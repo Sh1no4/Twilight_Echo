@@ -6,11 +6,9 @@ import type { Track } from '../types/music'
 
 const props = defineProps<{
   open: boolean
-  level2Open: boolean
 }>()
 
 const emit = defineEmits<{
-  closeLevel2: []
   selectView: [category: string, filter: string | null]
   enterStreaming: []
 }>()
@@ -65,10 +63,6 @@ const { currentTrack } = usePlayerStore()
 
 const menuBottom = computed(() => currentTrack.value ? '72px' : '0')
 
-const activeItem = computed(() =>
-  menuItems.find((item) => item.key === activeKey.value)
-)
-
 function buildArtistChildren(): SubItem[] {
   return artists.value.map((a) => ({ key: `artist:${a.name}`, label: `${a.name} (${a.trackCount})` }))
 }
@@ -83,13 +77,6 @@ function buildPlaylistChildren(): SubItem[] {
   return items
 }
 
-const resolvedChildren = computed(() => {
-  if (activeKey.value === 'artists') return buildArtistChildren()
-  if (activeKey.value === 'albums') return buildAlbumChildren()
-  if (activeKey.value === 'playlists') return buildPlaylistChildren()
-  return activeItem.value?.children ?? []
-})
-
 function selectItem(key: string): void {
   activeKey.value = key
   const children =
@@ -103,17 +90,6 @@ function selectItem(key: string): void {
   }
 
   emit('selectView', key, null)
-}
-
-async function selectChild(key: string): Promise<void> {
-  activeChildKey.value = key
-  if (key === 'addFolder') {
-    await addFolder()
-    emit('closeLevel2')
-  } else {
-    emit('selectView', activeKey.value, key)
-    emit('closeLevel2')
-  }
 }
 
 async function addFolder(): Promise<void> {
@@ -164,18 +140,6 @@ async function handleImportClick(): Promise<void> {
         <span v-if="scanning" class="scanning-text">正在扫描...</span>
       </div>
     </nav>
-  </div>
-  <div v-if="open && level2Open" class="context-menu">
-    <div
-      v-for="child in resolvedChildren"
-      :key="child.key"
-      class="context-item"
-      :class="{ active: activeChildKey === child.key }"
-      @click="selectChild(child.key)"
-    >
-      <span v-if="child.key === 'addFolder' && scanning" class="scanning-spinner"></span>
-      {{ child.label }}
-    </div>
   </div>
 </template>
 

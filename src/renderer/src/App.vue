@@ -13,7 +13,6 @@ import { usePlayerStore } from './stores/usePlayerStore'
 
 
 const menuOpen = ref(false)
-const level2Open = ref(false)
 const showPlayingPage = ref(false)
 const showStreamingPage = ref(false)
 const showLoginPage = ref(false)
@@ -34,14 +33,7 @@ function toggleMenu(): void {
     toggleStreamingMenu()
     return
   }
-  if (!menuOpen.value) {
-    menuOpen.value = true
-    level2Open.value = false
-  } else if (!level2Open.value) {
-    level2Open.value = true
-  } else {
-    level2Open.value = false
-  }
+  menuOpen.value = !menuOpen.value
 }
 
 function toggleStreamingMenu(): void {
@@ -54,7 +46,6 @@ function collapseMenu(): void {
     return
   }
   menuOpen.value = false
-  level2Open.value = false
 }
 
 function getDepth(filter: string | null): number {
@@ -91,7 +82,6 @@ function handleCoverClick(rect: { x: number; y: number; w: number; h: number }):
 
 function enterStreamingMode(): void {
   menuOpen.value = false
-  level2Open.value = false
   showPlayingPage.value = false
   showStreamingPage.value = true
 }
@@ -102,7 +92,6 @@ async function openLoginPage(): Promise<void> {
   if (isLoggedIn.value) {
     // 已登录则打开个人详情页
     menuOpen.value = false
-    level2Open.value = false
     showPlayingPage.value = false
     showStreamingPage.value = false
     loginPageMode.value = 'profile'
@@ -127,7 +116,6 @@ async function openLoginPage(): Promise<void> {
   } catch { /* 检查失败则继续显示登录页 */ }
 
   menuOpen.value = false
-  level2Open.value = false
   showPlayingPage.value = false
   showStreamingPage.value = false
   loginPageMode.value = 'login'
@@ -155,7 +143,7 @@ const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOri
 
 <template>
   <TitleBar :glass="showPlayingPage" :streaming="showStreamingPage" :menu-open="titleMenuOpen" @toggle-menu="toggleMenu" @collapse-menu="collapseMenu" @back="closePlayingPage" @login="openLoginPage" />
-  <SideMenu v-if="!showPlayingPage && !showStreamingPage && !showLoginPage" :open="menuOpen" :level2-open="level2Open" @close-level2="level2Open = false" @select-view="onSelectView" @enter-streaming="enterStreamingMode" />
+  <SideMenu v-if="!showPlayingPage && !showStreamingPage && !showLoginPage" :open="menuOpen" @select-view="onSelectView" @enter-streaming="enterStreamingMode" />
   <div class="main-content" :class="{ 'menu-open': menuOpen && !showPlayingPage && !showStreamingPage && !showLoginPage }" :style="{ minHeight: mainContentMinHeight }">
     <Transition :name="songlistTransitionName">
       <SongList v-if="!showPlayingPage && !showStreamingPage && !showLoginPage" :key="'songlist-' + activeCategory + (activeFilter ?? '')" :category="activeCategory" :filter="activeFilter" :has-player="hasPlayerBar" @select-view="onSelectView" />

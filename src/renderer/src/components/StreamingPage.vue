@@ -25,6 +25,58 @@ const detailLoading = ref(false)
 const detailError = ref('')
 const likedCount = ref<number | null>(null)
 
+const dailySongs = ref<Track[]>([])
+const personalFmSongs = ref<Track[]>([])
+const privateContentSongs = ref<Track[]>([])
+const recsLoading = ref(false)
+const recsError = ref('')
+
+async function loadRecommendations(): Promise<void> {
+  if (!isLoggedIn.value) return
+  if (dailySongs.value.length > 0 && personalFmSongs.value.length > 0) return
+  recsLoading.value = true
+  recsError.value = ''
+  try {
+    const [daily, fm, pvt] = await Promise.all([
+      fetchRecommendSongs().catch(() => [] as Track[]),
+      fetchPersonalFm().catch(() => [] as Track[]),
+      fetchPrivateContent().catch(() => [] as Track[])
+    ])
+    dailySongs.value = daily
+    personalFmSongs.value = fm
+    privateContentSongs.value = pvt
+  } catch (e) {
+    recsError.value = e instanceof Error ? e.message : '加载推荐失败'
+  } finally {
+    recsLoading.value = false
+  }
+}
+
+interface RecSection {
+  key: string
+  title: string
+  tracks: Track[]
+  icon: string
+}
+
+const recSections = computed<RecSection[]>(() => [
+  { key: 'daily', title: '每日推荐', tracks: dailySongs.value, icon: 'pi pi-calendar' },
+  { key: 'fm', title: '私人漫游', tracks: personalFmSongs.value, icon: 'pi pi-compass' },
+  { key: 'radar', title: '私人雷达', tracks: privateContentSongs.value, icon: 'pi pi-send' }
+])
+
+const activeRecSection = ref<RecSection | null>(null)
+
+function openRecSection(section: RecSection): void {
+  activeRecSection.value = section
+}
+
+function playRecSection(section: RecSection): void {
+  if (section.tracks.length > 0) {
+    playTrack(section.tracks[0], section.tracks)
+  }
+}
+
 interface TabItem {
   key: StreamingTab
   label: string
@@ -54,7 +106,10 @@ const {
   userPlaylists,
   fetchUserLibrary,
   fetchPlaylistTracks,
-  fetchLikedTracks
+  fetchLikedTracks,
+  fetchRecommendSongs,
+  fetchPersonalFm,
+  fetchPrivateContent
 } = useNcmStore()
 
 const { currentTrack, playTrack, formatTime } = usePlayerStore()
@@ -62,12 +117,14 @@ const { currentTrack, playTrack, formatTime } = usePlayerStore()
 const profileSignature = computed(() => profile.value?.signature?.trim() || '暂无个人简介')
 
 const headerTitle = computed(() => {
+  if (activeRecSection.value) return activeRecSection.value.title
   if (currentDetail.value?.type === 'liked') return '我收藏的歌曲'
   if (currentDetail.value?.type === 'playlist') return currentDetail.value.playlist.name
   return currentView.value?.label ?? '流媒体'
 })
 
 const headerSubtitle = computed(() => {
+  if (activeRecSection.value) return `${activeRecSection.value.tracks.length} 首`
   if (currentDetail.value) {
     return `${detailTracks.value.length} 首`
   }
@@ -106,6 +163,7 @@ function resetDetail(): void {
   detailTracks.value = []
   detailLoading.value = false
   detailError.value = ''
+  activeRecSection.value = null
 }
 
 async function ensureLibraryLoaded(force = false): Promise<void> {
@@ -150,11 +208,19 @@ async function openPlaylist(playlist: NcmPlaylistSummary, force = false): Promis
 }
 
 function goBack(): void {
+  if (activeRecSection.value) {
+    activeRecSection.value = null
+    return
+  }
   resetDetail()
 }
 
 function onTrackClick(track: Track): void {
-  playTrack(track, detailTracks.value)
+  if (activeRecSection.value) {
+    playTrack(track, activeRecSection.value.tracks)
+  } else {
+    playTrack(track, detailTracks.value)
+  }
 }
 
 async function playLikedSongs(): Promise<void> {
@@ -179,6 +245,9 @@ async function retryCurrentView(): Promise<void> {
 }
 
 watch(activeTab, async (tab) => {
+  if (tab === 'home' && isLoggedIn.value) {
+    loadRecommendations()
+  }
   if (tab === 'library' && isLoggedIn.value) {
     await ensureLibraryLoaded()
   }
@@ -190,7 +259,13 @@ watch(
     if (!loggedIn) {
       resetDetail()
       likedCount.value = null
+      dailySongs.value = []
+      personalFmSongs.value = []
+      privateContentSongs.value = []
       return
+    }
+    if (activeTab.value === 'home') {
+      loadRecommendations()
     }
     if (activeTab.value === 'library') {
       await ensureLibraryLoaded(true)
@@ -199,6 +274,9 @@ watch(
 )
 
 onMounted(async () => {
+  if (activeTab.value === 'home' && isLoggedIn.value) {
+    loadRecommendations()
+  }
   if (activeTab.value === 'library') {
     await ensureLibraryLoaded()
   }
@@ -239,7 +317,7 @@ onMounted(async () => {
     <div class="streaming-content">
       <div class="streaming-content-header">
         <div class="streaming-header-left">
-          <button v-if="currentDetail" class="btn-back" title="返回" @click="goBack">
+          <button v-if="currentDetail || activeRecSection" class="btn-back" title="返回" @click="goBack">
             <i class="pi pi-arrow-left"></i>
           </button>
           <div>
@@ -250,12 +328,89 @@ onMounted(async () => {
       </div>
 
       <div class="streaming-content-body">
-        <div v-if="activeTab === 'home'" class="streaming-placeholder">
-          <i class="pi pi-home" style="font-size: 48px; color: #ccc"></i>
-          <p class="placeholder-title">流媒体主页</p>
-          <p class="placeholder-hint">
-            {{ isLoggedIn ? '打开音乐库查看我收藏的歌曲和歌单' : '点击左上角头像登录网易云音乐' }}
-          </p>
+        <div v-if="activeTab === 'home'" class="home-view">
+          <div v-if="!isLoggedIn" class="streaming-placeholder">
+            <i class="pi pi-home" style="font-size: 48px; color: #ccc"></i>
+            <p class="placeholder-title">流媒体主页</p>
+            <p class="placeholder-hint">点击左上角头像登录网易云音乐</p>
+          </div>
+          <div v-else-if="recsLoading" class="streaming-placeholder">
+            <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
+            <p class="placeholder-title">正在加载推荐</p>
+            <p class="placeholder-hint">请稍候...</p>
+          </div>
+          <div v-else-if="recsError" class="streaming-placeholder">
+            <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
+            <p class="placeholder-title">加载失败</p>
+            <p class="placeholder-hint">{{ recsError }}</p>
+            <Button label="重试" severity="contrast" @click="loadRecommendations" />
+          </div>
+          <div v-else class="rec-sections">
+            <div class="rec-hero-row">
+              <div
+                v-for="section in recSections"
+                :key="section.key"
+                class="rec-hero-card"
+                @click="openRecSection(section)"
+              >
+                <img
+                  v-if="section.tracks.length > 0 && section.tracks[0].cover"
+                  :src="section.tracks[0].cover"
+                  class="rec-hero-cover"
+                  alt=""
+                />
+                <div v-else class="rec-hero-cover-placeholder">
+                  <i :class="section.icon" style="font-size: 28px; color: #bbb"></i>
+                </div>
+                <div class="rec-hero-name">{{ section.title }}</div>
+                <div class="rec-hero-count">{{ section.tracks.length || '暂无' }} 首</div>
+              </div>
+            </div>
+
+            <div v-if="activeRecSection" class="rec-detail">
+              <div class="rec-detail-header">
+                <button class="btn-back" title="返回" @click="activeRecSection = null">
+                  <i class="pi pi-arrow-left"></i>
+                </button>
+                <div>
+                  <h3 class="rec-detail-title">{{ activeRecSection.title }}</h3>
+                  <span class="rec-detail-count">{{ activeRecSection.tracks.length }} 首</span>
+                </div>
+                <Button
+                  v-if="activeRecSection.tracks.length > 0"
+                  label="播放全部"
+                  icon="pi pi-play"
+                  rounded
+                  severity="contrast"
+                  size="small"
+                  @click="playRecSection(activeRecSection)"
+                />
+              </div>
+              <div v-if="activeRecSection.tracks.length === 0" class="rec-empty">
+                <span>暂无推荐内容</span>
+              </div>
+              <div v-else class="rec-track-list">
+                <div
+                  v-for="(track, i) in activeRecSection.tracks"
+                  :key="track.id"
+                  class="rec-track-row"
+                  :class="{ 'track-playing': currentTrack?.id === track.id }"
+                  @click="onTrackClick(track)"
+                >
+                  <span class="rec-track-index">{{ i + 1 }}</span>
+                  <img v-if="track.cover" :src="track.cover" class="rec-track-cover" alt="" />
+                  <div v-else class="rec-track-cover-placeholder">
+                    <i class="pi pi-wave-pulse" style="font-size: 14px; color: #bbb"></i>
+                  </div>
+                  <div class="rec-track-info">
+                    <div class="rec-track-title">{{ track.title }}</div>
+                    <div class="rec-track-artist">{{ track.artist }}</div>
+                  </div>
+                  <span class="rec-track-duration">{{ formatTime(track.duration) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <div v-else-if="activeTab === 'playlists'" class="streaming-placeholder">
@@ -1042,5 +1197,188 @@ onMounted(async () => {
   width: 80px;
   font-size: 12px !important;
   color: #888 !important;
+}
+
+/* ===== Home Recommendations ===== */
+.home-view {
+  min-height: 100%;
+}
+
+.rec-sections {
+  display: flex;
+  flex-direction: column;
+}
+
+.rec-hero-row {
+  display: flex;
+  gap: 14px;
+}
+
+.rec-hero-card {
+  flex-shrink: 0;
+  width: 150px;
+  cursor: pointer;
+  transition: transform 0.15s;
+}
+
+.rec-hero-card:hover {
+  transform: translateY(-3px);
+}
+
+.rec-hero-cover {
+  width: 150px;
+  height: 150px;
+  object-fit: cover;
+  border-radius: 10px;
+  margin-bottom: 8px;
+}
+
+.rec-hero-cover-placeholder {
+  width: 150px;
+  height: 150px;
+  border-radius: 10px;
+  background: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.rec-hero-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #1a1a1a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.rec-hero-count {
+  font-size: 11px;
+  color: #999;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Detail view after clicking a rec hero card */
+.rec-detail {
+  margin-top: 24px;
+}
+
+.rec-detail-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.rec-detail-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: #1a1a1a;
+  margin: 0;
+}
+
+.rec-detail-count {
+  font-size: 12px;
+  color: #999;
+}
+
+.rec-empty {
+  height: 60px;
+  display: flex;
+  align-items: center;
+  color: #bbb;
+  font-size: 13px;
+}
+
+.rec-track-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.rec-track-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.rec-track-row:hover {
+  background: #fafafa;
+}
+
+.rec-track-row.track-playing {
+  background: #e8f0fe;
+}
+
+.rec-track-row.track-playing .rec-track-title {
+  color: #1a73e8;
+}
+
+.rec-track-index {
+  width: 28px;
+  text-align: center;
+  font-size: 13px;
+  color: #bbb;
+  flex-shrink: 0;
+}
+
+.rec-track-row.track-playing .rec-track-index {
+  color: #1a73e8;
+}
+
+.rec-track-cover {
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.rec-track-cover-placeholder {
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  background: #f5f5f5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.rec-track-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.rec-track-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1a1a1a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rec-track-artist {
+  font-size: 12px;
+  color: #999;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.rec-track-duration {
+  font-size: 12px;
+  color: #bbb;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
 </style>

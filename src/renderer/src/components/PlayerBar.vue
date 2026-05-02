@@ -548,7 +548,7 @@ function playTrackAt(index: number): void {
   transition: background 0.15s;
 }
 .player-cover-placeholder:hover { background: #eee; }
-.player-track-info { overflow: hidden; }
+.player-track-info { overflow: hidden; min-width: 0; }
 .player-title {
   font-size: 14px; font-weight: 500; color: #1a1a1a;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

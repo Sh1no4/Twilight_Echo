@@ -35,6 +35,19 @@ watch(
   }
 )
 
+watch(
+  () => currentTrack.value,
+  async (track) => {
+    if (track && track.source === 'ncm' && track.ncmSongId && !track.lyrics) {
+      const { fetchLyric } = useNcmStore()
+      const lrc = await fetchLyric(track.ncmSongId)
+      if (lrc && currentTrack.value?.id === track.id) {
+        currentTrack.value = { ...currentTrack.value, lyrics: lrc }
+      }
+    }
+  }
+)
+
 let cleanupFns: (() => void)[] = []
 let listenersSetup = false
 
@@ -144,6 +157,7 @@ async function loadAndPlay(track: Track): Promise<void> {
   try {
     const playTarget = await resolvePlayTarget(track)
     await window.api.mpv.play(playTarget)
+    isPlaying.value = true
   } catch (err) {
     console.error('[mpv] 播放失败:', err)
     isLoading.value = false
@@ -232,9 +246,11 @@ export function usePlayerStore() {
 
   async function togglePlay(): Promise<void> {
     if (!currentTrack.value) return
+    isPlaying.value = !isPlaying.value
     try {
       await window.api.mpv.togglePause()
     } catch (err) {
+      isPlaying.value = !isPlaying.value
       console.error('[mpv] togglePlay 失败:', err)
     }
   }

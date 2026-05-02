@@ -370,6 +370,44 @@ export function useNcmStore() {
     return url
   }
 
+  async function fetchRecommendSongs(): Promise<Track[]> {
+    const data = await requestAuthed(`/recommend/songs`)
+    const dailySongs = Array.isArray(data.data?.dailySongs)
+      ? data.data.dailySongs
+      : Array.isArray(data.dailySongs)
+        ? data.dailySongs
+        : []
+    if (dailySongs.length > 0) return dailySongs.map(normalizeTrack)
+    // fallback to generic parsing
+    return getSongItems(data).map(normalizeTrack)
+  }
+
+  async function fetchPersonalFm(): Promise<Track[]> {
+    const data = await requestAuthed(`/personal_fm`)
+    const fmData = Array.isArray(data.data) ? data.data : Array.isArray(data.result) ? data.result : []
+    if (fmData.length > 0) return fmData.map(normalizeTrack)
+    return getSongItems(data).map(normalizeTrack)
+  }
+
+  async function fetchPrivateContent(): Promise<Track[]> {
+    const data = await requestAuthed(`/personalized/privatecontent`)
+    const result = Array.isArray(data.result) ? data.result : Array.isArray(data.data) ? data.data : []
+    if (result.length > 0) return result.map(normalizeTrack)
+    return getSongItems(data).map(normalizeTrack)
+  }
+
+  async function fetchLyric(songId: number): Promise<string | null> {
+    try {
+      const data = await requestAuthed(`/lyric/new?id=${songId}`)
+      const lrc = data.lrc?.lyric || data.data?.lrc?.lyric || ''
+      if (lrc) return lrc
+      const data2 = await requestAuthed(`/lyric?id=${songId}`)
+      return data2.lrc?.lyric || data2.data?.lrc?.lyric || null
+    } catch {
+      return null
+    }
+  }
+
   return {
     isLoggedIn,
     profile,
@@ -385,6 +423,10 @@ export function useNcmStore() {
     fetchUserLibrary,
     fetchPlaylistTracks,
     fetchLikedTracks,
-    getSongStreamUrl
+    getSongStreamUrl,
+    fetchRecommendSongs,
+    fetchPersonalFm,
+    fetchPrivateContent,
+    fetchLyric
   }
 }
