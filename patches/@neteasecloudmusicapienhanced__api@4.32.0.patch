@@ -1,0 +1,18 @@
+diff --git a/module/login_qr_check.js b/module/login_qr_check.js
+index 1f34cb09d0a81d3f1c9ca048fec4f4ac2b850411..a81b3a2f8314ae57712d477f8803b450624348d4 100644
+--- a/module/login_qr_check.js
++++ b/module/login_qr_check.js
+@@ -22,8 +22,11 @@ module.exports = async (query, request) => {
+   } catch (error) {
+     return {
+       status: 200,
+-      body: {},
+-      cookie: result.cookie,
++      body: {
++        code: -1,
++        msg: error.message || 'request failed',
++      },
++      cookie: [],
+     }
+   }
+ }
