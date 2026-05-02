@@ -4,8 +4,9 @@ import type { Track } from '../types/music'
 const tracks = ref<Track[]>([])
 
 export function useMusicStore() {
-  function saveLibrary(): void {
-    window.api.data.saveMusicLibrary(tracks.value)
+  async function saveLibrary(): Promise<void> {
+    const plain = JSON.parse(JSON.stringify(tracks.value))
+    await window.api.data.saveMusicLibrary(plain)
   }
 
   async function loadLibrary(): Promise<void> {
@@ -15,12 +16,12 @@ export function useMusicStore() {
     }
   }
 
-  function addTracks(newTracks: Track[]): void {
+  async function addTracks(newTracks: Track[]): Promise<void> {
     const existingPaths = new Set(tracks.value.map((t) => t.filePath))
     const unique = newTracks.filter((t) => !existingPaths.has(t.filePath))
     if (unique.length > 0) {
       tracks.value = [...tracks.value, ...unique]
-      saveLibrary()
+      await saveLibrary()
     }
   }
 

@@ -100,7 +100,7 @@ async function addFolder(): Promise<void> {
     if (!folderPath) return
     const files: Track[] = await window.api.fs.scanMusicFiles(folderPath)
     if (files.length > 0) {
-      addTracks(files)
+      await addTracks(files)
     }
   } finally {
     scanning.value = false
