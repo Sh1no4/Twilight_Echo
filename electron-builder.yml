@@ -3,6 +3,8 @@ productName: twilight-echo
 directories:
   buildResources: build
 beforePack: ./scripts/extract-mpv.cjs
+afterPack: ./scripts/copy-node-modules.cjs
+asar: false
 files:
   - '!**/.vscode/*'
   - '!src/*'

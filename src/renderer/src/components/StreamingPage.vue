@@ -327,7 +327,8 @@ onMounted(async () => {
         </div>
       </div>
 
-      <div class="streaming-content-body">
+      <Transition name="tab-fade" mode="out-in">
+        <div :key="activeTab" class="streaming-content-body">
         <div v-if="activeTab === 'home'" class="home-view">
           <div v-if="!isLoggedIn" class="streaming-placeholder">
             <i class="pi pi-home" style="font-size: 48px; color: #ccc"></i>
@@ -592,7 +593,8 @@ onMounted(async () => {
             </Card>
           </div>
         </div>
-      </div>
+        </div>
+      </Transition>
     </div>
   </div>
 </template>
@@ -1380,5 +1382,21 @@ onMounted(async () => {
   color: #bbb;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+}
+
+/* ===== Tab Transition Animation ===== */
+.tab-fade-enter-active,
+.tab-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.tab-fade-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.tab-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
 }
 </style>
