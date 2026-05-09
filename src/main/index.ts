@@ -221,7 +221,7 @@ function createWindow(): void {
     height: 768,
     show: false,
     frame: false,
-    icon: join(__dirname, '../../build/icon.png'),
+    icon: join(app.getAppPath(), 'resources', 'icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
