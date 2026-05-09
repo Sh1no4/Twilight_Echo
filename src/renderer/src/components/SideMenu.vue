@@ -2,7 +2,6 @@
 import { ref, computed } from 'vue'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
-import type { Track } from '../types/music'
 import ImportDialog from './ImportDialog.vue'
 
 const props = defineProps<{
@@ -60,7 +59,7 @@ const activeChildKey = ref('all')
 const scanning = ref(false)
 const showImportDialog = ref(false)
 
-const { addTracks, artists, albums, playlists } = useMusicStore()
+const { artists, albums, playlists } = useMusicStore()
 const { currentTrack } = usePlayerStore()
 
 const menuBottom = computed(() => currentTrack.value ? '72px' : '0')

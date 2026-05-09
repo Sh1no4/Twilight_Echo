@@ -11,7 +11,7 @@ const emit = defineEmits<{
   close: []
 }>()
 
-const { scannedFolders, addFolder, removeFolder, addTracks, isScanning, saveLibrary } = useMusicStore()
+const { scannedFolders, addFolder, addTracks, isScanning, saveLibrary } = useMusicStore()
 
 const progress = ref({ current: 0, total: 0 })
 const selectedFolders = ref<Set<string>>(new Set())
@@ -113,7 +113,7 @@ onUnmounted(() => {
                   type="checkbox" 
                   :checked="selectedFolders.has(folder)" 
                   @change="toggleFolder(folder)"
-                  :disabled="scanning"
+                  :disabled="isScanning"
                 />
               </div>
             </div>

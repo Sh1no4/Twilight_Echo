@@ -43,9 +43,13 @@ interface WindowAPI {
   dialog: {
     openFolder: () => Promise<string | null>
   }
+  shell: {
+    showItemInFolder: (filePath: string) => Promise<void>
+  }
   fs: {
     scanMusicFiles: (folderPath: string) => Promise<TrackData[]>
     readAudioFile: (filePath: string) => Promise<{ buffer: ArrayBuffer; mimeType: string }>
+    onScanProgress: (cb: (progress: { current: number; total: number }) => void) => () => void
   }
   mpv: MpvAPI
   ncm: {
@@ -53,8 +57,8 @@ interface WindowAPI {
     request: (path: string, cookie?: string) => Promise<unknown>
   }
   data: {
-    saveMusicLibrary: (tracks: unknown[]) => Promise<void>
-    loadMusicLibrary: () => Promise<unknown[]>
+    saveMusicLibrary: (data: { tracks: unknown[]; folders: string[] }) => Promise<void>
+    loadMusicLibrary: () => Promise<{ tracks: unknown[]; folders: string[] } | unknown[]>
     saveCookie: (cookie: string) => Promise<void>
     loadCookie: () => Promise<string>
   }

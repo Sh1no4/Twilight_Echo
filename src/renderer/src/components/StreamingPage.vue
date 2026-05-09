@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import type { Track } from '../types/music'
 import { useNcmStore, type NcmPlaylistSummary } from '../stores/useNcmStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
@@ -217,26 +217,6 @@ const headerTitle = computed(() => {
   return currentView.value?.label ?? '流媒体'
 })
 
-const headerSubtitle = computed(() => {
-  if (isSearching.value) {
-    if (searchLoading.value) return '正在搜索...'
-    if (searchError.value) return searchError.value
-    return `找到 ${searchTotal.value} 首相关歌曲`
-  }
-  if (currentDetail.value) {
-    return `${detailTracks.value.length} 首`
-  }
-  if (activeTab.value === 'library') {
-    return isLoggedIn.value ? '我的网易云收藏与歌单' : '登录后可浏览网易云音乐库'
-  }
-  if (activeTab.value === 'playlists') {
-    return '发现与浏览在线歌单'
-  }
-  if (isLoggedIn.value && profile.value) {
-    return `欢迎回来，${profile.value.nickname}`
-  }
-  return '连接网易云音乐后可使用'
-})
 
 const rootLoading = computed(() => libraryLoading.value && !currentDetail.value)
 
