@@ -2,17 +2,26 @@ import { ref, computed } from 'vue'
 import type { Track } from '../types/music'
 
 const tracks = ref<Track[]>([])
+const scannedFolders = ref<string[]>([])
+const isScanning = ref(false)
 
 export function useMusicStore() {
   async function saveLibrary(): Promise<void> {
-    const plain = JSON.parse(JSON.stringify(tracks.value))
-    await window.api.data.saveMusicLibrary(plain)
+    const plainTracks = JSON.parse(JSON.stringify(tracks.value))
+    const plainFolders = JSON.parse(JSON.stringify(scannedFolders.value))
+    await window.api.data.saveMusicLibrary({ tracks: plainTracks, folders: plainFolders })
   }
 
   async function loadLibrary(): Promise<void> {
     const saved = await window.api.data.loadMusicLibrary()
-    if (saved.length > 0) {
-      tracks.value = saved as Track[]
+    if (saved) {
+      if (Array.isArray(saved)) {
+        // Legacy support
+        tracks.value = saved as Track[]
+      } else {
+        tracks.value = (saved.tracks || []) as Track[]
+        scannedFolders.value = (saved.folders || []) as string[]
+      }
     }
   }
 
@@ -21,7 +30,9 @@ export function useMusicStore() {
     const unique = newTracks.filter((t) => !existingPaths.has(t.filePath))
     if (unique.length > 0) {
       tracks.value = [...tracks.value, ...unique]
-      await saveLibrary()
+      if (!isScanning.value) {
+        await saveLibrary()
+      }
     }
   }
 
@@ -105,6 +116,18 @@ export function useMusicStore() {
     removeFromPlaylist,
     getPlaylistTracks,
     saveLibrary,
-    loadLibrary
+    loadLibrary,
+    scannedFolders,
+    isScanning,
+    addFolder(path: string) {
+      if (!scannedFolders.value.includes(path)) {
+        scannedFolders.value.push(path)
+        saveLibrary()
+      }
+    },
+    removeFolder(path: string) {
+      scannedFolders.value = scannedFolders.value.filter(f => f !== path)
+      saveLibrary()
+    }
   }
 }

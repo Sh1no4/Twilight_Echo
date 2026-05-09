@@ -14,6 +14,10 @@ export interface Track {
   source?: TrackSource
   ncmSongId?: number
   streamUrl?: string | null
+  format?: string
+  sampleRate?: number
+  bitrate?: number
+  bitDepth?: number
 }
 
 export const SUPPORTED_EXTENSIONS = [

@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import type { Track } from '../types/music'
+import ImportDialog from './ImportDialog.vue'
 
 const props = defineProps<{
   open: boolean
@@ -57,6 +58,7 @@ const menuItems: MenuItem[] = [
 const activeKey = ref('allSongs')
 const activeChildKey = ref('all')
 const scanning = ref(false)
+const showImportDialog = ref(false)
 
 const { addTracks, artists, albums, playlists } = useMusicStore()
 const { currentTrack } = usePlayerStore()
@@ -92,23 +94,8 @@ function selectItem(key: string): void {
   emit('selectView', key, null)
 }
 
-async function addFolder(): Promise<void> {
-  if (scanning.value) return
-  scanning.value = true
-  try {
-    const folderPath = await window.api.dialog.openFolder()
-    if (!folderPath) return
-    const files: Track[] = await window.api.fs.scanMusicFiles(folderPath)
-    if (files.length > 0) {
-      await addTracks(files)
-    }
-  } finally {
-    scanning.value = false
-  }
-}
-
 async function handleImportClick(): Promise<void> {
-  await addFolder()
+  showImportDialog.value = true
 }
 </script>
 
@@ -140,6 +127,7 @@ async function handleImportClick(): Promise<void> {
         <span v-if="scanning" class="scanning-text">正在扫描...</span>
       </div>
     </nav>
+    <ImportDialog :show="showImportDialog" @close="showImportDialog = false" />
   </div>
 </template>
 

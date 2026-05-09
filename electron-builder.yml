@@ -1,10 +1,11 @@
-appId: com.electron.app
-productName: twilight-echo
+appId: com.TwilightEcho.music
+productName: TwilightEcho
 directories:
   buildResources: build
 beforePack: ./scripts/extract-mpv.cjs
 afterPack: ./scripts/copy-node-modules.cjs
 asar: false
+icon: build/icon.png
 files:
   - '!**/.vscode/*'
   - '!src/*'
@@ -22,7 +23,8 @@ extraResources:
     filter:
       - '**/*'
 win:
-  executableName: twilight-echo
+  executableName: TwilightEcho
+  icon: build/icon.ico
   signAndEditExecutable: false
 nsis:
   artifactName: ${name}-${version}-setup.${ext}

@@ -22,6 +22,7 @@ const libraryLoaded = ref(false)
 const libraryError = ref('')
 const likedPlaylist = ref<NcmPlaylistSummary | null>(null)
 const userPlaylists = ref<NcmPlaylistSummary[]>([])
+const likedSongIds = ref<Set<number>>(new Set())
 
 const playlistTrackCache = new Map<string, Track[]>()
 const streamUrlCache = new Map<number, string | null>()
@@ -41,6 +42,7 @@ function resetLibraryState(): void {
   playlistTrackCache.clear()
   streamUrlCache.clear()
   likedTracksCache = null
+  likedSongIds.value = new Set()
 }
 
 function formatDuration(rawDuration: unknown): number {
@@ -396,6 +398,21 @@ export function useNcmStore() {
     return getSongItems(data).map(normalizeTrack)
   }
 
+  async function fetchRecommendPlaylists(): Promise<NcmPlaylistSummary[]> {
+    try {
+      const data = await requestAuthed(`/recommend/resource`)
+      const recommend = Array.isArray(data.recommend) ? data.recommend : Array.isArray(data.data) ? data.data : []
+      return recommend.map((item: any) => ({
+        id: Number(item.id),
+        name: item.name || '未命名歌单',
+        cover: item.picUrl || item.coverImgUrl || null,
+        trackCount: item.trackCount || 0
+      }))
+    } catch {
+      return []
+    }
+  }
+
   async function fetchLyric(songId: number): Promise<string | null> {
     try {
       const data = await requestAuthed(`/lyric/new?id=${songId}`)
@@ -408,6 +425,46 @@ export function useNcmStore() {
     }
   }
 
+  async function searchSongs(
+    keywords: string,
+    limit = 30,
+    offset = 0
+  ): Promise<{ tracks: Track[]; total: number }> {
+    const data = await requestAuthed(
+      `/cloudsearch?keywords=${encodeURIComponent(keywords)}&type=1&limit=${limit}&offset=${offset}`
+    )
+    const result = data.result || data.data?.result || {}
+    const songs: Record<string, any>[] =
+      Array.isArray(result.songs) ? result.songs : []
+    const total =
+      typeof result.songCount === 'number' ? result.songCount : songs.length
+    return { tracks: songs.map(normalizeTrack), total }
+  }
+
+  async function likeTrack(songId: number, like: boolean): Promise<void> {
+    await requestAuthed(`/like?id=${songId}&like=${String(like)}`)
+    if (like) {
+      likedSongIds.value = new Set([...likedSongIds.value, songId])
+    } else {
+      const next = new Set(likedSongIds.value)
+      next.delete(songId)
+      likedSongIds.value = next
+    }
+  }
+
+  function isTrackLiked(ncmSongId: number | undefined): boolean {
+    if (ncmSongId == null) return false
+    return likedSongIds.value.has(ncmSongId)
+  }
+
+  function syncLikedIds(tracks: Track[]): void {
+    const ids = new Set<number>()
+    for (const t of tracks) {
+      if (t.ncmSongId != null) ids.add(t.ncmSongId)
+    }
+    likedSongIds.value = ids
+  }
+
   return {
     isLoggedIn,
     profile,
@@ -416,6 +473,7 @@ export function useNcmStore() {
     libraryError,
     likedPlaylist,
     userPlaylists,
+    likedSongIds,
     buildProfile,
     checkLogin,
     setLogin,
@@ -425,8 +483,13 @@ export function useNcmStore() {
     fetchLikedTracks,
     getSongStreamUrl,
     fetchRecommendSongs,
+    fetchRecommendPlaylists,
     fetchPersonalFm,
     fetchPrivateContent,
-    fetchLyric
+    fetchLyric,
+    searchSongs,
+    likeTrack,
+    isTrackLiked,
+    syncLikedIds
   }
 }

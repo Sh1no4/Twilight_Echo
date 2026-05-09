@@ -12,6 +12,7 @@ defineEmits<{
   collapseMenu: []
   back: []
   login: []
+  settings: []
 }>()
 
 const { isLoggedIn, profile } = useNcmStore()
@@ -35,6 +36,9 @@ function close(): void {
           <line x1="3" y1="18" x2="21" y2="18" />
         </svg>
       </button>
+      <button class="settings-btn" title="设置" @click="$emit('settings')">
+        <i class="pi pi-cog"></i>
+      </button>
       <button v-if="streaming" class="login-btn" :title="isLoggedIn ? profile?.nickname || '个人详情' : '网易云登录'" @click="$emit('login')">
         <img v-if="isLoggedIn && profile?.avatarUrl" :src="profile.avatarUrl" class="user-avatar" alt="" />
         <i v-else class="pi pi-user"></i>
@@ -43,6 +47,9 @@ function close(): void {
     <div v-if="glass && !streaming" class="title-bar-start no-drag">
       <button class="back-btn" title="返回" @click="$emit('back')">
         <i class="pi pi-chevron-down"></i>
+      </button>
+      <button class="settings-btn" title="设置" @click="$emit('settings')">
+        <i class="pi pi-cog"></i>
       </button>
     </div>
     <button
@@ -111,6 +118,26 @@ function close(): void {
   background: rgba(0, 0, 0, 0.05);
 }
 
+.settings-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: #333;
+  cursor: pointer;
+  transition: background 0.15s;
+  padding: 0;
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.settings-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
 .login-btn {
   display: flex;
   align-items: center;
@@ -136,6 +163,14 @@ function close(): void {
   height: 20px;
   border-radius: 50%;
   object-fit: cover;
+}
+
+.title-bar-glass .settings-btn {
+  color: #fff;
+}
+
+.title-bar-glass .settings-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .title-bar-glass .login-btn {

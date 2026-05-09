@@ -57,11 +57,19 @@ const api = {
   dialog: {
     openFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder')
   },
+  shell: {
+    showItemInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('shell:showItemInFolder', filePath)
+  },
   fs: {
     scanMusicFiles: (folderPath: string): Promise<unknown[]> =>
       ipcRenderer.invoke('fs:scanMusicFiles', folderPath),
     readAudioFile: (filePath: string): Promise<{ buffer: ArrayBuffer; mimeType: string }> =>
-      ipcRenderer.invoke('fs:readAudioFile', filePath)
+      ipcRenderer.invoke('fs:readAudioFile', filePath),
+    onScanProgress: (cb: (progress: { current: number; total: number }) => void): (() => void) => {
+      const handler = (_event, data: { current: number; total: number }) => cb(data)
+      ipcRenderer.on('fs:scanProgress', handler)
+      return () => ipcRenderer.removeListener('fs:scanProgress', handler)
+    }
   },
   mpv: {
     play: (filePath: string): Promise<void> => ipcRenderer.invoke('mpv:play', filePath),

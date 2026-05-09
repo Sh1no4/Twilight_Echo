@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import type { Track } from '../types/music'
 import { useNcmStore, type NcmPlaylistSummary } from '../stores/useNcmStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
@@ -8,10 +8,18 @@ import Avatar from 'primevue/avatar'
 import Button from 'primevue/button'
 import Divider from 'primevue/divider'
 
+interface RecSection {
+  key: string
+  title: string
+  tracks: Track[]
+  icon: string
+}
+
 type StreamingTab = 'home' | 'playlists' | 'library'
 type DetailView =
   | { type: 'liked' }
   | { type: 'playlist'; playlist: NcmPlaylistSummary }
+  | { type: 'rec'; section: RecSection }
 
 const props = defineProps<{
   menuOpen: boolean
@@ -28,6 +36,7 @@ const likedCount = ref<number | null>(null)
 const dailySongs = ref<Track[]>([])
 const personalFmSongs = ref<Track[]>([])
 const privateContentSongs = ref<Track[]>([])
+const recommendPlaylists = ref<NcmPlaylistSummary[]>([])
 const recsLoading = ref(false)
 const recsError = ref('')
 
@@ -37,26 +46,21 @@ async function loadRecommendations(): Promise<void> {
   recsLoading.value = true
   recsError.value = ''
   try {
-    const [daily, fm, pvt] = await Promise.all([
+    const [daily, fm, pvt, playlists] = await Promise.all([
       fetchRecommendSongs().catch(() => [] as Track[]),
       fetchPersonalFm().catch(() => [] as Track[]),
-      fetchPrivateContent().catch(() => [] as Track[])
+      fetchPrivateContent().catch(() => [] as Track[]),
+      fetchRecommendPlaylists().catch(() => [] as NcmPlaylistSummary[])
     ])
     dailySongs.value = daily
     personalFmSongs.value = fm
     privateContentSongs.value = pvt
+    recommendPlaylists.value = playlists
   } catch (e) {
     recsError.value = e instanceof Error ? e.message : '加载推荐失败'
   } finally {
     recsLoading.value = false
   }
-}
-
-interface RecSection {
-  key: string
-  title: string
-  tracks: Track[]
-  icon: string
 }
 
 const recSections = computed<RecSection[]>(() => [
@@ -65,16 +69,11 @@ const recSections = computed<RecSection[]>(() => [
   { key: 'radar', title: '私人雷达', tracks: privateContentSongs.value, icon: 'pi pi-send' }
 ])
 
-const activeRecSection = ref<RecSection | null>(null)
-
-function openRecSection(section: RecSection): void {
-  activeRecSection.value = section
-}
-
-function playRecSection(section: RecSection): void {
-  if (section.tracks.length > 0) {
-    playTrack(section.tracks[0], section.tracks)
-  }
+async function openRecSection(section: RecSection, _event: MouseEvent): Promise<void> {
+  currentDetail.value = { type: 'rec', section }
+  detailTracks.value = section.tracks
+  detailLoading.value = false
+  detailError.value = ''
 }
 
 interface TabItem {
@@ -108,23 +107,122 @@ const {
   fetchPlaylistTracks,
   fetchLikedTracks,
   fetchRecommendSongs,
+  fetchRecommendPlaylists,
   fetchPersonalFm,
-  fetchPrivateContent
+  fetchPrivateContent,
+  searchSongs,
+  likeTrack,
+  isTrackLiked,
+  syncLikedIds
 } = useNcmStore()
+
+// ===== Search =====
+const searchQuery = ref('')
+const searchResults = ref<Track[]>([])
+const searchTotal = ref(0)
+const searchLoading = ref(false)
+const searchError = ref('')
+const searchInputFocused = ref(false)
+const isSearching = computed(() => searchQuery.value.trim().length > 0)
+
+// Like button state
+const likingTracks = ref<Set<number>>(new Set())
+
+async function onLikeTrack(track: Track, event: MouseEvent): Promise<void> {
+  event.stopPropagation()
+  const songId = track.ncmSongId
+  if (songId == null || likingTracks.value.has(songId)) return
+  const currentlyLiked = isTrackLiked(songId)
+  likingTracks.value = new Set([...likingTracks.value, songId])
+  try {
+    await likeTrack(songId, !currentlyLiked)
+  } finally {
+    const next = new Set(likingTracks.value)
+    next.delete(songId)
+    likingTracks.value = next
+  }
+}
+
+// Removed animation functions
+
+// Removed old animation functions
+
+let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearSearch(): void {
+  searchQuery.value = ''
+  searchResults.value = []
+  searchTotal.value = 0
+  searchLoading.value = false
+  searchError.value = ''
+}
+
+async function performSearch(keywords: string): Promise<void> {
+  if (!keywords.trim()) {
+    searchResults.value = []
+    searchTotal.value = 0
+    return
+  }
+  searchLoading.value = true
+  searchError.value = ''
+  try {
+    const { tracks, total } = await searchSongs(keywords.trim())
+    // Only apply if the query is still the same
+    if (searchQuery.value.trim() === keywords.trim()) {
+      searchResults.value = tracks
+      searchTotal.value = total
+    }
+  } catch (e) {
+    if (searchQuery.value.trim() === keywords.trim()) {
+      searchError.value = e instanceof Error ? e.message : '搜索失败'
+      searchResults.value = []
+      searchTotal.value = 0
+    }
+  } finally {
+    if (searchQuery.value.trim() === keywords.trim()) {
+      searchLoading.value = false
+    }
+  }
+}
+
+watch(searchQuery, (val) => {
+  if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+  const q = val.trim()
+  if (!q) {
+    searchResults.value = []
+    searchTotal.value = 0
+    searchLoading.value = false
+    searchError.value = ''
+    return
+  }
+  searchLoading.value = true
+  searchDebounceTimer = setTimeout(() => {
+    performSearch(q)
+  }, 300)
+})
+
+function onSearchTrackClick(track: Track): void {
+  playTrack(track, searchResults.value)
+}
 
 const { currentTrack, playTrack, formatTime } = usePlayerStore()
 
 const profileSignature = computed(() => profile.value?.signature?.trim() || '暂无个人简介')
 
 const headerTitle = computed(() => {
-  if (activeRecSection.value) return activeRecSection.value.title
+  if (isSearching.value) return `搜索: ${searchQuery.value.trim()}`
+  if (currentDetail.value?.type === 'rec') return currentDetail.value.section.title
   if (currentDetail.value?.type === 'liked') return '我收藏的歌曲'
   if (currentDetail.value?.type === 'playlist') return currentDetail.value.playlist.name
   return currentView.value?.label ?? '流媒体'
 })
 
 const headerSubtitle = computed(() => {
-  if (activeRecSection.value) return `${activeRecSection.value.tracks.length} 首`
+  if (isSearching.value) {
+    if (searchLoading.value) return '正在搜索...'
+    if (searchError.value) return searchError.value
+    return `找到 ${searchTotal.value} 首相关歌曲`
+  }
   if (currentDetail.value) {
     return `${detailTracks.value.length} 首`
   }
@@ -150,12 +248,40 @@ const likedSummary = computed(() => ({
 
 const userPlaylistEntries = computed(() => userPlaylists.value)
 
+const detailHeaderInfo = computed(() => {
+  if (!currentDetail.value) return null
+  if (currentDetail.value.type === 'liked') {
+    return {
+      title: '我收藏的歌曲',
+      cover: likedPlaylist.value?.cover ?? null,
+      desc: `共 ${likedCount.value ?? 0} 首歌曲`,
+      icon: 'pi pi-heart-fill'
+    }
+  }
+  if (currentDetail.value.type === 'playlist') {
+    return {
+      title: currentDetail.value.playlist.name,
+      cover: currentDetail.value.playlist.cover,
+      desc: `共 ${currentDetail.value.playlist.trackCount} 首歌曲`,
+      icon: 'pi pi-list'
+    }
+  }
+  if (currentDetail.value.type === 'rec') {
+    return {
+      title: currentDetail.value.section.title,
+      cover: currentDetail.value.section.tracks.length > 0 ? currentDetail.value.section.tracks[0].cover : null,
+      desc: `共 ${currentDetail.value.section.tracks.length} 首歌曲`,
+      icon: currentDetail.value.section.icon
+    }
+  }
+  return null
+})
+
 function selectTab(key: StreamingTab): void {
   if (activeTab.value !== key) {
     resetDetail()
   }
   activeTab.value = key
-  emit('toggleMenu')
 }
 
 function resetDetail(): void {
@@ -163,7 +289,6 @@ function resetDetail(): void {
   detailTracks.value = []
   detailLoading.value = false
   detailError.value = ''
-  activeRecSection.value = null
 }
 
 async function ensureLibraryLoaded(force = false): Promise<void> {
@@ -184,6 +309,7 @@ async function openLikedTracks(force = false): Promise<void> {
     const tracks = await fetchLikedTracks(force)
     detailTracks.value = tracks
     likedCount.value = tracks.length
+    syncLikedIds(tracks)
   } catch (error) {
     detailError.value = error instanceof Error ? error.message : '加载收藏歌曲失败'
     detailTracks.value = []
@@ -192,7 +318,7 @@ async function openLikedTracks(force = false): Promise<void> {
   }
 }
 
-async function openPlaylist(playlist: NcmPlaylistSummary, force = false): Promise<void> {
+async function openPlaylist(playlist: NcmPlaylistSummary, force = false, _event?: MouseEvent): Promise<void> {
   currentDetail.value = { type: 'playlist', playlist }
   detailLoading.value = true
   detailError.value = ''
@@ -208,19 +334,11 @@ async function openPlaylist(playlist: NcmPlaylistSummary, force = false): Promis
 }
 
 function goBack(): void {
-  if (activeRecSection.value) {
-    activeRecSection.value = null
-    return
-  }
   resetDetail()
 }
 
 function onTrackClick(track: Track): void {
-  if (activeRecSection.value) {
-    playTrack(track, activeRecSection.value.tracks)
-  } else {
-    playTrack(track, detailTracks.value)
-  }
+  playTrack(track, detailTracks.value)
 }
 
 async function playLikedSongs(): Promise<void> {
@@ -312,24 +430,111 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div v-if="menuOpen" class="streaming-overlay" :style="{ bottom: props.hasPlayer ? '72px' : '0px' }" @click="emit('toggleMenu')"></div>
 
     <div class="streaming-content">
       <div class="streaming-content-header">
         <div class="streaming-header-left">
-          <button v-if="currentDetail || activeRecSection" class="btn-back" title="返回" @click="goBack">
+          <button v-if="currentDetail || isSearching" class="btn-back" title="返回" @click="isSearching ? clearSearch() : goBack()">
             <i class="pi pi-arrow-left"></i>
           </button>
           <div>
             <h2 class="streaming-content-title">{{ headerTitle }}</h2>
-            <p class="streaming-content-subtitle">{{ headerSubtitle }}</p>
+          </div>
+        </div>
+        <div class="streaming-header-right">
+          <div v-if="isLoggedIn" class="streaming-search-box" :class="{ focused: searchInputFocused }">
+            <i class="pi pi-search streaming-search-icon"></i>
+            <input
+              v-model="searchQuery"
+              type="text"
+              class="streaming-search-input"
+              placeholder="搜索网易云音乐..."
+              @focus="searchInputFocused = true"
+              @blur="searchInputFocused = false"
+            />
+            <i v-if="searchLoading" class="pi pi-spin pi-spinner streaming-search-spinner"></i>
+            <button v-else-if="searchQuery" class="streaming-search-clear" @click="clearSearch">
+              <i class="pi pi-times"></i>
+            </button>
           </div>
         </div>
       </div>
 
       <Transition name="tab-fade" mode="out-in">
-        <div :key="activeTab" class="streaming-content-body">
-        <div v-if="activeTab === 'home'" class="home-view">
+        <div v-if="isSearching" key="search-results" class="streaming-content-body">
+          <div v-if="searchLoading && searchResults.length === 0" class="streaming-placeholder">
+            <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
+            <p class="placeholder-title">正在搜索</p>
+            <p class="placeholder-hint">请稍候...</p>
+          </div>
+          <div v-else-if="searchError && searchResults.length === 0" class="streaming-placeholder">
+            <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
+            <p class="placeholder-title">搜索失败</p>
+            <p class="placeholder-hint">{{ searchError }}</p>
+            <Button label="重试" severity="contrast" @click="performSearch(searchQuery.trim())" />
+          </div>
+          <div v-else-if="searchResults.length === 0" class="streaming-placeholder">
+            <i class="pi pi-search" style="font-size: 40px; color: #ccc"></i>
+            <p class="placeholder-title">未找到相关歌曲</p>
+            <p class="placeholder-hint">试试换个关键词搜索</p>
+          </div>
+          <div v-else class="track-table-wrapper">
+            <table class="track-table">
+              <thead>
+                <tr>
+                  <th class="col-cover-header">{{ searchTotal }} 首</th>
+                  <th class="col-index">#</th>
+                  <th class="col-info">标题</th>
+                  <th class="col-like-header"></th>
+                  <th class="col-album">专辑</th>
+                  <th class="col-duration">时长</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="(track, index) in searchResults"
+                  :key="track.id"
+                  class="track-row"
+                  :class="{ 'track-playing': currentTrack?.id === track.id }"
+                  @click="onSearchTrackClick(track)"
+                >
+                  <td class="col-cover">
+                    <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
+                    <div v-else class="cover-placeholder">
+                      <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+                    </div>
+                  </td>
+                  <td class="col-index">
+                    <span v-if="currentTrack?.id === track.id" class="playing-indicator">
+                      <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
+                    </span>
+                    <span v-else>{{ index + 1 }}</span>
+                  </td>
+                  <td class="col-info">
+                    <div class="track-title">{{ track.title }}</div>
+                    <div class="track-artist">{{ track.artist }}</div>
+                  </td>
+                  <td class="col-like">
+                    <button
+                      class="btn-like"
+                      :class="{ liked: isTrackLiked(track.ncmSongId), loading: likingTracks.has(track.ncmSongId ?? 0) }"
+                      :disabled="likingTracks.has(track.ncmSongId ?? 0)"
+                      @click="onLikeTrack(track, $event)"
+                      title="喜欢"
+                    >
+                      <i v-if="likingTracks.has(track.ncmSongId ?? 0)" class="pi pi-spin pi-spinner" style="font-size: 14px"></i>
+                      <i v-else :class="isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'" style="font-size: 14px"></i>
+                    </button>
+                  </td>
+                  <td class="col-album">{{ track.album }}</td>
+                  <td class="col-duration">{{ formatTime(track.duration) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div v-else :key="activeTab" class="streaming-content-body">
+        <div v-if="activeTab === 'home' && !currentDetail" class="home-view">
           <div v-if="!isLoggedIn" class="streaming-placeholder">
             <i class="pi pi-home" style="font-size: 48px; color: #ccc"></i>
             <p class="placeholder-title">流媒体主页</p>
@@ -347,86 +552,65 @@ onMounted(async () => {
             <Button label="重试" severity="contrast" @click="loadRecommendations" />
           </div>
           <div v-else class="rec-sections">
-            <div class="rec-hero-row">
+            <Divider align="left">
+              <span class="section-title main-section-title">个人推荐</span>
+            </Divider>
+            <div class="playlist-grid">
               <div
                 v-for="section in recSections"
                 :key="section.key"
-                class="rec-hero-card"
-                @click="openRecSection(section)"
+                class="playlist-grid-card"
+                @click="openRecSection(section, $event)"
               >
                 <img
                   v-if="section.tracks.length > 0 && section.tracks[0].cover"
                   :src="section.tracks[0].cover"
-                  class="rec-hero-cover"
+                  class="playlist-grid-cover"
                   alt=""
                 />
-                <div v-else class="rec-hero-cover-placeholder">
+                <div v-else class="playlist-grid-cover-placeholder">
                   <i :class="section.icon" style="font-size: 28px; color: #bbb"></i>
                 </div>
-                <div class="rec-hero-name">{{ section.title }}</div>
-                <div class="rec-hero-count">{{ section.tracks.length || '暂无' }} 首</div>
+                <div class="playlist-grid-name">{{ section.title }}</div>
+                <div class="playlist-grid-count">{{ section.tracks.length || '暂无' }} 首</div>
               </div>
             </div>
 
-            <div v-if="activeRecSection" class="rec-detail">
-              <div class="rec-detail-header">
-                <button class="btn-back" title="返回" @click="activeRecSection = null">
-                  <i class="pi pi-arrow-left"></i>
-                </button>
-                <div>
-                  <h3 class="rec-detail-title">{{ activeRecSection.title }}</h3>
-                  <span class="rec-detail-count">{{ activeRecSection.tracks.length }} 首</span>
+            <Divider align="left" style="margin-top: 32px;">
+              <span class="section-title main-section-title">歌单推荐</span>
+            </Divider>
+            <div class="playlist-grid">
+              <div
+                v-for="playlist in recommendPlaylists"
+                :key="playlist.id"
+                class="playlist-grid-card"
+                @click="openPlaylist(playlist, false, $event)"
+              >
+                <img v-if="playlist.cover" :src="playlist.cover" class="playlist-grid-cover" alt="" />
+                <div v-else class="playlist-grid-cover-placeholder">
+                  <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
                 </div>
-                <Button
-                  v-if="activeRecSection.tracks.length > 0"
-                  label="播放全部"
-                  icon="pi pi-play"
-                  rounded
-                  severity="contrast"
-                  size="small"
-                  @click="playRecSection(activeRecSection)"
-                />
-              </div>
-              <div v-if="activeRecSection.tracks.length === 0" class="rec-empty">
-                <span>暂无推荐内容</span>
-              </div>
-              <div v-else class="rec-track-list">
-                <div
-                  v-for="(track, i) in activeRecSection.tracks"
-                  :key="track.id"
-                  class="rec-track-row"
-                  :class="{ 'track-playing': currentTrack?.id === track.id }"
-                  @click="onTrackClick(track)"
-                >
-                  <span class="rec-track-index">{{ i + 1 }}</span>
-                  <img v-if="track.cover" :src="track.cover" class="rec-track-cover" alt="" />
-                  <div v-else class="rec-track-cover-placeholder">
-                    <i class="pi pi-wave-pulse" style="font-size: 14px; color: #bbb"></i>
-                  </div>
-                  <div class="rec-track-info">
-                    <div class="rec-track-title">{{ track.title }}</div>
-                    <div class="rec-track-artist">{{ track.artist }}</div>
-                  </div>
-                  <span class="rec-track-duration">{{ formatTime(track.duration) }}</span>
-                </div>
+                <div class="playlist-grid-name">{{ playlist.name }}</div>
+                <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
               </div>
             </div>
+
           </div>
         </div>
 
-        <div v-else-if="activeTab === 'playlists'" class="streaming-placeholder">
+        <div v-else-if="activeTab === 'playlists' && !currentDetail" class="streaming-placeholder">
           <i class="pi pi-bookmark" style="font-size: 48px; color: #ccc"></i>
           <p class="placeholder-title">歌单页暂不展示个人歌单</p>
           <p class="placeholder-hint">你创建的歌单已经移动到音乐库页面下方列表</p>
         </div>
 
-        <div v-else-if="!isLoggedIn" class="streaming-placeholder">
+        <div v-else-if="!isLoggedIn && !currentDetail" class="streaming-placeholder">
           <i class="pi pi-user" style="font-size: 48px; color: #ccc"></i>
           <p class="placeholder-title">请先登录网易云音乐</p>
           <p class="placeholder-hint">登录后即可加载我收藏的歌曲和在线歌单</p>
         </div>
 
-        <div v-else-if="rootLoading" class="streaming-placeholder">
+        <div v-else-if="rootLoading && !currentDetail" class="streaming-placeholder">
           <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
           <p class="placeholder-title">正在加载音乐库</p>
           <p class="placeholder-hint">请稍候...</p>
@@ -440,7 +624,27 @@ onMounted(async () => {
         </div>
 
         <div v-else-if="currentDetail" class="detail-view">
-          <div v-if="detailLoading" class="streaming-placeholder detail-placeholder">
+          <div v-if="detailHeaderInfo" class="detail-playlist-header">
+            <img v-if="detailHeaderInfo.cover" :src="detailHeaderInfo.cover" class="detail-playlist-cover" alt="cover" />
+            <div v-else class="detail-playlist-cover-placeholder">
+              <i :class="detailHeaderInfo.icon"></i>
+            </div>
+            <div class="detail-playlist-info">
+              <h2 class="detail-playlist-name">{{ detailHeaderInfo.title }}</h2>
+              <p class="detail-playlist-desc">{{ detailHeaderInfo.desc }}</p>
+              <Button
+                label="播放全部"
+                icon="pi pi-play"
+                rounded
+                severity="contrast"
+                class="detail-play-btn"
+                :disabled="detailLoading || detailTracks.length === 0"
+                @click="detailTracks.length > 0 && playTrack(detailTracks[0], detailTracks)"
+              />
+            </div>
+          </div>
+
+          <div v-if="detailLoading && detailTracks.length === 0" class="streaming-placeholder detail-placeholder">
             <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
             <p class="placeholder-title">正在加载歌曲</p>
             <p class="placeholder-hint">请稍候...</p>
@@ -453,19 +657,21 @@ onMounted(async () => {
             <Button label="重试" severity="contrast" @click="retryCurrentView" />
           </div>
 
-          <div v-else-if="detailTracks.length === 0" class="streaming-placeholder detail-placeholder">
+          <div v-else-if="detailTracks.length === 0 && !detailLoading" class="streaming-placeholder detail-placeholder">
             <i class="pi pi-wave-pulse" style="font-size: 40px; color: #ccc"></i>
             <p class="placeholder-title">暂无歌曲</p>
             <p class="placeholder-hint">这个页面目前没有可展示的歌曲</p>
           </div>
 
-          <div v-else class="track-table-wrapper">
+          <div v-else class="detail-content">
+            <div class="track-table-wrapper">
             <table class="track-table">
               <thead>
                 <tr>
-                  <th class="col-cover"></th>
+                  <th class="col-cover-header">{{ detailTracks.length }} 首</th>
                   <th class="col-index">#</th>
                   <th class="col-info">标题</th>
+                  <th class="col-like-header"></th>
                   <th class="col-album">专辑</th>
                   <th class="col-duration">时长</th>
                 </tr>
@@ -495,12 +701,25 @@ onMounted(async () => {
                     <div class="track-title">{{ track.title }}</div>
                     <div class="track-artist">{{ track.artist }}</div>
                   </td>
+                  <td class="col-like">
+                    <button
+                      class="btn-like"
+                      :class="{ liked: isTrackLiked(track.ncmSongId), loading: likingTracks.has(track.ncmSongId ?? 0) }"
+                      :disabled="likingTracks.has(track.ncmSongId ?? 0)"
+                      @click="onLikeTrack(track, $event)"
+                      title="喜欢"
+                    >
+                      <i v-if="likingTracks.has(track.ncmSongId ?? 0)" class="pi pi-spin pi-spinner" style="font-size: 14px"></i>
+                      <i v-else :class="isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'" style="font-size: 14px"></i>
+                    </button>
+                  </td>
                   <td class="col-album">{{ track.album }}</td>
                   <td class="col-duration">{{ formatTime(track.duration) }}</td>
                 </tr>
               </tbody>
             </table>
           </div>
+        </div>
         </div>
 
         <div v-else class="library-view">
@@ -565,7 +784,7 @@ onMounted(async () => {
               v-for="playlist in userPlaylistEntries"
               :key="playlist.id"
               class="playlist-list-item"
-              @click="openPlaylist(playlist)"
+              @click="openPlaylist(playlist, false, $event)"
             >
               <template #content>
                 <div class="playlist-row">
@@ -596,6 +815,8 @@ onMounted(async () => {
         </div>
       </Transition>
     </div>
+
+    <!-- Expansion overlay no longer needed, using clip-path on detail-view -->
   </div>
 </template>
 
@@ -612,7 +833,6 @@ onMounted(async () => {
   position: fixed;
   top: 32px;
   left: 0;
-  bottom: 72px;
   width: 0;
   background: #fff;
   border-right: 1px solid #e8e8e8;
@@ -716,6 +936,12 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  margin-left: 0;
+  transition: margin-left 0.25s ease;
+}
+
+.streaming-sidebar.open + .streaming-content {
+  margin-left: clamp(150px, 25vw, 270px);
 }
 
 .streaming-content-header {
@@ -1017,6 +1243,12 @@ onMounted(async () => {
   color: #666;
 }
 
+.main-section-title {
+  font-size: 20px !important;
+  font-weight: 800 !important;
+  color: #1a1a1a !important;
+}
+
 .playlist-list {
   display: flex;
   flex-direction: column;
@@ -1135,10 +1367,6 @@ onMounted(async () => {
   border-bottom-color: #d4e4fc !important;
 }
 
-.col-cover {
-  width: 52px;
-  padding-right: 0 !important;
-}
 
 .cover-img {
   width: 40px;
@@ -1161,6 +1389,17 @@ onMounted(async () => {
   width: 40px;
   color: #bbb !important;
   font-size: 13px !important;
+}
+
+.col-cover, .col-cover-header {
+  width: 60px;
+  flex-shrink: 0;
+}
+.col-cover-header {
+  color: #888;
+  font-size: 10px !important;
+  text-align: left;
+  padding-left: 12px !important;
 }
 
 .playing-indicator {
@@ -1398,5 +1637,270 @@ onMounted(async () => {
 .tab-fade-leave-to {
   opacity: 0;
   transform: translateY(-8px);
+}
+
+/* ===== Streaming Search Box ===== */
+.streaming-header-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1;
+}
+.streaming-search-box {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 18px;
+  background: #f5f5f5;
+  border: 1.5px solid transparent;
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+  min-width: 200px;
+  max-width: 320px;
+  flex-shrink: 0;
+}
+
+.streaming-search-box.focused {
+  border-color: #1a73e8;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+}
+
+.streaming-search-icon {
+  font-size: 14px;
+  color: #999;
+  flex-shrink: 0;
+  margin-right: 8px;
+  transition: color 0.2s;
+}
+
+.streaming-search-box.focused .streaming-search-icon {
+  color: #1a73e8;
+}
+
+.streaming-search-input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: #333;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.streaming-search-input::placeholder {
+  color: #bbb;
+}
+
+.streaming-search-spinner {
+  font-size: 14px;
+  color: #1a73e8;
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+
+.streaming-search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: #ddd;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  margin-left: 6px;
+  transition: background 0.15s;
+}
+
+.streaming-search-clear i {
+  font-size: 10px;
+  color: #666;
+}
+
+.streaming-search-clear:hover {
+  background: #ccc;
+}
+
+/* Playlist Grid for Recommendations */
+.playlist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 20px;
+  margin-top: 16px;
+}
+
+.playlist-grid-card {
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.playlist-grid-card:hover {
+  transform: translateY(-4px);
+}
+
+.playlist-grid-cover,
+.playlist-grid-cover-placeholder {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 12px;
+  margin-bottom: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+}
+
+.playlist-grid-cover-placeholder {
+  background: #f0f0f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.playlist-grid-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a1a1a;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 4px;
+  line-height: 1.4;
+}
+
+.playlist-grid-count {
+  font-size: 12px;
+  color: #999;
+}
+
+/* Detail Playlist Header */
+.detail-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.detail-playlist-header {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  padding-bottom: 32px;
+  border-bottom: 1px solid #eee;
+  margin-bottom: 24px;
+}
+
+.detail-playlist-cover,
+.detail-playlist-cover-placeholder {
+  width: 200px;
+  height: 200px;
+  border-radius: 16px;
+  object-fit: cover;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  flex-shrink: 0;
+}
+
+.detail-playlist-cover-placeholder {
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 64px;
+}
+
+.detail-playlist-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.detail-playlist-name {
+  font-size: 32px;
+  font-weight: 800;
+  color: #1a1a1a;
+  margin: 0 0 12px 0;
+  line-height: 1.2;
+}
+
+.detail-playlist-desc {
+  font-size: 14px;
+  color: #666;
+  margin: 0 0 24px 0;
+}
+
+.detail-play-btn {
+  align-self: flex-start;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ===== Like Button ===== */
+.col-like, .col-like-header {
+  width: 44px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.col-like-header {
+  padding: 0 !important;
+}
+
+.btn-like {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  cursor: pointer;
+  color: #ccc;
+  transition: color 0.2s, background 0.2s, transform 0.15s;
+  padding: 0;
+}
+
+.btn-like:hover {
+  background: #fce4ec;
+  color: #e91e63;
+  transform: scale(1.15);
+}
+
+.btn-like.liked {
+  color: #e91e63;
+}
+
+.btn-like.liked:hover {
+  background: #fce4ec;
+  color: #c62828;
+}
+
+.btn-like.loading {
+  color: #e91e63;
+  pointer-events: none;
+}
+
+.btn-like:disabled {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+/* ===== Page Expansion Animation Removed ===== */
+
+
+.cover-anim-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
 }
 </style>

@@ -1,12 +1,12 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
 import { join, extname, basename, dirname } from 'path'
-import { readdirSync, statSync, readFileSync, existsSync } from 'fs'
+import { readdirSync, statSync, readFileSync, existsSync, writeFileSync } from 'fs'
 import { readFile, writeFile } from 'fs/promises'
 import { randomUUID } from 'crypto'
+import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { parseFile } from 'music-metadata'
 import { MpvManager } from './mpvManager'
-import { serveNcmApi } from '@neteasecloudmusicapienhanced/api/server'
 
 const SUPPORTED_EXTENSIONS = [
   '.mp3', '.flac', '.wav', '.aac', '.ogg', '.wma', '.m4a',
@@ -74,7 +74,7 @@ interface FileEntry {
   size: number
 }
 
-function collectFiles(dirPath: string): FileEntry[] {
+async function collectFilesAsync(dirPath: string): Promise<FileEntry[]> {
   const results: FileEntry[] = []
   try {
     const entries = readdirSync(dirPath)
@@ -83,7 +83,7 @@ function collectFiles(dirPath: string): FileEntry[] {
       try {
         const st = statSync(fullPath)
         if (st.isDirectory()) {
-          results.push(...collectFiles(fullPath))
+          results.push(...(await collectFilesAsync(fullPath)))
         } else if (st.isFile()) {
           const ext = extname(entry).toLowerCase()
           if (SUPPORTED_EXTENSIONS.includes(ext)) {
@@ -96,6 +96,10 @@ function collectFiles(dirPath: string): FileEntry[] {
           }
         }
       } catch { /* skip */ }
+      // Yield to event loop every few files
+      if (results.length % 100 === 0) {
+        await new Promise(resolve => setImmediate(resolve))
+      }
     }
   } catch { /* skip */ }
   return results
@@ -138,7 +142,11 @@ async function parseTrack(file: FileEntry): Promise<unknown> {
       duration: Math.round(meta.format.duration || 0),
       size: file.size,
       cover,
-      lyrics
+      lyrics,
+      format: meta.format.container,
+      sampleRate: meta.format.sampleRate,
+      bitrate: meta.format.bitrate,
+      bitDepth: meta.format.bitsPerSample
     }
   } catch {
     const fileName = getNameFromFile(file.fullPath)
@@ -157,15 +165,23 @@ async function parseTrack(file: FileEntry): Promise<unknown> {
   }
 }
 
-async function scanDirectory(dirPath: string): Promise<unknown[]> {
-  const files = collectFiles(dirPath)
-
+async function scanDirectory(dirPath: string, onProgress?: (current: number, total: number) => void): Promise<unknown[]> {
+  const files = await collectFilesAsync(dirPath)
+  const total = files.length
   const results: unknown[] = []
-  const batchSize = 8
+  const batchSize = 10
+  
   for (let i = 0; i < files.length; i += batchSize) {
     const batch = files.slice(i, i + batchSize)
     const batchResults = await Promise.all(batch.map(parseTrack))
     results.push(...batchResults)
+    
+    if (onProgress) {
+      onProgress(results.length, total)
+    }
+    
+    // Small delay to keep UI responsive
+    await new Promise(resolve => setTimeout(resolve, 0))
   }
 
   return results
@@ -205,6 +221,7 @@ function createWindow(): void {
     height: 768,
     show: false,
     frame: false,
+    icon: join(__dirname, '../../build/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
@@ -315,6 +332,11 @@ function setupMpvIpc(): void {
 
 async function setupNcmApi(): Promise<void> {
   try {
+    const tokenPath = join(tmpdir(), 'anonymous_token')
+    if (!existsSync(tokenPath)) {
+      writeFileSync(tokenPath, '', 'utf-8')
+    }
+    const { serveNcmApi } = await import('@neteasecloudmusicapienhanced/api/server.js')
     const app = await serveNcmApi({
       port: NCM_API_PORT,
       checkVersion: false
@@ -350,9 +372,15 @@ app.whenReady().then(() => {
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
   })
+  
+  ipcMain.handle('shell:showItemInFolder', async (_event, filePath: string) => {
+    shell.showItemInFolder(filePath)
+  })
 
-  ipcMain.handle('fs:scanMusicFiles', async (_event, folderPath: string) => {
-    return await scanDirectory(folderPath)
+  ipcMain.handle('fs:scanMusicFiles', async (event, folderPath: string) => {
+    return await scanDirectory(folderPath, (current, total) => {
+      event.sender.send('fs:scanProgress', { current, total })
+    })
   })
 
   ipcMain.handle('fs:readAudioFile', async (_event, filePath: string) => {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
+import type { Track } from '../types/music'
 
 const props = defineProps<{
   category: string
@@ -13,10 +14,13 @@ const emit = defineEmits<{
   selectView: [category: string, filter: string | null]
 }>()
 
-const { tracks, artists, albums, playlists, getPlaylistTracks, removeTrack } = useMusicStore()
+const { tracks, artists, albums, playlists, getPlaylistTracks, removeTrack, addToPlaylist } = useMusicStore()
 const { currentTrack, playTrack } = usePlayerStore()
 
-const displayTracks = computed(() => {
+const searchQuery = ref('')
+const searchInputFocused = ref(false)
+
+const baseDisplayTracks = computed(() => {
   if (props.category === 'allSongs') return tracks.value
   if (props.filter) {
     if (props.filter.startsWith('artist:')) {
@@ -52,6 +56,17 @@ const viewTitle = computed(() => {
   return '我的音乐'
 })
 
+const displayTracks = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return baseDisplayTracks.value
+  return baseDisplayTracks.value.filter(
+    (t) =>
+      t.title.toLowerCase().includes(q) ||
+      t.artist.toLowerCase().includes(q) ||
+      t.album.toLowerCase().includes(q)
+  )
+})
+
 const showGrid = computed(() => {
   if (props.category === 'allSongs') return false
   return !props.filter
@@ -72,31 +87,165 @@ watch([showGrid, showTable], ([newGrid, newTable], [oldGrid, oldTable]) => {
   }
 })
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return bytes + ' B'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+function formatDuration(seconds: number): string {
+  if (!seconds) return '00:00'
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
-function onRowClick(track: (typeof tracks.value)[number], _index: number, event: MouseEvent): void {
+function onRowClick(track: Track, _index: number, event: MouseEvent): void {
   const target = event.target as HTMLElement
   if (target.closest('.btn-remove')) return
   playTrack(track, displayTracks.value)
 }
 
-function onRowDblClick(track: (typeof tracks.value)[number]): void {
+function onRowDblClick(track: Track): void {
   playTrack(track, displayTracks.value)
 }
+
+// Context Menu
+const showContextMenu = ref(false)
+const menuX = ref(0)
+const menuY = ref(0)
+const selectedTrack = ref<Track | null>(null)
+const showPlaylistSubmenu = ref(false)
+
+function onContextMenu(event: MouseEvent, track: Track): void {
+  event.preventDefault()
+  selectedTrack.value = track
+  menuX.value = event.clientX
+  menuY.value = event.clientY
+  showContextMenu.value = true
+  showPlaylistSubmenu.value = false
+  
+  // Adjust position if menu goes off screen
+  nextTick(() => {
+    const menu = document.querySelector('.context-menu') as HTMLElement
+    if (menu) {
+      const rect = menu.getBoundingClientRect()
+      if (rect.right > window.innerWidth) {
+        menuX.value -= rect.width
+      }
+      if (rect.bottom > window.innerHeight) {
+        menuY.value -= rect.height
+      }
+    }
+  })
+}
+
+function closeContextMenu(): void {
+  showContextMenu.value = false
+  showPlaylistSubmenu.value = false
+}
+
+function handleDelete(): void {
+  if (selectedTrack.value) {
+    removeTrack(selectedTrack.value.id)
+    closeContextMenu()
+  }
+}
+
+async function handleOpenFolder(): Promise<void> {
+  if (selectedTrack.value) {
+    await window.api.shell.showItemInFolder(selectedTrack.value.filePath)
+    closeContextMenu()
+  }
+}
+
+function handleAddToPlaylist(playlistName: string): void {
+  if (selectedTrack.value) {
+    addToPlaylist(playlistName, selectedTrack.value.id)
+    closeContextMenu()
+  }
+}
+
+onUnmounted(() => {
+  window.removeEventListener('click', closeContextMenu)
+})
+
+// Virtual Scrolling
+const containerRef = ref<HTMLElement | null>(null)
+const scrollTop = ref(0)
+const viewportHeight = ref(0)
+const rowHeight = 84 // Calculated height of one row
+
+const visibleRange = computed(() => {
+  const start = Math.floor(scrollTop.value / rowHeight)
+  const count = Math.ceil(viewportHeight.value / rowHeight) + 5 // +5 buffer
+  return {
+    start: Math.max(0, start),
+    end: Math.min(displayTracks.value.length, start + count)
+  }
+})
+
+const visibleTracks = computed(() => {
+  return displayTracks.value.slice(visibleRange.value.start, visibleRange.value.end)
+})
+
+const totalHeight = computed(() => displayTracks.value.length * rowHeight)
+const paddingTop = computed(() => visibleRange.value.start * rowHeight)
+
+function onScroll(e: Event) {
+  const target = e.target as HTMLElement
+  scrollTop.value = target.scrollTop
+}
+
+const updateViewportHeight = () => {
+  if (containerRef.value) {
+    viewportHeight.value = containerRef.value.clientHeight
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('click', closeContextMenu)
+  updateViewportHeight()
+  window.addEventListener('resize', updateViewportHeight)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('click', closeContextMenu)
+  window.removeEventListener('resize', updateViewportHeight)
+})
+
+watch(displayTracks, () => {
+  // Reset scroll on filter change
+  if (containerRef.value) {
+    containerRef.value.scrollTop = 0
+    scrollTop.value = 0
+  }
+})
+
 </script>
 
 <template>
-  <div class="song-list" :style="{ height: props.hasPlayer ? 'calc(100vh - 32px - 72px)' : 'calc(100vh - 32px)' }">
+  <div 
+    class="song-list" 
+    ref="containerRef"
+    @scroll="onScroll"
+    :style="{ height: props.hasPlayer ? 'calc(100vh - 32px - 72px)' : 'calc(100vh - 32px)' }"
+  >
     <!-- Grid View: Artists / Albums / Playlists -->
     <Transition :name="viewTransitionName">
     <div v-if="showGrid" class="grid-view" key="grid">
       <div class="song-list-header">
         <h2 class="song-list-title">{{ viewTitle }}</h2>
-        <span class="song-count">{{ category === 'artists' ? artists.length : category === 'albums' ? albums.length : playlists.length }} 项</span>
+        <div class="header-right">
+          <div class="search-box" :class="{ focused: searchInputFocused }">
+            <i class="pi pi-search search-icon"></i>
+            <input
+              v-model="searchQuery"
+              type="text"
+              class="search-input"
+              placeholder="搜索歌曲、艺术家、专辑..."
+              @focus="searchInputFocused = true"
+              @blur="searchInputFocused = false"
+            />
+            <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
+              <i class="pi pi-times"></i>
+            </button>
+          </div>
+        </div>
       </div>
       <div v-if="category === 'artists' && artists.length === 0" class="empty-state">
         <p class="empty-text">暂无艺术家</p>
@@ -163,7 +312,22 @@ function onRowDblClick(track: (typeof tracks.value)[number]): void {
           </button>
           <h2 class="song-list-title">{{ viewTitle }}</h2>
         </div>
-        <span class="song-count">{{ displayTracks.length }} 首</span>
+        <div class="header-right">
+          <div class="search-box" :class="{ focused: searchInputFocused }">
+            <i class="pi pi-search search-icon"></i>
+            <input
+              v-model="searchQuery"
+              type="text"
+              class="search-input"
+              placeholder="搜索歌曲、艺术家、专辑..."
+              @focus="searchInputFocused = true"
+              @blur="searchInputFocused = false"
+            />
+            <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
+              <i class="pi pi-times"></i>
+            </button>
+          </div>
+        </div>
       </div>
       <div v-if="displayTracks.length === 0" class="empty-state">
         <div class="empty-icon">
@@ -176,22 +340,24 @@ function onRowDblClick(track: (typeof tracks.value)[number]): void {
         <table class="track-table">
           <thead>
             <tr>
-              <th class="col-cover"></th>
+              <th class="col-cover-header">{{ displayTracks.length }} 首</th>
               <th class="col-index">#</th>
               <th class="col-info">标题</th>
               <th class="col-album">专辑</th>
-              <th class="col-size">大小</th>
-              <th class="col-action"></th>
+              <th class="col-duration">时长</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody :style="{ height: totalHeight + 'px', position: 'relative', display: 'block' }">
+            <div :style="{ height: paddingTop + 'px' }"></div>
             <tr
-              v-for="(track, index) in displayTracks"
+              v-for="(track, index) in visibleTracks"
               :key="track.id"
               class="track-row"
               :class="{ 'track-playing': currentTrack?.id === track.id }"
-              @click="onRowClick(track, index, $event)"
+              @click="onRowClick(track, visibleRange.start + index, $event)"
               @dblclick="onRowDblClick(track)"
+              @contextmenu="onContextMenu($event, track)"
+              :style="{ height: rowHeight + 'px', display: 'flex' }"
             >
               <td class="col-cover">
                 <img
@@ -208,22 +374,64 @@ function onRowDblClick(track: (typeof tracks.value)[number]): void {
                 <span v-if="currentTrack?.id === track.id" class="playing-indicator">
                   <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
                 </span>
-                <span v-else>{{ index + 1 }}</span>
+                <span v-else>{{ visibleRange.start + index + 1 }}</span>
               </td>
               <td class="col-info">
                 <div class="track-title">{{ track.title }}</div>
                 <div class="track-artist">{{ track.artist }}</div>
+                <div v-if="track.format || track.sampleRate" class="track-audio-data">
+                  <div class="track-pills">
+                    <span v-if="track.format" class="pill pill-format">{{ track.format.toUpperCase().replace(/^\./, '') }}</span>
+                    <span v-if="track.sampleRate" class="pill pill-rate">{{ (track.sampleRate / 1000).toFixed(1) }}kHz</span>
+                    <span v-if="track.bitDepth" class="pill pill-depth">{{ track.bitDepth }}bit</span>
+                    <span v-if="track.bitrate" class="pill pill-bitrate">{{ Math.round(track.bitrate / 1000) }}kbps</span>
+                  </div>
+                </div>
               </td>
               <td class="col-album">{{ track.album }}</td>
-              <td class="col-size">{{ formatSize(track.size) }}</td>
-              <td class="col-action">
-                <button class="btn-remove" title="移除" @click="removeTrack(track.id)">
-                  &times;
-                </button>
-              </td>
+              <td class="col-duration">{{ formatDuration(track.duration) }}</td>
             </tr>
+            <div :style="{ height: (totalHeight - paddingTop - (visibleTracks.length * rowHeight)) + 'px' }"></div>
           </tbody>
         </table>
+
+        <!-- Context Menu -->
+        <div
+          v-if="showContextMenu"
+          class="context-menu"
+          :style="{ top: menuY + 'px', left: menuX + 'px' }"
+          @click.stop
+        >
+          <div class="menu-item" @click="handleDelete">
+            <i class="pi pi-trash"></i>
+            <span>删除</span>
+          </div>
+          <div class="menu-item" @click="handleOpenFolder">
+            <i class="pi pi-folder-open"></i>
+            <span>打开文件所在位置</span>
+          </div>
+          <div
+            class="menu-item"
+            @mouseenter="showPlaylistSubmenu = true"
+            @mouseleave="showPlaylistSubmenu = false"
+          >
+            <i class="pi pi-plus"></i>
+            <span>加入到歌单</span>
+            <i class="pi pi-chevron-right submenu-icon"></i>
+            
+            <div v-if="showPlaylistSubmenu" class="submenu">
+              <div v-if="playlists.length === 0" class="menu-item disabled">暂无歌单</div>
+              <div
+                v-for="pl in playlists"
+                :key="pl.name"
+                class="menu-item"
+                @click="handleAddToPlaylist(pl.name)"
+              >
+                {{ pl.name }}
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     </Transition>
@@ -270,9 +478,12 @@ function onRowDblClick(track: (typeof tracks.value)[number]): void {
 .song-list {
   display: grid;
   position: relative;
-  padding: 32px 40px;
+  padding: 20px min(4vw, 40px);
   overflow-y: auto;
+  overflow-x: hidden;
   background: #fff;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .song-list > * {
@@ -281,10 +492,11 @@ function onRowDblClick(track: (typeof tracks.value)[number]): void {
 
 .song-list-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 28px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
 }
 
 .header-left {
@@ -322,145 +534,85 @@ function onRowDblClick(track: (typeof tracks.value)[number]): void {
 }
 
 .song-count {
-  font-size: 14px;
-  color: #888;
-  flex-shrink: 0;
+  display: none; /* Moved to table header */
+}
+.header-right {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1;
 }
 
-/* Grid View */
+/* Card Grid Layout */
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 24px;
+  width: 100%;
 }
 
-/* Artist Card */
-.artist-card {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 16px 12px;
-  border-radius: 12px;
-  background: #f9f9f9;
-  cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
-}
-.artist-card:hover {
-  background: #f0f0f0;
-  transform: translateY(-2px);
-}
-.artist-cover {
-  width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
-  border-radius: 12px;
-  margin-bottom: 10px;
-}
-.artist-cover-placeholder {
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 12px;
-  background: #eee;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 10px;
-}
-.artist-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: #1a1a1a;
-  text-align: center;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-  margin-bottom: 2px;
-}
-.artist-count {
-  font-size: 12px;
-  color: #999;
-}
-
-/* Album Card */
-.album-card {
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-  border-radius: 12px;
-  cursor: pointer;
-  transition: transform 0.1s;
-}
-.album-card:hover {
-  transform: translateY(-2px);
-}
-.album-cover {
-  width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
-  border-radius: 12px;
-  margin-bottom: 8px;
-}
-.album-cover-placeholder {
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 12px;
-  background: #eee;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 8px;
-}
-.album-name {
-  font-size: 14px;
-  font-weight: 500;
-  color: #1a1a1a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-bottom: 2px;
-}
-.album-count {
-  font-size: 12px;
-  color: #999;
-}
-
-/* Playlist Card */
-.playlist-card {
+/* Unified Card Component Styles */
+.artist-card, .album-card, .playlist-card {
   display: flex;
   flex-direction: column;
   padding: 12px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: #f9f9f9;
   cursor: pointer;
-  transition: background 0.15s, transform 0.1s;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
 }
-.playlist-card:hover {
-  background: #f0f0f0;
-  transform: translateY(-2px);
+
+.artist-card:hover, .album-card:hover, .playlist-card:hover {
+  background: #fff;
+  transform: translateY(-4px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+  border-color: #eee;
 }
+
+/* Unified Cover Styles */
+.artist-cover, .artist-cover-placeholder, 
+.album-cover, .album-cover-placeholder,
 .playlist-cover-placeholder {
   width: 100%;
   aspect-ratio: 1;
-  border-radius: 6px;
+  object-fit: cover;
+  border-radius: 8px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+}
+
+.artist-cover-placeholder, .album-cover-placeholder {
+  background: #eee;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.playlist-cover-placeholder {
   background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 10px;
 }
-.playlist-name {
+
+/* Unified Text Styles */
+.artist-name, .album-name, .playlist-name {
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   color: #1a1a1a;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin-bottom: 2px;
+  margin-bottom: 4px;
+  padding: 0 2px;
 }
-.playlist-count {
+
+.artist-count, .album-count, .playlist-count {
   font-size: 12px;
   color: #999;
+  padding: 0 2px;
 }
 
 /* Empty State */
@@ -494,11 +646,18 @@ function onRowDblClick(track: (typeof tracks.value)[number]): void {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
+  display: block;
 }
 .track-table thead {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
+  display: block;
+  background: #fff;
+  width: 100%;
+}
+.track-table thead tr {
+  display: flex;
 }
 .track-table th {
   text-align: left;
@@ -508,7 +667,6 @@ function onRowDblClick(track: (typeof tracks.value)[number]): void {
   color: #999;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  background: #fff;
   border-bottom: 1px solid #eee;
 }
 .track-row td {
@@ -516,11 +674,13 @@ function onRowDblClick(track: (typeof tracks.value)[number]): void {
   font-size: 14px;
   color: #333;
   border-bottom: 1px solid #f2f2f2;
-  vertical-align: middle;
+  display: flex;
+  align-items: center;
 }
 .track-row {
   cursor: pointer;
   transition: background 0.1s;
+  width: 100%;
 }
 .track-row:hover {
   background: #fafafa;
@@ -533,10 +693,6 @@ function onRowDblClick(track: (typeof tracks.value)[number]): void {
 }
 .track-playing td {
   border-bottom-color: #d4e4fc !important;
-}
-.col-cover {
-  width: 52px;
-  padding-right: 0 !important;
 }
 .cover-img {
   width: 40px;
@@ -557,19 +713,40 @@ function onRowDblClick(track: (typeof tracks.value)[number]): void {
   width: 40px;
   color: #bbb !important;
   font-size: 13px !important;
+  flex-shrink: 0;
+}
+.col-cover, .col-cover-header {
+  width: 60px;
+  flex-shrink: 0;
+}
+.col-cover-header {
+  color: #888;
+  font-size: 10px !important;
+  display: flex;
+  align-items: center;
+  padding-left: 12px !important;
 }
 .playing-indicator {
   display: flex;
   align-items: center;
 }
 .col-info {
-  width: auto;
+  flex: 1;
   line-height: 1.4;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start !important;
 }
 .track-title {
   font-size: 14px;
   font-weight: 500;
   color: #1a1a1a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
 }
 .track-playing .track-title {
   color: #1a73e8;
@@ -577,33 +754,213 @@ function onRowDblClick(track: (typeof tracks.value)[number]): void {
 .track-artist {
   font-size: 12px;
   color: #999;
-  margin-top: 2px;
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+.track-audio-data {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.meta-label {
+  font-size: 10px;
+  color: #bbb;
+  font-weight: 500;
 }
 .col-album {
-  width: 140px;
+  width: 25%;
+  max-width: 200px;
+  min-width: 100px;
   font-size: 13px !important;
   color: #666 !important;
+  flex-shrink: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.col-size {
-  width: 80px;
+@media (max-width: 600px) {
+  .col-album {
+    display: none !important;
+  }
+}
+.col-duration {
+  width: 60px;
+  text-align: right;
   font-size: 12px !important;
   color: #aaa !important;
+  padding-right: 10px !important;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
 }
-.col-action {
-  width: 40px;
-  text-align: center;
+
+.track-pills {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
 }
-.btn-remove {
-  border: none;
-  background: none;
+.pill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  line-height: 1.2;
+}
+.pill-format {
+  background: #f0f0f0;
+  color: #666;
+}
+.pill-rate {
+  background: #e3f2fd;
+  color: #1976d2;
+}
+.pill-depth {
+  background: #f1f8e9;
+  color: #558b2f;
+}
+.pill-bitrate {
+  background: #fff3e0;
+  color: #ef6c00;
+}
+
+/* Context Menu */
+.context-menu {
+  position: fixed;
+  z-index: 1000;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  padding: 6px;
+  min-width: 160px;
+  border: 1px solid #eee;
+}
+.menu-item {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px;
+  font-size: 13px;
+  color: #333;
+  border-radius: 4px;
   cursor: pointer;
-  font-size: 20px;
-  color: #ccc;
-  padding: 0;
-  line-height: 1;
-  transition: color 0.15s;
+  position: relative;
+  transition: background 0.15s;
 }
-.btn-remove:hover {
-  color: #e53935;
+.menu-item:hover {
+  background: #f5f5f5;
+}
+.menu-item i {
+  margin-right: 10px;
+  font-size: 14px;
+  color: #666;
+}
+.menu-item.disabled {
+  color: #ccc;
+  pointer-events: none;
+}
+.submenu-icon {
+  margin-left: auto;
+  margin-right: 0 !important;
+  font-size: 10px !important;
+  color: #999 !important;
+}
+.submenu {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+  padding: 6px;
+  min-width: 120px;
+  border: 1px solid #eee;
+  margin-left: 2px;
+}
+
+/* Search Box */
+.search-box {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 18px;
+  background: #f5f5f5;
+  border: 1.5px solid transparent;
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+  min-width: 150px;
+  max-width: 280px;
+  flex: 1;
+}
+@media (max-width: 500px) {
+  .search-box {
+    max-width: none;
+    width: 100%;
+    order: 2;
+  }
+  .song-list-header {
+    gap: 16px;
+  }
+}
+
+.search-box.focused {
+  border-color: #1a73e8;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+}
+
+.search-icon {
+  font-size: 14px;
+  color: #999;
+  flex-shrink: 0;
+  margin-right: 8px;
+  transition: color 0.2s;
+}
+
+.search-box.focused .search-icon {
+  color: #1a73e8;
+}
+
+.search-input {
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+  color: #333;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
+.search-input::placeholder {
+  color: #bbb;
+}
+
+.search-clear {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: #ddd;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  margin-left: 6px;
+  transition: background 0.15s;
+}
+
+.search-clear i {
+  font-size: 10px;
+  color: #666;
+}
+
+.search-clear:hover {
+  background: #ccc;
 }
 </style>

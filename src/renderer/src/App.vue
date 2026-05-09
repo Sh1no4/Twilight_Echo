@@ -7,6 +7,7 @@ import PlayerBar from './components/PlayerBar.vue'
 import PlayingMusic from './components/PlayingMusic.vue'
 import StreamingPage from './components/StreamingPage.vue'
 import LoginPage from './components/LoginPage.vue'
+import SettingsPage from './components/SettingsPage.vue'
 import { useMusicStore } from './stores/useMusicStore'
 import { useNcmStore } from './stores/useNcmStore'
 import { usePlayerStore } from './stores/usePlayerStore'
@@ -17,6 +18,7 @@ const showPlayingPage = ref(false)
 const showStreamingPage = ref(false)
 const showLoginPage = ref(false)
 const loginPageMode = ref<'login' | 'profile'>('login')
+const showSettingsPage = ref(false)
 
 const activeCategory = ref('allSongs')
 const activeFilter = ref<string | null>(null)
@@ -83,6 +85,7 @@ function handleCoverClick(rect: { x: number; y: number; w: number; h: number }):
 function enterStreamingMode(): void {
   menuOpen.value = false
   showPlayingPage.value = false
+  showSettingsPage.value = false
   showStreamingPage.value = true
 }
 
@@ -94,6 +97,7 @@ async function openLoginPage(): Promise<void> {
     menuOpen.value = false
     showPlayingPage.value = false
     showStreamingPage.value = false
+    showSettingsPage.value = false
     loginPageMode.value = 'profile'
     showLoginPage.value = true
     return
@@ -118,6 +122,7 @@ async function openLoginPage(): Promise<void> {
   menuOpen.value = false
   showPlayingPage.value = false
   showStreamingPage.value = false
+  showSettingsPage.value = false
   loginPageMode.value = 'login'
   showLoginPage.value = true
 }
@@ -125,6 +130,14 @@ async function openLoginPage(): Promise<void> {
 function closeLoginPage(): void {
   showLoginPage.value = false
   showStreamingPage.value = true
+}
+
+function openSettingsPage(): void {
+  showSettingsPage.value = true
+}
+
+function closeSettingsPage(): void {
+  showSettingsPage.value = false
 }
 
 const { loadLibrary } = useMusicStore()
@@ -142,8 +155,8 @@ const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOri
 </script>
 
 <template>
-  <TitleBar :glass="showPlayingPage" :streaming="showStreamingPage" :menu-open="titleMenuOpen" @toggle-menu="toggleMenu" @collapse-menu="collapseMenu" @back="closePlayingPage" @login="openLoginPage" />
-  <SideMenu v-if="!showPlayingPage && !showStreamingPage && !showLoginPage" :open="menuOpen" @select-view="onSelectView" @enter-streaming="enterStreamingMode" />
+  <TitleBar :glass="showPlayingPage" :streaming="showStreamingPage" :menu-open="titleMenuOpen" @toggle-menu="toggleMenu" @collapse-menu="collapseMenu" @back="closePlayingPage" @login="openLoginPage" @settings="openSettingsPage" />
+  <SideMenu v-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !showSettingsPage" :open="menuOpen" @select-view="onSelectView" @enter-streaming="enterStreamingMode" />
   <div class="main-content" :class="{ 'menu-open': menuOpen && !showPlayingPage && !showStreamingPage && !showLoginPage }" :style="{ minHeight: mainContentMinHeight }">
     <Transition :name="songlistTransitionName">
       <SongList v-if="!showPlayingPage && !showStreamingPage && !showLoginPage" :key="'songlist-' + activeCategory + (activeFilter ?? '')" :category="activeCategory" :filter="activeFilter" :has-player="hasPlayerBar" @select-view="onSelectView" />
@@ -154,6 +167,9 @@ const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOri
     <StreamingPage v-if="showStreamingPage" :menu-open="streamingMenuOpen" :has-player="hasPlayerBar" @toggle-menu="toggleStreamingMenu" @back-to-local="showStreamingPage = false" />
     <Transition name="login-page">
       <LoginPage v-if="showLoginPage" :force-profile="loginPageMode === 'profile'" @back="closeLoginPage" @login-success="closeLoginPage" />
+    </Transition>
+    <Transition name="login-page">
+      <SettingsPage v-if="showSettingsPage" @back="closeSettingsPage" />
     </Transition>
   </div>
   <PlayerBar v-if="hasPlayerBar" :glass="showPlayingPage" @click-cover="handleCoverClick" />
