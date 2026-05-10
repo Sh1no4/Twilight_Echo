@@ -103,11 +103,14 @@ watch(activeLyricIndex, async () => {
   }
 })
 
-watch(() => currentTrack.value?.id, () => {
-  if (lyricsEl.value) {
-    lyricsEl.value.scrollTo({ top: 0, behavior: 'instant' })
+watch(
+  () => currentTrack.value?.id,
+  () => {
+    if (lyricsEl.value) {
+      lyricsEl.value.scrollTo({ top: 0, behavior: 'instant' })
+    }
   }
-})
+)
 </script>
 
 <template>
@@ -121,15 +124,10 @@ watch(() => currentTrack.value?.id, () => {
 
     <!-- 前景内容 -->
     <div class="playing-music-foreground">
-      <div class="playing-music-content" v-if="currentTrack">
+      <div v-if="currentTrack" class="playing-music-content">
         <!-- 左侧：封面 -->
         <div class="cover-display">
-          <img
-            v-if="currentTrack.cover"
-            :src="currentTrack.cover"
-            class="main-cover"
-            alt="cover"
-          />
+          <img v-if="currentTrack.cover" :src="currentTrack.cover" class="main-cover" alt="cover" />
           <div v-else class="main-cover-placeholder">
             <i class="pi pi-wave-pulse" style="font-size: 80px; color: #ccc"></i>
           </div>
@@ -143,7 +141,7 @@ watch(() => currentTrack.value?.id, () => {
             <p class="track-album">{{ currentTrack.album }}</p>
           </div>
 
-          <div v-if="lyricLines.length > 0" class="lyrics-container" ref="lyricsEl">
+          <div v-if="lyricLines.length > 0" ref="lyricsEl" class="lyrics-container">
             <p
               v-for="(line, i) in lyricLines"
               :key="i"
@@ -326,7 +324,9 @@ watch(() => currentTrack.value?.id, () => {
   color: rgba(255, 255, 255, 0.45);
   line-height: 2.4;
   margin: 0;
-  transition: color 0.3s, font-size 0.3s;
+  transition:
+    color 0.3s,
+    font-size 0.3s;
 }
 
 .lyric-line.active {
@@ -334,5 +334,4 @@ watch(() => currentTrack.value?.id, () => {
   font-size: 17px;
   font-weight: 600;
 }
-
 </style>

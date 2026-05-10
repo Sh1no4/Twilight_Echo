@@ -1,0 +1,8 @@
+﻿
+D:\Project\Twilight_Echo\Twilight_Echo\src\renderer\src\stores\usePlayerStore.ts
+   51:5  error  'cleanupFns' is never reassigned. Use 'const' instead  prefer-const
+  230:8  error  Missing return type on function                        @typescript-eslint/explicit-function-return-type
+
+鉁?2 problems (2 errors, 0 warnings)
+  1 error and 0 warnings potentially fixable with the `--fix` option.
+

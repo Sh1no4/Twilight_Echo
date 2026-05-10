@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 const fs = require('fs')
 const path = require('path')
 
@@ -43,7 +44,7 @@ const SKIP_PACKAGES = new Set([
   '@volar',
   'esbuild',
   'rollup',
-  'vue-eslint-parser',
+  'vue-eslint-parser'
 ])
 
 /**

@@ -58,7 +58,8 @@ const api = {
     openFolder: (): Promise<string | null> => ipcRenderer.invoke('dialog:openFolder')
   },
   shell: {
-    showItemInFolder: (filePath: string): Promise<void> => ipcRenderer.invoke('shell:showItemInFolder', filePath)
+    showItemInFolder: (filePath: string): Promise<void> =>
+      ipcRenderer.invoke('shell:showItemInFolder', filePath)
   },
   fs: {
     scanMusicFiles: (folderPath: string): Promise<unknown[]> =>
@@ -66,7 +67,7 @@ const api = {
     readAudioFile: (filePath: string): Promise<{ buffer: ArrayBuffer; mimeType: string }> =>
       ipcRenderer.invoke('fs:readAudioFile', filePath),
     onScanProgress: (cb: (progress: { current: number; total: number }) => void): (() => void) => {
-      const handler = (_event, data: { current: number; total: number }) => cb(data)
+      const handler = (_event, data: { current: number; total: number }): void => cb(data)
       ipcRenderer.on('fs:scanProgress', handler)
       return () => ipcRenderer.removeListener('fs:scanProgress', handler)
     }
@@ -119,12 +120,9 @@ const api = {
   data: {
     saveMusicLibrary: (tracks: unknown[]): Promise<void> =>
       ipcRenderer.invoke('data:saveMusicLibrary', tracks),
-    loadMusicLibrary: (): Promise<unknown[]> =>
-      ipcRenderer.invoke('data:loadMusicLibrary'),
-    saveCookie: (cookie: string): Promise<void> =>
-      ipcRenderer.invoke('data:saveCookie', cookie),
-    loadCookie: (): Promise<string> =>
-      ipcRenderer.invoke('data:loadCookie')
+    loadMusicLibrary: (): Promise<unknown[]> => ipcRenderer.invoke('data:loadMusicLibrary'),
+    saveCookie: (cookie: string): Promise<void> => ipcRenderer.invoke('data:saveCookie', cookie),
+    loadCookie: (): Promise<string> => ipcRenderer.invoke('data:loadCookie')
   }
 }
 

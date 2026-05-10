@@ -217,7 +217,6 @@ const headerTitle = computed(() => {
   return currentView.value?.label ?? '流媒体'
 })
 
-
 const rootLoading = computed(() => libraryLoading.value && !currentDetail.value)
 
 const likedSummary = computed(() => ({
@@ -249,7 +248,10 @@ const detailHeaderInfo = computed(() => {
   if (currentDetail.value.type === 'rec') {
     return {
       title: currentDetail.value.section.title,
-      cover: currentDetail.value.section.tracks.length > 0 ? currentDetail.value.section.tracks[0].cover : null,
+      cover:
+        currentDetail.value.section.tracks.length > 0
+          ? currentDetail.value.section.tracks[0].cover
+          : null,
       desc: `共 ${currentDetail.value.section.tracks.length} 首歌曲`,
       icon: currentDetail.value.section.icon
     }
@@ -298,7 +300,11 @@ async function openLikedTracks(force = false): Promise<void> {
   }
 }
 
-async function openPlaylist(playlist: NcmPlaylistSummary, force = false, _event?: MouseEvent): Promise<void> {
+async function openPlaylist(
+  playlist: NcmPlaylistSummary,
+  force = false,
+  _event?: MouseEvent
+): Promise<void> {
   currentDetail.value = { type: 'playlist', playlist }
   detailLoading.value = true
   detailError.value = ''
@@ -383,7 +389,11 @@ onMounted(async () => {
 
 <template>
   <div class="streaming-page" :style="{ bottom: props.hasPlayer ? '72px' : '0px' }">
-    <div class="streaming-sidebar" :class="{ open: menuOpen }" :style="{ bottom: props.hasPlayer ? '72px' : '0px' }">
+    <div
+      class="streaming-sidebar"
+      :class="{ open: menuOpen }"
+      :style="{ bottom: props.hasPlayer ? '72px' : '0px' }"
+    >
       <div class="streaming-sidebar-inner">
         <div class="streaming-sidebar-header">
           <span class="streaming-sidebar-title">流媒体</span>
@@ -403,18 +413,25 @@ onMounted(async () => {
         <div class="streaming-sidebar-bottom">
           <div class="streaming-menu-separator"></div>
           <div class="streaming-menu-item streaming-local-btn" @click="emit('backToLocal')">
-            <i class="pi pi-home" style="font-size: 16px; width: 20px; text-align: center; flex-shrink: 0"></i>
+            <i
+              class="pi pi-home"
+              style="font-size: 16px; width: 20px; text-align: center; flex-shrink: 0"
+            ></i>
             <span class="streaming-menu-label">本地模式</span>
           </div>
         </div>
       </div>
     </div>
 
-
     <div class="streaming-content">
       <div class="streaming-content-header">
         <div class="streaming-header-left">
-          <button v-if="currentDetail || isSearching" class="btn-back" title="返回" @click="isSearching ? clearSearch() : goBack()">
+          <button
+            v-if="currentDetail || isSearching"
+            class="btn-back"
+            title="返回"
+            @click="isSearching ? clearSearch() : goBack()"
+          >
             <i class="pi pi-arrow-left"></i>
           </button>
           <div>
@@ -422,7 +439,11 @@ onMounted(async () => {
           </div>
         </div>
         <div class="streaming-header-right">
-          <div v-if="isLoggedIn" class="streaming-search-box" :class="{ focused: searchInputFocused }">
+          <div
+            v-if="isLoggedIn"
+            class="streaming-search-box"
+            :class="{ focused: searchInputFocused }"
+          >
             <i class="pi pi-search streaming-search-icon"></i>
             <input
               v-model="searchQuery"
@@ -497,13 +518,24 @@ onMounted(async () => {
                   <td class="col-like">
                     <button
                       class="btn-like"
-                      :class="{ liked: isTrackLiked(track.ncmSongId), loading: likingTracks.has(track.ncmSongId ?? 0) }"
+                      :class="{
+                        liked: isTrackLiked(track.ncmSongId),
+                        loading: likingTracks.has(track.ncmSongId ?? 0)
+                      }"
                       :disabled="likingTracks.has(track.ncmSongId ?? 0)"
-                      @click="onLikeTrack(track, $event)"
                       title="喜欢"
+                      @click="onLikeTrack(track, $event)"
                     >
-                      <i v-if="likingTracks.has(track.ncmSongId ?? 0)" class="pi pi-spin pi-spinner" style="font-size: 14px"></i>
-                      <i v-else :class="isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'" style="font-size: 14px"></i>
+                      <i
+                        v-if="likingTracks.has(track.ncmSongId ?? 0)"
+                        class="pi pi-spin pi-spinner"
+                        style="font-size: 14px"
+                      ></i>
+                      <i
+                        v-else
+                        :class="isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'"
+                        style="font-size: 14px"
+                      ></i>
                     </button>
                   </td>
                   <td class="col-album">{{ track.album }}</td>
@@ -514,284 +546,326 @@ onMounted(async () => {
           </div>
         </div>
         <div v-else :key="activeTab" class="streaming-content-body">
-        <div v-if="activeTab === 'home' && !currentDetail" class="home-view">
-          <div v-if="!isLoggedIn" class="streaming-placeholder">
-            <i class="pi pi-home" style="font-size: 48px; color: #ccc"></i>
-            <p class="placeholder-title">流媒体主页</p>
-            <p class="placeholder-hint">点击左上角头像登录网易云音乐</p>
-          </div>
-          <div v-else-if="recsLoading" class="streaming-placeholder">
-            <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
-            <p class="placeholder-title">正在加载推荐</p>
-            <p class="placeholder-hint">请稍候...</p>
-          </div>
-          <div v-else-if="recsError" class="streaming-placeholder">
-            <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
-            <p class="placeholder-title">加载失败</p>
-            <p class="placeholder-hint">{{ recsError }}</p>
-            <Button label="重试" severity="contrast" @click="loadRecommendations" />
-          </div>
-          <div v-else class="rec-sections">
-            <Divider align="left">
-              <span class="section-title main-section-title">个人推荐</span>
-            </Divider>
-            <div class="playlist-grid">
-              <div
-                v-for="section in recSections"
-                :key="section.key"
-                class="playlist-grid-card"
-                @click="openRecSection(section, $event)"
-              >
-                <img
-                  v-if="section.tracks.length > 0 && section.tracks[0].cover"
-                  :src="section.tracks[0].cover"
-                  class="playlist-grid-cover"
-                  alt=""
-                />
-                <div v-else class="playlist-grid-cover-placeholder">
-                  <i :class="section.icon" style="font-size: 28px; color: #bbb"></i>
+          <div v-if="activeTab === 'home' && !currentDetail" class="home-view">
+            <div v-if="!isLoggedIn" class="streaming-placeholder">
+              <i class="pi pi-home" style="font-size: 48px; color: #ccc"></i>
+              <p class="placeholder-title">流媒体主页</p>
+              <p class="placeholder-hint">点击左上角头像登录网易云音乐</p>
+            </div>
+            <div v-else-if="recsLoading" class="streaming-placeholder">
+              <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
+              <p class="placeholder-title">正在加载推荐</p>
+              <p class="placeholder-hint">请稍候...</p>
+            </div>
+            <div v-else-if="recsError" class="streaming-placeholder">
+              <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
+              <p class="placeholder-title">加载失败</p>
+              <p class="placeholder-hint">{{ recsError }}</p>
+              <Button label="重试" severity="contrast" @click="loadRecommendations" />
+            </div>
+            <div v-else class="rec-sections">
+              <Divider align="left">
+                <span class="section-title main-section-title">个人推荐</span>
+              </Divider>
+              <div class="playlist-grid">
+                <div
+                  v-for="section in recSections"
+                  :key="section.key"
+                  class="playlist-grid-card"
+                  @click="openRecSection(section, $event)"
+                >
+                  <img
+                    v-if="section.tracks.length > 0 && section.tracks[0].cover"
+                    :src="section.tracks[0].cover"
+                    class="playlist-grid-cover"
+                    alt=""
+                  />
+                  <div v-else class="playlist-grid-cover-placeholder">
+                    <i :class="section.icon" style="font-size: 28px; color: #bbb"></i>
+                  </div>
+                  <div class="playlist-grid-name">{{ section.title }}</div>
+                  <div class="playlist-grid-count">{{ section.tracks.length || '暂无' }} 首</div>
                 </div>
-                <div class="playlist-grid-name">{{ section.title }}</div>
-                <div class="playlist-grid-count">{{ section.tracks.length || '暂无' }} 首</div>
+              </div>
+
+              <Divider align="left" style="margin-top: 32px">
+                <span class="section-title main-section-title">歌单推荐</span>
+              </Divider>
+              <div class="playlist-grid">
+                <div
+                  v-for="playlist in recommendPlaylists"
+                  :key="playlist.id"
+                  class="playlist-grid-card"
+                  @click="openPlaylist(playlist, false, $event)"
+                >
+                  <img
+                    v-if="playlist.cover"
+                    :src="playlist.cover"
+                    class="playlist-grid-cover"
+                    alt=""
+                  />
+                  <div v-else class="playlist-grid-cover-placeholder">
+                    <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
+                  </div>
+                  <div class="playlist-grid-name">{{ playlist.name }}</div>
+                  <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
+                </div>
               </div>
             </div>
-
-            <Divider align="left" style="margin-top: 32px;">
-              <span class="section-title main-section-title">歌单推荐</span>
-            </Divider>
-            <div class="playlist-grid">
-              <div
-                v-for="playlist in recommendPlaylists"
-                :key="playlist.id"
-                class="playlist-grid-card"
-                @click="openPlaylist(playlist, false, $event)"
-              >
-                <img v-if="playlist.cover" :src="playlist.cover" class="playlist-grid-cover" alt="" />
-                <div v-else class="playlist-grid-cover-placeholder">
-                  <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
-                </div>
-                <div class="playlist-grid-name">{{ playlist.name }}</div>
-                <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
-              </div>
-            </div>
-
-          </div>
-        </div>
-
-        <div v-else-if="activeTab === 'playlists' && !currentDetail" class="streaming-placeholder">
-          <i class="pi pi-bookmark" style="font-size: 48px; color: #ccc"></i>
-          <p class="placeholder-title">歌单页暂不展示个人歌单</p>
-          <p class="placeholder-hint">你创建的歌单已经移动到音乐库页面下方列表</p>
-        </div>
-
-        <div v-else-if="!isLoggedIn && !currentDetail" class="streaming-placeholder">
-          <i class="pi pi-user" style="font-size: 48px; color: #ccc"></i>
-          <p class="placeholder-title">请先登录网易云音乐</p>
-          <p class="placeholder-hint">登录后即可加载我收藏的歌曲和在线歌单</p>
-        </div>
-
-        <div v-else-if="rootLoading && !currentDetail" class="streaming-placeholder">
-          <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
-          <p class="placeholder-title">正在加载音乐库</p>
-          <p class="placeholder-hint">请稍候...</p>
-        </div>
-
-        <div v-else-if="!currentDetail && libraryError" class="streaming-placeholder">
-          <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
-          <p class="placeholder-title">加载失败</p>
-          <p class="placeholder-hint">{{ libraryError }}</p>
-          <Button label="重试" severity="contrast" @click="retryCurrentView" />
-        </div>
-
-        <div v-else-if="currentDetail" class="detail-view">
-          <div v-if="detailHeaderInfo" class="detail-playlist-header">
-            <img v-if="detailHeaderInfo.cover" :src="detailHeaderInfo.cover" class="detail-playlist-cover" alt="cover" />
-            <div v-else class="detail-playlist-cover-placeholder">
-              <i :class="detailHeaderInfo.icon"></i>
-            </div>
-            <div class="detail-playlist-info">
-              <h2 class="detail-playlist-name">{{ detailHeaderInfo.title }}</h2>
-              <p class="detail-playlist-desc">{{ detailHeaderInfo.desc }}</p>
-              <Button
-                label="播放全部"
-                icon="pi pi-play"
-                rounded
-                severity="contrast"
-                class="detail-play-btn"
-                :disabled="detailLoading || detailTracks.length === 0"
-                @click="detailTracks.length > 0 && playTrack(detailTracks[0], detailTracks)"
-              />
-            </div>
           </div>
 
-          <div v-if="detailLoading && detailTracks.length === 0" class="streaming-placeholder detail-placeholder">
+          <div
+            v-else-if="activeTab === 'playlists' && !currentDetail"
+            class="streaming-placeholder"
+          >
+            <i class="pi pi-bookmark" style="font-size: 48px; color: #ccc"></i>
+            <p class="placeholder-title">歌单页暂不展示个人歌单</p>
+            <p class="placeholder-hint">你创建的歌单已经移动到音乐库页面下方列表</p>
+          </div>
+
+          <div v-else-if="!isLoggedIn && !currentDetail" class="streaming-placeholder">
+            <i class="pi pi-user" style="font-size: 48px; color: #ccc"></i>
+            <p class="placeholder-title">请先登录网易云音乐</p>
+            <p class="placeholder-hint">登录后即可加载我收藏的歌曲和在线歌单</p>
+          </div>
+
+          <div v-else-if="rootLoading && !currentDetail" class="streaming-placeholder">
             <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
-            <p class="placeholder-title">正在加载歌曲</p>
+            <p class="placeholder-title">正在加载音乐库</p>
             <p class="placeholder-hint">请稍候...</p>
           </div>
 
-          <div v-else-if="detailError" class="streaming-placeholder detail-placeholder">
+          <div v-else-if="!currentDetail && libraryError" class="streaming-placeholder">
             <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
             <p class="placeholder-title">加载失败</p>
-            <p class="placeholder-hint">{{ detailError }}</p>
+            <p class="placeholder-hint">{{ libraryError }}</p>
             <Button label="重试" severity="contrast" @click="retryCurrentView" />
           </div>
 
-          <div v-else-if="detailTracks.length === 0 && !detailLoading" class="streaming-placeholder detail-placeholder">
-            <i class="pi pi-wave-pulse" style="font-size: 40px; color: #ccc"></i>
-            <p class="placeholder-title">暂无歌曲</p>
-            <p class="placeholder-hint">这个页面目前没有可展示的歌曲</p>
-          </div>
+          <div v-else-if="currentDetail" class="detail-view">
+            <div v-if="detailHeaderInfo" class="detail-playlist-header">
+              <img
+                v-if="detailHeaderInfo.cover"
+                :src="detailHeaderInfo.cover"
+                class="detail-playlist-cover"
+                alt="cover"
+              />
+              <div v-else class="detail-playlist-cover-placeholder">
+                <i :class="detailHeaderInfo.icon"></i>
+              </div>
+              <div class="detail-playlist-info">
+                <h2 class="detail-playlist-name">{{ detailHeaderInfo.title }}</h2>
+                <p class="detail-playlist-desc">{{ detailHeaderInfo.desc }}</p>
+                <Button
+                  label="播放全部"
+                  icon="pi pi-play"
+                  rounded
+                  severity="contrast"
+                  class="detail-play-btn"
+                  :disabled="detailLoading || detailTracks.length === 0"
+                  @click="detailTracks.length > 0 && playTrack(detailTracks[0], detailTracks)"
+                />
+              </div>
+            </div>
 
-          <div v-else class="detail-content">
-            <div class="track-table-wrapper">
-            <table class="track-table">
-              <thead>
-                <tr>
-                  <th class="col-cover-header">{{ detailTracks.length }} 首</th>
-                  <th class="col-index">#</th>
-                  <th class="col-info">标题</th>
-                  <th class="col-like-header"></th>
-                  <th class="col-album">专辑</th>
-                  <th class="col-duration">时长</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="(track, index) in detailTracks"
-                  :key="track.id"
-                  class="track-row"
-                  :class="{ 'track-playing': currentTrack?.id === track.id }"
-                  @click="onTrackClick(track)"
-                  @dblclick="onTrackClick(track)"
-                >
-                  <td class="col-cover">
-                    <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
-                    <div v-else class="cover-placeholder">
-                      <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
-                    </div>
-                  </td>
-                  <td class="col-index">
-                    <span v-if="currentTrack?.id === track.id" class="playing-indicator">
-                      <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
-                    </span>
-                    <span v-else>{{ index + 1 }}</span>
-                  </td>
-                  <td class="col-info">
-                    <div class="track-title">{{ track.title }}</div>
-                    <div class="track-artist">{{ track.artist }}</div>
-                  </td>
-                  <td class="col-like">
-                    <button
-                      class="btn-like"
-                      :class="{ liked: isTrackLiked(track.ncmSongId), loading: likingTracks.has(track.ncmSongId ?? 0) }"
-                      :disabled="likingTracks.has(track.ncmSongId ?? 0)"
-                      @click="onLikeTrack(track, $event)"
-                      title="喜欢"
-                    >
-                      <i v-if="likingTracks.has(track.ncmSongId ?? 0)" class="pi pi-spin pi-spinner" style="font-size: 14px"></i>
-                      <i v-else :class="isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'" style="font-size: 14px"></i>
-                    </button>
-                  </td>
-                  <td class="col-album">{{ track.album }}</td>
-                  <td class="col-duration">{{ formatTime(track.duration) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-        </div>
-
-        <div v-else class="library-view">
-          <div class="library-hero">
-            <Card class="profile-card compact-profile-card">
-              <template #content>
-                <div class="profile-row compact-profile-row">
-                  <Avatar
-                    v-if="profile?.avatarUrl"
-                    :image="profile.avatarUrl"
-                    shape="circle"
-                    size="xlarge"
-                  />
-                  <Avatar v-else icon="pi pi-user" shape="circle" size="xlarge" />
-                  <div class="profile-meta">
-                    <div class="profile-name">{{ profile?.nickname || '未登录用户' }}</div>
-                    <div class="profile-subtitle">网易云音乐个人音乐库</div>
-                    <p class="profile-signature">{{ profileSignature }}</p>
-                  </div>
-                </div>
-              </template>
-            </Card>
-
-            <Card class="liked-songs-card liked-songs-hero-card" @click="openLikedTracks()">
-              <template #content>
-                <div class="liked-card-content hero-liked-card-content">
-                  <div class="liked-card-main">
-                    <div class="liked-card-badge liked-card-badge-hero">我的收藏</div>
-                    <h3 class="liked-card-title">{{ likedSummary.name }}</h3>
-                    <p class="liked-card-desc">{{ likedSummary.trackCount }} 首歌曲</p>
-                    <Button
-                      label="播放"
-                      icon="pi pi-play"
-                      rounded
-                      severity="contrast"
-                      class="liked-play-btn"
-                      @click.stop="playLikedSongs"
-                    />
-                  </div>
-                  <div class="liked-card-cover-wrap hero-liked-cover-wrap">
-                    <img v-if="likedSummary.cover" :src="likedSummary.cover" class="liked-card-cover hero-liked-card-cover" alt="cover" />
-                    <div v-else class="liked-card-cover-placeholder hero-liked-card-cover-placeholder">
-                      <i class="pi pi-heart-fill"></i>
-                    </div>
-                  </div>
-                </div>
-              </template>
-            </Card>
-          </div>
-
-          <Divider align="left">
-            <span class="section-title">我的歌单</span>
-          </Divider>
-
-          <div v-if="libraryLoaded && userPlaylistEntries.length === 0" class="empty-state only-empty-state">
-            <p class="empty-text">暂无在线歌单</p>
-            <p class="empty-hint">当前账号还没有可展示的在线歌单</p>
-          </div>
-
-          <div v-else class="playlist-list">
-            <Card
-              v-for="playlist in userPlaylistEntries"
-              :key="playlist.id"
-              class="playlist-list-item"
-              @click="openPlaylist(playlist, false, $event)"
+            <div
+              v-if="detailLoading && detailTracks.length === 0"
+              class="streaming-placeholder detail-placeholder"
             >
-              <template #content>
-                <div class="playlist-row">
-                  <Avatar
-                    v-if="playlist.cover"
-                    :image="playlist.cover"
-                    shape="square"
-                    size="large"
-                    class="playlist-avatar"
-                  />
-                  <Avatar
-                    v-else
-                    icon="pi pi-list"
-                    shape="square"
-                    size="large"
-                    class="playlist-avatar"
-                  />
-                  <div class="playlist-meta">
-                    <div class="playlist-row-title">{{ playlist.name }}</div>
-                    <div class="playlist-row-subtitle">{{ playlist.trackCount }} 首</div>
-                  </div>
-                  <Button icon="pi pi-chevron-right" text rounded aria-label="打开歌单" />
-                </div>
-              </template>
-            </Card>
+              <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
+              <p class="placeholder-title">正在加载歌曲</p>
+              <p class="placeholder-hint">请稍候...</p>
+            </div>
+
+            <div v-else-if="detailError" class="streaming-placeholder detail-placeholder">
+              <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
+              <p class="placeholder-title">加载失败</p>
+              <p class="placeholder-hint">{{ detailError }}</p>
+              <Button label="重试" severity="contrast" @click="retryCurrentView" />
+            </div>
+
+            <div
+              v-else-if="detailTracks.length === 0 && !detailLoading"
+              class="streaming-placeholder detail-placeholder"
+            >
+              <i class="pi pi-wave-pulse" style="font-size: 40px; color: #ccc"></i>
+              <p class="placeholder-title">暂无歌曲</p>
+              <p class="placeholder-hint">这个页面目前没有可展示的歌曲</p>
+            </div>
+
+            <div v-else class="detail-content">
+              <div class="track-table-wrapper">
+                <table class="track-table">
+                  <thead>
+                    <tr>
+                      <th class="col-cover-header">{{ detailTracks.length }} 首</th>
+                      <th class="col-index">#</th>
+                      <th class="col-info">标题</th>
+                      <th class="col-like-header"></th>
+                      <th class="col-album">专辑</th>
+                      <th class="col-duration">时长</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="(track, index) in detailTracks"
+                      :key="track.id"
+                      class="track-row"
+                      :class="{ 'track-playing': currentTrack?.id === track.id }"
+                      @click="onTrackClick(track)"
+                      @dblclick="onTrackClick(track)"
+                    >
+                      <td class="col-cover">
+                        <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
+                        <div v-else class="cover-placeholder">
+                          <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+                        </div>
+                      </td>
+                      <td class="col-index">
+                        <span v-if="currentTrack?.id === track.id" class="playing-indicator">
+                          <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
+                        </span>
+                        <span v-else>{{ index + 1 }}</span>
+                      </td>
+                      <td class="col-info">
+                        <div class="track-title">{{ track.title }}</div>
+                        <div class="track-artist">{{ track.artist }}</div>
+                      </td>
+                      <td class="col-like">
+                        <button
+                          class="btn-like"
+                          :class="{
+                            liked: isTrackLiked(track.ncmSongId),
+                            loading: likingTracks.has(track.ncmSongId ?? 0)
+                          }"
+                          :disabled="likingTracks.has(track.ncmSongId ?? 0)"
+                          title="喜欢"
+                          @click="onLikeTrack(track, $event)"
+                        >
+                          <i
+                            v-if="likingTracks.has(track.ncmSongId ?? 0)"
+                            class="pi pi-spin pi-spinner"
+                            style="font-size: 14px"
+                          ></i>
+                          <i
+                            v-else
+                            :class="
+                              isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'
+                            "
+                            style="font-size: 14px"
+                          ></i>
+                        </button>
+                      </td>
+                      <td class="col-album">{{ track.album }}</td>
+                      <td class="col-duration">{{ formatTime(track.duration) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
-        </div>
+
+          <div v-else class="library-view">
+            <div class="library-hero">
+              <Card class="profile-card compact-profile-card">
+                <template #content>
+                  <div class="profile-row compact-profile-row">
+                    <Avatar
+                      v-if="profile?.avatarUrl"
+                      :image="profile.avatarUrl"
+                      shape="circle"
+                      size="xlarge"
+                    />
+                    <Avatar v-else icon="pi pi-user" shape="circle" size="xlarge" />
+                    <div class="profile-meta">
+                      <div class="profile-name">{{ profile?.nickname || '未登录用户' }}</div>
+                      <div class="profile-subtitle">网易云音乐个人音乐库</div>
+                      <p class="profile-signature">{{ profileSignature }}</p>
+                    </div>
+                  </div>
+                </template>
+              </Card>
+
+              <Card class="liked-songs-card liked-songs-hero-card" @click="openLikedTracks()">
+                <template #content>
+                  <div class="liked-card-content hero-liked-card-content">
+                    <div class="liked-card-main">
+                      <div class="liked-card-badge liked-card-badge-hero">我的收藏</div>
+                      <h3 class="liked-card-title">{{ likedSummary.name }}</h3>
+                      <p class="liked-card-desc">{{ likedSummary.trackCount }} 首歌曲</p>
+                      <Button
+                        label="播放"
+                        icon="pi pi-play"
+                        rounded
+                        severity="contrast"
+                        class="liked-play-btn"
+                        @click.stop="playLikedSongs"
+                      />
+                    </div>
+                    <div class="liked-card-cover-wrap hero-liked-cover-wrap">
+                      <img
+                        v-if="likedSummary.cover"
+                        :src="likedSummary.cover"
+                        class="liked-card-cover hero-liked-card-cover"
+                        alt="cover"
+                      />
+                      <div
+                        v-else
+                        class="liked-card-cover-placeholder hero-liked-card-cover-placeholder"
+                      >
+                        <i class="pi pi-heart-fill"></i>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </Card>
+            </div>
+
+            <Divider align="left">
+              <span class="section-title">我的歌单</span>
+            </Divider>
+
+            <div
+              v-if="libraryLoaded && userPlaylistEntries.length === 0"
+              class="empty-state only-empty-state"
+            >
+              <p class="empty-text">暂无在线歌单</p>
+              <p class="empty-hint">当前账号还没有可展示的在线歌单</p>
+            </div>
+
+            <div v-else class="playlist-list">
+              <Card
+                v-for="playlist in userPlaylistEntries"
+                :key="playlist.id"
+                class="playlist-list-item"
+                @click="openPlaylist(playlist, false, $event)"
+              >
+                <template #content>
+                  <div class="playlist-row">
+                    <Avatar
+                      v-if="playlist.cover"
+                      :image="playlist.cover"
+                      shape="square"
+                      size="large"
+                      class="playlist-avatar"
+                    />
+                    <Avatar
+                      v-else
+                      icon="pi pi-list"
+                      shape="square"
+                      size="large"
+                      class="playlist-avatar"
+                    />
+                    <div class="playlist-meta">
+                      <div class="playlist-row-title">{{ playlist.name }}</div>
+                      <div class="playlist-row-subtitle">{{ playlist.trackCount }} 首</div>
+                    </div>
+                    <Button icon="pi pi-chevron-right" text rounded aria-label="打开歌单" />
+                  </div>
+                </template>
+              </Card>
+            </div>
+          </div>
         </div>
       </Transition>
     </div>
@@ -989,7 +1063,9 @@ onMounted(async () => {
   justify-content: center;
   color: #666;
   font-size: 16px;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
   flex-shrink: 0;
 }
 
@@ -1100,7 +1176,9 @@ onMounted(async () => {
   margin-bottom: 0;
   background: linear-gradient(135deg, #6a5cff 0%, #a855f7 48%, #ec4899 100%);
   color: #fff;
-  transition: transform 0.18s ease, box-shadow 0.18s ease;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
   box-shadow: 0 16px 40px rgba(126, 87, 255, 0.24);
 }
 
@@ -1347,7 +1425,6 @@ onMounted(async () => {
   border-bottom-color: #d4e4fc !important;
 }
 
-
 .cover-img {
   width: 40px;
   height: 40px;
@@ -1371,7 +1448,8 @@ onMounted(async () => {
   font-size: 13px !important;
 }
 
-.col-cover, .col-cover-header {
+.col-cover,
+.col-cover-header {
   width: 60px;
   flex-shrink: 0;
 }
@@ -1606,7 +1684,9 @@ onMounted(async () => {
 /* ===== Tab Transition Animation ===== */
 .tab-fade-enter-active,
 .tab-fade-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 
 .tab-fade-enter-from {
@@ -1634,7 +1714,10 @@ onMounted(async () => {
   border-radius: 18px;
   background: #f5f5f5;
   border: 1.5px solid transparent;
-  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+  transition:
+    border-color 0.2s,
+    background 0.2s,
+    box-shadow 0.2s;
   min-width: 200px;
   max-width: 320px;
   flex-shrink: 0;
@@ -1731,7 +1814,7 @@ onMounted(async () => {
   object-fit: cover;
   border-radius: 12px;
   margin-bottom: 12px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .playlist-grid-cover-placeholder {
@@ -1780,7 +1863,7 @@ onMounted(async () => {
   height: 200px;
   border-radius: 16px;
   object-fit: cover;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
   flex-shrink: 0;
 }
 
@@ -1822,7 +1905,8 @@ onMounted(async () => {
 }
 
 /* ===== Like Button ===== */
-.col-like, .col-like-header {
+.col-like,
+.col-like-header {
   width: 44px;
   flex-shrink: 0;
   text-align: center;
@@ -1843,7 +1927,10 @@ onMounted(async () => {
   border-radius: 50%;
   cursor: pointer;
   color: #ccc;
-  transition: color 0.2s, background 0.2s, transform 0.15s;
+  transition:
+    color 0.2s,
+    background 0.2s,
+    transform 0.15s;
   padding: 0;
 }
 
@@ -1873,7 +1960,6 @@ onMounted(async () => {
 }
 
 /* ===== Page Expansion Animation Removed ===== */
-
 
 .cover-anim-placeholder {
   width: 100%;

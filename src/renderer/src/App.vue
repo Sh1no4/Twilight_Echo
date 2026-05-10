@@ -12,7 +12,6 @@ import { useMusicStore } from './stores/useMusicStore'
 import { useNcmStore } from './stores/useNcmStore'
 import { usePlayerStore } from './stores/usePlayerStore'
 
-
 const menuOpen = ref(false)
 const showPlayingPage = ref(false)
 const showStreamingPage = ref(false)
@@ -27,7 +26,9 @@ const songlistTransitionName = ref('page-down')
 const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
 
 const streamingMenuOpen = ref(false)
-const titleMenuOpen = computed(() => showStreamingPage.value ? streamingMenuOpen.value : menuOpen.value)
+const titleMenuOpen = computed(() =>
+  showStreamingPage.value ? streamingMenuOpen.value : menuOpen.value
+)
 
 function toggleMenu(): void {
   if (showLoginPage.value) return
@@ -117,7 +118,9 @@ async function openLoginPage(): Promise<void> {
         return
       }
     }
-  } catch { /* 检查失败则继续显示登录页 */ }
+  } catch {
+    /* 检查失败则继续显示登录页 */
+  }
 
   menuOpen.value = false
   showPlayingPage.value = false
@@ -144,7 +147,9 @@ const { loadLibrary } = useMusicStore()
 const { checkLogin } = useNcmStore()
 const { currentTrack } = usePlayerStore()
 const hasPlayerBar = computed(() => !showLoginPage.value && !!currentTrack.value)
-const mainContentMinHeight = computed(() => hasPlayerBar.value ? 'calc(100vh - 32px - 72px)' : 'calc(100vh - 32px)')
+const mainContentMinHeight = computed(() =>
+  hasPlayerBar.value ? 'calc(100vh - 32px - 72px)' : 'calc(100vh - 32px)'
+)
 
 onMounted(() => {
   loadLibrary()
@@ -155,18 +160,58 @@ const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOri
 </script>
 
 <template>
-  <TitleBar :glass="showPlayingPage" :streaming="showStreamingPage" :menu-open="titleMenuOpen" @toggle-menu="toggleMenu" @collapse-menu="collapseMenu" @back="closePlayingPage" @login="openLoginPage" @settings="openSettingsPage" />
-  <SideMenu v-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !showSettingsPage" :open="menuOpen" @select-view="onSelectView" @enter-streaming="enterStreamingMode" />
-  <div class="main-content" :class="{ 'menu-open': menuOpen && !showPlayingPage && !showStreamingPage && !showLoginPage }" :style="{ minHeight: mainContentMinHeight }">
+  <TitleBar
+    :glass="showPlayingPage"
+    :streaming="showStreamingPage"
+    :menu-open="titleMenuOpen"
+    @toggle-menu="toggleMenu"
+    @collapse-menu="collapseMenu"
+    @back="closePlayingPage"
+    @login="openLoginPage"
+    @settings="openSettingsPage"
+  />
+  <SideMenu
+    v-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !showSettingsPage"
+    :open="menuOpen"
+    @select-view="onSelectView"
+    @enter-streaming="enterStreamingMode"
+  />
+  <div
+    class="main-content"
+    :class="{ 'menu-open': menuOpen && !showPlayingPage && !showStreamingPage && !showLoginPage }"
+    :style="{ minHeight: mainContentMinHeight }"
+  >
     <Transition :name="songlistTransitionName">
-      <SongList v-if="!showPlayingPage && !showStreamingPage && !showLoginPage" :key="'songlist-' + activeCategory + (activeFilter ?? '')" :category="activeCategory" :filter="activeFilter" :has-player="hasPlayerBar" @select-view="onSelectView" />
+      <SongList
+        v-if="!showPlayingPage && !showStreamingPage && !showLoginPage"
+        :key="'songlist-' + activeCategory + (activeFilter ?? '')"
+        :category="activeCategory"
+        :filter="activeFilter"
+        :has-player="hasPlayerBar"
+        @select-view="onSelectView"
+      />
     </Transition>
     <Transition name="playing-page">
-      <PlayingMusic v-if="showPlayingPage" :style="{ transformOrigin: coverTransformOrigin }" @back="closePlayingPage" />
+      <PlayingMusic
+        v-if="showPlayingPage"
+        :style="{ transformOrigin: coverTransformOrigin }"
+        @back="closePlayingPage"
+      />
     </Transition>
-    <StreamingPage v-if="showStreamingPage" :menu-open="streamingMenuOpen" :has-player="hasPlayerBar" @toggle-menu="toggleStreamingMenu" @back-to-local="showStreamingPage = false" />
+    <StreamingPage
+      v-if="showStreamingPage"
+      :menu-open="streamingMenuOpen"
+      :has-player="hasPlayerBar"
+      @toggle-menu="toggleStreamingMenu"
+      @back-to-local="showStreamingPage = false"
+    />
     <Transition name="login-page">
-      <LoginPage v-if="showLoginPage" :force-profile="loginPageMode === 'profile'" @back="closeLoginPage" @login-success="closeLoginPage" />
+      <LoginPage
+        v-if="showLoginPage"
+        :force-profile="loginPageMode === 'profile'"
+        @back="closeLoginPage"
+        @login-success="closeLoginPage"
+      />
     </Transition>
     <Transition name="login-page">
       <SettingsPage v-if="showSettingsPage" @back="closeSettingsPage" />
@@ -201,7 +246,9 @@ body {
 .page-down-leave-active,
 .page-up-enter-active,
 .page-up-leave-active {
-  transition: transform 0.35s ease, opacity 0.35s ease;
+  transition:
+    transform 0.35s ease,
+    opacity 0.35s ease;
 }
 .page-down-enter-active,
 .page-up-enter-active {
@@ -234,10 +281,16 @@ body {
 
 /* PlayingMusic open/close — expands from / shrinks to cover position */
 .playing-page-enter-active {
-  transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.35s ease, border-radius 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    transform 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.35s ease,
+    border-radius 0.5s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .playing-page-leave-active {
-  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.3s ease, border-radius 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  transition:
+    transform 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.3s ease,
+    border-radius 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .playing-page-enter-from {
@@ -254,10 +307,14 @@ body {
 
 /* Login page transition */
 .login-page-enter-active {
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
 }
 .login-page-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 .login-page-enter-from {
   opacity: 0;

@@ -51,9 +51,9 @@ export function extractDominantColor(imageSrc: string): Promise<string> {
         }
       }
 
-      const r = Math.round(((bestKey >> 16) & 0xff) / (buckets - 1) * 255)
-      const g = Math.round(((bestKey >> 8) & 0xff) / (buckets - 1) * 255)
-      const b = Math.round((bestKey & 0xff) / (buckets - 1) * 255)
+      const r = Math.round((((bestKey >> 16) & 0xff) / (buckets - 1)) * 255)
+      const g = Math.round((((bestKey >> 8) & 0xff) / (buckets - 1)) * 255)
+      const b = Math.round(((bestKey & 0xff) / (buckets - 1)) * 255)
 
       const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
       resolve(hex)

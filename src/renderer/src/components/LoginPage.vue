@@ -30,7 +30,12 @@ const pageState = ref<PageState>('loading')
 const errorMsg = ref('')
 const qrImage = ref('')
 const qrKey = ref('')
-const profile = ref<{ userId: number; nickname: string; avatarUrl: string; signature?: string } | null>(null)
+const profile = ref<{
+  userId: number
+  nickname: string
+  avatarUrl: string
+  signature?: string
+} | null>(null)
 const loginCookie = ref('')
 const lastKeyGenTime = ref(0)
 
@@ -38,14 +43,22 @@ let pollTimer: ReturnType<typeof setInterval> | null = null
 
 const statusText = computed(() => {
   switch (pageState.value) {
-    case 'loading': return '正在初始化...'
-    case 'qr_loading': return '正在生成二维码...'
-    case 'qr_ready': return '请使用网易云音乐 App 扫码登录'
-    case 'qr_scanned': return '已扫码，请在手机上确认登录'
-    case 'qr_expired': return '二维码已过期，请点击刷新'
-    case 'login_success': return '登录成功！'
-    case 'error': return errorMsg.value
-    default: return ''
+    case 'loading':
+      return '正在初始化...'
+    case 'qr_loading':
+      return '正在生成二维码...'
+    case 'qr_ready':
+      return '请使用网易云音乐 App 扫码登录'
+    case 'qr_scanned':
+      return '已扫码，请在手机上确认登录'
+    case 'qr_expired':
+      return '二维码已过期，请点击刷新'
+    case 'login_success':
+      return '登录成功！'
+    case 'error':
+      return errorMsg.value
+    default:
+      return ''
   }
 })
 
@@ -62,7 +75,11 @@ async function checkLoginStatus(cookie?: string): Promise<boolean> {
   try {
     const data = (await fetchNcm('/login/status', cookie)) as {
       code?: number
-      data?: { code: number; profile?: { userId: number; nickname: string; avatarUrl: string }; account?: unknown }
+      data?: {
+        code: number
+        profile?: { userId: number; nickname: string; avatarUrl: string }
+        account?: unknown
+      }
     }
     const profileData = data.data?.profile
     if (data.data?.code === 200 && profileData) {
@@ -71,7 +88,11 @@ async function checkLoginStatus(cookie?: string): Promise<boolean> {
       return true
     }
     if (data.code === 200 && (data as Record<string, unknown>).profile) {
-      const p = (data as Record<string, unknown>).profile as { userId: number; nickname: string; avatarUrl: string }
+      const p = (data as Record<string, unknown>).profile as {
+        userId: number
+        nickname: string
+        avatarUrl: string
+      }
       profile.value = p
       if (cookie) loginCookie.value = cookie
       return true
@@ -300,17 +321,8 @@ onUnmounted(() => {
       <!-- QR login states -->
       <div v-else class="login-qr-section">
         <!-- QR code -->
-        <div
-          v-if="qrImage"
-          class="qr-wrapper"
-          :class="{ expired: pageState === 'qr_expired' }"
-        >
-          <img
-            v-if="pageState !== 'qr_expired'"
-            :src="qrImage"
-            alt="登录二维码"
-            class="qr-image"
-          />
+        <div v-if="qrImage" class="qr-wrapper" :class="{ expired: pageState === 'qr_expired' }">
+          <img v-if="pageState !== 'qr_expired'" :src="qrImage" alt="登录二维码" class="qr-image" />
           <div v-else class="qr-expired-overlay" @click="handleRefresh">
             <i class="pi pi-refresh" style="font-size: 28px"></i>
             <span>点击刷新</span>
@@ -325,17 +337,21 @@ onUnmounted(() => {
         <!-- Status text -->
         <p class="qr-status" :class="{ success: pageState === 'login_success' }">
           <i v-if="pageState === 'qr_ready'" class="pi pi-mobile" style="margin-right: 6px"></i>
-          <i v-if="pageState === 'qr_scanned'" class="pi pi-check-circle" style="margin-right: 6px; color: #2ecc71"></i>
-          <i v-if="pageState === 'login_success'" class="pi pi-check-circle" style="margin-right: 6px; color: #2ecc71"></i>
+          <i
+            v-if="pageState === 'qr_scanned'"
+            class="pi pi-check-circle"
+            style="margin-right: 6px; color: #2ecc71"
+          ></i>
+          <i
+            v-if="pageState === 'login_success'"
+            class="pi pi-check-circle"
+            style="margin-right: 6px; color: #2ecc71"
+          ></i>
           {{ statusText }}
         </p>
 
         <!-- Refresh button -->
-        <button
-          v-if="pageState === 'qr_expired'"
-          class="login-action-btn"
-          @click="handleRefresh"
-        >
+        <button v-if="pageState === 'qr_expired'" class="login-action-btn" @click="handleRefresh">
           <i class="pi pi-refresh" style="margin-right: 6px"></i>
           刷新二维码
         </button>
@@ -436,7 +452,9 @@ onUnmounted(() => {
   color: #333;
   font-size: 14px;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
 }
 
 .login-action-btn:hover {

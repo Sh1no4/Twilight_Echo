@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import type { Track } from '../types/music'
 
 export interface NcmProfile {
@@ -27,6 +27,46 @@ const likedSongIds = ref<Set<number>>(new Set())
 const playlistTrackCache = new Map<string, Track[]>()
 const streamUrlCache = new Map<number, string | null>()
 let likedTracksCache: Track[] | null = null
+
+export interface NcmStore {
+  isLoggedIn: Ref<boolean>
+  profile: Ref<NcmProfile | null>
+  libraryLoading: Ref<boolean>
+  libraryLoaded: Ref<boolean>
+  libraryError: Ref<string>
+  likedPlaylist: Ref<NcmPlaylistSummary | null>
+  userPlaylists: Ref<NcmPlaylistSummary[]>
+  likedSongIds: Ref<Set<number>>
+  buildProfile: (prof: {
+    userId: number
+    nickname: string
+    avatarUrl: string
+    signature?: string
+  }) => Promise<NcmProfile>
+  checkLogin: () => Promise<boolean>
+  setLogin: (prof: NcmProfile) => void
+  logout: () => Promise<void>
+  fetchUserLibrary: (force?: boolean) => Promise<{
+    likedPlaylist: NcmPlaylistSummary | null
+    playlists: NcmPlaylistSummary[]
+  }>
+  fetchPlaylistTracks: (playlistId: number | string, force?: boolean) => Promise<Track[]>
+  fetchLikedTracks: (force?: boolean) => Promise<Track[]>
+  getSongStreamUrl: (songId: number, force?: boolean) => Promise<string | null>
+  fetchRecommendSongs: () => Promise<Track[]>
+  fetchRecommendPlaylists: () => Promise<NcmPlaylistSummary[]>
+  fetchPersonalFm: () => Promise<Track[]>
+  fetchPrivateContent: () => Promise<Track[]>
+  fetchLyric: (songId: number) => Promise<string | null>
+  searchSongs: (
+    keywords: string,
+    limit?: number,
+    offset?: number
+  ) => Promise<{ tracks: Track[]; total: number }>
+  likeTrack: (songId: number, like: boolean) => Promise<void>
+  isTrackLiked: (ncmSongId: number | undefined) => boolean
+  syncLikedIds: (tracks: Track[]) => void
+}
 
 function withPcUa(path: string): string {
   const sep = path.includes('?') ? '&' : '?'
@@ -58,7 +98,10 @@ function normalizeTrack(song: Record<string, any>): Track {
   const artist =
     artists.join(' / ') ||
     song.artist ||
-    song.artists?.map?.((item) => item?.name).filter(Boolean).join(' / ') ||
+    song.artists
+      ?.map?.((item) => item?.name)
+      .filter(Boolean)
+      .join(' / ') ||
     '未知艺术家'
   const title = song.name || song.title || '未知歌曲'
   const album = song.al?.name || song.album?.name || '未知专辑'
@@ -113,9 +156,7 @@ function getLikelistIds(data: Record<string, any>): number[] {
       ? data.data.ids
       : []
 
-  return rawIds
-    .map((id) => Number(id))
-    .filter((id) => Number.isFinite(id) && id > 0)
+  return rawIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
 }
 
 function getPlaylistTrackIds(data: Record<string, any>): number[] {
@@ -155,19 +196,26 @@ async function ensureProfile(checkLogin: () => Promise<boolean>): Promise<NcmPro
 async function fetchUserSignature(userId: number): Promise<string> {
   try {
     const data = await requestAuthed(`/user/detail?uid=${userId}`)
-    return data.profile?.signature || data.userPoint?.signature || data.data?.profile?.signature || ''
+    return (
+      data.profile?.signature || data.userPoint?.signature || data.data?.profile?.signature || ''
+    )
   } catch {
     return ''
   }
 }
 
-export function useNcmStore() {
-  async function buildProfile(prof: { userId: number; nickname: string; avatarUrl: string; signature?: string }): Promise<NcmProfile> {
+export function useNcmStore(): NcmStore {
+  async function buildProfile(prof: {
+    userId: number
+    nickname: string
+    avatarUrl: string
+    signature?: string
+  }): Promise<NcmProfile> {
     return {
       userId: prof.userId,
       nickname: prof.nickname,
       avatarUrl: prof.avatarUrl,
-      signature: prof.signature ?? await fetchUserSignature(prof.userId)
+      signature: prof.signature ?? (await fetchUserSignature(prof.userId))
     }
   }
 
@@ -276,12 +324,16 @@ export function useNcmStore() {
       return playlistTrackCache.get(cacheKey) ?? []
     }
 
-    const trackAllData = await requestAuthed(`/playlist/track/all?id=${encodeURIComponent(String(playlistId))}`)
+    const trackAllData = await requestAuthed(
+      `/playlist/track/all?id=${encodeURIComponent(String(playlistId))}`
+    )
     let songs = getSongItems(trackAllData)
 
     let playlistDetailData: Record<string, any> | null = null
     if (songs.length === 0) {
-      playlistDetailData = await requestAuthed(`/playlist/detail?id=${encodeURIComponent(String(playlistId))}`)
+      playlistDetailData = await requestAuthed(
+        `/playlist/detail?id=${encodeURIComponent(String(playlistId))}`
+      )
       songs = getSongItems(playlistDetailData)
     }
 
@@ -386,14 +438,22 @@ export function useNcmStore() {
 
   async function fetchPersonalFm(): Promise<Track[]> {
     const data = await requestAuthed(`/personal_fm`)
-    const fmData = Array.isArray(data.data) ? data.data : Array.isArray(data.result) ? data.result : []
+    const fmData = Array.isArray(data.data)
+      ? data.data
+      : Array.isArray(data.result)
+        ? data.result
+        : []
     if (fmData.length > 0) return fmData.map(normalizeTrack)
     return getSongItems(data).map(normalizeTrack)
   }
 
   async function fetchPrivateContent(): Promise<Track[]> {
     const data = await requestAuthed(`/personalized/privatecontent`)
-    const result = Array.isArray(data.result) ? data.result : Array.isArray(data.data) ? data.data : []
+    const result = Array.isArray(data.result)
+      ? data.result
+      : Array.isArray(data.data)
+        ? data.data
+        : []
     if (result.length > 0) return result.map(normalizeTrack)
     return getSongItems(data).map(normalizeTrack)
   }
@@ -401,7 +461,11 @@ export function useNcmStore() {
   async function fetchRecommendPlaylists(): Promise<NcmPlaylistSummary[]> {
     try {
       const data = await requestAuthed(`/recommend/resource`)
-      const recommend = Array.isArray(data.recommend) ? data.recommend : Array.isArray(data.data) ? data.data : []
+      const recommend = Array.isArray(data.recommend)
+        ? data.recommend
+        : Array.isArray(data.data)
+          ? data.data
+          : []
       return recommend.map((item: any) => ({
         id: Number(item.id),
         name: item.name || '未命名歌单',
@@ -434,10 +498,8 @@ export function useNcmStore() {
       `/cloudsearch?keywords=${encodeURIComponent(keywords)}&type=1&limit=${limit}&offset=${offset}`
     )
     const result = data.result || data.data?.result || {}
-    const songs: Record<string, any>[] =
-      Array.isArray(result.songs) ? result.songs : []
-    const total =
-      typeof result.songCount === 'number' ? result.songCount : songs.length
+    const songs: Record<string, any>[] = Array.isArray(result.songs) ? result.songs : []
+    const total = typeof result.songCount === 'number' ? result.songCount : songs.length
     return { tracks: songs.map(normalizeTrack), total }
   }
 

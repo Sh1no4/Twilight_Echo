@@ -1,11 +1,29 @@
-import { ref, computed } from 'vue'
+import { ref, computed, type Ref, type ComputedRef } from 'vue'
 import type { Track } from '../types/music'
 
 const tracks = ref<Track[]>([])
 const scannedFolders = ref<string[]>([])
 const isScanning = ref(false)
 
-export function useMusicStore() {
+export function useMusicStore(): {
+  tracks: Ref<Track[]>
+  artists: ComputedRef<any[]>
+  albums: ComputedRef<any[]>
+  playlists: Ref<{ name: string; trackIds: Set<string> }[]>
+  addTracks: (newTracks: Track[]) => Promise<void>
+  removeTrack: (id: string) => void
+  clearTracks: () => void
+  createPlaylist: (name: string) => void
+  addToPlaylist: (playlistName: string, trackId: string) => void
+  removeFromPlaylist: (playlistName: string, trackId: string) => void
+  getPlaylistTracks: (playlistName: string) => Track[]
+  saveLibrary: () => Promise<void>
+  loadLibrary: () => Promise<void>
+  scannedFolders: Ref<string[]>
+  isScanning: Ref<boolean>
+  addFolder: (path: string) => void
+  removeFolder: (path: string) => void
+} {
   async function saveLibrary(): Promise<void> {
     const plainTracks = JSON.parse(JSON.stringify(tracks.value))
     const plainFolders = JSON.parse(JSON.stringify(scannedFolders.value))
@@ -119,14 +137,14 @@ export function useMusicStore() {
     loadLibrary,
     scannedFolders,
     isScanning,
-    addFolder(path: string) {
+    addFolder(path: string): void {
       if (!scannedFolders.value.includes(path)) {
         scannedFolders.value.push(path)
         saveLibrary()
       }
     },
-    removeFolder(path: string) {
-      scannedFolders.value = scannedFolders.value.filter(f => f !== path)
+    removeFolder(path: string): void {
+      scannedFolders.value = scannedFolders.value.filter((f) => f !== path)
       saveLibrary()
     }
   }

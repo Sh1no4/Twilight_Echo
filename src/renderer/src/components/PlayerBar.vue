@@ -54,17 +54,26 @@ const moreOpen = ref(false)
 
 function toggleVolume(): void {
   volumeOpen.value = !volumeOpen.value
-  if (volumeOpen.value) { playlistOpen.value = false; moreOpen.value = false }
+  if (volumeOpen.value) {
+    playlistOpen.value = false
+    moreOpen.value = false
+  }
 }
 
 function togglePlaylist(): void {
   playlistOpen.value = !playlistOpen.value
-  if (playlistOpen.value) { volumeOpen.value = false; moreOpen.value = false }
+  if (playlistOpen.value) {
+    volumeOpen.value = false
+    moreOpen.value = false
+  }
 }
 
 function toggleMore(): void {
   moreOpen.value = !moreOpen.value
-  if (moreOpen.value) { volumeOpen.value = false; playlistOpen.value = false }
+  if (moreOpen.value) {
+    volumeOpen.value = false
+    playlistOpen.value = false
+  }
 }
 
 const modeLabels: Record<string, string> = {
@@ -84,7 +93,7 @@ function playTrackAt(index: number): void {
 </script>
 
 <template>
-  <div class="player-bar-shell" v-if="currentTrack">
+  <div v-if="currentTrack" class="player-bar-shell">
     <!-- 播放列表面板（向上抽屉） -->
     <Transition name="drawer-up">
       <div v-if="playlistOpen" class="playlist-panel" :class="{ 'panel-glass': glass }">
@@ -104,12 +113,7 @@ function playTrackAt(index: number): void {
               <i v-if="i === queueIndex" class="pi pi-volume-up playing-dot"></i>
               <span v-else>{{ i + 1 }}</span>
             </span>
-            <img
-              v-if="track.cover"
-              :src="track.cover"
-              class="playlist-cover"
-              alt=""
-            />
+            <img v-if="track.cover" :src="track.cover" class="playlist-cover" alt="" />
             <div v-else class="playlist-cover-placeholder">
               <i class="pi pi-wave-pulse" style="font-size: 12px; color: #bbb"></i>
             </div>
@@ -123,7 +127,11 @@ function playTrackAt(index: number): void {
     </Transition>
 
     <!-- PlayerBar 主体 -->
-    <div class="player-bar" :class="{ 'player-bar-glass': glass }" :style="{ '--accent-color': dominantColor }">
+    <div
+      class="player-bar"
+      :class="{ 'player-bar-glass': glass }"
+      :style="{ '--accent-color': dominantColor }"
+    >
       <!-- 左侧 -->
       <div class="player-left">
         <img
@@ -194,12 +202,22 @@ function playTrackAt(index: number): void {
               <span class="volume-drawer-val">{{ Math.round(volume * 100) }}</span>
             </div>
           </Transition>
-          <button class="icon-btn" :class="{ active: volumeOpen }" title="音量" @click="toggleVolume">
+          <button
+            class="icon-btn"
+            :class="{ active: volumeOpen }"
+            title="音量"
+            @click="toggleVolume"
+          >
             <i class="pi pi-volume-up"></i>
           </button>
         </div>
 
-        <button class="icon-btn" :class="{ active: playlistOpen }" title="播放列表" @click="togglePlaylist">
+        <button
+          class="icon-btn"
+          :class="{ active: playlistOpen }"
+          title="播放列表"
+          @click="togglePlaylist"
+        >
           <i class="pi pi-list"></i>
         </button>
 
@@ -220,11 +238,18 @@ function playTrackAt(index: number): void {
                     <span class="toggle-knob"></span>
                   </button>
                 </div>
-                <p class="more-item-desc">绕过 Windows 混音器，直通音频设备，开启后系统内其他应用将无法同时播放音频</p>
+                <p class="more-item-desc">
+                  绕过 Windows 混音器，直通音频设备，开启后系统内其他应用将无法同时播放音频
+                </p>
               </div>
             </div>
           </Transition>
-          <button class="icon-btn" :class="{ active: moreOpen }" title="更多设置" @click="toggleMore">
+          <button
+            class="icon-btn"
+            :class="{ active: moreOpen }"
+            title="更多设置"
+            @click="toggleMore"
+          >
             <i class="pi pi-ellipsis-h"></i>
           </button>
         </div>
@@ -245,10 +270,14 @@ function playTrackAt(index: number): void {
 
 /* ===== Upward Drawer Transition ===== */
 .drawer-up-enter-active {
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
 }
 .drawer-up-leave-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 .drawer-up-enter-from,
 .drawer-up-leave-to {
@@ -330,10 +359,14 @@ function playTrackAt(index: number): void {
 }
 
 .volume-drawer-enter-active {
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
 }
 .volume-drawer-leave-active {
-  transition: opacity 0.15s ease, transform 0.15s ease;
+  transition:
+    opacity 0.15s ease,
+    transform 0.15s ease;
 }
 .volume-drawer-enter-from,
 .volume-drawer-leave-to {
@@ -483,7 +516,10 @@ function playTrackAt(index: number): void {
   border-top: 1px solid #e8e8e8;
   padding: 0 24px;
   box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
-  transition: background 0.3s, border-color 0.3s, box-shadow 0.3s;
+  transition:
+    background 0.3s,
+    border-color 0.3s,
+    box-shadow 0.3s;
 }
 
 .player-bar-glass {
@@ -493,20 +529,50 @@ function playTrackAt(index: number): void {
   box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.15);
 }
 
-.player-bar-glass .player-title { color: #fff; }
-.player-bar-glass .player-artist { color: rgba(255, 255, 255, 0.7); }
-.player-bar-glass .ctrl-btn { color: rgba(255, 255, 255, 0.8); }
-.player-bar-glass .ctrl-btn:hover { background: rgba(255, 255, 255, 0.1); }
-.player-bar-glass .btn-play:hover { background: var(--accent-color, #1a73e8); }
-.player-bar-glass .mode-btn-right { color: rgba(255, 255, 255, 0.6); }
-.player-bar-glass .mode-btn-right img { opacity: 0.55; }
-.player-bar-glass .time-label { color: rgba(255, 255, 255, 0.5); }
-.player-bar-glass .player-cover-placeholder { background: rgba(255, 255, 255, 0.1); }
-.player-bar-glass .player-cover-placeholder:hover { background: rgba(255, 255, 255, 0.18); }
-.player-bar-glass .player-cover-placeholder i { color: rgba(255, 255, 255, 0.4); }
-.player-bar-glass .icon-btn { color: rgba(255, 255, 255, 0.6); }
-.player-bar-glass .icon-btn:hover { background: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.9); }
-.player-bar-glass .icon-btn.active { color: var(--accent-color, #1a73e8); background: rgba(26, 115, 232, 0.15); }
+.player-bar-glass .player-title {
+  color: #fff;
+}
+.player-bar-glass .player-artist {
+  color: rgba(255, 255, 255, 0.7);
+}
+.player-bar-glass .ctrl-btn {
+  color: rgba(255, 255, 255, 0.8);
+}
+.player-bar-glass .ctrl-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.player-bar-glass .btn-play:hover {
+  background: var(--accent-color, #1a73e8);
+}
+.player-bar-glass .mode-btn-right {
+  color: rgba(255, 255, 255, 0.6);
+}
+.player-bar-glass .mode-btn-right img {
+  opacity: 0.55;
+}
+.player-bar-glass .time-label {
+  color: rgba(255, 255, 255, 0.5);
+}
+.player-bar-glass .player-cover-placeholder {
+  background: rgba(255, 255, 255, 0.1);
+}
+.player-bar-glass .player-cover-placeholder:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+.player-bar-glass .player-cover-placeholder i {
+  color: rgba(255, 255, 255, 0.4);
+}
+.player-bar-glass .icon-btn {
+  color: rgba(255, 255, 255, 0.6);
+}
+.player-bar-glass .icon-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+}
+.player-bar-glass .icon-btn.active {
+  color: var(--accent-color, #1a73e8);
+  background: rgba(26, 115, 232, 0.15);
+}
 
 .player-bar-glass :deep(.p-slider) {
   background: color-mix(in srgb, var(--accent-color, #1a73e8) 12%, transparent);
@@ -528,16 +594,23 @@ function playTrackAt(index: number): void {
   max-width: 300px;
 }
 .player-cover {
-  width: 48px; height: 48px;
+  width: 48px;
+  height: 48px;
   border-radius: 6px;
   object-fit: cover;
   flex-shrink: 0;
   cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition:
+    transform 0.15s,
+    box-shadow 0.15s;
 }
-.player-cover:hover { transform: scale(1.08); box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15); }
+.player-cover:hover {
+  transform: scale(1.08);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
 .player-cover-placeholder {
-  width: 48px; height: 48px;
+  width: 48px;
+  height: 48px;
   border-radius: 6px;
   background: #f5f5f5;
   display: flex;
@@ -547,82 +620,170 @@ function playTrackAt(index: number): void {
   cursor: pointer;
   transition: background 0.15s;
 }
-.player-cover-placeholder:hover { background: #eee; }
-.player-track-info { overflow: hidden; min-width: 0; }
+.player-cover-placeholder:hover {
+  background: #eee;
+}
+.player-track-info {
+  overflow: hidden;
+  min-width: 0;
+}
 .player-title {
-  font-size: 14px; font-weight: 500; color: #1a1a1a;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 14px;
+  font-weight: 500;
+  color: #1a1a1a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .player-artist {
-  font-size: 12px; color: #999; margin-top: 2px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: 12px;
+  color: #999;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ===== Player Center ===== */
 .player-center {
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  flex: 1; max-width: 600px; margin: 0 40px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  max-width: 600px;
+  margin: 0 40px;
 }
-.player-controls { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+.player-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 6px;
+}
 .ctrl-btn {
-  display: flex; align-items: center; justify-content: center;
-  border: none; background: transparent; cursor: pointer;
-  padding: 6px; border-radius: 50%; transition: background 0.15s; color: #555;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 50%;
+  transition: background 0.15s;
+  color: #555;
 }
-.ctrl-btn:hover { background: #f0f0f0; }
-.ctrl-btn img { width: 25px; height: 25px; }
+.ctrl-btn:hover {
+  background: #f0f0f0;
+}
+.ctrl-btn img {
+  width: 25px;
+  height: 25px;
+}
 .btn-play {
-  width: 44px; height: 44px;
-  background: var(--accent-color, #1a73e8); color: #fff; padding: 10px;
+  width: 44px;
+  height: 44px;
+  background: var(--accent-color, #1a73e8);
+  color: #fff;
+  padding: 10px;
   transition: transform 0.15s;
 }
-.btn-play:hover { background: var(--accent-color, #1a73e8); transform: scale(1.08); }
-.btn-play img { width: 22px; height: 22px; filter: brightness(0) invert(1); }
+.btn-play:hover {
+  background: var(--accent-color, #1a73e8);
+  transform: scale(1.08);
+}
+.btn-play img {
+  width: 22px;
+  height: 22px;
+  filter: brightness(0) invert(1);
+}
 
 /* ===== Progress ===== */
-.progress-area { display: flex; align-items: center; gap: 10px; width: 100%; }
-.time-label {
-  font-size: 11px; color: #999; min-width: 36px;
-  font-variant-numeric: tabular-nums; text-align: center;
+.progress-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
 }
-.progress-slider { flex: 1; }
+.time-label {
+  font-size: 11px;
+  color: #999;
+  min-width: 36px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.progress-slider {
+  flex: 1;
+}
 .progress-slider :deep(.p-slider) {
   background: color-mix(in srgb, var(--accent-color, #1a73e8) 18%, transparent);
   padding: 14px 0;
   margin: -14px 0;
   background-clip: content-box;
 }
-.progress-slider :deep(.p-slider-range) { background: var(--accent-color, #1a73e8); }
-.progress-slider :deep(.p-slider-handle) { opacity: 0; pointer-events: none; }
+.progress-slider :deep(.p-slider-range) {
+  background: var(--accent-color, #1a73e8);
+}
+.progress-slider :deep(.p-slider-handle) {
+  opacity: 0;
+  pointer-events: none;
+}
 
 /* ===== Player Right ===== */
 .player-right {
-  display: flex; align-items: center; gap: 6px;
-  min-width: 160px; justify-content: flex-end;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 160px;
+  justify-content: flex-end;
 }
 
 .mode-btn-right {
-  width: 32px; height: 32px;
+  width: 32px;
+  height: 32px;
   padding: 3px;
-  display: flex; align-items: center; justify-content: center;
-  border: none; background: transparent; cursor: pointer;
-  border-radius: 50%; transition: background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: background 0.15s;
   color: #999;
   flex-shrink: 0;
 }
-.mode-btn-right:hover { background: #f0f0f0; }
-.mode-btn-right img { width: 22px; height: 22px; opacity: 0.45; }
+.mode-btn-right:hover {
+  background: #f0f0f0;
+}
+.mode-btn-right img {
+  width: 22px;
+  height: 22px;
+  opacity: 0.45;
+}
 
 .icon-btn {
-  display: flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px;
-  border: none; background: transparent; cursor: pointer;
-  border-radius: 50%; font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 50%;
+  font-size: 14px;
   color: #888;
-  transition: background 0.15s, color 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
-.icon-btn:hover { background: #f0f0f0; color: #555; }
-.icon-btn.active { color: var(--accent-color, #1a73e8); }
+.icon-btn:hover {
+  background: #f0f0f0;
+  color: #555;
+}
+.icon-btn.active {
+  color: var(--accent-color, #1a73e8);
+}
 
 /* ===== More Drawer ===== */
 .more-anchor {

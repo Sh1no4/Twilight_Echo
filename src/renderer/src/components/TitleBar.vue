@@ -30,7 +30,16 @@ function close(): void {
   <div class="title-bar drag-region" :class="{ 'title-bar-glass': glass }">
     <div v-if="!glass || streaming" class="title-bar-start no-drag">
       <button class="menu-btn" title="菜单" @click="$emit('toggleMenu')">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <line x1="3" y1="6" x2="21" y2="6" />
           <line x1="3" y1="12" x2="21" y2="12" />
           <line x1="3" y1="18" x2="21" y2="18" />
@@ -39,8 +48,18 @@ function close(): void {
       <button class="settings-btn" title="设置" @click="$emit('settings')">
         <i class="pi pi-cog"></i>
       </button>
-      <button v-if="streaming" class="login-btn" :title="isLoggedIn ? profile?.nickname || '个人详情' : '网易云登录'" @click="$emit('login')">
-        <img v-if="isLoggedIn && profile?.avatarUrl" :src="profile.avatarUrl" class="user-avatar" alt="" />
+      <button
+        v-if="streaming"
+        class="login-btn"
+        :title="isLoggedIn ? profile?.nickname || '个人详情' : '网易云登录'"
+        @click="$emit('login')"
+      >
+        <img
+          v-if="isLoggedIn && profile?.avatarUrl"
+          :src="profile.avatarUrl"
+          class="user-avatar"
+          alt=""
+        />
         <i v-else class="pi pi-user"></i>
       </button>
     </div>
@@ -245,7 +264,9 @@ function close(): void {
   color: #333;
   font-size: 16px;
   cursor: pointer;
-  transition: background 0.15s, color 0.3s;
+  transition:
+    background 0.15s,
+    color 0.3s;
 }
 
 .title-bar-glass .control-btn {

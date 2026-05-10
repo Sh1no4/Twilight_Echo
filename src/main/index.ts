@@ -9,17 +9,36 @@ import { parseFile } from 'music-metadata'
 import { MpvManager } from './mpvManager'
 
 const SUPPORTED_EXTENSIONS = [
-  '.mp3', '.flac', '.wav', '.aac', '.ogg', '.wma', '.m4a',
-  '.aiff', '.aif', '.opus', '.webm', '.alac', '.ape', '.wv',
-  '.dsf', '.dff'
+  '.mp3',
+  '.flac',
+  '.wav',
+  '.aac',
+  '.ogg',
+  '.wma',
+  '.m4a',
+  '.aiff',
+  '.aif',
+  '.opus',
+  '.webm',
+  '.alac',
+  '.ape',
+  '.wv',
+  '.dsf',
+  '.dff'
 ]
 
 const COVER_NAMES = [
-  'cover.jpg', 'cover.png', 'cover.webp',
-  'folder.jpg', 'folder.png',
-  'album.jpg', 'album.png',
-  'front.jpg', 'front.png',
-  'artwork.jpg', 'artwork.png'
+  'cover.jpg',
+  'cover.png',
+  'cover.webp',
+  'folder.jpg',
+  'folder.png',
+  'album.jpg',
+  'album.png',
+  'front.jpg',
+  'front.png',
+  'artwork.jpg',
+  'artwork.png'
 ]
 
 const coverCache = new Map<string, string | null>()
@@ -36,7 +55,9 @@ function findCoverInDir(dir: string): string | null {
         const dataUrl = `data:${mime};base64,${data.toString('base64')}`
         coverCache.set(dir, dataUrl)
         return dataUrl
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
     }
   }
   coverCache.set(dir, null)
@@ -95,13 +116,17 @@ async function collectFilesAsync(dirPath: string): Promise<FileEntry[]> {
             })
           }
         }
-      } catch { /* skip */ }
+      } catch {
+        /* skip */
+      }
       // Yield to event loop every few files
       if (results.length % 100 === 0) {
-        await new Promise(resolve => setImmediate(resolve))
+        await new Promise((resolve) => setImmediate(resolve))
       }
     }
-  } catch { /* skip */ }
+  } catch {
+    /* skip */
+  }
   return results
 }
 
@@ -165,23 +190,26 @@ async function parseTrack(file: FileEntry): Promise<unknown> {
   }
 }
 
-async function scanDirectory(dirPath: string, onProgress?: (current: number, total: number) => void): Promise<unknown[]> {
+async function scanDirectory(
+  dirPath: string,
+  onProgress?: (current: number, total: number) => void
+): Promise<unknown[]> {
   const files = await collectFilesAsync(dirPath)
   const total = files.length
   const results: unknown[] = []
   const batchSize = 10
-  
+
   for (let i = 0; i < files.length; i += batchSize) {
     const batch = files.slice(i, i + batchSize)
     const batchResults = await Promise.all(batch.map(parseTrack))
     results.push(...batchResults)
-    
+
     if (onProgress) {
       onProgress(results.length, total)
     }
-    
+
     // Small delay to keep UI responsive
-    await new Promise(resolve => setTimeout(resolve, 0))
+    await new Promise((resolve) => setTimeout(resolve, 0))
   }
 
   return results
@@ -306,14 +334,17 @@ function setupMpvIpc(): void {
   })
 
   ipcMain.handle('mpv:getExclusiveMode', async () => {
-    return (await requireMpv().getExclusiveMode())
+    return await requireMpv().getExclusiveMode()
   })
 
-  mpvManager.start().then(() => {
-    console.log('[mpv] 启动成功')
-  }).catch((err: Error) => {
-    console.error('[mpv]', err.message)
-  })
+  mpvManager
+    .start()
+    .then(() => {
+      console.log('[mpv] 启动成功')
+    })
+    .catch((err: Error) => {
+      console.error('[mpv]', err.message)
+    })
 
   ipcMain.handle('ncm:getPort', () => NCM_API_PORT)
 
@@ -372,7 +403,7 @@ app.whenReady().then(() => {
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
   })
-  
+
   ipcMain.handle('shell:showItemInFolder', async (_event, filePath: string) => {
     shell.showItemInFolder(filePath)
   })

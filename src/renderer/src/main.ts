@@ -8,8 +8,8 @@ import Aura from '@primeuix/themes/aura'
 const app = createApp(App)
 
 app.use(PrimeVue, {
-frame: false, 
-    theme: {
+  frame: false,
+  theme: {
     preset: Aura
   }
 })

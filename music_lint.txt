@@ -1,0 +1,8 @@
+﻿
+D:\Project\Twilight_Echo\Twilight_Echo\src\renderer\src\stores\useMusicStore.ts
+    8:8   error    Missing return type on function  @typescript-eslint/explicit-function-return-type
+  129:58  warning  Replace `f` with `(f)`           prettier/prettier
+
+鉁?2 problems (1 error, 1 warning)
+  0 errors and 1 warning potentially fixable with the `--fix` option.
+

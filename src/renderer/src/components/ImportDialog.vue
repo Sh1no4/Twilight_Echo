@@ -20,7 +20,7 @@ let cleanupProgress: (() => void) | null = null
 
 const newlyAddedFolders = ref<string[]>([])
 
-async function handleAddNewFolder() {
+async function handleAddNewFolder(): Promise<void> {
   const path = await window.api.dialog.openFolder()
   if (path && !scannedFolders.value.includes(path)) {
     addFolder(path)
@@ -29,7 +29,7 @@ async function handleAddNewFolder() {
   }
 }
 
-function toggleFolder(path: string) {
+function toggleFolder(path: string): void {
   if (selectedFolders.value.has(path)) {
     selectedFolders.value.delete(path)
   } else {
@@ -37,19 +37,19 @@ function toggleFolder(path: string) {
   }
 }
 
-async function startScan() {
+async function startScan(): Promise<void> {
   if (isScanning.value) return
-  
+
   const foldersToScan = Array.from(selectedFolders.value)
-    
+
   if (foldersToScan.length === 0) {
     alert('请选择至少一个文件夹进行扫描')
     return
   }
-  
+
   isScanning.value = true
   progress.value = { current: 0, total: 0 }
-  
+
   try {
     for (const folder of foldersToScan) {
       const tracks = await window.api.fs.scanMusicFiles(folder)
@@ -60,11 +60,11 @@ async function startScan() {
           const batch = (tracks as Track[]).slice(i, i + batchSize)
           await addTracks(batch)
           // Yield to allow UI updates
-          await new Promise(resolve => setTimeout(resolve, 50))
+          await new Promise((resolve) => setTimeout(resolve, 50))
         }
       }
     }
-    
+
     // Save once at the end
     await saveLibrary()
     newlyAddedFolders.value = []
@@ -78,7 +78,7 @@ async function startScan() {
 }
 
 onMounted(() => {
-  scannedFolders.value.forEach(f => selectedFolders.value.add(f))
+  scannedFolders.value.forEach((f) => selectedFolders.value.add(f))
   cleanupProgress = window.api.fs.onScanProgress((data) => {
     progress.value = data
   })
@@ -93,15 +93,14 @@ onUnmounted(() => {
   <Transition name="fade">
     <div v-if="show" class="modal-overlay" @click.self="emit('close')">
       <div class="import-dialog">
-        <div class="dialog-header">
-        </div>
-        
+        <div class="dialog-header"></div>
+
         <div class="dialog-content">
           <div class="folder-list-section">
             <div class="section-header">
               <span class="section-title">已选文件夹</span>
             </div>
-            
+
             <div class="folder-list">
               <div v-if="scannedFolders.length === 0" class="empty-folders">
                 暂无文件夹，请点击下方按钮添加
@@ -109,30 +108,41 @@ onUnmounted(() => {
               <div v-for="folder in scannedFolders" :key="folder" class="folder-item">
                 <i class="pi pi-folder"></i>
                 <span class="folder-path" :title="folder">{{ folder }}</span>
-                <input 
-                  type="checkbox" 
-                  :checked="selectedFolders.has(folder)" 
-                  @change="toggleFolder(folder)"
+                <input
+                  type="checkbox"
+                  :checked="selectedFolders.has(folder)"
                   :disabled="isScanning"
+                  @change="toggleFolder(folder)"
                 />
               </div>
             </div>
           </div>
-          
+
           <div v-if="isScanning" class="progress-section">
             <div class="progress-info">
               <span>正在扫描...</span>
               <span>{{ progress.current }} / {{ progress.total }}</span>
             </div>
             <div class="progress-bar-bg">
-              <div class="progress-bar-fill" :style="{ width: (progress.total > 0 ? (progress.current / progress.total * 100) : 0) + '%' }"></div>
+              <div
+                class="progress-bar-fill"
+                :style="{
+                  width: (progress.total > 0 ? (progress.current / progress.total) * 100 : 0) + '%'
+                }"
+              ></div>
             </div>
           </div>
         </div>
-        
+
         <div class="dialog-footer">
-          <button class="btn-cancel" @click="handleAddNewFolder" :disabled="isScanning">添加文件夹</button>
-          <button class="btn-start" @click="startScan" :disabled="isScanning || selectedFolders.size === 0">
+          <button class="btn-cancel" :disabled="isScanning" @click="handleAddNewFolder">
+            添加文件夹
+          </button>
+          <button
+            class="btn-start"
+            :disabled="isScanning || selectedFolders.size === 0"
+            @click="startScan"
+          >
             {{ isScanning ? '正在扫描...' : '重新扫描' }}
           </button>
         </div>
@@ -351,10 +361,12 @@ onUnmounted(() => {
   cursor: not-allowed;
 }
 
-.fade-enter-active, .fade-leave-active {
+.fade-enter-active,
+.fade-leave-active {
   transition: opacity 0.2s ease;
 }
-.fade-enter-from, .fade-leave-to {
+.fade-enter-from,
+.fade-leave-to {
   opacity: 0;
 }
 </style>

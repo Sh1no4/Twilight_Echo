@@ -78,7 +78,9 @@ const activeTab = ref<TabKey>('general')
               <span class="toggle-knob"></span>
             </button>
           </div>
-          <p class="setting-item-desc">绕过 Windows 混音器，直通音频设备。开启后系统内其他应用将无法同时播放音频。</p>
+          <p class="setting-item-desc">
+            绕过 Windows 混音器，直通音频设备。开启后系统内其他应用将无法同时播放音频。
+          </p>
         </div>
         <div class="setting-item">
           <div class="setting-item-header">

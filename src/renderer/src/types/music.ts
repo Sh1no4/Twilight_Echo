@@ -21,7 +21,20 @@ export interface Track {
 }
 
 export const SUPPORTED_EXTENSIONS = [
-  '.mp3', '.flac', '.wav', '.aac', '.ogg', '.wma', '.m4a',
-  '.aiff', '.aif', '.opus', '.webm', '.alac', '.ape', '.wv',
-  '.dsf', '.dff'
+  '.mp3',
+  '.flac',
+  '.wav',
+  '.aac',
+  '.ogg',
+  '.wma',
+  '.m4a',
+  '.aiff',
+  '.aif',
+  '.opus',
+  '.webm',
+  '.alac',
+  '.ape',
+  '.wv',
+  '.dsf',
+  '.dff'
 ]

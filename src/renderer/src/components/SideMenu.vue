@@ -30,9 +30,7 @@ const menuItems: MenuItem[] = [
     key: 'allSongs',
     label: '所有歌曲',
     icon: 'pi pi-wave-pulse',
-    children: [
-      { key: 'all', label: '全部' }
-    ]
+    children: [{ key: 'all', label: '全部' }]
   },
   {
     key: 'artists',
@@ -62,10 +60,13 @@ const showImportDialog = ref(false)
 const { artists, albums, playlists } = useMusicStore()
 const { currentTrack } = usePlayerStore()
 
-const menuBottom = computed(() => currentTrack.value ? '72px' : '0')
+const menuBottom = computed(() => (currentTrack.value ? '72px' : '0'))
 
 function buildArtistChildren(): SubItem[] {
-  return artists.value.map((a) => ({ key: `artist:${a.name}`, label: `${a.name} (${a.trackCount})` }))
+  return artists.value.map((a) => ({
+    key: `artist:${a.name}`,
+    label: `${a.name} (${a.trackCount})`
+  }))
 }
 
 function buildAlbumChildren(): SubItem[] {
@@ -73,7 +74,10 @@ function buildAlbumChildren(): SubItem[] {
 }
 
 function buildPlaylistChildren(): SubItem[] {
-  const items: SubItem[] = playlists.value.map((p) => ({ key: `playlist:${p.name}`, label: p.name }))
+  const items: SubItem[] = playlists.value.map((p) => ({
+    key: `playlist:${p.name}`,
+    label: p.name
+  }))
   items.push({ key: 'addFolder', label: '添加文件夹' })
   return items
 }
@@ -81,10 +85,13 @@ function buildPlaylistChildren(): SubItem[] {
 function selectItem(key: string): void {
   activeKey.value = key
   const children =
-    key === 'artists' ? buildArtistChildren() :
-    key === 'albums' ? buildAlbumChildren() :
-    key === 'playlists' ? buildPlaylistChildren() :
-    menuItems.find((m) => m.key === key)?.children ?? []
+    key === 'artists'
+      ? buildArtistChildren()
+      : key === 'albums'
+        ? buildAlbumChildren()
+        : key === 'playlists'
+          ? buildPlaylistChildren()
+          : (menuItems.find((m) => m.key === key)?.children ?? [])
 
   if (children.length > 0) {
     activeChildKey.value = children[0].key
@@ -116,11 +123,17 @@ async function handleImportClick(): Promise<void> {
       <div class="menu-bottom">
         <div class="menu-separator"></div>
         <div class="menu-item menu-item-streaming" @click="emit('enterStreaming')">
-          <i class="pi pi-cloud" style="font-size: 16px; color: #666; width: 20px; text-align: center; flex-shrink: 0"></i>
+          <i
+            class="pi pi-cloud"
+            style="font-size: 16px; color: #666; width: 20px; text-align: center; flex-shrink: 0"
+          ></i>
           <span class="item-label">流媒体</span>
         </div>
         <div class="menu-item menu-item-import" @click="handleImportClick()">
-          <i class="pi pi-plus" style="font-size: 16px; color: #666; width: 20px; text-align: center; flex-shrink: 0"></i>
+          <i
+            class="pi pi-plus"
+            style="font-size: 16px; color: #666; width: 20px; text-align: center; flex-shrink: 0"
+          ></i>
           <span class="item-label">导入歌曲</span>
         </div>
         <span v-if="scanning" class="scanning-text">正在扫描...</span>

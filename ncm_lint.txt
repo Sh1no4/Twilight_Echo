@@ -1,0 +1,37 @@
+﻿
+D:\Project\Twilight_Echo\Twilight_Echo\src\renderer\src\stores\useNcmStore.ts
+   53:46  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+   61:17  warning  Replace `?.map?.((item)路=>路item?.name).filter(Boolean)` with `鈴幝仿仿仿仿仿?.map?.((item)路=>路item?.name)鈴幝仿仿仿仿仿?filter(Boolean)鈴幝仿仿仿仿仿穈                                                  prettier/prettier
+   84:53  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+   93:48  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+   93:70  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+   99:44  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+   99:66  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+  109:46  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+  116:16  warning  Replace `鈴幝仿仿仿?map((id)路=>路Number(id))鈴幝仿仿仿穈 with `.map((id)路=>路Number(id))`                                                                                                       prettier/prettier
+  121:51  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+  133:51  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+  137:68  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+  143:83  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+  158:12  warning  Insert `(鈴幝仿仿仿仿仿穈                                                                                                                                                                  prettier/prettier
+  159:3   warning  Insert `路路)鈴幝仿穈                                                                                                                                                                    prettier/prettier
+  164:8   error    Missing return type on function                                                                                                                                                    @typescript-eslint/explicit-function-return-type
+  165:38  warning  Replace `路userId:路number;路nickname:路string;路avatarUrl:路string;路signature?:路string` with `鈴幝仿仿仿穟serId:路number鈴幝仿仿仿穘ickname:路string鈴幝仿仿仿穉vatarUrl:路string鈴幝仿仿仿穝ignature?:路string鈴幝穈  prettier/prettier
+  170:36  warning  Replace `await路fetchUserSignature(prof.userId` with `(await路fetchUserSignature(prof.userId)`                                                                                       prettier/prettier
+  186:28  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+  279:46  warning  Replace ``/playlist/track/all?id=${encodeURIComponent(String(playlistId))}`` with `鈴幝仿仿仿仿仿穈/playlist/track/all?id=${encodeURIComponent(String(playlistId))}`鈴幝仿仿仿穈                 prettier/prettier
+  282:44  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+  284:48  warning  Replace ``/playlist/detail?id=${encodeURIComponent(String(playlistId))}`` with `鈴幝仿仿仿仿仿仿仿穈/playlist/detail?id=${encodeURIComponent(String(playlistId))}`鈴幝仿仿仿仿仿穈                   prettier/prettier
+  292:43  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+  331:33  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+  389:44  warning  Replace `路?路data.data路:路Array.isArray(data.result)路?路data.result` with `鈴幝仿仿仿仿仿?路data.data鈴幝仿仿仿仿仿?路Array.isArray(data.result)鈴幝仿仿仿仿仿仿仿?路data.result鈴幝仿仿仿仿仿仿穈                       prettier/prettier
+  396:46  warning  Replace `路?路data.result路:路Array.isArray(data.data)路?路data.data` with `鈴幝仿仿仿仿仿?路data.result鈴幝仿仿仿仿仿?路Array.isArray(data.data)鈴幝仿仿仿仿仿仿仿?路data.data鈴幝仿仿仿仿仿仿穈                           prettier/prettier
+  404:54  warning  Replace `路?路data.recommend路:路Array.isArray(data.data)路?路data.data` with `鈴幝仿仿仿仿仿仿仿?路data.recommend鈴幝仿仿仿仿仿仿仿?路Array.isArray(data.data)鈴幝仿仿仿仿仿仿仿仿仿?路data.data鈴幝仿仿仿仿仿仿仿仿穈             prettier/prettier
+  405:35  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+  437:33  error    Unexpected any. Specify a different type                                                                                                                                           @typescript-eslint/no-explicit-any
+  437:41  warning  Delete `鈴幝仿仿仿仿穈                                                                                                                                                                    prettier/prettier
+  439:18  warning  Delete `鈴幝仿仿仿仿穈                                                                                                                                                                    prettier/prettier
+
+鉁?31 problems (18 errors, 13 warnings)
+  0 errors and 13 warnings potentially fixable with the `--fix` option.
+

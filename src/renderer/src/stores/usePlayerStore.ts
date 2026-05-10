@@ -1,4 +1,4 @@
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, type Ref, type ComputedRef } from 'vue'
 import type { Track } from '../types/music'
 import { extractDominantColor } from '../utils/colorExtractor'
 import { useNcmStore } from './useNcmStore'
@@ -48,7 +48,7 @@ watch(
   }
 )
 
-let cleanupFns: (() => void)[] = []
+const cleanupFns: (() => void)[] = []
 let listenersSetup = false
 
 function getTrackSource(track: Track): 'local' | 'ncm' {
@@ -227,7 +227,31 @@ const progress = computed(() => {
   return (currentTime.value / duration.value) * 100
 })
 
-export function usePlayerStore() {
+export function usePlayerStore(): {
+  currentTrack: Ref<Track | null>
+  dominantColor: Ref<string>
+  isPlaying: Ref<boolean>
+  isLoading: Ref<boolean>
+  currentTime: Ref<number>
+  duration: Ref<number>
+  volume: Ref<number>
+  progress: ComputedRef<number>
+  queue: Ref<Track[]>
+  queueIndex: Ref<number>
+  playMode: Ref<PlayMode>
+  mpvReady: Ref<boolean>
+  mpvError: Ref<string | null>
+  exclusiveMode: Ref<boolean>
+  cyclePlayMode: () => void
+  playTrack: (track: Track, trackList?: Track[]) => void
+  togglePlay: () => Promise<void>
+  next: () => void
+  prev: () => void
+  seek: (time: number) => void
+  setVolume: (vol: number) => void
+  toggleExclusiveMode: () => Promise<void>
+  formatTime: (seconds: number) => string
+} {
   function playTrack(track: Track, trackList?: Track[]): void {
     if (trackList) {
       originalQueue.value = [...trackList]
