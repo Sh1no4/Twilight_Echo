@@ -1,10 +1,10 @@
 # Twilight Echo
 
-<img src="./assets/logo.png" style="margin-left:0px; width: 35%;" alt="logo" /><img src="./assets/icon.svg" style="margin-left: 500px; width: 20%;" alt="icon" />
+<img src="./assets/logo.png" style="margin-left:0px; width: 35%;" alt="logo" /><img src="./assets/icon.svg" style="float: right; width: 17%; margin-left: 20px; margin-bottom: 10px;" alt="icon" />
 
 > Twilight Echo 是一款现代的音乐播放器，有现代的UI和流媒体播放，本地播放功能。
 
-## 功能特性
+## **功能特性**
 
 - **本地音乐库管理**
   - 按歌曲、艺术家、专辑进行浏览
