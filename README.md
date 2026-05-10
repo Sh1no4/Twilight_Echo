@@ -1,6 +1,6 @@
 # Twilight Echo
 
-<img src="https://gitee.com/Pxasen/Pictures/raw/master/img/20260510130633955.png"  style="margin-left: 600px; zoom: 20%;" alt="icon" style="zoom:22%;" /><img src="https://gitee.com/Pxasen/Pictures/raw/master/img/20260510130701553.png" style="margin-left: 1400px; zoom: 20%;" alt="logo"  />
+<img src="./assets/logo.png" style="margin-left:0px; zoom: 22%;" alt="logo" /><img src="./assets/icon.svg"  style="margin-left: 2500px; zoom: 20%;" alt="icon" />
 
 > Twilight Echo 是一款现代的音乐播放器，有现代的UI和流媒体播放，本地播放功能。
 
