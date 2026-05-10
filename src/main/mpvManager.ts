@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-require-imports */
 /* eslint-disable no-control-regex */
 import { spawn, ChildProcess } from 'child_process'
 import * as net from 'net'

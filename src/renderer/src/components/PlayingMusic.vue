@@ -8,6 +8,13 @@ defineEmits<{
   back: []
 }>()
 
+// 视图模式：cover = 封面模式, lyrics = 歌词模式
+const viewMode = ref<'cover' | 'lyrics'>('cover')
+
+function toggleViewMode(): void {
+  viewMode.value = viewMode.value === 'cover' ? 'lyrics' : 'cover'
+}
+
 const bgSrc = ref(currentTrack.value?.cover ?? '')
 const bgOpacity = ref(1)
 const lyricsEl = ref<HTMLElement | null>(null)
@@ -122,36 +129,73 @@ watch(
     <!-- 液态玻璃叠加层 -->
     <div v-if="showCoverBg" class="glass-overlay" />
 
+    <!-- 小药丸切换按钮 -->
+    <div class="pill-toggle" @click="toggleViewMode">
+      <div class="pill-slider" :class="{ 'pill-right': viewMode === 'lyrics' }" />
+      <span class="pill-label" :class="{ active: viewMode === 'cover' }">封面</span>
+      <span class="pill-label" :class="{ active: viewMode === 'lyrics' }">歌词</span>
+    </div>
+
     <!-- 前景内容 -->
     <div class="playing-music-foreground">
       <div v-if="currentTrack" class="playing-music-content">
-        <!-- 左侧：封面 -->
-        <div class="cover-display">
-          <img v-if="currentTrack.cover" :src="currentTrack.cover" class="main-cover" alt="cover" />
-          <div v-else class="main-cover-placeholder">
-            <i class="pi pi-wave-pulse" style="font-size: 80px; color: #ccc"></i>
+        <!-- ========== 封面模式 ========== -->
+        <Transition name="mode-fade" mode="out-in">
+          <div v-if="viewMode === 'cover'" key="cover" class="cover-mode">
+            <div class="cover-mode-inner">
+              <!-- 左侧封面 -->
+              <div class="cover-mode-left">
+                <img
+                  v-if="currentTrack.cover"
+                  :src="currentTrack.cover"
+                  class="cover-mode-img"
+                  alt="cover"
+                />
+                <div v-else class="cover-mode-placeholder">
+                  <i
+                    class="pi pi-wave-pulse"
+                    style="font-size: 96px; color: rgba(255, 255, 255, 0.3)"
+                  ></i>
+                </div>
+              </div>
+              <!-- 右侧信息 -->
+              <div class="cover-mode-right">
+                <h1 class="cover-mode-title">{{ currentTrack.title }}</h1>
+                <p class="cover-mode-artist">{{ currentTrack.artist }}</p>
+                <p v-if="currentTrack.album" class="cover-mode-album">{{ currentTrack.album }}</p>
+              </div>
+            </div>
           </div>
-        </div>
 
-        <!-- 右侧：歌曲信息 + 歌词 -->
-        <div class="info-panel" :class="{ 'has-lyrics': lyricLines.length > 0 }">
-          <div class="track-info">
-            <h1 class="track-title">{{ currentTrack.title }}</h1>
-            <p class="track-artist">{{ currentTrack.artist }}</p>
-            <p class="track-album">{{ currentTrack.album }}</p>
-          </div>
+          <!-- ========== 歌词模式 ========== -->
+          <div v-else key="lyrics" class="lyrics-mode">
+            <!-- 左上角浮层：歌曲信息 -->
+            <div class="lyrics-left">
+              <span class="lyrics-now-playing">NOW PLAYING</span>
+            </div>
 
-          <div v-if="lyricLines.length > 0" ref="lyricsEl" class="lyrics-container">
-            <p
-              v-for="(line, i) in lyricLines"
-              :key="i"
-              class="lyric-line"
-              :class="{ active: i === activeLyricIndex }"
-            >
-              {{ line.text }}
-            </p>
+            <!-- 歌词：铺满全屏居中 -->
+            <div class="lyrics-right">
+              <div v-if="lyricLines.length > 0" ref="lyricsEl" class="lyrics-mode-container">
+                <p
+                  v-for="(line, i) in lyricLines"
+                  :key="i"
+                  class="lyric-line"
+                  :class="{ active: i === activeLyricIndex }"
+                >
+                  {{ line.text }}
+                </p>
+              </div>
+              <div v-else class="lyrics-mode-empty">
+                <i
+                  class="pi pi-wave-pulse"
+                  style="font-size: 40px; color: rgba(255, 255, 255, 0.15)"
+                ></i>
+                <p>暂无歌词</p>
+              </div>
+            </div>
           </div>
-        </div>
+        </Transition>
       </div>
     </div>
   </div>
@@ -201,6 +245,59 @@ watch(
   pointer-events: none;
 }
 
+/* ===== 小药丸切换按钮 ===== */
+.pill-toggle {
+  position: absolute;
+  top: 44px;
+  right: 24px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  padding: 3px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.2s;
+}
+
+.pill-toggle:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.pill-slider {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  height: calc(100% - 6px);
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 999px;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+}
+
+.pill-slider.pill-right {
+  transform: translateX(100%);
+}
+
+.pill-label {
+  position: relative;
+  z-index: 1;
+  padding: 4px 16px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.45);
+  transition: color 0.3s;
+  white-space: nowrap;
+}
+
+.pill-label.active {
+  color: #fff;
+}
+
 /* 前景内容层 */
 .playing-music-foreground {
   position: relative;
@@ -214,124 +311,252 @@ watch(
 .playing-music-content {
   flex: 1;
   display: flex;
+  overflow: hidden;
+}
+
+/* ===== 模式切换动画 ===== */
+.mode-fade-enter-active {
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+.mode-fade-leave-active {
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+.mode-fade-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.mode-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+/* ===== 封面模式 ===== */
+.cover-mode {
+  flex: 1;
+  display: flex;
   align-items: center;
-  padding: 0 80px 110px 120px;
-  gap: 100px;
+  justify-content: center;
+  padding-bottom: 72px;
 }
 
-/* 左侧封面 */
-.cover-display {
+.cover-mode-inner {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 80px;
+  padding: 0 120px 0 40px;
+  width: 100%;
+  max-width: 1080px;
+}
+
+/* 左侧封面列 */
+.cover-mode-left {
   flex-shrink: 0;
-  margin-left: 40px;
-  margin-top: 20px;
 }
 
-.main-cover {
-  width: min(34vw, 300px);
-  height: min(34vw, 300px);
-  border-radius: 12px;
+.cover-mode-img {
+  width: min(40vw, 400px);
+  height: min(40vw, 400px);
+  border-radius: 20px;
   object-fit: cover;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.25);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.45),
+    0 6px 20px rgba(0, 0, 0, 0.25);
 }
 
-.main-cover-placeholder {
-  width: min(28vw, 220px);
-  height: min(28vw, 220px);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.3);
+.cover-mode-placeholder {
+  width: min(40vw, 400px);
+  height: min(40vw, 400px);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.06);
   backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.3);
 }
 
-/* 右侧信息面板 */
-.info-panel {
+/* 右侧信息列 */
+.cover-mode-right {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 24px;
-  max-height: calc(100vh - 142px);
-  padding-left: 150px;
-  padding-top: 60px;
+  gap: 12px;
+  padding-left: 80px;
 }
 
-.info-panel.has-lyrics {
-  justify-content: flex-start;
-}
-
-.track-info {
-  flex-shrink: 0;
-}
-
-.track-title {
-  font-size: 28px;
-  font-weight: 700;
+.cover-mode-title {
+  font-size: 42px;
+  font-weight: 800;
   color: #fff;
-  margin: 0 0 8px 0;
+  margin: 0;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  letter-spacing: -0.5px;
+}
+
+.cover-mode-artist {
+  font-size: 24px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.75);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cover-mode-album {
+  font-size: 16px;
+  color: rgba(255, 255, 255, 0.4);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ===== 歌词模式 ===== */
+.lyrics-mode {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+/* 左上角浮层信息栏 */
+.lyrics-left {
+  position: absolute;
+  top: 28px;
+  left: 48px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 320px;
+  pointer-events: none;
+}
+
+.lyrics-now-playing {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.lyrics-big-title {
+  font-size: 38px;
+  font-weight: 800;
+  color: #fff;
+  margin: 4px 0 0 0;
+  line-height: 1.1;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  letter-spacing: -0.5px;
+}
+
+.lyrics-big-artist {
+  font-size: 20px;
+  font-weight: 400;
+  color: rgba(255, 255, 255, 0.75);
+  margin: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.track-artist {
-  font-size: 16px;
-  color: rgba(255, 255, 255, 0.8);
-  margin: 0 0 4px 0;
+.lyrics-big-album {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.4);
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.track-album {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.55);
-  margin: 0;
+/* 歌词全屏容器 */
+.lyrics-right {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 歌词区域 */
-.lyrics-container {
+.lyrics-mode-container {
   flex: 1;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(0, 0, 0, 0.3) 10%,
-    rgba(0, 0, 0, 1) 25%,
-    rgba(0, 0, 0, 1) 75%,
-    rgba(0, 0, 0, 0.3) 90%,
+    rgba(0, 0, 0, 0.3) 8%,
+    rgba(0, 0, 0, 1) 20%,
+    rgba(0, 0, 0, 1) 80%,
+    rgba(0, 0, 0, 0.3) 92%,
     transparent 100%
   );
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(0, 0, 0, 0.3) 10%,
-    rgba(0, 0, 0, 1) 25%,
-    rgba(0, 0, 0, 1) 75%,
-    rgba(0, 0, 0, 0.3) 90%,
+    rgba(0, 0, 0, 0.3) 8%,
+    rgba(0, 0, 0, 1) 20%,
+    rgba(0, 0, 0, 1) 80%,
+    rgba(0, 0, 0, 0.3) 92%,
     transparent 100%
   );
-  padding: 120px 0;
+  padding: 100px 60px;
   scroll-behavior: smooth;
 }
 
-.lyrics-container::-webkit-scrollbar {
+.lyrics-mode-container::-webkit-scrollbar {
   width: 0;
 }
 
 .lyric-line {
-  font-size: 15px;
-  color: rgba(255, 255, 255, 0.45);
-  line-height: 2.4;
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.35);
+  line-height: 2.6;
   margin: 0;
+  text-align: center;
   transition:
-    color 0.3s,
-    font-size 0.3s;
+    color 0.4s ease,
+    font-size 0.4s ease,
+    transform 0.4s ease;
+  transform: scale(1);
 }
 
 .lyric-line.active {
   color: #fff;
-  font-size: 17px;
+  font-size: 22px;
   font-weight: 600;
+  transform: scale(1.05);
+}
+
+/* 无歌词占位 */
+.lyrics-mode-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: rgba(255, 255, 255, 0.25);
+  font-size: 14px;
+}
+
+.lyrics-mode-empty p {
+  margin: 0;
 }
 </style>

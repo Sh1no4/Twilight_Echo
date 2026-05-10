@@ -6,6 +6,8 @@ export interface NcmProfile {
   nickname: string
   avatarUrl: string
   signature: string
+  follows: number
+  followeds: number
 }
 
 export interface NcmPlaylistSummary {
@@ -13,6 +15,22 @@ export interface NcmPlaylistSummary {
   name: string
   cover: string | null
   trackCount: number
+}
+
+export interface NcmArtistSummary {
+  id: number
+  name: string
+  picUrl: string | null
+  albumSize: number
+  musicSize: number
+}
+
+export interface NcmUserSummary {
+  id: number
+  name: string
+  picUrl: string | null
+  musicSize: number
+  userType: number
 }
 
 const isLoggedIn = ref(false)
@@ -42,6 +60,8 @@ export interface NcmStore {
     nickname: string
     avatarUrl: string
     signature?: string
+    follows?: number
+    followeds?: number
   }) => Promise<NcmProfile>
   checkLogin: () => Promise<boolean>
   setLogin: (prof: NcmProfile) => void
@@ -63,6 +83,20 @@ export interface NcmStore {
     limit?: number,
     offset?: number
   ) => Promise<{ tracks: Track[]; total: number }>
+  searchPlaylists: (
+    keywords: string,
+    limit?: number,
+    offset?: number
+  ) => Promise<{ playlists: NcmPlaylistSummary[]; total: number }>
+  searchArtists: (
+    keywords: string,
+    limit?: number,
+    offset?: number
+  ) => Promise<{ artists: NcmArtistSummary[]; total: number }>
+  fetchArtistTopSongs: (artistId: number) => Promise<Track[]>
+  fetchUserPlaylistsByUid: (uid: number) => Promise<NcmPlaylistSummary[]>
+  fetchUserFollows: (uid: number, limit?: number, offset?: number) => Promise<NcmUserSummary[]>
+  fetchUserFolloweds: (uid: number, limit?: number, offset?: number) => Promise<NcmUserSummary[]>
   likeTrack: (songId: number, like: boolean) => Promise<void>
   isTrackLiked: (ncmSongId: number | undefined) => boolean
   syncLikedIds: (tracks: Track[]) => void
@@ -193,14 +227,19 @@ async function ensureProfile(checkLogin: () => Promise<boolean>): Promise<NcmPro
   return profile.value
 }
 
-async function fetchUserSignature(userId: number): Promise<string> {
+async function fetchUserDetailInfo(
+  userId: number
+): Promise<{ signature: string; follows: number; followeds: number }> {
   try {
     const data = await requestAuthed(`/user/detail?uid=${userId}`)
-    return (
-      data.profile?.signature || data.userPoint?.signature || data.data?.profile?.signature || ''
-    )
+    return {
+      signature:
+        data.profile?.signature || data.userPoint?.signature || data.data?.profile?.signature || '',
+      follows: data.profile?.follows || 0,
+      followeds: data.profile?.followeds || 0
+    }
   } catch {
-    return ''
+    return { signature: '', follows: 0, followeds: 0 }
   }
 }
 
@@ -210,12 +249,21 @@ export function useNcmStore(): NcmStore {
     nickname: string
     avatarUrl: string
     signature?: string
+    follows?: number
+    followeds?: number
   }): Promise<NcmProfile> {
+    const detail =
+      prof.signature === undefined || prof.follows === undefined
+        ? await fetchUserDetailInfo(prof.userId)
+        : null
+
     return {
       userId: prof.userId,
       nickname: prof.nickname,
       avatarUrl: prof.avatarUrl,
-      signature: prof.signature ?? (await fetchUserSignature(prof.userId))
+      signature: prof.signature ?? detail?.signature ?? '',
+      follows: prof.follows ?? detail?.follows ?? 0,
+      followeds: prof.followeds ?? detail?.followeds ?? 0
     }
   }
 
@@ -503,6 +551,91 @@ export function useNcmStore(): NcmStore {
     return { tracks: songs.map(normalizeTrack), total }
   }
 
+  async function searchPlaylists(
+    keywords: string,
+    limit = 30,
+    offset = 0
+  ): Promise<{ playlists: NcmPlaylistSummary[]; total: number }> {
+    const data = await requestAuthed(
+      `/cloudsearch?keywords=${encodeURIComponent(keywords)}&type=1000&limit=${limit}&offset=${offset}`
+    )
+    const result = data.result || data.data?.result || {}
+    const playlists: Record<string, any>[] = Array.isArray(result.playlists) ? result.playlists : []
+    const total = typeof result.playlistCount === 'number' ? result.playlistCount : playlists.length
+    return { playlists: playlists.map(normalizePlaylist), total }
+  }
+
+  async function searchArtists(
+    keywords: string,
+    limit = 30,
+    offset = 0
+  ): Promise<{ artists: NcmArtistSummary[]; total: number }> {
+    const data = await requestAuthed(
+      `/cloudsearch?keywords=${encodeURIComponent(keywords)}&type=100&limit=${limit}&offset=${offset}`
+    )
+    const result = data.result || data.data?.result || {}
+    const artists: Record<string, any>[] = Array.isArray(result.artists) ? result.artists : []
+    const total = typeof result.artistCount === 'number' ? result.artistCount : artists.length
+    return {
+      artists: artists.map((item) => ({
+        id: Number(item.id),
+        name: item.name || '未知歌手',
+        picUrl: item.picUrl || item.img1v1Url || null,
+        albumSize: item.albumSize || 0,
+        musicSize: item.musicSize || 0
+      })),
+      total
+    }
+  }
+
+  async function fetchArtistTopSongs(artistId: number): Promise<Track[]> {
+    try {
+      const data = await requestAuthed(`/artist/top/song?id=${artistId}`)
+      if (data.songs && Array.isArray(data.songs) && data.songs.length > 0) {
+        return data.songs.map(normalizeTrack)
+      }
+    } catch {
+      // fallback
+    }
+    const data = await requestAuthed(`/artists?id=${artistId}`)
+    const hotSongs = Array.isArray(data.hotSongs) ? data.hotSongs : []
+    return hotSongs.map(normalizeTrack)
+  }
+
+  async function fetchUserPlaylistsByUid(uid: number): Promise<NcmPlaylistSummary[]> {
+    const data = await requestAuthed(`/user/playlist?uid=${uid}&limit=1000`)
+    const playlists = Array.isArray(data.playlist) ? data.playlist : []
+    return playlists.map(normalizePlaylist)
+  }
+
+  async function fetchUserFollows(uid: number, limit = 30, offset = 0): Promise<NcmUserSummary[]> {
+    const data = await requestAuthed(`/user/follows?uid=${uid}&limit=${limit}&offset=${offset}`)
+    const follows = Array.isArray(data.follow) ? data.follow : []
+    return follows.map((item) => ({
+      id: Number(item.userId),
+      name: item.nickname || '未知用户',
+      picUrl: item.avatarUrl || null,
+      musicSize: item.playlistCount || 0,
+      userType: item.userType || 0
+    }))
+  }
+
+  async function fetchUserFolloweds(
+    uid: number,
+    limit = 30,
+    offset = 0
+  ): Promise<NcmUserSummary[]> {
+    const data = await requestAuthed(`/user/followeds?uid=${uid}&limit=${limit}&offset=${offset}`)
+    const followeds = Array.isArray(data.followeds) ? data.followeds : []
+    return followeds.map((item) => ({
+      id: Number(item.userId),
+      name: item.nickname || '未知用户',
+      picUrl: item.avatarUrl || null,
+      musicSize: item.playlistCount || 0,
+      userType: item.userType || 0
+    }))
+  }
+
   async function likeTrack(songId: number, like: boolean): Promise<void> {
     await requestAuthed(`/like?id=${songId}&like=${String(like)}`)
     if (like) {
@@ -550,6 +683,12 @@ export function useNcmStore(): NcmStore {
     fetchPrivateContent,
     fetchLyric,
     searchSongs,
+    searchPlaylists,
+    searchArtists,
+    fetchArtistTopSongs,
+    fetchUserPlaylistsByUid,
+    fetchUserFollows,
+    fetchUserFolloweds,
     likeTrack,
     isTrackLiked,
     syncLikedIds

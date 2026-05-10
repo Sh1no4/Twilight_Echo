@@ -4,7 +4,7 @@ import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import ImportDialog from './ImportDialog.vue'
 
-const props = defineProps<{
+defineProps<{
   open: boolean
 }>()
 

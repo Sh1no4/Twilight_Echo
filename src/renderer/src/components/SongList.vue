@@ -95,7 +95,7 @@ function formatDuration(seconds: number): string {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
-function onRowClick(track: Track, _index: number, event: MouseEvent): void {
+function onRowClick(track: Track, event: MouseEvent): void {
   const target = event.target as HTMLElement
   if (target.closest('.btn-remove')) return
   playTrack(track, displayTracks.value)
@@ -369,7 +369,7 @@ watch(displayTracks, () => {
                 class="track-row"
                 :class="{ 'track-playing': currentTrack?.id === track.id }"
                 :style="{ height: rowHeight + 'px', display: 'flex' }"
-                @click="onRowClick(track, visibleRange.start + index, $event)"
+                @click="onRowClick(track, $event)"
                 @dblclick="onRowDblClick(track)"
                 @contextmenu="onContextMenu($event, track)"
               >

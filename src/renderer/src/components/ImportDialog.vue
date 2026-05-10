@@ -3,7 +3,7 @@ import { ref, onMounted, onUnmounted } from 'vue'
 import { useMusicStore } from '../stores/useMusicStore'
 import type { Track } from '../types/music'
 
-const props = defineProps<{
+defineProps<{
   show: boolean
 }>()
 

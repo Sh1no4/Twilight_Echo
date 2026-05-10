@@ -1,12 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import type { Track } from '../types/music'
-import { useNcmStore, type NcmPlaylistSummary } from '../stores/useNcmStore'
+import {
+  useNcmStore,
+  type NcmPlaylistSummary,
+  type NcmArtistSummary,
+  type NcmUserSummary
+} from '../stores/useNcmStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import Card from 'primevue/card'
 import Avatar from 'primevue/avatar'
 import Button from 'primevue/button'
 import Divider from 'primevue/divider'
+import Paginator, { type PageState } from 'primevue/paginator'
 
 interface RecSection {
   key: string
@@ -20,8 +26,11 @@ type DetailView =
   | { type: 'liked' }
   | { type: 'playlist'; playlist: NcmPlaylistSummary }
   | { type: 'rec'; section: RecSection }
+  | { type: 'artist'; artist: NcmArtistSummary }
+  | { type: 'user_list'; listType: 'follows' | 'followers'; users: NcmUserSummary[]; title: string }
+  | { type: 'user_playlists'; user: NcmUserSummary; playlists: NcmPlaylistSummary[] }
 
-const props = defineProps<{
+defineProps<{
   menuOpen: boolean
   hasPlayer: boolean
 }>()
@@ -29,6 +38,7 @@ const props = defineProps<{
 const activeTab = ref<StreamingTab>('home')
 const currentDetail = ref<DetailView | null>(null)
 const detailTracks = ref<Track[]>([])
+const detailUsers = ref<NcmUserSummary[]>([])
 const detailLoading = ref(false)
 const detailError = ref('')
 const likedCount = ref<number | null>(null)
@@ -69,7 +79,7 @@ const recSections = computed<RecSection[]>(() => [
   { key: 'radar', title: '私人雷达', tracks: privateContentSongs.value, icon: 'pi pi-send' }
 ])
 
-async function openRecSection(section: RecSection, _event: MouseEvent): Promise<void> {
+async function openRecSection(section: RecSection): Promise<void> {
   currentDetail.value = { type: 'rec', section }
   detailTracks.value = section.tracks
   detailLoading.value = false
@@ -104,6 +114,7 @@ const {
   likedPlaylist,
   userPlaylists,
   fetchUserLibrary,
+  fetchUserPlaylistsByUid,
   fetchPlaylistTracks,
   fetchLikedTracks,
   fetchRecommendSongs,
@@ -111,6 +122,11 @@ const {
   fetchPersonalFm,
   fetchPrivateContent,
   searchSongs,
+  searchPlaylists,
+  searchArtists,
+  fetchArtistTopSongs,
+  fetchUserFollows,
+  fetchUserFolloweds,
   likeTrack,
   isTrackLiked,
   syncLikedIds
@@ -118,8 +134,12 @@ const {
 
 // ===== Search =====
 const searchQuery = ref('')
+const searchType = ref<'songs' | 'playlists' | 'artists'>('songs')
 const searchResults = ref<Track[]>([])
+const searchPlaylistsResults = ref<NcmPlaylistSummary[]>([])
+const searchArtistsResults = ref<NcmArtistSummary[]>([])
 const searchTotal = ref(0)
+const searchOffset = ref(0)
 const searchLoading = ref(false)
 const searchError = ref('')
 const searchInputFocused = ref(false)
@@ -152,7 +172,10 @@ let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
 function clearSearch(): void {
   searchQuery.value = ''
   searchResults.value = []
+  searchPlaylistsResults.value = []
+  searchArtistsResults.value = []
   searchTotal.value = 0
+  searchOffset.value = 0
   searchLoading.value = false
   searchError.value = ''
 }
@@ -160,22 +183,39 @@ function clearSearch(): void {
 async function performSearch(keywords: string): Promise<void> {
   if (!keywords.trim()) {
     searchResults.value = []
+    searchPlaylistsResults.value = []
+    searchArtistsResults.value = []
     searchTotal.value = 0
     return
   }
   searchLoading.value = true
   searchError.value = ''
   try {
-    const { tracks, total } = await searchSongs(keywords.trim())
-    // Only apply if the query is still the same
-    if (searchQuery.value.trim() === keywords.trim()) {
-      searchResults.value = tracks
-      searchTotal.value = total
+    if (searchType.value === 'songs') {
+      const { tracks, total } = await searchSongs(keywords.trim(), 30, searchOffset.value)
+      if (searchQuery.value.trim() === keywords.trim() && searchType.value === 'songs') {
+        searchResults.value = tracks
+        searchTotal.value = total
+      }
+    } else if (searchType.value === 'playlists') {
+      const { playlists, total } = await searchPlaylists(keywords.trim(), 30, searchOffset.value)
+      if (searchQuery.value.trim() === keywords.trim() && searchType.value === 'playlists') {
+        searchPlaylistsResults.value = playlists
+        searchTotal.value = total
+      }
+    } else if (searchType.value === 'artists') {
+      const { artists, total } = await searchArtists(keywords.trim(), 30, searchOffset.value)
+      if (searchQuery.value.trim() === keywords.trim() && searchType.value === 'artists') {
+        searchArtistsResults.value = artists
+        searchTotal.value = total
+      }
     }
   } catch (e) {
     if (searchQuery.value.trim() === keywords.trim()) {
       searchError.value = e instanceof Error ? e.message : '搜索失败'
       searchResults.value = []
+      searchPlaylistsResults.value = []
+      searchArtistsResults.value = []
       searchTotal.value = 0
     }
   } finally {
@@ -185,21 +225,33 @@ async function performSearch(keywords: string): Promise<void> {
   }
 }
 
-watch(searchQuery, (val) => {
+watch([searchQuery, searchType], ([newQuery, newType], [oldQuery, oldType]) => {
   if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
-  const q = val.trim()
+  const q = newQuery.trim()
   if (!q) {
     searchResults.value = []
+    searchPlaylistsResults.value = []
+    searchArtistsResults.value = []
     searchTotal.value = 0
+    searchOffset.value = 0
     searchLoading.value = false
     searchError.value = ''
     return
   }
-  searchLoading.value = true
-  searchDebounceTimer = setTimeout(() => {
-    performSearch(q)
-  }, 300)
+
+  if (oldQuery !== newQuery || oldType !== newType) {
+    searchOffset.value = 0
+    searchLoading.value = true
+    searchDebounceTimer = setTimeout(() => {
+      performSearch(q)
+    }, 300)
+  }
 })
+
+function onPageChange(event: PageState): void {
+  searchOffset.value = event.first
+  performSearch(searchQuery.value.trim())
+}
 
 function onSearchTrackClick(track: Track): void {
   playTrack(track, searchResults.value)
@@ -256,6 +308,30 @@ const detailHeaderInfo = computed(() => {
       icon: currentDetail.value.section.icon
     }
   }
+  if (currentDetail.value.type === 'artist') {
+    return {
+      title: currentDetail.value.artist.name,
+      cover: currentDetail.value.artist.picUrl,
+      desc: `共 ${currentDetail.value.artist.musicSize} 首热门单曲`,
+      icon: 'pi pi-user'
+    }
+  }
+  if (currentDetail.value.type === 'user_list') {
+    return {
+      title: currentDetail.value.title,
+      cover: null,
+      desc: `共 ${currentDetail.value.users.length} 人`,
+      icon: 'pi pi-users'
+    }
+  }
+  if (currentDetail.value.type === 'user_playlists') {
+    return {
+      title: currentDetail.value.user.name + ' 的歌单',
+      cover: currentDetail.value.user.picUrl,
+      desc: `共 ${currentDetail.value.playlists.length} 个歌单`,
+      icon: 'pi pi-user'
+    }
+  }
   return null
 })
 
@@ -269,6 +345,7 @@ function selectTab(key: StreamingTab): void {
 function resetDetail(): void {
   currentDetail.value = null
   detailTracks.value = []
+  detailUsers.value = []
   detailLoading.value = false
   detailError.value = ''
 }
@@ -300,11 +377,7 @@ async function openLikedTracks(force = false): Promise<void> {
   }
 }
 
-async function openPlaylist(
-  playlist: NcmPlaylistSummary,
-  force = false,
-  _event?: MouseEvent
-): Promise<void> {
+async function openPlaylist(playlist: NcmPlaylistSummary, force = false): Promise<void> {
   currentDetail.value = { type: 'playlist', playlist }
   detailLoading.value = true
   detailError.value = ''
@@ -316,6 +389,81 @@ async function openPlaylist(
     detailTracks.value = []
   } finally {
     detailLoading.value = false
+  }
+}
+
+async function openArtist(artist: NcmArtistSummary): Promise<void> {
+  currentDetail.value = { type: 'artist', artist }
+  detailLoading.value = true
+  detailError.value = ''
+
+  try {
+    detailTracks.value = await fetchArtistTopSongs(artist.id)
+  } catch (error) {
+    detailError.value = error instanceof Error ? error.message : '加载歌手热门歌曲失败'
+    detailTracks.value = []
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+async function openUserList(listType: 'follows' | 'followers'): Promise<void> {
+  if (!profile.value) return
+  currentDetail.value = {
+    type: 'user_list',
+    listType,
+    users: [],
+    title: listType === 'follows' ? '关注' : '粉丝'
+  }
+  detailLoading.value = true
+  detailError.value = ''
+  detailUsers.value = []
+
+  try {
+    const uid = profile.value.userId
+    const fetchFunc = listType === 'follows' ? fetchUserFollows : fetchUserFolloweds
+    detailUsers.value = await fetchFunc(uid, 100, 0)
+    if (currentDetail.value.type === 'user_list') {
+      currentDetail.value.users = detailUsers.value
+    }
+  } catch (error) {
+    detailError.value =
+      error instanceof Error
+        ? error.message
+        : `加载${listType === 'follows' ? '关注' : '粉丝'}列表失败`
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+async function openUserPlaylists(user: NcmUserSummary): Promise<void> {
+  currentDetail.value = { type: 'user_playlists', user, playlists: [] }
+  detailLoading.value = true
+  detailError.value = ''
+
+  try {
+    const playlists = await fetchUserPlaylistsByUid(user.id)
+    if (currentDetail.value.type === 'user_playlists') {
+      currentDetail.value.playlists = playlists
+    }
+  } catch (error) {
+    detailError.value = error instanceof Error ? error.message : '加载用户歌单失败'
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+async function onUserClick(user: NcmUserSummary): Promise<void> {
+  if (user.userType === 2 || user.userType === 4 || user.userType === 6) {
+    await openArtist({
+      id: user.id,
+      name: user.name,
+      picUrl: user.picUrl,
+      albumSize: 0,
+      musicSize: user.musicSize
+    })
+  } else {
+    await openUserPlaylists(user)
   }
 }
 
@@ -388,11 +536,11 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="streaming-page" :style="{ bottom: props.hasPlayer ? '72px' : '0px' }">
+  <div class="streaming-page" :style="{ bottom: hasPlayer ? '72px' : '0px' }">
     <div
       class="streaming-sidebar"
       :class="{ open: menuOpen }"
-      :style="{ bottom: props.hasPlayer ? '72px' : '0px' }"
+      :style="{ bottom: hasPlayer ? '72px' : '0px' }"
     >
       <div class="streaming-sidebar-inner">
         <div class="streaming-sidebar-header">
@@ -430,7 +578,7 @@ onMounted(async () => {
             v-if="currentDetail || isSearching"
             class="btn-back"
             title="返回"
-            @click="isSearching ? clearSearch() : goBack()"
+            @click="currentDetail ? goBack() : clearSearch()"
           >
             <i class="pi pi-arrow-left"></i>
           </button>
@@ -461,25 +609,78 @@ onMounted(async () => {
         </div>
       </div>
 
+      <!-- Search Type Tabs -->
+      <div v-if="isSearching && !currentDetail" class="streaming-search-tabs">
+        <div
+          class="search-tab-pill"
+          :class="{ active: searchType === 'songs' }"
+          @click="searchType = 'songs'"
+        >
+          单曲
+        </div>
+        <div
+          class="search-tab-pill"
+          :class="{ active: searchType === 'playlists' }"
+          @click="searchType = 'playlists'"
+        >
+          歌单
+        </div>
+        <div
+          class="search-tab-pill"
+          :class="{ active: searchType === 'artists' }"
+          @click="searchType = 'artists'"
+        >
+          歌手
+        </div>
+      </div>
+
       <Transition name="tab-fade" mode="out-in">
-        <div v-if="isSearching" key="search-results" class="streaming-content-body">
-          <div v-if="searchLoading && searchResults.length === 0" class="streaming-placeholder">
+        <div
+          v-if="isSearching && !currentDetail"
+          key="search-results"
+          class="streaming-content-body"
+          :class="{ 'has-search-tabs': isSearching }"
+        >
+          <div
+            v-if="
+              searchLoading &&
+              searchResults.length === 0 &&
+              searchPlaylistsResults.length === 0 &&
+              searchArtistsResults.length === 0
+            "
+            class="streaming-placeholder"
+          >
             <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
             <p class="placeholder-title">正在搜索</p>
             <p class="placeholder-hint">请稍候...</p>
           </div>
-          <div v-else-if="searchError && searchResults.length === 0" class="streaming-placeholder">
+          <div
+            v-else-if="
+              searchError &&
+              searchResults.length === 0 &&
+              searchPlaylistsResults.length === 0 &&
+              searchArtistsResults.length === 0
+            "
+            class="streaming-placeholder"
+          >
             <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
             <p class="placeholder-title">搜索失败</p>
             <p class="placeholder-hint">{{ searchError }}</p>
             <Button label="重试" severity="contrast" @click="performSearch(searchQuery.trim())" />
           </div>
-          <div v-else-if="searchResults.length === 0" class="streaming-placeholder">
+          <div
+            v-else-if="
+              searchResults.length === 0 &&
+              searchPlaylistsResults.length === 0 &&
+              searchArtistsResults.length === 0
+            "
+            class="streaming-placeholder"
+          >
             <i class="pi pi-search" style="font-size: 40px; color: #ccc"></i>
             <p class="placeholder-title">未找到相关歌曲</p>
             <p class="placeholder-hint">试试换个关键词搜索</p>
           </div>
-          <div v-else class="track-table-wrapper">
+          <div v-else-if="searchType === 'songs'" class="track-table-wrapper">
             <table class="track-table">
               <thead>
                 <tr>
@@ -543,6 +744,74 @@ onMounted(async () => {
                 </tr>
               </tbody>
             </table>
+            <Paginator
+              v-if="searchTotal > 30"
+              :rows="30"
+              :total-records="searchTotal"
+              :first="searchOffset"
+              class="search-paginator"
+              @page="onPageChange"
+            />
+          </div>
+          <div v-else-if="searchType === 'playlists'" class="rec-sections">
+            <div class="playlist-grid">
+              <div
+                v-for="playlist in searchPlaylistsResults"
+                :key="playlist.id"
+                class="playlist-grid-card"
+                @click="openPlaylist(playlist, false)"
+              >
+                <img
+                  v-if="playlist.cover"
+                  :src="playlist.cover"
+                  class="playlist-grid-cover"
+                  alt=""
+                />
+                <div v-else class="playlist-grid-cover-placeholder">
+                  <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
+                </div>
+                <div class="playlist-grid-name">{{ playlist.name }}</div>
+                <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
+              </div>
+            </div>
+            <Paginator
+              v-if="searchTotal > 30"
+              :rows="30"
+              :total-records="searchTotal"
+              :first="searchOffset"
+              class="search-paginator"
+              @page="onPageChange"
+            />
+          </div>
+          <div v-else-if="searchType === 'artists'" class="rec-sections">
+            <div class="playlist-grid">
+              <div
+                v-for="artist in searchArtistsResults"
+                :key="artist.id"
+                class="playlist-grid-card artist-card"
+                @click="openArtist(artist)"
+              >
+                <img
+                  v-if="artist.picUrl"
+                  :src="artist.picUrl"
+                  class="playlist-grid-cover artist-cover"
+                  alt=""
+                />
+                <div v-else class="playlist-grid-cover-placeholder artist-cover">
+                  <i class="pi pi-user" style="font-size: 28px; color: #bbb"></i>
+                </div>
+                <div class="playlist-grid-name">{{ artist.name }}</div>
+                <div class="playlist-grid-count">{{ artist.musicSize }} 首单曲</div>
+              </div>
+            </div>
+            <Paginator
+              v-if="searchTotal > 30"
+              :rows="30"
+              :total-records="searchTotal"
+              :first="searchOffset"
+              class="search-paginator"
+              @page="onPageChange"
+            />
           </div>
         </div>
         <div v-else :key="activeTab" class="streaming-content-body">
@@ -572,7 +841,7 @@ onMounted(async () => {
                   v-for="section in recSections"
                   :key="section.key"
                   class="playlist-grid-card"
-                  @click="openRecSection(section, $event)"
+                  @click="openRecSection(section)"
                 >
                   <img
                     v-if="section.tracks.length > 0 && section.tracks[0].cover"
@@ -596,7 +865,7 @@ onMounted(async () => {
                   v-for="playlist in recommendPlaylists"
                   :key="playlist.id"
                   class="playlist-grid-card"
-                  @click="openPlaylist(playlist, false, $event)"
+                  @click="openPlaylist(playlist, false)"
                 >
                   <img
                     v-if="playlist.cover"
@@ -657,6 +926,9 @@ onMounted(async () => {
                 <h2 class="detail-playlist-name">{{ detailHeaderInfo.title }}</h2>
                 <p class="detail-playlist-desc">{{ detailHeaderInfo.desc }}</p>
                 <Button
+                  v-if="
+                    currentDetail?.type !== 'user_list' && currentDetail?.type !== 'user_playlists'
+                  "
                   label="播放全部"
                   icon="pi pi-play"
                   rounded
@@ -668,13 +940,139 @@ onMounted(async () => {
               </div>
             </div>
 
+            <div v-if="detailLoading && detailTracks.length === 0" class="detail-content">
+              <div class="track-table-wrapper">
+                <table class="track-table skeleton-table">
+                  <thead>
+                    <tr>
+                      <th class="col-cover-header"></th>
+                      <th class="col-index">#</th>
+                      <th class="col-info">标题</th>
+                      <th class="col-like-header"></th>
+                      <th class="col-album">专辑</th>
+                      <th class="col-duration">时长</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr v-for="i in 10" :key="i" class="track-row skeleton-row">
+                      <td class="col-cover">
+                        <div
+                          class="skeleton-box skeleton-cover-box"
+                          :style="{ animationDelay: `${i * 0.05}s` }"
+                        ></div>
+                      </td>
+                      <td class="col-index">
+                        <div
+                          class="skeleton-box skeleton-index-box"
+                          :style="{ animationDelay: `${i * 0.05}s` }"
+                        ></div>
+                      </td>
+                      <td class="col-info">
+                        <div
+                          class="skeleton-box skeleton-title-box"
+                          :style="{ animationDelay: `${i * 0.05}s` }"
+                        ></div>
+                        <div
+                          class="skeleton-box skeleton-artist-box"
+                          :style="{ animationDelay: `${i * 0.05}s` }"
+                        ></div>
+                      </td>
+                      <td class="col-like"></td>
+                      <td class="col-album">
+                        <div
+                          class="skeleton-box skeleton-album-box"
+                          :style="{ animationDelay: `${i * 0.05}s` }"
+                        ></div>
+                      </td>
+                      <td class="col-duration">
+                        <div
+                          class="skeleton-box skeleton-time-box"
+                          :style="{ animationDelay: `${i * 0.05}s` }"
+                        ></div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
             <div
-              v-if="detailLoading && detailTracks.length === 0"
-              class="streaming-placeholder detail-placeholder"
+              v-else-if="currentDetail?.type === 'user_list'"
+              class="rec-sections"
+              style="padding: 0 40px; margin-top: 16px"
             >
-              <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
-              <p class="placeholder-title">正在加载歌曲</p>
-              <p class="placeholder-hint">请稍候...</p>
+              <div v-if="detailLoading" class="streaming-placeholder">
+                <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
+                <p class="placeholder-title">正在加载</p>
+              </div>
+              <div v-else-if="detailError" class="streaming-placeholder">
+                <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
+                <p class="placeholder-title">加载失败</p>
+                <p class="placeholder-hint">{{ detailError }}</p>
+              </div>
+              <div v-else-if="detailUsers.length === 0" class="streaming-placeholder">
+                <i class="pi pi-users" style="font-size: 40px; color: #ccc"></i>
+                <p class="placeholder-title">暂无数据</p>
+              </div>
+              <div v-else class="playlist-grid">
+                <div
+                  v-for="user in detailUsers"
+                  :key="user.id"
+                  class="playlist-grid-card artist-card"
+                  @click="onUserClick(user as any)"
+                >
+                  <img
+                    v-if="user.picUrl"
+                    :src="user.picUrl"
+                    class="playlist-grid-cover artist-cover"
+                    alt=""
+                  />
+                  <div v-else class="playlist-grid-cover-placeholder artist-cover">
+                    <i class="pi pi-user" style="font-size: 28px; color: #bbb"></i>
+                  </div>
+                  <div class="playlist-grid-name">{{ user.name }}</div>
+                </div>
+              </div>
+            </div>
+
+            <div
+              v-else-if="currentDetail?.type === 'user_playlists'"
+              class="rec-sections"
+              style="padding: 0 40px; margin-top: 16px"
+            >
+              <div v-if="detailLoading" class="streaming-placeholder">
+                <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
+                <p class="placeholder-title">正在加载歌单</p>
+              </div>
+              <div v-else-if="detailError" class="streaming-placeholder">
+                <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
+                <p class="placeholder-title">加载失败</p>
+                <p class="placeholder-hint">{{ detailError }}</p>
+              </div>
+              <div v-else-if="currentDetail.playlists.length === 0" class="streaming-placeholder">
+                <i class="pi pi-list" style="font-size: 40px; color: #ccc"></i>
+                <p class="placeholder-title">暂无歌单</p>
+              </div>
+              <div v-else class="playlist-grid">
+                <div
+                  v-for="playlist in currentDetail.playlists"
+                  :key="playlist.id"
+                  class="playlist-grid-card"
+                  @click="openPlaylist(playlist, false)"
+                >
+                  <img
+                    v-if="playlist.cover"
+                    :src="playlist.cover"
+                    class="playlist-grid-cover"
+                    alt=""
+                  />
+                  <div v-else class="playlist-grid-cover-placeholder">
+                    <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
+                  </div>
+                  <div class="playlist-grid-name">{{ playlist.name }}</div>
+                  <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
+                </div>
+              </div>
             </div>
 
             <div v-else-if="detailError" class="streaming-placeholder detail-placeholder">
@@ -781,6 +1179,16 @@ onMounted(async () => {
                       <div class="profile-name">{{ profile?.nickname || '未登录用户' }}</div>
                       <div class="profile-subtitle">网易云音乐个人音乐库</div>
                       <p class="profile-signature">{{ profileSignature }}</p>
+
+                      <div v-if="isLoggedIn" class="profile-stats">
+                        <span class="stat-item" @click="openUserList('follows')">
+                          <span class="stat-num">{{ profile?.follows || 0 }}</span> 关注
+                        </span>
+                        <Divider layout="vertical" class="stat-divider" />
+                        <span class="stat-item" @click="openUserList('followers')">
+                          <span class="stat-num">{{ profile?.followeds || 0 }}</span> 粉丝
+                        </span>
+                      </div>
                     </div>
                   </div>
                 </template>
@@ -838,7 +1246,7 @@ onMounted(async () => {
                 v-for="playlist in userPlaylistEntries"
                 :key="playlist.id"
                 class="playlist-list-item"
-                @click="openPlaylist(playlist, false, $event)"
+                @click="openPlaylist(playlist, false)"
               >
                 <template #content>
                   <div class="playlist-row">
@@ -1163,6 +1571,7 @@ onMounted(async () => {
   margin: 10px 0 0;
   display: -webkit-box;
   -webkit-line-clamp: 3;
+  line-clamp: 3;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
@@ -1741,6 +2150,60 @@ onMounted(async () => {
   color: #1a73e8;
 }
 
+/* ===== Search Tabs ===== */
+.streaming-search-tabs {
+  display: flex;
+  gap: 12px;
+  padding: 0 40px 16px 40px;
+  margin-top: -8px;
+}
+
+.search-tab-pill {
+  padding: 6px 16px;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #666;
+  background-color: #f0f0f0;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.search-tab-pill:hover {
+  background-color: #e4e4e4;
+  color: #333;
+}
+
+.search-tab-pill.active {
+  background-color: #1a73e8;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(26, 115, 232, 0.3);
+}
+
+.has-search-tabs {
+  padding-top: 0 !important;
+}
+
+/* ===== Artist Cards ===== */
+.artist-card {
+  align-items: center;
+  text-align: center;
+  padding: 16px;
+}
+
+.artist-cover {
+  border-radius: 50% !important; /* Circular avatars for artists */
+  aspect-ratio: 1 / 1;
+}
+
+/* ===== Search Paginator ===== */
+.search-paginator {
+  margin-top: 16px;
+  background: transparent !important;
+  border: none !important;
+}
+
 .streaming-search-input {
   border: none;
   outline: none;
@@ -1830,10 +2293,46 @@ onMounted(async () => {
   color: #1a1a1a;
   display: -webkit-box;
   -webkit-line-clamp: 2;
+  line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
   margin-bottom: 4px;
   line-height: 1.4;
+}
+
+/* ===== Profile Stats ===== */
+.profile-stats {
+  display: flex;
+  align-items: center;
+  margin-top: 12px;
+  gap: 12px;
+}
+
+.stat-item {
+  font-size: 13px;
+  color: #666;
+  cursor: pointer;
+  transition: color 0.2s;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.stat-item:hover {
+  color: #1a73e8;
+  background: rgba(26, 115, 232, 0.05);
+}
+
+.stat-num {
+  font-weight: 600;
+  color: #333;
+  margin-right: 2px;
+  font-size: 14px;
+}
+
+.stat-divider {
+  margin: 0 !important;
+  height: 14px !important;
 }
 
 .playlist-grid-count {
@@ -1968,5 +2467,74 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
   background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+}
+/* ===== Skeleton Animation ===== */
+.skeleton-box {
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-box::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  animation: skeleton-shimmer 1.5s infinite ease-in-out;
+}
+
+@keyframes skeleton-shimmer {
+  100% {
+    left: 200%;
+  }
+}
+
+.skeleton-table {
+  border-collapse: collapse;
+}
+
+.skeleton-row {
+  cursor: default !important;
+}
+
+.skeleton-row:hover {
+  background: transparent !important;
+}
+
+.skeleton-cover-box {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+}
+
+.skeleton-index-box {
+  width: 16px;
+  height: 16px;
+  margin: 0 auto;
+}
+
+.skeleton-title-box {
+  width: 60%;
+  height: 14px;
+  margin-bottom: 8px;
+}
+
+.skeleton-artist-box {
+  width: 30%;
+  height: 12px;
+}
+
+.skeleton-album-box {
+  width: 70%;
+  height: 14px;
+}
+
+.skeleton-time-box {
+  width: 40px;
+  height: 14px;
 }
 </style>
