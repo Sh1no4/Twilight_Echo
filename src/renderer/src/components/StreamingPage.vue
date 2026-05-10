@@ -8,11 +8,10 @@ import {
   type NcmUserSummary
 } from '../stores/useNcmStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
-import Card from 'primevue/card'
-import Avatar from 'primevue/avatar'
-import Button from 'primevue/button'
-import Divider from 'primevue/divider'
-import Paginator, { type PageState } from 'primevue/paginator'
+import { type PageState } from 'primevue/paginator'
+import StreamingHome from './StreamingHome.vue'
+import StreamingLibrary from './StreamingLibrary.vue'
+import StreamingSearch from './StreamingSearch.vue'
 
 interface RecSection {
   key: string
@@ -641,247 +640,39 @@ onMounted(async () => {
           class="streaming-content-body"
           :class="{ 'has-search-tabs': isSearching }"
         >
-          <div
-            v-if="
-              searchLoading &&
-              searchResults.length === 0 &&
-              searchPlaylistsResults.length === 0 &&
-              searchArtistsResults.length === 0
-            "
-            class="streaming-placeholder"
-          >
-            <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
-            <p class="placeholder-title">正在搜索</p>
-            <p class="placeholder-hint">请稍候...</p>
-          </div>
-          <div
-            v-else-if="
-              searchError &&
-              searchResults.length === 0 &&
-              searchPlaylistsResults.length === 0 &&
-              searchArtistsResults.length === 0
-            "
-            class="streaming-placeholder"
-          >
-            <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
-            <p class="placeholder-title">搜索失败</p>
-            <p class="placeholder-hint">{{ searchError }}</p>
-            <Button label="重试" severity="contrast" @click="performSearch(searchQuery.trim())" />
-          </div>
-          <div
-            v-else-if="
-              searchResults.length === 0 &&
-              searchPlaylistsResults.length === 0 &&
-              searchArtistsResults.length === 0
-            "
-            class="streaming-placeholder"
-          >
-            <i class="pi pi-search" style="font-size: 40px; color: #ccc"></i>
-            <p class="placeholder-title">未找到相关歌曲</p>
-            <p class="placeholder-hint">试试换个关键词搜索</p>
-          </div>
-          <div v-else-if="searchType === 'songs'" class="track-table-wrapper">
-            <table class="track-table">
-              <thead>
-                <tr>
-                  <th class="col-cover-header">{{ searchTotal }} 首</th>
-                  <th class="col-index">#</th>
-                  <th class="col-info">标题</th>
-                  <th class="col-like-header"></th>
-                  <th class="col-album">专辑</th>
-                  <th class="col-duration">时长</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr
-                  v-for="(track, index) in searchResults"
-                  :key="track.id"
-                  class="track-row"
-                  :class="{ 'track-playing': currentTrack?.id === track.id }"
-                  @click="onSearchTrackClick(track)"
-                >
-                  <td class="col-cover">
-                    <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
-                    <div v-else class="cover-placeholder">
-                      <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
-                    </div>
-                  </td>
-                  <td class="col-index">
-                    <span v-if="currentTrack?.id === track.id" class="playing-indicator">
-                      <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
-                    </span>
-                    <span v-else>{{ index + 1 }}</span>
-                  </td>
-                  <td class="col-info">
-                    <div class="track-title">{{ track.title }}</div>
-                    <div class="track-artist">{{ track.artist }}</div>
-                  </td>
-                  <td class="col-like">
-                    <button
-                      class="btn-like"
-                      :class="{
-                        liked: isTrackLiked(track.ncmSongId),
-                        loading: likingTracks.has(track.ncmSongId ?? 0)
-                      }"
-                      :disabled="likingTracks.has(track.ncmSongId ?? 0)"
-                      title="喜欢"
-                      @click="onLikeTrack(track, $event)"
-                    >
-                      <i
-                        v-if="likingTracks.has(track.ncmSongId ?? 0)"
-                        class="pi pi-spin pi-spinner"
-                        style="font-size: 14px"
-                      ></i>
-                      <i
-                        v-else
-                        :class="isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'"
-                        style="font-size: 14px"
-                      ></i>
-                    </button>
-                  </td>
-                  <td class="col-album">{{ track.album }}</td>
-                  <td class="col-duration">{{ formatTime(track.duration) }}</td>
-                </tr>
-              </tbody>
-            </table>
-            <Paginator
-              v-if="searchTotal > 30"
-              :rows="30"
-              :total-records="searchTotal"
-              :first="searchOffset"
-              class="search-paginator"
-              @page="onPageChange"
-            />
-          </div>
-          <div v-else-if="searchType === 'playlists'" class="rec-sections">
-            <div class="playlist-grid">
-              <div
-                v-for="playlist in searchPlaylistsResults"
-                :key="playlist.id"
-                class="playlist-grid-card"
-                @click="openPlaylist(playlist, false)"
-              >
-                <img
-                  v-if="playlist.cover"
-                  :src="playlist.cover"
-                  class="playlist-grid-cover"
-                  alt=""
-                />
-                <div v-else class="playlist-grid-cover-placeholder">
-                  <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
-                </div>
-                <div class="playlist-grid-name">{{ playlist.name }}</div>
-                <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
-              </div>
-            </div>
-            <Paginator
-              v-if="searchTotal > 30"
-              :rows="30"
-              :total-records="searchTotal"
-              :first="searchOffset"
-              class="search-paginator"
-              @page="onPageChange"
-            />
-          </div>
-          <div v-else-if="searchType === 'artists'" class="rec-sections">
-            <div class="playlist-grid">
-              <div
-                v-for="artist in searchArtistsResults"
-                :key="artist.id"
-                class="playlist-grid-card artist-card"
-                @click="openArtist(artist)"
-              >
-                <img
-                  v-if="artist.picUrl"
-                  :src="artist.picUrl"
-                  class="playlist-grid-cover artist-cover"
-                  alt=""
-                />
-                <div v-else class="playlist-grid-cover-placeholder artist-cover">
-                  <i class="pi pi-user" style="font-size: 28px; color: #bbb"></i>
-                </div>
-                <div class="playlist-grid-name">{{ artist.name }}</div>
-                <div class="playlist-grid-count">{{ artist.musicSize }} 首单曲</div>
-              </div>
-            </div>
-            <Paginator
-              v-if="searchTotal > 30"
-              :rows="30"
-              :total-records="searchTotal"
-              :first="searchOffset"
-              class="search-paginator"
-              @page="onPageChange"
-            />
-          </div>
+          <StreamingSearch
+            :search-type="searchType"
+            :search-results="searchResults"
+            :search-playlists-results="searchPlaylistsResults"
+            :search-artists-results="searchArtistsResults"
+            :search-total="searchTotal"
+            :search-offset="searchOffset"
+            :search-loading="searchLoading"
+            :search-error="searchError"
+            :current-track="currentTrack"
+            :liking-tracks="likingTracks"
+            :is-track-liked="isTrackLiked"
+            :format-time="formatTime"
+            @search-track-click="onSearchTrackClick"
+            @like-track="onLikeTrack"
+            @open-playlist="openPlaylist"
+            @open-artist="openArtist"
+            @page-change="onPageChange"
+            @retry="performSearch(searchQuery)"
+          />
         </div>
         <div v-else :key="activeTab" class="streaming-content-body">
-          <div v-if="activeTab === 'home' && !currentDetail" class="home-view">
-            <div v-if="!isLoggedIn" class="streaming-placeholder">
-              <i class="pi pi-home" style="font-size: 48px; color: #ccc"></i>
-              <p class="placeholder-title">流媒体主页</p>
-              <p class="placeholder-hint">点击左上角头像登录网易云音乐</p>
-            </div>
-            <div v-else-if="recsLoading" class="streaming-placeholder">
-              <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
-              <p class="placeholder-title">正在加载推荐</p>
-              <p class="placeholder-hint">请稍候...</p>
-            </div>
-            <div v-else-if="recsError" class="streaming-placeholder">
-              <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
-              <p class="placeholder-title">加载失败</p>
-              <p class="placeholder-hint">{{ recsError }}</p>
-              <Button label="重试" severity="contrast" @click="loadRecommendations" />
-            </div>
-            <div v-else class="rec-sections">
-              <Divider align="left">
-                <span class="section-title main-section-title">个人推荐</span>
-              </Divider>
-              <div class="playlist-grid">
-                <div
-                  v-for="section in recSections"
-                  :key="section.key"
-                  class="playlist-grid-card"
-                  @click="openRecSection(section)"
-                >
-                  <img
-                    v-if="section.tracks.length > 0 && section.tracks[0].cover"
-                    :src="section.tracks[0].cover"
-                    class="playlist-grid-cover"
-                    alt=""
-                  />
-                  <div v-else class="playlist-grid-cover-placeholder">
-                    <i :class="section.icon" style="font-size: 28px; color: #bbb"></i>
-                  </div>
-                  <div class="playlist-grid-name">{{ section.title }}</div>
-                  <div class="playlist-grid-count">{{ section.tracks.length || '暂无' }} 首</div>
-                </div>
-              </div>
-
-              <Divider align="left" style="margin-top: 32px">
-                <span class="section-title main-section-title">歌单推荐</span>
-              </Divider>
-              <div class="playlist-grid">
-                <div
-                  v-for="playlist in recommendPlaylists"
-                  :key="playlist.id"
-                  class="playlist-grid-card"
-                  @click="openPlaylist(playlist, false)"
-                >
-                  <img
-                    v-if="playlist.cover"
-                    :src="playlist.cover"
-                    class="playlist-grid-cover"
-                    alt=""
-                  />
-                  <div v-else class="playlist-grid-cover-placeholder">
-                    <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
-                  </div>
-                  <div class="playlist-grid-name">{{ playlist.name }}</div>
-                  <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
-                </div>
-              </div>
-            </div>
-          </div>
+          <StreamingHome
+            v-if="activeTab === 'home' && !currentDetail"
+            :is-logged-in="isLoggedIn"
+            :recs-loading="recsLoading"
+            :recs-error="recsError"
+            :rec-sections="recSections"
+            :recommend-playlists="recommendPlaylists"
+            @load-recommendations="loadRecommendations"
+            @open-rec-section="openRecSection"
+            @open-playlist="openPlaylist"
+          />
 
           <div
             v-else-if="activeTab === 'playlists' && !currentDetail"
@@ -1163,117 +954,19 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div v-else class="library-view">
-            <div class="library-hero">
-              <Card class="profile-card compact-profile-card">
-                <template #content>
-                  <div class="profile-row compact-profile-row">
-                    <Avatar
-                      v-if="profile?.avatarUrl"
-                      :image="profile.avatarUrl"
-                      shape="circle"
-                      size="xlarge"
-                    />
-                    <Avatar v-else icon="pi pi-user" shape="circle" size="xlarge" />
-                    <div class="profile-meta">
-                      <div class="profile-name">{{ profile?.nickname || '未登录用户' }}</div>
-                      <div class="profile-subtitle">网易云音乐个人音乐库</div>
-                      <p class="profile-signature">{{ profileSignature }}</p>
-
-                      <div v-if="isLoggedIn" class="profile-stats">
-                        <span class="stat-item" @click="openUserList('follows')">
-                          <span class="stat-num">{{ profile?.follows || 0 }}</span> 关注
-                        </span>
-                        <Divider layout="vertical" class="stat-divider" />
-                        <span class="stat-item" @click="openUserList('followers')">
-                          <span class="stat-num">{{ profile?.followeds || 0 }}</span> 粉丝
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-              </Card>
-
-              <Card class="liked-songs-card liked-songs-hero-card" @click="openLikedTracks()">
-                <template #content>
-                  <div class="liked-card-content hero-liked-card-content">
-                    <div class="liked-card-main">
-                      <div class="liked-card-badge liked-card-badge-hero">我的收藏</div>
-                      <h3 class="liked-card-title">{{ likedSummary.name }}</h3>
-                      <p class="liked-card-desc">{{ likedSummary.trackCount }} 首歌曲</p>
-                      <Button
-                        label="播放"
-                        icon="pi pi-play"
-                        rounded
-                        severity="contrast"
-                        class="liked-play-btn"
-                        @click.stop="playLikedSongs"
-                      />
-                    </div>
-                    <div class="liked-card-cover-wrap hero-liked-cover-wrap">
-                      <img
-                        v-if="likedSummary.cover"
-                        :src="likedSummary.cover"
-                        class="liked-card-cover hero-liked-card-cover"
-                        alt="cover"
-                      />
-                      <div
-                        v-else
-                        class="liked-card-cover-placeholder hero-liked-card-cover-placeholder"
-                      >
-                        <i class="pi pi-heart-fill"></i>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-              </Card>
-            </div>
-
-            <Divider align="left">
-              <span class="section-title">我的歌单</span>
-            </Divider>
-
-            <div
-              v-if="libraryLoaded && userPlaylistEntries.length === 0"
-              class="empty-state only-empty-state"
-            >
-              <p class="empty-text">暂无在线歌单</p>
-              <p class="empty-hint">当前账号还没有可展示的在线歌单</p>
-            </div>
-
-            <div v-else class="playlist-list">
-              <Card
-                v-for="playlist in userPlaylistEntries"
-                :key="playlist.id"
-                class="playlist-list-item"
-                @click="openPlaylist(playlist, false)"
-              >
-                <template #content>
-                  <div class="playlist-row">
-                    <Avatar
-                      v-if="playlist.cover"
-                      :image="playlist.cover"
-                      shape="square"
-                      size="large"
-                      class="playlist-avatar"
-                    />
-                    <Avatar
-                      v-else
-                      icon="pi pi-list"
-                      shape="square"
-                      size="large"
-                      class="playlist-avatar"
-                    />
-                    <div class="playlist-meta">
-                      <div class="playlist-row-title">{{ playlist.name }}</div>
-                      <div class="playlist-row-subtitle">{{ playlist.trackCount }} 首</div>
-                    </div>
-                    <Button icon="pi pi-chevron-right" text rounded aria-label="打开歌单" />
-                  </div>
-                </template>
-              </Card>
-            </div>
-          </div>
+          <StreamingLibrary
+            v-else-if="activeTab === 'library' && !currentDetail"
+            :is-logged-in="isLoggedIn"
+            :profile="profile"
+            :profile-signature="profileSignature"
+            :liked-summary="likedSummary"
+            :library-loaded="libraryLoaded"
+            :user-playlist-entries="userPlaylistEntries"
+            @open-user-list="openUserList"
+            @open-liked-tracks="openLikedTracks"
+            @play-liked-songs="playLikedSongs"
+            @open-playlist="openPlaylist"
+          />
         </div>
       </Transition>
     </div>
@@ -1514,268 +1207,7 @@ onMounted(async () => {
   min-height: 100%;
 }
 
-.library-hero {
-  display: grid;
-  grid-template-columns: minmax(280px, 0.9fr) minmax(360px, 1.1fr);
-  gap: 18px;
-  align-items: stretch;
-  margin-bottom: 8px;
-}
 
-.profile-card,
-.liked-songs-card,
-.playlist-list-item {
-  border-radius: 20px;
-  overflow: hidden;
-}
-
-.profile-card {
-  margin-bottom: 20px;
-}
-
-.compact-profile-card {
-  margin-bottom: 0;
-}
-
-.profile-row {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-
-.compact-profile-row {
-  align-items: flex-start;
-}
-
-.profile-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.profile-name {
-  font-size: 22px;
-  font-weight: 700;
-  color: #1a1a1a;
-}
-
-.profile-subtitle {
-  font-size: 13px;
-  color: #888;
-}
-
-.profile-signature {
-  font-size: 14px;
-  line-height: 1.6;
-  color: #666;
-  margin: 10px 0 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.liked-songs-card {
-  cursor: pointer;
-  margin-bottom: 8px;
-}
-
-.liked-songs-hero-card {
-  margin-bottom: 0;
-  background: linear-gradient(135deg, #6a5cff 0%, #a855f7 48%, #ec4899 100%);
-  color: #fff;
-  transition:
-    transform 0.18s ease,
-    box-shadow 0.18s ease;
-  box-shadow: 0 16px 40px rgba(126, 87, 255, 0.24);
-}
-
-.liked-songs-hero-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 22px 50px rgba(126, 87, 255, 0.3);
-}
-
-.liked-card-content {
-  display: flex;
-  align-items: center;
-  gap: 18px;
-}
-
-.hero-liked-card-content {
-  height: 100%;
-  justify-content: space-between;
-}
-
-.liked-card-main {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  min-width: 0;
-  flex: 1;
-}
-
-.liked-card-cover-wrap {
-  flex-shrink: 0;
-}
-
-.liked-card-cover,
-.liked-card-cover-placeholder {
-  width: 84px;
-  height: 84px;
-  border-radius: 18px;
-}
-
-.hero-liked-card-cover,
-.hero-liked-card-cover-placeholder {
-  width: 112px;
-  height: 112px;
-  border-radius: 24px;
-  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.18);
-}
-
-.liked-card-cover {
-  object-fit: cover;
-}
-
-.liked-card-cover-placeholder {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, #ff758c 0%, #ff7eb3 100%);
-  color: #fff;
-  font-size: 28px;
-}
-
-.hero-liked-card-cover-placeholder {
-  background: rgba(255, 255, 255, 0.16);
-  backdrop-filter: blur(10px);
-}
-
-.liked-card-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.liked-card-badge {
-  display: inline-flex;
-  align-items: center;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 999px;
-  background: #ffe8ee;
-  color: #d94870;
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 10px;
-}
-
-.liked-card-badge-hero {
-  background: rgba(255, 255, 255, 0.18);
-  color: #fff;
-}
-
-.liked-card-title {
-  font-size: 22px;
-  font-weight: 700;
-  color: #1a1a1a;
-  margin: 0 0 6px;
-}
-
-.liked-songs-hero-card .liked-card-title,
-.liked-songs-hero-card .liked-card-desc {
-  color: #fff;
-}
-
-.liked-card-desc {
-  font-size: 14px;
-  color: #777;
-  margin: 0;
-}
-
-.liked-play-btn {
-  margin-top: 18px;
-}
-
-.hero-liked-cover-wrap {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.section-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #666;
-}
-
-.main-section-title {
-  font-size: 20px !important;
-  font-weight: 800 !important;
-  color: #1a1a1a !important;
-}
-
-.playlist-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.playlist-list-item {
-  cursor: pointer;
-}
-
-.playlist-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-}
-
-.playlist-avatar {
-  flex-shrink: 0;
-}
-
-.playlist-meta {
-  flex: 1;
-  min-width: 0;
-}
-
-.playlist-row-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: #1a1a1a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.playlist-row-subtitle {
-  font-size: 12px;
-  color: #888;
-  margin-top: 4px;
-}
-
-.empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 320px;
-  text-align: center;
-}
-
-.empty-text {
-  font-size: 18px;
-  color: #999;
-  margin: 0 0 8px;
-}
-
-.empty-hint {
-  font-size: 13px;
-  color: #bbb;
-  margin: 0;
-}
 
 .track-table-wrapper {
   overflow-x: auto;
@@ -1907,189 +1339,6 @@ onMounted(async () => {
   color: #888 !important;
 }
 
-/* ===== Home Recommendations ===== */
-.home-view {
-  min-height: 100%;
-}
-
-.rec-sections {
-  display: flex;
-  flex-direction: column;
-}
-
-.rec-hero-row {
-  display: flex;
-  gap: 14px;
-}
-
-.rec-hero-card {
-  flex-shrink: 0;
-  width: 150px;
-  cursor: pointer;
-  transition: transform 0.15s;
-}
-
-.rec-hero-card:hover {
-  transform: translateY(-3px);
-}
-
-.rec-hero-cover {
-  width: 150px;
-  height: 150px;
-  object-fit: cover;
-  border-radius: 10px;
-  margin-bottom: 8px;
-}
-
-.rec-hero-cover-placeholder {
-  width: 150px;
-  height: 150px;
-  border-radius: 10px;
-  background: #f5f5f5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 8px;
-}
-
-.rec-hero-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: #1a1a1a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-bottom: 2px;
-}
-
-.rec-hero-count {
-  font-size: 11px;
-  color: #999;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Detail view after clicking a rec hero card */
-.rec-detail {
-  margin-top: 24px;
-}
-
-.rec-detail-header {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
-.rec-detail-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: #1a1a1a;
-  margin: 0;
-}
-
-.rec-detail-count {
-  font-size: 12px;
-  color: #999;
-}
-
-.rec-empty {
-  height: 60px;
-  display: flex;
-  align-items: center;
-  color: #bbb;
-  font-size: 13px;
-}
-
-.rec-track-list {
-  display: flex;
-  flex-direction: column;
-}
-
-.rec-track-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  cursor: pointer;
-  transition: background 0.1s;
-}
-
-.rec-track-row:hover {
-  background: #fafafa;
-}
-
-.rec-track-row.track-playing {
-  background: #e8f0fe;
-}
-
-.rec-track-row.track-playing .rec-track-title {
-  color: #1a73e8;
-}
-
-.rec-track-index {
-  width: 28px;
-  text-align: center;
-  font-size: 13px;
-  color: #bbb;
-  flex-shrink: 0;
-}
-
-.rec-track-row.track-playing .rec-track-index {
-  color: #1a73e8;
-}
-
-.rec-track-cover {
-  width: 40px;
-  height: 40px;
-  border-radius: 4px;
-  object-fit: cover;
-  flex-shrink: 0;
-}
-
-.rec-track-cover-placeholder {
-  width: 40px;
-  height: 40px;
-  border-radius: 4px;
-  background: #f5f5f5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
-.rec-track-info {
-  flex: 1;
-  min-width: 0;
-}
-
-.rec-track-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: #1a1a1a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.rec-track-artist {
-  font-size: 12px;
-  color: #999;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-top: 2px;
-}
-
-.rec-track-duration {
-  font-size: 12px;
-  color: #bbb;
-  font-variant-numeric: tabular-nums;
-  flex-shrink: 0;
-}
-
 /* ===== Tab Transition Animation ===== */
 .tab-fade-enter-active,
 .tab-fade-leave-active {
@@ -2185,24 +1434,9 @@ onMounted(async () => {
   padding-top: 0 !important;
 }
 
-/* ===== Artist Cards ===== */
-.artist-card {
-  align-items: center;
-  text-align: center;
-  padding: 16px;
-}
 
-.artist-cover {
-  border-radius: 50% !important; /* Circular avatars for artists */
-  aspect-ratio: 1 / 1;
-}
 
-/* ===== Search Paginator ===== */
-.search-paginator {
-  margin-top: 16px;
-  background: transparent !important;
-  border: none !important;
-}
+
 
 .streaming-search-input {
   border: none;
@@ -2251,94 +1485,7 @@ onMounted(async () => {
   background: #ccc;
 }
 
-/* Playlist Grid for Recommendations */
-.playlist-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 20px;
-  margin-top: 16px;
-}
 
-.playlist-grid-card {
-  display: flex;
-  flex-direction: column;
-  cursor: pointer;
-  transition: transform 0.2s;
-}
-
-.playlist-grid-card:hover {
-  transform: translateY(-4px);
-}
-
-.playlist-grid-cover,
-.playlist-grid-cover-placeholder {
-  width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
-  border-radius: 12px;
-  margin-bottom: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-}
-
-.playlist-grid-cover-placeholder {
-  background: #f0f0f0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.playlist-grid-name {
-  font-size: 14px;
-  font-weight: 600;
-  color: #1a1a1a;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  margin-bottom: 4px;
-  line-height: 1.4;
-}
-
-/* ===== Profile Stats ===== */
-.profile-stats {
-  display: flex;
-  align-items: center;
-  margin-top: 12px;
-  gap: 12px;
-}
-
-.stat-item {
-  font-size: 13px;
-  color: #666;
-  cursor: pointer;
-  transition: color 0.2s;
-  padding: 4px 8px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.02);
-}
-
-.stat-item:hover {
-  color: #1a73e8;
-  background: rgba(26, 115, 232, 0.05);
-}
-
-.stat-num {
-  font-weight: 600;
-  color: #333;
-  margin-right: 2px;
-  font-size: 14px;
-}
-
-.stat-divider {
-  margin: 0 !important;
-  height: 14px !important;
-}
-
-.playlist-grid-count {
-  font-size: 12px;
-  color: #999;
-}
 
 /* Detail Playlist Header */
 .detail-content {

@@ -1,32 +1,24 @@
 # Twilight Echo
 
-Twilight Echo 是一个基于 Electron + Vue 3 + TypeScript 构建的桌面音乐播放器，支持本地音乐库管理与网易云音乐流媒体播放，并通过 mpv 提供音频播放能力。
+<img src="D:\Project\Twilight_Echo\Twilight_Echo\build\icon.png" alt="icon" style="zoom:10%;" alt="TwilightEcho logo"/><img src="D:\Project\Twilight_Echo\Twilight_Echo\build\logo.png" alt="logo" style="zoom:20%;" />
+
+> Twilight Echo 是一款现代的音乐播放器，有现代的UI和流媒体播放，本地播放功能。
 
 ## 功能特性
 
-- 本地音乐扫描与导入
-  - 支持递归扫描文件夹中的音频文件
-  - 自动读取歌曲标题、艺术家、专辑、时长等元数据
-  - 支持读取内嵌封面、同目录封面图和 `.lrc` 歌词文件
-- 本地音乐库管理
+- **本地音乐库管理**
   - 按歌曲、艺术家、专辑进行浏览
   - 持久化保存已扫描的音乐库与文件夹记录
-- 网易云音乐流媒体模式
+- **网易云音乐流媒体模式**
   - 支持二维码登录网易云音乐
   - 支持读取登录状态与个人资料
   - 支持推荐歌曲、推荐歌单、私人漫游、私人雷达
   - 支持查看我喜欢的音乐与个人歌单
   - 支持在线搜索歌曲与收藏/取消收藏
-- 播放体验
-  - 基于 mpv 播放本地与在线音频
-  - 支持播放 / 暂停、上一首、下一首、进度拖动、音量调节
-  - 支持顺序播放、单曲循环、随机播放
-  - 支持根据封面提取主题色
-  - 支持 Windows WASAPI 独占模式
-- 桌面应用体验
-  - 自定义标题栏
-  - 本地模式 / 流媒体模式切换
-  - 设置页、播放详情页、侧边菜单等完整桌面交互
+- 良好的音频输出能力
+  - 采用mpv作为播放引擎
+  - 拥有WASAPI独占输出，确保音频流以原始采样率和位深（如 96kHz/24bit）传输，不经过系统的重采样算法，从而避免了数字转换带来的失真和底噪。
+  - 自动切换比特率
 
 ## 技术栈
 
@@ -41,23 +33,9 @@ Twilight Echo 是一个基于 Electron + Vue 3 + TypeScript 构建的桌面音�
 
 ## 支持的音频格式
 
-项目当前在主进程中支持以下音频扩展名扫描：
+项目当前在主进程中支持主流的音频格式，包括：
 
-- `.mp3`
-- `.flac`
-- `.wav`
-- `.aac`
-- `.ogg`
-- `.wma`
-- `.m4a`
-- `.aiff` / `.aif`
-- `.opus`
-- `.webm`
-- `.alac`
-- `.ape`
-- `.wv`
-- `.dsf`
-- `.dff`
+> .mp3 .flac .wav .aac .ogg .wma .m4a .aiff / .aif .opus .webm .alac .ape .wv .dsf .dff
 
 ## 项目结构
 
