@@ -1,6 +1,6 @@
 # Twilight Echo
 
-<img src="D:\Project\Twilight_Echo\Twilight_Echo\build\icon.png" alt="icon" style="zoom:10%;" alt="TwilightEcho logo"/><img src="D:\Project\Twilight_Echo\Twilight_Echo\build\logo.png" alt="logo" style="zoom:20%;" />
+<img src="https://gitee.com/Pxasen/Pictures/raw/master/img/20260510130633955.png"  style="margin-left: 600px; zoom: 23%;" alt="icon" style="zoom:22%;" /><img src="https://gitee.com/Pxasen/Pictures/raw/master/img/20260510130701553.png" style="margin-left: 900px; zoom: 25%;" alt="logo"  />
 
 > Twilight Echo 是一款现代的音乐播放器，有现代的UI和流媒体播放，本地播放功能。
 
@@ -15,7 +15,7 @@
   - 支持推荐歌曲、推荐歌单、私人漫游、私人雷达
   - 支持查看我喜欢的音乐与个人歌单
   - 支持在线搜索歌曲与收藏/取消收藏
-- 良好的音频输出能力
+- **良好的音频输出能力**
   - 采用mpv作为播放引擎
   - 拥有WASAPI独占输出，确保音频流以原始采样率和位深（如 96kHz/24bit）传输，不经过系统的重采样算法，从而避免了数字转换带来的失真和底噪。
   - 自动切换比特率
