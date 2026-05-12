@@ -52,6 +52,7 @@ ipcRenderer.on('mpv:disconnected', () => {
 const api = {
   window: {
     minimize: (): void => ipcRenderer.send('window:minimize'),
+    toggleMaximize: (): void => ipcRenderer.send('window:toggleMaximize'),
     close: (): void => ipcRenderer.send('window:close')
   },
   dialog: {

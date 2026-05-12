@@ -7,6 +7,7 @@ export interface Track {
   album: string
   filePath: string
   fileName: string
+  dir?: string
   duration: number
   size: number
   cover: string | null

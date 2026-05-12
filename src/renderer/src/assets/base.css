@@ -13,6 +13,40 @@
   margin: 0;
   font-weight: normal;
 }
+
+:root {
+  --te-primary-500: #7c4dff;
+  --te-primary-400: #a885f7;
+  --te-primary-300: #c084fc;
+  --te-favorite-500: #e84393;
+  --te-success-500: #20c65e;
+  --te-warning-500: #f59e0b;
+  --te-info-500: #3b82f6;
+  --te-accent-cyan: #22d3ee;
+  --te-neutral-50: #fafafa;
+  --te-neutral-100: #f5f5f7;
+  --te-neutral-200: #e5e7eb;
+  --te-neutral-300: #d1d5db;
+  --te-neutral-500: #6b7280;
+  --te-neutral-700: #374151;
+  --te-neutral-900: #111827;
+  --te-glass-bg: rgba(255, 255, 255, 0.62);
+  --te-glass-bg-strong: rgba(255, 255, 255, 0.74);
+  --te-glass-border: rgba(255, 255, 255, 0.55);
+  --te-glass-shadow: 0 20px 70px rgba(86, 70, 160, 0.16);
+  --te-glow-main: rgba(124, 77, 255, 0.26);
+  --te-glow-soft: rgba(255, 126, 182, 0.18);
+  --te-glow-cyan: rgba(34, 211, 238, 0.18);
+  --te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
+  --te-ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --te-ui-scale: 0.94;
+  --te-menu-width: clamp(132px, 18vw, 216px);
+}
+
+html {
+  min-height: 100%;
+  background: #fbfbff;
+}
 .drag-region {
   -webkit-app-region: drag;  /* 允许拖动窗口 */
   height: 32px;              /* 自定义标题栏高度 */
@@ -25,7 +59,12 @@ body {
   min-height: 100vh;
   padding-top: 32px;
   color: var(--color-text);
-  background: var(--color-background);
+  background:
+    linear-gradient(115deg, rgba(124, 77, 255, 0.12) 0%, transparent 29%),
+    linear-gradient(42deg, rgba(34, 211, 238, 0.13) 0%, transparent 34%),
+    linear-gradient(155deg, transparent 38%, rgba(255, 126, 182, 0.16) 71%, transparent 100%),
+    linear-gradient(180deg, #ffffff 0%, #f8f7ff 48%, #fbfdff 100%);
+  background-attachment: fixed;
   line-height: 1.6;
   font-family: 'AlibabaPuHuiTi', Inter, -apple-system, BlinkMacSystemFont,
     'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans',
@@ -33,4 +72,41 @@ body {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  font-size: 14px;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    conic-gradient(
+      from 18deg at 72% 18%,
+      transparent 0deg,
+      rgba(124, 77, 255, 0.2) 52deg,
+      rgba(255, 126, 182, 0.12) 96deg,
+      transparent 148deg,
+      transparent 360deg
+    ),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(247, 244, 255, 0.78));
+  opacity: 0.9;
+  animation: ambient-light-shift 14s var(--te-ease-soft) infinite alternate;
+}
+
+#app {
+  min-height: calc(100vh - 32px);
+  position: relative;
+  isolation: isolate;
+}
+
+@keyframes ambient-light-shift {
+  from {
+    transform: translate3d(-1.2%, -0.6%, 0) scale(1);
+  }
+  to {
+    transform: translate3d(1.4%, 0.8%, 0) scale(1.025);
+  }
 }

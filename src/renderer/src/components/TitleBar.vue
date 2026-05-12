@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { useNcmStore } from '../stores/useNcmStore'
 
 defineProps<{
@@ -19,6 +19,10 @@ const { isLoggedIn, profile } = useNcmStore()
 
 function minimize(): void {
   window.api.window.minimize()
+}
+
+function toggleMaximize(): void {
+  window.api.window.toggleMaximize()
 }
 
 function close(): void {
@@ -77,12 +81,17 @@ function close(): void {
       title="收起菜单"
       @click="$emit('collapseMenu')"
     >
-      <img src="/icons/arrow-left.svg" alt="收起" />
+      <img src="/icons/arrow-left.svg" alt="鏀惰捣" />
     </button>
     <div class="title-bar-controls no-drag">
       <button class="control-btn minimize" title="最小化" @click="minimize">
         <svg width="14" height="14" viewBox="0 0 10 10">
           <rect x="0" y="4.5" width="10" height="1" fill="currentColor" />
+        </svg>
+      </button>
+      <button class="control-btn maximize" title="最大化/还原" @click="toggleMaximize">
+        <svg width="13" height="13" viewBox="0 0 12 12" fill="none">
+          <rect x="2.5" y="2.5" width="7" height="7" rx="1" stroke="currentColor" />
         </svg>
       </button>
       <button class="control-btn close" title="关闭" @click="close">
@@ -98,19 +107,33 @@ function close(): void {
   align-items: center;
   justify-content: space-between;
   height: 32px;
-  background: #fff;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.62), rgba(248, 245, 255, 0.4)),
+    rgba(255, 255, 255, 0.46);
   user-select: none;
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   z-index: 9999;
-  transition: background 0.3s;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.62);
+  box-shadow: 0 12px 40px rgba(86, 70, 160, 0.1);
+  backdrop-filter: blur(22px) saturate(155%);
+  -webkit-backdrop-filter: blur(22px) saturate(155%);
+  transition:
+    background 0.3s,
+    border-color 0.3s,
+    box-shadow 0.3s;
 }
 
 .title-bar-glass {
-  background: rgba(0, 0, 0, 0.08);
-  backdrop-filter: blur(16px);
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.2), rgba(17, 24, 39, 0.1)),
+    rgba(17, 24, 39, 0.18);
+  border-bottom-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 12px 42px rgba(17, 24, 39, 0.16);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
 }
 
 .title-bar-start {
@@ -126,7 +149,7 @@ function close(): void {
   height: 100%;
   border: none;
   background: transparent;
-  color: #333;
+  color: var(--te-neutral-900);
   cursor: pointer;
   transition: background 0.15s;
   padding: 0;
@@ -134,7 +157,7 @@ function close(): void {
 }
 
 .menu-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(124, 77, 255, 0.1);
 }
 
 .settings-btn {
@@ -145,7 +168,7 @@ function close(): void {
   height: 100%;
   border: none;
   background: transparent;
-  color: #333;
+  color: var(--te-neutral-900);
   cursor: pointer;
   transition: background 0.15s;
   padding: 0;
@@ -154,7 +177,7 @@ function close(): void {
 }
 
 .settings-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(124, 77, 255, 0.1);
 }
 
 .login-btn {
@@ -165,7 +188,7 @@ function close(): void {
   height: 100%;
   border: none;
   background: transparent;
-  color: #333;
+  color: var(--te-neutral-900);
   cursor: pointer;
   transition: background 0.15s;
   padding: 0;
@@ -174,7 +197,7 @@ function close(): void {
 }
 
 .login-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(124, 77, 255, 0.1);
 }
 
 .user-avatar {
@@ -222,7 +245,7 @@ function close(): void {
 
 .collapse-btn {
   position: fixed;
-  left: calc(min(25vw, 270px) - 28px);
+  left: calc(var(--te-menu-width) - 28px);
   top: 0;
   width: 28px;
   height: 32px;
@@ -231,14 +254,14 @@ function close(): void {
   justify-content: center;
   border: none;
   background: transparent;
-  color: #666;
+  color: var(--te-neutral-700);
   cursor: pointer;
   padding: 0;
   transition: background 0.15s;
 }
 
 .collapse-btn:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: rgba(124, 77, 255, 0.1);
 }
 
 .collapse-btn img {
@@ -257,11 +280,11 @@ function close(): void {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 46px;
+  width: 42px;
   height: 100%;
   border: none;
   background: transparent;
-  color: #333;
+  color: var(--te-neutral-900);
   font-size: 16px;
   cursor: pointer;
   transition:
@@ -274,7 +297,11 @@ function close(): void {
 }
 
 .control-btn:hover {
-  background: rgba(0, 0, 0, 0.08);
+  background: rgba(124, 77, 255, 0.1);
+}
+
+.control-btn.maximize:hover {
+  background: rgba(124, 77, 255, 0.12);
 }
 
 .control-btn.close:hover {

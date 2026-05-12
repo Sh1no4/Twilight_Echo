@@ -49,6 +49,12 @@ const menuItems: MenuItem[] = [
     label: '歌单',
     icon: 'pi pi-bookmark',
     children: []
+  },
+  {
+    key: 'folders',
+    label: '文件夹',
+    icon: 'pi pi-folder',
+    children: []
   }
 ]
 
@@ -57,10 +63,10 @@ const activeChildKey = ref('all')
 const scanning = ref(false)
 const showImportDialog = ref(false)
 
-const { artists, albums, playlists } = useMusicStore()
+const { artists, albums, playlists, folders } = useMusicStore()
 const { currentTrack } = usePlayerStore()
 
-const menuBottom = computed(() => (currentTrack.value ? '72px' : '0'))
+const menuBottom = computed(() => (currentTrack.value ? '96px' : '0'))
 
 function buildArtistChildren(): SubItem[] {
   return artists.value.map((a) => ({
@@ -82,6 +88,13 @@ function buildPlaylistChildren(): SubItem[] {
   return items
 }
 
+function buildFolderChildren(): SubItem[] {
+  return folders.value.map((f) => ({
+    key: `folder:${f.path}`,
+    label: `${f.name} (${f.trackCount})`
+  }))
+}
+
 function selectItem(key: string): void {
   activeKey.value = key
   const children =
@@ -91,7 +104,9 @@ function selectItem(key: string): void {
         ? buildAlbumChildren()
         : key === 'playlists'
           ? buildPlaylistChildren()
-          : (menuItems.find((m) => m.key === key)?.children ?? [])
+          : key === 'folders'
+            ? buildFolderChildren()
+            : (menuItems.find((m) => m.key === key)?.children ?? [])
 
   if (children.length > 0) {
     activeChildKey.value = children[0].key
@@ -150,27 +165,34 @@ async function handleImportClick(): Promise<void> {
   left: 0;
   bottom: 0;
   width: 0;
-  background: #fff;
-  border-right: 1px solid #e8e8e8;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(248, 245, 255, 0.54)),
+    rgba(255, 255, 255, 0.58);
+  border-right: 1px solid rgba(255, 255, 255, 0.64);
   z-index: 1000;
   overflow: hidden;
-  transition: width 0.25s ease;
+  box-shadow: 22px 0 70px rgba(86, 70, 160, 0.12);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  transition:
+    width 0.32s var(--te-ease-soft),
+    box-shadow 0.32s;
 }
 
 .side-menu.open {
-  width: 25vw;
-  min-width: 150px;
-  max-width: 270px;
+  width: var(--te-menu-width);
+  min-width: 132px;
+  max-width: 216px;
 }
 
 .menu-items {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 12px 8px;
-  width: 25vw;
-  min-width: 150px;
-  max-width: 270px;
+  padding: 10px 6px 10px 4px;
+  width: var(--te-menu-width);
+  min-width: 132px;
+  max-width: 216px;
 }
 
 .menu-nav {
@@ -187,42 +209,51 @@ async function handleImportClick(): Promise<void> {
 .menu-item {
   display: flex;
   align-items: center;
-  height: 44px;
-  padding: 0 12px;
+  height: 38px;
+  padding: 0 10px;
   cursor: pointer;
-  border-radius: 6px;
-  transition: background 0.15s;
+  border-radius: 12px;
+  transition:
+    background 0.18s,
+    transform 0.18s var(--te-ease-soft),
+    box-shadow 0.18s;
   white-space: nowrap;
-  gap: 12px;
+  gap: 10px;
 }
 
 .menu-item:hover {
-  background: #f0f0f0;
+  background: rgba(124, 77, 255, 0.09);
+  transform: translateX(2px);
 }
 
 .menu-item.active {
-  background: #e8f0fe;
+  background:
+    linear-gradient(90deg, rgba(124, 77, 255, 0.17), rgba(255, 126, 182, 0.08)),
+    rgba(255, 255, 255, 0.42);
+  box-shadow:
+    inset 3px 0 0 rgba(124, 77, 255, 0.78),
+    0 12px 30px rgba(124, 77, 255, 0.1);
 }
 
 .menu-item.active .item-icon {
-  color: #1a73e8;
+  color: var(--te-primary-500);
 }
 
 .item-icon {
-  font-size: 18px;
-  width: 20px;
-  height: 20px;
+  font-size: 16px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #555;
+  color: var(--te-neutral-700);
   transition: color 0.15s;
 }
 
 .item-label {
-  font-size: 14px;
-  color: #333;
+  font-size: 13px;
+  color: var(--te-neutral-900);
   opacity: 0;
   transition: opacity 0.2s ease;
 }
@@ -236,15 +267,17 @@ async function handleImportClick(): Promise<void> {
   top: 40px;
   left: 0;
   min-width: 150px;
-  background: #fff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.64);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(86, 70, 160, 0.18);
   z-index: 1001;
   padding: 4px 0;
   overflow: hidden;
   max-height: 320px;
   overflow-y: auto;
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
 }
 
 .context-item {
@@ -260,35 +293,35 @@ async function handleImportClick(): Promise<void> {
 }
 
 .context-item:hover {
-  background: #f0f0f0;
+  background: rgba(124, 77, 255, 0.1);
 }
 
 .context-item.active {
-  color: #1a73e8;
-  background: #e8f0fe;
+  color: var(--te-primary-500);
+  background: rgba(124, 77, 255, 0.12);
   font-weight: 500;
 }
 
 .menu-separator {
   height: 1px;
-  background: #e8e8e8;
+  background: rgba(209, 213, 219, 0.5);
   margin: 8px 12px;
 }
 
 .menu-item-streaming {
-  color: #1a73e8;
+  color: var(--te-primary-500);
 }
 
 .menu-item-streaming:hover {
-  background: #e8f0fe;
+  background: rgba(124, 77, 255, 0.1);
 }
 
 .menu-item-import {
-  color: #1a73e8;
+  color: var(--te-primary-500);
 }
 
 .menu-item-import:hover {
-  background: #e8f0fe;
+  background: rgba(124, 77, 255, 0.1);
 }
 
 .scanning-text {
@@ -301,7 +334,7 @@ async function handleImportClick(): Promise<void> {
   width: 12px;
   height: 12px;
   border: 2px solid #ccc;
-  border-top-color: #1a73e8;
+  border-top-color: var(--te-primary-500);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }

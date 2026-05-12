@@ -90,8 +90,9 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <Transition name="fade">
-    <div v-if="show" class="modal-overlay" @click.self="emit('close')">
+  <Teleport to="body">
+    <Transition name="fade">
+      <div v-if="show" class="modal-overlay" @click.self="emit('close')">
       <div class="import-dialog">
         <div class="dialog-header"></div>
 
@@ -147,34 +148,44 @@ onUnmounted(() => {
           </button>
         </div>
       </div>
-    </div>
-  </Transition>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>
 .modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.4);
+  inset: 0;
+  background:
+    radial-gradient(circle at 30% 18%, rgba(124, 77, 255, 0.18), transparent 34%),
+    radial-gradient(circle at 72% 78%, rgba(34, 211, 238, 0.12), transparent 36%),
+    rgba(17, 24, 39, 0.18);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 2000;
-  backdrop-filter: blur(4px);
+  padding: 24px;
+  backdrop-filter: blur(8px) saturate(125%);
+  -webkit-backdrop-filter: blur(8px) saturate(125%);
 }
 
 .import-dialog {
-  width: 500px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  width: min(520px, calc(100vw - 48px));
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.7), rgba(248, 245, 255, 0.46)),
+    rgba(255, 255, 255, 0.52);
+  border-radius: 20px;
+  box-shadow:
+    0 28px 90px rgba(86, 70, 160, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid #eee;
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(24px) saturate(155%);
+  -webkit-backdrop-filter: blur(24px) saturate(155%);
+  animation: import-dialog-in 0.32s var(--te-ease-soft) both;
 }
 
 .dialog-header {
@@ -215,8 +226,8 @@ onUnmounted(() => {
 
 .section-title {
   font-size: 14px;
-  font-weight: 500;
-  color: #666;
+  font-weight: 700;
+  color: var(--te-neutral-900);
 }
 
 .btn-add-folder {
@@ -238,9 +249,9 @@ onUnmounted(() => {
 }
 
 .folder-list {
-  background: #f9f9f9;
-  border: 1px solid #eee;
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.44);
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  border-radius: 14px;
   max-height: 200px;
   overflow-y: auto;
   margin-bottom: 20px;
@@ -258,7 +269,7 @@ onUnmounted(() => {
   align-items: center;
   padding: 8px 12px;
   gap: 10px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid rgba(229, 231, 235, 0.52);
 }
 
 .folder-item:last-child {
@@ -301,9 +312,9 @@ onUnmounted(() => {
 }
 
 .progress-section {
-  background: #f0f7ff;
+  background: rgba(124, 77, 255, 0.1);
   padding: 12px;
-  border-radius: 8px;
+  border-radius: 14px;
   margin-top: 10px;
 }
 
@@ -311,20 +322,20 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   font-size: 12px;
-  color: #1a73e8;
+  color: var(--te-primary-500);
   margin-bottom: 8px;
 }
 
 .progress-bar-bg {
   height: 6px;
-  background: #e1efff;
-  border-radius: 3px;
+  background: rgba(124, 77, 255, 0.14);
+  border-radius: 999px;
   overflow: hidden;
 }
 
 .progress-bar-fill {
   height: 100%;
-  background: #1a73e8;
+  background: linear-gradient(90deg, var(--te-primary-500), var(--te-primary-300));
   transition: width 0.3s ease;
 }
 
@@ -336,28 +347,29 @@ onUnmounted(() => {
 }
 
 .btn-cancel {
-  background: #fff;
-  border: 1px solid #d9d9d9;
+  background: rgba(255, 255, 255, 0.56);
+  border: 1px solid rgba(255, 255, 255, 0.62);
   padding: 8px 16px;
-  border-radius: 6px;
+  border-radius: 12px;
   font-size: 14px;
   cursor: pointer;
   color: #666;
 }
 
 .btn-start {
-  background: #1a73e8;
+  background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-300));
   border: none;
   padding: 8px 24px;
-  border-radius: 6px;
+  border-radius: 12px;
   font-size: 14px;
   cursor: pointer;
   color: #fff;
   font-weight: 500;
+  box-shadow: 0 12px 30px rgba(124, 77, 255, 0.24);
 }
 
 .btn-start:disabled {
-  background: #bae7ff;
+  background: rgba(168, 133, 247, 0.36);
   cursor: not-allowed;
 }
 
@@ -368,5 +380,16 @@ onUnmounted(() => {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+@keyframes import-dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 </style>

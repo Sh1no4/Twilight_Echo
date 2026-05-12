@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
@@ -14,7 +14,7 @@ const emit = defineEmits<{
   selectView: [category: string, filter: string | null]
 }>()
 
-const { tracks, artists, albums, playlists, getPlaylistTracks, removeTrack, addToPlaylist } =
+const { tracks, artists, albums, playlists, folders, getPlaylistTracks, removeTrack, addToPlaylist } =
   useMusicStore()
 const { currentTrack, playTrack } = usePlayerStore()
 
@@ -36,12 +36,23 @@ const baseDisplayTracks = computed(() => {
       const name = props.filter.slice(9)
       return getPlaylistTracks(name)
     }
+    if (props.filter.startsWith('folder:')) {
+      const path = props.filter.slice(7)
+      const folder = folders.value.find((f) => f.path === path)
+      return folder?.tracks ?? []
+    }
   }
   return []
 })
 
 const viewTitle = computed(() => {
-  if (props.category === 'allSongs') return '所有歌曲'
+  if (props.category === 'folders') {
+    if (props.filter && props.filter.startsWith('folder:')) {
+      return folders.value.find((f) => f.path === props.filter?.slice(7))?.name ?? '文件夹'
+    }
+    return '文件夹'
+  }
+  if (props.category === 'allSongs') return '本地音乐'
   if (props.category === 'artists') {
     if (props.filter && props.filter.startsWith('artist:')) return props.filter.slice(7)
     return '艺术家'
@@ -94,6 +105,25 @@ function formatDuration(seconds: number): string {
   const secs = Math.floor(seconds % 60)
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
+
+function formatSize(bytes: number): string {
+  if (!bytes) return '--'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let value = bytes
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex += 1
+  }
+  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+}
+
+const viewTotalSize = computed(() => baseDisplayTracks.value.reduce((sum, track) => sum + track.size, 0))
+
+const viewMeta = computed(() => {
+  if (!showTable.value) return ''
+  return `共 ${baseDisplayTracks.value.length} 首歌曲，${formatSize(viewTotalSize.value)}`
+})
 
 function onRowClick(track: Track, event: MouseEvent): void {
   const target = event.target as HTMLElement
@@ -169,7 +199,7 @@ onUnmounted(() => {
 const containerRef = ref<HTMLElement | null>(null)
 const scrollTop = ref(0)
 const viewportHeight = ref(0)
-const rowHeight = 84 // Calculated height of one row
+const rowHeight = 64 // Calculated height of one row
 
 const visibleRange = computed(() => {
   const start = Math.floor(scrollTop.value / rowHeight)
@@ -222,7 +252,7 @@ watch(displayTracks, () => {
   <div
     ref="containerRef"
     class="song-list"
-    :style="{ height: props.hasPlayer ? 'calc(100vh - 32px - 72px)' : 'calc(100vh - 32px)' }"
+    :style="{ height: props.hasPlayer ? 'calc(100vh - 32px - 96px)' : 'calc(100vh - 32px)' }"
     @scroll="onScroll"
   >
     <!-- Grid View: Artists / Albums / Playlists -->
@@ -237,7 +267,7 @@ watch(displayTracks, () => {
                 v-model="searchQuery"
                 type="text"
                 class="search-input"
-                placeholder="搜索歌曲、艺术家、专辑..."
+                placeholder="搜索歌曲、歌手、专辑或文件夹"
                 @focus="searchInputFocused = true"
                 @blur="searchInputFocused = false"
               />
@@ -307,6 +337,21 @@ watch(displayTracks, () => {
               <div class="playlist-count">{{ playlist.trackIds.size }} 首</div>
             </div>
           </template>
+          <template v-if="category === 'folders'">
+            <div
+              v-for="folder in folders"
+              :key="folder.path"
+              class="playlist-card folder-card"
+              @click="emit('selectView', 'folders', `folder:${folder.path}`)"
+            >
+              <img v-if="folder.cover" :src="folder.cover" class="album-cover" alt="cover" />
+              <div v-else class="playlist-cover-placeholder">
+                <i class="pi pi-folder" style="font-size: 32px; color: #fff"></i>
+              </div>
+              <div class="playlist-name">{{ folder.name }}</div>
+              <div class="playlist-count">{{ folder.trackCount }} 首</div>
+            </div>
+          </template>
         </div>
       </div>
     </Transition>
@@ -324,7 +369,10 @@ watch(displayTracks, () => {
             >
               <i class="pi pi-arrow-left"></i>
             </button>
-            <h2 class="song-list-title">{{ viewTitle }}</h2>
+            <div class="title-group">
+              <h2 class="song-list-title">{{ viewTitle }}</h2>
+              <span v-if="viewMeta" class="song-list-meta">{{ viewMeta }}</span>
+            </div>
           </div>
           <div class="header-right">
             <div class="search-box" :class="{ focused: searchInputFocused }">
@@ -333,12 +381,26 @@ watch(displayTracks, () => {
                 v-model="searchQuery"
                 type="text"
                 class="search-input"
-                placeholder="搜索歌曲、艺术家、专辑..."
+                placeholder="搜索歌曲、歌手、专辑或文件夹"
                 @focus="searchInputFocused = true"
                 @blur="searchInputFocused = false"
               />
               <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
                 <i class="pi pi-times"></i>
+              </button>
+            </div>
+            <div class="view-tools" aria-hidden="true">
+              <button class="view-tool active" type="button" tabindex="-1">
+                <i class="pi pi-list"></i>
+              </button>
+              <button class="view-tool" type="button" tabindex="-1">
+                <i class="pi pi-th-large"></i>
+              </button>
+              <button class="view-tool" type="button" tabindex="-1">
+                <i class="pi pi-filter"></i>
+              </button>
+              <button class="view-tool" type="button" tabindex="-1">
+                <i class="pi pi-ellipsis-h"></i>
               </button>
             </div>
           </div>
@@ -347,22 +409,27 @@ watch(displayTracks, () => {
           <div class="empty-icon">
             <i class="pi pi-wave-pulse" style="font-size: 48px; color: #ccc"></i>
           </div>
-          <p class="empty-text">暂无音乐</p>
+          <p class="empty-text">暂无内容</p>
           <p class="empty-hint">通过左侧菜单「歌单 → 添加文件夹」导入音乐</p>
         </div>
         <div v-else class="track-table-wrapper">
           <table class="track-table">
             <thead>
               <tr>
-                <th class="col-cover-header">{{ displayTracks.length }} 首</th>
+                <th class="col-cover-header"></th>
                 <th class="col-index">#</th>
                 <th class="col-info">标题</th>
+                <th class="col-artist">艺术家</th>
                 <th class="col-album">专辑</th>
                 <th class="col-duration">时长</th>
+                <th class="col-size">大小</th>
+                <th class="col-more">•••</th>
               </tr>
             </thead>
             <tbody :style="{ height: totalHeight + 'px', position: 'relative', display: 'block' }">
-              <div :style="{ height: paddingTop + 'px' }"></div>
+              <tr class="virtual-spacer" :style="{ height: paddingTop + 'px' }" aria-hidden="true">
+                <td colspan="8"></td>
+              </tr>
               <tr
                 v-for="(track, index) in visibleTracks"
                 :key="track.id"
@@ -383,7 +450,7 @@ watch(displayTracks, () => {
                   <span v-if="currentTrack?.id === track.id" class="playing-indicator">
                     <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
                   </span>
-                  <span v-else>{{ visibleRange.start + index + 1 }}</span>
+                  <span v-else>{{ visibleRange.start + Number(index) + 1 }}</span>
                 </td>
                 <td class="col-info">
                   <div class="track-title">{{ track.title }}</div>
@@ -405,14 +472,23 @@ watch(displayTracks, () => {
                     </div>
                   </div>
                 </td>
+                <td class="col-artist">{{ track.artist }}</td>
                 <td class="col-album">{{ track.album }}</td>
                 <td class="col-duration">{{ formatDuration(track.duration) }}</td>
+                <td class="col-size">{{ formatSize(track.size) }}</td>
+                <td class="col-more">
+                  <i class="pi pi-heart"></i>
+                </td>
               </tr>
-              <div
+              <tr
+                class="virtual-spacer"
                 :style="{
                   height: totalHeight - paddingTop - visibleTracks.length * rowHeight + 'px'
                 }"
-              ></div>
+                aria-hidden="true"
+              >
+                <td colspan="8"></td>
+              </tr>
             </tbody>
           </table>
 
@@ -478,7 +554,7 @@ watch(displayTracks, () => {
   z-index: 0;
 }
 
-/* view-down: drilling into detail — old slides UP, new slides UP from BELOW */
+/* view-down: drilling into detail 鈥?old slides UP, new slides UP from BELOW */
 .view-down-leave-to {
   transform: translateY(-100%);
   opacity: 0;
@@ -488,7 +564,7 @@ watch(displayTracks, () => {
   opacity: 0;
 }
 
-/* view-up: going back — old slides DOWN, new slides DOWN from ABOVE */
+/* view-up: going back 鈥?old slides DOWN, new slides DOWN from ABOVE */
 .view-up-leave-to {
   transform: translateY(100%);
   opacity: 0;
@@ -501,61 +577,134 @@ watch(displayTracks, () => {
 .song-list {
   display: grid;
   position: relative;
-  padding: 20px min(4vw, 40px);
+  padding: 30px min(4.4vw, 48px) 36px;
   overflow-y: auto;
   overflow-x: hidden;
-  background: #fff;
+  background:
+    radial-gradient(circle at 18% 7%, rgba(124, 77, 255, 0.16), transparent 30%),
+    radial-gradient(circle at 53% 12%, rgba(255, 126, 182, 0.18), transparent 28%),
+    radial-gradient(circle at 86% 12%, rgba(104, 132, 255, 0.14), transparent 32%),
+    linear-gradient(180deg, rgba(247, 249, 255, 0.72), rgba(248, 246, 255, 0.42));
   width: 100%;
   box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 77, 255, 0.28) transparent;
+}
+
+.song-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.song-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.song-list::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(124, 77, 255, 0.24);
+  background-clip: content-box;
 }
 
 .song-list > * {
   grid-area: 1 / 1;
 }
 
+.grid-view,
+.table-view {
+  position: relative;
+  min-width: 0;
+  animation: surface-in 0.46s var(--te-ease-soft) both;
+  transform-origin: top center;
+}
+
+.grid-view::before,
+.table-view::before {
+  content: '';
+  position: absolute;
+  inset: -30px -28px auto;
+  height: 230px;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 16% 40%, rgba(124, 77, 255, 0.12), transparent 42%),
+    radial-gradient(circle at 52% 24%, rgba(255, 126, 182, 0.12), transparent 36%),
+    radial-gradient(circle at 86% 18%, rgba(94, 118, 255, 0.1), transparent 38%);
+}
+
 .song-list-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 24px;
+  gap: 24px;
+  min-height: 56px;
+  margin-bottom: 18px;
   flex-wrap: wrap;
+  padding: 0 32px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .header-left {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 12px;
+  min-width: 250px;
+  flex: 1 1 0;
+}
+
+.title-group {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  min-width: 0;
 }
 
 .btn-back {
   width: 32px;
   height: 32px;
   border: none;
-  background: none;
+  background: rgba(124, 77, 255, 0.09);
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #666;
+  color: var(--te-primary-500);
   font-size: 16px;
   transition:
-    background 0.15s,
-    color 0.15s;
+    background 0.18s,
+    color 0.18s,
+    transform 0.18s var(--te-ease-soft),
+    box-shadow 0.18s;
   flex-shrink: 0;
 }
 
 .btn-back:hover {
-  background: #f0f0f0;
-  color: #1a1a1a;
+  background: rgba(124, 77, 255, 0.16);
+  color: #5f36df;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(124, 77, 255, 0.16);
 }
 
 .song-list-title {
-  font-size: 24px;
-  font-weight: 600;
-  color: #1a1a1a;
+  font-size: 28px;
+  font-weight: 900;
+  color: var(--te-neutral-900);
   margin: 0;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.song-list-meta {
+  font-size: 13px;
+  font-weight: 750;
+  color: rgba(56, 65, 92, 0.7);
+  white-space: nowrap;
 }
 
 .song-count {
@@ -565,14 +714,16 @@ watch(displayTracks, () => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex: 1;
+  gap: 18px;
+  flex: 1.2 1 420px;
+  min-width: 320px;
 }
 
 /* Card Grid Layout */
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 24px;
+  grid-template-columns: repeat(auto-fill, minmax(166px, 1fr));
+  gap: 16px;
   width: 100%;
 }
 
@@ -582,21 +733,60 @@ watch(displayTracks, () => {
 .playlist-card {
   display: flex;
   flex-direction: column;
-  padding: 12px;
-  border-radius: 12px;
-  background: #f9f9f9;
+  padding: 14px;
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.56), rgba(248, 245, 255, 0.34)),
+    rgba(255, 255, 255, 0.34);
   cursor: pointer;
-  transition: all 0.2s ease;
-  border: 1px solid transparent;
+  transition:
+    transform 0.26s var(--te-ease-soft),
+    background 0.26s,
+    box-shadow 0.26s,
+    border-color 0.26s;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  box-shadow: 0 18px 50px rgba(86, 70, 160, 0.1);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  overflow: hidden;
+  position: relative;
+}
+
+.artist-card::before,
+.album-card::before,
+.playlist-card::before {
+  content: '';
+  position: absolute;
+  inset: -40% -25% auto auto;
+  width: 120px;
+  height: 120px;
+  pointer-events: none;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(124, 77, 255, 0.22), transparent 66%);
+  opacity: 0;
+  transition:
+    opacity 0.26s,
+    transform 0.26s var(--te-ease-soft);
 }
 
 .artist-card:hover,
 .album-card:hover,
 .playlist-card:hover {
-  background: #fff;
-  transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
-  border-color: #eee;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.7), rgba(247, 242, 255, 0.48)),
+    rgba(255, 255, 255, 0.46);
+  transform: translateY(-6px) scale(1.01);
+  box-shadow:
+    0 24px 70px rgba(86, 70, 160, 0.18),
+    0 0 0 1px rgba(124, 77, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.82);
+}
+
+.artist-card:hover::before,
+.album-card:hover::before,
+.playlist-card:hover::before {
+  opacity: 1;
+  transform: translate3d(-18px, 18px, 0);
 }
 
 /* Unified Cover Styles */
@@ -611,19 +801,23 @@ watch(displayTracks, () => {
   border-radius: 8px;
   margin-bottom: 12px;
   flex-shrink: 0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 18px 32px rgba(86, 70, 160, 0.14);
 }
 
 .artist-cover-placeholder,
 .album-cover-placeholder {
-  background: #eee;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.88), transparent 34%),
+    linear-gradient(135deg, rgba(124, 77, 255, 0.18), rgba(34, 211, 238, 0.12));
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .playlist-cover-placeholder {
-  background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+  background:
+    radial-gradient(circle at 72% 22%, rgba(255, 255, 255, 0.54), transparent 24%),
+    linear-gradient(135deg, #7c4dff 0%, #c084fc 48%, #ff7eb6 100%);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -634,8 +828,8 @@ watch(displayTracks, () => {
 .album-name,
 .playlist-name {
   font-size: 14px;
-  font-weight: 600;
-  color: #1a1a1a;
+  font-weight: 700;
+  color: var(--te-neutral-900);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -647,7 +841,7 @@ watch(displayTracks, () => {
 .album-count,
 .playlist-count {
   font-size: 12px;
-  color: #999;
+  color: var(--te-neutral-500);
   padding: 0 2px;
 }
 
@@ -659,6 +853,12 @@ watch(displayTracks, () => {
   justify-content: center;
   height: 60vh;
   text-align: center;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  box-shadow: var(--te-glass-shadow);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
 }
 .empty-icon {
   margin-bottom: 16px;
@@ -677,6 +877,18 @@ watch(displayTracks, () => {
 /* Table View */
 .track-table-wrapper {
   overflow-x: auto;
+  padding: 18px 18px 18px;
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background:
+    radial-gradient(circle at 42% 2%, rgba(255, 126, 182, 0.08), transparent 32%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.62), rgba(248, 245, 255, 0.36)),
+    rgba(255, 255, 255, 0.34);
+  box-shadow:
+    0 24px 74px rgba(86, 70, 160, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(24px) saturate(155%);
+  -webkit-backdrop-filter: blur(24px) saturate(155%);
 }
 .track-table {
   width: 100%;
@@ -689,71 +901,99 @@ watch(displayTracks, () => {
   top: 0;
   z-index: 2;
   display: block;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.22);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
   width: 100%;
+  border-radius: 10px;
 }
 .track-table thead tr {
   display: flex;
 }
 .track-table th {
   text-align: left;
-  padding: 8px 12px;
+  padding: 0 14px 12px;
   font-size: 11px;
-  font-weight: 600;
-  color: #999;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  border-bottom: 1px solid #eee;
+  font-weight: 800;
+  color: rgba(52, 61, 87, 0.76);
+  text-transform: none;
+  letter-spacing: 0;
+  border-bottom: 0;
 }
 .track-row td {
-  padding: 14px 12px;
-  font-size: 14px;
-  color: #333;
-  border-bottom: 1px solid #f2f2f2;
+  padding: 0 14px;
+  font-size: 13px;
+  color: var(--te-neutral-700);
+  border-bottom: 0;
   display: flex;
   align-items: center;
 }
 .track-row {
   cursor: pointer;
-  transition: background 0.1s;
+  transition:
+    background 0.18s,
+    transform 0.18s var(--te-ease-soft),
+    box-shadow 0.18s;
   width: 100%;
+  border-radius: 10px;
+  margin: 2px 0;
 }
+.virtual-spacer {
+  display: flex;
+  width: 100%;
+  pointer-events: none;
+}
+
+.virtual-spacer td {
+  flex: 1;
+  padding: 0;
+  border: 0;
+}
+
 .track-row:hover {
-  background: #fafafa;
+  background: rgba(255, 255, 255, 0.42);
+  transform: translateX(2px);
+  box-shadow: 0 12px 30px rgba(86, 70, 160, 0.06);
 }
 .track-row:hover td {
-  border-bottom-color: #e8e8e8;
+  border-bottom-color: transparent;
 }
 .track-playing {
-  background: #e8f0fe !important;
+  background:
+    linear-gradient(90deg, rgba(155, 97, 255, 0.1), rgba(255, 126, 182, 0.08)),
+    rgba(255, 255, 255, 0.3) !important;
+  box-shadow: 0 12px 30px rgba(124, 77, 255, 0.08);
 }
 .track-playing td {
-  border-bottom-color: #d4e4fc !important;
+  border-bottom-color: transparent !important;
 }
 .cover-img {
-  width: 40px;
-  height: 40px;
-  border-radius: 4px;
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
   object-fit: cover;
+  box-shadow: 0 10px 22px rgba(86, 70, 160, 0.14);
 }
 .cover-placeholder {
-  width: 40px;
-  height: 40px;
-  border-radius: 4px;
-  background: #f5f5f5;
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), transparent 36%),
+    linear-gradient(135deg, rgba(124, 77, 255, 0.18), rgba(34, 211, 238, 0.12));
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .col-index {
-  width: 40px;
-  color: #bbb !important;
+  width: 46px;
+  color: rgba(80, 88, 116, 0.62) !important;
   font-size: 13px !important;
   flex-shrink: 0;
 }
 .col-cover,
 .col-cover-header {
-  width: 60px;
+  width: 56px;
   flex-shrink: 0;
 }
 .col-cover-header {
@@ -768,7 +1008,7 @@ watch(displayTracks, () => {
   align-items: center;
 }
 .col-info {
-  flex: 1;
+  flex: 1.25;
   line-height: 1.4;
   min-width: 0;
   display: flex;
@@ -777,20 +1017,20 @@ watch(displayTracks, () => {
   align-items: flex-start !important;
 }
 .track-title {
-  font-size: 14px;
-  font-weight: 500;
-  color: #1a1a1a;
+  font-size: 13px;
+  font-weight: 850;
+  color: var(--te-neutral-900);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   width: 100%;
 }
 .track-playing .track-title {
-  color: #1a73e8;
+  color: #6f4ee8;
 }
 .track-artist {
   font-size: 12px;
-  color: #999;
+  color: rgba(71, 80, 112, 0.7);
   margin-top: 1px;
   white-space: nowrap;
   overflow: hidden;
@@ -798,7 +1038,7 @@ watch(displayTracks, () => {
   width: 100%;
 }
 .track-audio-data {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 8px;
   margin-top: 4px;
@@ -809,30 +1049,76 @@ watch(displayTracks, () => {
   font-weight: 500;
 }
 .col-album {
-  width: 25%;
-  max-width: 200px;
-  min-width: 100px;
+  width: 22%;
+  max-width: 260px;
+  min-width: 150px;
   font-size: 13px !important;
-  color: #666 !important;
+  font-weight: 750;
+  color: rgba(20, 28, 50, 0.9) !important;
   flex-shrink: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-@media (max-width: 600px) {
+.col-duration {
+  width: 74px;
+  text-align: right;
+  font-size: 12px !important;
+  color: rgba(80, 88, 116, 0.78) !important;
+  padding-right: 14px !important;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.col-artist {
+  width: 18%;
+  min-width: 130px;
+  max-width: 220px;
+  font-size: 13px !important;
+  color: rgba(71, 80, 112, 0.78) !important;
+  flex-shrink: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.col-size {
+  width: 86px;
+  flex-shrink: 0;
+  font-size: 12px !important;
+  color: rgba(80, 88, 116, 0.78) !important;
+}
+
+.col-more {
+  width: 54px;
+  flex-shrink: 0;
+  justify-content: center;
+  color: rgba(124, 77, 255, 0.52) !important;
+  font-size: 13px !important;
+}
+
+.track-playing .col-more {
+  color: rgba(199, 47, 214, 0.9) !important;
+}
+
+@media (max-width: 1120px) {
+  .col-size,
+  .col-more {
+    display: none !important;
+  }
+}
+
+@media (max-width: 920px) {
   .col-album {
     display: none !important;
   }
 }
-.col-duration {
-  width: 60px;
-  text-align: right;
-  font-size: 12px !important;
-  color: #aaa !important;
-  padding-right: 10px !important;
-  flex-shrink: 0;
-  display: flex;
-  justify-content: flex-end;
+
+@media (max-width: 720px) {
+  .col-artist {
+    display: none !important;
+  }
 }
 
 .track-pills {
@@ -844,37 +1130,39 @@ watch(displayTracks, () => {
   font-size: 9px;
   font-weight: 700;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: 999px;
   text-transform: uppercase;
   line-height: 1.2;
 }
 .pill-format {
-  background: #f0f0f0;
-  color: #666;
+  background: rgba(124, 77, 255, 0.1);
+  color: #6b3df0;
 }
 .pill-rate {
-  background: #e3f2fd;
-  color: #1976d2;
+  background: rgba(59, 130, 246, 0.12);
+  color: #2563eb;
 }
 .pill-depth {
-  background: #f1f8e9;
-  color: #558b2f;
+  background: rgba(32, 198, 94, 0.12);
+  color: #16a34a;
 }
 .pill-bitrate {
-  background: #fff3e0;
-  color: #ef6c00;
+  background: rgba(245, 158, 11, 0.14);
+  color: #d97706;
 }
 
 /* Context Menu */
 .context-menu {
   position: fixed;
   z-index: 1000;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 0.72);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(86, 70, 160, 0.18);
   padding: 6px;
   min-width: 160px;
-  border: 1px solid #eee;
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
 }
 .menu-item {
   display: flex;
@@ -882,13 +1170,17 @@ watch(displayTracks, () => {
   padding: 10px 12px;
   font-size: 13px;
   color: #333;
-  border-radius: 4px;
+  border-radius: 10px;
   cursor: pointer;
   position: relative;
-  transition: background 0.15s;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    transform 0.15s;
 }
 .menu-item:hover {
-  background: #f5f5f5;
+  background: rgba(124, 77, 255, 0.1);
+  transform: translateX(2px);
 }
 .menu-item i {
   margin-right: 10px;
@@ -909,33 +1201,48 @@ watch(displayTracks, () => {
   position: absolute;
   left: 100%;
   top: 0;
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  background: rgba(255, 255, 255, 0.76);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(86, 70, 160, 0.18);
   padding: 6px;
   min-width: 120px;
-  border: 1px solid #eee;
+  border: 1px solid rgba(255, 255, 255, 0.68);
   margin-left: 2px;
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+}
+
+@keyframes surface-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 /* Search Box */
 .search-box {
   display: flex;
   align-items: center;
-  height: 36px;
-  padding: 0 14px;
-  border-radius: 18px;
-  background: #f5f5f5;
-  border: 1.5px solid transparent;
+  height: 40px;
+  padding: 0 18px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.52);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow: 0 14px 36px rgba(86, 70, 160, 0.08);
+  backdrop-filter: blur(16px) saturate(145%);
+  -webkit-backdrop-filter: blur(16px) saturate(145%);
   transition:
     border-color 0.2s,
     background 0.2s,
     box-shadow 0.2s;
-  min-width: 150px;
-  max-width: 280px;
-  flex: 1;
+  width: clamp(260px, 30vw, 390px);
+  flex: 0 1 auto;
 }
-@media (max-width: 500px) {
+@media (max-width: 640px) {
   .search-box {
     max-width: none;
     width: 100%;
@@ -943,13 +1250,25 @@ watch(displayTracks, () => {
   }
   .song-list-header {
     gap: 16px;
+    padding: 0 10px;
+  }
+
+  .header-right {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+
+  .view-tools {
+    display: none;
   }
 }
 
 .search-box.focused {
-  border-color: #1a73e8;
-  background: #fff;
-  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
+  border-color: rgba(124, 77, 255, 0.34);
+  background: rgba(255, 255, 255, 0.68);
+  box-shadow:
+    0 0 0 4px rgba(124, 77, 255, 0.08),
+    0 16px 42px rgba(86, 70, 160, 0.1);
 }
 
 .search-icon {
@@ -961,7 +1280,7 @@ watch(displayTracks, () => {
 }
 
 .search-box.focused .search-icon {
-  color: #1a73e8;
+  color: var(--te-primary-500);
 }
 
 .search-input {
@@ -986,7 +1305,7 @@ watch(displayTracks, () => {
   width: 20px;
   height: 20px;
   border: none;
-  background: #ddd;
+  background: rgba(124, 77, 255, 0.12);
   border-radius: 50%;
   cursor: pointer;
   padding: 0;
@@ -1001,6 +1320,37 @@ watch(displayTracks, () => {
 }
 
 .search-clear:hover {
-  background: #ccc;
+  background: rgba(124, 77, 255, 0.2);
+}
+
+.view-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.view-tool {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 10px;
+  color: rgba(36, 44, 72, 0.74);
+  background: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 12px 30px rgba(86, 70, 160, 0.08);
+  backdrop-filter: blur(14px) saturate(145%);
+  -webkit-backdrop-filter: blur(14px) saturate(145%);
+}
+
+.view-tool.active {
+  color: var(--te-primary-500);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.view-tool i {
+  font-size: 13px;
 }
 </style>
+

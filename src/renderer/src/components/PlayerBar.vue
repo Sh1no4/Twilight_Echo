@@ -262,27 +262,28 @@ function playTrackAt(index: number): void {
 /* ===== Shell ===== */
 .player-bar-shell {
   position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
+  bottom: 14px;
+  left: 18px;
+  right: 18px;
   z-index: 1002;
+  pointer-events: none;
 }
 
 /* ===== Upward Drawer Transition ===== */
 .drawer-up-enter-active {
   transition:
-    opacity 0.25s ease,
-    transform 0.25s ease;
+    opacity 0.28s ease,
+    transform 0.34s var(--te-ease-soft);
 }
 .drawer-up-leave-active {
   transition:
     opacity 0.2s ease,
-    transform 0.2s ease;
+    transform 0.22s var(--te-ease-enter);
 }
 .drawer-up-enter-from,
 .drawer-up-leave-to {
   opacity: 0;
-  transform: translateY(8px);
+  transform: translateY(16px) scale(0.985);
 }
 
 /* ===== Volume Drawer ===== */
@@ -298,22 +299,25 @@ function playTrackAt(index: number): void {
   bottom: 100%;
   left: 50%;
   transform: translateX(-50%);
-  margin-bottom: 6px;
-  background: #fff;
-  border: 1px solid #e8e8e8;
-  border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 14px;
+  box-shadow: 0 18px 55px rgba(86, 70, 160, 0.16);
   padding: 10px 6px 8px;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
 }
 
 .volume-drawer.drawer-glass {
-  background: rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.28);
 }
 
 .volume-drawer-slider {
@@ -376,28 +380,66 @@ function playTrackAt(index: number): void {
 
 /* ===== Playlist Panel ===== */
 .playlist-panel {
-  background: #fff;
-  border-top: 1px solid #e8e8e8;
-  border-radius: 12px 12px 0 0;
-  box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.08);
-  margin: 0 4px;
-  max-height: 360px;
+  position: relative;
+  overflow: hidden;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.72), rgba(248, 245, 255, 0.52)),
+    rgba(255, 255, 255, 0.56);
+  border: 1px solid rgba(255, 255, 255, 0.66);
+  border-bottom: 0;
+  border-radius: 22px 22px 0 0;
+  box-shadow:
+    0 -26px 90px rgba(86, 70, 160, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  margin: 0 clamp(8px, 2vw, 28px) 12px;
+  max-height: 390px;
   display: flex;
   flex-direction: column;
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+}
+
+.playlist-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.88), transparent 18%),
+    radial-gradient(circle at 24% 30%, rgba(124, 77, 255, 0.28), transparent 38%),
+    radial-gradient(circle at 82% 18%, rgba(255, 126, 182, 0.22), transparent 34%),
+    radial-gradient(circle at 58% 92%, rgba(34, 211, 238, 0.16), transparent 42%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.48), rgba(245, 241, 255, 0.22));
+  animation: playlist-light 10s var(--te-ease-soft) infinite alternate;
+}
+
+.playlist-panel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.46), transparent 22% 78%, rgba(255, 255, 255, 0.3)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0.16));
 }
 .playlist-panel.panel-glass {
-  background: rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(20px);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.18)),
+    rgba(17, 24, 39, 0.18);
+  backdrop-filter: blur(24px) saturate(165%);
+  -webkit-backdrop-filter: blur(24px) saturate(165%);
+  border-color: rgba(255, 255, 255, 0.26);
 }
 .playlist-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px 10px;
+  padding: 16px 22px 10px;
   font-size: 14px;
-  font-weight: 600;
-  color: #333;
+  font-weight: 700;
+  color: var(--te-neutral-900);
   flex-shrink: 0;
 }
 .panel-glass .playlist-header {
@@ -405,8 +447,8 @@ function playTrackAt(index: number): void {
 }
 .playlist-count {
   font-size: 12px;
-  font-weight: 400;
-  color: #999;
+  font-weight: 500;
+  color: var(--te-neutral-500);
 }
 .panel-glass .playlist-count {
   color: rgba(255, 255, 255, 0.5);
@@ -414,28 +456,58 @@ function playTrackAt(index: number): void {
 .playlist-list {
   flex: 1;
   overflow-y: auto;
-  padding: 0 8px 8px;
+  padding: 0 12px 12px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 77, 255, 0.26) transparent;
+}
+
+.playlist-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+.playlist-list::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(124, 77, 255, 0.28);
+  background-clip: content-box;
 }
 .playlist-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: 9px 12px;
+  border-radius: 14px;
   cursor: pointer;
-  transition: background 0.1s;
+  border: 1px solid transparent;
+  transition:
+    background 0.18s,
+    transform 0.18s var(--te-ease-soft),
+    border-color 0.18s,
+    box-shadow 0.18s;
 }
 .playlist-item:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: rgba(255, 255, 255, 0.58);
+  border-color: rgba(255, 255, 255, 0.52);
+  box-shadow: 0 12px 34px rgba(86, 70, 160, 0.12);
+  transform: translateY(-1px);
 }
 .panel-glass .playlist-item:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.18);
 }
 .playlist-item.active {
-  background: rgba(26, 115, 232, 0.08);
+  background:
+    linear-gradient(90deg, rgba(124, 77, 255, 0.18), rgba(255, 126, 182, 0.1)),
+    rgba(255, 255, 255, 0.48);
+  border-color: rgba(124, 77, 255, 0.18);
+  box-shadow:
+    0 14px 34px rgba(124, 77, 255, 0.12),
+    inset 3px 0 0 rgba(124, 77, 255, 0.72);
 }
 .panel-glass .playlist-item.active {
-  background: rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(90deg, rgba(124, 77, 255, 0.28), rgba(255, 126, 182, 0.14)),
+    rgba(255, 255, 255, 0.16);
 }
 .playlist-index {
   width: 20px;
@@ -445,7 +517,7 @@ function playTrackAt(index: number): void {
   flex-shrink: 0;
 }
 .playlist-item.active .playlist-index {
-  color: #1a73e8;
+  color: var(--te-primary-500);
 }
 .panel-glass .playlist-item.active .playlist-index {
   color: rgba(255, 255, 255, 0.8);
@@ -456,15 +528,18 @@ function playTrackAt(index: number): void {
 .playlist-cover {
   width: 32px;
   height: 32px;
-  border-radius: 4px;
+  border-radius: 9px;
   object-fit: cover;
   flex-shrink: 0;
+  box-shadow: 0 8px 20px rgba(86, 70, 160, 0.18);
 }
 .playlist-cover-placeholder {
   width: 32px;
   height: 32px;
-  border-radius: 4px;
-  background: #f5f5f5;
+  border-radius: 9px;
+  background:
+    radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.8), transparent 36%),
+    linear-gradient(135deg, rgba(124, 77, 255, 0.2), rgba(34, 211, 238, 0.12));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -479,14 +554,14 @@ function playTrackAt(index: number): void {
 }
 .playlist-title {
   font-size: 13px;
-  font-weight: 500;
-  color: #333;
+  font-weight: 700;
+  color: var(--te-neutral-900);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .playlist-item.active .playlist-title {
-  color: #1a73e8;
+  color: var(--te-primary-500);
 }
 .panel-glass .playlist-title {
   color: rgba(255, 255, 255, 0.9);
@@ -496,7 +571,7 @@ function playTrackAt(index: number): void {
 }
 .playlist-artist {
   font-size: 11px;
-  color: #999;
+  color: var(--te-neutral-500);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -512,10 +587,20 @@ function playTrackAt(index: number): void {
   align-items: center;
   justify-content: space-between;
   height: 72px;
-  background: #fff;
-  border-top: 1px solid #e8e8e8;
-  padding: 0 24px;
-  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.04);
+  max-width: 1180px;
+  margin: 0 auto;
+  border-radius: 22px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.66), rgba(248, 245, 255, 0.42)),
+    rgba(255, 255, 255, 0.48);
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  padding: 0 22px;
+  box-shadow:
+    0 24px 80px rgba(86, 70, 160, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  pointer-events: auto;
   transition:
     background 0.3s,
     border-color 0.3s,
@@ -523,10 +608,13 @@ function playTrackAt(index: number): void {
 }
 
 .player-bar-glass {
-  background: rgba(0, 0, 0, 0.12);
-  backdrop-filter: blur(20px);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: 0 -4px 24px rgba(0, 0, 0, 0.15);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.1)),
+    rgba(17, 24, 39, 0.22);
+  backdrop-filter: blur(24px) saturate(160%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 -22px 70px rgba(17, 24, 39, 0.22);
 }
 
 .player-bar-glass .player-title {
@@ -596,23 +684,28 @@ function playTrackAt(index: number): void {
 .player-cover {
   width: 48px;
   height: 48px;
-  border-radius: 6px;
+  border-radius: 12px;
   object-fit: cover;
   flex-shrink: 0;
   cursor: pointer;
   transition:
-    transform 0.15s,
-    box-shadow 0.15s;
+    transform 0.22s var(--te-ease-soft),
+    box-shadow 0.22s,
+    filter 0.22s;
+  box-shadow: 0 14px 32px rgba(86, 70, 160, 0.2);
 }
 .player-cover:hover {
-  transform: scale(1.08);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 20px 45px rgba(86, 70, 160, 0.26);
+  filter: saturate(1.08);
 }
 .player-cover-placeholder {
   width: 48px;
   height: 48px;
-  border-radius: 6px;
-  background: #f5f5f5;
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), transparent 36%),
+    linear-gradient(135deg, rgba(124, 77, 255, 0.2), rgba(34, 211, 238, 0.12));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -629,8 +722,8 @@ function playTrackAt(index: number): void {
 }
 .player-title {
   font-size: 14px;
-  font-weight: 500;
-  color: #1a1a1a;
+  font-weight: 700;
+  color: var(--te-neutral-900);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -682,14 +775,26 @@ function playTrackAt(index: number): void {
 .btn-play {
   width: 44px;
   height: 44px;
-  background: var(--accent-color, #1a73e8);
+  background:
+    radial-gradient(circle at 34% 25%, rgba(255, 255, 255, 0.42), transparent 26%),
+    linear-gradient(135deg, var(--accent-color, #7c4dff), #a855f7);
   color: #fff;
   padding: 10px;
-  transition: transform 0.15s;
+  box-shadow:
+    0 14px 34px color-mix(in srgb, var(--accent-color, #7c4dff) 32%, transparent),
+    0 0 0 6px color-mix(in srgb, var(--accent-color, #7c4dff) 8%, transparent);
+  transition:
+    transform 0.2s var(--te-ease-soft),
+    box-shadow 0.2s;
 }
 .btn-play:hover {
-  background: var(--accent-color, #1a73e8);
-  transform: scale(1.08);
+  background:
+    radial-gradient(circle at 34% 25%, rgba(255, 255, 255, 0.5), transparent 26%),
+    linear-gradient(135deg, var(--accent-color, #7c4dff), #c084fc);
+  transform: translateY(-2px) scale(1.06);
+  box-shadow:
+    0 18px 42px color-mix(in srgb, var(--accent-color, #7c4dff) 38%, transparent),
+    0 0 0 9px color-mix(in srgb, var(--accent-color, #7c4dff) 9%, transparent);
 }
 .btn-play img {
   width: 22px;
@@ -721,7 +826,7 @@ function playTrackAt(index: number): void {
   background-clip: content-box;
 }
 .progress-slider :deep(.p-slider-range) {
-  background: var(--accent-color, #1a73e8);
+  background: linear-gradient(90deg, var(--accent-color, #7c4dff), #c084fc);
 }
 .progress-slider :deep(.p-slider-handle) {
   opacity: 0;
@@ -778,11 +883,12 @@ function playTrackAt(index: number): void {
     color 0.15s;
 }
 .icon-btn:hover {
-  background: #f0f0f0;
-  color: #555;
+  background: rgba(124, 77, 255, 0.1);
+  color: var(--te-primary-500);
 }
 .icon-btn.active {
-  color: var(--accent-color, #1a73e8);
+  color: var(--accent-color, #7c4dff);
+  background: color-mix(in srgb, var(--accent-color, #7c4dff) 12%, transparent);
 }
 
 /* ===== More Drawer ===== */
@@ -797,19 +903,22 @@ function playTrackAt(index: number): void {
   position: absolute;
   bottom: 100%;
   right: -8px;
-  margin-bottom: 6px;
-  background: #fff;
-  border: 1px solid #e8e8e8;
-  border-radius: 10px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.74);
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 16px;
+  box-shadow: 0 18px 55px rgba(86, 70, 160, 0.16);
   padding: 8px;
   min-width: 220px;
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
 }
 
 .more-drawer.drawer-glass {
-  background: rgba(0, 0, 0, 0.22);
-  backdrop-filter: blur(20px);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.26);
+  backdrop-filter: blur(22px) saturate(160%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.24);
 }
 
 .more-item {
@@ -860,7 +969,7 @@ function playTrackAt(index: number): void {
 }
 
 .toggle-switch.active {
-  background: var(--accent-color, #1a73e8);
+  background: linear-gradient(135deg, var(--accent-color, #7c4dff), #c084fc);
 }
 
 .drawer-glass .toggle-switch {
@@ -885,5 +994,14 @@ function playTrackAt(index: number): void {
 
 .toggle-switch.active .toggle-knob {
   transform: translateX(18px);
+}
+
+@keyframes playlist-light {
+  from {
+    transform: translate3d(-10px, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(14px, -6px, 0) scale(1.04);
+  }
 }
 </style>

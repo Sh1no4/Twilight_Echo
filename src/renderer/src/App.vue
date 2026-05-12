@@ -148,7 +148,7 @@ const { checkLogin } = useNcmStore()
 const { currentTrack } = usePlayerStore()
 const hasPlayerBar = computed(() => !showLoginPage.value && !!currentTrack.value)
 const mainContentMinHeight = computed(() =>
-  hasPlayerBar.value ? 'calc(100vh - 32px - 72px)' : 'calc(100vh - 32px)'
+  hasPlayerBar.value ? 'calc(100vh - 32px - 96px)' : 'calc(100vh - 32px)'
 )
 
 onMounted(() => {
@@ -222,15 +222,56 @@ const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOri
 
 <style>
 body {
-  background: #fff;
+  background: transparent;
 }
 
 .main-content {
   display: grid;
   margin-left: 0;
-  min-height: calc(100vh - 32px - 72px);
-  transition: margin-left 0.25s ease;
+  min-height: calc(100vh - 32px - 96px);
+  transition: margin-left 0.32s var(--te-ease-soft);
   overflow: hidden;
+  position: relative;
+  z-index: 1;
+}
+
+.main-content::before,
+.main-content::after {
+  content: '';
+  position: fixed;
+  pointer-events: none;
+  z-index: -1;
+  border-radius: 999px;
+  filter: blur(2px);
+}
+
+.main-content::before {
+  width: 42vw;
+  height: 42vw;
+  min-width: 360px;
+  min-height: 360px;
+  right: -12vw;
+  top: 5vh;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), transparent 24%),
+    radial-gradient(circle at 46% 48%, rgba(124, 77, 255, 0.22), transparent 58%),
+    radial-gradient(circle at 66% 62%, rgba(255, 126, 182, 0.16), transparent 68%);
+  opacity: 0.8;
+  animation: light-orbit 12s var(--te-ease-soft) infinite alternate;
+}
+
+.main-content::after {
+  width: 34vw;
+  height: 26vw;
+  min-width: 300px;
+  min-height: 220px;
+  left: 10vw;
+  bottom: 6vh;
+  background:
+    radial-gradient(circle at 40% 45%, rgba(34, 211, 238, 0.18), transparent 58%),
+    radial-gradient(circle at 72% 48%, rgba(168, 133, 247, 0.2), transparent 65%);
+  opacity: 0.72;
+  animation: light-float 16s var(--te-ease-soft) infinite alternate;
 }
 
 .main-content > * {
@@ -238,7 +279,25 @@ body {
 }
 
 .main-content.menu-open {
-  margin-left: min(25vw, 270px);
+  margin-left: var(--te-menu-width);
+}
+
+@keyframes light-orbit {
+  from {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  to {
+    transform: translate3d(-26px, 18px, 0) rotate(8deg);
+  }
+}
+
+@keyframes light-float {
+  from {
+    transform: translate3d(-16px, 10px, 0) scale(1);
+  }
+  to {
+    transform: translate3d(20px, -10px, 0) scale(1.05);
+  }
 }
 
 /* SongList internal view transitions (grid ↔ table) */
@@ -247,8 +306,8 @@ body {
 .page-up-enter-active,
 .page-up-leave-active {
   transition:
-    transform 0.35s ease,
-    opacity 0.35s ease;
+    transform 0.36s var(--te-ease-enter),
+    opacity 0.28s ease;
 }
 .page-down-enter-active,
 .page-up-enter-active {

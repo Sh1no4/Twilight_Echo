@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useNcmStore } from '../stores/useNcmStore'
 
@@ -15,6 +15,7 @@ const { setLogin: setStoreLogin, logout: storeLogout, buildProfile } = useNcmSto
 
 const POLL_INTERVAL = 3000
 const QR_KEY_COOLDOWN = 5000
+const REQUEST_TIMEOUT = 15000
 
 type PageState =
   | 'loading'
@@ -54,7 +55,7 @@ const statusText = computed(() => {
     case 'qr_expired':
       return '二维码已过期，请点击刷新'
     case 'login_success':
-      return '登录成功！'
+      return '登录成功'
     case 'error':
       return errorMsg.value
     default:
@@ -67,8 +68,24 @@ function getNcmUrl(path: string): string {
   return `${path}${sep}ua=pc`
 }
 
+function withTimeout<T>(promise: Promise<T>, ms = REQUEST_TIMEOUT): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error('请求超时')), ms)
+    promise
+      .then(resolve, reject)
+      .finally(() => window.clearTimeout(timer))
+  })
+}
+
 async function fetchNcm(path: string, cookie?: string): Promise<unknown> {
-  return window.api.ncm.request(getNcmUrl(path), cookie)
+  const data = (await withTimeout(window.api.ncm.request(getNcmUrl(path), cookie))) as {
+    code?: number
+    message?: string
+  }
+  if (data?.code === -1) {
+    throw new Error(data.message || '网易云接口请求失败')
+  }
+  return data
 }
 
 async function checkLoginStatus(cookie?: string): Promise<boolean> {
@@ -204,7 +221,7 @@ async function startQrLogin(): Promise<void> {
   const key = await getQrKey()
   if (!key) {
     pageState.value = 'error'
-    errorMsg.value = '获取二维码密钥失败，请检查 API 服务是否启动'
+    errorMsg.value = '获取二维码密钥失败，请确认网易云 API 服务正常'
     return
   }
   qrKey.value = key
@@ -305,7 +322,7 @@ onUnmounted(() => {
             <i class="pi pi-user" style="font-size: 36px"></i>
           </div>
           <div class="profile-info">
-            <span class="profile-nickname">{{ profile?.nickname || '未知用户' }}</span>
+            <span class="profile-nickname">{{ profile?.nickname || '鏈煡鐢ㄦ埛' }}</span>
             <span class="profile-uid">UID: {{ profile?.userId }}</span>
           </div>
           <button class="logout-btn" @click="handleLogout">
@@ -376,15 +393,21 @@ onUnmounted(() => {
   z-index: 100;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(124, 77, 255, 0.14), transparent 34%),
+    radial-gradient(circle at 82% 78%, rgba(34, 211, 238, 0.12), transparent 36%),
+    transparent;
 }
 
 .login-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 16px 24px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: 14px 24px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.58);
+  background: rgba(255, 255, 255, 0.34);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
   flex-shrink: 0;
 }
 
@@ -395,22 +418,22 @@ onUnmounted(() => {
   width: 32px;
   height: 32px;
   border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: #333;
+  border-radius: 10px;
+  background: rgba(124, 77, 255, 0.09);
+  color: var(--te-primary-500);
   cursor: pointer;
   font-size: 16px;
   transition: background 0.15s;
 }
 
 .login-back-btn:hover {
-  background: #f0f0f0;
+  background: rgba(124, 77, 255, 0.16);
 }
 
 .login-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: #1a1a1a;
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--te-neutral-900);
   margin: 0;
 }
 
@@ -419,7 +442,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px;
+  padding: 34px;
 }
 
 .login-status {
@@ -446,10 +469,10 @@ onUnmounted(() => {
   gap: 6px;
   margin-top: 8px;
   padding: 8px 20px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  background: #fff;
-  color: #333;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--te-neutral-900);
   font-size: 14px;
   cursor: pointer;
   transition:
@@ -458,8 +481,8 @@ onUnmounted(() => {
 }
 
 .login-action-btn:hover {
-  background: #f5f5f5;
-  border-color: #bbb;
+  background: rgba(124, 77, 255, 0.1);
+  border-color: rgba(124, 77, 255, 0.22);
 }
 
 /* Profile (logged in) */
@@ -475,9 +498,14 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   padding: 32px 40px;
-  border: 1px solid #eee;
-  border-radius: 12px;
-  background: #fafafa;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.54), rgba(248, 245, 255, 0.32)),
+    rgba(255, 255, 255, 0.32);
+  box-shadow: 0 24px 70px rgba(86, 70, 160, 0.14);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
 }
 
 .profile-avatar {
@@ -548,13 +576,14 @@ onUnmounted(() => {
   position: relative;
   width: 200px;
   height: 200px;
-  border: 1px solid #eee;
-  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  border-radius: 18px;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow: 0 24px 70px rgba(86, 70, 160, 0.16);
 }
 
 .qr-wrapper.expired {

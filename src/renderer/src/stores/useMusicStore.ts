@@ -9,6 +9,7 @@ export function useMusicStore(): {
   tracks: Ref<Track[]>
   artists: ComputedRef<any[]>
   albums: ComputedRef<any[]>
+  folders: ComputedRef<any[]>
   playlists: Ref<{ name: string; trackIds: Set<string> }[]>
   addTracks: (newTracks: Track[]) => Promise<void>
   removeTrack: (id: string) => void
@@ -97,6 +98,27 @@ export function useMusicStore(): {
       .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
   })
 
+  const folders = computed(() => {
+    return scannedFolders.value
+      .map((folderPath) => {
+        const items = tracks.value.filter((t) => {
+          const dir = t.dir || t.filePath.slice(0, Math.max(t.filePath.lastIndexOf('\\'), t.filePath.lastIndexOf('/')))
+          return dir === folderPath || t.filePath.startsWith(folderPath + '\\') || t.filePath.startsWith(folderPath + '/')
+        })
+        const normalized = folderPath.replace(/[\\/]+$/, '')
+        const name = normalized.split(/[\\/]/).pop() || folderPath
+        return {
+          name,
+          path: folderPath,
+          trackCount: items.length,
+          tracks: items,
+          cover: items.find((t) => t.cover)?.cover ?? null
+        }
+      })
+      .filter((f) => f.trackCount > 0)
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+  })
+
   const playlists = ref<{ name: string; trackIds: Set<string> }[]>([])
 
   function createPlaylist(name: string): void {
@@ -125,6 +147,7 @@ export function useMusicStore(): {
     tracks,
     artists,
     albums,
+    folders,
     playlists,
     addTracks,
     removeTrack,

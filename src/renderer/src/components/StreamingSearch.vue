@@ -198,12 +198,18 @@ const emit = defineEmits<{
   justify-content: center;
   padding: 60px 20px;
   text-align: center;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  box-shadow: 0 20px 70px rgba(86, 70, 160, 0.12);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
 }
 
 .placeholder-title {
   font-size: 18px;
   font-weight: 600;
-  color: #333;
+  color: var(--te-neutral-900);
   margin-top: 16px;
 }
 
@@ -232,11 +238,24 @@ const emit = defineEmits<{
 
 .playlist-grid-card {
   cursor: pointer;
-  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  padding: 14px;
+  border-radius: 16px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.52), rgba(248, 245, 255, 0.3)),
+    rgba(255, 255, 255, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 18px 50px rgba(86, 70, 160, 0.1);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  transition:
+    transform 0.26s var(--te-ease-soft),
+    background 0.26s,
+    box-shadow 0.26s;
 }
 
 .playlist-grid-card:hover {
-  transform: translateY(-8px);
+  transform: translateY(-6px) scale(1.01);
+  box-shadow: 0 24px 70px rgba(86, 70, 160, 0.18);
 }
 
 .playlist-grid-cover {
@@ -244,14 +263,16 @@ const emit = defineEmits<{
   aspect-ratio: 1;
   border-radius: 12px;
   object-fit: cover;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 18px 32px rgba(86, 70, 160, 0.14);
 }
 
 .playlist-grid-cover-placeholder {
   width: 100%;
   aspect-ratio: 1;
   border-radius: 12px;
-  background: #f5f5f5;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.86), transparent 34%),
+    linear-gradient(135deg, rgba(124, 77, 255, 0.22), rgba(34, 211, 238, 0.12));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -261,7 +282,7 @@ const emit = defineEmits<{
   margin-top: 12px;
   font-size: 14px;
   font-weight: 600;
-  color: #333;
+  color: var(--te-neutral-900);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   line-clamp: 2;

@@ -164,6 +164,7 @@ async function parseTrack(file: FileEntry): Promise<unknown> {
       album: album || '未知专辑',
       filePath: file.fullPath,
       fileName: file.fileName,
+      dir: file.dir,
       duration: Math.round(meta.format.duration || 0),
       size: file.size,
       cover,
@@ -182,6 +183,7 @@ async function parseTrack(file: FileEntry): Promise<unknown> {
       album: '未知专辑',
       filePath: file.fullPath,
       fileName: file.fileName,
+      dir: file.dir,
       duration: 0,
       size: file.size,
       cover: findCoverInDir(file.dir),
@@ -356,8 +358,21 @@ function setupMpvIpc(): void {
     if (cookie) {
       url += `&cookie=${encodeURIComponent(cookie)}`
     }
-    const res = await fetch(url)
-    return res.json()
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 12000)
+    try {
+      const res = await fetch(url, { signal: controller.signal })
+      return await res.json()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[ncm] request failed:', path, message)
+      return {
+        code: -1,
+        message
+      }
+    } finally {
+      clearTimeout(timer)
+    }
   })
 }
 
@@ -388,6 +403,16 @@ app.whenReady().then(() => {
 
   ipcMain.on('window:minimize', (event) => {
     BrowserWindow.fromWebContents(event.sender)?.minimize()
+  })
+
+  ipcMain.on('window:toggleMaximize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win) return
+    if (win.isMaximized()) {
+      win.unmaximize()
+    } else {
+      win.maximize()
+    }
   })
 
   ipcMain.on('window:close', (event) => {

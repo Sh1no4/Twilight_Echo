@@ -138,7 +138,7 @@ const emit = defineEmits<{
 
 <style scoped>
 .library-view {
-  padding: 24px 40px;
+  padding: 0;
 }
 
 .library-hero {
@@ -149,11 +149,15 @@ const emit = defineEmits<{
 }
 
 .profile-card {
-  border: none;
-  background: #fcfcfc;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.54), rgba(248, 245, 255, 0.32)),
+    rgba(255, 255, 255, 0.32);
   border-radius: 20px;
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
-  transition: all 0.3s ease;
+  box-shadow: 0 20px 70px rgba(86, 70, 160, 0.12);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  transition: all 0.3s var(--te-ease-soft);
 }
 
 .compact-profile-card {
@@ -172,7 +176,7 @@ const emit = defineEmits<{
 .profile-name {
   font-size: 20px;
   font-weight: 700;
-  color: #1a1a1a;
+  color: var(--te-neutral-900);
 }
 
 .profile-subtitle {
@@ -222,19 +226,22 @@ const emit = defineEmits<{
 }
 
 .liked-songs-card {
-  border: none;
-  background: linear-gradient(135deg, #1a1a1a 0%, #333 100%);
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  background:
+    radial-gradient(circle at 74% 18%, rgba(255, 255, 255, 0.2), transparent 26%),
+    radial-gradient(circle at 22% 88%, rgba(34, 211, 238, 0.18), transparent 34%),
+    linear-gradient(135deg, #111827 0%, #3b256f 48%, #7c4dff 100%);
   border-radius: 20px;
   color: #fff;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: all 0.3s var(--te-ease-soft);
   overflow: hidden;
-  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 24px 70px rgba(86, 70, 160, 0.24);
 }
 
 .liked-songs-card:hover {
   transform: translateY(-5px);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.2);
+  box-shadow: 0 30px 80px rgba(86, 70, 160, 0.3);
 }
 
 .liked-songs-hero-card {
@@ -307,7 +314,7 @@ const emit = defineEmits<{
 .section-title {
   font-size: 16px;
   font-weight: 700;
-  color: #1a1a1a;
+  color: var(--te-neutral-900);
 }
 
 .playlist-list {
@@ -317,18 +324,25 @@ const emit = defineEmits<{
 }
 
 .playlist-list-item {
-  border: none;
-  background: #fcfcfc;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.52), rgba(248, 245, 255, 0.3)),
+    rgba(255, 255, 255, 0.3);
   border-radius: 16px;
   cursor: pointer;
-  transition: all 0.2s ease;
-  border: 1px solid transparent;
+  transition: all 0.24s var(--te-ease-soft);
+  box-shadow: 0 18px 50px rgba(86, 70, 160, 0.1);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
 }
 
 .playlist-list-item:hover {
-  background: #fff;
-  border-color: #f0f0f0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.66), rgba(247, 242, 255, 0.42)),
+    rgba(255, 255, 255, 0.4);
+  border-color: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 24px 70px rgba(86, 70, 160, 0.18);
+  transform: translateY(-3px);
 }
 
 .playlist-row {
@@ -364,9 +378,11 @@ const emit = defineEmits<{
   align-items: center;
   justify-content: center;
   padding: 60px 0;
-  background: #f9f9f9;
+  background: rgba(255, 255, 255, 0.3);
   border-radius: 20px;
-  border: 2px dashed #eee;
+  border: 1px dashed rgba(124, 77, 255, 0.24);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
 }
 
 .empty-text {

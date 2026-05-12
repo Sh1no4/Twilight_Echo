@@ -38,6 +38,7 @@ interface MpvAPI {
 interface WindowAPI {
   window: {
     minimize: () => void
+    toggleMaximize: () => void
     close: () => void
   }
   dialog: {
