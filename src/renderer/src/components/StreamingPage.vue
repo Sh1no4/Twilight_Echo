@@ -268,6 +268,15 @@ const headerTitle = computed(() => {
   return currentView.value?.label ?? '流媒体'
 })
 
+const timeGreeting = computed(() => {
+  const hour = new Date().getHours()
+  if (hour < 5) return '夜深了，放一首安静的歌'
+  if (hour < 11) return '早上好，开启美好的一天'
+  if (hour < 14) return '中午好，让音乐陪你休息'
+  if (hour < 18) return '下午好，继续享受音乐'
+  if (hour < 22) return '晚上好，放松一下'
+  return '夜深了，放一首安静的歌'
+})
 const rootLoading = computed(() => libraryLoading.value && !currentDetail.value)
 
 const likedSummary = computed(() => ({
@@ -587,7 +596,7 @@ onMounted(async () => {
               v-if="activeTab === 'home' && !currentDetail && !isSearching"
               class="streaming-content-subtitle"
             >
-              欢迎回来，享受美好的一天
+              {{ timeGreeting }}
             </p>
           </div>
         </div>
@@ -997,10 +1006,10 @@ onMounted(async () => {
   z-index: 50;
   display: flex;
   background:
-    radial-gradient(circle at 14% 16%, rgba(124, 77, 255, 0.14), transparent 34%),
-    radial-gradient(circle at 86% 20%, rgba(255, 126, 182, 0.13), transparent 32%),
-    radial-gradient(circle at 64% 86%, rgba(34, 211, 238, 0.12), transparent 36%),
-    transparent;
+    radial-gradient(circle at 14% 16%, rgba(124, 77, 255, 0.035), transparent 38%),
+    radial-gradient(circle at 86% 20%, rgba(255, 126, 182, 0.032), transparent 36%),
+    radial-gradient(circle at 64% 86%, rgba(34, 211, 238, 0.03), transparent 40%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
 }
 
 .streaming-sidebar {

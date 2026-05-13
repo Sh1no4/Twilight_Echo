@@ -222,6 +222,13 @@ function onScroll(e: Event): void {
   scrollTop.value = target.scrollTop
 }
 
+function onRowPointerMove(event: PointerEvent): void {
+  const row = event.currentTarget as HTMLElement
+  const rect = row.getBoundingClientRect()
+  row.style.setProperty('--track-pointer-x', `${event.clientX - rect.left}px`)
+  row.style.setProperty('--track-pointer-y', `${event.clientY - rect.top}px`)
+}
+
 const updateViewportHeight = (): void => {
   if (containerRef.value) {
     viewportHeight.value = containerRef.value.clientHeight
@@ -419,16 +426,14 @@ watch(displayTracks, () => {
                 <th class="col-cover-header"></th>
                 <th class="col-index">#</th>
                 <th class="col-info">标题</th>
-                <th class="col-artist">艺术家</th>
                 <th class="col-album">专辑</th>
                 <th class="col-duration">时长</th>
                 <th class="col-size">大小</th>
-                <th class="col-more">•••</th>
               </tr>
             </thead>
             <tbody :style="{ height: totalHeight + 'px', position: 'relative', display: 'block' }">
               <tr class="virtual-spacer" :style="{ height: paddingTop + 'px' }" aria-hidden="true">
-                <td colspan="8"></td>
+                <td colspan="6"></td>
               </tr>
               <tr
                 v-for="(track, index) in visibleTracks"
@@ -438,6 +443,7 @@ watch(displayTracks, () => {
                 :style="{ height: rowHeight + 'px', display: 'flex' }"
                 @click="onRowClick(track, $event)"
                 @dblclick="onRowDblClick(track)"
+                @pointermove="onRowPointerMove"
                 @contextmenu="onContextMenu($event, track)"
               >
                 <td class="col-cover">
@@ -472,13 +478,9 @@ watch(displayTracks, () => {
                     </div>
                   </div>
                 </td>
-                <td class="col-artist">{{ track.artist }}</td>
                 <td class="col-album">{{ track.album }}</td>
                 <td class="col-duration">{{ formatDuration(track.duration) }}</td>
                 <td class="col-size">{{ formatSize(track.size) }}</td>
-                <td class="col-more">
-                  <i class="pi pi-heart"></i>
-                </td>
               </tr>
               <tr
                 class="virtual-spacer"
@@ -487,7 +489,7 @@ watch(displayTracks, () => {
                 }"
                 aria-hidden="true"
               >
-                <td colspan="8"></td>
+                <td colspan="6"></td>
               </tr>
             </tbody>
           </table>
@@ -581,10 +583,10 @@ watch(displayTracks, () => {
   overflow-y: auto;
   overflow-x: hidden;
   background:
-    radial-gradient(circle at 18% 7%, rgba(124, 77, 255, 0.16), transparent 30%),
-    radial-gradient(circle at 53% 12%, rgba(255, 126, 182, 0.18), transparent 28%),
-    radial-gradient(circle at 86% 12%, rgba(104, 132, 255, 0.14), transparent 32%),
-    linear-gradient(180deg, rgba(247, 249, 255, 0.72), rgba(248, 246, 255, 0.42));
+    radial-gradient(circle at 18% 7%, rgba(124, 77, 255, 0.045), transparent 34%),
+    radial-gradient(circle at 53% 12%, rgba(255, 126, 182, 0.04), transparent 32%),
+    radial-gradient(circle at 86% 12%, rgba(104, 132, 255, 0.038), transparent 36%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
   width: 100%;
   box-sizing: border-box;
   scrollbar-width: thin;
@@ -627,9 +629,9 @@ watch(displayTracks, () => {
   pointer-events: none;
   z-index: -1;
   background:
-    radial-gradient(circle at 16% 40%, rgba(124, 77, 255, 0.12), transparent 42%),
-    radial-gradient(circle at 52% 24%, rgba(255, 126, 182, 0.12), transparent 36%),
-    radial-gradient(circle at 86% 18%, rgba(94, 118, 255, 0.1), transparent 38%);
+    radial-gradient(circle at 16% 40%, rgba(124, 77, 255, 0.035), transparent 46%),
+    radial-gradient(circle at 52% 24%, rgba(255, 126, 182, 0.035), transparent 40%),
+    radial-gradient(circle at 86% 18%, rgba(94, 118, 255, 0.032), transparent 42%);
 }
 
 .song-list-header {
@@ -879,16 +881,16 @@ watch(displayTracks, () => {
   overflow-x: auto;
   padding: 18px 18px 18px;
   border-radius: 13px;
-  border: 1px solid rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.52);
   background:
-    radial-gradient(circle at 42% 2%, rgba(255, 126, 182, 0.08), transparent 32%),
-    linear-gradient(145deg, rgba(255, 255, 255, 0.62), rgba(248, 245, 255, 0.36)),
-    rgba(255, 255, 255, 0.34);
+    radial-gradient(circle at 42% 2%, rgba(255, 126, 182, 0.025), transparent 36%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.18)),
+    rgba(255, 255, 255, 0.16);
   box-shadow:
-    0 24px 74px rgba(86, 70, 160, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.82);
-  backdrop-filter: blur(24px) saturate(155%);
-  -webkit-backdrop-filter: blur(24px) saturate(155%);
+    0 26px 78px rgba(86, 70, 160, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.64);
+  backdrop-filter: blur(30px) saturate(168%);
+  -webkit-backdrop-filter: blur(30px) saturate(168%);
 }
 .track-table {
   width: 100%;
@@ -921,6 +923,8 @@ watch(displayTracks, () => {
   border-bottom: 0;
 }
 .track-row td {
+  position: relative;
+  z-index: 1;
   padding: 0 14px;
   font-size: 13px;
   color: var(--te-neutral-700);
@@ -929,14 +933,61 @@ watch(displayTracks, () => {
   align-items: center;
 }
 .track-row {
+  --track-pointer-x: 50%;
+  --track-pointer-y: 50%;
+  position: relative;
   cursor: pointer;
   transition:
-    background 0.18s,
-    transform 0.18s var(--te-ease-soft),
-    box-shadow 0.18s;
+    background 0.22s,
+    transform 0.24s var(--te-ease-soft),
+    box-shadow 0.24s,
+    filter 0.24s;
   width: 100%;
   border-radius: 10px;
   margin: 2px 0;
+  isolation: isolate;
+  transform-origin: center;
+  z-index: 0;
+}
+
+.track-row::before,
+.track-row::after {
+  content: '';
+  position: absolute;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.24s ease;
+}
+
+.track-row::before {
+  z-index: -1;
+  inset: 0;
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  background: linear-gradient(rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.18));
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+}
+
+.track-row::after {
+  z-index: 2;
+  inset: 0;
+  padding: 1px;
+  background: radial-gradient(
+    circle 92px at var(--track-pointer-x) var(--track-pointer-y),
+    rgba(124, 77, 255, 0.96) 0%,
+    rgba(34, 211, 238, 0.86) 34%,
+    rgba(255, 126, 182, 0.72) 55%,
+    transparent 76%
+  );
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
 }
 .virtual-spacer {
   display: flex;
@@ -951,22 +1002,56 @@ watch(displayTracks, () => {
 }
 
 .track-row:hover {
-  background: rgba(255, 255, 255, 0.42);
-  transform: translateX(2px);
-  box-shadow: 0 12px 30px rgba(86, 70, 160, 0.06);
+  background: transparent;
+  transform: translateX(2px) scale(1.012);
+  box-shadow: 0 16px 38px rgba(86, 70, 160, 0.08);
+  filter: saturate(1.02);
+  z-index: 3;
+}
+
+.track-row:hover::before,
+.track-row:hover::after {
+  opacity: 1;
+}
+
+.track-row:hover::after {
+  animation: pointer-border-pulse 1.7s ease-in-out infinite;
 }
 .track-row:hover td {
   border-bottom-color: transparent;
 }
 .track-playing {
-  background:
-    linear-gradient(90deg, rgba(155, 97, 255, 0.1), rgba(255, 126, 182, 0.08)),
-    rgba(255, 255, 255, 0.3) !important;
-  box-shadow: 0 12px 30px rgba(124, 77, 255, 0.08);
+  background: transparent !important;
+  box-shadow: 0 20px 48px rgba(124, 77, 255, 0.12);
+  transform: translateX(2px) scale(1.026);
+  z-index: 4;
 }
 .track-playing td {
   border-bottom-color: transparent !important;
 }
+
+.track-playing::before {
+  opacity: 1;
+}
+
+.track-playing::after {
+  opacity: 1;
+  background: linear-gradient(
+    90deg,
+    rgba(124, 77, 255, 0.88),
+    rgba(34, 211, 238, 0.72),
+    rgba(255, 126, 182, 0.82),
+    rgba(124, 77, 255, 0.88)
+  );
+  background-size: 260% 100%;
+  animation: border-gradient-flow 3.4s linear infinite;
+}
+
+.track-playing::before {
+  border-color: rgba(124, 77, 255, 0.18);
+  background: linear-gradient(rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.2));
+}
+
 .cover-img {
   width: 34px;
   height: 34px;
@@ -1071,18 +1156,6 @@ watch(displayTracks, () => {
   justify-content: flex-end;
 }
 
-.col-artist {
-  width: 18%;
-  min-width: 130px;
-  max-width: 220px;
-  font-size: 13px !important;
-  color: rgba(71, 80, 112, 0.78) !important;
-  flex-shrink: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .col-size {
   width: 86px;
   flex-shrink: 0;
@@ -1090,33 +1163,14 @@ watch(displayTracks, () => {
   color: rgba(80, 88, 116, 0.78) !important;
 }
 
-.col-more {
-  width: 54px;
-  flex-shrink: 0;
-  justify-content: center;
-  color: rgba(124, 77, 255, 0.52) !important;
-  font-size: 13px !important;
-}
-
-.track-playing .col-more {
-  color: rgba(199, 47, 214, 0.9) !important;
-}
-
 @media (max-width: 1120px) {
-  .col-size,
-  .col-more {
+  .col-size {
     display: none !important;
   }
 }
 
 @media (max-width: 920px) {
   .col-album {
-    display: none !important;
-  }
-}
-
-@media (max-width: 720px) {
-  .col-artist {
     display: none !important;
   }
 }
@@ -1220,6 +1274,24 @@ watch(displayTracks, () => {
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes border-gradient-flow {
+  to {
+    background-position: 260% 0;
+  }
+}
+
+@keyframes pointer-border-pulse {
+  0%,
+  100% {
+    opacity: 0.72;
+    filter: saturate(1.05);
+  }
+  50% {
+    opacity: 1;
+    filter: saturate(1.24);
   }
 }
 
