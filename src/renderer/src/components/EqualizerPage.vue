@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 
-defineEmits<{
+const emit = defineEmits<{
   back: []
 }>()
 
@@ -154,6 +154,7 @@ const appSettings = ref<AppSettings | null>(null)
 const presetName = ref('')
 const saving = ref(false)
 const presetMenuOpen = ref(false)
+const filterMenuOpen = ref(false)
 const selectedBandIndex = ref(0)
 
 const userPresets = computed(() => appSettings.value?.audioEqPresets ?? [])
@@ -290,7 +291,12 @@ async function applyEqPreset(preset: AudioEqPreset): Promise<void> {
 }
 
 async function saveEqPreset(): Promise<void> {
-  const name = presetName.value.trim()
+  const name =
+    presetName.value.trim() ||
+    `自定义 ${new Date().toLocaleTimeString('zh-CN', {
+      hour: '2-digit',
+      minute: '2-digit'
+    })}`
   if (!name || !appSettings.value || saving.value) return
   saving.value = true
   try {
@@ -313,8 +319,14 @@ async function saveEqPreset(): Promise<void> {
   }
 }
 
+function saveAsCurrentPreset(): void {
+  void saveEqPreset()
+}
+
 function switchTab(tab: EqualizerTab): void {
   activeTab.value = tab
+  presetMenuOpen.value = false
+  filterMenuOpen.value = false
   if (tab === 'graphic' || tab === 'parametric') {
     void updateAudioProcessing({ eqMode: tab })
   }
@@ -323,6 +335,8 @@ function switchTab(tab: EqualizerTab): void {
 function openAdvancedSettings(index = selectedBandIndex.value): void {
   selectedBandIndex.value = Math.min(Math.max(index, 0), audioProcessing.value.eqBands.length - 1)
   activeTab.value = 'parametric'
+  presetMenuOpen.value = false
+  filterMenuOpen.value = false
   void updateAudioProcessing({ eqMode: 'parametric' })
 }
 
@@ -337,6 +351,22 @@ async function resetEqualizer(): Promise<void> {
 
 function togglePresetMenu(): void {
   presetMenuOpen.value = !presetMenuOpen.value
+  if (presetMenuOpen.value) filterMenuOpen.value = false
+}
+
+function toggleFilterMenu(): void {
+  filterMenuOpen.value = !filterMenuOpen.value
+  if (filterMenuOpen.value) presetMenuOpen.value = false
+}
+
+async function selectFilterType(filterType: EqualizerFilterType): Promise<void> {
+  filterMenuOpen.value = false
+  await updateEqBand(selectedBandIndex.value, { filterType })
+}
+
+function selectBand(index: number): void {
+  selectedBandIndex.value = index
+  filterMenuOpen.value = false
 }
 
 function formatFrequency(frequency: number): string {
@@ -406,6 +436,10 @@ onMounted(() => {
 
 <template>
   <div class="eq-page">
+    <button type="button" class="eq-back-button" aria-label="返回" @click="emit('back')">
+      <i class="pi pi-chevron-left"></i>
+    </button>
+
     <aside class="eq-sidebar">
       <nav class="eq-nav">
         <button
@@ -488,6 +522,7 @@ onMounted(() => {
           </div>
           <button type="button" class="eq-command" @click="openAdvancedSettings()">高级设置</button>
           <button type="button" class="eq-command soft" @click="resetEqualizer">重置</button>
+          <button type="button" class="eq-command" :disabled="saving" @click="saveAsCurrentPreset">另存为</button>
         </div>
 
         <div class="response-card">
@@ -570,7 +605,7 @@ onMounted(() => {
             :key="index + '-' + band.frequency"
             class="graphic-band"
             :class="{ selected: selectedBandIndex === index }"
-            @click="selectedBandIndex = index"
+            @click="selectBand(index)"
             @dblclick="openAdvancedSettings(index)"
           >
             <span class="band-gain">{{ band.gain.toFixed(1) }}</span>
@@ -633,8 +668,9 @@ onMounted(() => {
               </div>
             </div>
           </div>
-          <button type="button" class="eq-command" @click="activeTab = 'graphic'">返回图形</button>
+          <button type="button" class="eq-command" @click="switchTab('graphic')">返回图形</button>
           <button type="button" class="eq-command soft" @click="resetEqualizer">重置</button>
+          <button type="button" class="eq-command" :disabled="saving" @click="saveAsCurrentPreset">另存为</button>
         </div>
 
         <div class="response-card compact">
@@ -708,7 +744,7 @@ onMounted(() => {
             :key="'select-' + index"
             type="button"
             :class="{ active: selectedBandIndex === index }"
-            @click="selectedBandIndex = index"
+            @click="selectBand(index)"
           >
             {{ formatFrequency(band.frequency) }}
           </button>
@@ -735,21 +771,26 @@ onMounted(() => {
               "
             />
           </label>
-          <label class="editor-row">
+          <div class="editor-row filter-row">
             <span>滤波器类型</span>
-            <select
-              :value="selectedBand.filterType"
-              @change="
-                updateEqBand(selectedBandIndex, {
-                  filterType: ($event.target as HTMLSelectElement).value as EqualizerFilterType
-                })
-              "
-            >
-              <option v-for="filter in filterTypes" :key="filter.value" :value="filter.value">
-                {{ filter.label }}
-              </option>
-            </select>
-          </label>
+            <div class="filter-menu-anchor">
+              <button type="button" class="filter-select-button" @click="toggleFilterMenu">
+                <strong>{{ selectedFilter.label }}</strong>
+                <i class="pi pi-chevron-down"></i>
+              </button>
+              <div v-if="filterMenuOpen" class="filter-menu">
+                <button
+                  v-for="filter in filterTypes"
+                  :key="filter.value"
+                  type="button"
+                  :class="{ active: selectedBand.filterType === filter.value }"
+                  @click="selectFilterType(filter.value)"
+                >
+                  {{ filter.label }}
+                </button>
+              </div>
+            </div>
+          </div>
           <label class="editor-row range-row" :class="{ disabled: isGainDisabled(selectedBand) }">
             <span>GAIN(dB)[-12.0~12.0]</span>
             <strong>{{ selectedBand.gain.toFixed(1) }}</strong>
@@ -804,10 +845,38 @@ onMounted(() => {
   z-index: 1300;
   display: grid;
   grid-template-columns: 176px minmax(0, 1fr);
+  height: calc(100vh - 48px);
+  min-height: 0;
   gap: 0;
   padding: 0;
   background: #f7f8fb;
   overflow: hidden;
+}
+
+.eq-back-button {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 40;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(52, 61, 87, 0.86);
+  font-size: 18px;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    color 0.2s;
+}
+
+.eq-back-button:hover {
+  background: #f7f5ff;
+  color: var(--te-primary-500);
 }
 
 .eq-sidebar,
@@ -829,17 +898,21 @@ onMounted(() => {
 
 .eq-sidebar {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
   padding: 16px 12px;
   border-right: 1px solid #e8ebf2;
 }
 
 .eq-content {
   min-width: 0;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   background: #f7f8fb;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .eq-nav,
@@ -888,6 +961,7 @@ onMounted(() => {
   width: 100%;
   height: auto;
   align-content: center;
+  justify-items: stretch;
   gap: 6px;
 }
 
@@ -905,6 +979,7 @@ onMounted(() => {
   color: rgba(52, 61, 87, 0.72);
   cursor: pointer;
   text-align: left;
+  justify-content: flex-start;
   overflow: hidden;
   transition:
     transform 0.22s var(--te-ease-soft),
@@ -945,6 +1020,8 @@ onMounted(() => {
 .eq-nav-item > span:last-child {
   position: relative;
   z-index: 1;
+  width: 100%;
+  text-align: left;
 }
 
 .eq-nav-label {
@@ -1031,6 +1108,13 @@ onMounted(() => {
   padding: 0 12px;
 }
 
+.eq-command:disabled,
+.preset-create button:disabled,
+.save-row button:disabled {
+  cursor: default;
+  opacity: 0.56;
+}
+
 .eq-command.soft {
   background:
     linear-gradient(135deg, rgba(170, 120, 110, 0.16), rgba(124, 77, 255, 0.08)),
@@ -1079,9 +1163,11 @@ onMounted(() => {
 .eq-square {
   flex: 1;
   min-height: 0;
+  max-height: 100%;
   overflow-y: auto;
-  overflow-x: visible;
+  overflow-x: hidden;
   padding: 18px 28px 28px;
+  scrollbar-gutter: stable;
 }
 
 .eq-toolbar,
@@ -1197,23 +1283,24 @@ onMounted(() => {
 }
 
 .response-card {
-  min-height: 230px;
+  min-height: 180px;
   padding: 12px;
 }
 
 .response-card.compact {
-  min-height: 240px;
+  min-height: 180px;
 }
 
 .response-chart {
   display: block;
   width: 100%;
-  height: 100%;
-  min-height: 250px;
+  height: 190px;
+  min-height: 0;
 }
 
 .response-card.compact .response-chart {
-  min-height: 210px;
+  height: 180px;
+  min-height: 0;
 }
 
 .chart-grid line {
@@ -1271,6 +1358,71 @@ onMounted(() => {
   font-weight: 760;
   outline: none;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56);
+}
+
+.filter-row {
+  position: relative;
+  z-index: 12;
+}
+
+.filter-menu-anchor {
+  position: relative;
+  min-width: 220px;
+}
+
+.filter-select-button {
+  width: 100%;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 10px;
+  border: 1px solid #e8ebf2;
+  border-radius: 8px;
+  background: #fff;
+  color: rgba(52, 61, 87, 0.86);
+  cursor: pointer;
+}
+
+.filter-select-button strong {
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.filter-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(260px, 80vw);
+  max-height: 360px;
+  display: grid;
+  gap: 4px;
+  overflow-y: auto;
+  padding: 8px;
+  border: 1px solid #e8ebf2;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 22px 54px rgba(34, 42, 68, 0.16);
+}
+
+.filter-menu button {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(52, 61, 87, 0.82);
+  font-size: 13px;
+  font-weight: 850;
+  text-align: left;
+  cursor: pointer;
+}
+
+.filter-menu button:hover,
+.filter-menu button.active {
+  background: #f7f5ff;
+  color: var(--te-primary-500);
 }
 
 .graphic-board {
@@ -1463,6 +1615,7 @@ onMounted(() => {
 
   .eq-sidebar {
     max-height: 220px;
+    justify-content: flex-start;
   }
 
   .eq-nav {

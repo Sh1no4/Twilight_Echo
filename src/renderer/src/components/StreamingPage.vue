@@ -1156,9 +1156,9 @@ onMounted(async () => {
 }
 
 .streaming-sidebar.open {
-  width: 184px;
-  min-width: 184px;
-  max-width: 184px;
+  width: var(--te-menu-width);
+  min-width: 132px;
+  max-width: 216px;
 }
 
 .streaming-sidebar-inner {
@@ -1166,9 +1166,9 @@ onMounted(async () => {
   flex-direction: column;
   height: 100%;
   padding: 10px 8px;
-  width: 184px;
-  min-width: 184px;
-  max-width: 184px;
+  width: var(--te-menu-width);
+  min-width: 132px;
+  max-width: 216px;
 }
 
 .streaming-sidebar-header {
@@ -1264,7 +1264,7 @@ onMounted(async () => {
 }
 
 .streaming-sidebar.open + .streaming-content {
-  margin-left: 184px;
+  margin-left: var(--te-menu-width);
 }
 
 .streaming-content-header {
@@ -2445,20 +2445,20 @@ onMounted(async () => {
 }
 
 .streaming-sidebar.open {
-  width: 184px;
-  min-width: 184px;
-  max-width: 184px;
+  width: var(--te-menu-width);
+  min-width: 132px;
+  max-width: 216px;
 }
 
 .streaming-sidebar-inner {
-  width: 184px;
-  min-width: 184px;
-  max-width: 184px;
+  width: var(--te-menu-width);
+  min-width: 132px;
+  max-width: 216px;
   padding: 10px 8px;
 }
 
 .streaming-sidebar.open + .streaming-content {
-  margin-left: 184px;
+  margin-left: var(--te-menu-width);
 }
 
 .streaming-menu-item {

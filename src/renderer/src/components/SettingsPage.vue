@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 
-defineEmits<{
+const emit = defineEmits<{
   back: []
 }>()
 
@@ -372,6 +372,10 @@ watch(
 
 <template>
   <div class="settings-page">
+    <button type="button" class="settings-back-button" aria-label="返回" @click="emit('back')">
+      <i class="pi pi-chevron-left"></i>
+    </button>
+
     <div class="settings-shell">
       <aside class="settings-sidebar" aria-label="设置分类">
         <nav class="settings-nav">
@@ -808,6 +812,32 @@ watch(
   background: #f7f8fb;
 }
 
+.settings-back-button {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 40;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(52, 61, 87, 0.86);
+  font-size: 18px;
+  cursor: pointer;
+  transition:
+    background 0.2s,
+    color 0.2s;
+}
+
+.settings-back-button:hover {
+  background: #f7f5ff;
+  color: var(--te-primary-500);
+}
+
 .settings-shell {
   width: 100%;
   height: 100%;
@@ -833,6 +863,7 @@ watch(
 .settings-sidebar {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   padding: 16px 12px;
   align-self: stretch;
   border-right: 1px solid #e8ebf2;
@@ -885,6 +916,7 @@ watch(
   width: 100%;
   height: auto;
   justify-content: center;
+  align-items: stretch;
   gap: 6px;
 }
 
@@ -902,6 +934,7 @@ watch(
   color: rgba(52, 61, 87, 0.72);
   cursor: pointer;
   text-align: left;
+  justify-content: flex-start;
   overflow: hidden;
   transition:
     transform 0.22s var(--te-ease-soft),
@@ -958,6 +991,8 @@ watch(
   position: relative;
   z-index: 1;
   gap: 2px;
+  width: 100%;
+  text-align: left;
 }
 
 .nav-label {

@@ -141,9 +141,6 @@ function openFeature(key: FeatureCard['key']): void {
               <span v-else class="playlist-cover placeholder-cover">
                 <i class="pi pi-list"></i>
               </span>
-              <span class="play-bubble">
-                <i class="pi pi-play-fill"></i>
-              </span>
             </span>
             <span class="playlist-name">{{ playlist.name }}</span>
             <span class="playlist-count">{{ playlist.trackCount }} 首</span>
@@ -656,41 +653,6 @@ function openFeature(key: FeatureCard['key']): void {
     linear-gradient(135deg, rgba(124, 77, 255, 0.16), rgba(34, 211, 238, 0.1));
 }
 
-.play-bubble {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  z-index: 1;
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 999px;
-  color: var(--te-primary-500);
-  background: rgba(255, 255, 255, 0.62);
-  border: 1px solid rgba(255, 255, 255, 0.68);
-  box-shadow: 0 10px 22px rgba(86, 70, 160, 0.12);
-  backdrop-filter: blur(10px) saturate(145%);
-  -webkit-backdrop-filter: blur(10px) saturate(145%);
-  transform: translateY(6px) scale(0.94);
-  opacity: 0;
-  transition:
-    transform 0.24s var(--te-ease-soft),
-    opacity 0.2s,
-    background 0.2s;
-}
-
-.playlist-tile:hover .play-bubble {
-  opacity: 1;
-  background: rgba(255, 255, 255, 0.78);
-  transform: translateY(0) scale(1);
-}
-
-.play-bubble i {
-  font-size: 10px;
-  transform: translateX(1px);
-}
-
 .playlist-name {
   position: relative;
   z-index: 1;
@@ -902,15 +864,6 @@ function openFeature(key: FeatureCard['key']): void {
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
-}
-
-.play-bubble {
-  opacity: 1;
-  transform: none;
-  width: 30px;
-  height: 30px;
-  color: #fff;
-  background: rgba(124, 77, 255, 0.82);
 }
 
 @media (max-width: 1180px) {

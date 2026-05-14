@@ -75,14 +75,6 @@ function close(): void {
         <i class="pi pi-cog"></i>
       </button>
     </div>
-    <button
-      v-if="menuOpen && !glass"
-      class="collapse-btn no-drag"
-      title="收起菜单"
-      @click="$emit('collapseMenu')"
-    >
-      <img src="/icons/arrow-left.svg" alt="鏀惰捣" />
-    </button>
     <div class="title-bar-controls no-drag">
       <button class="control-btn minimize" title="最小化" @click="minimize">
         <svg width="14" height="14" viewBox="0 0 10 10">
@@ -241,33 +233,6 @@ function close(): void {
 
 .back-btn:hover {
   background: rgba(255, 255, 255, 0.1);
-}
-
-.collapse-btn {
-  position: fixed;
-  left: calc(var(--te-menu-width) - 28px);
-  top: 0;
-  width: 28px;
-  height: 32px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  background: transparent;
-  color: var(--te-neutral-700);
-  cursor: pointer;
-  padding: 0;
-  transition: background 0.15s;
-}
-
-.collapse-btn:hover {
-  background: rgba(124, 77, 255, 0.1);
-}
-
-.collapse-btn img {
-  width: 16px;
-  height: 16px;
-  filter: brightness(0.5);
 }
 
 .title-bar-controls {

@@ -1109,14 +1109,15 @@ watch(displayTracks, () => {
 .track-title-row {
   width: 100%;
   min-width: 0;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
 }
 
 .track-title {
   min-width: 0;
-  flex: 0 1 auto;
+  width: 100%;
   font-size: 13px;
   font-weight: 850;
   color: var(--te-neutral-900);
@@ -1141,7 +1142,8 @@ watch(displayTracks, () => {
   align-items: center;
   flex-shrink: 0;
   gap: 6px;
-  min-width: 0;
+  min-width: 232px;
+  justify-content: flex-end;
 }
 .meta-label {
   font-size: 10px;
@@ -1191,32 +1193,43 @@ watch(displayTracks, () => {
 }
 
 .track-pills {
-  display: flex;
+  display: grid;
+  grid-template-columns: 46px 58px 44px 62px;
   gap: 4px;
   flex-shrink: 0;
   align-items: center;
+  justify-content: end;
 }
 .pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 9px;
   font-weight: 700;
   padding: 1px 5px;
   border-radius: 999px;
   text-transform: uppercase;
   line-height: 1.2;
+  white-space: nowrap;
+  justify-self: end;
 }
 .pill-format {
+  grid-column: 1;
   background: rgba(124, 77, 255, 0.1);
   color: #6b3df0;
 }
 .pill-rate {
+  grid-column: 2;
   background: rgba(59, 130, 246, 0.12);
   color: #2563eb;
 }
 .pill-depth {
+  grid-column: 3;
   background: rgba(32, 198, 94, 0.12);
   color: #16a34a;
 }
 .pill-bitrate {
+  grid-column: 4;
   background: rgba(245, 158, 11, 0.14);
   color: #d97706;
 }
