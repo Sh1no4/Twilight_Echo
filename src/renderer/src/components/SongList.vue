@@ -459,24 +459,29 @@ watch(displayTracks, () => {
                   <span v-else>{{ visibleRange.start + Number(index) + 1 }}</span>
                 </td>
                 <td class="col-info">
-                  <div class="track-title">{{ track.title }}</div>
-                  <div class="track-artist">{{ track.artist }}</div>
-                  <div v-if="track.format || track.sampleRate" class="track-audio-data">
-                    <div class="track-pills">
-                      <span v-if="track.format" class="pill pill-format">{{
-                        track.format.toUpperCase().replace(/^\./, '')
-                      }}</span>
-                      <span v-if="track.sampleRate" class="pill pill-rate"
-                        >{{ (track.sampleRate / 1000).toFixed(1) }}kHz</span
-                      >
-                      <span v-if="track.bitDepth" class="pill pill-depth"
-                        >{{ track.bitDepth }}bit</span
-                      >
-                      <span v-if="track.bitrate" class="pill pill-bitrate"
-                        >{{ Math.round(track.bitrate / 1000) }}kbps</span
-                      >
+                  <div class="track-title-row">
+                    <div class="track-title">{{ track.title }}</div>
+                    <div
+                      v-if="track.format || track.sampleRate || track.bitDepth || track.bitrate"
+                      class="track-audio-data"
+                    >
+                      <div class="track-pills">
+                        <span v-if="track.format" class="pill pill-format">{{
+                          track.format.toUpperCase().replace(/^\./, '')
+                        }}</span>
+                        <span v-if="track.sampleRate" class="pill pill-rate"
+                          >{{ (track.sampleRate / 1000).toFixed(1) }}kHz</span
+                        >
+                        <span v-if="track.bitDepth" class="pill pill-depth"
+                          >{{ track.bitDepth }}bit</span
+                        >
+                        <span v-if="track.bitrate" class="pill pill-bitrate"
+                          >{{ Math.round(track.bitrate / 1000) }}kbps</span
+                        >
+                      </div>
                     </div>
                   </div>
+                  <div class="track-artist">{{ track.artist }}</div>
                 </td>
                 <td class="col-album">{{ track.album }}</td>
                 <td class="col-duration">{{ formatDuration(track.duration) }}</td>
@@ -1101,14 +1106,23 @@ watch(displayTracks, () => {
   justify-content: center;
   align-items: flex-start !important;
 }
+.track-title-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .track-title {
+  min-width: 0;
+  flex: 0 1 auto;
   font-size: 13px;
   font-weight: 850;
   color: var(--te-neutral-900);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  width: 100%;
 }
 .track-playing .track-title {
   color: #6f4ee8;
@@ -1123,10 +1137,11 @@ watch(displayTracks, () => {
   width: 100%;
 }
 .track-audio-data {
-  display: none;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 4px;
+  flex-shrink: 0;
+  gap: 6px;
+  min-width: 0;
 }
 .meta-label {
   font-size: 10px;
@@ -1179,6 +1194,7 @@ watch(displayTracks, () => {
   display: flex;
   gap: 4px;
   flex-shrink: 0;
+  align-items: center;
 }
 .pill {
   font-size: 9px;

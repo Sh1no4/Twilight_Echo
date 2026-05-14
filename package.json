@@ -24,10 +24,8 @@
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@neteasecloudmusicapienhanced/api": "^4.32.0",
-    "@primeuix/themes": "^2.0.3",
     "music-metadata": "^11.12.3",
-    "primeicons": "^7.0.0",
-    "primevue": "^4.5.5"
+    "primeicons": "^7.0.0"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "3.0.0",

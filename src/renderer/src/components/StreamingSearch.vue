@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import Paginator, { type PageState } from 'primevue/paginator'
-import Button from 'primevue/button'
 import type { Track } from '../types/music'
 import type { NcmPlaylistSummary, NcmArtistSummary } from '../stores/useNcmStore'
+
+interface PageState {
+  first: number
+  rows: number
+  page: number
+  pageCount: number
+}
 
 const props = defineProps<{
   searchType: 'songs' | 'playlists' | 'artists'
@@ -27,6 +32,18 @@ const emit = defineEmits<{
   pageChange: [event: PageState]
   retry: []
 }>()
+
+const pageSize = 30
+
+function emitPage(first: number): void {
+  const normalizedFirst = Math.max(0, Math.min(first, Math.max(0, props.searchTotal - pageSize)))
+  emit('pageChange', {
+    first: normalizedFirst,
+    rows: pageSize,
+    page: Math.floor(normalizedFirst / pageSize),
+    pageCount: Math.max(1, Math.ceil(props.searchTotal / pageSize))
+  })
+}
 </script>
 
 <template>
@@ -39,7 +56,7 @@ const emit = defineEmits<{
       <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
       <p class="placeholder-title">搜索失败</p>
       <p class="placeholder-hint">{{ searchError }}</p>
-      <Button label="重试" severity="contrast" @click="emit('retry')" />
+      <button type="button" class="search-action-btn" @click="emit('retry')">重试</button>
     </div>
     <div v-else-if="searchTotal === 0 && !searchLoading" class="streaming-placeholder">
       <i class="pi pi-search" style="font-size: 40px; color: #ccc"></i>
@@ -113,14 +130,31 @@ const emit = defineEmits<{
             </tbody>
           </table>
         </div>
-        <Paginator
+        <div
           v-if="searchTotal > 30"
-          :rows="30"
-          :total-records="searchTotal"
-          :first="searchOffset"
           class="search-paginator"
-          @page="emit('pageChange', $event)"
-        />
+        >
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchOffset <= 0"
+            @click="emitPage(searchOffset - pageSize)"
+          >
+            上一页
+          </button>
+          <span class="pager-text">
+            {{ Math.floor(searchOffset / pageSize) + 1 }} /
+            {{ Math.ceil(searchTotal / pageSize) }}
+          </span>
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchOffset + pageSize >= searchTotal"
+            @click="emitPage(searchOffset + pageSize)"
+          >
+            下一页
+          </button>
+        </div>
       </div>
       <div v-else-if="searchType === 'playlists'" class="rec-sections">
         <div class="playlist-grid">
@@ -143,14 +177,31 @@ const emit = defineEmits<{
             <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
           </div>
         </div>
-        <Paginator
+        <div
           v-if="searchTotal > 30"
-          :rows="30"
-          :total-records="searchTotal"
-          :first="searchOffset"
           class="search-paginator"
-          @page="emit('pageChange', $event)"
-        />
+        >
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchOffset <= 0"
+            @click="emitPage(searchOffset - pageSize)"
+          >
+            上一页
+          </button>
+          <span class="pager-text">
+            {{ Math.floor(searchOffset / pageSize) + 1 }} /
+            {{ Math.ceil(searchTotal / pageSize) }}
+          </span>
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchOffset + pageSize >= searchTotal"
+            @click="emitPage(searchOffset + pageSize)"
+          >
+            下一页
+          </button>
+        </div>
       </div>
       <div v-else-if="searchType === 'artists'" class="rec-sections">
         <div class="playlist-grid">
@@ -173,14 +224,31 @@ const emit = defineEmits<{
             <div class="playlist-grid-count">{{ artist.musicSize }} 首单曲</div>
           </div>
         </div>
-        <Paginator
+        <div
           v-if="searchTotal > 30"
-          :rows="30"
-          :total-records="searchTotal"
-          :first="searchOffset"
           class="search-paginator"
-          @page="emit('pageChange', $event)"
-        />
+        >
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchOffset <= 0"
+            @click="emitPage(searchOffset - pageSize)"
+          >
+            上一页
+          </button>
+          <span class="pager-text">
+            {{ Math.floor(searchOffset / pageSize) + 1 }} /
+            {{ Math.ceil(searchTotal / pageSize) }}
+          </span>
+          <button
+            type="button"
+            class="pager-btn"
+            :disabled="searchOffset + pageSize >= searchTotal"
+            @click="emitPage(searchOffset + pageSize)"
+          >
+            下一页
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -305,13 +373,154 @@ const emit = defineEmits<{
 }
 
 .search-paginator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
   margin-top: 24px;
-  background: transparent !important;
-  border: none !important;
+}
+
+.search-action-btn,
+.pager-btn {
+  min-height: 34px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
+  background:
+    linear-gradient(135deg, rgba(124, 77, 255, 0.14), rgba(34, 211, 238, 0.1)),
+    rgba(255, 255, 255, 0.54);
+  color: rgba(52, 61, 87, 0.86);
+  font-size: 13px;
+  font-weight: 850;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(86, 70, 160, 0.08);
+  transition:
+    transform 0.2s var(--te-ease-soft),
+    box-shadow 0.2s,
+    opacity 0.2s;
+}
+
+.search-action-btn:hover,
+.pager-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 30px rgba(86, 70, 160, 0.12);
+}
+
+.pager-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.pager-text {
+  min-width: 72px;
+  text-align: center;
+  color: rgba(80, 88, 116, 0.64);
+  font-size: 12px;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
 }
 
 @keyframes fadeIn {
   from { opacity: 0; }
   to { opacity: 1; }
+}
+
+/* ===== Reference-style Search Refresh ===== */
+.search-view {
+  color: #242946;
+}
+
+.streaming-placeholder,
+.playlist-grid-card {
+  border-radius: 8px;
+  border-color: rgba(255, 255, 255, 0.72);
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.8), transparent 30%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.64), rgba(249, 246, 255, 0.3)),
+    rgba(255, 255, 255, 0.26);
+  box-shadow:
+    0 20px 58px rgba(86, 70, 160, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.76);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+}
+
+.placeholder-title {
+  color: #242946;
+  font-weight: 900;
+}
+
+.placeholder-hint,
+.playlist-grid-count,
+.pager-text {
+  color: rgba(82, 90, 122, 0.62);
+  font-weight: 750;
+}
+
+.rec-sections {
+  padding: 0;
+}
+
+.playlist-grid {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 18px;
+  margin-top: 0;
+}
+
+.playlist-grid-card {
+  padding: 12px;
+}
+
+.playlist-grid-card:hover {
+  transform: translateY(-4px);
+  box-shadow:
+    0 24px 64px rgba(86, 70, 160, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.playlist-grid-cover,
+.playlist-grid-cover-placeholder {
+  border-radius: 8px;
+}
+
+.playlist-grid-name {
+  color: #242946;
+  font-weight: 900;
+}
+
+.search-action-btn,
+.pager-btn {
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+  border-color: rgba(255, 255, 255, 0.72);
+}
+
+.pager-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, rgba(124, 77, 255, 0.16), rgba(255, 126, 182, 0.1));
+}
+
+/* ===== White Card Search Refinement ===== */
+.streaming-placeholder,
+.playlist-grid-card,
+.search-action-btn,
+.pager-btn {
+  background: #fff;
+  border-color: #eef1f6;
+  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.playlist-grid-card:hover {
+  box-shadow: 0 18px 38px rgba(34, 42, 68, 0.1);
+}
+
+.playlist-grid-cover-placeholder {
+  background: #f3f0ff;
+}
+
+.pager-btn:hover:not(:disabled),
+.search-action-btn:hover {
+  background: #f7f5ff;
 }
 </style>

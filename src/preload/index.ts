@@ -5,6 +5,58 @@ type MpvEventCallback = (event: { name: string; data: unknown }) => void
 type MpvEndFileCallback = (reason: string) => void
 type MpvSimpleCallback = () => void
 type MpvErrorCallback = (message: string) => void
+type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
+type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
+type EqMode = 'graphic' | 'parametric'
+type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
+type EqualizerFilterType =
+  | 'peak'
+  | 'lowShelf'
+  | 'highShelf'
+  | 'bandPass'
+  | 'lowPass'
+  | 'highPass'
+  | 'allPass'
+
+interface EqualizerBand {
+  frequency: number
+  gain: number
+  q: number
+  filterType: EqualizerFilterType
+}
+
+interface AudioProcessingSettings {
+  highResolution: boolean
+  dsdToPcm: boolean
+  eqEnabled: boolean
+  eqMode: EqMode
+  eqPreamp: number
+  eqBands: EqualizerBand[]
+  volumeNormalization: VolumeNormalizationMode
+  replayGainPreamp: number
+  replayGainFallback: number
+  replayGainClip: boolean
+  gapless: boolean
+  crossfadeSeconds: number
+}
+
+interface AudioEqPreset {
+  id: string
+  name: string
+  eqMode: EqMode
+  eqPreamp: number
+  eqBands: EqualizerBand[]
+}
+
+interface AppSettings {
+  autoLaunch: boolean
+  hardwareAcceleration: boolean
+  globalShortcuts: boolean
+  musicCachePath: string
+  closeToTray: boolean
+  audioProcessing: AudioProcessingSettings
+  audioEqPresets: AudioEqPreset[]
+}
 
 const mpvEventCallbacks = new Set<MpvEventCallback>()
 const mpvEndFileCallbacks = new Set<MpvEndFileCallback>()
@@ -12,6 +64,7 @@ const mpvStartFileCallbacks = new Set<MpvSimpleCallback>()
 const mpvReadyCallbacks = new Set<MpvSimpleCallback>()
 const mpvErrorCallbacks = new Set<MpvErrorCallback>()
 const mpvDisconnectedCallbacks = new Set<MpvSimpleCallback>()
+const playerShortcutCallbacks = new Set<(action: PlayerShortcutAction) => void>()
 
 ipcRenderer.on('mpv:property-change', (_event, data: { name: string; data: unknown }) => {
   for (const cb of mpvEventCallbacks) {
@@ -49,6 +102,12 @@ ipcRenderer.on('mpv:disconnected', () => {
   }
 })
 
+ipcRenderer.on('player:shortcut', (_event, action: PlayerShortcutAction) => {
+  for (const cb of playerShortcutCallbacks) {
+    cb(action)
+  }
+})
+
 const api = {
   window: {
     minimize: (): void => ipcRenderer.send('window:minimize'),
@@ -82,6 +141,22 @@ const api = {
     setExclusiveMode: (enabled: boolean): Promise<void> =>
       ipcRenderer.invoke('mpv:setExclusiveMode', enabled),
     getExclusiveMode: (): Promise<boolean> => ipcRenderer.invoke('mpv:getExclusiveMode'),
+    setAudioOutput: (output: AudioOutputId): Promise<void> =>
+      ipcRenderer.invoke('mpv:setAudioOutput', output),
+    getAudioOutput: (): Promise<AudioOutputId> => ipcRenderer.invoke('mpv:getAudioOutput'),
+    getAudioOutputOptions: (): Promise<
+      {
+        id: AudioOutputId
+        label: string
+        description: string
+        platform: NodeJS.Platform
+        supportsExclusive: boolean
+      }[]
+    > => ipcRenderer.invoke('mpv:getAudioOutputOptions'),
+    setAudioProcessing: (settings: Partial<AudioProcessingSettings>): Promise<AudioProcessingSettings> =>
+      ipcRenderer.invoke('mpv:setAudioProcessing', settings),
+    getAudioProcessing: (): Promise<AudioProcessingSettings> =>
+      ipcRenderer.invoke('mpv:getAudioProcessing'),
 
     onPropertyChange: (cb: MpvEventCallback): (() => void) => {
       mpvEventCallbacks.add(cb)
@@ -116,7 +191,11 @@ const api = {
   ncm: {
     getPort: (): Promise<number> => ipcRenderer.invoke('ncm:getPort'),
     request: (path: string, cookie?: string): Promise<unknown> =>
-      ipcRenderer.invoke('ncm:request', path, cookie)
+      ipcRenderer.invoke('ncm:request', path, cookie),
+    getCachedSong: (songId: number): Promise<string | null> =>
+      ipcRenderer.invoke('ncm:getCachedSong', songId),
+    cacheSong: (songId: number, url: string, fileName?: string): Promise<string | null> =>
+      ipcRenderer.invoke('ncm:cacheSong', songId, url, fileName)
   },
   data: {
     saveMusicLibrary: (tracks: unknown[]): Promise<void> =>
@@ -124,6 +203,17 @@ const api = {
     loadMusicLibrary: (): Promise<unknown[]> => ipcRenderer.invoke('data:loadMusicLibrary'),
     saveCookie: (cookie: string): Promise<void> => ipcRenderer.invoke('data:saveCookie', cookie),
     loadCookie: (): Promise<string> => ipcRenderer.invoke('data:loadCookie')
+  },
+  settings: {
+    get: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
+    update: (patch: Partial<AppSettings>): Promise<AppSettings> =>
+      ipcRenderer.invoke('settings:update', patch),
+    selectMusicCachePath: (): Promise<string | null> =>
+      ipcRenderer.invoke('settings:selectMusicCachePath'),
+    onPlayerShortcut: (cb: (action: PlayerShortcutAction) => void): (() => void) => {
+      playerShortcutCallbacks.add(cb)
+      return () => playerShortcutCallbacks.delete(cb)
+    }
   }
 }
 

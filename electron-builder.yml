@@ -3,20 +3,20 @@ productName: TwilightEcho
 directories:
   buildResources: build
 beforePack: ./scripts/extract-mpv.cjs
-afterPack: ./scripts/copy-node-modules.cjs
-asar: false
+asar: true
 icon: build/icon.png
 files:
   - '!**/.vscode/*'
   - '!src/*'
   - '!scripts/*'
   - '!resources/mpv.*'
+  - '!resources/mpv/**'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
-  - resources/**
+  - resources/mpv/**
 extraResources:
   - from: resources/mpv
     to: mpv

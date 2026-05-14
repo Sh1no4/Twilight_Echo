@@ -29,31 +29,31 @@ const menuItems: MenuItem[] = [
   {
     key: 'allSongs',
     label: '所有歌曲',
-    icon: 'pi pi-wave-pulse',
+    icon: 'pi pi-music',
     children: [{ key: 'all', label: '全部' }]
   },
   {
     key: 'artists',
     label: '艺术家',
-    icon: 'pi pi-user',
+    icon: 'pi pi-microphone',
     children: []
   },
   {
     key: 'albums',
     label: '专辑',
-    icon: 'pi pi-images',
+    icon: 'pi pi-clone',
     children: []
   },
   {
     key: 'playlists',
     label: '歌单',
-    icon: 'pi pi-bookmark',
+    icon: 'pi pi-list-check',
     children: []
   },
   {
     key: 'folders',
     label: '文件夹',
-    icon: 'pi pi-folder',
+    icon: 'pi pi-folder-open',
     children: []
   }
 ]
@@ -139,7 +139,7 @@ async function handleImportClick(): Promise<void> {
         <div class="menu-separator"></div>
         <div class="menu-item menu-item-streaming" @click="emit('enterStreaming')">
           <i
-            class="pi pi-cloud"
+            class="pi pi-globe"
             style="font-size: 16px; color: #666; width: 20px; text-align: center; flex-shrink: 0"
           ></i>
           <span class="item-label">流媒体</span>

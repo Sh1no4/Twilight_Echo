@@ -18,6 +18,67 @@ interface MpvEvent {
   data: unknown
 }
 
+type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
+type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
+type EqMode = 'graphic' | 'parametric'
+type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
+type EqualizerFilterType =
+  | 'peak'
+  | 'lowShelf'
+  | 'highShelf'
+  | 'bandPass'
+  | 'lowPass'
+  | 'highPass'
+  | 'allPass'
+
+interface EqualizerBand {
+  frequency: number
+  gain: number
+  q: number
+  filterType: EqualizerFilterType
+}
+
+interface AudioProcessingSettings {
+  highResolution: boolean
+  dsdToPcm: boolean
+  eqEnabled: boolean
+  eqMode: EqMode
+  eqPreamp: number
+  eqBands: EqualizerBand[]
+  volumeNormalization: VolumeNormalizationMode
+  replayGainPreamp: number
+  replayGainFallback: number
+  replayGainClip: boolean
+  gapless: boolean
+  crossfadeSeconds: number
+}
+
+interface AudioEqPreset {
+  id: string
+  name: string
+  eqMode: EqMode
+  eqPreamp: number
+  eqBands: EqualizerBand[]
+}
+
+interface AppSettings {
+  autoLaunch: boolean
+  hardwareAcceleration: boolean
+  globalShortcuts: boolean
+  musicCachePath: string
+  closeToTray: boolean
+  audioProcessing: AudioProcessingSettings
+  audioEqPresets: AudioEqPreset[]
+}
+
+interface AudioOutputOption {
+  id: AudioOutputId
+  label: string
+  description: string
+  platform: NodeJS.Platform
+  supportsExclusive: boolean
+}
+
 interface MpvAPI {
   play: (filePath: string) => Promise<void>
   togglePause: () => Promise<void>
@@ -26,6 +87,11 @@ interface MpvAPI {
   stop: () => Promise<void>
   setExclusiveMode: (enabled: boolean) => Promise<void>
   getExclusiveMode: () => Promise<boolean>
+  setAudioOutput: (output: AudioOutputId) => Promise<void>
+  getAudioOutput: () => Promise<AudioOutputId>
+  getAudioOutputOptions: () => Promise<AudioOutputOption[]>
+  setAudioProcessing: (settings: Partial<AudioProcessingSettings>) => Promise<AudioProcessingSettings>
+  getAudioProcessing: () => Promise<AudioProcessingSettings>
 
   onPropertyChange: (cb: (event: MpvEvent) => void) => () => void
   onEndFile: (cb: (reason: string) => void) => () => void
@@ -56,12 +122,20 @@ interface WindowAPI {
   ncm: {
     getPort: () => Promise<number>
     request: (path: string, cookie?: string) => Promise<unknown>
+    getCachedSong: (songId: number) => Promise<string | null>
+    cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
   }
   data: {
     saveMusicLibrary: (data: { tracks: unknown[]; folders: string[] }) => Promise<void>
     loadMusicLibrary: () => Promise<{ tracks: unknown[]; folders: string[] } | unknown[]>
     saveCookie: (cookie: string) => Promise<void>
     loadCookie: () => Promise<string>
+  }
+  settings: {
+    get: () => Promise<AppSettings>
+    update: (patch: Partial<AppSettings>) => Promise<AppSettings>
+    selectMusicCachePath: () => Promise<string | null>
+    onPlayerShortcut: (cb: (action: PlayerShortcutAction) => void) => () => void
   }
 }
 

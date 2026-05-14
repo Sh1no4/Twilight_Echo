@@ -10,7 +10,7 @@ interface RecSection {
 }
 
 interface FeatureCard {
-  key: 'daily' | 'fm' | 'radar' | 'liked'
+  key: 'daily' | 'fm' | 'radar'
   title: string
   desc: string
   icon: string
@@ -29,7 +29,6 @@ const emit = defineEmits<{
   loadRecommendations: []
   openRecSection: [section: RecSection]
   openPlaylist: [playlist: NcmPlaylistSummary]
-  openLikedTracks: []
 }>()
 
 const featureCards: FeatureCard[] = [
@@ -53,22 +52,10 @@ const featureCards: FeatureCard[] = [
     desc: '发现你可能喜欢',
     icon: 'pi pi-send',
     accent: 'aqua'
-  },
-  {
-    key: 'liked',
-    title: '我喜欢的音乐',
-    desc: '已收藏的歌曲',
-    icon: 'pi pi-heart-fill',
-    accent: 'magenta'
   }
 ]
 
 function openFeature(key: FeatureCard['key']): void {
-  if (key === 'liked') {
-    emit('openLikedTracks')
-    return
-  }
-
   const section = props.recSections.find((item) => item.key === key)
   if (section) {
     emit('openRecSection', section)
@@ -181,7 +168,11 @@ function openFeature(key: FeatureCard['key']): void {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 30px;
+  gap: 36px;
+  --stream-grid-width: 900px;
+  --stream-card-height: 172px;
+  --stream-card-gap: 18px;
+  --stream-card-radius: 12px;
   animation: page-rise 0.42s var(--te-ease-soft) both;
 }
 
@@ -189,16 +180,29 @@ function openFeature(key: FeatureCard['key']): void {
   content: '';
   position: absolute;
   top: -34px;
-  right: 4%;
-  width: 220px;
-  height: 220px;
+  right: 6%;
+  width: 260px;
+  height: 260px;
   border-radius: 999px;
   background:
-    radial-gradient(circle at 35% 32%, rgba(255, 255, 255, 0.92), transparent 28%),
-    radial-gradient(circle, rgba(124, 77, 255, 0.055), transparent 68%);
+    radial-gradient(circle at 35% 32%, rgba(255, 255, 255, 0.96), transparent 28%),
+    radial-gradient(circle, rgba(124, 77, 255, 0.045), transparent 68%);
   pointer-events: none;
-  opacity: 0.76;
-  filter: blur(2px);
+  opacity: 0.86;
+  filter: blur(4px);
+}
+
+.stream-home-content::after {
+  content: '';
+  position: absolute;
+  left: 2%;
+  top: 120px;
+  width: 320px;
+  height: 210px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(34, 211, 238, 0.028), transparent 70%);
+  pointer-events: none;
+  filter: blur(6px);
 }
 
 .quick-section,
@@ -301,6 +305,10 @@ function openFeature(key: FeatureCard['key']): void {
   margin-bottom: 14px;
 }
 
+.recommend-heading {
+  width: min(100%, var(--stream-grid-width));
+}
+
 .section-heading h3 {
   margin: 0;
   font-size: 16px;
@@ -318,9 +326,10 @@ function openFeature(key: FeatureCard['key']): void {
 
 .feature-strip {
   display: grid;
-  grid-template-columns: repeat(4, 138px);
-  gap: 22px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--stream-card-gap);
   justify-content: start;
+  width: min(100%, var(--stream-grid-width));
 }
 
 .feature-card {
@@ -328,21 +337,23 @@ function openFeature(key: FeatureCard['key']): void {
   display: grid;
   grid-template-rows: auto 1fr;
   align-content: space-between;
-  min-height: 126px;
-  padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.66);
-  border-radius: 8px;
+  min-height: var(--stream-card-height);
+  padding: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: var(--stream-card-radius);
   overflow: hidden;
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.64), rgba(255, 255, 255, 0.22)),
-    rgba(255, 255, 255, 0.24);
+    radial-gradient(circle at 22% 16%, rgba(255, 255, 255, 0.88), transparent 28%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.26)),
+    rgba(255, 255, 255, 0.22);
   text-align: left;
   cursor: pointer;
   box-shadow:
-    0 18px 48px rgba(86, 70, 160, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.66);
-  backdrop-filter: blur(18px) saturate(145%);
-  -webkit-backdrop-filter: blur(18px) saturate(145%);
+    0 20px 58px rgba(86, 70, 160, 0.09),
+    0 0 0 1px rgba(255, 255, 255, 0.34) inset,
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
   transition:
     transform 0.24s var(--te-ease-soft),
     border-color 0.24s,
@@ -354,15 +365,22 @@ function openFeature(key: FeatureCard['key']): void {
   content: '';
   position: absolute;
   inset: 0;
+  border-radius: inherit;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.58), transparent 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.26), transparent 64%);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.feature-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
   padding: 1px;
   border-radius: inherit;
-  background: linear-gradient(
-    135deg,
-    rgba(124, 77, 255, 0.42),
-    rgba(34, 211, 238, 0.28),
-    rgba(255, 126, 182, 0.32)
-  );
-  opacity: 0;
+  background: linear-gradient(135deg, rgba(124, 77, 255, 0.26), rgba(34, 211, 238, 0.16), rgba(255, 126, 182, 0.18));
+  opacity: 0.34;
   pointer-events: none;
   mask:
     linear-gradient(#000 0 0) content-box,
@@ -376,27 +394,27 @@ function openFeature(key: FeatureCard['key']): void {
 }
 
 .feature-card:hover {
-  transform: translateY(-4px);
+  transform: translateY(-5px) scale(1.01);
   border-color: rgba(255, 255, 255, 0.82);
   box-shadow:
-    0 26px 62px rgba(86, 70, 160, 0.14),
+    0 28px 72px rgba(86, 70, 160, 0.14),
     inset 0 1px 0 rgba(255, 255, 255, 0.78);
   filter: saturate(1.04);
 }
 
-.feature-card:hover::before {
-  opacity: 1;
+.feature-card:hover::after {
+  opacity: 0.72;
 }
 
 .feature-glow {
   position: absolute;
-  right: -18px;
-  top: -18px;
-  width: 86px;
-  height: 86px;
+  right: -22px;
+  top: -24px;
+  width: 112px;
+  height: 112px;
   border-radius: 999px;
-  opacity: 0.76;
-  filter: blur(2px);
+  opacity: 0.82;
+  filter: blur(5px);
   transition: transform 0.32s var(--te-ease-soft);
 }
 
@@ -405,19 +423,27 @@ function openFeature(key: FeatureCard['key']): void {
 }
 
 .feature-lilac .feature-glow {
-  background: radial-gradient(circle, rgba(124, 77, 255, 0.16), transparent 70%);
+  background:
+    radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.62), transparent 22%),
+    radial-gradient(circle, rgba(124, 77, 255, 0.16), transparent 72%);
 }
 
 .feature-sunset .feature-glow {
-  background: radial-gradient(circle, rgba(255, 126, 182, 0.16), transparent 70%);
+  background:
+    radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.62), transparent 22%),
+    radial-gradient(circle, rgba(255, 126, 182, 0.15), transparent 72%);
 }
 
 .feature-aqua .feature-glow {
-  background: radial-gradient(circle, rgba(34, 211, 238, 0.14), transparent 70%);
+  background:
+    radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.62), transparent 22%),
+    radial-gradient(circle, rgba(34, 211, 238, 0.13), transparent 72%);
 }
 
 .feature-magenta .feature-glow {
-  background: radial-gradient(circle, rgba(232, 67, 147, 0.14), transparent 70%);
+  background:
+    radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.62), transparent 22%),
+    radial-gradient(circle, rgba(232, 67, 147, 0.13), transparent 72%);
 }
 
 .feature-art,
@@ -429,29 +455,31 @@ function openFeature(key: FeatureCard['key']): void {
 .feature-art {
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
-  border-radius: 8px;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
   color: var(--te-primary-500);
   background:
-    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), transparent 36%),
-    linear-gradient(135deg, rgba(124, 77, 255, 0.16), rgba(34, 211, 238, 0.1));
-  box-shadow: 0 12px 26px rgba(86, 70, 160, 0.1);
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.92), transparent 36%),
+    linear-gradient(135deg, rgba(124, 77, 255, 0.15), rgba(34, 211, 238, 0.09));
+  box-shadow:
+    0 14px 30px rgba(86, 70, 160, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.66);
 }
 
 .feature-art i {
-  font-size: 15px;
+  font-size: 17px;
 }
 
 .feature-copy {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  margin-top: 16px;
+  margin-top: 24px;
 }
 
 .feature-title {
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.25;
   font-weight: 900;
   color: var(--te-neutral-900);
@@ -461,8 +489,8 @@ function openFeature(key: FeatureCard['key']): void {
 }
 
 .feature-desc {
-  margin-top: 4px;
-  font-size: 11px;
+  margin-top: 6px;
+  font-size: 12px;
   font-weight: 700;
   color: rgba(80, 88, 116, 0.62);
   white-space: nowrap;
@@ -498,21 +526,34 @@ function openFeature(key: FeatureCard['key']): void {
 
 .playlist-rail {
   display: grid;
-  grid-template-columns: repeat(5, minmax(112px, 1fr));
-  gap: 22px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--stream-card-gap);
+  width: min(100%, var(--stream-grid-width));
 }
 
 .playlist-tile {
   position: relative;
   display: flex;
   flex-direction: column;
+  justify-content: space-between;
   min-width: 0;
-  padding: 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
+  min-height: var(--stream-card-height);
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.68);
+  border-radius: var(--stream-card-radius);
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.86), transparent 30%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.24)),
+    rgba(255, 255, 255, 0.2);
   text-align: left;
   cursor: pointer;
+  overflow: hidden;
+  box-shadow:
+    0 20px 58px rgba(86, 70, 160, 0.08),
+    0 0 0 1px rgba(255, 255, 255, 0.32) inset,
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
   transition:
     transform 0.24s var(--te-ease-soft),
     border-color 0.24s,
@@ -520,26 +561,63 @@ function openFeature(key: FeatureCard['key']): void {
     box-shadow 0.24s;
 }
 
-.playlist-tile:hover {
-  transform: translateY(-4px);
-  border-color: rgba(255, 255, 255, 0.66);
+.playlist-tile::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.22)),
-    rgba(255, 255, 255, 0.18);
-  box-shadow: 0 22px 52px rgba(86, 70, 160, 0.1);
-  backdrop-filter: blur(18px) saturate(145%);
-  -webkit-backdrop-filter: blur(18px) saturate(145%);
+    linear-gradient(135deg, rgba(255, 255, 255, 0.52), transparent 44%),
+    radial-gradient(circle at 86% 12%, rgba(124, 77, 255, 0.055), transparent 34%);
+}
+
+.playlist-tile::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(124, 77, 255, 0.2), rgba(34, 211, 238, 0.13), rgba(255, 126, 182, 0.15));
+  opacity: 0.28;
+  pointer-events: none;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  -webkit-mask-composite: xor;
+  transition: opacity 0.24s;
+}
+
+.playlist-tile:hover {
+  transform: translateY(-5px) scale(1.01);
+  border-color: rgba(255, 255, 255, 0.82);
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.9), transparent 30%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.66), rgba(255, 255, 255, 0.28)),
+    rgba(255, 255, 255, 0.24);
+  box-shadow:
+    0 28px 72px rgba(86, 70, 160, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
+}
+
+.playlist-tile:hover::after {
+  opacity: 0.66;
 }
 
 .playlist-cover-wrap {
   position: relative;
   display: block;
-  width: 100%;
-  aspect-ratio: 1;
-  border-radius: 8px;
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
   overflow: hidden;
   background: rgba(255, 255, 255, 0.34);
-  box-shadow: 0 16px 34px rgba(86, 70, 160, 0.13);
+  box-shadow:
+    0 16px 34px rgba(86, 70, 160, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42);
   transition:
     transform 0.24s var(--te-ease-soft),
     box-shadow 0.24s,
@@ -557,7 +635,8 @@ function openFeature(key: FeatureCard['key']): void {
 }
 
 .playlist-tile:hover .playlist-cover-wrap {
-  box-shadow: 0 24px 52px rgba(86, 70, 160, 0.18);
+  transform: translateY(-1px);
+  box-shadow: 0 22px 46px rgba(86, 70, 160, 0.18);
   filter: saturate(1.05);
 }
 
@@ -579,13 +658,13 @@ function openFeature(key: FeatureCard['key']): void {
 
 .play-bubble {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
+  right: 6px;
+  bottom: 6px;
   z-index: 1;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 26px;
+  height: 26px;
   border-radius: 999px;
   color: var(--te-primary-500);
   background: rgba(255, 255, 255, 0.62);
@@ -608,15 +687,18 @@ function openFeature(key: FeatureCard['key']): void {
 }
 
 .play-bubble i {
-  font-size: 13px;
+  font-size: 10px;
   transform: translateX(1px);
 }
 
 .playlist-name {
-  margin-top: 12px;
-  font-size: 12px;
+  position: relative;
+  z-index: 1;
+  margin-top: auto;
+  padding-top: 18px;
+  font-size: 14px;
   line-height: 1.35;
-  font-weight: 850;
+  font-weight: 900;
   color: var(--te-neutral-900);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -624,8 +706,10 @@ function openFeature(key: FeatureCard['key']): void {
 }
 
 .playlist-count {
+  position: relative;
+  z-index: 1;
   margin-top: 4px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   color: rgba(80, 88, 116, 0.58);
 }
@@ -647,22 +731,24 @@ function openFeature(key: FeatureCard['key']): void {
 }
 
 @media (max-width: 1180px) {
-  .feature-strip {
-    gap: 16px;
-  }
-
-  .playlist-rail {
-    grid-template-columns: repeat(4, minmax(112px, 1fr));
+  .stream-home-content {
+    --stream-grid-width: 840px;
+    --stream-card-gap: 16px;
   }
 }
 
 @media (max-width: 920px) {
+  .stream-home-content {
+    --stream-grid-width: 100%;
+    --stream-card-height: 164px;
+  }
+
   .feature-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .playlist-rail {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -674,6 +760,275 @@ function openFeature(key: FeatureCard['key']): void {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/* ===== Reference-style Streaming Home Refresh ===== */
+.stream-home-content {
+  gap: 34px;
+  --stream-grid-width: min(100%, 980px);
+  --stream-card-height: 124px;
+  --stream-card-gap: 16px;
+  --stream-card-radius: 8px;
+}
+
+.stream-home-content::before,
+.stream-home-content::after {
+  display: none;
+}
+
+.feature-strip,
+.playlist-rail,
+.recommend-heading {
+  width: min(100%, var(--stream-grid-width));
+}
+
+.feature-strip {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.feature-card,
+.playlist-tile,
+.streaming-placeholder,
+.empty-recommend {
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.8), transparent 30%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.62), rgba(250, 247, 255, 0.32)),
+    rgba(255, 255, 255, 0.28);
+  border-color: rgba(255, 255, 255, 0.72);
+  box-shadow:
+    0 18px 50px rgba(86, 70, 160, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.76);
+}
+
+.feature-card {
+  min-height: 128px;
+  padding: 16px;
+}
+
+.feature-card:hover,
+.playlist-tile:hover {
+  transform: translateY(-4px);
+  box-shadow:
+    0 24px 62px rgba(86, 70, 160, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.feature-glow {
+  right: -18px;
+  top: -20px;
+  width: 88px;
+  height: 88px;
+  opacity: 0.72;
+}
+
+.feature-art {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+}
+
+.feature-copy {
+  margin-top: 18px;
+}
+
+.feature-title,
+.playlist-name {
+  color: #232743;
+}
+
+.feature-desc,
+.playlist-count,
+.section-heading p {
+  color: rgba(82, 90, 122, 0.62);
+}
+
+.recommend-block {
+  padding-bottom: 4px;
+}
+
+.section-heading h3 {
+  font-size: 18px;
+}
+
+.more-btn,
+.retry-btn {
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.playlist-rail {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  align-items: start;
+}
+
+.playlist-tile {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.playlist-tile::before,
+.playlist-tile::after {
+  display: none;
+}
+
+.playlist-cover-wrap {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  box-shadow: 0 16px 32px rgba(86, 70, 160, 0.14);
+}
+
+.playlist-cover-wrap::after {
+  background:
+    radial-gradient(circle at 54% 50%, rgba(255, 255, 255, 0.3), transparent 22%),
+    linear-gradient(180deg, transparent 52%, rgba(36, 28, 70, 0.18));
+}
+
+.playlist-name {
+  margin-top: 10px;
+  padding-top: 0;
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.play-bubble {
+  opacity: 1;
+  transform: none;
+  width: 30px;
+  height: 30px;
+  color: #fff;
+  background: rgba(124, 77, 255, 0.82);
+}
+
+@media (max-width: 1180px) {
+  .playlist-rail {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 920px) {
+  .feature-strip,
+  .playlist-rail {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ===== White Card Streaming Home Refinement ===== */
+.stream-home-content {
+  gap: 42px;
+  --stream-grid-width: 100%;
+  --stream-card-height: 176px;
+}
+
+.feature-card,
+.streaming-placeholder,
+.empty-recommend {
+  background: #fff;
+  border: 1px solid #eef1f6;
+  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.feature-card::before,
+.feature-card::after,
+.feature-glow {
+  display: none;
+}
+
+.feature-strip {
+  gap: 22px;
+}
+
+.feature-card {
+  min-height: 190px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.feature-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 18px 38px rgba(34, 42, 68, 0.1);
+}
+
+.feature-art {
+  width: 100%;
+  height: 116px;
+  border-radius: 0;
+  background:
+    radial-gradient(circle at 52% 50%, rgba(255, 255, 255, 0.58), transparent 18%),
+    linear-gradient(135deg, #eee6ff, #e8f7ff);
+  box-shadow: none;
+}
+
+.feature-sunset .feature-art {
+  background:
+    radial-gradient(circle at 52% 50%, rgba(255, 255, 255, 0.58), transparent 18%),
+    linear-gradient(135deg, #e6e6ff, #ffe7ee);
+}
+
+.feature-aqua .feature-art {
+  background:
+    radial-gradient(circle at 52% 50%, rgba(255, 255, 255, 0.58), transparent 18%),
+    linear-gradient(135deg, #dff8fb, #e2f7ff);
+}
+
+.feature-magenta .feature-art {
+  background:
+    radial-gradient(circle at 52% 50%, rgba(255, 255, 255, 0.58), transparent 18%),
+    linear-gradient(135deg, #f5cbff, #e2b5fa);
+}
+
+.feature-art i {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(124, 77, 255, 0.52);
+}
+
+.feature-copy {
+  margin: 0;
+  padding: 14px 16px 16px;
+}
+
+.playlist-rail {
+  gap: 26px;
+}
+
+.playlist-cover-wrap {
+  box-shadow: 0 12px 26px rgba(34, 42, 68, 0.12);
+}
+
+.playlist-cover-wrap::after {
+  background: linear-gradient(180deg, transparent 58%, rgba(35, 39, 67, 0.14));
+}
+
+.more-btn,
+.retry-btn {
+  background: #fff;
+  border-color: #eef1f6;
+  box-shadow: 0 8px 18px rgba(34, 42, 68, 0.05);
+}
+
+@media (max-width: 920px) {
+  .feature-card {
+    min-height: 176px;
   }
 }
 </style>

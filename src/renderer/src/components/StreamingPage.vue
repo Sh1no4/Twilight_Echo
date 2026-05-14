@@ -8,10 +8,16 @@ import {
   type NcmUserSummary
 } from '../stores/useNcmStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
-import { type PageState } from 'primevue/paginator'
 import StreamingHome from './StreamingHome.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
 import StreamingSearch from './StreamingSearch.vue'
+
+interface PageState {
+  first: number
+  rows?: number
+  page?: number
+  pageCount?: number
+}
 
 interface RecSection {
   key: string
@@ -35,9 +41,11 @@ defineProps<{
 }>()
 
 const activeTab = ref<StreamingTab>('home')
+const streamingTransitionName = ref('stream-page-down')
 const currentDetail = ref<DetailView | null>(null)
 const detailTracks = ref<Track[]>([])
 const detailUsers = ref<NcmUserSummary[]>([])
+const artistPlaylists = ref<NcmPlaylistSummary[]>([])
 const detailLoading = ref(false)
 const detailError = ref('')
 const likedCount = ref<number | null>(null)
@@ -79,6 +87,7 @@ const recSections = computed<RecSection[]>(() => [
 ])
 
 async function openRecSection(section: RecSection): Promise<void> {
+  streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = { type: 'rec', section }
   detailTracks.value = section.tracks
   detailLoading.value = false
@@ -92,12 +101,17 @@ interface TabItem {
 }
 
 const tabs: TabItem[] = [
-  { key: 'home', label: '主页', icon: 'pi pi-home' },
-  { key: 'playlists', label: '歌单', icon: 'pi pi-bookmark' },
-  { key: 'library', label: '音乐库', icon: 'pi pi-wave-pulse' }
+  { key: 'home', label: '主页', icon: 'pi pi-sparkles' },
+  { key: 'playlists', label: '歌单', icon: 'pi pi-list-check' },
+  { key: 'library', label: '音乐库', icon: 'pi pi-heart' }
 ]
 
 const currentView = computed(() => tabs.find((t) => t.key === activeTab.value))
+
+function getStreamingTabIndex(key: StreamingTab): number {
+  const index = tabs.findIndex((tab) => tab.key === key)
+  return index === -1 ? 0 : index
+}
 
 const emit = defineEmits<{
   toggleMenu: []
@@ -124,6 +138,7 @@ const {
   searchPlaylists,
   searchArtists,
   fetchArtistTopSongs,
+  fetchArtistPlaylists,
   fetchUserFollows,
   fetchUserFolloweds,
   likeTrack,
@@ -287,6 +302,10 @@ const likedSummary = computed(() => ({
 
 const userPlaylistEntries = computed(() => userPlaylists.value)
 
+const currentArtistPlaylists = computed(() =>
+  currentDetail.value?.type === 'artist' ? artistPlaylists.value : []
+)
+
 const detailHeaderInfo = computed(() => {
   if (!currentDetail.value) return null
   if (currentDetail.value.type === 'liked') {
@@ -317,10 +336,15 @@ const detailHeaderInfo = computed(() => {
     }
   }
   if (currentDetail.value.type === 'artist') {
+    const songCount = detailTracks.value.length
+    const playlistCount = artistPlaylists.value.length
+    const descParts: string[] = []
+    if (songCount > 0) descParts.push(`${songCount} 首热门单曲`)
+    if (playlistCount > 0) descParts.push(`${playlistCount} 个歌单`)
     return {
       title: currentDetail.value.artist.name,
       cover: currentDetail.value.artist.picUrl,
-      desc: `共 ${currentDetail.value.artist.musicSize} 首热门单曲`,
+      desc: descParts.length > 0 ? `共 ${descParts.join('，')}` : '暂无可展示内容',
       icon: 'pi pi-user'
     }
   }
@@ -345,15 +369,22 @@ const detailHeaderInfo = computed(() => {
 
 function selectTab(key: StreamingTab): void {
   if (activeTab.value !== key) {
+    const oldIndex = getStreamingTabIndex(activeTab.value)
+    const newIndex = getStreamingTabIndex(key)
+    streamingTransitionName.value = newIndex > oldIndex ? 'stream-page-down' : 'stream-page-up'
     resetDetail()
   }
   activeTab.value = key
 }
 
 function resetDetail(): void {
+  if (currentDetail.value) {
+    streamingTransitionName.value = 'stream-page-up'
+  }
   currentDetail.value = null
   detailTracks.value = []
   detailUsers.value = []
+  artistPlaylists.value = []
   detailLoading.value = false
   detailError.value = ''
 }
@@ -368,6 +399,7 @@ async function ensureLibraryLoaded(force = false): Promise<void> {
 }
 
 async function openLikedTracks(force = false): Promise<void> {
+  streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = { type: 'liked' }
   detailLoading.value = true
   detailError.value = ''
@@ -386,6 +418,7 @@ async function openLikedTracks(force = false): Promise<void> {
 }
 
 async function openPlaylist(playlist: NcmPlaylistSummary, force = false): Promise<void> {
+  streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = { type: 'playlist', playlist }
   detailLoading.value = true
   detailError.value = ''
@@ -401,15 +434,28 @@ async function openPlaylist(playlist: NcmPlaylistSummary, force = false): Promis
 }
 
 async function openArtist(artist: NcmArtistSummary): Promise<void> {
+  streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = { type: 'artist', artist }
   detailLoading.value = true
   detailError.value = ''
+  detailTracks.value = []
+  detailUsers.value = []
+  artistPlaylists.value = []
 
   try {
-    detailTracks.value = await fetchArtistTopSongs(artist.id)
+    const [tracks, playlists] = await Promise.all([
+      fetchArtistTopSongs(artist.id).catch(() => [] as Track[]),
+      fetchArtistPlaylists(artist.id).catch(() => [] as NcmPlaylistSummary[])
+    ])
+    detailTracks.value = tracks
+    artistPlaylists.value = playlists
+    if (tracks.length === 0 && playlists.length === 0) {
+      detailError.value = '没有找到这个歌手的热门歌曲或歌单'
+    }
   } catch (error) {
-    detailError.value = error instanceof Error ? error.message : '加载歌手热门歌曲失败'
+    detailError.value = error instanceof Error ? error.message : '加载歌手页面失败'
     detailTracks.value = []
+    artistPlaylists.value = []
   } finally {
     detailLoading.value = false
   }
@@ -417,6 +463,7 @@ async function openArtist(artist: NcmArtistSummary): Promise<void> {
 
 async function openUserList(listType: 'follows' | 'followers'): Promise<void> {
   if (!profile.value) return
+  streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = {
     type: 'user_list',
     listType,
@@ -445,6 +492,7 @@ async function openUserList(listType: 'follows' | 'followers'): Promise<void> {
 }
 
 async function openUserPlaylists(user: NcmUserSummary): Promise<void> {
+  streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = { type: 'user_playlists', user, playlists: [] }
   detailLoading.value = true
   detailError.value = ''
@@ -499,6 +547,10 @@ async function retryCurrentView(): Promise<void> {
   }
   if (currentDetail.value?.type === 'playlist') {
     await openPlaylist(currentDetail.value.playlist, true)
+    return
+  }
+  if (currentDetail.value?.type === 'artist') {
+    await openArtist(currentDetail.value.artist)
     return
   }
   await ensureLibraryLoaded(true)
@@ -570,7 +622,7 @@ onMounted(async () => {
           <div class="streaming-menu-separator"></div>
           <div class="streaming-menu-item streaming-local-btn" @click="emit('backToLocal')">
             <i
-              class="pi pi-home"
+              class="pi pi-desktop"
               style="font-size: 16px; width: 20px; text-align: center; flex-shrink: 0"
             ></i>
             <span class="streaming-menu-label">本地模式</span>
@@ -656,7 +708,7 @@ onMounted(async () => {
         </div>
       </div>
 
-      <Transition name="tab-fade" mode="out-in">
+      <Transition :name="streamingTransitionName" mode="out-in">
         <div
           v-if="isSearching && !currentDetail"
           key="search-results"
@@ -695,7 +747,6 @@ onMounted(async () => {
             @load-recommendations="loadRecommendations"
             @open-rec-section="openRecSection"
             @open-playlist="openPlaylist"
-            @open-liked-tracks="openLikedTracks"
           />
 
           <div
@@ -723,7 +774,9 @@ onMounted(async () => {
             <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
             <p class="placeholder-title">加载失败</p>
             <p class="placeholder-hint">{{ libraryError }}</p>
-            <Button label="重试" severity="contrast" @click="retryCurrentView" />
+            <button type="button" class="stream-action-btn" @click="retryCurrentView">
+              <span>重试</span>
+            </button>
           </div>
 
           <div v-else-if="currentDetail" class="detail-view">
@@ -740,22 +793,29 @@ onMounted(async () => {
               <div class="detail-playlist-info">
                 <h2 class="detail-playlist-name">{{ detailHeaderInfo.title }}</h2>
                 <p class="detail-playlist-desc">{{ detailHeaderInfo.desc }}</p>
-                <Button
+                <button
                   v-if="
                     currentDetail?.type !== 'user_list' && currentDetail?.type !== 'user_playlists'
                   "
-                  label="播放全部"
-                  icon="pi pi-play"
-                  rounded
-                  severity="contrast"
-                  class="detail-play-btn"
+                  type="button"
+                  class="stream-action-btn detail-play-btn"
                   :disabled="detailLoading || detailTracks.length === 0"
                   @click="detailTracks.length > 0 && playTrack(detailTracks[0], detailTracks)"
-                />
+                >
+                  <i class="pi pi-play"></i>
+                  <span>播放全部</span>
+                </button>
               </div>
             </div>
 
-            <div v-if="detailLoading && detailTracks.length === 0" class="detail-content">
+            <div
+              v-if="
+                detailLoading &&
+                detailTracks.length === 0 &&
+                currentArtistPlaylists.length === 0
+              "
+              class="detail-content"
+            >
               <div class="track-table-wrapper">
                 <table class="track-table skeleton-table">
                   <thead>
@@ -894,7 +954,45 @@ onMounted(async () => {
               <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
               <p class="placeholder-title">加载失败</p>
               <p class="placeholder-hint">{{ detailError }}</p>
-              <Button label="重试" severity="contrast" @click="retryCurrentView" />
+              <button type="button" class="stream-action-btn" @click="retryCurrentView">
+                <span>重试</span>
+              </button>
+            </div>
+
+            <div
+              v-else-if="
+                currentDetail?.type === 'artist' &&
+                detailTracks.length === 0 &&
+                currentArtistPlaylists.length > 0
+              "
+              class="artist-playlists-only"
+            >
+              <div class="artist-section-heading">
+                <div>
+                  <h3>歌手歌单</h3>
+                  <p>{{ currentDetail.artist.name }} 创建或关联的歌单</p>
+                </div>
+              </div>
+              <div class="playlist-grid">
+                <div
+                  v-for="playlist in currentArtistPlaylists"
+                  :key="playlist.id"
+                  class="playlist-grid-card"
+                  @click="openPlaylist(playlist, false)"
+                >
+                  <img
+                    v-if="playlist.cover"
+                    :src="playlist.cover"
+                    class="playlist-grid-cover"
+                    alt=""
+                  />
+                  <div v-else class="playlist-grid-cover-placeholder">
+                    <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
+                  </div>
+                  <div class="playlist-grid-name">{{ playlist.name }}</div>
+                  <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
+                </div>
+              </div>
             </div>
 
             <div
@@ -975,6 +1073,38 @@ onMounted(async () => {
                   </tbody>
                 </table>
               </div>
+
+              <section
+                v-if="currentDetail?.type === 'artist' && currentArtistPlaylists.length > 0"
+                class="artist-playlist-section"
+              >
+                <div class="artist-section-heading">
+                  <div>
+                    <h3>歌手歌单</h3>
+                    <p>{{ currentDetail.artist.name }} 创建或关联的歌单</p>
+                  </div>
+                </div>
+                <div class="playlist-grid">
+                  <div
+                    v-for="playlist in currentArtistPlaylists"
+                    :key="playlist.id"
+                    class="playlist-grid-card"
+                    @click="openPlaylist(playlist, false)"
+                  >
+                    <img
+                      v-if="playlist.cover"
+                      :src="playlist.cover"
+                      class="playlist-grid-cover"
+                      alt=""
+                    />
+                    <div v-else class="playlist-grid-cover-placeholder">
+                      <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
+                    </div>
+                    <div class="playlist-grid-name">{{ playlist.name }}</div>
+                    <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
+                  </div>
+                </div>
+              </section>
             </div>
           </div>
 
@@ -1005,11 +1135,7 @@ onMounted(async () => {
   inset: 32px 0 96px 0;
   z-index: 50;
   display: flex;
-  background:
-    radial-gradient(circle at 14% 16%, rgba(124, 77, 255, 0.035), transparent 38%),
-    radial-gradient(circle at 86% 20%, rgba(255, 126, 182, 0.032), transparent 36%),
-    radial-gradient(circle at 64% 86%, rgba(34, 211, 238, 0.03), transparent 40%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
+  background: #fafbfe;
 }
 
 .streaming-sidebar {
@@ -1030,19 +1156,19 @@ onMounted(async () => {
 }
 
 .streaming-sidebar.open {
-  width: 25vw;
-  min-width: 150px;
-  max-width: 270px;
+  width: 184px;
+  min-width: 184px;
+  max-width: 184px;
 }
 
 .streaming-sidebar-inner {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 12px 8px;
-  width: 25vw;
-  min-width: 150px;
-  max-width: 270px;
+  padding: 10px 8px;
+  width: 184px;
+  min-width: 184px;
+  max-width: 184px;
 }
 
 .streaming-sidebar-header {
@@ -1068,10 +1194,10 @@ onMounted(async () => {
 .streaming-menu-item {
   display: flex;
   align-items: center;
-  height: 44px;
-  padding: 0 12px;
+  height: 38px;
+  padding: 0 10px;
   cursor: pointer;
-  border-radius: 12px;
+  border-radius: 8px;
   transition:
     background 0.18s,
     transform 0.18s var(--te-ease-soft),
@@ -1099,9 +1225,9 @@ onMounted(async () => {
 }
 
 .streaming-menu-icon {
-  font-size: 18px;
-  width: 20px;
-  height: 20px;
+  font-size: 16px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1111,7 +1237,7 @@ onMounted(async () => {
 }
 
 .streaming-menu-label {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--te-neutral-900);
   opacity: 0;
   transition: opacity 0.2s ease;
@@ -1138,17 +1264,17 @@ onMounted(async () => {
 }
 
 .streaming-sidebar.open + .streaming-content {
-  margin-left: clamp(150px, 25vw, 270px);
+  margin-left: 184px;
 }
 
 .streaming-content-header {
   display: flex;
   align-items: center;
   gap: 16px;
-  min-height: 76px;
-  padding: 18px 22px 14px;
+  min-height: 64px;
+  padding: 12px 0 14px;
   flex-shrink: 0;
-  margin: 22px 40px 0;
+  margin: 20px clamp(36px, 6vw, 84px) 0;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -1166,14 +1292,14 @@ onMounted(async () => {
 }
 
 .streaming-content-title {
-  font-size: 20px;
+  font-size: 18px;
   font-weight: 900;
   color: var(--te-neutral-900);
   margin: 0;
 }
 
 .streaming-content-subtitle {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   color: #666b78;
   margin: 4px 0 0;
@@ -1182,7 +1308,7 @@ onMounted(async () => {
 .streaming-content-body {
   flex: 1;
   overflow-y: auto;
-  padding: 18px 40px 34px;
+  padding: 14px clamp(36px, 6vw, 84px) 34px;
   scrollbar-width: thin;
   scrollbar-color: rgba(124, 77, 255, 0.28) transparent;
 }
@@ -1236,15 +1362,15 @@ onMounted(async () => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 320px;
+  min-height: 260px;
   gap: 12px;
   text-align: center;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.3);
-  border: 1px solid rgba(255, 255, 255, 0.58);
-  box-shadow: 0 20px 70px rgba(86, 70, 160, 0.12);
-  backdrop-filter: blur(18px) saturate(145%);
-  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #eef1f6;
+  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .detail-placeholder {
@@ -1422,22 +1548,40 @@ onMounted(async () => {
   color: #888 !important;
 }
 
-/* ===== Tab Transition Animation ===== */
-.tab-fade-enter-active,
-.tab-fade-leave-active {
+/* ===== Sidebar-aware Page Transition Animation ===== */
+.stream-page-down-enter-active,
+.stream-page-down-leave-active,
+.stream-page-up-enter-active,
+.stream-page-up-leave-active {
   transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
+    opacity 0.26s ease,
+    transform 0.42s var(--te-ease-soft),
+    filter 0.32s ease;
+  will-change: transform, opacity, filter;
 }
 
-.tab-fade-enter-from {
+.stream-page-down-enter-from {
   opacity: 0;
-  transform: translateY(8px);
+  transform: translateY(46px) scale(0.992);
+  filter: blur(8px);
 }
 
-.tab-fade-leave-to {
+.stream-page-down-leave-to {
   opacity: 0;
-  transform: translateY(-8px);
+  transform: translateY(-34px) scale(0.992);
+  filter: blur(8px);
+}
+
+.stream-page-up-enter-from {
+  opacity: 0;
+  transform: translateY(-46px) scale(0.992);
+  filter: blur(8px);
+}
+
+.stream-page-up-leave-to {
+  opacity: 0;
+  transform: translateY(34px) scale(0.992);
+  filter: blur(8px);
 }
 
 /* ===== Streaming Search Box ===== */
@@ -1452,19 +1596,19 @@ onMounted(async () => {
 .streaming-search-box {
   display: flex;
   align-items: center;
-  height: 34px;
+  height: 32px;
   padding: 0 16px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.54);
-  border: 1px solid rgba(255, 255, 255, 0.68);
-  box-shadow: 0 12px 34px rgba(86, 70, 160, 0.08);
-  backdrop-filter: blur(16px) saturate(145%);
-  -webkit-backdrop-filter: blur(16px) saturate(145%);
+  background: #fff;
+  border: 1px solid #eef1f6;
+  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   transition:
     border-color 0.2s,
     background 0.2s,
     box-shadow 0.2s;
-  width: clamp(210px, 28vw, 340px);
+  width: clamp(220px, 30vw, 380px);
   flex-shrink: 0;
 }
 
@@ -1539,8 +1683,8 @@ onMounted(async () => {
 /* ===== Search Tabs ===== */
 .streaming-search-tabs {
   display: flex;
-  gap: 12px;
-  padding: 0 40px 16px 40px;
+  gap: 8px;
+  padding: 0 clamp(36px, 6vw, 84px) 14px;
   margin-top: -8px;
 }
 
@@ -1636,16 +1780,20 @@ onMounted(async () => {
   display: flex;
   align-items: flex-end;
   gap: 24px;
-  padding-bottom: 32px;
-  border-bottom: 1px solid rgba(229, 231, 235, 0.48);
-  margin-bottom: 24px;
+  min-height: 176px;
+  padding: 18px;
+  border: 1px solid #eef1f6;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
+  margin-bottom: 18px;
 }
 
 .detail-playlist-cover,
 .detail-playlist-cover-placeholder {
-  width: 200px;
-  height: 200px;
-  border-radius: 16px;
+  width: 132px;
+  height: 132px;
+  border-radius: 8px;
   object-fit: cover;
   box-shadow: 0 24px 55px rgba(86, 70, 160, 0.18);
   flex-shrink: 0;
@@ -1670,7 +1818,7 @@ onMounted(async () => {
 }
 
 .detail-playlist-name {
-  font-size: 32px;
+  font-size: clamp(22px, 3vw, 30px);
   font-weight: 800;
   color: var(--te-neutral-900);
   margin: 0 0 12px 0;
@@ -1685,9 +1833,137 @@ onMounted(async () => {
 
 .detail-play-btn {
   align-self: flex-start;
-  padding: 10px 24px;
+}
+
+.stream-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 0 20px;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 34% 24%, rgba(255, 255, 255, 0.32), transparent 26%),
+    linear-gradient(135deg, var(--te-neutral-900), rgba(52, 61, 87, 0.9));
+  color: #fff;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow:
+    0 16px 34px rgba(52, 61, 87, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+  transition:
+    transform 0.2s var(--te-ease-soft),
+    box-shadow 0.2s,
+    opacity 0.2s;
+}
+
+.stream-action-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow:
+    0 20px 42px rgba(52, 61, 87, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.26);
+}
+
+.stream-action-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.artist-playlists-only,
+.artist-playlist-section {
+  margin-top: 24px;
+}
+
+.artist-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.artist-section-heading h3 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--te-neutral-900);
+}
+
+.artist-section-heading p {
+  margin: 5px 0 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(80, 88, 116, 0.62);
+}
+
+.playlist-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: 14px;
+}
+
+.playlist-grid-card {
+  cursor: pointer;
+  padding: 10px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #eef1f6;
+  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transition:
+    transform 0.24s var(--te-ease-soft),
+    box-shadow 0.24s,
+    background 0.24s;
+}
+
+.playlist-grid-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 18px 38px rgba(34, 42, 68, 0.1);
+}
+
+.playlist-grid-cover,
+.playlist-grid-cover-placeholder {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  object-fit: cover;
+  box-shadow: 0 16px 30px rgba(86, 70, 160, 0.13);
+}
+
+.playlist-grid-cover-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.86), transparent 34%),
+    linear-gradient(135deg, rgba(124, 77, 255, 0.22), rgba(34, 211, 238, 0.12));
+}
+
+.artist-cover {
+  border-radius: 50% !important;
+}
+
+.playlist-grid-name {
+  margin-top: 11px;
+  font-size: 13px;
+  font-weight: 850;
+  color: var(--te-neutral-900);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.playlist-grid-count {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(80, 88, 116, 0.56);
 }
 
 /* ===== Like Button ===== */
@@ -1823,5 +2099,547 @@ onMounted(async () => {
 .skeleton-time-box {
   width: 40px;
   height: 14px;
+}
+
+/* ===== Reference-style Streaming Content Refresh ===== */
+.streaming-page {
+  background:
+    radial-gradient(circle at 30% 10%, rgba(184, 143, 255, 0.12), transparent 28%),
+    radial-gradient(circle at 78% 12%, rgba(148, 210, 255, 0.14), transparent 30%),
+    radial-gradient(circle at 44% 90%, rgba(255, 169, 210, 0.1), transparent 34%),
+    linear-gradient(180deg, rgba(252, 253, 255, 0.96), rgba(247, 250, 255, 0.92));
+}
+
+.streaming-content {
+  position: relative;
+  isolation: isolate;
+}
+
+.streaming-content::before {
+  content: '';
+  position: absolute;
+  inset: 20px 28px 26px;
+  z-index: -1;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 8px;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.28)),
+    rgba(255, 255, 255, 0.24);
+  box-shadow:
+    0 28px 90px rgba(86, 70, 160, 0.11),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
+  backdrop-filter: blur(26px) saturate(148%);
+  -webkit-backdrop-filter: blur(26px) saturate(148%);
+}
+
+.streaming-content-header {
+  min-height: 82px;
+  margin: 20px 40px 0;
+  padding: 20px 0 14px;
+}
+
+.streaming-content-title {
+  color: #242946;
+  font-size: 22px;
+  letter-spacing: 0;
+}
+
+.streaming-content-subtitle {
+  color: rgba(82, 90, 122, 0.68);
+  font-size: 13px;
+}
+
+.streaming-content-body {
+  padding: 16px 40px 36px;
+}
+
+.btn-back,
+.streaming-round-btn,
+.streaming-avatar-btn {
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+  box-shadow:
+    0 12px 28px rgba(86, 70, 160, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.btn-back {
+  color: #6f46e8;
+}
+
+.streaming-search-box {
+  height: 36px;
+  width: clamp(260px, 34vw, 460px);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.64);
+  border-color: rgba(255, 255, 255, 0.78);
+  box-shadow:
+    0 14px 34px rgba(86, 70, 160, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.streaming-search-box.focused {
+  background: rgba(255, 255, 255, 0.78);
+  border-color: rgba(168, 133, 247, 0.46);
+  box-shadow:
+    0 0 0 4px rgba(124, 77, 255, 0.09),
+    0 18px 44px rgba(86, 70, 160, 0.12);
+}
+
+.streaming-search-input {
+  color: #27304f;
+  font-size: 13px;
+}
+
+.streaming-search-tabs {
+  padding: 0 40px 14px;
+  gap: 8px;
+}
+
+.search-tab-pill {
+  min-height: 32px;
+  padding: 0 16px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 850;
+  color: rgba(64, 73, 108, 0.68);
+  background: rgba(255, 255, 255, 0.52);
+  border-color: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 10px 24px rgba(86, 70, 160, 0.06);
+}
+
+.search-tab-pill.active {
+  background: linear-gradient(135deg, #7c4dff, #b469f4);
+  color: #fff;
+  box-shadow: 0 14px 30px rgba(124, 77, 255, 0.22);
+}
+
+.streaming-placeholder,
+.track-table-wrapper,
+.detail-playlist-header,
+.playlist-grid-card {
+  border-radius: 8px;
+  border-color: rgba(255, 255, 255, 0.72);
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.78), transparent 30%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.64), rgba(249, 246, 255, 0.32)),
+    rgba(255, 255, 255, 0.24);
+  box-shadow:
+    0 20px 58px rgba(86, 70, 160, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.76);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+}
+
+.streaming-placeholder {
+  min-height: 330px;
+}
+
+.placeholder-title {
+  color: #242946;
+  font-weight: 900;
+}
+
+.placeholder-hint {
+  color: rgba(82, 90, 122, 0.58);
+  font-weight: 700;
+}
+
+.detail-playlist-header {
+  position: relative;
+  align-items: center;
+  min-height: 218px;
+  margin-bottom: 24px;
+  padding: 24px;
+  overflow: hidden;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.72);
+}
+
+.detail-playlist-header::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 82% 42%, rgba(255, 255, 255, 0.52), transparent 16%),
+    radial-gradient(circle at 84% 44%, rgba(124, 77, 255, 0.12), transparent 28%),
+    linear-gradient(115deg, rgba(238, 228, 255, 0.46), rgba(222, 240, 255, 0.34));
+}
+
+.detail-playlist-cover,
+.detail-playlist-cover-placeholder,
+.detail-playlist-info {
+  position: relative;
+  z-index: 1;
+}
+
+.detail-playlist-cover,
+.detail-playlist-cover-placeholder {
+  width: 168px;
+  height: 168px;
+  border-radius: 8px;
+  box-shadow: 0 24px 50px rgba(86, 70, 160, 0.18);
+}
+
+.detail-playlist-name {
+  color: #242946;
+  font-size: clamp(26px, 4vw, 38px);
+  font-weight: 900;
+}
+
+.detail-playlist-desc {
+  color: rgba(82, 90, 122, 0.64);
+  font-weight: 750;
+}
+
+.stream-action-btn {
+  min-height: 36px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #7c4dff, #b469f4);
+  box-shadow: 0 15px 32px rgba(124, 77, 255, 0.24);
+}
+
+.track-table-wrapper {
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.track-table {
+  border-spacing: 0;
+}
+
+.track-table th {
+  height: 42px;
+  padding: 0 14px;
+  color: rgba(82, 90, 122, 0.54);
+  font-size: 11px;
+  font-weight: 850;
+  background: rgba(255, 255, 255, 0.42);
+  border-bottom-color: rgba(213, 219, 235, 0.5);
+}
+
+.track-row td {
+  padding: 12px 14px;
+  color: rgba(54, 62, 96, 0.74);
+  border-bottom-color: rgba(226, 231, 242, 0.56);
+}
+
+.track-row:hover {
+  background: rgba(255, 255, 255, 0.54);
+  transform: none;
+  box-shadow: inset 3px 0 0 rgba(124, 77, 255, 0.34);
+}
+
+.track-playing {
+  background: linear-gradient(90deg, rgba(124, 77, 255, 0.13), rgba(255, 126, 182, 0.07)) !important;
+}
+
+.cover-img,
+.cover-placeholder {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+}
+
+.track-title {
+  color: #222744;
+  font-weight: 900;
+}
+
+.track-artist,
+.col-album,
+.col-duration,
+.col-index {
+  color: rgba(82, 90, 122, 0.58) !important;
+}
+
+.btn-like {
+  color: rgba(124, 77, 255, 0.32);
+}
+
+.btn-like:hover,
+.btn-like.liked {
+  color: #e84393;
+}
+
+.playlist-grid {
+  grid-template-columns: repeat(auto-fill, minmax(142px, 1fr));
+  gap: 18px;
+}
+
+.playlist-grid-card {
+  padding: 12px;
+}
+
+.playlist-grid-card:hover {
+  transform: translateY(-4px);
+  box-shadow:
+    0 24px 64px rgba(86, 70, 160, 0.15),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.playlist-grid-cover,
+.playlist-grid-cover-placeholder {
+  border-radius: 8px;
+}
+
+.playlist-grid-name {
+  color: #242946;
+}
+
+.playlist-grid-count {
+  color: rgba(82, 90, 122, 0.58);
+}
+
+.skeleton-box {
+  border-radius: 8px;
+  background: rgba(124, 77, 255, 0.06);
+}
+
+@media (max-width: 900px) {
+  .streaming-content::before {
+    inset: 12px;
+  }
+
+  .streaming-content-header,
+  .streaming-content-body,
+  .streaming-search-tabs {
+    margin-left: 22px;
+    margin-right: 22px;
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .streaming-content-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .streaming-header-right {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .streaming-search-box {
+    width: min(100%, 440px);
+  }
+
+  .detail-playlist-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .detail-playlist-cover,
+  .detail-playlist-cover-placeholder {
+    width: 132px;
+    height: 132px;
+  }
+}
+
+/* ===== White Card Streaming Refinement ===== */
+.streaming-page {
+  background: #fafbfe;
+}
+
+.streaming-sidebar.open {
+  width: 184px;
+  min-width: 184px;
+  max-width: 184px;
+}
+
+.streaming-sidebar-inner {
+  width: 184px;
+  min-width: 184px;
+  max-width: 184px;
+  padding: 10px 8px;
+}
+
+.streaming-sidebar.open + .streaming-content {
+  margin-left: 184px;
+}
+
+.streaming-menu-item {
+  height: 38px;
+  padding: 0 10px;
+  border-radius: 8px;
+}
+
+.streaming-menu-icon {
+  width: 18px;
+  height: 18px;
+  font-size: 16px;
+}
+
+.streaming-menu-label {
+  font-size: 13px;
+}
+
+.streaming-content::before {
+  display: none;
+}
+
+.streaming-content-header {
+  min-height: 64px;
+  margin: 20px clamp(36px, 6vw, 84px) 0;
+  padding: 12px 0 14px;
+}
+
+.streaming-content-title {
+  font-size: 18px;
+}
+
+.streaming-content-subtitle {
+  font-size: 12px;
+}
+
+.streaming-content-body {
+  padding: 14px clamp(36px, 6vw, 84px) 34px;
+}
+
+.streaming-search-tabs {
+  padding: 0 clamp(36px, 6vw, 84px) 14px;
+}
+
+.streaming-search-box {
+  height: 32px;
+  width: clamp(220px, 30vw, 380px);
+}
+
+.streaming-search-input {
+  font-size: 12px;
+}
+
+.streaming-search-box,
+.btn-back,
+.streaming-round-btn,
+.streaming-avatar-btn,
+.search-tab-pill,
+.streaming-placeholder,
+.track-table-wrapper,
+.detail-playlist-header,
+.playlist-grid-card {
+  background: #fff;
+  border-color: #eef1f6;
+  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.streaming-search-box.focused {
+  background: #fff;
+  border-color: #d9d1ff;
+  box-shadow: 0 0 0 4px rgba(124, 77, 255, 0.08);
+}
+
+.search-tab-pill.active {
+  background: #7c4dff;
+  box-shadow: 0 12px 24px rgba(124, 77, 255, 0.18);
+}
+
+.streaming-placeholder,
+.track-table-wrapper,
+.detail-playlist-header,
+.playlist-grid-card {
+  border-radius: 8px;
+}
+
+.streaming-placeholder {
+  min-height: 260px;
+}
+
+.detail-playlist-header {
+  min-height: 176px;
+  margin-bottom: 18px;
+  padding: 18px;
+}
+
+.detail-playlist-cover,
+.detail-playlist-cover-placeholder {
+  width: 132px;
+  height: 132px;
+}
+
+.detail-playlist-name {
+  font-size: clamp(22px, 3vw, 30px);
+}
+
+.track-table th {
+  height: 36px;
+  padding: 0 12px;
+}
+
+.track-row td {
+  padding: 10px 12px;
+}
+
+.cover-img,
+.cover-placeholder {
+  width: 36px;
+  height: 36px;
+}
+
+.playlist-grid {
+  grid-template-columns: repeat(auto-fill, minmax(124px, 1fr));
+  gap: 14px;
+}
+
+.playlist-grid-card {
+  padding: 10px;
+}
+
+.detail-playlist-header::before {
+  display: none;
+}
+
+.detail-playlist-header {
+  background: #fff;
+  border: 1px solid #eef1f6;
+}
+
+.track-table th {
+  background: #fbfcff;
+  border-bottom-color: #eef1f6;
+}
+
+.track-row td {
+  border-bottom-color: #f0f2f7;
+}
+
+.track-row:hover {
+  background: #faf8ff;
+  box-shadow: inset 3px 0 0 rgba(124, 77, 255, 0.28);
+}
+
+.track-playing {
+  background: #f5f1ff !important;
+}
+
+.cover-placeholder,
+.playlist-grid-cover-placeholder,
+.detail-playlist-cover-placeholder {
+  background: #f3f0ff;
+}
+
+.stream-action-btn {
+  background: #7c4dff;
+  box-shadow: 0 12px 24px rgba(124, 77, 255, 0.2);
+}
+
+.playlist-grid-card:hover {
+  box-shadow: 0 18px 38px rgba(34, 42, 68, 0.1);
+}
+
+@media (max-width: 900px) {
+  .streaming-content-header,
+  .streaming-content-body,
+  .streaming-search-tabs {
+    margin-left: 24px;
+    margin-right: 24px;
+    padding-left: 0;
+    padding-right: 0;
+  }
 }
 </style>

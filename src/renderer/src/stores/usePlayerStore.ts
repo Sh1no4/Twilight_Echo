@@ -4,6 +4,47 @@ import { extractDominantColor } from '../utils/colorExtractor'
 import { useNcmStore } from './useNcmStore'
 
 type PlayMode = 'sequential' | 'repeat' | 'shuffle'
+type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
+type EqMode = 'graphic' | 'parametric'
+type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
+type EqualizerFilterType =
+  | 'peak'
+  | 'lowShelf'
+  | 'highShelf'
+  | 'bandPass'
+  | 'lowPass'
+  | 'highPass'
+  | 'allPass'
+
+interface EqualizerBand {
+  frequency: number
+  gain: number
+  q: number
+  filterType: EqualizerFilterType
+}
+
+interface AudioProcessingSettings {
+  highResolution: boolean
+  dsdToPcm: boolean
+  eqEnabled: boolean
+  eqMode: EqMode
+  eqPreamp: number
+  eqBands: EqualizerBand[]
+  volumeNormalization: VolumeNormalizationMode
+  replayGainPreamp: number
+  replayGainFallback: number
+  replayGainClip: boolean
+  gapless: boolean
+  crossfadeSeconds: number
+}
+
+interface AudioOutputOption {
+  id: AudioOutputId
+  label: string
+  description: string
+  platform: string
+  supportsExclusive: boolean
+}
 
 const currentTrack = ref<Track | null>(null)
 const dominantColor = ref('#1a73e8')
@@ -19,6 +60,28 @@ const originalQueue = ref<Track[]>([])
 const mpvReady = ref(false)
 const mpvError = ref<string | null>(null)
 const exclusiveMode = ref(false)
+const audioOutput = ref<AudioOutputId>('wasapi')
+const audioOutputOptions = ref<AudioOutputOption[]>([])
+const defaultAudioProcessing: AudioProcessingSettings = {
+  highResolution: true,
+  dsdToPcm: true,
+  eqEnabled: false,
+  eqMode: 'graphic',
+  eqPreamp: 0,
+  eqBands: [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].map((frequency) => ({
+    frequency,
+    gain: 0,
+    q: 1,
+    filterType: 'peak'
+  })),
+  volumeNormalization: 'track',
+  replayGainPreamp: 0,
+  replayGainFallback: 0,
+  replayGainClip: true,
+  gapless: true,
+  crossfadeSeconds: 0
+}
+const audioProcessing = ref<AudioProcessingSettings>({ ...defaultAudioProcessing })
 
 watch(volume, (val) => {
   window.api.mpv.setVolume(val).catch(() => {})
@@ -50,6 +113,8 @@ watch(
 
 const cleanupFns: (() => void)[] = []
 let listenersSetup = false
+let crossfadeTimer: number | null = null
+let crossfadeTrackId = ''
 
 function getTrackSource(track: Track): 'local' | 'ncm' {
   return track.source === 'ncm' ? 'ncm' : 'local'
@@ -85,6 +150,8 @@ function setupMpvListeners(): void {
   const api = window.api?.mpv
   if (!api) return
 
+  const settingsApi = window.api?.settings
+
   cleanupFns.push(
     api.onPropertyChange(({ name, data }) => {
       switch (name) {
@@ -101,6 +168,9 @@ function setupMpvListeners(): void {
         case 'pause':
           isPlaying.value = !data
           break
+      }
+      if (name === 'time-pos' || name === 'duration') {
+        scheduleCrossfadeIfNeeded()
       }
     })
   )
@@ -125,7 +195,17 @@ function setupMpvListeners(): void {
       mpvError.value = null
       api.setVolume(volume.value).catch(() => {})
       try {
-        exclusiveMode.value = await api.getExclusiveMode()
+        ;[
+          exclusiveMode.value,
+          audioOutput.value,
+          audioOutputOptions.value,
+          audioProcessing.value
+        ] = await Promise.all([
+          api.getExclusiveMode(),
+          api.getAudioOutput(),
+          api.getAudioOutputOptions(),
+          api.getAudioProcessing()
+        ])
       } catch {
         // keep default
       }
@@ -147,12 +227,61 @@ function setupMpvListeners(): void {
       isPlaying.value = false
     })
   )
+
+  if (settingsApi?.onPlayerShortcut) {
+    cleanupFns.push(
+      settingsApi.onPlayerShortcut((action) => {
+        if (action === 'previous') {
+          previous()
+          return
+        }
+        if (action === 'next') {
+          next()
+          return
+        }
+        void togglePlayState()
+      })
+    )
+  }
 }
 
 setupMpvListeners()
 
+function clearCrossfadeTimer(): void {
+  if (crossfadeTimer) {
+    window.clearTimeout(crossfadeTimer)
+    crossfadeTimer = null
+  }
+  crossfadeTrackId = ''
+}
+
+function scheduleCrossfadeIfNeeded(): void {
+  const seconds = audioProcessing.value.crossfadeSeconds
+  const track = currentTrack.value
+  if (!track || !isPlaying.value || playMode.value === 'repeat' || seconds <= 0 || duration.value <= seconds + 1) {
+    clearCrossfadeTimer()
+    return
+  }
+
+  if (queue.value.length <= 1) return
+
+  const remaining = duration.value - currentTime.value
+  if (remaining > seconds || remaining < 0) {
+    if (crossfadeTrackId !== track.id) clearCrossfadeTimer()
+    return
+  }
+
+  if (crossfadeTrackId === track.id) return
+  crossfadeTrackId = track.id
+  crossfadeTimer = window.setTimeout(() => {
+    crossfadeTimer = null
+    next()
+  }, Math.max(0, remaining * 1000))
+}
+
 async function loadAndPlay(track: Track): Promise<void> {
   isLoading.value = true
+  clearCrossfadeTimer()
 
   try {
     const playTarget = await resolvePlayTarget(track)
@@ -167,6 +296,7 @@ async function loadAndPlay(track: Track): Promise<void> {
 
 function next(): void {
   if (queue.value.length === 0) return
+  clearCrossfadeTimer()
 
   if (playMode.value === 'repeat') {
     const track = queue.value[queueIndex.value]
@@ -185,6 +315,39 @@ function next(): void {
   } else {
     queueIndex.value = 0
     const track = queue.value[0]
+    currentTrack.value = track
+    void loadAndPlay(track)
+  }
+}
+
+async function togglePlayState(): Promise<void> {
+  if (!currentTrack.value) return
+  isPlaying.value = !isPlaying.value
+  try {
+    await window.api.mpv.togglePause()
+  } catch (err) {
+    isPlaying.value = !isPlaying.value
+    console.error('[mpv] togglePlay 失败:', err)
+  }
+}
+
+function previous(): void {
+  if (queue.value.length === 0) return
+  clearCrossfadeTimer()
+  if (currentTime.value > 3) {
+    window.api.mpv.seek(0).catch(() => {})
+    return
+  }
+  const prevIndex = queueIndex.value - 1
+  if (prevIndex >= 0) {
+    queueIndex.value = prevIndex
+    const track = queue.value[prevIndex]
+    currentTrack.value = track
+    void loadAndPlay(track)
+  } else {
+    const lastIndex = queue.value.length - 1
+    queueIndex.value = lastIndex
+    const track = queue.value[lastIndex]
     currentTrack.value = track
     void loadAndPlay(track)
   }
@@ -242,6 +405,9 @@ export function usePlayerStore(): {
   mpvReady: Ref<boolean>
   mpvError: Ref<string | null>
   exclusiveMode: Ref<boolean>
+  audioOutput: Ref<AudioOutputId>
+  audioOutputOptions: Ref<AudioOutputOption[]>
+  audioProcessing: Ref<AudioProcessingSettings>
   cyclePlayMode: () => void
   playTrack: (track: Track, trackList?: Track[]) => void
   togglePlay: () => Promise<void>
@@ -250,6 +416,8 @@ export function usePlayerStore(): {
   seek: (time: number) => void
   setVolume: (vol: number) => void
   toggleExclusiveMode: () => Promise<void>
+  setAudioOutput: (output: AudioOutputId) => Promise<void>
+  setAudioProcessing: (settings: Partial<AudioProcessingSettings>) => Promise<void>
   formatTime: (seconds: number) => string
 } {
   function playTrack(track: Track, trackList?: Track[]): void {
@@ -269,35 +437,11 @@ export function usePlayerStore(): {
   }
 
   async function togglePlay(): Promise<void> {
-    if (!currentTrack.value) return
-    isPlaying.value = !isPlaying.value
-    try {
-      await window.api.mpv.togglePause()
-    } catch (err) {
-      isPlaying.value = !isPlaying.value
-      console.error('[mpv] togglePlay 失败:', err)
-    }
+    await togglePlayState()
   }
 
   function prev(): void {
-    if (queue.value.length === 0) return
-    if (currentTime.value > 3) {
-      window.api.mpv.seek(0).catch(() => {})
-      return
-    }
-    const prevIndex = queueIndex.value - 1
-    if (prevIndex >= 0) {
-      queueIndex.value = prevIndex
-      const track = queue.value[prevIndex]
-      currentTrack.value = track
-      void loadAndPlay(track)
-    } else {
-      const lastIndex = queue.value.length - 1
-      queueIndex.value = lastIndex
-      const track = queue.value[lastIndex]
-      currentTrack.value = track
-      void loadAndPlay(track)
-    }
+    previous()
   }
 
   function seek(time: number): void {
@@ -315,6 +459,33 @@ export function usePlayerStore(): {
       exclusiveMode.value = next
     } catch (err) {
       console.error('[mpv] 切换独占模式失败:', err)
+    }
+  }
+
+  async function setAudioOutput(output: AudioOutputId): Promise<void> {
+    try {
+      await window.api.mpv.setAudioOutput(output)
+      audioOutput.value = output
+      const selected = audioOutputOptions.value.find((option) => option.id === output)
+      if (selected && !selected.supportsExclusive) {
+        exclusiveMode.value = false
+      } else {
+        exclusiveMode.value = await window.api.mpv.getExclusiveMode()
+      }
+    } catch (err) {
+      console.error('[mpv] 切换音频输出失败:', err)
+    }
+  }
+
+  async function setAudioProcessing(settings: Partial<AudioProcessingSettings>): Promise<void> {
+    try {
+      audioProcessing.value = await window.api.mpv.setAudioProcessing({
+        ...audioProcessing.value,
+        ...settings
+      })
+      scheduleCrossfadeIfNeeded()
+    } catch (err) {
+      console.error('[mpv] 更新音频处理设置失败:', err)
     }
   }
 
@@ -340,6 +511,9 @@ export function usePlayerStore(): {
     mpvReady,
     mpvError,
     exclusiveMode,
+    audioOutput,
+    audioOutputOptions,
+    audioProcessing,
     cyclePlayMode,
     playTrack,
     togglePlay,
@@ -348,6 +522,8 @@ export function usePlayerStore(): {
     seek,
     setVolume,
     toggleExclusiveMode,
+    setAudioOutput,
+    setAudioProcessing,
     formatTime
   }
 }

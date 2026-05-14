@@ -632,4 +632,150 @@ const emit = defineEmits<{
     transform: translateY(0);
   }
 }
+
+/* ===== Reference-style Library Refresh ===== */
+.library-view {
+  color: #242946;
+}
+
+.library-hero {
+  gap: 16px;
+  margin-bottom: 32px;
+}
+
+.profile-panel,
+.liked-panel,
+.playlist-list-item,
+.empty-state {
+  border-radius: 8px;
+  border-color: rgba(255, 255, 255, 0.72);
+  background:
+    radial-gradient(circle at 18% 12%, rgba(255, 255, 255, 0.8), transparent 30%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.64), rgba(249, 246, 255, 0.3)),
+    rgba(255, 255, 255, 0.26);
+  box-shadow:
+    0 20px 58px rgba(86, 70, 160, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.76);
+}
+
+.profile-panel,
+.liked-panel {
+  min-height: 178px;
+}
+
+.profile-name,
+.liked-card-title,
+.section-heading h3,
+.playlist-row-title,
+.empty-text {
+  color: #242946;
+}
+
+.profile-kicker,
+.profile-signature,
+.liked-card-desc,
+.section-heading p,
+.playlist-row-subtitle,
+.empty-hint {
+  color: rgba(82, 90, 122, 0.62);
+}
+
+.profile-avatar,
+.liked-card-cover-wrap,
+.playlist-cover-wrap {
+  border-radius: 8px;
+}
+
+.profile-avatar {
+  border-radius: 999px;
+}
+
+.stat-item,
+.liked-card-badge,
+.playlist-open-icon {
+  border-radius: 8px;
+  border-color: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.liked-panel::after {
+  background:
+    radial-gradient(circle at 82% 18%, rgba(232, 67, 147, 0.1), transparent 30%),
+    radial-gradient(circle at 28% 88%, rgba(34, 211, 238, 0.08), transparent 34%),
+    linear-gradient(120deg, rgba(238, 228, 255, 0.34), transparent 58%);
+}
+
+.liked-play-btn {
+  border-radius: 8px;
+  background: linear-gradient(135deg, #7c4dff, #b469f4);
+}
+
+.playlist-list {
+  gap: 10px;
+}
+
+.playlist-list-item {
+  min-height: 76px;
+}
+
+.playlist-list-item:hover,
+.liked-panel:hover {
+  transform: translateY(-3px);
+  box-shadow:
+    0 26px 66px rgba(86, 70, 160, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+@media (max-width: 720px) {
+  .liked-panel {
+    flex-direction: column-reverse;
+  }
+}
+
+/* ===== White Card Library Refinement ===== */
+.profile-panel,
+.liked-panel,
+.playlist-list-item,
+.empty-state,
+.stat-item,
+.liked-card-badge,
+.playlist-open-icon {
+  background: #fff;
+  border-color: #eef1f6;
+  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.profile-panel::before,
+.liked-panel::before,
+.playlist-list-item::before,
+.empty-state::before,
+.liked-panel::after,
+.liked-light {
+  display: none;
+}
+
+.stat-item,
+.liked-card-badge,
+.playlist-open-icon {
+  box-shadow: none;
+}
+
+.liked-play-btn {
+  background: #7c4dff;
+  box-shadow: 0 12px 24px rgba(124, 77, 255, 0.18);
+}
+
+.playlist-list-item:hover,
+.liked-panel:hover {
+  box-shadow: 0 18px 38px rgba(34, 42, 68, 0.1);
+}
+
+.profile-avatar-placeholder,
+.liked-card-cover-placeholder,
+.playlist-cover-placeholder,
+.empty-icon {
+  background: #f3f0ff;
+}
 </style>

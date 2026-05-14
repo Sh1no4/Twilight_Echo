@@ -1,21 +1,219 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, Menu, nativeImage, Tray } from 'electron'
 import { join, extname, basename, dirname } from 'path'
-import { readdirSync, statSync, readFileSync, existsSync, writeFileSync } from 'fs'
+import { readdirSync, statSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs'
 import { readFile, writeFile } from 'fs/promises'
 import { randomUUID } from 'crypto'
 import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { parseFile } from 'music-metadata'
-import { MpvManager } from './mpvManager'
+import {
+  DEFAULT_AUDIO_PROCESSING,
+  MpvManager,
+  normalizeAudioProcessingSettings,
+  type AudioProcessingSettings,
+  type EqMode,
+  type EqualizerBand
+} from './mpvManager'
+
+type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
+
+interface AudioEqPreset {
+  id: string
+  name: string
+  eqMode: EqMode
+  eqPreamp: number
+  eqBands: EqualizerBand[]
+}
+
+interface AppSettings {
+  autoLaunch: boolean
+  hardwareAcceleration: boolean
+  globalShortcuts: boolean
+  musicCachePath: string
+  closeToTray: boolean
+  audioProcessing: AudioProcessingSettings
+  audioEqPresets: AudioEqPreset[]
+}
+
+const DEFAULT_SETTINGS: AppSettings = {
+  autoLaunch: false,
+  hardwareAcceleration: true,
+  globalShortcuts: false,
+  musicCachePath: '',
+  closeToTray: false,
+  audioProcessing: DEFAULT_AUDIO_PROCESSING,
+  audioEqPresets: []
+}
+
+const PLAYER_SHORTCUTS: { accelerator: string; action: PlayerShortcutAction; label: string }[] = [
+  { accelerator: 'CommandOrControl+Alt+Left', action: 'previous', label: '上一首' },
+  { accelerator: 'CommandOrControl+Alt+Right', action: 'next', label: '下一首' },
+  { accelerator: 'CommandOrControl+Alt+Space', action: 'playPause', label: '播放 / 暂停' }
+]
+
+function getSettingsFilePath(): string {
+  return join(app.getPath('userData'), 'settings.json')
+}
+
+function normalizeAudioEqPresets(presets: unknown): AudioEqPreset[] {
+  if (!Array.isArray(presets)) return []
+
+  return presets
+    .map((preset, index): AudioEqPreset | null => {
+      if (!preset || typeof preset !== 'object') return null
+      const raw = preset as Partial<AudioEqPreset>
+      const normalized = normalizeAudioProcessingSettings({
+        eqMode: raw.eqMode,
+        eqPreamp: raw.eqPreamp,
+        eqBands: raw.eqBands
+      })
+      return {
+        id: typeof raw.id === 'string' && raw.id ? raw.id : `custom-${index}`,
+        name: typeof raw.name === 'string' && raw.name ? raw.name.slice(0, 40) : `Preset ${index + 1}`,
+        eqMode: normalized.eqMode,
+        eqPreamp: normalized.eqPreamp,
+        eqBands: normalized.eqBands
+      }
+    })
+    .filter((preset): preset is AudioEqPreset => Boolean(preset))
+    .slice(0, 24)
+}
+
+function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
+  return {
+    autoLaunch: settings.autoLaunch === true,
+    hardwareAcceleration: settings.hardwareAcceleration !== false,
+    globalShortcuts: settings.globalShortcuts === true,
+    musicCachePath: typeof settings.musicCachePath === 'string' ? settings.musicCachePath : '',
+    closeToTray: settings.closeToTray === true,
+    audioProcessing: normalizeAudioProcessingSettings(settings.audioProcessing),
+    audioEqPresets: normalizeAudioEqPresets(settings.audioEqPresets)
+  }
+}
+
+function readAppSettings(): AppSettings {
+  try {
+    const filePath = getSettingsFilePath()
+    if (!existsSync(filePath)) return { ...DEFAULT_SETTINGS }
+    const raw = readFileSync(filePath, 'utf-8')
+    return normalizeAppSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(raw) })
+  } catch {
+    return { ...DEFAULT_SETTINGS }
+  }
+}
+
+function writeAppSettings(settings: AppSettings): void {
+  const filePath = getSettingsFilePath()
+  mkdirSync(dirname(filePath), { recursive: true })
+  writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf-8')
+}
+
+let appSettings = readAppSettings()
+
+if (!appSettings.hardwareAcceleration) {
+  app.disableHardwareAcceleration()
+}
+
+function ensureMusicCacheDirectories(rootPath: string): void {
+  if (!rootPath) return
+  mkdirSync(rootPath, { recursive: true })
+  mkdirSync(join(rootPath, 'renderer-cache'), { recursive: true })
+  mkdirSync(join(rootPath, 'mpv-cache'), { recursive: true })
+  mkdirSync(join(rootPath, 'ncm-cache'), { recursive: true })
+}
+
+function getMpvCacheDir(): string | undefined {
+  if (!appSettings.musicCachePath) return undefined
+  return join(appSettings.musicCachePath, 'mpv-cache')
+}
+
+function getMusicCacheRoot(): string {
+  const root = appSettings.musicCachePath || join(app.getPath('userData'), 'music-cache')
+  ensureMusicCacheDirectories(root)
+  return root
+}
+
+function getNcmCacheDir(): string {
+  const dir = join(getMusicCacheRoot(), 'ncm-cache')
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+function inferNcmCacheExtension(url: string, contentType?: string | null, fileName?: string): string {
+  const nameExt = fileName ? extname(fileName).toLowerCase() : ''
+  if (nameExt && /^[a-z0-9.]+$/i.test(nameExt)) return nameExt
+
+  const mime = (contentType || '').toLowerCase()
+  if (mime.includes('flac')) return '.flac'
+  if (mime.includes('wav')) return '.wav'
+  if (mime.includes('aac')) return '.aac'
+  if (mime.includes('mp4') || mime.includes('m4a')) return '.m4a'
+  if (mime.includes('ogg')) return '.ogg'
+
+  try {
+    const parsed = new URL(url)
+    const pathExt = extname(parsed.pathname).toLowerCase()
+    if (pathExt && /^[a-z0-9.]+$/i.test(pathExt)) return pathExt
+  } catch {
+    /* keep fallback */
+  }
+
+  return '.mp3'
+}
+
+function getCachedNcmSong(songId: number): string | null {
+  const dir = getNcmCacheDir()
+  const prefix = `${songId}.`
+  const file = readdirSync(dir).find((name) => name.startsWith(prefix))
+  if (!file) return null
+  const fullPath = join(dir, file)
+  return existsSync(fullPath) ? fullPath : null
+}
+
+async function cacheNcmSong(songId: number, url: string, fileName?: string): Promise<string | null> {
+  if (!Number.isFinite(songId) || songId <= 0 || !/^https?:\/\//i.test(url)) return null
+
+  const cached = getCachedNcmSong(songId)
+  if (cached) return cached
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 45000)
+  try {
+    const res = await fetch(url, { signal: controller.signal })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const ext = inferNcmCacheExtension(url, res.headers.get('content-type'), fileName)
+    const target = join(getNcmCacheDir(), `${songId}${ext}`)
+    const buffer = Buffer.from(await res.arrayBuffer())
+    await writeFile(target, buffer)
+    return target
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn('[ncm] cache song failed:', songId, message)
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+if (appSettings.musicCachePath) {
+  try {
+    ensureMusicCacheDirectories(appSettings.musicCachePath)
+    app.commandLine.appendSwitch('disk-cache-dir', join(appSettings.musicCachePath, 'renderer-cache'))
+  } catch (err) {
+    console.warn('[settings] 无法使用自定义缓存目录:', err)
+  }
+}
 
 const SUPPORTED_EXTENSIONS = [
   '.mp3',
   '.flac',
   '.wav',
+  '.wave',
   '.aac',
   '.ogg',
   '.wma',
   '.m4a',
+  '.mp4',
   '.aiff',
   '.aif',
   '.opus',
@@ -24,7 +222,8 @@ const SUPPORTED_EXTENSIONS = [
   '.ape',
   '.wv',
   '.dsf',
-  '.dff'
+  '.dff',
+  '.mqa'
 ]
 
 const COVER_NAMES = [
@@ -223,10 +422,12 @@ function getMimeType(filePath: string): string {
     '.mp3': 'audio/mpeg',
     '.flac': 'audio/flac',
     '.wav': 'audio/wav',
+    '.wave': 'audio/wav',
     '.aac': 'audio/aac',
     '.ogg': 'audio/ogg',
     '.wma': 'audio/x-ms-wma',
     '.m4a': 'audio/mp4',
+    '.mp4': 'audio/mp4',
     '.aiff': 'audio/aiff',
     '.aif': 'audio/aiff',
     '.opus': 'audio/opus',
@@ -235,7 +436,8 @@ function getMimeType(filePath: string): string {
     '.ape': 'audio/ape',
     '.wv': 'audio/wavpack',
     '.dsf': 'audio/dsf',
-    '.dff': 'audio/dsf'
+    '.dff': 'audio/dsf',
+    '.mqa': 'audio/flac'
   }
   return mime[ext] || 'application/octet-stream'
 }
@@ -243,7 +445,123 @@ function getMimeType(filePath: string): string {
 let mpvManager: MpvManager | null = null
 let mainWindow: BrowserWindow | null = null
 let ncmServer: import('http').Server | null = null
+let tray: Tray | null = null
+let forceQuit = false
 const NCM_API_PORT = 3100
+
+function sendPlayerShortcut(action: PlayerShortcutAction): void {
+  if (mainWindow?.isDestroyed() === false) {
+    mainWindow.webContents.send('player:shortcut', action)
+  }
+}
+
+function applyAutoLaunch(enabled: boolean): void {
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      path: process.execPath
+    })
+  } catch (err) {
+    console.warn('[settings] 设置开机自启失败:', err)
+  }
+}
+
+function unregisterPlayerShortcuts(): void {
+  for (const shortcut of PLAYER_SHORTCUTS) {
+    globalShortcut.unregister(shortcut.accelerator)
+  }
+}
+
+function registerPlayerShortcuts(): void {
+  unregisterPlayerShortcuts()
+  if (!appSettings.globalShortcuts) return
+
+  for (const shortcut of PLAYER_SHORTCUTS) {
+    const ok = globalShortcut.register(shortcut.accelerator, () => {
+      sendPlayerShortcut(shortcut.action)
+    })
+    if (!ok) {
+      console.warn(`[settings] 全局快捷键注册失败: ${shortcut.label} ${shortcut.accelerator}`)
+    }
+  }
+}
+
+function createTray(): void {
+  if (tray) return
+
+  const iconPath = join(app.getAppPath(), 'resources', 'icon.png')
+  const icon = existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty()
+  tray = new Tray(icon)
+  tray.setToolTip('Twilight Echo')
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: '显示 Twilight Echo',
+        click: () => {
+          mainWindow?.show()
+          mainWindow?.focus()
+        }
+      },
+      {
+        label: '隐藏窗口',
+        click: () => mainWindow?.hide()
+      },
+      { type: 'separator' },
+      {
+        label: '退出',
+        click: () => {
+          forceQuit = true
+          app.quit()
+        }
+      }
+    ])
+  )
+  tray.on('double-click', () => {
+    mainWindow?.show()
+    mainWindow?.focus()
+  })
+}
+
+function destroyTray(): void {
+  tray?.destroy()
+  tray = null
+}
+
+function syncTrayState(): void {
+  if (appSettings.closeToTray) {
+    createTray()
+  } else {
+    destroyTray()
+  }
+}
+
+function applyRuntimeSettings(): void {
+  applyAutoLaunch(appSettings.autoLaunch)
+  registerPlayerShortcuts()
+  syncTrayState()
+}
+
+function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
+  const previousCachePath = appSettings.musicCachePath
+  const shouldUpdateAudioProcessing = Object.prototype.hasOwnProperty.call(patch, 'audioProcessing')
+  appSettings = normalizeAppSettings({ ...appSettings, ...patch })
+  writeAppSettings(appSettings)
+
+  if (appSettings.musicCachePath && appSettings.musicCachePath !== previousCachePath) {
+    try {
+      ensureMusicCacheDirectories(appSettings.musicCachePath)
+    } catch (err) {
+      console.warn('[settings] 创建缓存目录失败:', err)
+    }
+  }
+
+  if (shouldUpdateAudioProcessing) {
+    void mpvManager?.setAudioProcessing(appSettings.audioProcessing)
+  }
+
+  applyRuntimeSettings()
+  return { ...appSettings }
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -262,6 +580,17 @@ function createWindow(): void {
     mainWindow?.show()
   })
 
+  mainWindow.on('close', (event) => {
+    if (appSettings.closeToTray && !forceQuit) {
+      event.preventDefault()
+      mainWindow?.hide()
+    }
+  })
+
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -276,7 +605,9 @@ function createWindow(): void {
 
 function setupMpvIpc(): void {
   mpvManager = new MpvManager({
-    exclusiveMode: false
+    exclusiveMode: false,
+    cacheDir: getMpvCacheDir(),
+    audioProcessing: appSettings.audioProcessing
   })
 
   mpvManager.on('property-change', ({ name, data }) => {
@@ -339,6 +670,29 @@ function setupMpvIpc(): void {
     return await requireMpv().getExclusiveMode()
   })
 
+  ipcMain.handle('mpv:setAudioOutput', async (_event, output: string) => {
+    await requireMpv().setAudioOutput(output as never)
+  })
+
+  ipcMain.handle('mpv:getAudioOutput', async () => {
+    return await requireMpv().getAudioOutput()
+  })
+
+  ipcMain.handle('mpv:getAudioOutputOptions', async () => {
+    return requireMpv().getAudioOutputOptions()
+  })
+
+  ipcMain.handle('mpv:setAudioProcessing', async (_event, settings: Partial<AudioProcessingSettings>) => {
+    const normalized = await requireMpv().setAudioProcessing(settings)
+    appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
+    writeAppSettings(appSettings)
+    return normalized
+  })
+
+  ipcMain.handle('mpv:getAudioProcessing', async () => {
+    return requireMpv().getAudioProcessing()
+  })
+
   mpvManager
     .start()
     .then(() => {
@@ -349,6 +703,14 @@ function setupMpvIpc(): void {
     })
 
   ipcMain.handle('ncm:getPort', () => NCM_API_PORT)
+
+  ipcMain.handle('ncm:getCachedSong', async (_event, songId: number) => {
+    return getCachedNcmSong(Number(songId))
+  })
+
+  ipcMain.handle('ncm:cacheSong', async (_event, songId: number, url: string, fileName?: string) => {
+    return await cacheNcmSong(Number(songId), url, fileName)
+  })
 
   ipcMain.handle('ncm:request', async (_event, path: string, cookie?: string) => {
     const sep = path.includes('?') ? '&' : '?'
@@ -429,6 +791,25 @@ app.whenReady().then(() => {
     return result.filePaths[0]
   })
 
+  ipcMain.handle('settings:get', async () => {
+    return { ...appSettings }
+  })
+
+  ipcMain.handle('settings:update', async (_event, patch: Partial<AppSettings>) => {
+    return updateAppSettings(patch)
+  })
+
+  ipcMain.handle('settings:selectMusicCachePath', async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const options: Electron.OpenDialogOptions = {
+      title: '选择音乐缓存位置',
+      properties: ['openDirectory', 'createDirectory']
+    }
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
+
   ipcMain.handle('shell:showItemInFolder', async (_event, filePath: string) => {
     shell.showItemInFolder(filePath)
   })
@@ -480,6 +861,7 @@ app.whenReady().then(() => {
   })
 
   createWindow()
+  applyRuntimeSettings()
 
   setupMpvIpc()
   setupNcmApi()
@@ -490,12 +872,15 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && !appSettings.closeToTray) {
     app.quit()
   }
 })
 
 app.on('before-quit', () => {
+  forceQuit = true
+  unregisterPlayerShortcuts()
+  destroyTray()
   mpvManager?.destroy()
   mpvManager = null
   if (ncmServer) {
