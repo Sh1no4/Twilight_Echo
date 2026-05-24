@@ -1,0 +1,176 @@
+import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import type { AppSettings, SettingsSnapshot } from '../types/settings'
+
+const fallbackSettings: AppSettings = {
+  autoCheckLogin: true,
+  minimizeToTray: false,
+  launchAtLogin: false,
+  hardwareAcceleration: true,
+  cachePath: '',
+  blurEffect: true,
+  useCoverTheme: true,
+  lyricFontSize: 18
+}
+
+const settings = ref<AppSettings>({ ...fallbackSettings })
+const defaults = ref<SettingsSnapshot['defaults']>({ cachePath: '' })
+const paths = ref<SettingsSnapshot['paths'] | null>(null)
+const appVersion = ref('')
+const platform = ref('')
+const restartReasons = ref<string[]>([])
+const loaded = ref(false)
+const loading = ref(false)
+const saving = ref(false)
+const clearingCache = ref(false)
+const cacheSize = ref<number | null>(null)
+let listenerSetup = false
+
+function formatBytes(bytes: number | null): string {
+  if (bytes == null) return '计算中'
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let value = bytes / 1024
+  let unitIndex = 0
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024
+    unitIndex++
+  }
+  return `${value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${units[unitIndex]}`
+}
+
+function applyDomSettings(): void {
+  document.body.classList.toggle('te-no-blur', !settings.value.blurEffect)
+  document.documentElement.style.setProperty(
+    '--te-lyric-font-size',
+    `${settings.value.lyricFontSize}px`
+  )
+}
+
+function applySnapshot(snapshot: SettingsSnapshot): void {
+  settings.value = { ...snapshot.settings }
+  defaults.value = { ...snapshot.defaults }
+  paths.value = { ...snapshot.paths }
+  appVersion.value = snapshot.appVersion
+  platform.value = snapshot.platform
+  restartReasons.value = [...snapshot.restartReasons]
+  loaded.value = true
+  applyDomSettings()
+}
+
+function setupListener(): void {
+  if (listenerSetup) return
+  listenerSetup = true
+  window.api.settings.onChanged((snapshot) => {
+    applySnapshot(snapshot)
+  })
+}
+
+export function useSettingsStore(): {
+  settings: Ref<AppSettings>
+  defaults: Ref<SettingsSnapshot['defaults']>
+  paths: Ref<SettingsSnapshot['paths'] | null>
+  appVersion: Ref<string>
+  platform: Ref<string>
+  loaded: Ref<boolean>
+  loading: Ref<boolean>
+  saving: Ref<boolean>
+  clearingCache: Ref<boolean>
+  cacheSize: Ref<number | null>
+  formattedCacheSize: ComputedRef<string>
+  restartRequired: ComputedRef<boolean>
+  restartReasons: Ref<string[]>
+  loadSettings: () => Promise<AppSettings>
+  updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
+  chooseCacheFolder: () => Promise<void>
+  resetCacheFolder: () => Promise<void>
+  refreshCacheSize: () => Promise<void>
+  clearCache: () => Promise<void>
+  openCacheFolder: () => Promise<void>
+  relaunch: () => Promise<void>
+} {
+  const formattedCacheSize = computed(() => formatBytes(cacheSize.value))
+  const restartRequired = computed(() => restartReasons.value.length > 0)
+
+  async function loadSettings(): Promise<AppSettings> {
+    setupListener()
+    loading.value = true
+    try {
+      const snapshot = await window.api.settings.get()
+      applySnapshot(snapshot)
+      return settings.value
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+    saving.value = true
+    try {
+      const snapshot = await window.api.settings.update(patch)
+      applySnapshot(snapshot)
+      return settings.value
+    } finally {
+      saving.value = false
+    }
+  }
+
+  async function chooseCacheFolder(): Promise<void> {
+    const folder = await window.api.settings.chooseCacheFolder()
+    if (folder) {
+      await updateSettings({ cachePath: folder })
+    }
+  }
+
+  async function resetCacheFolder(): Promise<void> {
+    if (!defaults.value.cachePath) return
+    await updateSettings({ cachePath: defaults.value.cachePath })
+  }
+
+  async function refreshCacheSize(): Promise<void> {
+    cacheSize.value = await window.api.settings.getCacheSize()
+  }
+
+  async function clearCache(): Promise<void> {
+    clearingCache.value = true
+    try {
+      cacheSize.value = await window.api.settings.clearCache()
+    } finally {
+      clearingCache.value = false
+    }
+  }
+
+  async function openCacheFolder(): Promise<void> {
+    const targetPath = settings.value.cachePath || paths.value?.activeCachePath
+    if (targetPath) {
+      await window.api.shell.openPath(targetPath)
+    }
+  }
+
+  async function relaunch(): Promise<void> {
+    await window.api.app.relaunch()
+  }
+
+  return {
+    settings,
+    defaults,
+    paths,
+    appVersion,
+    platform,
+    loaded,
+    loading,
+    saving,
+    clearingCache,
+    cacheSize,
+    formattedCacheSize,
+    restartRequired,
+    restartReasons,
+    loadSettings,
+    updateSettings,
+    chooseCacheFolder,
+    resetCacheFolder,
+    refreshCacheSize,
+    clearCache,
+    openCacheFolder,
+    relaunch
+  }
+}
