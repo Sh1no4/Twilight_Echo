@@ -12,6 +12,7 @@ import EqualizerPage from './components/EqualizerPage.vue'
 import { useMusicStore } from './stores/useMusicStore'
 import { useNcmStore } from './stores/useNcmStore'
 import { usePlayerStore } from './stores/usePlayerStore'
+import { useSettingsStore } from './stores/useSettingsStore'
 
 const menuOpen = ref(false)
 const showPlayingPage = ref(false)
@@ -20,7 +21,7 @@ const showLoginPage = ref(false)
 const loginPageMode = ref<'login' | 'profile'>('login')
 const showSettingsPage = ref(false)
 const showEqualizerPage = ref(false)
-type SettingsSection = 'general' | 'system' | 'audio' | 'personalization' | 'shortcuts' | 'about'
+type SettingsSection = 'general' | 'playback' | 'cache' | 'performance' | 'appearance' | 'shortcuts' | 'about'
 const settingsInitialSection = ref<SettingsSection>('general')
 
 const activeCategory = ref('allSongs')
@@ -163,7 +164,7 @@ function closeSettingsPage(): void {
 }
 
 function openPlaybackSettings(): void {
-  openSettingsPage('audio')
+  openSettingsPage('playback')
 }
 
 function openEqualizerPage(): void {
@@ -178,6 +179,7 @@ function closeEqualizerPage(): void {
 const { loadLibrary } = useMusicStore()
 const { checkLogin } = useNcmStore()
 const { currentTrack } = usePlayerStore()
+const { loadSettings } = useSettingsStore()
 const hasPlayerBar = computed(
   () => !showLoginPage.value && !showSettingsPage.value && !showEqualizerPage.value && !!currentTrack.value
 )
@@ -256,6 +258,7 @@ function startSideMenuMonitor(): void {
 }
 
 onMounted(() => {
+  void loadSettings()
   loadLibrary()
   checkLogin()
 })
@@ -417,6 +420,19 @@ body {
 
 .main-content > * {
   grid-area: 1 / 1;
+}
+
+body.te-no-blur .main-content::before,
+body.te-no-blur .main-content::after,
+body.te-no-blur .page-down-leave-to,
+body.te-no-blur .page-down-enter-from,
+body.te-no-blur .page-up-leave-to,
+body.te-no-blur .page-up-enter-from,
+body.te-no-blur .playing-page-enter-from,
+body.te-no-blur .playing-page-leave-to,
+body.te-no-blur .login-page-enter-from,
+body.te-no-blur .login-page-leave-to {
+  filter: none !important;
 }
 
 .main-content.menu-open {

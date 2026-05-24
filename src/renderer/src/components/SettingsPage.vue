@@ -27,7 +27,11 @@ type BooleanSettingKey =
   | 'blurEffect'
   | 'useCoverTheme'
 
-const activeTab = ref<TabKey>('general')
+const props = defineProps<{
+  initialSection?: TabKey
+}>()
+
+const activeTab = ref<TabKey>(props.initialSection ?? 'general')
 
 const {
   settings,

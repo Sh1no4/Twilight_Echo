@@ -11,6 +11,7 @@ interface TrackData {
   size: number
   cover: string | null
   lyrics: string | null
+  translatedLyrics?: string | null
 }
 
 interface MpvEvent {
@@ -62,13 +63,36 @@ interface AudioEqPreset {
 }
 
 interface AppSettings {
+  autoCheckLogin: boolean
   autoLaunch: boolean
+  launchAtLogin: boolean
   hardwareAcceleration: boolean
   globalShortcuts: boolean
+  minimizeToTray: boolean
   musicCachePath: string
+  cachePath: string
   closeToTray: boolean
+  blurEffect: boolean
+  useCoverTheme: boolean
+  lyricFontSize: number
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
+}
+
+interface SettingsSnapshot extends AppSettings {
+  settings: AppSettings
+  defaults: {
+    cachePath: string
+  }
+  paths: {
+    settingsFile: string
+    userDataPath: string
+    activeCachePath: string
+  }
+  appVersion: string
+  platform: string
+  restartRequired: boolean
+  restartReasons: string[]
 }
 
 interface AudioOutputOption {
@@ -112,6 +136,7 @@ interface WindowAPI {
   }
   shell: {
     showItemInFolder: (filePath: string) => Promise<void>
+    openPath: (path: string) => Promise<string>
   }
   fs: {
     scanMusicFiles: (folderPath: string) => Promise<TrackData[]>
@@ -119,6 +144,9 @@ interface WindowAPI {
     onScanProgress: (cb: (progress: { current: number; total: number }) => void) => () => void
   }
   mpv: MpvAPI
+  app: {
+    relaunch: () => Promise<void>
+  }
   ncm: {
     getPort: () => Promise<number>
     request: (path: string, cookie?: string) => Promise<unknown>
@@ -132,9 +160,13 @@ interface WindowAPI {
     loadCookie: () => Promise<string>
   }
   settings: {
-    get: () => Promise<AppSettings>
-    update: (patch: Partial<AppSettings>) => Promise<AppSettings>
+    get: () => Promise<SettingsSnapshot>
+    update: (patch: Partial<AppSettings>) => Promise<SettingsSnapshot>
+    chooseCacheFolder: () => Promise<string | null>
     selectMusicCachePath: () => Promise<string | null>
+    getCacheSize: () => Promise<number>
+    clearCache: () => Promise<number>
+    onChanged: (cb: (snapshot: SettingsSnapshot) => void) => () => void
     onPlayerShortcut: (cb: (action: PlayerShortcutAction) => void) => () => void
   }
 }

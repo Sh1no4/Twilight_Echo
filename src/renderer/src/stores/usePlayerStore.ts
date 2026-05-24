@@ -2,6 +2,7 @@ import { ref, computed, watch, type Ref, type ComputedRef } from 'vue'
 import type { Track } from '../types/music'
 import { extractDominantColor } from '../utils/colorExtractor'
 import { useNcmStore } from './useNcmStore'
+import { useSettingsStore } from './useSettingsStore'
 
 type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
@@ -82,14 +83,20 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   crossfadeSeconds: 0
 }
 const audioProcessing = ref<AudioProcessingSettings>({ ...defaultAudioProcessing })
+const { settings: appSettings } = useSettingsStore()
 
 watch(volume, (val) => {
   window.api.mpv.setVolume(val).catch(() => {})
 })
 
 watch(
-  () => currentTrack.value?.cover,
-  async (cover) => {
+  [() => currentTrack.value?.cover, () => appSettings.value.useCoverTheme],
+  async ([cover, useCoverTheme]) => {
+    if (!useCoverTheme) {
+      dominantColor.value = '#7c4dff'
+      return
+    }
+
     if (cover) {
       dominantColor.value = await extractDominantColor(cover)
     } else {
@@ -99,13 +106,20 @@ watch(
 )
 
 watch(
-  () => currentTrack.value,
-  async (track) => {
-    if (track && track.source === 'ncm' && track.ncmSongId && !track.lyrics) {
+  () => [currentTrack.value?.id, currentTrack.value?.translatedLyrics] as const,
+  async ([id], [prevId]) => {
+    const track = currentTrack.value
+    if (!track || track.id !== id || track.id === prevId) return
+
+    if (track.source === 'ncm' && track.ncmSongId && track.translatedLyrics == null) {
       const { fetchLyric } = useNcmStore()
-      const lrc = await fetchLyric(track.ncmSongId)
-      if (lrc && currentTrack.value?.id === track.id) {
-        currentTrack.value = { ...currentTrack.value, lyrics: lrc }
+      const lyricData = await fetchLyric(track.ncmSongId)
+      if (currentTrack.value?.id === track.id && (lyricData.lyrics || lyricData.translatedLyrics)) {
+        currentTrack.value = {
+          ...currentTrack.value,
+          lyrics: lyricData.lyrics ?? currentTrack.value?.lyrics ?? null,
+          translatedLyrics: lyricData.translatedLyrics ?? currentTrack.value?.translatedLyrics ?? null
+        }
       }
     }
   }

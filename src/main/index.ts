@@ -1,7 +1,7 @@
 import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, Menu, nativeImage, Tray } from 'electron'
-import { join, extname, basename, dirname } from 'path'
+import { join, extname, basename, dirname, resolve } from 'path'
 import { readdirSync, statSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs'
-import { readFile, writeFile } from 'fs/promises'
+import { readFile, writeFile, readdir, stat, rm } from 'fs/promises'
 import { randomUUID } from 'crypto'
 import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -26,21 +26,51 @@ interface AudioEqPreset {
 }
 
 interface AppSettings {
+  autoCheckLogin: boolean
   autoLaunch: boolean
+  launchAtLogin: boolean
   hardwareAcceleration: boolean
   globalShortcuts: boolean
+  minimizeToTray: boolean
   musicCachePath: string
+  cachePath: string
   closeToTray: boolean
+  blurEffect: boolean
+  useCoverTheme: boolean
+  lyricFontSize: number
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
 }
 
+interface SettingsSnapshot extends AppSettings {
+  settings: AppSettings
+  defaults: {
+    cachePath: string
+  }
+  paths: {
+    settingsFile: string
+    userDataPath: string
+    activeCachePath: string
+  }
+  appVersion: string
+  platform: string
+  restartRequired: boolean
+  restartReasons: string[]
+}
+
 const DEFAULT_SETTINGS: AppSettings = {
+  autoCheckLogin: true,
   autoLaunch: false,
+  launchAtLogin: false,
   hardwareAcceleration: true,
   globalShortcuts: false,
+  minimizeToTray: false,
   musicCachePath: '',
+  cachePath: '',
   closeToTray: false,
+  blurEffect: true,
+  useCoverTheme: true,
+  lyricFontSize: 18,
   audioProcessing: DEFAULT_AUDIO_PROCESSING,
   audioEqPresets: []
 }
@@ -53,6 +83,15 @@ const PLAYER_SHORTCUTS: { accelerator: string; action: PlayerShortcutAction; lab
 
 function getSettingsFilePath(): string {
   return join(app.getPath('userData'), 'settings.json')
+}
+
+function getDefaultCachePath(): string {
+  return join(app.getPath('userData'), 'music-cache')
+}
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, value))
 }
 
 function normalizeAudioEqPresets(presets: unknown): AudioEqPreset[] {
@@ -80,12 +119,43 @@ function normalizeAudioEqPresets(presets: unknown): AudioEqPreset[] {
 }
 
 function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
+  const rawCachePath =
+    typeof settings.cachePath === 'string' && settings.cachePath.trim()
+      ? settings.cachePath.trim()
+      : typeof settings.musicCachePath === 'string' && settings.musicCachePath.trim()
+        ? settings.musicCachePath.trim()
+        : getDefaultCachePath()
+  const cachePath = resolve(rawCachePath)
+  const autoLaunch =
+    typeof settings.autoLaunch === 'boolean'
+      ? settings.autoLaunch
+      : typeof settings.launchAtLogin === 'boolean'
+        ? settings.launchAtLogin
+        : DEFAULT_SETTINGS.autoLaunch
+  const launchAtLogin =
+    typeof settings.launchAtLogin === 'boolean' ? settings.launchAtLogin : autoLaunch
+  const closeToTray =
+    typeof settings.closeToTray === 'boolean'
+      ? settings.closeToTray
+      : typeof settings.minimizeToTray === 'boolean'
+        ? settings.minimizeToTray
+        : DEFAULT_SETTINGS.closeToTray
+  const minimizeToTray =
+    typeof settings.minimizeToTray === 'boolean' ? settings.minimizeToTray : closeToTray
+
   return {
-    autoLaunch: settings.autoLaunch === true,
+    autoCheckLogin: settings.autoCheckLogin !== false,
+    autoLaunch,
+    launchAtLogin,
     hardwareAcceleration: settings.hardwareAcceleration !== false,
     globalShortcuts: settings.globalShortcuts === true,
-    musicCachePath: typeof settings.musicCachePath === 'string' ? settings.musicCachePath : '',
-    closeToTray: settings.closeToTray === true,
+    minimizeToTray,
+    musicCachePath: cachePath,
+    cachePath,
+    closeToTray,
+    blurEffect: settings.blurEffect !== false,
+    useCoverTheme: settings.useCoverTheme !== false,
+    lyricFontSize: clampNumber(settings.lyricFontSize, 14, 28, DEFAULT_SETTINGS.lyricFontSize),
     audioProcessing: normalizeAudioProcessingSettings(settings.audioProcessing),
     audioEqPresets: normalizeAudioEqPresets(settings.audioEqPresets)
   }
@@ -108,7 +178,57 @@ function writeAppSettings(settings: AppSettings): void {
   writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf-8')
 }
 
+function getRestartReasons(settings: AppSettings, launch: AppSettings): string[] {
+  const reasons: string[] = []
+  if (settings.hardwareAcceleration !== launch.hardwareAcceleration) {
+    reasons.push('GPU 加速')
+  }
+  if (resolve(settings.musicCachePath) !== resolve(launch.musicCachePath)) {
+    reasons.push('缓存位置')
+  }
+  return reasons
+}
+
+function createSettingsSnapshot(settings: AppSettings, launch: AppSettings): SettingsSnapshot {
+  const restartReasons = getRestartReasons(settings, launch)
+  return {
+    ...settings,
+    settings: { ...settings },
+    defaults: {
+      cachePath: getDefaultCachePath()
+    },
+    paths: {
+      settingsFile: getSettingsFilePath(),
+      userDataPath: app.getPath('userData'),
+      activeCachePath: launch.musicCachePath || getDefaultCachePath()
+    },
+    appVersion: app.getVersion(),
+    platform: process.platform,
+    restartRequired: restartReasons.length > 0,
+    restartReasons
+  }
+}
+
+async function getDirectorySize(directory: string): Promise<number> {
+  try {
+    const info = await stat(directory)
+    if (!info.isDirectory()) return info.size
+
+    const entries = await readdir(directory, { withFileTypes: true })
+    const sizes = await Promise.all(
+      entries.map((entry) => {
+        const fullPath = join(directory, entry.name)
+        return entry.isDirectory() ? getDirectorySize(fullPath) : stat(fullPath).then((s) => s.size)
+      })
+    )
+    return sizes.reduce((sum, size) => sum + size, 0)
+  } catch {
+    return 0
+  }
+}
+
 let appSettings = readAppSettings()
+const launchSettings = { ...appSettings }
 
 if (!appSettings.hardwareAcceleration) {
   app.disableHardwareAcceleration()
@@ -541,7 +661,7 @@ function applyRuntimeSettings(): void {
   syncTrayState()
 }
 
-function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
+function updateAppSettings(patch: Partial<AppSettings>): SettingsSnapshot {
   const previousCachePath = appSettings.musicCachePath
   const shouldUpdateAudioProcessing = Object.prototype.hasOwnProperty.call(patch, 'audioProcessing')
   appSettings = normalizeAppSettings({ ...appSettings, ...patch })
@@ -560,7 +680,17 @@ function updateAppSettings(patch: Partial<AppSettings>): AppSettings {
   }
 
   applyRuntimeSettings()
-  return { ...appSettings }
+  const snapshot = createSettingsSnapshot(appSettings, launchSettings)
+  mainWindow?.webContents.send('settings:changed', snapshot)
+  return snapshot
+}
+
+function relaunchApplication(): void {
+  forceQuit = true
+  app.relaunch({
+    args: process.argv.slice(1)
+  })
+  app.quit()
 }
 
 function createWindow(): void {
@@ -791,12 +921,34 @@ app.whenReady().then(() => {
     return result.filePaths[0]
   })
 
+  ipcMain.handle('app:relaunch', () => {
+    setTimeout(() => {
+      relaunchApplication()
+    }, 0)
+    return true
+  })
+
+  ipcMain.handle('shell:openPath', async (_event, targetPath: string) => {
+    return await shell.openPath(targetPath)
+  })
+
   ipcMain.handle('settings:get', async () => {
-    return { ...appSettings }
+    return createSettingsSnapshot(appSettings, launchSettings)
   })
 
   ipcMain.handle('settings:update', async (_event, patch: Partial<AppSettings>) => {
     return updateAppSettings(patch)
+  })
+
+  ipcMain.handle('settings:chooseCacheFolder', async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const options: Electron.OpenDialogOptions = {
+      title: '选择缓存位置',
+      properties: ['openDirectory', 'createDirectory']
+    }
+    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
   })
 
   ipcMain.handle('settings:selectMusicCachePath', async () => {
@@ -808,6 +960,21 @@ app.whenReady().then(() => {
     const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
+  })
+
+  ipcMain.handle('settings:getCacheSize', async () => {
+    return await getDirectorySize(appSettings.musicCachePath || getDefaultCachePath())
+  })
+
+  ipcMain.handle('settings:clearCache', async () => {
+    const cachePath = appSettings.musicCachePath || getDefaultCachePath()
+    try {
+      await rm(cachePath, { recursive: true, force: true })
+    } catch (error) {
+      console.warn('[settings] failed to clear cache:', error)
+    }
+    ensureMusicCacheDirectories(cachePath)
+    return await getDirectorySize(cachePath)
   })
 
   ipcMain.handle('shell:showItemInFolder', async (_event, filePath: string) => {

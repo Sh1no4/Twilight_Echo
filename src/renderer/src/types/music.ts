@@ -12,6 +12,7 @@ export interface Track {
   size: number
   cover: string | null
   lyrics: string | null
+  translatedLyrics?: string | null
   source?: TrackSource
   ncmSongId?: number
   streamUrl?: string | null

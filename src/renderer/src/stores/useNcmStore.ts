@@ -77,7 +77,10 @@ export interface NcmStore {
   fetchRecommendPlaylists: () => Promise<NcmPlaylistSummary[]>
   fetchPersonalFm: () => Promise<Track[]>
   fetchPrivateContent: () => Promise<Track[]>
-  fetchLyric: (songId: number) => Promise<string | null>
+  fetchLyric: (songId: number) => Promise<{
+    lyrics: string | null
+    translatedLyrics: string | null
+  }>
   searchSongs: (
     keywords: string,
     limit?: number,
@@ -186,6 +189,7 @@ function normalizeTrack(song: Record<string, any>): Track {
     size: audioMeta.size ?? 0,
     cover,
     lyrics: null,
+    translatedLyrics: null,
     source: 'ncm',
     ncmSongId: songId,
     streamUrl: null,
@@ -610,15 +614,29 @@ export function useNcmStore(): NcmStore {
     }
   }
 
-  async function fetchLyric(songId: number): Promise<string | null> {
+  function extractLyricText(data: Record<string, any>, key: 'lrc' | 'tlyric'): string | null {
+    return data[key]?.lyric || data.data?.[key]?.lyric || null
+  }
+
+  async function fetchLyric(songId: number): Promise<{
+    lyrics: string | null
+    translatedLyrics: string | null
+  }> {
     try {
       const data = await requestAuthed(`/lyric/new?id=${songId}`)
-      const lrc = data.lrc?.lyric || data.data?.lrc?.lyric || ''
-      if (lrc) return lrc
+      const lyrics = extractLyricText(data, 'lrc')
+      const translatedLyrics = extractLyricText(data, 'tlyric')
+      if (lyrics || translatedLyrics) {
+        return { lyrics, translatedLyrics }
+      }
+
       const data2 = await requestAuthed(`/lyric?id=${songId}`)
-      return data2.lrc?.lyric || data2.data?.lrc?.lyric || null
+      return {
+        lyrics: extractLyricText(data2, 'lrc'),
+        translatedLyrics: extractLyricText(data2, 'tlyric')
+      }
     } catch {
-      return null
+      return { lyrics: null, translatedLyrics: null }
     }
   }
 

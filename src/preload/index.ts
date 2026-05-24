@@ -58,6 +58,22 @@ interface AppSettings {
   audioEqPresets: AudioEqPreset[]
 }
 
+interface SettingsSnapshot extends AppSettings {
+  settings: AppSettings
+  defaults: {
+    cachePath: string
+  }
+  paths: {
+    settingsFile: string
+    userDataPath: string
+    activeCachePath: string
+  }
+  appVersion: string
+  platform: string
+  restartRequired: boolean
+  restartReasons: string[]
+}
+
 const mpvEventCallbacks = new Set<MpvEventCallback>()
 const mpvEndFileCallbacks = new Set<MpvEndFileCallback>()
 const mpvStartFileCallbacks = new Set<MpvSimpleCallback>()
@@ -65,6 +81,7 @@ const mpvReadyCallbacks = new Set<MpvSimpleCallback>()
 const mpvErrorCallbacks = new Set<MpvErrorCallback>()
 const mpvDisconnectedCallbacks = new Set<MpvSimpleCallback>()
 const playerShortcutCallbacks = new Set<(action: PlayerShortcutAction) => void>()
+const settingsChangedCallbacks = new Set<(snapshot: SettingsSnapshot) => void>()
 
 ipcRenderer.on('mpv:property-change', (_event, data: { name: string; data: unknown }) => {
   for (const cb of mpvEventCallbacks) {
@@ -108,6 +125,12 @@ ipcRenderer.on('player:shortcut', (_event, action: PlayerShortcutAction) => {
   }
 })
 
+ipcRenderer.on('settings:changed', (_event, snapshot: SettingsSnapshot) => {
+  for (const cb of settingsChangedCallbacks) {
+    cb(snapshot)
+  }
+})
+
 const api = {
   window: {
     minimize: (): void => ipcRenderer.send('window:minimize'),
@@ -119,7 +142,8 @@ const api = {
   },
   shell: {
     showItemInFolder: (filePath: string): Promise<void> =>
-      ipcRenderer.invoke('shell:showItemInFolder', filePath)
+      ipcRenderer.invoke('shell:showItemInFolder', filePath),
+    openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:openPath', path)
   },
   fs: {
     scanMusicFiles: (folderPath: string): Promise<unknown[]> =>
@@ -188,6 +212,9 @@ const api = {
       return () => mpvDisconnectedCallbacks.delete(cb)
     }
   },
+  app: {
+    relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch')
+  },
   ncm: {
     getPort: (): Promise<number> => ipcRenderer.invoke('ncm:getPort'),
     request: (path: string, cookie?: string): Promise<unknown> =>
@@ -205,11 +232,18 @@ const api = {
     loadCookie: (): Promise<string> => ipcRenderer.invoke('data:loadCookie')
   },
   settings: {
-    get: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
-    update: (patch: Partial<AppSettings>): Promise<AppSettings> =>
+    get: (): Promise<SettingsSnapshot> => ipcRenderer.invoke('settings:get'),
+    update: (patch: Partial<AppSettings>): Promise<SettingsSnapshot> =>
       ipcRenderer.invoke('settings:update', patch),
+    chooseCacheFolder: (): Promise<string | null> => ipcRenderer.invoke('settings:chooseCacheFolder'),
     selectMusicCachePath: (): Promise<string | null> =>
       ipcRenderer.invoke('settings:selectMusicCachePath'),
+    getCacheSize: (): Promise<number> => ipcRenderer.invoke('settings:getCacheSize'),
+    clearCache: (): Promise<number> => ipcRenderer.invoke('settings:clearCache'),
+    onChanged: (cb: (snapshot: SettingsSnapshot) => void): (() => void) => {
+      settingsChangedCallbacks.add(cb)
+      return () => settingsChangedCallbacks.delete(cb)
+    },
     onPlayerShortcut: (cb: (action: PlayerShortcutAction) => void): (() => void) => {
       playerShortcutCallbacks.add(cb)
       return () => playerShortcutCallbacks.delete(cb)
