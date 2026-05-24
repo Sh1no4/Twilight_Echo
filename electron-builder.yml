@@ -3,7 +3,8 @@ productName: TwilightEcho
 directories:
   buildResources: build
 beforePack: ./scripts/extract-mpv.cjs
-asar: true
+afterPack: ./scripts/copy-node-modules.cjs
+asar: false
 icon: build/icon.png
 files:
   - '!**/.vscode/*'
@@ -16,12 +17,13 @@ files:
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
-  - resources/mpv/**
+  - resources/**
 extraResources:
-  - from: resources/mpv
-    to: mpv
+  - from: resources
+    to: .
     filter:
-      - '**/*'
+      - mpv.exe
+      - mpv/**
 win:
   executableName: TwilightEcho
   icon: build/icon.ico

@@ -1,8 +1,60 @@
-node_modules
-dist
-out
-.DS_Store
+# Dependencies
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+.pnp.*
+
+# Build output and caches
+dist/
+out/
+release/
+coverage/
+.vite/
+.cache/
 .eslintcache
-*.log*
+*.tsbuildinfo
+
+# Packaged mpv artifacts
+resources/mpv/
+resources/mpv.zip
+
+# Logs
+*.log
+*.log.*
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment and local overrides
+.env
+.env.*
+!.env.example
+*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+._*
+
+# Editor and IDE files
 .vscode/
+.idea/
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*~
+
+# Merge and patch leftovers
+*.orig
+*.rej
+*.tmp
+*.temp
+
+# Local tooling caches
 .codex-tools/

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import Slider from 'primevue/slider'
 import { usePlayerStore } from '../stores/usePlayerStore'
 
 defineProps<{
@@ -16,17 +17,12 @@ const {
   queue,
   queueIndex,
   playMode,
-  exclusiveMode,
-  audioOutput,
-  audioOutputOptions,
   cyclePlayMode,
   togglePlay,
   next,
   prev,
   seek,
   playTrack,
-  toggleExclusiveMode,
-  setAudioOutput,
   formatTime
 } = usePlayerStore()
 
@@ -34,8 +30,6 @@ const coverRef = ref<HTMLElement | null>(null)
 
 const emit = defineEmits<{
   clickCover: [rect: { x: number; y: number; w: number; h: number }]
-  openSettings: []
-  openEqualizer: []
 }>()
 
 function onCoverClick(): void {
@@ -48,25 +42,17 @@ function onCoverClick(): void {
   }
 }
 
-function onProgressInput(event: Event): void {
-  const target = event.target as HTMLInputElement
-  seek(Number(target.value))
-}
-
-function onVolumeInput(event: Event): void {
-  const target = event.target as HTMLInputElement
-  volume.value = Number(target.value)
+function onSeek(value: number | number[]): void {
+  seek(Array.isArray(value) ? value[0] : value)
 }
 
 const volumeOpen = ref(false)
 const playlistOpen = ref(false)
-const moreOpen = ref(false)
 
 function toggleVolume(): void {
   volumeOpen.value = !volumeOpen.value
   if (volumeOpen.value) {
     playlistOpen.value = false
-    moreOpen.value = false
   }
 }
 
@@ -74,15 +60,6 @@ function togglePlaylist(): void {
   playlistOpen.value = !playlistOpen.value
   if (playlistOpen.value) {
     volumeOpen.value = false
-    moreOpen.value = false
-  }
-}
-
-function toggleMore(): void {
-  moreOpen.value = !moreOpen.value
-  if (moreOpen.value) {
-    volumeOpen.value = false
-    playlistOpen.value = false
   }
 }
 
@@ -93,26 +70,12 @@ const modeLabels: Record<string, string> = {
 }
 
 const modeTitle = computed(() => modeLabels[playMode.value] ?? '')
-const selectedAudioOutput = computed(() =>
-  audioOutputOptions.value.find((option) => option.id === audioOutput.value)
-)
-const exclusiveAvailable = computed(() => selectedAudioOutput.value?.supportsExclusive ?? false)
 
 function playTrackAt(index: number): void {
   const track = queue.value[index]
   if (track) {
     playTrack(track, queue.value)
   }
-}
-
-function openPlaybackSettings(): void {
-  moreOpen.value = false
-  emit('openSettings')
-}
-
-function openEqualizer(): void {
-  moreOpen.value = false
-  emit('openEqualizer')
 }
 </script>
 
@@ -122,15 +85,7 @@ function openEqualizer(): void {
     <Transition name="drawer-up">
       <div v-if="playlistOpen" class="playlist-panel" :class="{ 'panel-glass': glass }">
         <div class="playlist-header">
-          <div class="playlist-heading">
-            <span class="playlist-heading-icon">
-              <i class="pi pi-list"></i>
-            </span>
-            <div>
-              <span class="playlist-heading-title">播放列表</span>
-              <span class="playlist-heading-subtitle">当前队列</span>
-            </div>
-          </div>
+          <span>播放列表</span>
           <span class="playlist-count">{{ queue.length }} 首</span>
         </div>
         <div class="playlist-list">
@@ -199,16 +154,14 @@ function openEqualizer(): void {
         </div>
         <div class="progress-area">
           <span class="time-label">{{ formatTime(currentTime) }}</span>
-          <input
-            type="range"
-            :value="currentTime"
-            min="0"
+          <Slider
+            :model-value="currentTime"
+            :min="0"
             :max="duration || 1"
-            step="0.1"
+            :step="0.1"
             class="progress-slider"
-            :style="{ '--range-value': `${duration ? (currentTime / duration) * 100 : 0}%` }"
-            @input="onProgressInput"
-          >
+            @update:model-value="onSeek"
+          />
           <span class="time-label">{{ formatTime(duration) }}</span>
         </div>
       </div>
@@ -225,16 +178,14 @@ function openEqualizer(): void {
         <div class="volume-anchor">
           <Transition name="volume-drawer">
             <div v-if="volumeOpen" class="volume-drawer" :class="{ 'drawer-glass': glass }">
-              <input
-                type="range"
-                :value="volume"
-                min="0"
-                max="1"
-                step="0.01"
+              <Slider
+                v-model="volume"
+                :min="0"
+                :max="1"
+                :step="0.01"
+                orientation="vertical"
                 class="volume-drawer-slider"
-                :style="{ '--range-value': `${volume * 100}%` }"
-                @input="onVolumeInput"
-              >
+              />
               <span class="volume-drawer-val">{{ Math.round(volume * 100) }}</span>
             </div>
           </Transition>
@@ -256,72 +207,6 @@ function openEqualizer(): void {
         >
           <i class="pi pi-list"></i>
         </button>
-
-        <!-- 更多按钮 + 向上弹出抽屉 -->
-        <div class="more-anchor">
-          <Transition name="volume-drawer">
-            <div v-if="moreOpen" class="more-drawer" :class="{ 'drawer-glass': glass }">
-              <div class="more-action-grid">
-                <button type="button" class="more-action" @click="openPlaybackSettings">
-                  <span>
-                    <span class="more-action-title">播放设置</span>
-                    <span class="more-action-desc">输出、缓存与无缝播放</span>
-                  </span>
-                </button>
-                <button type="button" class="more-action" @click="openEqualizer">
-                  <span>
-                    <span class="more-action-title">均衡器</span>
-                    <span class="more-action-desc">图形、参数与预设</span>
-                  </span>
-                </button>
-              </div>
-              <div class="more-item">
-                <div class="more-item-header">
-                  <span class="more-item-label">独占模式</span>
-                  <button
-                    class="toggle-switch"
-                    :class="{ active: exclusiveMode }"
-                    role="switch"
-                    :aria-checked="exclusiveMode"
-                    :disabled="!exclusiveAvailable"
-                    @click="toggleExclusiveMode"
-                  >
-                    <span class="toggle-knob"></span>
-                  </button>
-                </div>
-                <p class="more-item-desc">
-                  当前输出支持时可绕过系统混音器
-                </p>
-              </div>
-              <div class="more-item">
-                <div class="more-item-header">
-                  <span class="more-item-label">音频输出</span>
-                  <span class="more-item-value">{{ selectedAudioOutput?.label ?? '自动' }}</span>
-                </div>
-                <div class="audio-output-mini-list">
-                  <button
-                    v-for="option in audioOutputOptions"
-                    :key="option.id"
-                    type="button"
-                    class="audio-output-mini"
-                    :class="{ active: audioOutput === option.id }"
-                    @click="setAudioOutput(option.id)"
-                  >
-                    {{ option.label }}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </Transition>
-          <button
-            class="icon-btn"
-            :class="{ active: moreOpen }"
-            title="更多设置"
-            @click="toggleMore"
-          >
-            <i class="pi pi-ellipsis-h"></i>
-          </button>
-        </div>
       </div>
     </div>
   </div>
@@ -390,52 +275,35 @@ function openEqualizer(): void {
 }
 
 .volume-drawer-slider {
-  width: 120px;
   height: 120px;
-  appearance: none;
-  -webkit-appearance: none;
-  background: transparent;
-  cursor: pointer;
-  transform: rotate(-90deg);
 }
 
-.volume-drawer-slider::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 999px;
-  background:
-    linear-gradient(90deg, var(--accent-color, #1a73e8), var(--accent-color, #1a73e8)) 0 / var(--range-value, 70%) 100% no-repeat,
-    color-mix(in srgb, var(--accent-color, #1a73e8) 18%, transparent);
-}
-
-.drawer-glass .volume-drawer-slider::-webkit-slider-runnable-track {
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.55)) 0 / var(--range-value, 70%) 100% no-repeat,
-    rgba(255, 255, 255, 0.12);
-}
-
-.volume-drawer-slider::-webkit-slider-thumb {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 0;
-  height: 0;
-}
-
-.volume-drawer-slider::-moz-range-track {
-  height: 4px;
-  border-radius: 999px;
+.volume-drawer-slider :deep(.p-slider) {
   background: color-mix(in srgb, var(--accent-color, #1a73e8) 18%, transparent);
+  border-radius: 999px;
+  padding: 0 10px;
+  margin: 0 -10px;
+  background-clip: content-box;
 }
 
-.volume-drawer-slider::-moz-range-progress {
-  height: 4px;
-  border-radius: 999px;
+.volume-drawer-slider :deep(.p-slider-range) {
   background: var(--accent-color, #1a73e8);
 }
 
-.volume-drawer-slider::-moz-range-thumb {
-  width: 0;
-  height: 0;
-  border: 0;
+.volume-drawer-slider :deep(.p-slider-handle) {
+  display: none;
+}
+
+.drawer-glass .volume-drawer-slider :deep(.p-slider) {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.drawer-glass .volume-drawer-slider :deep(.p-slider-range) {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.drawer-glass .volume-drawer-slider :deep(.p-slider-handle) {
+  display: none;
 }
 
 .volume-drawer-val {
@@ -469,21 +337,20 @@ function openEqualizer(): void {
   position: relative;
   overflow: hidden;
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.68), rgba(255, 255, 255, 0.28)),
-    rgba(255, 255, 255, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.68);
-  border-radius: 12px;
+    linear-gradient(145deg, rgba(255, 255, 255, 0.72), rgba(248, 245, 255, 0.52)),
+    rgba(255, 255, 255, 0.56);
+  border: 1px solid rgba(255, 255, 255, 0.66);
+  border-bottom: 0;
+  border-radius: 22px 22px 0 0;
   box-shadow:
-    0 24px 76px rgba(86, 70, 160, 0.14),
+    0 -26px 90px rgba(86, 70, 160, 0.22),
     inset 0 1px 0 rgba(255, 255, 255, 0.72);
-  width: min(520px, calc(100vw - 36px));
-  max-height: min(420px, calc(100vh - 132px));
-  margin: 0 auto 12px;
+  margin: 0 clamp(8px, 2vw, 28px) 12px;
+  max-height: 390px;
   display: flex;
   flex-direction: column;
-  pointer-events: auto;
-  backdrop-filter: blur(26px) saturate(160%);
-  -webkit-backdrop-filter: blur(26px) saturate(160%);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
 }
 
 .playlist-panel::before {
@@ -493,11 +360,11 @@ function openEqualizer(): void {
   z-index: -2;
   pointer-events: none;
   background:
-    radial-gradient(circle at 18% 14%, rgba(255, 255, 255, 0.9), transparent 18%),
-    radial-gradient(circle at 30% 26%, rgba(124, 77, 255, 0.075), transparent 38%),
-    radial-gradient(circle at 86% 16%, rgba(255, 126, 182, 0.055), transparent 34%),
-    radial-gradient(circle at 58% 92%, rgba(34, 211, 238, 0.05), transparent 42%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0.18));
+    radial-gradient(circle at 18% 18%, rgba(255, 255, 255, 0.88), transparent 18%),
+    radial-gradient(circle at 24% 30%, rgba(124, 77, 255, 0.28), transparent 38%),
+    radial-gradient(circle at 82% 18%, rgba(255, 126, 182, 0.22), transparent 34%),
+    radial-gradient(circle at 58% 92%, rgba(34, 211, 238, 0.16), transparent 42%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.48), rgba(245, 241, 255, 0.22));
   animation: playlist-light 10s var(--te-ease-soft) infinite alternate;
 }
 
@@ -508,98 +375,47 @@ function openEqualizer(): void {
   z-index: -1;
   pointer-events: none;
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.58), transparent 42%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.36), rgba(255, 255, 255, 0.08));
+    linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.46),
+      transparent 22% 78%,
+      rgba(255, 255, 255, 0.3)
+    ),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(255, 255, 255, 0.16));
 }
 .playlist-panel.panel-glass {
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.32), rgba(255, 255, 255, 0.14)),
-    rgba(17, 24, 39, 0.16);
-  backdrop-filter: blur(28px) saturate(168%);
-  -webkit-backdrop-filter: blur(28px) saturate(168%);
-  border-color: rgba(255, 255, 255, 0.3);
+    linear-gradient(145deg, rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.18)),
+    rgba(17, 24, 39, 0.18);
+  backdrop-filter: blur(24px) saturate(165%);
+  -webkit-backdrop-filter: blur(24px) saturate(165%);
+  border-color: rgba(255, 255, 255, 0.26);
 }
 .playlist-header {
-  position: relative;
-  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 14px 16px 12px;
+  padding: 16px 22px 10px;
+  font-size: 14px;
+  font-weight: 700;
   color: var(--te-neutral-900);
   flex-shrink: 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.54);
-}
-.playlist-heading {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-.playlist-heading-icon {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
-  color: var(--te-primary-500);
-  background:
-    radial-gradient(circle at 35% 28%, rgba(255, 255, 255, 0.9), transparent 36%),
-    linear-gradient(135deg, rgba(124, 77, 255, 0.14), rgba(34, 211, 238, 0.1));
-  box-shadow: 0 12px 26px rgba(86, 70, 160, 0.1);
-}
-.playlist-heading-title,
-.playlist-heading-subtitle {
-  display: block;
-  white-space: nowrap;
-}
-.playlist-heading-title {
-  font-size: 14px;
-  line-height: 1.2;
-  font-weight: 900;
-  color: var(--te-neutral-900);
-}
-.playlist-heading-subtitle {
-  margin-top: 2px;
-  font-size: 11px;
-  font-weight: 700;
-  color: rgba(80, 88, 116, 0.56);
 }
 .panel-glass .playlist-header {
   color: #fff;
 }
-.panel-glass .playlist-heading-title {
-  color: rgba(255, 255, 255, 0.94);
-}
-.panel-glass .playlist-heading-subtitle {
-  color: rgba(255, 255, 255, 0.52);
-}
-.panel-glass .playlist-heading-icon {
-  color: rgba(255, 255, 255, 0.9);
-  background: rgba(255, 255, 255, 0.12);
-}
 .playlist-count {
-  flex-shrink: 0;
-  padding: 5px 9px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.68);
-  background: rgba(255, 255, 255, 0.42);
-  font-size: 11px;
-  font-weight: 800;
-  color: rgba(80, 88, 116, 0.68);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--te-neutral-500);
 }
 .panel-glass .playlist-count {
-  border-color: rgba(255, 255, 255, 0.18);
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.62);
+  color: rgba(255, 255, 255, 0.5);
 }
 .playlist-list {
-  position: relative;
-  z-index: 1;
   flex: 1;
   overflow-y: auto;
-  padding: 10px 10px 12px;
+  padding: 0 12px 12px;
   scrollbar-width: thin;
   scrollbar-color: rgba(124, 77, 255, 0.26) transparent;
 }
@@ -615,16 +431,13 @@ function openEqualizer(): void {
   background-clip: content-box;
 }
 .playlist-item {
-  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
-  min-height: 52px;
-  padding: 8px 10px;
-  border-radius: 8px;
+  padding: 9px 12px;
+  border-radius: 14px;
   cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, 0);
-  overflow: hidden;
+  border: 1px solid transparent;
   transition:
     background 0.18s,
     transform 0.18s var(--te-ease-soft),
@@ -632,11 +445,9 @@ function openEqualizer(): void {
     box-shadow 0.18s;
 }
 .playlist-item:hover {
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.6), rgba(255, 255, 255, 0.24)),
-    rgba(255, 255, 255, 0.22);
-  border-color: rgba(255, 255, 255, 0.62);
-  box-shadow: 0 12px 30px rgba(86, 70, 160, 0.09);
+  background: rgba(255, 255, 255, 0.58);
+  border-color: rgba(255, 255, 255, 0.52);
+  box-shadow: 0 12px 34px rgba(86, 70, 160, 0.12);
   transform: translateY(-1px);
 }
 .panel-glass .playlist-item:hover {
@@ -645,12 +456,12 @@ function openEqualizer(): void {
 }
 .playlist-item.active {
   background:
-    linear-gradient(90deg, rgba(124, 77, 255, 0.12), rgba(34, 211, 238, 0.07)),
-    rgba(255, 255, 255, 0.46);
-  border-color: rgba(124, 77, 255, 0.16);
+    linear-gradient(90deg, rgba(124, 77, 255, 0.18), rgba(255, 126, 182, 0.1)),
+    rgba(255, 255, 255, 0.48);
+  border-color: rgba(124, 77, 255, 0.18);
   box-shadow:
-    0 14px 32px rgba(124, 77, 255, 0.1),
-    inset 3px 0 0 rgba(124, 77, 255, 0.62);
+    0 14px 34px rgba(124, 77, 255, 0.12),
+    inset 3px 0 0 rgba(124, 77, 255, 0.72);
 }
 .panel-glass .playlist-item.active {
   background:
@@ -658,11 +469,10 @@ function openEqualizer(): void {
     rgba(255, 255, 255, 0.16);
 }
 .playlist-index {
-  width: 22px;
+  width: 20px;
   text-align: center;
-  font-size: 11px;
-  font-weight: 800;
-  color: rgba(80, 88, 116, 0.42);
+  font-size: 12px;
+  color: #bbb;
   flex-shrink: 0;
 }
 .playlist-item.active .playlist-index {
@@ -675,17 +485,17 @@ function openEqualizer(): void {
   font-size: 11px;
 }
 .playlist-cover {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
   object-fit: cover;
   flex-shrink: 0;
-  box-shadow: 0 10px 22px rgba(86, 70, 160, 0.14);
+  box-shadow: 0 8px 20px rgba(86, 70, 160, 0.18);
 }
 .playlist-cover-placeholder {
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
   background:
     radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.8), transparent 36%),
     linear-gradient(135deg, rgba(124, 77, 255, 0.2), rgba(34, 211, 238, 0.12));
@@ -700,12 +510,10 @@ function openEqualizer(): void {
 .playlist-info {
   overflow: hidden;
   min-width: 0;
-  flex: 1;
 }
 .playlist-title {
   font-size: 13px;
-  line-height: 1.25;
-  font-weight: 850;
+  font-weight: 700;
   color: var(--te-neutral-900);
   white-space: nowrap;
   overflow: hidden;
@@ -722,8 +530,7 @@ function openEqualizer(): void {
 }
 .playlist-artist {
   font-size: 11px;
-  font-weight: 700;
-  color: rgba(80, 88, 116, 0.56);
+  color: var(--te-neutral-500);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -814,10 +621,15 @@ function openEqualizer(): void {
   background: rgba(26, 115, 232, 0.15);
 }
 
-.player-bar-glass .progress-slider::-webkit-slider-runnable-track {
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.7)) 0 / var(--range-value, 0%) 100% no-repeat,
-    color-mix(in srgb, var(--accent-color, #1a73e8) 12%, transparent);
+.player-bar-glass :deep(.p-slider) {
+  background: color-mix(in srgb, var(--accent-color, #1a73e8) 12%, transparent);
+}
+.player-bar-glass :deep(.p-slider-range) {
+  background: rgba(255, 255, 255, 0.7);
+}
+.player-bar-glass :deep(.p-slider-handle) {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* ===== Player Left ===== */
@@ -965,44 +777,19 @@ function openEqualizer(): void {
 }
 .progress-slider {
   flex: 1;
-  height: 24px;
-  appearance: none;
-  -webkit-appearance: none;
-  background: transparent;
-  cursor: pointer;
 }
-
-.progress-slider::-webkit-slider-runnable-track {
-  height: 4px;
-  border-radius: 999px;
-  background:
-    linear-gradient(90deg, var(--accent-color, #7c4dff), #c084fc) 0 / var(--range-value, 0%) 100% no-repeat,
-    color-mix(in srgb, var(--accent-color, #1a73e8) 18%, transparent);
-}
-
-.progress-slider::-webkit-slider-thumb {
-  appearance: none;
-  -webkit-appearance: none;
-  width: 0;
-  height: 0;
-}
-
-.progress-slider::-moz-range-track {
-  height: 4px;
-  border-radius: 999px;
+.progress-slider :deep(.p-slider) {
   background: color-mix(in srgb, var(--accent-color, #1a73e8) 18%, transparent);
+  padding: 14px 0;
+  margin: -14px 0;
+  background-clip: content-box;
 }
-
-.progress-slider::-moz-range-progress {
-  height: 4px;
-  border-radius: 999px;
+.progress-slider :deep(.p-slider-range) {
   background: linear-gradient(90deg, var(--accent-color, #7c4dff), #c084fc);
 }
-
-.progress-slider::-moz-range-thumb {
-  width: 0;
-  height: 0;
-  border: 0;
+.progress-slider :deep(.p-slider-handle) {
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* ===== Player Right ===== */
@@ -1061,241 +848,6 @@ function openEqualizer(): void {
 .icon-btn.active {
   color: var(--accent-color, #7c4dff);
   background: color-mix(in srgb, var(--accent-color, #7c4dff) 12%, transparent);
-}
-
-/* ===== More Drawer ===== */
-.more-anchor {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-
-.more-drawer {
-  position: absolute;
-  bottom: 100%;
-  right: -8px;
-  margin-bottom: 10px;
-  background: rgba(255, 255, 255, 0.74);
-  border: 0;
-  border-radius: 16px;
-  box-shadow: 0 18px 55px rgba(86, 70, 160, 0.16);
-  padding: 8px;
-  min-width: 252px;
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
-}
-
-.more-drawer.drawer-glass {
-  background: rgba(255, 255, 255, 0.26);
-  backdrop-filter: blur(22px) saturate(160%);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
-  border: 0;
-}
-
-.more-item {
-  padding: 8px 10px;
-}
-
-.more-action-grid {
-  display: grid;
-  gap: 7px;
-  padding-bottom: 8px;
-  margin-bottom: 4px;
-  border-bottom: 0;
-}
-
-.more-action {
-  width: 100%;
-  min-height: 42px;
-  display: flex;
-  align-items: center;
-  gap: 0;
-  padding: 8px 12px;
-  border: 0;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.46);
-  color: rgba(52, 61, 87, 0.88);
-  cursor: pointer;
-  text-align: left;
-  box-shadow: 0 10px 24px rgba(86, 70, 160, 0.08);
-  transition:
-    transform 0.2s var(--te-ease-soft),
-    border-color 0.2s,
-    background 0.2s,
-    box-shadow 0.2s;
-}
-
-.more-action:hover {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.7);
-  box-shadow: 0 12px 24px rgba(34, 42, 68, 0.08);
-}
-
-.more-action-title,
-.more-action-desc {
-  display: block;
-}
-
-.more-action-title {
-  font-size: 12px;
-  font-weight: 900;
-  color: rgba(34, 42, 66, 0.9);
-}
-
-.more-action-desc {
-  margin-top: 2px;
-  font-size: 10px;
-  font-weight: 700;
-  color: rgba(80, 88, 116, 0.56);
-}
-
-.drawer-glass .more-action-grid {
-  border-bottom: 0;
-}
-
-.drawer-glass .more-action {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.drawer-glass .more-action-title {
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.drawer-glass .more-action-desc {
-  color: rgba(255, 255, 255, 0.52);
-}
-
-.more-item-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.more-item-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: #333;
-  white-space: nowrap;
-}
-
-.more-item-value {
-  flex-shrink: 0;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.42);
-  color: rgba(80, 88, 116, 0.68);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.drawer-glass .more-item-label {
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.drawer-glass .more-item-value {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.62);
-}
-
-.more-item-desc {
-  margin: 6px 0 0 0;
-  font-size: 11px;
-  color: #999;
-  line-height: 1.4;
-}
-
-.drawer-glass .more-item-desc {
-  color: rgba(255, 255, 255, 0.45);
-}
-
-.audio-output-mini-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.audio-output-mini {
-  min-width: 58px;
-  height: 26px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.34);
-  color: rgba(80, 88, 116, 0.72);
-  font-size: 11px;
-  font-weight: 850;
-  cursor: pointer;
-  transition:
-    background 0.18s,
-    color 0.18s,
-    border-color 0.18s;
-}
-
-.audio-output-mini:hover,
-.audio-output-mini.active {
-  background: color-mix(in srgb, var(--accent-color, #7c4dff) 12%, rgba(255, 255, 255, 0.58));
-  color: var(--accent-color, #7c4dff);
-}
-
-.drawer-glass .audio-output-mini {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.58);
-}
-
-.drawer-glass .audio-output-mini:hover,
-.drawer-glass .audio-output-mini.active {
-  background: rgba(255, 255, 255, 0.16);
-  color: rgba(255, 255, 255, 0.92);
-}
-
-/* ===== Toggle Switch ===== */
-.toggle-switch {
-  position: relative;
-  width: 40px;
-  height: 22px;
-  border: none;
-  background: #d5d5d5;
-  border-radius: 999px;
-  cursor: pointer;
-  padding: 0;
-  flex-shrink: 0;
-  transition: background 0.2s ease;
-}
-
-.toggle-switch:disabled {
-  cursor: not-allowed;
-  opacity: 0.52;
-}
-
-.toggle-switch.active {
-  background: linear-gradient(135deg, var(--accent-color, #7c4dff), #c084fc);
-}
-
-.drawer-glass .toggle-switch {
-  background: rgba(255, 255, 255, 0.18);
-}
-
-.drawer-glass .toggle-switch.active {
-  background: var(--accent-color, #1a73e8);
-}
-
-.toggle-knob {
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-  transition: transform 0.2s ease;
-}
-
-.toggle-switch.active .toggle-knob {
-  transform: translateX(18px);
 }
 
 @keyframes playlist-light {

@@ -77,7 +77,10 @@ export interface NcmStore {
   fetchRecommendPlaylists: () => Promise<NcmPlaylistSummary[]>
   fetchPersonalFm: () => Promise<Track[]>
   fetchPrivateContent: () => Promise<Track[]>
-  fetchLyric: (songId: number) => Promise<string | null>
+  fetchLyric: (songId: number) => Promise<{
+    lyrics: string | null
+    translatedLyrics: string | null
+  }>
   searchSongs: (
     keywords: string,
     limit?: number,
@@ -94,7 +97,6 @@ export interface NcmStore {
     offset?: number
   ) => Promise<{ artists: NcmArtistSummary[]; total: number }>
   fetchArtistTopSongs: (artistId: number) => Promise<Track[]>
-  fetchArtistPlaylists: (artistId: number) => Promise<NcmPlaylistSummary[]>
   fetchUserPlaylistsByUid: (uid: number) => Promise<NcmPlaylistSummary[]>
   fetchUserFollows: (uid: number, limit?: number, offset?: number) => Promise<NcmUserSummary[]>
   fetchUserFolloweds: (uid: number, limit?: number, offset?: number) => Promise<NcmUserSummary[]>
@@ -125,38 +127,6 @@ function formatDuration(rawDuration: unknown): number {
   return rawDuration > 1000 ? Math.round(rawDuration / 1000) : Math.round(rawDuration)
 }
 
-function normalizeNcmFormat(rawFormat: unknown): string | undefined {
-  if (typeof rawFormat !== 'string' || !rawFormat.trim()) return undefined
-  const format = rawFormat.trim().toLowerCase()
-  if (format === 'mp4') return 'm4a'
-  return format
-}
-
-function getSongAudioMeta(song: Record<string, any>): {
-  format?: string
-  bitrate?: number
-  sampleRate?: number
-  size?: number
-} {
-  const candidates = [song.sq, song.hr, song.h, song.m, song.l, song.mainSong?.sq, song.mainSong?.h].filter(
-    Boolean
-  ) as Record<string, any>[]
-  const source = candidates.find((item) => item.br || item.bitrate || item.sr || item.size) ?? {}
-  const bitrate = Number(source.br ?? source.bitrate ?? song.br ?? song.bitrate)
-  const sampleRate = Number(source.sr ?? source.sampleRate ?? song.sr ?? song.sampleRate)
-  const size = Number(source.size ?? song.size)
-  const format =
-    normalizeNcmFormat(source.type ?? source.encodeType ?? source.format ?? song.type ?? song.encodeType) ??
-    undefined
-
-  return {
-    format,
-    bitrate: Number.isFinite(bitrate) && bitrate > 0 ? bitrate : undefined,
-    sampleRate: Number.isFinite(sampleRate) && sampleRate > 0 ? sampleRate : undefined,
-    size: Number.isFinite(size) && size > 0 ? size : undefined
-  }
-}
-
 function normalizeTrack(song: Record<string, any>): Track {
   const songId = Number(song.id)
   const artists = Array.isArray(song.ar)
@@ -173,7 +143,6 @@ function normalizeTrack(song: Record<string, any>): Track {
   const title = song.name || song.title || '未知歌曲'
   const album = song.al?.name || song.album?.name || '未知专辑'
   const cover = song.al?.picUrl || song.album?.picUrl || song.picUrl || song.coverImgUrl || null
-  const audioMeta = getSongAudioMeta(song)
 
   return {
     id: `ncm:${songId}`,
@@ -183,39 +152,13 @@ function normalizeTrack(song: Record<string, any>): Track {
     filePath: `ncm:${songId}`,
     fileName: `${artist} - ${title}`,
     duration: formatDuration(song.dt ?? song.duration),
-    size: audioMeta.size ?? 0,
+    size: 0,
     cover,
     lyrics: null,
+    translatedLyrics: null,
     source: 'ncm',
     ncmSongId: songId,
-    streamUrl: null,
-    format: audioMeta.format,
-    sampleRate: audioMeta.sampleRate,
-    bitrate: audioMeta.bitrate
-  }
-}
-
-function rememberStreamAudioMeta(songId: number, item: Record<string, any>): void {
-  const format = normalizeNcmFormat(item.type ?? item.encodeType ?? item.format)
-  const bitrate = Number(item.br ?? item.bitrate)
-  const sampleRate = Number(item.sr ?? item.sampleRate)
-  const size = Number(item.size)
-  for (const tracks of playlistTrackCache.values()) {
-    const track = tracks.find((candidate) => candidate.ncmSongId === songId)
-    if (!track) continue
-    if (format) track.format = format
-    if (Number.isFinite(bitrate) && bitrate > 0) track.bitrate = bitrate
-    if (Number.isFinite(sampleRate) && sampleRate > 0) track.sampleRate = sampleRate
-    if (Number.isFinite(size) && size > 0) track.size = size
-  }
-  if (likedTracksCache) {
-    const track = likedTracksCache.find((candidate) => candidate.ncmSongId === songId)
-    if (track) {
-      if (format) track.format = format
-      if (Number.isFinite(bitrate) && bitrate > 0) track.bitrate = bitrate
-      if (Number.isFinite(sampleRate) && sampleRate > 0) track.sampleRate = sampleRate
-      if (Number.isFinite(size) && size > 0) track.size = size
-    }
+    streamUrl: null
   }
 }
 
@@ -518,18 +461,6 @@ export function useNcmStore(): NcmStore {
   }
 
   async function getSongStreamUrl(songId: number, force = false): Promise<string | null> {
-    if (!force) {
-      try {
-        const cached = await window.api.ncm.getCachedSong(songId)
-        if (cached) {
-          streamUrlCache.set(songId, cached)
-          return cached
-        }
-      } catch {
-        /* cache miss falls through to online url */
-      }
-    }
-
     if (!force && streamUrlCache.has(songId)) {
       return streamUrlCache.get(songId) ?? null
     }
@@ -540,20 +471,8 @@ export function useNcmStore(): NcmStore {
       : Array.isArray(data.urls)
         ? data.urls
         : []
-    const streamItem = (streamItems[0] ?? {}) as Record<string, any>
-    const url = typeof streamItem.url === 'string' ? streamItem.url : null
-    rememberStreamAudioMeta(songId, streamItem)
+    const url = typeof streamItems[0]?.url === 'string' ? streamItems[0].url : null
     streamUrlCache.set(songId, url)
-    if (url) {
-      void window.api.ncm
-        .cacheSong(songId, url)
-        .then((cached) => {
-          if (cached && streamUrlCache.get(songId) === url) {
-            streamUrlCache.set(songId, cached)
-          }
-        })
-        .catch(() => {})
-    }
     return url
   }
 
@@ -610,15 +529,29 @@ export function useNcmStore(): NcmStore {
     }
   }
 
-  async function fetchLyric(songId: number): Promise<string | null> {
+  function extractLyricText(data: Record<string, any>, key: 'lrc' | 'tlyric'): string | null {
+    return data[key]?.lyric || data.data?.[key]?.lyric || null
+  }
+
+  async function fetchLyric(songId: number): Promise<{
+    lyrics: string | null
+    translatedLyrics: string | null
+  }> {
     try {
       const data = await requestAuthed(`/lyric/new?id=${songId}`)
-      const lrc = data.lrc?.lyric || data.data?.lrc?.lyric || ''
-      if (lrc) return lrc
+      const lyrics = extractLyricText(data, 'lrc')
+      const translatedLyrics = extractLyricText(data, 'tlyric')
+      if (lyrics || translatedLyrics) {
+        return { lyrics, translatedLyrics }
+      }
+
       const data2 = await requestAuthed(`/lyric?id=${songId}`)
-      return data2.lrc?.lyric || data2.data?.lrc?.lyric || null
+      return {
+        lyrics: extractLyricText(data2, 'lrc'),
+        translatedLyrics: extractLyricText(data2, 'tlyric')
+      }
     } catch {
-      return null
+      return { lyrics: null, translatedLyrics: null }
     }
   }
 
@@ -685,39 +618,6 @@ export function useNcmStore(): NcmStore {
     const data = await requestAuthed(`/artists?id=${artistId}`)
     const hotSongs = Array.isArray(data.hotSongs) ? data.hotSongs : []
     return hotSongs.map(normalizeTrack)
-  }
-
-  async function fetchArtistPlaylists(artistId: number): Promise<NcmPlaylistSummary[]> {
-    const candidateUserIds = new Set<number>()
-
-    try {
-      const detail = await requestAuthed(`/artist/detail?id=${artistId}`)
-      const ids = [
-        detail.data?.artist?.accountId,
-        detail.data?.artist?.userId,
-        detail.data?.user?.userId,
-        detail.artist?.accountId,
-        detail.artist?.userId,
-        detail.user?.userId
-      ]
-      for (const id of ids) {
-        const normalized = Number(id)
-        if (Number.isFinite(normalized) && normalized > 0) candidateUserIds.add(normalized)
-      }
-    } catch {
-      // Some artists do not expose a linked user account.
-    }
-
-    for (const uid of candidateUserIds) {
-      try {
-        const playlists = await fetchUserPlaylistsByUid(uid)
-        if (playlists.length > 0) return playlists
-      } catch {
-        // Try the next candidate account id.
-      }
-    }
-
-    return []
   }
 
   async function fetchUserPlaylistsByUid(uid: number): Promise<NcmPlaylistSummary[]> {
@@ -804,7 +704,6 @@ export function useNcmStore(): NcmStore {
     searchPlaylists,
     searchArtists,
     fetchArtistTopSongs,
-    fetchArtistPlaylists,
     fetchUserPlaylistsByUid,
     fetchUserFollows,
     fetchUserFolloweds,

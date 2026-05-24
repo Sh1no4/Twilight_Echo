@@ -12,6 +12,7 @@ export interface Track {
   size: number
   cover: string | null
   lyrics: string | null
+  translatedLyrics?: string | null
   source?: TrackSource
   ncmSongId?: number
   streamUrl?: string | null
@@ -25,12 +26,10 @@ export const SUPPORTED_EXTENSIONS = [
   '.mp3',
   '.flac',
   '.wav',
-  '.wave',
   '.aac',
   '.ogg',
   '.wma',
   '.m4a',
-  '.mp4',
   '.aiff',
   '.aif',
   '.opus',
@@ -39,6 +38,5 @@ export const SUPPORTED_EXTENSIONS = [
   '.ape',
   '.wv',
   '.dsf',
-  '.dff',
-  '.mqa'
+  '.dff'
 ]

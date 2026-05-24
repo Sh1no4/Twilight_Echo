@@ -48,8 +48,8 @@ html {
   background: #fbfbff;
 }
 .drag-region {
-  -webkit-app-region: drag;  /* 允许拖动窗口 */
-  height: 32px;              /* 自定义标题栏高度 */
+  -webkit-app-region: drag; /* 允许拖动窗口 */
+  height: 32px; /* 自定义标题栏高度 */
 }
 .no-drag {
   -webkit-app-region: no-drag; /* 按钮区域需禁止拖动 */
@@ -66,9 +66,20 @@ body {
     linear-gradient(180deg, #ffffff 0%, #f8f7ff 48%, #fbfdff 100%);
   background-attachment: fixed;
   line-height: 1.6;
-  font-family: 'AlibabaPuHuiTi', Inter, -apple-system, BlinkMacSystemFont,
-    'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Fira Sans', 'Droid Sans',
-    'Helvetica Neue', sans-serif;
+  font-family:
+    'AlibabaPuHuiTi',
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    Cantarell,
+    'Fira Sans',
+    'Droid Sans',
+    'Helvetica Neue',
+    sans-serif;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -94,6 +105,13 @@ body::before {
     linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(247, 244, 255, 0.78));
   opacity: 0.9;
   animation: ambient-light-shift 14s var(--te-ease-soft) infinite alternate;
+}
+
+body.te-no-blur *,
+body.te-no-blur *::before,
+body.te-no-blur *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
 }
 
 #app {

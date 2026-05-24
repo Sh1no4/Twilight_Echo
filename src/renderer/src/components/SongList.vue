@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
@@ -52,7 +52,7 @@ const viewTitle = computed(() => {
     }
     return '文件夹'
   }
-  if (props.category === 'allSongs') return '本地音乐'
+  if (props.category === 'allSongs') return '所有歌曲'
   if (props.category === 'artists') {
     if (props.filter && props.filter.startsWith('artist:')) return props.filter.slice(7)
     return '艺术家'
@@ -105,25 +105,6 @@ function formatDuration(seconds: number): string {
   const secs = Math.floor(seconds % 60)
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
-
-function formatSize(bytes: number): string {
-  if (!bytes) return '--'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let value = bytes
-  let unitIndex = 0
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024
-    unitIndex += 1
-  }
-  return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
-}
-
-const viewTotalSize = computed(() => baseDisplayTracks.value.reduce((sum, track) => sum + track.size, 0))
-
-const viewMeta = computed(() => {
-  if (!showTable.value) return ''
-  return `共 ${baseDisplayTracks.value.length} 首歌曲，${formatSize(viewTotalSize.value)}`
-})
 
 function onRowClick(track: Track, event: MouseEvent): void {
   const target = event.target as HTMLElement
@@ -199,7 +180,7 @@ onUnmounted(() => {
 const containerRef = ref<HTMLElement | null>(null)
 const scrollTop = ref(0)
 const viewportHeight = ref(0)
-const rowHeight = 64 // Calculated height of one row
+const rowHeight = 84 // Calculated height of one row
 
 const visibleRange = computed(() => {
   const start = Math.floor(scrollTop.value / rowHeight)
@@ -220,13 +201,6 @@ const paddingTop = computed(() => visibleRange.value.start * rowHeight)
 function onScroll(e: Event): void {
   const target = e.target as HTMLElement
   scrollTop.value = target.scrollTop
-}
-
-function onRowPointerMove(event: PointerEvent): void {
-  const row = event.currentTarget as HTMLElement
-  const rect = row.getBoundingClientRect()
-  row.style.setProperty('--track-pointer-x', `${event.clientX - rect.left}px`)
-  row.style.setProperty('--track-pointer-y', `${event.clientY - rect.top}px`)
 }
 
 const updateViewportHeight = (): void => {
@@ -274,7 +248,7 @@ watch(displayTracks, () => {
                 v-model="searchQuery"
                 type="text"
                 class="search-input"
-                placeholder="搜索歌曲、歌手、专辑或文件夹"
+                placeholder="搜索歌曲、艺术家、专辑..."
                 @focus="searchInputFocused = true"
                 @blur="searchInputFocused = false"
               />
@@ -376,10 +350,7 @@ watch(displayTracks, () => {
             >
               <i class="pi pi-arrow-left"></i>
             </button>
-            <div class="title-group">
-              <h2 class="song-list-title">{{ viewTitle }}</h2>
-              <span v-if="viewMeta" class="song-list-meta">{{ viewMeta }}</span>
-            </div>
+            <h2 class="song-list-title">{{ viewTitle }}</h2>
           </div>
           <div class="header-right">
             <div class="search-box" :class="{ focused: searchInputFocused }">
@@ -388,26 +359,12 @@ watch(displayTracks, () => {
                 v-model="searchQuery"
                 type="text"
                 class="search-input"
-                placeholder="搜索歌曲、歌手、专辑或文件夹"
+                placeholder="搜索歌曲、艺术家、专辑..."
                 @focus="searchInputFocused = true"
                 @blur="searchInputFocused = false"
               />
               <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
                 <i class="pi pi-times"></i>
-              </button>
-            </div>
-            <div class="view-tools" aria-hidden="true">
-              <button class="view-tool active" type="button" tabindex="-1">
-                <i class="pi pi-list"></i>
-              </button>
-              <button class="view-tool" type="button" tabindex="-1">
-                <i class="pi pi-th-large"></i>
-              </button>
-              <button class="view-tool" type="button" tabindex="-1">
-                <i class="pi pi-filter"></i>
-              </button>
-              <button class="view-tool" type="button" tabindex="-1">
-                <i class="pi pi-ellipsis-h"></i>
               </button>
             </div>
           </div>
@@ -416,24 +373,23 @@ watch(displayTracks, () => {
           <div class="empty-icon">
             <i class="pi pi-wave-pulse" style="font-size: 48px; color: #ccc"></i>
           </div>
-          <p class="empty-text">暂无内容</p>
+          <p class="empty-text">暂无音乐</p>
           <p class="empty-hint">通过左侧菜单「歌单 → 添加文件夹」导入音乐</p>
         </div>
         <div v-else class="track-table-wrapper">
           <table class="track-table">
             <thead>
               <tr>
-                <th class="col-cover-header"></th>
+                <th class="col-cover-header">{{ displayTracks.length }} 首</th>
                 <th class="col-index">#</th>
                 <th class="col-info">标题</th>
                 <th class="col-album">专辑</th>
                 <th class="col-duration">时长</th>
-                <th class="col-size">大小</th>
               </tr>
             </thead>
             <tbody :style="{ height: totalHeight + 'px', position: 'relative', display: 'block' }">
               <tr class="virtual-spacer" :style="{ height: paddingTop + 'px' }" aria-hidden="true">
-                <td colspan="6"></td>
+                <td colspan="5"></td>
               </tr>
               <tr
                 v-for="(track, index) in visibleTracks"
@@ -443,7 +399,6 @@ watch(displayTracks, () => {
                 :style="{ height: rowHeight + 'px', display: 'flex' }"
                 @click="onRowClick(track, $event)"
                 @dblclick="onRowDblClick(track)"
-                @pointermove="onRowPointerMove"
                 @contextmenu="onContextMenu($event, track)"
               >
                 <td class="col-cover">
@@ -459,33 +414,27 @@ watch(displayTracks, () => {
                   <span v-else>{{ visibleRange.start + Number(index) + 1 }}</span>
                 </td>
                 <td class="col-info">
-                  <div class="track-title-row">
-                    <div class="track-title">{{ track.title }}</div>
-                    <div
-                      v-if="track.format || track.sampleRate || track.bitDepth || track.bitrate"
-                      class="track-audio-data"
-                    >
-                      <div class="track-pills">
-                        <span v-if="track.format" class="pill pill-format">{{
-                          track.format.toUpperCase().replace(/^\./, '')
-                        }}</span>
-                        <span v-if="track.sampleRate" class="pill pill-rate"
-                          >{{ (track.sampleRate / 1000).toFixed(1) }}kHz</span
-                        >
-                        <span v-if="track.bitDepth" class="pill pill-depth"
-                          >{{ track.bitDepth }}bit</span
-                        >
-                        <span v-if="track.bitrate" class="pill pill-bitrate"
-                          >{{ Math.round(track.bitrate / 1000) }}kbps</span
-                        >
-                      </div>
+                  <div class="track-title">{{ track.title }}</div>
+                  <div class="track-artist">{{ track.artist }}</div>
+                  <div v-if="track.format || track.sampleRate" class="track-audio-data">
+                    <div class="track-pills">
+                      <span v-if="track.format" class="pill pill-format">{{
+                        track.format.toUpperCase().replace(/^\./, '')
+                      }}</span>
+                      <span v-if="track.sampleRate" class="pill pill-rate"
+                        >{{ (track.sampleRate / 1000).toFixed(1) }}kHz</span
+                      >
+                      <span v-if="track.bitDepth" class="pill pill-depth"
+                        >{{ track.bitDepth }}bit</span
+                      >
+                      <span v-if="track.bitrate" class="pill pill-bitrate"
+                        >{{ Math.round(track.bitrate / 1000) }}kbps</span
+                      >
                     </div>
                   </div>
-                  <div class="track-artist">{{ track.artist }}</div>
                 </td>
                 <td class="col-album">{{ track.album }}</td>
                 <td class="col-duration">{{ formatDuration(track.duration) }}</td>
-                <td class="col-size">{{ formatSize(track.size) }}</td>
               </tr>
               <tr
                 class="virtual-spacer"
@@ -494,7 +443,7 @@ watch(displayTracks, () => {
                 }"
                 aria-hidden="true"
               >
-                <td colspan="6"></td>
+                <td colspan="5"></td>
               </tr>
             </tbody>
           </table>
@@ -561,7 +510,7 @@ watch(displayTracks, () => {
   z-index: 0;
 }
 
-/* view-down: drilling into detail 鈥?old slides UP, new slides UP from BELOW */
+/* view-down: drilling into detail — old slides UP, new slides UP from BELOW */
 .view-down-leave-to {
   transform: translateY(-100%);
   opacity: 0;
@@ -571,7 +520,7 @@ watch(displayTracks, () => {
   opacity: 0;
 }
 
-/* view-up: going back 鈥?old slides DOWN, new slides DOWN from ABOVE */
+/* view-up: going back — old slides DOWN, new slides DOWN from ABOVE */
 .view-up-leave-to {
   transform: translateY(100%);
   opacity: 0;
@@ -584,14 +533,10 @@ watch(displayTracks, () => {
 .song-list {
   display: grid;
   position: relative;
-  padding: 30px min(4.4vw, 48px) 36px;
+  padding: 32px min(5vw, 62px) 36px;
   overflow-y: auto;
   overflow-x: hidden;
-  background:
-    radial-gradient(circle at 18% 7%, rgba(124, 77, 255, 0.045), transparent 34%),
-    radial-gradient(circle at 53% 12%, rgba(255, 126, 182, 0.04), transparent 32%),
-    radial-gradient(circle at 86% 12%, rgba(104, 132, 255, 0.038), transparent 36%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
+  background: transparent;
   width: 100%;
   box-sizing: border-box;
   scrollbar-width: thin;
@@ -629,46 +574,35 @@ watch(displayTracks, () => {
 .table-view::before {
   content: '';
   position: absolute;
-  inset: -30px -28px auto;
-  height: 230px;
+  inset: -16px -18px auto;
+  height: 170px;
   pointer-events: none;
   z-index: -1;
   background:
-    radial-gradient(circle at 16% 40%, rgba(124, 77, 255, 0.035), transparent 46%),
-    radial-gradient(circle at 52% 24%, rgba(255, 126, 182, 0.035), transparent 40%),
-    radial-gradient(circle at 86% 18%, rgba(94, 118, 255, 0.032), transparent 42%);
+    radial-gradient(circle at 16% 42%, rgba(124, 77, 255, 0.14), transparent 42%),
+    radial-gradient(circle at 84% 16%, rgba(255, 126, 182, 0.14), transparent 38%);
 }
 
 .song-list-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  min-height: 56px;
-  margin-bottom: 18px;
+  gap: 12px;
+  margin-bottom: 24px;
   flex-wrap: wrap;
-  padding: 0 32px;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.54);
+  box-shadow: 0 18px 55px rgba(86, 70, 160, 0.1);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
 }
 
 .header-left {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 250px;
-  flex: 1 1 0;
-}
-
-.title-group {
-  display: flex;
   align-items: baseline;
-  gap: 14px;
-  min-width: 0;
+  gap: 12px;
 }
 
 .btn-back {
@@ -699,19 +633,10 @@ watch(displayTracks, () => {
 }
 
 .song-list-title {
-  font-size: 28px;
-  font-weight: 900;
+  font-size: 22px;
+  font-weight: 700;
   color: var(--te-neutral-900);
   margin: 0;
-  letter-spacing: 0;
-  white-space: nowrap;
-}
-
-.song-list-meta {
-  font-size: 13px;
-  font-weight: 750;
-  color: rgba(56, 65, 92, 0.7);
-  white-space: nowrap;
 }
 
 .song-count {
@@ -721,9 +646,7 @@ watch(displayTracks, () => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 18px;
-  flex: 1.2 1 420px;
-  min-width: 320px;
+  flex: 1;
 }
 
 /* Card Grid Layout */
@@ -884,18 +807,17 @@ watch(displayTracks, () => {
 /* Table View */
 .track-table-wrapper {
   overflow-x: auto;
-  padding: 18px 18px 18px;
-  border-radius: 13px;
-  border: 1px solid rgba(255, 255, 255, 0.52);
+  padding: 10px 12px 12px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.64);
   background:
-    radial-gradient(circle at 42% 2%, rgba(255, 126, 182, 0.025), transparent 36%),
-    linear-gradient(145deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.18)),
-    rgba(255, 255, 255, 0.16);
+    linear-gradient(145deg, rgba(255, 255, 255, 0.5), rgba(248, 245, 255, 0.32)),
+    rgba(255, 255, 255, 0.28);
   box-shadow:
-    0 26px 78px rgba(86, 70, 160, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.64);
-  backdrop-filter: blur(30px) saturate(168%);
-  -webkit-backdrop-filter: blur(30px) saturate(168%);
+    0 24px 80px rgba(86, 70, 160, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(22px) saturate(150%);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
 }
 .track-table {
   width: 100%;
@@ -908,91 +830,40 @@ watch(displayTracks, () => {
   top: 0;
   z-index: 2;
   display: block;
-  background: rgba(255, 255, 255, 0.22);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  background: rgba(255, 255, 255, 0.32);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
   width: 100%;
-  border-radius: 10px;
 }
 .track-table thead tr {
   display: flex;
 }
 .track-table th {
   text-align: left;
-  padding: 0 14px 12px;
+  padding: 8px 12px;
   font-size: 11px;
-  font-weight: 800;
-  color: rgba(52, 61, 87, 0.76);
-  text-transform: none;
+  font-weight: 600;
+  color: #999;
+  text-transform: uppercase;
   letter-spacing: 0;
-  border-bottom: 0;
+  border-bottom: 1px solid rgba(209, 213, 219, 0.42);
 }
 .track-row td {
-  position: relative;
-  z-index: 1;
-  padding: 0 14px;
+  padding: 12px 12px;
   font-size: 13px;
   color: var(--te-neutral-700);
-  border-bottom: 0;
+  border-bottom: 1px solid rgba(229, 231, 235, 0.48);
   display: flex;
   align-items: center;
 }
 .track-row {
-  --track-pointer-x: 50%;
-  --track-pointer-y: 50%;
-  position: relative;
   cursor: pointer;
   transition:
-    background 0.22s,
-    transform 0.24s var(--te-ease-soft),
-    box-shadow 0.24s,
-    filter 0.24s;
+    background 0.18s,
+    transform 0.18s var(--te-ease-soft),
+    box-shadow 0.18s;
   width: 100%;
-  border-radius: 10px;
-  margin: 2px 0;
-  isolation: isolate;
-  transform-origin: center;
-  z-index: 0;
-}
-
-.track-row::before,
-.track-row::after {
-  content: '';
-  position: absolute;
-  border-radius: inherit;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.24s ease;
-}
-
-.track-row::before {
-  z-index: -1;
-  inset: 0;
-  border: 1px solid rgba(255, 255, 255, 0.36);
-  background: linear-gradient(rgba(255, 255, 255, 0.34), rgba(255, 255, 255, 0.18));
-  backdrop-filter: blur(18px) saturate(160%);
-  -webkit-backdrop-filter: blur(18px) saturate(160%);
-}
-
-.track-row::after {
-  z-index: 2;
-  inset: 0;
-  padding: 1px;
-  background: radial-gradient(
-    circle 92px at var(--track-pointer-x) var(--track-pointer-y),
-    rgba(124, 77, 255, 0.96) 0%,
-    rgba(34, 211, 238, 0.86) 34%,
-    rgba(255, 126, 182, 0.72) 55%,
-    transparent 76%
-  );
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  -webkit-mask-composite: xor;
+  border-radius: 12px;
 }
 .virtual-spacer {
   display: flex;
@@ -1007,67 +878,32 @@ watch(displayTracks, () => {
 }
 
 .track-row:hover {
-  background: transparent;
-  transform: translateX(2px) scale(1.012);
-  box-shadow: 0 16px 38px rgba(86, 70, 160, 0.08);
-  filter: saturate(1.02);
-  z-index: 3;
-}
-
-.track-row:hover::before,
-.track-row:hover::after {
-  opacity: 1;
-}
-
-.track-row:hover::after {
-  animation: pointer-border-pulse 1.7s ease-in-out infinite;
+  background: rgba(255, 255, 255, 0.44);
+  transform: translateX(4px);
+  box-shadow: 0 12px 30px rgba(86, 70, 160, 0.08);
 }
 .track-row:hover td {
-  border-bottom-color: transparent;
+  border-bottom-color: rgba(168, 133, 247, 0.24);
 }
 .track-playing {
-  background: transparent !important;
-  box-shadow: 0 20px 48px rgba(124, 77, 255, 0.12);
-  transform: translateX(2px) scale(1.026);
-  z-index: 4;
+  background:
+    linear-gradient(90deg, rgba(124, 77, 255, 0.08), rgba(255, 126, 182, 0.04)) !important;
+  box-shadow: inset 2px 0 0 rgba(124, 77, 255, 0.38);
 }
 .track-playing td {
-  border-bottom-color: transparent !important;
+  border-bottom-color: rgba(124, 77, 255, 0.12) !important;
 }
-
-.track-playing::before {
-  opacity: 1;
-}
-
-.track-playing::after {
-  opacity: 1;
-  background: linear-gradient(
-    90deg,
-    rgba(124, 77, 255, 0.88),
-    rgba(34, 211, 238, 0.72),
-    rgba(255, 126, 182, 0.82),
-    rgba(124, 77, 255, 0.88)
-  );
-  background-size: 260% 100%;
-  animation: border-gradient-flow 3.4s linear infinite;
-}
-
-.track-playing::before {
-  border-color: rgba(124, 77, 255, 0.18);
-  background: linear-gradient(rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.2));
-}
-
 .cover-img {
-  width: 34px;
-  height: 34px;
-  border-radius: 7px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   object-fit: cover;
-  box-shadow: 0 10px 22px rgba(86, 70, 160, 0.14);
+  box-shadow: 0 10px 24px rgba(86, 70, 160, 0.18);
 }
 .cover-placeholder {
-  width: 34px;
-  height: 34px;
-  border-radius: 7px;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
   background:
     radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), transparent 36%),
     linear-gradient(135deg, rgba(124, 77, 255, 0.18), rgba(34, 211, 238, 0.12));
@@ -1076,14 +912,14 @@ watch(displayTracks, () => {
   justify-content: center;
 }
 .col-index {
-  width: 46px;
-  color: rgba(80, 88, 116, 0.62) !important;
+  width: 40px;
+  color: #bbb !important;
   font-size: 13px !important;
   flex-shrink: 0;
 }
 .col-cover,
 .col-cover-header {
-  width: 56px;
+  width: 60px;
   flex-shrink: 0;
 }
 .col-cover-header {
@@ -1098,7 +934,7 @@ watch(displayTracks, () => {
   align-items: center;
 }
 .col-info {
-  flex: 1.25;
+  flex: 1;
   line-height: 1.4;
   min-width: 0;
   display: flex;
@@ -1106,31 +942,21 @@ watch(displayTracks, () => {
   justify-content: center;
   align-items: flex-start !important;
 }
-.track-title-row {
-  width: 100%;
-  min-width: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-}
-
 .track-title {
-  min-width: 0;
-  width: 100%;
   font-size: 13px;
-  font-weight: 850;
+  font-weight: 700;
   color: var(--te-neutral-900);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  width: 100%;
 }
 .track-playing .track-title {
   color: #6f4ee8;
 }
 .track-artist {
   font-size: 12px;
-  color: rgba(71, 80, 112, 0.7);
+  color: var(--te-neutral-500);
   margin-top: 1px;
   white-space: nowrap;
   overflow: hidden;
@@ -1138,12 +964,10 @@ watch(displayTracks, () => {
   width: 100%;
 }
 .track-audio-data {
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  flex-shrink: 0;
-  gap: 6px;
-  min-width: 232px;
-  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
 }
 .meta-label {
   font-size: 10px;
@@ -1151,85 +975,58 @@ watch(displayTracks, () => {
   font-weight: 500;
 }
 .col-album {
-  width: 22%;
-  max-width: 260px;
-  min-width: 150px;
+  width: 25%;
+  max-width: 200px;
+  min-width: 100px;
   font-size: 13px !important;
-  font-weight: 750;
-  color: rgba(20, 28, 50, 0.9) !important;
+  color: #666 !important;
   flex-shrink: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+@media (max-width: 600px) {
+  .col-album {
+    display: none !important;
+  }
+}
 .col-duration {
-  width: 74px;
+  width: 60px;
   text-align: right;
   font-size: 12px !important;
-  color: rgba(80, 88, 116, 0.78) !important;
-  padding-right: 14px !important;
+  color: #aaa !important;
+  padding-right: 10px !important;
   flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
 }
 
-.col-size {
-  width: 86px;
-  flex-shrink: 0;
-  font-size: 12px !important;
-  color: rgba(80, 88, 116, 0.78) !important;
-}
-
-@media (max-width: 1120px) {
-  .col-size {
-    display: none !important;
-  }
-}
-
-@media (max-width: 920px) {
-  .col-album {
-    display: none !important;
-  }
-}
-
 .track-pills {
-  display: grid;
-  grid-template-columns: 46px 58px 44px 62px;
+  display: flex;
   gap: 4px;
   flex-shrink: 0;
-  align-items: center;
-  justify-content: end;
 }
 .pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
   font-size: 9px;
   font-weight: 700;
   padding: 1px 5px;
   border-radius: 999px;
   text-transform: uppercase;
   line-height: 1.2;
-  white-space: nowrap;
-  justify-self: end;
 }
 .pill-format {
-  grid-column: 1;
   background: rgba(124, 77, 255, 0.1);
   color: #6b3df0;
 }
 .pill-rate {
-  grid-column: 2;
   background: rgba(59, 130, 246, 0.12);
   color: #2563eb;
 }
 .pill-depth {
-  grid-column: 3;
   background: rgba(32, 198, 94, 0.12);
   color: #16a34a;
 }
 .pill-bitrate {
-  grid-column: 4;
   background: rgba(245, 158, 11, 0.14);
   color: #d97706;
 }
@@ -1306,44 +1103,24 @@ watch(displayTracks, () => {
   }
 }
 
-@keyframes border-gradient-flow {
-  to {
-    background-position: 260% 0;
-  }
-}
-
-@keyframes pointer-border-pulse {
-  0%,
-  100% {
-    opacity: 0.72;
-    filter: saturate(1.05);
-  }
-  50% {
-    opacity: 1;
-    filter: saturate(1.24);
-  }
-}
-
 /* Search Box */
 .search-box {
   display: flex;
   align-items: center;
-  height: 40px;
-  padding: 0 18px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.52);
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  box-shadow: 0 14px 36px rgba(86, 70, 160, 0.08);
-  backdrop-filter: blur(16px) saturate(145%);
-  -webkit-backdrop-filter: blur(16px) saturate(145%);
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 18px;
+  background: #f5f5f5;
+  border: 1.5px solid transparent;
   transition:
     border-color 0.2s,
     background 0.2s,
     box-shadow 0.2s;
-  width: clamp(260px, 30vw, 390px);
-  flex: 0 1 auto;
+  min-width: 150px;
+  max-width: 280px;
+  flex: 1;
 }
-@media (max-width: 640px) {
+@media (max-width: 500px) {
   .search-box {
     max-width: none;
     width: 100%;
@@ -1351,25 +1128,13 @@ watch(displayTracks, () => {
   }
   .song-list-header {
     gap: 16px;
-    padding: 0 10px;
-  }
-
-  .header-right {
-    min-width: 0;
-    flex-basis: 100%;
-  }
-
-  .view-tools {
-    display: none;
   }
 }
 
 .search-box.focused {
-  border-color: rgba(124, 77, 255, 0.34);
-  background: rgba(255, 255, 255, 0.68);
-  box-shadow:
-    0 0 0 4px rgba(124, 77, 255, 0.08),
-    0 16px 42px rgba(86, 70, 160, 0.1);
+  border-color: #1a73e8;
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(26, 115, 232, 0.1);
 }
 
 .search-icon {
@@ -1381,7 +1146,7 @@ watch(displayTracks, () => {
 }
 
 .search-box.focused .search-icon {
-  color: var(--te-primary-500);
+  color: #1a73e8;
 }
 
 .search-input {
@@ -1406,7 +1171,7 @@ watch(displayTracks, () => {
   width: 20px;
   height: 20px;
   border: none;
-  background: rgba(124, 77, 255, 0.12);
+  background: #ddd;
   border-radius: 50%;
   cursor: pointer;
   padding: 0;
@@ -1421,37 +1186,6 @@ watch(displayTracks, () => {
 }
 
 .search-clear:hover {
-  background: rgba(124, 77, 255, 0.2);
-}
-
-.view-tools {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.view-tool {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid rgba(255, 255, 255, 0.62);
-  border-radius: 10px;
-  color: rgba(36, 44, 72, 0.74);
-  background: rgba(255, 255, 255, 0.42);
-  box-shadow: 0 12px 30px rgba(86, 70, 160, 0.08);
-  backdrop-filter: blur(14px) saturate(145%);
-  -webkit-backdrop-filter: blur(14px) saturate(145%);
-}
-
-.view-tool.active {
-  color: var(--te-primary-500);
-  background: rgba(255, 255, 255, 0.62);
-}
-
-.view-tool i {
-  font-size: 13px;
+  background: #ccc;
 }
 </style>
-

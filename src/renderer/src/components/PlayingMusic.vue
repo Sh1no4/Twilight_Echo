@@ -1,73 +1,95 @@
 <script setup lang="ts">
-import { ref, watch, computed, nextTick } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
-
-const { currentTrack, currentTime } = usePlayerStore()
-
-defineEmits<{
-  back: []
-}>()
-
-// 视图模式：cover = 封面模式, lyrics = 歌词模式
-const viewMode = ref<'cover' | 'lyrics'>('cover')
-
-function toggleViewMode(): void {
-  viewMode.value = viewMode.value === 'cover' ? 'lyrics' : 'cover'
-}
-
-const bgSrc = ref(currentTrack.value?.cover ?? '')
-const bgOpacity = ref(1)
-const lyricsEl = ref<HTMLElement | null>(null)
-
-watch(
-  () => currentTrack.value?.cover,
-  (newCover, oldCover) => {
-    if (!oldCover && newCover) {
-      bgSrc.value = newCover ?? ''
-      return
-    }
-    if (newCover && newCover !== bgSrc.value) {
-      bgOpacity.value = 0
-      setTimeout(() => {
-        bgSrc.value = newCover
-        bgOpacity.value = 1
-      }, 400)
-    } else if (!newCover) {
-      bgOpacity.value = 0
-      setTimeout(() => {
-        bgSrc.value = ''
-      }, 600)
-    }
-  }
-)
-
-const showCoverBg = computed(() => !!bgSrc.value)
 
 interface LyricLine {
   time: number
   text: string
+  translation: string | null
 }
 
-function parseLrc(lrc: string): LyricLine[] {
-  const lines: LyricLine[] = []
+const { currentTrack, dominantColor, currentTime, duration, seek, formatTime } = usePlayerStore()
+
+const bgSrc = ref(currentTrack.value?.cover ?? '')
+const lyricsEl = ref<HTMLElement | null>(null)
+const lyricLineEls = ref<Array<HTMLElement | null>>([])
+let lyricScrollRaf = 0
+
+watch(
+  () => currentTrack.value?.cover,
+  (newCover) => {
+    bgSrc.value = newCover ?? ''
+  },
+  { immediate: true }
+)
+
+watch(
+  () =>
+    [currentTrack.value?.id, currentTrack.value?.lyrics, currentTrack.value?.translatedLyrics] as const,
+  async ([id], previous) => {
+    const [prevId, prevLyrics, prevTranslatedLyrics] = previous ?? []
+
+    if (id !== prevId) {
+      lyricLineEls.value = []
+      await nextTick()
+      if (lyricsEl.value) {
+        lyricsEl.value.scrollTo({ top: 0, behavior: 'auto' })
+      }
+      return
+    }
+
+    if (
+      currentTrack.value &&
+      (currentTrack.value.lyrics !== prevLyrics ||
+        currentTrack.value.translatedLyrics !== prevTranslatedLyrics)
+    ) {
+      await nextTick()
+      if (activeLyricIndex.value >= 0) {
+        focusLyricLine(activeLyricIndex.value)
+      }
+    }
+  },
+  { immediate: true }
+)
+
+onBeforeUnmount(() => {
+  if (lyricScrollRaf !== 0) {
+    window.cancelAnimationFrame(lyricScrollRaf)
+    lyricScrollRaf = 0
+  }
+})
+
+interface ParsedLyricLine {
+  time: number
+  text: string
+}
+
+function parseLrc(lrc: string | null | undefined): ParsedLyricLine[] {
+  if (!lrc) return []
+
+  const lines: ParsedLyricLine[] = []
   const lineRe = /\[(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?\]/g
 
   for (const raw of lrc.split('\n')) {
     const trimmed = raw.trim()
     if (!trimmed) continue
 
-    let match: RegExpExecArray | null
     const timestamps: number[] = []
+    let match: RegExpExecArray | null
     lineRe.lastIndex = 0
 
     while ((match = lineRe.exec(trimmed)) !== null) {
-      const min = parseInt(match[1], 10)
-      const sec = parseInt(match[2], 10)
+      const min = Number.parseInt(match[1], 10)
+      const sec = Number.parseInt(match[2], 10)
       let ms = 0
+
       if (match[3]) {
-        ms = parseInt(match[3], 10)
-        if (match[3].length === 2) ms = ms * 10
+        ms = Number.parseInt(match[3], 10)
+        if (match[3].length === 2) {
+          ms *= 10
+        }
       }
+
       timestamps.push(min * 60 + sec + ms / 1000)
     }
 
@@ -83,14 +105,36 @@ function parseLrc(lrc: string): LyricLine[] {
   return lines
 }
 
-const lyricLines = computed(() => {
-  if (!currentTrack.value?.lyrics) return []
-  return parseLrc(currentTrack.value.lyrics)
+const lyricLines = computed<LyricLine[]>(() => {
+  const originalLines = parseLrc(currentTrack.value?.lyrics)
+  const translatedLines = parseLrc(currentTrack.value?.translatedLyrics ?? null)
+
+  if (originalLines.length === 0) {
+    return translatedLines.map((line) => ({
+      time: line.time,
+      text: line.text,
+      translation: null
+    }))
+  }
+
+  const translatedMap = new Map<number, string>()
+  for (const line of translatedLines) {
+    translatedMap.set(Math.round(line.time * 1000), line.text)
+  }
+
+  return originalLines.map((line) => ({
+    time: line.time,
+    text: line.text,
+    translation: translatedMap.get(Math.round(line.time * 1000)) ?? null
+  }))
 })
+
+const hasLyrics = computed(() => lyricLines.value.length > 0)
 
 const activeLyricIndex = computed(() => {
   const t = currentTime.value
   let idx = -1
+
   for (let i = 0; i < lyricLines.value.length; i++) {
     if (lyricLines.value[i].time <= t) {
       idx = i
@@ -98,104 +142,126 @@ const activeLyricIndex = computed(() => {
       break
     }
   }
+
   return idx
 })
 
-watch(activeLyricIndex, async () => {
-  await nextTick()
-  if (!lyricsEl.value) return
-  const active = lyricsEl.value.querySelector('.lyric-line.active') as HTMLElement | null
-  if (active) {
-    active.scrollIntoView({ block: 'center', behavior: 'smooth' })
-  }
-})
+const trackDurationLabel = computed(() => formatTime(duration.value))
 
-watch(
-  () => currentTrack.value?.id,
-  () => {
-    if (lyricsEl.value) {
-      lyricsEl.value.scrollTo({ top: 0, behavior: 'instant' })
-    }
+function setLyricLineRef(index: number, el: Element | ComponentPublicInstance | null): void {
+  lyricLineEls.value[index] = el instanceof HTMLElement ? el : null
+}
+
+function lyricTone(index: number): 'idle' | 'far' | 'mid' | 'near' | 'active' {
+  const active = activeLyricIndex.value
+  if (active < 0) return 'idle'
+
+  const distance = Math.abs(index - active)
+  if (distance === 0) return 'active'
+  if (distance === 1) return 'near'
+  if (distance === 2) return 'mid'
+  return 'far'
+}
+
+function jumpToLyric(time: number): void {
+  seek(time)
+}
+
+function focusLyricLine(index: number): void {
+  const container = lyricsEl.value
+  const line = lyricLineEls.value[index]
+
+  if (!container || !line) return
+
+  if (lyricScrollRaf !== 0) {
+    window.cancelAnimationFrame(lyricScrollRaf)
   }
-)
+
+  lyricScrollRaf = window.requestAnimationFrame(() => {
+    const containerRect = container.getBoundingClientRect()
+    const lineRect = line.getBoundingClientRect()
+    const targetTop =
+      container.scrollTop +
+      (lineRect.top - containerRect.top) -
+      (container.clientHeight - lineRect.height) * 0.5
+
+    container.scrollTo({
+      top: Math.max(0, targetTop),
+      behavior: 'smooth'
+    })
+
+    lyricScrollRaf = 0
+  })
+}
+
+watch(activeLyricIndex, async (index) => {
+  if (index < 0) return
+  await nextTick()
+  focusLyricLine(index)
+})
 </script>
 
 <template>
-  <div class="playing-music">
-    <!-- 模糊封面背景 -->
-    <div v-if="showCoverBg" class="cover-bg-wrapper">
-      <img :src="bgSrc" class="cover-bg-img" :style="{ opacity: bgOpacity }" />
-    </div>
-    <!-- 液态玻璃叠加层 -->
-    <div v-if="showCoverBg" class="glass-overlay" />
-
-    <!-- 小药丸切换按钮 -->
-    <div class="pill-toggle" @click="toggleViewMode">
-      <div class="pill-slider" :class="{ 'pill-right': viewMode === 'lyrics' }" />
-      <span class="pill-label" :class="{ active: viewMode === 'cover' }">封面</span>
-      <span class="pill-label" :class="{ active: viewMode === 'lyrics' }">歌词</span>
+  <div class="playing-music" :style="{ '--accent-color': dominantColor }">
+    <div class="backdrop" aria-hidden="true">
+      <Transition name="backdrop-cover-fade" appear>
+        <img v-if="bgSrc" :key="bgSrc" :src="bgSrc" class="backdrop-cover" alt="" />
+      </Transition>
+      <div class="backdrop-scrim" />
+      <div class="backdrop-accent" />
     </div>
 
-    <!-- 前景内容 -->
-    <div class="playing-music-foreground">
-      <div v-if="currentTrack" class="playing-music-content">
-        <!-- ========== 封面模式 ========== -->
-        <Transition name="mode-fade" mode="out-in">
-          <div v-if="viewMode === 'cover'" key="cover" class="cover-mode">
-            <div class="cover-mode-inner">
-              <!-- 左侧封面 -->
-              <div class="cover-mode-left">
-                <img
-                  v-if="currentTrack.cover"
-                  :src="currentTrack.cover"
-                  class="cover-mode-img"
-                  alt="cover"
-                />
-                <div v-else class="cover-mode-placeholder">
-                  <i
-                    class="pi pi-wave-pulse"
-                    style="font-size: 96px; color: rgba(255, 255, 255, 0.3)"
-                  ></i>
-                </div>
-              </div>
-              <!-- 右侧信息 -->
-              <div class="cover-mode-right">
-                <h1 class="cover-mode-title">{{ currentTrack.title }}</h1>
-                <p class="cover-mode-artist">{{ currentTrack.artist }}</p>
-                <p v-if="currentTrack.album" class="cover-mode-album">{{ currentTrack.album }}</p>
-              </div>
+    <div v-if="currentTrack" class="stage">
+      <main class="layout" :class="{ 'layout--single': !hasLyrics }">
+        <section class="cover-column">
+          <div class="cover-frame">
+            <img
+              v-if="currentTrack.cover"
+              :src="currentTrack.cover"
+              class="cover-image"
+              alt="cover"
+            />
+            <div v-else class="cover-placeholder">
+              <i class="pi pi-wave-pulse"></i>
             </div>
           </div>
 
-          <!-- ========== 歌词模式 ========== -->
-          <div v-else key="lyrics" class="lyrics-mode">
-            <!-- 左上角浮层：歌曲信息 -->
-            <div class="lyrics-left">
-              <span class="lyrics-now-playing">NOW PLAYING</span>
-            </div>
+          <div class="cover-meta">
+            <h1 class="track-title">{{ currentTrack.title }}</h1>
+            <p class="track-artist">{{ currentTrack.artist }}</p>
+            <p v-if="currentTrack.album" class="track-album">{{ currentTrack.album }}</p>
+          </div>
+        </section>
 
-            <!-- 歌词：铺满全屏居中 -->
-            <div class="lyrics-right">
-              <div v-if="lyricLines.length > 0" ref="lyricsEl" class="lyrics-mode-container">
-                <p
-                  v-for="(line, i) in lyricLines"
-                  :key="i"
-                  class="lyric-line"
-                  :class="{ active: i === activeLyricIndex }"
-                >
-                  {{ line.text }}
-                </p>
-              </div>
-              <div v-else class="lyrics-mode-empty">
-                <i
-                  class="pi pi-wave-pulse"
-                  style="font-size: 40px; color: rgba(255, 255, 255, 0.15)"
-                ></i>
-                <p>暂无歌词</p>
-              </div>
+        <section v-if="hasLyrics" class="lyrics-column">
+          <div class="lyrics-head">
+            <div class="time-chip">{{ formatTime(currentTime) }} / {{ trackDurationLabel }}</div>
+          </div>
+
+          <div ref="lyricsEl" class="lyrics-scroll">
+            <div class="lyrics-list">
+              <button
+                v-for="(line, i) in lyricLines"
+                :key="`${line.time}-${i}`"
+                :ref="(el) => setLyricLineRef(i, el)"
+                type="button"
+                class="lyric-row"
+                :class="lyricTone(i)"
+                @click="jumpToLyric(line.time)"
+              >
+                <span class="lyric-text">{{ line.text }}</span>
+                <span v-if="line.translation" class="lyric-translation">{{ line.translation }}</span>
+              </button>
             </div>
           </div>
-        </Transition>
+        </section>
+      </main>
+    </div>
+
+    <div v-else class="empty-shell">
+      <div class="empty-state">
+        <i class="pi pi-wave-pulse"></i>
+        <p>暂无正在播放的歌曲</p>
       </div>
     </div>
   </div>
@@ -205,358 +271,432 @@ watch(
 .playing-music {
   position: fixed;
   inset: 0;
-  z-index: 100;
-  display: flex;
-  flex-direction: column;
+  z-index: 1100;
   overflow: hidden;
-  background: #111;
+  color: #f4f7fb;
+  background: #05070b;
+  --accent-color: #7c4dff;
 }
 
-/* 模糊封面背景层 */
-.cover-bg-wrapper {
+.backdrop {
   position: absolute;
   inset: 0;
-  overflow: hidden;
   z-index: 0;
+  overflow: hidden;
+  background: #05070b;
 }
 
-.cover-bg-img {
-  width: 110%;
-  height: 110%;
-  object-fit: cover;
-  filter: blur(100px) brightness(0.5) saturate(2);
-  transform: translate(-5%, -5%);
-  transition: opacity 0.8s ease;
-}
-
-/* 液态玻璃叠加层 */
-.glass-overlay {
+.backdrop-cover {
   position: absolute;
   inset: 0;
-  z-index: 1;
-  background: linear-gradient(
-    180deg,
-    rgba(0, 0, 0, 0.15) 0%,
-    rgba(0, 0, 0, 0.02) 40%,
-    rgba(255, 255, 255, 0.06) 70%,
-    rgba(255, 255, 255, 0.12) 100%
-  );
-  backdrop-filter: blur(8px);
-  pointer-events: none;
-}
-
-/* ===== 小药丸切换按钮 ===== */
-.pill-toggle {
-  position: absolute;
-  top: 44px;
-  right: 24px;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  background: rgba(255, 255, 255, 0.1);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
-  padding: 3px;
-  cursor: pointer;
-  user-select: none;
-  transition: background 0.2s;
-}
-
-.pill-toggle:hover {
-  background: rgba(255, 255, 255, 0.16);
-}
-
-.pill-slider {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: calc(50% - 3px);
-  height: calc(100% - 6px);
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 999px;
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  pointer-events: none;
-}
-
-.pill-slider.pill-right {
-  transform: translateX(100%);
-}
-
-.pill-label {
-  position: relative;
-  z-index: 1;
-  padding: 4px 16px;
-  font-size: 12px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.45);
-  transition: color 0.3s;
-  white-space: nowrap;
-}
-
-.pill-label.active {
-  color: #fff;
-}
-
-/* 前景内容层 */
-.playing-music-foreground {
-  position: relative;
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  padding-top: 32px;
-}
-
-.playing-music-content {
-  flex: 1;
-  display: flex;
-  overflow: hidden;
-}
-
-/* ===== 模式切换动画 ===== */
-.mode-fade-enter-active {
-  transition:
-    opacity 0.3s ease,
-    transform 0.3s ease;
-}
-.mode-fade-leave-active {
-  transition:
-    opacity 0.2s ease,
-    transform 0.2s ease;
-}
-.mode-fade-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
-}
-.mode-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
-}
-
-/* ===== 封面模式 ===== */
-.cover-mode {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding-bottom: 72px;
-}
-
-.cover-mode-inner {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 80px;
-  padding: 0 120px 0 40px;
   width: 100%;
-  max-width: 1080px;
-}
-
-/* 左侧封面列 */
-.cover-mode-left {
-  flex-shrink: 0;
-}
-
-.cover-mode-img {
-  width: min(40vw, 400px);
-  height: min(40vw, 400px);
-  border-radius: 20px;
+  height: 100%;
   object-fit: cover;
-  box-shadow:
-    0 24px 80px rgba(0, 0, 0, 0.45),
-    0 6px 20px rgba(0, 0, 0, 0.25);
+  object-position: center;
+  transform: scale(1.06);
+  transform-origin: center;
+  filter: blur(96px) saturate(1.25) brightness(0.3);
+  will-change: opacity, transform;
 }
 
-.cover-mode-placeholder {
-  width: min(40vw, 400px);
-  height: min(40vw, 400px);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(8px);
-  display: flex;
-  align-items: center;
+.backdrop-cover-fade-enter-active,
+.backdrop-cover-fade-leave-active {
+  transition:
+    opacity 0.7s ease,
+    transform 0.7s ease;
+}
+
+.backdrop-cover-fade-enter-from {
+  opacity: 0;
+  transform: translateY(-18px) scale(1.09);
+}
+
+.backdrop-cover-fade-enter-to {
+  opacity: 1;
+  transform: translateY(0) scale(1.06);
+}
+
+.backdrop-cover-fade-leave-from {
+  opacity: 1;
+  transform: translateY(0) scale(1.06);
+}
+
+.backdrop-cover-fade-leave-to {
+  opacity: 0;
+  transform: translateY(18px) scale(1.09);
+}
+
+.backdrop-scrim {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(5, 7, 11, 0.34) 0%,
+      rgba(5, 7, 11, 0.74) 42%,
+      rgba(5, 7, 11, 0.92) 100%
+    ),
+    color-mix(in srgb, var(--accent-color) 8%, transparent);
+  backdrop-filter: blur(10px);
+}
+
+.backdrop-accent {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      circle at 18% 26%,
+      color-mix(in srgb, var(--accent-color) 22%, transparent),
+      transparent 42%
+    ),
+    radial-gradient(circle at 88% 20%, rgba(255, 255, 255, 0.12), transparent 26%);
+  opacity: 0.8;
+}
+
+.stage {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 1560px);
+  height: 100%;
+  margin: 0 auto;
+  padding: 40px 36px 28px;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 40px;
+  align-items: stretch;
+  height: 100%;
+  min-height: 0;
+}
+
+.layout--single {
+  grid-template-columns: minmax(300px, 440px);
+  align-content: center;
   justify-content: center;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.3);
 }
 
-/* 右侧信息列 */
-.cover-mode-right {
-  flex: 1;
+.layout--single .cover-column {
+  width: min(100%, 440px);
+  justify-self: center;
+}
+
+.layout--single .cover-meta {
+  text-align: center;
+}
+
+.cover-column {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-left: 80px;
+  gap: 18px;
+  align-self: center;
 }
 
-.cover-mode-title {
-  font-size: 42px;
-  font-weight: 800;
-  color: #fff;
-  margin: 0;
-  line-height: 1.15;
+.cover-frame {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 26px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.38);
+}
+
+.cover-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cover-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 68px;
+  color: rgba(255, 255, 255, 0.34);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    color-mix(in srgb, var(--accent-color) 18%, transparent);
+}
+
+.cover-meta {
+  min-width: 0;
+}
+
+.track-title {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: #fff;
+  overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  letter-spacing: -0.5px;
 }
 
-.cover-mode-artist {
-  font-size: 24px;
-  font-weight: 500;
-  color: rgba(255, 255, 255, 0.75);
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.cover-mode-album {
-  font-size: 16px;
-  color: rgba(255, 255, 255, 0.4);
-  margin: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ===== 歌词模式 ===== */
-.lyrics-mode {
-  flex: 1;
-  position: relative;
-  overflow: hidden;
-}
-
-/* 左上角浮层信息栏 */
-.lyrics-left {
-  position: absolute;
-  top: 28px;
-  left: 48px;
-  z-index: 3;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: 320px;
-  pointer-events: none;
-}
-
-.lyrics-now-playing {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.35);
-}
-
-.lyrics-big-title {
-  font-size: 38px;
-  font-weight: 800;
-  color: #fff;
-  margin: 4px 0 0 0;
-  line-height: 1.1;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  letter-spacing: -0.5px;
-}
-
-.lyrics-big-artist {
-  font-size: 20px;
-  font-weight: 400;
-  color: rgba(255, 255, 255, 0.75);
-  margin: 0;
+.track-artist {
+  margin: 10px 0 0;
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.78);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.lyrics-big-album {
+.track-album {
+  margin: 4px 0 0;
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.4);
-  margin: 0;
+  color: rgba(255, 255, 255, 0.48);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* 歌词全屏容器 */
-.lyrics-right {
-  position: absolute;
-  inset: 0;
+.lyrics-column {
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  padding-left: 6px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  align-self: stretch;
 }
 
-/* 歌词区域 */
-.lyrics-mode-container {
-  flex: 1;
-  overflow-y: auto;
+.lyrics-head {
   display: flex;
-  flex-direction: column;
-  align-items: center;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 16px;
+  padding-bottom: 18px;
+  min-width: 0;
+}
+
+.time-chip {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.lyrics-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 8px;
+  scroll-behavior: smooth;
   mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(0, 0, 0, 0.3) 8%,
-    rgba(0, 0, 0, 1) 20%,
-    rgba(0, 0, 0, 1) 80%,
-    rgba(0, 0, 0, 0.3) 92%,
+    rgba(0, 0, 0, 0.26) 6%,
+    rgba(0, 0, 0, 1) 18%,
+    rgba(0, 0, 0, 1) 82%,
+    rgba(0, 0, 0, 0.26) 94%,
     transparent 100%
   );
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
-    rgba(0, 0, 0, 0.3) 8%,
-    rgba(0, 0, 0, 1) 20%,
-    rgba(0, 0, 0, 1) 80%,
-    rgba(0, 0, 0, 0.3) 92%,
+    rgba(0, 0, 0, 0.26) 6%,
+    rgba(0, 0, 0, 1) 18%,
+    rgba(0, 0, 0, 1) 82%,
+    rgba(0, 0, 0, 0.26) 94%,
     transparent 100%
   );
-  padding: 100px 60px;
-  scroll-behavior: smooth;
 }
 
-.lyrics-mode-container::-webkit-scrollbar {
+.lyrics-scroll::-webkit-scrollbar {
   width: 0;
+  height: 0;
 }
 
-.lyric-line {
-  font-size: 18px;
-  color: rgba(255, 255, 255, 0.35);
-  line-height: 2.6;
-  margin: 0;
-  text-align: center;
-  transition:
-    color 0.4s ease,
-    font-size 0.4s ease,
-    transform 0.4s ease;
-  transform: scale(1);
+.lyrics-list {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 16vh 0 22vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
 }
 
-.lyric-line.active {
-  color: #fff;
-  font-size: 22px;
-  font-weight: 600;
-  transform: scale(1.05);
-}
-
-/* 无歌词占位 */
-.lyrics-mode-empty {
-  flex: 1;
+.lyric-row {
+  width: min(100%, 760px);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  color: rgba(255, 255, 255, 0.25);
+  gap: 5px;
+  border: 1px solid transparent;
+  border-radius: 18px;
+  background: transparent;
+  padding: 12px 20px;
+  text-align: center;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.42);
+  transition:
+    color 0.22s ease,
+    opacity 0.22s ease,
+    transform 0.22s ease,
+    background 0.22s ease,
+    border-color 0.22s ease,
+    box-shadow 0.22s ease;
+}
+
+.lyric-row:hover {
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.lyric-row.idle {
+  opacity: 0.56;
+}
+
+.lyric-row.far {
+  opacity: 0.3;
+}
+
+.lyric-row.mid {
+  opacity: 0.52;
+}
+
+.lyric-row.near {
+  opacity: 0.84;
+}
+
+.lyric-row.active {
+  opacity: 1;
+  color: #fff;
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--accent-color) 22%, transparent), transparent),
+    rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
+  animation: lyric-focus-in 0.34s ease;
+}
+
+.lyric-text {
+  min-width: 0;
+  width: 100%;
+  font-size: var(--te-lyric-font-size, 18px);
+  line-height: 1.85;
+  text-align: center;
+  word-break: break-word;
+}
+
+.lyric-row.active .lyric-text {
+  font-size: calc(var(--te-lyric-font-size, 18px) + 4px);
+  font-weight: 600;
+}
+
+.lyric-translation {
+  min-width: 0;
+  width: 100%;
+  font-size: calc(var(--te-lyric-font-size, 18px) - 2px);
+  line-height: 1.45;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.58);
+  word-break: break-word;
+}
+
+.lyric-row.active .lyric-translation {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.empty-shell {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(100%, 1560px);
+  height: 100%;
+  margin: 0 auto;
+  padding: 40px 36px 28px;
+}
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  color: rgba(255, 255, 255, 0.42);
   font-size: 14px;
 }
 
-.lyrics-mode-empty p {
+.empty-state i {
+  font-size: 42px;
+  color: rgba(255, 255, 255, 0.16);
+}
+
+.empty-state p {
   margin: 0;
+}
+
+@keyframes lyric-focus-in {
+  0% {
+    transform: translateY(8px) scale(0.99);
+    opacity: 0.72;
+  }
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 1;
+  }
+}
+
+@media (max-width: 1120px) {
+  .stage,
+  .empty-shell {
+    padding: 38px 22px 20px;
+  }
+
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 28px;
+  }
+
+  .lyrics-column {
+    padding-left: 0;
+    border-left: none;
+  }
+
+  .cover-column {
+    align-self: stretch;
+  }
+
+  .lyrics-list {
+    padding-top: 4vh;
+  }
+}
+
+@media (max-width: 760px) {
+  .stage,
+  .empty-shell {
+    padding: 34px 16px 16px;
+  }
+
+  .track-title {
+    font-size: 28px;
+  }
+
+  .track-artist {
+    font-size: 16px;
+  }
+
+  .lyrics-list {
+    padding: 2vh 0 18vh;
+  }
+
+  .lyric-row {
+    padding-inline: 12px;
+  }
 }
 </style>

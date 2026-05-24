@@ -26,7 +26,7 @@
 - Vue 3
 - TypeScript
 - Vite / electron-vite
-- PrimeIcons
+- PrimeVue
 - mpv
 - `@neteasecloudmusicapienhanced/api`
 - `music-metadata`
@@ -145,6 +145,7 @@ npm run build:linux
 
 - 打包配置位于 `electron-builder.yml`
 - 打包前会执行 `scripts/extract-mpv.cjs`
+- 打包后会执行 `scripts/copy-node-modules.cjs`
 
 ## 使用说明
 

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import ImportDialog from './ImportDialog.vue'
 
@@ -29,89 +28,45 @@ const menuItems: MenuItem[] = [
   {
     key: 'allSongs',
     label: '所有歌曲',
-    icon: 'pi pi-music',
+    icon: 'pi pi-wave-pulse',
     children: [{ key: 'all', label: '全部' }]
   },
   {
     key: 'artists',
     label: '艺术家',
-    icon: 'pi pi-microphone',
+    icon: 'pi pi-user',
     children: []
   },
   {
     key: 'albums',
     label: '专辑',
-    icon: 'pi pi-clone',
+    icon: 'pi pi-images',
     children: []
   },
   {
     key: 'playlists',
     label: '歌单',
-    icon: 'pi pi-list-check',
+    icon: 'pi pi-bookmark',
     children: []
   },
   {
     key: 'folders',
     label: '文件夹',
-    icon: 'pi pi-folder-open',
+    icon: 'pi pi-folder',
     children: []
   }
 ]
 
 const activeKey = ref('allSongs')
-const activeChildKey = ref('all')
 const scanning = ref(false)
 const showImportDialog = ref(false)
 
-const { artists, albums, playlists, folders } = useMusicStore()
 const { currentTrack } = usePlayerStore()
 
 const menuBottom = computed(() => (currentTrack.value ? '96px' : '0'))
 
-function buildArtistChildren(): SubItem[] {
-  return artists.value.map((a) => ({
-    key: `artist:${a.name}`,
-    label: `${a.name} (${a.trackCount})`
-  }))
-}
-
-function buildAlbumChildren(): SubItem[] {
-  return albums.value.map((a) => ({ key: `album:${a.name}`, label: `${a.name} (${a.trackCount})` }))
-}
-
-function buildPlaylistChildren(): SubItem[] {
-  const items: SubItem[] = playlists.value.map((p) => ({
-    key: `playlist:${p.name}`,
-    label: p.name
-  }))
-  items.push({ key: 'addFolder', label: '添加文件夹' })
-  return items
-}
-
-function buildFolderChildren(): SubItem[] {
-  return folders.value.map((f) => ({
-    key: `folder:${f.path}`,
-    label: `${f.name} (${f.trackCount})`
-  }))
-}
-
 function selectItem(key: string): void {
   activeKey.value = key
-  const children =
-    key === 'artists'
-      ? buildArtistChildren()
-      : key === 'albums'
-        ? buildAlbumChildren()
-        : key === 'playlists'
-          ? buildPlaylistChildren()
-          : key === 'folders'
-            ? buildFolderChildren()
-            : (menuItems.find((m) => m.key === key)?.children ?? [])
-
-  if (children.length > 0) {
-    activeChildKey.value = children[0].key
-  }
-
   emit('selectView', key, null)
 }
 
@@ -139,7 +94,7 @@ async function handleImportClick(): Promise<void> {
         <div class="menu-separator"></div>
         <div class="menu-item menu-item-streaming" @click="emit('enterStreaming')">
           <i
-            class="pi pi-globe"
+            class="pi pi-cloud"
             style="font-size: 16px; color: #666; width: 20px; text-align: center; flex-shrink: 0"
           ></i>
           <span class="item-label">流媒体</span>

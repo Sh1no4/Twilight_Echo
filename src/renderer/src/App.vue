@@ -8,10 +8,10 @@ import PlayingMusic from './components/PlayingMusic.vue'
 import StreamingPage from './components/StreamingPage.vue'
 import LoginPage from './components/LoginPage.vue'
 import SettingsPage from './components/SettingsPage.vue'
-import EqualizerPage from './components/EqualizerPage.vue'
 import { useMusicStore } from './stores/useMusicStore'
 import { useNcmStore } from './stores/useNcmStore'
 import { usePlayerStore } from './stores/usePlayerStore'
+import { useSettingsStore } from './stores/useSettingsStore'
 
 const menuOpen = ref(false)
 const showPlayingPage = ref(false)
@@ -19,14 +19,10 @@ const showStreamingPage = ref(false)
 const showLoginPage = ref(false)
 const loginPageMode = ref<'login' | 'profile'>('login')
 const showSettingsPage = ref(false)
-const showEqualizerPage = ref(false)
-type SettingsSection = 'general' | 'system' | 'audio' | 'personalization' | 'shortcuts' | 'about'
-const settingsInitialSection = ref<SettingsSection>('general')
 
 const activeCategory = ref('allSongs')
 const activeFilter = ref<string | null>(null)
 const songlistTransitionName = ref('page-down')
-const localMenuOrder = ['allSongs', 'artists', 'albums', 'playlists', 'folders']
 
 const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
 
@@ -61,23 +57,10 @@ function getDepth(filter: string | null): number {
   return 0
 }
 
-function getLocalMenuIndex(category: string): number {
-  const index = localMenuOrder.indexOf(category)
-  return index === -1 ? 0 : index
-}
-
 function onSelectView(category: string, filter: string | null): void {
-  const oldIndex = getLocalMenuIndex(activeCategory.value)
-  const newIndex = getLocalMenuIndex(category)
-
-  if (newIndex !== oldIndex) {
-    songlistTransitionName.value = newIndex > oldIndex ? 'page-down' : 'page-up'
-  } else {
-    const oldDepth = getDepth(activeFilter.value)
-    const newDepth = getDepth(filter)
-    songlistTransitionName.value = newDepth >= oldDepth ? 'page-down' : 'page-up'
-  }
-
+  const oldDepth = getDepth(activeFilter.value)
+  const newDepth = getDepth(filter)
+  songlistTransitionName.value = newDepth >= oldDepth ? 'page-down' : 'page-up'
   activeCategory.value = category
   activeFilter.value = filter
 }
@@ -105,7 +88,6 @@ function enterStreamingMode(): void {
   menuOpen.value = false
   showPlayingPage.value = false
   showSettingsPage.value = false
-  showEqualizerPage.value = false
   showStreamingPage.value = true
 }
 
@@ -118,7 +100,6 @@ async function openLoginPage(): Promise<void> {
     showPlayingPage.value = false
     showStreamingPage.value = false
     showSettingsPage.value = false
-    showEqualizerPage.value = false
     loginPageMode.value = 'profile'
     showLoginPage.value = true
     return
@@ -131,7 +112,14 @@ async function openLoginPage(): Promise<void> {
       const data = (await window.api.ncm.request(
         `/login/status?timestamp=${Date.now()}`,
         cookie
-      )) as Record<string, any>
+      )) as {
+        code?: number
+        profile?: unknown
+        data?: {
+          code?: number
+          profile?: unknown
+        }
+      }
       const profileData = data.data?.profile || data.profile
       if ((data.data?.code === 200 || data.code === 200) && profileData) {
         enterStreamingMode()
@@ -146,7 +134,6 @@ async function openLoginPage(): Promise<void> {
   showPlayingPage.value = false
   showStreamingPage.value = false
   showSettingsPage.value = false
-  showEqualizerPage.value = false
   loginPageMode.value = 'login'
   showLoginPage.value = true
 }
@@ -156,9 +143,7 @@ function closeLoginPage(): void {
   showStreamingPage.value = true
 }
 
-function openSettingsPage(section: SettingsSection = 'general'): void {
-  settingsInitialSection.value = section
-  showEqualizerPage.value = false
+function openSettingsPage(): void {
   showSettingsPage.value = true
 }
 
@@ -166,32 +151,21 @@ function closeSettingsPage(): void {
   showSettingsPage.value = false
 }
 
-function openPlaybackSettings(): void {
-  openSettingsPage('audio')
-}
-
-function openEqualizerPage(): void {
-  showSettingsPage.value = false
-  showEqualizerPage.value = true
-}
-
-function closeEqualizerPage(): void {
-  showEqualizerPage.value = false
-}
-
 const { loadLibrary } = useMusicStore()
 const { checkLogin } = useNcmStore()
 const { currentTrack } = usePlayerStore()
-const hasPlayerBar = computed(
-  () => !showLoginPage.value && !showSettingsPage.value && !showEqualizerPage.value && !!currentTrack.value
-)
+const { loadSettings, settings } = useSettingsStore()
+const hasPlayerBar = computed(() => !showLoginPage.value && !!currentTrack.value)
 const mainContentMinHeight = computed(() =>
   hasPlayerBar.value ? 'calc(100vh - 32px - 96px)' : 'calc(100vh - 32px)'
 )
 
-onMounted(() => {
+onMounted(async () => {
+  await loadSettings()
   loadLibrary()
-  checkLogin()
+  if (settings.value.autoCheckLogin) {
+    checkLogin()
+  }
 })
 
 const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOrigin.value.y}px`)
@@ -209,7 +183,7 @@ const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOri
     @settings="openSettingsPage"
   />
   <SideMenu
-    v-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !showSettingsPage && !showEqualizerPage"
+    v-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !showSettingsPage"
     :open="menuOpen"
     @select-view="onSelectView"
     @enter-streaming="enterStreamingMode"
@@ -252,23 +226,10 @@ const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOri
       />
     </Transition>
     <Transition name="login-page">
-      <SettingsPage
-        v-if="showSettingsPage"
-        :initial-section="settingsInitialSection"
-        @back="closeSettingsPage"
-      />
-    </Transition>
-    <Transition name="login-page">
-      <EqualizerPage v-if="showEqualizerPage" @back="closeEqualizerPage" />
+      <SettingsPage v-if="showSettingsPage" @back="closeSettingsPage" />
     </Transition>
   </div>
-  <PlayerBar
-    v-if="hasPlayerBar"
-    :glass="showPlayingPage"
-    @click-cover="handleCoverClick"
-    @open-settings="openPlaybackSettings"
-    @open-equalizer="openEqualizerPage"
-  />
+  <PlayerBar v-if="hasPlayerBar" :glass="showPlayingPage" @click-cover="handleCoverClick" />
 </template>
 
 <style>
@@ -304,10 +265,10 @@ body {
   right: -12vw;
   top: 5vh;
   background:
-    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.96), transparent 28%),
-    radial-gradient(circle at 46% 48%, rgba(124, 77, 255, 0.055), transparent 62%),
-    radial-gradient(circle at 66% 62%, rgba(255, 126, 182, 0.045), transparent 70%);
-  opacity: 0.56;
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), transparent 24%),
+    radial-gradient(circle at 46% 48%, rgba(124, 77, 255, 0.22), transparent 58%),
+    radial-gradient(circle at 66% 62%, rgba(255, 126, 182, 0.16), transparent 68%);
+  opacity: 0.8;
   animation: light-orbit 12s var(--te-ease-soft) infinite alternate;
 }
 
@@ -319,9 +280,9 @@ body {
   left: 10vw;
   bottom: 6vh;
   background:
-    radial-gradient(circle at 40% 45%, rgba(34, 211, 238, 0.05), transparent 62%),
-    radial-gradient(circle at 72% 48%, rgba(168, 133, 247, 0.055), transparent 68%);
-  opacity: 0.5;
+    radial-gradient(circle at 40% 45%, rgba(34, 211, 238, 0.18), transparent 58%),
+    radial-gradient(circle at 72% 48%, rgba(168, 133, 247, 0.2), transparent 65%);
+  opacity: 0.72;
   animation: light-float 16s var(--te-ease-soft) infinite alternate;
 }
 
@@ -357,10 +318,8 @@ body {
 .page-up-enter-active,
 .page-up-leave-active {
   transition:
-    transform 0.42s var(--te-ease-soft),
-    opacity 0.26s ease,
-    filter 0.32s ease;
-  will-change: transform, opacity, filter;
+    transform 0.36s var(--te-ease-enter),
+    opacity 0.28s ease;
 }
 .page-down-enter-active,
 .page-up-enter-active {
@@ -371,28 +330,24 @@ body {
   z-index: 0;
 }
 
-/* page-down: selected page is lower in the sidebar, new view rises from below */
+/* page-down: navigating deeper — old slides UP, new slides UP from BELOW */
 .page-down-leave-to {
-  transform: translateY(-34px) scale(0.992);
+  transform: translateY(-100%);
   opacity: 0;
-  filter: blur(8px);
 }
 .page-down-enter-from {
-  transform: translateY(46px) scale(0.992);
+  transform: translateY(100%);
   opacity: 0;
-  filter: blur(8px);
 }
 
-/* page-up: selected page is higher in the sidebar, new view drops from above */
+/* page-up: navigating back — old slides DOWN, new slides DOWN from ABOVE */
 .page-up-leave-to {
-  transform: translateY(34px) scale(0.992);
+  transform: translateY(100%);
   opacity: 0;
-  filter: blur(8px);
 }
 .page-up-enter-from {
-  transform: translateY(-46px) scale(0.992);
+  transform: translateY(-100%);
   opacity: 0;
-  filter: blur(8px);
 }
 
 /* PlayingMusic open/close — expands from / shrinks to cover position */

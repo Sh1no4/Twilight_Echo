@@ -11,6 +11,7 @@ interface TrackData {
   size: number
   cover: string | null
   lyrics: string | null
+  translatedLyrics?: string | null
 }
 
 interface MpvEvent {
@@ -18,65 +19,31 @@ interface MpvEvent {
   data: unknown
 }
 
-type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
-type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
-type EqMode = 'graphic' | 'parametric'
-type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
-type EqualizerFilterType =
-  | 'peak'
-  | 'lowShelf'
-  | 'highShelf'
-  | 'bandPass'
-  | 'lowPass'
-  | 'highPass'
-  | 'allPass'
-
-interface EqualizerBand {
-  frequency: number
-  gain: number
-  q: number
-  filterType: EqualizerFilterType
-}
-
-interface AudioProcessingSettings {
-  highResolution: boolean
-  dsdToPcm: boolean
-  eqEnabled: boolean
-  eqMode: EqMode
-  eqPreamp: number
-  eqBands: EqualizerBand[]
-  volumeNormalization: VolumeNormalizationMode
-  replayGainPreamp: number
-  replayGainFallback: number
-  replayGainClip: boolean
-  gapless: boolean
-  crossfadeSeconds: number
-}
-
-interface AudioEqPreset {
-  id: string
-  name: string
-  eqMode: EqMode
-  eqPreamp: number
-  eqBands: EqualizerBand[]
-}
-
 interface AppSettings {
-  autoLaunch: boolean
+  autoCheckLogin: boolean
+  minimizeToTray: boolean
+  launchAtLogin: boolean
   hardwareAcceleration: boolean
-  globalShortcuts: boolean
-  musicCachePath: string
-  closeToTray: boolean
-  audioProcessing: AudioProcessingSettings
-  audioEqPresets: AudioEqPreset[]
+  cachePath: string
+  blurEffect: boolean
+  useCoverTheme: boolean
+  lyricFontSize: number
 }
 
-interface AudioOutputOption {
-  id: AudioOutputId
-  label: string
-  description: string
-  platform: NodeJS.Platform
-  supportsExclusive: boolean
+interface SettingsSnapshot {
+  settings: AppSettings
+  defaults: {
+    cachePath: string
+  }
+  paths: {
+    settingsFile: string
+    userDataPath: string
+    activeCachePath: string
+  }
+  appVersion: string
+  platform: string
+  restartRequired: boolean
+  restartReasons: string[]
 }
 
 interface MpvAPI {
@@ -87,11 +54,6 @@ interface MpvAPI {
   stop: () => Promise<void>
   setExclusiveMode: (enabled: boolean) => Promise<void>
   getExclusiveMode: () => Promise<boolean>
-  setAudioOutput: (output: AudioOutputId) => Promise<void>
-  getAudioOutput: () => Promise<AudioOutputId>
-  getAudioOutputOptions: () => Promise<AudioOutputOption[]>
-  setAudioProcessing: (settings: Partial<AudioProcessingSettings>) => Promise<AudioProcessingSettings>
-  getAudioProcessing: () => Promise<AudioProcessingSettings>
 
   onPropertyChange: (cb: (event: MpvEvent) => void) => () => void
   onEndFile: (cb: (reason: string) => void) => () => void
@@ -112,6 +74,18 @@ interface WindowAPI {
   }
   shell: {
     showItemInFolder: (filePath: string) => Promise<void>
+    openPath: (targetPath: string) => Promise<string>
+  }
+  app: {
+    relaunch: () => Promise<void>
+  }
+  settings: {
+    get: () => Promise<SettingsSnapshot>
+    update: (patch: Partial<AppSettings>) => Promise<SettingsSnapshot>
+    chooseCacheFolder: () => Promise<string | null>
+    getCacheSize: () => Promise<number>
+    clearCache: () => Promise<number>
+    onChanged: (cb: (snapshot: SettingsSnapshot) => void) => () => void
   }
   fs: {
     scanMusicFiles: (folderPath: string) => Promise<TrackData[]>
@@ -122,20 +96,12 @@ interface WindowAPI {
   ncm: {
     getPort: () => Promise<number>
     request: (path: string, cookie?: string) => Promise<unknown>
-    getCachedSong: (songId: number) => Promise<string | null>
-    cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
   }
   data: {
     saveMusicLibrary: (data: { tracks: unknown[]; folders: string[] }) => Promise<void>
     loadMusicLibrary: () => Promise<{ tracks: unknown[]; folders: string[] } | unknown[]>
     saveCookie: (cookie: string) => Promise<void>
     loadCookie: () => Promise<string>
-  }
-  settings: {
-    get: () => Promise<AppSettings>
-    update: (patch: Partial<AppSettings>) => Promise<AppSettings>
-    selectMusicCachePath: () => Promise<string | null>
-    onPlayerShortcut: (cb: (action: PlayerShortcutAction) => void) => () => void
   }
 }
 
