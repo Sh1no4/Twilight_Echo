@@ -310,7 +310,9 @@ function startSideMenuMonitor(): void {
 }
 
 onMounted(async () => {
-  removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(savePlaybackSessionForQuit)
+  removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(
+    savePlaybackSessionForQuit
+  )
   const loadedSettings = await loadSettings()
   await loadLibrary()
   await checkLogin()

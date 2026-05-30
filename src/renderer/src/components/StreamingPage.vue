@@ -49,6 +49,7 @@ const artistPlaylists = ref<NcmPlaylistSummary[]>([])
 const detailLoading = ref(false)
 const detailError = ref('')
 const likedCount = ref<number | null>(null)
+let detailLoadToken = 0
 
 const dailySongs = ref<Track[]>([])
 const personalFmSongs = ref<Track[]>([])
@@ -87,6 +88,7 @@ const recSections = computed<RecSection[]>(() => [
 ])
 
 async function openRecSection(section: RecSection): Promise<void> {
+  detailLoadToken++
   streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = { type: 'rec', section }
   detailTracks.value = section.tracks
@@ -304,6 +306,22 @@ const userPlaylistEntries = computed(() => userPlaylists.value)
 const currentArtistPlaylists = computed(() =>
   currentDetail.value?.type === 'artist' ? artistPlaylists.value : []
 )
+const hasTrackDetailLoadingSurface = computed(
+  () =>
+    currentDetail.value?.type === 'liked' ||
+    currentDetail.value?.type === 'playlist' ||
+    currentDetail.value?.type === 'artist'
+)
+const showDetailInitialLoading = computed(
+  () =>
+    hasTrackDetailLoadingSurface.value &&
+    detailLoading.value &&
+    detailTracks.value.length === 0 &&
+    currentArtistPlaylists.value.length === 0
+)
+const showDetailOverlayLoading = computed(
+  () => detailLoading.value && !showDetailInitialLoading.value
+)
 
 const detailHeaderInfo = computed(() => {
   if (!currentDetail.value) return null
@@ -377,6 +395,7 @@ function selectTab(key: StreamingTab): void {
 }
 
 function resetDetail(): void {
+  detailLoadToken++
   if (currentDetail.value) {
     streamingTransitionName.value = 'stream-page-up'
   }
@@ -386,6 +405,20 @@ function resetDetail(): void {
   artistPlaylists.value = []
   detailLoading.value = false
   detailError.value = ''
+}
+
+function beginDetailLoad(): number {
+  const token = ++detailLoadToken
+  detailTracks.value = []
+  detailUsers.value = []
+  artistPlaylists.value = []
+  detailLoading.value = true
+  detailError.value = ''
+  return token
+}
+
+function isActiveDetailLoad(token: number): boolean {
+  return token === detailLoadToken
 }
 
 async function ensureLibraryLoaded(force = false): Promise<void> {
@@ -400,63 +433,70 @@ async function ensureLibraryLoaded(force = false): Promise<void> {
 async function openLikedTracks(force = false): Promise<void> {
   streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = { type: 'liked' }
-  detailLoading.value = true
-  detailError.value = ''
+  const token = beginDetailLoad()
 
   try {
     const tracks = await fetchLikedTracks(force)
+    if (!isActiveDetailLoad(token)) return
     detailTracks.value = tracks
     likedCount.value = tracks.length
     syncLikedIds(tracks)
   } catch (error) {
+    if (!isActiveDetailLoad(token)) return
     detailError.value = error instanceof Error ? error.message : '加载收藏歌曲失败'
     detailTracks.value = []
   } finally {
-    detailLoading.value = false
+    if (isActiveDetailLoad(token)) {
+      detailLoading.value = false
+    }
   }
 }
 
 async function openPlaylist(playlist: NcmPlaylistSummary, force = false): Promise<void> {
   streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = { type: 'playlist', playlist }
-  detailLoading.value = true
-  detailError.value = ''
+  const token = beginDetailLoad()
 
   try {
-    detailTracks.value = await fetchPlaylistTracks(playlist.id, force)
+    const tracks = await fetchPlaylistTracks(playlist.id, force)
+    if (!isActiveDetailLoad(token)) return
+    detailTracks.value = tracks
   } catch (error) {
+    if (!isActiveDetailLoad(token)) return
     detailError.value = error instanceof Error ? error.message : '加载歌单失败'
     detailTracks.value = []
   } finally {
-    detailLoading.value = false
+    if (isActiveDetailLoad(token)) {
+      detailLoading.value = false
+    }
   }
 }
 
 async function openArtist(artist: NcmArtistSummary): Promise<void> {
   streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = { type: 'artist', artist }
-  detailLoading.value = true
-  detailError.value = ''
-  detailTracks.value = []
-  detailUsers.value = []
-  artistPlaylists.value = []
+  const token = beginDetailLoad()
 
   try {
     const [tracks, playlists] = await Promise.all([
       fetchArtistTopSongs(artist.id).catch(() => [] as Track[]),
       fetchArtistPlaylists(artist.id).catch(() => [] as NcmPlaylistSummary[])
     ])
+    if (!isActiveDetailLoad(token)) return
     detailTracks.value = tracks
     artistPlaylists.value = playlists
     if (tracks.length === 0 && playlists.length === 0) {
       detailError.value = '没有找到这个歌手的热门歌曲或歌单'
     }
   } catch (error) {
+    if (!isActiveDetailLoad(token)) return
     detailError.value = error instanceof Error ? error.message : '加载歌手页面失败'
     detailTracks.value = []
     artistPlaylists.value = []
   } finally {
-    detailLoading.value = false
+    if (isActiveDetailLoad(token)) {
+      detailLoading.value = false
+    }
   }
 }
 
@@ -469,42 +509,48 @@ async function openUserList(listType: 'follows' | 'followers'): Promise<void> {
     users: [],
     title: listType === 'follows' ? '关注' : '粉丝'
   }
-  detailLoading.value = true
-  detailError.value = ''
-  detailUsers.value = []
+  const token = beginDetailLoad()
 
   try {
     const uid = profile.value.userId
     const fetchFunc = listType === 'follows' ? fetchUserFollows : fetchUserFolloweds
-    detailUsers.value = await fetchFunc(uid, 100, 0)
+    const users = await fetchFunc(uid, 100, 0)
+    if (!isActiveDetailLoad(token)) return
+    detailUsers.value = users
     if (currentDetail.value.type === 'user_list') {
       currentDetail.value.users = detailUsers.value
     }
   } catch (error) {
+    if (!isActiveDetailLoad(token)) return
     detailError.value =
       error instanceof Error
         ? error.message
         : `加载${listType === 'follows' ? '关注' : '粉丝'}列表失败`
   } finally {
-    detailLoading.value = false
+    if (isActiveDetailLoad(token)) {
+      detailLoading.value = false
+    }
   }
 }
 
 async function openUserPlaylists(user: NcmUserSummary): Promise<void> {
   streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = { type: 'user_playlists', user, playlists: [] }
-  detailLoading.value = true
-  detailError.value = ''
+  const token = beginDetailLoad()
 
   try {
     const playlists = await fetchUserPlaylistsByUid(user.id)
+    if (!isActiveDetailLoad(token)) return
     if (currentDetail.value.type === 'user_playlists') {
       currentDetail.value.playlists = playlists
     }
   } catch (error) {
+    if (!isActiveDetailLoad(token)) return
     detailError.value = error instanceof Error ? error.message : '加载用户歌单失败'
   } finally {
-    detailLoading.value = false
+    if (isActiveDetailLoad(token)) {
+      detailLoading.value = false
+    }
   }
 }
 
@@ -776,9 +822,7 @@ onMounted(async () => {
 
           <div v-else-if="currentDetail" class="detail-view">
             <div
-              v-if="
-                detailLoading && (detailTracks.length > 0 || currentArtistPlaylists.length > 0)
-              "
+              v-if="showDetailOverlayLoading"
               class="detail-loading-overlay"
               aria-live="polite"
             >
@@ -815,12 +859,24 @@ onMounted(async () => {
             </div>
 
             <div
-              v-if="
-                detailLoading && detailTracks.length === 0 && currentArtistPlaylists.length === 0
-              "
-              class="detail-content"
+              v-if="showDetailInitialLoading"
+              class="detail-content playlist-loading-state"
+              aria-live="polite"
             >
-              <div class="track-table-wrapper">
+              <div class="playlist-loading-status">
+                <span class="playlist-loading-disc" aria-hidden="true">
+                  <span class="playlist-loading-disc-core"></span>
+                </span>
+                <span class="playlist-loading-copy">
+                  <span class="playlist-loading-kicker">正在加载歌单</span>
+                  <strong>{{ detailHeaderInfo?.title ?? '歌单' }}</strong>
+                  <span>正在整理歌曲列表...</span>
+                </span>
+                <span class="playlist-loading-bars" aria-hidden="true">
+                  <span v-for="i in 5" :key="i"></span>
+                </span>
+              </div>
+              <div class="track-table-wrapper playlist-loading-table">
                 <table class="track-table skeleton-table">
                   <thead>
                     <tr>
@@ -2073,6 +2129,124 @@ onMounted(async () => {
   background: linear-gradient(135deg, #7c4dff 0%, #c084fc 48%, #ff7eb6 100%);
 }
 /* ===== Skeleton Animation ===== */
+.playlist-loading-state {
+  gap: 14px;
+}
+
+.playlist-loading-status {
+  min-height: 74px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid #eef1f6;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
+  overflow: hidden;
+}
+
+.playlist-loading-disc {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.95), transparent 32%),
+    linear-gradient(135deg, #7c4dff, #b469f4 56%, #ff7eb6);
+  box-shadow: 0 14px 28px rgba(124, 77, 255, 0.18);
+}
+
+.playlist-loading-disc::before,
+.playlist-loading-disc::after {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.54);
+  animation: playlist-loading-ring 1.5s ease-in-out infinite;
+}
+
+.playlist-loading-disc::after {
+  inset: 14px;
+  animation-delay: 0.18s;
+}
+
+.playlist-loading-disc-core {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.2);
+}
+
+.playlist-loading-copy {
+  min-width: 0;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.playlist-loading-kicker,
+.playlist-loading-copy > span:last-child {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(82, 90, 122, 0.58);
+}
+
+.playlist-loading-copy strong {
+  min-width: 0;
+  font-size: 15px;
+  line-height: 1.3;
+  font-weight: 800;
+  color: #242946;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playlist-loading-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 28px;
+  padding-inline: 4px;
+  flex-shrink: 0;
+}
+
+.playlist-loading-bars span {
+  width: 4px;
+  height: 10px;
+  border-radius: 999px;
+  background: #7c4dff;
+  opacity: 0.34;
+  animation: playlist-loading-bar 0.9s ease-in-out infinite;
+}
+
+.playlist-loading-bars span:nth-child(2) {
+  animation-delay: 0.09s;
+}
+
+.playlist-loading-bars span:nth-child(3) {
+  animation-delay: 0.18s;
+}
+
+.playlist-loading-bars span:nth-child(4) {
+  animation-delay: 0.27s;
+}
+
+.playlist-loading-bars span:nth-child(5) {
+  animation-delay: 0.36s;
+}
+
+.playlist-loading-table {
+  min-height: 430px;
+}
+
 .skeleton-box {
   background: rgba(0, 0, 0, 0.04);
   border-radius: 4px;
@@ -2094,6 +2268,30 @@ onMounted(async () => {
 @keyframes skeleton-shimmer {
   100% {
     left: 200%;
+  }
+}
+
+@keyframes playlist-loading-ring {
+  0%,
+  100% {
+    transform: scale(0.96);
+    opacity: 0.54;
+  }
+  50% {
+    transform: scale(1.08);
+    opacity: 0.92;
+  }
+}
+
+@keyframes playlist-loading-bar {
+  0%,
+  100% {
+    height: 8px;
+    opacity: 0.32;
+  }
+  50% {
+    height: 26px;
+    opacity: 0.86;
   }
 }
 

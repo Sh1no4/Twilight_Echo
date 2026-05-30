@@ -130,10 +130,7 @@ function emitPage(first: number): void {
             </tbody>
           </table>
         </div>
-        <div
-          v-if="searchTotal > 30"
-          class="search-paginator"
-        >
+        <div v-if="searchTotal > 30" class="search-paginator">
           <button
             type="button"
             class="pager-btn"
@@ -164,12 +161,7 @@ function emitPage(first: number): void {
             class="playlist-grid-card"
             @click="emit('openPlaylist', playlist)"
           >
-            <img
-              v-if="playlist.cover"
-              :src="playlist.cover"
-              class="playlist-grid-cover"
-              alt=""
-            />
+            <img v-if="playlist.cover" :src="playlist.cover" class="playlist-grid-cover" alt="" />
             <div v-else class="playlist-grid-cover-placeholder">
               <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
             </div>
@@ -177,10 +169,7 @@ function emitPage(first: number): void {
             <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
           </div>
         </div>
-        <div
-          v-if="searchTotal > 30"
-          class="search-paginator"
-        >
+        <div v-if="searchTotal > 30" class="search-paginator">
           <button
             type="button"
             class="pager-btn"
@@ -224,10 +213,7 @@ function emitPage(first: number): void {
             <div class="playlist-grid-count">{{ artist.musicSize }} 首单曲</div>
           </div>
         </div>
-        <div
-          v-if="searchTotal > 30"
-          class="search-paginator"
-        >
+        <div v-if="searchTotal > 30" class="search-paginator">
           <button
             type="button"
             class="pager-btn"
@@ -421,8 +407,12 @@ function emitPage(first: number): void {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* ===== Reference-style Search Refresh ===== */

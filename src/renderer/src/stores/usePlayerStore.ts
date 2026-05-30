@@ -53,6 +53,134 @@ interface AudioOutputState {
   deviceOptions: AudioDeviceOption[]
 }
 
+const FALLBACK_AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
+  {
+    id: 'wasapi',
+    label: 'WASAPI',
+    description: 'Windows 原生音频输出',
+    platform: 'win32',
+    supportsExclusive: true
+  },
+  {
+    id: 'asio',
+    label: 'ASIO',
+    description: '专业声卡驱动输出',
+    platform: 'win32',
+    supportsExclusive: true
+  },
+  {
+    id: 'coreaudio',
+    label: 'CoreAudio',
+    description: 'macOS 原生音频输出',
+    platform: 'darwin',
+    supportsExclusive: true
+  },
+  {
+    id: 'alsa',
+    label: 'ALSA',
+    description: 'Linux 原生音频输出',
+    platform: 'linux',
+    supportsExclusive: false
+  }
+]
+
+const DEFAULT_AUDIO_DEVICE_OPTION: AudioDeviceOption = {
+  id: 'auto',
+  label: '系统默认',
+  isDefault: true
+}
+
+function getRendererPlatform(): NodeJS.Platform {
+  const platform = navigator.platform.toLowerCase()
+  if (platform.includes('mac')) return 'darwin'
+  if (platform.includes('linux')) return 'linux'
+  return 'win32'
+}
+
+function getFallbackAudioOutputOptions(): AudioOutputOption[] {
+  return FALLBACK_AUDIO_OUTPUT_OPTIONS.filter((option) => option.platform === getRendererPlatform())
+}
+
+function getFallbackAudioOutput(): AudioOutputId {
+  return getFallbackAudioOutputOptions()[0]?.id ?? 'alsa'
+}
+
+function formatAudioDeviceLabel(device: string): string {
+  return device === 'auto' ? DEFAULT_AUDIO_DEVICE_OPTION.label : device
+}
+
+function normalizeAudioOutputOptions(
+  options: AudioOutputOption[],
+  selectedOutput: AudioOutputId
+): AudioOutputOption[] {
+  const fallbackOptions = getFallbackAudioOutputOptions()
+  const sourceOptions = Array.isArray(options) && options.length > 0 ? options : fallbackOptions
+  const fallbackById = new Map(fallbackOptions.map((option) => [option.id, option]))
+  const normalized = sourceOptions
+    .filter((option) => option?.id && option?.label)
+    .map((option) => ({
+      ...option,
+      description: fallbackById.get(option.id)?.description ?? option.description
+    }))
+
+  if (!normalized.some((option) => option.id === selectedOutput)) {
+    const fallback = fallbackOptions.find((option) => option.id === selectedOutput)
+    if (fallback) normalized.push(fallback)
+  }
+
+  return normalized.length > 0 ? normalized : fallbackOptions
+}
+
+function normalizeAudioDeviceOptions(
+  options: AudioDeviceOption[],
+  selectedDevice: string
+): AudioDeviceOption[] {
+  const normalized: AudioDeviceOption[] = []
+  const seen = new Set<string>()
+
+  function addOption(option: unknown): void {
+    if (typeof option === 'string') {
+      const id = option.trim()
+      if (!id || seen.has(id)) return
+      seen.add(id)
+      normalized.push({ id, label: formatAudioDeviceLabel(id), isDefault: id === 'auto' })
+      return
+    }
+
+    if (!option || typeof option !== 'object') return
+    const record = option as Record<string, unknown>
+    const id = typeof record.id === 'string' ? record.id.trim() : ''
+    if (!id || seen.has(id)) return
+    const rawLabel = typeof record.label === 'string' ? record.label.trim() : ''
+    seen.add(id)
+    normalized.push({
+      id,
+      label: id === 'auto' ? DEFAULT_AUDIO_DEVICE_OPTION.label : rawLabel || id,
+      isDefault: record.isDefault === true
+    })
+  }
+
+  const sourceOptions = Array.isArray(options) ? (options as unknown[]) : []
+  for (const option of sourceOptions) {
+    addOption(option)
+  }
+
+  if (!seen.has(DEFAULT_AUDIO_DEVICE_OPTION.id)) {
+    normalized.unshift(DEFAULT_AUDIO_DEVICE_OPTION)
+    seen.add(DEFAULT_AUDIO_DEVICE_OPTION.id)
+  }
+
+  if (selectedDevice && !seen.has(selectedDevice)) {
+    normalized.push({
+      id: selectedDevice,
+      label: formatAudioDeviceLabel(selectedDevice),
+      isDefault: selectedDevice === 'auto'
+    })
+  }
+
+  return normalized
+}
+
 const currentTrack = ref<Track | null>(null)
 const dominantColor = ref('#1a73e8')
 const isPlaying = ref(false)
@@ -67,10 +195,10 @@ const originalQueue = ref<Track[]>([])
 const audioEngineReady = ref(false)
 const audioEngineError = ref<string | null>(null)
 const exclusiveMode = ref(false)
-const audioOutput = ref<AudioOutputId>('wasapi')
+const audioOutput = ref<AudioOutputId>(getFallbackAudioOutput())
 const audioDevice = ref('auto')
-const audioOutputOptions = ref<AudioOutputOption[]>([])
-const audioDeviceOptions = ref<AudioDeviceOption[]>([])
+const audioOutputOptions = ref<AudioOutputOption[]>(getFallbackAudioOutputOptions())
+const audioDeviceOptions = ref<AudioDeviceOption[]>([DEFAULT_AUDIO_DEVICE_OPTION])
 const defaultAudioProcessing: AudioProcessingSettings = {
   highResolution: true,
   dsdToPcm: true,
@@ -277,8 +405,36 @@ function applyAudioOutputState(state: AudioOutputState): void {
   exclusiveMode.value = state.exclusiveMode
   audioOutput.value = state.output
   audioDevice.value = state.device
-  audioOutputOptions.value = [...state.outputOptions]
-  audioDeviceOptions.value = [...state.deviceOptions]
+  audioOutputOptions.value = normalizeAudioOutputOptions(state.outputOptions, state.output)
+  audioDeviceOptions.value = normalizeAudioDeviceOptions(state.deviceOptions, state.device)
+}
+
+let audioEngineStateRequest: Promise<void> | null = null
+
+async function refreshAudioOutputState(): Promise<void> {
+  if (audioEngineStateRequest) return audioEngineStateRequest
+  const api = window.api?.audioEngine
+  if (!api) return
+
+  audioEngineStateRequest = (async () => {
+    try {
+      const [outputState, processingSettings] = await Promise.all([
+        api.getAudioOutputState(),
+        api.getAudioProcessing()
+      ])
+      applyAudioOutputState(outputState)
+      audioProcessing.value = processingSettings
+      audioEngineReady.value = true
+      audioEngineError.value = null
+    } catch (err) {
+      audioEngineReady.value = false
+      console.warn('[audio-engine] Failed to refresh audio output state:', err)
+    } finally {
+      audioEngineStateRequest = null
+    }
+  })()
+
+  return audioEngineStateRequest
 }
 
 watch(volume, (val) => {
@@ -486,16 +642,7 @@ function setupAudioEngineListeners(): void {
       audioEngineReady.value = true
       audioEngineError.value = null
       api.setVolume(volume.value).catch(() => {})
-      try {
-        const [outputState, processingSettings] = await Promise.all([
-          api.getAudioOutputState(),
-          api.getAudioProcessing()
-        ])
-        applyAudioOutputState(outputState)
-        audioProcessing.value = processingSettings
-      } catch {
-        // keep default
-      }
+      await refreshAudioOutputState()
     })
   )
 
@@ -531,6 +678,8 @@ function setupAudioEngineListeners(): void {
       })
     )
   }
+
+  void refreshAudioOutputState()
 }
 
 setupAudioEngineListeners()
@@ -610,7 +759,10 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         if (!isActiveLoad(loadToken, track)) return
         nativeStarted = playResult?.nativeStarted === true
       } catch (engineErr) {
-        console.warn('[audio-engine] Native output unavailable, falling back to Electron playback:', engineErr)
+        console.warn(
+          '[audio-engine] Native output unavailable, falling back to Electron playback:',
+          engineErr
+        )
       }
     }
 
@@ -852,6 +1004,7 @@ export function usePlayerStore(): {
   toggleExclusiveMode: () => Promise<void>
   setAudioOutput: (output: AudioOutputId, device?: string) => Promise<void>
   setAudioDevice: (device: string) => Promise<void>
+  refreshAudioOutputState: () => Promise<void>
   setAudioProcessing: (settings: Partial<AudioProcessingSettings>) => Promise<void>
   restorePlaybackSession: (session: PlaybackSession) => void
   createPlaybackSession: (mode: PlaybackResumeMode) => PlaybackSession | null
@@ -974,10 +1127,10 @@ export function usePlayerStore(): {
     toggleExclusiveMode,
     setAudioOutput,
     setAudioDevice,
+    refreshAudioOutputState,
     setAudioProcessing,
     restorePlaybackSession,
     createPlaybackSession,
     formatTime
   }
 }
-

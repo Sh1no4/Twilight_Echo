@@ -29,7 +29,7 @@ interface AudioEngineEvent {
 
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
-type AppTheme = 'pureWhite' | 'aurora'
+type AppTheme = 'system' | 'pureWhite' | 'dark' | 'aurora'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 type TrackSource = 'local' | 'ncm'
 type EqMode = 'graphic' | 'parametric'
@@ -256,4 +256,3 @@ declare global {
     api: WindowAPI
   }
 }
-

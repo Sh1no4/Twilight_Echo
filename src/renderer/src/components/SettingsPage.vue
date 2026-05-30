@@ -19,7 +19,9 @@ const tabs = [
 ] as const
 
 const themeOptions: { value: AppTheme; label: string; description: string }[] = [
-  { value: 'pureWhite', label: '纯白', description: '清爽白底与蓝色重点色' },
+  { value: 'system', label: '跟随', description: '自动匹配系统明暗' },
+  { value: 'pureWhite', label: '浅色', description: '清爽白底与蓝色重点色' },
+  { value: 'dark', label: '深色', description: '低亮度背景与高对比文本' },
   { value: 'aurora', label: '流光', description: '柔和多彩的玻璃风格' }
 ]
 
@@ -78,6 +80,7 @@ const {
   toggleExclusiveMode,
   setAudioOutput,
   setAudioDevice,
+  refreshAudioOutputState,
   volume,
   setVolume
 } = usePlayerStore()
@@ -137,7 +140,7 @@ function setVolumeFromInput(event: Event): void {
 }
 
 onMounted(async () => {
-  await loadSettings()
+  await Promise.all([loadSettings(), refreshAudioOutputState()])
   await refreshCacheSize()
 })
 </script>
@@ -276,11 +279,7 @@ onMounted(async () => {
                 <span class="setting-desc">选择当前音频后端使用的设备或驱动</span>
               </div>
               <select class="select-control" :value="audioDevice" @change="selectAudioDevice">
-                <option
-                  v-for="device in audioDeviceOptions"
-                  :key="device.id"
-                  :value="device.id"
-                >
+                <option v-for="device in audioDeviceOptions" :key="device.id" :value="device.id">
                   {{ device.label }}
                 </option>
               </select>
@@ -823,7 +822,7 @@ onMounted(async () => {
 
 .theme-segment {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
   gap: 8px;
   padding: 4px;
   border: 1px solid rgba(17, 24, 39, 0.08);
@@ -873,6 +872,14 @@ onMounted(async () => {
 
 .theme-swatch-pureWhite {
   background: linear-gradient(135deg, #fff 0 48%, #2563eb 49% 100%);
+}
+
+.theme-swatch-system {
+  background: linear-gradient(135deg, #fff 0 48%, #111827 49% 100%);
+}
+
+.theme-swatch-dark {
+  background: linear-gradient(135deg, #0b1020 0 48%, #8b5cf6 49% 100%);
 }
 
 .theme-swatch-aurora {
@@ -1209,5 +1216,3 @@ onMounted(async () => {
   }
 }
 </style>
-
-

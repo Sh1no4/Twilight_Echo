@@ -22,12 +22,14 @@ const bgSrc = ref(currentTrack.value?.cover ?? '')
 const lyricsEl = ref<HTMLElement | null>(null)
 const lyricLineEls = ref<Array<HTMLElement | null>>([])
 let lyricScrollRaf = 0
-let lyricResizeTimer = 0
+let lyricCenterTimer = 0
+let lyricOpenCenterTimer = 0
 let lyricManualScrollTimer = 0
 let lyricManualScrollLocked = false
 let lyricResizeObserver: ResizeObserver | null = null
 const LYRIC_SCROLL_DURATION_MS = 420
 const LYRIC_RESIZE_SCROLL_DURATION_MS = 260
+const LYRIC_OPEN_CENTER_DELAY_MS = 620
 const LYRIC_MANUAL_RETURN_DELAY_MS = 3000
 const LYRIC_CENTER_OFFSET_RATIO = 0.08
 const LYRIC_CENTER_OFFSET_MAX = 72
@@ -75,9 +77,13 @@ watch(
 
 onBeforeUnmount(() => {
   cancelLyricScrollAnimation()
-  if (lyricResizeTimer !== 0) {
-    window.clearTimeout(lyricResizeTimer)
-    lyricResizeTimer = 0
+  if (lyricCenterTimer !== 0) {
+    window.clearTimeout(lyricCenterTimer)
+    lyricCenterTimer = 0
+  }
+  if (lyricOpenCenterTimer !== 0) {
+    window.clearTimeout(lyricOpenCenterTimer)
+    lyricOpenCenterTimer = 0
   }
   clearLyricManualScrollTimer()
   lyricResizeObserver?.disconnect()
@@ -262,6 +268,13 @@ function focusLyricLine(index: number, duration = LYRIC_SCROLL_DURATION_MS): voi
   animateLyricScrollTo(targetTop, duration)
 }
 
+async function centerActiveLyric(duration = LYRIC_RESIZE_SCROLL_DURATION_MS): Promise<void> {
+  await nextTick()
+  if (activeLyricIndex.value >= 0) {
+    focusLyricLine(activeLyricIndex.value, duration)
+  }
+}
+
 function clearLyricManualScrollTimer(): void {
   if (lyricManualScrollTimer !== 0) {
     window.clearTimeout(lyricManualScrollTimer)
@@ -287,18 +300,34 @@ function onLyricsManualScroll(): void {
   scheduleLyricReturnToCenter()
 }
 
-function refocusActiveLyricAfterResize(): void {
-  if (lyricResizeTimer !== 0) {
-    window.clearTimeout(lyricResizeTimer)
+function scheduleActiveLyricCenter(duration = LYRIC_RESIZE_SCROLL_DURATION_MS, delay = 80): void {
+  if (lyricCenterTimer !== 0) {
+    window.clearTimeout(lyricCenterTimer)
   }
 
-  lyricResizeTimer = window.setTimeout(async () => {
-    lyricResizeTimer = 0
-    await nextTick()
-    if (activeLyricIndex.value >= 0) {
-      focusLyricLine(activeLyricIndex.value, LYRIC_RESIZE_SCROLL_DURATION_MS)
+  lyricCenterTimer = window.setTimeout(() => {
+    lyricCenterTimer = 0
+    void centerActiveLyric(duration)
+  }, delay)
+}
+
+function scheduleLyricOpenCenter(): void {
+  scheduleActiveLyricCenter()
+
+  if (lyricOpenCenterTimer !== 0) {
+    window.clearTimeout(lyricOpenCenterTimer)
+  }
+
+  lyricOpenCenterTimer = window.setTimeout(() => {
+    lyricOpenCenterTimer = 0
+    if (!lyricManualScrollLocked) {
+      void centerActiveLyric()
     }
-  }, 80)
+  }, LYRIC_OPEN_CENTER_DELAY_MS)
+}
+
+function onLyricLayoutResize(): void {
+  scheduleActiveLyricCenter()
 }
 
 watch(activeLyricIndex, async (index) => {
@@ -314,21 +343,23 @@ watch(lyricsEl, (el, previousEl) => {
   }
   if (el) {
     lyricResizeObserver?.observe(el)
+    scheduleLyricOpenCenter()
   }
 })
 
 onMounted(() => {
   lyricResizeObserver = new ResizeObserver(() => {
-    refocusActiveLyricAfterResize()
+    onLyricLayoutResize()
   })
   if (lyricsEl.value) {
     lyricResizeObserver.observe(lyricsEl.value)
   }
-  window.addEventListener('resize', refocusActiveLyricAfterResize)
+  scheduleLyricOpenCenter()
+  window.addEventListener('resize', onLyricLayoutResize)
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', refocusActiveLyricAfterResize)
+  window.removeEventListener('resize', onLyricLayoutResize)
 })
 </script>
 

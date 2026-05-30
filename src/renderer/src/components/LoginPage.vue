@@ -71,9 +71,7 @@ function getNcmUrl(path: string): string {
 function withTimeout<T>(promise: Promise<T>, ms = REQUEST_TIMEOUT): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => reject(new Error('请求超时')), ms)
-    promise
-      .then(resolve, reject)
-      .finally(() => window.clearTimeout(timer))
+    promise.then(resolve, reject).finally(() => window.clearTimeout(timer))
   })
 }
 
@@ -395,8 +393,7 @@ onUnmounted(() => {
   flex-direction: column;
   background:
     radial-gradient(circle at 18% 20%, rgba(124, 77, 255, 0.14), transparent 34%),
-    radial-gradient(circle at 82% 78%, rgba(34, 211, 238, 0.12), transparent 36%),
-    transparent;
+    radial-gradient(circle at 82% 78%, rgba(34, 211, 238, 0.12), transparent 36%), transparent;
 }
 
 .login-header {

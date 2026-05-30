@@ -2,12 +2,15 @@
 import { computed, ref } from 'vue'
 import ImportDialog from './ImportDialog.vue'
 
-const props = withDefaults(defineProps<{
-  open: boolean
-  bottomOffset?: number
-}>(), {
-  bottomOffset: 0
-})
+const props = withDefaults(
+  defineProps<{
+    open: boolean
+    bottomOffset?: number
+  }>(),
+  {
+    bottomOffset: 0
+  }
+)
 
 const emit = defineEmits<{
   selectView: [category: string, filter: string | null]

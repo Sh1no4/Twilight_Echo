@@ -46,6 +46,9 @@ const playlistTrackCache = new Map<string, Track[]>()
 const streamUrlCache = new Map<number, string | null>()
 let likedTracksCache: Track[] | null = null
 
+type NcmApiJson = ReturnType<typeof JSON.parse>
+type NcmApiRecord = Record<string, NcmApiJson>
+
 export interface NcmStore {
   isLoggedIn: Ref<boolean>
   profile: Ref<NcmProfile | null>
@@ -135,22 +138,29 @@ function normalizeNcmFormat(rawFormat: unknown): string | undefined {
   return format
 }
 
-function getSongAudioMeta(song: Record<string, any>): {
+function getSongAudioMeta(song: NcmApiRecord): {
   format?: string
   bitrate?: number
   sampleRate?: number
   size?: number
 } {
-  const candidates = [song.sq, song.hr, song.h, song.m, song.l, song.mainSong?.sq, song.mainSong?.h].filter(
-    Boolean
-  ) as Record<string, any>[]
+  const candidates = [
+    song.sq,
+    song.hr,
+    song.h,
+    song.m,
+    song.l,
+    song.mainSong?.sq,
+    song.mainSong?.h
+  ].filter(Boolean) as NcmApiRecord[]
   const source = candidates.find((item) => item.br || item.bitrate || item.sr || item.size) ?? {}
   const bitrate = Number(source.br ?? source.bitrate ?? song.br ?? song.bitrate)
   const sampleRate = Number(source.sr ?? source.sampleRate ?? song.sr ?? song.sampleRate)
   const size = Number(source.size ?? song.size)
   const format =
-    normalizeNcmFormat(source.type ?? source.encodeType ?? source.format ?? song.type ?? song.encodeType) ??
-    undefined
+    normalizeNcmFormat(
+      source.type ?? source.encodeType ?? source.format ?? song.type ?? song.encodeType
+    ) ?? undefined
 
   return {
     format,
@@ -160,7 +170,7 @@ function getSongAudioMeta(song: Record<string, any>): {
   }
 }
 
-function normalizeTrack(song: Record<string, any>): Track {
+function normalizeTrack(song: NcmApiRecord): Track {
   const songId = Number(song.id)
   const artists = Array.isArray(song.ar)
     ? song.ar.map((artist) => artist?.name).filter(Boolean)
@@ -199,7 +209,7 @@ function normalizeTrack(song: Record<string, any>): Track {
   }
 }
 
-function rememberStreamAudioMeta(songId: number, item: Record<string, any>): void {
+function rememberStreamAudioMeta(songId: number, item: NcmApiRecord): void {
   const format = normalizeNcmFormat(item.type ?? item.encodeType ?? item.format)
   const bitrate = Number(item.br ?? item.bitrate)
   const sampleRate = Number(item.sr ?? item.sampleRate)
@@ -223,7 +233,7 @@ function rememberStreamAudioMeta(songId: number, item: Record<string, any>): voi
   }
 }
 
-function normalizePlaylist(playlist: Record<string, any>): NcmPlaylistSummary {
+function normalizePlaylist(playlist: NcmApiRecord): NcmPlaylistSummary {
   return {
     id: Number(playlist.id),
     name: playlist.name || '未命名歌单',
@@ -232,13 +242,13 @@ function normalizePlaylist(playlist: Record<string, any>): NcmPlaylistSummary {
   }
 }
 
-function getPlaylistItems(data: Record<string, any>): Record<string, any>[] {
+function getPlaylistItems(data: NcmApiRecord): NcmApiRecord[] {
   if (Array.isArray(data.playlist)) return data.playlist
   if (Array.isArray(data.data?.playlist)) return data.data.playlist
   return []
 }
 
-function getSongItems(data: Record<string, any>): Record<string, any>[] {
+function getSongItems(data: NcmApiRecord): NcmApiRecord[] {
   if (Array.isArray(data.songs)) return data.songs
   if (Array.isArray(data.data?.songs)) return data.data.songs
   if (Array.isArray(data.playlist?.tracks)) return data.playlist.tracks
@@ -248,7 +258,7 @@ function getSongItems(data: Record<string, any>): Record<string, any>[] {
   return []
 }
 
-function getLikelistIds(data: Record<string, any>): number[] {
+function getLikelistIds(data: NcmApiRecord): number[] {
   const rawIds = Array.isArray(data.ids)
     ? data.ids
     : Array.isArray(data.data?.ids)
@@ -258,7 +268,7 @@ function getLikelistIds(data: Record<string, any>): number[] {
   return rawIds.map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0)
 }
 
-function getPlaylistTrackIds(data: Record<string, any>): number[] {
+function getPlaylistTrackIds(data: NcmApiRecord): number[] {
   const rawTrackIds = Array.isArray(data.playlist?.trackIds)
     ? data.playlist.trackIds
     : Array.isArray(data.data?.playlist?.trackIds)
@@ -270,17 +280,17 @@ function getPlaylistTrackIds(data: Record<string, any>): number[] {
     .filter((id) => Number.isFinite(id) && id > 0)
 }
 
-function isLikedPlaylistItem(item: Record<string, any>): boolean {
+function isLikedPlaylistItem(item: NcmApiRecord): boolean {
   return item.specialType === 5 || item.specialType === '5' || item.name === '喜欢的音乐'
 }
 
-async function requestAuthed(path: string): Promise<Record<string, any>> {
+async function requestAuthed(path: string): Promise<NcmApiRecord> {
   const cookie = await window.api.data.loadCookie()
   if (!cookie) {
     throw new Error('请先登录网易云音乐')
   }
 
-  return (await window.api.ncm.request(withPcUa(path), cookie)) as Record<string, any>
+  return (await window.api.ncm.request(withPcUa(path), cookie)) as NcmApiRecord
 }
 
 async function ensureProfile(checkLogin: () => Promise<boolean>): Promise<NcmProfile> {
@@ -344,7 +354,7 @@ export function useNcmStore(): NcmStore {
       const data = (await window.api.ncm.request(
         `/login/status?timestamp=${Date.now()}`,
         cookie
-      )) as Record<string, any>
+      )) as NcmApiRecord
       const profileData = data.data?.profile || data.profile
       if ((data.data?.code === 200 || data.code === 200) && profileData) {
         const nextProfile = await buildProfile({
@@ -442,7 +452,7 @@ export function useNcmStore(): NcmStore {
     )
     let songs = getSongItems(trackAllData)
 
-    let playlistDetailData: Record<string, any> | null = null
+    let playlistDetailData: NcmApiRecord | null = null
     if (songs.length === 0) {
       playlistDetailData = await requestAuthed(
         `/playlist/detail?id=${encodeURIComponent(String(playlistId))}`
@@ -454,7 +464,7 @@ export function useNcmStore(): NcmStore {
       const detailSource = playlistDetailData ?? trackAllData
       const ids = getPlaylistTrackIds(detailSource)
       if (ids.length > 0) {
-        const detailSongs: Record<string, any>[] = []
+        const detailSongs: NcmApiRecord[] = []
         const chunkSize = 200
         for (let index = 0; index < ids.length; index += chunkSize) {
           const chunk = ids.slice(index, index + chunkSize)
@@ -493,7 +503,7 @@ export function useNcmStore(): NcmStore {
       return []
     }
 
-    const songs: Record<string, any>[] = []
+    const songs: NcmApiRecord[] = []
     const chunkSize = 200
 
     for (let index = 0; index < ids.length; index += chunkSize) {
@@ -544,7 +554,7 @@ export function useNcmStore(): NcmStore {
       : Array.isArray(data.urls)
         ? data.urls
         : []
-    const streamItem = (streamItems[0] ?? {}) as Record<string, any>
+    const streamItem = (streamItems[0] ?? {}) as NcmApiRecord
     const url = typeof streamItem.url === 'string' ? streamItem.url : null
     rememberStreamAudioMeta(songId, streamItem)
     streamUrlCache.set(songId, url)
@@ -603,7 +613,7 @@ export function useNcmStore(): NcmStore {
         : Array.isArray(data.data)
           ? data.data
           : []
-      return recommend.map((item: any) => ({
+      return recommend.map((item: NcmApiRecord) => ({
         id: Number(item.id),
         name: item.name || '未命名歌单',
         cover: item.picUrl || item.coverImgUrl || null,
@@ -614,7 +624,7 @@ export function useNcmStore(): NcmStore {
     }
   }
 
-  function extractLyricText(data: Record<string, any>, key: 'lrc' | 'tlyric'): string | null {
+  function extractLyricText(data: NcmApiRecord, key: 'lrc' | 'tlyric'): string | null {
     return data[key]?.lyric || data.data?.[key]?.lyric || null
   }
 
@@ -649,7 +659,7 @@ export function useNcmStore(): NcmStore {
       `/cloudsearch?keywords=${encodeURIComponent(keywords)}&type=1&limit=${limit}&offset=${offset}`
     )
     const result = data.result || data.data?.result || {}
-    const songs: Record<string, any>[] = Array.isArray(result.songs) ? result.songs : []
+    const songs: NcmApiRecord[] = Array.isArray(result.songs) ? result.songs : []
     const total = typeof result.songCount === 'number' ? result.songCount : songs.length
     return { tracks: songs.map(normalizeTrack), total }
   }
@@ -663,7 +673,7 @@ export function useNcmStore(): NcmStore {
       `/cloudsearch?keywords=${encodeURIComponent(keywords)}&type=1000&limit=${limit}&offset=${offset}`
     )
     const result = data.result || data.data?.result || {}
-    const playlists: Record<string, any>[] = Array.isArray(result.playlists) ? result.playlists : []
+    const playlists: NcmApiRecord[] = Array.isArray(result.playlists) ? result.playlists : []
     const total = typeof result.playlistCount === 'number' ? result.playlistCount : playlists.length
     return { playlists: playlists.map(normalizePlaylist), total }
   }
@@ -677,7 +687,7 @@ export function useNcmStore(): NcmStore {
       `/cloudsearch?keywords=${encodeURIComponent(keywords)}&type=100&limit=${limit}&offset=${offset}`
     )
     const result = data.result || data.data?.result || {}
-    const artists: Record<string, any>[] = Array.isArray(result.artists) ? result.artists : []
+    const artists: NcmApiRecord[] = Array.isArray(result.artists) ? result.artists : []
     const total = typeof result.artistCount === 'number' ? result.artistCount : artists.length
     return {
       artists: artists.map((item) => ({

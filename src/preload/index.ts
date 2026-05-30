@@ -8,7 +8,7 @@ type AudioEngineErrorCallback = (message: string) => void
 type AudioEnginePlaybackInfoCallback = (info: PlaybackInfo) => void
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
-type AppTheme = 'pureWhite' | 'aurora'
+type AppTheme = 'system' | 'pureWhite' | 'dark' | 'aurora'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 type TrackSource = 'local' | 'ncm'
 type EqMode = 'graphic' | 'parametric'
@@ -276,7 +276,8 @@ const api = {
       ipcRenderer.invoke('audioEngine:play', filePath, startTime),
     togglePause: (): Promise<void> => ipcRenderer.invoke('audioEngine:togglePause'),
     seek: (time: number): Promise<void> => ipcRenderer.invoke('audioEngine:seek', time),
-    setVolume: (volume: number): Promise<void> => ipcRenderer.invoke('audioEngine:setVolume', volume),
+    setVolume: (volume: number): Promise<void> =>
+      ipcRenderer.invoke('audioEngine:setVolume', volume),
     stop: (): Promise<void> => ipcRenderer.invoke('audioEngine:stop'),
     next: (): Promise<void> => ipcRenderer.invoke('audioEngine:next'),
     previous: (): Promise<void> => ipcRenderer.invoke('audioEngine:previous'),
@@ -294,7 +295,8 @@ const api = {
       ipcRenderer.invoke('audioEngine:getAudioOutputState'),
     setAudioProcessing: (
       settings: Partial<AudioProcessingSettings>
-    ): Promise<AudioProcessingSettings> => ipcRenderer.invoke('audioEngine:setAudioProcessing', settings),
+    ): Promise<AudioProcessingSettings> =>
+      ipcRenderer.invoke('audioEngine:setAudioProcessing', settings),
     getAudioProcessing: (): Promise<AudioProcessingSettings> =>
       ipcRenderer.invoke('audioEngine:getAudioProcessing'),
     getPlaybackInfo: (): Promise<PlaybackInfo> => ipcRenderer.invoke('audioEngine:getPlaybackInfo'),
@@ -398,4 +400,3 @@ if (process.contextIsolated) {
   // @ts-ignore (define in dts)
   window.api = api
 }
-

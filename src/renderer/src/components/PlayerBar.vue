@@ -230,7 +230,7 @@ onBeforeUnmount(() => {
     </Transition>
 
     <!-- PlayerBar 主体 -->
-  <div
+    <div
       class="player-bar"
       :class="{ 'player-bar-glass': glass }"
       :style="{
@@ -282,7 +282,7 @@ onBeforeUnmount(() => {
             class="progress-slider"
             :style="{ '--range-value': `${duration ? (currentTime / duration) * 100 : 0}%` }"
             @input="onProgressInput"
-          >
+          />
           <span class="time-label">{{ formatTime(duration) }}</span>
         </div>
       </div>
@@ -299,16 +299,18 @@ onBeforeUnmount(() => {
         <div class="volume-anchor" @wheel="onVolumeWheel">
           <Transition name="volume-drawer">
             <div v-if="volumeOpen" class="volume-drawer" :class="{ 'drawer-glass': glass }">
-              <input
-                type="range"
-                :value="volume"
-                min="0"
-                max="1"
-                step="0.01"
-                class="volume-drawer-slider"
-                :style="{ '--range-value': `${volume * 100}%` }"
-                @input="onVolumeInput"
-              >
+              <div class="volume-drawer-slider-wrap">
+                <input
+                  type="range"
+                  :value="volume"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  class="volume-drawer-slider"
+                  :style="{ '--range-value': `${volume * 100}%` }"
+                  @input="onVolumeInput"
+                />
+              </div>
               <span class="volume-drawer-val">{{ Math.round(volume * 100) }}</span>
             </div>
           </Transition>
@@ -363,9 +365,7 @@ onBeforeUnmount(() => {
                     <span class="toggle-knob"></span>
                   </button>
                 </div>
-                <p class="more-item-desc">
-                  当前输出支持时可绕过系统混音器
-                </p>
+                <p class="more-item-desc">当前输出支持时可绕过系统混音器</p>
               </div>
               <div class="more-item">
                 <div class="more-item-header">
@@ -390,11 +390,7 @@ onBeforeUnmount(() => {
                   :title="selectedAudioDevice?.label ?? audioDevice"
                   @change="onAudioDeviceChange"
                 >
-                  <option
-                    v-for="device in audioDeviceOptions"
-                    :key="device.id"
-                    :value="device.id"
-                  >
+                  <option v-for="device in audioDeviceOptions" :key="device.id" :value="device.id">
                     {{ device.label }}
                   </option>
                 </select>
@@ -490,11 +486,11 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(255, 255, 255, 0.62);
   border-radius: 14px;
   box-shadow: 0 18px 55px rgba(86, 70, 160, 0.16);
-  padding: 8px 5px 7px;
+  padding: 8px 8px 7px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
 }
@@ -506,27 +502,39 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(255, 255, 255, 0.28);
 }
 
-.volume-drawer-slider {
-  width: 96px;
+.volume-drawer-slider-wrap {
+  position: relative;
+  width: 28px;
   height: 96px;
+  flex-shrink: 0;
+}
+
+.volume-drawer-slider {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 96px;
+  height: 28px;
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
   cursor: pointer;
-  transform: rotate(-90deg);
+  transform: translate(-50%, -50%) rotate(-90deg);
 }
 
 .volume-drawer-slider::-webkit-slider-runnable-track {
   height: 6px;
   border-radius: 999px;
   background:
-    linear-gradient(90deg, var(--accent-color, #1a73e8), var(--accent-color, #1a73e8)) 0 / var(--range-value, 70%) 100% no-repeat,
+    linear-gradient(90deg, var(--accent-color, #1a73e8), var(--accent-color, #1a73e8)) 0 /
+      var(--range-value, 70%) 100% no-repeat,
     color-mix(in srgb, var(--accent-color, #1a73e8) 18%, transparent);
 }
 
 .drawer-glass .volume-drawer-slider::-webkit-slider-runnable-track {
   background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.55)) 0 / var(--range-value, 70%) 100% no-repeat,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.55)) 0 /
+      var(--range-value, 70%) 100% no-repeat,
     rgba(255, 255, 255, 0.12);
 }
 
@@ -945,7 +953,8 @@ onBeforeUnmount(() => {
 
 .player-bar-glass .progress-slider::-webkit-slider-runnable-track {
   background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.7)) 0 / var(--range-value, 0%) 100% no-repeat,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.7)) 0 /
+      var(--range-value, 0%) 100% no-repeat,
     color-mix(in srgb, var(--accent-color, #1a73e8) 12%, transparent);
 }
 
@@ -1102,7 +1111,8 @@ onBeforeUnmount(() => {
   height: 6px;
   border-radius: 999px;
   background:
-    linear-gradient(90deg, var(--accent-color, #7c4dff), #c084fc) 0 / var(--range-value, 0%) 100% no-repeat,
+    linear-gradient(90deg, var(--accent-color, #7c4dff), #c084fc) 0 / var(--range-value, 0%) 100%
+      no-repeat,
     color-mix(in srgb, var(--accent-color, #1a73e8) 18%, transparent);
 }
 

@@ -1,6 +1,7 @@
 ﻿import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type {
   AppSettings,
+  AppTheme,
   AudioOutputId,
   AudioProcessingSettings,
   SettingsSnapshot
@@ -43,7 +44,7 @@ const fallbackSettings: AppSettings = {
   musicCachePath: '',
   cachePath: '',
   closeToTray: false,
-  theme: 'pureWhite',
+  theme: 'system',
   blurEffect: true,
   useCoverTheme: true,
   lyricFontSize: 18,
@@ -67,6 +68,12 @@ const saving = ref(false)
 const clearingCache = ref(false)
 const cacheSize = ref<number | null>(null)
 let listenerSetup = false
+let systemThemeListenerSetup = false
+
+const systemThemeQuery =
+  typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+    ? window.matchMedia('(prefers-color-scheme: dark)')
+    : null
 
 function formatBytes(bytes: number | null): string {
   if (bytes == null) return 'Calculating...'
@@ -81,13 +88,33 @@ function formatBytes(bytes: number | null): string {
   return `${value >= 10 ? value.toFixed(1) : value.toFixed(2)} ${units[unitIndex]}`
 }
 
+function resolveTheme(theme: AppTheme): Exclude<AppTheme, 'system'> {
+  if (theme !== 'system') return theme
+  return systemThemeQuery?.matches ? 'dark' : 'pureWhite'
+}
+
 function applyDomSettings(): void {
-  document.documentElement.dataset.theme = settings.value.theme
+  const resolvedTheme = resolveTheme(settings.value.theme)
+  document.documentElement.dataset.theme = resolvedTheme
+  document.documentElement.dataset.themePreference = settings.value.theme
+  document.documentElement.style.colorScheme = resolvedTheme === 'dark' ? 'dark' : 'light'
   document.body.classList.toggle('te-no-blur', !settings.value.blurEffect)
   document.documentElement.style.setProperty(
     '--te-lyric-font-size',
     `${settings.value.lyricFontSize}px`
   )
+}
+
+function handleSystemThemeChange(): void {
+  if (settings.value.theme === 'system') {
+    applyDomSettings()
+  }
+}
+
+function setupSystemThemeListener(): void {
+  if (systemThemeListenerSetup || !systemThemeQuery) return
+  systemThemeListenerSetup = true
+  systemThemeQuery.addEventListener('change', handleSystemThemeChange)
 }
 
 function applySnapshot(snapshot: SettingsSnapshot): void {
@@ -104,9 +131,23 @@ function applySnapshot(snapshot: SettingsSnapshot): void {
 function setupListener(): void {
   if (listenerSetup) return
   listenerSetup = true
+  setupSystemThemeListener()
   window.api.settings.onChanged((snapshot) => {
     applySnapshot(snapshot)
   })
+}
+
+if (typeof document !== 'undefined') {
+  const applyInitialDomSettings = (): void => {
+    setupSystemThemeListener()
+    applyDomSettings()
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', applyInitialDomSettings, { once: true })
+  } else {
+    applyInitialDomSettings()
+  }
 }
 
 export function useSettingsStore(): {
