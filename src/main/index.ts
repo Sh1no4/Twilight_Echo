@@ -976,7 +976,7 @@ function setupAudioEngineIpc(): void {
   })
 
   ipcMain.handle('audioEngine:play', async (_event, source: string, startTime?: number) => {
-    await requireAudioEngine().play(source, startTime)
+    return await requireAudioEngine().play(source, startTime)
   })
 
   ipcMain.handle('audioEngine:togglePause', async () => {

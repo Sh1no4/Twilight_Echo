@@ -26,7 +26,7 @@ interface RecSection {
   icon: string
 }
 
-type StreamingTab = 'home' | 'playlists' | 'library'
+type StreamingTab = 'home' | 'library'
 type DetailView =
   | { type: 'liked' }
   | { type: 'playlist'; playlist: NcmPlaylistSummary }
@@ -102,7 +102,6 @@ interface TabItem {
 
 const tabs: TabItem[] = [
   { key: 'home', label: '主页', icon: 'pi pi-sparkles' },
-  { key: 'playlists', label: '歌单', icon: 'pi pi-list-check' },
   { key: 'library', label: '音乐库', icon: 'pi pi-heart' }
 ]
 
@@ -754,15 +753,6 @@ onMounted(async () => {
             @open-playlist="openPlaylist"
           />
 
-          <div
-            v-else-if="activeTab === 'playlists' && !currentDetail"
-            class="streaming-placeholder"
-          >
-            <i class="pi pi-bookmark" style="font-size: 48px; color: #ccc"></i>
-            <p class="placeholder-title">歌单页暂不展示个人歌单</p>
-            <p class="placeholder-hint">你创建的歌单已经移动到音乐库页面下方列表</p>
-          </div>
-
           <div v-else-if="!isLoggedIn && !currentDetail" class="streaming-placeholder">
             <i class="pi pi-user" style="font-size: 48px; color: #ccc"></i>
             <p class="placeholder-title">请先登录网易云音乐</p>
@@ -785,6 +775,17 @@ onMounted(async () => {
           </div>
 
           <div v-else-if="currentDetail" class="detail-view">
+            <div
+              v-if="
+                detailLoading && (detailTracks.length > 0 || currentArtistPlaylists.length > 0)
+              "
+              class="detail-loading-overlay"
+              aria-live="polite"
+            >
+              <i class="pi pi-spin pi-spinner"></i>
+              <span>正在加载</span>
+            </div>
+
             <div v-if="detailHeaderInfo" class="detail-playlist-header">
               <img
                 v-if="detailHeaderInfo.cover"
@@ -1407,6 +1408,37 @@ onMounted(async () => {
 .library-view,
 .detail-view {
   min-height: 100%;
+}
+
+.detail-view {
+  position: relative;
+}
+
+.detail-loading-overlay {
+  position: sticky;
+  top: 12px;
+  z-index: 5;
+  width: fit-content;
+  margin: 0 40px 12px auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 13px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  background: rgba(255, 255, 255, 0.82);
+  color: rgba(80, 88, 116, 0.72);
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 14px 34px rgba(86, 70, 160, 0.12);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  pointer-events: none;
+}
+
+.detail-loading-overlay i {
+  color: var(--te-primary-500);
 }
 
 .track-table-wrapper {

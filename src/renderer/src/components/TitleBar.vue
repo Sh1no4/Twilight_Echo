@@ -1,6 +1,5 @@
 ﻿<script setup lang="ts">
 import { useNcmStore } from '../stores/useNcmStore'
-import { usePlayerStore } from '../stores/usePlayerStore'
 
 withDefaults(
   defineProps<{
@@ -23,7 +22,6 @@ defineEmits<{
 }>()
 
 const { isLoggedIn, profile } = useNcmStore()
-const { currentTrack, dominantColor } = usePlayerStore()
 
 function minimize(): void {
   window.api.window.minimize()
@@ -46,19 +44,8 @@ function close(): void {
       'title-bar-settings': titleSurface === 'settings',
       'title-bar-streaming': titleSurface === 'streaming'
     }"
-    :style="{ '--accent-color': dominantColor }"
   >
-    <div v-if="glass && !streaming" class="title-bar-playing-backdrop" aria-hidden="true">
-      <img
-        v-if="currentTrack?.cover"
-        :key="currentTrack.cover"
-        :src="currentTrack.cover"
-        class="title-bar-cover-bg"
-        alt=""
-      />
-      <div class="title-bar-cover-scrim" />
-    </div>
-    <div v-if="!glass || streaming" class="title-bar-start no-drag">
+    <div v-if="!glass" class="title-bar-start no-drag">
       <button class="menu-btn" title="菜单" @click="$emit('toggleMenu')">
         <svg
           width="18"
@@ -91,14 +78,6 @@ function close(): void {
           alt=""
         />
         <i v-else class="pi pi-user"></i>
-      </button>
-    </div>
-    <div v-if="glass && !streaming" class="title-bar-start no-drag">
-      <button class="back-btn" title="返回" @click="$emit('back')">
-        <i class="pi pi-chevron-down"></i>
-      </button>
-      <button class="settings-btn" title="设置" @click="$emit('settings')">
-        <i class="pi pi-cog"></i>
       </button>
     </div>
     <div class="title-bar-controls no-drag">
@@ -167,40 +146,12 @@ function close(): void {
   -webkit-backdrop-filter: none;
 }
 
-.title-bar-playing-backdrop {
-  display: none;
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  overflow: hidden;
-  pointer-events: none;
-  background: #05070b;
-}
-
-.title-bar-cover-bg {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
-  object-fit: cover;
-  object-position: center;
-  filter: blur(58px) saturate(1.28) brightness(0.42);
-  transform: scale(1.06);
-  transform-origin: center;
-}
-
-.title-bar-cover-scrim {
-  position: fixed;
-  inset: 0;
-  background:
-    linear-gradient(
-      180deg,
-      rgba(5, 7, 11, 0.34) 0%,
-      rgba(5, 7, 11, 0.64) 42%,
-      rgba(5, 7, 11, 0.86) 100%
-    ),
-    color-mix(in srgb, var(--accent-color, #7c4dff) 8%, transparent);
-  backdrop-filter: blur(10px);
+.title-bar.title-bar-glass {
+  background: transparent;
+  border-bottom-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .title-bar-start {
@@ -292,26 +243,6 @@ function close(): void {
   background: rgba(255, 255, 255, 0.08);
 }
 
-.back-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 100%;
-  border: none;
-  background: transparent;
-  color: #fff;
-  cursor: pointer;
-  transition: background 0.15s;
-  padding: 0;
-  flex-shrink: 0;
-  font-size: 14px;
-}
-
-.back-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
 .title-bar-controls {
   display: flex;
   height: 100%;
@@ -333,7 +264,13 @@ function close(): void {
   cursor: pointer;
   transition:
     background 0.15s,
-    color 0.3s;
+    color 0.3s,
+    transform 0.24s var(--te-ease-soft);
+}
+
+.control-btn:active {
+  transform: scale(0.88);
+  transition-duration: 0.1s;
 }
 
 .title-bar-glass .control-btn {

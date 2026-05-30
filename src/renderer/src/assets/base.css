@@ -99,6 +99,8 @@
   box-sizing: border-box;
   margin: 0;
   font-weight: inherit;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 html {
@@ -199,6 +201,12 @@ select {
   font: inherit;
 }
 
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 button {
   letter-spacing: inherit;
 }
@@ -259,10 +267,6 @@ html[data-theme='pureWhite'] .title-bar.title-bar-glass {
   border-bottom-color: transparent;
   background: transparent;
   box-shadow: none;
-}
-
-html[data-theme='pureWhite'] .title-bar.title-bar-glass .title-bar-playing-backdrop {
-  display: none;
 }
 
 html[data-theme='pureWhite'] .title-bar:not(.title-bar-glass) .menu-btn:hover,

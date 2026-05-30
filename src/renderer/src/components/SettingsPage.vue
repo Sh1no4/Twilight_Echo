@@ -765,22 +765,36 @@ onMounted(async () => {
   position: relative;
   width: 42px;
   height: 24px;
-  border: none;
+  border: 1px solid rgba(15, 23, 42, 0.24);
   border-radius: 999px;
-  background: #d1d5db;
+  background: #64748b;
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
-  transition: background 0.2s ease;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.54),
+    0 1px 2px rgba(15, 23, 42, 0.08);
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .toggle-switch.active {
-  background: #2563eb;
+  border-color: #1e40af;
+  background: #1d4ed8;
 }
 
 .toggle-switch:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  opacity: 0.62;
+}
+
+.toggle-switch:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 3px rgba(37, 99, 235, 0.22),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.62);
 }
 
 .toggle-knob {
@@ -791,7 +805,7 @@ onMounted(async () => {
   height: 18px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.2);
+  box-shadow: 0 2px 5px rgba(15, 23, 42, 0.28);
   transition: transform 0.2s ease;
 }
 

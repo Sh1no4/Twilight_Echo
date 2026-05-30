@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue'
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+  type ComponentPublicInstance
+} from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 
 interface LyricLine {
@@ -14,6 +22,15 @@ const bgSrc = ref(currentTrack.value?.cover ?? '')
 const lyricsEl = ref<HTMLElement | null>(null)
 const lyricLineEls = ref<Array<HTMLElement | null>>([])
 let lyricScrollRaf = 0
+let lyricResizeTimer = 0
+let lyricManualScrollTimer = 0
+let lyricManualScrollLocked = false
+let lyricResizeObserver: ResizeObserver | null = null
+const LYRIC_SCROLL_DURATION_MS = 420
+const LYRIC_RESIZE_SCROLL_DURATION_MS = 260
+const LYRIC_MANUAL_RETURN_DELAY_MS = 3000
+const LYRIC_CENTER_OFFSET_RATIO = 0.08
+const LYRIC_CENTER_OFFSET_MAX = 72
 
 watch(
   () => currentTrack.value?.cover,
@@ -57,10 +74,14 @@ watch(
 )
 
 onBeforeUnmount(() => {
-  if (lyricScrollRaf !== 0) {
-    window.cancelAnimationFrame(lyricScrollRaf)
-    lyricScrollRaf = 0
+  cancelLyricScrollAnimation()
+  if (lyricResizeTimer !== 0) {
+    window.clearTimeout(lyricResizeTimer)
+    lyricResizeTimer = 0
   }
+  clearLyricManualScrollTimer()
+  lyricResizeObserver?.disconnect()
+  lyricResizeObserver = null
 })
 
 interface ParsedLyricLine {
@@ -171,37 +192,143 @@ function jumpToLyric(time: number): void {
   seek(time)
 }
 
-function focusLyricLine(index: number): void {
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3)
+}
+
+function cancelLyricScrollAnimation(): void {
+  if (lyricScrollRaf !== 0) {
+    window.cancelAnimationFrame(lyricScrollRaf)
+    lyricScrollRaf = 0
+  }
+}
+
+function getLyricTargetTop(index: number): number | null {
   const container = lyricsEl.value
   const line = lyricLineEls.value[index]
 
-  if (!container || !line) return
+  if (!container || !line) return null
 
-  if (lyricScrollRaf !== 0) {
-    window.cancelAnimationFrame(lyricScrollRaf)
+  const containerRect = container.getBoundingClientRect()
+  const lineRect = line.getBoundingClientRect()
+  const centerOffset = Math.min(
+    LYRIC_CENTER_OFFSET_MAX,
+    container.clientHeight * LYRIC_CENTER_OFFSET_RATIO
+  )
+  const targetTop =
+    container.scrollTop +
+    (lineRect.top - containerRect.top) -
+    (container.clientHeight - lineRect.height) * 0.5 +
+    centerOffset
+  const maxTop = Math.max(0, container.scrollHeight - container.clientHeight)
+
+  return Math.min(maxTop, Math.max(0, targetTop))
+}
+
+function animateLyricScrollTo(targetTop: number, duration: number): void {
+  const container = lyricsEl.value
+  if (!container) return
+
+  cancelLyricScrollAnimation()
+
+  const startTop = container.scrollTop
+  const distance = targetTop - startTop
+
+  if (Math.abs(distance) < 0.5 || duration <= 0) {
+    container.scrollTop = targetTop
+    return
   }
 
-  lyricScrollRaf = window.requestAnimationFrame(() => {
-    const containerRect = container.getBoundingClientRect()
-    const lineRect = line.getBoundingClientRect()
-    const targetTop =
-      container.scrollTop +
-      (lineRect.top - containerRect.top) -
-      (container.clientHeight - lineRect.height) * 0.5
+  const startAt = performance.now()
+  const step = (now: number): void => {
+    const progress = Math.min(1, (now - startAt) / duration)
+    container.scrollTop = startTop + distance * easeOutCubic(progress)
 
-    container.scrollTo({
-      top: Math.max(0, targetTop),
-      behavior: 'smooth'
-    })
+    if (progress < 1) {
+      lyricScrollRaf = window.requestAnimationFrame(step)
+      return
+    }
 
+    container.scrollTop = targetTop
     lyricScrollRaf = 0
-  })
+  }
+
+  lyricScrollRaf = window.requestAnimationFrame(step)
+}
+
+function focusLyricLine(index: number, duration = LYRIC_SCROLL_DURATION_MS): void {
+  const targetTop = getLyricTargetTop(index)
+  if (targetTop == null) return
+  animateLyricScrollTo(targetTop, duration)
+}
+
+function clearLyricManualScrollTimer(): void {
+  if (lyricManualScrollTimer !== 0) {
+    window.clearTimeout(lyricManualScrollTimer)
+    lyricManualScrollTimer = 0
+  }
+}
+
+function scheduleLyricReturnToCenter(): void {
+  clearLyricManualScrollTimer()
+  lyricManualScrollTimer = window.setTimeout(async () => {
+    lyricManualScrollTimer = 0
+    lyricManualScrollLocked = false
+    await nextTick()
+    if (activeLyricIndex.value >= 0) {
+      focusLyricLine(activeLyricIndex.value)
+    }
+  }, LYRIC_MANUAL_RETURN_DELAY_MS)
+}
+
+function onLyricsManualScroll(): void {
+  lyricManualScrollLocked = true
+  cancelLyricScrollAnimation()
+  scheduleLyricReturnToCenter()
+}
+
+function refocusActiveLyricAfterResize(): void {
+  if (lyricResizeTimer !== 0) {
+    window.clearTimeout(lyricResizeTimer)
+  }
+
+  lyricResizeTimer = window.setTimeout(async () => {
+    lyricResizeTimer = 0
+    await nextTick()
+    if (activeLyricIndex.value >= 0) {
+      focusLyricLine(activeLyricIndex.value, LYRIC_RESIZE_SCROLL_DURATION_MS)
+    }
+  }, 80)
 }
 
 watch(activeLyricIndex, async (index) => {
   if (index < 0) return
+  if (lyricManualScrollLocked) return
   await nextTick()
   focusLyricLine(index)
+})
+
+watch(lyricsEl, (el, previousEl) => {
+  if (previousEl) {
+    lyricResizeObserver?.unobserve(previousEl)
+  }
+  if (el) {
+    lyricResizeObserver?.observe(el)
+  }
+})
+
+onMounted(() => {
+  lyricResizeObserver = new ResizeObserver(() => {
+    refocusActiveLyricAfterResize()
+  })
+  if (lyricsEl.value) {
+    lyricResizeObserver.observe(lyricsEl.value)
+  }
+  window.addEventListener('resize', refocusActiveLyricAfterResize)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', refocusActiveLyricAfterResize)
 })
 </script>
 
@@ -242,7 +369,13 @@ watch(activeLyricIndex, async (index) => {
             <div class="time-chip">{{ formatTime(currentTime) }} / {{ trackDurationLabel }}</div>
           </div>
 
-          <div ref="lyricsEl" class="lyrics-scroll">
+          <div
+            ref="lyricsEl"
+            class="lyrics-scroll"
+            @wheel.passive="onLyricsManualScroll"
+            @pointerdown="onLyricsManualScroll"
+            @touchstart.passive="onLyricsManualScroll"
+          >
             <div class="lyrics-list">
               <button
                 v-for="(line, i) in lyricLines"
@@ -498,7 +631,8 @@ watch(activeLyricIndex, async (index) => {
   min-height: 0;
   overflow-y: auto;
   padding-right: 8px;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
+  overscroll-behavior: contain;
   mask-image: linear-gradient(
     to bottom,
     transparent 0%,
@@ -580,12 +714,12 @@ watch(activeLyricIndex, async (index) => {
 .lyric-row.active {
   opacity: 1;
   color: #fff;
+  transform: scale(1.012);
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--accent-color) 22%, transparent), transparent),
     rgba(255, 255, 255, 0.08);
   border-color: rgba(255, 255, 255, 0.1);
   box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
-  animation: lyric-focus-in 0.34s ease;
 }
 
 .lyric-text {
@@ -644,17 +778,6 @@ watch(activeLyricIndex, async (index) => {
 
 .empty-state p {
   margin: 0;
-}
-
-@keyframes lyric-focus-in {
-  0% {
-    transform: translateY(8px) scale(0.99);
-    opacity: 0.72;
-  }
-  100% {
-    transform: translateY(0) scale(1);
-    opacity: 1;
-  }
 }
 
 @media (max-width: 1120px) {
