@@ -1,136 +1,229 @@
-﻿# Twilight Echo
+# Twilight Echo
 
-<img src="./assets/logo.png" style="margin-left:0px; width: 35%;" alt="logo" /><img src="./assets/icon.svg" style=" width: 17%; margin-left: 20px; margin-bottom: 10px;" align="right" alt="icon" />
+<img src="./assets/logo.png" style="margin-left:0; width: 35%;" alt="Twilight Echo logo" />
+<img src="./assets/icon.svg" style="width: 17%; margin-left: 20px; margin-bottom: 10px;" align="right" alt="Twilight Echo icon" />
 
-> Twilight Echo 鏄竴娆剧幇浠ｇ殑闊充箰鎾斁鍣紝鏈夌幇浠ｇ殑UI鍜屾祦濯掍綋鎾斁锛屾湰鍦版挱鏀惧姛鑳姐€?
+Twilight Echo 是一个基于 `Electron + Vue 3 + TypeScript` 构建的桌面音乐播放器，面向同时重视界面体验、流媒体能力与音频输出质量的使用场景。
 
-## **鍔熻兘鐗规€?*
+它当前已经具备本地音乐库管理、网易云音乐流媒体模式、自研原生音频引擎 `Twilight Audio Engine`、播放记忆恢复、均衡器与缓存管理等能力，目标不是做一个“只能放歌的壳”，而是逐步打磨成一套完整的桌面 Hi-Fi 播放体验。
 
-- **鏈湴闊充箰搴撶鐞?*
-  - 鎸夋瓕鏇层€佽壓鏈銆佷笓杈戣繘琛屾祻瑙?
-  - 鎸佷箙鍖栦繚瀛樺凡鎵弿鐨勯煶涔愬簱涓庢枃浠跺す璁板綍
-- **缃戞槗浜戦煶涔愭祦濯掍綋妯″紡**
-  - 鏀寔浜岀淮鐮佺櫥褰曠綉鏄撲簯闊充箰
-  - 鏀寔璇诲彇鐧诲綍鐘舵€佷笌涓汉璧勬枡
-  - 鏀寔鎺ㄨ崘姝屾洸銆佹帹鑽愭瓕鍗曘€佺浜烘极娓搞€佺浜洪浄杈?
-  - 鏀寔鏌ョ湅鎴戝枩娆㈢殑闊充箰涓庝釜浜烘瓕鍗?
-  - 鏀寔鍦ㄧ嚎鎼滅储姝屾洸涓庢敹钘?鍙栨秷鏀惰棌
-- **鑹ソ鐨勯煶棰戣緭鍑鸿兘鍔?*
-  - 閲囩敤Twilight Audio Engine浣滀负鎾斁寮曟搸
-  - 鎷ユ湁WASAPI鐙崰杈撳嚭锛岀‘淇濋煶棰戞祦浠ュ師濮嬮噰鏍风巼鍜屼綅娣憋紙濡?96kHz/24bit锛変紶杈擄紝涓嶇粡杩囩郴缁熺殑閲嶉噰鏍风畻娉曪紝浠庤€岄伩鍏嶄簡鏁板瓧杞崲甯︽潵鐨勫け鐪熷拰搴曞櫔銆?
-  - 鑷姩鍒囨崲姣旂壒鐜?
+## 项目定位
 
-## 鎶€鏈爤
+- 本地音乐与在线流媒体双模式共存
+- 面向桌面端的沉浸式播放体验与视觉设计
+- 以 `Twilight Audio Engine` 为核心逐步强化原生音频播放链路
+- 保留 Electron 开发效率，同时向更强的音频控制能力扩展
 
-- Electron
-- Vue 3
-- TypeScript
-- Vite / electron-vite
-- PrimeIcons
-- Twilight Audio Engine
-- `@neteasecloudmusicapienhanced/api`
+## 核心功能
+
+### 1. 本地音乐库
+
+- 扫描本地文件夹并递归导入音频文件
+- 基于元数据自动整理歌曲、艺术家、专辑、文件夹视图
+- 自动读取封面、歌词与音频基础信息
+- 持久化保存已扫描音乐库与扫描目录记录
+
+### 2. 网易云音乐流媒体模式
+
+- 支持二维码登录与登录状态检查
+- 支持首页推荐、每日推荐、私人 FM、私人雷达
+- 支持在线搜索歌曲、歌单、艺人
+- 支持读取“我喜欢的音乐”、个人歌单、艺人热门歌曲
+- 支持收藏 / 取消收藏歌曲
+- 支持歌词与翻译歌词获取
+
+### 3. 播放与队列控制
+
+- 播放 / 暂停、上一首 / 下一首、进度拖动、音量控制
+- 顺序播放、单曲循环、随机播放
+- 支持播放列表队列切换
+- 支持播放结束自动续播
+- 支持退出前保存播放会话，并在下次启动时恢复曲目或恢复到上次播放位置
+
+### 4. 音频能力
+
+- 使用自研 `Twilight Audio Engine` 作为原生音频播放核心
+- 支持本地文件与 HTTP 音频流统一进入播放链路
+- 支持音频输出设备切换
+- 支持 `WASAPI`、`ASIO`、`CoreAudio`、`ALSA` 输出类型配置入口
+- Windows 下支持独占模式能力接入
+- 支持 Graphic / Parametric EQ、Preamp、Gapless、Crossfade、ReplayGain 相关设置
+- 在原生引擎不可用时保留 renderer `HTMLAudioElement` 兜底播放路径
+
+### 5. 桌面应用体验
+
+- 自定义无边框标题栏
+- 托盘最小化 / 关闭到托盘
+- 全局快捷键控制播放
+- 可配置缓存目录
+- 支持主题、模糊效果、封面取色、歌词字号等外观设置
+
+## 技术栈
+
+- `Electron`
+- `Vue 3`
+- `TypeScript`
+- `Vite` / `electron-vite`
+- `PrimeIcons`
 - `music-metadata`
+- `@neteasecloudmusicapienhanced/api`
+- `CMake`
+- `FFmpeg`
+- `Twilight Audio Engine`（C++20）
 
-## 鏀寔鐨勯煶棰戞牸寮?
+## 当前支持的音频格式
 
-椤圭洰褰撳墠鍦ㄤ富杩涚▼涓敮鎸佷富娴佺殑闊抽鏍煎紡锛屽寘鎷細
-
-> .mp3 .flac .wav .aac .ogg .wma .m4a .aiff / .aif .opus .webm .alac .ape .wv .dsf .dff
-
-## 椤圭洰缁撴瀯
+项目当前在扫描与读取阶段支持以下主流格式：
 
 ```text
-src/
-鈹溾攢 main/         Electron 涓昏繘绋嬶紝璐熻矗绐楀彛銆佹枃浠舵壂鎻忋€乵pv銆丯CM API
-鈹溾攢 preload/      棰勫姞杞藉眰锛屽悜娓叉煋杩涚▼鏆撮湶 IPC API
-鈹斺攢 renderer/     Vue 鍓嶇鐣岄潰
-   鈹斺攢 src/
-      鈹溾攢 components/
-      鈹溾攢 stores/
-      鈹溾攢 types/
-      鈹斺攢 utils/
+.mp3 .flac .wav .wave .aac .ogg .wma .m4a .mp4 .aiff .aif
+.opus .webm .alac .ape .wv .dsf .dff .mqa
 ```
 
-## 寮€鍙戝墠鍑嗗
+说明：
 
-璇峰厛纭繚浣犵殑鐜涓叿澶囷細
+- 本地库扫描是否识别，取决于主进程扫描规则
+- 实际播放效果还会受到 `Twilight Audio Engine` 当前后端实现与目标平台能力影响
 
-- Node.js 18+
-- npm 鎴?pnpm
+## 快速开始
 
-鎺ㄨ崘鐩存帴浣跨敤椤圭洰鐜版湁閿佹枃浠跺搴旂殑鍖呯鐞嗗櫒瀹夎渚濊禆銆?
+### 环境要求
 
-### 鍏充簬 Twilight Audio Engine
+- `Node.js` 18 及以上
+- `npm` 或 `pnpm`
+- 如需构建原生音频引擎，需额外准备 `CMake` 与对应平台的本地编译环境
 
-椤圭洰鎾斁鑳藉姏渚濊禆 Twilight Audio Engine锛?
+### 安装依赖
 
-- 寮€鍙戠幆澧冧笅锛屼唬鐮佷細浼樺厛灏濊瘯鐩存帴璋冪敤绯荤粺涓殑 `Twilight Audio Engine`
-- 鎵撳寘鏃讹紝椤圭洰浼氬皾璇曞皢 `resources/audio-engine` 瑙ｅ帇鍒?`resources/Twilight Audio Engine/` 鍚庨殢搴旂敤鍒嗗彂
-
-濡傛灉浣犳槸鍦ㄦ湰鍦板紑鍙戝苟閬囧埌鏃犳硶鎾斁鐨勯棶棰橈紝閫氬父闇€瑕侊細
-
-1. 鍦ㄧ郴缁熶腑瀹夎 `Twilight Audio Engine`
-2. 鎴栬€呯‘淇濋」鐩墦鍖呰祫婧愪腑鐨?Twilight Audio Engine 鍙敤
-
-## 瀹夎渚濊禆
-
-濡傛灉浣犱娇鐢?pnpm锛?
-
-```bash
-pnpm install
-```
-
-濡傛灉浣犱娇鐢?npm锛?
+使用 `npm`：
 
 ```bash
 npm install
 ```
 
-## 鍚姩寮€鍙戠幆澧?
+或使用 `pnpm`：
 
 ```bash
-pnpm dev
+pnpm install
 ```
 
-鎴栵細
+### 启动开发环境
 
 ```bash
 npm run dev
 ```
 
-鍚姩鍚庝細鎵撳紑 Electron 妗岄潰绐楀彛銆?
+启动后会打开 Electron 桌面窗口。
 
-## 浠ｇ爜妫€鏌ヤ笌鏍煎紡鍖?
+## 常用开发命令
 
-### Type Check
+### 前端 / Electron
 
 ```bash
+# 开发模式
+npm run dev
+
+# 类型检查
 npm run typecheck
-```
 
-### Lint
-
-```bash
+# Lint
 npm run lint
-```
 
-### Format
-
-```bash
+# 格式化
 npm run format
-```
 
-## 鏋勫缓搴旂敤
-
-### 閫氱敤鏋勫缓
-
-```bash
+# 构建应用
 npm run build
 ```
 
-### 骞冲彴鎵撳寘
+### Twilight Audio Engine
 
 ```bash
+# 配置默认构建目录
+npm run configure:audio-engine
+
+# 使用 vcpkg preset 配置
+npm run configure:audio-engine:vcpkg
+
+# 构建原生音频引擎
+npm run build:audio-engine
+
+# 运行原生引擎测试
+npm run test:audio-engine
+```
+
+## 项目结构
+
+```text
+.
+├─ src/
+│  ├─ main/                Electron 主进程，负责窗口、IPC、扫描、设置、缓存与 NCM API 接入
+│  ├─ preload/             暴露给 renderer 的安全桥接层
+│  └─ renderer/            Vue 3 前端界面
+│     └─ src/
+│        ├─ components/    页面与核心 UI 组件
+│        ├─ stores/        播放、本地库、设置、网易云状态管理
+│        ├─ types/         类型定义
+│        ├─ utils/         工具函数
+│        └─ assets/        样式资源
+├─ audio-engine/           Twilight Audio Engine（C++20 原生音频引擎）
+├─ resources/              应用图标、SVG、字体等资源
+├─ assets/                 README 与品牌资源
+├─ build/                  打包相关资源
+├─ patches/                第三方依赖补丁
+└─ scripts/                辅助脚本
+```
+
+## Twilight Audio Engine 说明
+
+`Twilight Audio Engine` 是本项目的原生音频引擎，位于 [audio-engine/README.md](/D:/Twilight_Echo-main/audio-engine/README.md)。
+
+当前仓库中已经包含：
+
+- C ABI 边界定义
+- `Node-API` 桥接代码
+- `FFmpeg` 解码路径
+- 音频队列 / 状态 / DSP / 元数据相关基础设施
+- 多平台输出后端接口槽位
+
+当前较完整的原生播放路径集中在 Windows：
+
+- `FFmpegDecoder` 负责本地文件与 HTTP URL 解码
+- `AudioPipeline` 负责 PCM 缓冲、播放位置、渲染回调等
+- `WasapiSharedBackend` 负责 `WASAPI shared mode` 输出
+- `DeviceManager` 负责 Windows 音频设备枚举
+
+需要注意：
+
+- `WASAPI Exclusive`、`ASIO`、`CoreAudio`、`ALSA` 目前在仓库中已有后端入口或类型支持，但不同平台的成熟度并不完全一致
+- 在未成功构建或加载原生引擎时，应用会退回到 renderer 层音频播放兜底逻辑
+- 如果你准备继续完善原生播放链路，建议优先从 `audio-engine/` 目录与 `src/main/audioEngineManager.ts` 入手
+
+## 缓存与数据存储
+
+应用会在 Electron 用户目录下持久化保存若干数据，例如：
+
+- 本地音乐库数据
+- 网易云登录 Cookie
+- 播放会话恢复信息
+- NCM 音频缓存
+- 应用设置与缓存目录
+
+其中缓存目录支持在设置页中调整，主进程会自动维护：
+
+- `renderer-cache`
+- `audio-engine-cache`
+- `ncm-cache`
+
+## 打包发布
+
+```bash
+# 仅构建产物
+npm run build
+
+# 生成 unpacked 目录
+npm run build:unpack
+
 # Windows
 npm run build:win
 
@@ -141,55 +234,26 @@ npm run build:mac
 npm run build:linux
 ```
 
-### 棰濆璇存槑
+补充说明：
 
-- 鎵撳寘閰嶇疆浣嶄簬 `electron-builder.yml`
-- 鎵撳寘鍓嶄細鎵ц `audio-engine/CMakeLists.txt`
+- 打包配置位于 `electron-builder.yml`
+- `postinstall` 会执行 `electron-builder install-app-deps`
+- 如果你的发布流程依赖原生音频引擎，请先确认对应平台的引擎产物已经正确构建并可被应用加载
 
-## 浣跨敤璇存槑
+## 已知事项
 
-### 1. 瀵煎叆鏈湴闊充箰
+- 网易云相关能力依赖本地启动的 `@neteasecloudmusicapienhanced/api` 服务
+- 某些在线能力需要用户先完成登录后才能正常使用
+- 原生音频引擎的不同输出后端在不同平台上的完成度并不完全一致
+- Windows 独占模式启用后，其他应用可能无法同时占用相同输出设备
+- 部分高质量音频能力是否真正生效，除了界面设置外，还取决于底层后端实现状态
 
-鍚姩搴旂敤鍚庯紝鍙互閫夋嫨闊充箰鏂囦欢澶硅繘琛屾壂鎻忋€傜▼搴忎細锛?
+## License
 
-- 閫掑綊鏌ユ壘鏀寔鐨勯煶棰戞枃浠?
-- 鑷姩鎻愬彇鍏冩暟鎹?
-- 灏濊瘯璇诲彇灏侀潰涓庢瓕璇?
-- 灏嗘壂鎻忕粨鏋滀繚瀛樺埌鏈湴鐢ㄦ埛鏁版嵁鐩綍
+本项目采用 [Apache License 2.0](./LICENSE) 开源。
 
-### 2. 浣跨敤娴佸獟浣撴ā寮?
+请注意：
 
-杩涘叆娴佸獟浣撻〉闈㈠悗锛屽彲浠ラ€氳繃浜岀淮鐮佺櫥褰曠綉鏄撲簯闊充箰銆傜櫥褰曞悗鍙娇鐢細
-
-- 棣栭〉鎺ㄨ崘
-- 鍦ㄧ嚎鎼滅储
-- 鎴戝枩娆㈢殑闊充箰
-- 涓汉姝屽崟
-- 鎺ㄨ崘姝屽崟
-
-### 3. 鎾斁鎺у埗
-
-鎾斁鍣ㄦ敮鎸侊細
-
-- 鎾斁 / 鏆傚仠
-- 涓婁竴棣?/ 涓嬩竴棣?
-- 璋冩暣鎾斁杩涘害
-- 闊抽噺鎺у埗
-- 鎾斁妯″紡鍒囨崲
-- 鐙崰妯″紡鍒囨崲
-
-## 鏁版嵁瀛樺偍
-
-搴旂敤浼氬皢閮ㄥ垎鏁版嵁淇濆瓨鍦?Electron 鐢ㄦ埛鐩綍涓紝鍖呮嫭锛?
-
-- 鏈湴闊充箰搴撴暟鎹?
-- 宸叉壂鎻忔枃浠跺す璁板綍
-- 缃戞槗浜戠櫥褰?Cookie
-
-## 宸茬煡娉ㄦ剰浜嬮」
-
-- 缃戞槗浜戠浉鍏宠兘鍔涗緷璧栨湰鍦板惎鍔ㄧ殑澧炲己 API 鏈嶅姟
-- 寮€鍙戠幆澧冧笅鑻ョ郴缁熶腑娌℃湁 `Twilight Audio Engine`锛屾挱鏀惧姛鑳藉彲鑳戒笉鍙敤
-- Windows 鐙崰妯″紡寮€鍚悗锛屽叾浠栧簲鐢ㄥ彲鑳芥棤娉曞悓鏃惰緭鍑洪煶棰?
-- 閮ㄥ垎鎵撳寘娴佺▼渚濊禆 `resources/audio-engine` 鏄惁瀛樺湪
-
+- 本许可证适用于本仓库中由项目作者拥有版权的源码与文档内容
+- 第三方依赖、字体、图标、在线服务接口及相关内容素材仍分别受其各自许可证或服务条款约束
+- 如你计划二次分发应用，请额外确认所使用第三方资源与在线内容是否允许对应分发方式
