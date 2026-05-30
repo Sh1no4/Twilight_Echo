@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
-import type { AppSettings } from '../types/settings'
+import type { AppSettings, AppTheme } from '../types/settings'
 
 defineEmits<{
   back: []
@@ -17,6 +17,11 @@ const tabs = [
   { key: 'shortcuts', label: '快捷键', icon: 'pi pi-keyboard' },
   { key: 'about', label: '关于', icon: 'pi pi-info-circle' }
 ] as const
+
+const themeOptions: { value: AppTheme; label: string; description: string }[] = [
+  { value: 'pureWhite', label: '纯白', description: '清爽白底与蓝色重点色' },
+  { value: 'aurora', label: '流光', description: '保留当前柔和彩色玻璃风格' }
+]
 
 type TabKey = (typeof tabs)[number]['key']
 type BooleanSettingKey =
@@ -70,6 +75,11 @@ const restartReasonText = computed(() => restartReasons.value.join('、'))
 
 function toggleSetting(key: BooleanSettingKey): void {
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
+}
+
+function setTheme(theme: AppTheme): void {
+  if (settings.value.theme === theme) return
+  void updateSettings({ theme })
 }
 
 function setLyricFontSize(event: Event): void {
@@ -308,6 +318,31 @@ onMounted(async () => {
         <section v-if="activeTab === 'appearance'" class="settings-section">
           <h2>外观</h2>
           <div class="settings-group">
+            <div class="setting-row theme-row">
+              <div class="setting-copy">
+                <span class="setting-label">主题</span>
+                <span class="setting-desc">切换应用整体配色和背景风格</span>
+              </div>
+              <div class="theme-segment" role="radiogroup" aria-label="主题">
+                <button
+                  v-for="theme in themeOptions"
+                  :key="theme.value"
+                  class="theme-option"
+                  :class="{ active: settings.theme === theme.value }"
+                  type="button"
+                  role="radio"
+                  :aria-checked="settings.theme === theme.value"
+                  @click="setTheme(theme.value)"
+                >
+                  <span class="theme-swatch" :class="`theme-swatch-${theme.value}`"></span>
+                  <span class="theme-option-copy">
+                    <span>{{ theme.label }}</span>
+                    <small>{{ theme.description }}</small>
+                  </span>
+                </button>
+              </div>
+            </div>
+
             <div class="setting-row">
               <div class="setting-copy">
                 <span class="setting-label">毛玻璃效果</span>
@@ -413,11 +448,12 @@ onMounted(async () => {
 <style scoped>
 .settings-page {
   position: fixed;
-  inset: 32px 0 0 0;
+  inset: 0;
   z-index: 50;
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.96);
+  padding-top: 32px;
+  background: #fff;
   color: var(--te-neutral-900);
 }
 
@@ -427,7 +463,8 @@ onMounted(async () => {
   gap: 12px;
   height: 56px;
   padding: 0 20px;
-  border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+  border-bottom: 0;
+  background: #fff;
   flex-shrink: 0;
 }
 
@@ -494,7 +531,7 @@ onMounted(async () => {
   gap: 4px;
   padding: 16px 12px;
   border-right: 1px solid rgba(17, 24, 39, 0.08);
-  background: rgba(248, 250, 252, 0.72);
+  background: #f8fafc;
 }
 
 .tab-btn {
@@ -631,6 +668,90 @@ onMounted(async () => {
 
 .range-row {
   grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+}
+
+.theme-row {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
+}
+
+.theme-segment {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.theme-option {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--te-neutral-700);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.16s,
+    border-color 0.16s,
+    color 0.16s,
+    box-shadow 0.16s;
+}
+
+.theme-option:hover {
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--te-neutral-900);
+}
+
+.theme-option.active {
+  border-color: color-mix(in srgb, var(--te-primary-500) 28%, transparent);
+  background: #fff;
+  color: var(--te-neutral-900);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+}
+
+.theme-swatch {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid rgba(17, 24, 39, 0.1);
+  box-shadow: inset 0 0 0 5px rgba(255, 255, 255, 0.76);
+}
+
+.theme-swatch-pureWhite {
+  background: linear-gradient(135deg, #fff 0 48%, #2563eb 49% 100%);
+}
+
+.theme-swatch-aurora {
+  background: linear-gradient(135deg, #7c4dff 0%, #c084fc 48%, #22d3ee 100%);
+}
+
+.theme-option-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.theme-option-copy span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.theme-option-copy small {
+  overflow: hidden;
+  color: var(--te-neutral-500);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .range-control {
@@ -829,6 +950,7 @@ onMounted(async () => {
 
   .setting-row,
   .path-row,
+  .theme-row,
   .range-row {
     grid-template-columns: 1fr;
     gap: 12px;

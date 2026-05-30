@@ -7,6 +7,7 @@ const fallbackSettings: AppSettings = {
   launchAtLogin: false,
   hardwareAcceleration: true,
   cachePath: '',
+  theme: 'pureWhite',
   blurEffect: true,
   useCoverTheme: true,
   lyricFontSize: 18
@@ -39,6 +40,7 @@ function formatBytes(bytes: number | null): string {
 }
 
 function applyDomSettings(): void {
+  document.documentElement.dataset.theme = settings.value.theme
   document.body.classList.toggle('te-no-blur', !settings.value.blurEffect)
   document.documentElement.style.setProperty(
     '--te-lyric-font-size',

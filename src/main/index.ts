@@ -1,4 +1,14 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, globalShortcut, Menu, nativeImage, Tray } from 'electron'
+import {
+  app,
+  shell,
+  BrowserWindow,
+  ipcMain,
+  dialog,
+  globalShortcut,
+  Menu,
+  nativeImage,
+  Tray
+} from 'electron'
 import { join, extname, basename, dirname, resolve } from 'path'
 import { readdirSync, statSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs'
 import { readFile, writeFile, readdir, stat, rm } from 'fs/promises'
@@ -16,6 +26,7 @@ import {
 } from './mpvManager'
 
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
+type AppTheme = 'pureWhite' | 'aurora'
 
 interface AudioEqPreset {
   id: string
@@ -35,6 +46,7 @@ interface AppSettings {
   musicCachePath: string
   cachePath: string
   closeToTray: boolean
+  theme: AppTheme
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number
@@ -68,6 +80,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   musicCachePath: '',
   cachePath: '',
   closeToTray: false,
+  theme: 'pureWhite',
   blurEffect: true,
   useCoverTheme: true,
   lyricFontSize: 18,
@@ -108,7 +121,8 @@ function normalizeAudioEqPresets(presets: unknown): AudioEqPreset[] {
       })
       return {
         id: typeof raw.id === 'string' && raw.id ? raw.id : `custom-${index}`,
-        name: typeof raw.name === 'string' && raw.name ? raw.name.slice(0, 40) : `Preset ${index + 1}`,
+        name:
+          typeof raw.name === 'string' && raw.name ? raw.name.slice(0, 40) : `Preset ${index + 1}`,
         eqMode: normalized.eqMode,
         eqPreamp: normalized.eqPreamp,
         eqBands: normalized.eqBands
@@ -116,6 +130,10 @@ function normalizeAudioEqPresets(presets: unknown): AudioEqPreset[] {
     })
     .filter((preset): preset is AudioEqPreset => Boolean(preset))
     .slice(0, 24)
+}
+
+function normalizeAppTheme(theme: unknown): AppTheme {
+  return theme === 'aurora' || theme === 'pureWhite' ? theme : DEFAULT_SETTINGS.theme
 }
 
 function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
@@ -153,6 +171,7 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
     musicCachePath: cachePath,
     cachePath,
     closeToTray,
+    theme: normalizeAppTheme(settings.theme),
     blurEffect: settings.blurEffect !== false,
     useCoverTheme: settings.useCoverTheme !== false,
     lyricFontSize: clampNumber(settings.lyricFontSize, 14, 28, DEFAULT_SETTINGS.lyricFontSize),
@@ -259,7 +278,11 @@ function getNcmCacheDir(): string {
   return dir
 }
 
-function inferNcmCacheExtension(url: string, contentType?: string | null, fileName?: string): string {
+function inferNcmCacheExtension(
+  url: string,
+  contentType?: string | null,
+  fileName?: string
+): string {
   const nameExt = fileName ? extname(fileName).toLowerCase() : ''
   if (nameExt && /^[a-z0-9.]+$/i.test(nameExt)) return nameExt
 
@@ -290,7 +313,11 @@ function getCachedNcmSong(songId: number): string | null {
   return existsSync(fullPath) ? fullPath : null
 }
 
-async function cacheNcmSong(songId: number, url: string, fileName?: string): Promise<string | null> {
+async function cacheNcmSong(
+  songId: number,
+  url: string,
+  fileName?: string
+): Promise<string | null> {
   if (!Number.isFinite(songId) || songId <= 0 || !/^https?:\/\//i.test(url)) return null
 
   const cached = getCachedNcmSong(songId)
@@ -318,7 +345,10 @@ async function cacheNcmSong(songId: number, url: string, fileName?: string): Pro
 if (appSettings.musicCachePath) {
   try {
     ensureMusicCacheDirectories(appSettings.musicCachePath)
-    app.commandLine.appendSwitch('disk-cache-dir', join(appSettings.musicCachePath, 'renderer-cache'))
+    app.commandLine.appendSwitch(
+      'disk-cache-dir',
+      join(appSettings.musicCachePath, 'renderer-cache')
+    )
   } catch (err) {
     console.warn('[settings] 无法使用自定义缓存目录:', err)
   }
@@ -610,7 +640,9 @@ function createTray(): void {
   if (tray) return
 
   const iconPath = join(app.getAppPath(), 'resources', 'icon.png')
-  const icon = existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty()
+  const icon = existsSync(iconPath)
+    ? nativeImage.createFromPath(iconPath)
+    : nativeImage.createEmpty()
   tray = new Tray(icon)
   tray.setToolTip('Twilight Echo')
   tray.setContextMenu(
@@ -695,8 +727,8 @@ function relaunchApplication(): void {
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 1300,
-    height: 768,
+    width: 1495,
+    height: 883,
     show: false,
     frame: false,
     icon: join(app.getAppPath(), 'resources', 'icon.png'),
@@ -812,12 +844,15 @@ function setupMpvIpc(): void {
     return requireMpv().getAudioOutputOptions()
   })
 
-  ipcMain.handle('mpv:setAudioProcessing', async (_event, settings: Partial<AudioProcessingSettings>) => {
-    const normalized = await requireMpv().setAudioProcessing(settings)
-    appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
-    writeAppSettings(appSettings)
-    return normalized
-  })
+  ipcMain.handle(
+    'mpv:setAudioProcessing',
+    async (_event, settings: Partial<AudioProcessingSettings>) => {
+      const normalized = await requireMpv().setAudioProcessing(settings)
+      appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
+      writeAppSettings(appSettings)
+      return normalized
+    }
+  )
 
   ipcMain.handle('mpv:getAudioProcessing', async () => {
     return requireMpv().getAudioProcessing()
@@ -838,9 +873,12 @@ function setupMpvIpc(): void {
     return getCachedNcmSong(Number(songId))
   })
 
-  ipcMain.handle('ncm:cacheSong', async (_event, songId: number, url: string, fileName?: string) => {
-    return await cacheNcmSong(Number(songId), url, fileName)
-  })
+  ipcMain.handle(
+    'ncm:cacheSong',
+    async (_event, songId: number, url: string, fileName?: string) => {
+      return await cacheNcmSong(Number(songId), url, fileName)
+    }
+  )
 
   ipcMain.handle('ncm:request', async (_event, path: string, cookie?: string) => {
     const sep = path.includes('?') ? '&' : '?'
@@ -946,7 +984,9 @@ app.whenReady().then(() => {
       title: '选择缓存位置',
       properties: ['openDirectory', 'createDirectory']
     }
-    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
   })
@@ -957,7 +997,9 @@ app.whenReady().then(() => {
       title: '选择音乐缓存位置',
       properties: ['openDirectory', 'createDirectory']
     }
-    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
   })

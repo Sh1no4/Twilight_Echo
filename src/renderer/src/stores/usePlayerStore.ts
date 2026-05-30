@@ -118,7 +118,8 @@ watch(
         currentTrack.value = {
           ...currentTrack.value,
           lyrics: lyricData.lyrics ?? currentTrack.value?.lyrics ?? null,
-          translatedLyrics: lyricData.translatedLyrics ?? currentTrack.value?.translatedLyrics ?? null
+          translatedLyrics:
+            lyricData.translatedLyrics ?? currentTrack.value?.translatedLyrics ?? null
         }
       }
     }
@@ -129,6 +130,70 @@ const cleanupFns: (() => void)[] = []
 let listenersSetup = false
 let crossfadeTimer: number | null = null
 let crossfadeTrackId = ''
+const TIME_UPDATE_INTERVAL_MS = 250
+let latestPlaybackTime = 0
+let lastTimePublishAt = 0
+let pendingTimePublishTimer: number | null = null
+let advancingFromEndedTrackId = ''
+let autoAdvanceInFlight = false
+
+function getNowMs(): number {
+  return performance.now()
+}
+
+function clearPendingTimePublish(): void {
+  if (pendingTimePublishTimer !== null) {
+    window.clearTimeout(pendingTimePublishTimer)
+    pendingTimePublishTimer = null
+  }
+}
+
+function publishCurrentTime(time: number): void {
+  latestPlaybackTime = time
+  currentTime.value = time
+  lastTimePublishAt = getNowMs()
+}
+
+function publishLatestCurrentTime(): void {
+  pendingTimePublishTimer = null
+  publishCurrentTime(latestPlaybackTime)
+}
+
+function setCurrentTimeImmediate(time: number): void {
+  clearPendingTimePublish()
+  publishCurrentTime(time)
+}
+
+function setCurrentTimeThrottled(time: number): void {
+  latestPlaybackTime = time
+  const now = getNowMs()
+  const remainingMs = TIME_UPDATE_INTERVAL_MS - (now - lastTimePublishAt)
+
+  if (remainingMs <= 0 || currentTime.value === 0) {
+    clearPendingTimePublish()
+    currentTime.value = time
+    lastTimePublishAt = now
+    return
+  }
+
+  if (pendingTimePublishTimer === null) {
+    pendingTimePublishTimer = window.setTimeout(publishLatestCurrentTime, remainingMs)
+  }
+}
+
+function flushLatestCurrentTime(): void {
+  clearPendingTimePublish()
+  publishCurrentTime(latestPlaybackTime)
+}
+
+function handlePlaybackEnded(): void {
+  const trackId = currentTrack.value?.id ?? ''
+  if (!trackId || autoAdvanceInFlight || advancingFromEndedTrackId === trackId) return
+  advancingFromEndedTrackId = trackId
+  autoAdvanceInFlight = true
+  flushLatestCurrentTime()
+  next()
+}
 
 function getTrackSource(track: Track): 'local' | 'ncm' {
   return track.source === 'ncm' ? 'ncm' : 'local'
@@ -171,7 +236,7 @@ function setupMpvListeners(): void {
       switch (name) {
         case 'time-pos':
           if (typeof data === 'number' && isFinite(data)) {
-            currentTime.value = data
+            setCurrentTimeThrottled(data)
           }
           break
         case 'duration':
@@ -181,6 +246,12 @@ function setupMpvListeners(): void {
           break
         case 'pause':
           isPlaying.value = !data
+          flushLatestCurrentTime()
+          break
+        case 'eof-reached':
+          if (data === true) {
+            handlePlaybackEnded()
+          }
           break
       }
       if (name === 'time-pos' || name === 'duration') {
@@ -192,13 +263,16 @@ function setupMpvListeners(): void {
   cleanupFns.push(
     api.onEndFile((reason) => {
       if (reason === 'eof') {
-        next()
+        handlePlaybackEnded()
       }
     })
   )
 
   cleanupFns.push(
     api.onStartFile(() => {
+      advancingFromEndedTrackId = ''
+      autoAdvanceInFlight = false
+      setCurrentTimeImmediate(0)
       isLoading.value = false
     })
   )
@@ -209,17 +283,13 @@ function setupMpvListeners(): void {
       mpvError.value = null
       api.setVolume(volume.value).catch(() => {})
       try {
-        ;[
-          exclusiveMode.value,
-          audioOutput.value,
-          audioOutputOptions.value,
-          audioProcessing.value
-        ] = await Promise.all([
-          api.getExclusiveMode(),
-          api.getAudioOutput(),
-          api.getAudioOutputOptions(),
-          api.getAudioProcessing()
-        ])
+        ;[exclusiveMode.value, audioOutput.value, audioOutputOptions.value, audioProcessing.value] =
+          await Promise.all([
+            api.getExclusiveMode(),
+            api.getAudioOutput(),
+            api.getAudioOutputOptions(),
+            api.getAudioProcessing()
+          ])
       } catch {
         // keep default
       }
@@ -272,14 +342,20 @@ function clearCrossfadeTimer(): void {
 function scheduleCrossfadeIfNeeded(): void {
   const seconds = audioProcessing.value.crossfadeSeconds
   const track = currentTrack.value
-  if (!track || !isPlaying.value || playMode.value === 'repeat' || seconds <= 0 || duration.value <= seconds + 1) {
+  if (
+    !track ||
+    !isPlaying.value ||
+    playMode.value === 'repeat' ||
+    seconds <= 0 ||
+    duration.value <= seconds + 1
+  ) {
     clearCrossfadeTimer()
     return
   }
 
   if (queue.value.length <= 1) return
 
-  const remaining = duration.value - currentTime.value
+  const remaining = duration.value - latestPlaybackTime
   if (remaining > seconds || remaining < 0) {
     if (crossfadeTrackId !== track.id) clearCrossfadeTimer()
     return
@@ -287,14 +363,18 @@ function scheduleCrossfadeIfNeeded(): void {
 
   if (crossfadeTrackId === track.id) return
   crossfadeTrackId = track.id
-  crossfadeTimer = window.setTimeout(() => {
-    crossfadeTimer = null
-    next()
-  }, Math.max(0, remaining * 1000))
+  crossfadeTimer = window.setTimeout(
+    () => {
+      crossfadeTimer = null
+      next()
+    },
+    Math.max(0, remaining * 1000)
+  )
 }
 
 async function loadAndPlay(track: Track): Promise<void> {
   isLoading.value = true
+  setCurrentTimeImmediate(0)
   clearCrossfadeTimer()
 
   try {
@@ -303,6 +383,7 @@ async function loadAndPlay(track: Track): Promise<void> {
     isPlaying.value = true
   } catch (err) {
     console.error('[mpv] 播放失败:', err)
+    autoAdvanceInFlight = false
     isLoading.value = false
     isPlaying.value = false
   }
@@ -348,7 +429,8 @@ async function togglePlayState(): Promise<void> {
 function previous(): void {
   if (queue.value.length === 0) return
   clearCrossfadeTimer()
-  if (currentTime.value > 3) {
+  if (latestPlaybackTime > 3) {
+    setCurrentTimeImmediate(0)
     window.api.mpv.seek(0).catch(() => {})
     return
   }
@@ -459,6 +541,7 @@ export function usePlayerStore(): {
   }
 
   function seek(time: number): void {
+    setCurrentTimeImmediate(time)
     window.api.mpv.seek(time).catch(() => {})
   }
 

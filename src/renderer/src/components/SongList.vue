@@ -4,6 +4,21 @@ import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import type { Track } from '../types/music'
 
+type LocalTransitionName = 'local-page-down' | 'local-page-up'
+type IdleDeadlineLike = {
+  didTimeout: boolean
+  timeRemaining: () => number
+}
+type RequestIdleCallbackLike = (
+  callback: (deadline: IdleDeadlineLike) => void,
+  options?: { timeout?: number }
+) => number
+type CancelIdleCallbackLike = (handle: number) => void
+type WindowWithIdleCallback = Window & {
+  requestIdleCallback?: RequestIdleCallbackLike
+  cancelIdleCallback?: CancelIdleCallbackLike
+}
+
 type GridItem = {
   name: string
   trackCount?: number
@@ -23,8 +38,16 @@ const emit = defineEmits<{
   selectView: [category: string, filter: string | null]
 }>()
 
-const { tracks, artists, albums, playlists, folders, getPlaylistTracks, removeTrack, addToPlaylist } =
-  useMusicStore()
+const {
+  tracks,
+  artists,
+  albums,
+  playlists,
+  folders,
+  getPlaylistTracks,
+  removeTrack,
+  addToPlaylist
+} = useMusicStore()
 const { currentTrack, playTrack } = usePlayerStore()
 
 const searchQuery = ref('')
@@ -99,8 +122,11 @@ const showTable = computed(() => {
 })
 
 const GRID_BATCH_SIZE = 16
+const GRID_IDLE_BATCH_SIZE = 24
 const renderedGridCount = ref(GRID_BATCH_SIZE)
-let gridRenderFrame: number | null = null
+let gridRenderIdleId: number | null = null
+let gridRenderTimer: number | null = null
+let lastGridRenderKey = ''
 
 const currentGridItems = computed<GridItem[]>(() => {
   if (props.category === 'artists') return artists.value
@@ -114,31 +140,67 @@ const visibleGridItems = computed(() => currentGridItems.value.slice(0, rendered
 const gridTotalCount = computed(() => currentGridItems.value.length)
 const visibleArtists = computed(() => (props.category === 'artists' ? visibleGridItems.value : []))
 const visibleAlbums = computed(() => (props.category === 'albums' ? visibleGridItems.value : []))
-const visiblePlaylists = computed(() => (props.category === 'playlists' ? visibleGridItems.value : []))
+const visiblePlaylists = computed(() =>
+  props.category === 'playlists' ? visibleGridItems.value : []
+)
 const visibleFolders = computed(() => (props.category === 'folders' ? visibleGridItems.value : []))
+const localTransitionName = computed<LocalTransitionName>(() =>
+  props.transitionName === 'page-up' ? 'local-page-up' : 'local-page-down'
+)
+const viewKey = computed(() =>
+  showGrid.value ? `grid-${props.category}` : `table-${props.category}-${props.filter ?? 'root'}`
+)
+const isSwitching = ref(false)
 
 function stopGridRendering(): void {
-  if (gridRenderFrame !== null) {
-    cancelAnimationFrame(gridRenderFrame)
-    gridRenderFrame = null
+  if (gridRenderIdleId !== null) {
+    const idleWindow = window as WindowWithIdleCallback
+    idleWindow.cancelIdleCallback?.(gridRenderIdleId)
+    gridRenderIdleId = null
+  }
+  if (gridRenderTimer !== null) {
+    window.clearTimeout(gridRenderTimer)
+    gridRenderTimer = null
   }
 }
 
-function startGridRendering(total: number): void {
-  stopGridRendering()
-  renderedGridCount.value = Math.min(GRID_BATCH_SIZE, total)
-  if (total <= GRID_BATCH_SIZE) return
-
-  const pump = (): void => {
-    renderedGridCount.value = Math.min(renderedGridCount.value + GRID_BATCH_SIZE, total)
-    if (renderedGridCount.value < total) {
-      gridRenderFrame = requestAnimationFrame(pump)
-    } else {
-      gridRenderFrame = null
-    }
+function scheduleGridPump(callback: () => void): void {
+  const idleWindow = window as WindowWithIdleCallback
+  if (idleWindow.requestIdleCallback) {
+    gridRenderIdleId = idleWindow.requestIdleCallback(
+      () => {
+        gridRenderIdleId = null
+        callback()
+      },
+      { timeout: 180 }
+    )
+    return
   }
 
-  gridRenderFrame = requestAnimationFrame(pump)
+  gridRenderTimer = window.setTimeout(() => {
+    gridRenderTimer = null
+    callback()
+  }, 48)
+}
+
+function pumpGridRendering(total: number): void {
+  if (!showGrid.value) {
+    stopGridRendering()
+    return
+  }
+
+  renderedGridCount.value = Math.min(renderedGridCount.value + GRID_IDLE_BATCH_SIZE, total)
+  if (renderedGridCount.value < total) {
+    scheduleGridPump(() => pumpGridRendering(total))
+  }
+}
+
+function startGridRendering(total: number, deferRest = false): void {
+  stopGridRendering()
+  renderedGridCount.value = Math.min(GRID_BATCH_SIZE, total)
+  if (total <= GRID_BATCH_SIZE || deferRest || isSwitching.value) return
+
+  scheduleGridPump(() => pumpGridRendering(total))
 }
 
 watch(
@@ -149,10 +211,27 @@ watch(
       return
     }
 
-    startGridRendering(gridTotalCount.value)
+    const nextGridRenderKey = viewKey.value
+    const deferRest = lastGridRenderKey !== '' && lastGridRenderKey !== nextGridRenderKey
+    lastGridRenderKey = nextGridRenderKey
+    startGridRendering(gridTotalCount.value, deferRest)
   },
   { immediate: true, flush: 'post' }
 )
+
+function onViewBeforeLeave(): void {
+  isSwitching.value = true
+  stopGridRendering()
+}
+
+function finishViewSwitch(): void {
+  isSwitching.value = false
+  if (showGrid.value) {
+    startGridRendering(gridTotalCount.value)
+  } else {
+    requestAnimationFrame(updateViewportHeight)
+  }
+}
 
 function formatDuration(seconds: number): string {
   if (!seconds) return '00:00'
@@ -251,7 +330,6 @@ const visibleRange = computed(() => {
   }
 })
 
-
 const visibleTracks = computed(() => {
   return displayTracks.value.slice(visibleRange.value.start, visibleRange.value.end)
 })
@@ -271,7 +349,7 @@ function onRowPointerMove(event: PointerEvent): void {
   row.style.setProperty('--track-pointer-y', `${event.clientY - rect.top}px`)
 }
 
-const updateViewportHeight = (): void => {
+function updateViewportHeight(): void {
   if (containerRef.value) {
     viewportHeight.value = containerRef.value.clientHeight
   }
@@ -318,305 +396,310 @@ watch(
   <div
     ref="containerRef"
     class="song-list"
-    :class="{ 'has-player': props.hasPlayer }"
+    :class="{ 'has-player': props.hasPlayer, 'is-switching': isSwitching }"
     :style="{ height: 'calc(100vh - 32px)' }"
     @scroll="onScroll"
   >
-    <!-- Grid View: Artists / Albums / Playlists -->
-    <Transition :name="transitionName">
-      <div v-if="showGrid" :key="'grid-' + category" class="grid-view">
-        <div class="song-list-header">
-          <h2 class="song-list-title">{{ viewTitle }}</h2>
-          <div class="header-right">
-            <div class="search-box" :class="{ focused: searchInputFocused }">
-              <i class="pi pi-search search-icon"></i>
-              <input
-                v-model="searchQuery"
-                type="text"
-                class="search-input"
-                placeholder="搜索歌曲、歌手、专辑或文件夹"
-                @focus="searchInputFocused = true"
-                @blur="searchInputFocused = false"
-              />
-              <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
-                <i class="pi pi-times"></i>
-              </button>
+    <Transition
+      :name="localTransitionName"
+      mode="out-in"
+      @before-leave="onViewBeforeLeave"
+      @after-enter="finishViewSwitch"
+      @enter-cancelled="finishViewSwitch"
+      @leave-cancelled="finishViewSwitch"
+    >
+      <div :key="viewKey" :class="showGrid ? 'grid-view' : 'table-view'">
+        <template v-if="showGrid">
+          <div class="song-list-header">
+            <h2 class="song-list-title">{{ viewTitle }}</h2>
+            <div class="header-right">
+              <div class="search-box" :class="{ focused: searchInputFocused }">
+                <i class="pi pi-search search-icon"></i>
+                <input
+                  v-model="searchQuery"
+                  type="text"
+                  class="search-input"
+                  placeholder="搜索歌曲、歌手、专辑或文件夹"
+                  @focus="searchInputFocused = true"
+                  @blur="searchInputFocused = false"
+                />
+                <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
+                  <i class="pi pi-times"></i>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-        <div v-if="category === 'artists' && artists.length === 0" class="empty-state">
-          <p class="empty-text">暂无艺术家</p>
-          <p class="empty-hint">通过歌单「添加文件夹」导入音乐</p>
-        </div>
-        <div v-else-if="category === 'albums' && albums.length === 0" class="empty-state">
-          <p class="empty-text">暂无专辑</p>
-          <p class="empty-hint">通过歌单「添加文件夹」导入音乐</p>
-        </div>
-        <div v-else-if="category === 'playlists' && playlists.length === 0" class="empty-state">
-          <p class="empty-text">暂无歌单</p>
-          <p class="empty-hint">通过歌单「添加文件夹」导入音乐</p>
-        </div>
-        <div v-else class="card-grid">
-          <!-- Artist Cards -->
-          <template v-if="category === 'artists'">
-            <div
-              v-for="artist in visibleArtists"
-              :key="artist.name"
-              class="artist-card"
-              @click="emit('selectView', 'artists', `artist:${artist.name}`)"
-            >
-              <img v-if="artist.cover" :src="artist.cover" class="artist-cover" alt="cover" />
-              <div v-else class="artist-cover-placeholder">
-                <i class="pi pi-user" style="font-size: 28px; color: #bbb"></i>
-              </div>
-              <div class="artist-name">{{ artist.name }}</div>
-              <div class="artist-count">{{ artist.trackCount }} 首</div>
-            </div>
-            <div v-if="renderedGridCount < gridTotalCount" class="grid-loading-more">正在加载更多艺术家...</div>
-          </template>
-          <!-- Album Cards -->
-          <template v-if="category === 'albums'">
-            <div
-              v-for="album in visibleAlbums"
-              :key="album.name"
-              class="album-card"
-              @click="emit('selectView', 'albums', `album:${album.name}`)"
-            >
-              <img v-if="album.cover" :src="album.cover" class="album-cover" alt="cover" />
-              <div v-else class="album-cover-placeholder">
-                <i class="pi pi-images" style="font-size: 28px; color: #bbb"></i>
-              </div>
-              <div class="album-name">{{ album.name }}</div>
-              <div class="album-count">{{ album.trackCount }} 首</div>
-            </div>
-          </template>
-          <!-- Playlist Cards -->
-          <template v-if="category === 'playlists'">
-            <div
-              v-for="playlist in visiblePlaylists"
-              :key="playlist.name"
-              class="playlist-card"
-              @click="emit('selectView', 'playlists', `playlist:${playlist.name}`)"
-            >
-              <div class="playlist-cover-placeholder">
-                <i class="pi pi-list" style="font-size: 32px; color: #ccc"></i>
-              </div>
-              <div class="playlist-name">{{ playlist.name }}</div>
-              <div class="playlist-count">{{ playlist.trackIds?.size ?? 0 }} 首</div>
-            </div>
-          </template>
-          <template v-if="category === 'folders'">
-            <div
-              v-for="folder in visibleFolders"
-              :key="folder.path"
-              class="playlist-card folder-card"
-              @click="emit('selectView', 'folders', `folder:${folder.path}`)"
-            >
-              <img v-if="folder.cover" :src="folder.cover" class="album-cover" alt="cover" />
-              <div v-else class="playlist-cover-placeholder">
-                <i class="pi pi-folder" style="font-size: 32px; color: #fff"></i>
-              </div>
-              <div class="playlist-name">{{ folder.name }}</div>
-              <div class="playlist-count">{{ folder.trackCount }} 首</div>
-            </div>
-          </template>
-        </div>
-      </div>
-    </Transition>
-
-    <!-- Table View: Track listing -->
-    <Transition :name="transitionName">
-      <div v-if="showTable" :key="'table-' + category + '-' + (filter ?? 'root')" class="table-view">
-        <div class="song-list-header">
-          <div class="header-left">
-            <button
-              v-if="category !== 'allSongs'"
-              class="btn-back"
-              title="返回"
-              @click="emit('selectView', category, null)"
-            >
-              <i class="pi pi-arrow-left"></i>
-            </button>
-            <div class="title-group">
-              <h2 class="song-list-title">{{ viewTitle }}</h2>
-            </div>
+          <div v-if="category === 'artists' && artists.length === 0" class="empty-state">
+            <p class="empty-text">暂无艺术家</p>
+            <p class="empty-hint">通过歌单「添加文件夹」导入音乐</p>
           </div>
-          <div class="header-right">
-            <div class="search-box" :class="{ focused: searchInputFocused }">
-              <i class="pi pi-search search-icon"></i>
-              <input
-                v-model="searchQuery"
-                type="text"
-                class="search-input"
-                placeholder="搜索歌曲、歌手、专辑或文件夹"
-                @focus="searchInputFocused = true"
-                @blur="searchInputFocused = false"
-              />
-              <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
-                <i class="pi pi-times"></i>
-              </button>
-            </div>
-            <div class="view-tools" aria-hidden="true">
-              <button class="view-tool active" type="button" tabindex="-1">
-                <i class="pi pi-list"></i>
-              </button>
-              <button class="view-tool" type="button" tabindex="-1">
-                <i class="pi pi-th-large"></i>
-              </button>
-              <button class="view-tool" type="button" tabindex="-1">
-                <i class="pi pi-filter"></i>
-              </button>
-              <button class="view-tool" type="button" tabindex="-1">
-                <i class="pi pi-ellipsis-h"></i>
-              </button>
-            </div>
+          <div v-else-if="category === 'albums' && albums.length === 0" class="empty-state">
+            <p class="empty-text">暂无专辑</p>
+            <p class="empty-hint">通过歌单「添加文件夹」导入音乐</p>
           </div>
-        </div>
-        <div v-if="displayTracks.length === 0" class="empty-state">
-          <div class="empty-icon">
-            <i class="pi pi-wave-pulse" style="font-size: 48px; color: #ccc"></i>
+          <div v-else-if="category === 'playlists' && playlists.length === 0" class="empty-state">
+            <p class="empty-text">暂无歌单</p>
+            <p class="empty-hint">通过歌单「添加文件夹」导入音乐</p>
           </div>
-          <p class="empty-text">暂无内容</p>
-          <p class="empty-hint">通过左侧菜单「歌单 → 添加文件夹」导入音乐</p>
-        </div>
-        <div v-else class="track-table-wrapper">
-          <table class="track-table">
-            <thead>
-              <tr>
-                <th class="col-cover-header"></th>
-                <th class="col-index">#</th>
-                <th class="col-info">标题</th>
-                <th class="col-album">专辑</th>
-                <th class="col-duration">时长</th>
-              </tr>
-            </thead>
-            <tbody ref="tbodyRef" :style="{ height: totalHeight + 'px', position: 'relative', display: 'block' }">
-              <tr class="virtual-spacer" :style="{ height: paddingTop + 'px' }" aria-hidden="true">
-                <td colspan="5"></td>
-              </tr>
-              <tr
-                v-for="(track, index) in visibleTracks"
-                :key="track.id"
-                class="track-row"
-                :class="{ 'track-playing': currentTrack?.id === track.id }"
-                :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
-                @click="onRowClick(track, $event)"
-                @dblclick="onRowDblClick(track)"
-                @pointermove="onRowPointerMove"
-                @contextmenu="onContextMenu($event, track)"
+          <div v-else class="card-grid">
+            <!-- Artist Cards -->
+            <template v-if="category === 'artists'">
+              <div
+                v-for="artist in visibleArtists"
+                :key="artist.name"
+                class="artist-card"
+                @click="emit('selectView', 'artists', `artist:${artist.name}`)"
               >
-                <td class="col-cover">
-                  <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
-                  <div v-else class="cover-placeholder">
-                    <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
-                  </div>
-                </td>
-                <td class="col-index">
-                  <span v-if="currentTrack?.id === track.id" class="playing-indicator">
-                    <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
-                  </span>
-                  <span v-else>{{ visibleRange.start + Number(index) + 1 }}</span>
-                </td>
-                <td class="col-info">
-                  <div class="track-title-row">
-                    <div class="track-title">{{ track.title }}</div>
-                  </div>
-                  <div class="track-artist">{{ track.artist }}</div>
-                </td>
-                <td class="col-album">{{ track.album }}</td>
-                <td class="col-duration">{{ formatDuration(track.duration) }}</td>
-              </tr>
-              <tr
-                class="virtual-spacer"
-                :style="{
-                  height: totalHeight - paddingTop - visibleTracks.length * rowHeight + 'px'
-                }"
-                aria-hidden="true"
+                <img v-if="artist.cover" :src="artist.cover" class="artist-cover" alt="cover" />
+                <div v-else class="artist-cover-placeholder">
+                  <i class="pi pi-user" style="font-size: 28px; color: #bbb"></i>
+                </div>
+                <div class="artist-name">{{ artist.name }}</div>
+                <div class="artist-count">{{ artist.trackCount }} 首</div>
+              </div>
+              <div v-if="renderedGridCount < gridTotalCount" class="grid-loading-more">
+                正在加载更多艺术家...
+              </div>
+            </template>
+            <!-- Album Cards -->
+            <template v-if="category === 'albums'">
+              <div
+                v-for="album in visibleAlbums"
+                :key="album.name"
+                class="album-card"
+                @click="emit('selectView', 'albums', `album:${album.name}`)"
               >
-                <td colspan="5"></td>
-              </tr>
-            </tbody>
-          </table>
-
-          <!-- Context Menu -->
-          <div
-            v-if="showContextMenu"
-            class="context-menu"
-            :style="{ top: menuY + 'px', left: menuX + 'px' }"
-            @click.stop
-          >
-            <div class="menu-item" @click="handleDelete">
-              <i class="pi pi-trash"></i>
-              <span>删除</span>
+                <img v-if="album.cover" :src="album.cover" class="album-cover" alt="cover" />
+                <div v-else class="album-cover-placeholder">
+                  <i class="pi pi-images" style="font-size: 28px; color: #bbb"></i>
+                </div>
+                <div class="album-name">{{ album.name }}</div>
+                <div class="album-count">{{ album.trackCount }} 首</div>
+              </div>
+            </template>
+            <!-- Playlist Cards -->
+            <template v-if="category === 'playlists'">
+              <div
+                v-for="playlist in visiblePlaylists"
+                :key="playlist.name"
+                class="playlist-card"
+                @click="emit('selectView', 'playlists', `playlist:${playlist.name}`)"
+              >
+                <div class="playlist-cover-placeholder">
+                  <i class="pi pi-list" style="font-size: 32px; color: #ccc"></i>
+                </div>
+                <div class="playlist-name">{{ playlist.name }}</div>
+                <div class="playlist-count">{{ playlist.trackIds?.size ?? 0 }} 首</div>
+              </div>
+            </template>
+            <template v-if="category === 'folders'">
+              <div
+                v-for="folder in visibleFolders"
+                :key="folder.path"
+                class="playlist-card folder-card"
+                @click="emit('selectView', 'folders', `folder:${folder.path}`)"
+              >
+                <img v-if="folder.cover" :src="folder.cover" class="album-cover" alt="cover" />
+                <div v-else class="playlist-cover-placeholder">
+                  <i class="pi pi-folder" style="font-size: 32px; color: #fff"></i>
+                </div>
+                <div class="playlist-name">{{ folder.name }}</div>
+                <div class="playlist-count">{{ folder.trackCount }} 首</div>
+              </div>
+            </template>
+          </div>
+        </template>
+        <template v-else>
+          <div class="song-list-header">
+            <div class="header-left">
+              <button
+                v-if="category !== 'allSongs'"
+                class="btn-back"
+                title="返回"
+                @click="emit('selectView', category, null)"
+              >
+                <i class="pi pi-arrow-left"></i>
+              </button>
+              <div class="title-group">
+                <h2 class="song-list-title">{{ viewTitle }}</h2>
+              </div>
             </div>
-            <div class="menu-item" @click="handleOpenFolder">
-              <i class="pi pi-folder-open"></i>
-              <span>打开文件所在位置</span>
+            <div class="header-right">
+              <div class="search-box" :class="{ focused: searchInputFocused }">
+                <i class="pi pi-search search-icon"></i>
+                <input
+                  v-model="searchQuery"
+                  type="text"
+                  class="search-input"
+                  placeholder="搜索歌曲、歌手、专辑或文件夹"
+                  @focus="searchInputFocused = true"
+                  @blur="searchInputFocused = false"
+                />
+                <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
+                  <i class="pi pi-times"></i>
+                </button>
+              </div>
+              <div class="view-tools" aria-hidden="true">
+                <button class="view-tool active" type="button" tabindex="-1">
+                  <i class="pi pi-list"></i>
+                </button>
+                <button class="view-tool" type="button" tabindex="-1">
+                  <i class="pi pi-th-large"></i>
+                </button>
+                <button class="view-tool" type="button" tabindex="-1">
+                  <i class="pi pi-filter"></i>
+                </button>
+                <button class="view-tool" type="button" tabindex="-1">
+                  <i class="pi pi-ellipsis-h"></i>
+                </button>
+              </div>
             </div>
-            <div
-              class="menu-item"
-              @mouseenter="showPlaylistSubmenu = true"
-              @mouseleave="showPlaylistSubmenu = false"
-            >
-              <i class="pi pi-plus"></i>
-              <span>加入到歌单</span>
-              <i class="pi pi-chevron-right submenu-icon"></i>
-
-              <div v-if="showPlaylistSubmenu" class="submenu">
-                <div v-if="playlists.length === 0" class="menu-item disabled">暂无歌单</div>
-                <div
-                  v-for="pl in playlists"
-                  :key="pl.name"
-                  class="menu-item"
-                  @click="handleAddToPlaylist(pl.name)"
+          </div>
+          <div v-if="displayTracks.length === 0" class="empty-state">
+            <div class="empty-icon">
+              <i class="pi pi-wave-pulse" style="font-size: 48px; color: #ccc"></i>
+            </div>
+            <p class="empty-text">暂无内容</p>
+            <p class="empty-hint">通过左侧菜单「歌单 → 添加文件夹」导入音乐</p>
+          </div>
+          <div v-else class="track-table-wrapper">
+            <table class="track-table">
+              <thead>
+                <tr>
+                  <th class="col-cover-header"></th>
+                  <th class="col-index">#</th>
+                  <th class="col-info">标题</th>
+                  <th class="col-album">专辑</th>
+                  <th class="col-duration">时长</th>
+                </tr>
+              </thead>
+              <tbody
+                ref="tbodyRef"
+                :style="{ height: totalHeight + 'px', position: 'relative', display: 'block' }"
+              >
+                <tr
+                  class="virtual-spacer"
+                  :style="{ height: paddingTop + 'px' }"
+                  aria-hidden="true"
                 >
-                  {{ pl.name }}
+                  <td colspan="5"></td>
+                </tr>
+                <tr
+                  v-for="(track, index) in visibleTracks"
+                  :key="track.id"
+                  class="track-row"
+                  :class="{ 'track-playing': currentTrack?.id === track.id }"
+                  :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
+                  @click="onRowClick(track, $event)"
+                  @dblclick="onRowDblClick(track)"
+                  @pointermove="onRowPointerMove"
+                  @contextmenu="onContextMenu($event, track)"
+                >
+                  <td class="col-cover">
+                    <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
+                    <div v-else class="cover-placeholder">
+                      <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+                    </div>
+                  </td>
+                  <td class="col-index">
+                    <span v-if="currentTrack?.id === track.id" class="playing-indicator">
+                      <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
+                    </span>
+                    <span v-else>{{ visibleRange.start + Number(index) + 1 }}</span>
+                  </td>
+                  <td class="col-info">
+                    <div class="track-title-row">
+                      <div class="track-title">{{ track.title }}</div>
+                    </div>
+                    <div class="track-artist">{{ track.artist }}</div>
+                  </td>
+                  <td class="col-album">{{ track.album }}</td>
+                  <td class="col-duration">{{ formatDuration(track.duration) }}</td>
+                </tr>
+                <tr
+                  class="virtual-spacer"
+                  :style="{
+                    height: totalHeight - paddingTop - visibleTracks.length * rowHeight + 'px'
+                  }"
+                  aria-hidden="true"
+                >
+                  <td colspan="5"></td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- Context Menu -->
+            <div
+              v-if="showContextMenu"
+              class="context-menu"
+              :style="{ top: menuY + 'px', left: menuX + 'px' }"
+              @click.stop
+            >
+              <div class="menu-item" @click="handleDelete">
+                <i class="pi pi-trash"></i>
+                <span>删除</span>
+              </div>
+              <div class="menu-item" @click="handleOpenFolder">
+                <i class="pi pi-folder-open"></i>
+                <span>打开文件所在位置</span>
+              </div>
+              <div
+                class="menu-item"
+                @mouseenter="showPlaylistSubmenu = true"
+                @mouseleave="showPlaylistSubmenu = false"
+              >
+                <i class="pi pi-plus"></i>
+                <span>加入到歌单</span>
+                <i class="pi pi-chevron-right submenu-icon"></i>
+
+                <div v-if="showPlaylistSubmenu" class="submenu">
+                  <div v-if="playlists.length === 0" class="menu-item disabled">暂无歌单</div>
+                  <div
+                    v-for="pl in playlists"
+                    :key="pl.name"
+                    class="menu-item"
+                    @click="handleAddToPlaylist(pl.name)"
+                  >
+                    {{ pl.name }}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
+        </template>
       </div>
     </Transition>
   </div>
 </template>
 
 <style scoped>
-.view-down-enter-active,
-.view-down-leave-active,
-.view-up-enter-active,
-.view-up-leave-active {
-  position: relative;
+.local-page-down-enter-active,
+.local-page-down-leave-active,
+.local-page-up-enter-active,
+.local-page-up-leave-active {
   transition:
-    transform 0.35s ease,
-    opacity 0.35s ease;
-}
-.view-down-enter-active,
-.view-up-enter-active {
-  z-index: 1;
-}
-.view-down-leave-active,
-.view-up-leave-active {
-  z-index: 0;
+    transform 0.24s var(--te-ease-soft),
+    opacity 0.18s ease;
+  will-change: transform;
 }
 
-/* view-down: drilling into detail 鈥?old slides UP, new slides UP from BELOW */
-.view-down-leave-to {
-  transform: translateY(-100%);
-  opacity: 0;
-}
-.view-down-enter-from {
-  transform: translateY(100%);
+.local-page-down-enter-from {
+  transform: translate3d(0, -26px, 0);
   opacity: 0;
 }
 
-/* view-up: going back 鈥?old slides DOWN, new slides DOWN from ABOVE */
-.view-up-leave-to {
-  transform: translateY(100%);
+.local-page-down-leave-to {
+  transform: translate3d(0, 18px, 0);
   opacity: 0;
 }
-.view-up-enter-from {
-  transform: translateY(-100%);
+
+.local-page-up-enter-from {
+  transform: translate3d(0, 26px, 0);
+  opacity: 0;
+}
+
+.local-page-up-leave-to {
+  transform: translate3d(0, -18px, 0);
   opacity: 0;
 }
 
@@ -660,7 +743,6 @@ watch(
 .table-view {
   position: relative;
   min-width: 0;
-  animation: surface-in 0.46s var(--te-ease-soft) both;
   transform-origin: top center;
 }
 
@@ -999,7 +1081,12 @@ watch(
   border: 1px solid rgba(255, 255, 255, 0.3);
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.12)),
-    linear-gradient(90deg, rgba(124, 77, 255, 0.03), rgba(255, 126, 182, 0.02), rgba(34, 211, 238, 0.03));
+    linear-gradient(
+      90deg,
+      rgba(124, 77, 255, 0.03),
+      rgba(255, 126, 182, 0.02),
+      rgba(34, 211, 238, 0.03)
+    );
   backdrop-filter: blur(18px) saturate(160%);
   -webkit-backdrop-filter: blur(18px) saturate(160%);
 }
@@ -1070,12 +1157,38 @@ watch(
       rgba(255, 126, 182, 0.18),
       rgba(124, 77, 255, 0.22)
     );
-  background-size: 100% 100%, 260% 100%;
-  animation: pointer-border-pulse 1.7s ease-in-out infinite, border-gradient-flow 2.8s linear infinite;
+  background-size:
+    100% 100%,
+    260% 100%;
+  animation:
+    pointer-border-pulse 1.7s ease-in-out infinite,
+    border-gradient-flow 2.8s linear infinite;
 }
 .track-row:hover td {
   border-bottom-color: transparent;
 }
+.song-list.is-switching .track-row,
+.song-list.is-switching .track-row::before,
+.song-list.is-switching .track-row::after {
+  transition: none !important;
+  animation: none !important;
+}
+
+.song-list.is-switching .track-row:hover {
+  transform: none;
+  box-shadow: none;
+  filter: none;
+}
+
+.song-list.is-switching .track-row:hover::before,
+.song-list.is-switching .track-row:hover::after {
+  opacity: 0;
+}
+
+.song-list.is-switching .track-playing::after {
+  animation: none !important;
+}
+
 .track-playing {
   background: transparent !important;
   box-shadow: 0 20px 48px rgba(124, 77, 255, 0.12);
@@ -1250,17 +1363,6 @@ watch(
   -webkit-backdrop-filter: blur(20px) saturate(150%);
 }
 
-@keyframes surface-in {
-  from {
-    opacity: 0;
-    transform: translateY(16px) scale(0.995);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
 @keyframes border-gradient-flow {
   to {
     background-position: 260% 0;
@@ -1269,7 +1371,9 @@ watch(
 
 @keyframes hover-gradient-flow {
   to {
-    background-position: 100% 0, 260% 0;
+    background-position:
+      100% 0,
+      260% 0;
   }
 }
 

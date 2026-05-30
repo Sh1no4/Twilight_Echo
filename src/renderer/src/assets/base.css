@@ -33,12 +33,64 @@
   --te-ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
   --te-ui-scale: 0.94;
   --te-menu-width: clamp(132px, 18vw, 216px);
-  --te-font-sans: 'Source Han Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
+  --te-font-sans:
+    'Source Han Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
     'Microsoft YaHei', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --te-text-title: 800;
   --te-text-body: 500;
   --te-text-meta: 400;
   --te-text-strong: 700;
+}
+
+:root,
+:root[data-theme='pureWhite'] {
+  --te-primary-500: #2563eb;
+  --te-primary-400: #3b82f6;
+  --te-primary-300: #93c5fd;
+  --te-favorite-500: #db2777;
+  --te-success-500: #16a34a;
+  --te-warning-500: #d97706;
+  --te-info-500: #2563eb;
+  --te-accent-cyan: #0891b2;
+  --te-neutral-50: #ffffff;
+  --te-neutral-100: #f8fafc;
+  --te-neutral-200: #e5e7eb;
+  --te-neutral-300: #d1d5db;
+  --te-neutral-500: #64748b;
+  --te-neutral-700: #334155;
+  --te-neutral-900: #0f172a;
+  --te-glass-bg: rgba(255, 255, 255, 0.94);
+  --te-glass-bg-strong: rgba(255, 255, 255, 0.98);
+  --te-glass-border: rgba(15, 23, 42, 0.1);
+  --te-glass-shadow: 0 16px 42px rgba(15, 23, 42, 0.08);
+  --te-glow-main: rgba(37, 99, 235, 0.12);
+  --te-glow-soft: rgba(59, 130, 246, 0.08);
+  --te-glow-cyan: rgba(8, 145, 178, 0.08);
+}
+
+:root[data-theme='aurora'] {
+  --te-primary-500: #7c4dff;
+  --te-primary-400: #a885f7;
+  --te-primary-300: #c084fc;
+  --te-favorite-500: #e84393;
+  --te-success-500: #20c65e;
+  --te-warning-500: #f59e0b;
+  --te-info-500: #3b82f6;
+  --te-accent-cyan: #22d3ee;
+  --te-neutral-50: #fafafa;
+  --te-neutral-100: #f5f5f7;
+  --te-neutral-200: #e5e7eb;
+  --te-neutral-300: #d1d5db;
+  --te-neutral-500: #6b7280;
+  --te-neutral-700: #374151;
+  --te-neutral-900: #111827;
+  --te-glass-bg: rgba(255, 255, 255, 0.62);
+  --te-glass-bg-strong: rgba(255, 255, 255, 0.74);
+  --te-glass-border: rgba(255, 255, 255, 0.55);
+  --te-glass-shadow: 0 20px 70px rgba(86, 70, 160, 0.16);
+  --te-glow-main: rgba(124, 77, 255, 0.26);
+  --te-glow-soft: rgba(255, 126, 182, 0.18);
+  --te-glow-cyan: rgba(34, 211, 238, 0.18);
 }
 
 *,
@@ -58,8 +110,8 @@ html {
 }
 
 .drag-region {
-  -webkit-app-region: drag;  /* 允许拖动窗口 */
-  height: 32px;              /* 自定义标题栏高度 */
+  -webkit-app-region: drag; /* 允许拖动窗口 */
+  height: 32px; /* 自定义标题栏高度 */
 }
 .no-drag {
   -webkit-app-region: no-drag; /* 按钮区域需禁止拖动 */
@@ -77,13 +129,26 @@ body {
   background-attachment: fixed;
   line-height: 1.65;
   font-family: var(--te-font-sans);
-  font-feature-settings: 'kern' 1, 'liga' 1, 'calt' 1, 'ss01' 1;
+  font-feature-settings:
+    'kern' 1,
+    'liga' 1,
+    'calt' 1,
+    'ss01' 1;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
   font-size: 14px;
   letter-spacing: 0.01em;
+}
+
+:root[data-theme='pureWhite'] {
+  background: #ffffff;
+}
+
+:root[data-theme='pureWhite'] html,
+html[data-theme='pureWhite'] {
+  background: #ffffff;
 }
 
 body.te-no-blur * {
@@ -109,6 +174,16 @@ body::before {
     linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(247, 244, 255, 0.78));
   opacity: 0.9;
   animation: ambient-light-shift 14s var(--te-ease-soft) infinite alternate;
+}
+
+html[data-theme='pureWhite'] body {
+  background: #ffffff;
+}
+
+html[data-theme='pureWhite'] body::before,
+html[data-theme='pureWhite'] .main-content::before,
+html[data-theme='pureWhite'] .main-content::after {
+  display: none;
 }
 
 #app {
@@ -154,4 +229,320 @@ a {
   to {
     transform: translate3d(1.4%, 0.8%, 0) scale(1.025);
   }
+}
+
+html[data-theme='pureWhite'] .title-bar {
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.06);
+  backdrop-filter: blur(14px) saturate(125%);
+  -webkit-backdrop-filter: blur(14px) saturate(125%);
+}
+
+html[data-theme='pureWhite'] .title-bar.title-bar-settings,
+html[data-theme='pureWhite'] .title-bar.title-bar-streaming {
+  border-bottom-color: transparent;
+  box-shadow: none;
+}
+
+html[data-theme='pureWhite'] .title-bar.title-bar-settings {
+  background: #ffffff;
+}
+
+html[data-theme='pureWhite'] .title-bar.title-bar-streaming {
+  background: #fafbfe;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-theme='pureWhite'] .title-bar.title-bar-glass {
+  border-bottom-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-theme='pureWhite'] .title-bar.title-bar-glass .title-bar-playing-backdrop {
+  display: none;
+}
+
+html[data-theme='pureWhite'] .title-bar:not(.title-bar-glass) .menu-btn:hover,
+html[data-theme='pureWhite'] .title-bar:not(.title-bar-glass) .settings-btn:hover,
+html[data-theme='pureWhite'] .title-bar:not(.title-bar-glass) .login-btn:hover,
+html[data-theme='pureWhite'] .title-bar:not(.title-bar-glass) .control-btn:hover {
+  background: rgba(37, 99, 235, 0.08);
+}
+
+html[data-theme='pureWhite'] .side-menu {
+  border-right-color: rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 16px 0 44px rgba(15, 23, 42, 0.06);
+  backdrop-filter: blur(12px) saturate(120%);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+}
+
+html[data-theme='pureWhite'] .menu-item:hover,
+html[data-theme='pureWhite'] .menu-item-streaming:hover,
+html[data-theme='pureWhite'] .menu-item-import:hover {
+  background: rgba(37, 99, 235, 0.07);
+}
+
+html[data-theme='pureWhite'] .menu-item.active {
+  background: rgba(37, 99, 235, 0.08);
+  box-shadow:
+    inset 3px 0 0 rgba(37, 99, 235, 0.84),
+    0 10px 24px rgba(37, 99, 235, 0.08);
+}
+
+html[data-theme='pureWhite'] .song-list {
+  background: #ffffff;
+}
+
+html[data-theme='pureWhite'] .song-list::before,
+html[data-theme='pureWhite'] .song-list::after,
+html[data-theme='pureWhite'] .card-grid::before,
+html[data-theme='pureWhite'] .artist-card::before,
+html[data-theme='pureWhite'] .album-card::before,
+html[data-theme='pureWhite'] .playlist-card::before {
+  display: none;
+}
+
+html[data-theme='pureWhite'] .song-list-header,
+html[data-theme='pureWhite'] .filter-card,
+html[data-theme='pureWhite'] .track-table-wrapper,
+html[data-theme='pureWhite'] .artist-card,
+html[data-theme='pureWhite'] .album-card,
+html[data-theme='pureWhite'] .playlist-card,
+html[data-theme='pureWhite'] .empty-list-card {
+  border-color: rgba(15, 23, 42, 0.08);
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-theme='pureWhite'] .song-list-header {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-theme='pureWhite'] .artist-card:hover,
+html[data-theme='pureWhite'] .album-card:hover,
+html[data-theme='pureWhite'] .playlist-card:hover {
+  box-shadow: 0 16px 36px rgba(15, 23, 42, 0.1);
+}
+
+html[data-theme='pureWhite'] .track-row:hover {
+  background: transparent;
+}
+
+html[data-theme='pureWhite'] .track-row.track-playing {
+  background: transparent;
+}
+
+html[data-theme='pureWhite'] .track-table-wrapper {
+  border: 0;
+  border-radius: 0;
+  background: #ffffff;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-theme='pureWhite'] .track-table thead {
+  background: #ffffff;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-theme='pureWhite'] .track-table th,
+html[data-theme='pureWhite'] .track-row td {
+  border-bottom-color: transparent;
+}
+
+html[data-theme='pureWhite'] .track-row {
+  background: transparent;
+  box-shadow: none;
+  filter: none;
+}
+
+html[data-theme='pureWhite'] .track-row::before,
+html[data-theme='pureWhite'] .track-row::after {
+  animation: none !important;
+  background: transparent;
+  border-color: transparent;
+  opacity: 0;
+}
+
+html[data-theme='pureWhite'] .track-row:hover,
+html[data-theme='pureWhite'] .track-row.track-playing {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 22px rgba(15, 23, 42, 0.08);
+  filter: none;
+  z-index: 3;
+}
+
+html[data-theme='pureWhite'] .track-row:hover::before,
+html[data-theme='pureWhite'] .track-row.track-playing::before {
+  border-color: rgba(15, 23, 42, 0.06);
+  background: rgba(15, 23, 42, 0.055);
+  opacity: 1;
+}
+
+html[data-theme='pureWhite'] .track-row:hover::after,
+html[data-theme='pureWhite'] .track-row.track-playing::after {
+  opacity: 0;
+}
+
+html[data-theme='pureWhite'] .track-row:hover td,
+html[data-theme='pureWhite'] .track-row.track-playing td {
+  border-bottom-color: transparent !important;
+}
+
+html[data-theme='pureWhite'] .track-playing .track-title {
+  color: var(--te-neutral-900);
+}
+
+html[data-theme='pureWhite'] .player-bar:not(.player-bar-glass),
+html[data-theme='pureWhite'] .playlist-panel:not(.panel-glass),
+html[data-theme='pureWhite'] .volume-drawer:not(.drawer-glass),
+html[data-theme='pureWhite'] .more-drawer:not(.drawer-glass) {
+  border-color: rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 16px 42px rgba(15, 23, 42, 0.1);
+  backdrop-filter: blur(12px) saturate(120%);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+}
+
+html[data-theme='pureWhite'] .ctrl-btn:hover,
+html[data-theme='pureWhite'] .icon-btn:hover,
+html[data-theme='pureWhite'] .icon-btn.active,
+html[data-theme='pureWhite'] .more-action:hover,
+html[data-theme='pureWhite'] .audio-output-mini:hover,
+html[data-theme='pureWhite'] .audio-output-mini.active {
+  background: rgba(37, 99, 235, 0.08);
+}
+
+html[data-theme='pureWhite'] .settings-page {
+  background: #ffffff;
+}
+
+html[data-theme='pureWhite'] .settings-tabs,
+html[data-theme='pureWhite'] .theme-segment,
+html[data-theme='pureWhite'] .path-field,
+html[data-theme='pureWhite'] .text-button,
+html[data-theme='pureWhite'] .icon-button.subtle,
+html[data-theme='pureWhite'] .shortcut-item kbd {
+  background: #f8fafc;
+}
+
+html[data-theme='pureWhite'] .settings-group,
+html[data-theme='pureWhite'] .shortcut-list,
+html[data-theme='pureWhite'] .theme-option.active {
+  border-color: rgba(15, 23, 42, 0.08);
+  background: #ffffff;
+}
+
+html[data-theme='pureWhite'] .tab-btn.active,
+html[data-theme='pureWhite'] .text-button:hover,
+html[data-theme='pureWhite'] .inline-note {
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+}
+
+html[data-theme='pureWhite'] .toggle-switch.active,
+html[data-theme='pureWhite'] .primary-button {
+  background: var(--te-primary-500);
+}
+
+html[data-theme='pureWhite'] .range-control {
+  accent-color: var(--te-primary-500);
+}
+
+html[data-theme='pureWhite'] .playing-music {
+  background: #080e17;
+}
+
+html[data-theme='pureWhite'] .playing-music .backdrop {
+  background: color-mix(in srgb, var(--accent-color) 26%, #080e17);
+}
+
+html[data-theme='pureWhite'] .playing-music .backdrop-cover {
+  filter: blur(64px) saturate(1.42) brightness(0.62);
+  opacity: 1;
+  transform: scale(1.14);
+}
+
+html[data-theme='pureWhite'] .playing-music .backdrop-scrim {
+  background:
+    linear-gradient(
+      180deg,
+      rgba(5, 10, 18, 0.18) 0%,
+      rgba(8, 13, 24, 0.28) 46%,
+      rgba(6, 10, 18, 0.78) 100%
+    ),
+    radial-gradient(
+      circle at 50% 18%,
+      color-mix(in srgb, var(--accent-color) 18%, transparent),
+      transparent 42%
+    );
+  backdrop-filter: none;
+}
+
+html[data-theme='pureWhite'] .playing-music .backdrop-accent {
+  background:
+    linear-gradient(180deg, transparent 0%, rgba(6, 10, 18, 0.38) 68%, rgba(6, 10, 18, 0.72) 100%),
+    radial-gradient(
+      circle at 22% 24%,
+      color-mix(in srgb, var(--accent-color) 28%, transparent),
+      transparent 38%
+    ),
+    radial-gradient(circle at 72% 34%, rgba(255, 255, 255, 0.08), transparent 30%);
+  opacity: 0.72;
+}
+
+html[data-theme='pureWhite'] .playing-music .track-title,
+html[data-theme='pureWhite'] .playing-music .lyric-row.active {
+  color: rgba(255, 255, 255, 0.96);
+}
+
+html[data-theme='pureWhite'] .playing-music .track-artist,
+html[data-theme='pureWhite'] .playing-music .lyric-row:hover {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+html[data-theme='pureWhite'] .playing-music .track-album,
+html[data-theme='pureWhite'] .playing-music .lyric-row {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+html[data-theme='pureWhite'] .playing-music .lyrics-column {
+  border-left-color: rgba(255, 255, 255, 0.08);
+}
+
+html[data-theme='pureWhite'] .playing-music .time-chip,
+html[data-theme='pureWhite'] .playing-music .lyric-row.active {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.2);
+}
+
+html[data-theme='pureWhite'] .playing-music .lyric-translation {
+  color: rgba(255, 255, 255, 0.56);
+}
+
+html[data-theme='pureWhite'] .playing-music .lyric-row.active .lyric-translation {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+html[data-theme='pureWhite'] .playing-music .cover-frame {
+  background: #ffffff;
+  box-shadow: 0 24px 56px rgba(15, 23, 42, 0.16);
+}
+
+html[data-theme='pureWhite'] .playing-music .cover-placeholder {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03)),
+    color-mix(in srgb, var(--accent-color) 20%, transparent);
+  color: rgba(255, 255, 255, 0.38);
 }

@@ -7,6 +7,7 @@ type MpvSimpleCallback = () => void
 type MpvErrorCallback = (message: string) => void
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
+type AppTheme = 'pureWhite' | 'aurora'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type EqualizerFilterType =
@@ -49,11 +50,19 @@ interface AudioEqPreset {
 }
 
 interface AppSettings {
+  autoCheckLogin: boolean
   autoLaunch: boolean
+  launchAtLogin: boolean
   hardwareAcceleration: boolean
   globalShortcuts: boolean
+  minimizeToTray: boolean
   musicCachePath: string
+  cachePath: string
   closeToTray: boolean
+  theme: AppTheme
+  blurEffect: boolean
+  useCoverTheme: boolean
+  lyricFontSize: number
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
 }
@@ -177,8 +186,9 @@ const api = {
         supportsExclusive: boolean
       }[]
     > => ipcRenderer.invoke('mpv:getAudioOutputOptions'),
-    setAudioProcessing: (settings: Partial<AudioProcessingSettings>): Promise<AudioProcessingSettings> =>
-      ipcRenderer.invoke('mpv:setAudioProcessing', settings),
+    setAudioProcessing: (
+      settings: Partial<AudioProcessingSettings>
+    ): Promise<AudioProcessingSettings> => ipcRenderer.invoke('mpv:setAudioProcessing', settings),
     getAudioProcessing: (): Promise<AudioProcessingSettings> =>
       ipcRenderer.invoke('mpv:getAudioProcessing'),
 
@@ -235,7 +245,8 @@ const api = {
     get: (): Promise<SettingsSnapshot> => ipcRenderer.invoke('settings:get'),
     update: (patch: Partial<AppSettings>): Promise<SettingsSnapshot> =>
       ipcRenderer.invoke('settings:update', patch),
-    chooseCacheFolder: (): Promise<string | null> => ipcRenderer.invoke('settings:chooseCacheFolder'),
+    chooseCacheFolder: (): Promise<string | null> =>
+      ipcRenderer.invoke('settings:chooseCacheFolder'),
     selectMusicCachePath: (): Promise<string | null> =>
       ipcRenderer.invoke('settings:selectMusicCachePath'),
     getCacheSize: (): Promise<number> => ipcRenderer.invoke('settings:getCacheSize'),

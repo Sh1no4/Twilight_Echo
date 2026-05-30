@@ -21,7 +21,15 @@ const showLoginPage = ref(false)
 const loginPageMode = ref<'login' | 'profile'>('login')
 const showSettingsPage = ref(false)
 const showEqualizerPage = ref(false)
-type SettingsSection = 'general' | 'playback' | 'cache' | 'performance' | 'appearance' | 'shortcuts' | 'about'
+type SettingsSection =
+  | 'general'
+  | 'playback'
+  | 'cache'
+  | 'performance'
+  | 'appearance'
+  | 'shortcuts'
+  | 'about'
+type TitleSurface = 'default' | 'settings' | 'streaming'
 const settingsInitialSection = ref<SettingsSection>('general')
 
 const activeCategory = ref('allSongs')
@@ -181,7 +189,11 @@ const { checkLogin } = useNcmStore()
 const { currentTrack } = usePlayerStore()
 const { loadSettings } = useSettingsStore()
 const hasPlayerBar = computed(
-  () => !showLoginPage.value && !showSettingsPage.value && !showEqualizerPage.value && !!currentTrack.value
+  () =>
+    !showLoginPage.value &&
+    !showSettingsPage.value &&
+    !showEqualizerPage.value &&
+    !!currentTrack.value
 )
 const showLocalSidebar = computed(
   () =>
@@ -247,7 +259,11 @@ function startSideMenuMonitor(): void {
 
   const tick = (): void => {
     measureSideMenuClearance()
-    if (showLocalSidebar.value && hasPlayerBar.value && (menuOpen.value || sideMenuBottomOffset.value > 0)) {
+    if (
+      showLocalSidebar.value &&
+      hasPlayerBar.value &&
+      (menuOpen.value || sideMenuBottomOffset.value > 0)
+    ) {
       sideMenuMonitorFrame = requestAnimationFrame(tick)
       return
     }
@@ -266,7 +282,11 @@ onMounted(() => {
 watch(
   [showLocalSidebar, hasPlayerBar, menuOpen],
   () => {
-    if (showLocalSidebar.value && hasPlayerBar.value && (menuOpen.value || sideMenuBottomOffset.value > 0)) {
+    if (
+      showLocalSidebar.value &&
+      hasPlayerBar.value &&
+      (menuOpen.value || sideMenuBottomOffset.value > 0)
+    ) {
       nextTick(startSideMenuMonitor)
       return
     }
@@ -282,12 +302,18 @@ onBeforeUnmount(() => {
 })
 
 const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOrigin.value.y}px`)
+const titleSurface = computed<TitleSurface>(() => {
+  if (showSettingsPage.value) return 'settings'
+  if (showStreamingPage.value) return 'streaming'
+  return 'default'
+})
 </script>
 
 <template>
   <TitleBar
     :glass="showPlayingPage"
     :streaming="showStreamingPage"
+    :title-surface="titleSurface"
     :menu-open="titleMenuOpen"
     @toggle-menu="toggleMenu"
     @collapse-menu="collapseMenu"
@@ -304,7 +330,7 @@ const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOri
   />
   <div
     class="main-content"
-    :class="{ 'menu-open': menuOpen && showLocalSidebar }"
+    :class="{ 'menu-open': menuOpen && showLocalSidebar, 'playing-open': showPlayingPage }"
     :style="{ minHeight: mainContentMinHeight }"
   >
     <Transition :name="songlistTransitionName">
@@ -438,6 +464,10 @@ body.te-no-blur .login-page-leave-to {
 .main-content.menu-open {
   width: calc(100% - var(--te-menu-width));
   transform: translate3d(var(--te-menu-width), 0, 0);
+}
+
+.main-content.playing-open {
+  overflow: visible;
 }
 
 @keyframes light-orbit {

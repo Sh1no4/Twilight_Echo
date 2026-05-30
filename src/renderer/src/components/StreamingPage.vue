@@ -676,7 +676,12 @@ onMounted(async () => {
             <i class="pi pi-bell"></i>
             <span class="notify-dot"></span>
           </button>
-          <button v-if="isLoggedIn" class="streaming-avatar-btn" title="个人资料" @click="$emit('toggleMenu')">
+          <button
+            v-if="isLoggedIn"
+            class="streaming-avatar-btn"
+            title="个人资料"
+            @click="$emit('toggleMenu')"
+          >
             <img v-if="profile?.avatarUrl" :src="profile.avatarUrl" alt="" />
             <i v-else class="pi pi-user"></i>
           </button>
@@ -810,9 +815,7 @@ onMounted(async () => {
 
             <div
               v-if="
-                detailLoading &&
-                detailTracks.length === 0 &&
-                currentArtistPlaylists.length === 0
+                detailLoading && detailTracks.length === 0 && currentArtistPlaylists.length === 0
               "
               class="detail-content"
             >
@@ -1132,17 +1135,21 @@ onMounted(async () => {
 <style scoped>
 .streaming-page {
   position: fixed;
-  inset: 32px 0 96px 0;
+  inset: 0 0 96px 0;
   z-index: 50;
   display: flex;
+  padding-top: 32px;
+  box-sizing: border-box;
   background: #fafbfe;
 }
 
 .streaming-sidebar {
   position: fixed;
-  top: 32px;
+  top: 0;
   left: 0;
   width: var(--te-menu-width);
+  padding-top: 32px;
+  box-sizing: border-box;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(248, 245, 255, 0.4)),
     rgba(255, 255, 255, 0.42);
@@ -1257,7 +1264,7 @@ onMounted(async () => {
 }
 
 .streaming-content {
-  flex: 1;
+  flex: 0 0 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1268,6 +1275,8 @@ onMounted(async () => {
 }
 
 .streaming-sidebar.open + .streaming-content {
+  width: calc(100% - var(--te-menu-width));
+  flex-basis: calc(100% - var(--te-menu-width));
   transform: translate3d(var(--te-menu-width), 0, 0);
 }
 
@@ -1399,8 +1408,6 @@ onMounted(async () => {
   min-height: 100%;
 }
 
-
-
 .track-table-wrapper {
   overflow-x: auto;
   border-radius: 20px;
@@ -1468,8 +1475,11 @@ onMounted(async () => {
 }
 
 .track-playing {
-  background:
-    linear-gradient(90deg, rgba(124, 77, 255, 0.16), rgba(255, 126, 182, 0.08)) !important;
+  background: linear-gradient(
+    90deg,
+    rgba(124, 77, 255, 0.16),
+    rgba(255, 126, 182, 0.08)
+  ) !important;
   box-shadow: inset 3px 0 0 rgba(124, 77, 255, 0.78);
 }
 
@@ -1720,10 +1730,6 @@ onMounted(async () => {
   padding-top: 0 !important;
 }
 
-
-
-
-
 .streaming-search-input {
   border: none;
   outline: none;
@@ -1770,8 +1776,6 @@ onMounted(async () => {
 .streaming-search-clear:hover {
   background: rgba(124, 77, 255, 0.2);
 }
-
-
 
 /* Detail Playlist Header */
 .detail-content {
@@ -2338,7 +2342,11 @@ onMounted(async () => {
 }
 
 .track-playing {
-  background: linear-gradient(90deg, rgba(124, 77, 255, 0.13), rgba(255, 126, 182, 0.07)) !important;
+  background: linear-gradient(
+    90deg,
+    rgba(124, 77, 255, 0.13),
+    rgba(255, 126, 182, 0.07)
+  ) !important;
 }
 
 .cover-img,
@@ -2461,6 +2469,8 @@ onMounted(async () => {
 
 .streaming-sidebar.open + .streaming-content {
   transform: translate3d(var(--te-menu-width), 0, 0);
+  width: calc(100% - var(--te-menu-width));
+  flex-basis: calc(100% - var(--te-menu-width));
 }
 
 .streaming-menu-item {

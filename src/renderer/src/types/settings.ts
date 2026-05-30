@@ -1,9 +1,12 @@
+export type AppTheme = 'pureWhite' | 'aurora'
+
 export interface AppSettings {
   autoCheckLogin: boolean
   minimizeToTray: boolean
   launchAtLogin: boolean
   hardwareAcceleration: boolean
   cachePath: string
+  theme: AppTheme
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number

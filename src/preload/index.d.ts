@@ -21,6 +21,7 @@ interface MpvEvent {
 
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
+type AppTheme = 'pureWhite' | 'aurora'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type EqualizerFilterType =
@@ -72,6 +73,7 @@ interface AppSettings {
   musicCachePath: string
   cachePath: string
   closeToTray: boolean
+  theme: AppTheme
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number
@@ -114,7 +116,9 @@ interface MpvAPI {
   setAudioOutput: (output: AudioOutputId) => Promise<void>
   getAudioOutput: () => Promise<AudioOutputId>
   getAudioOutputOptions: () => Promise<AudioOutputOption[]>
-  setAudioProcessing: (settings: Partial<AudioProcessingSettings>) => Promise<AudioProcessingSettings>
+  setAudioProcessing: (
+    settings: Partial<AudioProcessingSettings>
+  ) => Promise<AudioProcessingSettings>
   getAudioProcessing: () => Promise<AudioProcessingSettings>
 
   onPropertyChange: (cb: (event: MpvEvent) => void) => () => void

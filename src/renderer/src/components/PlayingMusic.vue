@@ -25,7 +25,11 @@ watch(
 
 watch(
   () =>
-    [currentTrack.value?.id, currentTrack.value?.lyrics, currentTrack.value?.translatedLyrics] as const,
+    [
+      currentTrack.value?.id,
+      currentTrack.value?.lyrics,
+      currentTrack.value?.translatedLyrics
+    ] as const,
   async ([id], previous) => {
     const [prevId, prevLyrics, prevTranslatedLyrics] = previous ?? []
 
@@ -250,7 +254,9 @@ watch(activeLyricIndex, async (index) => {
                 @click="jumpToLyric(line.time)"
               >
                 <span class="lyric-text">{{ line.text }}</span>
-                <span v-if="line.translation" class="lyric-translation">{{ line.translation }}</span>
+                <span v-if="line.translation" class="lyric-translation">{{
+                  line.translation
+                }}</span>
               </button>
             </div>
           </div>
@@ -270,7 +276,7 @@ watch(activeLyricIndex, async (index) => {
 <style scoped>
 .playing-music {
   position: fixed;
-  inset: 0;
+  inset: -32px 0 0 0;
   z-index: 1100;
   overflow: hidden;
   color: #f4f7fb;
@@ -295,7 +301,7 @@ watch(activeLyricIndex, async (index) => {
   object-position: center;
   transform: scale(1.06);
   transform-origin: center;
-  filter: blur(96px) saturate(1.25) brightness(0.3);
+  filter: blur(58px) saturate(1.28) brightness(0.42);
   will-change: opacity, transform;
 }
 
@@ -333,8 +339,8 @@ watch(activeLyricIndex, async (index) => {
     linear-gradient(
       180deg,
       rgba(5, 7, 11, 0.34) 0%,
-      rgba(5, 7, 11, 0.74) 42%,
-      rgba(5, 7, 11, 0.92) 100%
+      rgba(5, 7, 11, 0.64) 42%,
+      rgba(5, 7, 11, 0.86) 100%
     ),
     color-mix(in srgb, var(--accent-color) 8%, transparent);
   backdrop-filter: blur(10px);
@@ -360,7 +366,7 @@ watch(activeLyricIndex, async (index) => {
   width: min(100%, 1560px);
   height: 100%;
   margin: 0 auto;
-  padding: 40px 36px 28px;
+  padding: 72px 36px 28px;
 }
 
 .layout {

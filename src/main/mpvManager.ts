@@ -1,4 +1,3 @@
-/* eslint-disable no-control-regex */
 import { spawn, spawnSync, type ChildProcess } from 'child_process'
 import * as net from 'net'
 import type { Socket } from 'net'
@@ -83,7 +82,8 @@ const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
   {
     id: 'asio',
     label: 'ASIO',
-    description: 'Professional Windows driver output. Device control is handled by the ASIO driver.',
+    description:
+      'Professional Windows driver output. Device control is handled by the ASIO driver.',
     platform: 'win32',
     supportsExclusive: false
   },
@@ -103,14 +103,14 @@ const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
   }
 ]
 
-const DEFAULT_EQ_BANDS: EqualizerBand[] = [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].map(
-  (frequency) => ({
-    frequency,
-    gain: 0,
-    q: 1,
-    filterType: 'peak'
-  })
-)
+const DEFAULT_EQ_BANDS: EqualizerBand[] = [
+  31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000
+].map((frequency) => ({
+  frequency,
+  gain: 0,
+  q: 1,
+  filterType: 'peak'
+}))
 
 export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
   highResolution: true,
@@ -129,7 +129,9 @@ export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
 
 let compiledAudioOutputs: Set<string> | null | undefined
 
-export function getAudioOutputOptions(platform: NodeJS.Platform = process.platform): AudioOutputOption[] {
+export function getAudioOutputOptions(
+  platform: NodeJS.Platform = process.platform
+): AudioOutputOption[] {
   const platformOptions = AUDIO_OUTPUT_OPTIONS.filter((option) => option.platform === platform)
   if (platform !== process.platform) return platformOptions
 
@@ -587,7 +589,8 @@ export class MpvManager extends EventEmitter {
       [1, 'time-pos'],
       [2, 'duration'],
       [3, 'pause'],
-      [4, 'volume']
+      [4, 'volume'],
+      [5, 'eof-reached']
     ]
 
     for (const [id, prop] of props) {
@@ -608,15 +611,27 @@ export class MpvManager extends EventEmitter {
     const replayGain = getReplayGainMode(settings)
     const forcePcm = settings.highResolution || (settings.dsdToPcm && isDsdFile(filePath))
 
-    await this.sendBestEffort(['set_property', 'gapless-audio', settings.gapless ? 'yes' : 'no'], 'set gapless')
+    await this.sendBestEffort(
+      ['set_property', 'gapless-audio', settings.gapless ? 'yes' : 'no'],
+      'set gapless'
+    )
     await this.sendBestEffort(['set_property', 'replaygain', replayGain], 'set ReplayGain')
-    await this.sendBestEffort(['set_property', 'replaygain-preamp', settings.replayGainPreamp], 'set ReplayGain preamp')
+    await this.sendBestEffort(
+      ['set_property', 'replaygain-preamp', settings.replayGainPreamp],
+      'set ReplayGain preamp'
+    )
     await this.sendBestEffort(
       ['set_property', 'replaygain-fallback', settings.replayGainFallback],
       'set ReplayGain fallback'
     )
-    await this.sendBestEffort(['set_property', 'replaygain-clip', settings.replayGainClip ? 'yes' : 'no'], 'set ReplayGain clip')
-    await this.sendBestEffort(['set_property', 'audio-format', forcePcm ? 's32' : 'auto'], 'set PCM output format')
+    await this.sendBestEffort(
+      ['set_property', 'replaygain-clip', settings.replayGainClip ? 'yes' : 'no'],
+      'set ReplayGain clip'
+    )
+    await this.sendBestEffort(
+      ['set_property', 'audio-format', forcePcm ? 's32' : 'auto'],
+      'set PCM output format'
+    )
     await this.sendBestEffort(['set_property', 'af', filter], 'set audio filters')
   }
 
@@ -658,7 +673,9 @@ export class MpvManager extends EventEmitter {
   async setExclusiveMode(enabled: boolean): Promise<void> {
     const audioOutput = normalizeAudioOutput(this.config.audioOutput)
     if (enabled && !supportsAudioExclusive(audioOutput)) {
-      throw new Error(`${getAudioOutputOption(audioOutput).label} does not support mpv exclusive mode`)
+      throw new Error(
+        `${getAudioOutputOption(audioOutput).label} does not support mpv exclusive mode`
+      )
     }
     this.config.exclusiveMode = enabled
     await this.sendCommand(['set_property', 'audio-exclusive', enabled ? 'yes' : 'no'])
@@ -678,7 +695,9 @@ export class MpvManager extends EventEmitter {
 
     const outputResp = await this.sendCommand(['set_property', 'ao', nextOutput])
     if (outputResp.error !== 'success') {
-      throw new Error(`${getAudioOutputOption(nextOutput).label} output is unavailable: ${outputResp.error}`)
+      throw new Error(
+        `${getAudioOutputOption(nextOutput).label} output is unavailable: ${outputResp.error}`
+      )
     }
 
     if (supportsAudioExclusive(nextOutput)) {
@@ -701,7 +720,9 @@ export class MpvManager extends EventEmitter {
     return getAudioOutputOptions()
   }
 
-  async setAudioProcessing(settings: Partial<AudioProcessingSettings>): Promise<AudioProcessingSettings> {
+  async setAudioProcessing(
+    settings: Partial<AudioProcessingSettings>
+  ): Promise<AudioProcessingSettings> {
     const normalized = normalizeAudioProcessingSettings(settings)
     this.config.audioProcessing = normalized
     if (this.socket && !this.socket.destroyed) {

@@ -1,11 +1,18 @@
 ﻿<script setup lang="ts">
 import { useNcmStore } from '../stores/useNcmStore'
+import { usePlayerStore } from '../stores/usePlayerStore'
 
-defineProps<{
-  menuOpen: boolean
-  glass?: boolean
-  streaming?: boolean
-}>()
+withDefaults(
+  defineProps<{
+    menuOpen: boolean
+    glass?: boolean
+    streaming?: boolean
+    titleSurface?: 'default' | 'settings' | 'streaming'
+  }>(),
+  {
+    titleSurface: 'default'
+  }
+)
 
 defineEmits<{
   toggleMenu: []
@@ -16,6 +23,7 @@ defineEmits<{
 }>()
 
 const { isLoggedIn, profile } = useNcmStore()
+const { currentTrack, dominantColor } = usePlayerStore()
 
 function minimize(): void {
   window.api.window.minimize()
@@ -31,7 +39,25 @@ function close(): void {
 </script>
 
 <template>
-  <div class="title-bar drag-region" :class="{ 'title-bar-glass': glass }">
+  <div
+    class="title-bar drag-region"
+    :class="{
+      'title-bar-glass': glass,
+      'title-bar-settings': titleSurface === 'settings',
+      'title-bar-streaming': titleSurface === 'streaming'
+    }"
+    :style="{ '--accent-color': dominantColor }"
+  >
+    <div v-if="glass && !streaming" class="title-bar-playing-backdrop" aria-hidden="true">
+      <img
+        v-if="currentTrack?.cover"
+        :key="currentTrack.cover"
+        :src="currentTrack.cover"
+        class="title-bar-cover-bg"
+        alt=""
+      />
+      <div class="title-bar-cover-scrim" />
+    </div>
     <div v-if="!glass || streaming" class="title-bar-start no-drag">
       <button class="menu-btn" title="菜单" @click="$emit('toggleMenu')">
         <svg
@@ -108,6 +134,7 @@ function close(): void {
   left: 0;
   right: 0;
   z-index: 9999;
+  overflow: hidden;
   border-bottom: 1px solid rgba(255, 255, 255, 0.62);
   box-shadow: 0 12px 40px rgba(86, 70, 160, 0.1);
   backdrop-filter: blur(22px) saturate(155%);
@@ -119,18 +146,68 @@ function close(): void {
 }
 
 .title-bar-glass {
+  background: transparent;
+  border-bottom-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.title-bar.title-bar-settings {
+  background: rgba(255, 255, 255, 0.96);
+  border-bottom-color: transparent;
+  box-shadow: none;
+}
+
+.title-bar.title-bar-streaming {
+  background: #fafbfe;
+  border-bottom-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.title-bar-playing-backdrop {
+  display: none;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: #05070b;
+}
+
+.title-bar-cover-bg {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
+  object-position: center;
+  filter: blur(58px) saturate(1.28) brightness(0.42);
+  transform: scale(1.06);
+  transform-origin: center;
+}
+
+.title-bar-cover-scrim {
+  position: fixed;
+  inset: 0;
   background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.2), rgba(17, 24, 39, 0.1)),
-    rgba(17, 24, 39, 0.18);
-  border-bottom-color: rgba(255, 255, 255, 0.12);
-  box-shadow: 0 12px 42px rgba(17, 24, 39, 0.16);
-  backdrop-filter: blur(22px) saturate(160%);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
+    linear-gradient(
+      180deg,
+      rgba(5, 7, 11, 0.34) 0%,
+      rgba(5, 7, 11, 0.64) 42%,
+      rgba(5, 7, 11, 0.86) 100%
+    ),
+    color-mix(in srgb, var(--accent-color, #7c4dff) 8%, transparent);
+  backdrop-filter: blur(10px);
 }
 
 .title-bar-start {
   display: flex;
   height: 100%;
+  position: relative;
+  z-index: 1;
 }
 
 .menu-btn {
@@ -204,7 +281,7 @@ function close(): void {
 }
 
 .title-bar-glass .settings-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .title-bar-glass .login-btn {
@@ -212,7 +289,7 @@ function close(): void {
 }
 
 .title-bar-glass .login-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .back-btn {
@@ -232,13 +309,15 @@ function close(): void {
 }
 
 .back-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .title-bar-controls {
   display: flex;
   height: 100%;
   margin-left: auto;
+  position: relative;
+  z-index: 1;
 }
 
 .control-btn {
@@ -259,6 +338,14 @@ function close(): void {
 
 .title-bar-glass .control-btn {
   color: #fff;
+}
+
+.title-bar-glass .control-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.title-bar-glass .control-btn.maximize:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .control-btn:hover {
