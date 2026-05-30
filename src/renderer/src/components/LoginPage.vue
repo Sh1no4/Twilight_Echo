@@ -322,7 +322,7 @@ onUnmounted(() => {
             <i class="pi pi-user" style="font-size: 36px"></i>
           </div>
           <div class="profile-info">
-            <span class="profile-nickname">{{ profile?.nickname || '鏈煡鐢ㄦ埛' }}</span>
+            <span class="profile-nickname">{{ profile?.nickname || '未知用户' }}</span>
             <span class="profile-uid">UID: {{ profile?.userId }}</span>
           </div>
           <button class="logout-btn" @click="handleLogout">

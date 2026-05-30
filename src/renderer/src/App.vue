@@ -13,6 +13,8 @@ import { useMusicStore } from './stores/useMusicStore'
 import { useNcmStore } from './stores/useNcmStore'
 import { usePlayerStore } from './stores/usePlayerStore'
 import { useSettingsStore } from './stores/useSettingsStore'
+import type { PlaybackSession } from './types/music'
+import type { PlaybackResumeMode } from './types/settings'
 
 const menuOpen = ref(false)
 const showPlayingPage = ref(false)
@@ -186,8 +188,8 @@ function closeEqualizerPage(): void {
 
 const { loadLibrary } = useMusicStore()
 const { checkLogin } = useNcmStore()
-const { currentTrack } = usePlayerStore()
-const { loadSettings } = useSettingsStore()
+const { currentTrack, restorePlaybackSession, createPlaybackSession } = usePlayerStore()
+const { loadSettings, settings } = useSettingsStore()
 const hasPlayerBar = computed(
   () =>
     !showLoginPage.value &&
@@ -210,6 +212,40 @@ const sideMenuBottomOffset = ref(0)
 const sideMenuOverlapGap = 10
 
 let sideMenuMonitorFrame: number | null = null
+let removePlaybackSessionSaveListener: (() => void) | null = null
+
+async function restoreSavedPlaybackSession(mode: PlaybackResumeMode): Promise<void> {
+  if (mode === 'off') {
+    await window.api.data.clearPlaybackSession()
+    return
+  }
+
+  const session = await window.api.data.loadPlaybackSession()
+  if (!session?.track?.id) return
+
+  const restoredSession: PlaybackSession = {
+    ...session,
+    mode,
+    position: mode === 'trackAndPosition' ? session.position : 0
+  }
+  restorePlaybackSession(restoredSession)
+}
+
+async function savePlaybackSessionForQuit(): Promise<void> {
+  const mode = settings.value.playbackResumeMode
+  if (mode === 'off') {
+    await window.api.data.clearPlaybackSession()
+    return
+  }
+
+  const session = createPlaybackSession(mode)
+  if (!session) {
+    await window.api.data.clearPlaybackSession()
+    return
+  }
+
+  await window.api.data.savePlaybackSession(session)
+}
 
 function setSideMenuBottomOffset(offset: number): void {
   const nextOffset = Math.max(0, Math.round(offset))
@@ -273,10 +309,12 @@ function startSideMenuMonitor(): void {
   sideMenuMonitorFrame = requestAnimationFrame(tick)
 }
 
-onMounted(() => {
-  void loadSettings()
-  loadLibrary()
-  checkLogin()
+onMounted(async () => {
+  removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(savePlaybackSessionForQuit)
+  const loadedSettings = await loadSettings()
+  await loadLibrary()
+  await checkLogin()
+  await restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
 })
 
 watch(
@@ -298,6 +336,8 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  removePlaybackSessionSaveListener?.()
+  removePlaybackSessionSaveListener = null
   stopSideMenuMonitor()
 })
 

@@ -1,4 +1,4 @@
-import { ElectronAPI } from '@electron-toolkit/preload'
+﻿import { ElectronAPI } from '@electron-toolkit/preload'
 
 interface TrackData {
   id: string
@@ -7,14 +7,22 @@ interface TrackData {
   album: string
   filePath: string
   fileName: string
+  dir?: string
   duration: number
   size: number
   cover: string | null
   lyrics: string | null
   translatedLyrics?: string | null
+  source?: TrackSource
+  ncmSongId?: number
+  streamUrl?: string | null
+  format?: string
+  sampleRate?: number
+  bitrate?: number
+  bitDepth?: number
 }
 
-interface MpvEvent {
+interface AudioEngineEvent {
   name: string
   data: unknown
 }
@@ -22,6 +30,8 @@ interface MpvEvent {
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'pureWhite' | 'aurora'
+type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+type TrackSource = 'local' | 'ncm'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type EqualizerFilterType =
@@ -77,8 +87,20 @@ interface AppSettings {
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number
+  playbackResumeMode: PlaybackResumeMode
+  audioOutput: AudioOutputId
+  audioDevice: string
+  audioExclusiveMode: boolean
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
+}
+
+interface PlaybackSession {
+  version: 1
+  savedAt: string
+  mode: PlaybackResumeMode
+  track: TrackData
+  position: number
 }
 
 interface SettingsSnapshot extends AppSettings {
@@ -105,28 +127,77 @@ interface AudioOutputOption {
   supportsExclusive: boolean
 }
 
-interface MpvAPI {
-  play: (filePath: string) => Promise<void>
+interface AudioDeviceOption {
+  id: string
+  label: string
+  isDefault: boolean
+}
+
+interface AudioOutputState {
+  output: AudioOutputId
+  device: string
+  exclusiveMode: boolean
+  exclusiveAvailable: boolean
+  outputOptions: AudioOutputOption[]
+  deviceOptions: AudioDeviceOption[]
+}
+
+interface PlaybackInfo {
+  state: 'stopped' | 'playing' | 'paused'
+  position: number
+  duration: number
+  volume: number
+  queueIndex: number
+  source: string
+  codec: string
+  bitrate: number
+  sourceSampleRate: number
+  sourceBitDepth: number
+  outputBackend: string
+  outputDevice: string
+  outputSampleRate: number
+  outputBitDepth: number
+  channelCount: number
+  bitPerfect: boolean
+  dspActive: boolean
+  resampleReason: string
+  dsdMode: string
+}
+
+interface AudioEnginePlayResult {
+  nativeStarted: boolean
+}
+
+interface AudioEngineAPI {
+  loadQueue: (items: TrackData[], startIndex?: number) => Promise<void>
+  play: (filePath: string, startTime?: number) => Promise<AudioEnginePlayResult>
   togglePause: () => Promise<void>
   seek: (time: number) => Promise<void>
   setVolume: (volume: number) => Promise<void>
   stop: () => Promise<void>
-  setExclusiveMode: (enabled: boolean) => Promise<void>
+  next: () => Promise<void>
+  previous: () => Promise<void>
+  setExclusiveMode: (enabled: boolean) => Promise<AudioOutputState>
   getExclusiveMode: () => Promise<boolean>
-  setAudioOutput: (output: AudioOutputId) => Promise<void>
+  setAudioOutput: (output: AudioOutputId, device?: string) => Promise<AudioOutputState>
+  setAudioDevice: (device: string) => Promise<AudioOutputState>
   getAudioOutput: () => Promise<AudioOutputId>
   getAudioOutputOptions: () => Promise<AudioOutputOption[]>
+  getAudioOutputState: () => Promise<AudioOutputState>
   setAudioProcessing: (
     settings: Partial<AudioProcessingSettings>
   ) => Promise<AudioProcessingSettings>
   getAudioProcessing: () => Promise<AudioProcessingSettings>
+  getPlaybackInfo: () => Promise<PlaybackInfo>
+  getSpectrumData: (points?: number) => Promise<number[]>
 
-  onPropertyChange: (cb: (event: MpvEvent) => void) => () => void
+  onPropertyChange: (cb: (event: AudioEngineEvent) => void) => () => void
   onEndFile: (cb: (reason: string) => void) => () => void
   onStartFile: (cb: () => void) => () => void
   onReady: (cb: () => void) => () => void
   onError: (cb: (message: string) => void) => () => void
   onDisconnected: (cb: () => void) => () => void
+  onPlaybackInfo: (cb: (info: PlaybackInfo) => void) => () => void
 }
 
 interface WindowAPI {
@@ -147,9 +218,10 @@ interface WindowAPI {
     readAudioFile: (filePath: string) => Promise<{ buffer: ArrayBuffer; mimeType: string }>
     onScanProgress: (cb: (progress: { current: number; total: number }) => void) => () => void
   }
-  mpv: MpvAPI
+  audioEngine: AudioEngineAPI
   app: {
     relaunch: () => Promise<void>
+    onSavePlaybackSession: (cb: () => Promise<void> | void) => () => void
   }
   ncm: {
     getPort: () => Promise<number>
@@ -160,6 +232,9 @@ interface WindowAPI {
   data: {
     saveMusicLibrary: (data: { tracks: unknown[]; folders: string[] }) => Promise<void>
     loadMusicLibrary: () => Promise<{ tracks: unknown[]; folders: string[] } | unknown[]>
+    savePlaybackSession: (session: PlaybackSession | null) => Promise<void>
+    loadPlaybackSession: () => Promise<PlaybackSession | null>
+    clearPlaybackSession: () => Promise<void>
     saveCookie: (cookie: string) => Promise<void>
     loadCookie: () => Promise<string>
   }
@@ -181,3 +256,4 @@ declare global {
     api: WindowAPI
   }
 }
+

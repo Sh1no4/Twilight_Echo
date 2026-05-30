@@ -1,0 +1,13 @@
+{
+  "name": "twilight-audio-engine",
+  "version-string": "0.1.0",
+  "dependencies": [
+    "ffmpeg"
+  ],
+  "features": {
+    "tests": {
+      "description": "Build test dependencies",
+      "dependencies": []
+    }
+  }
+}

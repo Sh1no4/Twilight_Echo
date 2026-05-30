@@ -1,13 +1,16 @@
-import { contextBridge, ipcRenderer } from 'electron'
+﻿import { contextBridge, ipcRenderer } from 'electron'
 import { electronAPI } from '@electron-toolkit/preload'
 
-type MpvEventCallback = (event: { name: string; data: unknown }) => void
-type MpvEndFileCallback = (reason: string) => void
-type MpvSimpleCallback = () => void
-type MpvErrorCallback = (message: string) => void
+type AudioEngineEventCallback = (event: { name: string; data: unknown }) => void
+type AudioEngineEndFileCallback = (reason: string) => void
+type AudioEngineSimpleCallback = () => void
+type AudioEngineErrorCallback = (message: string) => void
+type AudioEnginePlaybackInfoCallback = (info: PlaybackInfo) => void
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'pureWhite' | 'aurora'
+type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+type TrackSource = 'local' | 'ncm'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type EqualizerFilterType =
@@ -49,6 +52,36 @@ interface AudioEqPreset {
   eqBands: EqualizerBand[]
 }
 
+interface TrackData {
+  id: string
+  title: string
+  artist: string
+  album: string
+  filePath: string
+  fileName: string
+  dir?: string
+  duration: number
+  size: number
+  cover: string | null
+  lyrics: string | null
+  translatedLyrics?: string | null
+  source?: TrackSource
+  ncmSongId?: number
+  streamUrl?: string | null
+  format?: string
+  sampleRate?: number
+  bitrate?: number
+  bitDepth?: number
+}
+
+interface PlaybackSession {
+  version: 1
+  savedAt: string
+  mode: PlaybackResumeMode
+  track: TrackData
+  position: number
+}
+
 interface AppSettings {
   autoCheckLogin: boolean
   autoLaunch: boolean
@@ -63,6 +96,10 @@ interface AppSettings {
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number
+  playbackResumeMode: PlaybackResumeMode
+  audioOutput: AudioOutputId
+  audioDevice: string
+  audioExclusiveMode: boolean
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
 }
@@ -83,48 +120,105 @@ interface SettingsSnapshot extends AppSettings {
   restartReasons: string[]
 }
 
-const mpvEventCallbacks = new Set<MpvEventCallback>()
-const mpvEndFileCallbacks = new Set<MpvEndFileCallback>()
-const mpvStartFileCallbacks = new Set<MpvSimpleCallback>()
-const mpvReadyCallbacks = new Set<MpvSimpleCallback>()
-const mpvErrorCallbacks = new Set<MpvErrorCallback>()
-const mpvDisconnectedCallbacks = new Set<MpvSimpleCallback>()
+interface AudioDeviceOption {
+  id: string
+  label: string
+  isDefault: boolean
+}
+
+interface AudioOutputOption {
+  id: AudioOutputId
+  label: string
+  description: string
+  platform: NodeJS.Platform
+  supportsExclusive: boolean
+}
+
+interface AudioOutputState {
+  output: AudioOutputId
+  device: string
+  exclusiveMode: boolean
+  exclusiveAvailable: boolean
+  outputOptions: AudioOutputOption[]
+  deviceOptions: AudioDeviceOption[]
+}
+
+interface PlaybackInfo {
+  state: 'stopped' | 'playing' | 'paused'
+  position: number
+  duration: number
+  volume: number
+  queueIndex: number
+  source: string
+  codec: string
+  bitrate: number
+  sourceSampleRate: number
+  sourceBitDepth: number
+  outputBackend: string
+  outputDevice: string
+  outputSampleRate: number
+  outputBitDepth: number
+  channelCount: number
+  bitPerfect: boolean
+  dspActive: boolean
+  resampleReason: string
+  dsdMode: string
+}
+
+interface AudioEnginePlayResult {
+  nativeStarted: boolean
+}
+
+const audioEngineEventCallbacks = new Set<AudioEngineEventCallback>()
+const audioEngineEndFileCallbacks = new Set<AudioEngineEndFileCallback>()
+const audioEngineStartFileCallbacks = new Set<AudioEngineSimpleCallback>()
+const audioEngineReadyCallbacks = new Set<AudioEngineSimpleCallback>()
+const audioEngineErrorCallbacks = new Set<AudioEngineErrorCallback>()
+const audioEngineDisconnectedCallbacks = new Set<AudioEngineSimpleCallback>()
+const audioEnginePlaybackInfoCallbacks = new Set<AudioEnginePlaybackInfoCallback>()
 const playerShortcutCallbacks = new Set<(action: PlayerShortcutAction) => void>()
 const settingsChangedCallbacks = new Set<(snapshot: SettingsSnapshot) => void>()
+const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
 
-ipcRenderer.on('mpv:property-change', (_event, data: { name: string; data: unknown }) => {
-  for (const cb of mpvEventCallbacks) {
+ipcRenderer.on('audioEngine:property-change', (_event, data: { name: string; data: unknown }) => {
+  for (const cb of audioEngineEventCallbacks) {
     cb(data)
   }
 })
 
-ipcRenderer.on('mpv:end-file', (_event, data: { reason: string }) => {
-  for (const cb of mpvEndFileCallbacks) {
+ipcRenderer.on('audioEngine:end-file', (_event, data: { reason: string }) => {
+  for (const cb of audioEngineEndFileCallbacks) {
     cb(data.reason)
   }
 })
 
-ipcRenderer.on('mpv:start-file', () => {
-  for (const cb of mpvStartFileCallbacks) {
+ipcRenderer.on('audioEngine:start-file', () => {
+  for (const cb of audioEngineStartFileCallbacks) {
     cb()
   }
 })
 
-ipcRenderer.on('mpv:ready', () => {
-  for (const cb of mpvReadyCallbacks) {
+ipcRenderer.on('audioEngine:ready', () => {
+  for (const cb of audioEngineReadyCallbacks) {
     cb()
   }
 })
 
-ipcRenderer.on('mpv:error', (_event, message: string) => {
-  for (const cb of mpvErrorCallbacks) {
+ipcRenderer.on('audioEngine:error', (_event, message: string) => {
+  for (const cb of audioEngineErrorCallbacks) {
     cb(message)
   }
 })
 
-ipcRenderer.on('mpv:disconnected', () => {
-  for (const cb of mpvDisconnectedCallbacks) {
+ipcRenderer.on('audioEngine:disconnected', () => {
+  for (const cb of audioEngineDisconnectedCallbacks) {
     cb()
+  }
+})
+
+ipcRenderer.on('audioEngine:playback-info', (_event, info: PlaybackInfo) => {
+  for (const cb of audioEnginePlaybackInfoCallbacks) {
+    cb(info)
   }
 })
 
@@ -137,6 +231,16 @@ ipcRenderer.on('player:shortcut', (_event, action: PlayerShortcutAction) => {
 ipcRenderer.on('settings:changed', (_event, snapshot: SettingsSnapshot) => {
   for (const cb of settingsChangedCallbacks) {
     cb(snapshot)
+  }
+})
+
+ipcRenderer.on('app:save-playback-session', async (_event, requestId: string) => {
+  try {
+    await Promise.allSettled(
+      [...savePlaybackSessionCallbacks].map((cb) => Promise.resolve().then(cb))
+    )
+  } finally {
+    await ipcRenderer.invoke('app:playback-session-saved', requestId)
   }
 })
 
@@ -165,65 +269,79 @@ const api = {
       return () => ipcRenderer.removeListener('fs:scanProgress', handler)
     }
   },
-  mpv: {
-    play: (filePath: string): Promise<void> => ipcRenderer.invoke('mpv:play', filePath),
-    togglePause: (): Promise<void> => ipcRenderer.invoke('mpv:togglePause'),
-    seek: (time: number): Promise<void> => ipcRenderer.invoke('mpv:seek', time),
-    setVolume: (volume: number): Promise<void> => ipcRenderer.invoke('mpv:setVolume', volume),
-    stop: (): Promise<void> => ipcRenderer.invoke('mpv:stop'),
-    setExclusiveMode: (enabled: boolean): Promise<void> =>
-      ipcRenderer.invoke('mpv:setExclusiveMode', enabled),
-    getExclusiveMode: (): Promise<boolean> => ipcRenderer.invoke('mpv:getExclusiveMode'),
-    setAudioOutput: (output: AudioOutputId): Promise<void> =>
-      ipcRenderer.invoke('mpv:setAudioOutput', output),
-    getAudioOutput: (): Promise<AudioOutputId> => ipcRenderer.invoke('mpv:getAudioOutput'),
-    getAudioOutputOptions: (): Promise<
-      {
-        id: AudioOutputId
-        label: string
-        description: string
-        platform: NodeJS.Platform
-        supportsExclusive: boolean
-      }[]
-    > => ipcRenderer.invoke('mpv:getAudioOutputOptions'),
+  audioEngine: {
+    loadQueue: (items: TrackData[], startIndex?: number): Promise<void> =>
+      ipcRenderer.invoke('audioEngine:loadQueue', items, startIndex),
+    play: (filePath: string, startTime?: number): Promise<AudioEnginePlayResult> =>
+      ipcRenderer.invoke('audioEngine:play', filePath, startTime),
+    togglePause: (): Promise<void> => ipcRenderer.invoke('audioEngine:togglePause'),
+    seek: (time: number): Promise<void> => ipcRenderer.invoke('audioEngine:seek', time),
+    setVolume: (volume: number): Promise<void> => ipcRenderer.invoke('audioEngine:setVolume', volume),
+    stop: (): Promise<void> => ipcRenderer.invoke('audioEngine:stop'),
+    next: (): Promise<void> => ipcRenderer.invoke('audioEngine:next'),
+    previous: (): Promise<void> => ipcRenderer.invoke('audioEngine:previous'),
+    setExclusiveMode: (enabled: boolean): Promise<AudioOutputState> =>
+      ipcRenderer.invoke('audioEngine:setExclusiveMode', enabled),
+    getExclusiveMode: (): Promise<boolean> => ipcRenderer.invoke('audioEngine:getExclusiveMode'),
+    setAudioOutput: (output: AudioOutputId, device?: string): Promise<AudioOutputState> =>
+      ipcRenderer.invoke('audioEngine:setAudioOutput', output, device),
+    setAudioDevice: (device: string): Promise<AudioOutputState> =>
+      ipcRenderer.invoke('audioEngine:setAudioDevice', device),
+    getAudioOutput: (): Promise<AudioOutputId> => ipcRenderer.invoke('audioEngine:getAudioOutput'),
+    getAudioOutputOptions: (): Promise<AudioOutputOption[]> =>
+      ipcRenderer.invoke('audioEngine:getAudioOutputOptions'),
+    getAudioOutputState: (): Promise<AudioOutputState> =>
+      ipcRenderer.invoke('audioEngine:getAudioOutputState'),
     setAudioProcessing: (
       settings: Partial<AudioProcessingSettings>
-    ): Promise<AudioProcessingSettings> => ipcRenderer.invoke('mpv:setAudioProcessing', settings),
+    ): Promise<AudioProcessingSettings> => ipcRenderer.invoke('audioEngine:setAudioProcessing', settings),
     getAudioProcessing: (): Promise<AudioProcessingSettings> =>
-      ipcRenderer.invoke('mpv:getAudioProcessing'),
+      ipcRenderer.invoke('audioEngine:getAudioProcessing'),
+    getPlaybackInfo: (): Promise<PlaybackInfo> => ipcRenderer.invoke('audioEngine:getPlaybackInfo'),
+    getSpectrumData: (points?: number): Promise<number[]> =>
+      ipcRenderer.invoke('audioEngine:getSpectrumData', points),
 
-    onPropertyChange: (cb: MpvEventCallback): (() => void) => {
-      mpvEventCallbacks.add(cb)
-      return () => mpvEventCallbacks.delete(cb)
+    onPropertyChange: (cb: AudioEngineEventCallback): (() => void) => {
+      audioEngineEventCallbacks.add(cb)
+      return () => audioEngineEventCallbacks.delete(cb)
     },
 
-    onEndFile: (cb: MpvEndFileCallback): (() => void) => {
-      mpvEndFileCallbacks.add(cb)
-      return () => mpvEndFileCallbacks.delete(cb)
+    onEndFile: (cb: AudioEngineEndFileCallback): (() => void) => {
+      audioEngineEndFileCallbacks.add(cb)
+      return () => audioEngineEndFileCallbacks.delete(cb)
     },
 
-    onStartFile: (cb: MpvSimpleCallback): (() => void) => {
-      mpvStartFileCallbacks.add(cb)
-      return () => mpvStartFileCallbacks.delete(cb)
+    onStartFile: (cb: AudioEngineSimpleCallback): (() => void) => {
+      audioEngineStartFileCallbacks.add(cb)
+      return () => audioEngineStartFileCallbacks.delete(cb)
     },
 
-    onReady: (cb: MpvSimpleCallback): (() => void) => {
-      mpvReadyCallbacks.add(cb)
-      return () => mpvReadyCallbacks.delete(cb)
+    onReady: (cb: AudioEngineSimpleCallback): (() => void) => {
+      audioEngineReadyCallbacks.add(cb)
+      return () => audioEngineReadyCallbacks.delete(cb)
     },
 
-    onError: (cb: MpvErrorCallback): (() => void) => {
-      mpvErrorCallbacks.add(cb)
-      return () => mpvErrorCallbacks.delete(cb)
+    onError: (cb: AudioEngineErrorCallback): (() => void) => {
+      audioEngineErrorCallbacks.add(cb)
+      return () => audioEngineErrorCallbacks.delete(cb)
     },
 
-    onDisconnected: (cb: MpvSimpleCallback): (() => void) => {
-      mpvDisconnectedCallbacks.add(cb)
-      return () => mpvDisconnectedCallbacks.delete(cb)
+    onDisconnected: (cb: AudioEngineSimpleCallback): (() => void) => {
+      audioEngineDisconnectedCallbacks.add(cb)
+      return () => audioEngineDisconnectedCallbacks.delete(cb)
+    },
+
+    onPlaybackInfo: (cb: AudioEnginePlaybackInfoCallback): (() => void) => {
+      audioEnginePlaybackInfoCallbacks.add(cb)
+      return () => audioEnginePlaybackInfoCallbacks.delete(cb)
     }
   },
   app: {
-    relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch')
+    relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
+    onSavePlaybackSession: (cb: () => Promise<void> | void): (() => void) => {
+      savePlaybackSessionCallbacks.add(cb)
+      return () => savePlaybackSessionCallbacks.delete(cb)
+    }
   },
   ncm: {
     getPort: (): Promise<number> => ipcRenderer.invoke('ncm:getPort'),
@@ -238,6 +356,11 @@ const api = {
     saveMusicLibrary: (tracks: unknown[]): Promise<void> =>
       ipcRenderer.invoke('data:saveMusicLibrary', tracks),
     loadMusicLibrary: (): Promise<unknown[]> => ipcRenderer.invoke('data:loadMusicLibrary'),
+    savePlaybackSession: (session: PlaybackSession | null): Promise<void> =>
+      ipcRenderer.invoke('data:savePlaybackSession', session),
+    loadPlaybackSession: (): Promise<PlaybackSession | null> =>
+      ipcRenderer.invoke('data:loadPlaybackSession'),
+    clearPlaybackSession: (): Promise<void> => ipcRenderer.invoke('data:clearPlaybackSession'),
     saveCookie: (cookie: string): Promise<void> => ipcRenderer.invoke('data:saveCookie', cookie),
     loadCookie: (): Promise<string> => ipcRenderer.invoke('data:loadCookie')
   },
@@ -275,3 +398,4 @@ if (process.contextIsolated) {
   // @ts-ignore (define in dts)
   window.api = api
 }
+

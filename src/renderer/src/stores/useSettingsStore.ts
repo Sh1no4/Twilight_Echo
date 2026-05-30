@@ -1,16 +1,58 @@
-import { computed, ref, type ComputedRef, type Ref } from 'vue'
-import type { AppSettings, SettingsSnapshot } from '../types/settings'
+﻿import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import type {
+  AppSettings,
+  AudioOutputId,
+  AudioProcessingSettings,
+  SettingsSnapshot
+} from '../types/settings'
+
+function getFallbackAudioOutput(): AudioOutputId {
+  const platform = navigator.platform.toLowerCase()
+  if (platform.includes('mac')) return 'coreaudio'
+  if (platform.includes('linux')) return 'alsa'
+  return 'wasapi'
+}
+
+const fallbackAudioProcessing: AudioProcessingSettings = {
+  highResolution: true,
+  dsdToPcm: true,
+  eqEnabled: false,
+  eqMode: 'graphic',
+  eqPreamp: 0,
+  eqBands: [31, 62, 125, 250, 500, 1000, 2000, 4000, 8000, 16000].map((frequency) => ({
+    frequency,
+    gain: 0,
+    q: 1,
+    filterType: 'peak'
+  })),
+  volumeNormalization: 'off',
+  replayGainPreamp: 0,
+  replayGainFallback: 0,
+  replayGainClip: true,
+  gapless: true,
+  crossfadeSeconds: 0
+}
 
 const fallbackSettings: AppSettings = {
   autoCheckLogin: true,
+  autoLaunch: false,
   minimizeToTray: false,
   launchAtLogin: false,
   hardwareAcceleration: true,
+  globalShortcuts: false,
+  musicCachePath: '',
   cachePath: '',
+  closeToTray: false,
   theme: 'pureWhite',
   blurEffect: true,
   useCoverTheme: true,
-  lyricFontSize: 18
+  lyricFontSize: 18,
+  playbackResumeMode: 'off',
+  audioOutput: getFallbackAudioOutput(),
+  audioDevice: 'auto',
+  audioExclusiveMode: false,
+  audioProcessing: fallbackAudioProcessing,
+  audioEqPresets: []
 }
 
 const settings = ref<AppSettings>({ ...fallbackSettings })
@@ -27,7 +69,7 @@ const cacheSize = ref<number | null>(null)
 let listenerSetup = false
 
 function formatBytes(bytes: number | null): string {
-  if (bytes == null) return '计算中'
+  if (bytes == null) return 'Calculating...'
   if (bytes < 1024) return `${bytes} B`
   const units = ['KB', 'MB', 'GB', 'TB']
   let value = bytes / 1024

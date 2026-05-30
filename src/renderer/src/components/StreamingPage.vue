@@ -1138,7 +1138,6 @@ onMounted(async () => {
   inset: 0 0 96px 0;
   z-index: 50;
   display: flex;
-  padding-top: 32px;
   box-sizing: border-box;
   background: #fafbfe;
 }
@@ -1148,7 +1147,6 @@ onMounted(async () => {
   top: 0;
   left: 0;
   width: var(--te-menu-width);
-  padding-top: 32px;
   box-sizing: border-box;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(248, 245, 255, 0.4)),
@@ -1258,7 +1256,7 @@ onMounted(async () => {
 
 .streaming-overlay {
   position: fixed;
-  inset: 32px 0 96px 0;
+  inset: 0 0 96px 0;
   z-index: 999;
   background: rgba(0, 0, 0, 0.15);
 }
@@ -1270,8 +1268,11 @@ onMounted(async () => {
   overflow: hidden;
   width: 100%;
   transform: translate3d(0, 0, 0);
-  will-change: transform;
-  transition: transform 0.32s var(--te-ease-soft);
+  will-change: transform, flex-basis, width;
+  transition:
+    transform 0.32s var(--te-ease-soft),
+    flex-basis 0.32s var(--te-ease-soft),
+    width 0.32s var(--te-ease-soft);
 }
 
 .streaming-sidebar.open + .streaming-content {

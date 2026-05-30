@@ -2,24 +2,21 @@ appId: com.TwilightEcho.music
 productName: TwilightEcho
 directories:
   buildResources: build
-beforePack: ./scripts/extract-mpv.cjs
 asar: true
 icon: build/icon.png
 files:
   - '!**/.vscode/*'
   - '!src/*'
   - '!scripts/*'
-  - '!resources/mpv.*'
-  - '!resources/mpv/**'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
 asarUnpack:
-  - resources/mpv/**
+  - resources/audio-engine/**
 extraResources:
-  - from: resources/mpv
-    to: mpv
+  - from: resources/audio-engine
+    to: audio-engine
     filter:
       - '**/*'
 win:

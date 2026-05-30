@@ -1,11 +1,16 @@
-import { ref, computed, watch, type Ref, type ComputedRef } from 'vue'
-import type { Track } from '../types/music'
+﻿import { ref, computed, watch, type Ref, type ComputedRef } from 'vue'
+import type { PlaybackSession, Track } from '../types/music'
+import type {
+  AudioDeviceOption,
+  AudioOutputId,
+  AudioOutputOption,
+  PlaybackResumeMode
+} from '../types/settings'
 import { extractDominantColor } from '../utils/colorExtractor'
 import { useNcmStore } from './useNcmStore'
 import { useSettingsStore } from './useSettingsStore'
 
 type PlayMode = 'sequential' | 'repeat' | 'shuffle'
-type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type EqualizerFilterType =
@@ -39,12 +44,13 @@ interface AudioProcessingSettings {
   crossfadeSeconds: number
 }
 
-interface AudioOutputOption {
-  id: AudioOutputId
-  label: string
-  description: string
-  platform: string
-  supportsExclusive: boolean
+interface AudioOutputState {
+  output: AudioOutputId
+  device: string
+  exclusiveMode: boolean
+  exclusiveAvailable: boolean
+  outputOptions: AudioOutputOption[]
+  deviceOptions: AudioDeviceOption[]
 }
 
 const currentTrack = ref<Track | null>(null)
@@ -58,11 +64,13 @@ const queue = ref<Track[]>([])
 const queueIndex = ref(-1)
 const playMode = ref<PlayMode>('sequential')
 const originalQueue = ref<Track[]>([])
-const mpvReady = ref(false)
-const mpvError = ref<string | null>(null)
+const audioEngineReady = ref(false)
+const audioEngineError = ref<string | null>(null)
 const exclusiveMode = ref(false)
 const audioOutput = ref<AudioOutputId>('wasapi')
+const audioDevice = ref('auto')
 const audioOutputOptions = ref<AudioOutputOption[]>([])
+const audioDeviceOptions = ref<AudioDeviceOption[]>([])
 const defaultAudioProcessing: AudioProcessingSettings = {
   highResolution: true,
   dsdToPcm: true,
@@ -75,7 +83,7 @@ const defaultAudioProcessing: AudioProcessingSettings = {
     q: 1,
     filterType: 'peak'
   })),
-  volumeNormalization: 'track',
+  volumeNormalization: 'off',
   replayGainPreamp: 0,
   replayGainFallback: 0,
   replayGainClip: true,
@@ -84,9 +92,111 @@ const defaultAudioProcessing: AudioProcessingSettings = {
 }
 const audioProcessing = ref<AudioProcessingSettings>({ ...defaultAudioProcessing })
 const { settings: appSettings } = useSettingsStore()
+let playbackAudio: HTMLAudioElement | null = null
+let playbackObjectUrl: string | null = null
+let nativePlaybackActive = false
+
+function getPlaybackAudio(): HTMLAudioElement {
+  if (playbackAudio) return playbackAudio
+
+  const audio = new Audio()
+  audio.preload = 'auto'
+  audio.volume = volume.value
+
+  audio.addEventListener('loadedmetadata', () => {
+    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+      duration.value = audio.duration
+    }
+  })
+
+  audio.addEventListener('timeupdate', () => {
+    if (Number.isFinite(audio.currentTime)) {
+      setCurrentTimeThrottled(audio.currentTime)
+      scheduleCrossfadeIfNeeded()
+    }
+  })
+
+  audio.addEventListener('play', () => {
+    isPlaying.value = true
+    flushLatestCurrentTime()
+  })
+
+  audio.addEventListener('pause', () => {
+    if (!audio.ended) {
+      isPlaying.value = false
+      flushLatestCurrentTime()
+    }
+  })
+
+  audio.addEventListener('ended', () => {
+    isPlaying.value = false
+    handlePlaybackEnded()
+  })
+
+  audio.addEventListener('error', () => {
+    const code = audio.error?.code ?? 0
+    audioEngineError.value = `音频播放失败（错误码 ${code}）`
+    isPlaying.value = false
+    isLoading.value = false
+  })
+
+  playbackAudio = audio
+  return audio
+}
+
+function releasePlaybackObjectUrl(): void {
+  if (playbackObjectUrl) {
+    URL.revokeObjectURL(playbackObjectUrl)
+    playbackObjectUrl = null
+  }
+}
+
+function stopRendererAudio(clearSource = false): void {
+  if (!playbackAudio) return
+  playbackAudio.pause()
+  if (clearSource) {
+    playbackAudio.removeAttribute('src')
+    playbackAudio.load()
+    releasePlaybackObjectUrl()
+  }
+}
+
+async function createPlayableUrl(target: string, track: Track): Promise<string> {
+  if (/^https?:\/\//i.test(target) || /^blob:/i.test(target) || /^data:/i.test(target)) {
+    releasePlaybackObjectUrl()
+    return target
+  }
+
+  const file = await window.api.fs.readAudioFile(target)
+  const blob = new Blob([file.buffer], { type: file.mimeType || 'audio/mpeg' })
+  releasePlaybackObjectUrl()
+  playbackObjectUrl = URL.createObjectURL(blob)
+  if (!duration.value && track.duration) {
+    duration.value = track.duration
+  }
+  return playbackObjectUrl
+}
+
+async function playWithRendererAudio(track: Track, target: string, startTime: number): Promise<void> {
+  const audio = getPlaybackAudio()
+  audio.pause()
+  audio.src = await createPlayableUrl(target, track)
+  audio.volume = volume.value
+  audio.currentTime = Math.max(0, startTime)
+  await audio.play()
+}
+
+function applyAudioOutputState(state: AudioOutputState): void {
+  exclusiveMode.value = state.exclusiveMode
+  audioOutput.value = state.output
+  audioDevice.value = state.device
+  audioOutputOptions.value = [...state.outputOptions]
+  audioDeviceOptions.value = [...state.deviceOptions]
+}
 
 watch(volume, (val) => {
-  window.api.mpv.setVolume(val).catch(() => {})
+  if (playbackAudio) playbackAudio.volume = val
+  window.api.audioEngine.setVolume(val).catch(() => {})
 })
 
 watch(
@@ -136,6 +246,10 @@ let lastTimePublishAt = 0
 let pendingTimePublishTimer: number | null = null
 let advancingFromEndedTrackId = ''
 let autoAdvanceInFlight = false
+let loadedTrackId = ''
+let restoredPlaybackPending = false
+let restoredPlaybackPosition = 0
+let pendingLoadStartTime = 0
 
 function getNowMs(): number {
   return performance.now()
@@ -222,11 +336,11 @@ async function resolvePlayTarget(track: Track): Promise<string> {
   return streamUrl
 }
 
-function setupMpvListeners(): void {
+function setupAudioEngineListeners(): void {
   if (listenersSetup) return
   listenersSetup = true
 
-  const api = window.api?.mpv
+  const api = window.api?.audioEngine
   if (!api) return
 
   const settingsApi = window.api?.settings
@@ -272,24 +386,23 @@ function setupMpvListeners(): void {
     api.onStartFile(() => {
       advancingFromEndedTrackId = ''
       autoAdvanceInFlight = false
-      setCurrentTimeImmediate(0)
+      setCurrentTimeImmediate(pendingLoadStartTime)
       isLoading.value = false
     })
   )
 
   cleanupFns.push(
     api.onReady(async () => {
-      mpvReady.value = true
-      mpvError.value = null
+      audioEngineReady.value = true
+      audioEngineError.value = null
       api.setVolume(volume.value).catch(() => {})
       try {
-        ;[exclusiveMode.value, audioOutput.value, audioOutputOptions.value, audioProcessing.value] =
-          await Promise.all([
-            api.getExclusiveMode(),
-            api.getAudioOutput(),
-            api.getAudioOutputOptions(),
-            api.getAudioProcessing()
-          ])
+        const [outputState, processingSettings] = await Promise.all([
+          api.getAudioOutputState(),
+          api.getAudioProcessing()
+        ])
+        applyAudioOutputState(outputState)
+        audioProcessing.value = processingSettings
       } catch {
         // keep default
       }
@@ -298,8 +411,8 @@ function setupMpvListeners(): void {
 
   cleanupFns.push(
     api.onError((message) => {
-      console.error('[mpv]', message)
-      mpvError.value = message
+      console.error('[audio-engine]', message)
+      audioEngineError.value = message
       isPlaying.value = false
       isLoading.value = false
     })
@@ -307,7 +420,8 @@ function setupMpvListeners(): void {
 
   cleanupFns.push(
     api.onDisconnected(() => {
-      mpvReady.value = false
+      audioEngineReady.value = false
+      nativePlaybackActive = false
       isPlaying.value = false
     })
   )
@@ -329,7 +443,7 @@ function setupMpvListeners(): void {
   }
 }
 
-setupMpvListeners()
+setupAudioEngineListeners()
 
 function clearCrossfadeTimer(): void {
   if (crossfadeTimer) {
@@ -372,20 +486,39 @@ function scheduleCrossfadeIfNeeded(): void {
   )
 }
 
-async function loadAndPlay(track: Track): Promise<void> {
+async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
+  const normalizedStartTime = Math.max(0, Number.isFinite(startTime) ? startTime : 0)
   isLoading.value = true
-  setCurrentTimeImmediate(0)
+  pendingLoadStartTime = normalizedStartTime
+  setCurrentTimeImmediate(normalizedStartTime)
   clearCrossfadeTimer()
 
   try {
     const playTarget = await resolvePlayTarget(track)
-    await window.api.mpv.play(playTarget)
+    const engineQueue = queue.value.map((item) => ({
+      ...item,
+      audioSource: item.id === track.id ? playTarget : item.streamUrl || item.filePath
+    }))
+    await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
+    const playResult = await window.api.audioEngine.play(playTarget, normalizedStartTime)
+    nativePlaybackActive = playResult?.nativeStarted === true
+    if (nativePlaybackActive) {
+      stopRendererAudio(true)
+    } else {
+      await playWithRendererAudio(track, playTarget, normalizedStartTime)
+    }
+    loadedTrackId = track.id
+    restoredPlaybackPending = false
+    restoredPlaybackPosition = 0
+    setCurrentTimeImmediate(normalizedStartTime)
     isPlaying.value = true
   } catch (err) {
-    console.error('[mpv] 播放失败:', err)
+    console.error('[audio-engine] 播放失败:', err)
+    audioEngineError.value = err instanceof Error ? err.message : String(err)
     autoAdvanceInFlight = false
     isLoading.value = false
     isPlaying.value = false
+    nativePlaybackActive = false
   }
 }
 
@@ -416,13 +549,28 @@ function next(): void {
 }
 
 async function togglePlayState(): Promise<void> {
-  if (!currentTrack.value) return
+  const track = currentTrack.value
+  if (!track) return
+  if (loadedTrackId !== track.id) {
+    await loadAndPlay(track, restoredPlaybackPending ? restoredPlaybackPosition : 0)
+    return
+  }
   isPlaying.value = !isPlaying.value
   try {
-    await window.api.mpv.togglePause()
+    if (nativePlaybackActive) {
+      await window.api.audioEngine.togglePause()
+    } else {
+      const audio = getPlaybackAudio()
+      if (audio.paused) {
+        await audio.play()
+      } else {
+        audio.pause()
+      }
+      await window.api.audioEngine.togglePause()
+    }
   } catch (err) {
     isPlaying.value = !isPlaying.value
-    console.error('[mpv] togglePlay 失败:', err)
+    console.error('[audio-engine] togglePlay 失败:', err)
   }
 }
 
@@ -431,7 +579,13 @@ function previous(): void {
   clearCrossfadeTimer()
   if (latestPlaybackTime > 3) {
     setCurrentTimeImmediate(0)
-    window.api.mpv.seek(0).catch(() => {})
+    if (currentTrack.value && loadedTrackId !== currentTrack.value.id) {
+      restoredPlaybackPending = true
+      restoredPlaybackPosition = 0
+    } else {
+      if (!nativePlaybackActive && playbackAudio) playbackAudio.currentTime = 0
+      window.api.audioEngine.seek(0).catch(() => {})
+    }
     return
   }
   const prevIndex = queueIndex.value - 1
@@ -486,6 +640,59 @@ const progress = computed(() => {
   return (currentTime.value / duration.value) * 100
 })
 
+function cloneTrackForPlaybackSession(track: Track): Track {
+  const cloned = JSON.parse(JSON.stringify(track)) as Track
+  if (cloned.source === 'ncm') {
+    cloned.streamUrl = null
+  }
+  return cloned
+}
+
+function restorePlaybackSession(session: PlaybackSession): void {
+  const track = cloneTrackForPlaybackSession(session.track)
+  const position =
+    session.mode === 'trackAndPosition'
+      ? Math.max(0, Number.isFinite(session.position) ? session.position : 0)
+      : 0
+
+  clearCrossfadeTimer()
+  currentTrack.value = track
+  queue.value = [track]
+  originalQueue.value = [track]
+  queueIndex.value = 0
+  duration.value = Math.max(0, track.duration || 0)
+  isPlaying.value = false
+  isLoading.value = false
+  loadedTrackId = ''
+  restoredPlaybackPending = true
+  restoredPlaybackPosition = position
+  pendingLoadStartTime = 0
+  autoAdvanceInFlight = false
+  advancingFromEndedTrackId = ''
+  setCurrentTimeImmediate(position)
+}
+
+function createPlaybackSession(mode: PlaybackResumeMode): PlaybackSession | null {
+  const track = currentTrack.value
+  if (!track || mode === 'off') return null
+
+  flushLatestCurrentTime()
+  const rawPosition =
+    mode === 'trackAndPosition'
+      ? Math.max(0, Number.isFinite(currentTime.value) ? currentTime.value : 0)
+      : 0
+  const position =
+    duration.value > 0 ? Math.min(rawPosition, Math.max(0, duration.value - 1)) : rawPosition
+
+  return {
+    version: 1,
+    savedAt: new Date().toISOString(),
+    mode,
+    track: cloneTrackForPlaybackSession(track),
+    position
+  }
+}
+
 export function usePlayerStore(): {
   currentTrack: Ref<Track | null>
   dominantColor: Ref<string>
@@ -498,11 +705,13 @@ export function usePlayerStore(): {
   queue: Ref<Track[]>
   queueIndex: Ref<number>
   playMode: Ref<PlayMode>
-  mpvReady: Ref<boolean>
-  mpvError: Ref<string | null>
+  audioEngineReady: Ref<boolean>
+  audioEngineError: Ref<string | null>
   exclusiveMode: Ref<boolean>
   audioOutput: Ref<AudioOutputId>
+  audioDevice: Ref<string>
   audioOutputOptions: Ref<AudioOutputOption[]>
+  audioDeviceOptions: Ref<AudioDeviceOption[]>
   audioProcessing: Ref<AudioProcessingSettings>
   cyclePlayMode: () => void
   playTrack: (track: Track, trackList?: Track[]) => void
@@ -512,8 +721,11 @@ export function usePlayerStore(): {
   seek: (time: number) => void
   setVolume: (vol: number) => void
   toggleExclusiveMode: () => Promise<void>
-  setAudioOutput: (output: AudioOutputId) => Promise<void>
+  setAudioOutput: (output: AudioOutputId, device?: string) => Promise<void>
+  setAudioDevice: (device: string) => Promise<void>
   setAudioProcessing: (settings: Partial<AudioProcessingSettings>) => Promise<void>
+  restorePlaybackSession: (session: PlaybackSession) => void
+  createPlaybackSession: (mode: PlaybackResumeMode) => PlaybackSession | null
   formatTime: (seconds: number) => string
 } {
   function playTrack(track: Track, trackList?: Track[]): void {
@@ -541,8 +753,15 @@ export function usePlayerStore(): {
   }
 
   function seek(time: number): void {
+    if (currentTrack.value && loadedTrackId !== currentTrack.value.id) {
+      restoredPlaybackPending = true
+      restoredPlaybackPosition = Math.max(0, Number.isFinite(time) ? time : 0)
+      setCurrentTimeImmediate(restoredPlaybackPosition)
+      return
+    }
     setCurrentTimeImmediate(time)
-    window.api.mpv.seek(time).catch(() => {})
+    if (!nativePlaybackActive && playbackAudio) playbackAudio.currentTime = Math.max(0, time)
+    window.api.audioEngine.seek(time).catch(() => {})
   }
 
   function setVolume(vol: number): void {
@@ -552,37 +771,40 @@ export function usePlayerStore(): {
   async function toggleExclusiveMode(): Promise<void> {
     const next = !exclusiveMode.value
     try {
-      await window.api.mpv.setExclusiveMode(next)
-      exclusiveMode.value = next
+      applyAudioOutputState(await window.api.audioEngine.setExclusiveMode(next))
     } catch (err) {
-      console.error('[mpv] 切换独占模式失败:', err)
+      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      console.error('[audio-engine] 切换独占模式失败:', err)
     }
   }
 
-  async function setAudioOutput(output: AudioOutputId): Promise<void> {
+  async function setAudioOutput(output: AudioOutputId, device?: string): Promise<void> {
     try {
-      await window.api.mpv.setAudioOutput(output)
-      audioOutput.value = output
-      const selected = audioOutputOptions.value.find((option) => option.id === output)
-      if (selected && !selected.supportsExclusive) {
-        exclusiveMode.value = false
-      } else {
-        exclusiveMode.value = await window.api.mpv.getExclusiveMode()
-      }
+      applyAudioOutputState(await window.api.audioEngine.setAudioOutput(output, device))
     } catch (err) {
-      console.error('[mpv] 切换音频输出失败:', err)
+      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      console.error('[audio-engine] 切换音频输出失败:', err)
+    }
+  }
+
+  async function setAudioDevice(device: string): Promise<void> {
+    try {
+      applyAudioOutputState(await window.api.audioEngine.setAudioDevice(device))
+    } catch (err) {
+      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      console.error('[audio-engine] 切换音频设备失败:', err)
     }
   }
 
   async function setAudioProcessing(settings: Partial<AudioProcessingSettings>): Promise<void> {
     try {
-      audioProcessing.value = await window.api.mpv.setAudioProcessing({
+      audioProcessing.value = await window.api.audioEngine.setAudioProcessing({
         ...audioProcessing.value,
         ...settings
       })
       scheduleCrossfadeIfNeeded()
     } catch (err) {
-      console.error('[mpv] 更新音频处理设置失败:', err)
+      console.error('[audio-engine] 更新音频处理设置失败:', err)
     }
   }
 
@@ -605,11 +827,13 @@ export function usePlayerStore(): {
     queue,
     queueIndex,
     playMode,
-    mpvReady,
-    mpvError,
+    audioEngineReady,
+    audioEngineError,
     exclusiveMode,
     audioOutput,
+    audioDevice,
     audioOutputOptions,
+    audioDeviceOptions,
     audioProcessing,
     cyclePlayMode,
     playTrack,
@@ -620,7 +844,11 @@ export function usePlayerStore(): {
     setVolume,
     toggleExclusiveMode,
     setAudioOutput,
+    setAudioDevice,
     setAudioProcessing,
+    restorePlaybackSession,
+    createPlaybackSession,
     formatTime
   }
 }
+

@@ -8,4 +8,4 @@ out
 .codex-tools/
 .claude
 .agents
-resources/mpv/mpv.exe
+audio-engine/build/

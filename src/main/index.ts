@@ -1,4 +1,4 @@
-import {
+﻿import {
   app,
   shell,
   BrowserWindow,
@@ -18,15 +18,20 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { parseFile } from 'music-metadata'
 import {
   DEFAULT_AUDIO_PROCESSING,
-  MpvManager,
+  AudioEngineManager,
+  normalizeAudioOutput,
   normalizeAudioProcessingSettings,
   type AudioProcessingSettings,
+  type AudioOutputId,
+  type AudioOutputState,
+  type AudioEngineQueueItem,
   type EqMode,
   type EqualizerBand
-} from './mpvManager'
+} from './audioEngineManager'
 
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'pureWhite' | 'aurora'
+type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 
 interface AudioEqPreset {
   id: string
@@ -50,8 +55,20 @@ interface AppSettings {
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number
+  playbackResumeMode: PlaybackResumeMode
+  audioOutput: AudioOutputId
+  audioDevice: string
+  audioExclusiveMode: boolean
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
+}
+
+interface PlaybackSession {
+  version: number
+  savedAt: string
+  mode: PlaybackResumeMode
+  track: unknown
+  position: number
 }
 
 interface SettingsSnapshot extends AppSettings {
@@ -84,6 +101,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   blurEffect: true,
   useCoverTheme: true,
   lyricFontSize: 18,
+  playbackResumeMode: 'off',
+  audioOutput:
+    process.platform === 'darwin' ? 'coreaudio' : process.platform === 'linux' ? 'alsa' : 'wasapi',
+  audioDevice: 'auto',
+  audioExclusiveMode: false,
   audioProcessing: DEFAULT_AUDIO_PROCESSING,
   audioEqPresets: []
 }
@@ -136,6 +158,16 @@ function normalizeAppTheme(theme: unknown): AppTheme {
   return theme === 'aurora' || theme === 'pureWhite' ? theme : DEFAULT_SETTINGS.theme
 }
 
+function normalizePlaybackResumeMode(mode: unknown): PlaybackResumeMode {
+  return mode === 'track' || mode === 'trackAndPosition' || mode === 'off'
+    ? mode
+    : DEFAULT_SETTINGS.playbackResumeMode
+}
+
+function normalizeAudioDevice(device: unknown): string {
+  return typeof device === 'string' && device.trim() ? device.trim() : DEFAULT_SETTINGS.audioDevice
+}
+
 function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
   const rawCachePath =
     typeof settings.cachePath === 'string' && settings.cachePath.trim()
@@ -175,6 +207,10 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
     blurEffect: settings.blurEffect !== false,
     useCoverTheme: settings.useCoverTheme !== false,
     lyricFontSize: clampNumber(settings.lyricFontSize, 14, 28, DEFAULT_SETTINGS.lyricFontSize),
+    playbackResumeMode: normalizePlaybackResumeMode(settings.playbackResumeMode),
+    audioOutput: normalizeAudioOutput(settings.audioOutput),
+    audioDevice: normalizeAudioDevice(settings.audioDevice),
+    audioExclusiveMode: settings.audioExclusiveMode === true,
     audioProcessing: normalizeAudioProcessingSettings(settings.audioProcessing),
     audioEqPresets: normalizeAudioEqPresets(settings.audioEqPresets)
   }
@@ -257,13 +293,8 @@ function ensureMusicCacheDirectories(rootPath: string): void {
   if (!rootPath) return
   mkdirSync(rootPath, { recursive: true })
   mkdirSync(join(rootPath, 'renderer-cache'), { recursive: true })
-  mkdirSync(join(rootPath, 'mpv-cache'), { recursive: true })
+  mkdirSync(join(rootPath, 'audio-engine-cache'), { recursive: true })
   mkdirSync(join(rootPath, 'ncm-cache'), { recursive: true })
-}
-
-function getMpvCacheDir(): string | undefined {
-  if (!appSettings.musicCachePath) return undefined
-  return join(appSettings.musicCachePath, 'mpv-cache')
 }
 
 function getMusicCacheRoot(): string {
@@ -592,12 +623,65 @@ function getMimeType(filePath: string): string {
   return mime[ext] || 'application/octet-stream'
 }
 
-let mpvManager: MpvManager | null = null
+let audioEngineManager: AudioEngineManager | null = null
 let mainWindow: BrowserWindow | null = null
 let ncmServer: import('http').Server | null = null
 let tray: Tray | null = null
 let forceQuit = false
+let closingAfterPlaybackSessionSave = false
+let savingPlaybackSessionBeforeClose = false
 const NCM_API_PORT = 3100
+const PLAYBACK_SESSION_SAVE_TIMEOUT_MS = 1800
+const pendingPlaybackSessionSaves = new Map<string, () => void>()
+
+function resolvePlaybackSessionSave(requestId: string): void {
+  const resolvePending = pendingPlaybackSessionSaves.get(requestId)
+  if (!resolvePending) return
+  pendingPlaybackSessionSaves.delete(requestId)
+  resolvePending()
+}
+
+async function requestRendererPlaybackSessionSave(): Promise<void> {
+  const win = mainWindow
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
+
+  const requestId = randomUUID()
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingPlaybackSessionSaves.delete(requestId)
+      resolve()
+    }, PLAYBACK_SESSION_SAVE_TIMEOUT_MS)
+
+    pendingPlaybackSessionSaves.set(requestId, () => {
+      clearTimeout(timer)
+      resolve()
+    })
+
+    win.webContents.send('app:save-playback-session', requestId)
+  })
+}
+
+async function closeMainWindowAfterPlaybackSessionSave(win: BrowserWindow): Promise<void> {
+  savingPlaybackSessionBeforeClose = true
+  try {
+    await requestRendererPlaybackSessionSave()
+  } catch (err) {
+    console.warn('[playback-session] save before close failed:', err)
+  } finally {
+    savingPlaybackSessionBeforeClose = false
+    if (!win.isDestroyed()) {
+      const shouldQuitAfterClose = forceQuit
+      if (shouldQuitAfterClose) {
+        win.once('closed', () => {
+          setTimeout(() => app.quit(), 0)
+        })
+      }
+      closingAfterPlaybackSessionSave = true
+      win.close()
+      closingAfterPlaybackSessionSave = false
+    }
+  }
+}
 
 function sendPlayerShortcut(action: PlayerShortcutAction): void {
   if (mainWindow?.isDestroyed() === false) {
@@ -612,7 +696,7 @@ function applyAutoLaunch(enabled: boolean): void {
       path: process.execPath
     })
   } catch (err) {
-    console.warn('[settings] 设置开机自启失败:', err)
+    console.warn('[settings] 设置开机自启动失败:', err)
   }
 }
 
@@ -693,10 +777,55 @@ function applyRuntimeSettings(): void {
   syncTrayState()
 }
 
-function updateAppSettings(patch: Partial<AppSettings>): SettingsSnapshot {
+function persistAudioOutputState(state: AudioOutputState): SettingsSnapshot {
+  appSettings = normalizeAppSettings({
+    ...appSettings,
+    audioOutput: state.output,
+    audioDevice: state.device,
+    audioExclusiveMode: state.exclusiveMode
+  })
+  writeAppSettings(appSettings)
+  const snapshot = createSettingsSnapshot(appSettings, launchSettings)
+  mainWindow?.webContents.send('settings:changed', snapshot)
+  return snapshot
+}
+
+async function updateAppSettings(patch: Partial<AppSettings>): Promise<SettingsSnapshot> {
   const previousCachePath = appSettings.musicCachePath
   const shouldUpdateAudioProcessing = Object.prototype.hasOwnProperty.call(patch, 'audioProcessing')
+  const shouldUpdateAudioOutput = Object.prototype.hasOwnProperty.call(patch, 'audioOutput')
+  const shouldUpdateAudioDevice = Object.prototype.hasOwnProperty.call(patch, 'audioDevice')
+  const shouldUpdateExclusiveMode = Object.prototype.hasOwnProperty.call(patch, 'audioExclusiveMode')
   appSettings = normalizeAppSettings({ ...appSettings, ...patch })
+
+  if (
+    audioEngineManager &&
+    (shouldUpdateAudioOutput || shouldUpdateAudioDevice || shouldUpdateExclusiveMode)
+  ) {
+    let audioState: AudioOutputState
+    if (shouldUpdateAudioOutput) {
+      audioState = await audioEngineManager.setAudioOutput(
+        appSettings.audioOutput,
+        appSettings.audioDevice
+      )
+    } else if (shouldUpdateAudioDevice) {
+      audioState = await audioEngineManager.setAudioDevice(appSettings.audioDevice)
+    } else {
+      audioState = await audioEngineManager.getAudioOutputState()
+    }
+
+    if (shouldUpdateExclusiveMode && audioState.exclusiveAvailable) {
+      audioState = await audioEngineManager.setExclusiveMode(appSettings.audioExclusiveMode)
+    }
+
+    appSettings = normalizeAppSettings({
+      ...appSettings,
+      audioOutput: audioState.output,
+      audioDevice: audioState.device,
+      audioExclusiveMode: audioState.exclusiveMode
+    })
+  }
+
   writeAppSettings(appSettings)
 
   if (appSettings.musicCachePath && appSettings.musicCachePath !== previousCachePath) {
@@ -708,7 +837,7 @@ function updateAppSettings(patch: Partial<AppSettings>): SettingsSnapshot {
   }
 
   if (shouldUpdateAudioProcessing) {
-    void mpvManager?.setAudioProcessing(appSettings.audioProcessing)
+    await audioEngineManager?.setAudioProcessing(appSettings.audioProcessing)
   }
 
   applyRuntimeSettings()
@@ -746,6 +875,14 @@ function createWindow(): void {
     if (appSettings.closeToTray && !forceQuit) {
       event.preventDefault()
       mainWindow?.hide()
+      return
+    }
+
+    if (!closingAfterPlaybackSessionSave) {
+      event.preventDefault()
+      if (!savingPlaybackSessionBeforeClose && mainWindow) {
+        void closeMainWindowAfterPlaybackSessionSave(mainWindow)
+      }
     }
   })
 
@@ -765,106 +902,174 @@ function createWindow(): void {
   }
 }
 
-function setupMpvIpc(): void {
-  mpvManager = new MpvManager({
-    exclusiveMode: false,
-    cacheDir: getMpvCacheDir(),
+function setupAudioEngineIpc(): void {
+  audioEngineManager = new AudioEngineManager({
+    exclusiveMode: appSettings.audioExclusiveMode,
+    audioOutput: appSettings.audioOutput,
+    audioDevice: appSettings.audioDevice,
     audioProcessing: appSettings.audioProcessing
   })
 
-  mpvManager.on('property-change', ({ name, data }) => {
-    mainWindow?.webContents.send('mpv:property-change', { name, data })
+  audioEngineManager.on('property-change', ({ name, data }) => {
+    mainWindow?.webContents.send('audioEngine:property-change', { name, data })
   })
 
-  mpvManager.on('end-file', ({ reason }) => {
-    mainWindow?.webContents.send('mpv:end-file', { reason })
+  audioEngineManager.on('end-file', ({ reason }) => {
+    mainWindow?.webContents.send('audioEngine:end-file', { reason })
   })
 
-  mpvManager.on('start-file', () => {
-    mainWindow?.webContents.send('mpv:start-file')
+  audioEngineManager.on('start-file', () => {
+    mainWindow?.webContents.send('audioEngine:start-file')
   })
 
-  mpvManager.on('error', (err: Error) => {
-    console.error('[mpv]', err.message)
-    mainWindow?.webContents.send('mpv:error', err.message)
+  audioEngineManager.on('error', (err: Error) => {
+    console.error('[audio-engine]', err.message)
+    mainWindow?.webContents.send('audioEngine:error', err.message)
   })
 
-  mpvManager.on('ready', () => {
-    mainWindow?.webContents.send('mpv:ready')
+  audioEngineManager.on('ready', () => {
+    mainWindow?.webContents.send('audioEngine:ready')
   })
 
-  mpvManager.on('disconnected', () => {
-    mainWindow?.webContents.send('mpv:disconnected')
+  audioEngineManager.on('playback-info', (info) => {
+    mainWindow?.webContents.send('audioEngine:playback-info', info)
   })
 
-  function requireMpv(): MpvManager {
-    if (!mpvManager) throw new Error('mpv 引擎未初始化')
-    return mpvManager
+  function requireAudioEngine(): AudioEngineManager {
+    if (!audioEngineManager) throw new Error('Twilight Audio Engine is not initialized')
+    return audioEngineManager
   }
 
-  ipcMain.handle('mpv:play', async (_event, filePath: string) => {
-    console.log('[ipc] mpv:play 收到请求:', filePath)
-    await requireMpv().play(filePath)
-    console.log('[ipc] mpv:play 完成')
+  function toQueueItem(raw: unknown): AudioEngineQueueItem | null {
+    if (!raw || typeof raw !== 'object') return null
+    const item = raw as Record<string, unknown>
+    const source =
+      typeof item.audioSource === 'string'
+        ? item.audioSource
+        : typeof item.playUrl === 'string'
+          ? item.playUrl
+          : typeof item.filePath === 'string'
+            ? item.filePath
+            : typeof item.streamUrl === 'string'
+              ? item.streamUrl
+              : ''
+    if (!source) return null
+    return {
+      id: typeof item.id === 'string' ? item.id : source,
+      source,
+      title: typeof item.title === 'string' ? item.title : undefined,
+      artist: typeof item.artist === 'string' ? item.artist : undefined,
+      album: typeof item.album === 'string' ? item.album : undefined,
+      duration: typeof item.duration === 'number' ? item.duration : undefined,
+      codec: typeof item.format === 'string' ? item.format : undefined,
+      sampleRate: typeof item.sampleRate === 'number' ? item.sampleRate : undefined,
+      bitrate: typeof item.bitrate === 'number' ? item.bitrate : undefined,
+      bitDepth: typeof item.bitDepth === 'number' ? item.bitDepth : undefined
+    }
+  }
+
+  ipcMain.handle('audioEngine:loadQueue', async (_event, items: unknown[], startIndex?: number) => {
+    const queue = Array.isArray(items)
+      ? items.map(toQueueItem).filter((item): item is AudioEngineQueueItem => Boolean(item))
+      : []
+    await requireAudioEngine().loadQueue(queue, Number(startIndex) || 0)
   })
 
-  ipcMain.handle('mpv:togglePause', async () => {
-    await requireMpv().togglePause()
+  ipcMain.handle('audioEngine:play', async (_event, source: string, startTime?: number) => {
+    await requireAudioEngine().play(source, startTime)
   })
 
-  ipcMain.handle('mpv:seek', async (_event, time: number) => {
-    await requireMpv().seek(time)
+  ipcMain.handle('audioEngine:togglePause', async () => {
+    await requireAudioEngine().togglePause()
   })
 
-  ipcMain.handle('mpv:setVolume', async (_event, volume: number) => {
-    await requireMpv().setVolume(volume)
+  ipcMain.handle('audioEngine:pause', async () => {
+    await requireAudioEngine().pause()
   })
 
-  ipcMain.handle('mpv:stop', async () => {
-    await requireMpv().stop()
+  ipcMain.handle('audioEngine:seek', async (_event, time: number) => {
+    await requireAudioEngine().seek(time)
   })
 
-  ipcMain.handle('mpv:setExclusiveMode', async (_event, enabled: boolean) => {
-    await requireMpv().setExclusiveMode(enabled)
+  ipcMain.handle('audioEngine:setVolume', async (_event, volume: number) => {
+    await requireAudioEngine().setVolume(volume)
   })
 
-  ipcMain.handle('mpv:getExclusiveMode', async () => {
-    return await requireMpv().getExclusiveMode()
+  ipcMain.handle('audioEngine:stop', async () => {
+    await requireAudioEngine().stop()
   })
 
-  ipcMain.handle('mpv:setAudioOutput', async (_event, output: string) => {
-    await requireMpv().setAudioOutput(output as never)
+  ipcMain.handle('audioEngine:next', async () => {
+    await requireAudioEngine().next()
   })
 
-  ipcMain.handle('mpv:getAudioOutput', async () => {
-    return await requireMpv().getAudioOutput()
+  ipcMain.handle('audioEngine:previous', async () => {
+    await requireAudioEngine().previous()
   })
 
-  ipcMain.handle('mpv:getAudioOutputOptions', async () => {
-    return requireMpv().getAudioOutputOptions()
+  ipcMain.handle('audioEngine:setExclusiveMode', async (_event, enabled: boolean) => {
+    const state = await requireAudioEngine().setExclusiveMode(enabled)
+    persistAudioOutputState(state)
+    return state
+  })
+
+  ipcMain.handle('audioEngine:getExclusiveMode', async () => {
+    return await requireAudioEngine().getExclusiveMode()
+  })
+
+  ipcMain.handle('audioEngine:setAudioOutput', async (_event, output: string, device?: string) => {
+    const state = await requireAudioEngine().setAudioOutput(output as AudioOutputId, device)
+    persistAudioOutputState(state)
+    return state
+  })
+
+  ipcMain.handle('audioEngine:setAudioDevice', async (_event, device: string) => {
+    const state = await requireAudioEngine().setAudioDevice(device)
+    persistAudioOutputState(state)
+    return state
+  })
+
+  ipcMain.handle('audioEngine:getAudioOutput', async () => {
+    return await requireAudioEngine().getAudioOutput()
+  })
+
+  ipcMain.handle('audioEngine:getAudioOutputOptions', async () => {
+    return requireAudioEngine().getAudioOutputOptions()
+  })
+
+  ipcMain.handle('audioEngine:getAudioOutputState', async () => {
+    return await requireAudioEngine().getAudioOutputState()
   })
 
   ipcMain.handle(
-    'mpv:setAudioProcessing',
+    'audioEngine:setAudioProcessing',
     async (_event, settings: Partial<AudioProcessingSettings>) => {
-      const normalized = await requireMpv().setAudioProcessing(settings)
+      const normalized = await requireAudioEngine().setAudioProcessing(settings)
       appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
       writeAppSettings(appSettings)
       return normalized
     }
   )
 
-  ipcMain.handle('mpv:getAudioProcessing', async () => {
-    return requireMpv().getAudioProcessing()
+  ipcMain.handle('audioEngine:getAudioProcessing', async () => {
+    return requireAudioEngine().getAudioProcessing()
   })
 
-  mpvManager
+  ipcMain.handle('audioEngine:getPlaybackInfo', async () => {
+    return await requireAudioEngine().getPlaybackInfo()
+  })
+
+  ipcMain.handle('audioEngine:getSpectrumData', async (_event, points?: number) => {
+    return requireAudioEngine().getSpectrumData(points)
+  })
+
+  audioEngineManager
     .start()
     .then(() => {
-      console.log('[mpv] 启动成功')
+      console.log('[audio-engine] started')
     })
     .catch((err: Error) => {
-      console.error('[mpv]', err.message)
+      console.error('[audio-engine]', err.message)
     })
 
   ipcMain.handle('ncm:getPort', () => NCM_API_PORT)
@@ -883,8 +1088,6 @@ function setupMpvIpc(): void {
   ipcMain.handle('ncm:request', async (_event, path: string, cookie?: string) => {
     const sep = path.includes('?') ? '&' : '?'
     let url = `http://localhost:${NCM_API_PORT}${path}${sep}timestamp=${Date.now()}`
-    // Pass cookie as query parameter, not HTTP header
-    // This matches the official NCM API convention (cookie is a module-level parameter)
     if (cookie) {
       url += `&cookie=${encodeURIComponent(cookie)}`
     }
@@ -905,7 +1108,6 @@ function setupMpvIpc(): void {
     }
   })
 }
-
 async function setupNcmApi(): Promise<void> {
   try {
     const tokenPath = join(tmpdir(), 'anonymous_token')
@@ -966,6 +1168,11 @@ app.whenReady().then(() => {
     return true
   })
 
+  ipcMain.handle('app:playback-session-saved', async (_event, requestId: string) => {
+    resolvePlaybackSessionSave(requestId)
+    return true
+  })
+
   ipcMain.handle('shell:openPath', async (_event, targetPath: string) => {
     return await shell.openPath(targetPath)
   })
@@ -975,7 +1182,7 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('settings:update', async (_event, patch: Partial<AppSettings>) => {
-    return updateAppSettings(patch)
+    return await updateAppSettings(patch)
   })
 
   ipcMain.handle('settings:chooseCacheFolder', async () => {
@@ -1040,6 +1247,7 @@ app.whenReady().then(() => {
   const userDataPath = app.getPath('userData')
   const MUSIC_LIBRARY_FILE = join(userDataPath, 'music-library.json')
   const NCM_COOKIE_FILE = join(userDataPath, 'ncm-cookie.json')
+  const PLAYBACK_SESSION_FILE = join(userDataPath, 'playback-session.json')
 
   ipcMain.handle('data:saveMusicLibrary', async (_event, tracks: unknown[]) => {
     await writeFile(MUSIC_LIBRARY_FILE, JSON.stringify(tracks), 'utf-8')
@@ -1053,6 +1261,28 @@ app.whenReady().then(() => {
     } catch {
       return []
     }
+  })
+
+  ipcMain.handle('data:savePlaybackSession', async (_event, session: PlaybackSession | null) => {
+    if (!session) {
+      await rm(PLAYBACK_SESSION_FILE, { force: true })
+      return
+    }
+    await writeFile(PLAYBACK_SESSION_FILE, JSON.stringify(session), 'utf-8')
+  })
+
+  ipcMain.handle('data:loadPlaybackSession', async () => {
+    if (!existsSync(PLAYBACK_SESSION_FILE)) return null
+    try {
+      const raw = readFileSync(PLAYBACK_SESSION_FILE, 'utf-8')
+      return JSON.parse(raw) as PlaybackSession
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle('data:clearPlaybackSession', async () => {
+    await rm(PLAYBACK_SESSION_FILE, { force: true })
   })
 
   ipcMain.handle('data:saveCookie', async (_event, cookie: string) => {
@@ -1072,7 +1302,7 @@ app.whenReady().then(() => {
   createWindow()
   applyRuntimeSettings()
 
-  setupMpvIpc()
+  setupAudioEngineIpc()
   setupNcmApi()
 
   app.on('activate', function () {
@@ -1088,12 +1318,16 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   forceQuit = true
+})
+
+app.on('will-quit', () => {
   unregisterPlayerShortcuts()
   destroyTray()
-  mpvManager?.destroy()
-  mpvManager = null
+  audioEngineManager?.destroy()
+  audioEngineManager = null
   if (ncmServer) {
     ncmServer.close()
     ncmServer = null
   }
 })
+

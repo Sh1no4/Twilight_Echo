@@ -429,6 +429,7 @@ html[data-theme='pureWhite'] .settings-page {
 
 html[data-theme='pureWhite'] .settings-tabs,
 html[data-theme='pureWhite'] .theme-segment,
+html[data-theme='pureWhite'] .resume-segment,
 html[data-theme='pureWhite'] .path-field,
 html[data-theme='pureWhite'] .text-button,
 html[data-theme='pureWhite'] .icon-button.subtle,
@@ -438,7 +439,8 @@ html[data-theme='pureWhite'] .shortcut-item kbd {
 
 html[data-theme='pureWhite'] .settings-group,
 html[data-theme='pureWhite'] .shortcut-list,
-html[data-theme='pureWhite'] .theme-option.active {
+html[data-theme='pureWhite'] .theme-option.active,
+html[data-theme='pureWhite'] .resume-option.active {
   border-color: rgba(15, 23, 42, 0.08);
   background: #ffffff;
 }

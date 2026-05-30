@@ -1,8 +1,8 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
-import type { AppSettings, AppTheme } from '../types/settings'
+import type { AppSettings, AppTheme, AudioOutputId, PlaybackResumeMode } from '../types/settings'
 
 defineEmits<{
   back: []
@@ -20,7 +20,17 @@ const tabs = [
 
 const themeOptions: { value: AppTheme; label: string; description: string }[] = [
   { value: 'pureWhite', label: '纯白', description: '清爽白底与蓝色重点色' },
-  { value: 'aurora', label: '流光', description: '保留当前柔和彩色玻璃风格' }
+  { value: 'aurora', label: '流光', description: '柔和多彩的玻璃风格' }
+]
+
+const playbackResumeOptions: {
+  value: PlaybackResumeMode
+  label: string
+  description: string
+}[] = [
+  { value: 'off', label: '关闭', description: '启动时不恢复播放' },
+  { value: 'track', label: '记住曲目', description: '只恢复上次曲目' },
+  { value: 'trackAndPosition', label: '曲目和位置', description: '恢复曲目与进度' }
 ]
 
 type TabKey = (typeof tabs)[number]['key']
@@ -58,7 +68,19 @@ const {
   relaunch
 } = useSettingsStore()
 
-const { exclusiveMode, toggleExclusiveMode, volume, setVolume } = usePlayerStore()
+const {
+  exclusiveMode,
+  audioOutput,
+  audioDevice,
+  audioOutputOptions,
+  audioDeviceOptions,
+  audioEngineError,
+  toggleExclusiveMode,
+  setAudioOutput,
+  setAudioDevice,
+  volume,
+  setVolume
+} = usePlayerStore()
 
 const volumePercent = computed({
   get: () => Math.round(volume.value * 100),
@@ -72,6 +94,13 @@ const cachePathNeedsRestart = computed(
   () => !!activeCachePath.value && activeCachePath.value !== settings.value.cachePath
 )
 const restartReasonText = computed(() => restartReasons.value.join('、'))
+const selectedAudioOutput = computed(() =>
+  audioOutputOptions.value.find((option) => option.id === audioOutput.value)
+)
+const selectedAudioDevice = computed(() =>
+  audioDeviceOptions.value.find((option) => option.id === audioDevice.value)
+)
+const exclusiveAvailable = computed(() => selectedAudioOutput.value?.supportsExclusive ?? false)
 
 function toggleSetting(key: BooleanSettingKey): void {
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
@@ -80,6 +109,22 @@ function toggleSetting(key: BooleanSettingKey): void {
 function setTheme(theme: AppTheme): void {
   if (settings.value.theme === theme) return
   void updateSettings({ theme })
+}
+
+function setPlaybackResumeMode(playbackResumeMode: PlaybackResumeMode): void {
+  if (settings.value.playbackResumeMode === playbackResumeMode) return
+  void updateSettings({ playbackResumeMode })
+}
+
+function selectAudioOutput(output: AudioOutputId): void {
+  if (audioOutput.value === output) return
+  void setAudioOutput(output)
+}
+
+function selectAudioDevice(event: Event): void {
+  const target = event.target as HTMLSelectElement
+  if (audioDevice.value === target.value) return
+  void setAudioDevice(target.value)
 }
 
 function setLyricFontSize(event: Event): void {
@@ -193,20 +238,82 @@ onMounted(async () => {
         <section v-if="activeTab === 'playback'" class="settings-section">
           <h2>播放</h2>
           <div class="settings-group">
+            <div class="setting-row audio-output-row">
+              <div class="setting-copy">
+                <span class="setting-label">音频输出</span>
+                <span class="setting-desc">
+                  当前为 {{ selectedAudioOutput?.label ?? '自动' }} ·
+                  {{ selectedAudioDevice?.label ?? audioDevice }}
+                </span>
+              </div>
+              <div
+                class="audio-output-segment"
+                role="radiogroup"
+                aria-label="音频输出"
+                :style="{
+                  gridTemplateColumns: `repeat(${Math.max(audioOutputOptions.length, 1)}, minmax(0, 1fr))`
+                }"
+              >
+                <button
+                  v-for="option in audioOutputOptions"
+                  :key="option.id"
+                  class="audio-output-option"
+                  :class="{ active: audioOutput === option.id }"
+                  type="button"
+                  role="radio"
+                  :aria-checked="audioOutput === option.id"
+                  @click="selectAudioOutput(option.id)"
+                >
+                  <span>{{ option.label }}</span>
+                  <small>{{ option.description }}</small>
+                </button>
+              </div>
+            </div>
+
+            <div class="setting-row audio-device-row">
+              <div class="setting-copy">
+                <span class="setting-label">输出设备</span>
+                <span class="setting-desc">选择当前音频后端使用的设备或驱动</span>
+              </div>
+              <select class="select-control" :value="audioDevice" @change="selectAudioDevice">
+                <option
+                  v-for="device in audioDeviceOptions"
+                  :key="device.id"
+                  :value="device.id"
+                >
+                  {{ device.label }}
+                </option>
+              </select>
+            </div>
+
             <div class="setting-row">
               <div class="setting-copy">
-                <span class="setting-label">WASAPI 独占模式</span>
-                <span class="setting-desc">直通音频设备，适合外置 DAC 和耳放</span>
+                <span class="setting-label">独占模式</span>
+                <span class="setting-desc">
+                  {{
+                    exclusiveAvailable
+                      ? '绕过系统混音器，适合外置 DAC 和耳放'
+                      : '当前输出后端不支持独占模式'
+                  }}
+                </span>
               </div>
               <button
                 class="toggle-switch"
                 :class="{ active: exclusiveMode }"
                 role="switch"
                 :aria-checked="exclusiveMode"
+                :disabled="!exclusiveAvailable"
                 @click="toggleExclusiveMode"
               >
                 <span class="toggle-knob"></span>
               </button>
+            </div>
+
+            <div v-if="audioEngineError" class="setting-row compact">
+              <div class="setting-copy">
+                <span class="setting-label">音频输出提示</span>
+                <span class="setting-desc">{{ audioEngineError }}</span>
+              </div>
             </div>
 
             <div class="setting-row range-row">
@@ -225,12 +332,34 @@ onMounted(async () => {
               />
             </div>
 
+            <div class="setting-row resume-row">
+              <div class="setting-copy">
+                <span class="setting-label">关闭时记忆播放</span>
+                <span class="setting-desc">下次启动时恢复上次的播放入口</span>
+              </div>
+              <div class="resume-segment" role="radiogroup" aria-label="关闭时记忆播放">
+                <button
+                  v-for="option in playbackResumeOptions"
+                  :key="option.value"
+                  class="resume-option"
+                  :class="{ active: settings.playbackResumeMode === option.value }"
+                  type="button"
+                  role="radio"
+                  :aria-checked="settings.playbackResumeMode === option.value"
+                  @click="setPlaybackResumeMode(option.value)"
+                >
+                  <span>{{ option.label }}</span>
+                  <small>{{ option.description }}</small>
+                </button>
+              </div>
+            </div>
+
             <div class="setting-row">
               <div class="setting-copy">
                 <span class="setting-label">音频引擎</span>
-                <span class="setting-desc">本地与在线歌曲统一由 mpv 输出</span>
+                <span class="setting-desc">本地与在线歌曲统一由 Twilight Audio Engine 输出</span>
               </div>
-              <span class="setting-value">MPV</span>
+              <span class="setting-value">Twilight Audio Engine</span>
             </div>
           </div>
         </section>
@@ -402,19 +531,19 @@ onMounted(async () => {
             </div>
             <div class="shortcut-item">
               <span>上一首</span>
-              <span><kbd>Ctrl</kbd><b>+</b><kbd>←</kbd></span>
+              <span><kbd>Ctrl</kbd><b>+</b><kbd>Left</kbd></span>
             </div>
             <div class="shortcut-item">
               <span>下一首</span>
-              <span><kbd>Ctrl</kbd><b>+</b><kbd>→</kbd></span>
+              <span><kbd>Ctrl</kbd><b>+</b><kbd>Right</kbd></span>
             </div>
             <div class="shortcut-item">
-              <span>音量加</span>
-              <span><kbd>Ctrl</kbd><b>+</b><kbd>↑</kbd></span>
+              <span>音量增加</span>
+              <span><kbd>Ctrl</kbd><b>+</b><kbd>Up</kbd></span>
             </div>
             <div class="shortcut-item">
-              <span>音量减</span>
-              <span><kbd>Ctrl</kbd><b>+</b><kbd>↓</kbd></span>
+              <span>音量降低</span>
+              <span><kbd>Ctrl</kbd><b>+</b><kbd>Down</kbd></span>
             </div>
           </div>
         </section>
@@ -432,7 +561,7 @@ onMounted(async () => {
             </div>
             <div class="setting-row compact">
               <span class="setting-label">技术栈</span>
-              <span class="setting-value">Electron + Vue 3 + MPV</span>
+              <span class="setting-value">Electron + Vue 3 + Twilight Audio Engine</span>
             </div>
             <div class="setting-row compact">
               <span class="setting-label">设置文件</span>
@@ -452,7 +581,6 @@ onMounted(async () => {
   z-index: 50;
   display: flex;
   flex-direction: column;
-  padding-top: 32px;
   background: #fff;
   color: var(--te-neutral-900);
 }
@@ -650,6 +778,11 @@ onMounted(async () => {
   background: #2563eb;
 }
 
+.toggle-switch:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .toggle-knob {
   position: absolute;
   top: 3px;
@@ -752,6 +885,99 @@ onMounted(async () => {
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.resume-row,
+.audio-output-row {
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
+}
+
+.audio-device-row {
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
+}
+
+.resume-segment,
+.audio-output-segment {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.resume-option,
+.audio-output-option {
+  display: flex;
+  min-height: 54px;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--te-neutral-700);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 0.16s,
+    border-color 0.16s,
+    color 0.16s,
+    box-shadow 0.16s;
+}
+
+.resume-option:hover,
+.audio-output-option:hover {
+  background: rgba(255, 255, 255, 0.76);
+  color: var(--te-neutral-900);
+}
+
+.resume-option.active,
+.audio-output-option.active {
+  border-color: color-mix(in srgb, var(--te-primary-500) 28%, transparent);
+  background: #fff;
+  color: var(--te-neutral-900);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+}
+
+.resume-option span,
+.audio-output-option span {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resume-option small,
+.audio-output-option small {
+  overflow: hidden;
+  color: var(--te-neutral-500);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select-control {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid rgba(17, 24, 39, 0.12);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--te-neutral-800);
+  font-size: 13px;
+  outline: none;
+  padding: 0 10px;
+}
+
+.select-control:focus {
+  border-color: color-mix(in srgb, var(--te-primary-500) 42%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--te-primary-500) 12%, transparent);
 }
 
 .range-control {
@@ -951,6 +1177,9 @@ onMounted(async () => {
   .setting-row,
   .path-row,
   .theme-row,
+  .audio-output-row,
+  .audio-device-row,
+  .resume-row,
   .range-row {
     grid-template-columns: 1fr;
     gap: 12px;
@@ -966,3 +1195,5 @@ onMounted(async () => {
   }
 }
 </style>
+
+

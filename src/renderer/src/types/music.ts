@@ -1,3 +1,5 @@
+import type { PlaybackResumeMode } from './settings'
+
 export type TrackSource = 'local' | 'ncm'
 
 export interface Track {
@@ -20,6 +22,14 @@ export interface Track {
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
+}
+
+export interface PlaybackSession {
+  version: 1
+  savedAt: string
+  mode: PlaybackResumeMode
+  track: Track
+  position: number
 }
 
 export const SUPPORTED_EXTENSIONS = [

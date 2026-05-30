@@ -20,7 +20,9 @@ const {
   playMode,
   exclusiveMode,
   audioOutput,
+  audioDevice,
   audioOutputOptions,
+  audioDeviceOptions,
   cyclePlayMode,
   togglePlay,
   next,
@@ -29,6 +31,7 @@ const {
   playTrack,
   toggleExclusiveMode,
   setAudioOutput,
+  setAudioDevice,
   formatTime
 } = usePlayerStore()
 
@@ -99,7 +102,15 @@ const modeTitle = computed(() => modeLabels[playMode.value] ?? '')
 const selectedAudioOutput = computed(() =>
   audioOutputOptions.value.find((option) => option.id === audioOutput.value)
 )
+const selectedAudioDevice = computed(() =>
+  audioDeviceOptions.value.find((option) => option.id === audioDevice.value)
+)
 const exclusiveAvailable = computed(() => selectedAudioOutput.value?.supportsExclusive ?? false)
+
+function onAudioDeviceChange(event: Event): void {
+  const target = event.target as HTMLSelectElement
+  void setAudioDevice(target.value)
+}
 
 function playTrackAt(index: number): void {
   const track = queue.value[index]
@@ -316,6 +327,20 @@ function openEqualizer(): void {
                     {{ option.label }}
                   </button>
                 </div>
+                <select
+                  class="audio-device-mini-select"
+                  :value="audioDevice"
+                  :title="selectedAudioDevice?.label ?? audioDevice"
+                  @change="onAudioDeviceChange"
+                >
+                  <option
+                    v-for="device in audioDeviceOptions"
+                    :key="device.id"
+                    :value="device.id"
+                  >
+                    {{ device.label }}
+                  </option>
+                </select>
               </div>
             </div>
           </Transition>
@@ -1099,7 +1124,7 @@ function openEqualizer(): void {
   border-radius: 16px;
   box-shadow: 0 18px 55px rgba(86, 70, 160, 0.16);
   padding: 8px;
-  min-width: 252px;
+  min-width: 288px;
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
 }
@@ -1258,9 +1283,28 @@ function openEqualizer(): void {
   color: var(--accent-color, #7c4dff);
 }
 
+.audio-device-mini-select {
+  width: 100%;
+  height: 30px;
+  margin-top: 8px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.42);
+  color: rgba(52, 61, 87, 0.84);
+  font-size: 11px;
+  font-weight: 700;
+  outline: none;
+  padding: 0 9px;
+}
+
 .drawer-glass .audio-output-mini {
   background: rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.58);
+}
+
+.drawer-glass .audio-device-mini-select {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.82);
 }
 
 .drawer-glass .audio-output-mini:hover,
