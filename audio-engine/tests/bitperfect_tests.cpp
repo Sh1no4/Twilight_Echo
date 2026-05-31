@@ -39,7 +39,10 @@ void assertNotBitPerfect(BitPerfectEvaluation evaluation) {
 void testBackendSupport() {
   auto shared = baseEvaluation();
   shared.supportsBitPerfect = false;
-  assertNotBitPerfect(shared);
+  shared.backendResampleReason = "backend shared path";
+  const BitPerfectResult sharedResult = evaluateBitPerfect(shared);
+  assert(!sharedResult.bitPerfect);
+  assert(sharedResult.resampleReason == "backend shared path");
 
   auto wasapiExclusive = baseEvaluation();
   assertBitPerfect(wasapiExclusive);
@@ -47,6 +50,14 @@ void testBackendSupport() {
   auto asio = baseEvaluation();
   asio.supportsBitPerfect = true;
   assertBitPerfect(asio);
+}
+
+void testBackendReasonFallback() {
+  auto shared = baseEvaluation();
+  shared.supportsBitPerfect = false;
+  const BitPerfectResult result = evaluateBitPerfect(shared);
+  assert(!result.bitPerfect);
+  assert(!result.resampleReason.empty());
 }
 
 void testFormatMismatch() {
@@ -129,6 +140,7 @@ void testRoutingSemantics() {
 
 int main() {
   testBackendSupport();
+  testBackendReasonFallback();
   testFormatMismatch();
   testProcessingFlags();
   testRoutingSemantics();

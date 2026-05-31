@@ -319,6 +319,7 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   impl_->outputInfo.resampled = requestedFormat.sampleRate != impl_->outputFormat.sampleRate ||
                                 requestedFormat.channelCount != impl_->outputFormat.channelCount ||
                                 requestedFormat.bitDepth != impl_->outputFormat.bitDepth;
+  impl_->outputInfo.resampleReason = "WASAPI 共享输出经过系统混音";
   impl_->outputInfo.outputSampleRate = impl_->outputFormat.sampleRate;
   impl_->outputInfo.outputBitDepth = impl_->outputFormat.bitDepth;
   impl_->outputInfo.backend = "wasapi";

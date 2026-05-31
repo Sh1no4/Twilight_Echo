@@ -110,9 +110,11 @@ BitPerfectResult evaluateBitPerfect(const BitPerfectEvaluation& evaluation) {
   if (result.bitPerfect) {
     result.resampleReason.clear();
   } else if (!evaluation.supportsBitPerfect) {
-    result.resampleReason = "共享输出经过系统混音";
+    result.resampleReason =
+        evaluation.backendResampleReason.empty() ? "共享输出经过系统混音" : evaluation.backendResampleReason;
   } else if (!result.formatMatched || result.resampled) {
-    result.resampleReason = "输出格式已转换";
+    result.resampleReason =
+        evaluation.backendResampleReason.empty() ? "输出格式已转换" : evaluation.backendResampleReason;
   } else if (!result.routingPreservesSemantics) {
     result.resampleReason = "声道映射改变声道语义";
   } else if (result.processingActive) {

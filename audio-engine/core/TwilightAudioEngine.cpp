@@ -106,6 +106,7 @@ void normalizeOutputInfoMirror(PlaybackInfo& info) {
   info.outputSampleRate = out.outputSampleRate;
   info.outputBitDepth = out.outputBitDepth;
   info.bitPerfect = out.bitPerfect;
+  info.resampleReason = out.resampleReason;
 }
 
 std::string inferCodec(const std::string& source) {
@@ -164,6 +165,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
   writeLatencyInfoJson(json, out.latencyInfo);
   json << ","
        << "\"channelRoutingMode\":\"" << escapeJson(out.channelRoutingMode) << "\","
+       << "\"resampleReason\":\"" << escapeJson(out.resampleReason) << "\","
        << "\"diagnostics\":";
   writeDiagnosticsJson(json, out.diagnostics);
   json << ","
@@ -326,13 +328,8 @@ QueueItem makeManualQueueItem(const std::string& source) {
 
 TwilightAudioEngine::TwilightAudioEngine() {
   pipeline_ = std::make_unique<AudioPipeline>();
-#if defined(_WIN32)
-  info_.outputBackend = "wasapi";
-#elif defined(__APPLE__)
-  info_.outputBackend = "coreaudio";
-#else
-  info_.outputBackend = "alsa";
-#endif
+  info_.outputBackend = defaultBackendId();
+  if (info_.outputBackend.empty()) info_.outputBackend = "none";
   info_.outputInfo.backend = info_.outputBackend;
   info_.outputInfo.actualBackend = info_.outputBackend;
   info_.outputInfo.exclusive = false;
@@ -806,15 +803,32 @@ std::string TwilightAudioEngine::enumerateDevicesJson() const {
 }
 
 std::string TwilightAudioEngine::enumerateBackendsJson() const {
-#if defined(_WIN32)
-  return "[{\"id\":\"wasapi\",\"label\":\"共享输出\",\"supportsExclusive\":false},"
-         "{\"id\":\"wasapi-exclusive\",\"label\":\"独占输出\",\"supportsExclusive\":true},"
-         "{\"id\":\"asio\",\"label\":\"专业声卡输出\",\"supportsExclusive\":true,\"optional\":true}]";
-#elif defined(__APPLE__)
-  return "[{\"id\":\"coreaudio\",\"label\":\"苹果系统音频\",\"supportsExclusive\":true}]";
-#else
-  return "[{\"id\":\"alsa\",\"label\":\"系统音频\",\"supportsExclusive\":false}]";
+  std::ostringstream json;
+  json << "[";
+  bool first = true;
+  auto append = [&](const char* id, const char* label, bool supportsExclusive, bool optional = false) {
+    if (!first) json << ",";
+    first = false;
+    json << "{\"id\":\"" << id << "\",\"label\":\"" << label << "\",\"supportsExclusive\":"
+         << (supportsExclusive ? "true" : "false");
+    if (optional) json << ",\"optional\":true";
+    json << "}";
+  };
+#if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+  append("wasapi", "共享输出", false);
+  append("wasapi-exclusive", "独占输出", true);
 #endif
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
+  append("asio", "专业声卡输出", true, true);
+#endif
+#if defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)
+  append("coreaudio", "苹果系统音频", false);
+#endif
+#if defined(__linux__) && defined(TAE_ENABLE_ALSA)
+  append("alsa", "Linux ALSA 输出", false);
+#endif
+  json << "]";
+  return json.str();
 }
 
 std::string TwilightAudioEngine::getPlaybackInfoJson() const {
@@ -990,6 +1004,7 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   if (info_.outputInfo.outputSampleRate <= 0) info_.outputInfo.outputSampleRate = status.outputFormat.sampleRate;
   if (info_.outputInfo.outputBitDepth <= 0) info_.outputInfo.outputBitDepth = status.outputFormat.bitDepth;
   info_.outputInfo.bitPerfect = status.bitPerfect;
+  if (info_.outputInfo.resampleReason.empty()) info_.outputInfo.resampleReason = status.resampleReason;
   info_.channelCount = status.outputFormat.channelCount;
   info_.dspActive = status.dspActive;
   info_.replayGainActive = status.replayGainActive;
@@ -1031,11 +1046,13 @@ void TwilightAudioEngine::updateBitPerfectLocked() {
   outputFormat.bitDepth = info_.outputInfo.outputBitDepth;
 
   const bool backendResampled = info_.outputInfo.resampled;
+  const std::string backendResampleReason = info_.outputInfo.resampleReason;
   const BitPerfectResult result = evaluateBitPerfect(BitPerfectEvaluation{
       sourceFormat,
       outputFormat,
       info_.outputInfo.supportsBitPerfect,
       backendResampled,
+      backendResampleReason,
       info_.volume,
       info_.replayGainActive,
       info_.eqActive,
@@ -1045,6 +1062,7 @@ void TwilightAudioEngine::updateBitPerfectLocked() {
   info_.dspActive = result.processingActive;
   info_.outputInfo.resampled = result.resampled;
   info_.outputInfo.bitPerfect = result.bitPerfect;
+  info_.outputInfo.resampleReason = result.resampleReason;
   info_.resampleReason = result.resampleReason;
   normalizeOutputInfoMirror(info_);
 }

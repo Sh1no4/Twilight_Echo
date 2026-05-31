@@ -471,6 +471,7 @@ PipelineStatus AudioPipeline::status() const {
   backendInfo.bitPerfect = outputInfo_.bitPerfect;
   backendInfo.resampled = outputInfo_.resampled;
   backendInfo.channelRoutingMode = outputInfo_.channelRoutingMode;
+  backendInfo.resampleReason = outputInfo_.resampleReason;
   status.outputInfo = backendInfo;
   status.backendId = backendId_;
   status.deviceName = deviceName_;
@@ -535,12 +536,15 @@ bool AudioPipeline::configureActiveStreamLocked(
 bool AudioPipeline::updateBitPerfectLocked() {
   AudioFormat semanticOutputFormat = outputFormat_;
   if (outputInfo_.actualChannels > 0) semanticOutputFormat.channelCount = outputInfo_.actualChannels;
-  const bool backendResampled = output_ ? output_->outputInfo().resampled : outputInfo_.resampled;
+  const OutputInfo backendInfo = output_ ? output_->outputInfo() : outputInfo_;
+  const bool backendResampled = backendInfo.resampled;
+  const std::string backendResampleReason = backendInfo.resampleReason;
   const BitPerfectResult result = evaluateBitPerfect(BitPerfectEvaluation{
       stream_.sourceFormat,
       semanticOutputFormat,
       outputInfo_.supportsBitPerfect,
       backendResampled,
+      backendResampleReason,
       volume_.load(),
       dspStatus_.replayGainActive,
       dspStatus_.eqActive,
@@ -552,6 +556,7 @@ bool AudioPipeline::updateBitPerfectLocked() {
   outputInfo_.resampled = result.resampled;
   outputInfo_.bitPerfect = bitPerfect_;
   outputInfo_.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
+  outputInfo_.resampleReason = result.resampleReason;
   resampleReason_ = result.resampleReason;
   return bitPerfect_;
 }

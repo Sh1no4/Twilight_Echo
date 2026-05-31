@@ -21,6 +21,8 @@ int main() {
   assert(TAE_GetPlaybackInfo(engine, json.data(), json.size(), &required) == TAE_RESULT_OK);
   assert(std::strstr(json.data(), "\"state\":\"playing\"") != nullptr ||
          std::strstr(json.data(), "\"state\":\"stopped\"") != nullptr);
+  assert(std::strstr(json.data(), "\"outputInfo\":{") != nullptr);
+  assert(std::strstr(json.data(), "\"resampleReason\"") != nullptr);
 
   const char* dspConfig =
       "{\"volumeNormalization\":\"track\",\"replayGainPreamp\":1.5,"

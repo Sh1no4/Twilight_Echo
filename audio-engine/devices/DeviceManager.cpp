@@ -1,3 +1,5 @@
+#include <cstdlib>
+#include <cstring>
 #include <sstream>
 #include <string>
 
@@ -11,6 +13,18 @@
 #include <propsys.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <wrl/client.h>
+#endif
+
+#if defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)
+#include <CoreAudio/CoreAudio.h>
+#include <CoreFoundation/CoreFoundation.h>
+#ifndef kAudioObjectPropertyElementMain
+#define kAudioObjectPropertyElementMain kAudioObjectPropertyElementMaster
+#endif
+#endif
+
+#if defined(__linux__) && defined(TAE_ENABLE_ALSA)
+#include <alsa/asoundlib.h>
 #endif
 
 namespace twilight::audio {
@@ -66,6 +80,67 @@ std::string readDeviceName(IMMDevice* device) {
   }
   PropVariantClear(&value);
   return name;
+}
+#endif
+
+#if defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)
+std::string cfStringToUtf8(CFStringRef value) {
+  if (!value) return {};
+  char stack[512] = {};
+  if (CFStringGetCString(value, stack, sizeof(stack), kCFStringEncodingUTF8)) return stack;
+  const CFIndex length = CFStringGetLength(value);
+  const CFIndex maxSize = CFStringGetMaximumSizeForEncoding(length, kCFStringEncodingUTF8) + 1;
+  if (maxSize <= 1) return {};
+  std::string out(static_cast<size_t>(maxSize), '\0');
+  if (!CFStringGetCString(value, out.data(), maxSize, kCFStringEncodingUTF8)) return {};
+  if (!out.empty()) out.resize(std::strlen(out.c_str()));
+  return out;
+}
+
+std::string readCoreAudioString(AudioDeviceID device, AudioObjectPropertySelector selector) {
+  AudioObjectPropertyAddress address{selector, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+  CFStringRef value = nullptr;
+  UInt32 size = sizeof(value);
+  if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, &value) != noErr || !value) return {};
+  std::string out = cfStringToUtf8(value);
+  CFRelease(value);
+  return out;
+}
+
+int coreAudioOutputChannelCount(AudioDeviceID device) {
+  AudioObjectPropertyAddress address{
+      kAudioDevicePropertyStreamConfiguration,
+      kAudioDevicePropertyScopeOutput,
+      kAudioObjectPropertyElementMain};
+  UInt32 size = 0;
+  if (AudioObjectGetPropertyDataSize(device, &address, 0, nullptr, &size) != noErr || size == 0) return 0;
+  std::string storage(size, '\0');
+  if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, storage.data()) != noErr) return 0;
+  auto* list = reinterpret_cast<AudioBufferList*>(storage.data());
+  int channels = 0;
+  for (UInt32 i = 0; i < list->mNumberBuffers; ++i) {
+    channels += static_cast<int>(list->mBuffers[i].mNumberChannels);
+  }
+  return channels;
+}
+
+std::string defaultCoreAudioUid() {
+  AudioObjectPropertyAddress address{
+      kAudioHardwarePropertyDefaultOutputDevice,
+      kAudioObjectPropertyScopeGlobal,
+      kAudioObjectPropertyElementMain};
+  AudioDeviceID device = kAudioObjectUnknown;
+  UInt32 size = sizeof(device);
+  if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size, &device) != noErr) return {};
+  return readCoreAudioString(device, kAudioDevicePropertyDeviceUID);
+}
+#endif
+
+#if defined(__linux__) && defined(TAE_ENABLE_ALSA)
+std::string firstLine(std::string value) {
+  const size_t newline = value.find('\n');
+  if (newline != std::string::npos) value.resize(newline);
+  return value;
 }
 #endif
 
@@ -126,6 +201,59 @@ std::string enumeratePlatformDevicesJson() {
   }
   json << "]";
   if (shouldUninitialize) CoUninitialize();
+  return json.str();
+#elif defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)
+  std::ostringstream json;
+  const std::string defaultUid = defaultCoreAudioUid();
+  json << "[{\"id\":\"auto\",\"label\":\"\\u7cfb\\u7edf\\u9ed8\\u8ba4\",\"isDefault\":true}";
+
+  AudioObjectPropertyAddress address{
+      kAudioHardwarePropertyDevices,
+      kAudioObjectPropertyScopeGlobal,
+      kAudioObjectPropertyElementMain};
+  UInt32 size = 0;
+  if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &address, 0, nullptr, &size) == noErr && size > 0) {
+    std::string storage(size, '\0');
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size, storage.data()) == noErr) {
+      const auto* devices = reinterpret_cast<const AudioDeviceID*>(storage.data());
+      const size_t count = size / sizeof(AudioDeviceID);
+      for (size_t i = 0; i < count; ++i) {
+        if (coreAudioOutputChannelCount(devices[i]) <= 0) continue;
+        const std::string uid = readCoreAudioString(devices[i], kAudioDevicePropertyDeviceUID);
+        if (uid.empty()) continue;
+        std::string label = readCoreAudioString(devices[i], kAudioObjectPropertyName);
+        if (label.empty()) label = uid;
+        json << ",{\"id\":\"" << escapeJson(uid) << "\",\"label\":\"" << escapeJson(label)
+             << "\",\"isDefault\":" << (uid == defaultUid ? "true" : "false") << "}";
+      }
+    }
+  }
+  json << "]";
+  return json.str();
+#elif defined(__linux__) && defined(TAE_ENABLE_ALSA)
+  std::ostringstream json;
+  json << "[{\"id\":\"auto\",\"label\":\"\\u7cfb\\u7edf\\u9ed8\\u8ba4\",\"isDefault\":true}";
+  void** hints = nullptr;
+  if (snd_device_name_hint(-1, "pcm", &hints) == 0 && hints) {
+    for (void** hint = hints; *hint; ++hint) {
+      char* rawName = snd_device_name_get_hint(*hint, "NAME");
+      char* rawDesc = snd_device_name_get_hint(*hint, "DESC");
+      char* rawIo = snd_device_name_get_hint(*hint, "IOID");
+      const std::string io = rawIo ? rawIo : "";
+      if (rawName && (io.empty() || io == "Output")) {
+        const std::string name = rawName;
+        std::string label = rawDesc ? firstLine(rawDesc) : name;
+        if (label.empty()) label = name;
+        json << ",{\"id\":\"" << escapeJson(name) << "\",\"label\":\"" << escapeJson(label)
+             << "\",\"isDefault\":" << (name == "default" ? "true" : "false") << "}";
+      }
+      if (rawName) free(rawName);
+      if (rawDesc) free(rawDesc);
+      if (rawIo) free(rawIo);
+    }
+    snd_device_name_free_hint(hints);
+  }
+  json << "]";
   return json.str();
 #else
   return "[{\"id\":\"auto\",\"label\":\"\\u7cfb\\u7edf\\u9ed8\\u8ba4\",\"isDefault\":true}]";

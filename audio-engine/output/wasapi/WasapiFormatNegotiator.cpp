@@ -144,6 +144,7 @@ bool WasapiFormatNegotiator::negotiate(const AudioFormat& sourceFormat, std::str
     outputInfo_.supportsBitPerfect = true;
     outputInfo_.bitPerfect = false;
     outputInfo_.resampled = !sameSourceFormat(sourceFormat, outputFormat_);
+    outputInfo_.resampleReason = outputInfo_.resampled ? "WASAPI 独占输出格式已协商为设备支持格式" : "";
     outputInfo_.outputSampleRate = outputFormat_.sampleRate;
     outputInfo_.outputBitDepth = outputFormat_.bitDepth;
     outputInfo_.backend = "wasapi-exclusive";

@@ -2,6 +2,8 @@
 
 Twilight Echo 的 C++20 原生音频引擎。
 
+API 字段、BitPerfect 判定、Recovery diagnostics 与后端能力矩阵见 [docs/audio-engine-api.md](../docs/audio-engine-api.md)。
+
 ## 构建目标
 
 - `twilight_audio_engine`：共享 C 接口动态库，Windows 输出名为 `twilight-audio-engine.dll`。

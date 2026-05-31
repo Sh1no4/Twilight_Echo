@@ -214,6 +214,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   outputInfo_.supportsBitPerfect = true;
   outputInfo_.bitPerfect = false;
   outputInfo_.resampled = !sameFormat(requestedFormat, outputFormat_);
+  outputInfo_.resampleReason = outputInfo_.resampled ? "ASIO 输出格式已协商为驱动支持格式" : "";
   outputInfo_.outputSampleRate = outputFormat_.sampleRate;
   outputInfo_.outputBitDepth = outputFormat_.bitDepth;
   outputInfo_.backend = "asio";

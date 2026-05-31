@@ -108,6 +108,7 @@ struct OutputInfo {
   double latencyMs = 0.0;
   LatencyInfo latencyInfo;
   std::string channelRoutingMode = "auto";
+  std::string resampleReason;
   Diagnostics diagnostics;
   bool deviceRecovered = false;
   int recoveryCount = 0;
@@ -118,6 +119,7 @@ struct BitPerfectEvaluation {
   AudioFormat outputFormat;
   bool supportsBitPerfect = false;
   bool backendResampled = false;
+  std::string backendResampleReason;
   double volume = 1.0;
   bool replayGainActive = false;
   bool eqActive = false;
