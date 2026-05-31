@@ -1,5 +1,7 @@
 #include "TwilightAudioEngine.h"
 
+#include "../metadata/AudioMetadataService.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -99,6 +101,15 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"dspActive\":" << (info.dspActive ? "true" : "false") << ","
        << "\"replayGainActive\":" << (info.replayGainActive ? "true" : "false") << ","
        << "\"eqActive\":" << (info.eqActive ? "true" : "false") << ","
+       << "\"convolverActive\":" << (info.convolverActive ? "true" : "false") << ","
+       << "\"crossfeedActive\":" << (info.crossfeedActive ? "true" : "false") << ","
+       << "\"fftActive\":" << (info.fftActive ? "true" : "false") << ","
+       << "\"irResampled\":" << (info.irResampled ? "true" : "false") << ","
+       << "\"replayGainDb\":" << info.replayGainDb << ","
+       << "\"crossfeedStrength\":" << info.crossfeedStrength << ","
+       << "\"convolverLatencyFrames\":" << info.convolverLatencyFrames << ","
+       << "\"partitionSize\":" << info.partitionSize << ","
+       << "\"channelMappingMode\":\"" << escapeJson(info.channelMappingMode) << "\","
        << "\"resampleReason\":\"" << escapeJson(info.resampleReason) << "\","
        << "\"dsdMode\":\"" << escapeJson(info.dsdMode) << "\","
        << "\"gaplessActive\":" << (info.gaplessActive ? "true" : "false") << ","
@@ -109,13 +120,50 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
   return json.str();
 }
 
-DspStatus configuredDspStatus(const std::string& dspJson) {
-  const DspConfig config = DspChain::parseConfigJson(dspJson);
+DspStatus configuredDspStatusFromConfig(const DspConfig& config) {
   DspStatus status;
+  if (!config.enabled) return status;
   status.replayGainActive = config.replayGainMode != ReplayGainMode::Off;
   status.eqActive = config.eqEnabled;
-  status.dspActive = status.replayGainActive || status.eqActive;
+  status.crossfeedActive = config.crossfeedEnabled && config.crossfeedStrength > 0.0001;
+  status.crossfeedStrength = status.crossfeedActive ? config.crossfeedStrength : 0.0;
+  status.dspActive = status.replayGainActive || status.eqActive || status.convolverActive || status.crossfeedActive;
   return status;
+}
+
+ReplayGainMode parseReplayGainModeId(const std::string& mode) {
+  std::string normalized = mode;
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  if (normalized == "track" || normalized == "loudnorm") return ReplayGainMode::Track;
+  if (normalized == "album") return ReplayGainMode::Album;
+  return ReplayGainMode::Off;
+}
+
+std::string convolverInfoToJson(const ConvolverInfo& info) {
+  std::ostringstream json;
+  json << "{"
+       << "\"loaded\":" << (info.loaded ? "true" : "false") << ","
+       << "\"active\":" << (info.active ? "true" : "false") << ","
+       << "\"irResampled\":" << (info.irResampled ? "true" : "false") << ","
+       << "\"path\":\"" << escapeJson(info.path) << "\","
+       << "\"sampleRate\":" << info.sampleRate << ","
+       << "\"channels\":" << info.channels << ","
+       << "\"lengthFrames\":" << info.lengthFrames << ","
+       << "\"lengthMs\":" << info.lengthMs << ","
+       << "\"partitionSize\":" << info.partitionSize << ","
+       << "\"latencyFrames\":" << info.latencyFrames << ","
+       << "\"channelMappingMode\":\"" << escapeJson(info.channelMappingMode) << "\","
+       << "\"warning\":\"" << escapeJson(info.warning) << "\","
+       << "\"lastError\":\"" << escapeJson(info.lastError) << "\""
+       << "}";
+  return json.str();
+}
+
+DspStatus configuredDspStatus(const std::string& dspJson) {
+  const DspConfig config = DspChain::parseConfigJson(dspJson);
+  return configuredDspStatusFromConfig(config);
 }
 
 bool gaplessEnabledFromConfig(const std::string& dspJson) {
@@ -451,8 +499,119 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
   if (pipeline_ && info_.state != PlaybackState::Stopped) {
     applyPipelineStatusLocked(pipeline_->status());
   } else {
+    const DspConfig config = DspChain::parseConfigJson(dspConfigJson_);
+    const DspStatus configStatus = configuredDspStatusFromConfig(config);
+    info_.replayGainActive = configStatus.replayGainActive;
+    info_.eqActive = configStatus.eqActive;
+    info_.crossfeedActive = configStatus.crossfeedActive;
+    info_.crossfeedStrength = configStatus.crossfeedStrength;
+    if (!config.enabled) info_.convolverActive = false;
     updateBitPerfectLocked();
   }
+  publishStateLocked();
+  return TAE_RESULT_OK;
+}
+
+TAE_Result TwilightAudioEngine::loadImpulseResponse(const std::string& path) {
+  if (path.empty()) return TAE_RESULT_INVALID_ARGUMENT;
+  std::string error;
+  if (!pipeline_ || !pipeline_->loadImpulseResponse(path, &error)) {
+    emitError(error.empty() ? "脉冲响应加载失败" : error);
+    return TAE_RESULT_INTERNAL_ERROR;
+  }
+  {
+    std::lock_guard lock(mutex_);
+    const PipelineStatus status = pipeline_->status();
+    info_.convolverActive = status.convolverActive;
+    info_.irResampled = status.irResampled;
+    info_.convolverLatencyFrames = status.convolverLatencyFrames;
+    info_.partitionSize = status.partitionSize;
+    info_.channelMappingMode = status.channelMappingMode;
+    info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
+    updateBitPerfectLocked();
+    publishStateLocked();
+  }
+  return TAE_RESULT_OK;
+}
+
+TAE_Result TwilightAudioEngine::unloadImpulseResponse() {
+  if (!pipeline_) return TAE_RESULT_NOT_INITIALIZED;
+  pipeline_->unloadImpulseResponse();
+  {
+    std::lock_guard lock(mutex_);
+    info_.convolverActive = false;
+    info_.irResampled = false;
+    info_.convolverLatencyFrames = 0;
+    info_.partitionSize = 0;
+    info_.channelMappingMode.clear();
+    updateBitPerfectLocked();
+    publishStateLocked();
+  }
+  return TAE_RESULT_OK;
+}
+
+std::string TwilightAudioEngine::getConvolverInfoJson() const {
+  return convolverInfoToJson(pipeline_ ? pipeline_->convolverInfo() : ConvolverInfo{});
+}
+
+TAE_Result TwilightAudioEngine::setEqBands(const std::string& eqJson) {
+  std::string error;
+  if (!pipeline_ || !pipeline_->setEqBands(eqJson, &error)) {
+    emitError(error.empty() ? "均衡器设置失败" : error);
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
+  std::lock_guard lock(mutex_);
+  const PipelineStatus status = pipeline_->status();
+  info_.eqActive = status.eqActive;
+  info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
+  updateBitPerfectLocked();
+  publishStateLocked();
+  return TAE_RESULT_OK;
+}
+
+TAE_Result TwilightAudioEngine::setEqPreset(const std::string& presetJson) {
+  std::string error;
+  if (!pipeline_ || !pipeline_->setEqPreset(presetJson, &error)) {
+    emitError(error.empty() ? "均衡器预设应用失败" : error);
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
+  std::lock_guard lock(mutex_);
+  const PipelineStatus status = pipeline_->status();
+  info_.eqActive = status.eqActive;
+  info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
+  updateBitPerfectLocked();
+  publishStateLocked();
+  return TAE_RESULT_OK;
+}
+
+TAE_Result TwilightAudioEngine::setCrossfeedStrength(double strength) {
+  if (!std::isfinite(strength)) return TAE_RESULT_INVALID_ARGUMENT;
+  if (!pipeline_) return TAE_RESULT_NOT_INITIALIZED;
+  pipeline_->setCrossfeedStrength(strength);
+  std::lock_guard lock(mutex_);
+  const PipelineStatus status = pipeline_->status();
+  info_.crossfeedActive = status.crossfeedActive;
+  info_.crossfeedStrength = status.crossfeedStrength;
+  info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
+  updateBitPerfectLocked();
+  publishStateLocked();
+  return TAE_RESULT_OK;
+}
+
+TAE_Result TwilightAudioEngine::setReplayGainMode(
+    const std::string& mode,
+    double preampDb,
+    double fallbackDb,
+    bool clip) {
+  if (!std::isfinite(preampDb) || !std::isfinite(fallbackDb)) return TAE_RESULT_INVALID_ARGUMENT;
+  if (!pipeline_) return TAE_RESULT_NOT_INITIALIZED;
+  pipeline_->setReplayGainMode(parseReplayGainModeId(mode), preampDb, fallbackDb, clip);
+  std::lock_guard lock(mutex_);
+  const PipelineStatus status = pipeline_->status();
+  info_.replayGainActive = status.replayGainActive;
+  info_.replayGainDb = status.replayGainDb;
+  info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
+  updateBitPerfectLocked();
   publishStateLocked();
   return TAE_RESULT_OK;
 }
@@ -460,6 +619,10 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
 std::string TwilightAudioEngine::getDspConfig() const {
   std::lock_guard lock(mutex_);
   return dspConfigJson_;
+}
+
+std::string TwilightAudioEngine::getMetadataJson(const std::string& source) const {
+  return readMetadataJson(source);
 }
 
 std::string TwilightAudioEngine::getQueueJson() const {
@@ -660,6 +823,15 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.dspActive = status.dspActive;
   info_.replayGainActive = status.replayGainActive;
   info_.eqActive = status.eqActive;
+  info_.convolverActive = status.convolverActive;
+  info_.crossfeedActive = status.crossfeedActive;
+  info_.fftActive = status.fftActive;
+  info_.irResampled = status.irResampled;
+  info_.replayGainDb = status.replayGainDb;
+  info_.crossfeedStrength = status.crossfeedStrength;
+  info_.convolverLatencyFrames = status.convolverLatencyFrames;
+  info_.partitionSize = status.partitionSize;
+  info_.channelMappingMode = status.channelMappingMode;
   info_.gaplessActive = status.gaplessActive;
   info_.preloadReady = status.preloadReady;
   const auto upcoming = queue_.upcoming();
@@ -670,10 +842,9 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
 }
 
 void TwilightAudioEngine::updateBitPerfectLocked() {
-  const DspStatus configStatus = configuredDspStatus(dspConfigJson_);
-  info_.replayGainActive = configStatus.replayGainActive;
-  info_.eqActive = configStatus.eqActive;
-  info_.dspActive = configStatus.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
+  const bool moduleDspActive =
+      info_.replayGainActive || info_.eqActive || info_.convolverActive || info_.crossfeedActive;
+  info_.dspActive = moduleDspActive || std::abs(info_.volume - 1.0) > 0.0001;
   const bool exclusive = info_.outputBackend == "wasapi-exclusive";
   info_.outputInfo.exclusive = exclusive;
   info_.outputInfo.backend = info_.outputBackend;
@@ -816,6 +987,56 @@ TAE_Result TAE_SetDspConfig(TAE_EngineHandle engine, const char* dsp_config_json
 TAE_Result TAE_GetDspConfig(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   return copyStringResult(fromHandle(engine)->getDspConfig(), buffer, buffer_size, required_size);
+}
+
+TAE_Result TAE_LoadImpulseResponse(TAE_EngineHandle engine, const char* path) {
+  if (!engine || !path) return TAE_RESULT_INVALID_ARGUMENT;
+  return fromHandle(engine)->loadImpulseResponse(path);
+}
+
+TAE_Result TAE_UnloadImpulseResponse(TAE_EngineHandle engine) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return fromHandle(engine)->unloadImpulseResponse();
+}
+
+TAE_Result TAE_GetConvolverInfo(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return copyStringResult(fromHandle(engine)->getConvolverInfoJson(), buffer, buffer_size, required_size);
+}
+
+TAE_Result TAE_SetEqBands(TAE_EngineHandle engine, const char* eq_json) {
+  if (!engine || !eq_json) return TAE_RESULT_INVALID_ARGUMENT;
+  return fromHandle(engine)->setEqBands(eq_json);
+}
+
+TAE_Result TAE_SetEqPreset(TAE_EngineHandle engine, const char* preset_json) {
+  if (!engine || !preset_json) return TAE_RESULT_INVALID_ARGUMENT;
+  return fromHandle(engine)->setEqPreset(preset_json);
+}
+
+TAE_Result TAE_SetCrossfeedStrength(TAE_EngineHandle engine, double strength) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return fromHandle(engine)->setCrossfeedStrength(strength);
+}
+
+TAE_Result TAE_SetReplayGainMode(
+    TAE_EngineHandle engine,
+    const char* mode,
+    double preamp_db,
+    double fallback_db,
+    int clip) {
+  if (!engine || !mode) return TAE_RESULT_INVALID_ARGUMENT;
+  return fromHandle(engine)->setReplayGainMode(mode, preamp_db, fallback_db, clip != 0);
+}
+
+TAE_Result TAE_GetMetadata(
+    TAE_EngineHandle engine,
+    const char* source,
+    char* buffer,
+    size_t buffer_size,
+    size_t* required_size) {
+  if (!engine || !source) return TAE_RESULT_INVALID_ARGUMENT;
+  return copyStringResult(fromHandle(engine)->getMetadataJson(source), buffer, buffer_size, required_size);
 }
 
 TAE_Result TAE_EnumerateDevices(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {

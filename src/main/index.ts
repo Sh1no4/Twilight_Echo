@@ -1064,6 +1064,81 @@ function setupAudioEngineIpc(): void {
     return requireAudioEngine().getAudioProcessing()
   })
 
+  ipcMain.handle('audioEngine:loadImpulseResponse', async (_event, path: string) => {
+    const info = await requireAudioEngine().loadImpulseResponse(path)
+    appSettings = normalizeAppSettings({
+      ...appSettings,
+      audioProcessing: requireAudioEngine().getAudioProcessing()
+    })
+    writeAppSettings(appSettings)
+    return info
+  })
+
+  ipcMain.handle('audioEngine:unloadImpulseResponse', async () => {
+    const info = await requireAudioEngine().unloadImpulseResponse()
+    appSettings = normalizeAppSettings({
+      ...appSettings,
+      audioProcessing: requireAudioEngine().getAudioProcessing()
+    })
+    writeAppSettings(appSettings)
+    return info
+  })
+
+  ipcMain.handle('audioEngine:getConvolverInfo', async () => {
+    return requireAudioEngine().getConvolverInfo()
+  })
+
+  ipcMain.handle('audioEngine:setEqBands', async (_event, settings: Partial<AudioProcessingSettings>) => {
+    const normalized = await requireAudioEngine().setEqBands(settings)
+    appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
+    writeAppSettings(appSettings)
+    return normalized
+  })
+
+  ipcMain.handle(
+    'audioEngine:setEqPreset',
+    async (
+      _event,
+      preset: {
+        eqMode: EqMode
+        eqPreamp: number
+        eqBands: EqualizerBand[]
+      }
+    ) => {
+      const normalized = await requireAudioEngine().setEqPreset(preset)
+      appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
+      writeAppSettings(appSettings)
+      return normalized
+    }
+  )
+
+  ipcMain.handle('audioEngine:setCrossfeedStrength', async (_event, strength: number) => {
+    const normalized = await requireAudioEngine().setCrossfeedStrength(Number(strength))
+    appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
+    writeAppSettings(appSettings)
+    return normalized
+  })
+
+  ipcMain.handle(
+    'audioEngine:setReplayGainMode',
+    async (
+      _event,
+      mode: AudioProcessingSettings['volumeNormalization'],
+      preamp?: number,
+      fallback?: number,
+      clip?: boolean
+    ) => {
+      const normalized = await requireAudioEngine().setReplayGainMode(mode, preamp, fallback, clip)
+      appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
+      writeAppSettings(appSettings)
+      return normalized
+    }
+  )
+
+  ipcMain.handle('audioEngine:getMetadata', async (_event, source: string) => {
+    return requireAudioEngine().getMetadata(source)
+  })
+
   ipcMain.handle('audioEngine:getPlaybackInfo', async () => {
     return await requireAudioEngine().getPlaybackInfo()
   })

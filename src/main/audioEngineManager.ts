@@ -24,6 +24,10 @@ export interface EqualizerBand {
 }
 
 export interface AudioProcessingSettings {
+  dspEnabled: boolean
+  clipGuard: boolean
+  fftEnabled: boolean
+  fftResolution: number
   highResolution: boolean
   dsdToPcm: boolean
   eqEnabled: boolean
@@ -34,6 +38,9 @@ export interface AudioProcessingSettings {
   replayGainPreamp: number
   replayGainFallback: number
   replayGainClip: boolean
+  convolverIrPath: string
+  crossfeedEnabled: boolean
+  crossfeedStrength: number
   gapless: boolean
   crossfadeSeconds: number
 }
@@ -103,6 +110,15 @@ export interface PlaybackInfo {
   dspActive: boolean
   replayGainActive: boolean
   eqActive: boolean
+  convolverActive: boolean
+  crossfeedActive: boolean
+  fftActive: boolean
+  irResampled: boolean
+  replayGainDb: number
+  crossfeedStrength: number
+  convolverLatencyFrames: number
+  partitionSize: number
+  channelMappingMode: string
   resampleReason: string
   dsdMode: string
   gaplessActive: boolean
@@ -137,11 +153,61 @@ interface NativeAudioBinding {
   Previous?: () => void
   SetPlayMode?: (mode: PlayMode) => void
   SetDspConfig?: (json: string) => void
+  LoadImpulseResponse?: (path: string) => void
+  UnloadImpulseResponse?: () => void
+  GetConvolverInfo?: () => string | ConvolverInfo
+  SetEqBands?: (json: string) => void
+  SetEqPreset?: (json: string) => void
+  SetCrossfeedStrength?: (strength: number) => void
+  SetReplayGainMode?: (mode: VolumeNormalizationMode, preamp: number, fallback: number, clip: boolean) => void
+  GetMetadata?: (source: string) => string | NativeAudioMetadata
   GetPlaybackInfo?: () => string | PlaybackInfo
   GetUpcomingTrack?: () => string | AudioEngineQueueItem | null
   GetSpectrumData?: (points?: number) => number[]
   EnumerateDevices?: () => string | AudioDeviceOption[]
   EnumerateBackends?: () => string
+}
+
+export interface ConvolverInfo {
+  loaded: boolean
+  active: boolean
+  irResampled: boolean
+  path: string
+  sampleRate: number
+  channels: number
+  lengthFrames: number
+  lengthMs: number
+  partitionSize: number
+  latencyFrames: number
+  channelMappingMode: string
+  warning: string
+  lastError: string
+}
+
+export interface NativeAudioMetadata {
+  source: string
+  title: string
+  artist: string
+  album: string
+  albumArtist: string
+  composer: string
+  year: string
+  genre: string
+  trackNumber: string
+  discNumber: string
+  comment: string
+  codec: string
+  sampleRate: number
+  bitDepth: number
+  bitrate: number
+  duration: number
+  coverMime: string
+  coverDataBase64: string
+  replayGainTrackGain: number | null
+  replayGainAlbumGain: number | null
+  r128TrackGain: number | null
+  r128AlbumGain: number | null
+  error: string
 }
 
 const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
@@ -185,6 +251,10 @@ const DEFAULT_EQ_BANDS: EqualizerBand[] = [
 }))
 
 export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
+  dspEnabled: true,
+  clipGuard: true,
+  fftEnabled: true,
+  fftResolution: 64,
   highResolution: true,
   dsdToPcm: true,
   eqEnabled: false,
@@ -195,6 +265,9 @@ export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
   replayGainPreamp: 0,
   replayGainFallback: 0,
   replayGainClip: true,
+  convolverIrPath: '',
+  crossfeedEnabled: false,
+  crossfeedStrength: 0,
   gapless: true,
   crossfadeSeconds: 0
 }
@@ -271,6 +344,10 @@ export function normalizeAudioProcessingSettings(
       : 'off'
 
   return {
+    dspEnabled: settings?.dspEnabled !== false,
+    clipGuard: settings?.clipGuard !== false,
+    fftEnabled: settings?.fftEnabled !== false,
+    fftResolution: clampNumber(settings?.fftResolution, 64, 2048, 64),
     highResolution: settings?.highResolution !== false,
     dsdToPcm: settings?.dsdToPcm !== false,
     eqEnabled: settings?.eqEnabled === true,
@@ -281,6 +358,9 @@ export function normalizeAudioProcessingSettings(
     replayGainPreamp: clampNumber(settings?.replayGainPreamp, -12, 12, 0),
     replayGainFallback: clampNumber(settings?.replayGainFallback, -12, 12, 0),
     replayGainClip: settings?.replayGainClip !== false,
+    convolverIrPath: typeof settings?.convolverIrPath === 'string' ? settings.convolverIrPath : '',
+    crossfeedEnabled: settings?.crossfeedEnabled === true,
+    crossfeedStrength: clampNumber(settings?.crossfeedStrength, 0, 1, 0),
     gapless: settings?.gapless !== false,
     crossfadeSeconds: clampNumber(settings?.crossfadeSeconds, 0, 12, 0)
   }
@@ -356,6 +436,15 @@ function createDefaultPlaybackInfo(output: AudioOutputId, device: string): Playb
     dspActive: false,
     replayGainActive: false,
     eqActive: false,
+    convolverActive: false,
+    crossfeedActive: false,
+    fftActive: false,
+    irResampled: false,
+    replayGainDb: 0,
+    crossfeedStrength: 0,
+    convolverLatencyFrames: 0,
+    partitionSize: 0,
+    channelMappingMode: '',
     resampleReason: output === 'wasapi' ? '共享输出经过系统混音' : '',
     dsdMode: 'unsupported',
     gaplessActive: false,
@@ -400,7 +489,7 @@ export class AudioEngineManager extends EventEmitter {
   async start(): Promise<void> {
     this.tryNative('初始化输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.tryNative('初始化输出设备', (native) => native.SetOutputDevice(this.device))
-    this.tryNative('初始化 DSP 配置', (native) => native.SetDspConfig?.(JSON.stringify(this.processing)))
+    this.applyNativeDspSettings('初始化 DSP 配置')
     this.startClock()
     setImmediate(() => this.emit('ready'))
   }
@@ -570,7 +659,7 @@ export class AudioEngineManager extends EventEmitter {
     settings: Partial<AudioProcessingSettings>
   ): Promise<AudioProcessingSettings> {
     this.processing = normalizeAudioProcessingSettings(settings)
-    this.tryNative('更新 DSP 配置', (native) => native.SetDspConfig?.(JSON.stringify(this.processing)))
+    this.applyNativeDspSettings('更新 DSP 配置')
     this.updateBitPerfect()
     this.publishPlaybackInfo()
     return this.processing
@@ -578,6 +667,104 @@ export class AudioEngineManager extends EventEmitter {
 
   getAudioProcessing(): AudioProcessingSettings {
     return this.processing
+  }
+
+  async loadImpulseResponse(path: string): Promise<ConvolverInfo> {
+    this.processing = normalizeAudioProcessingSettings({
+      ...this.processing,
+      convolverIrPath: path
+    })
+    this.tryNative('加载脉冲响应', (native) => native.LoadImpulseResponse?.(path))
+    this.updateNativeInfoSnapshot()
+    return this.getConvolverInfo()
+  }
+
+  async unloadImpulseResponse(): Promise<ConvolverInfo> {
+    this.processing = normalizeAudioProcessingSettings({
+      ...this.processing,
+      convolverIrPath: ''
+    })
+    this.tryNative('卸载脉冲响应', (native) => native.UnloadImpulseResponse?.())
+    this.updateNativeInfoSnapshot()
+    return this.getConvolverInfo()
+  }
+
+  getConvolverInfo(): ConvolverInfo {
+    return parseNativeJson(this.native?.GetConvolverInfo?.(), {
+      loaded: false,
+      active: false,
+      irResampled: false,
+      path: '',
+      sampleRate: 0,
+      channels: 0,
+      lengthFrames: 0,
+      lengthMs: 0,
+      partitionSize: 0,
+      latencyFrames: 0,
+      channelMappingMode: '',
+      warning: '',
+      lastError: ''
+    })
+  }
+
+  async setEqBands(settings: Partial<AudioProcessingSettings>): Promise<AudioProcessingSettings> {
+    this.processing = normalizeAudioProcessingSettings({ ...this.processing, ...settings })
+    this.tryNative('更新均衡器', (native) => native.SetEqBands?.(JSON.stringify(this.processing)))
+    this.updateNativeInfoSnapshot()
+    return this.processing
+  }
+
+  async setEqPreset(preset: {
+    eqMode: EqMode
+    eqPreamp: number
+    eqBands: EqualizerBand[]
+  }): Promise<AudioProcessingSettings> {
+    this.processing = normalizeAudioProcessingSettings({ ...this.processing, ...preset, eqEnabled: true })
+    this.tryNative('应用均衡器预设', (native) => native.SetEqPreset?.(JSON.stringify(this.processing)))
+    this.updateNativeInfoSnapshot()
+    return this.processing
+  }
+
+  async setCrossfeedStrength(strength: number): Promise<AudioProcessingSettings> {
+    this.processing = normalizeAudioProcessingSettings({
+      ...this.processing,
+      crossfeedEnabled: strength > 0,
+      crossfeedStrength: strength
+    })
+    this.tryNative('设置串音强度', (native) =>
+      native.SetCrossfeedStrength?.(this.processing.crossfeedStrength)
+    )
+    this.updateNativeInfoSnapshot()
+    return this.processing
+  }
+
+  async setReplayGainMode(
+    mode: VolumeNormalizationMode,
+    preamp = this.processing.replayGainPreamp,
+    fallback = this.processing.replayGainFallback,
+    clip = this.processing.replayGainClip
+  ): Promise<AudioProcessingSettings> {
+    this.processing = normalizeAudioProcessingSettings({
+      ...this.processing,
+      volumeNormalization: mode,
+      replayGainPreamp: preamp,
+      replayGainFallback: fallback,
+      replayGainClip: clip
+    })
+    this.tryNative('设置 ReplayGain', (native) =>
+      native.SetReplayGainMode?.(
+        this.processing.volumeNormalization,
+        this.processing.replayGainPreamp,
+        this.processing.replayGainFallback,
+        this.processing.replayGainClip
+      )
+    )
+    this.updateNativeInfoSnapshot()
+    return this.processing
+  }
+
+  getMetadata(source: string): NativeAudioMetadata | null {
+    return parseNativeJson(this.native?.GetMetadata?.(source), null as NativeAudioMetadata | null)
   }
 
   async setPlayMode(mode: PlayMode): Promise<void> {
@@ -690,6 +877,34 @@ export class AudioEngineManager extends EventEmitter {
     return this.output
   }
 
+  private applyNativeDspSettings(context: string): void {
+    this.tryNative(context, (native) => {
+      native.SetDspConfig?.(JSON.stringify(this.processing))
+      native.SetEqBands?.(JSON.stringify(this.processing))
+      native.SetReplayGainMode?.(
+        this.processing.volumeNormalization,
+        this.processing.replayGainPreamp,
+        this.processing.replayGainFallback,
+        this.processing.replayGainClip
+      )
+      native.SetCrossfeedStrength?.(
+        this.processing.crossfeedEnabled ? this.processing.crossfeedStrength : 0
+      )
+      if (this.processing.convolverIrPath) {
+        native.LoadImpulseResponse?.(this.processing.convolverIrPath)
+      } else {
+        native.UnloadImpulseResponse?.()
+      }
+    })
+  }
+
+  private updateNativeInfoSnapshot(): void {
+    const nativeInfo = this.readNativePlaybackInfo()
+    if (nativeInfo) this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+    this.updateBitPerfect()
+    this.publishPlaybackInfo()
+  }
+
   private getAudioDeviceOptions(): AudioDeviceOption[] {
     try {
       const nativeDevices = parseNativeJson(
@@ -719,15 +934,28 @@ export class AudioEngineManager extends EventEmitter {
 
   private updateBitPerfect(): void {
     const dspActive =
-      this.processing.eqEnabled ||
-      this.processing.volumeNormalization !== 'off' ||
-      Math.abs(this.processing.eqPreamp) > 0.001 ||
+      (this.processing.dspEnabled && this.processing.eqEnabled) ||
+      (this.processing.dspEnabled && this.processing.volumeNormalization !== 'off') ||
+      (this.processing.dspEnabled && this.playbackInfo.convolverActive) ||
+      (this.processing.dspEnabled &&
+        this.processing.crossfeedEnabled &&
+        this.processing.crossfeedStrength > 0) ||
+      (this.processing.dspEnabled && Math.abs(this.processing.eqPreamp) > 0.001) ||
       Math.abs(this.playbackInfo.volume - 1) > 0.001
-    const replayGainActive = this.processing.volumeNormalization !== 'off'
-    const eqActive = this.processing.eqEnabled
+    const replayGainActive = this.processing.dspEnabled && this.processing.volumeNormalization !== 'off'
+    const eqActive = this.processing.dspEnabled && this.processing.eqEnabled
+    const convolverActive =
+      this.processing.dspEnabled && this.playbackInfo.convolverActive
+    const crossfeedActive =
+      this.processing.dspEnabled &&
+      this.processing.crossfeedEnabled &&
+      this.processing.crossfeedStrength > 0
     const shared = this.output === 'wasapi' && !this.exclusiveMode
     this.playbackInfo.replayGainActive = replayGainActive
     this.playbackInfo.eqActive = eqActive
+    this.playbackInfo.convolverActive = convolverActive
+    this.playbackInfo.crossfeedActive = crossfeedActive
+    this.playbackInfo.crossfeedStrength = crossfeedActive ? this.processing.crossfeedStrength : 0
     this.playbackInfo.dspActive = dspActive
     this.playbackInfo.bitPerfect = !dspActive && !shared
     this.playbackInfo.outputInfo = {

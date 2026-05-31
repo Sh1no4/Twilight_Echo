@@ -4,7 +4,7 @@
 #include "AudioTypes.h"
 #include "../decoder/FFmpegDecoder.h"
 #include "../dsp/DspChain.h"
-#include "../dsp/SpectrumAnalyzer.h"
+#include "../dsp/FftSpectrumAnalyzer.h"
 #include "../output/IOutputBackend.h"
 
 #include "twilight_audio_engine.h"
@@ -36,6 +36,15 @@ struct PipelineStatus {
   bool dspActive = false;
   bool replayGainActive = false;
   bool eqActive = false;
+  bool convolverActive = false;
+  bool crossfeedActive = false;
+  bool fftActive = false;
+  bool irResampled = false;
+  double replayGainDb = 0.0;
+  double crossfeedStrength = 0.0;
+  uint32_t convolverLatencyFrames = 0;
+  uint32_t partitionSize = 0;
+  std::string channelMappingMode;
   bool bitPerfect = false;
   bool gaplessActive = false;
   bool preloadReady = false;
@@ -73,6 +82,13 @@ class AudioPipeline {
   TAE_Result seek(double seconds, std::string* error);
   void setVolume(double volume);
   void setDspConfig(const std::string& dspConfigJson);
+  bool loadImpulseResponse(const std::string& path, std::string* error);
+  void unloadImpulseResponse();
+  ConvolverInfo convolverInfo() const;
+  bool setEqBands(const std::string& json, std::string* error);
+  bool setEqPreset(const std::string& json, std::string* error);
+  void setCrossfeedStrength(double strength);
+  void setReplayGainMode(ReplayGainMode mode, double preampDb, double fallbackDb, bool clip);
   bool preloadNext(const std::optional<QueueItem>& item, std::string* error);
   bool skipToPreloaded(const QueueItem& item, std::string* error);
 
@@ -97,8 +113,9 @@ class AudioPipeline {
   std::unique_ptr<IOutputBackend> output_;
   std::shared_ptr<DecodeStream> activeStream_;
   std::shared_ptr<DecodeStream> preloadStream_;
-  SpectrumAnalyzer spectrum_;
+  FftSpectrumAnalyzer spectrum_;
   DspChain dspChain_;
+  DspConfig dspConfig_;
   DspStatus dspStatus_;
   AudioStreamInfo stream_;
   AudioFormat outputFormat_;

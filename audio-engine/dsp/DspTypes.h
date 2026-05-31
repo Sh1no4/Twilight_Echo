@@ -2,6 +2,7 @@
 
 #include "../core/AudioTypes.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,11 @@ struct DspEqBand {
 };
 
 struct DspConfig {
+  bool enabled = true;
+  bool clipGuard = true;
+  bool fftEnabled = true;
+  size_t fftResolution = 64;
+
   ReplayGainMode replayGainMode = ReplayGainMode::Off;
   double replayGainPreampDb = 0.0;
   double replayGainFallbackDb = 0.0;
@@ -45,6 +51,14 @@ struct DspConfig {
   EqMode eqMode = EqMode::Graphic;
   double eqPreampDb = 0.0;
   std::vector<DspEqBand> eqBands;
+
+  bool convolverEnabled = false;
+  std::string impulseResponsePath;
+
+  bool crossfeedEnabled = false;
+  double crossfeedStrength = 0.0;
+  double crossfeedDelayMs = 0.35;
+  double crossfeedCutoffHz = 700.0;
 };
 
 struct DspTrackContext {
@@ -56,6 +70,30 @@ struct DspStatus {
   bool dspActive = false;
   bool replayGainActive = false;
   bool eqActive = false;
+  bool convolverActive = false;
+  bool crossfeedActive = false;
+  bool irResampled = false;
+  double replayGainDb = 0.0;
+  double crossfeedStrength = 0.0;
+  uint32_t convolverLatencyFrames = 0;
+  uint32_t partitionSize = 0;
+  std::string channelMappingMode;
+};
+
+struct ConvolverInfo {
+  bool loaded = false;
+  bool active = false;
+  bool irResampled = false;
+  std::string path;
+  int sampleRate = 0;
+  int channels = 0;
+  uint64_t lengthFrames = 0;
+  double lengthMs = 0.0;
+  uint32_t partitionSize = 0;
+  uint32_t latencyFrames = 0;
+  std::string channelMappingMode;
+  std::string warning;
+  std::string lastError;
 };
 
 }  // namespace twilight::audio

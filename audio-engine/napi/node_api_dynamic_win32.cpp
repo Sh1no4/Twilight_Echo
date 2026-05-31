@@ -105,6 +105,15 @@ extern "C" napi_status NAPI_CDECL napi_get_value_double(
   return fn ? fn(env, value, result) : napi_generic_failure;
 }
 
+extern "C" napi_status NAPI_CDECL napi_get_value_bool(
+    napi_env env,
+    napi_value value,
+    bool* result) {
+  using Fn = napi_status(NAPI_CDECL*)(napi_env, napi_value, bool*);
+  static Fn fn = loadNodeApi<Fn>("napi_get_value_bool");
+  return fn ? fn(env, value, result) : napi_generic_failure;
+}
+
 extern "C" napi_status NAPI_CDECL napi_get_value_string_utf8(
     napi_env env,
     napi_value value,

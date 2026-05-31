@@ -198,11 +198,14 @@ TAE_Result AudioPipeline::play(
     outputInfo_ = output_->outputInfo();
     outputInfo_.backend = backendId_;
     outputInfo_.deviceName = deviceName_;
-    dspChain_.configureFromJson(dspConfigJson);
+    dspConfig_ = DspChain::parseConfigJson(dspConfigJson);
+    dspChain_.configure(dspConfig_);
     dspChain_.prepare(outputFormat_);
     dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
     dspStatus_ = dspChain_.status();
     dspActive_ = dspStatus_.dspActive || std::abs(volume - 1.0) > 0.0001;
+    spectrum_.prepare(outputFormat_, dspConfig_.fftResolution);
+    spectrum_.setEnabled(dspConfig_.fftEnabled);
     gaplessEnabled_ = gaplessEnabled;
     updateBitPerfectLocked();
     state_ = PipelineState::Playing;
@@ -281,6 +284,7 @@ TAE_Result AudioPipeline::stop() {
     trackStarted_ = false;
     outputEventMessage_.clear();
     dspStatus_ = {};
+    dspConfig_ = {};
     dspActive_ = false;
     bitPerfect_ = false;
     gaplessEnabled_ = true;
@@ -319,11 +323,69 @@ void AudioPipeline::setVolume(double volume) {
 
 void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
   std::lock_guard lock(mutex_);
-  dspChain_.configureFromJson(dspConfigJson);
+  dspConfig_ = DspChain::parseConfigJson(dspConfigJson);
+  dspChain_.configure(dspConfig_);
   if (outputFormat_.sampleRate > 0 && outputFormat_.channelCount > 0) {
     dspChain_.prepare(outputFormat_);
     dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
+    spectrum_.prepare(outputFormat_, dspConfig_.fftResolution);
   }
+  spectrum_.setEnabled(dspConfig_.fftEnabled);
+  dspStatus_ = dspChain_.status();
+  dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+  updateBitPerfectLocked();
+}
+
+bool AudioPipeline::loadImpulseResponse(const std::string& path, std::string* error) {
+  std::lock_guard lock(mutex_);
+  const bool ok = dspChain_.loadImpulseResponse(path, error);
+  dspStatus_ = dspChain_.status();
+  dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+  updateBitPerfectLocked();
+  return ok;
+}
+
+void AudioPipeline::unloadImpulseResponse() {
+  std::lock_guard lock(mutex_);
+  dspChain_.unloadImpulseResponse();
+  dspStatus_ = dspChain_.status();
+  dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+  updateBitPerfectLocked();
+}
+
+ConvolverInfo AudioPipeline::convolverInfo() const {
+  return dspChain_.convolverInfo();
+}
+
+bool AudioPipeline::setEqBands(const std::string& json, std::string* error) {
+  std::lock_guard lock(mutex_);
+  const bool ok = dspChain_.setEqBandsFromJson(json, error);
+  dspStatus_ = dspChain_.status();
+  dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+  updateBitPerfectLocked();
+  return ok;
+}
+
+bool AudioPipeline::setEqPreset(const std::string& json, std::string* error) {
+  std::lock_guard lock(mutex_);
+  const bool ok = dspChain_.setEqPresetFromJson(json, error);
+  dspStatus_ = dspChain_.status();
+  dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+  updateBitPerfectLocked();
+  return ok;
+}
+
+void AudioPipeline::setCrossfeedStrength(double strength) {
+  std::lock_guard lock(mutex_);
+  dspChain_.setCrossfeedStrength(strength);
+  dspStatus_ = dspChain_.status();
+  dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+  updateBitPerfectLocked();
+}
+
+void AudioPipeline::setReplayGainMode(ReplayGainMode mode, double preampDb, double fallbackDb, bool clip) {
+  std::lock_guard lock(mutex_);
+  dspChain_.setReplayGainMode(mode, preampDb, fallbackDb, clip);
   dspStatus_ = dspChain_.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updateBitPerfectLocked();
@@ -407,6 +469,15 @@ PipelineStatus AudioPipeline::status() const {
   status.dspActive = dspActive_;
   status.replayGainActive = dspStatus_.replayGainActive;
   status.eqActive = dspStatus_.eqActive;
+  status.convolverActive = dspStatus_.convolverActive;
+  status.crossfeedActive = dspStatus_.crossfeedActive;
+  status.fftActive = spectrum_.isActive();
+  status.irResampled = dspStatus_.irResampled;
+  status.replayGainDb = dspStatus_.replayGainDb;
+  status.crossfeedStrength = dspStatus_.crossfeedStrength;
+  status.convolverLatencyFrames = dspStatus_.convolverLatencyFrames;
+  status.partitionSize = dspStatus_.partitionSize;
+  status.channelMappingMode = dspStatus_.channelMappingMode;
   status.bitPerfect = bitPerfect_;
   status.gaplessActive = gaplessEnabled_ && preloadStream_ != nullptr;
   status.preloadReady = preloadStream_ && preloadStream_->readyForRender();

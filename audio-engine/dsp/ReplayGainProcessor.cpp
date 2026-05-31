@@ -37,12 +37,19 @@ void ReplayGainProcessor::process(float* samples, size_t frameCount) {
   }
 }
 
+void ReplayGainProcessor::reset() {
+}
+
 bool ReplayGainProcessor::isActive() const {
   return active_;
 }
 
+double ReplayGainProcessor::currentGainDb() const {
+  return active_ ? gainDb_ : 0.0;
+}
+
 void ReplayGainProcessor::updateGain(const ReplayGainInfo& info) {
-  if (config_.replayGainMode == ReplayGainMode::Off) {
+  if (!config_.enabled || config_.replayGainMode == ReplayGainMode::Off) {
     gainDb_ = 0.0;
     gainLinear_ = 1.0;
     active_ = false;

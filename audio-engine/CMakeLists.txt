@@ -21,10 +21,13 @@ add_library(twilight_audio_engine SHARED
   core/TwilightAudioEngine.cpp
   decoder/FFmpegDecoder.cpp
   devices/DeviceManager.cpp
+  dsp/ConvolverProcessor.cpp
+  dsp/CrossfeedProcessor.cpp
   dsp/DspChain.cpp
+  dsp/FftSpectrumAnalyzer.cpp
+  dsp/KissFftAdapter.cpp
   dsp/ParametricEqProcessor.cpp
   dsp/ReplayGainProcessor.cpp
-  dsp/SpectrumAnalyzer.cpp
   metadata/AudioMetadataService.cpp
   output/OutputBackendFactory.cpp
   output/wasapi/WasapiFormatNegotiator.cpp
@@ -140,10 +143,26 @@ if(TAE_BUILD_TESTS)
 
   add_executable(twilight_dsp_tests
     tests/dsp_tests.cpp
+    dsp/ConvolverProcessor.cpp
+    dsp/CrossfeedProcessor.cpp
     dsp/DspChain.cpp
+    dsp/FftSpectrumAnalyzer.cpp
+    dsp/KissFftAdapter.cpp
     dsp/ParametricEqProcessor.cpp
     dsp/ReplayGainProcessor.cpp
   )
   target_include_directories(twilight_dsp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   add_test(NAME twilight_dsp_unit COMMAND twilight_dsp_tests)
+
+  add_executable(twilight_metadata_tests
+    metadata/metadata_tests.cpp
+    metadata/AudioMetadataService.cpp
+  )
+  target_include_directories(twilight_metadata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  if(FFMPEG_FOUND)
+    target_compile_definitions(twilight_metadata_tests PRIVATE TAE_HAS_FFMPEG=1)
+    target_include_directories(twilight_metadata_tests PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_metadata_tests PRIVATE ${FFMPEG_LIBRARIES})
+  endif()
+  add_test(NAME twilight_metadata_unit COMMAND twilight_metadata_tests)
 endif()

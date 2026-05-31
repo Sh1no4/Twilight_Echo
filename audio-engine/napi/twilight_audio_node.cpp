@@ -103,6 +103,12 @@ double getNumberArg(napi_env env, napi_value value, double fallback) {
   return out;
 }
 
+bool getBoolArg(napi_env env, napi_value value, bool fallback) {
+  bool out = fallback;
+  napi_get_value_bool(env, value, &out);
+  return out;
+}
+
 void ensureEngine() {
   if (!g_engine) {
     if (TAE_CreateEngine(&g_engine) == TAE_RESULT_OK && g_engine) {
@@ -242,6 +248,94 @@ napi_value SetDspConfig(napi_env env, napi_callback_info info) {
   return throwOnError(env, TAE_SetDspConfig(g_engine, json.c_str()));
 }
 
+napi_value LoadImpulseResponse(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  if (argc < 1) {
+    napi_throw_type_error(env, nullptr, "加载脉冲响应需要文件路径");
+    return makeUndefined(env);
+  }
+  const std::string path = getStringArg(env, argv[0]);
+  return throwOnError(env, TAE_LoadImpulseResponse(g_engine, path.c_str()));
+}
+
+napi_value UnloadImpulseResponse(napi_env env, napi_callback_info) {
+  ensureEngine();
+  clearLastError();
+  return throwOnError(env, TAE_UnloadImpulseResponse(g_engine));
+}
+
+napi_value GetConvolverInfo(napi_env env, napi_callback_info) {
+  return readJson(env, TAE_GetConvolverInfo);
+}
+
+napi_value SetEqBands(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const std::string json = argc > 0 ? getStringArg(env, argv[0]) : "{}";
+  return throwOnError(env, TAE_SetEqBands(g_engine, json.c_str()));
+}
+
+napi_value SetEqPreset(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const std::string json = argc > 0 ? getStringArg(env, argv[0]) : "{}";
+  return throwOnError(env, TAE_SetEqPreset(g_engine, json.c_str()));
+}
+
+napi_value SetCrossfeedStrength(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const double strength = argc > 0 ? getNumberArg(env, argv[0], 0.0) : 0.0;
+  return throwOnError(env, TAE_SetCrossfeedStrength(g_engine, strength));
+}
+
+napi_value SetReplayGainMode(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 4;
+  napi_value argv[4];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const std::string mode = argc > 0 ? getStringArg(env, argv[0]) : "off";
+  const double preamp = argc > 1 ? getNumberArg(env, argv[1], 0.0) : 0.0;
+  const double fallback = argc > 2 ? getNumberArg(env, argv[2], 0.0) : 0.0;
+  const bool clip = argc > 3 ? getBoolArg(env, argv[3], true) : true;
+  return throwOnError(env, TAE_SetReplayGainMode(g_engine, mode.c_str(), preamp, fallback, clip ? 1 : 0));
+}
+
+napi_value GetMetadata(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  if (argc < 1) {
+    napi_throw_type_error(env, nullptr, "读取元数据需要音频地址");
+    return makeUndefined(env);
+  }
+  const std::string source = getStringArg(env, argv[0]);
+  size_t required = 0;
+  TAE_GetMetadata(g_engine, source.c_str(), nullptr, 0, &required);
+  std::vector<char> buffer(required == 0 ? 1 : required);
+  const TAE_Result result = TAE_GetMetadata(g_engine, source.c_str(), buffer.data(), buffer.size(), &required);
+  if (result != TAE_RESULT_OK) return throwOnError(env, result);
+  napi_value json;
+  napi_create_string_utf8(env, buffer.data(), NAPI_AUTO_LENGTH, &json);
+  return json;
+}
+
 napi_value GetPlaybackInfo(napi_env env, napi_callback_info) {
   return readJson(env, TAE_GetPlaybackInfo);
 }
@@ -312,6 +406,14 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "Previous", Previous);
   define(env, exports, "SetPlayMode", SetPlayMode);
   define(env, exports, "SetDspConfig", SetDspConfig);
+  define(env, exports, "LoadImpulseResponse", LoadImpulseResponse);
+  define(env, exports, "UnloadImpulseResponse", UnloadImpulseResponse);
+  define(env, exports, "GetConvolverInfo", GetConvolverInfo);
+  define(env, exports, "SetEqBands", SetEqBands);
+  define(env, exports, "SetEqPreset", SetEqPreset);
+  define(env, exports, "SetCrossfeedStrength", SetCrossfeedStrength);
+  define(env, exports, "SetReplayGainMode", SetReplayGainMode);
+  define(env, exports, "GetMetadata", GetMetadata);
   define(env, exports, "GetPlaybackInfo", GetPlaybackInfo);
   define(env, exports, "GetQueue", GetQueue);
   define(env, exports, "GetUpcomingTrack", GetUpcomingTrack);

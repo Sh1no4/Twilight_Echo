@@ -20,6 +20,10 @@ export interface EqualizerBand {
 }
 
 export interface AudioProcessingSettings {
+  dspEnabled: boolean
+  clipGuard: boolean
+  fftEnabled: boolean
+  fftResolution: number
   highResolution: boolean
   dsdToPcm: boolean
   eqEnabled: boolean
@@ -30,6 +34,9 @@ export interface AudioProcessingSettings {
   replayGainPreamp: number
   replayGainFallback: number
   replayGainClip: boolean
+  convolverIrPath: string
+  crossfeedEnabled: boolean
+  crossfeedStrength: number
   gapless: boolean
   crossfadeSeconds: number
 }

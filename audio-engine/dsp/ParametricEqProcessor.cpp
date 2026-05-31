@@ -151,12 +151,20 @@ bool ParametricEqProcessor::isActive() const {
   return active_;
 }
 
+void ParametricEqProcessor::reset() {
+  for (auto& filter : filters_) {
+    for (auto& state : filter.channelStates) {
+      state.reset();
+    }
+  }
+}
+
 void ParametricEqProcessor::rebuildFilters() {
   filters_.clear();
   preampLinear_ = dbToLinear(config_.eqPreampDb);
   active_ = false;
 
-  if (!config_.eqEnabled || format_.sampleRate <= 0 || format_.channelCount <= 0) return;
+  if (!config_.enabled || !config_.eqEnabled || format_.sampleRate <= 0 || format_.channelCount <= 0) return;
 
   active_ = std::abs(config_.eqPreampDb) > kGainEpsilonDb;
   for (const auto& band : config_.eqBands) {
@@ -168,14 +176,6 @@ void ParametricEqProcessor::rebuildFilters() {
   }
 
   active_ = active_ || !filters_.empty();
-}
-
-void ParametricEqProcessor::resetState() {
-  for (auto& filter : filters_) {
-    for (auto& state : filter.channelStates) {
-      state.reset();
-    }
-  }
 }
 
 }  // namespace twilight::audio

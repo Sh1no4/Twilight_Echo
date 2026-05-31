@@ -4,6 +4,7 @@
 #include "../playlist/QueueManager.h"
 #include "twilight_audio_engine.h"
 
+#include <cstdint>
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -43,6 +44,15 @@ struct PlaybackInfo {
   bool dspActive = false;
   bool replayGainActive = false;
   bool eqActive = false;
+  bool convolverActive = false;
+  bool crossfeedActive = false;
+  bool fftActive = false;
+  bool irResampled = false;
+  double replayGainDb = 0.0;
+  double crossfeedStrength = 0.0;
+  uint32_t convolverLatencyFrames = 0;
+  uint32_t partitionSize = 0;
+  std::string channelMappingMode;
   std::string resampleReason;
   std::string dsdMode = "unsupported";
   bool gaplessActive = false;
@@ -77,7 +87,15 @@ class TwilightAudioEngine {
   TAE_Result setPlayMode(const std::string& mode);
 
   TAE_Result setDspConfig(const std::string& dspJson);
+  TAE_Result loadImpulseResponse(const std::string& path);
+  TAE_Result unloadImpulseResponse();
+  std::string getConvolverInfoJson() const;
+  TAE_Result setEqBands(const std::string& eqJson);
+  TAE_Result setEqPreset(const std::string& presetJson);
+  TAE_Result setCrossfeedStrength(double strength);
+  TAE_Result setReplayGainMode(const std::string& mode, double preampDb, double fallbackDb, bool clip);
   std::string getDspConfig() const;
+  std::string getMetadataJson(const std::string& source) const;
   std::string getQueueJson() const;
   std::string getUpcomingTrackJson() const;
   std::string enumerateDevicesJson() const;

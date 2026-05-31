@@ -65,6 +65,10 @@ interface EqualizerBand {
 }
 
 interface AudioProcessingSettings {
+  dspEnabled: boolean
+  clipGuard: boolean
+  fftEnabled: boolean
+  fftResolution: number
   highResolution: boolean
   dsdToPcm: boolean
   eqEnabled: boolean
@@ -75,6 +79,9 @@ interface AudioProcessingSettings {
   replayGainPreamp: number
   replayGainFallback: number
   replayGainClip: boolean
+  convolverIrPath: string
+  crossfeedEnabled: boolean
+  crossfeedStrength: number
   gapless: boolean
   crossfadeSeconds: number
 }
@@ -107,6 +114,48 @@ interface AppSettings {
   audioExclusiveMode: boolean
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
+}
+
+interface ConvolverInfo {
+  loaded: boolean
+  active: boolean
+  irResampled: boolean
+  path: string
+  sampleRate: number
+  channels: number
+  lengthFrames: number
+  lengthMs: number
+  partitionSize: number
+  latencyFrames: number
+  channelMappingMode: string
+  warning: string
+  lastError: string
+}
+
+interface NativeAudioMetadata {
+  source: string
+  title: string
+  artist: string
+  album: string
+  albumArtist: string
+  composer: string
+  year: string
+  genre: string
+  trackNumber: string
+  discNumber: string
+  comment: string
+  codec: string
+  sampleRate: number
+  bitDepth: number
+  bitrate: number
+  duration: number
+  coverMime: string
+  coverDataBase64: string
+  replayGainTrackGain: number | null
+  replayGainAlbumGain: number | null
+  r128TrackGain: number | null
+  r128AlbumGain: number | null
+  error: string
 }
 
 interface PlaybackSession {
@@ -188,6 +237,15 @@ interface PlaybackInfo {
   dspActive: boolean
   replayGainActive: boolean
   eqActive: boolean
+  convolverActive: boolean
+  crossfeedActive: boolean
+  fftActive: boolean
+  irResampled: boolean
+  replayGainDb: number
+  crossfeedStrength: number
+  convolverLatencyFrames: number
+  partitionSize: number
+  channelMappingMode: string
   resampleReason: string
   dsdMode: string
   gaplessActive: boolean
@@ -221,6 +279,19 @@ interface AudioEngineAPI {
     settings: Partial<AudioProcessingSettings>
   ) => Promise<AudioProcessingSettings>
   getAudioProcessing: () => Promise<AudioProcessingSettings>
+  loadImpulseResponse: (path: string) => Promise<ConvolverInfo>
+  unloadImpulseResponse: () => Promise<ConvolverInfo>
+  getConvolverInfo: () => Promise<ConvolverInfo>
+  setEqBands: (settings: Partial<AudioProcessingSettings>) => Promise<AudioProcessingSettings>
+  setEqPreset: (preset: AudioEqPreset) => Promise<AudioProcessingSettings>
+  setCrossfeedStrength: (strength: number) => Promise<AudioProcessingSettings>
+  setReplayGainMode: (
+    mode: VolumeNormalizationMode,
+    preamp?: number,
+    fallback?: number,
+    clip?: boolean
+  ) => Promise<AudioProcessingSettings>
+  getMetadata: (source: string) => Promise<NativeAudioMetadata | null>
   getPlaybackInfo: () => Promise<PlaybackInfo>
   getSpectrumData: (points?: number) => Promise<number[]>
 

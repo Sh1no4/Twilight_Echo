@@ -52,6 +52,24 @@ TAE_API TAE_Result TAE_GetUpcomingTrack(TAE_EngineHandle engine, char* buffer, s
 
 TAE_API TAE_Result TAE_SetDspConfig(TAE_EngineHandle engine, const char* dsp_config_json);
 TAE_API TAE_Result TAE_GetDspConfig(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size);
+TAE_API TAE_Result TAE_LoadImpulseResponse(TAE_EngineHandle engine, const char* path);
+TAE_API TAE_Result TAE_UnloadImpulseResponse(TAE_EngineHandle engine);
+TAE_API TAE_Result TAE_GetConvolverInfo(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size);
+TAE_API TAE_Result TAE_SetEqBands(TAE_EngineHandle engine, const char* eq_json);
+TAE_API TAE_Result TAE_SetEqPreset(TAE_EngineHandle engine, const char* preset_json);
+TAE_API TAE_Result TAE_SetCrossfeedStrength(TAE_EngineHandle engine, double strength);
+TAE_API TAE_Result TAE_SetReplayGainMode(
+    TAE_EngineHandle engine,
+    const char* mode,
+    double preamp_db,
+    double fallback_db,
+    int clip);
+TAE_API TAE_Result TAE_GetMetadata(
+    TAE_EngineHandle engine,
+    const char* source,
+    char* buffer,
+    size_t buffer_size,
+    size_t* required_size);
 TAE_API TAE_Result TAE_EnumerateDevices(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size);
 TAE_API TAE_Result TAE_EnumerateBackends(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size);
 

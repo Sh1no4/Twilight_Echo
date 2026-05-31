@@ -191,14 +191,28 @@ DspChain::DspChain() {
   auto eq = std::make_unique<ParametricEqProcessor>();
   eq_ = eq.get();
   processors_.push_back(std::move(eq));
+
+  auto convolver = std::make_unique<ConvolverProcessor>();
+  convolver_ = convolver.get();
+  processors_.push_back(std::move(convolver));
+
+  auto crossfeed = std::make_unique<CrossfeedProcessor>();
+  crossfeed_ = crossfeed.get();
+  processors_.push_back(std::move(crossfeed));
 }
 
 void DspChain::configure(const DspConfig& config) {
   std::lock_guard lock(mutex_);
-  config_ = config;
+  DspConfig next = config;
+  if (next.impulseResponsePath.empty() && !next.convolverEnabled) {
+    next.impulseResponsePath = config_.impulseResponsePath;
+    next.convolverEnabled = config_.convolverEnabled;
+  }
+  config_ = next;
   for (auto& processor : processors_) {
     processor->configure(config_);
     processor->prepare(format_);
+    processor->setTrackContext(trackContext_);
   }
   refreshStatusLocked();
 }
@@ -218,6 +232,7 @@ void DspChain::prepare(const AudioFormat& format) {
 
 void DspChain::setTrackContext(const DspTrackContext& context) {
   std::lock_guard lock(mutex_);
+  trackContext_ = context;
   for (auto& processor : processors_) {
     processor->setTrackContext(context);
   }
@@ -230,8 +245,15 @@ void DspChain::process(float* samples, size_t frameCount) {
   for (auto& processor : processors_) {
     processor->process(samples, frameCount);
   }
-  if (config_.replayGainClip && status_.dspActive) {
+  if (config_.clipGuard && status_.dspActive) {
     clampOutput(samples, frameCount);
+  }
+}
+
+void DspChain::reset() {
+  std::lock_guard lock(mutex_);
+  for (auto& processor : processors_) {
+    processor->reset();
   }
 }
 
@@ -240,8 +262,92 @@ DspStatus DspChain::status() const {
   return status_;
 }
 
+bool DspChain::loadImpulseResponse(const std::string& path, std::string* error) {
+  std::lock_guard lock(mutex_);
+  if (!convolver_) return false;
+  const bool ok = convolver_->loadImpulseResponse(path, error);
+  if (ok) {
+    config_.convolverEnabled = true;
+    config_.impulseResponsePath = path;
+    convolver_->configure(config_);
+    convolver_->prepare(format_);
+  }
+  refreshStatusLocked();
+  return ok;
+}
+
+void DspChain::unloadImpulseResponse() {
+  std::lock_guard lock(mutex_);
+  if (convolver_) convolver_->unloadImpulseResponse();
+  config_.convolverEnabled = false;
+  config_.impulseResponsePath.clear();
+  refreshStatusLocked();
+}
+
+ConvolverInfo DspChain::convolverInfo() const {
+  std::lock_guard lock(mutex_);
+  return convolver_ ? convolver_->info() : ConvolverInfo{};
+}
+
+void DspChain::setEqBands(const std::vector<DspEqBand>& bands, EqMode mode, double preampDb, bool enabled) {
+  std::lock_guard lock(mutex_);
+  config_.eqBands = bands;
+  config_.eqMode = mode;
+  config_.eqPreampDb = std::clamp(preampDb, -24.0, 24.0);
+  config_.eqEnabled = enabled && !bands.empty();
+  if (eq_) {
+    eq_->configure(config_);
+    eq_->prepare(format_);
+    eq_->setTrackContext(trackContext_);
+  }
+  refreshStatusLocked();
+}
+
+bool DspChain::setEqBandsFromJson(const std::string& json, std::string*) {
+  const EqMode mode = parseEqMode(extractStringField(json, "eqMode").value_or("parametric"));
+  const double preamp = std::clamp(extractNumberField(json, "eqPreamp").value_or(0.0), -24.0, 24.0);
+  const bool enabled = extractBoolField(json, "eqEnabled").value_or(true);
+  setEqBands(parseEqBandsJson(json, mode), mode, preamp, enabled);
+  return true;
+}
+
+bool DspChain::setEqPresetFromJson(const std::string& json, std::string* error) {
+  return setEqBandsFromJson(json, error);
+}
+
+void DspChain::setCrossfeedStrength(double strength) {
+  std::lock_guard lock(mutex_);
+  config_.crossfeedStrength = std::clamp(strength, 0.0, 1.0);
+  config_.crossfeedEnabled = config_.crossfeedStrength > 0.0001;
+  if (crossfeed_) {
+    crossfeed_->configure(config_);
+    crossfeed_->prepare(format_);
+    crossfeed_->setTrackContext(trackContext_);
+  }
+  refreshStatusLocked();
+}
+
+void DspChain::setReplayGainMode(ReplayGainMode mode, double preampDb, double fallbackDb, bool clip) {
+  std::lock_guard lock(mutex_);
+  config_.replayGainMode = mode;
+  config_.replayGainPreampDb = std::clamp(preampDb, -24.0, 24.0);
+  config_.replayGainFallbackDb = std::clamp(fallbackDb, -24.0, 24.0);
+  config_.replayGainClip = clip;
+  if (replayGain_) {
+    replayGain_->configure(config_);
+    replayGain_->prepare(format_);
+    replayGain_->setTrackContext(trackContext_);
+  }
+  refreshStatusLocked();
+}
+
 DspConfig DspChain::parseConfigJson(const std::string& json) {
   DspConfig config;
+  config.enabled = extractBoolField(json, "dspEnabled").value_or(extractBoolField(json, "enabled").value_or(true));
+  config.clipGuard = extractBoolField(json, "clipGuard").value_or(true);
+  config.fftEnabled = extractBoolField(json, "fftEnabled").value_or(true);
+  config.fftResolution =
+      static_cast<size_t>(std::clamp(extractNumberField(json, "fftResolution").value_or(64.0), 64.0, 2048.0));
   config.replayGainMode = parseReplayGainMode(extractStringField(json, "volumeNormalization").value_or("off"));
   config.replayGainPreampDb = std::clamp(extractNumberField(json, "replayGainPreamp").value_or(0.0), -24.0, 24.0);
   config.replayGainFallbackDb = std::clamp(extractNumberField(json, "replayGainFallback").value_or(0.0), -24.0, 24.0);
@@ -250,13 +356,33 @@ DspConfig DspChain::parseConfigJson(const std::string& json) {
   config.eqMode = parseEqMode(extractStringField(json, "eqMode").value_or("graphic"));
   config.eqPreampDb = std::clamp(extractNumberField(json, "eqPreamp").value_or(0.0), -24.0, 24.0);
   config.eqBands = parseEqBands(json, config.eqMode);
+  config.convolverEnabled = extractBoolField(json, "convolverEnabled").value_or(false);
+  config.impulseResponsePath = extractStringField(json, "convolverIrPath").value_or("");
+  config.crossfeedStrength = std::clamp(extractNumberField(json, "crossfeedStrength").value_or(0.0), 0.0, 1.0);
+  config.crossfeedEnabled = extractBoolField(json, "crossfeedEnabled").value_or(config.crossfeedStrength > 0.0001);
+  config.crossfeedDelayMs = std::clamp(extractNumberField(json, "crossfeedDelayMs").value_or(0.35), 0.05, 2.0);
+  config.crossfeedCutoffHz = std::clamp(extractNumberField(json, "crossfeedCutoffHz").value_or(700.0), 80.0, 4000.0);
   return config;
+}
+
+std::vector<DspEqBand> DspChain::parseEqBandsJson(const std::string& json, EqMode mode) {
+  return parseEqBands(json, mode);
 }
 
 void DspChain::refreshStatusLocked() {
   status_.replayGainActive = replayGain_ && replayGain_->isActive();
   status_.eqActive = eq_ && eq_->isActive();
-  status_.dspActive = status_.replayGainActive || status_.eqActive;
+  status_.convolverActive = convolver_ && convolver_->isActive();
+  status_.crossfeedActive = crossfeed_ && crossfeed_->isActive();
+  status_.replayGainDb = replayGain_ ? replayGain_->currentGainDb() : 0.0;
+  status_.crossfeedStrength = crossfeed_ ? crossfeed_->strength() : 0.0;
+  const ConvolverInfo info = convolver_ ? convolver_->info() : ConvolverInfo{};
+  status_.irResampled = info.irResampled;
+  status_.convolverLatencyFrames = info.latencyFrames;
+  status_.partitionSize = info.partitionSize;
+  status_.channelMappingMode = info.channelMappingMode;
+  status_.dspActive = status_.replayGainActive || status_.eqActive || status_.convolverActive ||
+                      status_.crossfeedActive;
 }
 
 void DspChain::clampOutput(float* samples, size_t frameCount) {
@@ -268,7 +394,9 @@ void DspChain::clampOutput(float* samples, size_t frameCount) {
 
 bool dspConfigRequiresProcessing(const std::string& json) {
   const DspConfig config = DspChain::parseConfigJson(json);
-  return config.replayGainMode != ReplayGainMode::Off || config.eqEnabled;
+  return config.enabled &&
+         (config.replayGainMode != ReplayGainMode::Off || config.eqEnabled || config.convolverEnabled ||
+          config.crossfeedEnabled);
 }
 
 }  // namespace twilight::audio

@@ -2,9 +2,11 @@
 
 #include "IAudioProcessor.h"
 
+#include <vector>
+
 namespace twilight::audio {
 
-class ReplayGainProcessor final : public IAudioProcessor {
+class CrossfeedProcessor final : public IAudioProcessor {
  public:
   void configure(const DspConfig& config) override;
   void prepare(const AudioFormat& format) override;
@@ -12,15 +14,20 @@ class ReplayGainProcessor final : public IAudioProcessor {
   void process(float* samples, size_t frameCount) override;
   void reset() override;
   bool isActive() const override;
-  double currentGainDb() const;
+
+  double strength() const;
 
  private:
-  void updateGain(const ReplayGainInfo& info);
+  void rebuildDelay();
 
   DspConfig config_;
   AudioFormat format_;
-  double gainDb_ = 0.0;
-  double gainLinear_ = 1.0;
+  std::vector<float> delayLeft_;
+  std::vector<float> delayRight_;
+  size_t delayIndex_ = 0;
+  double lowpassLeft_ = 0.0;
+  double lowpassRight_ = 0.0;
+  double alpha_ = 0.0;
   bool active_ = false;
 };
 

@@ -14,6 +14,10 @@ function getFallbackAudioOutput(): AudioOutputId {
 }
 
 const fallbackAudioProcessing: AudioProcessingSettings = {
+  dspEnabled: true,
+  clipGuard: true,
+  fftEnabled: true,
+  fftResolution: 64,
   highResolution: true,
   dsdToPcm: true,
   eqEnabled: false,
@@ -29,6 +33,9 @@ const fallbackAudioProcessing: AudioProcessingSettings = {
   replayGainPreamp: 0,
   replayGainFallback: 0,
   replayGainClip: true,
+  convolverIrPath: '',
+  crossfeedEnabled: false,
+  crossfeedStrength: 0,
   gapless: true,
   crossfadeSeconds: 0
 }

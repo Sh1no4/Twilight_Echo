@@ -36,7 +36,16 @@ int main() {
   assert(std::strstr(json.data(), "\"dspActive\":true") != nullptr);
   assert(std::strstr(json.data(), "\"replayGainActive\":true") != nullptr);
   assert(std::strstr(json.data(), "\"eqActive\":true") != nullptr);
+  assert(std::strstr(json.data(), "\"convolverActive\":false") != nullptr);
+  assert(std::strstr(json.data(), "\"crossfeedActive\":false") != nullptr);
   assert(std::strstr(json.data(), "\"bitPerfect\":false") != nullptr);
+
+  assert(TAE_SetCrossfeedStrength(engine, 0.5) == TAE_RESULT_OK);
+  assert(TAE_SetReplayGainMode(engine, "album", 0.0, -3.0, 1) == TAE_RESULT_OK);
+  assert(TAE_GetConvolverInfo(engine, nullptr, 0, &required) == TAE_RESULT_OK);
+  assert(required > 1);
+  assert(TAE_GetMetadata(engine, "test.flac", nullptr, 0, &required) == TAE_RESULT_OK);
+  assert(required > 1);
 
   float spectrum[16] = {};
   size_t written = 0;

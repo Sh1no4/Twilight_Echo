@@ -25,6 +25,10 @@ interface EqualizerBand {
 }
 
 interface AudioProcessingSettings {
+  dspEnabled: boolean
+  clipGuard: boolean
+  fftEnabled: boolean
+  fftResolution: number
   highResolution: boolean
   dsdToPcm: boolean
   eqEnabled: boolean
@@ -35,6 +39,9 @@ interface AudioProcessingSettings {
   replayGainPreamp: number
   replayGainFallback: number
   replayGainClip: boolean
+  convolverIrPath: string
+  crossfeedEnabled: boolean
+  crossfeedStrength: number
   gapless: boolean
   crossfadeSeconds: number
 }
@@ -86,6 +93,10 @@ const defaultEqBands: EqualizerBand[] = defaultBandFrequencies.map((frequency) =
 }))
 
 const defaultAudioProcessing: AudioProcessingSettings = {
+  dspEnabled: true,
+  clipGuard: true,
+  fftEnabled: true,
+  fftResolution: 64,
   highResolution: true,
   dsdToPcm: true,
   eqEnabled: false,
@@ -96,6 +107,9 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   replayGainPreamp: 0,
   replayGainFallback: 0,
   replayGainClip: true,
+  convolverIrPath: '',
+  crossfeedEnabled: false,
+  crossfeedStrength: 0,
   gapless: true,
   crossfadeSeconds: 0
 }
@@ -219,9 +233,11 @@ function normalizeAudioProcessing(settings?: Partial<AudioProcessingSettings>): 
   return {
     ...defaultAudioProcessing,
     ...settings,
+    fftResolution: clampNumber(settings?.fftResolution, 64, 2048, 64),
     eqPreamp: clampNumber(settings?.eqPreamp, -12, 12, 0),
     replayGainPreamp: clampNumber(settings?.replayGainPreamp, -12, 12, 0),
     replayGainFallback: clampNumber(settings?.replayGainFallback, -12, 12, 0),
+    crossfeedStrength: clampNumber(settings?.crossfeedStrength, 0, 1, 0),
     crossfadeSeconds: clampNumber(settings?.crossfadeSeconds, 0, 12, 0),
     eqBands: defaultEqBands.map((defaultBand, index) => {
       const band = rawBands[index] ?? defaultBand

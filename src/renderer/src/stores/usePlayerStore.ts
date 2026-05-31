@@ -31,6 +31,10 @@ interface EqualizerBand {
 }
 
 interface AudioProcessingSettings {
+  dspEnabled: boolean
+  clipGuard: boolean
+  fftEnabled: boolean
+  fftResolution: number
   highResolution: boolean
   dsdToPcm: boolean
   eqEnabled: boolean
@@ -41,6 +45,9 @@ interface AudioProcessingSettings {
   replayGainPreamp: number
   replayGainFallback: number
   replayGainClip: boolean
+  convolverIrPath: string
+  crossfeedEnabled: boolean
+  crossfeedStrength: number
   gapless: boolean
   crossfadeSeconds: number
 }
@@ -73,6 +80,10 @@ const audioDevice = ref('auto')
 const audioOutputOptions = ref<AudioOutputOption[]>([])
 const audioDeviceOptions = ref<AudioDeviceOption[]>([])
 const defaultAudioProcessing: AudioProcessingSettings = {
+  dspEnabled: true,
+  clipGuard: true,
+  fftEnabled: true,
+  fftResolution: 64,
   highResolution: true,
   dsdToPcm: true,
   eqEnabled: false,
@@ -88,6 +99,9 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   replayGainPreamp: 0,
   replayGainFallback: 0,
   replayGainClip: true,
+  convolverIrPath: '',
+  crossfeedEnabled: false,
+  crossfeedStrength: 0,
   gapless: true,
   crossfadeSeconds: 0
 }
