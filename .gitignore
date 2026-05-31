@@ -12,3 +12,4 @@ audio-engine/build/
 audio-engine/vcpkg_installed/
 resources/audio-engine/*.dll
 resources/audio-engine/*.node
+audio-engine/third_party/ASIOSDK/
