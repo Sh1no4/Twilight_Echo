@@ -10,21 +10,23 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <windows.h>
 #include <audioclient.h>
-#include <functiondiscoverykeys_devpkey.h>
 #include <ksmedia.h>
 #include <mmdeviceapi.h>
 #include <mmreg.h>
 #include <propidl.h>
+#include <propsys.h>
+#include <functiondiscoverykeys_devpkey.h>
 #include <wrl/client.h>
-#include <windows.h>
 #endif
 
 namespace twilight::audio {
 
 struct WasapiSharedBackend::Impl {
   AudioFormat outputFormat;
-  std::string deviceName = "System default";
+  OutputInfo outputInfo;
+  std::string deviceName = "系统默认";
 
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   Microsoft::WRL::ComPtr<IMMDevice> device;
@@ -35,6 +37,7 @@ struct WasapiSharedBackend::Impl {
   std::atomic<bool> running{false};
   UINT32 bufferFrameCount = 0;
   RenderCallback callback;
+  OutputEventCallback eventCallback;
   bool ownerComInitialized = false;
 
   static std::wstring utf8ToWide(const std::string& value) {
@@ -61,10 +64,15 @@ struct WasapiSharedBackend::Impl {
     if (SUCCEEDED(hr)) return true;
     if (error) {
       char buffer[128] = {};
-      std::snprintf(buffer, sizeof(buffer), "%s (HRESULT 0x%08lx)", message, static_cast<unsigned long>(hr));
+      std::snprintf(buffer, sizeof(buffer), "%s (错误码 0x%08lx)", message, static_cast<unsigned long>(hr));
       *error = buffer;
     }
     return false;
+  }
+
+  static bool isDeviceInvalidated(HRESULT hr) {
+    return hr == AUDCLNT_E_DEVICE_INVALIDATED || hr == AUDCLNT_E_RESOURCES_INVALIDATED ||
+           hr == AUDCLNT_E_SERVICE_NOT_RUNNING;
   }
 
   bool loadDeviceName() {
@@ -82,6 +90,8 @@ struct WasapiSharedBackend::Impl {
   bool chooseFloatMixFormat(WAVEFORMATEX* mix, std::vector<uint8_t>* formatBytes, std::string* error) {
     if (!mix || !formatBytes) return false;
 
+    const GUID ieeeFloatSubFormat = {
+        0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
     const WORD channels = mix->nChannels;
     const DWORD sampleRate = mix->nSamplesPerSec;
     DWORD channelMask = 0;
@@ -100,7 +110,7 @@ struct WasapiSharedBackend::Impl {
     desired.Format.cbSize = sizeof(WAVEFORMATEXTENSIBLE) - sizeof(WAVEFORMATEX);
     desired.Samples.wValidBitsPerSample = 32;
     desired.dwChannelMask = channelMask;
-    desired.SubFormat = KSDATAFORMAT_SUBTYPE_IEEE_FLOAT;
+    desired.SubFormat = ieeeFloatSubFormat;
 
     WAVEFORMATEX* closest = nullptr;
     HRESULT hr = audioClient->IsFormatSupported(AUDCLNT_SHAREMODE_SHARED, &desired.Format, &closest);
@@ -115,9 +125,9 @@ struct WasapiSharedBackend::Impl {
     const bool mixIsFloat =
         mix->wFormatTag == WAVE_FORMAT_IEEE_FLOAT ||
         (mix->wFormatTag == WAVE_FORMAT_EXTENSIBLE &&
-         IsEqualGUID(reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(mix)->SubFormat, KSDATAFORMAT_SUBTYPE_IEEE_FLOAT));
+         IsEqualGUID(reinterpret_cast<const WAVEFORMATEXTENSIBLE*>(mix)->SubFormat, ieeeFloatSubFormat));
     if (!mixIsFloat) {
-      if (error) *error = "WASAPI shared mix format is not float32, and float32 shared mode was rejected";
+      if (error) *error = "共享输出混音格式不是 32 位浮点，且设备拒绝 32 位浮点共享输出";
       return false;
     }
 
@@ -136,19 +146,37 @@ struct WasapiSharedBackend::Impl {
       if (waitResult != WAIT_OBJECT_0) continue;
 
       UINT32 padding = 0;
-      if (FAILED(audioClient->GetCurrentPadding(&padding))) continue;
+      HRESULT hr = audioClient->GetCurrentPadding(&padding);
+      if (FAILED(hr)) {
+        if (eventCallback && isDeviceInvalidated(hr)) {
+          eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+          break;
+        }
+        continue;
+      }
       const UINT32 framesAvailable = bufferFrameCount > padding ? bufferFrameCount - padding : 0;
       if (framesAvailable == 0) continue;
 
       BYTE* data = nullptr;
-      if (FAILED(renderClient->GetBuffer(framesAvailable, &data))) continue;
+      hr = renderClient->GetBuffer(framesAvailable, &data);
+      if (FAILED(hr)) {
+        if (eventCallback && isDeviceInvalidated(hr)) {
+          eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+          break;
+        }
+        continue;
+      }
 
       const size_t samples = static_cast<size_t>(framesAvailable) * static_cast<size_t>(outputFormat.channelCount);
       std::fill(reinterpret_cast<float*>(data), reinterpret_cast<float*>(data) + samples, 0.0f);
       if (callback) {
         callback(reinterpret_cast<float*>(data), framesAvailable);
       }
-      renderClient->ReleaseBuffer(framesAvailable, 0);
+      hr = renderClient->ReleaseBuffer(framesAvailable, 0);
+      if (FAILED(hr) && eventCallback && isDeviceInvalidated(hr)) {
+        eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+        break;
+      }
     }
 
     CoUninitialize();
@@ -172,6 +200,7 @@ struct WasapiSharedBackend::Impl {
     }
     bufferFrameCount = 0;
     callback = nullptr;
+    eventCallback = nullptr;
     if (ownerComInitialized) {
       CoUninitialize();
       ownerComInitialized = false;
@@ -210,11 +239,11 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   if (hr == RPC_E_CHANGED_MODE) {
     hr = S_OK;
   }
-  if (!Impl::succeeded(hr, error, "Unable to initialize COM for WASAPI")) return false;
+  if (!Impl::succeeded(hr, error, "无法初始化音频输出所需环境")) return false;
 
   Microsoft::WRL::ComPtr<IMMDeviceEnumerator> enumerator;
   hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
-  if (!Impl::succeeded(hr, error, "Unable to create WASAPI device enumerator")) {
+  if (!Impl::succeeded(hr, error, "无法创建设备枚举器")) {
     (void)shouldUninitialize;
     return failAfterCom();
   }
@@ -225,19 +254,19 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
     const std::wstring id = Impl::utf8ToWide(deviceId);
     hr = enumerator->GetDevice(id.c_str(), &impl_->device);
   }
-  if (!Impl::succeeded(hr, error, "Unable to open WASAPI output device")) {
+  if (!Impl::succeeded(hr, error, "无法打开输出设备")) {
     return failAfterCom();
   }
   impl_->loadDeviceName();
 
   hr = impl_->device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &impl_->audioClient);
-  if (!Impl::succeeded(hr, error, "Unable to activate WASAPI audio client")) {
+  if (!Impl::succeeded(hr, error, "无法激活输出设备音频客户端")) {
     return failAfterCom();
   }
 
   WAVEFORMATEX* mixFormat = nullptr;
   hr = impl_->audioClient->GetMixFormat(&mixFormat);
-  if (!Impl::succeeded(hr, error, "Unable to read WASAPI mix format")) {
+  if (!Impl::succeeded(hr, error, "无法读取共享输出混音格式")) {
     return failAfterCom();
   }
 
@@ -257,26 +286,26 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
       0,
       activeFormat,
       nullptr);
-  if (!Impl::succeeded(hr, error, "Unable to initialize WASAPI shared stream")) {
+  if (!Impl::succeeded(hr, error, "无法初始化共享输出音频流")) {
     return failAfterCom();
   }
 
   impl_->samplesReadyEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
   if (!impl_->samplesReadyEvent) {
-    if (error) *error = "Unable to create WASAPI render event";
+    if (error) *error = "无法创建输出事件";
     return failAfterCom();
   }
   hr = impl_->audioClient->SetEventHandle(impl_->samplesReadyEvent);
-  if (!Impl::succeeded(hr, error, "Unable to attach WASAPI render event")) {
+  if (!Impl::succeeded(hr, error, "无法绑定输出事件")) {
     return failAfterCom();
   }
 
   hr = impl_->audioClient->GetBufferSize(&impl_->bufferFrameCount);
-  if (!Impl::succeeded(hr, error, "Unable to read WASAPI buffer size")) {
+  if (!Impl::succeeded(hr, error, "无法读取输出缓冲区大小")) {
     return failAfterCom();
   }
   hr = impl_->audioClient->GetService(IID_PPV_ARGS(&impl_->renderClient));
-  if (!Impl::succeeded(hr, error, "Unable to get WASAPI render client")) {
+  if (!Impl::succeeded(hr, error, "无法获取输出渲染客户端")) {
     return failAfterCom();
   }
 
@@ -284,29 +313,38 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   impl_->outputFormat.channelCount = static_cast<int>(activeFormat->nChannels);
   impl_->outputFormat.bitDepth = 32;
   impl_->outputFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
-  (void)requestedFormat;
+  impl_->outputInfo.exclusive = false;
+  impl_->outputInfo.bitPerfect = false;
+  impl_->outputInfo.resampled = requestedFormat.sampleRate != impl_->outputFormat.sampleRate ||
+                                requestedFormat.channelCount != impl_->outputFormat.channelCount ||
+                                requestedFormat.bitDepth != impl_->outputFormat.bitDepth;
+  impl_->outputInfo.outputSampleRate = impl_->outputFormat.sampleRate;
+  impl_->outputInfo.outputBitDepth = impl_->outputFormat.bitDepth;
+  impl_->outputInfo.backend = "wasapi";
+  impl_->outputInfo.deviceName = impl_->deviceName;
 
   return true;
 #else
   (void)deviceId;
   (void)requestedFormat;
-  if (error) *error = "WASAPI is only available in Windows builds with TAE_ENABLE_WASAPI";
+  if (error) *error = "当前构建未启用系统音频输出";
   return false;
 #endif
 }
 
-bool WasapiSharedBackend::start(RenderCallback callback, std::string* error) {
+bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   if (!impl_->audioClient || !impl_->renderClient) {
-    if (error) *error = "WASAPI backend is not open";
+    if (error) *error = "共享输出后端尚未打开";
     return false;
   }
 
   impl_->callback = std::move(callback);
+  impl_->eventCallback = std::move(eventCallback);
 
   BYTE* data = nullptr;
   HRESULT hr = impl_->renderClient->GetBuffer(impl_->bufferFrameCount, &data);
-  if (!Impl::succeeded(hr, error, "Unable to prefill WASAPI buffer")) return false;
+  if (!Impl::succeeded(hr, error, "无法预填充输出缓冲区")) return false;
   const size_t samples =
       static_cast<size_t>(impl_->bufferFrameCount) * static_cast<size_t>(impl_->outputFormat.channelCount);
   std::fill(reinterpret_cast<float*>(data), reinterpret_cast<float*>(data) + samples, 0.0f);
@@ -319,14 +357,15 @@ bool WasapiSharedBackend::start(RenderCallback callback, std::string* error) {
   impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
 
   hr = impl_->audioClient->Start();
-  if (!Impl::succeeded(hr, error, "Unable to start WASAPI stream")) {
+  if (!Impl::succeeded(hr, error, "无法启动共享输出音频流")) {
     impl_->stop();
     return false;
   }
   return true;
 #else
   (void)callback;
-  if (error) *error = "WASAPI is only available in Windows builds with TAE_ENABLE_WASAPI";
+  (void)eventCallback;
+  if (error) *error = "当前构建未启用系统音频输出";
   return false;
 #endif
 }
@@ -341,6 +380,10 @@ void WasapiSharedBackend::close() {
 
 AudioFormat WasapiSharedBackend::outputFormat() const {
   return impl_->outputFormat;
+}
+
+OutputInfo WasapiSharedBackend::outputInfo() const {
+  return impl_->outputInfo;
 }
 
 std::string WasapiSharedBackend::deviceName() const {

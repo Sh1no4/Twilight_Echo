@@ -10,11 +10,17 @@ namespace {
 
 constexpr size_t kDecodeChunkFrames = 2048;
 
+int normalizedBitDepth(int bitDepth) {
+  if (bitDepth <= 0) return 0;
+  if (bitDepth <= 16) return 16;
+  if (bitDepth <= 24) return 24;
+  return 32;
+}
+
 bool samePcmFormat(const AudioFormat& a, const AudioFormat& b) {
   return a.sampleRate == b.sampleRate &&
          a.channelCount == b.channelCount &&
-         a.bitDepth == b.bitDepth &&
-         a.sampleFormat == b.sampleFormat;
+         normalizedBitDepth(a.bitDepth) == normalizedBitDepth(b.bitDepth);
 }
 
 }  // namespace
@@ -42,7 +48,7 @@ TAE_Result AudioPipeline::play(
 
   auto output = createOutputBackend(backendId);
   if (!output) {
-    if (error) *error = "Requested audio output backend is not available: " + backendId;
+    if (error) *error = "请求的音频输出后端不可用：" + backendId;
     return TAE_RESULT_BACKEND_UNAVAILABLE;
   }
 
@@ -52,7 +58,10 @@ TAE_Result AudioPipeline::play(
   }
 
   const AudioFormat outputFormat = output->outputFormat();
-  if (!decoder->setOutputFormat(outputFormat, error)) {
+  AudioFormat decoderOutputFormat = outputFormat;
+  decoderOutputFormat.bitDepth = 32;
+  decoderOutputFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
+  if (!decoder->setOutputFormat(decoderOutputFormat, error)) {
     output->close();
     return TAE_RESULT_INTERNAL_ERROR;
   }
@@ -70,24 +79,39 @@ TAE_Result AudioPipeline::play(
     outputFormat_ = outputFormat;
     backendId_ = backendId == "wasapi-shared" ? "wasapi" : backendId;
     deviceName_ = output_->deviceName();
+    outputInfo_ = output_->outputInfo();
+    outputInfo_.backend = backendId_;
+    outputInfo_.deviceName = deviceName_;
     baseDspActive_ = dspActive;
     dspActive_ = baseDspActive_ || std::abs(volume - 1.0) > 0.0001;
-    const bool sharedWasapi = backendId_ == "wasapi";
-    bitPerfect_ = !dspActive_ && !sharedWasapi && samePcmFormat(stream_.sourceFormat, outputFormat_);
-    resampleReason_ = samePcmFormat(stream_.sourceFormat, outputFormat_)
-                          ? ""
-                          : sharedWasapi ? "shared-output-mix-format" : "output-format-conversion";
+    const bool formatMatched = samePcmFormat(stream_.sourceFormat, outputFormat_);
+    bitPerfect_ = outputInfo_.exclusive && !dspActive_ && formatMatched && !outputInfo_.resampled;
+    outputInfo_.bitPerfect = bitPerfect_;
+    resampleReason_ = outputInfo_.exclusive
+                          ? formatMatched ? "" : "输出格式已转换"
+                          : "共享输出经过系统混音";
     state_ = PipelineState::Playing;
     renderedFrames_ = static_cast<uint64_t>(std::max(0.0, startTimeSeconds) * outputFormat_.sampleRate);
     decodeEof_ = false;
     ended_ = false;
+    deviceInvalidated_ = false;
+    outputEventMessage_.clear();
     volume_ = std::clamp(volume, 0.0, 1.0);
     buffer_.reset(outputFormat_.channelCount, static_cast<size_t>(std::max(outputFormat_.sampleRate * 2, 8192)));
   }
 
   startDecodeThread();
 
-  if (!output_->start([this](float* data, size_t frames) { return render(data, frames); }, error)) {
+  auto eventCallback = [this](OutputBackendEvent event, const std::string& message) {
+    std::lock_guard lock(mutex_);
+    outputEventMessage_ = message;
+    if (event == OutputBackendEvent::DeviceInvalidated) {
+      deviceInvalidated_ = true;
+    }
+    state_ = PipelineState::Stopped;
+  };
+
+  if (!output_->start([this](float* data, size_t frames) { return render(data, frames); }, eventCallback, error)) {
     stop();
     return TAE_RESULT_BACKEND_UNAVAILABLE;
   }
@@ -128,9 +152,12 @@ TAE_Result AudioPipeline::stop() {
     backendId_.clear();
     deviceName_.clear();
     resampleReason_.clear();
+    outputInfo_ = {};
     renderedFrames_ = 0;
     decodeEof_ = false;
     ended_ = false;
+    deviceInvalidated_ = false;
+    outputEventMessage_.clear();
     baseDspActive_ = false;
     dspActive_ = false;
     bitPerfect_ = false;
@@ -166,8 +193,9 @@ void AudioPipeline::setVolume(double volume) {
   volume_ = std::clamp(volume, 0.0, 1.0);
   std::lock_guard lock(mutex_);
   dspActive_ = baseDspActive_ || std::abs(volume_.load() - 1.0) > 0.0001;
-  const bool sharedWasapi = backendId_ == "wasapi";
-  bitPerfect_ = !dspActive_ && !sharedWasapi && samePcmFormat(stream_.sourceFormat, outputFormat_);
+  bitPerfect_ = outputInfo_.exclusive && !dspActive_ && samePcmFormat(stream_.sourceFormat, outputFormat_) &&
+                !outputInfo_.resampled;
+  outputInfo_.bitPerfect = bitPerfect_;
 }
 
 PipelineStatus AudioPipeline::status() const {
@@ -180,6 +208,7 @@ PipelineStatus AudioPipeline::status() const {
           : 0.0;
   status.stream = stream_;
   status.outputFormat = outputFormat_;
+  status.outputInfo = outputInfo_;
   status.backendId = backendId_;
   status.deviceName = deviceName_;
   status.dspActive = dspActive_;
@@ -190,6 +219,14 @@ PipelineStatus AudioPipeline::status() const {
 
 bool AudioPipeline::consumeEnded() {
   return ended_.exchange(false);
+}
+
+bool AudioPipeline::consumeDeviceInvalidated(std::string* message) {
+  if (!deviceInvalidated_.exchange(false)) return false;
+  std::lock_guard lock(mutex_);
+  if (message) *message = outputEventMessage_.empty() ? "输出设备已失效" : outputEventMessage_;
+  outputEventMessage_.clear();
+  return true;
 }
 
 size_t AudioPipeline::getSpectrumData(float* buffer, size_t pointCount) const {

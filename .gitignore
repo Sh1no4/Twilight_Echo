@@ -9,3 +9,6 @@ out
 .claude
 .agents
 audio-engine/build/
+audio-engine/vcpkg_installed/
+resources/audio-engine/*.dll
+resources/audio-engine/*.node

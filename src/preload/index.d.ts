@@ -142,6 +142,16 @@ interface AudioOutputState {
   deviceOptions: AudioDeviceOption[]
 }
 
+interface OutputInfo {
+  exclusive: boolean
+  bitPerfect: boolean
+  resampled: boolean
+  outputSampleRate: number
+  outputBitDepth: number
+  backend: string
+  deviceName: string
+}
+
 interface PlaybackInfo {
   state: 'stopped' | 'playing' | 'paused'
   position: number
@@ -155,6 +165,7 @@ interface PlaybackInfo {
   sourceBitDepth: number
   outputBackend: string
   outputDevice: string
+  outputInfo: OutputInfo
   outputSampleRate: number
   outputBitDepth: number
   channelCount: number

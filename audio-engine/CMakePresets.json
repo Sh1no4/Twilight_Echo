@@ -31,6 +31,34 @@
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
       }
+    },
+    {
+      "name": "windows-mingw-static",
+      "displayName": "Windows MinGW Static FFmpeg",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/mingw-static",
+      "environment": {
+        "TEMP": "D:\\tools\\tmp",
+        "TMP": "D:\\tools\\tmp",
+        "VCPKG_DEFAULT_BINARY_CACHE": "D:\\tools\\vcpkg-bincache"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "$env{W64DEVKIT_ROOT}/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "$env{W64DEVKIT_ROOT}/bin/g++.exe",
+        "CMAKE_MAKE_PROGRAM": "$env{W64DEVKIT_ROOT}/bin/ninja.exe",
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-static",
+        "VCPKG_HOST_TRIPLET": "x64-mingw-static",
+        "VCPKG_BUILD_TYPE": "release",
+        "TAE_BUILD_NAPI": "ON",
+        "TAE_ENABLE_WASAPI": "ON"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
     }
   ],
   "buildPresets": [
@@ -41,12 +69,23 @@
     {
       "name": "windows-msvc",
       "configurePreset": "windows-msvc"
+    },
+    {
+      "name": "windows-mingw-static",
+      "configurePreset": "windows-mingw-static"
     }
   ],
   "testPresets": [
     {
       "name": "default",
       "configurePreset": "default",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "windows-mingw-static",
+      "configurePreset": "windows-mingw-static",
       "output": {
         "outputOnFailure": true
       }

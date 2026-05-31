@@ -27,6 +27,7 @@ struct PipelineStatus {
   double positionSeconds = 0.0;
   AudioStreamInfo stream;
   AudioFormat outputFormat;
+  OutputInfo outputInfo;
   std::string backendId;
   std::string deviceName;
   bool dspActive = false;
@@ -57,6 +58,7 @@ class AudioPipeline {
 
   PipelineStatus status() const;
   bool consumeEnded();
+  bool consumeDeviceInvalidated(std::string* message);
   size_t getSpectrumData(float* buffer, size_t pointCount) const;
 
  private:
@@ -75,9 +77,11 @@ class AudioPipeline {
   std::string backendId_;
   std::string deviceName_;
   std::string resampleReason_;
+  OutputInfo outputInfo_;
   std::atomic<bool> decodeRunning_{false};
   std::atomic<bool> decodeEof_{false};
   std::atomic<bool> ended_{false};
+  std::atomic<bool> deviceInvalidated_{false};
   std::atomic<double> volume_{1.0};
   std::atomic<uint64_t> renderedFrames_{0};
   std::thread decodeThread_;
@@ -85,6 +89,7 @@ class AudioPipeline {
   bool baseDspActive_ = false;
   bool dspActive_ = false;
   bool bitPerfect_ = false;
+  std::string outputEventMessage_;
 };
 
 }  // namespace twilight::audio

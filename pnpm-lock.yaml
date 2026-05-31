@@ -59,6 +59,9 @@ importers:
       eslint-plugin-vue:
         specifier: ^10.6.2
         version: 10.9.0(@typescript-eslint/parser@8.59.1(eslint@9.39.4(jiti@2.6.1))(typescript@5.9.3))(eslint@9.39.4(jiti@2.6.1))(vue-eslint-parser@10.4.0(eslint@9.39.4(jiti@2.6.1)))
+      node-api-headers:
+        specifier: ^1.9.0
+        version: 1.9.0
       prettier:
         specifier: ^3.7.4
         version: 3.8.3
@@ -2296,6 +2299,9 @@ packages:
 
   node-addon-api@1.7.2:
     resolution: {integrity: sha512-ibPK3iA+vaY1eEjESkQkM0BbCqFOaZMiXRTtdB0u7b4djtY6JnsjvPdUHVMg6xQt3B8fpTTWHI9A+ADjM9frzg==}
+
+  node-api-headers@1.9.0:
+    resolution: {integrity: sha512-2oNILP4jXwRB4ywnYKjVk1YyJ96n2D4EOVJO6S3oYZ5PtbJrw3Yt9TpAuX3nBLMuzn74rnfGQrv13pS9vC+YiA==}
 
   node-api-version@0.2.1:
     resolution: {integrity: sha512-2xP/IGGMmmSQpI1+O/k72jF/ykvZ89JeuKX3TLJAYPDVLUalrshrLHkeVcCCZqG/eEa635cr8IBYzgnDvM2O8Q==}
@@ -5537,6 +5543,8 @@ snapshots:
 
   node-addon-api@1.7.2:
     optional: true
+
+  node-api-headers@1.9.0: {}
 
   node-api-version@0.2.1:
     dependencies:

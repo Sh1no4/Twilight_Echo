@@ -34,12 +34,13 @@ struct PlaybackInfo {
   double volume = 1.0;
   int queueIndex = -1;
   std::string source;
-  std::string codec = "unknown";
+  std::string codec = "未知";
   int bitrate = 0;
   int sourceSampleRate = 0;
   int sourceBitDepth = 0;
   std::string outputBackend = "wasapi";
   std::string outputDevice = "auto";
+  OutputInfo outputInfo;
   int outputSampleRate = 0;
   int outputBitDepth = 0;
   int channelCount = 0;

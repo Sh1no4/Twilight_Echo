@@ -55,7 +55,7 @@ std::string escapeJson(const std::string& value) {
 
 std::string inferCodec(const std::string& source) {
   const auto dot = source.find_last_of('.');
-  if (dot == std::string::npos) return "unknown";
+  if (dot == std::string::npos) return "未知";
   std::string ext = source.substr(dot + 1);
   std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) {
     return static_cast<char>(std::tolower(ch));
@@ -81,6 +81,15 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"sourceBitDepth\":" << info.sourceBitDepth << ","
        << "\"outputBackend\":\"" << escapeJson(info.outputBackend) << "\","
        << "\"outputDevice\":\"" << escapeJson(info.outputDevice) << "\","
+       << "\"outputInfo\":{"
+       << "\"exclusive\":" << (info.outputInfo.exclusive ? "true" : "false") << ","
+       << "\"bitPerfect\":" << (info.outputInfo.bitPerfect ? "true" : "false") << ","
+       << "\"resampled\":" << (info.outputInfo.resampled ? "true" : "false") << ","
+       << "\"outputSampleRate\":" << info.outputInfo.outputSampleRate << ","
+       << "\"outputBitDepth\":" << info.outputInfo.outputBitDepth << ","
+       << "\"backend\":\"" << escapeJson(info.outputInfo.backend) << "\","
+       << "\"deviceName\":\"" << escapeJson(info.outputInfo.deviceName) << "\""
+       << "},"
        << "\"outputSampleRate\":" << info.outputSampleRate << ","
        << "\"outputBitDepth\":" << info.outputBitDepth << ","
        << "\"channelCount\":" << info.channelCount << ","
@@ -110,6 +119,9 @@ TwilightAudioEngine::TwilightAudioEngine() {
 #else
   info_.outputBackend = "alsa";
 #endif
+  info_.outputInfo.backend = info_.outputBackend;
+  info_.outputInfo.exclusive = info_.outputBackend == "wasapi-exclusive";
+  info_.resampleReason = info_.outputInfo.exclusive ? "" : "共享输出经过系统混音";
   lastTick_ = std::chrono::steady_clock::now();
   startClock();
 }
@@ -161,7 +173,7 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
       info_.state = PlaybackState::Stopped;
       info_.positionSeconds = 0.0;
     }
-    emitError(error.empty() ? "Unable to start native audio playback" : error);
+    emitError(error.empty() ? "无法启动原生音频播放" : error);
     return result;
   }
 
@@ -206,7 +218,7 @@ TAE_Result TwilightAudioEngine::seek(double positionSeconds) {
   if (pipeline_ && currentState != PlaybackState::Stopped) {
     const TAE_Result result = pipeline_->seek(positionSeconds, &error);
     if (result != TAE_RESULT_OK) {
-      emitError(error.empty() ? "Unable to seek native audio playback" : error);
+      emitError(error.empty() ? "无法跳转原生音频播放位置" : error);
       return result;
     }
   }
@@ -343,13 +355,13 @@ std::string TwilightAudioEngine::enumerateDevicesJson() const {
 
 std::string TwilightAudioEngine::enumerateBackendsJson() const {
 #if defined(_WIN32)
-  return "[{\"id\":\"wasapi\",\"label\":\"WASAPI Shared\",\"supportsExclusive\":false},"
-         "{\"id\":\"wasapi-exclusive\",\"label\":\"WASAPI Exclusive\",\"supportsExclusive\":true},"
-         "{\"id\":\"asio\",\"label\":\"ASIO\",\"supportsExclusive\":true,\"optional\":true}]";
+  return "[{\"id\":\"wasapi\",\"label\":\"共享输出\",\"supportsExclusive\":false},"
+         "{\"id\":\"wasapi-exclusive\",\"label\":\"独占输出\",\"supportsExclusive\":true},"
+         "{\"id\":\"asio\",\"label\":\"专业声卡输出\",\"supportsExclusive\":true,\"optional\":true}]";
 #elif defined(__APPLE__)
-  return "[{\"id\":\"coreaudio\",\"label\":\"CoreAudio\",\"supportsExclusive\":true}]";
+  return "[{\"id\":\"coreaudio\",\"label\":\"苹果系统音频\",\"supportsExclusive\":true}]";
 #else
-  return "[{\"id\":\"alsa\",\"label\":\"ALSA\",\"supportsExclusive\":false}]";
+  return "[{\"id\":\"alsa\",\"label\":\"系统音频\",\"supportsExclusive\":false}]";
 #endif
 }
 
@@ -390,9 +402,48 @@ void TwilightAudioEngine::clockLoop() {
     bool emitEnded = false;
     PipelineStatus pipelineStatus;
     const bool hasPipelineStatus = pipeline_ != nullptr;
+    bool deviceInvalidated = false;
+    std::string deviceInvalidatedMessage;
     if (hasPipelineStatus) {
       pipelineStatus = pipeline_->status();
       emitEnded = pipeline_->consumeEnded();
+      deviceInvalidated = pipeline_->consumeDeviceInvalidated(&deviceInvalidatedMessage);
+    }
+    if (deviceInvalidated) {
+      std::string source;
+      double position = 0.0;
+      PlaybackState previousState = PlaybackState::Stopped;
+      bool recover = false;
+      {
+        std::lock_guard lock(mutex_);
+        previousState = info_.state;
+        if (hasPipelineStatus) {
+          info_.positionSeconds = pipelineStatus.positionSeconds;
+          info_.durationSeconds = pipelineStatus.stream.durationSeconds;
+          info_.source = pipelineStatus.stream.source.empty() ? info_.source : pipelineStatus.stream.source;
+        }
+        source = info_.source;
+        position = info_.positionSeconds;
+        recover = info_.outputDevice == "auto" && !source.empty() && previousState != PlaybackState::Stopped;
+        if (!recover) {
+          info_.state = PlaybackState::Stopped;
+          payload = playbackInfoToJson(info_);
+          emitTick = true;
+        }
+      }
+      if (recover) {
+        const TAE_Result result = play(source, position);
+        if (result == TAE_RESULT_OK && previousState == PlaybackState::Paused) {
+          pause();
+        } else if (result != TAE_RESULT_OK) {
+          emitError(deviceInvalidatedMessage.empty() ? "输出设备已失效，自动恢复失败" : deviceInvalidatedMessage);
+        }
+      } else {
+        if (pipeline_) pipeline_->stop();
+        emitError(deviceInvalidatedMessage.empty() ? "输出设备已失效" : deviceInvalidatedMessage);
+        if (emitTick) emit("property-change", payload);
+      }
+      continue;
     }
     {
       std::lock_guard lock(mutex_);
@@ -452,6 +503,10 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   (void)status.deviceName;
   info_.outputSampleRate = status.outputFormat.sampleRate;
   info_.outputBitDepth = status.outputFormat.bitDepth;
+  info_.outputInfo = status.outputInfo;
+  info_.outputInfo.bitPerfect = status.bitPerfect;
+  if (info_.outputInfo.backend.empty()) info_.outputInfo.backend = info_.outputBackend;
+  if (info_.outputInfo.deviceName.empty()) info_.outputInfo.deviceName = status.deviceName;
   info_.channelCount = status.outputFormat.channelCount;
   info_.bitPerfect = status.bitPerfect;
   info_.dspActive = status.dspActive;
@@ -461,9 +516,15 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
 
 void TwilightAudioEngine::updateBitPerfectLocked() {
   info_.dspActive = containsEnabledDsp(dspConfigJson_) || std::abs(info_.volume - 1.0) > 0.0001;
-  const bool shared = info_.outputBackend == "wasapi" || info_.outputBackend == "wasapi-shared";
-  info_.bitPerfect = !info_.dspActive && !shared;
-  info_.resampleReason = shared ? "shared-output-mix-format" : "";
+  const bool exclusive = info_.outputBackend == "wasapi-exclusive";
+  info_.outputInfo.exclusive = exclusive;
+  info_.outputInfo.backend = info_.outputBackend;
+  info_.outputInfo.outputSampleRate = info_.outputSampleRate;
+  info_.outputInfo.outputBitDepth = info_.outputBitDepth;
+  info_.bitPerfect = !info_.dspActive && exclusive;
+  info_.outputInfo.bitPerfect = info_.bitPerfect;
+  info_.outputInfo.resampled = false;
+  info_.resampleReason = exclusive ? "" : "共享输出经过系统混音";
 }
 
 QueueItem TwilightAudioEngine::currentItemLocked() const {

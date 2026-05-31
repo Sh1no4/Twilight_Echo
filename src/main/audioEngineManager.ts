@@ -93,6 +93,7 @@ export interface PlaybackInfo {
   sourceBitDepth: number
   outputBackend: string
   outputDevice: string
+  outputInfo: OutputInfo
   outputSampleRate: number
   outputBitDepth: number
   channelCount: number
@@ -100,6 +101,16 @@ export interface PlaybackInfo {
   dspActive: boolean
   resampleReason: string
   dsdMode: string
+}
+
+export interface OutputInfo {
+  exclusive: boolean
+  bitPerfect: boolean
+  resampled: boolean
+  outputSampleRate: number
+  outputBitDepth: number
+  backend: string
+  deviceName: string
 }
 
 export interface AudioEnginePlayResult {
@@ -127,29 +138,29 @@ interface NativeAudioBinding {
 const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
   {
     id: 'wasapi',
-    label: 'WASAPI',
-    description: 'Windows 原生输出。当前可用共享模式；开启独占模式后使用 WASAPI Exclusive。',
+    label: '系统音频输出',
+    description: '系统原生输出。关闭独占时使用共享模式，开启独占时直接访问设备。',
     platform: 'win32',
     supportsExclusive: true
   },
   {
     id: 'asio',
-    label: 'ASIO',
-    description: '专业声卡驱动输出；配置 ASIO SDK 后编译启用。',
+    label: '专业声卡输出',
+    description: '专业声卡驱动输出；配置声卡开发包后编译启用。',
     platform: 'win32',
     supportsExclusive: true
   },
   {
     id: 'coreaudio',
-    label: 'CoreAudio',
-    description: 'macOS 原生音频输出后端。',
+    label: '苹果系统音频',
+    description: '苹果系统原生音频输出后端。',
     platform: 'darwin',
     supportsExclusive: true
   },
   {
     id: 'alsa',
-    label: 'ALSA',
-    description: 'Linux 原生音频输出后端。',
+    label: '系统音频输出',
+    description: '系统原生音频输出后端。',
     platform: 'linux',
     supportsExclusive: false
   }
@@ -281,8 +292,10 @@ function getNativeAddonCandidates(): string[] {
     join(process.resourcesPath ?? '', 'audio-engine', binary),
     join(app.getAppPath(), 'resources', 'audio-engine', binary),
     join(app.getAppPath(), 'audio-engine', 'build', 'default', binary),
+    join(app.getAppPath(), 'audio-engine', 'build', 'mingw-static', binary),
     join(app.getAppPath(), 'audio-engine', 'build', 'windows-msvc', binary),
     join(app.getAppPath(), '..', 'audio-engine', 'build', 'default', binary),
+    join(app.getAppPath(), '..', 'audio-engine', 'build', 'mingw-static', binary),
     join(app.getAppPath(), '..', 'audio-engine', 'build', 'windows-msvc', binary)
   ]
 }
@@ -295,13 +308,23 @@ function loadNativeBinding(): NativeAudioBinding | null {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       return require(candidate) as NativeAudioBinding
     } catch (err) {
-      console.warn('[audio-engine] failed to load native addon:', candidate, err)
+      console.warn('原生音频模块加载失败：', candidate, err)
     }
   }
   return null
 }
 
 function createDefaultPlaybackInfo(output: AudioOutputId, device: string): PlaybackInfo {
+  const exclusive = output !== 'wasapi'
+  const outputInfo: OutputInfo = {
+    exclusive,
+    bitPerfect: exclusive,
+    resampled: false,
+    outputSampleRate: 0,
+    outputBitDepth: 0,
+    backend: output,
+    deviceName: device
+  }
   return {
     state: 'stopped',
     position: 0,
@@ -309,25 +332,26 @@ function createDefaultPlaybackInfo(output: AudioOutputId, device: string): Playb
     volume: 1,
     queueIndex: -1,
     source: '',
-    codec: 'unknown',
+    codec: '未知',
     bitrate: 0,
     sourceSampleRate: 0,
     sourceBitDepth: 0,
     outputBackend: output,
     outputDevice: device,
+    outputInfo,
     outputSampleRate: 0,
     outputBitDepth: 0,
     channelCount: 0,
-    bitPerfect: output !== 'wasapi',
+    bitPerfect: exclusive,
     dspActive: false,
-    resampleReason: output === 'wasapi' ? 'shared-output-mix-format' : '',
+    resampleReason: output === 'wasapi' ? '共享输出经过系统混音' : '',
     dsdMode: 'unsupported'
   }
 }
 
 function inferCodec(source: string): string {
   const ext = source.split('.').pop()?.toLowerCase()
-  if (!ext) return 'unknown'
+  if (!ext) return '未知'
   if (ext === 'm4a' || ext === 'mp4') return 'aac/alac'
   if (ext === 'aif' || ext === 'aiff') return 'aiff'
   if (ext === 'dsf' || ext === 'dff') return 'dsd'
@@ -345,6 +369,7 @@ export class AudioEngineManager extends EventEmitter {
   private timer: NodeJS.Timeout | null = null
   private lastTick = Date.now()
   private destroyed = false
+  private nativePlaybackActive = false
 
   constructor(config: AudioEngineConfig = { exclusiveMode: false }) {
     super()
@@ -370,6 +395,8 @@ export class AudioEngineManager extends EventEmitter {
     const current = this.queue[this.playbackInfo.queueIndex]
     const duration = current?.source === source ? current.duration ?? 0 : 0
     const nativeStarted = this.tryNative('播放', (native) => native.Play(source, startTime))
+    this.nativePlaybackActive = nativeStarted
+    const nativeInfo = nativeStarted ? this.readNativePlaybackInfo() : null
     this.playbackInfo = {
       ...this.playbackInfo,
       state: 'playing',
@@ -377,7 +404,8 @@ export class AudioEngineManager extends EventEmitter {
       duration,
       source,
       codec: inferCodec(source),
-      dsdMode: /\.(dsf|dff)$/i.test(source) ? 'native-pending' : 'pcm'
+      dsdMode: /\.(dsf|dff)$/i.test(source) ? 'native-pending' : 'pcm',
+      ...nativeInfo
     }
     this.lastTick = Date.now()
     this.emit('start-file')
@@ -418,6 +446,7 @@ export class AudioEngineManager extends EventEmitter {
 
   async stop(): Promise<void> {
     this.tryNative('停止', (native) => native.Stop())
+    this.nativePlaybackActive = false
     this.playbackInfo.state = 'stopped'
     this.playbackInfo.position = 0
     this.publishProperty('pause', true)
@@ -519,13 +548,13 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async getPlaybackInfo(): Promise<PlaybackInfo> {
-    let nativeInfo = this.playbackInfo
-    try {
-      nativeInfo = parseNativeJson(this.native?.GetPlaybackInfo?.(), this.playbackInfo)
-    } catch {
-      nativeInfo = this.playbackInfo
+    if (this.nativePlaybackActive) {
+      const nativeInfo = this.readNativePlaybackInfo()
+      if (nativeInfo) {
+        this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+      }
     }
-    return { ...this.playbackInfo, ...nativeInfo }
+    return { ...this.playbackInfo }
   }
 
   getSpectrumData(points = 64): number[] {
@@ -543,6 +572,7 @@ export class AudioEngineManager extends EventEmitter {
 
   destroy(): void {
     this.destroyed = true
+    this.nativePlaybackActive = false
     if (this.timer) {
       clearInterval(this.timer)
       this.timer = null
@@ -556,8 +586,38 @@ export class AudioEngineManager extends EventEmitter {
     this.timer = setInterval(() => this.tick(), 250)
   }
 
+  private readNativePlaybackInfo(): PlaybackInfo | null {
+    try {
+      return parseNativeJson(this.native?.GetPlaybackInfo?.(), null as PlaybackInfo | null)
+    } catch {
+      return null
+    }
+  }
+
   private tick(): void {
-    if (this.destroyed || this.playbackInfo.state !== 'playing') return
+    if (this.destroyed) return
+
+    if (this.nativePlaybackActive) {
+      const wasPlaying = this.playbackInfo.state === 'playing'
+      const nativeInfo = this.readNativePlaybackInfo()
+      if (nativeInfo) {
+        this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+        this.lastTick = Date.now()
+        this.publishProperty('time-pos', this.playbackInfo.position)
+        if (this.playbackInfo.duration > 0) {
+          this.publishProperty('duration', this.playbackInfo.duration)
+        }
+        this.publishPlaybackInfo()
+        if (wasPlaying && nativeInfo.state === 'stopped') {
+          this.nativePlaybackActive = false
+          this.publishProperty('eof-reached', true)
+          this.emit('end-file', { reason: 'eof' })
+        }
+      }
+      return
+    }
+
+    if (this.playbackInfo.state !== 'playing') return
     const now = Date.now()
     const elapsed = (now - this.lastTick) / 1000
     this.lastTick = now
@@ -603,7 +663,7 @@ export class AudioEngineManager extends EventEmitter {
       return true
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      console.warn(`[audio-engine] 原生引擎${context}失败，使用 Electron 临时播放通道:`, message)
+      console.warn(`原生音频引擎${context}失败，使用临时播放通道：`, message)
       return false
     }
   }
@@ -617,7 +677,17 @@ export class AudioEngineManager extends EventEmitter {
     const shared = this.output === 'wasapi' && !this.exclusiveMode
     this.playbackInfo.dspActive = dspActive
     this.playbackInfo.bitPerfect = !dspActive && !shared
-    this.playbackInfo.resampleReason = shared ? 'shared-output-mix-format' : ''
+    this.playbackInfo.outputInfo = {
+      ...this.playbackInfo.outputInfo,
+      exclusive: !shared,
+      bitPerfect: this.playbackInfo.bitPerfect,
+      resampled: this.nativePlaybackActive ? this.playbackInfo.outputInfo.resampled : false,
+      outputSampleRate: this.playbackInfo.outputSampleRate,
+      outputBitDepth: this.playbackInfo.outputBitDepth,
+      backend: this.playbackInfo.outputBackend,
+      deviceName: this.playbackInfo.outputInfo.deviceName || this.playbackInfo.outputDevice
+    }
+    this.playbackInfo.resampleReason = shared ? '共享输出经过系统混音' : ''
   }
 
   private publishProperty(name: string, data: unknown): void {
