@@ -170,6 +170,7 @@ interface AppSettings {
   audioOutput: AudioOutputId
   audioDevice: string
   audioExclusiveMode: boolean
+  audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
 }
@@ -254,6 +255,7 @@ interface OutputInfo {
   supportsBitPerfect: boolean
   bitPerfect: boolean
   resampled: boolean
+  resampleReason: string
   outputSampleRate: number
   outputBitDepth: number
   backend: string
@@ -443,7 +445,8 @@ const api = {
       ipcRenderer.invoke('audioEngine:play', filePath, startTime),
     togglePause: (): Promise<void> => ipcRenderer.invoke('audioEngine:togglePause'),
     seek: (time: number): Promise<void> => ipcRenderer.invoke('audioEngine:seek', time),
-    setVolume: (volume: number): Promise<void> => ipcRenderer.invoke('audioEngine:setVolume', volume),
+    setVolume: (volume: number): Promise<void> =>
+      ipcRenderer.invoke('audioEngine:setVolume', volume),
     stop: (): Promise<void> => ipcRenderer.invoke('audioEngine:stop'),
     next: (): Promise<void> => ipcRenderer.invoke('audioEngine:next'),
     previous: (): Promise<void> => ipcRenderer.invoke('audioEngine:previous'),
@@ -458,7 +461,7 @@ const api = {
       ipcRenderer.invoke('audioEngine:setAudioOutput', output, device),
     setAudioDevice: (device: string): Promise<AudioOutputState> =>
       ipcRenderer.invoke('audioEngine:setAudioDevice', device),
-    setOutputConfig: (config: OutputConfig): Promise<void> =>
+    setOutputConfig: (config: OutputConfig): Promise<OutputConfig> =>
       ipcRenderer.invoke('audioEngine:setOutputConfig', config),
     getAudioOutput: (): Promise<AudioOutputId> => ipcRenderer.invoke('audioEngine:getAudioOutput'),
     getAudioOutputOptions: (): Promise<AudioOutputOption[]> =>
@@ -467,9 +470,12 @@ const api = {
       ipcRenderer.invoke('audioEngine:getAudioOutputState'),
     setAudioProcessing: (
       settings: Partial<AudioProcessingSettings>
-    ): Promise<AudioProcessingSettings> => ipcRenderer.invoke('audioEngine:setAudioProcessing', settings),
+    ): Promise<AudioProcessingSettings> =>
+      ipcRenderer.invoke('audioEngine:setAudioProcessing', settings),
     getAudioProcessing: (): Promise<AudioProcessingSettings> =>
       ipcRenderer.invoke('audioEngine:getAudioProcessing'),
+    selectImpulseResponse: (): Promise<string | null> =>
+      ipcRenderer.invoke('audioEngine:selectImpulseResponse'),
     loadImpulseResponse: (path: string): Promise<ConvolverInfo> =>
       ipcRenderer.invoke('audioEngine:loadImpulseResponse', path),
     unloadImpulseResponse: (): Promise<ConvolverInfo> =>
@@ -592,4 +598,3 @@ if (process.contextIsolated) {
   // @ts-ignore (define in dts)
   window.api = api
 }
-

@@ -115,6 +115,7 @@ export interface AudioEngineConfig {
   exclusiveMode: boolean
   audioOutput?: AudioOutputId
   audioDevice?: string
+  audioOutputConfig?: Partial<OutputConfig>
   audioProcessing?: Partial<AudioProcessingSettings>
 }
 
@@ -190,6 +191,7 @@ export interface OutputInfo {
   supportsBitPerfect: boolean
   bitPerfect: boolean
   resampled: boolean
+  resampleReason: string
   outputSampleRate: number
   outputBitDepth: number
   backend: string
@@ -238,7 +240,12 @@ interface NativeAudioBinding {
   SetEqBands?: (json: string) => void
   SetEqPreset?: (json: string) => void
   SetCrossfeedStrength?: (strength: number) => void
-  SetReplayGainMode?: (mode: VolumeNormalizationMode, preamp: number, fallback: number, clip: boolean) => void
+  SetReplayGainMode?: (
+    mode: VolumeNormalizationMode,
+    preamp: number,
+    fallback: number,
+    clip: boolean
+  ) => void
   GetMetadata?: (source: string) => string | NativeAudioMetadata
   GetPlaybackInfo?: () => string | PlaybackInfo
   GetUpcomingTrack?: () => string | AudioEngineQueueItem | null
@@ -309,7 +316,7 @@ const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
     label: '苹果系统音频',
     description: '苹果系统原生音频输出后端。',
     platform: 'darwin',
-    supportsExclusive: true
+    supportsExclusive: false
   },
   {
     id: 'alsa',
@@ -351,6 +358,11 @@ export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
   crossfadeSeconds: 0
 }
 
+const DEFAULT_OUTPUT_CONFIG: OutputConfig = {
+  preferredBufferSize: 0,
+  routingMode: 'auto'
+}
+
 function isAudioOutputId(output: unknown): output is AudioOutputId {
   return output === 'wasapi' || output === 'asio' || output === 'coreaudio' || output === 'alsa'
 }
@@ -380,6 +392,25 @@ function supportsAudioExclusive(output: AudioOutputId): boolean {
 
 function normalizeAudioDevice(device: unknown): string {
   return typeof device === 'string' && device.trim() ? device.trim() : 'auto'
+}
+
+function normalizeChannelRoutingMode(value: unknown): ChannelRoutingMode {
+  return value === 'stereo' ||
+    value === 'stereo-to-5.1' ||
+    value === 'stereo-to-7.1' ||
+    value === 'mono-to-stereo' ||
+    value === 'mono-to-multichannel'
+    ? value
+    : 'auto'
+}
+
+function normalizeOutputConfig(config?: Partial<OutputConfig>): OutputConfig {
+  return {
+    preferredBufferSize: Number.isFinite(config?.preferredBufferSize)
+      ? clampNumber(Math.trunc(config?.preferredBufferSize ?? 0), 0, 8192, 0)
+      : DEFAULT_OUTPUT_CONFIG.preferredBufferSize,
+    routingMode: normalizeChannelRoutingMode(config?.routingMode)
+  }
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
@@ -482,8 +513,23 @@ function loadNativeBinding(): NativeAudioBinding | null {
   return null
 }
 
-function createDefaultPlaybackInfo(output: AudioOutputId, device: string): PlaybackInfo {
-  const exclusive = output !== 'wasapi'
+function createDefaultPlaybackInfo(
+  output: AudioOutputId,
+  device: string,
+  exclusiveMode: boolean,
+  outputConfig: OutputConfig
+): PlaybackInfo {
+  const exclusive = output === 'wasapi' ? exclusiveMode : output === 'asio'
+  const supportsBitPerfect = output === 'asio' || (output === 'wasapi' && exclusiveMode)
+  const resampleReason = supportsBitPerfect
+    ? ''
+    : output === 'wasapi'
+      ? '共享输出经过系统混音'
+      : output === 'coreaudio'
+        ? 'CoreAudio 默认输出可能经过系统混音或格式转换'
+        : output === 'alsa'
+          ? 'ALSA 当前设备未声明 hw 直连 bit-perfect 能力'
+          : '当前输出路径未声明 bit-perfect 能力'
   const latencyInfo: LatencyInfo = {
     bufferLatencyMs: 0,
     outputLatencyMs: 0,
@@ -502,9 +548,10 @@ function createDefaultPlaybackInfo(output: AudioOutputId, device: string): Playb
   }
   const outputInfo: OutputInfo = {
     exclusive,
-    supportsBitPerfect: exclusive,
-    bitPerfect: exclusive,
+    supportsBitPerfect,
+    bitPerfect: false,
     resampled: false,
+    resampleReason,
     outputSampleRate: 0,
     outputBitDepth: 0,
     backend: output,
@@ -523,7 +570,7 @@ function createDefaultPlaybackInfo(output: AudioOutputId, device: string): Playb
     latencyFrames: 0,
     latencyMs: 0,
     latencyInfo,
-    channelRoutingMode: 'auto',
+    channelRoutingMode: outputConfig.routingMode,
     diagnostics,
     deviceRecovered: false,
     recoveryCount: 0
@@ -554,15 +601,15 @@ function createDefaultPlaybackInfo(output: AudioOutputId, device: string): Playb
     latencyFrames: 0,
     latencyMs: 0,
     latencyInfo,
-    channelRoutingMode: 'auto',
-    supportsBitPerfect: exclusive,
+    channelRoutingMode: outputConfig.routingMode,
+    supportsBitPerfect,
     diagnostics,
     deviceRecovered: false,
     recoveryCount: 0,
     outputSampleRate: 0,
     outputBitDepth: 0,
     channelCount: 0,
-    bitPerfect: exclusive,
+    bitPerfect: false,
     dspActive: false,
     replayGainActive: false,
     eqActive: false,
@@ -575,7 +622,7 @@ function createDefaultPlaybackInfo(output: AudioOutputId, device: string): Playb
     convolverLatencyFrames: 0,
     partitionSize: 0,
     channelMappingMode: '',
-    resampleReason: output === 'wasapi' ? '共享输出经过系统混音' : '',
+    resampleReason,
     dsdMode: 'unsupported',
     gaplessActive: false,
     preloadReady: false,
@@ -597,6 +644,7 @@ export class AudioEngineManager extends EventEmitter {
   private output: AudioOutputId
   private device: string
   private exclusiveMode: boolean
+  private outputConfig: OutputConfig
   private processing: AudioProcessingSettings
   private queue: AudioEngineQueueItem[] = []
   private playbackInfo: PlaybackInfo
@@ -610,9 +658,15 @@ export class AudioEngineManager extends EventEmitter {
     this.output = normalizeAudioOutput(config.audioOutput)
     this.device = normalizeAudioDevice(config.audioDevice)
     this.exclusiveMode = config.exclusiveMode && supportsAudioExclusive(this.output)
+    this.outputConfig = normalizeOutputConfig(config.audioOutputConfig)
     this.processing = normalizeAudioProcessingSettings(config.audioProcessing)
-    this.playbackInfo = createDefaultPlaybackInfo(this.output, this.device)
-    this.playbackInfo.outputBackend = this.getNativeBackendId()
+    this.playbackInfo = createDefaultPlaybackInfo(
+      this.output,
+      this.device,
+      this.exclusiveMode,
+      this.outputConfig
+    )
+    this.resetOutputInfoDefaults()
     this.updateBitPerfect()
   }
 
@@ -628,7 +682,7 @@ export class AudioEngineManager extends EventEmitter {
   async play(source: string, startTime = 0): Promise<AudioEnginePlayResult> {
     if (!source) throw new Error('音频地址为空')
     const current = this.queue[this.playbackInfo.queueIndex]
-    const duration = current?.source === source ? current.duration ?? 0 : 0
+    const duration = current?.source === source ? (current.duration ?? 0) : 0
     const nativeStarted = this.tryNative('播放', (native) => native.Play(source, startTime))
     this.nativePlaybackActive = nativeStarted
     const nativeInfo = nativeStarted ? this.readNativePlaybackInfo() : null
@@ -691,7 +745,8 @@ export class AudioEngineManager extends EventEmitter {
 
   async loadQueue(items: AudioEngineQueueItem[], startIndex = 0): Promise<void> {
     this.queue = [...items]
-    this.playbackInfo.queueIndex = this.queue.length > 0 ? Math.min(Math.max(0, startIndex), this.queue.length - 1) : -1
+    this.playbackInfo.queueIndex =
+      this.queue.length > 0 ? Math.min(Math.max(0, startIndex), this.queue.length - 1) : -1
     this.tryNative('加载队列', (native) =>
       native.LoadQueue?.(JSON.stringify(this.queue), this.playbackInfo.queueIndex)
     )
@@ -700,7 +755,11 @@ export class AudioEngineManager extends EventEmitter {
 
   async next(): Promise<void> {
     if (this.queue.length === 0) return
-    if (this.nativePlaybackActive && this.native?.Next && this.tryNative('下一首', (native) => native.Next?.())) {
+    if (
+      this.nativePlaybackActive &&
+      this.native?.Next &&
+      this.tryNative('下一首', (native) => native.Next?.())
+    ) {
       const nativeInfo = this.readNativePlaybackInfo()
       if (nativeInfo) {
         this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
@@ -717,7 +776,11 @@ export class AudioEngineManager extends EventEmitter {
 
   async previous(): Promise<void> {
     if (this.queue.length === 0) return
-    if (this.nativePlaybackActive && this.native?.Previous && this.tryNative('上一首', (native) => native.Previous?.())) {
+    if (
+      this.nativePlaybackActive &&
+      this.native?.Previous &&
+      this.tryNative('上一首', (native) => native.Previous?.())
+    ) {
       const nativeInfo = this.readNativePlaybackInfo()
       if (nativeInfo) {
         this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
@@ -740,7 +803,7 @@ export class AudioEngineManager extends EventEmitter {
     this.exclusiveMode = enabled
     this.tryNative('切换独占模式', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.applyNativeOutputConfig('切换输出配置')
-    this.playbackInfo.outputBackend = this.getNativeBackendId()
+    this.resetOutputInfoDefaults()
     this.updateBitPerfect()
     return await this.getAudioOutputState()
   }
@@ -756,8 +819,7 @@ export class AudioEngineManager extends EventEmitter {
     this.tryNative('切换输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
     this.applyNativeOutputConfig('切换输出配置')
-    this.playbackInfo.outputBackend = this.getNativeBackendId()
-    this.playbackInfo.outputDevice = this.device
+    this.resetOutputInfoDefaults()
     this.updateBitPerfect()
     return await this.getAudioOutputState()
   }
@@ -766,19 +828,17 @@ export class AudioEngineManager extends EventEmitter {
     this.device = normalizeAudioDevice(device)
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
     this.playbackInfo.outputDevice = this.device
+    this.playbackInfo.outputInfo.deviceName = this.device
+    this.playbackInfo.outputInfo.actualDeviceName = this.device
     return await this.getAudioOutputState()
   }
 
   async setOutputConfig(config: Partial<OutputConfig>): Promise<void> {
-    const normalized: OutputConfig = {
-      preferredBufferSize: Number.isFinite(config.preferredBufferSize)
-        ? Math.max(0, Math.trunc(config.preferredBufferSize ?? 0))
-        : 0,
-      routingMode: config.routingMode ?? 'auto'
-    }
-    this.tryNative('设置输出配置', (native) => native.SetOutputConfig?.(JSON.stringify(normalized)))
-    this.playbackInfo.outputInfo.channelRoutingMode = normalized.routingMode
-    this.playbackInfo.channelRoutingMode = normalized.routingMode
+    this.outputConfig = normalizeOutputConfig(config)
+    this.applyNativeOutputConfig('设置输出配置')
+    this.playbackInfo.outputInfo.channelRoutingMode = this.outputConfig.routingMode
+    this.playbackInfo.channelRoutingMode = this.outputConfig.routingMode
+    this.updateBitPerfect()
     this.publishPlaybackInfo()
   }
 
@@ -865,8 +925,14 @@ export class AudioEngineManager extends EventEmitter {
     eqPreamp: number
     eqBands: EqualizerBand[]
   }): Promise<AudioProcessingSettings> {
-    this.processing = normalizeAudioProcessingSettings({ ...this.processing, ...preset, eqEnabled: true })
-    this.tryNative('应用均衡器预设', (native) => native.SetEqPreset?.(JSON.stringify(this.processing)))
+    this.processing = normalizeAudioProcessingSettings({
+      ...this.processing,
+      ...preset,
+      eqEnabled: true
+    })
+    this.tryNative('应用均衡器预设', (native) =>
+      native.SetEqPreset?.(JSON.stringify(this.processing))
+    )
     this.updateNativeInfoSnapshot()
     return this.processing
   }
@@ -970,9 +1036,24 @@ export class AudioEngineManager extends EventEmitter {
 
   private readNativePlaybackInfo(): PlaybackInfo | null {
     try {
-      return parseNativeJson(this.native?.GetPlaybackInfo?.(), null as PlaybackInfo | null)
+      const info = parseNativeJson(this.native?.GetPlaybackInfo?.(), null as PlaybackInfo | null)
+      return info ? this.normalizePlaybackInfo(info) : null
     } catch {
       return null
+    }
+  }
+
+  private normalizePlaybackInfo(info: PlaybackInfo): PlaybackInfo {
+    const outputInfo: OutputInfo = {
+      ...this.playbackInfo.outputInfo,
+      ...info.outputInfo
+    }
+    const resampleReason = outputInfo.resampleReason || info.resampleReason || ''
+    outputInfo.resampleReason = resampleReason
+    return {
+      ...info,
+      outputInfo,
+      resampleReason
     }
   }
 
@@ -1045,13 +1126,27 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   private applyNativeOutputConfig(context: string): void {
-    const config: OutputConfig = {
-      preferredBufferSize: 0,
-      routingMode: 'auto'
-    }
     this.tryNative(context, (native) => {
-      native.SetOutputConfig?.(JSON.stringify(config))
+      native.SetOutputConfig?.(JSON.stringify(this.outputConfig))
     })
+  }
+
+  private resetOutputInfoDefaults(): void {
+    const fallback = createDefaultPlaybackInfo(
+      this.output,
+      this.device,
+      this.exclusiveMode,
+      this.outputConfig
+    )
+    this.playbackInfo.outputBackend = this.getNativeBackendId()
+    this.playbackInfo.outputDevice = this.device
+    this.playbackInfo.actualBackend = this.getNativeBackendId()
+    this.playbackInfo.outputInfo = {
+      ...fallback.outputInfo,
+      backend: this.getNativeBackendId(),
+      actualBackend: this.getNativeBackendId()
+    }
+    this.playbackInfo.resampleReason = this.playbackInfo.outputInfo.resampleReason
   }
 
   private updateNativeInfoSnapshot(): void {
@@ -1098,15 +1193,15 @@ export class AudioEngineManager extends EventEmitter {
         this.processing.crossfeedStrength > 0) ||
       (this.processing.dspEnabled && Math.abs(this.processing.eqPreamp) > 0.001) ||
       Math.abs(this.playbackInfo.volume - 1) > 0.001
-    const replayGainActive = this.processing.dspEnabled && this.processing.volumeNormalization !== 'off'
+    const replayGainActive =
+      this.processing.dspEnabled && this.processing.volumeNormalization !== 'off'
     const eqActive = this.processing.dspEnabled && this.processing.eqEnabled
-    const convolverActive =
-      this.processing.dspEnabled && this.playbackInfo.convolverActive
+    const convolverActive = this.processing.dspEnabled && this.playbackInfo.convolverActive
     const crossfeedActive =
       this.processing.dspEnabled &&
       this.processing.crossfeedEnabled &&
       this.processing.crossfeedStrength > 0
-    const supportsBitPerfect = this.playbackInfo.outputInfo.supportsBitPerfect ?? !(this.output === 'wasapi' && !this.exclusiveMode)
+    const supportsBitPerfect = this.playbackInfo.outputInfo.supportsBitPerfect === true
     const outputFormatMatchesSource =
       this.playbackInfo.sourceSampleRate > 0 &&
       this.playbackInfo.outputSampleRate > 0 &&
@@ -1114,29 +1209,37 @@ export class AudioEngineManager extends EventEmitter {
       this.playbackInfo.sourceBitDepth > 0 &&
       this.playbackInfo.outputBitDepth > 0 &&
       this.playbackInfo.sourceBitDepth === this.playbackInfo.outputBitDepth
-    const noResample = !(this.nativePlaybackActive && this.playbackInfo.outputInfo.resampled)
+    const noResample = !this.playbackInfo.outputInfo.resampled
     const shared = this.output === 'wasapi' && !this.exclusiveMode
+    const resampleReason =
+      this.playbackInfo.outputInfo.resampleReason || (shared ? '共享输出经过系统混音' : '')
     this.playbackInfo.replayGainActive = replayGainActive
     this.playbackInfo.eqActive = eqActive
     this.playbackInfo.convolverActive = convolverActive
     this.playbackInfo.crossfeedActive = crossfeedActive
     this.playbackInfo.crossfeedStrength = crossfeedActive ? this.processing.crossfeedStrength : 0
     this.playbackInfo.dspActive = dspActive
-    this.playbackInfo.bitPerfect = supportsBitPerfect && !dspActive && noResample && outputFormatMatchesSource
+    this.playbackInfo.bitPerfect =
+      supportsBitPerfect && !dspActive && noResample && outputFormatMatchesSource
     this.playbackInfo.outputInfo = {
       ...this.playbackInfo.outputInfo,
-      exclusive: !shared,
+      exclusive:
+        this.output === 'wasapi' ? this.exclusiveMode : this.playbackInfo.outputInfo.exclusive,
       supportsBitPerfect,
       bitPerfect: this.playbackInfo.bitPerfect,
       resampled: this.nativePlaybackActive ? this.playbackInfo.outputInfo.resampled : false,
+      resampleReason,
       outputSampleRate: this.playbackInfo.outputSampleRate,
       outputBitDepth: this.playbackInfo.outputBitDepth,
       backend: this.playbackInfo.outputBackend,
       actualBackend: this.playbackInfo.actualBackend || this.playbackInfo.outputBackend,
       deviceName: this.playbackInfo.outputInfo.deviceName || this.playbackInfo.outputDevice,
-      actualDeviceName: this.playbackInfo.outputInfo.actualDeviceName || this.playbackInfo.outputInfo.deviceName || this.playbackInfo.outputDevice
+      actualDeviceName:
+        this.playbackInfo.outputInfo.actualDeviceName ||
+        this.playbackInfo.outputInfo.deviceName ||
+        this.playbackInfo.outputDevice
     }
-    this.playbackInfo.resampleReason = shared ? '共享输出经过系统混音' : ''
+    this.playbackInfo.resampleReason = resampleReason
   }
 
   private publishProperty(name: string, data: unknown): void {

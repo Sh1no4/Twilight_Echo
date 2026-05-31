@@ -2,7 +2,15 @@
 import { computed, onMounted, ref } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
-import type { AppSettings, AppTheme, AudioOutputId, PlaybackResumeMode } from '../types/settings'
+import type {
+  AppSettings,
+  AppTheme,
+  AudioOutputId,
+  AudioProcessingSettings,
+  ChannelRoutingMode,
+  PlaybackResumeMode,
+  VolumeNormalizationMode
+} from '../types/settings'
 
 defineEmits<{
   back: []
@@ -32,6 +40,63 @@ const playbackResumeOptions: {
   { value: 'track', label: '记住曲目', description: '只恢复上次曲目' },
   { value: 'trackAndPosition', label: '曲目和位置', description: '恢复曲目与进度' }
 ]
+
+const bufferSizeOptions = [
+  { value: 0, label: 'Auto', help: '由后端和设备协商，通常最稳。' },
+  { value: 64, label: '64', help: '低延迟，适合实时监听；更容易受设备和系统负载影响。' },
+  { value: 128, label: '128', help: '低延迟与稳定性的折中。' },
+  { value: 256, label: '256', help: '推荐日常值，兼顾响应和稳定。' },
+  { value: 512, label: '512', help: '更稳，适合普通播放。' },
+  { value: 1024, label: '1024', help: '高稳定，切歌和操作响应会略慢。' },
+  { value: 2048, label: '2048', help: '最大稳定优先，适合设备容易 underrun 的场景。' }
+] as const
+
+const routingModeOptions: { value: ChannelRoutingMode; label: string; help: string }[] = [
+  { value: 'auto', label: 'Auto', help: '按源文件与设备自动选择声道布局。' },
+  { value: 'stereo', label: 'Stereo', help: '强制立体声输出，最适合耳机和双声道音箱。' },
+  { value: 'stereo-to-5.1', label: 'Stereo -> 5.1', help: '把双声道扩展到 5.1 布局。' },
+  { value: 'stereo-to-7.1', label: 'Stereo -> 7.1', help: '把双声道扩展到 7.1 布局。' },
+  { value: 'mono-to-stereo', label: 'Mono -> Stereo', help: '单声道复制到左右声道。' },
+  { value: 'mono-to-multichannel', label: 'Mono -> Multichannel', help: '单声道扩展到多声道设备。' }
+]
+
+const replayGainOptions: { value: VolumeNormalizationMode; label: string; help: string }[] = [
+  { value: 'off', label: 'Off', help: '不做响度归一化，保留原始音量。' },
+  { value: 'track', label: 'Track', help: '逐曲目拉平响度，歌单随机播放更均衡。' },
+  { value: 'album', label: 'Album', help: '保留专辑内曲目相对音量，适合整专播放。' },
+  { value: 'loudnorm', label: 'Loudnorm', help: '按响度分析目标处理，适合来源差异很大的音频。' }
+]
+
+const fftResolutionOptions = [64, 128, 256, 512, 1024, 2048] as const
+
+const playbackHelp = {
+  audioOutput:
+    '选择原生输出后端。Windows 可用 WASAPI/ASIO，macOS 用 CoreAudio，Linux 用 ALSA；不同后端决定设备枚举、独占能力和 bit-perfect 可能性。',
+  audioDevice:
+    '选择当前后端要使用的具体设备或驱动。Auto 会跟随系统默认输出，指定设备适合外置 DAC、专业声卡或 ALSA hw/plughw。',
+  exclusive:
+    '独占模式会尝试绕过系统混音器。WASAPI Exclusive/ASIO 更可能 bit-perfect；CoreAudio 默认输出和 ALSA default 通常不保证。',
+  buffer:
+    '缓冲越小延迟越低，但更容易爆音或 underrun；缓冲越大越稳，但切歌和交互响应会变慢。Auto 通常优先稳定。',
+  routing:
+    '声道路由会改变声道语义，因此可能让 bit-perfect 失效。听耳机和普通音箱建议 Auto 或 Stereo。',
+  status:
+    '显示后端实际输出格式、延迟和恢复计数。BitPerfect 表示未重采样且处理链未改动音频；Mixed/Resampled 表示经过混音、重采样或 DSP。',
+  dsp: 'DSP 总开关控制均衡器、ReplayGain、Crossfeed 和卷积等处理。关闭后更接近原始输出，也更容易满足 bit-perfect。',
+  clipGuard: '在增益、EQ 或 ReplayGain 可能超过 0 dBFS 时降低削波风险，适合开启 DSP 时保留。',
+  replayGain:
+    'ReplayGain 用元数据或响度分析平衡不同歌曲音量。Track 适合随机播放，Album 适合整专，Preamp/Fallback 用于补偿整体响度。',
+  eq: '启用均衡器处理。详细频段和参数在均衡器页面调整；开启 EQ 会让 bit-perfect 失效。',
+  crossfeed:
+    '把左右声道少量互混，减轻耳机声像过宽或疲劳感。适合耳机，不建议用于本来就做过空间混音的内容。',
+  convolver:
+    '加载卷积脉冲响应，用于房间校正、耳机校正或空间效果。IR 采样率不匹配时可能产生额外重采样。',
+  continuity:
+    '把播放体验相关选项合并在一起：无缝播放减少曲目间空隙，Crossfade 做淡入淡出，关闭记忆决定下次启动恢复方式。',
+  fft: 'FFT 只影响频谱/可视化分析精度，不直接改变听到的声音；分辨率越高越耗 CPU。',
+  volume: '应用音量低于 100% 会改变样本值，因此不满足 bit-perfect。追求 bit-perfect 时保持 100%。',
+  error: '显示原生音频引擎、设备切换或输出配置的最近错误。'
+} as const
 
 type TabKey = (typeof tabs)[number]['key']
 type BooleanSettingKey =
@@ -74,10 +139,20 @@ const {
   audioDevice,
   audioOutputOptions,
   audioDeviceOptions,
+  audioProcessing,
+  audioOutputConfig,
+  playbackInfo,
+  outputInfo,
   audioEngineError,
   toggleExclusiveMode,
   setAudioOutput,
   setAudioDevice,
+  setAudioOutputConfig,
+  setAudioProcessing,
+  setReplayGainMode,
+  setCrossfeedStrength,
+  selectImpulseResponse,
+  clearImpulseResponse,
   volume,
   setVolume
 } = usePlayerStore()
@@ -101,6 +176,48 @@ const selectedAudioDevice = computed(() =>
   audioDeviceOptions.value.find((option) => option.id === audioDevice.value)
 )
 const exclusiveAvailable = computed(() => selectedAudioOutput.value?.supportsExclusive ?? false)
+const outputResampleReason = computed(
+  () => outputInfo.value?.resampleReason || playbackInfo.value?.resampleReason || ''
+)
+const bitPerfectState = computed(() => {
+  if (outputInfo.value?.bitPerfect) return 'BitPerfect'
+  if (outputInfo.value?.resampled) return 'Resampled'
+  if (playbackInfo.value?.dspActive) return 'DSP Active'
+  return outputInfo.value?.supportsBitPerfect ? 'Ready' : 'Mixed'
+})
+const outputFormatText = computed(() => {
+  const info = outputInfo.value
+  if (!info) return '等待音频引擎'
+  const rate =
+    info.actualSampleRate || info.outputSampleRate || playbackInfo.value?.actualSampleRate || 0
+  const bitDepth =
+    info.actualBitDepth || info.outputBitDepth || playbackInfo.value?.actualBitDepth || 0
+  const channels = info.actualChannels || playbackInfo.value?.actualChannels || 0
+  const parts = [
+    rate > 0 ? `${rate} Hz` : '',
+    bitDepth > 0 ? `${bitDepth} bit` : '',
+    channels > 0 ? `${channels} ch` : ''
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(' · ') : '未开始播放'
+})
+const outputLatencyText = computed(() => {
+  const info = outputInfo.value
+  if (!info) return '0 ms'
+  const total = info.latencyInfo?.totalLatencyMs || info.latencyMs || 0
+  const frames = info.bufferSizeFrames || playbackInfo.value?.bufferSizeFrames || 0
+  return `${total.toFixed(total >= 10 ? 0 : 1)} ms${frames > 0 ? ` · ${frames} frames` : ''}`
+})
+const outputDiagnosticsText = computed(() => {
+  const diagnostics = outputInfo.value?.diagnostics ?? playbackInfo.value?.diagnostics
+  if (!diagnostics) return 'Recovery 0 · XRun 0'
+  const xrun = diagnostics.sessionUnderrunCount + diagnostics.sessionBufferDropCount
+  return `Recovery ${diagnostics.sessionRecoveryCount} · XRun ${xrun}`
+})
+const convolverPathLabel = computed(() => {
+  const path = audioProcessing.value.convolverIrPath
+  if (!path) return '未加载'
+  return path.split(/[\\/]/).pop() || path
+})
 
 function toggleSetting(key: BooleanSettingKey): void {
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
@@ -125,6 +242,50 @@ function selectAudioDevice(event: Event): void {
   const target = event.target as HTMLSelectElement
   if (audioDevice.value === target.value) return
   void setAudioDevice(target.value)
+}
+
+function setPreferredBufferSize(value: number): void {
+  if (audioOutputConfig.value.preferredBufferSize === value) return
+  void setAudioOutputConfig({ preferredBufferSize: value })
+}
+
+function setRoutingMode(event: Event): void {
+  const target = event.target as HTMLSelectElement
+  void setAudioOutputConfig({ routingMode: target.value as ChannelRoutingMode })
+}
+
+function updateAudioProcessing(patch: Partial<AudioProcessingSettings>): void {
+  void setAudioProcessing(patch)
+}
+
+function setReplayGainFromSelect(event: Event): void {
+  const target = event.target as HTMLSelectElement
+  void setReplayGainMode(target.value as VolumeNormalizationMode)
+}
+
+function setReplayGainPreamp(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  updateAudioProcessing({ replayGainPreamp: value })
+}
+
+function setReplayGainFallback(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  updateAudioProcessing({ replayGainFallback: value })
+}
+
+function setCrossfeedFromInput(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  void setCrossfeedStrength(value)
+}
+
+function setCrossfadeFromInput(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  updateAudioProcessing({ crossfadeSeconds: value })
+}
+
+function setFftResolution(event: Event): void {
+  const value = Number((event.target as HTMLSelectElement).value)
+  updateAudioProcessing({ fftResolution: value })
 }
 
 function setLyricFontSize(event: Event): void {
@@ -240,7 +401,17 @@ onMounted(async () => {
           <div class="settings-group">
             <div class="setting-row audio-output-row">
               <div class="setting-copy">
-                <span class="setting-label">音频输出</span>
+                <span class="label-row">
+                  <span class="setting-label">音频输出</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.audioOutput"
+                    :data-help="playbackHelp.audioOutput"
+                    >?</span
+                  >
+                </span>
                 <span class="setting-desc">
                   当前为 {{ selectedAudioOutput?.label ?? '自动' }} ·
                   {{ selectedAudioDevice?.label ?? audioDevice }}
@@ -261,6 +432,7 @@ onMounted(async () => {
                   :class="{ active: audioOutput === option.id }"
                   type="button"
                   role="radio"
+                  :title="option.description"
                   :aria-checked="audioOutput === option.id"
                   @click="selectAudioOutput(option.id)"
                 >
@@ -272,15 +444,21 @@ onMounted(async () => {
 
             <div class="setting-row audio-device-row">
               <div class="setting-copy">
-                <span class="setting-label">输出设备</span>
+                <span class="label-row">
+                  <span class="setting-label">输出设备</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.audioDevice"
+                    :data-help="playbackHelp.audioDevice"
+                    >?</span
+                  >
+                </span>
                 <span class="setting-desc">选择当前音频后端使用的设备或驱动</span>
               </div>
               <select class="select-control" :value="audioDevice" @change="selectAudioDevice">
-                <option
-                  v-for="device in audioDeviceOptions"
-                  :key="device.id"
-                  :value="device.id"
-                >
+                <option v-for="device in audioDeviceOptions" :key="device.id" :value="device.id">
                   {{ device.label }}
                 </option>
               </select>
@@ -288,7 +466,17 @@ onMounted(async () => {
 
             <div class="setting-row">
               <div class="setting-copy">
-                <span class="setting-label">独占模式</span>
+                <span class="label-row">
+                  <span class="setting-label">独占模式</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.exclusive"
+                    :data-help="playbackHelp.exclusive"
+                    >?</span
+                  >
+                </span>
                 <span class="setting-desc">
                   {{
                     exclusiveAvailable
@@ -309,16 +497,470 @@ onMounted(async () => {
               </button>
             </div>
 
+            <div class="setting-row buffer-row">
+              <div class="setting-copy">
+                <span class="label-row">
+                  <span class="setting-label">输出缓冲</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.buffer"
+                    :data-help="playbackHelp.buffer"
+                    >?</span
+                  >
+                </span>
+                <span class="setting-desc"
+                  >当前 {{ audioOutputConfig.preferredBufferSize || 'Auto' }}</span
+                >
+              </div>
+              <div class="chip-segment" role="radiogroup" aria-label="输出缓冲">
+                <button
+                  v-for="option in bufferSizeOptions"
+                  :key="option.value"
+                  class="chip-option"
+                  :class="{ active: audioOutputConfig.preferredBufferSize === option.value }"
+                  type="button"
+                  role="radio"
+                  :title="option.help"
+                  :aria-checked="audioOutputConfig.preferredBufferSize === option.value"
+                  @click="setPreferredBufferSize(option.value)"
+                >
+                  {{ option.label }}
+                </button>
+              </div>
+            </div>
+
+            <div class="setting-row audio-device-row">
+              <div class="setting-copy">
+                <span class="label-row">
+                  <span class="setting-label">声道路由</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.routing"
+                    :data-help="playbackHelp.routing"
+                    >?</span
+                  >
+                </span>
+                <span class="setting-desc">{{ audioOutputConfig.routingMode }}</span>
+              </div>
+              <select
+                class="select-control"
+                :value="audioOutputConfig.routingMode"
+                @change="setRoutingMode"
+              >
+                <option
+                  v-for="option in routingModeOptions"
+                  :key="option.value"
+                  :value="option.value"
+                  :title="option.help"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </div>
+
+            <div class="setting-row status-row">
+              <div class="setting-copy">
+                <span class="label-row">
+                  <span class="setting-label">输出状态</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.status"
+                    :data-help="playbackHelp.status"
+                    >?</span
+                  >
+                </span>
+                <span class="setting-desc">{{ outputResampleReason || outputFormatText }}</span>
+              </div>
+              <div class="status-panel">
+                <span
+                  class="status-chip"
+                  :class="{ success: outputInfo?.bitPerfect, warning: outputInfo?.resampled }"
+                >
+                  {{ bitPerfectState }}
+                </span>
+                <span class="status-chip">{{ outputInfo?.actualBackend || audioOutput }}</span>
+                <span class="status-chip">{{ outputFormatText }}</span>
+                <span class="status-chip">{{ outputLatencyText }}</span>
+                <span class="status-chip">{{ outputDiagnosticsText }}</span>
+              </div>
+            </div>
+
+            <div class="settings-subheading">音频处理</div>
+
+            <div class="setting-row">
+              <div class="setting-copy">
+                <span class="label-row">
+                  <span class="setting-label">DSP 总开关</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.dsp"
+                    :data-help="playbackHelp.dsp"
+                    >?</span
+                  >
+                </span>
+                <span class="setting-desc">
+                  {{ playbackInfo?.dspActive ? '正在处理音频' : '处理链待命' }}
+                </span>
+              </div>
+              <button
+                class="toggle-switch"
+                :class="{ active: audioProcessing.dspEnabled }"
+                role="switch"
+                :aria-checked="audioProcessing.dspEnabled"
+                @click="updateAudioProcessing({ dspEnabled: !audioProcessing.dspEnabled })"
+              >
+                <span class="toggle-knob"></span>
+              </button>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-copy">
+                <span class="label-row">
+                  <span class="setting-label">Clip Guard</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.clipGuard"
+                    :data-help="playbackHelp.clipGuard"
+                    >?</span
+                  >
+                </span>
+                <span class="setting-desc">削波保护</span>
+              </div>
+              <button
+                class="toggle-switch"
+                :class="{ active: audioProcessing.clipGuard }"
+                role="switch"
+                :aria-checked="audioProcessing.clipGuard"
+                @click="updateAudioProcessing({ clipGuard: !audioProcessing.clipGuard })"
+              >
+                <span class="toggle-knob"></span>
+              </button>
+            </div>
+
+            <div class="setting-row replaygain-row">
+              <div class="setting-copy">
+                <span class="label-row">
+                  <span class="setting-label">ReplayGain</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.replayGain"
+                    :data-help="playbackHelp.replayGain"
+                    >?</span
+                  >
+                </span>
+                <span class="setting-desc">
+                  Preamp {{ audioProcessing.replayGainPreamp.toFixed(1) }} dB · Fallback
+                  {{ audioProcessing.replayGainFallback.toFixed(1) }} dB ·
+                  {{ audioProcessing.replayGainClip ? '防削波' : '允许峰值' }}
+                </span>
+              </div>
+              <div class="stacked-control">
+                <div class="inline-control-group spread">
+                  <select
+                    class="select-control"
+                    :value="audioProcessing.volumeNormalization"
+                    @change="setReplayGainFromSelect"
+                  >
+                    <option
+                      v-for="option in replayGainOptions"
+                      :key="option.value"
+                      :value="option.value"
+                      :title="option.help"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                  <label class="inline-toggle-label">
+                    防削波
+                    <button
+                      class="toggle-switch"
+                      :class="{ active: audioProcessing.replayGainClip }"
+                      role="switch"
+                      :aria-checked="audioProcessing.replayGainClip"
+                      @click="
+                        updateAudioProcessing({ replayGainClip: !audioProcessing.replayGainClip })
+                      "
+                    >
+                      <span class="toggle-knob"></span>
+                    </button>
+                  </label>
+                </div>
+                <label class="compact-range-row">
+                  <span>Preamp</span>
+                  <input
+                    class="range-control"
+                    type="range"
+                    min="-12"
+                    max="12"
+                    step="0.5"
+                    :value="audioProcessing.replayGainPreamp"
+                    @input="setReplayGainPreamp"
+                  />
+                  <strong>{{ audioProcessing.replayGainPreamp.toFixed(1) }}</strong>
+                </label>
+                <label class="compact-range-row">
+                  <span>Fallback</span>
+                  <input
+                    class="range-control"
+                    type="range"
+                    min="-12"
+                    max="12"
+                    step="0.5"
+                    :value="audioProcessing.replayGainFallback"
+                    @input="setReplayGainFallback"
+                  />
+                  <strong>{{ audioProcessing.replayGainFallback.toFixed(1) }}</strong>
+                </label>
+              </div>
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-copy">
+                <span class="label-row">
+                  <span class="setting-label">均衡器</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.eq"
+                    :data-help="playbackHelp.eq"
+                    >?</span
+                  >
+                </span>
+                <span class="setting-desc">{{ audioProcessing.eqMode }}</span>
+              </div>
+              <button
+                class="toggle-switch"
+                :class="{ active: audioProcessing.eqEnabled }"
+                role="switch"
+                :aria-checked="audioProcessing.eqEnabled"
+                @click="updateAudioProcessing({ eqEnabled: !audioProcessing.eqEnabled })"
+              >
+                <span class="toggle-knob"></span>
+              </button>
+            </div>
+
+            <div class="setting-row range-row">
+              <div class="setting-copy">
+                <span class="label-row">
+                  <span class="setting-label">Crossfeed</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.crossfeed"
+                    :data-help="playbackHelp.crossfeed"
+                    >?</span
+                  >
+                </span>
+                <span class="setting-desc">
+                  {{
+                    audioProcessing.crossfeedEnabled
+                      ? Math.round(audioProcessing.crossfeedStrength * 100)
+                      : 0
+                  }}%
+                </span>
+              </div>
+              <input
+                class="range-control"
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                :value="audioProcessing.crossfeedEnabled ? audioProcessing.crossfeedStrength : 0"
+                @input="setCrossfeedFromInput"
+              />
+            </div>
+
+            <div class="setting-row path-row">
+              <div class="setting-copy">
+                <span class="label-row">
+                  <span class="setting-label">Convolver IR</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.convolver"
+                    :data-help="playbackHelp.convolver"
+                    >?</span
+                  >
+                </span>
+                <span class="setting-desc">{{ convolverPathLabel }}</span>
+              </div>
+              <div class="path-actions convolver-actions">
+                <div class="path-field" :title="audioProcessing.convolverIrPath">
+                  {{ convolverPathLabel }}
+                </div>
+                <button class="text-button" @click="selectImpulseResponse">
+                  <i class="pi pi-folder-open"></i>
+                  选择
+                </button>
+                <button
+                  class="icon-button subtle"
+                  title="卸载"
+                  :disabled="!audioProcessing.convolverIrPath"
+                  @click="clearImpulseResponse"
+                >
+                  <i class="pi pi-times"></i>
+                </button>
+              </div>
+            </div>
+
+            <div class="setting-row audio-device-row">
+              <div class="setting-copy">
+                <span class="label-row">
+                  <span class="setting-label">FFT</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.fft"
+                    :data-help="playbackHelp.fft"
+                    >?</span
+                  >
+                </span>
+                <span class="setting-desc">{{ audioProcessing.fftEnabled ? '开启' : '关闭' }}</span>
+              </div>
+              <div class="inline-control-group">
+                <button
+                  class="toggle-switch"
+                  :class="{ active: audioProcessing.fftEnabled }"
+                  role="switch"
+                  :aria-checked="audioProcessing.fftEnabled"
+                  @click="updateAudioProcessing({ fftEnabled: !audioProcessing.fftEnabled })"
+                >
+                  <span class="toggle-knob"></span>
+                </button>
+                <select
+                  class="select-control compact-select"
+                  :value="audioProcessing.fftResolution"
+                  @change="setFftResolution"
+                >
+                  <option v-for="value in fftResolutionOptions" :key="value" :value="value">
+                    {{ value }}
+                  </option>
+                </select>
+              </div>
+            </div>
+
+            <div class="settings-subheading">播放体验</div>
+
+            <div class="setting-row continuity-row">
+              <div class="setting-copy">
+                <span class="label-row">
+                  <span class="setting-label">播放连续性</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.continuity"
+                    :data-help="playbackHelp.continuity"
+                    >?</span
+                  >
+                </span>
+                <span class="setting-desc">
+                  无缝 {{ audioProcessing.gapless ? '开' : '关' }} · Crossfade
+                  {{ audioProcessing.crossfadeSeconds.toFixed(1) }} s ·
+                  {{
+                    playbackResumeOptions.find(
+                      (option) => option.value === settings.playbackResumeMode
+                    )?.label
+                  }}
+                </span>
+              </div>
+              <div class="continuity-panel">
+                <div class="inline-control-group spread">
+                  <label class="inline-toggle-label">
+                    无缝播放
+                    <button
+                      class="toggle-switch"
+                      :class="{ active: audioProcessing.gapless }"
+                      role="switch"
+                      :aria-checked="audioProcessing.gapless"
+                      @click="updateAudioProcessing({ gapless: !audioProcessing.gapless })"
+                    >
+                      <span class="toggle-knob"></span>
+                    </button>
+                  </label>
+                  <label class="compact-range-row crossfade-compact">
+                    <span>Crossfade</span>
+                    <input
+                      class="range-control"
+                      type="range"
+                      min="0"
+                      max="12"
+                      step="0.5"
+                      :value="audioProcessing.crossfadeSeconds"
+                      @input="setCrossfadeFromInput"
+                    />
+                    <strong>{{ audioProcessing.crossfadeSeconds.toFixed(1) }}</strong>
+                  </label>
+                </div>
+                <div
+                  class="resume-segment compact-resume"
+                  role="radiogroup"
+                  aria-label="关闭时记忆播放"
+                >
+                  <button
+                    v-for="option in playbackResumeOptions"
+                    :key="option.value"
+                    class="resume-option"
+                    :class="{ active: settings.playbackResumeMode === option.value }"
+                    type="button"
+                    role="radio"
+                    :title="option.description"
+                    :aria-checked="settings.playbackResumeMode === option.value"
+                    @click="setPlaybackResumeMode(option.value)"
+                  >
+                    <span>{{ option.label }}</span>
+                    <small>{{ option.description }}</small>
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div v-if="audioEngineError" class="setting-row compact">
               <div class="setting-copy">
-                <span class="setting-label">音频输出提示</span>
+                <span class="label-row">
+                  <span class="setting-label">音频输出提示</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.error"
+                    :data-help="playbackHelp.error"
+                    >?</span
+                  >
+                </span>
                 <span class="setting-desc">{{ audioEngineError }}</span>
               </div>
             </div>
 
             <div class="setting-row range-row">
               <div class="setting-copy">
-                <span class="setting-label">当前音量</span>
+                <span class="label-row">
+                  <span class="setting-label">当前音量</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.volume"
+                    :data-help="playbackHelp.volume"
+                    >?</span
+                  >
+                </span>
                 <span class="setting-desc">{{ volumePercent }}%</span>
               </div>
               <input
@@ -330,36 +972,6 @@ onMounted(async () => {
                 :value="volumePercent"
                 @input="setVolumeFromInput"
               />
-            </div>
-
-            <div class="setting-row resume-row">
-              <div class="setting-copy">
-                <span class="setting-label">关闭时记忆播放</span>
-                <span class="setting-desc">下次启动时恢复上次的播放入口</span>
-              </div>
-              <div class="resume-segment" role="radiogroup" aria-label="关闭时记忆播放">
-                <button
-                  v-for="option in playbackResumeOptions"
-                  :key="option.value"
-                  class="resume-option"
-                  :class="{ active: settings.playbackResumeMode === option.value }"
-                  type="button"
-                  role="radio"
-                  :aria-checked="settings.playbackResumeMode === option.value"
-                  @click="setPlaybackResumeMode(option.value)"
-                >
-                  <span>{{ option.label }}</span>
-                  <small>{{ option.description }}</small>
-                </button>
-              </div>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-copy">
-                <span class="setting-label">音频引擎</span>
-                <span class="setting-desc">本地与在线歌曲统一由 Twilight Audio Engine 输出</span>
-              </div>
-              <span class="setting-value">Twilight Audio Engine</span>
             </div>
           </div>
         </section>
@@ -714,7 +1326,7 @@ onMounted(async () => {
 .settings-group {
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 8px;
-  overflow: hidden;
+  overflow: visible;
   background: #fff;
 }
 
@@ -735,11 +1347,81 @@ onMounted(async () => {
   min-height: 54px;
 }
 
+.settings-subheading {
+  padding: 12px 18px 8px;
+  border-top: 1px solid rgba(17, 24, 39, 0.06);
+  background: #f8fafc;
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .setting-copy {
   display: flex;
   flex-direction: column;
   gap: 3px;
   min-width: 0;
+}
+
+.label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.help-dot {
+  position: relative;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: help;
+  outline: none;
+}
+
+.help-dot:hover,
+.help-dot:focus-visible {
+  background: #2563eb;
+  color: #fff;
+}
+
+.help-dot::after {
+  content: attr(data-help);
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 50%;
+  width: min(300px, 56vw);
+  padding: 9px 10px;
+  border: 1px solid rgba(37, 99, 235, 0.16);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 16px 38px rgba(15, 23, 42, 0.14);
+  color: var(--te-neutral-700);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-50%) translateX(-3px);
+  transition:
+    opacity 0.14s ease,
+    transform 0.14s ease;
+}
+
+.help-dot:hover::after,
+.help-dot:focus-visible::after {
+  opacity: 1;
+  transform: translateY(-50%);
 }
 
 .setting-label {
@@ -801,6 +1483,21 @@ onMounted(async () => {
 
 .range-row {
   grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
+}
+
+.buffer-row {
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
+}
+
+.status-row {
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
+}
+
+.replaygain-row,
+.continuity-row {
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(390px, 520px);
 }
 
 .theme-row {
@@ -907,6 +1604,66 @@ onMounted(async () => {
   background: #f8fafc;
 }
 
+.chip-segment {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.chip-option {
+  min-width: 0;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--te-neutral-700);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chip-option:hover,
+.chip-option.active {
+  border-color: color-mix(in srgb, var(--te-primary-500) 28%, transparent);
+  background: #fff;
+  color: #2563eb;
+}
+
+.status-panel {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.status-chip {
+  max-width: 100%;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: var(--te-neutral-600);
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.status-chip.success {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.status-chip.warning {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
 .resume-option,
 .audio-output-option {
   display: flex;
@@ -985,6 +1742,57 @@ onMounted(async () => {
   accent-color: #2563eb;
 }
 
+.stacked-control,
+.continuity-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+
+.inline-control-group.spread {
+  justify-content: space-between;
+}
+
+.inline-toggle-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 9px;
+  min-height: 38px;
+  color: var(--te-neutral-600);
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.compact-range-row {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  color: var(--te-neutral-600);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.compact-range-row strong {
+  color: var(--te-neutral-700);
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.crossfade-compact {
+  flex: 1;
+  grid-template-columns: 70px minmax(110px, 1fr) 36px;
+}
+
+.compact-resume {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .path-row {
   grid-template-columns: minmax(0, 1fr) minmax(280px, 440px);
   align-items: start;
@@ -995,6 +1803,10 @@ onMounted(async () => {
   grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 8px;
   align-items: center;
+}
+
+.convolver-actions {
+  grid-template-columns: minmax(0, 1fr) auto auto;
 }
 
 .path-field {
@@ -1085,6 +1897,12 @@ onMounted(async () => {
   opacity: 0.45;
 }
 
+.icon-button:disabled,
+.text-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .danger-button {
   padding: 0 13px;
   background: #fef2f2;
@@ -1110,6 +1928,17 @@ onMounted(async () => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.inline-control-group {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.compact-select {
+  width: 120px;
 }
 
 .shortcut-list {
@@ -1179,6 +2008,10 @@ onMounted(async () => {
   .theme-row,
   .audio-output-row,
   .audio-device-row,
+  .buffer-row,
+  .status-row,
+  .replaygain-row,
+  .continuity-row,
   .resume-row,
   .range-row {
     grid-template-columns: 1fr;
@@ -1189,11 +2022,44 @@ onMounted(async () => {
     grid-template-columns: minmax(0, 1fr) auto auto auto;
   }
 
+  .convolver-actions {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  .chip-segment {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .status-panel,
+  .inline-control-group {
+    justify-content: flex-start;
+  }
+
+  .inline-control-group.spread {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .compact-range-row,
+  .crossfade-compact {
+    grid-template-columns: 72px minmax(0, 1fr) 42px;
+    width: 100%;
+  }
+
+  .help-dot::after {
+    left: 0;
+    top: calc(100% + 8px);
+    transform: translateY(-3px);
+  }
+
+  .help-dot:hover::after,
+  .help-dot:focus-visible::after {
+    transform: translateY(0);
+  }
+
   .restart-strip {
     align-items: flex-start;
     flex-direction: column;
   }
 }
 </style>
-
-

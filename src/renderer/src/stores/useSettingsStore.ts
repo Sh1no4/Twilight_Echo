@@ -58,6 +58,10 @@ const fallbackSettings: AppSettings = {
   audioOutput: getFallbackAudioOutput(),
   audioDevice: 'auto',
   audioExclusiveMode: false,
+  audioOutputConfig: {
+    preferredBufferSize: 0,
+    routingMode: 'auto'
+  },
   audioProcessing: fallbackAudioProcessing,
   audioEqPresets: []
 }

@@ -25,6 +25,8 @@ import {
   type AudioOutputId,
   type AudioOutputState,
   type AudioEngineQueueItem,
+  type ChannelRoutingMode,
+  type OutputConfig,
   type PlayMode,
   type EqMode,
   type EqualizerBand
@@ -60,6 +62,7 @@ interface AppSettings {
   audioOutput: AudioOutputId
   audioDevice: string
   audioExclusiveMode: boolean
+  audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
 }
@@ -107,6 +110,10 @@ const DEFAULT_SETTINGS: AppSettings = {
     process.platform === 'darwin' ? 'coreaudio' : process.platform === 'linux' ? 'alsa' : 'wasapi',
   audioDevice: 'auto',
   audioExclusiveMode: false,
+  audioOutputConfig: {
+    preferredBufferSize: 0,
+    routingMode: 'auto'
+  },
   audioProcessing: DEFAULT_AUDIO_PROCESSING,
   audioEqPresets: []
 }
@@ -169,22 +176,26 @@ function normalizeAudioDevice(device: unknown): string {
   return typeof device === 'string' && device.trim() ? device.trim() : DEFAULT_SETTINGS.audioDevice
 }
 
-function normalizeOutputConfig(config: unknown): { preferredBufferSize?: number; routingMode?: import('./audioEngineManager').ChannelRoutingMode } {
-  if (!config || typeof config !== 'object') return {}
+function normalizeChannelRoutingMode(value: unknown): ChannelRoutingMode {
+  return value === 'stereo' ||
+    value === 'stereo-to-5.1' ||
+    value === 'stereo-to-7.1' ||
+    value === 'mono-to-stereo' ||
+    value === 'mono-to-multichannel'
+    ? value
+    : 'auto'
+}
+
+function normalizeOutputConfig(config: unknown): OutputConfig {
+  if (!config || typeof config !== 'object') return { ...DEFAULT_SETTINGS.audioOutputConfig }
   const value = config as { preferredBufferSize?: unknown; routingMode?: unknown }
-  const out: { preferredBufferSize?: number; routingMode?: import('./audioEngineManager').ChannelRoutingMode } = {}
-  if (typeof value.preferredBufferSize === 'number') out.preferredBufferSize = value.preferredBufferSize
-  if (
-    value.routingMode === 'auto' ||
-    value.routingMode === 'stereo' ||
-    value.routingMode === 'stereo-to-5.1' ||
-    value.routingMode === 'stereo-to-7.1' ||
-    value.routingMode === 'mono-to-stereo' ||
-    value.routingMode === 'mono-to-multichannel'
-  ) {
-    out.routingMode = value.routingMode
+  return {
+    preferredBufferSize:
+      typeof value.preferredBufferSize === 'number'
+        ? clampNumber(Math.trunc(value.preferredBufferSize), 0, 8192, 0)
+        : DEFAULT_SETTINGS.audioOutputConfig.preferredBufferSize,
+    routingMode: normalizeChannelRoutingMode(value.routingMode)
   }
-  return out
 }
 
 function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
@@ -230,6 +241,7 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
     audioOutput: normalizeAudioOutput(settings.audioOutput),
     audioDevice: normalizeAudioDevice(settings.audioDevice),
     audioExclusiveMode: settings.audioExclusiveMode === true,
+    audioOutputConfig: normalizeOutputConfig(settings.audioOutputConfig),
     audioProcessing: normalizeAudioProcessingSettings(settings.audioProcessing),
     audioEqPresets: normalizeAudioEqPresets(settings.audioEqPresets)
   }
@@ -809,12 +821,30 @@ function persistAudioOutputState(state: AudioOutputState): SettingsSnapshot {
   return snapshot
 }
 
+function persistAudioOutputConfig(config: OutputConfig): SettingsSnapshot {
+  appSettings = normalizeAppSettings({
+    ...appSettings,
+    audioOutputConfig: config
+  })
+  writeAppSettings(appSettings)
+  const snapshot = createSettingsSnapshot(appSettings, launchSettings)
+  mainWindow?.webContents.send('settings:changed', snapshot)
+  return snapshot
+}
+
 async function updateAppSettings(patch: Partial<AppSettings>): Promise<SettingsSnapshot> {
   const previousCachePath = appSettings.musicCachePath
   const shouldUpdateAudioProcessing = Object.prototype.hasOwnProperty.call(patch, 'audioProcessing')
+  const shouldUpdateAudioOutputConfig = Object.prototype.hasOwnProperty.call(
+    patch,
+    'audioOutputConfig'
+  )
   const shouldUpdateAudioOutput = Object.prototype.hasOwnProperty.call(patch, 'audioOutput')
   const shouldUpdateAudioDevice = Object.prototype.hasOwnProperty.call(patch, 'audioDevice')
-  const shouldUpdateExclusiveMode = Object.prototype.hasOwnProperty.call(patch, 'audioExclusiveMode')
+  const shouldUpdateExclusiveMode = Object.prototype.hasOwnProperty.call(
+    patch,
+    'audioExclusiveMode'
+  )
   appSettings = normalizeAppSettings({ ...appSettings, ...patch })
 
   if (
@@ -857,6 +887,10 @@ async function updateAppSettings(patch: Partial<AppSettings>): Promise<SettingsS
 
   if (shouldUpdateAudioProcessing) {
     await audioEngineManager?.setAudioProcessing(appSettings.audioProcessing)
+  }
+
+  if (shouldUpdateAudioOutputConfig) {
+    await audioEngineManager?.setOutputConfig(appSettings.audioOutputConfig)
   }
 
   applyRuntimeSettings()
@@ -926,6 +960,7 @@ function setupAudioEngineIpc(): void {
     exclusiveMode: appSettings.audioExclusiveMode,
     audioOutput: appSettings.audioOutput,
     audioDevice: appSettings.audioDevice,
+    audioOutputConfig: appSettings.audioOutputConfig,
     audioProcessing: appSettings.audioProcessing
   })
 
@@ -1057,7 +1092,10 @@ function setupAudioEngineIpc(): void {
   })
 
   ipcMain.handle('audioEngine:setOutputConfig', async (_event, config: unknown) => {
-    await requireAudioEngine().setOutputConfig(normalizeOutputConfig(config))
+    const normalized = normalizeOutputConfig(config)
+    await requireAudioEngine().setOutputConfig(normalized)
+    persistAudioOutputConfig(normalized)
+    return normalized
   })
 
   ipcMain.handle('audioEngine:getAudioOutput', async () => {
@@ -1086,6 +1124,23 @@ function setupAudioEngineIpc(): void {
     return requireAudioEngine().getAudioProcessing()
   })
 
+  ipcMain.handle('audioEngine:selectImpulseResponse', async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const options: Electron.OpenDialogOptions = {
+      title: '选择卷积脉冲响应',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Impulse Response', extensions: ['wav', 'flac', 'aiff', 'aif'] },
+        { name: 'All Files', extensions: ['*'] }
+      ]
+    }
+    const result = win
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
+
   ipcMain.handle('audioEngine:loadImpulseResponse', async (_event, path: string) => {
     const info = await requireAudioEngine().loadImpulseResponse(path)
     appSettings = normalizeAppSettings({
@@ -1110,12 +1165,15 @@ function setupAudioEngineIpc(): void {
     return requireAudioEngine().getConvolverInfo()
   })
 
-  ipcMain.handle('audioEngine:setEqBands', async (_event, settings: Partial<AudioProcessingSettings>) => {
-    const normalized = await requireAudioEngine().setEqBands(settings)
-    appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
-    writeAppSettings(appSettings)
-    return normalized
-  })
+  ipcMain.handle(
+    'audioEngine:setEqBands',
+    async (_event, settings: Partial<AudioProcessingSettings>) => {
+      const normalized = await requireAudioEngine().setEqBands(settings)
+      appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
+      writeAppSettings(appSettings)
+      return normalized
+    }
+  )
 
   ipcMain.handle(
     'audioEngine:setEqPreset',
@@ -1436,4 +1494,3 @@ app.on('will-quit', () => {
     ncmServer = null
   }
 })
-

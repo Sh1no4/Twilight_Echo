@@ -4,6 +4,8 @@ import type {
   AudioDeviceOption,
   AudioOutputId,
   AudioOutputOption,
+  AudioProcessingSettings,
+  OutputConfig,
   PlaybackResumeMode
 } from '../types/settings'
 import { extractDominantColor } from '../utils/colorExtractor'
@@ -12,45 +14,7 @@ import { useSettingsStore } from './useSettingsStore'
 
 type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
-type EqMode = 'graphic' | 'parametric'
-type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
-type EqualizerFilterType =
-  | 'peak'
-  | 'lowShelf'
-  | 'highShelf'
-  | 'bandPass'
-  | 'lowPass'
-  | 'highPass'
-  | 'allPass'
-
-interface EqualizerBand {
-  frequency: number
-  gain: number
-  q: number
-  filterType: EqualizerFilterType
-}
-
-interface AudioProcessingSettings {
-  dspEnabled: boolean
-  clipGuard: boolean
-  fftEnabled: boolean
-  fftResolution: number
-  highResolution: boolean
-  dsdToPcm: boolean
-  eqEnabled: boolean
-  eqMode: EqMode
-  eqPreamp: number
-  eqBands: EqualizerBand[]
-  volumeNormalization: VolumeNormalizationMode
-  replayGainPreamp: number
-  replayGainFallback: number
-  replayGainClip: boolean
-  convolverIrPath: string
-  crossfeedEnabled: boolean
-  crossfeedStrength: number
-  gapless: boolean
-  crossfadeSeconds: number
-}
+type NativeOutputInfo = NativePlaybackInfo['outputInfo']
 
 interface AudioOutputState {
   output: AudioOutputId
@@ -106,6 +70,13 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   crossfadeSeconds: 0
 }
 const audioProcessing = ref<AudioProcessingSettings>({ ...defaultAudioProcessing })
+const defaultAudioOutputConfig: OutputConfig = {
+  preferredBufferSize: 0,
+  routingMode: 'auto'
+}
+const audioOutputConfig = ref<OutputConfig>({ ...defaultAudioOutputConfig })
+const playbackInfo = ref<NativePlaybackInfo | null>(null)
+const outputInfo = computed<NativeOutputInfo | null>(() => playbackInfo.value?.outputInfo ?? null)
 const { settings: appSettings } = useSettingsStore()
 let playbackAudio: HTMLAudioElement | null = null
 let playbackObjectUrl: string | null = null
@@ -192,7 +163,11 @@ async function createPlayableUrl(target: string, track: Track): Promise<string> 
   return playbackObjectUrl
 }
 
-async function playWithRendererAudio(track: Track, target: string, startTime: number): Promise<void> {
+async function playWithRendererAudio(
+  track: Track,
+  target: string,
+  startTime: number
+): Promise<void> {
   const audio = getPlaybackAudio()
   audio.pause()
   audio.src = await createPlayableUrl(target, track)
@@ -209,20 +184,40 @@ function applyAudioOutputState(state: AudioOutputState): void {
   audioDeviceOptions.value = [...state.deviceOptions]
 }
 
+function normalizeNativePlaybackInfo(info: NativePlaybackInfo): NativePlaybackInfo {
+  const resampleReason = info.outputInfo?.resampleReason || info.resampleReason || ''
+  return {
+    ...info,
+    outputInfo: {
+      ...info.outputInfo,
+      resampleReason
+    },
+    resampleReason
+  }
+}
+
 function getTrackAudioSource(track: Track): string {
   return track.streamUrl || track.filePath
 }
 
 function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
-  if (Number.isInteger(info.queueIndex) && info.queueIndex >= 0 && info.queueIndex < queue.value.length) {
+  if (
+    Number.isInteger(info.queueIndex) &&
+    info.queueIndex >= 0 &&
+    info.queueIndex < queue.value.length
+  ) {
     return info.queueIndex
   }
 
   if (!info.source) return -1
-  return queue.value.findIndex((track) => track.id === info.source || getTrackAudioSource(track) === info.source)
+  return queue.value.findIndex(
+    (track) => track.id === info.source || getTrackAudioSource(track) === info.source
+  )
 }
 
 function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
+  const normalizedInfo = normalizeNativePlaybackInfo(info)
+  playbackInfo.value = normalizedInfo
   const infoIndex = findTrackIndexFromPlaybackInfo(info)
   let switchedTrack = false
 
@@ -234,21 +229,26 @@ function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
     loadedTrackId = track.id
   }
 
-  const nextDuration = Number.isFinite(info.duration) && info.duration > 0 ? info.duration : currentTrack.value?.duration
+  const nextDuration =
+    Number.isFinite(info.duration) && info.duration > 0
+      ? info.duration
+      : currentTrack.value?.duration
   if (nextDuration && nextDuration > 0) {
     duration.value = nextDuration
   }
 
-  const nextPosition = Number.isFinite(info.position) ? Math.max(0, info.position) : latestPlaybackTime
+  const nextPosition = Number.isFinite(info.position)
+    ? Math.max(0, info.position)
+    : latestPlaybackTime
   if (switchedTrack || nextPosition + 1 < latestPlaybackTime) {
     setCurrentTimeImmediate(nextPosition)
   } else {
     setCurrentTimeThrottled(nextPosition)
   }
 
-  isPlaying.value = info.state === 'playing'
+  isPlaying.value = normalizedInfo.state === 'playing'
   isLoading.value = false
-  if (info.state === 'stopped') {
+  if (normalizedInfo.state === 'stopped') {
     nativePlaybackActive = false
   }
   autoAdvanceInFlight = false
@@ -307,6 +307,18 @@ watch(
       dominantColor.value = '#1a73e8'
     }
   }
+)
+
+watch(
+  () => appSettings.value.audioOutputConfig,
+  (config) => {
+    audioOutputConfig.value = {
+      preferredBufferSize:
+        config?.preferredBufferSize ?? defaultAudioOutputConfig.preferredBufferSize,
+      routingMode: config?.routingMode ?? defaultAudioOutputConfig.routingMode
+    }
+  },
+  { deep: true, immediate: true }
 )
 
 watch(
@@ -487,6 +499,7 @@ function setupAudioEngineListeners(): void {
 
   cleanupFns.push(
     api.onPlaybackInfo((info) => {
+      playbackInfo.value = normalizeNativePlaybackInfo(info)
       if (!nativePlaybackActive && info.state !== 'stopped') return
       applyNativePlaybackInfo(info)
     })
@@ -498,12 +511,15 @@ function setupAudioEngineListeners(): void {
       audioEngineError.value = null
       api.setVolume(volume.value).catch(() => {})
       try {
-        const [outputState, processingSettings] = await Promise.all([
+        const [outputState, processingSettings, nativeInfo] = await Promise.all([
           api.getAudioOutputState(),
-          api.getAudioProcessing()
+          api.getAudioProcessing(),
+          api.getPlaybackInfo()
         ])
         applyAudioOutputState(outputState)
         audioProcessing.value = processingSettings
+        audioOutputConfig.value = { ...appSettings.value.audioOutputConfig }
+        playbackInfo.value = normalizeNativePlaybackInfo(nativeInfo)
       } catch {
         // keep default
       }
@@ -829,6 +845,9 @@ export function usePlayerStore(): {
   audioOutputOptions: Ref<AudioOutputOption[]>
   audioDeviceOptions: Ref<AudioDeviceOption[]>
   audioProcessing: Ref<AudioProcessingSettings>
+  audioOutputConfig: Ref<OutputConfig>
+  playbackInfo: Ref<NativePlaybackInfo | null>
+  outputInfo: ComputedRef<NativeOutputInfo | null>
   cyclePlayMode: () => void
   playTrack: (track: Track, trackList?: Track[]) => void
   togglePlay: () => Promise<void>
@@ -839,7 +858,16 @@ export function usePlayerStore(): {
   toggleExclusiveMode: () => Promise<void>
   setAudioOutput: (output: AudioOutputId, device?: string) => Promise<void>
   setAudioDevice: (device: string) => Promise<void>
+  setAudioOutputConfig: (config: Partial<OutputConfig>) => Promise<void>
   setAudioProcessing: (settings: Partial<AudioProcessingSettings>) => Promise<void>
+  toggleDspEnabled: () => Promise<void>
+  toggleEqEnabled: () => Promise<void>
+  toggleCrossfeed: () => Promise<void>
+  toggleGapless: () => Promise<void>
+  setReplayGainMode: (mode: AudioProcessingSettings['volumeNormalization']) => Promise<void>
+  setCrossfeedStrength: (strength: number) => Promise<void>
+  selectImpulseResponse: () => Promise<void>
+  clearImpulseResponse: () => Promise<void>
   restorePlaybackSession: (session: PlaybackSession) => void
   createPlaybackSession: (mode: PlaybackResumeMode) => PlaybackSession | null
   formatTime: (seconds: number) => string
@@ -912,15 +940,96 @@ export function usePlayerStore(): {
     }
   }
 
+  async function setAudioOutputConfig(config: Partial<OutputConfig>): Promise<void> {
+    try {
+      audioOutputConfig.value = await window.api.audioEngine.setOutputConfig({
+        ...audioOutputConfig.value,
+        ...config
+      })
+      playbackInfo.value = normalizeNativePlaybackInfo(
+        await window.api.audioEngine.getPlaybackInfo()
+      )
+    } catch (err) {
+      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      console.error('[音频引擎] 更新输出配置失败:', err)
+    }
+  }
+
   async function setAudioProcessing(settings: Partial<AudioProcessingSettings>): Promise<void> {
     try {
       audioProcessing.value = await window.api.audioEngine.setAudioProcessing({
         ...audioProcessing.value,
         ...settings
       })
+      playbackInfo.value = normalizeNativePlaybackInfo(
+        await window.api.audioEngine.getPlaybackInfo()
+      )
       scheduleCrossfadeIfNeeded()
     } catch (err) {
       console.error('[音频引擎] 更新音频处理设置失败:', err)
+    }
+  }
+
+  async function toggleDspEnabled(): Promise<void> {
+    await setAudioProcessing({ dspEnabled: !audioProcessing.value.dspEnabled })
+  }
+
+  async function toggleEqEnabled(): Promise<void> {
+    await setAudioProcessing({ eqEnabled: !audioProcessing.value.eqEnabled })
+  }
+
+  async function toggleCrossfeed(): Promise<void> {
+    await setAudioProcessing({
+      crossfeedEnabled: !audioProcessing.value.crossfeedEnabled,
+      crossfeedStrength:
+        !audioProcessing.value.crossfeedEnabled && audioProcessing.value.crossfeedStrength <= 0
+          ? 0.35
+          : audioProcessing.value.crossfeedStrength
+    })
+  }
+
+  async function toggleGapless(): Promise<void> {
+    await setAudioProcessing({ gapless: !audioProcessing.value.gapless })
+  }
+
+  async function setReplayGainMode(
+    mode: AudioProcessingSettings['volumeNormalization']
+  ): Promise<void> {
+    await setAudioProcessing({ volumeNormalization: mode })
+  }
+
+  async function setCrossfeedStrength(strength: number): Promise<void> {
+    await setAudioProcessing({
+      crossfeedEnabled: strength > 0,
+      crossfeedStrength: Math.min(1, Math.max(0, strength))
+    })
+  }
+
+  async function selectImpulseResponse(): Promise<void> {
+    try {
+      const path = await window.api.audioEngine.selectImpulseResponse()
+      if (!path) return
+      await window.api.audioEngine.loadImpulseResponse(path)
+      audioProcessing.value = await window.api.audioEngine.getAudioProcessing()
+      playbackInfo.value = normalizeNativePlaybackInfo(
+        await window.api.audioEngine.getPlaybackInfo()
+      )
+    } catch (err) {
+      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      console.error('[音频引擎] 加载卷积脉冲响应失败:', err)
+    }
+  }
+
+  async function clearImpulseResponse(): Promise<void> {
+    try {
+      await window.api.audioEngine.unloadImpulseResponse()
+      audioProcessing.value = await window.api.audioEngine.getAudioProcessing()
+      playbackInfo.value = normalizeNativePlaybackInfo(
+        await window.api.audioEngine.getPlaybackInfo()
+      )
+    } catch (err) {
+      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      console.error('[音频引擎] 卸载卷积脉冲响应失败:', err)
     }
   }
 
@@ -951,6 +1060,9 @@ export function usePlayerStore(): {
     audioOutputOptions,
     audioDeviceOptions,
     audioProcessing,
+    audioOutputConfig,
+    playbackInfo,
+    outputInfo,
     cyclePlayMode,
     playTrack,
     togglePlay,
@@ -961,10 +1073,18 @@ export function usePlayerStore(): {
     toggleExclusiveMode,
     setAudioOutput,
     setAudioDevice,
+    setAudioOutputConfig,
     setAudioProcessing,
+    toggleDspEnabled,
+    toggleEqEnabled,
+    toggleCrossfeed,
+    toggleGapless,
+    setReplayGainMode,
+    setCrossfeedStrength,
+    selectImpulseResponse,
+    clearImpulseResponse,
     restorePlaybackSession,
     createPlaybackSession,
     formatTime
   }
 }
-

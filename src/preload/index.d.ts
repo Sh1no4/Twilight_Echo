@@ -119,6 +119,7 @@ interface AppSettings {
   audioOutput: AudioOutputId
   audioDevice: string
   audioExclusiveMode: boolean
+  audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
 }
@@ -253,6 +254,7 @@ interface OutputInfo {
   supportsBitPerfect: boolean
   bitPerfect: boolean
   resampled: boolean
+  resampleReason: string
   outputSampleRate: number
   outputBitDepth: number
   backend: string
@@ -349,8 +351,8 @@ interface AudioEngineAPI {
   setExclusiveMode: (enabled: boolean) => Promise<AudioOutputState>
   getExclusiveMode: () => Promise<boolean>
   setAudioOutput: (output: AudioOutputId, device?: string) => Promise<AudioOutputState>
-    setAudioDevice: (device: string) => Promise<AudioOutputState>
-    setOutputConfig: (config: OutputConfig) => Promise<void>
+  setAudioDevice: (device: string) => Promise<AudioOutputState>
+  setOutputConfig: (config: OutputConfig) => Promise<OutputConfig>
   getAudioOutput: () => Promise<AudioOutputId>
   getAudioOutputOptions: () => Promise<AudioOutputOption[]>
   getAudioOutputState: () => Promise<AudioOutputState>
@@ -358,6 +360,7 @@ interface AudioEngineAPI {
     settings: Partial<AudioProcessingSettings>
   ) => Promise<AudioProcessingSettings>
   getAudioProcessing: () => Promise<AudioProcessingSettings>
+  selectImpulseResponse: () => Promise<string | null>
   loadImpulseResponse: (path: string) => Promise<ConvolverInfo>
   unloadImpulseResponse: () => Promise<ConvolverInfo>
   getConvolverInfo: () => Promise<ConvolverInfo>
@@ -439,4 +442,3 @@ declare global {
     api: WindowAPI
   }
 }
-

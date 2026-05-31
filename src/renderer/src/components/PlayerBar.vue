@@ -23,6 +23,9 @@ const {
   audioDevice,
   audioOutputOptions,
   audioDeviceOptions,
+  audioProcessing,
+  playbackInfo,
+  outputInfo,
   cyclePlayMode,
   togglePlay,
   next,
@@ -32,6 +35,11 @@ const {
   toggleExclusiveMode,
   setAudioOutput,
   setAudioDevice,
+  toggleDspEnabled,
+  toggleEqEnabled,
+  toggleCrossfeed,
+  toggleGapless,
+  setReplayGainMode,
   formatTime
 } = usePlayerStore()
 
@@ -106,6 +114,32 @@ const selectedAudioDevice = computed(() =>
   audioDeviceOptions.value.find((option) => option.id === audioDevice.value)
 )
 const exclusiveAvailable = computed(() => selectedAudioOutput.value?.supportsExclusive ?? false)
+const audioStatusChips = computed(() => {
+  const chips: { label: string; tone?: 'success' | 'warning' | 'muted' }[] = []
+  if (outputInfo.value?.bitPerfect) {
+    chips.push({ label: 'BitPerfect', tone: 'success' })
+  } else if (outputInfo.value?.resampled) {
+    chips.push({ label: 'Resampled', tone: 'warning' })
+  } else {
+    chips.push({
+      label: outputInfo.value?.supportsBitPerfect ? 'Ready' : 'Mixed',
+      tone: outputInfo.value?.supportsBitPerfect ? undefined : 'muted'
+    })
+  }
+  if (playbackInfo.value?.dspActive) chips.push({ label: 'DSP', tone: 'warning' })
+  if (exclusiveMode.value) chips.push({ label: 'Exclusive', tone: 'success' })
+  return chips
+})
+const nonBitPerfectReason = computed(() => {
+  if (outputInfo.value?.bitPerfect) return ''
+  return outputInfo.value?.resampleReason || playbackInfo.value?.resampleReason || ''
+})
+
+const replayGainMiniOptions = [
+  { value: 'off', label: 'Off' },
+  { value: 'track', label: 'Track' },
+  { value: 'album', label: 'Album' }
+] as const
 
 function onAudioDeviceChange(event: Event): void {
   const target = event.target as HTMLSelectElement
@@ -173,7 +207,7 @@ function openEqualizer(): void {
     </Transition>
 
     <!-- PlayerBar 主体 -->
-  <div
+    <div
       class="player-bar"
       :class="{ 'player-bar-glass': glass }"
       :style="{
@@ -225,7 +259,7 @@ function openEqualizer(): void {
             class="progress-slider"
             :style="{ '--range-value': `${duration ? (currentTime / duration) * 100 : 0}%` }"
             @input="onProgressInput"
-          >
+          />
           <span class="time-label">{{ formatTime(duration) }}</span>
         </div>
       </div>
@@ -251,7 +285,7 @@ function openEqualizer(): void {
                 class="volume-drawer-slider"
                 :style="{ '--range-value': `${volume * 100}%` }"
                 @input="onVolumeInput"
-              >
+              />
               <span class="volume-drawer-val">{{ Math.round(volume * 100) }}</span>
             </div>
           </Transition>
@@ -292,6 +326,19 @@ function openEqualizer(): void {
                   </span>
                 </button>
               </div>
+              <div class="more-status">
+                <span
+                  v-for="chip in audioStatusChips"
+                  :key="chip.label"
+                  class="more-status-chip"
+                  :class="chip.tone"
+                >
+                  {{ chip.label }}
+                </span>
+              </div>
+              <p v-if="nonBitPerfectReason" class="more-item-desc compact-reason">
+                {{ nonBitPerfectReason }}
+              </p>
               <div class="more-item">
                 <div class="more-item-header">
                   <span class="more-item-label">独占模式</span>
@@ -306,9 +353,61 @@ function openEqualizer(): void {
                     <span class="toggle-knob"></span>
                   </button>
                 </div>
-                <p class="more-item-desc">
-                  当前输出支持时可绕过系统混音器
-                </p>
+                <p class="more-item-desc">当前输出支持时可绕过系统混音器</p>
+              </div>
+              <div class="more-item">
+                <div class="more-item-header">
+                  <span class="more-item-label">DSP</span>
+                  <button
+                    class="toggle-switch"
+                    :class="{ active: audioProcessing.dspEnabled }"
+                    role="switch"
+                    :aria-checked="audioProcessing.dspEnabled"
+                    @click="toggleDspEnabled"
+                  >
+                    <span class="toggle-knob"></span>
+                  </button>
+                </div>
+                <div class="quick-toggle-grid">
+                  <button
+                    type="button"
+                    class="quick-toggle"
+                    :class="{ active: audioProcessing.eqEnabled }"
+                    @click="toggleEqEnabled"
+                  >
+                    EQ
+                  </button>
+                  <button
+                    type="button"
+                    class="quick-toggle"
+                    :class="{ active: audioProcessing.crossfeedEnabled }"
+                    @click="toggleCrossfeed"
+                  >
+                    Crossfeed
+                  </button>
+                  <button
+                    type="button"
+                    class="quick-toggle"
+                    :class="{ active: audioProcessing.gapless }"
+                    @click="toggleGapless"
+                  >
+                    Gapless
+                  </button>
+                </div>
+                <div class="mini-segment" role="radiogroup" aria-label="ReplayGain">
+                  <button
+                    v-for="option in replayGainMiniOptions"
+                    :key="option.value"
+                    type="button"
+                    class="mini-segment-option"
+                    :class="{ active: audioProcessing.volumeNormalization === option.value }"
+                    role="radio"
+                    :aria-checked="audioProcessing.volumeNormalization === option.value"
+                    @click="setReplayGainMode(option.value)"
+                  >
+                    {{ option.label }}
+                  </button>
+                </div>
               </div>
               <div class="more-item">
                 <div class="more-item-header">
@@ -333,11 +432,7 @@ function openEqualizer(): void {
                   :title="selectedAudioDevice?.label ?? audioDevice"
                   @change="onAudioDeviceChange"
                 >
-                  <option
-                    v-for="device in audioDeviceOptions"
-                    :key="device.id"
-                    :value="device.id"
-                  >
+                  <option v-for="device in audioDeviceOptions" :key="device.id" :value="device.id">
                     {{ device.label }}
                   </option>
                 </select>
@@ -451,13 +546,15 @@ function openEqualizer(): void {
   height: 4px;
   border-radius: 999px;
   background:
-    linear-gradient(90deg, var(--accent-color, #1a73e8), var(--accent-color, #1a73e8)) 0 / var(--range-value, 70%) 100% no-repeat,
+    linear-gradient(90deg, var(--accent-color, #1a73e8), var(--accent-color, #1a73e8)) 0 /
+      var(--range-value, 70%) 100% no-repeat,
     color-mix(in srgb, var(--accent-color, #1a73e8) 18%, transparent);
 }
 
 .drawer-glass .volume-drawer-slider::-webkit-slider-runnable-track {
   background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.55)) 0 / var(--range-value, 70%) 100% no-repeat,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.55)) 0 /
+      var(--range-value, 70%) 100% no-repeat,
     rgba(255, 255, 255, 0.12);
 }
 
@@ -870,7 +967,8 @@ function openEqualizer(): void {
 
 .player-bar-glass .progress-slider::-webkit-slider-runnable-track {
   background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.7)) 0 / var(--range-value, 0%) 100% no-repeat,
+    linear-gradient(90deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.7)) 0 /
+      var(--range-value, 0%) 100% no-repeat,
     color-mix(in srgb, var(--accent-color, #1a73e8) 12%, transparent);
 }
 
@@ -1019,7 +1117,8 @@ function openEqualizer(): void {
   height: 4px;
   border-radius: 999px;
   background:
-    linear-gradient(90deg, var(--accent-color, #7c4dff), #c084fc) 0 / var(--range-value, 0%) 100% no-repeat,
+    linear-gradient(90deg, var(--accent-color, #7c4dff), #c084fc) 0 / var(--range-value, 0%) 100%
+      no-repeat,
     color-mix(in srgb, var(--accent-color, #1a73e8) 18%, transparent);
 }
 
@@ -1124,7 +1223,9 @@ function openEqualizer(): void {
   border-radius: 16px;
   box-shadow: 0 18px 55px rgba(86, 70, 160, 0.16);
   padding: 8px;
-  min-width: 288px;
+  min-width: 320px;
+  max-height: min(560px, calc(100vh - 132px));
+  overflow-y: auto;
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
 }
@@ -1209,6 +1310,49 @@ function openEqualizer(): void {
   color: rgba(255, 255, 255, 0.52);
 }
 
+.more-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 2px 8px;
+}
+
+.more-status-chip {
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.42);
+  color: rgba(80, 88, 116, 0.72);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.more-status-chip.success {
+  background: rgba(16, 185, 129, 0.14);
+  color: #047857;
+}
+
+.more-status-chip.warning {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+}
+
+.more-status-chip.muted {
+  background: rgba(148, 163, 184, 0.16);
+  color: rgba(80, 88, 116, 0.62);
+}
+
+.drawer-glass .more-status-chip {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.compact-reason {
+  margin: 0 2px 4px;
+}
+
 .more-item-header {
   display: flex;
   align-items: center;
@@ -1251,6 +1395,55 @@ function openEqualizer(): void {
 
 .drawer-glass .more-item-desc {
   color: rgba(255, 255, 255, 0.45);
+}
+
+.quick-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.quick-toggle,
+.mini-segment-option {
+  min-width: 0;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.34);
+  color: rgba(80, 88, 116, 0.72);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.quick-toggle:hover,
+.quick-toggle.active,
+.mini-segment-option:hover,
+.mini-segment-option.active {
+  background: color-mix(in srgb, var(--accent-color, #7c4dff) 12%, rgba(255, 255, 255, 0.58));
+  color: var(--accent-color, #7c4dff);
+}
+
+.mini-segment {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.drawer-glass .quick-toggle,
+.drawer-glass .mini-segment-option {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.drawer-glass .quick-toggle:hover,
+.drawer-glass .quick-toggle.active,
+.drawer-glass .mini-segment-option:hover,
+.drawer-glass .mini-segment-option.active {
+  background: rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .audio-output-mini-list {

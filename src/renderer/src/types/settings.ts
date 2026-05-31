@@ -106,6 +106,7 @@ export interface AppSettings {
   audioOutput: AudioOutputId
   audioDevice: string
   audioExclusiveMode: boolean
+  audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
 }
