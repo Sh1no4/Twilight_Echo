@@ -1,6 +1,7 @@
 #include "IOutputBackend.h"
 
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+#include "wasapi/WasapiExclusiveBackend.h"
 #include "wasapi/WasapiSharedBackend.h"
 #endif
 
@@ -20,6 +21,9 @@ std::unique_ptr<IOutputBackend> createOutputBackend(const std::string& backendId
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   if (backendId == "wasapi" || backendId == "wasapi-shared") {
     return std::make_unique<WasapiSharedBackend>();
+  }
+  if (backendId == "wasapi-exclusive") {
+    return std::make_unique<WasapiExclusiveBackend>();
   }
 #else
   (void)backendId;

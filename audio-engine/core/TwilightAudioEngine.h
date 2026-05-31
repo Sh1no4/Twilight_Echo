@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AudioPipeline.h"
+#include "../playlist/QueueManager.h"
 #include "twilight_audio_engine.h"
 
 #include <atomic>
@@ -20,26 +21,21 @@ enum class PlaybackState {
   Paused
 };
 
-struct QueueItem {
-  std::string id;
-  std::string source;
-  std::string title;
-  double durationSeconds = 0.0;
-};
-
 struct PlaybackInfo {
   PlaybackState state = PlaybackState::Stopped;
   double positionSeconds = 0.0;
   double durationSeconds = 0.0;
   double volume = 1.0;
   int queueIndex = -1;
+  std::string playMode = "sequential";
   std::string source;
-  std::string codec = "unknown";
+  std::string codec = "未知";
   int bitrate = 0;
   int sourceSampleRate = 0;
   int sourceBitDepth = 0;
   std::string outputBackend = "wasapi";
   std::string outputDevice = "auto";
+  OutputInfo outputInfo;
   int outputSampleRate = 0;
   int outputBitDepth = 0;
   int channelCount = 0;
@@ -47,6 +43,10 @@ struct PlaybackInfo {
   bool dspActive = false;
   std::string resampleReason;
   std::string dsdMode = "unsupported";
+  bool gaplessActive = false;
+  bool preloadReady = false;
+  bool hasUpcomingTrack = false;
+  QueueItem upcomingTrack;
 };
 
 class TwilightAudioEngine {
@@ -72,10 +72,12 @@ class TwilightAudioEngine {
   TAE_Result removeFromQueue(int index);
   TAE_Result next();
   TAE_Result previous();
+  TAE_Result setPlayMode(const std::string& mode);
 
   TAE_Result setDspConfig(const std::string& dspJson);
   std::string getDspConfig() const;
   std::string getQueueJson() const;
+  std::string getUpcomingTrackJson() const;
   std::string enumerateDevicesJson() const;
   std::string enumerateBackendsJson() const;
   std::string getPlaybackInfoJson() const;
@@ -94,8 +96,7 @@ class TwilightAudioEngine {
 
   mutable std::mutex mutex_;
   PlaybackInfo info_;
-  std::vector<QueueItem> queue_;
-  std::string rawQueueJson_ = "[]";
+  QueueManager queue_;
   std::string dspConfigJson_ = "{}";
   std::unique_ptr<AudioPipeline> pipeline_;
   TAE_EventCallback eventCallback_ = nullptr;

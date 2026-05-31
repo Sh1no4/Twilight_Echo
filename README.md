@@ -3,60 +3,52 @@
 <img src="./assets/logo.png" style="margin-left:0; width: 35%;" alt="Twilight Echo logo" />
 <img src="./assets/icon.svg" style="width: 17%; margin-left: 20px; margin-bottom: 10px;" align="right" alt="Twilight Echo icon" />
 
-Twilight Echo 是一个基于 `Electron + Vue 3 + TypeScript` 构建的桌面音乐播放器，面向同时重视界面体验、流媒体能力与音频输出质量的使用场景。
+Twilight Echo 是一款基于 `Electron + Vue 3 + TypeScript` 的桌面音乐播放器。项目目标不是只做一个能播放音乐的外壳，而是逐步构建一套具备本地音乐库、网易云音乐接入、沉浸式界面和原生 HiFi 音频链路的完整桌面播放体验。
 
-它当前已经具备本地音乐库管理、网易云音乐流媒体模式、自研原生音频引擎 `Twilight Audio Engine`、播放记忆恢复、均衡器与缓存管理等能力，目标不是做一个“只能放歌的壳”，而是逐步打磨成一套完整的桌面 Hi-Fi 播放体验。
+当前重点是自研 `Twilight Audio Engine`：一个独立于 mpv 的 C++20 音频引擎，通过稳定 C ABI 和 Node-API 桥接给 Electron 使用。
 
-## 项目定位
+## 当前状态
 
-- 本地音乐与在线流媒体双模式共存
-- 面向桌面端的沉浸式播放体验与视觉设计
-- 以 `Twilight Audio Engine` 为核心逐步强化原生音频播放链路
-- 保留 Electron 开发效率，同时向更强的音频控制能力扩展
+- 桌面端：Electron 主进程、Preload 安全桥、Vue 3 Renderer 已接入。
+- 播放通道：Electron 侧保留 HTMLAudio 临时兜底；原生引擎可用时优先走 `twilight_audio_node.node`。
+- 原生引擎：Windows MVP 已打通 `FFmpeg -> AudioPipeline -> WASAPI Shared -> Node-API`。
+- 构建产物：Windows 下已生成 `twilight-audio-engine.dll` 和 `twilight_audio_node.node`。
+- 设备枚举：已支持 WASAPI 设备枚举，设置页可读取统一设备模型。
+- 后续重点：WASAPI Exclusive、ASIO、DSP 实处理、gapless/crossfade、CoreAudio/ALSA、DSD Native/DoP。
 
 ## 核心功能
 
-### 1. 本地音乐库
+### 本地音乐库
 
-- 扫描本地文件夹并递归导入音频文件
-- 基于元数据自动整理歌曲、艺术家、专辑、文件夹视图
-- 自动读取封面、歌词与音频基础信息
-- 持久化保存已扫描音乐库与扫描目录记录
+- 扫描本地文件夹并递归导入音频文件。
+- 基于元数据整理歌曲、艺术家、专辑和文件夹视图。
+- 读取封面、歌词和音频基础信息。
+- 持久化音乐库、扫描目录和播放会话。
 
-### 2. 网易云音乐流媒体模式
+### 网易云音乐
 
-- 支持二维码登录与登录状态检查
-- 支持首页推荐、每日推荐、私人 FM、私人雷达
-- 支持在线搜索歌曲、歌单、艺人
-- 支持读取“我喜欢的音乐”、个人歌单、艺人热门歌曲
-- 支持收藏 / 取消收藏歌曲
-- 支持歌词与翻译歌词获取
+- 支持二维码登录和登录状态检查。
+- 支持首页推荐、每日推荐、私人 FM、私人雷达。
+- 支持搜索歌曲、歌单和艺人。
+- 支持读取“我喜欢的音乐”、个人歌单和艺人热门歌曲。
+- 支持收藏 / 取消收藏歌曲。
+- 支持歌词和翻译歌词读取。
 
-### 3. 播放与队列控制
+### 播放控制
 
-- 播放 / 暂停、上一首 / 下一首、进度拖动、音量控制
-- 顺序播放、单曲循环、随机播放
-- 支持播放列表队列切换
-- 支持播放结束自动续播
-- 支持退出前保存播放会话，并在下次启动时恢复曲目或恢复到上次播放位置
+- 播放、暂停、停止、上一首、下一首。
+- 进度跳转和音量控制。
+- 顺序播放、单曲循环、随机播放。
+- 播放队列切换和会话恢复。
+- 原生引擎不可用时自动回退到 Renderer 层播放。
 
-### 4. 音频能力
+### HiFi 音频方向
 
-- 使用自研 `Twilight Audio Engine` 作为原生音频播放核心
-- 支持本地文件与 HTTP 音频流统一进入播放链路
-- 支持音频输出设备切换
-- 支持 `WASAPI`、`ASIO`、`CoreAudio`、`ALSA` 输出类型配置入口
-- Windows 下支持独占模式能力接入
-- 支持 Graphic / Parametric EQ、Preamp、Gapless、Crossfade、ReplayGain 相关设置
-- 在原生引擎不可用时保留 renderer `HTMLAudioElement` 兜底播放路径
-
-### 5. 桌面应用体验
-
-- 自定义无边框标题栏
-- 托盘最小化 / 关闭到托盘
-- 全局快捷键控制播放
-- 可配置缓存目录
-- 支持主题、模糊效果、封面取色、歌词字号等外观设置
+- 自研 `Twilight Audio Engine`，目标替换 mpv。
+- 使用 FFmpeg 作为解码层。
+- Windows 当前优先 WASAPI Shared，预留 WASAPI Exclusive 和 ASIO。
+- 预留 CoreAudio、ALSA、ReplayGain、EQ、FIR Convolver、Resampler、VST3 Host、DSD Native、SACD ISO、Room Correction。
+- `GetPlaybackInfo()` 会上报 codec、bit depth、sample rate、bitrate、输出后端、输出设备、输出采样率、输出位深、bit-perfect 状态和 DSP 状态。
 
 ## 技术栈
 
@@ -67,41 +59,64 @@ Twilight Echo 是一个基于 `Electron + Vue 3 + TypeScript` 构建的桌面音
 - `PrimeIcons`
 - `music-metadata`
 - `@neteasecloudmusicapienhanced/api`
+- `C++20`
 - `CMake`
+- `vcpkg`
 - `FFmpeg`
-- `Twilight Audio Engine`（C++20）
+- `Node-API`
+- `WASAPI`
 
-## 当前支持的音频格式
+## 支持格式
 
-项目当前在扫描与读取阶段支持以下主流格式：
+本地库扫描和元数据读取覆盖常见格式：
 
 ```text
 .mp3 .flac .wav .wave .aac .ogg .wma .m4a .mp4 .aiff .aif
 .opus .webm .alac .ape .wv .dsf .dff .mqa
 ```
 
-说明：
+原生引擎的实际播放能力取决于当前平台后端和 FFmpeg 构建。Windows MVP 已验证 WAV/PCM 路径，其他格式会随着 FFmpeg 解码和输出链路测试继续补齐。
 
-- 本地库扫描是否识别，取决于主进程扫描规则
-- 实际播放效果还会受到 `Twilight Audio Engine` 当前后端实现与目标平台能力影响
+## 项目结构
+
+```text
+.
+├── src/
+│   ├── main/                 Electron 主进程：窗口、IPC、扫描、设置、缓存、NCM、音频引擎管理
+│   ├── preload/              暴露给 Renderer 的安全 API
+│   └── renderer/             Vue 3 前端界面
+│       └── src/
+│           ├── components/   页面和核心 UI 组件
+│           ├── stores/       播放、本地库、设置、网易云状态管理
+│           ├── types/        类型定义
+│           ├── utils/        工具函数
+│           └── assets/       前端样式资源
+├── audio-engine/             Twilight Audio Engine，C++20 原生音频引擎
+│   ├── include/              稳定 C ABI
+│   ├── core/                 引擎生命周期、状态机、AudioPipeline、缓冲区
+│   ├── decoder/              FFmpeg 解码
+│   ├── dsp/                  DSP 链、频谱分析、未来 EQ/卷积/重采样
+│   ├── output/               WASAPI/ASIO/CoreAudio/ALSA 后端
+│   ├── devices/              设备枚举和能力模型
+│   ├── playlist/             Queue/Playlist 预留
+│   ├── metadata/             音频信息读取预留
+│   ├── napi/                 Node-API 桥接层
+│   └── tests/                Native 测试
+├── resources/                应用资源和打包资源
+├── build/                    electron-builder 资源
+├── patches/                  第三方依赖补丁
+└── scripts/                  辅助脚本
+```
 
 ## 快速开始
 
-### 环境要求
-
-- `Node.js` 18 及以上
-- `npm` 或 `pnpm`
-- 如需构建原生音频引擎，需额外准备 `CMake` 与对应平台的本地编译环境
-
 ### 安装依赖
-
-使用 `npm`：
 
 ```bash
 npm install
 ```
 
-或使用 `pnpm`：
+或使用 pnpm：
 
 ```bash
 pnpm install
@@ -113,16 +128,87 @@ pnpm install
 npm run dev
 ```
 
-启动后会打开 Electron 桌面窗口。
-
-## 常用开发命令
-
-### 前端 / Electron
+### 构建 Electron 应用
 
 ```bash
-# 开发模式
-npm run dev
+npm run build
+```
 
+## Twilight Audio Engine 构建
+
+### Windows 已验证工具链
+
+当前 Windows 原生 MVP 使用以下工具链验证：
+
+- CMake 4.3+
+- w64devkit / MinGW GCC
+- Ninja
+- vcpkg
+- FFmpeg `x64-mingw-static`
+- Node-API headers
+
+本机推荐环境变量：
+
+```powershell
+$env:W64DEVKIT_ROOT="D:\tools\w64devkit"
+$env:VCPKG_ROOT="D:\tools\vcpkg"
+$env:VCPKG_DEFAULT_TRIPLET="x64-mingw-static"
+```
+
+### 配置、构建、测试
+
+```bash
+npm run configure:audio-engine:mingw
+npm run build:audio-engine:mingw
+npm run test:audio-engine:mingw
+```
+
+生成的主要产物位于：
+
+```text
+audio-engine/build/mingw-static/twilight-audio-engine.dll
+audio-engine/build/mingw-static/twilight_audio_node.node
+```
+
+### 默认 CMake 入口
+
+```bash
+npm run configure:audio-engine
+npm run build:audio-engine
+npm run test:audio-engine
+```
+
+## Electron 集成方式
+
+Electron 主进程通过 `src/main/audioEngineManager.ts` 加载原生桥接模块：
+
+```text
+twilight_audio_node.node
+        ↓
+twilight-audio-engine.dll C ABI
+        ↓
+TwilightAudioEngine
+        ↓
+FFmpeg -> DSP Chain -> WASAPI/CoreAudio/ALSA/ASIO
+```
+
+对 Renderer 暴露的核心能力包括：
+
+- `Play()`
+- `Pause()`
+- `Stop()`
+- `Seek()`
+- `SetVolume()`
+- `SetOutputDevice()`
+- `SetOutputBackend()`
+- `GetPlaybackInfo()`
+- `GetSpectrumData()`
+
+当前 dev 模式会优先从 `audio-engine/build/mingw-static`、`audio-engine/build/default`、`resources/audio-engine` 等位置查找 `.node` 文件。
+
+## 常用命令
+
+```bash
 # 类型检查
 npm run typecheck
 
@@ -132,95 +218,18 @@ npm run lint
 # 格式化
 npm run format
 
-# 构建应用
+# Electron 构建
 npm run build
+
+# Windows native engine
+npm run configure:audio-engine:mingw
+npm run build:audio-engine:mingw
+npm run test:audio-engine:mingw
 ```
-
-### Twilight Audio Engine
-
-```bash
-# 配置默认构建目录
-npm run configure:audio-engine
-
-# 使用 vcpkg preset 配置
-npm run configure:audio-engine:vcpkg
-
-# 构建原生音频引擎
-npm run build:audio-engine
-
-# 运行原生引擎测试
-npm run test:audio-engine
-```
-
-## 项目结构
-
-```text
-.
-├─ src/
-│  ├─ main/                Electron 主进程，负责窗口、IPC、扫描、设置、缓存与 NCM API 接入
-│  ├─ preload/             暴露给 renderer 的安全桥接层
-│  └─ renderer/            Vue 3 前端界面
-│     └─ src/
-│        ├─ components/    页面与核心 UI 组件
-│        ├─ stores/        播放、本地库、设置、网易云状态管理
-│        ├─ types/         类型定义
-│        ├─ utils/         工具函数
-│        └─ assets/        样式资源
-├─ audio-engine/           Twilight Audio Engine（C++20 原生音频引擎）
-├─ resources/              应用图标、SVG、字体等资源
-├─ assets/                 README 与品牌资源
-├─ build/                  打包相关资源
-├─ patches/                第三方依赖补丁
-└─ scripts/                辅助脚本
-```
-
-## Twilight Audio Engine 说明
-
-`Twilight Audio Engine` 是本项目的原生音频引擎，位于 [audio-engine/README.md](/D:/Twilight_Echo-main/audio-engine/README.md)。
-
-当前仓库中已经包含：
-
-- C ABI 边界定义
-- `Node-API` 桥接代码
-- `FFmpeg` 解码路径
-- 音频队列 / 状态 / DSP / 元数据相关基础设施
-- 多平台输出后端接口槽位
-
-当前较完整的原生播放路径集中在 Windows：
-
-- `FFmpegDecoder` 负责本地文件与 HTTP URL 解码
-- `AudioPipeline` 负责 PCM 缓冲、播放位置、渲染回调等
-- `WasapiSharedBackend` 负责 `WASAPI shared mode` 输出
-- `DeviceManager` 负责 Windows 音频设备枚举
-
-需要注意：
-
-- `WASAPI Exclusive`、`ASIO`、`CoreAudio`、`ALSA` 目前在仓库中已有后端入口或类型支持，但不同平台的成熟度并不完全一致
-- 在未成功构建或加载原生引擎时，应用会退回到 renderer 层音频播放兜底逻辑
-- 如果你准备继续完善原生播放链路，建议优先从 `audio-engine/` 目录与 `src/main/audioEngineManager.ts` 入手
-
-## 缓存与数据存储
-
-应用会在 Electron 用户目录下持久化保存若干数据，例如：
-
-- 本地音乐库数据
-- 网易云登录 Cookie
-- 播放会话恢复信息
-- NCM 音频缓存
-- 应用设置与缓存目录
-
-其中缓存目录支持在设置页中调整，主进程会自动维护：
-
-- `renderer-cache`
-- `audio-engine-cache`
-- `ncm-cache`
 
 ## 打包发布
 
 ```bash
-# 仅构建产物
-npm run build
-
 # 生成 unpacked 目录
 npm run build:unpack
 
@@ -234,26 +243,19 @@ npm run build:mac
 npm run build:linux
 ```
 
-补充说明：
-
-- 打包配置位于 `electron-builder.yml`
-- `postinstall` 会执行 `electron-builder install-app-deps`
-- 如果你的发布流程依赖原生音频引擎，请先确认对应平台的引擎产物已经正确构建并可被应用加载
+打包配置位于 `electron-builder.yml`。`resources/audio-engine` 会作为额外资源复制到应用资源目录；正式发布前需要确保目标平台的 `twilight-audio-engine` 和 `twilight_audio_node.node` 已经构建并放置到对应资源目录。
 
 ## 已知事项
 
-- 网易云相关能力依赖本地启动的 `@neteasecloudmusicapienhanced/api` 服务
-- 某些在线能力需要用户先完成登录后才能正常使用
-- 原生音频引擎的不同输出后端在不同平台上的完成度并不完全一致
-- Windows 独占模式启用后，其他应用可能无法同时占用相同输出设备
-- 部分高质量音频能力是否真正生效，除了界面设置外，还取决于底层后端实现状态
+- Windows 当前已验证 WASAPI Shared；Exclusive/ASIO 仍在后续阶段。
+- Shared Mode 会经过系统混音格式，`bitPerfect=false` 是符合预期的。
+- 启用软件音量、ReplayGain、EQ、卷积或重采样时会标记 `bitPerfect=false`。
+- DSD64/128/256 当前优先做识别和状态上报，Native DSD/DoP 将在 Exclusive/ASIO 成熟后实现。
+- 网易云相关能力依赖本地启动的 `@neteasecloudmusicapienhanced/api` 服务。
+- npm 可能会提示 `.npmrc` 中镜像配置为 unknown project config，这是 npm 新版本的警告，不影响当前构建。
 
 ## License
 
 本项目采用 [Apache License 2.0](./LICENSE) 开源。
 
-请注意：
-
-- 本许可证适用于本仓库中由项目作者拥有版权的源码与文档内容
-- 第三方依赖、字体、图标、在线服务接口及相关内容素材仍分别受其各自许可证或服务条款约束
-- 如你计划二次分发应用，请额外确认所使用第三方资源与在线内容是否允许对应分发方式
+第三方依赖、字体、图标、在线服务接口和相关内容素材分别受各自许可证或服务条款约束。若计划二次分发，请额外确认相关资源是否允许对应分发方式。

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <sstream>
 
 namespace twilight::audio {
@@ -55,7 +56,7 @@ std::string escapeJson(const std::string& value) {
 
 std::string inferCodec(const std::string& source) {
   const auto dot = source.find_last_of('.');
-  if (dot == std::string::npos) return "unknown";
+  if (dot == std::string::npos) return "未知";
   std::string ext = source.substr(dot + 1);
   std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) {
     return static_cast<char>(std::tolower(ch));
@@ -74,6 +75,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"duration\":" << info.durationSeconds << ","
        << "\"volume\":" << info.volume << ","
        << "\"queueIndex\":" << info.queueIndex << ","
+       << "\"playMode\":\"" << escapeJson(info.playMode) << "\","
        << "\"source\":\"" << escapeJson(info.source) << "\","
        << "\"codec\":\"" << escapeJson(info.codec) << "\","
        << "\"bitrate\":" << info.bitrate << ","
@@ -81,13 +83,26 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"sourceBitDepth\":" << info.sourceBitDepth << ","
        << "\"outputBackend\":\"" << escapeJson(info.outputBackend) << "\","
        << "\"outputDevice\":\"" << escapeJson(info.outputDevice) << "\","
+       << "\"outputInfo\":{"
+       << "\"exclusive\":" << (info.outputInfo.exclusive ? "true" : "false") << ","
+       << "\"bitPerfect\":" << (info.outputInfo.bitPerfect ? "true" : "false") << ","
+       << "\"resampled\":" << (info.outputInfo.resampled ? "true" : "false") << ","
+       << "\"outputSampleRate\":" << info.outputInfo.outputSampleRate << ","
+       << "\"outputBitDepth\":" << info.outputInfo.outputBitDepth << ","
+       << "\"backend\":\"" << escapeJson(info.outputInfo.backend) << "\","
+       << "\"deviceName\":\"" << escapeJson(info.outputInfo.deviceName) << "\""
+       << "},"
        << "\"outputSampleRate\":" << info.outputSampleRate << ","
        << "\"outputBitDepth\":" << info.outputBitDepth << ","
        << "\"channelCount\":" << info.channelCount << ","
        << "\"bitPerfect\":" << (info.bitPerfect ? "true" : "false") << ","
        << "\"dspActive\":" << (info.dspActive ? "true" : "false") << ","
        << "\"resampleReason\":\"" << escapeJson(info.resampleReason) << "\","
-       << "\"dsdMode\":\"" << escapeJson(info.dsdMode) << "\""
+       << "\"dsdMode\":\"" << escapeJson(info.dsdMode) << "\","
+       << "\"gaplessActive\":" << (info.gaplessActive ? "true" : "false") << ","
+       << "\"preloadReady\":" << (info.preloadReady ? "true" : "false") << ","
+       << "\"upcomingTrack\":"
+       << QueueManager::itemToJson(info.hasUpcomingTrack ? std::optional<QueueItem>(info.upcomingTrack) : std::nullopt)
        << "}";
   return json.str();
 }
@@ -97,6 +112,23 @@ bool containsEnabledDsp(const std::string& dspJson) {
          dspJson.find("\"volumeNormalization\":\"track\"") != std::string::npos ||
          dspJson.find("\"volumeNormalization\":\"album\"") != std::string::npos ||
          dspJson.find("\"volumeNormalization\":\"loudnorm\"") != std::string::npos;
+}
+
+bool gaplessEnabledFromConfig(const std::string& dspJson) {
+  if (dspJson.find("\"gapless\":false") != std::string::npos) return false;
+  const std::string key = "\"crossfadeSeconds\":";
+  const size_t pos = dspJson.find(key);
+  if (pos == std::string::npos) return true;
+  const size_t valueStart = pos + key.size();
+  return dspJson.compare(valueStart, 1, "0") == 0;
+}
+
+QueueItem makeManualQueueItem(const std::string& source) {
+  QueueItem item;
+  item.id = "manual";
+  item.source = source;
+  item.title = source;
+  return item;
 }
 
 }  // namespace
@@ -110,6 +142,10 @@ TwilightAudioEngine::TwilightAudioEngine() {
 #else
   info_.outputBackend = "alsa";
 #endif
+  info_.outputInfo.backend = info_.outputBackend;
+  info_.outputInfo.exclusive = info_.outputBackend == "wasapi-exclusive";
+  info_.resampleReason = info_.outputInfo.exclusive ? "" : "共享输出经过系统混音";
+  updateBitPerfectLocked();
   lastTick_ = std::chrono::steady_clock::now();
   startClock();
 }
@@ -132,28 +168,39 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
   std::string device;
   double volume = 1.0;
   bool dspActive = false;
+  bool gaplessEnabled = true;
+  QueueItem item;
+  std::optional<QueueItem> upcoming;
   {
     std::lock_guard lock(mutex_);
     if (queue_.empty()) {
-      queue_.push_back({"manual", source, source, 0.0});
-      rawQueueJson_ = "[]";
+      item = makeManualQueueItem(source);
       info_.queueIndex = 0;
+    } else {
+      item = queue_.current().value_or(makeManualQueueItem(source));
+      if (item.source.empty() || item.source != source) item.source = source;
+      info_.queueIndex = queue_.currentIndex();
     }
-    info_.source = source;
+    upcoming = queue_.upcoming();
+    info_.source = item.source;
     info_.positionSeconds = std::max(0.0, startTimeSeconds);
-    info_.durationSeconds = currentItemLocked().durationSeconds;
-    info_.codec = inferCodec(source);
+    info_.durationSeconds = item.durationSeconds;
+    info_.codec = inferCodec(item.source);
     info_.state = PlaybackState::Playing;
     info_.dsdMode = info_.codec == "dsd" ? "native-pending" : "pcm";
+    info_.playMode = queue_.playModeId();
+    info_.hasUpcomingTrack = upcoming.has_value();
+    info_.upcomingTrack = upcoming.value_or(QueueItem{});
     backend = info_.outputBackend;
     device = info_.outputDevice;
     volume = info_.volume;
     dspActive = containsEnabledDsp(dspConfigJson_);
+    gaplessEnabled = gaplessEnabledFromConfig(dspConfigJson_);
   }
 
   std::string error;
   const TAE_Result result =
-      pipeline_ ? pipeline_->play(source, startTimeSeconds, backend, device, volume, dspActive, &error)
+      pipeline_ ? pipeline_->play(item, upcoming, startTimeSeconds, backend, device, volume, dspActive, gaplessEnabled, &error)
                 : TAE_RESULT_NOT_INITIALIZED;
   if (result != TAE_RESULT_OK) {
     {
@@ -161,7 +208,7 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
       info_.state = PlaybackState::Stopped;
       info_.positionSeconds = 0.0;
     }
-    emitError(error.empty() ? "Unable to start native audio playback" : error);
+    emitError(error.empty() ? "无法启动原生音频播放" : error);
     return result;
   }
 
@@ -206,7 +253,7 @@ TAE_Result TwilightAudioEngine::seek(double positionSeconds) {
   if (pipeline_ && currentState != PlaybackState::Stopped) {
     const TAE_Result result = pipeline_->seek(positionSeconds, &error);
     if (result != TAE_RESULT_OK) {
-      emitError(error.empty() ? "Unable to seek native audio playback" : error);
+      emitError(error.empty() ? "无法跳转原生音频播放位置" : error);
       return result;
     }
   }
@@ -274,48 +321,119 @@ TAE_Result TwilightAudioEngine::setOutputBackend(const std::string& backendId) {
 }
 
 TAE_Result TwilightAudioEngine::loadQueue(const std::string& queueJson, int startIndex) {
+  std::string error;
   std::lock_guard lock(mutex_);
-  rawQueueJson_ = queueJson.empty() ? "[]" : queueJson;
-  queue_.clear();
-  queue_.push_back({"queue", "", "", 0.0});
-  info_.queueIndex = std::max(0, startIndex);
-  emit("queue-change", rawQueueJson_);
+  if (!queue_.loadFromJson(queueJson, startIndex, &error)) {
+    emitError(error.empty() ? "播放队列加载失败" : error);
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
+  info_.queueIndex = queue_.currentIndex();
+  info_.playMode = queue_.playModeId();
+  const auto upcoming = queue_.upcoming();
+  info_.hasUpcomingTrack = upcoming.has_value();
+  info_.upcomingTrack = upcoming.value_or(QueueItem{});
+  emit("queue-change", queue_.queueJson());
   return TAE_RESULT_OK;
 }
 
 TAE_Result TwilightAudioEngine::addToQueue(const std::string& itemJson) {
+  std::string error;
   std::lock_guard lock(mutex_);
-  if (rawQueueJson_ == "[]") {
-    rawQueueJson_ = "[" + itemJson + "]";
-  } else if (!itemJson.empty()) {
-    rawQueueJson_.insert(rawQueueJson_.size() - 1, "," + itemJson);
+  if (!queue_.addFromJson(itemJson, &error)) {
+    emitError(error.empty() ? "无法加入播放队列" : error);
+    return TAE_RESULT_INVALID_ARGUMENT;
   }
-  emit("queue-change", rawQueueJson_);
+  emit("queue-change", queue_.queueJson());
   return TAE_RESULT_OK;
 }
 
 TAE_Result TwilightAudioEngine::removeFromQueue(int index) {
   std::lock_guard lock(mutex_);
-  if (index < 0) return TAE_RESULT_INVALID_ARGUMENT;
-  emit("queue-change", rawQueueJson_);
+  if (!queue_.removeAt(index)) return TAE_RESULT_INVALID_ARGUMENT;
+  info_.queueIndex = queue_.currentIndex();
+  emit("queue-change", queue_.queueJson());
   return TAE_RESULT_OK;
 }
 
 TAE_Result TwilightAudioEngine::next() {
-  std::lock_guard lock(mutex_);
-  info_.queueIndex += 1;
-  info_.positionSeconds = 0.0;
-  publishStateLocked();
-  emit("next", playbackInfoToJson(info_));
+  std::optional<QueueItem> item;
+  std::optional<QueueItem> upcoming;
+  PlaybackState state = PlaybackState::Stopped;
+  {
+    std::lock_guard lock(mutex_);
+    item = queue_.next();
+    if (!item) return TAE_RESULT_OK;
+    upcoming = queue_.upcoming();
+    state = info_.state;
+    info_.queueIndex = queue_.currentIndex();
+    info_.positionSeconds = 0.0;
+    info_.source = item->source;
+    info_.durationSeconds = item->durationSeconds;
+    info_.codec = inferCodec(item->source);
+    info_.hasUpcomingTrack = upcoming.has_value();
+    info_.upcomingTrack = upcoming.value_or(QueueItem{});
+    publishStateLocked();
+  }
+
+  if (state != PlaybackState::Stopped && item) {
+    std::string error;
+    bool usedPreload = pipeline_ && pipeline_->skipToPreloaded(*item, &error);
+    if (usedPreload) {
+      if (pipeline_) pipeline_->consumeTrackStarted(nullptr);
+      if (pipeline_) pipeline_->preloadNext(upcoming, &error);
+      std::lock_guard lock(mutex_);
+      applyPipelineStatusLocked(pipeline_->status());
+      publishStateLocked();
+    } else {
+      const TAE_Result result = play(item->source, 0.0);
+      if (result != TAE_RESULT_OK) return result;
+    }
+  }
+  emit("next", getPlaybackInfoJson());
   return TAE_RESULT_OK;
 }
 
 TAE_Result TwilightAudioEngine::previous() {
-  std::lock_guard lock(mutex_);
-  info_.queueIndex = std::max(-1, info_.queueIndex - 1);
-  info_.positionSeconds = 0.0;
-  publishStateLocked();
-  emit("previous", playbackInfoToJson(info_));
+  std::optional<QueueItem> item;
+  PlaybackState state = PlaybackState::Stopped;
+  {
+    std::lock_guard lock(mutex_);
+    item = queue_.previous();
+    if (!item) return TAE_RESULT_OK;
+    state = info_.state;
+    info_.queueIndex = queue_.currentIndex();
+    info_.positionSeconds = 0.0;
+    info_.source = item->source;
+    info_.durationSeconds = item->durationSeconds;
+    info_.codec = inferCodec(item->source);
+    const auto upcoming = queue_.upcoming();
+    info_.hasUpcomingTrack = upcoming.has_value();
+    info_.upcomingTrack = upcoming.value_or(QueueItem{});
+    publishStateLocked();
+  }
+
+  if (state != PlaybackState::Stopped && item) {
+    const TAE_Result result = play(item->source, 0.0);
+    if (result != TAE_RESULT_OK) return result;
+  }
+  emit("previous", getPlaybackInfoJson());
+  return TAE_RESULT_OK;
+}
+
+TAE_Result TwilightAudioEngine::setPlayMode(const std::string& mode) {
+  std::optional<QueueItem> upcoming;
+  {
+    std::lock_guard lock(mutex_);
+    queue_.setPlayMode(QueueManager::parsePlayMode(mode));
+    info_.playMode = queue_.playModeId();
+    info_.queueIndex = queue_.currentIndex();
+    upcoming = queue_.upcoming();
+    info_.hasUpcomingTrack = upcoming.has_value();
+    info_.upcomingTrack = upcoming.value_or(QueueItem{});
+    publishStateLocked();
+  }
+  std::string error;
+  if (pipeline_) pipeline_->preloadNext(upcoming, &error);
   return TAE_RESULT_OK;
 }
 
@@ -334,7 +452,12 @@ std::string TwilightAudioEngine::getDspConfig() const {
 
 std::string TwilightAudioEngine::getQueueJson() const {
   std::lock_guard lock(mutex_);
-  return rawQueueJson_;
+  return queue_.queueJson();
+}
+
+std::string TwilightAudioEngine::getUpcomingTrackJson() const {
+  std::lock_guard lock(mutex_);
+  return queue_.upcomingJson();
 }
 
 std::string TwilightAudioEngine::enumerateDevicesJson() const {
@@ -343,13 +466,13 @@ std::string TwilightAudioEngine::enumerateDevicesJson() const {
 
 std::string TwilightAudioEngine::enumerateBackendsJson() const {
 #if defined(_WIN32)
-  return "[{\"id\":\"wasapi\",\"label\":\"WASAPI Shared\",\"supportsExclusive\":false},"
-         "{\"id\":\"wasapi-exclusive\",\"label\":\"WASAPI Exclusive\",\"supportsExclusive\":true},"
-         "{\"id\":\"asio\",\"label\":\"ASIO\",\"supportsExclusive\":true,\"optional\":true}]";
+  return "[{\"id\":\"wasapi\",\"label\":\"共享输出\",\"supportsExclusive\":false},"
+         "{\"id\":\"wasapi-exclusive\",\"label\":\"独占输出\",\"supportsExclusive\":true},"
+         "{\"id\":\"asio\",\"label\":\"专业声卡输出\",\"supportsExclusive\":true,\"optional\":true}]";
 #elif defined(__APPLE__)
-  return "[{\"id\":\"coreaudio\",\"label\":\"CoreAudio\",\"supportsExclusive\":true}]";
+  return "[{\"id\":\"coreaudio\",\"label\":\"苹果系统音频\",\"supportsExclusive\":true}]";
 #else
-  return "[{\"id\":\"alsa\",\"label\":\"ALSA\",\"supportsExclusive\":false}]";
+  return "[{\"id\":\"alsa\",\"label\":\"系统音频\",\"supportsExclusive\":false}]";
 #endif
 }
 
@@ -390,9 +513,71 @@ void TwilightAudioEngine::clockLoop() {
     bool emitEnded = false;
     PipelineStatus pipelineStatus;
     const bool hasPipelineStatus = pipeline_ != nullptr;
+    bool deviceInvalidated = false;
+    bool trackStarted = false;
+    QueueItem startedItem;
+    std::string deviceInvalidatedMessage;
     if (hasPipelineStatus) {
       pipelineStatus = pipeline_->status();
       emitEnded = pipeline_->consumeEnded();
+      deviceInvalidated = pipeline_->consumeDeviceInvalidated(&deviceInvalidatedMessage);
+      trackStarted = pipeline_->consumeTrackStarted(&startedItem);
+    }
+    if (deviceInvalidated) {
+      std::string source;
+      double position = 0.0;
+      PlaybackState previousState = PlaybackState::Stopped;
+      bool recover = false;
+      {
+        std::lock_guard lock(mutex_);
+        previousState = info_.state;
+        if (hasPipelineStatus) {
+          info_.positionSeconds = pipelineStatus.positionSeconds;
+          info_.durationSeconds = pipelineStatus.stream.durationSeconds;
+          info_.source = pipelineStatus.stream.source.empty() ? info_.source : pipelineStatus.stream.source;
+        }
+        source = info_.source;
+        position = info_.positionSeconds;
+        recover = info_.outputDevice == "auto" && !source.empty() && previousState != PlaybackState::Stopped;
+        if (!recover) {
+          info_.state = PlaybackState::Stopped;
+          payload = playbackInfoToJson(info_);
+          emitTick = true;
+        }
+      }
+      if (recover) {
+        const TAE_Result result = play(source, position);
+        if (result == TAE_RESULT_OK && previousState == PlaybackState::Paused) {
+          pause();
+        } else if (result != TAE_RESULT_OK) {
+          emitError(deviceInvalidatedMessage.empty() ? "输出设备已失效，自动恢复失败" : deviceInvalidatedMessage);
+        }
+      } else {
+        if (pipeline_) pipeline_->stop();
+        emitError(deviceInvalidatedMessage.empty() ? "输出设备已失效" : deviceInvalidatedMessage);
+        if (emitTick) emit("property-change", payload);
+      }
+      continue;
+    }
+    if (trackStarted) {
+      std::optional<QueueItem> upcoming;
+      {
+        std::lock_guard lock(mutex_);
+        queue_.advanceAfterEnd();
+        applyPipelineStatusLocked(pipelineStatus);
+        info_.queueIndex = queue_.currentIndex();
+        info_.playMode = queue_.playModeId();
+        upcoming = queue_.upcoming();
+        info_.hasUpcomingTrack = upcoming.has_value();
+        info_.upcomingTrack = upcoming.value_or(QueueItem{});
+        payload = playbackInfoToJson(info_);
+        emitTick = true;
+      }
+      std::string preloadError;
+      if (pipeline_) pipeline_->preloadNext(upcoming, &preloadError);
+      if (emitTick) emit("property-change", payload);
+      emit("start-file", "{}");
+      continue;
     }
     {
       std::lock_guard lock(mutex_);
@@ -448,28 +633,43 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.bitrate = static_cast<int>(std::max<int64_t>(0, status.stream.bitrate));
   info_.sourceSampleRate = status.stream.sourceFormat.sampleRate;
   info_.sourceBitDepth = status.stream.sourceFormat.bitDepth;
+  info_.queueIndex = queue_.currentIndex();
+  info_.playMode = queue_.playModeId();
   info_.outputBackend = status.backendId.empty() ? info_.outputBackend : status.backendId;
   (void)status.deviceName;
   info_.outputSampleRate = status.outputFormat.sampleRate;
   info_.outputBitDepth = status.outputFormat.bitDepth;
+  info_.outputInfo = status.outputInfo;
+  info_.outputInfo.bitPerfect = status.bitPerfect;
+  if (info_.outputInfo.backend.empty()) info_.outputInfo.backend = info_.outputBackend;
+  if (info_.outputInfo.deviceName.empty()) info_.outputInfo.deviceName = status.deviceName;
   info_.channelCount = status.outputFormat.channelCount;
   info_.bitPerfect = status.bitPerfect;
   info_.dspActive = status.dspActive;
+  info_.gaplessActive = status.gaplessActive;
+  info_.preloadReady = status.preloadReady;
+  const auto upcoming = queue_.upcoming();
+  info_.hasUpcomingTrack = upcoming.has_value();
+  info_.upcomingTrack = upcoming.value_or(QueueItem{});
   info_.resampleReason = status.resampleReason;
   info_.dsdMode = status.stream.isDsd ? "dsd-to-pcm-pending-native" : "pcm";
 }
 
 void TwilightAudioEngine::updateBitPerfectLocked() {
   info_.dspActive = containsEnabledDsp(dspConfigJson_) || std::abs(info_.volume - 1.0) > 0.0001;
-  const bool shared = info_.outputBackend == "wasapi" || info_.outputBackend == "wasapi-shared";
-  info_.bitPerfect = !info_.dspActive && !shared;
-  info_.resampleReason = shared ? "shared-output-mix-format" : "";
+  const bool exclusive = info_.outputBackend == "wasapi-exclusive";
+  info_.outputInfo.exclusive = exclusive;
+  info_.outputInfo.backend = info_.outputBackend;
+  info_.outputInfo.outputSampleRate = info_.outputSampleRate;
+  info_.outputInfo.outputBitDepth = info_.outputBitDepth;
+  info_.bitPerfect = !info_.dspActive && exclusive;
+  info_.outputInfo.bitPerfect = info_.bitPerfect;
+  info_.outputInfo.resampled = false;
+  info_.resampleReason = exclusive ? "" : "共享输出经过系统混音";
 }
 
 QueueItem TwilightAudioEngine::currentItemLocked() const {
-  if (queue_.empty()) return {};
-  const int index = std::clamp(info_.queueIndex, 0, static_cast<int>(queue_.size() - 1));
-  return queue_[static_cast<size_t>(index)];
+  return queue_.current().value_or(QueueItem{});
 }
 
 }  // namespace twilight::audio
@@ -576,9 +776,19 @@ TAE_Result TAE_Previous(TAE_EngineHandle engine) {
   return fromHandle(engine)->previous();
 }
 
+TAE_Result TAE_SetPlayMode(TAE_EngineHandle engine, const char* mode) {
+  if (!engine || !mode) return TAE_RESULT_INVALID_ARGUMENT;
+  return fromHandle(engine)->setPlayMode(mode);
+}
+
 TAE_Result TAE_GetQueue(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   return copyStringResult(fromHandle(engine)->getQueueJson(), buffer, buffer_size, required_size);
+}
+
+TAE_Result TAE_GetUpcomingTrack(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return copyStringResult(fromHandle(engine)->getUpcomingTrackJson(), buffer, buffer_size, required_size);
 }
 
 TAE_Result TAE_SetDspConfig(TAE_EngineHandle engine, const char* dsp_config_json) {

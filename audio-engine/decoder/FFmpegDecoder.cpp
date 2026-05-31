@@ -73,7 +73,7 @@ struct FFmpegDecoder::Impl {
 
   bool convertFrame(std::string* error) {
     if (!swr) {
-      if (error) *error = "FFmpeg resampler is not initialized";
+      if (error) *error = "解码重采样器尚未初始化";
       return false;
     }
 
@@ -94,7 +94,7 @@ struct FFmpegDecoder::Impl {
         const_cast<const uint8_t**>(frame->extended_data),
         frame->nb_samples);
     if (actualSamples < 0) {
-      if (error) *error = "FFmpeg resample failed: " + avError(actualSamples);
+      if (error) *error = "解码重采样失败，错误码：" + std::to_string(actualSamples);
       return false;
     }
 
@@ -118,7 +118,7 @@ struct FFmpegDecoder::Impl {
         return false;
       }
       if (ret != AVERROR(EAGAIN)) {
-        if (error) *error = "FFmpeg receive frame failed: " + avError(ret);
+        if (error) *error = "解码器接收音频帧失败，错误码：" + std::to_string(ret);
         eof = true;
         return false;
       }
@@ -130,7 +130,7 @@ struct FFmpegDecoder::Impl {
           return false;
         }
         if (ret < 0 && ret != AVERROR(EAGAIN)) {
-          if (error) *error = "FFmpeg drain failed: " + avError(ret);
+          if (error) *error = "解码器收尾失败，错误码：" + std::to_string(ret);
           eof = true;
           return false;
         }
@@ -147,7 +147,7 @@ struct FFmpegDecoder::Impl {
         ret = avcodec_send_packet(codecContext, packet);
         av_packet_unref(packet);
         if (ret < 0 && ret != AVERROR(EAGAIN)) {
-          if (error) *error = "FFmpeg send packet failed: " + avError(ret);
+          if (error) *error = "解码器提交音频包失败，错误码：" + std::to_string(ret);
           eof = true;
           return false;
         }
@@ -177,19 +177,19 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
 #if defined(TAE_HAS_FFMPEG)
   int ret = avformat_open_input(&impl_->formatContext, source.c_str(), nullptr, nullptr);
   if (ret < 0) {
-    if (error) *error = "FFmpeg open failed: " + Impl::avError(ret);
+    if (error) *error = "打开音频失败，错误码：" + std::to_string(ret);
     return false;
   }
 
   ret = avformat_find_stream_info(impl_->formatContext, nullptr);
   if (ret < 0) {
-    if (error) *error = "FFmpeg probe failed: " + Impl::avError(ret);
+    if (error) *error = "解析音频信息失败，错误码：" + std::to_string(ret);
     return false;
   }
 
   ret = av_find_best_stream(impl_->formatContext, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
   if (ret < 0) {
-    if (error) *error = "No audio stream found";
+    if (error) *error = "未找到音频流";
     return false;
   }
   impl_->audioStreamIndex = ret;
@@ -198,32 +198,32 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
   const AVCodecParameters* params = stream->codecpar;
   const AVCodec* codec = avcodec_find_decoder(params->codec_id);
   if (!codec) {
-    if (error) *error = "No FFmpeg decoder is available for this codec";
+    if (error) *error = "当前音频格式没有可用解码器";
     return false;
   }
 
   impl_->codecContext = avcodec_alloc_context3(codec);
   if (!impl_->codecContext) {
-    if (error) *error = "Unable to allocate FFmpeg codec context";
+    if (error) *error = "无法分配解码器上下文";
     return false;
   }
 
   ret = avcodec_parameters_to_context(impl_->codecContext, params);
   if (ret < 0) {
-    if (error) *error = "Unable to copy FFmpeg codec parameters: " + Impl::avError(ret);
+    if (error) *error = "无法读取解码参数，错误码：" + std::to_string(ret);
     return false;
   }
 
   ret = avcodec_open2(impl_->codecContext, codec, nullptr);
   if (ret < 0) {
-    if (error) *error = "Unable to open FFmpeg decoder: " + Impl::avError(ret);
+    if (error) *error = "无法打开解码器，错误码：" + std::to_string(ret);
     return false;
   }
 
   impl_->packet = av_packet_alloc();
   impl_->frame = av_frame_alloc();
   if (!impl_->packet || !impl_->frame) {
-    if (error) *error = "Unable to allocate FFmpeg packet/frame";
+    if (error) *error = "无法分配解码缓冲";
     return false;
   }
 
@@ -232,7 +232,7 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
   const int sampleBitDepth = av_get_bytes_per_sample(impl_->codecContext->sample_fmt) * 8;
 
   impl_->streamInfo.source = source;
-  impl_->streamInfo.codec = codec->name ? codec->name : "unknown";
+  impl_->streamInfo.codec = codec->name ? codec->name : "未知";
   impl_->streamInfo.bitrate =
       params->bit_rate > 0 ? params->bit_rate : impl_->formatContext->bit_rate;
   impl_->streamInfo.sourceFormat.sampleRate = impl_->codecContext->sample_rate;
@@ -253,7 +253,7 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
   return setOutputFormat(defaultOutput, error);
 #else
   (void)source;
-  if (error) *error = "FFmpeg support is not compiled into twilight-audio-engine";
+  if (error) *error = "当前构建未启用音频解码支持";
   return false;
 #endif
 }
@@ -265,11 +265,11 @@ void FFmpegDecoder::close() {
 bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* error) {
 #if defined(TAE_HAS_FFMPEG)
   if (!impl_->codecContext) {
-    if (error) *error = "FFmpeg decoder is not open";
+    if (error) *error = "解码器尚未打开";
     return false;
   }
   if (format.sampleRate <= 0 || format.channelCount <= 0) {
-    if (error) *error = "Invalid output format requested";
+    if (error) *error = "请求的输出格式无效";
     return false;
   }
 
@@ -290,13 +290,13 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
       0,
       nullptr);
   if (ret < 0 || !impl_->swr) {
-    if (error) *error = "Unable to allocate FFmpeg resampler";
+    if (error) *error = "无法分配解码重采样器";
     return false;
   }
 
   ret = swr_init(impl_->swr);
   if (ret < 0) {
-    if (error) *error = "Unable to initialize FFmpeg resampler: " + Impl::avError(ret);
+    if (error) *error = "无法初始化解码重采样器，错误码：" + std::to_string(ret);
     return false;
   }
 
@@ -307,7 +307,7 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
   return true;
 #else
   (void)format;
-  if (error) *error = "FFmpeg support is not compiled into twilight-audio-engine";
+  if (error) *error = "当前构建未启用音频解码支持";
   return false;
 #endif
 }
@@ -358,7 +358,7 @@ bool FFmpegDecoder::seek(double seconds, std::string* error) {
   const int64_t timestamp = static_cast<int64_t>(seconds / av_q2d(stream->time_base));
   const int ret = av_seek_frame(impl_->formatContext, impl_->audioStreamIndex, timestamp, AVSEEK_FLAG_BACKWARD);
   if (ret < 0) {
-    if (error) *error = "FFmpeg seek failed: " + Impl::avError(ret);
+    if (error) *error = "音频跳转失败，错误码：" + std::to_string(ret);
     return false;
   }
   avcodec_flush_buffers(impl_->codecContext);
@@ -368,7 +368,7 @@ bool FFmpegDecoder::seek(double seconds, std::string* error) {
   return true;
 #else
   (void)seconds;
-  if (error) *error = "FFmpeg support is not compiled into twilight-audio-engine";
+  if (error) *error = "当前构建未启用音频解码支持";
   return false;
 #endif
 }

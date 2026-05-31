@@ -20,6 +20,9 @@ audio-engine/CMakeCache.txt
 audio-engine/cmake_install.cmake
 audio-engine/compile_commands.json
 audio-engine/Testing/
+audio-engine/vcpkg_installed/
+resources/audio-engine/*.dll
+resources/audio-engine/*.node
 
 # Test and coverage output
 coverage/

@@ -11,6 +11,7 @@ import { useNcmStore } from './useNcmStore'
 import { useSettingsStore } from './useSettingsStore'
 
 type PlayMode = 'sequential' | 'repeat' | 'shuffle'
+type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type EqualizerFilterType =
@@ -437,6 +438,85 @@ async function refreshAudioOutputState(): Promise<void> {
   return audioEngineStateRequest
 }
 
+function getTrackAudioSource(track: Track): string {
+  return track.streamUrl || track.filePath
+}
+
+function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
+  if (Number.isInteger(info.queueIndex) && info.queueIndex >= 0 && info.queueIndex < queue.value.length) {
+    return info.queueIndex
+  }
+
+  if (!info.source) return -1
+  return queue.value.findIndex((track) => track.id === info.source || getTrackAudioSource(track) === info.source)
+}
+
+function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
+  const infoIndex = findTrackIndexFromPlaybackInfo(info)
+  let switchedTrack = false
+
+  if (infoIndex >= 0) {
+    const track = queue.value[infoIndex]
+    switchedTrack = currentTrack.value?.id !== track.id
+    queueIndex.value = infoIndex
+    currentTrack.value = track
+    loadedTrackId = track.id
+  }
+
+  const nextDuration = Number.isFinite(info.duration) && info.duration > 0 ? info.duration : currentTrack.value?.duration
+  if (nextDuration && nextDuration > 0) {
+    duration.value = nextDuration
+  }
+
+  const nextPosition = Number.isFinite(info.position) ? Math.max(0, info.position) : latestPlaybackTime
+  if (switchedTrack || nextPosition + 1 < latestPlaybackTime) {
+    setCurrentTimeImmediate(nextPosition)
+  } else {
+    setCurrentTimeThrottled(nextPosition)
+  }
+
+  isPlaying.value = info.state === 'playing'
+  isLoading.value = false
+  if (info.state === 'stopped') {
+    nativePlaybackActive = false
+  }
+  autoAdvanceInFlight = false
+  advancingFromEndedTrackId = ''
+  restoredPlaybackPending = false
+  restoredPlaybackPosition = 0
+  pendingLoadStartTime = 0
+  scheduleCrossfadeIfNeeded()
+}
+
+async function syncNativeQueueState(): Promise<void> {
+  const engineQueue = queue.value.map((item) => ({
+    ...item,
+    audioSource: getTrackAudioSource(item)
+  }))
+  await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
+  await window.api.audioEngine.setPlayMode(playMode.value)
+}
+
+async function refreshNativePlaybackInfo(): Promise<void> {
+  applyNativePlaybackInfo(await window.api.audioEngine.getPlaybackInfo())
+}
+
+async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<void> {
+  try {
+    isLoading.value = true
+    if (direction === 'next') {
+      await window.api.audioEngine.next()
+    } else {
+      await window.api.audioEngine.previous()
+    }
+    await refreshNativePlaybackInfo()
+  } catch (err) {
+    audioEngineError.value = err instanceof Error ? err.message : String(err)
+    console.error('[音频引擎] 切换歌曲失败:', err)
+    isLoading.value = false
+  }
+}
+
 watch(volume, (val) => {
   if (playbackAudio) playbackAudio.volume = val
   window.api.audioEngine.setVolume(val).catch(() => {})
@@ -638,6 +718,13 @@ function setupAudioEngineListeners(): void {
   )
 
   cleanupFns.push(
+    api.onPlaybackInfo((info) => {
+      if (!nativePlaybackActive && info.state !== 'stopped') return
+      applyNativePlaybackInfo(info)
+    })
+  )
+
+  cleanupFns.push(
     api.onReady(async () => {
       audioEngineReady.value = true
       audioEngineError.value = null
@@ -746,23 +833,31 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
 
     const engineQueue = queue.value.map((item) => ({
       ...item,
-      audioSource: item.id === track.id ? playTarget : item.streamUrl || item.filePath
+      audioSource: item.id === track.id ? playTarget : getTrackAudioSource(item)
     }))
     let nativeStarted = false
 
-    if (shouldUseNativePlayback(track, playTarget)) {
-      try {
-        await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
-        if (!isActiveLoad(loadToken, track)) return
+    try {
+      await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
+      if (!isActiveLoad(loadToken, track)) return
 
+      await window.api.audioEngine.setPlayMode(playMode.value)
+      if (!isActiveLoad(loadToken, track)) return
+
+      if (shouldUseNativePlayback(track, playTarget)) {
         const playResult = await window.api.audioEngine.play(playTarget, normalizedStartTime)
         if (!isActiveLoad(loadToken, track)) return
         nativeStarted = playResult?.nativeStarted === true
-      } catch (engineErr) {
+      }
+    } catch (engineErr) {
+      if (!isActiveLoad(loadToken, track)) return
+      if (shouldUseNativePlayback(track, playTarget)) {
         console.warn(
           '[audio-engine] Native output unavailable, falling back to Electron playback:',
           engineErr
         )
+      } else {
+        console.warn('[audio-engine] Failed to sync native playback queue:', engineErr)
       }
     }
 
@@ -805,6 +900,11 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
 function next(): void {
   if (queue.value.length === 0) return
   clearCrossfadeTimer()
+
+  if (nativePlaybackActive) {
+    void advanceNativePlayback('next')
+    return
+  }
 
   if (playMode.value === 'repeat') {
     const track = queue.value[queueIndex.value]
@@ -870,6 +970,11 @@ function previous(): void {
     return
   }
   const prevIndex = queueIndex.value - 1
+  if (nativePlaybackActive) {
+    void advanceNativePlayback('previous')
+    return
+  }
+
   if (prevIndex >= 0) {
     queueIndex.value = prevIndex
     const track = queue.value[prevIndex]
@@ -914,6 +1019,10 @@ function cyclePlayMode(): void {
   const idx = modes.indexOf(playMode.value)
   playMode.value = modes[(idx + 1) % modes.length]
   applyPlayMode()
+  void syncNativeQueueState().catch((err) => {
+    audioEngineError.value = err instanceof Error ? err.message : String(err)
+    console.error('[音频引擎] 同步播放模式失败:', err)
+  })
 }
 
 const progress = computed(() => {

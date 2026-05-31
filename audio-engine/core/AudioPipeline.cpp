@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace twilight::audio {
@@ -10,14 +11,128 @@ namespace {
 
 constexpr size_t kDecodeChunkFrames = 2048;
 
+int normalizedBitDepth(int bitDepth) {
+  if (bitDepth <= 0) return 0;
+  if (bitDepth <= 16) return 16;
+  if (bitDepth <= 24) return 24;
+  return 32;
+}
+
 bool samePcmFormat(const AudioFormat& a, const AudioFormat& b) {
   return a.sampleRate == b.sampleRate &&
          a.channelCount == b.channelCount &&
-         a.bitDepth == b.bitDepth &&
-         a.sampleFormat == b.sampleFormat;
+         normalizedBitDepth(a.bitDepth) == normalizedBitDepth(b.bitDepth);
+}
+
+QueueItem makeManualItem(const std::string& source) {
+  QueueItem item;
+  item.id = source;
+  item.source = source;
+  item.title = source;
+  return item;
 }
 
 }  // namespace
+
+struct AudioPipeline::DecodeStream {
+  QueueItem item;
+  AudioStreamInfo stream;
+  AudioFormat decodeFormat;
+  std::unique_ptr<FFmpegDecoder> decoder;
+  AudioBuffer buffer;
+  std::atomic<bool> running{false};
+  std::atomic<bool> eof{false};
+  std::thread decodeThread;
+
+  ~DecodeStream() {
+    stop();
+  }
+
+  bool openSource(const QueueItem& queueItem, std::string* error) {
+    stop();
+    item = queueItem;
+    decoder = std::make_unique<FFmpegDecoder>();
+    if (!decoder->open(item.source, error)) {
+      decoder.reset();
+      return false;
+    }
+    stream = decoder->streamInfo();
+    stream.source = item.source;
+    if (item.durationSeconds > 0.0) stream.durationSeconds = item.durationSeconds;
+    return true;
+  }
+
+  bool configure(const AudioFormat& outputFormat, double startTimeSeconds, std::string* error) {
+    if (!decoder) {
+      if (error) *error = "解码器尚未打开";
+      return false;
+    }
+
+    decodeFormat = outputFormat;
+    decodeFormat.bitDepth = 32;
+    decodeFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
+    if (!decoder->setOutputFormat(decodeFormat, error)) return false;
+    if (startTimeSeconds > 0.0 && !decoder->seek(startTimeSeconds, error)) return false;
+
+    eof = false;
+    buffer.reset(outputFormat.channelCount, static_cast<size_t>(std::max(outputFormat.sampleRate * 2, 8192)));
+    return true;
+  }
+
+  void start() {
+    if (!decoder || running.load()) return;
+    running = true;
+    decodeThread = std::thread([this] { decodeLoop(); });
+  }
+
+  void stop() {
+    running = false;
+    buffer.notifyAll();
+    if (decodeThread.joinable()) decodeThread.join();
+  }
+
+  bool seek(double seconds, std::string* error) {
+    if (!decoder) return false;
+    stop();
+    if (!decoder->seek(std::max(0.0, seconds), error)) {
+      start();
+      return false;
+    }
+    buffer.clear();
+    eof = false;
+    start();
+    return true;
+  }
+
+  size_t read(float* output, size_t frameCount) {
+    return buffer.read(output, frameCount);
+  }
+
+  bool drained() const {
+    return eof.load() && buffer.availableFrames() == 0;
+  }
+
+  bool readyForRender() const {
+    return buffer.availableFrames() > 0 || eof.load();
+  }
+
+ private:
+  void decodeLoop() {
+    const int channels = std::max(1, decodeFormat.channelCount);
+    std::vector<float> frames(kDecodeChunkFrames * static_cast<size_t>(channels));
+
+    while (running.load()) {
+      if (!decoder) break;
+      std::string error;
+      const size_t decoded = decoder->readFrames(frames.data(), kDecodeChunkFrames, &error);
+      if (decoded == 0) {
+        eof = true;
+        break;
+      }
+      buffer.writeBlocking(frames.data(), decoded, running);
+    }
+  }
+};
 
 AudioPipeline::AudioPipeline() = default;
 
@@ -33,61 +148,85 @@ TAE_Result AudioPipeline::play(
     double volume,
     bool dspActive,
     std::string* error) {
-  stop();
+  return play(makeManualItem(source), std::nullopt, startTimeSeconds, backendId, deviceId, volume, dspActive, false, error);
+}
 
-  auto decoder = std::make_unique<FFmpegDecoder>();
-  if (!decoder->open(source, error)) {
+TAE_Result AudioPipeline::play(
+    const QueueItem& item,
+    const std::optional<QueueItem>& upcomingItem,
+    double startTimeSeconds,
+    const std::string& backendId,
+    const std::string& deviceId,
+    double volume,
+    bool dspActive,
+    bool gaplessEnabled,
+    std::string* error) {
+  stop();
+  if (item.source.empty()) return TAE_RESULT_INVALID_ARGUMENT;
+
+  auto active = std::make_shared<DecodeStream>();
+  if (!active->openSource(item, error)) {
     return TAE_RESULT_BACKEND_UNAVAILABLE;
   }
 
   auto output = createOutputBackend(backendId);
   if (!output) {
-    if (error) *error = "Requested audio output backend is not available: " + backendId;
+    if (error) *error = "请求的音频输出后端不可用：" + backendId;
     return TAE_RESULT_BACKEND_UNAVAILABLE;
   }
 
-  const AudioFormat sourceFormat = decoder->streamInfo().sourceFormat;
-  if (!output->open(deviceId, sourceFormat, error)) {
+  if (!output->open(deviceId, active->stream.sourceFormat, error)) {
     return TAE_RESULT_BACKEND_UNAVAILABLE;
   }
 
   const AudioFormat outputFormat = output->outputFormat();
-  if (!decoder->setOutputFormat(outputFormat, error)) {
-    output->close();
-    return TAE_RESULT_INTERNAL_ERROR;
-  }
-
-  if (startTimeSeconds > 0.0 && !decoder->seek(startTimeSeconds, error)) {
+  if (!active->configure(outputFormat, startTimeSeconds, error)) {
     output->close();
     return TAE_RESULT_INTERNAL_ERROR;
   }
 
   {
     std::lock_guard lock(mutex_);
-    decoder_ = std::move(decoder);
     output_ = std::move(output);
-    stream_ = decoder_->streamInfo();
+    activeStream_ = active;
+    preloadStream_.reset();
+    stream_ = activeStream_->stream;
     outputFormat_ = outputFormat;
+    currentItem_ = item;
     backendId_ = backendId == "wasapi-shared" ? "wasapi" : backendId;
     deviceName_ = output_->deviceName();
+    outputInfo_ = output_->outputInfo();
+    outputInfo_.backend = backendId_;
+    outputInfo_.deviceName = deviceName_;
     baseDspActive_ = dspActive;
     dspActive_ = baseDspActive_ || std::abs(volume - 1.0) > 0.0001;
-    const bool sharedWasapi = backendId_ == "wasapi";
-    bitPerfect_ = !dspActive_ && !sharedWasapi && samePcmFormat(stream_.sourceFormat, outputFormat_);
-    resampleReason_ = samePcmFormat(stream_.sourceFormat, outputFormat_)
-                          ? ""
-                          : sharedWasapi ? "shared-output-mix-format" : "output-format-conversion";
+    gaplessEnabled_ = gaplessEnabled;
+    updateBitPerfectLocked();
     state_ = PipelineState::Playing;
     renderedFrames_ = static_cast<uint64_t>(std::max(0.0, startTimeSeconds) * outputFormat_.sampleRate);
-    decodeEof_ = false;
     ended_ = false;
+    deviceInvalidated_ = false;
+    trackStarted_ = false;
+    outputEventMessage_.clear();
     volume_ = std::clamp(volume, 0.0, 1.0);
-    buffer_.reset(outputFormat_.channelCount, static_cast<size_t>(std::max(outputFormat_.sampleRate * 2, 8192)));
   }
 
-  startDecodeThread();
+  active->start();
+  if (gaplessEnabled_) {
+    std::string preloadError;
+    preloadNext(upcomingItem, &preloadError);
+  }
 
-  if (!output_->start([this](float* data, size_t frames) { return render(data, frames); }, error)) {
+  auto eventCallback = [this](OutputBackendEvent event, const std::string& message) {
+    std::lock_guard lock(mutex_);
+    outputEventMessage_ = message;
+    if (event == OutputBackendEvent::DeviceInvalidated) {
+      deviceInvalidated_ = true;
+    }
+    state_ = PipelineState::Stopped;
+  };
+
+  if (!output_->start([this](float* data, size_t frames) { return render(data, frames); }, eventCallback, error)) {
     stop();
     return TAE_RESULT_BACKEND_UNAVAILABLE;
   }
@@ -107,58 +246,60 @@ TAE_Result AudioPipeline::togglePause() {
 
 TAE_Result AudioPipeline::stop() {
   std::unique_ptr<IOutputBackend> output;
+  std::shared_ptr<DecodeStream> active;
+  std::shared_ptr<DecodeStream> preload;
   {
     std::lock_guard lock(mutex_);
     state_ = PipelineState::Stopped;
     output = std::move(output_);
+    active = std::move(activeStream_);
+    preload = std::move(preloadStream_);
   }
 
   if (output) {
     output->stop();
     output->close();
   }
-
-  stopDecodeThread();
+  if (active) active->stop();
+  if (preload) preload->stop();
 
   {
     std::lock_guard lock(mutex_);
-    decoder_.reset();
     stream_ = {};
     outputFormat_ = {};
+    currentItem_ = {};
     backendId_.clear();
     deviceName_.clear();
     resampleReason_.clear();
+    outputInfo_ = {};
     renderedFrames_ = 0;
-    decodeEof_ = false;
     ended_ = false;
+    deviceInvalidated_ = false;
+    trackStarted_ = false;
+    outputEventMessage_.clear();
     baseDspActive_ = false;
     dspActive_ = false;
     bitPerfect_ = false;
-    buffer_.clear();
+    gaplessEnabled_ = true;
   }
   return TAE_RESULT_OK;
 }
 
 TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
+  std::shared_ptr<DecodeStream> active;
   {
     std::lock_guard lock(mutex_);
-    if (!decoder_ || outputFormat_.sampleRate <= 0) return TAE_RESULT_NOT_INITIALIZED;
+    if (!activeStream_ || outputFormat_.sampleRate <= 0) return TAE_RESULT_NOT_INITIALIZED;
+    active = activeStream_;
   }
-  stopDecodeThread();
+
+  if (!active->seek(seconds, error)) return TAE_RESULT_INTERNAL_ERROR;
 
   {
     std::lock_guard lock(mutex_);
-    if (!decoder_->seek(std::max(0.0, seconds), error)) {
-      startDecodeThread();
-      return TAE_RESULT_INTERNAL_ERROR;
-    }
-    buffer_.clear();
     renderedFrames_ = static_cast<uint64_t>(std::max(0.0, seconds) * outputFormat_.sampleRate);
-    decodeEof_ = false;
     ended_ = false;
   }
-
-  startDecodeThread();
   return TAE_RESULT_OK;
 }
 
@@ -166,8 +307,65 @@ void AudioPipeline::setVolume(double volume) {
   volume_ = std::clamp(volume, 0.0, 1.0);
   std::lock_guard lock(mutex_);
   dspActive_ = baseDspActive_ || std::abs(volume_.load() - 1.0) > 0.0001;
-  const bool sharedWasapi = backendId_ == "wasapi";
-  bitPerfect_ = !dspActive_ && !sharedWasapi && samePcmFormat(stream_.sourceFormat, outputFormat_);
+  updateBitPerfectLocked();
+}
+
+bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::string* error) {
+  if (!item || item->source.empty()) {
+    std::shared_ptr<DecodeStream> previous;
+    {
+      std::lock_guard lock(mutex_);
+      previous = std::move(preloadStream_);
+    }
+    if (previous) previous->stop();
+    return true;
+  }
+
+  AudioFormat outputFormat;
+  bool gapless = false;
+  {
+    std::lock_guard lock(mutex_);
+    if (preloadStream_ && preloadStream_->item.source == item->source) return true;
+    outputFormat = outputFormat_;
+    gapless = gaplessEnabled_;
+  }
+  if (!gapless || outputFormat.sampleRate <= 0 || outputFormat.channelCount <= 0) return false;
+
+  auto stream = std::make_shared<DecodeStream>();
+  if (!stream->openSource(*item, error)) return false;
+  if (!stream->configure(outputFormat, 0.0, error)) return false;
+  stream->start();
+
+  std::shared_ptr<DecodeStream> previous;
+  {
+    std::lock_guard lock(mutex_);
+    previous = std::move(preloadStream_);
+    preloadStream_ = std::move(stream);
+  }
+  if (previous) previous->stop();
+  return true;
+}
+
+bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
+  std::shared_ptr<DecodeStream> oldActive;
+  {
+    std::lock_guard lock(mutex_);
+    if (!preloadStream_ || preloadStream_->item.source != item.source) {
+      if (error) *error = "下一首尚未完成预加载";
+      return false;
+    }
+    oldActive = std::move(activeStream_);
+    activeStream_ = std::move(preloadStream_);
+    preloadStream_.reset();
+    stream_ = activeStream_->stream;
+    currentItem_ = activeStream_->item;
+    renderedFrames_ = 0;
+    ended_ = false;
+    trackStarted_ = true;
+    updateBitPerfectLocked();
+  }
+  if (oldActive) oldActive->stop();
+  return true;
 }
 
 PipelineStatus AudioPipeline::status() const {
@@ -180,16 +378,35 @@ PipelineStatus AudioPipeline::status() const {
           : 0.0;
   status.stream = stream_;
   status.outputFormat = outputFormat_;
+  status.outputInfo = outputInfo_;
   status.backendId = backendId_;
   status.deviceName = deviceName_;
+  status.currentItem = currentItem_;
   status.dspActive = dspActive_;
   status.bitPerfect = bitPerfect_;
+  status.gaplessActive = gaplessEnabled_ && preloadStream_ != nullptr;
+  status.preloadReady = preloadStream_ && preloadStream_->readyForRender();
   status.resampleReason = resampleReason_;
   return status;
 }
 
 bool AudioPipeline::consumeEnded() {
   return ended_.exchange(false);
+}
+
+bool AudioPipeline::consumeDeviceInvalidated(std::string* message) {
+  if (!deviceInvalidated_.exchange(false)) return false;
+  std::lock_guard lock(mutex_);
+  if (message) *message = outputEventMessage_.empty() ? "输出设备已失效" : outputEventMessage_;
+  outputEventMessage_.clear();
+  return true;
+}
+
+bool AudioPipeline::consumeTrackStarted(QueueItem* item) {
+  if (!trackStarted_.exchange(false)) return false;
+  std::lock_guard lock(mutex_);
+  if (item) *item = currentItem_;
+  return true;
 }
 
 size_t AudioPipeline::getSpectrumData(float* buffer, size_t pointCount) const {
@@ -200,44 +417,26 @@ size_t AudioPipeline::getSpectrumData(float* buffer, size_t pointCount) const {
   return spectrum_.read(buffer, pointCount, phase);
 }
 
-void AudioPipeline::startDecodeThread() {
-  decodeRunning_ = true;
-  decodeThread_ = std::thread([this] { decodeLoop(); });
+bool AudioPipeline::configureActiveStreamLocked(
+    const std::shared_ptr<DecodeStream>& stream,
+    const QueueItem& item,
+    double startTimeSeconds,
+    std::string* error) {
+  if (!stream) return false;
+  if (!stream->openSource(item, error)) return false;
+  if (!stream->configure(outputFormat_, startTimeSeconds, error)) return false;
+  return true;
 }
 
-void AudioPipeline::stopDecodeThread() {
-  decodeRunning_ = false;
-  buffer_.notifyAll();
-  if (decodeThread_.joinable()) {
-    decodeThread_.join();
-  }
-}
-
-void AudioPipeline::decodeLoop() {
-  std::vector<float> frames;
-  int channels = 0;
-  {
-    std::lock_guard lock(mutex_);
-    channels = std::max(1, outputFormat_.channelCount);
-  }
-  frames.resize(kDecodeChunkFrames * static_cast<size_t>(channels));
-
-  while (decodeRunning_.load()) {
-    FFmpegDecoder* decoder = nullptr;
-    {
-      std::lock_guard lock(mutex_);
-      decoder = decoder_.get();
-    }
-    if (!decoder) break;
-
-    std::string error;
-    const size_t decoded = decoder->readFrames(frames.data(), kDecodeChunkFrames, &error);
-    if (decoded == 0) {
-      decodeEof_ = true;
-      break;
-    }
-    buffer_.writeBlocking(frames.data(), decoded, decodeRunning_);
-  }
+bool AudioPipeline::updateBitPerfectLocked() {
+  const bool formatMatched = samePcmFormat(stream_.sourceFormat, outputFormat_);
+  outputInfo_.resampled = !formatMatched;
+  bitPerfect_ = outputInfo_.exclusive && !dspActive_ && formatMatched && !outputInfo_.resampled;
+  outputInfo_.bitPerfect = bitPerfect_;
+  resampleReason_ = outputInfo_.exclusive
+                        ? formatMatched ? "" : "输出格式已转换"
+                        : "共享输出经过系统混音";
+  return bitPerfect_;
 }
 
 size_t AudioPipeline::render(float* output, size_t frameCount) {
@@ -245,19 +444,53 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
 
   PipelineState state = PipelineState::Stopped;
   int channels = 0;
+  std::shared_ptr<DecodeStream> active;
   {
     std::lock_guard lock(mutex_);
     state = state_;
     channels = std::max(1, outputFormat_.channelCount);
+    active = activeStream_;
   }
 
   std::fill(output, output + frameCount * static_cast<size_t>(channels), 0.0f);
-  if (state != PipelineState::Playing) {
+  if (state != PipelineState::Playing || !active) {
     spectrum_.capture(output, frameCount, channels);
     return frameCount;
   }
 
-  const size_t read = buffer_.read(output, frameCount);
+  size_t totalRead = 0;
+  size_t positionRead = 0;
+  while (totalRead < frameCount) {
+    const size_t read = active->read(output + totalRead * static_cast<size_t>(channels), frameCount - totalRead);
+    totalRead += read;
+    positionRead += read;
+
+    if (totalRead >= frameCount || !active->drained()) break;
+
+    std::shared_ptr<DecodeStream> next;
+    std::shared_ptr<DecodeStream> oldActive;
+    {
+      std::lock_guard lock(mutex_);
+      if (!gaplessEnabled_ || !preloadStream_ || !preloadStream_->readyForRender()) {
+        break;
+      }
+      oldActive = activeStream_;
+      activeStream_ = preloadStream_;
+      preloadStream_.reset();
+      active = activeStream_;
+      next = activeStream_;
+      stream_ = activeStream_->stream;
+      currentItem_ = activeStream_->item;
+      renderedFrames_ = 0;
+      positionRead = 0;
+      ended_ = false;
+      trackStarted_ = true;
+      updateBitPerfectLocked();
+    }
+    if (oldActive) oldActive->stop();
+    if (!next) break;
+  }
+
   const double volume = volume_.load();
   if (std::abs(volume - 1.0) > 0.0001) {
     const size_t sampleCount = frameCount * static_cast<size_t>(channels);
@@ -266,9 +499,9 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     }
   }
 
-  if (read > 0) {
-    renderedFrames_ += read;
-  } else if (decodeEof_.load() && buffer_.availableFrames() == 0) {
+  if (positionRead > 0) {
+    renderedFrames_ += positionRead;
+  } else if (active->drained()) {
     ended_ = true;
     std::lock_guard lock(mutex_);
     if (state_ == PipelineState::Playing) state_ = PipelineState::Stopped;

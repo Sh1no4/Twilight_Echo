@@ -54,23 +54,23 @@ async function startScan(): Promise<void> {
     for (const folder of foldersToScan) {
       const tracks = await window.api.fs.scanMusicFiles(folder)
       if (tracks && tracks.length > 0) {
-        // Add in batches of 500
+        // 每批导入 500 首，避免一次性更新过重。
         const batchSize = 500
         for (let i = 0; i < tracks.length; i += batchSize) {
           const batch = (tracks as Track[]).slice(i, i + batchSize)
           await addTracks(batch)
-          // Yield to allow UI updates
+          // 让界面有机会刷新导入进度。
           await new Promise((resolve) => setTimeout(resolve, 50))
         }
       }
     }
 
-    // Save once at the end
+    // 全部导入完成后统一保存。
     await saveLibrary()
     newlyAddedFolders.value = []
     emit('close')
   } catch (err) {
-    console.error('Scan failed:', err)
+    console.error('扫描音乐文件失败：', err)
   } finally {
     isScanning.value = false
     progress.value = { current: 0, total: 0 }

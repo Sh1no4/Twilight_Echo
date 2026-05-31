@@ -5,11 +5,12 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <functiondiscoverykeys_devpkey.h>
+#include <windows.h>
 #include <mmdeviceapi.h>
 #include <propidl.h>
+#include <propsys.h>
+#include <functiondiscoverykeys_devpkey.h>
 #include <wrl/client.h>
-#include <windows.h>
 #endif
 
 namespace twilight::audio {

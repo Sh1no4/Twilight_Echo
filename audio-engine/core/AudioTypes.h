@@ -6,7 +6,11 @@
 namespace twilight::audio {
 
 enum class AudioSampleFormat {
-  Float32Interleaved
+  Float32Interleaved,
+  Int16Interleaved,
+  Int24Interleaved,
+  Int24In32Interleaved,
+  Int32Interleaved
 };
 
 struct AudioFormat {
@@ -18,11 +22,34 @@ struct AudioFormat {
 
 struct AudioStreamInfo {
   std::string source;
-  std::string codec = "unknown";
+  std::string codec = "未知";
   int64_t bitrate = 0;
   double durationSeconds = 0.0;
   AudioFormat sourceFormat;
   bool isDsd = false;
+};
+
+struct QueueItem {
+  std::string id;
+  std::string source;
+  std::string title;
+  std::string artist;
+  std::string album;
+  std::string codec;
+  double durationSeconds = 0.0;
+  int sampleRate = 0;
+  int64_t bitrate = 0;
+  int bitDepth = 0;
+};
+
+struct OutputInfo {
+  bool exclusive = false;
+  bool bitPerfect = false;
+  bool resampled = false;
+  int outputSampleRate = 0;
+  int outputBitDepth = 0;
+  std::string backend;
+  std::string deviceName;
 };
 
 }  // namespace twilight::audio

@@ -2,17 +2,15 @@
 
 #include "../IOutputBackend.h"
 
-#include <atomic>
 #include <memory>
 #include <string>
-#include <thread>
 
 namespace twilight::audio {
 
-class WasapiSharedBackend final : public IOutputBackend {
+class WasapiExclusiveBackend final : public IOutputBackend {
  public:
-  WasapiSharedBackend();
-  ~WasapiSharedBackend() override;
+  WasapiExclusiveBackend();
+  ~WasapiExclusiveBackend() override;
 
   const char* id() const override;
   bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) override;
