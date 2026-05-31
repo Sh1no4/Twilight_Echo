@@ -101,6 +101,8 @@ export interface PlaybackInfo {
   channelCount: number
   bitPerfect: boolean
   dspActive: boolean
+  replayGainActive: boolean
+  eqActive: boolean
   resampleReason: string
   dsdMode: string
   gaplessActive: boolean
@@ -352,6 +354,8 @@ function createDefaultPlaybackInfo(output: AudioOutputId, device: string): Playb
     channelCount: 0,
     bitPerfect: exclusive,
     dspActive: false,
+    replayGainActive: false,
+    eqActive: false,
     resampleReason: output === 'wasapi' ? '共享输出经过系统混音' : '',
     dsdMode: 'unsupported',
     gaplessActive: false,
@@ -719,7 +723,11 @@ export class AudioEngineManager extends EventEmitter {
       this.processing.volumeNormalization !== 'off' ||
       Math.abs(this.processing.eqPreamp) > 0.001 ||
       Math.abs(this.playbackInfo.volume - 1) > 0.001
+    const replayGainActive = this.processing.volumeNormalization !== 'off'
+    const eqActive = this.processing.eqEnabled
     const shared = this.output === 'wasapi' && !this.exclusiveMode
+    this.playbackInfo.replayGainActive = replayGainActive
+    this.playbackInfo.eqActive = eqActive
     this.playbackInfo.dspActive = dspActive
     this.playbackInfo.bitPerfect = !dspActive && !shared
     this.playbackInfo.outputInfo = {

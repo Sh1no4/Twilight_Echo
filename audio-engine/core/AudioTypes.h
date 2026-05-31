@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace twilight::audio {
@@ -20,12 +21,20 @@ struct AudioFormat {
   AudioSampleFormat sampleFormat = AudioSampleFormat::Float32Interleaved;
 };
 
+struct ReplayGainInfo {
+  std::optional<double> trackGainDb;
+  std::optional<double> albumGainDb;
+  std::optional<double> r128TrackGainDb;
+  std::optional<double> r128AlbumGainDb;
+};
+
 struct AudioStreamInfo {
   std::string source;
   std::string codec = "未知";
   int64_t bitrate = 0;
   double durationSeconds = 0.0;
   AudioFormat sourceFormat;
+  ReplayGainInfo replayGain;
   bool isDsd = false;
 };
 

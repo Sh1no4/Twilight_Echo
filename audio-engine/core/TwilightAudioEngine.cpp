@@ -97,6 +97,8 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"channelCount\":" << info.channelCount << ","
        << "\"bitPerfect\":" << (info.bitPerfect ? "true" : "false") << ","
        << "\"dspActive\":" << (info.dspActive ? "true" : "false") << ","
+       << "\"replayGainActive\":" << (info.replayGainActive ? "true" : "false") << ","
+       << "\"eqActive\":" << (info.eqActive ? "true" : "false") << ","
        << "\"resampleReason\":\"" << escapeJson(info.resampleReason) << "\","
        << "\"dsdMode\":\"" << escapeJson(info.dsdMode) << "\","
        << "\"gaplessActive\":" << (info.gaplessActive ? "true" : "false") << ","
@@ -107,11 +109,13 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
   return json.str();
 }
 
-bool containsEnabledDsp(const std::string& dspJson) {
-  return dspJson.find("\"eqEnabled\":true") != std::string::npos ||
-         dspJson.find("\"volumeNormalization\":\"track\"") != std::string::npos ||
-         dspJson.find("\"volumeNormalization\":\"album\"") != std::string::npos ||
-         dspJson.find("\"volumeNormalization\":\"loudnorm\"") != std::string::npos;
+DspStatus configuredDspStatus(const std::string& dspJson) {
+  const DspConfig config = DspChain::parseConfigJson(dspJson);
+  DspStatus status;
+  status.replayGainActive = config.replayGainMode != ReplayGainMode::Off;
+  status.eqActive = config.eqEnabled;
+  status.dspActive = status.replayGainActive || status.eqActive;
+  return status;
 }
 
 bool gaplessEnabledFromConfig(const std::string& dspJson) {
@@ -167,7 +171,7 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
   std::string backend;
   std::string device;
   double volume = 1.0;
-  bool dspActive = false;
+  std::string dspConfigJson;
   bool gaplessEnabled = true;
   QueueItem item;
   std::optional<QueueItem> upcoming;
@@ -194,13 +198,13 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
     backend = info_.outputBackend;
     device = info_.outputDevice;
     volume = info_.volume;
-    dspActive = containsEnabledDsp(dspConfigJson_);
+    dspConfigJson = dspConfigJson_;
     gaplessEnabled = gaplessEnabledFromConfig(dspConfigJson_);
   }
 
   std::string error;
   const TAE_Result result =
-      pipeline_ ? pipeline_->play(item, upcoming, startTimeSeconds, backend, device, volume, dspActive, gaplessEnabled, &error)
+      pipeline_ ? pipeline_->play(item, upcoming, startTimeSeconds, backend, device, volume, dspConfigJson, gaplessEnabled, &error)
                 : TAE_RESULT_NOT_INITIALIZED;
   if (result != TAE_RESULT_OK) {
     {
@@ -215,7 +219,6 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
   std::lock_guard lock(mutex_);
   applyPipelineStatusLocked(pipeline_->status());
   lastTick_ = std::chrono::steady_clock::now();
-  updateBitPerfectLocked();
   publishStateLocked();
   return TAE_RESULT_OK;
 }
@@ -273,7 +276,11 @@ TAE_Result TwilightAudioEngine::setVolume(double volume) {
   std::lock_guard lock(mutex_);
   info_.volume = std::clamp(volume, 0.0, 1.0);
   if (pipeline_) pipeline_->setVolume(info_.volume);
-  updateBitPerfectLocked();
+  if (pipeline_ && info_.state != PlaybackState::Stopped) {
+    applyPipelineStatusLocked(pipeline_->status());
+  } else {
+    updateBitPerfectLocked();
+  }
   publishStateLocked();
   return TAE_RESULT_OK;
 }
@@ -440,7 +447,12 @@ TAE_Result TwilightAudioEngine::setPlayMode(const std::string& mode) {
 TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
   std::lock_guard lock(mutex_);
   dspConfigJson_ = dspJson.empty() ? "{}" : dspJson;
-  updateBitPerfectLocked();
+  if (pipeline_) pipeline_->setDspConfig(dspConfigJson_);
+  if (pipeline_ && info_.state != PlaybackState::Stopped) {
+    applyPipelineStatusLocked(pipeline_->status());
+  } else {
+    updateBitPerfectLocked();
+  }
   publishStateLocked();
   return TAE_RESULT_OK;
 }
@@ -646,6 +658,8 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.channelCount = status.outputFormat.channelCount;
   info_.bitPerfect = status.bitPerfect;
   info_.dspActive = status.dspActive;
+  info_.replayGainActive = status.replayGainActive;
+  info_.eqActive = status.eqActive;
   info_.gaplessActive = status.gaplessActive;
   info_.preloadReady = status.preloadReady;
   const auto upcoming = queue_.upcoming();
@@ -656,7 +670,10 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
 }
 
 void TwilightAudioEngine::updateBitPerfectLocked() {
-  info_.dspActive = containsEnabledDsp(dspConfigJson_) || std::abs(info_.volume - 1.0) > 0.0001;
+  const DspStatus configStatus = configuredDspStatus(dspConfigJson_);
+  info_.replayGainActive = configStatus.replayGainActive;
+  info_.eqActive = configStatus.eqActive;
+  info_.dspActive = configStatus.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
   const bool exclusive = info_.outputBackend == "wasapi-exclusive";
   info_.outputInfo.exclusive = exclusive;
   info_.outputInfo.backend = info_.outputBackend;

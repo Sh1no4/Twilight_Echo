@@ -146,9 +146,9 @@ TAE_Result AudioPipeline::play(
     const std::string& backendId,
     const std::string& deviceId,
     double volume,
-    bool dspActive,
+    const std::string& dspConfigJson,
     std::string* error) {
-  return play(makeManualItem(source), std::nullopt, startTimeSeconds, backendId, deviceId, volume, dspActive, false, error);
+  return play(makeManualItem(source), std::nullopt, startTimeSeconds, backendId, deviceId, volume, dspConfigJson, false, error);
 }
 
 TAE_Result AudioPipeline::play(
@@ -158,7 +158,7 @@ TAE_Result AudioPipeline::play(
     const std::string& backendId,
     const std::string& deviceId,
     double volume,
-    bool dspActive,
+    const std::string& dspConfigJson,
     bool gaplessEnabled,
     std::string* error) {
   stop();
@@ -198,8 +198,11 @@ TAE_Result AudioPipeline::play(
     outputInfo_ = output_->outputInfo();
     outputInfo_.backend = backendId_;
     outputInfo_.deviceName = deviceName_;
-    baseDspActive_ = dspActive;
-    dspActive_ = baseDspActive_ || std::abs(volume - 1.0) > 0.0001;
+    dspChain_.configureFromJson(dspConfigJson);
+    dspChain_.prepare(outputFormat_);
+    dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
+    dspStatus_ = dspChain_.status();
+    dspActive_ = dspStatus_.dspActive || std::abs(volume - 1.0) > 0.0001;
     gaplessEnabled_ = gaplessEnabled;
     updateBitPerfectLocked();
     state_ = PipelineState::Playing;
@@ -277,7 +280,7 @@ TAE_Result AudioPipeline::stop() {
     deviceInvalidated_ = false;
     trackStarted_ = false;
     outputEventMessage_.clear();
-    baseDspActive_ = false;
+    dspStatus_ = {};
     dspActive_ = false;
     bitPerfect_ = false;
     gaplessEnabled_ = true;
@@ -299,6 +302,10 @@ TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
     std::lock_guard lock(mutex_);
     renderedFrames_ = static_cast<uint64_t>(std::max(0.0, seconds) * outputFormat_.sampleRate);
     ended_ = false;
+    dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
+    dspStatus_ = dspChain_.status();
+    dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+    updateBitPerfectLocked();
   }
   return TAE_RESULT_OK;
 }
@@ -306,7 +313,19 @@ TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
 void AudioPipeline::setVolume(double volume) {
   volume_ = std::clamp(volume, 0.0, 1.0);
   std::lock_guard lock(mutex_);
-  dspActive_ = baseDspActive_ || std::abs(volume_.load() - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+  updateBitPerfectLocked();
+}
+
+void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
+  std::lock_guard lock(mutex_);
+  dspChain_.configureFromJson(dspConfigJson);
+  if (outputFormat_.sampleRate > 0 && outputFormat_.channelCount > 0) {
+    dspChain_.prepare(outputFormat_);
+    dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
+  }
+  dspStatus_ = dspChain_.status();
+  dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updateBitPerfectLocked();
 }
 
@@ -362,6 +381,9 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
     renderedFrames_ = 0;
     ended_ = false;
     trackStarted_ = true;
+    dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
+    dspStatus_ = dspChain_.status();
+    dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
     updateBitPerfectLocked();
   }
   if (oldActive) oldActive->stop();
@@ -383,6 +405,8 @@ PipelineStatus AudioPipeline::status() const {
   status.deviceName = deviceName_;
   status.currentItem = currentItem_;
   status.dspActive = dspActive_;
+  status.replayGainActive = dspStatus_.replayGainActive;
+  status.eqActive = dspStatus_.eqActive;
   status.bitPerfect = bitPerfect_;
   status.gaplessActive = gaplessEnabled_ && preloadStream_ != nullptr;
   status.preloadReady = preloadStream_ && preloadStream_->readyForRender();
@@ -461,7 +485,11 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   size_t totalRead = 0;
   size_t positionRead = 0;
   while (totalRead < frameCount) {
-    const size_t read = active->read(output + totalRead * static_cast<size_t>(channels), frameCount - totalRead);
+    float* segment = output + totalRead * static_cast<size_t>(channels);
+    const size_t read = active->read(segment, frameCount - totalRead);
+    if (read > 0) {
+      dspChain_.process(segment, read);
+    }
     totalRead += read;
     positionRead += read;
 
@@ -485,6 +513,9 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
       positionRead = 0;
       ended_ = false;
       trackStarted_ = true;
+      dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
+      dspStatus_ = dspChain_.status();
+      dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
       updateBitPerfectLocked();
     }
     if (oldActive) oldActive->stop();

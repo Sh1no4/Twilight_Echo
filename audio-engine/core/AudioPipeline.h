@@ -3,6 +3,7 @@
 #include "AudioBuffer.h"
 #include "AudioTypes.h"
 #include "../decoder/FFmpegDecoder.h"
+#include "../dsp/DspChain.h"
 #include "../dsp/SpectrumAnalyzer.h"
 #include "../output/IOutputBackend.h"
 
@@ -33,6 +34,8 @@ struct PipelineStatus {
   std::string deviceName;
   QueueItem currentItem;
   bool dspActive = false;
+  bool replayGainActive = false;
+  bool eqActive = false;
   bool bitPerfect = false;
   bool gaplessActive = false;
   bool preloadReady = false;
@@ -54,7 +57,7 @@ class AudioPipeline {
       const std::string& backendId,
       const std::string& deviceId,
       double volume,
-      bool dspActive,
+      const std::string& dspConfigJson,
       bool gaplessEnabled,
       std::string* error);
   TAE_Result play(
@@ -63,12 +66,13 @@ class AudioPipeline {
       const std::string& backendId,
       const std::string& deviceId,
       double volume,
-      bool dspActive,
+      const std::string& dspConfigJson,
       std::string* error);
   TAE_Result togglePause();
   TAE_Result stop();
   TAE_Result seek(double seconds, std::string* error);
   void setVolume(double volume);
+  void setDspConfig(const std::string& dspConfigJson);
   bool preloadNext(const std::optional<QueueItem>& item, std::string* error);
   bool skipToPreloaded(const QueueItem& item, std::string* error);
 
@@ -94,6 +98,8 @@ class AudioPipeline {
   std::shared_ptr<DecodeStream> activeStream_;
   std::shared_ptr<DecodeStream> preloadStream_;
   SpectrumAnalyzer spectrum_;
+  DspChain dspChain_;
+  DspStatus dspStatus_;
   AudioStreamInfo stream_;
   AudioFormat outputFormat_;
   QueueItem currentItem_;
@@ -107,7 +113,6 @@ class AudioPipeline {
   std::atomic<double> volume_{1.0};
   std::atomic<uint64_t> renderedFrames_{0};
   PipelineState state_ = PipelineState::Stopped;
-  bool baseDspActive_ = false;
   bool dspActive_ = false;
   bool bitPerfect_ = false;
   bool gaplessEnabled_ = true;

@@ -41,6 +41,8 @@ struct PlaybackInfo {
   int channelCount = 0;
   bool bitPerfect = true;
   bool dspActive = false;
+  bool replayGainActive = false;
+  bool eqActive = false;
   std::string resampleReason;
   std::string dsdMode = "unsupported";
   bool gaplessActive = false;

@@ -186,6 +186,8 @@ interface PlaybackInfo {
   channelCount: number
   bitPerfect: boolean
   dspActive: boolean
+  replayGainActive: boolean
+  eqActive: boolean
   resampleReason: string
   dsdMode: string
   gaplessActive: boolean

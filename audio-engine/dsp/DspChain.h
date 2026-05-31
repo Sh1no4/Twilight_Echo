@@ -1,0 +1,42 @@
+#pragma once
+
+#include "DspTypes.h"
+#include "ParametricEqProcessor.h"
+#include "ReplayGainProcessor.h"
+
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
+namespace twilight::audio {
+
+class DspChain {
+ public:
+  DspChain();
+
+  void configure(const DspConfig& config);
+  void configureFromJson(const std::string& json);
+  void prepare(const AudioFormat& format);
+  void setTrackContext(const DspTrackContext& context);
+  void process(float* samples, size_t frameCount);
+  DspStatus status() const;
+
+  static DspConfig parseConfigJson(const std::string& json);
+
+ private:
+  void refreshStatusLocked();
+  void clampOutput(float* samples, size_t frameCount);
+
+  mutable std::mutex mutex_;
+  DspConfig config_;
+  AudioFormat format_;
+  DspStatus status_;
+  ReplayGainProcessor* replayGain_ = nullptr;
+  ParametricEqProcessor* eq_ = nullptr;
+  std::vector<std::unique_ptr<IAudioProcessor>> processors_;
+};
+
+bool dspConfigRequiresProcessing(const std::string& json);
+
+}  // namespace twilight::audio

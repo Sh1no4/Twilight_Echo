@@ -1,7 +1,11 @@
 #include "FFmpegDecoder.h"
 
 #include <algorithm>
+#include <cctype>
+#include <cstdlib>
 #include <cstring>
+#include <optional>
+#include <string>
 #include <vector>
 
 #if defined(TAE_HAS_FFMPEG)
@@ -10,6 +14,7 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/channel_layout.h>
+#include <libavutil/dict.h>
 #include <libavutil/error.h>
 #include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
@@ -17,6 +22,61 @@ extern "C" {
 #endif
 
 namespace twilight::audio {
+
+#if defined(TAE_HAS_FFMPEG)
+namespace {
+
+std::string normalizeMetadataKey(std::string key) {
+  std::transform(key.begin(), key.end(), key.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::toupper(ch));
+  });
+  return key;
+}
+
+std::optional<double> parseGainDb(const char* rawValue, bool r128) {
+  if (!rawValue) return std::nullopt;
+  std::string value(rawValue);
+  value.erase(value.begin(), std::find_if(value.begin(), value.end(), [](unsigned char ch) {
+                return !std::isspace(ch);
+              }));
+  value.erase(std::find_if(value.rbegin(), value.rend(), [](unsigned char ch) {
+                return !std::isspace(ch);
+              }).base(),
+              value.end());
+  if (value.empty()) return std::nullopt;
+
+  std::string lower = value;
+  std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+
+  char* end = nullptr;
+  const double parsed = std::strtod(value.c_str(), &end);
+  if (end == value.c_str()) return std::nullopt;
+  if (r128 && lower.find("db") == std::string::npos) return parsed / 256.0;
+  return parsed;
+}
+
+void readReplayGainDictionary(AVDictionary* metadata, ReplayGainInfo* replayGain) {
+  if (!metadata || !replayGain) return;
+
+  const AVDictionaryEntry* entry = nullptr;
+  while ((entry = av_dict_get(metadata, "", entry, AV_DICT_IGNORE_SUFFIX)) != nullptr) {
+    const std::string key = normalizeMetadataKey(entry->key ? entry->key : "");
+    if (key == "REPLAYGAIN_TRACK_GAIN") {
+      replayGain->trackGainDb = parseGainDb(entry->value, false);
+    } else if (key == "REPLAYGAIN_ALBUM_GAIN") {
+      replayGain->albumGainDb = parseGainDb(entry->value, false);
+    } else if (key == "R128_TRACK_GAIN") {
+      replayGain->r128TrackGainDb = parseGainDb(entry->value, true);
+    } else if (key == "R128_ALBUM_GAIN") {
+      replayGain->r128AlbumGainDb = parseGainDb(entry->value, true);
+    }
+  }
+}
+
+}  // namespace
+#endif
 
 struct FFmpegDecoder::Impl {
   AudioStreamInfo streamInfo;
@@ -240,6 +300,8 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
   impl_->streamInfo.sourceFormat.bitDepth = rawBitDepth > 0 ? rawBitDepth : sampleBitDepth;
   impl_->streamInfo.sourceFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
   impl_->streamInfo.isDsd = impl_->streamInfo.codec.rfind("dsd", 0) == 0;
+  readReplayGainDictionary(impl_->formatContext->metadata, &impl_->streamInfo.replayGain);
+  readReplayGainDictionary(stream->metadata, &impl_->streamInfo.replayGain);
 
   if (stream->duration != AV_NOPTS_VALUE) {
     impl_->streamInfo.durationSeconds = static_cast<double>(stream->duration) * av_q2d(stream->time_base);

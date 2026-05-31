@@ -22,6 +22,8 @@ add_library(twilight_audio_engine SHARED
   decoder/FFmpegDecoder.cpp
   devices/DeviceManager.cpp
   dsp/DspChain.cpp
+  dsp/ParametricEqProcessor.cpp
+  dsp/ReplayGainProcessor.cpp
   dsp/SpectrumAnalyzer.cpp
   metadata/AudioMetadataService.cpp
   output/OutputBackendFactory.cpp
@@ -135,4 +137,13 @@ if(TAE_BUILD_TESTS)
   add_executable(twilight_audio_tests tests/engine_smoke.cpp)
   target_link_libraries(twilight_audio_tests PRIVATE twilight_audio_engine)
   add_test(NAME twilight_audio_engine_smoke COMMAND twilight_audio_tests)
+
+  add_executable(twilight_dsp_tests
+    tests/dsp_tests.cpp
+    dsp/DspChain.cpp
+    dsp/ParametricEqProcessor.cpp
+    dsp/ReplayGainProcessor.cpp
+  )
+  target_include_directories(twilight_dsp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME twilight_dsp_unit COMMAND twilight_dsp_tests)
 endif()
