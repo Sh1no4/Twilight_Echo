@@ -11,19 +11,6 @@ namespace {
 
 constexpr size_t kDecodeChunkFrames = 2048;
 
-int normalizedBitDepth(int bitDepth) {
-  if (bitDepth <= 0) return 0;
-  if (bitDepth <= 16) return 16;
-  if (bitDepth <= 24) return 24;
-  return 32;
-}
-
-bool samePcmFormat(const AudioFormat& a, const AudioFormat& b) {
-  return a.sampleRate == b.sampleRate &&
-         a.channelCount == b.channelCount &&
-         normalizedBitDepth(a.bitDepth) == normalizedBitDepth(b.bitDepth);
-}
-
 QueueItem makeManualItem(const std::string& source) {
   QueueItem item;
   item.id = source;
@@ -173,6 +160,13 @@ TAE_Result AudioPipeline::play(
   if (!output) {
     if (error) *error = "请求的音频输出后端不可用：" + backendId;
     return TAE_RESULT_BACKEND_UNAVAILABLE;
+  }
+
+  {
+    std::lock_guard lock(mutex_);
+    if (!output->setOutputConfig(outputConfig_, error)) {
+      return TAE_RESULT_INVALID_ARGUMENT;
+    }
   }
 
   if (!output->open(deviceId, active->stream.sourceFormat, error)) {
@@ -336,6 +330,17 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
   updateBitPerfectLocked();
 }
 
+bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* error) {
+  std::lock_guard lock(mutex_);
+  outputConfig_ = config;
+  if (output_ && !output_->setOutputConfig(outputConfig_, error)) return false;
+  if (output_) {
+    outputInfo_ = output_->outputInfo();
+    updateBitPerfectLocked();
+  }
+  return true;
+}
+
 bool AudioPipeline::loadImpulseResponse(const std::string& path, std::string* error) {
   std::lock_guard lock(mutex_);
   const bool ok = dspChain_.loadImpulseResponse(path, error);
@@ -462,7 +467,11 @@ PipelineStatus AudioPipeline::status() const {
           : 0.0;
   status.stream = stream_;
   status.outputFormat = outputFormat_;
-  status.outputInfo = outputInfo_;
+  OutputInfo backendInfo = output_ ? output_->outputInfo() : outputInfo_;
+  backendInfo.bitPerfect = outputInfo_.bitPerfect;
+  backendInfo.resampled = outputInfo_.resampled;
+  backendInfo.channelRoutingMode = outputInfo_.channelRoutingMode;
+  status.outputInfo = backendInfo;
   status.backendId = backendId_;
   status.deviceName = deviceName_;
   status.currentItem = currentItem_;
@@ -524,13 +533,26 @@ bool AudioPipeline::configureActiveStreamLocked(
 }
 
 bool AudioPipeline::updateBitPerfectLocked() {
-  const bool formatMatched = samePcmFormat(stream_.sourceFormat, outputFormat_);
-  outputInfo_.resampled = !formatMatched;
-  bitPerfect_ = outputInfo_.exclusive && !dspActive_ && formatMatched && !outputInfo_.resampled;
+  AudioFormat semanticOutputFormat = outputFormat_;
+  if (outputInfo_.actualChannels > 0) semanticOutputFormat.channelCount = outputInfo_.actualChannels;
+  const bool backendResampled = output_ ? output_->outputInfo().resampled : outputInfo_.resampled;
+  const BitPerfectResult result = evaluateBitPerfect(BitPerfectEvaluation{
+      stream_.sourceFormat,
+      semanticOutputFormat,
+      outputInfo_.supportsBitPerfect,
+      backendResampled,
+      volume_.load(),
+      dspStatus_.replayGainActive,
+      dspStatus_.eqActive,
+      dspStatus_.convolverActive,
+      dspStatus_.crossfeedActive,
+      outputConfig_.routingMode});
+  dspActive_ = result.processingActive;
+  bitPerfect_ = result.bitPerfect;
+  outputInfo_.resampled = result.resampled;
   outputInfo_.bitPerfect = bitPerfect_;
-  resampleReason_ = outputInfo_.exclusive
-                        ? formatMatched ? "" : "输出格式已转换"
-                        : "共享输出经过系统混音";
+  outputInfo_.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
+  resampleReason_ = result.resampleReason;
   return bitPerfect_;
 }
 

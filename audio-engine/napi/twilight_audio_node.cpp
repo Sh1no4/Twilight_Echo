@@ -248,6 +248,16 @@ napi_value SetDspConfig(napi_env env, napi_callback_info info) {
   return throwOnError(env, TAE_SetDspConfig(g_engine, json.c_str()));
 }
 
+napi_value SetOutputConfig(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const std::string json = argc > 0 ? getStringArg(env, argv[0]) : "{}";
+  return throwOnError(env, TAE_SetOutputConfig(g_engine, json.c_str()));
+}
+
 napi_value LoadImpulseResponse(napi_env env, napi_callback_info info) {
   ensureEngine();
   clearLastError();
@@ -406,6 +416,7 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "Previous", Previous);
   define(env, exports, "SetPlayMode", SetPlayMode);
   define(env, exports, "SetDspConfig", SetDspConfig);
+  define(env, exports, "SetOutputConfig", SetOutputConfig);
   define(env, exports, "LoadImpulseResponse", LoadImpulseResponse);
   define(env, exports, "UnloadImpulseResponse", UnloadImpulseResponse);
   define(env, exports, "GetConvolverInfo", GetConvolverInfo);

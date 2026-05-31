@@ -314,6 +314,7 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   impl_->outputFormat.bitDepth = 32;
   impl_->outputFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
   impl_->outputInfo.exclusive = false;
+  impl_->outputInfo.supportsBitPerfect = false;
   impl_->outputInfo.bitPerfect = false;
   impl_->outputInfo.resampled = requestedFormat.sampleRate != impl_->outputFormat.sampleRate ||
                                 requestedFormat.channelCount != impl_->outputFormat.channelCount ||
@@ -321,7 +322,19 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   impl_->outputInfo.outputSampleRate = impl_->outputFormat.sampleRate;
   impl_->outputInfo.outputBitDepth = impl_->outputFormat.bitDepth;
   impl_->outputInfo.backend = "wasapi";
+  impl_->outputInfo.actualBackend = "wasapi";
   impl_->outputInfo.deviceName = impl_->deviceName;
+  impl_->outputInfo.actualDeviceName = impl_->deviceName;
+  impl_->outputInfo.actualOutputFormat = "float32";
+  impl_->outputInfo.actualSampleRate = impl_->outputFormat.sampleRate;
+  impl_->outputInfo.actualBitDepth = impl_->outputFormat.bitDepth;
+  impl_->outputInfo.actualChannels = impl_->outputFormat.channelCount;
+  impl_->outputInfo.bufferSizeFrames = static_cast<int>(impl_->bufferFrameCount);
+  impl_->outputInfo.latencyInfo.bufferLatencyMs =
+      impl_->outputFormat.sampleRate > 0
+          ? static_cast<double>(impl_->bufferFrameCount) * 1000.0 / static_cast<double>(impl_->outputFormat.sampleRate)
+          : 0.0;
+  impl_->outputInfo.latencyInfo.totalLatencyMs = impl_->outputInfo.latencyInfo.bufferLatencyMs;
 
   return true;
 #else
@@ -330,6 +343,12 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   if (error) *error = "当前构建未启用系统音频输出";
   return false;
 #endif
+}
+
+bool WasapiSharedBackend::setOutputConfig(const OutputConfig& config, std::string* error) {
+  (void)config;
+  (void)error;
+  return true;
 }
 
 bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) {

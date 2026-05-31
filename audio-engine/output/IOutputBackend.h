@@ -24,6 +24,7 @@ class IOutputBackend {
 
   virtual const char* id() const = 0;
   virtual bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) = 0;
+  virtual bool setOutputConfig(const OutputConfig& config, std::string* error) = 0;
   virtual bool start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) = 0;
   virtual void stop() = 0;
   virtual void close() = 0;

@@ -5,7 +5,7 @@ project(TwilightAudioEngine VERSION 0.1.0 LANGUAGES CXX)
 option(TAE_BUILD_NAPI "Build the Node-API bridge" OFF)
 option(TAE_BUILD_TESTS "Build Twilight Audio Engine tests" ON)
 option(TAE_ENABLE_WASAPI "Enable the Windows WASAPI backend" ON)
-option(TAE_ENABLE_ASIO "Enable optional ASIO backend when the SDK is available" OFF)
+option(TAE_ENABLE_ASIO "Enable optional ASIO backend when the SDK is available" ON)
 option(TAE_ENABLE_COREAUDIO "Enable the macOS CoreAudio backend" ON)
 option(TAE_ENABLE_ALSA "Enable the Linux ALSA backend" ON)
 
@@ -15,9 +15,21 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+set(TAE_ASIO_SDK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ASIOSDK")
+set(TAE_ASIO_AVAILABLE OFF)
+if(WIN32 AND TAE_ENABLE_ASIO)
+  if(EXISTS "${TAE_ASIO_SDK_DIR}/common/asio.h" AND EXISTS "${TAE_ASIO_SDK_DIR}/host/asiodrivers.cpp")
+    set(TAE_ASIO_AVAILABLE ON)
+  else()
+    message(WARNING "ASIO SDK not found at ${TAE_ASIO_SDK_DIR}; ASIO backend will be disabled.")
+    set(TAE_ENABLE_ASIO OFF CACHE BOOL "Enable optional ASIO backend when the SDK is available" FORCE)
+  endif()
+endif()
+
 add_library(twilight_audio_engine SHARED
   core/AudioBuffer.cpp
   core/AudioPipeline.cpp
+  core/AudioTypes.cpp
   core/TwilightAudioEngine.cpp
   decoder/FFmpegDecoder.cpp
   devices/DeviceManager.cpp
@@ -34,6 +46,8 @@ add_library(twilight_audio_engine SHARED
   output/wasapi/WasapiSharedBackend.cpp
   output/wasapi/WasapiExclusiveBackend.cpp
   output/asio/AsioBackend.cpp
+  output/asio/DeviceCapabilityCache.cpp
+  output/asio/RealAsioHost.cpp
   output/coreaudio/CoreAudioBackend.cpp
   output/alsa/AlsaBackend.cpp
   playlist/QueueManager.cpp
@@ -92,6 +106,26 @@ endif()
 if(WIN32 AND TAE_ENABLE_WASAPI)
   target_compile_definitions(twilight_audio_engine PRIVATE TAE_ENABLE_WASAPI=1)
   target_link_libraries(twilight_audio_engine PRIVATE ole32 uuid avrt)
+endif()
+
+if(TAE_ASIO_AVAILABLE)
+  set(TAE_ASIO_SDK_SOURCES
+    "${TAE_ASIO_SDK_DIR}/common/asio.cpp"
+    "${TAE_ASIO_SDK_DIR}/host/asiodrivers.cpp"
+    "${TAE_ASIO_SDK_DIR}/host/pc/asiolist.cpp"
+  )
+  set_source_files_properties(${TAE_ASIO_SDK_SOURCES} PROPERTIES
+    COMPILE_DEFINITIONS "interface=struct"
+    COMPILE_OPTIONS "-include;unknwn.h"
+  )
+  target_compile_definitions(twilight_audio_engine PRIVATE TAE_ENABLE_ASIO=1)
+  target_include_directories(twilight_audio_engine PRIVATE
+    "${TAE_ASIO_SDK_DIR}/common"
+    "${TAE_ASIO_SDK_DIR}/host"
+    "${TAE_ASIO_SDK_DIR}/host/pc"
+  )
+  target_sources(twilight_audio_engine PRIVATE ${TAE_ASIO_SDK_SOURCES})
+  target_link_libraries(twilight_audio_engine PRIVATE ole32 uuid winmm)
 endif()
 
 if(APPLE AND TAE_ENABLE_COREAUDIO)
@@ -165,4 +199,58 @@ if(TAE_BUILD_TESTS)
     target_link_libraries(twilight_metadata_tests PRIVATE ${FFMPEG_LIBRARIES})
   endif()
   add_test(NAME twilight_metadata_unit COMMAND twilight_metadata_tests)
+
+  add_executable(twilight_bitperfect_tests
+    tests/bitperfect_tests.cpp
+    core/AudioTypes.cpp
+  )
+  target_include_directories(twilight_bitperfect_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME twilight_bitperfect_unit COMMAND twilight_bitperfect_tests)
+
+  add_executable(twilight_asio_backend_tests
+    tests/asio_backend_tests.cpp
+    output/asio/AsioBackend.cpp
+    output/asio/DeviceCapabilityCache.cpp
+    output/asio/MockAsioHost.cpp
+    output/asio/RealAsioHost.cpp
+    core/AudioTypes.cpp
+  )
+  target_include_directories(twilight_asio_backend_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  if(TAE_ASIO_AVAILABLE)
+    target_compile_definitions(twilight_asio_backend_tests PRIVATE TAE_ENABLE_ASIO=1)
+    target_include_directories(twilight_asio_backend_tests PRIVATE
+      "${TAE_ASIO_SDK_DIR}/common"
+      "${TAE_ASIO_SDK_DIR}/host"
+      "${TAE_ASIO_SDK_DIR}/host/pc"
+    )
+    target_sources(twilight_asio_backend_tests PRIVATE ${TAE_ASIO_SDK_SOURCES})
+    target_link_libraries(twilight_asio_backend_tests PRIVATE ole32 uuid winmm)
+  endif()
+  add_test(NAME twilight_asio_backend_unit COMMAND twilight_asio_backend_tests)
+
+  add_executable(twilight_output_backend_tests
+    tests/output_backend_tests.cpp
+    output/asio/AsioBackend.cpp
+    output/asio/DeviceCapabilityCache.cpp
+    output/asio/MockAsioHost.cpp
+    output/asio/RealAsioHost.cpp
+    core/AudioTypes.cpp
+  )
+  target_include_directories(twilight_output_backend_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  if(TAE_ASIO_AVAILABLE)
+    target_compile_definitions(twilight_output_backend_tests PRIVATE TAE_ENABLE_ASIO=1)
+    target_include_directories(twilight_output_backend_tests PRIVATE
+      "${TAE_ASIO_SDK_DIR}/common"
+      "${TAE_ASIO_SDK_DIR}/host"
+      "${TAE_ASIO_SDK_DIR}/host/pc"
+    )
+    target_sources(twilight_output_backend_tests PRIVATE ${TAE_ASIO_SDK_SOURCES})
+    target_link_libraries(twilight_output_backend_tests PRIVATE ole32 uuid winmm)
+  endif()
+  add_test(NAME twilight_output_backend_unit COMMAND twilight_output_backend_tests)
+
+  add_executable(audio_output_benchmark
+    tests/output_backend_benchmark.cpp
+  )
+  target_include_directories(audio_output_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

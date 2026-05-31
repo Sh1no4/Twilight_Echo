@@ -5,6 +5,10 @@
 #include "wasapi/WasapiSharedBackend.h"
 #endif
 
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
+#include "asio/AsioBackend.h"
+#endif
+
 namespace twilight::audio {
 
 std::string defaultBackendId() {
@@ -25,8 +29,11 @@ std::unique_ptr<IOutputBackend> createOutputBackend(const std::string& backendId
   if (backendId == "wasapi-exclusive") {
     return std::make_unique<WasapiExclusiveBackend>();
   }
-#else
-  (void)backendId;
+#endif
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
+  if (backendId == "asio") {
+    return std::make_unique<AsioBackend>();
+  }
 #endif
   return nullptr;
 }

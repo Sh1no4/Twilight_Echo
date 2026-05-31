@@ -82,6 +82,7 @@ class AudioPipeline {
   TAE_Result seek(double seconds, std::string* error);
   void setVolume(double volume);
   void setDspConfig(const std::string& dspConfigJson);
+  bool setOutputConfig(const OutputConfig& config, std::string* error);
   bool loadImpulseResponse(const std::string& path, std::string* error);
   void unloadImpulseResponse();
   ConvolverInfo convolverInfo() const;
@@ -116,6 +117,7 @@ class AudioPipeline {
   FftSpectrumAnalyzer spectrum_;
   DspChain dspChain_;
   DspConfig dspConfig_;
+  OutputConfig outputConfig_;
   DspStatus dspStatus_;
   AudioStreamInfo stream_;
   AudioFormat outputFormat_;

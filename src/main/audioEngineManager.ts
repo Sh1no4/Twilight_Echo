@@ -7,6 +7,13 @@ export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 export type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 export type EqMode = 'graphic' | 'parametric'
 export type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
+export type ChannelRoutingMode =
+  | 'auto'
+  | 'stereo'
+  | 'stereo-to-5.1'
+  | 'stereo-to-7.1'
+  | 'mono-to-stereo'
+  | 'mono-to-multichannel'
 export type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -57,6 +64,42 @@ export interface AudioDeviceOption {
   id: string
   label: string
   isDefault: boolean
+  backend?: string
+  name?: string
+  channels?: number
+  sampleRates?: number[]
+  driverName?: string
+  driverVersion?: number
+  bitDepths?: number[]
+  latencyFrames?: number
+  minBufferSize?: number
+  maxBufferSize?: number
+  granularity?: number
+  preferredBufferSize?: number
+  capabilityVersion?: number
+}
+
+export interface OutputConfig {
+  preferredBufferSize: number
+  routingMode: ChannelRoutingMode
+}
+
+export interface LatencyInfo {
+  bufferLatencyMs: number
+  outputLatencyMs: number
+  totalLatencyMs: number
+}
+
+export interface OutputDiagnostics {
+  sessionUnderrunCount: number
+  sessionBufferDropCount: number
+  sessionRecoveryCount: number
+  lifetimeUnderrunCount: number
+  lifetimeBufferDropCount: number
+  lifetimeRecoveryCount: number
+  driverRestartCount: number
+  deviceLostCount: number
+  lastError: string
 }
 
 export interface AudioOutputState {
@@ -103,6 +146,22 @@ export interface PlaybackInfo {
   outputBackend: string
   outputDevice: string
   outputInfo: OutputInfo
+  actualBackend: string
+  driverName: string
+  driverVersion: number
+  actualOutputFormat: string
+  actualSampleRate: number
+  actualBitDepth: number
+  actualChannels: number
+  bufferSizeFrames: number
+  latencyFrames: number
+  latencyMs: number
+  latencyInfo: LatencyInfo
+  channelRoutingMode: string
+  supportsBitPerfect: boolean
+  diagnostics: OutputDiagnostics
+  deviceRecovered: boolean
+  recoveryCount: number
   outputSampleRate: number
   outputBitDepth: number
   channelCount: number
@@ -128,12 +187,31 @@ export interface PlaybackInfo {
 
 export interface OutputInfo {
   exclusive: boolean
+  supportsBitPerfect: boolean
   bitPerfect: boolean
   resampled: boolean
   outputSampleRate: number
   outputBitDepth: number
   backend: string
+  actualBackend: string
   deviceName: string
+  actualDeviceName: string
+  driverName: string
+  actualDriverName: string
+  driverVersion: number
+  actualDriverVersion: number
+  actualOutputFormat: string
+  actualSampleRate: number
+  actualBitDepth: number
+  actualChannels: number
+  bufferSizeFrames: number
+  latencyFrames: number
+  latencyMs: number
+  latencyInfo: LatencyInfo
+  channelRoutingMode: string
+  diagnostics: OutputDiagnostics
+  deviceRecovered: boolean
+  recoveryCount: number
 }
 
 export interface AudioEnginePlayResult {
@@ -148,6 +226,7 @@ interface NativeAudioBinding {
   SetVolume: (volume: number) => void
   SetOutputDevice: (device: string) => void
   SetOutputBackend: (backend: string) => void
+  SetOutputConfig?: (json: string) => void
   LoadQueue?: (queueJson: string, startIndex: number) => void
   Next?: () => void
   Previous?: () => void
@@ -405,14 +484,49 @@ function loadNativeBinding(): NativeAudioBinding | null {
 
 function createDefaultPlaybackInfo(output: AudioOutputId, device: string): PlaybackInfo {
   const exclusive = output !== 'wasapi'
+  const latencyInfo: LatencyInfo = {
+    bufferLatencyMs: 0,
+    outputLatencyMs: 0,
+    totalLatencyMs: 0
+  }
+  const diagnostics: OutputDiagnostics = {
+    sessionUnderrunCount: 0,
+    sessionBufferDropCount: 0,
+    sessionRecoveryCount: 0,
+    lifetimeUnderrunCount: 0,
+    lifetimeBufferDropCount: 0,
+    lifetimeRecoveryCount: 0,
+    driverRestartCount: 0,
+    deviceLostCount: 0,
+    lastError: ''
+  }
   const outputInfo: OutputInfo = {
     exclusive,
+    supportsBitPerfect: exclusive,
     bitPerfect: exclusive,
     resampled: false,
     outputSampleRate: 0,
     outputBitDepth: 0,
     backend: output,
-    deviceName: device
+    actualBackend: output,
+    deviceName: device,
+    actualDeviceName: device,
+    driverName: '',
+    actualDriverName: '',
+    driverVersion: 0,
+    actualDriverVersion: 0,
+    actualOutputFormat: '',
+    actualSampleRate: 0,
+    actualBitDepth: 0,
+    actualChannels: 0,
+    bufferSizeFrames: 0,
+    latencyFrames: 0,
+    latencyMs: 0,
+    latencyInfo,
+    channelRoutingMode: 'auto',
+    diagnostics,
+    deviceRecovered: false,
+    recoveryCount: 0
   }
   return {
     state: 'stopped',
@@ -429,6 +543,22 @@ function createDefaultPlaybackInfo(output: AudioOutputId, device: string): Playb
     outputBackend: output,
     outputDevice: device,
     outputInfo,
+    actualBackend: output,
+    driverName: '',
+    driverVersion: 0,
+    actualOutputFormat: '',
+    actualSampleRate: 0,
+    actualBitDepth: 0,
+    actualChannels: 0,
+    bufferSizeFrames: 0,
+    latencyFrames: 0,
+    latencyMs: 0,
+    latencyInfo,
+    channelRoutingMode: 'auto',
+    supportsBitPerfect: exclusive,
+    diagnostics,
+    deviceRecovered: false,
+    recoveryCount: 0,
     outputSampleRate: 0,
     outputBitDepth: 0,
     channelCount: 0,
@@ -489,6 +619,7 @@ export class AudioEngineManager extends EventEmitter {
   async start(): Promise<void> {
     this.tryNative('初始化输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.tryNative('初始化输出设备', (native) => native.SetOutputDevice(this.device))
+    this.applyNativeOutputConfig('初始化输出配置')
     this.applyNativeDspSettings('初始化 DSP 配置')
     this.startClock()
     setImmediate(() => this.emit('ready'))
@@ -608,6 +739,7 @@ export class AudioEngineManager extends EventEmitter {
     }
     this.exclusiveMode = enabled
     this.tryNative('切换独占模式', (native) => native.SetOutputBackend(this.getNativeBackendId()))
+    this.applyNativeOutputConfig('切换输出配置')
     this.playbackInfo.outputBackend = this.getNativeBackendId()
     this.updateBitPerfect()
     return await this.getAudioOutputState()
@@ -623,6 +755,7 @@ export class AudioEngineManager extends EventEmitter {
     if (!supportsAudioExclusive(this.output)) this.exclusiveMode = false
     this.tryNative('切换输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
+    this.applyNativeOutputConfig('切换输出配置')
     this.playbackInfo.outputBackend = this.getNativeBackendId()
     this.playbackInfo.outputDevice = this.device
     this.updateBitPerfect()
@@ -634,6 +767,19 @@ export class AudioEngineManager extends EventEmitter {
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
     this.playbackInfo.outputDevice = this.device
     return await this.getAudioOutputState()
+  }
+
+  async setOutputConfig(config: Partial<OutputConfig>): Promise<void> {
+    const normalized: OutputConfig = {
+      preferredBufferSize: Number.isFinite(config.preferredBufferSize)
+        ? Math.max(0, Math.trunc(config.preferredBufferSize ?? 0))
+        : 0,
+      routingMode: config.routingMode ?? 'auto'
+    }
+    this.tryNative('设置输出配置', (native) => native.SetOutputConfig?.(JSON.stringify(normalized)))
+    this.playbackInfo.outputInfo.channelRoutingMode = normalized.routingMode
+    this.playbackInfo.channelRoutingMode = normalized.routingMode
+    this.publishPlaybackInfo()
   }
 
   async getAudioOutput(): Promise<AudioOutputId> {
@@ -898,6 +1044,16 @@ export class AudioEngineManager extends EventEmitter {
     })
   }
 
+  private applyNativeOutputConfig(context: string): void {
+    const config: OutputConfig = {
+      preferredBufferSize: 0,
+      routingMode: 'auto'
+    }
+    this.tryNative(context, (native) => {
+      native.SetOutputConfig?.(JSON.stringify(config))
+    })
+  }
+
   private updateNativeInfoSnapshot(): void {
     const nativeInfo = this.readNativePlaybackInfo()
     if (nativeInfo) this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
@@ -950,6 +1106,15 @@ export class AudioEngineManager extends EventEmitter {
       this.processing.dspEnabled &&
       this.processing.crossfeedEnabled &&
       this.processing.crossfeedStrength > 0
+    const supportsBitPerfect = this.playbackInfo.outputInfo.supportsBitPerfect ?? !(this.output === 'wasapi' && !this.exclusiveMode)
+    const outputFormatMatchesSource =
+      this.playbackInfo.sourceSampleRate > 0 &&
+      this.playbackInfo.outputSampleRate > 0 &&
+      this.playbackInfo.sourceSampleRate === this.playbackInfo.outputSampleRate &&
+      this.playbackInfo.sourceBitDepth > 0 &&
+      this.playbackInfo.outputBitDepth > 0 &&
+      this.playbackInfo.sourceBitDepth === this.playbackInfo.outputBitDepth
+    const noResample = !(this.nativePlaybackActive && this.playbackInfo.outputInfo.resampled)
     const shared = this.output === 'wasapi' && !this.exclusiveMode
     this.playbackInfo.replayGainActive = replayGainActive
     this.playbackInfo.eqActive = eqActive
@@ -957,16 +1122,19 @@ export class AudioEngineManager extends EventEmitter {
     this.playbackInfo.crossfeedActive = crossfeedActive
     this.playbackInfo.crossfeedStrength = crossfeedActive ? this.processing.crossfeedStrength : 0
     this.playbackInfo.dspActive = dspActive
-    this.playbackInfo.bitPerfect = !dspActive && !shared
+    this.playbackInfo.bitPerfect = supportsBitPerfect && !dspActive && noResample && outputFormatMatchesSource
     this.playbackInfo.outputInfo = {
       ...this.playbackInfo.outputInfo,
       exclusive: !shared,
+      supportsBitPerfect,
       bitPerfect: this.playbackInfo.bitPerfect,
       resampled: this.nativePlaybackActive ? this.playbackInfo.outputInfo.resampled : false,
       outputSampleRate: this.playbackInfo.outputSampleRate,
       outputBitDepth: this.playbackInfo.outputBitDepth,
       backend: this.playbackInfo.outputBackend,
-      deviceName: this.playbackInfo.outputInfo.deviceName || this.playbackInfo.outputDevice
+      actualBackend: this.playbackInfo.actualBackend || this.playbackInfo.outputBackend,
+      deviceName: this.playbackInfo.outputInfo.deviceName || this.playbackInfo.outputDevice,
+      actualDeviceName: this.playbackInfo.outputInfo.actualDeviceName || this.playbackInfo.outputInfo.deviceName || this.playbackInfo.outputDevice
     }
     this.playbackInfo.resampleReason = shared ? '共享输出经过系统混音' : ''
   }

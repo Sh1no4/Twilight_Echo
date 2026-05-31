@@ -14,6 +14,13 @@ type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 type TrackSource = 'local' | 'ncm'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
+type ChannelRoutingMode =
+  | 'auto'
+  | 'stereo'
+  | 'stereo-to-5.1'
+  | 'stereo-to-7.1'
+  | 'mono-to-stereo'
+  | 'mono-to-multichannel'
 type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -187,6 +194,42 @@ interface AudioDeviceOption {
   id: string
   label: string
   isDefault: boolean
+  backend?: string
+  name?: string
+  channels?: number
+  sampleRates?: number[]
+  driverName?: string
+  driverVersion?: number
+  bitDepths?: number[]
+  latencyFrames?: number
+  minBufferSize?: number
+  maxBufferSize?: number
+  granularity?: number
+  preferredBufferSize?: number
+  capabilityVersion?: number
+}
+
+interface OutputConfig {
+  preferredBufferSize: number
+  routingMode: ChannelRoutingMode
+}
+
+interface LatencyInfo {
+  bufferLatencyMs: number
+  outputLatencyMs: number
+  totalLatencyMs: number
+}
+
+interface OutputDiagnostics {
+  sessionUnderrunCount: number
+  sessionBufferDropCount: number
+  sessionRecoveryCount: number
+  lifetimeUnderrunCount: number
+  lifetimeBufferDropCount: number
+  lifetimeRecoveryCount: number
+  driverRestartCount: number
+  deviceLostCount: number
+  lastError: string
 }
 
 interface AudioOutputOption {
@@ -208,12 +251,31 @@ interface AudioOutputState {
 
 interface OutputInfo {
   exclusive: boolean
+  supportsBitPerfect: boolean
   bitPerfect: boolean
   resampled: boolean
   outputSampleRate: number
   outputBitDepth: number
   backend: string
+  actualBackend: string
   deviceName: string
+  actualDeviceName: string
+  driverName: string
+  actualDriverName: string
+  driverVersion: number
+  actualDriverVersion: number
+  actualOutputFormat: string
+  actualSampleRate: number
+  actualBitDepth: number
+  actualChannels: number
+  bufferSizeFrames: number
+  latencyFrames: number
+  latencyMs: number
+  latencyInfo: LatencyInfo
+  channelRoutingMode: string
+  diagnostics: OutputDiagnostics
+  deviceRecovered: boolean
+  recoveryCount: number
 }
 
 interface PlaybackInfo {
@@ -231,6 +293,22 @@ interface PlaybackInfo {
   outputBackend: string
   outputDevice: string
   outputInfo: OutputInfo
+  actualBackend: string
+  driverName: string
+  driverVersion: number
+  actualOutputFormat: string
+  actualSampleRate: number
+  actualBitDepth: number
+  actualChannels: number
+  bufferSizeFrames: number
+  latencyFrames: number
+  latencyMs: number
+  latencyInfo: LatencyInfo
+  channelRoutingMode: string
+  supportsBitPerfect: boolean
+  diagnostics: OutputDiagnostics
+  deviceRecovered: boolean
+  recoveryCount: number
   outputSampleRate: number
   outputBitDepth: number
   channelCount: number
@@ -380,6 +458,8 @@ const api = {
       ipcRenderer.invoke('audioEngine:setAudioOutput', output, device),
     setAudioDevice: (device: string): Promise<AudioOutputState> =>
       ipcRenderer.invoke('audioEngine:setAudioDevice', device),
+    setOutputConfig: (config: OutputConfig): Promise<void> =>
+      ipcRenderer.invoke('audioEngine:setOutputConfig', config),
     getAudioOutput: (): Promise<AudioOutputId> => ipcRenderer.invoke('audioEngine:getAudioOutput'),
     getAudioOutputOptions: (): Promise<AudioOutputOption[]> =>
       ipcRenderer.invoke('audioEngine:getAudioOutputOptions'),

@@ -37,10 +37,22 @@ struct PlaybackInfo {
   std::string outputBackend = "wasapi";
   std::string outputDevice = "auto";
   OutputInfo outputInfo;
+  std::string actualBackend;
+  std::string driverName;
+  long driverVersion = 0;
+  std::string actualOutputFormat;
+  int actualSampleRate = 0;
+  int actualBitDepth = 0;
+  int actualChannels = 0;
+  int bufferSizeFrames = 0;
+  int latencyFrames = 0;
+  double latencyMs = 0.0;
+  bool deviceRecovered = false;
+  int recoveryCount = 0;
   int outputSampleRate = 0;
   int outputBitDepth = 0;
   int channelCount = 0;
-  bool bitPerfect = true;
+  bool bitPerfect = false;
   bool dspActive = false;
   bool replayGainActive = false;
   bool eqActive = false;
@@ -87,6 +99,7 @@ class TwilightAudioEngine {
   TAE_Result setPlayMode(const std::string& mode);
 
   TAE_Result setDspConfig(const std::string& dspJson);
+  TAE_Result setOutputConfig(const std::string& outputConfigJson);
   TAE_Result loadImpulseResponse(const std::string& path);
   TAE_Result unloadImpulseResponse();
   std::string getConvolverInfoJson() const;
@@ -118,6 +131,7 @@ class TwilightAudioEngine {
   PlaybackInfo info_;
   QueueManager queue_;
   std::string dspConfigJson_ = "{}";
+  OutputConfig outputConfig_;
   std::unique_ptr<AudioPipeline> pipeline_;
   TAE_EventCallback eventCallback_ = nullptr;
   void* eventUserData_ = nullptr;

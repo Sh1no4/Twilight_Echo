@@ -141,12 +141,19 @@ bool WasapiFormatNegotiator::negotiate(const AudioFormat& sourceFormat, std::str
     outputFormat_ = candidate.outputFormat;
     waveFormatBytes_ = candidate.waveFormatBytes;
     outputInfo_.exclusive = true;
+    outputInfo_.supportsBitPerfect = true;
     outputInfo_.bitPerfect = false;
     outputInfo_.resampled = !sameSourceFormat(sourceFormat, outputFormat_);
     outputInfo_.outputSampleRate = outputFormat_.sampleRate;
     outputInfo_.outputBitDepth = outputFormat_.bitDepth;
     outputInfo_.backend = "wasapi-exclusive";
+    outputInfo_.actualBackend = "wasapi-exclusive";
     outputInfo_.deviceName.clear();
+    outputInfo_.actualDeviceName.clear();
+    outputInfo_.actualOutputFormat = "pcm";
+    outputInfo_.actualSampleRate = outputFormat_.sampleRate;
+    outputInfo_.actualBitDepth = outputFormat_.bitDepth;
+    outputInfo_.actualChannels = outputFormat_.channelCount;
     return true;
   }
 

@@ -71,6 +71,8 @@ std::string readDeviceName(IMMDevice* device) {
 
 }  // namespace
 
+std::string enumerateAsioDevicesJson();
+
 std::string enumeratePlatformDevicesJson() {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -118,6 +120,10 @@ std::string enumeratePlatformDevicesJson() {
     }
   }
 
+  const std::string asioJson = enumerateAsioDevicesJson();
+  if (asioJson.size() > 2) {
+    json << "," << asioJson.substr(1, asioJson.size() - 2);
+  }
   json << "]";
   if (shouldUninitialize) CoUninitialize();
   return json.str();

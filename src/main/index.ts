@@ -169,6 +169,24 @@ function normalizeAudioDevice(device: unknown): string {
   return typeof device === 'string' && device.trim() ? device.trim() : DEFAULT_SETTINGS.audioDevice
 }
 
+function normalizeOutputConfig(config: unknown): { preferredBufferSize?: number; routingMode?: import('./audioEngineManager').ChannelRoutingMode } {
+  if (!config || typeof config !== 'object') return {}
+  const value = config as { preferredBufferSize?: unknown; routingMode?: unknown }
+  const out: { preferredBufferSize?: number; routingMode?: import('./audioEngineManager').ChannelRoutingMode } = {}
+  if (typeof value.preferredBufferSize === 'number') out.preferredBufferSize = value.preferredBufferSize
+  if (
+    value.routingMode === 'auto' ||
+    value.routingMode === 'stereo' ||
+    value.routingMode === 'stereo-to-5.1' ||
+    value.routingMode === 'stereo-to-7.1' ||
+    value.routingMode === 'mono-to-stereo' ||
+    value.routingMode === 'mono-to-multichannel'
+  ) {
+    out.routingMode = value.routingMode
+  }
+  return out
+}
+
 function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
   const rawCachePath =
     typeof settings.cachePath === 'string' && settings.cachePath.trim()
@@ -1036,6 +1054,10 @@ function setupAudioEngineIpc(): void {
     const state = await requireAudioEngine().setAudioDevice(device)
     persistAudioOutputState(state)
     return state
+  })
+
+  ipcMain.handle('audioEngine:setOutputConfig', async (_event, config: unknown) => {
+    await requireAudioEngine().setOutputConfig(normalizeOutputConfig(config))
   })
 
   ipcMain.handle('audioEngine:getAudioOutput', async () => {

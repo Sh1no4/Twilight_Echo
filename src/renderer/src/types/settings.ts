@@ -3,6 +3,13 @@ export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 export type EqMode = 'graphic' | 'parametric'
 export type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
+export type ChannelRoutingMode =
+  | 'auto'
+  | 'stereo'
+  | 'stereo-to-5.1'
+  | 'stereo-to-7.1'
+  | 'mono-to-stereo'
+  | 'mono-to-multichannel'
 export type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -61,6 +68,24 @@ export interface AudioDeviceOption {
   id: string
   label: string
   isDefault: boolean
+  backend?: string
+  name?: string
+  channels?: number
+  sampleRates?: number[]
+  driverName?: string
+  driverVersion?: number
+  bitDepths?: number[]
+  latencyFrames?: number
+  minBufferSize?: number
+  maxBufferSize?: number
+  granularity?: number
+  preferredBufferSize?: number
+  capabilityVersion?: number
+}
+
+export interface OutputConfig {
+  preferredBufferSize: number
+  routingMode: ChannelRoutingMode
 }
 
 export interface AppSettings {

@@ -103,6 +103,7 @@ struct WasapiExclusiveBackend::Impl {
     outputFormat = negotiator.outputFormat();
     outputInfo = negotiator.outputInfo();
     outputInfo.deviceName = deviceName;
+    outputInfo.actualDeviceName = deviceName;
     waveFormatBytes.assign(
         reinterpret_cast<const uint8_t*>(negotiator.waveFormat()),
         reinterpret_cast<const uint8_t*>(negotiator.waveFormat()) + negotiator.waveFormatSize());
@@ -141,6 +142,13 @@ struct WasapiExclusiveBackend::Impl {
 
     hr = audioClient->GetBufferSize(&bufferFrameCount);
     if (!wasapi::succeeded(hr, error, "无法读取独占输出缓冲区大小")) return false;
+    outputInfo.bufferSizeFrames = static_cast<int>(bufferFrameCount);
+    outputInfo.latencyFrames = static_cast<int>(bufferFrameCount);
+    outputInfo.latencyMs = outputFormat.sampleRate > 0
+                               ? static_cast<double>(bufferFrameCount) * 1000.0 / static_cast<double>(outputFormat.sampleRate)
+                               : 0.0;
+    outputInfo.latencyInfo.bufferLatencyMs = outputInfo.latencyMs;
+    outputInfo.latencyInfo.totalLatencyMs = outputInfo.latencyMs;
 
     hr = audioClient->GetService(IID_PPV_ARGS(&renderClient));
     return wasapi::succeeded(hr, error, "无法获取独占输出渲染客户端");
@@ -295,6 +303,12 @@ bool WasapiExclusiveBackend::open(const std::string& deviceId, const AudioFormat
   if (error) *error = "当前构建未启用独占输出";
   return false;
 #endif
+}
+
+bool WasapiExclusiveBackend::setOutputConfig(const OutputConfig& config, std::string* error) {
+  (void)config;
+  (void)error;
+  return true;
 }
 
 bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) {

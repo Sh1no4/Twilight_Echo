@@ -56,6 +56,58 @@ std::string escapeJson(const std::string& value) {
   return out;
 }
 
+void writeLatencyInfoJson(std::ostringstream& json, const OutputInfo::LatencyInfo& latency) {
+  json << "{"
+       << "\"bufferLatencyMs\":" << latency.bufferLatencyMs << ","
+       << "\"outputLatencyMs\":" << latency.outputLatencyMs << ","
+       << "\"totalLatencyMs\":" << latency.totalLatencyMs
+       << "}";
+}
+
+void writeDiagnosticsJson(std::ostringstream& json, const OutputInfo::Diagnostics& diagnostics) {
+  json << "{"
+       << "\"sessionUnderrunCount\":" << diagnostics.sessionUnderrunCount << ","
+       << "\"sessionBufferDropCount\":" << diagnostics.sessionBufferDropCount << ","
+       << "\"sessionRecoveryCount\":" << diagnostics.sessionRecoveryCount << ","
+       << "\"lifetimeUnderrunCount\":" << diagnostics.lifetimeUnderrunCount << ","
+       << "\"lifetimeBufferDropCount\":" << diagnostics.lifetimeBufferDropCount << ","
+       << "\"lifetimeRecoveryCount\":" << diagnostics.lifetimeRecoveryCount << ","
+       << "\"driverRestartCount\":" << diagnostics.driverRestartCount << ","
+       << "\"deviceLostCount\":" << diagnostics.deviceLostCount << ","
+       << "\"lastError\":\"" << escapeJson(diagnostics.lastError) << "\""
+       << "}";
+}
+
+void normalizeOutputInfoMirror(PlaybackInfo& info) {
+  OutputInfo& out = info.outputInfo;
+  if (out.backend.empty()) out.backend = info.outputBackend;
+  if (out.actualBackend.empty()) out.actualBackend = out.backend;
+  if (out.deviceName.empty()) out.deviceName = info.outputDevice;
+  if (out.actualDeviceName.empty()) out.actualDeviceName = out.deviceName;
+  if (out.actualDriverName.empty()) out.actualDriverName = out.driverName;
+  if (out.actualDriverVersion == 0) out.actualDriverVersion = out.driverVersion;
+  if (out.outputSampleRate <= 0 && info.outputSampleRate > 0) out.outputSampleRate = info.outputSampleRate;
+  if (out.outputBitDepth <= 0 && info.outputBitDepth > 0) out.outputBitDepth = info.outputBitDepth;
+  if (out.actualSampleRate <= 0) out.actualSampleRate = out.outputSampleRate;
+  if (out.actualBitDepth <= 0) out.actualBitDepth = out.outputBitDepth;
+
+  info.actualBackend = out.actualBackend;
+  info.driverName = out.driverName.empty() ? out.actualDriverName : out.driverName;
+  info.driverVersion = out.driverVersion != 0 ? out.driverVersion : out.actualDriverVersion;
+  info.actualOutputFormat = out.actualOutputFormat;
+  info.actualSampleRate = out.actualSampleRate;
+  info.actualBitDepth = out.actualBitDepth;
+  info.actualChannels = out.actualChannels;
+  info.bufferSizeFrames = out.bufferSizeFrames;
+  info.latencyFrames = out.latencyFrames;
+  info.latencyMs = out.latencyMs;
+  info.deviceRecovered = out.deviceRecovered;
+  info.recoveryCount = out.recoveryCount;
+  info.outputSampleRate = out.outputSampleRate;
+  info.outputBitDepth = out.outputBitDepth;
+  info.bitPerfect = out.bitPerfect;
+}
+
 std::string inferCodec(const std::string& source) {
   const auto dot = source.find_last_of('.');
   if (dot == std::string::npos) return "未知";
@@ -70,6 +122,7 @@ std::string inferCodec(const std::string& source) {
 }
 
 std::string playbackInfoToJson(const PlaybackInfo& info) {
+  const OutputInfo& out = info.outputInfo;
   std::ostringstream json;
   json << "{"
        << "\"state\":\"" << stateToString(info.state) << "\","
@@ -86,18 +139,61 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"outputBackend\":\"" << escapeJson(info.outputBackend) << "\","
        << "\"outputDevice\":\"" << escapeJson(info.outputDevice) << "\","
        << "\"outputInfo\":{"
-       << "\"exclusive\":" << (info.outputInfo.exclusive ? "true" : "false") << ","
-       << "\"bitPerfect\":" << (info.outputInfo.bitPerfect ? "true" : "false") << ","
-       << "\"resampled\":" << (info.outputInfo.resampled ? "true" : "false") << ","
-       << "\"outputSampleRate\":" << info.outputInfo.outputSampleRate << ","
-       << "\"outputBitDepth\":" << info.outputInfo.outputBitDepth << ","
-       << "\"backend\":\"" << escapeJson(info.outputInfo.backend) << "\","
-       << "\"deviceName\":\"" << escapeJson(info.outputInfo.deviceName) << "\""
+       << "\"exclusive\":" << (out.exclusive ? "true" : "false") << ","
+       << "\"supportsBitPerfect\":" << (out.supportsBitPerfect ? "true" : "false") << ","
+       << "\"bitPerfect\":" << (out.bitPerfect ? "true" : "false") << ","
+       << "\"resampled\":" << (out.resampled ? "true" : "false") << ","
+       << "\"outputSampleRate\":" << out.outputSampleRate << ","
+       << "\"outputBitDepth\":" << out.outputBitDepth << ","
+       << "\"backend\":\"" << escapeJson(out.backend) << "\","
+       << "\"actualBackend\":\"" << escapeJson(out.actualBackend) << "\","
+       << "\"deviceName\":\"" << escapeJson(out.deviceName) << "\","
+       << "\"actualDeviceName\":\"" << escapeJson(out.actualDeviceName) << "\","
+       << "\"driverName\":\"" << escapeJson(out.driverName) << "\","
+       << "\"actualDriverName\":\"" << escapeJson(out.actualDriverName) << "\","
+       << "\"driverVersion\":" << out.driverVersion << ","
+       << "\"actualDriverVersion\":" << out.actualDriverVersion << ","
+       << "\"actualOutputFormat\":\"" << escapeJson(out.actualOutputFormat) << "\","
+       << "\"actualSampleRate\":" << out.actualSampleRate << ","
+       << "\"actualBitDepth\":" << out.actualBitDepth << ","
+       << "\"actualChannels\":" << out.actualChannels << ","
+       << "\"bufferSizeFrames\":" << out.bufferSizeFrames << ","
+       << "\"latencyFrames\":" << out.latencyFrames << ","
+       << "\"latencyMs\":" << out.latencyMs << ","
+       << "\"latencyInfo\":";
+  writeLatencyInfoJson(json, out.latencyInfo);
+  json << ","
+       << "\"channelRoutingMode\":\"" << escapeJson(out.channelRoutingMode) << "\","
+       << "\"diagnostics\":";
+  writeDiagnosticsJson(json, out.diagnostics);
+  json << ","
+       << "\"deviceRecovered\":" << (out.deviceRecovered ? "true" : "false") << ","
+       << "\"recoveryCount\":" << out.recoveryCount
        << "},"
-       << "\"outputSampleRate\":" << info.outputSampleRate << ","
-       << "\"outputBitDepth\":" << info.outputBitDepth << ","
+       << "\"actualBackend\":\"" << escapeJson(out.actualBackend) << "\","
+       << "\"driverName\":\"" << escapeJson(out.driverName.empty() ? out.actualDriverName : out.driverName) << "\","
+       << "\"driverVersion\":" << (out.driverVersion != 0 ? out.driverVersion : out.actualDriverVersion) << ","
+       << "\"actualOutputFormat\":\"" << escapeJson(out.actualOutputFormat) << "\","
+       << "\"actualSampleRate\":" << out.actualSampleRate << ","
+       << "\"actualBitDepth\":" << out.actualBitDepth << ","
+       << "\"actualChannels\":" << out.actualChannels << ","
+       << "\"bufferSizeFrames\":" << out.bufferSizeFrames << ","
+       << "\"latencyFrames\":" << out.latencyFrames << ","
+       << "\"latencyMs\":" << out.latencyMs << ","
+       << "\"latencyInfo\":";
+  writeLatencyInfoJson(json, out.latencyInfo);
+  json << ","
+       << "\"channelRoutingMode\":\"" << escapeJson(out.channelRoutingMode) << "\","
+       << "\"supportsBitPerfect\":" << (out.supportsBitPerfect ? "true" : "false") << ","
+       << "\"diagnostics\":";
+  writeDiagnosticsJson(json, out.diagnostics);
+  json << ","
+       << "\"deviceRecovered\":" << (out.deviceRecovered ? "true" : "false") << ","
+       << "\"recoveryCount\":" << out.recoveryCount << ","
+       << "\"outputSampleRate\":" << out.outputSampleRate << ","
+       << "\"outputBitDepth\":" << out.outputBitDepth << ","
        << "\"channelCount\":" << info.channelCount << ","
-       << "\"bitPerfect\":" << (info.bitPerfect ? "true" : "false") << ","
+       << "\"bitPerfect\":" << (out.bitPerfect ? "true" : "false") << ","
        << "\"dspActive\":" << (info.dspActive ? "true" : "false") << ","
        << "\"replayGainActive\":" << (info.replayGainActive ? "true" : "false") << ","
        << "\"eqActive\":" << (info.eqActive ? "true" : "false") << ","
@@ -175,6 +271,49 @@ bool gaplessEnabledFromConfig(const std::string& dspJson) {
   return dspJson.compare(valueStart, 1, "0") == 0;
 }
 
+uint32_t parseUintField(const std::string& json, const std::string& key, uint32_t fallback) {
+  const std::string marker = "\"" + key + "\":";
+  const size_t pos = json.find(marker);
+  if (pos == std::string::npos) return fallback;
+  const size_t start = pos + marker.size();
+  size_t end = start;
+  while (end < json.size() && std::isdigit(static_cast<unsigned char>(json[end]))) ++end;
+  if (end == start) return fallback;
+  try {
+    return static_cast<uint32_t>(std::stoul(json.substr(start, end - start)));
+  } catch (...) {
+    return fallback;
+  }
+}
+
+std::string parseStringField(const std::string& json, const std::string& key, const std::string& fallback) {
+  const std::string marker = "\"" + key + "\":\"";
+  const size_t pos = json.find(marker);
+  if (pos == std::string::npos) return fallback;
+  const size_t start = pos + marker.size();
+  size_t end = start;
+  bool escaped = false;
+  for (; end < json.size(); ++end) {
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (json[end] == '\\') {
+      escaped = true;
+      continue;
+    }
+    if (json[end] == '"') break;
+  }
+  return escapeJson(json.substr(start, end - start));
+}
+
+OutputConfig parseOutputConfigJson(const std::string& json) {
+  OutputConfig config;
+  config.preferredBufferSize = parseUintField(json, "preferredBufferSize", 0);
+  config.routingMode = parseChannelRoutingMode(parseStringField(json, "routingMode", "auto"));
+  return config;
+}
+
 QueueItem makeManualQueueItem(const std::string& source) {
   QueueItem item;
   item.id = "manual";
@@ -195,8 +334,9 @@ TwilightAudioEngine::TwilightAudioEngine() {
   info_.outputBackend = "alsa";
 #endif
   info_.outputInfo.backend = info_.outputBackend;
-  info_.outputInfo.exclusive = info_.outputBackend == "wasapi-exclusive";
-  info_.resampleReason = info_.outputInfo.exclusive ? "" : "共享输出经过系统混音";
+  info_.outputInfo.actualBackend = info_.outputBackend;
+  info_.outputInfo.exclusive = false;
+  info_.outputInfo.supportsBitPerfect = false;
   updateBitPerfectLocked();
   lastTick_ = std::chrono::steady_clock::now();
   startClock();
@@ -361,6 +501,10 @@ TAE_Result TwilightAudioEngine::setOutputBackend(const std::string& backendId) {
   {
     std::lock_guard lock(mutex_);
     info_.outputBackend = backendId == "wasapi-shared" ? "wasapi" : backendId;
+    info_.outputInfo = {};
+    info_.outputInfo.backend = info_.outputBackend;
+    info_.outputInfo.actualBackend = info_.outputBackend;
+    info_.outputInfo.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
     source = info_.source;
     position = info_.positionSeconds;
     state = info_.state;
@@ -506,6 +650,28 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
     info_.crossfeedActive = configStatus.crossfeedActive;
     info_.crossfeedStrength = configStatus.crossfeedStrength;
     if (!config.enabled) info_.convolverActive = false;
+    updateBitPerfectLocked();
+  }
+  publishStateLocked();
+  return TAE_RESULT_OK;
+}
+
+TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJson) {
+  OutputConfig parsed = parseOutputConfigJson(outputConfigJson.empty() ? "{}" : outputConfigJson);
+  std::string error;
+  {
+    std::lock_guard lock(mutex_);
+    outputConfig_ = parsed;
+  }
+  if (pipeline_ && !pipeline_->setOutputConfig(parsed, &error)) {
+    emitError(error.empty() ? "输出配置设置失败" : error);
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
+  std::lock_guard lock(mutex_);
+  info_.outputInfo.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
+  if (pipeline_ && info_.state != PlaybackState::Stopped) {
+    applyPipelineStatusLocked(pipeline_->status());
+  } else {
     updateBitPerfectLocked();
   }
   publishStateLocked();
@@ -815,11 +981,16 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.outputSampleRate = status.outputFormat.sampleRate;
   info_.outputBitDepth = status.outputFormat.bitDepth;
   info_.outputInfo = status.outputInfo;
-  info_.outputInfo.bitPerfect = status.bitPerfect;
   if (info_.outputInfo.backend.empty()) info_.outputInfo.backend = info_.outputBackend;
+  if (info_.outputInfo.actualBackend.empty()) info_.outputInfo.actualBackend = info_.outputInfo.backend;
   if (info_.outputInfo.deviceName.empty()) info_.outputInfo.deviceName = status.deviceName;
+  if (info_.outputInfo.actualDeviceName.empty()) info_.outputInfo.actualDeviceName = info_.outputInfo.deviceName;
+  if (info_.outputInfo.actualDriverName.empty()) info_.outputInfo.actualDriverName = info_.outputInfo.driverName;
+  if (info_.outputInfo.actualDriverVersion == 0) info_.outputInfo.actualDriverVersion = info_.outputInfo.driverVersion;
+  if (info_.outputInfo.outputSampleRate <= 0) info_.outputInfo.outputSampleRate = status.outputFormat.sampleRate;
+  if (info_.outputInfo.outputBitDepth <= 0) info_.outputInfo.outputBitDepth = status.outputFormat.bitDepth;
+  info_.outputInfo.bitPerfect = status.bitPerfect;
   info_.channelCount = status.outputFormat.channelCount;
-  info_.bitPerfect = status.bitPerfect;
   info_.dspActive = status.dspActive;
   info_.replayGainActive = status.replayGainActive;
   info_.eqActive = status.eqActive;
@@ -839,21 +1010,43 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.upcomingTrack = upcoming.value_or(QueueItem{});
   info_.resampleReason = status.resampleReason;
   info_.dsdMode = status.stream.isDsd ? "dsd-to-pcm-pending-native" : "pcm";
+  normalizeOutputInfoMirror(info_);
 }
 
 void TwilightAudioEngine::updateBitPerfectLocked() {
-  const bool moduleDspActive =
-      info_.replayGainActive || info_.eqActive || info_.convolverActive || info_.crossfeedActive;
-  info_.dspActive = moduleDspActive || std::abs(info_.volume - 1.0) > 0.0001;
-  const bool exclusive = info_.outputBackend == "wasapi-exclusive";
-  info_.outputInfo.exclusive = exclusive;
-  info_.outputInfo.backend = info_.outputBackend;
-  info_.outputInfo.outputSampleRate = info_.outputSampleRate;
-  info_.outputInfo.outputBitDepth = info_.outputBitDepth;
-  info_.bitPerfect = !info_.dspActive && exclusive;
-  info_.outputInfo.bitPerfect = info_.bitPerfect;
-  info_.outputInfo.resampled = false;
-  info_.resampleReason = exclusive ? "" : "共享输出经过系统混音";
+  if (info_.outputInfo.backend.empty()) info_.outputInfo.backend = info_.outputBackend;
+  if (info_.outputInfo.actualBackend.empty()) info_.outputInfo.actualBackend = info_.outputInfo.backend;
+  info_.outputInfo.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
+  if (info_.outputInfo.outputSampleRate <= 0) info_.outputInfo.outputSampleRate = info_.outputSampleRate;
+  if (info_.outputInfo.outputBitDepth <= 0) info_.outputInfo.outputBitDepth = info_.outputBitDepth;
+
+  AudioFormat sourceFormat;
+  sourceFormat.sampleRate = info_.sourceSampleRate;
+  sourceFormat.channelCount = info_.channelCount > 0 ? info_.channelCount : info_.outputInfo.actualChannels;
+  sourceFormat.bitDepth = info_.sourceBitDepth;
+
+  AudioFormat outputFormat;
+  outputFormat.sampleRate = info_.outputInfo.outputSampleRate;
+  outputFormat.channelCount = info_.outputInfo.actualChannels > 0 ? info_.outputInfo.actualChannels : info_.channelCount;
+  outputFormat.bitDepth = info_.outputInfo.outputBitDepth;
+
+  const bool backendResampled = info_.outputInfo.resampled;
+  const BitPerfectResult result = evaluateBitPerfect(BitPerfectEvaluation{
+      sourceFormat,
+      outputFormat,
+      info_.outputInfo.supportsBitPerfect,
+      backendResampled,
+      info_.volume,
+      info_.replayGainActive,
+      info_.eqActive,
+      info_.convolverActive,
+      info_.crossfeedActive,
+      outputConfig_.routingMode});
+  info_.dspActive = result.processingActive;
+  info_.outputInfo.resampled = result.resampled;
+  info_.outputInfo.bitPerfect = result.bitPerfect;
+  info_.resampleReason = result.resampleReason;
+  normalizeOutputInfoMirror(info_);
 }
 
 QueueItem TwilightAudioEngine::currentItemLocked() const {
@@ -982,6 +1175,11 @@ TAE_Result TAE_GetUpcomingTrack(TAE_EngineHandle engine, char* buffer, size_t bu
 TAE_Result TAE_SetDspConfig(TAE_EngineHandle engine, const char* dsp_config_json) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   return fromHandle(engine)->setDspConfig(dsp_config_json ? dsp_config_json : "{}");
+}
+
+TAE_Result TAE_SetOutputConfig(TAE_EngineHandle engine, const char* output_config_json) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return fromHandle(engine)->setOutputConfig(output_config_json ? output_config_json : "{}");
 }
 
 TAE_Result TAE_GetDspConfig(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
