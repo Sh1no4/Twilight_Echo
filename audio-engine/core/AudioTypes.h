@@ -29,6 +29,19 @@ struct AudioStreamInfo {
   bool isDsd = false;
 };
 
+struct QueueItem {
+  std::string id;
+  std::string source;
+  std::string title;
+  std::string artist;
+  std::string album;
+  std::string codec;
+  double durationSeconds = 0.0;
+  int sampleRate = 0;
+  int64_t bitrate = 0;
+  int bitDepth = 0;
+};
+
 struct OutputInfo {
   bool exclusive = false;
   bool bitPerfect = false;

@@ -141,7 +141,7 @@ napi_value Play(napi_env env, napi_callback_info info) {
   napi_value argv[2];
   napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
   if (argc < 1) {
-    napi_throw_type_error(env, nullptr, "Play requires a source");
+    napi_throw_type_error(env, nullptr, "播放需要音频地址");
     return makeUndefined(env);
   }
   const std::string source = getStringArg(env, argv[0]);
@@ -222,6 +222,16 @@ napi_value Previous(napi_env env, napi_callback_info) {
   return throwOnError(env, TAE_Previous(g_engine));
 }
 
+napi_value SetPlayMode(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const std::string mode = argc > 0 ? getStringArg(env, argv[0]) : "sequential";
+  return throwOnError(env, TAE_SetPlayMode(g_engine, mode.c_str()));
+}
+
 napi_value SetDspConfig(napi_env env, napi_callback_info info) {
   ensureEngine();
   clearLastError();
@@ -238,6 +248,10 @@ napi_value GetPlaybackInfo(napi_env env, napi_callback_info) {
 
 napi_value GetQueue(napi_env env, napi_callback_info) {
   return readJson(env, TAE_GetQueue);
+}
+
+napi_value GetUpcomingTrack(napi_env env, napi_callback_info) {
+  return readJson(env, TAE_GetUpcomingTrack);
 }
 
 napi_value GetDspConfig(napi_env env, napi_callback_info) {
@@ -296,9 +310,11 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "LoadQueue", LoadQueue);
   define(env, exports, "Next", Next);
   define(env, exports, "Previous", Previous);
+  define(env, exports, "SetPlayMode", SetPlayMode);
   define(env, exports, "SetDspConfig", SetDspConfig);
   define(env, exports, "GetPlaybackInfo", GetPlaybackInfo);
   define(env, exports, "GetQueue", GetQueue);
+  define(env, exports, "GetUpcomingTrack", GetUpcomingTrack);
   define(env, exports, "GetDspConfig", GetDspConfig);
   define(env, exports, "EnumerateDevices", EnumerateDevices);
   define(env, exports, "EnumerateBackends", EnumerateBackends);

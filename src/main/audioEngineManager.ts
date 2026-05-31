@@ -4,6 +4,7 @@ import { join } from 'path'
 import { app } from 'electron'
 
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
+export type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 export type EqMode = 'graphic' | 'parametric'
 export type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 export type EqualizerFilterType =
@@ -86,6 +87,7 @@ export interface PlaybackInfo {
   duration: number
   volume: number
   queueIndex: number
+  playMode: PlayMode
   source: string
   codec: string
   bitrate: number
@@ -101,6 +103,9 @@ export interface PlaybackInfo {
   dspActive: boolean
   resampleReason: string
   dsdMode: string
+  gaplessActive: boolean
+  preloadReady: boolean
+  upcomingTrack: AudioEngineQueueItem | null
 }
 
 export interface OutputInfo {
@@ -128,8 +133,10 @@ interface NativeAudioBinding {
   LoadQueue?: (queueJson: string, startIndex: number) => void
   Next?: () => void
   Previous?: () => void
+  SetPlayMode?: (mode: PlayMode) => void
   SetDspConfig?: (json: string) => void
   GetPlaybackInfo?: () => string | PlaybackInfo
+  GetUpcomingTrack?: () => string | AudioEngineQueueItem | null
   GetSpectrumData?: (points?: number) => number[]
   EnumerateDevices?: () => string | AudioDeviceOption[]
   EnumerateBackends?: () => string
@@ -331,6 +338,7 @@ function createDefaultPlaybackInfo(output: AudioOutputId, device: string): Playb
     duration: 0,
     volume: 1,
     queueIndex: -1,
+    playMode: 'sequential',
     source: '',
     codec: '未知',
     bitrate: 0,
@@ -345,7 +353,10 @@ function createDefaultPlaybackInfo(output: AudioOutputId, device: string): Playb
     bitPerfect: exclusive,
     dspActive: false,
     resampleReason: output === 'wasapi' ? '共享输出经过系统混音' : '',
-    dsdMode: 'unsupported'
+    dsdMode: 'unsupported',
+    gaplessActive: false,
+    preloadReady: false,
+    upcomingTrack: null
   }
 }
 
@@ -465,6 +476,15 @@ export class AudioEngineManager extends EventEmitter {
 
   async next(): Promise<void> {
     if (this.queue.length === 0) return
+    if (this.nativePlaybackActive && this.native?.Next && this.tryNative('下一首', (native) => native.Next?.())) {
+      const nativeInfo = this.readNativePlaybackInfo()
+      if (nativeInfo) {
+        this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+      }
+      this.emit('start-file')
+      this.publishPlaybackInfo()
+      return
+    }
     const nextIndex = (this.playbackInfo.queueIndex + 1) % this.queue.length
     this.playbackInfo.queueIndex = nextIndex
     this.tryNative('下一首', (native) => native.Next?.())
@@ -473,6 +493,15 @@ export class AudioEngineManager extends EventEmitter {
 
   async previous(): Promise<void> {
     if (this.queue.length === 0) return
+    if (this.nativePlaybackActive && this.native?.Previous && this.tryNative('上一首', (native) => native.Previous?.())) {
+      const nativeInfo = this.readNativePlaybackInfo()
+      if (nativeInfo) {
+        this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+      }
+      this.emit('start-file')
+      this.publishPlaybackInfo()
+      return
+    }
     const nextIndex =
       this.playbackInfo.queueIndex <= 0 ? this.queue.length - 1 : this.playbackInfo.queueIndex - 1
     this.playbackInfo.queueIndex = nextIndex
@@ -545,6 +574,22 @@ export class AudioEngineManager extends EventEmitter {
 
   getAudioProcessing(): AudioProcessingSettings {
     return this.processing
+  }
+
+  async setPlayMode(mode: PlayMode): Promise<void> {
+    this.playbackInfo.playMode = mode
+    this.tryNative('切换播放模式', (native) => native.SetPlayMode?.(mode))
+    const nativeInfo = this.readNativePlaybackInfo()
+    if (nativeInfo) this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+    this.publishPlaybackInfo()
+  }
+
+  getUpcomingTrack(): AudioEngineQueueItem | null {
+    try {
+      return parseNativeJson(this.native?.GetUpcomingTrack?.(), null as AudioEngineQueueItem | null)
+    } catch {
+      return this.playbackInfo.upcomingTrack
+    }
   }
 
   async getPlaybackInfo(): Promise<PlaybackInfo> {

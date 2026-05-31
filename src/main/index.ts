@@ -25,6 +25,7 @@ import {
   type AudioOutputId,
   type AudioOutputState,
   type AudioEngineQueueItem,
+  type PlayMode,
   type EqMode,
   type EqualizerBand
 } from './audioEngineManager'
@@ -366,7 +367,7 @@ async function cacheNcmSong(
     return target
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    console.warn('[ncm] cache song failed:', songId, message)
+    console.warn('网易云歌曲缓存失败：', songId, message)
     return null
   } finally {
     clearTimeout(timer)
@@ -381,7 +382,7 @@ if (appSettings.musicCachePath) {
       join(appSettings.musicCachePath, 'renderer-cache')
     )
   } catch (err) {
-    console.warn('[settings] 无法使用自定义缓存目录:', err)
+    console.warn('无法使用自定义缓存目录：', err)
   }
 }
 
@@ -666,7 +667,7 @@ async function closeMainWindowAfterPlaybackSessionSave(win: BrowserWindow): Prom
   try {
     await requestRendererPlaybackSessionSave()
   } catch (err) {
-    console.warn('[playback-session] save before close failed:', err)
+    console.warn('关闭前保存播放会话失败：', err)
   } finally {
     savingPlaybackSessionBeforeClose = false
     if (!win.isDestroyed()) {
@@ -696,7 +697,7 @@ function applyAutoLaunch(enabled: boolean): void {
       path: process.execPath
     })
   } catch (err) {
-    console.warn('[settings] 设置开机自启动失败:', err)
+    console.warn('设置开机自启动失败：', err)
   }
 }
 
@@ -715,7 +716,7 @@ function registerPlayerShortcuts(): void {
       sendPlayerShortcut(shortcut.action)
     })
     if (!ok) {
-      console.warn(`[settings] 全局快捷键注册失败: ${shortcut.label} ${shortcut.accelerator}`)
+      console.warn(`全局快捷键注册失败：${shortcut.label} ${shortcut.accelerator}`)
     }
   }
 }
@@ -832,7 +833,7 @@ async function updateAppSettings(patch: Partial<AppSettings>): Promise<SettingsS
     try {
       ensureMusicCacheDirectories(appSettings.musicCachePath)
     } catch (err) {
-      console.warn('[settings] 创建缓存目录失败:', err)
+      console.warn('创建缓存目录失败：', err)
     }
   }
 
@@ -923,7 +924,7 @@ function setupAudioEngineIpc(): void {
   })
 
   audioEngineManager.on('error', (err: Error) => {
-    console.error('[audio-engine]', err.message)
+    console.error('[音频引擎]', err.message)
     mainWindow?.webContents.send('audioEngine:error', err.message)
   })
 
@@ -936,7 +937,7 @@ function setupAudioEngineIpc(): void {
   })
 
   function requireAudioEngine(): AudioEngineManager {
-    if (!audioEngineManager) throw new Error('Twilight Audio Engine is not initialized')
+    if (!audioEngineManager) throw new Error('原生音频引擎尚未初始化')
     return audioEngineManager
   }
 
@@ -1007,6 +1008,14 @@ function setupAudioEngineIpc(): void {
     await requireAudioEngine().previous()
   })
 
+  ipcMain.handle('audioEngine:setPlayMode', async (_event, mode: PlayMode) => {
+    await requireAudioEngine().setPlayMode(mode)
+  })
+
+  ipcMain.handle('audioEngine:getUpcomingTrack', async () => {
+    return requireAudioEngine().getUpcomingTrack()
+  })
+
   ipcMain.handle('audioEngine:setExclusiveMode', async (_event, enabled: boolean) => {
     const state = await requireAudioEngine().setExclusiveMode(enabled)
     persistAudioOutputState(state)
@@ -1066,10 +1075,10 @@ function setupAudioEngineIpc(): void {
   audioEngineManager
     .start()
     .then(() => {
-      console.log('[audio-engine] started')
+      console.log('原生音频引擎已启动')
     })
     .catch((err: Error) => {
-      console.error('[audio-engine]', err.message)
+      console.error('原生音频引擎启动失败：', err.message)
     })
 
   ipcMain.handle('ncm:getPort', () => NCM_API_PORT)
@@ -1098,7 +1107,7 @@ function setupAudioEngineIpc(): void {
       return await res.json()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      console.error('[ncm] request failed:', path, message)
+      console.error('网易云请求失败：', path, message)
       return {
         code: -1,
         message
@@ -1120,9 +1129,9 @@ async function setupNcmApi(): Promise<void> {
       checkVersion: false
     })
     ncmServer = app.server
-    console.log(`[ncm] 网易云音乐 API 已启动 @ http://localhost:${NCM_API_PORT}`)
+    console.log(`网易云音乐服务已启动：http://localhost:${NCM_API_PORT}`)
   } catch (err) {
-    console.error('[ncm] 启动失败:', err)
+    console.error('网易云音乐服务启动失败：', err)
   }
 }
 
@@ -1220,7 +1229,7 @@ app.whenReady().then(() => {
     try {
       await rm(cachePath, { recursive: true, force: true })
     } catch (error) {
-      console.warn('[settings] failed to clear cache:', error)
+      console.warn('清理缓存失败：', error)
     }
     ensureMusicCacheDirectories(cachePath)
     return await getDirectorySize(cachePath)

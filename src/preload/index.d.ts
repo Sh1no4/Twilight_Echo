@@ -28,6 +28,7 @@ interface AudioEngineEvent {
 }
 
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
+type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'pureWhite' | 'aurora'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
@@ -42,6 +43,19 @@ type EqualizerFilterType =
   | 'lowPass'
   | 'highPass'
   | 'allPass'
+
+interface AudioEngineQueueItem {
+  id: string
+  source: string
+  title?: string
+  artist?: string
+  album?: string
+  duration?: number
+  codec?: string
+  sampleRate?: number
+  bitrate?: number
+  bitDepth?: number
+}
 
 interface EqualizerBand {
   frequency: number
@@ -158,6 +172,7 @@ interface PlaybackInfo {
   duration: number
   volume: number
   queueIndex: number
+  playMode: PlayMode
   source: string
   codec: string
   bitrate: number
@@ -173,6 +188,9 @@ interface PlaybackInfo {
   dspActive: boolean
   resampleReason: string
   dsdMode: string
+  gaplessActive: boolean
+  preloadReady: boolean
+  upcomingTrack: AudioEngineQueueItem | null
 }
 
 interface AudioEnginePlayResult {
@@ -188,6 +206,8 @@ interface AudioEngineAPI {
   stop: () => Promise<void>
   next: () => Promise<void>
   previous: () => Promise<void>
+  setPlayMode: (mode: PlayMode) => Promise<void>
+  getUpcomingTrack: () => Promise<AudioEngineQueueItem | null>
   setExclusiveMode: (enabled: boolean) => Promise<AudioOutputState>
   getExclusiveMode: () => Promise<boolean>
   setAudioOutput: (output: AudioOutputId, device?: string) => Promise<AudioOutputState>

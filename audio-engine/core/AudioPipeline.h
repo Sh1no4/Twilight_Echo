@@ -11,6 +11,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -30,8 +31,11 @@ struct PipelineStatus {
   OutputInfo outputInfo;
   std::string backendId;
   std::string deviceName;
+  QueueItem currentItem;
   bool dspActive = false;
   bool bitPerfect = false;
+  bool gaplessActive = false;
+  bool preloadReady = false;
   std::string resampleReason;
 };
 
@@ -44,6 +48,16 @@ class AudioPipeline {
   AudioPipeline& operator=(const AudioPipeline&) = delete;
 
   TAE_Result play(
+      const QueueItem& item,
+      const std::optional<QueueItem>& upcomingItem,
+      double startTimeSeconds,
+      const std::string& backendId,
+      const std::string& deviceId,
+      double volume,
+      bool dspActive,
+      bool gaplessEnabled,
+      std::string* error);
+  TAE_Result play(
       const std::string& source,
       double startTimeSeconds,
       const std::string& backendId,
@@ -55,40 +69,48 @@ class AudioPipeline {
   TAE_Result stop();
   TAE_Result seek(double seconds, std::string* error);
   void setVolume(double volume);
+  bool preloadNext(const std::optional<QueueItem>& item, std::string* error);
+  bool skipToPreloaded(const QueueItem& item, std::string* error);
 
   PipelineStatus status() const;
   bool consumeEnded();
   bool consumeDeviceInvalidated(std::string* message);
+  bool consumeTrackStarted(QueueItem* item);
   size_t getSpectrumData(float* buffer, size_t pointCount) const;
 
  private:
-  void startDecodeThread();
-  void stopDecodeThread();
-  void decodeLoop();
+  struct DecodeStream;
+
+  bool configureActiveStreamLocked(
+      const std::shared_ptr<DecodeStream>& stream,
+      const QueueItem& item,
+      double startTimeSeconds,
+      std::string* error);
+  bool updateBitPerfectLocked();
   size_t render(float* output, size_t frameCount);
 
   mutable std::mutex mutex_;
-  std::unique_ptr<FFmpegDecoder> decoder_;
   std::unique_ptr<IOutputBackend> output_;
-  AudioBuffer buffer_;
+  std::shared_ptr<DecodeStream> activeStream_;
+  std::shared_ptr<DecodeStream> preloadStream_;
   SpectrumAnalyzer spectrum_;
   AudioStreamInfo stream_;
   AudioFormat outputFormat_;
+  QueueItem currentItem_;
   std::string backendId_;
   std::string deviceName_;
   std::string resampleReason_;
   OutputInfo outputInfo_;
-  std::atomic<bool> decodeRunning_{false};
-  std::atomic<bool> decodeEof_{false};
   std::atomic<bool> ended_{false};
   std::atomic<bool> deviceInvalidated_{false};
+  std::atomic<bool> trackStarted_{false};
   std::atomic<double> volume_{1.0};
   std::atomic<uint64_t> renderedFrames_{0};
-  std::thread decodeThread_;
   PipelineState state_ = PipelineState::Stopped;
   bool baseDspActive_ = false;
   bool dspActive_ = false;
   bool bitPerfect_ = false;
+  bool gaplessEnabled_ = true;
   std::string outputEventMessage_;
 };
 

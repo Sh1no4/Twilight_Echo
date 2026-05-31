@@ -251,7 +251,7 @@ async function loadAppSettings(): Promise<void> {
       activeTab.value = 'parametric'
     }
   } catch (err) {
-    console.error('[eq] 读取均衡器设置失败:', err)
+    console.error('读取均衡器设置失败：', err)
   }
 }
 
@@ -313,7 +313,7 @@ async function saveEqPreset(): Promise<void> {
     presetName.value = ''
     presetMenuOpen.value = true
   } catch (err) {
-    console.error('[eq] 保存预设失败:', err)
+    console.error('保存均衡器预设失败：', err)
   } finally {
     saving.value = false
   }

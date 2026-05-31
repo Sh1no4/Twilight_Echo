@@ -7,6 +7,7 @@ type AudioEngineSimpleCallback = () => void
 type AudioEngineErrorCallback = (message: string) => void
 type AudioEnginePlaybackInfoCallback = (info: PlaybackInfo) => void
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
+type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'pureWhite' | 'aurora'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
@@ -69,6 +70,19 @@ interface TrackData {
   ncmSongId?: number
   streamUrl?: string | null
   format?: string
+  sampleRate?: number
+  bitrate?: number
+  bitDepth?: number
+}
+
+interface AudioEngineQueueItem {
+  id: string
+  source: string
+  title?: string
+  artist?: string
+  album?: string
+  duration?: number
+  codec?: string
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
@@ -159,6 +173,7 @@ interface PlaybackInfo {
   duration: number
   volume: number
   queueIndex: number
+  playMode: PlayMode
   source: string
   codec: string
   bitrate: number
@@ -174,6 +189,9 @@ interface PlaybackInfo {
   dspActive: boolean
   resampleReason: string
   dsdMode: string
+  gaplessActive: boolean
+  preloadReady: boolean
+  upcomingTrack: AudioEngineQueueItem | null
 }
 
 interface AudioEnginePlayResult {
@@ -291,6 +309,10 @@ const api = {
     stop: (): Promise<void> => ipcRenderer.invoke('audioEngine:stop'),
     next: (): Promise<void> => ipcRenderer.invoke('audioEngine:next'),
     previous: (): Promise<void> => ipcRenderer.invoke('audioEngine:previous'),
+    setPlayMode: (mode: PlayMode): Promise<void> =>
+      ipcRenderer.invoke('audioEngine:setPlayMode', mode),
+    getUpcomingTrack: (): Promise<AudioEngineQueueItem | null> =>
+      ipcRenderer.invoke('audioEngine:getUpcomingTrack'),
     setExclusiveMode: (enabled: boolean): Promise<AudioOutputState> =>
       ipcRenderer.invoke('audioEngine:setExclusiveMode', enabled),
     getExclusiveMode: (): Promise<boolean> => ipcRenderer.invoke('audioEngine:getExclusiveMode'),

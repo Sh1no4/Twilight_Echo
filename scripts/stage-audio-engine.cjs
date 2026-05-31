@@ -17,7 +17,7 @@ function findBuildDir() {
 const buildDir = findBuildDir()
 if (!buildDir) {
   console.error(
-    '[audio-engine] No built native runtime found. Run npm run build:audio-engine:mingw first.'
+    '未找到已构建的原生音频运行文件。请先运行 npm run build:audio-engine:mingw。'
   )
   process.exit(1)
 }
@@ -27,7 +27,15 @@ mkdirSync(outputDir, { recursive: true })
 for (const file of runtimeFiles) {
   const source = join(buildDir, file)
   const target = join(outputDir, file)
-  copyFileSync(source, target)
+  try {
+    copyFileSync(source, target)
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? error.code : '未知'
+    console.error(
+      `暂存原生音频文件失败：${file}。请先关闭正在占用旧文件的播放器窗口或后台进程。错误码：${code}`
+    )
+    process.exit(1)
+  }
   const sizeMiB = (statSync(target).size / 1024 / 1024).toFixed(1)
-  console.log(`[audio-engine] staged ${file} (${sizeMiB} MiB)`)
+  console.log(`已暂存原生音频文件：${file}（${sizeMiB} MiB）`)
 }
