@@ -223,6 +223,7 @@ if(TAE_BUILD_TESTS)
   add_executable(twilight_metadata_tests
     metadata/metadata_tests.cpp
     metadata/AudioMetadataService.cpp
+    core/AudioTypes.cpp
   )
   target_include_directories(twilight_metadata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   if(FFMPEG_FOUND)
@@ -239,15 +240,75 @@ if(TAE_BUILD_TESTS)
   target_include_directories(twilight_bitperfect_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   add_test(NAME twilight_bitperfect_unit COMMAND twilight_bitperfect_tests)
 
+  add_executable(twilight_ffmpeg_decoder_tests
+    tests/ffmpeg_decoder_tests.cpp
+    decoder/FFmpegDecoder.cpp
+    core/AudioTypes.cpp
+  )
+  target_include_directories(twilight_ffmpeg_decoder_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  if(FFMPEG_FOUND)
+    target_compile_definitions(twilight_ffmpeg_decoder_tests PRIVATE TAE_HAS_FFMPEG=1)
+    target_include_directories(twilight_ffmpeg_decoder_tests PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_ffmpeg_decoder_tests PRIVATE ${FFMPEG_LIBRARIES})
+  endif()
+  add_test(NAME twilight_ffmpeg_decoder_unit COMMAND twilight_ffmpeg_decoder_tests)
+
+  add_executable(twilight_queue_tests
+    tests/queue_tests.cpp
+    playlist/QueueManager.cpp
+  )
+  target_include_directories(twilight_queue_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME twilight_queue_unit COMMAND twilight_queue_tests)
+
   add_executable(twilight_backend_factory_tests tests/backend_factory_tests.cpp)
   target_include_directories(twilight_backend_factory_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(twilight_backend_factory_tests PRIVATE twilight_audio_engine)
   add_test(NAME twilight_backend_factory_unit COMMAND twilight_backend_factory_tests)
 
-  add_executable(twilight_platform_backend_smoke tests/platform_backend_smoke.cpp)
+  add_executable(twilight_platform_backend_smoke
+    tests/platform_backend_smoke.cpp
+    core/AudioTypes.cpp
+  )
   target_include_directories(twilight_platform_backend_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(twilight_platform_backend_smoke PRIVATE twilight_audio_engine)
+  if(TAE_WASAPI_AVAILABLE)
+    target_sources(twilight_platform_backend_smoke PRIVATE
+      output/wasapi/WasapiFormatNegotiator.cpp
+      output/wasapi/WasapiSharedBackend.cpp
+      output/wasapi/WasapiExclusiveBackend.cpp
+    )
+    target_compile_definitions(twilight_platform_backend_smoke PRIVATE TAE_ENABLE_WASAPI=1)
+    target_link_libraries(twilight_platform_backend_smoke PRIVATE ole32 uuid avrt)
+  endif()
+  if(TAE_COREAUDIO_AVAILABLE)
+    target_sources(twilight_platform_backend_smoke PRIVATE output/coreaudio/CoreAudioBackend.cpp)
+    target_compile_definitions(twilight_platform_backend_smoke PRIVATE TAE_ENABLE_COREAUDIO=1)
+    target_link_libraries(twilight_platform_backend_smoke PRIVATE
+      "-framework CoreAudio"
+      "-framework CoreFoundation"
+      "-framework AudioToolbox"
+      "-framework AudioUnit"
+    )
+  endif()
+  if(TAE_ALSA_AVAILABLE)
+    target_sources(twilight_platform_backend_smoke PRIVATE output/alsa/AlsaBackend.cpp)
+    target_compile_definitions(twilight_platform_backend_smoke PRIVATE TAE_ENABLE_ALSA=1)
+    target_include_directories(twilight_platform_backend_smoke PRIVATE ${ALSA_INCLUDE_DIRS})
+    target_link_libraries(twilight_platform_backend_smoke PRIVATE ${ALSA_LIBRARIES})
+  endif()
   add_test(NAME twilight_platform_backend_smoke COMMAND twilight_platform_backend_smoke)
+
+  if(TAE_WASAPI_AVAILABLE)
+    add_executable(twilight_wasapi_format_negotiator_tests
+      tests/wasapi_format_negotiator_tests.cpp
+      output/wasapi/WasapiFormatNegotiator.cpp
+      core/AudioTypes.cpp
+    )
+    target_include_directories(twilight_wasapi_format_negotiator_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_definitions(twilight_wasapi_format_negotiator_tests PRIVATE TAE_ENABLE_WASAPI=1)
+    target_link_libraries(twilight_wasapi_format_negotiator_tests PRIVATE ole32 uuid)
+    add_test(NAME twilight_wasapi_format_negotiator_unit COMMAND twilight_wasapi_format_negotiator_tests)
+  endif()
 
   add_executable(twilight_asio_backend_tests
     tests/asio_backend_tests.cpp

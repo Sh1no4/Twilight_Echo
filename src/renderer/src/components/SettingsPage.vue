@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
@@ -81,7 +81,7 @@ const playbackHelp = {
   routing:
     '声道路由会改变声道语义，因此可能让 bit-perfect 失效。听耳机和普通音箱建议 Auto 或 Stereo。',
   status:
-    '显示后端实际输出格式、延迟和恢复计数。BitPerfect 表示未重采样且处理链未改动音频；Mixed/Resampled 表示经过混音、重采样或 DSP。',
+    '显示后端实际输出格式、延迟和恢复计数。Source Exact 表示源格式未被破坏，Output Perfect 表示解码后 PCM 到设备没有额外处理或格式转换。',
   dsp: 'DSP 总开关控制均衡器、ReplayGain、Crossfeed 和卷积等处理。关闭后更接近原始输出，也更容易满足 bit-perfect。',
   clipGuard: '在增益、EQ 或 ReplayGain 可能超过 0 dBFS 时降低削波风险，适合开启 DSP 时保留。',
   replayGain:
@@ -176,29 +176,169 @@ const selectedAudioDevice = computed(() =>
   audioDeviceOptions.value.find((option) => option.id === audioDevice.value)
 )
 const exclusiveAvailable = computed(() => selectedAudioOutput.value?.supportsExclusive ?? false)
-const outputResampleReason = computed(
-  () => outputInfo.value?.resampleReason || playbackInfo.value?.resampleReason || ''
+const backendLabels: Record<string, string> = {
+  wasapi: 'WASAPI Shared',
+  'wasapi-exclusive': 'WASAPI Exclusive',
+  asio: 'ASIO',
+  coreaudio: 'CoreAudio',
+  alsa: 'ALSA'
+}
+const reasonLabels: { pattern: RegExp; label: string }[] = [
+  { pattern: /shared|mixer|共享|混音/i, label: '共享输出经过系统混音器' },
+  { pattern: /replaygain/i, label: 'ReplayGain 正在改变样本' },
+  { pattern: /\beq\b|equalizer/i, label: 'EQ 正在改变样本' },
+  { pattern: /convolver|ir/i, label: 'Convolver 正在改变样本' },
+  { pattern: /crossfeed/i, label: 'Crossfeed 正在改变声道内容' },
+  { pattern: /crossfade/i, label: 'Crossfade 正在改变播放连续性' },
+  { pattern: /volume/i, label: '软件音量不是 100%' },
+  { pattern: /routing|channel/i, label: '声道路由或通道数发生变化' },
+  { pattern: /resampl|sample rate/i, label: '采样率发生转换' },
+  { pattern: /bit depth|format|converted|passthrough/i, label: 'PCM 格式未验证为直通' },
+  { pattern: /lossy/i, label: '源文件是有损格式，不能 Source Exact' }
+]
+
+function canonicalSourceExact(): boolean {
+  return outputInfo.value ? outputInfo.value.sourceExact === true : playbackInfo.value?.sourceExact === true
+}
+
+function canonicalOutputPerfect(): boolean {
+  return outputInfo.value
+    ? outputInfo.value.outputPerfect === true
+    : playbackInfo.value?.outputPerfect === true
+}
+
+function formatBackendLabel(backend: string): string {
+  return backendLabels[backend] ?? backend
+}
+
+function formatPerfectReason(reason: string): string {
+  const trimmed = reason.trim()
+  if (!trimmed) return ''
+  return reasonLabels.find((item) => item.pattern.test(trimmed))?.label ?? trimmed
+}
+
+const perfectReason = computed(
+  () => outputInfo.value?.perfectReason || playbackInfo.value?.perfectReason || ''
 )
-const bitPerfectState = computed(() => {
-  if (outputInfo.value?.bitPerfect) return 'BitPerfect'
-  if (outputInfo.value?.resampled) return 'Resampled'
-  if (playbackInfo.value?.dspActive) return 'DSP Active'
-  return outputInfo.value?.supportsBitPerfect ? 'Ready' : 'Mixed'
-})
+const readablePerfectReason = computed(() => formatPerfectReason(perfectReason.value))
+const sourceExact = computed(() => canonicalSourceExact())
+const outputPerfect = computed(() => canonicalOutputPerfect())
 const outputFormatText = computed(() => {
   const info = outputInfo.value
   if (!info) return '等待音频引擎'
+  const format = info.actualOutputFormat || playbackInfo.value?.actualOutputFormat || ''
   const rate =
     info.actualSampleRate || info.outputSampleRate || playbackInfo.value?.actualSampleRate || 0
   const bitDepth =
     info.actualBitDepth || info.outputBitDepth || playbackInfo.value?.actualBitDepth || 0
   const channels = info.actualChannels || playbackInfo.value?.actualChannels || 0
   const parts = [
+    format,
     rate > 0 ? `${rate} Hz` : '',
     bitDepth > 0 ? `${bitDepth} bit` : '',
     channels > 0 ? `${channels} ch` : ''
   ].filter(Boolean)
   return parts.length > 0 ? parts.join(' · ') : '未开始播放'
+})
+function compactRate(rate: number): string {
+  return rate > 0 ? `${Math.round(rate / 100) / 10}kHz` : ''
+}
+
+function compactSampleFormat(format: string, bitDepth: number): string {
+  const normalized = format.trim().toLowerCase()
+  if (/^(f32|float|float32|flt|fltp)$/.test(normalized)) return 'float32'
+  if (/^(s24|s24_3le|int24|int24in32|s32p24)/.test(normalized)) return 'int24'
+  if (/^(s16|s16le|int16)/.test(normalized)) return 'int16'
+  if (/^(s32|s32le|int32)/.test(normalized)) return 'int32'
+  return format || (bitDepth > 0 ? `${bitDepth}bit` : '')
+}
+
+function compactPcm(
+  format: string,
+  bitDepth: number,
+  sampleRate: number,
+  channels: number,
+  includeRate = true
+): string {
+  const parts = [
+    compactSampleFormat(format, bitDepth),
+    includeRate && sampleRate > 0 ? compactRate(sampleRate) : '',
+    channels > 0 ? `${channels}ch` : ''
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(' ') : 'PCM'
+}
+
+function inferDsdRate(sampleRate: number): number {
+  if (sampleRate >= 10000000) return 256
+  if (sampleRate >= 5000000) return 128
+  if (sampleRate >= 2500000) return 64
+  return 0
+}
+
+function isDsdPlayback(info: NonNullable<typeof playbackInfo.value>): boolean {
+  const out = outputInfo.value
+  return (
+    out?.isDsd === true ||
+    info.isDsd === true ||
+    out?.dsdMode === 'native' ||
+    out?.dsdMode === 'dop' ||
+    out?.dsdMode === 'unsupported' ||
+    info.dsdMode === 'native' ||
+    info.dsdMode === 'dop' ||
+    info.dsdMode === 'unsupported'
+  )
+}
+
+function formatDsdSource(info: NonNullable<typeof playbackInfo.value>): string {
+  const ext = info.source.split('.').pop()?.toUpperCase()
+  const container = ext === 'DSF' || ext === 'DFF' ? ext : ext === 'ISO' ? 'SACD ISO' : 'DSD'
+  const dsdRate = outputInfo.value?.dsdRate || info.dsdRate || inferDsdRate(info.sourceSampleRate)
+  return [container, dsdRate > 0 ? `DSD${dsdRate}` : 'DSD'].filter(Boolean).join(' ')
+}
+
+function formatDecodedStage(info: NonNullable<typeof playbackInfo.value>): string {
+  const pcm = compactPcm(
+    info.decodedSampleFormat,
+    info.decodedBitDepth,
+    info.decodedSampleRate,
+    info.decodedChannels,
+    false
+  )
+  if (!isDsdPlayback(info)) return pcm
+  const mode = outputInfo.value?.dsdMode || info.dsdMode
+  if (mode === 'native') return 'DSD Native'
+  if (mode === 'dop') return `DoP carrier ${pcm}`
+  return `PCM fallback ${pcm}`
+}
+
+const outputChainText = computed(() => {
+  const info = playbackInfo.value
+  if (!info) return ''
+  const source = isDsdPlayback(info)
+    ? formatDsdSource(info)
+    : [
+        info.codec || 'Source',
+        info.sourceBitDepth > 0 ? `${info.sourceBitDepth}bit` : '',
+        compactRate(info.sourceSampleRate)
+      ]
+        .filter(Boolean)
+        .join(' ')
+  const decoded = formatDecodedStage(info)
+  const out = outputInfo.value
+  const backend = out?.actualBackend || info.actualBackend || info.outputBackend || audioOutput.value
+  const actual = compactPcm(
+    out?.actualOutputFormat || info.actualOutputFormat,
+    out?.actualBitDepth || info.actualBitDepth,
+    out?.actualSampleRate || info.actualSampleRate,
+    out?.actualChannels || info.actualChannels,
+    false
+  )
+  return `${source || 'Source'} -> ${decoded} -> ${formatBackendLabel(backend)} -> ${actual}`
+})
+const statusSummaryText = computed(() => {
+  if (readablePerfectReason.value) return `未达成：${readablePerfectReason.value}`
+  if (outputPerfect.value) return 'Output Perfect 已验证'
+  return outputChainText.value || outputFormatText.value
 })
 const outputLatencyText = computed(() => {
   const info = outputInfo.value
@@ -575,17 +715,26 @@ onMounted(async () => {
                     >?</span
                   >
                 </span>
-                <span class="setting-desc">{{ outputResampleReason || outputFormatText }}</span>
+                <span class="setting-desc">{{ statusSummaryText }}</span>
               </div>
               <div class="status-panel">
                 <span
                   class="status-chip"
-                  :class="{ success: outputInfo?.bitPerfect, warning: outputInfo?.resampled }"
+                  :class="{ success: sourceExact }"
                 >
-                  {{ bitPerfectState }}
+                  Source Exact
                 </span>
-                <span class="status-chip">{{ outputInfo?.actualBackend || audioOutput }}</span>
+                <span
+                  class="status-chip"
+                  :class="{ success: outputPerfect, warning: !outputPerfect && outputInfo?.supportsOutputPerfect }"
+                >
+                  Output Perfect
+                </span>
+                <span class="status-chip">{{
+                  formatBackendLabel(outputInfo?.actualBackend || audioOutput)
+                }}</span>
                 <span class="status-chip">{{ outputFormatText }}</span>
+                <span v-if="outputChainText" class="status-chip status-chain">{{ outputChainText }}</span>
                 <span class="status-chip">{{ outputLatencyText }}</span>
                 <span class="status-chip">{{ outputDiagnosticsText }}</span>
               </div>
@@ -1662,6 +1811,12 @@ onMounted(async () => {
 .status-chip.warning {
   background: #fff7ed;
   color: #c2410c;
+}
+
+.status-chain {
+  max-width: min(520px, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .resume-option,

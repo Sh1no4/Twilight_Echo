@@ -37,10 +37,11 @@ struct DspEqBand {
 };
 
 struct DspConfig {
-  bool enabled = true;
+  bool enabled = false;
   bool clipGuard = true;
   bool fftEnabled = true;
   size_t fftResolution = 64;
+  bool gapless = true;
 
   ReplayGainMode replayGainMode = ReplayGainMode::Off;
   double replayGainPreampDb = 0.0;
@@ -59,6 +60,8 @@ struct DspConfig {
   double crossfeedStrength = 0.0;
   double crossfeedDelayMs = 0.35;
   double crossfeedCutoffHz = 700.0;
+
+  double crossfadeSeconds = 0.0;
 };
 
 struct DspTrackContext {
@@ -72,9 +75,11 @@ struct DspStatus {
   bool eqActive = false;
   bool convolverActive = false;
   bool crossfeedActive = false;
+  bool crossfadeActive = false;
   bool irResampled = false;
   double replayGainDb = 0.0;
   double crossfeedStrength = 0.0;
+  double crossfadeSeconds = 0.0;
   uint32_t convolverLatencyFrames = 0;
   uint32_t partitionSize = 0;
   std::string channelMappingMode;

@@ -80,10 +80,23 @@ void testCapabilityCacheAndVersion() {
   auto& cache = DeviceCapabilityCache::instance();
   AsioDeviceInfo info = makeMockAsioDevice("asio:cache", {44100, 48000}, 2);
   info.capabilityVersion = 7;
+  info.dopCapable = true;
+  info.dopCarrierSampleRates = {176400};
+  info.dopCarrierSampleFormats = {AudioSampleFormat::Int24In32Interleaved};
+  info.nativeDsdCapable = true;
+  info.nativeDsdSampleRates = {2822400};
   cache.put(info);
   auto hit = cache.get("asio:cache");
   assert(hit);
   assert(hit->capabilityVersion == 7);
+  assert(hit->dopCapable);
+  assert(hit->dopCarrierSampleRates.size() == 1);
+  assert(hit->dopCarrierSampleRates[0] == 176400);
+  assert(hit->dopCarrierSampleFormats.size() == 1);
+  assert(hit->dopCarrierSampleFormats[0] == AudioSampleFormat::Int24In32Interleaved);
+  assert(hit->nativeDsdCapable);
+  assert(hit->nativeDsdSampleRates.size() == 1);
+  assert(hit->nativeDsdSampleRates[0] == 2822400);
   assert(!cache.dirty("asio:cache"));
 
   const uint64_t bumped = cache.bumpVersion("asio:cache");
@@ -102,7 +115,7 @@ void testLatencyInfoAndPlaybackInfo() {
   assert(info.actualBackend == "asio");
   assert(info.actualDeviceName == "Mock ASIO");
   assert(info.actualDriverName == "Mock ASIO");
-  assert(info.supportsBitPerfect);
+  assert(info.supportsOutputPerfect);
   assert(info.latencyInfo.bufferLatencyMs > 5.0);
   assert(info.latencyInfo.outputLatencyMs > 0.0);
   assert(info.latencyInfo.totalLatencyMs >= info.latencyInfo.bufferLatencyMs);
@@ -168,6 +181,36 @@ void testDiagnostics() {
   assert(info.deviceRecovered);
 }
 
+void testDeviceLostAndBufferFailureDiagnostics() {
+  {
+    auto host = makeHost();
+    auto* rawHost = host.get();
+    AsioBackend backend(std::move(host));
+    std::string error;
+    assert(backend.open("asio:phase5b", sourceFormat(), &error));
+    assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+    rawHost->triggerEvent(AsioHostEvent::DeviceLost, "device lost");
+    const auto info = backend.outputInfo();
+    assert(info.diagnostics.deviceLostCount == 1);
+    assert(info.diagnostics.sessionRecoveryCount == 1);
+    assert(info.diagnostics.lastError.find("ASIO device lost") != std::string::npos);
+  }
+  {
+    auto host = makeHost();
+    auto* rawHost = host.get();
+    AsioBackend backend(std::move(host));
+    std::string error;
+    assert(backend.open("asio:phase5b", sourceFormat(), &error));
+    assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+    rawHost->triggerEvent(AsioHostEvent::BufferFailure, "buffer failed");
+    const auto info = backend.outputInfo();
+    assert(info.diagnostics.sessionUnderrunCount == 1);
+    assert(info.diagnostics.lifetimeUnderrunCount == 1);
+    assert(info.diagnostics.sessionRecoveryCount == 1);
+    assert(info.diagnostics.lastError.find("ASIO buffer failure") != std::string::npos);
+  }
+}
+
 }  // namespace
 
 int main() {
@@ -177,5 +220,6 @@ int main() {
   testChannelRouting();
   testMonoRouting();
   testDiagnostics();
+  testDeviceLostAndBufferFailureDiagnostics();
   return 0;
 }

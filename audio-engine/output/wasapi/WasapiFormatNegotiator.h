@@ -27,6 +27,7 @@ class WasapiFormatNegotiator final {
 
   const AudioFormat& outputFormat() const;
   const OutputInfo& outputInfo() const;
+  const std::string& lastFailureReason() const;
   const WAVEFORMATEX* waveFormat() const;
   size_t waveFormatSize() const;
 
@@ -34,12 +35,14 @@ class WasapiFormatNegotiator final {
   struct Candidate;
 
   std::vector<Candidate> buildCandidates(const AudioFormat& sourceFormat) const;
-  bool isSupported(const Candidate& candidate) const;
+  HRESULT supportResult(const Candidate& candidate) const;
+  std::string buildFailureReason(const AudioFormat& sourceFormat, const std::vector<Candidate>& candidates) const;
   bool sameSourceFormat(const AudioFormat& sourceFormat, const AudioFormat& outputFormat) const;
 
   IAudioClient* audioClient_ = nullptr;
   AudioFormat outputFormat_;
   OutputInfo outputInfo_;
+  std::string lastFailureReason_;
   std::vector<uint8_t> waveFormatBytes_;
 };
 

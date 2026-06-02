@@ -370,6 +370,14 @@ napi_value EnumerateBackends(napi_env env, napi_callback_info) {
   return readJson(env, TAE_EnumerateBackends);
 }
 
+napi_value GetEngineCapabilities(napi_env env, napi_callback_info) {
+  return readJson(env, TAE_GetEngineCapabilities);
+}
+
+napi_value GetLastError(napi_env env, napi_callback_info) {
+  return readJson(env, TAE_GetLastError);
+}
+
 napi_value GetSpectrumData(napi_env env, napi_callback_info info) {
   ensureEngine();
   size_t argc = 1;
@@ -431,6 +439,8 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "GetDspConfig", GetDspConfig);
   define(env, exports, "EnumerateDevices", EnumerateDevices);
   define(env, exports, "EnumerateBackends", EnumerateBackends);
+  define(env, exports, "GetEngineCapabilities", GetEngineCapabilities);
+  define(env, exports, "GetLastError", GetLastError);
   define(env, exports, "GetSpectrumData", GetSpectrumData);
   return exports;
 }

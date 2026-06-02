@@ -343,11 +343,12 @@ void DspChain::setReplayGainMode(ReplayGainMode mode, double preampDb, double fa
 
 DspConfig DspChain::parseConfigJson(const std::string& json) {
   DspConfig config;
-  config.enabled = extractBoolField(json, "dspEnabled").value_or(extractBoolField(json, "enabled").value_or(true));
+  config.enabled = extractBoolField(json, "dspEnabled").value_or(extractBoolField(json, "enabled").value_or(false));
   config.clipGuard = extractBoolField(json, "clipGuard").value_or(true);
   config.fftEnabled = extractBoolField(json, "fftEnabled").value_or(true);
   config.fftResolution =
       static_cast<size_t>(std::clamp(extractNumberField(json, "fftResolution").value_or(64.0), 64.0, 2048.0));
+  config.gapless = extractBoolField(json, "gapless").value_or(true);
   config.replayGainMode = parseReplayGainMode(extractStringField(json, "volumeNormalization").value_or("off"));
   config.replayGainPreampDb = std::clamp(extractNumberField(json, "replayGainPreamp").value_or(0.0), -24.0, 24.0);
   config.replayGainFallbackDb = std::clamp(extractNumberField(json, "replayGainFallback").value_or(0.0), -24.0, 24.0);
@@ -362,6 +363,7 @@ DspConfig DspChain::parseConfigJson(const std::string& json) {
   config.crossfeedEnabled = extractBoolField(json, "crossfeedEnabled").value_or(config.crossfeedStrength > 0.0001);
   config.crossfeedDelayMs = std::clamp(extractNumberField(json, "crossfeedDelayMs").value_or(0.35), 0.05, 2.0);
   config.crossfeedCutoffHz = std::clamp(extractNumberField(json, "crossfeedCutoffHz").value_or(700.0), 80.0, 4000.0);
+  config.crossfadeSeconds = std::clamp(extractNumberField(json, "crossfadeSeconds").value_or(0.0), 0.0, 12.0);
   return config;
 }
 
@@ -374,8 +376,10 @@ void DspChain::refreshStatusLocked() {
   status_.eqActive = eq_ && eq_->isActive();
   status_.convolverActive = convolver_ && convolver_->isActive();
   status_.crossfeedActive = crossfeed_ && crossfeed_->isActive();
+  status_.crossfadeActive = config_.crossfadeSeconds > 0.0001;
   status_.replayGainDb = replayGain_ ? replayGain_->currentGainDb() : 0.0;
   status_.crossfeedStrength = crossfeed_ ? crossfeed_->strength() : 0.0;
+  status_.crossfadeSeconds = status_.crossfadeActive ? config_.crossfadeSeconds : 0.0;
   const ConvolverInfo info = convolver_ ? convolver_->info() : ConvolverInfo{};
   status_.irResampled = info.irResampled;
   status_.convolverLatencyFrames = info.latencyFrames;
@@ -394,9 +398,11 @@ void DspChain::clampOutput(float* samples, size_t frameCount) {
 
 bool dspConfigRequiresProcessing(const std::string& json) {
   const DspConfig config = DspChain::parseConfigJson(json);
-  return config.enabled &&
-         (config.replayGainMode != ReplayGainMode::Off || config.eqEnabled || config.convolverEnabled ||
-          config.crossfeedEnabled);
+  const bool dspProcessing =
+      config.enabled &&
+      (config.replayGainMode != ReplayGainMode::Off || config.eqEnabled || config.convolverEnabled ||
+       config.crossfeedEnabled);
+  return dspProcessing || config.crossfadeSeconds > 0.0001;
 }
 
 }  // namespace twilight::audio

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <string>
 
 namespace twilight::audio {
 namespace {
@@ -37,6 +38,52 @@ bool routingPreservesSemantics(ChannelRoutingMode mode, int sourceChannels, int 
     default:
       return false;
   }
+}
+
+std::string formatSummary(const AudioFormat& format) {
+  return sampleFormatToString(format.sampleFormat) + " " + std::to_string(effectivePcmBitDepth(format)) + "bit " +
+         std::to_string(format.sampleRate) + "Hz " + std::to_string(format.channelCount) + "ch";
+}
+
+std::string processingReason(const PerfectEvaluation& evaluation) {
+  if (std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon) return "Volume active";
+  if (evaluation.replayGainActive) return "ReplayGain active";
+  if (evaluation.eqActive) return "EQ active";
+  if (evaluation.convolverActive) return "Convolver active";
+  if (evaluation.crossfeedActive) return "Crossfeed active";
+  if (evaluation.crossfadeActive) return "Crossfade active";
+  return "Audio processing active";
+}
+
+bool hasConcreteFormat(const AudioFormat& format) {
+  return format.sampleRate > 0 && format.channelCount > 0 && effectivePcmBitDepth(format) > 0;
+}
+
+bool dopCarrierMatchesExpected(const PerfectEvaluation& evaluation) {
+  const auto expected = dopCarrierFormatForDsd(evaluation.dsdRate, evaluation.sourceFormat.channelCount);
+  if (!expected.has_value()) return false;
+  if (evaluation.dopCarrierMatched) return true;
+  return hasConcreteFormat(evaluation.dopCarrierFormat) && pcmFormatsExactMatch(evaluation.dopCarrierFormat, *expected) &&
+         pcmFormatsExactMatch(evaluation.outputFormat, evaluation.dopCarrierFormat);
+}
+
+std::string dsdPerfectReason(const PerfectEvaluation& evaluation) {
+  if (evaluation.sacdIsoSource) return "SACD ISO unsupported";
+  if (evaluation.nativeDsdRequested || evaluation.dsdMode == DsdMode::Native ||
+      evaluation.dsdMode == DsdMode::Unsupported) {
+    return "DSD source unsupported";
+  }
+  if (evaluation.dsdMode == DsdMode::Pcm) return "DSD converted to PCM";
+  if (evaluation.dsdMode == DsdMode::Dop) {
+    if (!dopCarrierFormatForDsd(evaluation.dsdRate, evaluation.sourceFormat.channelCount).has_value()) {
+      return "DSD source unsupported";
+    }
+    if (!dopCarrierMatchesExpected(evaluation)) return "DoP carrier mismatch";
+    if (!evaluation.dopPassthroughProven || !evaluation.supportsOutputPerfect || evaluation.backendResampled) {
+      return "DoP candidate but backend cannot prove passthrough";
+    }
+  }
+  return "DSD source unsupported";
 }
 
 }  // namespace
@@ -74,6 +121,36 @@ ChannelRoutingMode parseChannelRoutingMode(const std::string& mode) {
   return ChannelRoutingMode::Auto;
 }
 
+std::string dsdModeToString(DsdMode mode) {
+  switch (mode) {
+    case DsdMode::Dop:
+      return "dop";
+    case DsdMode::Native:
+      return "native";
+    case DsdMode::Unsupported:
+      return "unsupported";
+    case DsdMode::Pcm:
+    default:
+      return "pcm";
+  }
+}
+
+std::string sampleFormatToString(AudioSampleFormat format) {
+  switch (format) {
+    case AudioSampleFormat::Int16Interleaved:
+      return "int16";
+    case AudioSampleFormat::Int24Interleaved:
+      return "int24";
+    case AudioSampleFormat::Int24In32Interleaved:
+      return "int24-in32";
+    case AudioSampleFormat::Int32Interleaved:
+      return "int32";
+    case AudioSampleFormat::Float32Interleaved:
+    default:
+      return "float32";
+  }
+}
+
 int normalizedPcmBitDepth(int bitDepth) {
   if (bitDepth <= 0) return 0;
   if (bitDepth <= 16) return 16;
@@ -87,38 +164,86 @@ int effectivePcmBitDepth(const AudioFormat& format) {
   return bitDepthFromSampleFormat(format.sampleFormat);
 }
 
-BitPerfectResult evaluateBitPerfect(const BitPerfectEvaluation& evaluation) {
-  BitPerfectResult result;
-  const int sourceBitDepth = effectivePcmBitDepth(evaluation.sourceFormat);
-  const int outputBitDepth = effectivePcmBitDepth(evaluation.outputFormat);
-  const bool sampleRateMatched = evaluation.sourceFormat.sampleRate > 0 && evaluation.outputFormat.sampleRate > 0 &&
-                                 evaluation.sourceFormat.sampleRate == evaluation.outputFormat.sampleRate;
-  const bool bitDepthMatched = sourceBitDepth > 0 && outputBitDepth > 0 && sourceBitDepth == outputBitDepth;
-  result.formatMatched = sampleRateMatched && bitDepthMatched;
-  result.resampled = evaluation.backendResampled || (evaluation.sourceFormat.sampleRate > 0 &&
-                                                     evaluation.outputFormat.sampleRate > 0 && !sampleRateMatched) ||
-                     (sourceBitDepth > 0 && outputBitDepth > 0 && !bitDepthMatched);
-  result.processingActive = evaluation.replayGainActive || evaluation.eqActive || evaluation.convolverActive ||
-                            evaluation.crossfeedActive || std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon;
+bool pcmFormatsExactMatch(const AudioFormat& left, const AudioFormat& right) {
+  const int leftBitDepth = effectivePcmBitDepth(left);
+  const int rightBitDepth = effectivePcmBitDepth(right);
+  return left.sampleRate > 0 && right.sampleRate > 0 && left.sampleRate == right.sampleRate &&
+         left.channelCount > 0 && right.channelCount > 0 && left.channelCount == right.channelCount &&
+         leftBitDepth > 0 && rightBitDepth > 0 && leftBitDepth == rightBitDepth &&
+         left.sampleFormat == right.sampleFormat;
+}
+
+std::optional<AudioFormat> dopCarrierFormatForDsd(int dsdRate, int channelCount) {
+  if (channelCount <= 0) return std::nullopt;
+
+  AudioFormat carrier;
+  carrier.channelCount = channelCount;
+  carrier.bitDepth = 24;
+  carrier.sampleFormat = AudioSampleFormat::Int24Interleaved;
+
+  switch (dsdRate) {
+    case 64:
+      carrier.sampleRate = 176400;
+      return carrier;
+    case 128:
+      carrier.sampleRate = 352800;
+      return carrier;
+    default:
+      return std::nullopt;
+  }
+}
+
+PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
+  PerfectResult result;
+  const AudioFormat decodedFormat =
+      evaluation.decodedFormat.sampleRate > 0 ? evaluation.decodedFormat : evaluation.sourceFormat;
+  const bool dopCarrierMatched = evaluation.sourceDsd && evaluation.dsdMode == DsdMode::Dop &&
+                                 dopCarrierMatchesExpected(evaluation);
+  result.formatMatched = pcmFormatsExactMatch(decodedFormat, evaluation.outputFormat);
+  result.sourceFormatMatched = pcmFormatsExactMatch(evaluation.sourceFormat, evaluation.outputFormat);
+  result.resampled = evaluation.backendResampled || !result.formatMatched;
+  result.processingActive =
+      evaluation.replayGainActive || evaluation.eqActive || evaluation.convolverActive || evaluation.crossfeedActive ||
+      evaluation.crossfadeActive || std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon;
   result.routingPreservesSemantics = routingPreservesSemantics(
       evaluation.routingMode,
-      evaluation.sourceFormat.channelCount,
+      decodedFormat.channelCount,
       evaluation.outputFormat.channelCount);
-  result.bitPerfect = evaluation.supportsBitPerfect && result.formatMatched && !result.resampled &&
-                      !result.processingActive && result.routingPreservesSemantics;
+  result.pcmPassthrough = evaluation.pcmPassthrough && result.formatMatched && !evaluation.backendResampled;
+  const bool pcmOutputPerfect =
+      !evaluation.sourceDsd && evaluation.supportsOutputPerfect && result.pcmPassthrough &&
+      !result.processingActive && result.routingPreservesSemantics;
+  const bool dopOutputPerfect =
+      evaluation.sourceDsd && evaluation.dsdMode == DsdMode::Dop && dopCarrierMatched &&
+      evaluation.dopPassthroughProven && evaluation.supportsOutputPerfect && !evaluation.backendResampled &&
+      !result.processingActive && result.routingPreservesSemantics;
+  result.outputPerfect = pcmOutputPerfect || dopOutputPerfect;
+  result.sourceExact =
+      result.outputPerfect && evaluation.sourceLossless &&
+      (evaluation.sourceDsd ? evaluation.dsdMode == DsdMode::Dop : result.sourceFormatMatched);
 
-  if (result.bitPerfect) {
-    result.resampleReason.clear();
-  } else if (!evaluation.supportsBitPerfect) {
-    result.resampleReason =
-        evaluation.backendResampleReason.empty() ? "共享输出经过系统混音" : evaluation.backendResampleReason;
-  } else if (!result.formatMatched || result.resampled) {
-    result.resampleReason =
-        evaluation.backendResampleReason.empty() ? "输出格式已转换" : evaluation.backendResampleReason;
+  if (result.sourceExact && result.outputPerfect) {
+    result.perfectReason.clear();
+  } else if (evaluation.sourceDsd) {
+    result.perfectReason = dsdPerfectReason(evaluation);
+  } else if (!evaluation.supportsOutputPerfect) {
+    result.perfectReason =
+        evaluation.backendPerfectReason.empty() ? "共享输出经过系统混音" : evaluation.backendPerfectReason;
   } else if (!result.routingPreservesSemantics) {
-    result.resampleReason = "声道映射改变声道语义";
+    result.perfectReason = "声道映射改变声道语义";
   } else if (result.processingActive) {
-    result.resampleReason = "音量或 DSP 处理已启用";
+    result.perfectReason = processingReason(evaluation);
+  } else if (!result.pcmPassthrough) {
+    result.perfectReason =
+        evaluation.backendPerfectReason.empty()
+            ? "Decoded PCM converted from " + formatSummary(decodedFormat) + " to " + formatSummary(evaluation.outputFormat)
+            : evaluation.backendPerfectReason;
+  } else if (!evaluation.sourceLossless) {
+    result.perfectReason = "Source is lossy; decoded PCM path is output perfect";
+  } else if (!result.sourceFormatMatched) {
+    result.perfectReason =
+        "Source PCM format differs from output format: " + formatSummary(evaluation.sourceFormat) + " -> " +
+        formatSummary(evaluation.outputFormat);
   }
   return result;
 }

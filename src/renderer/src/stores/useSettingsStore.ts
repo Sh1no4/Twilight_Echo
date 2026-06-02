@@ -14,7 +14,7 @@ function getFallbackAudioOutput(): AudioOutputId {
 }
 
 const fallbackAudioProcessing: AudioProcessingSettings = {
-  dspEnabled: true,
+  dspEnabled: false,
   clipGuard: true,
   fftEnabled: true,
   fftResolution: 64,

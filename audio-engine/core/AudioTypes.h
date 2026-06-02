@@ -15,6 +15,13 @@ enum class AudioSampleFormat {
   Int32Interleaved
 };
 
+enum class DsdMode {
+  Pcm,
+  Dop,
+  Native,
+  Unsupported
+};
+
 struct AudioFormat {
   int sampleRate = 0;
   int channelCount = 0;
@@ -49,8 +56,12 @@ struct AudioStreamInfo {
   int64_t bitrate = 0;
   double durationSeconds = 0.0;
   AudioFormat sourceFormat;
+  AudioFormat decodedFormat;
   ReplayGainInfo replayGain;
+  bool sourceLossless = false;
   bool isDsd = false;
+  DsdMode dsdMode = DsdMode::Pcm;
+  int dsdRate = 0;
 };
 
 struct QueueItem {
@@ -86,9 +97,14 @@ struct OutputInfo {
   };
 
   bool exclusive = false;
-  bool supportsBitPerfect = false;
-  bool bitPerfect = false;
+  bool supportsOutputPerfect = false;
+  bool sourceExact = false;
+  bool outputPerfect = false;
+  bool pcmPassthrough = false;
   bool resampled = false;
+  bool isDsd = false;
+  std::string dsdMode = "pcm";
+  int dsdRate = 0;
   int outputSampleRate = 0;
   int outputBitDepth = 0;
   std::string backend;
@@ -103,44 +119,68 @@ struct OutputInfo {
   int actualSampleRate = 0;
   int actualBitDepth = 0;
   int actualChannels = 0;
+  bool driverDopCapable = false;
+  bool driverNativeDsdCapable = false;
+  std::vector<int> driverDopCarrierSampleRates;
+  std::vector<std::string> driverDopCarrierFormats;
+  std::vector<int> driverNativeDsdSampleRates;
   int bufferSizeFrames = 0;
   int latencyFrames = 0;
   double latencyMs = 0.0;
   LatencyInfo latencyInfo;
   std::string channelRoutingMode = "auto";
-  std::string resampleReason;
+  std::string perfectReason;
   Diagnostics diagnostics;
   bool deviceRecovered = false;
   int recoveryCount = 0;
 };
 
-struct BitPerfectEvaluation {
+struct PerfectEvaluation {
   AudioFormat sourceFormat;
+  AudioFormat decodedFormat;
   AudioFormat outputFormat;
-  bool supportsBitPerfect = false;
+  bool sourceLossless = false;
+  bool sourceDsd = false;
+  DsdMode dsdMode = DsdMode::Pcm;
+  int dsdRate = 0;
+  AudioFormat dopCarrierFormat;
+  bool dopCarrierMatched = false;
+  bool dopPassthroughProven = false;
+  bool nativeDsdRequested = false;
+  bool sacdIsoSource = false;
+  bool supportsOutputPerfect = false;
   bool backendResampled = false;
-  std::string backendResampleReason;
+  std::string backendPerfectReason;
   double volume = 1.0;
   bool replayGainActive = false;
   bool eqActive = false;
   bool convolverActive = false;
   bool crossfeedActive = false;
+  bool crossfadeActive = false;
   ChannelRoutingMode routingMode = ChannelRoutingMode::Auto;
+  bool pcmPassthrough = false;
 };
 
-struct BitPerfectResult {
-  bool bitPerfect = false;
+struct PerfectResult {
+  bool sourceExact = false;
+  bool outputPerfect = false;
+  bool pcmPassthrough = false;
   bool resampled = false;
   bool processingActive = false;
   bool formatMatched = false;
+  bool sourceFormatMatched = false;
   bool routingPreservesSemantics = false;
-  std::string resampleReason;
+  std::string perfectReason;
 };
 
 std::string channelRoutingModeToString(ChannelRoutingMode mode);
 ChannelRoutingMode parseChannelRoutingMode(const std::string& mode);
+std::string dsdModeToString(DsdMode mode);
+std::string sampleFormatToString(AudioSampleFormat format);
 int normalizedPcmBitDepth(int bitDepth);
 int effectivePcmBitDepth(const AudioFormat& format);
-BitPerfectResult evaluateBitPerfect(const BitPerfectEvaluation& evaluation);
+bool pcmFormatsExactMatch(const AudioFormat& left, const AudioFormat& right);
+std::optional<AudioFormat> dopCarrierFormatForDsd(int dsdRate, int channelCount);
+PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation);
 
 }  // namespace twilight::audio

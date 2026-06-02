@@ -34,6 +34,10 @@ struct PlaybackInfo {
   int bitrate = 0;
   int sourceSampleRate = 0;
   int sourceBitDepth = 0;
+  int decodedSampleRate = 0;
+  int decodedBitDepth = 0;
+  int decodedChannels = 0;
+  std::string decodedSampleFormat;
   std::string outputBackend = "wasapi";
   std::string outputDevice = "auto";
   OutputInfo outputInfo;
@@ -52,21 +56,28 @@ struct PlaybackInfo {
   int outputSampleRate = 0;
   int outputBitDepth = 0;
   int channelCount = 0;
-  bool bitPerfect = false;
+  bool supportsOutputPerfect = false;
+  bool sourceExact = false;
+  bool outputPerfect = false;
+  bool pcmPassthrough = false;
   bool dspActive = false;
   bool replayGainActive = false;
   bool eqActive = false;
   bool convolverActive = false;
   bool crossfeedActive = false;
+  bool crossfadeActive = false;
   bool fftActive = false;
   bool irResampled = false;
   double replayGainDb = 0.0;
   double crossfeedStrength = 0.0;
+  double crossfadeSeconds = 0.0;
   uint32_t convolverLatencyFrames = 0;
   uint32_t partitionSize = 0;
   std::string channelMappingMode;
-  std::string resampleReason;
+  std::string perfectReason;
+  bool isDsd = false;
   std::string dsdMode = "unsupported";
+  int dsdRate = 0;
   bool gaplessActive = false;
   bool preloadReady = false;
   bool hasUpcomingTrack = false;
@@ -113,6 +124,8 @@ class TwilightAudioEngine {
   std::string getUpcomingTrackJson() const;
   std::string enumerateDevicesJson() const;
   std::string enumerateBackendsJson() const;
+  std::string engineCapabilitiesJson() const;
+  std::string getLastErrorJson() const;
   std::string getPlaybackInfoJson() const;
   size_t getSpectrumData(float* buffer, size_t pointCount) const;
 
@@ -121,10 +134,13 @@ class TwilightAudioEngine {
   void stopClock();
   void clockLoop();
   void emit(const char* type, const std::string& payload) const;
-  void emitError(const std::string& message) const;
+  void emitError(
+      const std::string& message,
+      TAE_Result code = TAE_RESULT_INTERNAL_ERROR,
+      const std::string& context = {}) const;
   void publishStateLocked() const;
   void applyPipelineStatusLocked(const PipelineStatus& status);
-  void updateBitPerfectLocked();
+  void updatePerfectLocked();
   QueueItem currentItemLocked() const;
 
   mutable std::mutex mutex_;
@@ -135,6 +151,10 @@ class TwilightAudioEngine {
   std::unique_ptr<AudioPipeline> pipeline_;
   TAE_EventCallback eventCallback_ = nullptr;
   void* eventUserData_ = nullptr;
+  mutable std::mutex errorMutex_;
+  mutable std::string lastError_;
+  mutable TAE_Result lastErrorCode_ = TAE_RESULT_OK;
+  mutable std::string lastErrorContext_;
   std::atomic<bool> running_{true};
   std::thread clockThread_;
   std::chrono::steady_clock::time_point lastTick_;

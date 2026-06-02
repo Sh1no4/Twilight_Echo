@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <sstream>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -20,6 +21,22 @@
 #endif
 
 namespace twilight::audio {
+namespace {
+
+#if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+std::string hresultSuffix(HRESULT hr) {
+  std::ostringstream stream;
+  stream << "0x" << std::hex << std::uppercase << static_cast<unsigned long>(hr);
+  return stream.str();
+}
+
+std::string outputFormatSummary(const AudioFormat& format) {
+  return std::to_string(format.sampleRate) + "Hz " + std::to_string(format.channelCount) + "ch " +
+         sampleFormatToString(format.sampleFormat) + " " + std::to_string(format.bitDepth) + "bit";
+}
+#endif
+
+}  // namespace
 
 struct WasapiExclusiveBackend::Impl {
   AudioFormat outputFormat;
@@ -41,6 +58,30 @@ struct WasapiExclusiveBackend::Impl {
   std::vector<uint8_t> waveFormatBytes;
   bool ownerComInitialized = false;
 
+  void resetFailureInfo() {
+    outputInfo = {};
+    outputInfo.exclusive = true;
+    outputInfo.supportsOutputPerfect = false;
+    outputInfo.sourceExact = false;
+    outputInfo.outputPerfect = false;
+    outputInfo.pcmPassthrough = false;
+    outputInfo.backend = "wasapi-exclusive";
+    outputInfo.actualBackend = "wasapi-exclusive";
+    outputInfo.deviceName = deviceName;
+    outputInfo.actualDeviceName = deviceName;
+  }
+
+  bool fail(std::string* error, const std::string& reason) {
+    outputInfo.perfectReason = reason;
+    outputInfo.diagnostics.lastError = reason;
+    if (error) *error = reason;
+    return false;
+  }
+
+  bool failHr(std::string* error, const std::string& reason, HRESULT hr) {
+    return fail(error, reason + " (错误码 " + hresultSuffix(hr) + ")");
+  }
+
   bool loadDeviceName() {
     Microsoft::WRL::ComPtr<IPropertyStore> properties;
     if (!device || FAILED(device->OpenPropertyStore(STGM_READ, &properties))) return false;
@@ -57,7 +98,8 @@ struct WasapiExclusiveBackend::Impl {
     audioClient.Reset();
     renderClient.Reset();
     HRESULT hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &audioClient);
-    return wasapi::succeeded(hr, error, "无法激活独占输出音频客户端");
+    if (SUCCEEDED(hr)) return true;
+    return failHr(error, "WASAPI 独占 open failure：无法激活音频客户端", hr);
   }
 
   bool initializeAudioClient(const WAVEFORMATEX* format, REFERENCE_TIME requestedDuration, std::string* error) {
@@ -93,12 +135,20 @@ struct WasapiExclusiveBackend::Impl {
       }
     }
 
-    return wasapi::succeeded(hr, error, "无法初始化独占输出音频流");
+    return failHr(
+        error,
+        "WASAPI 独占 init failure：设备拒绝协商格式 " + outputFormatSummary(outputFormat),
+        hr);
   }
 
   bool configureStream(const AudioFormat& requestedFormat, std::string* error) {
     WasapiFormatNegotiator negotiator(audioClient.Get());
-    if (!negotiator.negotiate(requestedFormat, error)) return false;
+    if (!negotiator.negotiate(requestedFormat, error)) {
+      outputInfo = negotiator.outputInfo();
+      outputInfo.deviceName = deviceName;
+      outputInfo.actualDeviceName = deviceName;
+      return false;
+    }
 
     outputFormat = negotiator.outputFormat();
     outputInfo = negotiator.outputInfo();
@@ -108,11 +158,18 @@ struct WasapiExclusiveBackend::Impl {
         reinterpret_cast<const uint8_t*>(negotiator.waveFormat()),
         reinterpret_cast<const uint8_t*>(negotiator.waveFormat()) + negotiator.waveFormatSize());
     const auto* waveFormat = reinterpret_cast<const WAVEFORMATEX*>(waveFormatBytes.data());
+    const std::string negotiatedPerfectReason = outputInfo.perfectReason;
+    auto restoreNegotiatedReason = [&]() {
+      outputInfo.perfectReason = negotiatedPerfectReason;
+      outputInfo.diagnostics.lastError.clear();
+    };
 
     REFERENCE_TIME defaultPeriod = 0;
     REFERENCE_TIME minimumPeriod = 0;
     HRESULT hr = audioClient->GetDevicePeriod(&defaultPeriod, &minimumPeriod);
-    if (!wasapi::succeeded(hr, error, "无法读取设备缓冲周期")) return false;
+    if (FAILED(hr)) {
+      return failHr(error, "WASAPI 独占 init failure：无法读取设备缓冲周期", hr);
+    }
 
     REFERENCE_TIME requestedDuration = minimumPeriod > 0 ? minimumPeriod : defaultPeriod;
     if (requestedDuration <= 0) {
@@ -122,26 +179,27 @@ struct WasapiExclusiveBackend::Impl {
     if (!initializeAudioClient(waveFormat, requestedDuration, error)) {
       if (defaultPeriod > requestedDuration && activateAudioClient(error) &&
           initializeAudioClient(waveFormat, defaultPeriod, error)) {
+        restoreNegotiatedReason();
         return true;
       }
       return false;
     }
 
+    restoreNegotiatedReason();
     return true;
   }
 
   bool attachEventAndRenderClient(std::string* error) {
     samplesReadyEvent.reset(CreateEventW(nullptr, FALSE, FALSE, nullptr));
     if (!samplesReadyEvent) {
-      if (error) *error = "无法创建独占输出事件";
-      return false;
+      return fail(error, "WASAPI 独占 init failure：无法创建事件回调句柄");
     }
 
     HRESULT hr = audioClient->SetEventHandle(samplesReadyEvent.get());
-    if (!wasapi::succeeded(hr, error, "无法绑定独占输出事件")) return false;
+    if (FAILED(hr)) return failHr(error, "WASAPI 独占 init failure：无法绑定事件回调", hr);
 
     hr = audioClient->GetBufferSize(&bufferFrameCount);
-    if (!wasapi::succeeded(hr, error, "无法读取独占输出缓冲区大小")) return false;
+    if (FAILED(hr)) return failHr(error, "WASAPI 独占 init failure：无法读取缓冲区大小", hr);
     outputInfo.bufferSizeFrames = static_cast<int>(bufferFrameCount);
     outputInfo.latencyFrames = static_cast<int>(bufferFrameCount);
     outputInfo.latencyMs = outputFormat.sampleRate > 0
@@ -151,7 +209,8 @@ struct WasapiExclusiveBackend::Impl {
     outputInfo.latencyInfo.totalLatencyMs = outputInfo.latencyMs;
 
     hr = audioClient->GetService(IID_PPV_ARGS(&renderClient));
-    return wasapi::succeeded(hr, error, "无法获取独占输出渲染客户端");
+    if (SUCCEEDED(hr)) return true;
+    return failHr(error, "WASAPI 独占 init failure：无法获取渲染客户端", hr);
   }
 
   bool renderPacket(UINT32 frameCount) {
@@ -266,6 +325,7 @@ const char* WasapiExclusiveBackend::id() const {
 bool WasapiExclusiveBackend::open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   close();
+  impl_->resetFailureInfo();
 
   HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   impl_->ownerComInitialized = SUCCEEDED(hr);
@@ -277,11 +337,16 @@ bool WasapiExclusiveBackend::open(const std::string& deviceId, const AudioFormat
     }
     return false;
   };
-  if (!wasapi::succeeded(hr, error, "无法初始化独占输出所需环境")) return false;
+  if (FAILED(hr)) {
+    return impl_->failHr(error, "WASAPI 独占 open failure：无法初始化 COM 环境", hr);
+  }
 
   Microsoft::WRL::ComPtr<IMMDeviceEnumerator> enumerator;
   hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
-  if (!wasapi::succeeded(hr, error, "无法创建设备枚举器")) return failAfterCom();
+  if (FAILED(hr)) {
+    impl_->failHr(error, "WASAPI 独占 open failure：无法创建设备枚举器", hr);
+    return failAfterCom();
+  }
 
   if (deviceId.empty() || deviceId == "auto") {
     hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &impl_->device);
@@ -289,7 +354,10 @@ bool WasapiExclusiveBackend::open(const std::string& deviceId, const AudioFormat
     const std::wstring id = wasapi::utf8ToWide(deviceId);
     hr = enumerator->GetDevice(id.c_str(), &impl_->device);
   }
-  if (!wasapi::succeeded(hr, error, "无法打开独占输出设备")) return failAfterCom();
+  if (FAILED(hr)) {
+    impl_->failHr(error, "WASAPI 独占 open failure：无法打开输出设备", hr);
+    return failAfterCom();
+  }
 
   impl_->loadDeviceName();
   if (!impl_->activateAudioClient(error)) return failAfterCom();

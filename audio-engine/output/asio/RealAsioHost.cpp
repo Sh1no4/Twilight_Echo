@@ -210,6 +210,11 @@ std::vector<AsioDeviceInfo> RealAsioHost::enumerateDevices() {
     device.driverName = name;
     device.isDefault = devices.empty();
     device.capabilityVersion = DeviceCapabilityCache::instance().version(device.id);
+    device.dopCapable = false;
+    device.nativeDsdCapable = false;
+    device.dopCarrierSampleRates.clear();
+    device.dopCarrierSampleFormats.clear();
+    device.nativeDsdSampleRates.clear();
 
     if (loadAsioDriver(name)) {
       ASIODriverInfo info{};
@@ -246,9 +251,22 @@ std::vector<AsioDeviceInfo> RealAsioHost::enumerateDevices() {
             device.defaultBitDepth = device.defaultSampleFormat == AudioSampleFormat::Int16Interleaved
                                          ? 16
                                          : device.defaultSampleFormat == AudioSampleFormat::Int24Interleaved ? 24 : 32;
+            device.sampleFormats = {device.defaultSampleFormat};
           }
         }
-        device.bitDepths = {16, 24, 32};
+        if (device.sampleFormats.empty()) device.sampleFormats = {device.defaultSampleFormat};
+        device.bitDepths.clear();
+        for (const auto format : device.sampleFormats) {
+          const int depth = format == AudioSampleFormat::Int16Interleaved
+                                ? 16
+                                : (format == AudioSampleFormat::Int24Interleaved ||
+                                   format == AudioSampleFormat::Int24In32Interleaved)
+                                      ? 24
+                                      : 32;
+          if (std::find(device.bitDepths.begin(), device.bitDepths.end(), depth) == device.bitDepths.end()) {
+            device.bitDepths.push_back(depth);
+          }
+        }
       }
       ASIOExit();
     }
@@ -463,6 +481,24 @@ std::string enumerateAsioDevicesJson() {
       json << device.bitDepths[i];
     }
     json << "],\"latencyFrames\":" << device.outputLatencyFrames
+         << ",\"dopCapable\":" << (device.dopCapable ? "true" : "false")
+         << ",\"nativeDsdCapable\":" << (device.nativeDsdCapable ? "true" : "false")
+         << ",\"dopCarrierSampleRates\":[";
+    for (size_t i = 0; i < device.dopCarrierSampleRates.size(); ++i) {
+      if (i > 0) json << ",";
+      json << device.dopCarrierSampleRates[i];
+    }
+    json << "],\"dopCarrierFormats\":[";
+    for (size_t i = 0; i < device.dopCarrierSampleFormats.size(); ++i) {
+      if (i > 0) json << ",";
+      json << "\"" << escapeJson(sampleFormatToString(device.dopCarrierSampleFormats[i])) << "\"";
+    }
+    json << "],\"nativeDsdSampleRates\":[";
+    for (size_t i = 0; i < device.nativeDsdSampleRates.size(); ++i) {
+      if (i > 0) json << ",";
+      json << device.nativeDsdSampleRates[i];
+    }
+    json << "]"
          << ",\"minBufferSize\":" << device.minBufferSize
          << ",\"maxBufferSize\":" << device.maxBufferSize
          << ",\"granularity\":" << device.bufferGranularity

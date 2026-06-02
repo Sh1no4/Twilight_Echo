@@ -64,11 +64,17 @@ void writeLe32(uint8_t* out, int32_t value) {
 
 bool exactFormatMatch(const AudioFormat& requested, const AudioFormat& actual) {
   return requested.sampleRate == actual.sampleRate && requested.channelCount == actual.channelCount &&
-         effectivePcmBitDepth(requested) == effectivePcmBitDepth(actual);
+         effectivePcmBitDepth(requested) == effectivePcmBitDepth(actual) &&
+         requested.sampleFormat == actual.sampleFormat;
 }
 
 bool startsWith(const std::string& value, const char* prefix) {
   return value.rfind(prefix, 0) == 0;
+}
+
+std::string formatDescription(const AudioFormat& format) {
+  return sampleFormatToString(format.sampleFormat) + " " + std::to_string(effectivePcmBitDepth(format)) + "bit " +
+         std::to_string(format.sampleRate) + "Hz " + std::to_string(format.channelCount) + "ch";
 }
 
 }  // namespace
@@ -114,6 +120,28 @@ struct AlsaBackend::Impl {
 
   static bool isDirectHwDevice(const std::string& id) {
     return startsWith(id, "hw:");
+  }
+
+  static bool isPlugHwDevice(const std::string& id) {
+    return startsWith(id, "plughw:");
+  }
+
+  static std::string pluginPathReason(const std::string& id) {
+    if (id == "default") {
+      return "ALSA default 可能经过 dmix/plug 插件链，无法证明硬件直通";
+    }
+    if (isPlugHwDevice(id)) {
+      return "ALSA plughw: 可能自动转换采样率、位深或声道，无法证明硬件直通";
+    }
+    if (id == "null") {
+      return "ALSA null 是测试输出设备，不是硬件直通路径";
+    }
+    return "ALSA 输出未使用 hw: 直连设备，可能经过插件链或格式转换";
+  }
+
+  static std::string formatMismatchReason(const AudioFormat& requested, const AudioFormat& actual) {
+    return "ALSA hw: 实际输出格式与请求格式不完全匹配: requested " + formatDescription(requested) +
+           ", actual " + formatDescription(actual);
   }
 
   static std::vector<FormatCandidate> candidatesFor(const AudioFormat& requested) {
@@ -412,13 +440,15 @@ bool AlsaBackend::open(const std::string& deviceId, const AudioFormat& requested
 
   const bool directHw = Impl::isDirectHwDevice(impl_->deviceId);
   const bool formatMatched = exactFormatMatch(requestedFormat, impl_->outputFormat);
-  const bool supportsBitPerfect = directHw && formatMatched;
+  const bool supportsOutputPerfect = directHw && formatMatched;
   const double sampleRate = impl_->outputFormat.sampleRate > 0 ? static_cast<double>(impl_->outputFormat.sampleRate) : 0.0;
 
   impl_->outputInfo = {};
   impl_->outputInfo.exclusive = directHw;
-  impl_->outputInfo.supportsBitPerfect = supportsBitPerfect;
-  impl_->outputInfo.bitPerfect = false;
+  impl_->outputInfo.supportsOutputPerfect = supportsOutputPerfect;
+  impl_->outputInfo.sourceExact = false;
+  impl_->outputInfo.outputPerfect = false;
+  impl_->outputInfo.pcmPassthrough = false;
   impl_->outputInfo.resampled = !formatMatched;
   impl_->outputInfo.outputSampleRate = impl_->outputFormat.sampleRate;
   impl_->outputInfo.outputBitDepth = impl_->outputFormat.bitDepth;
@@ -426,7 +456,7 @@ bool AlsaBackend::open(const std::string& deviceId, const AudioFormat& requested
   impl_->outputInfo.actualBackend = "alsa";
   impl_->outputInfo.deviceName = impl_->deviceName;
   impl_->outputInfo.actualDeviceName = impl_->deviceName;
-  impl_->outputInfo.actualOutputFormat = snd_pcm_format_name(impl_->pcmFormat);
+  impl_->outputInfo.actualOutputFormat = sampleFormatToString(impl_->outputFormat.sampleFormat);
   impl_->outputInfo.actualSampleRate = impl_->outputFormat.sampleRate;
   impl_->outputInfo.actualBitDepth = impl_->outputFormat.bitDepth;
   impl_->outputInfo.actualChannels = impl_->outputFormat.channelCount;
@@ -444,9 +474,9 @@ bool AlsaBackend::open(const std::string& deviceId, const AudioFormat& requested
   impl_->outputInfo.latencyInfo.totalLatencyMs = impl_->outputInfo.latencyMs;
   impl_->outputInfo.channelRoutingMode = channelRoutingModeToString(impl_->outputConfig.routingMode);
   impl_->outputInfo.diagnostics = impl_->diagnostics;
-  if (!supportsBitPerfect) {
-    impl_->outputInfo.resampleReason =
-        directHw ? "ALSA 硬件输出格式与源格式不完全匹配" : "ALSA 输出经过插件链，无法保证 bit-perfect";
+  if (!supportsOutputPerfect) {
+    impl_->outputInfo.perfectReason =
+        directHw ? Impl::formatMismatchReason(requestedFormat, impl_->outputFormat) : Impl::pluginPathReason(impl_->deviceId);
   }
 
   return true;

@@ -93,7 +93,7 @@ const defaultEqBands: EqualizerBand[] = defaultBandFrequencies.map((frequency) =
 }))
 
 const defaultAudioProcessing: AudioProcessingSettings = {
-  dspEnabled: true,
+  dspEnabled: false,
   clipGuard: true,
   fftEnabled: true,
   fftResolution: 64,
@@ -103,7 +103,7 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   eqMode: 'graphic',
   eqPreamp: 0,
   eqBands: defaultEqBands,
-  volumeNormalization: 'track',
+  volumeNormalization: 'off',
   replayGainPreamp: 0,
   replayGainFallback: 0,
   replayGainClip: true,

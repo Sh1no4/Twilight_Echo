@@ -26,6 +26,12 @@ struct AsioDeviceInfo {
   int outputChannels = 0;
   std::vector<int> supportedSampleRates;
   std::vector<int> bitDepths;
+  std::vector<AudioSampleFormat> sampleFormats;
+  bool dopCapable = false;
+  bool nativeDsdCapable = false;
+  std::vector<int> dopCarrierSampleRates;
+  std::vector<AudioSampleFormat> dopCarrierSampleFormats;
+  std::vector<int> nativeDsdSampleRates;
   int defaultSampleRate = 0;
   int defaultBitDepth = 32;
   AudioSampleFormat defaultSampleFormat = AudioSampleFormat::Float32Interleaved;

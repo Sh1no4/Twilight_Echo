@@ -19,6 +19,30 @@ QueueItem makeManualItem(const std::string& source) {
   return item;
 }
 
+AudioSampleFormat sampleFormatFromOutputLabel(const std::string& label, AudioSampleFormat fallback) {
+  if (label == "int16" || label == "s16" || label == "S16_LE") return AudioSampleFormat::Int16Interleaved;
+  if (label == "int24" || label == "s24_3le" || label == "S24_3LE") return AudioSampleFormat::Int24Interleaved;
+  if (label == "int24-in32" || label == "s24_le" || label == "S24_LE") {
+    return AudioSampleFormat::Int24In32Interleaved;
+  }
+  if (label == "int32" || label == "s32" || label == "S32_LE") return AudioSampleFormat::Int32Interleaved;
+  if (label == "float32" || label == "FLOAT_LE") return AudioSampleFormat::Float32Interleaved;
+  return fallback;
+}
+
+AudioFormat actualOutputPcmFormat(const AudioFormat& fallback, const OutputInfo& info) {
+  AudioFormat format = fallback;
+  if (info.actualSampleRate > 0) format.sampleRate = info.actualSampleRate;
+  if (info.actualChannels > 0) format.channelCount = info.actualChannels;
+  if (info.actualBitDepth > 0) {
+    format.bitDepth = info.actualBitDepth;
+  } else if (info.outputBitDepth > 0) {
+    format.bitDepth = info.outputBitDepth;
+  }
+  format.sampleFormat = sampleFormatFromOutputLabel(info.actualOutputFormat, fallback.sampleFormat);
+  return format;
+}
+
 }  // namespace
 
 struct AudioPipeline::DecodeStream {
@@ -59,10 +83,12 @@ struct AudioPipeline::DecodeStream {
     decodeFormat.bitDepth = 32;
     decodeFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
     if (!decoder->setOutputFormat(decodeFormat, error)) return false;
+    decodeFormat = decoder->outputFormat();
+    stream.decodedFormat = decodeFormat;
     if (startTimeSeconds > 0.0 && !decoder->seek(startTimeSeconds, error)) return false;
 
     eof = false;
-    buffer.reset(outputFormat.channelCount, static_cast<size_t>(std::max(outputFormat.sampleRate * 2, 8192)));
+    buffer.reset(decodeFormat.channelCount, static_cast<size_t>(std::max(decodeFormat.sampleRate * 2, 8192)));
     return true;
   }
 
@@ -197,18 +223,18 @@ TAE_Result AudioPipeline::play(
     dspChain_.prepare(outputFormat_);
     dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
     dspStatus_ = dspChain_.status();
+    volume_ = std::clamp(volume, 0.0, 1.0);
     dspActive_ = dspStatus_.dspActive || std::abs(volume - 1.0) > 0.0001;
     spectrum_.prepare(outputFormat_, dspConfig_.fftResolution);
     spectrum_.setEnabled(dspConfig_.fftEnabled);
     gaplessEnabled_ = gaplessEnabled;
-    updateBitPerfectLocked();
+    updatePerfectLocked();
     state_ = PipelineState::Playing;
     renderedFrames_ = static_cast<uint64_t>(std::max(0.0, startTimeSeconds) * outputFormat_.sampleRate);
     ended_ = false;
     deviceInvalidated_ = false;
     trackStarted_ = false;
     outputEventMessage_.clear();
-    volume_ = std::clamp(volume, 0.0, 1.0);
   }
 
   active->start();
@@ -270,7 +296,7 @@ TAE_Result AudioPipeline::stop() {
     currentItem_ = {};
     backendId_.clear();
     deviceName_.clear();
-    resampleReason_.clear();
+    perfectReason_.clear();
     outputInfo_ = {};
     renderedFrames_ = 0;
     ended_ = false;
@@ -280,7 +306,7 @@ TAE_Result AudioPipeline::stop() {
     dspStatus_ = {};
     dspConfig_ = {};
     dspActive_ = false;
-    bitPerfect_ = false;
+    outputPerfect_ = false;
     gaplessEnabled_ = true;
   }
   return TAE_RESULT_OK;
@@ -303,7 +329,7 @@ TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
     dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
     dspStatus_ = dspChain_.status();
     dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
-    updateBitPerfectLocked();
+    updatePerfectLocked();
   }
   return TAE_RESULT_OK;
 }
@@ -312,22 +338,28 @@ void AudioPipeline::setVolume(double volume) {
   volume_ = std::clamp(volume, 0.0, 1.0);
   std::lock_guard lock(mutex_);
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
-  updateBitPerfectLocked();
+  updatePerfectLocked();
 }
 
 void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
-  std::lock_guard lock(mutex_);
-  dspConfig_ = DspChain::parseConfigJson(dspConfigJson);
-  dspChain_.configure(dspConfig_);
-  if (outputFormat_.sampleRate > 0 && outputFormat_.channelCount > 0) {
-    dspChain_.prepare(outputFormat_);
-    dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
-    spectrum_.prepare(outputFormat_, dspConfig_.fftResolution);
+  std::shared_ptr<DecodeStream> disabledPreload;
+  {
+    std::lock_guard lock(mutex_);
+    dspConfig_ = DspChain::parseConfigJson(dspConfigJson);
+    gaplessEnabled_ = dspConfig_.gapless && dspConfig_.crossfadeSeconds <= 0.0001;
+    if (!gaplessEnabled_) disabledPreload = std::move(preloadStream_);
+    dspChain_.configure(dspConfig_);
+    if (outputFormat_.sampleRate > 0 && outputFormat_.channelCount > 0) {
+      dspChain_.prepare(outputFormat_);
+      dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
+      spectrum_.prepare(outputFormat_, dspConfig_.fftResolution);
+    }
+    spectrum_.setEnabled(dspConfig_.fftEnabled);
+    dspStatus_ = dspChain_.status();
+    dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+    updatePerfectLocked();
   }
-  spectrum_.setEnabled(dspConfig_.fftEnabled);
-  dspStatus_ = dspChain_.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
-  updateBitPerfectLocked();
+  if (disabledPreload) disabledPreload->stop();
 }
 
 bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* error) {
@@ -336,7 +368,7 @@ bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* err
   if (output_ && !output_->setOutputConfig(outputConfig_, error)) return false;
   if (output_) {
     outputInfo_ = output_->outputInfo();
-    updateBitPerfectLocked();
+    updatePerfectLocked();
   }
   return true;
 }
@@ -346,7 +378,7 @@ bool AudioPipeline::loadImpulseResponse(const std::string& path, std::string* er
   const bool ok = dspChain_.loadImpulseResponse(path, error);
   dspStatus_ = dspChain_.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
-  updateBitPerfectLocked();
+  updatePerfectLocked();
   return ok;
 }
 
@@ -355,7 +387,7 @@ void AudioPipeline::unloadImpulseResponse() {
   dspChain_.unloadImpulseResponse();
   dspStatus_ = dspChain_.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
-  updateBitPerfectLocked();
+  updatePerfectLocked();
 }
 
 ConvolverInfo AudioPipeline::convolverInfo() const {
@@ -367,7 +399,7 @@ bool AudioPipeline::setEqBands(const std::string& json, std::string* error) {
   const bool ok = dspChain_.setEqBandsFromJson(json, error);
   dspStatus_ = dspChain_.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
-  updateBitPerfectLocked();
+  updatePerfectLocked();
   return ok;
 }
 
@@ -376,7 +408,7 @@ bool AudioPipeline::setEqPreset(const std::string& json, std::string* error) {
   const bool ok = dspChain_.setEqPresetFromJson(json, error);
   dspStatus_ = dspChain_.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
-  updateBitPerfectLocked();
+  updatePerfectLocked();
   return ok;
 }
 
@@ -385,7 +417,7 @@ void AudioPipeline::setCrossfeedStrength(double strength) {
   dspChain_.setCrossfeedStrength(strength);
   dspStatus_ = dspChain_.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
-  updateBitPerfectLocked();
+  updatePerfectLocked();
 }
 
 void AudioPipeline::setReplayGainMode(ReplayGainMode mode, double preampDb, double fallbackDb, bool clip) {
@@ -393,7 +425,7 @@ void AudioPipeline::setReplayGainMode(ReplayGainMode mode, double preampDb, doub
   dspChain_.setReplayGainMode(mode, preampDb, fallbackDb, clip);
   dspStatus_ = dspChain_.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
-  updateBitPerfectLocked();
+  updatePerfectLocked();
 }
 
 bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::string* error) {
@@ -451,7 +483,7 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
     dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
     dspStatus_ = dspChain_.status();
     dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
-    updateBitPerfectLocked();
+    updatePerfectLocked();
   }
   if (oldActive) oldActive->stop();
   return true;
@@ -468,10 +500,12 @@ PipelineStatus AudioPipeline::status() const {
   status.stream = stream_;
   status.outputFormat = outputFormat_;
   OutputInfo backendInfo = output_ ? output_->outputInfo() : outputInfo_;
-  backendInfo.bitPerfect = outputInfo_.bitPerfect;
+  backendInfo.sourceExact = outputInfo_.sourceExact;
+  backendInfo.outputPerfect = outputInfo_.outputPerfect;
+  backendInfo.pcmPassthrough = outputInfo_.pcmPassthrough;
   backendInfo.resampled = outputInfo_.resampled;
   backendInfo.channelRoutingMode = outputInfo_.channelRoutingMode;
-  backendInfo.resampleReason = outputInfo_.resampleReason;
+  backendInfo.perfectReason = outputInfo_.perfectReason;
   status.outputInfo = backendInfo;
   status.backendId = backendId_;
   status.deviceName = deviceName_;
@@ -481,17 +515,20 @@ PipelineStatus AudioPipeline::status() const {
   status.eqActive = dspStatus_.eqActive;
   status.convolverActive = dspStatus_.convolverActive;
   status.crossfeedActive = dspStatus_.crossfeedActive;
+  status.crossfadeActive = dspStatus_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001;
   status.fftActive = spectrum_.isActive();
   status.irResampled = dspStatus_.irResampled;
   status.replayGainDb = dspStatus_.replayGainDb;
   status.crossfeedStrength = dspStatus_.crossfeedStrength;
+  status.crossfadeSeconds = status.crossfadeActive ? dspConfig_.crossfadeSeconds : 0.0;
   status.convolverLatencyFrames = dspStatus_.convolverLatencyFrames;
   status.partitionSize = dspStatus_.partitionSize;
   status.channelMappingMode = dspStatus_.channelMappingMode;
-  status.bitPerfect = bitPerfect_;
+  status.sourceExact = outputInfo_.sourceExact;
+  status.outputPerfect = outputPerfect_;
   status.gaplessActive = gaplessEnabled_ && preloadStream_ != nullptr;
   status.preloadReady = preloadStream_ && preloadStream_->readyForRender();
-  status.resampleReason = resampleReason_;
+  status.perfectReason = perfectReason_;
   return status;
 }
 
@@ -533,32 +570,46 @@ bool AudioPipeline::configureActiveStreamLocked(
   return true;
 }
 
-bool AudioPipeline::updateBitPerfectLocked() {
-  AudioFormat semanticOutputFormat = outputFormat_;
-  if (outputInfo_.actualChannels > 0) semanticOutputFormat.channelCount = outputInfo_.actualChannels;
+bool AudioPipeline::updatePerfectLocked() {
   const OutputInfo backendInfo = output_ ? output_->outputInfo() : outputInfo_;
+  AudioFormat semanticOutputFormat = actualOutputPcmFormat(outputFormat_, backendInfo);
   const bool backendResampled = backendInfo.resampled;
-  const std::string backendResampleReason = backendInfo.resampleReason;
-  const BitPerfectResult result = evaluateBitPerfect(BitPerfectEvaluation{
-      stream_.sourceFormat,
-      semanticOutputFormat,
-      outputInfo_.supportsBitPerfect,
-      backendResampled,
-      backendResampleReason,
-      volume_.load(),
-      dspStatus_.replayGainActive,
-      dspStatus_.eqActive,
-      dspStatus_.convolverActive,
-      dspStatus_.crossfeedActive,
-      outputConfig_.routingMode});
+  const std::string backendPerfectReason = backendInfo.perfectReason;
+  PerfectEvaluation evaluation;
+  evaluation.sourceFormat = stream_.sourceFormat;
+  evaluation.decodedFormat = stream_.decodedFormat;
+  evaluation.outputFormat = semanticOutputFormat;
+  evaluation.sourceLossless = stream_.sourceLossless;
+  evaluation.sourceDsd = stream_.isDsd;
+  if (stream_.isDsd) {
+    evaluation.dsdMode = stream_.dsdMode;
+    evaluation.dsdRate = stream_.dsdRate;
+  }
+  evaluation.supportsOutputPerfect = outputInfo_.supportsOutputPerfect;
+  evaluation.backendResampled = backendResampled;
+  evaluation.backendPerfectReason = backendPerfectReason;
+  evaluation.volume = volume_.load();
+  evaluation.replayGainActive = dspStatus_.replayGainActive;
+  evaluation.eqActive = dspStatus_.eqActive;
+  evaluation.convolverActive = dspStatus_.convolverActive;
+  evaluation.crossfeedActive = dspStatus_.crossfeedActive;
+  evaluation.crossfadeActive = dspStatus_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001;
+  evaluation.routingMode = outputConfig_.routingMode;
+  evaluation.pcmPassthrough = pcmFormatsExactMatch(evaluation.decodedFormat, evaluation.outputFormat) && !backendResampled;
+  const PerfectResult result = evaluatePerfect(evaluation);
   dspActive_ = result.processingActive;
-  bitPerfect_ = result.bitPerfect;
+  outputPerfect_ = result.outputPerfect;
+  outputInfo_.sourceExact = result.sourceExact;
   outputInfo_.resampled = result.resampled;
-  outputInfo_.bitPerfect = bitPerfect_;
+  outputInfo_.outputPerfect = outputPerfect_;
+  outputInfo_.pcmPassthrough = result.pcmPassthrough;
+  outputInfo_.isDsd = stream_.isDsd;
+  outputInfo_.dsdMode = stream_.isDsd ? dsdModeToString(stream_.dsdMode) : dsdModeToString(DsdMode::Pcm);
+  outputInfo_.dsdRate = stream_.isDsd ? stream_.dsdRate : 0;
   outputInfo_.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
-  outputInfo_.resampleReason = result.resampleReason;
-  resampleReason_ = result.resampleReason;
-  return bitPerfect_;
+  outputInfo_.perfectReason = result.perfectReason;
+  perfectReason_ = result.perfectReason;
+  return outputPerfect_;
 }
 
 size_t AudioPipeline::render(float* output, size_t frameCount) {
@@ -614,7 +665,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
       dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
       dspStatus_ = dspChain_.status();
       dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
-      updateBitPerfectLocked();
+      updatePerfectLocked();
     }
     if (oldActive) oldActive->stop();
     if (!next) break;

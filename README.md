@@ -10,11 +10,11 @@ Twilight Echo 是一款基于 `Electron + Vue 3 + TypeScript` 的桌面音乐播
 ## 当前状态
 
 - 桌面端：Electron 主进程、Preload 安全桥、Vue 3 Renderer 已接入。
-- 播放通道：Electron 侧保留 HTMLAudio 临时兜底；原生引擎可用时优先走 `twilight_audio_node.node`。
-- 原生引擎：Windows MVP 已打通 `FFmpeg -> AudioPipeline -> WASAPI Shared -> Node-API`。
+- 播放通道：Electron 默认走 `twilight_audio_node.node`；HTMLAudio 只作为显式开发/应急 fallback。
+- 原生引擎：Windows MinGW 已打通 `FFmpeg -> AudioPipeline -> WASAPI Shared/Exclusive -> Node-API`，并纳入 9 个 CTest 目标。
 - 构建产物：Windows 下已生成 `twilight-audio-engine.dll` 和 `twilight_audio_node.node`。
 - 设备枚举：已支持 WASAPI 设备枚举，设置页可读取统一设备模型。
-- 后续重点：WASAPI Exclusive、ASIO、DSP 实处理、gapless/crossfade、CoreAudio/ALSA、DSD Native/DoP。
+- 后续重点：PCM passthrough 验证、ASIO 真实 SDK/设备 smoke、CoreAudio/ALSA 平台验证、native crossfade overlap mixing、DSD/DoP 能力验证。
 
 ## 核心功能
 
@@ -40,15 +40,15 @@ Twilight Echo 是一款基于 `Electron + Vue 3 + TypeScript` 的桌面音乐播
 - 进度跳转和音量控制。
 - 顺序播放、单曲循环、随机播放。
 - 播放队列切换和会话恢复。
-- 原生引擎不可用时自动回退到 Renderer 层播放。
+- 原生引擎不可用时会报告降级原因；Renderer 层播放只在显式开启 fallback 时使用。
 
 ### HiFi 音频方向
 
 - 自研 `Twilight Audio Engine`，目标替换 mpv。
 - 使用 FFmpeg 作为解码层。
-- Windows 当前优先 WASAPI Shared，预留 WASAPI Exclusive 和 ASIO。
-- 预留 CoreAudio、ALSA、ReplayGain、EQ、FIR Convolver、Resampler、VST3 Host、DSD Native、SACD ISO、Room Correction。
-- `GetPlaybackInfo()` 会上报 codec、bit depth、sample rate、bitrate、输出后端、输出设备、输出采样率、输出位深、bit-perfect 状态和 DSP 状态。
+- Windows 当前包含 WASAPI Shared/Exclusive；ASIO SDK 可选且不入仓库。
+- CoreAudio、ALSA、ReplayGain、EQ、FIR Convolver、Crossfeed、Crossfade 状态、Spectrum、Metadata 和 Queue 管线已经进入源码结构。
+- `GetPlaybackInfo()` 以 `outputInfo` 作为 canonical 状态，上报实际 backend/device/format、`sourceExact` / `outputPerfect`、`perfectReason`、DSP 状态、DSD/DoP 状态镜像和 recovery diagnostics。
 
 ## 技术栈
 
@@ -95,11 +95,11 @@ Twilight Echo 是一款基于 `Electron + Vue 3 + TypeScript` 的桌面音乐播
 │   ├── include/              稳定 C ABI
 │   ├── core/                 引擎生命周期、状态机、AudioPipeline、缓冲区
 │   ├── decoder/              FFmpeg 解码
-│   ├── dsp/                  DSP 链、频谱分析、未来 EQ/卷积/重采样
+│   ├── dsp/                  DSP 链、ReplayGain、EQ、卷积、Crossfeed、频谱分析
 │   ├── output/               WASAPI/ASIO/CoreAudio/ALSA 后端
 │   ├── devices/              设备枚举和能力模型
-│   ├── playlist/             Queue/Playlist 预留
-│   ├── metadata/             音频信息读取预留
+│   ├── playlist/             Queue/Playlist、gapless preload
+│   ├── metadata/             音频信息、ReplayGain、DSD 状态读取
 │   ├── napi/                 Node-API 桥接层
 │   └── tests/                Native 测试
 ├── resources/                应用资源和打包资源
@@ -163,6 +163,8 @@ npm run build:audio-engine:mingw
 npm run test:audio-engine:mingw
 ```
 
+`configure:audio-engine:mingw` 会处理 vcpkg/FFmpeg 临时目录残留导致的 access denied，并检查 MinGW CTest 矩阵是否注册完整。
+
 生成的主要产物位于：
 
 ```text
@@ -206,6 +208,12 @@ FFmpeg -> DSP Chain -> WASAPI/CoreAudio/ALSA/ASIO
 
 当前 dev 模式会优先从 `audio-engine/build/mingw-static`、`audio-engine/build/default`、`resources/audio-engine` 等位置查找 `.node` 文件。
 
+HTMLAudio fallback 默认关闭。需要临时启用 Renderer 兜底时设置：
+
+```powershell
+$env:TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK="1"
+```
+
 ## 常用命令
 
 ```bash
@@ -224,6 +232,7 @@ npm run build
 # Windows native engine
 npm run configure:audio-engine:mingw
 npm run build:audio-engine:mingw
+ctest --test-dir audio-engine/build/mingw-static -N
 npm run test:audio-engine:mingw
 ```
 
@@ -247,10 +256,15 @@ npm run build:linux
 
 ## 已知事项
 
-- Windows 当前已验证 WASAPI Shared；Exclusive/ASIO 仍在后续阶段。
-- Shared Mode 会经过系统混音格式，`bitPerfect=false` 是符合预期的。
-- 启用软件音量、ReplayGain、EQ、卷积或重采样时会标记 `bitPerfect=false`。
-- DSD64/128/256 当前优先做识别和状态上报，Native DSD/DoP 将在 Exclusive/ASIO 成熟后实现。
+- Windows 当前 MinGW 测试矩阵注册并通过 9 个 CTest 目标；真实设备 smoke 仍按设备环境分阶段推进。
+- Shared Mode 会经过系统混音格式，`outputPerfect=false` 是符合预期的。
+- `sourceExact` 表示源文件级精确；`outputPerfect` 表示 decoded PCM 到设备实际输出期间没有额外处理或格式转换。有损源可达成 `outputPerfect=true`，但 `sourceExact=false`。
+- `pcmPassthrough` 由 FFmpeg decoded PCM 与后端实际 PCM 格式精确比较得出；Float32/Int、位深、声道或采样率任一转换都会让 `outputPerfect=false`。
+- WASAPI Exclusive/ASIO 只有独占或驱动打开成功、actual PCM format 完整上报并与 decoded PCM 完全匹配后，才允许进入 `outputPerfect` 判定。
+- CoreAudio 默认路径和 ALSA `default` / `plughw:` 默认不能保证绕过混音或插件转换；ALSA 只有显式 `hw:` 且格式完全匹配时才可能 `outputPerfect=true`。
+- 真实设备 smoke 是 opt-in；没有 ASIO SDK、macOS/Linux 工具链或对应设备时会跳过，不作为默认 CI 必需条件。
+- DSP 默认 bypass；启用软件音量、ReplayGain、EQ、卷积、Crossfeed 或重采样时会标记 `outputPerfect=false`。
+- DSD64/128/256 当前优先做识别和状态上报；DSF/DFF 走 PCM fallback 时会明确展示为 DSD 源到 PCM 输出链路。Native DSD 与 DoP 尚未完成真实播放闭环；SACD ISO 当前只报告 unsupported。
 - 网易云相关能力依赖本地启动的 `@neteasecloudmusicapienhanced/api` 服务。
 - npm 可能会提示 `.npmrc` 中镜像配置为 unknown project config，这是 npm 新版本的警告，不影响当前构建。
 

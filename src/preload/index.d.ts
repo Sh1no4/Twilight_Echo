@@ -1,4 +1,4 @@
-﻿import { ElectronAPI } from '@electron-toolkit/preload'
+import { ElectronAPI } from '@electron-toolkit/preload'
 
 interface TrackData {
   id: string
@@ -153,10 +153,16 @@ interface NativeAudioMetadata {
   discNumber: string
   comment: string
   codec: string
+  container: string
+  channelLayout: string
   sampleRate: number
+  channelCount: number
   bitDepth: number
   bitrate: number
   duration: number
+  isDsd: boolean
+  dsdMode: string
+  dsdRate: number
   coverMime: string
   coverDataBase64: string
   replayGainTrackGain: number | null
@@ -251,10 +257,12 @@ interface AudioOutputState {
 
 interface OutputInfo {
   exclusive: boolean
-  supportsBitPerfect: boolean
-  bitPerfect: boolean
+  supportsOutputPerfect: boolean
+  sourceExact: boolean
+  outputPerfect: boolean
+  pcmPassthrough: boolean
   resampled: boolean
-  resampleReason: string
+  perfectReason: string
   outputSampleRate: number
   outputBitDepth: number
   backend: string
@@ -277,9 +285,39 @@ interface OutputInfo {
   diagnostics: OutputDiagnostics
   deviceRecovered: boolean
   recoveryCount: number
+  isDsd: boolean
+  dsdMode: string
+  dsdRate: number
 }
 
-interface PlaybackInfo {
+type PlaybackOutputInfoMirror = Pick<
+  OutputInfo,
+  | 'actualBackend'
+  | 'actualOutputFormat'
+  | 'actualSampleRate'
+  | 'actualBitDepth'
+  | 'actualChannels'
+  | 'bufferSizeFrames'
+  | 'latencyFrames'
+  | 'latencyMs'
+  | 'latencyInfo'
+  | 'channelRoutingMode'
+  | 'supportsOutputPerfect'
+  | 'sourceExact'
+  | 'diagnostics'
+  | 'deviceRecovered'
+  | 'recoveryCount'
+  | 'outputSampleRate'
+  | 'outputBitDepth'
+  | 'outputPerfect'
+  | 'pcmPassthrough'
+  | 'perfectReason'
+  | 'isDsd'
+  | 'dsdMode'
+  | 'dsdRate'
+>
+
+interface PlaybackInfo extends PlaybackOutputInfoMirror {
   state: 'stopped' | 'playing' | 'paused'
   position: number
   duration: number
@@ -291,6 +329,10 @@ interface PlaybackInfo {
   bitrate: number
   sourceSampleRate: number
   sourceBitDepth: number
+  decodedSampleRate: number
+  decodedBitDepth: number
+  decodedChannels: number
+  decodedSampleFormat: string
   outputBackend: string
   outputDevice: string
   outputInfo: OutputInfo
@@ -306,28 +348,34 @@ interface PlaybackInfo {
   latencyMs: number
   latencyInfo: LatencyInfo
   channelRoutingMode: string
-  supportsBitPerfect: boolean
+  supportsOutputPerfect: boolean
+  sourceExact: boolean
   diagnostics: OutputDiagnostics
   deviceRecovered: boolean
   recoveryCount: number
   outputSampleRate: number
   outputBitDepth: number
   channelCount: number
-  bitPerfect: boolean
+  outputPerfect: boolean
+  pcmPassthrough: boolean
   dspActive: boolean
   replayGainActive: boolean
   eqActive: boolean
   convolverActive: boolean
   crossfeedActive: boolean
+  crossfadeActive: boolean
   fftActive: boolean
   irResampled: boolean
   replayGainDb: number
   crossfeedStrength: number
+  crossfadeSeconds: number
   convolverLatencyFrames: number
   partitionSize: number
   channelMappingMode: string
-  resampleReason: string
+  perfectReason: string
+  isDsd: boolean
   dsdMode: string
+  dsdRate: number
   gaplessActive: boolean
   preloadReady: boolean
   upcomingTrack: AudioEngineQueueItem | null
@@ -335,6 +383,7 @@ interface PlaybackInfo {
 
 interface AudioEnginePlayResult {
   nativeStarted: boolean
+  fallbackReason: string
 }
 
 interface AudioEngineAPI {

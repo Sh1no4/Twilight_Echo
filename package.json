@@ -14,7 +14,7 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "configure:audio-engine": "cmake -S audio-engine -B audio-engine/build/default -DTAE_BUILD_NAPI=OFF",
     "configure:audio-engine:vcpkg": "cmake -S audio-engine --preset default",
-    "configure:audio-engine:mingw": "cmake -S audio-engine --preset windows-mingw-static",
+    "configure:audio-engine:mingw": "node scripts/configure-audio-engine-mingw.cjs",
     "build:audio-engine": "cmake --build audio-engine/build/default",
     "build:audio-engine:mingw": "cmake --build audio-engine/build/mingw-static && npm run stage:audio-engine",
     "stage:audio-engine": "node scripts/stage-audio-engine.cjs",

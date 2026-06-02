@@ -113,6 +113,38 @@ struct CoreAudioBackend::Impl {
     return channels;
   }
 
+  static AudioSampleFormat sampleFormatFromStreamDescription(const AudioStreamBasicDescription& format) {
+    if (format.mFormatID != kAudioFormatLinearPCM) return AudioSampleFormat::Float32Interleaved;
+    if ((format.mFormatFlags & kAudioFormatFlagIsFloat) != 0 && format.mBitsPerChannel == 32) {
+      return AudioSampleFormat::Float32Interleaved;
+    }
+    if ((format.mFormatFlags & kAudioFormatFlagIsSignedInteger) != 0) {
+      if (format.mBitsPerChannel <= 16) return AudioSampleFormat::Int16Interleaved;
+      if (format.mBitsPerChannel == 24 && format.mBytesPerFrame == format.mChannelsPerFrame * 3) {
+        return AudioSampleFormat::Int24Interleaved;
+      }
+      if (format.mBitsPerChannel == 24) return AudioSampleFormat::Int24In32Interleaved;
+      if (format.mBitsPerChannel >= 32) return AudioSampleFormat::Int32Interleaved;
+    }
+    return AudioSampleFormat::Float32Interleaved;
+  }
+
+  static std::string coreAudioReason(const AudioFormat& requested, const AudioFormat& actual) {
+    std::string reason = "CoreAudio 默认输出使用系统混音路径，未启用 Hog Mode/Exclusive";
+    if (requested.sampleRate != actual.sampleRate) {
+      reason += "; actual sample rate " + std::to_string(actual.sampleRate) + "Hz";
+    }
+    if (requested.channelCount != actual.channelCount) {
+      reason += "; actual channels " + std::to_string(actual.channelCount);
+    }
+    if (requested.sampleFormat != actual.sampleFormat ||
+        effectivePcmBitDepth(requested) != effectivePcmBitDepth(actual)) {
+      reason += "; actual format " + sampleFormatToString(actual.sampleFormat) + " " +
+                std::to_string(effectivePcmBitDepth(actual)) + "bit";
+    }
+    return reason;
+  }
+
   static bool defaultOutputDevice(AudioDeviceID* out, std::string* error) {
     AudioObjectPropertyAddress address{
         kAudioHardwarePropertyDefaultOutputDevice,
@@ -387,25 +419,31 @@ bool CoreAudioBackend::open(const std::string& deviceId, const AudioFormat& requ
 
   impl_->outputFormat.sampleRate = static_cast<int>(actualRate + 0.5);
   impl_->outputFormat.channelCount = static_cast<int>(std::max<UInt32>(1, format.mChannelsPerFrame));
-  impl_->outputFormat.bitDepth = 32;
-  impl_->outputFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
+  impl_->outputFormat.sampleFormat = Impl::sampleFormatFromStreamDescription(format);
+  impl_->outputFormat.bitDepth = effectivePcmBitDepth(impl_->outputFormat);
+  if (impl_->outputFormat.bitDepth <= 0) {
+    impl_->outputFormat.bitDepth = static_cast<int>(format.mBitsPerChannel > 0 ? format.mBitsPerChannel : 32);
+  }
   impl_->deviceName = Impl::deviceString(selectedDevice, kAudioObjectPropertyName);
   if (impl_->deviceName.empty()) impl_->deviceName = "CoreAudio Default Output";
 
   impl_->outputInfo = {};
   impl_->outputInfo.exclusive = false;
-  impl_->outputInfo.supportsBitPerfect = false;
-  impl_->outputInfo.bitPerfect = false;
+  impl_->outputInfo.supportsOutputPerfect = false;
+  impl_->outputInfo.sourceExact = false;
+  impl_->outputInfo.outputPerfect = false;
+  impl_->outputInfo.pcmPassthrough = false;
   impl_->outputInfo.resampled = requestedFormat.sampleRate != impl_->outputFormat.sampleRate ||
                                 requestedFormat.channelCount != impl_->outputFormat.channelCount ||
-                                effectivePcmBitDepth(requestedFormat) != 32;
+                                effectivePcmBitDepth(requestedFormat) != effectivePcmBitDepth(impl_->outputFormat) ||
+                                requestedFormat.sampleFormat != impl_->outputFormat.sampleFormat;
   impl_->outputInfo.outputSampleRate = impl_->outputFormat.sampleRate;
   impl_->outputInfo.outputBitDepth = impl_->outputFormat.bitDepth;
   impl_->outputInfo.backend = "coreaudio";
   impl_->outputInfo.actualBackend = "coreaudio";
   impl_->outputInfo.deviceName = impl_->deviceName;
   impl_->outputInfo.actualDeviceName = impl_->deviceName;
-  impl_->outputInfo.actualOutputFormat = "float32";
+  impl_->outputInfo.actualOutputFormat = sampleFormatToString(impl_->outputFormat.sampleFormat);
   impl_->outputInfo.actualSampleRate = impl_->outputFormat.sampleRate;
   impl_->outputInfo.actualBitDepth = impl_->outputFormat.bitDepth;
   impl_->outputInfo.actualChannels = impl_->outputFormat.channelCount;
@@ -419,7 +457,7 @@ bool CoreAudioBackend::open(const std::string& deviceId, const AudioFormat& requ
       impl_->outputInfo.latencyInfo.bufferLatencyMs + impl_->outputInfo.latencyInfo.outputLatencyMs;
   impl_->outputInfo.latencyMs = impl_->outputInfo.latencyInfo.totalLatencyMs;
   impl_->outputInfo.channelRoutingMode = channelRoutingModeToString(impl_->outputConfig.routingMode);
-  impl_->outputInfo.resampleReason = "CoreAudio 默认输出可能经过系统混音或格式转换";
+  impl_->outputInfo.perfectReason = Impl::coreAudioReason(requestedFormat, impl_->outputFormat);
   return true;
 #else
   (void)deviceId;

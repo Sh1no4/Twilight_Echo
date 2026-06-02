@@ -68,6 +68,46 @@ int main() {
   {
     DspChain chain;
     DspConfig config;
+    chain.configure(config);
+    chain.prepare(testFormat());
+    chain.setTrackContext({});
+
+    std::vector<float> samples = {1.0f, -1.0f, 0.25f, -0.25f};
+    const std::vector<float> original = samples;
+    chain.process(samples.data(), 2);
+
+    assert(!chain.status().dspActive);
+    assert(samples == original);
+  }
+
+  {
+    DspChain chain;
+    const DspConfig config = DspChain::parseConfigJson("{\"dspEnabled\":false,\"crossfadeSeconds\":0.5}");
+    assert(config.gapless);
+    chain.configure(config);
+    chain.prepare(testFormat());
+    chain.setTrackContext({});
+
+    const DspStatus status = chain.status();
+    assert(status.crossfadeActive);
+    assert(closeTo(status.crossfadeSeconds, 0.5));
+
+    std::vector<float> samples = {1.0f, -1.0f, 0.25f, -0.25f};
+    const std::vector<float> original = samples;
+    chain.process(samples.data(), 2);
+    assert(samples == original);
+  }
+
+  {
+    const DspConfig config = DspChain::parseConfigJson("{\"gapless\":false,\"crossfadeSeconds\":0}");
+    assert(!config.gapless);
+    assert(config.crossfadeSeconds == 0.0);
+  }
+
+  {
+    DspChain chain;
+    DspConfig config;
+    config.enabled = true;
     config.replayGainMode = ReplayGainMode::Track;
     config.replayGainClip = true;
     chain.configure(config);
@@ -90,6 +130,7 @@ int main() {
   {
     DspChain chain;
     DspConfig config;
+    config.enabled = true;
     config.replayGainMode = ReplayGainMode::Album;
     config.replayGainFallbackDb = -3.0;
     config.replayGainPreampDb = 1.0;
@@ -107,6 +148,7 @@ int main() {
   {
     DspChain chain;
     DspConfig config;
+    config.enabled = true;
     config.eqEnabled = true;
     config.eqMode = EqMode::Graphic;
     config.eqBands.push_back({1000.0, 3.0, 1.0, DspFilterType::AllPass});
@@ -126,6 +168,7 @@ int main() {
   {
     DspChain chain;
     DspConfig config;
+    config.enabled = true;
     config.eqEnabled = true;
     config.eqMode = EqMode::Parametric;
     config.eqBands.push_back({1000.0, 3.0, 1.0, DspFilterType::BandPass});
@@ -158,6 +201,7 @@ int main() {
   {
     DspChain chain;
     DspConfig config;
+    config.enabled = true;
     chain.configure(config);
     chain.prepare(testFormat());
     chain.setCrossfeedStrength(0.75);
@@ -181,6 +225,20 @@ int main() {
     assert(analyzer.read(spectrum.data(), spectrum.size()) == spectrum.size());
     assert(analyzer.isActive());
     for (float value : spectrum) assert(std::isfinite(value));
+  }
+
+  {
+    FftSpectrumAnalyzer analyzer;
+    analyzer.prepare(testFormat(), 256);
+    std::vector<float> silence(512, 0.0f);
+    analyzer.capture(silence.data(), 256, 2);
+    std::vector<float> spectrum(64, 1.0f);
+    assert(analyzer.read(spectrum.data(), spectrum.size()) == spectrum.size());
+    assert(analyzer.isActive());
+    for (float value : spectrum) {
+      assert(std::isfinite(value));
+      assert(value == 0.0f);
+    }
   }
 
   return 0;

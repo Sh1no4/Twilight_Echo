@@ -7,12 +7,14 @@
 #include <cstdlib>
 #include <optional>
 #include <sstream>
+#include <string>
 #include <vector>
 
 #if defined(TAE_HAS_FFMPEG)
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/channel_layout.h>
 #include <libavutil/avutil.h>
 #include <libavutil/dict.h>
 }
@@ -56,6 +58,20 @@ std::string toUpper(std::string value) {
   return value;
 }
 
+std::string toLower(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  return value;
+}
+
+std::string extensionOf(const std::string& source) {
+  const size_t slash = source.find_last_of("/\\");
+  const size_t dot = source.find_last_of('.');
+  if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) return "";
+  return toLower(source.substr(dot + 1));
+}
+
 std::optional<double> parseGainDb(const char* rawValue, bool r128) {
   if (!rawValue) return std::nullopt;
   std::string value(rawValue);
@@ -78,6 +94,51 @@ std::optional<double> parseGainDb(const char* rawValue, bool r128) {
   if (end == value.c_str()) return std::nullopt;
   if (r128 && lower.find("db") == std::string::npos) return parsed / 256.0;
   return parsed;
+}
+
+bool textMentions(const std::string& haystack, const std::string& needle) {
+  return toLower(haystack).find(needle) != std::string::npos;
+}
+
+bool codecLooksDsd(const std::string& codec) {
+  const std::string normalized = toLower(codec);
+  return normalized.rfind("dsd", 0) == 0 || normalized == "dsf" || normalized == "dff" ||
+         normalized == "dst" || normalized == "dop" || normalized.find("dsd_") != std::string::npos ||
+         normalized.find("dop") != std::string::npos;
+}
+
+bool containerLooksDsd(const std::string& container, const std::string& extension) {
+  return extension == "dsf" || extension == "dff" || extension == "dop" ||
+         textMentions(container, "dsd") || textMentions(container, "dsf") ||
+         textMentions(container, "dff") || textMentions(container, "dsdiff") || textMentions(container, "dop");
+}
+
+bool looksDop(const std::string& codec, const std::string& container, const std::string& extension) {
+  return extension == "dop" || textMentions(codec, "dop") || textMentions(container, "dop");
+}
+
+int inferDsdRate(int sampleRate, bool dopCarrier = false) {
+  if (dopCarrier) {
+    if (sampleRate >= 650000) return 256;
+    if (sampleRate >= 320000) return 128;
+    if (sampleRate >= 160000) return 64;
+  }
+  if (sampleRate >= 10000000) return 256;
+  if (sampleRate >= 5000000) return 128;
+  if (sampleRate >= 2500000) return 64;
+  return 0;
+}
+
+bool sourceLooksSacdIso(const std::string& source) {
+  return extensionOf(source) == "iso";
+}
+
+void markSacdIsoUnsupported(AudioMetadata* metadata) {
+  if (!metadata) return;
+  metadata->codec = "sacd_iso";
+  metadata->container = "SACD ISO";
+  metadata->isDsd = true;
+  metadata->dsdMode = dsdModeToString(DsdMode::Unsupported);
 }
 
 void assignMetadataField(AudioMetadata* metadata, const std::string& key, const char* value) {
@@ -164,10 +225,16 @@ std::string metadataToJson(const AudioMetadata& metadata, const std::string& err
        << "\"discNumber\":\"" << escapeJson(metadata.discNumber) << "\","
        << "\"comment\":\"" << escapeJson(metadata.comment) << "\","
        << "\"codec\":\"" << escapeJson(metadata.codec) << "\","
+       << "\"container\":\"" << escapeJson(metadata.container) << "\","
+       << "\"channelLayout\":\"" << escapeJson(metadata.channelLayout) << "\","
        << "\"sampleRate\":" << metadata.sampleRate << ","
+       << "\"channelCount\":" << metadata.channelCount << ","
        << "\"bitDepth\":" << metadata.bitDepth << ","
        << "\"bitrate\":" << metadata.bitrate << ","
        << "\"duration\":" << metadata.durationSeconds << ","
+       << "\"isDsd\":" << (metadata.isDsd ? "true" : "false") << ","
+       << "\"dsdMode\":\"" << escapeJson(metadata.dsdMode) << "\","
+       << "\"dsdRate\":" << metadata.dsdRate << ","
        << "\"coverMime\":\"" << escapeJson(metadata.coverMime) << "\","
        << "\"coverDataBase64\":\"" << escapeJson(metadata.coverDataBase64) << "\","
        << "\"replayGainTrackGain\":" << optionalNumber(metadata.replayGain.trackGainDb) << ","
@@ -185,6 +252,10 @@ std::string readMetadataJson(const std::string& source) {
   AudioMetadata metadata;
   metadata.source = source;
   if (source.empty()) return metadataToJson(metadata, "音频地址为空");
+  if (sourceLooksSacdIso(source)) {
+    markSacdIsoUnsupported(&metadata);
+    return metadataToJson(metadata, "SACD ISO 暂不支持解析和播放");
+  }
 
 #if defined(TAE_HAS_FFMPEG)
   FormatContextHandle handle;
@@ -196,6 +267,11 @@ std::string readMetadataJson(const std::string& source) {
   }
 
   readDictionary(handle.context->metadata, &metadata);
+  const std::string sourceExtension = extensionOf(source);
+  if (handle.context->iformat) {
+    metadata.container = handle.context->iformat->long_name ? handle.context->iformat->long_name
+                                                            : (handle.context->iformat->name ? handle.context->iformat->name : "");
+  }
   metadata.durationSeconds =
       handle.context->duration != AV_NOPTS_VALUE
           ? static_cast<double>(handle.context->duration) / static_cast<double>(AV_TIME_BASE)
@@ -210,10 +286,20 @@ std::string readMetadataJson(const std::string& source) {
       const AVCodecDescriptor* descriptor = avcodec_descriptor_get(stream->codecpar->codec_id);
       metadata.codec = descriptor && descriptor->name ? descriptor->name : "";
       metadata.sampleRate = stream->codecpar->sample_rate;
+      metadata.channelCount = stream->codecpar->ch_layout.nb_channels;
+      char layout[128] = {};
+      if (av_channel_layout_describe(&stream->codecpar->ch_layout, layout, sizeof(layout)) >= 0) {
+        metadata.channelLayout = layout;
+      }
       metadata.bitDepth = stream->codecpar->bits_per_raw_sample > 0
                               ? stream->codecpar->bits_per_raw_sample
                               : stream->codecpar->bits_per_coded_sample;
       if (stream->codecpar->bit_rate > 0) metadata.bitrate = stream->codecpar->bit_rate;
+      const bool dopCarrier = looksDop(metadata.codec, metadata.container, sourceExtension);
+      metadata.isDsd = codecLooksDsd(metadata.codec) || containerLooksDsd(metadata.container, sourceExtension);
+      if (metadata.isDsd && metadata.bitDepth <= 0) metadata.bitDepth = 1;
+      metadata.dsdRate = metadata.isDsd ? inferDsdRate(metadata.sampleRate, dopCarrier) : 0;
+      metadata.dsdMode = metadata.isDsd ? dsdModeToString(DsdMode::Unsupported) : dsdModeToString(DsdMode::Pcm);
     }
     if ((stream->disposition & AV_DISPOSITION_ATTACHED_PIC) != 0 && stream->attached_pic.data &&
         stream->attached_pic.size > 0 && metadata.coverDataBase64.empty()) {

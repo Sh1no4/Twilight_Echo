@@ -44,6 +44,18 @@ bool MockAsioHost::open(const AsioOpenConfig& config, AsioOpenResult* result, st
   lastOpenConfig = config;
   if (failOpenCount > 0) {
     --failOpenCount;
+    if (error) {
+      *error = openFailure == OpenFailure::DriverInit ? "mock driver init failure" : "mock open failure";
+    }
+    return false;
+  }
+  if (failDriverInitCount > 0) {
+    --failDriverInitCount;
+    if (error) *error = "mock driver init failure";
+    return false;
+  }
+  if (failDriverOpenCount > 0) {
+    --failDriverOpenCount;
     if (error) *error = "mock open failure";
     return false;
   }
@@ -137,7 +149,8 @@ AsioDeviceInfo makeMockAsioDevice(
     std::string id,
     std::vector<int> sampleRates,
     int channels,
-    AudioSampleFormat sampleFormat) {
+    AudioSampleFormat sampleFormat,
+    MockAsioHost::DsdProfile dsdProfile) {
   AsioDeviceInfo device;
   device.id = std::move(id);
   device.name = "Mock ASIO";
@@ -145,9 +158,20 @@ AsioDeviceInfo makeMockAsioDevice(
   device.driverVersion = 42;
   device.outputChannels = channels;
   device.supportedSampleRates = std::move(sampleRates);
+  device.dopCapable = dsdProfile.dopCapable;
+  device.nativeDsdCapable = dsdProfile.nativeDsdCapable;
+  device.dopCarrierSampleRates = std::move(dsdProfile.dopCarrierSampleRates);
+  device.dopCarrierSampleFormats = std::move(dsdProfile.dopCarrierSampleFormats);
+  device.nativeDsdSampleRates = std::move(dsdProfile.nativeDsdSampleRates);
   device.defaultSampleRate = device.supportedSampleRates.empty() ? 48000 : device.supportedSampleRates.front();
   device.defaultSampleFormat = sampleFormat;
   device.defaultBitDepth = bitDepthForFormat(sampleFormat);
+  device.sampleFormats = {
+      AudioSampleFormat::Int16Interleaved,
+      AudioSampleFormat::Int24Interleaved,
+      AudioSampleFormat::Int24In32Interleaved,
+      AudioSampleFormat::Int32Interleaved,
+      AudioSampleFormat::Float32Interleaved};
   device.bitDepths = {16, 24, 32};
   device.minBufferSize = 4;
   device.maxBufferSize = 2048;

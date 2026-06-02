@@ -9,12 +9,32 @@ int main() {
   assert(TAE_CreateEngine(&engine) == TAE_RESULT_OK);
   assert(engine != nullptr);
 
+  size_t required = 0;
+  assert(TAE_GetEngineCapabilities(engine, nullptr, 0, &required) == TAE_RESULT_OK);
+  assert(required > 1);
+  std::vector<char> capabilities(required);
+  assert(TAE_GetEngineCapabilities(engine, capabilities.data(), capabilities.size(), &required) == TAE_RESULT_OK);
+  assert(std::strstr(capabilities.data(), "\"pcmPassthrough\":true") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"outputPerfectRequiresPcmPassthrough\":true") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"htmlAudioFallbackDefault\":false") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"backendCapabilities\"") != nullptr);
+
+  assert(TAE_LoadQueue(engine, "{}", 0) == TAE_RESULT_INVALID_ARGUMENT);
+  required = 0;
+  assert(TAE_GetLastError(engine, nullptr, 0, &required) == TAE_RESULT_OK);
+  std::vector<char> lastError(required);
+  assert(TAE_GetLastError(engine, lastError.data(), lastError.size(), &required) == TAE_RESULT_OK);
+  assert(std::strstr(lastError.data(), "\"hasError\":true") != nullptr);
+  assert(std::strstr(lastError.data(), "\"code\":\"TAE_RESULT_INVALID_ARGUMENT\"") != nullptr);
+  assert(std::strstr(lastError.data(), "\"context\":\"queue\"") != nullptr);
+  assert(std::strstr(lastError.data(), "\"recoverable\":false") != nullptr);
+
   assert(TAE_LoadQueue(engine, "[{\"id\":\"1\",\"source\":\"test.flac\"}]", 0) == TAE_RESULT_OK);
   const TAE_Result playResult = TAE_Play(engine, "test.flac", 0.0);
   assert(playResult == TAE_RESULT_OK || playResult == TAE_RESULT_BACKEND_UNAVAILABLE);
   assert(TAE_SetVolume(engine, 1.0) == TAE_RESULT_OK);
 
-  size_t required = 0;
+  required = 0;
   assert(TAE_GetPlaybackInfo(engine, nullptr, 0, &required) == TAE_RESULT_OK);
   assert(required > 1);
   std::vector<char> json(required);
@@ -22,10 +42,22 @@ int main() {
   assert(std::strstr(json.data(), "\"state\":\"playing\"") != nullptr ||
          std::strstr(json.data(), "\"state\":\"stopped\"") != nullptr);
   assert(std::strstr(json.data(), "\"outputInfo\":{") != nullptr);
-  assert(std::strstr(json.data(), "\"resampleReason\"") != nullptr);
+  assert(std::strstr(json.data(), "\"sourceExact\"") != nullptr);
+  assert(std::strstr(json.data(), "\"outputPerfect\"") != nullptr);
+  assert(std::strstr(json.data(), "\"pcmPassthrough\"") != nullptr);
+  assert(std::strstr(json.data(), "\"perfectReason\"") != nullptr);
+  assert(std::strstr(json.data(), "\"decodedSampleRate\"") != nullptr);
+  assert(std::strstr(json.data(), "\"decodedBitDepth\"") != nullptr);
+  assert(std::strstr(json.data(), "\"decodedChannels\"") != nullptr);
+  assert(std::strstr(json.data(), "\"decodedSampleFormat\"") != nullptr);
+  assert(std::strstr(json.data(), "\"isDsd\"") != nullptr);
+  assert(std::strstr(json.data(), "\"dsdMode\"") != nullptr);
+  assert(std::strstr(json.data(), "\"dsdRate\"") != nullptr);
+  assert(std::strstr(json.data(), "\"bitPerfect\"") == nullptr);
+  assert(std::strstr(json.data(), "\"resampleReason\"") == nullptr);
 
   const char* dspConfig =
-      "{\"volumeNormalization\":\"track\",\"replayGainPreamp\":1.5,"
+      "{\"dspEnabled\":true,\"volumeNormalization\":\"track\",\"replayGainPreamp\":1.5,"
       "\"replayGainFallback\":-6,\"replayGainClip\":true,"
       "\"eqEnabled\":true,\"eqMode\":\"parametric\",\"eqPreamp\":-1,"
       "\"eqBands\":[{\"frequency\":1000,\"gain\":3,\"q\":1,"
@@ -40,7 +72,7 @@ int main() {
   assert(std::strstr(json.data(), "\"eqActive\":true") != nullptr);
   assert(std::strstr(json.data(), "\"convolverActive\":false") != nullptr);
   assert(std::strstr(json.data(), "\"crossfeedActive\":false") != nullptr);
-  assert(std::strstr(json.data(), "\"bitPerfect\":false") != nullptr);
+  assert(std::strstr(json.data(), "\"outputPerfect\":false") != nullptr);
 
   assert(TAE_SetCrossfeedStrength(engine, 0.5) == TAE_RESULT_OK);
   assert(TAE_SetReplayGainMode(engine, "album", 0.0, -3.0, 1) == TAE_RESULT_OK);

@@ -33,6 +33,20 @@ std::string normalizeMetadataKey(std::string key) {
   return key;
 }
 
+std::string toLower(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  return value;
+}
+
+std::string extensionOf(const std::string& source) {
+  const size_t slash = source.find_last_of("/\\");
+  const size_t dot = source.find_last_of('.');
+  if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) return "";
+  return toLower(source.substr(dot + 1));
+}
+
 std::optional<double> parseGainDb(const char* rawValue, bool r128) {
   if (!rawValue) return std::nullopt;
   std::string value(rawValue);
@@ -73,6 +87,91 @@ void readReplayGainDictionary(AVDictionary* metadata, ReplayGainInfo* replayGain
       replayGain->r128AlbumGainDb = parseGainDb(entry->value, true);
     }
   }
+}
+
+AudioSampleFormat mapSampleFormat(AVSampleFormat sampleFormat) {
+  const AVSampleFormat packed = av_get_packed_sample_fmt(sampleFormat);
+  switch (packed) {
+    case AV_SAMPLE_FMT_S16:
+      return AudioSampleFormat::Int16Interleaved;
+    case AV_SAMPLE_FMT_S32:
+      return AudioSampleFormat::Int32Interleaved;
+    case AV_SAMPLE_FMT_FLT:
+    case AV_SAMPLE_FMT_DBL:
+      return AudioSampleFormat::Float32Interleaved;
+    default:
+      return AudioSampleFormat::Float32Interleaved;
+  }
+}
+
+AudioSampleFormat sourceSampleFormat(int bitDepth, AVSampleFormat sampleFormat) {
+  if (bitDepth > 0 && bitDepth <= 16) return AudioSampleFormat::Int16Interleaved;
+  if (bitDepth > 16 && bitDepth <= 24) return AudioSampleFormat::Int24Interleaved;
+  return mapSampleFormat(sampleFormat);
+}
+
+int sampleBitDepth(AVSampleFormat sampleFormat) {
+  const AVSampleFormat packed = av_get_packed_sample_fmt(sampleFormat);
+  switch (packed) {
+    case AV_SAMPLE_FMT_U8:
+      return 8;
+    case AV_SAMPLE_FMT_S16:
+      return 16;
+    case AV_SAMPLE_FMT_S32:
+    case AV_SAMPLE_FMT_FLT:
+      return 32;
+    case AV_SAMPLE_FMT_DBL:
+      return 64;
+    default:
+      return av_get_bytes_per_sample(sampleFormat) * 8;
+  }
+}
+
+bool codecLooksLossless(const AVCodecDescriptor* descriptor, const std::string& codecName) {
+  if (descriptor && (descriptor->props & AV_CODEC_PROP_LOSSLESS) != 0) return true;
+  const std::string normalized = toLower(codecName);
+  return normalized == "flac" || normalized == "alac" || normalized == "wavpack" || normalized == "ape" ||
+         normalized == "tta" || normalized == "pcm_s16le" || normalized == "pcm_s24le" ||
+         normalized == "pcm_s32le" || normalized == "pcm_f32le" || normalized.rfind("pcm_", 0) == 0;
+}
+
+bool textMentions(const std::string& haystack, const std::string& needle) {
+  return toLower(haystack).find(needle) != std::string::npos;
+}
+
+bool codecLooksDsd(AVCodecID codecId, const std::string& codecName, const std::string& containerName, const std::string& extension) {
+  switch (codecId) {
+    case AV_CODEC_ID_DSD_LSBF:
+    case AV_CODEC_ID_DSD_MSBF:
+    case AV_CODEC_ID_DSD_LSBF_PLANAR:
+    case AV_CODEC_ID_DSD_MSBF_PLANAR:
+      return true;
+    default:
+      break;
+  }
+  const std::string normalizedCodec = toLower(codecName);
+  return normalizedCodec.rfind("dsd", 0) == 0 || normalizedCodec == "dsf" || normalizedCodec == "dff" ||
+         normalizedCodec == "dst" || normalizedCodec == "dop" || normalizedCodec.find("dop") != std::string::npos ||
+         extension == "dsf" || extension == "dff" || extension == "dop" ||
+         textMentions(containerName, "dsd") || textMentions(containerName, "dsf") ||
+         textMentions(containerName, "dff") || textMentions(containerName, "dsdiff") ||
+         textMentions(containerName, "dop");
+}
+
+bool sourceLooksSacdIso(const std::string& source) {
+  return extensionOf(source) == "iso";
+}
+
+int inferDsdRate(int sampleRate, bool dopCarrier = false) {
+  if (dopCarrier) {
+    if (sampleRate >= 650000) return 256;
+    if (sampleRate >= 320000) return 128;
+    if (sampleRate >= 160000) return 64;
+  }
+  if (sampleRate >= 10000000) return 256;
+  if (sampleRate >= 5000000) return 128;
+  if (sampleRate >= 2500000) return 64;
+  return 0;
 }
 
 }  // namespace
@@ -235,6 +334,11 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
   close();
 
 #if defined(TAE_HAS_FFMPEG)
+  if (sourceLooksSacdIso(source)) {
+    if (error) *error = "SACD ISO 暂不支持解析和播放";
+    return false;
+  }
+
   int ret = avformat_open_input(&impl_->formatContext, source.c_str(), nullptr, nullptr);
   if (ret < 0) {
     if (error) *error = "打开音频失败，错误码：" + std::to_string(ret);
@@ -287,19 +391,38 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
     return false;
   }
 
-  const int channels = std::max(1, impl_->codecContext->ch_layout.nb_channels);
-  const int rawBitDepth = params->bits_per_raw_sample > 0 ? params->bits_per_raw_sample : 0;
-  const int sampleBitDepth = av_get_bytes_per_sample(impl_->codecContext->sample_fmt) * 8;
+  const int parameterChannels = params->ch_layout.nb_channels;
+  const int decodedChannels = impl_->codecContext->ch_layout.nb_channels;
+  const int channels = std::max(1, parameterChannels > 0 ? parameterChannels : decodedChannels);
+  const int rawBitDepth = params->bits_per_raw_sample > 0
+                              ? params->bits_per_raw_sample
+                              : (params->bits_per_coded_sample > 0 ? params->bits_per_coded_sample : 0);
+  const int decodedBitDepth = sampleBitDepth(impl_->codecContext->sample_fmt);
+  const AVCodecDescriptor* descriptor = avcodec_descriptor_get(params->codec_id);
+  const std::string codecName = codec->name ? codec->name : "未知";
+  const std::string containerName =
+      impl_->formatContext->iformat
+          ? (impl_->formatContext->iformat->long_name ? impl_->formatContext->iformat->long_name
+                                                      : (impl_->formatContext->iformat->name ? impl_->formatContext->iformat->name : ""))
+          : "";
+  const bool sourceDsd = codecLooksDsd(params->codec_id, codecName, containerName, extensionOf(source));
+  const bool dopCarrier = sourceDsd && (textMentions(codecName, "dop") || textMentions(containerName, "dop"));
+  const int sourceSampleRate = params->sample_rate > 0 ? params->sample_rate : impl_->codecContext->sample_rate;
 
   impl_->streamInfo.source = source;
-  impl_->streamInfo.codec = codec->name ? codec->name : "未知";
+  impl_->streamInfo.codec = codecName;
   impl_->streamInfo.bitrate =
       params->bit_rate > 0 ? params->bit_rate : impl_->formatContext->bit_rate;
-  impl_->streamInfo.sourceFormat.sampleRate = impl_->codecContext->sample_rate;
+  impl_->streamInfo.sourceFormat.sampleRate = sourceSampleRate;
   impl_->streamInfo.sourceFormat.channelCount = channels;
-  impl_->streamInfo.sourceFormat.bitDepth = rawBitDepth > 0 ? rawBitDepth : sampleBitDepth;
-  impl_->streamInfo.sourceFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
-  impl_->streamInfo.isDsd = impl_->streamInfo.codec.rfind("dsd", 0) == 0;
+  impl_->streamInfo.sourceFormat.bitDepth = sourceDsd ? 1 : (rawBitDepth > 0 ? rawBitDepth : decodedBitDepth);
+  impl_->streamInfo.sourceFormat.sampleFormat =
+      sourceDsd ? AudioSampleFormat::Float32Interleaved : sourceSampleFormat(rawBitDepth, impl_->codecContext->sample_fmt);
+  impl_->streamInfo.decodedFormat = impl_->streamInfo.sourceFormat;
+  impl_->streamInfo.sourceLossless = sourceDsd || codecLooksLossless(descriptor, codecName);
+  impl_->streamInfo.isDsd = sourceDsd;
+  impl_->streamInfo.dsdMode = sourceDsd ? DsdMode::Pcm : DsdMode::Pcm;
+  impl_->streamInfo.dsdRate = sourceDsd ? inferDsdRate(sourceSampleRate, dopCarrier) : 0;
   readReplayGainDictionary(impl_->formatContext->metadata, &impl_->streamInfo.replayGain);
   readReplayGainDictionary(stream->metadata, &impl_->streamInfo.replayGain);
 
@@ -311,7 +434,11 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
   }
 
   AudioFormat defaultOutput = impl_->streamInfo.sourceFormat;
+  if (sourceDsd && impl_->codecContext->sample_rate > 0) {
+    defaultOutput.sampleRate = impl_->codecContext->sample_rate;
+  }
   defaultOutput.bitDepth = 32;
+  defaultOutput.sampleFormat = AudioSampleFormat::Float32Interleaved;
   return setOutputFormat(defaultOutput, error);
 #else
   (void)source;
@@ -365,6 +492,7 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
   impl_->outputFormat = format;
   impl_->outputFormat.bitDepth = 32;
   impl_->outputFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
+  impl_->streamInfo.decodedFormat = impl_->outputFormat;
   impl_->resetPending();
   return true;
 #else

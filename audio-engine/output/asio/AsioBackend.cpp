@@ -9,6 +9,7 @@
 #include <limits>
 #include <set>
 #include <thread>
+#include <tuple>
 
 namespace twilight::audio {
 namespace {
@@ -17,18 +18,6 @@ int normalizeBitDepth(int bitDepth) {
   if (bitDepth <= 16) return 16;
   if (bitDepth <= 24) return 24;
   return 32;
-}
-
-AudioSampleFormat formatForBitDepth(int bitDepth) {
-  switch (normalizeBitDepth(bitDepth)) {
-    case 16:
-      return AudioSampleFormat::Int16Interleaved;
-    case 24:
-      return AudioSampleFormat::Int24Interleaved;
-    case 32:
-    default:
-      return AudioSampleFormat::Float32Interleaved;
-  }
 }
 
 int bitDepthForFormat(AudioSampleFormat format) {
@@ -110,7 +99,56 @@ size_t bytesPerSample(AudioSampleFormat format) {
 
 bool sameFormat(const AudioFormat& a, const AudioFormat& b) {
   return a.sampleRate == b.sampleRate && a.channelCount == b.channelCount &&
-         normalizeBitDepth(a.bitDepth) == normalizeBitDepth(b.bitDepth);
+         normalizeBitDepth(a.bitDepth) == normalizeBitDepth(b.bitDepth) &&
+         a.sampleFormat == b.sampleFormat;
+}
+
+bool containsFormat(const std::vector<AudioSampleFormat>& formats, AudioSampleFormat format) {
+  return std::find(formats.begin(), formats.end(), format) != formats.end();
+}
+
+void appendUniqueSampleRates(std::vector<int>* sampleRates, const std::vector<int>& extraSampleRates) {
+  if (!sampleRates) return;
+  for (int sampleRate : extraSampleRates) {
+    if (sampleRate > 0 && std::find(sampleRates->begin(), sampleRates->end(), sampleRate) == sampleRates->end()) {
+      sampleRates->push_back(sampleRate);
+    }
+  }
+}
+
+void appendUniqueSampleFormats(std::vector<AudioSampleFormat>* formats, const std::vector<AudioSampleFormat>& extraFormats) {
+  if (!formats) return;
+  for (AudioSampleFormat format : extraFormats) {
+    if (!containsFormat(*formats, format)) formats->push_back(format);
+  }
+}
+
+std::vector<std::string> sampleFormatNames(const std::vector<AudioSampleFormat>& formats) {
+  std::vector<std::string> names;
+  names.reserve(formats.size());
+  for (AudioSampleFormat format : formats) {
+    names.push_back(sampleFormatToString(format));
+  }
+  return names;
+}
+
+std::string hostEventPrefix(AsioHostEvent event) {
+  switch (event) {
+    case AsioHostEvent::DriverReset:
+      return "ASIO driver reset";
+    case AsioHostEvent::DriverRestart:
+      return "ASIO driver restart";
+    case AsioHostEvent::DeviceLost:
+      return "ASIO device lost";
+    case AsioHostEvent::BufferFailure:
+    default:
+      return "ASIO buffer failure";
+  }
+}
+
+std::string hostEventReason(AsioHostEvent event, const std::string& message) {
+  const auto prefix = hostEventPrefix(event);
+  return message.empty() ? prefix : prefix + ": " + message;
 }
 
 bool explicitBufferSizeAllowed(uint32_t size) {
@@ -167,6 +205,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   if (devices.empty()) {
     if (error) *error = "未找到可用 ASIO 驱动";
     diagnostics_.lastError = error ? *error : "未找到可用 ASIO 驱动";
+    outputInfo_.perfectReason = diagnostics_.lastError;
     return false;
   }
 
@@ -177,6 +216,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   if (deviceIt == devices.end()) {
     if (error) *error = "无法找到请求的 ASIO 设备：" + deviceId;
     diagnostics_.lastError = error ? *error : "无法找到请求的 ASIO 设备";
+    outputInfo_.perfectReason = diagnostics_.lastError;
     return false;
   }
 
@@ -184,6 +224,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   if (!chooseFormat(*deviceIt, requestedFormat, &selected)) {
     if (error) *error = "ASIO 设备没有可协商的输出格式";
     diagnostics_.lastError = error ? *error : "ASIO 设备没有可协商的输出格式";
+    outputInfo_.perfectReason = diagnostics_.lastError;
     return false;
   }
 
@@ -196,6 +237,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   AsioOpenResult result;
   if (!host_->open(openConfig_, &result, error)) {
     if (error) diagnostics_.lastError = *error;
+    outputInfo_.perfectReason = diagnostics_.lastError;
     return false;
   }
 
@@ -211,10 +253,12 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
 
   outputInfo_ = {};
   outputInfo_.exclusive = true;
-  outputInfo_.supportsBitPerfect = true;
-  outputInfo_.bitPerfect = false;
+  outputInfo_.supportsOutputPerfect = true;
+  outputInfo_.sourceExact = false;
+  outputInfo_.outputPerfect = false;
+  outputInfo_.pcmPassthrough = false;
   outputInfo_.resampled = !sameFormat(requestedFormat, outputFormat_);
-  outputInfo_.resampleReason = outputInfo_.resampled ? "ASIO 输出格式已协商为驱动支持格式" : "";
+  outputInfo_.perfectReason = outputInfo_.resampled ? "ASIO 输出格式已协商为驱动支持格式" : "";
   outputInfo_.outputSampleRate = outputFormat_.sampleRate;
   outputInfo_.outputBitDepth = outputFormat_.bitDepth;
   outputInfo_.backend = "asio";
@@ -225,10 +269,15 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   outputInfo_.actualDriverName = driverName_;
   outputInfo_.driverVersion = driverVersion_;
   outputInfo_.actualDriverVersion = driverVersion_;
-  outputInfo_.actualOutputFormat = asioSampleFormatName(outputFormat_.sampleFormat);
+  outputInfo_.actualOutputFormat = sampleFormatToString(outputFormat_.sampleFormat);
   outputInfo_.actualSampleRate = outputFormat_.sampleRate;
   outputInfo_.actualBitDepth = outputFormat_.bitDepth;
   outputInfo_.actualChannels = selected.channelCount;
+  outputInfo_.driverDopCapable = deviceInfo_.dopCapable;
+  outputInfo_.driverNativeDsdCapable = deviceInfo_.nativeDsdCapable;
+  outputInfo_.driverDopCarrierSampleRates = deviceInfo_.dopCarrierSampleRates;
+  outputInfo_.driverDopCarrierFormats = sampleFormatNames(deviceInfo_.dopCarrierSampleFormats);
+  outputInfo_.driverNativeDsdSampleRates = deviceInfo_.nativeDsdSampleRates;
   outputInfo_.bufferSizeFrames = static_cast<int>(bufferSizeFrames_);
   outputInfo_.latencyFrames = static_cast<int>(latencyFrames_);
   outputInfo_.latencyMs = outputFormat_.sampleRate > 0
@@ -309,35 +358,49 @@ bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& 
   if (!selected || requestedFormat.sampleRate <= 0 || requestedFormat.channelCount <= 0) return false;
 
   std::vector<int> sampleRates = device.supportedSampleRates;
+  if (device.dopCapable) appendUniqueSampleRates(&sampleRates, device.dopCarrierSampleRates);
   if (sampleRates.empty() && device.defaultSampleRate > 0) sampleRates.push_back(device.defaultSampleRate);
   if (sampleRates.empty()) sampleRates = asioDefaultSampleRateProbeSet();
 
-  std::vector<int> bitDepths = {16, 24, 32};
-  if (device.defaultBitDepth > 0 && std::find(bitDepths.begin(), bitDepths.end(), normalizeBitDepth(device.defaultBitDepth)) == bitDepths.end()) {
-    bitDepths.push_back(normalizeBitDepth(device.defaultBitDepth));
+  std::vector<AudioSampleFormat> sampleFormats = device.sampleFormats;
+  if (device.dopCapable) appendUniqueSampleFormats(&sampleFormats, device.dopCarrierSampleFormats);
+  if (sampleFormats.empty()) sampleFormats.push_back(device.defaultSampleFormat);
+  if (!containsFormat(sampleFormats, device.defaultSampleFormat)) sampleFormats.push_back(device.defaultSampleFormat);
+  if (device.bitDepths.empty()) {
+    if (!containsFormat(sampleFormats, AudioSampleFormat::Int16Interleaved)) {
+      sampleFormats.push_back(AudioSampleFormat::Int16Interleaved);
+    }
+    if (!containsFormat(sampleFormats, AudioSampleFormat::Int24Interleaved)) {
+      sampleFormats.push_back(AudioSampleFormat::Int24Interleaved);
+    }
+    if (!containsFormat(sampleFormats, AudioSampleFormat::Float32Interleaved)) {
+      sampleFormats.push_back(AudioSampleFormat::Float32Interleaved);
+    }
   }
 
   std::vector<FormatCandidate> candidates;
-  std::set<std::pair<int, int>> seen;
+  std::set<std::tuple<int, int, AudioSampleFormat>> seen;
   for (int sampleRate : sampleRates) {
     if (sampleRate <= 0) continue;
-    for (int bitDepth : bitDepths) {
-      const int normalized = normalizeBitDepth(bitDepth);
-      if (!seen.insert({sampleRate, normalized}).second) continue;
+    for (AudioSampleFormat sampleFormat : sampleFormats) {
+      const int normalized = bitDepthForFormat(sampleFormat);
+      if (!device.bitDepths.empty()) {
+        const bool supportedDepth = std::find_if(device.bitDepths.begin(), device.bitDepths.end(), [&](int depth) {
+                                      return normalizeBitDepth(depth) == normalized;
+                                    }) != device.bitDepths.end();
+        if (!supportedDepth) continue;
+      }
+      if (!seen.insert({sampleRate, normalized, sampleFormat}).second) continue;
       FormatCandidate candidate;
       candidate.format.sampleRate = sampleRate;
       candidate.format.channelCount = requestedFormat.channelCount;
       candidate.format.bitDepth = normalized;
-      candidate.format.sampleFormat = normalized == normalizeBitDepth(device.defaultBitDepth)
-                                          ? device.defaultSampleFormat
-                                          : formatForBitDepth(normalized);
-      if (bitDepthForFormat(candidate.format.sampleFormat) != normalized) {
-        candidate.format.sampleFormat = formatForBitDepth(normalized);
-      }
+      candidate.format.sampleFormat = sampleFormat;
       candidate.sampleRateError = std::abs(sampleRate - requestedFormat.sampleRate);
       candidate.bitDepthError = std::abs(normalized - normalizeBitDepth(requestedFormat.bitDepth));
       candidate.exact = candidate.sampleRateError == 0 && candidate.bitDepthError == 0 &&
-                        candidate.format.channelCount == requestedFormat.channelCount;
+                        candidate.format.channelCount == requestedFormat.channelCount &&
+                        candidate.format.sampleFormat == requestedFormat.sampleFormat;
       candidate.isDefault = sampleRate == device.defaultSampleRate && normalized == normalizeBitDepth(device.defaultBitDepth);
       candidates.push_back(candidate);
     }
@@ -349,6 +412,10 @@ bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& 
     if (left.sampleRateError != right.sampleRateError) return left.sampleRateError < right.sampleRateError;
     if (left.format.sampleRate != right.format.sampleRate) return left.format.sampleRate > right.format.sampleRate;
     if (left.bitDepthError != right.bitDepthError) return left.bitDepthError < right.bitDepthError;
+    if ((left.format.sampleFormat == AudioSampleFormat::Float32Interleaved) !=
+        (right.format.sampleFormat == AudioSampleFormat::Float32Interleaved)) {
+      return left.format.sampleFormat == AudioSampleFormat::Float32Interleaved;
+    }
     if (left.isDefault != right.isDefault) return left.isDefault;
     return left.format.bitDepth > right.format.bitDepth;
   });
@@ -421,14 +488,29 @@ bool AsioBackend::createAndStartHost(std::string* error) {
     ++diagnostics_.sessionBufferDropCount;
     ++diagnostics_.lifetimeBufferDropCount;
     if (error) diagnostics_.lastError = *error;
+    if (error) outputInfo_.perfectReason = "ASIO buffer creation failed: " + *error;
     outputInfo_.diagnostics = diagnostics_;
     return false;
+  }
+  {
+    std::lock_guard lock(mutex_);
+    const AudioSampleFormat actualSampleFormat = host_->outputSampleFormat(0);
+    outputFormat_.sampleFormat = actualSampleFormat;
+    outputFormat_.bitDepth = bitDepthForFormat(actualSampleFormat);
+    outputInfo_.actualOutputFormat = sampleFormatToString(actualSampleFormat);
+    outputInfo_.actualBitDepth = outputFormat_.bitDepth;
+    outputInfo_.outputBitDepth = outputFormat_.bitDepth;
+    outputInfo_.resampled = !sameFormat(openConfig_.format, outputFormat_);
+    if (outputInfo_.resampled && outputInfo_.perfectReason.empty()) {
+      outputInfo_.perfectReason = "ASIO actual output format differs from negotiated format";
+    }
   }
   running_ = true;
   if (!host_->start(error)) {
     running_ = false;
     std::lock_guard lock(mutex_);
     if (error) diagnostics_.lastError = *error;
+    if (error) outputInfo_.perfectReason = "ASIO start failed: " + *error;
     outputInfo_.diagnostics = diagnostics_;
     return false;
   }
@@ -494,13 +576,14 @@ bool AsioBackend::recover(AsioHostEvent event, const std::string& message) {
   const auto now = std::chrono::steady_clock::now();
   {
     std::lock_guard lock(mutex_);
-    diagnostics_.lastError = message;
+    diagnostics_.lastError = hostEventReason(event, message);
     if (event == AsioHostEvent::DriverRestart) ++diagnostics_.driverRestartCount;
     if (event == AsioHostEvent::DeviceLost) ++diagnostics_.deviceLostCount;
     if (event == AsioHostEvent::BufferFailure) {
       ++diagnostics_.sessionUnderrunCount;
       ++diagnostics_.lifetimeUnderrunCount;
     }
+    outputInfo_.perfectReason = diagnostics_.lastError;
     outputInfo_.diagnostics = diagnostics_;
   }
   if (event == AsioHostEvent::DriverReset || event == AsioHostEvent::DriverRestart || event == AsioHostEvent::DeviceLost) {

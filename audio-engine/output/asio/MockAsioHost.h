@@ -11,8 +11,21 @@ namespace twilight::audio {
 
 class MockAsioHost final : public IAsioHost {
  public:
+  struct DsdProfile {
+    bool dopCapable = false;
+    bool nativeDsdCapable = false;
+    std::vector<int> dopCarrierSampleRates;
+    std::vector<AudioSampleFormat> dopCarrierSampleFormats;
+    std::vector<int> nativeDsdSampleRates;
+  };
+
   struct ChannelBuffer {
     std::array<std::vector<uint8_t>, 2> buffers;
+  };
+
+  enum class OpenFailure {
+    DriverInit,
+    DriverOpen
   };
 
   std::vector<AsioDeviceInfo> devices;
@@ -27,8 +40,11 @@ class MockAsioHost final : public IAsioHost {
   int createBuffersCalls = 0;
   int outputReadyCalls = 0;
   int failOpenCount = 0;
+  int failDriverInitCount = 0;
+  int failDriverOpenCount = 0;
   int failCreateBuffersCount = 0;
   int failStartCount = 0;
+  OpenFailure openFailure = OpenFailure::DriverOpen;
   bool started = false;
 
   std::vector<AsioDeviceInfo> enumerateDevices() override;
@@ -54,6 +70,7 @@ AsioDeviceInfo makeMockAsioDevice(
     std::string id,
     std::vector<int> sampleRates,
     int channels = 2,
-    AudioSampleFormat sampleFormat = AudioSampleFormat::Float32Interleaved);
+    AudioSampleFormat sampleFormat = AudioSampleFormat::Float32Interleaved,
+    MockAsioHost::DsdProfile dsdProfile = {});
 
 }  // namespace twilight::audio

@@ -22,6 +22,26 @@
 #endif
 
 namespace twilight::audio {
+namespace {
+
+bool looksLikeDsdOrDopRequest(const AudioFormat& format) {
+  const bool dsdRate = format.sampleRate == 2822400 || format.sampleRate == 5644800;
+  const bool dopCarrierRate = format.sampleRate == 176400 || format.sampleRate == 352800;
+  const bool dopCarrierFormat =
+      format.bitDepth == 24 &&
+      (format.sampleFormat == AudioSampleFormat::Int24Interleaved ||
+       format.sampleFormat == AudioSampleFormat::Int24In32Interleaved);
+  return dsdRate || (dopCarrierRate && dopCarrierFormat);
+}
+
+std::string sharedPerfectReason(const AudioFormat& requestedFormat) {
+  if (looksLikeDsdOrDopRequest(requestedFormat)) {
+    return "WASAPI 共享输出经过系统混音；DSD/DoP carrier 不能在 Shared mixer 中保持 outputPerfect";
+  }
+  return "WASAPI 共享输出经过系统混音";
+}
+
+}  // namespace
 
 struct WasapiSharedBackend::Impl {
   AudioFormat outputFormat;
@@ -314,19 +334,21 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   impl_->outputFormat.bitDepth = 32;
   impl_->outputFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
   impl_->outputInfo.exclusive = false;
-  impl_->outputInfo.supportsBitPerfect = false;
-  impl_->outputInfo.bitPerfect = false;
+  impl_->outputInfo.supportsOutputPerfect = false;
+  impl_->outputInfo.sourceExact = false;
+  impl_->outputInfo.outputPerfect = false;
+  impl_->outputInfo.pcmPassthrough = false;
   impl_->outputInfo.resampled = requestedFormat.sampleRate != impl_->outputFormat.sampleRate ||
                                 requestedFormat.channelCount != impl_->outputFormat.channelCount ||
                                 requestedFormat.bitDepth != impl_->outputFormat.bitDepth;
-  impl_->outputInfo.resampleReason = "WASAPI 共享输出经过系统混音";
+  impl_->outputInfo.perfectReason = sharedPerfectReason(requestedFormat);
   impl_->outputInfo.outputSampleRate = impl_->outputFormat.sampleRate;
   impl_->outputInfo.outputBitDepth = impl_->outputFormat.bitDepth;
   impl_->outputInfo.backend = "wasapi";
   impl_->outputInfo.actualBackend = "wasapi";
   impl_->outputInfo.deviceName = impl_->deviceName;
   impl_->outputInfo.actualDeviceName = impl_->deviceName;
-  impl_->outputInfo.actualOutputFormat = "float32";
+  impl_->outputInfo.actualOutputFormat = sampleFormatToString(impl_->outputFormat.sampleFormat);
   impl_->outputInfo.actualSampleRate = impl_->outputFormat.sampleRate;
   impl_->outputInfo.actualBitDepth = impl_->outputFormat.bitDepth;
   impl_->outputInfo.actualChannels = impl_->outputFormat.channelCount;

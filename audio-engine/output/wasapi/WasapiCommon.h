@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <vector>
@@ -213,6 +214,8 @@ inline void packFloatToPcm(
       break;
     }
     case AudioSampleFormat::Float32Interleaved:
+      std::memcpy(output, input, sampleCount * sizeof(float));
+      break;
     default:
       std::fill(output, output + sampleCount * sizeof(float), 0);
       break;

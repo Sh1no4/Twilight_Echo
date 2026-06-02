@@ -28,6 +28,22 @@ const char* stateToString(PlaybackState state) {
   }
 }
 
+const char* resultToString(TAE_Result result) {
+  switch (result) {
+    case TAE_RESULT_OK:
+      return "TAE_RESULT_OK";
+    case TAE_RESULT_INVALID_ARGUMENT:
+      return "TAE_RESULT_INVALID_ARGUMENT";
+    case TAE_RESULT_NOT_INITIALIZED:
+      return "TAE_RESULT_NOT_INITIALIZED";
+    case TAE_RESULT_BACKEND_UNAVAILABLE:
+      return "TAE_RESULT_BACKEND_UNAVAILABLE";
+    case TAE_RESULT_INTERNAL_ERROR:
+    default:
+      return "TAE_RESULT_INTERNAL_ERROR";
+  }
+}
+
 std::string escapeJson(const std::string& value) {
   std::string out;
   out.reserve(value.size() + 8);
@@ -105,8 +121,14 @@ void normalizeOutputInfoMirror(PlaybackInfo& info) {
   info.recoveryCount = out.recoveryCount;
   info.outputSampleRate = out.outputSampleRate;
   info.outputBitDepth = out.outputBitDepth;
-  info.bitPerfect = out.bitPerfect;
-  info.resampleReason = out.resampleReason;
+  info.supportsOutputPerfect = out.supportsOutputPerfect;
+  info.sourceExact = out.sourceExact;
+  info.outputPerfect = out.outputPerfect;
+  info.pcmPassthrough = out.pcmPassthrough;
+  info.perfectReason = out.perfectReason;
+  info.isDsd = out.isDsd;
+  info.dsdMode = out.dsdMode.empty() ? (out.isDsd ? dsdModeToString(DsdMode::Unsupported) : dsdModeToString(DsdMode::Pcm)) : out.dsdMode;
+  info.dsdRate = out.isDsd ? out.dsdRate : 0;
 }
 
 std::string inferCodec(const std::string& source) {
@@ -120,6 +142,29 @@ std::string inferCodec(const std::string& source) {
   if (ext == "aif" || ext == "aiff") return "aiff";
   if (ext == "dsf" || ext == "dff") return "dsd";
   return ext;
+}
+
+bool codecLooksLossless(const std::string& codec) {
+  return codec == "flac" || codec == "wav" || codec == "alac" || codec == "aiff" || codec == "aif" ||
+         codec == "ape" || codec == "wv" || codec == "tta" || codec == "pcm";
+}
+
+AudioSampleFormat sampleFormatFromText(const std::string& format, int bitDepth) {
+  if (format == "int16") return AudioSampleFormat::Int16Interleaved;
+  if (format == "int24") return AudioSampleFormat::Int24Interleaved;
+  if (format == "int24-in32") return AudioSampleFormat::Int24In32Interleaved;
+  if (format == "int32") return AudioSampleFormat::Int32Interleaved;
+  if (format == "float32") return AudioSampleFormat::Float32Interleaved;
+  if (bitDepth <= 16) return AudioSampleFormat::Int16Interleaved;
+  if (bitDepth <= 24) return AudioSampleFormat::Int24Interleaved;
+  return AudioSampleFormat::Float32Interleaved;
+}
+
+DsdMode parseDsdMode(const std::string& mode) {
+  if (mode == "dop") return DsdMode::Dop;
+  if (mode == "native") return DsdMode::Native;
+  if (mode == "unsupported") return DsdMode::Unsupported;
+  return DsdMode::Pcm;
 }
 
 std::string playbackInfoToJson(const PlaybackInfo& info) {
@@ -137,13 +182,22 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"bitrate\":" << info.bitrate << ","
        << "\"sourceSampleRate\":" << info.sourceSampleRate << ","
        << "\"sourceBitDepth\":" << info.sourceBitDepth << ","
+       << "\"decodedSampleRate\":" << info.decodedSampleRate << ","
+       << "\"decodedBitDepth\":" << info.decodedBitDepth << ","
+       << "\"decodedChannels\":" << info.decodedChannels << ","
+       << "\"decodedSampleFormat\":\"" << escapeJson(info.decodedSampleFormat) << "\","
        << "\"outputBackend\":\"" << escapeJson(info.outputBackend) << "\","
        << "\"outputDevice\":\"" << escapeJson(info.outputDevice) << "\","
        << "\"outputInfo\":{"
        << "\"exclusive\":" << (out.exclusive ? "true" : "false") << ","
-       << "\"supportsBitPerfect\":" << (out.supportsBitPerfect ? "true" : "false") << ","
-       << "\"bitPerfect\":" << (out.bitPerfect ? "true" : "false") << ","
+       << "\"supportsOutputPerfect\":" << (out.supportsOutputPerfect ? "true" : "false") << ","
+       << "\"sourceExact\":" << (out.sourceExact ? "true" : "false") << ","
+       << "\"outputPerfect\":" << (out.outputPerfect ? "true" : "false") << ","
+       << "\"pcmPassthrough\":" << (out.pcmPassthrough ? "true" : "false") << ","
        << "\"resampled\":" << (out.resampled ? "true" : "false") << ","
+       << "\"isDsd\":" << (out.isDsd ? "true" : "false") << ","
+       << "\"dsdMode\":\"" << escapeJson(out.dsdMode) << "\","
+       << "\"dsdRate\":" << out.dsdRate << ","
        << "\"outputSampleRate\":" << out.outputSampleRate << ","
        << "\"outputBitDepth\":" << out.outputBitDepth << ","
        << "\"backend\":\"" << escapeJson(out.backend) << "\","
@@ -165,7 +219,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
   writeLatencyInfoJson(json, out.latencyInfo);
   json << ","
        << "\"channelRoutingMode\":\"" << escapeJson(out.channelRoutingMode) << "\","
-       << "\"resampleReason\":\"" << escapeJson(out.resampleReason) << "\","
+       << "\"perfectReason\":\"" << escapeJson(out.perfectReason) << "\","
        << "\"diagnostics\":";
   writeDiagnosticsJson(json, out.diagnostics);
   json << ","
@@ -186,7 +240,6 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
   writeLatencyInfoJson(json, out.latencyInfo);
   json << ","
        << "\"channelRoutingMode\":\"" << escapeJson(out.channelRoutingMode) << "\","
-       << "\"supportsBitPerfect\":" << (out.supportsBitPerfect ? "true" : "false") << ","
        << "\"diagnostics\":";
   writeDiagnosticsJson(json, out.diagnostics);
   json << ","
@@ -195,21 +248,28 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"outputSampleRate\":" << out.outputSampleRate << ","
        << "\"outputBitDepth\":" << out.outputBitDepth << ","
        << "\"channelCount\":" << info.channelCount << ","
-       << "\"bitPerfect\":" << (out.bitPerfect ? "true" : "false") << ","
+       << "\"supportsOutputPerfect\":" << (out.supportsOutputPerfect ? "true" : "false") << ","
+       << "\"sourceExact\":" << (out.sourceExact ? "true" : "false") << ","
+       << "\"outputPerfect\":" << (out.outputPerfect ? "true" : "false") << ","
+       << "\"pcmPassthrough\":" << (out.pcmPassthrough ? "true" : "false") << ","
        << "\"dspActive\":" << (info.dspActive ? "true" : "false") << ","
        << "\"replayGainActive\":" << (info.replayGainActive ? "true" : "false") << ","
        << "\"eqActive\":" << (info.eqActive ? "true" : "false") << ","
        << "\"convolverActive\":" << (info.convolverActive ? "true" : "false") << ","
        << "\"crossfeedActive\":" << (info.crossfeedActive ? "true" : "false") << ","
+       << "\"crossfadeActive\":" << (info.crossfadeActive ? "true" : "false") << ","
        << "\"fftActive\":" << (info.fftActive ? "true" : "false") << ","
        << "\"irResampled\":" << (info.irResampled ? "true" : "false") << ","
        << "\"replayGainDb\":" << info.replayGainDb << ","
        << "\"crossfeedStrength\":" << info.crossfeedStrength << ","
+       << "\"crossfadeSeconds\":" << info.crossfadeSeconds << ","
        << "\"convolverLatencyFrames\":" << info.convolverLatencyFrames << ","
        << "\"partitionSize\":" << info.partitionSize << ","
        << "\"channelMappingMode\":\"" << escapeJson(info.channelMappingMode) << "\","
-       << "\"resampleReason\":\"" << escapeJson(info.resampleReason) << "\","
+       << "\"perfectReason\":\"" << escapeJson(info.perfectReason) << "\","
+       << "\"isDsd\":" << (info.isDsd ? "true" : "false") << ","
        << "\"dsdMode\":\"" << escapeJson(info.dsdMode) << "\","
+       << "\"dsdRate\":" << info.dsdRate << ","
        << "\"gaplessActive\":" << (info.gaplessActive ? "true" : "false") << ","
        << "\"preloadReady\":" << (info.preloadReady ? "true" : "false") << ","
        << "\"upcomingTrack\":"
@@ -220,12 +280,17 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
 
 DspStatus configuredDspStatusFromConfig(const DspConfig& config) {
   DspStatus status;
-  if (!config.enabled) return status;
-  status.replayGainActive = config.replayGainMode != ReplayGainMode::Off;
-  status.eqActive = config.eqEnabled;
-  status.crossfeedActive = config.crossfeedEnabled && config.crossfeedStrength > 0.0001;
+  status.crossfadeActive = config.crossfadeSeconds > 0.0001;
+  status.crossfadeSeconds = status.crossfadeActive ? config.crossfadeSeconds : 0.0;
+  if (config.enabled) {
+    status.replayGainActive = config.replayGainMode != ReplayGainMode::Off;
+    status.eqActive = config.eqEnabled;
+    status.crossfeedActive = config.crossfeedEnabled && config.crossfeedStrength > 0.0001;
+  }
   status.crossfeedStrength = status.crossfeedActive ? config.crossfeedStrength : 0.0;
-  status.dspActive = status.replayGainActive || status.eqActive || status.convolverActive || status.crossfeedActive;
+  status.dspActive =
+      status.replayGainActive || status.eqActive || status.convolverActive || status.crossfeedActive ||
+      status.crossfadeActive;
   return status;
 }
 
@@ -265,12 +330,8 @@ DspStatus configuredDspStatus(const std::string& dspJson) {
 }
 
 bool gaplessEnabledFromConfig(const std::string& dspJson) {
-  if (dspJson.find("\"gapless\":false") != std::string::npos) return false;
-  const std::string key = "\"crossfadeSeconds\":";
-  const size_t pos = dspJson.find(key);
-  if (pos == std::string::npos) return true;
-  const size_t valueStart = pos + key.size();
-  return dspJson.compare(valueStart, 1, "0") == 0;
+  const DspConfig config = DspChain::parseConfigJson(dspJson);
+  return config.gapless && config.crossfadeSeconds <= 0.0001;
 }
 
 uint32_t parseUintField(const std::string& json, const std::string& key, uint32_t fallback) {
@@ -333,8 +394,8 @@ TwilightAudioEngine::TwilightAudioEngine() {
   info_.outputInfo.backend = info_.outputBackend;
   info_.outputInfo.actualBackend = info_.outputBackend;
   info_.outputInfo.exclusive = false;
-  info_.outputInfo.supportsBitPerfect = false;
-  updateBitPerfectLocked();
+  info_.outputInfo.supportsOutputPerfect = false;
+  updatePerfectLocked();
   lastTick_ = std::chrono::steady_clock::now();
   startClock();
 }
@@ -376,7 +437,12 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
     info_.durationSeconds = item.durationSeconds;
     info_.codec = inferCodec(item.source);
     info_.state = PlaybackState::Playing;
-    info_.dsdMode = info_.codec == "dsd" ? "native-pending" : "pcm";
+    info_.isDsd = info_.codec == "dsd";
+    info_.dsdMode = info_.isDsd ? dsdModeToString(DsdMode::Unsupported) : dsdModeToString(DsdMode::Pcm);
+    info_.dsdRate = 0;
+    info_.outputInfo.isDsd = info_.isDsd;
+    info_.outputInfo.dsdMode = info_.dsdMode;
+    info_.outputInfo.dsdRate = 0;
     info_.playMode = queue_.playModeId();
     info_.hasUpcomingTrack = upcoming.has_value();
     info_.upcomingTrack = upcoming.value_or(QueueItem{});
@@ -397,7 +463,7 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
       info_.state = PlaybackState::Stopped;
       info_.positionSeconds = 0.0;
     }
-    emitError(error.empty() ? "无法启动原生音频播放" : error);
+    emitError(error.empty() ? "无法启动原生音频播放" : error, result, "play");
     return result;
   }
 
@@ -441,7 +507,7 @@ TAE_Result TwilightAudioEngine::seek(double positionSeconds) {
   if (pipeline_ && currentState != PlaybackState::Stopped) {
     const TAE_Result result = pipeline_->seek(positionSeconds, &error);
     if (result != TAE_RESULT_OK) {
-      emitError(error.empty() ? "无法跳转原生音频播放位置" : error);
+      emitError(error.empty() ? "无法跳转原生音频播放位置" : error, result, "seek");
       return result;
     }
   }
@@ -464,7 +530,7 @@ TAE_Result TwilightAudioEngine::setVolume(double volume) {
   if (pipeline_ && info_.state != PlaybackState::Stopped) {
     applyPipelineStatusLocked(pipeline_->status());
   } else {
-    updateBitPerfectLocked();
+    updatePerfectLocked();
   }
   publishStateLocked();
   return TAE_RESULT_OK;
@@ -505,7 +571,7 @@ TAE_Result TwilightAudioEngine::setOutputBackend(const std::string& backendId) {
     source = info_.source;
     position = info_.positionSeconds;
     state = info_.state;
-    updateBitPerfectLocked();
+    updatePerfectLocked();
     publishStateLocked();
   }
   if (state != PlaybackState::Stopped && !source.empty()) {
@@ -520,7 +586,7 @@ TAE_Result TwilightAudioEngine::loadQueue(const std::string& queueJson, int star
   std::string error;
   std::lock_guard lock(mutex_);
   if (!queue_.loadFromJson(queueJson, startIndex, &error)) {
-    emitError(error.empty() ? "播放队列加载失败" : error);
+    emitError(error.empty() ? "播放队列加载失败" : error, TAE_RESULT_INVALID_ARGUMENT, "queue");
     return TAE_RESULT_INVALID_ARGUMENT;
   }
   info_.queueIndex = queue_.currentIndex();
@@ -536,7 +602,7 @@ TAE_Result TwilightAudioEngine::addToQueue(const std::string& itemJson) {
   std::string error;
   std::lock_guard lock(mutex_);
   if (!queue_.addFromJson(itemJson, &error)) {
-    emitError(error.empty() ? "无法加入播放队列" : error);
+    emitError(error.empty() ? "无法加入播放队列" : error, TAE_RESULT_INVALID_ARGUMENT, "queue");
     return TAE_RESULT_INVALID_ARGUMENT;
   }
   emit("queue-change", queue_.queueJson());
@@ -646,8 +712,10 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
     info_.eqActive = configStatus.eqActive;
     info_.crossfeedActive = configStatus.crossfeedActive;
     info_.crossfeedStrength = configStatus.crossfeedStrength;
+    info_.crossfadeActive = configStatus.crossfadeActive;
+    info_.crossfadeSeconds = configStatus.crossfadeSeconds;
     if (!config.enabled) info_.convolverActive = false;
-    updateBitPerfectLocked();
+    updatePerfectLocked();
   }
   publishStateLocked();
   return TAE_RESULT_OK;
@@ -661,7 +729,7 @@ TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJ
     outputConfig_ = parsed;
   }
   if (pipeline_ && !pipeline_->setOutputConfig(parsed, &error)) {
-    emitError(error.empty() ? "输出配置设置失败" : error);
+    emitError(error.empty() ? "输出配置设置失败" : error, TAE_RESULT_INVALID_ARGUMENT, "output-config");
     return TAE_RESULT_INVALID_ARGUMENT;
   }
   std::lock_guard lock(mutex_);
@@ -669,7 +737,7 @@ TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJ
   if (pipeline_ && info_.state != PlaybackState::Stopped) {
     applyPipelineStatusLocked(pipeline_->status());
   } else {
-    updateBitPerfectLocked();
+    updatePerfectLocked();
   }
   publishStateLocked();
   return TAE_RESULT_OK;
@@ -679,7 +747,7 @@ TAE_Result TwilightAudioEngine::loadImpulseResponse(const std::string& path) {
   if (path.empty()) return TAE_RESULT_INVALID_ARGUMENT;
   std::string error;
   if (!pipeline_ || !pipeline_->loadImpulseResponse(path, &error)) {
-    emitError(error.empty() ? "脉冲响应加载失败" : error);
+    emitError(error.empty() ? "脉冲响应加载失败" : error, TAE_RESULT_INVALID_ARGUMENT, "dsp");
     return TAE_RESULT_INTERNAL_ERROR;
   }
   {
@@ -691,7 +759,7 @@ TAE_Result TwilightAudioEngine::loadImpulseResponse(const std::string& path) {
     info_.partitionSize = status.partitionSize;
     info_.channelMappingMode = status.channelMappingMode;
     info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
-    updateBitPerfectLocked();
+    updatePerfectLocked();
     publishStateLocked();
   }
   return TAE_RESULT_OK;
@@ -707,7 +775,7 @@ TAE_Result TwilightAudioEngine::unloadImpulseResponse() {
     info_.convolverLatencyFrames = 0;
     info_.partitionSize = 0;
     info_.channelMappingMode.clear();
-    updateBitPerfectLocked();
+    updatePerfectLocked();
     publishStateLocked();
   }
   return TAE_RESULT_OK;
@@ -720,14 +788,14 @@ std::string TwilightAudioEngine::getConvolverInfoJson() const {
 TAE_Result TwilightAudioEngine::setEqBands(const std::string& eqJson) {
   std::string error;
   if (!pipeline_ || !pipeline_->setEqBands(eqJson, &error)) {
-    emitError(error.empty() ? "均衡器设置失败" : error);
+    emitError(error.empty() ? "均衡器设置失败" : error, TAE_RESULT_INVALID_ARGUMENT, "dsp");
     return TAE_RESULT_INVALID_ARGUMENT;
   }
   std::lock_guard lock(mutex_);
   const PipelineStatus status = pipeline_->status();
   info_.eqActive = status.eqActive;
   info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
-  updateBitPerfectLocked();
+  updatePerfectLocked();
   publishStateLocked();
   return TAE_RESULT_OK;
 }
@@ -735,14 +803,14 @@ TAE_Result TwilightAudioEngine::setEqBands(const std::string& eqJson) {
 TAE_Result TwilightAudioEngine::setEqPreset(const std::string& presetJson) {
   std::string error;
   if (!pipeline_ || !pipeline_->setEqPreset(presetJson, &error)) {
-    emitError(error.empty() ? "均衡器预设应用失败" : error);
+    emitError(error.empty() ? "均衡器预设应用失败" : error, TAE_RESULT_INVALID_ARGUMENT, "dsp");
     return TAE_RESULT_INVALID_ARGUMENT;
   }
   std::lock_guard lock(mutex_);
   const PipelineStatus status = pipeline_->status();
   info_.eqActive = status.eqActive;
   info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
-  updateBitPerfectLocked();
+  updatePerfectLocked();
   publishStateLocked();
   return TAE_RESULT_OK;
 }
@@ -756,7 +824,7 @@ TAE_Result TwilightAudioEngine::setCrossfeedStrength(double strength) {
   info_.crossfeedActive = status.crossfeedActive;
   info_.crossfeedStrength = status.crossfeedStrength;
   info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
-  updateBitPerfectLocked();
+  updatePerfectLocked();
   publishStateLocked();
   return TAE_RESULT_OK;
 }
@@ -774,7 +842,7 @@ TAE_Result TwilightAudioEngine::setReplayGainMode(
   info_.replayGainActive = status.replayGainActive;
   info_.replayGainDb = status.replayGainDb;
   info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
-  updateBitPerfectLocked();
+  updatePerfectLocked();
   publishStateLocked();
   return TAE_RESULT_OK;
 }
@@ -828,6 +896,67 @@ std::string TwilightAudioEngine::enumerateBackendsJson() const {
   append("alsa", "Linux ALSA 输出", false);
 #endif
   json << "]";
+  return json.str();
+}
+
+std::string TwilightAudioEngine::engineCapabilitiesJson() const {
+  const std::string backends = enumerateBackendsJson();
+  std::ostringstream json;
+  json << "{"
+       << "\"version\":\"" << TAE_GetVersion() << "\","
+       << "\"defaultBackend\":\"" << escapeJson(defaultBackendId()) << "\","
+       << "\"pcmPassthrough\":true,"
+       << "\"outputPerfectRequiresPcmPassthrough\":true,"
+       << "\"htmlAudioFallbackDefault\":false,"
+       << "\"dsdModes\":[\"pcm\",\"dop\",\"native\",\"unsupported\"],"
+       << "\"dsd\":{\"native\":false,\"dop\":false,\"sacdIso\":false,\"mode\":\"unsupported\"},"
+       << "\"features\":{"
+       << "\"ffmpeg\":"
+#if defined(TAE_HAS_FFMPEG)
+       << "true"
+#else
+       << "false"
+#endif
+       << ",\"wasapi\":"
+#if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+       << "true"
+#else
+       << "false"
+#endif
+       << ",\"asio\":"
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
+       << "true"
+#else
+       << "false"
+#endif
+       << ",\"coreaudio\":"
+#if defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)
+       << "true"
+#else
+       << "false"
+#endif
+       << ",\"alsa\":"
+#if defined(__linux__) && defined(TAE_ENABLE_ALSA)
+       << "true"
+#else
+       << "false"
+#endif
+       << ",\"nativeDsd\":false,\"dop\":false,\"sacdIso\":false"
+       << "},\"backends\":" << backends
+       << ",\"backendCapabilities\":" << backends
+       << "}";
+  return json.str();
+}
+
+std::string TwilightAudioEngine::getLastErrorJson() const {
+  std::lock_guard lock(errorMutex_);
+  const bool hasError = !lastError_.empty();
+  std::ostringstream json;
+  json << "{\"hasError\":" << (hasError ? "true" : "false") << ",\"code\":\""
+       << resultToString(hasError ? lastErrorCode_ : TAE_RESULT_OK) << "\",\"message\":\""
+       << escapeJson(lastError_) << "\",\"backend\":\"\",\"context\":\""
+       << escapeJson(lastErrorContext_.empty() ? "native" : lastErrorContext_) << "\",\"recoverable\":"
+       << (hasError && lastErrorCode_ != TAE_RESULT_INVALID_ARGUMENT ? "true" : "false") << "}";
   return json.str();
 }
 
@@ -905,11 +1034,17 @@ void TwilightAudioEngine::clockLoop() {
         if (result == TAE_RESULT_OK && previousState == PlaybackState::Paused) {
           pause();
         } else if (result != TAE_RESULT_OK) {
-          emitError(deviceInvalidatedMessage.empty() ? "输出设备已失效，自动恢复失败" : deviceInvalidatedMessage);
+          emitError(
+              deviceInvalidatedMessage.empty() ? "输出设备已失效，自动恢复失败" : deviceInvalidatedMessage,
+              TAE_RESULT_BACKEND_UNAVAILABLE,
+              "device-recovery");
         }
       } else {
         if (pipeline_) pipeline_->stop();
-        emitError(deviceInvalidatedMessage.empty() ? "输出设备已失效" : deviceInvalidatedMessage);
+        emitError(
+            deviceInvalidatedMessage.empty() ? "输出设备已失效" : deviceInvalidatedMessage,
+            TAE_RESULT_BACKEND_UNAVAILABLE,
+            "device");
         if (emitTick) emit("property-change", payload);
       }
       continue;
@@ -934,19 +1069,42 @@ void TwilightAudioEngine::clockLoop() {
       emit("start-file", "{}");
       continue;
     }
+    std::optional<QueueItem> autoNextItem;
     {
       std::lock_guard lock(mutex_);
       if (hasPipelineStatus && info_.state != PlaybackState::Stopped) {
         applyPipelineStatusLocked(pipelineStatus);
       }
       if (emitEnded) {
-        info_.state = PlaybackState::Stopped;
-        if (info_.durationSeconds > 0.0) info_.positionSeconds = info_.durationSeconds;
+        autoNextItem = queue_.advanceAfterEnd();
+        if (autoNextItem && !autoNextItem->source.empty()) {
+          info_.queueIndex = queue_.currentIndex();
+          info_.playMode = queue_.playModeId();
+          info_.source = autoNextItem->source;
+          info_.durationSeconds = autoNextItem->durationSeconds;
+          info_.positionSeconds = 0.0;
+          info_.codec = inferCodec(autoNextItem->source);
+          info_.hasUpcomingTrack = queue_.upcoming().has_value();
+          info_.upcomingTrack = queue_.upcoming().value_or(QueueItem{});
+        } else {
+          info_.state = PlaybackState::Stopped;
+          if (info_.durationSeconds > 0.0) info_.positionSeconds = info_.durationSeconds;
+        }
       }
-      if (info_.state == PlaybackState::Playing || info_.state == PlaybackState::Paused || emitEnded) {
+      if (!autoNextItem &&
+          (info_.state == PlaybackState::Playing || info_.state == PlaybackState::Paused || emitEnded)) {
         payload = playbackInfoToJson(info_);
         emitTick = true;
       }
+    }
+    if (autoNextItem && !autoNextItem->source.empty()) {
+      const TAE_Result result = play(autoNextItem->source, 0.0);
+      if (result == TAE_RESULT_OK) {
+        emit("start-file", "{}");
+      } else {
+        emit("end-file", "{\"reason\":\"error\"}");
+      }
+      continue;
     }
     if (emitTick) emit("property-change", payload);
     if (emitEnded) emit("end-file", "{\"reason\":\"eof\"}");
@@ -959,8 +1117,15 @@ void TwilightAudioEngine::emit(const char* type, const std::string& payload) con
   if (callback) callback(type, payload.c_str(), userData);
 }
 
-void TwilightAudioEngine::emitError(const std::string& message) const {
-  emit("error", "{\"message\":\"" + escapeJson(message) + "\"}");
+void TwilightAudioEngine::emitError(const std::string& message, TAE_Result code, const std::string& context) const {
+  {
+    std::lock_guard lock(errorMutex_);
+    lastError_ = message;
+    lastErrorCode_ = code;
+    lastErrorContext_ = context.empty() ? "native" : context;
+  }
+  emit("error", "{\"code\":\"" + std::string(resultToString(code)) + "\",\"message\":\"" + escapeJson(message) +
+                    "\",\"context\":\"" + escapeJson(lastErrorContext_) + "\"}");
 }
 
 void TwilightAudioEngine::publishStateLocked() const {
@@ -988,6 +1153,10 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.bitrate = static_cast<int>(std::max<int64_t>(0, status.stream.bitrate));
   info_.sourceSampleRate = status.stream.sourceFormat.sampleRate;
   info_.sourceBitDepth = status.stream.sourceFormat.bitDepth;
+  info_.decodedSampleRate = status.stream.decodedFormat.sampleRate;
+  info_.decodedBitDepth = status.stream.decodedFormat.bitDepth;
+  info_.decodedChannels = status.stream.decodedFormat.channelCount;
+  info_.decodedSampleFormat = sampleFormatToString(status.stream.decodedFormat.sampleFormat);
   info_.queueIndex = queue_.currentIndex();
   info_.playMode = queue_.playModeId();
   info_.outputBackend = status.backendId.empty() ? info_.outputBackend : status.backendId;
@@ -1003,18 +1172,25 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   if (info_.outputInfo.actualDriverVersion == 0) info_.outputInfo.actualDriverVersion = info_.outputInfo.driverVersion;
   if (info_.outputInfo.outputSampleRate <= 0) info_.outputInfo.outputSampleRate = status.outputFormat.sampleRate;
   if (info_.outputInfo.outputBitDepth <= 0) info_.outputInfo.outputBitDepth = status.outputFormat.bitDepth;
-  info_.outputInfo.bitPerfect = status.bitPerfect;
-  if (info_.outputInfo.resampleReason.empty()) info_.outputInfo.resampleReason = status.resampleReason;
+  info_.outputInfo.sourceExact = status.sourceExact;
+  info_.outputInfo.outputPerfect = status.outputPerfect;
+  info_.outputInfo.pcmPassthrough = status.outputInfo.pcmPassthrough;
+  info_.outputInfo.isDsd = status.stream.isDsd;
+  info_.outputInfo.dsdMode = status.stream.isDsd ? dsdModeToString(status.stream.dsdMode) : dsdModeToString(DsdMode::Pcm);
+  info_.outputInfo.dsdRate = status.stream.isDsd ? status.stream.dsdRate : 0;
+  if (info_.outputInfo.perfectReason.empty()) info_.outputInfo.perfectReason = status.perfectReason;
   info_.channelCount = status.outputFormat.channelCount;
   info_.dspActive = status.dspActive;
   info_.replayGainActive = status.replayGainActive;
   info_.eqActive = status.eqActive;
   info_.convolverActive = status.convolverActive;
   info_.crossfeedActive = status.crossfeedActive;
+  info_.crossfadeActive = status.crossfadeActive;
   info_.fftActive = status.fftActive;
   info_.irResampled = status.irResampled;
   info_.replayGainDb = status.replayGainDb;
   info_.crossfeedStrength = status.crossfeedStrength;
+  info_.crossfadeSeconds = status.crossfadeSeconds;
   info_.convolverLatencyFrames = status.convolverLatencyFrames;
   info_.partitionSize = status.partitionSize;
   info_.channelMappingMode = status.channelMappingMode;
@@ -1023,12 +1199,14 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   const auto upcoming = queue_.upcoming();
   info_.hasUpcomingTrack = upcoming.has_value();
   info_.upcomingTrack = upcoming.value_or(QueueItem{});
-  info_.resampleReason = status.resampleReason;
-  info_.dsdMode = status.stream.isDsd ? "dsd-to-pcm-pending-native" : "pcm";
+  info_.perfectReason = status.perfectReason;
+  info_.isDsd = status.stream.isDsd;
+  info_.dsdMode = status.stream.isDsd ? dsdModeToString(status.stream.dsdMode) : dsdModeToString(DsdMode::Pcm);
+  info_.dsdRate = status.stream.isDsd ? status.stream.dsdRate : 0;
   normalizeOutputInfoMirror(info_);
 }
 
-void TwilightAudioEngine::updateBitPerfectLocked() {
+void TwilightAudioEngine::updatePerfectLocked() {
   if (info_.outputInfo.backend.empty()) info_.outputInfo.backend = info_.outputBackend;
   if (info_.outputInfo.actualBackend.empty()) info_.outputInfo.actualBackend = info_.outputInfo.backend;
   info_.outputInfo.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
@@ -1039,31 +1217,57 @@ void TwilightAudioEngine::updateBitPerfectLocked() {
   sourceFormat.sampleRate = info_.sourceSampleRate;
   sourceFormat.channelCount = info_.channelCount > 0 ? info_.channelCount : info_.outputInfo.actualChannels;
   sourceFormat.bitDepth = info_.sourceBitDepth;
+  sourceFormat.sampleFormat = sampleFormatFromText("", sourceFormat.bitDepth);
+
+  AudioFormat decodedFormat;
+  decodedFormat.sampleRate = info_.decodedSampleRate > 0 ? info_.decodedSampleRate : info_.outputSampleRate;
+  decodedFormat.channelCount =
+      info_.decodedChannels > 0 ? info_.decodedChannels : (info_.channelCount > 0 ? info_.channelCount : info_.outputInfo.actualChannels);
+  decodedFormat.bitDepth = info_.decodedBitDepth > 0 ? info_.decodedBitDepth : info_.outputBitDepth;
+  decodedFormat.sampleFormat = sampleFormatFromText(info_.decodedSampleFormat, decodedFormat.bitDepth);
 
   AudioFormat outputFormat;
   outputFormat.sampleRate = info_.outputInfo.outputSampleRate;
   outputFormat.channelCount = info_.outputInfo.actualChannels > 0 ? info_.outputInfo.actualChannels : info_.channelCount;
-  outputFormat.bitDepth = info_.outputInfo.outputBitDepth;
+  outputFormat.bitDepth =
+      info_.outputInfo.actualBitDepth > 0 ? info_.outputInfo.actualBitDepth : info_.outputInfo.outputBitDepth;
+  outputFormat.sampleFormat = sampleFormatFromText(info_.outputInfo.actualOutputFormat, outputFormat.bitDepth);
 
   const bool backendResampled = info_.outputInfo.resampled;
-  const std::string backendResampleReason = info_.outputInfo.resampleReason;
-  const BitPerfectResult result = evaluateBitPerfect(BitPerfectEvaluation{
-      sourceFormat,
-      outputFormat,
-      info_.outputInfo.supportsBitPerfect,
-      backendResampled,
-      backendResampleReason,
-      info_.volume,
-      info_.replayGainActive,
-      info_.eqActive,
-      info_.convolverActive,
-      info_.crossfeedActive,
-      outputConfig_.routingMode});
+  const std::string backendPerfectReason =
+      (!info_.outputInfo.supportsOutputPerfect || backendResampled) ? info_.outputInfo.perfectReason : "";
+  PerfectEvaluation evaluation;
+  evaluation.sourceFormat = sourceFormat;
+  evaluation.decodedFormat = decodedFormat;
+  evaluation.outputFormat = outputFormat;
+  evaluation.sourceLossless = codecLooksLossless(info_.codec);
+  evaluation.sourceDsd = info_.isDsd || info_.codec == "dsd";
+  if (evaluation.sourceDsd) {
+    evaluation.dsdMode = parseDsdMode(info_.dsdMode);
+    evaluation.dsdRate = info_.dsdRate;
+  }
+  evaluation.supportsOutputPerfect = info_.outputInfo.supportsOutputPerfect;
+  evaluation.backendResampled = backendResampled;
+  evaluation.backendPerfectReason = backendPerfectReason;
+  evaluation.volume = info_.volume;
+  evaluation.replayGainActive = info_.replayGainActive;
+  evaluation.eqActive = info_.eqActive;
+  evaluation.convolverActive = info_.convolverActive;
+  evaluation.crossfeedActive = info_.crossfeedActive;
+  evaluation.crossfadeActive = info_.crossfadeActive || DspChain::parseConfigJson(dspConfigJson_).crossfadeSeconds > 0.0001;
+  evaluation.routingMode = outputConfig_.routingMode;
+  evaluation.pcmPassthrough = pcmFormatsExactMatch(decodedFormat, outputFormat) && !backendResampled;
+  const PerfectResult result = evaluatePerfect(evaluation);
   info_.dspActive = result.processingActive;
+  info_.outputInfo.sourceExact = result.sourceExact;
   info_.outputInfo.resampled = result.resampled;
-  info_.outputInfo.bitPerfect = result.bitPerfect;
-  info_.outputInfo.resampleReason = result.resampleReason;
-  info_.resampleReason = result.resampleReason;
+  info_.outputInfo.outputPerfect = result.outputPerfect;
+  info_.outputInfo.pcmPassthrough = result.pcmPassthrough;
+  info_.outputInfo.isDsd = evaluation.sourceDsd;
+  info_.outputInfo.dsdMode = evaluation.sourceDsd ? dsdModeToString(evaluation.dsdMode) : dsdModeToString(DsdMode::Pcm);
+  info_.outputInfo.dsdRate = evaluation.sourceDsd ? evaluation.dsdRate : 0;
+  info_.outputInfo.perfectReason = result.perfectReason;
+  info_.perfectReason = result.perfectReason;
   normalizeOutputInfoMirror(info_);
 }
 
@@ -1263,6 +1467,16 @@ TAE_Result TAE_EnumerateDevices(TAE_EngineHandle engine, char* buffer, size_t bu
 TAE_Result TAE_EnumerateBackends(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   return copyStringResult(fromHandle(engine)->enumerateBackendsJson(), buffer, buffer_size, required_size);
+}
+
+TAE_Result TAE_GetEngineCapabilities(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return copyStringResult(fromHandle(engine)->engineCapabilitiesJson(), buffer, buffer_size, required_size);
+}
+
+TAE_Result TAE_GetLastError(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return copyStringResult(fromHandle(engine)->getLastErrorJson(), buffer, buffer_size, required_size);
 }
 
 TAE_Result TAE_GetPlaybackInfo(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {

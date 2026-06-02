@@ -38,17 +38,20 @@ struct PipelineStatus {
   bool eqActive = false;
   bool convolverActive = false;
   bool crossfeedActive = false;
+  bool crossfadeActive = false;
   bool fftActive = false;
   bool irResampled = false;
   double replayGainDb = 0.0;
   double crossfeedStrength = 0.0;
+  double crossfadeSeconds = 0.0;
   uint32_t convolverLatencyFrames = 0;
   uint32_t partitionSize = 0;
   std::string channelMappingMode;
-  bool bitPerfect = false;
+  bool sourceExact = false;
+  bool outputPerfect = false;
   bool gaplessActive = false;
   bool preloadReady = false;
-  std::string resampleReason;
+  std::string perfectReason;
 };
 
 class AudioPipeline {
@@ -107,7 +110,7 @@ class AudioPipeline {
       const QueueItem& item,
       double startTimeSeconds,
       std::string* error);
-  bool updateBitPerfectLocked();
+  bool updatePerfectLocked();
   size_t render(float* output, size_t frameCount);
 
   mutable std::mutex mutex_;
@@ -124,7 +127,7 @@ class AudioPipeline {
   QueueItem currentItem_;
   std::string backendId_;
   std::string deviceName_;
-  std::string resampleReason_;
+  std::string perfectReason_;
   OutputInfo outputInfo_;
   std::atomic<bool> ended_{false};
   std::atomic<bool> deviceInvalidated_{false};
@@ -133,7 +136,7 @@ class AudioPipeline {
   std::atomic<uint64_t> renderedFrames_{0};
   PipelineState state_ = PipelineState::Stopped;
   bool dspActive_ = false;
-  bool bitPerfect_ = false;
+  bool outputPerfect_ = false;
   bool gaplessEnabled_ = true;
   std::string outputEventMessage_;
 };

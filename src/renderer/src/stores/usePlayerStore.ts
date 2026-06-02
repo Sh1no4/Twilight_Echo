@@ -1,4 +1,4 @@
-﻿import { ref, computed, watch, type Ref, type ComputedRef } from 'vue'
+import { ref, computed, watch, type Ref, type ComputedRef } from 'vue'
 import type { PlaybackSession, Track } from '../types/music'
 import type {
   AudioDeviceOption,
@@ -44,7 +44,7 @@ const audioDevice = ref('auto')
 const audioOutputOptions = ref<AudioOutputOption[]>([])
 const audioDeviceOptions = ref<AudioDeviceOption[]>([])
 const defaultAudioProcessing: AudioProcessingSettings = {
-  dspEnabled: true,
+  dspEnabled: false,
   clipGuard: true,
   fftEnabled: true,
   fftResolution: 64,
@@ -185,14 +185,45 @@ function applyAudioOutputState(state: AudioOutputState): void {
 }
 
 function normalizeNativePlaybackInfo(info: NativePlaybackInfo): NativePlaybackInfo {
-  const resampleReason = info.outputInfo?.resampleReason || info.resampleReason || ''
+  const canonicalOutput = info.outputInfo
+  const perfectReason = canonicalOutput?.perfectReason || info.perfectReason || ''
+  const sourceExact = canonicalOutput ? canonicalOutput.sourceExact === true : info.sourceExact === true
+  const outputPerfect = canonicalOutput
+    ? canonicalOutput.outputPerfect === true
+    : info.outputPerfect === true
+  const pcmPassthrough = canonicalOutput
+    ? canonicalOutput.pcmPassthrough === true
+    : info.pcmPassthrough === true
+  const dsdMode =
+    canonicalOutput?.dsdMode ||
+    info.dsdMode ||
+    (canonicalOutput?.isDsd || info.isDsd ? 'unsupported' : 'pcm')
+  const isDsd =
+    canonicalOutput?.isDsd === true ||
+    info.isDsd === true ||
+    dsdMode === 'native' ||
+    dsdMode === 'dop' ||
+    dsdMode === 'unsupported'
+  const dsdRate = canonicalOutput?.dsdRate || info.dsdRate || 0
   return {
     ...info,
     outputInfo: {
-      ...info.outputInfo,
-      resampleReason
+      ...canonicalOutput,
+      sourceExact,
+      outputPerfect,
+      pcmPassthrough,
+      perfectReason,
+      isDsd,
+      dsdMode,
+      dsdRate: isDsd ? dsdRate : 0
     },
-    resampleReason
+    sourceExact,
+    outputPerfect,
+    pcmPassthrough,
+    perfectReason,
+    isDsd,
+    dsdMode,
+    dsdRate: isDsd ? dsdRate : 0
   }
 }
 
@@ -576,6 +607,7 @@ function scheduleCrossfadeIfNeeded(): void {
   if (
     !track ||
     !isPlaying.value ||
+    nativePlaybackActive ||
     playMode.value === 'repeat' ||
     seconds <= 0 ||
     duration.value <= seconds + 1
@@ -621,8 +653,12 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     const playResult = await window.api.audioEngine.play(playTarget, normalizedStartTime)
     nativePlaybackActive = playResult?.nativeStarted === true
     if (nativePlaybackActive) {
+      audioEngineError.value = ''
       stopRendererAudio(true)
     } else {
+      audioEngineError.value = playResult?.fallbackReason
+        ? `原生音频引擎不可用，已启用临时播放通道：${playResult.fallbackReason}`
+        : ''
       await playWithRendererAudio(track, playTarget, normalizedStartTime)
     }
     loadedTrackId = track.id
