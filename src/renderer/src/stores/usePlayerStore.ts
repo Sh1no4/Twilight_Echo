@@ -186,25 +186,19 @@ function applyAudioOutputState(state: AudioOutputState): void {
 
 function normalizeNativePlaybackInfo(info: NativePlaybackInfo): NativePlaybackInfo {
   const canonicalOutput = info.outputInfo
-  const perfectReason = canonicalOutput?.perfectReason || info.perfectReason || ''
-  const sourceExact = canonicalOutput ? canonicalOutput.sourceExact === true : info.sourceExact === true
-  const outputPerfect = canonicalOutput
-    ? canonicalOutput.outputPerfect === true
-    : info.outputPerfect === true
+  const sourceExact = canonicalOutput?.sourceExact === true
+  const outputPerfect = canonicalOutput?.outputPerfect === true
   const pcmPassthrough = canonicalOutput
     ? canonicalOutput.pcmPassthrough === true
     : info.pcmPassthrough === true
-  const dsdMode =
-    canonicalOutput?.dsdMode ||
-    info.dsdMode ||
-    (canonicalOutput?.isDsd || info.isDsd ? 'unsupported' : 'pcm')
+  const perfectReason = canonicalOutput?.perfectReason || ''
   const isDsd =
     canonicalOutput?.isDsd === true ||
-    info.isDsd === true ||
-    dsdMode === 'native' ||
-    dsdMode === 'dop' ||
-    dsdMode === 'unsupported'
-  const dsdRate = canonicalOutput?.dsdRate || info.dsdRate || 0
+    canonicalOutput?.dsdMode === 'native' ||
+    canonicalOutput?.dsdMode === 'dop' ||
+    canonicalOutput?.dsdMode === 'unsupported'
+  const dsdMode = isDsd ? canonicalOutput?.dsdMode || 'unsupported' : 'pcm'
+  const dsdRate = isDsd ? canonicalOutput?.dsdRate || 0 : 0
   return {
     ...info,
     outputInfo: {
@@ -223,7 +217,7 @@ function normalizeNativePlaybackInfo(info: NativePlaybackInfo): NativePlaybackIn
     perfectReason,
     isDsd,
     dsdMode,
-    dsdRate: isDsd ? dsdRate : 0
+    dsdRate
   }
 }
 

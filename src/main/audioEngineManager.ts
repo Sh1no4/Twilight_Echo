@@ -713,13 +713,6 @@ function sourceLooksDsd(source: string): boolean {
   return /\.(dsf|dff)$/i.test(source)
 }
 
-function inferDsdRate(sampleRate: number): number {
-  if (sampleRate >= 10000000) return 256
-  if (sampleRate >= 5000000) return 128
-  if (sampleRate >= 2500000) return 64
-  return 0
-}
-
 export class AudioEngineManager extends EventEmitter {
   private native = loadNativeBinding()
   private output: AudioOutputId
@@ -1143,31 +1136,29 @@ export class AudioEngineManager extends EventEmitter {
       ...this.playbackInfo.outputInfo,
       ...(info.outputInfo ?? {})
     }
-    const perfectReason = outputInfo.perfectReason || info.perfectReason || ''
-    const dsdMode =
-      outputInfo.dsdMode || info.dsdMode || (outputInfo.isDsd || info.isDsd ? 'unsupported' : 'pcm')
-    const dsdRate =
-      outputInfo.dsdRate ||
-      info.dsdRate ||
-      inferDsdRate(info.sourceSampleRate || info.decodedSampleRate || 0)
+    const canonicalOutput = info.outputInfo
+    const sourceExact = canonicalOutput?.sourceExact === true
+    const outputPerfect = canonicalOutput?.outputPerfect === true
+    const perfectReason = canonicalOutput?.perfectReason || ''
     const isDsd =
-      outputInfo.isDsd === true ||
-      info.isDsd === true ||
-      dsdMode === 'native' ||
-      dsdMode === 'dop' ||
-      dsdMode === 'unsupported'
+      canonicalOutput?.isDsd === true ||
+      canonicalOutput?.dsdMode === 'native' ||
+      canonicalOutput?.dsdMode === 'dop' ||
+      canonicalOutput?.dsdMode === 'unsupported'
+    const dsdMode = isDsd ? canonicalOutput?.dsdMode || 'unsupported' : 'pcm'
+    const dsdRate = isDsd ? canonicalOutput?.dsdRate || 0 : 0
+    outputInfo.sourceExact = sourceExact
+    outputInfo.outputPerfect = outputPerfect
     outputInfo.perfectReason = perfectReason
     outputInfo.isDsd = isDsd
     outputInfo.dsdMode = dsdMode
-    outputInfo.dsdRate = isDsd ? dsdRate : 0
+    outputInfo.dsdRate = dsdRate
     outputInfo.backend = outputInfo.backend || info.outputBackend || this.getNativeBackendId()
     outputInfo.actualBackend = outputInfo.actualBackend || outputInfo.backend
     outputInfo.deviceName = outputInfo.deviceName || info.outputDevice || this.device
     outputInfo.actualDeviceName = outputInfo.actualDeviceName || outputInfo.deviceName
     outputInfo.actualDriverName = outputInfo.actualDriverName || outputInfo.driverName || ''
     outputInfo.actualDriverVersion = outputInfo.actualDriverVersion || info.driverVersion || 0
-    outputInfo.sourceExact = outputInfo.sourceExact === true
-    outputInfo.outputPerfect = outputInfo.outputPerfect === true
     outputInfo.pcmPassthrough = outputInfo.pcmPassthrough === true
     outputInfo.latencyInfo = outputInfo.latencyInfo || info.latencyInfo || this.playbackInfo.latencyInfo
     outputInfo.diagnostics =
@@ -1195,22 +1186,34 @@ export class AudioEngineManager extends EventEmitter {
       channelRoutingMode:
         outputInfo.channelRoutingMode || info.channelRoutingMode || this.outputConfig.routingMode,
       supportsOutputPerfect: outputInfo.supportsOutputPerfect === true,
-      sourceExact: outputInfo.sourceExact === true,
+      sourceExact,
       diagnostics: outputInfo.diagnostics,
       deviceRecovered: outputInfo.deviceRecovered === true,
       recoveryCount: outputInfo.recoveryCount || info.recoveryCount || 0,
       outputSampleRate: outputInfo.outputSampleRate || info.outputSampleRate || 0,
       outputBitDepth: outputInfo.outputBitDepth || info.outputBitDepth || 0,
       channelCount: outputInfo.actualChannels || info.channelCount || 0,
-      outputPerfect: outputInfo.outputPerfect === true,
+      outputPerfect,
       pcmPassthrough: outputInfo.pcmPassthrough === true,
       isDsd,
       dsdMode,
-      dsdRate: isDsd ? dsdRate : 0,
+      dsdRate,
       crossfadeActive: info.crossfadeActive === true || this.processing.crossfadeSeconds > 0,
       crossfadeSeconds: info.crossfadeSeconds || this.processing.crossfadeSeconds || 0,
       perfectReason
     }
+  }
+
+  private syncPlaybackOutputMirrorsFromOutputInfo(): void {
+    const outputInfo = this.playbackInfo.outputInfo
+    this.playbackInfo.supportsOutputPerfect = outputInfo.supportsOutputPerfect === true
+    this.playbackInfo.sourceExact = outputInfo.sourceExact === true
+    this.playbackInfo.outputPerfect = outputInfo.outputPerfect === true
+    this.playbackInfo.pcmPassthrough = outputInfo.pcmPassthrough === true
+    this.playbackInfo.perfectReason = outputInfo.perfectReason || ''
+    this.playbackInfo.isDsd = outputInfo.isDsd === true
+    this.playbackInfo.dsdMode = outputInfo.isDsd === true ? outputInfo.dsdMode || 'unsupported' : 'pcm'
+    this.playbackInfo.dsdRate = outputInfo.isDsd === true ? outputInfo.dsdRate || 0 : 0
   }
 
   private tick(): void {
@@ -1309,11 +1312,7 @@ export class AudioEngineManager extends EventEmitter {
       backend: this.getNativeBackendId(),
       actualBackend: this.getNativeBackendId()
     }
-    this.playbackInfo.supportsOutputPerfect = this.playbackInfo.outputInfo.supportsOutputPerfect
-    this.playbackInfo.sourceExact = false
-    this.playbackInfo.outputPerfect = false
-    this.playbackInfo.pcmPassthrough = false
-    this.playbackInfo.perfectReason = this.playbackInfo.outputInfo.perfectReason
+    this.syncPlaybackOutputMirrorsFromOutputInfo()
   }
 
   private updateNativeInfoSnapshot(): void {
@@ -1408,16 +1407,13 @@ export class AudioEngineManager extends EventEmitter {
     this.playbackInfo.crossfadeActive = crossfadeActive
     this.playbackInfo.crossfadeSeconds = crossfadeActive ? this.processing.crossfadeSeconds : 0
     this.playbackInfo.dspActive = dspActive
-    this.playbackInfo.sourceExact = false
-    this.playbackInfo.outputPerfect = false
-    this.playbackInfo.pcmPassthrough = false
     this.playbackInfo.outputInfo = {
       ...this.playbackInfo.outputInfo,
       exclusive:
         this.output === 'wasapi' ? this.exclusiveMode : this.playbackInfo.outputInfo.exclusive,
       supportsOutputPerfect,
       sourceExact: false,
-      outputPerfect: this.playbackInfo.outputPerfect,
+      outputPerfect: false,
       pcmPassthrough: false,
       resampled: this.nativePlaybackActive ? this.playbackInfo.outputInfo.resampled : false,
       perfectReason,
@@ -1431,7 +1427,7 @@ export class AudioEngineManager extends EventEmitter {
         this.playbackInfo.outputInfo.deviceName ||
         this.playbackInfo.outputDevice
     }
-    this.playbackInfo.perfectReason = perfectReason
+    this.syncPlaybackOutputMirrorsFromOutputInfo()
   }
 
   private publishProperty(name: string, data: unknown): void {

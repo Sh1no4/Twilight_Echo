@@ -133,6 +133,77 @@ void testDopCarrierProfile() {
   assert(info.driverDopCarrierFormats[1] == "int32");
   assert(!info.outputPerfect);
   assert(!info.pcmPassthrough);
+
+  const DopRuntimeFacts candidateFacts = backend.dopRuntimeFacts();
+  assert(candidateFacts.state == DopRuntimeFactState::Candidate);
+  assert(candidateFacts.explicitlyCapable);
+  assert(candidateFacts.candidateFormat.sampleRate == 352800);
+  assert(candidateFacts.candidateFormat.bitDepth == 24);
+  assert(candidateFacts.candidateFormat.sampleFormat == AudioSampleFormat::Int24In32Interleaved);
+  assert(!hasConcreteAudioFormat(candidateFacts.actualFormat));
+
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+  const DopRuntimeFacts provenFacts = backend.dopRuntimeFacts();
+  assert(provenFacts.state == DopRuntimeFactState::Proven);
+  assert(provenFacts.explicitlyCapable);
+  assert(pcmFormatsExactMatch(provenFacts.candidateFormat, provenFacts.actualFormat));
+}
+
+void testDopRuntimeFactsUnprovenWithoutExplicitCapability() {
+  auto host = std::make_unique<MockAsioHost>();
+  auto device = makeMockAsioDevice("asio:dop-unproven", {352800}, 2, AudioSampleFormat::Int24In32Interleaved);
+  device.dopCapable = false;
+  device.sampleFormats = {AudioSampleFormat::Int24In32Interleaved};
+  device.bitDepths = {24};
+  host->devices.push_back(device);
+  auto* rawHost = host.get();
+  rawHost->channelFormats = {
+      AudioSampleFormat::Int24In32Interleaved,
+      AudioSampleFormat::Int24In32Interleaved,
+  };
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:dop-unproven", sourceFormat(352800, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
+  assert(backend.dopRuntimeFacts().state == DopRuntimeFactState::Candidate);
+  assert(!backend.dopRuntimeFacts().explicitlyCapable);
+
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+  const DopRuntimeFacts facts = backend.dopRuntimeFacts();
+  assert(facts.state == DopRuntimeFactState::Unproven);
+  assert(!facts.explicitlyCapable);
+  assert(pcmFormatsExactMatch(facts.candidateFormat, facts.actualFormat));
+}
+
+void testDopRuntimeFactsMismatchWhenActualFormatDiffers() {
+  MockAsioHost::DsdProfile profile;
+  profile.dopCapable = true;
+  profile.dopCarrierSampleRates = {176400};
+  profile.dopCarrierSampleFormats = {AudioSampleFormat::Int24In32Interleaved};
+
+  auto host = std::make_unique<MockAsioHost>();
+  auto device = makeMockAsioDevice("asio:dop-mismatch", {176400}, 2, AudioSampleFormat::Int24In32Interleaved, profile);
+  device.sampleFormats = {
+      AudioSampleFormat::Int24In32Interleaved,
+      AudioSampleFormat::Float32Interleaved,
+  };
+  host->devices.push_back(device);
+  auto* rawHost = host.get();
+  rawHost->channelFormats = {
+      AudioSampleFormat::Float32Interleaved,
+      AudioSampleFormat::Float32Interleaved,
+  };
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:dop-mismatch", sourceFormat(176400, 24, 2, AudioSampleFormat::Int24In32Interleaved), &error));
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+
+  const DopRuntimeFacts facts = backend.dopRuntimeFacts();
+  assert(facts.state == DopRuntimeFactState::Mismatch);
+  assert(facts.explicitlyCapable);
+  assert(!hasConcreteAudioFormat(facts.actualFormat));
+  assert(facts.reason.find("not a DoP carrier") != std::string::npos);
 }
 
 void testNativeDsdCapabilityProfile() {
@@ -574,6 +645,8 @@ int main() {
   testOpenFailureAndFallbackFormats();
   testExtremeSampleRates();
   testDopCarrierProfile();
+  testDopRuntimeFactsUnprovenWithoutExplicitCapability();
+  testDopRuntimeFactsMismatchWhenActualFormatDiffers();
   testNativeDsdCapabilityProfile();
   testChannelCounts();
   testLifecycleAndPlaybackInfo();

@@ -46,16 +46,17 @@ DSP 默认 bypass。ReplayGain、EQ、FIR Convolver、Crossfeed、Crossfade 和�
 
 ## DSD 策略
 
-Metadata 会识别 DSD 相关字段并报告 DSD64/128/256 级别。Renderer 展示优先消费 `outputInfo.isDsd` / `dsdMode` / `dsdRate`，顶层字段只做兼容镜像。
+Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer 展示优先消费 `outputInfo.isDsd` / `dsdMode` / `dsdRate` 表示当前 runtime 传输状态，顶层字段只做兼容镜像；当 DoP 运行时回退到 PCM 时，canonical mirror 必须清成 `isDsd=false`、`dsdMode='pcm'`、`dsdRate=0`，而源侧 DSD 标签可继续由文件元数据提供。
 
-- PCM fallback：DSF/DFF 源可被识别为 DSD，但当前实际链路仍是 DSD 源 -> decoded PCM -> 后端 PCM 输出；UI 需要明确展示 fallback，不把它写成 Native DSD。
-- Native DSD：后端直接输出 DSD bitstream；当前尚未实现真实播放闭环。
-- DoP：把 DSD bitstream 封装在 PCM carrier 中输出，语义不同于把 DSD 转成 PCM；当前尚未实现真实播放闭环。
-- SACD ISO：当前不支持作为可播放容器，只允许识别并报告 `unsupported`。
+- DoP carrier：Phase 6D 允许 DSF/DFF DSD64/128 在后端、设备、声道数和实际 PCM carrier 格式满足条件时进入 `dsdMode=dop`；UI 展示 `DoP carrier`，不把它写成 PCM fallback。
+- PCM fallback：DSF/DFF DSD256/512、DoP 条件不满足，或软件音量、ReplayGain、EQ、Convolver、Crossfeed、Crossfade 等处理启用时，实际链路回到 DSD 源 -> decoded PCM -> 后端 PCM 输出；UI 需要明确展示 fallback。
+- Native DSD：后端直接输出 DSD bitstream；Phase 6D 不实现 Native DSD。
+- SACD ISO：Phase 6D 不支持作为可播放容器，只允许识别并报告 `unsupported`，后续再补。
 
 ## 后续顺序
 
 1. 收口 WASAPI Exclusive、ASIO、CoreAudio、ALSA 的 actual format、failure reason 与 opt-in smoke。
 2. 为更多真实音频 fixture 覆盖 lossy/lossless 的 `sourceExact` 与 `outputPerfect` 组合。
-3. 将 crossfade overlap mixing 继续收敛到 native queue，并为真实音频文件补可选 smoke。
-4. 在 macOS/Linux 工具链与真实设备 smoke 通过后补平台产物路径和打包检查。
+3. 将 Native DSD 与 SACD ISO 放到 DoP carrier path 稳定后继续补齐。
+4. 将 crossfade overlap mixing 继续收敛到 native queue，并为真实音频文件补可选 smoke。
+5. 在 macOS/Linux 工具链与真实设备 smoke 通过后补平台产物路径和打包检查。

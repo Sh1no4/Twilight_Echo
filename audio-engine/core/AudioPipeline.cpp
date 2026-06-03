@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <utility>
 #include <vector>
 
@@ -10,6 +11,11 @@ namespace twilight::audio {
 namespace {
 
 constexpr size_t kDecodeChunkFrames = 2048;
+constexpr double kUnityVolumeEpsilon = 0.0001;
+AudioPipeline::BackendFactory& backendFactoryOverride() {
+  static AudioPipeline::BackendFactory factory;
+  return factory;
+}
 
 QueueItem makeManualItem(const std::string& source) {
   QueueItem item;
@@ -43,17 +49,98 @@ AudioFormat actualOutputPcmFormat(const AudioFormat& fallback, const OutputInfo&
   return format;
 }
 
+bool backendCanAttemptDop(const std::string& backendId) {
+  return backendId == "asio" || backendId == "wasapi-exclusive";
+}
+
+bool sampleFormatCanCarryDop(AudioSampleFormat format) {
+  return format == AudioSampleFormat::Int24Interleaved || format == AudioSampleFormat::Int24In32Interleaved;
+}
+
+bool formatCanCarryDop(const AudioFormat& format, int dsdRate, int channels) {
+  const auto expected = dopCarrierFormatForDsd(dsdRate, channels);
+  return expected.has_value() && format.sampleRate == expected->sampleRate &&
+         format.channelCount == expected->channelCount && effectivePcmBitDepth(format) == 24 &&
+         sampleFormatCanCarryDop(format.sampleFormat);
+}
+
+int32_t signed24FromBytes(uint8_t low, uint8_t mid, uint8_t high) {
+  int32_t value = static_cast<int32_t>(low) | (static_cast<int32_t>(mid) << 8) |
+                  (static_cast<int32_t>(high) << 16);
+  if ((value & 0x800000) != 0) value |= ~0x00ffffff;
+  return value;
+}
+
+float signed24ToFloat(int32_t value) {
+  return static_cast<float>(std::clamp(static_cast<double>(value) / 8388608.0, -1.0, 1.0));
+}
+
+void dopBytesToFloatCarrier(
+    const std::vector<uint8_t>& bytes,
+    AudioSampleFormat format,
+    float* output,
+    size_t sampleCount) {
+  if (!output || sampleCount == 0) return;
+  const size_t bytesPerSample = format == AudioSampleFormat::Int24In32Interleaved ? 4 : 3;
+  const size_t availableSamples = bytes.size() / bytesPerSample;
+  const size_t count = std::min(sampleCount, availableSamples);
+  for (size_t i = 0; i < count; ++i) {
+    const size_t offset = i * bytesPerSample;
+    int32_t value = 0;
+    if (format == AudioSampleFormat::Int24In32Interleaved) {
+      value = signed24FromBytes(bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+    } else {
+      value = signed24FromBytes(bytes[offset + 0], bytes[offset + 1], bytes[offset + 2]);
+    }
+    output[i] = signed24ToFloat(value);
+  }
+  std::fill(output + count, output + sampleCount, 0.0f);
+}
+
+DsdBitOrder dsdBitOrderFromInfo(const DsdStreamInfo& info) {
+  return info.bitOrder;
+}
+
+DsdPacking dsdPackingFromInfo(const DsdStreamInfo& info) {
+  return info.packing;
+}
+
+AudioStreamInfo streamInfoFromDsd(const QueueItem& item, const DsdStreamInfo& dsd, DsdMode mode) {
+  AudioStreamInfo stream;
+  stream.source = item.source;
+  stream.codec = "dsd";
+  stream.durationSeconds = item.durationSeconds > 0.0 ? item.durationSeconds : dsd.durationSeconds;
+  stream.sourceFormat.sampleRate = dsd.dsdSampleRate;
+  stream.sourceFormat.channelCount = dsd.channelCount;
+  stream.sourceFormat.bitDepth = 1;
+  stream.sourceFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
+  stream.decodedFormat = stream.sourceFormat;
+  stream.sourceLossless = true;
+  stream.isDsd = true;
+  stream.dsdMode = mode;
+  stream.dsdRate = dsd.dsdRate;
+  return stream;
+}
+
 }  // namespace
 
 struct AudioPipeline::DecodeStream {
+  enum class Mode {
+    Pcm,
+    Dop
+  };
+
   QueueItem item;
   AudioStreamInfo stream;
   AudioFormat decodeFormat;
   std::unique_ptr<FFmpegDecoder> decoder;
+  std::unique_ptr<DsdReader> dsdReader;
+  DopPacker dopPacker;
   AudioBuffer buffer;
   std::atomic<bool> running{false};
   std::atomic<bool> eof{false};
   std::thread decodeThread;
+  Mode mode = Mode::Pcm;
 
   ~DecodeStream() {
     stop();
@@ -61,7 +148,9 @@ struct AudioPipeline::DecodeStream {
 
   bool openSource(const QueueItem& queueItem, std::string* error) {
     stop();
+    dsdReader.reset();
     item = queueItem;
+    mode = Mode::Pcm;
     decoder = std::make_unique<FFmpegDecoder>();
     if (!decoder->open(item.source, error)) {
       decoder.reset();
@@ -73,7 +162,26 @@ struct AudioPipeline::DecodeStream {
     return true;
   }
 
+  bool openDsdSource(const QueueItem& queueItem, std::string* error) {
+    stop();
+    decoder.reset();
+    item = queueItem;
+    mode = Mode::Dop;
+    dsdReader = std::make_unique<DsdReader>();
+    if (!dsdReader->open(item.source, error)) {
+      dsdReader.reset();
+      return false;
+    }
+    stream = streamInfoFromDsd(item, dsdReader->streamInfo(), DsdMode::Dop);
+    return true;
+  }
+
   bool configure(const AudioFormat& outputFormat, double startTimeSeconds, std::string* error) {
+    if (mode == Mode::Dop) return configureDop(outputFormat, startTimeSeconds, error);
+    return configurePcm(outputFormat, startTimeSeconds, error);
+  }
+
+  bool configurePcm(const AudioFormat& outputFormat, double startTimeSeconds, std::string* error) {
     if (!decoder) {
       if (error) *error = "解码器尚未打开";
       return false;
@@ -92,8 +200,36 @@ struct AudioPipeline::DecodeStream {
     return true;
   }
 
+  bool configureDop(const AudioFormat& outputFormat, double startTimeSeconds, std::string* error) {
+    if (!dsdReader) {
+      if (error) *error = "DSD reader is not open";
+      return false;
+    }
+    const DsdStreamInfo& dsd = dsdReader->streamInfo();
+    if (!formatCanCarryDop(outputFormat, dsd.dsdRate, dsd.channelCount)) {
+      if (error) *error = "DoP carrier format mismatch";
+      return false;
+    }
+
+    DopPackerConfig config;
+    config.channelCount = dsd.channelCount;
+    config.dsdRate = dsd.dsdRate;
+    config.bitOrder = dsdBitOrderFromInfo(dsd);
+    config.packing = dsdPackingFromInfo(dsd);
+    config.outputFormat = outputFormat.sampleFormat;
+    if (!dopPacker.configure(config, error)) return false;
+    if (startTimeSeconds > 0.0 && !dsdReader->seek(startTimeSeconds, error)) return false;
+
+    decodeFormat = dopPacker.carrierFormat();
+    stream.decodedFormat = decodeFormat;
+    stream.dsdMode = DsdMode::Dop;
+    eof = false;
+    buffer.reset(decodeFormat.channelCount, static_cast<size_t>(std::max(decodeFormat.sampleRate * 2, 8192)));
+    return true;
+  }
+
   void start() {
-    if (!decoder || running.load()) return;
+    if ((!decoder && !dsdReader) || running.load()) return;
     running = true;
     decodeThread = std::thread([this] { decodeLoop(); });
   }
@@ -105,9 +241,11 @@ struct AudioPipeline::DecodeStream {
   }
 
   bool seek(double seconds, std::string* error) {
-    if (!decoder) return false;
+    if (!decoder && !dsdReader) return false;
     stop();
-    if (!decoder->seek(std::max(0.0, seconds), error)) {
+    const bool ok = mode == Mode::Dop ? dsdReader->seek(std::max(0.0, seconds), error)
+                                      : decoder->seek(std::max(0.0, seconds), error);
+    if (!ok) {
       start();
       return false;
     }
@@ -131,6 +269,11 @@ struct AudioPipeline::DecodeStream {
 
  private:
   void decodeLoop() {
+    if (mode == Mode::Dop) {
+      decodeDopLoop();
+      return;
+    }
+
     const int channels = std::max(1, decodeFormat.channelCount);
     std::vector<float> frames(kDecodeChunkFrames * static_cast<size_t>(channels));
 
@@ -145,12 +288,39 @@ struct AudioPipeline::DecodeStream {
       buffer.writeBlocking(frames.data(), decoded, running);
     }
   }
+
+  void decodeDopLoop() {
+    const int channels = std::max(1, decodeFormat.channelCount);
+    const size_t dsdBytesPerChunk = kDecodeChunkFrames * static_cast<size_t>(channels) * 2;
+    std::vector<uint8_t> dsdBytes(dsdBytesPerChunk);
+    std::vector<uint8_t> pcmBytes;
+    std::vector<float> frames(kDecodeChunkFrames * static_cast<size_t>(channels));
+
+    while (running.load()) {
+      if (!dsdReader) break;
+      const size_t read = dsdReader->readBytes(dsdBytes.data(), dsdBytes.size());
+      if (read == 0) {
+        eof = true;
+        break;
+      }
+      const size_t packedFrames = dopPacker.pack(dsdBytes.data(), read, &pcmBytes);
+      if (packedFrames == 0) continue;
+      const size_t sampleCount = packedFrames * static_cast<size_t>(channels);
+      frames.resize(sampleCount);
+      dopBytesToFloatCarrier(pcmBytes, decodeFormat.sampleFormat, frames.data(), sampleCount);
+      buffer.writeBlocking(frames.data(), packedFrames, running);
+    }
+  }
 };
 
 AudioPipeline::AudioPipeline() = default;
 
 AudioPipeline::~AudioPipeline() {
   stop();
+}
+
+void AudioPipeline::setBackendFactoryForTests(BackendFactory factory) {
+  backendFactoryOverride() = std::move(factory);
 }
 
 TAE_Result AudioPipeline::play(
@@ -161,7 +331,18 @@ TAE_Result AudioPipeline::play(
     double volume,
     const std::string& dspConfigJson,
     std::string* error) {
-  return play(makeManualItem(source), std::nullopt, startTimeSeconds, backendId, deviceId, volume, dspConfigJson, false, error);
+  return playInternal(
+      makeManualItem(source),
+      std::nullopt,
+      startTimeSeconds,
+      backendId,
+      deviceId,
+      volume,
+      dspConfigJson,
+      false,
+      true,
+      {},
+      error);
 }
 
 TAE_Result AudioPipeline::play(
@@ -174,35 +355,131 @@ TAE_Result AudioPipeline::play(
     const std::string& dspConfigJson,
     bool gaplessEnabled,
     std::string* error) {
+  return playInternal(
+      item,
+      upcomingItem,
+      startTimeSeconds,
+      backendId,
+      deviceId,
+      volume,
+      dspConfigJson,
+      gaplessEnabled,
+      true,
+      {},
+      error);
+}
+
+TAE_Result AudioPipeline::playInternal(
+    const QueueItem& item,
+    const std::optional<QueueItem>& upcomingItem,
+    double startTimeSeconds,
+    const std::string& backendId,
+    const std::string& deviceId,
+    double volume,
+    const std::string& dspConfigJson,
+    bool gaplessEnabled,
+    bool allowDop,
+    const std::string& forcedDsdFallbackReason,
+    std::string* error) {
   stop();
   if (item.source.empty()) return TAE_RESULT_INVALID_ARGUMENT;
 
-  auto active = std::make_shared<DecodeStream>();
-  if (!active->openSource(item, error)) {
-    return TAE_RESULT_BACKEND_UNAVAILABLE;
-  }
-
-  auto output = createOutputBackend(backendId);
-  if (!output) {
-    if (error) *error = "请求的音频输出后端不可用：" + backendId;
-    return TAE_RESULT_BACKEND_UNAVAILABLE;
-  }
-
+  OutputConfig outputConfig;
   {
     std::lock_guard lock(mutex_);
-    if (!output->setOutputConfig(outputConfig_, error)) {
-      return TAE_RESULT_INVALID_ARGUMENT;
+    outputConfig = outputConfig_;
+  }
+
+  const DspConfig requestedDspConfig = DspChain::parseConfigJson(dspConfigJson);
+  const bool processingRequiresPcm =
+      dspConfigRequiresProcessing(dspConfigJson) || std::abs(volume - 1.0) > kUnityVolumeEpsilon ||
+      outputConfig.routingMode != ChannelRoutingMode::Auto;
+
+  std::optional<DsdStreamInfo> dsdProbe;
+  if (sourceLooksDsfOrDff(item.source)) {
+    DsdReader probe;
+    std::string probeError;
+    if (probe.open(item.source, &probeError)) {
+      dsdProbe = probe.streamInfo();
     }
   }
 
-  if (!output->open(deviceId, active->stream.sourceFormat, error)) {
-    return TAE_RESULT_BACKEND_UNAVAILABLE;
+  const bool canTryDop = allowDop && dsdProbe.has_value() && !processingRequiresPcm &&
+                         backendCanAttemptDop(backendId) &&
+                         dopCarrierFormatForDsd(dsdProbe->dsdRate, dsdProbe->channelCount).has_value();
+
+  std::shared_ptr<DecodeStream> active;
+  std::unique_ptr<IOutputBackend> output;
+  AudioFormat outputFormat;
+  bool dopPath = false;
+  std::string dopAttemptError;
+
+  if (canTryDop) {
+    auto dopActive = std::make_shared<DecodeStream>();
+    if (dopActive->openDsdSource(item, &dopAttemptError)) {
+      output = backendFactoryOverride() ? backendFactoryOverride()(backendId) : createOutputBackend(backendId);
+      if (!output) {
+        dopAttemptError = "请求的音频输出后端不可用：" + backendId;
+      } else if (!output->setOutputConfig(outputConfig, &dopAttemptError)) {
+        output.reset();
+      } else {
+        AudioFormat requested = dopCarrierFormatForDsd(dsdProbe->dsdRate, dsdProbe->channelCount).value();
+        requested.sampleFormat = AudioSampleFormat::Int24Interleaved;
+        if (output->open(deviceId, requested, &dopAttemptError)) {
+          outputFormat = output->outputFormat();
+          if (formatCanCarryDop(outputFormat, dsdProbe->dsdRate, dsdProbe->channelCount) &&
+              dopActive->configure(outputFormat, startTimeSeconds, &dopAttemptError)) {
+            active = dopActive;
+            dopPath = true;
+          } else {
+            output->close();
+            output.reset();
+          }
+        } else {
+          output.reset();
+        }
+      }
+    }
   }
 
-  const AudioFormat outputFormat = output->outputFormat();
-  if (!active->configure(outputFormat, startTimeSeconds, error)) {
-    output->close();
-    return TAE_RESULT_INTERNAL_ERROR;
+  if (!active) {
+    active = std::make_shared<DecodeStream>();
+    if (!active->openSource(item, error)) {
+      return TAE_RESULT_BACKEND_UNAVAILABLE;
+    }
+
+    output = backendFactoryOverride() ? backendFactoryOverride()(backendId) : createOutputBackend(backendId);
+    if (!output) {
+      if (error) *error = "请求的音频输出后端不可用：" + backendId;
+      return TAE_RESULT_BACKEND_UNAVAILABLE;
+    }
+    if (!output->setOutputConfig(outputConfig, error)) {
+      return TAE_RESULT_INVALID_ARGUMENT;
+    }
+    if (!output->open(deviceId, active->stream.sourceFormat, error)) {
+      return TAE_RESULT_BACKEND_UNAVAILABLE;
+    }
+
+    outputFormat = output->outputFormat();
+    if (!active->configure(outputFormat, startTimeSeconds, error)) {
+      output->close();
+      return TAE_RESULT_INTERNAL_ERROR;
+    }
+
+    if (active->stream.isDsd) {
+      active->stream.dsdMode = DsdMode::Pcm;
+      if (processingRequiresPcm) {
+        dopAttemptError = "DSD processing active; falling back to PCM";
+      } else if (active->stream.dsdRate >= 256) {
+        dopAttemptError = "DSD" + std::to_string(active->stream.dsdRate) + " currently falls back to PCM";
+      } else if (!forcedDsdFallbackReason.empty()) {
+        dopAttemptError = forcedDsdFallbackReason;
+      } else if (!dopAttemptError.empty()) {
+        // Keep the failed DoP attempt reason available through the evaluator backend reason path.
+      } else {
+        dopAttemptError = "DoP backend could not prove passthrough";
+      }
+    }
   }
 
   {
@@ -218,7 +495,14 @@ TAE_Result AudioPipeline::play(
     outputInfo_ = output_->outputInfo();
     outputInfo_.backend = backendId_;
     outputInfo_.deviceName = deviceName_;
-    dspConfig_ = DspChain::parseConfigJson(dspConfigJson);
+    dsdFallbackReason_ =
+        (!dopAttemptError.empty() && activeStream_->stream.isDsd && activeStream_->stream.dsdMode == DsdMode::Pcm)
+            ? dopAttemptError
+            : "";
+    if (!dsdFallbackReason_.empty()) {
+      outputInfo_.perfectReason = dopAttemptError;
+    }
+    dspConfig_ = requestedDspConfig;
     dspChain_.configure(dspConfig_);
     dspChain_.prepare(outputFormat_);
     dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
@@ -227,7 +511,8 @@ TAE_Result AudioPipeline::play(
     dspActive_ = dspStatus_.dspActive || std::abs(volume - 1.0) > 0.0001;
     spectrum_.prepare(outputFormat_, dspConfig_.fftResolution);
     spectrum_.setEnabled(dspConfig_.fftEnabled);
-    gaplessEnabled_ = gaplessEnabled;
+    gaplessEnabled_ = gaplessEnabled && !dopPath;
+    dopPathActive_ = dopPath;
     updatePerfectLocked();
     state_ = PipelineState::Playing;
     renderedFrames_ = static_cast<uint64_t>(std::max(0.0, startTimeSeconds) * outputFormat_.sampleRate);
@@ -238,7 +523,7 @@ TAE_Result AudioPipeline::play(
   }
 
   active->start();
-  if (gaplessEnabled_) {
+  if (gaplessEnabled_ && !dopPath) {
     std::string preloadError;
     preloadNext(upcomingItem, &preloadError);
   }
@@ -255,6 +540,38 @@ TAE_Result AudioPipeline::play(
   if (!output_->start([this](float* data, size_t frames) { return render(data, frames); }, eventCallback, error)) {
     stop();
     return TAE_RESULT_BACKEND_UNAVAILABLE;
+  }
+
+  if (dopPath) {
+    const DopRuntimeFacts dopFacts = output_->dopRuntimeFacts();
+    if (dopFacts.state == DopRuntimeFactState::Candidate || dopFacts.state == DopRuntimeFactState::Mismatch ||
+        dopFacts.state == DopRuntimeFactState::Unproven || dopFacts.state == DopRuntimeFactState::Unsupported) {
+      const std::string fallbackReason =
+          dopFacts.state == DopRuntimeFactState::Mismatch ? "DoP carrier mismatch"
+                                                          : "DoP backend could not prove passthrough";
+      stop();
+      return playInternal(
+          item,
+          upcomingItem,
+          startTimeSeconds,
+          backendId,
+          deviceId,
+          volume,
+          dspConfigJson,
+          gaplessEnabled,
+          false,
+          fallbackReason,
+          error);
+    }
+  }
+
+  {
+    std::lock_guard lock(mutex_);
+    outputFormat_ = output_->outputFormat();
+    outputInfo_ = output_->outputInfo();
+    outputInfo_.backend = backendId_;
+    outputInfo_.deviceName = deviceName_;
+    updatePerfectLocked();
   }
 
   return TAE_RESULT_OK;
@@ -297,6 +614,7 @@ TAE_Result AudioPipeline::stop() {
     backendId_.clear();
     deviceName_.clear();
     perfectReason_.clear();
+    dsdFallbackReason_.clear();
     outputInfo_ = {};
     renderedFrames_ = 0;
     ended_ = false;
@@ -308,6 +626,7 @@ TAE_Result AudioPipeline::stop() {
     dspActive_ = false;
     outputPerfect_ = false;
     gaplessEnabled_ = true;
+    dopPathActive_ = false;
   }
   return TAE_RESULT_OK;
 }
@@ -346,7 +665,7 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
   {
     std::lock_guard lock(mutex_);
     dspConfig_ = DspChain::parseConfigJson(dspConfigJson);
-    gaplessEnabled_ = dspConfig_.gapless && dspConfig_.crossfadeSeconds <= 0.0001;
+    gaplessEnabled_ = !dopPathActive_ && dspConfig_.gapless && dspConfig_.crossfadeSeconds <= 0.0001;
     if (!gaplessEnabled_) disabledPreload = std::move(preloadStream_);
     dspChain_.configure(dspConfig_);
     if (outputFormat_.sampleRate > 0 && outputFormat_.channelCount > 0) {
@@ -504,6 +823,9 @@ PipelineStatus AudioPipeline::status() const {
   backendInfo.outputPerfect = outputInfo_.outputPerfect;
   backendInfo.pcmPassthrough = outputInfo_.pcmPassthrough;
   backendInfo.resampled = outputInfo_.resampled;
+  backendInfo.isDsd = outputInfo_.isDsd;
+  backendInfo.dsdMode = outputInfo_.dsdMode;
+  backendInfo.dsdRate = outputInfo_.dsdRate;
   backendInfo.channelRoutingMode = outputInfo_.channelRoutingMode;
   backendInfo.perfectReason = outputInfo_.perfectReason;
   status.outputInfo = backendInfo;
@@ -530,6 +852,45 @@ PipelineStatus AudioPipeline::status() const {
   status.preloadReady = preloadStream_ && preloadStream_->readyForRender();
   status.perfectReason = perfectReason_;
   return status;
+}
+
+bool AudioPipeline::isDopPathActive() const {
+  std::lock_guard lock(mutex_);
+  return dopPathActive_;
+}
+
+bool AudioPipeline::needsPcmFallback(std::string* reason) const {
+  std::lock_guard lock(mutex_);
+  if (!dopPathActive_ || !stream_.isDsd || stream_.dsdMode != DsdMode::Dop) return false;
+  if (output_) {
+    const DopRuntimeFacts dopFacts = output_->dopRuntimeFacts();
+    if (dopFacts.state == DopRuntimeFactState::Mismatch) {
+      if (reason) *reason = "DoP carrier mismatch";
+      return true;
+    }
+    if (dopFacts.state == DopRuntimeFactState::Candidate || dopFacts.state == DopRuntimeFactState::Unproven ||
+        dopFacts.state == DopRuntimeFactState::Unsupported) {
+      if (reason) *reason = "DoP backend could not prove passthrough";
+      return true;
+    }
+  }
+  const bool processingActive =
+      dspStatus_.replayGainActive || dspStatus_.eqActive || dspStatus_.convolverActive || dspStatus_.crossfeedActive ||
+      dspStatus_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001 || std::abs(volume_.load() - 1.0) > kUnityVolumeEpsilon ||
+      outputConfig_.routingMode != ChannelRoutingMode::Auto;
+  if (!processingActive) return false;
+  if (reason) *reason = "DSD processing active; falling back to PCM";
+  return true;
+}
+
+void AudioPipeline::setRerouteInProgress(bool active, const std::string& reason) {
+  std::lock_guard lock(mutex_);
+  rerouteInProgress_ = active;
+  if (active && !reason.empty()) {
+    dsdFallbackReason_ = reason;
+    outputInfo_.perfectReason = reason;
+    perfectReason_ = reason;
+  }
 }
 
 bool AudioPipeline::consumeEnded() {
@@ -572,9 +933,13 @@ bool AudioPipeline::configureActiveStreamLocked(
 
 bool AudioPipeline::updatePerfectLocked() {
   const OutputInfo backendInfo = output_ ? output_->outputInfo() : outputInfo_;
+  const DopRuntimeFacts dopFacts = output_ ? output_->dopRuntimeFacts() : DopRuntimeFacts{};
   AudioFormat semanticOutputFormat = actualOutputPcmFormat(outputFormat_, backendInfo);
   const bool backendResampled = backendInfo.resampled;
-  const std::string backendPerfectReason = backendInfo.perfectReason;
+  const std::string backendPerfectReason =
+      stream_.isDsd && stream_.dsdMode == DsdMode::Pcm && !dsdFallbackReason_.empty()
+          ? dsdFallbackReason_
+          : backendInfo.perfectReason;
   PerfectEvaluation evaluation;
   evaluation.sourceFormat = stream_.sourceFormat;
   evaluation.decodedFormat = stream_.decodedFormat;
@@ -584,8 +949,18 @@ bool AudioPipeline::updatePerfectLocked() {
   if (stream_.isDsd) {
     evaluation.dsdMode = stream_.dsdMode;
     evaluation.dsdRate = stream_.dsdRate;
+    if (stream_.dsdMode == DsdMode::Dop) {
+      evaluation.dopCarrierFormat = stream_.decodedFormat;
+      evaluation.dopCarrierMatched = pcmFormatsExactMatch(stream_.decodedFormat, semanticOutputFormat);
+      if (dopFacts.state == DopRuntimeFactState::Mismatch && hasConcreteAudioFormat(dopFacts.actualFormat)) {
+        evaluation.dopCarrierFormat = dopFacts.actualFormat;
+        evaluation.dopCarrierMatched = pcmFormatsExactMatch(dopFacts.actualFormat, semanticOutputFormat);
+      }
+      evaluation.dopPassthroughProven =
+          dopFacts.state == DopRuntimeFactState::Proven && evaluation.dopCarrierMatched && !backendResampled;
+    }
   }
-  evaluation.supportsOutputPerfect = outputInfo_.supportsOutputPerfect;
+  evaluation.supportsOutputPerfect = backendInfo.supportsOutputPerfect;
   evaluation.backendResampled = backendResampled;
   evaluation.backendPerfectReason = backendPerfectReason;
   evaluation.volume = volume_.load();
@@ -636,7 +1011,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   while (totalRead < frameCount) {
     float* segment = output + totalRead * static_cast<size_t>(channels);
     const size_t read = active->read(segment, frameCount - totalRead);
-    if (read > 0) {
+    if (read > 0 && !dopPathActive_) {
       dspChain_.process(segment, read);
     }
     totalRead += read;
@@ -672,7 +1047,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   }
 
   const double volume = volume_.load();
-  if (std::abs(volume - 1.0) > 0.0001) {
+  if (!dopPathActive_ && std::abs(volume - 1.0) > 0.0001) {
     const size_t sampleCount = frameCount * static_cast<size_t>(channels);
     for (size_t i = 0; i < sampleCount; ++i) {
       output[i] = static_cast<float>(std::clamp(static_cast<double>(output[i]) * volume, -1.0, 1.0));

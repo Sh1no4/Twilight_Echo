@@ -1,0 +1,605 @@
+#include "../core/TwilightAudioEngine.h"
+#include "../decoder/DsdReader.h"
+#include "../decoder/FFmpegDecoder.h"
+#include "../output/IOutputBackend.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cassert>
+#include <chrono>
+#include <cstdint>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <thread>
+#include <vector>
+
+using namespace twilight::audio;
+
+namespace {
+
+constexpr int kDsd64Rate = 2822400;
+
+void writeLe16(std::ofstream& out, uint16_t value) {
+  out.put(static_cast<char>(value & 0xff));
+  out.put(static_cast<char>((value >> 8) & 0xff));
+}
+
+void writeLe32(std::ofstream& out, uint32_t value) {
+  writeLe16(out, static_cast<uint16_t>(value & 0xffff));
+  writeLe16(out, static_cast<uint16_t>((value >> 16) & 0xffff));
+}
+
+void writeLe64(std::ofstream& out, uint64_t value) {
+  writeLe32(out, static_cast<uint32_t>(value & 0xffffffffULL));
+  writeLe32(out, static_cast<uint32_t>((value >> 32) & 0xffffffffULL));
+}
+
+std::filesystem::path writeDsfFixture(const std::string& name, int sampleRate = kDsd64Rate) {
+  const auto path = std::filesystem::temp_directory_path() / name;
+  constexpr uint32_t kChannels = 2;
+  constexpr uint32_t kBlockSizePerChannel = 8;
+  constexpr uint64_t kDataBytes = static_cast<uint64_t>(kChannels) * kBlockSizePerChannel;
+  constexpr uint64_t kFileSize = 28 + 52 + 12 + kDataBytes;
+
+  std::ofstream out(path, std::ios::binary);
+  out.write("DSD ", 4);
+  writeLe64(out, 28);
+  writeLe64(out, kFileSize);
+  writeLe64(out, 0);
+  out.write("fmt ", 4);
+  writeLe64(out, 52);
+  writeLe32(out, 1);
+  writeLe32(out, 0);
+  writeLe32(out, 2);
+  writeLe32(out, kChannels);
+  writeLe32(out, static_cast<uint32_t>(sampleRate));
+  writeLe32(out, 1);
+  writeLe64(out, kBlockSizePerChannel * 8);
+  writeLe32(out, kBlockSizePerChannel);
+  writeLe32(out, 0);
+  out.write("data", 4);
+  writeLe64(out, 12 + kDataBytes);
+  for (uint8_t byte : {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88}) out.put(static_cast<char>(byte));
+  for (uint8_t byte : {0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xf0, 0x0f}) out.put(static_cast<char>(byte));
+  return path;
+}
+
+AudioFormat makePcmFormat(
+    int sampleRate = 44100,
+    int channels = 2,
+    int bitDepth = 24,
+    AudioSampleFormat sampleFormat = AudioSampleFormat::Int24Interleaved) {
+  AudioFormat format;
+  format.sampleRate = sampleRate;
+  format.channelCount = channels;
+  format.bitDepth = bitDepth;
+  format.sampleFormat = sampleFormat;
+  return format;
+}
+
+struct BackendSnapshot {
+  int serial = 0;
+  std::string backendId;
+  AudioFormat requestedFormat;
+  AudioFormat openedFormat;
+  OutputInfo info;
+  bool started = false;
+  bool stopped = false;
+  bool closed = false;
+};
+
+struct BackendState {
+  int serial = 0;
+  std::string backendId;
+  AudioFormat requestedFormat;
+  AudioFormat openedFormat;
+  OutputInfo info;
+  RenderCallback render;
+  OutputEventCallback event;
+  bool started = false;
+  bool stopped = false;
+  bool closed = false;
+};
+
+struct BackendRegistry {
+  mutable std::mutex mutex;
+  int nextSerial = 1;
+  std::vector<std::shared_ptr<BackendState>> states;
+
+  void reset() {
+    std::lock_guard lock(mutex);
+    nextSerial = 1;
+    states.clear();
+  }
+
+  int registerState(const std::shared_ptr<BackendState>& state) {
+    std::lock_guard lock(mutex);
+    state->serial = nextSerial++;
+    states.push_back(state);
+    return state->serial;
+  }
+
+  std::vector<BackendSnapshot> snapshots() const {
+    std::lock_guard lock(mutex);
+    std::vector<BackendSnapshot> result;
+    result.reserve(states.size());
+    for (const auto& state : states) {
+      BackendSnapshot snapshot;
+      snapshot.serial = state->serial;
+      snapshot.backendId = state->backendId;
+      snapshot.requestedFormat = state->requestedFormat;
+      snapshot.openedFormat = state->openedFormat;
+      snapshot.info = state->info;
+      snapshot.started = state->started;
+      snapshot.stopped = state->stopped;
+      snapshot.closed = state->closed;
+      result.push_back(snapshot);
+    }
+    return result;
+  }
+
+  std::shared_ptr<BackendState> latestStarted() const {
+    std::lock_guard lock(mutex);
+    for (auto it = states.rbegin(); it != states.rend(); ++it) {
+      if ((*it)->started && !(*it)->closed) return *it;
+    }
+    return nullptr;
+  }
+};
+
+BackendRegistry g_backendRegistry;
+
+bool formatLooksDopCarrier(const AudioFormat& format) {
+  return format.sampleRate == 176400 && format.channelCount == 2 && format.bitDepth == 24 &&
+         format.sampleFormat == AudioSampleFormat::Int24Interleaved;
+}
+
+bool formatLooksDsdSourceRequest(const AudioFormat& format) {
+  return format.sampleRate == kDsd64Rate && format.channelCount == 2 && format.bitDepth == 1;
+}
+
+bool formatLooksPcmTrackRequest(const AudioFormat& format) {
+  return format.sampleRate == 44100 && format.channelCount == 2 && format.bitDepth == 24;
+}
+
+bool jsonContains(const std::string& json, const std::string& needle) {
+  return json.find(needle) != std::string::npos;
+}
+
+bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 1500) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (predicate()) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return predicate();
+}
+
+void pumpLatestBackend(size_t iterations, size_t frames = 256) {
+  auto state = g_backendRegistry.latestStarted();
+  assert(state);
+  std::vector<float> buffer(frames * static_cast<size_t>(std::max(1, state->openedFormat.channelCount)));
+  for (size_t i = 0; i < iterations; ++i) {
+    RenderCallback render;
+    {
+      std::lock_guard lock(g_backendRegistry.mutex);
+      render = state->render;
+    }
+    if (!render) return;
+    render(buffer.data(), frames);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+}
+
+class FakeOutputBackend final : public IOutputBackend {
+ public:
+  explicit FakeOutputBackend(std::string backendId)
+      : state_(std::make_shared<BackendState>()) {
+    state_->backendId = std::move(backendId);
+    g_backendRegistry.registerState(state_);
+  }
+
+  const char* id() const override {
+    return state_->backendId.c_str();
+  }
+
+  bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) override {
+    (void)error;
+    state_->requestedFormat = requestedFormat;
+
+    AudioFormat opened = requestedFormat;
+    if (formatLooksDopCarrier(requestedFormat)) {
+      opened = requestedFormat;
+    } else if (formatLooksDsdSourceRequest(requestedFormat)) {
+      opened = makePcmFormat(176400, 2, 24, AudioSampleFormat::Int24Interleaved);
+    } else {
+      opened = requestedFormat;
+    }
+    state_->openedFormat = opened;
+
+    OutputInfo info;
+    info.exclusive = state_->backendId == "wasapi-exclusive";
+    info.supportsOutputPerfect = state_->backendId == "wasapi-exclusive";
+    info.backend = state_->backendId;
+    info.actualBackend = state_->backendId;
+    info.deviceName = deviceId.empty() ? "Test Device" : deviceId;
+    info.actualDeviceName = info.deviceName;
+    info.driverName = "Test Driver";
+    info.actualDriverName = info.driverName;
+    info.outputSampleRate = opened.sampleRate;
+    info.outputBitDepth = opened.bitDepth;
+    info.actualSampleRate = opened.sampleRate;
+    info.actualBitDepth = opened.bitDepth;
+    info.actualChannels = opened.channelCount;
+    info.actualOutputFormat = sampleFormatToString(opened.sampleFormat);
+    info.driverDopCapable = formatLooksDopCarrier(requestedFormat);
+    info.driverDopCarrierSampleRates = {176400, 352800};
+    info.driverDopCarrierFormats = {"int24", "int24-in32"};
+    info.channelRoutingMode = "auto";
+    state_->info = info;
+    return true;
+  }
+
+  bool setOutputConfig(const OutputConfig& config, std::string* error) override {
+    (void)error;
+    state_->info.channelRoutingMode = channelRoutingModeToString(config.routingMode);
+    return true;
+  }
+
+  bool start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) override {
+    (void)error;
+    state_->render = std::move(callback);
+    state_->event = std::move(eventCallback);
+    state_->started = true;
+    return true;
+  }
+
+  void stop() override {
+    state_->stopped = true;
+  }
+
+  void close() override {
+    state_->closed = true;
+  }
+
+  AudioFormat outputFormat() const override {
+    return state_->openedFormat;
+  }
+
+  OutputInfo outputInfo() const override {
+    return state_->info;
+  }
+
+  DopRuntimeFacts dopRuntimeFacts() const override {
+    DopRuntimeFacts facts;
+    if (!formatLooksDopCarrier(state_->requestedFormat)) return facts;
+
+    facts.candidateFormat = state_->requestedFormat;
+    facts.explicitlyCapable = true;
+    if (!formatLooksDopCarrier(state_->openedFormat)) {
+      facts.state = DopRuntimeFactState::Unproven;
+      facts.reason = "DoP backend could not prove passthrough";
+      return facts;
+    }
+
+    facts.actualFormat = state_->openedFormat;
+    if (!pcmFormatsExactMatch(facts.candidateFormat, facts.actualFormat)) {
+      facts.state = DopRuntimeFactState::Mismatch;
+      facts.reason = "DoP carrier mismatch";
+      return facts;
+    }
+
+    facts.state = DopRuntimeFactState::Proven;
+    facts.reason = "Fake backend accepted an exact DoP carrier";
+    return facts;
+  }
+
+  std::string deviceName() const override {
+    return state_->info.deviceName;
+  }
+
+ private:
+  std::shared_ptr<BackendState> state_;
+};
+
+struct TrackProfile {
+  AudioStreamInfo stream;
+  AudioFormat defaultOutput;
+  size_t totalFrames = 8192;
+  float sampleValue = 0.25f;
+};
+
+TrackProfile buildTrackProfile(const std::string& source) {
+  TrackProfile profile;
+  profile.stream.source = source;
+  profile.stream.durationSeconds = 30.0;
+  profile.stream.sourceLossless = true;
+  if (source.size() >= 4 && source.substr(source.size() - 4) == ".dsf") {
+    profile.stream.codec = "dsd";
+    profile.stream.sourceFormat.sampleRate = kDsd64Rate;
+    profile.stream.sourceFormat.channelCount = 2;
+    profile.stream.sourceFormat.bitDepth = 1;
+    profile.stream.sourceFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
+    profile.stream.decodedFormat = makePcmFormat(176400, 2, 32, AudioSampleFormat::Float32Interleaved);
+    profile.stream.isDsd = true;
+    profile.stream.dsdMode = DsdMode::Pcm;
+    profile.stream.dsdRate = 64;
+    profile.defaultOutput = profile.stream.decodedFormat;
+    profile.sampleValue = 0.5f;
+    return profile;
+  }
+
+  profile.stream.codec = "flac";
+  profile.stream.sourceFormat = makePcmFormat(44100, 2, 24, AudioSampleFormat::Int24Interleaved);
+  profile.stream.decodedFormat = makePcmFormat(44100, 2, 32, AudioSampleFormat::Float32Interleaved);
+  profile.defaultOutput = profile.stream.decodedFormat;
+  profile.sampleValue = 0.25f;
+  return profile;
+}
+
+class EngineHarness {
+ public:
+  EngineHarness()
+      : dsdPath_(writeDsfFixture("twilight-phase6e-runtime-reroute.dsf")) {
+    dsdPathString_ = dsdPath_.string();
+    g_backendRegistry.reset();
+    engine_.setOutputBackend("wasapi-exclusive");
+  }
+
+  ~EngineHarness() {
+    engine_.stop();
+    std::error_code ignored;
+    std::filesystem::remove(dsdPath_, ignored);
+  }
+
+  TwilightAudioEngine& engine() { return engine_; }
+  const std::string& dsdPath() const { return dsdPathString_; }
+
+ private:
+  TwilightAudioEngine engine_;
+  std::filesystem::path dsdPath_;
+  std::string dsdPathString_;
+};
+
+void assertLatestPlaybackContains(TwilightAudioEngine& engine, const std::string& needle) {
+  const std::string json = engine.getPlaybackInfoJson();
+  assert(jsonContains(json, needle));
+}
+
+void testDsd64StartsOnDop() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(formatLooksDopCarrier(snapshots.front().requestedFormat));
+  assertLatestPlaybackContains(engine, "\"isDsd\":true");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
+}
+
+void testEqEnableRequestsPcmReroute() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+
+  const char* eqJson =
+      "{\"dspEnabled\":true,\"eqEnabled\":true,\"eqMode\":\"parametric\","
+      "\"eqBands\":[{\"frequency\":1000,\"gain\":3,\"q\":1,\"filterType\":\"peak\"}]}";
+  assert(engine.setDspConfig(eqJson) == TAE_RESULT_OK);
+
+  assert(waitUntil([] { return g_backendRegistry.snapshots().size() >= 2; }));
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(formatLooksDsdSourceRequest(snapshots.back().requestedFormat));
+  assertLatestPlaybackContains(engine, "\"eqActive\":true");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"perfectReason\":\"DSD processing active; falling back to PCM\"");
+}
+
+void testVolumeChangeRequestsPcmReroute() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+
+  assert(waitUntil([] { return g_backendRegistry.snapshots().size() >= 2; }));
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(formatLooksDsdSourceRequest(snapshots.back().requestedFormat));
+  assertLatestPlaybackContains(engine, "\"volume\":0.5");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+}
+
+void testSeekReevaluatesDsdPath() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+
+  assert(engine.seek(5.0) == TAE_RESULT_OK);
+
+  assert(waitUntil([] { return g_backendRegistry.snapshots().size() >= 2; }));
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(formatLooksDopCarrier(snapshots.back().requestedFormat));
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
+}
+
+void testPausedSettingsFallbackBeforeResume() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+
+  assert(engine.pause() == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+
+  const char* eqJson =
+      "{\"dspEnabled\":true,\"eqEnabled\":true,\"eqMode\":\"parametric\","
+      "\"eqBands\":[{\"frequency\":1000,\"gain\":3,\"q\":1,\"filterType\":\"peak\"}]}";
+  assert(engine.setDspConfig(eqJson) == TAE_RESULT_OK);
+
+  assert(waitUntil([] { return g_backendRegistry.snapshots().size() >= 2; }));
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+
+  assert(engine.pause() == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"state\":\"playing\"");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assert(g_backendRegistry.snapshots().size() == 2);
+}
+
+void testManualNextDoesNotInheritDsdPath() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  const std::string queueJson = "[{\"id\":\"dsd\",\"source\":\"" + harness.dsdPath() +
+                                "\",\"duration\":30},{\"id\":\"pcm\",\"source\":\"next.flac\",\"duration\":30}]";
+  assert(engine.loadQueue(queueJson, 0) == TAE_RESULT_OK);
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+
+  assert(engine.next() == TAE_RESULT_OK);
+  assert(waitUntil([] { return g_backendRegistry.snapshots().size() >= 2; }));
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(formatLooksPcmTrackRequest(snapshots.back().requestedFormat));
+  assertLatestPlaybackContains(engine, "\"source\":\"next.flac\"");
+  assertLatestPlaybackContains(engine, "\"isDsd\":false");
+}
+
+void testAutoNextDoesNotInheritDsdPath() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  const std::string queueJson = "[{\"id\":\"dsd\",\"source\":\"" + harness.dsdPath() +
+                                "\",\"duration\":30},{\"id\":\"pcm\",\"source\":\"auto-next.flac\",\"duration\":30}]";
+  assert(engine.loadQueue(queueJson, 0) == TAE_RESULT_OK);
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+
+  pumpLatestBackend(96);
+  assert(waitUntil([&engine] {
+    return jsonContains(engine.getPlaybackInfoJson(), "\"source\":\"auto-next.flac\"");
+  }));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() >= 2);
+  assert(formatLooksPcmTrackRequest(snapshots.back().requestedFormat));
+  assertLatestPlaybackContains(engine, "\"isDsd\":false");
+  assertLatestPlaybackContains(engine, "\"source\":\"auto-next.flac\"");
+}
+
+}  // namespace
+
+namespace twilight::audio {
+
+std::string defaultBackendId() {
+  return "wasapi-exclusive";
+}
+
+std::unique_ptr<IOutputBackend> createOutputBackend(const std::string& backendId) {
+  return std::make_unique<FakeOutputBackend>(backendId);
+}
+
+std::string enumeratePlatformDevicesJson() {
+  return "[]";
+}
+
+std::string readMetadataJson(const std::string& source) {
+  return "{\"source\":\"" + source + "\"}";
+}
+
+struct FFmpegDecoder::Impl {
+  TrackProfile profile;
+  AudioFormat outputFormat;
+  size_t positionFrames = 0;
+};
+
+FFmpegDecoder::FFmpegDecoder()
+    : impl_(std::make_unique<Impl>()) {}
+
+FFmpegDecoder::~FFmpegDecoder() = default;
+
+bool FFmpegDecoder::open(const std::string& source, std::string* error) {
+  (void)error;
+  impl_->profile = buildTrackProfile(source);
+  impl_->outputFormat = impl_->profile.defaultOutput;
+  impl_->positionFrames = 0;
+  impl_->profile.stream.decodedFormat = impl_->outputFormat;
+  return true;
+}
+
+void FFmpegDecoder::close() {
+  impl_->positionFrames = impl_->profile.totalFrames;
+}
+
+bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* error) {
+  (void)error;
+  impl_->outputFormat = format;
+  impl_->profile.stream.decodedFormat = format;
+  return true;
+}
+
+size_t FFmpegDecoder::readFrames(float* output, size_t frameCount, std::string* error) {
+  (void)error;
+  const size_t channels = static_cast<size_t>(std::max(1, impl_->outputFormat.channelCount));
+  const size_t remaining = impl_->profile.totalFrames > impl_->positionFrames
+                               ? impl_->profile.totalFrames - impl_->positionFrames
+                               : 0;
+  const size_t read = std::min(frameCount, remaining);
+  for (size_t frame = 0; frame < read; ++frame) {
+    for (size_t channel = 0; channel < channels; ++channel) {
+      output[frame * channels + channel] = impl_->profile.sampleValue;
+    }
+  }
+  impl_->positionFrames += read;
+  return read;
+}
+
+bool FFmpegDecoder::seek(double seconds, std::string* error) {
+  (void)error;
+  const double clamped = std::max(0.0, seconds);
+  const double sampleRate = static_cast<double>(std::max(1, impl_->outputFormat.sampleRate));
+  const size_t nextFrame = static_cast<size_t>(clamped * sampleRate);
+  impl_->positionFrames = std::min(nextFrame, impl_->profile.totalFrames);
+  return true;
+}
+
+bool FFmpegDecoder::eof() const {
+  return impl_->positionFrames >= impl_->profile.totalFrames;
+}
+
+const AudioStreamInfo& FFmpegDecoder::streamInfo() const {
+  return impl_->profile.stream;
+}
+
+const AudioFormat& FFmpegDecoder::outputFormat() const {
+  return impl_->outputFormat;
+}
+
+}  // namespace twilight::audio
+
+int main() {
+  testDsd64StartsOnDop();
+  testEqEnableRequestsPcmReroute();
+  testVolumeChangeRequestsPcmReroute();
+  testSeekReevaluatesDsdPath();
+  testPausedSettingsFallbackBeforeResume();
+  testManualNextDoesNotInheritDsdPath();
+  testAutoNextDoesNotInheritDsdPath();
+  return 0;
+}

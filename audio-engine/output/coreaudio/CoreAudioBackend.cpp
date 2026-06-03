@@ -20,6 +20,44 @@
 #endif
 
 namespace twilight::audio {
+namespace {
+
+AudioFormat dopCandidateForRequestedFormat(const AudioFormat& requestedFormat) {
+  if (isDopCarrierFormat(requestedFormat)) return requestedFormat;
+
+  AudioFormat candidate;
+  candidate.channelCount = requestedFormat.channelCount;
+  candidate.bitDepth = 24;
+  candidate.sampleFormat = AudioSampleFormat::Int24Interleaved;
+  switch (requestedFormat.sampleRate) {
+    case 2822400:
+      candidate.sampleRate = 176400;
+      return candidate;
+    case 5644800:
+      candidate.sampleRate = 352800;
+      return candidate;
+    default:
+      return {};
+  }
+}
+
+DopRuntimeFacts unprovenDopRuntimeFacts(
+    const AudioFormat& requestedFormat,
+    const AudioFormat& actualFormat,
+    const std::string& reason) {
+  DopRuntimeFacts facts;
+  const AudioFormat candidateFormat = dopCandidateForRequestedFormat(requestedFormat);
+  const bool dopLikeRequest = requestedFormat.sampleRate >= 2500000 || isDopCarrierFormat(requestedFormat);
+  if (!dopLikeRequest && !isDopCarrierFormat(actualFormat)) return facts;
+
+  facts.state = DopRuntimeFactState::Unproven;
+  facts.candidateFormat = candidateFormat;
+  facts.actualFormat = isDopCarrierFormat(actualFormat) ? actualFormat : AudioFormat{};
+  facts.reason = reason;
+  return facts;
+}
+
+}  // namespace
 
 struct CoreAudioBackend::Impl {
   mutable std::mutex mutex;
@@ -28,6 +66,7 @@ struct CoreAudioBackend::Impl {
   OutputConfig outputConfig;
   AudioFormat outputFormat;
   OutputInfo outputInfo;
+  DopRuntimeFacts dopRuntimeFacts;
   std::string deviceName = "CoreAudio";
   std::atomic<bool> running{false};
 
@@ -265,6 +304,7 @@ struct CoreAudioBackend::Impl {
   void resetState() {
     outputFormat = {};
     outputInfo = {};
+    dopRuntimeFacts = {};
     deviceName = "CoreAudio";
   }
 };
@@ -458,6 +498,10 @@ bool CoreAudioBackend::open(const std::string& deviceId, const AudioFormat& requ
   impl_->outputInfo.latencyMs = impl_->outputInfo.latencyInfo.totalLatencyMs;
   impl_->outputInfo.channelRoutingMode = channelRoutingModeToString(impl_->outputConfig.routingMode);
   impl_->outputInfo.perfectReason = Impl::coreAudioReason(requestedFormat, impl_->outputFormat);
+  impl_->dopRuntimeFacts = unprovenDopRuntimeFacts(
+      requestedFormat,
+      impl_->outputFormat,
+      "CoreAudio shared system path cannot prove DoP passthrough");
   return true;
 #else
   (void)deviceId;
@@ -530,6 +574,11 @@ AudioFormat CoreAudioBackend::outputFormat() const {
 OutputInfo CoreAudioBackend::outputInfo() const {
   std::lock_guard lock(impl_->mutex);
   return impl_->outputInfo;
+}
+
+DopRuntimeFacts CoreAudioBackend::dopRuntimeFacts() const {
+  std::lock_guard lock(impl_->mutex);
+  return impl_->dopRuntimeFacts;
 }
 
 std::string CoreAudioBackend::deviceName() const {

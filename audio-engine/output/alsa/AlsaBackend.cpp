@@ -77,6 +77,41 @@ std::string formatDescription(const AudioFormat& format) {
          std::to_string(format.sampleRate) + "Hz " + std::to_string(format.channelCount) + "ch";
 }
 
+AudioFormat dopCandidateForRequestedFormat(const AudioFormat& requestedFormat) {
+  if (isDopCarrierFormat(requestedFormat)) return requestedFormat;
+
+  AudioFormat candidate;
+  candidate.channelCount = requestedFormat.channelCount;
+  candidate.bitDepth = 24;
+  candidate.sampleFormat = AudioSampleFormat::Int24Interleaved;
+  switch (requestedFormat.sampleRate) {
+    case 2822400:
+      candidate.sampleRate = 176400;
+      return candidate;
+    case 5644800:
+      candidate.sampleRate = 352800;
+      return candidate;
+    default:
+      return {};
+  }
+}
+
+DopRuntimeFacts unprovenDopRuntimeFacts(
+    const AudioFormat& requestedFormat,
+    const AudioFormat& actualFormat,
+    const std::string& reason) {
+  DopRuntimeFacts facts;
+  const AudioFormat candidateFormat = dopCandidateForRequestedFormat(requestedFormat);
+  const bool dopLikeRequest = requestedFormat.sampleRate >= 2500000 || isDopCarrierFormat(requestedFormat);
+  if (!dopLikeRequest && !isDopCarrierFormat(actualFormat)) return facts;
+
+  facts.state = DopRuntimeFactState::Unproven;
+  facts.candidateFormat = candidateFormat;
+  facts.actualFormat = isDopCarrierFormat(actualFormat) ? actualFormat : AudioFormat{};
+  facts.reason = reason;
+  return facts;
+}
+
 }  // namespace
 
 struct AlsaBackend::Impl {
@@ -86,6 +121,7 @@ struct AlsaBackend::Impl {
   OutputConfig outputConfig;
   AudioFormat outputFormat;
   OutputInfo outputInfo;
+  DopRuntimeFacts dopRuntimeFacts;
   OutputInfo::Diagnostics diagnostics;
   std::string deviceId = "default";
   std::string deviceName = "ALSA default";
@@ -314,6 +350,7 @@ struct AlsaBackend::Impl {
     diagnostics.deviceLostCount = lifetime.deviceLostCount;
     outputFormat = {};
     outputInfo = {};
+    dopRuntimeFacts = {};
     deviceId = "default";
     deviceName = "ALSA default";
   }
@@ -478,6 +515,10 @@ bool AlsaBackend::open(const std::string& deviceId, const AudioFormat& requested
     impl_->outputInfo.perfectReason =
         directHw ? Impl::formatMismatchReason(requestedFormat, impl_->outputFormat) : Impl::pluginPathReason(impl_->deviceId);
   }
+  impl_->dopRuntimeFacts = unprovenDopRuntimeFacts(
+      requestedFormat,
+      impl_->outputFormat,
+      directHw ? "ALSA direct path does not provide explicit DoP runtime proof" : Impl::pluginPathReason(impl_->deviceId));
 
   return true;
 #else
@@ -556,6 +597,11 @@ AudioFormat AlsaBackend::outputFormat() const {
 OutputInfo AlsaBackend::outputInfo() const {
   std::lock_guard lock(impl_->mutex);
   return impl_->outputInfo;
+}
+
+DopRuntimeFacts AlsaBackend::dopRuntimeFacts() const {
+  std::lock_guard lock(impl_->mutex);
+  return impl_->dopRuntimeFacts;
 }
 
 std::string AlsaBackend::deviceName() const {

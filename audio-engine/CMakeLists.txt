@@ -49,6 +49,8 @@ add_library(twilight_audio_engine SHARED
   core/AudioPipeline.cpp
   core/AudioTypes.cpp
   core/TwilightAudioEngine.cpp
+  decoder/DopPacker.cpp
+  decoder/DsdReader.cpp
   decoder/FFmpegDecoder.cpp
   devices/DeviceManager.cpp
   dsp/ConvolverProcessor.cpp
@@ -253,6 +255,15 @@ if(TAE_BUILD_TESTS)
   endif()
   add_test(NAME twilight_ffmpeg_decoder_unit COMMAND twilight_ffmpeg_decoder_tests)
 
+  add_executable(twilight_dsd_dop_tests
+    tests/dsd_dop_tests.cpp
+    decoder/DopPacker.cpp
+    decoder/DsdReader.cpp
+    core/AudioTypes.cpp
+  )
+  target_include_directories(twilight_dsd_dop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME twilight_dsd_dop_unit COMMAND twilight_dsd_dop_tests)
+
   add_executable(twilight_queue_tests
     tests/queue_tests.cpp
     playlist/QueueManager.cpp
@@ -351,6 +362,29 @@ if(TAE_BUILD_TESTS)
     target_link_libraries(twilight_output_backend_tests PRIVATE ole32 uuid winmm)
   endif()
   add_test(NAME twilight_output_backend_unit COMMAND twilight_output_backend_tests)
+
+  add_executable(twilight_runtime_queue_reroute_tests
+    tests/runtime_queue_reroute_tests.cpp
+    core/AudioBuffer.cpp
+    core/AudioPipeline.cpp
+    core/AudioTypes.cpp
+    core/TwilightAudioEngine.cpp
+    decoder/DopPacker.cpp
+    decoder/DsdReader.cpp
+    dsp/ConvolverProcessor.cpp
+    dsp/CrossfeedProcessor.cpp
+    dsp/DspChain.cpp
+    dsp/FftSpectrumAnalyzer.cpp
+    dsp/KissFftAdapter.cpp
+    dsp/ParametricEqProcessor.cpp
+    dsp/ReplayGainProcessor.cpp
+    playlist/QueueManager.cpp
+  )
+  target_include_directories(twilight_runtime_queue_reroute_tests PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  add_test(NAME twilight_runtime_queue_reroute_unit COMMAND twilight_runtime_queue_reroute_tests)
 
   add_executable(audio_output_benchmark
     tests/output_backend_benchmark.cpp

@@ -62,21 +62,22 @@ bool isDopCarrierRate(int sampleRate) {
          kDopCarrierSampleRates.end();
 }
 
-bool isDopCarrierSampleFormat(AudioSampleFormat sampleFormat) {
-  return sampleFormat == AudioSampleFormat::Int24Interleaved ||
-         sampleFormat == AudioSampleFormat::Int24In32Interleaved;
-}
-
-bool isDopCarrierFormat(const AudioFormat& format) {
-  return isDopCarrierRate(format.sampleRate) && normalizeBitDepth(format.bitDepth) == 24 &&
-         isDopCarrierSampleFormat(format.sampleFormat);
-}
-
 int dopCarrierRateForSource(const AudioFormat& sourceFormat) {
   if (sourceFormat.sampleRate == kDsd64SampleRate) return 176400;
   if (sourceFormat.sampleRate == kDsd128SampleRate) return 352800;
   if (isDopCarrierFormat(sourceFormat)) return sourceFormat.sampleRate;
   return 0;
+}
+
+AudioFormat defaultDopCandidate(const AudioFormat& sourceFormat) {
+  if (isDopCarrierFormat(sourceFormat)) return sourceFormat;
+
+  AudioFormat candidate;
+  candidate.sampleRate = dopCarrierRateForSource(sourceFormat);
+  candidate.channelCount = sourceFormat.channelCount;
+  candidate.bitDepth = 24;
+  candidate.sampleFormat = AudioSampleFormat::Int24Interleaved;
+  return candidate.sampleRate > 0 ? candidate : AudioFormat{};
 }
 
 bool wantsDopCarrier(const AudioFormat& sourceFormat) {
@@ -219,15 +220,26 @@ bool WasapiFormatNegotiator::negotiate(const AudioFormat& sourceFormat, std::str
   lastFailureReason_.clear();
   outputInfo_ = {};
   outputFormat_ = {};
+  dopRuntimeFacts_ = {};
   waveFormatBytes_.clear();
 
   if (!audioClient_) {
     lastFailureReason_ = "WASAPI 独占格式协商失败：音频客户端尚未初始化";
+    if (wantsDopCarrier(sourceFormat)) {
+      dopRuntimeFacts_.state = DopRuntimeFactState::Unproven;
+      dopRuntimeFacts_.candidateFormat = defaultDopCandidate(sourceFormat);
+      dopRuntimeFacts_.reason = lastFailureReason_;
+    }
     if (error) *error = lastFailureReason_;
     return false;
   }
   if (sourceFormat.sampleRate <= 0 || sourceFormat.channelCount <= 0) {
     lastFailureReason_ = "WASAPI 独占格式协商失败：源音频格式无效";
+    if (wantsDopCarrier(sourceFormat)) {
+      dopRuntimeFacts_.state = DopRuntimeFactState::Unproven;
+      dopRuntimeFacts_.candidateFormat = defaultDopCandidate(sourceFormat);
+      dopRuntimeFacts_.reason = lastFailureReason_;
+    }
     if (error) *error = lastFailureReason_;
     return false;
   }
@@ -246,6 +258,9 @@ bool WasapiFormatNegotiator::negotiate(const AudioFormat& sourceFormat, std::str
     outputInfo_.resampled = !sameSourceFormat(sourceFormat, outputFormat_);
     if (candidate.dopCarrier) {
       outputInfo_.perfectReason = "WASAPI 独占输出格式已协商为 DoP carrier（未启用 Native DSD）";
+      outputInfo_.driverDopCapable = true;
+      outputInfo_.driverDopCarrierSampleRates = {outputFormat_.sampleRate};
+      outputInfo_.driverDopCarrierFormats = {sampleFormatToString(outputFormat_.sampleFormat)};
     } else {
       outputInfo_.perfectReason = outputInfo_.resampled ? "WASAPI 独占输出格式已协商为设备支持格式" : "";
     }
@@ -259,6 +274,13 @@ bool WasapiFormatNegotiator::negotiate(const AudioFormat& sourceFormat, std::str
     outputInfo_.actualSampleRate = outputFormat_.sampleRate;
     outputInfo_.actualBitDepth = outputFormat_.bitDepth;
     outputInfo_.actualChannels = outputFormat_.channelCount;
+    if (candidate.dopCarrier) {
+      dopRuntimeFacts_.state = DopRuntimeFactState::Proven;
+      dopRuntimeFacts_.candidateFormat = outputFormat_;
+      dopRuntimeFacts_.actualFormat = outputFormat_;
+      dopRuntimeFacts_.explicitlyCapable = true;
+      dopRuntimeFacts_.reason = "WASAPI exclusive accepted an exact DoP carrier format";
+    }
     return true;
   }
 
@@ -268,6 +290,11 @@ bool WasapiFormatNegotiator::negotiate(const AudioFormat& sourceFormat, std::str
   outputInfo_.backend = "wasapi-exclusive";
   outputInfo_.actualBackend = "wasapi-exclusive";
   outputInfo_.perfectReason = lastFailureReason_;
+  if (wantsDopCarrier(sourceFormat)) {
+    dopRuntimeFacts_.state = DopRuntimeFactState::Unproven;
+    dopRuntimeFacts_.candidateFormat = defaultDopCandidate(sourceFormat);
+    dopRuntimeFacts_.reason = lastFailureReason_;
+  }
   if (error) *error = lastFailureReason_;
   return false;
 }
@@ -278,6 +305,10 @@ const AudioFormat& WasapiFormatNegotiator::outputFormat() const {
 
 const OutputInfo& WasapiFormatNegotiator::outputInfo() const {
   return outputInfo_;
+}
+
+const DopRuntimeFacts& WasapiFormatNegotiator::dopRuntimeFacts() const {
+  return dopRuntimeFacts_;
 }
 
 const std::string& WasapiFormatNegotiator::lastFailureReason() const {

@@ -136,13 +136,11 @@ const reasonLabels: { pattern: RegExp; label: string }[] = [
 ]
 
 function canonicalSourceExact(): boolean {
-  return outputInfo.value ? outputInfo.value.sourceExact === true : playbackInfo.value?.sourceExact === true
+  return outputInfo.value?.sourceExact === true
 }
 
 function canonicalOutputPerfect(): boolean {
-  return outputInfo.value
-    ? outputInfo.value.outputPerfect === true
-    : playbackInfo.value?.outputPerfect === true
+  return outputInfo.value?.outputPerfect === true
 }
 
 function formatBackendLabel(backend: string): string {
@@ -173,7 +171,7 @@ const nonPerfectReason = computed(() => {
   const sourceExact = canonicalSourceExact()
   const outputPerfect = canonicalOutputPerfect()
   if (sourceExact && outputPerfect) return ''
-  const reason = formatPerfectReason(outputInfo.value?.perfectReason || playbackInfo.value?.perfectReason || '')
+  const reason = formatPerfectReason(outputInfo.value?.perfectReason || '')
   return reason ? `未达成：${reason}` : ''
 })
 function compactRate(rate: number): string {
@@ -204,31 +202,36 @@ function compactPcm(
   return parts.length > 0 ? parts.join(' ') : 'PCM'
 }
 
+function isSacdIsoSource(info: NonNullable<typeof playbackInfo.value>): boolean {
+  return info.source.split('.').pop()?.toUpperCase() === 'ISO'
+}
+
 function inferDsdRate(sampleRate: number): number {
+  if (sampleRate >= 20000000) return 512
   if (sampleRate >= 10000000) return 256
   if (sampleRate >= 5000000) return 128
   if (sampleRate >= 2500000) return 64
   return 0
 }
 
-function isDsdPlayback(info: NonNullable<typeof playbackInfo.value>): boolean {
+function isDsdSource(info: NonNullable<typeof playbackInfo.value>): boolean {
+  return /\.(dsf|dff)$/i.test(info.source) || info.codec.trim().toLowerCase() === 'dsd'
+}
+
+function isDsdPlayback(): boolean {
   const out = outputInfo.value
   return (
     out?.isDsd === true ||
-    info.isDsd === true ||
     out?.dsdMode === 'native' ||
     out?.dsdMode === 'dop' ||
-    out?.dsdMode === 'unsupported' ||
-    info.dsdMode === 'native' ||
-    info.dsdMode === 'dop' ||
-    info.dsdMode === 'unsupported'
+    out?.dsdMode === 'unsupported'
   )
 }
 
 function formatDsdSource(info: NonNullable<typeof playbackInfo.value>): string {
   const ext = info.source.split('.').pop()?.toUpperCase()
   const container = ext === 'DSF' || ext === 'DFF' ? ext : ext === 'ISO' ? 'SACD ISO' : 'DSD'
-  const dsdRate = outputInfo.value?.dsdRate || info.dsdRate || inferDsdRate(info.sourceSampleRate)
+  const dsdRate = outputInfo.value?.dsdRate || inferDsdRate(info.sourceSampleRate)
   return [container, dsdRate > 0 ? `DSD${dsdRate}` : 'DSD'].filter(Boolean).join(' ')
 }
 
@@ -240,17 +243,18 @@ function formatDecodedStage(info: NonNullable<typeof playbackInfo.value>): strin
     info.decodedChannels,
     false
   )
-  if (!isDsdPlayback(info)) return pcm
-  const mode = outputInfo.value?.dsdMode || info.dsdMode
+  if (!isDsdSource(info) && !isDsdPlayback()) return pcm
+  const mode = outputInfo.value?.dsdMode || 'pcm'
   if (mode === 'native') return 'DSD Native'
   if (mode === 'dop') return `DoP carrier ${pcm}`
+  if (mode === 'unsupported' && isSacdIsoSource(info)) return 'SACD unsupported'
   return `PCM fallback ${pcm}`
 }
 
 const outputChainText = computed(() => {
   const info = playbackInfo.value
   if (!info) return ''
-  const source = isDsdPlayback(info)
+  const source = isDsdSource(info) || isSacdIsoSource(info)
     ? formatDsdSource(info)
     : [
         info.codec || 'Source',

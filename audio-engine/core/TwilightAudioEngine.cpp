@@ -505,6 +505,13 @@ TAE_Result TwilightAudioEngine::seek(double positionSeconds) {
     currentState = info_.state;
   }
   if (pipeline_ && currentState != PlaybackState::Stopped) {
+    if (pipeline_->isDopPathActive()) {
+      return restartCurrentPlaybackForReroute(
+          std::max(0.0, positionSeconds),
+          currentState,
+          {},
+          "seek");
+    }
     const TAE_Result result = pipeline_->seek(positionSeconds, &error);
     if (result != TAE_RESULT_OK) {
       emitError(error.empty() ? "无法跳转原生音频播放位置" : error, result, "seek");
@@ -524,15 +531,26 @@ TAE_Result TwilightAudioEngine::seek(double positionSeconds) {
 
 TAE_Result TwilightAudioEngine::setVolume(double volume) {
   if (!std::isfinite(volume)) return TAE_RESULT_INVALID_ARGUMENT;
-  std::lock_guard lock(mutex_);
-  info_.volume = std::clamp(volume, 0.0, 1.0);
-  if (pipeline_) pipeline_->setVolume(info_.volume);
-  if (pipeline_ && info_.state != PlaybackState::Stopped) {
-    applyPipelineStatusLocked(pipeline_->status());
-  } else {
-    updatePerfectLocked();
+  std::string rerouteReason;
+  double reroutePosition = 0.0;
+  PlaybackState rerouteState = PlaybackState::Stopped;
+  {
+    std::lock_guard lock(mutex_);
+    info_.volume = std::clamp(volume, 0.0, 1.0);
+    if (pipeline_) pipeline_->setVolume(info_.volume);
+    if (pipeline_ && info_.state != PlaybackState::Stopped) {
+      applyPipelineStatusLocked(pipeline_->status());
+      if (!shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+        publishStateLocked();
+      }
+    } else {
+      updatePerfectLocked();
+      publishStateLocked();
+    }
   }
-  publishStateLocked();
+  if (!rerouteReason.empty()) {
+    return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "volume");
+  }
   return TAE_RESULT_OK;
 }
 
@@ -700,30 +718,44 @@ TAE_Result TwilightAudioEngine::setPlayMode(const std::string& mode) {
 }
 
 TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
-  std::lock_guard lock(mutex_);
-  dspConfigJson_ = dspJson.empty() ? "{}" : dspJson;
-  if (pipeline_) pipeline_->setDspConfig(dspConfigJson_);
-  if (pipeline_ && info_.state != PlaybackState::Stopped) {
-    applyPipelineStatusLocked(pipeline_->status());
-  } else {
-    const DspConfig config = DspChain::parseConfigJson(dspConfigJson_);
-    const DspStatus configStatus = configuredDspStatusFromConfig(config);
-    info_.replayGainActive = configStatus.replayGainActive;
-    info_.eqActive = configStatus.eqActive;
-    info_.crossfeedActive = configStatus.crossfeedActive;
-    info_.crossfeedStrength = configStatus.crossfeedStrength;
-    info_.crossfadeActive = configStatus.crossfadeActive;
-    info_.crossfadeSeconds = configStatus.crossfadeSeconds;
-    if (!config.enabled) info_.convolverActive = false;
-    updatePerfectLocked();
+  std::string rerouteReason;
+  double reroutePosition = 0.0;
+  PlaybackState rerouteState = PlaybackState::Stopped;
+  {
+    std::lock_guard lock(mutex_);
+    dspConfigJson_ = dspJson.empty() ? "{}" : dspJson;
+    if (pipeline_) pipeline_->setDspConfig(dspConfigJson_);
+    if (pipeline_ && info_.state != PlaybackState::Stopped) {
+      applyPipelineStatusLocked(pipeline_->status());
+      if (!shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+        publishStateLocked();
+      }
+    } else {
+      const DspConfig config = DspChain::parseConfigJson(dspConfigJson_);
+      const DspStatus configStatus = configuredDspStatusFromConfig(config);
+      info_.replayGainActive = configStatus.replayGainActive;
+      info_.eqActive = configStatus.eqActive;
+      info_.crossfeedActive = configStatus.crossfeedActive;
+      info_.crossfeedStrength = configStatus.crossfeedStrength;
+      info_.crossfadeActive = configStatus.crossfadeActive;
+      info_.crossfadeSeconds = configStatus.crossfadeSeconds;
+      if (!config.enabled) info_.convolverActive = false;
+      updatePerfectLocked();
+      publishStateLocked();
+    }
   }
-  publishStateLocked();
+  if (!rerouteReason.empty()) {
+    return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "dsp");
+  }
   return TAE_RESULT_OK;
 }
 
 TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJson) {
   OutputConfig parsed = parseOutputConfigJson(outputConfigJson.empty() ? "{}" : outputConfigJson);
   std::string error;
+  std::string rerouteReason;
+  double reroutePosition = 0.0;
+  PlaybackState rerouteState = PlaybackState::Stopped;
   {
     std::lock_guard lock(mutex_);
     outputConfig_ = parsed;
@@ -736,10 +768,18 @@ TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJ
   info_.outputInfo.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
   if (pipeline_ && info_.state != PlaybackState::Stopped) {
     applyPipelineStatusLocked(pipeline_->status());
+    if (shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+      // Defer publish until the reroute completes.
+    } else {
+      publishStateLocked();
+    }
   } else {
     updatePerfectLocked();
+    publishStateLocked();
   }
-  publishStateLocked();
+  if (!rerouteReason.empty()) {
+    return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "output-config");
+  }
   return TAE_RESULT_OK;
 }
 
@@ -750,17 +790,18 @@ TAE_Result TwilightAudioEngine::loadImpulseResponse(const std::string& path) {
     emitError(error.empty() ? "脉冲响应加载失败" : error, TAE_RESULT_INVALID_ARGUMENT, "dsp");
     return TAE_RESULT_INTERNAL_ERROR;
   }
+  std::string rerouteReason;
+  double reroutePosition = 0.0;
+  PlaybackState rerouteState = PlaybackState::Stopped;
   {
     std::lock_guard lock(mutex_);
-    const PipelineStatus status = pipeline_->status();
-    info_.convolverActive = status.convolverActive;
-    info_.irResampled = status.irResampled;
-    info_.convolverLatencyFrames = status.convolverLatencyFrames;
-    info_.partitionSize = status.partitionSize;
-    info_.channelMappingMode = status.channelMappingMode;
-    info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
-    updatePerfectLocked();
-    publishStateLocked();
+    applyPipelineStatusLocked(pipeline_->status());
+    if (!shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+      publishStateLocked();
+    }
+  }
+  if (!rerouteReason.empty()) {
+    return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "dsp");
   }
   return TAE_RESULT_OK;
 }
@@ -768,15 +809,18 @@ TAE_Result TwilightAudioEngine::loadImpulseResponse(const std::string& path) {
 TAE_Result TwilightAudioEngine::unloadImpulseResponse() {
   if (!pipeline_) return TAE_RESULT_NOT_INITIALIZED;
   pipeline_->unloadImpulseResponse();
+  std::string rerouteReason;
+  double reroutePosition = 0.0;
+  PlaybackState rerouteState = PlaybackState::Stopped;
   {
     std::lock_guard lock(mutex_);
-    info_.convolverActive = false;
-    info_.irResampled = false;
-    info_.convolverLatencyFrames = 0;
-    info_.partitionSize = 0;
-    info_.channelMappingMode.clear();
-    updatePerfectLocked();
-    publishStateLocked();
+    applyPipelineStatusLocked(pipeline_->status());
+    if (!shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+      publishStateLocked();
+    }
+  }
+  if (!rerouteReason.empty()) {
+    return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "dsp");
   }
   return TAE_RESULT_OK;
 }
@@ -791,12 +835,19 @@ TAE_Result TwilightAudioEngine::setEqBands(const std::string& eqJson) {
     emitError(error.empty() ? "均衡器设置失败" : error, TAE_RESULT_INVALID_ARGUMENT, "dsp");
     return TAE_RESULT_INVALID_ARGUMENT;
   }
-  std::lock_guard lock(mutex_);
-  const PipelineStatus status = pipeline_->status();
-  info_.eqActive = status.eqActive;
-  info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
-  updatePerfectLocked();
-  publishStateLocked();
+  std::string rerouteReason;
+  double reroutePosition = 0.0;
+  PlaybackState rerouteState = PlaybackState::Stopped;
+  {
+    std::lock_guard lock(mutex_);
+    applyPipelineStatusLocked(pipeline_->status());
+    if (!shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+      publishStateLocked();
+    }
+  }
+  if (!rerouteReason.empty()) {
+    return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "dsp");
+  }
   return TAE_RESULT_OK;
 }
 
@@ -806,12 +857,19 @@ TAE_Result TwilightAudioEngine::setEqPreset(const std::string& presetJson) {
     emitError(error.empty() ? "均衡器预设应用失败" : error, TAE_RESULT_INVALID_ARGUMENT, "dsp");
     return TAE_RESULT_INVALID_ARGUMENT;
   }
-  std::lock_guard lock(mutex_);
-  const PipelineStatus status = pipeline_->status();
-  info_.eqActive = status.eqActive;
-  info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
-  updatePerfectLocked();
-  publishStateLocked();
+  std::string rerouteReason;
+  double reroutePosition = 0.0;
+  PlaybackState rerouteState = PlaybackState::Stopped;
+  {
+    std::lock_guard lock(mutex_);
+    applyPipelineStatusLocked(pipeline_->status());
+    if (!shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+      publishStateLocked();
+    }
+  }
+  if (!rerouteReason.empty()) {
+    return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "dsp");
+  }
   return TAE_RESULT_OK;
 }
 
@@ -819,13 +877,19 @@ TAE_Result TwilightAudioEngine::setCrossfeedStrength(double strength) {
   if (!std::isfinite(strength)) return TAE_RESULT_INVALID_ARGUMENT;
   if (!pipeline_) return TAE_RESULT_NOT_INITIALIZED;
   pipeline_->setCrossfeedStrength(strength);
-  std::lock_guard lock(mutex_);
-  const PipelineStatus status = pipeline_->status();
-  info_.crossfeedActive = status.crossfeedActive;
-  info_.crossfeedStrength = status.crossfeedStrength;
-  info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
-  updatePerfectLocked();
-  publishStateLocked();
+  std::string rerouteReason;
+  double reroutePosition = 0.0;
+  PlaybackState rerouteState = PlaybackState::Stopped;
+  {
+    std::lock_guard lock(mutex_);
+    applyPipelineStatusLocked(pipeline_->status());
+    if (!shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+      publishStateLocked();
+    }
+  }
+  if (!rerouteReason.empty()) {
+    return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "dsp");
+  }
   return TAE_RESULT_OK;
 }
 
@@ -837,13 +901,19 @@ TAE_Result TwilightAudioEngine::setReplayGainMode(
   if (!std::isfinite(preampDb) || !std::isfinite(fallbackDb)) return TAE_RESULT_INVALID_ARGUMENT;
   if (!pipeline_) return TAE_RESULT_NOT_INITIALIZED;
   pipeline_->setReplayGainMode(parseReplayGainModeId(mode), preampDb, fallbackDb, clip);
-  std::lock_guard lock(mutex_);
-  const PipelineStatus status = pipeline_->status();
-  info_.replayGainActive = status.replayGainActive;
-  info_.replayGainDb = status.replayGainDb;
-  info_.dspActive = status.dspActive || std::abs(info_.volume - 1.0) > 0.0001;
-  updatePerfectLocked();
-  publishStateLocked();
+  std::string rerouteReason;
+  double reroutePosition = 0.0;
+  PlaybackState rerouteState = PlaybackState::Stopped;
+  {
+    std::lock_guard lock(mutex_);
+    applyPipelineStatusLocked(pipeline_->status());
+    if (!shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+      publishStateLocked();
+    }
+  }
+  if (!rerouteReason.empty()) {
+    return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "dsp");
+  }
   return TAE_RESULT_OK;
 }
 
@@ -1269,6 +1339,45 @@ void TwilightAudioEngine::updatePerfectLocked() {
   info_.outputInfo.perfectReason = result.perfectReason;
   info_.perfectReason = result.perfectReason;
   normalizeOutputInfoMirror(info_);
+}
+
+bool TwilightAudioEngine::shouldReroutePipelineLocked(
+    std::string* reason,
+    double* position,
+    PlaybackState* state) const {
+  if (!pipeline_ || info_.state == PlaybackState::Stopped) return false;
+  std::string fallbackReason;
+  if (!pipeline_->needsPcmFallback(&fallbackReason)) return false;
+  if (reason) *reason = std::move(fallbackReason);
+  if (position) *position = info_.positionSeconds;
+  if (state) *state = info_.state;
+  return true;
+}
+
+TAE_Result TwilightAudioEngine::restartCurrentPlaybackForReroute(
+    double positionSeconds,
+    PlaybackState previousState,
+    const std::string& reason,
+    const std::string& context) {
+  (void)context;
+  std::string source;
+  {
+    std::lock_guard lock(mutex_);
+    source = info_.source;
+    if (pipeline_) pipeline_->setRerouteInProgress(true, reason);
+  }
+  if (source.empty()) return TAE_RESULT_OK;
+
+  const TAE_Result result = play(source, std::max(0.0, positionSeconds));
+  {
+    std::lock_guard lock(mutex_);
+    if (pipeline_) pipeline_->setRerouteInProgress(false);
+  }
+  if (result != TAE_RESULT_OK) return result;
+  if (previousState == PlaybackState::Paused) {
+    return pause();
+  }
+  return TAE_RESULT_OK;
 }
 
 QueueItem TwilightAudioEngine::currentItemLocked() const {

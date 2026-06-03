@@ -156,6 +156,68 @@ bool explicitBufferSizeAllowed(uint32_t size) {
   return std::find(std::begin(kAllowed), std::end(kAllowed), size) != std::end(kAllowed);
 }
 
+AudioFormat emptyFormat() {
+  return {};
+}
+
+bool containsSampleRate(const std::vector<int>& sampleRates, int sampleRate) {
+  return std::find(sampleRates.begin(), sampleRates.end(), sampleRate) != sampleRates.end();
+}
+
+bool containsSampleFormat(const std::vector<AudioSampleFormat>& sampleFormats, AudioSampleFormat sampleFormat) {
+  return std::find(sampleFormats.begin(), sampleFormats.end(), sampleFormat) != sampleFormats.end();
+}
+
+DopRuntimeFacts buildAsioDopRuntimeFacts(
+    const AsioDeviceInfo& device,
+    const AudioFormat& candidateFormat,
+    const AudioFormat& actualFormat,
+    bool actualObserved,
+    bool actualChannelFormatsMatch) {
+  DopRuntimeFacts facts;
+  if (!isDopCarrierFormat(candidateFormat)) return facts;
+
+  facts.candidateFormat = candidateFormat;
+  facts.explicitlyCapable =
+      device.dopCapable && containsSampleRate(device.dopCarrierSampleRates, candidateFormat.sampleRate) &&
+      containsSampleFormat(device.dopCarrierSampleFormats, candidateFormat.sampleFormat);
+  if (!actualObserved) {
+    facts.state = DopRuntimeFactState::Candidate;
+    facts.reason = facts.explicitlyCapable ? "ASIO DoP carrier candidate selected; waiting for runtime confirmation"
+                                           : "ASIO DoP carrier candidate selected without explicit driver proof";
+    return facts;
+  }
+
+  if (!actualChannelFormatsMatch) {
+    facts.state = DopRuntimeFactState::Mismatch;
+    facts.reason = "ASIO runtime channel sample formats differ; cannot prove a single DoP carrier";
+    return facts;
+  }
+
+  if (!isDopCarrierFormat(actualFormat)) {
+    facts.state = DopRuntimeFactState::Mismatch;
+    facts.reason = "ASIO actual runtime format is not a DoP carrier";
+    return facts;
+  }
+
+  facts.actualFormat = actualFormat;
+  if (!pcmFormatsExactMatch(candidateFormat, actualFormat)) {
+    facts.state = DopRuntimeFactState::Mismatch;
+    facts.reason = "ASIO actual DoP carrier does not exactly match the negotiated carrier";
+    return facts;
+  }
+
+  if (!facts.explicitlyCapable) {
+    facts.state = DopRuntimeFactState::Unproven;
+    facts.reason = "ASIO carrier matched at runtime, but the driver did not explicitly prove DoP support";
+    return facts;
+  }
+
+  facts.state = DopRuntimeFactState::Proven;
+  facts.reason = "ASIO driver advertised this exact DoP carrier and runtime format matched exactly";
+  return facts;
+}
+
 }  // namespace
 
 struct AsioBackend::FormatCandidate {
@@ -199,6 +261,9 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     recoveryCooldownUntil_ = {};
     recoveryInProgress_ = false;
     deviceRecovered_ = false;
+    dopRuntimeFacts_ = {};
+    actualOutputFormatObserved_ = false;
+    actualOutputChannelFormatsMatch_ = true;
   }
 
   const auto devices = host_->enumerateDevices();
@@ -293,6 +358,12 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   outputInfo_.diagnostics = diagnostics_;
   outputInfo_.deviceRecovered = false;
   outputInfo_.recoveryCount = recoveryCount_;
+  dopRuntimeFacts_ = buildAsioDopRuntimeFacts(
+      deviceInfo_,
+      openConfig_.format,
+      emptyFormat(),
+      actualOutputFormatObserved_,
+      actualOutputChannelFormatsMatch_);
   opened_ = true;
   return true;
 }
@@ -334,6 +405,9 @@ void AsioBackend::close() {
   eventCallback_ = nullptr;
   renderScratch_.clear();
   recoveryInProgress_ = false;
+  dopRuntimeFacts_ = {};
+  actualOutputFormatObserved_ = false;
+  actualOutputChannelFormatsMatch_ = true;
   opened_ = false;
 }
 
@@ -348,6 +422,11 @@ OutputInfo AsioBackend::outputInfo() const {
   info.recoveryCount = recoveryCount_;
   info.diagnostics = diagnostics_;
   return info;
+}
+
+DopRuntimeFacts AsioBackend::dopRuntimeFacts() const {
+  std::lock_guard lock(mutex_);
+  return dopRuntimeFacts_;
 }
 
 std::string AsioBackend::deviceName() const {
@@ -494,16 +573,32 @@ bool AsioBackend::createAndStartHost(std::string* error) {
   }
   {
     std::lock_guard lock(mutex_);
-    const AudioSampleFormat actualSampleFormat = host_->outputSampleFormat(0);
-    outputFormat_.sampleFormat = actualSampleFormat;
-    outputFormat_.bitDepth = bitDepthForFormat(actualSampleFormat);
-    outputInfo_.actualOutputFormat = sampleFormatToString(actualSampleFormat);
+    const int outputChannels = std::max(1, openConfig_.format.channelCount);
+    const AudioSampleFormat firstActualSampleFormat = host_->outputSampleFormat(0);
+    bool uniformActualSampleFormat = true;
+    for (int channel = 1; channel < outputChannels; ++channel) {
+      if (host_->outputSampleFormat(channel) != firstActualSampleFormat) {
+        uniformActualSampleFormat = false;
+        break;
+      }
+    }
+    actualOutputFormatObserved_ = true;
+    actualOutputChannelFormatsMatch_ = uniformActualSampleFormat;
+    outputFormat_.sampleFormat = firstActualSampleFormat;
+    outputFormat_.bitDepth = bitDepthForFormat(firstActualSampleFormat);
+    outputInfo_.actualOutputFormat = sampleFormatToString(firstActualSampleFormat);
     outputInfo_.actualBitDepth = outputFormat_.bitDepth;
     outputInfo_.outputBitDepth = outputFormat_.bitDepth;
     outputInfo_.resampled = !sameFormat(openConfig_.format, outputFormat_);
     if (outputInfo_.resampled && outputInfo_.perfectReason.empty()) {
       outputInfo_.perfectReason = "ASIO actual output format differs from negotiated format";
     }
+    dopRuntimeFacts_ = buildAsioDopRuntimeFacts(
+        deviceInfo_,
+        openConfig_.format,
+        outputFormat_,
+        actualOutputFormatObserved_,
+        actualOutputChannelFormatsMatch_);
   }
   running_ = true;
   if (!host_->start(error)) {

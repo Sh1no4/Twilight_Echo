@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../core/AudioTypes.h"
+#include "../IOutputBackend.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -27,6 +27,7 @@ class WasapiFormatNegotiator final {
 
   const AudioFormat& outputFormat() const;
   const OutputInfo& outputInfo() const;
+  const DopRuntimeFacts& dopRuntimeFacts() const;
   const std::string& lastFailureReason() const;
   const WAVEFORMATEX* waveFormat() const;
   size_t waveFormatSize() const;
@@ -42,6 +43,7 @@ class WasapiFormatNegotiator final {
   IAudioClient* audioClient_ = nullptr;
   AudioFormat outputFormat_;
   OutputInfo outputInfo_;
+  DopRuntimeFacts dopRuntimeFacts_;
   std::string lastFailureReason_;
   std::vector<uint8_t> waveFormatBytes_;
 };

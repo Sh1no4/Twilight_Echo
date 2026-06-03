@@ -167,6 +167,13 @@ void testDsd64NegotiatesDopCarrier() {
   assert(!info.pcmPassthrough);
   assert(info.actualOutputFormat == "int24-in32");
   assert(info.perfectReason.find("DoP carrier") != std::string::npos);
+
+  const DopRuntimeFacts facts = negotiator.dopRuntimeFacts();
+  assert(facts.state == DopRuntimeFactState::Proven);
+  assert(facts.explicitlyCapable);
+  assert(facts.candidateFormat.sampleRate == 176400);
+  assert(facts.candidateFormat.sampleFormat == AudioSampleFormat::Int24In32Interleaved);
+  assert(pcmFormatsExactMatch(facts.candidateFormat, facts.actualFormat));
 }
 
 void testDsd128FailureReasonNamesDopCarrierFacts() {
@@ -185,6 +192,12 @@ void testDsd128FailureReasonNamesDopCarrierFacts() {
   assert(!info.supportsOutputPerfect);
   assert(!info.outputPerfect);
   assert(info.perfectReason == error);
+
+  const DopRuntimeFacts facts = negotiator.dopRuntimeFacts();
+  assert(facts.state == DopRuntimeFactState::Unproven);
+  assert(!facts.explicitlyCapable);
+  assert(facts.candidateFormat.sampleRate == 352800);
+  assert(facts.reason == error);
 }
 
 void testUnsupportedDsdRateDoesNotTryNativeDsd() {
@@ -196,6 +209,11 @@ void testUnsupportedDsdRateDoesNotTryNativeDsd() {
   assert(client.probes.empty());
   assert(error.find("暂无可用 DoP carrier") != std::string::npos);
   assert(error.find("未启用 Native DSD") != std::string::npos);
+
+  const DopRuntimeFacts facts = negotiator.dopRuntimeFacts();
+  assert(facts.state == DopRuntimeFactState::Unproven);
+  assert(!facts.explicitlyCapable);
+  assert(!hasConcreteAudioFormat(facts.candidateFormat));
 }
 
 #endif

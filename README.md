@@ -14,7 +14,7 @@ Twilight Echo 是一款基于 `Electron + Vue 3 + TypeScript` 的桌面音乐播
 - 原生引擎：Windows MinGW 已打通 `FFmpeg -> AudioPipeline -> WASAPI Shared/Exclusive -> Node-API`，并纳入 9 个 CTest 目标。
 - 构建产物：Windows 下已生成 `twilight-audio-engine.dll` 和 `twilight_audio_node.node`。
 - 设备枚举：已支持 WASAPI 设备枚举，设置页可读取统一设备模型。
-- 后续重点：PCM passthrough 验证、ASIO 真实 SDK/设备 smoke、CoreAudio/ALSA 平台验证、native crossfade overlap mixing、DSD/DoP 能力验证。
+- 后续重点：PCM passthrough 验证、ASIO 真实 SDK/设备 smoke、CoreAudio/ALSA 平台验证、native crossfade overlap mixing、Native DSD/SACD ISO 后置能力验证。
 
 ## 核心功能
 
@@ -48,7 +48,7 @@ Twilight Echo 是一款基于 `Electron + Vue 3 + TypeScript` 的桌面音乐播
 - 使用 FFmpeg 作为解码层。
 - Windows 当前包含 WASAPI Shared/Exclusive；ASIO SDK 可选且不入仓库。
 - CoreAudio、ALSA、ReplayGain、EQ、FIR Convolver、Crossfeed、Crossfade 状态、Spectrum、Metadata 和 Queue 管线已经进入源码结构。
-- `GetPlaybackInfo()` 以 `outputInfo` 作为 canonical 状态，上报实际 backend/device/format、`sourceExact` / `outputPerfect`、`perfectReason`、DSP 状态、DSD/DoP 状态镜像和 recovery diagnostics。
+- `GetPlaybackInfo()` 以 `outputInfo` 作为 canonical 状态，上报实际 backend/device/format、`sourceExact` / `outputPerfect`、`perfectReason`、DSP 状态、DSD/DoP carrier 或 PCM fallback 状态镜像和 recovery diagnostics。
 
 ## 技术栈
 
@@ -264,7 +264,7 @@ npm run build:linux
 - CoreAudio 默认路径和 ALSA `default` / `plughw:` 默认不能保证绕过混音或插件转换；ALSA 只有显式 `hw:` 且格式完全匹配时才可能 `outputPerfect=true`。
 - 真实设备 smoke 是 opt-in；没有 ASIO SDK、macOS/Linux 工具链或对应设备时会跳过，不作为默认 CI 必需条件。
 - DSP 默认 bypass；启用软件音量、ReplayGain、EQ、卷积、Crossfeed 或重采样时会标记 `outputPerfect=false`。
-- DSD64/128/256 当前优先做识别和状态上报；DSF/DFF 走 PCM fallback 时会明确展示为 DSD 源到 PCM 输出链路。Native DSD 与 DoP 尚未完成真实播放闭环；SACD ISO 当前只报告 unsupported。
+- DSF/DFF DSD64/128 可进入 DoP carrier path，UI 会展示为 DSD 源到 `DoP carrier` 再到后端实际输出；DSD256/512、DoP 条件不满足或处理启用时走 PCM fallback。运行时若从 DoP 回退到 PCM，canonical `outputInfo` 会同步清成 PCM 状态，源侧 DSD 标签仍保留在链路文本中。Native DSD 与 SACD ISO 后置，SACD ISO 当前只报告 unsupported。
 - 网易云相关能力依赖本地启动的 `@neteasecloudmusicapienhanced/api` 服务。
 - npm 可能会提示 `.npmrc` 中镜像配置为 unknown project config，这是 npm 新版本的警告，不影响当前构建。
 

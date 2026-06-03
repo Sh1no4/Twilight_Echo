@@ -141,6 +141,12 @@ class TwilightAudioEngine {
   void publishStateLocked() const;
   void applyPipelineStatusLocked(const PipelineStatus& status);
   void updatePerfectLocked();
+  bool shouldReroutePipelineLocked(std::string* reason, double* position, PlaybackState* state) const;
+  TAE_Result restartCurrentPlaybackForReroute(
+      double positionSeconds,
+      PlaybackState previousState,
+      const std::string& reason,
+      const std::string& context);
   QueueItem currentItemLocked() const;
 
   mutable std::mutex mutex_;

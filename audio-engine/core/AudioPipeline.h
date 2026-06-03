@@ -2,6 +2,8 @@
 
 #include "AudioBuffer.h"
 #include "AudioTypes.h"
+#include "../decoder/DopPacker.h"
+#include "../decoder/DsdReader.h"
 #include "../decoder/FFmpegDecoder.h"
 #include "../dsp/DspChain.h"
 #include "../dsp/FftSpectrumAnalyzer.h"
@@ -10,6 +12,7 @@
 #include "twilight_audio_engine.h"
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -56,6 +59,8 @@ struct PipelineStatus {
 
 class AudioPipeline {
  public:
+  using BackendFactory = std::function<std::unique_ptr<IOutputBackend>(const std::string&)>;
+
   AudioPipeline();
   ~AudioPipeline();
 
@@ -101,6 +106,11 @@ class AudioPipeline {
   bool consumeDeviceInvalidated(std::string* message);
   bool consumeTrackStarted(QueueItem* item);
   size_t getSpectrumData(float* buffer, size_t pointCount) const;
+  bool isDopPathActive() const;
+  bool needsPcmFallback(std::string* reason) const;
+  void setRerouteInProgress(bool active, const std::string& reason = {});
+
+  static void setBackendFactoryForTests(BackendFactory factory);
 
  private:
   struct DecodeStream;
@@ -109,6 +119,18 @@ class AudioPipeline {
       const std::shared_ptr<DecodeStream>& stream,
       const QueueItem& item,
       double startTimeSeconds,
+      std::string* error);
+  TAE_Result playInternal(
+      const QueueItem& item,
+      const std::optional<QueueItem>& upcomingItem,
+      double startTimeSeconds,
+      const std::string& backendId,
+      const std::string& deviceId,
+      double volume,
+      const std::string& dspConfigJson,
+      bool gaplessEnabled,
+      bool allowDop,
+      const std::string& forcedDsdFallbackReason,
       std::string* error);
   bool updatePerfectLocked();
   size_t render(float* output, size_t frameCount);
@@ -138,6 +160,9 @@ class AudioPipeline {
   bool dspActive_ = false;
   bool outputPerfect_ = false;
   bool gaplessEnabled_ = true;
+  bool dopPathActive_ = false;
+  std::string dsdFallbackReason_;
+  bool rerouteInProgress_ = false;
   std::string outputEventMessage_;
 };
 

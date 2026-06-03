@@ -41,6 +41,7 @@ std::string outputFormatSummary(const AudioFormat& format) {
 struct WasapiExclusiveBackend::Impl {
   AudioFormat outputFormat;
   OutputInfo outputInfo;
+  DopRuntimeFacts dopRuntimeFacts;
   std::string deviceName = "系统默认";
 
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
@@ -60,6 +61,7 @@ struct WasapiExclusiveBackend::Impl {
 
   void resetFailureInfo() {
     outputInfo = {};
+    dopRuntimeFacts = {};
     outputInfo.exclusive = true;
     outputInfo.supportsOutputPerfect = false;
     outputInfo.sourceExact = false;
@@ -145,6 +147,7 @@ struct WasapiExclusiveBackend::Impl {
     WasapiFormatNegotiator negotiator(audioClient.Get());
     if (!negotiator.negotiate(requestedFormat, error)) {
       outputInfo = negotiator.outputInfo();
+      dopRuntimeFacts = negotiator.dopRuntimeFacts();
       outputInfo.deviceName = deviceName;
       outputInfo.actualDeviceName = deviceName;
       return false;
@@ -152,6 +155,7 @@ struct WasapiExclusiveBackend::Impl {
 
     outputFormat = negotiator.outputFormat();
     outputInfo = negotiator.outputInfo();
+    dopRuntimeFacts = negotiator.dopRuntimeFacts();
     outputInfo.deviceName = deviceName;
     outputInfo.actualDeviceName = deviceName;
     waveFormatBytes.assign(
@@ -426,6 +430,10 @@ AudioFormat WasapiExclusiveBackend::outputFormat() const {
 
 OutputInfo WasapiExclusiveBackend::outputInfo() const {
   return impl_->outputInfo;
+}
+
+DopRuntimeFacts WasapiExclusiveBackend::dopRuntimeFacts() const {
+  return impl_->dopRuntimeFacts;
 }
 
 std::string WasapiExclusiveBackend::deviceName() const {

@@ -304,7 +304,51 @@ void testDopCandidateRequiresBackendPassthroughProof() {
   const PerfectResult result = evaluatePerfect(dop);
   assert(!result.sourceExact);
   assert(!result.outputPerfect);
-  assert(result.perfectReason == "DoP candidate but backend cannot prove passthrough");
+  assert(result.perfectReason == "DoP backend could not prove passthrough");
+}
+
+void testDopPerfectWhenBackendProvesPassthrough() {
+  auto dop = baseEvaluation();
+  dop.sourceFormat = pcm(2822400, 1, 2, AudioSampleFormat::Float32Interleaved);
+  dop.sourceDsd = true;
+  dop.sourceLossless = true;
+  dop.dsdMode = DsdMode::Dop;
+  dop.dsdRate = 64;
+  dop.dopCarrierFormat = dopCarrierFormatForDsd(64, 2).value();
+  dop.decodedFormat = dop.dopCarrierFormat;
+  dop.outputFormat = dop.dopCarrierFormat;
+  dop.dopCarrierMatched = true;
+  dop.dopPassthroughProven = true;
+  dop.pcmPassthrough = true;
+
+  const PerfectResult result = evaluatePerfect(dop);
+  assert(result.sourceExact);
+  assert(result.outputPerfect);
+  assert(result.pcmPassthrough);
+  assert(result.perfectReason.empty());
+}
+
+void testDsdProcessingFallbackReason() {
+  auto dsd = baseEvaluation();
+  dsd.sourceDsd = true;
+  dsd.dsdMode = DsdMode::Pcm;
+  dsd.dsdRate = 64;
+  dsd.eqActive = true;
+  const PerfectResult result = evaluatePerfect(dsd);
+  assert(!result.sourceExact);
+  assert(!result.outputPerfect);
+  assert(result.perfectReason == "DSD processing active; falling back to PCM");
+}
+
+void testDsdHighRateFallbackReason() {
+  auto dsd = baseEvaluation();
+  dsd.sourceDsd = true;
+  dsd.dsdMode = DsdMode::Pcm;
+  dsd.dsdRate = 256;
+  const PerfectResult result = evaluatePerfect(dsd);
+  assert(!result.sourceExact);
+  assert(!result.outputPerfect);
+  assert(result.perfectReason == "DSD256 currently falls back to PCM");
 }
 
 void testUnsupportedDsdRateRejectsDopPerfect() {
@@ -340,6 +384,9 @@ int main() {
   testDsdConvertedToPcmReason();
   testDopCarrierMismatchReason();
   testDopCandidateRequiresBackendPassthroughProof();
+  testDopPerfectWhenBackendProvesPassthrough();
+  testDsdProcessingFallbackReason();
+  testDsdHighRateFallbackReason();
   testUnsupportedDsdRateRejectsDopPerfect();
   return 0;
 }

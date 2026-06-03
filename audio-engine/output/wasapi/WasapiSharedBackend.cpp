@@ -34,6 +34,25 @@ bool looksLikeDsdOrDopRequest(const AudioFormat& format) {
   return dsdRate || (dopCarrierRate && dopCarrierFormat);
 }
 
+AudioFormat dopCandidateForRequestedFormat(const AudioFormat& requestedFormat) {
+  if (isDopCarrierFormat(requestedFormat)) return requestedFormat;
+
+  AudioFormat candidate;
+  candidate.channelCount = requestedFormat.channelCount;
+  candidate.bitDepth = 24;
+  candidate.sampleFormat = AudioSampleFormat::Int24Interleaved;
+  switch (requestedFormat.sampleRate) {
+    case 2822400:
+      candidate.sampleRate = 176400;
+      return candidate;
+    case 5644800:
+      candidate.sampleRate = 352800;
+      return candidate;
+    default:
+      return {};
+  }
+}
+
 std::string sharedPerfectReason(const AudioFormat& requestedFormat) {
   if (looksLikeDsdOrDopRequest(requestedFormat)) {
     return "WASAPI 共享输出经过系统混音；DSD/DoP carrier 不能在 Shared mixer 中保持 outputPerfect";
@@ -46,6 +65,7 @@ std::string sharedPerfectReason(const AudioFormat& requestedFormat) {
 struct WasapiSharedBackend::Impl {
   AudioFormat outputFormat;
   OutputInfo outputInfo;
+  DopRuntimeFacts dopRuntimeFacts;
   std::string deviceName = "系统默认";
 
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
@@ -245,6 +265,9 @@ const char* WasapiSharedBackend::id() const {
 bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   close();
+  impl_->outputFormat = {};
+  impl_->outputInfo = {};
+  impl_->dopRuntimeFacts = {};
 
   HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
   const bool shouldUninitialize = SUCCEEDED(hr);
@@ -358,6 +381,13 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
           ? static_cast<double>(impl_->bufferFrameCount) * 1000.0 / static_cast<double>(impl_->outputFormat.sampleRate)
           : 0.0;
   impl_->outputInfo.latencyInfo.totalLatencyMs = impl_->outputInfo.latencyInfo.bufferLatencyMs;
+  impl_->dopRuntimeFacts = {};
+  if (looksLikeDsdOrDopRequest(requestedFormat) || isDopCarrierFormat(impl_->outputFormat)) {
+    impl_->dopRuntimeFacts.state = DopRuntimeFactState::Unproven;
+    impl_->dopRuntimeFacts.candidateFormat = dopCandidateForRequestedFormat(requestedFormat);
+    impl_->dopRuntimeFacts.actualFormat = isDopCarrierFormat(impl_->outputFormat) ? impl_->outputFormat : AudioFormat{};
+    impl_->dopRuntimeFacts.reason = "WASAPI shared mixer cannot prove DoP passthrough";
+  }
 
   return true;
 #else
@@ -426,6 +456,10 @@ AudioFormat WasapiSharedBackend::outputFormat() const {
 
 OutputInfo WasapiSharedBackend::outputInfo() const {
   return impl_->outputInfo;
+}
+
+DopRuntimeFacts WasapiSharedBackend::dopRuntimeFacts() const {
+  return impl_->dopRuntimeFacts;
 }
 
 std::string WasapiSharedBackend::deviceName() const {

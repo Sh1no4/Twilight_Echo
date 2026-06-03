@@ -12,7 +12,7 @@ Twilight Echo 的 C++20 原生音频引擎，通过稳定 C ABI 和 Node-API 桥
 - Queue：native 侧负责队列索引、upcoming track、EOF auto-next、gapless 预加载和 crossfade 状态判定。
 - 后端：WASAPI Shared/Exclusive、ASIO 可选 SDK 接入、CoreAudio/ALSA 源码后端。
 - DSP：ReplayGain、Parametric EQ、FIR Convolver、Crossfeed、FFT Spectrum。
-- Metadata：container、channel layout、channel count、DSD64/128/256 识别字段、ReplayGain/R128 字段。
+- Metadata：container、channel layout、channel count、DSD64/128/256/512 识别字段、ReplayGain/R128 字段。
 
 Windows MinGW 当前验证结果：
 
@@ -80,6 +80,7 @@ $env:TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK="1"
 - ASIO SDK 不入仓库；没有 SDK 时构建必须成功，并通过 capabilities/后端枚举报告不可用。
 - 真实设备 smoke 是 opt-in；没有 SDK、目标平台工具链或对应设备时跳过，不阻塞默认 CI。
 - Crossfade 已进入 native 状态和 bit-perfect 判定，但真实 overlap mixing 仍需继续补齐。
-- DSF/DFF 当前可识别 DSD64/128/256，并在 UI 中展示 DSD 源到 PCM fallback 或后端 PCM 输出链路；这不是 Native DSD。
-- Native DSD、DoP、SACD ISO 尚未实现真实播放闭环。Native DSD 是直接输出 DSD bitstream，DoP 是用 PCM carrier 承载 DSD bitstream，SACD ISO 当前只允许识别并报告 `unsupported`。
+- DSF/DFF DSD64/128 可进入 DoP carrier path，并在 UI 中展示 DSD 源到 `DoP carrier` 再到后端实际输出；DoP 是用 PCM carrier 承载 DSD bitstream，不等同于把 DSD 转成 PCM。
+- DSF/DFF DSD256/512、DoP 条件不满足，或软件音量、ReplayGain、EQ、Convolver、Crossfeed、Crossfade 等处理启用时走 PCM fallback，并在 UI 中展示 DSD 源到 PCM 输出链路。运行时若从 DoP 回退到 PCM，canonical `outputInfo.isDsd/dsdMode/dsdRate` 会清成当前 PCM 状态，顶层 `PlaybackInfo` 只做同值镜像。
+- Native DSD、SACD ISO 仍未进入 Phase 6D 真实播放闭环。Native DSD 是直接输出 DSD bitstream，SACD ISO 当前只允许识别并报告 `unsupported`。
 - macOS/Linux 后端需要对应平台工具链和真实设备 smoke 后才能声明发布级能力。

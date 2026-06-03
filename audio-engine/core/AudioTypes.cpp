@@ -73,14 +73,16 @@ std::string dsdPerfectReason(const PerfectEvaluation& evaluation) {
       evaluation.dsdMode == DsdMode::Unsupported) {
     return "DSD source unsupported";
   }
-  if (evaluation.dsdMode == DsdMode::Pcm) return "DSD converted to PCM";
+  if (evaluation.dsdMode == DsdMode::Pcm) {
+    return evaluation.backendPerfectReason.empty() ? "DSD converted to PCM" : evaluation.backendPerfectReason;
+  }
   if (evaluation.dsdMode == DsdMode::Dop) {
     if (!dopCarrierFormatForDsd(evaluation.dsdRate, evaluation.sourceFormat.channelCount).has_value()) {
       return "DSD source unsupported";
     }
     if (!dopCarrierMatchesExpected(evaluation)) return "DoP carrier mismatch";
     if (!evaluation.dopPassthroughProven || !evaluation.supportsOutputPerfect || evaluation.backendResampled) {
-      return "DoP candidate but backend cannot prove passthrough";
+      return "DoP backend could not prove passthrough";
     }
   }
   return "DSD source unsupported";
@@ -225,7 +227,13 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
   if (result.sourceExact && result.outputPerfect) {
     result.perfectReason.clear();
   } else if (evaluation.sourceDsd) {
-    result.perfectReason = dsdPerfectReason(evaluation);
+    if (result.processingActive) {
+      result.perfectReason = "DSD processing active; falling back to PCM";
+    } else if (evaluation.dsdMode == DsdMode::Pcm && evaluation.dsdRate >= 256) {
+      result.perfectReason = "DSD" + std::to_string(evaluation.dsdRate) + " currently falls back to PCM";
+    } else {
+      result.perfectReason = dsdPerfectReason(evaluation);
+    }
   } else if (!evaluation.supportsOutputPerfect) {
     result.perfectReason =
         evaluation.backendPerfectReason.empty() ? "共享输出经过系统混音" : evaluation.backendPerfectReason;
