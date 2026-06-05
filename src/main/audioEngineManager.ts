@@ -1,7 +1,25 @@
 import { EventEmitter } from 'events'
 import { existsSync } from 'fs'
+import { createRequire } from 'module'
 import { join } from 'path'
-import { app } from 'electron'
+
+const require = createRequire(import.meta.url)
+
+type ElectronModule = typeof import('electron')
+
+function resolveElectronApp(): ElectronModule['app'] | null {
+  try {
+    const electronModule = require('electron') as ElectronModule | string
+    if (typeof electronModule === 'object' && electronModule && 'app' in electronModule) {
+      return electronModule.app
+    }
+  } catch {
+    // Node-side tests can import this module without an Electron runtime.
+  }
+  return null
+}
+
+const electronApp = resolveElectronApp()
 
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 export type PlayMode = 'sequential' | 'repeat' | 'shuffle'
@@ -14,6 +32,8 @@ export type ChannelRoutingMode =
   | 'stereo-to-7.1'
   | 'mono-to-stereo'
   | 'mono-to-multichannel'
+export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
+export type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
 export type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -37,6 +57,8 @@ export interface AudioProcessingSettings {
   fftResolution: number
   highResolution: boolean
   dsdToPcm: boolean
+  dsdOutputMode: DsdOutputMode
+  sacdProgramMode: SacdProgramMode
   eqEnabled: boolean
   eqMode: EqMode
   eqPreamp: number
@@ -77,6 +99,14 @@ export interface AudioDeviceOption {
   granularity?: number
   preferredBufferSize?: number
   capabilityVersion?: number
+  supportsExclusive?: boolean
+  supportsHogMode?: boolean
+  supportsDirectHw?: boolean
+  supportsDop?: boolean
+  supportsNativeDsd?: boolean
+  supportedDsdRates?: number[]
+  pathKind?: string
+  capabilityReason?: string
 }
 
 export interface OutputConfig {
@@ -119,6 +149,13 @@ export interface AudioEngineConfig {
   audioProcessing?: Partial<AudioProcessingSettings>
 }
 
+export interface AudioEngineScheduler {
+  now: () => number
+  setInterval: (callback: () => void, delayMs: number) => NodeJS.Timeout
+  clearInterval: (handle: NodeJS.Timeout) => void
+  setImmediate: (callback: () => void) => void
+}
+
 export interface AudioEngineQueueItem {
   id: string
   source: string
@@ -154,10 +191,12 @@ export type PlaybackOutputInfoMirror = Pick<
   | 'outputPerfect'
   | 'pcmPassthrough'
   | 'perfectReason'
+  | 'perfectReasonCode'
   | 'isDsd'
   | 'dsdMode'
   | 'dsdRate'
->
+> &
+  Partial<Pick<OutputInfo, 'accessMode' | 'devicePathKind' | 'capabilityReason'>>
 
 export interface PlaybackInfo extends PlaybackOutputInfoMirror {
   state: 'stopped' | 'playing' | 'paused'
@@ -215,6 +254,7 @@ export interface PlaybackInfo extends PlaybackOutputInfoMirror {
   partitionSize: number
   channelMappingMode: string
   perfectReason: string
+  perfectReasonCode: string
   isDsd: boolean
   dsdMode: string
   dsdRate: number
@@ -245,6 +285,15 @@ export interface OutputInfo {
   actualSampleRate: number
   actualBitDepth: number
   actualChannels: number
+  accessMode: string
+  devicePathKind: string
+  perfectReasonCode: string
+  capabilityReason: string
+  driverDopCapable: boolean
+  driverNativeDsdCapable: boolean
+  driverDopCarrierSampleRates: number[]
+  driverDopCarrierFormats: string[]
+  driverNativeDsdSampleRates: number[]
   bufferSizeFrames: number
   latencyFrames: number
   latencyMs: number
@@ -263,7 +312,7 @@ export interface AudioEnginePlayResult {
   fallbackReason: string
 }
 
-interface NativeAudioBinding {
+export interface NativeAudioBinding {
   Play: (source: string, startTime?: number) => void
   Pause: () => void
   Stop: () => void
@@ -297,6 +346,13 @@ interface NativeAudioBinding {
   EnumerateBackends?: () => string
   GetEngineCapabilities?: () => string
   GetLastError?: () => string
+}
+
+export interface AudioEngineManagerDependencies {
+  nativeBinding?: NativeAudioBinding | null
+  scheduler?: Partial<AudioEngineScheduler>
+  deviceOptionsProvider?: () => AudioDeviceOption[] | null
+  nativeAddonCandidates?: () => string[]
 }
 
 export interface ConvolverInfo {
@@ -394,6 +450,8 @@ export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
   fftResolution: 64,
   highResolution: true,
   dsdToPcm: true,
+  dsdOutputMode: 'auto',
+  sacdProgramMode: 'auto',
   eqEnabled: false,
   eqMode: 'graphic',
   eqPreamp: 0,
@@ -412,6 +470,13 @@ export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
 const DEFAULT_OUTPUT_CONFIG: OutputConfig = {
   preferredBufferSize: 0,
   routingMode: 'auto'
+}
+
+const DEFAULT_AUDIO_ENGINE_SCHEDULER: AudioEngineScheduler = {
+  now: () => Date.now(),
+  setInterval: (callback, delayMs) => setInterval(callback, delayMs),
+  clearInterval: (handle) => clearInterval(handle),
+  setImmediate: (callback) => setImmediate(callback)
 }
 
 function isAudioOutputId(output: unknown): output is AudioOutputId {
@@ -503,6 +568,18 @@ export function normalizeAudioProcessingSettings(
     settings?.volumeNormalization === 'loudnorm'
       ? settings.volumeNormalization
       : 'off'
+  const dsdOutputMode: DsdOutputMode =
+    settings?.dsdOutputMode === 'pcm' ||
+    settings?.dsdOutputMode === 'dop' ||
+    settings?.dsdOutputMode === 'native'
+      ? settings.dsdOutputMode
+      : settings?.dsdToPcm === true
+        ? 'pcm'
+        : 'auto'
+  const sacdProgramMode: SacdProgramMode =
+    settings?.sacdProgramMode === 'stereo' || settings?.sacdProgramMode === 'multichannel'
+      ? settings.sacdProgramMode
+      : 'auto'
 
   return {
     dspEnabled: settings?.dspEnabled === true,
@@ -510,7 +587,9 @@ export function normalizeAudioProcessingSettings(
     fftEnabled: settings?.fftEnabled !== false,
     fftResolution: clampNumber(settings?.fftResolution, 64, 2048, 64),
     highResolution: settings?.highResolution !== false,
-    dsdToPcm: settings?.dsdToPcm !== false,
+    dsdToPcm: dsdOutputMode === 'pcm',
+    dsdOutputMode,
+    sacdProgramMode,
     eqEnabled: settings?.eqEnabled === true,
     eqMode: settings?.eqMode === 'parametric' ? 'parametric' : 'graphic',
     eqPreamp: clampNumber(settings?.eqPreamp, -12, 12, 0),
@@ -538,15 +617,16 @@ function parseNativeJson<T>(value: string | T | undefined, fallback: T): T {
 
 function getNativeAddonCandidates(): string[] {
   const binary = 'twilight_audio_node.node'
+  const appPath = electronApp?.getAppPath?.() ?? process.cwd()
   return [
     join(process.resourcesPath ?? '', 'audio-engine', binary),
-    join(app.getAppPath(), 'resources', 'audio-engine', binary),
-    join(app.getAppPath(), 'audio-engine', 'build', 'default', binary),
-    join(app.getAppPath(), 'audio-engine', 'build', 'mingw-static', binary),
-    join(app.getAppPath(), 'audio-engine', 'build', 'windows-msvc', binary),
-    join(app.getAppPath(), '..', 'audio-engine', 'build', 'default', binary),
-    join(app.getAppPath(), '..', 'audio-engine', 'build', 'mingw-static', binary),
-    join(app.getAppPath(), '..', 'audio-engine', 'build', 'windows-msvc', binary)
+    join(appPath, 'resources', 'audio-engine', binary),
+    join(appPath, 'audio-engine', 'build', 'default', binary),
+    join(appPath, 'audio-engine', 'build', 'mingw-static', binary),
+    join(appPath, 'audio-engine', 'build', 'windows-msvc', binary),
+    join(appPath, '..', 'audio-engine', 'build', 'default', binary),
+    join(appPath, '..', 'audio-engine', 'build', 'mingw-static', binary),
+    join(appPath, '..', 'audio-engine', 'build', 'windows-msvc', binary)
   ]
 }
 
@@ -554,8 +634,8 @@ function rendererFallbackAllowed(): boolean {
   return process.env.TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK === '1'
 }
 
-function loadNativeBinding(): NativeAudioBinding | null {
-  for (const candidate of getNativeAddonCandidates()) {
+function loadNativeBinding(getCandidates: () => string[] = getNativeAddonCandidates): NativeAudioBinding | null {
+  for (const candidate of getCandidates()) {
     if (!existsSync(candidate)) continue
     try {
       // Native addons must be loaded dynamically because the file is produced by CMake.
@@ -576,6 +656,11 @@ function createDefaultPlaybackInfo(
 ): PlaybackInfo {
   const exclusive = output === 'wasapi' ? exclusiveMode : output === 'asio'
   const supportsOutputPerfect = output === 'asio' || (output === 'wasapi' && exclusiveMode)
+  const accessMode =
+    output === 'asio' ? 'exclusive' : output === 'wasapi' ? (exclusiveMode ? 'exclusive' : 'shared') : 'shared'
+  const devicePathKind =
+    output === 'asio' ? 'asio' : output === 'coreaudio' ? 'hal' : 'default'
+  const perfectReasonCode = supportsOutputPerfect ? '' : output === 'wasapi' ? 'shared_mixer' : 'backend_not_output_perfect'
   const perfectReason = supportsOutputPerfect
     ? ''
     : output === 'wasapi'
@@ -608,6 +693,10 @@ function createDefaultPlaybackInfo(
     outputPerfect: false,
     pcmPassthrough: false,
     resampled: false,
+    accessMode,
+    devicePathKind,
+    perfectReasonCode,
+    capabilityReason: perfectReason,
     perfectReason,
     outputSampleRate: 0,
     outputBitDepth: 0,
@@ -623,6 +712,11 @@ function createDefaultPlaybackInfo(
     actualSampleRate: 0,
     actualBitDepth: 0,
     actualChannels: 0,
+    driverDopCapable: false,
+    driverNativeDsdCapable: false,
+    driverDopCarrierSampleRates: [],
+    driverDopCarrierFormats: [],
+    driverNativeDsdSampleRates: [],
     bufferSizeFrames: 0,
     latencyFrames: 0,
     latencyMs: 0,
@@ -655,6 +749,8 @@ function createDefaultPlaybackInfo(
     outputDevice: device,
     outputInfo,
     actualBackend: output,
+    accessMode,
+    devicePathKind,
     driverName: '',
     driverVersion: 0,
     actualOutputFormat: '',
@@ -691,6 +787,8 @@ function createDefaultPlaybackInfo(
     partitionSize: 0,
     channelMappingMode: '',
     perfectReason,
+    perfectReasonCode,
+    capabilityReason: perfectReason,
     isDsd: false,
     dsdMode: 'pcm',
     dsdRate: 0,
@@ -713,28 +811,66 @@ function sourceLooksDsd(source: string): boolean {
   return /\.(dsf|dff)$/i.test(source)
 }
 
+function normalizeDsdState(
+  canonicalOutput?: Partial<OutputInfo> | null,
+  mirror?: Partial<PlaybackInfo> | null
+): { isDsd: boolean; dsdMode: string; dsdRate: number } {
+  const canonicalMode =
+    typeof canonicalOutput?.dsdMode === 'string' ? canonicalOutput.dsdMode.trim() : ''
+  const mirrorMode = typeof mirror?.dsdMode === 'string' ? mirror.dsdMode.trim() : ''
+  const canonicalHasMode = canonicalMode.length > 0
+  const modeIndicatesDsd = (mode: string): boolean =>
+    mode === 'native' || mode === 'dop' || mode === 'unsupported'
+  const canonicalIsDsd =
+    typeof canonicalOutput?.isDsd === 'boolean'
+      ? canonicalOutput.isDsd
+      : canonicalHasMode
+        ? modeIndicatesDsd(canonicalMode)
+        : undefined
+  const isDsd = canonicalIsDsd ?? (mirror?.isDsd === true || modeIndicatesDsd(mirrorMode))
+  const rawMode = canonicalHasMode ? canonicalMode : mirrorMode
+  const dsdMode = isDsd ? rawMode || 'unsupported' : 'pcm'
+  const dsdRate = isDsd ? (canonicalOutput?.dsdRate ?? mirror?.dsdRate ?? 0) : 0
+  return { isDsd, dsdMode, dsdRate }
+}
+
 export class AudioEngineManager extends EventEmitter {
-  private native = loadNativeBinding()
+  private native: NativeAudioBinding | null
   private output: AudioOutputId
   private device: string
   private exclusiveMode: boolean
   private outputConfig: OutputConfig
   private processing: AudioProcessingSettings
+  private scheduler: AudioEngineScheduler
+  private deviceOptionsProvider?: () => AudioDeviceOption[] | null
   private queue: AudioEngineQueueItem[] = []
   private playbackInfo: PlaybackInfo
   private timer: NodeJS.Timeout | null = null
-  private lastTick = Date.now()
+  private lastTick = 0
   private destroyed = false
   private nativePlaybackActive = false
   private lastNativeError = ''
 
-  constructor(config: AudioEngineConfig = { exclusiveMode: false }) {
+  constructor(
+    config: AudioEngineConfig = { exclusiveMode: false },
+    dependencies: AudioEngineManagerDependencies = {}
+  ) {
     super()
+    this.scheduler = {
+      ...DEFAULT_AUDIO_ENGINE_SCHEDULER,
+      ...(dependencies.scheduler ?? {})
+    }
+    this.deviceOptionsProvider = dependencies.deviceOptionsProvider
+    this.native =
+      dependencies.nativeBinding !== undefined
+        ? dependencies.nativeBinding
+        : loadNativeBinding(dependencies.nativeAddonCandidates)
     this.output = normalizeAudioOutput(config.audioOutput)
     this.device = normalizeAudioDevice(config.audioDevice)
     this.exclusiveMode = config.exclusiveMode && supportsAudioExclusive(this.output)
     this.outputConfig = normalizeOutputConfig(config.audioOutputConfig)
     this.processing = normalizeAudioProcessingSettings(config.audioProcessing)
+    this.lastTick = this.scheduler.now()
     this.playbackInfo = createDefaultPlaybackInfo(
       this.output,
       this.device,
@@ -751,7 +887,7 @@ export class AudioEngineManager extends EventEmitter {
     this.applyNativeOutputConfig('初始化输出配置')
     this.applyNativeDspSettings('初始化 DSP 配置')
     this.startClock()
-    setImmediate(() => this.emit('ready'))
+    this.scheduler.setImmediate(() => this.emit('ready'))
   }
 
   async play(source: string, startTime = 0): Promise<AudioEnginePlayResult> {
@@ -781,7 +917,7 @@ export class AudioEngineManager extends EventEmitter {
       dsdRate: 0,
       ...nativeInfo
     }
-    this.lastTick = Date.now()
+    this.lastTick = this.scheduler.now()
     this.emit('start-file')
     this.publishProperty('duration', this.playbackInfo.duration)
     this.publishProperty('pause', false)
@@ -795,7 +931,7 @@ export class AudioEngineManager extends EventEmitter {
   async togglePause(): Promise<void> {
     this.tryNative('暂停/继续', (native) => native.Pause())
     this.playbackInfo.state = this.playbackInfo.state === 'paused' ? 'playing' : 'paused'
-    this.lastTick = Date.now()
+    this.lastTick = this.scheduler.now()
     this.publishProperty('pause', this.playbackInfo.state !== 'playing')
     this.publishPlaybackInfo()
   }
@@ -808,7 +944,7 @@ export class AudioEngineManager extends EventEmitter {
     const position = Math.max(0, Number.isFinite(time) ? time : 0)
     this.tryNative('跳转', (native) => native.Seek(position))
     this.playbackInfo.position = position
-    this.lastTick = Date.now()
+    this.lastTick = this.scheduler.now()
     this.publishProperty('time-pos', position)
     this.publishPlaybackInfo()
   }
@@ -891,8 +1027,7 @@ export class AudioEngineManager extends EventEmitter {
     this.exclusiveMode = enabled
     this.tryNative('切换独占模式', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.applyNativeOutputConfig('切换输出配置')
-    this.resetOutputInfoDefaults()
-    this.updateOutputPerfect()
+    this.refreshOutputInfoFromNative(true)
     return await this.getAudioOutputState()
   }
 
@@ -907,17 +1042,14 @@ export class AudioEngineManager extends EventEmitter {
     this.tryNative('切换输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
     this.applyNativeOutputConfig('切换输出配置')
-    this.resetOutputInfoDefaults()
-    this.updateOutputPerfect()
+    this.refreshOutputInfoFromNative(true)
     return await this.getAudioOutputState()
   }
 
   async setAudioDevice(device: string): Promise<AudioOutputState> {
     this.device = normalizeAudioDevice(device)
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
-    this.playbackInfo.outputDevice = this.device
-    this.playbackInfo.outputInfo.deviceName = this.device
-    this.playbackInfo.outputInfo.actualDeviceName = this.device
+    this.refreshOutputInfoFromNative(true)
     return await this.getAudioOutputState()
   }
 
@@ -926,8 +1058,7 @@ export class AudioEngineManager extends EventEmitter {
     this.applyNativeOutputConfig('设置输出配置')
     this.playbackInfo.outputInfo.channelRoutingMode = this.outputConfig.routingMode
     this.playbackInfo.channelRoutingMode = this.outputConfig.routingMode
-    this.updateOutputPerfect()
-    this.publishPlaybackInfo()
+    this.refreshOutputInfoFromNative(false)
   }
 
   async getAudioOutput(): Promise<AudioOutputId> {
@@ -953,6 +1084,28 @@ export class AudioEngineManager extends EventEmitter {
     settings: Partial<AudioProcessingSettings>
   ): Promise<AudioProcessingSettings> {
     this.processing = normalizeAudioProcessingSettings(settings)
+    if (this.processing.dsdOutputMode === 'pcm') {
+      const sourceIsDsd =
+        sourceLooksDsd(this.playbackInfo.source) ||
+        this.playbackInfo.codec.trim().toLowerCase() === 'dsd' ||
+        this.playbackInfo.outputInfo.isDsd === true
+      this.playbackInfo.outputInfo = {
+        ...this.playbackInfo.outputInfo,
+        isDsd: sourceIsDsd,
+        dsdMode: 'pcm',
+        dsdRate: sourceIsDsd ? this.playbackInfo.outputInfo.dsdRate || this.playbackInfo.dsdRate || 0 : 0,
+        perfectReasonCode: sourceIsDsd
+          ? 'dsd_converted_to_pcm'
+          : this.playbackInfo.outputInfo.perfectReasonCode,
+        perfectReason: sourceIsDsd
+          ? 'DSD 当前已转换为 PCM 输出'
+          : this.playbackInfo.outputInfo.perfectReason,
+        capabilityReason: sourceIsDsd
+          ? 'DSD 当前已转换为 PCM 输出'
+          : this.playbackInfo.outputInfo.capabilityReason
+      }
+      this.syncPlaybackOutputMirrorsFromOutputInfo()
+    }
     this.applyNativeDspSettings('更新 DSP 配置')
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
@@ -1110,7 +1263,7 @@ export class AudioEngineManager extends EventEmitter {
     this.destroyed = true
     this.nativePlaybackActive = false
     if (this.timer) {
-      clearInterval(this.timer)
+      this.scheduler.clearInterval(this.timer)
       this.timer = null
     }
     this.tryNative('销毁停止', (native) => native.Stop())
@@ -1118,8 +1271,8 @@ export class AudioEngineManager extends EventEmitter {
 
   private startClock(): void {
     if (this.timer) return
-    this.lastTick = Date.now()
-    this.timer = setInterval(() => this.tick(), 250)
+    this.lastTick = this.scheduler.now()
+    this.timer = this.scheduler.setInterval(() => this.tick(), 250)
   }
 
   private readNativePlaybackInfo(): PlaybackInfo | null {
@@ -1132,85 +1285,150 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   private normalizePlaybackInfo(info: PlaybackInfo): PlaybackInfo {
+    const preferNonEmpty = (...values: Array<string | undefined | null>): string => {
+      for (const value of values) {
+        if (typeof value === 'string' && value.trim().length > 0) return value
+      }
+      return ''
+    }
     const outputInfo: OutputInfo = {
       ...this.playbackInfo.outputInfo,
       ...(info.outputInfo ?? {})
     }
     const canonicalOutput = info.outputInfo
-    const sourceExact = canonicalOutput?.sourceExact === true
-    const outputPerfect = canonicalOutput?.outputPerfect === true
-    const perfectReason = canonicalOutput?.perfectReason || ''
-    const isDsd =
-      canonicalOutput?.isDsd === true ||
-      canonicalOutput?.dsdMode === 'native' ||
-      canonicalOutput?.dsdMode === 'dop' ||
-      canonicalOutput?.dsdMode === 'unsupported'
-    const dsdMode = isDsd ? canonicalOutput?.dsdMode || 'unsupported' : 'pcm'
-    const dsdRate = isDsd ? canonicalOutput?.dsdRate || 0 : 0
+    const sourceExact = canonicalOutput?.sourceExact ?? info.sourceExact ?? false
+    const outputPerfect = canonicalOutput?.outputPerfect ?? info.outputPerfect ?? false
+    const perfectReason = canonicalOutput?.perfectReason ?? info.perfectReason ?? ''
+    const perfectReasonCode = canonicalOutput?.perfectReasonCode ?? info.perfectReasonCode ?? ''
+    const supportsOutputPerfect =
+      canonicalOutput?.supportsOutputPerfect ?? info.supportsOutputPerfect ?? outputInfo.supportsOutputPerfect ?? false
+    const normalizedDsd = normalizeDsdState(canonicalOutput, info)
+    const isDsd = normalizedDsd.isDsd
+    const dsdMode =
+      isDsd && this.processing.dsdOutputMode === 'pcm' ? 'pcm' : normalizedDsd.dsdMode
+    const dsdRate = normalizedDsd.dsdRate
+    const latencyInfo =
+      canonicalOutput?.latencyInfo ?? info.latencyInfo ?? this.playbackInfo.latencyInfo
+    const diagnostics =
+      canonicalOutput?.diagnostics ?? info.diagnostics ?? this.playbackInfo.diagnostics
     outputInfo.sourceExact = sourceExact
     outputInfo.outputPerfect = outputPerfect
-    outputInfo.perfectReason = perfectReason
+    outputInfo.supportsOutputPerfect = supportsOutputPerfect
+    outputInfo.perfectReason =
+      isDsd && dsdMode === 'pcm' && normalizedDsd.dsdMode !== 'pcm'
+        ? 'DSD 当前已转换为 PCM 输出'
+        : perfectReason
+    outputInfo.perfectReasonCode =
+      isDsd && dsdMode === 'pcm' && normalizedDsd.dsdMode !== 'pcm'
+        ? 'dsd_converted_to_pcm'
+        : perfectReasonCode
     outputInfo.isDsd = isDsd
     outputInfo.dsdMode = dsdMode
     outputInfo.dsdRate = dsdRate
-    outputInfo.backend = outputInfo.backend || info.outputBackend || this.getNativeBackendId()
-    outputInfo.actualBackend = outputInfo.actualBackend || outputInfo.backend
-    outputInfo.deviceName = outputInfo.deviceName || info.outputDevice || this.device
-    outputInfo.actualDeviceName = outputInfo.actualDeviceName || outputInfo.deviceName
-    outputInfo.actualDriverName = outputInfo.actualDriverName || outputInfo.driverName || ''
-    outputInfo.actualDriverVersion = outputInfo.actualDriverVersion || info.driverVersion || 0
+    outputInfo.backend = preferNonEmpty(canonicalOutput?.backend, info.outputBackend, this.getNativeBackendId())
+    outputInfo.actualBackend = preferNonEmpty(canonicalOutput?.actualBackend, outputInfo.backend)
+    outputInfo.accessMode = preferNonEmpty(
+      canonicalOutput?.accessMode,
+      outputInfo.exclusive ? 'exclusive' : 'shared'
+    )
+    outputInfo.devicePathKind = preferNonEmpty(canonicalOutput?.devicePathKind, 'default')
+    outputInfo.capabilityReason = preferNonEmpty(canonicalOutput?.capabilityReason, perfectReason)
+    outputInfo.deviceName = preferNonEmpty(canonicalOutput?.deviceName, info.outputDevice, this.device)
+    outputInfo.actualDeviceName = preferNonEmpty(canonicalOutput?.actualDeviceName, outputInfo.deviceName)
+    outputInfo.driverName = preferNonEmpty(canonicalOutput?.driverName, info.driverName)
+    outputInfo.actualDriverName = preferNonEmpty(
+      canonicalOutput?.actualDriverName,
+      outputInfo.driverName
+    )
+    outputInfo.driverVersion = canonicalOutput?.driverVersion ?? info.driverVersion ?? 0
+    outputInfo.actualDriverVersion = canonicalOutput?.actualDriverVersion ?? info.driverVersion ?? 0
     outputInfo.pcmPassthrough = outputInfo.pcmPassthrough === true
-    outputInfo.latencyInfo = outputInfo.latencyInfo || info.latencyInfo || this.playbackInfo.latencyInfo
-    outputInfo.diagnostics =
-      outputInfo.diagnostics || info.diagnostics || this.playbackInfo.diagnostics
+    outputInfo.actualOutputFormat =
+      canonicalOutput?.actualOutputFormat ?? info.actualOutputFormat ?? ''
+    outputInfo.actualSampleRate = canonicalOutput?.actualSampleRate ?? info.actualSampleRate ?? 0
+    outputInfo.actualBitDepth = canonicalOutput?.actualBitDepth ?? info.actualBitDepth ?? 0
+    outputInfo.actualChannels = canonicalOutput?.actualChannels ?? info.actualChannels ?? 0
+    outputInfo.outputSampleRate = canonicalOutput?.outputSampleRate ?? info.outputSampleRate ?? 0
+    outputInfo.outputBitDepth = canonicalOutput?.outputBitDepth ?? info.outputBitDepth ?? 0
+    outputInfo.bufferSizeFrames = canonicalOutput?.bufferSizeFrames ?? info.bufferSizeFrames ?? 0
+    outputInfo.latencyFrames = canonicalOutput?.latencyFrames ?? info.latencyFrames ?? 0
+    outputInfo.latencyMs = canonicalOutput?.latencyMs ?? info.latencyMs ?? 0
+    outputInfo.channelRoutingMode =
+      canonicalOutput?.channelRoutingMode ?? info.channelRoutingMode ?? this.outputConfig.routingMode
+    outputInfo.deviceRecovered = canonicalOutput?.deviceRecovered ?? info.deviceRecovered ?? false
+    outputInfo.recoveryCount = canonicalOutput?.recoveryCount ?? info.recoveryCount ?? 0
+    outputInfo.latencyInfo = latencyInfo
+    outputInfo.diagnostics = diagnostics
     return {
       ...info,
       outputInfo,
       outputBackend: outputInfo.backend,
       outputDevice: outputInfo.deviceName,
       actualBackend: outputInfo.actualBackend,
-      driverName: outputInfo.driverName || outputInfo.actualDriverName || info.driverName || '',
+      accessMode: outputInfo.accessMode,
+      devicePathKind: outputInfo.devicePathKind,
+      driverName: preferNonEmpty(outputInfo.driverName, outputInfo.actualDriverName, info.driverName),
       driverVersion: outputInfo.driverVersion || outputInfo.actualDriverVersion || info.driverVersion || 0,
-      actualOutputFormat: outputInfo.actualOutputFormat || info.actualOutputFormat || '',
-      actualSampleRate: outputInfo.actualSampleRate || info.actualSampleRate || 0,
-      actualBitDepth: outputInfo.actualBitDepth || info.actualBitDepth || 0,
-      actualChannels: outputInfo.actualChannels || info.actualChannels || 0,
+      actualOutputFormat: outputInfo.actualOutputFormat,
+      actualSampleRate: outputInfo.actualSampleRate,
+      actualBitDepth: outputInfo.actualBitDepth,
+      actualChannels: outputInfo.actualChannels,
       decodedSampleRate: info.decodedSampleRate || 0,
       decodedBitDepth: info.decodedBitDepth || 0,
       decodedChannels: info.decodedChannels || 0,
       decodedSampleFormat: info.decodedSampleFormat || '',
-      bufferSizeFrames: outputInfo.bufferSizeFrames || info.bufferSizeFrames || 0,
-      latencyFrames: outputInfo.latencyFrames || info.latencyFrames || 0,
-      latencyMs: outputInfo.latencyMs || info.latencyMs || 0,
-      latencyInfo: outputInfo.latencyInfo,
-      channelRoutingMode:
-        outputInfo.channelRoutingMode || info.channelRoutingMode || this.outputConfig.routingMode,
-      supportsOutputPerfect: outputInfo.supportsOutputPerfect === true,
+      bufferSizeFrames: outputInfo.bufferSizeFrames,
+      latencyFrames: outputInfo.latencyFrames,
+      latencyMs: outputInfo.latencyMs,
+      latencyInfo,
+      channelRoutingMode: outputInfo.channelRoutingMode,
+      supportsOutputPerfect,
       sourceExact,
-      diagnostics: outputInfo.diagnostics,
+      diagnostics,
       deviceRecovered: outputInfo.deviceRecovered === true,
-      recoveryCount: outputInfo.recoveryCount || info.recoveryCount || 0,
-      outputSampleRate: outputInfo.outputSampleRate || info.outputSampleRate || 0,
-      outputBitDepth: outputInfo.outputBitDepth || info.outputBitDepth || 0,
+      recoveryCount: outputInfo.recoveryCount,
+      outputSampleRate: outputInfo.outputSampleRate,
+      outputBitDepth: outputInfo.outputBitDepth,
       channelCount: outputInfo.actualChannels || info.channelCount || 0,
       outputPerfect,
       pcmPassthrough: outputInfo.pcmPassthrough === true,
       isDsd,
       dsdMode,
       dsdRate,
+      perfectReasonCode: outputInfo.perfectReasonCode,
+      capabilityReason: outputInfo.capabilityReason,
       crossfadeActive: info.crossfadeActive === true || this.processing.crossfadeSeconds > 0,
       crossfadeSeconds: info.crossfadeSeconds || this.processing.crossfadeSeconds || 0,
-      perfectReason
+      perfectReason: outputInfo.perfectReason
     }
   }
 
   private syncPlaybackOutputMirrorsFromOutputInfo(): void {
     const outputInfo = this.playbackInfo.outputInfo
+    this.playbackInfo.actualBackend = outputInfo.actualBackend || outputInfo.backend || ''
+    this.playbackInfo.accessMode = outputInfo.accessMode || ''
+    this.playbackInfo.devicePathKind = outputInfo.devicePathKind || ''
+    this.playbackInfo.actualOutputFormat = outputInfo.actualOutputFormat || ''
+    this.playbackInfo.actualSampleRate = outputInfo.actualSampleRate || 0
+    this.playbackInfo.actualBitDepth = outputInfo.actualBitDepth || 0
+    this.playbackInfo.actualChannels = outputInfo.actualChannels || 0
+    this.playbackInfo.bufferSizeFrames = outputInfo.bufferSizeFrames || 0
+    this.playbackInfo.latencyFrames = outputInfo.latencyFrames || 0
+    this.playbackInfo.latencyMs = outputInfo.latencyMs || 0
+    this.playbackInfo.latencyInfo = outputInfo.latencyInfo
+    this.playbackInfo.channelRoutingMode = outputInfo.channelRoutingMode || this.outputConfig.routingMode
     this.playbackInfo.supportsOutputPerfect = outputInfo.supportsOutputPerfect === true
     this.playbackInfo.sourceExact = outputInfo.sourceExact === true
+    this.playbackInfo.diagnostics = outputInfo.diagnostics
+    this.playbackInfo.deviceRecovered = outputInfo.deviceRecovered === true
+    this.playbackInfo.recoveryCount = outputInfo.recoveryCount || 0
+    this.playbackInfo.outputSampleRate = outputInfo.outputSampleRate || 0
+    this.playbackInfo.outputBitDepth = outputInfo.outputBitDepth || 0
     this.playbackInfo.outputPerfect = outputInfo.outputPerfect === true
     this.playbackInfo.pcmPassthrough = outputInfo.pcmPassthrough === true
     this.playbackInfo.perfectReason = outputInfo.perfectReason || ''
+    this.playbackInfo.perfectReasonCode = outputInfo.perfectReasonCode || ''
+    this.playbackInfo.capabilityReason = outputInfo.capabilityReason || ''
     this.playbackInfo.isDsd = outputInfo.isDsd === true
     this.playbackInfo.dsdMode = outputInfo.isDsd === true ? outputInfo.dsdMode || 'unsupported' : 'pcm'
     this.playbackInfo.dsdRate = outputInfo.isDsd === true ? outputInfo.dsdRate || 0 : 0
@@ -1226,7 +1444,7 @@ export class AudioEngineManager extends EventEmitter {
       const nativeInfo = this.readNativePlaybackInfo()
       if (nativeInfo) {
         this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
-        this.lastTick = Date.now()
+        this.lastTick = this.scheduler.now()
         this.publishProperty('time-pos', this.playbackInfo.position)
         if (this.playbackInfo.duration > 0) {
           this.publishProperty('duration', this.playbackInfo.duration)
@@ -1247,7 +1465,7 @@ export class AudioEngineManager extends EventEmitter {
     }
 
     if (this.playbackInfo.state !== 'playing') return
-    const now = Date.now()
+    const now = this.scheduler.now()
     const elapsed = (now - this.lastTick) / 1000
     this.lastTick = now
     this.playbackInfo.position += elapsed
@@ -1316,6 +1534,11 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   private updateNativeInfoSnapshot(): void {
+    this.refreshOutputInfoFromNative(false)
+  }
+
+  private refreshOutputInfoFromNative(resetDefaults: boolean): void {
+    if (resetDefaults) this.resetOutputInfoDefaults()
     const nativeInfo = this.readNativePlaybackInfo()
     if (nativeInfo) this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
     this.updateOutputPerfect()
@@ -1323,6 +1546,10 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   private getAudioDeviceOptions(): AudioDeviceOption[] {
+    const injectedDevices = this.deviceOptionsProvider?.()
+    if (Array.isArray(injectedDevices) && injectedDevices.length > 0) {
+      return injectedDevices
+    }
     try {
       const nativeDevices = parseNativeJson(
         this.native?.EnumerateDevices?.(),
@@ -1334,7 +1561,21 @@ export class AudioEngineManager extends EventEmitter {
     } catch {
       // Fall through to the stable default device.
     }
-    return [{ id: 'auto', label: '系统默认', isDefault: true }]
+    return [
+      {
+        id: 'auto',
+        label: '系统默认',
+        isDefault: true,
+        supportsExclusive: false,
+        supportsHogMode: false,
+        supportsDirectHw: false,
+        supportsDop: false,
+        supportsNativeDsd: false,
+        supportedDsdRates: [],
+        pathKind: 'default',
+        capabilityReason: ''
+      }
+    ]
   }
 
   private tryNative(context: string, command: (native: NativeAudioBinding) => void): boolean {
@@ -1399,6 +1640,9 @@ export class AudioEngineManager extends EventEmitter {
         : supportsOutputPerfect && !dspActive && noResample && outputFormatMatchesSource
           ? '当前 PCM 渲染路径尚未验证样本级直通'
           : '')
+    const perfectReasonCode =
+      this.playbackInfo.outputInfo.perfectReasonCode ||
+      (shared ? 'shared_mixer' : perfectReason ? 'output_not_perfect' : '')
     this.playbackInfo.replayGainActive = replayGainActive
     this.playbackInfo.eqActive = eqActive
     this.playbackInfo.convolverActive = convolverActive
@@ -1416,6 +1660,20 @@ export class AudioEngineManager extends EventEmitter {
       outputPerfect: false,
       pcmPassthrough: false,
       resampled: this.nativePlaybackActive ? this.playbackInfo.outputInfo.resampled : false,
+      accessMode:
+        this.playbackInfo.outputInfo.accessMode ||
+        (this.output === 'asio'
+          ? 'exclusive'
+          : this.output === 'wasapi'
+            ? this.exclusiveMode
+              ? 'exclusive'
+              : 'shared'
+            : 'shared'),
+      devicePathKind:
+        this.playbackInfo.outputInfo.devicePathKind ||
+        (this.output === 'asio' ? 'asio' : this.output === 'coreaudio' ? 'hal' : 'default'),
+      perfectReasonCode,
+      capabilityReason: this.playbackInfo.outputInfo.capabilityReason || perfectReason,
       perfectReason,
       outputSampleRate: this.playbackInfo.outputSampleRate,
       outputBitDepth: this.playbackInfo.outputBitDepth,

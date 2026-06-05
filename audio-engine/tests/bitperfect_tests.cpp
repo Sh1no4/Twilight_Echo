@@ -271,6 +271,7 @@ void testDsdConvertedToPcmReason() {
   const PerfectResult result = evaluatePerfect(dsd);
   assert(!result.sourceExact);
   assert(!result.outputPerfect);
+  assert(result.perfectReasonCode == "dsd_converted_to_pcm");
   assert(result.perfectReason == "DSD converted to PCM");
 }
 
@@ -287,6 +288,7 @@ void testDopCarrierMismatchReason() {
   const PerfectResult result = evaluatePerfect(dop);
   assert(!result.sourceExact);
   assert(!result.outputPerfect);
+  assert(result.perfectReasonCode == "dop_carrier_mismatch");
   assert(result.perfectReason == "DoP carrier mismatch");
 }
 
@@ -304,6 +306,7 @@ void testDopCandidateRequiresBackendPassthroughProof() {
   const PerfectResult result = evaluatePerfect(dop);
   assert(!result.sourceExact);
   assert(!result.outputPerfect);
+  assert(result.perfectReasonCode == "dop_passthrough_unproven");
   assert(result.perfectReason == "DoP backend could not prove passthrough");
 }
 
@@ -325,6 +328,7 @@ void testDopPerfectWhenBackendProvesPassthrough() {
   assert(result.sourceExact);
   assert(result.outputPerfect);
   assert(result.pcmPassthrough);
+  assert(result.perfectReasonCode.empty());
   assert(result.perfectReason.empty());
 }
 
@@ -337,6 +341,29 @@ void testDsdProcessingFallbackReason() {
   const PerfectResult result = evaluatePerfect(dsd);
   assert(!result.sourceExact);
   assert(!result.outputPerfect);
+  assert(result.perfectReasonCode == "dsd_processing_pcm_fallback");
+  assert(result.perfectReason == "DSD processing active; falling back to PCM");
+}
+
+void testDsdDopRoutingSemanticChangeUsesProcessingFallbackCode() {
+  auto dop = baseEvaluation();
+  dop.sourceDsd = true;
+  dop.dsdMode = DsdMode::Dop;
+  dop.dsdRate = 64;
+  dop.dopCarrierFormat = dopCarrierFormatForDsd(64, 2).value();
+  dop.decodedFormat = dop.dopCarrierFormat;
+  dop.outputFormat = dop.dopCarrierFormat;
+  dop.outputFormat.channelCount = 6;
+  dop.routingMode = ChannelRoutingMode::StereoTo51;
+  dop.dopCarrierMatched = true;
+  dop.dopPassthroughProven = true;
+  dop.pcmPassthrough = true;
+
+  const PerfectResult result = evaluatePerfect(dop);
+  assert(!result.sourceExact);
+  assert(!result.outputPerfect);
+  assert(!result.routingPreservesSemantics);
+  assert(result.perfectReasonCode == "dsd_processing_pcm_fallback");
   assert(result.perfectReason == "DSD processing active; falling back to PCM");
 }
 
@@ -348,6 +375,7 @@ void testDsdHighRateFallbackReason() {
   const PerfectResult result = evaluatePerfect(dsd);
   assert(!result.sourceExact);
   assert(!result.outputPerfect);
+  assert(result.perfectReasonCode == "dsd_high_rate_pcm_fallback");
   assert(result.perfectReason == "DSD256 currently falls back to PCM");
 }
 
@@ -386,6 +414,7 @@ int main() {
   testDopCandidateRequiresBackendPassthroughProof();
   testDopPerfectWhenBackendProvesPassthrough();
   testDsdProcessingFallbackReason();
+  testDsdDopRoutingSemanticChangeUsesProcessingFallbackCode();
   testDsdHighRateFallbackReason();
   testUnsupportedDsdRateRejectsDopPerfect();
   return 0;

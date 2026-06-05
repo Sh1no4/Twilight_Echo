@@ -122,6 +122,38 @@ AudioStreamInfo streamInfoFromDsd(const QueueItem& item, const DsdStreamInfo& ds
   return stream;
 }
 
+bool dsdOutputModePrefersPcm(DsdOutputMode mode) {
+  return mode == DsdOutputMode::Pcm;
+}
+
+bool dsdOutputModeRequestsDop(DsdOutputMode mode) {
+  return mode == DsdOutputMode::Auto || mode == DsdOutputMode::Dop;
+}
+
+AudioFormat pcmFallbackRequestFormat(
+    const AudioStreamInfo& stream,
+    const std::optional<DsdStreamInfo>& dsdProbe) {
+  AudioFormat requested = stream.decodedFormat;
+  requested.channelCount =
+      stream.sourceFormat.channelCount > 0 ? stream.sourceFormat.channelCount : std::max(1, requested.channelCount);
+  requested.bitDepth = 32;
+  requested.sampleFormat = AudioSampleFormat::Float32Interleaved;
+
+  const auto assignRate = [&](int sampleRate) {
+    if (sampleRate > 0) requested.sampleRate = sampleRate;
+  };
+
+  if (dsdProbe.has_value()) {
+    assignRate(dsdProbe->dsdSampleRate / 16);
+  } else if (stream.dsdRate > 0 && stream.sourceFormat.sampleRate > 0) {
+    assignRate(stream.sourceFormat.sampleRate / 16);
+  }
+
+  if (requested.sampleRate <= 0) requested.sampleRate = stream.sourceFormat.sampleRate;
+  if (requested.sampleRate <= 0) requested.sampleRate = 176400;
+  return requested;
+}
+
 }  // namespace
 
 struct AudioPipeline::DecodeStream {
@@ -395,6 +427,10 @@ TAE_Result AudioPipeline::playInternal(
       dspConfigRequiresProcessing(dspConfigJson) || std::abs(volume - 1.0) > kUnityVolumeEpsilon ||
       outputConfig.routingMode != ChannelRoutingMode::Auto;
 
+  crossfadeMixActive_ = false;
+  crossfadeFramesProcessed_ = 0;
+  crossfadeTotalFrames_ = 0;
+
   std::optional<DsdStreamInfo> dsdProbe;
   if (sourceLooksDsfOrDff(item.source)) {
     DsdReader probe;
@@ -404,9 +440,13 @@ TAE_Result AudioPipeline::playInternal(
     }
   }
 
-  const bool canTryDop = allowDop && dsdProbe.has_value() && !processingRequiresPcm &&
-                         backendCanAttemptDop(backendId) &&
-                         dopCarrierFormatForDsd(dsdProbe->dsdRate, dsdProbe->channelCount).has_value();
+  const bool canTryDop = allowDop &&
+                         shouldAttemptDopForCurrentConfig(
+                             requestedDspConfig,
+                             outputConfig,
+                             dsdProbe,
+                             volume,
+                             backendId);
 
   std::shared_ptr<DecodeStream> active;
   std::unique_ptr<IOutputBackend> output;
@@ -456,7 +496,9 @@ TAE_Result AudioPipeline::playInternal(
     if (!output->setOutputConfig(outputConfig, error)) {
       return TAE_RESULT_INVALID_ARGUMENT;
     }
-    if (!output->open(deviceId, active->stream.sourceFormat, error)) {
+    const AudioFormat requestedPcmFormat =
+        active->stream.isDsd ? pcmFallbackRequestFormat(active->stream, dsdProbe) : active->stream.sourceFormat;
+    if (!output->open(deviceId, requestedPcmFormat, error)) {
       return TAE_RESULT_BACKEND_UNAVAILABLE;
     }
 
@@ -468,17 +510,13 @@ TAE_Result AudioPipeline::playInternal(
 
     if (active->stream.isDsd) {
       active->stream.dsdMode = DsdMode::Pcm;
-      if (processingRequiresPcm) {
-        dopAttemptError = "DSD processing active; falling back to PCM";
-      } else if (active->stream.dsdRate >= 256) {
-        dopAttemptError = "DSD" + std::to_string(active->stream.dsdRate) + " currently falls back to PCM";
-      } else if (!forcedDsdFallbackReason.empty()) {
-        dopAttemptError = forcedDsdFallbackReason;
-      } else if (!dopAttemptError.empty()) {
-        // Keep the failed DoP attempt reason available through the evaluator backend reason path.
-      } else {
-        dopAttemptError = "DoP backend could not prove passthrough";
-      }
+      dopAttemptError = determineDsdPcmFallbackReason(
+          requestedDspConfig,
+          outputConfig,
+          active->stream,
+          volume,
+          forcedDsdFallbackReason.empty() ? dopAttemptError : forcedDsdFallbackReason,
+          dsdOutputModeRequestsDop(requestedDspConfig.dsdOutputMode));
     }
   }
 
@@ -506,6 +544,9 @@ TAE_Result AudioPipeline::playInternal(
     dspChain_.configure(dspConfig_);
     dspChain_.prepare(outputFormat_);
     dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
+    preloadDspChain_.configure(dspConfig_);
+    preloadDspChain_.prepare(outputFormat_);
+    preloadDspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
     dspStatus_ = dspChain_.status();
     volume_ = std::clamp(volume, 0.0, 1.0);
     dspActive_ = dspStatus_.dspActive || std::abs(volume - 1.0) > 0.0001;
@@ -577,6 +618,54 @@ TAE_Result AudioPipeline::playInternal(
   return TAE_RESULT_OK;
 }
 
+bool AudioPipeline::shouldAttemptDopForCurrentConfig(
+    const DspConfig& dspConfig,
+    const OutputConfig& outputConfig,
+    const std::optional<DsdStreamInfo>& dsdProbe,
+    double volume,
+    const std::string& backendId) const {
+  if (!dsdProbe.has_value()) return false;
+  if (!dsdOutputModeRequestsDop(dspConfig.dsdOutputMode)) return false;
+  if (dspConfig.dsdOutputMode == DsdOutputMode::Native) return false;
+  if (dspConfigRequiresProcessing("{}")) {
+    // Never reached; kept to make the decision tree explicit near DSD policy.
+  }
+  const bool processingRequiresPcm =
+      (dspConfig.enabled &&
+       (dspConfig.replayGainMode != ReplayGainMode::Off || dspConfig.eqEnabled || dspConfig.convolverEnabled ||
+        dspConfig.crossfeedEnabled)) ||
+      dspConfig.crossfadeSeconds > 0.0001 || outputConfig.routingMode != ChannelRoutingMode::Auto ||
+      std::abs(volume - 1.0) > kUnityVolumeEpsilon;
+  if (processingRequiresPcm) return false;
+  if (!backendCanAttemptDop(backendId)) return false;
+  return dopCarrierFormatForDsd(dsdProbe->dsdRate, dsdProbe->channelCount).has_value();
+}
+
+std::string AudioPipeline::determineDsdPcmFallbackReason(
+    const DspConfig& dspConfig,
+    const OutputConfig& outputConfig,
+    const AudioStreamInfo& stream,
+    double volume,
+    const std::string& attemptedDopReason,
+    bool dopModeRequested) const {
+  const bool processingRequiresPcm =
+      (dspConfig.enabled &&
+       (dspConfig.replayGainMode != ReplayGainMode::Off || dspConfig.eqEnabled || dspConfig.convolverEnabled ||
+        dspConfig.crossfeedEnabled)) ||
+      dspConfig.crossfadeSeconds > 0.0001 || outputConfig.routingMode != ChannelRoutingMode::Auto ||
+      std::abs(volume - 1.0) > kUnityVolumeEpsilon;
+
+  if (processingRequiresPcm) return "DSD processing active; falling back to PCM";
+  if (dspConfig.dsdOutputMode == DsdOutputMode::Pcm) return "DSD output mode forced PCM";
+  if (dspConfig.dsdOutputMode == DsdOutputMode::Native) return "Native DSD not yet available; falling back to PCM";
+  if (stream.dsdRate >= 256) {
+    return "DSD" + std::to_string(stream.dsdRate) + " currently falls back to PCM";
+  }
+  if (!attemptedDopReason.empty()) return attemptedDopReason;
+  if (dopModeRequested) return "DoP backend could not prove passthrough";
+  return "DSD converted to PCM";
+}
+
 TAE_Result AudioPipeline::togglePause() {
   std::lock_guard lock(mutex_);
   if (state_ == PipelineState::Playing) {
@@ -627,6 +716,9 @@ TAE_Result AudioPipeline::stop() {
     outputPerfect_ = false;
     gaplessEnabled_ = true;
     dopPathActive_ = false;
+    crossfadeMixActive_ = false;
+    crossfadeFramesProcessed_ = 0;
+    crossfadeTotalFrames_ = 0;
   }
   return TAE_RESULT_OK;
 }
@@ -665,12 +757,19 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
   {
     std::lock_guard lock(mutex_);
     dspConfig_ = DspChain::parseConfigJson(dspConfigJson);
-    gaplessEnabled_ = !dopPathActive_ && dspConfig_.gapless && dspConfig_.crossfadeSeconds <= 0.0001;
-    if (!gaplessEnabled_) disabledPreload = std::move(preloadStream_);
+    gaplessEnabled_ = !dopPathActive_ && dspConfig_.gapless;
+    if (!gaplessEnabled_) {
+      disabledPreload = std::move(preloadStream_);
+      crossfadeMixActive_ = false;
+      crossfadeFramesProcessed_ = 0;
+      crossfadeTotalFrames_ = 0;
+    }
     dspChain_.configure(dspConfig_);
     if (outputFormat_.sampleRate > 0 && outputFormat_.channelCount > 0) {
       dspChain_.prepare(outputFormat_);
       dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
+      preloadDspChain_.prepare(outputFormat_);
+      preloadDspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
       spectrum_.prepare(outputFormat_, dspConfig_.fftResolution);
     }
     spectrum_.setEnabled(dspConfig_.fftEnabled);
@@ -787,6 +886,10 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
   std::shared_ptr<DecodeStream> oldActive;
   {
     std::lock_guard lock(mutex_);
+    if (crossfadeMixActive_) {
+      if (error) *error = "crossfade overlap 已经消耗了预加载流起始数据";
+      return false;
+    }
     if (!preloadStream_ || preloadStream_->item.source != item.source) {
       if (error) *error = "下一首尚未完成预加载";
       return false;
@@ -802,6 +905,9 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
     dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
     dspStatus_ = dspChain_.status();
     dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+    crossfadeMixActive_ = false;
+    crossfadeFramesProcessed_ = 0;
+    crossfadeTotalFrames_ = 0;
     updatePerfectLocked();
   }
   if (oldActive) oldActive->stop();
@@ -848,7 +954,8 @@ PipelineStatus AudioPipeline::status() const {
   status.channelMappingMode = dspStatus_.channelMappingMode;
   status.sourceExact = outputInfo_.sourceExact;
   status.outputPerfect = outputPerfect_;
-  status.gaplessActive = gaplessEnabled_ && preloadStream_ != nullptr;
+  status.gaplessActive =
+      gaplessEnabled_ && dspConfig_.crossfadeSeconds <= 0.0001 && preloadStream_ != nullptr && !crossfadeMixActive_;
   status.preloadReady = preloadStream_ && preloadStream_->readyForRender();
   status.perfectReason = perfectReason_;
   return status;
@@ -982,6 +1089,7 @@ bool AudioPipeline::updatePerfectLocked() {
   outputInfo_.dsdMode = stream_.isDsd ? dsdModeToString(stream_.dsdMode) : dsdModeToString(DsdMode::Pcm);
   outputInfo_.dsdRate = stream_.isDsd ? stream_.dsdRate : 0;
   outputInfo_.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
+  outputInfo_.perfectReasonCode = result.perfectReasonCode;
   outputInfo_.perfectReason = result.perfectReason;
   perfectReason_ = result.perfectReason;
   return outputPerfect_;
@@ -993,11 +1101,27 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   PipelineState state = PipelineState::Stopped;
   int channels = 0;
   std::shared_ptr<DecodeStream> active;
+  std::shared_ptr<DecodeStream> preload;
+  DspConfig dspConfig;
+  AudioFormat outputFormat;
+  bool dopPathActive = false;
+  double volume = 1.0;
+  bool crossfadeMixActive = false;
+  uint64_t crossfadeFramesProcessed = 0;
+  uint64_t crossfadeTotalFrames = 0;
   {
     std::lock_guard lock(mutex_);
     state = state_;
-    channels = std::max(1, outputFormat_.channelCount);
+    outputFormat = outputFormat_;
+    channels = std::max(1, outputFormat.channelCount);
     active = activeStream_;
+    preload = preloadStream_;
+    dspConfig = dspConfig_;
+    dopPathActive = dopPathActive_;
+    volume = volume_.load();
+    crossfadeMixActive = crossfadeMixActive_;
+    crossfadeFramesProcessed = crossfadeFramesProcessed_;
+    crossfadeTotalFrames = crossfadeTotalFrames_;
   }
 
   std::fill(output, output + frameCount * static_cast<size_t>(channels), 0.0f);
@@ -1006,16 +1130,76 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     return frameCount;
   }
 
+  const bool wantsCrossfade = dspConfig.crossfadeSeconds > 0.0001;
   size_t totalRead = 0;
   size_t positionRead = 0;
   while (totalRead < frameCount) {
     float* segment = output + totalRead * static_cast<size_t>(channels);
     const size_t read = active->read(segment, frameCount - totalRead);
-    if (read > 0 && !dopPathActive_) {
+    if (read > 0 && !dopPathActive) {
       dspChain_.process(segment, read);
     }
     totalRead += read;
     positionRead += read;
+
+    if (wantsCrossfade && preload && preload->readyForRender() && outputFormat.sampleRate > 0) {
+      const uint64_t requestedFrames =
+          static_cast<uint64_t>(std::max(1.0, dspConfig.crossfadeSeconds * static_cast<double>(outputFormat.sampleRate)));
+      if (!crossfadeMixActive) {
+        const double secondsRemaining =
+            active->stream.durationSeconds > 0.0
+                ? std::max(0.0, active->stream.durationSeconds -
+                                     (static_cast<double>(renderedFrames_.load() + positionRead) /
+                                      static_cast<double>(outputFormat.sampleRate)))
+                : 0.0;
+        if (secondsRemaining <= dspConfig.crossfadeSeconds + 0.02) {
+          crossfadeMixActive = true;
+          crossfadeFramesProcessed = 0;
+          crossfadeTotalFrames = requestedFrames;
+          preloadDspChain_.configure(dspConfig);
+          preloadDspChain_.prepare(outputFormat);
+          preloadDspChain_.setTrackContext(DspTrackContext{preload->stream, preload->item});
+          {
+            std::lock_guard lock(mutex_);
+            if (preloadStream_ == preload) {
+              crossfadeMixActive_ = true;
+              crossfadeFramesProcessed_ = 0;
+              crossfadeTotalFrames_ = requestedFrames;
+            }
+          }
+        }
+      }
+
+      if (crossfadeMixActive) {
+        std::vector<float> preloadFrames((frameCount - totalRead + read) * static_cast<size_t>(channels), 0.0f);
+        const size_t mixedFrames = preload->read(preloadFrames.data(), read);
+        if (mixedFrames > 0 && !dopPathActive) {
+          preloadDspChain_.process(preloadFrames.data(), mixedFrames);
+          const uint64_t totalFrames = std::max<uint64_t>(1, crossfadeTotalFrames);
+          for (size_t frame = 0; frame < mixedFrames; ++frame) {
+            const double fadeOut =
+                1.0 - std::clamp(static_cast<double>(crossfadeFramesProcessed + frame) / static_cast<double>(totalFrames), 0.0, 1.0);
+            const double fadeIn =
+                std::clamp(static_cast<double>(crossfadeFramesProcessed + frame) / static_cast<double>(totalFrames), 0.0, 1.0);
+            for (int channel = 0; channel < channels; ++channel) {
+              const size_t index = (totalRead - read + frame) * static_cast<size_t>(channels) + static_cast<size_t>(channel);
+              output[index] = static_cast<float>(std::clamp(
+                  static_cast<double>(output[index]) * fadeOut +
+                      static_cast<double>(preloadFrames[frame * static_cast<size_t>(channels) + static_cast<size_t>(channel)]) * fadeIn,
+                  -1.0,
+                  1.0));
+            }
+          }
+          crossfadeFramesProcessed += mixedFrames;
+          {
+            std::lock_guard lock(mutex_);
+            if (preloadStream_ == preload && crossfadeMixActive_) {
+              crossfadeFramesProcessed_ += mixedFrames;
+            }
+          }
+        }
+      }
+    }
 
     if (totalRead >= frameCount || !active->drained()) break;
 
@@ -1023,7 +1207,8 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     std::shared_ptr<DecodeStream> oldActive;
     {
       std::lock_guard lock(mutex_);
-      if (!gaplessEnabled_ || !preloadStream_ || !preloadStream_->readyForRender()) {
+      const bool canPromotePreload = preloadStream_ && preloadStream_->readyForRender();
+      if ((!gaplessEnabled_ && !crossfadeMixActive_) || !canPromotePreload) {
         break;
       }
       oldActive = activeStream_;
@@ -1040,14 +1225,16 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
       dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
       dspStatus_ = dspChain_.status();
       dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+      crossfadeMixActive_ = false;
+      crossfadeFramesProcessed_ = 0;
+      crossfadeTotalFrames_ = 0;
       updatePerfectLocked();
     }
     if (oldActive) oldActive->stop();
     if (!next) break;
   }
 
-  const double volume = volume_.load();
-  if (!dopPathActive_ && std::abs(volume - 1.0) > 0.0001) {
+  if (!dopPathActive && std::abs(volume - 1.0) > 0.0001) {
     const size_t sampleCount = frameCount * static_cast<size_t>(channels);
     for (size_t i = 0; i < sampleCount; ++i) {
       output[i] = static_cast<float>(std::clamp(static_cast<double>(output[i]) * volume, -1.0, 1.0));

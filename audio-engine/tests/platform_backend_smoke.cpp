@@ -36,6 +36,13 @@ void assertActualFormatFacts(const OutputInfo& info) {
   assert(info.bufferSizeFrames > 0);
 }
 
+void assertLatencyFacts(const OutputInfo& info) {
+  assert(info.latencyInfo.bufferLatencyMs >= 0.0);
+  assert(info.latencyInfo.outputLatencyMs >= 0.0);
+  assert(info.latencyInfo.totalLatencyMs >= info.latencyInfo.bufferLatencyMs);
+  assert(info.latencyMs == info.latencyInfo.totalLatencyMs);
+}
+
 }  // namespace
 
 int main() {
@@ -54,9 +61,11 @@ int main() {
         assert(info.actualBitDepth > 0);
         assert(info.actualChannels > 0);
         assert(info.bufferSizeFrames > 0);
+        assertLatencyFacts(info);
         assert(!info.exclusive);
         assert(!info.supportsOutputPerfect);
         assert(!info.outputPerfect);
+        assert(info.perfectReasonCode == "shared_mixer");
         assert(!info.perfectReason.empty());
         backend.close();
       } else {
@@ -79,8 +88,10 @@ int main() {
         assert(info.actualBitDepth > 0);
         assert(info.actualChannels > 0);
         assert(info.bufferSizeFrames > 0);
+        assertLatencyFacts(info);
         assert(info.exclusive);
         assert(info.supportsOutputPerfect);
+        assert(info.perfectReasonCode.empty() || info.perfectReasonCode == "pcm_converted" || info.perfectReasonCode == "dsd_dop");
         assert(!info.outputPerfect);
         backend.close();
       } else {

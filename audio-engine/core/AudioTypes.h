@@ -97,6 +97,7 @@ struct OutputInfo {
   };
 
   bool exclusive = false;
+  std::string accessMode = "shared";
   bool supportsOutputPerfect = false;
   bool sourceExact = false;
   bool outputPerfect = false;
@@ -109,6 +110,7 @@ struct OutputInfo {
   int outputBitDepth = 0;
   std::string backend;
   std::string actualBackend;
+  std::string devicePathKind = "default";
   std::string deviceName;
   std::string actualDeviceName;
   std::string driverName;
@@ -119,6 +121,8 @@ struct OutputInfo {
   int actualSampleRate = 0;
   int actualBitDepth = 0;
   int actualChannels = 0;
+  std::string perfectReasonCode;
+  std::string capabilityReason;
   bool driverDopCapable = false;
   bool driverNativeDsdCapable = false;
   std::vector<int> driverDopCarrierSampleRates;
@@ -170,6 +174,7 @@ struct PerfectResult {
   bool formatMatched = false;
   bool sourceFormatMatched = false;
   bool routingPreservesSemantics = false;
+  std::string perfectReasonCode;
   std::string perfectReason;
 };
 

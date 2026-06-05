@@ -10,6 +10,8 @@ export type ChannelRoutingMode =
   | 'stereo-to-7.1'
   | 'mono-to-stereo'
   | 'mono-to-multichannel'
+export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
+export type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
 export type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -33,6 +35,8 @@ export interface AudioProcessingSettings {
   fftResolution: number
   highResolution: boolean
   dsdToPcm: boolean
+  dsdOutputMode: DsdOutputMode
+  sacdProgramMode: SacdProgramMode
   eqEnabled: boolean
   eqMode: EqMode
   eqPreamp: number
@@ -81,6 +85,14 @@ export interface AudioDeviceOption {
   granularity?: number
   preferredBufferSize?: number
   capabilityVersion?: number
+  supportsExclusive?: boolean
+  supportsHogMode?: boolean
+  supportsDirectHw?: boolean
+  supportsDop?: boolean
+  supportsNativeDsd?: boolean
+  supportedDsdRates?: number[]
+  pathKind?: string
+  capabilityReason?: string
 }
 
 export interface OutputConfig {

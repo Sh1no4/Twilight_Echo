@@ -251,23 +251,27 @@ bool WasapiFormatNegotiator::negotiate(const AudioFormat& sourceFormat, std::str
     outputFormat_ = candidate.outputFormat;
     waveFormatBytes_ = candidate.waveFormatBytes;
     outputInfo_.exclusive = true;
+    outputInfo_.accessMode = "exclusive";
     outputInfo_.supportsOutputPerfect = true;
     outputInfo_.sourceExact = false;
     outputInfo_.outputPerfect = false;
     outputInfo_.pcmPassthrough = false;
     outputInfo_.resampled = !sameSourceFormat(sourceFormat, outputFormat_);
     if (candidate.dopCarrier) {
+      outputInfo_.perfectReasonCode = "dsd_dop";
       outputInfo_.perfectReason = "WASAPI 独占输出格式已协商为 DoP carrier（未启用 Native DSD）";
       outputInfo_.driverDopCapable = true;
       outputInfo_.driverDopCarrierSampleRates = {outputFormat_.sampleRate};
       outputInfo_.driverDopCarrierFormats = {sampleFormatToString(outputFormat_.sampleFormat)};
     } else {
+      outputInfo_.perfectReasonCode = outputInfo_.resampled ? "pcm_converted" : "";
       outputInfo_.perfectReason = outputInfo_.resampled ? "WASAPI 独占输出格式已协商为设备支持格式" : "";
     }
     outputInfo_.outputSampleRate = outputFormat_.sampleRate;
     outputInfo_.outputBitDepth = outputFormat_.bitDepth;
     outputInfo_.backend = "wasapi-exclusive";
     outputInfo_.actualBackend = "wasapi-exclusive";
+    outputInfo_.devicePathKind = "default";
     outputInfo_.deviceName.clear();
     outputInfo_.actualDeviceName.clear();
     outputInfo_.actualOutputFormat = sampleFormatToString(outputFormat_.sampleFormat);
@@ -286,9 +290,13 @@ bool WasapiFormatNegotiator::negotiate(const AudioFormat& sourceFormat, std::str
 
   lastFailureReason_ = buildFailureReason(sourceFormat, candidates);
   outputInfo_.exclusive = true;
+  outputInfo_.accessMode = "exclusive";
   outputInfo_.supportsOutputPerfect = false;
   outputInfo_.backend = "wasapi-exclusive";
   outputInfo_.actualBackend = "wasapi-exclusive";
+  outputInfo_.devicePathKind = "default";
+  outputInfo_.perfectReasonCode = "backend_not_output_perfect";
+  outputInfo_.capabilityReason = lastFailureReason_;
   outputInfo_.perfectReason = lastFailureReason_;
   if (wantsDopCarrier(sourceFormat)) {
     dopRuntimeFacts_.state = DopRuntimeFactState::Unproven;

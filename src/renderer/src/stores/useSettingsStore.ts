@@ -20,6 +20,8 @@ const fallbackAudioProcessing: AudioProcessingSettings = {
   fftResolution: 64,
   highResolution: true,
   dsdToPcm: true,
+  dsdOutputMode: 'auto',
+  sacdProgramMode: 'auto',
   eqEnabled: false,
   eqMode: 'graphic',
   eqPreamp: 0,

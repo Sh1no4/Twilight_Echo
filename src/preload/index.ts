@@ -21,6 +21,8 @@ type ChannelRoutingMode =
   | 'stereo-to-7.1'
   | 'mono-to-stereo'
   | 'mono-to-multichannel'
+type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
+type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
 type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -44,6 +46,8 @@ interface AudioProcessingSettings {
   fftResolution: number
   highResolution: boolean
   dsdToPcm: boolean
+  dsdOutputMode: DsdOutputMode
+  sacdProgramMode: SacdProgramMode
   eqEnabled: boolean
   eqMode: EqMode
   eqPreamp: number
@@ -214,6 +218,14 @@ interface AudioDeviceOption {
   granularity?: number
   preferredBufferSize?: number
   capabilityVersion?: number
+  supportsExclusive?: boolean
+  supportsHogMode?: boolean
+  supportsDirectHw?: boolean
+  supportsDop?: boolean
+  supportsNativeDsd?: boolean
+  supportedDsdRates?: number[]
+  pathKind?: string
+  capabilityReason?: string
 }
 
 interface OutputConfig {
@@ -278,6 +290,15 @@ interface OutputInfo {
   actualSampleRate: number
   actualBitDepth: number
   actualChannels: number
+  accessMode: string
+  devicePathKind: string
+  perfectReasonCode: string
+  capabilityReason: string
+  driverDopCapable: boolean
+  driverNativeDsdCapable: boolean
+  driverDopCarrierSampleRates: number[]
+  driverDopCarrierFormats: string[]
+  driverNativeDsdSampleRates: number[]
   bufferSizeFrames: number
   latencyFrames: number
   latencyMs: number
@@ -313,10 +334,12 @@ type PlaybackOutputInfoMirror = Pick<
   | 'outputPerfect'
   | 'pcmPassthrough'
   | 'perfectReason'
+  | 'perfectReasonCode'
   | 'isDsd'
   | 'dsdMode'
   | 'dsdRate'
->
+> &
+  Partial<Pick<OutputInfo, 'accessMode' | 'devicePathKind' | 'capabilityReason'>>
 
 interface PlaybackInfo extends PlaybackOutputInfoMirror {
   state: 'stopped' | 'playing' | 'paused'
@@ -374,6 +397,7 @@ interface PlaybackInfo extends PlaybackOutputInfoMirror {
   partitionSize: number
   channelMappingMode: string
   perfectReason: string
+  perfectReasonCode: string
   isDsd: boolean
   dsdMode: string
   dsdRate: number

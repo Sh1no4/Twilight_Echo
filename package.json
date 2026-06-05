@@ -18,6 +18,7 @@
     "build:audio-engine": "cmake --build audio-engine/build/default",
     "build:audio-engine:mingw": "cmake --build audio-engine/build/mingw-static && npm run stage:audio-engine",
     "stage:audio-engine": "node scripts/stage-audio-engine.cjs",
+    "test:audio-manager": "node --experimental-strip-types --test src/main/audioEngineManager.test.ts",
     "test:audio-engine": "ctest --test-dir audio-engine/build/default --output-on-failure",
     "test:audio-engine:mingw": "ctest --test-dir audio-engine/build/mingw-static --output-on-failure",
     "start": "electron-vite preview",

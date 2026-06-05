@@ -31,6 +31,8 @@ interface AudioProcessingSettings {
   fftResolution: number
   highResolution: boolean
   dsdToPcm: boolean
+  dsdOutputMode: 'auto' | 'pcm' | 'dop' | 'native'
+  sacdProgramMode: 'auto' | 'stereo' | 'multichannel'
   eqEnabled: boolean
   eqMode: EqMode
   eqPreamp: number
@@ -99,6 +101,8 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   fftResolution: 64,
   highResolution: true,
   dsdToPcm: true,
+  dsdOutputMode: 'auto',
+  sacdProgramMode: 'auto',
   eqEnabled: false,
   eqMode: 'graphic',
   eqPreamp: 0,
@@ -233,6 +237,18 @@ function normalizeAudioProcessing(settings?: Partial<AudioProcessingSettings>): 
   return {
     ...defaultAudioProcessing,
     ...settings,
+    dsdOutputMode:
+      settings?.dsdOutputMode === 'pcm' ||
+      settings?.dsdOutputMode === 'dop' ||
+      settings?.dsdOutputMode === 'native'
+        ? settings.dsdOutputMode
+        : settings?.dsdToPcm === true
+          ? 'pcm'
+          : 'auto',
+    sacdProgramMode:
+      settings?.sacdProgramMode === 'stereo' || settings?.sacdProgramMode === 'multichannel'
+        ? settings.sacdProgramMode
+        : 'auto',
     fftResolution: clampNumber(settings?.fftResolution, 64, 2048, 64),
     eqPreamp: clampNumber(settings?.eqPreamp, -12, 12, 0),
     replayGainPreamp: clampNumber(settings?.replayGainPreamp, -12, 12, 0),

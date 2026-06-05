@@ -5,6 +5,9 @@
 
 #include <algorithm>
 #include <atomic>
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <chrono>
 #include <cstdint>
@@ -24,6 +27,8 @@ using namespace twilight::audio;
 namespace {
 
 constexpr int kDsd64Rate = 2822400;
+constexpr int kDsd128Rate = 5644800;
+constexpr int kDsd256Rate = 11289600;
 
 void writeLe16(std::ofstream& out, uint16_t value) {
   out.put(static_cast<char>(value & 0xff));
@@ -155,17 +160,38 @@ struct BackendRegistry {
 
 BackendRegistry g_backendRegistry;
 
+enum class FakeDopBehavior {
+  Proven,
+  Mismatch,
+  Unproven
+};
+
+FakeDopBehavior g_fakeDopBehavior = FakeDopBehavior::Proven;
+
 bool formatLooksDopCarrier(const AudioFormat& format) {
-  return format.sampleRate == 176400 && format.channelCount == 2 && format.bitDepth == 24 &&
-         format.sampleFormat == AudioSampleFormat::Int24Interleaved;
+  return (format.sampleRate == 176400 || format.sampleRate == 352800) && format.channelCount == 2 &&
+         format.bitDepth == 24 &&
+         (format.sampleFormat == AudioSampleFormat::Int24Interleaved ||
+          format.sampleFormat == AudioSampleFormat::Int24In32Interleaved);
 }
 
 bool formatLooksDsdSourceRequest(const AudioFormat& format) {
-  return format.sampleRate == kDsd64Rate && format.channelCount == 2 && format.bitDepth == 1;
+  return (format.sampleRate == kDsd64Rate || format.sampleRate == kDsd128Rate ||
+          format.sampleRate == kDsd256Rate) &&
+         format.channelCount == 2 && format.bitDepth == 1;
 }
 
 bool formatLooksPcmTrackRequest(const AudioFormat& format) {
   return format.sampleRate == 44100 && format.channelCount == 2 && format.bitDepth == 24;
+}
+
+bool formatLooksDsdPcmFallbackRequest(const AudioFormat& format, int sampleRate = 176400) {
+  return format.sampleRate == sampleRate && format.channelCount == 2 && format.bitDepth == 32 &&
+         format.sampleFormat == AudioSampleFormat::Float32Interleaved;
+}
+
+void assertFormatLooksDsdPcmFallbackRequest(const AudioFormat& format, int sampleRate = 176400) {
+  assert(formatLooksDsdPcmFallbackRequest(format, sampleRate));
 }
 
 bool jsonContains(const std::string& json, const std::string& needle) {
@@ -181,9 +207,29 @@ bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 1500) {
   return predicate();
 }
 
-void pumpLatestBackend(size_t iterations, size_t frames = 256) {
-  auto state = g_backendRegistry.latestStarted();
+bool waitForStartedBackendCount(size_t count, int timeoutMs = 1500) {
+  return waitUntil(
+      [count] {
+        const auto snapshots = g_backendRegistry.snapshots();
+        return snapshots.size() >= count && snapshots[count - 1].started && !snapshots[count - 1].closed;
+      },
+      timeoutMs);
+}
+
+std::shared_ptr<BackendState> waitForLatestStartedBackendState(int timeoutMs = 1500) {
+  std::shared_ptr<BackendState> started;
+  const bool ready = waitUntil(
+      [&started] {
+        started = g_backendRegistry.latestStarted();
+        return static_cast<bool>(started);
+      },
+      timeoutMs);
+  return ready ? started : nullptr;
+}
+
+void pumpBackend(const std::shared_ptr<BackendState>& state, size_t iterations, size_t frames = 256) {
   assert(state);
+  assert(state->openedFormat.channelCount > 0);
   std::vector<float> buffer(frames * static_cast<size_t>(std::max(1, state->openedFormat.channelCount)));
   for (size_t i = 0; i < iterations; ++i) {
     RenderCallback render;
@@ -191,7 +237,7 @@ void pumpLatestBackend(size_t iterations, size_t frames = 256) {
       std::lock_guard lock(g_backendRegistry.mutex);
       render = state->render;
     }
-    if (!render) return;
+    assert(render);
     render(buffer.data(), frames);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
@@ -211,13 +257,17 @@ class FakeOutputBackend final : public IOutputBackend {
 
   bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) override {
     (void)error;
+    std::lock_guard lock(g_backendRegistry.mutex);
     state_->requestedFormat = requestedFormat;
 
     AudioFormat opened = requestedFormat;
     if (formatLooksDopCarrier(requestedFormat)) {
       opened = requestedFormat;
+      if (g_fakeDopBehavior == FakeDopBehavior::Mismatch) {
+        opened.sampleFormat = AudioSampleFormat::Int24In32Interleaved;
+      }
     } else if (formatLooksDsdSourceRequest(requestedFormat)) {
-      opened = makePcmFormat(176400, 2, 24, AudioSampleFormat::Int24Interleaved);
+      opened = makePcmFormat(requestedFormat.sampleRate / 16, 2, 32, AudioSampleFormat::Float32Interleaved);
     } else {
       opened = requestedFormat;
     }
@@ -248,12 +298,14 @@ class FakeOutputBackend final : public IOutputBackend {
 
   bool setOutputConfig(const OutputConfig& config, std::string* error) override {
     (void)error;
+    std::lock_guard lock(g_backendRegistry.mutex);
     state_->info.channelRoutingMode = channelRoutingModeToString(config.routingMode);
     return true;
   }
 
   bool start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) override {
     (void)error;
+    std::lock_guard lock(g_backendRegistry.mutex);
     state_->render = std::move(callback);
     state_->event = std::move(eventCallback);
     state_->started = true;
@@ -261,27 +313,38 @@ class FakeOutputBackend final : public IOutputBackend {
   }
 
   void stop() override {
+    std::lock_guard lock(g_backendRegistry.mutex);
     state_->stopped = true;
   }
 
   void close() override {
+    std::lock_guard lock(g_backendRegistry.mutex);
     state_->closed = true;
   }
 
   AudioFormat outputFormat() const override {
+    std::lock_guard lock(g_backendRegistry.mutex);
     return state_->openedFormat;
   }
 
   OutputInfo outputInfo() const override {
+    std::lock_guard lock(g_backendRegistry.mutex);
     return state_->info;
   }
 
   DopRuntimeFacts dopRuntimeFacts() const override {
+    std::lock_guard lock(g_backendRegistry.mutex);
     DopRuntimeFacts facts;
     if (!formatLooksDopCarrier(state_->requestedFormat)) return facts;
 
     facts.candidateFormat = state_->requestedFormat;
     facts.explicitlyCapable = true;
+    if (g_fakeDopBehavior == FakeDopBehavior::Unproven) {
+      facts.actualFormat = state_->openedFormat;
+      facts.state = DopRuntimeFactState::Unproven;
+      facts.reason = "DoP backend could not prove passthrough";
+      return facts;
+    }
     if (!formatLooksDopCarrier(state_->openedFormat)) {
       facts.state = DopRuntimeFactState::Unproven;
       facts.reason = "DoP backend could not prove passthrough";
@@ -301,6 +364,7 @@ class FakeOutputBackend final : public IOutputBackend {
   }
 
   std::string deviceName() const override {
+    std::lock_guard lock(g_backendRegistry.mutex);
     return state_->info.deviceName;
   }
 
@@ -321,15 +385,19 @@ TrackProfile buildTrackProfile(const std::string& source) {
   profile.stream.durationSeconds = 30.0;
   profile.stream.sourceLossless = true;
   if (source.size() >= 4 && source.substr(source.size() - 4) == ".dsf") {
+    const bool isDsd256 = source.find("dsd256") != std::string::npos;
+    const bool isDsd128 = source.find("dsd128") != std::string::npos;
+    const int dsdSampleRate = isDsd256 ? kDsd256Rate : (isDsd128 ? kDsd128Rate : kDsd64Rate);
+    const int dsdRate = isDsd256 ? 256 : (isDsd128 ? 128 : 64);
     profile.stream.codec = "dsd";
-    profile.stream.sourceFormat.sampleRate = kDsd64Rate;
+    profile.stream.sourceFormat.sampleRate = dsdSampleRate;
     profile.stream.sourceFormat.channelCount = 2;
     profile.stream.sourceFormat.bitDepth = 1;
     profile.stream.sourceFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
-    profile.stream.decodedFormat = makePcmFormat(176400, 2, 32, AudioSampleFormat::Float32Interleaved);
+    profile.stream.decodedFormat = makePcmFormat(dsdSampleRate / 16, 2, 32, AudioSampleFormat::Float32Interleaved);
     profile.stream.isDsd = true;
     profile.stream.dsdMode = DsdMode::Pcm;
-    profile.stream.dsdRate = 64;
+    profile.stream.dsdRate = dsdRate;
     profile.defaultOutput = profile.stream.decodedFormat;
     profile.sampleValue = 0.5f;
     return profile;
@@ -345,15 +413,19 @@ TrackProfile buildTrackProfile(const std::string& source) {
 
 class EngineHarness {
  public:
-  EngineHarness()
-      : dsdPath_(writeDsfFixture("twilight-phase6e-runtime-reroute.dsf")) {
+  EngineHarness(
+      std::string fixtureName = "twilight-phase6d-runtime-reroute-dsd64.dsf",
+      int sampleRate = kDsd64Rate)
+      : dsdPath_(writeDsfFixture(fixtureName, sampleRate)) {
     dsdPathString_ = dsdPath_.string();
     g_backendRegistry.reset();
+    g_fakeDopBehavior = FakeDopBehavior::Proven;
     engine_.setOutputBackend("wasapi-exclusive");
   }
 
   ~EngineHarness() {
     engine_.stop();
+    g_fakeDopBehavior = FakeDopBehavior::Proven;
     std::error_code ignored;
     std::filesystem::remove(dsdPath_, ignored);
   }
@@ -377,7 +449,7 @@ void testDsd64StartsOnDop() {
   auto& engine = harness.engine();
 
   assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
-  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+  assert(waitForStartedBackendCount(1));
 
   const auto snapshots = g_backendRegistry.snapshots();
   assert(snapshots.size() == 1);
@@ -387,21 +459,102 @@ void testDsd64StartsOnDop() {
   assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
 }
 
+void testDsd128StartsOnDop() {
+  EngineHarness harness("twilight-phase6d-runtime-reroute-dsd128.dsf", kDsd128Rate);
+  auto& engine = harness.engine();
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(formatLooksDopCarrier(snapshots.front().requestedFormat));
+  assert(snapshots.front().requestedFormat.sampleRate == 352800);
+  assertLatestPlaybackContains(engine, "\"isDsd\":true");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
+  assertLatestPlaybackContains(engine, "\"dsdRate\":128");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
+}
+
+void testDsd256FallsBackToPcm() {
+  EngineHarness harness("twilight-phase6d-runtime-reroute-dsd256.dsf", kDsd256Rate);
+  auto& engine = harness.engine();
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assertFormatLooksDsdPcmFallbackRequest(snapshots.front().requestedFormat, 705600);
+  assertLatestPlaybackContains(engine, "\"isDsd\":true");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"dsdRate\":256");
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dsd_high_rate_pcm_fallback\"");
+}
+
+void testDopMismatchFallsBackWithStableCode() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  g_fakeDopBehavior = FakeDopBehavior::Mismatch;
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(2));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 2);
+  assert(formatLooksDopCarrier(snapshots.front().requestedFormat));
+  assertFormatLooksDsdPcmFallbackRequest(snapshots.back().requestedFormat);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dop_carrier_mismatch\"");
+}
+
+void testDopUnprovenFallsBackWithStableCode() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  g_fakeDopBehavior = FakeDopBehavior::Unproven;
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(2));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 2);
+  assert(formatLooksDopCarrier(snapshots.front().requestedFormat));
+  assertFormatLooksDsdPcmFallbackRequest(snapshots.back().requestedFormat);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dop_passthrough_unproven\"");
+}
+
+void testInitialNonUnityVolumeUsesPcmFallback() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assertFormatLooksDsdPcmFallbackRequest(snapshots.front().requestedFormat);
+  assertLatestPlaybackContains(engine, "\"volume\":0.5");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dsd_processing_pcm_fallback\"");
+}
+
 void testEqEnableRequestsPcmReroute() {
   EngineHarness harness;
   auto& engine = harness.engine();
 
   assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
-  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+  assert(waitForStartedBackendCount(1));
 
   const char* eqJson =
       "{\"dspEnabled\":true,\"eqEnabled\":true,\"eqMode\":\"parametric\","
       "\"eqBands\":[{\"frequency\":1000,\"gain\":3,\"q\":1,\"filterType\":\"peak\"}]}";
   assert(engine.setDspConfig(eqJson) == TAE_RESULT_OK);
 
-  assert(waitUntil([] { return g_backendRegistry.snapshots().size() >= 2; }));
+  assert(waitForStartedBackendCount(2));
   const auto snapshots = g_backendRegistry.snapshots();
-  assert(formatLooksDsdSourceRequest(snapshots.back().requestedFormat));
+  assertFormatLooksDsdPcmFallbackRequest(snapshots.back().requestedFormat);
   assertLatestPlaybackContains(engine, "\"eqActive\":true");
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
   assertLatestPlaybackContains(engine, "\"perfectReason\":\"DSD processing active; falling back to PCM\"");
@@ -412,15 +565,48 @@ void testVolumeChangeRequestsPcmReroute() {
   auto& engine = harness.engine();
 
   assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
-  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+  assert(waitForStartedBackendCount(1));
 
   assert(engine.setVolume(0.5) == TAE_RESULT_OK);
 
-  assert(waitUntil([] { return g_backendRegistry.snapshots().size() >= 2; }));
+  assert(waitForStartedBackendCount(2));
   const auto snapshots = g_backendRegistry.snapshots();
-  assert(formatLooksDsdSourceRequest(snapshots.back().requestedFormat));
+  assertFormatLooksDsdPcmFallbackRequest(snapshots.back().requestedFormat);
   assertLatestPlaybackContains(engine, "\"volume\":0.5");
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+}
+
+void testDsdOutputModePcmRequestsPcmReroute() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  assert(engine.setDspConfig("{\"dsdOutputMode\":\"pcm\"}") == TAE_RESULT_OK);
+
+  assert(waitForStartedBackendCount(2));
+  const auto snapshots = g_backendRegistry.snapshots();
+  assertFormatLooksDsdPcmFallbackRequest(snapshots.back().requestedFormat);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"perfectReason\":\"DSD output mode forced PCM\"");
+}
+
+void testDsdOutputModeDopReentersDopPath() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.setDspConfig("{\"dsdOutputMode\":\"pcm\"}") == TAE_RESULT_OK);
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+  assertFormatLooksDsdPcmFallbackRequest(g_backendRegistry.snapshots().back().requestedFormat);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+
+  assert(engine.setDspConfig("{\"dsdOutputMode\":\"dop\"}") == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(2));
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(formatLooksDopCarrier(snapshots.back().requestedFormat));
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
 }
 
 void testSeekReevaluatesDsdPath() {
@@ -428,11 +614,11 @@ void testSeekReevaluatesDsdPath() {
   auto& engine = harness.engine();
 
   assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
-  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+  assert(waitForStartedBackendCount(1));
 
   assert(engine.seek(5.0) == TAE_RESULT_OK);
 
-  assert(waitUntil([] { return g_backendRegistry.snapshots().size() >= 2; }));
+  assert(waitForStartedBackendCount(2));
   const auto snapshots = g_backendRegistry.snapshots();
   assert(formatLooksDopCarrier(snapshots.back().requestedFormat));
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
@@ -443,7 +629,7 @@ void testPausedSettingsFallbackBeforeResume() {
   auto& engine = harness.engine();
 
   assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
-  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+  assert(waitForStartedBackendCount(1));
 
   assert(engine.pause() == TAE_RESULT_OK);
   assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
@@ -453,7 +639,7 @@ void testPausedSettingsFallbackBeforeResume() {
       "\"eqBands\":[{\"frequency\":1000,\"gain\":3,\"q\":1,\"filterType\":\"peak\"}]}";
   assert(engine.setDspConfig(eqJson) == TAE_RESULT_OK);
 
-  assert(waitUntil([] { return g_backendRegistry.snapshots().size() >= 2; }));
+  assert(waitForStartedBackendCount(2));
   assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
 
@@ -471,10 +657,10 @@ void testManualNextDoesNotInheritDsdPath() {
                                 "\",\"duration\":30},{\"id\":\"pcm\",\"source\":\"next.flac\",\"duration\":30}]";
   assert(engine.loadQueue(queueJson, 0) == TAE_RESULT_OK);
   assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
-  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+  assert(waitForStartedBackendCount(1));
 
   assert(engine.next() == TAE_RESULT_OK);
-  assert(waitUntil([] { return g_backendRegistry.snapshots().size() >= 2; }));
+  assert(waitForStartedBackendCount(2));
   const auto snapshots = g_backendRegistry.snapshots();
   assert(formatLooksPcmTrackRequest(snapshots.back().requestedFormat));
   assertLatestPlaybackContains(engine, "\"source\":\"next.flac\"");
@@ -489,9 +675,11 @@ void testAutoNextDoesNotInheritDsdPath() {
                                 "\",\"duration\":30},{\"id\":\"pcm\",\"source\":\"auto-next.flac\",\"duration\":30}]";
   assert(engine.loadQueue(queueJson, 0) == TAE_RESULT_OK);
   assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
-  assert(waitUntil([] { return g_backendRegistry.snapshots().size() == 1; }));
+  assert(waitForStartedBackendCount(1));
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
 
-  pumpLatestBackend(96);
+  pumpBackend(backend, 96);
   assert(waitUntil([&engine] {
     return jsonContains(engine.getPlaybackInfoJson(), "\"source\":\"auto-next.flac\"");
   }));
@@ -595,8 +783,15 @@ const AudioFormat& FFmpegDecoder::outputFormat() const {
 
 int main() {
   testDsd64StartsOnDop();
+  testDsd128StartsOnDop();
+  testDsd256FallsBackToPcm();
+  testDopMismatchFallsBackWithStableCode();
+  testDopUnprovenFallsBackWithStableCode();
+  testInitialNonUnityVolumeUsesPcmFallback();
   testEqEnableRequestsPcmReroute();
   testVolumeChangeRequestsPcmReroute();
+  testDsdOutputModePcmRequestsPcmReroute();
+  testDsdOutputModeDopReentersDopPath();
   testSeekReevaluatesDsdPath();
   testPausedSettingsFallbackBeforeResume();
   testManualNextDoesNotInheritDsdPath();

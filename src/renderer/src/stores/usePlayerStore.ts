@@ -50,6 +50,8 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   fftResolution: 64,
   highResolution: true,
   dsdToPcm: true,
+  dsdOutputMode: 'auto',
+  sacdProgramMode: 'auto',
   eqEnabled: false,
   eqMode: 'graphic',
   eqPreamp: 0,
@@ -184,6 +186,29 @@ function applyAudioOutputState(state: AudioOutputState): void {
   audioDeviceOptions.value = [...state.deviceOptions]
 }
 
+function normalizeDsdState(
+  canonicalOutput?: Partial<NativeOutputInfo> | null,
+  mirror?: Partial<NativePlaybackInfo> | null
+): { isDsd: boolean; dsdMode: string; dsdRate: number } {
+  const canonicalMode =
+    typeof canonicalOutput?.dsdMode === 'string' ? canonicalOutput.dsdMode.trim() : ''
+  const mirrorMode = typeof mirror?.dsdMode === 'string' ? mirror.dsdMode.trim() : ''
+  const canonicalHasMode = canonicalMode.length > 0
+  const modeIndicatesDsd = (mode: string): boolean =>
+    mode === 'native' || mode === 'dop' || mode === 'unsupported'
+  const canonicalIsDsd =
+    typeof canonicalOutput?.isDsd === 'boolean'
+      ? canonicalOutput.isDsd
+      : canonicalHasMode
+        ? modeIndicatesDsd(canonicalMode)
+        : undefined
+  const isDsd = canonicalIsDsd ?? (mirror?.isDsd === true || modeIndicatesDsd(mirrorMode))
+  const rawMode = canonicalHasMode ? canonicalMode : mirrorMode
+  const dsdMode = isDsd ? rawMode || 'unsupported' : 'pcm'
+  const dsdRate = isDsd ? (canonicalOutput?.dsdRate ?? mirror?.dsdRate ?? 0) : 0
+  return { isDsd, dsdMode, dsdRate }
+}
+
 function normalizeNativePlaybackInfo(info: NativePlaybackInfo): NativePlaybackInfo {
   const canonicalOutput = info.outputInfo
   const sourceExact = canonicalOutput?.sourceExact === true
@@ -192,29 +217,65 @@ function normalizeNativePlaybackInfo(info: NativePlaybackInfo): NativePlaybackIn
     ? canonicalOutput.pcmPassthrough === true
     : info.pcmPassthrough === true
   const perfectReason = canonicalOutput?.perfectReason || ''
-  const isDsd =
-    canonicalOutput?.isDsd === true ||
-    canonicalOutput?.dsdMode === 'native' ||
-    canonicalOutput?.dsdMode === 'dop' ||
-    canonicalOutput?.dsdMode === 'unsupported'
-  const dsdMode = isDsd ? canonicalOutput?.dsdMode || 'unsupported' : 'pcm'
-  const dsdRate = isDsd ? canonicalOutput?.dsdRate || 0 : 0
+  const perfectReasonCode = canonicalOutput?.perfectReasonCode || ''
+  const capabilityReason = canonicalOutput?.capabilityReason || ''
+  const { isDsd, dsdMode, dsdRate } = normalizeDsdState(canonicalOutput, info)
   return {
     ...info,
     outputInfo: {
       ...canonicalOutput,
+      actualBackend: canonicalOutput?.actualBackend || info.actualBackend || '',
+      accessMode: canonicalOutput?.accessMode || info.accessMode || '',
+      devicePathKind: canonicalOutput?.devicePathKind || info.devicePathKind || '',
+      actualOutputFormat: canonicalOutput?.actualOutputFormat || info.actualOutputFormat || '',
+      actualSampleRate: canonicalOutput?.actualSampleRate ?? info.actualSampleRate ?? 0,
+      actualBitDepth: canonicalOutput?.actualBitDepth ?? info.actualBitDepth ?? 0,
+      actualChannels: canonicalOutput?.actualChannels ?? info.actualChannels ?? 0,
+      bufferSizeFrames: canonicalOutput?.bufferSizeFrames ?? info.bufferSizeFrames ?? 0,
+      latencyFrames: canonicalOutput?.latencyFrames ?? info.latencyFrames ?? 0,
+      latencyMs: canonicalOutput?.latencyMs ?? info.latencyMs ?? 0,
+      latencyInfo: canonicalOutput?.latencyInfo ?? info.latencyInfo,
+      channelRoutingMode: canonicalOutput?.channelRoutingMode || info.channelRoutingMode || 'auto',
+      supportsOutputPerfect: canonicalOutput?.supportsOutputPerfect === true,
       sourceExact,
+      diagnostics: canonicalOutput?.diagnostics ?? info.diagnostics,
+      deviceRecovered: canonicalOutput?.deviceRecovered === true || info.deviceRecovered === true,
+      recoveryCount: canonicalOutput?.recoveryCount ?? info.recoveryCount ?? 0,
+      outputSampleRate: canonicalOutput?.outputSampleRate ?? info.outputSampleRate ?? 0,
+      outputBitDepth: canonicalOutput?.outputBitDepth ?? info.outputBitDepth ?? 0,
       outputPerfect,
       pcmPassthrough,
       perfectReason,
+      perfectReasonCode,
+      capabilityReason,
       isDsd,
       dsdMode,
       dsdRate: isDsd ? dsdRate : 0
     },
+    actualBackend: canonicalOutput?.actualBackend || info.actualBackend || '',
+    accessMode: canonicalOutput?.accessMode || info.accessMode || '',
+    devicePathKind: canonicalOutput?.devicePathKind || info.devicePathKind || '',
+    actualOutputFormat: canonicalOutput?.actualOutputFormat || info.actualOutputFormat || '',
+    actualSampleRate: canonicalOutput?.actualSampleRate ?? info.actualSampleRate ?? 0,
+    actualBitDepth: canonicalOutput?.actualBitDepth ?? info.actualBitDepth ?? 0,
+    actualChannels: canonicalOutput?.actualChannels ?? info.actualChannels ?? 0,
+    bufferSizeFrames: canonicalOutput?.bufferSizeFrames ?? info.bufferSizeFrames ?? 0,
+    latencyFrames: canonicalOutput?.latencyFrames ?? info.latencyFrames ?? 0,
+    latencyMs: canonicalOutput?.latencyMs ?? info.latencyMs ?? 0,
+    latencyInfo: canonicalOutput?.latencyInfo ?? info.latencyInfo,
+    channelRoutingMode: canonicalOutput?.channelRoutingMode || info.channelRoutingMode || 'auto',
+    supportsOutputPerfect: canonicalOutput?.supportsOutputPerfect === true,
     sourceExact,
+    diagnostics: canonicalOutput?.diagnostics ?? info.diagnostics,
+    deviceRecovered: canonicalOutput?.deviceRecovered === true || info.deviceRecovered === true,
+    recoveryCount: canonicalOutput?.recoveryCount ?? info.recoveryCount ?? 0,
+    outputSampleRate: canonicalOutput?.outputSampleRate ?? info.outputSampleRate ?? 0,
+    outputBitDepth: canonicalOutput?.outputBitDepth ?? info.outputBitDepth ?? 0,
     outputPerfect,
     pcmPassthrough,
     perfectReason,
+    perfectReasonCode,
+    capabilityReason,
     isDsd,
     dsdMode,
     dsdRate

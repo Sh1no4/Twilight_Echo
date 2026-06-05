@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <mutex>
 #include <sstream>
 #include <thread>
 #include <utility>
@@ -34,6 +35,10 @@ std::string outputFormatSummary(const AudioFormat& format) {
   return std::to_string(format.sampleRate) + "Hz " + std::to_string(format.channelCount) + "ch " +
          sampleFormatToString(format.sampleFormat) + " " + std::to_string(format.bitDepth) + "bit";
 }
+
+double referenceTimeToMilliseconds(REFERENCE_TIME duration) {
+  return duration > 0 ? static_cast<double>(duration) / 10000.0 : 0.0;
+}
 #endif
 
 }  // namespace
@@ -41,8 +46,11 @@ std::string outputFormatSummary(const AudioFormat& format) {
 struct WasapiExclusiveBackend::Impl {
   AudioFormat outputFormat;
   OutputInfo outputInfo;
+  OutputInfo::Diagnostics diagnostics;
   DopRuntimeFacts dopRuntimeFacts;
   std::string deviceName = "系统默认";
+  OutputConfig outputConfig;
+  mutable std::mutex infoMutex;
 
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   Microsoft::WRL::ComPtr<IMMDevice> device;
@@ -60,23 +68,43 @@ struct WasapiExclusiveBackend::Impl {
   bool ownerComInitialized = false;
 
   void resetFailureInfo() {
+    OutputInfo::Diagnostics lifetime = diagnostics;
+    diagnostics = {};
+    diagnostics.lifetimeUnderrunCount = lifetime.lifetimeUnderrunCount;
+    diagnostics.lifetimeBufferDropCount = lifetime.lifetimeBufferDropCount;
+    diagnostics.lifetimeRecoveryCount = lifetime.lifetimeRecoveryCount;
+    diagnostics.driverRestartCount = lifetime.driverRestartCount;
+    diagnostics.deviceLostCount = lifetime.deviceLostCount;
+
+    std::lock_guard lock(infoMutex);
     outputInfo = {};
     dopRuntimeFacts = {};
     outputInfo.exclusive = true;
+    outputInfo.accessMode = "exclusive";
     outputInfo.supportsOutputPerfect = false;
     outputInfo.sourceExact = false;
     outputInfo.outputPerfect = false;
     outputInfo.pcmPassthrough = false;
     outputInfo.backend = "wasapi-exclusive";
     outputInfo.actualBackend = "wasapi-exclusive";
+    outputInfo.devicePathKind = "default";
     outputInfo.deviceName = deviceName;
     outputInfo.actualDeviceName = deviceName;
+    outputInfo.diagnostics = diagnostics;
+  }
+
+  void recordFailure(const char* reasonCode, const std::string& reason, std::string* error = nullptr) {
+    diagnostics.lastError = reason;
+    std::lock_guard lock(infoMutex);
+    outputInfo.perfectReasonCode = reasonCode ? reasonCode : "backend_open_failure";
+    outputInfo.capabilityReason = reason;
+    outputInfo.perfectReason = reason;
+    outputInfo.diagnostics = diagnostics;
+    if (error) *error = reason;
   }
 
   bool fail(std::string* error, const std::string& reason) {
-    outputInfo.perfectReason = reason;
-    outputInfo.diagnostics.lastError = reason;
-    if (error) *error = reason;
+    recordFailure("backend_open_failure", reason, error);
     return false;
   }
 
@@ -150,6 +178,7 @@ struct WasapiExclusiveBackend::Impl {
       dopRuntimeFacts = negotiator.dopRuntimeFacts();
       outputInfo.deviceName = deviceName;
       outputInfo.actualDeviceName = deviceName;
+      outputInfo.diagnostics = diagnostics;
       return false;
     }
 
@@ -158,14 +187,20 @@ struct WasapiExclusiveBackend::Impl {
     dopRuntimeFacts = negotiator.dopRuntimeFacts();
     outputInfo.deviceName = deviceName;
     outputInfo.actualDeviceName = deviceName;
+    outputInfo.diagnostics = diagnostics;
     waveFormatBytes.assign(
         reinterpret_cast<const uint8_t*>(negotiator.waveFormat()),
         reinterpret_cast<const uint8_t*>(negotiator.waveFormat()) + negotiator.waveFormatSize());
     const auto* waveFormat = reinterpret_cast<const WAVEFORMATEX*>(waveFormatBytes.data());
+    const std::string negotiatedPerfectReasonCode = outputInfo.perfectReasonCode;
+    const std::string negotiatedCapabilityReason = outputInfo.capabilityReason;
     const std::string negotiatedPerfectReason = outputInfo.perfectReason;
     auto restoreNegotiatedReason = [&]() {
+      diagnostics.lastError.clear();
+      outputInfo.perfectReasonCode = negotiatedPerfectReasonCode;
+      outputInfo.capabilityReason = negotiatedCapabilityReason;
       outputInfo.perfectReason = negotiatedPerfectReason;
-      outputInfo.diagnostics.lastError.clear();
+      outputInfo.diagnostics = diagnostics;
     };
 
     REFERENCE_TIME defaultPeriod = 0;
@@ -175,7 +210,13 @@ struct WasapiExclusiveBackend::Impl {
       return failHr(error, "WASAPI 独占 init failure：无法读取设备缓冲周期", hr);
     }
 
-    REFERENCE_TIME requestedDuration = minimumPeriod > 0 ? minimumPeriod : defaultPeriod;
+    REFERENCE_TIME requestedDuration = 0;
+    if (outputConfig.preferredBufferSize > 0) {
+      requestedDuration = wasapi::framesToReferenceTime(outputConfig.preferredBufferSize, outputFormat.sampleRate);
+    }
+    if (requestedDuration <= 0) {
+      requestedDuration = minimumPeriod > 0 ? minimumPeriod : defaultPeriod;
+    }
     if (requestedDuration <= 0) {
       requestedDuration = std::max<REFERENCE_TIME>(1, wasapi::framesToReferenceTime(256, outputFormat.sampleRate));
     }
@@ -206,11 +247,22 @@ struct WasapiExclusiveBackend::Impl {
     if (FAILED(hr)) return failHr(error, "WASAPI 独占 init failure：无法读取缓冲区大小", hr);
     outputInfo.bufferSizeFrames = static_cast<int>(bufferFrameCount);
     outputInfo.latencyFrames = static_cast<int>(bufferFrameCount);
-    outputInfo.latencyMs = outputFormat.sampleRate > 0
-                               ? static_cast<double>(bufferFrameCount) * 1000.0 / static_cast<double>(outputFormat.sampleRate)
-                               : 0.0;
-    outputInfo.latencyInfo.bufferLatencyMs = outputInfo.latencyMs;
-    outputInfo.latencyInfo.totalLatencyMs = outputInfo.latencyMs;
+    outputInfo.latencyInfo.bufferLatencyMs =
+        outputFormat.sampleRate > 0
+            ? static_cast<double>(bufferFrameCount) * 1000.0 / static_cast<double>(outputFormat.sampleRate)
+            : 0.0;
+    REFERENCE_TIME streamLatency = 0;
+    hr = audioClient->GetStreamLatency(&streamLatency);
+    if (SUCCEEDED(hr)) {
+      const double streamLatencyMs = referenceTimeToMilliseconds(streamLatency);
+      outputInfo.latencyInfo.outputLatencyMs = std::max(0.0, streamLatencyMs - outputInfo.latencyInfo.bufferLatencyMs);
+      outputInfo.latencyInfo.totalLatencyMs =
+          outputInfo.latencyInfo.bufferLatencyMs + outputInfo.latencyInfo.outputLatencyMs;
+    } else {
+      outputInfo.latencyInfo.outputLatencyMs = 0.0;
+      outputInfo.latencyInfo.totalLatencyMs = outputInfo.latencyInfo.bufferLatencyMs;
+    }
+    outputInfo.latencyMs = outputInfo.latencyInfo.totalLatencyMs;
 
     hr = audioClient->GetService(IID_PPV_ARGS(&renderClient));
     if (SUCCEEDED(hr)) return true;
@@ -249,14 +301,18 @@ struct WasapiExclusiveBackend::Impl {
   }
 
   void notifyFailure(HRESULT hr, const char* fallbackMessage) {
-    if (!eventCallback) return;
     if (wasapi::isDeviceInvalidated(hr)) {
-      eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+      ++diagnostics.deviceLostCount;
+      recordFailure("device_lost", fallbackMessage + std::string(" (错误码 ") + hresultSuffix(hr) + ")");
+      if (eventCallback) eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
       return;
     }
     char buffer[160] = {};
     std::snprintf(buffer, sizeof(buffer), "%s (错误码 0x%08lx)", fallbackMessage, static_cast<unsigned long>(hr));
-    eventCallback(OutputBackendEvent::RenderError, buffer);
+    ++diagnostics.sessionBufferDropCount;
+    ++diagnostics.lifetimeBufferDropCount;
+    recordFailure("render_failure", buffer);
+    if (eventCallback) eventCallback(OutputBackendEvent::RenderError, buffer);
   }
 
   void renderLoop() {
@@ -378,7 +434,7 @@ bool WasapiExclusiveBackend::open(const std::string& deviceId, const AudioFormat
 }
 
 bool WasapiExclusiveBackend::setOutputConfig(const OutputConfig& config, std::string* error) {
-  (void)config;
+  impl_->outputConfig = config;
   (void)error;
   return true;
 }
@@ -386,7 +442,7 @@ bool WasapiExclusiveBackend::setOutputConfig(const OutputConfig& config, std::st
 bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   if (!impl_->audioClient || !impl_->renderClient) {
-    if (error) *error = "独占输出后端尚未打开";
+    impl_->recordFailure("backend_start_failure", "独占输出后端尚未打开", error);
     return false;
   }
 
@@ -394,7 +450,7 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
   impl_->eventCallback = std::move(eventCallback);
 
   if (!impl_->renderPacket(impl_->bufferFrameCount)) {
-    if (error) *error = "无法预填充独占输出缓冲区";
+    if (error) *error = impl_->diagnostics.lastError.empty() ? "无法预填充独占输出缓冲区" : impl_->diagnostics.lastError;
     return false;
   }
 
@@ -403,6 +459,11 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
 
   HRESULT hr = impl_->audioClient->Start();
   if (!wasapi::succeeded(hr, error, "无法启动独占输出音频流")) {
+    if (wasapi::isDeviceInvalidated(hr)) ++impl_->diagnostics.deviceLostCount;
+    impl_->recordFailure(
+        wasapi::isDeviceInvalidated(hr) ? "device_lost" : "backend_start_failure",
+        "无法启动独占输出音频流 (错误码 " + hresultSuffix(hr) + ")",
+        error);
     impl_->stop();
     return false;
   }
@@ -429,6 +490,7 @@ AudioFormat WasapiExclusiveBackend::outputFormat() const {
 }
 
 OutputInfo WasapiExclusiveBackend::outputInfo() const {
+  std::lock_guard lock(impl_->infoMutex);
   return impl_->outputInfo;
 }
 

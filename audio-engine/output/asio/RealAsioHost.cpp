@@ -481,6 +481,11 @@ std::string enumerateAsioDevicesJson() {
       json << device.bitDepths[i];
     }
     json << "],\"latencyFrames\":" << device.outputLatencyFrames
+         << ",\"supportsExclusive\":true"
+         << ",\"supportsHogMode\":false"
+         << ",\"supportsDirectHw\":false"
+         << ",\"supportsDop\":" << (device.dopCapable ? "true" : "false")
+         << ",\"supportsNativeDsd\":" << (device.nativeDsdCapable ? "true" : "false")
          << ",\"dopCapable\":" << (device.dopCapable ? "true" : "false")
          << ",\"nativeDsdCapable\":" << (device.nativeDsdCapable ? "true" : "false")
          << ",\"dopCarrierSampleRates\":[";
@@ -499,6 +504,14 @@ std::string enumerateAsioDevicesJson() {
       json << device.nativeDsdSampleRates[i];
     }
     json << "]"
+         << ",\"supportedDsdRates\":[";
+    for (size_t i = 0; i < device.nativeDsdSampleRates.size(); ++i) {
+      if (i > 0) json << ",";
+      json << device.nativeDsdSampleRates[i];
+    }
+    json << "]"
+         << ",\"pathKind\":\"asio\""
+         << ",\"capabilityReason\":\"\""
          << ",\"minBufferSize\":" << device.minBufferSize
          << ",\"maxBufferSize\":" << device.maxBufferSize
          << ",\"granularity\":" << device.bufferGranularity

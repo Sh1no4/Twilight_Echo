@@ -482,6 +482,7 @@ bool AlsaBackend::open(const std::string& deviceId, const AudioFormat& requested
 
   impl_->outputInfo = {};
   impl_->outputInfo.exclusive = directHw;
+  impl_->outputInfo.accessMode = directHw ? "direct" : "plugin";
   impl_->outputInfo.supportsOutputPerfect = supportsOutputPerfect;
   impl_->outputInfo.sourceExact = false;
   impl_->outputInfo.outputPerfect = false;
@@ -491,6 +492,8 @@ bool AlsaBackend::open(const std::string& deviceId, const AudioFormat& requested
   impl_->outputInfo.outputBitDepth = impl_->outputFormat.bitDepth;
   impl_->outputInfo.backend = "alsa";
   impl_->outputInfo.actualBackend = "alsa";
+  impl_->outputInfo.devicePathKind =
+      directHw ? "hw" : (impl_->deviceId.rfind("plughw:", 0) == 0 ? "plughw" : "default");
   impl_->outputInfo.deviceName = impl_->deviceName;
   impl_->outputInfo.actualDeviceName = impl_->deviceName;
   impl_->outputInfo.actualOutputFormat = sampleFormatToString(impl_->outputFormat.sampleFormat);
@@ -512,8 +515,10 @@ bool AlsaBackend::open(const std::string& deviceId, const AudioFormat& requested
   impl_->outputInfo.channelRoutingMode = channelRoutingModeToString(impl_->outputConfig.routingMode);
   impl_->outputInfo.diagnostics = impl_->diagnostics;
   if (!supportsOutputPerfect) {
+    impl_->outputInfo.perfectReasonCode = directHw ? "pcm_converted" : "plugin_path";
     impl_->outputInfo.perfectReason =
         directHw ? Impl::formatMismatchReason(requestedFormat, impl_->outputFormat) : Impl::pluginPathReason(impl_->deviceId);
+    impl_->outputInfo.capabilityReason = impl_->outputInfo.perfectReason;
   }
   impl_->dopRuntimeFacts = unprovenDopRuntimeFacts(
       requestedFormat,

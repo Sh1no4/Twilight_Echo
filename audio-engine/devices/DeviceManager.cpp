@@ -144,6 +144,10 @@ std::string firstLine(std::string value) {
 }
 #endif
 
+std::string boolJson(bool value) {
+  return value ? "true" : "false";
+}
+
 }  // namespace
 
 std::string enumerateAsioDevicesJson();
@@ -175,7 +179,10 @@ std::string enumeratePlatformDevicesJson() {
   }
 
   std::ostringstream json;
-  json << "[{\"id\":\"auto\",\"label\":\"\\u7cfb\\u7edf\\u9ed8\\u8ba4\",\"isDefault\":true}";
+  json << "[{\"id\":\"auto\",\"label\":\"\\u7cfb\\u7edf\\u9ed8\\u8ba4\",\"isDefault\":true,"
+       << "\"supportsExclusive\":true,\"supportsHogMode\":false,\"supportsDirectHw\":false,"
+       << "\"supportsDop\":false,\"supportsNativeDsd\":false,\"supportedDsdRates\":[],"
+       << "\"pathKind\":\"default\",\"capabilityReason\":\"\"}";
 
   Microsoft::WRL::ComPtr<IMMDeviceCollection> collection;
   if (SUCCEEDED(enumerator->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &collection))) {
@@ -191,7 +198,10 @@ std::string enumeratePlatformDevicesJson() {
       const std::string label = readDeviceName(device.Get());
       json << ",{\"id\":\"" << escapeJson(id) << "\",\"label\":\""
            << escapeJson(label.empty() ? id : label) << "\",\"isDefault\":"
-           << (id == defaultId ? "true" : "false") << "}";
+           << (id == defaultId ? "true" : "false")
+           << ",\"supportsExclusive\":true,\"supportsHogMode\":false,\"supportsDirectHw\":false,"
+           << "\"supportsDop\":false,\"supportsNativeDsd\":false,\"supportedDsdRates\":[],"
+           << "\"pathKind\":\"default\",\"capabilityReason\":\"\"}";
     }
   }
 
@@ -205,7 +215,10 @@ std::string enumeratePlatformDevicesJson() {
 #elif defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)
   std::ostringstream json;
   const std::string defaultUid = defaultCoreAudioUid();
-  json << "[{\"id\":\"auto\",\"label\":\"\\u7cfb\\u7edf\\u9ed8\\u8ba4\",\"isDefault\":true}";
+  json << "[{\"id\":\"auto\",\"label\":\"\\u7cfb\\u7edf\\u9ed8\\u8ba4\",\"isDefault\":true,"
+       << "\"supportsExclusive\":false,\"supportsHogMode\":false,\"supportsDirectHw\":false,"
+       << "\"supportsDop\":false,\"supportsNativeDsd\":false,\"supportedDsdRates\":[],"
+       << "\"pathKind\":\"hal\",\"capabilityReason\":\"CoreAudio shared path available; Hog/Exclusive pending runtime support\"}";
 
   AudioObjectPropertyAddress address{
       kAudioHardwarePropertyDevices,
@@ -224,7 +237,10 @@ std::string enumeratePlatformDevicesJson() {
         std::string label = readCoreAudioString(devices[i], kAudioObjectPropertyName);
         if (label.empty()) label = uid;
         json << ",{\"id\":\"" << escapeJson(uid) << "\",\"label\":\"" << escapeJson(label)
-             << "\",\"isDefault\":" << (uid == defaultUid ? "true" : "false") << "}";
+             << "\",\"isDefault\":" << (uid == defaultUid ? "true" : "false")
+             << ",\"supportsExclusive\":false,\"supportsHogMode\":false,\"supportsDirectHw\":false,"
+             << "\"supportsDop\":false,\"supportsNativeDsd\":false,\"supportedDsdRates\":[],"
+             << "\"pathKind\":\"hal\",\"capabilityReason\":\"CoreAudio shared path available; Hog/Exclusive pending runtime support\"}";
       }
     }
   }
@@ -232,7 +248,10 @@ std::string enumeratePlatformDevicesJson() {
   return json.str();
 #elif defined(__linux__) && defined(TAE_ENABLE_ALSA)
   std::ostringstream json;
-  json << "[{\"id\":\"auto\",\"label\":\"\\u7cfb\\u7edf\\u9ed8\\u8ba4\",\"isDefault\":true}";
+  json << "[{\"id\":\"auto\",\"label\":\"\\u7cfb\\u7edf\\u9ed8\\u8ba4\",\"isDefault\":true,"
+       << "\"supportsExclusive\":false,\"supportsHogMode\":false,\"supportsDirectHw\":false,"
+       << "\"supportsDop\":false,\"supportsNativeDsd\":false,\"supportedDsdRates\":[],"
+       << "\"pathKind\":\"default\",\"capabilityReason\":\"ALSA default route may include plugin or mixer stages\"}";
   void** hints = nullptr;
   if (snd_device_name_hint(-1, "pcm", &hints) == 0 && hints) {
     for (void** hint = hints; *hint; ++hint) {
@@ -244,8 +263,19 @@ std::string enumeratePlatformDevicesJson() {
         const std::string name = rawName;
         std::string label = rawDesc ? firstLine(rawDesc) : name;
         if (label.empty()) label = name;
+        const bool directHw = name.rfind("hw:", 0) == 0;
+        const bool plugHw = name.rfind("plughw:", 0) == 0;
+        const std::string pathKind = directHw ? "hw" : (plugHw ? "plughw" : "default");
+        const std::string capabilityReason = directHw
+                                                 ? ""
+                                                 : (plugHw ? "plughw may insert format conversion"
+                                                           : "ALSA default route may include plugin or mixer stages");
         json << ",{\"id\":\"" << escapeJson(name) << "\",\"label\":\"" << escapeJson(label)
-             << "\",\"isDefault\":" << (name == "default" ? "true" : "false") << "}";
+             << "\",\"isDefault\":" << (name == "default" ? "true" : "false")
+             << ",\"supportsExclusive\":false,\"supportsHogMode\":false,\"supportsDirectHw\":"
+             << boolJson(directHw) << ",\"supportsDop\":false,\"supportsNativeDsd\":false,"
+             << "\"supportedDsdRates\":[],\"pathKind\":\"" << pathKind
+             << "\",\"capabilityReason\":\"" << escapeJson(capabilityReason) << "\"}";
       }
       if (rawName) free(rawName);
       if (rawDesc) free(rawDesc);
@@ -256,7 +286,10 @@ std::string enumeratePlatformDevicesJson() {
   json << "]";
   return json.str();
 #else
-  return "[{\"id\":\"auto\",\"label\":\"\\u7cfb\\u7edf\\u9ed8\\u8ba4\",\"isDefault\":true}]";
+  return "[{\"id\":\"auto\",\"label\":\"\\u7cfb\\u7edf\\u9ed8\\u8ba4\",\"isDefault\":true,"
+         "\"supportsExclusive\":false,\"supportsHogMode\":false,\"supportsDirectHw\":false,"
+         "\"supportsDop\":false,\"supportsNativeDsd\":false,\"supportedDsdRates\":[],"
+         "\"pathKind\":\"default\",\"capabilityReason\":\"\"}]";
 #endif
 }
 

@@ -244,6 +244,18 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   close();
   if (!host_) {
     if (error) *error = "当前构建未启用 ASIO 输出";
+    std::lock_guard lock(mutex_);
+    diagnostics_.lastError = error ? *error : "当前构建未启用 ASIO 输出";
+    outputInfo_ = {};
+    outputInfo_.exclusive = true;
+    outputInfo_.accessMode = "exclusive";
+    outputInfo_.backend = "asio";
+    outputInfo_.actualBackend = "asio";
+    outputInfo_.devicePathKind = "asio";
+    outputInfo_.perfectReasonCode = "backend_open_failure";
+    outputInfo_.capabilityReason = diagnostics_.lastError;
+    outputInfo_.perfectReason = diagnostics_.lastError;
+    outputInfo_.diagnostics = diagnostics_;
     return false;
   }
 
@@ -264,13 +276,29 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     dopRuntimeFacts_ = {};
     actualOutputFormatObserved_ = false;
     actualOutputChannelFormatsMatch_ = true;
+    outputInfo_ = {};
+    outputInfo_.exclusive = true;
+    outputInfo_.accessMode = "exclusive";
+    outputInfo_.backend = "asio";
+    outputInfo_.actualBackend = "asio";
+    outputInfo_.devicePathKind = "asio";
+    outputInfo_.diagnostics = diagnostics_;
+    outputInfo_.deviceRecovered = false;
+    outputInfo_.recoveryCount = recoveryCount_;
   }
 
   const auto devices = host_->enumerateDevices();
   if (devices.empty()) {
     if (error) *error = "未找到可用 ASIO 驱动";
     diagnostics_.lastError = error ? *error : "未找到可用 ASIO 驱动";
+    outputInfo_.backend = "asio";
+    outputInfo_.actualBackend = "asio";
+    outputInfo_.accessMode = "exclusive";
+    outputInfo_.devicePathKind = "asio";
+    outputInfo_.perfectReasonCode = "device_not_found";
+    outputInfo_.capabilityReason = diagnostics_.lastError;
     outputInfo_.perfectReason = diagnostics_.lastError;
+    outputInfo_.diagnostics = diagnostics_;
     return false;
   }
 
@@ -281,7 +309,14 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   if (deviceIt == devices.end()) {
     if (error) *error = "无法找到请求的 ASIO 设备：" + deviceId;
     diagnostics_.lastError = error ? *error : "无法找到请求的 ASIO 设备";
+    outputInfo_.backend = "asio";
+    outputInfo_.actualBackend = "asio";
+    outputInfo_.accessMode = "exclusive";
+    outputInfo_.devicePathKind = "asio";
+    outputInfo_.perfectReasonCode = "device_not_found";
+    outputInfo_.capabilityReason = diagnostics_.lastError;
     outputInfo_.perfectReason = diagnostics_.lastError;
+    outputInfo_.diagnostics = diagnostics_;
     return false;
   }
 
@@ -289,7 +324,18 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   if (!chooseFormat(*deviceIt, requestedFormat, &selected)) {
     if (error) *error = "ASIO 设备没有可协商的输出格式";
     diagnostics_.lastError = error ? *error : "ASIO 设备没有可协商的输出格式";
+    outputInfo_.backend = "asio";
+    outputInfo_.actualBackend = "asio";
+    outputInfo_.accessMode = "exclusive";
+    outputInfo_.devicePathKind = "asio";
+    outputInfo_.deviceName = deviceIt->name.empty() ? deviceIt->driverName : deviceIt->name;
+    outputInfo_.actualDeviceName = outputInfo_.deviceName;
+    outputInfo_.driverName = deviceIt->driverName;
+    outputInfo_.actualDriverName = deviceIt->driverName;
+    outputInfo_.perfectReasonCode = "format_not_supported";
+    outputInfo_.capabilityReason = diagnostics_.lastError;
     outputInfo_.perfectReason = diagnostics_.lastError;
+    outputInfo_.diagnostics = diagnostics_;
     return false;
   }
 
@@ -302,7 +348,18 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   AsioOpenResult result;
   if (!host_->open(openConfig_, &result, error)) {
     if (error) diagnostics_.lastError = *error;
+    outputInfo_.backend = "asio";
+    outputInfo_.actualBackend = "asio";
+    outputInfo_.accessMode = "exclusive";
+    outputInfo_.devicePathKind = "asio";
+    outputInfo_.deviceName = deviceIt->name.empty() ? deviceIt->driverName : deviceIt->name;
+    outputInfo_.actualDeviceName = outputInfo_.deviceName;
+    outputInfo_.driverName = deviceIt->driverName;
+    outputInfo_.actualDriverName = deviceIt->driverName;
+    outputInfo_.perfectReasonCode = "backend_open_failure";
+    outputInfo_.capabilityReason = diagnostics_.lastError;
     outputInfo_.perfectReason = diagnostics_.lastError;
+    outputInfo_.diagnostics = diagnostics_;
     return false;
   }
 
@@ -318,16 +375,19 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
 
   outputInfo_ = {};
   outputInfo_.exclusive = true;
+  outputInfo_.accessMode = "exclusive";
   outputInfo_.supportsOutputPerfect = true;
   outputInfo_.sourceExact = false;
   outputInfo_.outputPerfect = false;
   outputInfo_.pcmPassthrough = false;
   outputInfo_.resampled = !sameFormat(requestedFormat, outputFormat_);
+  outputInfo_.perfectReasonCode = outputInfo_.resampled ? "pcm_converted" : "";
   outputInfo_.perfectReason = outputInfo_.resampled ? "ASIO 输出格式已协商为驱动支持格式" : "";
   outputInfo_.outputSampleRate = outputFormat_.sampleRate;
   outputInfo_.outputBitDepth = outputFormat_.bitDepth;
   outputInfo_.backend = "asio";
   outputInfo_.actualBackend = "asio";
+  outputInfo_.devicePathKind = "asio";
   outputInfo_.deviceName = deviceName_;
   outputInfo_.actualDeviceName = deviceName_;
   outputInfo_.driverName = driverName_;
@@ -567,7 +627,11 @@ bool AsioBackend::createAndStartHost(std::string* error) {
     ++diagnostics_.sessionBufferDropCount;
     ++diagnostics_.lifetimeBufferDropCount;
     if (error) diagnostics_.lastError = *error;
-    if (error) outputInfo_.perfectReason = "ASIO buffer creation failed: " + *error;
+    if (error) {
+      outputInfo_.perfectReasonCode = "buffer_failure";
+      outputInfo_.capabilityReason = *error;
+      outputInfo_.perfectReason = "ASIO buffer creation failed: " + *error;
+    }
     outputInfo_.diagnostics = diagnostics_;
     return false;
   }
@@ -591,6 +655,7 @@ bool AsioBackend::createAndStartHost(std::string* error) {
     outputInfo_.outputBitDepth = outputFormat_.bitDepth;
     outputInfo_.resampled = !sameFormat(openConfig_.format, outputFormat_);
     if (outputInfo_.resampled && outputInfo_.perfectReason.empty()) {
+      outputInfo_.perfectReasonCode = "pcm_converted";
       outputInfo_.perfectReason = "ASIO actual output format differs from negotiated format";
     }
     dopRuntimeFacts_ = buildAsioDopRuntimeFacts(
@@ -605,7 +670,11 @@ bool AsioBackend::createAndStartHost(std::string* error) {
     running_ = false;
     std::lock_guard lock(mutex_);
     if (error) diagnostics_.lastError = *error;
-    if (error) outputInfo_.perfectReason = "ASIO start failed: " + *error;
+    if (error) {
+      outputInfo_.perfectReasonCode = "backend_start_failure";
+      outputInfo_.capabilityReason = *error;
+      outputInfo_.perfectReason = "ASIO start failed: " + *error;
+    }
     outputInfo_.diagnostics = diagnostics_;
     return false;
   }
@@ -672,12 +741,17 @@ bool AsioBackend::recover(AsioHostEvent event, const std::string& message) {
   {
     std::lock_guard lock(mutex_);
     diagnostics_.lastError = hostEventReason(event, message);
-    if (event == AsioHostEvent::DriverRestart) ++diagnostics_.driverRestartCount;
+    if (event == AsioHostEvent::DriverReset || event == AsioHostEvent::DriverRestart) ++diagnostics_.driverRestartCount;
     if (event == AsioHostEvent::DeviceLost) ++diagnostics_.deviceLostCount;
     if (event == AsioHostEvent::BufferFailure) {
       ++diagnostics_.sessionUnderrunCount;
       ++diagnostics_.lifetimeUnderrunCount;
     }
+    outputInfo_.perfectReasonCode =
+        event == AsioHostEvent::BufferFailure
+            ? "buffer_failure"
+            : (event == AsioHostEvent::DeviceLost ? "device_lost" : "driver_restart");
+    outputInfo_.capabilityReason = diagnostics_.lastError;
     outputInfo_.perfectReason = diagnostics_.lastError;
     outputInfo_.diagnostics = diagnostics_;
   }
@@ -695,12 +769,16 @@ bool AsioBackend::recover(AsioHostEvent event, const std::string& message) {
     if (recoveryInProgress_) {
       diagnostics_.lastError = message.empty() ? "ASIO recovery already in progress"
                                                : message + " (ASIO recovery already in progress)";
+      outputInfo_.capabilityReason = diagnostics_.lastError;
+      outputInfo_.perfectReason = diagnostics_.lastError;
       outputInfo_.diagnostics = diagnostics_;
       return false;
     }
     if (now < recoveryCooldownUntil_) {
       diagnostics_.lastError = message.empty() ? "ASIO recovery cooldown active"
                                                : message + " (ASIO recovery cooldown active)";
+      outputInfo_.capabilityReason = diagnostics_.lastError;
+      outputInfo_.perfectReason = diagnostics_.lastError;
       outputInfo_.diagnostics = diagnostics_;
       return false;
     }
@@ -708,12 +786,17 @@ bool AsioBackend::recover(AsioHostEvent event, const std::string& message) {
       recoveryCooldownUntil_ = now + kRecoveryCooldown;
       diagnostics_.lastError = message.empty() ? "ASIO recovery cooldown active"
                                                : message + " (ASIO recovery cooldown active)";
+      outputInfo_.capabilityReason = diagnostics_.lastError;
+      outputInfo_.perfectReason = diagnostics_.lastError;
       outputInfo_.diagnostics = diagnostics_;
       return false;
     }
     recoveryWindow_.push_back(now);
     recoveryInProgress_ = true;
     recoveryAttempts_ = 0;
+    outputInfo_.deviceRecovered = false;
+    outputInfo_.recoveryCount = recoveryCount_;
+    outputInfo_.diagnostics = diagnostics_;
   }
 
   std::string lastAttemptError;
@@ -721,6 +804,8 @@ bool AsioBackend::recover(AsioHostEvent event, const std::string& message) {
     {
       std::lock_guard lock(mutex_);
       recoveryAttempts_ = attempt;
+      outputInfo_.recoveryCount = recoveryCount_;
+      outputInfo_.diagnostics = diagnostics_;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(kBackoffMs[attempt]));
     std::string error;
@@ -756,6 +841,8 @@ bool AsioBackend::recover(AsioHostEvent event, const std::string& message) {
     recoveryAttempts_ = kMaxAttempts;
     diagnostics_.lastError =
         lastAttemptError.empty() ? (message.empty() ? "ASIO 设备恢复失败" : message) : lastAttemptError;
+    outputInfo_.capabilityReason = diagnostics_.lastError;
+    outputInfo_.perfectReason = diagnostics_.lastError;
     outputInfo_.diagnostics = diagnostics_;
   }
   if (eventCallback) {

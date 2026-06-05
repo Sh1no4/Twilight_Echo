@@ -150,6 +150,27 @@ ReplayGainMode parseReplayGainMode(const std::string& mode) {
   return ReplayGainMode::Off;
 }
 
+DsdOutputMode parseDsdOutputMode(const std::string& mode) {
+  std::string normalized = mode;
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  if (normalized == "pcm") return DsdOutputMode::Pcm;
+  if (normalized == "dop") return DsdOutputMode::Dop;
+  if (normalized == "native") return DsdOutputMode::Native;
+  return DsdOutputMode::Auto;
+}
+
+SacdProgramMode parseSacdProgramMode(const std::string& mode) {
+  std::string normalized = mode;
+  std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  if (normalized == "stereo") return SacdProgramMode::Stereo;
+  if (normalized == "multichannel") return SacdProgramMode::Multichannel;
+  return SacdProgramMode::Auto;
+}
+
 EqMode parseEqMode(const std::string& mode) {
   return toLower(mode) == "parametric" ? EqMode::Parametric : EqMode::Graphic;
 }
@@ -349,6 +370,10 @@ DspConfig DspChain::parseConfigJson(const std::string& json) {
   config.fftResolution =
       static_cast<size_t>(std::clamp(extractNumberField(json, "fftResolution").value_or(64.0), 64.0, 2048.0));
   config.gapless = extractBoolField(json, "gapless").value_or(true);
+  config.dsdOutputMode = parseDsdOutputMode(extractStringField(json, "dsdOutputMode").value_or(
+      extractBoolField(json, "dsdToPcm").value_or(false) ? "pcm" : "auto"));
+  config.sacdProgramMode =
+      parseSacdProgramMode(extractStringField(json, "sacdProgramMode").value_or("auto"));
   config.replayGainMode = parseReplayGainMode(extractStringField(json, "volumeNormalization").value_or("off"));
   config.replayGainPreampDb = std::clamp(extractNumberField(json, "replayGainPreamp").value_or(0.0), -24.0, 24.0);
   config.replayGainFallbackDb = std::clamp(extractNumberField(json, "replayGainFallback").value_or(0.0), -24.0, 24.0);

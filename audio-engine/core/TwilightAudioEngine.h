@@ -74,6 +74,7 @@ struct PlaybackInfo {
   uint32_t convolverLatencyFrames = 0;
   uint32_t partitionSize = 0;
   std::string channelMappingMode;
+  std::string perfectReasonCode;
   std::string perfectReason;
   bool isDsd = false;
   std::string dsdMode = "unsupported";

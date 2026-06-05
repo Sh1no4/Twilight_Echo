@@ -120,6 +120,19 @@ class AudioPipeline {
       const QueueItem& item,
       double startTimeSeconds,
       std::string* error);
+  bool shouldAttemptDopForCurrentConfig(
+      const DspConfig& dspConfig,
+      const OutputConfig& outputConfig,
+      const std::optional<DsdStreamInfo>& dsdProbe,
+      double volume,
+      const std::string& backendId) const;
+  std::string determineDsdPcmFallbackReason(
+      const DspConfig& dspConfig,
+      const OutputConfig& outputConfig,
+      const AudioStreamInfo& stream,
+      double volume,
+      const std::string& attemptedDopReason,
+      bool dopModeRequested) const;
   TAE_Result playInternal(
       const QueueItem& item,
       const std::optional<QueueItem>& upcomingItem,
@@ -141,6 +154,7 @@ class AudioPipeline {
   std::shared_ptr<DecodeStream> preloadStream_;
   FftSpectrumAnalyzer spectrum_;
   DspChain dspChain_;
+  DspChain preloadDspChain_;
   DspConfig dspConfig_;
   OutputConfig outputConfig_;
   DspStatus dspStatus_;
@@ -161,6 +175,9 @@ class AudioPipeline {
   bool outputPerfect_ = false;
   bool gaplessEnabled_ = true;
   bool dopPathActive_ = false;
+  bool crossfadeMixActive_ = false;
+  uint64_t crossfadeFramesProcessed_ = 0;
+  uint64_t crossfadeTotalFrames_ = 0;
   std::string dsdFallbackReason_;
   bool rerouteInProgress_ = false;
   std::string outputEventMessage_;

@@ -19,6 +19,19 @@ enum class EqMode {
   Parametric
 };
 
+enum class DsdOutputMode {
+  Auto,
+  Pcm,
+  Dop,
+  Native
+};
+
+enum class SacdProgramMode {
+  Auto,
+  Stereo,
+  Multichannel
+};
+
 enum class DspFilterType {
   Peak,
   LowShelf,
@@ -42,6 +55,8 @@ struct DspConfig {
   bool fftEnabled = true;
   size_t fftResolution = 64;
   bool gapless = true;
+  DsdOutputMode dsdOutputMode = DsdOutputMode::Auto;
+  SacdProgramMode sacdProgramMode = SacdProgramMode::Auto;
 
   ReplayGainMode replayGainMode = ReplayGainMode::Off;
   double replayGainPreampDb = 0.0;

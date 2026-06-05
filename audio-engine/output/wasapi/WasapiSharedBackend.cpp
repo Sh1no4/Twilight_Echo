@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -60,13 +61,27 @@ std::string sharedPerfectReason(const AudioFormat& requestedFormat) {
   return "WASAPI 共享输出经过系统混音";
 }
 
+#if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+double referenceTimeToMilliseconds(REFERENCE_TIME duration) {
+  return duration > 0 ? static_cast<double>(duration) / 10000.0 : 0.0;
+}
+
+std::string hresultMessage(const char* message, HRESULT hr) {
+  char buffer[160] = {};
+  std::snprintf(buffer, sizeof(buffer), "%s (错误码 0x%08lx)", message, static_cast<unsigned long>(hr));
+  return buffer;
+}
+#endif
+
 }  // namespace
 
 struct WasapiSharedBackend::Impl {
   AudioFormat outputFormat;
   OutputInfo outputInfo;
+  OutputInfo::Diagnostics diagnostics;
   DopRuntimeFacts dopRuntimeFacts;
   std::string deviceName = "系统默认";
+  mutable std::mutex infoMutex;
 
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   Microsoft::WRL::ComPtr<IMMDevice> device;
@@ -100,13 +115,12 @@ struct WasapiSharedBackend::Impl {
     return out;
   }
 
-  static bool succeeded(HRESULT hr, std::string* error, const char* message) {
+  bool succeeded(HRESULT hr, std::string* error, const char* message, const char* reasonCode) {
     if (SUCCEEDED(hr)) return true;
-    if (error) {
-      char buffer[128] = {};
-      std::snprintf(buffer, sizeof(buffer), "%s (错误码 0x%08lx)", message, static_cast<unsigned long>(hr));
-      *error = buffer;
+    if (reasonCode && std::strcmp(reasonCode, "device_lost") == 0) {
+      ++diagnostics.deviceLostCount;
     }
+    recordFailure(reasonCode, hresultMessage(message, hr), error);
     return false;
   }
 
@@ -125,6 +139,60 @@ struct WasapiSharedBackend::Impl {
     }
     PropVariantClear(&value);
     return true;
+  }
+
+  void resetOutputInfo() {
+    OutputInfo::Diagnostics lifetime = diagnostics;
+    diagnostics = {};
+    diagnostics.lifetimeUnderrunCount = lifetime.lifetimeUnderrunCount;
+    diagnostics.lifetimeBufferDropCount = lifetime.lifetimeBufferDropCount;
+    diagnostics.lifetimeRecoveryCount = lifetime.lifetimeRecoveryCount;
+    diagnostics.driverRestartCount = lifetime.driverRestartCount;
+    diagnostics.deviceLostCount = lifetime.deviceLostCount;
+
+    std::lock_guard lock(infoMutex);
+    outputInfo = {};
+    outputInfo.exclusive = false;
+    outputInfo.accessMode = "shared";
+    outputInfo.supportsOutputPerfect = false;
+    outputInfo.sourceExact = false;
+    outputInfo.outputPerfect = false;
+    outputInfo.pcmPassthrough = false;
+    outputInfo.backend = "wasapi";
+    outputInfo.actualBackend = "wasapi";
+    outputInfo.devicePathKind = "default";
+    outputInfo.deviceName = deviceName;
+    outputInfo.actualDeviceName = deviceName;
+    outputInfo.diagnostics = diagnostics;
+  }
+
+  void recordFailure(const char* reasonCode, const std::string& reason, std::string* error = nullptr) {
+    diagnostics.lastError = reason;
+    std::lock_guard lock(infoMutex);
+    outputInfo.perfectReasonCode = reasonCode ? reasonCode : "backend_open_failure";
+    outputInfo.capabilityReason = reason;
+    outputInfo.perfectReason = reason;
+    outputInfo.diagnostics = diagnostics;
+    if (error) *error = reason;
+  }
+
+  void recordRenderFailure(HRESULT hr, const char* message) {
+    const std::string reason = hresultMessage(message, hr);
+    if (isDeviceInvalidated(hr)) {
+      ++diagnostics.deviceLostCount;
+      recordFailure("device_lost", reason);
+      return;
+    }
+    ++diagnostics.sessionBufferDropCount;
+    ++diagnostics.lifetimeBufferDropCount;
+    recordFailure("render_failure", reason);
+  }
+
+  bool renderSucceeded(HRESULT hr, std::string* error, const char* message) {
+    if (SUCCEEDED(hr)) return true;
+    recordRenderFailure(hr, message);
+    if (error) *error = diagnostics.lastError;
+    return false;
   }
 
   bool chooseFloatMixFormat(WAVEFORMATEX* mix, std::vector<uint8_t>* formatBytes, std::string* error) {
@@ -188,6 +256,7 @@ struct WasapiSharedBackend::Impl {
       UINT32 padding = 0;
       HRESULT hr = audioClient->GetCurrentPadding(&padding);
       if (FAILED(hr)) {
+        recordRenderFailure(hr, "无法读取共享输出缓冲状态");
         if (eventCallback && isDeviceInvalidated(hr)) {
           eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
           break;
@@ -200,6 +269,7 @@ struct WasapiSharedBackend::Impl {
       BYTE* data = nullptr;
       hr = renderClient->GetBuffer(framesAvailable, &data);
       if (FAILED(hr)) {
+        recordRenderFailure(hr, "无法获取共享输出缓冲区");
         if (eventCallback && isDeviceInvalidated(hr)) {
           eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
           break;
@@ -213,9 +283,12 @@ struct WasapiSharedBackend::Impl {
         callback(reinterpret_cast<float*>(data), framesAvailable);
       }
       hr = renderClient->ReleaseBuffer(framesAvailable, 0);
-      if (FAILED(hr) && eventCallback && isDeviceInvalidated(hr)) {
-        eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
-        break;
+      if (FAILED(hr)) {
+        recordRenderFailure(hr, "无法提交共享输出缓冲区");
+        if (eventCallback && isDeviceInvalidated(hr)) {
+          eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+          break;
+        }
       }
     }
 
@@ -266,7 +339,7 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   close();
   impl_->outputFormat = {};
-  impl_->outputInfo = {};
+  impl_->resetOutputInfo();
   impl_->dopRuntimeFacts = {};
 
   HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -282,11 +355,11 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   if (hr == RPC_E_CHANGED_MODE) {
     hr = S_OK;
   }
-  if (!Impl::succeeded(hr, error, "无法初始化音频输出所需环境")) return false;
+  if (!impl_->succeeded(hr, error, "无法初始化音频输出所需环境", "backend_open_failure")) return false;
 
   Microsoft::WRL::ComPtr<IMMDeviceEnumerator> enumerator;
   hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
-  if (!Impl::succeeded(hr, error, "无法创建设备枚举器")) {
+  if (!impl_->succeeded(hr, error, "无法创建设备枚举器", "backend_open_failure")) {
     (void)shouldUninitialize;
     return failAfterCom();
   }
@@ -297,19 +370,19 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
     const std::wstring id = Impl::utf8ToWide(deviceId);
     hr = enumerator->GetDevice(id.c_str(), &impl_->device);
   }
-  if (!Impl::succeeded(hr, error, "无法打开输出设备")) {
+  if (!impl_->succeeded(hr, error, "无法打开输出设备", "device_not_found")) {
     return failAfterCom();
   }
   impl_->loadDeviceName();
 
   hr = impl_->device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, &impl_->audioClient);
-  if (!Impl::succeeded(hr, error, "无法激活输出设备音频客户端")) {
+  if (!impl_->succeeded(hr, error, "无法激活输出设备音频客户端", "backend_open_failure")) {
     return failAfterCom();
   }
 
   WAVEFORMATEX* mixFormat = nullptr;
   hr = impl_->audioClient->GetMixFormat(&mixFormat);
-  if (!Impl::succeeded(hr, error, "无法读取共享输出混音格式")) {
+  if (!impl_->succeeded(hr, error, "无法读取共享输出混音格式", "backend_open_failure")) {
     return failAfterCom();
   }
 
@@ -317,6 +390,7 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   const bool choseFormat = impl_->chooseFloatMixFormat(mixFormat, &activeFormatBytes, error);
   CoTaskMemFree(mixFormat);
   if (!choseFormat) {
+    impl_->recordFailure("format_not_supported", error ? *error : "共享输出格式协商失败");
     return failAfterCom();
   }
 
@@ -329,26 +403,26 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
       0,
       activeFormat,
       nullptr);
-  if (!Impl::succeeded(hr, error, "无法初始化共享输出音频流")) {
+  if (!impl_->succeeded(hr, error, "无法初始化共享输出音频流", "backend_open_failure")) {
     return failAfterCom();
   }
 
   impl_->samplesReadyEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
   if (!impl_->samplesReadyEvent) {
-    if (error) *error = "无法创建输出事件";
+    impl_->recordFailure("backend_open_failure", "无法创建输出事件", error);
     return failAfterCom();
   }
   hr = impl_->audioClient->SetEventHandle(impl_->samplesReadyEvent);
-  if (!Impl::succeeded(hr, error, "无法绑定输出事件")) {
+  if (!impl_->succeeded(hr, error, "无法绑定输出事件", "backend_open_failure")) {
     return failAfterCom();
   }
 
   hr = impl_->audioClient->GetBufferSize(&impl_->bufferFrameCount);
-  if (!Impl::succeeded(hr, error, "无法读取输出缓冲区大小")) {
+  if (!impl_->succeeded(hr, error, "无法读取输出缓冲区大小", "backend_open_failure")) {
     return failAfterCom();
   }
   hr = impl_->audioClient->GetService(IID_PPV_ARGS(&impl_->renderClient));
-  if (!Impl::succeeded(hr, error, "无法获取输出渲染客户端")) {
+  if (!impl_->succeeded(hr, error, "无法获取输出渲染客户端", "backend_open_failure")) {
     return failAfterCom();
   }
 
@@ -357,6 +431,7 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   impl_->outputFormat.bitDepth = 32;
   impl_->outputFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
   impl_->outputInfo.exclusive = false;
+  impl_->outputInfo.accessMode = "shared";
   impl_->outputInfo.supportsOutputPerfect = false;
   impl_->outputInfo.sourceExact = false;
   impl_->outputInfo.outputPerfect = false;
@@ -364,11 +439,14 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   impl_->outputInfo.resampled = requestedFormat.sampleRate != impl_->outputFormat.sampleRate ||
                                 requestedFormat.channelCount != impl_->outputFormat.channelCount ||
                                 requestedFormat.bitDepth != impl_->outputFormat.bitDepth;
+  impl_->outputInfo.perfectReasonCode = "shared_mixer";
   impl_->outputInfo.perfectReason = sharedPerfectReason(requestedFormat);
+  impl_->outputInfo.capabilityReason = impl_->outputInfo.perfectReason;
   impl_->outputInfo.outputSampleRate = impl_->outputFormat.sampleRate;
   impl_->outputInfo.outputBitDepth = impl_->outputFormat.bitDepth;
   impl_->outputInfo.backend = "wasapi";
   impl_->outputInfo.actualBackend = "wasapi";
+  impl_->outputInfo.devicePathKind = "default";
   impl_->outputInfo.deviceName = impl_->deviceName;
   impl_->outputInfo.actualDeviceName = impl_->deviceName;
   impl_->outputInfo.actualOutputFormat = sampleFormatToString(impl_->outputFormat.sampleFormat);
@@ -380,7 +458,19 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
       impl_->outputFormat.sampleRate > 0
           ? static_cast<double>(impl_->bufferFrameCount) * 1000.0 / static_cast<double>(impl_->outputFormat.sampleRate)
           : 0.0;
-  impl_->outputInfo.latencyInfo.totalLatencyMs = impl_->outputInfo.latencyInfo.bufferLatencyMs;
+  REFERENCE_TIME streamLatency = 0;
+  hr = impl_->audioClient->GetStreamLatency(&streamLatency);
+  if (SUCCEEDED(hr)) {
+    const double streamLatencyMs = referenceTimeToMilliseconds(streamLatency);
+    impl_->outputInfo.latencyInfo.outputLatencyMs =
+        std::max(0.0, streamLatencyMs - impl_->outputInfo.latencyInfo.bufferLatencyMs);
+    impl_->outputInfo.latencyInfo.totalLatencyMs =
+        impl_->outputInfo.latencyInfo.bufferLatencyMs + impl_->outputInfo.latencyInfo.outputLatencyMs;
+  } else {
+    impl_->outputInfo.latencyInfo.outputLatencyMs = 0.0;
+    impl_->outputInfo.latencyInfo.totalLatencyMs = impl_->outputInfo.latencyInfo.bufferLatencyMs;
+  }
+  impl_->outputInfo.latencyMs = impl_->outputInfo.latencyInfo.totalLatencyMs;
   impl_->dopRuntimeFacts = {};
   if (looksLikeDsdOrDopRequest(requestedFormat) || isDopCarrierFormat(impl_->outputFormat)) {
     impl_->dopRuntimeFacts.state = DopRuntimeFactState::Unproven;
@@ -407,7 +497,7 @@ bool WasapiSharedBackend::setOutputConfig(const OutputConfig& config, std::strin
 bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   if (!impl_->audioClient || !impl_->renderClient) {
-    if (error) *error = "共享输出后端尚未打开";
+    impl_->recordFailure("backend_start_failure", "共享输出后端尚未打开", error);
     return false;
   }
 
@@ -416,20 +506,22 @@ bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eve
 
   BYTE* data = nullptr;
   HRESULT hr = impl_->renderClient->GetBuffer(impl_->bufferFrameCount, &data);
-  if (!Impl::succeeded(hr, error, "无法预填充输出缓冲区")) return false;
+  if (!impl_->renderSucceeded(hr, error, "无法预填充输出缓冲区")) return false;
   const size_t samples =
       static_cast<size_t>(impl_->bufferFrameCount) * static_cast<size_t>(impl_->outputFormat.channelCount);
   std::fill(reinterpret_cast<float*>(data), reinterpret_cast<float*>(data) + samples, 0.0f);
   if (impl_->callback) {
     impl_->callback(reinterpret_cast<float*>(data), impl_->bufferFrameCount);
   }
-  impl_->renderClient->ReleaseBuffer(impl_->bufferFrameCount, 0);
+  hr = impl_->renderClient->ReleaseBuffer(impl_->bufferFrameCount, 0);
+  if (!impl_->renderSucceeded(hr, error, "无法提交预填充输出缓冲区")) return false;
 
   impl_->running = true;
   impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
 
   hr = impl_->audioClient->Start();
-  if (!Impl::succeeded(hr, error, "无法启动共享输出音频流")) {
+  const char* startReasonCode = Impl::isDeviceInvalidated(hr) ? "device_lost" : "backend_start_failure";
+  if (!impl_->succeeded(hr, error, "无法启动共享输出音频流", startReasonCode)) {
     impl_->stop();
     return false;
   }
@@ -455,6 +547,7 @@ AudioFormat WasapiSharedBackend::outputFormat() const {
 }
 
 OutputInfo WasapiSharedBackend::outputInfo() const {
+  std::lock_guard lock(impl_->infoMutex);
   return impl_->outputInfo;
 }
 

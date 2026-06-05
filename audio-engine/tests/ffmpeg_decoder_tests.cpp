@@ -110,6 +110,7 @@ void assertDecoderReportsPcm(const std::string& name, int bitsPerSample) {
   assert(stream.decodedFormat.channelCount == 2);
   assert(stream.decodedFormat.bitDepth == 32);
   assert(stream.decodedFormat.sampleFormat == AudioSampleFormat::Float32Interleaved);
+  decoder.close();
   std::filesystem::remove(path);
 }
 
@@ -135,6 +136,7 @@ void assertDecoderReportsDsdFallbackWhenSupported() {
   assert(stream.decodedFormat.bitDepth == 32);
   assert(stream.decodedFormat.sampleFormat == AudioSampleFormat::Float32Interleaved);
   assert(stream.decodedFormat.sampleRate > 0);
+  decoder.close();
   std::filesystem::remove(path);
 }
 

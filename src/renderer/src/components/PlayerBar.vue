@@ -121,19 +121,45 @@ const backendLabels: Record<string, string> = {
   coreaudio: 'CoreAudio',
   alsa: 'ALSA'
 }
-const reasonLabels: { pattern: RegExp; label: string }[] = [
-  { pattern: /shared|mixer|共享|混音/i, label: '共享输出经过系统混音器' },
-  { pattern: /replaygain/i, label: 'ReplayGain 正在改变样本' },
-  { pattern: /\beq\b|equalizer/i, label: 'EQ 正在改变样本' },
-  { pattern: /convolver|ir/i, label: 'Convolver 正在改变样本' },
-  { pattern: /crossfeed/i, label: 'Crossfeed 正在改变声道内容' },
-  { pattern: /crossfade/i, label: 'Crossfade 正在改变播放连续性' },
-  { pattern: /volume/i, label: '软件音量不是 100%' },
-  { pattern: /routing|channel/i, label: '声道路由或通道数发生变化' },
-  { pattern: /resampl|sample rate/i, label: '采样率发生转换' },
-  { pattern: /bit depth|format|converted|passthrough/i, label: 'PCM 格式未验证为直通' },
-  { pattern: /lossy/i, label: '源文件是有损格式，不能 Source Exact' }
-]
+const reasonCodeLabels: Record<string, string> = {
+  shared_mixer: '共享输出经过系统混音器',
+  processing_active: '当前处理链正在改变样本',
+  replaygain_active: 'ReplayGain 正在改变样本',
+  eq_active: 'EQ 正在改变样本',
+  convolver_active: 'Convolver 正在改变样本',
+  crossfeed_active: 'Crossfeed 正在改变声道内容',
+  crossfade_active: 'Crossfade 正在改变播放连续性',
+  volume_not_unity: '软件音量不是 100%',
+  routing_changes_semantics: '声道路由或通道语义发生变化',
+  pcm_converted: 'PCM 格式或采样率发生转换',
+  source_lossy: '源文件是有损格式，不能 Source Exact',
+  source_format_differs: '源格式与输出链不一致',
+  backend_not_output_perfect: '当前输出路径未声明 bit-perfect 能力',
+  output_not_perfect: '当前输出链尚未验证为直通',
+  dsd_processing_pcm_fallback: 'DSD 因处理链启用而回退到 PCM',
+  dsd_high_rate_pcm_fallback: 'DSD 因采样率或驱动限制回退到 PCM',
+  dsd_converted_to_pcm: 'DSD 当前已转换为 PCM 输出',
+  dsd_source_unsupported: '当前 DSD 源或模式不受支持',
+  sacd_iso_unsupported: 'SACD ISO 目前仅识别，不支持播放',
+  dsd_dop: '当前 DSD 正在通过 DoP 载波传输',
+  dop_carrier_mismatch: 'DoP 载波格式与目标 DSD 速率不匹配',
+  dop_passthrough_unproven: 'DoP 输出路径未能证明直通',
+  plugin_path: '当前设备路径包含插件或混音层',
+  device_not_found: '当前后端没有找到请求设备',
+  format_not_supported: '当前设备不支持请求的输出格式',
+  backend_open_failure: '输出后端打开失败',
+  backend_start_failure: '输出后端启动失败',
+  buffer_failure: '输出缓冲失败或发生 underrun',
+  device_lost: '输出设备已断开，需要恢复',
+  driver_restart: '驱动发生重启或重置'
+}
+const accessModeLabels: Record<string, string> = {
+  shared: 'Shared',
+  exclusive: 'Exclusive',
+  hog: 'Hog',
+  direct: 'Direct',
+  plugin: 'Plugin'
+}
 
 function canonicalSourceExact(): boolean {
   return outputInfo.value?.sourceExact === true
@@ -150,7 +176,7 @@ function formatBackendLabel(backend: string): string {
 function formatPerfectReason(reason: string): string {
   const trimmed = reason.trim()
   if (!trimmed) return ''
-  return reasonLabels.find((item) => item.pattern.test(trimmed))?.label ?? trimmed
+  return trimmed
 }
 
 const audioStatusChips = computed(() => {
@@ -165,13 +191,23 @@ const audioStatusChips = computed(() => {
   if (outputInfo.value?.resampled) chips.push({ label: 'Resampled', tone: 'warning' })
   if (playbackInfo.value?.dspActive) chips.push({ label: 'DSP', tone: 'warning' })
   if (exclusiveMode.value) chips.push({ label: 'Exclusive', tone: 'success' })
+  if (outputInfo.value?.accessMode) {
+    chips.push({
+      label: accessModeLabels[outputInfo.value.accessMode] ?? outputInfo.value.accessMode,
+      tone: outputInfo.value.accessMode === 'shared' ? 'muted' : 'success'
+    })
+  }
   return chips
 })
 const nonPerfectReason = computed(() => {
   const sourceExact = canonicalSourceExact()
   const outputPerfect = canonicalOutputPerfect()
   if (sourceExact && outputPerfect) return ''
-  const reason = formatPerfectReason(outputInfo.value?.perfectReason || '')
+  const code = outputInfo.value?.perfectReasonCode || playbackInfo.value?.perfectReasonCode || ''
+  const capabilityReason = outputInfo.value?.capabilityReason || ''
+  const reason = code && reasonCodeLabels[code]
+    ? reasonCodeLabels[code]
+    : capabilityReason || formatPerfectReason(outputInfo.value?.perfectReason || '')
   return reason ? `未达成：${reason}` : ''
 })
 function compactRate(rate: number): string {
@@ -245,7 +281,7 @@ function formatDecodedStage(info: NonNullable<typeof playbackInfo.value>): strin
   )
   if (!isDsdSource(info) && !isDsdPlayback()) return pcm
   const mode = outputInfo.value?.dsdMode || 'pcm'
-  if (mode === 'native') return 'DSD Native'
+  if (mode === 'native') return 'Native DSD path'
   if (mode === 'dop') return `DoP carrier ${pcm}`
   if (mode === 'unsupported' && isSacdIsoSource(info)) return 'SACD unsupported'
   return `PCM fallback ${pcm}`
@@ -265,7 +301,7 @@ const outputChainText = computed(() => {
         .join(' ')
   const decoded = formatDecodedStage(info)
   const out = outputInfo.value
-  const backend = out?.actualBackend || info.actualBackend || info.outputBackend || audioOutput.value
+  const backend = out?.actualBackend || info.actualBackend || ''
   const actual = compactPcm(
     out?.actualOutputFormat || info.actualOutputFormat,
     out?.actualBitDepth || info.actualBitDepth,
@@ -273,7 +309,21 @@ const outputChainText = computed(() => {
     out?.actualChannels || info.actualChannels,
     false
   )
-  return `${source || 'Source'} -> ${decoded} -> ${formatBackendLabel(backend)} -> ${actual}`
+  return `${source || 'Source'} -> ${decoded} -> ${backend ? formatBackendLabel(backend) : 'Backend pending'} -> ${actual}`
+})
+const outputLatencyText = computed(() => {
+  const info = outputInfo.value
+  if (!info) return 'Latency 0.0 ms'
+  const buffer = info.latencyInfo?.bufferLatencyMs ?? 0
+  const driver = info.latencyInfo?.outputLatencyMs ?? 0
+  const total = info.latencyInfo?.totalLatencyMs ?? info.latencyMs ?? 0
+  const frames = info.bufferSizeFrames || playbackInfo.value?.bufferSizeFrames || 0
+  return `Latency Buffer ${buffer.toFixed(1)} ms · Driver ${driver.toFixed(1)} ms · Total ${total.toFixed(total >= 10 ? 0 : 1)} ms${frames > 0 ? ` · ${frames} frames` : ''}`
+})
+const outputDiagnosticsText = computed(() => {
+  const diagnostics = outputInfo.value?.diagnostics ?? playbackInfo.value?.diagnostics
+  if (!diagnostics) return 'Underrun 0 · Drop 0 · Restart 0 · Lost 0 · Recovery 0'
+  return `Underrun ${diagnostics.sessionUnderrunCount} · Drop ${diagnostics.sessionBufferDropCount} · Restart ${diagnostics.driverRestartCount} · Lost ${diagnostics.deviceLostCount} · Recovery ${diagnostics.sessionRecoveryCount}`
 })
 
 const replayGainMiniOptions = [
@@ -482,6 +532,12 @@ function openEqualizer(): void {
               </p>
               <p v-if="outputChainText" class="more-output-chain">
                 {{ outputChainText }}
+              </p>
+              <p class="more-item-desc compact-reason">
+                {{ outputLatencyText }}
+              </p>
+              <p class="more-item-desc compact-reason">
+                {{ outputDiagnosticsText }}
               </p>
               <div class="more-item">
                 <div class="more-item-header">

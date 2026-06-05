@@ -55,6 +55,33 @@ std::string processingReason(const PerfectEvaluation& evaluation) {
   return "Audio processing active";
 }
 
+std::string processingReasonCode(const PerfectEvaluation& evaluation) {
+  if (std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon) return "volume_not_unity";
+  if (evaluation.replayGainActive) return "replaygain_active";
+  if (evaluation.eqActive) return "eq_active";
+  if (evaluation.convolverActive) return "convolver_active";
+  if (evaluation.crossfeedActive) return "crossfeed_active";
+  if (evaluation.crossfadeActive) return "crossfade_active";
+  return "processing_active";
+}
+
+std::string lowerText(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+    return static_cast<char>(std::tolower(ch));
+  });
+  return value;
+}
+
+std::string dsdPcmFallbackReasonCode(const std::string& backendReason) {
+  const std::string reason = lowerText(backendReason);
+  if (reason.find("dop carrier mismatch") != std::string::npos) return "dop_carrier_mismatch";
+  if (reason.find("passthrough") != std::string::npos || reason.find("prove") != std::string::npos) {
+    return "dop_passthrough_unproven";
+  }
+  if (reason.find("native dsd") != std::string::npos) return "dsd_source_unsupported";
+  return "dsd_converted_to_pcm";
+}
+
 bool hasConcreteFormat(const AudioFormat& format) {
   return format.sampleRate > 0 && format.channelCount > 0 && effectivePcmBitDepth(format) > 0;
 }
@@ -86,6 +113,27 @@ std::string dsdPerfectReason(const PerfectEvaluation& evaluation) {
     }
   }
   return "DSD source unsupported";
+}
+
+std::string dsdPerfectReasonCode(const PerfectEvaluation& evaluation) {
+  if (evaluation.sacdIsoSource) return "sacd_iso_unsupported";
+  if (evaluation.nativeDsdRequested || evaluation.dsdMode == DsdMode::Native ||
+      evaluation.dsdMode == DsdMode::Unsupported) {
+    return "dsd_source_unsupported";
+  }
+  if (evaluation.dsdMode == DsdMode::Pcm) {
+    return dsdPcmFallbackReasonCode(evaluation.backendPerfectReason);
+  }
+  if (evaluation.dsdMode == DsdMode::Dop) {
+    if (!dopCarrierFormatForDsd(evaluation.dsdRate, evaluation.sourceFormat.channelCount).has_value()) {
+      return "dsd_source_unsupported";
+    }
+    if (!dopCarrierMatchesExpected(evaluation)) return "dop_carrier_mismatch";
+    if (!evaluation.dopPassthroughProven || !evaluation.supportsOutputPerfect || evaluation.backendResampled) {
+      return "dop_passthrough_unproven";
+    }
+  }
+  return "dsd_source_unsupported";
 }
 
 }  // namespace
@@ -225,33 +273,45 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
       (evaluation.sourceDsd ? evaluation.dsdMode == DsdMode::Dop : result.sourceFormatMatched);
 
   if (result.sourceExact && result.outputPerfect) {
+    result.perfectReasonCode.clear();
     result.perfectReason.clear();
   } else if (evaluation.sourceDsd) {
-    if (result.processingActive) {
+    if (result.processingActive || !result.routingPreservesSemantics) {
+      result.perfectReasonCode = "dsd_processing_pcm_fallback";
       result.perfectReason = "DSD processing active; falling back to PCM";
     } else if (evaluation.dsdMode == DsdMode::Pcm && evaluation.dsdRate >= 256) {
+      result.perfectReasonCode = "dsd_high_rate_pcm_fallback";
       result.perfectReason = "DSD" + std::to_string(evaluation.dsdRate) + " currently falls back to PCM";
     } else {
+      result.perfectReasonCode = dsdPerfectReasonCode(evaluation);
       result.perfectReason = dsdPerfectReason(evaluation);
     }
   } else if (!evaluation.supportsOutputPerfect) {
+    result.perfectReasonCode = "backend_not_output_perfect";
     result.perfectReason =
         evaluation.backendPerfectReason.empty() ? "共享输出经过系统混音" : evaluation.backendPerfectReason;
   } else if (!result.routingPreservesSemantics) {
+    result.perfectReasonCode = "routing_changes_semantics";
     result.perfectReason = "声道映射改变声道语义";
   } else if (result.processingActive) {
+    result.perfectReasonCode = processingReasonCode(evaluation);
     result.perfectReason = processingReason(evaluation);
   } else if (!result.pcmPassthrough) {
+    result.perfectReasonCode = "pcm_converted";
     result.perfectReason =
         evaluation.backendPerfectReason.empty()
             ? "Decoded PCM converted from " + formatSummary(decodedFormat) + " to " + formatSummary(evaluation.outputFormat)
             : evaluation.backendPerfectReason;
   } else if (!evaluation.sourceLossless) {
+    result.perfectReasonCode = "source_lossy";
     result.perfectReason = "Source is lossy; decoded PCM path is output perfect";
   } else if (!result.sourceFormatMatched) {
+    result.perfectReasonCode = "source_format_differs";
     result.perfectReason =
         "Source PCM format differs from output format: " + formatSummary(evaluation.sourceFormat) + " -> " +
         formatSummary(evaluation.outputFormat);
+  } else {
+    result.perfectReasonCode = "output_not_perfect";
   }
   return result;
 }

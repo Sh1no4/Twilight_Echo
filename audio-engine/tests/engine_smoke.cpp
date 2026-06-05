@@ -17,7 +17,14 @@ int main() {
   assert(std::strstr(capabilities.data(), "\"pcmPassthrough\":true") != nullptr);
   assert(std::strstr(capabilities.data(), "\"outputPerfectRequiresPcmPassthrough\":true") != nullptr);
   assert(std::strstr(capabilities.data(), "\"htmlAudioFallbackDefault\":false") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"dsdModes\":[\"pcm\",\"dop\",\"native\",\"unsupported\"]") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"devicePathKinds\":[\"default\",\"hw\",\"plughw\",\"hal\",\"asio\"]") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"output\":{\"accessModes\":[\"shared\",\"exclusive\",\"hog\",\"direct\",\"plugin\"]}") != nullptr);
   assert(std::strstr(capabilities.data(), "\"backendCapabilities\"") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"id\":\"wasapi\"") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"id\":\"wasapi-exclusive\"") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"id\":\"asio\"") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"devicePathKind\":\"asio\"") != nullptr);
 
   assert(TAE_LoadQueue(engine, "{}", 0) == TAE_RESULT_INVALID_ARGUMENT);
   required = 0;
@@ -42,10 +49,27 @@ int main() {
   assert(std::strstr(json.data(), "\"state\":\"playing\"") != nullptr ||
          std::strstr(json.data(), "\"state\":\"stopped\"") != nullptr);
   assert(std::strstr(json.data(), "\"outputInfo\":{") != nullptr);
+  assert(std::strstr(json.data(), "\"actualBackend\"") != nullptr);
+  assert(std::strstr(json.data(), "\"actualOutputFormat\"") != nullptr);
+  assert(std::strstr(json.data(), "\"actualSampleRate\"") != nullptr);
+  assert(std::strstr(json.data(), "\"actualBitDepth\"") != nullptr);
+  assert(std::strstr(json.data(), "\"actualChannels\"") != nullptr);
+  assert(std::strstr(json.data(), "\"bufferSizeFrames\"") != nullptr);
+  assert(std::strstr(json.data(), "\"latencyInfo\"") != nullptr);
+  assert(std::strstr(json.data(), "\"bufferLatencyMs\"") != nullptr);
+  assert(std::strstr(json.data(), "\"outputLatencyMs\"") != nullptr);
+  assert(std::strstr(json.data(), "\"totalLatencyMs\"") != nullptr);
+  assert(std::strstr(json.data(), "\"diagnostics\"") != nullptr);
+  assert(std::strstr(json.data(), "\"sessionUnderrunCount\"") != nullptr);
+  assert(std::strstr(json.data(), "\"sessionBufferDropCount\"") != nullptr);
+  assert(std::strstr(json.data(), "\"sessionRecoveryCount\"") != nullptr);
+  assert(std::strstr(json.data(), "\"driverRestartCount\"") != nullptr);
+  assert(std::strstr(json.data(), "\"deviceLostCount\"") != nullptr);
   assert(std::strstr(json.data(), "\"sourceExact\"") != nullptr);
   assert(std::strstr(json.data(), "\"outputPerfect\"") != nullptr);
   assert(std::strstr(json.data(), "\"pcmPassthrough\"") != nullptr);
   assert(std::strstr(json.data(), "\"perfectReason\"") != nullptr);
+  assert(std::strstr(json.data(), "\"perfectReasonCode\"") != nullptr);
   assert(std::strstr(json.data(), "\"decodedSampleRate\"") != nullptr);
   assert(std::strstr(json.data(), "\"decodedBitDepth\"") != nullptr);
   assert(std::strstr(json.data(), "\"decodedChannels\"") != nullptr);

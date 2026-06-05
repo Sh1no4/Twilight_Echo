@@ -13,6 +13,7 @@
 namespace twilight::audio {
 
 std::string enumeratePlatformDevicesJson();
+std::string enumerateAsioDevicesJson();
 
 namespace {
 
@@ -94,10 +95,161 @@ void writeDiagnosticsJson(std::ostringstream& json, const OutputInfo::Diagnostic
        << "}";
 }
 
+std::string boolJson(bool value) {
+  return value ? "true" : "false";
+}
+
+bool jsonArrayHasItems(const std::string& json) {
+  return json.find('{') != std::string::npos;
+}
+
+void writeBackendCapabilityJson(
+    std::ostringstream& json,
+    const char* id,
+    const char* label,
+    bool compiled,
+    bool runtimeAvailable,
+    bool supportsExclusive,
+    bool supportsOutputPerfect,
+    const char* accessMode,
+    const char* devicePathKind,
+    const std::string& unavailableReason = {},
+    bool optional = false) {
+  json << "{\"id\":\"" << escapeJson(id) << "\",\"label\":\"" << escapeJson(label) << "\","
+       << "\"compiled\":" << boolJson(compiled) << ","
+       << "\"runtimeAvailable\":" << boolJson(runtimeAvailable) << ","
+       << "\"supportsExclusive\":" << boolJson(supportsExclusive) << ","
+       << "\"supportsOutputPerfect\":" << boolJson(supportsOutputPerfect) << ","
+       << "\"accessMode\":\"" << escapeJson(accessMode) << "\","
+       << "\"devicePathKind\":\"" << escapeJson(devicePathKind) << "\","
+       << "\"unavailableReason\":\"" << escapeJson(runtimeAvailable ? std::string{} : unavailableReason) << "\"";
+  if (optional) json << ",\"optional\":true";
+  json << "}";
+}
+
+std::string backendCapabilitiesJson() {
+  std::ostringstream json;
+  json << "[";
+  bool first = true;
+  auto append = [&](const char* id,
+                    const char* label,
+                    bool compiled,
+                    bool runtimeAvailable,
+                    bool supportsExclusive,
+                    bool supportsOutputPerfect,
+                    const char* accessMode,
+                    const char* devicePathKind,
+                    const std::string& unavailableReason = {},
+                    bool optional = false) {
+    if (!first) json << ",";
+    first = false;
+    writeBackendCapabilityJson(
+        json,
+        id,
+        label,
+        compiled,
+        runtimeAvailable,
+        supportsExclusive,
+        supportsOutputPerfect,
+        accessMode,
+        devicePathKind,
+        unavailableReason,
+        optional);
+  };
+
+#if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+  append("wasapi", "共享输出", true, true, false, false, "shared", "default");
+  append("wasapi-exclusive", "独占输出", true, true, true, true, "exclusive", "default");
+#else
+  append(
+      "wasapi",
+      "共享输出",
+      false,
+      false,
+      false,
+      false,
+      "shared",
+      "default",
+      "WASAPI is only available in Windows builds with TAE_ENABLE_WASAPI");
+  append(
+      "wasapi-exclusive",
+      "独占输出",
+      false,
+      false,
+      true,
+      false,
+      "exclusive",
+      "default",
+      "WASAPI Exclusive is only available in Windows builds with TAE_ENABLE_WASAPI");
+#endif
+
+#if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
+  const std::string asioDevices = enumerateAsioDevicesJson();
+  append(
+      "asio",
+      "专业声卡输出",
+      true,
+      jsonArrayHasItems(asioDevices),
+      true,
+      true,
+      "exclusive",
+      "asio",
+      "No ASIO drivers were enumerated",
+      true);
+#else
+  append(
+      "asio",
+      "专业声卡输出",
+      false,
+      false,
+      true,
+      false,
+      "exclusive",
+      "asio",
+      "ASIO SDK was not available when this build was configured",
+      true);
+#endif
+
+#if defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)
+  append("coreaudio", "苹果系统音频", true, true, false, false, "shared", "hal");
+#else
+  append(
+      "coreaudio",
+      "苹果系统音频",
+      false,
+      false,
+      false,
+      false,
+      "shared",
+      "hal",
+      "CoreAudio is only available in macOS builds with TAE_ENABLE_COREAUDIO");
+#endif
+
+#if defined(__linux__) && defined(TAE_ENABLE_ALSA)
+  append("alsa", "Linux ALSA 输出", true, true, false, false, "plugin", "default");
+#else
+  append(
+      "alsa",
+      "Linux ALSA 输出",
+      false,
+      false,
+      false,
+      false,
+      "plugin",
+      "default",
+      "ALSA is only available in Linux builds with TAE_ENABLE_ALSA and ALSA development libraries");
+#endif
+
+  json << "]";
+  return json.str();
+}
+
 void normalizeOutputInfoMirror(PlaybackInfo& info) {
   OutputInfo& out = info.outputInfo;
   if (out.backend.empty()) out.backend = info.outputBackend;
   if (out.actualBackend.empty()) out.actualBackend = out.backend;
+  if (out.accessMode.empty()) out.accessMode = out.exclusive ? "exclusive" : "shared";
+  if (out.devicePathKind.empty()) out.devicePathKind = "default";
   if (out.deviceName.empty()) out.deviceName = info.outputDevice;
   if (out.actualDeviceName.empty()) out.actualDeviceName = out.deviceName;
   if (out.actualDriverName.empty()) out.actualDriverName = out.driverName;
@@ -125,6 +277,7 @@ void normalizeOutputInfoMirror(PlaybackInfo& info) {
   info.sourceExact = out.sourceExact;
   info.outputPerfect = out.outputPerfect;
   info.pcmPassthrough = out.pcmPassthrough;
+  info.perfectReasonCode = out.perfectReasonCode;
   info.perfectReason = out.perfectReason;
   info.isDsd = out.isDsd;
   info.dsdMode = out.dsdMode.empty() ? (out.isDsd ? dsdModeToString(DsdMode::Unsupported) : dsdModeToString(DsdMode::Pcm)) : out.dsdMode;
@@ -190,6 +343,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"outputDevice\":\"" << escapeJson(info.outputDevice) << "\","
        << "\"outputInfo\":{"
        << "\"exclusive\":" << (out.exclusive ? "true" : "false") << ","
+       << "\"accessMode\":\"" << escapeJson(out.accessMode) << "\","
        << "\"supportsOutputPerfect\":" << (out.supportsOutputPerfect ? "true" : "false") << ","
        << "\"sourceExact\":" << (out.sourceExact ? "true" : "false") << ","
        << "\"outputPerfect\":" << (out.outputPerfect ? "true" : "false") << ","
@@ -202,6 +356,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"outputBitDepth\":" << out.outputBitDepth << ","
        << "\"backend\":\"" << escapeJson(out.backend) << "\","
        << "\"actualBackend\":\"" << escapeJson(out.actualBackend) << "\","
+       << "\"devicePathKind\":\"" << escapeJson(out.devicePathKind) << "\","
        << "\"deviceName\":\"" << escapeJson(out.deviceName) << "\","
        << "\"actualDeviceName\":\"" << escapeJson(out.actualDeviceName) << "\","
        << "\"driverName\":\"" << escapeJson(out.driverName) << "\","
@@ -212,6 +367,26 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"actualSampleRate\":" << out.actualSampleRate << ","
        << "\"actualBitDepth\":" << out.actualBitDepth << ","
        << "\"actualChannels\":" << out.actualChannels << ","
+       << "\"perfectReasonCode\":\"" << escapeJson(out.perfectReasonCode) << "\","
+       << "\"capabilityReason\":\"" << escapeJson(out.capabilityReason) << "\","
+       << "\"driverDopCapable\":" << (out.driverDopCapable ? "true" : "false") << ","
+       << "\"driverNativeDsdCapable\":" << (out.driverNativeDsdCapable ? "true" : "false") << ","
+       << "\"driverDopCarrierSampleRates\":[";
+  for (size_t i = 0; i < out.driverDopCarrierSampleRates.size(); ++i) {
+    if (i > 0) json << ",";
+    json << out.driverDopCarrierSampleRates[i];
+  }
+  json << "],\"driverDopCarrierFormats\":[";
+  for (size_t i = 0; i < out.driverDopCarrierFormats.size(); ++i) {
+    if (i > 0) json << ",";
+    json << "\"" << escapeJson(out.driverDopCarrierFormats[i]) << "\"";
+  }
+  json << "],\"driverNativeDsdSampleRates\":[";
+  for (size_t i = 0; i < out.driverNativeDsdSampleRates.size(); ++i) {
+    if (i > 0) json << ",";
+    json << out.driverNativeDsdSampleRates[i];
+  }
+  json << "],"
        << "\"bufferSizeFrames\":" << out.bufferSizeFrames << ","
        << "\"latencyFrames\":" << out.latencyFrames << ","
        << "\"latencyMs\":" << out.latencyMs << ","
@@ -266,6 +441,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"convolverLatencyFrames\":" << info.convolverLatencyFrames << ","
        << "\"partitionSize\":" << info.partitionSize << ","
        << "\"channelMappingMode\":\"" << escapeJson(info.channelMappingMode) << "\","
+       << "\"perfectReasonCode\":\"" << escapeJson(info.perfectReasonCode) << "\","
        << "\"perfectReason\":\"" << escapeJson(info.perfectReason) << "\","
        << "\"isDsd\":" << (info.isDsd ? "true" : "false") << ","
        << "\"dsdMode\":\"" << escapeJson(info.dsdMode) << "\","
@@ -331,7 +507,7 @@ DspStatus configuredDspStatus(const std::string& dspJson) {
 
 bool gaplessEnabledFromConfig(const std::string& dspJson) {
   const DspConfig config = DspChain::parseConfigJson(dspJson);
-  return config.gapless && config.crossfadeSeconds <= 0.0001;
+  return config.gapless || config.crossfadeSeconds > 0.0001;
 }
 
 uint32_t parseUintField(const std::string& json, const std::string& key, uint32_t fallback) {
@@ -394,7 +570,9 @@ TwilightAudioEngine::TwilightAudioEngine() {
   info_.outputInfo.backend = info_.outputBackend;
   info_.outputInfo.actualBackend = info_.outputBackend;
   info_.outputInfo.exclusive = false;
+  info_.outputInfo.accessMode = "shared";
   info_.outputInfo.supportsOutputPerfect = false;
+  info_.outputInfo.devicePathKind = "default";
   updatePerfectLocked();
   lastTick_ = std::chrono::steady_clock::now();
   startClock();
@@ -721,25 +899,57 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
   std::string rerouteReason;
   double reroutePosition = 0.0;
   PlaybackState rerouteState = PlaybackState::Stopped;
+  DspConfig previousConfig;
+  const DspConfig nextConfig = DspChain::parseConfigJson(dspJson.empty() ? "{}" : dspJson);
   {
     std::lock_guard lock(mutex_);
+    previousConfig = DspChain::parseConfigJson(dspConfigJson_);
     dspConfigJson_ = dspJson.empty() ? "{}" : dspJson;
     if (pipeline_) pipeline_->setDspConfig(dspConfigJson_);
     if (pipeline_ && info_.state != PlaybackState::Stopped) {
       applyPipelineStatusLocked(pipeline_->status());
-      if (!shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+      if (info_.isDsd) {
+        const bool previousForcedPcm =
+            previousConfig.dsdOutputMode == DsdOutputMode::Pcm || previousConfig.dsdOutputMode == DsdOutputMode::Native;
+        const bool previousWantedDop =
+            previousConfig.dsdOutputMode == DsdOutputMode::Auto || previousConfig.dsdOutputMode == DsdOutputMode::Dop;
+        const bool wantsPcm = nextConfig.dsdOutputMode == DsdOutputMode::Pcm;
+        const bool wantsNative = nextConfig.dsdOutputMode == DsdOutputMode::Native;
+        const bool wantsDop =
+            nextConfig.dsdOutputMode == DsdOutputMode::Auto || nextConfig.dsdOutputMode == DsdOutputMode::Dop;
+        const bool dopActive = pipeline_->isDopPathActive();
+        if (previousWantedDop && (wantsPcm || wantsNative)) {
+          rerouteReason = wantsPcm ? "DSD output mode forced PCM" : "Native DSD not yet available; falling back to PCM";
+          reroutePosition = info_.positionSeconds;
+          rerouteState = info_.state;
+        } else if (previousForcedPcm && wantsDop) {
+          reroutePosition = info_.positionSeconds;
+          rerouteState = info_.state;
+          rerouteReason = "Re-enter DoP output mode";
+        } else if (dopActive && (wantsPcm || wantsNative)) {
+          rerouteReason = wantsPcm ? "DSD output mode forced PCM" : "Native DSD not yet available; falling back to PCM";
+          reroutePosition = info_.positionSeconds;
+          rerouteState = info_.state;
+        } else if (!dopActive && wantsDop &&
+                   (info_.dsdMode == "pcm" || info_.outputInfo.dsdMode == "pcm")) {
+          reroutePosition = info_.positionSeconds;
+          rerouteState = info_.state;
+          rerouteReason = "Re-enter DoP output mode";
+        }
+      }
+      if (rerouteReason.empty() &&
+          !shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
         publishStateLocked();
       }
     } else {
-      const DspConfig config = DspChain::parseConfigJson(dspConfigJson_);
-      const DspStatus configStatus = configuredDspStatusFromConfig(config);
+      const DspStatus configStatus = configuredDspStatusFromConfig(nextConfig);
       info_.replayGainActive = configStatus.replayGainActive;
       info_.eqActive = configStatus.eqActive;
       info_.crossfeedActive = configStatus.crossfeedActive;
       info_.crossfeedStrength = configStatus.crossfeedStrength;
       info_.crossfadeActive = configStatus.crossfadeActive;
       info_.crossfadeSeconds = configStatus.crossfadeSeconds;
-      if (!config.enabled) info_.convolverActive = false;
+      if (!nextConfig.enabled) info_.convolverActive = false;
       updatePerfectLocked();
       publishStateLocked();
     }
@@ -971,6 +1181,7 @@ std::string TwilightAudioEngine::enumerateBackendsJson() const {
 
 std::string TwilightAudioEngine::engineCapabilitiesJson() const {
   const std::string backends = enumerateBackendsJson();
+  const std::string backendCapabilities = backendCapabilitiesJson();
   std::ostringstream json;
   json << "{"
        << "\"version\":\"" << TAE_GetVersion() << "\","
@@ -979,6 +1190,8 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
        << "\"outputPerfectRequiresPcmPassthrough\":true,"
        << "\"htmlAudioFallbackDefault\":false,"
        << "\"dsdModes\":[\"pcm\",\"dop\",\"native\",\"unsupported\"],"
+       << "\"sacdProgramModes\":[\"auto\",\"stereo\",\"multichannel\"],"
+       << "\"devicePathKinds\":[\"default\",\"hw\",\"plughw\",\"hal\",\"asio\"],"
        << "\"dsd\":{\"native\":false,\"dop\":false,\"sacdIso\":false,\"mode\":\"unsupported\"},"
        << "\"features\":{"
        << "\"ffmpeg\":"
@@ -1013,7 +1226,8 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
 #endif
        << ",\"nativeDsd\":false,\"dop\":false,\"sacdIso\":false"
        << "},\"backends\":" << backends
-       << ",\"backendCapabilities\":" << backends
+       << ",\"backendCapabilities\":" << backendCapabilities
+       << ",\"output\":{\"accessModes\":[\"shared\",\"exclusive\",\"hog\",\"direct\",\"plugin\"]}"
        << "}";
   return json.str();
 }
@@ -1337,6 +1551,8 @@ void TwilightAudioEngine::updatePerfectLocked() {
   info_.outputInfo.dsdMode = evaluation.sourceDsd ? dsdModeToString(evaluation.dsdMode) : dsdModeToString(DsdMode::Pcm);
   info_.outputInfo.dsdRate = evaluation.sourceDsd ? evaluation.dsdRate : 0;
   info_.outputInfo.perfectReason = result.perfectReason;
+  info_.outputInfo.perfectReasonCode = result.perfectReasonCode;
+  info_.perfectReasonCode = result.perfectReasonCode;
   info_.perfectReason = result.perfectReason;
   normalizeOutputInfoMirror(info_);
 }
@@ -1346,6 +1562,25 @@ bool TwilightAudioEngine::shouldReroutePipelineLocked(
     double* position,
     PlaybackState* state) const {
   if (!pipeline_ || info_.state == PlaybackState::Stopped) return false;
+  const DspConfig config = DspChain::parseConfigJson(dspConfigJson_);
+  if (info_.isDsd) {
+    const bool wantsPcm = config.dsdOutputMode == DsdOutputMode::Pcm;
+    const bool wantsNative = config.dsdOutputMode == DsdOutputMode::Native;
+    const bool wantsDop = config.dsdOutputMode == DsdOutputMode::Auto || config.dsdOutputMode == DsdOutputMode::Dop;
+    if (pipeline_->isDopPathActive() && (wantsPcm || wantsNative)) {
+      if (reason) {
+        *reason = wantsPcm ? "DSD output mode forced PCM" : "Native DSD not yet available; falling back to PCM";
+      }
+      if (position) *position = info_.positionSeconds;
+      if (state) *state = info_.state;
+      return true;
+    }
+    if (!pipeline_->isDopPathActive() && info_.dsdMode == "pcm" && wantsDop) {
+      if (position) *position = info_.positionSeconds;
+      if (state) *state = info_.state;
+      return true;
+    }
+  }
   std::string fallbackReason;
   if (!pipeline_->needsPcmFallback(&fallbackReason)) return false;
   if (reason) *reason = std::move(fallbackReason);
