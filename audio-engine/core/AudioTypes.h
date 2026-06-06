@@ -29,6 +29,13 @@ struct AudioFormat {
   AudioSampleFormat sampleFormat = AudioSampleFormat::Float32Interleaved;
 };
 
+struct PcmBlock {
+  AudioFormat format;
+  uint8_t* data = nullptr;
+  size_t frames = 0;
+  size_t byteSize = 0;
+};
+
 enum class ChannelRoutingMode {
   Auto,
   Stereo,
@@ -189,6 +196,8 @@ std::string channelRoutingModeToString(ChannelRoutingMode mode);
 ChannelRoutingMode parseChannelRoutingMode(const std::string& mode);
 std::string dsdModeToString(DsdMode mode);
 std::string sampleFormatToString(AudioSampleFormat format);
+size_t audioSampleFormatBytes(AudioSampleFormat format);
+size_t audioFormatBytesPerFrame(const AudioFormat& format);
 int normalizedPcmBitDepth(int bitDepth);
 int effectivePcmBitDepth(const AudioFormat& format);
 bool pcmFormatsExactMatch(const AudioFormat& left, const AudioFormat& right);
