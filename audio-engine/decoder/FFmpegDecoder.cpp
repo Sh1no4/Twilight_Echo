@@ -1,5 +1,7 @@
 #include "FFmpegDecoder.h"
 
+#include "SacdIsoProbe.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
@@ -159,7 +161,7 @@ bool codecLooksDsd(AVCodecID codecId, const std::string& codecName, const std::s
 }
 
 bool sourceLooksSacdIso(const std::string& source) {
-  return extensionOf(source) == "iso";
+  return probeSacdIsoEntry(source).isSacdIso();
 }
 
 int inferDsdRate(int sampleRate, bool dopCarrier = false) {
@@ -335,7 +337,14 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
 
 #if defined(TAE_HAS_FFMPEG)
   if (sourceLooksSacdIso(source)) {
-    if (error) *error = "SACD ISO 暂不支持解析和播放";
+    const SacdIsoEntryProbe probe = probeSacdIsoEntry(source);
+    const SacdDstProviderSelection dstProvider = selectSacdDstProvider(avcodec_find_decoder_by_name(kSacdDstCodecName) != nullptr, nullptr);
+    if (error) {
+      *error = probe.reason.empty() ? kSacdIsoUnsupportedReason : probe.reason;
+      if (!dstProvider.available && !dstProvider.reason.empty()) {
+        *error += "; " + dstProvider.reason;
+      }
+    }
     return false;
   }
 

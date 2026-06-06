@@ -363,6 +363,10 @@ class FakeOutputBackend final : public IOutputBackend {
     return facts;
   }
 
+  NativeDsdRuntimeFacts nativeDsdRuntimeFacts() const override {
+    return unsupportedNativeDsdRuntimeFacts("Fake output backend does not implement Native DSD");
+  }
+
   std::string deviceName() const override {
     std::lock_guard lock(g_backendRegistry.mutex);
     return state_->info.deviceName;
@@ -441,6 +445,9 @@ class EngineHarness {
 
 void assertLatestPlaybackContains(TwilightAudioEngine& engine, const std::string& needle) {
   const std::string json = engine.getPlaybackInfoJson();
+  if (!jsonContains(json, needle)) {
+    std::fprintf(stderr, "Missing playback JSON fragment: %s\nPlayback JSON: %s\n", needle.c_str(), json.c_str());
+  }
   assert(jsonContains(json, needle));
 }
 

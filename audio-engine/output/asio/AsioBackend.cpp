@@ -218,6 +218,46 @@ DopRuntimeFacts buildAsioDopRuntimeFacts(
   return facts;
 }
 
+NativeDsdRuntimeFacts buildAsioNativeDsdRuntimeFacts(
+    const AsioDeviceInfo& device,
+    const AudioFormat& requestedFormat,
+    bool rawDsdPathStarted) {
+  NativeDsdRuntimeFacts facts;
+  facts.requestedDsdRate = requestedFormat.sampleRate >= 2822400 ? requestedFormat.sampleRate : 0;
+  facts.channelCount = requestedFormat.channelCount;
+  facts.explicitlyCapable = device.nativeDsdCapable;
+  facts.advertisedSampleRates = device.nativeDsdSampleRates;
+
+  if (facts.requestedDsdRate <= 0) {
+    facts.state = NativeDsdRuntimeFactState::Unsupported;
+    facts.reason = "No Native DSD stream was requested";
+    return facts;
+  }
+
+  if (!device.nativeDsdCapable) {
+    facts.state = NativeDsdRuntimeFactState::Unsupported;
+    facts.reason = "ASIO driver did not advertise Native DSD support";
+    return facts;
+  }
+
+  if (!containsSampleRate(device.nativeDsdSampleRates, facts.requestedDsdRate)) {
+    facts.state = NativeDsdRuntimeFactState::Mismatch;
+    facts.reason = "ASIO driver did not advertise the requested Native DSD rate";
+    return facts;
+  }
+
+  if (!rawDsdPathStarted) {
+    facts.state = NativeDsdRuntimeFactState::Candidate;
+    facts.reason = "ASIO driver advertises Native DSD, but raw DSD rendering is not active";
+    return facts;
+  }
+
+  facts.state = NativeDsdRuntimeFactState::Proven;
+  facts.actualDsdRate = facts.requestedDsdRate;
+  facts.reason = "ASIO Native DSD stream started with a matching runtime rate";
+  return facts;
+}
+
 }  // namespace
 
 struct AsioBackend::FormatCandidate {
@@ -274,6 +314,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     recoveryInProgress_ = false;
     deviceRecovered_ = false;
     dopRuntimeFacts_ = {};
+    nativeDsdRuntimeFacts_ = unsupportedNativeDsdRuntimeFacts("No Native DSD stream was requested");
     actualOutputFormatObserved_ = false;
     actualOutputChannelFormatsMatch_ = true;
     outputInfo_ = {};
@@ -424,6 +465,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
       emptyFormat(),
       actualOutputFormatObserved_,
       actualOutputChannelFormatsMatch_);
+  nativeDsdRuntimeFacts_ = buildAsioNativeDsdRuntimeFacts(deviceInfo_, requestedFormat, false);
   opened_ = true;
   return true;
 }
@@ -466,6 +508,7 @@ void AsioBackend::close() {
   renderScratch_.clear();
   recoveryInProgress_ = false;
   dopRuntimeFacts_ = {};
+  nativeDsdRuntimeFacts_ = unsupportedNativeDsdRuntimeFacts("No Native DSD stream was requested");
   actualOutputFormatObserved_ = false;
   actualOutputChannelFormatsMatch_ = true;
   opened_ = false;
@@ -487,6 +530,11 @@ OutputInfo AsioBackend::outputInfo() const {
 DopRuntimeFacts AsioBackend::dopRuntimeFacts() const {
   std::lock_guard lock(mutex_);
   return dopRuntimeFacts_;
+}
+
+NativeDsdRuntimeFacts AsioBackend::nativeDsdRuntimeFacts() const {
+  std::lock_guard lock(mutex_);
+  return nativeDsdRuntimeFacts_;
 }
 
 std::string AsioBackend::deviceName() const {

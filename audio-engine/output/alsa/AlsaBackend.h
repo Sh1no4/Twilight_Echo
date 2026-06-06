@@ -22,6 +22,7 @@ class AlsaBackend final : public IOutputBackend {
   AudioFormat outputFormat() const override;
   OutputInfo outputInfo() const override;
   DopRuntimeFacts dopRuntimeFacts() const override;
+  NativeDsdRuntimeFacts nativeDsdRuntimeFacts() const override;
   std::string deviceName() const override;
 
  private:

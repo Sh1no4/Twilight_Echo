@@ -1,5 +1,7 @@
 #include "DsdReader.h"
 
+#include "SacdIsoProbe.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -88,7 +90,7 @@ bool sourceLooksDsfOrDff(const std::string& source) {
 }
 
 bool sourceLooksSacdIso(const std::string& source) {
-  return extensionOf(source) == "iso";
+  return probeSacdIsoEntry(source).isSacdIso();
 }
 
 int inferDsdRateFromSampleRate(int sampleRate) {
@@ -108,8 +110,9 @@ bool DsdReader::open(const std::string& source, std::string* error) {
     if (error) *error = "DSD source is empty";
     return false;
   }
-  if (sourceLooksSacdIso(source)) {
-    if (error) *error = "SACD ISO unsupported";
+  const SacdIsoEntryProbe sacdIso = probeSacdIsoEntry(source);
+  if (sacdIso.isSacdIso()) {
+    if (error) *error = sacdIso.reason.empty() ? kSacdIsoUnsupportedReason : sacdIso.reason;
     return false;
   }
 

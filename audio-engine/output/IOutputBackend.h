@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace twilight::audio {
 
@@ -34,6 +35,30 @@ struct DopRuntimeFacts {
   std::string reason;
 };
 
+enum class NativeDsdRuntimeFactState {
+  Unsupported,
+  Candidate,
+  Unproven,
+  Mismatch,
+  Proven
+};
+
+struct NativeDsdRuntimeFacts {
+  NativeDsdRuntimeFactState state = NativeDsdRuntimeFactState::Unsupported;
+  int requestedDsdRate = 0;
+  int actualDsdRate = 0;
+  int channelCount = 0;
+  bool explicitlyCapable = false;
+  std::vector<int> advertisedSampleRates;
+  std::string reason;
+};
+
+inline NativeDsdRuntimeFacts unsupportedNativeDsdRuntimeFacts(const std::string& reason) {
+  NativeDsdRuntimeFacts facts;
+  facts.reason = reason;
+  return facts;
+}
+
 inline bool hasConcreteAudioFormat(const AudioFormat& format) {
   return format.sampleRate > 0 && format.channelCount > 0 && effectivePcmBitDepth(format) > 0;
 }
@@ -61,6 +86,7 @@ class IOutputBackend {
   virtual AudioFormat outputFormat() const = 0;
   virtual OutputInfo outputInfo() const = 0;
   virtual DopRuntimeFacts dopRuntimeFacts() const = 0;
+  virtual NativeDsdRuntimeFacts nativeDsdRuntimeFacts() const = 0;
   virtual std::string deviceName() const = 0;
 };
 

@@ -609,6 +609,10 @@ DopRuntimeFacts AlsaBackend::dopRuntimeFacts() const {
   return impl_->dopRuntimeFacts;
 }
 
+NativeDsdRuntimeFacts AlsaBackend::nativeDsdRuntimeFacts() const {
+  return unsupportedNativeDsdRuntimeFacts("ALSA Native DSD output is not implemented in this build");
+}
+
 std::string AlsaBackend::deviceName() const {
   std::lock_guard lock(impl_->mutex);
   return impl_->deviceName;

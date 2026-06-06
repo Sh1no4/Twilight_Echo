@@ -555,6 +555,10 @@ DopRuntimeFacts WasapiSharedBackend::dopRuntimeFacts() const {
   return impl_->dopRuntimeFacts;
 }
 
+NativeDsdRuntimeFacts WasapiSharedBackend::nativeDsdRuntimeFacts() const {
+  return unsupportedNativeDsdRuntimeFacts("WASAPI shared output does not support Native DSD");
+}
+
 std::string WasapiSharedBackend::deviceName() const {
   return impl_->deviceName;
 }

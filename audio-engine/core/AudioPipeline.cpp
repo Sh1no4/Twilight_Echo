@@ -933,6 +933,7 @@ PipelineStatus AudioPipeline::status() const {
   backendInfo.dsdMode = outputInfo_.dsdMode;
   backendInfo.dsdRate = outputInfo_.dsdRate;
   backendInfo.channelRoutingMode = outputInfo_.channelRoutingMode;
+  backendInfo.perfectReasonCode = outputInfo_.perfectReasonCode;
   backendInfo.perfectReason = outputInfo_.perfectReason;
   status.outputInfo = backendInfo;
   status.backendId = backendId_;

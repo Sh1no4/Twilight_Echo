@@ -498,6 +498,10 @@ DopRuntimeFacts WasapiExclusiveBackend::dopRuntimeFacts() const {
   return impl_->dopRuntimeFacts;
 }
 
+NativeDsdRuntimeFacts WasapiExclusiveBackend::nativeDsdRuntimeFacts() const {
+  return unsupportedNativeDsdRuntimeFacts("WASAPI exclusive output supports PCM/DoP only; Native DSD is unavailable");
+}
+
 std::string WasapiExclusiveBackend::deviceName() const {
   return impl_->deviceName;
 }

@@ -585,6 +585,10 @@ DopRuntimeFacts CoreAudioBackend::dopRuntimeFacts() const {
   return impl_->dopRuntimeFacts;
 }
 
+NativeDsdRuntimeFacts CoreAudioBackend::nativeDsdRuntimeFacts() const {
+  return unsupportedNativeDsdRuntimeFacts("CoreAudio Native DSD/Hog Mode is not implemented in this build");
+}
+
 std::string CoreAudioBackend::deviceName() const {
   std::lock_guard lock(impl_->mutex);
   return impl_->deviceName;
