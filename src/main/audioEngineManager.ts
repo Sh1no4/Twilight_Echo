@@ -294,6 +294,13 @@ export interface OutputInfo {
   driverDopCarrierSampleRates: number[]
   driverDopCarrierFormats: string[]
   driverNativeDsdSampleRates: number[]
+  nativeDsdRuntimeState: string
+  nativeDsdRequestedRate: number
+  nativeDsdActualRate: number
+  nativeDsdChannels: number
+  nativeDsdExplicitlyCapable: boolean
+  nativeDsdAdvertisedSampleRates: number[]
+  nativeDsdRuntimeReason: string
   bufferSizeFrames: number
   latencyFrames: number
   latencyMs: number
@@ -717,6 +724,13 @@ function createDefaultPlaybackInfo(
     driverDopCarrierSampleRates: [],
     driverDopCarrierFormats: [],
     driverNativeDsdSampleRates: [],
+    nativeDsdRuntimeState: 'unsupported',
+    nativeDsdRequestedRate: 0,
+    nativeDsdActualRate: 0,
+    nativeDsdChannels: 0,
+    nativeDsdExplicitlyCapable: false,
+    nativeDsdAdvertisedSampleRates: [],
+    nativeDsdRuntimeReason: '',
     bufferSizeFrames: 0,
     latencyFrames: 0,
     latencyMs: 0,

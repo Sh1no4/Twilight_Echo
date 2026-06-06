@@ -64,6 +64,33 @@ bool formatCanCarryDop(const AudioFormat& format, int dsdRate, int channels) {
          sampleFormatCanCarryDop(format.sampleFormat);
 }
 
+std::string nativeDsdRuntimeStateToString(NativeDsdRuntimeFactState state) {
+  switch (state) {
+    case NativeDsdRuntimeFactState::Candidate:
+      return "candidate";
+    case NativeDsdRuntimeFactState::Unproven:
+      return "unproven";
+    case NativeDsdRuntimeFactState::Mismatch:
+      return "mismatch";
+    case NativeDsdRuntimeFactState::Proven:
+      return "proven";
+    case NativeDsdRuntimeFactState::Unsupported:
+    default:
+      return "unsupported";
+  }
+}
+
+void applyNativeDsdRuntimeFacts(OutputInfo* info, const NativeDsdRuntimeFacts& facts) {
+  if (!info) return;
+  info->nativeDsdRuntimeState = nativeDsdRuntimeStateToString(facts.state);
+  info->nativeDsdRequestedRate = facts.requestedDsdRate;
+  info->nativeDsdActualRate = facts.actualDsdRate;
+  info->nativeDsdChannels = facts.channelCount;
+  info->nativeDsdExplicitlyCapable = facts.explicitlyCapable;
+  info->nativeDsdAdvertisedSampleRates = facts.advertisedSampleRates;
+  info->nativeDsdRuntimeReason = facts.reason;
+}
+
 int32_t signed24FromBytes(uint8_t low, uint8_t mid, uint8_t high) {
   int32_t value = static_cast<int32_t>(low) | (static_cast<int32_t>(mid) << 8) |
                   (static_cast<int32_t>(high) << 16);
@@ -932,6 +959,7 @@ PipelineStatus AudioPipeline::status() const {
   backendInfo.isDsd = outputInfo_.isDsd;
   backendInfo.dsdMode = outputInfo_.dsdMode;
   backendInfo.dsdRate = outputInfo_.dsdRate;
+  if (output_) applyNativeDsdRuntimeFacts(&backendInfo, output_->nativeDsdRuntimeFacts());
   backendInfo.channelRoutingMode = outputInfo_.channelRoutingMode;
   backendInfo.perfectReasonCode = outputInfo_.perfectReasonCode;
   backendInfo.perfectReason = outputInfo_.perfectReason;
@@ -1042,6 +1070,8 @@ bool AudioPipeline::configureActiveStreamLocked(
 bool AudioPipeline::updatePerfectLocked() {
   const OutputInfo backendInfo = output_ ? output_->outputInfo() : outputInfo_;
   const DopRuntimeFacts dopFacts = output_ ? output_->dopRuntimeFacts() : DopRuntimeFacts{};
+  const NativeDsdRuntimeFacts nativeDsdFacts =
+      output_ ? output_->nativeDsdRuntimeFacts() : unsupportedNativeDsdRuntimeFacts("No output backend is active");
   AudioFormat semanticOutputFormat = actualOutputPcmFormat(outputFormat_, backendInfo);
   const bool backendResampled = backendInfo.resampled;
   const std::string backendPerfectReason =
@@ -1089,6 +1119,7 @@ bool AudioPipeline::updatePerfectLocked() {
   outputInfo_.isDsd = stream_.isDsd;
   outputInfo_.dsdMode = stream_.isDsd ? dsdModeToString(stream_.dsdMode) : dsdModeToString(DsdMode::Pcm);
   outputInfo_.dsdRate = stream_.isDsd ? stream_.dsdRate : 0;
+  applyNativeDsdRuntimeFacts(&outputInfo_, nativeDsdFacts);
   outputInfo_.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
   outputInfo_.perfectReasonCode = result.perfectReasonCode;
   outputInfo_.perfectReason = result.perfectReason;

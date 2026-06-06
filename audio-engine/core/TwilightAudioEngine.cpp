@@ -387,6 +387,18 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
     json << out.driverNativeDsdSampleRates[i];
   }
   json << "],"
+       << "\"nativeDsdRuntimeState\":\"" << escapeJson(out.nativeDsdRuntimeState) << "\","
+       << "\"nativeDsdRequestedRate\":" << out.nativeDsdRequestedRate << ","
+       << "\"nativeDsdActualRate\":" << out.nativeDsdActualRate << ","
+       << "\"nativeDsdChannels\":" << out.nativeDsdChannels << ","
+       << "\"nativeDsdExplicitlyCapable\":" << (out.nativeDsdExplicitlyCapable ? "true" : "false") << ","
+       << "\"nativeDsdAdvertisedSampleRates\":[";
+  for (size_t i = 0; i < out.nativeDsdAdvertisedSampleRates.size(); ++i) {
+    if (i > 0) json << ",";
+    json << out.nativeDsdAdvertisedSampleRates[i];
+  }
+  json << "],"
+       << "\"nativeDsdRuntimeReason\":\"" << escapeJson(out.nativeDsdRuntimeReason) << "\","
        << "\"bufferSizeFrames\":" << out.bufferSizeFrames << ","
        << "\"latencyFrames\":" << out.latencyFrames << ","
        << "\"latencyMs\":" << out.latencyMs << ","

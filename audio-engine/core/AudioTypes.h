@@ -128,6 +128,13 @@ struct OutputInfo {
   std::vector<int> driverDopCarrierSampleRates;
   std::vector<std::string> driverDopCarrierFormats;
   std::vector<int> driverNativeDsdSampleRates;
+  std::string nativeDsdRuntimeState = "unsupported";
+  int nativeDsdRequestedRate = 0;
+  int nativeDsdActualRate = 0;
+  int nativeDsdChannels = 0;
+  bool nativeDsdExplicitlyCapable = false;
+  std::vector<int> nativeDsdAdvertisedSampleRates;
+  std::string nativeDsdRuntimeReason;
   int bufferSizeFrames = 0;
   int latencyFrames = 0;
   double latencyMs = 0.0;

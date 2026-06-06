@@ -160,6 +160,13 @@ const accessModeLabels: Record<string, string> = {
   direct: 'Direct',
   plugin: 'Plugin'
 }
+const nativeDsdStateLabels: Record<string, string> = {
+  unsupported: 'Native DSD Unsupported',
+  candidate: 'Native DSD Candidate',
+  unproven: 'Native DSD Unproven',
+  mismatch: 'Native DSD Mismatch',
+  proven: 'Native DSD Proven'
+}
 
 function canonicalSourceExact(): boolean {
   return outputInfo.value?.sourceExact === true
@@ -179,6 +186,28 @@ function formatPerfectReason(reason: string): string {
   return trimmed
 }
 
+function nativeDsdRuntimeTone(state: string): 'success' | 'warning' | 'muted' {
+  if (state === 'proven') return 'success'
+  if (state === 'candidate' || state === 'unproven' || state === 'mismatch') return 'warning'
+  return 'muted'
+}
+
+const nativeDsdRuntimeText = computed(() => {
+  const info = outputInfo.value
+  if (!info) return ''
+  const state = info.nativeDsdRuntimeState || 'unsupported'
+  const hasRuntimeInterest =
+    state !== 'unsupported' ||
+    info.driverNativeDsdCapable ||
+    info.nativeDsdRequestedRate > 0 ||
+    info.nativeDsdExplicitlyCapable
+  if (!hasRuntimeInterest) return ''
+  const label = nativeDsdStateLabels[state] ?? `Native DSD ${state}`
+  const rate =
+    info.nativeDsdActualRate || info.nativeDsdRequestedRate || info.driverNativeDsdSampleRates?.[0] || 0
+  return rate > 0 ? `${label} ${compactRate(rate)}` : label
+})
+
 const audioStatusChips = computed(() => {
   const chips: { label: string; tone?: 'success' | 'warning' | 'muted' }[] = []
   const sourceExact = canonicalSourceExact()
@@ -195,6 +224,12 @@ const audioStatusChips = computed(() => {
     chips.push({
       label: accessModeLabels[outputInfo.value.accessMode] ?? outputInfo.value.accessMode,
       tone: outputInfo.value.accessMode === 'shared' ? 'muted' : 'success'
+    })
+  }
+  if (nativeDsdRuntimeText.value) {
+    chips.push({
+      label: nativeDsdRuntimeText.value,
+      tone: nativeDsdRuntimeTone(outputInfo.value?.nativeDsdRuntimeState || 'unsupported')
     })
   }
   return chips
@@ -324,6 +359,10 @@ const outputDiagnosticsText = computed(() => {
   const diagnostics = outputInfo.value?.diagnostics ?? playbackInfo.value?.diagnostics
   if (!diagnostics) return 'Underrun 0 · Drop 0 · Restart 0 · Lost 0 · Recovery 0'
   return `Underrun ${diagnostics.sessionUnderrunCount} · Drop ${diagnostics.sessionBufferDropCount} · Restart ${diagnostics.driverRestartCount} · Lost ${diagnostics.deviceLostCount} · Recovery ${diagnostics.sessionRecoveryCount}`
+})
+const nativeDsdRuntimeReasonText = computed(() => {
+  const reason = outputInfo.value?.nativeDsdRuntimeReason?.trim()
+  return reason ? `Native DSD: ${reason}` : ''
 })
 
 const replayGainMiniOptions = [
@@ -538,6 +577,9 @@ function openEqualizer(): void {
               </p>
               <p class="more-item-desc compact-reason">
                 {{ outputDiagnosticsText }}
+              </p>
+              <p v-if="nativeDsdRuntimeReasonText" class="more-item-desc compact-reason">
+                {{ nativeDsdRuntimeReasonText }}
               </p>
               <div class="more-item">
                 <div class="more-item-header">

@@ -237,6 +237,13 @@ const accessModeLabels: Record<string, string> = {
   direct: 'Direct',
   plugin: 'Plugin'
 }
+const nativeDsdStateLabels: Record<string, string> = {
+  unsupported: 'Native DSD Unsupported',
+  candidate: 'Native DSD Candidate',
+  unproven: 'Native DSD Unproven',
+  mismatch: 'Native DSD Mismatch',
+  proven: 'Native DSD Proven'
+}
 
 function canonicalSourceExact(): boolean {
   return outputInfo.value?.sourceExact === true
@@ -255,6 +262,33 @@ function formatPerfectReason(reason: string): string {
   if (!trimmed) return ''
   return trimmed
 }
+
+function nativeDsdRuntimeTone(state: string): 'success' | 'warning' | 'muted' {
+  if (state === 'proven') return 'success'
+  if (state === 'candidate' || state === 'unproven' || state === 'mismatch') return 'warning'
+  return 'muted'
+}
+
+const nativeDsdRuntimeText = computed(() => {
+  const info = outputInfo.value
+  if (!info) return ''
+  const state = info.nativeDsdRuntimeState || 'unsupported'
+  const hasRuntimeInterest =
+    state !== 'unsupported' ||
+    info.driverNativeDsdCapable ||
+    info.nativeDsdRequestedRate > 0 ||
+    info.nativeDsdExplicitlyCapable
+  if (!hasRuntimeInterest) return ''
+  const label = nativeDsdStateLabels[state] ?? `Native DSD ${state}`
+  const rate =
+    info.nativeDsdActualRate || info.nativeDsdRequestedRate || info.driverNativeDsdSampleRates?.[0] || 0
+  return rate > 0 ? `${label} ${compactRate(rate)}` : label
+})
+
+const nativeDsdRuntimeReasonText = computed(() => {
+  const reason = outputInfo.value?.nativeDsdRuntimeReason?.trim()
+  return reason ? `Native DSD: ${reason}` : ''
+})
 
 const perfectReason = computed(() => outputInfo.value?.perfectReason || '')
 const readablePerfectReason = computed(() => {
@@ -814,9 +848,19 @@ onMounted(async () => {
                   outputInfo?.actualBackend ? formatBackendLabel(outputInfo.actualBackend) : 'Backend pending'
                 }}</span>
                 <span class="status-chip">{{ outputFormatText }}</span>
+                <span
+                  v-if="nativeDsdRuntimeText"
+                  class="status-chip"
+                  :class="nativeDsdRuntimeTone(outputInfo?.nativeDsdRuntimeState || 'unsupported')"
+                >
+                  {{ nativeDsdRuntimeText }}
+                </span>
                 <span v-if="outputChainText" class="status-chip status-chain">{{ outputChainText }}</span>
                 <span class="status-chip">{{ outputLatencyText }}</span>
                 <span class="status-chip">{{ outputDiagnosticsText }}</span>
+                <span v-if="nativeDsdRuntimeReasonText" class="status-chip status-chain">{{
+                  nativeDsdRuntimeReasonText
+                }}</span>
               </div>
             </div>
 

@@ -298,6 +298,13 @@ interface OutputInfo {
   driverDopCarrierSampleRates: number[]
   driverDopCarrierFormats: string[]
   driverNativeDsdSampleRates: number[]
+  nativeDsdRuntimeState: string
+  nativeDsdRequestedRate: number
+  nativeDsdActualRate: number
+  nativeDsdChannels: number
+  nativeDsdExplicitlyCapable: boolean
+  nativeDsdAdvertisedSampleRates: number[]
+  nativeDsdRuntimeReason: string
   bufferSizeFrames: number
   latencyFrames: number
   latencyMs: number

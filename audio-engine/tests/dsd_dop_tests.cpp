@@ -227,6 +227,7 @@ void testDsfReader() {
   assert(reader.readBytes(bytes.data(), bytes.size()) == 16);
   assert(bytes[0] == 0x11);
   assert(bytes[8] == 0x99);
+  reader.close();
   std::filesystem::remove(path);
 }
 
@@ -242,6 +243,7 @@ void testDffReader() {
   assert(info.dsdRate == 128);
   assert(info.bitOrder == DsdBitOrder::MsbFirst);
   assert(info.packing == DsdPacking::DffInterleaved);
+  reader.close();
   std::filesystem::remove(path);
 }
 
@@ -258,8 +260,8 @@ void testDopPackerInt24() {
   assert(packer.pack(dsd, sizeof(dsd), &pcm) == 2);
   assert(pcm.size() == 12);
   assert(pcm[0] == 0x11 && pcm[1] == 0x22 && pcm[2] == 0x05);
-  assert(pcm[3] == 0x33 && pcm[4] == 0x44 && pcm[5] == 0x05);
-  assert(pcm[6] == 0x55 && pcm[7] == 0x66 && pcm[8] == 0xfa);
+  assert(pcm[3] == 0x55 && pcm[4] == 0x66 && pcm[5] == 0x05);
+  assert(pcm[6] == 0x33 && pcm[7] == 0x44 && pcm[8] == 0xfa);
   assert(pcm[9] == 0x77 && pcm[10] == 0x88 && pcm[11] == 0xfa);
 }
 
