@@ -6,11 +6,13 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace twilight::audio {
 
 using RenderCallback = std::function<size_t(float* interleaved, size_t frameCount)>;
+using TypedRenderCallback = std::function<size_t(PcmBlock& block)>;
 
 enum class OutputBackendEvent {
   DeviceInvalidated,
@@ -80,6 +82,14 @@ class IOutputBackend {
   virtual bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) = 0;
   virtual bool setOutputConfig(const OutputConfig& config, std::string* error) = 0;
   virtual bool start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) = 0;
+  virtual bool startTyped(
+      TypedRenderCallback callback,
+      RenderCallback fallbackCallback,
+      OutputEventCallback eventCallback,
+      std::string* error) {
+    (void)callback;
+    return start(std::move(fallbackCallback), std::move(eventCallback), error);
+  }
   virtual void stop() = 0;
   virtual void close() = 0;
 

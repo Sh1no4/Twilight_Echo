@@ -108,8 +108,14 @@ void assertDecoderReportsPcm(const std::string& name, int bitsPerSample) {
   assert(stream.sourceFormat.bitDepth == bitsPerSample);
   assert(stream.decodedFormat.sampleRate == 48000);
   assert(stream.decodedFormat.channelCount == 2);
-  assert(stream.decodedFormat.bitDepth == 32);
-  assert(stream.decodedFormat.sampleFormat == AudioSampleFormat::Float32Interleaved);
+  assert(stream.decodedFormat.bitDepth == bitsPerSample);
+  if (bitsPerSample == 16) {
+    assert(stream.decodedFormat.sampleFormat == AudioSampleFormat::Int16Interleaved);
+  } else if (bitsPerSample == 24) {
+    assert(stream.decodedFormat.sampleFormat == AudioSampleFormat::Int24Interleaved);
+  } else {
+    assert(stream.decodedFormat.sampleFormat == AudioSampleFormat::Int32Interleaved);
+  }
   decoder.close();
   std::filesystem::remove(path);
 }

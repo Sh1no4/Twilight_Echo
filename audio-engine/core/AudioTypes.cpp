@@ -201,6 +201,25 @@ std::string sampleFormatToString(AudioSampleFormat format) {
   }
 }
 
+size_t audioSampleFormatBytes(AudioSampleFormat format) {
+  switch (format) {
+    case AudioSampleFormat::Int16Interleaved:
+      return 2;
+    case AudioSampleFormat::Int24Interleaved:
+      return 3;
+    case AudioSampleFormat::Int24In32Interleaved:
+    case AudioSampleFormat::Int32Interleaved:
+    case AudioSampleFormat::Float32Interleaved:
+    default:
+      return 4;
+  }
+}
+
+size_t audioFormatBytesPerFrame(const AudioFormat& format) {
+  if (format.channelCount <= 0) return 0;
+  return audioSampleFormatBytes(format.sampleFormat) * static_cast<size_t>(format.channelCount);
+}
+
 int normalizedPcmBitDepth(int bitDepth) {
   if (bitDepth <= 0) return 0;
   if (bitDepth <= 16) return 16;

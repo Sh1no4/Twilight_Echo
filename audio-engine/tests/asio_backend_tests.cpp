@@ -50,6 +50,14 @@ int32_t readInt24In32(const std::vector<uint8_t>& bytes) {
   return readInt32(bytes) >> 8;
 }
 
+void writeInt16Bytes(uint8_t* output, int16_t value) {
+  std::memcpy(output, &value, sizeof(value));
+}
+
+void writeInt32Bytes(uint8_t* output, int32_t value) {
+  std::memcpy(output, &value, sizeof(value));
+}
+
 void testFormatNegotiation() {
   auto host = makeHost();
   auto* rawHost = host.get();
@@ -433,6 +441,61 @@ void testPacking() {
   }
 }
 
+void testTypedPassthroughPacking() {
+  struct Case {
+    AudioSampleFormat sampleFormat;
+    int bitDepth;
+    std::vector<uint8_t> left;
+    std::vector<uint8_t> right;
+  };
+  const Case cases[] = {
+      {AudioSampleFormat::Int16Interleaved, 16, {0x34, 0x12}, {0xcc, 0xed}},
+      {AudioSampleFormat::Int24Interleaved, 24, {0x11, 0x22, 0x33}, {0xaa, 0xbb, 0xcc}},
+      {AudioSampleFormat::Int24In32Interleaved, 24, {0x00, 0x11, 0x22, 0x33}, {0x00, 0xaa, 0xbb, 0xcc}},
+      {AudioSampleFormat::Int32Interleaved, 32, {0x11, 0x22, 0x33, 0x44}, {0xaa, 0xbb, 0xcc, 0xdd}},
+  };
+
+  for (const auto& item : cases) {
+    auto host = std::make_unique<MockAsioHost>();
+    auto device = makeMockAsioDevice("asio:typed", {48000}, 2, item.sampleFormat);
+    device.sampleFormats = {item.sampleFormat};
+    device.bitDepths = {item.bitDepth};
+    host->devices.push_back(device);
+    auto* rawHost = host.get();
+    rawHost->channelFormats = {item.sampleFormat, item.sampleFormat};
+
+    AsioBackend backend(std::move(host));
+    std::string error;
+    assert(backend.open("asio:typed", sourceFormat(48000, item.bitDepth, 2, item.sampleFormat), &error));
+    bool typedCalled = false;
+    bool fallbackCalled = false;
+    assert(backend.startTyped(
+        [&](PcmBlock& block) {
+          typedCalled = true;
+          assert(block.format.sampleFormat == item.sampleFormat);
+          assert(block.format.channelCount == 2);
+          const size_t bytesPerSample = audioSampleFormatBytes(item.sampleFormat);
+          for (size_t frame = 0; frame < block.frames; ++frame) {
+            std::memcpy(block.data + (frame * 2) * bytesPerSample, item.left.data(), bytesPerSample);
+            std::memcpy(block.data + (frame * 2 + 1) * bytesPerSample, item.right.data(), bytesPerSample);
+          }
+          return block.frames;
+        },
+        [&](float*, size_t frames) {
+          fallbackCalled = true;
+          return frames;
+        },
+        nullptr,
+        &error));
+
+    rawHost->triggerBufferSwitch(0);
+    assert(typedCalled);
+    assert(!fallbackCalled);
+    assert(std::equal(item.left.begin(), item.left.end(), rawHost->channelBuffers[0].buffers[0].begin()));
+    assert(std::equal(item.right.begin(), item.right.end(), rawHost->channelBuffers[1].buffers[0].begin()));
+  }
+}
+
 void testStartFailurePaths() {
   {
     auto host = makeHost();
@@ -654,6 +717,7 @@ int main() {
   testActualOutputFormatRefreshAfterBuffers();
   testBufferSizeMatrix();
   testPacking();
+  testTypedPassthroughPacking();
   testStartFailurePaths();
   testRecovery();
   testRecoveryEventDiagnostics();

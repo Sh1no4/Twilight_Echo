@@ -62,6 +62,7 @@ struct WasapiExclusiveBackend::Impl {
   UINT32 bufferFrameCount = 0;
   REFERENCE_TIME bufferDuration = 0;
   RenderCallback callback;
+  TypedRenderCallback typedCallback;
   OutputEventCallback eventCallback;
   std::vector<float> renderScratch;
   std::vector<uint8_t> waveFormatBytes;
@@ -279,6 +280,23 @@ struct WasapiExclusiveBackend::Impl {
       return false;
     }
 
+    if (typedCallback) {
+      PcmBlock block;
+      block.format = outputFormat;
+      block.data = data;
+      block.frames = frameCount;
+      block.byteSize = static_cast<size_t>(frameCount) * audioFormatBytesPerFrame(outputFormat);
+      const size_t rendered = typedCallback(block);
+      if (rendered > 0) {
+        hr = renderClient->ReleaseBuffer(frameCount, 0);
+        if (FAILED(hr)) {
+          notifyFailure(hr, "无法提交独占输出缓冲区");
+          return false;
+        }
+        return true;
+      }
+    }
+
     const size_t sampleCount = static_cast<size_t>(frameCount) * static_cast<size_t>(outputFormat.channelCount);
     renderScratch.assign(sampleCount, 0.0f);
     if (callback) {
@@ -358,6 +376,7 @@ struct WasapiExclusiveBackend::Impl {
     bufferFrameCount = 0;
     bufferDuration = 0;
     callback = nullptr;
+    typedCallback = nullptr;
     eventCallback = nullptr;
     renderScratch.clear();
     waveFormatBytes.clear();
@@ -447,6 +466,7 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
   }
 
   impl_->callback = std::move(callback);
+  impl_->typedCallback = nullptr;
   impl_->eventCallback = std::move(eventCallback);
 
   if (!impl_->renderPacket(impl_->bufferFrameCount)) {
@@ -471,6 +491,50 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
   return true;
 #else
   (void)callback;
+  (void)eventCallback;
+  if (error) *error = "当前构建未启用独占输出";
+  return false;
+#endif
+}
+
+bool WasapiExclusiveBackend::startTyped(
+    TypedRenderCallback callback,
+    RenderCallback fallbackCallback,
+    OutputEventCallback eventCallback,
+    std::string* error) {
+#if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+  if (!impl_->audioClient || !impl_->renderClient) {
+    impl_->recordFailure("backend_start_failure", "独占输出后端尚未打开", error);
+    return false;
+  }
+
+  impl_->typedCallback = std::move(callback);
+  impl_->callback = std::move(fallbackCallback);
+  impl_->eventCallback = std::move(eventCallback);
+
+  if (!impl_->renderPacket(impl_->bufferFrameCount)) {
+    if (error) *error = impl_->diagnostics.lastError.empty() ? "无法预填充独占输出缓冲区" : impl_->diagnostics.lastError;
+    return false;
+  }
+
+  impl_->running = true;
+  impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+
+  HRESULT hr = impl_->audioClient->Start();
+  if (!wasapi::succeeded(hr, error, "无法启动独占输出音频流")) {
+    if (wasapi::isDeviceInvalidated(hr)) ++impl_->diagnostics.deviceLostCount;
+    impl_->recordFailure(
+        wasapi::isDeviceInvalidated(hr) ? "device_lost" : "backend_start_failure",
+        "无法启动独占输出音频流 (错误码 " + hresultSuffix(hr) + ")",
+        error);
+    impl_->stop();
+    return false;
+  }
+
+  return true;
+#else
+  (void)callback;
+  (void)fallbackCallback;
   (void)eventCallback;
   if (error) *error = "当前构建未启用独占输出";
   return false;

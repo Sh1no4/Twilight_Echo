@@ -489,6 +489,25 @@ bool AsioBackend::start(RenderCallback callback, OutputEventCallback eventCallba
   {
     std::lock_guard lock(mutex_);
     callback_ = std::move(callback);
+    typedCallback_ = nullptr;
+    eventCallback_ = std::move(eventCallback);
+  }
+  return createAndStartHost(error);
+}
+
+bool AsioBackend::startTyped(
+    TypedRenderCallback callback,
+    RenderCallback fallbackCallback,
+    OutputEventCallback eventCallback,
+    std::string* error) {
+  if (!opened_) {
+    if (error) *error = "ASIO 后端尚未打开";
+    return false;
+  }
+  {
+    std::lock_guard lock(mutex_);
+    typedCallback_ = std::move(callback);
+    callback_ = std::move(fallbackCallback);
     eventCallback_ = std::move(eventCallback);
   }
   return createAndStartHost(error);
@@ -504,8 +523,10 @@ void AsioBackend::close() {
   if (host_) host_->close();
   std::lock_guard lock(mutex_);
   callback_ = nullptr;
+  typedCallback_ = nullptr;
   eventCallback_ = nullptr;
   renderScratch_.clear();
+  typedRenderScratch_.clear();
   recoveryInProgress_ = false;
   dopRuntimeFacts_ = {};
   nativeDsdRuntimeFacts_ = unsupportedNativeDsdRuntimeFacts("No Native DSD stream was requested");
@@ -731,13 +752,50 @@ bool AsioBackend::createAndStartHost(std::string* error) {
 
 void AsioBackend::renderBuffer(long bufferIndex) {
   RenderCallback callback;
+  TypedRenderCallback typedCallback;
+  OutputConfig outputConfig;
+  AudioFormat outputFormat;
+  bool actualOutputChannelFormatsMatch = false;
   {
     std::lock_guard lock(mutex_);
     callback = callback_;
+    typedCallback = typedCallback_;
+    outputConfig = outputConfig_;
+    outputFormat = outputFormat_;
+    actualOutputChannelFormatsMatch = actualOutputChannelFormatsMatch_;
   }
-  const int sourceChannels = std::max(1, outputFormat_.channelCount);
+  const int sourceChannels = std::max(1, outputFormat.channelCount);
   const int outputChannels = std::max(1, openConfig_.format.channelCount);
   const size_t frames = static_cast<size_t>(std::max<long>(1, bufferSizeFrames_));
+
+  if (typedCallback && outputConfig.routingMode == ChannelRoutingMode::Auto && sourceChannels == outputChannels &&
+      actualOutputChannelFormatsMatch && host_->outputSampleFormat(0) == outputFormat.sampleFormat &&
+      audioFormatBytesPerFrame(outputFormat) > 0) {
+    const size_t sampleStride = bytesPerSample(outputFormat.sampleFormat);
+    const size_t bytesPerFrame = audioFormatBytesPerFrame(outputFormat);
+    typedRenderScratch_.assign(frames * bytesPerFrame, 0);
+    PcmBlock block;
+    block.format = outputFormat;
+    block.data = typedRenderScratch_.data();
+    block.frames = frames;
+    block.byteSize = typedRenderScratch_.size();
+    const size_t rendered = typedCallback(block);
+    if (rendered > 0) {
+      for (int channel = 0; channel < outputChannels; ++channel) {
+        auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
+        if (!output) continue;
+        if (host_->outputSampleFormat(channel) != outputFormat.sampleFormat) continue;
+        for (size_t frame = 0; frame < frames; ++frame) {
+          const size_t sourceOffset =
+              (frame * static_cast<size_t>(sourceChannels) + static_cast<size_t>(channel)) * sampleStride;
+          std::memcpy(output + frame * sampleStride, typedRenderScratch_.data() + sourceOffset, sampleStride);
+        }
+      }
+      host_->outputReady();
+      return;
+    }
+  }
+
   const size_t samples = frames * static_cast<size_t>(sourceChannels);
   renderScratch_.assign(samples, 0.0f);
   if (callback) callback(renderScratch_.data(), frames);
@@ -749,7 +807,7 @@ void AsioBackend::renderBuffer(long bufferIndex) {
     const size_t stride = bytesPerSample(sampleFormat);
     for (size_t frame = 0; frame < frames; ++frame) {
       float sample = 0.0f;
-      switch (outputConfig_.routingMode) {
+      switch (outputConfig.routingMode) {
         case ChannelRoutingMode::MonoToStereo:
         case ChannelRoutingMode::MonoToMultichannel:
           if (channel < 2) sample = renderScratch_[frame * static_cast<size_t>(sourceChannels)];

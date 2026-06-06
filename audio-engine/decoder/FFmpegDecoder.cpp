@@ -176,6 +176,49 @@ int inferDsdRate(int sampleRate, bool dopCarrier = false) {
   return 0;
 }
 
+AVSampleFormat swrSampleFormatFor(AudioSampleFormat format) {
+  switch (format) {
+    case AudioSampleFormat::Int16Interleaved:
+      return AV_SAMPLE_FMT_S16;
+    case AudioSampleFormat::Int24Interleaved:
+    case AudioSampleFormat::Int24In32Interleaved:
+    case AudioSampleFormat::Int32Interleaved:
+      return AV_SAMPLE_FMT_S32;
+    case AudioSampleFormat::Float32Interleaved:
+    default:
+      return AV_SAMPLE_FMT_FLT;
+  }
+}
+
+bool isTypedIntegerFormat(AudioSampleFormat format) {
+  return format == AudioSampleFormat::Int16Interleaved || format == AudioSampleFormat::Int24Interleaved ||
+         format == AudioSampleFormat::Int24In32Interleaved || format == AudioSampleFormat::Int32Interleaved;
+}
+
+void appendConvertedSamples(
+    const uint8_t* source,
+    size_t sampleCount,
+    AudioSampleFormat outputFormat,
+    std::vector<uint8_t>* pending) {
+  if (!source || !pending || sampleCount == 0) return;
+  if (outputFormat == AudioSampleFormat::Int24Interleaved) {
+    const auto* values = reinterpret_cast<const int32_t*>(source);
+    const size_t start = pending->size();
+    pending->resize(start + sampleCount * 3);
+    for (size_t i = 0; i < sampleCount; ++i) {
+      const auto value = static_cast<uint32_t>(values[i]);
+      (*pending)[start + i * 3 + 0] = static_cast<uint8_t>((value >> 8) & 0xff);
+      (*pending)[start + i * 3 + 1] = static_cast<uint8_t>((value >> 16) & 0xff);
+      (*pending)[start + i * 3 + 2] = static_cast<uint8_t>((value >> 24) & 0xff);
+    }
+    return;
+  }
+
+  const size_t bytesPerSample = audioSampleFormatBytes(outputFormat);
+  const size_t byteCount = sampleCount * bytesPerSample;
+  pending->insert(pending->end(), source, source + byteCount);
+}
+
 }  // namespace
 #endif
 
@@ -192,7 +235,7 @@ struct FFmpegDecoder::Impl {
   SwrContext* swr = nullptr;
   int audioStreamIndex = -1;
   bool inputEof = false;
-  std::vector<float> pending;
+  std::vector<uint8_t> pending;
   size_t pendingFrameOffset = 0;
   AVChannelLayout targetLayout{};
 
@@ -246,8 +289,10 @@ struct FFmpegDecoder::Impl {
         AV_ROUND_UP));
     if (outSamples <= 0) return true;
 
-    std::vector<float> converted(static_cast<size_t>(outSamples) * static_cast<size_t>(channels));
-    uint8_t* outData[] = {reinterpret_cast<uint8_t*>(converted.data())};
+    const AVSampleFormat swrOutputFormat = swrSampleFormatFor(outputFormat.sampleFormat);
+    const size_t swrBytesPerSample = static_cast<size_t>(std::max(1, av_get_bytes_per_sample(swrOutputFormat)));
+    std::vector<uint8_t> converted(static_cast<size_t>(outSamples) * static_cast<size_t>(channels) * swrBytesPerSample);
+    uint8_t* outData[] = {converted.data()};
     const int actualSamples = swr_convert(
         swr,
         outData,
@@ -259,8 +304,12 @@ struct FFmpegDecoder::Impl {
       return false;
     }
 
-    converted.resize(static_cast<size_t>(actualSamples) * static_cast<size_t>(channels));
-    pending.insert(pending.end(), converted.begin(), converted.end());
+    converted.resize(static_cast<size_t>(actualSamples) * static_cast<size_t>(channels) * swrBytesPerSample);
+    appendConvertedSamples(
+        converted.data(),
+        static_cast<size_t>(actualSamples) * static_cast<size_t>(channels),
+        outputFormat.sampleFormat,
+        &pending);
     return true;
   }
 
@@ -445,9 +494,9 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
   AudioFormat defaultOutput = impl_->streamInfo.sourceFormat;
   if (sourceDsd && impl_->codecContext->sample_rate > 0) {
     defaultOutput.sampleRate = impl_->codecContext->sample_rate;
+    defaultOutput.bitDepth = 32;
+    defaultOutput.sampleFormat = AudioSampleFormat::Float32Interleaved;
   }
-  defaultOutput.bitDepth = 32;
-  defaultOutput.sampleFormat = AudioSampleFormat::Float32Interleaved;
   return setOutputFormat(defaultOutput, error);
 #else
   (void)source;
@@ -470,6 +519,10 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
     if (error) *error = "请求的输出格式无效";
     return false;
   }
+  if (impl_->streamInfo.isDsd && isTypedIntegerFormat(format.sampleFormat)) {
+    if (error) *error = "DSD PCM fallback 只能输出 Float32 工作格式";
+    return false;
+  }
 
   if (impl_->swr) {
     swr_free(&impl_->swr);
@@ -480,7 +533,7 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
   int ret = swr_alloc_set_opts2(
       &impl_->swr,
       &impl_->targetLayout,
-      AV_SAMPLE_FMT_FLT,
+      swrSampleFormatFor(format.sampleFormat),
       format.sampleRate,
       &impl_->codecContext->ch_layout,
       impl_->codecContext->sample_fmt,
@@ -499,8 +552,9 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
   }
 
   impl_->outputFormat = format;
-  impl_->outputFormat.bitDepth = 32;
-  impl_->outputFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
+  if (impl_->outputFormat.bitDepth <= 0) {
+    impl_->outputFormat.bitDepth = effectivePcmBitDepth(impl_->outputFormat);
+  }
   impl_->streamInfo.decodedFormat = impl_->outputFormat;
   impl_->resetPending();
   return true;
@@ -514,31 +568,47 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
 size_t FFmpegDecoder::readFrames(float* output, size_t frameCount, std::string* error) {
   if (!output || frameCount == 0) return 0;
   std::fill(output, output + frameCount * static_cast<size_t>(std::max(1, impl_->outputFormat.channelCount)), 0.0f);
+  if (impl_->outputFormat.sampleFormat != AudioSampleFormat::Float32Interleaved) return 0;
+
+  PcmBlock block;
+  block.format = impl_->outputFormat;
+  block.data = reinterpret_cast<uint8_t*>(output);
+  block.frames = frameCount;
+  block.byteSize = frameCount * audioFormatBytesPerFrame(block.format);
+  return readFrames(block, error);
+}
+
+size_t FFmpegDecoder::readFrames(PcmBlock& output, std::string* error) {
+  if (!output.data || output.frames == 0) return 0;
+  if (output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
 
 #if defined(TAE_HAS_FFMPEG)
   if (!impl_->codecContext || !impl_->swr) return 0;
+  if (!pcmFormatsExactMatch(output.format, impl_->outputFormat)) return 0;
 
   const size_t channels = static_cast<size_t>(std::max(1, impl_->outputFormat.channelCount));
+  const size_t bytesPerFrame = audioFormatBytesPerFrame(impl_->outputFormat);
+  if (bytesPerFrame == 0) return 0;
   size_t copiedFrames = 0;
 
-  while (copiedFrames < frameCount) {
+  while (copiedFrames < output.frames) {
     const size_t pendingFrames =
-        impl_->pending.size() / channels > impl_->pendingFrameOffset
-            ? impl_->pending.size() / channels - impl_->pendingFrameOffset
+        impl_->pending.size() / bytesPerFrame > impl_->pendingFrameOffset
+            ? impl_->pending.size() / bytesPerFrame - impl_->pendingFrameOffset
             : 0;
     if (pendingFrames == 0) {
       if (!impl_->decodeOneFrame(error)) break;
       continue;
     }
 
-    const size_t toCopy = std::min(frameCount - copiedFrames, pendingFrames);
-    const size_t srcOffset = impl_->pendingFrameOffset * channels;
-    const size_t dstOffset = copiedFrames * channels;
-    std::memcpy(output + dstOffset, impl_->pending.data() + srcOffset, toCopy * channels * sizeof(float));
+    const size_t toCopy = std::min(output.frames - copiedFrames, pendingFrames);
+    const size_t srcOffset = impl_->pendingFrameOffset * bytesPerFrame;
+    const size_t dstOffset = copiedFrames * bytesPerFrame;
+    std::memcpy(output.data + dstOffset, impl_->pending.data() + srcOffset, toCopy * bytesPerFrame);
 
     impl_->pendingFrameOffset += toCopy;
     copiedFrames += toCopy;
-    if (impl_->pendingFrameOffset >= impl_->pending.size() / channels) {
+    if (impl_->pendingFrameOffset >= impl_->pending.size() / bytesPerFrame) {
       impl_->resetPending();
     }
   }
@@ -546,6 +616,7 @@ size_t FFmpegDecoder::readFrames(float* output, size_t frameCount, std::string* 
   return copiedFrames;
 #else
   (void)error;
+  (void)output;
   return 0;
 #endif
 }

@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -95,8 +96,11 @@ struct BackendSnapshot {
   AudioFormat openedFormat;
   OutputInfo info;
   bool started = false;
+  bool typedStarted = false;
   bool stopped = false;
   bool closed = false;
+  int typedRenderCalls = 0;
+  int floatRenderCalls = 0;
 };
 
 struct BackendState {
@@ -106,10 +110,14 @@ struct BackendState {
   AudioFormat openedFormat;
   OutputInfo info;
   RenderCallback render;
+  TypedRenderCallback typedRender;
   OutputEventCallback event;
   bool started = false;
+  bool typedStarted = false;
   bool stopped = false;
   bool closed = false;
+  int typedRenderCalls = 0;
+  int floatRenderCalls = 0;
 };
 
 struct BackendRegistry {
@@ -142,8 +150,11 @@ struct BackendRegistry {
       snapshot.openedFormat = state->openedFormat;
       snapshot.info = state->info;
       snapshot.started = state->started;
+      snapshot.typedStarted = state->typedStarted;
       snapshot.stopped = state->stopped;
       snapshot.closed = state->closed;
+      snapshot.typedRenderCalls = state->typedRenderCalls;
+      snapshot.floatRenderCalls = state->floatRenderCalls;
       result.push_back(snapshot);
     }
     return result;
@@ -198,6 +209,50 @@ bool jsonContains(const std::string& json, const std::string& needle) {
   return json.find(needle) != std::string::npos;
 }
 
+int32_t floatToSignedInt(double sample, int bits) {
+  const double clamped = std::clamp(sample, -1.0, 1.0);
+  if (bits == 16) {
+    return static_cast<int32_t>(std::clamp(std::llround(clamped * 32768.0), -32768LL, 32767LL));
+  }
+  if (bits == 24) {
+    return static_cast<int32_t>(std::clamp(std::llround(clamped * 8388608.0), -8388608LL, 8388607LL));
+  }
+  return static_cast<int32_t>(std::clamp(std::llround(clamped * 2147483648.0), -2147483648LL, 2147483647LL));
+}
+
+void writeSample(double sample, AudioSampleFormat format, uint8_t* output) {
+  switch (format) {
+    case AudioSampleFormat::Int16Interleaved: {
+      const int16_t value = static_cast<int16_t>(floatToSignedInt(sample, 16));
+      std::memcpy(output, &value, sizeof(value));
+      break;
+    }
+    case AudioSampleFormat::Int24Interleaved: {
+      const auto value = static_cast<uint32_t>(floatToSignedInt(sample, 24));
+      output[0] = static_cast<uint8_t>(value & 0xff);
+      output[1] = static_cast<uint8_t>((value >> 8) & 0xff);
+      output[2] = static_cast<uint8_t>((value >> 16) & 0xff);
+      break;
+    }
+    case AudioSampleFormat::Int24In32Interleaved: {
+      const int32_t value = static_cast<int32_t>(static_cast<uint32_t>(floatToSignedInt(sample, 24)) << 8);
+      std::memcpy(output, &value, sizeof(value));
+      break;
+    }
+    case AudioSampleFormat::Int32Interleaved: {
+      const int32_t value = floatToSignedInt(sample, 32);
+      std::memcpy(output, &value, sizeof(value));
+      break;
+    }
+    case AudioSampleFormat::Float32Interleaved:
+    default: {
+      const float value = static_cast<float>(sample);
+      std::memcpy(output, &value, sizeof(value));
+      break;
+    }
+  }
+}
+
 bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 1500) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
   while (std::chrono::steady_clock::now() < deadline) {
@@ -231,14 +286,34 @@ void pumpBackend(const std::shared_ptr<BackendState>& state, size_t iterations, 
   assert(state);
   assert(state->openedFormat.channelCount > 0);
   std::vector<float> buffer(frames * static_cast<size_t>(std::max(1, state->openedFormat.channelCount)));
+  std::vector<uint8_t> typedBuffer(frames * audioFormatBytesPerFrame(state->openedFormat));
   for (size_t i = 0; i < iterations; ++i) {
     RenderCallback render;
+    TypedRenderCallback typedRender;
     {
       std::lock_guard lock(g_backendRegistry.mutex);
       render = state->render;
+      typedRender = state->typedRender;
     }
-    assert(render);
-    render(buffer.data(), frames);
+    bool renderedTyped = false;
+    if (typedRender && !typedBuffer.empty()) {
+      PcmBlock block;
+      block.format = state->openedFormat;
+      block.data = typedBuffer.data();
+      block.frames = frames;
+      block.byteSize = typedBuffer.size();
+      renderedTyped = typedRender(block) > 0;
+      if (renderedTyped) {
+        std::lock_guard lock(g_backendRegistry.mutex);
+        ++state->typedRenderCalls;
+      }
+    }
+    if (!renderedTyped) {
+      assert(render);
+      render(buffer.data(), frames);
+      std::lock_guard lock(g_backendRegistry.mutex);
+      ++state->floatRenderCalls;
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
 }
@@ -307,8 +382,25 @@ class FakeOutputBackend final : public IOutputBackend {
     (void)error;
     std::lock_guard lock(g_backendRegistry.mutex);
     state_->render = std::move(callback);
+    state_->typedRender = nullptr;
     state_->event = std::move(eventCallback);
     state_->started = true;
+    state_->typedStarted = false;
+    return true;
+  }
+
+  bool startTyped(
+      TypedRenderCallback callback,
+      RenderCallback fallbackCallback,
+      OutputEventCallback eventCallback,
+      std::string* error) override {
+    (void)error;
+    std::lock_guard lock(g_backendRegistry.mutex);
+    state_->typedRender = std::move(callback);
+    state_->render = std::move(fallbackCallback);
+    state_->event = std::move(eventCallback);
+    state_->started = true;
+    state_->typedStarted = true;
     return true;
   }
 
@@ -409,8 +501,9 @@ TrackProfile buildTrackProfile(const std::string& source) {
 
   profile.stream.codec = "flac";
   profile.stream.sourceFormat = makePcmFormat(44100, 2, 24, AudioSampleFormat::Int24Interleaved);
-  profile.stream.decodedFormat = makePcmFormat(44100, 2, 32, AudioSampleFormat::Float32Interleaved);
+  profile.stream.decodedFormat = profile.stream.sourceFormat;
   profile.defaultOutput = profile.stream.decodedFormat;
+  profile.totalFrames = 65536;
   profile.sampleValue = 0.25f;
   return profile;
 }
@@ -464,6 +557,56 @@ void testDsd64StartsOnDop() {
   assertLatestPlaybackContains(engine, "\"isDsd\":true");
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
   assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
+}
+
+void testPcmTypedPassthroughIsOutputPerfect() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.play("typed-passthrough.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  pumpBackend(backend, 2, 128);
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(formatLooksPcmTrackRequest(snapshots.front().requestedFormat));
+  assert(snapshots.front().typedStarted);
+  assert(snapshots.front().typedRenderCalls > 0);
+  assert(snapshots.front().floatRenderCalls == 0);
+  assertLatestPlaybackContains(engine, "\"isDsd\":false");
+  assertLatestPlaybackContains(engine, "\"decodedBitDepth\":24");
+  assertLatestPlaybackContains(engine, "\"decodedSampleFormat\":\"int24\"");
+  assertLatestPlaybackContains(engine, "\"pcmPassthrough\":true");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"\"");
+}
+
+void testPcmVolumeFallsBackToFloatProcessing() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  assert(engine.play("typed-volume-fallback.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  pumpBackend(backend, 2, 128);
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(formatLooksPcmTrackRequest(snapshots.front().requestedFormat));
+  assert(snapshots.front().typedStarted);
+  assert(snapshots.front().typedRenderCalls == 0);
+  assert(snapshots.front().floatRenderCalls > 0);
+  assertLatestPlaybackContains(engine, "\"decodedBitDepth\":32");
+  assertLatestPlaybackContains(engine, "\"decodedSampleFormat\":\"float32\"");
+  assertLatestPlaybackContains(engine, "\"pcmPassthrough\":false");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":false");
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"volume_not_unity\"");
 }
 
 void testDsd128StartsOnDop() {
@@ -751,6 +894,7 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
 
 size_t FFmpegDecoder::readFrames(float* output, size_t frameCount, std::string* error) {
   (void)error;
+  if (impl_->outputFormat.sampleFormat != AudioSampleFormat::Float32Interleaved) return 0;
   const size_t channels = static_cast<size_t>(std::max(1, impl_->outputFormat.channelCount));
   const size_t remaining = impl_->profile.totalFrames > impl_->positionFrames
                                ? impl_->profile.totalFrames - impl_->positionFrames
@@ -759,6 +903,28 @@ size_t FFmpegDecoder::readFrames(float* output, size_t frameCount, std::string* 
   for (size_t frame = 0; frame < read; ++frame) {
     for (size_t channel = 0; channel < channels; ++channel) {
       output[frame * channels + channel] = impl_->profile.sampleValue;
+    }
+  }
+  impl_->positionFrames += read;
+  return read;
+}
+
+size_t FFmpegDecoder::readFrames(PcmBlock& output, std::string* error) {
+  (void)error;
+  if (!output.data || output.frames == 0) return 0;
+  if (output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
+  if (!pcmFormatsExactMatch(output.format, impl_->outputFormat)) return 0;
+
+  const size_t channels = static_cast<size_t>(std::max(1, impl_->outputFormat.channelCount));
+  const size_t bytesPerSample = audioSampleFormatBytes(impl_->outputFormat.sampleFormat);
+  const size_t remaining = impl_->profile.totalFrames > impl_->positionFrames
+                               ? impl_->profile.totalFrames - impl_->positionFrames
+                               : 0;
+  const size_t read = std::min(output.frames, remaining);
+  for (size_t frame = 0; frame < read; ++frame) {
+    for (size_t channel = 0; channel < channels; ++channel) {
+      const size_t offset = (frame * channels + channel) * bytesPerSample;
+      writeSample(impl_->profile.sampleValue, impl_->outputFormat.sampleFormat, output.data + offset);
     }
   }
   impl_->positionFrames += read;
@@ -790,6 +956,8 @@ const AudioFormat& FFmpegDecoder::outputFormat() const {
 
 int main() {
   testDsd64StartsOnDop();
+  testPcmTypedPassthroughIsOutputPerfect();
+  testPcmVolumeFallsBackToFloatProcessing();
   testDsd128StartsOnDop();
   testDsd256FallsBackToPcm();
   testDopMismatchFallsBackWithStableCode();

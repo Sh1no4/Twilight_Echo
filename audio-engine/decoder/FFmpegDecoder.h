@@ -21,6 +21,7 @@ class FFmpegDecoder {
 
   bool setOutputFormat(const AudioFormat& format, std::string* error);
   size_t readFrames(float* output, size_t frameCount, std::string* error);
+  size_t readFrames(PcmBlock& output, std::string* error);
   bool seek(double seconds, std::string* error);
   bool eof() const;
 

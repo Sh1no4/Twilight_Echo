@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <utility>
 #include <vector>
 
@@ -53,6 +54,14 @@ bool backendCanAttemptDop(const std::string& backendId) {
   return backendId == "asio" || backendId == "wasapi-exclusive";
 }
 
+bool backendCanTypedPassthrough(const std::string& backendId) {
+  return backendId == "asio" || backendId == "wasapi-exclusive";
+}
+
+bool formatCanTypedPassthrough(const AudioFormat& format) {
+  return format.sampleRate > 0 && format.channelCount > 0 && audioFormatBytesPerFrame(format) > 0;
+}
+
 bool sampleFormatCanCarryDop(AudioSampleFormat format) {
   return format == AudioSampleFormat::Int24Interleaved || format == AudioSampleFormat::Int24In32Interleaved;
 }
@@ -100,6 +109,50 @@ int32_t signed24FromBytes(uint8_t low, uint8_t mid, uint8_t high) {
 
 float signed24ToFloat(int32_t value) {
   return static_cast<float>(std::clamp(static_cast<double>(value) / 8388608.0, -1.0, 1.0));
+}
+
+float int16ToFloat(int16_t value) {
+  return static_cast<float>(std::clamp(static_cast<double>(value) / 32768.0, -1.0, 1.0));
+}
+
+float int32ToFloat(int32_t value) {
+  return static_cast<float>(std::clamp(static_cast<double>(value) / 2147483648.0, -1.0, 1.0));
+}
+
+void typedPcmToFloat(const PcmBlock& block, float* output, size_t frames) {
+  if (!block.data || !output || frames == 0 || block.format.channelCount <= 0) return;
+  const int channels = std::max(1, block.format.channelCount);
+  const size_t availableFrames = std::min(frames, block.frames);
+  const size_t samples = availableFrames * static_cast<size_t>(channels);
+  std::fill(output, output + frames * static_cast<size_t>(channels), 0.0f);
+  switch (block.format.sampleFormat) {
+    case AudioSampleFormat::Int16Interleaved: {
+      const auto* input = reinterpret_cast<const int16_t*>(block.data);
+      for (size_t i = 0; i < samples; ++i) output[i] = int16ToFloat(input[i]);
+      break;
+    }
+    case AudioSampleFormat::Int24Interleaved: {
+      for (size_t i = 0; i < samples; ++i) {
+        const size_t offset = i * 3;
+        output[i] = signed24ToFloat(signed24FromBytes(block.data[offset], block.data[offset + 1], block.data[offset + 2]));
+      }
+      break;
+    }
+    case AudioSampleFormat::Int24In32Interleaved: {
+      const auto* input = reinterpret_cast<const int32_t*>(block.data);
+      for (size_t i = 0; i < samples; ++i) output[i] = signed24ToFloat(input[i] >> 8);
+      break;
+    }
+    case AudioSampleFormat::Int32Interleaved: {
+      const auto* input = reinterpret_cast<const int32_t*>(block.data);
+      for (size_t i = 0; i < samples; ++i) output[i] = int32ToFloat(input[i]);
+      break;
+    }
+    case AudioSampleFormat::Float32Interleaved:
+    default:
+      std::memcpy(output, block.data, samples * sizeof(float));
+      break;
+  }
 }
 
 void dopBytesToFloatCarrier(
@@ -200,6 +253,7 @@ struct AudioPipeline::DecodeStream {
   std::atomic<bool> eof{false};
   std::thread decodeThread;
   Mode mode = Mode::Pcm;
+  bool typedPassthrough = false;
 
   ~DecodeStream() {
     stop();
@@ -235,27 +289,38 @@ struct AudioPipeline::DecodeStream {
     return true;
   }
 
-  bool configure(const AudioFormat& outputFormat, double startTimeSeconds, std::string* error) {
+  bool configure(
+      const AudioFormat& outputFormat,
+      double startTimeSeconds,
+      std::string* error,
+      bool useTypedPassthrough = false) {
     if (mode == Mode::Dop) return configureDop(outputFormat, startTimeSeconds, error);
-    return configurePcm(outputFormat, startTimeSeconds, error);
+    return configurePcm(outputFormat, startTimeSeconds, error, useTypedPassthrough);
   }
 
-  bool configurePcm(const AudioFormat& outputFormat, double startTimeSeconds, std::string* error) {
+  bool configurePcm(
+      const AudioFormat& outputFormat,
+      double startTimeSeconds,
+      std::string* error,
+      bool useTypedPassthrough) {
     if (!decoder) {
       if (error) *error = "解码器尚未打开";
       return false;
     }
 
     decodeFormat = outputFormat;
-    decodeFormat.bitDepth = 32;
-    decodeFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
+    typedPassthrough = useTypedPassthrough;
+    if (!typedPassthrough) {
+      decodeFormat.bitDepth = 32;
+      decodeFormat.sampleFormat = AudioSampleFormat::Float32Interleaved;
+    }
     if (!decoder->setOutputFormat(decodeFormat, error)) return false;
     decodeFormat = decoder->outputFormat();
     stream.decodedFormat = decodeFormat;
     if (startTimeSeconds > 0.0 && !decoder->seek(startTimeSeconds, error)) return false;
 
     eof = false;
-    buffer.reset(decodeFormat.channelCount, static_cast<size_t>(std::max(decodeFormat.sampleRate * 2, 8192)));
+    buffer.reset(decodeFormat, static_cast<size_t>(std::max(decodeFormat.sampleRate * 2, 8192)));
     return true;
   }
 
@@ -282,7 +347,9 @@ struct AudioPipeline::DecodeStream {
     decodeFormat = dopPacker.carrierFormat();
     stream.decodedFormat = decodeFormat;
     stream.dsdMode = DsdMode::Dop;
+    typedPassthrough = false;
     eof = false;
+    // DoP keeps the existing float carrier ring buffer; typed PCM passthrough is only for ordinary PCM.
     buffer.reset(decodeFormat.channelCount, static_cast<size_t>(std::max(decodeFormat.sampleRate * 2, 8192)));
     return true;
   }
@@ -318,6 +385,35 @@ struct AudioPipeline::DecodeStream {
     return buffer.read(output, frameCount);
   }
 
+  size_t readFloat(float* output, size_t frameCount) {
+    if (!output || frameCount == 0) return 0;
+    const AudioFormat bufferFormat = buffer.format();
+    if (bufferFormat.sampleFormat == AudioSampleFormat::Float32Interleaved) {
+      return buffer.read(output, frameCount);
+    }
+
+    const size_t bytesPerFrame = audioFormatBytesPerFrame(bufferFormat);
+    if (bytesPerFrame == 0) return 0;
+    std::vector<uint8_t> scratch(frameCount * bytesPerFrame);
+    PcmBlock block;
+    block.format = bufferFormat;
+    block.data = scratch.data();
+    block.frames = frameCount;
+    block.byteSize = scratch.size();
+    const size_t read = buffer.read(block);
+    block.frames = read;
+    typedPcmToFloat(block, output, frameCount);
+    return read;
+  }
+
+  size_t read(PcmBlock& output) {
+    return buffer.read(output);
+  }
+
+  AudioFormat bufferFormat() const {
+    return buffer.format();
+  }
+
   bool drained() const {
     return eof.load() && buffer.availableFrames() == 0;
   }
@@ -334,17 +430,43 @@ struct AudioPipeline::DecodeStream {
     }
 
     const int channels = std::max(1, decodeFormat.channelCount);
-    std::vector<float> frames(kDecodeChunkFrames * static_cast<size_t>(channels));
+    const size_t bytesPerFrame = audioFormatBytesPerFrame(decodeFormat);
+    std::vector<float> frames;
+    std::vector<uint8_t> typedFrames;
+    if (decodeFormat.sampleFormat == AudioSampleFormat::Float32Interleaved) {
+      frames.assign(kDecodeChunkFrames * static_cast<size_t>(channels), 0.0f);
+    } else {
+      typedFrames.assign(kDecodeChunkFrames * bytesPerFrame, 0);
+    }
 
     while (running.load()) {
       if (!decoder) break;
       std::string error;
-      const size_t decoded = decoder->readFrames(frames.data(), kDecodeChunkFrames, &error);
+      size_t decoded = 0;
+      if (decodeFormat.sampleFormat == AudioSampleFormat::Float32Interleaved) {
+        decoded = decoder->readFrames(frames.data(), kDecodeChunkFrames, &error);
+      } else {
+        PcmBlock block;
+        block.format = decodeFormat;
+        block.data = typedFrames.data();
+        block.frames = kDecodeChunkFrames;
+        block.byteSize = typedFrames.size();
+        decoded = decoder->readFrames(block, &error);
+      }
       if (decoded == 0) {
         eof = true;
         break;
       }
-      buffer.writeBlocking(frames.data(), decoded, running);
+      if (decodeFormat.sampleFormat == AudioSampleFormat::Float32Interleaved) {
+        buffer.writeBlocking(frames.data(), decoded, running);
+      } else {
+        PcmBlock block;
+        block.format = decodeFormat;
+        block.data = typedFrames.data();
+        block.frames = decoded;
+        block.byteSize = decoded * bytesPerFrame;
+        buffer.writeBlocking(block, running);
+      }
     }
   }
 
@@ -530,7 +652,11 @@ TAE_Result AudioPipeline::playInternal(
     }
 
     outputFormat = output->outputFormat();
-    if (!active->configure(outputFormat, startTimeSeconds, error)) {
+    const bool canUseTypedPassthrough =
+        !active->stream.isDsd && !processingRequiresPcm && backendCanTypedPassthrough(backendId) &&
+        formatCanTypedPassthrough(active->stream.sourceFormat) &&
+        pcmFormatsExactMatch(active->stream.sourceFormat, outputFormat);
+    if (!active->configure(outputFormat, startTimeSeconds, error, canUseTypedPassthrough)) {
       output->close();
       return TAE_RESULT_INTERNAL_ERROR;
     }
@@ -579,8 +705,9 @@ TAE_Result AudioPipeline::playInternal(
     dspActive_ = dspStatus_.dspActive || std::abs(volume - 1.0) > 0.0001;
     spectrum_.prepare(outputFormat_, dspConfig_.fftResolution);
     spectrum_.setEnabled(dspConfig_.fftEnabled);
-    gaplessEnabled_ = gaplessEnabled && !dopPath;
+    gaplessEnabled_ = gaplessEnabled && !dopPath && !activeStream_->typedPassthrough;
     dopPathActive_ = dopPath;
+    typedPassthroughActive_ = !dopPath && activeStream_->typedPassthrough;
     updatePerfectLocked();
     state_ = PipelineState::Playing;
     renderedFrames_ = static_cast<uint64_t>(std::max(0.0, startTimeSeconds) * outputFormat_.sampleRate);
@@ -591,7 +718,7 @@ TAE_Result AudioPipeline::playInternal(
   }
 
   active->start();
-  if (gaplessEnabled_ && !dopPath) {
+  if (gaplessEnabled && !dopPath && !active->typedPassthrough) {
     std::string preloadError;
     preloadNext(upcomingItem, &preloadError);
   }
@@ -605,7 +732,11 @@ TAE_Result AudioPipeline::playInternal(
     state_ = PipelineState::Stopped;
   };
 
-  if (!output_->start([this](float* data, size_t frames) { return render(data, frames); }, eventCallback, error)) {
+  if (!output_->startTyped(
+          [this](PcmBlock& block) { return renderTyped(block); },
+          [this](float* data, size_t frames) { return render(data, frames); },
+          eventCallback,
+          error)) {
     stop();
     return TAE_RESULT_BACKEND_UNAVAILABLE;
   }
@@ -744,6 +875,7 @@ TAE_Result AudioPipeline::stop() {
     outputPerfect_ = false;
     gaplessEnabled_ = true;
     dopPathActive_ = false;
+    typedPassthroughActive_ = false;
     crossfadeMixActive_ = false;
     crossfadeFramesProcessed_ = 0;
     crossfadeTotalFrames_ = 0;
@@ -786,7 +918,7 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
   {
     std::lock_guard lock(mutex_);
     dspConfig_ = DspChain::parseConfigJson(dspConfigJson);
-    gaplessEnabled_ = !dopPathActive_ && dspConfig_.gapless;
+    gaplessEnabled_ = !dopPathActive_ && !typedPassthroughActive_ && dspConfig_.gapless;
     if (!gaplessEnabled_) {
       disabledPreload = std::move(preloadStream_);
       crossfadeMixActive_ = false;
@@ -999,6 +1131,18 @@ bool AudioPipeline::isDopPathActive() const {
 
 bool AudioPipeline::needsPcmFallback(std::string* reason) const {
   std::lock_guard lock(mutex_);
+  const bool processingActive =
+      dspStatus_.replayGainActive || dspStatus_.eqActive || dspStatus_.convolverActive || dspStatus_.crossfeedActive ||
+      dspStatus_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001 ||
+      std::abs(volume_.load() - 1.0) > kUnityVolumeEpsilon ||
+      outputConfig_.routingMode != ChannelRoutingMode::Auto;
+
+  if (typedPassthroughActive_) {
+    if (!processingActive) return false;
+    if (reason) *reason = "PCM processing active; falling back to Float32";
+    return true;
+  }
+
   if (!dopPathActive_ || !stream_.isDsd || stream_.dsdMode != DsdMode::Dop) return false;
   if (output_) {
     const DopRuntimeFacts dopFacts = output_->dopRuntimeFacts();
@@ -1012,10 +1156,6 @@ bool AudioPipeline::needsPcmFallback(std::string* reason) const {
       return true;
     }
   }
-  const bool processingActive =
-      dspStatus_.replayGainActive || dspStatus_.eqActive || dspStatus_.convolverActive || dspStatus_.crossfeedActive ||
-      dspStatus_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001 || std::abs(volume_.load() - 1.0) > kUnityVolumeEpsilon ||
-      outputConfig_.routingMode != ChannelRoutingMode::Auto;
   if (!processingActive) return false;
   if (reason) *reason = "DSD processing active; falling back to PCM";
   return true;
@@ -1136,6 +1276,54 @@ bool AudioPipeline::updatePerfectLocked() {
   return outputPerfect_;
 }
 
+size_t AudioPipeline::renderTyped(PcmBlock& output) {
+  if (!output.data || output.frames == 0) return 0;
+  if (output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
+
+  PipelineState state = PipelineState::Stopped;
+  std::shared_ptr<DecodeStream> active;
+  AudioFormat outputFormat;
+  bool typedPassthroughActive = false;
+  {
+    std::lock_guard lock(mutex_);
+    state = state_;
+    active = activeStream_;
+    outputFormat = outputFormat_;
+    typedPassthroughActive = typedPassthroughActive_;
+  }
+
+  if (state != PipelineState::Playing || !active) {
+    spectrum_.resetCapture();
+    return typedPassthroughActive ? output.frames : 0;
+  }
+
+  if (!typedPassthroughActive || !pcmFormatsExactMatch(output.format, outputFormat) ||
+      !pcmFormatsExactMatch(active->bufferFormat(), output.format)) {
+    return 0;
+  }
+
+  const size_t read = active->read(output);
+  if (read > 0) {
+    const int channels = std::max(1, output.format.channelCount);
+    std::vector<float> visualization(output.frames * static_cast<size_t>(channels), 0.0f);
+    PcmBlock captured = output;
+    captured.frames = read;
+    captured.byteSize = read * audioFormatBytesPerFrame(output.format);
+    typedPcmToFloat(captured, visualization.data(), output.frames);
+    renderedFrames_ += read;
+    spectrum_.capture(visualization.data(), output.frames, channels);
+  } else if (active->drained()) {
+    ended_ = true;
+    std::lock_guard lock(mutex_);
+    if (state_ == PipelineState::Playing) state_ = PipelineState::Stopped;
+    spectrum_.resetCapture();
+  } else {
+    spectrum_.resetCapture();
+  }
+
+  return output.frames;
+}
+
 size_t AudioPipeline::render(float* output, size_t frameCount) {
   if (!output || frameCount == 0) return 0;
 
@@ -1176,7 +1364,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   size_t positionRead = 0;
   while (totalRead < frameCount) {
     float* segment = output + totalRead * static_cast<size_t>(channels);
-    const size_t read = active->read(segment, frameCount - totalRead);
+    const size_t read = active->readFloat(segment, frameCount - totalRead);
     if (read > 0 && !dopPathActive) {
       dspChain_.process(segment, read);
     }
@@ -1213,7 +1401,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
 
       if (crossfadeMixActive) {
         std::vector<float> preloadFrames((frameCount - totalRead + read) * static_cast<size_t>(channels), 0.0f);
-        const size_t mixedFrames = preload->read(preloadFrames.data(), read);
+        const size_t mixedFrames = preload->readFloat(preloadFrames.data(), read);
         if (mixedFrames > 0 && !dopPathActive) {
           preloadDspChain_.process(preloadFrames.data(), mixedFrames);
           const uint64_t totalFrames = std::max<uint64_t>(1, crossfadeTotalFrames);

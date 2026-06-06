@@ -23,6 +23,11 @@ class AsioBackend final : public IOutputBackend {
   bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) override;
   bool setOutputConfig(const OutputConfig& config, std::string* error) override;
   bool start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) override;
+  bool startTyped(
+      TypedRenderCallback callback,
+      RenderCallback fallbackCallback,
+      OutputEventCallback eventCallback,
+      std::string* error) override;
   void stop() override;
   void close() override;
 
@@ -45,6 +50,7 @@ class AsioBackend final : public IOutputBackend {
   std::unique_ptr<IAsioHost> host_;
   mutable std::mutex mutex_;
   RenderCallback callback_;
+  TypedRenderCallback typedCallback_;
   OutputEventCallback eventCallback_;
   OutputConfig outputConfig_;
   AsioOpenConfig openConfig_;
@@ -70,6 +76,7 @@ class AsioBackend final : public IOutputBackend {
   bool actualOutputChannelFormatsMatch_ = true;
   std::atomic<bool> running_{false};
   std::vector<float> renderScratch_;
+  std::vector<uint8_t> typedRenderScratch_;
 };
 
 bool asioBackendAvailable();

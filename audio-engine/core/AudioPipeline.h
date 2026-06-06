@@ -151,6 +151,7 @@ class AudioPipeline {
       std::string* error);
   bool updatePerfectLocked();
   size_t render(float* output, size_t frameCount);
+  size_t renderTyped(PcmBlock& output);
 
   mutable std::mutex mutex_;
   std::unique_ptr<IOutputBackend> output_;
@@ -179,6 +180,7 @@ class AudioPipeline {
   bool outputPerfect_ = false;
   bool gaplessEnabled_ = true;
   bool dopPathActive_ = false;
+  bool typedPassthroughActive_ = false;
   bool crossfadeMixActive_ = false;
   uint64_t crossfadeFramesProcessed_ = 0;
   uint64_t crossfadeTotalFrames_ = 0;

@@ -1,8 +1,11 @@
 #pragma once
 
+#include "AudioTypes.h"
+
 #include <atomic>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <vector>
 
@@ -13,15 +16,19 @@ class AudioBuffer {
   AudioBuffer() = default;
 
   void reset(int channels, size_t capacityFrames);
+  void reset(const AudioFormat& format, size_t capacityFrames);
   void clear();
   void notifyAll();
 
   size_t writeBlocking(const float* data, size_t frames, const std::atomic<bool>& running);
+  size_t writeBlocking(const PcmBlock& block, const std::atomic<bool>& running);
   size_t read(float* data, size_t frames);
+  size_t read(PcmBlock& block);
 
   size_t availableFrames() const;
   size_t freeFrames() const;
   int channels() const;
+  AudioFormat format() const;
 
  private:
   size_t contiguousWritableFramesLocked() const;
@@ -30,7 +37,9 @@ class AudioBuffer {
   mutable std::mutex mutex_;
   std::condition_variable notFull_;
   std::condition_variable notEmpty_;
-  std::vector<float> data_;
+  std::vector<uint8_t> data_;
+  AudioFormat format_;
+  size_t bytesPerFrame_ = 0;
   size_t capacityFrames_ = 0;
   size_t readFrame_ = 0;
   size_t writeFrame_ = 0;
