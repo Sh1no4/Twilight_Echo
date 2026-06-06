@@ -119,6 +119,23 @@ interface NativeAudioMetadata {
   error: string
 }
 
+interface VisualizationOptions {
+  spectrumPoints?: number
+  waveformPoints?: number
+  spectrogramFrames?: number
+}
+
+interface VisualizationData {
+  spectrum: number[]
+  waveform: number[]
+  peakDb: number
+  rmsDb: number
+  lufsMomentary: number | null
+  spectrogram: number[][]
+  sampleRate: number
+  active: boolean
+}
+
 interface TrackData {
   id: string
   title: string
@@ -580,6 +597,8 @@ const api = {
     getPlaybackInfo: (): Promise<PlaybackInfo> => ipcRenderer.invoke('audioEngine:getPlaybackInfo'),
     getSpectrumData: (points?: number): Promise<number[]> =>
       ipcRenderer.invoke('audioEngine:getSpectrumData', points),
+    getVisualizationData: (options?: VisualizationOptions): Promise<VisualizationData> =>
+      ipcRenderer.invoke('audioEngine:getVisualizationData', options),
 
     onPropertyChange: (cb: AudioEngineEventCallback): (() => void) => {
       audioEngineEventCallbacks.add(cb)

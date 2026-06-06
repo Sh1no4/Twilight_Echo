@@ -1227,6 +1227,12 @@ function setupAudioEngineIpc(): void {
     return requireAudioEngine().getSpectrumData(points)
   })
 
+  ipcMain.handle('audioEngine:getVisualizationData', async (_event, options?: unknown) => {
+    return requireAudioEngine().getVisualizationData(
+      typeof options === 'object' && options !== null ? options : {}
+    )
+  })
+
   audioEngineManager
     .start()
     .then(() => {

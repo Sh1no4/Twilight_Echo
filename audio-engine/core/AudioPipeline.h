@@ -106,6 +106,10 @@ class AudioPipeline {
   bool consumeDeviceInvalidated(std::string* message);
   bool consumeTrackStarted(QueueItem* item);
   size_t getSpectrumData(float* buffer, size_t pointCount) const;
+  std::string getVisualizationDataJson(
+      size_t spectrumPoints,
+      size_t waveformPoints,
+      size_t spectrogramFrames) const;
   bool isDopPathActive() const;
   bool needsPcmFallback(std::string* reason) const;
   void setRerouteInProgress(bool active, const std::string& reason = {});

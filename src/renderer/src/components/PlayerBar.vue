@@ -26,6 +26,7 @@ const {
   audioProcessing,
   playbackInfo,
   outputInfo,
+  visualizationData,
   cyclePlayMode,
   togglePlay,
   next,
@@ -132,10 +133,12 @@ const reasonCodeLabels: Record<string, string> = {
   volume_not_unity: '软件音量不是 100%',
   routing_changes_semantics: '声道路由或通道语义发生变化',
   pcm_converted: 'PCM 格式或采样率发生转换',
+  integer_passthrough_unavailable: '当前解码路径仍经过 Float32，整数 PCM 直通不可用',
   source_lossy: '源文件是有损格式，不能 Source Exact',
   source_format_differs: '源格式与输出链不一致',
   backend_not_output_perfect: '当前输出路径未声明 bit-perfect 能力',
   output_not_perfect: '当前输出链尚未验证为直通',
+  visualization_inactive: '当前没有可视化采样数据',
   dsd_processing_pcm_fallback: 'DSD 因处理链启用而回退到 PCM',
   dsd_high_rate_pcm_fallback: 'DSD 因采样率或驱动限制回退到 PCM',
   dsd_converted_to_pcm: 'DSD 当前已转换为 PCM 输出',
@@ -184,6 +187,14 @@ function formatPerfectReason(reason: string): string {
   const trimmed = reason.trim()
   if (!trimmed) return ''
   return trimmed
+}
+
+function resolvePerfectReasonText(): string {
+  const code = outputInfo.value?.perfectReasonCode || playbackInfo.value?.perfectReasonCode || ''
+  if (code && reasonCodeLabels[code]) return reasonCodeLabels[code]
+  const capabilityReason = outputInfo.value?.capabilityReason?.trim() || ''
+  if (capabilityReason) return capabilityReason
+  return formatPerfectReason(outputInfo.value?.perfectReason || playbackInfo.value?.perfectReason || '')
 }
 
 function nativeDsdRuntimeTone(state: string): 'success' | 'warning' | 'muted' {
@@ -238,11 +249,7 @@ const nonPerfectReason = computed(() => {
   const sourceExact = canonicalSourceExact()
   const outputPerfect = canonicalOutputPerfect()
   if (sourceExact && outputPerfect) return ''
-  const code = outputInfo.value?.perfectReasonCode || playbackInfo.value?.perfectReasonCode || ''
-  const capabilityReason = outputInfo.value?.capabilityReason || ''
-  const reason = code && reasonCodeLabels[code]
-    ? reasonCodeLabels[code]
-    : capabilityReason || formatPerfectReason(outputInfo.value?.perfectReason || '')
+  const reason = resolvePerfectReasonText()
   return reason ? `未达成：${reason}` : ''
 })
 function compactRate(rate: number): string {
@@ -344,7 +351,13 @@ const outputChainText = computed(() => {
     out?.actualChannels || info.actualChannels,
     false
   )
-  return `${source || 'Source'} -> ${decoded} -> ${backend ? formatBackendLabel(backend) : 'Backend pending'} -> ${actual}`
+  const perfect =
+    canonicalSourceExact() && canonicalOutputPerfect()
+      ? 'Bit Perfect'
+      : resolvePerfectReasonText()
+        ? `Not Bit Perfect (${resolvePerfectReasonText()})`
+        : 'Not Bit Perfect'
+  return `${source || 'Source'} -> ${decoded} -> ${backend ? formatBackendLabel(backend) : 'Backend pending'} -> ${actual} -> ${perfect}`
 })
 const outputLatencyText = computed(() => {
   const info = outputInfo.value
@@ -363,6 +376,68 @@ const outputDiagnosticsText = computed(() => {
 const nativeDsdRuntimeReasonText = computed(() => {
   const reason = outputInfo.value?.nativeDsdRuntimeReason?.trim()
   return reason ? `Native DSD: ${reason}` : ''
+})
+
+function finiteNumber(value: number | null | undefined, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function clamp01(value: number): number {
+  return Math.min(1, Math.max(0, value))
+}
+
+function formatDb(value: number | null | undefined): string {
+  const safe = finiteNumber(value, -120)
+  if (safe <= -119) return '-inf dB'
+  return `${safe.toFixed(safe > -10 ? 1 : 0)} dB`
+}
+
+const visualizationActive = computed(() => visualizationData.value.active === true)
+const peakText = computed(() => formatDb(visualizationData.value.peakDb))
+const rmsText = computed(() => formatDb(visualizationData.value.rmsDb))
+const lufsText = computed(() => {
+  const value = visualizationData.value.lufsMomentary
+  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)} LUFS` : 'Inactive'
+})
+const visualizationStateText = computed(() => {
+  if (!visualizationActive.value) return 'Inactive'
+  return visualizationData.value.sampleRate > 0 ? compactRate(visualizationData.value.sampleRate) : 'Active'
+})
+const waveformBars = computed(() => {
+  const source = visualizationData.value.waveform
+  const targetPoints = 48
+  return Array.from({ length: targetPoints }, (_, index) => {
+    const bucket = Math.min(source.length - 1, Math.floor((index * source.length) / targetPoints))
+    const amplitude = visualizationActive.value && bucket >= 0 ? Math.abs(finiteNumber(source[bucket])) : 0
+    const normalized = clamp01(amplitude)
+    return {
+      height: Math.max(5, Math.round(normalized * 92)),
+      opacity: visualizationActive.value ? 0.34 + normalized * 0.62 : 0.18
+    }
+  })
+})
+const spectrogramFrameCount = 32
+const spectrogramBinCount = 24
+const spectrogramCells = computed(() => {
+  if (!visualizationActive.value) return []
+  const frames = visualizationData.value.spectrogram.slice(-spectrogramFrameCount)
+  const cells: { key: string; color: string }[] = []
+  for (let bin = spectrogramBinCount - 1; bin >= 0; bin -= 1) {
+    for (let frame = 0; frame < spectrogramFrameCount; frame += 1) {
+      const row = frames[frames.length - spectrogramFrameCount + frame]
+      const valueIndex = row ? Math.min(row.length - 1, Math.floor((bin * row.length) / spectrogramBinCount)) : -1
+      const energy = valueIndex >= 0 ? clamp01(finiteNumber(row?.[valueIndex])) : 0
+      const alpha = 0.08 + energy * 0.82
+      const red = Math.round(38 + energy * 186)
+      const green = Math.round(92 + energy * 116)
+      const blue = Math.round(132 - energy * 68)
+      cells.push({
+        key: `${bin}-${frame}`,
+        color: `rgba(${red}, ${green}, ${blue}, ${alpha})`
+      })
+    }
+  }
+  return cells
 })
 
 const replayGainMiniOptions = [
@@ -581,6 +656,42 @@ function openEqualizer(): void {
               <p v-if="nativeDsdRuntimeReasonText" class="more-item-desc compact-reason">
                 {{ nativeDsdRuntimeReasonText }}
               </p>
+              <div class="visualization-panel" :class="{ inactive: !visualizationActive }">
+                <div class="visualization-header">
+                  <span>Visualization</span>
+                  <span>{{ visualizationStateText }}</span>
+                </div>
+                <div class="waveform-strip" aria-hidden="true">
+                  <span
+                    v-for="(bar, index) in waveformBars"
+                    :key="index"
+                    class="waveform-bar"
+                    :style="{ height: `${bar.height}%`, opacity: bar.opacity }"
+                  ></span>
+                </div>
+                <div class="meter-row">
+                  <span><strong>Peak</strong>{{ peakText }}</span>
+                  <span><strong>RMS</strong>{{ rmsText }}</span>
+                  <span><strong>LUFS</strong>{{ lufsText }}</span>
+                </div>
+                <div class="spectrogram-grid" :class="{ inactive: !visualizationActive }">
+                  <template v-if="!visualizationActive">
+                    <span
+                      v-for="index in spectrogramFrameCount * spectrogramBinCount"
+                      :key="`idle-${index}`"
+                      class="spectrogram-cell idle"
+                    ></span>
+                  </template>
+                  <template v-else>
+                    <span
+                      v-for="cell in spectrogramCells"
+                      :key="cell.key"
+                      class="spectrogram-cell"
+                      :style="{ background: cell.color }"
+                    ></span>
+                  </template>
+                </div>
+              </div>
               <div class="more-item">
                 <div class="more-item-header">
                   <span class="more-item-label">独占模式</span>
@@ -1608,6 +1719,139 @@ function openEqualizer(): void {
 
 .drawer-glass .more-output-chain {
   color: rgba(255, 255, 255, 0.56);
+}
+
+.visualization-panel {
+  display: grid;
+  gap: 7px;
+  margin: 2px 2px 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.34);
+  overflow: hidden;
+}
+
+.drawer-glass .visualization-panel {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.visualization-header,
+.meter-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.visualization-header span {
+  overflow: hidden;
+  color: rgba(52, 61, 87, 0.78);
+  font-size: 10px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.visualization-header span:last-child {
+  color: rgba(80, 88, 116, 0.52);
+  font-variant-numeric: tabular-nums;
+}
+
+.drawer-glass .visualization-header span {
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.drawer-glass .visualization-header span:last-child {
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.waveform-strip {
+  display: grid;
+  grid-template-columns: repeat(48, minmax(0, 1fr));
+  align-items: center;
+  gap: 2px;
+  height: 34px;
+  overflow: hidden;
+}
+
+.waveform-bar {
+  display: block;
+  min-height: 5%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #2563eb, #14b8a6);
+  transform-origin: center;
+}
+
+.visualization-panel.inactive .waveform-bar {
+  background: rgba(148, 163, 184, 0.28);
+}
+
+.meter-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.meter-row span {
+  min-width: 0;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.42);
+  color: rgba(52, 61, 87, 0.72);
+  font-size: 10px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.meter-row strong {
+  color: rgba(80, 88, 116, 0.5);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.drawer-glass .meter-row span {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.drawer-glass .meter-row strong {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.spectrogram-grid {
+  display: grid;
+  grid-template-columns: repeat(32, minmax(0, 1fr));
+  grid-template-rows: repeat(24, 2px);
+  gap: 1px;
+  height: 71px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.08);
+}
+
+.spectrogram-cell {
+  display: block;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 1px;
+}
+
+.spectrogram-cell.idle {
+  background: rgba(148, 163, 184, 0.12);
+}
+
+.drawer-glass .spectrogram-grid {
+  background: rgba(15, 23, 42, 0.18);
+}
+
+.drawer-glass .spectrogram-cell.idle {
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .more-item-header {

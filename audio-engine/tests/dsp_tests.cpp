@@ -225,6 +225,29 @@ int main() {
     assert(analyzer.read(spectrum.data(), spectrum.size()) == spectrum.size());
     assert(analyzer.isActive());
     for (float value : spectrum) assert(std::isfinite(value));
+
+    const std::string json = analyzer.readVisualizationJson(24, 32, 8);
+    assert(json.find("\"active\":true") != std::string::npos);
+    assert(json.find("\"spectrum\"") != std::string::npos);
+    assert(json.find("\"waveform\"") != std::string::npos);
+    assert(json.find("\"peakDb\"") != std::string::npos);
+    assert(json.find("\"rmsDb\"") != std::string::npos);
+    assert(json.find("\"lufsMomentary\"") != std::string::npos);
+    assert(json.find("\"spectrogram\"") != std::string::npos);
+    assert(json.find("\"sampleRate\":48000") != std::string::npos);
+    assert(json.find("nan") == std::string::npos);
+    assert(json.find("inf") == std::string::npos);
+  }
+
+  {
+    FftSpectrumAnalyzer analyzer;
+    analyzer.prepare(testFormat(), 256);
+    analyzer.setEnabled(false);
+    const std::string json = analyzer.readVisualizationJson(24, 32, 8);
+    assert(json.find("\"active\":false") != std::string::npos);
+    assert(json.find("\"lufsMomentary\":null") != std::string::npos);
+    assert(json.find("\"spectrogram\":[]") != std::string::npos);
+    assert(json.find("\"sampleRate\":48000") != std::string::npos);
   }
 
   {

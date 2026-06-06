@@ -65,7 +65,7 @@ void testLossyOutputPerfect() {
   assert(result.perfectReason.find("lossy") != std::string::npos);
 }
 
-void testLosslessDecodedConversionKeepsOnlyOutputPerfect() {
+void testLosslessIntegerDecodedConversionBlocksOutputPerfect() {
   auto evaluation = baseEvaluation();
   evaluation.sourceFormat = pcm(48000, 24, 2, AudioSampleFormat::Int24Interleaved);
   evaluation.decodedFormat = pcm(48000, 32, 2, AudioSampleFormat::Float32Interleaved);
@@ -73,8 +73,10 @@ void testLosslessDecodedConversionKeepsOnlyOutputPerfect() {
 
   const PerfectResult result = evaluatePerfect(evaluation);
   assert(!result.sourceExact);
-  assert(result.outputPerfect);
-  assert(result.perfectReason.find("Source PCM format differs") != std::string::npos);
+  assert(!result.outputPerfect);
+  assert(!result.pcmPassthrough);
+  assert(result.perfectReasonCode == "integer_passthrough_unavailable");
+  assert(result.perfectReason.find("Lossless PCM decoded through non-identical PCM format") != std::string::npos);
 }
 
 void testBackendSupport() {
@@ -125,7 +127,19 @@ void testPcmPassthroughRequiresExactFormat() {
   const PerfectResult floatToIntResult = evaluatePerfect(floatToInt);
   assert(!floatToIntResult.outputPerfect);
   assert(!floatToIntResult.pcmPassthrough);
-  assert(floatToIntResult.perfectReason.find("Decoded PCM converted") != std::string::npos);
+  assert(floatToIntResult.perfectReasonCode == "integer_passthrough_unavailable");
+
+  auto outputConversion = baseEvaluation();
+  outputConversion.sourceFormat = float32;
+  outputConversion.decodedFormat = float32;
+  outputConversion.outputFormat = int24;
+  outputConversion.pcmPassthrough =
+      pcmFormatsExactMatch(outputConversion.decodedFormat, outputConversion.outputFormat);
+  const PerfectResult outputConversionResult = evaluatePerfect(outputConversion);
+  assert(!outputConversionResult.outputPerfect);
+  assert(!outputConversionResult.pcmPassthrough);
+  assert(outputConversionResult.perfectReasonCode == "pcm_converted");
+  assert(outputConversionResult.perfectReason.find("Decoded PCM converted") != std::string::npos);
 }
 
 void testFormatMismatch() {
@@ -397,7 +411,7 @@ void testUnsupportedDsdRateRejectsDopPerfect() {
 int main() {
   testLosslessSourceExact();
   testLossyOutputPerfect();
-  testLosslessDecodedConversionKeepsOnlyOutputPerfect();
+  testLosslessIntegerDecodedConversionBlocksOutputPerfect();
   testBackendSupport();
   testBackendReasonFallback();
   testPassthroughRequired();

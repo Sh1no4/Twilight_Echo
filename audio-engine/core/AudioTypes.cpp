@@ -259,7 +259,11 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
       evaluation.routingMode,
       decodedFormat.channelCount,
       evaluation.outputFormat.channelCount);
-  result.pcmPassthrough = evaluation.pcmPassthrough && result.formatMatched && !evaluation.backendResampled;
+  const bool losslessPcmDecodedConverted =
+      !evaluation.sourceDsd && evaluation.sourceLossless &&
+      !pcmFormatsExactMatch(evaluation.sourceFormat, decodedFormat);
+  result.pcmPassthrough = evaluation.pcmPassthrough && result.formatMatched && !evaluation.backendResampled &&
+                          !losslessPcmDecodedConverted;
   const bool pcmOutputPerfect =
       !evaluation.sourceDsd && evaluation.supportsOutputPerfect && result.pcmPassthrough &&
       !result.processingActive && result.routingPreservesSemantics;
@@ -296,6 +300,11 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
   } else if (result.processingActive) {
     result.perfectReasonCode = processingReasonCode(evaluation);
     result.perfectReason = processingReason(evaluation);
+  } else if (losslessPcmDecodedConverted) {
+    result.perfectReasonCode = "integer_passthrough_unavailable";
+    result.perfectReason =
+        "Lossless PCM decoded through non-identical PCM format: " + formatSummary(evaluation.sourceFormat) + " -> " +
+        formatSummary(decodedFormat);
   } else if (!result.pcmPassthrough) {
     result.perfectReasonCode = "pcm_converted";
     result.perfectReason =

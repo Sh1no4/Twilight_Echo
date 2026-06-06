@@ -129,6 +129,7 @@ class TwilightAudioEngine {
   std::string getLastErrorJson() const;
   std::string getPlaybackInfoJson() const;
   size_t getSpectrumData(float* buffer, size_t pointCount) const;
+  std::string getVisualizationDataJson(const std::string& optionsJson) const;
 
  private:
   void startClock();

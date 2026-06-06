@@ -565,6 +565,39 @@ OutputConfig parseOutputConfigJson(const std::string& json) {
   return config;
 }
 
+struct VisualizationQuery {
+  size_t spectrumPoints = 64;
+  size_t waveformPoints = 128;
+  size_t spectrogramFrames = 48;
+};
+
+VisualizationQuery parseVisualizationQueryJson(const std::string& json) {
+  VisualizationQuery query;
+  query.spectrumPoints = std::clamp<uint32_t>(parseUintField(json, "spectrumPoints", 64), 8, 256);
+  query.waveformPoints = std::clamp<uint32_t>(parseUintField(json, "waveformPoints", 128), 16, 512);
+  query.spectrogramFrames = std::clamp<uint32_t>(parseUintField(json, "spectrogramFrames", 48), 1, 96);
+  return query;
+}
+
+std::string inactiveVisualizationJson(const VisualizationQuery& query, int sampleRate) {
+  std::ostringstream json;
+  auto writeZeros = [](std::ostringstream& out, size_t count) {
+    out << "[";
+    for (size_t i = 0; i < count; ++i) {
+      if (i > 0) out << ",";
+      out << "0";
+    }
+    out << "]";
+  };
+  json << "{\"spectrum\":";
+  writeZeros(json, query.spectrumPoints);
+  json << ",\"waveform\":";
+  writeZeros(json, query.waveformPoints);
+  json << ",\"peakDb\":-120,\"rmsDb\":-120,\"lufsMomentary\":null,\"spectrogram\":[],"
+       << "\"sampleRate\":" << sampleRate << ",\"active\":false}";
+  return json.str();
+}
+
 QueueItem makeManualQueueItem(const std::string& source) {
   QueueItem item;
   item.id = "manual";
@@ -1276,6 +1309,18 @@ size_t TwilightAudioEngine::getSpectrumData(float* buffer, size_t pointCount) co
   return pointCount;
 }
 
+std::string TwilightAudioEngine::getVisualizationDataJson(const std::string& optionsJson) const {
+  const VisualizationQuery query = parseVisualizationQueryJson(optionsJson.empty() ? "{}" : optionsJson);
+  if (pipeline_) {
+    return pipeline_->getVisualizationDataJson(
+        query.spectrumPoints,
+        query.waveformPoints,
+        query.spectrogramFrames);
+  }
+  std::lock_guard lock(mutex_);
+  return inactiveVisualizationJson(query, info_.actualSampleRate);
+}
+
 void TwilightAudioEngine::startClock() {
   clockThread_ = std::thread([this] { clockLoop(); });
 }
@@ -1845,6 +1890,20 @@ TAE_Result TAE_GetSpectrumData(TAE_EngineHandle engine, float* buffer, size_t po
   const size_t written = fromHandle(engine)->getSpectrumData(buffer, point_count);
   if (written_count) *written_count = written;
   return TAE_RESULT_OK;
+}
+
+TAE_Result TAE_GetVisualizationData(
+    TAE_EngineHandle engine,
+    const char* options_json,
+    char* buffer,
+    size_t buffer_size,
+    size_t* required_size) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return copyStringResult(
+      fromHandle(engine)->getVisualizationDataJson(options_json ? options_json : "{}"),
+      buffer,
+      buffer_size,
+      required_size);
 }
 
 const char* TAE_GetVersion(void) {

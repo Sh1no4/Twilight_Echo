@@ -11,11 +11,15 @@ const expectedTests = [
   'twilight_dsp_unit',
   'twilight_metadata_unit',
   'twilight_bitperfect_unit',
+  'twilight_ffmpeg_decoder_unit',
+  'twilight_dsd_dop_unit',
   'twilight_queue_unit',
   'twilight_backend_factory_unit',
-  'twilight_platform_backend_smoke',
+  'twilight_wasapi_format_negotiator_unit',
   'twilight_asio_backend_unit',
-  'twilight_output_backend_unit'
+  'twilight_output_backend_unit',
+  'twilight_runtime_queue_reroute_unit',
+  'twilight_platform_backend_smoke',
 ]
 
 function runCmake() {

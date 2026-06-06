@@ -21,6 +21,7 @@
     "test:audio-manager": "node --experimental-strip-types --test src/main/audioEngineManager.test.ts",
     "test:audio-engine": "ctest --test-dir audio-engine/build/default --output-on-failure",
     "test:audio-engine:mingw": "ctest --test-dir audio-engine/build/mingw-static --output-on-failure",
+    "test:no-real-device": "npm run configure:audio-engine:mingw && npm run build:audio-engine:mingw && npm run test:audio-engine:mingw && npm run test:audio-manager && npm run typecheck && npm run build",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",

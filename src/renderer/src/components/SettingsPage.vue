@@ -209,10 +209,12 @@ const reasonCodeLabels: Record<string, string> = {
   volume_not_unity: '软件音量不是 100%',
   routing_changes_semantics: '声道路由或通道语义发生变化',
   pcm_converted: 'PCM 格式或采样率发生转换',
+  integer_passthrough_unavailable: '当前解码路径仍经过 Float32，整数 PCM 直通不可用',
   source_lossy: '源文件是有损格式，不能 Source Exact',
   source_format_differs: '源格式与输出链不一致',
   backend_not_output_perfect: '当前输出路径未声明 bit-perfect 能力',
   output_not_perfect: '当前输出链尚未验证为直通',
+  visualization_inactive: '当前没有可视化采样数据',
   dsd_processing_pcm_fallback: 'DSD 因处理链启用而回退到 PCM',
   dsd_high_rate_pcm_fallback: 'DSD 因采样率或驱动限制回退到 PCM',
   dsd_converted_to_pcm: 'DSD 当前已转换为 PCM 输出',
@@ -263,6 +265,14 @@ function formatPerfectReason(reason: string): string {
   return trimmed
 }
 
+function resolvePerfectReasonText(): string {
+  const code = outputInfo.value?.perfectReasonCode || playbackInfo.value?.perfectReasonCode || ''
+  if (code && reasonCodeLabels[code]) return reasonCodeLabels[code]
+  const capabilityReason = outputInfo.value?.capabilityReason?.trim()
+  if (capabilityReason) return capabilityReason
+  return formatPerfectReason(outputInfo.value?.perfectReason || playbackInfo.value?.perfectReason || '')
+}
+
 function nativeDsdRuntimeTone(state: string): 'success' | 'warning' | 'muted' {
   if (state === 'proven') return 'success'
   if (state === 'candidate' || state === 'unproven' || state === 'mismatch') return 'warning'
@@ -290,14 +300,7 @@ const nativeDsdRuntimeReasonText = computed(() => {
   return reason ? `Native DSD: ${reason}` : ''
 })
 
-const perfectReason = computed(() => outputInfo.value?.perfectReason || '')
-const readablePerfectReason = computed(() => {
-  const code = outputInfo.value?.perfectReasonCode || playbackInfo.value?.perfectReasonCode || ''
-  if (code && reasonCodeLabels[code]) return reasonCodeLabels[code]
-  const capabilityReason = outputInfo.value?.capabilityReason?.trim()
-  if (capabilityReason) return capabilityReason
-  return formatPerfectReason(perfectReason.value)
-})
+const readablePerfectReason = computed(() => resolvePerfectReasonText())
 const sourceExact = computed(() => canonicalSourceExact())
 const outputPerfect = computed(() => canonicalOutputPerfect())
 const accessModeText = computed(() => {
@@ -434,7 +437,14 @@ const outputChainText = computed(() => {
     out?.actualChannels || info.actualChannels,
     false
   )
-  return `${source || 'Source'} -> ${decoded} -> ${backend ? formatBackendLabel(backend) : 'Backend pending'} -> ${actual}`
+  const reason = readablePerfectReason.value
+  const perfect =
+    sourceExact.value && outputPerfect.value
+      ? 'Bit Perfect'
+      : reason
+        ? `Not Bit Perfect (${reason})`
+        : 'Not Bit Perfect'
+  return `${source || 'Source'} -> ${decoded} -> ${backend ? formatBackendLabel(backend) : 'Backend pending'} -> ${actual} -> ${perfect}`
 })
 const statusSummaryText = computed(() => {
   if (readablePerfectReason.value) return `未达成：${readablePerfectReason.value}`

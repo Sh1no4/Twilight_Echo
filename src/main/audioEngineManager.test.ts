@@ -404,6 +404,28 @@ class FakeNativeBinding implements NativeAudioBinding {
   GetPlaybackInfo = (): string => JSON.stringify(this.playbackInfo)
   GetUpcomingTrack = (): AudioEngineQueueItem | null => null
   GetSpectrumData = (): number[] => []
+  GetVisualizationData = (optionsJson: string): string => {
+    const options = JSON.parse(optionsJson || '{}') as {
+      spectrumPoints?: number
+      waveformPoints?: number
+      spectrogramFrames?: number
+    }
+    const spectrumPoints = options.spectrumPoints ?? 64
+    const waveformPoints = options.waveformPoints ?? 128
+    return JSON.stringify({
+      spectrum: Array.from({ length: spectrumPoints }, (_, index) => index / Math.max(1, spectrumPoints - 1)),
+      waveform: Array.from({ length: waveformPoints }, (_, index) => Math.sin(index / 8)),
+      peakDb: -3,
+      rmsDb: -12,
+      lufsMomentary: -15,
+      spectrogram: [
+        Array.from({ length: spectrumPoints }, () => 0.25),
+        Array.from({ length: spectrumPoints }, () => 0.5)
+      ],
+      sampleRate: 48000,
+      active: true
+    })
+  }
   EnumerateDevices = (): string => JSON.stringify(this.devices)
   EnumerateBackends = (): string => JSON.stringify(['wasapi', 'wasapi-exclusive', 'asio'])
   GetEngineCapabilities = (): string => JSON.stringify({})
@@ -762,6 +784,62 @@ test('getAudioOutputState can use injected device options without native enumera
   assert.equal(state.deviceOptions[2].pathKind, 'asio')
   assert.equal(state.deviceOptions[2].supportsDop, true)
   assert.equal(state.deviceOptions[2].capabilityVersion, 3)
+})
+
+test('getVisualizationData normalizes native visualization data', () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+
+  const data = manager.getVisualizationData({
+    spectrumPoints: 12,
+    waveformPoints: 20,
+    spectrogramFrames: 1
+  })
+
+  assert.equal(data.active, true)
+  assert.equal(data.sampleRate, 48000)
+  assert.equal(data.spectrum.length, 12)
+  assert.equal(data.waveform.length, 20)
+  assert.equal(data.spectrogram.length, 1)
+  assert.equal(data.spectrogram[0].length, 12)
+  assert.equal(data.peakDb, -3)
+  assert.equal(data.rmsDb, -12)
+  assert.equal(data.lufsMomentary, -15)
+})
+
+test('getVisualizationData returns inactive shape when native visualization is unavailable', () => {
+  const nativeBinding = new FakeNativeBinding()
+  delete (nativeBinding as Partial<NativeAudioBinding>).GetVisualizationData
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+
+  const data = manager.getVisualizationData({
+    spectrumPoints: 12,
+    waveformPoints: 20,
+    spectrogramFrames: 4
+  })
+
+  assert.equal(data.active, false)
+  assert.equal(data.sampleRate, 0)
+  assert.equal(data.spectrum.length, 12)
+  assert.equal(data.waveform.length, 20)
+  assert.equal(data.spectrogram.length, 0)
+  assert.equal(data.peakDb, -120)
+  assert.equal(data.rmsDb, -120)
+  assert.equal(data.lufsMomentary, null)
 })
 
 test('canonical outputInfo clears stale DoP mirrors on PCM DSD fallback', async () => {

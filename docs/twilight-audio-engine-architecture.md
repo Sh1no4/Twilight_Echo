@@ -15,7 +15,7 @@ npm run typecheck
 npm run build
 ```
 
-当前 `ctest -N` 注册 MinGW 测试目标，`npm run test:audio-engine:mingw` 是 native 闭环验证入口。
+当前 `ctest -N` 注册 13 个 MinGW 测试目标，`npm run test:audio-engine:mingw` 是 native 闭环验证入口。`npm run test:no-real-device` 串联 MinGW configure/build、native CTest、Electron manager 测试、typecheck 和前端 build；真实设备 smoke 继续 opt-in，不进入默认门禁。
 
 ## 边界
 
@@ -32,6 +32,12 @@ npm run build
 当前公共契约使用双状态：`sourceExact` 表示源文件级精确，`outputPerfect` 表示 decoded PCM 到后端实际输出期间没有额外处理或格式损伤。后端只上报实际输出格式和能力，最终状态由统一 evaluator 计算。
 
 `outputPerfect=true` 要求 backend capability、decoded PCM 与实际输出的采样率/位深/声道/sample format 完全匹配、无 resample、无 DSP/音量/routing 改变，并且本次播放 `pcmPassthrough=true`。`pcmPassthrough` 由 `AudioPipeline` 用 FFmpeg decoded PCM 与后端 actual output 事实比较得出；后端只上报事实。`sourceExact=true` 还要求源为无损且源格式与输出格式完全一致；MP3/AAC/OGG 等有损源可达成 `outputPerfect=true`，但不会达成 `sourceExact=true`。
+
+当前 FFmpeg decode、`AudioBuffer` 与后端 `RenderCallback` 仍是 Float32 工作格式。无损整数 PCM 源如果进入 Float32 管线，再由后端重新打包为 Int16/Int24/Int24-in32/Int32，必须报告 `outputPerfect=false`、`pcmPassthrough=false` 和 `perfectReasonCode=integer_passthrough_unavailable`。真正的 typed integer passthrough 需要后续把 decode buffer、ring buffer、DSP bypass 分支和后端渲染回调一起扩展到非 Float32 样本通道。
+
+## 可视化 tap
+
+FFT tap 已扩展为只读 visualization tap，监听最终 PCM 渲染缓冲，不影响音频输出。C ABI / Node-API 通过 `GetVisualizationData` 返回 spectrum、waveform、peak、RMS、momentary LUFS 估算、固定滚动窗口 spectrogram、sampleRate 和 active 状态。无播放采样或 tap 禁用时返回 inactive 空闲态，Renderer 只能展示空闲态，不能生成假数据。
 
 Phase 6B 的后端判定边界：
 
@@ -56,7 +62,7 @@ Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer
 ## 后续顺序
 
 1. 收口 WASAPI Exclusive、ASIO、CoreAudio、ALSA 的 actual format、failure reason 与 opt-in smoke。
-2. 为更多真实音频 fixture 覆盖 lossy/lossless 的 `sourceExact` 与 `outputPerfect` 组合。
+2. 为更多真实音频 fixture 覆盖 lossy/lossless 的 `sourceExact` 与 `outputPerfect` 组合；当前默认门禁已经覆盖 generated WAV/DSF、SACD ISO unsupported 和缺失文件 metadata shape，但没有把外部 MP3/FLAC/M4A/OGG 样本作为必需依赖。
 3. 将 Native DSD 与 SACD ISO 放到 DoP carrier path 稳定后继续补齐。
 4. 将 crossfade overlap mixing 继续收敛到 native queue，并为真实音频文件补可选 smoke。
 5. 在 macOS/Linux 工具链与真实设备 smoke 通过后补平台产物路径和打包检查。

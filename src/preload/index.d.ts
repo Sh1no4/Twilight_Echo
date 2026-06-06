@@ -97,6 +97,23 @@ interface AudioProcessingSettings {
   crossfadeSeconds: number
 }
 
+interface VisualizationOptions {
+  spectrumPoints?: number
+  waveformPoints?: number
+  spectrogramFrames?: number
+}
+
+interface VisualizationData {
+  spectrum: number[]
+  waveform: number[]
+  peakDb: number
+  rmsDb: number
+  lufsMomentary: number | null
+  spectrogram: number[][]
+  sampleRate: number
+  active: boolean
+}
+
 interface AudioEqPreset {
   id: string
   name: string
@@ -456,6 +473,7 @@ interface AudioEngineAPI {
   getMetadata: (source: string) => Promise<NativeAudioMetadata | null>
   getPlaybackInfo: () => Promise<PlaybackInfo>
   getSpectrumData: (points?: number) => Promise<number[]>
+  getVisualizationData: (options?: VisualizationOptions) => Promise<VisualizationData>
 
   onPropertyChange: (cb: (event: AudioEngineEvent) => void) => () => void
   onEndFile: (cb: (reason: string) => void) => () => void

@@ -697,6 +697,7 @@ TAE_Result AudioPipeline::togglePause() {
   std::lock_guard lock(mutex_);
   if (state_ == PipelineState::Playing) {
     state_ = PipelineState::Paused;
+    spectrum_.resetCapture();
   } else if (state_ == PipelineState::Paused) {
     state_ = PipelineState::Playing;
   }
@@ -746,6 +747,7 @@ TAE_Result AudioPipeline::stop() {
     crossfadeMixActive_ = false;
     crossfadeFramesProcessed_ = 0;
     crossfadeTotalFrames_ = 0;
+    spectrum_.resetCapture();
   }
   return TAE_RESULT_OK;
 }
@@ -1056,6 +1058,13 @@ size_t AudioPipeline::getSpectrumData(float* buffer, size_t pointCount) const {
   return spectrum_.read(buffer, pointCount, phase);
 }
 
+std::string AudioPipeline::getVisualizationDataJson(
+    size_t spectrumPoints,
+    size_t waveformPoints,
+    size_t spectrogramFrames) const {
+  return spectrum_.readVisualizationJson(spectrumPoints, waveformPoints, spectrogramFrames);
+}
+
 bool AudioPipeline::configureActiveStreamLocked(
     const std::shared_ptr<DecodeStream>& stream,
     const QueueItem& item,
@@ -1158,7 +1167,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
 
   std::fill(output, output + frameCount * static_cast<size_t>(channels), 0.0f);
   if (state != PipelineState::Playing || !active) {
-    spectrum_.capture(output, frameCount, channels);
+    spectrum_.resetCapture();
     return frameCount;
   }
 
@@ -1275,13 +1284,16 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
 
   if (positionRead > 0) {
     renderedFrames_ += positionRead;
+    spectrum_.capture(output, frameCount, channels);
   } else if (active->drained()) {
     ended_ = true;
     std::lock_guard lock(mutex_);
     if (state_ == PipelineState::Playing) state_ = PipelineState::Stopped;
+    spectrum_.resetCapture();
+  } else {
+    spectrum_.resetCapture();
   }
 
-  spectrum_.capture(output, frameCount, channels);
   return frameCount;
 }
 

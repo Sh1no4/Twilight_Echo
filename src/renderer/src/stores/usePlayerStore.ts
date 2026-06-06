@@ -15,6 +15,7 @@ import { useSettingsStore } from './useSettingsStore'
 type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
+type NativeVisualizationData = Awaited<ReturnType<typeof window.api.audioEngine.getVisualizationData>>
 
 interface AudioOutputState {
   output: AudioOutputId
@@ -79,6 +80,22 @@ const defaultAudioOutputConfig: OutputConfig = {
 const audioOutputConfig = ref<OutputConfig>({ ...defaultAudioOutputConfig })
 const playbackInfo = ref<NativePlaybackInfo | null>(null)
 const outputInfo = computed<NativeOutputInfo | null>(() => playbackInfo.value?.outputInfo ?? null)
+const visualizationOptions = {
+  spectrumPoints: 48,
+  waveformPoints: 96,
+  spectrogramFrames: 48
+} as const
+const createInactiveVisualizationData = (): NativeVisualizationData => ({
+  spectrum: Array.from({ length: visualizationOptions.spectrumPoints }, () => 0),
+  waveform: Array.from({ length: visualizationOptions.waveformPoints }, () => 0),
+  peakDb: -120,
+  rmsDb: -120,
+  lufsMomentary: null,
+  spectrogram: [],
+  sampleRate: 0,
+  active: false
+})
+const visualizationData = ref<NativeVisualizationData>(createInactiveVisualizationData())
 const { settings: appSettings } = useSettingsStore()
 let playbackAudio: HTMLAudioElement | null = null
 let playbackObjectUrl: string | null = null
@@ -431,8 +448,10 @@ watch(
 const cleanupFns: (() => void)[] = []
 let listenersSetup = false
 let crossfadeTimer: number | null = null
+let visualizationTimer: number | null = null
 let crossfadeTrackId = ''
 const TIME_UPDATE_INTERVAL_MS = 250
+const VISUALIZATION_UPDATE_INTERVAL_MS = 250
 let latestPlaybackTime = 0
 let lastTimePublishAt = 0
 let pendingTimePublishTimer: number | null = null
@@ -490,6 +509,33 @@ function setCurrentTimeThrottled(time: number): void {
 function flushLatestCurrentTime(): void {
   clearPendingTimePublish()
   publishCurrentTime(latestPlaybackTime)
+}
+
+async function refreshVisualizationData(): Promise<void> {
+  try {
+    visualizationData.value = await window.api.audioEngine.getVisualizationData(visualizationOptions)
+  } catch {
+    visualizationData.value = createInactiveVisualizationData()
+  }
+}
+
+function stopVisualizationPolling(clearData = false): void {
+  if (visualizationTimer !== null) {
+    window.clearInterval(visualizationTimer)
+    visualizationTimer = null
+  }
+  if (clearData) {
+    visualizationData.value = createInactiveVisualizationData()
+  }
+}
+
+function startVisualizationPolling(): void {
+  if (visualizationTimer !== null) return
+  void refreshVisualizationData()
+  visualizationTimer = window.setInterval(
+    () => void refreshVisualizationData(),
+    VISUALIZATION_UPDATE_INTERVAL_MS
+  )
 }
 
 function handlePlaybackEnded(): void {
@@ -647,6 +693,18 @@ function setupAudioEngineListeners(): void {
 }
 
 setupAudioEngineListeners()
+
+watch(
+  [isPlaying, audioEngineReady, () => currentTrack.value?.id],
+  ([playing, ready, trackId]) => {
+    if (playing && ready && trackId) {
+      startVisualizationPolling()
+      return
+    }
+    stopVisualizationPolling(true)
+  },
+  { immediate: true }
+)
 
 function clearCrossfadeTimer(): void {
   if (crossfadeTimer) {
@@ -939,6 +997,7 @@ export function usePlayerStore(): {
   audioOutputConfig: Ref<OutputConfig>
   playbackInfo: Ref<NativePlaybackInfo | null>
   outputInfo: ComputedRef<NativeOutputInfo | null>
+  visualizationData: Ref<NativeVisualizationData>
   cyclePlayMode: () => void
   playTrack: (track: Track, trackList?: Track[]) => void
   togglePlay: () => Promise<void>
@@ -1154,6 +1213,7 @@ export function usePlayerStore(): {
     audioOutputConfig,
     playbackInfo,
     outputInfo,
+    visualizationData,
     cyclePlayMode,
     playTrack,
     togglePlay,

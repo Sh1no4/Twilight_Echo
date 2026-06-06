@@ -78,6 +78,12 @@ TAE_API TAE_Result TAE_GetLastError(TAE_EngineHandle engine, char* buffer, size_
 
 TAE_API TAE_Result TAE_GetPlaybackInfo(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size);
 TAE_API TAE_Result TAE_GetSpectrumData(TAE_EngineHandle engine, float* buffer, size_t point_count, size_t* written_count);
+TAE_API TAE_Result TAE_GetVisualizationData(
+    TAE_EngineHandle engine,
+    const char* options_json,
+    char* buffer,
+    size_t buffer_size,
+    size_t* required_size);
 TAE_API const char* TAE_GetVersion(void);
 
 #ifdef __cplusplus

@@ -28,6 +28,29 @@
 - `outputInfo.isDsd` / `dsdMode` / `dsdRate`：DSD 状态 canonical 字段。顶层 `PlaybackInfo.isDsd`、`dsdMode`、`dsdRate` 只做镜像；Renderer 应优先读取 `outputInfo` 表示当前 runtime 传输状态。若 DoP 在运行时回退到 PCM，canonical 状态必须同步为 `isDsd=false`、`dsdMode='pcm'`、`dsdRate=0`，UI 可另外基于源文件元数据保留 `DSF/DFF DSD64 -> PCM fallback ...` 的源侧说明。
 - `crossfadeActive` / `crossfadeSeconds`：播放连续性处理状态。当前 native 会稳定上报并参与 bit-perfect 判定；overlap mixing 仍属于后续补完项。
 
+## Visualization API
+
+`TAE_GetVisualizationData(engine, options_json, buffer, buffer_size, required_size)` 是只读 tap 查询接口，使用与其他 JSON 查询相同的 buffer/required-size 模式。它监听最终送往后端前的 PCM 渲染缓冲，不改变音频输出；旧的 `TAE_GetSpectrumData()` 保留为兼容入口。
+
+`options_json` 支持：
+
+- `spectrumPoints`：8-256，默认 64。
+- `waveformPoints`：16-512，默认 128。
+- `spectrogramFrames`：1-96，默认 48；native 侧保留固定滚动窗口，不无限增长。
+
+返回 JSON 固定包含：
+
+- `spectrum: number[]`
+- `waveform: number[]`
+- `peakDb: number`
+- `rmsDb: number`
+- `lufsMomentary: number | null`
+- `spectrogram: number[][]`
+- `sampleRate: number`
+- `active: boolean`
+
+当没有播放采样或 FFT tap 禁用时，`active=false`，`spectrum` / `waveform` 返回固定长度零数组，`spectrogram=[]`，`lufsMomentary=null`。UI 必须把它展示为空闲态，不能生成假成功数据。当前 LUFS 为基于当前 PCM 块 RMS 的 momentary 估算，用于播放器可视化，不作为合规响度计量。
+
 ## Capabilities 与错误 JSON
 
 `TAE_GetEngineCapabilities()` 使用 C ABI 的 buffer/required-size 模式返回 JSON。稳定字段包括：
@@ -56,7 +79,7 @@
 
 `sourceExact=true` 额外要求源格式无损，并且源格式与实际输出格式完全一致。有损格式可以达成 `outputPerfect=true`，但 `sourceExact=false`，原因会显示为 `Source is lossy; decoded PCM path is output perfect`。
 
-各后端只声明能力和实际格式；`TwilightAudioEngine` 与 `AudioPipeline` 不按 backend id 硬编码最终状态。当前主渲染路径仍以 Float32 作为解码/DSP 工作格式，因此整数 PCM 源如果被转换为 Float32，再由后端打包为整数输出，`outputPerfect=false`；只有 decoded PCM 与后端实际格式同为 Float32 且其余条件满足时才可能 `outputPerfect=true`。
+各后端只声明能力和实际格式；`TwilightAudioEngine` 与 `AudioPipeline` 不按 backend id 硬编码最终状态。当前主渲染路径仍以 Float32 作为解码/DSP 工作格式，因此整数 PCM 源如果被转换为 Float32，再由后端打包为整数输出，`outputPerfect=false`，`perfectReasonCode=integer_passthrough_unavailable`。只有 decoded PCM 与后端实际格式同为 Float32 且其余条件满足时才可能 `outputPerfect=true`。真正的 typed integer passthrough 需要后续把 FFmpeg decode buffer、AudioBuffer 和 `RenderCallback` 一起扩展到非 Float32 样本通道。
 
 ## DSD / DoP / SACD 语义
 

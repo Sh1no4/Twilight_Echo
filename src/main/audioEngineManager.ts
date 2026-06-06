@@ -319,6 +319,23 @@ export interface AudioEnginePlayResult {
   fallbackReason: string
 }
 
+export interface VisualizationOptions {
+  spectrumPoints?: number
+  waveformPoints?: number
+  spectrogramFrames?: number
+}
+
+export interface VisualizationData {
+  spectrum: number[]
+  waveform: number[]
+  peakDb: number
+  rmsDb: number
+  lufsMomentary: number | null
+  spectrogram: number[][]
+  sampleRate: number
+  active: boolean
+}
+
 export interface NativeAudioBinding {
   Play: (source: string, startTime?: number) => void
   Pause: () => void
@@ -349,6 +366,7 @@ export interface NativeAudioBinding {
   GetPlaybackInfo?: () => string | PlaybackInfo
   GetUpcomingTrack?: () => string | AudioEngineQueueItem | null
   GetSpectrumData?: (points?: number) => number[]
+  GetVisualizationData?: (optionsJson: string) => string | VisualizationData
   EnumerateDevices?: () => string | AudioDeviceOption[]
   EnumerateBackends?: () => string
   GetEngineCapabilities?: () => string
@@ -536,6 +554,14 @@ function normalizeOutputConfig(config?: Partial<OutputConfig>): OutputConfig {
   }
 }
 
+function normalizeVisualizationOptions(options?: VisualizationOptions): Required<VisualizationOptions> {
+  return {
+    spectrumPoints: Math.trunc(clampNumber(options?.spectrumPoints, 8, 256, 64)),
+    waveformPoints: Math.trunc(clampNumber(options?.waveformPoints, 16, 512, 128)),
+    spectrogramFrames: Math.trunc(clampNumber(options?.spectrogramFrames, 1, 96, 48))
+  }
+}
+
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.min(max, Math.max(min, value))
@@ -619,6 +645,54 @@ function parseNativeJson<T>(value: string | T | undefined, fallback: T): T {
     return JSON.parse(value) as T
   } catch {
     return fallback
+  }
+}
+
+function normalizeNumberArray(value: unknown, length: number): number[] {
+  const source = Array.isArray(value) ? value : []
+  return Array.from({ length }, (_, index) => {
+    const item = source[index]
+    return typeof item === 'number' && Number.isFinite(item) ? item : 0
+  })
+}
+
+function normalizeSpectrogram(value: unknown, frames: number, points: number): number[][] {
+  const source = Array.isArray(value) ? value.slice(-frames) : []
+  return source.map((row) => normalizeNumberArray(row, points))
+}
+
+function createInactiveVisualizationData(
+  options: Required<VisualizationOptions>,
+  sampleRate = 0
+): VisualizationData {
+  return {
+    spectrum: Array.from({ length: options.spectrumPoints }, () => 0),
+    waveform: Array.from({ length: options.waveformPoints }, () => 0),
+    peakDb: -120,
+    rmsDb: -120,
+    lufsMomentary: null,
+    spectrogram: [],
+    sampleRate: Math.max(0, Math.trunc(sampleRate || 0)),
+    active: false
+  }
+}
+
+function normalizeVisualizationData(
+  data: Partial<VisualizationData>,
+  options: Required<VisualizationOptions>
+): VisualizationData {
+  return {
+    spectrum: normalizeNumberArray(data.spectrum, options.spectrumPoints),
+    waveform: normalizeNumberArray(data.waveform, options.waveformPoints),
+    peakDb: typeof data.peakDb === 'number' && Number.isFinite(data.peakDb) ? data.peakDb : -120,
+    rmsDb: typeof data.rmsDb === 'number' && Number.isFinite(data.rmsDb) ? data.rmsDb : -120,
+    lufsMomentary:
+      typeof data.lufsMomentary === 'number' && Number.isFinite(data.lufsMomentary)
+        ? data.lufsMomentary
+        : null,
+    spectrogram: normalizeSpectrogram(data.spectrogram, options.spectrogramFrames, options.spectrumPoints),
+    sampleRate: typeof data.sampleRate === 'number' && Number.isFinite(data.sampleRate) ? data.sampleRate : 0,
+    active: data.active === true
   }
 }
 
@@ -1271,6 +1345,20 @@ export class AudioEngineManager extends EventEmitter {
       const x = index / Math.max(1, points - 1)
       return (Math.sin((x * 12 + this.playbackInfo.position) * Math.PI) + 1) * 0.25
     })
+  }
+
+  getVisualizationData(options: VisualizationOptions = {}): VisualizationData {
+    const normalizedOptions = normalizeVisualizationOptions(options)
+    try {
+      const nativeData = parseNativeJson(
+        this.native?.GetVisualizationData?.(JSON.stringify(normalizedOptions)),
+        null as VisualizationData | null
+      )
+      if (nativeData) return normalizeVisualizationData(nativeData, normalizedOptions)
+    } catch {
+      // Keep returning a stable inactive shape when native visualization is unavailable.
+    }
+    return createInactiveVisualizationData(normalizedOptions, this.playbackInfo.actualSampleRate)
   }
 
   destroy(): void {
