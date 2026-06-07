@@ -1,0 +1,441 @@
+const fs = require('node:fs')
+const os = require('node:os')
+const path = require('node:path')
+
+const root = path.resolve(__dirname, '..')
+
+function usage() {
+  return [
+    'Usage:',
+    '  npm run smoke:wasapi -- --device "FiiO JM21"',
+    '  node scripts/wasapi-real-smoke.cjs --device "{endpoint-id}" --buffer 256',
+    '',
+    'Options:',
+    '  --device <name-or-id>       Required unless TAE_WASAPI_DEVICE is set. Use "auto" only intentionally.',
+    '  --buffer <frames>           Exclusive preferred buffer size. Default: 256.',
+    '  --duration-ms <ms>          Playback duration per probe. Default: 1200.',
+    '  --volume <0..1>             Non-bit-perfect smoke volume. Default: 0.02.',
+    '  --expect-bit-perfect        Fail when the silent exclusive bit-perfect probe is not outputPerfect.',
+    '  --skip-bit-perfect-probe    Only run Shared and Exclusive hardware smoke.',
+    '  --module <path>             Native twilight_audio_node.node path.',
+    '  --json                      Print JSON only.',
+    '  --help                      Show this help.'
+  ].join('\n')
+}
+
+function parseArgs(argv) {
+  const options = {
+    device: process.env.TAE_WASAPI_DEVICE || '',
+    buffer: Number(process.env.TAE_WASAPI_BUFFER || 256),
+    durationMs: Number(process.env.TAE_WASAPI_DURATION_MS || 1200),
+    volume: Number(process.env.TAE_WASAPI_VOLUME || 0.02),
+    expectBitPerfect: process.env.TAE_WASAPI_EXPECT_BIT_PERFECT === '1',
+    skipBitPerfectProbe: process.env.TAE_WASAPI_SKIP_BIT_PERFECT_PROBE === '1',
+    modulePath: process.env.TAE_AUDIO_NODE || '',
+    json: false,
+    help: false
+  }
+
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]
+    const next = () => {
+      i += 1
+      if (i >= argv.length) throw new Error(`Missing value for ${arg}`)
+      return argv[i]
+    }
+
+    if (arg === '--device') options.device = next()
+    else if (arg === '--buffer') options.buffer = Number(next())
+    else if (arg === '--duration-ms') options.durationMs = Number(next())
+    else if (arg === '--volume') options.volume = Number(next())
+    else if (arg === '--expect-bit-perfect') options.expectBitPerfect = true
+    else if (arg === '--skip-bit-perfect-probe') options.skipBitPerfectProbe = true
+    else if (arg === '--module') options.modulePath = next()
+    else if (arg === '--json') options.json = true
+    else if (arg === '--help' || arg === '-h') options.help = true
+    else throw new Error(`Unknown option: ${arg}`)
+  }
+
+  if (!Number.isFinite(options.buffer) || options.buffer < 0) {
+    throw new Error('--buffer must be a non-negative number')
+  }
+  if (!Number.isFinite(options.durationMs) || options.durationMs < 100) {
+    throw new Error('--duration-ms must be at least 100')
+  }
+  if (!Number.isFinite(options.volume) || options.volume < 0 || options.volume > 1) {
+    throw new Error('--volume must be between 0 and 1')
+  }
+
+  return options
+}
+
+function loadNative(modulePath) {
+  const candidates = [
+    modulePath,
+    path.join(root, 'audio-engine', 'build', 'mingw-static', 'twilight_audio_node.node'),
+    path.join(root, 'resources', 'audio-engine', 'twilight_audio_node.node'),
+    path.join(root, 'out', 'renderer', 'audio-engine', 'twilight_audio_node.node')
+  ].filter(Boolean)
+
+  const selected = candidates.find((candidate) => fs.existsSync(candidate))
+  if (!selected) {
+    throw new Error(
+      [
+        'Cannot find twilight_audio_node.node.',
+        'Build and stage the native engine first:',
+        '  npm run configure:audio-engine:mingw',
+        '  npm run build:audio-engine:mingw'
+      ].join('\n')
+    )
+  }
+
+  const nativeDir = path.dirname(selected)
+  process.env.PATH = `${nativeDir}${path.delimiter}${process.env.PATH || ''}`
+  return { audio: require(selected), modulePath: selected }
+}
+
+function parseJson(raw, context) {
+  try {
+    return JSON.parse(raw)
+  } catch (error) {
+    throw new Error(`${context} returned invalid JSON: ${error && error.message}`)
+  }
+}
+
+function normalized(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function resolveDevice(devices, query) {
+  if (!query) throw new Error('Missing --device. Pass a device name such as "FiiO JM21" or an endpoint id.')
+  if (query === 'auto') {
+    const auto = devices.find((device) => device.id === 'auto')
+    if (!auto) throw new Error('The native device list did not include auto')
+    return auto
+  }
+
+  const exact = devices.filter((device) => device.id === query || device.label === query)
+  if (exact.length === 1) return exact[0]
+  if (exact.length > 1) throw new Error(`Device selector matched multiple exact devices: ${query}`)
+
+  const queryText = normalized(query)
+  const fuzzy = devices.filter((device) => normalized(device.label).includes(queryText) || normalized(device.id).includes(queryText))
+  if (fuzzy.length === 1) return fuzzy[0]
+
+  const list = devices
+    .map((device) => `  - ${device.label} | id=${device.id} | default=${Boolean(device.isDefault)}`)
+    .join('\n')
+  if (fuzzy.length === 0) throw new Error(`No device matched "${query}". Available devices:\n${list}`)
+  throw new Error(`Device selector "${query}" matched multiple devices:\n${list}`)
+}
+
+function compactPlaybackInfo(info) {
+  const output = info.outputInfo || {}
+  return {
+    state: info.state,
+    source: info.source,
+    codec: info.codec,
+    decodedSampleRate: info.decodedSampleRate,
+    decodedBitDepth: info.decodedBitDepth,
+    decodedChannels: info.decodedChannels,
+    decodedSampleFormat: info.decodedSampleFormat,
+    outputBackend: info.outputBackend,
+    actualBackend: info.actualBackend || output.actualBackend,
+    outputDevice: info.outputDevice,
+    deviceName: output.actualDeviceName || output.deviceName,
+    actualOutputFormat: output.actualOutputFormat,
+    actualSampleRate: output.actualSampleRate,
+    actualBitDepth: output.actualBitDepth,
+    actualChannels: output.actualChannels,
+    accessMode: output.accessMode,
+    devicePathKind: output.devicePathKind,
+    exclusive: output.exclusive,
+    bufferSizeFrames: output.bufferSizeFrames,
+    latencyFrames: output.latencyFrames,
+    latencyMs: output.latencyMs,
+    latencyInfo: output.latencyInfo,
+    supportsOutputPerfect: output.supportsOutputPerfect,
+    outputPerfect: output.outputPerfect,
+    pcmPassthrough: output.pcmPassthrough,
+    sourceExact: output.sourceExact,
+    resampled: output.resampled,
+    perfectReasonCode: output.perfectReasonCode,
+    perfectReason: output.perfectReason,
+    diagnostics: output.diagnostics
+  }
+}
+
+function expect(condition, message) {
+  if (!condition) throw new Error(message)
+}
+
+function assertDeviceFacts(label, info, device) {
+  expect(info.deviceName, `${label}: missing actual device name`)
+  if (device.id !== 'auto') {
+    expect(
+      normalized(info.deviceName).includes(normalized(device.label)),
+      `${label}: actual device "${info.deviceName}" does not match selected "${device.label}"`
+    )
+  }
+  expect(info.actualOutputFormat, `${label}: missing actual output format`)
+  expect(info.actualSampleRate > 0, `${label}: missing actual sample rate`)
+  expect(info.actualBitDepth > 0, `${label}: missing actual bit depth`)
+  expect(info.actualChannels > 0, `${label}: missing actual channel count`)
+  expect(info.bufferSizeFrames > 0, `${label}: missing buffer size`)
+  expect(info.latencyInfo && info.latencyInfo.totalLatencyMs >= info.latencyInfo.bufferLatencyMs, `${label}: invalid latency facts`)
+}
+
+function assertNoBackendFailures(label, info) {
+  const diagnostics = info.diagnostics || {}
+  expect(diagnostics.sessionUnderrunCount === 0, `${label}: underrun count is ${diagnostics.sessionUnderrunCount}`)
+  expect(diagnostics.sessionBufferDropCount === 0, `${label}: buffer drop count is ${diagnostics.sessionBufferDropCount}`)
+  expect(diagnostics.deviceLostCount === 0, `${label}: device lost count is ${diagnostics.deviceLostCount}`)
+  expect(!diagnostics.lastError, `${label}: backend reported lastError=${diagnostics.lastError}`)
+}
+
+function assertShared(label, info, device) {
+  assertDeviceFacts(label, info, device)
+  assertNoBackendFailures(label, info)
+  expect(info.actualBackend === 'wasapi', `${label}: expected actualBackend=wasapi, got ${info.actualBackend}`)
+  expect(info.accessMode === 'shared', `${label}: expected shared access, got ${info.accessMode}`)
+  expect(info.supportsOutputPerfect === false, `${label}: shared mode must not support outputPerfect`)
+  expect(info.outputPerfect === false, `${label}: shared mode must not be outputPerfect`)
+  expect(info.perfectReasonCode === 'shared_mixer', `${label}: expected perfectReasonCode=shared_mixer, got ${info.perfectReasonCode}`)
+}
+
+function assertExclusive(label, info, device) {
+  assertDeviceFacts(label, info, device)
+  assertNoBackendFailures(label, info)
+  expect(info.actualBackend === 'wasapi-exclusive', `${label}: expected actualBackend=wasapi-exclusive, got ${info.actualBackend}`)
+  expect(info.accessMode === 'exclusive', `${label}: expected exclusive access, got ${info.accessMode}`)
+  expect(info.exclusive === true, `${label}: expected exclusive=true`)
+  expect(info.supportsOutputPerfect === true, `${label}: exclusive mode should support outputPerfect`)
+}
+
+function writeS32leSilenceWav(filePath) {
+  const sampleRate = 48000
+  const channels = 2
+  const bits = 32
+  const seconds = 2
+  const blockAlign = (channels * bits) / 8
+  const byteRate = sampleRate * blockAlign
+  const dataSize = sampleRate * seconds * blockAlign
+  const buffer = Buffer.alloc(44 + dataSize)
+  buffer.write('RIFF', 0)
+  buffer.writeUInt32LE(36 + dataSize, 4)
+  buffer.write('WAVE', 8)
+  buffer.write('fmt ', 12)
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(channels, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(byteRate, 28)
+  buffer.writeUInt16LE(blockAlign, 32)
+  buffer.writeUInt16LE(bits, 34)
+  buffer.write('data', 36)
+  buffer.writeUInt32LE(dataSize, 40)
+  fs.writeFileSync(filePath, buffer)
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function safeStop(audio) {
+  try {
+    audio.Stop()
+  } catch (_) {
+    // Best-effort cleanup after a failed open/start.
+  }
+}
+
+function resetProcessing(audio, volume) {
+  audio.SetVolume(volume)
+  audio.SetReplayGainMode('off', 0, 0, true)
+  audio.SetEqBands(JSON.stringify({ enabled: false, bands: [] }))
+  audio.SetCrossfeedStrength(0)
+  audio.SetDspConfig(JSON.stringify({ crossfadeSeconds: 0 }))
+}
+
+async function runPlayback({ audio, label, backend, device, source, buffer, durationMs, volume }) {
+  safeStop(audio)
+  resetProcessing(audio, volume)
+  audio.SetOutputBackend(backend)
+  audio.SetOutputDevice(device.id)
+  audio.SetOutputConfig(JSON.stringify({ preferredBufferSize: buffer, routingMode: 'auto' }))
+  audio.Play(source, 0)
+  await sleep(durationMs)
+  const info = compactPlaybackInfo(parseJson(audio.GetPlaybackInfo(), 'GetPlaybackInfo'))
+  safeStop(audio)
+
+  if (backend === 'wasapi') assertShared(label, info, device)
+  else if (backend === 'wasapi-exclusive') assertExclusive(label, info, device)
+  else throw new Error(`${label}: unsupported backend ${backend}`)
+
+  return { ok: true, label, backend, requestedBufferSize: buffer, volume, source, info }
+}
+
+async function runBitPerfectProbe({ audio, device, buffer, durationMs, expectBitPerfect }) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-wasapi-'))
+  const source = path.join(tempDir, 'wasapi-silence-s32le-48k.wav')
+  writeS32leSilenceWav(source)
+
+  const label = 'WASAPI Exclusive bit-perfect probe'
+  try {
+    const result = await runPlayback({
+      audio,
+      label,
+      backend: 'wasapi-exclusive',
+      device,
+      source,
+      buffer,
+      durationMs,
+      volume: 1
+    })
+    if (expectBitPerfect) {
+      expect(result.info.pcmPassthrough === true, `${label}: expected pcmPassthrough=true, got ${result.info.pcmPassthrough}`)
+      expect(result.info.outputPerfect === true, `${label}: expected outputPerfect=true, got ${result.info.outputPerfect}`)
+      expect(!result.info.perfectReasonCode, `${label}: expected empty perfectReasonCode, got ${result.info.perfectReasonCode}`)
+    }
+    result.expectBitPerfect = expectBitPerfect
+    return result
+  } finally {
+    safeStop(audio)
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
+}
+
+function printHumanSummary(summary) {
+  console.log(`Native module: ${summary.modulePath}`)
+  console.log(`Selected device: ${summary.device.label}`)
+  console.log(`Endpoint id: ${summary.device.id}`)
+  console.log('')
+  for (const result of summary.results) {
+    const status = result.ok ? 'PASS' : 'FAIL'
+    console.log(`${status} ${result.label}`)
+    if (result.info) {
+      const latency = result.info.latencyInfo || {}
+      console.log(
+        `  backend=${result.info.actualBackend} access=${result.info.accessMode} format=${result.info.actualOutputFormat}/${result.info.actualBitDepth}bit/${result.info.actualSampleRate}Hz/${result.info.actualChannels}ch`
+      )
+      console.log(
+        `  buffer=${result.info.bufferSizeFrames} frames latency=${latency.totalLatencyMs}ms outputPerfect=${result.info.outputPerfect} reason=${result.info.perfectReasonCode || '(none)'}`
+      )
+    }
+    if (result.error) console.log(`  error=${result.error}`)
+  }
+}
+
+async function main() {
+  const options = parseArgs(process.argv.slice(2))
+  if (options.help) {
+    console.log(usage())
+    return
+  }
+  if (!options.device) throw new Error('Missing --device.\n' + usage())
+
+  const { audio, modulePath } = loadNative(options.modulePath)
+  const devices = parseJson(audio.EnumerateDevices(), 'EnumerateDevices')
+  const device = resolveDevice(devices, options.device)
+  const tonePath = path.join(root, 'audio-engine', 'build', 'mingw-static', 'test-tone.wav')
+  if (!fs.existsSync(tonePath)) {
+    throw new Error(`Missing smoke source: ${tonePath}. Run npm run build:audio-engine:mingw first.`)
+  }
+
+  const results = []
+  for (const test of [
+    { label: 'WASAPI Shared hardware smoke', backend: 'wasapi', source: tonePath, volume: options.volume },
+    {
+      label: 'WASAPI Exclusive hardware smoke',
+      backend: 'wasapi-exclusive',
+      source: tonePath,
+      volume: options.volume
+    }
+  ]) {
+    try {
+      results.push(
+        await runPlayback({
+          audio,
+          label: test.label,
+          backend: test.backend,
+          device,
+          source: test.source,
+          buffer: test.backend === 'wasapi-exclusive' ? options.buffer : 0,
+          durationMs: options.durationMs,
+          volume: test.volume
+        })
+      )
+    } catch (error) {
+      safeStop(audio)
+      let info = null
+      let lastError = null
+      try {
+        info = compactPlaybackInfo(parseJson(audio.GetPlaybackInfo(), 'GetPlaybackInfo'))
+      } catch (_) {}
+      try {
+        lastError = parseJson(audio.GetLastError(), 'GetLastError')
+      } catch (_) {}
+      results.push({ ok: false, label: test.label, backend: test.backend, error: error && error.message, info, lastError })
+    }
+  }
+
+  if (!options.skipBitPerfectProbe) {
+    try {
+      results.push(
+        await runBitPerfectProbe({
+          audio,
+          device,
+          buffer: options.buffer,
+          durationMs: options.durationMs,
+          expectBitPerfect: options.expectBitPerfect
+        })
+      )
+    } catch (error) {
+      safeStop(audio)
+      let info = null
+      let lastError = null
+      try {
+        info = compactPlaybackInfo(parseJson(audio.GetPlaybackInfo(), 'GetPlaybackInfo'))
+      } catch (_) {}
+      try {
+        lastError = parseJson(audio.GetLastError(), 'GetLastError')
+      } catch (_) {}
+      results.push({
+        ok: false,
+        label: 'WASAPI Exclusive bit-perfect probe',
+        backend: 'wasapi-exclusive',
+        error: error && error.message,
+        info,
+        lastError,
+        expectBitPerfect: options.expectBitPerfect
+      })
+    }
+  }
+
+  const summary = {
+    modulePath,
+    deviceSelector: options.device,
+    device,
+    options: {
+      buffer: options.buffer,
+      durationMs: options.durationMs,
+      volume: options.volume,
+      expectBitPerfect: options.expectBitPerfect,
+      skipBitPerfectProbe: options.skipBitPerfectProbe
+    },
+    results
+  }
+
+  if (options.json) console.log(JSON.stringify(summary, null, 2))
+  else printHumanSummary(summary)
+
+  if (results.some((result) => !result.ok)) process.exitCode = 1
+}
+
+main().catch((error) => {
+  console.error(error && error.message ? error.message : error)
+  process.exitCode = 1
+})

@@ -82,9 +82,11 @@ void testLosslessIntegerDecodedConversionBlocksOutputPerfect() {
 void testBackendSupport() {
   auto shared = baseEvaluation();
   shared.supportsOutputPerfect = false;
+  shared.backendPerfectReasonCode = "shared_mixer";
   shared.backendPerfectReason = "backend shared path";
   const PerfectResult sharedResult = evaluatePerfect(shared);
   assert(!sharedResult.outputPerfect);
+  assert(sharedResult.perfectReasonCode == "shared_mixer");
   assert(sharedResult.perfectReason == "backend shared path");
 
   auto wasapiExclusive = baseEvaluation();

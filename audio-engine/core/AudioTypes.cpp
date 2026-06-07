@@ -310,7 +310,8 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
       result.perfectReason = dsdPerfectReason(evaluation);
     }
   } else if (!evaluation.supportsOutputPerfect) {
-    result.perfectReasonCode = "backend_not_output_perfect";
+    result.perfectReasonCode =
+        evaluation.backendPerfectReasonCode.empty() ? "backend_not_output_perfect" : evaluation.backendPerfectReasonCode;
     result.perfectReason =
         evaluation.backendPerfectReason.empty() ? "共享输出经过系统混音" : evaluation.backendPerfectReason;
   } else if (!result.routingPreservesSemantics) {

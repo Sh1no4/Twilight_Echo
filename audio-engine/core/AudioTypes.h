@@ -169,6 +169,7 @@ struct PerfectEvaluation {
   bool sacdIsoSource = false;
   bool supportsOutputPerfect = false;
   bool backendResampled = false;
+  std::string backendPerfectReasonCode;
   std::string backendPerfectReason;
   double volume = 1.0;
   bool replayGainActive = false;

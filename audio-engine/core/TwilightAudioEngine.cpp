@@ -1644,6 +1644,7 @@ void TwilightAudioEngine::updatePerfectLocked() {
   }
   evaluation.supportsOutputPerfect = info_.outputInfo.supportsOutputPerfect;
   evaluation.backendResampled = backendResampled;
+  evaluation.backendPerfectReasonCode = info_.outputInfo.perfectReasonCode;
   evaluation.backendPerfectReason = backendPerfectReason;
   evaluation.volume = info_.volume;
   evaluation.replayGainActive = info_.replayGainActive;

@@ -1249,6 +1249,7 @@ bool AudioPipeline::updatePerfectLocked() {
   }
   evaluation.supportsOutputPerfect = backendInfo.supportsOutputPerfect;
   evaluation.backendResampled = backendResampled;
+  evaluation.backendPerfectReasonCode = backendInfo.perfectReasonCode;
   evaluation.backendPerfectReason = backendPerfectReason;
   evaluation.volume = volume_.load();
   evaluation.replayGainActive = dspStatus_.replayGainActive;
