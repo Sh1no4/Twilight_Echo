@@ -150,9 +150,7 @@ function hslToRgb({ h, s, l }: HslColor): RgbColor {
 }
 
 function rgbToHex({ r, g, b }: RgbColor): string {
-  return `#${[r, g, b]
-    .map((channel) => channel.toString(16).padStart(2, '0'))
-    .join('')}`
+  return `#${[r, g, b].map((channel) => channel.toString(16).padStart(2, '0')).join('')}`
 }
 
 export function normalizeAccentColor(color: string): string {

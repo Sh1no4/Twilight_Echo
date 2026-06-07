@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { normalizeAccentColor } from '../utils/colorExtractor'
 
@@ -45,6 +45,7 @@ const {
 } = usePlayerStore()
 
 const coverRef = ref<HTMLElement | null>(null)
+const playerBarShellRef = ref<HTMLElement | null>(null)
 const playButtonColor = computed(() => normalizeAccentColor(dominantColor.value))
 
 const emit = defineEmits<{
@@ -70,12 +71,46 @@ function onProgressInput(event: Event): void {
 
 function onVolumeInput(event: Event): void {
   const target = event.target as HTMLInputElement
-  volume.value = Number(target.value)
+  volume.value = clampVolume(Number(target.value))
+}
+
+function clampVolume(value: number): number {
+  if (!Number.isFinite(value)) return volume.value
+  return Math.min(1, Math.max(0, value))
+}
+
+function onVolumeWheel(event: WheelEvent): void {
+  event.preventDefault()
+  if (!volumeOpen.value) {
+    volumeOpen.value = true
+    playlistOpen.value = false
+    moreOpen.value = false
+  }
+  const step = event.shiftKey ? 0.01 : 0.04
+  volume.value = clampVolume(volume.value + (event.deltaY < 0 ? step : -step))
 }
 
 const volumeOpen = ref(false)
 const playlistOpen = ref(false)
 const moreOpen = ref(false)
+const floatingPanelOpen = computed(() => volumeOpen.value || playlistOpen.value || moreOpen.value)
+
+function closeFloatingPanels(): void {
+  volumeOpen.value = false
+  playlistOpen.value = false
+  moreOpen.value = false
+}
+
+function dismissFloatingPanels(): void {
+  closeFloatingPanels()
+}
+
+function onDocumentPointerDown(event: PointerEvent): void {
+  if (!volumeOpen.value && !playlistOpen.value && !moreOpen.value) return
+  const target = event.target
+  if (target instanceof Node && playerBarShellRef.value?.contains(target)) return
+  closeFloatingPanels()
+}
 
 function toggleVolume(): void {
   volumeOpen.value = !volumeOpen.value
@@ -467,11 +502,33 @@ function openEqualizer(): void {
   moreOpen.value = false
   emit('openEqualizer')
 }
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocumentPointerDown)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown)
+})
 </script>
 
 <template>
-  <div v-if="currentTrack" class="player-bar-shell" :class="{ 'menu-open': menuOpen }">
+  <div
+    v-if="currentTrack"
+    ref="playerBarShellRef"
+    class="player-bar-shell"
+    :class="{ 'menu-open': menuOpen }"
+  >
     <!-- 播放列表面板（向上抽屉） -->
+    <button
+      v-if="floatingPanelOpen"
+      class="player-panel-dismiss"
+      type="button"
+      aria-label="关闭浮层"
+      @pointerdown.prevent.stop="dismissFloatingPanels"
+      @click.prevent.stop
+    ></button>
+
     <Transition name="drawer-up">
       <div v-if="playlistOpen" class="playlist-panel" :class="{ 'panel-glass': glass }">
         <div class="playlist-header">
@@ -578,19 +635,21 @@ function openEqualizer(): void {
         </button>
 
         <!-- 音量按钮 + 向上弹出抽屉 -->
-        <div class="volume-anchor">
+        <div class="volume-anchor" @wheel="onVolumeWheel">
           <Transition name="volume-drawer">
             <div v-if="volumeOpen" class="volume-drawer" :class="{ 'drawer-glass': glass }">
-              <input
-                type="range"
-                :value="volume"
-                min="0"
-                max="1"
-                step="0.01"
-                class="volume-drawer-slider"
-                :style="{ '--range-value': `${volume * 100}%` }"
-                @input="onVolumeInput"
-              />
+              <div class="volume-drawer-slider-wrap">
+                <input
+                  type="range"
+                  :value="volume"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  class="volume-drawer-slider"
+                  :style="{ '--range-value': `${volume * 100}%` }"
+                  @input="onVolumeInput"
+                />
+              </div>
               <span class="volume-drawer-val">{{ Math.round(volume * 100) }}</span>
             </div>
           </Transition>
@@ -834,6 +893,17 @@ function openEqualizer(): void {
   margin: 0;
 }
 
+.player-panel-dismiss {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  pointer-events: auto;
+  cursor: default;
+}
+
 /* ===== Upward Drawer Transition ===== */
 .drawer-up-enter-active {
   transition:
@@ -865,15 +935,16 @@ function openEqualizer(): void {
   left: 50%;
   transform: translateX(-50%);
   margin-bottom: 10px;
+  z-index: 2;
   background: rgba(255, 255, 255, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.62);
   border-radius: 14px;
   box-shadow: 0 18px 55px rgba(86, 70, 160, 0.16);
-  padding: 10px 6px 8px;
+  padding: 8px 8px 7px;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
 }
@@ -885,18 +956,28 @@ function openEqualizer(): void {
   border: 1px solid rgba(255, 255, 255, 0.28);
 }
 
+.volume-drawer-slider-wrap {
+  position: relative;
+  width: 28px;
+  height: 96px;
+  flex-shrink: 0;
+}
+
 .volume-drawer-slider {
-  width: 120px;
-  height: 120px;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 96px;
+  height: 28px;
   appearance: none;
   -webkit-appearance: none;
   background: transparent;
   cursor: pointer;
-  transform: rotate(-90deg);
+  transform: translate(-50%, -50%) rotate(-90deg);
 }
 
 .volume-drawer-slider::-webkit-slider-runnable-track {
-  height: 4px;
+  height: 6px;
   border-radius: 999px;
   background:
     linear-gradient(90deg, var(--accent-color, #1a73e8), var(--accent-color, #1a73e8)) 0 /
@@ -919,13 +1000,13 @@ function openEqualizer(): void {
 }
 
 .volume-drawer-slider::-moz-range-track {
-  height: 4px;
+  height: 6px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-color, #1a73e8) 18%, transparent);
 }
 
 .volume-drawer-slider::-moz-range-progress {
-  height: 4px;
+  height: 6px;
   border-radius: 999px;
   background: var(--accent-color, #1a73e8);
 }
@@ -965,6 +1046,7 @@ function openEqualizer(): void {
 /* ===== Playlist Panel ===== */
 .playlist-panel {
   position: relative;
+  z-index: 2;
   overflow: hidden;
   background:
     linear-gradient(145deg, rgba(255, 255, 255, 0.68), rgba(255, 255, 255, 0.28)),
@@ -1233,6 +1315,8 @@ function openEqualizer(): void {
 
 /* ===== Player Bar ===== */
 .player-bar {
+  position: relative;
+  z-index: 2;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1259,12 +1343,15 @@ function openEqualizer(): void {
 
 .player-bar-glass {
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.06)),
-    rgba(17, 24, 39, 0.1);
-  backdrop-filter: blur(24px) saturate(160%);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  border-top: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 0 -22px 70px rgba(17, 24, 39, 0.22);
+    linear-gradient(145deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.06)),
+    rgba(8, 10, 16, 0.72);
+  border-color: rgba(255, 255, 255, 0.18);
+  border-top-color: rgba(255, 255, 255, 0.2);
+  box-shadow:
+    0 -18px 62px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(28px) saturate(145%);
+  -webkit-backdrop-filter: blur(28px) saturate(145%);
 }
 
 .player-bar-glass .player-title {
@@ -1414,11 +1501,17 @@ function openEqualizer(): void {
   cursor: pointer;
   padding: 6px;
   border-radius: 50%;
-  transition: background 0.15s;
+  transition:
+    background 0.16s ease,
+    transform 0.24s var(--te-ease-soft);
   color: #555;
 }
 .ctrl-btn:hover {
   background: #f0f0f0;
+}
+.ctrl-btn:active {
+  transform: scale(0.88);
+  transition-duration: 0.1s;
 }
 .ctrl-btn img {
   width: 25px;
@@ -1431,7 +1524,9 @@ function openEqualizer(): void {
   color: #fff;
   padding: 10px;
   box-shadow: none;
-  transition: none;
+  transition:
+    transform 0.28s var(--te-ease-soft),
+    background 0.2s ease;
 }
 .btn-play:hover {
   background: var(--play-button-color, var(--accent-color, var(--te-primary-500)));
@@ -1467,7 +1562,7 @@ function openEqualizer(): void {
 }
 
 .progress-slider::-webkit-slider-runnable-track {
-  height: 4px;
+  height: 6px;
   border-radius: 999px;
   background:
     linear-gradient(90deg, var(--accent-color, #7c4dff), #c084fc) 0 / var(--range-value, 0%) 100%
@@ -1483,13 +1578,13 @@ function openEqualizer(): void {
 }
 
 .progress-slider::-moz-range-track {
-  height: 4px;
+  height: 6px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent-color, #1a73e8) 18%, transparent);
 }
 
 .progress-slider::-moz-range-progress {
-  height: 4px;
+  height: 6px;
   border-radius: 999px;
   background: linear-gradient(90deg, var(--accent-color, #7c4dff), #c084fc);
 }
@@ -1520,7 +1615,9 @@ function openEqualizer(): void {
   background: transparent;
   cursor: pointer;
   border-radius: 50%;
-  transition: background 0.15s;
+  transition:
+    background 0.15s,
+    transform 0.24s var(--te-ease-soft);
   color: #999;
   flex-shrink: 0;
 }
@@ -1531,6 +1628,11 @@ function openEqualizer(): void {
   width: 22px;
   height: 22px;
   opacity: 0.45;
+}
+
+.mode-btn-right:active {
+  transform: scale(0.88);
+  transition-duration: 0.1s;
 }
 
 .icon-btn {
@@ -1547,7 +1649,8 @@ function openEqualizer(): void {
   color: #888;
   transition:
     background 0.15s,
-    color 0.15s;
+    color 0.15s,
+    transform 0.24s var(--te-ease-soft);
 }
 .icon-btn:hover {
   background: rgba(124, 77, 255, 0.1);
@@ -1556,6 +1659,11 @@ function openEqualizer(): void {
 .icon-btn.active {
   color: var(--accent-color, #7c4dff);
   background: color-mix(in srgb, var(--accent-color, #7c4dff) 12%, transparent);
+}
+
+.icon-btn:active {
+  transform: scale(0.88);
+  transition-duration: 0.1s;
 }
 
 /* ===== More Drawer ===== */
@@ -1584,7 +1692,7 @@ function openEqualizer(): void {
 }
 
 .more-drawer.drawer-glass {
-  background: rgba(255, 255, 255, 0.26);
+  background: rgba(255, 255, 255, 0.34);
   backdrop-filter: blur(22px) saturate(160%);
   -webkit-backdrop-filter: blur(22px) saturate(160%);
   border: 0;
@@ -2012,29 +2120,41 @@ function openEqualizer(): void {
   position: relative;
   width: 40px;
   height: 22px;
-  border: none;
-  background: #d5d5d5;
+  border: 1px solid rgba(15, 23, 42, 0.24);
+  background: #64748b;
   border-radius: 999px;
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
-  transition: background 0.2s ease;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+  transition:
+    background 0.2s ease,
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.toggle-switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color, #7c4dff) 24%, transparent);
 }
 
 .toggle-switch:disabled {
   cursor: not-allowed;
-  opacity: 0.52;
+  opacity: 0.62;
 }
 
 .toggle-switch.active {
-  background: linear-gradient(135deg, var(--accent-color, #7c4dff), #c084fc);
+  border-color: color-mix(in srgb, var(--accent-color, #7c4dff) 72%, #1e293b);
+  background: var(--accent-color, #7c4dff);
 }
 
 .drawer-glass .toggle-switch {
-  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.44);
+  background: rgba(255, 255, 255, 0.34);
 }
 
 .drawer-glass .toggle-switch.active {
+  border-color: rgba(255, 255, 255, 0.5);
   background: var(--accent-color, #1a73e8);
 }
 
@@ -2046,7 +2166,7 @@ function openEqualizer(): void {
   height: 18px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.28);
   transition: transform 0.2s ease;
 }
 

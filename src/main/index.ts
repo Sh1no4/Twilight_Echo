@@ -6,6 +6,7 @@
   dialog,
   globalShortcut,
   Menu,
+  nativeTheme,
   nativeImage,
   Tray
 } from 'electron'
@@ -33,7 +34,7 @@ import {
 } from './audioEngineManager'
 
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
-type AppTheme = 'pureWhite' | 'aurora'
+type AppTheme = 'system' | 'pureWhite' | 'dark' | 'aurora'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 
 interface AudioEqPreset {
@@ -101,7 +102,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   musicCachePath: '',
   cachePath: '',
   closeToTray: false,
-  theme: 'pureWhite',
+  theme: 'system',
   blurEffect: true,
   useCoverTheme: true,
   lyricFontSize: 18,
@@ -163,7 +164,9 @@ function normalizeAudioEqPresets(presets: unknown): AudioEqPreset[] {
 }
 
 function normalizeAppTheme(theme: unknown): AppTheme {
-  return theme === 'aurora' || theme === 'pureWhite' ? theme : DEFAULT_SETTINGS.theme
+  return theme === 'system' || theme === 'dark' || theme === 'aurora' || theme === 'pureWhite'
+    ? theme
+    : DEFAULT_SETTINGS.theme
 }
 
 function normalizePlaybackResumeMode(mode: unknown): PlaybackResumeMode {
@@ -907,12 +910,19 @@ function relaunchApplication(): void {
   app.quit()
 }
 
+function getWindowBackgroundColor(settings: AppSettings): string {
+  if (settings.theme === 'dark') return '#080b12'
+  if (settings.theme === 'system' && nativeTheme.shouldUseDarkColors) return '#080b12'
+  return '#ffffff'
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1495,
     height: 883,
     show: false,
     frame: false,
+    backgroundColor: getWindowBackgroundColor(appSettings),
     icon: join(app.getAppPath(), 'resources', 'icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

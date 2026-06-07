@@ -310,7 +310,9 @@ function startSideMenuMonitor(): void {
 }
 
 onMounted(async () => {
-  removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(savePlaybackSessionForQuit)
+  removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(
+    savePlaybackSessionForQuit
+  )
   const loadedSettings = await loadSettings()
   await loadLibrary()
   await checkLogin()
@@ -343,6 +345,7 @@ onBeforeUnmount(() => {
 
 const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOrigin.value.y}px`)
 const titleSurface = computed<TitleSurface>(() => {
+  if (showPlayingPage.value) return 'default'
   if (showSettingsPage.value) return 'settings'
   if (showStreamingPage.value) return 'streaming'
   return 'default'
@@ -352,7 +355,7 @@ const titleSurface = computed<TitleSurface>(() => {
 <template>
   <TitleBar
     :glass="showPlayingPage"
-    :streaming="showStreamingPage"
+    :streaming="showStreamingPage && !showPlayingPage"
     :title-surface="titleSurface"
     :menu-open="titleMenuOpen"
     @toggle-menu="toggleMenu"
@@ -575,27 +578,31 @@ body.te-no-blur .login-page-leave-to {
 /* PlayingMusic open/close — expands from / shrinks to cover position */
 .playing-page-enter-active {
   transition:
-    transform 0.5s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.35s ease,
-    border-radius 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    transform 0.56s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.34s ease,
+    filter 0.56s cubic-bezier(0.16, 1, 0.3, 1),
+    border-radius 0.56s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .playing-page-leave-active {
   transition:
-    transform 0.4s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.3s ease,
-    border-radius 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    transform 0.42s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.26s ease,
+    filter 0.42s cubic-bezier(0.4, 0, 0.2, 1),
+    border-radius 0.42s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .playing-page-enter-from {
-  transform: scale(0) !important;
-  border-radius: 50%;
+  transform: scale(0.12) !important;
+  border-radius: 28px;
   opacity: 0;
+  filter: blur(10px);
 }
 
 .playing-page-leave-to {
-  transform: scale(0) !important;
-  border-radius: 50%;
+  transform: scale(0.12) !important;
+  border-radius: 28px;
   opacity: 0;
+  filter: blur(10px);
 }
 
 /* Login page transition */

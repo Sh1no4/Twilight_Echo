@@ -562,6 +562,84 @@ function normalizeVisualizationOptions(options?: VisualizationOptions): Required
   }
 }
 
+const DEFAULT_AUDIO_DEVICE_OPTION: AudioDeviceOption = {
+  id: 'auto',
+  label: '系统默认',
+  isDefault: true,
+  supportsExclusive: false,
+  supportsHogMode: false,
+  supportsDirectHw: false,
+  supportsDop: false,
+  supportsNativeDsd: false,
+  supportedDsdRates: [],
+  pathKind: 'default',
+  capabilityReason: ''
+}
+
+function formatAudioDeviceLabel(device: string): string {
+  return device === DEFAULT_AUDIO_DEVICE_OPTION.id ? DEFAULT_AUDIO_DEVICE_OPTION.label : device
+}
+
+function normalizeAudioDeviceOption(option: unknown): AudioDeviceOption | null {
+  if (typeof option === 'string') {
+    const id = option.trim()
+    if (!id) return null
+    return {
+      id,
+      label: formatAudioDeviceLabel(id),
+      isDefault: id === DEFAULT_AUDIO_DEVICE_OPTION.id
+    }
+  }
+
+  if (!option || typeof option !== 'object') return null
+  const record = option as Record<string, unknown>
+  const id = typeof record.id === 'string' ? record.id.trim() : ''
+  if (!id) return null
+  const rawLabel = typeof record.label === 'string' ? record.label.trim() : ''
+  return {
+    ...(record as Partial<AudioDeviceOption>),
+    id,
+    label:
+      id === DEFAULT_AUDIO_DEVICE_OPTION.id ? DEFAULT_AUDIO_DEVICE_OPTION.label : rawLabel || id,
+    isDefault: record.isDefault === true
+  }
+}
+
+function normalizeAudioDeviceOptions(
+  rawOptions: unknown,
+  selectedDevice: string
+): AudioDeviceOption[] {
+  const options: AudioDeviceOption[] = []
+  const seen = new Set<string>()
+
+  function addOption(option: AudioDeviceOption | null): void {
+    if (!option || seen.has(option.id)) return
+    seen.add(option.id)
+    options.push(option)
+  }
+
+  if (Array.isArray(rawOptions)) {
+    for (const option of rawOptions) {
+      addOption(normalizeAudioDeviceOption(option))
+    }
+  }
+
+  if (!seen.has(DEFAULT_AUDIO_DEVICE_OPTION.id)) {
+    options.unshift(DEFAULT_AUDIO_DEVICE_OPTION)
+    seen.add(DEFAULT_AUDIO_DEVICE_OPTION.id)
+  }
+
+  if (selectedDevice && !seen.has(selectedDevice)) {
+    options.push({
+      id: selectedDevice,
+      label: formatAudioDeviceLabel(selectedDevice),
+      isDefault: selectedDevice === DEFAULT_AUDIO_DEVICE_OPTION.id
+    })
+  }
+
+  return options
+}
+
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.min(max, Math.max(min, value))
@@ -1124,8 +1202,10 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setAudioOutput(output: AudioOutputId, device?: string): Promise<AudioOutputState> {
-    this.output = normalizeAudioOutput(output)
-    this.device = normalizeAudioDevice(device ?? this.device)
+    const nextOutput = normalizeAudioOutput(output)
+    const outputChanged = nextOutput !== this.output
+    this.output = nextOutput
+    this.device = normalizeAudioDevice(device ?? (outputChanged ? 'auto' : this.device))
     if (!supportsAudioExclusive(this.output)) this.exclusiveMode = false
     this.tryNative('切换输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
@@ -1650,34 +1730,20 @@ export class AudioEngineManager extends EventEmitter {
   private getAudioDeviceOptions(): AudioDeviceOption[] {
     const injectedDevices = this.deviceOptionsProvider?.()
     if (Array.isArray(injectedDevices) && injectedDevices.length > 0) {
-      return injectedDevices
+      return normalizeAudioDeviceOptions(injectedDevices, this.device)
     }
+    let nativeDevices: unknown = null
     try {
-      const nativeDevices = parseNativeJson(
+      nativeDevices = parseNativeJson(
         this.native?.EnumerateDevices?.(),
         null as AudioDeviceOption[] | null
       )
-      if (nativeDevices && Array.isArray(nativeDevices) && nativeDevices.length > 0) {
-        return nativeDevices
-      }
     } catch {
       // Fall through to the stable default device.
     }
-    return [
-      {
-        id: 'auto',
-        label: '系统默认',
-        isDefault: true,
-        supportsExclusive: false,
-        supportsHogMode: false,
-        supportsDirectHw: false,
-        supportsDop: false,
-        supportsNativeDsd: false,
-        supportedDsdRates: [],
-        pathKind: 'default',
-        capabilityReason: ''
-      }
-    ]
+    const normalizedDevices = normalizeAudioDeviceOptions(nativeDevices, this.device)
+    if (normalizedDevices.length > 0) return normalizedDevices
+    return [DEFAULT_AUDIO_DEVICE_OPTION]
   }
 
   private tryNative(context: string, command: (native: NativeAudioBinding) => void): boolean {

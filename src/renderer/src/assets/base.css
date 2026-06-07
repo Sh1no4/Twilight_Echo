@@ -29,6 +29,7 @@
   --te-glow-main: rgba(124, 77, 255, 0.26);
   --te-glow-soft: rgba(255, 126, 182, 0.18);
   --te-glow-cyan: rgba(34, 211, 238, 0.18);
+  --color-text: var(--te-neutral-900);
   --te-ease-enter: cubic-bezier(0.4, 0, 0.2, 1);
   --te-ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
   --te-ui-scale: 0.94;
@@ -66,6 +67,7 @@
   --te-glow-main: rgba(37, 99, 235, 0.12);
   --te-glow-soft: rgba(59, 130, 246, 0.08);
   --te-glow-cyan: rgba(8, 145, 178, 0.08);
+  --color-text: var(--te-neutral-900);
 }
 
 :root[data-theme='aurora'] {
@@ -91,6 +93,34 @@
   --te-glow-main: rgba(124, 77, 255, 0.26);
   --te-glow-soft: rgba(255, 126, 182, 0.18);
   --te-glow-cyan: rgba(34, 211, 238, 0.18);
+  --color-text: var(--te-neutral-900);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --te-primary-500: #8b5cf6;
+  --te-primary-400: #a78bfa;
+  --te-primary-300: #c4b5fd;
+  --te-favorite-500: #f472b6;
+  --te-success-500: #4ade80;
+  --te-warning-500: #fbbf24;
+  --te-info-500: #60a5fa;
+  --te-accent-cyan: #22d3ee;
+  --te-neutral-50: #080b12;
+  --te-neutral-100: #101623;
+  --te-neutral-200: #1f2937;
+  --te-neutral-300: #334155;
+  --te-neutral-500: #94a3b8;
+  --te-neutral-700: #cbd5e1;
+  --te-neutral-900: #f8fafc;
+  --te-glass-bg: rgba(15, 23, 42, 0.74);
+  --te-glass-bg-strong: rgba(17, 24, 39, 0.88);
+  --te-glass-border: rgba(148, 163, 184, 0.18);
+  --te-glass-shadow: 0 22px 72px rgba(0, 0, 0, 0.34);
+  --te-glow-main: rgba(139, 92, 246, 0.26);
+  --te-glow-soft: rgba(244, 114, 182, 0.16);
+  --te-glow-cyan: rgba(34, 211, 238, 0.16);
+  --color-text: var(--te-neutral-900);
 }
 
 *,
@@ -99,6 +129,8 @@
   box-sizing: border-box;
   margin: 0;
   font-weight: inherit;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 html {
@@ -199,6 +231,12 @@ select {
   font: inherit;
 }
 
+input,
+textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 button {
   letter-spacing: inherit;
 }
@@ -259,10 +297,6 @@ html[data-theme='pureWhite'] .title-bar.title-bar-glass {
   border-bottom-color: transparent;
   background: transparent;
   box-shadow: none;
-}
-
-html[data-theme='pureWhite'] .title-bar.title-bar-glass .title-bar-playing-backdrop {
-  display: none;
 }
 
 html[data-theme='pureWhite'] .title-bar:not(.title-bar-glass) .menu-btn:hover,
@@ -547,4 +581,640 @@ html[data-theme='pureWhite'] .playing-music .cover-placeholder {
     linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03)),
     color-mix(in srgb, var(--accent-color) 20%, transparent);
   color: rgba(255, 255, 255, 0.38);
+}
+
+html[data-theme='dark'],
+html[data-theme='dark'] body {
+  background: #080b12;
+}
+
+html[data-theme='dark'] body {
+  color: var(--te-neutral-900);
+  background:
+    radial-gradient(circle at 16% 8%, rgba(139, 92, 246, 0.18), transparent 30%),
+    radial-gradient(circle at 82% 12%, rgba(34, 211, 238, 0.12), transparent 30%),
+    radial-gradient(circle at 58% 92%, rgba(244, 114, 182, 0.1), transparent 34%),
+    linear-gradient(180deg, #080b12 0%, #0d1320 52%, #090f19 100%);
+}
+
+html[data-theme='dark'] body::before {
+  background:
+    conic-gradient(
+      from 24deg at 76% 16%,
+      transparent 0deg,
+      rgba(139, 92, 246, 0.22) 56deg,
+      rgba(34, 211, 238, 0.1) 106deg,
+      transparent 164deg,
+      transparent 360deg
+    ),
+    linear-gradient(135deg, rgba(8, 11, 18, 0.74), rgba(17, 24, 39, 0.72));
+  opacity: 0.82;
+}
+
+html[data-theme='dark'] .main-content::before {
+  background:
+    radial-gradient(circle at 35% 30%, rgba(139, 92, 246, 0.14), transparent 30%),
+    radial-gradient(circle at 58% 55%, rgba(34, 211, 238, 0.08), transparent 64%),
+    radial-gradient(circle at 72% 66%, rgba(244, 114, 182, 0.06), transparent 70%);
+  opacity: 0.72;
+}
+
+html[data-theme='dark'] .main-content::after {
+  background:
+    radial-gradient(circle at 36% 45%, rgba(34, 211, 238, 0.11), transparent 62%),
+    radial-gradient(circle at 72% 48%, rgba(168, 85, 247, 0.12), transparent 68%);
+  opacity: 0.7;
+}
+
+html[data-theme='dark'] .title-bar {
+  border-bottom-color: rgba(148, 163, 184, 0.14);
+  background:
+    linear-gradient(90deg, rgba(15, 23, 42, 0.86), rgba(17, 24, 39, 0.72)),
+    rgba(8, 11, 18, 0.78);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+}
+
+html[data-theme='dark'] .title-bar.title-bar-settings,
+html[data-theme='dark'] .title-bar.title-bar-streaming {
+  background: #080b12;
+  border-bottom-color: rgba(148, 163, 184, 0.1);
+  box-shadow: none;
+}
+
+html[data-theme='dark'] .title-bar.title-bar-glass {
+  background: transparent;
+  border-bottom-color: transparent;
+  box-shadow: none;
+}
+
+html[data-theme='dark'] .menu-btn,
+html[data-theme='dark'] .settings-btn,
+html[data-theme='dark'] .login-btn,
+html[data-theme='dark'] .control-btn {
+  color: rgba(248, 250, 252, 0.9);
+}
+
+html[data-theme='dark'] .menu-btn:hover,
+html[data-theme='dark'] .settings-btn:hover,
+html[data-theme='dark'] .login-btn:hover,
+html[data-theme='dark'] .control-btn:hover {
+  background: rgba(139, 92, 246, 0.16);
+}
+
+html[data-theme='dark'] .side-menu,
+html[data-theme='dark'] .streaming-sidebar {
+  border-right-color: rgba(148, 163, 184, 0.14);
+  background:
+    linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(17, 24, 39, 0.74)),
+    rgba(8, 11, 18, 0.86);
+  box-shadow: 22px 0 70px rgba(0, 0, 0, 0.24);
+}
+
+html[data-theme='dark'] .menu-separator {
+  background: rgba(148, 163, 184, 0.18);
+}
+
+html[data-theme='dark'] .menu-item:hover,
+html[data-theme='dark'] .menu-item-streaming:hover,
+html[data-theme='dark'] .menu-item-import:hover,
+html[data-theme='dark'] .streaming-menu-item:hover {
+  background: rgba(139, 92, 246, 0.16);
+}
+
+html[data-theme='dark'] .menu-item.active,
+html[data-theme='dark'] .streaming-menu-item.active {
+  background:
+    linear-gradient(90deg, rgba(139, 92, 246, 0.28), rgba(34, 211, 238, 0.11)),
+    rgba(15, 23, 42, 0.82);
+  box-shadow:
+    inset 3px 0 0 rgba(167, 139, 250, 0.82),
+    0 12px 30px rgba(0, 0, 0, 0.18);
+}
+
+html[data-theme='dark'] .item-icon,
+html[data-theme='dark'] .item-label,
+html[data-theme='dark'] .streaming-menu-icon,
+html[data-theme='dark'] .streaming-menu-label {
+  color: rgba(226, 232, 240, 0.9);
+}
+
+html[data-theme='dark'] .song-list {
+  background:
+    radial-gradient(circle at 18% 7%, rgba(139, 92, 246, 0.12), transparent 34%),
+    radial-gradient(circle at 86% 12%, rgba(34, 211, 238, 0.08), transparent 36%),
+    linear-gradient(180deg, rgba(8, 11, 18, 0.98), rgba(13, 19, 32, 0.96));
+  scrollbar-color: rgba(167, 139, 250, 0.38) transparent;
+}
+
+html[data-theme='dark'] .grid-view::before,
+html[data-theme='dark'] .table-view::before {
+  background:
+    radial-gradient(circle at 16% 40%, rgba(139, 92, 246, 0.12), transparent 46%),
+    radial-gradient(circle at 52% 24%, rgba(244, 114, 182, 0.08), transparent 40%),
+    radial-gradient(circle at 86% 18%, rgba(34, 211, 238, 0.08), transparent 42%);
+}
+
+html[data-theme='dark'] .artist-card,
+html[data-theme='dark'] .album-card,
+html[data-theme='dark'] .playlist-card,
+html[data-theme='dark'] .empty-state,
+html[data-theme='dark'] .track-table-wrapper,
+html[data-theme='dark'] .context-menu,
+html[data-theme='dark'] .submenu {
+  border-color: rgba(148, 163, 184, 0.16);
+  background:
+    linear-gradient(145deg, rgba(15, 23, 42, 0.82), rgba(17, 24, 39, 0.58)),
+    rgba(8, 11, 18, 0.72);
+  box-shadow: 0 22px 64px rgba(0, 0, 0, 0.26);
+}
+
+html[data-theme='dark'] .artist-card:hover,
+html[data-theme='dark'] .album-card:hover,
+html[data-theme='dark'] .playlist-card:hover {
+  border-color: rgba(167, 139, 250, 0.32);
+  background:
+    linear-gradient(145deg, rgba(30, 41, 59, 0.88), rgba(15, 23, 42, 0.72)),
+    rgba(17, 24, 39, 0.82);
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.34),
+    0 0 0 1px rgba(139, 92, 246, 0.12);
+}
+
+html[data-theme='dark'] .artist-cover-placeholder,
+html[data-theme='dark'] .album-cover-placeholder,
+html[data-theme='dark'] .playlist-cover-placeholder,
+html[data-theme='dark'] .cover-placeholder,
+html[data-theme='dark'] .player-cover-placeholder,
+html[data-theme='dark'] .playlist-cover-placeholder,
+html[data-theme='dark'] .playlist-grid-cover-placeholder {
+  background:
+    radial-gradient(circle at 35% 30%, rgba(248, 250, 252, 0.14), transparent 34%),
+    linear-gradient(135deg, rgba(139, 92, 246, 0.34), rgba(34, 211, 238, 0.16));
+}
+
+html[data-theme='dark'] .song-list-title,
+html[data-theme='dark'] .artist-name,
+html[data-theme='dark'] .album-name,
+html[data-theme='dark'] .playlist-name,
+html[data-theme='dark'] .track-title,
+html[data-theme='dark'] .playlist-title,
+html[data-theme='dark'] .player-title,
+html[data-theme='dark'] .placeholder-title,
+html[data-theme='dark'] .playlist-grid-name {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .artist-count,
+html[data-theme='dark'] .album-count,
+html[data-theme='dark'] .playlist-count,
+html[data-theme='dark'] .track-artist,
+html[data-theme='dark'] .player-artist,
+html[data-theme='dark'] .empty-text,
+html[data-theme='dark'] .empty-hint,
+html[data-theme='dark'] .placeholder-hint,
+html[data-theme='dark'] .playlist-grid-count {
+  color: rgba(148, 163, 184, 0.82);
+}
+
+html[data-theme='dark'] .search-box,
+html[data-theme='dark'] .streaming-search-box,
+html[data-theme='dark'] .view-tool {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.74);
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.24);
+}
+
+html[data-theme='dark'] .search-box.focused,
+html[data-theme='dark'] .streaming-search-box.focused {
+  border-color: rgba(167, 139, 250, 0.48);
+  background: rgba(17, 24, 39, 0.92);
+  box-shadow:
+    0 0 0 4px rgba(139, 92, 246, 0.16),
+    0 18px 44px rgba(0, 0, 0, 0.28);
+}
+
+html[data-theme='dark'] .search-input,
+html[data-theme='dark'] .streaming-search-input {
+  color: rgba(248, 250, 252, 0.92);
+}
+
+html[data-theme='dark'] .search-input::placeholder,
+html[data-theme='dark'] .streaming-search-input::placeholder {
+  color: rgba(148, 163, 184, 0.58);
+}
+
+html[data-theme='dark'] .track-table thead,
+html[data-theme='dark'] .track-table th {
+  background: rgba(15, 23, 42, 0.88);
+}
+
+html[data-theme='dark'] .track-table th {
+  color: rgba(148, 163, 184, 0.74);
+  border-bottom-color: rgba(148, 163, 184, 0.14);
+}
+
+html[data-theme='dark'] .track-row td {
+  color: rgba(203, 213, 225, 0.86);
+  border-bottom-color: rgba(148, 163, 184, 0.1);
+}
+
+html[data-theme='dark'] .track-row::before {
+  border-color: rgba(148, 163, 184, 0.16);
+  background:
+    linear-gradient(135deg, rgba(30, 41, 59, 0.74), rgba(15, 23, 42, 0.48)),
+    linear-gradient(
+      90deg,
+      rgba(139, 92, 246, 0.1),
+      rgba(244, 114, 182, 0.06),
+      rgba(34, 211, 238, 0.08)
+    );
+}
+
+html[data-theme='dark'] .track-row:hover {
+  box-shadow: 0 16px 38px rgba(0, 0, 0, 0.26);
+}
+
+html[data-theme='dark'] .track-playing {
+  background:
+    linear-gradient(90deg, rgba(139, 92, 246, 0.22), rgba(34, 211, 238, 0.08)) !important;
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.28);
+}
+
+html[data-theme='dark'] .track-playing .track-title {
+  color: #ddd6fe;
+}
+
+html[data-theme='dark'] .col-index,
+html[data-theme='dark'] .col-album,
+html[data-theme='dark'] .col-duration {
+  color: rgba(148, 163, 184, 0.72) !important;
+}
+
+html[data-theme='dark'] .context-menu .menu-item,
+html[data-theme='dark'] .submenu .menu-item {
+  color: rgba(226, 232, 240, 0.9);
+}
+
+html[data-theme='dark'] .context-menu .menu-item i,
+html[data-theme='dark'] .submenu .menu-item i {
+  color: rgba(148, 163, 184, 0.82);
+}
+
+html[data-theme='dark'] .player-bar:not(.player-bar-glass),
+html[data-theme='dark'] .playlist-panel:not(.panel-glass),
+html[data-theme='dark'] .volume-drawer:not(.drawer-glass),
+html[data-theme='dark'] .more-drawer:not(.drawer-glass) {
+  border-color: rgba(148, 163, 184, 0.16);
+  background:
+    linear-gradient(145deg, rgba(15, 23, 42, 0.92), rgba(17, 24, 39, 0.74)),
+    rgba(8, 11, 18, 0.78);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.36),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme='dark'] .playlist-panel::before,
+html[data-theme='dark'] .playlist-panel::after {
+  opacity: 0.42;
+}
+
+html[data-theme='dark'] .playlist-header {
+  border-bottom-color: rgba(148, 163, 184, 0.14);
+}
+
+html[data-theme='dark'] .playlist-heading-title,
+html[data-theme='dark'] .more-action-title,
+html[data-theme='dark'] .more-item-label {
+  color: rgba(248, 250, 252, 0.94);
+}
+
+html[data-theme='dark'] .playlist-heading-subtitle,
+html[data-theme='dark'] .playlist-artist,
+html[data-theme='dark'] .more-action-desc,
+html[data-theme='dark'] .more-item-desc,
+html[data-theme='dark'] .volume-drawer-val,
+html[data-theme='dark'] .time-label {
+  color: rgba(148, 163, 184, 0.76);
+}
+
+html[data-theme='dark'] .playlist-item:hover,
+html[data-theme='dark'] .more-action {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: rgba(30, 41, 59, 0.68);
+}
+
+html[data-theme='dark'] .playlist-item.active,
+html[data-theme='dark'] .more-action:hover,
+html[data-theme='dark'] .audio-output-mini:hover,
+html[data-theme='dark'] .audio-output-mini.active {
+  background: rgba(139, 92, 246, 0.18);
+  color: rgba(221, 214, 254, 0.96);
+}
+
+html[data-theme='dark'] .more-item-value,
+html[data-theme='dark'] .audio-output-mini,
+html[data-theme='dark'] .audio-device-mini-select {
+  background: rgba(15, 23, 42, 0.82);
+  color: rgba(203, 213, 225, 0.88);
+}
+
+html[data-theme='dark'] .ctrl-btn,
+html[data-theme='dark'] .icon-btn,
+html[data-theme='dark'] .mode-btn-right {
+  color: rgba(203, 213, 225, 0.82);
+}
+
+html[data-theme='dark'] .ctrl-btn:hover,
+html[data-theme='dark'] .icon-btn:hover,
+html[data-theme='dark'] .icon-btn.active,
+html[data-theme='dark'] .mode-btn-right:hover {
+  background: rgba(139, 92, 246, 0.16);
+  color: rgba(248, 250, 252, 0.94);
+}
+
+html[data-theme='dark'] .player-bar:not(.player-bar-glass) .ctrl-btn img,
+html[data-theme='dark'] .player-bar:not(.player-bar-glass) .mode-btn-right img {
+  filter: invert(1);
+  opacity: 0.68;
+}
+
+html[data-theme='dark'] .settings-page,
+html[data-theme='dark'] .settings-header {
+  background: #080b12;
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .settings-tabs,
+html[data-theme='dark'] .theme-segment,
+html[data-theme='dark'] .resume-segment,
+html[data-theme='dark'] .audio-output-segment,
+html[data-theme='dark'] .path-field,
+html[data-theme='dark'] .text-button,
+html[data-theme='dark'] .icon-button.subtle,
+html[data-theme='dark'] .shortcut-item kbd {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: #101623;
+  color: rgba(203, 213, 225, 0.88);
+}
+
+html[data-theme='dark'] .settings-tabs {
+  border-right-color: rgba(148, 163, 184, 0.12);
+}
+
+html[data-theme='dark'] .settings-group,
+html[data-theme='dark'] .shortcut-list,
+html[data-theme='dark'] .theme-option.active,
+html[data-theme='dark'] .resume-option.active,
+html[data-theme='dark'] .audio-output-option.active {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: #0d1320;
+}
+
+html[data-theme='dark'] .setting-row + .setting-row,
+html[data-theme='dark'] .shortcut-item + .shortcut-item {
+  border-top-color: rgba(148, 163, 184, 0.12);
+}
+
+html[data-theme='dark'] .setting-label,
+html[data-theme='dark'] .settings-section h2,
+html[data-theme='dark'] .settings-heading h1,
+html[data-theme='dark'] .theme-option-copy span,
+html[data-theme='dark'] .resume-option span,
+html[data-theme='dark'] .audio-output-option span {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .setting-desc,
+html[data-theme='dark'] .setting-value,
+html[data-theme='dark'] .settings-heading span,
+html[data-theme='dark'] .theme-option-copy small,
+html[data-theme='dark'] .resume-option small,
+html[data-theme='dark'] .audio-output-option small {
+  color: rgba(148, 163, 184, 0.78);
+}
+
+html[data-theme='dark'] .tab-btn:hover,
+html[data-theme='dark'] .theme-option:hover,
+html[data-theme='dark'] .resume-option:hover,
+html[data-theme='dark'] .audio-output-option:hover,
+html[data-theme='dark'] .icon-button:hover,
+html[data-theme='dark'] .icon-button.subtle:hover {
+  background: rgba(139, 92, 246, 0.14);
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .tab-btn.active,
+html[data-theme='dark'] .text-button:hover,
+html[data-theme='dark'] .inline-note {
+  background: rgba(139, 92, 246, 0.18);
+  color: #ddd6fe;
+}
+
+html[data-theme='dark'] .select-control {
+  border-color: rgba(148, 163, 184, 0.18);
+  background: #101623;
+  color: rgba(248, 250, 252, 0.92);
+}
+
+html[data-theme='dark'] .restart-strip {
+  border-bottom-color: rgba(251, 191, 36, 0.22);
+  background: rgba(120, 53, 15, 0.26);
+  color: #fde68a;
+}
+
+html[data-theme='dark'] .danger-button {
+  border-color: rgba(248, 113, 113, 0.24);
+  background: rgba(127, 29, 29, 0.42);
+  color: #fecaca;
+}
+
+html[data-theme='dark'] .streaming-page,
+html[data-theme='dark'] .login-page,
+html[data-theme='dark'] .eq-page {
+  background:
+    radial-gradient(circle at 30% 10%, rgba(139, 92, 246, 0.12), transparent 28%),
+    radial-gradient(circle at 78% 12%, rgba(34, 211, 238, 0.1), transparent 30%),
+    linear-gradient(180deg, #080b12, #0d1320);
+  color: rgba(248, 250, 252, 0.94);
+}
+
+html[data-theme='dark'] .streaming-content-title,
+html[data-theme='dark'] .detail-playlist-name,
+html[data-theme='dark'] .artist-section-heading h3,
+html[data-theme='dark'] .profile-name,
+html[data-theme='dark'] .liked-card-title,
+html[data-theme='dark'] .playlist-row-title,
+html[data-theme='dark'] .feature-title,
+html[data-theme='dark'] .section-heading h2 {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .streaming-content-subtitle,
+html[data-theme='dark'] .detail-playlist-desc,
+html[data-theme='dark'] .artist-section-heading p,
+html[data-theme='dark'] .profile-kicker,
+html[data-theme='dark'] .profile-signature,
+html[data-theme='dark'] .liked-card-desc,
+html[data-theme='dark'] .playlist-row-subtitle,
+html[data-theme='dark'] .feature-desc,
+html[data-theme='dark'] .section-heading p {
+  color: rgba(148, 163, 184, 0.78);
+}
+
+html[data-theme='dark'] .streaming-search-box,
+html[data-theme='dark'] .btn-back,
+html[data-theme='dark'] .streaming-round-btn,
+html[data-theme='dark'] .streaming-avatar-btn,
+html[data-theme='dark'] .search-tab-pill,
+html[data-theme='dark'] .streaming-placeholder,
+html[data-theme='dark'] .detail-playlist-header,
+html[data-theme='dark'] .playlist-grid-card,
+html[data-theme='dark'] .feature-card,
+html[data-theme='dark'] .profile-panel,
+html[data-theme='dark'] .liked-panel,
+html[data-theme='dark'] .playlist-list-item,
+html[data-theme='dark'] .playlist-loading-status {
+  border-color: rgba(148, 163, 184, 0.16);
+  background:
+    linear-gradient(145deg, rgba(15, 23, 42, 0.88), rgba(17, 24, 39, 0.68)),
+    rgba(8, 11, 18, 0.72);
+  box-shadow:
+    0 20px 58px rgba(0, 0, 0, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+html[data-theme='dark'] .track-table th {
+  background: #101623;
+}
+
+html[data-theme='dark'] .track-row:hover {
+  background: rgba(30, 41, 59, 0.56);
+}
+
+html[data-theme='dark'] .search-tab-pill.active,
+html[data-theme='dark'] .stream-action-btn {
+  background: linear-gradient(135deg, #8b5cf6, #22d3ee);
+  color: #ffffff;
+  box-shadow: 0 14px 30px rgba(139, 92, 246, 0.24);
+}
+
+html[data-theme='dark'] .btn-like.liked:hover {
+  background: rgba(244, 114, 182, 0.16);
+}
+
+html[data-theme='dark'] .login-header,
+html[data-theme='dark'] .login-body,
+html[data-theme='dark'] .profile-card,
+html[data-theme='dark'] .qr-wrapper,
+html[data-theme='dark'] .qr-placeholder,
+html[data-theme='dark'] .login-status {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.82);
+  color: rgba(248, 250, 252, 0.94);
+}
+
+html[data-theme='dark'] .login-title,
+html[data-theme='dark'] .profile-nickname {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .profile-uid,
+html[data-theme='dark'] .qr-status {
+  color: rgba(148, 163, 184, 0.78);
+}
+
+html[data-theme='dark'] .login-back-btn,
+html[data-theme='dark'] .login-action-btn,
+html[data-theme='dark'] .logout-btn {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: rgba(139, 92, 246, 0.16);
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .modal-overlay {
+  background: rgba(3, 7, 18, 0.72);
+}
+
+html[data-theme='dark'] .import-dialog,
+html[data-theme='dark'] .folder-list,
+html[data-theme='dark'] .folder-item,
+html[data-theme='dark'] .progress-bar-bg {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: #0d1320;
+  color: rgba(248, 250, 252, 0.94);
+}
+
+html[data-theme='dark'] .section-title,
+html[data-theme='dark'] .folder-path,
+html[data-theme='dark'] .progress-info {
+  color: rgba(248, 250, 252, 0.92);
+}
+
+html[data-theme='dark'] .empty-folders {
+  color: rgba(148, 163, 184, 0.78);
+}
+
+html[data-theme='dark'] .btn-cancel {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: #101623;
+  color: rgba(203, 213, 225, 0.9);
+}
+
+html[data-theme='dark'] .eq-sidebar,
+html[data-theme='dark'] .eq-content,
+html[data-theme='dark'] .eq-workbench,
+html[data-theme='dark'] .response-card,
+html[data-theme='dark'] .graphic-board,
+html[data-theme='dark'] .parameter-editor,
+html[data-theme='dark'] .square-panel,
+html[data-theme='dark'] .preset-menu,
+html[data-theme='dark'] .filter-menu {
+  border-color: rgba(148, 163, 184, 0.16);
+  background:
+    linear-gradient(145deg, rgba(15, 23, 42, 0.88), rgba(17, 24, 39, 0.66)),
+    rgba(8, 11, 18, 0.74);
+  color: rgba(248, 250, 252, 0.94);
+  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.26);
+}
+
+html[data-theme='dark'] .eq-nav-item,
+html[data-theme='dark'] .eq-command,
+html[data-theme='dark'] .preset-menu-item,
+html[data-theme='dark'] .filter-menu button,
+html[data-theme='dark'] .filter-select-button,
+html[data-theme='dark'] .band-selector button {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.82);
+  color: rgba(226, 232, 240, 0.9);
+}
+
+html[data-theme='dark'] .eq-nav-item.active,
+html[data-theme='dark'] .eq-enable.active,
+html[data-theme='dark'] .preset-menu-item.active,
+html[data-theme='dark'] .filter-menu button.active,
+html[data-theme='dark'] .band-selector button.active,
+html[data-theme='dark'] .graphic-band.selected {
+  background: rgba(139, 92, 246, 0.2);
+  color: #ddd6fe;
+}
+
+html[data-theme='dark'] .eq-heading h1,
+html[data-theme='dark'] .editor-title,
+html[data-theme='dark'] .band-gain {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .eq-heading p,
+html[data-theme='dark'] .eq-nav-desc,
+html[data-theme='dark'] .preset-menu-title,
+html[data-theme='dark'] .preset-empty,
+html[data-theme='dark'] .band-frequency,
+html[data-theme='dark'] .editor-row span {
+  color: rgba(148, 163, 184, 0.78);
+}
+
+html[data-theme='dark'] input,
+html[data-theme='dark'] select,
+html[data-theme='dark'] textarea {
+  color-scheme: dark;
 }

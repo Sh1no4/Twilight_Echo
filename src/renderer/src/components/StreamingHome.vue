@@ -376,7 +376,12 @@ function openFeature(key: FeatureCard['key']): void {
   inset: 0;
   padding: 1px;
   border-radius: inherit;
-  background: linear-gradient(135deg, rgba(124, 77, 255, 0.26), rgba(34, 211, 238, 0.16), rgba(255, 126, 182, 0.18));
+  background: linear-gradient(
+    135deg,
+    rgba(124, 77, 255, 0.26),
+    rgba(34, 211, 238, 0.16),
+    rgba(255, 126, 182, 0.18)
+  );
   opacity: 0.34;
   pointer-events: none;
   mask:
@@ -574,7 +579,12 @@ function openFeature(key: FeatureCard['key']): void {
   inset: 0;
   padding: 1px;
   border-radius: inherit;
-  background: linear-gradient(135deg, rgba(124, 77, 255, 0.2), rgba(34, 211, 238, 0.13), rgba(255, 126, 182, 0.15));
+  background: linear-gradient(
+    135deg,
+    rgba(124, 77, 255, 0.2),
+    rgba(34, 211, 238, 0.13),
+    rgba(255, 126, 182, 0.15)
+  );
   opacity: 0.28;
   pointer-events: none;
   mask:

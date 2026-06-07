@@ -160,8 +160,18 @@ const builtInEqPresets: AudioEqPreset[] = [
 ]
 
 const tabs: { key: EqualizerTab; label: string; icon: string; desc: string }[] = [
-  { key: 'graphic', label: '图形均衡器', icon: 'pi pi-chart-bar', desc: '曲线、Master 与 10 波段塑形' },
-  { key: 'parametric', label: '参数均衡器', icon: 'pi pi-sliders-h', desc: '频率、滤波器、增益与 Q 值' },
+  {
+    key: 'graphic',
+    label: '图形均衡器',
+    icon: 'pi pi-chart-bar',
+    desc: '曲线、Master 与 10 波段塑形'
+  },
+  {
+    key: 'parametric',
+    label: '参数均衡器',
+    icon: 'pi pi-sliders-h',
+    desc: '频率、滤波器、增益与 Q 值'
+  },
   { key: 'square', label: '配置广场', icon: 'pi pi-compass', desc: '预设分享入口' }
 ]
 
@@ -177,13 +187,18 @@ const selectedBandIndex = ref(0)
 
 const userPresets = computed(() => appSettings.value?.audioEqPresets ?? [])
 const activeTabMeta = computed(() => tabs.find((tab) => tab.key === activeTab.value) ?? tabs[0])
-const selectedBand = computed(() => audioProcessing.value.eqBands[selectedBandIndex.value] ?? audioProcessing.value.eqBands[0])
+const selectedBand = computed(
+  () => audioProcessing.value.eqBands[selectedBandIndex.value] ?? audioProcessing.value.eqBands[0]
+)
 const selectedFilter = computed(
-  () => filterTypes.find((filter) => filter.value === selectedBand.value?.filterType) ?? filterTypes[0]
+  () =>
+    filterTypes.find((filter) => filter.value === selectedBand.value?.filterType) ?? filterTypes[0]
 )
 
 const responsePath = computed(() =>
-  responsePoints.value.map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(' ')
+  responsePoints.value
+    .map((point, index) => `${index === 0 ? 'M' : 'L'}${point.x.toFixed(2)},${point.y.toFixed(2)}`)
+    .join(' ')
 )
 const responseFillPath = computed(() => {
   if (responsePoints.value.length === 0) return ''
@@ -232,7 +247,9 @@ function normalizeFilterType(value: unknown): EqualizerFilterType {
   return 'peak'
 }
 
-function normalizeAudioProcessing(settings?: Partial<AudioProcessingSettings>): AudioProcessingSettings {
+function normalizeAudioProcessing(
+  settings?: Partial<AudioProcessingSettings>
+): AudioProcessingSettings {
   const rawBands = Array.isArray(settings?.eqBands) ? settings.eqBands : defaultEqBands
   return {
     ...defaultAudioProcessing,
@@ -304,10 +321,19 @@ async function updateEqBand(index: number, patch: Partial<EqualizerBand>): Promi
   bands[index] = {
     ...bands[index],
     ...patch,
-    frequency: patch.frequency !== undefined ? clampNumber(patch.frequency, 20, 20000, bands[index].frequency) : bands[index].frequency,
-    gain: patch.gain !== undefined ? clampNumber(patch.gain, -12, 12, bands[index].gain) : bands[index].gain,
+    frequency:
+      patch.frequency !== undefined
+        ? clampNumber(patch.frequency, 20, 20000, bands[index].frequency)
+        : bands[index].frequency,
+    gain:
+      patch.gain !== undefined
+        ? clampNumber(patch.gain, -12, 12, bands[index].gain)
+        : bands[index].gain,
     q: patch.q !== undefined ? clampNumber(patch.q, 0.25, 8, bands[index].q) : bands[index].q,
-    filterType: patch.filterType !== undefined ? normalizeFilterType(patch.filterType) : bands[index].filterType
+    filterType:
+      patch.filterType !== undefined
+        ? normalizeFilterType(patch.filterType)
+        : bands[index].filterType
   }
   await updateAudioProcessing({ eqBands: bands })
 }
@@ -402,7 +428,8 @@ function selectBand(index: number): void {
 }
 
 function formatFrequency(frequency: number): string {
-  if (frequency >= 1000) return `${Number((frequency / 1000).toFixed(frequency % 1000 === 0 ? 0 : 1))}k`
+  if (frequency >= 1000)
+    return `${Number((frequency / 1000).toFixed(frequency % 1000 === 0 ? 0 : 1))}k`
   return `${Math.round(frequency)}`
 }
 
@@ -413,7 +440,10 @@ function formatFrequencyLong(frequency: number): string {
 function frequencyToX(frequency: number): number {
   const min = Math.log10(graphMinFrequency)
   const max = Math.log10(graphMaxFrequency)
-  const ratio = (Math.log10(clampNumber(frequency, graphMinFrequency, graphMaxFrequency, graphMinFrequency)) - min) / (max - min)
+  const ratio =
+    (Math.log10(clampNumber(frequency, graphMinFrequency, graphMaxFrequency, graphMinFrequency)) -
+      min) /
+    (max - min)
   return chartPad.left + ratio * (chartWidth - chartPad.left - chartPad.right)
 }
 
@@ -424,7 +454,9 @@ function frequencyFromRatio(ratio: number): number {
 }
 
 function gainToY(gain: number): number {
-  const ratio = (clampNumber(gain, graphMinGain, graphMaxGain, 0) - graphMinGain) / (graphMaxGain - graphMinGain)
+  const ratio =
+    (clampNumber(gain, graphMinGain, graphMaxGain, 0) - graphMinGain) /
+    (graphMaxGain - graphMinGain)
   return chartHeight - chartPad.bottom - ratio * (chartHeight - chartPad.top - chartPad.bottom)
 }
 
@@ -452,7 +484,10 @@ function estimateBandGainAtFrequency(band: EqualizerBand, frequency: number): nu
 }
 
 function estimateTotalGain(frequency: number): number {
-  const bandGain = audioProcessing.value.eqBands.reduce((sum, band) => sum + estimateBandGainAtFrequency(band, frequency), 0)
+  const bandGain = audioProcessing.value.eqBands.reduce(
+    (sum, band) => sum + estimateBandGainAtFrequency(band, frequency),
+    0
+  )
   return clampNumber(audioProcessing.value.eqPreamp + bandGain, graphMinGain, graphMaxGain, 0)
 }
 
@@ -546,7 +581,11 @@ onMounted(() => {
               </div>
               <div class="preset-create">
                 <input v-model="presetName" type="text" placeholder="新建预设名称" />
-                <button type="button" :disabled="saving || !presetName.trim()" @click="saveEqPreset">
+                <button
+                  type="button"
+                  :disabled="saving || !presetName.trim()"
+                  @click="saveEqPreset"
+                >
                   新建
                 </button>
               </div>
@@ -554,11 +593,18 @@ onMounted(() => {
           </div>
           <button type="button" class="eq-command" @click="openAdvancedSettings()">高级设置</button>
           <button type="button" class="eq-command soft" @click="resetEqualizer">重置</button>
-          <button type="button" class="eq-command" :disabled="saving" @click="saveAsCurrentPreset">另存为</button>
+          <button type="button" class="eq-command" :disabled="saving" @click="saveAsCurrentPreset">
+            另存为
+          </button>
         </div>
 
         <div class="response-card">
-          <svg class="response-chart" :viewBox="`0 0 ${chartWidth} ${chartHeight}`" role="img" aria-label="均衡器响应曲线">
+          <svg
+            class="response-chart"
+            :viewBox="`0 0 ${chartWidth} ${chartHeight}`"
+            role="img"
+            aria-label="均衡器响应曲线"
+          >
             <defs>
               <linearGradient id="eqStroke" x1="0" y1="0" x2="1" y2="0">
                 <stop offset="0%" stop-color="#7c4dff" />
@@ -613,7 +659,6 @@ onMounted(() => {
             <path class="response-line" :d="responsePath" />
           </svg>
         </div>
-
 
         <div class="graphic-board">
           <div class="graphic-band master-band">
@@ -694,7 +739,11 @@ onMounted(() => {
               </div>
               <div class="preset-create">
                 <input v-model="presetName" type="text" placeholder="新建预设名称" />
-                <button type="button" :disabled="saving || !presetName.trim()" @click="saveEqPreset">
+                <button
+                  type="button"
+                  :disabled="saving || !presetName.trim()"
+                  @click="saveEqPreset"
+                >
                   新建
                 </button>
               </div>
@@ -702,11 +751,18 @@ onMounted(() => {
           </div>
           <button type="button" class="eq-command" @click="switchTab('graphic')">返回图形</button>
           <button type="button" class="eq-command soft" @click="resetEqualizer">重置</button>
-          <button type="button" class="eq-command" :disabled="saving" @click="saveAsCurrentPreset">另存为</button>
+          <button type="button" class="eq-command" :disabled="saving" @click="saveAsCurrentPreset">
+            另存为
+          </button>
         </div>
 
         <div class="response-card compact">
-          <svg class="response-chart" :viewBox="`0 0 ${chartWidth} ${chartHeight}`" role="img" aria-label="参数均衡器响应曲线">
+          <svg
+            class="response-chart"
+            :viewBox="`0 0 ${chartWidth} ${chartHeight}`"
+            role="img"
+            aria-label="参数均衡器响应曲线"
+          >
             <defs>
               <linearGradient id="eqStrokeParametric" x1="0" y1="0" x2="1" y2="0">
                 <stop offset="0%" stop-color="#7c4dff" />
@@ -781,7 +837,6 @@ onMounted(() => {
             {{ formatFrequency(band.frequency) }}
           </button>
         </div>
-
 
         <div v-if="selectedBand" class="parameter-editor">
           <div class="editor-title">
@@ -1667,5 +1722,4 @@ onMounted(() => {
     row-gap: 18px;
   }
 }
-
 </style>

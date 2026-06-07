@@ -56,7 +56,11 @@ export function useMusicStore(): {
       albumMap.get(albumName)!.push(track)
 
       const dir =
-        track.dir || track.filePath.slice(0, Math.max(track.filePath.lastIndexOf('\\'), track.filePath.lastIndexOf('/')))
+        track.dir ||
+        track.filePath.slice(
+          0,
+          Math.max(track.filePath.lastIndexOf('\\'), track.filePath.lastIndexOf('/'))
+        )
       if (dir) {
         if (!folderMap.has(dir)) folderMap.set(dir, [])
         folderMap.get(dir)!.push(track)

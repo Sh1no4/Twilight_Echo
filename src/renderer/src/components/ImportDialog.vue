@@ -93,61 +93,62 @@ onUnmounted(() => {
   <Teleport to="body">
     <Transition name="fade">
       <div v-if="show" class="modal-overlay" @click.self="emit('close')">
-      <div class="import-dialog">
-        <div class="dialog-header"></div>
+        <div class="import-dialog">
+          <div class="dialog-header"></div>
 
-        <div class="dialog-content">
-          <div class="folder-list-section">
-            <div class="section-header">
-              <span class="section-title">已选文件夹</span>
+          <div class="dialog-content">
+            <div class="folder-list-section">
+              <div class="section-header">
+                <span class="section-title">已选文件夹</span>
+              </div>
+
+              <div class="folder-list">
+                <div v-if="scannedFolders.length === 0" class="empty-folders">
+                  暂无文件夹，请点击下方按钮添加
+                </div>
+                <div v-for="folder in scannedFolders" :key="folder" class="folder-item">
+                  <i class="pi pi-folder"></i>
+                  <span class="folder-path" :title="folder">{{ folder }}</span>
+                  <input
+                    type="checkbox"
+                    :checked="selectedFolders.has(folder)"
+                    :disabled="isScanning"
+                    @change="toggleFolder(folder)"
+                  />
+                </div>
+              </div>
             </div>
 
-            <div class="folder-list">
-              <div v-if="scannedFolders.length === 0" class="empty-folders">
-                暂无文件夹，请点击下方按钮添加
+            <div v-if="isScanning" class="progress-section">
+              <div class="progress-info">
+                <span>正在扫描...</span>
+                <span>{{ progress.current }} / {{ progress.total }}</span>
               </div>
-              <div v-for="folder in scannedFolders" :key="folder" class="folder-item">
-                <i class="pi pi-folder"></i>
-                <span class="folder-path" :title="folder">{{ folder }}</span>
-                <input
-                  type="checkbox"
-                  :checked="selectedFolders.has(folder)"
-                  :disabled="isScanning"
-                  @change="toggleFolder(folder)"
-                />
+              <div class="progress-bar-bg">
+                <div
+                  class="progress-bar-fill"
+                  :style="{
+                    width:
+                      (progress.total > 0 ? (progress.current / progress.total) * 100 : 0) + '%'
+                  }"
+                ></div>
               </div>
             </div>
           </div>
 
-          <div v-if="isScanning" class="progress-section">
-            <div class="progress-info">
-              <span>正在扫描...</span>
-              <span>{{ progress.current }} / {{ progress.total }}</span>
-            </div>
-            <div class="progress-bar-bg">
-              <div
-                class="progress-bar-fill"
-                :style="{
-                  width: (progress.total > 0 ? (progress.current / progress.total) * 100 : 0) + '%'
-                }"
-              ></div>
-            </div>
+          <div class="dialog-footer">
+            <button class="btn-cancel" :disabled="isScanning" @click="handleAddNewFolder">
+              添加文件夹
+            </button>
+            <button
+              class="btn-start"
+              :disabled="isScanning || selectedFolders.size === 0"
+              @click="startScan"
+            >
+              {{ isScanning ? '正在扫描...' : '重新扫描' }}
+            </button>
           </div>
         </div>
-
-        <div class="dialog-footer">
-          <button class="btn-cancel" :disabled="isScanning" @click="handleAddNewFolder">
-            添加文件夹
-          </button>
-          <button
-            class="btn-start"
-            :disabled="isScanning || selectedFolders.size === 0"
-            @click="startScan"
-          >
-            {{ isScanning ? '正在扫描...' : '重新扫描' }}
-          </button>
-        </div>
-      </div>
       </div>
     </Transition>
   </Teleport>

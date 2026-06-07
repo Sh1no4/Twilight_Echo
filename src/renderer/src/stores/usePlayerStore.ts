@@ -26,6 +26,134 @@ interface AudioOutputState {
   deviceOptions: AudioDeviceOption[]
 }
 
+const FALLBACK_AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
+  {
+    id: 'wasapi',
+    label: 'WASAPI',
+    description: 'Windows 原生音频输出',
+    platform: 'win32',
+    supportsExclusive: true
+  },
+  {
+    id: 'asio',
+    label: 'ASIO',
+    description: '专业声卡驱动输出',
+    platform: 'win32',
+    supportsExclusive: true
+  },
+  {
+    id: 'coreaudio',
+    label: 'CoreAudio',
+    description: 'macOS 原生音频输出',
+    platform: 'darwin',
+    supportsExclusive: true
+  },
+  {
+    id: 'alsa',
+    label: 'ALSA',
+    description: 'Linux 原生音频输出',
+    platform: 'linux',
+    supportsExclusive: false
+  }
+]
+
+const DEFAULT_AUDIO_DEVICE_OPTION: AudioDeviceOption = {
+  id: 'auto',
+  label: '系统默认',
+  isDefault: true
+}
+
+function getRendererPlatform(): NodeJS.Platform {
+  const platform = navigator.platform.toLowerCase()
+  if (platform.includes('mac')) return 'darwin'
+  if (platform.includes('linux')) return 'linux'
+  return 'win32'
+}
+
+function getFallbackAudioOutputOptions(): AudioOutputOption[] {
+  return FALLBACK_AUDIO_OUTPUT_OPTIONS.filter((option) => option.platform === getRendererPlatform())
+}
+
+function getFallbackAudioOutput(): AudioOutputId {
+  return getFallbackAudioOutputOptions()[0]?.id ?? 'alsa'
+}
+
+function formatAudioDeviceLabel(device: string): string {
+  return device === 'auto' ? DEFAULT_AUDIO_DEVICE_OPTION.label : device
+}
+
+function normalizeAudioOutputOptions(
+  options: AudioOutputOption[],
+  selectedOutput: AudioOutputId
+): AudioOutputOption[] {
+  const fallbackOptions = getFallbackAudioOutputOptions()
+  const sourceOptions = Array.isArray(options) && options.length > 0 ? options : fallbackOptions
+  const fallbackById = new Map(fallbackOptions.map((option) => [option.id, option]))
+  const normalized = sourceOptions
+    .filter((option) => option?.id && option?.label)
+    .map((option) => ({
+      ...option,
+      description: fallbackById.get(option.id)?.description ?? option.description
+    }))
+
+  if (!normalized.some((option) => option.id === selectedOutput)) {
+    const fallback = fallbackOptions.find((option) => option.id === selectedOutput)
+    if (fallback) normalized.push(fallback)
+  }
+
+  return normalized.length > 0 ? normalized : fallbackOptions
+}
+
+function normalizeAudioDeviceOptions(
+  options: AudioDeviceOption[],
+  selectedDevice: string
+): AudioDeviceOption[] {
+  const normalized: AudioDeviceOption[] = []
+  const seen = new Set<string>()
+
+  function addOption(option: unknown): void {
+    if (typeof option === 'string') {
+      const id = option.trim()
+      if (!id || seen.has(id)) return
+      seen.add(id)
+      normalized.push({ id, label: formatAudioDeviceLabel(id), isDefault: id === 'auto' })
+      return
+    }
+
+    if (!option || typeof option !== 'object') return
+    const record = option as Record<string, unknown>
+    const id = typeof record.id === 'string' ? record.id.trim() : ''
+    if (!id || seen.has(id)) return
+    const rawLabel = typeof record.label === 'string' ? record.label.trim() : ''
+    seen.add(id)
+    normalized.push({
+      id,
+      label: id === 'auto' ? DEFAULT_AUDIO_DEVICE_OPTION.label : rawLabel || id,
+      isDefault: record.isDefault === true
+    })
+  }
+
+  const sourceOptions = Array.isArray(options) ? (options as unknown[]) : []
+  for (const option of sourceOptions) {
+    addOption(option)
+  }
+
+  if (!seen.has(DEFAULT_AUDIO_DEVICE_OPTION.id)) {
+    normalized.unshift(DEFAULT_AUDIO_DEVICE_OPTION)
+    seen.add(DEFAULT_AUDIO_DEVICE_OPTION.id)
+  }
+
+  if (selectedDevice && !seen.has(selectedDevice)) {
+    normalized.push({
+      id: selectedDevice,
+      label: formatAudioDeviceLabel(selectedDevice),
+      isDefault: selectedDevice === 'auto'
+    })
+  }
+
+  return normalized
+}
+
 const currentTrack = ref<Track | null>(null)
 const dominantColor = ref('#1a73e8')
 const isPlaying = ref(false)
@@ -40,10 +168,10 @@ const originalQueue = ref<Track[]>([])
 const audioEngineReady = ref(false)
 const audioEngineError = ref<string | null>(null)
 const exclusiveMode = ref(false)
-const audioOutput = ref<AudioOutputId>('wasapi')
+const audioOutput = ref<AudioOutputId>(getFallbackAudioOutput())
 const audioDevice = ref('auto')
-const audioOutputOptions = ref<AudioOutputOption[]>([])
-const audioDeviceOptions = ref<AudioDeviceOption[]>([])
+const audioOutputOptions = ref<AudioOutputOption[]>(getFallbackAudioOutputOptions())
+const audioDeviceOptions = ref<AudioDeviceOption[]>([DEFAULT_AUDIO_DEVICE_OPTION])
 const defaultAudioProcessing: AudioProcessingSettings = {
   dspEnabled: false,
   clipGuard: true,
@@ -100,6 +228,38 @@ const { settings: appSettings } = useSettingsStore()
 let playbackAudio: HTMLAudioElement | null = null
 let playbackObjectUrl: string | null = null
 let nativePlaybackActive = false
+let activeLoadToken = 0
+let rendererPlaybackWatchdogTimer: number | null = null
+const RENDERER_PLAYBACK_WATCHDOG_MS = 220
+
+function isActiveLoad(loadToken: number, track: Track): boolean {
+  return loadToken === activeLoadToken && currentTrack.value?.id === track.id
+}
+
+function clearRendererPlaybackWatchdog(): void {
+  if (rendererPlaybackWatchdogTimer !== null) {
+    window.clearTimeout(rendererPlaybackWatchdogTimer)
+    rendererPlaybackWatchdogTimer = null
+  }
+}
+
+function scheduleRendererPlaybackWatchdog(track: Track, loadToken: number): void {
+  clearRendererPlaybackWatchdog()
+  rendererPlaybackWatchdogTimer = window.setTimeout(async () => {
+    rendererPlaybackWatchdogTimer = null
+    if (!isActiveLoad(loadToken, track) || nativePlaybackActive) return
+
+    const audio = playbackAudio
+    if (!audio || !audio.src || !audio.paused || audio.ended) return
+
+    try {
+      await audio.play()
+    } catch (err) {
+      if (!isActiveLoad(loadToken, track)) return
+      console.warn('[audio-engine] Renderer playback watchdog retry failed:', err)
+    }
+  }, RENDERER_PLAYBACK_WATCHDOG_MS)
+}
 
 function getPlaybackAudio(): HTMLAudioElement {
   if (playbackAudio) return playbackAudio
@@ -140,7 +300,7 @@ function getPlaybackAudio(): HTMLAudioElement {
 
   audio.addEventListener('error', () => {
     const code = audio.error?.code ?? 0
-    audioEngineError.value = `音频播放失败（错误码 ${code}）`
+    audioEngineError.value = `Audio playback failed (code ${code})`
     isPlaying.value = false
     isLoading.value = false
   })
@@ -157,6 +317,7 @@ function releasePlaybackObjectUrl(): void {
 }
 
 function stopRendererAudio(clearSource = false): void {
+  clearRendererPlaybackWatchdog()
   if (!playbackAudio) return
   playbackAudio.pause()
   if (clearSource) {
@@ -166,13 +327,38 @@ function stopRendererAudio(clearSource = false): void {
   }
 }
 
-async function createPlayableUrl(target: string, track: Track): Promise<string> {
+async function stopNativeAudio(): Promise<void> {
+  try {
+    await window.api.audioEngine.stop()
+  } catch {
+    // The renderer audio fallback can still continue if the native bridge is unavailable.
+  }
+}
+
+function shouldUseNativePlayback(track: Track, target: string): boolean {
+  return (
+    exclusiveMode.value &&
+    getTrackSource(track) === 'local' &&
+    !/^https?:\/\//i.test(target) &&
+    !/^blob:/i.test(target) &&
+    !/^data:/i.test(target)
+  )
+}
+
+async function createPlayableUrl(
+  target: string,
+  track: Track,
+  loadToken: number
+): Promise<string | null> {
   if (/^https?:\/\//i.test(target) || /^blob:/i.test(target) || /^data:/i.test(target)) {
+    if (!isActiveLoad(loadToken, track)) return null
     releasePlaybackObjectUrl()
     return target
   }
 
   const file = await window.api.fs.readAudioFile(target)
+  if (!isActiveLoad(loadToken, track)) return null
+
   const blob = new Blob([file.buffer], { type: file.mimeType || 'audio/mpeg' })
   releasePlaybackObjectUrl()
   playbackObjectUrl = URL.createObjectURL(blob)
@@ -185,22 +371,75 @@ async function createPlayableUrl(target: string, track: Track): Promise<string> 
 async function playWithRendererAudio(
   track: Track,
   target: string,
-  startTime: number
-): Promise<void> {
+  startTime: number,
+  loadToken: number
+): Promise<boolean> {
   const audio = getPlaybackAudio()
   audio.pause()
-  audio.src = await createPlayableUrl(target, track)
+  if (!isActiveLoad(loadToken, track)) return false
+
+  const playableUrl = await createPlayableUrl(target, track, loadToken)
+  if (!playableUrl || !isActiveLoad(loadToken, track)) return false
+
+  audio.src = playableUrl
   audio.volume = volume.value
+  if (!isActiveLoad(loadToken, track)) return false
+
   audio.currentTime = Math.max(0, startTime)
-  await audio.play()
+  if (!isActiveLoad(loadToken, track)) return false
+
+  try {
+    await audio.play()
+  } catch (err) {
+    if (!isActiveLoad(loadToken, track)) return false
+
+    await new Promise((resolve) => window.setTimeout(resolve, 140))
+    if (!isActiveLoad(loadToken, track)) return false
+
+    try {
+      await audio.play()
+    } catch {
+      throw err
+    }
+  }
+
+  return isActiveLoad(loadToken, track)
 }
 
 function applyAudioOutputState(state: AudioOutputState): void {
   exclusiveMode.value = state.exclusiveMode
   audioOutput.value = state.output
   audioDevice.value = state.device
-  audioOutputOptions.value = [...state.outputOptions]
-  audioDeviceOptions.value = [...state.deviceOptions]
+  audioOutputOptions.value = normalizeAudioOutputOptions(state.outputOptions, state.output)
+  audioDeviceOptions.value = normalizeAudioDeviceOptions(state.deviceOptions, state.device)
+}
+
+let audioEngineStateRequest: Promise<void> | null = null
+
+async function refreshAudioOutputState(): Promise<void> {
+  if (audioEngineStateRequest) return audioEngineStateRequest
+  const api = window.api?.audioEngine
+  if (!api) return
+
+  audioEngineStateRequest = (async () => {
+    try {
+      const [outputState, processingSettings] = await Promise.all([
+        api.getAudioOutputState(),
+        api.getAudioProcessing()
+      ])
+      applyAudioOutputState(outputState)
+      audioProcessing.value = processingSettings
+      audioEngineReady.value = true
+      audioEngineError.value = null
+    } catch (err) {
+      audioEngineReady.value = false
+      console.warn('[audio-engine] Failed to refresh audio output state:', err)
+    } finally {
+      audioEngineStateRequest = null
+    }
+  })()
+
+  return audioEngineStateRequest
 }
 
 function normalizeDsdState(
@@ -561,13 +800,13 @@ async function resolvePlayTarget(track: Track): Promise<string> {
   }
 
   if (!track.ncmSongId) {
-    throw new Error('缺少网易云歌曲 ID，无法播放')
+    throw new Error('Missing NetEase song ID, cannot play')
   }
 
   const { getSongStreamUrl } = useNcmStore()
   const streamUrl = await getSongStreamUrl(track.ncmSongId)
   if (!streamUrl) {
-    throw new Error('未获取到网易云音频地址')
+    throw new Error('Unable to resolve NetEase stream URL')
   }
 
   track.streamUrl = streamUrl
@@ -587,6 +826,7 @@ function setupAudioEngineListeners(): void {
     api.onPropertyChange(({ name, data }) => {
       switch (name) {
         case 'time-pos':
+          if (!nativePlaybackActive) break
           if (typeof data === 'number' && isFinite(data)) {
             setCurrentTimeThrottled(data)
           }
@@ -597,11 +837,12 @@ function setupAudioEngineListeners(): void {
           }
           break
         case 'pause':
+          if (!nativePlaybackActive) break
           isPlaying.value = !data
           flushLatestCurrentTime()
           break
         case 'eof-reached':
-          if (data === true) {
+          if (nativePlaybackActive && data === true) {
             handlePlaybackEnded()
           }
           break
@@ -614,7 +855,7 @@ function setupAudioEngineListeners(): void {
 
   cleanupFns.push(
     api.onEndFile((reason) => {
-      if (reason === 'eof') {
+      if (nativePlaybackActive && reason === 'eof') {
         handlePlaybackEnded()
       }
     })
@@ -622,6 +863,7 @@ function setupAudioEngineListeners(): void {
 
   cleanupFns.push(
     api.onStartFile(() => {
+      if (!nativePlaybackActive) return
       advancingFromEndedTrackId = ''
       autoAdvanceInFlight = false
       setCurrentTimeImmediate(pendingLoadStartTime)
@@ -642,14 +884,9 @@ function setupAudioEngineListeners(): void {
       audioEngineReady.value = true
       audioEngineError.value = null
       api.setVolume(volume.value).catch(() => {})
+      await refreshAudioOutputState()
       try {
-        const [outputState, processingSettings, nativeInfo] = await Promise.all([
-          api.getAudioOutputState(),
-          api.getAudioProcessing(),
-          api.getPlaybackInfo()
-        ])
-        applyAudioOutputState(outputState)
-        audioProcessing.value = processingSettings
+        const nativeInfo = await api.getPlaybackInfo()
         audioOutputConfig.value = { ...appSettings.value.audioOutputConfig }
         playbackInfo.value = normalizeNativePlaybackInfo(nativeInfo)
       } catch {
@@ -660,7 +897,7 @@ function setupAudioEngineListeners(): void {
 
   cleanupFns.push(
     api.onError((message) => {
-      console.error('[音频引擎]', message)
+      console.error('[audio-engine] Playback error:', message)
       audioEngineError.value = message
       isPlaying.value = false
       isLoading.value = false
@@ -690,6 +927,8 @@ function setupAudioEngineListeners(): void {
       })
     )
   }
+
+  void refreshAudioOutputState()
 }
 
 setupAudioEngineListeners()
@@ -750,37 +989,88 @@ function scheduleCrossfadeIfNeeded(): void {
 
 async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   const normalizedStartTime = Math.max(0, Number.isFinite(startTime) ? startTime : 0)
+  const loadToken = ++activeLoadToken
   isLoading.value = true
+  nativePlaybackActive = false
+  stopRendererAudio(true)
+  if (playbackAudio) playbackAudio.muted = false
   pendingLoadStartTime = normalizedStartTime
+  duration.value = Math.max(0, track.duration || 0)
   setCurrentTimeImmediate(normalizedStartTime)
   clearCrossfadeTimer()
 
   try {
+    await stopNativeAudio()
+    if (!isActiveLoad(loadToken, track)) return
+
     const playTarget = await resolvePlayTarget(track)
+    if (!isActiveLoad(loadToken, track)) return
+
     const engineQueue = queue.value.map((item) => ({
       ...item,
       audioSource: item.id === track.id ? playTarget : getTrackAudioSource(item)
     }))
-    await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
-    await window.api.audioEngine.setPlayMode(playMode.value)
-    const playResult = await window.api.audioEngine.play(playTarget, normalizedStartTime)
-    nativePlaybackActive = playResult?.nativeStarted === true
+    let nativeStarted = false
+    let nativeFallbackReason = ''
+
+    try {
+      await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
+      if (!isActiveLoad(loadToken, track)) return
+
+      await window.api.audioEngine.setPlayMode(playMode.value)
+      if (!isActiveLoad(loadToken, track)) return
+
+      if (shouldUseNativePlayback(track, playTarget)) {
+        const playResult = await window.api.audioEngine.play(playTarget, normalizedStartTime)
+        if (!isActiveLoad(loadToken, track)) return
+        nativeStarted = playResult?.nativeStarted === true
+        nativeFallbackReason = playResult?.fallbackReason ?? ''
+      }
+    } catch (engineErr) {
+      if (!isActiveLoad(loadToken, track)) return
+      if (shouldUseNativePlayback(track, playTarget)) {
+        nativeFallbackReason = engineErr instanceof Error ? engineErr.message : String(engineErr)
+        console.warn(
+          '[audio-engine] Native output unavailable, falling back to Electron playback:',
+          engineErr
+        )
+      } else {
+        console.warn('[audio-engine] Failed to sync native playback queue:', engineErr)
+      }
+    }
+
+    if (!isActiveLoad(loadToken, track)) return
+    nativePlaybackActive = nativeStarted
+
     if (nativePlaybackActive) {
       audioEngineError.value = ''
       stopRendererAudio(true)
     } else {
-      audioEngineError.value = playResult?.fallbackReason
-        ? `原生音频引擎不可用，已启用临时播放通道：${playResult.fallbackReason}`
+      audioEngineError.value = nativeFallbackReason
+        ? `原生音频引擎不可用，已启用临时播放通道：${nativeFallbackReason}`
         : ''
-      await playWithRendererAudio(track, playTarget, normalizedStartTime)
+      const rendererStarted = await playWithRendererAudio(
+        track,
+        playTarget,
+        normalizedStartTime,
+        loadToken
+      )
+      if (!rendererStarted || !isActiveLoad(loadToken, track)) return
+      scheduleRendererPlaybackWatchdog(track, loadToken)
     }
+
+    if (!isActiveLoad(loadToken, track)) return
+    advancingFromEndedTrackId = ''
+    autoAdvanceInFlight = false
     loadedTrackId = track.id
     restoredPlaybackPending = false
     restoredPlaybackPosition = 0
     setCurrentTimeImmediate(normalizedStartTime)
+    isLoading.value = false
     isPlaying.value = true
   } catch (err) {
-    console.error('[音频引擎] 播放失败:', err)
+    if (!isActiveLoad(loadToken, track)) return
+    console.error('[audio-engine] Playback failed:', err)
     audioEngineError.value = err instanceof Error ? err.message : String(err)
     autoAdvanceInFlight = false
     isLoading.value = false
@@ -827,9 +1117,9 @@ async function togglePlayState(): Promise<void> {
     await loadAndPlay(track, restoredPlaybackPending ? restoredPlaybackPosition : 0)
     return
   }
-  isPlaying.value = !isPlaying.value
   try {
     if (nativePlaybackActive) {
+      isPlaying.value = !isPlaying.value
       await window.api.audioEngine.togglePause()
     } else {
       const audio = getPlaybackAudio()
@@ -838,11 +1128,12 @@ async function togglePlayState(): Promise<void> {
       } else {
         audio.pause()
       }
-      await window.api.audioEngine.togglePause()
     }
   } catch (err) {
-    isPlaying.value = !isPlaying.value
-    console.error('[音频引擎] 暂停或继续播放失败:', err)
+    if (nativePlaybackActive) {
+      isPlaying.value = !isPlaying.value
+    }
+    console.error('[audio-engine] togglePlay failed:', err)
   }
 }
 
@@ -856,7 +1147,7 @@ function previous(): void {
       restoredPlaybackPosition = 0
     } else {
       if (!nativePlaybackActive && playbackAudio) playbackAudio.currentTime = 0
-      window.api.audioEngine.seek(0).catch(() => {})
+      if (nativePlaybackActive) window.api.audioEngine.seek(0).catch(() => {})
     }
     return
   }
@@ -1009,6 +1300,7 @@ export function usePlayerStore(): {
   setAudioOutput: (output: AudioOutputId, device?: string) => Promise<void>
   setAudioDevice: (device: string) => Promise<void>
   setAudioOutputConfig: (config: Partial<OutputConfig>) => Promise<void>
+  refreshAudioOutputState: () => Promise<void>
   setAudioProcessing: (settings: Partial<AudioProcessingSettings>) => Promise<void>
   toggleDspEnabled: () => Promise<void>
   toggleEqEnabled: () => Promise<void>
@@ -1055,7 +1347,7 @@ export function usePlayerStore(): {
     }
     setCurrentTimeImmediate(time)
     if (!nativePlaybackActive && playbackAudio) playbackAudio.currentTime = Math.max(0, time)
-    window.api.audioEngine.seek(time).catch(() => {})
+    if (nativePlaybackActive) window.api.audioEngine.seek(time).catch(() => {})
   }
 
   function setVolume(vol: number): void {
@@ -1068,7 +1360,7 @@ export function usePlayerStore(): {
       applyAudioOutputState(await window.api.audioEngine.setExclusiveMode(next))
     } catch (err) {
       audioEngineError.value = err instanceof Error ? err.message : String(err)
-      console.error('[音频引擎] 切换独占模式失败:', err)
+      console.error('[audio-engine] Failed to toggle exclusive mode:', err)
     }
   }
 
@@ -1077,7 +1369,7 @@ export function usePlayerStore(): {
       applyAudioOutputState(await window.api.audioEngine.setAudioOutput(output, device))
     } catch (err) {
       audioEngineError.value = err instanceof Error ? err.message : String(err)
-      console.error('[音频引擎] 切换音频输出失败:', err)
+      console.error('[audio-engine] Failed to switch audio output:', err)
     }
   }
 
@@ -1086,7 +1378,7 @@ export function usePlayerStore(): {
       applyAudioOutputState(await window.api.audioEngine.setAudioDevice(device))
     } catch (err) {
       audioEngineError.value = err instanceof Error ? err.message : String(err)
-      console.error('[音频引擎] 切换音频设备失败:', err)
+      console.error('[audio-engine] Failed to switch audio device:', err)
     }
   }
 
@@ -1116,7 +1408,7 @@ export function usePlayerStore(): {
       )
       scheduleCrossfadeIfNeeded()
     } catch (err) {
-      console.error('[音频引擎] 更新音频处理设置失败:', err)
+      console.error('[audio-engine] Failed to update audio processing settings:', err)
     }
   }
 
@@ -1225,6 +1517,7 @@ export function usePlayerStore(): {
     setAudioOutput,
     setAudioDevice,
     setAudioOutputConfig,
+    refreshAudioOutputState,
     setAudioProcessing,
     toggleDspEnabled,
     toggleEqEnabled,
