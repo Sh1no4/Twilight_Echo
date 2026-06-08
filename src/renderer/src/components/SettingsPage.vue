@@ -5,6 +5,7 @@ import { useSettingsStore } from '../stores/useSettingsStore'
 import type {
   AppSettings,
   AppTheme,
+  AudioDeviceOption,
   AudioOutputId,
   AudioProcessingSettings,
   ChannelRoutingMode,
@@ -14,13 +15,15 @@ import type {
   VolumeNormalizationMode
 } from '../types/settings'
 
-defineEmits<{
+const emit = defineEmits<{
   back: []
+  openEqualizer: []
 }>()
 
 const tabs = [
   { key: 'general', label: '常规', icon: 'pi pi-sliders-h' },
   { key: 'playback', label: '播放', icon: 'pi pi-volume-up' },
+  { key: 'dsp', label: 'DSP', icon: 'pi pi-sliders-v' },
   { key: 'cache', label: '缓存', icon: 'pi pi-database' },
   { key: 'performance', label: '性能', icon: 'pi pi-bolt' },
   { key: 'appearance', label: '外观', icon: 'pi pi-palette' },
@@ -249,6 +252,13 @@ const nativeDsdStateLabels: Record<string, string> = {
   mismatch: 'Native DSD Mismatch',
   proven: 'Native DSD Proven'
 }
+const deviceBackendLabels: Record<string, string> = {
+  wasapi: 'WASAPI',
+  'wasapi-exclusive': 'WASAPI',
+  asio: 'ASIO',
+  coreaudio: 'CoreAudio',
+  alsa: 'ALSA'
+}
 
 function canonicalSourceExact(): boolean {
   return outputInfo.value?.sourceExact === true
@@ -311,19 +321,11 @@ const accessModeText = computed(() => {
   return mode ? accessModeLabels[mode] ?? mode : 'Unknown'
 })
 const pathKindText = computed(() => outputInfo.value?.devicePathKind || 'Unknown path')
-const selectedDeviceCapabilityText = computed(() => {
-  const device = selectedAudioDevice.value
-  if (!device) return '等待设备能力'
-  const parts = [
-    device.supportsExclusive ? 'Exclusive' : '',
-    device.supportsHogMode ? 'Hog' : '',
-    device.supportsDirectHw ? 'Direct HW' : '',
-    device.supportsNativeDsd ? 'Native DSD' : '',
-    device.supportsDop ? 'DoP' : '',
-    device.pathKind ? `Path ${device.pathKind}` : ''
-  ].filter(Boolean)
-  return parts.length > 0 ? parts.join(' · ') : device.capabilityReason || '未声明额外能力'
-})
+const selectedDeviceTitle = computed(() =>
+  selectedAudioDevice.value
+    ? `${selectedAudioDevice.value.label} · ${deviceSpecText(selectedAudioDevice.value)}`
+    : '选择输出设备'
+)
 const outputFormatText = computed(() => {
   const info = outputInfo.value
   if (!info) return '等待音频引擎'
@@ -343,6 +345,57 @@ const outputFormatText = computed(() => {
 })
 function compactRate(rate: number): string {
   return rate > 0 ? `${Math.round(rate / 100) / 10}kHz` : ''
+}
+
+function formatDeviceBackend(device: AudioDeviceOption): string {
+  const backend = device.backend || audioOutput.value
+  return deviceBackendLabels[backend] ?? formatBackendLabel(backend)
+}
+
+function formatDeviceChannels(device: AudioDeviceOption): string {
+  return typeof device.channels === 'number' && device.channels > 0 ? `${device.channels}ch` : ''
+}
+
+function highestNumber(values?: number[]): number {
+  return Array.isArray(values)
+    ? values.reduce((max, value) => (Number.isFinite(value) && value > max ? value : max), 0)
+    : 0
+}
+
+function formatDeviceRate(device: AudioDeviceOption): string {
+  const rate = highestNumber(device.sampleRates)
+  return rate > 0 ? compactRate(rate) : ''
+}
+
+function formatDeviceDepth(device: AudioDeviceOption): string {
+  const depth = highestNumber(device.bitDepths)
+  return depth > 0 ? `${depth}bit` : ''
+}
+
+function deviceSpecText(device: AudioDeviceOption): string {
+  const parts = [
+    formatDeviceBackend(device),
+    formatDeviceChannels(device),
+    formatDeviceRate(device),
+    formatDeviceDepth(device)
+  ].filter(Boolean)
+  if (parts.length > 0) return parts.join(' · ')
+  if (device.id === 'auto') return '跟随系统默认输出'
+  if (device.isDefault) return '系统默认设备'
+  return '原生输出设备'
+}
+
+function deviceIconClass(device: AudioDeviceOption): string {
+  const text = `${device.id} ${device.label} ${device.backend || ''} ${device.pathKind || ''}`.toLowerCase()
+  if (
+    /earbud|earphone|in[-\s]?ear|iem|tws|airpods|buds|入耳|耳塞|豆/.test(text)
+  ) {
+    return 'device-icon-earbuds'
+  }
+  if (/speaker|speakers|soundbar|monitor|音响|音箱|扬声器|喇叭/.test(text)) {
+    return 'device-icon-speaker'
+  }
+  return 'device-icon-headphones'
 }
 
 function compactSampleFormat(format: string, bitDepth: number): string {
@@ -473,6 +526,38 @@ const convolverPathLabel = computed(() => {
   if (!path) return '未加载'
   return path.split(/[\\/]/).pop() || path
 })
+const replayGainModeLabel = computed(
+  () =>
+    replayGainOptions.find((option) => option.value === audioProcessing.value.volumeNormalization)
+      ?.label ?? 'Off'
+)
+const dspStatusText = computed(() => {
+  if (!audioProcessing.value.dspEnabled) return '处理链关闭'
+  return playbackInfo.value?.dspActive ? '正在处理音频' : '处理链待命'
+})
+const dspPerfectImpactText = computed(() => {
+  if (!audioProcessing.value.dspEnabled) return '关闭 DSP 时更接近原始输出'
+  if (readablePerfectReason.value) return `当前影响：${readablePerfectReason.value}`
+  return '启用处理链后通常不满足 bit-perfect'
+})
+const replayGainSummaryText = computed(() =>
+  audioProcessing.value.volumeNormalization === 'off'
+    ? '未启用'
+    : `${replayGainModeLabel.value} · Preamp ${audioProcessing.value.replayGainPreamp.toFixed(1)} dB`
+)
+const eqSummaryText = computed(() =>
+  audioProcessing.value.eqEnabled
+    ? `${audioProcessing.value.eqMode === 'parametric' ? '参数' : '图形'} · Preamp ${audioProcessing.value.eqPreamp.toFixed(1)} dB`
+    : '未启用'
+)
+const crossfeedSummaryText = computed(() =>
+  audioProcessing.value.crossfeedEnabled
+    ? `${Math.round(audioProcessing.value.crossfeedStrength * 100)}%`
+    : '未启用'
+)
+const outputSafetyText = computed(() =>
+  audioProcessing.value.clipGuard ? '削波保护开启' : '削波保护关闭'
+)
 
 function toggleSetting(key: BooleanSettingKey): void {
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
@@ -493,10 +578,9 @@ function selectAudioOutput(output: AudioOutputId): void {
   void setAudioOutput(output)
 }
 
-function selectAudioDevice(event: Event): void {
-  const target = event.target as HTMLSelectElement
-  if (audioDevice.value === target.value) return
-  void setAudioDevice(target.value)
+function selectAudioDevice(deviceId: string): void {
+  if (audioDevice.value === deviceId) return
+  void setAudioDevice(deviceId)
 }
 
 function setPreferredBufferSize(value: number): void {
@@ -560,6 +644,10 @@ function setLyricFontSize(event: Event): void {
 
 function setVolumeFromInput(event: Event): void {
   volumePercent.value = Number((event.target as HTMLInputElement).value)
+}
+
+function openEqualizerFromDsp(): void {
+  emit('openEqualizer')
 }
 
 onMounted(async () => {
@@ -664,6 +752,60 @@ onMounted(async () => {
         <section v-if="activeTab === 'playback'" class="settings-section">
           <h2>播放</h2>
           <div class="settings-group">
+            <div class="device-board">
+              <div class="device-board-head">
+                <div class="setting-copy">
+                  <span class="label-row">
+                    <span class="setting-label">可用输出设备</span>
+                    <span
+                      class="help-dot"
+                      tabindex="0"
+                      role="note"
+                      :aria-label="playbackHelp.audioDevice"
+                      :data-help="playbackHelp.audioDevice"
+                      >?</span
+                    >
+                  </span>
+                  <span class="setting-desc">{{ selectedDeviceTitle }}</span>
+                </div>
+                <button
+                  class="icon-button subtle"
+                  type="button"
+                  title="刷新设备"
+                  aria-label="刷新设备"
+                  @click="refreshAudioOutputState"
+                >
+                  <i class="pi pi-refresh"></i>
+                </button>
+              </div>
+              <div class="device-card-grid" role="radiogroup" aria-label="输出设备">
+                <button
+                  v-for="device in audioDeviceOptions"
+                  :key="device.id"
+                  class="device-card"
+                  :class="{ active: audioDevice === device.id }"
+                  type="button"
+                  role="radio"
+                  :aria-checked="audioDevice === device.id"
+                  :title="`${device.label} · ${deviceSpecText(device)}`"
+                  @click="selectAudioDevice(device.id)"
+                >
+                  <span
+                    class="device-card-icon"
+                    :class="deviceIconClass(device)"
+                    aria-hidden="true"
+                  ></span>
+                  <span class="device-card-copy">
+                    <span class="device-card-name">{{ device.label }}</span>
+                    <span class="device-card-spec">{{ deviceSpecText(device) }}</span>
+                  </span>
+                  <span v-if="audioDevice === device.id" class="device-card-pill">当前</span>
+                  <span v-else-if="device.id === 'auto'" class="device-card-pill muted">AUTO</span>
+                  <span v-else-if="device.isDefault" class="device-card-pill muted">默认</span>
+                </button>
+              </div>
+            </div>
+
             <div class="setting-row audio-output-row">
               <div class="setting-copy">
                 <span class="label-row">
@@ -705,28 +847,6 @@ onMounted(async () => {
                   <small>{{ option.description }}</small>
                 </button>
               </div>
-            </div>
-
-            <div class="setting-row audio-device-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">输出设备</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.audioDevice"
-                    :data-help="playbackHelp.audioDevice"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">{{ selectedDeviceCapabilityText }}</span>
-              </div>
-              <select class="select-control" :value="audioDevice" @change="selectAudioDevice">
-                <option v-for="device in audioDeviceOptions" :key="device.id" :value="device.id">
-                  {{ device.label }}
-                </option>
-              </select>
             </div>
 
             <div class="setting-row">
@@ -877,7 +997,7 @@ onMounted(async () => {
               </div>
             </div>
 
-            <div class="settings-subheading">音频处理</div>
+            <div class="settings-subheading">格式与可视化</div>
 
             <div class="setting-row audio-device-row">
               <div class="setting-copy">
@@ -927,231 +1047,6 @@ onMounted(async () => {
                   {{ option.label }}
                 </option>
               </select>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">DSP 总开关</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.dsp"
-                    :data-help="playbackHelp.dsp"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">
-                  {{ playbackInfo?.dspActive ? '正在处理音频' : '处理链待命' }}
-                </span>
-              </div>
-              <button
-                class="toggle-switch"
-                :class="{ active: audioProcessing.dspEnabled }"
-                role="switch"
-                :aria-checked="audioProcessing.dspEnabled"
-                @click="updateAudioProcessing({ dspEnabled: !audioProcessing.dspEnabled })"
-              >
-                <span class="toggle-knob"></span>
-              </button>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">Clip Guard</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.clipGuard"
-                    :data-help="playbackHelp.clipGuard"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">削波保护</span>
-              </div>
-              <button
-                class="toggle-switch"
-                :class="{ active: audioProcessing.clipGuard }"
-                role="switch"
-                :aria-checked="audioProcessing.clipGuard"
-                @click="updateAudioProcessing({ clipGuard: !audioProcessing.clipGuard })"
-              >
-                <span class="toggle-knob"></span>
-              </button>
-            </div>
-
-            <div class="setting-row replaygain-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">ReplayGain</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.replayGain"
-                    :data-help="playbackHelp.replayGain"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">
-                  Preamp {{ audioProcessing.replayGainPreamp.toFixed(1) }} dB · Fallback
-                  {{ audioProcessing.replayGainFallback.toFixed(1) }} dB ·
-                  {{ audioProcessing.replayGainClip ? '防削波' : '允许峰值' }}
-                </span>
-              </div>
-              <div class="stacked-control">
-                <div class="inline-control-group spread">
-                  <select
-                    class="select-control"
-                    :value="audioProcessing.volumeNormalization"
-                    @change="setReplayGainFromSelect"
-                  >
-                    <option
-                      v-for="option in replayGainOptions"
-                      :key="option.value"
-                      :value="option.value"
-                      :title="option.help"
-                    >
-                      {{ option.label }}
-                    </option>
-                  </select>
-                  <label class="inline-toggle-label">
-                    防削波
-                    <button
-                      class="toggle-switch"
-                      :class="{ active: audioProcessing.replayGainClip }"
-                      role="switch"
-                      :aria-checked="audioProcessing.replayGainClip"
-                      @click="
-                        updateAudioProcessing({ replayGainClip: !audioProcessing.replayGainClip })
-                      "
-                    >
-                      <span class="toggle-knob"></span>
-                    </button>
-                  </label>
-                </div>
-                <label class="compact-range-row">
-                  <span>Preamp</span>
-                  <input
-                    class="range-control"
-                    type="range"
-                    min="-12"
-                    max="12"
-                    step="0.5"
-                    :value="audioProcessing.replayGainPreamp"
-                    @input="setReplayGainPreamp"
-                  />
-                  <strong>{{ audioProcessing.replayGainPreamp.toFixed(1) }}</strong>
-                </label>
-                <label class="compact-range-row">
-                  <span>Fallback</span>
-                  <input
-                    class="range-control"
-                    type="range"
-                    min="-12"
-                    max="12"
-                    step="0.5"
-                    :value="audioProcessing.replayGainFallback"
-                    @input="setReplayGainFallback"
-                  />
-                  <strong>{{ audioProcessing.replayGainFallback.toFixed(1) }}</strong>
-                </label>
-              </div>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">均衡器</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.eq"
-                    :data-help="playbackHelp.eq"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">{{ audioProcessing.eqMode }}</span>
-              </div>
-              <button
-                class="toggle-switch"
-                :class="{ active: audioProcessing.eqEnabled }"
-                role="switch"
-                :aria-checked="audioProcessing.eqEnabled"
-                @click="updateAudioProcessing({ eqEnabled: !audioProcessing.eqEnabled })"
-              >
-                <span class="toggle-knob"></span>
-              </button>
-            </div>
-
-            <div class="setting-row range-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">Crossfeed</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.crossfeed"
-                    :data-help="playbackHelp.crossfeed"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">
-                  {{
-                    audioProcessing.crossfeedEnabled
-                      ? Math.round(audioProcessing.crossfeedStrength * 100)
-                      : 0
-                  }}%
-                </span>
-              </div>
-              <input
-                class="range-control"
-                type="range"
-                min="0"
-                max="1"
-                step="0.05"
-                :value="audioProcessing.crossfeedEnabled ? audioProcessing.crossfeedStrength : 0"
-                @input="setCrossfeedFromInput"
-              />
-            </div>
-
-            <div class="setting-row path-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">Convolver IR</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.convolver"
-                    :data-help="playbackHelp.convolver"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">{{ convolverPathLabel }}</span>
-              </div>
-              <div class="path-actions convolver-actions">
-                <div class="path-field" :title="audioProcessing.convolverIrPath">
-                  {{ convolverPathLabel }}
-                </div>
-                <button class="text-button" @click="selectImpulseResponse">
-                  <i class="pi pi-folder-open"></i>
-                  选择
-                </button>
-                <button
-                  class="icon-button subtle"
-                  title="卸载"
-                  :disabled="!audioProcessing.convolverIrPath"
-                  @click="clearImpulseResponse"
-                >
-                  <i class="pi pi-times"></i>
-                </button>
-              </div>
             </div>
 
             <div class="setting-row audio-device-row">
@@ -1308,6 +1203,294 @@ onMounted(async () => {
                 :value="volumePercent"
                 @input="setVolumeFromInput"
               />
+            </div>
+          </div>
+        </section>
+
+        <section v-if="activeTab === 'dsp'" class="settings-section dsp-section">
+          <h2>DSP</h2>
+          <div class="dsp-board">
+            <div class="dsp-hero">
+              <div class="dsp-hero-main">
+                <span class="dsp-kicker">Digital Signal Processing</span>
+                <h3>{{ dspStatusText }}</h3>
+                <p>{{ dspPerfectImpactText }}</p>
+              </div>
+              <button
+                class="toggle-switch dsp-master-toggle"
+                :class="{ active: audioProcessing.dspEnabled }"
+                role="switch"
+                :aria-checked="audioProcessing.dspEnabled"
+                @click="updateAudioProcessing({ dspEnabled: !audioProcessing.dspEnabled })"
+              >
+                <span class="toggle-knob"></span>
+              </button>
+            </div>
+
+            <div class="dsp-summary-grid">
+              <div class="dsp-summary-card">
+                <span>输入</span>
+                <strong>{{ replayGainSummaryText }}</strong>
+              </div>
+              <div class="dsp-summary-card">
+                <span>塑形</span>
+                <strong>{{ eqSummaryText }}</strong>
+              </div>
+              <div class="dsp-summary-card">
+                <span>空间</span>
+                <strong>Crossfeed {{ crossfeedSummaryText }}</strong>
+              </div>
+              <div class="dsp-summary-card">
+                <span>输出安全</span>
+                <strong>{{ outputSafetyText }}</strong>
+              </div>
+            </div>
+
+            <div class="dsp-module">
+              <div class="dsp-module-head">
+                <span class="dsp-module-icon">
+                  <i class="pi pi-sign-in"></i>
+                </span>
+                <div>
+                  <h3>输入</h3>
+                  <p>响度归一化和整体输入增益</p>
+                </div>
+              </div>
+              <div class="dsp-control-row replaygain-row">
+                <div class="setting-copy">
+                  <span class="label-row">
+                    <span class="setting-label">ReplayGain</span>
+                    <span
+                      class="help-dot"
+                      tabindex="0"
+                      role="note"
+                      :aria-label="playbackHelp.replayGain"
+                      :data-help="playbackHelp.replayGain"
+                      >?</span
+                    >
+                  </span>
+                  <span class="setting-desc">
+                    Preamp {{ audioProcessing.replayGainPreamp.toFixed(1) }} dB · Fallback
+                    {{ audioProcessing.replayGainFallback.toFixed(1) }} dB ·
+                    {{ audioProcessing.replayGainClip ? '防削波' : '允许峰值' }}
+                  </span>
+                </div>
+                <div class="stacked-control">
+                  <div class="inline-control-group spread">
+                    <select
+                      class="select-control"
+                      :value="audioProcessing.volumeNormalization"
+                      @change="setReplayGainFromSelect"
+                    >
+                      <option
+                        v-for="option in replayGainOptions"
+                        :key="option.value"
+                        :value="option.value"
+                        :title="option.help"
+                      >
+                        {{ option.label }}
+                      </option>
+                    </select>
+                    <label class="inline-toggle-label">
+                      防削波
+                      <button
+                        class="toggle-switch"
+                        :class="{ active: audioProcessing.replayGainClip }"
+                        role="switch"
+                        :aria-checked="audioProcessing.replayGainClip"
+                        @click="
+                          updateAudioProcessing({ replayGainClip: !audioProcessing.replayGainClip })
+                        "
+                      >
+                        <span class="toggle-knob"></span>
+                      </button>
+                    </label>
+                  </div>
+                  <label class="compact-range-row">
+                    <span>Preamp</span>
+                    <input
+                      class="range-control"
+                      type="range"
+                      min="-12"
+                      max="12"
+                      step="0.5"
+                      :value="audioProcessing.replayGainPreamp"
+                      @input="setReplayGainPreamp"
+                    />
+                    <strong>{{ audioProcessing.replayGainPreamp.toFixed(1) }}</strong>
+                  </label>
+                  <label class="compact-range-row">
+                    <span>Fallback</span>
+                    <input
+                      class="range-control"
+                      type="range"
+                      min="-12"
+                      max="12"
+                      step="0.5"
+                      :value="audioProcessing.replayGainFallback"
+                      @input="setReplayGainFallback"
+                    />
+                    <strong>{{ audioProcessing.replayGainFallback.toFixed(1) }}</strong>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <div class="dsp-module">
+              <div class="dsp-module-head">
+                <span class="dsp-module-icon">
+                  <i class="pi pi-sliders-h"></i>
+                </span>
+                <div>
+                  <h3>塑形</h3>
+                  <p>均衡器和耳机校正入口</p>
+                </div>
+              </div>
+              <div class="dsp-card-grid">
+                <div class="dsp-card">
+                  <span class="dsp-card-icon">
+                    <i class="pi pi-wave-pulse"></i>
+                  </span>
+                  <div class="dsp-card-copy">
+                    <span class="dsp-card-title">图形 / 参数 EQ</span>
+                    <span class="dsp-card-desc">{{ eqSummaryText }}</span>
+                  </div>
+                  <div class="dsp-card-actions">
+                    <button
+                      class="toggle-switch"
+                      :class="{ active: audioProcessing.eqEnabled }"
+                      role="switch"
+                      :aria-checked="audioProcessing.eqEnabled"
+                      @click="updateAudioProcessing({ eqEnabled: !audioProcessing.eqEnabled })"
+                    >
+                      <span class="toggle-knob"></span>
+                    </button>
+                    <button class="text-button dsp-card-button" type="button" @click="openEqualizerFromDsp">
+                      <i class="pi pi-arrow-up-right"></i>
+                      打开
+                    </button>
+                  </div>
+                </div>
+
+                <div class="dsp-card">
+                  <span class="dsp-card-icon headphones">
+                    <i class="pi pi-headphones"></i>
+                  </span>
+                  <div class="dsp-card-copy">
+                    <span class="dsp-card-title">耳机校正</span>
+                    <span class="dsp-card-desc">OPRA 预设库待接入</span>
+                  </div>
+                  <span class="dsp-card-pill">预留</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="dsp-module">
+              <div class="dsp-module-head">
+                <span class="dsp-module-icon">
+                  <i class="pi pi-arrows-h"></i>
+                </span>
+                <div>
+                  <h3>空间</h3>
+                  <p>声场交叉馈入和卷积脉冲响应</p>
+                </div>
+              </div>
+              <div class="dsp-control-row range-row">
+                <div class="setting-copy">
+                  <span class="label-row">
+                    <span class="setting-label">Crossfeed</span>
+                    <span
+                      class="help-dot"
+                      tabindex="0"
+                      role="note"
+                      :aria-label="playbackHelp.crossfeed"
+                      :data-help="playbackHelp.crossfeed"
+                      >?</span
+                    >
+                  </span>
+                  <span class="setting-desc">{{ crossfeedSummaryText }}</span>
+                </div>
+                <input
+                  class="range-control"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  :value="audioProcessing.crossfeedEnabled ? audioProcessing.crossfeedStrength : 0"
+                  @input="setCrossfeedFromInput"
+                />
+              </div>
+
+              <div class="dsp-control-row path-row">
+                <div class="setting-copy">
+                  <span class="label-row">
+                    <span class="setting-label">Convolver IR</span>
+                    <span
+                      class="help-dot"
+                      tabindex="0"
+                      role="note"
+                      :aria-label="playbackHelp.convolver"
+                      :data-help="playbackHelp.convolver"
+                      >?</span
+                    >
+                  </span>
+                  <span class="setting-desc">{{ convolverPathLabel }}</span>
+                </div>
+                <div class="path-actions convolver-actions">
+                  <div class="path-field" :title="audioProcessing.convolverIrPath">
+                    {{ convolverPathLabel }}
+                  </div>
+                  <button class="text-button" @click="selectImpulseResponse">
+                    <i class="pi pi-folder-open"></i>
+                    选择
+                  </button>
+                  <button
+                    class="icon-button subtle"
+                    title="卸载"
+                    :disabled="!audioProcessing.convolverIrPath"
+                    @click="clearImpulseResponse"
+                  >
+                    <i class="pi pi-times"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="dsp-module">
+              <div class="dsp-module-head">
+                <span class="dsp-module-icon">
+                  <i class="pi pi-shield"></i>
+                </span>
+                <div>
+                  <h3>输出安全</h3>
+                  <p>防止处理链推高峰值导致削波</p>
+                </div>
+              </div>
+              <div class="dsp-control-row">
+                <div class="setting-copy">
+                  <span class="label-row">
+                    <span class="setting-label">Clip Guard</span>
+                    <span
+                      class="help-dot"
+                      tabindex="0"
+                      role="note"
+                      :aria-label="playbackHelp.clipGuard"
+                      :data-help="playbackHelp.clipGuard"
+                      >?</span
+                    >
+                  </span>
+                  <span class="setting-desc">{{ outputSafetyText }}</span>
+                </div>
+                <button
+                  class="toggle-switch"
+                  :class="{ active: audioProcessing.clipGuard }"
+                  role="switch"
+                  :aria-checked="audioProcessing.clipGuard"
+                  @click="updateAudioProcessing({ clipGuard: !audioProcessing.clipGuard })"
+                >
+                  <span class="toggle-knob"></span>
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -1947,6 +2130,606 @@ onMounted(async () => {
   grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
 }
 
+.device-board {
+  position: relative;
+  display: grid;
+  gap: 14px;
+  margin: 14px 18px 18px;
+  padding: 15px 16px 16px;
+  overflow: hidden;
+  isolation: isolate;
+  border: 1px solid rgba(232, 238, 244, 0.24);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.095), rgba(255, 255, 255, 0.018)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.025), rgba(0, 0, 0, 0.07)),
+    rgba(48, 52, 56, 0.24);
+  box-shadow:
+    0 24px 58px rgba(12, 18, 48, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  -webkit-backdrop-filter: blur(32px) saturate(118%);
+  backdrop-filter: blur(32px) saturate(118%);
+}
+
+.device-board::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 16% 20%, rgba(115, 189, 245, 0.88), transparent 31%),
+    radial-gradient(circle at 82% 12%, rgba(179, 148, 244, 0.78), transparent 34%),
+    radial-gradient(circle at 72% 88%, rgba(183, 234, 212, 0.42), transparent 34%),
+    linear-gradient(145deg, rgba(20, 25, 42, 0.66), rgba(13, 31, 62, 0.42) 48%, rgba(34, 23, 64, 0.56));
+}
+
+.device-board::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.13), transparent 35%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.035), rgba(0, 0, 0, 0.12)),
+    rgba(48, 52, 56, 0.2);
+}
+
+.device-board > * {
+  position: relative;
+  z-index: 2;
+}
+
+:global(html[data-theme='dark']) .device-board {
+  border-color: rgba(232, 238, 244, 0.2);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.016)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.024), rgba(0, 0, 0, 0.08)),
+    rgba(48, 52, 56, 0.28);
+}
+
+.device-board .setting-label {
+  color: #f5f8ff;
+  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.24);
+}
+
+.device-board .setting-desc {
+  color: rgba(228, 236, 248, 0.72);
+}
+
+.device-board .help-dot {
+  background: rgba(255, 255, 255, 0.12);
+  color: #b7ead4;
+}
+
+.device-board .icon-button.subtle {
+  border-color: rgba(232, 238, 244, 0.18);
+  background: rgba(255, 255, 255, 0.055);
+  color: #eef5fb;
+  -webkit-backdrop-filter: blur(18px);
+  backdrop-filter: blur(18px);
+}
+
+.device-board .icon-button.subtle:hover {
+  border-color: rgba(232, 238, 244, 0.28);
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.device-board-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.device-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+  min-width: 0;
+}
+
+.device-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-content: start;
+  align-items: start;
+  min-width: 0;
+  min-height: 146px;
+  gap: 12px 10px;
+  padding: 14px;
+  overflow: hidden;
+  border: 1px solid rgba(232, 238, 244, 0.12);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.012)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.024), rgba(0, 0, 0, 0.052)),
+    rgba(31, 35, 41, 0.16);
+  color: #eef5fb;
+  cursor: pointer;
+  text-align: left;
+  box-shadow:
+    0 13px 28px rgba(4, 8, 18, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  -webkit-backdrop-filter: blur(22px) saturate(114%);
+  backdrop-filter: blur(22px) saturate(114%);
+  transition:
+    transform 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    background 0.16s ease;
+}
+
+.device-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent 38%),
+    radial-gradient(circle at 92% 18%, rgba(255, 255, 255, 0.06), transparent 26%);
+}
+
+.device-card::before {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  pointer-events: none;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.035);
+}
+
+.device-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(183, 234, 212, 0.42);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.016)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.03), rgba(0, 0, 0, 0.058)),
+    rgba(31, 35, 41, 0.18);
+  box-shadow:
+    0 16px 34px rgba(4, 8, 18, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.device-card.active {
+  border-color: rgba(183, 234, 212, 0.58);
+  background:
+    linear-gradient(180deg, rgba(183, 234, 212, 0.09), rgba(115, 189, 245, 0.024)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.032), rgba(0, 0, 0, 0.06)),
+    rgba(31, 35, 41, 0.2);
+  box-shadow:
+    0 17px 38px rgba(4, 8, 18, 0.18),
+    0 0 0 1px rgba(183, 234, 212, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.device-card:focus-visible {
+  outline: none;
+  border-color: rgba(115, 189, 245, 0.82);
+  box-shadow:
+    0 0 0 3px rgba(115, 189, 245, 0.2),
+    0 18px 38px rgba(15, 23, 42, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.device-card-icon {
+  position: relative;
+  z-index: 1;
+  grid-column: 1;
+  grid-row: 1;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 4px;
+  background-color: currentColor;
+  color: rgba(232, 238, 244, 0.84);
+  -webkit-mask: var(--device-icon-url) center / contain no-repeat;
+  mask: var(--device-icon-url) center / contain no-repeat;
+  filter: drop-shadow(0 1px 12px rgba(0, 0, 0, 0.24));
+}
+
+.device-card.active .device-card-icon {
+  color: rgba(232, 238, 244, 0.94);
+}
+
+.device-icon-headphones {
+  --device-icon-url: url('/icons/audio-devices/headphones.svg');
+}
+
+.device-icon-speaker {
+  --device-icon-url: url('/icons/audio-devices/speaker.svg');
+}
+
+.device-icon-earbuds {
+  --device-icon-url: url('/icons/audio-devices/earbuds.svg');
+}
+
+.device-card-copy {
+  position: relative;
+  z-index: 1;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.device-card-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #f3fbf7;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-card-spec {
+  overflow: hidden;
+  color: rgba(216, 226, 238, 0.58);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-card-pill {
+  position: relative;
+  z-index: 1;
+  grid-column: 2;
+  grid-row: 1;
+  align-self: start;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  padding: 3px 7px;
+  border: 1px solid rgba(183, 234, 212, 0.28);
+  border-radius: 6px;
+  background: rgba(183, 234, 212, 0.08);
+  color: #b7ead4;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.device-card-pill.muted {
+  border-color: rgba(232, 238, 244, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: #a3adbb;
+}
+
+.dsp-section {
+  max-width: 920px;
+}
+
+.dsp-board {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+.dsp-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  min-height: 72px;
+  padding: 14px 18px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.dsp-hero-main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.dsp-kicker {
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.dsp-hero h3 {
+  margin: 0;
+  color: var(--te-neutral-900);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.dsp-hero p {
+  margin: 0;
+  color: var(--te-neutral-600);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.dsp-master-toggle {
+  width: 52px;
+  height: 30px;
+  border-color: rgba(37, 99, 235, 0.18);
+  background: #e8eef8;
+}
+
+.dsp-master-toggle .toggle-knob {
+  width: 22px;
+  height: 22px;
+}
+
+.dsp-master-toggle.active {
+  border-color: rgba(37, 99, 235, 0.34);
+  background: #2563eb;
+}
+
+.dsp-master-toggle.active .toggle-knob {
+  transform: translateX(22px);
+}
+
+.dsp-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 18px 14px;
+  border-bottom: 1px solid rgba(17, 24, 39, 0.06);
+}
+
+.dsp-summary-card,
+.dsp-control-row,
+.dsp-card {
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.dsp-summary-card {
+  display: grid;
+  min-height: 54px;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.dsp-summary-card span {
+  color: var(--te-neutral-500);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.dsp-summary-card strong {
+  overflow: hidden;
+  color: var(--te-neutral-900);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsp-module {
+  display: grid;
+  gap: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.dsp-module-head {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 12px 18px 8px;
+  border-top: 1px solid rgba(17, 24, 39, 0.06);
+  background: #f8fafc;
+}
+
+.dsp-module-icon,
+.dsp-card-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(37, 99, 235, 0.14);
+  background: #edf4ff;
+  color: #2563eb;
+}
+
+.dsp-module-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  font-size: 13px;
+}
+
+.dsp-module-head h3 {
+  margin: 0;
+  color: var(--te-neutral-700);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.dsp-module-head p {
+  margin: 2px 0 0;
+  overflow: hidden;
+  color: var(--te-neutral-500);
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsp-control-row {
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 14px 18px;
+  border-width: 1px 0 0;
+  border-radius: 0;
+  background: #ffffff;
+}
+
+.dsp-control-row.replaygain-row {
+  align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(390px, 1fr);
+}
+
+.dsp-control-row.range-row {
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+}
+
+.dsp-control-row.path-row {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 460px);
+}
+
+.dsp-board .setting-label {
+  color: var(--te-neutral-900);
+}
+
+.dsp-board .setting-desc,
+.dsp-board .inline-toggle-label,
+.dsp-board .compact-range-row,
+.dsp-board .compact-range-row strong {
+  color: var(--te-neutral-600);
+}
+
+.dsp-board .select-control,
+.dsp-board .path-field {
+  border-color: rgba(17, 24, 39, 0.08);
+  background: #f8fafc;
+  color: var(--te-neutral-900);
+}
+
+.dsp-board .select-control option {
+  color: var(--te-neutral-900);
+}
+
+.dsp-board .text-button,
+.dsp-board .icon-button.subtle {
+  border-color: rgba(37, 99, 235, 0.14);
+  background: #eef4ff;
+  color: #2563eb;
+}
+
+.dsp-board .text-button:hover,
+.dsp-board .icon-button.subtle:hover {
+  border-color: rgba(37, 99, 235, 0.24);
+  background: #e2ecff;
+  color: #1d4ed8;
+}
+
+.dsp-board .range-control {
+  accent-color: #2563eb;
+}
+
+.dsp-board .help-dot {
+  background: #edf4ff;
+  color: #2563eb;
+}
+
+.dsp-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid rgba(17, 24, 39, 0.06);
+}
+
+.dsp-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 12px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.dsp-card-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  font-size: 20px;
+}
+
+.dsp-card-icon.headphones {
+  color: #4f46e5;
+}
+
+.dsp-card-copy {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.dsp-card-title {
+  overflow: hidden;
+  color: var(--te-neutral-900);
+  font-size: 13px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsp-card-desc {
+  overflow: hidden;
+  color: var(--te-neutral-500);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsp-card-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dsp-card-button {
+  height: 30px;
+  padding: 0 10px;
+}
+
+.dsp-card-pill {
+  align-self: start;
+  justify-self: end;
+  min-width: 42px;
+  padding: 3px 7px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: var(--te-neutral-500);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
 .audio-device-row {
   grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
 }
@@ -2367,6 +3150,51 @@ onMounted(async () => {
     padding: 20px 16px 40px;
   }
 
+  .device-board {
+    padding: 14px;
+  }
+
+  .device-board-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .device-board-head .icon-button {
+    align-self: flex-end;
+  }
+
+  .device-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dsp-board {
+    padding: 0;
+  }
+
+  .dsp-hero,
+  .dsp-summary-grid,
+  .dsp-card-grid,
+  .dsp-control-row,
+  .dsp-control-row.replaygain-row,
+  .dsp-control-row.range-row,
+  .dsp-control-row.path-row {
+    grid-template-columns: 1fr;
+  }
+
+  .dsp-master-toggle {
+    justify-self: start;
+  }
+
+  .dsp-card {
+    grid-template-columns: 44px minmax(0, 1fr);
+  }
+
+  .dsp-card-actions,
+  .dsp-card-pill {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
   .setting-row,
   .path-row,
   .theme-row,
@@ -2374,6 +3202,7 @@ onMounted(async () => {
   .audio-device-row,
   .buffer-row,
   .status-row,
+  .dsp-control-row,
   .replaygain-row,
   .continuity-row,
   .resume-row,

@@ -26,6 +26,7 @@ const showEqualizerPage = ref(false)
 type SettingsSection =
   | 'general'
   | 'playback'
+  | 'dsp'
   | 'cache'
   | 'performance'
   | 'appearance'
@@ -175,6 +176,10 @@ function closeSettingsPage(): void {
 
 function openPlaybackSettings(): void {
   openSettingsPage('playback')
+}
+
+function openDspSettings(): void {
+  openSettingsPage('dsp')
 }
 
 function openEqualizerPage(): void {
@@ -413,6 +418,7 @@ const titleSurface = computed<TitleSurface>(() => {
         v-if="showSettingsPage"
         :initial-section="settingsInitialSection"
         @back="closeSettingsPage"
+        @open-equalizer="openEqualizerPage"
       />
     </Transition>
     <Transition name="login-page">
@@ -424,7 +430,7 @@ const titleSurface = computed<TitleSurface>(() => {
     :glass="showPlayingPage"
     @click-cover="handleCoverClick"
     @open-settings="openPlaybackSettings"
-    @open-equalizer="openEqualizerPage"
+    @open-dsp="openDspSettings"
   />
 </template>
 

@@ -20,10 +20,7 @@ const {
   playMode,
   exclusiveMode,
   audioOutput,
-  audioDevice,
   audioOutputOptions,
-  audioDeviceOptions,
-  audioProcessing,
   playbackInfo,
   outputInfo,
   visualizationData,
@@ -34,13 +31,6 @@ const {
   seek,
   playTrack,
   toggleExclusiveMode,
-  setAudioOutput,
-  setAudioDevice,
-  toggleDspEnabled,
-  toggleEqEnabled,
-  toggleCrossfeed,
-  toggleGapless,
-  setReplayGainMode,
   formatTime
 } = usePlayerStore()
 
@@ -51,7 +41,7 @@ const playButtonColor = computed(() => normalizeAccentColor(dominantColor.value)
 const emit = defineEmits<{
   clickCover: [rect: { x: number; y: number; w: number; h: number }]
   openSettings: []
-  openEqualizer: []
+  openDsp: []
 }>()
 
 function onCoverClick(): void {
@@ -145,9 +135,6 @@ const modeLabels: Record<string, string> = {
 const modeTitle = computed(() => modeLabels[playMode.value] ?? '')
 const selectedAudioOutput = computed(() =>
   audioOutputOptions.value.find((option) => option.id === audioOutput.value)
-)
-const selectedAudioDevice = computed(() =>
-  audioDeviceOptions.value.find((option) => option.id === audioDevice.value)
 )
 const exclusiveAvailable = computed(() => selectedAudioOutput.value?.supportsExclusive ?? false)
 const backendLabels: Record<string, string> = {
@@ -475,17 +462,6 @@ const spectrogramCells = computed(() => {
   return cells
 })
 
-const replayGainMiniOptions = [
-  { value: 'off', label: 'Off' },
-  { value: 'track', label: 'Track' },
-  { value: 'album', label: 'Album' }
-] as const
-
-function onAudioDeviceChange(event: Event): void {
-  const target = event.target as HTMLSelectElement
-  void setAudioDevice(target.value)
-}
-
 function playTrackAt(index: number): void {
   const track = queue.value[index]
   if (track) {
@@ -498,9 +474,9 @@ function openPlaybackSettings(): void {
   emit('openSettings')
 }
 
-function openEqualizer(): void {
+function openDspSettings(): void {
   moreOpen.value = false
-  emit('openEqualizer')
+  emit('openDsp')
 }
 
 onMounted(() => {
@@ -683,10 +659,10 @@ onBeforeUnmount(() => {
                     <span class="more-action-desc">输出、缓存与无缝播放</span>
                   </span>
                 </button>
-                <button type="button" class="more-action" @click="openEqualizer">
+                <button type="button" class="more-action" @click="openDspSettings">
                   <span>
-                    <span class="more-action-title">均衡器</span>
-                    <span class="more-action-desc">图形、参数与预设</span>
+                    <span class="more-action-title">DSP 菜单</span>
+                    <span class="more-action-desc">EQ、校正与空间处理</span>
                   </span>
                 </button>
               </div>
@@ -766,88 +742,6 @@ onBeforeUnmount(() => {
                   </button>
                 </div>
                 <p class="more-item-desc">当前输出支持时可绕过系统混音器</p>
-              </div>
-              <div class="more-item">
-                <div class="more-item-header">
-                  <span class="more-item-label">DSP</span>
-                  <button
-                    class="toggle-switch"
-                    :class="{ active: audioProcessing.dspEnabled }"
-                    role="switch"
-                    :aria-checked="audioProcessing.dspEnabled"
-                    @click="toggleDspEnabled"
-                  >
-                    <span class="toggle-knob"></span>
-                  </button>
-                </div>
-                <div class="quick-toggle-grid">
-                  <button
-                    type="button"
-                    class="quick-toggle"
-                    :class="{ active: audioProcessing.eqEnabled }"
-                    @click="toggleEqEnabled"
-                  >
-                    EQ
-                  </button>
-                  <button
-                    type="button"
-                    class="quick-toggle"
-                    :class="{ active: audioProcessing.crossfeedEnabled }"
-                    @click="toggleCrossfeed"
-                  >
-                    Crossfeed
-                  </button>
-                  <button
-                    type="button"
-                    class="quick-toggle"
-                    :class="{ active: audioProcessing.gapless }"
-                    @click="toggleGapless"
-                  >
-                    Gapless
-                  </button>
-                </div>
-                <div class="mini-segment" role="radiogroup" aria-label="ReplayGain">
-                  <button
-                    v-for="option in replayGainMiniOptions"
-                    :key="option.value"
-                    type="button"
-                    class="mini-segment-option"
-                    :class="{ active: audioProcessing.volumeNormalization === option.value }"
-                    role="radio"
-                    :aria-checked="audioProcessing.volumeNormalization === option.value"
-                    @click="setReplayGainMode(option.value)"
-                  >
-                    {{ option.label }}
-                  </button>
-                </div>
-              </div>
-              <div class="more-item">
-                <div class="more-item-header">
-                  <span class="more-item-label">音频输出</span>
-                  <span class="more-item-value">{{ selectedAudioOutput?.label ?? '自动' }}</span>
-                </div>
-                <div class="audio-output-mini-list">
-                  <button
-                    v-for="option in audioOutputOptions"
-                    :key="option.id"
-                    type="button"
-                    class="audio-output-mini"
-                    :class="{ active: audioOutput === option.id }"
-                    @click="setAudioOutput(option.id)"
-                  >
-                    {{ option.label }}
-                  </button>
-                </div>
-                <select
-                  class="audio-device-mini-select"
-                  :value="audioDevice"
-                  :title="selectedAudioDevice?.label ?? audioDevice"
-                  @change="onAudioDeviceChange"
-                >
-                  <option v-for="device in audioDeviceOptions" :key="device.id" :value="device.id">
-                    {{ device.label }}
-                  </option>
-                </select>
               </div>
             </div>
           </Transition>
@@ -2004,115 +1898,6 @@ onBeforeUnmount(() => {
 
 .drawer-glass .more-item-desc {
   color: rgba(255, 255, 255, 0.45);
-}
-
-.quick-toggle-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.quick-toggle,
-.mini-segment-option {
-  min-width: 0;
-  height: 28px;
-  border: 0;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.34);
-  color: rgba(80, 88, 116, 0.72);
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.quick-toggle:hover,
-.quick-toggle.active,
-.mini-segment-option:hover,
-.mini-segment-option.active {
-  background: color-mix(in srgb, var(--accent-color, #7c4dff) 12%, rgba(255, 255, 255, 0.58));
-  color: var(--accent-color, #7c4dff);
-}
-
-.mini-segment {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  margin-top: 7px;
-}
-
-.drawer-glass .quick-toggle,
-.drawer-glass .mini-segment-option {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.58);
-}
-
-.drawer-glass .quick-toggle:hover,
-.drawer-glass .quick-toggle.active,
-.drawer-glass .mini-segment-option:hover,
-.drawer-glass .mini-segment-option.active {
-  background: rgba(255, 255, 255, 0.16);
-  color: rgba(255, 255, 255, 0.92);
-}
-
-.audio-output-mini-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.audio-output-mini {
-  min-width: 58px;
-  height: 26px;
-  padding: 0 9px;
-  border: 0;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.34);
-  color: rgba(80, 88, 116, 0.72);
-  font-size: 11px;
-  font-weight: 700;
-  cursor: pointer;
-  transition:
-    background 0.18s,
-    color 0.18s,
-    border-color 0.18s;
-}
-
-.audio-output-mini:hover,
-.audio-output-mini.active {
-  background: color-mix(in srgb, var(--accent-color, #7c4dff) 12%, rgba(255, 255, 255, 0.58));
-  color: var(--accent-color, #7c4dff);
-}
-
-.audio-device-mini-select {
-  width: 100%;
-  height: 30px;
-  margin-top: 8px;
-  border: 0;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.42);
-  color: rgba(52, 61, 87, 0.84);
-  font-size: 11px;
-  font-weight: 700;
-  outline: none;
-  padding: 0 9px;
-}
-
-.drawer-glass .audio-output-mini {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.58);
-}
-
-.drawer-glass .audio-device-mini-select {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.82);
-}
-
-.drawer-glass .audio-output-mini:hover,
-.drawer-glass .audio-output-mini.active {
-  background: rgba(255, 255, 255, 0.16);
-  color: rgba(255, 255, 255, 0.92);
 }
 
 /* ===== Toggle Switch ===== */
