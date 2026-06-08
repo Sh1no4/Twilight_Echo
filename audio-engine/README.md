@@ -9,7 +9,7 @@ Twilight Echo 的 C++20 原生音频引擎，通过稳定 C ABI 和 Node-API 桥
 - C ABI：`TAE_Play`、队列、DSP 配置、设备/后端枚举、`TAE_GetPlaybackInfo`、`TAE_GetVisualizationData`、`TAE_GetEngineCapabilities`、`TAE_GetLastError`。
 - Node-API：薄桥接到 C ABI，返回 JSON，不承载播放策略。
 - 解码与管线：FFmpeg 解码、Float32 内部渲染、环形缓冲、gapless preload、只读 visualization tap。
-- Queue：native 侧负责队列索引、upcoming track、EOF auto-next、gapless 预加载和 crossfade 状态判定。
+- Queue：native 侧负责队列索引、upcoming track、EOF auto-next、gapless 预加载和 crossfade overlap mixing。
 - 后端：WASAPI Shared/Exclusive、ASIO 可选 SDK 接入、CoreAudio/ALSA 源码后端。
 - DSP：ReplayGain、Parametric EQ、FIR Convolver、Crossfeed、FFT Spectrum / Waveform / Peak / LUFS / Spectrogram 采样。
 - Metadata：container、channel layout、channel count、DSD64/128/256/512 识别字段、ReplayGain/R128 字段。
@@ -91,9 +91,10 @@ $env:TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK="1"
 
 - ASIO SDK 不入仓库；没有 SDK 时构建必须成功，并通过 capabilities/后端枚举报告不可用。
 - 真实设备 smoke 是 opt-in；没有 SDK、目标平台工具链或对应设备时跳过，不阻塞默认 CI。
-- Crossfade 已进入 native 状态和 bit-perfect 判定，但真实 overlap mixing 仍需继续补齐。
+- Crossfade 已进入 native float 渲染路径，能对预加载下一首做 overlap mixing，并在启用时稳定报告 `outputPerfect=false` / `perfectReasonCode=crossfade_active`。
 - DSF/DFF DSD64/128 可进入 DoP carrier path，并在 UI 中展示 DSD 源到 `DoP carrier` 再到后端实际输出；DoP 是用 PCM carrier 承载 DSD bitstream，不等同于把 DSD 转成 PCM。
 - DSF/DFF DSD256/512、DoP 条件不满足，或软件音量、ReplayGain、EQ、Convolver、Crossfeed、Crossfade 等处理启用时走 PCM fallback，并在 UI 中展示 DSD 源到 PCM 输出链路。运行时若从 DoP 回退到 PCM，canonical `outputInfo.isDsd/dsdMode/dsdRate` 会清成当前 PCM 状态，顶层 `PlaybackInfo` 只做同值镜像。
 - Native DSD、SACD ISO 仍未进入 Phase 6D 真实播放闭环。Native DSD 是直接输出 DSD bitstream，SACD ISO 当前只允许识别并报告 `unsupported`。
-- Metadata 默认测试覆盖空 source、缺失文件 shape、generated DSF DSD64/128/256 和 SACD ISO unsupported。MP3/FLAC/M4A/OGG 小样本 fixture 仍不作为默认门禁依赖，避免引入外部编码器或大文件。
+- Metadata 默认测试覆盖空 source、缺失文件 shape、generated DSF DSD64/128/256 和 SACD ISO unsupported。FFmpeg decoder 默认测试通过生成 WAV/DSF fixture 覆盖 PCM/DSD shape；如设置 `TAE_AUDIO_FIXTURES_DIR`，会额外扫描 MP3/FLAC/M4A/OGG/AAC 等真实小样本做 opt-in 解码 smoke，真实样本不作为默认门禁依赖。
+- WASAPI 真实设备 smoke 可用 `npm run smoke:wasapi -- --device "M30" --buffer 256 --expect-bit-perfect --format-matrix` 跑多格式矩阵；矩阵只要求实际匹配格式 bit-perfect，不支持或被协商到其它格式的样本必须给出明确 non-perfect reason。
 - macOS/Linux 后端需要对应平台工具链和真实设备 smoke 后才能声明发布级能力。

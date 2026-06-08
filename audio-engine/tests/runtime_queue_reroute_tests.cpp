@@ -282,38 +282,48 @@ std::shared_ptr<BackendState> waitForLatestStartedBackendState(int timeoutMs = 1
   return ready ? started : nullptr;
 }
 
-void pumpBackend(const std::shared_ptr<BackendState>& state, size_t iterations, size_t frames = 256) {
+std::vector<float> renderBackendFrames(const std::shared_ptr<BackendState>& state, size_t frames = 256) {
   assert(state);
   assert(state->openedFormat.channelCount > 0);
-  std::vector<float> buffer(frames * static_cast<size_t>(std::max(1, state->openedFormat.channelCount)));
+  const size_t channels = static_cast<size_t>(std::max(1, state->openedFormat.channelCount));
+  std::vector<float> buffer(frames * channels, 0.0f);
   std::vector<uint8_t> typedBuffer(frames * audioFormatBytesPerFrame(state->openedFormat));
+
+  RenderCallback render;
+  TypedRenderCallback typedRender;
+  {
+    std::lock_guard lock(g_backendRegistry.mutex);
+    render = state->render;
+    typedRender = state->typedRender;
+  }
+
+  bool renderedTyped = false;
+  if (typedRender && !typedBuffer.empty()) {
+    PcmBlock block;
+    block.format = state->openedFormat;
+    block.data = typedBuffer.data();
+    block.frames = frames;
+    block.byteSize = typedBuffer.size();
+    renderedTyped = typedRender(block) > 0;
+    if (renderedTyped) {
+      std::lock_guard lock(g_backendRegistry.mutex);
+      ++state->typedRenderCalls;
+    }
+  }
+  if (!renderedTyped) {
+    assert(render);
+    render(buffer.data(), frames);
+    std::lock_guard lock(g_backendRegistry.mutex);
+    ++state->floatRenderCalls;
+  }
+
+  return buffer;
+}
+
+void pumpBackend(const std::shared_ptr<BackendState>& state, size_t iterations, size_t frames = 256) {
+  assert(state);
   for (size_t i = 0; i < iterations; ++i) {
-    RenderCallback render;
-    TypedRenderCallback typedRender;
-    {
-      std::lock_guard lock(g_backendRegistry.mutex);
-      render = state->render;
-      typedRender = state->typedRender;
-    }
-    bool renderedTyped = false;
-    if (typedRender && !typedBuffer.empty()) {
-      PcmBlock block;
-      block.format = state->openedFormat;
-      block.data = typedBuffer.data();
-      block.frames = frames;
-      block.byteSize = typedBuffer.size();
-      renderedTyped = typedRender(block) > 0;
-      if (renderedTyped) {
-        std::lock_guard lock(g_backendRegistry.mutex);
-        ++state->typedRenderCalls;
-      }
-    }
-    if (!renderedTyped) {
-      assert(render);
-      render(buffer.data(), frames);
-      std::lock_guard lock(g_backendRegistry.mutex);
-      ++state->floatRenderCalls;
-    }
+    renderBackendFrames(state, frames);
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
   }
 }
@@ -505,6 +515,13 @@ TrackProfile buildTrackProfile(const std::string& source) {
   profile.defaultOutput = profile.stream.decodedFormat;
   profile.totalFrames = 65536;
   profile.sampleValue = 0.25f;
+  if (source.find("crossfade-current") != std::string::npos) {
+    profile.totalFrames = 4096;
+    profile.sampleValue = 0.25f;
+  } else if (source.find("crossfade-next") != std::string::npos) {
+    profile.totalFrames = 8192;
+    profile.sampleValue = 0.75f;
+  }
   return profile;
 }
 
@@ -542,6 +559,10 @@ void assertLatestPlaybackContains(TwilightAudioEngine& engine, const std::string
     std::fprintf(stderr, "Missing playback JSON fragment: %s\nPlayback JSON: %s\n", needle.c_str(), json.c_str());
   }
   assert(jsonContains(json, needle));
+}
+
+bool bufferHasSampleAbove(const std::vector<float>& samples, float threshold) {
+  return std::any_of(samples.begin(), samples.end(), [threshold](float sample) { return sample > threshold; });
 }
 
 void testDsd64StartsOnDop() {
@@ -841,6 +862,56 @@ void testAutoNextDoesNotInheritDsdPath() {
   assertLatestPlaybackContains(engine, "\"source\":\"auto-next.flac\"");
 }
 
+void testNativeCrossfadeOverlapMixesPreloadAndPromotes() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.setDspConfig("{\"gapless\":true,\"crossfadeSeconds\":0.04}") == TAE_RESULT_OK);
+  const std::string queueJson =
+      "[{\"id\":\"current\",\"source\":\"crossfade-current.flac\",\"duration\":0.08},"
+      "{\"id\":\"next\",\"source\":\"crossfade-next.flac\",\"duration\":0.20}]";
+  assert(engine.loadQueue(queueJson, 0) == TAE_RESULT_OK);
+  assert(engine.play("crossfade-current.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  assertLatestPlaybackContains(engine, "\"crossfadeActive\":true");
+  assert(waitUntil([&engine] { return jsonContains(engine.getPlaybackInfoJson(), "\"preloadReady\":true"); }));
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":false");
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"crossfade_active\"");
+
+  bool sawOverlapMix = false;
+  for (int i = 0; i < 24; ++i) {
+    const auto rendered = renderBackendFrames(backend, 256);
+    if (bufferHasSampleAbove(rendered, 0.30f)) {
+      sawOverlapMix = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  assert(sawOverlapMix);
+
+  const auto afterMixSnapshots = g_backendRegistry.snapshots();
+  assert(afterMixSnapshots.size() == 1);
+  assert(afterMixSnapshots.front().typedStarted);
+  assert(afterMixSnapshots.front().typedRenderCalls == 0);
+  assert(afterMixSnapshots.front().floatRenderCalls > 0);
+
+  bool promoted = false;
+  for (int i = 0; i < 80; ++i) {
+    renderBackendFrames(backend, 256);
+    if (jsonContains(engine.getPlaybackInfoJson(), "\"source\":\"crossfade-next.flac\",\"codec\"")) {
+      promoted = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  assert(promoted);
+  assertLatestPlaybackContains(engine, "\"source\":\"crossfade-next.flac\",\"codec\"");
+  assertLatestPlaybackContains(engine, "\"queueIndex\":1");
+}
+
 }  // namespace
 
 namespace twilight::audio {
@@ -971,5 +1042,6 @@ int main() {
   testPausedSettingsFallbackBeforeResume();
   testManualNextDoesNotInheritDsdPath();
   testAutoNextDoesNotInheritDsdPath();
+  testNativeCrossfadeOverlapMixesPreloadAndPromotes();
   return 0;
 }

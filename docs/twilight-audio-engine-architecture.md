@@ -22,7 +22,7 @@ npm run build
 - C ABI 是稳定边界；新增查询继续使用 buffer/required-size 模式。
 - Node-API 是薄桥接，只转发 C ABI、抛出 native 错误、返回 JSON。
 - `outputInfo` 是 canonical playback 状态；顶层 `PlaybackInfo` 字段只做兼容镜像，包括 `isDsd`、`dsdMode`、`dsdRate`。
-- Native queue 负责 EOF auto-next 和 gapless preload；Electron 只同步 `PlaybackInfo` 并发送用户操作。`crossfadeSeconds` 现在由 native 状态上报并使 `outputPerfect=false`，Renderer 不再在 native 播放时用自己的 crossfade 定时器驱动下一首；真正的 overlap mixing 仍在后续顺序中。
+- Native queue 负责 EOF auto-next、gapless preload 和 crossfade overlap mixing；Electron 只同步 `PlaybackInfo` 并发送用户操作。`crossfadeSeconds` 由 native 状态上报并使 `outputPerfect=false`，Renderer 不再在 native 播放时用自己的 crossfade 定时器驱动下一首。
 - Electron 默认走 native engine；HTMLAudio 只允许通过 `TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK=1` 显式开启。
 - ASIO SDK 不入仓库；缺失时构建通过，并通过 capabilities/后端列表报告不可用。
 - 真实设备 smoke 是 opt-in：没有 ASIO SDK、目标平台工具链或真实设备时跳过，不阻塞默认 CI。
@@ -61,8 +61,7 @@ Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer
 
 ## 后续顺序
 
-1. 收口 WASAPI Exclusive、ASIO、CoreAudio、ALSA 的 actual format、failure reason 与 opt-in smoke。
-2. 为更多真实音频 fixture 覆盖 lossy/lossless 的 `sourceExact` 与 `outputPerfect` 组合；当前默认门禁已经覆盖 generated WAV/DSF、SACD ISO unsupported 和缺失文件 metadata shape，但没有把外部 MP3/FLAC/M4A/OGG 样本作为必需依赖。
+1. 继续收口 ASIO、CoreAudio、ALSA 的 actual format、failure reason 与 opt-in smoke；WASAPI Exclusive 已增加真实设备多格式矩阵 smoke。
+2. 扩充真实音频 fixture 样本集；当前默认门禁覆盖 generated WAV/DSF，`TAE_AUDIO_FIXTURES_DIR` 可 opt-in 扫描 MP3/FLAC/M4A/OGG/AAC 等外部小样本。
 3. 将 Native DSD 与 SACD ISO 放到 DoP carrier path 稳定后继续补齐。
-4. 将 crossfade overlap mixing 继续收敛到 native queue，并为真实音频文件补可选 smoke。
-5. 在 macOS/Linux 工具链与真实设备 smoke 通过后补平台产物路径和打包检查。
+4. 在 macOS/Linux 工具链与真实设备 smoke 通过后补平台产物路径和打包检查。

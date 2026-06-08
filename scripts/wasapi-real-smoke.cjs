@@ -17,6 +17,7 @@ function usage() {
     '  --volume <0..1>             Non-bit-perfect smoke volume. Default: 0.02.',
     '  --expect-bit-perfect        Fail when the adaptive silent exclusive probe is not outputPerfect.',
     '  --skip-bit-perfect-probe    Only run Shared and Exclusive hardware smoke.',
+    '  --format-matrix             Also run generated WAV probes across s16/s24/s32/f32 source formats.',
     '  --module <path>             Native twilight_audio_node.node path.',
     '  --json                      Print JSON only.',
     '  --help                      Show this help.'
@@ -31,6 +32,7 @@ function parseArgs(argv) {
     volume: Number(process.env.TAE_WASAPI_VOLUME || 0.02),
     expectBitPerfect: process.env.TAE_WASAPI_EXPECT_BIT_PERFECT === '1',
     skipBitPerfectProbe: process.env.TAE_WASAPI_SKIP_BIT_PERFECT_PROBE === '1',
+    formatMatrix: process.env.TAE_WASAPI_FORMAT_MATRIX === '1',
     modulePath: process.env.TAE_AUDIO_NODE || '',
     json: false,
     help: false
@@ -50,6 +52,7 @@ function parseArgs(argv) {
     else if (arg === '--volume') options.volume = Number(next())
     else if (arg === '--expect-bit-perfect') options.expectBitPerfect = true
     else if (arg === '--skip-bit-perfect-probe') options.skipBitPerfectProbe = true
+    else if (arg === '--format-matrix') options.formatMatrix = true
     else if (arg === '--module') options.modulePath = next()
     else if (arg === '--json') options.json = true
     else if (arg === '--help' || arg === '-h') options.help = true
@@ -263,6 +266,62 @@ function writeSilenceWav(filePath, probeFormat) {
   return { ...probeFormat, wavEncoding: encoding.suffix }
 }
 
+function staticFormatMatrix() {
+  return [
+    {
+      label: 'WASAPI Exclusive format matrix s16/48k/2ch',
+      actualOutputFormat: 'int16',
+      actualSampleRate: 48000,
+      actualBitDepth: 16,
+      actualChannels: 2
+    },
+    {
+      label: 'WASAPI Exclusive format matrix s24/96k/2ch',
+      actualOutputFormat: 'int24',
+      actualSampleRate: 96000,
+      actualBitDepth: 24,
+      actualChannels: 2
+    },
+    {
+      label: 'WASAPI Exclusive format matrix s32/48k/2ch',
+      actualOutputFormat: 'int32',
+      actualSampleRate: 48000,
+      actualBitDepth: 32,
+      actualChannels: 2
+    },
+    {
+      label: 'WASAPI Exclusive format matrix f32/48k/2ch',
+      actualOutputFormat: 'float32',
+      actualSampleRate: 48000,
+      actualBitDepth: 32,
+      actualChannels: 2
+    }
+  ]
+}
+
+function matrixProbeMatchesActual(probeFormat, info) {
+  return (
+    info.actualOutputFormat === probeFormat.actualOutputFormat &&
+    info.actualSampleRate === probeFormat.actualSampleRate &&
+    info.actualBitDepth === probeFormat.actualBitDepth &&
+    info.actualChannels === probeFormat.actualChannels
+  )
+}
+
+function assertMatrixHonesty(label, info, probeFormat) {
+  if (info.outputPerfect) {
+    expect(info.pcmPassthrough === true, `${label}: outputPerfect=true must also report pcmPassthrough=true`)
+    expect(!info.perfectReasonCode, `${label}: outputPerfect=true must clear perfectReasonCode`)
+    expect(matrixProbeMatchesActual(probeFormat, info), `${label}: outputPerfect=true but probe and actual output formats differ`)
+    return
+  }
+
+  expect(Boolean(info.perfectReasonCode), `${label}: non-perfect matrix probe must report perfectReasonCode`)
+  if (matrixProbeMatchesActual(probeFormat, info)) {
+    throw new Error(`${label}: exact matrix probe was not outputPerfect; reason=${info.perfectReasonCode}`)
+  }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -336,6 +395,60 @@ async function runBitPerfectProbe({ audio, device, buffer, durationMs, expectBit
   }
 }
 
+async function runFormatMatrix({ audio, device, buffer, durationMs }) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-wasapi-matrix-'))
+  const results = []
+  try {
+    for (const probeFormat of staticFormatMatrix()) {
+      const encoding = wavEncodingForOutputFormat(probeFormat)
+      const source = path.join(
+        tempDir,
+        `wasapi-matrix-${encoding.suffix}-${probeFormat.actualSampleRate}hz-${probeFormat.actualChannels}ch.wav`
+      )
+      const writtenProbeFormat = writeSilenceWav(source, probeFormat)
+      try {
+        const result = await runPlayback({
+          audio,
+          label: probeFormat.label,
+          backend: 'wasapi-exclusive',
+          device,
+          source,
+          buffer,
+          durationMs,
+          volume: 1
+        })
+        assertMatrixHonesty(probeFormat.label, result.info, probeFormat)
+        result.probeFormat = writtenProbeFormat
+        result.matrixExactMatch = matrixProbeMatchesActual(probeFormat, result.info)
+        results.push(result)
+      } catch (error) {
+        safeStop(audio)
+        let info = null
+        let lastError = null
+        try {
+          info = compactPlaybackInfo(parseJson(audio.GetPlaybackInfo(), 'GetPlaybackInfo'))
+        } catch (_) {}
+        try {
+          lastError = parseJson(audio.GetLastError(), 'GetLastError')
+        } catch (_) {}
+        results.push({
+          ok: false,
+          label: probeFormat.label,
+          backend: 'wasapi-exclusive',
+          error: error && error.message,
+          info,
+          lastError,
+          probeFormat: writtenProbeFormat
+        })
+      }
+    }
+    return results
+  } finally {
+    safeStop(audio)
+    fs.rmSync(tempDir, { recursive: true, force: true })
+  }
+}
+
 function printHumanSummary(summary) {
   console.log(`Native module: ${summary.modulePath}`)
   console.log(`Selected device: ${summary.device.label}`)
@@ -353,6 +466,9 @@ function printHumanSummary(summary) {
         console.log(
           `  probe=${result.probeFormat.wavEncoding}/${result.probeFormat.actualSampleRate}Hz/${result.probeFormat.actualChannels}ch`
         )
+      }
+      if (typeof result.matrixExactMatch === 'boolean') {
+        console.log(`  matrixExactMatch=${result.matrixExactMatch}`)
       }
       console.log(
         `  buffer=${result.info.bufferSizeFrames} frames latency=${latency.totalLatencyMs}ms outputPerfect=${result.info.outputPerfect} reason=${result.info.perfectReasonCode || '(none)'}`
@@ -452,6 +568,10 @@ async function main() {
     }
   }
 
+  if (options.formatMatrix) {
+    results.push(...(await runFormatMatrix({ audio, device, buffer: options.buffer, durationMs: options.durationMs })))
+  }
+
   const summary = {
     modulePath,
     deviceSelector: options.device,
@@ -461,7 +581,8 @@ async function main() {
       durationMs: options.durationMs,
       volume: options.volume,
       expectBitPerfect: options.expectBitPerfect,
-      skipBitPerfectProbe: options.skipBitPerfectProbe
+      skipBitPerfectProbe: options.skipBitPerfectProbe,
+      formatMatrix: options.formatMatrix
     },
     results
   }

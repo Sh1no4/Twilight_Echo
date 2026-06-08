@@ -244,6 +244,7 @@ if(TAE_BUILD_TESTS)
 
   add_executable(twilight_ffmpeg_decoder_tests
     tests/ffmpeg_decoder_tests.cpp
+    tests/AudioFixtureLibrary.cpp
     decoder/FFmpegDecoder.cpp
     core/AudioTypes.cpp
   )

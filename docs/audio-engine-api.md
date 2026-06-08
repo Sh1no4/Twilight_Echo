@@ -26,7 +26,7 @@
 - `outputInfo.resampled`：后端或统一评估发现采样率、位深、声道数或 sample format 发生转换。
 - `outputInfo.perfectReason`：`sourceExact` 或 `outputPerfect` 未达成时的 canonical 原因。
 - `outputInfo.isDsd` / `dsdMode` / `dsdRate`：DSD 状态 canonical 字段。顶层 `PlaybackInfo.isDsd`、`dsdMode`、`dsdRate` 只做镜像；Renderer 应优先读取 `outputInfo` 表示当前 runtime 传输状态。若 DoP 在运行时回退到 PCM，canonical 状态必须同步为 `isDsd=false`、`dsdMode='pcm'`、`dsdRate=0`，UI 可另外基于源文件元数据保留 `DSF/DFF DSD64 -> PCM fallback ...` 的源侧说明。
-- `crossfadeActive` / `crossfadeSeconds`：播放连续性处理状态。当前 native 会稳定上报并参与 bit-perfect 判定；overlap mixing 仍属于后续补完项。
+- `crossfadeActive` / `crossfadeSeconds`：播放连续性处理状态。当前 native 会对预加载下一首做 overlap mixing，并参与 bit-perfect 判定；启用 crossfade 时必须报告 `outputPerfect=false`。
 
 ## Visualization API
 
