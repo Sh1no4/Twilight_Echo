@@ -168,7 +168,7 @@ const reasonCodeLabels: Record<string, string> = {
   volume_not_unity: '软件音量不是 100%',
   routing_changes_semantics: '声道路由或通道语义发生变化',
   pcm_converted: 'PCM 格式或采样率发生转换',
-  integer_passthrough_unavailable: '当前解码路径仍经过 Float32，整数 PCM 直通不可用',
+  integer_passthrough_unavailable: '源格式与设备实际输出格式不一致，无法 PCM 直通',
   source_lossy: '源文件是有损格式，不能 Source Exact',
   source_format_differs: '源格式与输出链不一致',
   backend_not_output_perfect: '当前输出路径未声明 bit-perfect 能力',

@@ -79,7 +79,7 @@
 
 `sourceExact=true` 额外要求源格式无损，并且源格式与实际输出格式完全一致。有损格式可以达成 `outputPerfect=true`，但 `sourceExact=false`，原因会显示为 `Source is lossy; decoded PCM path is output perfect`。
 
-各后端只声明能力和实际格式；`TwilightAudioEngine` 与 `AudioPipeline` 不按 backend id 硬编码最终状态。当前主渲染路径仍以 Float32 作为解码/DSP 工作格式，因此整数 PCM 源如果被转换为 Float32，再由后端打包为整数输出，`outputPerfect=false`，`perfectReasonCode=integer_passthrough_unavailable`。只有 decoded PCM 与后端实际格式同为 Float32 且其余条件满足时才可能 `outputPerfect=true`。真正的 typed integer passthrough 需要后续把 FFmpeg decode buffer、AudioBuffer 和 `RenderCallback` 一起扩展到非 Float32 样本通道。
+各后端只声明能力和实际格式；`TwilightAudioEngine` 与 `AudioPipeline` 不按 backend id 硬编码最终状态。WASAPI Exclusive / ASIO 当前可以在处理链完全 bypass、音量为 1.0、routing 保持语义且 decoded PCM 与后端实际格式完全一致时走 typed PCM passthrough；Int16/Int24/Int32/Float32 都由 `PcmBlock`、typed `AudioBuffer` 和后端 typed render 承载。整数 PCM 源如果因为格式不匹配或处理链要求被转换到 Float32，再由后端重新打包为整数输出，仍必须报告 `outputPerfect=false`、`pcmPassthrough=false` 和具体原因，例如 `integer_passthrough_unavailable` 或 `pcm_converted`。
 
 ## DSD / DoP / SACD 语义
 

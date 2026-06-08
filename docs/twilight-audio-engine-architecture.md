@@ -33,7 +33,7 @@ npm run build
 
 `outputPerfect=true` 要求 backend capability、decoded PCM 与实际输出的采样率/位深/声道/sample format 完全匹配、无 resample、无 DSP/音量/routing 改变，并且本次播放 `pcmPassthrough=true`。`pcmPassthrough` 由 `AudioPipeline` 用 FFmpeg decoded PCM 与后端 actual output 事实比较得出；后端只上报事实。`sourceExact=true` 还要求源为无损且源格式与输出格式完全一致；MP3/AAC/OGG 等有损源可达成 `outputPerfect=true`，但不会达成 `sourceExact=true`。
 
-当前 FFmpeg decode、`AudioBuffer` 与后端 `RenderCallback` 仍是 Float32 工作格式。无损整数 PCM 源如果进入 Float32 管线，再由后端重新打包为 Int16/Int24/Int24-in32/Int32，必须报告 `outputPerfect=false`、`pcmPassthrough=false` 和 `perfectReasonCode=integer_passthrough_unavailable`。真正的 typed integer passthrough 需要后续把 decode buffer、ring buffer、DSP bypass 分支和后端渲染回调一起扩展到非 Float32 样本通道。
+当前 WASAPI Exclusive / ASIO 在严格 bypass 条件下可以走 typed PCM passthrough：FFmpeg decode 输出、`AudioBuffer`、后端 typed render 共享同一个实际 PCM 格式，Int16/Int24/Int32/Float32 均可参与 `pcmPassthrough` 判定。无损整数 PCM 源如果因源格式与设备实际格式不一致、DSP/音量/routing 处理或其它 fallback 进入 Float32 管线，再由后端重新打包为整数输出，必须报告 `outputPerfect=false`、`pcmPassthrough=false` 和具体 `perfectReasonCode`，不得误报 bit-perfect。
 
 ## 可视化 tap
 

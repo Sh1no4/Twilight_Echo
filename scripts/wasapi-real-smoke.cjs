@@ -15,7 +15,7 @@ function usage() {
     '  --buffer <frames>           Exclusive preferred buffer size. Default: 256.',
     '  --duration-ms <ms>          Playback duration per probe. Default: 1200.',
     '  --volume <0..1>             Non-bit-perfect smoke volume. Default: 0.02.',
-    '  --expect-bit-perfect        Fail when the silent exclusive bit-perfect probe is not outputPerfect.',
+    '  --expect-bit-perfect        Fail when the adaptive silent exclusive probe is not outputPerfect.',
     '  --skip-bit-perfect-probe    Only run Shared and Exclusive hardware smoke.',
     '  --module <path>             Native twilight_audio_node.node path.',
     '  --json                      Print JSON only.',
@@ -215,12 +215,34 @@ function assertExclusive(label, info, device) {
   expect(info.supportsOutputPerfect === true, `${label}: exclusive mode should support outputPerfect`)
 }
 
-function writeS32leSilenceWav(filePath) {
-  const sampleRate = 48000
-  const channels = 2
-  const bits = 32
+function wavEncodingForOutputFormat(probeFormat) {
+  const sampleFormat = probeFormat.actualOutputFormat
+  if (sampleFormat === 'int16') return { formatTag: 1, bits: 16, bytesPerSample: 2, suffix: 's16le' }
+  if (sampleFormat === 'int24') return { formatTag: 1, bits: 24, bytesPerSample: 3, suffix: 's24le' }
+  if (sampleFormat === 'int32') return { formatTag: 1, bits: 32, bytesPerSample: 4, suffix: 's32le' }
+  if (sampleFormat === 'float32') return { formatTag: 3, bits: 32, bytesPerSample: 4, suffix: 'f32le' }
+  throw new Error(`Cannot generate an exact WAV probe for output sample format: ${sampleFormat}`)
+}
+
+function probeFormatFromExclusiveInfo(info) {
+  if (!info) throw new Error('Cannot run bit-perfect probe without successful exclusive output facts')
+  return {
+    actualOutputFormat: info.actualOutputFormat,
+    actualSampleRate: info.actualSampleRate,
+    actualBitDepth: info.actualBitDepth,
+    actualChannels: info.actualChannels
+  }
+}
+
+function writeSilenceWav(filePath, probeFormat) {
+  const encoding = wavEncodingForOutputFormat(probeFormat)
+  const sampleRate = probeFormat.actualSampleRate
+  const channels = probeFormat.actualChannels
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) throw new Error('Cannot generate WAV probe without sample rate')
+  if (!Number.isFinite(channels) || channels <= 0) throw new Error('Cannot generate WAV probe without channel count')
+
   const seconds = 2
-  const blockAlign = (channels * bits) / 8
+  const blockAlign = channels * encoding.bytesPerSample
   const byteRate = sampleRate * blockAlign
   const dataSize = sampleRate * seconds * blockAlign
   const buffer = Buffer.alloc(44 + dataSize)
@@ -229,15 +251,16 @@ function writeS32leSilenceWav(filePath) {
   buffer.write('WAVE', 8)
   buffer.write('fmt ', 12)
   buffer.writeUInt32LE(16, 16)
-  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(encoding.formatTag, 20)
   buffer.writeUInt16LE(channels, 22)
   buffer.writeUInt32LE(sampleRate, 24)
   buffer.writeUInt32LE(byteRate, 28)
   buffer.writeUInt16LE(blockAlign, 32)
-  buffer.writeUInt16LE(bits, 34)
+  buffer.writeUInt16LE(encoding.bits, 34)
   buffer.write('data', 36)
   buffer.writeUInt32LE(dataSize, 40)
   fs.writeFileSync(filePath, buffer)
+  return { ...probeFormat, wavEncoding: encoding.suffix }
 }
 
 function sleep(ms) {
@@ -278,10 +301,14 @@ async function runPlayback({ audio, label, backend, device, source, buffer, dura
   return { ok: true, label, backend, requestedBufferSize: buffer, volume, source, info }
 }
 
-async function runBitPerfectProbe({ audio, device, buffer, durationMs, expectBitPerfect }) {
+async function runBitPerfectProbe({ audio, device, buffer, durationMs, expectBitPerfect, probeFormat }) {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-wasapi-'))
-  const source = path.join(tempDir, 'wasapi-silence-s32le-48k.wav')
-  writeS32leSilenceWav(source)
+  const encoding = wavEncodingForOutputFormat(probeFormat)
+  const source = path.join(
+    tempDir,
+    `wasapi-silence-${encoding.suffix}-${probeFormat.actualSampleRate}hz-${probeFormat.actualChannels}ch.wav`
+  )
+  const writtenProbeFormat = writeSilenceWav(source, probeFormat)
 
   const label = 'WASAPI Exclusive bit-perfect probe'
   try {
@@ -301,6 +328,7 @@ async function runBitPerfectProbe({ audio, device, buffer, durationMs, expectBit
       expect(!result.info.perfectReasonCode, `${label}: expected empty perfectReasonCode, got ${result.info.perfectReasonCode}`)
     }
     result.expectBitPerfect = expectBitPerfect
+    result.probeFormat = writtenProbeFormat
     return result
   } finally {
     safeStop(audio)
@@ -321,6 +349,11 @@ function printHumanSummary(summary) {
       console.log(
         `  backend=${result.info.actualBackend} access=${result.info.accessMode} format=${result.info.actualOutputFormat}/${result.info.actualBitDepth}bit/${result.info.actualSampleRate}Hz/${result.info.actualChannels}ch`
       )
+      if (result.probeFormat) {
+        console.log(
+          `  probe=${result.probeFormat.wavEncoding}/${result.probeFormat.actualSampleRate}Hz/${result.probeFormat.actualChannels}ch`
+        )
+      }
       console.log(
         `  buffer=${result.info.bufferSizeFrames} frames latency=${latency.totalLatencyMs}ms outputPerfect=${result.info.outputPerfect} reason=${result.info.perfectReasonCode || '(none)'}`
       )
@@ -346,6 +379,7 @@ async function main() {
   }
 
   const results = []
+  let exclusiveProbeFormat = null
   for (const test of [
     { label: 'WASAPI Shared hardware smoke', backend: 'wasapi', source: tonePath, volume: options.volume },
     {
@@ -356,8 +390,7 @@ async function main() {
     }
   ]) {
     try {
-      results.push(
-        await runPlayback({
+      const result = await runPlayback({
           audio,
           label: test.label,
           backend: test.backend,
@@ -367,7 +400,10 @@ async function main() {
           durationMs: options.durationMs,
           volume: test.volume
         })
-      )
+      results.push(result)
+      if (test.backend === 'wasapi-exclusive') {
+        exclusiveProbeFormat = probeFormatFromExclusiveInfo(result.info)
+      }
     } catch (error) {
       safeStop(audio)
       let info = null
@@ -390,7 +426,8 @@ async function main() {
           device,
           buffer: options.buffer,
           durationMs: options.durationMs,
-          expectBitPerfect: options.expectBitPerfect
+          expectBitPerfect: options.expectBitPerfect,
+          probeFormat: exclusiveProbeFormat
         })
       )
     } catch (error) {

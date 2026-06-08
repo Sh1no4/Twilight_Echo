@@ -67,7 +67,7 @@ resources/audio-engine/twilight_audio_node.node
 
 `sourceExact=true` 表示源文件级精确；`outputPerfect=true` 表示 decoded PCM 到设备实际输出之间没有额外处理或格式损伤。有损格式可达成 `outputPerfect=true`，但 `sourceExact=false`。`pcmPassthrough` 由 decoded PCM 与后端 actual output 精确比较；整数 PCM 源如果被转换到 Float32 管线再打包为整数输出，不能标记为 `outputPerfect=true`。
 
-当前 FFmpeg decode、AudioBuffer 和后端 RenderCallback 仍是 Float32 工作格式。无损整数 PCM 源被转换到 Float32 时会报告 `perfectReasonCode=integer_passthrough_unavailable`，这是防误报门禁，不等同于已经实现完整 typed integer passthrough。
+WASAPI Exclusive / ASIO 已具备 typed PCM passthrough 分支：当无 DSP、音量为 1.0、routing 不改变语义，且源 PCM 格式与后端实际输出格式完全一致时，FFmpeg decode、AudioBuffer 和后端 typed render 会按 Int16/Int24/Int32/Float32 直通，允许 `pcmPassthrough=true` / `outputPerfect=true`。如果源格式和设备实际格式不一致，或处理链需要 Float32，则继续报告 `integer_passthrough_unavailable` 或 `pcm_converted`，避免误报 bit-perfect。
 
 `TAE_GetVisualizationData` / Node-API `GetVisualizationData` 返回只读可视化数据：`spectrum`、`waveform`、`peakDb`、`rmsDb`、`lufsMomentary`、`spectrogram`、`sampleRate`、`active`。无播放采样时返回 inactive 空闲态；旧的 `TAE_GetSpectrumData` 保留兼容。
 
