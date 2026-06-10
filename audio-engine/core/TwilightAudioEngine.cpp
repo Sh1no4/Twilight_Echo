@@ -558,10 +558,23 @@ std::string parseStringField(const std::string& json, const std::string& key, co
   return escapeJson(json.substr(start, end - start));
 }
 
+bool parseBoolField(const std::string& json, const std::string& key, bool fallback) {
+  const std::string marker = "\"" + key + "\":";
+  const size_t pos = json.find(marker);
+  if (pos == std::string::npos) return fallback;
+  const size_t start = pos + marker.size();
+  size_t idx = start;
+  while (idx < json.size() && std::isspace(static_cast<unsigned char>(json[idx]))) ++idx;
+  if (idx + 4 <= json.size() && json.substr(idx, 4) == "true") return true;
+  if (idx + 5 <= json.size() && json.substr(idx, 5) == "false") return false;
+  return fallback;
+}
+
 OutputConfig parseOutputConfigJson(const std::string& json) {
   OutputConfig config;
   config.preferredBufferSize = parseUintField(json, "preferredBufferSize", 0);
   config.routingMode = parseChannelRoutingMode(parseStringField(json, "routingMode", "auto"));
+  config.wasapiExclusivePushMode = parseBoolField(json, "wasapiExclusivePushMode", false);
   return config;
 }
 
@@ -783,7 +796,7 @@ TAE_Result TwilightAudioEngine::seek(double positionSeconds) {
     currentState = info_.state;
   }
   if (pipeline_ && currentState != PlaybackState::Stopped) {
-    if (pipeline_->isDopPathActive()) {
+    if (pipeline_->isDopPathActive() || pipeline_->isNativeDsdPathActive()) {
       return restartCurrentPlaybackForReroute(
           std::max(0.0, positionSeconds),
           currentState,
@@ -1009,32 +1022,31 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
     if (pipeline_ && info_.state != PlaybackState::Stopped) {
       applyPipelineStatusLocked(pipeline_->status());
       if (info_.isDsd) {
-        const bool previousForcedPcm =
-            previousConfig.dsdOutputMode == DsdOutputMode::Pcm || previousConfig.dsdOutputMode == DsdOutputMode::Native;
-        const bool previousWantedDop =
-            previousConfig.dsdOutputMode == DsdOutputMode::Auto || previousConfig.dsdOutputMode == DsdOutputMode::Dop;
         const bool wantsPcm = nextConfig.dsdOutputMode == DsdOutputMode::Pcm;
-        const bool wantsNative = nextConfig.dsdOutputMode == DsdOutputMode::Native;
+        const bool wantsNative =
+            nextConfig.dsdOutputMode == DsdOutputMode::Auto || nextConfig.dsdOutputMode == DsdOutputMode::Native;
         const bool wantsDop =
-            nextConfig.dsdOutputMode == DsdOutputMode::Auto || nextConfig.dsdOutputMode == DsdOutputMode::Dop;
+            nextConfig.dsdOutputMode == DsdOutputMode::Auto || nextConfig.dsdOutputMode == DsdOutputMode::Dop ||
+            nextConfig.dsdOutputMode == DsdOutputMode::Native;
+        const bool modeChanged = previousConfig.dsdOutputMode != nextConfig.dsdOutputMode;
         const bool dopActive = pipeline_->isDopPathActive();
-        if (previousWantedDop && (wantsPcm || wantsNative)) {
-          rerouteReason = wantsPcm ? "DSD output mode forced PCM" : "Native DSD not yet available; falling back to PCM";
+        const bool nativeActive = pipeline_->isNativeDsdPathActive();
+        if ((dopActive || nativeActive) && wantsPcm) {
+          rerouteReason = "DSD output mode forced PCM";
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
-        } else if (previousForcedPcm && wantsDop) {
-          reroutePosition = info_.positionSeconds;
-          rerouteState = info_.state;
-          rerouteReason = "Re-enter DoP output mode";
-        } else if (dopActive && (wantsPcm || wantsNative)) {
-          rerouteReason = wantsPcm ? "DSD output mode forced PCM" : "Native DSD not yet available; falling back to PCM";
-          reroutePosition = info_.positionSeconds;
-          rerouteState = info_.state;
-        } else if (!dopActive && wantsDop &&
-                   (info_.dsdMode == "pcm" || info_.outputInfo.dsdMode == "pcm")) {
+        } else if (nativeActive && nextConfig.dsdOutputMode == DsdOutputMode::Dop) {
           reroutePosition = info_.positionSeconds;
           rerouteState = info_.state;
           rerouteReason = "Re-enter DoP output mode";
+        } else if (modeChanged && wantsNative && !nativeActive) {
+          reroutePosition = info_.positionSeconds;
+          rerouteState = info_.state;
+          rerouteReason = "Re-enter Native DSD output mode";
+        } else if (modeChanged && wantsDop && !dopActive && !nativeActive) {
+          reroutePosition = info_.positionSeconds;
+          rerouteState = info_.state;
+          rerouteReason = wantsNative ? "Re-enter Native DSD output mode" : "Re-enter DoP output mode";
         }
       }
       if (rerouteReason.empty() &&
@@ -1282,6 +1294,13 @@ std::string TwilightAudioEngine::enumerateBackendsJson() const {
 std::string TwilightAudioEngine::engineCapabilitiesJson() const {
   const std::string backends = enumerateBackendsJson();
   const std::string backendCapabilities = backendCapabilitiesJson();
+  bool nativeDsdCapable = false;
+  bool dopCapable = false;
+  {
+    std::lock_guard lock(mutex_);
+    nativeDsdCapable = info_.outputInfo.driverNativeDsdCapable;
+    dopCapable = info_.outputInfo.driverDopCapable;
+  }
   std::ostringstream json;
   json << "{"
        << "\"version\":\"" << TAE_GetVersion() << "\","
@@ -1292,7 +1311,7 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
        << "\"dsdModes\":[\"pcm\",\"dop\",\"native\",\"unsupported\"],"
        << "\"sacdProgramModes\":[\"auto\",\"stereo\",\"multichannel\"],"
        << "\"devicePathKinds\":[\"default\",\"hw\",\"plughw\",\"hal\",\"asio\"],"
-       << "\"dsd\":{\"native\":false,\"dop\":false,\"sacdIso\":false,\"mode\":\"unsupported\"},"
+       << "\"dsd\":{\"native\":" << (nativeDsdCapable ? "true" : "false") << ",\"dop\":" << (dopCapable ? "true" : "false") << ",\"sacdIso\":false,\"mode\":\"unsupported\"},"
        << "\"features\":{"
        << "\"ffmpeg\":"
 #if defined(TAE_HAS_FFMPEG)
@@ -1324,7 +1343,7 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
 #else
        << "false"
 #endif
-       << ",\"nativeDsd\":false,\"dop\":false,\"sacdIso\":false"
+       << ",\"nativeDsd\":" << (nativeDsdCapable ? "true" : "false") << ",\"dop\":" << (dopCapable ? "true" : "false") << ",\"sacdIso\":false"
        << "},\"backends\":" << backends
        << ",\"backendCapabilities\":" << backendCapabilities
        << ",\"output\":{\"accessModes\":[\"shared\",\"exclusive\",\"hog\",\"direct\",\"plugin\"]}"
@@ -1678,17 +1697,32 @@ bool TwilightAudioEngine::shouldReroutePipelineLocked(
   const DspConfig config = DspChain::parseConfigJson(dspConfigJson_);
   if (info_.isDsd) {
     const bool wantsPcm = config.dsdOutputMode == DsdOutputMode::Pcm;
-    const bool wantsNative = config.dsdOutputMode == DsdOutputMode::Native;
-    const bool wantsDop = config.dsdOutputMode == DsdOutputMode::Auto || config.dsdOutputMode == DsdOutputMode::Dop;
-    if (pipeline_->isDopPathActive() && (wantsPcm || wantsNative)) {
+    const bool wantsNative = config.dsdOutputMode == DsdOutputMode::Auto || config.dsdOutputMode == DsdOutputMode::Native;
+    const bool wantsDop = config.dsdOutputMode == DsdOutputMode::Auto || config.dsdOutputMode == DsdOutputMode::Dop ||
+                          config.dsdOutputMode == DsdOutputMode::Native;
+    const bool dopActive = pipeline_->isDopPathActive();
+    const bool nativeActive = pipeline_->isNativeDsdPathActive();
+    if ((dopActive || nativeActive) && wantsPcm) {
       if (reason) {
-        *reason = wantsPcm ? "DSD output mode forced PCM" : "Native DSD not yet available; falling back to PCM";
+        *reason = "DSD output mode forced PCM";
       }
       if (position) *position = info_.positionSeconds;
       if (state) *state = info_.state;
       return true;
     }
-    if (!pipeline_->isDopPathActive() && info_.dsdMode == "pcm" && wantsDop) {
+    if (nativeActive && config.dsdOutputMode == DsdOutputMode::Dop) {
+      if (reason) *reason = "Re-enter DoP output mode";
+      if (position) *position = info_.positionSeconds;
+      if (state) *state = info_.state;
+      return true;
+    }
+    if (!nativeActive && wantsNative && info_.dsdMode == "pcm") {
+      if (reason) *reason = "Re-enter Native DSD output mode";
+      if (position) *position = info_.positionSeconds;
+      if (state) *state = info_.state;
+      return true;
+    }
+    if (!dopActive && !nativeActive && info_.dsdMode == "pcm" && wantsDop) {
       if (position) *position = info_.positionSeconds;
       if (state) *state = info_.state;
       return true;

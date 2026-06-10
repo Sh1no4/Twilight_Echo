@@ -195,6 +195,7 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   replayGainPreamp: 0,
   replayGainFallback: 0,
   replayGainClip: true,
+  convolverEnabled: false,
   convolverIrPath: '',
   crossfeedEnabled: false,
   crossfeedStrength: 0,
@@ -204,7 +205,8 @@ const defaultAudioProcessing: AudioProcessingSettings = {
 const audioProcessing = ref<AudioProcessingSettings>({ ...defaultAudioProcessing })
 const defaultAudioOutputConfig: OutputConfig = {
   preferredBufferSize: 0,
-  routingMode: 'auto'
+  routingMode: 'auto',
+  wasapiExclusivePushMode: false
 }
 const audioOutputConfig = ref<OutputConfig>({ ...defaultAudioOutputConfig })
 const playbackInfo = ref<NativePlaybackInfo | null>(null)
@@ -586,7 +588,9 @@ function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
   isPlaying.value = normalizedInfo.state === 'playing'
   isLoading.value = false
   if (normalizedInfo.state === 'stopped') {
-    nativePlaybackActive = false
+    if (info.nativePlaybackActive === false) {
+      nativePlaybackActive = false
+    }
   }
   autoAdvanceInFlight = false
   advancingFromEndedTrackId = ''
@@ -602,7 +606,8 @@ async function syncNativeQueueState(): Promise<void> {
     audioSource: getTrackAudioSource(item)
   }))
   await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
-  await window.api.audioEngine.setPlayMode(playMode.value)
+  const nativePlayMode = playMode.value === 'repeat' ? 'repeat' : 'sequential'
+  await window.api.audioEngine.setPlayMode(nativePlayMode)
 }
 
 async function refreshNativePlaybackInfo(): Promise<void> {
@@ -652,7 +657,9 @@ watch(
     audioOutputConfig.value = {
       preferredBufferSize:
         config?.preferredBufferSize ?? defaultAudioOutputConfig.preferredBufferSize,
-      routingMode: config?.routingMode ?? defaultAudioOutputConfig.routingMode
+      routingMode: config?.routingMode ?? defaultAudioOutputConfig.routingMode,
+      wasapiExclusivePushMode:
+        config?.wasapiExclusivePushMode ?? defaultAudioOutputConfig.wasapiExclusivePushMode
     }
   },
   { deep: true, immediate: true }
@@ -837,9 +844,7 @@ function setupAudioEngineListeners(): void {
           flushLatestCurrentTime()
           break
         case 'eof-reached':
-          if (nativePlaybackActive && data === true) {
-            handlePlaybackEnded()
-          }
+          // Native handles auto-advance internally, so we don't trigger it here to avoid double-transition.
           break
       }
       if (name === 'time-pos' || name === 'duration') {
@@ -851,7 +856,7 @@ function setupAudioEngineListeners(): void {
   cleanupFns.push(
     api.onEndFile((reason) => {
       if (nativePlaybackActive && reason === 'eof') {
-        handlePlaybackEnded()
+        // Native handles auto-advance internally, so we don't trigger it here to avoid double-transition.
       }
     })
   )
@@ -869,6 +874,9 @@ function setupAudioEngineListeners(): void {
   cleanupFns.push(
     api.onPlaybackInfo((info) => {
       playbackInfo.value = normalizeNativePlaybackInfo(info)
+      if (info.nativePlaybackActive !== undefined) {
+        nativePlaybackActive = info.nativePlaybackActive
+      }
       if (!nativePlaybackActive && info.state !== 'stopped') return
       applyNativePlaybackInfo(info)
     })
@@ -1012,7 +1020,8 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
       if (!isActiveLoad(loadToken, track)) return
 
-      await window.api.audioEngine.setPlayMode(playMode.value)
+      const nativePlayMode = playMode.value === 'repeat' ? 'repeat' : 'sequential'
+      await window.api.audioEngine.setPlayMode(nativePlayMode)
       if (!isActiveLoad(loadToken, track)) return
 
       if (shouldUseNativePlayback(track, playTarget)) {

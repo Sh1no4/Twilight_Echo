@@ -15,6 +15,7 @@ namespace twilight::audio {
 namespace {
 
 int normalizeBitDepth(int bitDepth) {
+  if (bitDepth <= 1) return 1;
   if (bitDepth <= 16) return 16;
   if (bitDepth <= 24) return 24;
   return 32;
@@ -22,6 +23,10 @@ int normalizeBitDepth(int bitDepth) {
 
 int bitDepthForFormat(AudioSampleFormat format) {
   switch (format) {
+    case AudioSampleFormat::DsdInt8Lsb1:
+    case AudioSampleFormat::DsdInt8Msb1:
+    case AudioSampleFormat::DsdInt8Ner8:
+      return 1;
     case AudioSampleFormat::Int16Interleaved:
       return 16;
     case AudioSampleFormat::Int24Interleaved:
@@ -85,6 +90,10 @@ void writePackedSample(float sample, AudioSampleFormat format, uint8_t* output) 
 
 size_t bytesPerSample(AudioSampleFormat format) {
   switch (format) {
+    case AudioSampleFormat::DsdInt8Lsb1:
+    case AudioSampleFormat::DsdInt8Msb1:
+    case AudioSampleFormat::DsdInt8Ner8:
+      return 1;
     case AudioSampleFormat::Int16Interleaved:
       return 2;
     case AudioSampleFormat::Int24Interleaved:
@@ -98,6 +107,9 @@ size_t bytesPerSample(AudioSampleFormat format) {
 }
 
 bool sameFormat(const AudioFormat& a, const AudioFormat& b) {
+  if (isDsdSampleFormat(a.sampleFormat) || isDsdSampleFormat(b.sampleFormat)) {
+    return dsdFormatsExactMatch(a, b);
+  }
   return a.sampleRate == b.sampleRate && a.channelCount == b.channelCount &&
          normalizeBitDepth(a.bitDepth) == normalizeBitDepth(b.bitDepth) &&
          a.sampleFormat == b.sampleFormat;
@@ -123,6 +135,11 @@ void appendUniqueSampleFormats(std::vector<AudioSampleFormat>* formats, const st
   }
 }
 
+bool isNativeDsdRequest(const AudioFormat& format) {
+  return format.sampleRate >= 2822400 && format.channelCount > 0 && effectivePcmBitDepth(format) == 1 &&
+         isDsdSampleFormat(format.sampleFormat);
+}
+
 std::vector<std::string> sampleFormatNames(const std::vector<AudioSampleFormat>& formats) {
   std::vector<std::string> names;
   names.reserve(formats.size());
@@ -130,6 +147,11 @@ std::vector<std::string> sampleFormatNames(const std::vector<AudioSampleFormat>&
     names.push_back(sampleFormatToString(format));
   }
   return names;
+}
+
+double asioCallbackFrameRate(const AudioFormat& format) {
+  const double sampleRate = static_cast<double>(std::max(1, format.sampleRate));
+  return isDsdSampleFormat(format.sampleFormat) ? sampleRate / 8.0 : sampleRate;
 }
 
 std::string hostEventPrefix(AsioHostEvent event) {
@@ -149,6 +171,33 @@ std::string hostEventPrefix(AsioHostEvent event) {
 std::string hostEventReason(AsioHostEvent event, const std::string& message) {
   const auto prefix = hostEventPrefix(event);
   return message.empty() ? prefix : prefix + ": " + message;
+}
+
+std::string nativeDsdRuntimeStateName(NativeDsdRuntimeFactState state) {
+  switch (state) {
+    case NativeDsdRuntimeFactState::Candidate:
+      return "candidate";
+    case NativeDsdRuntimeFactState::Unproven:
+      return "unproven";
+    case NativeDsdRuntimeFactState::Mismatch:
+      return "mismatch";
+    case NativeDsdRuntimeFactState::Proven:
+      return "proven";
+    case NativeDsdRuntimeFactState::Unsupported:
+    default:
+      return "unsupported";
+  }
+}
+
+void applyNativeDsdFactsToOutputInfo(OutputInfo* info, const NativeDsdRuntimeFacts& facts) {
+  if (!info) return;
+  info->nativeDsdRuntimeState = nativeDsdRuntimeStateName(facts.state);
+  info->nativeDsdRequestedRate = facts.requestedDsdRate;
+  info->nativeDsdActualRate = facts.actualDsdRate;
+  info->nativeDsdChannels = facts.channelCount;
+  info->nativeDsdExplicitlyCapable = facts.explicitlyCapable;
+  info->nativeDsdAdvertisedSampleRates = facts.advertisedSampleRates;
+  info->nativeDsdRuntimeReason = facts.reason;
 }
 
 bool explicitBufferSizeAllowed(uint32_t size) {
@@ -221,6 +270,9 @@ DopRuntimeFacts buildAsioDopRuntimeFacts(
 NativeDsdRuntimeFacts buildAsioNativeDsdRuntimeFacts(
     const AsioDeviceInfo& device,
     const AudioFormat& requestedFormat,
+    const AudioFormat& actualFormat,
+    bool actualObserved,
+    bool actualChannelFormatsMatch,
     bool rawDsdPathStarted) {
   NativeDsdRuntimeFacts facts;
   facts.requestedDsdRate = requestedFormat.sampleRate >= 2822400 ? requestedFormat.sampleRate : 0;
@@ -231,6 +283,12 @@ NativeDsdRuntimeFacts buildAsioNativeDsdRuntimeFacts(
   if (facts.requestedDsdRate <= 0) {
     facts.state = NativeDsdRuntimeFactState::Unsupported;
     facts.reason = "No Native DSD stream was requested";
+    return facts;
+  }
+
+  if (!isDsdSampleFormat(requestedFormat.sampleFormat) || effectivePcmBitDepth(requestedFormat) != 1) {
+    facts.state = NativeDsdRuntimeFactState::Unsupported;
+    facts.reason = "Requested ASIO format is not raw Native DSD";
     return facts;
   }
 
@@ -246,14 +304,46 @@ NativeDsdRuntimeFacts buildAsioNativeDsdRuntimeFacts(
     return facts;
   }
 
+  if (!device.nativeDsdSampleFormats.empty() &&
+      !containsSampleFormat(device.nativeDsdSampleFormats, requestedFormat.sampleFormat)) {
+    facts.state = NativeDsdRuntimeFactState::Mismatch;
+    facts.reason = "ASIO driver did not advertise the requested Native DSD sample type";
+    return facts;
+  }
+
   if (!rawDsdPathStarted) {
     facts.state = NativeDsdRuntimeFactState::Candidate;
     facts.reason = "ASIO driver advertises Native DSD, but raw DSD rendering is not active";
     return facts;
   }
 
+  if (!actualObserved) {
+    facts.state = NativeDsdRuntimeFactState::Candidate;
+    facts.reason = "ASIO Native DSD buffers have not reported their runtime sample type";
+    return facts;
+  }
+
+  if (!actualChannelFormatsMatch) {
+    facts.state = NativeDsdRuntimeFactState::Mismatch;
+    facts.reason = "ASIO runtime channel sample formats differ; cannot write a single Native DSD sample type";
+    return facts;
+  }
+
+  if (!isDsdSampleFormat(actualFormat.sampleFormat) || actualFormat.sampleRate < 2822400) {
+    facts.state = NativeDsdRuntimeFactState::Mismatch;
+    facts.actualDsdRate = actualFormat.sampleRate >= 2822400 ? actualFormat.sampleRate : 0;
+    facts.reason = "ASIO runtime sample type is not Native DSD";
+    return facts;
+  }
+
+  facts.actualDsdRate = actualFormat.sampleRate;
+  if (!dsdFormatsExactMatch(requestedFormat, actualFormat)) {
+    facts.state = NativeDsdRuntimeFactState::Mismatch;
+    facts.reason = "ASIO actual Native DSD format does not exactly match the negotiated format";
+    return facts;
+  }
+
   facts.state = NativeDsdRuntimeFactState::Proven;
-  facts.actualDsdRate = facts.requestedDsdRate;
   facts.reason = "ASIO Native DSD stream started with a matching runtime rate";
   return facts;
 }
@@ -446,13 +536,11 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
   outputInfo_.driverNativeDsdSampleRates = deviceInfo_.nativeDsdSampleRates;
   outputInfo_.bufferSizeFrames = static_cast<int>(bufferSizeFrames_);
   outputInfo_.latencyFrames = static_cast<int>(latencyFrames_);
-  outputInfo_.latencyMs = outputFormat_.sampleRate > 0
-                              ? static_cast<double>(latencyFrames_) * 1000.0 / static_cast<double>(outputFormat_.sampleRate)
-                              : 0.0;
+  const double callbackFrameRate = asioCallbackFrameRate(outputFormat_);
+  outputInfo_.latencyMs =
+      callbackFrameRate > 0.0 ? static_cast<double>(latencyFrames_) * 1000.0 / callbackFrameRate : 0.0;
   outputInfo_.latencyInfo.bufferLatencyMs =
-      outputFormat_.sampleRate > 0
-          ? static_cast<double>(bufferSizeFrames_) * 1000.0 / static_cast<double>(outputFormat_.sampleRate)
-          : 0.0;
+      callbackFrameRate > 0.0 ? static_cast<double>(bufferSizeFrames_) * 1000.0 / callbackFrameRate : 0.0;
   outputInfo_.latencyInfo.outputLatencyMs = outputInfo_.latencyMs;
   outputInfo_.latencyInfo.totalLatencyMs = outputInfo_.latencyInfo.bufferLatencyMs + outputInfo_.latencyInfo.outputLatencyMs;
   outputInfo_.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
@@ -465,7 +553,14 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
       emptyFormat(),
       actualOutputFormatObserved_,
       actualOutputChannelFormatsMatch_);
-  nativeDsdRuntimeFacts_ = buildAsioNativeDsdRuntimeFacts(deviceInfo_, requestedFormat, false);
+  nativeDsdRuntimeFacts_ = buildAsioNativeDsdRuntimeFacts(
+      deviceInfo_,
+      openConfig_.format,
+      emptyFormat(),
+      actualOutputFormatObserved_,
+      actualOutputChannelFormatsMatch_,
+      false);
+  applyNativeDsdFactsToOutputInfo(&outputInfo_, nativeDsdRuntimeFacts_);
   opened_ = true;
   return true;
 }
@@ -567,11 +662,13 @@ bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& 
 
   std::vector<int> sampleRates = device.supportedSampleRates;
   if (device.dopCapable) appendUniqueSampleRates(&sampleRates, device.dopCarrierSampleRates);
+  if (device.nativeDsdCapable) appendUniqueSampleRates(&sampleRates, device.nativeDsdSampleRates);
   if (sampleRates.empty() && device.defaultSampleRate > 0) sampleRates.push_back(device.defaultSampleRate);
   if (sampleRates.empty()) sampleRates = asioDefaultSampleRateProbeSet();
 
   std::vector<AudioSampleFormat> sampleFormats = device.sampleFormats;
   if (device.dopCapable) appendUniqueSampleFormats(&sampleFormats, device.dopCarrierSampleFormats);
+  if (device.nativeDsdCapable) appendUniqueSampleFormats(&sampleFormats, device.nativeDsdSampleFormats);
   if (sampleFormats.empty()) sampleFormats.push_back(device.defaultSampleFormat);
   if (!containsFormat(sampleFormats, device.defaultSampleFormat)) sampleFormats.push_back(device.defaultSampleFormat);
   if (device.bitDepths.empty()) {
@@ -590,8 +687,11 @@ bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& 
   std::set<std::tuple<int, int, AudioSampleFormat>> seen;
   for (int sampleRate : sampleRates) {
     if (sampleRate <= 0) continue;
+    if (isNativeDsdRequest(requestedFormat) && sampleRate != requestedFormat.sampleRate) continue;
     for (AudioSampleFormat sampleFormat : sampleFormats) {
       const int normalized = bitDepthForFormat(sampleFormat);
+      if (isNativeDsdRequest(requestedFormat) && !isDsdSampleFormat(sampleFormat)) continue;
+      if (!isNativeDsdRequest(requestedFormat) && isDsdSampleFormat(sampleFormat)) continue;
       if (!device.bitDepths.empty()) {
         const bool supportedDepth = std::find_if(device.bitDepths.begin(), device.bitDepths.end(), [&](int depth) {
                                       return normalizeBitDepth(depth) == normalized;
@@ -620,6 +720,9 @@ bool AsioBackend::chooseFormat(const AsioDeviceInfo& device, const AudioFormat& 
     if (left.sampleRateError != right.sampleRateError) return left.sampleRateError < right.sampleRateError;
     if (left.format.sampleRate != right.format.sampleRate) return left.format.sampleRate > right.format.sampleRate;
     if (left.bitDepthError != right.bitDepthError) return left.bitDepthError < right.bitDepthError;
+    if (isDsdSampleFormat(left.format.sampleFormat) != isDsdSampleFormat(right.format.sampleFormat)) {
+      return isDsdSampleFormat(left.format.sampleFormat);
+    }
     if ((left.format.sampleFormat == AudioSampleFormat::Float32Interleaved) !=
         (right.format.sampleFormat == AudioSampleFormat::Float32Interleaved)) {
       return left.format.sampleFormat == AudioSampleFormat::Float32Interleaved;
@@ -724,8 +827,11 @@ bool AsioBackend::createAndStartHost(std::string* error) {
     outputInfo_.outputBitDepth = outputFormat_.bitDepth;
     outputInfo_.resampled = !sameFormat(openConfig_.format, outputFormat_);
     if (outputInfo_.resampled && outputInfo_.perfectReason.empty()) {
-      outputInfo_.perfectReasonCode = "pcm_converted";
-      outputInfo_.perfectReason = "ASIO actual output format differs from negotiated format";
+      outputInfo_.perfectReasonCode = isNativeDsdRequest(openConfig_.format) ? "native_dsd_format_mismatch"
+                                                                             : "pcm_converted";
+      outputInfo_.perfectReason = isNativeDsdRequest(openConfig_.format)
+                                      ? "ASIO actual Native DSD format differs from negotiated format"
+                                      : "ASIO actual output format differs from negotiated format";
     }
     dopRuntimeFacts_ = buildAsioDopRuntimeFacts(
         deviceInfo_,
@@ -733,6 +839,14 @@ bool AsioBackend::createAndStartHost(std::string* error) {
         outputFormat_,
         actualOutputFormatObserved_,
         actualOutputChannelFormatsMatch_);
+    nativeDsdRuntimeFacts_ = buildAsioNativeDsdRuntimeFacts(
+        deviceInfo_,
+        openConfig_.format,
+        outputFormat_,
+        actualOutputFormatObserved_,
+        actualOutputChannelFormatsMatch_,
+        false);
+    applyNativeDsdFactsToOutputInfo(&outputInfo_, nativeDsdRuntimeFacts_);
   }
   running_ = true;
   if (!host_->start(error)) {
@@ -746,6 +860,29 @@ bool AsioBackend::createAndStartHost(std::string* error) {
     }
     outputInfo_.diagnostics = diagnostics_;
     return false;
+  }
+  {
+    std::lock_guard lock(mutex_);
+    const bool rawDsdStarted = isNativeDsdRequest(openConfig_.format);
+    if (rawDsdStarted) {
+      nativeDsdRuntimeFacts_ = buildAsioNativeDsdRuntimeFacts(
+          deviceInfo_,
+          openConfig_.format,
+          outputFormat_,
+          actualOutputFormatObserved_,
+          actualOutputChannelFormatsMatch_,
+          true);
+      outputInfo_.resampled = nativeDsdRuntimeFacts_.state == NativeDsdRuntimeFactState::Proven
+                                  ? false
+                                  : !sameFormat(openConfig_.format, outputFormat_);
+      outputInfo_.perfectReason = nativeDsdRuntimeFacts_.state == NativeDsdRuntimeFactState::Proven
+                                      ? ""
+                                      : nativeDsdRuntimeFacts_.reason;
+      outputInfo_.perfectReasonCode = nativeDsdRuntimeFacts_.state == NativeDsdRuntimeFactState::Proven
+                                          ? ""
+                                          : "native_dsd_runtime_unproven";
+      applyNativeDsdFactsToOutputInfo(&outputInfo_, nativeDsdRuntimeFacts_);
+    }
   }
   return true;
 }
@@ -767,11 +904,12 @@ void AsioBackend::renderBuffer(long bufferIndex) {
   const int sourceChannels = std::max(1, outputFormat.channelCount);
   const int outputChannels = std::max(1, openConfig_.format.channelCount);
   const size_t frames = static_cast<size_t>(std::max<long>(1, bufferSizeFrames_));
+  const bool nativeDsdOutput = isNativeDsdRequest(openConfig_.format) || isDsdSampleFormat(outputFormat.sampleFormat);
 
   const auto now = std::chrono::high_resolution_clock::now();
   if (lastRenderTime_.time_since_epoch().count() > 0) {
     const double elapsedMs = std::chrono::duration<double, std::milli>(now - lastRenderTime_).count();
-    const double expectedMs = static_cast<double>(frames) * 1000.0 / std::max(1.0, static_cast<double>(outputFormat.sampleRate));
+    const double expectedMs = static_cast<double>(frames) * 1000.0 / asioCallbackFrameRate(outputFormat);
     if (expectedMs > 0 && elapsedMs > expectedMs * 1.5) {
       std::lock_guard lock(mutex_);
       ++diagnostics_.sessionUnderrunCount;
@@ -806,6 +944,28 @@ void AsioBackend::renderBuffer(long bufferIndex) {
       host_->outputReady();
       return;
     }
+  }
+
+  if (nativeDsdOutput) {
+    for (int channel = 0; channel < outputChannels; ++channel) {
+      auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
+      if (!output) continue;
+      const AudioSampleFormat sampleFormat = host_->outputSampleFormat(channel);
+      if (!isDsdSampleFormat(sampleFormat)) continue;
+      std::memset(output, 0x69, frames * bytesPerSample(sampleFormat));
+    }
+    {
+      std::lock_guard lock(mutex_);
+      ++diagnostics_.sessionBufferDropCount;
+      ++diagnostics_.lifetimeBufferDropCount;
+      diagnostics_.lastError = "ASIO Native DSD render requires a typed raw DSD callback";
+      outputInfo_.perfectReasonCode = "native_dsd_typed_callback_missing";
+      outputInfo_.perfectReason = diagnostics_.lastError;
+      outputInfo_.capabilityReason = diagnostics_.lastError;
+      outputInfo_.diagnostics = diagnostics_;
+    }
+    host_->outputReady();
+    return;
   }
 
   const size_t samples = frames * static_cast<size_t>(sourceChannels);

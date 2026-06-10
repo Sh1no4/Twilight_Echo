@@ -13,7 +13,10 @@ enum class AudioSampleFormat {
   Int16Interleaved,
   Int24Interleaved,
   Int24In32Interleaved,
-  Int32Interleaved
+  Int32Interleaved,
+  DsdInt8Lsb1,
+  DsdInt8Msb1,
+  DsdInt8Ner8
 };
 
 enum class DsdMode {
@@ -49,6 +52,7 @@ enum class ChannelRoutingMode {
 struct OutputConfig {
   uint32_t preferredBufferSize = 0;
   ChannelRoutingMode routingMode = ChannelRoutingMode::Auto;
+  bool wasapiExclusivePushMode = false;
 };
 
 struct ReplayGainInfo {
@@ -166,6 +170,7 @@ struct PerfectEvaluation {
   bool dopCarrierMatched = false;
   bool dopPassthroughProven = false;
   bool nativeDsdRequested = false;
+  bool nativeDsdPassthroughProven = false;
   bool sacdIsoSource = false;
   bool supportsOutputPerfect = false;
   bool backendResampled = false;
@@ -203,6 +208,8 @@ size_t audioFormatBytesPerFrame(const AudioFormat& format);
 int normalizedPcmBitDepth(int bitDepth);
 int effectivePcmBitDepth(const AudioFormat& format);
 bool pcmFormatsExactMatch(const AudioFormat& left, const AudioFormat& right);
+bool isDsdSampleFormat(AudioSampleFormat format);
+bool dsdFormatsExactMatch(const AudioFormat& left, const AudioFormat& right);
 std::optional<AudioFormat> dopCarrierFormatForDsd(int dsdRate, int channelCount);
 PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation);
 

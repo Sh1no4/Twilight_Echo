@@ -208,6 +208,7 @@ function makePlaybackInfo(overrides: Partial<PlaybackInfo> = {}): PlaybackInfo {
     gaplessActive: false,
     preloadReady: false,
     upcomingTrack: null,
+    nativePlaybackActive: false,
     ...overrides,
     outputInfo
   }

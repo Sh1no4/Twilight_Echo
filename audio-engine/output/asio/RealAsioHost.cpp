@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <sstream>
@@ -19,6 +20,7 @@ namespace twilight::audio {
 namespace {
 
 constexpr std::array<int, 8> kProbeRates = {44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000};
+constexpr std::array<int, 4> kDsdProbeRates = {2822400, 5644800, 11289600, 22579200};
 
 #if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
 RealAsioHost* g_activeHost = nullptr;
@@ -76,6 +78,12 @@ long legalizeAsioBufferSize(long requested, long minSize, long maxSize, long pre
 
 AudioSampleFormat fromAsioSampleType(ASIOSampleType type) {
   switch (type) {
+    case ASIOSTDSDInt8LSB1:
+      return AudioSampleFormat::DsdInt8Lsb1;
+    case ASIOSTDSDInt8MSB1:
+      return AudioSampleFormat::DsdInt8Msb1;
+    case ASIOSTDSDInt8NER8:
+      return AudioSampleFormat::DsdInt8Ner8;
     case ASIOSTInt16LSB:
     case ASIOSTInt16MSB:
       return AudioSampleFormat::Int16Interleaved;
@@ -90,6 +98,17 @@ AudioSampleFormat fromAsioSampleType(ASIOSampleType type) {
     default:
       return AudioSampleFormat::Float32Interleaved;
   }
+}
+
+int bitDepthForSampleFormat(AudioSampleFormat format) {
+  if (isDsdSampleFormat(format)) return 1;
+  if (format == AudioSampleFormat::Int16Interleaved) return 16;
+  if (format == AudioSampleFormat::Int24Interleaved || format == AudioSampleFormat::Int24In32Interleaved) return 24;
+  return 32;
+}
+
+bool isNativeDsdRequest(const AudioFormat& format) {
+  return format.sampleRate >= 2822400 && format.channelCount > 0 && isDsdSampleFormat(format.sampleFormat);
 }
 
 ASIOSampleRate makeAsioSampleRate(int sampleRate) {
@@ -111,6 +130,70 @@ int asioSampleRateToInt(const ASIOSampleRate& sampleRate) {
   std::memcpy(&value, sampleRate.ieee, sizeof(value));
   return static_cast<int>(value);
 #endif
+}
+
+bool setAsioIoFormat(ASIOIoFormatType type) {
+  ASIOIoFormat format{};
+  format.FormatType = type;
+  return ASIOFuture(kAsioSetIoFormat, &format) == ASE_SUCCESS;
+}
+
+bool canAsioIoFormat(ASIOIoFormatType type) {
+  ASIOIoFormat format{};
+  format.FormatType = type;
+  return ASIOFuture(kAsioCanDoIoFormat, &format) == ASE_SUCCESS;
+}
+
+bool getAsioIoFormat(ASIOIoFormatType* type) {
+  if (!type) return false;
+  ASIOIoFormat format{};
+  const bool ok = ASIOFuture(kAsioGetIoFormat, &format) == ASE_SUCCESS;
+  if (ok) *type = format.FormatType;
+  return ok;
+}
+
+void appendUniqueFormat(std::vector<AudioSampleFormat>* formats, AudioSampleFormat format) {
+  if (!formats) return;
+  if (std::find(formats->begin(), formats->end(), format) == formats->end()) formats->push_back(format);
+}
+
+void appendUniqueRate(std::vector<int>* rates, int rate) {
+  if (!rates || rate <= 0) return;
+  if (std::find(rates->begin(), rates->end(), rate) == rates->end()) rates->push_back(rate);
+}
+
+void probeNativeDsdSupport(AsioDeviceInfo* device) {
+  if (!device || device->outputChannels <= 0) return;
+  ASIOIoFormatType previousFormat = kASIOPCMFormat;
+  getAsioIoFormat(&previousFormat);
+  if (!canAsioIoFormat(kASIODSDFormat)) return;
+  if (!setAsioIoFormat(kASIODSDFormat)) return;
+
+  for (int rate : kDsdProbeRates) {
+    if (ASIOCanSampleRate(makeAsioSampleRate(rate)) == ASE_OK) {
+      appendUniqueRate(&device->nativeDsdSampleRates, rate);
+    }
+  }
+
+  for (long channelIndex = 0; channelIndex < std::max(1, device->outputChannels); ++channelIndex) {
+    ASIOChannelInfo channel{};
+    channel.channel = channelIndex;
+    channel.isInput = ASIOFalse;
+    if (ASIOGetChannelInfo(&channel) == ASE_OK) {
+      const AudioSampleFormat format = fromAsioSampleType(channel.type);
+      if (isDsdSampleFormat(format)) {
+        appendUniqueFormat(&device->nativeDsdSampleFormats, format);
+      }
+    }
+  }
+
+  device->nativeDsdCapable = !device->nativeDsdSampleRates.empty() && !device->nativeDsdSampleFormats.empty();
+  if (device->nativeDsdCapable) {
+    for (AudioSampleFormat format : device->nativeDsdSampleFormats) {
+      appendUniqueFormat(&device->sampleFormats, format);
+    }
+  }
+  setAsioIoFormat(previousFormat == kASIODSDFormat ? kASIODSDFormat : kASIOPCMFormat);
 }
 
 long asioMessage(long selector, long value, void*, double*) {
@@ -165,6 +248,12 @@ std::string asioSampleFormatName(AudioSampleFormat format) {
       return "int24-in32";
     case AudioSampleFormat::Int32Interleaved:
       return "int32";
+    case AudioSampleFormat::DsdInt8Lsb1:
+      return "dsd-int8-lsb1";
+    case AudioSampleFormat::DsdInt8Msb1:
+      return "dsd-int8-msb1";
+    case AudioSampleFormat::DsdInt8Ner8:
+      return "dsd-int8-ner8";
     case AudioSampleFormat::Float32Interleaved:
     default:
       return "float32";
@@ -260,11 +349,14 @@ std::vector<AsioDeviceInfo> RealAsioHost::enumerateDevices() {
     device.dopCarrierSampleRates.clear();
     device.dopCarrierSampleFormats.clear();
     device.nativeDsdSampleRates.clear();
+    device.nativeDsdSampleFormats.clear();
 
+    bool probedCapabilities = false;
     if (loadAsioDriver(name)) {
       ASIODriverInfo info{};
       info.asioVersion = 2;
       if (ASIOInit(&info) == ASE_OK) {
+        probedCapabilities = true;
         device.driverVersion = info.driverVersion;
         long inputs = 0;
         long outputs = 0;
@@ -300,14 +392,10 @@ std::vector<AsioDeviceInfo> RealAsioHost::enumerateDevices() {
           }
         }
         if (device.sampleFormats.empty()) device.sampleFormats = {device.defaultSampleFormat};
+        probeNativeDsdSupport(&device);
         device.bitDepths.clear();
         for (const auto format : device.sampleFormats) {
-          const int depth = format == AudioSampleFormat::Int16Interleaved
-                                ? 16
-                                : (format == AudioSampleFormat::Int24Interleaved ||
-                                   format == AudioSampleFormat::Int24In32Interleaved)
-                                      ? 24
-                                      : 32;
+          const int depth = bitDepthForSampleFormat(format);
           if (std::find(device.bitDepths.begin(), device.bitDepths.end(), depth) == device.bitDepths.end()) {
             device.bitDepths.push_back(depth);
           }
@@ -315,7 +403,7 @@ std::vector<AsioDeviceInfo> RealAsioHost::enumerateDevices() {
       }
       ASIOExit();
     }
-    DeviceCapabilityCache::instance().put(device);
+    if (probedCapabilities) DeviceCapabilityCache::instance().put(device);
     devices.push_back(device);
   }
 #endif
@@ -352,6 +440,17 @@ bool RealAsioHost::open(const AsioOpenConfig& config, AsioOpenResult* result, st
   impl_->result.actualFormat = config.format;
   impl_->result.driverName = info.name[0] ? info.name : driverName;
   impl_->result.driverVersion = info.driverVersion;
+
+  const bool nativeDsd = isNativeDsdRequest(config.format);
+  if (nativeDsd) {
+    if (!canAsioIoFormat(kASIODSDFormat) || !setAsioIoFormat(kASIODSDFormat)) {
+      if (error) *error = "ASIO 驱动无法切换到 Native DSD I/O format";
+      close();
+      return false;
+    }
+  } else {
+    setAsioIoFormat(kASIOPCMFormat);
+  }
 
   if (ASIOCanSampleRate(makeAsioSampleRate(config.format.sampleRate)) != ASE_OK ||
       ASIOSetSampleRate(makeAsioSampleRate(config.format.sampleRate)) != ASE_OK) {
@@ -454,6 +553,7 @@ void RealAsioHost::close() {
 #if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
   if (impl_->initialized) {
     ASIODisposeBuffers();
+    setAsioIoFormat(kASIOPCMFormat);
     ASIOExit();
     impl_->initialized = false;
   }
@@ -549,6 +649,11 @@ std::string enumerateAsioDevicesJson() {
     for (size_t i = 0; i < device.nativeDsdSampleRates.size(); ++i) {
       if (i > 0) json << ",";
       json << device.nativeDsdSampleRates[i];
+    }
+    json << "],\"nativeDsdSampleFormats\":[";
+    for (size_t i = 0; i < device.nativeDsdSampleFormats.size(); ++i) {
+      if (i > 0) json << ",";
+      json << "\"" << escapeJson(sampleFormatToString(device.nativeDsdSampleFormats[i])) << "\"";
     }
     json << "]"
          << ",\"supportedDsdRates\":[";

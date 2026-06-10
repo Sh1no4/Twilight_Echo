@@ -134,9 +134,13 @@ struct WasapiExclusiveBackend::Impl {
   }
 
   bool initializeAudioClient(const WAVEFORMATEX* format, REFERENCE_TIME requestedDuration, std::string* error) {
+    DWORD streamFlags = AUDCLNT_STREAMFLAGS_NOPERSIST;
+    if (!outputConfig.wasapiExclusivePushMode) {
+      streamFlags |= AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
+    }
     HRESULT hr = audioClient->Initialize(
         AUDCLNT_SHAREMODE_EXCLUSIVE,
-        AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_NOPERSIST,
+        streamFlags,
         requestedDuration,
         requestedDuration,
         format,
@@ -154,7 +158,7 @@ struct WasapiExclusiveBackend::Impl {
             std::max<REFERENCE_TIME>(1, wasapi::framesToReferenceTime(alignedFrames, outputFormat.sampleRate));
         hr = audioClient->Initialize(
             AUDCLNT_SHAREMODE_EXCLUSIVE,
-            AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_NOPERSIST,
+            streamFlags,
             alignedDuration,
             alignedDuration,
             format,
@@ -236,13 +240,16 @@ struct WasapiExclusiveBackend::Impl {
   }
 
   bool attachEventAndRenderClient(std::string* error) {
-    samplesReadyEvent.reset(CreateEventW(nullptr, FALSE, FALSE, nullptr));
-    if (!samplesReadyEvent) {
-      return fail(error, "WASAPI 独占 init failure：无法创建事件回调句柄");
-    }
+    HRESULT hr = S_OK;
+    if (!outputConfig.wasapiExclusivePushMode) {
+      samplesReadyEvent.reset(CreateEventW(nullptr, FALSE, FALSE, nullptr));
+      if (!samplesReadyEvent) {
+        return fail(error, "WASAPI 独占 init failure：无法创建事件回调句柄");
+      }
 
-    HRESULT hr = audioClient->SetEventHandle(samplesReadyEvent.get());
-    if (FAILED(hr)) return failHr(error, "WASAPI 独占 init failure：无法绑定事件回调", hr);
+      hr = audioClient->SetEventHandle(samplesReadyEvent.get());
+      if (FAILED(hr)) return failHr(error, "WASAPI 独占 init failure：无法绑定事件回调", hr);
+    }
 
     hr = audioClient->GetBufferSize(&bufferFrameCount);
     if (FAILED(hr)) return failHr(error, "WASAPI 独占 init failure：无法读取缓冲区大小", hr);
@@ -342,15 +349,23 @@ struct WasapiExclusiveBackend::Impl {
     auto lastWakeTime = std::chrono::high_resolution_clock::now();
     auto lastLatencyQueryTime = lastWakeTime;
 
+    const double sleepMsDouble = outputInfo.latencyInfo.bufferLatencyMs > 0 ? outputInfo.latencyInfo.bufferLatencyMs * 0.5 : 5.0;
+    const DWORD sleepMs = std::max<DWORD>(1, static_cast<DWORD>(sleepMsDouble));
+
     while (running.load()) {
-      const DWORD waitResult = WaitForSingleObject(samplesReadyEvent.get(), 2000);
-      if (!running.load()) break;
-      if (waitResult != WAIT_OBJECT_0) {
-        if (waitResult == WAIT_TIMEOUT) {
-           ++diagnostics.sessionUnderrunCount;
-           ++diagnostics.lifetimeUnderrunCount;
+      if (outputConfig.wasapiExclusivePushMode) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
+        if (!running.load()) break;
+      } else {
+        const DWORD waitResult = WaitForSingleObject(samplesReadyEvent.get(), 2000);
+        if (!running.load()) break;
+        if (waitResult != WAIT_OBJECT_0) {
+          if (waitResult == WAIT_TIMEOUT) {
+             ++diagnostics.sessionUnderrunCount;
+             ++diagnostics.lifetimeUnderrunCount;
+          }
+          continue;
         }
-        continue;
       }
 
       auto now = std::chrono::high_resolution_clock::now();
@@ -359,7 +374,7 @@ struct WasapiExclusiveBackend::Impl {
 
       // In exclusive mode, the expected wakeup interval is roughly bufferLatencyMs.
       // If we wake up much later than expected, we missed a deadline.
-      if (outputInfo.latencyInfo.bufferLatencyMs > 0 && elapsedMs > outputInfo.latencyInfo.bufferLatencyMs * 1.5) {
+      if (!outputConfig.wasapiExclusivePushMode && outputInfo.latencyInfo.bufferLatencyMs > 0 && elapsedMs > outputInfo.latencyInfo.bufferLatencyMs * 1.5) {
         ++diagnostics.sessionUnderrunCount;
         ++diagnostics.lifetimeUnderrunCount;
       }

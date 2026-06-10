@@ -113,7 +113,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   audioExclusiveMode: false,
   audioOutputConfig: {
     preferredBufferSize: 0,
-    routingMode: 'auto'
+    routingMode: 'auto',
+    wasapiExclusivePushMode: false
   },
   audioProcessing: DEFAULT_AUDIO_PROCESSING,
   audioEqPresets: []
@@ -206,13 +207,14 @@ function normalizeChannelRoutingMode(value: unknown): ChannelRoutingMode {
 
 function normalizeOutputConfig(config: unknown): OutputConfig {
   if (!config || typeof config !== 'object') return { ...DEFAULT_SETTINGS.audioOutputConfig }
-  const value = config as { preferredBufferSize?: unknown; routingMode?: unknown }
+  const value = config as { preferredBufferSize?: unknown; routingMode?: unknown; wasapiExclusivePushMode?: unknown }
   return {
     preferredBufferSize:
       typeof value.preferredBufferSize === 'number'
         ? clampNumber(Math.trunc(value.preferredBufferSize), 0, 8192, 0)
         : DEFAULT_SETTINGS.audioOutputConfig.preferredBufferSize,
-    routingMode: normalizeChannelRoutingMode(value.routingMode)
+    routingMode: normalizeChannelRoutingMode(value.routingMode),
+    wasapiExclusivePushMode: value.wasapiExclusivePushMode === true
   }
 }
 

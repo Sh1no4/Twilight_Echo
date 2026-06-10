@@ -8,6 +8,10 @@ namespace {
 
 bool bufferFormatsCompatible(const AudioFormat& left, const AudioFormat& right) {
   const bool sampleRateCompatible = left.sampleRate <= 0 || right.sampleRate <= 0 || left.sampleRate == right.sampleRate;
+  if (isDsdSampleFormat(left.sampleFormat) || isDsdSampleFormat(right.sampleFormat)) {
+    return sampleRateCompatible && left.channelCount > 0 && right.channelCount > 0 &&
+           left.channelCount == right.channelCount && dsdFormatsExactMatch(left, right);
+  }
   return sampleRateCompatible && left.channelCount > 0 && right.channelCount > 0 &&
          left.channelCount == right.channelCount &&
          effectivePcmBitDepth(left) == effectivePcmBitDepth(right) &&

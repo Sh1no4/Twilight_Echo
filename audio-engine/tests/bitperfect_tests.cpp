@@ -348,6 +348,66 @@ void testDopPerfectWhenBackendProvesPassthrough() {
   assert(result.perfectReason.empty());
 }
 
+void testNativeDsdRequiresBackendProof() {
+  auto native = baseEvaluation();
+  native.sourceFormat = pcm(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  native.decodedFormat = native.sourceFormat;
+  native.outputFormat = native.sourceFormat;
+  native.sourceDsd = true;
+  native.sourceLossless = true;
+  native.dsdMode = DsdMode::Native;
+  native.dsdRate = 64;
+  native.nativeDsdRequested = true;
+  native.backendPerfectReasonCode = "native_dsd_runtime_unproven";
+  native.backendPerfectReason = "ASIO runtime sample type is not Native DSD";
+
+  const PerfectResult result = evaluatePerfect(native);
+  assert(!result.sourceExact);
+  assert(!result.outputPerfect);
+  assert(result.perfectReasonCode == "native_dsd_runtime_unproven");
+  assert(result.perfectReason == "ASIO runtime sample type is not Native DSD");
+}
+
+void testNativeDsdPerfectWhenBackendProvesPassthrough() {
+  auto native = baseEvaluation();
+  native.sourceFormat = pcm(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  native.decodedFormat = native.sourceFormat;
+  native.outputFormat = native.sourceFormat;
+  native.sourceDsd = true;
+  native.sourceLossless = true;
+  native.dsdMode = DsdMode::Native;
+  native.dsdRate = 64;
+  native.nativeDsdRequested = true;
+  native.nativeDsdPassthroughProven = true;
+  native.pcmPassthrough = false;
+
+  const PerfectResult result = evaluatePerfect(native);
+  assert(result.sourceExact);
+  assert(result.outputPerfect);
+  assert(!result.pcmPassthrough);
+  assert(result.perfectReasonCode.empty());
+  assert(result.perfectReason.empty());
+}
+
+void testNativeDsdProcessingBlocksPerfect() {
+  auto native = baseEvaluation();
+  native.sourceFormat = pcm(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  native.decodedFormat = native.sourceFormat;
+  native.outputFormat = native.sourceFormat;
+  native.sourceDsd = true;
+  native.sourceLossless = true;
+  native.dsdMode = DsdMode::Native;
+  native.dsdRate = 64;
+  native.nativeDsdRequested = true;
+  native.nativeDsdPassthroughProven = true;
+  native.eqActive = true;
+
+  const PerfectResult result = evaluatePerfect(native);
+  assert(!result.sourceExact);
+  assert(!result.outputPerfect);
+  assert(result.perfectReasonCode == "dsd_processing_pcm_fallback");
+}
+
 void testDsdProcessingFallbackReason() {
   auto dsd = baseEvaluation();
   dsd.sourceDsd = true;
@@ -429,6 +489,9 @@ int main() {
   testDopCarrierMismatchReason();
   testDopCandidateRequiresBackendPassthroughProof();
   testDopPerfectWhenBackendProvesPassthrough();
+  testNativeDsdRequiresBackendProof();
+  testNativeDsdPerfectWhenBackendProvesPassthrough();
+  testNativeDsdProcessingBlocksPerfect();
   testDsdProcessingFallbackReason();
   testDsdDopRoutingSemanticChangeUsesProcessingFallbackCode();
   testDsdHighRateFallbackReason();

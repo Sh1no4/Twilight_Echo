@@ -95,7 +95,9 @@ const playbackHelp = {
   audioDevice:
     '选择当前后端要使用的具体设备或驱动。Auto 会跟随系统默认输出，指定设备适合外置 DAC、专业声卡或 ALSA hw/plughw。',
   exclusive:
-    '独占模式会尝试绕过系统混音器。WASAPI Exclusive/ASIO 更可能 bit-perfect；CoreAudio 默认输出和 ALSA default 通常不保证。',
+    '独占模式会尝试绕过系统混音器。WASAPI Exclusive/ASIO 更可能 bit-perfect；CoreAudio 默认输出 and ALSA default 通常不保证。',
+  wasapiExclusivePushMode:
+    'WASAPI 独占驱动模式。默认的“事件驱动”模式延迟低且性能好，但部分声卡/USB DAC 驱动不兼容，可能引发无声或爆音。切换到“推送模式（定时器驱动）”通常能有效解决此类硬件兼容性问题。',
   buffer:
     '缓冲越小延迟越低，但更容易爆音或 underrun；缓冲越大越稳，但切歌和交互响应会变慢。Auto 通常优先稳定。',
   routing:
@@ -588,9 +590,24 @@ function setPreferredBufferSize(value: number): void {
   void setAudioOutputConfig({ preferredBufferSize: value })
 }
 
+function isBufferSizeOutOfRange(value: number): boolean {
+  if (value === 0) return false
+  const dev = selectedAudioDevice.value
+  if (!dev || (dev.minBufferSize == null && dev.maxBufferSize == null)) return false
+  const min = dev.minBufferSize ?? 0
+  const max = dev.maxBufferSize ?? Infinity
+  return value < min || value > max
+}
+
 function setRoutingMode(event: Event): void {
   const target = event.target as HTMLSelectElement
   void setAudioOutputConfig({ routingMode: target.value as ChannelRoutingMode })
+}
+
+function toggleWasapiExclusivePushMode(): void {
+  void setAudioOutputConfig({
+    wasapiExclusivePushMode: !audioOutputConfig.value.wasapiExclusivePushMode
+  })
 }
 
 function updateAudioProcessing(patch: Partial<AudioProcessingSettings>): void {
@@ -903,6 +920,38 @@ onMounted(async () => {
               </button>
             </div>
 
+            <div v-if="exclusiveMode && audioOutput === 'wasapi'" class="setting-row">
+              <div class="setting-copy">
+                <span class="label-row">
+                  <span class="setting-label">WASAPI Exclusive 驱动模式</span>
+                  <span
+                    class="help-dot"
+                    tabindex="0"
+                    role="note"
+                    :aria-label="playbackHelp.wasapiExclusivePushMode"
+                    :data-help="playbackHelp.wasapiExclusivePushMode"
+                    >?</span
+                  >
+                </span>
+                <span class="setting-desc">
+                  {{
+                    audioOutputConfig.wasapiExclusivePushMode
+                      ? '推送模式 (Timer-Driven)：兼容性好，适合部分无法在事件驱动模式正常工作的驱动'
+                      : '事件驱动模式 (Event-Driven)：默认，超低延迟与更高性能'
+                  }}
+                </span>
+              </div>
+              <button
+                class="toggle-switch"
+                :class="{ active: audioOutputConfig.wasapiExclusivePushMode }"
+                role="switch"
+                :aria-checked="audioOutputConfig.wasapiExclusivePushMode"
+                @click="toggleWasapiExclusivePushMode"
+              >
+                <span class="toggle-knob"></span>
+              </button>
+            </div>
+
             <div class="setting-row buffer-row">
               <div class="setting-copy">
                 <span class="label-row">
@@ -925,10 +974,13 @@ onMounted(async () => {
                   v-for="option in bufferSizeOptions"
                   :key="option.value"
                   class="chip-option"
-                  :class="{ active: audioOutputConfig.preferredBufferSize === option.value }"
+                  :class="{
+                    active: audioOutputConfig.preferredBufferSize === option.value,
+                    'out-of-range': isBufferSizeOutOfRange(option.value)
+                  }"
                   type="button"
                   role="radio"
-                  :title="option.help"
+                  :title="isBufferSizeOutOfRange(option.value) ? `${option.label} 超出设备支持范围` : option.help"
                   :aria-checked="audioOutputConfig.preferredBufferSize === option.value"
                   @click="setPreferredBufferSize(option.value)"
                 >
@@ -2804,6 +2856,10 @@ onMounted(async () => {
   border-color: color-mix(in srgb, var(--te-primary-500) 28%, transparent);
   background: #fff;
   color: #2563eb;
+}
+
+.chip-option.out-of-range {
+  opacity: 0.38;
 }
 
 .status-panel {

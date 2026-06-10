@@ -111,6 +111,7 @@ class AudioPipeline {
       size_t waveformPoints,
       size_t spectrogramFrames) const;
   bool isDopPathActive() const;
+  bool isNativeDsdPathActive() const;
   bool needsPcmFallback(std::string* reason) const;
   void setRerouteInProgress(bool active, const std::string& reason = {});
 
@@ -125,6 +126,12 @@ class AudioPipeline {
       double startTimeSeconds,
       std::string* error);
   bool shouldAttemptDopForCurrentConfig(
+      const DspConfig& dspConfig,
+      const OutputConfig& outputConfig,
+      const std::optional<DsdStreamInfo>& dsdProbe,
+      double volume,
+      const std::string& backendId) const;
+  bool shouldAttemptNativeDsdForCurrentConfig(
       const DspConfig& dspConfig,
       const OutputConfig& outputConfig,
       const std::optional<DsdStreamInfo>& dsdProbe,
@@ -146,6 +153,7 @@ class AudioPipeline {
       double volume,
       const std::string& dspConfigJson,
       bool gaplessEnabled,
+      bool allowNativeDsd,
       bool allowDop,
       const std::string& forcedDsdFallbackReason,
       std::string* error);
@@ -181,6 +189,7 @@ class AudioPipeline {
   bool outputPerfect_ = false;
   bool gaplessEnabled_ = true;
   bool dopPathActive_ = false;
+  bool nativeDsdPathActive_ = false;
   bool typedPassthroughActive_ = false;
   bool crossfadeMixActive_ = false;
   uint64_t crossfadeFramesProcessed_ = 0;

@@ -67,6 +67,7 @@ export interface AudioProcessingSettings {
   replayGainPreamp: number
   replayGainFallback: number
   replayGainClip: boolean
+  convolverEnabled: boolean
   convolverIrPath: string
   crossfeedEnabled: boolean
   crossfeedStrength: number
@@ -112,6 +113,7 @@ export interface AudioDeviceOption {
 export interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
+  wasapiExclusivePushMode?: boolean
 }
 
 export interface LatencyInfo {
@@ -207,6 +209,7 @@ export interface PlaybackInfo extends PlaybackOutputInfoMirror {
   playMode: PlayMode
   source: string
   codec: string
+  nativePlaybackActive: boolean
   bitrate: number
   sourceSampleRate: number
   sourceBitDepth: number
@@ -486,6 +489,7 @@ export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
   replayGainPreamp: 0,
   replayGainFallback: 0,
   replayGainClip: true,
+  convolverEnabled: false,
   convolverIrPath: '',
   crossfeedEnabled: false,
   crossfeedStrength: 0,
@@ -495,7 +499,8 @@ export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
 
 const DEFAULT_OUTPUT_CONFIG: OutputConfig = {
   preferredBufferSize: 0,
-  routingMode: 'auto'
+  routingMode: 'auto',
+  wasapiExclusivePushMode: false
 }
 
 const DEFAULT_AUDIO_ENGINE_SCHEDULER: AudioEngineScheduler = {
@@ -564,9 +569,10 @@ function normalizeChannelRoutingMode(value: unknown): ChannelRoutingMode {
 function normalizeOutputConfig(config?: Partial<OutputConfig>): OutputConfig {
   return {
     preferredBufferSize: Number.isFinite(config?.preferredBufferSize)
-      ? clampNumber(Math.trunc(config?.preferredBufferSize ?? 0), 0, 8192, 0)
+      ? clampNumber(Math.trunc(config?.preferredBufferSize ?? 0), 0, 2048, 0)
       : DEFAULT_OUTPUT_CONFIG.preferredBufferSize,
-    routingMode: normalizeChannelRoutingMode(config?.routingMode)
+    routingMode: normalizeChannelRoutingMode(config?.routingMode),
+    wasapiExclusivePushMode: config?.wasapiExclusivePushMode === true
   }
 }
 
@@ -726,6 +732,7 @@ export function normalizeAudioProcessingSettings(
     replayGainPreamp: clampNumber(settings?.replayGainPreamp, -12, 12, 0),
     replayGainFallback: clampNumber(settings?.replayGainFallback, -12, 12, 0),
     replayGainClip: settings?.replayGainClip !== false,
+    convolverEnabled: settings?.convolverEnabled === true,
     convolverIrPath: typeof settings?.convolverIrPath === 'string' ? settings.convolverIrPath : '',
     crossfeedEnabled: settings?.crossfeedEnabled === true,
     crossfeedStrength: clampNumber(settings?.crossfeedStrength, 0, 1, 0),
@@ -977,7 +984,8 @@ function createDefaultPlaybackInfo(
     dsdRate: 0,
     gaplessActive: false,
     preloadReady: false,
-    upcomingTrack: null
+    upcomingTrack: null,
+    nativePlaybackActive: false
   }
 }
 
@@ -1239,11 +1247,19 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setOutputConfig(config: Partial<OutputConfig>): Promise<void> {
+    const prevBufferSize = this.outputConfig.preferredBufferSize
     this.outputConfig = normalizeOutputConfig(config)
+    const bufferSizeChanged = this.outputConfig.preferredBufferSize !== prevBufferSize
+    const needsReopen = bufferSizeChanged && this.output === 'asio'
+    if (needsReopen) {
+      this.tryNative('重开 ASIO 后端以应用 buffer size', (native) =>
+        native.SetOutputBackend(this.getNativeBackendId())
+      )
+    }
     this.applyNativeOutputConfig('设置输出配置')
     this.playbackInfo.outputInfo.channelRoutingMode = this.outputConfig.routingMode
     this.playbackInfo.channelRoutingMode = this.outputConfig.routingMode
-    this.refreshOutputInfoFromNative(false)
+    this.refreshOutputInfoFromNative(needsReopen)
   }
 
   async getAudioOutput(): Promise<AudioOutputId> {
@@ -1268,26 +1284,37 @@ export class AudioEngineManager extends EventEmitter {
   async setAudioProcessing(
     settings: Partial<AudioProcessingSettings>
   ): Promise<AudioProcessingSettings> {
-    this.processing = normalizeAudioProcessingSettings(settings)
-    if (this.processing.dsdOutputMode === 'pcm') {
-      const sourceIsDsd =
-        sourceLooksDsd(this.playbackInfo.source) ||
-        this.playbackInfo.codec.trim().toLowerCase() === 'dsd' ||
-        this.playbackInfo.outputInfo.isDsd === true
+    this.processing = this.mergeAudioProcessingSettings(settings)
+    const sourceIsDsd =
+      sourceLooksDsd(this.playbackInfo.source) ||
+      this.playbackInfo.codec.trim().toLowerCase() === 'dsd' ||
+      this.playbackInfo.outputInfo.isDsd === true
+
+    if (sourceIsDsd) {
+      const mode = this.processing.dsdOutputMode
+      const optimisticMode = mode === 'auto' ? 'dop' : mode
+      const isForcedPcm = mode === 'pcm'
+
       this.playbackInfo.outputInfo = {
         ...this.playbackInfo.outputInfo,
-        isDsd: sourceIsDsd,
-        dsdMode: 'pcm',
-        dsdRate: sourceIsDsd ? this.playbackInfo.outputInfo.dsdRate || this.playbackInfo.dsdRate || 0 : 0,
-        perfectReasonCode: sourceIsDsd
+        isDsd: true,
+        dsdMode: optimisticMode,
+        dsdRate: this.playbackInfo.outputInfo.dsdRate || this.playbackInfo.dsdRate || 0,
+        perfectReasonCode: isForcedPcm
           ? 'dsd_converted_to_pcm'
-          : this.playbackInfo.outputInfo.perfectReasonCode,
-        perfectReason: sourceIsDsd
+          : this.playbackInfo.outputInfo.perfectReasonCode === 'dsd_converted_to_pcm'
+            ? ''
+            : this.playbackInfo.outputInfo.perfectReasonCode,
+        perfectReason: isForcedPcm
           ? 'DSD 当前已转换为 PCM 输出'
-          : this.playbackInfo.outputInfo.perfectReason,
-        capabilityReason: sourceIsDsd
+          : this.playbackInfo.outputInfo.perfectReason === 'DSD 当前已转换为 PCM 输出'
+            ? ''
+            : this.playbackInfo.outputInfo.perfectReason,
+        capabilityReason: isForcedPcm
           ? 'DSD 当前已转换为 PCM 输出'
-          : this.playbackInfo.outputInfo.capabilityReason
+          : this.playbackInfo.outputInfo.capabilityReason === 'DSD 当前已转换为 PCM 输出'
+            ? ''
+            : this.playbackInfo.outputInfo.capabilityReason
       }
       this.syncPlaybackOutputMirrorsFromOutputInfo()
     }
@@ -1302,8 +1329,8 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async loadImpulseResponse(path: string): Promise<ConvolverInfo> {
-    this.processing = normalizeAudioProcessingSettings({
-      ...this.processing,
+    this.processing = this.mergeAudioProcessingSettings({
+      convolverEnabled: true,
       convolverIrPath: path
     })
     this.tryNative('加载脉冲响应', (native) => native.LoadImpulseResponse?.(path))
@@ -1312,8 +1339,8 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async unloadImpulseResponse(): Promise<ConvolverInfo> {
-    this.processing = normalizeAudioProcessingSettings({
-      ...this.processing,
+    this.processing = this.mergeAudioProcessingSettings({
+      convolverEnabled: false,
       convolverIrPath: ''
     })
     this.tryNative('卸载脉冲响应', (native) => native.UnloadImpulseResponse?.())
@@ -1340,7 +1367,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setEqBands(settings: Partial<AudioProcessingSettings>): Promise<AudioProcessingSettings> {
-    this.processing = normalizeAudioProcessingSettings({ ...this.processing, ...settings })
+    this.processing = this.mergeAudioProcessingSettings(settings)
     this.tryNative('更新均衡器', (native) => native.SetEqBands?.(JSON.stringify(this.processing)))
     this.updateNativeInfoSnapshot()
     return this.processing
@@ -1351,8 +1378,7 @@ export class AudioEngineManager extends EventEmitter {
     eqPreamp: number
     eqBands: EqualizerBand[]
   }): Promise<AudioProcessingSettings> {
-    this.processing = normalizeAudioProcessingSettings({
-      ...this.processing,
+    this.processing = this.mergeAudioProcessingSettings({
       ...preset,
       eqEnabled: true
     })
@@ -1364,8 +1390,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setCrossfeedStrength(strength: number): Promise<AudioProcessingSettings> {
-    this.processing = normalizeAudioProcessingSettings({
-      ...this.processing,
+    this.processing = this.mergeAudioProcessingSettings({
       crossfeedEnabled: strength > 0,
       crossfeedStrength: strength
     })
@@ -1382,8 +1407,7 @@ export class AudioEngineManager extends EventEmitter {
     fallback = this.processing.replayGainFallback,
     clip = this.processing.replayGainClip
   ): Promise<AudioProcessingSettings> {
-    this.processing = normalizeAudioProcessingSettings({
-      ...this.processing,
+    this.processing = this.mergeAudioProcessingSettings({
       volumeNormalization: mode,
       replayGainPreamp: preamp,
       replayGainFallback: fallback,
@@ -1428,7 +1452,7 @@ export class AudioEngineManager extends EventEmitter {
         this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
       }
     }
-    return { ...this.playbackInfo }
+    return { ...this.playbackInfo, nativePlaybackActive: this.nativePlaybackActive }
   }
 
   getSpectrumData(points = 64): number[] {
@@ -1598,7 +1622,8 @@ export class AudioEngineManager extends EventEmitter {
       capabilityReason: outputInfo.capabilityReason,
       crossfadeActive: info.crossfadeActive === true || this.processing.crossfadeSeconds > 0,
       crossfadeSeconds: info.crossfadeSeconds || this.processing.crossfadeSeconds || 0,
-      perfectReason: outputInfo.perfectReason
+      perfectReason: outputInfo.perfectReason,
+      nativePlaybackActive: this.nativePlaybackActive
     }
   }
 
@@ -1657,7 +1682,10 @@ export class AudioEngineManager extends EventEmitter {
           this.emit('start-file')
         }
         if (wasPlaying && nativeInfo.state === 'stopped') {
-          this.nativePlaybackActive = false
+          const isAtEnd = this.queue.length === 0 || nativeInfo.queueIndex >= this.queue.length - 1
+          if (isAtEnd) {
+            this.nativePlaybackActive = false
+          }
         }
       }
       return
@@ -1685,6 +1713,24 @@ export class AudioEngineManager extends EventEmitter {
   private getNativeBackendId(): string {
     if (this.output === 'wasapi' && this.exclusiveMode) return 'wasapi-exclusive'
     return this.output
+  }
+
+  private mergeAudioProcessingSettings(
+    settings: Partial<AudioProcessingSettings>
+  ): AudioProcessingSettings {
+    const normalized = normalizeAudioProcessingSettings({ ...this.processing, ...settings })
+    const explicitlyDisabled = settings.dspEnabled === false
+    const processingModuleEnabled =
+      normalized.eqEnabled ||
+      normalized.volumeNormalization !== 'off' ||
+      normalized.convolverEnabled ||
+      normalized.convolverIrPath.length > 0 ||
+      (normalized.crossfeedEnabled && normalized.crossfeedStrength > 0) ||
+      Math.abs(normalized.eqPreamp) > 0.001
+    return {
+      ...normalized,
+      dspEnabled: explicitlyDisabled ? false : normalized.dspEnabled || processingModuleEnabled
+    }
   }
 
   private applyNativeDspSettings(context: string): void {
@@ -1878,6 +1924,6 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   private publishPlaybackInfo(): void {
-    this.emit('playback-info', { ...this.playbackInfo })
+    this.emit('playback-info', { ...this.playbackInfo, nativePlaybackActive: this.nativePlaybackActive })
   }
 }

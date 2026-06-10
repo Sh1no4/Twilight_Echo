@@ -256,6 +256,7 @@ interface AudioDeviceOption {
 interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
+  wasapiExclusivePushMode?: boolean
 }
 
 interface LatencyInfo {
@@ -374,6 +375,7 @@ interface PlaybackInfo extends PlaybackOutputInfoMirror {
   playMode: PlayMode
   source: string
   codec: string
+  nativePlaybackActive: boolean
   bitrate: number
   sourceSampleRate: number
   sourceBitDepth: number

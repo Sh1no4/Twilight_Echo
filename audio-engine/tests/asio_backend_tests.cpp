@@ -250,6 +250,128 @@ void testNativeDsdCapabilityProfile() {
   }
 }
 
+void testNativeDsdRuntimeProven() {
+  MockAsioHost::DsdProfile profile;
+  profile.nativeDsdCapable = true;
+  profile.nativeDsdSampleRates = {2822400, 5644800, 11289600, 22579200};
+  profile.nativeDsdSampleFormats = {
+      AudioSampleFormat::DsdInt8Lsb1,
+      AudioSampleFormat::DsdInt8Msb1,
+      AudioSampleFormat::DsdInt8Ner8,
+  };
+  auto host = std::make_unique<MockAsioHost>();
+  host->devices.push_back(makeMockAsioDevice("asio:native-proven", {48000}, 2, AudioSampleFormat::Float32Interleaved, profile));
+  auto* rawHost = host.get();
+  rawHost->channelFormats = {AudioSampleFormat::DsdInt8Lsb1, AudioSampleFormat::DsdInt8Lsb1};
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  const AudioFormat request = sourceFormat(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  assert(backend.open("asio:native-proven", request, &error));
+  assert(rawHost->lastOpenConfig.format.sampleRate == 2822400);
+  assert(rawHost->lastOpenConfig.format.bitDepth == 1);
+  assert(rawHost->lastOpenConfig.format.sampleFormat == AudioSampleFormat::DsdInt8Lsb1);
+  assert(backend.nativeDsdRuntimeFacts().state == NativeDsdRuntimeFactState::Candidate);
+
+  bool typedCalled = false;
+  bool fallbackCalled = false;
+  assert(backend.startTyped(
+      [&](PcmBlock& block) {
+        typedCalled = true;
+        assert(block.format.sampleFormat == AudioSampleFormat::DsdInt8Lsb1);
+        assert(block.format.sampleRate == 2822400);
+        for (size_t frame = 0; frame < block.frames; ++frame) {
+          block.data[frame * 2] = 0xaa;
+          block.data[frame * 2 + 1] = 0x55;
+        }
+        return block.frames;
+      },
+      [&](float*, size_t frames) {
+        fallbackCalled = true;
+        return frames;
+      },
+      nullptr,
+      &error));
+  rawHost->triggerBufferSwitch(0);
+  assert(typedCalled);
+  assert(!fallbackCalled);
+  assert(rawHost->channelBuffers[0].buffers[0][0] == 0xaa);
+  assert(rawHost->channelBuffers[1].buffers[0][0] == 0x55);
+
+  const NativeDsdRuntimeFacts facts = backend.nativeDsdRuntimeFacts();
+  assert(facts.state == NativeDsdRuntimeFactState::Proven);
+  assert(facts.requestedDsdRate == 2822400);
+  assert(facts.actualDsdRate == 2822400);
+  assert(facts.channelCount == 2);
+  assert(facts.explicitlyCapable);
+  const OutputInfo info = backend.outputInfo();
+  assert(info.nativeDsdRuntimeState == "proven");
+  assert(info.nativeDsdActualRate == 2822400);
+  assert(!info.resampled);
+}
+
+void testNativeDsdRejectsUnsupportedRate() {
+  MockAsioHost::DsdProfile profile;
+  profile.nativeDsdCapable = true;
+  profile.nativeDsdSampleRates = {2822400};
+  profile.nativeDsdSampleFormats = {AudioSampleFormat::DsdInt8Lsb1};
+  auto host = std::make_unique<MockAsioHost>();
+  host->devices.push_back(makeMockAsioDevice("asio:native-rate", {48000}, 2, AudioSampleFormat::Float32Interleaved, profile));
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(!backend.open("asio:native-rate", sourceFormat(5644800, 1, 2, AudioSampleFormat::DsdInt8Lsb1), &error));
+  assert(!error.empty());
+  assert(backend.outputInfo().perfectReasonCode == "format_not_supported");
+}
+
+void testNativeDsdRuntimeSampleTypeMismatch() {
+  MockAsioHost::DsdProfile profile;
+  profile.nativeDsdCapable = true;
+  profile.nativeDsdSampleRates = {2822400};
+  profile.nativeDsdSampleFormats = {AudioSampleFormat::DsdInt8Lsb1};
+  auto host = std::make_unique<MockAsioHost>();
+  host->devices.push_back(makeMockAsioDevice("asio:native-mismatch", {48000}, 2, AudioSampleFormat::Float32Interleaved, profile));
+  auto* rawHost = host.get();
+  rawHost->channelFormats = {AudioSampleFormat::Float32Interleaved, AudioSampleFormat::Float32Interleaved};
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:native-mismatch", sourceFormat(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1), &error));
+  assert(backend.startTyped(
+      [](PcmBlock& block) { return block.frames; },
+      [](float*, size_t frames) { return frames; },
+      nullptr,
+      &error));
+  const NativeDsdRuntimeFacts facts = backend.nativeDsdRuntimeFacts();
+  assert(facts.state == NativeDsdRuntimeFactState::Mismatch);
+  assert(facts.reason.find("not Native DSD") != std::string::npos);
+  assert(backend.outputInfo().perfectReasonCode == "native_dsd_runtime_unproven");
+}
+
+void testNativeDsdRuntimeChannelFormatMismatch() {
+  MockAsioHost::DsdProfile profile;
+  profile.nativeDsdCapable = true;
+  profile.nativeDsdSampleRates = {2822400};
+  profile.nativeDsdSampleFormats = {AudioSampleFormat::DsdInt8Lsb1, AudioSampleFormat::DsdInt8Msb1};
+  auto host = std::make_unique<MockAsioHost>();
+  host->devices.push_back(makeMockAsioDevice("asio:native-channel-mismatch", {48000}, 2, AudioSampleFormat::Float32Interleaved, profile));
+  auto* rawHost = host.get();
+  rawHost->channelFormats = {AudioSampleFormat::DsdInt8Lsb1, AudioSampleFormat::DsdInt8Msb1};
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:native-channel-mismatch", sourceFormat(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1), &error));
+  assert(backend.startTyped(
+      [](PcmBlock& block) { return block.frames; },
+      [](float*, size_t frames) { return frames; },
+      nullptr,
+      &error));
+  const NativeDsdRuntimeFacts facts = backend.nativeDsdRuntimeFacts();
+  assert(facts.state == NativeDsdRuntimeFactState::Mismatch);
+  assert(facts.reason.find("channel sample formats differ") != std::string::npos);
+}
+
 void testChannelCounts() {
   for (int channels : {1, 2, 6, 8}) {
     auto host = std::make_unique<MockAsioHost>();
@@ -711,6 +833,10 @@ int main() {
   testDopRuntimeFactsUnprovenWithoutExplicitCapability();
   testDopRuntimeFactsMismatchWhenActualFormatDiffers();
   testNativeDsdCapabilityProfile();
+  testNativeDsdRuntimeProven();
+  testNativeDsdRejectsUnsupportedRate();
+  testNativeDsdRuntimeSampleTypeMismatch();
+  testNativeDsdRuntimeChannelFormatMismatch();
   testChannelCounts();
   testLifecycleAndPlaybackInfo();
   testActualOutputFormats();

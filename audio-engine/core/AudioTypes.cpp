@@ -12,6 +12,10 @@ constexpr double kUnityVolumeEpsilon = 0.0001;
 
 int bitDepthFromSampleFormat(AudioSampleFormat format) {
   switch (format) {
+    case AudioSampleFormat::DsdInt8Lsb1:
+    case AudioSampleFormat::DsdInt8Msb1:
+    case AudioSampleFormat::DsdInt8Ner8:
+      return 1;
     case AudioSampleFormat::Int16Interleaved:
       return 16;
     case AudioSampleFormat::Int24Interleaved:
@@ -83,7 +87,8 @@ std::string dsdPcmFallbackReasonCode(const std::string& backendReason) {
 }
 
 bool hasConcreteFormat(const AudioFormat& format) {
-  return format.sampleRate > 0 && format.channelCount > 0 && effectivePcmBitDepth(format) > 0;
+  return format.sampleRate > 0 && format.channelCount > 0 &&
+         (isDsdSampleFormat(format.sampleFormat) || effectivePcmBitDepth(format) > 0);
 }
 
 bool dopCarrierMatchesExpected(const PerfectEvaluation& evaluation) {
@@ -96,8 +101,14 @@ bool dopCarrierMatchesExpected(const PerfectEvaluation& evaluation) {
 
 std::string dsdPerfectReason(const PerfectEvaluation& evaluation) {
   if (evaluation.sacdIsoSource) return "SACD ISO unsupported";
-  if (evaluation.nativeDsdRequested || evaluation.dsdMode == DsdMode::Native ||
-      evaluation.dsdMode == DsdMode::Unsupported) {
+  if (evaluation.dsdMode == DsdMode::Native) {
+    if (!evaluation.nativeDsdPassthroughProven) {
+      return evaluation.backendPerfectReason.empty() ? "Native DSD backend could not prove passthrough"
+                                                     : evaluation.backendPerfectReason;
+    }
+    return "Native DSD output format mismatch";
+  }
+  if (evaluation.nativeDsdRequested || evaluation.dsdMode == DsdMode::Unsupported) {
     return "DSD source unsupported";
   }
   if (evaluation.dsdMode == DsdMode::Pcm) {
@@ -117,8 +128,14 @@ std::string dsdPerfectReason(const PerfectEvaluation& evaluation) {
 
 std::string dsdPerfectReasonCode(const PerfectEvaluation& evaluation) {
   if (evaluation.sacdIsoSource) return "sacd_iso_unsupported";
-  if (evaluation.nativeDsdRequested || evaluation.dsdMode == DsdMode::Native ||
-      evaluation.dsdMode == DsdMode::Unsupported) {
+  if (evaluation.dsdMode == DsdMode::Native) {
+    if (!evaluation.nativeDsdPassthroughProven) {
+      return evaluation.backendPerfectReasonCode.empty() ? "native_dsd_passthrough_unproven"
+                                                         : evaluation.backendPerfectReasonCode;
+    }
+    return "native_dsd_format_mismatch";
+  }
+  if (evaluation.nativeDsdRequested || evaluation.dsdMode == DsdMode::Unsupported) {
     return "dsd_source_unsupported";
   }
   if (evaluation.dsdMode == DsdMode::Pcm) {
@@ -187,6 +204,12 @@ std::string dsdModeToString(DsdMode mode) {
 
 std::string sampleFormatToString(AudioSampleFormat format) {
   switch (format) {
+    case AudioSampleFormat::DsdInt8Lsb1:
+      return "dsd-int8-lsb1";
+    case AudioSampleFormat::DsdInt8Msb1:
+      return "dsd-int8-msb1";
+    case AudioSampleFormat::DsdInt8Ner8:
+      return "dsd-int8-ner8";
     case AudioSampleFormat::Int16Interleaved:
       return "int16";
     case AudioSampleFormat::Int24Interleaved:
@@ -203,6 +226,10 @@ std::string sampleFormatToString(AudioSampleFormat format) {
 
 size_t audioSampleFormatBytes(AudioSampleFormat format) {
   switch (format) {
+    case AudioSampleFormat::DsdInt8Lsb1:
+    case AudioSampleFormat::DsdInt8Msb1:
+    case AudioSampleFormat::DsdInt8Ner8:
+      return 1;
     case AudioSampleFormat::Int16Interleaved:
       return 2;
     case AudioSampleFormat::Int24Interleaved:
@@ -228,17 +255,31 @@ int normalizedPcmBitDepth(int bitDepth) {
 }
 
 int effectivePcmBitDepth(const AudioFormat& format) {
+  if (isDsdSampleFormat(format.sampleFormat)) return 1;
   if (format.sampleFormat == AudioSampleFormat::Int24In32Interleaved) return 24;
   if (format.bitDepth > 0) return normalizedPcmBitDepth(format.bitDepth);
   return bitDepthFromSampleFormat(format.sampleFormat);
 }
 
 bool pcmFormatsExactMatch(const AudioFormat& left, const AudioFormat& right) {
+  if (isDsdSampleFormat(left.sampleFormat) || isDsdSampleFormat(right.sampleFormat)) return false;
   const int leftBitDepth = effectivePcmBitDepth(left);
   const int rightBitDepth = effectivePcmBitDepth(right);
   return left.sampleRate > 0 && right.sampleRate > 0 && left.sampleRate == right.sampleRate &&
          left.channelCount > 0 && right.channelCount > 0 && left.channelCount == right.channelCount &&
          leftBitDepth > 0 && rightBitDepth > 0 && leftBitDepth == rightBitDepth &&
+         left.sampleFormat == right.sampleFormat;
+}
+
+bool isDsdSampleFormat(AudioSampleFormat format) {
+  return format == AudioSampleFormat::DsdInt8Lsb1 || format == AudioSampleFormat::DsdInt8Msb1 ||
+         format == AudioSampleFormat::DsdInt8Ner8;
+}
+
+bool dsdFormatsExactMatch(const AudioFormat& left, const AudioFormat& right) {
+  return left.sampleRate > 0 && right.sampleRate > 0 && left.sampleRate == right.sampleRate &&
+         left.channelCount > 0 && right.channelCount > 0 && left.channelCount == right.channelCount &&
+         isDsdSampleFormat(left.sampleFormat) && isDsdSampleFormat(right.sampleFormat) &&
          left.sampleFormat == right.sampleFormat;
 }
 
@@ -266,9 +307,11 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
   PerfectResult result;
   const AudioFormat decodedFormat =
       evaluation.decodedFormat.sampleRate > 0 ? evaluation.decodedFormat : evaluation.sourceFormat;
+  const bool dsdFormatMatched = evaluation.sourceDsd && evaluation.dsdMode == DsdMode::Native &&
+                                dsdFormatsExactMatch(decodedFormat, evaluation.outputFormat);
   const bool dopCarrierMatched = evaluation.sourceDsd && evaluation.dsdMode == DsdMode::Dop &&
                                  dopCarrierMatchesExpected(evaluation);
-  result.formatMatched = pcmFormatsExactMatch(decodedFormat, evaluation.outputFormat);
+  result.formatMatched = dsdFormatMatched || pcmFormatsExactMatch(decodedFormat, evaluation.outputFormat);
   result.sourceFormatMatched = pcmFormatsExactMatch(evaluation.sourceFormat, evaluation.outputFormat);
   result.resampled = evaluation.backendResampled || !result.formatMatched;
   result.processingActive =
@@ -286,14 +329,19 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
   const bool pcmOutputPerfect =
       !evaluation.sourceDsd && evaluation.supportsOutputPerfect && result.pcmPassthrough &&
       !result.processingActive && result.routingPreservesSemantics;
+  const bool nativeDsdOutputPerfect =
+      evaluation.sourceDsd && evaluation.dsdMode == DsdMode::Native && evaluation.supportsOutputPerfect &&
+      evaluation.nativeDsdPassthroughProven && dsdFormatsExactMatch(evaluation.decodedFormat, evaluation.outputFormat) &&
+      !evaluation.backendResampled && !result.processingActive && result.routingPreservesSemantics;
   const bool dopOutputPerfect =
       evaluation.sourceDsd && evaluation.dsdMode == DsdMode::Dop && dopCarrierMatched &&
       evaluation.dopPassthroughProven && evaluation.supportsOutputPerfect && !evaluation.backendResampled &&
       !result.processingActive && result.routingPreservesSemantics;
-  result.outputPerfect = pcmOutputPerfect || dopOutputPerfect;
+  result.outputPerfect = pcmOutputPerfect || nativeDsdOutputPerfect || dopOutputPerfect;
   result.sourceExact =
       result.outputPerfect && evaluation.sourceLossless &&
-      (evaluation.sourceDsd ? evaluation.dsdMode == DsdMode::Dop : result.sourceFormatMatched);
+      (evaluation.sourceDsd ? (evaluation.dsdMode == DsdMode::Native || evaluation.dsdMode == DsdMode::Dop)
+                            : result.sourceFormatMatched);
 
   if (result.sourceExact && result.outputPerfect) {
     result.perfectReasonCode.clear();

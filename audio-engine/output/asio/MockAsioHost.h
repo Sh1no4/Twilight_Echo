@@ -17,6 +17,7 @@ class MockAsioHost final : public IAsioHost {
     std::vector<int> dopCarrierSampleRates;
     std::vector<AudioSampleFormat> dopCarrierSampleFormats;
     std::vector<int> nativeDsdSampleRates;
+    std::vector<AudioSampleFormat> nativeDsdSampleFormats;
   };
 
   struct ChannelBuffer {

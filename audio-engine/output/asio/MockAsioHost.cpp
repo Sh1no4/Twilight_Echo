@@ -7,6 +7,10 @@ namespace {
 
 size_t bytesPerSample(AudioSampleFormat format) {
   switch (format) {
+    case AudioSampleFormat::DsdInt8Lsb1:
+    case AudioSampleFormat::DsdInt8Msb1:
+    case AudioSampleFormat::DsdInt8Ner8:
+      return 1;
     case AudioSampleFormat::Int16Interleaved:
       return 2;
     case AudioSampleFormat::Int24Interleaved:
@@ -21,6 +25,10 @@ size_t bytesPerSample(AudioSampleFormat format) {
 
 int bitDepthForFormat(AudioSampleFormat format) {
   switch (format) {
+    case AudioSampleFormat::DsdInt8Lsb1:
+    case AudioSampleFormat::DsdInt8Msb1:
+    case AudioSampleFormat::DsdInt8Ner8:
+      return 1;
     case AudioSampleFormat::Int16Interleaved:
       return 16;
     case AudioSampleFormat::Int24Interleaved:
@@ -163,6 +171,7 @@ AsioDeviceInfo makeMockAsioDevice(
   device.dopCarrierSampleRates = std::move(dsdProfile.dopCarrierSampleRates);
   device.dopCarrierSampleFormats = std::move(dsdProfile.dopCarrierSampleFormats);
   device.nativeDsdSampleRates = std::move(dsdProfile.nativeDsdSampleRates);
+  device.nativeDsdSampleFormats = std::move(dsdProfile.nativeDsdSampleFormats);
   device.defaultSampleRate = device.supportedSampleRates.empty() ? 48000 : device.supportedSampleRates.front();
   device.defaultSampleFormat = sampleFormat;
   device.defaultBitDepth = bitDepthForFormat(sampleFormat);
@@ -172,7 +181,18 @@ AsioDeviceInfo makeMockAsioDevice(
       AudioSampleFormat::Int24In32Interleaved,
       AudioSampleFormat::Int32Interleaved,
       AudioSampleFormat::Float32Interleaved};
+  if (device.nativeDsdCapable) {
+    if (device.nativeDsdSampleFormats.empty()) {
+      device.nativeDsdSampleFormats = {AudioSampleFormat::DsdInt8Lsb1};
+    }
+    for (const auto format : device.nativeDsdSampleFormats) {
+      if (std::find(device.sampleFormats.begin(), device.sampleFormats.end(), format) == device.sampleFormats.end()) {
+        device.sampleFormats.push_back(format);
+      }
+    }
+  }
   device.bitDepths = {16, 24, 32};
+  if (device.nativeDsdCapable) device.bitDepths.push_back(1);
   device.minBufferSize = 4;
   device.maxBufferSize = 2048;
   device.bufferGranularity = 4;

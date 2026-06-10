@@ -249,6 +249,7 @@ interface AudioDeviceOption {
 interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
+  wasapiExclusivePushMode?: boolean
 }
 
 interface LatencyInfo {

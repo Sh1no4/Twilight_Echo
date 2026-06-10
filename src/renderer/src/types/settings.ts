@@ -45,6 +45,7 @@ export interface AudioProcessingSettings {
   replayGainPreamp: number
   replayGainFallback: number
   replayGainClip: boolean
+  convolverEnabled: boolean
   convolverIrPath: string
   crossfeedEnabled: boolean
   crossfeedStrength: number
@@ -98,6 +99,7 @@ export interface AudioDeviceOption {
 export interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
+  wasapiExclusivePushMode?: boolean
 }
 
 export interface AppSettings {
