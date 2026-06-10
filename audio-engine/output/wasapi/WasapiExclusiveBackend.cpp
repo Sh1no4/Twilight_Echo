@@ -215,16 +215,11 @@ struct WasapiExclusiveBackend::Impl {
       return failHr(error, "WASAPI 独占 init failure：无法读取设备缓冲周期", hr);
     }
 
-    REFERENCE_TIME requestedDuration = 0;
-    if (outputConfig.preferredBufferSize > 0) {
-      requestedDuration = wasapi::framesToReferenceTime(outputConfig.preferredBufferSize, outputFormat.sampleRate);
-    }
-    if (requestedDuration <= 0) {
-      requestedDuration = minimumPeriod > 0 ? minimumPeriod : defaultPeriod;
-    }
-    if (requestedDuration <= 0) {
-      requestedDuration = std::max<REFERENCE_TIME>(1, wasapi::framesToReferenceTime(256, outputFormat.sampleRate));
-    }
+    REFERENCE_TIME requestedDuration = wasapi::chooseExclusiveBufferDuration(
+        outputConfig.preferredBufferSize,
+        outputFormat.sampleRate,
+        defaultPeriod,
+        minimumPeriod);
 
     if (!initializeAudioClient(waveFormat, requestedDuration, error)) {
       if (defaultPeriod > requestedDuration && activateAudioClient(error) &&
@@ -286,13 +281,15 @@ struct WasapiExclusiveBackend::Impl {
       notifyFailure(hr, "无法获取独占输出缓冲区");
       return false;
     }
+    const size_t byteCount = static_cast<size_t>(frameCount) * audioFormatBytesPerFrame(outputFormat);
+    if (data && byteCount > 0) std::memset(data, 0, byteCount);
 
     if (typedCallback) {
       PcmBlock block;
       block.format = outputFormat;
       block.data = data;
       block.frames = frameCount;
-      block.byteSize = static_cast<size_t>(frameCount) * audioFormatBytesPerFrame(outputFormat);
+      block.byteSize = byteCount;
       const size_t rendered = typedCallback(block);
       if (rendered > 0) {
         hr = renderClient->ReleaseBuffer(frameCount, 0);
@@ -397,7 +394,8 @@ struct WasapiExclusiveBackend::Impl {
         break;
       }
 
-      const UINT32 framesAvailable = bufferFrameCount > padding ? bufferFrameCount - padding : 0;
+      const UINT32 framesAvailable =
+          wasapi::exclusiveRenderFrames(bufferFrameCount, padding, outputConfig.wasapiExclusivePushMode);
       if (framesAvailable == 0) continue;
       if (!renderPacket(framesAvailable)) break;
     }
@@ -515,13 +513,12 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
   impl_->typedCallback = nullptr;
   impl_->eventCallback = std::move(eventCallback);
 
-  if (!impl_->renderPacket(impl_->bufferFrameCount)) {
+  if (!impl_->renderPacket(wasapi::exclusiveInitialRenderFrames(
+          impl_->bufferFrameCount,
+          impl_->outputConfig.wasapiExclusivePushMode))) {
     if (error) *error = impl_->diagnostics.lastError.empty() ? "无法预填充独占输出缓冲区" : impl_->diagnostics.lastError;
     return false;
   }
-
-  impl_->running = true;
-  impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
 
   HRESULT hr = impl_->audioClient->Start();
   if (!wasapi::succeeded(hr, error, "无法启动独占输出音频流")) {
@@ -533,6 +530,9 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
     impl_->stop();
     return false;
   }
+
+  impl_->running = true;
+  impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
 
   return true;
 #else
@@ -558,13 +558,12 @@ bool WasapiExclusiveBackend::startTyped(
   impl_->callback = std::move(fallbackCallback);
   impl_->eventCallback = std::move(eventCallback);
 
-  if (!impl_->renderPacket(impl_->bufferFrameCount)) {
+  if (!impl_->renderPacket(wasapi::exclusiveInitialRenderFrames(
+          impl_->bufferFrameCount,
+          impl_->outputConfig.wasapiExclusivePushMode))) {
     if (error) *error = impl_->diagnostics.lastError.empty() ? "无法预填充独占输出缓冲区" : impl_->diagnostics.lastError;
     return false;
   }
-
-  impl_->running = true;
-  impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
 
   HRESULT hr = impl_->audioClient->Start();
   if (!wasapi::succeeded(hr, error, "无法启动独占输出音频流")) {
@@ -576,6 +575,9 @@ bool WasapiExclusiveBackend::startTyped(
     impl_->stop();
     return false;
   }
+
+  impl_->running = true;
+  impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
 
   return true;
 #else

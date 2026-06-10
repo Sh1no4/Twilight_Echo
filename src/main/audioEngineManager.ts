@@ -560,6 +560,33 @@ function normalizeAudioDevice(device: unknown): string {
   return normalized
 }
 
+function looksLikeWasapiEndpointId(device: string): boolean {
+  return /^\{0\.0\.0\./i.test(device.trim())
+}
+
+function deviceOptionBelongsToAsio(option: AudioDeviceOption | undefined): boolean {
+  if (!option) return false
+  return (
+    option.backend === 'asio' ||
+    option.pathKind === 'asio' ||
+    option.id.toLowerCase().startsWith('asio:')
+  )
+}
+
+function deviceCompatibleWithOutput(
+  output: AudioOutputId,
+  device: string,
+  options: AudioDeviceOption[]
+): boolean {
+  if (device === 'auto') return true
+  const option = options.find((entry) => entry.id === device)
+  if (output === 'asio') {
+    if (looksLikeWasapiEndpointId(device)) return false
+    return option ? deviceOptionBelongsToAsio(option) : true
+  }
+  return !deviceOptionBelongsToAsio(option) && !device.toLowerCase().startsWith('asio:')
+}
+
 function normalizeChannelRoutingMode(value: unknown): ChannelRoutingMode {
   return value === 'stereo' ||
     value === 'stereo-to-5.1' ||
@@ -1066,6 +1093,7 @@ export class AudioEngineManager extends EventEmitter {
         : loadNativeBinding(dependencies.nativeAddonCandidates)
     this.output = normalizeAudioOutput(config.audioOutput)
     this.device = normalizeAudioDevice(config.audioDevice)
+    this.device = this.resolveCompatibleDevice(this.output, this.device)
     this.exclusiveMode = config.exclusiveMode && supportsAudioExclusive(this.output)
     this.outputConfig = normalizeOutputConfig(config.audioOutputConfig)
     this.processing = normalizeAudioProcessingSettings(config.audioProcessing)
@@ -1093,7 +1121,36 @@ export class AudioEngineManager extends EventEmitter {
     if (!source) throw new Error('音频地址为空')
     const current = this.queue[this.playbackInfo.queueIndex]
     const duration = current?.source === source ? (current.duration ?? 0) : 0
-    const nativeStarted = this.tryNative('播放', (native) => native.Play(source, startTime))
+    const firstErrorContext = {
+      output: this.output,
+      device: this.device,
+      exclusiveMode: this.exclusiveMode,
+      outputConfig: this.outputConfig
+    }
+    let nativeStarted = this.tryNative(
+      '播放',
+      (native) => native.Play(source, startTime),
+      firstErrorContext.output !== 'asio'
+    )
+    let nativeFallbackReason = ''
+    if (!nativeStarted && this.shouldFallbackFromAsio(firstErrorContext.output)) {
+      nativeFallbackReason = this.lastNativeError || 'ASIO 输出不可用'
+      this.output = 'wasapi'
+      this.device = 'auto'
+      this.exclusiveMode = false
+      this.tryNative('ASIO 失败后切换到 WASAPI 兜底后端', (native) =>
+        native.SetOutputBackend(this.getNativeBackendId())
+      )
+      this.tryNative('ASIO 失败后切换到 WASAPI 默认设备', (native) => native.SetOutputDevice(this.device))
+      this.applyNativeOutputConfig('ASIO 失败后应用 WASAPI 兜底配置')
+      nativeStarted = this.tryNative('WASAPI 兜底播放', (native) => native.Play(source, startTime))
+      if (!nativeStarted) {
+        this.output = firstErrorContext.output
+        this.device = firstErrorContext.device
+        this.exclusiveMode = firstErrorContext.exclusiveMode
+        this.outputConfig = firstErrorContext.outputConfig
+      }
+    }
     if (!nativeStarted && !rendererFallbackAllowed()) {
       const detail =
         this.lastNativeError ||
@@ -1104,17 +1161,29 @@ export class AudioEngineManager extends EventEmitter {
     this.nativePlaybackActive = nativeStarted
     const nativeInfo = nativeStarted ? this.readNativePlaybackInfo() : null
     const isDsd = sourceLooksDsd(source)
+    const nativeDsd = nativeInfo ? normalizeDsdState(nativeInfo.outputInfo, nativeInfo) : null
+    const playbackIsDsd = isDsd || nativeDsd?.isDsd === true
+    const playbackDsdMode = nativeDsd?.isDsd ? nativeDsd.dsdMode : playbackIsDsd ? 'unsupported' : 'pcm'
+    const playbackDsdRate = nativeDsd?.isDsd ? nativeDsd.dsdRate : 0
     this.playbackInfo = {
       ...this.playbackInfo,
+      ...nativeInfo,
       state: 'playing',
       position: Math.max(0, Number.isFinite(startTime) ? startTime : 0),
       duration,
       source,
       codec: inferCodec(source),
-      isDsd,
-      dsdMode: isDsd ? 'unsupported' : 'pcm',
-      dsdRate: 0,
-      ...nativeInfo
+      isDsd: playbackIsDsd,
+      dsdMode: playbackDsdMode,
+      dsdRate: playbackDsdRate,
+      outputInfo: nativeInfo?.outputInfo
+        ? {
+            ...nativeInfo.outputInfo,
+            isDsd: playbackIsDsd,
+            dsdMode: playbackDsdMode,
+            dsdRate: playbackDsdRate
+          }
+        : this.playbackInfo.outputInfo
     }
     this.lastTick = this.scheduler.now()
     this.emit('start-file')
@@ -1123,7 +1192,7 @@ export class AudioEngineManager extends EventEmitter {
     this.publishPlaybackInfo()
     return {
       nativeStarted,
-      fallbackReason: nativeStarted ? '' : this.lastNativeError || '原生音频引擎不可用'
+      fallbackReason: nativeFallbackReason || (nativeStarted ? '' : this.lastNativeError || '原生音频引擎不可用')
     }
   }
 
@@ -1239,6 +1308,7 @@ export class AudioEngineManager extends EventEmitter {
     const outputChanged = nextOutput !== this.output
     this.output = nextOutput
     this.device = normalizeAudioDevice(device ?? (outputChanged ? 'auto' : this.device))
+    this.device = this.resolveCompatibleDevice(this.output, this.device)
     if (!supportsAudioExclusive(this.output)) this.exclusiveMode = false
     this.tryNative('切换输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
@@ -1249,6 +1319,7 @@ export class AudioEngineManager extends EventEmitter {
 
   async setAudioDevice(device: string): Promise<AudioOutputState> {
     this.device = normalizeAudioDevice(device)
+    this.device = this.resolveCompatibleDevice(this.output, this.device)
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
     this.refreshOutputInfoFromNative(true)
     return await this.getAudioOutputState()
@@ -1534,9 +1605,16 @@ export class AudioEngineManager extends EventEmitter {
     const supportsOutputPerfect =
       canonicalOutput?.supportsOutputPerfect ?? info.supportsOutputPerfect ?? outputInfo.supportsOutputPerfect ?? false
     const normalizedDsd = normalizeDsdState(canonicalOutput, info)
-    const isDsd = normalizedDsd.isDsd
+    const sourceIsDsd = sourceLooksDsd(info.source || this.playbackInfo.source)
+    const isDsd = normalizedDsd.isDsd || sourceIsDsd
     const dsdMode =
-      isDsd && this.processing.dsdOutputMode === 'pcm' ? 'pcm' : normalizedDsd.dsdMode
+      !isDsd
+        ? 'pcm'
+        : this.processing.dsdOutputMode === 'pcm'
+        ? 'pcm'
+        : normalizedDsd.isDsd
+          ? normalizedDsd.dsdMode
+          : 'unsupported'
     const dsdRate = normalizedDsd.dsdRate
     const latencyInfo =
       canonicalOutput?.latencyInfo ?? info.latencyInfo ?? this.playbackInfo.latencyInfo
@@ -1723,6 +1801,16 @@ export class AudioEngineManager extends EventEmitter {
     return this.output
   }
 
+  private resolveCompatibleDevice(output: AudioOutputId, device: string): string {
+    const normalized = normalizeAudioDevice(device)
+    const options = this.getAudioDeviceOptions()
+    return deviceCompatibleWithOutput(output, normalized, options) ? normalized : 'auto'
+  }
+
+  private shouldFallbackFromAsio(output: AudioOutputId): boolean {
+    return output === 'asio'
+  }
+
   private mergeAudioProcessingSettings(
     settings: Partial<AudioProcessingSettings>
   ): AudioProcessingSettings {
@@ -1817,7 +1905,11 @@ export class AudioEngineManager extends EventEmitter {
     return [DEFAULT_AUDIO_DEVICE_OPTION]
   }
 
-  private tryNative(context: string, command: (native: NativeAudioBinding) => void): boolean {
+  private tryNative(
+    context: string,
+    command: (native: NativeAudioBinding) => void,
+    logFailure = true
+  ): boolean {
     if (!this.native) {
       this.lastNativeError = '未加载 twilight_audio_node.node'
       return false
@@ -1829,6 +1921,7 @@ export class AudioEngineManager extends EventEmitter {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       this.lastNativeError = message
+      if (!logFailure) return false
       const fallbackHint = rendererFallbackAllowed()
         ? '使用临时播放通道'
         : '已阻止 HTMLAudio 静默降级'

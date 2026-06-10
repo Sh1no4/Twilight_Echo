@@ -1,4 +1,5 @@
 #include "../core/AudioTypes.h"
+#include "../output/wasapi/WasapiCommon.h"
 #include "../output/wasapi/WasapiFormatNegotiator.h"
 
 #include <cassert>
@@ -216,6 +217,31 @@ void testUnsupportedDsdRateDoesNotTryNativeDsd() {
   assert(!hasConcreteAudioFormat(facts.candidateFormat));
 }
 
+void testExclusiveBufferPolicyAvoidsMinimumPeriodForAuto() {
+  const REFERENCE_TIME minimumPeriod = wasapi::framesToReferenceTime(64, 48000);
+  const REFERENCE_TIME defaultPeriod = wasapi::framesToReferenceTime(480, 48000);
+
+  assert(wasapi::chooseExclusiveBufferDuration(0, 48000, defaultPeriod, minimumPeriod) == defaultPeriod);
+  assert(wasapi::chooseExclusiveBufferDuration(128, 48000, defaultPeriod, minimumPeriod) ==
+         wasapi::framesToReferenceTime(128, 48000));
+  assert(wasapi::chooseExclusiveBufferDuration(0, 48000, 0, minimumPeriod) == minimumPeriod);
+}
+
+void testExclusiveInitialRenderLeavesWakeupHeadroom() {
+  assert(wasapi::exclusiveInitialRenderFrames(0, true) == 0);
+  assert(wasapi::exclusiveInitialRenderFrames(1, true) == 1);
+  assert(wasapi::exclusiveInitialRenderFrames(64, true) == 32);
+  assert(wasapi::exclusiveInitialRenderFrames(481, true) == 240);
+  assert(wasapi::exclusiveInitialRenderFrames(64, false) == 0);
+}
+
+void testExclusiveRenderFramePolicySeparatesEventAndPushMode() {
+  assert(wasapi::exclusiveRenderFrames(0, 0, false) == 0);
+  assert(wasapi::exclusiveRenderFrames(512, 128, false) == 512);
+  assert(wasapi::exclusiveRenderFrames(512, 128, true) == 384);
+  assert(wasapi::exclusiveRenderFrames(512, 512, true) == 0);
+}
+
 #endif
 
 }  // namespace
@@ -225,6 +251,9 @@ int main() {
   testDsd64NegotiatesDopCarrier();
   testDsd128FailureReasonNamesDopCarrierFacts();
   testUnsupportedDsdRateDoesNotTryNativeDsd();
+  testExclusiveBufferPolicyAvoidsMinimumPeriodForAuto();
+  testExclusiveInitialRenderLeavesWakeupHeadroom();
+  testExclusiveRenderFramePolicySeparatesEventAndPushMode();
 #endif
   return 0;
 }

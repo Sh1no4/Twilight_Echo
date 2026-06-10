@@ -261,6 +261,9 @@ class FakeNativeBinding implements NativeAudioBinding {
   } | null = null
   lastCrossfeedStrength = 0
   loadedImpulseResponsePath = ''
+  failAsioPlayWith = ''
+  lastErrorMessage = ''
+  playCalls: Array<{ backend: string; device: string; source: string; startTime: number }> = []
 
   constructor(playbackInfo?: Partial<PlaybackInfo>, devices = DEVICE_OPTIONS) {
     this.devices = devices
@@ -268,6 +271,14 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
 
   Play = (source: string, startTime = 0): void => {
+    const backend = this.playbackInfo.outputInfo.actualBackend
+    const device = this.playbackInfo.outputInfo.deviceName
+    this.playCalls.push({ backend, device, source, startTime })
+    if (backend === 'asio' && this.failAsioPlayWith) {
+      this.lastErrorMessage = this.failAsioPlayWith
+      throw new Error(this.failAsioPlayWith)
+    }
+    this.lastErrorMessage = ''
     this.playbackInfo = {
       ...this.playbackInfo,
       state: 'playing',
@@ -306,7 +317,11 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
 
   SetOutputDevice = (device: string): void => {
-    const nextDevice = this.devices.find((entry) => entry.id === device) ?? this.devices[0]
+    const currentBackend = this.playbackInfo.outputInfo.actualBackend
+    const nextDevice =
+      device === 'auto' && currentBackend === 'asio'
+        ? (this.devices.find((entry) => entry.pathKind === 'asio') ?? this.devices[0])
+        : (this.devices.find((entry) => entry.id === device) ?? this.devices[0])
     const deviceName = nextDevice.name || nextDevice.label
     const outputInfo = {
       ...this.playbackInfo.outputInfo,
@@ -460,7 +475,7 @@ class FakeNativeBinding implements NativeAudioBinding {
   EnumerateDevices = (): string => JSON.stringify(this.devices)
   EnumerateBackends = (): string => JSON.stringify(['wasapi', 'wasapi-exclusive', 'asio'])
   GetEngineCapabilities = (): string => JSON.stringify({})
-  GetLastError = (): string => JSON.stringify({ message: '' })
+  GetLastError = (): string => JSON.stringify({ message: this.lastErrorMessage })
 
   setDiagnostics(diagnostics: Partial<OutputDiagnostics>, extras: Partial<OutputInfo> = {}): void {
     const nextDiagnostics = {
@@ -752,6 +767,61 @@ test('backend and device switches do not leave stale output facts', async () => 
   assert.equal(sharedInfo.outputInfo.perfectReasonCode, 'shared_mixer')
   assert.equal(sharedInfo.outputInfo.supportsOutputPerfect, false)
   assertPlaybackMirrorsOutputInfo(sharedInfo)
+})
+
+test('switching to ASIO does not keep a WASAPI endpoint device id', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: '{0.0.0.00000000}.{f968bbfb-342c-4419-adef-8082728d6c2d}'
+    },
+    nativeBinding
+  )
+
+  await manager.setAudioOutput('asio')
+  const state = await manager.getAudioOutputState()
+  const info = await manager.getPlaybackInfo()
+
+  assert.equal(state.output, 'asio')
+  assert.equal(state.device, 'auto')
+  assert.equal(info.outputInfo.actualBackend, 'asio')
+  assert.equal(info.outputInfo.devicePathKind, 'asio')
+  assert.notEqual(info.outputInfo.deviceName, '{0.0.0.00000000}.{f968bbfb-342c-4419-adef-8082728d6c2d}')
+  assertPlaybackMirrorsOutputInfo(info)
+})
+
+test('ASIO play failure falls back to native WASAPI instead of throwing to HTMLAudio', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  nativeBinding.failAsioPlayWith =
+    '无法找到请求的 ASIO 设备：{0.0.0.00000000}.{f968bbfb-342c-4419-adef-8082728d6c2d}'
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'asio',
+      audioDevice: 'asio:studio'
+    },
+    nativeBinding
+  )
+
+  await manager.setAudioOutput('asio', 'asio:studio')
+  const result = await manager.play('album.dsf', 0)
+  const state = await manager.getAudioOutputState()
+  const info = await manager.getPlaybackInfo()
+
+  assert.equal(result.nativeStarted, true)
+  assert.match(result.fallbackReason, /无法找到请求的 ASIO 设备/)
+  assert.deepEqual(nativeBinding.playCalls.map((call) => call.backend), ['asio', 'wasapi'])
+  assert.equal(state.output, 'wasapi')
+  assert.equal(state.device, 'auto')
+  assert.equal(info.state, 'playing')
+  assert.equal(info.outputInfo.actualBackend, 'wasapi')
+  assert.equal(info.outputInfo.accessMode, 'shared')
+  assert.equal(info.outputInfo.deviceName, 'auto')
+  assert.equal(info.source, 'album.dsf')
+  assert.equal(info.isDsd, true)
+  assertPlaybackMirrorsOutputInfo(info)
 })
 
 test('setOutputConfig keeps routing and non-perfect reasons in sync', async () => {

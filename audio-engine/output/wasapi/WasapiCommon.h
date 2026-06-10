@@ -151,6 +151,29 @@ inline REFERENCE_TIME framesToReferenceTime(UINT32 frames, int sampleRate) {
       (static_cast<long double>(frames) * 10000000.0L / static_cast<long double>(sampleRate)) + 0.5L);
 }
 
+inline REFERENCE_TIME chooseExclusiveBufferDuration(
+    UINT32 preferredBufferSize,
+    int sampleRate,
+    REFERENCE_TIME defaultPeriod,
+    REFERENCE_TIME minimumPeriod) {
+  if (preferredBufferSize > 0) return framesToReferenceTime(preferredBufferSize, sampleRate);
+  if (defaultPeriod > 0) return defaultPeriod;
+  if (minimumPeriod > 0) return minimumPeriod;
+  return std::max<REFERENCE_TIME>(1, framesToReferenceTime(256, sampleRate));
+}
+
+inline UINT32 exclusiveInitialRenderFrames(UINT32 bufferFrameCount, bool pushMode) {
+  if (!pushMode) return 0;
+  if (bufferFrameCount == 0) return 0;
+  return std::max<UINT32>(1, bufferFrameCount / 2);
+}
+
+inline UINT32 exclusiveRenderFrames(UINT32 bufferFrameCount, UINT32 padding, bool pushMode) {
+  if (bufferFrameCount == 0) return 0;
+  if (!pushMode) return bufferFrameCount;
+  return bufferFrameCount > padding ? bufferFrameCount - padding : 0;
+}
+
 inline UINT32 referenceTimeToFrames(REFERENCE_TIME duration, int sampleRate) {
   if (duration <= 0 || sampleRate <= 0) return 0;
   return static_cast<UINT32>(
