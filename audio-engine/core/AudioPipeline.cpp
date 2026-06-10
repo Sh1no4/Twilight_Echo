@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -14,9 +15,16 @@ namespace {
 
 constexpr size_t kDecodeChunkFrames = 2048;
 constexpr double kUnityVolumeEpsilon = 0.0001;
+constexpr double kDefaultRenderReadWaitMs = 10.0;
+constexpr double kMaxRenderReadWaitMs = 20.0;
 AudioPipeline::BackendFactory& backendFactoryOverride() {
   static AudioPipeline::BackendFactory factory;
   return factory;
+}
+
+std::chrono::milliseconds renderReadWaitForLatency(double bufferLatencyMs) {
+  const double base = bufferLatencyMs > 0.0 ? bufferLatencyMs * 0.8 : kDefaultRenderReadWaitMs;
+  return std::chrono::milliseconds(static_cast<int>(std::ceil(std::clamp(base, 2.0, kMaxRenderReadWaitMs))));
 }
 
 QueueItem makeManualItem(const std::string& source) {
@@ -543,6 +551,14 @@ struct AudioPipeline::DecodeStream {
     return buffer.availableFrames() > 0 || eof.load();
   }
 
+  bool waitForPreroll(size_t targetFrames, std::chrono::milliseconds timeout) const {
+    return buffer.waitForAvailableFrames(targetFrames, timeout, running, eof) > 0 || eof.load();
+  }
+
+  void waitForRenderFrames(size_t targetFrames, std::chrono::milliseconds timeout) const {
+    buffer.waitForAvailableFrames(targetFrames, timeout, running, eof);
+  }
+
  private:
   void decodeLoop() {
     if (mode == Mode::Dop) {
@@ -937,7 +953,11 @@ TAE_Result AudioPipeline::playInternal(
     outputEventMessage_.clear();
   }
 
+  const size_t prerollFrames = outputInfo_.bufferSizeFrames > 0
+                                   ? static_cast<size_t>(outputInfo_.bufferSizeFrames)
+                                   : static_cast<size_t>(std::max(1, outputFormat_.sampleRate / 100));
   active->start();
+  active->waitForPreroll(prerollFrames, std::chrono::milliseconds(500));
   if (gaplessEnabled && !dopPath && !nativeDsdPath && !active->typedPassthrough) {
     std::string preloadError;
     preloadNext(upcomingItem, &preloadError);
@@ -1574,6 +1594,8 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
   PipelineState state = PipelineState::Stopped;
   std::shared_ptr<DecodeStream> active;
   AudioFormat outputFormat;
+  std::chrono::milliseconds renderReadWait =
+      std::chrono::milliseconds(static_cast<int>(kDefaultRenderReadWaitMs));
   bool typedPassthroughActive = false;
   bool nativeDsdPathActive = false;
   {
@@ -1581,6 +1603,7 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
     state = state_;
     active = activeStream_;
     outputFormat = outputFormat_;
+    renderReadWait = renderReadWaitForLatency(outputInfo_.latencyInfo.bufferLatencyMs);
     typedPassthroughActive = typedPassthroughActive_;
     nativeDsdPathActive = nativeDsdPathActive_;
   }
@@ -1602,6 +1625,7 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
     return 0;
   }
 
+  active->waitForRenderFrames(output.frames, renderReadWait);
   const size_t read = active->read(output);
   if (read > 0) {
     renderedFrames_ += read;
@@ -1644,6 +1668,8 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   bool crossfadeMixActive = false;
   uint64_t crossfadeFramesProcessed = 0;
   uint64_t crossfadeTotalFrames = 0;
+  std::chrono::milliseconds renderReadWait =
+      std::chrono::milliseconds(static_cast<int>(kDefaultRenderReadWaitMs));
   {
     std::lock_guard lock(mutex_);
     state = state_;
@@ -1659,6 +1685,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     crossfadeMixActive = crossfadeMixActive_;
     crossfadeFramesProcessed = crossfadeFramesProcessed_;
     crossfadeTotalFrames = crossfadeTotalFrames_;
+    renderReadWait = renderReadWaitForLatency(outputInfo_.latencyInfo.bufferLatencyMs);
   }
 
   std::fill(output, output + frameCount * static_cast<size_t>(channels), 0.0f);
@@ -1682,6 +1709,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     }
 
     float* readBuffer = routingRequired ? routingScratch_.data() : segment;
+    active->waitForRenderFrames(frameCount - totalRead, renderReadWait);
     const size_t read = active->readFloat(readBuffer, frameCount - totalRead);
     
     if (read > 0 && !dopPathActive) {

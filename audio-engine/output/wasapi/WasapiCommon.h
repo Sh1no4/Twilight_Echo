@@ -121,6 +121,10 @@ inline bool isDeviceInvalidated(HRESULT hr) {
          hr == AUDCLNT_E_SERVICE_NOT_RUNNING;
 }
 
+inline bool isDeviceInUse(HRESULT hr) {
+  return hr == AUDCLNT_E_DEVICE_IN_USE;
+}
+
 inline bool isDefaultDeviceAlias(const std::string& deviceId) {
   return deviceId.empty() || deviceId == "auto" || deviceId == "default" || deviceId == "System Default" ||
          deviceId == "system default" || deviceId == "system-default" || deviceId == "系统默认";
@@ -163,8 +167,8 @@ inline REFERENCE_TIME chooseExclusiveBufferDuration(
 }
 
 inline UINT32 exclusiveInitialRenderFrames(UINT32 bufferFrameCount, bool pushMode) {
-  if (!pushMode) return 0;
   if (bufferFrameCount == 0) return 0;
+  if (!pushMode) return bufferFrameCount;
   return std::max<UINT32>(1, bufferFrameCount / 2);
 }
 

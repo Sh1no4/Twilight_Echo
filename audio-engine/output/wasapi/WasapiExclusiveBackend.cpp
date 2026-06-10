@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <mutex>
 #include <sstream>
@@ -145,6 +146,19 @@ struct WasapiExclusiveBackend::Impl {
         requestedDuration,
         format,
         nullptr);
+    if (wasapi::isDeviceInUse(hr)) {
+      for (int attempt = 0; attempt < 5 && wasapi::isDeviceInUse(hr); ++attempt) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        if (!activateAudioClient(error)) return false;
+        hr = audioClient->Initialize(
+            AUDCLNT_SHAREMODE_EXCLUSIVE,
+            streamFlags,
+            requestedDuration,
+            requestedDuration,
+            format,
+            nullptr);
+      }
+    }
     if (hr == S_OK) {
       bufferDuration = requestedDuration;
       return true;
@@ -408,7 +422,10 @@ struct WasapiExclusiveBackend::Impl {
     running = false;
     if (samplesReadyEvent) SetEvent(samplesReadyEvent.get());
     if (renderThread.joinable()) renderThread.join();
-    if (audioClient) audioClient->Stop();
+    if (audioClient) {
+      audioClient->Stop();
+      audioClient->Reset();
+    }
   }
 
   void close() {
@@ -520,6 +537,11 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
     return false;
   }
 
+  if (!impl_->outputConfig.wasapiExclusivePushMode) {
+    impl_->running = true;
+    impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+  }
+
   HRESULT hr = impl_->audioClient->Start();
   if (!wasapi::succeeded(hr, error, "无法启动独占输出音频流")) {
     if (wasapi::isDeviceInvalidated(hr)) ++impl_->diagnostics.deviceLostCount;
@@ -531,8 +553,10 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
     return false;
   }
 
-  impl_->running = true;
-  impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+  if (impl_->outputConfig.wasapiExclusivePushMode) {
+    impl_->running = true;
+    impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+  }
 
   return true;
 #else
@@ -565,6 +589,11 @@ bool WasapiExclusiveBackend::startTyped(
     return false;
   }
 
+  if (!impl_->outputConfig.wasapiExclusivePushMode) {
+    impl_->running = true;
+    impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+  }
+
   HRESULT hr = impl_->audioClient->Start();
   if (!wasapi::succeeded(hr, error, "无法启动独占输出音频流")) {
     if (wasapi::isDeviceInvalidated(hr)) ++impl_->diagnostics.deviceLostCount;
@@ -576,8 +605,10 @@ bool WasapiExclusiveBackend::startTyped(
     return false;
   }
 
-  impl_->running = true;
-  impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+  if (impl_->outputConfig.wasapiExclusivePushMode) {
+    impl_->running = true;
+    impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+  }
 
   return true;
 #else

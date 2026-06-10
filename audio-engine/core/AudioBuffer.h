@@ -3,6 +3,7 @@
 #include "AudioTypes.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
@@ -24,6 +25,11 @@ class AudioBuffer {
   size_t writeBlocking(const PcmBlock& block, const std::atomic<bool>& running);
   size_t read(float* data, size_t frames);
   size_t read(PcmBlock& block);
+  size_t waitForAvailableFrames(
+      size_t targetFrames,
+      std::chrono::milliseconds timeout,
+      const std::atomic<bool>& running,
+      const std::atomic<bool>& eof) const;
 
   size_t availableFrames() const;
   size_t freeFrames() const;
@@ -35,8 +41,8 @@ class AudioBuffer {
   size_t contiguousReadableFramesLocked() const;
 
   mutable std::mutex mutex_;
-  std::condition_variable notFull_;
-  std::condition_variable notEmpty_;
+  mutable std::condition_variable notFull_;
+  mutable std::condition_variable notEmpty_;
   std::vector<uint8_t> data_;
   AudioFormat format_;
   size_t bytesPerFrame_ = 0;

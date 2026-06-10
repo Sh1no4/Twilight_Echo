@@ -232,7 +232,7 @@ void testExclusiveInitialRenderLeavesWakeupHeadroom() {
   assert(wasapi::exclusiveInitialRenderFrames(1, true) == 1);
   assert(wasapi::exclusiveInitialRenderFrames(64, true) == 32);
   assert(wasapi::exclusiveInitialRenderFrames(481, true) == 240);
-  assert(wasapi::exclusiveInitialRenderFrames(64, false) == 0);
+  assert(wasapi::exclusiveInitialRenderFrames(64, false) == 64);
 }
 
 void testExclusiveRenderFramePolicySeparatesEventAndPushMode() {
@@ -240,6 +240,11 @@ void testExclusiveRenderFramePolicySeparatesEventAndPushMode() {
   assert(wasapi::exclusiveRenderFrames(512, 128, false) == 512);
   assert(wasapi::exclusiveRenderFrames(512, 128, true) == 384);
   assert(wasapi::exclusiveRenderFrames(512, 512, true) == 0);
+}
+
+void testExclusiveDeviceInUseIsRetryableStartupFailure() {
+  assert(wasapi::isDeviceInUse(AUDCLNT_E_DEVICE_IN_USE));
+  assert(!wasapi::isDeviceInUse(AUDCLNT_E_UNSUPPORTED_FORMAT));
 }
 
 #endif
@@ -254,6 +259,7 @@ int main() {
   testExclusiveBufferPolicyAvoidsMinimumPeriodForAuto();
   testExclusiveInitialRenderLeavesWakeupHeadroom();
   testExclusiveRenderFramePolicySeparatesEventAndPushMode();
+  testExclusiveDeviceInUseIsRetryableStartupFailure();
 #endif
   return 0;
 }

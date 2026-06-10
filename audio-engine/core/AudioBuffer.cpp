@@ -144,6 +144,23 @@ size_t AudioBuffer::read(PcmBlock& block) {
   return read;
 }
 
+size_t AudioBuffer::waitForAvailableFrames(
+    size_t targetFrames,
+    std::chrono::milliseconds timeout,
+    const std::atomic<bool>& running,
+    const std::atomic<bool>& eof) const {
+  if (targetFrames == 0) return 0;
+  std::unique_lock lock(mutex_);
+  const auto ready = [&] {
+    return availableFrames_ >= targetFrames || !running.load() || eof.load();
+  };
+  if (timeout.count() <= 0) {
+    return availableFrames_;
+  }
+  notEmpty_.wait_for(lock, timeout, ready);
+  return availableFrames_;
+}
+
 size_t AudioBuffer::availableFrames() const {
   std::lock_guard lock(mutex_);
   return availableFrames_;

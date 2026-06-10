@@ -185,6 +185,8 @@ enum class FakeNativeDsdBehavior {
 
 FakeDopBehavior g_fakeDopBehavior = FakeDopBehavior::Proven;
 FakeNativeDsdBehavior g_fakeNativeDsdBehavior = FakeNativeDsdBehavior::Proven;
+std::atomic<int> g_decodeFirstReadDelayMs{0};
+std::atomic<int> g_decodeEveryReadDelayMs{0};
 
 bool formatLooksDopCarrier(const AudioFormat& format) {
   return (format.sampleRate == 176400 || format.sampleRate == 352800) && format.channelCount == 2 &&
@@ -588,6 +590,8 @@ class EngineHarness {
     engine_.stop();
     g_fakeDopBehavior = FakeDopBehavior::Proven;
     g_fakeNativeDsdBehavior = FakeNativeDsdBehavior::Proven;
+    g_decodeFirstReadDelayMs = 0;
+    g_decodeEveryReadDelayMs = 0;
     std::error_code ignored;
     std::filesystem::remove(dsdPath_, ignored);
   }
@@ -651,6 +655,49 @@ void testPcmTypedPassthroughIsOutputPerfect() {
   assertLatestPlaybackContains(engine, "\"pcmPassthrough\":true");
   assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
   assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"\"");
+}
+
+void testOutputStartWaitsForFirstDecodedFrames() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  g_decodeFirstReadDelayMs = 150;
+  std::atomic<int> result{TAE_RESULT_INTERNAL_ERROR};
+  std::thread playThread([&] {
+    result = engine.play("typed-preroll.flac", 0.0);
+  });
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(40));
+  const auto earlySnapshots = g_backendRegistry.snapshots();
+  assert(earlySnapshots.size() == 1);
+  assert(!earlySnapshots.front().started);
+
+  playThread.join();
+  assert(result == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  const auto rendered = renderBackendFrames(backend, 128);
+  assert(bufferHasSampleAbove(rendered, 0.10f));
+}
+
+void testRenderWaitsForTransientDecoderLag() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  g_decodeEveryReadDelayMs = 3;
+  assert(engine.play("transient-decoder-lag.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  const auto first = renderBackendFrames(backend, 2048);
+  const auto second = renderBackendFrames(backend, 2048);
+  assert(bufferHasSampleAbove(first, 0.10f));
+  assert(bufferHasSampleAbove(second, 0.10f));
 }
 
 void testPcmVolumeFallsBackToFloatProcessing() {
@@ -1100,6 +1147,14 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
 size_t FFmpegDecoder::readFrames(float* output, size_t frameCount, std::string* error) {
   (void)error;
   if (impl_->outputFormat.sampleFormat != AudioSampleFormat::Float32Interleaved) return 0;
+  const int delayMs = g_decodeFirstReadDelayMs.exchange(0);
+  if (delayMs > 0 && impl_->positionFrames == 0) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+  }
+  const int everyReadDelayMs = g_decodeEveryReadDelayMs.load();
+  if (everyReadDelayMs > 0) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(everyReadDelayMs));
+  }
   const size_t channels = static_cast<size_t>(std::max(1, impl_->outputFormat.channelCount));
   const size_t remaining = impl_->profile.totalFrames > impl_->positionFrames
                                ? impl_->profile.totalFrames - impl_->positionFrames
@@ -1119,6 +1174,14 @@ size_t FFmpegDecoder::readFrames(PcmBlock& output, std::string* error) {
   if (!output.data || output.frames == 0) return 0;
   if (output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
   if (!pcmFormatsExactMatch(output.format, impl_->outputFormat)) return 0;
+  const int delayMs = g_decodeFirstReadDelayMs.exchange(0);
+  if (delayMs > 0 && impl_->positionFrames == 0) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
+  }
+  const int everyReadDelayMs = g_decodeEveryReadDelayMs.load();
+  if (everyReadDelayMs > 0) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(everyReadDelayMs));
+  }
 
   const size_t channels = static_cast<size_t>(std::max(1, impl_->outputFormat.channelCount));
   const size_t bytesPerSample = audioSampleFormatBytes(impl_->outputFormat.sampleFormat);
@@ -1162,6 +1225,8 @@ const AudioFormat& FFmpegDecoder::outputFormat() const {
 int main() {
   testDsd64StartsOnDop();
   testPcmTypedPassthroughIsOutputPerfect();
+  testOutputStartWaitsForFirstDecodedFrames();
+  testRenderWaitsForTransientDecoderLag();
   testPcmVolumeFallsBackToFloatProcessing();
   testDsd128StartsOnDop();
   testAsioAutoPrefersNativeDsd();

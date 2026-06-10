@@ -263,6 +263,8 @@ class FakeNativeBinding implements NativeAudioBinding {
   loadedImpulseResponsePath = ''
   failAsioPlayWith = ''
   lastErrorMessage = ''
+  nextLeavesStopped = false
+  nextCalls = 0
   playCalls: Array<{ backend: string; device: string; source: string; startTime: number }> = []
 
   constructor(playbackInfo?: Partial<PlaybackInfo>, devices = DEVICE_OPTIONS) {
@@ -411,8 +413,23 @@ class FakeNativeBinding implements NativeAudioBinding {
     })
   }
 
-  LoadQueue = (_queueJson: string, _startIndex: number): void => {}
-  Next = (): void => {}
+  LoadQueue = (queueJson: string, startIndex: number): void => {
+    const queue = JSON.parse(queueJson) as AudioEngineQueueItem[]
+    this.playbackInfo = {
+      ...this.playbackInfo,
+      queueIndex: queue.length > 0 ? Math.min(Math.max(0, startIndex), queue.length - 1) : -1
+    }
+  }
+  Next = (): void => {
+    this.nextCalls += 1
+    if (this.nextLeavesStopped) {
+      this.playbackInfo = {
+        ...this.playbackInfo,
+        state: 'stopped',
+        queueIndex: this.playbackInfo.queueIndex + 1
+      }
+    }
+  }
   Previous = (): void => {}
   SetPlayMode = (mode: PlayMode): void => {
     this.playbackInfo = {
@@ -822,6 +839,34 @@ test('ASIO play failure falls back to native WASAPI instead of throwing to HTMLA
   assert.equal(info.source, 'album.dsf')
   assert.equal(info.isDsd, true)
   assertPlaybackMirrorsOutputInfo(info)
+})
+
+test('next falls back to Play when native Next advances but does not keep playback active', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  nativeBinding.nextLeavesStopped = true
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const queue = [
+    { id: '1', source: 'first.flac', title: 'First' },
+    { id: '2', source: 'second.flac', title: 'Second' }
+  ]
+
+  await manager.loadQueue(queue, 0)
+  await manager.play(queue[0].source, 0)
+  await manager.next()
+  const info = await manager.getPlaybackInfo()
+
+  assert.equal(nativeBinding.nextCalls, 1)
+  assert.deepEqual(nativeBinding.playCalls.map((call) => call.source), ['first.flac', 'second.flac'])
+  assert.equal(info.state, 'playing')
+  assert.equal(info.queueIndex, 1)
+  assert.equal(info.source, 'second.flac')
 })
 
 test('setOutputConfig keeps routing and non-perfect reasons in sync', async () => {

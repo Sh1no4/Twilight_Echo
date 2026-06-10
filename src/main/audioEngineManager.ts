@@ -1247,44 +1247,54 @@ export class AudioEngineManager extends EventEmitter {
 
   async next(): Promise<void> {
     if (this.queue.length === 0) return
+    const fallbackIndex = (this.playbackInfo.queueIndex + 1) % this.queue.length
+    let nextIndex = fallbackIndex
+    let targetSource = this.queue[nextIndex]?.source
     if (
       this.nativePlaybackActive &&
       this.native?.Next &&
       this.tryNative('下一首', (native) => native.Next?.())
     ) {
       const nativeInfo = this.readNativePlaybackInfo()
-      if (nativeInfo) {
-        this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+      if (nativeInfo && nativeInfo.queueIndex >= 0 && nativeInfo.queueIndex < this.queue.length) {
+        nextIndex = nativeInfo.queueIndex
+        targetSource = this.queue[nextIndex]?.source
       }
-      this.emit('start-file')
-      this.publishPlaybackInfo()
-      return
+      if (nativeInfo && nativeInfo.state === 'playing' && nativeInfo.source === targetSource) {
+        this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+        this.emit('start-file')
+        this.publishPlaybackInfo()
+        return
+      }
     }
-    const nextIndex = (this.playbackInfo.queueIndex + 1) % this.queue.length
     this.playbackInfo.queueIndex = nextIndex
-    this.tryNative('下一首', (native) => native.Next?.())
     await this.play(this.queue[nextIndex].source, 0)
   }
 
   async previous(): Promise<void> {
     if (this.queue.length === 0) return
+    const fallbackIndex =
+      this.playbackInfo.queueIndex <= 0 ? this.queue.length - 1 : this.playbackInfo.queueIndex - 1
+    let nextIndex = fallbackIndex
+    let targetSource = this.queue[nextIndex]?.source
     if (
       this.nativePlaybackActive &&
       this.native?.Previous &&
       this.tryNative('上一首', (native) => native.Previous?.())
     ) {
       const nativeInfo = this.readNativePlaybackInfo()
-      if (nativeInfo) {
-        this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+      if (nativeInfo && nativeInfo.queueIndex >= 0 && nativeInfo.queueIndex < this.queue.length) {
+        nextIndex = nativeInfo.queueIndex
+        targetSource = this.queue[nextIndex]?.source
       }
-      this.emit('start-file')
-      this.publishPlaybackInfo()
-      return
+      if (nativeInfo && nativeInfo.state === 'playing' && nativeInfo.source === targetSource) {
+        this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+        this.emit('start-file')
+        this.publishPlaybackInfo()
+        return
+      }
     }
-    const nextIndex =
-      this.playbackInfo.queueIndex <= 0 ? this.queue.length - 1 : this.playbackInfo.queueIndex - 1
     this.playbackInfo.queueIndex = nextIndex
-    this.tryNative('上一首', (native) => native.Previous?.())
     await this.play(this.queue[nextIndex].source, 0)
   }
 
