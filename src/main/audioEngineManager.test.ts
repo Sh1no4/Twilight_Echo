@@ -50,8 +50,12 @@ const DEVICE_OPTIONS: AudioDeviceOption[] = [
     granularity: 64,
     preferredBufferSize: 256,
     supportsDop: true,
-    supportsNativeDsd: false,
+    supportsNativeDsd: true,
     supportedDsdRates: [64],
+    nativeDsdSampleRates: [2822400, 5644800, 11289600],
+    nativeDsdSampleFormats: ['dsd-int8-msb1'],
+    dopCarrierSampleRates: [176400],
+    dopCarrierFormats: ['int24-in32'],
     capabilityVersion: 3
   }
 ]
@@ -689,8 +693,12 @@ test('ASIO output config uses the native applied buffer and capability facts', a
   assert.equal(asioDevice?.granularity, 64)
   assert.equal(asioDevice?.preferredBufferSize, 256)
   assert.equal(asioDevice?.supportsDop, true)
-  assert.equal(asioDevice?.supportsNativeDsd, false)
+  assert.equal(asioDevice?.supportsNativeDsd, true)
   assert.deepEqual(asioDevice?.supportedDsdRates, [64])
+  assert.deepEqual(asioDevice?.nativeDsdSampleRates, [2822400, 5644800, 11289600])
+  assert.deepEqual(asioDevice?.nativeDsdSampleFormats, ['dsd-int8-msb1'])
+  assert.deepEqual(asioDevice?.dopCarrierSampleRates, [176400])
+  assert.deepEqual(asioDevice?.dopCarrierFormats, ['int24-in32'])
   assert.equal(asioDevice?.capabilityVersion, 3)
   assertPlaybackMirrorsOutputInfo(info)
 })

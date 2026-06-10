@@ -128,6 +128,7 @@ function normalizeAudioDeviceOptions(
     const rawLabel = typeof record.label === 'string' ? record.label.trim() : ''
     seen.add(id)
     normalized.push({
+      ...(record as Partial<AudioDeviceOption>),
       id,
       label: id === 'auto' ? DEFAULT_AUDIO_DEVICE_OPTION.label : rawLabel || id,
       isDefault: record.isDefault === true

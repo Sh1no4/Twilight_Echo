@@ -249,6 +249,10 @@ interface AudioDeviceOption {
   supportsDop?: boolean
   supportsNativeDsd?: boolean
   supportedDsdRates?: number[]
+  nativeDsdSampleRates?: number[]
+  nativeDsdSampleFormats?: string[]
+  dopCarrierSampleRates?: number[]
+  dopCarrierFormats?: string[]
   pathKind?: string
   capabilityReason?: string
 }

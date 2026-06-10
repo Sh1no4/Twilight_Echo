@@ -374,12 +374,43 @@ function formatDeviceDepth(device: AudioDeviceOption): string {
   return depth > 0 ? `${depth}bit` : ''
 }
 
+function normalizeDsdRateLabel(rate: number): string {
+  if (!Number.isFinite(rate) || rate <= 0) return ''
+  if (rate < 1000) return `DSD${Math.trunc(rate)}`
+  const multiple = Math.round(rate / 44100)
+  if (multiple >= 512) return 'DSD512'
+  if (multiple >= 256) return 'DSD256'
+  if (multiple >= 128) return 'DSD128'
+  if (multiple >= 64) return 'DSD64'
+  return `${compactRate(rate)} DSD`
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))]
+}
+
+function formatNativeDsdRates(device: AudioDeviceOption): string {
+  const rawRates =
+    device.nativeDsdSampleRates && device.nativeDsdSampleRates.length > 0
+      ? device.nativeDsdSampleRates
+      : device.supportedDsdRates || []
+  const labels = uniqueStrings(rawRates.map(normalizeDsdRateLabel))
+  return labels.length > 0 ? `Native ${labels.join('/')}` : ''
+}
+
+function formatNativeDsdFormats(device: AudioDeviceOption): string {
+  const formats = uniqueStrings((device.nativeDsdSampleFormats || []).map((format) => format.trim()))
+  return formats.length > 0 ? formats.join('/') : ''
+}
+
 function deviceSpecText(device: AudioDeviceOption): string {
   const parts = [
     formatDeviceBackend(device),
     formatDeviceChannels(device),
     formatDeviceRate(device),
-    formatDeviceDepth(device)
+    formatDeviceDepth(device),
+    device.supportsNativeDsd ? formatNativeDsdRates(device) : '',
+    device.supportsNativeDsd ? formatNativeDsdFormats(device) : ''
   ].filter(Boolean)
   if (parts.length > 0) return parts.join(' · ')
   if (device.id === 'auto') return '跟随系统默认输出'
