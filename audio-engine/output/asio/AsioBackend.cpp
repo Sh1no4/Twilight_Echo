@@ -586,6 +586,8 @@ bool AsioBackend::start(RenderCallback callback, OutputEventCallback eventCallba
     callback_ = std::move(callback);
     typedCallback_ = nullptr;
     eventCallback_ = std::move(eventCallback);
+    lastRenderTime_ = {};
+    renderCallbacksSeen_ = 0;
   }
   return createAndStartHost(error);
 }
@@ -604,6 +606,8 @@ bool AsioBackend::startTyped(
     typedCallback_ = std::move(callback);
     callback_ = std::move(fallbackCallback);
     eventCallback_ = std::move(eventCallback);
+    lastRenderTime_ = {};
+    renderCallbacksSeen_ = 0;
   }
   return createAndStartHost(error);
 }
@@ -622,6 +626,8 @@ void AsioBackend::close() {
   eventCallback_ = nullptr;
   renderScratch_.clear();
   typedRenderScratch_.clear();
+  lastRenderTime_ = {};
+  renderCallbacksSeen_ = 0;
   recoveryInProgress_ = false;
   dopRuntimeFacts_ = {};
   nativeDsdRuntimeFacts_ = unsupportedNativeDsdRuntimeFacts("No Native DSD stream was requested");
@@ -907,7 +913,9 @@ void AsioBackend::renderBuffer(long bufferIndex) {
   const bool nativeDsdOutput = isNativeDsdRequest(openConfig_.format) || isDsdSampleFormat(outputFormat.sampleFormat);
 
   const auto now = std::chrono::high_resolution_clock::now();
-  if (lastRenderTime_.time_since_epoch().count() > 0) {
+  const uint32_t callbacksSeen = renderCallbacksSeen_++;
+  static constexpr uint32_t kUnderrunWarmupCallbacks = 2;
+  if (callbacksSeen >= kUnderrunWarmupCallbacks && lastRenderTime_.time_since_epoch().count() > 0) {
     const double elapsedMs = std::chrono::duration<double, std::milli>(now - lastRenderTime_).count();
     const double expectedMs = static_cast<double>(frames) * 1000.0 / asioCallbackFrameRate(outputFormat);
     if (expectedMs > 0 && elapsedMs > expectedMs * 1.5) {

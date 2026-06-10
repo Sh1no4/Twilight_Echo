@@ -3,12 +3,14 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace twilight::audio;
@@ -308,6 +310,42 @@ void testNativeDsdRuntimeProven() {
   assert(info.nativeDsdRuntimeState == "proven");
   assert(info.nativeDsdActualRate == 2822400);
   assert(!info.resampled);
+}
+
+void testNativeDsdUnderrunWarmupCallbacks() {
+  MockAsioHost::DsdProfile profile;
+  profile.nativeDsdCapable = true;
+  profile.nativeDsdSampleRates = {2822400};
+  profile.nativeDsdSampleFormats = {AudioSampleFormat::DsdInt8Lsb1};
+  auto host = std::make_unique<MockAsioHost>();
+  auto device = makeMockAsioDevice("asio:native-warmup", {48000}, 2, AudioSampleFormat::Float32Interleaved, profile);
+  device.preferredBufferSize = 4;
+  device.minBufferSize = 4;
+  device.maxBufferSize = 4;
+  host->devices.push_back(device);
+  auto* rawHost = host.get();
+  rawHost->channelFormats = {AudioSampleFormat::DsdInt8Lsb1, AudioSampleFormat::DsdInt8Lsb1};
+
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:native-warmup", sourceFormat(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1), &error));
+  assert(backend.startTyped(
+      [](PcmBlock& block) {
+        std::memset(block.data, 0x69, block.byteSize);
+        return block.frames;
+      },
+      [](float*, size_t frames) { return frames; },
+      nullptr,
+      &error));
+
+  rawHost->triggerBufferSwitch(0);
+  std::this_thread::sleep_for(std::chrono::milliseconds(3));
+  rawHost->triggerBufferSwitch(1);
+  assert(backend.outputInfo().diagnostics.sessionUnderrunCount == 0);
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(3));
+  rawHost->triggerBufferSwitch(0);
+  assert(backend.outputInfo().diagnostics.sessionUnderrunCount >= 1);
 }
 
 void testNativeDsdRejectsUnsupportedRate() {
@@ -834,6 +872,7 @@ int main() {
   testDopRuntimeFactsMismatchWhenActualFormatDiffers();
   testNativeDsdCapabilityProfile();
   testNativeDsdRuntimeProven();
+  testNativeDsdUnderrunWarmupCallbacks();
   testNativeDsdRejectsUnsupportedRate();
   testNativeDsdRuntimeSampleTypeMismatch();
   testNativeDsdRuntimeChannelFormatMismatch();

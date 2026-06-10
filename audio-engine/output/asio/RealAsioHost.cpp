@@ -166,24 +166,41 @@ void probeNativeDsdSupport(AsioDeviceInfo* device) {
   if (!device || device->outputChannels <= 0) return;
   ASIOIoFormatType previousFormat = kASIOPCMFormat;
   getAsioIoFormat(&previousFormat);
-  if (!canAsioIoFormat(kASIODSDFormat)) return;
-  if (!setAsioIoFormat(kASIODSDFormat)) return;
+  ASIOSampleRate previousRate{};
+  const bool hasPreviousRate = ASIOGetSampleRate(&previousRate) == ASE_OK;
+  const auto restorePreviousState = [&]() {
+    setAsioIoFormat(previousFormat == kASIODSDFormat ? kASIODSDFormat : kASIOPCMFormat);
+    if (hasPreviousRate) ASIOSetSampleRate(previousRate);
+  };
 
-  for (int rate : kDsdProbeRates) {
-    if (ASIOCanSampleRate(makeAsioSampleRate(rate)) == ASE_OK) {
-      appendUniqueRate(&device->nativeDsdSampleRates, rate);
-    }
+  if (!canAsioIoFormat(kASIODSDFormat)) {
+    restorePreviousState();
+    return;
+  }
+  if (!setAsioIoFormat(kASIODSDFormat)) {
+    restorePreviousState();
+    return;
   }
 
-  for (long channelIndex = 0; channelIndex < std::max(1, device->outputChannels); ++channelIndex) {
-    ASIOChannelInfo channel{};
-    channel.channel = channelIndex;
-    channel.isInput = ASIOFalse;
-    if (ASIOGetChannelInfo(&channel) == ASE_OK) {
-      const AudioSampleFormat format = fromAsioSampleType(channel.type);
-      if (isDsdSampleFormat(format)) {
-        appendUniqueFormat(&device->nativeDsdSampleFormats, format);
+  const auto probeDsdChannelFormats = [&]() {
+    for (long channelIndex = 0; channelIndex < std::max(1, device->outputChannels); ++channelIndex) {
+      ASIOChannelInfo channel{};
+      channel.channel = channelIndex;
+      channel.isInput = ASIOFalse;
+      if (ASIOGetChannelInfo(&channel) == ASE_OK) {
+        const AudioSampleFormat format = fromAsioSampleType(channel.type);
+        if (isDsdSampleFormat(format)) {
+          appendUniqueFormat(&device->nativeDsdSampleFormats, format);
+        }
       }
+    }
+  };
+
+  for (int rate : kDsdProbeRates) {
+    const ASIOSampleRate asioRate = makeAsioSampleRate(rate);
+    if (ASIOCanSampleRate(asioRate) == ASE_OK && ASIOSetSampleRate(asioRate) == ASE_OK) {
+      appendUniqueRate(&device->nativeDsdSampleRates, rate);
+      probeDsdChannelFormats();
     }
   }
 
@@ -193,7 +210,7 @@ void probeNativeDsdSupport(AsioDeviceInfo* device) {
       appendUniqueFormat(&device->sampleFormats, format);
     }
   }
-  setAsioIoFormat(previousFormat == kASIODSDFormat ? kASIODSDFormat : kASIOPCMFormat);
+  restorePreviousState();
 }
 
 long asioMessage(long selector, long value, void*, double*) {

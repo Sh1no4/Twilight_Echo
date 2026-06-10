@@ -2,9 +2,11 @@
 #include "AudioFixtureLibrary.h"
 
 #include <cassert>
+#include <cstdio>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <system_error>
 
 using namespace twilight::audio;
 using namespace twilight::audio::test;
@@ -59,6 +61,38 @@ void assertDecoderReportsDsdFallbackWhenSupported() {
   decoder.close();
 }
 
+std::filesystem::path pathFromUtf8Bytes(const std::string& utf8) {
+  return std::filesystem::path(reinterpret_cast<const char8_t*>(utf8.c_str()));
+}
+
+void assertDecoderOpensUtf8Path() {
+  const std::string chinesePath = "\xe4\xb8\xad\xe6\x96\x87\xe8\xb7\xaf\xe5\xbe\x84";
+  const std::filesystem::path unicodeDir =
+      std::filesystem::temp_directory_path() / pathFromUtf8Bytes("twilight-" + chinesePath);
+  std::error_code fsError;
+  std::filesystem::create_directories(unicodeDir, fsError);
+  assert(!fsError);
+
+  auto fixture = writePcmWavFixture(
+      {(unicodeDir / pathFromUtf8Bytes("twilight-" + chinesePath + "-s16.wav")).string(), 48000, 2, 16, 32, false});
+  assert(std::filesystem::exists(fixture.path()));
+
+  FFmpegDecoder decoder;
+  std::string error;
+  const bool opened = decoder.open(fixture.string(), &error);
+  if (!opened) {
+    std::fprintf(stderr, "UTF-8 path fixture failed to decode: %s\nerror: %s\n", fixture.string().c_str(), error.c_str());
+  }
+  assert(opened);
+  assert(decoder.streamInfo().source == fixture.string());
+  assert(decoder.streamInfo().sourceFormat.sampleRate == 48000);
+  assert(decoder.streamInfo().sourceFormat.channelCount == 2);
+  decoder.close();
+
+  fixture.cleanup();
+  std::filesystem::remove(unicodeDir, fsError);
+}
+
 void assertDecoderOpensExternalFixturesWhenProvided() {
   const auto fixtures = findExternalAudioFixtures();
   if (fixtures.empty()) return;
@@ -88,6 +122,7 @@ int main() {
   assertDecoderReportsPcm("twilight-fixture-s24.wav", 24);
   assertDecoderReportsPcm("twilight-fixture-s32.wav", 32);
   assertDecoderReportsDsdFallbackWhenSupported();
+  assertDecoderOpensUtf8Path();
   assertDecoderOpensExternalFixturesWhenProvided();
 #endif
   return 0;

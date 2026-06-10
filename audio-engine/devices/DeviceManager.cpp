@@ -205,12 +205,13 @@ std::string enumeratePlatformDevicesJson() {
     }
   }
 
+  if (shouldUninitialize) CoUninitialize();
+
   const std::string asioJson = enumerateAsioDevicesJson();
   if (asioJson.size() > 2) {
     json << "," << asioJson.substr(1, asioJson.size() - 2);
   }
   json << "]";
-  if (shouldUninitialize) CoUninitialize();
   return json.str();
 #elif defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)
   std::ostringstream json;
