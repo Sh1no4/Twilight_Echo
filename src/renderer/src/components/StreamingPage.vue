@@ -645,7 +645,6 @@ onMounted(async () => {
     <div
       class="streaming-sidebar"
       :class="{ open: menuOpen }"
-      :style="{ bottom: hasPlayer ? '96px' : '0px' }"
     >
       <div class="streaming-sidebar-inner">
         <div class="streaming-sidebar-header">
@@ -1203,6 +1202,7 @@ onMounted(async () => {
   position: fixed;
   top: 0;
   left: 0;
+  bottom: 0;
   width: var(--te-menu-width);
   box-sizing: border-box;
   background:
@@ -1252,7 +1252,6 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  flex: 1;
 }
 
 .streaming-menu-item {

@@ -11,7 +11,7 @@ const emit = defineEmits<{
   close: []
 }>()
 
-const { scannedFolders, addFolder, addTracks, isScanning, saveLibrary } = useMusicStore()
+const { scannedFolders, addFolder, addTracks, isScanning, saveLibrary, syncFolders } = useMusicStore()
 
 const progress = ref({ current: 0, total: 0 })
 const selectedFolders = ref<Set<string>>(new Set())
@@ -42,15 +42,12 @@ async function startScan(): Promise<void> {
 
   const foldersToScan = Array.from(selectedFolders.value)
 
-  if (foldersToScan.length === 0) {
-    alert('请选择至少一个文件夹进行扫描')
-    return
-  }
-
   isScanning.value = true
   progress.value = { current: 0, total: 0 }
 
   try {
+    syncFolders(foldersToScan)
+
     for (const folder of foldersToScan) {
       const tracks = await window.api.fs.scanMusicFiles(folder)
       if (tracks && tracks.length > 0) {
@@ -142,7 +139,7 @@ onUnmounted(() => {
             </button>
             <button
               class="btn-start"
-              :disabled="isScanning || selectedFolders.size === 0"
+              :disabled="isScanning"
               @click="startScan"
             >
               {{ isScanning ? '正在扫描...' : '重新扫描' }}

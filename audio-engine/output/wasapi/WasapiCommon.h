@@ -121,6 +121,11 @@ inline bool isDeviceInvalidated(HRESULT hr) {
          hr == AUDCLNT_E_SERVICE_NOT_RUNNING;
 }
 
+inline bool isDefaultDeviceAlias(const std::string& deviceId) {
+  return deviceId.empty() || deviceId == "auto" || deviceId == "default" || deviceId == "System Default" ||
+         deviceId == "system default" || deviceId == "system-default" || deviceId == "系统默认";
+}
+
 inline DWORD defaultChannelMask(int channelCount) {
   switch (channelCount) {
     case 1:

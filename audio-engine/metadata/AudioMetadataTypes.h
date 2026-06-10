@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace twilight::audio {
 
@@ -33,6 +34,7 @@ struct AudioMetadata {
   std::string coverMime;
   std::string coverDataBase64;
   ReplayGainInfo replayGain;
+  std::vector<AudioMetadata> isoTracks;
 };
 
 }  // namespace twilight::audio

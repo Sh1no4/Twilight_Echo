@@ -41,6 +41,7 @@ interface AudioProcessingSettings {
   replayGainPreamp: number
   replayGainFallback: number
   replayGainClip: boolean
+  convolverEnabled: boolean
   convolverIrPath: string
   crossfeedEnabled: boolean
   crossfeedStrength: number
@@ -100,7 +101,7 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   fftEnabled: true,
   fftResolution: 64,
   highResolution: true,
-  dsdToPcm: true,
+  dsdToPcm: false,
   dsdOutputMode: 'auto',
   sacdProgramMode: 'auto',
   eqEnabled: false,
@@ -111,6 +112,7 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   replayGainPreamp: 0,
   replayGainFallback: 0,
   replayGainClip: true,
+  convolverEnabled: false,
   convolverIrPath: '',
   crossfeedEnabled: false,
   crossfeedStrength: 0,
@@ -305,7 +307,17 @@ async function loadAppSettings(): Promise<void> {
 }
 
 async function updateAudioProcessing(patch: Partial<AudioProcessingSettings>): Promise<void> {
-  const nextSettings = normalizeAudioProcessing({ ...audioProcessing.value, ...patch })
+  const eqTouched =
+    patch.eqEnabled === true ||
+    patch.eqMode !== undefined ||
+    patch.eqPreamp !== undefined ||
+    patch.eqBands !== undefined
+  const nextSettings = normalizeAudioProcessing({
+    ...audioProcessing.value,
+    ...patch,
+    dspEnabled: patch.dspEnabled ?? (audioProcessing.value.dspEnabled || eqTouched),
+    eqEnabled: patch.eqEnabled ?? true
+  })
   await setAudioProcessing(nextSettings)
   if (appSettings.value) {
     appSettings.value = {

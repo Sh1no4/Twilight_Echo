@@ -372,7 +372,6 @@ const titleSurface = computed<TitleSurface>(() => {
   <SideMenu
     v-if="showLocalSidebar"
     :open="menuOpen"
-    :bottom-offset="sideMenuBottomOffset"
     @select-view="onSelectView"
     @enter-streaming="enterStreamingMode"
   />

@@ -12,10 +12,14 @@ import type {
   OutputInfo,
   PlaybackInfo,
   PlayMode,
+  AudioProcessingSettings,
   VolumeNormalizationMode
 } from './audioEngineManager'
 
-const { AudioEngineManager } = (await import(new URL('./audioEngineManager.ts', import.meta.url).href)) as typeof import('./audioEngineManager')
+const { AudioEngineManager, DEFAULT_AUDIO_PROCESSING, normalizeAudioProcessingSettings } =
+  (await import(
+    new URL('./audioEngineManager.ts', import.meta.url).href
+  )) as typeof import('./audioEngineManager')
 
 const DEVICE_OPTIONS: AudioDeviceOption[] = [
   {
@@ -242,6 +246,16 @@ class FakeNativeBinding implements NativeAudioBinding {
   playbackInfo: PlaybackInfo
   devices: AudioDeviceOption[]
   lastOutputConfig: OutputConfig = { preferredBufferSize: 0, routingMode: 'auto' }
+  lastDspConfig: Partial<AudioProcessingSettings> = {}
+  lastEqConfig: Partial<AudioProcessingSettings> = {}
+  lastReplayGainConfig: {
+    mode: VolumeNormalizationMode
+    preamp: number
+    fallback: number
+    clip: boolean
+  } | null = null
+  lastCrossfeedStrength = 0
+  loadedImpulseResponsePath = ''
 
   constructor(playbackInfo?: Partial<PlaybackInfo>, devices = DEVICE_OPTIONS) {
     this.devices = devices
@@ -387,19 +401,31 @@ class FakeNativeBinding implements NativeAudioBinding {
     }
   }
 
-  SetDspConfig = (_json: string): void => {}
-  LoadImpulseResponse = (_path: string): void => {}
-  UnloadImpulseResponse = (): void => {}
+  SetDspConfig = (json: string): void => {
+    this.lastDspConfig = JSON.parse(json) as Partial<AudioProcessingSettings>
+  }
+  LoadImpulseResponse = (path: string): void => {
+    this.loadedImpulseResponsePath = path
+  }
+  UnloadImpulseResponse = (): void => {
+    this.loadedImpulseResponsePath = ''
+  }
   GetConvolverInfo = (): string => JSON.stringify({ loaded: false, active: false })
-  SetEqBands = (_json: string): void => {}
+  SetEqBands = (json: string): void => {
+    this.lastEqConfig = JSON.parse(json) as Partial<AudioProcessingSettings>
+  }
   SetEqPreset = (_json: string): void => {}
-  SetCrossfeedStrength = (_strength: number): void => {}
+  SetCrossfeedStrength = (strength: number): void => {
+    this.lastCrossfeedStrength = strength
+  }
   SetReplayGainMode = (
-    _mode: VolumeNormalizationMode,
-    _preamp: number,
-    _fallback: number,
-    _clip: boolean
-  ): void => {}
+    mode: VolumeNormalizationMode,
+    preamp: number,
+    fallback: number,
+    clip: boolean
+  ): void => {
+    this.lastReplayGainConfig = { mode, preamp, fallback, clip }
+  }
   GetMetadata = (_source: string): string => JSON.stringify(null)
   GetPlaybackInfo = (): string => JSON.stringify(this.playbackInfo)
   GetUpcomingTrack = (): AudioEngineQueueItem | null => null
@@ -513,6 +539,24 @@ function makeManager(
   })
 }
 
+test('normalizing explicit DSD Auto is not overridden by legacy dsdToPcm flag', () => {
+  const normalized = normalizeAudioProcessingSettings({
+    ...DEFAULT_AUDIO_PROCESSING,
+    dsdToPcm: true,
+    dsdOutputMode: 'auto'
+  })
+
+  assert.equal(normalized.dsdOutputMode, 'auto')
+  assert.equal(normalized.dsdToPcm, false)
+})
+
+test('legacy dsdToPcm still maps to PCM when dsdOutputMode is absent', () => {
+  const normalized = normalizeAudioProcessingSettings({ dsdToPcm: true })
+
+  assert.equal(normalized.dsdOutputMode, 'pcm')
+  assert.equal(normalized.dsdToPcm, true)
+})
+
 test('setExclusiveMode refreshes backend facts immediately', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
@@ -557,6 +601,28 @@ test('setAudioDevice refreshes canonical device names immediately', async () => 
   assert.equal(info.outputInfo.actualDeviceName, 'Desk DAC')
   assert.equal(info.outputInfo.devicePathKind, 'default')
   assertPlaybackMirrorsOutputInfo(info)
+})
+
+test('default output device display labels normalize to auto', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: '系统默认'
+    },
+    nativeBinding
+  )
+
+  assert.equal((await manager.getAudioOutputState()).device, 'auto')
+
+  await manager.setAudioDevice('System Default')
+  const state = await manager.getAudioOutputState()
+  const info = await manager.getPlaybackInfo()
+
+  assert.equal(state.device, 'auto')
+  assert.equal(info.outputDevice, 'auto')
+  assert.equal(info.outputInfo.deviceName, 'auto')
 })
 
 test('setOutputConfig uses the actual native buffer size and latency facts', async () => {
@@ -840,6 +906,87 @@ test('getVisualizationData returns inactive shape when native visualization is u
   assert.equal(data.peakDb, -120)
   assert.equal(data.rmsDb, -120)
   assert.equal(data.lufsMomentary, null)
+})
+
+test('DSP module updates enable the native DSP chain instead of only toggling UI state', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioProcessing: {
+        dspEnabled: false,
+        eqEnabled: false,
+        volumeNormalization: 'off',
+        crossfeedEnabled: false,
+        crossfeedStrength: 0,
+        convolverIrPath: ''
+      }
+    },
+    nativeBinding
+  )
+
+  const eq = await manager.setAudioProcessing({ eqEnabled: true })
+  assert.equal(eq.dspEnabled, true)
+  assert.equal(eq.eqEnabled, true)
+  assert.equal(nativeBinding.lastDspConfig.dspEnabled, true)
+  assert.equal(nativeBinding.lastDspConfig.eqEnabled, true)
+
+  const replayGain = await manager.setReplayGainMode('track', 1.5, -3, true)
+  assert.equal(replayGain.dspEnabled, true)
+  assert.equal(replayGain.volumeNormalization, 'track')
+  assert.deepEqual(nativeBinding.lastReplayGainConfig, {
+    mode: 'track',
+    preamp: 1.5,
+    fallback: -3,
+    clip: true
+  })
+
+  const crossfeed = await manager.setCrossfeedStrength(0.35)
+  assert.equal(crossfeed.dspEnabled, true)
+  assert.equal(crossfeed.crossfeedEnabled, true)
+  assert.equal(crossfeed.crossfeedStrength, 0.35)
+  assert.equal(nativeBinding.lastCrossfeedStrength, 0.35)
+
+  const convolver = await manager.loadImpulseResponse('C:\\ir\\headphones.wav')
+  assert.equal(manager.getAudioProcessing().dspEnabled, true)
+  assert.equal(manager.getAudioProcessing().convolverEnabled, true)
+  assert.equal(manager.getAudioProcessing().convolverIrPath, 'C:\\ir\\headphones.wav')
+  assert.equal(nativeBinding.loadedImpulseResponsePath, 'C:\\ir\\headphones.wav')
+  assert.equal(convolver.loaded, false)
+
+  await manager.unloadImpulseResponse()
+  assert.equal(manager.getAudioProcessing().convolverEnabled, false)
+  assert.equal(manager.getAudioProcessing().convolverIrPath, '')
+  assert.equal(nativeBinding.loadedImpulseResponsePath, '')
+})
+
+test('turning the DSP master switch off still bypasses processing modules', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioProcessing: {
+        dspEnabled: true,
+        eqEnabled: true,
+        volumeNormalization: 'track',
+        crossfeedEnabled: true,
+        crossfeedStrength: 0.4
+      }
+    },
+    nativeBinding
+  )
+
+  const processing = await manager.setAudioProcessing({ dspEnabled: false })
+
+  assert.equal(processing.dspEnabled, false)
+  assert.equal(processing.eqEnabled, true)
+  assert.equal(processing.volumeNormalization, 'track')
+  assert.equal(processing.crossfeedEnabled, true)
+  assert.equal(nativeBinding.lastDspConfig.dspEnabled, false)
 })
 
 test('canonical outputInfo clears stale DoP mirrors on PCM DSD fallback', async () => {

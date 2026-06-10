@@ -1,4 +1,5 @@
 #include "AudioPipeline.h"
+#include "../dsp/ChannelRouter.h"
 
 #include <algorithm>
 #include <chrono>
@@ -645,8 +646,23 @@ TAE_Result AudioPipeline::playInternal(
     if (!output->setOutputConfig(outputConfig, error)) {
       return TAE_RESULT_INVALID_ARGUMENT;
     }
-    const AudioFormat requestedPcmFormat =
+    AudioFormat requestedPcmFormat =
         active->stream.isDsd ? pcmFallbackRequestFormat(active->stream, dsdProbe) : active->stream.sourceFormat;
+    
+    switch (outputConfig.routingMode) {
+      case ChannelRoutingMode::MonoToStereo:
+      case ChannelRoutingMode::Stereo:
+        requestedPcmFormat.channelCount = 2;
+        break;
+      case ChannelRoutingMode::StereoTo51:
+        requestedPcmFormat.channelCount = 6;
+        break;
+      case ChannelRoutingMode::StereoTo71:
+        requestedPcmFormat.channelCount = 8;
+        break;
+      default:
+        break;
+    }
     if (!output->open(deviceId, requestedPcmFormat, error)) {
       return TAE_RESULT_BACKEND_UNAVAILABLE;
     }
@@ -656,7 +672,12 @@ TAE_Result AudioPipeline::playInternal(
         !active->stream.isDsd && !processingRequiresPcm && backendCanTypedPassthrough(backendId) &&
         formatCanTypedPassthrough(active->stream.sourceFormat) &&
         pcmFormatsExactMatch(active->stream.sourceFormat, outputFormat);
-    if (!active->configure(outputFormat, startTimeSeconds, error, canUseTypedPassthrough)) {
+    AudioFormat decodeFormat = outputFormat;
+    if (outputConfig.routingMode != ChannelRoutingMode::Auto) {
+      decodeFormat.channelCount = std::max(1, active->stream.sourceFormat.channelCount);
+    }
+
+    if (!active->configure(decodeFormat, startTimeSeconds, error, canUseTypedPassthrough)) {
       output->close();
       return TAE_RESULT_INTERNAL_ERROR;
     }
@@ -680,6 +701,10 @@ TAE_Result AudioPipeline::playInternal(
     preloadStream_.reset();
     stream_ = activeStream_->stream;
     outputFormat_ = outputFormat;
+    decodeFormat_ = outputFormat;
+    if (outputConfig.routingMode != ChannelRoutingMode::Auto) {
+      decodeFormat_.channelCount = std::max(1, stream_.sourceFormat.channelCount);
+    }
     currentItem_ = item;
     backendId_ = backendId == "wasapi-shared" ? "wasapi" : backendId;
     deviceName_ = output_->deviceName();
@@ -695,10 +720,10 @@ TAE_Result AudioPipeline::playInternal(
     }
     dspConfig_ = requestedDspConfig;
     dspChain_.configure(dspConfig_);
-    dspChain_.prepare(outputFormat_);
+    dspChain_.prepare(decodeFormat_);
     dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
     preloadDspChain_.configure(dspConfig_);
-    preloadDspChain_.prepare(outputFormat_);
+    preloadDspChain_.prepare(decodeFormat_);
     preloadDspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
     dspStatus_ = dspChain_.status();
     volume_ = std::clamp(volume, 0.0, 1.0);
@@ -1212,7 +1237,7 @@ bool AudioPipeline::configureActiveStreamLocked(
     std::string* error) {
   if (!stream) return false;
   if (!stream->openSource(item, error)) return false;
-  if (!stream->configure(outputFormat_, startTimeSeconds, error)) return false;
+  if (!stream->configure(decodeFormat_, startTimeSeconds, error)) return false;
   return true;
 }
 
@@ -1333,7 +1358,9 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   std::shared_ptr<DecodeStream> active;
   std::shared_ptr<DecodeStream> preload;
   DspConfig dspConfig;
+  OutputConfig outputConfig;
   AudioFormat outputFormat;
+  AudioFormat decodeFormat;
   bool dopPathActive = false;
   double volume = 1.0;
   bool crossfadeMixActive = false;
@@ -1342,7 +1369,9 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   {
     std::lock_guard lock(mutex_);
     state = state_;
+    outputConfig = outputConfig_;
     outputFormat = outputFormat_;
+    decodeFormat = decodeFormat_;
     channels = std::max(1, outputFormat.channelCount);
     active = activeStream_;
     preload = preloadStream_;
@@ -1365,9 +1394,23 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   size_t positionRead = 0;
   while (totalRead < frameCount) {
     float* segment = output + totalRead * static_cast<size_t>(channels);
-    const size_t read = active->readFloat(segment, frameCount - totalRead);
+    const int decodeChannels = std::max(1, decodeFormat.channelCount);
+    const bool routingRequired = !dopPathActive && (decodeChannels != channels || outputConfig.routingMode != ChannelRoutingMode::Auto);
+
+    if (routingRequired) {
+      if (routingScratch_.size() < (frameCount - totalRead) * static_cast<size_t>(decodeChannels)) {
+        routingScratch_.resize((frameCount - totalRead) * static_cast<size_t>(decodeChannels));
+      }
+    }
+
+    float* readBuffer = routingRequired ? routingScratch_.data() : segment;
+    const size_t read = active->readFloat(readBuffer, frameCount - totalRead);
+    
     if (read > 0 && !dopPathActive) {
-      dspChain_.process(segment, read);
+      dspChain_.process(readBuffer, read);
+      if (routingRequired) {
+        routeChannels(readBuffer, segment, read, decodeChannels, channels, outputConfig.routingMode);
+      }
     }
     totalRead += read;
     positionRead += read;
@@ -1402,9 +1445,18 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
 
       if (crossfadeMixActive) {
         std::vector<float> preloadFrames((frameCount - totalRead + read) * static_cast<size_t>(channels), 0.0f);
-        const size_t mixedFrames = preload->readFloat(preloadFrames.data(), read);
+        if (routingRequired) {
+          if (preloadRoutingScratch_.size() < read * static_cast<size_t>(decodeChannels)) {
+            preloadRoutingScratch_.resize(read * static_cast<size_t>(decodeChannels));
+          }
+        }
+        float* preloadReadBuffer = routingRequired ? preloadRoutingScratch_.data() : preloadFrames.data();
+        const size_t mixedFrames = preload->readFloat(preloadReadBuffer, read);
         if (mixedFrames > 0 && !dopPathActive) {
-          preloadDspChain_.process(preloadFrames.data(), mixedFrames);
+          preloadDspChain_.process(preloadReadBuffer, mixedFrames);
+          if (routingRequired) {
+            routeChannels(preloadReadBuffer, preloadFrames.data(), mixedFrames, decodeChannels, channels, outputConfig.routingMode);
+          }
           const uint64_t totalFrames = std::max<uint64_t>(1, crossfadeTotalFrames);
           for (size_t frame = 0; frame < mixedFrames; ++frame) {
             const double fadeOut =

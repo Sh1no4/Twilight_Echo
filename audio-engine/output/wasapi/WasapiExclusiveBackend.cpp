@@ -339,10 +339,41 @@ struct WasapiExclusiveBackend::Impl {
     DWORD taskIndex = 0;
     HANDLE mmcssHandle = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
 
+    auto lastWakeTime = std::chrono::high_resolution_clock::now();
+    auto lastLatencyQueryTime = lastWakeTime;
+
     while (running.load()) {
       const DWORD waitResult = WaitForSingleObject(samplesReadyEvent.get(), 2000);
       if (!running.load()) break;
-      if (waitResult != WAIT_OBJECT_0) continue;
+      if (waitResult != WAIT_OBJECT_0) {
+        if (waitResult == WAIT_TIMEOUT) {
+           ++diagnostics.sessionUnderrunCount;
+           ++diagnostics.lifetimeUnderrunCount;
+        }
+        continue;
+      }
+
+      auto now = std::chrono::high_resolution_clock::now();
+      double elapsedMs = std::chrono::duration<double, std::milli>(now - lastWakeTime).count();
+      lastWakeTime = now;
+
+      // In exclusive mode, the expected wakeup interval is roughly bufferLatencyMs.
+      // If we wake up much later than expected, we missed a deadline.
+      if (outputInfo.latencyInfo.bufferLatencyMs > 0 && elapsedMs > outputInfo.latencyInfo.bufferLatencyMs * 1.5) {
+        ++diagnostics.sessionUnderrunCount;
+        ++diagnostics.lifetimeUnderrunCount;
+      }
+
+      if (std::chrono::duration<double, std::milli>(now - lastLatencyQueryTime).count() > 1000.0) {
+        lastLatencyQueryTime = now;
+        REFERENCE_TIME streamLatency = 0;
+        if (SUCCEEDED(audioClient->GetStreamLatency(&streamLatency))) {
+          const double streamLatencyMs = referenceTimeToMilliseconds(streamLatency);
+          outputInfo.latencyInfo.outputLatencyMs = std::max(0.0, streamLatencyMs - outputInfo.latencyInfo.bufferLatencyMs);
+          outputInfo.latencyInfo.totalLatencyMs = outputInfo.latencyInfo.bufferLatencyMs + outputInfo.latencyInfo.outputLatencyMs;
+          outputInfo.latencyMs = outputInfo.latencyInfo.totalLatencyMs;
+        }
+      }
 
       UINT32 padding = 0;
       HRESULT hr = audioClient->GetCurrentPadding(&padding);
@@ -427,7 +458,7 @@ bool WasapiExclusiveBackend::open(const std::string& deviceId, const AudioFormat
     return failAfterCom();
   }
 
-  if (deviceId.empty() || deviceId == "auto") {
+  if (wasapi::isDefaultDeviceAlias(deviceId)) {
     hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &impl_->device);
   } else {
     const std::wstring id = wasapi::utf8ToWide(deviceId);

@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <sstream>
 
 #if defined(_WIN32) && defined(TAE_ENABLE_ASIO)
@@ -27,6 +28,50 @@ std::string asioErrorText(long error, const char* fallback) {
   char buffer[160] = {};
   std::snprintf(buffer, sizeof(buffer), "%s (ASIO 错误码 %ld)", fallback, error);
   return buffer;
+}
+
+std::string asioErrorText(long error, const char* fallback, const AsioOpenConfig& config) {
+  if (error == ASE_OK) return {};
+  std::ostringstream message;
+  message << asioErrorText(error, fallback)
+          << " [rate=" << config.format.sampleRate
+          << "Hz, channels=" << config.format.channelCount
+          << ", buffer=" << config.bufferSizeFrames
+          << ", format=" << sampleFormatToString(config.format.sampleFormat)
+          << "]";
+  return message.str();
+}
+
+long legalizeAsioBufferSize(long requested, long minSize, long maxSize, long preferred, long granularity) {
+  if (preferred <= 0) preferred = requested > 0 ? requested : 512;
+  if (minSize <= 0) minSize = preferred;
+  if (maxSize <= 0) maxSize = std::max(minSize, preferred);
+  if (maxSize < minSize) maxSize = minSize;
+
+  long value = requested > 0 ? requested : preferred;
+  value = std::clamp(value, minSize, maxSize);
+  if (granularity > 0) {
+    const long offset = value - minSize;
+    const long lower = minSize + (offset / granularity) * granularity;
+    const long upper = std::min(maxSize, lower + granularity);
+    const long lowerDistance = std::labs(value - lower);
+    const long upperDistance = std::labs(upper - value);
+    return lowerDistance <= upperDistance ? lower : upper;
+  }
+  if (granularity < 0) {
+    long best = minSize;
+    long bestDistance = std::labs(value - best);
+    for (long size = minSize; size <= maxSize; size *= 2) {
+      const long distance = std::labs(value - size);
+      if (distance < bestDistance || (distance == bestDistance && size < best)) {
+        best = size;
+        bestDistance = distance;
+      }
+      if (size > maxSize / 2) break;
+    }
+    return best;
+  }
+  return value;
 }
 
 AudioSampleFormat fromAsioSampleType(ASIOSampleType type) {
@@ -324,7 +369,9 @@ bool RealAsioHost::open(const AsioOpenConfig& config, AsioOpenResult* result, st
     close();
     return false;
   }
-  impl_->result.bufferSizeFrames = config.bufferSizeFrames > 0 ? config.bufferSizeFrames : preferred;
+  impl_->result.bufferSizeFrames =
+      legalizeAsioBufferSize(config.bufferSizeFrames, minSize, maxSize, preferred, granularity);
+  impl_->config.bufferSizeFrames = impl_->result.bufferSizeFrames;
   long inputLatency = 0;
   long outputLatency = 0;
   if (ASIOGetLatencies(&inputLatency, &outputLatency) == ASE_OK) impl_->result.latencyFrames = outputLatency;
@@ -373,7 +420,7 @@ bool RealAsioHost::createBuffers(
       impl_->result.bufferSizeFrames,
       &impl_->callbacks);
   if (result != ASE_OK) {
-    if (error) *error = asioErrorText(result, "无法创建 ASIO buffers");
+    if (error) *error = asioErrorText(result, "无法创建 ASIO buffers", impl_->config);
     return false;
   }
   return true;

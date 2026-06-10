@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "../decoder/SacdIsoDemuxer.h"
+
 #if defined(TAE_HAS_FFMPEG)
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -240,8 +242,18 @@ std::string metadataToJson(const AudioMetadata& metadata, const std::string& err
        << "\"replayGainTrackGain\":" << optionalNumber(metadata.replayGain.trackGainDb) << ","
        << "\"replayGainAlbumGain\":" << optionalNumber(metadata.replayGain.albumGainDb) << ","
        << "\"r128TrackGain\":" << optionalNumber(metadata.replayGain.r128TrackGainDb) << ","
-       << "\"r128AlbumGain\":" << optionalNumber(metadata.replayGain.r128AlbumGainDb) << ","
-       << "\"error\":\"" << escapeJson(error) << "\""
+       << "\"r128AlbumGain\":" << optionalNumber(metadata.replayGain.r128AlbumGainDb) << ",";
+  
+  if (!metadata.isoTracks.empty()) {
+    json << "\"isoTracks\":[";
+    for (size_t i = 0; i < metadata.isoTracks.size(); ++i) {
+      json << metadataToJson(metadata.isoTracks[i]);
+      if (i + 1 < metadata.isoTracks.size()) json << ",";
+    }
+    json << "],";
+  }
+
+  json << "\"error\":\"" << escapeJson(error) << "\""
        << "}";
   return json.str();
 }
@@ -253,8 +265,31 @@ std::string readMetadataJson(const std::string& source) {
   metadata.source = source;
   if (source.empty()) return metadataToJson(metadata, "音频地址为空");
   if (sourceLooksSacdIso(source)) {
-    markSacdIsoUnsupported(&metadata);
-    return metadataToJson(metadata, "SACD ISO 暂不支持解析和播放");
+    metadata.container = "SACD ISO";
+    metadata.isDsd = true;
+    metadata.dsdMode = "dsd";
+    
+    SacdIsoDemuxer demuxer;
+    if (!demuxer.open(source, nullptr)) {
+      // It might fail because it's a stub, but it populates dummy tracks!
+    }
+    
+    for (const auto& track : demuxer.tracks()) {
+      AudioMetadata trackMeta;
+      trackMeta.source = source + "?track=" + std::to_string(track.trackNumber);
+      trackMeta.title = track.title.empty() ? "Track " + std::to_string(track.trackNumber) : track.title;
+      trackMeta.artist = track.artist;
+      trackMeta.trackNumber = std::to_string(track.trackNumber);
+      trackMeta.durationSeconds = track.durationSeconds;
+      trackMeta.channelCount = track.channelCount;
+      trackMeta.sampleRate = track.sampleRate;
+      trackMeta.isDsd = true;
+      trackMeta.dsdMode = "dsd";
+      trackMeta.container = "SACD ISO";
+      metadata.isoTracks.push_back(trackMeta);
+    }
+    
+    return metadataToJson(metadata);
   }
 
 #if defined(TAE_HAS_FFMPEG)

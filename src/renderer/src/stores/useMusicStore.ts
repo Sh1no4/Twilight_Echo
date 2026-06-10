@@ -38,6 +38,7 @@ export function useMusicStore(): {
   isScanning: Ref<boolean>
   addFolder: (path: string) => void
   removeFolder: (path: string) => void
+  syncFolders: (folders: string[]) => void
 } {
   function rebuildDerivedCollections(): void {
     trackById.clear()
@@ -196,6 +197,18 @@ export function useMusicStore(): {
     },
     removeFolder(path: string): void {
       scannedFolders.value = scannedFolders.value.filter((f) => f !== path)
+      rebuildDerivedCollections()
+      saveLibrary()
+    },
+    syncFolders(folders: string[]): void {
+      scannedFolders.value = [...folders]
+      const folderPrefixes = folders.map((f) => {
+        const normalized = f.replace(/[\\/]+$/, '')
+        return normalized + (normalized.includes('\\') ? '\\' : '/')
+      })
+      tracks.value = tracks.value.filter((t) =>
+        folderPrefixes.some((prefix) => t.filePath.startsWith(prefix) || t.filePath === prefix.slice(0, -1))
+      )
       rebuildDerivedCollections()
       saveLibrary()
     }

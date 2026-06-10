@@ -426,6 +426,7 @@ export interface NativeAudioMetadata {
   r128TrackGain: number | null
   r128AlbumGain: number | null
   error: string
+  isoTracks?: NativeAudioMetadata[]
 }
 
 const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
@@ -474,7 +475,7 @@ export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
   fftEnabled: true,
   fftResolution: 64,
   highResolution: true,
-  dsdToPcm: true,
+  dsdToPcm: false,
   dsdOutputMode: 'auto',
   sacdProgramMode: 'auto',
   eqEnabled: false,
@@ -531,8 +532,23 @@ function supportsAudioExclusive(output: AudioOutputId): boolean {
   return getAudioOutputOptions().some((option) => option.id === output && option.supportsExclusive)
 }
 
+function isDefaultAudioDeviceAlias(device: string): boolean {
+  const normalized = device.trim()
+  const lower = normalized.toLowerCase()
+  return (
+    lower === 'auto' ||
+    lower === 'default' ||
+    lower === 'system default' ||
+    lower === 'system-default' ||
+    normalized === '系统默认'
+  )
+}
+
 function normalizeAudioDevice(device: unknown): string {
-  return typeof device === 'string' && device.trim() ? device.trim() : 'auto'
+  if (typeof device !== 'string') return 'auto'
+  const normalized = device.trim()
+  if (!normalized || isDefaultAudioDeviceAlias(normalized)) return 'auto'
+  return normalized
 }
 
 function normalizeChannelRoutingMode(value: unknown): ChannelRoutingMode {
@@ -680,6 +696,7 @@ export function normalizeAudioProcessingSettings(
       ? settings.volumeNormalization
       : 'off'
   const dsdOutputMode: DsdOutputMode =
+    settings?.dsdOutputMode === 'auto' ||
     settings?.dsdOutputMode === 'pcm' ||
     settings?.dsdOutputMode === 'dop' ||
     settings?.dsdOutputMode === 'native'

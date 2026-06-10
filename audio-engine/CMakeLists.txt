@@ -52,7 +52,9 @@ add_library(twilight_audio_engine SHARED
   decoder/DopPacker.cpp
   decoder/DsdReader.cpp
   decoder/FFmpegDecoder.cpp
+  decoder/SacdIsoDemuxer.cpp
   devices/DeviceManager.cpp
+  dsp/ChannelRouter.cpp
   dsp/ConvolverProcessor.cpp
   dsp/CrossfeedProcessor.cpp
   dsp/DspChain.cpp
@@ -211,6 +213,7 @@ if(TAE_BUILD_TESTS)
 
   add_executable(twilight_dsp_tests
     tests/dsp_tests.cpp
+    dsp/ChannelRouter.cpp
     dsp/ConvolverProcessor.cpp
     dsp/CrossfeedProcessor.cpp
     dsp/DspChain.cpp
@@ -225,6 +228,7 @@ if(TAE_BUILD_TESTS)
   add_executable(twilight_metadata_tests
     metadata/metadata_tests.cpp
     metadata/AudioMetadataService.cpp
+    decoder/SacdIsoDemuxer.cpp
     core/AudioTypes.cpp
   )
   target_include_directories(twilight_metadata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -372,6 +376,7 @@ if(TAE_BUILD_TESTS)
     core/TwilightAudioEngine.cpp
     decoder/DopPacker.cpp
     decoder/DsdReader.cpp
+    dsp/ChannelRouter.cpp
     dsp/ConvolverProcessor.cpp
     dsp/CrossfeedProcessor.cpp
     dsp/DspChain.cpp

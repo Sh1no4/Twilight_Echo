@@ -165,6 +165,7 @@ class AudioPipeline {
   DspStatus dspStatus_;
   AudioStreamInfo stream_;
   AudioFormat outputFormat_;
+  AudioFormat decodeFormat_;
   QueueItem currentItem_;
   std::string backendId_;
   std::string deviceName_;
@@ -187,6 +188,8 @@ class AudioPipeline {
   std::string dsdFallbackReason_;
   bool rerouteInProgress_ = false;
   std::string outputEventMessage_;
+  std::vector<float> routingScratch_;
+  std::vector<float> preloadRoutingScratch_;
 };
 
 }  // namespace twilight::audio

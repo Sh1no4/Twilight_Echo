@@ -56,6 +56,7 @@ interface AudioProcessingSettings {
   replayGainPreamp: number
   replayGainFallback: number
   replayGainClip: boolean
+  convolverEnabled: boolean
   convolverIrPath: string
   crossfeedEnabled: boolean
   crossfeedStrength: number

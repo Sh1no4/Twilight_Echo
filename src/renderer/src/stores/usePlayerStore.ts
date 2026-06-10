@@ -9,6 +9,7 @@ import type {
   PlaybackResumeMode
 } from '../types/settings'
 import { extractDominantColor } from '../utils/colorExtractor'
+import { shouldUseNativePlaybackTarget } from '../utils/playbackRouting'
 import { useNcmStore } from './useNcmStore'
 import { useSettingsStore } from './useSettingsStore'
 
@@ -178,7 +179,7 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   fftEnabled: true,
   fftResolution: 64,
   highResolution: true,
-  dsdToPcm: true,
+  dsdToPcm: false,
   dsdOutputMode: 'auto',
   sacdProgramMode: 'auto',
   eqEnabled: false,
@@ -336,13 +337,7 @@ async function stopNativeAudio(): Promise<void> {
 }
 
 function shouldUseNativePlayback(track: Track, target: string): boolean {
-  return (
-    exclusiveMode.value &&
-    getTrackSource(track) === 'local' &&
-    !/^https?:\/\//i.test(target) &&
-    !/^blob:/i.test(target) &&
-    !/^data:/i.test(target)
-  )
+  return shouldUseNativePlaybackTarget(getTrackSource(track), target)
 }
 
 async function createPlayableUrl(
@@ -539,7 +534,7 @@ function normalizeNativePlaybackInfo(info: NativePlaybackInfo): NativePlaybackIn
 }
 
 function getTrackAudioSource(track: Track): string {
-  return track.streamUrl || track.filePath
+  return track.subTrack || track.streamUrl || track.filePath
 }
 
 function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {

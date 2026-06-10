@@ -10,6 +10,7 @@ export interface Track {
   filePath: string
   fileName: string
   dir?: string
+  subTrack?: string
   duration: number
   size: number
   cover: string | null

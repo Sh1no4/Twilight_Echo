@@ -77,6 +77,7 @@ class AsioBackend final : public IOutputBackend {
   std::atomic<bool> running_{false};
   std::vector<float> renderScratch_;
   std::vector<uint8_t> typedRenderScratch_;
+  std::chrono::high_resolution_clock::time_point lastRenderTime_{};
 };
 
 bool asioBackendAvailable();

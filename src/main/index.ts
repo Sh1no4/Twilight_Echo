@@ -1,4 +1,4 @@
-﻿import {
+import {
   app,
   shell,
   BrowserWindow,
@@ -175,8 +175,23 @@ function normalizePlaybackResumeMode(mode: unknown): PlaybackResumeMode {
     : DEFAULT_SETTINGS.playbackResumeMode
 }
 
+function isDefaultAudioDeviceAlias(device: string): boolean {
+  const normalized = device.trim()
+  const lower = normalized.toLowerCase()
+  return (
+    lower === 'auto' ||
+    lower === 'default' ||
+    lower === 'system default' ||
+    lower === 'system-default' ||
+    normalized === '系统默认'
+  )
+}
+
 function normalizeAudioDevice(device: unknown): string {
-  return typeof device === 'string' && device.trim() ? device.trim() : DEFAULT_SETTINGS.audioDevice
+  if (typeof device !== 'string') return DEFAULT_SETTINGS.audioDevice
+  const normalized = device.trim()
+  if (!normalized || isDefaultAudioDeviceAlias(normalized)) return DEFAULT_SETTINGS.audioDevice
+  return normalized
 }
 
 function normalizeChannelRoutingMode(value: unknown): ChannelRoutingMode {
@@ -438,7 +453,8 @@ const SUPPORTED_EXTENSIONS = [
   '.wv',
   '.dsf',
   '.dff',
-  '.mqa'
+  '.mqa',
+  '.iso'
 ]
 
 const COVER_NAMES = [
@@ -517,9 +533,7 @@ async function collectFilesAsync(dirPath: string): Promise<FileEntry[]> {
       const fullPath = join(dirPath, entry)
       try {
         const st = statSync(fullPath)
-        if (st.isDirectory()) {
-          results.push(...(await collectFilesAsync(fullPath)))
-        } else if (st.isFile()) {
+        if (st.isFile()) {
           const ext = extname(entry).toLowerCase()
           if (SUPPORTED_EXTENSIONS.includes(ext)) {
             results.push({
@@ -544,7 +558,37 @@ async function collectFilesAsync(dirPath: string): Promise<FileEntry[]> {
   return results
 }
 
-async function parseTrack(file: FileEntry): Promise<unknown> {
+async function parseTrack(file: FileEntry): Promise<unknown[]> {
+  const ext = file.fileName.toLowerCase()
+  if (ext.endsWith('.iso')) {
+    try {
+      const meta = audioEngineManager?.getMetadata(file.fullPath)
+      if (meta && meta.isoTracks && meta.isoTracks.length > 0) {
+        return meta.isoTracks.map(isoTrack => {
+          return {
+            id: randomUUID(),
+            title: isoTrack.title || 'Unknown Track',
+            artist: isoTrack.artist || 'Unknown Artist',
+            album: isoTrack.album || 'Unknown Album',
+            filePath: file.fullPath,
+            fileName: file.fileName,
+            dir: file.dir,
+            duration: Math.round(isoTrack.duration || 0),
+            size: file.size,
+            cover: findCoverInDir(file.dir),
+            lyrics: findLyricsInDir(file.dir, file.fileName),
+            format: isoTrack.container || 'SACD ISO',
+            sampleRate: isoTrack.sampleRate,
+            bitDepth: isoTrack.bitDepth || 1,
+            subTrack: isoTrack.source
+          }
+        })
+      }
+    } catch {
+      /* fallback below */
+    }
+  }
+
   const id = randomUUID()
   try {
     const meta = await parseFile(file.fullPath, { skipCovers: false })
@@ -571,7 +615,7 @@ async function parseTrack(file: FileEntry): Promise<unknown> {
 
     const lyrics = findLyricsInDir(file.dir, file.fileName)
 
-    return {
+    return [{
       id,
       title: title || fileName.title,
       artist: artist || fileName.artist,
@@ -587,10 +631,10 @@ async function parseTrack(file: FileEntry): Promise<unknown> {
       sampleRate: meta.format.sampleRate,
       bitrate: meta.format.bitrate,
       bitDepth: meta.format.bitsPerSample
-    }
+    }]
   } catch {
     const fileName = getNameFromFile(file.fullPath)
-    return {
+    return [{
       id,
       title: fileName.title,
       artist: fileName.artist,
@@ -602,7 +646,7 @@ async function parseTrack(file: FileEntry): Promise<unknown> {
       size: file.size,
       cover: findCoverInDir(file.dir),
       lyrics: findLyricsInDir(file.dir, file.fileName)
-    }
+    }]
   }
 }
 
@@ -618,7 +662,7 @@ async function scanDirectory(
   for (let i = 0; i < files.length; i += batchSize) {
     const batch = files.slice(i, i + batchSize)
     const batchResults = await Promise.all(batch.map(parseTrack))
-    results.push(...batchResults)
+    results.push(...batchResults.flat())
 
     if (onProgress) {
       onProgress(results.length, total)

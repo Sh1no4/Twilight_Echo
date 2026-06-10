@@ -768,6 +768,18 @@ void AsioBackend::renderBuffer(long bufferIndex) {
   const int outputChannels = std::max(1, openConfig_.format.channelCount);
   const size_t frames = static_cast<size_t>(std::max<long>(1, bufferSizeFrames_));
 
+  const auto now = std::chrono::high_resolution_clock::now();
+  if (lastRenderTime_.time_since_epoch().count() > 0) {
+    const double elapsedMs = std::chrono::duration<double, std::milli>(now - lastRenderTime_).count();
+    const double expectedMs = static_cast<double>(frames) * 1000.0 / std::max(1.0, static_cast<double>(outputFormat.sampleRate));
+    if (expectedMs > 0 && elapsedMs > expectedMs * 1.5) {
+      std::lock_guard lock(mutex_);
+      ++diagnostics_.sessionUnderrunCount;
+      ++diagnostics_.lifetimeUnderrunCount;
+    }
+  }
+  lastRenderTime_ = now;
+
   if (typedCallback && outputConfig.routingMode == ChannelRoutingMode::Auto && sourceChannels == outputChannels &&
       actualOutputChannelFormatsMatch && host_->outputSampleFormat(0) == outputFormat.sampleFormat &&
       audioFormatBytesPerFrame(outputFormat) > 0) {
@@ -807,24 +819,8 @@ void AsioBackend::renderBuffer(long bufferIndex) {
     const size_t stride = bytesPerSample(sampleFormat);
     for (size_t frame = 0; frame < frames; ++frame) {
       float sample = 0.0f;
-      switch (outputConfig.routingMode) {
-        case ChannelRoutingMode::MonoToStereo:
-        case ChannelRoutingMode::MonoToMultichannel:
-          if (channel < 2) sample = renderScratch_[frame * static_cast<size_t>(sourceChannels)];
-          break;
-        case ChannelRoutingMode::Stereo:
-        case ChannelRoutingMode::StereoTo51:
-        case ChannelRoutingMode::StereoTo71:
-          if (channel < 2 && sourceChannels > channel) {
-            sample = renderScratch_[frame * static_cast<size_t>(sourceChannels) + static_cast<size_t>(channel)];
-          }
-          break;
-        case ChannelRoutingMode::Auto:
-        default:
-          if (channel < sourceChannels) {
-            sample = renderScratch_[frame * static_cast<size_t>(sourceChannels) + static_cast<size_t>(channel)];
-          }
-          break;
+      if (channel < sourceChannels) {
+        sample = renderScratch_[frame * static_cast<size_t>(sourceChannels) + static_cast<size_t>(channel)];
       }
       writePackedSample(sample, sampleFormat, output + frame * stride);
     }

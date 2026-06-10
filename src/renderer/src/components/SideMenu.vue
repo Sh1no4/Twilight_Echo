@@ -2,15 +2,9 @@
 import { computed, ref } from 'vue'
 import ImportDialog from './ImportDialog.vue'
 
-const props = withDefaults(
-  defineProps<{
-    open: boolean
-    bottomOffset?: number
-  }>(),
-  {
-    bottomOffset: 0
-  }
-)
+const props = defineProps<{
+  open: boolean
+}>()
 
 const emit = defineEmits<{
   selectView: [category: string, filter: string | null]
@@ -35,9 +29,7 @@ const activeKey = ref('allSongs')
 const scanning = ref(false)
 const showImportDialog = ref(false)
 
-const menuStyle = computed(() => ({
-  '--menu-bottom-offset': `${Math.max(0, props.bottomOffset)}px`
-}))
+// removed menuStyle
 
 function selectItem(key: string): void {
   activeKey.value = key
@@ -50,7 +42,7 @@ function handleImportClick(): void {
 </script>
 
 <template>
-  <div class="side-menu" :class="{ open }" :style="menuStyle">
+  <div class="side-menu" :class="{ open }">
     <nav class="menu-items">
       <div class="menu-nav">
         <div
@@ -115,18 +107,18 @@ function handleImportClick(): void {
   width: 100%;
   min-width: 132px;
   max-width: 216px;
-  padding: 10px 6px calc(10px + var(--menu-bottom-offset, 0px)) 4px;
+  padding: 10px 6px 10px 4px;
 }
 
 .menu-nav {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  flex: 1;
 }
 
 .menu-bottom {
   flex-shrink: 0;
+  margin-top: auto;
 }
 
 .menu-item {

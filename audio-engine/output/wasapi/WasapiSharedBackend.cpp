@@ -1,5 +1,7 @@
 #include "WasapiSharedBackend.h"
 
+#include "WasapiCommon.h"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -364,7 +366,7 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
     return failAfterCom();
   }
 
-  if (deviceId.empty() || deviceId == "auto") {
+  if (wasapi::isDefaultDeviceAlias(deviceId)) {
     hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &impl_->device);
   } else {
     const std::wstring id = Impl::utf8ToWide(deviceId);

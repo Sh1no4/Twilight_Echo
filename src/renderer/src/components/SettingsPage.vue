@@ -597,6 +597,14 @@ function updateAudioProcessing(patch: Partial<AudioProcessingSettings>): void {
   void setAudioProcessing(patch)
 }
 
+function enableDspModule(patch: Partial<AudioProcessingSettings>): void {
+  updateAudioProcessing({ dspEnabled: true, ...patch })
+}
+
+function toggleDspModule(enabled: boolean, patch: Partial<AudioProcessingSettings>): void {
+  updateAudioProcessing(enabled ? { dspEnabled: true, ...patch } : patch)
+}
+
 function setReplayGainFromSelect(event: Event): void {
   const target = event.target as HTMLSelectElement
   void setReplayGainMode(target.value as VolumeNormalizationMode)
@@ -604,12 +612,12 @@ function setReplayGainFromSelect(event: Event): void {
 
 function setReplayGainPreamp(event: Event): void {
   const value = Number((event.target as HTMLInputElement).value)
-  updateAudioProcessing({ replayGainPreamp: value })
+  enableDspModule({ replayGainPreamp: value })
 }
 
 function setReplayGainFallback(event: Event): void {
   const value = Number((event.target as HTMLInputElement).value)
-  updateAudioProcessing({ replayGainFallback: value })
+  enableDspModule({ replayGainFallback: value })
 }
 
 function setCrossfeedFromInput(event: Event): void {
@@ -648,6 +656,19 @@ function setVolumeFromInput(event: Event): void {
 
 function openEqualizerFromDsp(): void {
   emit('openEqualizer')
+}
+
+function toggleEqFromDsp(): void {
+  const enabled = !audioProcessing.value.eqEnabled
+  toggleDspModule(enabled, { eqEnabled: enabled })
+}
+
+function toggleReplayGainClip(): void {
+  enableDspModule({ replayGainClip: !audioProcessing.value.replayGainClip })
+}
+
+function toggleClipGuard(): void {
+  updateAudioProcessing({ clipGuard: !audioProcessing.value.clipGuard })
 }
 
 onMounted(async () => {
@@ -1298,9 +1319,7 @@ onMounted(async () => {
                         :class="{ active: audioProcessing.replayGainClip }"
                         role="switch"
                         :aria-checked="audioProcessing.replayGainClip"
-                        @click="
-                          updateAudioProcessing({ replayGainClip: !audioProcessing.replayGainClip })
-                        "
+                        @click="toggleReplayGainClip"
                       >
                         <span class="toggle-knob"></span>
                       </button>
@@ -1361,7 +1380,7 @@ onMounted(async () => {
                       :class="{ active: audioProcessing.eqEnabled }"
                       role="switch"
                       :aria-checked="audioProcessing.eqEnabled"
-                      @click="updateAudioProcessing({ eqEnabled: !audioProcessing.eqEnabled })"
+                      @click="toggleEqFromDsp"
                     >
                       <span class="toggle-knob"></span>
                     </button>
@@ -1377,10 +1396,23 @@ onMounted(async () => {
                     <i class="pi pi-headphones"></i>
                   </span>
                   <div class="dsp-card-copy">
-                    <span class="dsp-card-title">耳机校正</span>
-                    <span class="dsp-card-desc">OPRA 预设库待接入</span>
+                    <span class="dsp-card-title">耳机校正 / 房间校正</span>
+                    <span class="dsp-card-desc">{{ convolverPathLabel }}</span>
                   </div>
-                  <span class="dsp-card-pill">预留</span>
+                  <div class="dsp-card-actions">
+                    <button class="text-button dsp-card-button" type="button" @click="selectImpulseResponse">
+                      <i class="pi pi-folder-open"></i>
+                      IR
+                    </button>
+                    <button
+                      class="icon-button subtle"
+                      title="卸载 IR"
+                      :disabled="!audioProcessing.convolverIrPath"
+                      @click="clearImpulseResponse"
+                    >
+                      <i class="pi pi-times"></i>
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1486,7 +1518,7 @@ onMounted(async () => {
                   :class="{ active: audioProcessing.clipGuard }"
                   role="switch"
                   :aria-checked="audioProcessing.clipGuard"
-                  @click="updateAudioProcessing({ clipGuard: !audioProcessing.clipGuard })"
+                  @click="toggleClipGuard"
                 >
                   <span class="toggle-knob"></span>
                 </button>

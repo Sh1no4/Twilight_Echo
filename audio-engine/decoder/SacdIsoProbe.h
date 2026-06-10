@@ -69,11 +69,16 @@ struct SacdDstProviderSelection {
 };
 
 inline std::string sacdIsoExtensionOf(const std::string& source) {
-  const size_t slash = source.find_last_of("/\\");
-  const size_t dot = source.find_last_of('.');
+  std::string cleanSource = source;
+  const size_t qm = cleanSource.find('?');
+  if (qm != std::string::npos) {
+    cleanSource = cleanSource.substr(0, qm);
+  }
+  const size_t slash = cleanSource.find_last_of("/\\");
+  const size_t dot = cleanSource.find_last_of('.');
   if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) return "";
 
-  std::string extension = source.substr(dot + 1);
+  std::string extension = cleanSource.substr(dot + 1);
   std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
     return static_cast<char>(std::tolower(ch));
   });
@@ -203,7 +208,13 @@ inline SacdIsoEntryProbe probeSacdIsoEntry(const std::string& source) {
   probe.codec = kSacdIsoCodecName;
   probe.container = kSacdIsoContainerName;
 
-  std::ifstream file(source, std::ios::binary);
+  std::string cleanSource = source;
+  const size_t qm = cleanSource.find('?');
+  if (qm != std::string::npos) {
+    cleanSource = cleanSource.substr(0, qm);
+  }
+
+  std::ifstream file(cleanSource, std::ios::binary);
   if (!file) {
     probe.reasonCode = kSacdIsoOpenFailedReasonCode;
     probe.reason = "Unable to open ISO image";

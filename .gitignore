@@ -24,12 +24,14 @@ audio-engine/vcpkg_installed/
 resources/audio-engine/*.dll
 resources/audio-engine/*.node
 audio-engine/third_party/ASIOSDK/
+resources/audio-engine/
 
 # Test and coverage output
 coverage/
 .nyc_output/
 playwright-report/
 test-results/
+
 
 # Caches
 .cache/
@@ -67,6 +69,8 @@ Desktop.ini
 .codex-tools/
 .claude/
 .agents/
+.gemini/
+
 
 # Temporary files
 tmp/
