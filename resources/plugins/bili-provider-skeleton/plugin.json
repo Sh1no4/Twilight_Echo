@@ -1,0 +1,15 @@
+{
+  "id": "com.twilightecho.examples.bili-provider-skeleton",
+  "name": "Bilibili Provider Skeleton",
+  "version": "0.1.0",
+  "description": "Phase 2 MediaProvider skeleton for search and playback URL dogfooding.",
+  "author": "Twilight Echo",
+  "license": "Apache-2.0",
+  "type": ["provider"],
+  "main": "index.mjs",
+  "engines": {
+    "twilightEcho": ">=0.20.0"
+  },
+  "apiVersion": 1,
+  "permissions": ["network"]
+}

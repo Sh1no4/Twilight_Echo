@@ -32,6 +32,8 @@ import {
   type EqMode,
   type EqualizerBand
 } from './audioEngineManager'
+import { TwilightPluginManager } from './plugins/manager'
+import type { TwilightPluginUninstallOptions } from './plugins/types'
 
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'system' | 'pureWhite' | 'dark' | 'aurora'
@@ -335,6 +337,7 @@ async function getDirectorySize(directory: string): Promise<number> {
 
 let appSettings = readAppSettings()
 const launchSettings = { ...appSettings }
+let pluginManager: TwilightPluginManager | null = null
 
 if (!appSettings.hardwareAcceleration) {
   app.disableHardwareAcceleration()
@@ -1033,14 +1036,17 @@ function setupAudioEngineIpc(): void {
 
   audioEngineManager.on('property-change', ({ name, data }) => {
     mainWindow?.webContents.send('audioEngine:property-change', { name, data })
+    void pluginManager?.broadcastEvent(`audioEngine:${name}`, data)
   })
 
   audioEngineManager.on('end-file', ({ reason }) => {
     mainWindow?.webContents.send('audioEngine:end-file', { reason })
+    void pluginManager?.broadcastEvent('audioEngine:end-file', { reason })
   })
 
   audioEngineManager.on('start-file', () => {
     mainWindow?.webContents.send('audioEngine:start-file')
+    void pluginManager?.broadcastEvent('audioEngine:start-file', null)
   })
 
   audioEngineManager.on('error', (err: Error) => {
@@ -1050,10 +1056,12 @@ function setupAudioEngineIpc(): void {
 
   audioEngineManager.on('ready', () => {
     mainWindow?.webContents.send('audioEngine:ready')
+    void pluginManager?.broadcastEvent('audioEngine:ready', null)
   })
 
   audioEngineManager.on('playback-info', (info) => {
     mainWindow?.webContents.send('audioEngine:playback-info', info)
+    void pluginManager?.broadcastEvent('player:playback-info', info)
   })
 
   function requireAudioEngine(): AudioEngineManager {
@@ -1332,6 +1340,78 @@ function setupAudioEngineIpc(): void {
     }
   })
 }
+
+function setupPluginIpc(): void {
+  if (pluginManager) return
+  pluginManager = new TwilightPluginManager({
+    appVersion: app.getVersion(),
+    hostEntry: join(__dirname, 'pluginHost.js'),
+    getPlaybackInfo: async () => audioEngineManager?.getPlaybackInfo() ?? null,
+    player: {
+      play: async () => {
+        await audioEngineManager?.togglePause()
+      },
+      pause: async () => {
+        await audioEngineManager?.pause()
+      },
+      togglePause: async () => {
+        await audioEngineManager?.togglePause()
+      },
+      stop: async () => {
+        await audioEngineManager?.stop()
+      },
+      next: async () => {
+        await audioEngineManager?.next()
+      },
+      previous: async () => {
+        await audioEngineManager?.previous()
+      }
+    }
+  })
+
+  void pluginManager.initialize().catch((error) => {
+    console.error('[插件系统] 初始化失败：', error)
+  })
+
+  pluginManager.on('changed', () => {
+    mainWindow?.webContents.send('plugins:changed')
+  })
+
+  ipcMain.handle('plugins:list', async () => {
+    return await pluginManager!.list()
+  })
+  ipcMain.handle('plugins:installFromPath', async (_event, sourcePath: string) => {
+    return await pluginManager!.installFromPath(sourcePath)
+  })
+  ipcMain.handle('plugins:chooseAndInstall', async () => {
+    return await pluginManager!.chooseAndInstall()
+  })
+  ipcMain.handle('plugins:enable', async (_event, id: string) => {
+    return await pluginManager!.enable(id)
+  })
+  ipcMain.handle('plugins:disable', async (_event, id: string) => {
+    return await pluginManager!.disable(id)
+  })
+  ipcMain.handle('plugins:uninstall', async (_event, id: string, options?: TwilightPluginUninstallOptions) => {
+    await pluginManager!.uninstall(id, options)
+    return true
+  })
+  ipcMain.handle('plugins:openLog', async (_event, id: string) => {
+    await pluginManager!.openLog(id)
+  })
+  ipcMain.handle('plugins:getLog', async (_event, id: string) => {
+    return await pluginManager!.getLog(id)
+  })
+  ipcMain.handle('providers:list', async () => {
+    return pluginManager!.listProviders()
+  })
+  ipcMain.handle(
+    'providers:call',
+    async (_event, providerId: string, method: Parameters<TwilightPluginManager['callProvider']>[1], args: unknown[]) => {
+      return await pluginManager!.callProvider(providerId, method, Array.isArray(args) ? args : [])
+    }
+  )
+}
 async function setupNcmApi(): Promise<void> {
   try {
     const tokenPath = join(tmpdir(), 'anonymous_token')
@@ -1527,6 +1607,7 @@ app.whenReady().then(() => {
   applyRuntimeSettings()
 
   setupAudioEngineIpc()
+  setupPluginIpc()
   setupNcmApi()
 
   app.on('activate', function () {
@@ -1547,8 +1628,10 @@ app.on('before-quit', () => {
 app.on('will-quit', () => {
   unregisterPlayerShortcuts()
   destroyTray()
+  void pluginManager?.destroy()
   audioEngineManager?.destroy()
   audioEngineManager = null
+  pluginManager = null
   if (ncmServer) {
     ncmServer.close()
     ncmServer = null

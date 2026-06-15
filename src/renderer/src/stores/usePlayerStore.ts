@@ -10,7 +10,7 @@ import type {
 } from '../types/settings'
 import { extractDominantColor } from '../utils/colorExtractor'
 import { shouldUseNativePlaybackTarget } from '../utils/playbackRouting'
-import { useNcmStore } from './useNcmStore'
+import { useMediaProviders } from '../providers'
 import { useSettingsStore } from './useSettingsStore'
 
 type PlayMode = 'sequential' | 'repeat' | 'shuffle'
@@ -672,9 +672,8 @@ watch(
     const track = currentTrack.value
     if (!track || track.id !== id || track.id === prevId) return
 
-    if (track.source === 'ncm' && track.ncmSongId && track.translatedLyrics == null) {
-      const { fetchLyric } = useNcmStore()
-      const lyricData = await fetchLyric(track.ncmSongId)
+    if (getTrackSource(track) !== 'local' && track.translatedLyrics == null) {
+      const lyricData = await useMediaProviders().resolveLyrics(track)
       if (currentTrack.value?.id === track.id && (lyricData.lyrics || lyricData.translatedLyrics)) {
         currentTrack.value = {
           ...currentTrack.value,
@@ -789,8 +788,10 @@ function handlePlaybackEnded(): void {
   next()
 }
 
-function getTrackSource(track: Track): 'local' | 'ncm' {
-  return track.source === 'ncm' ? 'ncm' : 'local'
+function getTrackSource(track: Track): string {
+  if (track.source) return track.source
+  const separatorIndex = track.id.indexOf(':')
+  return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
 }
 
 async function resolvePlayTarget(track: Track): Promise<string> {
@@ -802,14 +803,9 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     return track.streamUrl
   }
 
-  if (!track.ncmSongId) {
-    throw new Error('Missing NetEase song ID, cannot play')
-  }
-
-  const { getSongStreamUrl } = useNcmStore()
-  const streamUrl = await getSongStreamUrl(track.ncmSongId)
+  const streamUrl = await useMediaProviders().resolvePlaybackUrl(track)
   if (!streamUrl) {
-    throw new Error('Unable to resolve NetEase stream URL')
+    throw new Error(`Unable to resolve ${getTrackSource(track)} stream URL`)
   }
 
   track.streamUrl = streamUrl

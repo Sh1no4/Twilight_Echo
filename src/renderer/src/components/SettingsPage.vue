@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
+import PluginSettingsPanel from './PluginSettingsPanel.vue'
 import type {
   AppSettings,
   AppTheme,
@@ -25,6 +26,7 @@ const tabs = [
   { key: 'playback', label: '播放', icon: 'pi pi-volume-up' },
   { key: 'dsp', label: 'DSP', icon: 'pi pi-sliders-v' },
   { key: 'cache', label: '缓存', icon: 'pi pi-database' },
+  { key: 'plugins', label: '插件', icon: 'pi pi-box' },
   { key: 'performance', label: '性能', icon: 'pi pi-bolt' },
   { key: 'appearance', label: '外观', icon: 'pi pi-palette' },
   { key: 'shortcuts', label: '快捷键', icon: 'pi pi-keyboard' },
@@ -1656,6 +1658,11 @@ onMounted(async () => {
               </div>
             </div>
           </div>
+        </section>
+
+        <section v-if="activeTab === 'plugins'" class="settings-section plugin-settings-section">
+          <h2>插件</h2>
+          <PluginSettingsPanel />
         </section>
 
         <section v-if="activeTab === 'performance'" class="settings-section">

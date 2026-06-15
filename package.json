@@ -20,6 +20,7 @@
     "stage:audio-engine": "node scripts/stage-audio-engine.cjs",
     "test:playback-routing": "node --experimental-strip-types --test src/renderer/src/utils/playbackRouting.test.ts",
     "test:audio-manager": "node --experimental-strip-types --test src/main/audioEngineManager.test.ts",
+    "test:plugins": "node --experimental-strip-types --test src/main/plugins/manifest.test.ts src/renderer/src/providers/mediaProvider.test.ts",
     "test:audio-engine": "ctest --test-dir audio-engine/build/default --output-on-failure",
     "test:audio-engine:mingw": "ctest --test-dir audio-engine/build/mingw-static --output-on-failure",
     "test:no-real-device": "npm run configure:audio-engine:mingw && npm run build:audio-engine:mingw && npm run test:audio-engine:mingw && npm run test:audio-manager && npm run test:playback-routing && npm run typecheck && npm run build",
@@ -38,6 +39,7 @@
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@neteasecloudmusicapienhanced/api": "^4.32.0",
+    "extract-zip": "^2.0.1",
     "music-metadata": "^11.12.3",
     "primeicons": "^7.0.0"
   },

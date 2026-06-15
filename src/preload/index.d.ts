@@ -32,7 +32,25 @@ type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'system' | 'pureWhite' | 'dark' | 'aurora'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
-type TrackSource = 'local' | 'ncm'
+type BuiltInTrackSource = 'local' | 'ncm'
+type TrackSource = BuiltInTrackSource | (string & {})
+type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
+type TwilightPluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
+type TwilightMediaProviderCapability =
+  | 'search'
+  | 'playbackUrl'
+  | 'lyrics'
+  | 'cover'
+  | 'playlist'
+  | 'library'
+  | 'login'
+type TwilightMediaProviderMethod =
+  | 'getPlaybackUrl'
+  | 'getLyrics'
+  | 'searchSongs'
+  | 'searchPlaylists'
+  | 'searchArtists'
+  | 'fetchPlaylistTracks'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type ChannelRoutingMode =
@@ -255,6 +273,48 @@ interface AudioDeviceOption {
   dopCarrierFormats?: string[]
   pathKind?: string
   capabilityReason?: string
+}
+
+interface TwilightPluginDescriptor {
+  id: string
+  name: string
+  version: string
+  description: string
+  author: string
+  license: string
+  type: TwilightPluginType[]
+  main?: string
+  binary?: Record<string, string>
+  engines: {
+    twilightEcho: string
+  }
+  apiVersion: number
+  permissions: string[]
+  status: TwilightPluginStatus
+  enabled: boolean
+  error: string | null
+  isDsp: boolean
+  source: 'directory' | 'tep' | 'scan'
+  installedAt: string | null
+  updatedAt: string | null
+  paths: {
+    root: string
+    versionRoot: string
+    manifestPath: string
+    dataDir: string
+    logPath: string
+  }
+}
+
+interface TwilightPluginInstallResult {
+  plugin: TwilightPluginDescriptor
+  warning: string
+}
+
+interface TwilightMediaProviderRegistration {
+  id: string
+  name: string
+  capabilities: TwilightMediaProviderCapability[]
 }
 
 interface OutputConfig {
@@ -538,6 +598,21 @@ interface WindowAPI {
     clearCache: () => Promise<number>
     onChanged: (cb: (snapshot: SettingsSnapshot) => void) => () => void
     onPlayerShortcut: (cb: (action: PlayerShortcutAction) => void) => () => void
+  }
+  plugins: {
+    list: () => Promise<TwilightPluginDescriptor[]>
+    installFromPath: (path: string) => Promise<TwilightPluginInstallResult>
+    chooseAndInstall: () => Promise<TwilightPluginInstallResult | null>
+    enable: (id: string) => Promise<TwilightPluginDescriptor>
+    disable: (id: string) => Promise<TwilightPluginDescriptor>
+    uninstall: (id: string, options?: { removeData?: boolean }) => Promise<void>
+    openLog: (id: string) => Promise<void>
+    getLog: (id: string) => Promise<string>
+    onChanged: (cb: () => void) => () => void
+  }
+  providers: {
+    list: () => Promise<TwilightMediaProviderRegistration[]>
+    call: (providerId: string, method: TwilightMediaProviderMethod, args: unknown[]) => Promise<unknown>
   }
 }
 

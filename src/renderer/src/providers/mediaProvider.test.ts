@@ -1,0 +1,51 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+const { MediaProviderRegistry, getProviderLocalId, getTrackProviderId } = (await import(
+  new URL('./mediaProvider.ts', import.meta.url).href
+)) as typeof import('./mediaProvider')
+
+const { getNcmSongId } = (await import(
+  new URL('./ncmTrack.ts', import.meta.url).href
+)) as typeof import('./ncmTrack')
+
+test('extracts provider prefixes from source or track id', () => {
+  assert.equal(getTrackProviderId({ id: 'bili:BV1xx', source: undefined }), 'bili')
+  assert.equal(getTrackProviderId({ id: 'ignored:123', source: 'ncm' }), 'ncm')
+  assert.equal(getProviderLocalId('bili:BV1xx', 'bili'), 'BV1xx')
+  assert.equal(getProviderLocalId('ncm:12345', 'bili'), null)
+})
+
+test('resolves playback through the matching provider', async () => {
+  const registry = new MediaProviderRegistry()
+  registry.register({
+    id: 'bili',
+    name: 'Bilibili',
+    source: 'plugin',
+    capabilities: ['playbackUrl'],
+    getPlaybackUrl: async (track) => `https://example.test/${track.id}.mp3`
+  })
+
+  assert.equal(
+    await registry.resolvePlaybackUrl({
+      id: 'bili:BV1xx',
+      title: 'Song',
+      artist: 'Artist',
+      album: 'Album',
+      filePath: 'bili:BV1xx',
+      fileName: 'Song',
+      duration: 1,
+      size: 0,
+      cover: null,
+      lyrics: null,
+      source: 'bili'
+    }),
+    'https://example.test/bili:BV1xx.mp3'
+  )
+})
+
+test('normalizes NetEase song ids from legacy and prefixed tracks', () => {
+  assert.equal(getNcmSongId({ id: 'ncm:123', ncmSongId: undefined }), 123)
+  assert.equal(getNcmSongId({ id: 'ncm:123', ncmSongId: 456 }), 456)
+  assert.equal(getNcmSongId({ id: 'bili:123', ncmSongId: undefined }), null)
+})

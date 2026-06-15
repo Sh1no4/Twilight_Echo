@@ -24,4 +24,5 @@ test('renderer-direct targets stay on renderer audio path', () => {
   assert.equal(shouldUseNativePlaybackTarget('local', 'blob:twilight-track'), false)
   assert.equal(shouldUseNativePlaybackTarget('local', 'data:audio/mpeg;base64,AAAA'), false)
   assert.equal(shouldUseNativePlaybackTarget('ncm', 'D:\\cache\\track.flac'), false)
+  assert.equal(shouldUseNativePlaybackTarget('bili', 'D:\\cache\\track.flac'), false)
 })

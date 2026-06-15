@@ -1,6 +1,7 @@
 import type { PlaybackResumeMode } from './settings'
 
-export type TrackSource = 'local' | 'ncm'
+export type BuiltInTrackSource = 'local' | 'ncm'
+export type TrackSource = BuiltInTrackSource | (string & {})
 
 export interface Track {
   id: string

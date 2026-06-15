@@ -11,7 +11,25 @@ type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'system' | 'pureWhite' | 'dark' | 'aurora'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
-type TrackSource = 'local' | 'ncm'
+type BuiltInTrackSource = 'local' | 'ncm'
+type TrackSource = BuiltInTrackSource | (string & {})
+type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
+type TwilightPluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
+type TwilightMediaProviderCapability =
+  | 'search'
+  | 'playbackUrl'
+  | 'lyrics'
+  | 'cover'
+  | 'playlist'
+  | 'library'
+  | 'login'
+type TwilightMediaProviderMethod =
+  | 'getPlaybackUrl'
+  | 'getLyrics'
+  | 'searchSongs'
+  | 'searchPlaylists'
+  | 'searchArtists'
+  | 'fetchPlaylistTracks'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type ChannelRoutingMode =
@@ -250,6 +268,48 @@ interface AudioDeviceOption {
   capabilityReason?: string
 }
 
+interface TwilightPluginDescriptor {
+  id: string
+  name: string
+  version: string
+  description: string
+  author: string
+  license: string
+  type: TwilightPluginType[]
+  main?: string
+  binary?: Record<string, string>
+  engines: {
+    twilightEcho: string
+  }
+  apiVersion: number
+  permissions: string[]
+  status: TwilightPluginStatus
+  enabled: boolean
+  error: string | null
+  isDsp: boolean
+  source: 'directory' | 'tep' | 'scan'
+  installedAt: string | null
+  updatedAt: string | null
+  paths: {
+    root: string
+    versionRoot: string
+    manifestPath: string
+    dataDir: string
+    logPath: string
+  }
+}
+
+interface TwilightPluginInstallResult {
+  plugin: TwilightPluginDescriptor
+  warning: string
+}
+
+interface TwilightMediaProviderRegistration {
+  id: string
+  name: string
+  capabilities: TwilightMediaProviderCapability[]
+}
+
 interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
@@ -451,6 +511,7 @@ const audioEnginePlaybackInfoCallbacks = new Set<AudioEnginePlaybackInfoCallback
 const playerShortcutCallbacks = new Set<(action: PlayerShortcutAction) => void>()
 const settingsChangedCallbacks = new Set<(snapshot: SettingsSnapshot) => void>()
 const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
+const pluginChangedCallbacks = new Set<() => void>()
 
 ipcRenderer.on('audioEngine:property-change', (_event, data: { name: string; data: unknown }) => {
   for (const cb of audioEngineEventCallbacks) {
@@ -503,6 +564,12 @@ ipcRenderer.on('player:shortcut', (_event, action: PlayerShortcutAction) => {
 ipcRenderer.on('settings:changed', (_event, snapshot: SettingsSnapshot) => {
   for (const cb of settingsChangedCallbacks) {
     cb(snapshot)
+  }
+})
+
+ipcRenderer.on('plugins:changed', () => {
+  for (const cb of pluginChangedCallbacks) {
+    cb()
   }
 })
 
@@ -687,6 +754,30 @@ const api = {
       playerShortcutCallbacks.add(cb)
       return () => playerShortcutCallbacks.delete(cb)
     }
+  },
+  plugins: {
+    list: (): Promise<TwilightPluginDescriptor[]> => ipcRenderer.invoke('plugins:list'),
+    installFromPath: (path: string): Promise<TwilightPluginInstallResult> =>
+      ipcRenderer.invoke('plugins:installFromPath', path),
+    chooseAndInstall: (): Promise<TwilightPluginInstallResult | null> =>
+      ipcRenderer.invoke('plugins:chooseAndInstall'),
+    enable: (id: string): Promise<TwilightPluginDescriptor> =>
+      ipcRenderer.invoke('plugins:enable', id),
+    disable: (id: string): Promise<TwilightPluginDescriptor> =>
+      ipcRenderer.invoke('plugins:disable', id),
+    uninstall: (id: string, options?: { removeData?: boolean }): Promise<void> =>
+      ipcRenderer.invoke('plugins:uninstall', id, options),
+    openLog: (id: string): Promise<void> => ipcRenderer.invoke('plugins:openLog', id),
+    getLog: (id: string): Promise<string> => ipcRenderer.invoke('plugins:getLog', id),
+    onChanged: (cb: () => void): (() => void) => {
+      pluginChangedCallbacks.add(cb)
+      return () => pluginChangedCallbacks.delete(cb)
+    }
+  },
+  providers: {
+    list: (): Promise<TwilightMediaProviderRegistration[]> => ipcRenderer.invoke('providers:list'),
+    call: (providerId: string, method: TwilightMediaProviderMethod, args: unknown[]): Promise<unknown> =>
+      ipcRenderer.invoke('providers:call', providerId, method, args)
   }
 }
 
