@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'url'
+import { deletePluginSetting, getPluginSetting, setPluginSetting } from './plugins/settingsStore'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -28,6 +29,11 @@ interface TwilightPluginContext {
     info: (message: string) => void
     warn: (message: string) => void
     error: (message: string) => void
+  }
+  settings: {
+    get: (key?: string) => Promise<unknown>
+    set: (key: string, value: unknown) => Promise<void>
+    delete: (key: string) => Promise<void>
   }
   twilight: {
     events: {
@@ -69,8 +75,44 @@ interface TwilightPluginContext {
         stylesheet?: string
       }) => Promise<void>
     }
+    internal?: {
+      ncm?: {
+        request: (path: string, cookie?: string) => Promise<unknown>
+        getCachedSong: (songId: number) => Promise<string | null>
+        cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
+      }
+    }
   }
 }
+
+const INTERNAL_NCM_PLUGIN_ID = 'com.twilightecho.provider.ncm'
+const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
+  'getPlaybackUrl',
+  'getLyrics',
+  'searchSongs',
+  'searchPlaylists',
+  'searchArtists',
+  'fetchPlaylistTracks',
+  'checkLogin',
+  'getProfile',
+  'logout',
+  'getQrKey',
+  'getQrImage',
+  'checkQrLogin',
+  'fetchUserLibrary',
+  'fetchLikedTracks',
+  'fetchRecommendSongs',
+  'fetchRecommendPlaylists',
+  'fetchPersonalFm',
+  'fetchPrivateContent',
+  'fetchArtistTopSongs',
+  'fetchArtistPlaylists',
+  'fetchUserPlaylistsByUid',
+  'fetchUserFollows',
+  'fetchUserFolloweds',
+  'likeTrack',
+  'isTrackLiked'
+]
 
 const maybeParentPort = (process as unknown as { parentPort?: ParentPort }).parentPort
 if (!maybeParentPort) {
@@ -116,7 +158,7 @@ async function activatePlugin(message: Extract<PluginHostRequest, { kind: 'activ
     if (typeof activePlugin.activate !== 'function') {
       throw new Error('插件入口必须导出 activate(context)')
     }
-    await activePlugin.activate(createContext(message.apiVersion, message.dataDir))
+    await activePlugin.activate(createContext(message.pluginId, message.apiVersion, message.dataDir))
     post({ kind: 'activated', pluginId: message.pluginId })
   } catch (error) {
     reportError(error)
@@ -139,7 +181,67 @@ async function deactivatePlugin(requestId: string): Promise<void> {
   }
 }
 
-function createContext(apiVersion: number, storagePath: string): TwilightPluginContext {
+function createContext(pluginId: string, apiVersion: number, storagePath: string): TwilightPluginContext {
+  const twilight: TwilightPluginContext['twilight'] = {
+    events: {
+      on: (eventName, callback) => {
+        const handlers = eventHandlers.get(eventName) ?? new Set()
+        handlers.add(callback)
+        eventHandlers.set(eventName, handlers)
+        post({ kind: 'api-event-subscribe', eventName })
+        return () => handlers.delete(callback)
+      }
+    },
+    player: {
+      getPlaybackInfo: () => callPlayerApi('getPlaybackInfo'),
+      play: () => callPlayerApi('play').then(() => undefined),
+      pause: () => callPlayerApi('pause').then(() => undefined),
+      togglePause: () => callPlayerApi('togglePause').then(() => undefined),
+      stop: () => callPlayerApi('stop').then(() => undefined),
+      next: () => callPlayerApi('next').then(() => undefined),
+      previous: () => callPlayerApi('previous').then(() => undefined)
+    },
+    providers: {
+      register: async (provider) => {
+        const handlers: ProviderHandler = {}
+        for (const method of PROVIDER_METHODS) {
+          if (typeof provider[method] === 'function') {
+            handlers[method] = provider[method]
+          }
+        }
+        providerHandlers.set(provider.id.trim().toLowerCase(), handlers)
+        await callProviderApi('register', {
+          id: provider.id,
+          name: provider.name,
+          capabilities: provider.capabilities
+        })
+      }
+    },
+    ui: {
+      register: (contribution) => callUiApi('registerUi', contribution).then(() => undefined),
+      onCommand: (command, handler) => {
+        const normalized = command.trim()
+        if (!normalized) throw new Error('UI command is required')
+        commandHandlers.set(normalized, handler)
+        return () => commandHandlers.delete(normalized)
+      }
+    },
+    themes: {
+      register: (theme) => callUiApi('registerTheme', theme).then(() => undefined)
+    }
+  }
+
+  if (pluginId === INTERNAL_NCM_PLUGIN_ID) {
+    twilight.internal = {
+      ncm: {
+        request: (path, cookie) => callInternalNcmApi('ncmRequest', [path, cookie]),
+        getCachedSong: (songId) => callInternalNcmApi('ncmGetCachedSong', [songId]) as Promise<string | null>,
+        cacheSong: (songId, url, fileName) =>
+          callInternalNcmApi('ncmCacheSong', [songId, url, fileName]) as Promise<string | null>
+      }
+    }
+  }
+
   return {
     apiVersion,
     storagePath,
@@ -149,55 +251,12 @@ function createContext(apiVersion: number, storagePath: string): TwilightPluginC
       warn: (message) => log('warn', message),
       error: (message) => log('error', message)
     },
-    twilight: {
-      events: {
-        on: (eventName, callback) => {
-          const handlers = eventHandlers.get(eventName) ?? new Set()
-          handlers.add(callback)
-          eventHandlers.set(eventName, handlers)
-          post({ kind: 'api-event-subscribe', eventName })
-          return () => handlers.delete(callback)
-        }
-      },
-      player: {
-        getPlaybackInfo: () => callPlayerApi('getPlaybackInfo'),
-        play: () => callPlayerApi('play').then(() => undefined),
-        pause: () => callPlayerApi('pause').then(() => undefined),
-        togglePause: () => callPlayerApi('togglePause').then(() => undefined),
-        stop: () => callPlayerApi('stop').then(() => undefined),
-        next: () => callPlayerApi('next').then(() => undefined),
-        previous: () => callPlayerApi('previous').then(() => undefined)
-      },
-      providers: {
-        register: async (provider) => {
-          providerHandlers.set(provider.id.trim().toLowerCase(), {
-            getPlaybackUrl: provider.getPlaybackUrl,
-            getLyrics: provider.getLyrics,
-            searchSongs: provider.searchSongs,
-            searchPlaylists: provider.searchPlaylists,
-            searchArtists: provider.searchArtists,
-            fetchPlaylistTracks: provider.fetchPlaylistTracks
-          })
-          await callProviderApi('register', {
-            id: provider.id,
-            name: provider.name,
-            capabilities: provider.capabilities
-          })
-        }
-      },
-      ui: {
-        register: (contribution) => callUiApi('registerUi', contribution).then(() => undefined),
-        onCommand: (command, handler) => {
-          const normalized = command.trim()
-          if (!normalized) throw new Error('UI command is required')
-          commandHandlers.set(normalized, handler)
-          return () => commandHandlers.delete(normalized)
-        }
-      },
-      themes: {
-        register: (theme) => callUiApi('registerTheme', theme).then(() => undefined)
-      }
-    }
+    settings: {
+      get: (key) => getPluginSetting(storagePath, key),
+      set: (key, value) => setPluginSetting(storagePath, key, value),
+      delete: (key) => deletePluginSetting(storagePath, key)
+    },
+    twilight
   }
 }
 
@@ -217,6 +276,13 @@ function callUiApi(
   contribution: unknown
 ): Promise<unknown> {
   return callApi('extensions', method, [contribution])
+}
+
+function callInternalNcmApi(
+  method: Extract<PluginHostResponse, { kind: 'api-call' }>['method'],
+  args: unknown[]
+): Promise<unknown> {
+  return callApi('internal', method, args)
 }
 
 function callApi(

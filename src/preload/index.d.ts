@@ -51,6 +51,25 @@ type TwilightMediaProviderMethod =
   | 'searchPlaylists'
   | 'searchArtists'
   | 'fetchPlaylistTracks'
+  | 'checkLogin'
+  | 'getProfile'
+  | 'logout'
+  | 'getQrKey'
+  | 'getQrImage'
+  | 'checkQrLogin'
+  | 'fetchUserLibrary'
+  | 'fetchLikedTracks'
+  | 'fetchRecommendSongs'
+  | 'fetchRecommendPlaylists'
+  | 'fetchPersonalFm'
+  | 'fetchPrivateContent'
+  | 'fetchArtistTopSongs'
+  | 'fetchArtistPlaylists'
+  | 'fetchUserPlaylistsByUid'
+  | 'fetchUserFollows'
+  | 'fetchUserFolloweds'
+  | 'likeTrack'
+  | 'isTrackLiked'
 type TwilightUiContributionKind = 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
@@ -286,6 +305,7 @@ interface TwilightPluginDescriptor {
   type: TwilightPluginType[]
   main?: string
   binary?: Record<string, string>
+  dependencies?: Record<string, string>
   engines: {
     twilightEcho: string
   }
@@ -293,9 +313,10 @@ interface TwilightPluginDescriptor {
   permissions: string[]
   status: TwilightPluginStatus
   enabled: boolean
+  builtIn: boolean
   error: string | null
   isDsp: boolean
-  source: 'directory' | 'tep' | 'scan'
+  source: 'directory' | 'tep' | 'bundled' | 'scan'
   installedAt: string | null
   updatedAt: string | null
   paths: {

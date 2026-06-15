@@ -11,11 +11,18 @@ const emit = defineEmits<{
   loginSuccess: []
 }>()
 
-const { setLogin: setStoreLogin, logout: storeLogout, buildProfile } = useNcmStore()
+const {
+  logout: storeLogout,
+  checkLogin: storeCheckLogin,
+  getQrKey: storeGetQrKey,
+  getQrImage: storeGetQrImage,
+  checkQrLogin: storeCheckQrLogin,
+  profile: storeProfile,
+  providerError
+} = useNcmStore()
 
 const POLL_INTERVAL = 3000
 const QR_KEY_COOLDOWN = 5000
-const REQUEST_TIMEOUT = 15000
 
 type PageState =
   | 'loading'
@@ -37,7 +44,6 @@ const profile = ref<{
   avatarUrl: string
   signature?: string
 } | null>(null)
-const loginCookie = ref('')
 const lastKeyGenTime = ref(0)
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -63,56 +69,11 @@ const statusText = computed(() => {
   }
 })
 
-function getNcmUrl(path: string): string {
-  const sep = path.includes('?') ? '&' : '?'
-  return `${path}${sep}ua=pc`
-}
-
-function withTimeout<T>(promise: Promise<T>, ms = REQUEST_TIMEOUT): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new Error('请求超时')), ms)
-    promise.then(resolve, reject).finally(() => window.clearTimeout(timer))
-  })
-}
-
-async function fetchNcm(path: string, cookie?: string): Promise<unknown> {
-  const data = (await withTimeout(window.api.ncm.request(getNcmUrl(path), cookie))) as {
-    code?: number
-    message?: string
-  }
-  if (data?.code === -1) {
-    throw new Error(data.message || '网易云接口请求失败')
-  }
-  return data
-}
-
-async function checkLoginStatus(cookie?: string): Promise<boolean> {
+async function checkLoginStatus(): Promise<boolean> {
   try {
-    const data = (await fetchNcm('/login/status', cookie)) as {
-      code?: number
-      data?: {
-        code: number
-        profile?: { userId: number; nickname: string; avatarUrl: string }
-        account?: unknown
-      }
-    }
-    const profileData = data.data?.profile
-    if (data.data?.code === 200 && profileData) {
-      profile.value = profileData
-      if (cookie) loginCookie.value = cookie
-      return true
-    }
-    if (data.code === 200 && (data as Record<string, unknown>).profile) {
-      const p = (data as Record<string, unknown>).profile as {
-        userId: number
-        nickname: string
-        avatarUrl: string
-      }
-      profile.value = p
-      if (cookie) loginCookie.value = cookie
-      return true
-    }
-    return false
+    const loggedIn = await storeCheckLogin()
+    profile.value = storeProfile.value
+    return loggedIn
   } catch {
     return false
   }
@@ -120,14 +81,7 @@ async function checkLoginStatus(cookie?: string): Promise<boolean> {
 
 async function getQrKey(): Promise<string | null> {
   try {
-    const data = (await fetchNcm('/login/qr/key')) as {
-      code: number
-      data: { unikey: string }
-    }
-    if (data.code === 200 && data.data?.unikey) {
-      return data.data.unikey
-    }
-    return null
+    return await storeGetQrKey()
   } catch {
     return null
   }
@@ -135,27 +89,15 @@ async function getQrKey(): Promise<string | null> {
 
 async function getQrImage(key: string): Promise<string | null> {
   try {
-    const data = (await fetchNcm(`/login/qr/create?key=${key}&qrimg=true&platform=web`)) as {
-      code: number
-      data: { qrimg?: string }
-    }
-    if (data.code === 200 && data.data?.qrimg) {
-      const raw = data.data.qrimg
-      return raw.startsWith('data:') ? raw : `data:image/png;base64,${raw}`
-    }
-    return null
+    return await storeGetQrImage(key)
   } catch {
     return null
   }
 }
 
-async function checkQrScan(key: string): Promise<{ code: number; cookie?: string }> {
+async function checkQrScan(key: string): Promise<{ code: number }> {
   try {
-    const data = (await fetchNcm(`/login/qr/check?key=${key}`)) as {
-      code: number
-      cookie?: string
-    }
-    return { code: data.code, cookie: data.cookie }
+    return await storeCheckQrLogin(key)
   } catch {
     return { code: -1 }
   }
@@ -178,16 +120,7 @@ function startPolling(key: string): void {
         break
       case 803: {
         stopPolling()
-        const cookie = result.cookie || ''
-        if (cookie) {
-          loginCookie.value = cookie
-          await window.api.data.saveCookie(cookie)
-        }
-        await checkLoginStatus(cookie)
-        if (profile.value) {
-          const storeProfile = await buildProfile(profile.value)
-          setStoreLogin(storeProfile)
-        }
+        await checkLoginStatus()
         emit('loginSuccess')
         break
       }
@@ -219,7 +152,7 @@ async function startQrLogin(): Promise<void> {
   const key = await getQrKey()
   if (!key) {
     pageState.value = 'error'
-    errorMsg.value = '获取二维码密钥失败，请确认网易云 API 服务正常'
+    errorMsg.value = providerError.value || '获取二维码密钥失败，请确认网易云插件已启用'
     return
   }
   qrKey.value = key
@@ -242,7 +175,6 @@ function handleRefresh(): void {
 
 async function handleLogout(): Promise<void> {
   await storeLogout()
-  loginCookie.value = ''
   profile.value = null
   pageState.value = 'qr_loading'
   qrImage.value = ''
@@ -256,24 +188,14 @@ function handleBack(): void {
 }
 
 onMounted(async () => {
-  const savedCookie = await window.api.data.loadCookie()
-  if (savedCookie) {
-    loginCookie.value = savedCookie
-    const loggedIn = await checkLoginStatus(savedCookie)
-    if (loggedIn) {
-      if (profile.value) {
-        const storeProfile = await buildProfile(profile.value)
-        setStoreLogin(storeProfile)
-      }
-      if (props.forceProfile) {
-        pageState.value = 'logged_in'
-        return
-      }
-      emit('loginSuccess')
+  const loggedIn = await checkLoginStatus()
+  if (loggedIn) {
+    if (props.forceProfile) {
+      pageState.value = 'logged_in'
       return
     }
-    await window.api.data.saveCookie('')
-    loginCookie.value = ''
+    emit('loginSuccess')
+    return
   }
 
   await startQrLogin()

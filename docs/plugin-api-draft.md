@@ -20,6 +20,7 @@ or app shutdown.
 interface TwilightPluginContext {
   apiVersion: number
   storagePath: string
+  settings: PluginPrivateSettings
   logger: PluginLogger
   twilight: TwilightApi
 }
@@ -27,6 +28,17 @@ interface TwilightPluginContext {
 
 `storagePath` points to `plugin-data/<id>/`. Plugins should keep private data
 there and should not mutate app files elsewhere.
+
+```ts
+interface PluginPrivateSettings {
+  get(key?: string): Promise<unknown>
+  set(key: string, value: unknown): Promise<void>
+  delete(key: string): Promise<void>
+}
+```
+
+`settings` reads and writes `plugin-data/<id>/settings.json`. It is plugin
+private storage only; host application settings are not exposed in Phase 1.
 
 ## Logging
 
@@ -41,6 +53,23 @@ interface PluginLogger {
 
 Logs are appended to `logs/plugins/<id>.log` and are visible from the settings
 plugin page.
+
+## Dependencies
+
+Plugins may declare optional package dependencies in `plugin.json`:
+
+```json
+{
+  "dependencies": {
+    "com.example.base": ">=1.0.0"
+  }
+}
+```
+
+Dependencies are checked at enable/startup time. Missing, disabled,
+incompatible, or cyclic dependencies mark the dependent plugin as failed and
+write the reason to its log. The host does not auto-install or auto-enable
+dependencies.
 
 ## Events
 
@@ -106,6 +135,25 @@ interface MediaProviderRegistration {
   searchPlaylists?(keywords: string, limit?: number, offset?: number): Promise<{ items: PlaylistSummary[]; total: number }>
   searchArtists?(keywords: string, limit?: number, offset?: number): Promise<{ items: ArtistSummary[]; total: number }>
   fetchPlaylistTracks?(playlistId: string | number, force?: boolean): Promise<Track[]>
+  checkLogin?(): Promise<{ loggedIn: boolean; profile: ProviderProfile | null }>
+  getProfile?(): Promise<ProviderProfile | null>
+  logout?(): Promise<void>
+  getQrKey?(): Promise<string | null>
+  getQrImage?(key: string): Promise<string | null>
+  checkQrLogin?(key: string): Promise<{ code: number }>
+  fetchUserLibrary?(force?: boolean): Promise<{ likedPlaylist: PlaylistSummary | null; playlists: PlaylistSummary[] }>
+  fetchLikedTracks?(force?: boolean): Promise<Track[]>
+  fetchRecommendSongs?(): Promise<Track[]>
+  fetchRecommendPlaylists?(): Promise<PlaylistSummary[]>
+  fetchPersonalFm?(): Promise<Track[]>
+  fetchPrivateContent?(): Promise<Track[]>
+  fetchArtistTopSongs?(artistId: string | number): Promise<Track[]>
+  fetchArtistPlaylists?(artistId: string | number): Promise<PlaylistSummary[]>
+  fetchUserPlaylistsByUid?(uid: string | number): Promise<PlaylistSummary[]>
+  fetchUserFollows?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
+  fetchUserFolloweds?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
+  likeTrack?(trackId: string | number, like: boolean): Promise<void>
+  isTrackLiked?(trackId: string | number | undefined): Promise<boolean> | boolean
 }
 
 await context.twilight.providers.register({
@@ -121,9 +169,16 @@ await context.twilight.providers.register({
 })
 ```
 
-The built-in NetEase Cloud Music integration is dogfooded as the internal `ncm`
-provider. Existing renderer UI can keep its compatibility store while playback
-URL and lyrics resolution go through the `MediaProvider` facade.
+The NetEase Cloud Music integration is dogfooded as Twilight Echo's bundled
+base provider plugin. Its plugin id is `com.twilightecho.provider.ncm`, its
+provider id is `ncm`, it ships with the app, is enabled by default, can be
+disabled, and cannot be uninstalled like a third-party plugin. Existing renderer
+UI can keep its compatibility store, but that store must call `providers.call`
+instead of `window.api.ncm` or host cookie IPC.
+
+The bundled NetEase plugin receives a private internal gateway for the local NCM
+API and song cache. This gateway is not part of the public third-party plugin
+API and is rejected for all other plugin ids.
 
 Provider tracks must keep their source prefix throughout queue, library, and
 session persistence:
@@ -203,7 +258,8 @@ load remote runtime code.
   `MediaProvider`; playback URL and lyrics resolution now use the provider
   facade before direct store access.
 - `useSettingsStore`: plugin-private settings are supported through
-  `storagePath`; host settings mutation is not exposed in Phase 1.
+  `context.settings` backed by `plugin-data/<id>/settings.json`; host settings
+  mutation is not exposed in Phase 1.
 - Main-process IPC: plugins do not call existing `audioEngine:*`, `data:*`, or
   `settings:*` channels directly.
 - `audioEngineManager`: event and playback operations are bridged by the plugin

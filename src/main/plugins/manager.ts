@@ -6,6 +6,7 @@ import { cp, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'fs/promises
 import { basename, dirname, extname, join, relative, resolve } from 'path'
 import { tmpdir } from 'os'
 import { EventEmitter } from 'events'
+import { planPluginStartup } from './dependencies'
 import { isCompatibleTwilightRange, validatePluginManifest } from './manifest'
 import type {
   PluginHostApiResult,
@@ -19,6 +20,7 @@ import type {
   TwilightPluginDescriptor,
   TwilightPluginInstallResult,
   TwilightPluginManifest,
+  TwilightPluginSource,
   TwilightPluginStateRecord,
   TwilightPluginUninstallOptions
 } from './types'
@@ -28,6 +30,16 @@ type PluginStateFile = Record<string, TwilightPluginStateRecord>
 export interface TwilightPluginManagerOptions {
   appVersion: string
   hostEntry: string
+  bundledPlugins?: Array<{
+    id: string
+    sourcePath: string
+    defaultEnabled?: boolean
+  }>
+  ncm?: {
+    request: (path: string, cookie?: string) => Promise<unknown>
+    getCachedSong: (songId: number) => Promise<string | null>
+    cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
+  }
   getPlaybackInfo: () => Promise<unknown> | unknown
   player: {
     play: () => Promise<void> | void
@@ -49,10 +61,15 @@ interface RunningPlugin {
 }
 
 const STATE_FILE = 'plugin-state.json'
+const PLUGIN_ACTIVATE_TIMEOUT_MS = 5000
+const PLUGIN_DEACTIVATE_TIMEOUT_MS = 1500
+const INTERNAL_NCM_PLUGIN_ID = 'com.twilightecho.provider.ncm'
 
 export class TwilightPluginManager extends EventEmitter {
   private readonly appVersion: string
   private readonly hostEntry: string
+  private readonly bundledPlugins: NonNullable<TwilightPluginManagerOptions['bundledPlugins']>
+  private readonly ncm: TwilightPluginManagerOptions['ncm']
   private readonly getPlaybackInfo: TwilightPluginManagerOptions['getPlaybackInfo']
   private readonly player: TwilightPluginManagerOptions['player']
   private readonly running = new Map<string, RunningPlugin>()
@@ -70,6 +87,8 @@ export class TwilightPluginManager extends EventEmitter {
     super()
     this.appVersion = options.appVersion
     this.hostEntry = options.hostEntry
+    this.bundledPlugins = options.bundledPlugins ?? []
+    this.ncm = options.ncm
     this.getPlaybackInfo = options.getPlaybackInfo
     this.player = options.player
   }
@@ -92,6 +111,7 @@ export class TwilightPluginManager extends EventEmitter {
   async initialize(): Promise<void> {
     this.ensureRoots()
     await this.loadState()
+    await this.syncBundledPlugins()
     await this.scanAndStartEnabled()
   }
 
@@ -124,6 +144,9 @@ export class TwilightPluginManager extends EventEmitter {
           ? await this.extractTep(source, tempRoot)
           : source
       const manifest = await this.readManifest(installSource)
+      if (this.isBundledPluginId(manifest.id)) {
+        throw new Error('自带插件随 Twilight Echo 分发，不能用本地包覆盖安装')
+      }
       await this.confirmTrustBasedInstall(manifest, source)
       const target = this.versionRoot(manifest.id, manifest.version)
       await rm(target, { recursive: true, force: true })
@@ -171,9 +194,13 @@ export class TwilightPluginManager extends EventEmitter {
     }
     try {
       this.setEnabled(id, true)
-      await this.startPlugin(descriptor)
+      const descriptors = await this.list()
+      const startupPlan = planPluginStartup(descriptors)
+      const dependencyError = startupPlan.failures.get(id)
+      if (dependencyError) throw new Error(dependencyError)
+      await this.startPlugin(await this.findDescriptor(id))
     } catch (error) {
-      this.markFailed(id, error instanceof Error ? error.message : String(error))
+      this.markFailed(id, error instanceof Error ? error.message : String(error), descriptor)
       throw error
     }
     return this.findDescriptor(id)
@@ -186,6 +213,9 @@ export class TwilightPluginManager extends EventEmitter {
   }
 
   async uninstall(id: string, options: TwilightPluginUninstallOptions = {}): Promise<void> {
+    if (this.isBundledPluginId(id)) {
+      throw new Error('自带插件不能卸载；如需关闭，请在插件页停用')
+    }
     await this.disable(id).catch(() => undefined)
     await rm(join(this.roots.plugins, id), { recursive: true, force: true })
     if (options.removeData) {
@@ -288,13 +318,50 @@ export class TwilightPluginManager extends EventEmitter {
 
   private async scanAndStartEnabled(): Promise<void> {
     const descriptors = await this.list()
-    for (const descriptor of descriptors) {
-      if (descriptor.enabled && descriptor.status !== 'invalid') {
-        await this.startPlugin(descriptor).catch((error) => {
-          this.markFailed(descriptor.id, error instanceof Error ? error.message : String(error))
-        })
+    const startupPlan = planPluginStartup(descriptors)
+    for (const [id, error] of startupPlan.failures) {
+      const descriptor = descriptors.find((candidate) => candidate.id === id)
+      this.markFailed(id, error, descriptor)
+    }
+    for (const descriptor of startupPlan.ordered) {
+      await this.startPlugin(descriptor).catch((error) => {
+        this.markFailed(descriptor.id, error instanceof Error ? error.message : String(error), descriptor)
+      })
+    }
+  }
+
+  private async syncBundledPlugins(): Promise<void> {
+    for (const bundled of this.bundledPlugins) {
+      try {
+        if (!existsSync(bundled.sourcePath)) continue
+        const manifest = await this.readManifest(bundled.sourcePath)
+        if (manifest.id !== bundled.id) {
+          throw new Error(`自带插件 ID 不匹配：${manifest.id} !== ${bundled.id}`)
+        }
+
+        const targetRoot = join(this.roots.plugins, manifest.id)
+        const target = this.versionRoot(manifest.id, manifest.version)
+        await rm(targetRoot, { recursive: true, force: true })
+        mkdirSync(dirname(target), { recursive: true })
+        await cp(bundled.sourcePath, target, { recursive: true })
+
+        const now = new Date().toISOString()
+        const previous = this.state[manifest.id]
+        this.state[manifest.id] = {
+          enabled: previous?.enabled ?? bundled.defaultEnabled === true,
+          installedAt: previous?.installedAt ?? now,
+          updatedAt: previous?.updatedAt ?? now,
+          source: 'bundled',
+          lastError: previous?.lastError
+        }
+      } catch (error) {
+        console.error(
+          `[插件系统] 同步自带插件失败：${bundled.id}`,
+          error instanceof Error ? error.message : error
+        )
       }
     }
+    await this.saveState()
   }
 
   private async startPlugin(descriptor: TwilightPluginDescriptor): Promise<void> {
@@ -335,6 +402,7 @@ export class TwilightPluginManager extends EventEmitter {
     })
     child.stdout?.on('data', (chunk) => this.appendLog(descriptor, 'info', chunk.toString()))
     child.stderr?.on('data', (chunk) => this.appendLog(descriptor, 'error', chunk.toString()))
+    const activation = this.waitForActivation(child, descriptor)
     child.postMessage({
       kind: 'activate',
       pluginId: descriptor.id,
@@ -343,6 +411,14 @@ export class TwilightPluginManager extends EventEmitter {
       dataDir: descriptor.paths.dataDir,
       apiVersion: descriptor.apiVersion
     } satisfies PluginHostRequest)
+    try {
+      await activation
+      this.markStarted(descriptor)
+      this.appendLog(descriptor, 'info', '插件已激活')
+    } catch (error) {
+      await this.stopPlugin(descriptor.id).catch(() => undefined)
+      throw error
+    }
   }
 
   private async stopPlugin(id: string): Promise<void> {
@@ -351,7 +427,7 @@ export class TwilightPluginManager extends EventEmitter {
     const requestId = randomUUID()
     running.process.postMessage({ kind: 'deactivate', requestId } satisfies PluginHostRequest)
     await new Promise<void>((resolveDone) => {
-      const timer = setTimeout(resolveDone, 1500)
+      const timer = setTimeout(resolveDone, PLUGIN_DEACTIVATE_TIMEOUT_MS)
       const onMessage = (message: PluginHostResponse): void => {
         if (message.kind === 'deactivated' && message.requestId === requestId) {
           clearTimeout(timer)
@@ -363,6 +439,45 @@ export class TwilightPluginManager extends EventEmitter {
     })
     running.process.kill()
     this.running.delete(id)
+  }
+
+  private waitForActivation(child: UtilityProcess, descriptor: TwilightPluginDescriptor): Promise<void> {
+    return new Promise((resolveReady, rejectReady) => {
+      let settled = false
+      const cleanup = (): void => {
+        clearTimeout(timer)
+        child.off('message', onMessage)
+        child.off('exit', onExit)
+        child.off('error', onError)
+      }
+      const settle = (error?: Error): void => {
+        if (settled) return
+        settled = true
+        cleanup()
+        if (error) rejectReady(error)
+        else resolveReady()
+      }
+      const timer = setTimeout(() => {
+        this.appendLog(descriptor, 'error', `插件启动超时：${PLUGIN_ACTIVATE_TIMEOUT_MS}ms`)
+        settle(new Error(`插件启动超时：${PLUGIN_ACTIVATE_TIMEOUT_MS}ms`))
+      }, PLUGIN_ACTIVATE_TIMEOUT_MS)
+      const onMessage = (message: PluginHostResponse): void => {
+        if (message.kind === 'activated' && message.pluginId === descriptor.id) {
+          settle()
+        } else if (message.kind === 'host-error') {
+          settle(new Error(message.message))
+        }
+      }
+      const onExit = (code: number | null): void => {
+        settle(new Error(`插件宿主进程退出：${code}`))
+      }
+      const onError = (_type: unknown, location: unknown): void => {
+        settle(new Error(`插件宿主进程错误：${String(location)}`))
+      }
+      child.on('message', onMessage)
+      child.on('exit', onExit)
+      child.on('error', onError)
+    })
   }
 
   private async handleHostMessage(id: string, message: PluginHostResponse): Promise<void> {
@@ -409,6 +524,14 @@ export class TwilightPluginManager extends EventEmitter {
           requestId: message.requestId,
           ok: true,
           value: this.registerExtensionFromPlugin(id, message)
+        }
+      }
+      if (message.namespace === 'internal') {
+        return {
+          kind: 'api-result',
+          requestId: message.requestId,
+          ok: true,
+          value: await this.handleInternalApiCall(id, message)
         }
       }
       if (message.namespace !== 'player') throw new Error('未知 API 命名空间')
@@ -461,6 +584,35 @@ export class TwilightPluginManager extends EventEmitter {
     running.providers.push(provider)
     this.emit('changed')
     return provider
+  }
+
+  private async handleInternalApiCall(
+    pluginId: string,
+    message: Extract<PluginHostResponse, { kind: 'api-call' }>
+  ): Promise<unknown> {
+    if (pluginId !== INTERNAL_NCM_PLUGIN_ID) {
+      throw new Error('内部 API 仅允许自带网易云插件访问')
+    }
+    if (!this.ncm) throw new Error('网易云内部服务不可用')
+    if (message.method === 'ncmRequest') {
+      const [path, cookie] = message.args
+      if (typeof path !== 'string') throw new Error('ncmRequest path 必须是字符串')
+      return this.ncm.request(path, typeof cookie === 'string' ? cookie : undefined)
+    }
+    if (message.method === 'ncmGetCachedSong') {
+      const songId = Number(message.args[0])
+      if (!Number.isFinite(songId)) throw new Error('ncmGetCachedSong songId 无效')
+      return this.ncm.getCachedSong(songId)
+    }
+    if (message.method === 'ncmCacheSong') {
+      const songId = Number(message.args[0])
+      const url = message.args[1]
+      const fileName = message.args[2]
+      if (!Number.isFinite(songId)) throw new Error('ncmCacheSong songId 无效')
+      if (typeof url !== 'string') throw new Error('ncmCacheSong url 必须是字符串')
+      return this.ncm.cacheSong(songId, url, typeof fileName === 'string' ? fileName : undefined)
+    }
+    throw new Error('未知内部 API')
   }
 
   private registerExtensionFromPlugin(
@@ -568,13 +720,15 @@ export class TwilightPluginManager extends EventEmitter {
       const state = this.state[manifest.id]
       const paths = this.pathsFor(manifest.id, manifest.version)
       const error = this.validateRuntimeDescriptor(manifest, paths.versionRoot)
+      const descriptorSource = state?.source ?? source
       return {
         ...manifest,
         status: error ? 'invalid' : state?.lastError ? 'failed' : state?.enabled ? 'enabled' : 'disabled',
         enabled: state?.enabled === true && !error,
+        builtIn: this.isBundledPluginId(manifest.id) || descriptorSource === 'bundled',
         error: error ?? state?.lastError ?? null,
         isDsp: manifest.type.includes('dsp'),
-        source: state?.source ?? source,
+        source: descriptorSource,
         installedAt: state?.installedAt ?? null,
         updatedAt: state?.updatedAt ?? null,
         paths
@@ -595,6 +749,7 @@ export class TwilightPluginManager extends EventEmitter {
         permissions: [],
         status: 'invalid',
         enabled: false,
+        builtIn: this.isBundledPluginId(id),
         error: error instanceof Error ? error.message : String(error),
         isDsp: false,
         source,
@@ -670,20 +825,33 @@ export class TwilightPluginManager extends EventEmitter {
       enabled,
       installedAt: this.state[id]?.installedAt ?? now,
       updatedAt: now,
-      source: this.state[id]?.source ?? 'directory'
+      source: this.state[id]?.source ?? this.defaultStateSource(id)
     }
     void this.saveState()
     this.emit('changed')
   }
 
-  private markFailed(id: string, message: string): void {
+  private markFailed(id: string, message: string, descriptor?: TwilightPluginDescriptor): void {
     const now = new Date().toISOString()
     this.state[id] = {
       enabled: false,
       installedAt: this.state[id]?.installedAt ?? now,
       updatedAt: now,
-      source: this.state[id]?.source ?? 'directory',
+      source: this.state[id]?.source ?? this.defaultStateSource(id),
       lastError: message
+    }
+    if (descriptor) this.appendLog(descriptor, 'error', message)
+    void this.saveState()
+    this.emit('changed')
+  }
+
+  private markStarted(descriptor: TwilightPluginDescriptor): void {
+    const now = new Date().toISOString()
+    this.state[descriptor.id] = {
+      enabled: true,
+      installedAt: this.state[descriptor.id]?.installedAt ?? descriptor.installedAt ?? now,
+      updatedAt: this.state[descriptor.id]?.updatedAt ?? descriptor.updatedAt ?? now,
+      source: this.state[descriptor.id]?.source ?? this.defaultStateSource(descriptor.id)
     }
     void this.saveState()
     this.emit('changed')
@@ -740,6 +908,7 @@ export class TwilightPluginManager extends EventEmitter {
       type: descriptor.type,
       main: descriptor.main,
       binary: descriptor.binary,
+      dependencies: descriptor.dependencies,
       engines: descriptor.engines,
       apiVersion: descriptor.apiVersion,
       permissions: descriptor.permissions,
@@ -749,6 +918,14 @@ export class TwilightPluginManager extends EventEmitter {
       icon: descriptor.icon,
       signature: descriptor.signature
     }
+  }
+
+  private isBundledPluginId(id: string): boolean {
+    return this.bundledPlugins.some((plugin) => plugin.id === id)
+  }
+
+  private defaultStateSource(id: string): TwilightPluginSource {
+    return this.isBundledPluginId(id) ? 'bundled' : 'directory'
   }
 }
 

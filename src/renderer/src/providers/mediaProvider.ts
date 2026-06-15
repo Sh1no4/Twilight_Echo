@@ -34,6 +34,23 @@ export interface MediaProviderArtistSummary {
   musicSize?: number
 }
 
+export interface MediaProviderProfile {
+  userId: number | string
+  nickname: string
+  avatarUrl: string
+  signature?: string
+  follows?: number
+  followeds?: number
+}
+
+export interface MediaProviderUserSummary {
+  id: number | string
+  name: string
+  picUrl: string | null
+  musicSize?: number
+  userType?: number
+}
+
 export interface MediaProvider {
   id: string
   name: string
@@ -58,6 +75,36 @@ export interface MediaProvider {
     offset?: number
   ) => Promise<MediaProviderSearchResult<MediaProviderArtistSummary>>
   fetchPlaylistTracks?: (playlistId: number | string, force?: boolean) => Promise<Track[]>
+  checkLogin?: () => Promise<{ loggedIn: boolean; profile: MediaProviderProfile | null }>
+  getProfile?: () => Promise<MediaProviderProfile | null>
+  logout?: () => Promise<void>
+  getQrKey?: () => Promise<string | null>
+  getQrImage?: (key: string) => Promise<string | null>
+  checkQrLogin?: (key: string) => Promise<{ code: number }>
+  fetchUserLibrary?: (force?: boolean) => Promise<{
+    likedPlaylist: MediaProviderPlaylistSummary | null
+    playlists: MediaProviderPlaylistSummary[]
+  }>
+  fetchLikedTracks?: (force?: boolean) => Promise<Track[]>
+  fetchRecommendSongs?: () => Promise<Track[]>
+  fetchRecommendPlaylists?: () => Promise<MediaProviderPlaylistSummary[]>
+  fetchPersonalFm?: () => Promise<Track[]>
+  fetchPrivateContent?: () => Promise<Track[]>
+  fetchArtistTopSongs?: (artistId: number | string) => Promise<Track[]>
+  fetchArtistPlaylists?: (artistId: number | string) => Promise<MediaProviderPlaylistSummary[]>
+  fetchUserPlaylistsByUid?: (uid: number | string) => Promise<MediaProviderPlaylistSummary[]>
+  fetchUserFollows?: (
+    uid: number | string,
+    limit?: number,
+    offset?: number
+  ) => Promise<MediaProviderUserSummary[]>
+  fetchUserFolloweds?: (
+    uid: number | string,
+    limit?: number,
+    offset?: number
+  ) => Promise<MediaProviderUserSummary[]>
+  likeTrack?: (trackId: number | string, like: boolean) => Promise<void>
+  isTrackLiked?: (trackId: number | string | undefined) => boolean | Promise<boolean>
 }
 
 export class MediaProviderRegistry {

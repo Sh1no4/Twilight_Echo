@@ -88,6 +88,22 @@ function normalizeBinary(value: unknown): Record<string, string> | undefined {
   return Object.keys(binary).length > 0 ? binary : undefined
 }
 
+function normalizeDependencies(value: unknown): Record<string, string> | undefined {
+  if (value == null) return undefined
+  if (!isRecord(value)) throw new Error('plugin.json 字段 dependencies 必须是对象')
+  const dependencies: Record<string, string> = {}
+  for (const [id, range] of Object.entries(value)) {
+    if (!PLUGIN_ID_PATTERN.test(id)) {
+      throw new Error(`plugin.json dependencies 含有非法插件 ID：${id}`)
+    }
+    if (typeof range !== 'string' || !isSupportedSemverRange(range.trim())) {
+      throw new Error(`plugin.json dependencies.${id} 必须是受支持的 semver range`)
+    }
+    dependencies[id] = range.trim()
+  }
+  return Object.keys(dependencies).length > 0 ? dependencies : undefined
+}
+
 export function validatePluginManifest(raw: unknown): TwilightPluginManifest {
   if (!isRecord(raw)) throw new Error('plugin.json 必须是 JSON 对象')
 
@@ -121,6 +137,7 @@ export function validatePluginManifest(raw: unknown): TwilightPluginManifest {
   const type = normalizeTypes(raw.type)
   const main = normalizeRelativePath(raw.main, 'main')
   const binary = normalizeBinary(raw.binary)
+  const dependencies = normalizeDependencies(raw.dependencies)
   if (!main && !binary) throw new Error('plugin.json 必须声明 main 或 binary')
   if (type.includes('dsp') && !binary) throw new Error('type 包含 dsp 时必须声明 binary')
 
@@ -134,6 +151,7 @@ export function validatePluginManifest(raw: unknown): TwilightPluginManifest {
     type,
     main,
     binary,
+    dependencies,
     engines: {
       twilightEcho: engines.twilightEcho.trim()
     },
@@ -160,6 +178,18 @@ export function isCompatibleTwilightRange(range: string, appVersion: string): bo
     return compareSemver(appVersion, trimmed.slice(2).trim()) >= 0
   }
   return trimmed === appVersion
+}
+
+export function isSupportedSemverRange(range: string): boolean {
+  if (range === '*') return true
+  if (SEMVER_PATTERN.test(range)) return true
+  if (range.startsWith('^') || range.startsWith('~')) {
+    return SEMVER_PATTERN.test(range.slice(1).trim())
+  }
+  if (range.startsWith('>=')) {
+    return SEMVER_PATTERN.test(range.slice(2).trim())
+  }
+  return false
 }
 
 function compareSemver(left: string, right: string): number {

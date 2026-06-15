@@ -10,7 +10,7 @@ import type {
 } from '../types/settings'
 import { extractDominantColor } from '../utils/colorExtractor'
 import { shouldUseNativePlaybackTarget } from '../utils/playbackRouting'
-import { useMediaProviders } from '../providers'
+import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useSettingsStore } from './useSettingsStore'
 
 type PlayMode = 'sequential' | 'repeat' | 'shuffle'
@@ -673,6 +673,7 @@ watch(
     if (!track || track.id !== id || track.id === prevId) return
 
     if (getTrackSource(track) !== 'local' && track.translatedLyrics == null) {
+      await syncPluginProviders()
       const lyricData = await useMediaProviders().resolveLyrics(track)
       if (currentTrack.value?.id === track.id && (lyricData.lyrics || lyricData.translatedLyrics)) {
         currentTrack.value = {
@@ -803,6 +804,7 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     return track.streamUrl
   }
 
+  await syncPluginProviders()
   const streamUrl = await useMediaProviders().resolvePlaybackUrl(track)
   if (!streamUrl) {
     throw new Error(`Unable to resolve ${getTrackSource(track)} stream URL`)

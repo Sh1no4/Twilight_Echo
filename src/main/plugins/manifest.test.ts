@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const { isCompatibleTwilightRange, validatePluginManifest } = (await import(
@@ -70,6 +71,43 @@ test('rejects future plugin API versions', () => {
   assert.throws(() => validatePluginManifest({ ...validManifest, apiVersion: 99 }), /高于宿主支持版本/)
 })
 
+test('accepts valid plugin dependencies', () => {
+  const manifest = validatePluginManifest({
+    ...validManifest,
+    dependencies: {
+      'com.example.base': '>=1.0.0',
+      'org.example.shared': '^2.1.0',
+      'net.example.exact': '3.0.0',
+      'io.example.any': '*'
+    }
+  })
+  assert.deepEqual(manifest.dependencies, {
+    'com.example.base': '>=1.0.0',
+    'org.example.shared': '^2.1.0',
+    'net.example.exact': '3.0.0',
+    'io.example.any': '*'
+  })
+})
+
+test('rejects invalid plugin dependencies', () => {
+  assert.throws(
+    () => validatePluginManifest({ ...validManifest, dependencies: [] }),
+    /dependencies/
+  )
+  assert.throws(
+    () => validatePluginManifest({ ...validManifest, dependencies: { bad: '>=1.0.0' } }),
+    /非法插件 ID/
+  )
+  assert.throws(
+    () =>
+      validatePluginManifest({
+        ...validManifest,
+        dependencies: { 'com.example.base': 'latest' }
+      }),
+    /semver range/
+  )
+})
+
 test('checks basic Twilight Echo engine ranges', () => {
   assert.equal(isCompatibleTwilightRange('>=0.20.0', '0.20.0'), true)
   assert.equal(isCompatibleTwilightRange('>=0.21.0', '0.20.0'), false)
@@ -97,4 +135,17 @@ test('accepts Phase 3 UI and theme sample manifests', () => {
     }).type,
     ['theme']
   )
+})
+
+test('accepts bundled NetEase provider manifest', async () => {
+  const raw = await readFile(
+    new URL('../../../resources/plugins/ncm-provider/plugin.json', import.meta.url),
+    'utf-8'
+  )
+  const manifest = validatePluginManifest(JSON.parse(raw))
+  assert.equal(manifest.id, 'com.twilightecho.provider.ncm')
+  assert.deepEqual(manifest.type, ['provider'])
+  assert.equal(manifest.main, 'index.mjs')
+  assert.ok(manifest.permissions.includes('network'))
+  assert.ok(manifest.permissions.includes('settings'))
 })

@@ -106,21 +106,8 @@ function enterStreamingMode(): void {
 
 async function openLoginPage(): Promise<void> {
   // 检查是否已登录
-  const { isLoggedIn } = useNcmStore()
-  type LoginStatusProfile = {
-    userId: number
-    nickname: string
-    avatarUrl: string
-    signature?: string
-  }
-  type LoginStatusResponse = {
-    data?: {
-      profile?: LoginStatusProfile
-      code?: number
-    }
-    profile?: LoginStatusProfile
-    code?: number
-  }
+  const { isLoggedIn, checkLogin } = useNcmStore()
+  await checkLogin()
   if (isLoggedIn.value) {
     // 已登录则打开个人详情页
     menuOpen.value = false
@@ -131,24 +118,6 @@ async function openLoginPage(): Promise<void> {
     loginPageMode.value = 'profile'
     showLoginPage.value = true
     return
-  }
-
-  // 未登录则走登录流程，但先二次验证 cookie 状态
-  try {
-    const cookie = await window.api.data.loadCookie()
-    if (cookie) {
-      const data = (await window.api.ncm.request(
-        `/login/status?timestamp=${Date.now()}`,
-        cookie
-      )) as LoginStatusResponse
-      const profileData = data.data?.profile || data.profile
-      if ((data.data?.code === 200 || data.code === 200) && profileData) {
-        enterStreamingMode()
-        return
-      }
-    }
-  } catch {
-    /* 检查失败则继续显示登录页 */
   }
 
   menuOpen.value = false

@@ -717,6 +717,35 @@ const NCM_API_PORT = 3100
 const PLAYBACK_SESSION_SAVE_TIMEOUT_MS = 1800
 const pendingPlaybackSessionSaves = new Map<string, () => void>()
 
+function bundledPluginPath(name: string): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'plugins', name)
+    : join(process.cwd(), 'resources', 'plugins', name)
+}
+
+async function requestNcmApi(path: string, cookie?: string): Promise<unknown> {
+  const sep = path.includes('?') ? '&' : '?'
+  let url = `http://localhost:${NCM_API_PORT}${path}${sep}timestamp=${Date.now()}`
+  if (cookie) {
+    url += `&cookie=${encodeURIComponent(cookie)}`
+  }
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 12000)
+  try {
+    const res = await fetch(url, { signal: controller.signal })
+    return await res.json()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.error('网易云请求失败：', path, message)
+    return {
+      code: -1,
+      message
+    }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 function resolvePlaybackSessionSave(requestId: string): void {
   const resolvePending = pendingPlaybackSessionSaves.get(requestId)
   if (!resolvePending) return
@@ -1318,26 +1347,7 @@ function setupAudioEngineIpc(): void {
   )
 
   ipcMain.handle('ncm:request', async (_event, path: string, cookie?: string) => {
-    const sep = path.includes('?') ? '&' : '?'
-    let url = `http://localhost:${NCM_API_PORT}${path}${sep}timestamp=${Date.now()}`
-    if (cookie) {
-      url += `&cookie=${encodeURIComponent(cookie)}`
-    }
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 12000)
-    try {
-      const res = await fetch(url, { signal: controller.signal })
-      return await res.json()
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      console.error('网易云请求失败：', path, message)
-      return {
-        code: -1,
-        message
-      }
-    } finally {
-      clearTimeout(timer)
-    }
+    return requestNcmApi(path, cookie)
   })
 }
 
@@ -1346,6 +1356,18 @@ function setupPluginIpc(): void {
   pluginManager = new TwilightPluginManager({
     appVersion: app.getVersion(),
     hostEntry: join(__dirname, 'pluginHost.js'),
+    bundledPlugins: [
+      {
+        id: 'com.twilightecho.provider.ncm',
+        sourcePath: bundledPluginPath('ncm-provider'),
+        defaultEnabled: true
+      }
+    ],
+    ncm: {
+      request: requestNcmApi,
+      getCachedSong: async (songId) => getCachedNcmSong(Number(songId)),
+      cacheSong: async (songId, url, fileName) => cacheNcmSong(Number(songId), url, fileName)
+    },
     getPlaybackInfo: async () => audioEngineManager?.getPlaybackInfo() ?? null,
     player: {
       play: async () => {

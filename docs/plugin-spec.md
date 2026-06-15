@@ -1,6 +1,7 @@
 # Twilight Echo Plugin Specification
 
-This document freezes the Phase 0 contract for the Phase 1 plugin host. It is
+This document freezes the Phase 0 contract for the Phase 1 plugin host and adds
+the Phase 2 bundled provider requirements now implemented in the app. It is
 derived from `docs/twilight-echo-plugin-spec.md` and keeps that document as the
 product-level source of truth.
 
@@ -38,7 +39,11 @@ Required `plugin.json` fields:
 
 `main` and `binary` are mutually compatible but at least one must exist. If
 `type` contains `dsp`, `binary` is required. Optional fields are `contributes`,
-`homepage`, `repository`, `icon`, and reserved `signature`.
+`dependencies`, `homepage`, `repository`, `icon`, and reserved `signature`.
+`dependencies` is a map of plugin id to supported semver range, for example
+`{ "com.example.base": ">=1.0.0" }`. It controls enable-time validation and
+dependency-order loading only; the host does not auto-install or auto-enable
+dependencies.
 
 Phase 1 permission enum:
 
@@ -61,8 +66,29 @@ of Twilight Echo internals are unsupported.
 ## Phase 1 Boundaries
 
 Phase 1 implements generic plugin discovery, local install, activation,
-deactivation, uninstall, logs, and management UI.
+deactivation, uninstall, dependency-order loading, private plugin settings,
+logs, and management UI.
 
-Phase 1 does not implement NetEase Cloud Music provider dogfooding, renderer UI
-injection, theme loading, or native DSP C ABI loading. Native DSP plugins are
-shown with a warning but not activated through the engine.
+Phase 1 does not implement renderer UI injection, theme loading, or native DSP C
+ABI loading. Native DSP plugins are shown with a warning but not activated
+through the engine.
+
+## Phase 2 Bundled Provider
+
+NetEase Cloud Music is Twilight Echo's bundled base provider plugin:
+
+- plugin id: `com.twilightecho.provider.ncm`
+- provider id and track prefix: `ncm`
+- package source: app-bundled `resources/plugins/ncm-provider`
+- install target: user data `plugins/com.twilightecho.provider.ncm/<version>/`
+
+The host syncs and repairs this plugin at startup. It is enabled by default and
+visible in the plugin manager. Users may disable it, but it cannot be
+uninstalled or overwritten by a local plugin package. When disabled, NetEase
+streaming UI reports the disabled provider while local library, playback, and
+settings continue to work.
+
+The bundled provider still registers through `context.twilight.providers` and
+does not import host internals. Its local NetEase API and song-cache access go
+through a host-injected internal gateway that is rejected for all third-party
+plugins.

@@ -12,12 +12,16 @@ interface PluginDescriptor {
   license: string
   type: string[]
   main?: string
+  dependencies?: Record<string, string>
   permissions: string[]
   status: PluginStatus
   enabled: boolean
+  builtIn: boolean
   error: string | null
   isDsp: boolean
-  source: 'directory' | 'tep' | 'scan'
+  source: 'directory' | 'tep' | 'bundled' | 'scan'
+  installedAt: string | null
+  updatedAt: string | null
   paths: {
     versionRoot: string
     dataDir: string
@@ -118,6 +122,17 @@ function typeLabel(type: string): string {
   return labels[type] ?? type
 }
 
+function dependencyEntries(plugin: PluginDescriptor): [string, string][] {
+  return Object.entries(plugin.dependencies ?? {})
+}
+
+function formatDate(value: string | null): string {
+  if (!value) return '未知'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return date.toLocaleString()
+}
+
 onMounted(() => {
   void refreshPlugins()
   removePluginListener = window.api.plugins.onChanged(() => {
@@ -173,6 +188,7 @@ onUnmounted(() => {
           <div class="plugin-title-row">
             <h4>{{ plugin.name }}</h4>
             <span class="plugin-pill" :class="plugin.status">{{ statusLabel(plugin.status) }}</span>
+            <span v-if="plugin.builtIn" class="plugin-pill builtin">自带基础插件</span>
             <span v-if="plugin.isDsp" class="plugin-pill native">原生 DSP 风险</span>
           </div>
           <p>{{ plugin.description || '没有描述' }}</p>
@@ -180,9 +196,16 @@ onUnmounted(() => {
             <span>{{ plugin.id }}</span>
             <span>v{{ plugin.version }}</span>
             <span>{{ plugin.author }}</span>
+            <span>更新 {{ formatDate(plugin.updatedAt) }}</span>
           </div>
           <div class="plugin-tags">
             <span v-for="type in plugin.type" :key="type">{{ typeLabel(type) }}</span>
+          </div>
+          <div v-if="dependencyEntries(plugin).length > 0" class="plugin-dependencies">
+            <strong>依赖</strong>
+            <code v-for="[dependencyId, range] in dependencyEntries(plugin)" :key="dependencyId">
+              {{ dependencyId }} {{ range }}
+            </code>
           </div>
           <div class="plugin-permissions">
             <strong>权限</strong>
@@ -203,7 +226,12 @@ onUnmounted(() => {
           <button class="icon-button subtle" title="打开日志文件" @click="openLog(plugin)">
             <i class="pi pi-external-link"></i>
           </button>
-          <button class="danger-button" :disabled="busyId === plugin.id" @click="uninstallPlugin(plugin)">
+          <button
+            class="danger-button"
+            :disabled="busyId === plugin.id || plugin.builtIn"
+            :title="plugin.builtIn ? '自带插件不能卸载，可停用' : '卸载插件'"
+            @click="uninstallPlugin(plugin)"
+          >
             卸载
           </button>
         </div>
@@ -269,6 +297,7 @@ onUnmounted(() => {
 .plugin-title-row,
 .plugin-meta,
 .plugin-tags,
+.plugin-dependencies,
 .plugin-permissions,
 .plugin-summary,
 .plugin-log-head {
@@ -308,6 +337,7 @@ onUnmounted(() => {
 
 .plugin-meta,
 .plugin-tags,
+.plugin-dependencies,
 .plugin-permissions {
   margin-top: 10px;
   color: var(--te-neutral-500);
@@ -316,6 +346,7 @@ onUnmounted(() => {
 
 .plugin-tags span,
 .plugin-pill,
+.plugin-dependencies code,
 .plugin-permissions code {
   border-radius: 999px;
   padding: 4px 8px;
@@ -335,6 +366,11 @@ onUnmounted(() => {
 .plugin-pill.native {
   background: #fff7ed;
   color: #c2410c;
+}
+
+.plugin-pill.builtin {
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .plugin-card-error {

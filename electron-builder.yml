@@ -19,6 +19,10 @@ extraResources:
     to: audio-engine
     filter:
       - '**/*'
+  - from: resources/plugins
+    to: plugins
+    filter:
+      - '**/*'
 win:
   executableName: TwilightEcho
   icon: build/icon.ico

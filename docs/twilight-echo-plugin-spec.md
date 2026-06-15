@@ -32,6 +32,7 @@
 | 字段 | 说明 |
 |---|---|
 | `contributes` | 声明扩展点贡献：页面、设置项、命令、主题资源 |
+| `dependencies` | 可选插件依赖表，形态为 `{ "<pluginId>": "<semver range>" }`，用于启用校验与按依赖序加载 |
 | `homepage` / `repository` | 主页与源码仓库 |
 | `icon` | 图标路径 |
 | `signature` | 预留签名字段（未来收紧安全策略时启用，不破坏格式） |
@@ -69,6 +70,7 @@
 - `activate(context)`：插件被启用或应用启动时调用。
 - `deactivate()`：插件被禁用、卸载或应用退出时调用，须释放全部资源。
 - `context` 注入内容：版本化 `twilight` API 句柄、插件私有存储目录路径、设置读写接口、日志器。
+- `dependencies` 仅声明宿主内已安装插件之间的依赖关系；宿主不会自动安装或自动启用依赖。依赖缺失、版本不满足、未启用或循环依赖时，依赖方标记为失败并写入插件日志。
 
 ### 4.3 API 网关
 
@@ -91,6 +93,9 @@
 
 - 曲目 ID 必须带 provider 前缀（如 `ncm:12345`、`local:<hash>`）。
 - 来源标识贯穿播放队列、音乐库与会话持久化。
+- 网易云音乐是 Twilight Echo 自带基础 `MediaProvider` 插件：插件 ID 为
+  `com.twilightecho.provider.ncm`，provider 前缀固定为 `ncm`，随软件分发并默认启用；
+  用户可停用以隔离故障或隐藏在线音源，但不可像第三方插件一样卸载。
 
 ## 5. DSP 原生插件 C ABI 标准
 

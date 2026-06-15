@@ -120,6 +120,8 @@ const emit = defineEmits<{
 }>()
 
 const {
+  providerAvailable,
+  providerError,
   isLoggedIn,
   profile,
   libraryLoading,
@@ -784,7 +786,7 @@ onMounted(async () => {
         </div>
         <div v-else :key="activeTab" class="streaming-content-body">
           <StreamingHome
-            v-if="activeTab === 'home' && !currentDetail"
+            v-if="activeTab === 'home' && !currentDetail && providerAvailable"
             :is-logged-in="isLoggedIn"
             :recs-loading="recsLoading"
             :recs-error="recsError"
@@ -794,6 +796,14 @@ onMounted(async () => {
             @open-rec-section="openRecSection"
             @open-playlist="openPlaylist"
           />
+
+          <div v-else-if="!providerAvailable && !currentDetail" class="streaming-placeholder">
+            <i class="pi pi-ban" style="font-size: 48px; color: #ccc"></i>
+            <p class="placeholder-title">网易云音乐插件已停用</p>
+            <p class="placeholder-hint">
+              {{ providerError || '请在设置的插件页重新启用 NetEase Cloud Music。' }}
+            </p>
+          </div>
 
           <div v-else-if="!isLoggedIn && !currentDetail" class="streaming-placeholder">
             <i class="pi pi-user" style="font-size: 48px; color: #ccc"></i>

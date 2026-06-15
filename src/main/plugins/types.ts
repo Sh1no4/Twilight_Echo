@@ -28,6 +28,7 @@ export interface TwilightPluginManifest {
   type: TwilightPluginType[]
   main?: string
   binary?: Record<string, string>
+  dependencies?: Record<string, string>
   engines: {
     twilightEcho: string
   }
@@ -42,11 +43,13 @@ export interface TwilightPluginManifest {
 
 export type TwilightPluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
 
+export type TwilightPluginSource = 'directory' | 'tep' | 'bundled'
+
 export interface TwilightPluginStateRecord {
   enabled: boolean
   installedAt: string
   updatedAt: string
-  source: 'directory' | 'tep'
+  source: TwilightPluginSource
   lastError?: string
 }
 
@@ -68,6 +71,7 @@ export interface TwilightPluginDescriptor {
   type: TwilightPluginType[]
   main?: string
   binary?: Record<string, string>
+  dependencies?: Record<string, string>
   engines: {
     twilightEcho: string
   }
@@ -80,9 +84,10 @@ export interface TwilightPluginDescriptor {
   signature?: unknown
   status: TwilightPluginStatus
   enabled: boolean
+  builtIn: boolean
   error: string | null
   isDsp: boolean
-  source: 'directory' | 'tep' | 'scan'
+  source: TwilightPluginSource | 'scan'
   installedAt: string | null
   updatedAt: string | null
   paths: TwilightPluginPaths
@@ -119,6 +124,25 @@ export type TwilightMediaProviderMethod =
   | 'searchPlaylists'
   | 'searchArtists'
   | 'fetchPlaylistTracks'
+  | 'checkLogin'
+  | 'getProfile'
+  | 'logout'
+  | 'getQrKey'
+  | 'getQrImage'
+  | 'checkQrLogin'
+  | 'fetchUserLibrary'
+  | 'fetchLikedTracks'
+  | 'fetchRecommendSongs'
+  | 'fetchRecommendPlaylists'
+  | 'fetchPersonalFm'
+  | 'fetchPrivateContent'
+  | 'fetchArtistTopSongs'
+  | 'fetchArtistPlaylists'
+  | 'fetchUserPlaylistsByUid'
+  | 'fetchUserFollows'
+  | 'fetchUserFolloweds'
+  | 'likeTrack'
+  | 'isTrackLiked'
 
 export type TwilightUiContributionKind = 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
 
@@ -202,7 +226,7 @@ export type PluginHostResponse =
   | {
       kind: 'api-call'
       requestId: string
-      namespace: 'player' | 'providers' | 'extensions'
+      namespace: 'player' | 'providers' | 'extensions' | 'internal'
       method:
         | 'getPlaybackInfo'
         | 'play'
@@ -214,6 +238,9 @@ export type PluginHostResponse =
         | 'register'
         | 'registerUi'
         | 'registerTheme'
+        | 'ncmRequest'
+        | 'ncmGetCachedSong'
+        | 'ncmCacheSong'
       args: unknown[]
     }
   | {
