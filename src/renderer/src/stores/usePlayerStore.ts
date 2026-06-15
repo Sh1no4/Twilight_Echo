@@ -932,6 +932,22 @@ function setupAudioEngineListeners(): void {
     )
   }
 
+  if (settingsApi?.onChanged) {
+    cleanupFns.push(
+      settingsApi.onChanged((snapshot) => {
+        audioOutputConfig.value = {
+          ...defaultAudioOutputConfig,
+          ...snapshot.settings.audioOutputConfig
+        }
+        audioProcessing.value = {
+          ...defaultAudioProcessing,
+          ...snapshot.settings.audioProcessing,
+          eqBands: snapshot.settings.audioProcessing.eqBands.map((band) => ({ ...band }))
+        }
+      })
+    )
+  }
+
   void refreshAudioOutputState()
 }
 
@@ -1413,6 +1429,7 @@ export function usePlayerStore(): {
       )
       scheduleCrossfadeIfNeeded()
     } catch (err) {
+      audioEngineError.value = err instanceof Error ? err.message : String(err)
       console.error('[audio-engine] Failed to update audio processing settings:', err)
     }
   }

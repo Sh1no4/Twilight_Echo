@@ -18,7 +18,7 @@ interface MenuItem {
 }
 
 const menuItems: MenuItem[] = [
-  { key: 'allSongs', label: '所有歌曲', icon: 'pi pi-music' },
+  { key: 'allSongs', label: '所有歌曲', icon: 'pi pi-headphones' },
   { key: 'artists', label: '艺术家', icon: 'pi pi-microphone' },
   { key: 'albums', label: '专辑', icon: 'pi pi-clone' },
   { key: 'playlists', label: '歌单', icon: 'pi pi-list-check' },
@@ -80,15 +80,13 @@ function handleImportClick(): void {
   left: 0;
   bottom: 0;
   width: var(--te-menu-width);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.76), rgba(248, 245, 255, 0.54)),
-    rgba(255, 255, 255, 0.58);
-  border-right: 1px solid rgba(255, 255, 255, 0.64);
+  background: #ffffff;
+  border-right: 1px solid rgba(17, 24, 39, 0.06);
   z-index: 1000;
   overflow: hidden;
-  box-shadow: 22px 0 70px rgba(86, 70, 160, 0.12);
-  backdrop-filter: blur(22px) saturate(150%);
-  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  box-shadow: 8px 0 24px rgba(15, 23, 42, 0.04);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   transform: translate3d(-100%, 0, 0);
   will-change: transform;
   transition:
@@ -107,13 +105,13 @@ function handleImportClick(): void {
   width: 100%;
   min-width: 132px;
   max-width: 216px;
-  padding: 10px 6px 10px 4px;
+  padding: 14px 9px 14px 1px;
 }
 
 .menu-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 8px;
 }
 
 .menu-bottom {
@@ -122,42 +120,50 @@ function handleImportClick(): void {
 }
 
 .menu-item {
+  position: relative;
   display: flex;
   align-items: center;
-  height: 38px;
-  padding: 0 10px;
+  height: 42px;
+  padding: 0 12px 0 18px;
   cursor: pointer;
-  border-radius: 12px;
-  gap: 10px;
+  border-radius: 11px;
+  gap: 12px;
   white-space: nowrap;
+  color: #111827;
   transition:
     background 0.18s,
-    transform 0.18s var(--te-ease-soft),
-    box-shadow 0.18s;
+    color 0.18s;
 }
 
 .menu-item:hover {
-  background: rgba(124, 77, 255, 0.09);
-  transform: translateX(2px);
+  background: #f3f4f6;
 }
 
 .menu-item.active {
-  background:
-    linear-gradient(90deg, rgba(124, 77, 255, 0.17), rgba(255, 126, 182, 0.08)),
-    rgba(255, 255, 255, 0.42);
-  box-shadow:
-    inset 3px 0 0 rgba(124, 77, 255, 0.78),
-    0 12px 30px rgba(124, 77, 255, 0.1);
+  background: #e8e8e8;
+  color: #0f172a;
+  box-shadow: none;
+}
+
+.menu-item.active::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 4px;
+  border-radius: 0 999px 999px 0;
+  background: #020617;
 }
 
 .item-icon {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: var(--te-neutral-700);
+  color: #4b5563;
   font-size: 16px;
   transition: color 0.15s;
 }
@@ -165,12 +171,13 @@ function handleImportClick(): void {
 .menu-item.active .item-icon,
 .menu-item-streaming .item-icon,
 .menu-item-import .item-icon {
-  color: var(--te-primary-500);
+  color: #111827;
 }
 
 .item-label {
-  font-size: 13px;
-  color: var(--te-neutral-900);
+  font-size: 14px;
+  font-weight: 700;
+  color: currentColor;
   opacity: 0;
   transition: opacity 0.2s ease;
 }
@@ -181,18 +188,18 @@ function handleImportClick(): void {
 
 .menu-separator {
   height: 1px;
-  margin: 8px 12px;
-  background: rgba(209, 213, 219, 0.5);
+  margin: 10px 10px 8px 14px;
+  background: #e5e7eb;
 }
 
 .menu-item-streaming,
 .menu-item-import {
-  color: var(--te-primary-500);
+  color: #111827;
 }
 
 .menu-item-streaming:hover,
 .menu-item-import:hover {
-  background: rgba(124, 77, 255, 0.1);
+  background: #f3f4f6;
 }
 
 .scanning-text {

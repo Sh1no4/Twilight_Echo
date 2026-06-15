@@ -665,10 +665,7 @@ onMounted(async () => {
         <div class="streaming-sidebar-bottom">
           <div class="streaming-menu-separator"></div>
           <div class="streaming-menu-item streaming-local-btn" @click="emit('backToLocal')">
-            <i
-              class="pi pi-desktop"
-              style="font-size: 16px; width: 20px; text-align: center; flex-shrink: 0"
-            ></i>
+            <i class="streaming-menu-icon pi pi-desktop"></i>
             <span class="streaming-menu-label">本地模式</span>
           </div>
         </div>
@@ -1205,15 +1202,13 @@ onMounted(async () => {
   bottom: 0;
   width: var(--te-menu-width);
   box-sizing: border-box;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.66), rgba(248, 245, 255, 0.4)),
-    rgba(255, 255, 255, 0.42);
-  border-right: 1px solid rgba(255, 255, 255, 0.62);
+  background: #ffffff;
+  border-right: 1px solid rgba(17, 24, 39, 0.06);
   z-index: 1000;
   overflow: hidden;
-  box-shadow: 22px 0 70px rgba(86, 70, 160, 0.12);
-  backdrop-filter: blur(22px) saturate(150%);
-  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  box-shadow: 8px 0 24px rgba(15, 23, 42, 0.04);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   transform: translate3d(-100%, 0, 0);
   will-change: transform;
   transition:
@@ -1229,79 +1224,88 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 10px 8px;
+  padding: 14px 9px 14px 1px;
   width: var(--te-menu-width);
   min-width: 132px;
   max-width: 216px;
 }
 
 .streaming-sidebar-header {
-  padding: 8px 12px 16px;
+  padding: 2px 12px 12px 18px;
   flex-shrink: 0;
 }
 
 .streaming-sidebar-title {
   font-size: 13px;
-  font-weight: 600;
-  color: var(--te-neutral-500);
-  text-transform: uppercase;
+  font-weight: 800;
+  color: #6b7280;
+  text-transform: none;
   letter-spacing: 0;
 }
 
 .streaming-nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 8px;
 }
 
 .streaming-menu-item {
+  position: relative;
   display: flex;
   align-items: center;
-  height: 38px;
-  padding: 0 10px;
+  height: 42px;
+  padding: 0 12px 0 18px;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: 11px;
+  color: #111827;
   transition:
     background 0.18s,
-    transform 0.18s var(--te-ease-soft),
-    box-shadow 0.18s;
+    color 0.18s;
   gap: 12px;
   white-space: nowrap;
 }
 
 .streaming-menu-item:hover {
-  background: rgba(124, 77, 255, 0.09);
-  transform: translateX(2px);
+  background: #f3f4f6;
 }
 
 .streaming-menu-item.active {
-  background:
-    linear-gradient(90deg, rgba(124, 77, 255, 0.17), rgba(255, 126, 182, 0.08)),
-    rgba(255, 255, 255, 0.34);
-  box-shadow:
-    inset 3px 0 0 rgba(124, 77, 255, 0.78),
-    0 12px 30px rgba(124, 77, 255, 0.1);
+  background: #e8e8e8;
+  color: #0f172a;
+  box-shadow: none;
+}
+
+.streaming-menu-item.active::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 10px;
+  bottom: 10px;
+  width: 4px;
+  border-radius: 0 999px 999px 0;
+  background: #020617;
 }
 
 .streaming-menu-item.active .streaming-menu-icon {
-  color: var(--te-primary-500);
+  color: #111827;
 }
 
 .streaming-menu-icon {
   font-size: 16px;
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: var(--te-neutral-700);
+  color: #4b5563;
   transition: color 0.15s;
 }
 
 .streaming-menu-label {
-  font-size: 13px;
-  color: var(--te-neutral-900);
+  font-size: 14px;
+  font-weight: 700;
+  color: currentColor;
   opacity: 0;
   transition: opacity 0.2s ease;
 }
@@ -1390,16 +1394,16 @@ onMounted(async () => {
 
 .streaming-menu-separator {
   height: 1px;
-  background: rgba(209, 213, 219, 0.5);
-  margin: 8px 12px;
+  background: #e5e7eb;
+  margin: 10px 10px 8px 14px;
 }
 
 .streaming-local-btn {
-  color: #555;
+  color: #111827;
 }
 
 .streaming-local-btn:hover {
-  background: rgba(124, 77, 255, 0.1);
+  background: #f3f4f6;
 }
 
 .btn-back {
@@ -2694,7 +2698,7 @@ onMounted(async () => {
   width: var(--te-menu-width);
   min-width: 132px;
   max-width: 216px;
-  padding: 10px 8px;
+  padding: 14px 9px 14px 1px;
 }
 
 .streaming-sidebar.open + .streaming-content {
@@ -2704,19 +2708,19 @@ onMounted(async () => {
 }
 
 .streaming-menu-item {
-  height: 38px;
-  padding: 0 10px;
-  border-radius: 8px;
+  height: 42px;
+  padding: 0 12px 0 18px;
+  border-radius: 11px;
 }
 
 .streaming-menu-icon {
-  width: 18px;
-  height: 18px;
+  width: 17px;
+  height: 17px;
   font-size: 16px;
 }
 
 .streaming-menu-label {
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .streaming-content::before {

@@ -6,6 +6,38 @@
   font-display: swap;
 }
 
+@font-face {
+  font-family: 'Mochiy Pop One';
+  src: url('/font/MochiyPopOne-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Zen Maru Gothic';
+  src: url('/font/ZenMaruGothic-Medium.ttf') format('truetype');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Zen Maru Gothic';
+  src: url('/font/ZenMaruGothic-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Zen Maru Gothic';
+  src: url('/font/ZenMaruGothic-Black.ttf') format('truetype');
+  font-weight: 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
   --te-primary-500: #7c4dff;
   --te-primary-400: #a885f7;
@@ -34,6 +66,12 @@
   --te-ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
   --te-ui-scale: 0.94;
   --te-menu-width: clamp(132px, 18vw, 216px);
+  --te-font-display:
+    'Mochiy Pop One', 'Zen Maru Gothic', 'Source Han Sans SC', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+  --te-font-rounded:
+    'Zen Maru Gothic', 'Source Han Sans SC', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
   --te-font-sans:
     'Source Han Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
     'Microsoft YaHei', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -307,24 +345,22 @@ html[data-theme='pureWhite'] .title-bar:not(.title-bar-glass) .control-btn:hover
 }
 
 html[data-theme='pureWhite'] .side-menu {
-  border-right-color: rgba(15, 23, 42, 0.08);
-  background: rgba(255, 255, 255, 0.98);
-  box-shadow: 16px 0 44px rgba(15, 23, 42, 0.06);
-  backdrop-filter: blur(12px) saturate(120%);
-  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  border-right-color: rgba(17, 24, 39, 0.06);
+  background: #ffffff;
+  box-shadow: 8px 0 24px rgba(15, 23, 42, 0.04);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 html[data-theme='pureWhite'] .menu-item:hover,
 html[data-theme='pureWhite'] .menu-item-streaming:hover,
 html[data-theme='pureWhite'] .menu-item-import:hover {
-  background: rgba(37, 99, 235, 0.07);
+  background: #f3f4f6;
 }
 
 html[data-theme='pureWhite'] .menu-item.active {
-  background: rgba(37, 99, 235, 0.08);
-  box-shadow:
-    inset 3px 0 0 rgba(37, 99, 235, 0.84),
-    0 10px 24px rgba(37, 99, 235, 0.08);
+  background: #e8e8e8;
+  box-shadow: none;
 }
 
 html[data-theme='pureWhite'] .song-list {
@@ -434,6 +470,8 @@ html[data-theme='pureWhite'] .track-row.track-playing td {
 }
 
 html[data-theme='pureWhite'] .track-playing .track-title {
+  font-family: var(--te-font-rounded);
+  font-weight: 900;
   color: var(--te-neutral-900);
 }
 
@@ -661,7 +699,12 @@ html[data-theme='dark'] .control-btn:hover {
   background: rgba(139, 92, 246, 0.16);
 }
 
-html[data-theme='dark'] .side-menu,
+html[data-theme='dark'] .side-menu {
+  border-right-color: rgba(15, 23, 42, 0.08);
+  background: #ffffff;
+  box-shadow: 8px 0 24px rgba(15, 23, 42, 0.06);
+}
+
 html[data-theme='dark'] .streaming-sidebar {
   border-right-color: rgba(148, 163, 184, 0.14);
   background:
@@ -671,17 +714,21 @@ html[data-theme='dark'] .streaming-sidebar {
 }
 
 html[data-theme='dark'] .menu-separator {
-  background: rgba(148, 163, 184, 0.18);
+  background: #e5e7eb;
 }
 
 html[data-theme='dark'] .menu-item:hover,
 html[data-theme='dark'] .menu-item-streaming:hover,
 html[data-theme='dark'] .menu-item-import:hover,
 html[data-theme='dark'] .streaming-menu-item:hover {
-  background: rgba(139, 92, 246, 0.16);
+  background: #f3f4f6;
 }
 
-html[data-theme='dark'] .menu-item.active,
+html[data-theme='dark'] .menu-item.active {
+  background: #e8e8e8;
+  box-shadow: none;
+}
+
 html[data-theme='dark'] .streaming-menu-item.active {
   background:
     linear-gradient(90deg, rgba(139, 92, 246, 0.28), rgba(34, 211, 238, 0.11)),
@@ -692,7 +739,10 @@ html[data-theme='dark'] .streaming-menu-item.active {
 }
 
 html[data-theme='dark'] .item-icon,
-html[data-theme='dark'] .item-label,
+html[data-theme='dark'] .item-label {
+  color: #111827;
+}
+
 html[data-theme='dark'] .streaming-menu-icon,
 html[data-theme='dark'] .streaming-menu-label {
   color: rgba(226, 232, 240, 0.9);
@@ -841,6 +891,8 @@ html[data-theme='dark'] .track-playing {
 }
 
 html[data-theme='dark'] .track-playing .track-title {
+  font-family: var(--te-font-rounded);
+  font-weight: 900;
   color: #ddd6fe;
 }
 

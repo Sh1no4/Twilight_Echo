@@ -1029,13 +1029,15 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .playlist-heading-title {
+  font-family: var(--te-font-rounded);
   font-size: 14px;
   line-height: 1.2;
-  font-weight: 800;
+  font-weight: 900;
   color: var(--te-neutral-900);
 }
 .playlist-heading-subtitle {
   margin-top: 2px;
+  font-family: var(--te-font-rounded);
   font-size: 11px;
   font-weight: 700;
   color: rgba(80, 88, 116, 0.56);
@@ -1177,9 +1179,10 @@ onBeforeUnmount(() => {
   flex: 1;
 }
 .playlist-title {
+  font-family: var(--te-font-rounded);
   font-size: 13px;
-  line-height: 1.25;
-  font-weight: 700;
+  line-height: 1.28;
+  font-weight: 900;
   color: var(--te-neutral-900);
   white-space: nowrap;
   overflow: hidden;
@@ -1195,6 +1198,7 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 .playlist-artist {
+  font-family: var(--te-font-rounded);
   font-size: 11px;
   font-weight: 700;
   color: rgba(80, 88, 116, 0.56);
@@ -1311,8 +1315,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-width: 220px;
-  max-width: 300px;
+  min-width: 260px;
+  max-width: 360px;
 }
 .player-cover {
   width: 48px;
@@ -1354,15 +1358,19 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 .player-title {
-  font-size: 14px;
-  font-weight: 700;
+  font-family: var(--te-font-rounded);
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1.28;
   color: var(--te-neutral-900);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .player-artist {
+  font-family: var(--te-font-rounded);
   font-size: 12px;
+  font-weight: 700;
   color: #999;
   margin-top: 2px;
   white-space: nowrap;

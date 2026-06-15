@@ -881,6 +881,17 @@ function persistAudioOutputConfig(config: OutputConfig): SettingsSnapshot {
   return snapshot
 }
 
+function persistAudioProcessingState(processing: AudioProcessingSettings): SettingsSnapshot {
+  appSettings = normalizeAppSettings({
+    ...appSettings,
+    audioProcessing: processing
+  })
+  writeAppSettings(appSettings)
+  const snapshot = createSettingsSnapshot(appSettings, launchSettings)
+  mainWindow?.webContents.send('settings:changed', snapshot)
+  return snapshot
+}
+
 async function updateAppSettings(patch: Partial<AppSettings>): Promise<SettingsSnapshot> {
   const previousCachePath = appSettings.musicCachePath
   const shouldUpdateAudioProcessing = Object.prototype.hasOwnProperty.call(patch, 'audioProcessing')
@@ -1170,8 +1181,7 @@ function setupAudioEngineIpc(): void {
     'audioEngine:setAudioProcessing',
     async (_event, settings: Partial<AudioProcessingSettings>) => {
       const normalized = await requireAudioEngine().setAudioProcessing(settings)
-      appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
-      writeAppSettings(appSettings)
+      persistAudioProcessingState(normalized)
       return normalized
     }
   )
@@ -1199,21 +1209,13 @@ function setupAudioEngineIpc(): void {
 
   ipcMain.handle('audioEngine:loadImpulseResponse', async (_event, path: string) => {
     const info = await requireAudioEngine().loadImpulseResponse(path)
-    appSettings = normalizeAppSettings({
-      ...appSettings,
-      audioProcessing: requireAudioEngine().getAudioProcessing()
-    })
-    writeAppSettings(appSettings)
+    persistAudioProcessingState(requireAudioEngine().getAudioProcessing())
     return info
   })
 
   ipcMain.handle('audioEngine:unloadImpulseResponse', async () => {
     const info = await requireAudioEngine().unloadImpulseResponse()
-    appSettings = normalizeAppSettings({
-      ...appSettings,
-      audioProcessing: requireAudioEngine().getAudioProcessing()
-    })
-    writeAppSettings(appSettings)
+    persistAudioProcessingState(requireAudioEngine().getAudioProcessing())
     return info
   })
 
@@ -1225,8 +1227,7 @@ function setupAudioEngineIpc(): void {
     'audioEngine:setEqBands',
     async (_event, settings: Partial<AudioProcessingSettings>) => {
       const normalized = await requireAudioEngine().setEqBands(settings)
-      appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
-      writeAppSettings(appSettings)
+      persistAudioProcessingState(normalized)
       return normalized
     }
   )
@@ -1242,16 +1243,14 @@ function setupAudioEngineIpc(): void {
       }
     ) => {
       const normalized = await requireAudioEngine().setEqPreset(preset)
-      appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
-      writeAppSettings(appSettings)
+      persistAudioProcessingState(normalized)
       return normalized
     }
   )
 
   ipcMain.handle('audioEngine:setCrossfeedStrength', async (_event, strength: number) => {
     const normalized = await requireAudioEngine().setCrossfeedStrength(Number(strength))
-    appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
-    writeAppSettings(appSettings)
+    persistAudioProcessingState(normalized)
     return normalized
   })
 
@@ -1265,8 +1264,7 @@ function setupAudioEngineIpc(): void {
       clip?: boolean
     ) => {
       const normalized = await requireAudioEngine().setReplayGainMode(mode, preamp, fallback, clip)
-      appSettings = normalizeAppSettings({ ...appSettings, audioProcessing: normalized })
-      writeAppSettings(appSettings)
+      persistAudioProcessingState(normalized)
       return normalized
     }
   )

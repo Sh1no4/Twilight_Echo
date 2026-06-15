@@ -564,6 +564,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 18px;
   align-self: center;
+  transform: translateX(28px);
 }
 
 .cover-frame {
@@ -600,9 +601,10 @@ onBeforeUnmount(() => {
 
 .track-title {
   margin: 0;
-  font-size: 34px;
-  font-weight: 700;
-  line-height: 1.1;
+  font-family: var(--te-font-display);
+  font-size: 32px;
+  font-weight: 400;
+  line-height: 1.22;
   color: #fff;
   overflow: hidden;
   display: -webkit-box;
@@ -612,7 +614,9 @@ onBeforeUnmount(() => {
 
 .track-artist {
   margin: 10px 0 0;
+  font-family: var(--te-font-rounded);
   font-size: 18px;
+  font-weight: 700;
   color: rgba(255, 255, 255, 0.78);
   white-space: nowrap;
   overflow: hidden;
@@ -621,7 +625,9 @@ onBeforeUnmount(() => {
 
 .track-album {
   margin: 4px 0 0;
+  font-family: var(--te-font-rounded);
   font-size: 14px;
+  font-weight: 500;
   color: rgba(255, 255, 255, 0.48);
   white-space: nowrap;
   overflow: hidden;
@@ -633,7 +639,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   padding-left: 6px;
-  border-left: 1px solid rgba(255, 255, 255, 0.08);
   align-self: stretch;
 }
 
@@ -830,6 +835,7 @@ onBeforeUnmount(() => {
 
   .cover-column {
     align-self: stretch;
+    transform: none;
   }
 
   .lyrics-list {

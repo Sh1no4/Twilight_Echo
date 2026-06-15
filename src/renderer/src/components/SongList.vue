@@ -820,8 +820,9 @@ watch(
 }
 
 .song-list-title {
+  font-family: var(--te-font-rounded);
   font-size: 28px;
-  font-weight: 800;
+  font-weight: 900;
   color: var(--te-neutral-900);
   margin: 0;
   letter-spacing: 0;
@@ -1282,8 +1283,9 @@ watch(
 .track-title {
   min-width: 0;
   width: 100%;
-  font-size: 13px;
-  font-weight: 700;
+  font-family: var(--te-font-rounded);
+  font-size: 14px;
+  font-weight: 900;
   color: var(--te-neutral-900);
   white-space: nowrap;
   overflow: hidden;
@@ -1293,7 +1295,9 @@ watch(
   color: #6f4ee8;
 }
 .track-artist {
+  font-family: var(--te-font-rounded);
   font-size: 12px;
+  font-weight: 700;
   color: rgba(71, 80, 112, 0.7);
   margin-top: 1px;
   white-space: nowrap;
