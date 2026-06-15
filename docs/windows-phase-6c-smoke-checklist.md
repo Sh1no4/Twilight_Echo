@@ -79,8 +79,8 @@ Run the automated mock backend gate before any real hardware smoke. This gate mu
    Expected:
    - ASIO mock Native DSD reports `dsdMode=native` only when runtime facts are `proven`.
    - Native DSD mismatch falls back to DoP when possible, then PCM.
-   - SACD ISO fixture metadata returns real `isoTracks`; uncompressed DSD tracks are playable and DST tracks report `dst_provider_unavailable`.
-   - `GetEngineCapabilities()` reports SACD ISO support for uncompressed DSD area playback and keeps `sacdIsoDst=false`.
+   - SACD ISO fixture metadata returns real `isoTracks`; uncompressed DSD tracks are playable with `outputModes=["native","dop","pcm"]`, and DST tracks report `playable=false` plus `reasonCode=dst_dsd_provider_unavailable`.
+   - `GetEngineCapabilities()` reports SACD ISO support for uncompressed DSD area playback and keeps `sacdIsoDst=false`, with `sacdIsoDstMode=unavailable` and `sacdIsoDstReasonCode=dst_dsd_provider_unavailable`.
 5. Real WASAPI/ASIO DoP smoke is deferred.
    Expected:
    - Do not block Phase 6D on a real DoP DAC or ASIO driver.
@@ -175,7 +175,7 @@ Run the automated mock backend gate before any real hardware smoke. This gate mu
    - `outputPerfectRequiresPcmPassthrough=true`
    - `htmlAudioFallbackDefault=false`
    - `dsdModes` includes `pcm`, `dop`, `native`, and `unsupported`
-   - Native DSD reflects ASIO runtime capability honestly, SACD ISO is true for uncompressed DSD area playback, and `sacdIsoDst=false`
+   - Native DSD reflects ASIO runtime capability honestly, SACD ISO is true for uncompressed DSD area playback, and `sacdIsoDst=false` with `sacdIsoDstReasonCode=dst_dsd_provider_unavailable`
    - `devicePathKinds` includes `default`, `hw`, `plughw`, `hal`, and `asio`
    - `output.accessModes` includes `shared`, `exclusive`, `hog`, `direct`, and `plugin`
    - `backendCapabilities` includes `wasapi`, `wasapi-exclusive`, and `asio`
@@ -193,3 +193,4 @@ Run the automated mock backend gate before any real hardware smoke. This gate mu
 - Phase 6D mock DSF/DFF DSD64/128 DoP carrier cases pass without real hardware.
 - Phase 6D mock DSD256/512 and processing fallback cases report PCM fallback honestly.
 - Native DSD ASIO mock, SACD ISO uncompressed fixture playback, and PCM fallback cases pass; real Native DSD DAC and real WASAPI/ASIO DoP smoke remain opt-in.
+- External release evidence can be produced with `npm run smoke:audio-format-matrix -- --manifest "<matrix.json>" --json`; add `--playback --backend wasapi-exclusive --device "<device>"` for WASAPI hardware PCM/DoP evidence or `--backend asio` for ASIO Native DSD evidence.

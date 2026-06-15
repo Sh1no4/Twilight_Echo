@@ -423,9 +423,12 @@ export interface NativeAudioMetadata {
   bitDepth: number
   bitrate: number
   duration: number
+  playable?: boolean
+  reasonCode?: string
   isDsd: boolean
   dsdMode: string
   dsdRate: number
+  outputModes?: string[]
   coverMime: string
   coverDataBase64: string
   replayGainTrackGain: number | null

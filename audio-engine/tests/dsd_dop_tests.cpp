@@ -371,7 +371,7 @@ void testSacdIsoProbePlayableEntry() {
   reader.close();
 
   assert(!reader.open((iso.string() + "?area=stereo&track=2"), &error));
-  assert(error == kSacdDstNoProviderReason);
+  assert(error == kSacdDstDsdProviderUnavailableReason);
   {
     std::error_code ignored;
     std::filesystem::remove(iso, ignored);
@@ -393,7 +393,7 @@ void testSacdIsoDemuxerTracksAndSeek() {
   assert(demuxer.readBytes(bytes.data(), bytes.size()) == bytes.size());
   assert(bytes[0] == 0x80);
   assert(!demuxer.selectTrack("stereo", 2, &error));
-  assert(error == kSacdDstNoProviderReason);
+  assert(error == kSacdDstDsdProviderUnavailableReason);
   {
     std::error_code ignored;
     std::filesystem::remove(iso, ignored);
@@ -422,18 +422,35 @@ class AcceptingDstProvider final : public SacdDstProvider {
     if (reason) reason->clear();
     return true;
   }
+
+  bool preservesDsd() const override {
+    return true;
+  }
+};
+
+class PcmOnlyDstProvider final : public SacdDstProvider {
+ public:
+  const char* name() const override {
+    return "pcm-only-test-provider";
+  }
+
+  bool available(std::string* reason) const override {
+    if (reason) reason->clear();
+    return true;
+  }
 };
 
 void testSacdDstProviderSelection() {
   auto ffmpeg = selectSacdDstProvider(true, nullptr);
-  assert(ffmpeg.available);
+  assert(!ffmpeg.available);
   assert(ffmpeg.provider == kSacdDstFfmpegProviderName);
-  assert(ffmpeg.reasonCode.empty());
+  assert(ffmpeg.reasonCode == kSacdDstDsdProviderUnavailableReasonCode);
+  assert(ffmpeg.reason == kSacdDstDsdProviderUnavailableReason);
 
   auto none = selectSacdDstProvider(false, nullptr);
   assert(!none.available);
-  assert(none.reasonCode == kSacdDstNoProviderReasonCode);
-  assert(none.reason == kSacdDstNoProviderReason);
+  assert(none.reasonCode == kSacdDstDsdProviderUnavailableReasonCode);
+  assert(none.reason == kSacdDstDsdProviderUnavailableReason);
 
   RejectingDstProvider rejecting;
   auto rejected = selectSacdDstProvider(false, &rejecting);
@@ -441,6 +458,13 @@ void testSacdDstProviderSelection() {
   assert(rejected.provider == "rejecting-test-provider");
   assert(rejected.reasonCode == kSacdDstProviderRejectedReasonCode);
   assert(rejected.reason == "test provider disabled");
+
+  PcmOnlyDstProvider pcmOnly;
+  auto pcmOnlyRejected = selectSacdDstProvider(false, &pcmOnly);
+  assert(!pcmOnlyRejected.available);
+  assert(pcmOnlyRejected.provider == "pcm-only-test-provider");
+  assert(pcmOnlyRejected.reasonCode == kSacdDstDsdProviderUnavailableReasonCode);
+  assert(pcmOnlyRejected.reason == kSacdDstDsdProviderUnavailableReason);
 
   AcceptingDstProvider accepting;
   auto accepted = selectSacdDstProvider(false, &accepting);

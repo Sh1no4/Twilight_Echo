@@ -57,11 +57,11 @@ Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer
 - DoP carrier：Phase 6D 允许 DSF/DFF DSD64/128 在后端、设备、声道数和实际 PCM carrier 格式满足条件时进入 `dsdMode=dop`；UI 展示 `DoP carrier`，不把它写成 PCM fallback。
 - PCM fallback：DSF/DFF DSD256/512、DoP 条件不满足，或软件音量、ReplayGain、EQ、Convolver、Crossfeed、Crossfade 等处理启用时，实际链路回到 DSD 源 -> decoded PCM -> 后端 PCM 输出；UI 需要明确展示 fallback。
 - Native DSD：首版只承诺 ASIO；驱动运行态证明为 `proven` 时可直接输出 DSD bitstream，否则回退 DoP 或 PCM。
-- SACD ISO：首版支持未压缩 DSD area 的曲目切片播放；DST 压缩曲目明确报告 `unsupported`。
+- SACD ISO：首版支持未压缩 DSD area 的曲目切片播放；DST 压缩曲目只允许 DSD-preserving provider。当前 provider 不可用时报告 `dst_dsd_provider_unavailable`，禁止把 FFmpeg PCM DST decode 包装成 Native DSD/DoP 成功。
 
 ## 后续顺序
 
 1. 继续收口 ASIO、CoreAudio、ALSA 的 actual format、failure reason 与 opt-in smoke；WASAPI Exclusive 已增加真实设备多格式矩阵 smoke。
-2. 扩充真实音频 fixture 样本集；当前默认门禁覆盖 generated WAV/DSF，`TAE_AUDIO_FIXTURES_DIR` 可 opt-in 扫描 MP3/FLAC/M4A/OGG/AAC 等外部小样本。
-3. 后续补齐 SACD DST 解码、真实 ASIO Native DSD DAC smoke 和跨平台独占输出验证。
+2. 扩充真实音频 fixture 样本集；当前默认门禁覆盖 generated WAV/DSF，`TAE_AUDIO_FIXTURE_MANIFEST` 可指向外部 JSON 矩阵，`TAE_AUDIO_FIXTURES_DIR` 继续作为 MP3/FLAC/M4A/OGG/AAC/DSF/DFF 等外部小样本目录扫描 fallback。
+3. 后续补齐可投入生产的 DSD-preserving SACD DST provider、真实 ASIO Native DSD DAC smoke 和跨平台独占输出验证。
 4. 在 macOS/Linux 工具链与真实设备 smoke 通过后补平台产物路径和打包检查。

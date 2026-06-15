@@ -28,12 +28,15 @@ struct AudioMetadata {
   int bitDepth = 0;
   int64_t bitrate = 0;
   double durationSeconds = 0.0;
+  bool playable = true;
+  std::string reasonCode;
   bool isDsd = false;
   std::string dsdMode = "pcm";
   int dsdRate = 0;
   std::string coverMime;
   std::string coverDataBase64;
   ReplayGainInfo replayGain;
+  std::vector<std::string> outputModes;
   std::vector<AudioMetadata> isoTracks;
 };
 

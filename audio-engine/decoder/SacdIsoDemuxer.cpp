@@ -239,8 +239,8 @@ bool parseTwilightAreaToc(
     track.title = "Track " + std::to_string(track.trackNumber);
     track.playable = !track.isDst && track.dataOffset > 0 && track.dataSize > 0;
     if (track.isDst) {
-      track.reasonCode = kSacdDstNoProviderReasonCode;
-      track.reason = kSacdDstNoProviderReason;
+      track.reasonCode = kSacdDstDsdProviderUnavailableReasonCode;
+      track.reason = kSacdDstDsdProviderUnavailableReason;
     }
     tracks->push_back(track);
     parsed = true;
@@ -282,8 +282,8 @@ void addMarkerTracks(const std::vector<IsoEntry>& entries, std::vector<SacdIsoTr
         static_cast<double>(static_cast<uint64_t>(track.sampleRate) * static_cast<uint64_t>(track.channelCount));
     track.playable = !track.isDst;
     if (track.isDst) {
-      track.reasonCode = kSacdDstNoProviderReasonCode;
-      track.reason = kSacdDstNoProviderReason;
+      track.reasonCode = kSacdDstDsdProviderUnavailableReasonCode;
+      track.reason = kSacdDstDsdProviderUnavailableReason;
     }
     tracks->push_back(track);
   }
@@ -407,7 +407,7 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
 
   const auto& track = impl_->tracks[static_cast<size_t>(selected)];
   if (!track.playable || track.isDst) {
-    if (error) *error = track.reason.empty() ? kSacdDstNoProviderReason : track.reason;
+    if (error) *error = track.reason.empty() ? kSacdDstDsdProviderUnavailableReason : track.reason;
     return false;
   }
   const uint64_t size = fileSize(impl_->file);

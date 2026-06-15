@@ -582,7 +582,7 @@ async function parseTrack(file: FileEntry): Promise<unknown[]> {
     try {
       const meta = audioEngineManager?.getMetadata(file.fullPath)
       if (meta && meta.isoTracks && meta.isoTracks.length > 0) {
-        return meta.isoTracks.map(isoTrack => {
+        return meta.isoTracks.filter(isoTrack => isoTrack.playable !== false).map(isoTrack => {
           return {
             id: randomUUID(),
             title: isoTrack.title || 'Unknown Track',

@@ -213,6 +213,15 @@ std::string optionalNumber(std::optional<double> value) {
   return out.str();
 }
 
+void writeStringArray(std::ostringstream& json, const std::vector<std::string>& values) {
+  json << "[";
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (i > 0) json << ",";
+    json << "\"" << escapeJson(values[i]) << "\"";
+  }
+  json << "]";
+}
+
 std::string metadataToJson(const AudioMetadata& metadata, const std::string& error = {}) {
   std::ostringstream json;
   json << "{"
@@ -235,6 +244,8 @@ std::string metadataToJson(const AudioMetadata& metadata, const std::string& err
        << "\"bitDepth\":" << metadata.bitDepth << ","
        << "\"bitrate\":" << metadata.bitrate << ","
        << "\"duration\":" << metadata.durationSeconds << ","
+       << "\"playable\":" << (metadata.playable ? "true" : "false") << ","
+       << "\"reasonCode\":\"" << escapeJson(metadata.reasonCode) << "\","
        << "\"isDsd\":" << (metadata.isDsd ? "true" : "false") << ","
        << "\"dsdMode\":\"" << escapeJson(metadata.dsdMode) << "\","
        << "\"dsdRate\":" << metadata.dsdRate << ","
@@ -243,7 +254,10 @@ std::string metadataToJson(const AudioMetadata& metadata, const std::string& err
        << "\"replayGainTrackGain\":" << optionalNumber(metadata.replayGain.trackGainDb) << ","
        << "\"replayGainAlbumGain\":" << optionalNumber(metadata.replayGain.albumGainDb) << ","
        << "\"r128TrackGain\":" << optionalNumber(metadata.replayGain.r128TrackGainDb) << ","
-       << "\"r128AlbumGain\":" << optionalNumber(metadata.replayGain.r128AlbumGainDb) << ",";
+       << "\"r128AlbumGain\":" << optionalNumber(metadata.replayGain.r128AlbumGainDb) << ","
+       << "\"outputModes\":";
+  writeStringArray(json, metadata.outputModes);
+  json << ",";
   
   if (!metadata.isoTracks.empty()) {
     json << "\"isoTracks\":[";
@@ -288,6 +302,9 @@ std::string readMetadataJson(const std::string& source) {
       trackMeta.dsdRate = inferDsdRate(track.sampleRate);
       trackMeta.container = "SACD ISO";
       trackMeta.codec = track.isDst ? "dst" : "dsd";
+      trackMeta.playable = track.playable;
+      trackMeta.reasonCode = track.playable ? "" : track.reasonCode;
+      if (track.playable) trackMeta.outputModes = {"native", "dop", "pcm"};
       trackMeta.comment = track.playable ? "" : (track.reason.empty() ? "SACD ISO DST track unsupported" : track.reason);
       metadata.isoTracks.push_back(trackMeta);
     }

@@ -61,7 +61,7 @@
 - `htmlAudioFallbackDefault`：Electron 是否默认允许 HTMLAudio 兜底；现阶段为 `false`。
 - `backends` / `backendCapabilities`：后端能力列表，两个字段保持兼容。
 - `features`：FFmpeg、WASAPI、ASIO、CoreAudio、ALSA、Native DSD、DoP、SACD ISO 能力布尔值。
-- `dsd`：DSD 能力模型。DSF/DFF 与 SACD ISO 未压缩 DSD area 可进入 Native DSD / DoP / PCM fallback 决策链；DST 压缩 SACD 曲目仍明确 unsupported。
+- `dsd`：DSD 能力模型。DSF/DFF 与 SACD ISO 未压缩 DSD area 可进入 Native DSD / DoP / PCM fallback 决策链；DST 压缩 SACD 曲目只接受 DSD-preserving provider。当前 provider 不可用时 `sacdIsoDst=false`、`sacdIsoDstMode=unavailable`、`sacdIsoDstReasonCode=dst_dsd_provider_unavailable`。
 
 `TAE_GetLastError()` 同样使用 buffer/required-size 模式，返回 `hasError`、`code`、`message`、`backend`、`context`、`recoverable`。
 
@@ -86,7 +86,9 @@
 - DoP carrier：DSF/DFF DSD64/128 在后端、设备、声道数和实际 PCM carrier 格式满足条件时可进入 `dsdMode=dop`。UI 展示为 DSD 源到 `DoP carrier` 再到后端实际输出；它不同于 PCM fallback，因为 carrier 保留 DSD bitstream。
 - PCM fallback：DSF/DFF DSD256/512、DoP carrier 条件不满足，或软件音量、ReplayGain、EQ、Convolver、Crossfeed、Crossfade 等处理启用时，必须走 PCM fallback。UI 展示为 DSD 源到 PCM 工作格式再到后端实际 PCM 格式，不把它标为 Native DSD 或 DoP。
 - Native DSD：指后端和设备直接接收 DSD bitstream。首版只承诺 ASIO，且只有运行态证明为 `proven` 才能声明 native。
-- SACD ISO：首版支持未压缩 DSD area 的曲目切片播放；DST 压缩曲目报告 unsupported，不能静默当作未压缩 DSD、DoP 或普通 PCM 播放完成。
+- SACD ISO：首版支持未压缩 DSD area 的曲目切片播放；`?area=stereo|multichannel&track=N` 可选择具体 program/track。DST 压缩曲目必须走 DSD-preserving provider 才能进入 Native DSD / DoP；provider 不可用时报 `dst_dsd_provider_unavailable`，provider 失败时报 `dst_dsd_provider_failed`，禁止把 FFmpeg PCM DST decode 包装成 Native DSD/DoP 成功。
+
+`GetMetadata()` 对 SACD ISO 返回 `isoTracks[]`。每个 track 带有 `playable`、`reasonCode` 和 `outputModes`：未压缩 DSD track 为 `playable=true` 且 `outputModes=["native","dop","pcm"]`；DST track 在 provider 不可用时为 `playable=false`、`codec=dst`、`reasonCode=dst_dsd_provider_unavailable`、`outputModes=[]`。
 
 Phase 6B 的后端规则：
 
@@ -121,4 +123,4 @@ ASIO 保留冷却与恢复诊断策略。ALSA 提供基础 xrun 恢复：`snd_pc
 
 ## 当前非闭环范围
 
-当前不包含 SACD DST 解码、CoreAudio hog mode、高级设备独占、多设备同步或复杂热插拔监听。Native DSD 首版只承诺 ASIO；真实设备 smoke 是 opt-in，不作为当前 CI 必需条件；没有 ASIO SDK、macOS/Linux 工具链或对应设备时必须跳过并保持默认验证通过。
+当前不包含可投入生产的 DSD-preserving SACD DST provider、CoreAudio hog mode、高级设备独占、多设备同步或复杂热插拔监听。Native DSD 首版只承诺 ASIO；真实设备 smoke 是 opt-in，不作为当前 CI 必需条件；没有 ASIO SDK、macOS/Linux 工具链或对应设备时必须跳过并保持默认验证通过。

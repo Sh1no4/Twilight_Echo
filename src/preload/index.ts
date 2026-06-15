@@ -146,9 +146,12 @@ interface NativeAudioMetadata {
   bitDepth: number
   bitrate: number
   duration: number
+  playable?: boolean
+  reasonCode?: string
   isDsd: boolean
   dsdMode: string
   dsdRate: number
+  outputModes?: string[]
   coverMime: string
   coverDataBase64: string
   replayGainTrackGain: number | null
@@ -156,6 +159,7 @@ interface NativeAudioMetadata {
   r128TrackGain: number | null
   r128AlbumGain: number | null
   error: string
+  isoTracks?: NativeAudioMetadata[]
 }
 
 interface VisualizationOptions {

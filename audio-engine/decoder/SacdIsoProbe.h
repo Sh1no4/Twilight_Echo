@@ -53,6 +53,10 @@ inline constexpr const char* kSacdDstFfmpegProviderName = "ffmpeg";
 inline constexpr const char* kSacdDstNoProviderReasonCode = "dst_provider_unavailable";
 inline constexpr const char* kSacdDstNoProviderReason =
     "DST decoding unavailable: FFmpeg DST decoder is unavailable and no optional DST provider is registered";
+inline constexpr const char* kSacdDstDsdProviderUnavailableReasonCode = "dst_dsd_provider_unavailable";
+inline constexpr const char* kSacdDstDsdProviderUnavailableReason =
+    "SACD DST requires a DSD-preserving provider; PCM-only DST decoding is not accepted for Native DSD or DoP";
+inline constexpr const char* kSacdDstDsdProviderFailedReasonCode = "dst_dsd_provider_failed";
 inline constexpr const char* kSacdDstProviderRejectedReasonCode = "dst_provider_rejected";
 
 class SacdDstProvider {
@@ -60,6 +64,7 @@ class SacdDstProvider {
   virtual ~SacdDstProvider() = default;
   virtual const char* name() const = 0;
   virtual bool available(std::string* reason) const = 0;
+  virtual bool preservesDsd() const { return false; }
 };
 
 struct SacdDstProviderSelection {
@@ -89,26 +94,34 @@ inline std::string sacdIsoExtensionOf(const std::string& source) {
 inline SacdDstProviderSelection selectSacdDstProvider(bool ffmpegDstAvailable, const SacdDstProvider* fallbackProvider) {
   SacdDstProviderSelection selection;
   if (ffmpegDstAvailable) {
-    selection.available = true;
+    selection.available = false;
     selection.provider = kSacdDstFfmpegProviderName;
+    selection.reasonCode = kSacdDstDsdProviderUnavailableReasonCode;
+    selection.reason = kSacdDstDsdProviderUnavailableReason;
     return selection;
   }
 
   if (fallbackProvider) {
     std::string reason;
-    if (fallbackProvider->available(&reason)) {
+    const bool providerAvailable = fallbackProvider->available(&reason);
+    const bool providerPreservesDsd = fallbackProvider->preservesDsd();
+    if (providerAvailable && providerPreservesDsd) {
       selection.available = true;
       selection.provider = fallbackProvider->name() ? fallbackProvider->name() : "";
       return selection;
     }
     selection.provider = fallbackProvider->name() ? fallbackProvider->name() : "";
-    selection.reasonCode = kSacdDstProviderRejectedReasonCode;
-    selection.reason = reason.empty() ? "Optional DST provider is unavailable" : reason;
+    selection.reasonCode = providerAvailable ? kSacdDstDsdProviderUnavailableReasonCode : kSacdDstProviderRejectedReasonCode;
+    selection.reason = reason.empty()
+                           ? (selection.reasonCode == kSacdDstDsdProviderUnavailableReasonCode
+                                  ? kSacdDstDsdProviderUnavailableReason
+                                  : "Optional DST provider is unavailable")
+                           : reason;
     return selection;
   }
 
-  selection.reasonCode = kSacdDstNoProviderReasonCode;
-  selection.reason = kSacdDstNoProviderReason;
+  selection.reasonCode = kSacdDstDsdProviderUnavailableReasonCode;
+  selection.reason = kSacdDstDsdProviderUnavailableReason;
   return selection;
 }
 

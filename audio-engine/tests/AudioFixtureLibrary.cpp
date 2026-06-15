@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <system_error>
 
@@ -41,10 +42,91 @@ std::string lowercaseExtension(const std::filesystem::path& path) {
 }
 
 bool isSupportedExternalFixture(const std::filesystem::path& path) {
-  static constexpr std::array<const char*, 10> kExtensions = {
-      ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".dsf", ".dff", ".aiff"};
+  static constexpr std::array<const char*, 11> kExtensions = {
+      ".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".dsf", ".dff", ".aiff", ".iso"};
   const std::string extension = lowercaseExtension(path);
   return std::find(kExtensions.begin(), kExtensions.end(), extension) != kExtensions.end();
+}
+
+std::string readTextFile(const std::filesystem::path& path) {
+  std::ifstream file(path, std::ios::binary);
+  if (!file) return {};
+  std::ostringstream buffer;
+  buffer << file.rdbuf();
+  return buffer.str();
+}
+
+std::string parseJsonStringAt(const std::string& json, size_t quote) {
+  if (quote >= json.size() || json[quote] != '"') return {};
+  std::string value;
+  for (size_t i = quote + 1; i < json.size(); ++i) {
+    const char ch = json[i];
+    if (ch == '"') return value;
+    if (ch != '\\' || i + 1 >= json.size()) {
+      value.push_back(ch);
+      continue;
+    }
+    const char escaped = json[++i];
+    switch (escaped) {
+      case '\\':
+      case '"':
+      case '/':
+        value.push_back(escaped);
+        break;
+      case 'n':
+        value.push_back('\n');
+        break;
+      case 'r':
+        value.push_back('\r');
+        break;
+      case 't':
+        value.push_back('\t');
+        break;
+      default:
+        value.push_back(escaped);
+        break;
+    }
+  }
+  return {};
+}
+
+void collectManifestKeyPaths(
+    const std::string& json,
+    const std::string& key,
+    const std::filesystem::path& baseDir,
+    std::vector<std::filesystem::path>* fixtures) {
+  if (!fixtures) return;
+  const std::string needle = "\"" + key + "\"";
+  size_t pos = 0;
+  while ((pos = json.find(needle, pos)) != std::string::npos && fixtures->size() < 256) {
+    const size_t colon = json.find(':', pos + needle.size());
+    if (colon == std::string::npos) break;
+    const size_t quote = json.find('"', colon + 1);
+    if (quote == std::string::npos) break;
+    std::filesystem::path candidate(parseJsonStringAt(json, quote));
+    if (!candidate.empty()) {
+      if (candidate.is_relative()) candidate = baseDir / candidate;
+      if (isSupportedExternalFixture(candidate)) fixtures->push_back(candidate);
+    }
+    pos = quote + 1;
+  }
+}
+
+std::vector<std::filesystem::path> findExternalAudioFixturesFromManifest() {
+  const char* rawManifest = std::getenv("TAE_AUDIO_FIXTURE_MANIFEST");
+  if (!rawManifest || std::string(rawManifest).empty()) return {};
+  const std::filesystem::path manifestPath(rawManifest);
+  const std::string json = readTextFile(manifestPath);
+  if (json.empty()) return {};
+
+  std::vector<std::filesystem::path> fixtures;
+  const std::filesystem::path baseDir = manifestPath.parent_path();
+  collectManifestKeyPaths(json, "path", baseDir, &fixtures);
+  collectManifestKeyPaths(json, "source", baseDir, &fixtures);
+  collectManifestKeyPaths(json, "file", baseDir, &fixtures);
+  std::sort(fixtures.begin(), fixtures.end());
+  fixtures.erase(std::unique(fixtures.begin(), fixtures.end()), fixtures.end());
+  return fixtures;
 }
 
 }  // namespace
@@ -148,6 +230,9 @@ TempAudioFixture writeDsfFixture(const std::string& name, int sampleRate, int bl
 }
 
 std::vector<std::filesystem::path> findExternalAudioFixtures() {
+  auto manifestFixtures = findExternalAudioFixturesFromManifest();
+  if (!manifestFixtures.empty()) return manifestFixtures;
+
   const char* rawDir = std::getenv("TAE_AUDIO_FIXTURES_DIR");
   if (!rawDir || std::string(rawDir).empty()) return {};
 

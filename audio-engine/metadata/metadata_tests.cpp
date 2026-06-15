@@ -221,7 +221,11 @@ int main() {
   assert(sacdIso.find("?area=stereo&track=1") != std::string::npos);
   assert(sacdIso.find("\"codec\":\"dsd\"") != std::string::npos);
   assert(sacdIso.find("\"codec\":\"dst\"") != std::string::npos);
-  assert(sacdIso.find("DST decoding unavailable") != std::string::npos);
+  assert(sacdIso.find("\"playable\":true") != std::string::npos);
+  assert(sacdIso.find("\"outputModes\":[\"native\",\"dop\",\"pcm\"]") != std::string::npos);
+  assert(sacdIso.find("\"playable\":false") != std::string::npos);
+  assert(sacdIso.find("\"reasonCode\":\"dst_dsd_provider_unavailable\"") != std::string::npos);
+  assert(sacdIso.find("DSD-preserving provider") != std::string::npos);
 
   const std::string missing = readMetadataJson("missing-file.flac");
   assert(missing.find("\"source\":\"missing-file.flac\"") != std::string::npos);

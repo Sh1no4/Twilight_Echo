@@ -238,6 +238,8 @@ const reasonCodeLabels: Record<string, string> = {
   dsd_converted_to_pcm: 'DSD 当前已转换为 PCM 输出',
   dsd_source_unsupported: '当前 DSD 源或模式不受支持',
   sacd_iso_unsupported: 'SACD ISO 不含可播放的未压缩 DSD 区域',
+  dst_dsd_provider_unavailable: 'SACD DST 需要保留 DSD 的 provider，当前不可用',
+  dst_dsd_provider_failed: 'SACD DST 保 DSD provider 解码失败',
   dsd_dop: '当前 DSD 正在通过 DoP 载波传输',
   dop_carrier_mismatch: 'DoP 载波格式与目标 DSD 速率不匹配',
   dop_passthrough_unproven: 'DoP 输出路径未能证明直通',
