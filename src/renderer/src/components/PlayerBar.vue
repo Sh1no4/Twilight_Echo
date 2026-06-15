@@ -170,7 +170,7 @@ const reasonCodeLabels: Record<string, string> = {
   dsd_high_rate_pcm_fallback: 'DSD 因采样率或驱动限制回退到 PCM',
   dsd_converted_to_pcm: 'DSD 当前已转换为 PCM 输出',
   dsd_source_unsupported: '当前 DSD 源或模式不受支持',
-  sacd_iso_unsupported: 'SACD ISO 目前仅识别，不支持播放',
+  sacd_iso_unsupported: 'SACD ISO 不含可播放的未压缩 DSD 区域',
   dsd_dop: '当前 DSD 正在通过 DoP 载波传输',
   dop_carrier_mismatch: 'DoP 载波格式与目标 DSD 速率不匹配',
   dop_passthrough_unproven: 'DoP 输出路径未能证明直通',

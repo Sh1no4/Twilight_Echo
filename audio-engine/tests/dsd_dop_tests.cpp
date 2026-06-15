@@ -321,7 +321,7 @@ void testDopPackerInt24In32() {
   assert(pcm[4] == 0x00 && pcm[5] == 0x56 && pcm[6] == 0x78 && pcm[7] == 0xfa);
 }
 
-void testSacdIsoProbeUnsupportedEntry() {
+void testSacdIsoProbePlayableEntry() {
   const auto notIso = probeSacdIsoEntry("album.dsf");
   assert(!notIso.isSacdIso());
   assert(!notIso.unsupported());
@@ -346,18 +346,18 @@ void testSacdIsoProbeUnsupportedEntry() {
   const auto iso = writeSacdIsoFixture("twilight-sacd-fixture.iso");
   const auto probe = probeSacdIsoEntry(iso.string());
   assert(probe.isSacdIso());
-  assert(probe.unsupported());
-  assert(probe.status == SacdIsoEntryStatus::Unsupported);
+  assert(!probe.unsupported());
+  assert(probe.status == SacdIsoEntryStatus::Supported);
   assert(probe.source == iso.string());
-  assert(probe.reasonCode == kSacdIsoUnsupportedReasonCode);
-  assert(probe.reason == kSacdIsoUnsupportedReason);
+  assert(probe.reasonCode.empty());
+  assert(probe.reason.empty());
   assert(probe.codec == kSacdIsoCodecName);
   assert(probe.container == kSacdIsoContainerName);
   assert(probe.isIso9660);
   assert(probe.hasSacdMarkers);
   assert(probe.isDsd);
   assert(probe.hasDst);
-  assert(!probe.playable);
+  assert(probe.playable);
 
   DsdReader reader;
   std::string error;
@@ -456,7 +456,7 @@ int main() {
   testDffReader();
   testDopPackerInt24();
   testDopPackerInt24In32();
-  testSacdIsoProbeUnsupportedEntry();
+  testSacdIsoProbePlayableEntry();
   testSacdIsoDemuxerTracksAndSeek();
   testSacdDstProviderSelection();
   assert(sourceLooksDsfOrDff("song.DSF"));

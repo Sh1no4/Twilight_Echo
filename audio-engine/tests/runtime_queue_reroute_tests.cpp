@@ -386,6 +386,56 @@ void writeSample(double sample, AudioSampleFormat format, uint8_t* output) {
   }
 }
 
+int32_t signed24FromBytes(uint8_t low, uint8_t mid, uint8_t high) {
+  int32_t value = static_cast<int32_t>(low) | (static_cast<int32_t>(mid) << 8) |
+                  (static_cast<int32_t>(high) << 16);
+  if ((value & 0x800000) != 0) value |= ~0x00ffffff;
+  return value;
+}
+
+float signedSampleToFloat(int32_t value, double scale) {
+  return static_cast<float>(std::clamp(static_cast<double>(value) / scale, -1.0, 1.0));
+}
+
+void typedPcmToFloat(const PcmBlock& block, std::vector<float>* output) {
+  if (!block.data || !output || block.frames == 0 || block.format.channelCount <= 0) return;
+  const size_t channels = static_cast<size_t>(std::max(1, block.format.channelCount));
+  const size_t samples = block.frames * channels;
+  if (output->size() < samples) output->resize(samples, 0.0f);
+
+  switch (block.format.sampleFormat) {
+    case AudioSampleFormat::Int16Interleaved: {
+      const auto* input = reinterpret_cast<const int16_t*>(block.data);
+      for (size_t i = 0; i < samples; ++i) (*output)[i] = signedSampleToFloat(input[i], 32768.0);
+      break;
+    }
+    case AudioSampleFormat::Int24Interleaved: {
+      for (size_t i = 0; i < samples; ++i) {
+        const size_t offset = i * 3;
+        (*output)[i] =
+            signedSampleToFloat(signed24FromBytes(block.data[offset], block.data[offset + 1], block.data[offset + 2]), 8388608.0);
+      }
+      break;
+    }
+    case AudioSampleFormat::Int24In32Interleaved: {
+      const auto* input = reinterpret_cast<const int32_t*>(block.data);
+      for (size_t i = 0; i < samples; ++i) (*output)[i] = signedSampleToFloat(input[i] >> 8, 8388608.0);
+      break;
+    }
+    case AudioSampleFormat::Int32Interleaved: {
+      const auto* input = reinterpret_cast<const int32_t*>(block.data);
+      for (size_t i = 0; i < samples; ++i) (*output)[i] = signedSampleToFloat(input[i], 2147483648.0);
+      break;
+    }
+    case AudioSampleFormat::Float32Interleaved:
+    default: {
+      const auto* input = reinterpret_cast<const float*>(block.data);
+      std::copy(input, input + samples, output->begin());
+      break;
+    }
+  }
+}
+
 bool waitUntil(const std::function<bool()>& predicate, int timeoutMs = 1500) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
   while (std::chrono::steady_clock::now() < deadline) {
@@ -439,6 +489,7 @@ std::vector<float> renderBackendFrames(const std::shared_ptr<BackendState>& stat
     block.byteSize = typedBuffer.size();
     renderedTyped = typedRender(block) > 0;
     if (renderedTyped) {
+      typedPcmToFloat(block, &buffer);
       std::lock_guard lock(g_backendRegistry.mutex);
       ++state->typedRenderCalls;
     }
@@ -518,7 +569,7 @@ class FakeOutputBackend final : public IOutputBackend {
     info.driverDopCarrierSampleRates = {176400, 352800};
     info.driverDopCarrierFormats = {"int24", "int24-in32"};
     info.driverNativeDsdCapable = state_->backendId == "asio";
-    info.driverNativeDsdSampleRates = {kDsd64Rate, kDsd128Rate, kDsd256Rate};
+    info.driverNativeDsdSampleRates = {kDsd64Rate, kDsd128Rate, kDsd256Rate, kDsd512Rate};
     info.channelRoutingMode = "auto";
     state_->info = info;
     return true;
@@ -617,7 +668,7 @@ class FakeOutputBackend final : public IOutputBackend {
     facts.requestedDsdRate = state_->requestedFormat.sampleRate;
     facts.channelCount = state_->requestedFormat.channelCount;
     facts.explicitlyCapable = state_->backendId == "asio";
-    facts.advertisedSampleRates = {kDsd64Rate, kDsd128Rate, kDsd256Rate};
+    facts.advertisedSampleRates = {kDsd64Rate, kDsd128Rate, kDsd256Rate, kDsd512Rate};
     if (!facts.explicitlyCapable || g_fakeNativeDsdBehavior == FakeNativeDsdBehavior::Unsupported) {
       facts.state = NativeDsdRuntimeFactState::Unsupported;
       facts.reason = "Fake ASIO backend does not advertise Native DSD support";

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "../decoder/SacdIsoDemuxer.h"
+#include "../decoder/SacdIsoProbe.h"
 
 #if defined(TAE_HAS_FFMPEG)
 extern "C" {
@@ -132,7 +133,7 @@ int inferDsdRate(int sampleRate, bool dopCarrier = false) {
 }
 
 bool sourceLooksSacdIso(const std::string& source) {
-  return extensionOf(source) == "iso";
+  return probeSacdIsoEntry(source).isSacdIso();
 }
 
 void markSacdIsoUnsupported(AudioMetadata* metadata) {
@@ -267,12 +268,10 @@ std::string readMetadataJson(const std::string& source) {
   if (sourceLooksSacdIso(source)) {
     metadata.container = "SACD ISO";
     metadata.isDsd = true;
-    metadata.dsdMode = "dsd";
+    metadata.dsdMode = dsdModeToString(DsdMode::Pcm);
     
     SacdIsoDemuxer demuxer;
-    if (!demuxer.open(source, nullptr)) {
-      // It might fail because it's a stub, but it populates dummy tracks!
-    }
+    demuxer.open(source, nullptr);
     
     for (const auto& track : demuxer.tracks()) {
       AudioMetadata trackMeta;
@@ -285,7 +284,7 @@ std::string readMetadataJson(const std::string& source) {
       trackMeta.sampleRate = track.sampleRate;
       trackMeta.bitDepth = 1;
       trackMeta.isDsd = true;
-      trackMeta.dsdMode = "dsd";
+      trackMeta.dsdMode = dsdModeToString(DsdMode::Pcm);
       trackMeta.dsdRate = inferDsdRate(track.sampleRate);
       trackMeta.container = "SACD ISO";
       trackMeta.codec = track.isDst ? "dst" : "dsd";

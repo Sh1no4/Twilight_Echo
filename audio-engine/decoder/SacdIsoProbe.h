@@ -13,6 +13,7 @@ namespace twilight::audio {
 
 enum class SacdIsoEntryStatus {
   NotSacdIso,
+  Supported,
   Unsupported
 };
 
@@ -43,7 +44,7 @@ inline constexpr const char* kSacdIsoCodecName = "sacd_iso";
 inline constexpr const char* kSacdIsoContainerName = "SACD ISO";
 inline constexpr const char* kSacdIsoUnsupportedReasonCode = "sacd_iso_unsupported";
 inline constexpr const char* kSacdIsoUnsupportedReason =
-    "SACD ISO recognized but slicing/playback is not implemented";
+    "SACD ISO recognized but no uncompressed DSD area is playable";
 inline constexpr const char* kSacdIsoOpenFailedReasonCode = "sacd_iso_open_failed";
 inline constexpr const char* kSacdIsoNotIso9660ReasonCode = "not_iso9660";
 inline constexpr const char* kSacdIsoMissingMarkersReasonCode = "iso9660_without_sacd_markers";
@@ -145,6 +146,13 @@ inline bool sacdPathLooksAudioAreaMarker(const std::string& path) {
   if (path.rfind("SACD/", 0) != 0) return false;
   return path.find("_AREA") != std::string::npos || path.find("_TAREA") != std::string::npos ||
          sacdEndsWith(path, ".2CH") || sacdEndsWith(path, ".MCH") || sacdEndsWith(path, ".DST") ||
+         sacdEndsWith(path, ".DSD");
+}
+
+inline bool sacdPathLooksUncompressedDsdMarker(const std::string& path) {
+  if (path.rfind("SACD/", 0) != 0) return false;
+  return path.find("TWOCH") != std::string::npos || path.find("2CH") != std::string::npos ||
+         path.find("MCH") != std::string::npos || path.find("MULTI") != std::string::npos ||
          sacdEndsWith(path, ".DSD");
 }
 
@@ -253,8 +261,10 @@ inline SacdIsoEntryProbe probeSacdIsoEntry(const std::string& source) {
   const bool hasMasterToc = sacdHasPath(probe.markers, "SACD/MASTER.TOC") ||
                             sacdHasPath(probe.markers, "SACD/MASTER2.TOC");
   bool hasAreaMarker = false;
+  bool hasUncompressedDsdMarker = false;
   for (const auto& marker : probe.markers) {
     hasAreaMarker = hasAreaMarker || sacdPathLooksAudioAreaMarker(marker);
+    hasUncompressedDsdMarker = hasUncompressedDsdMarker || sacdPathLooksUncompressedDsdMarker(marker);
     probe.hasDst = probe.hasDst || sacdEndsWith(marker, ".DST") || marker.find("DST") != std::string::npos;
   }
 
@@ -265,11 +275,17 @@ inline SacdIsoEntryProbe probeSacdIsoEntry(const std::string& source) {
     return probe;
   }
 
-  probe.status = SacdIsoEntryStatus::Unsupported;
-  probe.reasonCode = kSacdIsoUnsupportedReasonCode;
-  probe.reason = kSacdIsoUnsupportedReason;
   probe.isDsd = true;
-  probe.playable = false;
+  probe.playable = hasUncompressedDsdMarker;
+  if (probe.playable) {
+    probe.status = SacdIsoEntryStatus::Supported;
+    probe.reasonCode.clear();
+    probe.reason.clear();
+  } else {
+    probe.status = SacdIsoEntryStatus::Unsupported;
+    probe.reasonCode = kSacdIsoUnsupportedReasonCode;
+    probe.reason = kSacdIsoUnsupportedReason;
+  }
   return probe;
 }
 

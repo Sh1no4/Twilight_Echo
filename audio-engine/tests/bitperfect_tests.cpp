@@ -270,14 +270,24 @@ void testDsdUnsupported() {
   assert(result.perfectReason == "DSD source unsupported");
 }
 
-void testSACDIsoUnsupportedReason() {
+void testSacdIsoNativeDsdCanBePerfect() {
   auto sacd = baseEvaluation();
+  sacd.sourceFormat = pcm(2822400, 1, 2, AudioSampleFormat::DsdInt8Msb1);
+  sacd.decodedFormat = sacd.sourceFormat;
+  sacd.outputFormat = sacd.sourceFormat;
   sacd.sourceDsd = true;
+  sacd.sourceLossless = true;
   sacd.sacdIsoSource = true;
+  sacd.dsdMode = DsdMode::Native;
+  sacd.dsdRate = 64;
+  sacd.nativeDsdRequested = true;
+  sacd.nativeDsdPassthroughProven = true;
+
   const PerfectResult result = evaluatePerfect(sacd);
-  assert(!result.sourceExact);
-  assert(!result.outputPerfect);
-  assert(result.perfectReason == "SACD ISO unsupported");
+  assert(result.sourceExact);
+  assert(result.outputPerfect);
+  assert(result.perfectReasonCode.empty());
+  assert(result.perfectReason.empty());
 }
 
 void testDsdConvertedToPcmReason() {
@@ -484,7 +494,7 @@ int main() {
   testProcessingFlags();
   testRoutingSemantics();
   testDsdUnsupported();
-  testSACDIsoUnsupportedReason();
+  testSacdIsoNativeDsdCanBePerfect();
   testDsdConvertedToPcmReason();
   testDopCarrierMismatchReason();
   testDopCandidateRequiresBackendPassthroughProof();

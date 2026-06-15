@@ -264,7 +264,7 @@ npm run build:linux
 - CoreAudio 默认路径和 ALSA `default` / `plughw:` 默认不能保证绕过混音或插件转换；ALSA 只有显式 `hw:` 且格式完全匹配时才可能 `outputPerfect=true`。
 - 真实设备 smoke 是 opt-in；没有 ASIO SDK、macOS/Linux 工具链或对应设备时会跳过，不作为默认 CI 必需条件。
 - DSP 默认 bypass；启用软件音量、ReplayGain、EQ、卷积、Crossfeed 或重采样时会标记 `outputPerfect=false`。
-- DSF/DFF DSD64/128 可进入 DoP carrier path，UI 会展示为 DSD 源到 `DoP carrier` 再到后端实际输出；DSD256/512、DoP 条件不满足或处理启用时走 PCM fallback。运行时若从 DoP 回退到 PCM，canonical `outputInfo` 会同步清成 PCM 状态，源侧 DSD 标签仍保留在链路文本中。Native DSD 与 SACD ISO 后置，SACD ISO 当前只报告 unsupported。
+- DSF/DFF 与 SACD ISO 未压缩 DSD area 会进入 Native DSD -> DoP -> PCM 决策链；Native DSD 首版只承诺 ASIO 且要求运行态 proven，DST 压缩 SACD 曲目仍明确 unsupported。
 - 网易云相关能力依赖本地启动的 `@neteasecloudmusicapienhanced/api` 服务。
 - npm 可能会提示 `.npmrc` 中镜像配置为 unknown project config，这是 npm 新版本的警告，不影响当前构建。
 

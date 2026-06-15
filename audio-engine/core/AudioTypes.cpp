@@ -100,7 +100,6 @@ bool dopCarrierMatchesExpected(const PerfectEvaluation& evaluation) {
 }
 
 std::string dsdPerfectReason(const PerfectEvaluation& evaluation) {
-  if (evaluation.sacdIsoSource) return "SACD ISO unsupported";
   if (evaluation.dsdMode == DsdMode::Native) {
     if (!evaluation.nativeDsdPassthroughProven) {
       return evaluation.backendPerfectReason.empty() ? "Native DSD backend could not prove passthrough"
@@ -127,7 +126,6 @@ std::string dsdPerfectReason(const PerfectEvaluation& evaluation) {
 }
 
 std::string dsdPerfectReasonCode(const PerfectEvaluation& evaluation) {
-  if (evaluation.sacdIsoSource) return "sacd_iso_unsupported";
   if (evaluation.dsdMode == DsdMode::Native) {
     if (!evaluation.nativeDsdPassthroughProven) {
       return evaluation.backendPerfectReasonCode.empty() ? "native_dsd_passthrough_unproven"

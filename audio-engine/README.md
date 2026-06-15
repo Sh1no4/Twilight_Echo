@@ -94,7 +94,8 @@ $env:TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK="1"
 - Crossfade 已进入 native float 渲染路径，能对预加载下一首做 overlap mixing，并在启用时稳定报告 `outputPerfect=false` / `perfectReasonCode=crossfade_active`。
 - DSF/DFF DSD64/128 可进入 DoP carrier path，并在 UI 中展示 DSD 源到 `DoP carrier` 再到后端实际输出；DoP 是用 PCM carrier 承载 DSD bitstream，不等同于把 DSD 转成 PCM。
 - DSF/DFF DSD256/512、DoP 条件不满足，或软件音量、ReplayGain、EQ、Convolver、Crossfeed、Crossfade 等处理启用时走 PCM fallback，并在 UI 中展示 DSD 源到 PCM 输出链路。运行时若从 DoP 回退到 PCM，canonical `outputInfo.isDsd/dsdMode/dsdRate` 会清成当前 PCM 状态，顶层 `PlaybackInfo` 只做同值镜像。
-- Native DSD、SACD ISO 仍未进入 Phase 6D 真实播放闭环。Native DSD 是直接输出 DSD bitstream，SACD ISO 当前只允许识别并报告 `unsupported`。
-- Metadata 默认测试覆盖空 source、缺失文件 shape、generated DSF DSD64/128/256 和 SACD ISO unsupported。FFmpeg decoder 默认测试通过生成 WAV/DSF fixture 覆盖 PCM/DSD shape；如设置 `TAE_AUDIO_FIXTURES_DIR`，会额外扫描 MP3/FLAC/M4A/OGG/AAC 等真实小样本做 opt-in 解码 smoke，真实样本不作为默认门禁依赖。
+- Native DSD 首版只承诺 ASIO；只有运行态 facts 证明为 `proven` 时才声明 `dsdMode=native`、`sourceExact=true` 和 `outputPerfect=true`，否则按 DoP、PCM 顺序回退。
+- SACD ISO 首版支持未压缩 DSD area 的曲目切片播放，并进入与 DSF/DFF 相同的 Native DSD -> DoP -> PCM 决策链；DST 压缩曲目明确返回 unsupported，不静默转 PCM。
+- Metadata 默认测试覆盖空 source、缺失文件 shape、generated DSF DSD64/128/256 和 SACD ISO `isoTracks`。FFmpeg decoder 默认测试通过生成 WAV/DSF fixture 覆盖 PCM/DSD shape；如设置 `TAE_AUDIO_FIXTURES_DIR`，会额外扫描 MP3/FLAC/M4A/OGG/AAC 等真实小样本做 opt-in 解码 smoke，真实样本不作为默认门禁依赖。
 - WASAPI 真实设备 smoke 可用 `npm run smoke:wasapi -- --device "M30" --buffer 256 --expect-bit-perfect --format-matrix` 跑多格式矩阵；矩阵只要求实际匹配格式 bit-perfect，不支持或被协商到其它格式的样本必须给出明确 non-perfect reason。
 - macOS/Linux 后端需要对应平台工具链和真实设备 smoke 后才能声明发布级能力。
