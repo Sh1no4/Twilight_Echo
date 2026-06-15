@@ -41,6 +41,7 @@ export interface TwilightPluginManagerOptions {
     cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
   }
   getPlaybackInfo: () => Promise<unknown> | unknown
+  applyNativeDspPluginChain: (chainJson: string) => Promise<void> | void
   player: {
     play: () => Promise<void> | void
     pause: () => Promise<void> | void
@@ -72,6 +73,7 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly bundledPlugins: NonNullable<TwilightPluginManagerOptions['bundledPlugins']>
   private readonly ncm: TwilightPluginManagerOptions['ncm']
   private readonly getPlaybackInfo: TwilightPluginManagerOptions['getPlaybackInfo']
+  private readonly applyNativeDspPluginChain: TwilightPluginManagerOptions['applyNativeDspPluginChain']
   private readonly player: TwilightPluginManagerOptions['player']
   private readonly running = new Map<string, RunningPlugin>()
   private readonly providerCalls = new Map<
@@ -100,6 +102,7 @@ export class TwilightPluginManager extends EventEmitter {
     this.bundledPlugins = options.bundledPlugins ?? []
     this.ncm = options.ncm
     this.getPlaybackInfo = options.getPlaybackInfo
+    this.applyNativeDspPluginChain = options.applyNativeDspPluginChain
     this.player = options.player
   }
 
@@ -123,6 +126,7 @@ export class TwilightPluginManager extends EventEmitter {
     await this.loadState()
     await this.syncBundledPlugins()
     await this.scanAndStartEnabled()
+    await this.syncNativeDspChain()
   }
 
   async list(): Promise<TwilightPluginDescriptor[]> {
@@ -199,16 +203,19 @@ export class TwilightPluginManager extends EventEmitter {
   async enable(id: string): Promise<TwilightPluginDescriptor> {
     const descriptor = await this.findDescriptor(id)
     if (descriptor.status === 'invalid') throw new Error(descriptor.error ?? '插件无效')
-    if (descriptor.isDsp && !descriptor.main) {
-      throw new Error('DSP 原生插件将在 Phase 4 单独启用；Phase 1 仅展示风险信息')
-    }
     try {
       this.setEnabled(id, true)
       const descriptors = await this.list()
       const startupPlan = planPluginStartup(descriptors)
       const dependencyError = startupPlan.failures.get(id)
       if (dependencyError) throw new Error(dependencyError)
-      await this.startPlugin(await this.findDescriptor(id))
+      const refreshed = await this.findDescriptor(id)
+      if (refreshed.main) {
+        await this.startPlugin(refreshed)
+      } else {
+        this.markStarted(refreshed)
+      }
+      await this.syncNativeDspChain()
     } catch (error) {
       this.markFailed(id, error instanceof Error ? error.message : String(error), descriptor)
       throw error
@@ -219,6 +226,7 @@ export class TwilightPluginManager extends EventEmitter {
   async disable(id: string): Promise<TwilightPluginDescriptor> {
     this.setEnabled(id, false)
     await this.stopPlugin(id)
+    await this.syncNativeDspChain()
     return this.findDescriptor(id)
   }
 
@@ -233,6 +241,7 @@ export class TwilightPluginManager extends EventEmitter {
     }
     delete this.state[id]
     await this.saveState()
+    await this.syncNativeDspChain()
     this.emit('changed')
   }
 
@@ -251,6 +260,39 @@ export class TwilightPluginManager extends EventEmitter {
     } catch {
       return ''
     }
+  }
+
+  async handleNativeDspHostCrash(reason: string): Promise<void> {
+    const descriptors = await this.list()
+    for (const descriptor of descriptors) {
+      if (!descriptor.enabled || !descriptor.type.includes('dsp')) continue
+      const message = `原生 DSP 音频服务崩溃，已旁路：${reason}`
+      this.markFailed(descriptor.id, message, descriptor)
+      this.appendLog(descriptor, 'error', message)
+    }
+    await this.applyNativeDspPluginChain(JSON.stringify({ plugins: [] }))
+    await this.saveState()
+    this.emit('changed')
+  }
+
+  async setNativeDspPluginParameters(id: string, parameters: Record<string, number>): Promise<TwilightPluginDescriptor> {
+    const descriptor = await this.findDescriptor(id)
+    if (!descriptor.type.includes('dsp')) throw new Error('只有 DSP 插件支持原生参数')
+    const normalized: Record<string, number> = {}
+    for (const [key, value] of Object.entries(parameters)) {
+      const name = key.trim()
+      if (!name) continue
+      if (!Number.isFinite(value)) throw new Error(`DSP 参数不是有限数字：${name}`)
+      normalized[name] = value
+    }
+    const state = this.state[id]
+    if (!state) throw new Error('插件状态不存在')
+    state.nativeDspParameters = normalized
+    state.updatedAt = new Date().toISOString()
+    await this.saveState()
+    await this.syncNativeDspChain()
+    this.emit('changed')
+    return this.findDescriptor(id)
   }
 
   async broadcastEvent(name: string, payload: unknown): Promise<void> {
@@ -355,9 +397,11 @@ export class TwilightPluginManager extends EventEmitter {
       this.markFailed(id, error, descriptor)
     }
     for (const descriptor of startupPlan.ordered) {
-      await this.startPlugin(descriptor).catch((error) => {
-        this.markFailed(descriptor.id, error instanceof Error ? error.message : String(error), descriptor)
-      })
+      if (descriptor.main) {
+        await this.startPlugin(descriptor).catch((error) => {
+          this.markFailed(descriptor.id, error instanceof Error ? error.message : String(error), descriptor)
+        })
+      }
     }
   }
 
@@ -393,6 +437,23 @@ export class TwilightPluginManager extends EventEmitter {
       }
     }
     await this.saveState()
+  }
+
+  private async syncNativeDspChain(): Promise<void> {
+    const descriptors = await this.list()
+    const enabled = descriptors
+      .filter((descriptor) => descriptor.enabled && descriptor.status !== 'invalid' && descriptor.type.includes('dsp'))
+      .filter((descriptor) => this.resolveNativeDspBinary(descriptor) !== null)
+      .sort((left, right) => left.id.localeCompare(right.id))
+    const chain = {
+      plugins: enabled.map((descriptor) => ({
+        id: descriptor.id,
+        path: this.resolveNativeDspBinary(descriptor),
+        enabled: true,
+        parameters: this.state[descriptor.id]?.nativeDspParameters ?? {}
+      }))
+    }
+    await this.applyNativeDspPluginChain(JSON.stringify(chain))
   }
 
   private async startPlugin(descriptor: TwilightPluginDescriptor): Promise<void> {
@@ -819,6 +880,13 @@ export class TwilightPluginManager extends EventEmitter {
         return '插件 main 入口不存在或越界'
       }
     }
+    if (manifest.type.includes('dsp')) {
+      const binary = this.resolveNativeDspBinary({
+        ...manifest,
+        paths: this.pathsFor(manifest.id, manifest.version)
+      } as TwilightPluginDescriptor)
+      if (!binary) return 'DSP 插件缺少当前平台 binary'
+    }
     return null
   }
 
@@ -967,6 +1035,20 @@ export class TwilightPluginManager extends EventEmitter {
       icon: descriptor.icon,
       signature: descriptor.signature
     }
+  }
+
+  private resolveNativeDspBinary(descriptor: TwilightPluginDescriptor | TwilightPluginManifest): string | null {
+    const binary = descriptor.binary
+    if (!binary) return null
+    const key = `${process.platform}-${process.arch}`
+    const relPath = binary[key] ?? binary[process.platform]
+    if (!relPath) return null
+    const resolved = resolve(
+      'paths' in descriptor ? descriptor.paths.versionRoot : this.versionRoot(descriptor.id, descriptor.version),
+      relPath
+    )
+    const root = 'paths' in descriptor ? descriptor.paths.versionRoot : this.versionRoot(descriptor.id, descriptor.version)
+    return isInsidePath(resolved, root) && existsSync(resolved) ? resolved : null
   }
 
   private isBundledPluginId(id: string): boolean {

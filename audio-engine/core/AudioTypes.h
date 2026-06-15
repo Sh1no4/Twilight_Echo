@@ -156,6 +156,7 @@ struct OutputInfo {
   Diagnostics diagnostics;
   bool deviceRecovered = false;
   int recoveryCount = 0;
+  std::string nativeDspJson = "{\"plugins\":[]}";
 };
 
 struct PerfectEvaluation {
@@ -181,6 +182,7 @@ struct PerfectEvaluation {
   bool eqActive = false;
   bool convolverActive = false;
   bool crossfeedActive = false;
+  bool nativeDspActive = false;
   bool crossfadeActive = false;
   ChannelRoutingMode routingMode = ChannelRoutingMode::Auto;
   bool pcmPassthrough = false;

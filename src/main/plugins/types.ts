@@ -51,6 +51,7 @@ export interface TwilightPluginStateRecord {
   updatedAt: string
   source: TwilightPluginSource
   lastError?: string
+  nativeDspParameters?: Record<string, number>
 }
 
 export interface TwilightPluginPaths {

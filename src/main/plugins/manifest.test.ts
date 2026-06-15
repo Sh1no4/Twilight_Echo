@@ -48,6 +48,27 @@ test('requires binary for DSP plugins', () => {
   assert.throws(() => validatePluginManifest({ ...validManifest, type: ['dsp'] }), /binary/)
 })
 
+test('requires native permission for DSP plugins', () => {
+  assert.throws(
+    () =>
+      validatePluginManifest({
+        ...validManifest,
+        type: ['dsp'],
+        main: undefined,
+        binary: { 'win32-x64': 'plugin.dll' }
+      }),
+    /dsp:native/
+  )
+  const manifest = validatePluginManifest({
+    ...validManifest,
+    type: ['dsp'],
+    main: undefined,
+    binary: { 'win32-x64': 'plugin.dll' },
+    permissions: ['dsp:native']
+  })
+  assert.deepEqual(manifest.permissions, ['dsp:native'])
+})
+
 test('requires either JS main or native binary', () => {
   assert.throws(() => validatePluginManifest({ ...validManifest, main: undefined }), /main 或 binary/)
 })

@@ -5,6 +5,7 @@
 #include "DspTypes.h"
 #include "ParametricEqProcessor.h"
 #include "ReplayGainProcessor.h"
+#include "../plugins/PluginRegistry.h"
 
 #include <memory>
 #include <mutex>
@@ -32,6 +33,8 @@ class DspChain {
   bool setEqPresetFromJson(const std::string& json, std::string* error);
   void setCrossfeedStrength(double strength);
   void setReplayGainMode(ReplayGainMode mode, double preampDb, double fallbackDb, bool clip);
+  void setNativeDspPluginChain(const std::string& json);
+  std::string nativeDspPluginStatusJson() const;
 
   static DspConfig parseConfigJson(const std::string& json);
   static std::vector<DspEqBand> parseEqBandsJson(const std::string& json, EqMode mode);
@@ -49,6 +52,7 @@ class DspChain {
   ParametricEqProcessor* eq_ = nullptr;
   ConvolverProcessor* convolver_ = nullptr;
   CrossfeedProcessor* crossfeed_ = nullptr;
+  PluginRegistry* nativePlugins_ = nullptr;
   std::vector<std::unique_ptr<IAudioProcessor>> processors_;
 };
 

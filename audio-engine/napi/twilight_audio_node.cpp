@@ -325,6 +325,20 @@ napi_value SetReplayGainMode(napi_env env, napi_callback_info info) {
   return throwOnError(env, TAE_SetReplayGainMode(g_engine, mode.c_str(), preamp, fallback, clip ? 1 : 0));
 }
 
+napi_value SetDspPluginChain(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const std::string json = argc > 0 ? getStringArg(env, argv[0]) : "{\"plugins\":[]}";
+  return throwOnError(env, TAE_SetDspPluginChain(g_engine, json.c_str()));
+}
+
+napi_value GetDspPluginStatus(napi_env env, napi_callback_info) {
+  return readJson(env, TAE_GetDspPluginStatus);
+}
+
 napi_value GetMetadata(napi_env env, napi_callback_info info) {
   ensureEngine();
   clearLastError();
@@ -449,6 +463,8 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "SetEqPreset", SetEqPreset);
   define(env, exports, "SetCrossfeedStrength", SetCrossfeedStrength);
   define(env, exports, "SetReplayGainMode", SetReplayGainMode);
+  define(env, exports, "SetDspPluginChain", SetDspPluginChain);
+  define(env, exports, "GetDspPluginStatus", GetDspPluginStatus);
   define(env, exports, "GetMetadata", GetMetadata);
   define(env, exports, "GetPlaybackInfo", GetPlaybackInfo);
   define(env, exports, "GetQueue", GetQueue);

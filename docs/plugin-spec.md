@@ -76,8 +76,23 @@ arbitrary renderer DOM access. Theme plugins register CSS variables and/or one
 packaged stylesheet; users explicitly choose one plugin theme in appearance
 settings before it is applied.
 
-Native DSP C ABI loading remains a Phase 4 boundary. Native DSP plugins are
-shown with a warning but not activated through the engine.
+Phase 4 implements native DSP C ABI loading for Twilight Echo DSP plugins.
+Native DSP plugins are loaded through the audio engine plugin registry, appear
+in a separate risk-marked management section, and can be enabled or disabled
+without starting a JS utilityProcess when the package has no `main`.
+
+DSP ABI v1 supports float32 interleaved PCM processors. The host validates the
+current platform `binary`, requires `dsp:native`, and passes the enabled DSP
+chain to the audio engine. Process failures, prepare failures, unsupported
+formats, and repeated realtime-budget overruns bypass the owning plugin and are
+reported through playback diagnostics.
+
+The production recovery boundary is the Audio Engine Service: by default the
+Electron main process talks to a restartable service process that loads
+`twilight_audio_node` and native DSP libraries. A hard-crashing DSP plugin
+terminates that service, not the main application; the host clears the native
+DSP chain and marks enabled DSP plugins failed until the user re-enables them.
+`TWILIGHT_AUDIO_SERVICE=0` is a development fallback for direct native binding.
 
 ## Phase 2 Bundled Provider
 
@@ -109,3 +124,20 @@ events remain available for low-level diagnostics.
 
 UI commands are request/response calls with a short host timeout. Handler errors
 fail only the owning plugin and are written to that plugin's log.
+
+## Phase 4 Native DSP Baseline
+
+Native DSP plugins export `tae_plugin_get_info()` from the dynamic library
+declared in `plugin.json.binary`. The returned ABI table uses independent
+`TAE_DSP_PLUGIN_ABI_VERSION = 1` and exposes create/destroy, prepare, process,
+set_param, reset, and a self-described parameter table.
+
+The public engine surface includes `TAE_SetDspPluginChain`,
+`TAE_GetDspPluginStatus`, and `outputInfo.nativeDsp` in playback info. DSD,
+DoP, Native DSD, and typed PCM passthrough paths do not run native DSP v1
+processors; they are bypassed so passthrough semantics stay explicit.
+
+`outputInfo.nativeDsp.plugins[]` includes loaded/active/bypassed state, bypass
+reason, last error, process timing, overrun count, and parameter metadata with
+current values. The management UI uses that metadata to render basic bool,
+int, float, and enum controls.

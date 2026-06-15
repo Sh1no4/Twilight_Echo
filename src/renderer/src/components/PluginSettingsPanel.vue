@@ -29,7 +29,31 @@ interface PluginDescriptor {
   }
 }
 
+interface NativeDspParameter {
+  id: string
+  name: string
+  type: 'bool' | 'int' | 'float' | 'enum' | string
+  defaultValue: number
+  minValue: number
+  maxValue: number
+  step: number
+  unit: string
+  enumValues?: string[] | string | null
+  currentValue: number
+}
+
+interface NativeDspStatus {
+  id: string
+  loaded?: boolean
+  active?: boolean
+  bypassed?: boolean
+  bypassReason?: string
+  lastError?: string
+  parameters?: NativeDspParameter[]
+}
+
 const plugins = ref<PluginDescriptor[]>([])
+const nativeDspStatuses = ref<Record<string, NativeDspStatus>>({})
 const loading = ref(false)
 const busyId = ref<string | null>(null)
 const error = ref('')
@@ -38,12 +62,35 @@ const selectedLogPlugin = ref('')
 let removePluginListener: (() => void) | null = null
 
 const enabledCount = computed(() => plugins.value.filter((plugin) => plugin.enabled).length)
+const pluginGroups = computed(() => [
+  {
+    id: 'regular',
+    title: 'JS / 内容插件',
+    description: '音源、工具、UI 和主题插件运行在受控插件宿主进程中。',
+    plugins: plugins.value.filter((plugin) => !plugin.isDsp)
+  },
+  {
+    id: 'dsp',
+    title: '原生 DSP 插件',
+    description: '原生 DSP 插件加载到音频引擎进程内，故障会被旁路，硬崩溃会触发引擎恢复路径。',
+    plugins: plugins.value.filter((plugin) => plugin.isDsp)
+  }
+].filter((group) => group.plugins.length > 0))
 
 async function refreshPlugins(): Promise<void> {
   loading.value = true
   error.value = ''
   try {
     plugins.value = await window.api.plugins.list()
+    const playbackInfo = await window.api.audioEngine.getPlaybackInfo()
+    const rawStatuses = playbackInfo.outputInfo?.nativeDsp?.plugins
+    nativeDspStatuses.value = Array.isArray(rawStatuses)
+      ? Object.fromEntries(
+          rawStatuses
+            .filter((item): item is NativeDspStatus => Boolean(item) && typeof item === 'object' && typeof (item as NativeDspStatus).id === 'string')
+            .map((item) => [item.id, normalizeNativeDspStatus(item)])
+        )
+      : {}
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -126,6 +173,59 @@ function dependencyEntries(plugin: PluginDescriptor): [string, string][] {
   return Object.entries(plugin.dependencies ?? {})
 }
 
+function normalizeNativeDspStatus(status: NativeDspStatus): NativeDspStatus {
+  return {
+    ...status,
+    parameters: Array.isArray(status.parameters)
+      ? status.parameters.map((parameter) => ({
+          ...parameter,
+          enumValues: Array.isArray(parameter.enumValues)
+            ? parameter.enumValues
+            : typeof parameter.enumValues === 'string'
+              ? safeParseEnumValues(parameter.enumValues)
+              : null
+        }))
+      : []
+  }
+}
+
+function safeParseEnumValues(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function nativeDspStatus(plugin: PluginDescriptor): NativeDspStatus | null {
+  return nativeDspStatuses.value[plugin.id] ?? null
+}
+
+function nativeDspParameters(plugin: PluginDescriptor): NativeDspParameter[] {
+  return nativeDspStatus(plugin)?.parameters ?? []
+}
+
+async function updateNativeDspParameter(
+  plugin: PluginDescriptor,
+  parameter: NativeDspParameter,
+  rawValue: string | number | boolean
+): Promise<void> {
+  const status = nativeDspStatus(plugin)
+  const values: Record<string, number> = {}
+  for (const item of status?.parameters ?? []) {
+    values[item.id] = Number.isFinite(item.currentValue) ? item.currentValue : item.defaultValue
+  }
+  values[parameter.id] =
+    parameter.type === 'bool'
+      ? rawValue === true || rawValue === 'true'
+        ? 1
+        : 0
+      : Number(rawValue)
+  await window.api.plugins.setNativeDspParameters(plugin.id, values)
+  await refreshPlugins()
+}
+
 function formatDate(value: string | null): string {
   if (!value) return '未知'
   const date = new Date(value)
@@ -151,7 +251,7 @@ onUnmounted(() => {
       <div>
         <span class="plugin-kicker">Trust-based plugin runtime</span>
         <h3>插件系统</h3>
-        <p>安装前会展示权限；启用后的 JS 插件运行在独立 utilityProcess，不会直接 import 宿主内部模块。</p>
+        <p>安装前会展示权限；JS 插件运行在独立 utilityProcess，原生 DSP 插件单独标记风险并挂入音频引擎 DSP 链。</p>
       </div>
       <div class="plugin-actions">
         <button class="text-button" :disabled="loading" @click="refreshPlugins">
@@ -178,64 +278,118 @@ onUnmounted(() => {
     </div>
 
     <div class="plugin-list">
-      <article
-        v-for="plugin in plugins"
-        :key="`${plugin.id}:${plugin.version}`"
-        class="plugin-card"
-        :class="{ failed: plugin.status === 'failed' || plugin.status === 'invalid' }"
-      >
-        <div class="plugin-card-main">
-          <div class="plugin-title-row">
-            <h4>{{ plugin.name }}</h4>
-            <span class="plugin-pill" :class="plugin.status">{{ statusLabel(plugin.status) }}</span>
-            <span v-if="plugin.builtIn" class="plugin-pill builtin">自带基础插件</span>
-            <span v-if="plugin.isDsp" class="plugin-pill native">原生 DSP 风险</span>
-          </div>
-          <p>{{ plugin.description || '没有描述' }}</p>
-          <div class="plugin-meta">
-            <span>{{ plugin.id }}</span>
-            <span>v{{ plugin.version }}</span>
-            <span>{{ plugin.author }}</span>
-            <span>更新 {{ formatDate(plugin.updatedAt) }}</span>
-          </div>
-          <div class="plugin-tags">
-            <span v-for="type in plugin.type" :key="type">{{ typeLabel(type) }}</span>
-          </div>
-          <div v-if="dependencyEntries(plugin).length > 0" class="plugin-dependencies">
-            <strong>依赖</strong>
-            <code v-for="[dependencyId, range] in dependencyEntries(plugin)" :key="dependencyId">
-              {{ dependencyId }} {{ range }}
-            </code>
-          </div>
-          <div class="plugin-permissions">
-            <strong>权限</strong>
-            <span v-if="plugin.permissions.length === 0">无</span>
-            <code v-for="permission in plugin.permissions" :key="permission">{{ permission }}</code>
-          </div>
-          <div v-if="plugin.error" class="plugin-card-error">{{ plugin.error }}</div>
+      <section v-for="group in pluginGroups" :key="group.id" class="plugin-group">
+        <div class="plugin-group-head">
+          <strong>{{ group.title }}</strong>
+          <span>{{ group.description }}</span>
         </div>
-        <div class="plugin-card-actions">
-          <button
-            class="text-button"
-            :disabled="busyId === plugin.id || plugin.status === 'invalid' || (plugin.isDsp && !plugin.main)"
-            @click="togglePlugin(plugin)"
-          >
-            {{ plugin.enabled ? '停用' : '启用' }}
-          </button>
-          <button class="text-button" @click="previewLog(plugin)">查看日志</button>
-          <button class="icon-button subtle" title="打开日志文件" @click="openLog(plugin)">
-            <i class="pi pi-external-link"></i>
-          </button>
-          <button
-            class="danger-button"
-            :disabled="busyId === plugin.id || plugin.builtIn"
-            :title="plugin.builtIn ? '自带插件不能卸载，可停用' : '卸载插件'"
-            @click="uninstallPlugin(plugin)"
-          >
-            卸载
-          </button>
-        </div>
-      </article>
+        <article
+          v-for="plugin in group.plugins"
+          :key="`${plugin.id}:${plugin.version}`"
+          class="plugin-card"
+          :class="{ failed: plugin.status === 'failed' || plugin.status === 'invalid' }"
+        >
+          <div class="plugin-card-main">
+            <div class="plugin-title-row">
+              <h4>{{ plugin.name }}</h4>
+              <span class="plugin-pill" :class="plugin.status">{{ statusLabel(plugin.status) }}</span>
+              <span v-if="plugin.builtIn" class="plugin-pill builtin">自带基础插件</span>
+              <span v-if="plugin.isDsp" class="plugin-pill native">原生 DSP 风险</span>
+            </div>
+            <p>{{ plugin.description || '没有描述' }}</p>
+            <div class="plugin-meta">
+              <span>{{ plugin.id }}</span>
+              <span>v{{ plugin.version }}</span>
+              <span>{{ plugin.author }}</span>
+              <span>更新 {{ formatDate(plugin.updatedAt) }}</span>
+            </div>
+            <div class="plugin-tags">
+              <span v-for="type in plugin.type" :key="type">{{ typeLabel(type) }}</span>
+            </div>
+            <div v-if="dependencyEntries(plugin).length > 0" class="plugin-dependencies">
+              <strong>依赖</strong>
+              <code v-for="[dependencyId, range] in dependencyEntries(plugin)" :key="dependencyId">
+                {{ dependencyId }} {{ range }}
+              </code>
+            </div>
+            <div class="plugin-permissions">
+              <strong>权限</strong>
+              <span v-if="plugin.permissions.length === 0">无</span>
+              <code v-for="permission in plugin.permissions" :key="permission">{{ permission }}</code>
+            </div>
+            <div v-if="plugin.isDsp" class="plugin-native-note">
+              原生插件与音频引擎同进程运行；处理失败会自动 bypass，硬崩溃可能触发引擎恢复。
+            </div>
+            <div v-if="plugin.isDsp && nativeDspStatus(plugin)" class="plugin-native-status">
+              <span>loaded: {{ nativeDspStatus(plugin)?.loaded ? 'yes' : 'no' }}</span>
+              <span>active: {{ nativeDspStatus(plugin)?.active ? 'yes' : 'no' }}</span>
+              <span v-if="nativeDspStatus(plugin)?.bypassed">
+                bypass: {{ nativeDspStatus(plugin)?.bypassReason || nativeDspStatus(plugin)?.lastError || 'unknown' }}
+              </span>
+            </div>
+            <div v-if="plugin.isDsp && nativeDspParameters(plugin).length > 0" class="plugin-native-params">
+              <strong>DSP 参数</strong>
+              <label
+                v-for="parameter in nativeDspParameters(plugin)"
+                :key="parameter.id"
+                class="plugin-native-param"
+              >
+                <span>{{ parameter.name }}<small v-if="parameter.unit"> {{ parameter.unit }}</small></span>
+                <input
+                  v-if="parameter.type === 'bool'"
+                  type="checkbox"
+                  :checked="parameter.currentValue > 0"
+                  @change="updateNativeDspParameter(plugin, parameter, ($event.target as HTMLInputElement).checked)"
+                />
+                <select
+                  v-else-if="parameter.type === 'enum'"
+                  :value="parameter.currentValue"
+                  @change="updateNativeDspParameter(plugin, parameter, ($event.target as HTMLSelectElement).value)"
+                >
+                  <option
+                    v-for="(option, optionIndex) in parameter.enumValues || []"
+                    :key="option"
+                    :value="optionIndex"
+                  >
+                    {{ option }}
+                  </option>
+                </select>
+                <input
+                  v-else
+                  type="number"
+                  :min="parameter.minValue"
+                  :max="parameter.maxValue"
+                  :step="parameter.step || (parameter.type === 'int' ? 1 : 0.01)"
+                  :value="parameter.currentValue"
+                  @change="updateNativeDspParameter(plugin, parameter, ($event.target as HTMLInputElement).value)"
+                />
+              </label>
+            </div>
+            <div v-if="plugin.error" class="plugin-card-error">{{ plugin.error }}</div>
+          </div>
+          <div class="plugin-card-actions">
+            <button
+              class="text-button"
+              :disabled="busyId === plugin.id || plugin.status === 'invalid'"
+              @click="togglePlugin(plugin)"
+            >
+              {{ plugin.enabled ? '停用' : '启用' }}
+            </button>
+            <button class="text-button" @click="previewLog(plugin)">查看日志</button>
+            <button class="icon-button subtle" title="打开日志文件" @click="openLog(plugin)">
+              <i class="pi pi-external-link"></i>
+            </button>
+            <button
+              class="danger-button"
+              :disabled="busyId === plugin.id || plugin.builtIn"
+              :title="plugin.builtIn ? '自带插件不能卸载，可停用' : '卸载插件'"
+              @click="uninstallPlugin(plugin)"
+            >
+              卸载
+            </button>
+          </div>
+        </article>
+      </section>
     </div>
 
     <div v-if="selectedLogPlugin" class="plugin-log">
@@ -255,6 +409,29 @@ onUnmounted(() => {
 .plugin-list {
   display: grid;
   gap: 12px;
+}
+
+.plugin-group {
+  display: grid;
+  gap: 10px;
+}
+
+.plugin-group-head {
+  display: grid;
+  gap: 4px;
+  padding: 4px 2px;
+}
+
+.plugin-group-head strong {
+  color: var(--te-neutral-900);
+  font-size: 13px;
+}
+
+.plugin-group-head span,
+.plugin-native-note {
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .plugin-hero,
@@ -378,6 +555,52 @@ onUnmounted(() => {
   padding: 8px 10px;
   border-radius: 8px;
   font-size: 12px;
+}
+
+.plugin-native-note {
+  margin-top: 12px;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-weight: 800;
+}
+
+.plugin-native-status,
+.plugin-native-params {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--te-neutral-500);
+  font-size: 12px;
+}
+
+.plugin-native-params strong {
+  color: var(--te-neutral-700);
+}
+
+.plugin-native-param {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+}
+
+.plugin-native-param small {
+  color: var(--te-neutral-400);
+}
+
+.plugin-native-param input[type='number'],
+.plugin-native-param select {
+  width: 92px;
+  min-height: 28px;
+  border: 1px solid rgba(17, 24, 39, 0.12);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--te-neutral-800);
+  padding: 4px 6px;
 }
 
 .plugin-card-actions {

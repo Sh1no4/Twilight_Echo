@@ -119,6 +119,8 @@ class TwilightAudioEngine {
   TAE_Result setEqPreset(const std::string& presetJson);
   TAE_Result setCrossfeedStrength(double strength);
   TAE_Result setReplayGainMode(const std::string& mode, double preampDb, double fallbackDb, bool clip);
+  TAE_Result setNativeDspPluginChain(const std::string& chainJson);
+  std::string getNativeDspPluginStatusJson() const;
   std::string getDspConfig() const;
   std::string getMetadataJson(const std::string& source) const;
   std::string getQueueJson() const;
@@ -156,6 +158,7 @@ class TwilightAudioEngine {
   PlaybackInfo info_;
   QueueManager queue_;
   std::string dspConfigJson_ = "{}";
+  std::string nativeDspPluginChainJson_ = "{\"plugins\":[]}";
   OutputConfig outputConfig_;
   std::unique_ptr<AudioPipeline> pipeline_;
   TAE_EventCallback eventCallback_ = nullptr;

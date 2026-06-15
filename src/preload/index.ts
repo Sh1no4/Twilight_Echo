@@ -447,6 +447,7 @@ interface OutputInfo {
   diagnostics: OutputDiagnostics
   deviceRecovered: boolean
   recoveryCount: number
+  nativeDsp?: { plugins: unknown[] }
   isDsd: boolean
   dsdMode: string
   dsdRate: number
@@ -819,6 +820,8 @@ const api = {
       ipcRenderer.invoke('plugins:uninstall', id, options),
     openLog: (id: string): Promise<void> => ipcRenderer.invoke('plugins:openLog', id),
     getLog: (id: string): Promise<string> => ipcRenderer.invoke('plugins:getLog', id),
+    setNativeDspParameters: (id: string, parameters: Record<string, number>): Promise<TwilightPluginDescriptor> =>
+      ipcRenderer.invoke('plugins:setNativeDspParameters', id, parameters),
     onChanged: (cb: () => void): (() => void) => {
       pluginChangedCallbacks.add(cb)
       return () => pluginChangedCallbacks.delete(cb)

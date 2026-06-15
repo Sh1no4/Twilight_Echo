@@ -8,7 +8,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
-          pluginHost: resolve(__dirname, 'src/main/pluginHost.ts')
+          pluginHost: resolve(__dirname, 'src/main/pluginHost.ts'),
+          audioEngineService: resolve(__dirname, 'src/main/audioEngineService.ts')
         }
       }
     }

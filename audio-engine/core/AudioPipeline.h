@@ -41,6 +41,7 @@ struct PipelineStatus {
   bool eqActive = false;
   bool convolverActive = false;
   bool crossfeedActive = false;
+  bool nativeDspActive = false;
   bool crossfadeActive = false;
   bool fftActive = false;
   bool irResampled = false;
@@ -50,6 +51,7 @@ struct PipelineStatus {
   uint32_t convolverLatencyFrames = 0;
   uint32_t partitionSize = 0;
   std::string channelMappingMode;
+  std::string nativeDspJson = "{\"plugins\":[]}";
   bool sourceExact = false;
   bool outputPerfect = false;
   bool gaplessActive = false;
@@ -98,6 +100,8 @@ class AudioPipeline {
   bool setEqPreset(const std::string& json, std::string* error);
   void setCrossfeedStrength(double strength);
   void setReplayGainMode(ReplayGainMode mode, double preampDb, double fallbackDb, bool clip);
+  void setNativeDspPluginChain(const std::string& json);
+  std::string nativeDspPluginStatusJson() const;
   bool preloadNext(const std::optional<QueueItem>& item, std::string* error);
   bool skipToPreloaded(const QueueItem& item, std::string* error);
 

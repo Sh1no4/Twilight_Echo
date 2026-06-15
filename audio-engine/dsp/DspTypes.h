@@ -90,6 +90,7 @@ struct DspStatus {
   bool eqActive = false;
   bool convolverActive = false;
   bool crossfeedActive = false;
+  bool nativeDspActive = false;
   bool crossfadeActive = false;
   bool irResampled = false;
   double replayGainDb = 0.0;
@@ -98,6 +99,7 @@ struct DspStatus {
   uint32_t convolverLatencyFrames = 0;
   uint32_t partitionSize = 0;
   std::string channelMappingMode;
+  std::string nativeDspJson = "{\"plugins\":[]}";
 };
 
 struct ConvolverInfo {

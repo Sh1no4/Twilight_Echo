@@ -1290,6 +1290,19 @@ void AudioPipeline::setReplayGainMode(ReplayGainMode mode, double preampDb, doub
   updatePerfectLocked();
 }
 
+void AudioPipeline::setNativeDspPluginChain(const std::string& json) {
+  std::lock_guard lock(mutex_);
+  dspChain_.setNativeDspPluginChain(json);
+  preloadDspChain_.setNativeDspPluginChain(json);
+  dspStatus_ = dspChain_.status();
+  dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+  updatePerfectLocked();
+}
+
+std::string AudioPipeline::nativeDspPluginStatusJson() const {
+  return dspChain_.nativeDspPluginStatusJson();
+}
+
 bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::string* error) {
   if (!item || item->source.empty()) {
     std::shared_ptr<DecodeStream> previous;
@@ -1389,6 +1402,7 @@ PipelineStatus AudioPipeline::status() const {
   status.eqActive = dspStatus_.eqActive;
   status.convolverActive = dspStatus_.convolverActive;
   status.crossfeedActive = dspStatus_.crossfeedActive;
+  status.nativeDspActive = dspStatus_.nativeDspActive;
   status.crossfadeActive = dspStatus_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001;
   status.fftActive = spectrum_.isActive();
   status.irResampled = dspStatus_.irResampled;
@@ -1398,6 +1412,7 @@ PipelineStatus AudioPipeline::status() const {
   status.convolverLatencyFrames = dspStatus_.convolverLatencyFrames;
   status.partitionSize = dspStatus_.partitionSize;
   status.channelMappingMode = dspStatus_.channelMappingMode;
+  status.nativeDspJson = dspStatus_.nativeDspJson;
   status.sourceExact = outputInfo_.sourceExact;
   status.outputPerfect = outputPerfect_;
   status.gaplessActive =
@@ -1421,7 +1436,7 @@ bool AudioPipeline::needsPcmFallback(std::string* reason) const {
   std::lock_guard lock(mutex_);
   const bool processingActive =
       dspStatus_.replayGainActive || dspStatus_.eqActive || dspStatus_.convolverActive || dspStatus_.crossfeedActive ||
-      dspStatus_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001 ||
+      dspStatus_.nativeDspActive || dspStatus_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001 ||
       std::abs(volume_.load() - 1.0) > kUnityVolumeEpsilon ||
       outputConfig_.routingMode != ChannelRoutingMode::Auto;
 
@@ -1566,6 +1581,7 @@ bool AudioPipeline::updatePerfectLocked() {
   evaluation.eqActive = dspStatus_.eqActive;
   evaluation.convolverActive = dspStatus_.convolverActive;
   evaluation.crossfeedActive = dspStatus_.crossfeedActive;
+  evaluation.nativeDspActive = dspStatus_.nativeDspActive;
   evaluation.crossfadeActive = dspStatus_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001;
   evaluation.routingMode = outputConfig_.routingMode;
   evaluation.pcmPassthrough = pcmFormatsExactMatch(evaluation.decodedFormat, evaluation.outputFormat) && !backendResampled;
@@ -1649,7 +1665,7 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
     spectrum_.resetCapture();
   }
 
-  return output.frames;
+  return read > 0 || active->drained() ? output.frames : 0;
 }
 
 size_t AudioPipeline::render(float* output, size_t frameCount) {

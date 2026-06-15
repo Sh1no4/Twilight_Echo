@@ -15,6 +15,7 @@ namespace twilight::audio {
 
 std::string enumeratePlatformDevicesJson();
 std::string enumerateAsioDevicesJson();
+std::string pluginCapabilitiesJson();
 
 namespace {
 
@@ -412,7 +413,8 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
   writeDiagnosticsJson(json, out.diagnostics);
   json << ","
        << "\"deviceRecovered\":" << (out.deviceRecovered ? "true" : "false") << ","
-       << "\"recoveryCount\":" << out.recoveryCount
+       << "\"recoveryCount\":" << out.recoveryCount << ","
+       << "\"nativeDsp\":" << (out.nativeDspJson.empty() ? "{\"plugins\":[]}" : out.nativeDspJson)
        << "},"
        << "\"actualBackend\":\"" << escapeJson(out.actualBackend) << "\","
        << "\"driverName\":\"" << escapeJson(out.driverName.empty() ? out.actualDriverName : out.driverName) << "\","
@@ -1240,6 +1242,38 @@ TAE_Result TwilightAudioEngine::setReplayGainMode(
   return TAE_RESULT_OK;
 }
 
+TAE_Result TwilightAudioEngine::setNativeDspPluginChain(const std::string& chainJson) {
+  std::string nextChain;
+  {
+    std::lock_guard lock(mutex_);
+    nativeDspPluginChainJson_ = chainJson.empty() ? "{\"plugins\":[]}" : chainJson;
+    nextChain = nativeDspPluginChainJson_;
+  }
+  if (pipeline_) {
+    pipeline_->setNativeDspPluginChain(nextChain);
+  }
+  std::string rerouteReason;
+  double reroutePosition = 0.0;
+  PlaybackState rerouteState = PlaybackState::Stopped;
+  {
+    std::lock_guard lock(mutex_);
+    if (pipeline_) applyPipelineStatusLocked(pipeline_->status());
+    if (!shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+      publishStateLocked();
+    }
+  }
+  if (!rerouteReason.empty()) {
+    return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "dsp");
+  }
+  return TAE_RESULT_OK;
+}
+
+std::string TwilightAudioEngine::getNativeDspPluginStatusJson() const {
+  std::lock_guard lock(mutex_);
+  if (pipeline_) return pipeline_->nativeDspPluginStatusJson();
+  return "{\"plugins\":[]}";
+}
+
 std::string TwilightAudioEngine::getDspConfig() const {
   std::lock_guard lock(mutex_);
   return dspConfigJson_;
@@ -1348,9 +1382,11 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
        << "false"
 #endif
        << ",\"nativeDsd\":" << (nativeDsdCapable ? "true" : "false") << ",\"dop\":" << (dopCapable ? "true" : "false")
-       << ",\"sacdIso\":true,\"sacdIsoDst\":false,\"sacdIsoDstDsdProvider\":false"
+       << ",\"sacdIso\":true,\"sacdIsoDst\":false,\"sacdIsoDstDsdProvider\":false,"
+       << "\"audioPluginSystem\":true,\"nativeDsp\":true"
        << "},\"backends\":" << backends
        << ",\"backendCapabilities\":" << backendCapabilities
+       << ",\"plugins\":" << pluginCapabilitiesJson()
        << ",\"output\":{\"accessModes\":[\"shared\",\"exclusive\",\"hog\",\"direct\",\"plugin\"]}"
        << "}";
   return json.str();
@@ -1595,6 +1631,7 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.outputInfo.sourceExact = status.sourceExact;
   info_.outputInfo.outputPerfect = status.outputPerfect;
   info_.outputInfo.pcmPassthrough = status.outputInfo.pcmPassthrough;
+  info_.outputInfo.nativeDspJson = status.nativeDspJson.empty() ? "{\"plugins\":[]}" : status.nativeDspJson;
   info_.outputInfo.isDsd = status.stream.isDsd;
   info_.outputInfo.dsdMode = status.stream.isDsd ? dsdModeToString(status.stream.dsdMode) : dsdModeToString(DsdMode::Pcm);
   info_.outputInfo.dsdRate = status.stream.isDsd ? status.stream.dsdRate : 0;
@@ -1943,6 +1980,16 @@ TAE_Result TAE_SetReplayGainMode(
     int clip) {
   if (!engine || !mode) return TAE_RESULT_INVALID_ARGUMENT;
   return fromHandle(engine)->setReplayGainMode(mode, preamp_db, fallback_db, clip != 0);
+}
+
+TAE_Result TAE_SetDspPluginChain(TAE_EngineHandle engine, const char* chain_json) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return fromHandle(engine)->setNativeDspPluginChain(chain_json ? chain_json : "{\"plugins\":[]}");
+}
+
+TAE_Result TAE_GetDspPluginStatus(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return copyStringResult(fromHandle(engine)->getNativeDspPluginStatusJson(), buffer, buffer_size, required_size);
 }
 
 TAE_Result TAE_GetMetadata(

@@ -128,6 +128,10 @@ Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playe
 - 引擎对 `process()` 做耗时监控，连续超出预算自动 bypass 并经 `GetPlaybackInfo()` 诊断字段上报。
 - 加载失败 / prepare 失败 / 运行异常一律自动 bypass，不中断播放。
 - DSD / passthrough 路径下 DSP 插件自动 bypass（与 `outputPerfect` 语义一致）。
+- Phase 4 的 ABI v1 仅支持 float32 interleaved PCM；宿主通过
+  `TAE_SetDspPluginChain` 配置链路，通过 `TAE_GetDspPluginStatus` 和
+  `PlaybackInfo.outputInfo.nativeDsp` 上报诊断。诊断字段包含加载状态、旁路原因、
+  最近错误、处理耗时、超时次数与参数当前值。
 
 ### 5.4 参数体系
 
@@ -135,7 +139,10 @@ Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playe
 
 ### 5.5 风险标注
 
-- DSP 插件与引擎同进程运行；管理 UI 必须单独分区并标注崩溃风险。
+- DSP 插件与 Twilight Audio Engine 同进程运行；生产宿主由可重启 Audio Engine
+  Service 默认承载该引擎，避免原生 DSP 硬崩溃退出 Electron 主进程。`TWILIGHT_AUDIO_SERVICE=0`
+  仅作为开发回退开关。管理 UI 必须单独分区并标注崩溃风险与服务重启行为。
+- 纯 DSP 插件不启动 JS `utilityProcess`；混合插件的 JS 轨和 DSP 轨分别按各自规则运行。
 
 ## 6. 安全底线（信任式安装下的最低要求）
 

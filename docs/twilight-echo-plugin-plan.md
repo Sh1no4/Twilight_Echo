@@ -114,7 +114,7 @@ JS 插件 API 与 DSP C ABI 各自有独立版本号、独立的稳定性承诺�
 ### 任务
 
 1. 将引擎内 `PluginRegistry` 做实：定义稳定 C ABI（见规范文档第 5 节），加载外部动态库挂入 DSP 链（与现有 EQ / FIR Convolver / Crossfeed 同级）。
-2. 插件管理 UI 中 DSP 插件单独分区，明确标注："原生插件，与播放器同进程运行，崩溃可能导致引擎重启"。
+2. 插件管理 UI 中 DSP 插件单独分区，明确标注："原生插件运行在可重启音频服务内，崩溃会触发音频服务恢复"。
 3. 引擎侧防护：加载失败 / 处理超时 / 异常时自动 bypass，并通过 `GetPlaybackInfo()` 诊断字段上报（沿用现有 recovery diagnostics 思路）。
 4. DSD / passthrough 路径下 DSP 插件自动 bypass（与现有 `outputPerfect` 语义一致）。
 
@@ -122,6 +122,15 @@ JS 插件 API 与 DSP C ABI 各自有独立版本号、独立的稳定性承诺�
 
 - 将现有某个内置 DSP（如 Crossfeed）用插件 ABI 重新封装并跑通。
 - 一个故意崩溃的测试插件不会杀死整个应用（引擎可恢复或可重启）。
+
+### 当前实现说明
+
+- ABI v1 已落地为 Twilight Echo 自有 C ABI，当前范围限定为 float32 interleaved PCM。
+- 宿主可安装并启用纯 DSP 插件；纯 DSP 插件不启动 JS 宿主，只更新 native DSP chain。
+- `GetPlaybackInfo()` 通过 `outputInfo.nativeDsp` 暴露 DSP 插件诊断、参数元数据与
+  当前值；DSD / passthrough 路径自动旁路 DSP v1。
+- 官方 Crossfeed ABI 示例和 crash fixture 用于验收；硬崩溃插件应只杀死并重启音频
+  服务，不退出主应用。
 
 ---
 
@@ -157,6 +166,6 @@ JS 插件 API 与 DSP C ABI 各自有独立版本号、独立的稳定性承诺�
 | # | 风险 | 对策 |
 |---|---|---|
 | 1 | **"开放生态 + 信任式安装"长期不可持续**：生态有规模后恶意插件必然出现 | 架构上预留收紧空间（utilityProcess 宿主 + API 网关 + 强制权限声明），未来切换强制权限只需在网关层加闸；Phase 5 前重新评估，至少对索引内插件引入签名 |
-| 2 | **DSP 插件为同进程原生代码**，崩溃隔离只能依赖引擎进程级恢复 | Phase 4 启动前确认引擎是否运行在可独立重启的进程中，这决定该阶段的难度与方案 |
+| 2 | **DSP 插件为同进程原生代码**，崩溃隔离只能依赖引擎进程级恢复 | Phase 4 默认使用可重启 Audio Engine Service 承载 native addon 和 DSP 动态库；崩溃后主进程标记 DSP 插件失败并清空 chain |
 | 3 | **网易云插件化是最大重构**（Phase 2） | 不建议跳过——跳过则 API 设计必然脱离实际；可拆分为接口先行、逐模块迁移 |
 | 4 | 音源插件涉及第三方平台版权与 ToS | 生态规范要求插件自行承担合规责任；官方索引对明显侵权源不收录 |

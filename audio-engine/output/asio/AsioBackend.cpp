@@ -987,7 +987,11 @@ void AsioBackend::renderBuffer(long bufferIndex) {
     const size_t stride = bytesPerSample(sampleFormat);
     for (size_t frame = 0; frame < frames; ++frame) {
       float sample = 0.0f;
-      if (channel < sourceChannels) {
+      if (sourceChannels == 1 && outputConfig.routingMode == ChannelRoutingMode::MonoToMultichannel) {
+        if (channel < 2) sample = renderScratch_[frame];
+      } else if (sourceChannels == 1 && outputConfig.routingMode == ChannelRoutingMode::MonoToStereo) {
+        if (channel < 2) sample = renderScratch_[frame];
+      } else if (channel < sourceChannels) {
         sample = renderScratch_[frame * static_cast<size_t>(sourceChannels) + static_cast<size_t>(channel)];
       }
       writePackedSample(sample, sampleFormat, output + frame * stride);

@@ -65,6 +65,8 @@ TAE_API TAE_Result TAE_SetReplayGainMode(
     double preamp_db,
     double fallback_db,
     int clip);
+TAE_API TAE_Result TAE_SetDspPluginChain(TAE_EngineHandle engine, const char* chain_json);
+TAE_API TAE_Result TAE_GetDspPluginStatus(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size);
 TAE_API TAE_Result TAE_GetMetadata(
     TAE_EngineHandle engine,
     const char* source,

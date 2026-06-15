@@ -85,6 +85,7 @@ target_include_directories(twilight_audio_engine
 )
 
 target_compile_definitions(twilight_audio_engine PRIVATE TAE_BUILDING_LIBRARY=1)
+target_link_libraries(twilight_audio_engine PRIVATE ${CMAKE_DL_LIBS})
 
 if(WIN32)
   target_compile_definitions(twilight_audio_engine PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -221,9 +222,48 @@ if(TAE_BUILD_TESTS)
     dsp/KissFftAdapter.cpp
     dsp/ParametricEqProcessor.cpp
     dsp/ReplayGainProcessor.cpp
+    plugins/PluginRegistry.cpp
   )
   target_include_directories(twilight_dsp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(twilight_dsp_tests PRIVATE ${CMAKE_DL_LIBS})
   add_test(NAME twilight_dsp_unit COMMAND twilight_dsp_tests)
+
+  add_library(twilight_test_gain_dsp_plugin SHARED tests/test_gain_dsp_plugin.cpp)
+  target_include_directories(twilight_test_gain_dsp_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_library(twilight_test_fault_dsp_plugin SHARED tests/test_fault_dsp_plugin.cpp)
+  target_include_directories(twilight_test_fault_dsp_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_library(twilight_test_bad_abi_dsp_plugin SHARED tests/test_bad_abi_dsp_plugin.cpp)
+  target_include_directories(twilight_test_bad_abi_dsp_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_library(twilight_test_invalid_param_dsp_plugin SHARED tests/test_invalid_param_dsp_plugin.cpp)
+  target_include_directories(twilight_test_invalid_param_dsp_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_library(twilight_crossfeed_dsp_plugin SHARED tests/test_crossfeed_dsp_plugin.cpp)
+  target_include_directories(twilight_crossfeed_dsp_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_library(twilight_test_crash_dsp_plugin SHARED tests/test_crash_dsp_plugin.cpp)
+  target_include_directories(twilight_test_crash_dsp_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  if(WIN32)
+    set_target_properties(twilight_test_gain_dsp_plugin PROPERTIES PREFIX "")
+    set_target_properties(twilight_test_fault_dsp_plugin PROPERTIES PREFIX "")
+    set_target_properties(twilight_test_bad_abi_dsp_plugin PROPERTIES PREFIX "")
+    set_target_properties(twilight_test_invalid_param_dsp_plugin PROPERTIES PREFIX "")
+    set_target_properties(twilight_crossfeed_dsp_plugin PROPERTIES PREFIX "")
+    set_target_properties(twilight_test_crash_dsp_plugin PROPERTIES PREFIX "")
+  endif()
+
+  add_executable(twilight_native_dsp_plugin_tests
+    tests/native_dsp_plugin_tests.cpp
+    plugins/PluginRegistry.cpp
+  )
+  target_include_directories(twilight_native_dsp_plugin_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(twilight_native_dsp_plugin_tests PRIVATE twilight_audio_engine)
+  add_test(
+    NAME twilight_native_dsp_plugin_unit
+    COMMAND twilight_native_dsp_plugin_tests
+      $<TARGET_FILE:twilight_test_gain_dsp_plugin>
+      $<TARGET_FILE:twilight_test_fault_dsp_plugin>
+      $<TARGET_FILE:twilight_test_bad_abi_dsp_plugin>
+      $<TARGET_FILE:twilight_test_invalid_param_dsp_plugin>
+      $<TARGET_FILE:twilight_crossfeed_dsp_plugin>
+  )
 
   add_executable(twilight_metadata_tests
     metadata/metadata_tests.cpp
@@ -386,12 +426,14 @@ if(TAE_BUILD_TESTS)
     dsp/KissFftAdapter.cpp
     dsp/ParametricEqProcessor.cpp
     dsp/ReplayGainProcessor.cpp
+    plugins/PluginRegistry.cpp
     playlist/QueueManager.cpp
   )
   target_include_directories(twilight_runtime_queue_reroute_tests PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
+  target_link_libraries(twilight_runtime_queue_reroute_tests PRIVATE ${CMAKE_DL_LIBS})
   add_test(NAME twilight_runtime_queue_reroute_unit COMMAND twilight_runtime_queue_reroute_tests)
 
   add_executable(audio_output_benchmark

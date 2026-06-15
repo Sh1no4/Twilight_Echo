@@ -2,6 +2,7 @@ import { EventEmitter } from 'events'
 import { existsSync } from 'fs'
 import { createRequire } from 'module'
 import { join } from 'path'
+import { AudioEngineServiceBinding, canUseAudioEngineService } from './audioEngineServiceClient.ts'
 
 const require = createRequire(import.meta.url)
 
@@ -316,6 +317,7 @@ export interface OutputInfo {
   diagnostics: OutputDiagnostics
   deviceRecovered: boolean
   recoveryCount: number
+  nativeDsp?: { plugins: unknown[] }
   isDsd: boolean
   dsdMode: string
   dsdRate: number
@@ -369,6 +371,8 @@ export interface NativeAudioBinding {
     fallback: number,
     clip: boolean
   ) => void
+  SetDspPluginChain?: (json: string) => void
+  GetDspPluginStatus?: () => string | { plugins: unknown[] }
   GetMetadata?: (source: string) => string | NativeAudioMetadata
   GetPlaybackInfo?: () => string | PlaybackInfo
   GetUpcomingTrack?: () => string | AudioEngineQueueItem | null
@@ -380,11 +384,19 @@ export interface NativeAudioBinding {
   GetLastError?: () => string
 }
 
+export interface AudioEngineServiceNativeBinding extends NativeAudioBinding {
+  getMetadataAsync: (source: string) => Promise<string | NativeAudioMetadata>
+  destroy: () => void
+  on: (event: 'crash' | 'error-log' | 'log' | 'ready', listener: (...args: any[]) => void) => unknown
+}
+
 export interface AudioEngineManagerDependencies {
   nativeBinding?: NativeAudioBinding | null
   scheduler?: Partial<AudioEngineScheduler>
   deviceOptionsProvider?: () => AudioDeviceOption[] | null
   nativeAddonCandidates?: () => string[]
+  audioServiceEntry?: string
+  audioServiceFactory?: () => AudioEngineServiceNativeBinding
 }
 
 export interface ConvolverInfo {
@@ -836,7 +848,7 @@ function normalizeVisualizationData(
   }
 }
 
-function getNativeAddonCandidates(): string[] {
+export function getNativeAddonCandidates(): string[] {
   const binary = 'twilight_audio_node.node'
   const appPath = electronApp?.getAppPath?.() ?? process.cwd()
   return [
@@ -855,7 +867,7 @@ function rendererFallbackAllowed(): boolean {
   return process.env.TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK === '1'
 }
 
-function loadNativeBinding(getCandidates: () => string[] = getNativeAddonCandidates): NativeAudioBinding | null {
+export function loadNativeBinding(getCandidates: () => string[] = getNativeAddonCandidates): NativeAudioBinding | null {
   for (const candidate of getCandidates()) {
     if (!existsSync(candidate)) continue
     try {
@@ -953,6 +965,7 @@ function createDefaultPlaybackInfo(
     diagnostics,
     deviceRecovered: false,
     recoveryCount: 0,
+    nativeDsp: { plugins: [] },
     isDsd: false,
     dsdMode: 'pcm',
     dsdRate: 0
@@ -1065,6 +1078,7 @@ function normalizeDsdState(
 
 export class AudioEngineManager extends EventEmitter {
   private native: NativeAudioBinding | null
+  private audioServiceBinding: AudioEngineServiceNativeBinding | null = null
   private output: AudioOutputId
   private device: string
   private exclusiveMode: boolean
@@ -1093,7 +1107,7 @@ export class AudioEngineManager extends EventEmitter {
     this.native =
       dependencies.nativeBinding !== undefined
         ? dependencies.nativeBinding
-        : loadNativeBinding(dependencies.nativeAddonCandidates)
+        : this.createNativeBinding(dependencies)
     this.output = normalizeAudioOutput(config.audioOutput)
     this.device = normalizeAudioDevice(config.audioDevice)
     this.device = this.resolveCompatibleDevice(this.output, this.device)
@@ -1109,6 +1123,53 @@ export class AudioEngineManager extends EventEmitter {
     )
     this.resetOutputInfoDefaults()
     this.updateOutputPerfect()
+  }
+
+  private createNativeBinding(dependencies: AudioEngineManagerDependencies): NativeAudioBinding | null {
+    if (dependencies.audioServiceFactory || canUseAudioEngineService()) {
+      const service = dependencies.audioServiceFactory?.() ??
+        new AudioEngineServiceBinding({
+          serviceEntry: dependencies.audioServiceEntry ?? join(__dirname, 'audioEngineService.js')
+        })
+      service.on('crash', (reason: string) => this.handleAudioServiceCrash(reason))
+      service.on('error-log', (message: string) => {
+        if (message.trim()) console.warn('[音频服务]', message.trim())
+      })
+      this.audioServiceBinding = service
+      return service
+    }
+    return loadNativeBinding(dependencies.nativeAddonCandidates)
+  }
+
+  private handleAudioServiceCrash(reason: string): void {
+    this.lastNativeError = reason
+    this.nativePlaybackActive = false
+    const nextDiagnostics = {
+      ...this.playbackInfo.outputInfo.diagnostics,
+      lastError: reason,
+      sessionRecoveryCount: this.playbackInfo.outputInfo.diagnostics.sessionRecoveryCount + 1,
+      lifetimeRecoveryCount: this.playbackInfo.outputInfo.diagnostics.lifetimeRecoveryCount + 1
+    }
+    this.playbackInfo = {
+      ...this.playbackInfo,
+      state: 'stopped',
+      nativePlaybackActive: false,
+      outputInfo: {
+        ...this.playbackInfo.outputInfo,
+        nativeDsp: { plugins: [] },
+        diagnostics: nextDiagnostics,
+        recoveryCount: this.playbackInfo.outputInfo.recoveryCount + 1
+      },
+      diagnostics: {
+        ...this.playbackInfo.diagnostics,
+        lastError: reason,
+        sessionRecoveryCount: this.playbackInfo.diagnostics.sessionRecoveryCount + 1,
+        lifetimeRecoveryCount: this.playbackInfo.diagnostics.lifetimeRecoveryCount + 1
+      },
+      recoveryCount: this.playbackInfo.recoveryCount + 1
+    }
+    this.emit('audio-service-crash', { reason })
+    this.publishPlaybackInfo()
   }
 
   async start(): Promise<void> {
@@ -1517,8 +1578,29 @@ export class AudioEngineManager extends EventEmitter {
     return this.processing
   }
 
+  setNativeDspPluginChain(chainJson: string): void {
+    this.tryNative('更新原生 DSP 插件链', (native) => {
+      native.SetDspPluginChain?.(chainJson)
+    })
+    this.updateNativeInfoSnapshot()
+  }
+
+  getNativeDspPluginStatus(): unknown {
+    return parseNativeJson(this.native?.GetDspPluginStatus?.(), { plugins: [] })
+  }
+
   getMetadata(source: string): NativeAudioMetadata | null {
     return parseNativeJson(this.native?.GetMetadata?.(source), null as NativeAudioMetadata | null)
+  }
+
+  async getMetadataAsync(source: string): Promise<NativeAudioMetadata | null> {
+    if (this.audioServiceBinding) {
+      return parseNativeJson(
+        await this.audioServiceBinding.getMetadataAsync(source),
+        null as NativeAudioMetadata | null
+      )
+    }
+    return this.getMetadata(source)
   }
 
   async setPlayMode(mode: PlayMode): Promise<void> {
@@ -1582,6 +1664,8 @@ export class AudioEngineManager extends EventEmitter {
       this.timer = null
     }
     this.tryNative('销毁停止', (native) => native.Stop())
+    this.audioServiceBinding?.destroy()
+    this.audioServiceBinding = null
   }
 
   private startClock(): void {

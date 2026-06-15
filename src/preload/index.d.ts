@@ -446,6 +446,7 @@ interface OutputInfo {
   diagnostics: OutputDiagnostics
   deviceRecovered: boolean
   recoveryCount: number
+  nativeDsp?: { plugins: unknown[] }
   isDsd: boolean
   dsdMode: string
   dsdRate: number
@@ -658,6 +659,7 @@ interface WindowAPI {
     uninstall: (id: string, options?: { removeData?: boolean }) => Promise<void>
     openLog: (id: string) => Promise<void>
     getLog: (id: string) => Promise<string>
+    setNativeDspParameters: (id: string, parameters: Record<string, number>) => Promise<TwilightPluginDescriptor>
     onChanged: (cb: () => void) => () => void
   }
   providers: {

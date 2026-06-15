@@ -273,6 +273,48 @@ load remote runtime code. The renderer applies only the plugin theme selected by
 the user in Settings -> Appearance; disabling or uninstalling that plugin clears
 the selected plugin theme.
 
+## Native DSP Plugins
+
+Phase 4 adds the native DSP track. A native DSP plugin declares `type:["dsp"]`,
+`permissions:["dsp:native"]`, and a platform `binary` entry. Pure DSP plugins do
+not run in the JS plugin host; enabling them updates the audio engine native DSP
+chain.
+
+The C ABI entrypoint is:
+
+```c
+const tae_dsp_plugin_info* tae_plugin_get_info(void);
+```
+
+ABI v1 is `TAE_DSP_PLUGIN_ABI_VERSION = 1` and supports float32 interleaved PCM.
+The info table provides `create`, `destroy`, `prepare`, `process`, `set_param`,
+`reset`, and parameter metadata. ABI structs may only append fields at the tail.
+
+The host engine exposes:
+
+```ts
+TAE_SetDspPluginChain(chainJson)
+TAE_GetDspPluginStatus()
+PlaybackInfo.outputInfo.nativeDsp
+```
+
+Native DSP plugins are bypassed on prepare/process errors, unsupported formats,
+and repeated realtime-budget overruns. DSD / passthrough paths bypass native DSP
+v1 processors.
+
+`PlaybackInfo.outputInfo.nativeDsp.plugins[]` reports `id`, `name`, `version`,
+`enabled`, `loaded`, `active`, `bypassed`, `bypassReason`, `lastError`,
+`processCalls`, `overrunCount`, `lastProcessMs`, `maxProcessMs`, and
+`parameters[]`. Parameter entries include `id`, `name`, `type`, `defaultValue`,
+`minValue`, `maxValue`, `step`, `unit`, `enumValues`, and `currentValue`; the
+management UI uses them to render bool, int, float, and enum controls.
+
+In production the native audio engine is hosted by a restartable Audio Engine
+Service by default. A DSP plugin hard crash restarts that service, clears the
+native DSP chain, and marks enabled DSP plugins failed instead of exiting the
+Electron main process. `TWILIGHT_AUDIO_SERVICE=0` is reserved as a development
+fallback for direct native binding.
+
 ## Host Capability Audit
 
 - `usePlayerStore`: maps to player observe/control API through main-process
@@ -291,6 +333,9 @@ the selected plugin theme.
   API gateway.
 - UI/theme extension points: Phase 3 exposes controlled DTO registration for
   PlayerBar buttons, settings entries, sidebar pages, and declarative themes.
+- Native DSP: Phase 4 exposes a C ABI plugin chain through the audio engine
+  service; JS plugins and native DSP plugins remain separate compatibility
+  tracks.
 
 ## Examples
 

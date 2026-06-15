@@ -580,7 +580,7 @@ async function parseTrack(file: FileEntry): Promise<unknown[]> {
   const ext = file.fileName.toLowerCase()
   if (ext.endsWith('.iso')) {
     try {
-      const meta = audioEngineManager?.getMetadata(file.fullPath)
+      const meta = await audioEngineManager?.getMetadataAsync(file.fullPath)
       if (meta && meta.isoTracks && meta.isoTracks.length > 0) {
         return meta.isoTracks.filter(isoTrack => isoTrack.playable !== false).map(isoTrack => {
           return {
@@ -1113,6 +1113,12 @@ function setupAudioEngineIpc(): void {
     mainWindow?.webContents.send('audioEngine:error', err.message)
   })
 
+  audioEngineManager.on('audio-service-crash', ({ reason }) => {
+    console.error('[音频服务]', reason)
+    mainWindow?.webContents.send('audioEngine:error', `音频服务已重启：${reason}`)
+    void pluginManager?.handleNativeDspHostCrash(reason)
+  })
+
   audioEngineManager.on('ready', () => {
     mainWindow?.webContents.send('audioEngine:ready')
     void pluginManager?.broadcastEvent('audioEngine:ready', null)
@@ -1338,7 +1344,7 @@ function setupAudioEngineIpc(): void {
   )
 
   ipcMain.handle('audioEngine:getMetadata', async (_event, source: string) => {
-    return requireAudioEngine().getMetadata(source)
+    return await requireAudioEngine().getMetadataAsync(source)
   })
 
   ipcMain.handle('audioEngine:getPlaybackInfo', async () => {
@@ -1400,6 +1406,9 @@ function setupPluginIpc(): void {
       cacheSong: async (songId, url, fileName) => cacheNcmSong(Number(songId), url, fileName)
     },
     getPlaybackInfo: async () => audioEngineManager?.getPlaybackInfo() ?? null,
+    applyNativeDspPluginChain: async (chainJson) => {
+      audioEngineManager?.setNativeDspPluginChain(chainJson)
+    },
     player: {
       play: async () => {
         await audioEngineManager?.togglePause()
@@ -1462,6 +1471,9 @@ function setupPluginIpc(): void {
   })
   ipcMain.handle('plugins:getLog', async (_event, id: string) => {
     return await pluginManager!.getLog(id)
+  })
+  ipcMain.handle('plugins:setNativeDspParameters', async (_event, id: string, parameters: Record<string, number>) => {
+    return await pluginManager!.setNativeDspPluginParameters(id, parameters)
   })
   ipcMain.handle('providers:list', async () => {
     return pluginManager!.listProviders()

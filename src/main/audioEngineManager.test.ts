@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { EventEmitter } from 'node:events'
 
 import type {
+  AudioEngineServiceNativeBinding,
   AudioDeviceOption,
   AudioEngineManagerDependencies,
   AudioEngineQueueItem,
@@ -562,6 +564,47 @@ class FakeNativeBinding implements NativeAudioBinding {
       dsdRate: outputInfo.dsdRate,
       outputInfo
     }
+  }
+}
+
+class FakeAudioServiceBinding extends EventEmitter implements AudioEngineServiceNativeBinding {
+  stopped = false
+  volume = 1
+  backend = 'wasapi'
+  device = 'auto'
+  playbackInfo = makePlaybackInfo({ state: 'playing', nativePlaybackActive: true })
+
+  Play = (): void => {
+    this.playbackInfo = makePlaybackInfo({ state: 'playing', nativePlaybackActive: true })
+  }
+  Pause = (): void => {
+    this.playbackInfo = { ...this.playbackInfo, state: 'paused' }
+  }
+  Stop = (): void => {
+    this.stopped = true
+    this.playbackInfo = { ...this.playbackInfo, state: 'stopped', nativePlaybackActive: false }
+  }
+  Seek = (): void => {}
+  SetVolume = (volume: number): void => {
+    this.volume = volume
+  }
+  SetOutputDevice = (device: string): void => {
+    this.device = device
+  }
+  SetOutputBackend = (backend: string): void => {
+    this.backend = backend
+  }
+  SetOutputConfig = (): void => {}
+  SetDspConfig = (): void => {}
+  GetMetadata = (): string => JSON.stringify({ title: 'sync fallback', error: '' })
+  GetPlaybackInfo = (): string => JSON.stringify(this.playbackInfo)
+  GetDspPluginStatus = (): string => JSON.stringify({ plugins: [] })
+  GetLastError = (): string => JSON.stringify({ message: '' })
+  async getMetadataAsync(source: string): Promise<string> {
+    return JSON.stringify({ source, title: 'service metadata', error: '' })
+  }
+  destroy(): void {
+    this.stopped = true
   }
 }
 
@@ -1203,4 +1246,36 @@ test('switching DSD output mode to PCM does not leave stale DoP state', async ()
   assert.equal(pcmInfo.perfectReasonCode, 'dsd_converted_to_pcm')
   assert.notEqual(pcmInfo.outputInfo.dsdMode, 'dop')
   assertPlaybackMirrorsOutputInfo(pcmInfo)
+})
+
+test('audio service crash stops native playback and keeps manager usable', async () => {
+  const service = new FakeAudioServiceBinding()
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+
+  let crashReason = ''
+  manager.on('audio-service-crash', ({ reason }) => {
+    crashReason = reason
+  })
+
+  const meta = await manager.getMetadataAsync('service-track.flac')
+  assert.equal(meta?.title, 'service metadata')
+
+  service.emit('crash', 'native dsp crash fixture exited')
+  const info = await manager.getPlaybackInfo()
+
+  assert.equal(crashReason, 'native dsp crash fixture exited')
+  assert.equal(info.state, 'stopped')
+  assert.equal(info.nativePlaybackActive, false)
+  assert.equal(info.outputInfo.diagnostics.lastError, 'native dsp crash fixture exited')
+  assert.equal(info.outputInfo.nativeDsp?.plugins.length, 0)
+  assert.equal(info.outputInfo.recoveryCount, 1)
+
+  manager.destroy()
 })

@@ -55,6 +55,7 @@ std::string processingReason(const PerfectEvaluation& evaluation) {
   if (evaluation.eqActive) return "EQ active";
   if (evaluation.convolverActive) return "Convolver active";
   if (evaluation.crossfeedActive) return "Crossfeed active";
+  if (evaluation.nativeDspActive) return "Native DSP plugin active";
   if (evaluation.crossfadeActive) return "Crossfade active";
   return "Audio processing active";
 }
@@ -65,6 +66,7 @@ std::string processingReasonCode(const PerfectEvaluation& evaluation) {
   if (evaluation.eqActive) return "eq_active";
   if (evaluation.convolverActive) return "convolver_active";
   if (evaluation.crossfeedActive) return "crossfeed_active";
+  if (evaluation.nativeDspActive) return "native_dsp_active";
   if (evaluation.crossfadeActive) return "crossfade_active";
   return "processing_active";
 }
@@ -314,7 +316,7 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
   result.resampled = evaluation.backendResampled || !result.formatMatched;
   result.processingActive =
       evaluation.replayGainActive || evaluation.eqActive || evaluation.convolverActive || evaluation.crossfeedActive ||
-      evaluation.crossfadeActive || std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon;
+      evaluation.nativeDspActive || evaluation.crossfadeActive || std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon;
   result.routingPreservesSemantics = routingPreservesSemantics(
       evaluation.routingMode,
       decodedFormat.channelCount,

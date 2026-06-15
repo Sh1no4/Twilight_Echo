@@ -140,6 +140,10 @@ export function validatePluginManifest(raw: unknown): TwilightPluginManifest {
   const dependencies = normalizeDependencies(raw.dependencies)
   if (!main && !binary) throw new Error('plugin.json 必须声明 main 或 binary')
   if (type.includes('dsp') && !binary) throw new Error('type 包含 dsp 时必须声明 binary')
+  const permissions = normalizePermissions(raw.permissions)
+  if (type.includes('dsp') && !permissions.includes('dsp:native')) {
+    throw new Error('type 包含 dsp 时必须声明 dsp:native 权限')
+  }
 
   return {
     id,
@@ -156,7 +160,7 @@ export function validatePluginManifest(raw: unknown): TwilightPluginManifest {
       twilightEcho: engines.twilightEcho.trim()
     },
     apiVersion: normalizedApiVersion,
-    permissions: normalizePermissions(raw.permissions),
+    permissions,
     contributes: raw.contributes,
     homepage: typeof raw.homepage === 'string' ? raw.homepage.trim() : undefined,
     repository: typeof raw.repository === 'string' ? raw.repository.trim() : undefined,

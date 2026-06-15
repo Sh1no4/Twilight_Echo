@@ -220,6 +220,10 @@ DspChain::DspChain() {
   auto crossfeed = std::make_unique<CrossfeedProcessor>();
   crossfeed_ = crossfeed.get();
   processors_.push_back(std::move(crossfeed));
+
+  auto nativePlugins = std::make_unique<PluginRegistry>();
+  nativePlugins_ = nativePlugins.get();
+  processors_.push_back(std::move(nativePlugins));
 }
 
 void DspChain::configure(const DspConfig& config) {
@@ -362,6 +366,21 @@ void DspChain::setReplayGainMode(ReplayGainMode mode, double preampDb, double fa
   refreshStatusLocked();
 }
 
+void DspChain::setNativeDspPluginChain(const std::string& json) {
+  std::lock_guard lock(mutex_);
+  if (!nativePlugins_) return;
+  nativePlugins_->setPluginChain(PluginRegistry::parseChainJson(json));
+  nativePlugins_->configure(config_);
+  nativePlugins_->prepare(format_);
+  nativePlugins_->setTrackContext(trackContext_);
+  refreshStatusLocked();
+}
+
+std::string DspChain::nativeDspPluginStatusJson() const {
+  std::lock_guard lock(mutex_);
+  return nativePlugins_ ? nativePlugins_->statusJson() : std::string("{\"plugins\":[]}");
+}
+
 DspConfig DspChain::parseConfigJson(const std::string& json) {
   DspConfig config;
   config.enabled = extractBoolField(json, "dspEnabled").value_or(extractBoolField(json, "enabled").value_or(false));
@@ -401,6 +420,7 @@ void DspChain::refreshStatusLocked() {
   status_.eqActive = eq_ && eq_->isActive();
   status_.convolverActive = convolver_ && convolver_->isActive();
   status_.crossfeedActive = crossfeed_ && crossfeed_->isActive();
+  status_.nativeDspActive = nativePlugins_ && nativePlugins_->isActive();
   status_.crossfadeActive = config_.crossfadeSeconds > 0.0001;
   status_.replayGainDb = replayGain_ ? replayGain_->currentGainDb() : 0.0;
   status_.crossfeedStrength = crossfeed_ ? crossfeed_->strength() : 0.0;
@@ -410,8 +430,9 @@ void DspChain::refreshStatusLocked() {
   status_.convolverLatencyFrames = info.latencyFrames;
   status_.partitionSize = info.partitionSize;
   status_.channelMappingMode = info.channelMappingMode;
+  status_.nativeDspJson = nativePlugins_ ? nativePlugins_->statusJson() : std::string("{\"plugins\":[]}");
   status_.dspActive = status_.replayGainActive || status_.eqActive || status_.convolverActive ||
-                      status_.crossfeedActive;
+                      status_.crossfeedActive || status_.nativeDspActive;
 }
 
 void DspChain::clampOutput(float* samples, size_t frameCount) {
