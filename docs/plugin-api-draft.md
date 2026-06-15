@@ -58,6 +58,9 @@ Phase 1 event names:
 - `player:playback-info`
 - `audioEngine:<property-change-name>`
 
+Phase 3 treats this API as the supported tool/automation event bus. Handlers run
+inside the plugin host process; thrown errors fail only that plugin.
+
 ## Player
 
 ```ts
@@ -141,6 +144,55 @@ const track: Track = {
 }
 ```
 
+## UI Extension Points
+
+Phase 3 UI plugins register declarative contributions. Renderer code renders
+only host-approved DTOs; plugins do not receive arbitrary DOM access.
+
+```ts
+await context.twilight.ui.register({
+  id: 'my-player-button',
+  kind: 'playerBarButton',
+  title: 'Scrobble',
+  description: 'Publish the current track',
+  icon: 'pi pi-send',
+  command: 'myPlugin.scrobble'
+})
+
+context.twilight.ui.onCommand('myPlugin.scrobble', async (track) => {
+  context.logger.info(`Scrobble requested for ${track?.title ?? 'unknown track'}`)
+})
+```
+
+Initial controlled UI contribution kinds:
+
+- `playerBarButton`: rendered in the PlayerBar more drawer and must declare `command`.
+- `settingsPanel`: rendered as a plugin settings entry and may declare `command`.
+- `sidebarPage`: reserved Phase 3 slot for custom pages and must declare `command`.
+
+UI contributions require `type` containing `ui` or `tool` and permission
+`ui:inject`.
+
+## Themes
+
+Theme plugins register CSS variables and/or one packaged stylesheet. Theme
+stylesheets are resolved inside the installed plugin directory and cannot point
+outside the package.
+
+```ts
+await context.twilight.themes.register({
+  id: 'nocturne',
+  name: 'Nocturne',
+  variables: {
+    '--te-primary-500': '#38bdf8'
+  },
+  stylesheet: 'theme.css'
+})
+```
+
+Theme plugins are declarative only. They must not execute renderer scripts or
+load remote runtime code.
+
 ## Host Capability Audit
 
 - `usePlayerStore`: maps to player observe/control API through main-process
@@ -156,6 +208,8 @@ const track: Track = {
   `settings:*` channels directly.
 - `audioEngineManager`: event and playback operations are bridged by the plugin
   API gateway.
+- UI/theme extension points: Phase 3 exposes controlled DTO registration for
+  PlayerBar buttons, settings entries, sidebar pages, and declarative themes.
 
 ## Examples
 

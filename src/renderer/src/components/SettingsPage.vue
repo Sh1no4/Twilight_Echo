@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
+import { useExtensionRegistry } from '../extensions/registry'
 import PluginSettingsPanel from './PluginSettingsPanel.vue'
 import type {
   AppSettings,
@@ -136,6 +137,10 @@ const props = defineProps<{
 }>()
 
 const activeTab = ref<TabKey>(props.initialSection ?? 'general')
+const { uiContributions, syncExtensions } = useExtensionRegistry()
+const pluginSettingsPanels = computed(() =>
+  uiContributions.value.filter((contribution) => contribution.kind === 'settingsPanel')
+)
 
 const {
   settings,
@@ -721,9 +726,15 @@ function toggleClipGuard(): void {
   updateAudioProcessing({ clipGuard: !audioProcessing.value.clipGuard })
 }
 
+async function runSettingsExtension(command?: string): Promise<void> {
+  if (!command) return
+  await window.api.extensions.executeCommand(command, [])
+}
+
 onMounted(async () => {
   await Promise.all([loadSettings(), refreshAudioOutputState()])
   await refreshCacheSize()
+  await syncExtensions()
 })
 </script>
 
@@ -1663,6 +1674,26 @@ onMounted(async () => {
         <section v-if="activeTab === 'plugins'" class="settings-section plugin-settings-section">
           <h2>插件</h2>
           <PluginSettingsPanel />
+          <div v-if="pluginSettingsPanels.length > 0" class="settings-group plugin-extension-group">
+            <div class="settings-subheading">插件配置区</div>
+            <div
+              v-for="panel in pluginSettingsPanels"
+              :key="panel.id"
+              class="setting-row plugin-extension-row"
+            >
+              <div class="setting-copy">
+                <span class="setting-label">{{ panel.title }}</span>
+                <span class="setting-desc">{{ panel.description || '由插件提供的受控配置入口' }}</span>
+              </div>
+              <button
+                class="text-button"
+                :disabled="!panel.command"
+                @click="runSettingsExtension(panel.command)"
+              >
+                打开
+              </button>
+            </div>
+          </div>
         </section>
 
         <section v-if="activeTab === 'performance'" class="settings-section">

@@ -120,6 +120,31 @@ export type TwilightMediaProviderMethod =
   | 'searchArtists'
   | 'fetchPlaylistTracks'
 
+export type TwilightUiContributionKind = 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
+
+export interface TwilightUiContribution {
+  id: string
+  kind: TwilightUiContributionKind
+  title: string
+  description?: string
+  icon?: string
+  command?: string
+}
+
+export interface TwilightThemeContribution {
+  id: string
+  name: string
+  description?: string
+  variables?: Record<string, string>
+  stylesheet?: string
+}
+
+export interface TwilightPluginExtensionContribution {
+  pluginId: string
+  ui: TwilightUiContribution[]
+  themes: TwilightThemeContribution[]
+}
+
 export type PluginHostRequest =
   | {
       kind: 'activate'
@@ -143,6 +168,11 @@ export type PluginHostRequest =
       requestId: string
       providerId: string
       method: TwilightMediaProviderMethod
+      args: unknown[]
+    }
+  | {
+      kind: 'ui-command'
+      command: string
       args: unknown[]
     }
 
@@ -172,7 +202,7 @@ export type PluginHostResponse =
   | {
       kind: 'api-call'
       requestId: string
-      namespace: 'player' | 'providers'
+      namespace: 'player' | 'providers' | 'extensions'
       method:
         | 'getPlaybackInfo'
         | 'play'
@@ -182,6 +212,8 @@ export type PluginHostResponse =
         | 'next'
         | 'previous'
         | 'register'
+        | 'registerUi'
+        | 'registerTheme'
       args: unknown[]
     }
   | {

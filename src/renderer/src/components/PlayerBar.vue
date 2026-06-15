@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
+import { useExtensionRegistry } from '../extensions/registry'
 import { normalizeAccentColor } from '../utils/colorExtractor'
 
 defineProps<{
@@ -37,6 +38,10 @@ const {
 const coverRef = ref<HTMLElement | null>(null)
 const playerBarShellRef = ref<HTMLElement | null>(null)
 const playButtonColor = computed(() => normalizeAccentColor(dominantColor.value))
+const { uiContributions, syncExtensions } = useExtensionRegistry()
+const playerBarButtons = computed(() =>
+  uiContributions.value.filter((contribution) => contribution.kind === 'playerBarButton')
+)
 
 const emit = defineEmits<{
   clickCover: [rect: { x: number; y: number; w: number; h: number }]
@@ -479,7 +484,14 @@ function openDspSettings(): void {
   emit('openDsp')
 }
 
+async function runPlayerBarExtension(command?: string): Promise<void> {
+  if (!command) return
+  moreOpen.value = false
+  await window.api.extensions.executeCommand(command, [currentTrack.value])
+}
+
 onMounted(() => {
+  void syncExtensions()
   document.addEventListener('pointerdown', onDocumentPointerDown)
 })
 
@@ -663,6 +675,18 @@ onBeforeUnmount(() => {
                   <span>
                     <span class="more-action-title">DSP 菜单</span>
                     <span class="more-action-desc">EQ、校正与空间处理</span>
+                  </span>
+                </button>
+                <button
+                  v-for="button in playerBarButtons"
+                  :key="button.id"
+                  type="button"
+                  class="more-action"
+                  @click="runPlayerBarExtension(button.command)"
+                >
+                  <span>
+                    <span class="more-action-title">{{ button.title }}</span>
+                    <span class="more-action-desc">{{ button.description || '插件操作' }}</span>
                   </span>
                 </button>
               </div>

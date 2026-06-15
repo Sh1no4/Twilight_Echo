@@ -18,6 +18,7 @@ type PluginModule = {
 }
 
 type ProviderHandler = Partial<Record<TwilightMediaProviderMethod, (...args: unknown[]) => Promise<unknown> | unknown>>
+type CommandHandler = (...args: unknown[]) => Promise<unknown> | unknown
 
 interface TwilightPluginContext {
   apiVersion: number
@@ -48,6 +49,26 @@ interface TwilightPluginContext {
         capabilities: string[]
       } & ProviderHandler) => Promise<void>
     }
+    ui: {
+      register: (contribution: {
+        id: string
+        kind: 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
+        title: string
+        description?: string
+        icon?: string
+        command?: string
+      }) => Promise<void>
+      onCommand: (command: string, handler: CommandHandler) => () => void
+    }
+    themes: {
+      register: (theme: {
+        id: string
+        name: string
+        description?: string
+        variables?: Record<string, string>
+        stylesheet?: string
+      }) => Promise<void>
+    }
   }
 }
 
@@ -60,6 +81,7 @@ const parentPort = maybeParentPort
 let activePlugin: PluginModule | null = null
 const eventHandlers = new Map<string, Set<(payload: unknown) => void>>()
 const providerHandlers = new Map<string, ProviderHandler>()
+const commandHandlers = new Map<string, CommandHandler>()
 const pendingApiCalls = new Map<
   string,
   {
@@ -78,6 +100,8 @@ parentPort.on('message', (event) => {
     emitPluginEvent(message.name, message.payload)
   } else if (message.kind === 'provider-call') {
     void callProviderHandler(message)
+  } else if (message.kind === 'ui-command') {
+    void callCommandHandler(message)
   } else if (message.kind === 'api-result') {
     resolveApiResult(message)
   }
@@ -110,6 +134,7 @@ async function deactivatePlugin(requestId: string): Promise<void> {
     activePlugin = null
     eventHandlers.clear()
     providerHandlers.clear()
+    commandHandlers.clear()
     post({ kind: 'deactivated', requestId })
   }
 }
@@ -159,6 +184,18 @@ function createContext(apiVersion: number, storagePath: string): TwilightPluginC
             capabilities: provider.capabilities
           })
         }
+      },
+      ui: {
+        register: (contribution) => callUiApi('registerUi', contribution).then(() => undefined),
+        onCommand: (command, handler) => {
+          const normalized = command.trim()
+          if (!normalized) throw new Error('UI command is required')
+          commandHandlers.set(normalized, handler)
+          return () => commandHandlers.delete(normalized)
+        }
+      },
+      themes: {
+        register: (theme) => callUiApi('registerTheme', theme).then(() => undefined)
       }
     }
   }
@@ -173,6 +210,13 @@ function callProviderApi(
   provider: unknown
 ): Promise<unknown> {
   return callApi('providers', method, [provider])
+}
+
+function callUiApi(
+  method: Extract<PluginHostResponse, { kind: 'api-call' }>['method'],
+  contribution: unknown
+): Promise<unknown> {
+  return callApi('extensions', method, [contribution])
 }
 
 function callApi(
@@ -230,6 +274,16 @@ async function callProviderHandler(
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error))
     post({ kind: 'provider-result', requestId: message.requestId, ok: false, error: err.message })
+  }
+}
+
+async function callCommandHandler(message: Extract<PluginHostRequest, { kind: 'ui-command' }>): Promise<void> {
+  try {
+    const handler = commandHandlers.get(message.command)
+    if (!handler) throw new Error(`UI command is not registered: ${message.command}`)
+    await handler(...message.args)
+  } catch (error) {
+    reportError(error)
   }
 }
 

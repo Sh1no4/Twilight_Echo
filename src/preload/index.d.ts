@@ -51,6 +51,7 @@ type TwilightMediaProviderMethod =
   | 'searchPlaylists'
   | 'searchArtists'
   | 'fetchPlaylistTracks'
+type TwilightUiContributionKind = 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type ChannelRoutingMode =
@@ -315,6 +316,29 @@ interface TwilightMediaProviderRegistration {
   id: string
   name: string
   capabilities: TwilightMediaProviderCapability[]
+}
+
+interface TwilightUiContribution {
+  id: string
+  kind: TwilightUiContributionKind
+  title: string
+  description?: string
+  icon?: string
+  command?: string
+}
+
+interface TwilightThemeContribution {
+  id: string
+  name: string
+  description?: string
+  variables?: Record<string, string>
+  stylesheet?: string
+}
+
+interface TwilightPluginExtensionContribution {
+  pluginId: string
+  ui: TwilightUiContribution[]
+  themes: TwilightThemeContribution[]
 }
 
 interface OutputConfig {
@@ -613,6 +637,11 @@ interface WindowAPI {
   providers: {
     list: () => Promise<TwilightMediaProviderRegistration[]>
     call: (providerId: string, method: TwilightMediaProviderMethod, args: unknown[]) => Promise<unknown>
+  }
+  extensions: {
+    list: () => Promise<TwilightPluginExtensionContribution[]>
+    executeCommand: (command: string, args?: unknown[]) => Promise<void>
+    readThemeStylesheet: (stylesheetPath: string) => Promise<string>
   }
 }
 

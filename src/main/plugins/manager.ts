@@ -13,6 +13,9 @@ import type {
   PluginHostResponse,
   TwilightMediaProviderMethod,
   TwilightMediaProviderRegistration,
+  TwilightPluginExtensionContribution,
+  TwilightThemeContribution,
+  TwilightUiContribution,
   TwilightPluginDescriptor,
   TwilightPluginInstallResult,
   TwilightPluginManifest,
@@ -41,6 +44,8 @@ interface RunningPlugin {
   descriptor: TwilightPluginDescriptor
   subscriptions: Set<string>
   providers: TwilightMediaProviderRegistration[]
+  ui: TwilightUiContribution[]
+  themes: TwilightThemeContribution[]
 }
 
 const STATE_FILE = 'plugin-state.json'
@@ -220,6 +225,30 @@ export class TwilightPluginManager extends EventEmitter {
     return [...this.running.values()].flatMap((running) => running.providers)
   }
 
+  listExtensions(): TwilightPluginExtensionContribution[] {
+    return [...this.running.values()]
+      .filter((running) => running.ui.length > 0 || running.themes.length > 0)
+      .map((running) => ({
+        pluginId: running.descriptor.id,
+        ui: running.ui,
+        themes: running.themes
+      }))
+  }
+
+  async executeUiCommand(command: string, args: unknown[] = []): Promise<void> {
+    const normalized = command.trim()
+    if (!normalized) throw new Error('UI command 不能为空')
+    const running = [...this.running.values()].find((candidate) =>
+      candidate.ui.some((contribution) => contribution.command === normalized)
+    )
+    if (!running) throw new Error(`UI command 未注册：${normalized}`)
+    running.process.postMessage({
+      kind: 'ui-command',
+      command: normalized,
+      args
+    } satisfies PluginHostRequest)
+  }
+
   async callProvider(
     providerId: string,
     method: TwilightMediaProviderMethod,
@@ -287,7 +316,9 @@ export class TwilightPluginManager extends EventEmitter {
       process: child,
       descriptor,
       subscriptions: new Set(),
-      providers: []
+      providers: [],
+      ui: [],
+      themes: []
     }
     this.running.set(descriptor.id, running)
     child.on('message', (message: PluginHostResponse) => {
@@ -372,6 +403,14 @@ export class TwilightPluginManager extends EventEmitter {
           value: this.registerProviderFromPlugin(id, message)
         }
       }
+      if (message.namespace === 'extensions') {
+        return {
+          kind: 'api-result',
+          requestId: message.requestId,
+          ok: true,
+          value: this.registerExtensionFromPlugin(id, message)
+        }
+      }
       if (message.namespace !== 'player') throw new Error('未知 API 命名空间')
       const method = message.method
       if (method === 'getPlaybackInfo') {
@@ -422,6 +461,93 @@ export class TwilightPluginManager extends EventEmitter {
     running.providers.push(provider)
     this.emit('changed')
     return provider
+  }
+
+  private registerExtensionFromPlugin(
+    pluginId: string,
+    message: Extract<PluginHostResponse, { kind: 'api-call' }>
+  ): TwilightUiContribution | TwilightThemeContribution {
+    const running = this.running.get(pluginId)
+    if (!running) throw new Error('插件未运行')
+    if (message.method === 'registerUi') {
+      const contribution = this.normalizeUiContribution(running, message.args[0])
+      running.ui.push(contribution)
+      this.emit('changed')
+      return contribution
+    }
+    if (message.method === 'registerTheme') {
+      const contribution = this.normalizeThemeContribution(running, message.args[0])
+      running.themes.push(contribution)
+      this.emit('changed')
+      return contribution
+    }
+    throw new Error('未知扩展 API')
+  }
+
+  private normalizeUiContribution(running: RunningPlugin, raw: unknown): TwilightUiContribution {
+    if (!running.descriptor.type.includes('ui') && !running.descriptor.type.includes('tool')) {
+      throw new Error('只有 ui 或 tool 类型插件可以注册 UI 扩展点')
+    }
+    if (!running.descriptor.permissions.includes('ui:inject')) {
+      throw new Error('UI 扩展插件必须声明 ui:inject 权限')
+    }
+    if (!raw || typeof raw !== 'object') throw new Error('UI 扩展注册信息必须是对象')
+    const record = raw as Record<string, unknown>
+    const id = normalizeContributionId(record.id)
+    const kind = typeof record.kind === 'string' ? record.kind : ''
+    if (!['sidebarPage', 'playerBarButton', 'settingsPanel'].includes(kind)) {
+      throw new Error('未知 UI 扩展点')
+    }
+    const title = normalizeText(record.title, 'UI 扩展标题必填')
+    const command = typeof record.command === 'string' ? record.command.trim() : undefined
+    if ((kind === 'playerBarButton' || kind === 'sidebarPage') && !command) {
+      throw new Error(`${kind} 扩展必须声明 command`)
+    }
+    return {
+      id,
+      kind: kind as TwilightUiContribution['kind'],
+      title,
+      description: typeof record.description === 'string' ? record.description.trim() : undefined,
+      icon: typeof record.icon === 'string' ? record.icon.trim() : undefined,
+      command
+    }
+  }
+
+  private normalizeThemeContribution(
+    running: RunningPlugin,
+    raw: unknown
+  ): TwilightThemeContribution {
+    if (!running.descriptor.type.includes('theme')) {
+      throw new Error('只有 theme 类型插件可以注册主题')
+    }
+    if (!raw || typeof raw !== 'object') throw new Error('主题注册信息必须是对象')
+    const record = raw as Record<string, unknown>
+    const id = normalizeContributionId(record.id)
+    const name = normalizeText(record.name, '主题名称必填')
+    const variables =
+      record.variables && typeof record.variables === 'object'
+        ? normalizeCssVariables(record.variables as Record<string, unknown>)
+        : undefined
+    const stylesheet =
+      typeof record.stylesheet === 'string' && record.stylesheet.trim()
+        ? this.resolveThemeStylesheet(running.descriptor, record.stylesheet.trim())
+        : undefined
+    if (!variables && !stylesheet) throw new Error('主题必须声明 variables 或 stylesheet')
+    return {
+      id,
+      name,
+      description: typeof record.description === 'string' ? record.description.trim() : undefined,
+      variables,
+      stylesheet
+    }
+  }
+
+  private resolveThemeStylesheet(descriptor: TwilightPluginDescriptor, stylesheet: string): string {
+    const stylesheetPath = resolve(descriptor.paths.versionRoot, stylesheet)
+    if (!isInsidePath(stylesheetPath, descriptor.paths.versionRoot) || !existsSync(stylesheetPath)) {
+      throw new Error('主题 stylesheet 不存在或越界')
+    }
+    return stylesheetPath
   }
 
   private handleProviderResult(message: Extract<PluginHostResponse, { kind: 'provider-result' }>): void {
@@ -651,4 +777,30 @@ function isAbsoluteLike(path: string): boolean {
 
 function sepForPlatform(): string {
   return process.platform === 'win32' ? '\\' : '/'
+}
+
+function normalizeContributionId(value: unknown): string {
+  const id = typeof value === 'string' ? value.trim() : ''
+  if (!id || !/^[a-z][a-z0-9-_.]*$/.test(id)) {
+    throw new Error('扩展 id 必须是小写标识符')
+  }
+  return id
+}
+
+function normalizeText(value: unknown, message: string): string {
+  const text = typeof value === 'string' ? value.trim() : ''
+  if (!text) throw new Error(message)
+  return text.slice(0, 120)
+}
+
+function normalizeCssVariables(raw: Record<string, unknown>): Record<string, string> {
+  const variables: Record<string, string> = {}
+  for (const [key, value] of Object.entries(raw)) {
+    if (!/^--te-[a-z0-9-_]+$/.test(key)) continue
+    if (typeof value !== 'string') continue
+    const normalized = value.trim()
+    if (!normalized || /url\s*\(|@import|expression\s*\(/i.test(normalized)) continue
+    variables[key] = normalized.slice(0, 240)
+  }
+  return variables
 }

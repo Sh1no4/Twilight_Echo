@@ -13,6 +13,7 @@ import { useMusicStore } from './stores/useMusicStore'
 import { useNcmStore } from './stores/useNcmStore'
 import { usePlayerStore } from './stores/usePlayerStore'
 import { useSettingsStore } from './stores/useSettingsStore'
+import { setupPluginThemeRuntime } from './extensions/themeRuntime'
 import type { PlaybackSession } from './types/music'
 import type { PlaybackResumeMode } from './types/settings'
 
@@ -315,6 +316,7 @@ function startSideMenuMonitor(): void {
 }
 
 onMounted(async () => {
+  setupPluginThemeRuntime()
   removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(
     savePlaybackSessionForQuit
   )

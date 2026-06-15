@@ -30,6 +30,7 @@ type TwilightMediaProviderMethod =
   | 'searchPlaylists'
   | 'searchArtists'
   | 'fetchPlaylistTracks'
+type TwilightUiContributionKind = 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type ChannelRoutingMode =
@@ -308,6 +309,29 @@ interface TwilightMediaProviderRegistration {
   id: string
   name: string
   capabilities: TwilightMediaProviderCapability[]
+}
+
+interface TwilightUiContribution {
+  id: string
+  kind: TwilightUiContributionKind
+  title: string
+  description?: string
+  icon?: string
+  command?: string
+}
+
+interface TwilightThemeContribution {
+  id: string
+  name: string
+  description?: string
+  variables?: Record<string, string>
+  stylesheet?: string
+}
+
+interface TwilightPluginExtensionContribution {
+  pluginId: string
+  ui: TwilightUiContribution[]
+  themes: TwilightThemeContribution[]
 }
 
 interface OutputConfig {
@@ -778,6 +802,13 @@ const api = {
     list: (): Promise<TwilightMediaProviderRegistration[]> => ipcRenderer.invoke('providers:list'),
     call: (providerId: string, method: TwilightMediaProviderMethod, args: unknown[]): Promise<unknown> =>
       ipcRenderer.invoke('providers:call', providerId, method, args)
+  },
+  extensions: {
+    list: (): Promise<TwilightPluginExtensionContribution[]> => ipcRenderer.invoke('extensions:list'),
+    executeCommand: (command: string, args?: unknown[]): Promise<void> =>
+      ipcRenderer.invoke('extensions:executeCommand', command, args),
+    readThemeStylesheet: (stylesheetPath: string): Promise<string> =>
+      ipcRenderer.invoke('extensions:readThemeStylesheet', stylesheetPath)
   }
 }
 

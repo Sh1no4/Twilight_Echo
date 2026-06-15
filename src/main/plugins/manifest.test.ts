@@ -76,3 +76,25 @@ test('checks basic Twilight Echo engine ranges', () => {
   assert.equal(isCompatibleTwilightRange('^0.20.0', '0.20.1'), true)
   assert.equal(isCompatibleTwilightRange('~0.20.0', '0.21.0'), false)
 })
+
+test('accepts Phase 3 UI and theme sample manifests', () => {
+  assert.deepEqual(
+    validatePluginManifest({
+      ...validManifest,
+      id: 'com.example.scrobbler',
+      type: ['tool', 'ui'],
+      permissions: ['player:observe', 'ui:inject']
+    }).type,
+    ['tool', 'ui']
+  )
+
+  assert.deepEqual(
+    validatePluginManifest({
+      ...validManifest,
+      id: 'com.example.theme',
+      type: ['theme'],
+      permissions: []
+    }).type,
+    ['theme']
+  )
+})

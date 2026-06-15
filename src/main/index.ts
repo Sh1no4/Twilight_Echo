@@ -1411,6 +1411,20 @@ function setupPluginIpc(): void {
       return await pluginManager!.callProvider(providerId, method, Array.isArray(args) ? args : [])
     }
   )
+  ipcMain.handle('extensions:list', async () => {
+    return pluginManager!.listExtensions()
+  })
+  ipcMain.handle('extensions:executeCommand', async (_event, command: string, args?: unknown[]) => {
+    await pluginManager!.executeUiCommand(command, Array.isArray(args) ? args : [])
+  })
+  ipcMain.handle('extensions:readThemeStylesheet', async (_event, stylesheetPath: string) => {
+    const normalized = resolve(stylesheetPath)
+    const allowed = pluginManager!.listExtensions().some((entry) =>
+      entry.themes.some((theme) => theme.stylesheet && resolve(theme.stylesheet) === normalized)
+    )
+    if (!allowed) throw new Error('主题 stylesheet 未注册')
+    return readFileSync(normalized, 'utf-8')
+  })
 }
 async function setupNcmApi(): Promise<void> {
   try {
