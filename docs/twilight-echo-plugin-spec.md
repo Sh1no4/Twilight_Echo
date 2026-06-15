@@ -89,6 +89,11 @@
 | 主题 | theme | CSS 变量包 + 自定义样式表；**仅声明式样式，不执行脚本** |
 | DSP 节点 | dsp | 挂入引擎 DSP 链（见第 5 节） |
 
+Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playerBarButton`
+和 `settingsPanel` 均通过 command 回到插件宿主进程执行业务逻辑，不向插件开放
+任意 DOM 权限。主题插件由用户在外观设置中显式选择后生效；宿主一次只应用一个
+插件主题，且 stylesheet 必须位于插件包目录内。
+
 ### 4.5 多音源数据模型
 
 - 曲目 ID 必须带 provider 前缀（如 `ncm:12345`、`local:<hash>`）。

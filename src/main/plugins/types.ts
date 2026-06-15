@@ -196,6 +196,7 @@ export type PluginHostRequest =
     }
   | {
       kind: 'ui-command'
+      requestId: string
       command: string
       args: unknown[]
     }
@@ -251,6 +252,18 @@ export type PluginHostResponse =
     }
   | {
       kind: 'provider-result'
+      requestId: string
+      ok: false
+      error: string
+    }
+  | {
+      kind: 'ui-command-result'
+      requestId: string
+      ok: true
+      value: unknown
+    }
+  | {
+      kind: 'ui-command-result'
       requestId: string
       ok: false
       error: string

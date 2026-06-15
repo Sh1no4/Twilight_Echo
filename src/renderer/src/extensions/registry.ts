@@ -1,8 +1,9 @@
 import { computed, ref } from 'vue'
 
-type UiContributionKind = 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
+export type UiContributionKind = 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
 
-interface UiContribution {
+export interface UiContribution {
+  pluginId: string
   id: string
   kind: UiContributionKind
   title: string
@@ -11,7 +12,8 @@ interface UiContribution {
   command?: string
 }
 
-interface ThemeContribution {
+export interface ThemeContribution {
+  pluginId: string
   id: string
   name: string
   description?: string
@@ -57,8 +59,18 @@ export async function syncExtensions(): Promise<void> {
     const nextUi: UiContribution[] = []
     const nextThemes: ThemeContribution[] = []
     for (const entry of entries as PluginExtensionContribution[]) {
-      nextUi.push(...entry.ui)
-      nextThemes.push(...entry.themes)
+      nextUi.push(
+        ...entry.ui.map((contribution) => ({
+          ...contribution,
+          pluginId: entry.pluginId
+        }))
+      )
+      nextThemes.push(
+        ...entry.themes.map((theme) => ({
+          ...theme,
+          pluginId: entry.pluginId
+        }))
+      )
     }
     uiContributions.value = nextUi
     themeContributions.value = nextThemes

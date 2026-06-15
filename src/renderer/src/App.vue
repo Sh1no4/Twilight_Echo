@@ -9,11 +9,13 @@ import StreamingPage from './components/StreamingPage.vue'
 import LoginPage from './components/LoginPage.vue'
 import SettingsPage from './components/SettingsPage.vue'
 import EqualizerPage from './components/EqualizerPage.vue'
+import PluginExtensionPage from './components/PluginExtensionPage.vue'
 import { useMusicStore } from './stores/useMusicStore'
 import { useNcmStore } from './stores/useNcmStore'
 import { usePlayerStore } from './stores/usePlayerStore'
 import { useSettingsStore } from './stores/useSettingsStore'
 import { setupPluginThemeRuntime } from './extensions/themeRuntime'
+import { useExtensionRegistry, type UiContribution } from './extensions/registry'
 import type { PlaybackSession } from './types/music'
 import type { PlaybackResumeMode } from './types/settings'
 
@@ -24,6 +26,7 @@ const showLoginPage = ref(false)
 const loginPageMode = ref<'login' | 'profile'>('login')
 const showSettingsPage = ref(false)
 const showEqualizerPage = ref(false)
+const activePluginPage = ref<UiContribution | null>(null)
 type SettingsSection =
   | 'general'
   | 'playback'
@@ -77,6 +80,29 @@ function onSelectView(category: string, filter: string | null): void {
   }
   activeCategory.value = category
   activeFilter.value = filter
+  activePluginPage.value = null
+}
+
+function closePluginPage(): void {
+  activePluginPage.value = null
+}
+
+function handleTitleBack(): void {
+  if (activePluginPage.value) {
+    closePluginPage()
+    return
+  }
+  closePlayingPage()
+}
+
+function onSelectPluginPage(page: UiContribution): void {
+  menuOpen.value = false
+  showPlayingPage.value = false
+  showStreamingPage.value = false
+  showLoginPage.value = false
+  showSettingsPage.value = false
+  showEqualizerPage.value = false
+  activePluginPage.value = page
 }
 
 function openPlayingPage(rect: { x: number; y: number; w: number; h: number }): void {
@@ -101,6 +127,7 @@ function enterStreamingMode(): void {
   showPlayingPage.value = false
   showSettingsPage.value = false
   showEqualizerPage.value = false
+  activePluginPage.value = null
   showStreamingPage.value = true
 }
 
@@ -115,6 +142,7 @@ async function openLoginPage(): Promise<void> {
     showStreamingPage.value = false
     showSettingsPage.value = false
     showEqualizerPage.value = false
+    activePluginPage.value = null
     loginPageMode.value = 'profile'
     showLoginPage.value = true
     return
@@ -125,6 +153,7 @@ async function openLoginPage(): Promise<void> {
   showStreamingPage.value = false
   showSettingsPage.value = false
   showEqualizerPage.value = false
+  activePluginPage.value = null
   loginPageMode.value = 'login'
   showLoginPage.value = true
 }
@@ -137,6 +166,7 @@ function closeLoginPage(): void {
 function openSettingsPage(section: SettingsSection = 'general'): void {
   settingsInitialSection.value = section
   showEqualizerPage.value = false
+  activePluginPage.value = null
   showSettingsPage.value = true
 }
 
@@ -154,6 +184,7 @@ function openDspSettings(): void {
 
 function openEqualizerPage(): void {
   showSettingsPage.value = false
+  activePluginPage.value = null
   showEqualizerPage.value = true
 }
 
@@ -165,11 +196,16 @@ const { loadLibrary } = useMusicStore()
 const { checkLogin } = useNcmStore()
 const { currentTrack, restorePlaybackSession, createPlaybackSession } = usePlayerStore()
 const { loadSettings, settings } = useSettingsStore()
+const { uiContributions, syncExtensions } = useExtensionRegistry()
+const sidebarPages = computed(() =>
+  uiContributions.value.filter((contribution) => contribution.kind === 'sidebarPage')
+)
 const hasPlayerBar = computed(
   () =>
     !showLoginPage.value &&
     !showSettingsPage.value &&
     !showEqualizerPage.value &&
+    !activePluginPage.value &&
     !!currentTrack.value
 )
 const showLocalSidebar = computed(
@@ -292,6 +328,7 @@ onMounted(async () => {
   const loadedSettings = await loadSettings()
   await loadLibrary()
   await checkLogin()
+  await syncExtensions()
   await restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
 })
 
@@ -313,6 +350,17 @@ watch(
   { immediate: true, flush: 'post' }
 )
 
+watch(sidebarPages, (pages) => {
+  const active = activePluginPage.value
+  if (!active) return
+  const stillRegistered = pages.some(
+    (page) => page.pluginId === active.pluginId && page.id === active.id
+  )
+  if (!stillRegistered) {
+    activePluginPage.value = null
+  }
+})
+
 onBeforeUnmount(() => {
   removePlaybackSessionSaveListener?.()
   removePlaybackSessionSaveListener = null
@@ -324,6 +372,7 @@ const titleSurface = computed<TitleSurface>(() => {
   if (showPlayingPage.value) return 'default'
   if (showSettingsPage.value) return 'settings'
   if (showStreamingPage.value) return 'streaming'
+  if (activePluginPage.value) return 'settings'
   return 'default'
 })
 </script>
@@ -336,14 +385,16 @@ const titleSurface = computed<TitleSurface>(() => {
     :menu-open="titleMenuOpen"
     @toggle-menu="toggleMenu"
     @collapse-menu="collapseMenu"
-    @back="closePlayingPage"
+    @back="handleTitleBack"
     @login="openLoginPage"
     @settings="openSettingsPage"
   />
   <SideMenu
     v-if="showLocalSidebar"
     :open="menuOpen"
+    :plugin-pages="sidebarPages"
     @select-view="onSelectView"
+    @select-plugin-page="onSelectPluginPage"
     @enter-streaming="enterStreamingMode"
   />
   <div
@@ -353,7 +404,7 @@ const titleSurface = computed<TitleSurface>(() => {
   >
     <Transition :name="songlistTransitionName">
       <SongList
-        v-if="!showPlayingPage && !showStreamingPage && !showLoginPage"
+        v-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !activePluginPage"
         :category="activeCategory"
         :filter="activeFilter"
         :has-player="hasPlayerBar"
@@ -393,6 +444,13 @@ const titleSurface = computed<TitleSurface>(() => {
     </Transition>
     <Transition name="login-page">
       <EqualizerPage v-if="showEqualizerPage" @back="closeEqualizerPage" />
+    </Transition>
+    <Transition name="login-page">
+      <PluginExtensionPage
+        v-if="activePluginPage"
+        :page="activePluginPage"
+        @back="closePluginPage"
+      />
     </Transition>
   </div>
   <PlayerBar

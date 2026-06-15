@@ -347,8 +347,11 @@ async function callCommandHandler(message: Extract<PluginHostRequest, { kind: 'u
   try {
     const handler = commandHandlers.get(message.command)
     if (!handler) throw new Error(`UI command is not registered: ${message.command}`)
-    await handler(...message.args)
+    const value = await handler(...message.args)
+    post({ kind: 'ui-command-result', requestId: message.requestId, ok: true, value })
   } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error))
+    post({ kind: 'ui-command-result', requestId: message.requestId, ok: false, error: err.message })
     reportError(error)
   }
 }

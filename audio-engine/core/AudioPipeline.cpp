@@ -753,7 +753,7 @@ TAE_Result AudioPipeline::playInternal(
   crossfadeTotalFrames_ = 0;
 
   std::optional<DsdStreamInfo> dsdProbe;
-  if (sourceLooksDsfOrDff(item.source)) {
+  if (sourceLooksDsfOrDff(item.source) || sourceLooksSacdIso(item.source)) {
     DsdReader probe;
     std::string probeError;
     if (probe.open(item.source, &probeError)) {

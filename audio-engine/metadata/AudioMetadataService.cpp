@@ -276,16 +276,20 @@ std::string readMetadataJson(const std::string& source) {
     
     for (const auto& track : demuxer.tracks()) {
       AudioMetadata trackMeta;
-      trackMeta.source = source + "?track=" + std::to_string(track.trackNumber);
+      trackMeta.source = source + "?area=" + track.area + "&track=" + std::to_string(track.trackNumber);
       trackMeta.title = track.title.empty() ? "Track " + std::to_string(track.trackNumber) : track.title;
       trackMeta.artist = track.artist;
       trackMeta.trackNumber = std::to_string(track.trackNumber);
       trackMeta.durationSeconds = track.durationSeconds;
       trackMeta.channelCount = track.channelCount;
       trackMeta.sampleRate = track.sampleRate;
+      trackMeta.bitDepth = 1;
       trackMeta.isDsd = true;
       trackMeta.dsdMode = "dsd";
+      trackMeta.dsdRate = inferDsdRate(track.sampleRate);
       trackMeta.container = "SACD ISO";
+      trackMeta.codec = track.isDst ? "dst" : "dsd";
+      trackMeta.comment = track.playable ? "" : (track.reason.empty() ? "SACD ISO DST track unsupported" : track.reason);
       metadata.isoTracks.push_back(trackMeta);
     }
     

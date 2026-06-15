@@ -30,6 +30,7 @@ namespace {
 constexpr int kDsd64Rate = 2822400;
 constexpr int kDsd128Rate = 5644800;
 constexpr int kDsd256Rate = 11289600;
+constexpr int kDsd512Rate = 22579200;
 
 void writeLe16(std::ofstream& out, uint16_t value) {
   out.put(static_cast<char>(value & 0xff));
@@ -44,6 +45,129 @@ void writeLe32(std::ofstream& out, uint32_t value) {
 void writeLe64(std::ofstream& out, uint64_t value) {
   writeLe32(out, static_cast<uint32_t>(value & 0xffffffffULL));
   writeLe32(out, static_cast<uint32_t>((value >> 32) & 0xffffffffULL));
+}
+
+void writeLe32To(uint8_t* data, uint32_t value) {
+  data[0] = static_cast<uint8_t>(value & 0xff);
+  data[1] = static_cast<uint8_t>((value >> 8) & 0xff);
+  data[2] = static_cast<uint8_t>((value >> 16) & 0xff);
+  data[3] = static_cast<uint8_t>((value >> 24) & 0xff);
+}
+
+void writeBe32To(uint8_t* data, uint32_t value) {
+  data[0] = static_cast<uint8_t>((value >> 24) & 0xff);
+  data[1] = static_cast<uint8_t>((value >> 16) & 0xff);
+  data[2] = static_cast<uint8_t>((value >> 8) & 0xff);
+  data[3] = static_cast<uint8_t>(value & 0xff);
+}
+
+void writeDirectoryRecord(
+    std::vector<uint8_t>& directory,
+    size_t offset,
+    uint32_t extent,
+    uint32_t size,
+    bool isDirectory,
+    const std::string& name) {
+  const size_t nameLength = name.size();
+  const size_t recordLength = 33 + nameLength + ((nameLength % 2) == 0 ? 1 : 0);
+  assert(offset + recordLength <= directory.size());
+  directory[offset] = static_cast<uint8_t>(recordLength);
+  writeLe32To(directory.data() + offset + 2, extent);
+  writeBe32To(directory.data() + offset + 6, extent);
+  writeLe32To(directory.data() + offset + 10, size);
+  writeBe32To(directory.data() + offset + 14, size);
+  directory[offset + 25] = isDirectory ? 0x02 : 0x00;
+  directory[offset + 28] = 1;
+  directory[offset + 31] = 1;
+  directory[offset + 32] = static_cast<uint8_t>(nameLength);
+  std::copy(name.begin(), name.end(), directory.begin() + static_cast<std::ptrdiff_t>(offset + 33));
+}
+
+void writeSpecialDirectoryRecord(
+    std::vector<uint8_t>& directory,
+    size_t offset,
+    uint32_t extent,
+    uint32_t size,
+    uint8_t name) {
+  directory[offset] = 34;
+  writeLe32To(directory.data() + offset + 2, extent);
+  writeBe32To(directory.data() + offset + 6, extent);
+  writeLe32To(directory.data() + offset + 10, size);
+  writeBe32To(directory.data() + offset + 14, size);
+  directory[offset + 25] = 0x02;
+  directory[offset + 28] = 1;
+  directory[offset + 31] = 1;
+  directory[offset + 32] = 1;
+  directory[offset + 33] = name;
+}
+
+void writeTwilightTrack(
+    std::vector<uint8_t>& toc,
+    size_t offset,
+    int trackNumber,
+    uint32_t startSector,
+    uint32_t sectorCount,
+    uint32_t channelCount,
+    uint32_t sampleRate,
+    bool dst,
+    const std::string& fileName) {
+  std::memcpy(toc.data() + offset, "TWTE1", 5);
+  writeLe32To(toc.data() + offset + 8, static_cast<uint32_t>(trackNumber));
+  writeLe32To(toc.data() + offset + 12, startSector);
+  writeLe32To(toc.data() + offset + 16, sectorCount);
+  writeLe32To(toc.data() + offset + 20, channelCount);
+  writeLe32To(toc.data() + offset + 24, sampleRate);
+  writeLe32To(toc.data() + offset + 28, dst ? 1U : 0U);
+  std::copy(fileName.begin(), fileName.end(), toc.begin() + static_cast<std::ptrdiff_t>(offset + 32));
+}
+
+std::filesystem::path writeSacdIsoFixture(const std::string& name) {
+  const auto path = std::filesystem::temp_directory_path() / name;
+  constexpr uint32_t kRootSector = 20;
+  constexpr uint32_t kSacdSector = 21;
+  constexpr uint32_t kSectorSize = 2048;
+  std::vector<uint8_t> image(27 * kSectorSize, 0);
+  uint8_t* pvd = image.data() + 16 * kSectorSize;
+  pvd[0] = 1;
+  std::memcpy(pvd + 1, "CD001", 5);
+  pvd[6] = 1;
+  writeLe32To(pvd + 156 + 2, kRootSector);
+  writeBe32To(pvd + 156 + 6, kRootSector);
+  writeLe32To(pvd + 156 + 10, kSectorSize);
+  writeBe32To(pvd + 156 + 14, kSectorSize);
+  pvd[156] = 34;
+  pvd[156 + 25] = 0x02;
+  pvd[156 + 28] = 1;
+  pvd[156 + 31] = 1;
+  pvd[156 + 32] = 1;
+  uint8_t* terminator = image.data() + 17 * kSectorSize;
+  terminator[0] = 255;
+  std::memcpy(terminator + 1, "CD001", 5);
+  terminator[6] = 1;
+
+  std::vector<uint8_t> root(kSectorSize, 0);
+  writeSpecialDirectoryRecord(root, 0, kRootSector, kSectorSize, 0);
+  writeSpecialDirectoryRecord(root, 34, kRootSector, kSectorSize, 1);
+  writeDirectoryRecord(root, 68, kSacdSector, kSectorSize, true, "SACD");
+  std::copy(root.begin(), root.end(), image.begin() + kRootSector * kSectorSize);
+
+  std::vector<uint8_t> sacd(kSectorSize, 0);
+  writeSpecialDirectoryRecord(sacd, 0, kSacdSector, kSectorSize, 0);
+  writeSpecialDirectoryRecord(sacd, 34, kRootSector, kSectorSize, 1);
+  writeDirectoryRecord(sacd, 68, 22, 128, false, "MASTER.TOC");
+  writeDirectoryRecord(sacd, 112, 23, 2048, false, "TWOCH_AREA.TOC");
+  writeDirectoryRecord(sacd, 160, 25, 256, false, "TRACK01.DSD");
+  std::copy(sacd.begin(), sacd.end(), image.begin() + kSacdSector * kSectorSize);
+
+  std::vector<uint8_t> twoch(kSectorSize, 0);
+  std::memcpy(twoch.data(), "TWTEAREA", 8);
+  writeLe32To(twoch.data() + 8, 1);
+  writeTwilightTrack(twoch, 16, 1, 25, 1, 2, kDsd64Rate, false, "TRACK01.DSD");
+  std::copy(twoch.begin(), twoch.end(), image.begin() + 23 * kSectorSize);
+  for (int i = 0; i < 256; ++i) image[25 * kSectorSize + i] = static_cast<uint8_t>(0x80 + (i & 0x3f));
+  std::ofstream out(path, std::ios::binary);
+  out.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
+  return path;
 }
 
 std::filesystem::path writeDsfFixture(const std::string& name, int sampleRate = kDsd64Rate) {
@@ -197,7 +321,7 @@ bool formatLooksDopCarrier(const AudioFormat& format) {
 
 bool formatLooksDsdSourceRequest(const AudioFormat& format) {
   return (format.sampleRate == kDsd64Rate || format.sampleRate == kDsd128Rate ||
-          format.sampleRate == kDsd256Rate) &&
+          format.sampleRate == kDsd256Rate || format.sampleRate == kDsd512Rate) &&
          format.channelCount == 2 && format.bitDepth == 1 && isDsdSampleFormat(format.sampleFormat);
 }
 
@@ -538,11 +662,12 @@ TrackProfile buildTrackProfile(const std::string& source) {
   profile.stream.source = source;
   profile.stream.durationSeconds = 30.0;
   profile.stream.sourceLossless = true;
-  if (source.size() >= 4 && source.substr(source.size() - 4) == ".dsf") {
+  if ((source.size() >= 4 && source.substr(source.size() - 4) == ".dsf") || source.find(".iso") != std::string::npos) {
+    const bool isDsd512 = source.find("dsd512") != std::string::npos;
     const bool isDsd256 = source.find("dsd256") != std::string::npos;
     const bool isDsd128 = source.find("dsd128") != std::string::npos;
-    const int dsdSampleRate = isDsd256 ? kDsd256Rate : (isDsd128 ? kDsd128Rate : kDsd64Rate);
-    const int dsdRate = isDsd256 ? 256 : (isDsd128 ? 128 : 64);
+    const int dsdSampleRate = isDsd512 ? kDsd512Rate : (isDsd256 ? kDsd256Rate : (isDsd128 ? kDsd128Rate : kDsd64Rate));
+    const int dsdRate = isDsd512 ? 512 : (isDsd256 ? 256 : (isDsd128 ? 128 : 64));
     profile.stream.codec = "dsd";
     profile.stream.sourceFormat.sampleRate = dsdSampleRate;
     profile.stream.sourceFormat.channelCount = 2;
@@ -842,6 +967,82 @@ void testDsd256FallsBackToPcm() {
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
   assertLatestPlaybackContains(engine, "\"dsdRate\":256");
   assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dsd_high_rate_pcm_fallback\"");
+}
+
+void testDsd256StartsOnAsioNativeDsd() {
+  EngineHarness harness("twilight-phase6d-runtime-reroute-dsd256.dsf", kDsd256Rate);
+  auto& engine = harness.engine();
+  assert(engine.setOutputBackend("asio") == TAE_RESULT_OK);
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(formatLooksDsdSourceRequest(snapshots.front().requestedFormat));
+  assert(snapshots.front().requestedFormat.sampleRate == kDsd256Rate);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"native\"");
+  assertLatestPlaybackContains(engine, "\"dsdRate\":256");
+  assertLatestPlaybackContains(engine, "\"nativeDsdRuntimeState\":\"proven\"");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
+}
+
+void testDsd512StartsOnAsioNativeDsd() {
+  EngineHarness harness("twilight-phase6d-runtime-reroute-dsd512.dsf", kDsd512Rate);
+  auto& engine = harness.engine();
+  assert(engine.setOutputBackend("asio") == TAE_RESULT_OK);
+
+  assert(engine.play(harness.dsdPath(), 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(formatLooksDsdSourceRequest(snapshots.front().requestedFormat));
+  assert(snapshots.front().requestedFormat.sampleRate == kDsd512Rate);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"native\"");
+  assertLatestPlaybackContains(engine, "\"dsdRate\":512");
+  assertLatestPlaybackContains(engine, "\"nativeDsdRuntimeState\":\"proven\"");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
+}
+
+void testSacdIsoTrackUsesAsioNativeDsd() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  assert(engine.setOutputBackend("asio") == TAE_RESULT_OK);
+  const auto iso = writeSacdIsoFixture("twilight-sacd-runtime-native.iso");
+  const std::string source = iso.string() + "?area=stereo&track=1";
+
+  assert(engine.play(source, 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(formatLooksDsdSourceRequest(snapshots.front().requestedFormat));
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"native\"");
+  assertLatestPlaybackContains(engine, "\"nativeDsdRuntimeState\":\"proven\"");
+  assertLatestPlaybackContains(engine, "\"outputPerfect\":true");
+  std::error_code ignored;
+  std::filesystem::remove(iso, ignored);
+}
+
+void testSacdIsoTrackFallsBackToPcmWhenProcessingActive() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  assert(engine.setOutputBackend("asio") == TAE_RESULT_OK);
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  const auto iso = writeSacdIsoFixture("twilight-sacd-runtime-pcm.iso");
+  const std::string source = iso.string() + "?area=stereo&track=1";
+
+  assert(engine.play(source, 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assertFormatLooksDsdPcmFallbackRequest(snapshots.front().requestedFormat);
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dsd_processing_pcm_fallback\"");
+  std::error_code ignored;
+  std::filesystem::remove(iso, ignored);
 }
 
 void testDopMismatchFallsBackWithStableCode() {
@@ -1235,6 +1436,10 @@ int main() {
   testAsioNativeDsdMismatchFallsBackToDop();
   testAsioNativeDsdAndDopFailureFallsBackToPcm();
   testDsd256FallsBackToPcm();
+  testDsd256StartsOnAsioNativeDsd();
+  testDsd512StartsOnAsioNativeDsd();
+  testSacdIsoTrackUsesAsioNativeDsd();
+  testSacdIsoTrackFallsBackToPcmWhenProcessingActive();
   testDopMismatchFallsBackWithStableCode();
   testDopUnprovenFallsBackWithStableCode();
   testInitialNonUnityVolumeUsesPcmFallback();

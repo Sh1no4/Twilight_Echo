@@ -55,6 +55,7 @@ const fallbackSettings: AppSettings = {
   cachePath: '',
   closeToTray: false,
   theme: 'system',
+  pluginThemeId: null,
   blurEffect: true,
   useCoverTheme: true,
   lyricFontSize: 18,

@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import ImportDialog from './ImportDialog.vue'
+import type { UiContribution } from '../extensions/registry'
 
 const props = defineProps<{
   open: boolean
+  pluginPages?: UiContribution[]
 }>()
 
 const emit = defineEmits<{
   selectView: [category: string, filter: string | null]
+  selectPluginPage: [page: UiContribution]
   enterStreaming: []
 }>()
 
@@ -36,6 +39,11 @@ function selectItem(key: string): void {
   emit('selectView', key, null)
 }
 
+function selectPluginPage(page: UiContribution): void {
+  activeKey.value = `plugin:${page.pluginId}:${page.id}`
+  emit('selectPluginPage', page)
+}
+
 function handleImportClick(): void {
   showImportDialog.value = true
 }
@@ -58,6 +66,17 @@ function handleImportClick(): void {
       </div>
       <div class="menu-bottom">
         <div class="menu-separator"></div>
+        <div
+          v-for="page in props.pluginPages ?? []"
+          :key="`${page.pluginId}:${page.id}`"
+          class="menu-item menu-item-plugin"
+          :class="{ active: activeKey === `plugin:${page.pluginId}:${page.id}` }"
+          @click="selectPluginPage(page)"
+        >
+          <i class="item-icon" :class="page.icon || 'pi pi-box'"></i>
+          <span class="item-label">{{ page.title }}</span>
+        </div>
+        <div v-if="(props.pluginPages?.length ?? 0) > 0" class="menu-separator"></div>
         <div class="menu-item menu-item-streaming" @click="emit('enterStreaming')">
           <i class="item-icon pi pi-globe"></i>
           <span class="item-label">流媒体</span>

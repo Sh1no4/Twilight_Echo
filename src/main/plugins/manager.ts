@@ -63,6 +63,7 @@ interface RunningPlugin {
 const STATE_FILE = 'plugin-state.json'
 const PLUGIN_ACTIVATE_TIMEOUT_MS = 5000
 const PLUGIN_DEACTIVATE_TIMEOUT_MS = 1500
+const PLUGIN_UI_COMMAND_TIMEOUT_MS = 5000
 const INTERNAL_NCM_PLUGIN_ID = 'com.twilightecho.provider.ncm'
 
 export class TwilightPluginManager extends EventEmitter {
@@ -76,6 +77,15 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly providerCalls = new Map<
     string,
     {
+      resolve: (value: unknown) => void
+      reject: (error: Error) => void
+      timer: NodeJS.Timeout
+    }
+  >()
+  private readonly uiCommandCalls = new Map<
+    string,
+    {
+      pluginId: string
       resolve: (value: unknown) => void
       reject: (error: Error) => void
       timer: NodeJS.Timeout
@@ -265,18 +275,39 @@ export class TwilightPluginManager extends EventEmitter {
       }))
   }
 
-  async executeUiCommand(command: string, args: unknown[] = []): Promise<void> {
+  async executeUiCommand(command: string, args: unknown[] = []): Promise<unknown> {
     const normalized = command.trim()
     if (!normalized) throw new Error('UI command 不能为空')
     const running = [...this.running.values()].find((candidate) =>
       candidate.ui.some((contribution) => contribution.command === normalized)
     )
     if (!running) throw new Error(`UI command 未注册：${normalized}`)
+    const requestId = randomUUID()
     running.process.postMessage({
       kind: 'ui-command',
+      requestId,
       command: normalized,
       args
     } satisfies PluginHostRequest)
+    return new Promise((resolveCommand, rejectCommand) => {
+      const timer = setTimeout(() => {
+        this.uiCommandCalls.delete(requestId)
+        const latestRunning = this.running.get(running.descriptor.id)
+        this.markFailed(
+          running.descriptor.id,
+          `UI command 调用超时：${normalized}`,
+          latestRunning?.descriptor ?? running.descriptor
+        )
+        void this.stopPlugin(running.descriptor.id)
+        rejectCommand(new Error(`UI command 调用超时：${normalized}`))
+      }, PLUGIN_UI_COMMAND_TIMEOUT_MS)
+      this.uiCommandCalls.set(requestId, {
+        pluginId: running.descriptor.id,
+        resolve: resolveCommand,
+        reject: rejectCommand,
+        timer
+      })
+    })
   }
 
   async callProvider(
@@ -503,6 +534,9 @@ export class TwilightPluginManager extends EventEmitter {
     if (message.kind === 'provider-result') {
       this.handleProviderResult(message)
     }
+    if (message.kind === 'ui-command-result') {
+      this.handleUiCommandResult(id, message)
+    }
   }
 
   private async handleApiCall(
@@ -706,6 +740,21 @@ export class TwilightPluginManager extends EventEmitter {
     const pending = this.providerCalls.get(message.requestId)
     if (!pending) return
     this.providerCalls.delete(message.requestId)
+    clearTimeout(pending.timer)
+    if (message.ok) {
+      pending.resolve(message.value)
+    } else {
+      pending.reject(new Error(message.error))
+    }
+  }
+
+  private handleUiCommandResult(
+    pluginId: string,
+    message: Extract<PluginHostResponse, { kind: 'ui-command-result' }>
+  ): void {
+    const pending = this.uiCommandCalls.get(message.requestId)
+    if (!pending || pending.pluginId !== pluginId) return
+    this.uiCommandCalls.delete(message.requestId)
     clearTimeout(pending.timer)
     if (message.ok) {
       pending.resolve(message.value)

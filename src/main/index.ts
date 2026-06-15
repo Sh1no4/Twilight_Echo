@@ -27,12 +27,14 @@ import {
   type AudioOutputState,
   type AudioEngineQueueItem,
   type ChannelRoutingMode,
+  type PlaybackInfo,
   type OutputConfig,
   type PlayMode,
   type EqMode,
   type EqualizerBand
 } from './audioEngineManager'
 import { TwilightPluginManager } from './plugins/manager'
+import { derivePlaybackEvents } from './plugins/events'
 import type { TwilightPluginUninstallOptions } from './plugins/types'
 
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
@@ -58,6 +60,7 @@ interface AppSettings {
   cachePath: string
   closeToTray: boolean
   theme: AppTheme
+  pluginThemeId: string | null
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number
@@ -105,6 +108,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   cachePath: '',
   closeToTray: false,
   theme: 'system',
+  pluginThemeId: null,
   blurEffect: true,
   useCoverTheme: true,
   lyricFontSize: 18,
@@ -176,6 +180,14 @@ function normalizePlaybackResumeMode(mode: unknown): PlaybackResumeMode {
   return mode === 'track' || mode === 'trackAndPosition' || mode === 'off'
     ? mode
     : DEFAULT_SETTINGS.playbackResumeMode
+}
+
+function normalizePluginThemeId(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  return normalized && /^[a-z][a-z0-9-_.]*:[a-z][a-z0-9-_.]*$/.test(normalized)
+    ? normalized
+    : null
 }
 
 function isDefaultAudioDeviceAlias(device: string): boolean {
@@ -256,6 +268,7 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
     cachePath,
     closeToTray,
     theme: normalizeAppTheme(settings.theme),
+    pluginThemeId: normalizePluginThemeId(settings.pluginThemeId),
     blurEffect: settings.blurEffect !== false,
     useCoverTheme: settings.useCoverTheme !== false,
     lyricFontSize: clampNumber(settings.lyricFontSize, 14, 28, DEFAULT_SETTINGS.lyricFontSize),
@@ -713,6 +726,7 @@ let tray: Tray | null = null
 let forceQuit = false
 let closingAfterPlaybackSessionSave = false
 let savingPlaybackSessionBeforeClose = false
+let lastPluginPlaybackInfo: PlaybackInfo | null = null
 const NCM_API_PORT = 3100
 const PLAYBACK_SESSION_SAVE_TIMEOUT_MS = 1800
 const pendingPlaybackSessionSaves = new Map<string, () => void>()
@@ -913,6 +927,18 @@ function persistAudioOutputConfig(config: OutputConfig): SettingsSnapshot {
   return snapshot
 }
 
+function broadcastPlayerLifecycleEvents(info: PlaybackInfo): void {
+  const previous = lastPluginPlaybackInfo
+  lastPluginPlaybackInfo = info
+  for (const event of derivePlaybackEvents(previous, info)) {
+    const payload =
+      event.name === 'player:progress'
+        ? event.payload
+        : info
+    void pluginManager?.broadcastEvent(event.name, payload)
+  }
+}
+
 function persistAudioProcessingState(processing: AudioProcessingSettings): SettingsSnapshot {
   appSettings = normalizeAppSettings({
     ...appSettings,
@@ -1078,6 +1104,10 @@ function setupAudioEngineIpc(): void {
     void pluginManager?.broadcastEvent('audioEngine:start-file', null)
   })
 
+  audioEngineManager.on('queue-change', (queue) => {
+    void pluginManager?.broadcastEvent('player:queue-change', { queue })
+  })
+
   audioEngineManager.on('error', (err: Error) => {
     console.error('[音频引擎]', err.message)
     mainWindow?.webContents.send('audioEngine:error', err.message)
@@ -1091,6 +1121,7 @@ function setupAudioEngineIpc(): void {
   audioEngineManager.on('playback-info', (info) => {
     mainWindow?.webContents.send('audioEngine:playback-info', info)
     void pluginManager?.broadcastEvent('player:playback-info', info)
+    broadcastPlayerLifecycleEvents(info)
   })
 
   function requireAudioEngine(): AudioEngineManager {
@@ -1391,9 +1422,17 @@ function setupPluginIpc(): void {
     }
   })
 
-  void pluginManager.initialize().catch((error) => {
-    console.error('[插件系统] 初始化失败：', error)
-  })
+  void pluginManager
+    .initialize()
+    .then(() => {
+      void pluginManager?.broadcastEvent('app:ready', {
+        version: app.getVersion(),
+        platform: process.platform
+      })
+    })
+    .catch((error) => {
+      console.error('[插件系统] 初始化失败：', error)
+    })
 
   pluginManager.on('changed', () => {
     mainWindow?.webContents.send('plugins:changed')
@@ -1437,7 +1476,7 @@ function setupPluginIpc(): void {
     return pluginManager!.listExtensions()
   })
   ipcMain.handle('extensions:executeCommand', async (_event, command: string, args?: unknown[]) => {
-    await pluginManager!.executeUiCommand(command, Array.isArray(args) ? args : [])
+    return await pluginManager!.executeUiCommand(command, Array.isArray(args) ? args : [])
   })
   ipcMain.handle('extensions:readThemeStylesheet', async (_event, stylesheetPath: string) => {
     const normalized = resolve(stylesheetPath)
@@ -1659,6 +1698,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   forceQuit = true
+  void pluginManager?.broadcastEvent('app:before-quit', null)
 })
 
 app.on('will-quit', () => {

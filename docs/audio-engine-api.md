@@ -61,7 +61,7 @@
 - `htmlAudioFallbackDefault`：Electron 是否默认允许 HTMLAudio 兜底；现阶段为 `false`。
 - `backends` / `backendCapabilities`：后端能力列表，两个字段保持兼容。
 - `features`：FFmpeg、WASAPI、ASIO、CoreAudio、ALSA、Native DSD、DoP、SACD ISO 能力布尔值。
-- `dsd`：DSD 能力模型。Phase 6D 中 DSF/DFF DSD64/128 可进入 DoP carrier path；DSD256/512、处理启用或设备/后端不满足 carrier 条件时走 PCM fallback。Native DSD 与 SACD ISO 仍保持后置。
+- `dsd`：DSD 能力模型。DSF/DFF 与 SACD ISO 未压缩 DSD area 可进入 Native DSD / DoP / PCM fallback 决策链；DST 压缩 SACD 曲目仍明确 unsupported。
 
 `TAE_GetLastError()` 同样使用 buffer/required-size 模式，返回 `hasError`、`code`、`message`、`backend`、`context`、`recoverable`。
 
@@ -85,8 +85,8 @@
 
 - DoP carrier：DSF/DFF DSD64/128 在后端、设备、声道数和实际 PCM carrier 格式满足条件时可进入 `dsdMode=dop`。UI 展示为 DSD 源到 `DoP carrier` 再到后端实际输出；它不同于 PCM fallback，因为 carrier 保留 DSD bitstream。
 - PCM fallback：DSF/DFF DSD256/512、DoP carrier 条件不满足，或软件音量、ReplayGain、EQ、Convolver、Crossfeed、Crossfade 等处理启用时，必须走 PCM fallback。UI 展示为 DSD 源到 PCM 工作格式再到后端实际 PCM 格式，不把它标为 Native DSD 或 DoP。
-- Native DSD：指后端和设备直接接收 DSD bitstream。Phase 6D 不实现 Native DSD，capabilities 与播放状态不得声明 native 已完成。
-- SACD ISO：Phase 6D 不作为可播放容器支持；只能识别/报告 unsupported，不能静默当作 DSF/DFF、DoP 或普通 PCM 播放完成。
+- Native DSD：指后端和设备直接接收 DSD bitstream。首版只承诺 ASIO，且只有运行态证明为 `proven` 才能声明 native。
+- SACD ISO：首版支持未压缩 DSD area 的曲目切片播放；DST 压缩曲目报告 unsupported，不能静默当作未压缩 DSD、DoP 或普通 PCM 播放完成。
 
 Phase 6B 的后端规则：
 
@@ -121,4 +121,4 @@ ASIO 保留冷却与恢复诊断策略。ALSA 提供基础 xrun 恢复：`snd_pc
 
 ## 当前非闭环范围
 
-当前不包含真实 Native DSD、SACD ISO 播放、CoreAudio hog mode、高级设备独占、多设备同步或复杂热插拔监听。DoP 的 Phase 6D 范围限定为 DSF/DFF DSD64/128 的 carrier path；DSD256/512 与处理启用场景必须回到 PCM fallback。真实设备 smoke 是 opt-in，不作为当前 CI 必需条件；没有 ASIO SDK、macOS/Linux 工具链或对应设备时必须跳过并保持默认验证通过。
+当前不包含 SACD DST 解码、CoreAudio hog mode、高级设备独占、多设备同步或复杂热插拔监听。Native DSD 首版只承诺 ASIO；真实设备 smoke 是 opt-in，不作为当前 CI 必需条件；没有 ASIO SDK、macOS/Linux 工具链或对应设备时必须跳过并保持默认验证通过。

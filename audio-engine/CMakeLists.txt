@@ -264,6 +264,7 @@ if(TAE_BUILD_TESTS)
     tests/dsd_dop_tests.cpp
     decoder/DopPacker.cpp
     decoder/DsdReader.cpp
+    decoder/SacdIsoDemuxer.cpp
     core/AudioTypes.cpp
   )
   target_include_directories(twilight_dsd_dop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -376,6 +377,7 @@ if(TAE_BUILD_TESTS)
     core/TwilightAudioEngine.cpp
     decoder/DopPacker.cpp
     decoder/DsdReader.cpp
+    decoder/SacdIsoDemuxer.cpp
     dsp/ChannelRouter.cpp
     dsp/ConvolverProcessor.cpp
     dsp/CrossfeedProcessor.cpp

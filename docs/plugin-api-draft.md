@@ -90,6 +90,22 @@ Phase 1 event names:
 Phase 3 treats this API as the supported tool/automation event bus. Handlers run
 inside the plugin host process; thrown errors fail only that plugin.
 
+Phase 3 supported event names:
+
+- `app:ready`
+- `app:before-quit`
+- `player:track-change`
+- `player:play`
+- `player:pause`
+- `player:stop`
+- `player:progress`
+- `player:queue-change`
+- `player:playback-info`
+
+The existing `audioEngine:*` events remain available as compatibility events for
+low-level diagnostics. Tool plugins should prefer the normalized `player:*` and
+`app:*` names.
+
 ## Player
 
 ```ts
@@ -216,6 +232,7 @@ await context.twilight.ui.register({
 
 context.twilight.ui.onCommand('myPlugin.scrobble', async (track) => {
   context.logger.info(`Scrobble requested for ${track?.title ?? 'unknown track'}`)
+  return { ok: true }
 })
 ```
 
@@ -223,7 +240,13 @@ Initial controlled UI contribution kinds:
 
 - `playerBarButton`: rendered in the PlayerBar more drawer and must declare `command`.
 - `settingsPanel`: rendered as a plugin settings entry and may declare `command`.
-- `sidebarPage`: reserved Phase 3 slot for custom pages and must declare `command`.
+- `sidebarPage`: rendered in the local sidebar as a controlled host page and
+  must declare `command`.
+
+UI commands are request/response calls. The host waits for completion with a
+short timeout and returns the plugin handler result to the renderer. Command
+failures mark only the owning plugin as failed and are written to that plugin's
+log.
 
 UI contributions require `type` containing `ui` or `tool` and permission
 `ui:inject`.
@@ -246,7 +269,9 @@ await context.twilight.themes.register({
 ```
 
 Theme plugins are declarative only. They must not execute renderer scripts or
-load remote runtime code.
+load remote runtime code. The renderer applies only the plugin theme selected by
+the user in Settings -> Appearance; disabling or uninstalling that plugin clears
+the selected plugin theme.
 
 ## Host Capability Audit
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/AudioTypes.h"
+#include "SacdIsoDemuxer.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -57,11 +58,14 @@ class DsdReader {
  private:
   bool openDsf(std::string* error);
   bool openDff(std::string* error);
+  bool openSacdIso(const std::string& source, std::string* error);
 
   std::ifstream file_;
+  SacdIsoDemuxer sacd_;
   DsdStreamInfo info_;
   uint64_t readOffset_ = 0;
   bool eof_ = false;
+  bool sacdActive_ = false;
 };
 
 }  // namespace twilight::audio

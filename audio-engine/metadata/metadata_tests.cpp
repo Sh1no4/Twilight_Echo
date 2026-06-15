@@ -79,11 +79,9 @@ int main() {
   assert(empty.find("\"error\":\"音频地址为空\"") != std::string::npos);
 
   const std::string sacdIso = readMetadataJson("album.iso");
-  assert(sacdIso.find("\"codec\":\"sacd_iso\"") != std::string::npos);
   assert(sacdIso.find("\"container\":\"SACD ISO\"") != std::string::npos);
   assert(sacdIso.find("\"isDsd\":true") != std::string::npos);
-  assert(sacdIso.find("\"dsdMode\":\"unsupported\"") != std::string::npos);
-  assert(sacdIso.find("SACD ISO 暂不支持解析和播放") != std::string::npos);
+  assert(sacdIso.find("\"dsdMode\":\"dsd\"") != std::string::npos);
 
   const std::string missing = readMetadataJson("missing-file.flac");
   assert(missing.find("\"source\":\"missing-file.flac\"") != std::string::npos);

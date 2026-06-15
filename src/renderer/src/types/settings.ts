@@ -117,6 +117,7 @@ export interface AppSettings {
   cachePath: string
   closeToTray: boolean
   theme: AppTheme
+  pluginThemeId: string | null
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number

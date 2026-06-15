@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useExtensionRegistry } from '../extensions/registry'
+import { getPluginThemeKey } from '../extensions/themeSelection'
 import PluginSettingsPanel from './PluginSettingsPanel.vue'
 import type {
   AppSettings,
@@ -141,6 +142,8 @@ const { uiContributions, syncExtensions } = useExtensionRegistry()
 const pluginSettingsPanels = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'settingsPanel')
 )
+const { themeContributions } = useExtensionRegistry()
+const pluginThemeOptions = computed(() => themeContributions.value)
 
 const {
   settings,
@@ -606,6 +609,15 @@ function toggleSetting(key: BooleanSettingKey): void {
 function setTheme(theme: AppTheme): void {
   if (settings.value.theme === theme) return
   void updateSettings({ theme })
+}
+
+function setPluginTheme(pluginThemeId: string | null): void {
+  if (settings.value.pluginThemeId === pluginThemeId) return
+  void updateSettings({ pluginThemeId })
+}
+
+function pluginThemeKey(theme: { pluginId: string; id: string }): string {
+  return getPluginThemeKey(theme)
 }
 
 function setPlaybackResumeMode(playbackResumeMode: PlaybackResumeMode): void {
@@ -1756,6 +1768,45 @@ onMounted(async () => {
               </div>
             </div>
 
+            <div class="setting-row plugin-theme-row">
+              <div class="setting-copy">
+                <span class="setting-label">插件主题</span>
+                <span class="setting-desc">仅应用当前选择的声明式主题插件</span>
+              </div>
+              <div class="plugin-theme-list" role="radiogroup" aria-label="插件主题">
+                <button
+                  class="theme-option"
+                  :class="{ active: settings.pluginThemeId == null }"
+                  type="button"
+                  role="radio"
+                  :aria-checked="settings.pluginThemeId == null"
+                  @click="setPluginTheme(null)"
+                >
+                  <span class="theme-swatch theme-swatch-system"></span>
+                  <span class="theme-option-copy">
+                    <span>关闭</span>
+                    <small>不应用插件样式</small>
+                  </span>
+                </button>
+                <button
+                  v-for="theme in pluginThemeOptions"
+                  :key="`${theme.pluginId}:${theme.id}`"
+                  class="theme-option"
+                  :class="{ active: settings.pluginThemeId === pluginThemeKey(theme) }"
+                  type="button"
+                  role="radio"
+                  :aria-checked="settings.pluginThemeId === pluginThemeKey(theme)"
+                  @click="setPluginTheme(pluginThemeKey(theme))"
+                >
+                  <span class="theme-swatch plugin-theme-swatch"></span>
+                  <span class="theme-option-copy">
+                    <span>{{ theme.name }}</span>
+                    <small>{{ theme.description || theme.pluginId }}</small>
+                  </span>
+                </button>
+              </div>
+            </div>
+
             <div class="setting-row">
               <div class="setting-copy">
                 <span class="setting-label">毛玻璃效果</span>
@@ -2186,11 +2237,13 @@ onMounted(async () => {
   grid-template-columns: minmax(0, 1fr) minmax(390px, 520px);
 }
 
-.theme-row {
+.theme-row,
+.plugin-theme-row {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
 }
 
-.theme-segment {
+.theme-segment,
+.plugin-theme-list {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
   gap: 8px;
@@ -2254,6 +2307,10 @@ onMounted(async () => {
 
 .theme-swatch-aurora {
   background: linear-gradient(135deg, #7c4dff 0%, #c084fc 48%, #22d3ee 100%);
+}
+
+.plugin-theme-swatch {
+  background: linear-gradient(135deg, #38bdf8 0%, #0f172a 52%, #a78bfa 100%);
 }
 
 .theme-option-copy {

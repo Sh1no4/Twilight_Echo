@@ -229,6 +229,7 @@ interface AppSettings {
   cachePath: string
   closeToTray: boolean
   theme: AppTheme
+  pluginThemeId: string | null
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number
@@ -826,7 +827,7 @@ const api = {
   },
   extensions: {
     list: (): Promise<TwilightPluginExtensionContribution[]> => ipcRenderer.invoke('extensions:list'),
-    executeCommand: (command: string, args?: unknown[]): Promise<void> =>
+    executeCommand: (command: string, args?: unknown[]): Promise<unknown> =>
       ipcRenderer.invoke('extensions:executeCommand', command, args),
     readThemeStylesheet: (stylesheetPath: string): Promise<string> =>
       ipcRenderer.invoke('extensions:readThemeStylesheet', stylesheetPath)

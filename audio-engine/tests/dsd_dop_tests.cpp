@@ -1,5 +1,6 @@
 #include "../decoder/DopPacker.h"
 #include "../decoder/DsdReader.h"
+#include "../decoder/SacdIsoDemuxer.h"
 #include "../decoder/SacdIsoProbe.h"
 
 #include <cassert>
@@ -42,6 +43,27 @@ void writeBe32To(uint8_t* data, uint32_t value) {
   data[1] = static_cast<uint8_t>((value >> 16) & 0xff);
   data[2] = static_cast<uint8_t>((value >> 8) & 0xff);
   data[3] = static_cast<uint8_t>(value & 0xff);
+}
+
+void writeTwilightTrack(
+    std::vector<uint8_t>& toc,
+    size_t offset,
+    int trackNumber,
+    uint32_t startSector,
+    uint32_t sectorCount,
+    uint32_t channelCount,
+    uint32_t sampleRate,
+    bool dst,
+    const std::string& fileName) {
+  assert(offset + 64 <= toc.size());
+  std::memcpy(toc.data() + offset, "TWTE1", 5);
+  writeLe32To(toc.data() + offset + 8, static_cast<uint32_t>(trackNumber));
+  writeLe32To(toc.data() + offset + 12, startSector);
+  writeLe32To(toc.data() + offset + 16, sectorCount);
+  writeLe32To(toc.data() + offset + 20, channelCount);
+  writeLe32To(toc.data() + offset + 24, sampleRate);
+  writeLe32To(toc.data() + offset + 28, dst ? 1U : 0U);
+  std::copy(fileName.begin(), fileName.end(), toc.begin() + static_cast<std::ptrdiff_t>(offset + 32));
 }
 
 void writeDirectoryRecord(
@@ -159,14 +181,14 @@ std::filesystem::path writeSacdIsoFixture(const std::string& name) {
   constexpr uint32_t kRootSector = 20;
   constexpr uint32_t kSacdSector = 21;
   constexpr uint32_t kSectorSize = 2048;
-  std::vector<uint8_t> image(24 * kSectorSize, 0);
+  std::vector<uint8_t> image(28 * kSectorSize, 0);
 
   uint8_t* pvd = image.data() + 16 * kSectorSize;
   pvd[0] = 1;
   std::memcpy(pvd + 1, "CD001", 5);
   pvd[6] = 1;
   std::memcpy(pvd + 40, "TWILIGHT_SACD_FIXTURE", 21);
-  pvd[80] = 24;
+  pvd[80] = 28;
   writeLe32To(pvd + 156 + 2, kRootSector);
   writeBe32To(pvd + 156 + 6, kRootSector);
   writeLe32To(pvd + 156 + 10, kSectorSize);
@@ -192,9 +214,27 @@ std::filesystem::path writeSacdIsoFixture(const std::string& name) {
   writeSpecialDirectoryRecord(sacd, 0, kSacdSector, kSectorSize, 0);
   writeSpecialDirectoryRecord(sacd, 34, kRootSector, kSectorSize, 1);
   writeDirectoryRecord(sacd, 68, 22, 128, false, "MASTER.TOC");
-  writeDirectoryRecord(sacd, 112, 22, 128, false, "TWOCH_AREA.TOC");
-  writeDirectoryRecord(sacd, 160, 23, 256, false, "TRACK01.DST");
+  writeDirectoryRecord(sacd, 112, 23, 2048, false, "TWOCH_AREA.TOC");
+  writeDirectoryRecord(sacd, 160, 24, 2048, false, "MCH_AREA.TOC");
+  writeDirectoryRecord(sacd, 206, 25, 256, false, "TRACK01.DSD");
+  writeDirectoryRecord(sacd, 250, 26, 256, false, "TRACK01.DST");
   std::copy(sacd.begin(), sacd.end(), image.begin() + kSacdSector * kSectorSize);
+
+  std::vector<uint8_t> twoch(kSectorSize, 0);
+  std::memcpy(twoch.data(), "TWTEAREA", 8);
+  writeLe32To(twoch.data() + 8, 2);
+  writeTwilightTrack(twoch, 16, 1, 25, 1, 2, 2822400, false, "TRACK01.DSD");
+  writeTwilightTrack(twoch, 80, 2, 26, 1, 2, 2822400, true, "TRACK01.DST");
+  std::copy(twoch.begin(), twoch.end(), image.begin() + 23 * kSectorSize);
+
+  std::vector<uint8_t> mch(kSectorSize, 0);
+  std::memcpy(mch.data(), "TWTEAREA", 8);
+  writeLe32To(mch.data() + 8, 1);
+  writeTwilightTrack(mch, 16, 1, 25, 1, 6, 2822400, false, "TRACK01.DSD");
+  std::copy(mch.begin(), mch.end(), image.begin() + 24 * kSectorSize);
+
+  for (int i = 0; i < 256; ++i) image[25 * kSectorSize + i] = static_cast<uint8_t>(0x80 + (i & 0x3f));
+  for (int i = 0; i < 256; ++i) image[26 * kSectorSize + i] = static_cast<uint8_t>(0x40 + (i & 0x3f));
 
   std::ofstream out(path, std::ios::binary);
   out.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
@@ -298,7 +338,10 @@ void testSacdIsoProbeUnsupportedEntry() {
   assert(!rejectedProbe.isSacdIso());
   assert(rejectedProbe.isIso9660 == false);
   assert(rejectedProbe.reasonCode == kSacdIsoNotIso9660ReasonCode);
-  std::filesystem::remove(nonIso);
+  {
+    std::error_code ignored;
+    std::filesystem::remove(nonIso, ignored);
+  }
 
   const auto iso = writeSacdIsoFixture("twilight-sacd-fixture.iso");
   const auto probe = probeSacdIsoEntry(iso.string());
@@ -318,9 +361,43 @@ void testSacdIsoProbeUnsupportedEntry() {
 
   DsdReader reader;
   std::string error;
-  assert(!reader.open(iso.string(), &error));
-  assert(error == kSacdIsoUnsupportedReason);
-  std::filesystem::remove(iso);
+  assert(reader.open((iso.string() + "?area=stereo&track=1"), &error));
+  assert(reader.streamInfo().container == "SACD ISO");
+  assert(reader.streamInfo().channelCount == 2);
+  assert(reader.streamInfo().dsdRate == 64);
+  std::vector<uint8_t> bytes(16);
+  assert(reader.readBytes(bytes.data(), bytes.size()) == bytes.size());
+  assert(bytes[0] == 0x80);
+  reader.close();
+
+  assert(!reader.open((iso.string() + "?area=stereo&track=2"), &error));
+  assert(error == kSacdDstNoProviderReason);
+  {
+    std::error_code ignored;
+    std::filesystem::remove(iso, ignored);
+  }
+}
+
+void testSacdIsoDemuxerTracksAndSeek() {
+  const auto iso = writeSacdIsoFixture("twilight-sacd-demuxer-fixture.iso");
+  SacdIsoDemuxer demuxer;
+  std::string error;
+  assert(demuxer.open(iso.string(), &error));
+  assert(demuxer.tracks().size() == 3);
+  assert(demuxer.selectTrack("stereo", 1, &error));
+  assert(demuxer.streamInfo().source.find("area=stereo&track=1") != std::string::npos);
+  std::vector<uint8_t> bytes(8);
+  assert(demuxer.readBytes(bytes.data(), bytes.size()) == bytes.size());
+  assert(bytes[0] == 0x80);
+  assert(demuxer.seek(0.0, &error));
+  assert(demuxer.readBytes(bytes.data(), bytes.size()) == bytes.size());
+  assert(bytes[0] == 0x80);
+  assert(!demuxer.selectTrack("stereo", 2, &error));
+  assert(error == kSacdDstNoProviderReason);
+  {
+    std::error_code ignored;
+    std::filesystem::remove(iso, ignored);
+  }
 }
 
 class RejectingDstProvider final : public SacdDstProvider {
@@ -380,6 +457,7 @@ int main() {
   testDopPackerInt24();
   testDopPackerInt24In32();
   testSacdIsoProbeUnsupportedEntry();
+  testSacdIsoDemuxerTracksAndSeek();
   testSacdDstProviderSelection();
   assert(sourceLooksDsfOrDff("song.DSF"));
   assert(sourceLooksDsfOrDff("song.dff"));

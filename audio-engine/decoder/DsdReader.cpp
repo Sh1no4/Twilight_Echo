@@ -112,8 +112,7 @@ bool DsdReader::open(const std::string& source, std::string* error) {
   }
   const SacdIsoEntryProbe sacdIso = probeSacdIsoEntry(source);
   if (sacdIso.isSacdIso()) {
-    if (error) *error = sacdIso.reason.empty() ? kSacdIsoUnsupportedReason : sacdIso.reason;
-    return false;
+    return openSacdIso(source, error);
   }
 
   file_.open(source, std::ios::binary);
@@ -134,12 +133,19 @@ bool DsdReader::open(const std::string& source, std::string* error) {
 
 void DsdReader::close() {
   if (file_.is_open()) file_.close();
+  sacd_.close();
   info_ = {};
   readOffset_ = 0;
   eof_ = false;
+  sacdActive_ = false;
 }
 
 bool DsdReader::seek(double seconds, std::string* error) {
+  if (sacdActive_) {
+    const bool ok = sacd_.seek(seconds, error);
+    eof_ = sacd_.eof();
+    return ok;
+  }
   if (!file_.is_open() || info_.dataOffset == 0) {
     if (error) *error = "DSD reader is not open";
     return false;
@@ -161,6 +167,11 @@ bool DsdReader::seek(double seconds, std::string* error) {
 }
 
 size_t DsdReader::readBytes(uint8_t* output, size_t maxBytes) {
+  if (sacdActive_) {
+    const size_t read = sacd_.readBytes(output, maxBytes);
+    eof_ = sacd_.eof();
+    return read;
+  }
   if (!output || maxBytes == 0 || !file_.is_open() || eof_) return 0;
   const uint64_t remaining = info_.dataSize > readOffset_ ? info_.dataSize - readOffset_ : 0;
   const size_t toRead = static_cast<size_t>(std::min<uint64_t>(remaining, maxBytes));
@@ -300,6 +311,59 @@ bool DsdReader::openDff(std::string* error) {
     return false;
   }
   return true;
+}
+
+bool DsdReader::openSacdIso(const std::string& source, std::string* error) {
+  if (!sacd_.open(source, error)) return false;
+  int trackNumber = 1;
+  std::string area;
+  const size_t qm = source.find('?');
+  if (qm != std::string::npos) {
+    const std::string query = source.substr(qm + 1);
+    size_t start = 0;
+    while (start <= query.size()) {
+      const size_t amp = query.find('&', start);
+      const std::string pair = query.substr(start, amp == std::string::npos ? std::string::npos : amp - start);
+      const size_t eq = pair.find('=');
+      const std::string key = eq == std::string::npos ? pair : pair.substr(0, eq);
+      const std::string value = eq == std::string::npos ? "" : pair.substr(eq + 1);
+      if (key == "track") {
+        try {
+          trackNumber = std::stoi(value);
+        } catch (...) {
+          trackNumber = 1;
+        }
+      } else if (key == "area") {
+        area = value;
+      }
+      if (amp == std::string::npos) break;
+      start = amp + 1;
+    }
+  }
+  if (!sacd_.selectTrack(area, trackNumber, error)) {
+    sacd_.close();
+    return false;
+  }
+  const AudioStreamInfo& stream = sacd_.streamInfo();
+  info_.source = source;
+  info_.container = "SACD ISO";
+  info_.channelCount = stream.sourceFormat.channelCount;
+  info_.dsdSampleRate = stream.sourceFormat.sampleRate;
+  info_.dsdRate = stream.dsdRate > 0 ? stream.dsdRate : dsdRateFromSampleRate(info_.dsdSampleRate);
+  info_.bitOrder = DsdBitOrder::MsbFirst;
+  info_.packing = DsdPacking::DffInterleaved;
+  info_.durationSeconds = stream.durationSeconds;
+  const auto& tracks = sacd_.tracks();
+  const auto selected = std::find_if(tracks.begin(), tracks.end(), [&](const SacdIsoTrackInfo& track) {
+    return track.trackNumber == trackNumber && (area.empty() || track.area == area);
+  });
+  if (selected != tracks.end()) {
+    info_.dataOffset = selected->dataOffset;
+    info_.dataSize = selected->dataSize;
+  }
+  sacdActive_ = true;
+  eof_ = sacd_.eof();
+  return info_.channelCount > 0 && info_.dsdSampleRate > 0 && info_.dataSize > 0;
 }
 
 }  // namespace twilight::audio

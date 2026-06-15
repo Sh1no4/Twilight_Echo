@@ -1,9 +1,9 @@
 # Twilight Echo Plugin Specification
 
-This document freezes the Phase 0 contract for the Phase 1 plugin host and adds
-the Phase 2 bundled provider requirements now implemented in the app. It is
-derived from `docs/twilight-echo-plugin-spec.md` and keeps that document as the
-product-level source of truth.
+This document freezes the Phase 0 contract for the JS plugin host and adds the
+Phase 2 bundled provider plus Phase 3 controlled UI/theme requirements now
+implemented in the app. It is derived from `docs/twilight-echo-plugin-spec.md`
+and keeps that document as the product-level source of truth.
 
 ## Package Contract
 
@@ -63,15 +63,21 @@ permissions, author, source, and the same-privilege warning.
 Plugins access host capabilities only through `context.twilight`. Direct imports
 of Twilight Echo internals are unsupported.
 
-## Phase 1 Boundaries
+## Phase Boundaries
 
 Phase 1 implements generic plugin discovery, local install, activation,
 deactivation, uninstall, dependency-order loading, private plugin settings,
 logs, and management UI.
 
-Phase 1 does not implement renderer UI injection, theme loading, or native DSP C
-ABI loading. Native DSP plugins are shown with a warning but not activated
-through the engine.
+Phase 3 implements event subscriptions and controlled UI/theme extension points.
+UI plugins register host-approved DTOs only: `sidebarPage`, `playerBarButton`,
+and `settingsPanel`. Those entries call plugin-host commands and do not receive
+arbitrary renderer DOM access. Theme plugins register CSS variables and/or one
+packaged stylesheet; users explicitly choose one plugin theme in appearance
+settings before it is applied.
+
+Native DSP C ABI loading remains a Phase 4 boundary. Native DSP plugins are
+shown with a warning but not activated through the engine.
 
 ## Phase 2 Bundled Provider
 
@@ -92,3 +98,14 @@ The bundled provider still registers through `context.twilight.providers` and
 does not import host internals. Its local NetEase API and song-cache access go
 through a host-injected internal gateway that is rejected for all third-party
 plugins.
+
+## Phase 3 Event And UI Baseline
+
+Tool plugins can subscribe through `context.twilight.events.on`. The normalized
+Phase 3 events are `app:ready`, `app:before-quit`, `player:track-change`,
+`player:play`, `player:pause`, `player:stop`, `player:progress`,
+`player:queue-change`, and `player:playback-info`. Existing `audioEngine:*`
+events remain available for low-level diagnostics.
+
+UI commands are request/response calls with a short host timeout. Handler errors
+fail only the owning plugin and are written to that plugin's log.

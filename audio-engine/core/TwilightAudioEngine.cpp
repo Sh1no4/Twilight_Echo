@@ -1311,7 +1311,7 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
        << "\"dsdModes\":[\"pcm\",\"dop\",\"native\",\"unsupported\"],"
        << "\"sacdProgramModes\":[\"auto\",\"stereo\",\"multichannel\"],"
        << "\"devicePathKinds\":[\"default\",\"hw\",\"plughw\",\"hal\",\"asio\"],"
-       << "\"dsd\":{\"native\":" << (nativeDsdCapable ? "true" : "false") << ",\"dop\":" << (dopCapable ? "true" : "false") << ",\"sacdIso\":false,\"mode\":\"unsupported\"},"
+       << "\"dsd\":{\"native\":" << (nativeDsdCapable ? "true" : "false") << ",\"dop\":" << (dopCapable ? "true" : "false") << ",\"sacdIso\":true,\"sacdIsoDst\":false,\"mode\":\"pcm\"},"
        << "\"features\":{"
        << "\"ffmpeg\":"
 #if defined(TAE_HAS_FFMPEG)
@@ -1343,7 +1343,7 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
 #else
        << "false"
 #endif
-       << ",\"nativeDsd\":" << (nativeDsdCapable ? "true" : "false") << ",\"dop\":" << (dopCapable ? "true" : "false") << ",\"sacdIso\":false"
+       << ",\"nativeDsd\":" << (nativeDsdCapable ? "true" : "false") << ",\"dop\":" << (dopCapable ? "true" : "false") << ",\"sacdIso\":true,\"sacdIsoDst\":false"
        << "},\"backends\":" << backends
        << ",\"backendCapabilities\":" << backendCapabilities
        << ",\"output\":{\"accessModes\":[\"shared\",\"exclusive\",\"hog\",\"direct\",\"plugin\"]}"
