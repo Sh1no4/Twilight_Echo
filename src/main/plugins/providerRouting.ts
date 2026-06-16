@@ -49,7 +49,8 @@ export function findProviderRoute<T extends { providers: TwilightMediaProviderRe
   method: TwilightMediaProviderMethod
 ): T | null {
   const normalizedProviderId = providerId.trim().toLowerCase()
-  for (const running of runningPlugins) {
+  const candidates = [...runningPlugins]
+  for (const running of candidates.reverse()) {
     if (
       running.providers.some(
         (provider) =>
@@ -60,4 +61,16 @@ export function findProviderRoute<T extends { providers: TwilightMediaProviderRe
     }
   }
   return null
+}
+
+export function dedupeProviderRegistrations<T extends { providers: TwilightMediaProviderRegistration[] }>(
+  runningPlugins: Iterable<T>
+): TwilightMediaProviderRegistration[] {
+  const providers = new Map<string, TwilightMediaProviderRegistration>()
+  for (const running of runningPlugins) {
+    for (const provider of running.providers) {
+      providers.set(provider.id, provider)
+    }
+  }
+  return [...providers.values()]
 }

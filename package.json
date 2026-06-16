@@ -1,6 +1,6 @@
 {
   "name": "TwilightEcho",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "description": "An Electron application with Vue and TypeScript",
   "license": "Apache-2.0",
   "main": "./out/main/index.js",

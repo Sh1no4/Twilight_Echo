@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-const { isRendererDirectAudioTarget, shouldUseNativePlaybackTarget } = (await import(
+const { isRendererDirectAudioTarget, shouldReuseResolvedStreamUrl, shouldUseNativePlaybackTarget } = (await import(
   new URL('./playbackRouting.ts', import.meta.url).href
 )) as typeof import('./playbackRouting')
 
@@ -25,4 +25,10 @@ test('renderer-direct targets stay on renderer audio path', () => {
   assert.equal(shouldUseNativePlaybackTarget('local', 'data:audio/mpeg;base64,AAAA'), false)
   assert.equal(shouldUseNativePlaybackTarget('ncm', 'D:\\cache\\track.flac'), false)
   assert.equal(shouldUseNativePlaybackTarget('bili', 'D:\\cache\\track.flac'), false)
+})
+
+test('Bilibili proxy stream URLs are treated as transient', () => {
+  assert.equal(shouldReuseResolvedStreamUrl('local'), true)
+  assert.equal(shouldReuseResolvedStreamUrl('ncm'), true)
+  assert.equal(shouldReuseResolvedStreamUrl('bili'), false)
 })

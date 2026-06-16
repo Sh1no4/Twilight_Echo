@@ -8,7 +8,7 @@ import { tmpdir } from 'os'
 import { EventEmitter } from 'events'
 import { planPluginStartup } from './dependencies'
 import { isCompatibleTwilightRange, validatePluginManifest } from './manifest'
-import { findProviderRoute } from './providerRouting'
+import { dedupeProviderRegistrations, findProviderRoute } from './providerRouting'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -337,7 +337,7 @@ export class TwilightPluginManager extends EventEmitter {
   }
 
   listProviders(): TwilightMediaProviderRegistration[] {
-    return [...this.running.values()].flatMap((running) => running.providers)
+    return dedupeProviderRegistrations(this.running.values())
   }
 
   listExtensions(): TwilightPluginExtensionContribution[] {

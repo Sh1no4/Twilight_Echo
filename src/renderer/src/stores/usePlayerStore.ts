@@ -9,7 +9,7 @@ import type {
   PlaybackResumeMode
 } from '../types/settings'
 import { extractDominantColor } from '../utils/colorExtractor'
-import { shouldUseNativePlaybackTarget } from '../utils/playbackRouting'
+import { shouldReuseResolvedStreamUrl, shouldUseNativePlaybackTarget } from '../utils/playbackRouting'
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useSettingsStore } from './useSettingsStore'
 
@@ -807,18 +807,19 @@ function getTrackSource(track: Track): string {
 }
 
 async function resolvePlayTarget(track: Track): Promise<string> {
-  if (getTrackSource(track) === 'local') {
+  const source = getTrackSource(track)
+  if (source === 'local') {
     return track.filePath
   }
 
-  if (track.streamUrl) {
+  if (track.streamUrl && shouldReuseResolvedStreamUrl(source)) {
     return track.streamUrl
   }
 
   await syncPluginProviders()
   const streamUrl = await useMediaProviders().resolvePlaybackUrl(track)
   if (!streamUrl) {
-    throw new Error(`Unable to resolve ${getTrackSource(track)} stream URL`)
+    throw new Error(`Unable to resolve ${source} stream URL`)
   }
 
   track.streamUrl = streamUrl

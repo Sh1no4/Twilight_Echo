@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-const { findProviderRoute, providerSupportsMethod } = (await import(
+const { dedupeProviderRegistrations, findProviderRoute, providerSupportsMethod } = (await import(
   new URL('./providerRouting.ts', import.meta.url).href
 )) as typeof import('./providerRouting')
 
@@ -48,4 +48,12 @@ test('routes provider calls to a plugin that declares the required method capabi
     findProviderRoute([skeleton, fullProvider], 'bili', 'searchSongs')?.pluginId,
     skeleton.pluginId
   )
+})
+
+test('prefers the latest registration when multiple plugins expose the same provider id', () => {
+  assert.equal(
+    findProviderRoute([skeleton, fullProvider], 'bili', 'getPlaybackUrl')?.pluginId,
+    fullProvider.pluginId
+  )
+  assert.deepEqual(dedupeProviderRegistrations([skeleton, fullProvider]), fullProvider.providers)
 })
