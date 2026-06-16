@@ -40,7 +40,7 @@ import { derivePlaybackEvents } from './plugins/events'
 import type { TwilightPluginUninstallOptions } from './plugins/types'
 
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
-type AppTheme = 'system' | 'pureWhite' | 'dark' | 'aurora'
+type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 
 interface AudioEqPreset {
@@ -173,7 +173,7 @@ function normalizeAudioEqPresets(presets: unknown): AudioEqPreset[] {
 }
 
 function normalizeAppTheme(theme: unknown): AppTheme {
-  return theme === 'system' || theme === 'dark' || theme === 'aurora' || theme === 'pureWhite'
+  return theme === 'system' || theme === 'dark' || theme === 'pureWhite'
     ? theme
     : DEFAULT_SETTINGS.theme
 }
@@ -733,6 +733,7 @@ let lastPluginPlaybackInfo: PlaybackInfo | null = null
 const NCM_API_PORT = 3100
 const PLAYBACK_SESSION_SAVE_TIMEOUT_MS = 1800
 const NCM_OFFICIAL_LOGIN_TIMEOUT_MS = 180000
+const NCM_API_REQUEST_TIMEOUT_MS = 25000
 const pendingPlaybackSessionSaves = new Map<string, () => void>()
 
 function bundledPluginPath(name: string): string {
@@ -754,7 +755,7 @@ async function requestNcmApi(path: string, cookie?: string): Promise<unknown> {
     url += `&cookie=${encodeURIComponent(cookie)}`
   }
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 12000)
+  const timer = setTimeout(() => controller.abort(), NCM_API_REQUEST_TIMEOUT_MS)
   try {
     const res = await fetch(url, { signal: controller.signal })
     return await res.json()
@@ -1104,8 +1105,12 @@ async function updateAppSettings(patch: Partial<AppSettings>): Promise<SettingsS
     }
   }
 
-  if (shouldUpdateAudioProcessing) {
-    await audioEngineManager?.setAudioProcessing(appSettings.audioProcessing)
+  if (shouldUpdateAudioProcessing && audioEngineManager) {
+    try {
+      await audioEngineManager.setAudioProcessing(appSettings.audioProcessing)
+    } catch (err) {
+      console.warn('应用 DSP 设置到音频引擎失败，已保留设置：', err)
+    }
   }
 
   if (shouldUpdateAudioOutputConfig) {

@@ -72,7 +72,35 @@ const STATE_FILE = 'plugin-state.json'
 const PLUGIN_ACTIVATE_TIMEOUT_MS = 5000
 const PLUGIN_DEACTIVATE_TIMEOUT_MS = 1500
 const PLUGIN_UI_COMMAND_TIMEOUT_MS = 5000
+const PLUGIN_PROVIDER_DEFAULT_TIMEOUT_MS = 15000
+const PLUGIN_PROVIDER_MEDIUM_TIMEOUT_MS = 30000
+const PLUGIN_PROVIDER_SLOW_TIMEOUT_MS = 120000
 const INTERNAL_NCM_PLUGIN_ID = 'com.twilightecho.provider.ncm'
+
+function getProviderCallTimeoutMs(method: TwilightMediaProviderMethod): number {
+  if (
+    [
+      'fetchPlaylistTracks',
+      'fetchLikedTracks',
+      'fetchUserLibrary',
+      'fetchRecommendSongs',
+      'fetchRecommendPlaylists',
+      'fetchPersonalFm',
+      'fetchPrivateContent',
+      'fetchArtistTopSongs',
+      'fetchArtistPlaylists',
+      'fetchUserPlaylistsByUid',
+      'fetchUserFollows',
+      'fetchUserFolloweds'
+    ].includes(method)
+  ) {
+    return PLUGIN_PROVIDER_SLOW_TIMEOUT_MS
+  }
+  if (['getPlaybackUrl', 'getLyrics', 'searchSongs', 'searchPlaylists', 'searchArtists'].includes(method)) {
+    return PLUGIN_PROVIDER_MEDIUM_TIMEOUT_MS
+  }
+  return PLUGIN_PROVIDER_DEFAULT_TIMEOUT_MS
+}
 
 export class TwilightPluginManager extends EventEmitter {
   private readonly appVersion: string
@@ -416,7 +444,7 @@ export class TwilightPluginManager extends EventEmitter {
       const timer = setTimeout(() => {
         this.providerCalls.delete(requestId)
         rejectCall(new Error(`Provider 调用超时：${normalizedProviderId}.${method}`))
-      }, 10000)
+      }, getProviderCallTimeoutMs(method))
       this.providerCalls.set(requestId, {
         resolve: resolveCall,
         reject: rejectCall,

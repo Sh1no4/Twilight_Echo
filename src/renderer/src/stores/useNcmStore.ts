@@ -146,7 +146,7 @@ async function callNcmProvider<T>(method: string, args: unknown[] = []): Promise
     markProviderAvailable()
     return value
   } catch (error) {
-    if (error instanceof Error && /Provider 未启用|provider is disabled|ncm/i.test(error.message)) {
+    if (error instanceof Error && /Provider 未启用|provider is disabled|does not implement/i.test(error.message)) {
       markProviderUnavailable(error)
     }
     throw error

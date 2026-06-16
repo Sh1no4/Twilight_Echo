@@ -108,32 +108,6 @@
   --color-text: var(--te-neutral-900);
 }
 
-:root[data-theme='aurora'] {
-  --te-primary-500: #7c4dff;
-  --te-primary-400: #a885f7;
-  --te-primary-300: #c084fc;
-  --te-favorite-500: #e84393;
-  --te-success-500: #20c65e;
-  --te-warning-500: #f59e0b;
-  --te-info-500: #3b82f6;
-  --te-accent-cyan: #22d3ee;
-  --te-neutral-50: #fafafa;
-  --te-neutral-100: #f5f5f7;
-  --te-neutral-200: #e5e7eb;
-  --te-neutral-300: #d1d5db;
-  --te-neutral-500: #6b7280;
-  --te-neutral-700: #374151;
-  --te-neutral-900: #111827;
-  --te-glass-bg: rgba(255, 255, 255, 0.62);
-  --te-glass-bg-strong: rgba(255, 255, 255, 0.74);
-  --te-glass-border: rgba(255, 255, 255, 0.55);
-  --te-glass-shadow: 0 20px 70px rgba(86, 70, 160, 0.16);
-  --te-glow-main: rgba(124, 77, 255, 0.26);
-  --te-glow-soft: rgba(255, 126, 182, 0.18);
-  --te-glow-cyan: rgba(34, 211, 238, 0.18);
-  --color-text: var(--te-neutral-900);
-}
-
 :root[data-theme='dark'] {
   color-scheme: dark;
   --te-primary-500: #8b5cf6;
@@ -501,6 +475,8 @@ html[data-theme='pureWhite'] .settings-page {
 
 html[data-theme='pureWhite'] .settings-tabs,
 html[data-theme='pureWhite'] .theme-segment,
+html[data-theme='pureWhite'] .skin-selector,
+html[data-theme='pureWhite'] .color-mode-buttons,
 html[data-theme='pureWhite'] .resume-segment,
 html[data-theme='pureWhite'] .path-field,
 html[data-theme='pureWhite'] .text-button,
@@ -512,6 +488,7 @@ html[data-theme='pureWhite'] .shortcut-item kbd {
 html[data-theme='pureWhite'] .settings-group,
 html[data-theme='pureWhite'] .shortcut-list,
 html[data-theme='pureWhite'] .theme-option.active,
+html[data-theme='pureWhite'] .color-mode-button.active,
 html[data-theme='pureWhite'] .resume-option.active {
   border-color: rgba(15, 23, 42, 0.08);
   background: #ffffff;
@@ -998,6 +975,8 @@ html[data-theme='dark'] .settings-header {
 
 html[data-theme='dark'] .settings-tabs,
 html[data-theme='dark'] .theme-segment,
+html[data-theme='dark'] .skin-selector,
+html[data-theme='dark'] .color-mode-buttons,
 html[data-theme='dark'] .resume-segment,
 html[data-theme='dark'] .audio-output-segment,
 html[data-theme='dark'] .path-field,
@@ -1016,6 +995,7 @@ html[data-theme='dark'] .settings-tabs {
 html[data-theme='dark'] .settings-group,
 html[data-theme='dark'] .shortcut-list,
 html[data-theme='dark'] .theme-option.active,
+html[data-theme='dark'] .color-mode-button.active,
 html[data-theme='dark'] .resume-option.active,
 html[data-theme='dark'] .audio-output-option.active {
   border-color: rgba(148, 163, 184, 0.16);
@@ -1047,6 +1027,7 @@ html[data-theme='dark'] .audio-output-option small {
 
 html[data-theme='dark'] .tab-btn:hover,
 html[data-theme='dark'] .theme-option:hover,
+html[data-theme='dark'] .color-mode-button:hover,
 html[data-theme='dark'] .resume-option:hover,
 html[data-theme='dark'] .audio-output-option:hover,
 html[data-theme='dark'] .icon-button:hover,
@@ -1124,8 +1105,7 @@ html[data-theme='dark'] .playlist-grid-card,
 html[data-theme='dark'] .feature-card,
 html[data-theme='dark'] .profile-panel,
 html[data-theme='dark'] .liked-panel,
-html[data-theme='dark'] .playlist-list-item,
-html[data-theme='dark'] .playlist-loading-status {
+html[data-theme='dark'] .playlist-list-item {
   border-color: rgba(148, 163, 184, 0.16);
   background:
     linear-gradient(145deg, rgba(15, 23, 42, 0.88), rgba(17, 24, 39, 0.68)),

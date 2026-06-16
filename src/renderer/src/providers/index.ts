@@ -1,4 +1,4 @@
-import { MediaProviderRegistry } from './mediaProvider'
+import { MediaProviderRegistry, toProviderIpcArgs } from './mediaProvider'
 import type {
   MediaProviderArtistSummary,
   MediaProviderPlaylistSummary,
@@ -38,7 +38,7 @@ export async function syncPluginProviders(): Promise<void> {
       for (const provider of providers) {
         if (mediaProviders.get(provider.id)) continue
         const callProvider = <T>(method: string, args: unknown[] = []): Promise<T> =>
-          api.call(provider.id, method as never, args) as Promise<T>
+          api.call(provider.id, method as never, toProviderIpcArgs(args)) as Promise<T>
         mediaProviders.register({
           id: provider.id,
           name: provider.name,

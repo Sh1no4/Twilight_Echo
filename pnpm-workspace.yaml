@@ -1,6 +1,9 @@
 packages:
   - packages/*
 
+patchedDependencies:
+  '@neteasecloudmusicapienhanced/api@4.35.1': patches/@neteasecloudmusicapienhanced__api@4.35.1.patch
+
 allowBuilds:
   electron: true
   electron-winstaller: true

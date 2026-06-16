@@ -91,14 +91,15 @@
       "verified": true
     },
     {
-      "id": "com.twilightecho.examples.bili-provider-skeleton",
-      "name": "Bilibili Provider Skeleton",
-      "version": "0.1.0",
-      "description": "Phase 2 MediaProvider skeleton for search and playback URL dogfooding.",
+      "id": "com.twilightecho.provider.bilibili",
+      "name": "Bilibili Favorites Provider",
+      "version": "0.1.1",
+      "description": "Play audio from videos in the signed-in user's Bilibili favorite folders.",
       "author": "Twilight Echo",
       "license": "Apache-2.0",
       "type": [
-        "provider"
+        "provider",
+        "ui"
       ],
       "main": "index.mjs",
       "engines": {
@@ -106,16 +107,18 @@
       },
       "apiVersion": 1,
       "permissions": [
-        "network"
+        "network",
+        "settings",
+        "ui:inject"
       ],
-      "sourceUrl": "packages/com.twilightecho.examples.bili-provider-skeleton-0.1.0.tep",
-      "checksumSha256": "aafec270a2616bc550c7a08f9b8f822fd67826be32fd8c838db347a94906aff5",
-      "repository": "https://github.com/twilight-echo/plugins",
-      "homepage": "https://twilightecho.com/plugins",
+      "sourceUrl": "packages/com.twilightecho.provider.bilibili-0.1.1.tep",
+      "checksumSha256": "f279f4c61f8df5402a2a7ee5360b42e463d5655c9481d15ac423025bb10f0d9d",
+      "repository": "https://github.com/asenyarzc-cpu/Twilight-Echo-plugins",
+      "homepage": "https://github.com/asenyarzc-cpu/Twilight-Echo-plugins",
       "tags": [
-        "official",
         "provider",
-        "phase-2"
+        "ui",
+        "bilibili"
       ],
       "verified": true
     }

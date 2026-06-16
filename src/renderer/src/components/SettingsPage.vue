@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useExtensionRegistry } from '../extensions/registry'
-import { getPluginThemeKey } from '../extensions/themeSelection'
 import PluginSettingsPanel from './PluginSettingsPanel.vue'
 import type {
   AppSettings,
@@ -35,11 +34,10 @@ const tabs = [
   { key: 'about', label: '关于', icon: 'pi pi-info-circle' }
 ] as const
 
-const themeOptions: { value: AppTheme; label: string; description: string }[] = [
-  { value: 'system', label: '跟随', description: '自动匹配系统明暗' },
-  { value: 'pureWhite', label: '浅色', description: '清爽白底与蓝色重点色' },
-  { value: 'dark', label: '深色', description: '低亮度背景与高对比文本' },
-  { value: 'aurora', label: '流光', description: '柔和多彩的玻璃风格' }
+const colorModeOptions: { value: AppTheme; label: string; icon: string }[] = [
+  { value: 'pureWhite', label: '亮色', icon: 'pi pi-sun' },
+  { value: 'dark', label: '深色', icon: 'pi pi-moon' },
+  { value: 'system', label: '跟随', icon: 'pi pi-desktop' }
 ]
 
 const playbackResumeOptions: {
@@ -142,8 +140,6 @@ const { uiContributions, syncExtensions } = useExtensionRegistry()
 const pluginSettingsPanels = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'settingsPanel')
 )
-const { themeContributions } = useExtensionRegistry()
-const pluginThemeOptions = computed(() => themeContributions.value)
 
 const {
   settings,
@@ -613,13 +609,9 @@ function setTheme(theme: AppTheme): void {
   void updateSettings({ theme })
 }
 
-function setPluginTheme(pluginThemeId: string | null): void {
-  if (settings.value.pluginThemeId === pluginThemeId) return
-  void updateSettings({ pluginThemeId })
-}
-
-function pluginThemeKey(theme: { pluginId: string; id: string }): string {
-  return getPluginThemeKey(theme)
+function useDefaultSkin(): void {
+  if (settings.value.pluginThemeId == null) return
+  void updateSettings({ pluginThemeId: null })
 }
 
 function setPlaybackResumeMode(playbackResumeMode: PlaybackResumeMode): void {
@@ -747,6 +739,7 @@ async function runSettingsExtension(command?: string): Promise<void> {
 
 onMounted(async () => {
   await Promise.all([loadSettings(), refreshAudioOutputState()])
+  useDefaultSkin()
   await refreshCacheSize()
   await syncExtensions()
 })
@@ -1745,66 +1738,46 @@ onMounted(async () => {
         <section v-if="activeTab === 'appearance'" class="settings-section">
           <h2>外观</h2>
           <div class="settings-group">
-            <div class="setting-row theme-row">
+            <div class="setting-row skin-row">
               <div class="setting-copy">
-                <span class="setting-label">主题</span>
-                <span class="setting-desc">切换应用整体配色和背景风格</span>
+                <span class="setting-label">皮肤</span>
+                <span class="setting-desc">当前使用应用默认皮肤</span>
               </div>
-              <div class="theme-segment" role="radiogroup" aria-label="主题">
+              <div class="skin-selector" role="radiogroup" aria-label="皮肤">
                 <button
-                  v-for="theme in themeOptions"
+                  class="theme-option active"
+                  type="button"
+                  role="radio"
+                  aria-checked="true"
+                  @click="useDefaultSkin"
+                >
+                  <span class="theme-swatch theme-swatch-default"></span>
+                  <span class="theme-option-copy">
+                    <span>默认皮肤</span>
+                    <small>Twilight Echo 默认界面</small>
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <div class="setting-row color-mode-row">
+              <div class="setting-copy">
+                <span class="setting-label">明暗模式</span>
+                <span class="setting-desc">选择亮色、深色或跟随系统</span>
+              </div>
+              <div class="color-mode-buttons" role="radiogroup" aria-label="明暗模式">
+                <button
+                  v-for="theme in colorModeOptions"
                   :key="theme.value"
-                  class="theme-option"
+                  class="color-mode-button"
                   :class="{ active: settings.theme === theme.value }"
                   type="button"
                   role="radio"
                   :aria-checked="settings.theme === theme.value"
                   @click="setTheme(theme.value)"
                 >
-                  <span class="theme-swatch" :class="`theme-swatch-${theme.value}`"></span>
-                  <span class="theme-option-copy">
-                    <span>{{ theme.label }}</span>
-                    <small>{{ theme.description }}</small>
-                  </span>
-                </button>
-              </div>
-            </div>
-
-            <div class="setting-row plugin-theme-row">
-              <div class="setting-copy">
-                <span class="setting-label">插件主题</span>
-                <span class="setting-desc">仅应用当前选择的声明式主题插件</span>
-              </div>
-              <div class="plugin-theme-list" role="radiogroup" aria-label="插件主题">
-                <button
-                  class="theme-option"
-                  :class="{ active: settings.pluginThemeId == null }"
-                  type="button"
-                  role="radio"
-                  :aria-checked="settings.pluginThemeId == null"
-                  @click="setPluginTheme(null)"
-                >
-                  <span class="theme-swatch theme-swatch-system"></span>
-                  <span class="theme-option-copy">
-                    <span>关闭</span>
-                    <small>不应用插件样式</small>
-                  </span>
-                </button>
-                <button
-                  v-for="theme in pluginThemeOptions"
-                  :key="`${theme.pluginId}:${theme.id}`"
-                  class="theme-option"
-                  :class="{ active: settings.pluginThemeId === pluginThemeKey(theme) }"
-                  type="button"
-                  role="radio"
-                  :aria-checked="settings.pluginThemeId === pluginThemeKey(theme)"
-                  @click="setPluginTheme(pluginThemeKey(theme))"
-                >
-                  <span class="theme-swatch plugin-theme-swatch"></span>
-                  <span class="theme-option-copy">
-                    <span>{{ theme.name }}</span>
-                    <small>{{ theme.description || theme.pluginId }}</small>
-                  </span>
+                  <i :class="theme.icon"></i>
+                  <span>{{ theme.label }}</span>
                 </button>
               </div>
             </div>
@@ -2239,15 +2212,24 @@ onMounted(async () => {
   grid-template-columns: minmax(0, 1fr) minmax(390px, 520px);
 }
 
-.theme-row,
-.plugin-theme-row {
+.skin-row,
+.color-mode-row {
   grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
 }
 
-.theme-segment,
-.plugin-theme-list {
+.skin-selector {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  grid-template-columns: 1fr;
+  gap: 8px;
+  padding: 4px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.color-mode-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   padding: 4px;
   border: 1px solid rgba(17, 24, 39, 0.08);
@@ -2299,20 +2281,16 @@ onMounted(async () => {
   background: linear-gradient(135deg, #fff 0 48%, #2563eb 49% 100%);
 }
 
+.theme-swatch-default {
+  background: linear-gradient(135deg, #ffffff 0 42%, #2563eb 43% 68%, #0f172a 69% 100%);
+}
+
 .theme-swatch-system {
   background: linear-gradient(135deg, #fff 0 48%, #111827 49% 100%);
 }
 
 .theme-swatch-dark {
   background: linear-gradient(135deg, #0b1020 0 48%, #8b5cf6 49% 100%);
-}
-
-.theme-swatch-aurora {
-  background: linear-gradient(135deg, #7c4dff 0%, #c084fc 48%, #22d3ee 100%);
-}
-
-.plugin-theme-swatch {
-  background: linear-gradient(135deg, #38bdf8 0%, #0f172a 52%, #a78bfa 100%);
 }
 
 .theme-option-copy {
@@ -2335,6 +2313,38 @@ onMounted(async () => {
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.color-mode-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-width: 0;
+  height: 38px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--te-neutral-700);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+  transition:
+    background 0.16s,
+    border-color 0.16s,
+    color 0.16s,
+    box-shadow 0.16s;
+}
+
+.color-mode-button:hover,
+.color-mode-button.active {
+  border-color: color-mix(in srgb, var(--te-primary-500) 28%, transparent);
+  background: #fff;
+  color: #2563eb;
+}
+
+.color-mode-button.active {
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
 }
 
 .resume-row,
@@ -3413,7 +3423,8 @@ onMounted(async () => {
 
   .setting-row,
   .path-row,
-  .theme-row,
+  .skin-row,
+  .color-mode-row,
   .audio-output-row,
   .audio-device-row,
   .buffer-row,

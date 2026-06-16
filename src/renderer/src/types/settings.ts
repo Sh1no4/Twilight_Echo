@@ -1,4 +1,4 @@
-export type AppTheme = 'system' | 'pureWhite' | 'dark' | 'aurora'
+export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 export type EqMode = 'graphic' | 'parametric'

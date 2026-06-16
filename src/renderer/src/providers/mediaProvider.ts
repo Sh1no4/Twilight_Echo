@@ -1,3 +1,4 @@
+import { toRaw } from 'vue'
 import type { Track } from '../types/music'
 
 export type MediaProviderCapability =
@@ -187,6 +188,29 @@ export function getTrackProviderId(track: Pick<Track, 'id' | 'source'>): string 
 export function getProviderLocalId(trackId: string, providerId: string): string | null {
   const prefix = `${normalizeProviderId(providerId)}:`
   return trackId.startsWith(prefix) ? trackId.slice(prefix.length) : null
+}
+
+export function toProviderIpcArgs(args: unknown[]): unknown[] {
+  return args.map((arg) => toProviderIpcValue(arg))
+}
+
+function toProviderIpcValue(value: unknown, seen = new WeakSet<object>()): unknown {
+  if (value === null || typeof value !== 'object') return value
+
+  const raw = toRaw(value) as object
+  if (seen.has(raw)) return null
+  seen.add(raw)
+
+  if (Array.isArray(raw)) {
+    return raw.map((item) => toProviderIpcValue(item, seen))
+  }
+
+  const output: Record<string, unknown> = {}
+  for (const [key, nestedValue] of Object.entries(raw)) {
+    if (typeof nestedValue === 'function' || typeof nestedValue === 'symbol') continue
+    output[key] = toProviderIpcValue(nestedValue, seen)
+  }
+  return output
 }
 
 function normalizeProviderId(id: string): string {

@@ -34,7 +34,7 @@ type DetailView =
   | { type: 'liked' }
   | { type: 'playlist'; playlist: MediaProviderPlaylistSummary }
   | { type: 'rec'; section: RecSection }
-  | { type: 'artist'; artist: NcmArtistSummary }
+  | { type: 'artist'; artist: NcmArtistSummary; user?: NcmUserSummary }
   | { type: 'user_list'; listType: 'follows' | 'followers'; users: NcmUserSummary[]; title: string }
   | { type: 'user_playlists'; user: NcmUserSummary; playlists: NcmPlaylistSummary[] }
 
@@ -330,6 +330,10 @@ const activeLibraryLoaded = computed(() =>
 const activeLibraryError = computed(() =>
   isBiliActive.value ? biliLibraryError.value : libraryError.value
 )
+const activeProviderUnavailable = computed(() => {
+  const error = activeProviderError.value
+  return /Provider 未启用|provider is disabled|does not implement/i.test(error)
+})
 const showNcmSearch = computed(() => !isBiliActive.value && isLoggedIn.value)
 const trackUnitLabel = computed(() => (isBiliActive.value ? '个视频' : '首歌曲'))
 const profileSignature = computed(() => activeProfile.value?.signature?.trim() || '暂无个人简介')
@@ -525,6 +529,36 @@ function isActiveDetailLoad(token: number): boolean {
   return token === detailLoadToken
 }
 
+function mergePlaylistSummaries(...groups: NcmPlaylistSummary[][]): NcmPlaylistSummary[] {
+  const seen = new Set<number>()
+  const merged: NcmPlaylistSummary[] = []
+  for (const group of groups) {
+    for (const playlist of group) {
+      if (seen.has(playlist.id)) continue
+      seen.add(playlist.id)
+      merged.push(playlist)
+    }
+  }
+  return merged
+}
+
+function normalizeNameForMatch(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, '')
+}
+
+async function findArtistByUserName(user: NcmUserSummary): Promise<NcmArtistSummary | null> {
+  const keyword = user.name.trim()
+  if (!keyword) return null
+  const { artists } = await searchArtists(keyword, 8, 0)
+  if (artists.length === 0) return null
+  const normalizedKeyword = normalizeNameForMatch(keyword)
+  return (
+    artists.find((artist) => normalizeNameForMatch(artist.name) === normalizedKeyword) ??
+    artists[0] ??
+    null
+  )
+}
+
 async function ensureLibraryLoaded(force = false): Promise<void> {
   if (isBiliActive.value) {
     await ensureBiliLibraryLoaded(force)
@@ -635,22 +669,45 @@ async function openPlaylist(playlist: MediaProviderPlaylistSummary, force = fals
   }
 }
 
-async function openArtist(artist: NcmArtistSummary): Promise<void> {
+async function openArtist(artist: NcmArtistSummary, linkedUser?: NcmUserSummary): Promise<void> {
   streamingTransitionName.value = 'stream-page-down'
-  currentDetail.value = { type: 'artist', artist }
+  currentDetail.value = { type: 'artist', artist, user: linkedUser }
   const token = beginDetailLoad()
 
   try {
-    const [tracks, playlists] = await Promise.all([
+    let [tracks, artistOwnedPlaylists, userOwnedPlaylists] = await Promise.all([
       fetchArtistTopSongs(artist.id).catch(() => [] as Track[]),
-      fetchArtistPlaylists(artist.id).catch(() => [] as NcmPlaylistSummary[])
+      fetchArtistPlaylists(artist.id).catch(() => [] as NcmPlaylistSummary[]),
+      linkedUser
+        ? fetchUserPlaylistsByUid(linkedUser.id).catch(() => [] as NcmPlaylistSummary[])
+        : Promise.resolve([] as NcmPlaylistSummary[])
     ])
-    if (!isActiveDetailLoad(token)) return
-    detailTracks.value = tracks
-    artistPlaylists.value = playlists
-    if (tracks.length === 0 && playlists.length === 0) {
-      detailError.value = '没有找到这个歌手的热门歌曲或歌单'
+
+    let resolvedArtist = artist
+    if (linkedUser && tracks.length === 0) {
+      const matchedArtist = await findArtistByUserName(linkedUser).catch(() => null)
+      if (matchedArtist && matchedArtist.id !== artist.id) {
+        const [matchedTracks, matchedPlaylists] = await Promise.all([
+          fetchArtistTopSongs(matchedArtist.id).catch(() => [] as Track[]),
+          fetchArtistPlaylists(matchedArtist.id).catch(() => [] as NcmPlaylistSummary[])
+        ])
+        if (matchedTracks.length > 0 || matchedPlaylists.length > 0) {
+          resolvedArtist = {
+            ...matchedArtist,
+            picUrl: matchedArtist.picUrl ?? artist.picUrl
+          }
+          tracks = matchedTracks
+          artistOwnedPlaylists = mergePlaylistSummaries(artistOwnedPlaylists, matchedPlaylists)
+        }
+      }
     }
+
+    if (!isActiveDetailLoad(token)) return
+    if (currentDetail.value?.type === 'artist') {
+      currentDetail.value.artist = resolvedArtist
+    }
+    detailTracks.value = tracks
+    artistPlaylists.value = mergePlaylistSummaries(artistOwnedPlaylists, userOwnedPlaylists)
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
     detailError.value = error instanceof Error ? error.message : '加载歌手页面失败'
@@ -725,7 +782,7 @@ async function onUserClick(user: NcmUserSummary): Promise<void> {
       picUrl: user.picUrl,
       albumSize: 0,
       musicSize: user.musicSize
-    })
+    }, user)
   } else {
     await openUserPlaylists(user)
   }
@@ -986,7 +1043,7 @@ onMounted(async () => {
             @open-playlist="openPlaylist"
           />
 
-          <div v-else-if="!activeProviderAvailable && !currentDetail" class="streaming-placeholder">
+          <div v-else-if="(!activeProviderAvailable || activeProviderUnavailable) && !currentDetail" class="streaming-placeholder">
             <i class="pi pi-ban" style="font-size: 48px; color: #ccc"></i>
             <p class="placeholder-title">
               {{ isBiliActive ? 'Bilibili 插件已停用' : '网易云音乐插件已停用' }}
@@ -1073,19 +1130,6 @@ onMounted(async () => {
               class="detail-content playlist-loading-state"
               aria-live="polite"
             >
-              <div class="playlist-loading-status">
-                <span class="playlist-loading-disc" aria-hidden="true">
-                  <span class="playlist-loading-disc-core"></span>
-                </span>
-                <span class="playlist-loading-copy">
-                  <span class="playlist-loading-kicker">正在加载歌单</span>
-                  <strong>{{ detailHeaderInfo?.title ?? '歌单' }}</strong>
-                  <span>正在整理歌曲列表...</span>
-                </span>
-                <span class="playlist-loading-bars" aria-hidden="true">
-                  <span v-for="i in 5" :key="i"></span>
-                </span>
-              </div>
               <div class="track-table-wrapper playlist-loading-table">
                 <table class="track-table skeleton-table">
                   <thead>
@@ -1185,20 +1229,19 @@ onMounted(async () => {
               class="rec-sections"
               style="padding: 0 40px; margin-top: 16px"
             >
-              <div v-if="detailLoading" class="streaming-placeholder">
-                <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
-                <p class="placeholder-title">正在加载歌单</p>
-              </div>
-              <div v-else-if="detailError" class="streaming-placeholder">
+              <div v-if="!detailLoading && detailError" class="streaming-placeholder">
                 <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
                 <p class="placeholder-title">加载失败</p>
                 <p class="placeholder-hint">{{ detailError }}</p>
               </div>
-              <div v-else-if="currentDetail.playlists.length === 0" class="streaming-placeholder">
+              <div
+                v-else-if="!detailLoading && currentDetail.playlists.length === 0"
+                class="streaming-placeholder"
+              >
                 <i class="pi pi-list" style="font-size: 40px; color: #ccc"></i>
                 <p class="placeholder-title">暂无歌单</p>
               </div>
-              <div v-else class="playlist-grid">
+              <div v-else-if="!detailLoading" class="playlist-grid">
                 <div
                   v-for="playlist in currentDetail.playlists"
                   :key="playlist.id"
@@ -1239,8 +1282,10 @@ onMounted(async () => {
             >
               <div class="artist-section-heading">
                 <div>
-                  <h3>歌手歌单</h3>
-                  <p>{{ currentDetail.artist.name }} 创建或关联的歌单</p>
+                  <h3>创建或收藏的歌单</h3>
+                  <p>
+                    {{ currentDetail.user?.name ?? currentDetail.artist.name }} 创建或收藏的歌单
+                  </p>
                 </div>
               </div>
               <div class="playlist-grid">
@@ -1270,8 +1315,8 @@ onMounted(async () => {
               class="streaming-placeholder detail-placeholder"
             >
               <i class="pi pi-wave-pulse" style="font-size: 40px; color: #ccc"></i>
-              <p class="placeholder-title">暂无歌曲</p>
-              <p class="placeholder-hint">这个页面目前没有可展示的歌曲</p>
+              <p class="placeholder-title">暂无内容</p>
+              <p class="placeholder-hint">这个页面目前没有可展示的歌曲或歌单</p>
             </div>
 
             <div v-else class="detail-content">
@@ -1350,8 +1395,10 @@ onMounted(async () => {
               >
                 <div class="artist-section-heading">
                   <div>
-                    <h3>歌手歌单</h3>
-                    <p>{{ currentDetail.artist.name }} 创建或关联的歌单</p>
+                    <h3>创建或收藏的歌单</h3>
+                    <p>
+                      {{ currentDetail.user?.name ?? currentDetail.artist.name }} 创建或收藏的歌单
+                    </p>
                   </div>
                 </div>
                 <div class="playlist-grid">
@@ -2350,117 +2397,7 @@ onMounted(async () => {
 }
 /* ===== Skeleton Animation ===== */
 .playlist-loading-state {
-  gap: 14px;
-}
-
-.playlist-loading-status {
-  min-height: 74px;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 14px 16px;
-  border: 1px solid #eef1f6;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
-  overflow: hidden;
-}
-
-.playlist-loading-disc {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 46px;
-  height: 46px;
-  flex-shrink: 0;
-  border-radius: 8px;
-  background:
-    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.95), transparent 32%),
-    linear-gradient(135deg, #7c4dff, #b469f4 56%, #ff7eb6);
-  box-shadow: 0 14px 28px rgba(124, 77, 255, 0.18);
-}
-
-.playlist-loading-disc::before,
-.playlist-loading-disc::after {
-  content: '';
-  position: absolute;
-  inset: 7px;
-  border-radius: 999px;
-  border: 2px solid rgba(255, 255, 255, 0.54);
-  animation: playlist-loading-ring 1.5s ease-in-out infinite;
-}
-
-.playlist-loading-disc::after {
-  inset: 14px;
-  animation-delay: 0.18s;
-}
-
-.playlist-loading-disc-core {
-  width: 7px;
-  height: 7px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.2);
-}
-
-.playlist-loading-copy {
-  min-width: 0;
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.playlist-loading-kicker,
-.playlist-loading-copy > span:last-child {
-  font-size: 12px;
-  font-weight: 700;
-  color: rgba(82, 90, 122, 0.58);
-}
-
-.playlist-loading-copy strong {
-  min-width: 0;
-  font-size: 15px;
-  line-height: 1.3;
-  font-weight: 800;
-  color: #242946;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.playlist-loading-bars {
-  display: inline-flex;
-  align-items: flex-end;
-  gap: 4px;
-  height: 28px;
-  padding-inline: 4px;
-  flex-shrink: 0;
-}
-
-.playlist-loading-bars span {
-  width: 4px;
-  height: 10px;
-  border-radius: 999px;
-  background: #7c4dff;
-  opacity: 0.34;
-  animation: playlist-loading-bar 0.9s ease-in-out infinite;
-}
-
-.playlist-loading-bars span:nth-child(2) {
-  animation-delay: 0.09s;
-}
-
-.playlist-loading-bars span:nth-child(3) {
-  animation-delay: 0.18s;
-}
-
-.playlist-loading-bars span:nth-child(4) {
-  animation-delay: 0.27s;
-}
-
-.playlist-loading-bars span:nth-child(5) {
-  animation-delay: 0.36s;
+  gap: 0;
 }
 
 .playlist-loading-table {
@@ -2488,30 +2425,6 @@ onMounted(async () => {
 @keyframes skeleton-shimmer {
   100% {
     left: 200%;
-  }
-}
-
-@keyframes playlist-loading-ring {
-  0%,
-  100% {
-    transform: scale(0.96);
-    opacity: 0.54;
-  }
-  50% {
-    transform: scale(1.08);
-    opacity: 0.92;
-  }
-}
-
-@keyframes playlist-loading-bar {
-  0%,
-  100% {
-    height: 8px;
-    opacity: 0.32;
-  }
-  50% {
-    height: 26px;
-    opacity: 0.86;
   }
 }
 

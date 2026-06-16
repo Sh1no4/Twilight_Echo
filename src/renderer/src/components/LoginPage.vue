@@ -505,7 +505,7 @@ onUnmounted(() => {
 <style scoped>
 .login-page {
   position: fixed;
-  inset: 32px 0 0 0;
+  inset: 0;
   z-index: 100;
   display: flex;
   flex-direction: column;
@@ -519,10 +519,8 @@ onUnmounted(() => {
   align-items: center;
   gap: 12px;
   padding: 14px 24px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.58);
-  background: rgba(255, 255, 255, 0.34);
-  backdrop-filter: blur(18px) saturate(145%);
-  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  background: rgba(255, 255, 255, 0.92);
   flex-shrink: 0;
 }
 
@@ -558,6 +556,10 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   padding: 34px;
+  background:
+    radial-gradient(circle at 18% 20%, rgba(124, 77, 255, 0.08), transparent 34%),
+    radial-gradient(circle at 82% 78%, rgba(34, 211, 238, 0.08), transparent 36%),
+    #ffffff;
 }
 
 .account-list {

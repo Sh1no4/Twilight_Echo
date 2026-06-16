@@ -9,7 +9,7 @@ type AudioEnginePlaybackInfoCallback = (info: PlaybackInfo) => void
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
-type AppTheme = 'system' | 'pureWhite' | 'dark' | 'aurora'
+type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 type BuiltInTrackSource = 'local' | 'ncm'
 type TrackSource = BuiltInTrackSource | (string & {})

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { reactive } from 'vue'
 
-const { MediaProviderRegistry, getProviderLocalId, getTrackProviderId } = (await import(
+const { MediaProviderRegistry, getProviderLocalId, getTrackProviderId, toProviderIpcArgs } = (await import(
   new URL('./mediaProvider.ts', import.meta.url).href
 )) as typeof import('./mediaProvider')
 
@@ -48,4 +49,26 @@ test('normalizes NetEase song ids from legacy and prefixed tracks', () => {
   assert.equal(getNcmSongId({ id: 'ncm:123', ncmSongId: undefined }), 123)
   assert.equal(getNcmSongId({ id: 'ncm:123', ncmSongId: 456 }), 456)
   assert.equal(getNcmSongId({ id: 'bili:123', ncmSongId: undefined }), null)
+})
+
+test('normalizes reactive provider call args before IPC', () => {
+  const track = reactive({
+    id: 'bili:BV1xx:123',
+    title: 'Song',
+    artist: 'Artist',
+    album: 'Album',
+    filePath: 'bili:BV1xx:123',
+    fileName: 'Song',
+    duration: 1,
+    size: 0,
+    cover: null,
+    lyrics: null,
+    source: 'bili',
+    nested: reactive({ value: 'ok' })
+  })
+
+  assert.throws(() => structuredClone([track]), /could not be cloned/i)
+  const args = toProviderIpcArgs([track])
+  assert.deepEqual(structuredClone(args), args)
+  assert.equal((args[0] as { nested: { value: string } }).nested.value, 'ok')
 })

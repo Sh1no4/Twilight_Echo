@@ -228,7 +228,7 @@ const createInactiveVisualizationData = (): NativeVisualizationData => ({
   active: false
 })
 const visualizationData = ref<NativeVisualizationData>(createInactiveVisualizationData())
-const { settings: appSettings } = useSettingsStore()
+const { settings: appSettings, updateSettings } = useSettingsStore()
 let playbackAudio: HTMLAudioElement | null = null
 let playbackObjectUrl: string | null = null
 let nativePlaybackActive = false
@@ -438,6 +438,37 @@ async function refreshAudioOutputState(): Promise<void> {
   })()
 
   return audioEngineStateRequest
+}
+
+function cloneAudioProcessingSettings(settings: AudioProcessingSettings): AudioProcessingSettings {
+  return {
+    ...settings,
+    eqBands: settings.eqBands.map((band) => ({ ...band }))
+  }
+}
+
+function mergeAudioProcessingPatch(
+  patch: Partial<AudioProcessingSettings>
+): AudioProcessingSettings {
+  return cloneAudioProcessingSettings({
+    ...audioProcessing.value,
+    ...patch,
+    eqBands: patch.eqBands ?? audioProcessing.value.eqBands
+  })
+}
+
+async function persistAudioProcessingFallback(
+  nextSettings: AudioProcessingSettings,
+  reason: unknown
+): Promise<void> {
+  audioEngineError.value = reason instanceof Error ? reason.message : String(reason)
+  try {
+    const savedSettings = await updateSettings({ audioProcessing: nextSettings })
+    audioProcessing.value = cloneAudioProcessingSettings(savedSettings.audioProcessing)
+  } catch (err) {
+    audioEngineError.value = err instanceof Error ? err.message : String(err)
+    console.error('[audio-engine] Failed to persist audio processing fallback:', err)
+  }
 }
 
 function normalizeDsdState(
@@ -888,7 +919,7 @@ function setupAudioEngineListeners(): void {
       if (info.nativePlaybackActive !== undefined) {
         nativePlaybackActive = info.nativePlaybackActive
       }
-      if (!nativePlaybackActive && info.state !== 'stopped') return
+      if (!nativePlaybackActive) return
       applyNativePlaybackInfo(info)
     })
   )
@@ -1441,18 +1472,19 @@ export function usePlayerStore(): {
   }
 
   async function setAudioProcessing(settings: Partial<AudioProcessingSettings>): Promise<void> {
+    const nextSettings = mergeAudioProcessingPatch(settings)
+    audioProcessing.value = nextSettings
     try {
-      audioProcessing.value = await window.api.audioEngine.setAudioProcessing({
-        ...audioProcessing.value,
-        ...settings
-      })
+      audioProcessing.value = cloneAudioProcessingSettings(
+        await window.api.audioEngine.setAudioProcessing(nextSettings)
+      )
       playbackInfo.value = normalizeNativePlaybackInfo(
         await window.api.audioEngine.getPlaybackInfo()
       )
       scheduleCrossfadeIfNeeded()
     } catch (err) {
-      audioEngineError.value = err instanceof Error ? err.message : String(err)
       console.error('[audio-engine] Failed to update audio processing settings:', err)
+      await persistAudioProcessingFallback(nextSettings, err)
     }
   }
 
@@ -1495,27 +1527,41 @@ export function usePlayerStore(): {
     try {
       const path = await window.api.audioEngine.selectImpulseResponse()
       if (!path) return
+      const nextSettings = mergeAudioProcessingPatch({
+        convolverEnabled: true,
+        convolverIrPath: path
+      })
+      audioProcessing.value = nextSettings
       await window.api.audioEngine.loadImpulseResponse(path)
-      audioProcessing.value = await window.api.audioEngine.getAudioProcessing()
+      audioProcessing.value = cloneAudioProcessingSettings(
+        await window.api.audioEngine.getAudioProcessing()
+      )
       playbackInfo.value = normalizeNativePlaybackInfo(
         await window.api.audioEngine.getPlaybackInfo()
       )
     } catch (err) {
-      audioEngineError.value = err instanceof Error ? err.message : String(err)
       console.error('[音频引擎] 加载卷积脉冲响应失败:', err)
+      await persistAudioProcessingFallback(audioProcessing.value, err)
     }
   }
 
   async function clearImpulseResponse(): Promise<void> {
+    const nextSettings = mergeAudioProcessingPatch({
+      convolverEnabled: false,
+      convolverIrPath: ''
+    })
+    audioProcessing.value = nextSettings
     try {
       await window.api.audioEngine.unloadImpulseResponse()
-      audioProcessing.value = await window.api.audioEngine.getAudioProcessing()
+      audioProcessing.value = cloneAudioProcessingSettings(
+        await window.api.audioEngine.getAudioProcessing()
+      )
       playbackInfo.value = normalizeNativePlaybackInfo(
         await window.api.audioEngine.getPlaybackInfo()
       )
     } catch (err) {
-      audioEngineError.value = err instanceof Error ? err.message : String(err)
       console.error('[音频引擎] 卸载卷积脉冲响应失败:', err)
+      await persistAudioProcessingFallback(nextSettings, err)
     }
   }
 

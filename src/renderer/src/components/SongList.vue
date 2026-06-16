@@ -539,20 +539,6 @@ watch(
                   <i class="pi pi-times"></i>
                 </button>
               </div>
-              <div class="view-tools" aria-hidden="true">
-                <button class="view-tool active" type="button" tabindex="-1">
-                  <i class="pi pi-list"></i>
-                </button>
-                <button class="view-tool" type="button" tabindex="-1">
-                  <i class="pi pi-th-large"></i>
-                </button>
-                <button class="view-tool" type="button" tabindex="-1">
-                  <i class="pi pi-filter"></i>
-                </button>
-                <button class="view-tool" type="button" tabindex="-1">
-                  <i class="pi pi-ellipsis-h"></i>
-                </button>
-              </div>
             </div>
           </div>
           <div v-if="displayTracks.length === 0" class="empty-state">
@@ -1427,10 +1413,6 @@ watch(
     min-width: 0;
     flex-basis: 100%;
   }
-
-  .view-tools {
-    display: none;
-  }
 }
 
 .search-box.focused {
@@ -1493,33 +1475,4 @@ watch(
   background: rgba(124, 77, 255, 0.2);
 }
 
-.view-tools {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.view-tool {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid rgba(255, 255, 255, 0.62);
-  border-radius: 10px;
-  color: rgba(36, 44, 72, 0.74);
-  background: rgba(255, 255, 255, 0.42);
-  box-shadow: 0 12px 30px rgba(86, 70, 160, 0.08);
-  backdrop-filter: blur(14px) saturate(145%);
-  -webkit-backdrop-filter: blur(14px) saturate(145%);
-}
-
-.view-tool.active {
-  color: var(--te-primary-500);
-  background: rgba(255, 255, 255, 0.62);
-}
-
-.view-tool i {
-  font-size: 13px;
-}
 </style>

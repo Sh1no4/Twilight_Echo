@@ -225,11 +225,36 @@ function getPlaylistItems(data) {
 function getSongItems(data) {
   if (Array.isArray(data.songs)) return data.songs
   if (Array.isArray(data.data?.songs)) return data.data.songs
+  if (Array.isArray(data.result?.songs)) return data.result.songs
+  if (Array.isArray(data.data?.result?.songs)) return data.data.result.songs
   if (Array.isArray(data.playlist?.tracks)) return data.playlist.tracks
   if (Array.isArray(data.playlist?.songs)) return data.playlist.songs
   if (Array.isArray(data.data?.playlist?.tracks)) return data.data.playlist.tracks
+  if (Array.isArray(data.data?.artist?.hotSongs)) return data.data.artist.hotSongs
+  if (Array.isArray(data.artist?.hotSongs)) return data.artist.hotSongs
+  if (Array.isArray(data.hotSongs)) return data.hotSongs
   if (Array.isArray(data.data)) return data.data
   return []
+}
+
+function addPositiveId(target, value) {
+  const normalized = Number(value)
+  if (Number.isFinite(normalized) && normalized > 0) target.add(normalized)
+}
+
+function mergePlaylists(...groups) {
+  const seen = new Set()
+  const merged = []
+  for (const group of groups) {
+    if (!Array.isArray(group)) continue
+    for (const playlist of group) {
+      const key = String(playlist?.id ?? '')
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      merged.push(playlist)
+    }
+  }
+  return merged
 }
 
 function getLikelistIds(data) {
@@ -585,51 +610,65 @@ async function searchArtists(keywords, limit = 30, offset = 0) {
 }
 
 async function fetchArtistTopSongs(artistId) {
-  try {
-    const data = await requestAuthed(`/artist/top/song?id=${artistId}`)
-    if (Array.isArray(data.songs) && data.songs.length > 0) return data.songs.map(normalizeTrack)
-  } catch {
-    // Fall back to the legacy endpoint.
+  const encodedId = encodeURIComponent(String(artistId))
+  const endpoints = [
+    `/artist/top/song?id=${encodedId}`,
+    `/artist/songs?id=${encodedId}&order=hot&limit=50&offset=0`,
+    `/artists?id=${encodedId}`
+  ]
+
+  let lastError = null
+  for (const endpoint of endpoints) {
+    try {
+      const data = await requestAuthed(endpoint)
+      const songs = getSongItems(data)
+      if (songs.length > 0) return songs.map(normalizeTrack)
+    } catch (error) {
+      lastError = error
+    }
   }
-  const data = await requestAuthed(`/artists?id=${artistId}`)
-  const hotSongs = Array.isArray(data.hotSongs) ? data.hotSongs : []
-  return hotSongs.map(normalizeTrack)
+  if (lastError) throw lastError
+  return []
 }
 
 async function fetchArtistPlaylists(artistId) {
   const candidateUserIds = new Set()
   try {
-    const detail = await requestAuthed(`/artist/detail?id=${artistId}`)
+    const detail = await requestAuthed(`/artist/detail?id=${encodeURIComponent(String(artistId))}`)
     const ids = [
       detail.data?.artist?.accountId,
       detail.data?.artist?.userId,
+      detail.data?.artist?.profile?.userId,
       detail.data?.user?.userId,
+      detail.data?.userProfile?.userId,
       detail.artist?.accountId,
       detail.artist?.userId,
-      detail.user?.userId
+      detail.artist?.profile?.userId,
+      detail.user?.userId,
+      detail.userProfile?.userId
     ]
-    for (const id of ids) {
-      const normalized = Number(id)
-      if (Number.isFinite(normalized) && normalized > 0) candidateUserIds.add(normalized)
-    }
+    ids.forEach((id) => addPositiveId(candidateUserIds, id))
   } catch {
     // Some artists do not expose a linked user account.
   }
 
+  const playlistGroups = []
   for (const uid of candidateUserIds) {
     try {
       const playlists = await fetchUserPlaylistsByUid(uid)
-      if (playlists.length > 0) return playlists
+      if (playlists.length > 0) playlistGroups.push(playlists)
     } catch {
       // Try the next candidate account id.
     }
   }
-  return []
+  return mergePlaylists(...playlistGroups)
 }
 
 async function fetchUserPlaylistsByUid(uid) {
-  const data = await requestAuthed(`/user/playlist?uid=${uid}&limit=1000`)
-  const playlists = Array.isArray(data.playlist) ? data.playlist : []
+  const data = await requestAuthed(
+    `/user/playlist?uid=${encodeURIComponent(String(uid))}&limit=1000`
+  )
+  const playlists = getPlaylistItems(data)
   return playlists.map(normalizePlaylist)
 }
 

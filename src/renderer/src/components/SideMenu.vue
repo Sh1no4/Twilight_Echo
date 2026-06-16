@@ -109,6 +109,7 @@ function handleImportClick(): void {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   transform: translate3d(-100%, 0, 0);
+  transform-origin: left center;
   will-change: transform;
   transition:
     transform 0.32s var(--te-ease-soft),
@@ -117,6 +118,20 @@ function handleImportClick(): void {
 
 .side-menu.open {
   transform: translate3d(0, 0, 0);
+}
+
+.side-menu .menu-items {
+  transform: translate3d(-8px, 0, 0);
+  opacity: 0;
+  transform-origin: left center;
+  transition:
+    transform 0.28s var(--te-ease-soft),
+    opacity 0.2s ease;
+}
+
+.side-menu.open .menu-items {
+  transform: translate3d(0, 0, 0);
+  opacity: 1;
 }
 
 .menu-items {

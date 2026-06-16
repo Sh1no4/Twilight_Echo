@@ -1126,6 +1126,11 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   private createNativeBinding(dependencies: AudioEngineManagerDependencies): NativeAudioBinding | null {
+    const nativeAddonCandidates = dependencies.nativeAddonCandidates ?? getNativeAddonCandidates
+    if (!nativeAddonCandidates().some((candidate) => existsSync(candidate))) {
+      this.lastNativeError = '未加载 twilight_audio_node.node'
+      return null
+    }
     if (dependencies.audioServiceFactory || canUseAudioEngineService()) {
       const service = dependencies.audioServiceFactory?.() ??
         new AudioEngineServiceBinding({
@@ -1138,7 +1143,7 @@ export class AudioEngineManager extends EventEmitter {
       this.audioServiceBinding = service
       return service
     }
-    return loadNativeBinding(dependencies.nativeAddonCandidates)
+    return loadNativeBinding(nativeAddonCandidates)
   }
 
   private handleAudioServiceCrash(reason: string): void {

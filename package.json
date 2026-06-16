@@ -67,15 +67,5 @@
     "vue": "^3.5.25",
     "vue-eslint-parser": "^10.2.0",
     "vue-tsc": "^3.1.6"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron",
-      "esbuild",
-      "@neteasecloudmusicapienhanced/api"
-    ],
-    "patchedDependencies": {
-      "@neteasecloudmusicapienhanced/api@4.35.1": "patches/@neteasecloudmusicapienhanced__api@4.35.1.patch"
-    }
   }
 }

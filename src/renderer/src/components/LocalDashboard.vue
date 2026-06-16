@@ -411,13 +411,6 @@ function playDashboardTrack(track: Track | undefined): void {
                         <p>{{ track.artist || 'Unknown Artist' }}</p>
                     </div>
                 </div>
-                <div v-if="recentlyAddedTracks.length === 0" class="recent-item">
-                    <img :src="FALLBACK_THUMB" alt="Album">
-                    <div class="recent-info">
-                        <h4>暂无本地音乐</h4>
-                        <p>导入音乐后会显示最近添加</p>
-                    </div>
-                </div>
             </div>
         </div>
 
