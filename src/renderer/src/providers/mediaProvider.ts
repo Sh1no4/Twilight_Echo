@@ -43,6 +43,13 @@ export interface MediaProviderProfile {
   followeds?: number
 }
 
+export interface MediaProviderQrLogin {
+  key: string
+  qrContent?: string
+  imageDataUrl?: string
+  expiresInSeconds?: number
+}
+
 export interface MediaProviderUserSummary {
   id: number | string
   name: string
@@ -78,6 +85,7 @@ export interface MediaProvider {
   checkLogin?: () => Promise<{ loggedIn: boolean; profile: MediaProviderProfile | null }>
   getProfile?: () => Promise<MediaProviderProfile | null>
   logout?: () => Promise<void>
+  getQrLogin?: () => Promise<MediaProviderQrLogin | null>
   getQrKey?: () => Promise<string | null>
   getQrImage?: (key: string) => Promise<string | null>
   checkQrLogin?: (key: string) => Promise<{ code: number }>

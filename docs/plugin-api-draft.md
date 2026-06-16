@@ -154,6 +154,7 @@ interface MediaProviderRegistration {
   checkLogin?(): Promise<{ loggedIn: boolean; profile: ProviderProfile | null }>
   getProfile?(): Promise<ProviderProfile | null>
   logout?(): Promise<void>
+  getQrLogin?(): Promise<{ key: string; qrContent?: string; imageDataUrl?: string; expiresInSeconds?: number } | null>
   getQrKey?(): Promise<string | null>
   getQrImage?(key: string): Promise<string | null>
   checkQrLogin?(key: string): Promise<{ code: number }>
@@ -195,6 +196,10 @@ instead of `window.api.ncm` or host cookie IPC.
 The bundled NetEase plugin receives a private internal gateway for the local NCM
 API and song cache. This gateway is not part of the public third-party plugin
 API and is rejected for all other plugin ids.
+
+Provider login UIs should prefer `getQrLogin()` when present. It lets a plugin
+return a provider-native QR payload such as a URL, while the renderer owns QR
+image generation. Older providers can keep `getQrKey()` plus `getQrImage()`.
 
 Provider tracks must keep their source prefix throughout queue, library, and
 session persistence:
@@ -379,6 +384,11 @@ as local `.tep` installation.
 A Discord status sync plugin can subscribe to `player:playback-info` and publish
 status externally after declaring `network` and `player:observe`.
 
-A Bilibili provider plugin can be described by the manifest and future
-`MediaProvider` shape without changing this Phase 1 host contract; provider
-runtime integration starts in Phase 2.
+A Bilibili provider plugin can be described by the manifest and
+`MediaProvider` shape without changing this host contract. Twilight Echo treats
+`com.twilightecho.provider.bilibili` as an external third-party `provider + ui`
+plugin that can be distributed from a separate plugin repository or a private
+server index. It uses Bilibili Web QR login, stores cookies in
+`plugin-data/com.twilightecho.provider.bilibili/settings.json`, lists the
+signed-in user's video favorite folders, and returns `127.0.0.1` loopback audio
+proxy URLs for `bili:<bvid>:<cid>` tracks.

@@ -1,26 +1,29 @@
 <script setup lang="ts">
-import type { NcmProfile, NcmPlaylistSummary } from '../stores/useNcmStore'
+import type { MediaProviderPlaylistSummary, MediaProviderProfile } from '../providers/mediaProvider'
 
 defineProps<{
   isLoggedIn: boolean
-  profile: NcmProfile | null
+  providerLabel?: string
+  profile: MediaProviderProfile | null
   profileSignature: string
   likedSummary: { name: string; trackCount: number; cover: string | null }
   libraryLoaded: boolean
-  userPlaylistEntries: NcmPlaylistSummary[]
+  userPlaylistEntries: MediaProviderPlaylistSummary[]
+  showLikedPanel?: boolean
+  showSocialStats?: boolean
 }>()
 
 const emit = defineEmits<{
   openUserList: [type: 'follows' | 'followers']
   openLikedTracks: []
   playLikedSongs: []
-  openPlaylist: [playlist: NcmPlaylistSummary]
+  openPlaylist: [playlist: MediaProviderPlaylistSummary]
 }>()
 </script>
 
 <template>
   <div class="library-view">
-    <section class="library-hero">
+    <section class="library-hero" :class="{ 'library-hero-single': showLikedPanel === false }">
       <div class="profile-panel">
         <div class="profile-avatar-wrap">
           <img v-if="profile?.avatarUrl" :src="profile.avatarUrl" class="profile-avatar" alt="" />
@@ -30,11 +33,11 @@ const emit = defineEmits<{
         </div>
 
         <div class="profile-meta">
-          <span class="profile-kicker">网易云音乐个人音乐库</span>
+          <span class="profile-kicker">{{ providerLabel || '在线音源' }}个人音乐库</span>
           <h3 class="profile-name">{{ profile?.nickname || '未登录用户' }}</h3>
           <p class="profile-signature">{{ profileSignature }}</p>
 
-          <div v-if="isLoggedIn" class="profile-stats">
+          <div v-if="isLoggedIn && showSocialStats !== false" class="profile-stats">
             <button type="button" class="stat-item" @click="emit('openUserList', 'follows')">
               <span class="stat-num">{{ profile?.follows || 0 }}</span>
               <span class="stat-label">关注</span>
@@ -47,7 +50,12 @@ const emit = defineEmits<{
         </div>
       </div>
 
-      <button type="button" class="liked-panel" @click="emit('openLikedTracks')">
+      <button
+        v-if="showLikedPanel !== false"
+        type="button"
+        class="liked-panel"
+        @click="emit('openLikedTracks')"
+      >
         <span class="liked-light"></span>
         <span class="liked-copy">
           <span class="liked-card-badge">我的收藏</span>
@@ -75,8 +83,8 @@ const emit = defineEmits<{
     <section class="playlist-section">
       <div class="section-heading">
         <div>
-          <h3>我的歌单</h3>
-          <p>{{ userPlaylistEntries.length }} 个在线歌单</p>
+          <h3>我的收藏夹</h3>
+          <p>{{ userPlaylistEntries.length }} 个在线列表</p>
         </div>
       </div>
 
@@ -126,6 +134,10 @@ const emit = defineEmits<{
   grid-template-columns: minmax(0, 1.08fr) minmax(320px, 0.92fr);
   gap: 18px;
   margin-bottom: 34px;
+}
+
+.library-hero-single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .profile-panel,

@@ -90,6 +90,15 @@ export async function syncPluginProviders(): Promise<void> {
           logout: provider.capabilities.includes('login')
             ? () => callProvider<void>('logout')
             : undefined,
+          getQrLogin: provider.capabilities.includes('login')
+            ? () =>
+                callProvider<{
+                  key: string
+                  qrContent?: string
+                  imageDataUrl?: string
+                  expiresInSeconds?: number
+                } | null>('getQrLogin')
+            : undefined,
           getQrKey: provider.capabilities.includes('login')
             ? () => callProvider<string | null>('getQrKey')
             : undefined,

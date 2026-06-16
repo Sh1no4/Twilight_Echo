@@ -20,6 +20,29 @@ Installed plugins live under the Electron user data directory:
 Plugins must not write application files outside their own package and private
 data directories.
 
+## Plugin Repository Boundary
+
+The Twilight Echo app repository must not store third-party plugin source code,
+plugin tests, or third-party plugin-specific `.tep` release packages. It may
+store host/runtime code, plugin API typings, plugin tooling, built-in app
+plugins, and the app-side plugin index client.
+
+Third-party plugin source and packages belong in the external plugin repository:
+
+- GitHub: `https://github.com/asenyarzc-cpu/Twilight-Echo-plugins/`
+- Local path: `D:\Twilight-Echo-plugins`
+
+Future third-party plugins should be added under
+`D:\Twilight-Echo-plugins\plugins\<plugin-name>\`, packaged into
+`D:\Twilight-Echo-plugins\packages\`, and indexed by
+`D:\Twilight-Echo-plugins\plugins.json`. The app consumes that repository
+through `TWILIGHT_PLUGIN_INDEX_URL`, pointed at the GitHub raw `plugins.json` URL
+or a future self-hosted HTTPS `plugins.json`.
+
+Built-in application plugins are the exception. NetEase Cloud Music remains
+owned by the app repository because it is a bundled base provider, synced by the
+host, enabled by default, and not uninstallable like third-party plugins.
+
 ## Manifest
 
 Required `plugin.json` fields:
@@ -114,6 +137,17 @@ does not import host internals. Its local NetEase API and song-cache access go
 through a host-injected internal gateway that is rejected for all third-party
 plugins.
 
+Third-party providers use the same public provider API.
+`com.twilightecho.provider.bilibili` is maintained as an external `provider +
+ui` plugin rather than an app-bundled provider. It can be served from a separate
+GitHub plugin repository or a private plugin server index. When installed and
+enabled, it exposes provider id `bili`, uses Web QR login through
+`getQrLogin()` / `checkQrLogin()`, stores Bilibili cookies only in its private
+settings file, and maps favorite videos to audio-only tracks with stable ids
+`bili:<bvid>:<cid>`. Playback URLs may be local `127.0.0.1` loopback proxy URLs
+owned by the plugin so the renderer audio element can play DASH audio without
+downloading or showing video.
+
 ## Phase 3 Event And UI Baseline
 
 Tool plugins can subscribe through `context.twilight.events.on`. The normalized
@@ -156,7 +190,8 @@ Twilight Echo ships local-publishable ecosystem tooling:
   `checksumSha256`, `tags`, and `verified`.
 
 The app reads the bundled index by default. Development builds may set
-`TWILIGHT_PLUGIN_INDEX_URL` to a remote GitHub raw JSON URL. Index installation
-validates protocol, package size, sha256 checksum, and the packaged manifest
-before delegating to the normal trust-based installer. The index cannot install
-or overwrite bundled plugins such as `com.twilightecho.provider.ncm`.
+`TWILIGHT_PLUGIN_INDEX_URL` to any HTTPS `plugins.json` endpoint, including a
+GitHub raw URL or a private server. Index installation validates protocol,
+package size, sha256 checksum, and the packaged manifest before delegating to
+the normal trust-based installer. The index cannot install or overwrite bundled
+plugins such as `com.twilightecho.provider.ncm`.

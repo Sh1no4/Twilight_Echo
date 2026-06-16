@@ -156,6 +156,15 @@ JS 插件 API 与 DSP C ABI 各自有独立版本号、独立的稳定性承诺�
 - `create-twilight-plugin init` 生成 `tool`、`provider`、`ui-tool`、`theme` 插件项目；`create-twilight-plugin pack` 生成 `.tep` 并排除 `node_modules`、缓存和构建噪声。
 - `resources/plugin-index/plugins.json` 是 schemaVersion 1 的官方示例索引；索引包安装前校验 URL 协议、大小、sha256 和包内 manifest，并禁止覆盖内置网易云插件。
 - 插件管理页增加“插件市场”，展示 verified、权限、兼容/已安装/可更新状态；安装仍走信任式权限警告。
+- Bilibili 收藏夹音频 Provider 示例作为独立插件仓库发布：它是第三方
+  `provider + ui` 插件，需要用户通过远程插件索引安装并启用；登录后通过 Provider
+  API 暴露收藏夹和 `bili:<bvid>:<cid>` 音频 track，播放 URL 由插件维护的
+  `127.0.0.1` loopback 代理提供。远程索引可先指向 GitHub raw JSON，后续可用
+  `TWILIGHT_PLUGIN_INDEX_URL` 切换到自托管 HTTPS `plugins.json`。
+- 第三方插件源码不再写入 Twilight Echo 主项目。后续新增第三方插件统一写入
+  `D:\Twilight-Echo-plugins`，对应 GitHub 仓库为
+  `https://github.com/asenyarzc-cpu/Twilight-Echo-plugins/`；主项目只实现通用宿主能力，
+  通过远程 `plugins.json` 消费插件。
 
 ---
 

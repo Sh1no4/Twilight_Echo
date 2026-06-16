@@ -21,7 +21,7 @@
     "build:audio-engine:mingw": "cmake --build audio-engine/build/mingw-static && npm run stage:audio-engine",
     "stage:audio-engine": "node scripts/stage-audio-engine.cjs",
     "test:playback-routing": "node --experimental-strip-types --test src/renderer/src/utils/playbackRouting.test.ts",
-    "test:audio-manager": "node --experimental-strip-types --test src/main/audioEngineManager.test.ts",
+    "test:audio-manager": "node --experimental-strip-types --test src/main/audioEngineManager.test.ts src/main/audioEngineServiceClient.test.ts",
     "test:plugins": "node --experimental-strip-types --test src/main/plugins/manifest.test.ts src/main/plugins/dependencies.test.ts src/main/plugins/settingsStore.test.ts src/main/plugins/events.test.ts src/main/plugins/indexService.test.ts src/renderer/src/providers/mediaProvider.test.ts src/renderer/src/extensions/themeSelection.test.ts",
     "test:audio-engine": "ctest --test-dir audio-engine/build/default --output-on-failure",
     "test:audio-engine:mingw": "ctest --test-dir audio-engine/build/mingw-static --output-on-failure",
@@ -42,9 +42,11 @@
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@neteasecloudmusicapienhanced/api": "^4.32.0",
+    "@types/qrcode": "^1.5.6",
     "extract-zip": "^2.0.1",
     "music-metadata": "^11.12.3",
-    "primeicons": "^7.0.0"
+    "primeicons": "^7.0.0",
+    "qrcode": "^1.5.4"
   },
   "devDependencies": {
     "@electron-toolkit/eslint-config-prettier": "3.0.0",

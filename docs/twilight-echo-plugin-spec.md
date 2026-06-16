@@ -49,6 +49,19 @@
 - 插件日志：`logs/plugins/<id>.log`，每插件独立通道。
 - **禁止**插件写入自身目录与私有数据目录以外的应用文件。
 
+### 2.1 插件源码仓库边界
+
+- Twilight Echo 主项目仓库不保存第三方插件源码、测试或第三方插件专属 `.tep` 发布包。
+- 主项目只保存宿主能力、插件 API / tooling、内置基础插件和应用内插件市场客户端。
+- 第三方插件源码统一写入独立插件仓库：
+  - GitHub：`https://github.com/asenyarzc-cpu/Twilight-Echo-plugins/`
+  - 本地：`D:\Twilight-Echo-plugins`
+- 新增第三方插件时，源码放在 `D:\Twilight-Echo-plugins\plugins\<plugin-name>\`，
+  打包产物放在 `D:\Twilight-Echo-plugins\packages\`，索引写入
+  `D:\Twilight-Echo-plugins\plugins.json`。
+- 主项目通过 `TWILIGHT_PLUGIN_INDEX_URL` 指向 GitHub raw `plugins.json` 或未来自托管
+  HTTPS `plugins.json` 来消费第三方插件。
+
 ## 3. API 版本与兼容性承诺
 
 - 插件 API 独立于应用版本，使用 `apiVersion` 主版本号（1, 2, …）。
@@ -101,6 +114,11 @@ Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playe
 - 网易云音乐是 Twilight Echo 自带基础 `MediaProvider` 插件：插件 ID 为
   `com.twilightecho.provider.ncm`，provider 前缀固定为 `ncm`，随软件分发并默认启用；
   用户可停用以隔离故障或隐藏在线音源，但不可像第三方插件一样卸载。
+- 第三方音源插件使用同一 Provider API。Bilibili 收藏夹音频插件作为外部插件仓库
+  或私有插件索引分发，插件 ID 为 `com.twilightecho.provider.bilibili`，provider 前缀
+  固定为 `bili`；仅在用户安装、启用并扫码登录后，流媒体 UI 才展示其视频收藏夹。
+  该插件可通过 `getQrLogin()` 暴露 Web QR 登录，并可返回 `127.0.0.1` loopback 音频
+  代理 URL 播放 DASH 音频，不下载或展示视频画面。
 
 ## 5. DSP 原生插件 C ABI 标准
 
@@ -185,5 +203,5 @@ Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playe
 - `@twilight-echo/plugin-api` 是开发者侧权威 typings 包，API v1 类型从这里导出；宿主内部实现可复用自身类型，但不得改变 v1 语义。
 - `create-twilight-plugin` 提供 `init` 与 `pack`：模板覆盖 `tool`、`provider`、`ui-tool`、`theme`；`pack` 产物为 `.tep` zip，根目录必须包含 `plugin.json`。
 - 官方静态索引为 `plugins.json`，当前 schemaVersion 固定为 `1`。索引 entry 复用 manifest 字段，并增加 `sourceUrl`、`checksumSha256`、`tags`、`verified`。
-- 应用内市场默认读取随应用分发的本地索引；开发环境可用 `TWILIGHT_PLUGIN_INDEX_URL` 指向远程 GitHub raw JSON。安装前必须校验 sourceUrl、包大小、sha256 与包内 manifest。
+- 应用内市场默认读取随应用分发的本地索引；开发环境可用 `TWILIGHT_PLUGIN_INDEX_URL` 指向远程 GitHub raw JSON 或自托管 HTTPS `plugins.json`。安装前必须校验 sourceUrl、包大小、sha256 与包内 manifest。
 - Phase 5 仍是信任式安装：索引只提高可发现性和完整性校验，不代表运行时权限 enforcement 或恶意代码沙箱。

@@ -7,7 +7,9 @@ import {
   type NcmArtistSummary,
   type NcmUserSummary
 } from '../stores/useNcmStore'
+import { useProviderStore } from '../stores/useProviderStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
+import type { MediaProviderPlaylistSummary } from '../providers/mediaProvider'
 import StreamingHome from './StreamingHome.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
 import StreamingSearch from './StreamingSearch.vue'
@@ -27,9 +29,10 @@ interface RecSection {
 }
 
 type StreamingTab = 'home' | 'library'
+type StreamingProvider = 'ncm' | 'bili'
 type DetailView =
   | { type: 'liked' }
-  | { type: 'playlist'; playlist: NcmPlaylistSummary }
+  | { type: 'playlist'; playlist: MediaProviderPlaylistSummary }
   | { type: 'rec'; section: RecSection }
   | { type: 'artist'; artist: NcmArtistSummary }
   | { type: 'user_list'; listType: 'follows' | 'followers'; users: NcmUserSummary[]; title: string }
@@ -41,6 +44,7 @@ defineProps<{
 }>()
 
 const activeTab = ref<StreamingTab>('home')
+const activeProvider = ref<StreamingProvider>('ncm')
 const streamingTransitionName = ref('stream-page-down')
 const currentDetail = ref<DetailView | null>(null)
 const detailTracks = ref<Track[]>([])
@@ -57,8 +61,33 @@ const privateContentSongs = ref<Track[]>([])
 const recommendPlaylists = ref<NcmPlaylistSummary[]>([])
 const recsLoading = ref(false)
 const recsError = ref('')
+const providerStore = useProviderStore()
+const biliLoggedIn = ref(false)
+const biliProfile = ref<{
+  userId: number
+  nickname: string
+  avatarUrl: string
+  signature: string
+  follows: number
+  followeds: number
+} | null>(null)
+const biliLibraryLoading = ref(false)
+const biliLibraryLoaded = ref(false)
+const biliLibraryError = ref('')
+const biliPlaylists = ref<MediaProviderPlaylistSummary[]>([])
+const biliLikedPlaylist = ref<MediaProviderPlaylistSummary | null>(null)
+
+const isBiliActive = computed(() => activeProvider.value === 'bili')
+const biliProviderAvailable = computed(() => providerStore.hasProvider('bili'))
+const providerTabs = computed(() => [
+  { id: 'ncm' as const, label: '网易云', icon: 'pi pi-cloud', available: true },
+  ...(biliProviderAvailable.value
+    ? [{ id: 'bili' as const, label: 'Bilibili', icon: 'pi pi-video', available: true }]
+    : [])
+])
 
 async function loadRecommendations(): Promise<void> {
+  if (isBiliActive.value) return
   if (!isLoggedIn.value) return
   if (dailySongs.value.length > 0 && personalFmSongs.value.length > 0) return
   recsLoading.value = true
@@ -106,6 +135,9 @@ const tabs: TabItem[] = [
   { key: 'home', label: '主页', icon: 'pi pi-sparkles' },
   { key: 'library', label: '音乐库', icon: 'pi pi-heart' }
 ]
+const visibleTabs = computed<TabItem[]>(() =>
+  isBiliActive.value ? [{ key: 'library', label: '收藏夹', icon: 'pi pi-folder' }] : tabs
+)
 
 const currentView = computed(() => tabs.find((t) => t.key === activeTab.value))
 
@@ -276,14 +308,36 @@ function onSearchTrackClick(track: Track): void {
 
 const { currentTrack, playTrack, formatTime } = usePlayerStore()
 
-const profileSignature = computed(() => profile.value?.signature?.trim() || '暂无个人简介')
+const activeProfile = computed(() => (isBiliActive.value ? biliProfile.value : profile.value))
+const activeLoggedIn = computed(() => (isBiliActive.value ? biliLoggedIn.value : isLoggedIn.value))
+const activeProviderAvailable = computed(() =>
+  isBiliActive.value ? biliProviderAvailable.value : providerAvailable.value
+)
+const activeProviderError = computed(() =>
+  isBiliActive.value ? biliLibraryError.value : providerError.value
+)
+const activeLibraryLoaded = computed(() =>
+  isBiliActive.value ? biliLibraryLoaded.value : libraryLoaded.value
+)
+const activeLibraryError = computed(() =>
+  isBiliActive.value ? biliLibraryError.value : libraryError.value
+)
+const showNcmSearch = computed(() => !isBiliActive.value && isLoggedIn.value)
+const trackUnitLabel = computed(() => (isBiliActive.value ? '个视频' : '首歌曲'))
+const profileSignature = computed(() => activeProfile.value?.signature?.trim() || '暂无个人简介')
 
 const headerTitle = computed(() => {
+  if (isBiliActive.value && currentDetail.value?.type === 'playlist') return currentDetail.value.playlist.name
+  if (isBiliActive.value) return 'Bilibili 收藏夹'
   if (isSearching.value) return `搜索: ${searchQuery.value.trim()}`
   if (currentDetail.value?.type === 'rec') return currentDetail.value.section.title
   if (currentDetail.value?.type === 'liked') return '我收藏的歌曲'
   if (currentDetail.value?.type === 'playlist') return currentDetail.value.playlist.name
   return currentView.value?.label ?? '流媒体'
+})
+const headerSubtitle = computed(() => {
+  if (isBiliActive.value) return activeLoggedIn.value ? '已登录账号的视频收藏夹' : '登录后展示全部视频收藏夹'
+  return timeGreeting.value
 })
 
 const timeGreeting = computed(() => {
@@ -295,15 +349,23 @@ const timeGreeting = computed(() => {
   if (hour < 22) return '晚上好，放松一下'
   return '夜深了，放一首安静的歌'
 })
-const rootLoading = computed(() => libraryLoading.value && !currentDetail.value)
+const rootLoading = computed(() =>
+  isBiliActive.value
+    ? biliLibraryLoading.value && !currentDetail.value
+    : libraryLoading.value && !currentDetail.value
+)
 
 const likedSummary = computed(() => ({
-  name: '我收藏的歌曲',
-  cover: likedPlaylist.value?.cover ?? null,
-  trackCount: likedCount.value ?? likedPlaylist.value?.trackCount ?? 0
+  name: isBiliActive.value ? 'Bilibili 收藏夹' : '我收藏的歌曲',
+  cover: isBiliActive.value ? (biliLikedPlaylist.value?.cover ?? null) : (likedPlaylist.value?.cover ?? null),
+  trackCount: isBiliActive.value
+    ? biliPlaylists.value.length
+    : (likedCount.value ?? likedPlaylist.value?.trackCount ?? 0)
 }))
 
-const userPlaylistEntries = computed(() => userPlaylists.value)
+const userPlaylistEntries = computed(() =>
+  isBiliActive.value ? biliPlaylists.value : userPlaylists.value
+)
 
 const currentArtistPlaylists = computed(() =>
   currentDetail.value?.type === 'artist' ? artistPlaylists.value : []
@@ -339,7 +401,7 @@ const detailHeaderInfo = computed(() => {
     return {
       title: currentDetail.value.playlist.name,
       cover: currentDetail.value.playlist.cover,
-      desc: `共 ${currentDetail.value.playlist.trackCount} 首歌曲`,
+      desc: `共 ${currentDetail.value.playlist.trackCount} ${trackUnitLabel.value}`,
       icon: 'pi pi-list'
     }
   }
@@ -350,7 +412,7 @@ const detailHeaderInfo = computed(() => {
         currentDetail.value.section.tracks.length > 0
           ? currentDetail.value.section.tracks[0].cover
           : null,
-      desc: `共 ${currentDetail.value.section.tracks.length} 首歌曲`,
+      desc: `共 ${currentDetail.value.section.tracks.length} ${trackUnitLabel.value}`,
       icon: currentDetail.value.section.icon
     }
   }
@@ -387,6 +449,7 @@ const detailHeaderInfo = computed(() => {
 })
 
 function selectTab(key: StreamingTab): void {
+  if (isBiliActive.value && key !== 'library') return
   if (activeTab.value !== key) {
     const oldIndex = getStreamingTabIndex(activeTab.value)
     const newIndex = getStreamingTabIndex(key)
@@ -394,6 +457,21 @@ function selectTab(key: StreamingTab): void {
     resetDetail()
   }
   activeTab.value = key
+}
+
+function selectProvider(provider: StreamingProvider): void {
+  if (activeProvider.value === provider) return
+  activeProvider.value = provider
+  resetDetail()
+  clearSearch()
+  if (provider === 'bili') {
+    activeTab.value = 'library'
+    void refreshBiliState()
+    void ensureBiliLibraryLoaded()
+  }
+  if (provider === 'ncm' && activeTab.value === 'home' && isLoggedIn.value) {
+    void loadRecommendations()
+  }
 }
 
 function resetDetail(): void {
@@ -424,11 +502,68 @@ function isActiveDetailLoad(token: number): boolean {
 }
 
 async function ensureLibraryLoaded(force = false): Promise<void> {
+  if (isBiliActive.value) {
+    await ensureBiliLibraryLoaded(force)
+    return
+  }
   if (!isLoggedIn.value) return
   try {
     await fetchUserLibrary(force)
   } catch {
     // error is already stored in libraryError
+  }
+}
+
+async function refreshBiliState(): Promise<void> {
+  await providerStore.syncProviders().catch(() => undefined)
+  if (!biliProviderAvailable.value) {
+    biliLoggedIn.value = false
+    biliProfile.value = null
+    biliPlaylists.value = []
+    biliLikedPlaylist.value = null
+    biliLibraryLoaded.value = false
+    return
+  }
+  try {
+    const state = await providerStore.checkLogin('bili')
+    biliLoggedIn.value = state.loggedIn
+    biliProfile.value = state.profile
+      ? {
+          userId: Number(state.profile.userId) || 0,
+          nickname: state.profile.nickname || 'Bilibili 用户',
+          avatarUrl: state.profile.avatarUrl || '',
+          signature: state.profile.signature ?? '',
+          follows: Number(state.profile.follows) || 0,
+          followeds: Number(state.profile.followeds) || 0
+        }
+      : null
+    if (!state.loggedIn) {
+      biliPlaylists.value = []
+      biliLikedPlaylist.value = null
+      biliLibraryLoaded.value = false
+    }
+    biliLibraryError.value = ''
+  } catch (error) {
+    biliLoggedIn.value = false
+    biliProfile.value = null
+    biliLibraryError.value = error instanceof Error ? error.message : 'Bilibili 登录状态检查失败'
+  }
+}
+
+async function ensureBiliLibraryLoaded(force = false): Promise<void> {
+  if (!biliProviderAvailable.value || !biliLoggedIn.value) return
+  if (biliLibraryLoaded.value && !force) return
+  biliLibraryLoading.value = true
+  biliLibraryError.value = ''
+  try {
+    const library = await providerStore.fetchUserLibrary('bili', force)
+    biliLikedPlaylist.value = library.likedPlaylist ?? null
+    biliPlaylists.value = library.playlists
+    biliLibraryLoaded.value = true
+  } catch (error) {
+    biliLibraryError.value = error instanceof Error ? error.message : '加载 Bilibili 收藏夹失败'
+  } finally {
+    biliLibraryLoading.value = false
   }
 }
 
@@ -454,18 +589,20 @@ async function openLikedTracks(force = false): Promise<void> {
   }
 }
 
-async function openPlaylist(playlist: NcmPlaylistSummary, force = false): Promise<void> {
+async function openPlaylist(playlist: MediaProviderPlaylistSummary, force = false): Promise<void> {
   streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = { type: 'playlist', playlist }
   const token = beginDetailLoad()
 
   try {
-    const tracks = await fetchPlaylistTracks(playlist.id, force)
+    const tracks = isBiliActive.value
+      ? await providerStore.fetchPlaylistTracks('bili', playlist.id, force)
+      : await fetchPlaylistTracks(playlist.id, force)
     if (!isActiveDetailLoad(token)) return
     detailTracks.value = tracks
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
-    detailError.value = error instanceof Error ? error.message : '加载歌单失败'
+    detailError.value = error instanceof Error ? error.message : '加载列表失败'
     detailTracks.value = []
   } finally {
     if (isActiveDetailLoad(token)) {
@@ -604,6 +741,11 @@ async function retryCurrentView(): Promise<void> {
 }
 
 watch(activeTab, async (tab) => {
+  if (isBiliActive.value) {
+    if (tab !== 'library') activeTab.value = 'library'
+    if (biliLoggedIn.value) await ensureBiliLibraryLoaded()
+    return
+  }
   if (tab === 'home' && isLoggedIn.value) {
     loadRecommendations()
   }
@@ -632,7 +774,24 @@ watch(
   }
 )
 
+watch(
+  () => biliProviderAvailable.value,
+  async (available) => {
+    if (!available && isBiliActive.value) {
+      selectProvider('ncm')
+      return
+    }
+    if (available) {
+      await refreshBiliState()
+    }
+  }
+)
+
 onMounted(async () => {
+  await providerStore.syncProviders().catch(() => undefined)
+  if (biliProviderAvailable.value) {
+    await refreshBiliState()
+  }
   if (activeTab.value === 'home' && isLoggedIn.value) {
     loadRecommendations()
   }
@@ -652,9 +811,22 @@ onMounted(async () => {
         <div class="streaming-sidebar-header">
           <span class="streaming-sidebar-title">流媒体</span>
         </div>
+        <div class="streaming-provider-tabs">
+          <button
+            v-for="provider in providerTabs"
+            :key="provider.id"
+            type="button"
+            class="provider-tab-pill"
+            :class="{ active: activeProvider === provider.id }"
+            @click="selectProvider(provider.id)"
+          >
+            <i :class="provider.icon"></i>
+            <span>{{ provider.label }}</span>
+          </button>
+        </div>
         <nav class="streaming-nav">
           <div
-            v-for="tab in tabs"
+            v-for="tab in visibleTabs"
             :key="tab.key"
             class="streaming-menu-item"
             :class="{ active: activeTab === tab.key }"
@@ -691,13 +863,19 @@ onMounted(async () => {
               v-if="activeTab === 'home' && !currentDetail && !isSearching"
               class="streaming-content-subtitle"
             >
-              {{ timeGreeting }}
+              {{ headerSubtitle }}
+            </p>
+            <p
+              v-else-if="isBiliActive && !currentDetail && !isSearching"
+              class="streaming-content-subtitle"
+            >
+              {{ headerSubtitle }}
             </p>
           </div>
         </div>
         <div class="streaming-header-right">
           <div
-            v-if="isLoggedIn"
+            v-if="showNcmSearch"
             class="streaming-search-box"
             :class="{ focused: searchInputFocused }"
           >
@@ -715,24 +893,24 @@ onMounted(async () => {
               <i class="pi pi-times"></i>
             </button>
           </div>
-          <button v-if="isLoggedIn" class="streaming-round-btn" title="通知">
+          <button v-if="showNcmSearch" class="streaming-round-btn" title="通知">
             <i class="pi pi-bell"></i>
             <span class="notify-dot"></span>
           </button>
           <button
-            v-if="isLoggedIn"
+            v-if="activeLoggedIn"
             class="streaming-avatar-btn"
             title="个人资料"
             @click="$emit('toggleMenu')"
           >
-            <img v-if="profile?.avatarUrl" :src="profile.avatarUrl" alt="" />
+            <img v-if="activeProfile?.avatarUrl" :src="activeProfile.avatarUrl" alt="" />
             <i v-else class="pi pi-user"></i>
           </button>
         </div>
       </div>
 
       <!-- Search Type Tabs -->
-      <div v-if="isSearching && !currentDetail" class="streaming-search-tabs">
+      <div v-if="showNcmSearch && isSearching && !currentDetail" class="streaming-search-tabs">
         <div
           class="search-tab-pill"
           :class="{ active: searchType === 'songs' }"
@@ -758,7 +936,7 @@ onMounted(async () => {
 
       <Transition :name="streamingTransitionName" mode="out-in">
         <div
-          v-if="isSearching && !currentDetail"
+          v-if="showNcmSearch && isSearching && !currentDetail"
           key="search-results"
           class="streaming-content-body"
           :class="{ 'has-search-tabs': isSearching }"
@@ -786,7 +964,7 @@ onMounted(async () => {
         </div>
         <div v-else :key="activeTab" class="streaming-content-body">
           <StreamingHome
-            v-if="activeTab === 'home' && !currentDetail && providerAvailable"
+            v-if="activeTab === 'home' && !currentDetail && activeProviderAvailable"
             :is-logged-in="isLoggedIn"
             :recs-loading="recsLoading"
             :recs-error="recsError"
@@ -797,18 +975,33 @@ onMounted(async () => {
             @open-playlist="openPlaylist"
           />
 
-          <div v-else-if="!providerAvailable && !currentDetail" class="streaming-placeholder">
+          <div v-else-if="!activeProviderAvailable && !currentDetail" class="streaming-placeholder">
             <i class="pi pi-ban" style="font-size: 48px; color: #ccc"></i>
-            <p class="placeholder-title">网易云音乐插件已停用</p>
+            <p class="placeholder-title">
+              {{ isBiliActive ? 'Bilibili 插件已停用' : '网易云音乐插件已停用' }}
+            </p>
             <p class="placeholder-hint">
-              {{ providerError || '请在设置的插件页重新启用 NetEase Cloud Music。' }}
+              {{
+                activeProviderError ||
+                (isBiliActive
+                  ? '请在设置的插件页重新启用 Bilibili Provider。'
+                  : '请在设置的插件页重新启用 NetEase Cloud Music。')
+              }}
             </p>
           </div>
 
-          <div v-else-if="!isLoggedIn && !currentDetail" class="streaming-placeholder">
+          <div v-else-if="!activeLoggedIn && !currentDetail" class="streaming-placeholder">
             <i class="pi pi-user" style="font-size: 48px; color: #ccc"></i>
-            <p class="placeholder-title">请先登录网易云音乐</p>
-            <p class="placeholder-hint">登录后即可加载我收藏的歌曲和在线歌单</p>
+            <p class="placeholder-title">
+              {{ isBiliActive ? '请先登录 Bilibili' : '请先登录网易云音乐' }}
+            </p>
+            <p class="placeholder-hint">
+              {{
+                isBiliActive
+                  ? '登录后即可加载全部视频收藏夹'
+                  : '登录后即可加载我收藏的歌曲和在线歌单'
+              }}
+            </p>
           </div>
 
           <div v-else-if="rootLoading && !currentDetail" class="streaming-placeholder">
@@ -817,10 +1010,10 @@ onMounted(async () => {
             <p class="placeholder-hint">请稍候...</p>
           </div>
 
-          <div v-else-if="!currentDetail && libraryError" class="streaming-placeholder">
+          <div v-else-if="!currentDetail && activeLibraryError" class="streaming-placeholder">
             <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
             <p class="placeholder-title">加载失败</p>
-            <p class="placeholder-hint">{{ libraryError }}</p>
+            <p class="placeholder-hint">{{ activeLibraryError }}</p>
             <button type="button" class="stream-action-btn" @click="retryCurrentView">
               <span>重试</span>
             </button>
@@ -889,7 +1082,7 @@ onMounted(async () => {
                       <th class="col-cover-header"></th>
                       <th class="col-index">#</th>
                       <th class="col-info">标题</th>
-                      <th class="col-like-header"></th>
+                      <th v-if="!isBiliActive" class="col-like-header"></th>
                       <th class="col-album">专辑</th>
                       <th class="col-duration">时长</th>
                     </tr>
@@ -918,7 +1111,7 @@ onMounted(async () => {
                           :style="{ animationDelay: `${i * 0.05}s` }"
                         ></div>
                       </td>
-                      <td class="col-like"></td>
+                      <td v-if="!isBiliActive" class="col-like"></td>
                       <td class="col-album">
                         <div
                           class="skeleton-box skeleton-album-box"
@@ -1078,7 +1271,7 @@ onMounted(async () => {
                       <th class="col-cover-header">{{ detailTracks.length }} 首</th>
                       <th class="col-index">#</th>
                       <th class="col-info">标题</th>
-                      <th class="col-like-header"></th>
+                      <th v-if="!isBiliActive" class="col-like-header"></th>
                       <th class="col-album">专辑</th>
                       <th class="col-duration">时长</th>
                     </tr>
@@ -1108,7 +1301,7 @@ onMounted(async () => {
                         <div class="track-title">{{ track.title }}</div>
                         <div class="track-artist">{{ track.artist }}</div>
                       </td>
-                      <td class="col-like">
+                      <td v-if="!isBiliActive" class="col-like">
                         <button
                           class="btn-like"
                           :class="{
@@ -1176,12 +1369,15 @@ onMounted(async () => {
 
           <StreamingLibrary
             v-else-if="activeTab === 'library' && !currentDetail"
-            :is-logged-in="isLoggedIn"
-            :profile="profile"
+            :is-logged-in="activeLoggedIn"
+            :provider-label="isBiliActive ? 'Bilibili' : '网易云音乐'"
+            :profile="activeProfile"
             :profile-signature="profileSignature"
             :liked-summary="likedSummary"
-            :library-loaded="libraryLoaded"
+            :library-loaded="activeLibraryLoaded"
             :user-playlist-entries="userPlaylistEntries"
+            :show-liked-panel="!isBiliActive"
+            :show-social-stats="!isBiliActive"
             @open-user-list="openUserList"
             @open-liked-tracks="openLikedTracks"
             @play-liked-songs="playLikedSongs"
@@ -1251,6 +1447,42 @@ onMounted(async () => {
   color: #6b7280;
   text-transform: none;
   letter-spacing: 0;
+}
+
+.streaming-provider-tabs {
+  display: grid;
+  gap: 7px;
+  padding: 0 9px 12px 9px;
+}
+
+.provider-tab-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid #eef1f6;
+  border-radius: 8px;
+  background: #fff;
+  color: rgba(82, 90, 122, 0.7);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 10px 22px rgba(34, 42, 68, 0.05);
+  transition:
+    background 0.18s,
+    border-color 0.18s,
+    color 0.18s;
+}
+
+.provider-tab-pill.active {
+  border-color: rgba(124, 77, 255, 0.18);
+  background: #f5f1ff;
+  color: #6f46e8;
+}
+
+.provider-tab-pill i {
+  font-size: 14px;
 }
 
 .streaming-nav {

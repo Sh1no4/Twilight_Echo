@@ -182,6 +182,13 @@ export interface ProviderProfile {
   [key: string]: unknown
 }
 
+export interface QrLoginRequest {
+  key: string
+  qrContent?: string
+  imageDataUrl?: string
+  expiresInSeconds?: number
+}
+
 export interface TwilightMediaProviderRegistration {
   id: string
   name: string
@@ -203,6 +210,7 @@ export interface TwilightMediaProviderRegistration {
   checkLogin?(): Promise<{ loggedIn: boolean; profile: ProviderProfile | null }>
   getProfile?(): Promise<ProviderProfile | null>
   logout?(): Promise<void>
+  getQrLogin?(): Promise<QrLoginRequest | null>
   getQrKey?(): Promise<string | null>
   getQrImage?(key: string): Promise<string | null>
   checkQrLogin?(key: string): Promise<{ code: number }>

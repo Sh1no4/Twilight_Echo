@@ -96,6 +96,7 @@ const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
   'checkLogin',
   'getProfile',
   'logout',
+  'getQrLogin',
   'getQrKey',
   'getQrImage',
   'checkQrLogin',

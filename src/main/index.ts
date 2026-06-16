@@ -1095,6 +1095,8 @@ function setupAudioEngineIpc(): void {
     audioDevice: appSettings.audioDevice,
     audioOutputConfig: appSettings.audioOutputConfig,
     audioProcessing: appSettings.audioProcessing
+  }, {
+    audioServiceEntry: join(__dirname, 'audioEngineService.js')
   })
 
   audioEngineManager.on('property-change', ({ name, data }) => {
@@ -1416,7 +1418,7 @@ function setupPluginIpc(): void {
     },
     getPlaybackInfo: async () => audioEngineManager?.getPlaybackInfo() ?? null,
     applyNativeDspPluginChain: async (chainJson) => {
-      audioEngineManager?.setNativeDspPluginChain(chainJson)
+      await audioEngineManager?.setNativeDspPluginChain(chainJson)
     },
     player: {
       play: async () => {

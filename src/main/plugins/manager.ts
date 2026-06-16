@@ -81,6 +81,7 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly applyNativeDspPluginChain: TwilightPluginManagerOptions['applyNativeDspPluginChain']
   private readonly player: TwilightPluginManagerOptions['player']
   private readonly running = new Map<string, RunningPlugin>()
+  private readonly stopping = new Set<string>()
   private readonly providerCalls = new Map<
     string,
     {
@@ -136,16 +137,20 @@ export class TwilightPluginManager extends EventEmitter {
 
   async list(): Promise<TwilightPluginDescriptor[]> {
     this.ensureRoots()
-    const descriptors: TwilightPluginDescriptor[] = []
+    const descriptorsById = new Map<string, TwilightPluginDescriptor>()
     const rootEntries = await safeReadDir(this.roots.plugins)
     for (const pluginDir of rootEntries) {
       const idRoot = join(this.roots.plugins, pluginDir)
       const versionEntries = await safeReadDir(idRoot)
       for (const version of versionEntries) {
-        descriptors.push(await this.readDescriptor(join(idRoot, version), 'scan'))
+        const descriptor = await this.readDescriptor(join(idRoot, version), 'scan')
+        const current = descriptorsById.get(descriptor.id)
+        if (!current || compareSemver(descriptor.version, current.version) > 0) {
+          descriptorsById.set(descriptor.id, descriptor)
+        }
       }
     }
-    return descriptors.sort((left, right) => left.name.localeCompare(right.name))
+    return [...descriptorsById.values()].sort((left, right) => left.name.localeCompare(right.name))
   }
 
   async installFromPath(
@@ -170,6 +175,9 @@ export class TwilightPluginManager extends EventEmitter {
         throw new Error('自带插件随 Twilight Echo 分发，不能用本地包覆盖安装')
       }
       await this.confirmTrustBasedInstall(manifest, options.sourceLabel ?? source)
+      const previousState = this.state[manifest.id]
+      const wasEnabled = previousState?.enabled === true
+      await this.stopPlugin(manifest.id).catch(() => undefined)
       const target = this.versionRoot(manifest.id, manifest.version)
       await rm(target, { recursive: true, force: true })
       mkdirSync(dirname(target), { recursive: true })
@@ -177,15 +185,30 @@ export class TwilightPluginManager extends EventEmitter {
         recursive: true,
         filter: (path) => !isInsidePath(path, this.roots.plugins)
       })
+      await this.removeOtherPluginVersions(manifest.id, manifest.version)
       const now = new Date().toISOString()
       this.state[manifest.id] = {
-        enabled: false,
-        installedAt: this.state[manifest.id]?.installedAt ?? now,
+        enabled: wasEnabled,
+        installedAt: previousState?.installedAt ?? now,
         updatedAt: now,
         source: options.source ?? (isTep ? 'tep' : 'directory')
       }
       await this.saveState()
       const plugin = await this.readDescriptor(target, this.state[manifest.id].source)
+      if (wasEnabled) {
+        try {
+          if (plugin.main) {
+            await this.startPlugin(plugin)
+          } else {
+            this.markStarted(plugin)
+          }
+          await this.syncNativeDspChain()
+        } catch (error) {
+          this.markFailed(manifest.id, error instanceof Error ? error.message : String(error), plugin)
+          throw error
+        }
+      }
+      this.emit('changed')
       return {
         plugin,
         warning: '信任式安装：插件拥有与应用相同的权限，请仅安装可信来源。'
@@ -492,8 +515,9 @@ export class TwilightPluginManager extends EventEmitter {
       void this.handleHostMessage(descriptor.id, message)
     })
     child.on('exit', (code) => {
+      const wasStopping = this.stopping.delete(descriptor.id)
       this.running.delete(descriptor.id)
-      if (this.state[descriptor.id]?.enabled) {
+      if (this.state[descriptor.id]?.enabled && !wasStopping) {
         this.markFailed(descriptor.id, `插件宿主进程退出：${code}`)
       }
     })
@@ -524,6 +548,7 @@ export class TwilightPluginManager extends EventEmitter {
   private async stopPlugin(id: string): Promise<void> {
     const running = this.running.get(id)
     if (!running) return
+    this.stopping.add(id)
     const requestId = randomUUID()
     running.process.postMessage({ kind: 'deactivate', requestId } satisfies PluginHostRequest)
     await new Promise<void>((resolveDone) => {
@@ -537,7 +562,14 @@ export class TwilightPluginManager extends EventEmitter {
       }
       running.process.on('message', onMessage)
     })
-    running.process.kill()
+    await new Promise<void>((resolveDone) => {
+      const timer = setTimeout(resolveDone, PLUGIN_DEACTIVATE_TIMEOUT_MS)
+      running.process.once('exit', () => {
+        clearTimeout(timer)
+        resolveDone()
+      })
+      running.process.kill()
+    })
     this.running.delete(id)
   }
 
@@ -1003,6 +1035,16 @@ export class TwilightPluginManager extends EventEmitter {
     return join(this.roots.plugins, id, version)
   }
 
+  private async removeOtherPluginVersions(id: string, keepVersion: string): Promise<void> {
+    const pluginRoot = join(this.roots.plugins, id)
+    const versions = await safeReadDir(pluginRoot)
+    await Promise.all(
+      versions
+        .filter((version) => version !== keepVersion)
+        .map((version) => rm(join(pluginRoot, version), { recursive: true, force: true }))
+    )
+  }
+
   private ensureRoots(): void {
     mkdirSync(this.roots.plugins, { recursive: true })
     mkdirSync(this.roots.data, { recursive: true })
@@ -1093,6 +1135,16 @@ function isAbsoluteLike(path: string): boolean {
 
 function sepForPlatform(): string {
   return process.platform === 'win32' ? '\\' : '/'
+}
+
+function compareSemver(left: string, right: string): number {
+  const leftParts = left.split('.').map((part) => Number.parseInt(part, 10) || 0)
+  const rightParts = right.split('.').map((part) => Number.parseInt(part, 10) || 0)
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] > rightParts[index]) return 1
+    if (leftParts[index] < rightParts[index]) return -1
+  }
+  return 0
 }
 
 function normalizeContributionId(value: unknown): string {

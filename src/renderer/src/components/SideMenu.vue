@@ -14,6 +14,7 @@ const emit = defineEmits<{
   enterStreaming: []
 }>()
 
+
 interface MenuItem {
   key: string
   label: string
@@ -21,6 +22,7 @@ interface MenuItem {
 }
 
 const menuItems: MenuItem[] = [
+  { key: 'dashboard', label: '首页', icon: 'pi pi-home' },
   { key: 'allSongs', label: '所有歌曲', icon: 'pi pi-headphones' },
   { key: 'artists', label: '艺术家', icon: 'pi pi-microphone' },
   { key: 'albums', label: '专辑', icon: 'pi pi-clone' },
@@ -28,7 +30,7 @@ const menuItems: MenuItem[] = [
   { key: 'folders', label: '文件夹', icon: 'pi pi-folder-open' }
 ]
 
-const activeKey = ref('allSongs')
+const activeKey = ref('dashboard')
 const scanning = ref(false)
 const showImportDialog = ref(false)
 

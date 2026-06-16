@@ -1,8 +1,11 @@
-﻿<script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+<script setup lang="ts">
+import QRCode from 'qrcode'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useNcmStore } from '../stores/useNcmStore'
+import { useProviderStore } from '../stores/useProviderStore'
+import type { MediaProviderProfile } from '../providers/mediaProvider'
 
-const props = defineProps<{
+defineProps<{
   forceProfile?: boolean
 }>()
 
@@ -12,20 +15,24 @@ const emit = defineEmits<{
 }>()
 
 const {
-  logout: storeLogout,
-  checkLogin: storeCheckLogin,
-  getQrKey: storeGetQrKey,
-  getQrImage: storeGetQrImage,
-  checkQrLogin: storeCheckQrLogin,
-  profile: storeProfile,
-  providerError
+  providerAvailable: ncmProviderAvailable,
+  providerError: ncmProviderError,
+  logout: storeNcmLogout,
+  checkLogin: storeNcmCheckLogin,
+  getQrKey: storeNcmGetQrKey,
+  getQrImage: storeNcmGetQrImage,
+  checkQrLogin: storeNcmCheckQrLogin,
+  profile: ncmProfile
 } = useNcmStore()
+const providerStore = useProviderStore()
 
 const POLL_INTERVAL = 3000
 const QR_KEY_COOLDOWN = 5000
 
+type LoginProviderId = 'ncm' | 'bili'
 type PageState =
   | 'loading'
+  | 'account_list'
   | 'logged_in'
   | 'qr_loading'
   | 'qr_ready'
@@ -34,34 +41,86 @@ type PageState =
   | 'login_success'
   | 'error'
 
+interface AccountState {
+  available: boolean
+  loggedIn: boolean
+  profile: MediaProviderProfile | null
+  error: string
+}
+
+interface ProviderCard {
+  id: LoginProviderId
+  name: string
+  desc: string
+  icon: string
+  available: boolean
+  loggedIn: boolean
+  profile: MediaProviderProfile | null
+  error: string
+}
+
 const pageState = ref<PageState>('loading')
+const activeProvider = ref<LoginProviderId | null>(null)
 const errorMsg = ref('')
 const qrImage = ref('')
 const qrKey = ref('')
-const profile = ref<{
-  userId: number
-  nickname: string
-  avatarUrl: string
-  signature?: string
-} | null>(null)
 const lastKeyGenTime = ref(0)
+const accountStates = ref<Record<LoginProviderId, AccountState>>({
+  ncm: { available: true, loggedIn: false, profile: null, error: '' },
+  bili: { available: false, loggedIn: false, profile: null, error: '' }
+})
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
+const providerCards = computed<ProviderCard[]>(() => {
+  const cards: ProviderCard[] = [
+    {
+      id: 'ncm',
+      name: '网易云音乐',
+      desc: '内置基础音源',
+      icon: 'pi pi-cloud',
+      ...accountStates.value.ncm
+    }
+  ]
+  if (accountStates.value.bili.available) {
+    cards.push({
+      id: 'bili',
+      name: 'Bilibili',
+      desc: '收藏夹视频音频',
+      icon: 'pi pi-video',
+      ...accountStates.value.bili
+    })
+  }
+  return cards
+})
+
+const activeCard = computed(() =>
+  activeProvider.value
+    ? providerCards.value.find((provider) => provider.id === activeProvider.value) ?? null
+    : null
+)
+
+const activeProfile = computed(() =>
+  activeProvider.value ? accountStates.value[activeProvider.value].profile : null
+)
+
 const statusText = computed(() => {
+  const providerName = activeCard.value?.name ?? '在线账号'
   switch (pageState.value) {
     case 'loading':
       return '正在初始化...'
     case 'qr_loading':
       return '正在生成二维码...'
     case 'qr_ready':
-      return '请使用网易云音乐 App 扫码登录'
+      return activeProvider.value === 'bili'
+        ? '请使用哔哩哔哩 App 扫码登录'
+        : '请使用网易云音乐 App 扫码登录'
     case 'qr_scanned':
       return '已扫码，请在手机上确认登录'
     case 'qr_expired':
       return '二维码已过期，请点击刷新'
     case 'login_success':
-      return '登录成功'
+      return `${providerName} 登录成功`
     case 'error':
       return errorMsg.value
     default:
@@ -69,63 +128,116 @@ const statusText = computed(() => {
   }
 })
 
-async function checkLoginStatus(): Promise<boolean> {
+async function refreshAccounts(): Promise<void> {
+  await providerStore.syncProviders().catch(() => undefined)
+  await Promise.all([refreshNcmAccount(), refreshBiliAccount()])
+  if (!activeProvider.value && pageState.value === 'loading') pageState.value = 'account_list'
+}
+
+async function refreshNcmAccount(): Promise<void> {
   try {
-    const loggedIn = await storeCheckLogin()
-    profile.value = storeProfile.value
-    return loggedIn
-  } catch {
-    return false
+    const loggedIn = await storeNcmCheckLogin()
+    accountStates.value = {
+      ...accountStates.value,
+      ncm: {
+        available: ncmProviderAvailable.value,
+        loggedIn,
+        profile: ncmProfile.value,
+        error: ncmProviderError.value
+      }
+    }
+  } catch (error) {
+    accountStates.value = {
+      ...accountStates.value,
+      ncm: {
+        available: false,
+        loggedIn: false,
+        profile: null,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
   }
 }
 
-async function getQrKey(): Promise<string | null> {
+async function refreshBiliAccount(): Promise<void> {
+  const available = providerStore.hasProvider('bili')
+  if (!available) {
+    accountStates.value = {
+      ...accountStates.value,
+      bili: { available: false, loggedIn: false, profile: null, error: '' }
+    }
+    return
+  }
   try {
-    return await storeGetQrKey()
-  } catch {
-    return null
+    const state = await providerStore.checkLogin('bili')
+    accountStates.value = {
+      ...accountStates.value,
+      bili: {
+        available: true,
+        loggedIn: state.loggedIn,
+        profile: state.profile,
+        error: ''
+      }
+    }
+  } catch (error) {
+    accountStates.value = {
+      ...accountStates.value,
+      bili: {
+        available: true,
+        loggedIn: false,
+        profile: null,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    }
   }
 }
 
-async function getQrImage(key: string): Promise<string | null> {
-  try {
-    return await storeGetQrImage(key)
-  } catch {
-    return null
+function openAccount(providerId: LoginProviderId): void {
+  activeProvider.value = providerId
+  const state = accountStates.value[providerId]
+  if (!state.available) {
+    pageState.value = 'error'
+    errorMsg.value = state.error || `${providerId === 'ncm' ? '网易云音乐' : 'Bilibili'} Provider 未启用`
+    return
   }
+  if (state.loggedIn) {
+    pageState.value = 'logged_in'
+    return
+  }
+  void startQrLogin()
 }
 
-async function checkQrScan(key: string): Promise<{ code: number }> {
+async function checkQrScan(providerId: LoginProviderId, key: string): Promise<{ code: number }> {
   try {
-    return await storeCheckQrLogin(key)
+    if (providerId === 'ncm') return await storeNcmCheckQrLogin(key)
+    return await providerStore.checkQrLogin('bili', key)
   } catch {
     return { code: -1 }
   }
 }
 
-function startPolling(key: string): void {
+function startPolling(providerId: LoginProviderId, key: string): void {
   stopPolling()
   pollTimer = setInterval(async () => {
-    const result = await checkQrScan(key)
-    switch (result.code) {
-      case 800:
-        pageState.value = 'qr_expired'
-        stopPolling()
-        break
-      case 801:
-        pageState.value = 'qr_ready'
-        break
-      case 802:
-        pageState.value = 'qr_scanned'
-        break
-      case 803: {
-        stopPolling()
-        await checkLoginStatus()
-        emit('loginSuccess')
-        break
-      }
-      default:
-        break
+    const result = await checkQrScan(providerId, key)
+    if (isQrExpired(providerId, result.code)) {
+      pageState.value = 'qr_expired'
+      stopPolling()
+      return
+    }
+    if (isQrWaiting(providerId, result.code)) {
+      pageState.value = 'qr_ready'
+      return
+    }
+    if (isQrScanned(providerId, result.code)) {
+      pageState.value = 'qr_scanned'
+      return
+    }
+    if (isQrSuccess(providerId, result.code)) {
+      stopPolling()
+      pageState.value = 'login_success'
+      await refreshAccounts()
+      emit('loginSuccess')
     }
   }, POLL_INTERVAL)
 }
@@ -138,10 +250,10 @@ function stopPolling(): void {
 }
 
 async function startQrLogin(): Promise<void> {
+  const providerId = activeProvider.value
+  if (!providerId) return
   const now = Date.now()
-  if (now - lastKeyGenTime.value < QR_KEY_COOLDOWN) {
-    return
-  }
+  if (now - lastKeyGenTime.value < QR_KEY_COOLDOWN) return
   lastKeyGenTime.value = now
 
   pageState.value = 'qr_loading'
@@ -149,56 +261,86 @@ async function startQrLogin(): Promise<void> {
   qrKey.value = ''
   errorMsg.value = ''
 
-  const key = await getQrKey()
-  if (!key) {
+  try {
+    if (providerId === 'ncm') {
+      const key = await storeNcmGetQrKey()
+      if (!key) throw new Error(ncmProviderError.value || '获取二维码密钥失败，请确认网易云插件已启用')
+      qrKey.value = key
+      const img = await storeNcmGetQrImage(key)
+      if (!img) throw new Error('生成二维码失败，请稍后重试')
+      qrImage.value = img
+    } else {
+      const qr = await providerStore.getQrLogin('bili')
+      if (!qr?.key) throw new Error('获取 Bilibili 二维码失败')
+      qrKey.value = qr.key
+      qrImage.value =
+        qr.imageDataUrl ||
+        (await QRCode.toDataURL(qr.qrContent || qr.key, {
+          margin: 1,
+          width: 220
+        }))
+    }
+    pageState.value = 'qr_ready'
+    startPolling(providerId, qrKey.value)
+  } catch (error) {
     pageState.value = 'error'
-    errorMsg.value = providerError.value || '获取二维码密钥失败，请确认网易云插件已启用'
-    return
+    errorMsg.value = error instanceof Error ? error.message : String(error)
   }
-  qrKey.value = key
+}
 
-  const img = await getQrImage(key)
-  if (!img) {
-    pageState.value = 'error'
-    errorMsg.value = '生成二维码失败，请稍后重试'
-    return
-  }
-  qrImage.value = img
-  pageState.value = 'qr_ready'
+function isQrExpired(providerId: LoginProviderId, code: number): boolean {
+  return providerId === 'ncm' ? code === 800 : code === 86038
+}
 
-  startPolling(key)
+function isQrWaiting(providerId: LoginProviderId, code: number): boolean {
+  return providerId === 'ncm' ? code === 801 : code === 86101
+}
+
+function isQrScanned(providerId: LoginProviderId, code: number): boolean {
+  return providerId === 'ncm' ? code === 802 : code === 86090
+}
+
+function isQrSuccess(providerId: LoginProviderId, code: number): boolean {
+  return providerId === 'ncm' ? code === 803 : code === 0
 }
 
 function handleRefresh(): void {
-  startQrLogin()
+  lastKeyGenTime.value = 0
+  void startQrLogin()
 }
 
 async function handleLogout(): Promise<void> {
-  await storeLogout()
-  profile.value = null
-  pageState.value = 'qr_loading'
+  const providerId = activeProvider.value
+  if (!providerId) return
+  if (providerId === 'ncm') {
+    await storeNcmLogout()
+  } else {
+    await providerStore.logout('bili')
+  }
+  await refreshAccounts()
+  openAccount(providerId)
+}
+
+function backToAccounts(): void {
+  stopPolling()
+  activeProvider.value = null
+  pageState.value = 'account_list'
   qrImage.value = ''
   qrKey.value = ''
-  startQrLogin()
+  errorMsg.value = ''
 }
 
 function handleBack(): void {
+  if (activeProvider.value) {
+    backToAccounts()
+    return
+  }
   stopPolling()
   emit('back')
 }
 
 onMounted(async () => {
-  const loggedIn = await checkLoginStatus()
-  if (loggedIn) {
-    if (props.forceProfile) {
-      pageState.value = 'logged_in'
-      return
-    }
-    emit('loginSuccess')
-    return
-  }
-
-  await startQrLogin()
+  await refreshAccounts()
 })
 
 onUnmounted(() => {
@@ -212,29 +354,56 @@ onUnmounted(() => {
       <button class="login-back-btn" title="返回" @click="handleBack">
         <i class="pi pi-arrow-left"></i>
       </button>
-      <h2 class="login-title">网易云音乐登录</h2>
+      <h2 class="login-title">
+        {{ activeCard ? activeCard.name : '在线账号' }}
+      </h2>
     </div>
 
     <div class="login-body">
-      <!-- Loading state -->
       <div v-if="pageState === 'loading'" class="login-status">
         <i class="pi pi-spin pi-spinner" style="font-size: 32px; color: #999"></i>
         <p>{{ statusText }}</p>
       </div>
 
-      <!-- Error state -->
+      <div v-else-if="pageState === 'account_list'" class="account-list">
+        <button
+          v-for="provider in providerCards"
+          :key="provider.id"
+          type="button"
+          class="account-card"
+          :class="{ unavailable: !provider.available }"
+          @click="openAccount(provider.id)"
+        >
+          <span class="account-icon">
+            <i :class="provider.icon"></i>
+          </span>
+          <span class="account-copy">
+            <span class="account-title">{{ provider.name }}</span>
+            <span class="account-desc">
+              <template v-if="provider.loggedIn">
+                已登录：{{ provider.profile?.nickname || provider.profile?.userId || '未知用户' }}
+              </template>
+              <template v-else-if="provider.available">{{ provider.desc }}</template>
+              <template v-else>{{ provider.error || 'Provider 未启用' }}</template>
+            </span>
+          </span>
+          <span class="account-action">
+            {{ provider.loggedIn ? '管理' : provider.available ? '登录' : '不可用' }}
+          </span>
+        </button>
+      </div>
+
       <div v-else-if="pageState === 'error'" class="login-status">
         <i class="pi pi-exclamation-triangle" style="font-size: 32px; color: #e74c3c"></i>
         <p class="error-text">{{ statusText }}</p>
-        <button class="login-action-btn" @click="startQrLogin">重试</button>
+        <button class="login-action-btn" @click="handleRefresh">重试</button>
       </div>
 
-      <!-- Logged in state -->
       <div v-else-if="pageState === 'logged_in'" class="login-profile">
         <div class="profile-card">
           <img
-            v-if="profile?.avatarUrl"
-            :src="profile.avatarUrl"
+            v-if="activeProfile?.avatarUrl"
+            :src="activeProfile.avatarUrl"
             class="profile-avatar"
             alt="头像"
           />
@@ -242,8 +411,8 @@ onUnmounted(() => {
             <i class="pi pi-user" style="font-size: 36px"></i>
           </div>
           <div class="profile-info">
-            <span class="profile-nickname">{{ profile?.nickname || '未知用户' }}</span>
-            <span class="profile-uid">UID: {{ profile?.userId }}</span>
+            <span class="profile-nickname">{{ activeProfile?.nickname || '未知用户' }}</span>
+            <span class="profile-uid">UID: {{ activeProfile?.userId }}</span>
           </div>
           <button class="logout-btn" @click="handleLogout">
             <i class="pi pi-sign-out"></i>
@@ -255,9 +424,7 @@ onUnmounted(() => {
         </button>
       </div>
 
-      <!-- QR login states -->
       <div v-else class="login-qr-section">
-        <!-- QR code -->
         <div v-if="qrImage" class="qr-wrapper" :class="{ expired: pageState === 'qr_expired' }">
           <img v-if="pageState !== 'qr_expired'" :src="qrImage" alt="登录二维码" class="qr-image" />
           <div v-else class="qr-expired-overlay" @click="handleRefresh">
@@ -266,12 +433,10 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- QR loading placeholder -->
         <div v-else-if="pageState === 'qr_loading'" class="qr-placeholder">
           <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #ccc"></i>
         </div>
 
-        <!-- Status text -->
         <p class="qr-status" :class="{ success: pageState === 'login_success' }">
           <i v-if="pageState === 'qr_ready'" class="pi pi-mobile" style="margin-right: 6px"></i>
           <i
@@ -287,13 +452,11 @@ onUnmounted(() => {
           {{ statusText }}
         </p>
 
-        <!-- Refresh button -->
         <button v-if="pageState === 'qr_expired'" class="login-action-btn" @click="handleRefresh">
           <i class="pi pi-refresh" style="margin-right: 6px"></i>
           刷新二维码
         </button>
 
-        <!-- Back button on success -->
         <button
           v-if="pageState === 'login_success'"
           class="login-action-btn"
@@ -364,6 +527,87 @@ onUnmounted(() => {
   padding: 34px;
 }
 
+.account-list {
+  display: grid;
+  gap: 12px;
+  width: min(520px, 100%);
+}
+
+.account-card {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  min-height: 82px;
+  padding: 14px;
+  border: 1px solid #eef1f6;
+  border-radius: 8px;
+  background: #fff;
+  color: #242946;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
+}
+
+.account-card:hover {
+  box-shadow: 0 18px 38px rgba(34, 42, 68, 0.1);
+  transform: translateY(-1px);
+}
+
+.account-card.unavailable {
+  opacity: 0.66;
+}
+
+.account-icon {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  color: var(--te-primary-500);
+  background: #f3f0ff;
+}
+
+.account-icon i {
+  font-size: 20px;
+}
+
+.account-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.account-title {
+  font-size: 15px;
+  font-weight: 800;
+  color: #242946;
+}
+
+.account-desc {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(82, 90, 122, 0.62);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 62px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--te-primary-500);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .login-status {
   display: flex;
   flex-direction: column;
@@ -404,7 +648,6 @@ onUnmounted(() => {
   border-color: rgba(124, 77, 255, 0.22);
 }
 
-/* Profile (logged in) */
 .login-profile {
   display: flex;
   flex-direction: column;
@@ -483,7 +726,6 @@ onUnmounted(() => {
   background: #fef0f0;
 }
 
-/* QR section */
 .login-qr-section {
   display: flex;
   flex-direction: column;

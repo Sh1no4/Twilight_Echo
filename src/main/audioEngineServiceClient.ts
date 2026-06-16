@@ -65,6 +65,7 @@ export interface AudioEngineServiceBindingOptions {
   serviceEntry: string
   requestTimeoutMs?: number
   restartDelayMs?: number
+  electron?: ElectronModule
 }
 
 export class AudioEngineServiceBinding extends EventEmitter implements NativeAudioBinding {
@@ -152,7 +153,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   GetConvolverInfo(): string | ConvolverInfo {
-    void this.call('GetConvolverInfo', []).then((value) => {
+    this.refreshCache('GetConvolverInfo', [], (value) => {
       this.lastConvolverInfo = value as string | ConvolverInfo
     })
     return this.lastConvolverInfo ?? '{"loaded":false,"active":false}'
@@ -179,7 +180,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   GetDspPluginStatus(): string | { plugins: unknown[] } {
-    void this.call('GetDspPluginStatus', []).then((value) => {
+    this.refreshCache('GetDspPluginStatus', [], (value) => {
       this.lastDspStatus = value as string | { plugins: unknown[] }
     })
     return this.lastDspStatus
@@ -191,14 +192,14 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   GetPlaybackInfo(): string | PlaybackInfo {
-    void this.call('GetPlaybackInfo', []).then((value) => {
+    this.refreshCache('GetPlaybackInfo', [], (value) => {
       this.lastPlaybackInfo = value as string | PlaybackInfo
     })
     return this.lastPlaybackInfo ?? '{"state":"stopped"}'
   }
 
   GetUpcomingTrack(): string | AudioEngineQueueItem | null {
-    void this.call('GetUpcomingTrack', []).then((value) => {
+    this.refreshCache('GetUpcomingTrack', [], (value) => {
       this.lastUpcomingTrack = value as string | AudioEngineQueueItem | null
     })
     return this.lastUpcomingTrack
@@ -210,14 +211,14 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   GetVisualizationData(optionsJson: string): string | VisualizationData {
-    void this.call('GetVisualizationData', [optionsJson]).then((value) => {
+    this.refreshCache('GetVisualizationData', [optionsJson], (value) => {
       this.lastVisualizationData = value as string | VisualizationData
     })
     return this.lastVisualizationData ?? '{"spectrum":[],"waveform":[],"peakDb":-120,"rmsDb":-120,"lufsMomentary":null,"spectrogram":[],"sampleRate":0,"active":false}'
   }
 
   EnumerateDevices(): string | AudioDeviceOption[] {
-    void this.call('EnumerateDevices', []).then((value) => {
+    this.refreshCache('EnumerateDevices', [], (value) => {
       this.lastDevices = value as string | AudioDeviceOption[]
     })
     return this.lastDevices ?? '[]'
@@ -252,7 +253,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
 
   private start(): void {
     if (this.stopped) return
-    const electron = resolveElectron()
+    const electron = this.options.electron ?? resolveElectron()
     if (!electron?.utilityProcess) {
       this.recordFailure('当前运行时不支持 Electron utilityProcess')
       return
@@ -312,6 +313,20 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     void this.call(method, args).catch((error) => {
       this.recordFailure(error instanceof Error ? error.message : String(error))
     })
+  }
+
+  private refreshCache(
+    method: keyof NativeAudioBinding,
+    args: unknown[],
+    apply: (value: unknown) => void
+  ): void {
+    void this.call(method, args)
+      .then(apply)
+      .catch((error) => {
+        this.lastErrorJson = JSON.stringify({
+          message: error instanceof Error ? error.message : String(error)
+        })
+      })
   }
 
   private call(method: keyof NativeAudioBinding, args: unknown[]): Promise<unknown> {

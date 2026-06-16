@@ -134,6 +134,13 @@ export interface TwilightMediaProviderRegistration {
   capabilities: TwilightMediaProviderCapability[]
 }
 
+export interface TwilightQrLoginRequest {
+  key: string
+  qrContent?: string
+  imageDataUrl?: string
+  expiresInSeconds?: number
+}
+
 export type TwilightMediaProviderMethod =
   | 'getPlaybackUrl'
   | 'getLyrics'
@@ -144,6 +151,7 @@ export type TwilightMediaProviderMethod =
   | 'checkLogin'
   | 'getProfile'
   | 'logout'
+  | 'getQrLogin'
   | 'getQrKey'
   | 'getQrImage'
   | 'checkQrLogin'

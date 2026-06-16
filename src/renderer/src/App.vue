@@ -3,6 +3,7 @@ import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import TitleBar from './components/TitleBar.vue'
 import SideMenu from './components/SideMenu.vue'
 import SongList from './components/SongList.vue'
+import LocalDashboard from './components/LocalDashboard.vue'
 import PlayerBar from './components/PlayerBar.vue'
 import PlayingMusic from './components/PlayingMusic.vue'
 import StreamingPage from './components/StreamingPage.vue'
@@ -39,10 +40,10 @@ type SettingsSection =
 type TitleSurface = 'default' | 'settings' | 'streaming'
 const settingsInitialSection = ref<SettingsSection>('general')
 
-const activeCategory = ref('allSongs')
+const activeCategory = ref('dashboard')
 const activeFilter = ref<string | null>(null)
 const songlistTransitionName = ref<'page-down' | 'page-up'>('page-down')
-const songlistOrder = ['allSongs', 'artists', 'albums', 'playlists', 'folders'] as const
+const songlistOrder = ['dashboard', 'allSongs', 'artists', 'albums', 'playlists', 'folders'] as const
 
 const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
 
@@ -132,22 +133,6 @@ function enterStreamingMode(): void {
 }
 
 async function openLoginPage(): Promise<void> {
-  // 检查是否已登录
-  const { isLoggedIn, checkLogin } = useNcmStore()
-  await checkLogin()
-  if (isLoggedIn.value) {
-    // 已登录则打开个人详情页
-    menuOpen.value = false
-    showPlayingPage.value = false
-    showStreamingPage.value = false
-    showSettingsPage.value = false
-    showEqualizerPage.value = false
-    activePluginPage.value = null
-    loginPageMode.value = 'profile'
-    showLoginPage.value = true
-    return
-  }
-
   menuOpen.value = false
   showPlayingPage.value = false
   showStreamingPage.value = false
@@ -403,8 +388,11 @@ const titleSurface = computed<TitleSurface>(() => {
     :style="{ minHeight: mainContentMinHeight }"
   >
     <Transition :name="songlistTransitionName">
+      <LocalDashboard
+        v-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !activePluginPage && activeCategory === 'dashboard'"
+      />
       <SongList
-        v-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !activePluginPage"
+        v-else-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !activePluginPage"
         :category="activeCategory"
         :filter="activeFilter"
         :has-player="hasPlayerBar"
