@@ -1,0 +1,19 @@
+{
+  "name": "create-twilight-plugin",
+  "version": "0.1.0",
+  "description": "CLI scaffolding and packer for Twilight Echo plugins.",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "bin": {
+    "create-twilight-plugin": "bin/create-twilight-plugin.cjs"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "templates",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.cjs"
+  }
+}

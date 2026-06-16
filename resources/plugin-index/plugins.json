@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "plugins": [
+    {
+      "id": "com.twilightecho.hello-world-tool",
+      "name": "Hello World Tool",
+      "version": "1.0.0",
+      "description": "Logs Twilight Echo playback events from the Phase 1 plugin host.",
+      "author": "Twilight Echo",
+      "license": "Apache-2.0",
+      "type": [
+        "tool"
+      ],
+      "main": "index.mjs",
+      "engines": {
+        "twilightEcho": ">=0.20.0"
+      },
+      "apiVersion": 1,
+      "permissions": [
+        "player:observe"
+      ],
+      "sourceUrl": "packages/com.twilightecho.hello-world-tool-1.0.0.tep",
+      "checksumSha256": "f9fdbab6876d5a30a3cfd9dee3aa8e170a43384ed454c24a0cd893d2813574fb",
+      "repository": "https://github.com/twilight-echo/plugins",
+      "homepage": "https://twilightecho.com/plugins",
+      "tags": [
+        "official",
+        "tool",
+        "phase-1"
+      ],
+      "verified": true
+    },
+    {
+      "id": "com.twilightecho.examples.scrobbler-tool",
+      "name": "Scrobbler Tool Sample",
+      "version": "0.1.0",
+      "description": "Phase 3 tool plugin that observes playback events and exposes controlled UI actions.",
+      "author": "Twilight Echo",
+      "license": "Apache-2.0",
+      "type": [
+        "tool",
+        "ui"
+      ],
+      "main": "index.mjs",
+      "engines": {
+        "twilightEcho": ">=0.20.0"
+      },
+      "apiVersion": 1,
+      "permissions": [
+        "network",
+        "player:observe",
+        "ui:inject"
+      ],
+      "sourceUrl": "packages/com.twilightecho.examples.scrobbler-tool-0.1.0.tep",
+      "checksumSha256": "7bfc9926fa3079f1bd9e770f4359127c04755ec345db05158e36a6755aabab86",
+      "repository": "https://github.com/twilight-echo/plugins",
+      "homepage": "https://twilightecho.com/plugins",
+      "tags": [
+        "official",
+        "tool",
+        "ui",
+        "phase-3"
+      ],
+      "verified": true
+    },
+    {
+      "id": "com.twilightecho.examples.nocturne-theme",
+      "name": "Nocturne Theme Sample",
+      "version": "0.1.0",
+      "description": "Phase 3 declarative theme plugin using CSS variables and a packaged stylesheet.",
+      "author": "Twilight Echo",
+      "license": "Apache-2.0",
+      "type": [
+        "theme"
+      ],
+      "main": "index.mjs",
+      "engines": {
+        "twilightEcho": ">=0.20.0"
+      },
+      "apiVersion": 1,
+      "permissions": [],
+      "sourceUrl": "packages/com.twilightecho.examples.nocturne-theme-0.1.0.tep",
+      "checksumSha256": "2499bae8d95264d8c3816d682d8f32bbc02fa7a5c8b577d071ffa6f4dd7dd3aa",
+      "repository": "https://github.com/twilight-echo/plugins",
+      "homepage": "https://twilightecho.com/plugins",
+      "tags": [
+        "official",
+        "theme",
+        "phase-3"
+      ],
+      "verified": true
+    },
+    {
+      "id": "com.twilightecho.examples.bili-provider-skeleton",
+      "name": "Bilibili Provider Skeleton",
+      "version": "0.1.0",
+      "description": "Phase 2 MediaProvider skeleton for search and playback URL dogfooding.",
+      "author": "Twilight Echo",
+      "license": "Apache-2.0",
+      "type": [
+        "provider"
+      ],
+      "main": "index.mjs",
+      "engines": {
+        "twilightEcho": ">=0.20.0"
+      },
+      "apiVersion": 1,
+      "permissions": [
+        "network"
+      ],
+      "sourceUrl": "packages/com.twilightecho.examples.bili-provider-skeleton-0.1.0.tep",
+      "checksumSha256": "aafec270a2616bc550c7a08f9b8f822fd67826be32fd8c838db347a94906aff5",
+      "repository": "https://github.com/twilight-echo/plugins",
+      "homepage": "https://twilightecho.com/plugins",
+      "tags": [
+        "official",
+        "provider",
+        "phase-2"
+      ],
+      "verified": true
+    }
+  ]
+}

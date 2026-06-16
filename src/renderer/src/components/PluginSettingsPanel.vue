@@ -19,7 +19,7 @@ interface PluginDescriptor {
   builtIn: boolean
   error: string | null
   isDsp: boolean
-  source: 'directory' | 'tep' | 'bundled' | 'scan'
+  source: 'directory' | 'tep' | 'bundled' | 'index' | 'scan'
   installedAt: string | null
   updatedAt: string | null
   paths: {
@@ -27,6 +27,36 @@ interface PluginDescriptor {
     dataDir: string
     logPath: string
   }
+}
+
+type PluginIndexInstallState =
+  | 'not-installed'
+  | 'installed'
+  | 'update-available'
+  | 'incompatible'
+  | 'built-in-blocked'
+
+interface PluginIndexEntry {
+  id: string
+  name: string
+  version: string
+  description: string
+  author: string
+  license: string
+  type: string[]
+  permissions: string[]
+  engines: {
+    twilightEcho: string
+  }
+  apiVersion: number
+  sourceUrl: string
+  checksumSha256: string
+  homepage?: string
+  repository?: string
+  tags?: string[]
+  verified?: boolean
+  installState?: PluginIndexInstallState
+  installedVersion?: string
 }
 
 interface NativeDspParameter {
@@ -53,15 +83,19 @@ interface NativeDspStatus {
 }
 
 const plugins = ref<PluginDescriptor[]>([])
+const indexEntries = ref<PluginIndexEntry[]>([])
 const nativeDspStatuses = ref<Record<string, NativeDspStatus>>({})
 const loading = ref(false)
+const marketLoading = ref(false)
 const busyId = ref<string | null>(null)
 const error = ref('')
+const marketError = ref('')
 const selectedLog = ref('')
 const selectedLogPlugin = ref('')
 let removePluginListener: (() => void) | null = null
 
 const enabledCount = computed(() => plugins.value.filter((plugin) => plugin.enabled).length)
+const marketCount = computed(() => indexEntries.value.length)
 const pluginGroups = computed(() => [
   {
     id: 'regular',
@@ -98,6 +132,21 @@ async function refreshPlugins(): Promise<void> {
   }
 }
 
+async function refreshIndex(force = false): Promise<void> {
+  marketLoading.value = true
+  marketError.value = ''
+  try {
+    indexEntries.value = force
+      ? await window.api.plugins.refreshIndex()
+      : await window.api.plugins.listIndex()
+  } catch (err) {
+    marketError.value = err instanceof Error ? err.message : String(err)
+    indexEntries.value = []
+  } finally {
+    marketLoading.value = false
+  }
+}
+
 async function installPlugin(): Promise<void> {
   error.value = ''
   const result = await window.api.plugins.chooseAndInstall()
@@ -119,6 +168,21 @@ async function togglePlugin(plugin: PluginDescriptor): Promise<void> {
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
     await refreshPlugins()
+  } finally {
+    busyId.value = null
+  }
+}
+
+async function installIndexPlugin(entry: PluginIndexEntry): Promise<void> {
+  busyId.value = entry.id
+  marketError.value = ''
+  try {
+    await window.api.plugins.installFromIndex(entry.id)
+    await refreshPlugins()
+    await refreshIndex(true)
+  } catch (err) {
+    marketError.value = err instanceof Error ? err.message : String(err)
+    await refreshIndex(true)
   } finally {
     busyId.value = null
   }
@@ -167,6 +231,22 @@ function typeLabel(type: string): string {
     dsp: 'DSP'
   }
   return labels[type] ?? type
+}
+
+function installStateLabel(entry: PluginIndexEntry): string {
+  const state = entry.installState ?? 'not-installed'
+  const labels: Record<PluginIndexInstallState, string> = {
+    'not-installed': '可安装',
+    installed: entry.installedVersion ? `已安装 v${entry.installedVersion}` : '已安装',
+    'update-available': entry.installedVersion ? `可更新 v${entry.installedVersion} → v${entry.version}` : '可更新',
+    incompatible: '不兼容',
+    'built-in-blocked': '自带插件'
+  }
+  return labels[state]
+}
+
+function canInstallIndexEntry(entry: PluginIndexEntry): boolean {
+  return entry.installState === 'not-installed' || entry.installState === 'update-available' || !entry.installState
 }
 
 function dependencyEntries(plugin: PluginDescriptor): [string, string][] {
@@ -235,8 +315,10 @@ function formatDate(value: string | null): string {
 
 onMounted(() => {
   void refreshPlugins()
+  void refreshIndex()
   removePluginListener = window.api.plugins.onChanged(() => {
     void refreshPlugins()
+    void refreshIndex()
   })
 })
 
@@ -268,6 +350,7 @@ onUnmounted(() => {
     <div class="plugin-summary">
       <span>已安装 {{ plugins.length }}</span>
       <span>已启用 {{ enabledCount }}</span>
+      <span>市场 {{ marketCount }}</span>
       <span>日志：logs/plugins/&lt;id&gt;.log</span>
     </div>
 
@@ -276,6 +359,61 @@ onUnmounted(() => {
     <div v-if="plugins.length === 0 && !loading" class="plugin-empty">
       暂无插件。可以安装官方 hello-world 示例或本地 .tep 包。
     </div>
+
+    <section class="plugin-market">
+      <div class="plugin-group-head">
+        <strong>插件市场</strong>
+        <span>静态索引来源；安装前仍会展示权限与信任式安装警告。</span>
+      </div>
+      <div class="plugin-market-actions">
+        <button class="text-button" :disabled="marketLoading" @click="refreshIndex(true)">
+          <i class="pi pi-refresh"></i>
+          刷新市场
+        </button>
+      </div>
+      <div v-if="marketError" class="plugin-error">{{ marketError }}</div>
+      <div v-if="indexEntries.length === 0 && !marketLoading && !marketError" class="plugin-empty">
+        暂无索引插件。仍可安装本地目录或 .tep 包。
+      </div>
+      <div class="market-grid">
+        <article v-for="entry in indexEntries" :key="`${entry.id}:${entry.version}`" class="market-card">
+          <div class="plugin-title-row">
+            <h4>{{ entry.name }}</h4>
+            <span class="plugin-pill" :class="entry.installState || 'not-installed'">
+              {{ installStateLabel(entry) }}
+            </span>
+            <span v-if="entry.verified" class="plugin-pill builtin">已审核</span>
+          </div>
+          <p>{{ entry.description || '没有描述' }}</p>
+          <div class="plugin-meta">
+            <span>{{ entry.id }}</span>
+            <span>v{{ entry.version }}</span>
+            <span>{{ entry.author }}</span>
+            <span>{{ entry.engines.twilightEcho }}</span>
+          </div>
+          <div class="plugin-tags">
+            <span v-for="type in entry.type" :key="type">{{ typeLabel(type) }}</span>
+            <span v-for="tag in entry.tags || []" :key="tag">{{ tag }}</span>
+          </div>
+          <div class="plugin-permissions">
+            <strong>权限</strong>
+            <span v-if="entry.permissions.length === 0">无</span>
+            <code v-for="permission in entry.permissions" :key="permission">{{ permission }}</code>
+          </div>
+          <div class="market-card-actions">
+            <button
+              class="primary-button"
+              :disabled="busyId === entry.id || !canInstallIndexEntry(entry)"
+              :title="canInstallIndexEntry(entry) ? '安装索引插件' : installStateLabel(entry)"
+              @click="installIndexPlugin(entry)"
+            >
+              <i class="pi pi-download"></i>
+              {{ entry.installState === 'update-available' ? '更新' : '安装' }}
+            </button>
+          </div>
+        </article>
+      </div>
+    </section>
 
     <div class="plugin-list">
       <section v-for="group in pluginGroups" :key="group.id" class="plugin-group">
@@ -406,7 +544,8 @@ onUnmounted(() => {
 
 <style scoped>
 .plugin-panel,
-.plugin-list {
+.plugin-list,
+.plugin-market {
   display: grid;
   gap: 12px;
 }
@@ -436,6 +575,7 @@ onUnmounted(() => {
 
 .plugin-hero,
 .plugin-card,
+.market-card,
 .plugin-log {
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 10px;
@@ -456,13 +596,15 @@ onUnmounted(() => {
 }
 
 .plugin-hero h3,
-.plugin-card h4 {
+.plugin-card h4,
+.market-card h4 {
   margin: 0;
   color: var(--te-neutral-900);
 }
 
 .plugin-hero p,
-.plugin-card p {
+.plugin-card p,
+.market-card p {
   margin: 6px 0 0;
   color: var(--te-neutral-600);
   font-size: 13px;
@@ -471,6 +613,8 @@ onUnmounted(() => {
 
 .plugin-actions,
 .plugin-card-actions,
+.plugin-market-actions,
+.market-card-actions,
 .plugin-title-row,
 .plugin-meta,
 .plugin-tags,
@@ -506,6 +650,18 @@ onUnmounted(() => {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 16px;
   padding: 16px;
+}
+
+.market-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.market-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
 }
 
 .plugin-card.failed {
@@ -548,6 +704,18 @@ onUnmounted(() => {
 .plugin-pill.builtin {
   background: #eff6ff;
   color: #1d4ed8;
+}
+
+.plugin-pill.not-installed,
+.plugin-pill.update-available {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.plugin-pill.incompatible,
+.plugin-pill.built-in-blocked {
+  background: #f1f5f9;
+  color: var(--te-neutral-500);
 }
 
 .plugin-card-error {

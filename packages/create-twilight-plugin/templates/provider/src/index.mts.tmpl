@@ -1,0 +1,33 @@
+import type { Track, TwilightPluginContext } from '@twilight-echo/plugin-api'
+
+const providerId = '{{packageName}}'
+
+function track(id: string, title: string): Track {
+  return {
+    id: `${providerId}:${id}`,
+    filePath: `${providerId}:${id}`,
+    source: providerId,
+    title,
+    artist: 'Example Artist',
+    album: 'Example Album',
+    fileName: title,
+    duration: 180,
+    size: 0,
+    cover: null,
+    lyrics: null
+  }
+}
+
+export async function activate(context: TwilightPluginContext): Promise<void> {
+  await context.twilight.providers.register({
+    id: providerId,
+    name: '{{pluginName}}',
+    capabilities: ['search', 'playbackUrl'],
+    async searchSongs(keywords: string) {
+      return { items: [track('demo', `Demo result for ${keywords}`)], total: 1 }
+    },
+    async getPlaybackUrl() {
+      return null
+    }
+  })
+}

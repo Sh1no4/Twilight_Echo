@@ -1,0 +1,15 @@
+import type { TwilightPluginContext } from '@twilight-echo/plugin-api'
+
+let unsubscribe: (() => void) | null = null
+
+export async function activate(context: TwilightPluginContext): Promise<void> {
+  context.logger.info('{{pluginName}} activated')
+  unsubscribe = context.twilight.events.on('player:playback-info', (payload) => {
+    context.logger.debug(`Playback info received: ${JSON.stringify(payload)}`)
+  })
+}
+
+export async function deactivate(): Promise<void> {
+  unsubscribe?.()
+  unsubscribe = null
+}

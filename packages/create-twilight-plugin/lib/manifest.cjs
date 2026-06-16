@@ -1,0 +1,126 @@
+const path = require('node:path')
+
+const PLUGIN_TYPES = new Set(['provider', 'tool', 'ui', 'theme', 'dsp'])
+const PLUGIN_PERMISSIONS = new Set([
+  'network',
+  'filesystem:read',
+  'filesystem:write',
+  'player:control',
+  'player:observe',
+  'library:read',
+  'library:write',
+  'settings',
+  'clipboard',
+  'ui:inject',
+  'dsp:native'
+])
+
+const PLUGIN_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
+
+function isRecord(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function requireString(source, key) {
+  const value = source[key]
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`plugin.json missing required string field: ${key}`)
+  }
+  return value.trim()
+}
+
+function normalizeRelativePath(value, key) {
+  if (value == null) return undefined
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`plugin.json field ${key} must be a relative path string`)
+  }
+  const normalized = path.normalize(value.trim())
+  if (path.isAbsolute(normalized) || normalized === '..' || normalized.startsWith(`..${path.sep}`)) {
+    throw new Error(`plugin.json field ${key} cannot point outside the plugin root`)
+  }
+  return normalized
+}
+
+function isSupportedSemverRange(range) {
+  if (range === '*') return true
+  if (SEMVER_PATTERN.test(range)) return true
+  if (range.startsWith('^') || range.startsWith('~')) return SEMVER_PATTERN.test(range.slice(1).trim())
+  if (range.startsWith('>=')) return SEMVER_PATTERN.test(range.slice(2).trim())
+  return false
+}
+
+function validatePluginManifest(raw) {
+  if (!isRecord(raw)) throw new Error('plugin.json must be an object')
+
+  const id = requireString(raw, 'id')
+  if (!PLUGIN_ID_PATTERN.test(id)) {
+    throw new Error('plugin.json id must be reverse-domain style, for example com.example.plugin')
+  }
+
+  const version = requireString(raw, 'version')
+  if (!SEMVER_PATTERN.test(version)) throw new Error('plugin.json version must follow semver, for example 1.0.0')
+
+  if (!isRecord(raw.engines) || typeof raw.engines.twilightEcho !== 'string' || !raw.engines.twilightEcho.trim()) {
+    throw new Error('plugin.json missing engines.twilightEcho')
+  }
+
+  if (!Number.isInteger(raw.apiVersion) || raw.apiVersion < 1) {
+    throw new Error('plugin.json apiVersion must be a positive integer')
+  }
+
+  const type = raw.type
+  if (!Array.isArray(type) || type.length === 0) throw new Error('plugin.json type must be a non-empty array')
+  for (const item of type) {
+    if (typeof item !== 'string' || !PLUGIN_TYPES.has(item)) throw new Error(`plugin.json contains unknown type: ${String(item)}`)
+  }
+
+  const main = normalizeRelativePath(raw.main, 'main')
+  const binary = raw.binary
+  if (binary != null && !isRecord(binary)) throw new Error('plugin.json binary must be an object')
+  if (binary) {
+    for (const [platform, binaryPath] of Object.entries(binary)) {
+      normalizeRelativePath(binaryPath, `binary.${platform}`)
+    }
+  }
+  if (!main && !binary) throw new Error('plugin.json must declare main or binary')
+  if (type.includes('dsp') && !binary) throw new Error('plugin.json type dsp requires binary')
+
+  if (!Array.isArray(raw.permissions)) throw new Error('plugin.json permissions must be an array')
+  for (const permission of raw.permissions) {
+    if (typeof permission !== 'string' || !PLUGIN_PERMISSIONS.has(permission)) {
+      throw new Error(`plugin.json contains unknown permission: ${String(permission)}`)
+    }
+  }
+  if (type.includes('dsp') && !raw.permissions.includes('dsp:native')) {
+    throw new Error('plugin.json type dsp requires dsp:native permission')
+  }
+
+  if (raw.dependencies != null) {
+    if (!isRecord(raw.dependencies)) throw new Error('plugin.json dependencies must be an object')
+    for (const [dependencyId, range] of Object.entries(raw.dependencies)) {
+      if (!PLUGIN_ID_PATTERN.test(dependencyId)) throw new Error(`plugin.json dependency id is invalid: ${dependencyId}`)
+      if (typeof range !== 'string' || !isSupportedSemverRange(range.trim())) {
+        throw new Error(`plugin.json dependency range is invalid: ${dependencyId}`)
+      }
+    }
+  }
+
+  return {
+    id,
+    name: requireString(raw, 'name'),
+    version,
+    description: requireString(raw, 'description'),
+    author: requireString(raw, 'author'),
+    license: requireString(raw, 'license'),
+    type: [...new Set(type)],
+    main,
+    binary,
+    dependencies: raw.dependencies,
+    engines: { twilightEcho: raw.engines.twilightEcho.trim() },
+    apiVersion: raw.apiVersion,
+    permissions: [...new Set(raw.permissions)]
+  }
+}
+
+module.exports = { validatePluginManifest }

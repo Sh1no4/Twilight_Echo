@@ -61,6 +61,11 @@ interface RunningPlugin {
   themes: TwilightThemeContribution[]
 }
 
+interface InstallFromPathOptions {
+  source?: TwilightPluginSource
+  sourceLabel?: string
+}
+
 const STATE_FILE = 'plugin-state.json'
 const PLUGIN_ACTIVATE_TIMEOUT_MS = 5000
 const PLUGIN_DEACTIVATE_TIMEOUT_MS = 1500
@@ -143,7 +148,10 @@ export class TwilightPluginManager extends EventEmitter {
     return descriptors.sort((left, right) => left.name.localeCompare(right.name))
   }
 
-  async installFromPath(sourcePath: string): Promise<TwilightPluginInstallResult> {
+  async installFromPath(
+    sourcePath: string,
+    options: InstallFromPathOptions = {}
+  ): Promise<TwilightPluginInstallResult> {
     const source = resolve(sourcePath)
     if (!existsSync(source)) throw new Error('插件来源不存在')
     const sourceStats = await stat(source)
@@ -161,7 +169,7 @@ export class TwilightPluginManager extends EventEmitter {
       if (this.isBundledPluginId(manifest.id)) {
         throw new Error('自带插件随 Twilight Echo 分发，不能用本地包覆盖安装')
       }
-      await this.confirmTrustBasedInstall(manifest, source)
+      await this.confirmTrustBasedInstall(manifest, options.sourceLabel ?? source)
       const target = this.versionRoot(manifest.id, manifest.version)
       await rm(target, { recursive: true, force: true })
       mkdirSync(dirname(target), { recursive: true })
@@ -174,7 +182,7 @@ export class TwilightPluginManager extends EventEmitter {
         enabled: false,
         installedAt: this.state[manifest.id]?.installedAt ?? now,
         updatedAt: now,
-        source: isTep ? 'tep' : 'directory'
+        source: options.source ?? (isTep ? 'tep' : 'directory')
       }
       await this.saveState()
       const plugin = await this.readDescriptor(target, this.state[manifest.id].source)

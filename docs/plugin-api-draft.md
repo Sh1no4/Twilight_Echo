@@ -315,6 +315,43 @@ native DSP chain, and marks enabled DSP plugins failed instead of exiting the
 Electron main process. `TWILIGHT_AUDIO_SERVICE=0` is reserved as a development
 fallback for direct native binding.
 
+## Phase 5 Typings, CLI, And Index API
+
+Developer typings are exported from `@twilight-echo/plugin-api`:
+
+```ts
+import type { TwilightPluginContext, TwilightPluginManifest } from '@twilight-echo/plugin-api'
+```
+
+The official CLI is `create-twilight-plugin`:
+
+```bash
+create-twilight-plugin init my-provider --type provider --id com.example.provider
+create-twilight-plugin pack ./my-provider
+```
+
+Renderer/preload exposes the plugin index through the existing `plugins`
+namespace:
+
+```ts
+interface TwilightPluginIndexEntry extends TwilightPluginManifest {
+  sourceUrl: string
+  checksumSha256: string
+  tags?: string[]
+  verified?: boolean
+  installState?: 'not-installed' | 'installed' | 'update-available' | 'incompatible' | 'built-in-blocked'
+  installedVersion?: string
+}
+
+window.api.plugins.listIndex(): Promise<TwilightPluginIndexEntry[]>
+window.api.plugins.refreshIndex(): Promise<TwilightPluginIndexEntry[]>
+window.api.plugins.installFromIndex(id: string): Promise<TwilightPluginInstallResult>
+```
+
+The index schema is static JSON with `schemaVersion: 1`. Installation validates
+the package checksum and then uses the same trust-based manifest validation path
+as local `.tep` installation.
+
 ## Host Capability Audit
 
 - `usePlayerStore`: maps to player observe/control API through main-process

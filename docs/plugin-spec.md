@@ -141,3 +141,22 @@ processors; they are bypassed so passthrough semantics stay explicit.
 reason, last error, process timing, overrun count, and parameter metadata with
 current values. The management UI uses that metadata to render basic bool,
 int, float, and enum controls.
+
+## Phase 5 Ecosystem Baseline
+
+Twilight Echo ships local-publishable ecosystem tooling:
+
+- `@twilight-echo/plugin-api` exports the authoritative API v1 typings for
+  manifests, lifecycle context, providers, events, UI/theme contributions, and
+  native DSP diagnostics.
+- `create-twilight-plugin` scaffolds `tool`, `provider`, `ui-tool`, and `theme`
+  plugins, then packages any valid plugin root as a `.tep` archive.
+- `resources/plugin-index/plugins.json` is a static schemaVersion 1 index.
+  Entries repeat the plugin manifest fields and add `sourceUrl`,
+  `checksumSha256`, `tags`, and `verified`.
+
+The app reads the bundled index by default. Development builds may set
+`TWILIGHT_PLUGIN_INDEX_URL` to a remote GitHub raw JSON URL. Index installation
+validates protocol, package size, sha256 checksum, and the packaged manifest
+before delegating to the normal trust-based installer. The index cannot install
+or overwrite bundled plugins such as `com.twilightecho.provider.ncm`.

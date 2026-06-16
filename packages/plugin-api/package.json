@@ -1,0 +1,20 @@
+{
+  "name": "@twilight-echo/plugin-api",
+  "version": "0.1.0",
+  "description": "Authoritative TypeScript typings for Twilight Echo plugin API v1.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

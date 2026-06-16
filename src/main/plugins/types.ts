@@ -43,7 +43,7 @@ export interface TwilightPluginManifest {
 
 export type TwilightPluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
 
-export type TwilightPluginSource = 'directory' | 'tep' | 'bundled'
+export type TwilightPluginSource = 'directory' | 'tep' | 'bundled' | 'index'
 
 export interface TwilightPluginStateRecord {
   enabled: boolean
@@ -98,6 +98,22 @@ export interface TwilightPluginInstallResult {
   plugin: TwilightPluginDescriptor
   warning: string
 }
+
+export interface TwilightPluginIndexEntry extends TwilightPluginManifest {
+  sourceUrl: string
+  checksumSha256: string
+  tags?: string[]
+  verified?: boolean
+  installState?: TwilightPluginIndexInstallState
+  installedVersion?: string
+}
+
+export type TwilightPluginIndexInstallState =
+  | 'not-installed'
+  | 'installed'
+  | 'update-available'
+  | 'incompatible'
+  | 'built-in-blocked'
 
 export interface TwilightPluginUninstallOptions {
   removeData?: boolean

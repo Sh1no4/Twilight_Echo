@@ -150,6 +150,13 @@ JS 插件 API 与 DSP C ABI 各自有独立版本号、独立的稳定性承诺�
 - 新开发者从模板到可运行插件 ≤ 30 分钟。
 - 应用内可浏览索引并一键安装插件。
 
+### 当前实现说明
+
+- Phase 5 采用“本地可发布”范围：仓库内提供 `packages/plugin-api`、`packages/create-twilight-plugin`、官方模板、本地静态索引和应用内市场，不实际发布 npm 包或创建远程 GitHub 仓库。
+- `create-twilight-plugin init` 生成 `tool`、`provider`、`ui-tool`、`theme` 插件项目；`create-twilight-plugin pack` 生成 `.tep` 并排除 `node_modules`、缓存和构建噪声。
+- `resources/plugin-index/plugins.json` 是 schemaVersion 1 的官方示例索引；索引包安装前校验 URL 协议、大小、sha256 和包内 manifest，并禁止覆盖内置网易云插件。
+- 插件管理页增加“插件市场”，展示 verified、权限、兼容/已安装/可更新状态；安装仍走信任式权限警告。
+
 ---
 
 ## 质量与生态标准（贯穿各阶段）

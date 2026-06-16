@@ -15,6 +15,12 @@ type BuiltInTrackSource = 'local' | 'ncm'
 type TrackSource = BuiltInTrackSource | (string & {})
 type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
 type TwilightPluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
+type TwilightPluginIndexInstallState =
+  | 'not-installed'
+  | 'installed'
+  | 'update-available'
+  | 'incompatible'
+  | 'built-in-blocked'
 type TwilightMediaProviderCapability =
   | 'search'
   | 'playbackUrl'
@@ -314,7 +320,7 @@ interface TwilightPluginDescriptor {
   builtIn: boolean
   error: string | null
   isDsp: boolean
-  source: 'directory' | 'tep' | 'bundled' | 'scan'
+  source: 'directory' | 'tep' | 'bundled' | 'index' | 'scan'
   installedAt: string | null
   updatedAt: string | null
   paths: {
@@ -329,6 +335,33 @@ interface TwilightPluginDescriptor {
 interface TwilightPluginInstallResult {
   plugin: TwilightPluginDescriptor
   warning: string
+}
+
+interface TwilightPluginIndexEntry {
+  id: string
+  name: string
+  version: string
+  description: string
+  author: string
+  license: string
+  type: TwilightPluginType[]
+  main?: string
+  binary?: Record<string, string>
+  dependencies?: Record<string, string>
+  engines: {
+    twilightEcho: string
+  }
+  apiVersion: number
+  permissions: string[]
+  homepage?: string
+  repository?: string
+  icon?: string
+  sourceUrl: string
+  checksumSha256: string
+  tags?: string[]
+  verified?: boolean
+  installState?: TwilightPluginIndexInstallState
+  installedVersion?: string
 }
 
 interface TwilightMediaProviderRegistration {
@@ -820,6 +853,11 @@ const api = {
       ipcRenderer.invoke('plugins:uninstall', id, options),
     openLog: (id: string): Promise<void> => ipcRenderer.invoke('plugins:openLog', id),
     getLog: (id: string): Promise<string> => ipcRenderer.invoke('plugins:getLog', id),
+    listIndex: (): Promise<TwilightPluginIndexEntry[]> => ipcRenderer.invoke('plugins:listIndex'),
+    refreshIndex: (): Promise<TwilightPluginIndexEntry[]> =>
+      ipcRenderer.invoke('plugins:refreshIndex'),
+    installFromIndex: (id: string): Promise<TwilightPluginInstallResult> =>
+      ipcRenderer.invoke('plugins:installFromIndex', id),
     setNativeDspParameters: (id: string, parameters: Record<string, number>): Promise<TwilightPluginDescriptor> =>
       ipcRenderer.invoke('plugins:setNativeDspParameters', id, parameters),
     onChanged: (cb: () => void): (() => void) => {

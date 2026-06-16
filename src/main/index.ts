@@ -34,6 +34,7 @@ import {
   type EqualizerBand
 } from './audioEngineManager'
 import { TwilightPluginManager } from './plugins/manager'
+import { PluginIndexService } from './plugins/indexService'
 import { derivePlaybackEvents } from './plugins/events'
 import type { TwilightPluginUninstallOptions } from './plugins/types'
 
@@ -351,6 +352,7 @@ async function getDirectorySize(directory: string): Promise<number> {
 let appSettings = readAppSettings()
 const launchSettings = { ...appSettings }
 let pluginManager: TwilightPluginManager | null = null
+let pluginIndexService: PluginIndexService | null = null
 
 if (!appSettings.hardwareAcceleration) {
   app.disableHardwareAcceleration()
@@ -735,6 +737,12 @@ function bundledPluginPath(name: string): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'plugins', name)
     : join(process.cwd(), 'resources', 'plugins', name)
+}
+
+function bundledPluginIndexPath(): string {
+  return app.isPackaged
+    ? join(process.resourcesPath, 'plugin-index', 'plugins.json')
+    : join(process.cwd(), 'resources', 'plugin-index', 'plugins.json')
 }
 
 async function requestNcmApi(path: string, cookie?: string): Promise<unknown> {
@@ -1390,12 +1398,13 @@ function setupAudioEngineIpc(): void {
 
 function setupPluginIpc(): void {
   if (pluginManager) return
+  const bundledPluginIds = ['com.twilightecho.provider.ncm']
   pluginManager = new TwilightPluginManager({
     appVersion: app.getVersion(),
     hostEntry: join(__dirname, 'pluginHost.js'),
     bundledPlugins: [
       {
-        id: 'com.twilightecho.provider.ncm',
+        id: bundledPluginIds[0],
         sourcePath: bundledPluginPath('ncm-provider'),
         defaultEnabled: true
       }
@@ -1429,6 +1438,12 @@ function setupPluginIpc(): void {
         await audioEngineManager?.previous()
       }
     }
+  })
+  pluginIndexService = new PluginIndexService({
+    appVersion: app.getVersion(),
+    localIndexPath: bundledPluginIndexPath(),
+    remoteIndexUrl: process.env.TWILIGHT_PLUGIN_INDEX_URL,
+    bundledPluginIds
   })
 
   void pluginManager
@@ -1471,6 +1486,39 @@ function setupPluginIpc(): void {
   })
   ipcMain.handle('plugins:getLog', async (_event, id: string) => {
     return await pluginManager!.getLog(id)
+  })
+  ipcMain.handle('plugins:listIndex', async () => {
+    const [entries, installed] = await Promise.all([
+      pluginIndexService!.list(),
+      pluginManager!.list()
+    ])
+    return entries.map((entry) => ({
+      ...entry,
+      installState: pluginIndexService!.describeInstallState(entry, installed),
+      installedVersion: installed.find((plugin) => plugin.id === entry.id)?.version
+    }))
+  })
+  ipcMain.handle('plugins:refreshIndex', async () => {
+    const [entries, installed] = await Promise.all([
+      pluginIndexService!.refresh(),
+      pluginManager!.list()
+    ])
+    return entries.map((entry) => ({
+      ...entry,
+      installState: pluginIndexService!.describeInstallState(entry, installed),
+      installedVersion: installed.find((plugin) => plugin.id === entry.id)?.version
+    }))
+  })
+  ipcMain.handle('plugins:installFromIndex', async (_event, id: string) => {
+    const downloaded = await pluginIndexService!.downloadPackage(id)
+    try {
+      return await pluginManager!.installFromPath(downloaded.packagePath, {
+        source: 'index',
+        sourceLabel: downloaded.entry.sourceUrl
+      })
+    } finally {
+      await downloaded.cleanup()
+    }
   })
   ipcMain.handle('plugins:setNativeDspParameters', async (_event, id: string, parameters: Record<string, number>) => {
     return await pluginManager!.setNativeDspPluginParameters(id, parameters)

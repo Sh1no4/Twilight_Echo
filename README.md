@@ -217,6 +217,10 @@ $env:TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK="1"
 ## 常用命令
 
 ```bash
+# 插件 typings / CLI
+npm run build:plugin-api
+npm run test:plugin-tooling
+
 # 类型检查
 npm run typecheck
 
@@ -235,6 +239,27 @@ npm run build:audio-engine:mingw
 ctest --test-dir audio-engine/build/mingw-static -N
 npm run test:audio-engine:mingw
 ```
+
+## 插件开发
+
+Twilight Echo 插件生态目前提供本地可发布工具链：
+
+- `@twilight-echo/plugin-api`：插件 API v1 权威 TypeScript typings。
+- `create-twilight-plugin`：生成 `tool`、`provider`、`ui-tool`、`theme` 插件模板，并打包 `.tep`。
+- `resources/plugin-index/plugins.json`：应用内插件市场使用的静态索引示例。
+
+快速路径：
+
+```bash
+npx create-twilight-plugin init my-provider --type provider --id com.example.provider
+cd my-provider
+npm install
+npm run build
+npm test
+npm run pack
+```
+
+开发者文档见 `docs/plugin-developer-guide.md`。目标是从模板到可安装运行插件不超过 30 分钟。
 
 ## 打包发布
 

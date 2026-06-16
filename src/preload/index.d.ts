@@ -36,6 +36,12 @@ type BuiltInTrackSource = 'local' | 'ncm'
 type TrackSource = BuiltInTrackSource | (string & {})
 type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
 type TwilightPluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
+type TwilightPluginIndexInstallState =
+  | 'not-installed'
+  | 'installed'
+  | 'update-available'
+  | 'incompatible'
+  | 'built-in-blocked'
 type TwilightMediaProviderCapability =
   | 'search'
   | 'playbackUrl'
@@ -321,7 +327,7 @@ interface TwilightPluginDescriptor {
   builtIn: boolean
   error: string | null
   isDsp: boolean
-  source: 'directory' | 'tep' | 'bundled' | 'scan'
+  source: 'directory' | 'tep' | 'bundled' | 'index' | 'scan'
   installedAt: string | null
   updatedAt: string | null
   paths: {
@@ -336,6 +342,33 @@ interface TwilightPluginDescriptor {
 interface TwilightPluginInstallResult {
   plugin: TwilightPluginDescriptor
   warning: string
+}
+
+interface TwilightPluginIndexEntry {
+  id: string
+  name: string
+  version: string
+  description: string
+  author: string
+  license: string
+  type: TwilightPluginType[]
+  main?: string
+  binary?: Record<string, string>
+  dependencies?: Record<string, string>
+  engines: {
+    twilightEcho: string
+  }
+  apiVersion: number
+  permissions: string[]
+  homepage?: string
+  repository?: string
+  icon?: string
+  sourceUrl: string
+  checksumSha256: string
+  tags?: string[]
+  verified?: boolean
+  installState?: TwilightPluginIndexInstallState
+  installedVersion?: string
 }
 
 interface TwilightMediaProviderRegistration {
@@ -659,6 +692,9 @@ interface WindowAPI {
     uninstall: (id: string, options?: { removeData?: boolean }) => Promise<void>
     openLog: (id: string) => Promise<void>
     getLog: (id: string) => Promise<string>
+    listIndex: () => Promise<TwilightPluginIndexEntry[]>
+    refreshIndex: () => Promise<TwilightPluginIndexEntry[]>
+    installFromIndex: (id: string) => Promise<TwilightPluginInstallResult>
     setNativeDspParameters: (id: string, parameters: Record<string, number>) => Promise<TwilightPluginDescriptor>
     onChanged: (cb: () => void) => () => void
   }

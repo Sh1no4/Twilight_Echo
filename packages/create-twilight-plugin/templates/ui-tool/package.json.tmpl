@@ -1,0 +1,16 @@
+{
+  "name": "{{packageName}}",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node --test dist/index.test.mjs",
+    "pack": "create-twilight-plugin pack ."
+  },
+  "devDependencies": {
+    "@twilight-echo/plugin-api": "^0.1.0",
+    "create-twilight-plugin": "^0.1.0",
+    "typescript": "^5.9.3"
+  }
+}

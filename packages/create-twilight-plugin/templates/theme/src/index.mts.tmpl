@@ -1,0 +1,14 @@
+import type { TwilightPluginContext } from '@twilight-echo/plugin-api'
+
+export async function activate(context: TwilightPluginContext): Promise<void> {
+  await context.twilight.themes.register({
+    id: '{{packageName}}',
+    name: '{{pluginName}}',
+    description: 'A declarative Twilight Echo theme.',
+    variables: {
+      '--te-primary-500': '#2563eb',
+      '--te-accent-500': '#16a34a'
+    },
+    stylesheet: 'theme.css'
+  })
+}

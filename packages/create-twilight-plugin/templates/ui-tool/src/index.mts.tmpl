@@ -1,0 +1,15 @@
+import type { TwilightPluginContext } from '@twilight-echo/plugin-api'
+
+export async function activate(context: TwilightPluginContext): Promise<void> {
+  context.twilight.ui.onCommand('{{packageName}}.ping', async () => ({
+    message: '{{pluginName}} command executed'
+  }))
+
+  await context.twilight.ui.register({
+    id: '{{packageName}}-button',
+    kind: 'playerBarButton',
+    title: '{{pluginName}}',
+    icon: 'pi pi-send',
+    command: '{{packageName}}.ping'
+  })
+}

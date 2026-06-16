@@ -23,6 +23,10 @@ extraResources:
     to: plugins
     filter:
       - '**/*'
+  - from: resources/plugin-index
+    to: plugin-index
+    filter:
+      - '**/*'
 win:
   executableName: TwilightEcho
   icon: build/icon.ico
