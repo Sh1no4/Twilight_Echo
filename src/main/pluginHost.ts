@@ -78,6 +78,7 @@ interface TwilightPluginContext {
     internal?: {
       ncm?: {
         request: (path: string, cookie?: string) => Promise<unknown>
+        officialLogin: () => Promise<string>
         getCachedSong: (songId: number) => Promise<string | null>
         cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
       }
@@ -96,6 +97,7 @@ const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
   'checkLogin',
   'getProfile',
   'logout',
+  'openOfficialLogin',
   'getQrLogin',
   'getQrKey',
   'getQrImage',
@@ -236,6 +238,7 @@ function createContext(pluginId: string, apiVersion: number, storagePath: string
     twilight.internal = {
       ncm: {
         request: (path, cookie) => callInternalNcmApi('ncmRequest', [path, cookie]),
+        officialLogin: () => callInternalNcmApi('ncmOfficialLogin', []) as Promise<string>,
         getCachedSong: (songId) => callInternalNcmApi('ncmGetCachedSong', [songId]) as Promise<string | null>,
         cacheSong: (songId, url, fileName) =>
           callInternalNcmApi('ncmCacheSong', [songId, url, fileName]) as Promise<string | null>

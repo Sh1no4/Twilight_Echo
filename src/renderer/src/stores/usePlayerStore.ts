@@ -611,11 +611,8 @@ async function syncNativeQueueState(): Promise<void> {
   await window.api.audioEngine.setPlayMode(nativePlayMode)
 }
 
-async function refreshNativePlaybackInfo(): Promise<void> {
-  applyNativePlaybackInfo(await window.api.audioEngine.getPlaybackInfo())
-}
-
 async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<void> {
+  stopVisualizationPolling(false)
   try {
     isLoading.value = true
     if (direction === 'next') {
@@ -623,11 +620,20 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
     } else {
       await window.api.audioEngine.previous()
     }
-    await refreshNativePlaybackInfo()
+    await new Promise((resolve) => window.setTimeout(resolve, 80))
+    const info = await window.api.audioEngine.getPlaybackInfo()
+    applyNativePlaybackInfo(info)
+    const track = currentTrack.value
+    if (track && info.state !== 'playing') {
+      nativePlaybackActive = false
+      await loadAndPlay(track)
+    }
   } catch (err) {
     audioEngineError.value = err instanceof Error ? err.message : String(err)
     console.error('[音频引擎] 切换歌曲失败:', err)
     isLoading.value = false
+  } finally {
+    if (isPlaying.value && currentTrack.value) startVisualizationPolling()
   }
 }
 
@@ -691,9 +697,10 @@ const cleanupFns: (() => void)[] = []
 let listenersSetup = false
 let crossfadeTimer: number | null = null
 let visualizationTimer: number | null = null
+let visualizationRequestInFlight = false
 let crossfadeTrackId = ''
 const TIME_UPDATE_INTERVAL_MS = 250
-const VISUALIZATION_UPDATE_INTERVAL_MS = 250
+const VISUALIZATION_UPDATE_INTERVAL_MS = 120
 let latestPlaybackTime = 0
 let lastTimePublishAt = 0
 let pendingTimePublishTimer: number | null = null
@@ -754,10 +761,14 @@ function flushLatestCurrentTime(): void {
 }
 
 async function refreshVisualizationData(): Promise<void> {
+  if (visualizationRequestInFlight) return
+  visualizationRequestInFlight = true
   try {
     visualizationData.value = await window.api.audioEngine.getVisualizationData(visualizationOptions)
   } catch {
     visualizationData.value = createInactiveVisualizationData()
+  } finally {
+    visualizationRequestInFlight = false
   }
 }
 
@@ -1008,6 +1019,7 @@ function scheduleCrossfadeIfNeeded(): void {
 async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   const normalizedStartTime = Math.max(0, Number.isFinite(startTime) ? startTime : 0)
   const loadToken = ++activeLoadToken
+  stopVisualizationPolling(false)
   isLoading.value = true
   nativePlaybackActive = false
   stopRendererAudio(true)
@@ -1087,6 +1099,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     setCurrentTimeImmediate(normalizedStartTime)
     isLoading.value = false
     isPlaying.value = true
+    startVisualizationPolling()
   } catch (err) {
     if (!isActiveLoad(loadToken, track)) return
     console.error('[audio-engine] Playback failed:', err)
@@ -1095,6 +1108,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     isLoading.value = false
     isPlaying.value = false
     nativePlaybackActive = false
+    stopVisualizationPolling(true)
   }
 }
 
@@ -1218,7 +1232,11 @@ function applyPlayMode(): void {
 function cyclePlayMode(): void {
   const modes: PlayMode[] = ['sequential', 'repeat', 'shuffle']
   const idx = modes.indexOf(playMode.value)
-  playMode.value = modes[(idx + 1) % modes.length]
+  setPlayModeInternal(modes[(idx + 1) % modes.length])
+}
+
+function setPlayModeInternal(mode: PlayMode): void {
+  playMode.value = mode
   applyPlayMode()
   void syncNativeQueueState().catch((err) => {
     audioEngineError.value = err instanceof Error ? err.message : String(err)
@@ -1309,6 +1327,7 @@ export function usePlayerStore(): {
   outputInfo: ComputedRef<NativeOutputInfo | null>
   visualizationData: Ref<NativeVisualizationData>
   cyclePlayMode: () => void
+  setPlayMode: (mode: PlayMode) => void
   playTrack: (track: Track, trackList?: Track[]) => void
   togglePlay: () => Promise<void>
   next: () => void
@@ -1347,6 +1366,10 @@ export function usePlayerStore(): {
     if (queueIndex.value === -1) queueIndex.value = 0
     currentTrack.value = track
     void loadAndPlay(track)
+  }
+
+  function setPlayMode(mode: PlayMode): void {
+    setPlayModeInternal(mode)
   }
 
   async function togglePlay(): Promise<void> {
@@ -1527,6 +1550,7 @@ export function usePlayerStore(): {
     outputInfo,
     visualizationData,
     cyclePlayMode,
+    setPlayMode,
     playTrack,
     togglePlay,
     next,

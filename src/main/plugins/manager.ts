@@ -8,6 +8,7 @@ import { tmpdir } from 'os'
 import { EventEmitter } from 'events'
 import { planPluginStartup } from './dependencies'
 import { isCompatibleTwilightRange, validatePluginManifest } from './manifest'
+import { findProviderRoute } from './providerRouting'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -37,6 +38,7 @@ export interface TwilightPluginManagerOptions {
   }>
   ncm?: {
     request: (path: string, cookie?: string) => Promise<unknown>
+    officialLogin: () => Promise<string>
     getCachedSong: (songId: number) => Promise<string | null>
     cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
   }
@@ -389,10 +391,17 @@ export class TwilightPluginManager extends EventEmitter {
     args: unknown[]
   ): Promise<unknown> {
     const normalizedProviderId = providerId.trim().toLowerCase()
-    const running = [...this.running.values()].find((candidate) =>
+    const running = findProviderRoute(this.running.values(), normalizedProviderId, method)
+    const hasProvider = [...this.running.values()].some((candidate) =>
       candidate.providers.some((provider) => provider.id === normalizedProviderId)
     )
-    if (!running) throw new Error(`Provider 未启用：${normalizedProviderId}`)
+    if (!running) {
+      throw new Error(
+        hasProvider
+          ? `Provider ${normalizedProviderId} does not implement ${method}`
+          : `Provider 未启用：${normalizedProviderId}`
+      )
+    }
 
     const requestId = randomUUID()
     running.process.postMessage({
@@ -733,6 +742,9 @@ export class TwilightPluginManager extends EventEmitter {
       const [path, cookie] = message.args
       if (typeof path !== 'string') throw new Error('ncmRequest path 必须是字符串')
       return this.ncm.request(path, typeof cookie === 'string' ? cookie : undefined)
+    }
+    if (message.method === 'ncmOfficialLogin') {
+      return this.ncm.officialLogin()
     }
     if (message.method === 'ncmGetCachedSong') {
       const songId = Number(message.args[0])

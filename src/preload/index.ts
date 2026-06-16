@@ -39,6 +39,7 @@ type TwilightMediaProviderMethod =
   | 'checkLogin'
   | 'getProfile'
   | 'logout'
+  | 'openOfficialLogin'
   | 'getQrLogin'
   | 'getQrKey'
   | 'getQrImage'

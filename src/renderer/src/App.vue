@@ -13,6 +13,7 @@ import EqualizerPage from './components/EqualizerPage.vue'
 import PluginExtensionPage from './components/PluginExtensionPage.vue'
 import { useMusicStore } from './stores/useMusicStore'
 import { useNcmStore } from './stores/useNcmStore'
+import { setupListeningStatsTracking } from './stores/useListeningStatsStore'
 import { usePlayerStore } from './stores/usePlayerStore'
 import { useSettingsStore } from './stores/useSettingsStore'
 import { setupPluginThemeRuntime } from './extensions/themeRuntime'
@@ -307,6 +308,7 @@ function startSideMenuMonitor(): void {
 
 onMounted(async () => {
   setupPluginThemeRuntime()
+  setupListeningStatsTracking()
   removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(
     savePlaybackSessionForQuit
   )
@@ -390,6 +392,7 @@ const titleSurface = computed<TitleSurface>(() => {
     <Transition :name="songlistTransitionName">
       <LocalDashboard
         v-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !activePluginPage && activeCategory === 'dashboard'"
+        @open-dsp="openDspSettings"
       />
       <SongList
         v-else-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !activePluginPage"

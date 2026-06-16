@@ -79,12 +79,6 @@ const biliLikedPlaylist = ref<MediaProviderPlaylistSummary | null>(null)
 
 const isBiliActive = computed(() => activeProvider.value === 'bili')
 const biliProviderAvailable = computed(() => providerStore.hasProvider('bili'))
-const providerTabs = computed(() => [
-  { id: 'ncm' as const, label: '网易云', icon: 'pi pi-cloud', available: true },
-  ...(biliProviderAvailable.value
-    ? [{ id: 'bili' as const, label: 'Bilibili', icon: 'pi pi-video', available: true }]
-    : [])
-])
 
 async function loadRecommendations(): Promise<void> {
   if (isBiliActive.value) return
@@ -131,13 +125,27 @@ interface TabItem {
   icon: string
 }
 
+type SidebarItem =
+  | { key: StreamingTab; provider: 'ncm'; label: string; icon: string }
+  | { key: 'bili-library'; provider: 'bili'; label: string; icon: string }
+
 const tabs: TabItem[] = [
   { key: 'home', label: '主页', icon: 'pi pi-sparkles' },
   { key: 'library', label: '音乐库', icon: 'pi pi-heart' }
 ]
-const visibleTabs = computed<TabItem[]>(() =>
-  isBiliActive.value ? [{ key: 'library', label: '收藏夹', icon: 'pi pi-folder' }] : tabs
-)
+const sidebarItems = computed<SidebarItem[]>(() => [
+  ...tabs.map((tab) => ({ ...tab, provider: 'ncm' as const })),
+  ...(biliProviderAvailable.value
+    ? [
+        {
+          key: 'bili-library' as const,
+          provider: 'bili' as const,
+          label: 'Bilibili 收藏夹',
+          icon: 'pi pi-video'
+        }
+      ]
+    : [])
+])
 
 const currentView = computed(() => tabs.find((t) => t.key === activeTab.value))
 
@@ -472,6 +480,22 @@ function selectProvider(provider: StreamingProvider): void {
   if (provider === 'ncm' && activeTab.value === 'home' && isLoggedIn.value) {
     void loadRecommendations()
   }
+}
+
+function isSidebarItemActive(item: SidebarItem): boolean {
+  if (item.provider === 'bili') return isBiliActive.value
+  return activeProvider.value === 'ncm' && activeTab.value === item.key
+}
+
+function selectSidebarItem(item: SidebarItem): void {
+  if (item.provider === 'bili') {
+    selectProvider('bili')
+    return
+  }
+  if (activeProvider.value !== 'ncm') {
+    selectProvider('ncm')
+  }
+  selectTab(item.key)
 }
 
 function resetDetail(): void {
@@ -811,29 +835,16 @@ onMounted(async () => {
         <div class="streaming-sidebar-header">
           <span class="streaming-sidebar-title">流媒体</span>
         </div>
-        <div class="streaming-provider-tabs">
-          <button
-            v-for="provider in providerTabs"
-            :key="provider.id"
-            type="button"
-            class="provider-tab-pill"
-            :class="{ active: activeProvider === provider.id }"
-            @click="selectProvider(provider.id)"
-          >
-            <i :class="provider.icon"></i>
-            <span>{{ provider.label }}</span>
-          </button>
-        </div>
         <nav class="streaming-nav">
           <div
-            v-for="tab in visibleTabs"
-            :key="tab.key"
+            v-for="item in sidebarItems"
+            :key="item.key"
             class="streaming-menu-item"
-            :class="{ active: activeTab === tab.key }"
-            @click="selectTab(tab.key)"
+            :class="{ active: isSidebarItemActive(item) }"
+            @click="selectSidebarItem(item)"
           >
-            <i class="streaming-menu-icon" :class="tab.icon"></i>
-            <span class="streaming-menu-label">{{ tab.label }}</span>
+            <i class="streaming-menu-icon" :class="item.icon"></i>
+            <span class="streaming-menu-label">{{ item.label }}</span>
           </div>
         </nav>
         <div class="streaming-sidebar-bottom">
@@ -1447,42 +1458,6 @@ onMounted(async () => {
   color: #6b7280;
   text-transform: none;
   letter-spacing: 0;
-}
-
-.streaming-provider-tabs {
-  display: grid;
-  gap: 7px;
-  padding: 0 9px 12px 9px;
-}
-
-.provider-tab-pill {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 34px;
-  padding: 0 10px;
-  border: 1px solid #eef1f6;
-  border-radius: 8px;
-  background: #fff;
-  color: rgba(82, 90, 122, 0.7);
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-  box-shadow: 0 10px 22px rgba(34, 42, 68, 0.05);
-  transition:
-    background 0.18s,
-    border-color 0.18s,
-    color 0.18s;
-}
-
-.provider-tab-pill.active {
-  border-color: rgba(124, 77, 255, 0.18);
-  background: #f5f1ff;
-  color: #6f46e8;
-}
-
-.provider-tab-pill i {
-  font-size: 14px;
 }
 
 .streaming-nav {

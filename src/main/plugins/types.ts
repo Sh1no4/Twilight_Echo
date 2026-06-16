@@ -151,6 +151,7 @@ export type TwilightMediaProviderMethod =
   | 'checkLogin'
   | 'getProfile'
   | 'logout'
+  | 'openOfficialLogin'
   | 'getQrLogin'
   | 'getQrKey'
   | 'getQrImage'
@@ -265,6 +266,7 @@ export type PluginHostResponse =
         | 'registerUi'
         | 'registerTheme'
         | 'ncmRequest'
+        | 'ncmOfficialLogin'
         | 'ncmGetCachedSong'
         | 'ncmCacheSong'
       args: unknown[]

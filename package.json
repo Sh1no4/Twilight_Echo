@@ -1,6 +1,6 @@
 {
   "name": "TwilightEcho",
-  "version": "0.20.0",
+  "version": "0.2.0",
   "description": "An Electron application with Vue and TypeScript",
   "license": "Apache-2.0",
   "main": "./out/main/index.js",
@@ -22,7 +22,7 @@
     "stage:audio-engine": "node scripts/stage-audio-engine.cjs",
     "test:playback-routing": "node --experimental-strip-types --test src/renderer/src/utils/playbackRouting.test.ts",
     "test:audio-manager": "node --experimental-strip-types --test src/main/audioEngineManager.test.ts src/main/audioEngineServiceClient.test.ts",
-    "test:plugins": "node --experimental-strip-types --test src/main/plugins/manifest.test.ts src/main/plugins/dependencies.test.ts src/main/plugins/settingsStore.test.ts src/main/plugins/events.test.ts src/main/plugins/indexService.test.ts src/renderer/src/providers/mediaProvider.test.ts src/renderer/src/extensions/themeSelection.test.ts",
+    "test:plugins": "node --experimental-strip-types --test src/main/plugins/manifest.test.ts src/main/plugins/dependencies.test.ts src/main/plugins/settingsStore.test.ts src/main/plugins/events.test.ts src/main/plugins/indexService.test.ts src/main/plugins/ncmProviderLogin.test.ts src/main/plugins/providerRouting.test.ts src/renderer/src/providers/mediaProvider.test.ts src/renderer/src/extensions/themeSelection.test.ts",
     "test:audio-engine": "ctest --test-dir audio-engine/build/default --output-on-failure",
     "test:audio-engine:mingw": "ctest --test-dir audio-engine/build/mingw-static --output-on-failure",
     "test:no-real-device": "npm run configure:audio-engine:mingw && npm run build:audio-engine:mingw && npm run test:audio-engine:mingw && npm run test:audio-manager && npm run test:playback-routing && npm run typecheck && npm run build",
@@ -41,7 +41,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "@neteasecloudmusicapienhanced/api": "^4.32.0",
+    "@neteasecloudmusicapienhanced/api": "^4.35.1",
     "@types/qrcode": "^1.5.6",
     "extract-zip": "^2.0.1",
     "music-metadata": "^11.12.3",
@@ -75,7 +75,7 @@
       "@neteasecloudmusicapienhanced/api"
     ],
     "patchedDependencies": {
-      "@neteasecloudmusicapienhanced/api@4.32.0": "patches/@neteasecloudmusicapienhanced__api@4.32.0.patch"
+      "@neteasecloudmusicapienhanced/api@4.35.1": "patches/@neteasecloudmusicapienhanced__api@4.35.1.patch"
     }
   }
 }

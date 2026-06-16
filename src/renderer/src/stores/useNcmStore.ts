@@ -60,6 +60,7 @@ export interface NcmStore {
   checkLogin: () => Promise<boolean>
   setLogin: (prof: NcmProfile) => void
   logout: () => Promise<void>
+  openOfficialLogin: () => Promise<boolean>
   getQrKey: () => Promise<string | null>
   getQrImage: (key: string) => Promise<string | null>
   checkQrLogin: (key: string) => Promise<{ code: number }>
@@ -210,6 +211,11 @@ export function useNcmStore(): NcmStore {
     isLoggedIn.value = false
     profile.value = null
     resetLibraryState()
+  }
+
+  async function openOfficialLogin(): Promise<boolean> {
+    const state = await callNcmProvider<NcmLoginState>('openOfficialLogin')
+    return applyLoginState(state)
   }
 
   async function getQrKey(): Promise<string | null> {
@@ -388,6 +394,7 @@ export function useNcmStore(): NcmStore {
     checkLogin,
     setLogin,
     logout,
+    openOfficialLogin,
     getQrKey,
     getQrImage,
     checkQrLogin,

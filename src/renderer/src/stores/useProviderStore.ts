@@ -49,7 +49,18 @@ export function useProviderStore(): OnlineProviderStore {
   }
 
   async function checkLogin(id: string): Promise<ProviderLoginState> {
-    return callProvider<ProviderLoginState>(id, 'checkLogin')
+    const provider = providers.value.find((item) => item.id === id)
+    if (!provider?.capabilities.includes('login')) {
+      return { loggedIn: false, profile: null }
+    }
+    try {
+      return await callProvider<ProviderLoginState>(id, 'checkLogin')
+    } catch (error) {
+      if (error instanceof Error && /does not implement checkLogin/i.test(error.message)) {
+        return { loggedIn: false, profile: null }
+      }
+      throw error
+    }
   }
 
   async function getQrLogin(id: string): Promise<MediaProviderQrLogin | null> {

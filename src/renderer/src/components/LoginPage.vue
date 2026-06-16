@@ -18,6 +18,7 @@ const {
   providerAvailable: ncmProviderAvailable,
   providerError: ncmProviderError,
   logout: storeNcmLogout,
+  openOfficialLogin: storeNcmOpenOfficialLogin,
   checkLogin: storeNcmCheckLogin,
   getQrKey: storeNcmGetQrKey,
   getQrImage: storeNcmGetQrImage,
@@ -309,6 +310,25 @@ function handleRefresh(): void {
   void startQrLogin()
 }
 
+async function handleOfficialLogin(): Promise<void> {
+  if (activeProvider.value !== 'ncm') return
+  stopPolling()
+  pageState.value = 'qr_loading'
+  qrImage.value = ''
+  qrKey.value = ''
+  errorMsg.value = ''
+  try {
+    const loggedIn = await storeNcmOpenOfficialLogin()
+    if (!loggedIn) throw new Error('网易云官方登录未完成')
+    pageState.value = 'login_success'
+    await refreshAccounts()
+    emit('loginSuccess')
+  } catch (error) {
+    pageState.value = 'error'
+    errorMsg.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
 async function handleLogout(): Promise<void> {
   const providerId = activeProvider.value
   if (!providerId) return
@@ -452,9 +472,22 @@ onUnmounted(() => {
           {{ statusText }}
         </p>
 
+        <p v-if="activeProvider === 'ncm' && pageState !== 'login_success'" class="qr-login-hint">
+          如果登录失败，请尝试网页接口
+        </p>
+
         <button v-if="pageState === 'qr_expired'" class="login-action-btn" @click="handleRefresh">
           <i class="pi pi-refresh" style="margin-right: 6px"></i>
           刷新二维码
+        </button>
+
+        <button
+          v-if="activeProvider === 'ncm' && pageState !== 'login_success'"
+          class="login-action-btn"
+          @click="handleOfficialLogin"
+        >
+          <i class="pi pi-external-link" style="margin-right: 6px"></i>
+          使用官方网页登录
         </button>
 
         <button
@@ -795,5 +828,12 @@ onUnmounted(() => {
 
 .qr-status.success {
   color: #2ecc71;
+}
+
+.qr-login-hint {
+  margin: -6px 0 0;
+  color: rgba(90, 90, 104, 0.72);
+  font-size: 12px;
+  line-height: 1.5;
 }
 </style>

@@ -28,6 +28,7 @@ export async function activate(context) {
     checkLogin,
     getProfile,
     logout,
+    openOfficialLogin,
     getQrKey,
     getQrImage,
     checkQrLogin,
@@ -60,6 +61,10 @@ function withPcUa(path) {
   return `${path}${sep}ua=pc`
 }
 
+function shouldUsePcUa(path) {
+  return !path.startsWith('/login/')
+}
+
 function resetCaches() {
   playlistTrackCache.clear()
   streamUrlCache.clear()
@@ -86,7 +91,7 @@ async function saveCookie(cookie) {
 }
 
 async function request(path, cookie) {
-  const data = await ncmApi.request(withPcUa(path), cookie)
+  const data = await ncmApi.request(shouldUsePcUa(path) ? withPcUa(path) : path, cookie)
   if (data && typeof data === 'object' && data.code === -1) {
     throw new Error(data.message || 'NetEase API request failed')
   }
@@ -315,13 +320,22 @@ async function logout() {
   resetCaches()
 }
 
+async function openOfficialLogin() {
+  const cookie = await ncmApi.officialLogin()
+  if (!cookie || typeof cookie !== 'string' || !cookie.includes('MUSIC_U=')) {
+    throw new Error('网易云官方登录未返回有效 Cookie')
+  }
+  await saveCookie(cookie)
+  return await checkLogin()
+}
+
 async function getQrKey() {
   const data = await request('/login/qr/key')
   return data.code === 200 && data.data?.unikey ? data.data.unikey : null
 }
 
 async function getQrImage(key) {
-  const data = await request(`/login/qr/create?key=${encodeURIComponent(String(key))}&qrimg=true&platform=web`)
+  const data = await request(`/login/qr/create?key=${encodeURIComponent(String(key))}&qrimg=true`)
   if (data.code !== 200 || !data.data?.qrimg) return null
   const raw = data.data.qrimg
   return raw.startsWith('data:') ? raw : `data:image/png;base64,${raw}`

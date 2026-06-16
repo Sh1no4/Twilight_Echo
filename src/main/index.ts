@@ -8,6 +8,7 @@ import {
   Menu,
   nativeTheme,
   nativeImage,
+  session,
   Tray
 } from 'electron'
 import { join, extname, basename, dirname, resolve } from 'path'
@@ -731,6 +732,7 @@ let savingPlaybackSessionBeforeClose = false
 let lastPluginPlaybackInfo: PlaybackInfo | null = null
 const NCM_API_PORT = 3100
 const PLAYBACK_SESSION_SAVE_TIMEOUT_MS = 1800
+const NCM_OFFICIAL_LOGIN_TIMEOUT_MS = 180000
 const pendingPlaybackSessionSaves = new Map<string, () => void>()
 
 function bundledPluginPath(name: string): string {
@@ -766,6 +768,97 @@ async function requestNcmApi(path: string, cookie?: string): Promise<unknown> {
   } finally {
     clearTimeout(timer)
   }
+}
+
+async function collectNcmOfficialCookie(partition: string): Promise<string> {
+  const ses = session.fromPartition(partition)
+  const cookies = await ses.cookies.get({ domain: '.music.163.com' })
+  const names = new Set(['MUSIC_U', '__csrf', 'NMTID', 'MUSIC_A'])
+  return cookies
+    .filter((cookie) => names.has(cookie.name))
+    .map((cookie) => `${cookie.name}=${cookie.value}`)
+    .join(';')
+}
+
+async function openNcmOfficialLogin(): Promise<string> {
+  const partition = `persist:twilight-ncm-login-${Date.now()}`
+  const ses = session.fromPartition(partition)
+  await ses.clearStorageData().catch(() => undefined)
+
+  return await new Promise<string>((resolveLogin, rejectLogin) => {
+    const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined
+    const loginWindow = new BrowserWindow({
+      width: 920,
+      height: 680,
+      minWidth: 720,
+      minHeight: 560,
+      title: '网易云音乐登录',
+      parent: owner,
+      modal: false,
+      show: false,
+      webPreferences: {
+        session: ses,
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true
+      }
+    })
+
+    let settled = false
+    const cleanup = (): void => {
+      clearTimeout(timer)
+      ses.cookies.removeListener('changed', handleCookieChanged)
+      loginWindow.removeAllListeners('closed')
+    }
+    const finish = (cookie: string): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      if (!loginWindow.isDestroyed()) loginWindow.close()
+      resolveLogin(cookie)
+    }
+    const fail = (error: Error): void => {
+      if (settled) return
+      settled = true
+      cleanup()
+      if (!loginWindow.isDestroyed()) loginWindow.close()
+      rejectLogin(error)
+    }
+    const checkCookie = async (): Promise<void> => {
+      const cookie = await collectNcmOfficialCookie(partition)
+      if (cookie.includes('MUSIC_U=')) finish(cookie)
+    }
+    const handleCookieChanged = (): void => {
+      void checkCookie().catch(() => undefined)
+    }
+    const timer = setTimeout(() => {
+      fail(new Error('网易云官方登录超时'))
+    }, NCM_OFFICIAL_LOGIN_TIMEOUT_MS)
+
+    ses.cookies.on('changed', handleCookieChanged)
+    loginWindow.once('closed', () => {
+      if (!settled) {
+        settled = true
+        cleanup()
+        rejectLogin(new Error('已取消网易云官方登录'))
+      }
+    })
+    loginWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:\/\/([^/]+\.)?music\.163\.com\//i.test(url)) return { action: 'allow' }
+      void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    loginWindow.webContents.on('will-navigate', (event, url) => {
+      if (/^https?:\/\/([^/]+\.)?music\.163\.com\//i.test(url)) return
+      event.preventDefault()
+      void shell.openExternal(url)
+    })
+    loginWindow.once('ready-to-show', () => loginWindow.show())
+    loginWindow
+      .loadURL('https://music.163.com/#/login')
+      .then(() => checkCookie())
+      .catch((error) => fail(error instanceof Error ? error : new Error(String(error))))
+  })
 }
 
 function resolvePlaybackSessionSave(requestId: string): void {
@@ -1413,6 +1506,7 @@ function setupPluginIpc(): void {
     ],
     ncm: {
       request: requestNcmApi,
+      officialLogin: openNcmOfficialLogin,
       getCachedSong: async (songId) => getCachedNcmSong(Number(songId)),
       cacheSong: async (songId, url, fileName) => cacheNcmSong(Number(songId), url, fileName)
     },

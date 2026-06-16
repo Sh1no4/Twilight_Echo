@@ -1,51 +1,274 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed } from 'vue'
+import { useMusicStore } from '../stores/useMusicStore'
+import { useListeningStatsStore } from '../stores/useListeningStatsStore'
+import { usePlayerStore } from '../stores/usePlayerStore'
+import type { Track } from '../types/music'
 
-const visualizerRef = ref<HTMLElement | null>(null)
-const heatmapRef = ref<HTMLElement | null>(null)
+const emit = defineEmits<{
+  (event: 'open-dsp'): void
+}>()
 
-onMounted(() => {
-  if (visualizerRef.value) {
-    for(let i = 0; i < 18; i++) {
-      const bar = document.createElement('div')
-      bar.className = 'bar'
-      bar.style.animationDuration = (Math.random() * 350 + 250) + 'ms'
-      bar.style.animationDelay = '-' + (Math.random() * 800) + 'ms'
-      visualizerRef.value.appendChild(bar)
-    }
-  }
+interface DspNode {
+  id: string
+  name: string
+  icon: string
+  active: boolean
+}
 
-  if (heatmapRef.value) {
-    const totalDays = 140
-    for(let i = 0; i < totalDays; i++) {
-      const cell = document.createElement('div')
-      const progress = i / totalDays
-      const rand = Math.random() + (progress * 0.4)
-      
-      let level = ''
-      let hours = 0
-      
-      if (rand > 1.1) { level = 'level-4'; hours = Math.floor(Math.random() * 3 + 6) }
-      else if (rand > 0.8) { level = 'level-3'; hours = Math.floor(Math.random() * 2 + 4) }
-      else if (rand > 0.5) { level = 'level-2'; hours = Math.floor(Math.random() * 2 + 2) }
-      else if (rand > 0.25) { level = 'level-1'; hours = 1 }
-      
-      cell.className = `heatmap-cell ${level}`
-      
-      const d = new Date()
-      d.setDate(d.getDate() - (totalDays - i - 1))
-      const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-      
-      if(hours > 0) {
-        cell.setAttribute('data-info', `${hours} hours on ${dateStr}`)
-      } else {
-        cell.setAttribute('data-info', `No activity on ${dateStr}`)
-      }
-      
-      heatmapRef.value.appendChild(cell)
-    }
-  }
+const DEFAULT_COVER = '/icon.png'
+const FALLBACK_THUMB = '/icon.png'
+const HEATMAP_DAYS = 140
+
+const { tracks, albums } = useMusicStore()
+const { listeningStats } = useListeningStatsStore()
+const {
+  currentTrack,
+  isPlaying,
+  currentTime,
+  duration,
+  progress,
+  playMode,
+  audioProcessing,
+  playbackInfo,
+  outputInfo,
+  visualizationData,
+  setPlayMode,
+  playTrack,
+  togglePlay,
+  next,
+  prev,
+  seek,
+  formatTime
+} = usePlayerStore()
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value)
+}
+
+function dayKey(date: Date): string {
+  return date.toISOString().slice(0, 10)
+}
+
+const nowPlayingTitle = computed(() => currentTrack.value?.title || '暂无正在播放')
+const nowPlayingArtist = computed(() => currentTrack.value?.artist || '选择一首本地或在线音乐开始')
+const nowPlayingCover = computed(() => currentTrack.value?.cover || DEFAULT_COVER)
+const nowPlayingMeta = computed(() => {
+  const track = currentTrack.value
+  if (!track) return 'Ready'
+  const album = track.album || 'Unknown Album'
+  const format = formatTrackFormat(track)
+  return `${album} • ${format}`
 })
+
+const progressWidth = computed(() => `${Math.min(100, Math.max(0, progress.value))}%`)
+
+const libraryDays = computed(() => {
+  const seconds = tracks.value.reduce((sum, track) => sum + Math.max(0, track.duration || 0), 0)
+  return seconds / 86400
+})
+
+const recentlyAddedTracks = computed(() => tracks.value.slice(-3).reverse())
+const topTracks = computed(() => {
+  const byId = new Map(tracks.value.map((track) => [track.id, track]))
+  const stats = Object.entries(listeningStats.value.tracks)
+    .sort(([, a], [, b]) => b.seconds - a.seconds)
+    .slice(0, 3)
+    .map(([id, stat]) => ({ id, stat, track: byId.get(id) ?? stat.track }))
+
+  if (stats.length > 0) return stats
+
+  return tracks.value.slice(0, 3).map((track) => ({
+    id: track.id,
+    track,
+    stat: {
+      seconds: 0,
+      plays: 0,
+      title: track.title,
+      artist: track.artist,
+      cover: track.cover
+    }
+  }))
+})
+
+const heatmapCells = computed(() => {
+  return Array.from({ length: HEATMAP_DAYS }, (_, index) => {
+    const date = new Date()
+    date.setDate(date.getDate() - (HEATMAP_DAYS - index - 1))
+    const seconds = listeningStats.value.days[dayKey(date)] ?? 0
+    const hours = seconds / 3600
+    return {
+      key: dayKey(date),
+      level: heatmapLevel(hours),
+      info:
+        seconds > 0
+          ? `${formatDuration(seconds)} on ${date.toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric'
+            })}`
+          : `No activity on ${date.toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric'
+            })}`
+    }
+  })
+})
+
+const thisMonthSeconds = computed(() => {
+  const monthPrefix = dayKey(new Date()).slice(0, 7)
+  return Object.entries(listeningStats.value.days).reduce(
+    (sum, [date, seconds]) => (date.startsWith(monthPrefix) ? sum + seconds : sum),
+    0
+  )
+})
+
+const dailyAverageSeconds = computed(() => {
+  const now = new Date()
+  return thisMonthSeconds.value / now.getDate()
+})
+
+const dayStreak = computed(() => {
+  let streak = 0
+  const cursor = new Date()
+  while ((listeningStats.value.days[dayKey(cursor)] ?? 0) > 0) {
+    streak += 1
+    cursor.setDate(cursor.getDate() - 1)
+  }
+  return streak
+})
+
+const thisMonthDisplay = computed(() => formatStatDuration(thisMonthSeconds.value))
+const dailyAverageDisplay = computed(() => formatStatDuration(dailyAverageSeconds.value))
+
+const dspNodes = computed<DspNode[]>(() => {
+  const output = outputInfo.value
+  const nativePlugins = Array.isArray(output?.nativeDsp?.plugins) ? output.nativeDsp.plugins : []
+  const activeNativePlugins = nativePlugins
+    .map((plugin) => normalizeNativeDspPlugin(plugin))
+    .filter((plugin): plugin is DspNode => !!plugin)
+
+  return [
+    {
+      id: 'source',
+      name: playbackInfo.value?.source ? 'Source File' : 'No Source',
+      icon: 'ph ph-file-audio',
+      active: !!playbackInfo.value?.source
+    },
+    {
+      id: 'resampler',
+      name: output?.resampled ? 'SOXR Resampler' : 'Native Rate',
+      icon: 'ph ph-wave-sine',
+      active: output?.resampled === true
+    },
+    {
+      id: 'eq',
+      name: audioProcessing.value.eqMode === 'parametric' ? 'Parametric EQ' : '10-Band EQ',
+      icon: 'ph ph-faders',
+      active: audioProcessing.value.dspEnabled && audioProcessing.value.eqEnabled
+    },
+    {
+      id: 'replaygain',
+      name: audioProcessing.value.volumeNormalization === 'off' ? 'ReplayGain Off' : 'ReplayGain',
+      icon: 'ph ph-gauge',
+      active:
+        audioProcessing.value.dspEnabled && audioProcessing.value.volumeNormalization !== 'off'
+    },
+    {
+      id: 'crossfeed',
+      name: 'Bauer Crossfeed',
+      icon: 'ph ph-headphones',
+      active: audioProcessing.value.dspEnabled && audioProcessing.value.crossfeedEnabled
+    },
+    ...activeNativePlugins,
+    {
+      id: 'output',
+      name: output?.actualBackend ? `${output.actualBackend.toUpperCase()} Output` : 'Audio Output',
+      icon: 'ph ph-speaker-hifi',
+      active: playbackInfo.value?.state === 'playing'
+    }
+  ]
+})
+
+const spectrumBars = computed(() => {
+  const values = visualizationData.value.spectrum.slice(0, 24)
+  const normalized = values.length > 0 ? values : Array.from({ length: 24 }, () => 0)
+  return normalized.map((value) => {
+    if (!visualizationData.value.active) return 0.14
+    const width = Math.max(12, Math.min(132, 12 + Math.sqrt(Math.max(0, value)) * 120))
+    return Math.min(1, Math.max(0.08, width / 132))
+  })
+})
+
+function normalizeNativeDspPlugin(plugin: unknown): DspNode | null {
+  if (!isRecord(plugin)) return null
+  const id = typeof plugin.id === 'string' ? plugin.id : ''
+  const name = typeof plugin.name === 'string' ? plugin.name : id || 'Native DSP'
+  if (!id && !name) return null
+  return {
+    id: `native:${id || name}`,
+    name,
+    icon: 'ph ph-cpu',
+    active: plugin.active === true && plugin.bypassed !== true
+  }
+}
+
+function heatmapLevel(hours: number): string {
+  if (hours >= 4) return 'level-4'
+  if (hours >= 2) return 'level-3'
+  if (hours >= 0.5) return 'level-2'
+  if (hours > 0) return 'level-1'
+  return ''
+}
+
+function formatTrackFormat(track: Track): string {
+  const parts: string[] = []
+  if (track.format) parts.push(track.format.toUpperCase())
+  if (track.bitDepth) parts.push(`${track.bitDepth}-bit`)
+  if (track.sampleRate) parts.push(`${Math.round(track.sampleRate / 1000)}kHz`)
+  if (parts.length > 0) return parts.join(' / ')
+  return track.source === 'ncm' ? 'NCM Stream' : track.source === 'bili' ? 'Bilibili Audio' : 'Local Audio'
+}
+
+function formatCompactNumber(value: number): string {
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 1 : 0)}k`
+  return String(value)
+}
+
+function formatDays(value: number): string {
+  if (value >= 10) return Math.round(value).toString()
+  return value.toFixed(1)
+}
+
+function formatDuration(seconds: number): string {
+  if (seconds >= 3600) return `${(seconds / 3600).toFixed(seconds >= 36000 ? 0 : 1)}h`
+  if (seconds >= 60) return `${Math.round(seconds / 60)}m`
+  return `${Math.round(seconds)}s`
+}
+
+function formatStatDuration(seconds: number): { value: string; unit: string } {
+  if (seconds >= 3600) {
+    return {
+      value: (seconds / 3600).toFixed(seconds >= 36000 ? 0 : 1),
+      unit: 'h'
+    }
+  }
+  return {
+    value: String(Math.round(seconds / 60)),
+    unit: 'm'
+  }
+}
+
+function handleSeek(event: MouseEvent): void {
+  if (duration.value <= 0) return
+  const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
+  const ratio = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width))
+  seek(duration.value * ratio)
+}
+
+function playDashboardTrack(track: Track | undefined): void {
+  if (!track) return
+  playTrack(track, tracks.value)
+}
 </script>
 
 <template>
@@ -55,35 +278,59 @@ onMounted(() => {
         <!-- Now Playing Card (Left Top - Horizontal & Wide) -->
         <div class="card now-playing">
             <div class="album-art-container">
-                <div class="record-vinyl"></div>
                 <div class="album-art">
-                    <img src="https://images.unsplash.com/photo-1493225457124-a1a2a5eaebfc?q=80&w=600&auto=format&fit=crop" alt="Album Art">
+                    <img :src="nowPlayingCover" alt="Album Art">
                 </div>
             </div>
             
             <div class="player-content">
                 <div class="song-info">
-                    <h2>Aura</h2>
-                    <p>Bicep</p>
-                    <div class="meta">Isles • FLAC 24-bit / 48kHz</div>
+                    <h2>{{ nowPlayingTitle }}</h2>
+                    <p>{{ nowPlayingArtist }}</p>
+                    <div class="meta">{{ nowPlayingMeta }}</div>
                 </div>
 
                 <div class="progress-container">
-                    <div class="progress-bar">
-                        <div class="progress-fill"></div>
+                    <div class="progress-bar" @click="handleSeek">
+                        <div class="progress-fill" :style="{ width: progressWidth }"></div>
                     </div>
                     <div class="time">
-                        <span>03:42</span>
-                        <span>05:13</span>
+                        <span>{{ formatTime(currentTime) }}</span>
+                        <span>{{ formatTime(duration) }}</span>
                     </div>
                 </div>
 
                 <div class="controls">
-                    <button class="control-btn"><i class="ph ph-shuffle"></i></button>
-                    <button class="control-btn"><i class="ph-fill ph-skip-back-circle"></i></button>
-                    <button class="control-btn play-btn"><i class="ph-fill ph-pause"></i></button>
-                    <button class="control-btn"><i class="ph-fill ph-skip-forward-circle"></i></button>
-                    <button class="control-btn"><i class="ph ph-repeat"></i></button>
+                    <button
+                      class="control-btn"
+                      :class="{ active: playMode === 'shuffle' }"
+                      title="随机播放"
+                      aria-label="随机播放"
+                      @click="setPlayMode(playMode === 'shuffle' ? 'sequential' : 'shuffle')"
+                    >
+                      <img src="/Shuffle.svg" alt="随机播放">
+                    </button>
+                    <button class="control-btn" title="上一首" aria-label="上一首" @click="prev">
+                      <img src="/Previous%20track.svg" alt="上一首">
+                    </button>
+                    <button class="control-btn play-btn" title="播放/暂停" aria-label="播放/暂停" @click="togglePlay">
+                      <img :src="isPlaying ? '/Pause.svg' : '/Start.svg'" :alt="isPlaying ? '暂停' : '播放'">
+                    </button>
+                    <button class="control-btn" title="下一首" aria-label="下一首" @click="next">
+                      <img src="/Next%20Track.svg" alt="下一首">
+                    </button>
+                    <button
+                      class="control-btn"
+                      :class="{ active: playMode === 'repeat' }"
+                      title="单曲循环 / 顺序播放"
+                      aria-label="单曲循环 / 顺序播放"
+                      @click="setPlayMode(playMode === 'repeat' ? 'sequential' : 'repeat')"
+                    >
+                      <img
+                        :src="playMode === 'repeat' ? '/Single%20song%20repeat.svg' : '/sequential%20playback.svg'"
+                        :alt="playMode === 'repeat' ? '单曲循环' : '顺序播放'"
+                      >
+                    </button>
                 </div>
             </div>
         </div>
@@ -101,22 +348,28 @@ onMounted(() => {
                     <span>Wed</span>
                     <span>Fri</span>
                 </div>
-                <div class="heatmap" ref="heatmapRef">
-                    <!-- Cells injected via JS -->
+                <div class="heatmap">
+                    <div
+                      v-for="cell in heatmapCells"
+                      :key="cell.key"
+                      class="heatmap-cell"
+                      :class="cell.level"
+                      :data-info="cell.info"
+                    ></div>
                 </div>
             </div>
 
             <div class="calendar-stats">
                 <div class="stat">
-                    <span class="stat-value">86<span style="font-size:1rem;color:var(--text-muted);font-weight:600;">h</span></span>
+                    <span class="stat-value">{{ thisMonthDisplay.value }}<span style="font-size:1rem;color:var(--text-muted);font-weight:600;">{{ thisMonthDisplay.unit }}</span></span>
                     <span class="stat-label">This Month</span>
                 </div>
                 <div class="stat">
-                    <span class="stat-value">3.1<span style="font-size:1rem;color:var(--text-muted);font-weight:600;">h</span></span>
+                    <span class="stat-value">{{ dailyAverageDisplay.value }}<span style="font-size:1rem;color:var(--text-muted);font-weight:600;">{{ dailyAverageDisplay.unit }}</span></span>
                     <span class="stat-label">Daily Avg</span>
                 </div>
                 <div class="stat">
-                    <span class="stat-value">12</span>
+                    <span class="stat-value">{{ dayStreak }}</span>
                     <span class="stat-label">Day Streak</span>
                 </div>
             </div>
@@ -131,40 +384,38 @@ onMounted(() => {
             
             <div class="library-stats-header">
                 <div class="lib-stat">
-                    <span>24.5k</span>
+                    <span>{{ formatCompactNumber(tracks.length) }}</span>
                     <label>Tracks</label>
                 </div>
                 <div class="lib-stat">
-                    <span>1,842</span>
+                    <span>{{ formatCompactNumber(albums.length) }}</span>
                     <label>Albums</label>
                 </div>
                 <div class="lib-stat">
-                    <span>142</span>
+                    <span>{{ formatDays(libraryDays) }}</span>
                     <label>Days</label>
                 </div>
             </div>
 
             <h3 class="section-title">Recently Added</h3>
             <div class="recent-list">
-                <div class="recent-item">
-                    <img src="https://images.unsplash.com/photo-1621252179027-94459d278660?q=80&w=200&auto=format&fit=crop" alt="Album">
+                <div
+                  v-for="track in recentlyAddedTracks"
+                  :key="track.id"
+                  class="recent-item"
+                  @click="playDashboardTrack(track)"
+                >
+                    <img :src="track.cover || FALLBACK_THUMB" alt="Album">
                     <div class="recent-info">
-                        <h4>Random Access Memories</h4>
-                        <p>Daft Punk</p>
+                        <h4>{{ track.title }}</h4>
+                        <p>{{ track.artist || 'Unknown Artist' }}</p>
                     </div>
                 </div>
-                <div class="recent-item">
-                    <img src="https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=200&auto=format&fit=crop" alt="Album">
+                <div v-if="recentlyAddedTracks.length === 0" class="recent-item">
+                    <img :src="FALLBACK_THUMB" alt="Album">
                     <div class="recent-info">
-                        <h4>Currents</h4>
-                        <p>Tame Impala</p>
-                    </div>
-                </div>
-                <div class="recent-item">
-                    <img src="https://images.unsplash.com/photo-1619983081563-430f63602796?q=80&w=200&auto=format&fit=crop" alt="Album">
-                    <div class="recent-info">
-                        <h4>Discovery</h4>
-                        <p>Daft Punk</p>
+                        <h4>暂无本地音乐</h4>
+                        <p>导入音乐后会显示最近添加</p>
                     </div>
                 </div>
             </div>
@@ -178,28 +429,17 @@ onMounted(() => {
             </div>
 
             <div class="track-list">
-                <div class="track-item">
-                    <div class="rank">1</div>
-                    <img src="https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?q=80&w=200&auto=format&fit=crop" alt="Track">
+                <div
+                  v-for="(entry, index) in topTracks"
+                  :key="entry.id"
+                  class="track-item"
+                  @click="playDashboardTrack(entry.track)"
+                >
+                    <div class="rank">{{ index + 1 }}</div>
+                    <img :src="entry.track?.cover || entry.stat.cover || FALLBACK_THUMB" alt="Track">
                     <div class="track-info">
-                        <h4>Midnight City</h4>
-                        <p>M83 • 124 plays</p>
-                    </div>
-                </div>
-                <div class="track-item">
-                    <div class="rank">2</div>
-                    <img src="https://images.unsplash.com/photo-1493225457124-a1a2a5eaebfc?q=80&w=200&auto=format&fit=crop" alt="Track">
-                    <div class="track-info">
-                        <h4>Aura</h4>
-                        <p>Bicep • 98 plays</p>
-                    </div>
-                </div>
-                <div class="track-item">
-                    <div class="rank">3</div>
-                    <img src="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=200&auto=format&fit=crop" alt="Track">
-                    <div class="track-info">
-                        <h4>Resonance</h4>
-                        <p>HOME • 86 plays</p>
+                        <h4>{{ entry.track?.title || entry.stat.title }}</h4>
+                        <p>{{ entry.track?.artist || entry.stat.artist }} • {{ entry.stat.plays }} plays</p>
                     </div>
                 </div>
             </div>
@@ -214,29 +454,15 @@ onMounted(() => {
             
             <div class="dsp-scroll-container">
                 <div class="dsp-nodes">
-                    <div class="dsp-node active">
-                        <i class="ph ph-file-audio"></i>
-                        <div class="name">Source File</div>
-                        <div class="status-dot"></div>
-                    </div>
-                    <div class="dsp-node active">
-                        <i class="ph ph-wave-sine"></i>
-                        <div class="name">SOXR Resampler</div>
-                        <div class="status-dot"></div>
-                    </div>
-                    <div class="dsp-node">
-                        <i class="ph ph-faders"></i>
-                        <div class="name">10-Band EQ</div>
-                        <div class="status-dot"></div>
-                    </div>
-                    <div class="dsp-node active">
-                        <i class="ph ph-headphones"></i>
-                        <div class="name">Bauer Crossfeed</div>
-                        <div class="status-dot"></div>
-                    </div>
-                    <div class="dsp-node active">
-                        <i class="ph ph-speaker-hifi"></i>
-                        <div class="name">ASIO Output</div>
+                    <div
+                      v-for="node in dspNodes"
+                      :key="node.id"
+                      class="dsp-node"
+                      :class="{ active: node.active }"
+                      @click="emit('open-dsp')"
+                    >
+                        <i :class="node.icon"></i>
+                        <div class="name">{{ node.name }}</div>
                         <div class="status-dot"></div>
                     </div>
                 </div>
@@ -244,12 +470,13 @@ onMounted(() => {
 
             <!-- Horizontal Spectrum Analyzer (Right to Left) -->
             <div class="visualizer-container">
-                <div class="visualizer-title">
-                    Spectrum
-                    <i class="ph-fill ph-waveform"></i>
-                </div>
-                <div class="visualizer" ref="visualizerRef">
-                    <!-- Bars injected via JS -->
+                <div class="visualizer">
+                    <div
+                      v-for="(scale, index) in spectrumBars"
+                      :key="index"
+                      class="bar"
+                      :style="{ '--bar-scale': scale }"
+                    ></div>
                 </div>
             </div>
         </div>
@@ -363,7 +590,6 @@ onMounted(() => {
     overflow: hidden;
     position: relative;
     z-index: 2;
-    animation: float 6s ease-in-out infinite;
 }
 
 .album-art img {
@@ -375,30 +601,6 @@ onMounted(() => {
 
 .album-art:hover img {
     transform: scale(1.05);
-}
-
-.record-vinyl {
-    position: absolute;
-    top: 5%;
-    right: -12%;
-    width: 220px;
-    height: 220px;
-    background: #e5e7eb;
-    border-radius: 50%;
-    z-index: 1;
-    border: 2px solid #d1d5db;
-    box-shadow: inset 0 0 0 8px #f3f4f6, inset 0 0 0 10px #e5e7eb;
-    animation: spin 5s linear infinite;
-}
-
-@keyframes spin {
-    100% { transform: rotate(360deg); }
-}
-
-@keyframes float {
-    0% { transform: translateY(0px); }
-    50% { transform: translateY(-8px); }
-    100% { transform: translateY(0px); }
 }
 
 .player-content {
@@ -494,10 +696,28 @@ onMounted(() => {
     opacity: 0.7;
 }
 
+.control-btn img {
+    width: 1.35rem;
+    height: 1.35rem;
+    display: block;
+    object-fit: contain;
+}
+
+.play-btn img {
+    width: 1.75rem;
+    height: 1.75rem;
+    filter: brightness(0) invert(1);
+}
+
 .control-btn:hover {
     opacity: 1;
     color: var(--accent);
     transform: scale(1.1);
+}
+
+.control-btn.active {
+    opacity: 1;
+    color: var(--accent);
 }
 
 .play-btn {
@@ -756,9 +976,9 @@ onMounted(() => {
 .dsp-scroll-container {
     overflow-y: auto;
     overflow-x: hidden;
-    flex-grow: 1;
+    flex: 0 1 auto;
     padding-right: 0.5rem;
-    margin-bottom: 1.5rem;
+    margin-bottom: 0;
     scrollbar-width: thin;
     scrollbar-color: var(--accent-light) rgba(0,0,0,0.05);
 }
@@ -853,28 +1073,13 @@ onMounted(() => {
 /* --- Horizontal Spectrum Analyzer (Right to Left) --- */
 .visualizer-container {
     width: 100%;
-    margin-top: auto;
-    border-top: 1px solid rgba(0,0,0,0.05);
-    padding-top: 1.5rem;
-}
-
-.visualizer-title {
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    font-weight: 700;
-    color: var(--text-muted);
-    margin-bottom: 1rem;
-    letter-spacing: 1px;
+    flex: 1 1 180px;
+    min-height: 160px;
     display: flex;
     align-items: center;
-    justify-content: flex-end; /* Align title to the right */
-    gap: 0.5rem;
+    justify-content: flex-end;
+    padding-top: 0.25rem;
     padding-right: 0.5rem;
-}
-
-.visualizer-title i {
-    color: var(--accent);
-    font-size: 1rem;
 }
 
 .visualizer {
@@ -882,20 +1087,20 @@ onMounted(() => {
     flex-direction: column; /* Stack bars vertically */
     align-items: flex-end;  /* Align bars to the right */
     gap: 4px;
-    width: 100%;
-    padding-right: 0.5rem;
+    width: max-content;
+    max-width: 100%;
 }
 
 :deep(.bar) {
-    height: 5px; /* Fixed height for horizontal bars */
+    width: 132px;
+    height: 4px; /* Fixed height for horizontal bars */
     background: linear-gradient(to left, var(--accent), var(--accent-light)); /* Gradient right to left */
     border-radius: 3px 0 0 3px;
-    animation: sound-horizontal 0ms -800ms linear infinite alternate;
-}
-
-@keyframes sound-horizontal {
-    0% { width: 10px; opacity: 0.4; }
-    100% { width: 90px; opacity: 1; } /* Animate width growing to the left */
+    opacity: 0.95;
+    transform: scaleX(var(--bar-scale, 0.12));
+    transform-origin: right center;
+    transition: transform 55ms linear, opacity 55ms linear;
+    will-change: transform;
 }
 
 /* Responsive */
@@ -908,10 +1113,16 @@ onMounted(() => {
     .dsp-nodes { flex-direction: row; }
     .dsp-nodes::before { top: 50%; bottom: auto; left: 0; right: 0; width: 100%; height: 2px; transform: translateY(-50%); }
     .dsp-node { flex-direction: column; }
+    .visualizer-container { min-height: 120px; }
     .visualizer { flex-direction: row; align-items: flex-end; padding-right: 0; }
-    .visualizer-title { justify-content: center; padding-right: 0; }
-    :deep(.bar) { height: auto; width: 4px; background: linear-gradient(to top, var(--accent), var(--accent-light)); border-radius: 2px 2px 0 0; animation: sound 0ms -800ms linear infinite alternate; }
-    @keyframes sound { 0% { height: 10px; opacity: 0.4; } 100% { height: 50px; opacity: 1; } }
+    :deep(.bar) {
+        width: 4px;
+        height: 58px;
+        background: linear-gradient(to top, var(--accent), var(--accent-light));
+        border-radius: 2px 2px 0 0;
+        transform: scaleY(var(--bar-scale, 0.12));
+        transform-origin: center bottom;
+    }
 }
 @media (max-width: 950px) {
     .dashboard {
@@ -926,6 +1137,5 @@ onMounted(() => {
         text-align: center;
     }
     .now-playing .controls { justify-content: center; }
-    .now-playing .record-vinyl { display: none; }
 }
 </style>

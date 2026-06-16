@@ -1241,9 +1241,10 @@ onBeforeUnmount(() => {
 .player-bar {
   position: relative;
   z-index: 2;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 280px) minmax(460px, 1fr) minmax(0, 280px);
   align-items: center;
-  justify-content: space-between;
+  column-gap: 22px;
   height: 72px;
   max-width: 1180px;
   margin: 0 auto;
@@ -1341,8 +1342,8 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-width: 260px;
-  max-width: 360px;
+  min-width: 0;
+  max-width: 100%;
 }
 .player-cover {
   width: 48px;
@@ -1382,6 +1383,7 @@ onBeforeUnmount(() => {
 .player-track-info {
   overflow: hidden;
   min-width: 0;
+  max-width: 100%;
 }
 .player-title {
   font-family: var(--te-font-rounded);
@@ -1409,16 +1411,18 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
-  flex: 1;
-  max-width: 600px;
-  margin: 0 40px;
+  gap: 0;
+  min-width: 0;
+  width: 100%;
+  justify-self: center;
+  transform: translateY(2px);
 }
 .player-controls {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 6px;
+  margin-top: 0;
+  flex-shrink: 0;
 }
 .ctrl-btn {
   display: flex;
@@ -1528,7 +1532,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  min-width: 160px;
+  min-width: 0;
   justify-content: flex-end;
 }
 
@@ -1592,6 +1596,41 @@ onBeforeUnmount(() => {
 .icon-btn:active {
   transform: scale(0.88);
   transition-duration: 0.1s;
+}
+
+@media (max-width: 900px) {
+  .player-bar {
+    grid-template-columns: minmax(0, 0.72fr) minmax(360px, 1.8fr) minmax(0, 0.72fr);
+    column-gap: 12px;
+    padding: 0 14px;
+  }
+
+  .player-right {
+    gap: 2px;
+  }
+
+  .progress-area {
+    gap: 6px;
+  }
+}
+
+@media (max-width: 680px) {
+  .player-bar {
+    grid-template-columns: minmax(0, 0.55fr) minmax(320px, 2fr) minmax(0, 0.55fr);
+    column-gap: 8px;
+  }
+
+  .player-left {
+    gap: 8px;
+  }
+
+  .player-controls {
+    margin-top: 0;
+  }
+
+  .time-label {
+    min-width: 32px;
+  }
 }
 
 /* ===== More Drawer ===== */
