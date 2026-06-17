@@ -307,27 +307,30 @@ std::optional<QueueItem> QueueManager::current() const {
 }
 
 std::optional<QueueItem> QueueManager::upcoming() const {
-  const int index = queueIndexAtOrderOffset(1);
+  const int index = queueIndexAtOrderOffset(1, true);
   if (index < 0 || index >= static_cast<int>(items_.size())) return std::nullopt;
   return items_[static_cast<size_t>(index)];
 }
 
 std::optional<QueueItem> QueueManager::next() {
-  const int index = queueIndexAtOrderOffset(1);
+  const int index = queueIndexAtOrderOffset(1, false);
   if (index < 0) return std::nullopt;
   setCurrentIndex(index);
   return current();
 }
 
 std::optional<QueueItem> QueueManager::previous() {
-  const int index = queueIndexAtOrderOffset(-1);
+  const int index = queueIndexAtOrderOffset(-1, false);
   if (index < 0) return std::nullopt;
   setCurrentIndex(index);
   return current();
 }
 
 std::optional<QueueItem> QueueManager::advanceAfterEnd() {
-  return next();
+  const int index = queueIndexAtOrderOffset(1, true);
+  if (index < 0) return std::nullopt;
+  setCurrentIndex(index);
+  return current();
 }
 
 std::string QueueManager::queueJson() const {
@@ -394,9 +397,9 @@ void QueueManager::rebuildPlayOrder() {
   }
 }
 
-int QueueManager::queueIndexAtOrderOffset(int offset) const {
+int QueueManager::queueIndexAtOrderOffset(int offset, bool honorRepeat) const {
   if (items_.empty() || playOrder_.empty()) return -1;
-  if (playMode_ == PlayMode::Repeat) return currentIndex();
+  if (honorRepeat && playMode_ == PlayMode::Repeat) return currentIndex();
 
   const int count = static_cast<int>(playOrder_.size());
   const int base = orderPosition_ < 0 ? 0 : orderPosition_;

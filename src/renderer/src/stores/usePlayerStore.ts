@@ -235,6 +235,18 @@ let nativePlaybackActive = false
 let activeLoadToken = 0
 let rendererPlaybackWatchdogTimer: number | null = null
 const RENDERER_PLAYBACK_WATCHDOG_MS = 220
+const PLAYBACK_TOGGLE_INTENT_GRACE_MS = 650
+const NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS = 2500
+let playbackToggleIntent: { playing: boolean; expiresAt: number } | null = null
+let nativePlaybackInfoIntent:
+  | {
+      loadToken: number
+      trackId: string
+      queueIndex: number
+      source: string
+      expiresAt: number
+    }
+  | null = null
 
 function isActiveLoad(loadToken: number, track: Track): boolean {
   return loadToken === activeLoadToken && currentTrack.value?.id === track.id
@@ -245,6 +257,68 @@ function clearRendererPlaybackWatchdog(): void {
     window.clearTimeout(rendererPlaybackWatchdogTimer)
     rendererPlaybackWatchdogTimer = null
   }
+}
+
+function setNativePlaybackInfoIntent(loadToken: number, track: Track, source = ''): void {
+  nativePlaybackInfoIntent = {
+    loadToken,
+    trackId: track.id,
+    queueIndex: queueIndex.value,
+    source,
+    expiresAt: getNowMs() + NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS
+  }
+}
+
+function clearNativePlaybackInfoIntent(): void {
+  nativePlaybackInfoIntent = null
+}
+
+function clearNativePlaybackInfoIntentForLoad(loadToken: number): void {
+  if (nativePlaybackInfoIntent?.loadToken === loadToken) {
+    clearNativePlaybackInfoIntent()
+  }
+}
+
+function nativePlaybackInfoMatchesIntent(info: NativePlaybackInfo, infoIndex: number): boolean {
+  const intent = nativePlaybackInfoIntent
+  if (!intent) return true
+  const indexedTrack = infoIndex >= 0 ? queue.value[infoIndex] : null
+  if (indexedTrack?.id === intent.trackId) return true
+
+  const source = typeof info.source === 'string' ? info.source.trim() : ''
+  return source.length > 0 && (source === intent.source || source === intent.trackId)
+}
+
+function shouldIgnoreNativePlaybackInfo(info: NativePlaybackInfo, infoIndex: number): boolean {
+  if (!nativePlaybackInfoIntent) return false
+  if (getNowMs() > nativePlaybackInfoIntent.expiresAt) {
+    clearNativePlaybackInfoIntent()
+    return false
+  }
+  return !nativePlaybackInfoMatchesIntent(info, infoIndex)
+}
+
+function setPlaybackToggleIntent(playing: boolean): void {
+  playbackToggleIntent = {
+    playing,
+    expiresAt: getNowMs() + PLAYBACK_TOGGLE_INTENT_GRACE_MS
+  }
+}
+
+function clearPlaybackToggleIntent(): void {
+  playbackToggleIntent = null
+}
+
+function applyNativePlayingState(playing: boolean): void {
+  if (playbackToggleIntent) {
+    if (getNowMs() > playbackToggleIntent.expiresAt) {
+      clearPlaybackToggleIntent()
+    } else if (playing !== playbackToggleIntent.playing) {
+      return
+    }
+  }
+
+  isPlaying.value = playing
 }
 
 function scheduleRendererPlaybackWatchdog(track: Track, loadToken: number): void {
@@ -590,6 +664,10 @@ function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
   const normalizedInfo = normalizeNativePlaybackInfo(info)
   playbackInfo.value = normalizedInfo
   const infoIndex = findTrackIndexFromPlaybackInfo(info)
+  if (shouldIgnoreNativePlaybackInfo(info, infoIndex)) return
+  if (nativePlaybackInfoIntent && nativePlaybackInfoMatchesIntent(info, infoIndex)) {
+    clearNativePlaybackInfoIntent()
+  }
   let switchedTrack = false
 
   if (infoIndex >= 0) {
@@ -617,7 +695,7 @@ function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
     setCurrentTimeThrottled(nextPosition)
   }
 
-  isPlaying.value = normalizedInfo.state === 'playing'
+  applyNativePlayingState(normalizedInfo.state === 'playing')
   isLoading.value = false
   if (normalizedInfo.state === 'stopped') {
     if (info.nativePlaybackActive === false) {
@@ -642,10 +720,35 @@ async function syncNativeQueueState(): Promise<void> {
   await window.api.audioEngine.setPlayMode(nativePlayMode)
 }
 
+function queueNativeQueueStateSync(): Promise<void> {
+  const previousRequest = nativeQueueSyncRequest
+  const request = (previousRequest ?? Promise.resolve())
+    .catch(() => {})
+    .then(() => syncNativeQueueState())
+
+  nativeQueueSyncRequest = request
+  void request.finally(() => {
+    if (nativeQueueSyncRequest === request) {
+      nativeQueueSyncRequest = null
+    }
+  })
+
+  return request
+}
+
+async function waitForNativeQueueStateSync(): Promise<void> {
+  const request = nativeQueueSyncRequest
+  if (request) {
+    await request
+  }
+}
+
 async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<void> {
+  clearNativePlaybackInfoIntent()
   stopVisualizationPolling(false)
   try {
     isLoading.value = true
+    await waitForNativeQueueStateSync()
     if (direction === 'next') {
       await window.api.audioEngine.next()
     } else {
@@ -741,6 +844,7 @@ let loadedTrackId = ''
 let restoredPlaybackPending = false
 let restoredPlaybackPosition = 0
 let pendingLoadStartTime = 0
+let nativeQueueSyncRequest: Promise<void> | null = null
 
 function getNowMs(): number {
   return performance.now()
@@ -828,6 +932,11 @@ function handlePlaybackEnded(): void {
   advancingFromEndedTrackId = trackId
   autoAdvanceInFlight = true
   flushLatestCurrentTime()
+  if (playMode.value === 'repeat') {
+    const track = currentTrack.value
+    if (track) void loadAndPlay(track)
+    return
+  }
   next()
 }
 
@@ -882,7 +991,7 @@ function setupAudioEngineListeners(): void {
           break
         case 'pause':
           if (!nativePlaybackActive) break
-          isPlaying.value = !data
+          applyNativePlayingState(!data)
           flushLatestCurrentTime()
           break
         case 'eof-reached':
@@ -944,6 +1053,8 @@ function setupAudioEngineListeners(): void {
     api.onError((message) => {
       console.error('[audio-engine] Playback error:', message)
       audioEngineError.value = message
+      clearPlaybackToggleIntent()
+      clearNativePlaybackInfoIntent()
       isPlaying.value = false
       isLoading.value = false
     })
@@ -953,6 +1064,8 @@ function setupAudioEngineListeners(): void {
     api.onDisconnected(() => {
       audioEngineReady.value = false
       nativePlaybackActive = false
+      clearPlaybackToggleIntent()
+      clearNativePlaybackInfoIntent()
       isPlaying.value = false
     })
   )
@@ -1051,6 +1164,8 @@ function scheduleCrossfadeIfNeeded(): void {
 async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   const normalizedStartTime = Math.max(0, Number.isFinite(startTime) ? startTime : 0)
   const loadToken = ++activeLoadToken
+  clearPlaybackToggleIntent()
+  setNativePlaybackInfoIntent(loadToken, track)
   stopVisualizationPolling(false)
   isLoading.value = true
   nativePlaybackActive = false
@@ -1067,6 +1182,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
 
     const playTarget = await resolvePlayTarget(track)
     if (!isActiveLoad(loadToken, track)) return
+    setNativePlaybackInfoIntent(loadToken, track, playTarget)
 
     const engineQueue = queue.value.map((item) => ({
       ...item,
@@ -1109,6 +1225,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       audioEngineError.value = ''
       stopRendererAudio(true)
     } else {
+      clearNativePlaybackInfoIntentForLoad(loadToken)
       audioEngineError.value = nativeFallbackReason
         ? `原生音频引擎不可用，已启用临时播放通道：${nativeFallbackReason}`
         : ''
@@ -1134,6 +1251,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     startVisualizationPolling()
   } catch (err) {
     if (!isActiveLoad(loadToken, track)) return
+    clearNativePlaybackInfoIntentForLoad(loadToken)
     console.error('[audio-engine] Playback failed:', err)
     audioEngineError.value = err instanceof Error ? err.message : String(err)
     autoAdvanceInFlight = false
@@ -1150,14 +1268,6 @@ function next(): void {
 
   if (nativePlaybackActive) {
     void advanceNativePlayback('next')
-    return
-  }
-
-  if (playMode.value === 'repeat') {
-    const track = queue.value[queueIndex.value]
-    if (track) {
-      void loadAndPlay(track)
-    }
     return
   }
 
@@ -1184,8 +1294,11 @@ async function togglePlayState(): Promise<void> {
   }
   try {
     if (nativePlaybackActive) {
-      isPlaying.value = !isPlaying.value
+      const nextPlaying = !isPlaying.value
+      isPlaying.value = nextPlaying
+      setPlaybackToggleIntent(nextPlaying)
       await window.api.audioEngine.togglePause()
+      setPlaybackToggleIntent(nextPlaying)
     } else {
       const audio = getPlaybackAudio()
       if (audio.paused) {
@@ -1197,6 +1310,7 @@ async function togglePlayState(): Promise<void> {
   } catch (err) {
     if (nativePlaybackActive) {
       isPlaying.value = !isPlaying.value
+      clearPlaybackToggleIntent()
     }
     console.error('[audio-engine] togglePlay failed:', err)
   }
@@ -1270,7 +1384,7 @@ function cyclePlayMode(): void {
 function setPlayModeInternal(mode: PlayMode): void {
   playMode.value = mode
   applyPlayMode()
-  void syncNativeQueueState().catch((err) => {
+  void queueNativeQueueStateSync().catch((err) => {
     audioEngineError.value = err instanceof Error ? err.message : String(err)
     console.error('[音频引擎] 同步播放模式失败:', err)
   })
@@ -1297,6 +1411,8 @@ function restorePlaybackSession(session: PlaybackSession): void {
       : 0
 
   clearCrossfadeTimer()
+  clearNativePlaybackInfoIntent()
+  clearPlaybackToggleIntent()
   currentTrack.value = track
   queue.value = [track]
   originalQueue.value = [track]

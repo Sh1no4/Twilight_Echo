@@ -43,6 +43,21 @@ void testRepeatAdvanceKeepsCurrentTrack() {
   assert(next->source == "b.flac");
 }
 
+void testRepeatManualNextUsesPlaylistOrder() {
+  QueueManager queue;
+  std::string error;
+  assert(queue.loadFromJson(kQueueJson, 1, &error));
+  queue.setPlayMode(PlayMode::Repeat);
+  auto next = queue.next();
+  assert(next);
+  assert(queue.currentIndex() == 2);
+  assert(next->source == "c.flac");
+  auto previous = queue.previous();
+  assert(previous);
+  assert(queue.currentIndex() == 1);
+  assert(previous->source == "b.flac");
+}
+
 void testAddRemoveAndInvalidInput() {
   QueueManager queue;
   std::string error;
@@ -63,6 +78,7 @@ int main() {
   testLoadAndUpcoming();
   testSequentialAdvanceWrapsLikeRenderer();
   testRepeatAdvanceKeepsCurrentTrack();
+  testRepeatManualNextUsesPlaylistOrder();
   testAddRemoveAndInvalidInput();
   return 0;
 }

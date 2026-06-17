@@ -42,7 +42,8 @@ function close(): void {
     :class="{
       'title-bar-glass': glass,
       'title-bar-settings': titleSurface === 'settings',
-      'title-bar-streaming': titleSurface === 'streaming'
+      'title-bar-streaming': titleSurface === 'streaming',
+      'title-bar-menu-open': menuOpen
     }"
   >
     <div v-if="!glass" class="title-bar-start no-drag">
@@ -104,9 +105,7 @@ function close(): void {
   align-items: center;
   justify-content: space-between;
   height: 32px;
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.62), rgba(248, 245, 255, 0.4)),
-    rgba(255, 255, 255, 0.46);
+  background: #ffffff;
   user-select: none;
   position: fixed;
   top: 0;
@@ -114,14 +113,28 @@ function close(): void {
   right: 0;
   z-index: 9999;
   overflow: hidden;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.62);
-  box-shadow: 0 12px 40px rgba(86, 70, 160, 0.1);
-  backdrop-filter: blur(22px) saturate(155%);
-  -webkit-backdrop-filter: blur(22px) saturate(155%);
+  border-bottom: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   transition:
     background 0.3s,
     border-color 0.3s,
     box-shadow 0.3s;
+}
+
+.title-bar::before {
+  content: '';
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--te-menu-width);
+  z-index: 0;
+  pointer-events: none;
+  background: #ffffff;
+  transform: translate3d(-100%, 0, 0);
+  transform-origin: left center;
+  will-change: transform;
+  transition: transform 0.32s var(--te-ease-soft);
 }
 
 .title-bar-glass {
@@ -133,7 +146,7 @@ function close(): void {
 }
 
 .title-bar.title-bar-settings {
-  background: rgba(255, 255, 255, 0.96);
+  background: #ffffff;
   border-bottom-color: transparent;
   box-shadow: none;
 }
@@ -146,12 +159,29 @@ function close(): void {
   -webkit-backdrop-filter: none;
 }
 
+.title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
+  background: #ffffff;
+}
+
+.title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
+  background: #fafbfe;
+}
+
+.title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings)::before {
+  transform: translate3d(0, 0, 0);
+}
+
 .title-bar.title-bar-glass {
   background: transparent;
   border-bottom-color: transparent;
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+.title-bar.title-bar-glass::before,
+.title-bar.title-bar-settings::before {
+  transform: translate3d(-100%, 0, 0);
 }
 
 .title-bar-start {

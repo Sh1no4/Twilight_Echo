@@ -1,3 +1,7 @@
+<script lang="ts">
+const lyricScrollPositions = new Map<string, number>()
+</script>
+
 <script setup lang="ts">
 import {
   computed,
@@ -27,12 +31,48 @@ let lyricOpenCenterTimer = 0
 let lyricManualScrollTimer = 0
 let lyricManualScrollLocked = false
 let lyricResizeObserver: ResizeObserver | null = null
+let restoringLyricScroll = false
 const LYRIC_SCROLL_DURATION_MS = 420
 const LYRIC_RESIZE_SCROLL_DURATION_MS = 260
 const LYRIC_OPEN_CENTER_DELAY_MS = 620
 const LYRIC_MANUAL_RETURN_DELAY_MS = 3000
 const LYRIC_CENTER_OFFSET_RATIO = 0.08
 const LYRIC_CENTER_OFFSET_MAX = 72
+
+function currentTrackId(): string {
+  return currentTrack.value?.id ?? ''
+}
+
+function saveLyricScrollPosition(trackId = currentTrackId()): void {
+  const el = lyricsEl.value
+  if (!trackId || !el) return
+  lyricScrollPositions.set(trackId, el.scrollTop)
+}
+
+function restoreLyricScrollPosition(): boolean {
+  const trackId = currentTrackId()
+  const el = lyricsEl.value
+  if (!trackId || !el || !lyricScrollPositions.has(trackId)) return false
+
+  const savedTop = lyricScrollPositions.get(trackId) ?? 0
+  const maxTop = Math.max(0, el.scrollHeight - el.clientHeight)
+  restoringLyricScroll = true
+  cancelLyricScrollAnimation()
+  clearLyricManualScrollTimer()
+  lyricManualScrollLocked = true
+  el.scrollTo({ top: Math.min(maxTop, Math.max(0, savedTop)), behavior: 'auto' })
+  window.requestAnimationFrame(() => {
+    restoringLyricScroll = false
+  })
+  return true
+}
+
+async function restoreOrCenterLyrics(): Promise<void> {
+  await nextTick()
+  if (restoreLyricScrollPosition()) return
+  lyricManualScrollLocked = false
+  scheduleLyricOpenCenter()
+}
 
 watch(
   () => currentTrack.value?.cover,
@@ -53,10 +93,16 @@ watch(
     const [prevId, prevLyrics, prevTranslatedLyrics] = previous ?? []
 
     if (id !== prevId) {
+      if (prevId) {
+        saveLyricScrollPosition(prevId)
+      }
       lyricLineEls.value = []
       await nextTick()
       if (lyricsEl.value) {
-        lyricsEl.value.scrollTo({ top: 0, behavior: 'auto' })
+        if (!restoreLyricScrollPosition()) {
+          lyricManualScrollLocked = false
+          lyricsEl.value.scrollTo({ top: 0, behavior: 'auto' })
+        }
       }
       return
     }
@@ -76,6 +122,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  saveLyricScrollPosition()
   cancelLyricScrollAnimation()
   if (lyricCenterTimer !== 0) {
     window.clearTimeout(lyricCenterTimer)
@@ -312,7 +359,15 @@ function scheduleLyricReturnToCenter(): void {
 function onLyricsManualScroll(): void {
   lyricManualScrollLocked = true
   cancelLyricScrollAnimation()
+  saveLyricScrollPosition()
   scheduleLyricReturnToCenter()
+}
+
+function onLyricsScroll(): void {
+  if (restoringLyricScroll) return
+  if (lyricManualScrollLocked) {
+    saveLyricScrollPosition()
+  }
 }
 
 function scheduleActiveLyricCenter(duration = LYRIC_RESIZE_SCROLL_DURATION_MS, delay = 80): void {
@@ -342,6 +397,7 @@ function scheduleLyricOpenCenter(): void {
 }
 
 function onLyricLayoutResize(): void {
+  if (lyricManualScrollLocked) return
   scheduleActiveLyricCenter()
 }
 
@@ -358,7 +414,7 @@ watch(lyricsEl, (el, previousEl) => {
   }
   if (el) {
     lyricResizeObserver?.observe(el)
-    scheduleLyricOpenCenter()
+    void restoreOrCenterLyrics()
   }
 })
 
@@ -369,7 +425,7 @@ onMounted(() => {
   if (lyricsEl.value) {
     lyricResizeObserver.observe(lyricsEl.value)
   }
-  scheduleLyricOpenCenter()
+  void restoreOrCenterLyrics()
   window.addEventListener('resize', onLyricLayoutResize)
 })
 
@@ -418,6 +474,7 @@ onBeforeUnmount(() => {
           <div
             ref="lyricsEl"
             class="lyrics-scroll"
+            @scroll.passive="onLyricsScroll"
             @wheel.passive="onLyricsManualScroll"
             @pointerdown="onLyricsManualScroll"
             @touchstart.passive="onLyricsManualScroll"
