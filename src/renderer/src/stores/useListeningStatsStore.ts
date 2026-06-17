@@ -93,7 +93,12 @@ function dayKey(date: Date): string {
   return date.toISOString().slice(0, 10)
 }
 
+function shouldTrackListeningStats(track: Track): boolean {
+  return track.source !== 'bili' && !track.id.startsWith('bili:')
+}
+
 function addListeningSeconds(track: Track, seconds: number): void {
+  if (!shouldTrackListeningStats(track)) return
   const today = dayKey(new Date())
   const nextStats: ListeningStats = {
     days: { ...listeningStats.value.days },

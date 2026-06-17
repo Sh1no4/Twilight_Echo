@@ -160,6 +160,14 @@ function closeSettingsPage(): void {
   showSettingsPage.value = false
 }
 
+function toggleSettingsPage(): void {
+  if (showSettingsPage.value) {
+    closeSettingsPage()
+    return
+  }
+  openSettingsPage()
+}
+
 function openPlaybackSettings(): void {
   openSettingsPage('playback')
 }
@@ -201,6 +209,20 @@ const showLocalSidebar = computed(
     !showLoginPage.value &&
     !showSettingsPage.value &&
     !showEqualizerPage.value
+)
+const localViewVisible = computed(
+  () =>
+    !showPlayingPage.value &&
+    !showStreamingPage.value &&
+    !showLoginPage.value &&
+    !showSettingsPage.value &&
+    !showEqualizerPage.value &&
+    !activePluginPage.value
+)
+const sideMenuActiveKey = computed(() =>
+  activePluginPage.value
+    ? `plugin:${activePluginPage.value.pluginId}:${activePluginPage.value.id}`
+    : activeCategory.value
 )
 const mainContentMinHeight = computed(() =>
   hasPlayerBar.value ? 'calc(100vh - 32px)' : 'calc(100vh - 32px)'
@@ -374,11 +396,12 @@ const titleSurface = computed<TitleSurface>(() => {
     @collapse-menu="collapseMenu"
     @back="handleTitleBack"
     @login="openLoginPage"
-    @settings="openSettingsPage"
+    @settings="toggleSettingsPage"
   />
   <SideMenu
     v-if="showLocalSidebar"
     :open="menuOpen"
+    :active-key="sideMenuActiveKey"
     :plugin-pages="sidebarPages"
     @select-view="onSelectView"
     @select-plugin-page="onSelectPluginPage"
@@ -391,11 +414,11 @@ const titleSurface = computed<TitleSurface>(() => {
   >
     <Transition :name="songlistTransitionName">
       <LocalDashboard
-        v-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !activePluginPage && activeCategory === 'dashboard'"
+        v-if="localViewVisible && activeCategory === 'dashboard'"
         @open-dsp="openDspSettings"
       />
       <SongList
-        v-else-if="!showPlayingPage && !showStreamingPage && !showLoginPage && !activePluginPage"
+        v-else-if="localViewVisible"
         :category="activeCategory"
         :filter="activeFilter"
         :has-player="hasPlayerBar"

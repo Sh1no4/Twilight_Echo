@@ -4,6 +4,13 @@ import { useMusicStore } from '../stores/useMusicStore'
 import { useListeningStatsStore } from '../stores/useListeningStatsStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import type { Track } from '../types/music'
+import nextTrackIcon from '../assets/icons/next-track.svg'
+import pauseIcon from '../assets/icons/pause.svg'
+import playIcon from '../assets/icons/play.svg'
+import previousTrackIcon from '../assets/icons/previous-track.svg'
+import repeatIcon from '../assets/icons/single-song-repeat.svg'
+import shuffleIcon from '../assets/icons/shuffle.svg'
+import sequentialIcon from '../assets/icons/sequential-playback.svg'
 
 const emit = defineEmits<{
   (event: 'open-dsp'): void
@@ -50,6 +57,10 @@ function dayKey(date: Date): string {
   return date.toISOString().slice(0, 10)
 }
 
+function isBiliTrack(track: Track | undefined): boolean {
+  return track?.source === 'bili' || track?.id.startsWith('bili:') === true
+}
+
 const nowPlayingTitle = computed(() => currentTrack.value?.title || '暂无正在播放')
 const nowPlayingArtist = computed(() => currentTrack.value?.artist || '选择一首本地或在线音乐开始')
 const nowPlayingCover = computed(() => currentTrack.value?.cover || DEFAULT_COVER)
@@ -72,6 +83,7 @@ const recentlyAddedTracks = computed(() => tracks.value.slice(-3).reverse())
 const topTracks = computed(() => {
   const byId = new Map(tracks.value.map((track) => [track.id, track]))
   const stats = Object.entries(listeningStats.value.tracks)
+    .filter(([id, stat]) => !id.startsWith('bili:') && !isBiliTrack(stat.track))
     .sort(([, a], [, b]) => b.seconds - a.seconds)
     .slice(0, 3)
     .map(([id, stat]) => ({ id, stat, track: byId.get(id) ?? stat.track }))
@@ -308,16 +320,16 @@ function playDashboardTrack(track: Track | undefined): void {
                       aria-label="随机播放"
                       @click="setPlayMode(playMode === 'shuffle' ? 'sequential' : 'shuffle')"
                     >
-                      <img src="/Shuffle.svg" alt="随机播放">
+                      <img :src="shuffleIcon" alt="随机播放" />
                     </button>
                     <button class="control-btn" title="上一首" aria-label="上一首" @click="prev">
-                      <img src="/Previous%20track.svg" alt="上一首">
+                      <img :src="previousTrackIcon" alt="上一首" />
                     </button>
                     <button class="control-btn play-btn" title="播放/暂停" aria-label="播放/暂停" @click="togglePlay">
-                      <img :src="isPlaying ? '/Pause.svg' : '/Start.svg'" :alt="isPlaying ? '暂停' : '播放'">
+                      <img :src="isPlaying ? pauseIcon : playIcon" :alt="isPlaying ? '暂停' : '播放'" />
                     </button>
                     <button class="control-btn" title="下一首" aria-label="下一首" @click="next">
-                      <img src="/Next%20Track.svg" alt="下一首">
+                      <img :src="nextTrackIcon" alt="下一首" />
                     </button>
                     <button
                       class="control-btn"
@@ -327,9 +339,9 @@ function playDashboardTrack(track: Track | undefined): void {
                       @click="setPlayMode(playMode === 'repeat' ? 'sequential' : 'repeat')"
                     >
                       <img
-                        :src="playMode === 'repeat' ? '/Single%20song%20repeat.svg' : '/sequential%20playback.svg'"
+                        :src="playMode === 'repeat' ? repeatIcon : sequentialIcon"
                         :alt="playMode === 'repeat' ? '单曲循环' : '顺序播放'"
-                      >
+                      />
                     </button>
                 </div>
             </div>
@@ -682,11 +694,15 @@ function playDashboardTrack(track: Track | undefined): void {
 .control-btn {
     background: none;
     border: none;
-    color: var(--text-main);
+    color: #222;
     font-size: 1.6rem;
     cursor: pointer;
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    opacity: 0.7;
+    opacity: 0.75;
+}
+
+.control-btn i {
+    display: none;
 }
 
 .control-btn img {
@@ -694,6 +710,8 @@ function playDashboardTrack(track: Track | undefined): void {
     height: 1.35rem;
     display: block;
     object-fit: contain;
+    pointer-events: none;
+    user-select: none;
 }
 
 .play-btn img {
@@ -714,22 +732,22 @@ function playDashboardTrack(track: Track | undefined): void {
 }
 
 .play-btn {
-    width: 64px;
-    height: 64px;
+    width: 70px;
+    height: 70px;
     border-radius: 50%;
-    background: linear-gradient(135deg, var(--accent), #6366f1);
+    background: #5e60f6;
     color: white;
     display: flex;
     justify-content: center;
     align-items: center;
     font-size: 2rem;
     opacity: 1;
-    box-shadow: 0 8px 18px var(--accent-glow);
+    box-shadow: 0 10px 20px rgba(94, 96, 246, 0.28);
 }
 
 .play-btn:hover {
     transform: scale(1.08);
-    box-shadow: 0 12px 24px rgba(79, 70, 229, 0.3);
+    box-shadow: 0 14px 28px rgba(94, 96, 246, 0.34);
     color: white;
 }
 

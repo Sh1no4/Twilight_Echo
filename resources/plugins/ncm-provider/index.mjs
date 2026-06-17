@@ -62,6 +62,7 @@ function withPcUa(path) {
 }
 
 function shouldUsePcUa(path) {
+  if (path.startsWith('/song/url')) return false
   return !path.startsWith('/login/')
 }
 
@@ -472,6 +473,30 @@ function getSongIdFromTrack(track) {
   return Number.isFinite(songId) && songId > 0 ? songId : null
 }
 
+function getPlaybackUrlRequestPaths(songId) {
+  const encodedId = encodeURIComponent(String(songId))
+  return [
+    `/song/url?id=${encodedId}&br=999000`,
+    `/song/url?id=${encodedId}&br=320000`,
+    `/song/url?id=${encodedId}&br=128000`,
+    `/song/url/v1?id=${encodedId}&level=exhigh`,
+    `/song/url/v1?id=${encodedId}&level=higher`,
+    `/song/url/v1?id=${encodedId}&level=standard`
+  ]
+}
+
+function getPlaybackStreamItems(data) {
+  if (Array.isArray(data?.data)) return data.data
+  if (Array.isArray(data?.urls)) return data.urls
+  if (Array.isArray(data?.url)) return data.url
+  return []
+}
+
+function getPlaybackFailureMessage(data, streamItem) {
+  const message = streamItem?.msg ?? streamItem?.message ?? data?.msg ?? data?.message
+  return typeof message === 'string' && message.trim() ? message.trim() : ''
+}
+
 async function getPlaybackUrl(track, options = {}) {
   const songId = getSongIdFromTrack(track)
   if (songId == null) throw new Error('Missing NetEase song ID, cannot play')
@@ -489,23 +514,34 @@ async function getPlaybackUrl(track, options = {}) {
     }
   }
 
-  if (!force && streamUrlCache.has(songId)) return streamUrlCache.get(songId) ?? null
+  if (!force && streamUrlCache.has(songId)) return streamUrlCache.get(songId)
 
-  const data = await requestAuthed(`/song/url/v1?id=${songId}&level=exhigh`)
-  const streamItems = Array.isArray(data.data) ? data.data : Array.isArray(data.urls) ? data.urls : []
-  const streamItem = streamItems[0] ?? {}
-  const url = typeof streamItem.url === 'string' ? streamItem.url : null
-  rememberStreamAudioMeta(songId, streamItem)
-  streamUrlCache.set(songId, url)
-  if (url) {
-    void ncmApi
-      .cacheSong(songId, url, track?.fileName)
-      .then((cached) => {
-        if (cached && streamUrlCache.get(songId) === url) streamUrlCache.set(songId, cached)
-      })
-      .catch(() => {})
+  let lastFailureMessage = ''
+  for (const path of getPlaybackUrlRequestPaths(songId)) {
+    try {
+      const data = await requestAuthed(path)
+      const streamItems = getPlaybackStreamItems(data)
+      const streamItem = streamItems[0] ?? {}
+      const url = typeof streamItem.url === 'string' && streamItem.url ? streamItem.url : null
+      if (url) {
+        rememberStreamAudioMeta(songId, streamItem)
+        streamUrlCache.set(songId, url)
+        void ncmApi
+          .cacheSong(songId, url, track?.fileName)
+          .then((cached) => {
+            if (cached && streamUrlCache.get(songId) === url) streamUrlCache.set(songId, cached)
+          })
+          .catch(() => {})
+        return url
+      }
+      lastFailureMessage = getPlaybackFailureMessage(data, streamItem) || lastFailureMessage
+    } catch (error) {
+      lastFailureMessage = error instanceof Error ? error.message : String(error)
+    }
   }
-  return url
+
+  if (lastFailureMessage) getContext().logger.warn(`网易云播放地址解析失败：${lastFailureMessage}`)
+  return null
 }
 
 async function fetchRecommendSongs() {

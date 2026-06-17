@@ -357,7 +357,7 @@ onUnmounted(() => {
     <div v-if="error" class="plugin-error">{{ error }}</div>
 
     <div v-if="plugins.length === 0 && !loading" class="plugin-empty">
-      暂无插件。可以安装官方 hello-world 示例或本地 .tep 包。
+      暂无插件。可以安装本地目录或 .tep 包。
     </div>
 
     <section class="plugin-market">

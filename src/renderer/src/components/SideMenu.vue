@@ -5,6 +5,7 @@ import type { UiContribution } from '../extensions/registry'
 
 const props = defineProps<{
   open: boolean
+  activeKey: string
   pluginPages?: UiContribution[]
 }>()
 
@@ -30,19 +31,16 @@ const menuItems: MenuItem[] = [
   { key: 'folders', label: '文件夹', icon: 'pi pi-folder-open' }
 ]
 
-const activeKey = ref('dashboard')
 const scanning = ref(false)
 const showImportDialog = ref(false)
 
 // removed menuStyle
 
 function selectItem(key: string): void {
-  activeKey.value = key
   emit('selectView', key, null)
 }
 
 function selectPluginPage(page: UiContribution): void {
-  activeKey.value = `plugin:${page.pluginId}:${page.id}`
   emit('selectPluginPage', page)
 }
 
@@ -59,7 +57,7 @@ function handleImportClick(): void {
           v-for="item in menuItems"
           :key="item.key"
           class="menu-item"
-          :class="{ active: activeKey === item.key }"
+          :class="{ active: props.activeKey === item.key }"
           @click="selectItem(item.key)"
         >
           <i class="item-icon" :class="item.icon"></i>
@@ -72,7 +70,7 @@ function handleImportClick(): void {
           v-for="page in props.pluginPages ?? []"
           :key="`${page.pluginId}:${page.id}`"
           class="menu-item menu-item-plugin"
-          :class="{ active: activeKey === `plugin:${page.pluginId}:${page.id}` }"
+          :class="{ active: props.activeKey === `plugin:${page.pluginId}:${page.id}` }"
           @click="selectPluginPage(page)"
         >
           <i class="item-icon" :class="page.icon || 'pi pi-box'"></i>

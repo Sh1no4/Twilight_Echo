@@ -5,15 +5,18 @@ directories:
 asar: true
 icon: build/icon.png
 files:
-  - '!**/.vscode/*'
-  - '!src/*'
-  - '!scripts/*'
-  - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
-  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
-asarUnpack:
-  - resources/audio-engine/**
+  - out/**
+  - node_modules/**
+  - package.json
+  - '!out/renderer/audio-engine/**'
+  - '!out/renderer/plugins/**'
+  - '!out/renderer/plugin-index/**'
+  - '!out/renderer/font/Alibaba-PuHuiTi-Medium.ttf'
+  - '!node_modules/**/{test,tests,__tests__,docs,doc,example,examples,benchmark,benchmarks}/**'
+  - '!node_modules/**/*.map'
+  - '!node_modules/**/*.ts'
+  - '!node_modules/**/*.md'
+  - '!node_modules/@neteasecloudmusicapienhanced/api/public/**'
 extraResources:
   - from: resources/audio-engine
     to: audio-engine

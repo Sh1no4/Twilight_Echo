@@ -3,6 +3,13 @@ import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useExtensionRegistry } from '../extensions/registry'
 import { normalizeAccentColor } from '../utils/colorExtractor'
+import nextTrackIcon from '../assets/icons/next-track.svg'
+import pauseIcon from '../assets/icons/pause.svg'
+import playIcon from '../assets/icons/play.svg'
+import previousTrackIcon from '../assets/icons/previous-track.svg'
+import repeatIcon from '../assets/icons/single-song-repeat.svg'
+import sequentialIcon from '../assets/icons/sequential-playback.svg'
+import shuffleIcon from '../assets/icons/shuffle.svg'
 
 defineProps<{
   glass?: boolean
@@ -591,13 +598,13 @@ onBeforeUnmount(() => {
       <div class="player-center">
         <div class="player-controls">
           <button class="ctrl-btn" aria-label="上一首" @click="prev">
-            <img src="/skip-last.svg" alt="上一首" />
+            <img :src="previousTrackIcon" alt="上一首" />
           </button>
           <button class="ctrl-btn btn-play" aria-label="播放/暂停" @click="togglePlay">
-            <i :class="isPlaying ? 'pi pi-pause' : 'pi pi-play'"></i>
+            <img :src="isPlaying ? pauseIcon : playIcon" :alt="isPlaying ? '暂停' : '播放'" />
           </button>
           <button class="ctrl-btn" aria-label="下一首" @click="next">
-            <img src="/skip-next.svg" alt="下一首" />
+            <img :src="nextTrackIcon" alt="下一首" />
           </button>
         </div>
         <div class="progress-area">
@@ -619,9 +626,9 @@ onBeforeUnmount(() => {
       <!-- 右侧 -->
       <div class="player-right">
         <button class="ctrl-btn mode-btn-right" :title="modeTitle" @click="cyclePlayMode">
-          <img v-if="playMode === 'sequential'" src="/sequential%20playback.svg" alt="顺序" />
-          <img v-else-if="playMode === 'repeat'" src="/Single%20song%20repeat.svg" alt="单曲循环" />
-          <img v-else src="/Shuffle.svg" alt="随机" />
+          <img v-if="playMode === 'sequential'" :src="sequentialIcon" alt="顺序" />
+          <img v-else-if="playMode === 'repeat'" :src="repeatIcon" alt="单曲循环" />
+          <img v-else :src="shuffleIcon" alt="随机" />
         </button>
 
         <!-- 音量按钮 + 向上弹出抽屉 -->
@@ -858,8 +865,8 @@ onBeforeUnmount(() => {
   transform: translateX(-50%);
   margin-bottom: 10px;
   z-index: 2;
-  background: rgba(255, 255, 255, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.62);
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   border-radius: 14px;
   box-shadow: 0 18px 55px rgba(86, 70, 160, 0.16);
   padding: 8px 8px 7px;
@@ -867,15 +874,18 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   gap: 5px;
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .volume-drawer.drawer-glass {
-  background: rgba(255, 255, 255, 0.28);
-  backdrop-filter: blur(22px) saturate(160%);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: #151a24;
+  border-color: #303848;
+  box-shadow:
+    0 22px 56px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .volume-drawer-slider-wrap {
@@ -909,9 +919,9 @@ onBeforeUnmount(() => {
 
 .drawer-glass .volume-drawer-slider::-webkit-slider-runnable-track {
   background:
-    linear-gradient(90deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0.55)) 0 /
+    linear-gradient(90deg, var(--accent-color, #3b82f6), var(--accent-color, #3b82f6)) 0 /
       var(--range-value, 70%) 100% no-repeat,
-    rgba(255, 255, 255, 0.12);
+    #2a3242;
 }
 
 .volume-drawer-slider::-webkit-slider-thumb {
@@ -946,7 +956,7 @@ onBeforeUnmount(() => {
 }
 
 .drawer-glass .volume-drawer-val {
-  color: rgba(255, 255, 255, 0.6);
+  color: #d8dee8;
 }
 
 .volume-drawer-enter-active {
@@ -1003,21 +1013,16 @@ onBeforeUnmount(() => {
   opacity: 0;
 }
 .playlist-panel.panel-glass {
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.08)),
-    rgba(15, 23, 42, 0.42);
-  backdrop-filter: blur(28px) saturate(168%);
-  -webkit-backdrop-filter: blur(28px) saturate(168%);
-  border-color: rgba(255, 255, 255, 0.26);
+  background: #151a24;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-color: #303848;
   box-shadow:
-    0 24px 64px rgba(0, 0, 0, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    0 26px 70px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 .playlist-panel.panel-glass::after {
-  opacity: 1;
-  background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.18), transparent 46%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(15, 23, 42, 0.08));
+  opacity: 0;
 }
 .playlist-header {
   position: relative;
@@ -1067,17 +1072,17 @@ onBeforeUnmount(() => {
 }
 .panel-glass .playlist-header {
   color: #fff;
-  border-bottom-color: rgba(255, 255, 255, 0.16);
+  border-bottom-color: #273040;
 }
 .panel-glass .playlist-heading-title {
-  color: rgba(255, 255, 255, 0.96);
+  color: #f8fafc;
 }
 .panel-glass .playlist-heading-subtitle {
-  color: rgba(255, 255, 255, 0.72);
+  color: #aab4c4;
 }
 .panel-glass .playlist-heading-icon {
-  color: rgba(255, 255, 255, 0.94);
-  background: rgba(255, 255, 255, 0.14);
+  color: #dbeafe;
+  background: #23304a;
 }
 .playlist-count {
   flex-shrink: 0;
@@ -1090,9 +1095,9 @@ onBeforeUnmount(() => {
   color: #475569;
 }
 .panel-glass .playlist-count {
-  border-color: rgba(255, 255, 255, 0.2);
-  background: rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.8);
+  border-color: #334155;
+  background: #1e2633;
+  color: #cbd5e1;
 }
 .playlist-list {
   position: relative;
@@ -1138,8 +1143,8 @@ onBeforeUnmount(() => {
   transform: translateY(-1px);
 }
 .panel-glass .playlist-item:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.2);
+  background: #202938;
+  border-color: #334155;
   box-shadow: none;
 }
 .playlist-item.active {
@@ -1150,13 +1155,11 @@ onBeforeUnmount(() => {
     inset 3px 0 0 rgba(124, 77, 255, 0.62);
 }
 .panel-glass .playlist-item.active {
-  background:
-    linear-gradient(90deg, rgba(124, 77, 255, 0.34), rgba(34, 211, 238, 0.16)),
-    rgba(255, 255, 255, 0.16);
-  border-color: rgba(255, 255, 255, 0.24);
+  background: color-mix(in srgb, var(--accent-color, #3b82f6) 24%, #1b2432);
+  border-color: color-mix(in srgb, var(--accent-color, #3b82f6) 38%, #334155);
   box-shadow:
-    0 12px 28px rgba(0, 0, 0, 0.16),
-    inset 3px 0 0 rgba(255, 255, 255, 0.72);
+    0 12px 28px rgba(0, 0, 0, 0.2),
+    inset 3px 0 0 var(--accent-color, #3b82f6);
 }
 .playlist-index {
   width: 22px;
@@ -1170,10 +1173,10 @@ onBeforeUnmount(() => {
   color: var(--te-primary-500);
 }
 .panel-glass .playlist-index {
-  color: rgba(255, 255, 255, 0.62);
+  color: #94a3b8;
 }
 .panel-glass .playlist-item.active .playlist-index {
-  color: rgba(255, 255, 255, 0.92);
+  color: #f8fafc;
 }
 .playing-dot {
   font-size: 11px;
@@ -1197,7 +1200,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .panel-glass .playlist-cover-placeholder {
-  background: rgba(255, 255, 255, 0.12);
+  background: #253044;
 }
 .playlist-info {
   overflow: hidden;
@@ -1218,10 +1221,10 @@ onBeforeUnmount(() => {
   color: var(--te-primary-500);
 }
 .panel-glass .playlist-title {
-  color: rgba(255, 255, 255, 0.94);
+  color: #edf2f7;
 }
 .panel-glass .playlist-item.active .playlist-title {
-  color: #fff;
+  color: #ffffff;
 }
 .playlist-artist {
   font-family: var(--te-font-rounded);
@@ -1234,7 +1237,7 @@ onBeforeUnmount(() => {
   margin-top: 1px;
 }
 .panel-glass .playlist-artist {
-  color: rgba(255, 255, 255, 0.72);
+  color: #aab4c4;
 }
 
 /* ===== Player Bar ===== */
@@ -1291,6 +1294,10 @@ onBeforeUnmount(() => {
 .player-bar-glass .ctrl-btn:hover {
   background: rgba(255, 255, 255, 0.1);
 }
+.player-bar-glass .ctrl-btn img {
+  filter: brightness(0) invert(1);
+  opacity: 0.82;
+}
 .player-bar-glass .btn-play {
   background: var(--play-button-color, var(--accent-color, var(--te-primary-500)));
   color: #fff;
@@ -1304,6 +1311,7 @@ onBeforeUnmount(() => {
   color: rgba(255, 255, 255, 0.6);
 }
 .player-bar-glass .mode-btn-right img {
+  filter: brightness(0) invert(1);
   opacity: 0.55;
 }
 .player-bar-glass .time-label {
@@ -1446,8 +1454,12 @@ onBeforeUnmount(() => {
   transition-duration: 0.1s;
 }
 .ctrl-btn img {
-  width: 25px;
-  height: 25px;
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+  opacity: 0.8;
+  pointer-events: none;
+  user-select: none;
 }
 .btn-play {
   width: 44px;
@@ -1468,6 +1480,12 @@ onBeforeUnmount(() => {
   font-size: 18px;
   line-height: 1;
   color: #fff;
+}
+.btn-play img {
+  width: 21px;
+  height: 21px;
+  opacity: 1;
+  filter: brightness(0) invert(1);
 }
 
 /* ===== Progress ===== */
@@ -1557,9 +1575,12 @@ onBeforeUnmount(() => {
   background: #f0f0f0;
 }
 .mode-btn-right img {
-  width: 22px;
-  height: 22px;
-  opacity: 0.45;
+  width: 19px;
+  height: 19px;
+  object-fit: contain;
+  opacity: 0.58;
+  pointer-events: none;
+  user-select: none;
 }
 
 .mode-btn-right:active {
@@ -1646,23 +1667,26 @@ onBeforeUnmount(() => {
   bottom: 100%;
   right: -8px;
   margin-bottom: 10px;
-  background: rgba(255, 255, 255, 0.74);
-  border: 0;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
   border-radius: 16px;
   box-shadow: 0 18px 55px rgba(86, 70, 160, 0.16);
   padding: 8px;
   min-width: 320px;
   max-height: min(560px, calc(100vh - 132px));
   overflow-y: auto;
-  backdrop-filter: blur(18px) saturate(150%);
-  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .more-drawer.drawer-glass {
-  background: rgba(255, 255, 255, 0.34);
-  backdrop-filter: blur(22px) saturate(160%);
-  -webkit-backdrop-filter: blur(22px) saturate(160%);
-  border: 0;
+  background: #151a24;
+  border-color: #303848;
+  box-shadow:
+    0 26px 70px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .more-item {
@@ -1686,7 +1710,7 @@ onBeforeUnmount(() => {
   padding: 8px 12px;
   border: 0;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.46);
+  background: #f8fafc;
   color: rgba(52, 61, 87, 0.88);
   cursor: pointer;
   text-align: left;
@@ -1700,7 +1724,7 @@ onBeforeUnmount(() => {
 
 .more-action:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.7);
+  background: #eef2ff;
   box-shadow: 0 12px 24px rgba(34, 42, 68, 0.08);
 }
 
@@ -1727,15 +1751,21 @@ onBeforeUnmount(() => {
 }
 
 .drawer-glass .more-action {
-  background: rgba(255, 255, 255, 0.08);
+  background: #202938;
+  color: #e5e7eb;
 }
 
 .drawer-glass .more-action-title {
-  color: rgba(255, 255, 255, 0.9);
+  color: #f8fafc;
 }
 
 .drawer-glass .more-action-desc {
-  color: rgba(255, 255, 255, 0.52);
+  color: #aab4c4;
+}
+
+.drawer-glass .more-action:hover {
+  background: #273247;
+  box-shadow: none;
 }
 
 .more-status {
@@ -1751,8 +1781,8 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 0 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.42);
-  color: rgba(80, 88, 116, 0.72);
+  background: #f1f5f9;
+  color: #475569;
   font-size: 10px;
   font-weight: 900;
 }
@@ -1773,8 +1803,23 @@ onBeforeUnmount(() => {
 }
 
 .drawer-glass .more-status-chip {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.7);
+  background: #202938;
+  color: #cbd5e1;
+}
+
+.drawer-glass .more-status-chip.success {
+  background: rgba(5, 150, 105, 0.2);
+  color: #86efac;
+}
+
+.drawer-glass .more-status-chip.warning {
+  background: rgba(217, 119, 6, 0.22);
+  color: #fcd34d;
+}
+
+.drawer-glass .more-status-chip.muted {
+  background: #263244;
+  color: #94a3b8;
 }
 
 .compact-reason {
@@ -1793,7 +1838,7 @@ onBeforeUnmount(() => {
 }
 
 .drawer-glass .more-output-chain {
-  color: rgba(255, 255, 255, 0.56);
+  color: #b8c2d2;
 }
 
 .visualization-panel {
@@ -1802,12 +1847,13 @@ onBeforeUnmount(() => {
   margin: 2px 2px 8px;
   padding: 8px;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.34);
+  background: #f8fafc;
   overflow: hidden;
 }
 
 .drawer-glass .visualization-panel {
-  background: rgba(255, 255, 255, 0.08);
+  background: #1c2431;
+  border: 1px solid #303848;
 }
 
 .visualization-header,
@@ -1834,11 +1880,11 @@ onBeforeUnmount(() => {
 }
 
 .drawer-glass .visualization-header span {
-  color: rgba(255, 255, 255, 0.74);
+  color: #dbe3ef;
 }
 
 .drawer-glass .visualization-header span:last-child {
-  color: rgba(255, 255, 255, 0.46);
+  color: #94a3b8;
 }
 
 .waveform-strip {
@@ -1891,12 +1937,12 @@ onBeforeUnmount(() => {
 }
 
 .drawer-glass .meter-row span {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.72);
+  background: #263244;
+  color: #dbe3ef;
 }
 
 .drawer-glass .meter-row strong {
-  color: rgba(255, 255, 255, 0.42);
+  color: #94a3b8;
 }
 
 .spectrogram-grid {
@@ -1922,11 +1968,11 @@ onBeforeUnmount(() => {
 }
 
 .drawer-glass .spectrogram-grid {
-  background: rgba(15, 23, 42, 0.18);
+  background: #111827;
 }
 
 .drawer-glass .spectrogram-cell.idle {
-  background: rgba(255, 255, 255, 0.05);
+  background: #263244;
 }
 
 .more-item-header {
@@ -1954,12 +2000,12 @@ onBeforeUnmount(() => {
 }
 
 .drawer-glass .more-item-label {
-  color: rgba(255, 255, 255, 0.9);
+  color: #f8fafc;
 }
 
 .drawer-glass .more-item-value {
-  background: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.62);
+  background: #263244;
+  color: #cbd5e1;
 }
 
 .more-item-desc {
@@ -1970,7 +2016,7 @@ onBeforeUnmount(() => {
 }
 
 .drawer-glass .more-item-desc {
-  color: rgba(255, 255, 255, 0.45);
+  color: #94a3b8;
 }
 
 /* ===== Toggle Switch ===== */
@@ -2007,12 +2053,12 @@ onBeforeUnmount(() => {
 }
 
 .drawer-glass .toggle-switch {
-  border-color: rgba(255, 255, 255, 0.44);
-  background: rgba(255, 255, 255, 0.34);
+  border-color: #475569;
+  background: #334155;
 }
 
 .drawer-glass .toggle-switch.active {
-  border-color: rgba(255, 255, 255, 0.5);
+  border-color: color-mix(in srgb, var(--accent-color, #3b82f6) 78%, #cbd5e1);
   background: var(--accent-color, #1a73e8);
 }
 

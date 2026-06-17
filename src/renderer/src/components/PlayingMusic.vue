@@ -105,7 +105,7 @@ function parseLrc(lrc: string | null | undefined): ParsedLyricLine[] {
     const trimmed = raw.trim()
     if (!trimmed) continue
 
-    const timestamps: number[] = []
+    const timestamps: Array<{ time: number; index: number; end: number }> = []
     let match: RegExpExecArray | null
     lineRe.lastIndex = 0
 
@@ -121,14 +121,29 @@ function parseLrc(lrc: string | null | undefined): ParsedLyricLine[] {
         }
       }
 
-      timestamps.push(min * 60 + sec + ms / 1000)
+      timestamps.push({
+        time: min * 60 + sec + ms / 1000,
+        index: match.index,
+        end: match.index + match[0].length
+      })
     }
 
     const text = trimmed.replace(lineRe, '').trim()
-    if (!text) continue
+    if (!text || timestamps.length === 0) continue
+
+    const hasInlineTimestamps = timestamps.some((timestamp, index) => {
+      if (index === 0) return timestamp.index > 0
+      const previous = timestamps[index - 1]
+      return trimmed.slice(previous.end, timestamp.index).trim().length > 0
+    })
+
+    if (hasInlineTimestamps) {
+      lines.push({ time: timestamps[0].time, text })
+      continue
+    }
 
     for (const ts of timestamps) {
-      lines.push({ time: ts, text })
+      lines.push({ time: ts.time, text })
     }
   }
 

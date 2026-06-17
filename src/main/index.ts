@@ -751,13 +751,18 @@ function bundledPluginIndexPath(): string {
 async function requestNcmApi(path: string, cookie?: string): Promise<unknown> {
   const sep = path.includes('?') ? '&' : '?'
   let url = `http://localhost:${NCM_API_PORT}${path}${sep}timestamp=${Date.now()}`
+  const headers: Record<string, string> = {}
   if (cookie) {
-    url += `&cookie=${encodeURIComponent(cookie)}`
+    headers.Cookie = cookie
+      .split(';')
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .join('; ')
   }
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), NCM_API_REQUEST_TIMEOUT_MS)
   try {
-    const res = await fetch(url, { signal: controller.signal })
+    const res = await fetch(url, { signal: controller.signal, headers })
     return await res.json()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)

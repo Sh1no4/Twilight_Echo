@@ -15,11 +15,11 @@ type TestRunningProvider = {
 }
 
 const skeleton: TestRunningProvider = {
-  pluginId: 'com.twilightecho.examples.bili-provider-skeleton',
+  pluginId: 'com.test.bili-provider-basic',
   providers: [
     {
       id: 'bili',
-      name: 'Bilibili Provider Skeleton',
+      name: 'Bilibili Basic Provider',
       capabilities: ['search', 'playbackUrl', 'lyrics', 'cover', 'playlist']
     }
   ]
