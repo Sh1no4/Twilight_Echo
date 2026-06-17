@@ -12,7 +12,7 @@ const props = defineProps<{
   showLikedPanel?: boolean
   showSocialStats?: boolean
   allowPinPlaylists?: boolean
-  pinnedPlaylistId?: string | number | null
+  pinnedPlaylistIds?: Array<string | number>
   pinningPlaylistId?: string | number | null
 }>()
 
@@ -30,7 +30,10 @@ function playlistId(playlist: MediaProviderPlaylistSummary): string {
 
 function isPlaylistPinned(playlist: MediaProviderPlaylistSummary): boolean {
   const playlistWithPinned = playlist as MediaProviderPlaylistSummary & { pinned?: boolean }
-  return playlistWithPinned.pinned === true || String(props.pinnedPlaylistId ?? '') === playlistId(playlist)
+  return (
+    playlistWithPinned.pinned === true ||
+    (props.pinnedPlaylistIds ?? []).some((id) => String(id) === playlistId(playlist))
+  )
 }
 
 function isPlaylistPinning(playlist: MediaProviderPlaylistSummary): boolean {
