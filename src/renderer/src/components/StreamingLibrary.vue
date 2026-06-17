@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { MediaProviderPlaylistSummary, MediaProviderProfile } from '../providers/mediaProvider'
 
-defineProps<{
+const props = defineProps<{
   isLoggedIn: boolean
   providerLabel?: string
   profile: MediaProviderProfile | null
@@ -11,6 +11,9 @@ defineProps<{
   userPlaylistEntries: MediaProviderPlaylistSummary[]
   showLikedPanel?: boolean
   showSocialStats?: boolean
+  allowPinPlaylists?: boolean
+  pinnedPlaylistId?: string | number | null
+  pinningPlaylistId?: string | number | null
 }>()
 
 const emit = defineEmits<{
@@ -18,7 +21,27 @@ const emit = defineEmits<{
   openLikedTracks: []
   playLikedSongs: []
   openPlaylist: [playlist: MediaProviderPlaylistSummary]
+  togglePinnedPlaylist: [playlist: MediaProviderPlaylistSummary]
 }>()
+
+function playlistId(playlist: MediaProviderPlaylistSummary): string {
+  return String(playlist.id)
+}
+
+function isPlaylistPinned(playlist: MediaProviderPlaylistSummary): boolean {
+  const playlistWithPinned = playlist as MediaProviderPlaylistSummary & { pinned?: boolean }
+  return playlistWithPinned.pinned === true || String(props.pinnedPlaylistId ?? '') === playlistId(playlist)
+}
+
+function isPlaylistPinning(playlist: MediaProviderPlaylistSummary): boolean {
+  return String(props.pinningPlaylistId ?? '') === playlistId(playlist)
+}
+
+function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylistSummary): void {
+  if (event.key !== 'Enter' && event.key !== ' ') return
+  event.preventDefault()
+  emit('openPlaylist', playlist)
+}
 </script>
 
 <template>
@@ -97,12 +120,14 @@ const emit = defineEmits<{
       </div>
 
       <div v-else class="playlist-list">
-        <button
+        <article
           v-for="playlist in userPlaylistEntries"
           :key="playlist.id"
           class="playlist-list-item"
-          type="button"
+          role="button"
+          tabindex="0"
           @click="emit('openPlaylist', playlist)"
+          @keydown="onPlaylistKeydown($event, playlist)"
         >
           <span class="playlist-cover-wrap">
             <img v-if="playlist.cover" :src="playlist.cover" class="playlist-cover" alt="" />
@@ -114,10 +139,29 @@ const emit = defineEmits<{
             <span class="playlist-row-title">{{ playlist.name }}</span>
             <span class="playlist-row-subtitle">{{ playlist.trackCount }} 首</span>
           </span>
+          <button
+            v-if="allowPinPlaylists"
+            type="button"
+            class="playlist-pin-button"
+            :class="{ active: isPlaylistPinned(playlist) }"
+            :disabled="isPlaylistPinning(playlist)"
+            :title="isPlaylistPinned(playlist) ? '取消置顶收藏夹' : '置顶收藏夹'"
+            @click.stop="emit('togglePinnedPlaylist', playlist)"
+          >
+            <i
+              :class="
+                isPlaylistPinning(playlist)
+                  ? 'pi pi-spin pi-spinner'
+                  : isPlaylistPinned(playlist)
+                    ? 'pi pi-star-fill'
+                    : 'pi pi-star'
+              "
+            ></i>
+          </button>
           <span class="playlist-open-icon">
             <i class="pi pi-chevron-right"></i>
           </span>
-        </button>
+        </article>
       </div>
     </section>
   </div>
@@ -568,6 +612,43 @@ const emit = defineEmits<{
     background 0.22s;
 }
 
+.playlist-pin-button {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(80, 88, 116, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.52);
+  color: rgba(80, 88, 116, 0.46);
+  cursor: pointer;
+  transition:
+    background 0.18s,
+    border-color 0.18s,
+    color 0.18s,
+    transform 0.18s;
+}
+
+.playlist-pin-button:hover,
+.playlist-pin-button.active {
+  border-color: rgba(245, 158, 11, 0.32);
+  background: #fff7ed;
+  color: #d97706;
+}
+
+.playlist-pin-button:hover {
+  transform: translateY(-1px);
+}
+
+.playlist-pin-button:disabled {
+  cursor: wait;
+  opacity: 0.68;
+  transform: none;
+}
+
 .playlist-list-item:hover .playlist-open-icon {
   color: var(--te-primary-500);
   background: rgba(255, 255, 255, 0.72);
@@ -704,7 +785,8 @@ const emit = defineEmits<{
 
 .stat-item,
 .liked-card-badge,
-.playlist-open-icon {
+.playlist-open-icon,
+.playlist-pin-button {
   border-radius: 8px;
   border-color: rgba(255, 255, 255, 0.72);
   background: rgba(255, 255, 255, 0.5);
@@ -770,8 +852,15 @@ const emit = defineEmits<{
 
 .stat-item,
 .liked-card-badge,
-.playlist-open-icon {
+.playlist-open-icon,
+.playlist-pin-button {
   box-shadow: none;
+}
+
+.playlist-pin-button.active {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #d97706;
 }
 
 .liked-play-btn {

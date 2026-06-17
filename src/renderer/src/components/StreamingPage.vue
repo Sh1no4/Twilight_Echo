@@ -76,6 +76,8 @@ const biliLibraryLoaded = ref(false)
 const biliLibraryError = ref('')
 const biliPlaylists = ref<MediaProviderPlaylistSummary[]>([])
 const biliLikedPlaylist = ref<MediaProviderPlaylistSummary | null>(null)
+const biliPinnedPlaylistId = ref<string | null>(null)
+const biliPinningPlaylistId = ref<string | null>(null)
 
 const isBiliActive = computed(() => activeProvider.value === 'bili')
 const biliProviderAvailable = computed(() => providerStore.hasProvider('bili'))
@@ -579,6 +581,7 @@ async function refreshBiliState(): Promise<void> {
     biliProfile.value = null
     biliPlaylists.value = []
     biliLikedPlaylist.value = null
+    biliPinnedPlaylistId.value = null
     biliLibraryLoaded.value = false
     return
   }
@@ -617,11 +620,38 @@ async function ensureBiliLibraryLoaded(force = false): Promise<void> {
     const library = await providerStore.fetchUserLibrary('bili', force)
     biliLikedPlaylist.value = library.likedPlaylist ?? null
     biliPlaylists.value = library.playlists
+    const pinnedPlaylist = library.playlists.find((playlist) => {
+      const playlistWithPinned = playlist as MediaProviderPlaylistSummary & { pinned?: boolean }
+      return playlistWithPinned.pinned === true
+    })
+    biliPinnedPlaylistId.value = pinnedPlaylist ? String(pinnedPlaylist.id) : null
     biliLibraryLoaded.value = true
   } catch (error) {
     biliLibraryError.value = error instanceof Error ? error.message : '加载 Bilibili 收藏夹失败'
   } finally {
     biliLibraryLoading.value = false
+  }
+}
+
+async function toggleBiliPinnedPlaylist(playlist: MediaProviderPlaylistSummary): Promise<void> {
+  if (!isBiliActive.value || biliPinningPlaylistId.value) return
+  const playlistId = String(playlist.id)
+  biliPinningPlaylistId.value = playlistId
+  biliLibraryError.value = ''
+  try {
+    const result = await window.api.extensions.executeCommand('bilibili.setPinnedFavoriteFolder', [
+      { id: playlistId }
+    ])
+    const record = result && typeof result === 'object' ? (result as Record<string, unknown>) : {}
+    biliPinnedPlaylistId.value =
+      typeof record.pinnedFavoriteFolderId === 'string' && record.pinnedFavoriteFolderId
+        ? record.pinnedFavoriteFolderId
+        : null
+    await ensureBiliLibraryLoaded(true)
+  } catch (error) {
+    biliLibraryError.value = error instanceof Error ? error.message : '设置 Bilibili 收藏夹置顶失败'
+  } finally {
+    biliPinningPlaylistId.value = null
   }
 }
 
@@ -1436,10 +1466,14 @@ onMounted(async () => {
             :user-playlist-entries="userPlaylistEntries"
             :show-liked-panel="!isBiliActive"
             :show-social-stats="!isBiliActive"
+            :allow-pin-playlists="isBiliActive"
+            :pinned-playlist-id="biliPinnedPlaylistId"
+            :pinning-playlist-id="biliPinningPlaylistId"
             @open-user-list="openUserList"
             @open-liked-tracks="openLikedTracks"
             @play-liked-songs="playLikedSongs"
             @open-playlist="openPlaylist"
+            @toggle-pinned-playlist="toggleBiliPinnedPlaylist"
           />
         </div>
       </Transition>
