@@ -104,6 +104,12 @@ export interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
   wasapiExclusivePushMode?: boolean
+  upmixCenterGain?: number
+  upmixLfeGain?: number
+  upmixLfeLowpassHz?: number
+  upmixSurroundGain?: number
+  upmixSideGain?: number
+  upmixSurroundDelayMs?: number
 }
 
 export interface AppSettings {

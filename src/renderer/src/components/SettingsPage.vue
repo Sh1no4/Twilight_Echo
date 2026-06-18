@@ -12,6 +12,7 @@ import type {
   AudioProcessingSettings,
   ChannelRoutingMode,
   DsdOutputMode,
+  OutputConfig,
   PlaybackResumeMode,
   SacdProgramMode,
   VolumeNormalizationMode
@@ -651,6 +652,16 @@ function setRoutingMode(event: Event): void {
   void setAudioOutputConfig({ routingMode: target.value as ChannelRoutingMode })
 }
 
+const isUpmixActive = computed(
+  () =>
+    audioOutputConfig.value.routingMode === 'stereo-to-5.1' ||
+    audioOutputConfig.value.routingMode === 'stereo-to-7.1'
+)
+
+function setUpmixParam(field: keyof OutputConfig, value: number): void {
+  void setAudioOutputConfig({ [field]: value } as Partial<OutputConfig>)
+}
+
 function toggleWasapiExclusivePushMode(): void {
   void setAudioOutputConfig({
     wasapiExclusivePushMode: !audioOutputConfig.value.wasapiExclusivePushMode
@@ -1073,6 +1084,117 @@ onMounted(async () => {
                 </option>
               </select>
             </div>
+
+            <!-- 上混参数（仅 5.1/7.1 模式显示） -->
+            <template v-if="isUpmixActive">
+              <div class="setting-row upmix-row">
+                <div class="setting-copy">
+                  <span class="label-row">
+                    <span class="setting-label">中置增益</span>
+                  </span>
+                  <span class="setting-desc">{{ (audioOutputConfig.upmixCenterGain ?? 0.7071).toFixed(3) }}</span>
+                </div>
+                <input
+                  type="range"
+                  class="slider-control"
+                  min="0"
+                  max="1.5"
+                  step="0.01"
+                  :value="audioOutputConfig.upmixCenterGain ?? 0.7071"
+                  @input="setUpmixParam('upmixCenterGain', Number(($event.target as HTMLInputElement).value))"
+                />
+              </div>
+
+              <div class="setting-row upmix-row">
+                <div class="setting-copy">
+                  <span class="label-row">
+                    <span class="setting-label">LFE 增益</span>
+                  </span>
+                  <span class="setting-desc">{{ (audioOutputConfig.upmixLfeGain ?? 0.5).toFixed(3) }}</span>
+                </div>
+                <input
+                  type="range"
+                  class="slider-control"
+                  min="0"
+                  max="1.5"
+                  step="0.01"
+                  :value="audioOutputConfig.upmixLfeGain ?? 0.5"
+                  @input="setUpmixParam('upmixLfeGain', Number(($event.target as HTMLInputElement).value))"
+                />
+              </div>
+
+              <div class="setting-row upmix-row">
+                <div class="setting-copy">
+                  <span class="label-row">
+                    <span class="setting-label">LFE 低通</span>
+                  </span>
+                  <span class="setting-desc">{{ Math.round(audioOutputConfig.upmixLfeLowpassHz ?? 120) }} Hz</span>
+                </div>
+                <input
+                  type="range"
+                  class="slider-control"
+                  min="40"
+                  max="300"
+                  step="1"
+                  :value="audioOutputConfig.upmixLfeLowpassHz ?? 120"
+                  @input="setUpmixParam('upmixLfeLowpassHz', Number(($event.target as HTMLInputElement).value))"
+                />
+              </div>
+
+              <div class="setting-row upmix-row">
+                <div class="setting-copy">
+                  <span class="label-row">
+                    <span class="setting-label">环绕增益</span>
+                  </span>
+                  <span class="setting-desc">{{ (audioOutputConfig.upmixSurroundGain ?? 0.5).toFixed(3) }}</span>
+                </div>
+                <input
+                  type="range"
+                  class="slider-control"
+                  min="0"
+                  max="1.5"
+                  step="0.01"
+                  :value="audioOutputConfig.upmixSurroundGain ?? 0.5"
+                  @input="setUpmixParam('upmixSurroundGain', Number(($event.target as HTMLInputElement).value))"
+                />
+              </div>
+
+              <div v-if="audioOutputConfig.routingMode === 'stereo-to-7.1'" class="setting-row upmix-row">
+                <div class="setting-copy">
+                  <span class="label-row">
+                    <span class="setting-label">侧环绕增益</span>
+                  </span>
+                  <span class="setting-desc">{{ (audioOutputConfig.upmixSideGain ?? 0.3).toFixed(3) }}</span>
+                </div>
+                <input
+                  type="range"
+                  class="slider-control"
+                  min="0"
+                  max="1.5"
+                  step="0.01"
+                  :value="audioOutputConfig.upmixSideGain ?? 0.3"
+                  @input="setUpmixParam('upmixSideGain', Number(($event.target as HTMLInputElement).value))"
+                />
+              </div>
+
+              <div class="setting-row upmix-row">
+                <div class="setting-copy">
+                  <span class="label-row">
+                    <span class="setting-label">环绕延迟</span>
+                  </span>
+                  <span class="setting-desc">{{ Math.round(audioOutputConfig.upmixSurroundDelayMs ?? 0) }} ms</span>
+                </div>
+                <input
+                  type="range"
+                  class="slider-control"
+                  min="0"
+                  max="50"
+                  step="1"
+                  :value="audioOutputConfig.upmixSurroundDelayMs ?? 0"
+                  @input="setUpmixParam('upmixSurroundDelayMs', Number(($event.target as HTMLInputElement).value))"
+                />
+              </div>
+            </template>
 
             <div class="setting-row status-row">
               <div class="setting-copy">
@@ -2046,6 +2168,17 @@ onMounted(async () => {
 
 .setting-row.compact {
   min-height: 54px;
+}
+
+.upmix-row {
+  min-height: 48px;
+  padding: 8px 18px 8px 36px;
+  background: rgba(99, 102, 241, 0.03);
+}
+
+.upmix-row .slider-control {
+  width: 140px;
+  accent-color: #6366f1;
 }
 
 .settings-subheading {
