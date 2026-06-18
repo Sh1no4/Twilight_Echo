@@ -52,6 +52,15 @@ const streamingMenuOpen = ref(false)
 const titleMenuOpen = computed(() =>
   showStreamingPage.value ? streamingMenuOpen.value : menuOpen.value
 )
+const showStreamingSurface = computed(
+  () =>
+    showStreamingPage.value &&
+    !showPlayingPage.value &&
+    !showLoginPage.value &&
+    !showSettingsPage.value &&
+    !showEqualizerPage.value &&
+    !activePluginPage.value
+)
 
 function toggleMenu(): void {
   if (showLoginPage.value) return
@@ -359,6 +368,22 @@ watch(
   { immediate: true, flush: 'post' }
 )
 
+watch(
+  showSettingsPage,
+  (visible) => {
+    document.body.classList.toggle('te-settings-surface', visible)
+  },
+  { immediate: true }
+)
+
+watch(
+  showStreamingSurface,
+  (visible) => {
+    document.body.classList.toggle('te-streaming-surface', visible)
+  },
+  { immediate: true }
+)
+
 watch(sidebarPages, (pages) => {
   const active = activePluginPage.value
   if (!active) return
@@ -374,6 +399,8 @@ onBeforeUnmount(() => {
   removePlaybackSessionSaveListener?.()
   removePlaybackSessionSaveListener = null
   stopSideMenuMonitor()
+  document.body.classList.remove('te-settings-surface')
+  document.body.classList.remove('te-streaming-surface')
 })
 
 const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOrigin.value.y}px`)

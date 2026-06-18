@@ -105,7 +105,7 @@ function close(): void {
   align-items: center;
   justify-content: space-between;
   height: 32px;
-  background: #ffffff;
+  background: transparent;
   user-select: none;
   position: fixed;
   top: 0;
@@ -118,23 +118,12 @@ function close(): void {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   transition:
-    background 0.3s,
     border-color 0.3s,
     box-shadow 0.3s;
 }
 
 .title-bar::before {
-  content: '';
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: var(--te-menu-width);
-  z-index: 0;
-  pointer-events: none;
-  background: #ffffff;
-  transform: translate3d(-100%, 0, 0);
-  transform-origin: left center;
-  will-change: transform;
-  transition: transform 0.32s var(--te-ease-soft);
+  display: none;
 }
 
 .title-bar-glass {
@@ -146,13 +135,17 @@ function close(): void {
 }
 
 .title-bar.title-bar-settings {
-  background: #ffffff;
+  background: transparent !important;
   border-bottom-color: transparent;
   box-shadow: none;
 }
 
+.title-bar.title-bar-settings::before {
+  display: none;
+}
+
 .title-bar.title-bar-streaming {
-  background: #fafbfe;
+  background: var(--te-streaming-surface);
   border-bottom-color: transparent;
   box-shadow: none;
   backdrop-filter: none;
@@ -160,15 +153,15 @@ function close(): void {
 }
 
 .title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
-  background: #ffffff;
+  background: transparent;
 }
 
 .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
-  background: #fafbfe;
+  background: var(--te-streaming-surface);
 }
 
 .title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings)::before {
-  transform: translate3d(0, 0, 0);
+  transform: none;
 }
 
 .title-bar.title-bar-glass {

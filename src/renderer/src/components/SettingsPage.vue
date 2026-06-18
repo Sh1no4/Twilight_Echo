@@ -1,29 +1,27 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { usePlayerStore } from '../stores/usePlayerStore'
-import { useSettingsStore } from '../stores/useSettingsStore'
-import { useExtensionRegistry } from '../extensions/registry'
-import PluginSettingsPanel from './PluginSettingsPanel.vue'
-import type {
-  AppSettings,
-  AppTheme,
-  AudioDeviceOption,
-  AudioOutputId,
-  AudioProcessingSettings,
-  ChannelRoutingMode,
-  DsdOutputMode,
-  OutputConfig,
-  PlaybackResumeMode,
-  SacdProgramMode,
-  VolumeNormalizationMode
-} from '../types/settings'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 
-const emit = defineEmits<{
+type SectionKey =
+  | 'general'
+  | 'playback'
+  | 'dsp'
+  | 'cache'
+  | 'plugins'
+  | 'performance'
+  | 'appearance'
+  | 'shortcuts'
+  | 'about'
+
+const props = defineProps<{
+  initialSection?: SectionKey
+}>()
+
+defineEmits<{
   back: []
   openEqualizer: []
 }>()
 
-const tabs = [
+const sections: { key: SectionKey; label: string; icon: string }[] = [
   { key: 'general', label: '常规', icon: 'pi pi-sliders-h' },
   { key: 'playback', label: '播放', icon: 'pi pi-volume-up' },
   { key: 'dsp', label: 'DSP', icon: 'pi pi-sliders-v' },
@@ -33,3589 +31,2069 @@ const tabs = [
   { key: 'appearance', label: '外观', icon: 'pi pi-palette' },
   { key: 'shortcuts', label: '快捷键', icon: 'pi pi-keyboard' },
   { key: 'about', label: '关于', icon: 'pi pi-info-circle' }
-] as const
-
-const colorModeOptions: { value: AppTheme; label: string; icon: string }[] = [
-  { value: 'pureWhite', label: '亮色', icon: 'pi pi-sun' },
-  { value: 'dark', label: '深色', icon: 'pi pi-moon' },
-  { value: 'system', label: '跟随', icon: 'pi pi-desktop' }
 ]
 
-const playbackResumeOptions: {
-  value: PlaybackResumeMode
-  label: string
-  description: string
-}[] = [
-  { value: 'off', label: '关闭', description: '启动时不恢复播放' },
-  { value: 'track', label: '记住曲目', description: '只恢复上次曲目' },
-  { value: 'trackAndPosition', label: '曲目和位置', description: '恢复曲目与进度' }
-]
+const activeSection = ref<SectionKey>(props.initialSection ?? 'general')
+const pageRef = ref<HTMLElement | null>(null)
 
-const bufferSizeOptions = [
-  { value: 0, label: 'Auto', help: '由后端和设备协商，通常最稳。' },
-  { value: 64, label: '64', help: '低延迟，适合实时监听；更容易受设备和系统负载影响。' },
-  { value: 128, label: '128', help: '低延迟与稳定性的折中。' },
-  { value: 256, label: '256', help: '推荐日常值，兼顾响应和稳定。' },
-  { value: 512, label: '512', help: '更稳，适合普通播放。' },
-  { value: 1024, label: '1024', help: '高稳定，切歌和操作响应会略慢。' },
-  { value: 2048, label: '2048', help: '最大稳定优先，适合设备容易 underrun 的场景。' }
-] as const
+function scrollToSection(section: SectionKey): void {
+  activeSection.value = section
+  document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
 
-const routingModeOptions: { value: ChannelRoutingMode; label: string; help: string }[] = [
-  { value: 'auto', label: 'Auto', help: '按源文件与设备自动选择声道布局。' },
-  { value: 'stereo', label: 'Stereo', help: '强制立体声输出，最适合耳机和双声道音箱。' },
-  { value: 'stereo-to-5.1', label: 'Stereo -> 5.1', help: '把双声道扩展到 5.1 布局。' },
-  { value: 'stereo-to-7.1', label: 'Stereo -> 7.1', help: '把双声道扩展到 7.1 布局。' },
-  { value: 'mono-to-stereo', label: 'Mono -> Stereo', help: '单声道复制到左右声道。' },
-  { value: 'mono-to-multichannel', label: 'Mono -> Multichannel', help: '单声道扩展到多声道设备。' }
-]
+function updateActiveSection(): void {
+  const page = pageRef.value
+  if (!page) return
 
-const replayGainOptions: { value: VolumeNormalizationMode; label: string; help: string }[] = [
-  { value: 'off', label: 'Off', help: '不做响度归一化，保留原始音量。' },
-  { value: 'track', label: 'Track', help: '逐曲目拉平响度，歌单随机播放更均衡。' },
-  { value: 'album', label: 'Album', help: '保留专辑内曲目相对音量，适合整专播放。' },
-  { value: 'loudnorm', label: 'Loudnorm', help: '按响度分析目标处理，适合来源差异很大的音频。' }
-]
+  const pageTop = page.getBoundingClientRect().top
+  let closest = activeSection.value
+  let closestDistance = Number.POSITIVE_INFINITY
 
-const dsdOutputModeOptions: { value: DsdOutputMode; label: string; help: string }[] = [
-  { value: 'auto', label: 'Auto', help: '按设备实际能力选择：Native、DoP 载波或 PCM 回退。' },
-  { value: 'pcm', label: 'PCM', help: '始终将 DSD 转换为 PCM，兼容性最高。' },
-  { value: 'dop', label: 'DoP', help: '请求 DoP 载波；不可用时显示实际 PCM 回退。' },
-  { value: 'native', label: 'Native', help: '请求 Native DSD；仅在输出状态确认时显示 Native。' }
-]
-
-const sacdProgramModeOptions: { value: SacdProgramMode; label: string; help: string }[] = [
-  { value: 'auto', label: 'Auto', help: '自动选择 SACD program。' },
-  { value: 'stereo', label: 'Stereo', help: '优先播放 SACD 双声道 program。' },
-  { value: 'multichannel', label: 'Multichannel', help: '优先播放 SACD 多声道 program。' }
-]
-
-const fftResolutionOptions = [64, 128, 256, 512, 1024, 2048] as const
-
-const playbackHelp = {
-  audioOutput:
-    '选择原生输出后端。Windows 可用 WASAPI/ASIO，macOS 用 CoreAudio，Linux 用 ALSA；不同后端决定设备枚举、独占能力和 bit-perfect 可能性。',
-  audioDevice:
-    '选择当前后端要使用的具体设备或驱动。Auto 会跟随系统默认输出，指定设备适合外置 DAC、专业声卡或 ALSA hw/plughw。',
-  exclusive:
-    '独占模式会尝试绕过系统混音器。WASAPI Exclusive/ASIO/CoreAudio Hog Mode 更可能 bit-perfect；ALSA default 通常不保证。',
-  wasapiExclusivePushMode:
-    'WASAPI 独占驱动模式。默认的“事件驱动”模式延迟低且性能好，但部分声卡/USB DAC 驱动不兼容，可能引发无声或爆音。切换到“推送模式（定时器驱动）”通常能有效解决此类硬件兼容性问题。',
-  buffer:
-    '缓冲越小延迟越低，但更容易爆音或 underrun；缓冲越大越稳，但切歌和交互响应会变慢。Auto 通常优先稳定。',
-  routing:
-    '声道路由会改变声道语义，因此可能让 bit-perfect 失效。听耳机和普通音箱建议 Auto 或 Stereo。',
-  status:
-    '显示后端实际输出格式、延迟和恢复计数。Source Exact 表示源格式未被破坏，Output Perfect 表示解码后 PCM 到设备没有额外处理或格式转换。',
-  dsp: 'DSP 总开关控制均衡器、ReplayGain、Crossfeed 和卷积等处理。关闭后更接近原始输出，也更容易满足 bit-perfect。',
-  clipGuard: '在增益、EQ 或 ReplayGain 可能超过 0 dBFS 时降低削波风险，适合开启 DSP 时保留。',
-  replayGain:
-    'ReplayGain 用元数据或响度分析平衡不同歌曲音量。Track 适合随机播放，Album 适合整专，Preamp/Fallback 用于补偿整体响度。',
-  eq: '启用均衡器处理。详细频段和参数在均衡器页面调整；开启 EQ 会让 bit-perfect 失效。',
-  crossfeed:
-    '把左右声道少量互混，减轻耳机声像过宽或疲劳感。适合耳机，不建议用于本来就做过空间混音的内容。',
-  convolver:
-    '加载卷积脉冲响应，用于房间校正、耳机校正或空间效果。IR 采样率不匹配时可能产生额外重采样。',
-  continuity:
-    '把播放体验相关选项合并在一起：无缝播放减少曲目间空隙，Crossfade 做淡入淡出，关闭记忆决定下次启动恢复方式。',
-  fft: 'FFT 只影响频谱/可视化分析精度，不直接改变听到的声音；分辨率越高越耗 CPU。',
-  volume: '应用音量低于 100% 会改变样本值，因此不满足 bit-perfect。追求 bit-perfect 时保持 100%。',
-  error: '显示原生音频引擎、设备切换或输出配置的最近错误。'
-} as const
-
-type TabKey = (typeof tabs)[number]['key']
-type BooleanSettingKey =
-  | 'autoCheckLogin'
-  | 'minimizeToTray'
-  | 'launchAtLogin'
-  | 'hardwareAcceleration'
-  | 'blurEffect'
-  | 'useCoverTheme'
-
-const props = defineProps<{
-  initialSection?: TabKey
-}>()
-
-const activeTab = ref<TabKey>(props.initialSection ?? 'general')
-const { uiContributions, syncExtensions } = useExtensionRegistry()
-const pluginSettingsPanels = computed(() =>
-  uiContributions.value.filter((contribution) => contribution.kind === 'settingsPanel')
-)
-
-const {
-  settings,
-  paths,
-  appVersion,
-  loading,
-  saving,
-  clearingCache,
-  formattedCacheSize,
-  restartRequired,
-  restartReasons,
-  loadSettings,
-  updateSettings,
-  chooseCacheFolder,
-  resetCacheFolder,
-  refreshCacheSize,
-  clearCache,
-  openCacheFolder,
-  relaunch
-} = useSettingsStore()
-
-const {
-  exclusiveMode,
-  audioOutput,
-  audioDevice,
-  audioOutputOptions,
-  audioDeviceOptions,
-  audioProcessing,
-  audioOutputConfig,
-  playbackInfo,
-  outputInfo,
-  audioEngineError,
-  toggleExclusiveMode,
-  setAudioOutput,
-  setAudioDevice,
-  setAudioOutputConfig,
-  setAudioProcessing,
-  setReplayGainMode,
-  setCrossfeedStrength,
-  selectImpulseResponse,
-  clearImpulseResponse,
-  refreshAudioOutputState,
-  volume,
-  setVolume
-} = usePlayerStore()
-
-const volumePercent = computed({
-  get: () => Math.round(volume.value * 100),
-  set: (value: number) => {
-    setVolume(value / 100)
+  for (const section of sections) {
+    const el = document.getElementById(section.key)
+    if (!el) continue
+    const distance = Math.abs(el.getBoundingClientRect().top - pageTop - 24)
+    if (distance < closestDistance) {
+      closest = section.key
+      closestDistance = distance
+    }
   }
-})
 
-const activeCachePath = computed(() => paths.value?.activeCachePath ?? '')
-const cachePathNeedsRestart = computed(
-  () => !!activeCachePath.value && activeCachePath.value !== settings.value.cachePath
-)
-const restartReasonText = computed(() => restartReasons.value.join('、'))
-const selectedAudioOutput = computed(() =>
-  audioOutputOptions.value.find((option) => option.id === audioOutput.value)
-)
-const selectedAudioDevice = computed(() =>
-  audioDeviceOptions.value.find((option) => option.id === audioDevice.value)
-)
-const exclusiveAvailable = computed(() => selectedAudioOutput.value?.supportsExclusive ?? false)
-const backendLabels: Record<string, string> = {
-  wasapi: 'WASAPI Shared',
-  'wasapi-exclusive': 'WASAPI Exclusive',
-  asio: 'ASIO',
-  coreaudio: 'CoreAudio',
-  'coreaudio-exclusive': 'CoreAudio Hog',
-  alsa: 'ALSA'
-}
-const reasonCodeLabels: Record<string, string> = {
-  shared_mixer: '共享输出经过系统混音器',
-  processing_active: '当前处理链正在改变样本',
-  replaygain_active: 'ReplayGain 正在改变样本',
-  eq_active: 'EQ 正在改变样本',
-  convolver_active: 'Convolver 正在改变样本',
-  crossfeed_active: 'Crossfeed 正在改变声道内容',
-  crossfade_active: 'Crossfade 正在改变播放连续性',
-  volume_not_unity: '软件音量不是 100%',
-  routing_changes_semantics: '声道路由或通道语义发生变化',
-  hog_mode_failed: '无法获取 CoreAudio Hog Mode 独占访问',
-  sample_rate_unsupported: '设备不支持请求的采样率',
-  pcm_converted: 'PCM 格式或采样率发生转换',
-  integer_passthrough_unavailable: '源格式与设备实际输出格式不一致，无法 PCM 直通',
-  source_lossy: '源文件是有损格式，不能 Source Exact',
-  source_format_differs: '源格式与输出链不一致',
-  backend_not_output_perfect: '当前输出路径未声明 bit-perfect 能力',
-  output_not_perfect: '当前输出链尚未验证为直通',
-  visualization_inactive: '当前没有可视化采样数据',
-  dsd_processing_pcm_fallback: 'DSD 因处理链启用而回退到 PCM',
-  dsd_high_rate_pcm_fallback: 'DSD 因采样率或驱动限制回退到 PCM',
-  dsd_converted_to_pcm: 'DSD 当前已转换为 PCM 输出',
-  dsd_source_unsupported: '当前 DSD 源或模式不受支持',
-  sacd_iso_unsupported: 'SACD ISO 不含可播放的未压缩 DSD 区域',
-  dst_dsd_provider_unavailable: 'SACD DST 需要保留 DSD 的 provider，当前不可用',
-  dst_dsd_provider_failed: 'SACD DST 保 DSD provider 解码失败',
-  dsd_dop: '当前 DSD 正在通过 DoP 载波传输',
-  dop_carrier_mismatch: 'DoP 载波格式与目标 DSD 速率不匹配',
-  dop_passthrough_unproven: 'DoP 输出路径未能证明直通',
-  plugin_path: '当前设备路径包含插件或混音层',
-  device_not_found: '当前后端没有找到请求设备',
-  format_not_supported: '当前设备不支持请求的输出格式',
-  backend_open_failure: '输出后端打开失败',
-  backend_start_failure: '输出后端启动失败',
-  buffer_failure: '输出缓冲失败或发生 underrun',
-  device_lost: '输出设备已断开，需要恢复',
-  driver_restart: '驱动发生重启或重置'
-}
-const accessModeLabels: Record<string, string> = {
-  shared: 'Shared',
-  exclusive: 'Exclusive',
-  hog: 'Hog',
-  direct: 'Direct',
-  plugin: 'Plugin'
-}
-const nativeDsdStateLabels: Record<string, string> = {
-  unsupported: 'Native DSD Unsupported',
-  candidate: 'Native DSD Candidate',
-  unproven: 'Native DSD Unproven',
-  mismatch: 'Native DSD Mismatch',
-  proven: 'Native DSD Proven'
-}
-const deviceBackendLabels: Record<string, string> = {
-  wasapi: 'WASAPI',
-  'wasapi-exclusive': 'WASAPI',
-  asio: 'ASIO',
-  coreaudio: 'CoreAudio',
-  alsa: 'ALSA'
-}
-
-function canonicalSourceExact(): boolean {
-  return outputInfo.value?.sourceExact === true
-}
-
-function canonicalOutputPerfect(): boolean {
-  return outputInfo.value?.outputPerfect === true
-}
-
-function formatBackendLabel(backend: string): string {
-  return backendLabels[backend] ?? backend
-}
-
-function formatPerfectReason(reason: string): string {
-  const trimmed = reason.trim()
-  if (!trimmed) return ''
-  return trimmed
-}
-
-function resolvePerfectReasonText(): string {
-  const code = outputInfo.value?.perfectReasonCode || playbackInfo.value?.perfectReasonCode || ''
-  if (code && reasonCodeLabels[code]) return reasonCodeLabels[code]
-  const capabilityReason = outputInfo.value?.capabilityReason?.trim()
-  if (capabilityReason) return capabilityReason
-  return formatPerfectReason(outputInfo.value?.perfectReason || playbackInfo.value?.perfectReason || '')
-}
-
-function nativeDsdRuntimeTone(state: string): 'success' | 'warning' | 'muted' {
-  if (state === 'proven') return 'success'
-  if (state === 'candidate' || state === 'unproven' || state === 'mismatch') return 'warning'
-  return 'muted'
-}
-
-const nativeDsdRuntimeText = computed(() => {
-  const info = outputInfo.value
-  if (!info) return ''
-  const state = info.nativeDsdRuntimeState || 'unsupported'
-  const hasRuntimeInterest =
-    state !== 'unsupported' ||
-    info.driverNativeDsdCapable ||
-    info.nativeDsdRequestedRate > 0 ||
-    info.nativeDsdExplicitlyCapable
-  if (!hasRuntimeInterest) return ''
-  const label = nativeDsdStateLabels[state] ?? `Native DSD ${state}`
-  const rate =
-    info.nativeDsdActualRate || info.nativeDsdRequestedRate || info.driverNativeDsdSampleRates?.[0] || 0
-  return rate > 0 ? `${label} ${compactRate(rate)}` : label
-})
-
-const nativeDsdRuntimeReasonText = computed(() => {
-  const reason = outputInfo.value?.nativeDsdRuntimeReason?.trim()
-  return reason ? `Native DSD: ${reason}` : ''
-})
-
-const readablePerfectReason = computed(() => resolvePerfectReasonText())
-const sourceExact = computed(() => canonicalSourceExact())
-const outputPerfect = computed(() => canonicalOutputPerfect())
-const accessModeText = computed(() => {
-  const mode = outputInfo.value?.accessMode || ''
-  return mode ? accessModeLabels[mode] ?? mode : 'Unknown'
-})
-const pathKindText = computed(() => outputInfo.value?.devicePathKind || 'Unknown path')
-const selectedDeviceTitle = computed(() =>
-  selectedAudioDevice.value
-    ? `${selectedAudioDevice.value.label} · ${deviceSpecText(selectedAudioDevice.value)}`
-    : '选择输出设备'
-)
-const outputFormatText = computed(() => {
-  const info = outputInfo.value
-  if (!info) return '等待音频引擎'
-  const format = info.actualOutputFormat || playbackInfo.value?.actualOutputFormat || ''
-  const rate =
-    info.actualSampleRate || info.outputSampleRate || playbackInfo.value?.actualSampleRate || 0
-  const bitDepth =
-    info.actualBitDepth || info.outputBitDepth || playbackInfo.value?.actualBitDepth || 0
-  const channels = info.actualChannels || playbackInfo.value?.actualChannels || 0
-  const parts = [
-    format,
-    rate > 0 ? `${rate} Hz` : '',
-    bitDepth > 0 ? `${bitDepth} bit` : '',
-    channels > 0 ? `${channels} ch` : ''
-  ].filter(Boolean)
-  return parts.length > 0 ? parts.join(' · ') : '未开始播放'
-})
-function compactRate(rate: number): string {
-  return rate > 0 ? `${Math.round(rate / 100) / 10}kHz` : ''
-}
-
-function formatDeviceBackend(device: AudioDeviceOption): string {
-  const backend = device.backend || audioOutput.value
-  return deviceBackendLabels[backend] ?? formatBackendLabel(backend)
-}
-
-function formatDeviceChannels(device: AudioDeviceOption): string {
-  return typeof device.channels === 'number' && device.channels > 0 ? `${device.channels}ch` : ''
-}
-
-function highestNumber(values?: number[]): number {
-  return Array.isArray(values)
-    ? values.reduce((max, value) => (Number.isFinite(value) && value > max ? value : max), 0)
-    : 0
-}
-
-function formatDeviceRate(device: AudioDeviceOption): string {
-  const rate = highestNumber(device.sampleRates)
-  return rate > 0 ? compactRate(rate) : ''
-}
-
-function formatDeviceDepth(device: AudioDeviceOption): string {
-  const depth = highestNumber(device.bitDepths)
-  return depth > 0 ? `${depth}bit` : ''
-}
-
-function normalizeDsdRateLabel(rate: number): string {
-  if (!Number.isFinite(rate) || rate <= 0) return ''
-  if (rate < 1000) return `DSD${Math.trunc(rate)}`
-  const multiple = Math.round(rate / 44100)
-  if (multiple >= 512) return 'DSD512'
-  if (multiple >= 256) return 'DSD256'
-  if (multiple >= 128) return 'DSD128'
-  if (multiple >= 64) return 'DSD64'
-  return `${compactRate(rate)} DSD`
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return [...new Set(values.filter(Boolean))]
-}
-
-function formatNativeDsdRates(device: AudioDeviceOption): string {
-  const rawRates =
-    device.nativeDsdSampleRates && device.nativeDsdSampleRates.length > 0
-      ? device.nativeDsdSampleRates
-      : device.supportedDsdRates || []
-  const labels = uniqueStrings(rawRates.map(normalizeDsdRateLabel))
-  return labels.length > 0 ? `Native ${labels.join('/')}` : ''
-}
-
-function formatNativeDsdFormats(device: AudioDeviceOption): string {
-  const formats = uniqueStrings((device.nativeDsdSampleFormats || []).map((format) => format.trim()))
-  return formats.length > 0 ? formats.join('/') : ''
-}
-
-function deviceSpecText(device: AudioDeviceOption): string {
-  const parts = [
-    formatDeviceBackend(device),
-    formatDeviceChannels(device),
-    formatDeviceRate(device),
-    formatDeviceDepth(device),
-    device.supportsNativeDsd ? formatNativeDsdRates(device) : '',
-    device.supportsNativeDsd ? formatNativeDsdFormats(device) : ''
-  ].filter(Boolean)
-  if (parts.length > 0) return parts.join(' · ')
-  if (device.id === 'auto') return '跟随系统默认输出'
-  if (device.isDefault) return '系统默认设备'
-  return '原生输出设备'
-}
-
-function deviceIconClass(device: AudioDeviceOption): string {
-  const text = `${device.id} ${device.label} ${device.backend || ''} ${device.pathKind || ''}`.toLowerCase()
-  if (
-    /earbud|earphone|in[-\s]?ear|iem|tws|airpods|buds|入耳|耳塞|豆/.test(text)
-  ) {
-    return 'device-icon-earbuds'
-  }
-  if (/speaker|speakers|soundbar|monitor|音响|音箱|扬声器|喇叭/.test(text)) {
-    return 'device-icon-speaker'
-  }
-  return 'device-icon-headphones'
-}
-
-function compactSampleFormat(format: string, bitDepth: number): string {
-  const normalized = format.trim().toLowerCase()
-  if (/^(f32|float|float32|flt|fltp)$/.test(normalized)) return 'float32'
-  if (/^(s24|s24_3le|int24|int24in32|s32p24)/.test(normalized)) return 'int24'
-  if (/^(s16|s16le|int16)/.test(normalized)) return 'int16'
-  if (/^(s32|s32le|int32)/.test(normalized)) return 'int32'
-  return format || (bitDepth > 0 ? `${bitDepth}bit` : '')
-}
-
-function compactPcm(
-  format: string,
-  bitDepth: number,
-  sampleRate: number,
-  channels: number,
-  includeRate = true
-): string {
-  const parts = [
-    compactSampleFormat(format, bitDepth),
-    includeRate && sampleRate > 0 ? compactRate(sampleRate) : '',
-    channels > 0 ? `${channels}ch` : ''
-  ].filter(Boolean)
-  return parts.length > 0 ? parts.join(' ') : 'PCM'
-}
-
-function isSacdIsoSource(info: NonNullable<typeof playbackInfo.value>): boolean {
-  return info.source.split('.').pop()?.toUpperCase() === 'ISO'
-}
-
-function inferDsdRate(sampleRate: number): number {
-  if (sampleRate >= 20000000) return 512
-  if (sampleRate >= 10000000) return 256
-  if (sampleRate >= 5000000) return 128
-  if (sampleRate >= 2500000) return 64
-  return 0
-}
-
-function isDsdSource(info: NonNullable<typeof playbackInfo.value>): boolean {
-  return /\.(dsf|dff)$/i.test(info.source) || info.codec.trim().toLowerCase() === 'dsd'
-}
-
-function isDsdPlayback(): boolean {
-  const out = outputInfo.value
-  return (
-    out?.isDsd === true ||
-    out?.dsdMode === 'native' ||
-    out?.dsdMode === 'dop' ||
-    out?.dsdMode === 'unsupported'
-  )
-}
-
-function formatDsdSource(info: NonNullable<typeof playbackInfo.value>): string {
-  const ext = info.source.split('.').pop()?.toUpperCase()
-  const container = ext === 'DSF' || ext === 'DFF' ? ext : ext === 'ISO' ? 'SACD ISO' : 'DSD'
-  const dsdRate = outputInfo.value?.dsdRate || inferDsdRate(info.sourceSampleRate)
-  return [container, dsdRate > 0 ? `DSD${dsdRate}` : 'DSD'].filter(Boolean).join(' ')
-}
-
-function formatDecodedStage(info: NonNullable<typeof playbackInfo.value>): string {
-  const pcm = compactPcm(
-    info.decodedSampleFormat,
-    info.decodedBitDepth,
-    info.decodedSampleRate,
-    info.decodedChannels,
-    false
-  )
-  if (!isDsdSource(info) && !isDsdPlayback()) return pcm
-  const mode = outputInfo.value?.dsdMode || 'pcm'
-  if (mode === 'native') return 'Native DSD path'
-  if (mode === 'dop') return `DoP carrier ${pcm}`
-  if (mode === 'unsupported' && isSacdIsoSource(info)) return 'SACD unsupported'
-  return `PCM fallback ${pcm}`
-}
-
-const outputChainText = computed(() => {
-  const info = playbackInfo.value
-  if (!info) return ''
-  const source = isDsdSource(info) || isSacdIsoSource(info)
-    ? formatDsdSource(info)
-    : [
-        info.codec || 'Source',
-        info.sourceBitDepth > 0 ? `${info.sourceBitDepth}bit` : '',
-        compactRate(info.sourceSampleRate)
-      ]
-        .filter(Boolean)
-        .join(' ')
-  const decoded = formatDecodedStage(info)
-  const out = outputInfo.value
-  const backend = out?.actualBackend || info.actualBackend || ''
-  const actual = compactPcm(
-    out?.actualOutputFormat || info.actualOutputFormat,
-    out?.actualBitDepth || info.actualBitDepth,
-    out?.actualSampleRate || info.actualSampleRate,
-    out?.actualChannels || info.actualChannels,
-    false
-  )
-  const reason = readablePerfectReason.value
-  const perfect =
-    sourceExact.value && outputPerfect.value
-      ? 'Bit Perfect'
-      : reason
-        ? `Not Bit Perfect (${reason})`
-        : 'Not Bit Perfect'
-  return `${source || 'Source'} -> ${decoded} -> ${backend ? formatBackendLabel(backend) : 'Backend pending'} -> ${actual} -> ${perfect}`
-})
-const statusSummaryText = computed(() => {
-  if (readablePerfectReason.value) return `未达成：${readablePerfectReason.value}`
-  if (outputPerfect.value) return 'Output Perfect 已验证'
-  return outputChainText.value || outputFormatText.value
-})
-const outputLatencyText = computed(() => {
-  const info = outputInfo.value
-  if (!info) return 'Latency 0.0 ms'
-  const buffer = info.latencyInfo?.bufferLatencyMs ?? 0
-  const driver = info.latencyInfo?.outputLatencyMs ?? 0
-  const total = info.latencyInfo?.totalLatencyMs ?? info.latencyMs ?? 0
-  const frames = info.bufferSizeFrames || playbackInfo.value?.bufferSizeFrames || 0
-  return `Latency Buffer ${buffer.toFixed(1)} ms · Driver ${driver.toFixed(1)} ms · Total ${total.toFixed(total >= 10 ? 0 : 1)} ms${frames > 0 ? ` · ${frames} frames` : ''}`
-})
-const outputDiagnosticsText = computed(() => {
-  const diagnostics = outputInfo.value?.diagnostics ?? playbackInfo.value?.diagnostics
-  if (!diagnostics) return 'Underrun 0 · Drop 0 · Restart 0 · Lost 0 · Recovery 0'
-  return `Underrun ${diagnostics.sessionUnderrunCount} · Drop ${diagnostics.sessionBufferDropCount} · Restart ${diagnostics.driverRestartCount} · Lost ${diagnostics.deviceLostCount} · Recovery ${diagnostics.sessionRecoveryCount}`
-})
-const convolverPathLabel = computed(() => {
-  const path = audioProcessing.value.convolverIrPath
-  if (!path) return '未加载'
-  return path.split(/[\\/]/).pop() || path
-})
-const replayGainModeLabel = computed(
-  () =>
-    replayGainOptions.find((option) => option.value === audioProcessing.value.volumeNormalization)
-      ?.label ?? 'Off'
-)
-const dspStatusText = computed(() => {
-  if (!audioProcessing.value.dspEnabled) return '处理链关闭'
-  return playbackInfo.value?.dspActive ? '正在处理音频' : '处理链待命'
-})
-const dspPerfectImpactText = computed(() => {
-  if (!audioProcessing.value.dspEnabled) return '关闭 DSP 时更接近原始输出'
-  if (readablePerfectReason.value) return `当前影响：${readablePerfectReason.value}`
-  return '启用处理链后通常不满足 bit-perfect'
-})
-const replayGainSummaryText = computed(() =>
-  audioProcessing.value.volumeNormalization === 'off'
-    ? '未启用'
-    : `${replayGainModeLabel.value} · Preamp ${audioProcessing.value.replayGainPreamp.toFixed(1)} dB`
-)
-const eqSummaryText = computed(() =>
-  audioProcessing.value.eqEnabled
-    ? `${audioProcessing.value.eqMode === 'parametric' ? '参数' : '图形'} · Preamp ${audioProcessing.value.eqPreamp.toFixed(1)} dB`
-    : '未启用'
-)
-const crossfeedSummaryText = computed(() =>
-  audioProcessing.value.crossfeedEnabled
-    ? `${Math.round(audioProcessing.value.crossfeedStrength * 100)}%`
-    : '未启用'
-)
-const outputSafetyText = computed(() =>
-  audioProcessing.value.clipGuard ? '削波保护开启' : '削波保护关闭'
-)
-
-function toggleSetting(key: BooleanSettingKey): void {
-  void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
-}
-
-function setTheme(theme: AppTheme): void {
-  if (settings.value.theme === theme) return
-  void updateSettings({ theme })
-}
-
-function useDefaultSkin(): void {
-  if (settings.value.pluginThemeId == null) return
-  void updateSettings({ pluginThemeId: null })
-}
-
-function setPlaybackResumeMode(playbackResumeMode: PlaybackResumeMode): void {
-  if (settings.value.playbackResumeMode === playbackResumeMode) return
-  void updateSettings({ playbackResumeMode })
-}
-
-function selectAudioOutput(output: AudioOutputId): void {
-  if (audioOutput.value === output) return
-  void setAudioOutput(output)
-}
-
-function selectAudioDevice(deviceId: string): void {
-  if (audioDevice.value === deviceId) return
-  void setAudioDevice(deviceId)
-}
-
-function setPreferredBufferSize(value: number): void {
-  if (audioOutputConfig.value.preferredBufferSize === value) return
-  void setAudioOutputConfig({ preferredBufferSize: value })
-}
-
-function isBufferSizeOutOfRange(value: number): boolean {
-  if (value === 0) return false
-  const dev = selectedAudioDevice.value
-  if (!dev || (dev.minBufferSize == null && dev.maxBufferSize == null)) return false
-  const min = dev.minBufferSize ?? 0
-  const max = dev.maxBufferSize ?? Infinity
-  return value < min || value > max
-}
-
-function setRoutingMode(event: Event): void {
-  const target = event.target as HTMLSelectElement
-  void setAudioOutputConfig({ routingMode: target.value as ChannelRoutingMode })
-}
-
-const isUpmixActive = computed(
-  () =>
-    audioOutputConfig.value.routingMode === 'stereo-to-5.1' ||
-    audioOutputConfig.value.routingMode === 'stereo-to-7.1'
-)
-
-function setUpmixParam(field: keyof OutputConfig, value: number): void {
-  void setAudioOutputConfig({ [field]: value } as Partial<OutputConfig>)
-}
-
-function toggleWasapiExclusivePushMode(): void {
-  void setAudioOutputConfig({
-    wasapiExclusivePushMode: !audioOutputConfig.value.wasapiExclusivePushMode
-  })
-}
-
-function updateAudioProcessing(patch: Partial<AudioProcessingSettings>): void {
-  void setAudioProcessing(patch)
-}
-
-function enableDspModule(patch: Partial<AudioProcessingSettings>): void {
-  updateAudioProcessing({ dspEnabled: true, ...patch })
-}
-
-function toggleDspModule(enabled: boolean, patch: Partial<AudioProcessingSettings>): void {
-  updateAudioProcessing(enabled ? { dspEnabled: true, ...patch } : patch)
-}
-
-function setReplayGainFromSelect(event: Event): void {
-  const target = event.target as HTMLSelectElement
-  void setReplayGainMode(target.value as VolumeNormalizationMode)
-}
-
-function setReplayGainPreamp(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value)
-  enableDspModule({ replayGainPreamp: value })
-}
-
-function setReplayGainFallback(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value)
-  enableDspModule({ replayGainFallback: value })
-}
-
-function setCrossfeedFromInput(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value)
-  void setCrossfeedStrength(value)
-}
-
-function setCrossfadeFromInput(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value)
-  updateAudioProcessing({ crossfadeSeconds: value })
-}
-
-function setFftResolution(event: Event): void {
-  const value = Number((event.target as HTMLSelectElement).value)
-  updateAudioProcessing({ fftResolution: value })
-}
-
-function setDsdOutputMode(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value as DsdOutputMode
-  updateAudioProcessing({ dsdOutputMode: value, dsdToPcm: value === 'pcm' })
-}
-
-function setSacdProgramMode(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value as SacdProgramMode
-  updateAudioProcessing({ sacdProgramMode: value })
-}
-
-function setLyricFontSize(event: Event): void {
-  const value = Number((event.target as HTMLInputElement).value)
-  void updateSettings({ lyricFontSize: value })
-}
-
-function setVolumeFromInput(event: Event): void {
-  volumePercent.value = Number((event.target as HTMLInputElement).value)
-}
-
-function openEqualizerFromDsp(): void {
-  emit('openEqualizer')
-}
-
-function toggleEqFromDsp(): void {
-  const enabled = !audioProcessing.value.eqEnabled
-  toggleDspModule(enabled, { eqEnabled: enabled })
-}
-
-function toggleReplayGainClip(): void {
-  enableDspModule({ replayGainClip: !audioProcessing.value.replayGainClip })
-}
-
-function toggleClipGuard(): void {
-  updateAudioProcessing({ clipGuard: !audioProcessing.value.clipGuard })
-}
-
-async function runSettingsExtension(command?: string): Promise<void> {
-  if (!command) return
-  await window.api.extensions.executeCommand(command, [])
+  activeSection.value = closest
 }
 
 onMounted(async () => {
-  await Promise.all([loadSettings(), refreshAudioOutputState()])
-  useDefaultSkin()
-  await refreshCacheSize()
-  await syncExtensions()
+  await nextTick()
+  pageRef.value?.addEventListener('scroll', updateActiveSection, { passive: true })
+  if (props.initialSection && props.initialSection !== 'general') {
+    scrollToSection(props.initialSection)
+  }
+})
+
+onBeforeUnmount(() => {
+  pageRef.value?.removeEventListener('scroll', updateActiveSection)
 })
 </script>
 
 <template>
-  <div class="settings-page">
-    <header class="settings-header">
-      <button class="icon-button" title="返回" @click="$emit('back')">
-        <i class="pi pi-arrow-left"></i>
-      </button>
-      <div class="settings-heading">
-        <h1>设置</h1>
-        <span v-if="saving">正在保存</span>
-        <span v-else-if="loading">正在加载</span>
-        <span v-else>Twilight Echo</span>
-      </div>
-    </header>
-
-    <div v-if="restartRequired" class="restart-strip">
-      <div>
-        <strong>需要重启</strong>
-        <span>{{ restartReasonText }} 会在重启后生效</span>
-      </div>
-      <button class="primary-button" @click="relaunch">
-        <i class="pi pi-refresh"></i>
-        重启应用
-      </button>
-    </div>
-
-    <div class="settings-shell">
-      <nav class="settings-tabs">
+  <main ref="pageRef" class="settings-preview-page">
+    <div class="settings-preview-layout">
+      <nav class="settings-preview-nav" aria-label="设置分区">
         <button
-          v-for="tab in tabs"
-          :key="tab.key"
-          class="tab-btn"
-          :class="{ active: activeTab === tab.key }"
-          @click="activeTab = tab.key"
+          v-for="section in sections"
+          :key="section.key"
+          type="button"
+          class="preview-nav-item"
+          :class="{ active: activeSection === section.key }"
+          @click="scrollToSection(section.key)"
         >
-          <i :class="tab.icon"></i>
-          <span>{{ tab.label }}</span>
+          <i :class="section.icon"></i>
+          <span>{{ section.label }}</span>
         </button>
       </nav>
 
-      <main class="settings-body">
-        <section v-if="activeTab === 'general'" class="settings-section">
-          <h2>常规</h2>
-          <div class="settings-group">
-            <div class="setting-row">
-              <div class="setting-copy">
-                <span class="setting-label">启动时检查网易云登录</span>
-                <span class="setting-desc">打开应用后同步当前登录状态</span>
-              </div>
-              <button
-                class="toggle-switch"
-                :class="{ active: settings.autoCheckLogin }"
-                role="switch"
-                :aria-checked="settings.autoCheckLogin"
-                @click="toggleSetting('autoCheckLogin')"
-              >
-                <span class="toggle-knob"></span>
-              </button>
-            </div>
+      <div class="settings-preview-stack">
+        <section id="general" class="glass-card preview-section">
+          <div class="section-title-row">
+            <i class="pi pi-sliders-h"></i>
+            <h2>常规 (General)</h2>
+          </div>
 
-            <div class="setting-row">
-              <div class="setting-copy">
-                <span class="setting-label">关闭按钮最小化到托盘</span>
-                <span class="setting-desc">关闭窗口时保留后台播放和托盘入口</span>
+          <div class="section-block">
+            <h3>媒体库管理 (Library & Sync)</h3>
+            <div class="setting-list">
+              <div class="setting-item top-align">
+                <div class="setting-copy">
+                  <strong>扫描文件夹</strong>
+                  <span>添加包含您本地音乐文件的目录。</span>
+                </div>
+                <div class="folder-list">
+                  <div class="folder-chip">
+                    <span>D:\Music\Hi-Res</span>
+                    <i class="pi pi-times"></i>
+                  </div>
+                  <button type="button" class="dashed-button">
+                    <i class="pi pi-plus"></i>
+                    添加文件夹
+                  </button>
+                </div>
               </div>
-              <button
-                class="toggle-switch"
-                :class="{ active: settings.minimizeToTray }"
-                role="switch"
-                :aria-checked="settings.minimizeToTray"
-                @click="toggleSetting('minimizeToTray')"
-              >
-                <span class="toggle-knob"></span>
-              </button>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-copy">
-                <span class="setting-label">开机自动启动</span>
-                <span class="setting-desc">登录系统后自动启动 Twilight Echo</span>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>实时监控文件夹变动</strong>
+                  <span>当添加新音乐时自动同步到媒体库，无需手动刷新。</span>
+                </div>
+                <span class="toggle-switch active" aria-hidden="true"></span>
               </div>
-              <button
-                class="toggle-switch"
-                :class="{ active: settings.launchAtLogin }"
-                role="switch"
-                :aria-checked="settings.launchAtLogin"
-                @click="toggleSetting('launchAtLogin')"
-              >
-                <span class="toggle-knob"></span>
-              </button>
             </div>
           </div>
-        </section>
 
-        <section v-if="activeTab === 'playback'" class="settings-section">
-          <h2>播放</h2>
-          <div class="settings-group">
-            <div class="device-board">
-              <div class="device-board-head">
+          <div class="section-block">
+            <h3>存储与清理 (Storage)</h3>
+            <div class="setting-list">
+              <div class="setting-item">
                 <div class="setting-copy">
-                  <span class="label-row">
-                    <span class="setting-label">可用输出设备</span>
-                    <span
-                      class="help-dot"
-                      tabindex="0"
-                      role="note"
-                      :aria-label="playbackHelp.audioDevice"
-                      :data-help="playbackHelp.audioDevice"
-                      >?</span
-                    >
-                  </span>
-                  <span class="setting-desc">{{ selectedDeviceTitle }}</span>
+                  <strong>图片与歌词缓存位置</strong>
+                  <span>当前：C:\Users\Admin\AppData\...</span>
                 </div>
-                <button
-                  class="icon-button subtle"
-                  type="button"
-                  title="刷新设备"
-                  aria-label="刷新设备"
-                  @click="refreshAudioOutputState"
-                >
-                  <i class="pi pi-refresh"></i>
-                </button>
+                <button type="button" class="soft-button">更改目录</button>
               </div>
-              <div class="device-card-grid" role="radiogroup" aria-label="输出设备">
-                <button
-                  v-for="device in audioDeviceOptions"
-                  :key="device.id"
-                  class="device-card"
-                  :class="{ active: audioDevice === device.id }"
-                  type="button"
-                  role="radio"
-                  :aria-checked="audioDevice === device.id"
-                  :title="`${device.label} · ${deviceSpecText(device)}`"
-                  @click="selectAudioDevice(device.id)"
-                >
-                  <span
-                    class="device-card-icon"
-                    :class="deviceIconClass(device)"
-                    aria-hidden="true"
-                  ></span>
-                  <span class="device-card-copy">
-                    <span class="device-card-name">{{ device.label }}</span>
-                    <span class="device-card-spec">{{ deviceSpecText(device) }}</span>
-                  </span>
-                  <span v-if="audioDevice === device.id" class="device-card-pill">当前</span>
-                  <span v-else-if="device.id === 'auto'" class="device-card-pill muted">AUTO</span>
-                  <span v-else-if="device.isDefault" class="device-card-pill muted">默认</span>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>清理应用缓存</strong>
+                  <span>当前占用：<b>1.2 GB</b>。清理不会删除您的本地音乐文件。</span>
+                </div>
+                <button type="button" class="danger-soft-button">
+                  <i class="pi pi-trash"></i>
+                  立即清理
                 </button>
               </div>
             </div>
+          </div>
 
-            <div class="setting-row audio-output-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">音频输出</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.audioOutput"
-                    :data-help="playbackHelp.audioOutput"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">
-                  当前为 {{ selectedAudioOutput?.label ?? '自动' }} ·
-                  {{ selectedAudioDevice?.label ?? audioDevice }}
-                </span>
-              </div>
-              <div
-                class="audio-output-segment"
-                role="radiogroup"
-                aria-label="音频输出"
-                :style="{
-                  gridTemplateColumns: `repeat(${Math.max(audioOutputOptions.length, 1)}, minmax(0, 1fr))`
-                }"
-              >
-                <button
-                  v-for="option in audioOutputOptions"
-                  :key="option.id"
-                  class="audio-output-option"
-                  :class="{ active: audioOutput === option.id }"
-                  type="button"
-                  role="radio"
-                  :title="option.description"
-                  :aria-checked="audioOutput === option.id"
-                  @click="selectAudioOutput(option.id)"
-                >
-                  <span>{{ option.label }}</span>
-                  <small>{{ option.description }}</small>
-                </button>
-              </div>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">独占模式</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.exclusive"
-                    :data-help="playbackHelp.exclusive"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">
-                  {{
-                    exclusiveAvailable
-                      ? '绕过系统混音器，适合外置 DAC 和耳放'
-                      : '当前输出后端不支持独占模式'
-                  }}
-                </span>
-              </div>
-              <button
-                class="toggle-switch"
-                :class="{ active: exclusiveMode }"
-                role="switch"
-                :aria-checked="exclusiveMode"
-                :disabled="!exclusiveAvailable"
-                @click="toggleExclusiveMode"
-              >
-                <span class="toggle-knob"></span>
-              </button>
-            </div>
-
-            <div v-if="exclusiveMode && audioOutput === 'wasapi'" class="setting-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">WASAPI Exclusive 驱动模式</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.wasapiExclusivePushMode"
-                    :data-help="playbackHelp.wasapiExclusivePushMode"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">
-                  {{
-                    audioOutputConfig.wasapiExclusivePushMode
-                      ? '推送模式 (Timer-Driven)：兼容性好，适合部分无法在事件驱动模式正常工作的驱动'
-                      : '事件驱动模式 (Event-Driven)：默认，超低延迟与更高性能'
-                  }}
-                </span>
-              </div>
-              <button
-                class="toggle-switch"
-                :class="{ active: audioOutputConfig.wasapiExclusivePushMode }"
-                role="switch"
-                :aria-checked="audioOutputConfig.wasapiExclusivePushMode"
-                @click="toggleWasapiExclusivePushMode"
-              >
-                <span class="toggle-knob"></span>
-              </button>
-            </div>
-
-            <div class="setting-row buffer-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">输出缓冲</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.buffer"
-                    :data-help="playbackHelp.buffer"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc"
-                  >当前 {{ audioOutputConfig.preferredBufferSize || 'Auto' }}</span
-                >
-              </div>
-              <div class="chip-segment" role="radiogroup" aria-label="输出缓冲">
-                <button
-                  v-for="option in bufferSizeOptions"
-                  :key="option.value"
-                  class="chip-option"
-                  :class="{
-                    active: audioOutputConfig.preferredBufferSize === option.value,
-                    'out-of-range': isBufferSizeOutOfRange(option.value)
-                  }"
-                  type="button"
-                  role="radio"
-                  :title="isBufferSizeOutOfRange(option.value) ? `${option.label} 超出设备支持范围` : option.help"
-                  :aria-checked="audioOutputConfig.preferredBufferSize === option.value"
-                  @click="setPreferredBufferSize(option.value)"
-                >
-                  {{ option.label }}
-                </button>
-              </div>
-            </div>
-
-            <div class="setting-row audio-device-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">声道路由</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.routing"
-                    :data-help="playbackHelp.routing"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">{{ audioOutputConfig.routingMode }}</span>
-              </div>
-              <select
-                class="select-control"
-                :value="audioOutputConfig.routingMode"
-                @change="setRoutingMode"
-              >
-                <option
-                  v-for="option in routingModeOptions"
-                  :key="option.value"
-                  :value="option.value"
-                  :title="option.help"
-                >
-                  {{ option.label }}
-                </option>
-              </select>
-            </div>
-
-            <!-- 上混参数（仅 5.1/7.1 模式显示） -->
-            <template v-if="isUpmixActive">
-              <div class="setting-row upmix-row">
+          <div class="section-block">
+            <h3>集成与社交 (Integration & Social)</h3>
+            <div class="setting-list">
+              <div class="setting-item">
                 <div class="setting-copy">
-                  <span class="label-row">
-                    <span class="setting-label">中置增益</span>
-                  </span>
-                  <span class="setting-desc">{{ (audioOutputConfig.upmixCenterGain ?? 0.7071).toFixed(3) }}</span>
+                  <strong>原生媒体控制 (SMTC)</strong>
+                  <span>响应键盘多媒体按键，并在系统锁屏界面显示播放控制。</span>
                 </div>
-                <input
-                  type="range"
-                  class="slider-control"
-                  min="0"
-                  max="1.5"
-                  step="0.01"
-                  :value="audioOutputConfig.upmixCenterGain ?? 0.7071"
-                  @input="setUpmixParam('upmixCenterGain', Number(($event.target as HTMLInputElement).value))"
-                />
+                <span class="toggle-switch active" aria-hidden="true"></span>
               </div>
-
-              <div class="setting-row upmix-row">
+              <hr />
+              <div class="setting-item">
                 <div class="setting-copy">
-                  <span class="label-row">
-                    <span class="setting-label">LFE 增益</span>
-                  </span>
-                  <span class="setting-desc">{{ (audioOutputConfig.upmixLfeGain ?? 0.5).toFixed(3) }}</span>
+                  <strong>Discord Rich Presence <i class="pi pi-discord discord-icon"></i></strong>
+                  <span>在 Discord 状态中向好友展示您正在播放的音乐。</span>
                 </div>
-                <input
-                  type="range"
-                  class="slider-control"
-                  min="0"
-                  max="1.5"
-                  step="0.01"
-                  :value="audioOutputConfig.upmixLfeGain ?? 0.5"
-                  @input="setUpmixParam('upmixLfeGain', Number(($event.target as HTMLInputElement).value))"
-                />
-              </div>
-
-              <div class="setting-row upmix-row">
-                <div class="setting-copy">
-                  <span class="label-row">
-                    <span class="setting-label">LFE 低通</span>
-                  </span>
-                  <span class="setting-desc">{{ Math.round(audioOutputConfig.upmixLfeLowpassHz ?? 120) }} Hz</span>
-                </div>
-                <input
-                  type="range"
-                  class="slider-control"
-                  min="40"
-                  max="300"
-                  step="1"
-                  :value="audioOutputConfig.upmixLfeLowpassHz ?? 120"
-                  @input="setUpmixParam('upmixLfeLowpassHz', Number(($event.target as HTMLInputElement).value))"
-                />
-              </div>
-
-              <div class="setting-row upmix-row">
-                <div class="setting-copy">
-                  <span class="label-row">
-                    <span class="setting-label">环绕增益</span>
-                  </span>
-                  <span class="setting-desc">{{ (audioOutputConfig.upmixSurroundGain ?? 0.5).toFixed(3) }}</span>
-                </div>
-                <input
-                  type="range"
-                  class="slider-control"
-                  min="0"
-                  max="1.5"
-                  step="0.01"
-                  :value="audioOutputConfig.upmixSurroundGain ?? 0.5"
-                  @input="setUpmixParam('upmixSurroundGain', Number(($event.target as HTMLInputElement).value))"
-                />
-              </div>
-
-              <div v-if="audioOutputConfig.routingMode === 'stereo-to-7.1'" class="setting-row upmix-row">
-                <div class="setting-copy">
-                  <span class="label-row">
-                    <span class="setting-label">侧环绕增益</span>
-                  </span>
-                  <span class="setting-desc">{{ (audioOutputConfig.upmixSideGain ?? 0.3).toFixed(3) }}</span>
-                </div>
-                <input
-                  type="range"
-                  class="slider-control"
-                  min="0"
-                  max="1.5"
-                  step="0.01"
-                  :value="audioOutputConfig.upmixSideGain ?? 0.3"
-                  @input="setUpmixParam('upmixSideGain', Number(($event.target as HTMLInputElement).value))"
-                />
-              </div>
-
-              <div class="setting-row upmix-row">
-                <div class="setting-copy">
-                  <span class="label-row">
-                    <span class="setting-label">环绕延迟</span>
-                  </span>
-                  <span class="setting-desc">{{ Math.round(audioOutputConfig.upmixSurroundDelayMs ?? 0) }} ms</span>
-                </div>
-                <input
-                  type="range"
-                  class="slider-control"
-                  min="0"
-                  max="50"
-                  step="1"
-                  :value="audioOutputConfig.upmixSurroundDelayMs ?? 0"
-                  @input="setUpmixParam('upmixSurroundDelayMs', Number(($event.target as HTMLInputElement).value))"
-                />
-              </div>
-            </template>
-
-            <div class="setting-row status-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">输出状态</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.status"
-                    :data-help="playbackHelp.status"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">{{ statusSummaryText }}</span>
-              </div>
-              <div class="status-panel">
-                <span
-                  class="status-chip"
-                  :class="{ success: sourceExact }"
-                >
-                  Source Exact
-                </span>
-                <span
-                  class="status-chip"
-                  :class="{ success: outputPerfect, warning: !outputPerfect && outputInfo?.supportsOutputPerfect }"
-                >
-                  Output Perfect
-                </span>
-                <span class="status-chip">{{ accessModeText }}</span>
-                <span class="status-chip">{{ pathKindText }}</span>
-                <span class="status-chip">{{
-                  outputInfo?.actualBackend ? formatBackendLabel(outputInfo.actualBackend) : 'Backend pending'
-                }}</span>
-                <span class="status-chip">{{ outputFormatText }}</span>
-                <span
-                  v-if="nativeDsdRuntimeText"
-                  class="status-chip"
-                  :class="nativeDsdRuntimeTone(outputInfo?.nativeDsdRuntimeState || 'unsupported')"
-                >
-                  {{ nativeDsdRuntimeText }}
-                </span>
-                <span v-if="outputChainText" class="status-chip status-chain">{{ outputChainText }}</span>
-                <span class="status-chip">{{ outputLatencyText }}</span>
-                <span class="status-chip">{{ outputDiagnosticsText }}</span>
-                <span v-if="nativeDsdRuntimeReasonText" class="status-chip status-chain">{{
-                  nativeDsdRuntimeReasonText
-                }}</span>
+                <span class="toggle-switch inactive" aria-hidden="true"></span>
               </div>
             </div>
+          </div>
 
-            <div class="settings-subheading">格式与可视化</div>
-
-            <div class="setting-row audio-device-row">
-              <div class="setting-copy">
-                <span class="setting-label">DSD 输出模式</span>
-                <span class="setting-desc">
-                  {{ dsdOutputModeOptions.find((option) => option.value === audioProcessing.dsdOutputMode)?.help }}
-                </span>
+          <div class="section-block">
+            <h3>启动与窗口 (Startup)</h3>
+            <div class="setting-list">
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>开机自动启动</strong>
+                  <span>在系统启动时自动在后台运行。</span>
+                </div>
+                <span class="toggle-switch inactive" aria-hidden="true"></span>
               </div>
-              <select
-                class="select-control"
-                :value="audioProcessing.dsdOutputMode"
-                @change="setDsdOutputMode"
-              >
-                <option
-                  v-for="option in dsdOutputModeOptions"
-                  :key="option.value"
-                  :value="option.value"
-                  :title="option.help"
-                >
-                  {{ option.label }}
-                </option>
-              </select>
-            </div>
-
-            <div class="setting-row audio-device-row">
-              <div class="setting-copy">
-                <span class="setting-label">SACD Program</span>
-                <span class="setting-desc">
-                  {{
-                    sacdProgramModeOptions.find(
-                      (option) => option.value === audioProcessing.sacdProgramMode
-                    )?.help
-                  }}
-                </span>
-              </div>
-              <select
-                class="select-control"
-                :value="audioProcessing.sacdProgramMode"
-                @change="setSacdProgramMode"
-              >
-                <option
-                  v-for="option in sacdProgramModeOptions"
-                  :key="option.value"
-                  :value="option.value"
-                  :title="option.help"
-                >
-                  {{ option.label }}
-                </option>
-              </select>
-            </div>
-
-            <div class="setting-row audio-device-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">FFT</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.fft"
-                    :data-help="playbackHelp.fft"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">{{ audioProcessing.fftEnabled ? '开启' : '关闭' }}</span>
-              </div>
-              <div class="inline-control-group">
-                <button
-                  class="toggle-switch"
-                  :class="{ active: audioProcessing.fftEnabled }"
-                  role="switch"
-                  :aria-checked="audioProcessing.fftEnabled"
-                  @click="updateAudioProcessing({ fftEnabled: !audioProcessing.fftEnabled })"
-                >
-                  <span class="toggle-knob"></span>
-                </button>
-                <select
-                  class="select-control compact-select"
-                  :value="audioProcessing.fftResolution"
-                  @change="setFftResolution"
-                >
-                  <option v-for="value in fftResolutionOptions" :key="value" :value="value">
-                    {{ value }}
-                  </option>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>关闭主窗口时</strong>
+                  <span>选择点击关闭按钮后的应用行为。</span>
+                </div>
+                <select class="preview-select">
+                  <option>最小化到系统托盘</option>
                 </select>
               </div>
             </div>
-
-            <div class="settings-subheading">播放体验</div>
-
-            <div class="setting-row continuity-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">播放连续性</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.continuity"
-                    :data-help="playbackHelp.continuity"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">
-                  无缝 {{ audioProcessing.gapless ? '开' : '关' }} · Crossfade
-                  {{ audioProcessing.crossfadeSeconds.toFixed(1) }} s ·
-                  {{
-                    playbackResumeOptions.find(
-                      (option) => option.value === settings.playbackResumeMode
-                    )?.label
-                  }}
-                </span>
-              </div>
-              <div class="continuity-panel">
-                <div class="inline-control-group spread">
-                  <label class="inline-toggle-label">
-                    无缝播放
-                    <button
-                      class="toggle-switch"
-                      :class="{ active: audioProcessing.gapless }"
-                      role="switch"
-                      :aria-checked="audioProcessing.gapless"
-                      @click="updateAudioProcessing({ gapless: !audioProcessing.gapless })"
-                    >
-                      <span class="toggle-knob"></span>
-                    </button>
-                  </label>
-                  <label class="compact-range-row crossfade-compact">
-                    <span>Crossfade</span>
-                    <input
-                      class="range-control"
-                      type="range"
-                      min="0"
-                      max="12"
-                      step="0.5"
-                      :value="audioProcessing.crossfadeSeconds"
-                      @input="setCrossfadeFromInput"
-                    />
-                    <strong>{{ audioProcessing.crossfadeSeconds.toFixed(1) }}</strong>
-                  </label>
-                </div>
-                <div
-                  class="resume-segment compact-resume"
-                  role="radiogroup"
-                  aria-label="关闭时记忆播放"
-                >
-                  <button
-                    v-for="option in playbackResumeOptions"
-                    :key="option.value"
-                    class="resume-option"
-                    :class="{ active: settings.playbackResumeMode === option.value }"
-                    type="button"
-                    role="radio"
-                    :title="option.description"
-                    :aria-checked="settings.playbackResumeMode === option.value"
-                    @click="setPlaybackResumeMode(option.value)"
-                  >
-                    <span>{{ option.label }}</span>
-                    <small>{{ option.description }}</small>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div v-if="audioEngineError" class="setting-row compact">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">音频输出提示</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.error"
-                    :data-help="playbackHelp.error"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">{{ audioEngineError }}</span>
-              </div>
-            </div>
-
-            <div class="setting-row range-row">
-              <div class="setting-copy">
-                <span class="label-row">
-                  <span class="setting-label">当前音量</span>
-                  <span
-                    class="help-dot"
-                    tabindex="0"
-                    role="note"
-                    :aria-label="playbackHelp.volume"
-                    :data-help="playbackHelp.volume"
-                    >?</span
-                  >
-                </span>
-                <span class="setting-desc">{{ volumePercent }}%</span>
-              </div>
-              <input
-                class="range-control"
-                type="range"
-                min="0"
-                max="100"
-                step="1"
-                :value="volumePercent"
-                @input="setVolumeFromInput"
-              />
-            </div>
           </div>
         </section>
 
-        <section v-if="activeTab === 'dsp'" class="settings-section dsp-section">
-          <h2>DSP</h2>
-          <div class="dsp-board">
-            <div class="dsp-hero">
-              <div class="dsp-hero-main">
-                <span class="dsp-kicker">Digital Signal Processing</span>
-                <h3>{{ dspStatusText }}</h3>
-                <p>{{ dspPerfectImpactText }}</p>
-              </div>
-              <button
-                class="toggle-switch dsp-master-toggle"
-                :class="{ active: audioProcessing.dspEnabled }"
-                role="switch"
-                :aria-checked="audioProcessing.dspEnabled"
-                @click="updateAudioProcessing({ dspEnabled: !audioProcessing.dspEnabled })"
-              >
-                <span class="toggle-knob"></span>
-              </button>
-            </div>
-
-            <div class="dsp-summary-grid">
-              <div class="dsp-summary-card">
-                <span>输入</span>
-                <strong>{{ replayGainSummaryText }}</strong>
-              </div>
-              <div class="dsp-summary-card">
-                <span>塑形</span>
-                <strong>{{ eqSummaryText }}</strong>
-              </div>
-              <div class="dsp-summary-card">
-                <span>空间</span>
-                <strong>Crossfeed {{ crossfeedSummaryText }}</strong>
-              </div>
-              <div class="dsp-summary-card">
-                <span>输出安全</span>
-                <strong>{{ outputSafetyText }}</strong>
-              </div>
-            </div>
-
-            <div class="dsp-module">
-              <div class="dsp-module-head">
-                <span class="dsp-module-icon">
-                  <i class="pi pi-sign-in"></i>
-                </span>
-                <div>
-                  <h3>输入</h3>
-                  <p>响度归一化和整体输入增益</p>
-                </div>
-              </div>
-              <div class="dsp-control-row replaygain-row">
-                <div class="setting-copy">
-                  <span class="label-row">
-                    <span class="setting-label">ReplayGain</span>
-                    <span
-                      class="help-dot"
-                      tabindex="0"
-                      role="note"
-                      :aria-label="playbackHelp.replayGain"
-                      :data-help="playbackHelp.replayGain"
-                      >?</span
-                    >
-                  </span>
-                  <span class="setting-desc">
-                    Preamp {{ audioProcessing.replayGainPreamp.toFixed(1) }} dB · Fallback
-                    {{ audioProcessing.replayGainFallback.toFixed(1) }} dB ·
-                    {{ audioProcessing.replayGainClip ? '防削波' : '允许峰值' }}
-                  </span>
-                </div>
-                <div class="stacked-control">
-                  <div class="inline-control-group spread">
-                    <select
-                      class="select-control"
-                      :value="audioProcessing.volumeNormalization"
-                      @change="setReplayGainFromSelect"
-                    >
-                      <option
-                        v-for="option in replayGainOptions"
-                        :key="option.value"
-                        :value="option.value"
-                        :title="option.help"
-                      >
-                        {{ option.label }}
-                      </option>
-                    </select>
-                    <label class="inline-toggle-label">
-                      防削波
-                      <button
-                        class="toggle-switch"
-                        :class="{ active: audioProcessing.replayGainClip }"
-                        role="switch"
-                        :aria-checked="audioProcessing.replayGainClip"
-                        @click="toggleReplayGainClip"
-                      >
-                        <span class="toggle-knob"></span>
-                      </button>
-                    </label>
-                  </div>
-                  <label class="compact-range-row">
-                    <span>Preamp</span>
-                    <input
-                      class="range-control"
-                      type="range"
-                      min="-12"
-                      max="12"
-                      step="0.5"
-                      :value="audioProcessing.replayGainPreamp"
-                      @input="setReplayGainPreamp"
-                    />
-                    <strong>{{ audioProcessing.replayGainPreamp.toFixed(1) }}</strong>
-                  </label>
-                  <label class="compact-range-row">
-                    <span>Fallback</span>
-                    <input
-                      class="range-control"
-                      type="range"
-                      min="-12"
-                      max="12"
-                      step="0.5"
-                      :value="audioProcessing.replayGainFallback"
-                      @input="setReplayGainFallback"
-                    />
-                    <strong>{{ audioProcessing.replayGainFallback.toFixed(1) }}</strong>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <div class="dsp-module">
-              <div class="dsp-module-head">
-                <span class="dsp-module-icon">
-                  <i class="pi pi-sliders-h"></i>
-                </span>
-                <div>
-                  <h3>塑形</h3>
-                  <p>均衡器和耳机校正入口</p>
-                </div>
-              </div>
-              <div class="dsp-card-grid">
-                <div class="dsp-card">
-                  <span class="dsp-card-icon">
-                    <i class="pi pi-wave-pulse"></i>
-                  </span>
-                  <div class="dsp-card-copy">
-                    <span class="dsp-card-title">图形 / 参数 EQ</span>
-                    <span class="dsp-card-desc">{{ eqSummaryText }}</span>
-                  </div>
-                  <div class="dsp-card-actions">
-                    <button
-                      class="toggle-switch"
-                      :class="{ active: audioProcessing.eqEnabled }"
-                      role="switch"
-                      :aria-checked="audioProcessing.eqEnabled"
-                      @click="toggleEqFromDsp"
-                    >
-                      <span class="toggle-knob"></span>
-                    </button>
-                    <button class="text-button dsp-card-button" type="button" @click="openEqualizerFromDsp">
-                      <i class="pi pi-arrow-up-right"></i>
-                      打开
-                    </button>
-                  </div>
-                </div>
-
-                <div class="dsp-card">
-                  <span class="dsp-card-icon headphones">
-                    <i class="pi pi-headphones"></i>
-                  </span>
-                  <div class="dsp-card-copy">
-                    <span class="dsp-card-title">耳机校正 / 房间校正</span>
-                    <span class="dsp-card-desc">{{ convolverPathLabel }}</span>
-                  </div>
-                  <div class="dsp-card-actions">
-                    <button class="text-button dsp-card-button" type="button" @click="selectImpulseResponse">
-                      <i class="pi pi-folder-open"></i>
-                      IR
-                    </button>
-                    <button
-                      class="icon-button subtle"
-                      title="卸载 IR"
-                      :disabled="!audioProcessing.convolverIrPath"
-                      @click="clearImpulseResponse"
-                    >
-                      <i class="pi pi-times"></i>
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div class="dsp-module">
-              <div class="dsp-module-head">
-                <span class="dsp-module-icon">
-                  <i class="pi pi-arrows-h"></i>
-                </span>
-                <div>
-                  <h3>空间</h3>
-                  <p>声场交叉馈入和卷积脉冲响应</p>
-                </div>
-              </div>
-              <div class="dsp-control-row range-row">
-                <div class="setting-copy">
-                  <span class="label-row">
-                    <span class="setting-label">Crossfeed</span>
-                    <span
-                      class="help-dot"
-                      tabindex="0"
-                      role="note"
-                      :aria-label="playbackHelp.crossfeed"
-                      :data-help="playbackHelp.crossfeed"
-                      >?</span
-                    >
-                  </span>
-                  <span class="setting-desc">{{ crossfeedSummaryText }}</span>
-                </div>
-                <input
-                  class="range-control"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  :value="audioProcessing.crossfeedEnabled ? audioProcessing.crossfeedStrength : 0"
-                  @input="setCrossfeedFromInput"
-                />
-              </div>
-
-              <div class="dsp-control-row path-row">
-                <div class="setting-copy">
-                  <span class="label-row">
-                    <span class="setting-label">Convolver IR</span>
-                    <span
-                      class="help-dot"
-                      tabindex="0"
-                      role="note"
-                      :aria-label="playbackHelp.convolver"
-                      :data-help="playbackHelp.convolver"
-                      >?</span
-                    >
-                  </span>
-                  <span class="setting-desc">{{ convolverPathLabel }}</span>
-                </div>
-                <div class="path-actions convolver-actions">
-                  <div class="path-field" :title="audioProcessing.convolverIrPath">
-                    {{ convolverPathLabel }}
-                  </div>
-                  <button class="text-button" @click="selectImpulseResponse">
-                    <i class="pi pi-folder-open"></i>
-                    选择
-                  </button>
-                  <button
-                    class="icon-button subtle"
-                    title="卸载"
-                    :disabled="!audioProcessing.convolverIrPath"
-                    @click="clearImpulseResponse"
-                  >
-                    <i class="pi pi-times"></i>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="dsp-module">
-              <div class="dsp-module-head">
-                <span class="dsp-module-icon">
-                  <i class="pi pi-shield"></i>
-                </span>
-                <div>
-                  <h3>输出安全</h3>
-                  <p>防止处理链推高峰值导致削波</p>
-                </div>
-              </div>
-              <div class="dsp-control-row">
-                <div class="setting-copy">
-                  <span class="label-row">
-                    <span class="setting-label">Clip Guard</span>
-                    <span
-                      class="help-dot"
-                      tabindex="0"
-                      role="note"
-                      :aria-label="playbackHelp.clipGuard"
-                      :data-help="playbackHelp.clipGuard"
-                      >?</span
-                    >
-                  </span>
-                  <span class="setting-desc">{{ outputSafetyText }}</span>
-                </div>
-                <button
-                  class="toggle-switch"
-                  :class="{ active: audioProcessing.clipGuard }"
-                  role="switch"
-                  :aria-checked="audioProcessing.clipGuard"
-                  @click="toggleClipGuard"
-                >
-                  <span class="toggle-knob"></span>
-                </button>
-              </div>
-            </div>
+        <section id="playback" class="glass-card preview-section">
+          <div class="section-title-row">
+            <i class="pi pi-volume-up"></i>
+            <h2>播放 (Playback)</h2>
           </div>
-        </section>
 
-        <section v-if="activeTab === 'cache'" class="settings-section">
-          <h2>缓存</h2>
-          <div class="settings-group">
-            <div class="setting-row path-row">
-              <div class="setting-copy">
-                <span class="setting-label">缓存位置</span>
-                <span class="setting-desc">网络图片、接口数据和 Chromium 会话缓存</span>
+          <div class="device-panel">
+            <div class="device-panel-head">
+              <div>
+                <p>Audio Output</p>
+                <h3>输出设备与链路</h3>
               </div>
-              <div class="path-actions">
-                <div class="path-field" :title="settings.cachePath">
-                  {{ settings.cachePath }}
-                </div>
-                <button class="text-button" @click="chooseCacheFolder">
-                  <i class="pi pi-folder-open"></i>
-                  选择
-                </button>
-                <button class="icon-button subtle" title="恢复默认" @click="resetCacheFolder">
-                  <i class="pi pi-undo"></i>
-                </button>
-                <button class="icon-button subtle" title="打开缓存目录" @click="openCacheFolder">
-                  <i class="pi pi-external-link"></i>
-                </button>
-              </div>
-            </div>
-
-            <div v-if="cachePathNeedsRestart" class="inline-note">
-              当前生效目录：{{ activeCachePath }}
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-copy">
-                <span class="setting-label">缓存占用</span>
-                <span class="setting-desc">{{ formattedCacheSize }}</span>
-              </div>
-              <div class="button-cluster">
-                <button class="text-button" @click="refreshCacheSize">
-                  <i class="pi pi-sync"></i>
-                  刷新
-                </button>
-                <button class="danger-button" :disabled="clearingCache" @click="clearCache">
-                  <i class="pi pi-trash"></i>
-                  {{ clearingCache ? '清理中' : '清理缓存' }}
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section v-if="activeTab === 'plugins'" class="settings-section plugin-settings-section">
-          <h2>插件</h2>
-          <PluginSettingsPanel />
-          <div v-if="pluginSettingsPanels.length > 0" class="settings-group plugin-extension-group">
-            <div class="settings-subheading">插件配置区</div>
-            <div
-              v-for="panel in pluginSettingsPanels"
-              :key="panel.id"
-              class="setting-row plugin-extension-row"
-            >
-              <div class="setting-copy">
-                <span class="setting-label">{{ panel.title }}</span>
-                <span class="setting-desc">{{ panel.description || '由插件提供的受控配置入口' }}</span>
-              </div>
-              <button
-                class="text-button"
-                :disabled="!panel.command"
-                @click="runSettingsExtension(panel.command)"
-              >
-                打开
-              </button>
-            </div>
-          </div>
-        </section>
-
-        <section v-if="activeTab === 'performance'" class="settings-section">
-          <h2>性能</h2>
-          <div class="settings-group">
-            <div class="setting-row">
-              <div class="setting-copy">
-                <span class="setting-label">GPU 加速</span>
-                <span class="setting-desc">启用 Chromium 界面渲染硬件加速</span>
-              </div>
-              <button
-                class="toggle-switch"
-                :class="{ active: settings.hardwareAcceleration }"
-                role="switch"
-                :aria-checked="settings.hardwareAcceleration"
-                @click="toggleSetting('hardwareAcceleration')"
-              >
-                <span class="toggle-knob"></span>
-              </button>
-            </div>
-
-            <div class="setting-row">
-              <div class="setting-copy">
-                <span class="setting-label">重启应用</span>
-                <span class="setting-desc">让 GPU 和缓存目录变更立即进入新进程</span>
-              </div>
-              <button class="primary-button" :disabled="!restartRequired" @click="relaunch">
+              <button type="button" class="icon-button" title="刷新设备列表">
                 <i class="pi pi-refresh"></i>
-                立即重启
+              </button>
+            </div>
+            <div class="device-grid">
+              <button type="button" class="device-card active">
+                <i class="pi pi-headphones"></i>
+                <span>系统默认输出</span>
+                <small>WASAPI · 2ch · 48kHz</small>
+                <b>当前</b>
+              </button>
+              <button type="button" class="device-card">
+                <i class="pi pi-volume-up"></i>
+                <span>Realtek Audio</span>
+                <small>Shared · 24bit · 96kHz</small>
+              </button>
+              <button type="button" class="device-card">
+                <i class="pi pi-microchip"></i>
+                <span>USB DAC</span>
+                <small>Exclusive · Native DSD</small>
+              </button>
+            </div>
+          </div>
+
+          <div class="section-block">
+            <h3>播放引擎 (Engine)</h3>
+            <div class="setting-list">
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>输出模式</strong>
+                  <span>选择音频后端和系统混音路径。</span>
+                </div>
+                <div class="segmented-control">
+                  <button class="active" type="button">WASAPI</button>
+                  <button type="button">ASIO</button>
+                  <button type="button">ALSA</button>
+                </div>
+              </div>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>独占模式 (Exclusive)</strong>
+                  <span>尝试绕过系统混音器以获得更直接的输出链路。</span>
+                </div>
+                <span class="toggle-switch inactive" aria-hidden="true"></span>
+              </div>
+              <hr />
+              <div class="setting-item compact-row">
+                <div class="setting-copy">
+                  <strong>音量与削波保护</strong>
+                  <span>应用音量低于 100% 会改变样本值。</span>
+                </div>
+                <div class="inline-controls">
+                  <input class="number-input" type="number" value="100" />
+                  <span class="toggle-switch active" aria-hidden="true"></span>
+                </div>
+              </div>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>启动时恢复播放</strong>
+                  <span>记住上次播放的曲目和播放位置。</span>
+                </div>
+                <select class="preview-select">
+                  <option>曲目和精确位置</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="accordion-preview">
+            <div class="accordion-head">
+              <div>
+                <strong>高级引擎参数</strong>
+                <span>缓冲、声道路由、DSD 输出和 SACD program。</span>
+              </div>
+              <i class="pi pi-chevron-down"></i>
+            </div>
+            <div class="advanced-grid">
+              <label>
+                <span>Buffer Size</span>
+                <select class="preview-select">
+                  <option>Auto</option>
+                  <option>256</option>
+                </select>
+              </label>
+              <label>
+                <span>Routing</span>
+                <select class="preview-select">
+                  <option>Auto</option>
+                  <option>Stereo</option>
+                </select>
+              </label>
+              <label>
+                <span>DSD Output</span>
+                <select class="preview-select">
+                  <option>Auto</option>
+                  <option>DoP</option>
+                </select>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section id="dsp" class="glass-card preview-section">
+          <div class="section-title-row split">
+            <div>
+              <i class="pi pi-sliders-v"></i>
+              <h2>DSP 处理器</h2>
+            </div>
+            <span class="toggle-switch inactive large" aria-hidden="true"></span>
+          </div>
+
+          <div class="dsp-status-grid">
+            <div class="dsp-meter">
+              <span>Input</span>
+              <strong>PCM 24bit</strong>
+              <small>96 kHz · 2ch</small>
+            </div>
+            <div class="dsp-meter">
+              <span>Process</span>
+              <strong>Bypass</strong>
+              <small>0 modules active</small>
+            </div>
+            <div class="dsp-meter">
+              <span>Output</span>
+              <strong>WASAPI</strong>
+              <small>Shared path</small>
+            </div>
+          </div>
+
+          <div class="dsp-disabled-content">
+            <div class="dsp-actions">
+              <button class="brand-soft-button" type="button">
+                <i class="pi pi-sliders-h"></i>
+                打开均衡器
+              </button>
+              <button class="soft-button" type="button">
+                <i class="pi pi-folder-open"></i>
+                载入 IR
+              </button>
+              <button class="soft-button" type="button">
+                <i class="pi pi-undo"></i>
+                重置
+              </button>
+            </div>
+
+            <div class="dsp-module-grid">
+              <div class="dsp-module-card">
+                <h3>基础处理 (Core)</h3>
+                <div class="mini-setting">
+                  <div>
+                    <strong>ReplayGain</strong>
+                    <span>响度归一化</span>
+                  </div>
+                  <select class="preview-select">
+                    <option>Track</option>
+                  </select>
+                </div>
+                <div class="mini-setting">
+                  <div>
+                    <strong>Preamp</strong>
+                    <span>预增益</span>
+                  </div>
+                  <input class="number-input" type="number" value="0.0" />
+                </div>
+              </div>
+
+              <div class="dsp-module-card">
+                <h3>空间与声学 (Spatial & Acoustic)</h3>
+                <div class="mini-setting">
+                  <div>
+                    <strong>Parametric EQ</strong>
+                    <span>10 段均衡器</span>
+                  </div>
+                  <button class="soft-button compact" type="button">
+                    <i class="pi pi-sliders-h"></i>
+                    打开面板
+                  </button>
+                </div>
+                <div class="mini-setting">
+                  <div>
+                    <strong>Crossfeed</strong>
+                    <span>耳机声场融合</span>
+                  </div>
+                  <input class="range-input" type="range" min="0" max="100" value="40" />
+                </div>
+              </div>
+
+              <div class="dsp-module-card">
+                <h3>硬核解码 (Decoding)</h3>
+                <div class="decode-grid">
+                  <label>
+                    <span>DSD Mode</span>
+                    <select class="preview-select">
+                      <option>Auto</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>SACD Program</span>
+                    <select class="preview-select">
+                      <option>Auto</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>FFT Resolution</span>
+                    <select class="preview-select">
+                      <option>2048 (高精度)</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="cache" class="glass-card preview-section">
+          <div class="section-title-row">
+            <i class="pi pi-database"></i>
+            <h2>缓存 (Cache)</h2>
+          </div>
+          <div class="setting-list">
+            <div class="setting-item top-align">
+              <div class="setting-copy">
+                <strong>缓存目录</strong>
+                <span>保存图片、歌词和在线资源缓存。</span>
+              </div>
+              <div class="path-control">
+                <input readonly value="C:\Users\Admin\AppData\Roaming\TwilightEcho\Cache" />
+                <button type="button" class="soft-button">选择文件夹</button>
+                <button type="button" class="muted-button">恢复默认</button>
+              </div>
+            </div>
+            <hr />
+            <div class="setting-item top-align">
+              <div class="setting-copy">
+                <strong>音乐缓存目录</strong>
+                <span>单独存放可复用的流媒体缓存。</span>
+              </div>
+              <div class="path-control">
+                <input readonly value="未设置" />
+                <button type="button" class="soft-button">选择文件夹</button>
+              </div>
+            </div>
+            <hr />
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>缓存占用</strong>
+                <span>当前估算：<b>1.2 GB</b></span>
+              </div>
+              <button class="danger-soft-button solid-hover" type="button">
+                <i class="pi pi-trash"></i>
+                清理缓存
               </button>
             </div>
           </div>
         </section>
 
-        <section v-if="activeTab === 'appearance'" class="settings-section">
-          <h2>外观</h2>
-          <div class="settings-group">
-            <div class="setting-row skin-row">
+        <section id="plugins" class="glass-card preview-section">
+          <div class="section-title-row">
+            <i class="pi pi-box"></i>
+            <h2>插件 (Plugins)</h2>
+          </div>
+          <div class="plugin-empty">
+            <i class="pi pi-box"></i>
+            <strong>插件生态准备中</strong>
+            <span>安装、启用、权限和插件设置区域将显示在这里。</span>
+          </div>
+        </section>
+
+        <section id="performance" class="glass-card preview-section">
+          <div class="section-title-row">
+            <i class="pi pi-bolt"></i>
+            <h2>性能 (Performance)</h2>
+          </div>
+          <div class="setting-list">
+            <div class="setting-item">
               <div class="setting-copy">
-                <span class="setting-label">皮肤</span>
-                <span class="setting-desc">当前使用应用默认皮肤</span>
+                <strong>硬件加速</strong>
+                <span>使用 GPU 加速界面渲染、动画与模糊效果。</span>
               </div>
-              <div class="skin-selector" role="radiogroup" aria-label="皮肤">
-                <button
-                  class="theme-option active"
-                  type="button"
-                  role="radio"
-                  aria-checked="true"
-                  @click="useDefaultSkin"
-                >
-                  <span class="theme-swatch theme-swatch-default"></span>
-                  <span class="theme-option-copy">
-                    <span>默认皮肤</span>
-                    <small>Twilight Echo 默认界面</small>
-                  </span>
+              <span class="toggle-switch active" aria-hidden="true"></span>
+            </div>
+          </div>
+        </section>
+
+        <section id="appearance" class="glass-card preview-section">
+          <div class="section-title-row">
+            <i class="pi pi-palette"></i>
+            <h2>外观 (Appearance)</h2>
+          </div>
+
+          <div class="setting-list">
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>主题模式</strong>
+                <span>跟随系统或固定为浅色、深色。</span>
+              </div>
+              <div class="theme-segment">
+                <button class="active" type="button">
+                  <i class="pi pi-desktop"></i>
+                  系统
+                </button>
+                <button type="button">
+                  <i class="pi pi-sun"></i>
+                  浅色
+                </button>
+                <button type="button">
+                  <i class="pi pi-moon"></i>
+                  深色
                 </button>
               </div>
             </div>
-
-            <div class="setting-row color-mode-row">
+            <hr />
+            <div class="setting-item">
               <div class="setting-copy">
-                <span class="setting-label">明暗模式</span>
-                <span class="setting-desc">选择亮色、深色或跟随系统</span>
+                <strong>强调色</strong>
+                <span>选择界面中的主要品牌色。</span>
               </div>
-              <div class="color-mode-buttons" role="radiogroup" aria-label="明暗模式">
-                <button
-                  v-for="theme in colorModeOptions"
-                  :key="theme.value"
-                  class="color-mode-button"
-                  :class="{ active: settings.theme === theme.value }"
-                  type="button"
-                  role="radio"
-                  :aria-checked="settings.theme === theme.value"
-                  @click="setTheme(theme.value)"
-                >
-                  <i :class="theme.icon"></i>
-                  <span>{{ theme.label }}</span>
+              <div class="swatch-row" aria-hidden="true">
+                <span class="swatch violet active"><i class="pi pi-check"></i></span>
+                <span class="swatch blue"></span>
+                <span class="swatch emerald"></span>
+                <span class="swatch rose"></span>
+                <span class="swatch amber"></span>
+                <span class="swatch slate"></span>
+              </div>
+            </div>
+            <hr />
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>原生半透明材质 (Mica / Acrylic)</strong>
+                <span>启用系统级视窗模糊效果，让背景透出桌面壁纸。</span>
+              </div>
+              <span class="toggle-switch active" aria-hidden="true"></span>
+            </div>
+            <hr />
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>全局字体 (Typography)</strong>
+                <span>更换界面的主要显示字体。</span>
+              </div>
+              <select class="preview-select wide">
+                <option>系统默认 (System)</option>
+                <option>Inter / Roboto</option>
+                <option>霞鹜文楷 (LXGW)</option>
+                <option>Sarasa Gothic</option>
+                <option>Comic Sans MS</option>
+              </select>
+            </div>
+            <hr />
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>界面排版密度 (UI Density)</strong>
+                <span>控制列表项的间距与信息密度。</span>
+              </div>
+              <div class="segmented-control density">
+                <button type="button">紧凑</button>
+                <button class="active" type="button">标准</button>
+                <button type="button">舒展</button>
+              </div>
+            </div>
+            <hr />
+            <div class="setting-item top-align">
+              <div class="setting-copy">
+                <strong>沉浸式播放页背景 (Now Playing)</strong>
+                <span>全屏播放或详情页的背景视觉风格。</span>
+              </div>
+              <div class="background-options">
+                <button class="active" type="button">
+                  <span class="blur-cover"></span>
+                  <small>专辑高斯模糊</small>
+                </button>
+                <button type="button">
+                  <span class="fluid-cover"></span>
+                  <small>动态流体渐变</small>
+                </button>
+                <button type="button">
+                  <span class="solid-cover"></span>
+                  <small>纯粹极简纯色</small>
                 </button>
               </div>
             </div>
-
-            <div class="setting-row">
+            <hr />
+            <div class="setting-item">
               <div class="setting-copy">
-                <span class="setting-label">毛玻璃效果</span>
-                <span class="setting-desc">降低透明模糊效果可以减少显卡压力</span>
+                <strong>歌词显示样式 (Lyrics Style)</strong>
+                <span>翻译对齐方式及未播放行暗度。</span>
               </div>
-              <button
-                class="toggle-switch"
-                :class="{ active: settings.blurEffect }"
-                role="switch"
-                :aria-checked="settings.blurEffect"
-                @click="toggleSetting('blurEffect')"
-              >
-                <span class="toggle-knob"></span>
+              <div class="inline-controls">
+                <select class="preview-select">
+                  <option>居中对齐</option>
+                  <option>靠左对齐</option>
+                </select>
+                <div class="range-pill">
+                  <span>未播放暗度</span>
+                  <input class="range-input" type="range" min="10" max="100" value="40" />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="shortcuts" class="glass-card preview-section">
+          <div class="section-title-row">
+            <i class="pi pi-keyboard"></i>
+            <h2>快捷键</h2>
+          </div>
+          <div class="setting-list">
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>全局快捷键 (Global Shortcuts)</strong>
+                <span>在应用位于后台时，依然响应系统媒体播放快捷键。</span>
+              </div>
+              <span class="toggle-switch inactive" aria-hidden="true"></span>
+            </div>
+            <hr />
+            <div class="shortcut-grid">
+              <div><span>播放 / 暂停</span><kbd>Space</kbd></div>
+              <div><span>上一首</span><kbd>Ctrl + Left</kbd></div>
+              <div><span>下一首</span><kbd>Ctrl + Right</kbd></div>
+              <div><span>音量加/减</span><kbd>Up / Down</kbd></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="about" class="glass-card preview-section about-section">
+          <div class="about-glow" aria-hidden="true"></div>
+          <div class="section-title-row">
+            <i class="pi pi-info-circle"></i>
+            <h2>关于 (About)</h2>
+          </div>
+
+          <div class="about-hero">
+            <div class="logo-shell">
+              <div class="logo-glow"></div>
+              <div class="logo-mark">
+                <i class="pi pi-headphones"></i>
+              </div>
+            </div>
+            <div class="about-copy">
+              <h3>Twilight Echo</h3>
+              <span>Version 1.2.0-beta.4</span>
+              <p>一款专为发烧友打造的现代级桌面音乐枢纽，支持海量本地高解析度音频与插件化流媒体扩展。</p>
+            </div>
+          </div>
+
+          <div class="about-cards">
+            <div class="update-card">
+              <div class="status-icon"><i class="pi pi-check-circle"></i></div>
+              <div>
+                <strong>当前已是最新版本</strong>
+                <span>上次检查：今天 10:42</span>
+              </div>
+              <button class="soft-button" type="button">
+                <i class="pi pi-sync"></i>
+                检查更新
               </button>
             </div>
 
-            <div class="setting-row">
-              <div class="setting-copy">
-                <span class="setting-label">封面取色</span>
-                <span class="setting-desc">播放控件跟随当前歌曲封面生成强调色</span>
+            <div class="sponsor-card">
+              <i class="pi pi-heart-fill sponsor-watermark"></i>
+              <div>
+                <h3><i class="pi pi-heart"></i> 支持项目发展</h3>
+                <p>Twilight Echo 是一个由热情驱动的免费开源项目。您的慷慨赞助将直接用于服务器开销、持续更新以及给开发者的深夜咖啡。</p>
               </div>
-              <button
-                class="toggle-switch"
-                :class="{ active: settings.useCoverTheme }"
-                role="switch"
-                :aria-checked="settings.useCoverTheme"
-                @click="toggleSetting('useCoverTheme')"
-              >
-                <span class="toggle-knob"></span>
-              </button>
-            </div>
-
-            <div class="setting-row range-row">
-              <div class="setting-copy">
-                <span class="setting-label">歌词字号</span>
-                <span class="setting-desc">{{ settings.lyricFontSize }} px</span>
+              <div class="sponsor-actions">
+                <button class="sponsor-button" type="button">
+                  <i class="pi pi-wallet"></i>
+                  赞助支持
+                </button>
+                <button class="sponsor-list-button" type="button">
+                  <i class="pi pi-users"></i>
+                  赞助名单
+                </button>
               </div>
-              <input
-                class="range-control"
-                type="range"
-                min="14"
-                max="28"
-                step="1"
-                :value="settings.lyricFontSize"
-                @input="setLyricFontSize"
-              />
             </div>
           </div>
-        </section>
 
-        <section v-if="activeTab === 'shortcuts'" class="settings-section">
-          <h2>快捷键</h2>
-          <div class="shortcut-list">
-            <div class="shortcut-item">
-              <span>播放 / 暂停</span>
-              <kbd>Space</kbd>
-            </div>
-            <div class="shortcut-item">
-              <span>上一首</span>
-              <span><kbd>Ctrl</kbd><b>+</b><kbd>Left</kbd></span>
-            </div>
-            <div class="shortcut-item">
-              <span>下一首</span>
-              <span><kbd>Ctrl</kbd><b>+</b><kbd>Right</kbd></span>
-            </div>
-            <div class="shortcut-item">
-              <span>音量增加</span>
-              <span><kbd>Ctrl</kbd><b>+</b><kbd>Up</kbd></span>
-            </div>
-            <div class="shortcut-item">
-              <span>音量降低</span>
-              <span><kbd>Ctrl</kbd><b>+</b><kbd>Down</kbd></span>
-            </div>
-          </div>
-        </section>
+          <hr />
 
-        <section v-if="activeTab === 'about'" class="settings-section">
-          <h2>关于</h2>
-          <div class="settings-group">
-            <div class="setting-row compact">
-              <span class="setting-label">应用名称</span>
-              <span class="setting-value">Twilight Echo</span>
-            </div>
-            <div class="setting-row compact">
-              <span class="setting-label">版本</span>
-              <span class="setting-value">v{{ appVersion || '0.20.0' }}</span>
-            </div>
-            <div class="setting-row compact">
-              <span class="setting-label">技术栈</span>
-              <span class="setting-value">Electron + Vue 3 + Twilight Audio Engine</span>
-            </div>
-            <div class="setting-row compact">
-              <span class="setting-label">设置文件</span>
-              <span class="setting-value path-value">{{ paths?.settingsFile }}</span>
-            </div>
+          <div class="about-links">
+            <button type="button"><i class="pi pi-github"></i> GitHub</button>
+            <button type="button"><i class="pi pi-file-o"></i> 更新日志</button>
+            <button type="button"><i class="pi pi-heart-fill"></i> 开源致谢</button>
           </div>
         </section>
-      </main>
+      </div>
     </div>
-  </div>
+  </main>
 </template>
 
+<style>
+@font-face {
+  font-family: 'Outfit';
+  src: url('/font/Outfit-VariableFont_wght.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Noto Sans SC';
+  src: url('/font/NotoSansSC-VariableFont_wght.ttf') format('truetype');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+</style>
+
 <style scoped>
-.settings-page {
+
+.settings-preview-page {
+  --brand-50: #f5f3ff;
+  --brand-100: #ede9fe;
+  --brand-200: #ddd6fe;
+  --brand-300: #c4b5fd;
+  --brand-400: #a78bfa;
+  --brand-500: #8b5cf6;
+  --brand-600: #7c3aed;
+  --brand-700: #6d28d9;
   position: fixed;
   inset: 0;
-  z-index: 50;
-  display: flex;
-  flex-direction: column;
-  background: #fff;
-  color: var(--te-neutral-900);
-}
-
-.settings-header {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  height: 56px;
-  padding: 0 20px;
-  border-bottom: 0;
-  background: #fff;
-  flex-shrink: 0;
-}
-
-.settings-heading {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
-}
-
-.settings-heading h1 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 700;
-}
-
-.settings-heading span {
-  margin-top: 2px;
-  font-size: 12px;
-  color: var(--te-neutral-500);
-}
-
-.restart-strip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 10px 20px;
-  background: #fff7ed;
-  border-bottom: 1px solid #fed7aa;
-  color: #9a3412;
-  flex-shrink: 0;
-}
-
-.restart-strip div {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.restart-strip strong {
-  font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.restart-strip span {
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.settings-shell {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: 176px minmax(0, 1fr);
-}
-
-.settings-tabs {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 16px 12px;
-  border-right: 1px solid rgba(17, 24, 39, 0.08);
-  background: #f8fafc;
-}
-
-.tab-btn {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 38px;
-  padding: 0 12px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--te-neutral-500);
-  font-size: 13px;
-  cursor: pointer;
-  transition:
-    color 0.15s,
-    background 0.15s;
-}
-
-.tab-btn i {
-  width: 16px;
-  text-align: center;
-  font-size: 14px;
-}
-
-.tab-btn:hover {
-  color: var(--te-neutral-900);
-  background: rgba(17, 24, 39, 0.05);
-}
-
-.tab-btn.active {
-  color: #2563eb;
-  background: rgba(37, 99, 235, 0.1);
-  font-weight: 700;
-}
-
-.settings-body {
+  width: 100%;
+  height: 100vh;
   overflow-y: auto;
-  padding: 28px 32px 48px;
+  overflow-x: hidden;
+  padding: 0 48px 48px;
+  background: #f4f4f7;
+  color: #111827;
+  font-family: 'Outfit', 'Noto Sans SC', var(--te-font-sans), sans-serif;
+  scroll-behavior: smooth;
 }
 
-.settings-section {
-  max-width: 820px;
+.settings-preview-page::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
 }
 
-.settings-section h2 {
-  margin: 0 0 16px;
-  font-size: 20px;
-  font-weight: 800;
+.settings-preview-page::-webkit-scrollbar-track {
+  background: transparent;
 }
 
-.settings-group {
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 8px;
-  overflow: visible;
-  background: #fff;
+.settings-preview-page::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.15);
 }
 
-.setting-row {
-  min-height: 72px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 20px;
-  padding: 14px 18px;
+.settings-preview-page::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
 }
 
-.setting-row + .setting-row {
-  border-top: 1px solid rgba(17, 24, 39, 0.06);
+.settings-preview-page button,
+.settings-preview-page input,
+.settings-preview-page select {
+  font: inherit;
 }
 
-.setting-row.compact {
-  min-height: 54px;
+.settings-preview-layout {
+  width: min(100%, 1280px);
+  margin: 0 auto;
 }
 
-.upmix-row {
-  min-height: 48px;
-  padding: 8px 18px 8px 36px;
-  background: rgba(99, 102, 241, 0.03);
-}
-
-.upmix-row .slider-control {
-  width: 140px;
-  accent-color: #6366f1;
-}
-
-.settings-subheading {
-  padding: 12px 18px 8px;
-  border-top: 1px solid rgba(17, 24, 39, 0.06);
-  background: #f8fafc;
-  color: var(--te-neutral-500);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.setting-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-
-.label-row {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.help-dot {
+.settings-preview-layout {
   position: relative;
-  z-index: 3;
-  display: inline-flex;
+  display: block;
+  padding-top: 32px;
+}
+
+.settings-preview-nav {
+  position: fixed;
+  left: max(24px, calc((100vw - 896px) / 4 - 96px));
+  top: 44%;
+  z-index: 20;
+  display: flex;
+  width: 192px;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #eff6ff;
-  color: #2563eb;
-  font-size: 11px;
-  font-weight: 900;
-  line-height: 1;
-  cursor: help;
-  outline: none;
-}
-
-.help-dot:hover,
-.help-dot:focus-visible {
-  background: #2563eb;
-  color: #fff;
-}
-
-.help-dot::after {
-  content: attr(data-help);
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 50%;
-  width: min(300px, 56vw);
-  padding: 9px 10px;
-  border: 1px solid rgba(37, 99, 235, 0.16);
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 16px 38px rgba(15, 23, 42, 0.14);
-  color: var(--te-neutral-700);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.5;
-  white-space: normal;
-  pointer-events: none;
-  opacity: 0;
-  transform: translateY(-50%) translateX(-3px);
-  transition:
-    opacity 0.14s ease,
-    transform 0.14s ease;
-}
-
-.help-dot:hover::after,
-.help-dot:focus-visible::after {
-  opacity: 1;
+  gap: 6px;
+  max-height: calc(100vh - 96px);
   transform: translateY(-50%);
 }
 
-.setting-label {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--te-neutral-900);
+.preview-nav-item {
+  display: grid;
+  grid-template-columns: 16px auto;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 40px;
+  padding: 10px 16px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: #4b5563;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  text-align: center;
+  transition:
+    background 0.18s ease,
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    color 0.18s ease;
 }
 
-.setting-desc,
-.setting-value {
+.preview-nav-item i {
+  width: 16px;
+  text-align: center;
+}
+
+.preview-nav-item:hover {
+  background: rgba(255, 255, 255, 0.6);
+  color: #111827;
+}
+
+.preview-nav-item.active {
+  border-color: var(--brand-100);
+  background: #ffffff;
+  color: var(--brand-600);
+  font-weight: 800;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.08);
+}
+
+.settings-preview-stack {
+  display: flex;
+  width: min(100%, 896px);
+  flex-direction: column;
+  gap: 32px;
+  margin: 0 auto;
+  padding-bottom: 40px;
+}
+
+.glass-card {
+  border: 1px solid rgba(255, 255, 255, 1);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.7);
+  box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.05);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+}
+
+.preview-section {
+  scroll-margin-top: 24px;
+  padding: 32px;
+}
+
+.section-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.section-title-row.split {
+  justify-content: space-between;
+}
+
+.section-title-row.split > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.section-title-row i {
+  color: var(--brand-500);
+  font-size: 18px;
+}
+
+.section-title-row h2 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 18px;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.section-block + .section-block {
+  margin-top: 32px;
+}
+
+.section-block h3,
+.dsp-module-card h3 {
+  margin: 0 0 16px;
+  color: var(--brand-500);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.setting-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.setting-list hr,
+.about-section hr {
+  width: 100%;
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: rgba(243, 244, 246, 0.82);
+}
+
+.setting-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.setting-item.top-align {
+  align-items: flex-start;
+}
+
+.setting-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding-right: 8px;
+}
+
+.setting-copy strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.setting-copy span {
+  color: #6b7280;
   font-size: 12px;
-  color: var(--te-neutral-500);
+  font-weight: 500;
+  line-height: 1.45;
 }
 
-.path-value {
-  max-width: 520px;
+.setting-copy b {
+  color: var(--brand-600);
+  font-weight: 800;
+}
+
+.discord-icon {
+  color: #6366f1 !important;
+  font-size: 14px !important;
+}
+
+.folder-list {
+  display: flex;
+  width: 256px;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.folder-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 36px;
+  padding: 8px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+  color: #374151;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.folder-chip span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.folder-chip i {
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.dashed-button,
+.soft-button,
+.muted-button,
+.danger-soft-button,
+.brand-soft-button,
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+
+.dashed-button {
+  width: 100%;
+  min-height: 36px;
+  border: 1px dashed #d1d5db;
+  background: rgba(249, 250, 251, 0.5);
+  color: #6b7280;
+}
+
+.dashed-button:hover {
+  border-color: var(--brand-500);
+  background: var(--brand-50);
+  color: var(--brand-600);
+}
+
+.soft-button,
+.muted-button {
+  min-height: 30px;
+  padding: 6px 16px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #374151;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.06);
+}
+
+.soft-button:hover {
+  border-color: #d1d5db;
+}
+
+.muted-button {
+  background: #f3f4f6;
+  color: #4b5563;
+  box-shadow: none;
+}
+
+.danger-soft-button {
+  min-height: 30px;
+  padding: 6px 16px;
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #dc2626;
+  box-shadow: 0 1px 5px rgba(220, 38, 38, 0.08);
+}
+
+.danger-soft-button:hover,
+.danger-soft-button.solid-hover:hover {
+  background: #fee2e2;
+}
+
+.danger-soft-button.solid-hover:hover {
+  border-color: #ef4444;
+  background: #ef4444;
+  color: #fff;
+}
+
+.brand-soft-button {
+  min-height: 38px;
+  padding: 8px 16px;
+  border: 1px solid var(--brand-200);
+  background: var(--brand-50);
+  color: var(--brand-700);
+  box-shadow: 0 1px 5px rgba(124, 58, 237, 0.08);
+}
+
+.brand-soft-button:hover {
+  background: var(--brand-100);
+}
+
+.icon-button {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  color: #4b5563;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.06);
+}
+
+.icon-button:hover {
+  border-color: var(--brand-300);
+  color: var(--brand-600);
 }
 
 .toggle-switch {
   position: relative;
-  width: 42px;
-  height: 24px;
-  border: 1px solid rgba(15, 23, 42, 0.24);
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 20px;
   border-radius: 999px;
-  background: #64748b;
   cursor: pointer;
-  padding: 0;
-  flex-shrink: 0;
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.54),
-    0 1px 2px rgba(15, 23, 42, 0.08);
-  transition:
-    background 0.2s ease,
-    border-color 0.2s ease,
-    box-shadow 0.2s ease;
+  transition: all 0.3s ease;
+}
+
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
 }
 
 .toggle-switch.active {
-  border-color: #1e40af;
-  background: #1d4ed8;
+  background: var(--brand-500);
 }
 
-.toggle-switch:disabled {
-  cursor: not-allowed;
-  opacity: 0.62;
+.toggle-switch.active::after {
+  left: 22px;
 }
 
-.toggle-switch:focus-visible {
-  outline: none;
-  box-shadow:
-    0 0 0 3px rgba(37, 99, 235, 0.22),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.62);
+.toggle-switch.inactive {
+  background: #d1d5db;
 }
 
-.toggle-knob {
-  position: absolute;
+.toggle-switch.inactive::after {
+  left: 2px;
+}
+
+.toggle-switch.large {
+  width: 48px;
+  height: 26px;
+}
+
+.toggle-switch.large::after {
   top: 3px;
-  left: 3px;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 2px 5px rgba(15, 23, 42, 0.28);
-  transition: transform 0.2s ease;
+  width: 20px;
+  height: 20px;
 }
 
-.toggle-switch.active .toggle-knob {
-  transform: translateX(18px);
+.toggle-switch.large.active::after {
+  left: 25px;
 }
 
-.range-row {
-  grid-template-columns: minmax(0, 1fr) minmax(180px, 260px);
-}
-
-.buffer-row {
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
-}
-
-.status-row {
-  align-items: start;
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
-}
-
-.replaygain-row,
-.continuity-row {
-  align-items: start;
-  grid-template-columns: minmax(0, 1fr) minmax(390px, 520px);
-}
-
-.skin-row,
-.color-mode-row {
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
-}
-
-.skin-selector {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
-  padding: 4px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
+.preview-select,
+.number-input {
+  height: 34px;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #f8fafc;
+  outline: none;
+  background: #fff;
+  color: #374151;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.05);
+  font-size: 12px;
+  font-weight: 800;
 }
 
-.color-mode-buttons {
+.preview-select {
+  width: 144px;
+  padding: 0 12px;
+  appearance: none;
+}
+
+.preview-select.wide {
+  width: 160px;
+  background: #f9fafb;
+  box-shadow: none;
+}
+
+.number-input {
+  width: 56px;
+  padding: 0 8px;
+  text-align: right;
+}
+
+.preview-select:focus,
+.number-input:focus {
+  border-color: var(--brand-500);
+}
+
+.device-panel {
+  margin-bottom: 32px;
+  overflow: hidden;
+  border: 1px solid rgba(229, 231, 235, 0.75);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.device-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+}
+
+.device-panel-head p {
+  margin: 0 0 2px;
+  color: var(--brand-500);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.device-panel-head h3 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 15px;
+  font-weight: 900;
+}
+
+.device-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  padding: 4px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 8px;
-  background: #f8fafc;
-}
-
-.theme-option {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  align-items: center;
-  gap: 9px;
-  min-height: 54px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--te-neutral-700);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background 0.16s,
-    border-color 0.16s,
-    color 0.16s,
-    box-shadow 0.16s;
-}
-
-.theme-option:hover {
-  background: rgba(255, 255, 255, 0.76);
-  color: var(--te-neutral-900);
-}
-
-.theme-option.active {
-  border-color: color-mix(in srgb, var(--te-primary-500) 28%, transparent);
-  background: #fff;
-  color: var(--te-neutral-900);
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
-}
-
-.theme-swatch {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  border: 1px solid rgba(17, 24, 39, 0.1);
-  box-shadow: inset 0 0 0 5px rgba(255, 255, 255, 0.76);
-}
-
-.theme-swatch-pureWhite {
-  background: linear-gradient(135deg, #fff 0 48%, #2563eb 49% 100%);
-}
-
-.theme-swatch-default {
-  background: linear-gradient(135deg, #ffffff 0 42%, #2563eb 43% 68%, #0f172a 69% 100%);
-}
-
-.theme-swatch-system {
-  background: linear-gradient(135deg, #fff 0 48%, #111827 49% 100%);
-}
-
-.theme-swatch-dark {
-  background: linear-gradient(135deg, #0b1020 0 48%, #8b5cf6 49% 100%);
-}
-
-.theme-option-copy {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.theme-option-copy span {
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.theme-option-copy small {
-  overflow: hidden;
-  color: var(--te-neutral-500);
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.color-mode-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  min-width: 0;
-  height: 38px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--te-neutral-700);
-  cursor: pointer;
-  font-size: 13px;
-  font-weight: 800;
-  transition:
-    background 0.16s,
-    border-color 0.16s,
-    color 0.16s,
-    box-shadow 0.16s;
-}
-
-.color-mode-button:hover,
-.color-mode-button.active {
-  border-color: color-mix(in srgb, var(--te-primary-500) 28%, transparent);
-  background: #fff;
-  color: #2563eb;
-}
-
-.color-mode-button.active {
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
-}
-
-.resume-row,
-.audio-output-row {
-  grid-template-columns: minmax(0, 1fr) minmax(360px, 520px);
-}
-
-.device-board {
-  position: relative;
-  display: grid;
-  gap: 14px;
-  margin: 14px 18px 18px;
-  padding: 15px 16px 16px;
-  overflow: hidden;
-  isolation: isolate;
-  border: 1px solid rgba(232, 238, 244, 0.24);
-  border-radius: 14px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.095), rgba(255, 255, 255, 0.018)),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.025), rgba(0, 0, 0, 0.07)),
-    rgba(48, 52, 56, 0.24);
-  box-shadow:
-    0 24px 58px rgba(12, 18, 48, 0.24),
-    inset 0 1px 0 rgba(255, 255, 255, 0.16);
-  -webkit-backdrop-filter: blur(32px) saturate(118%);
-  backdrop-filter: blur(32px) saturate(118%);
-}
-
-.device-board::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 16% 20%, rgba(115, 189, 245, 0.88), transparent 31%),
-    radial-gradient(circle at 82% 12%, rgba(179, 148, 244, 0.78), transparent 34%),
-    radial-gradient(circle at 72% 88%, rgba(183, 234, 212, 0.42), transparent 34%),
-    linear-gradient(145deg, rgba(20, 25, 42, 0.66), rgba(13, 31, 62, 0.42) 48%, rgba(34, 23, 64, 0.56));
-}
-
-.device-board::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-  border-radius: inherit;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.13), transparent 35%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.035), rgba(0, 0, 0, 0.12)),
-    rgba(48, 52, 56, 0.2);
-}
-
-.device-board > * {
-  position: relative;
-  z-index: 2;
-}
-
-:global(html[data-theme='dark']) .device-board {
-  border-color: rgba(232, 238, 244, 0.2);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.016)),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.024), rgba(0, 0, 0, 0.08)),
-    rgba(48, 52, 56, 0.28);
-}
-
-.device-board .setting-label {
-  color: #f5f8ff;
-  text-shadow: 0 1px 12px rgba(0, 0, 0, 0.24);
-}
-
-.device-board .setting-desc {
-  color: rgba(228, 236, 248, 0.72);
-}
-
-.device-board .help-dot {
-  background: rgba(255, 255, 255, 0.12);
-  color: #b7ead4;
-}
-
-.device-board .icon-button.subtle {
-  border-color: rgba(232, 238, 244, 0.18);
-  background: rgba(255, 255, 255, 0.055);
-  color: #eef5fb;
-  -webkit-backdrop-filter: blur(18px);
-  backdrop-filter: blur(18px);
-}
-
-.device-board .icon-button.subtle:hover {
-  border-color: rgba(232, 238, 244, 0.28);
-  background: rgba(255, 255, 255, 0.09);
-}
-
-.device-board-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 14px;
-}
-
-.device-card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 10px;
-  min-width: 0;
+  gap: 12px;
+  padding: 0 20px 20px;
 }
 
 .device-card {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-content: start;
-  align-items: start;
-  min-width: 0;
-  min-height: 146px;
-  gap: 12px 10px;
-  padding: 14px;
-  overflow: hidden;
-  border: 1px solid rgba(232, 238, 244, 0.12);
-  border-radius: 8px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.012)),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.024), rgba(0, 0, 0, 0.052)),
-    rgba(31, 35, 41, 0.16);
-  color: #eef5fb;
-  cursor: pointer;
-  text-align: left;
-  box-shadow:
-    0 13px 28px rgba(4, 8, 18, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  -webkit-backdrop-filter: blur(22px) saturate(114%);
-  backdrop-filter: blur(22px) saturate(114%);
-  transition:
-    transform 0.16s ease,
-    border-color 0.16s ease,
-    box-shadow 0.16s ease,
-    background 0.16s ease;
-}
-
-.device-card::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border-radius: inherit;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.07), transparent 38%),
-    radial-gradient(circle at 92% 18%, rgba(255, 255, 255, 0.06), transparent 26%);
-}
-
-.device-card::before {
-  content: "";
-  position: absolute;
-  inset: 1px;
-  pointer-events: none;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.035);
-}
-
-.device-card:hover {
-  transform: translateY(-1px);
-  border-color: rgba(183, 234, 212, 0.42);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.09), rgba(255, 255, 255, 0.016)),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.03), rgba(0, 0, 0, 0.058)),
-    rgba(31, 35, 41, 0.18);
-  box-shadow:
-    0 16px 34px rgba(4, 8, 18, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
-}
-
-.device-card.active {
-  border-color: rgba(183, 234, 212, 0.58);
-  background:
-    linear-gradient(180deg, rgba(183, 234, 212, 0.09), rgba(115, 189, 245, 0.024)),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.032), rgba(0, 0, 0, 0.06)),
-    rgba(31, 35, 41, 0.2);
-  box-shadow:
-    0 17px 38px rgba(4, 8, 18, 0.18),
-    0 0 0 1px rgba(183, 234, 212, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.14);
-}
-
-.device-card:focus-visible {
-  outline: none;
-  border-color: rgba(115, 189, 245, 0.82);
-  box-shadow:
-    0 0 0 3px rgba(115, 189, 245, 0.2),
-    0 18px 38px rgba(15, 23, 42, 0.2),
-    inset 0 1px 0 rgba(255, 255, 255, 0.18);
-}
-
-.device-card-icon {
-  position: relative;
-  z-index: 1;
-  grid-column: 1;
-  grid-row: 1;
-  width: 52px;
-  height: 52px;
-  margin-bottom: 4px;
-  background-color: currentColor;
-  color: rgba(232, 238, 244, 0.84);
-  -webkit-mask: var(--device-icon-url) center / contain no-repeat;
-  mask: var(--device-icon-url) center / contain no-repeat;
-  filter: drop-shadow(0 1px 12px rgba(0, 0, 0, 0.24));
-}
-
-.device-card.active .device-card-icon {
-  color: rgba(232, 238, 244, 0.94);
-}
-
-.device-icon-headphones {
-  --device-icon-url: url('/icons/audio-devices/headphones.svg');
-}
-
-.device-icon-speaker {
-  --device-icon-url: url('/icons/audio-devices/speaker.svg');
-}
-
-.device-icon-earbuds {
-  --device-icon-url: url('/icons/audio-devices/earbuds.svg');
-}
-
-.device-card-copy {
-  position: relative;
-  z-index: 1;
-  grid-column: 1 / -1;
-  grid-row: 2;
-  display: grid;
-  min-width: 0;
-  gap: 3px;
-}
-
-.device-card-name {
-  min-width: 0;
-  overflow: hidden;
-  color: #f3fbf7;
-  font-size: 13px;
-  font-weight: 800;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.device-card-spec {
-  overflow: hidden;
-  color: rgba(216, 226, 238, 0.58);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1.35;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.device-card-pill {
-  position: relative;
-  z-index: 1;
-  grid-column: 2;
-  grid-row: 1;
-  align-self: start;
-  justify-self: end;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 42px;
-  padding: 3px 7px;
-  border: 1px solid rgba(183, 234, 212, 0.28);
-  border-radius: 6px;
-  background: rgba(183, 234, 212, 0.08);
-  color: #b7ead4;
-  font-size: 10px;
-  font-weight: 900;
-  line-height: 1.1;
-}
-
-.device-card-pill.muted {
-  border-color: rgba(232, 238, 244, 0.16);
-  background: rgba(255, 255, 255, 0.05);
-  color: #a3adbb;
-}
-
-.dsp-section {
-  max-width: 920px;
-}
-
-.dsp-board {
-  display: grid;
-  gap: 0;
-  overflow: hidden;
-  padding: 0;
-  border: 0;
-  border-radius: inherit;
-  background: transparent;
-  box-shadow: none;
-}
-
-.dsp-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 20px;
-  min-height: 72px;
-  padding: 14px 18px;
-  overflow: hidden;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.dsp-hero-main {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.dsp-kicker {
-  color: var(--te-neutral-500);
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0;
-}
-
-.dsp-hero h3 {
-  margin: 0;
-  color: var(--te-neutral-900);
-  font-size: 14px;
-  font-weight: 800;
-  line-height: 1.25;
-}
-
-.dsp-hero p {
-  margin: 0;
-  color: var(--te-neutral-600);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.45;
-}
-
-.dsp-master-toggle {
-  width: 52px;
-  height: 30px;
-  border-color: rgba(37, 99, 235, 0.18);
-  background: #e8eef8;
-}
-
-.dsp-master-toggle .toggle-knob {
-  width: 22px;
-  height: 22px;
-}
-
-.dsp-master-toggle.active {
-  border-color: rgba(37, 99, 235, 0.34);
-  background: #2563eb;
-}
-
-.dsp-master-toggle.active .toggle-knob {
-  transform: translateX(22px);
-}
-
-.dsp-summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  padding: 0 18px 14px;
-  border-bottom: 1px solid rgba(17, 24, 39, 0.06);
-}
-
-.dsp-summary-card,
-.dsp-control-row,
-.dsp-card {
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background: #ffffff;
-  box-shadow: none;
-}
-
-.dsp-summary-card {
-  display: grid;
-  min-height: 54px;
+  min-height: 132px;
   gap: 4px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  background: #f8fafc;
+  align-content: end;
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.95), rgba(249, 250, 251, 0.78)),
+    #ffffff;
+  color: #374151;
+  text-align: left;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  cursor: pointer;
 }
 
-.dsp-summary-card span {
-  color: var(--te-neutral-500);
-  font-size: 11px;
-  font-weight: 900;
+.device-card:hover,
+.device-card.active {
+  border-color: var(--brand-300);
+  box-shadow: 0 14px 32px rgba(124, 58, 237, 0.12);
 }
 
-.dsp-summary-card strong {
+.device-card i {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  color: var(--brand-500);
+  font-size: 28px;
+}
+
+.device-card span {
   overflow: hidden;
-  color: var(--te-neutral-900);
-  font-size: 12px;
+  color: #1f2937;
+  font-size: 13px;
   font-weight: 900;
-  line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dsp-module {
-  display: grid;
-  gap: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.dsp-module-head {
-  display: grid;
-  grid-template-columns: 28px minmax(0, 1fr);
-  align-items: center;
-  gap: 8px;
-  padding: 12px 18px 8px;
-  border-top: 1px solid rgba(17, 24, 39, 0.06);
-  background: #f8fafc;
-}
-
-.dsp-module-icon,
-.dsp-card-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgba(37, 99, 235, 0.14);
-  background: #edf4ff;
-  color: #2563eb;
-}
-
-.dsp-module-icon {
-  width: 24px;
-  height: 24px;
-  border-radius: 7px;
-  font-size: 13px;
-}
-
-.dsp-module-head h3 {
-  margin: 0;
-  color: var(--te-neutral-700);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.dsp-module-head p {
-  margin: 2px 0 0;
+.device-card small {
   overflow: hidden;
-  color: var(--te-neutral-500);
+  color: #6b7280;
   font-size: 11px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dsp-control-row {
-  min-height: 72px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+.device-card b {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--brand-50);
+  color: var(--brand-600);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.segmented-control,
+.theme-segment {
+  display: inline-flex;
   align-items: center;
-  gap: 20px;
-  padding: 14px 18px;
-  border-width: 1px 0 0;
-  border-radius: 0;
-  background: #ffffff;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(229, 231, 235, 0.7);
+  border-radius: 12px;
+  background: rgba(243, 244, 246, 0.8);
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.04);
 }
 
-.dsp-control-row.replaygain-row {
-  align-items: start;
-  grid-template-columns: minmax(0, 1fr) minmax(390px, 1fr);
-}
-
-.dsp-control-row.range-row {
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
-}
-
-.dsp-control-row.path-row {
-  grid-template-columns: minmax(0, 1fr) minmax(300px, 460px);
-}
-
-.dsp-board .setting-label {
-  color: var(--te-neutral-900);
-}
-
-.dsp-board .setting-desc,
-.dsp-board .inline-toggle-label,
-.dsp-board .compact-range-row,
-.dsp-board .compact-range-row strong {
-  color: var(--te-neutral-600);
-}
-
-.dsp-board .select-control,
-.dsp-board .path-field {
-  border-color: rgba(17, 24, 39, 0.08);
-  background: #f8fafc;
-  color: var(--te-neutral-900);
-}
-
-.dsp-board .select-control option {
-  color: var(--te-neutral-900);
-}
-
-.dsp-board .text-button,
-.dsp-board .icon-button.subtle {
-  border-color: rgba(37, 99, 235, 0.14);
-  background: #eef4ff;
-  color: #2563eb;
-}
-
-.dsp-board .text-button:hover,
-.dsp-board .icon-button.subtle:hover {
-  border-color: rgba(37, 99, 235, 0.24);
-  background: #e2ecff;
-  color: #1d4ed8;
-}
-
-.dsp-board .range-control {
-  accent-color: #2563eb;
-}
-
-.dsp-board .help-dot {
-  background: #edf4ff;
-  color: #2563eb;
-}
-
-.dsp-card-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  padding: 14px 18px;
-  border-top: 1px solid rgba(17, 24, 39, 0.06);
-}
-
-.dsp-card {
-  position: relative;
-  display: grid;
-  grid-template-columns: 48px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 12px;
-  min-height: 72px;
-  padding: 12px;
+.segmented-control button,
+.theme-segment button {
+  min-height: 32px;
+  padding: 7px 16px;
+  border: 0;
   border-radius: 8px;
-  overflow: hidden;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.segmented-control button.active,
+.theme-segment button.active {
   background: #fff;
+  color: #1f2937;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.08);
 }
 
-.dsp-card-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 8px;
-  font-size: 20px;
+.theme-segment button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.dsp-card-icon.headphones {
-  color: #4f46e5;
+.theme-segment button.active i {
+  color: var(--brand-500);
 }
 
-.dsp-card-copy {
+.inline-controls {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
+.compact-row {
+  min-height: 38px;
+}
+
+.accordion-preview {
+  overflow: hidden;
+  border: 1px solid rgba(229, 231, 235, 0.65);
+  border-radius: 12px;
+  background: rgba(249, 250, 251, 0.7);
+}
+
+.accordion-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 20px;
+}
+
+.accordion-head div {
   display: grid;
-  min-width: 0;
   gap: 3px;
 }
 
-.dsp-card-title {
-  overflow: hidden;
-  color: var(--te-neutral-900);
+.accordion-head strong {
+  color: #1f2937;
   font-size: 13px;
   font-weight: 900;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.dsp-card-desc {
-  overflow: hidden;
-  color: var(--te-neutral-500);
-  font-size: 11px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.accordion-head span {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
 }
 
-.dsp-card-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
+.accordion-head i {
+  color: #9ca3af;
 }
 
-.dsp-card-button {
-  height: 30px;
-  padding: 0 10px;
-}
-
-.dsp-card-pill {
-  align-self: start;
-  justify-self: end;
-  min-width: 42px;
-  padding: 3px 7px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 6px;
-  background: #f1f5f9;
-  color: var(--te-neutral-500);
-  font-size: 10px;
-  font-weight: 900;
-  line-height: 1.1;
-}
-
-.audio-device-row {
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 360px);
-}
-
-.resume-segment,
-.audio-output-segment {
+.advanced-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-  padding: 4px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 8px;
-  background: #f8fafc;
+  gap: 14px;
+  padding: 14px 20px 20px;
+  border-top: 1px solid rgba(229, 231, 235, 0.6);
 }
 
-.chip-segment {
+.advanced-grid label,
+.decode-grid label {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  gap: 6px;
-  padding: 4px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 8px;
-  background: #f8fafc;
-}
-
-.chip-option {
-  min-width: 0;
-  height: 32px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--te-neutral-700);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.chip-option:hover,
-.chip-option.active {
-  border-color: color-mix(in srgb, var(--te-primary-500) 28%, transparent);
-  background: #fff;
-  color: #2563eb;
-}
-
-.chip-option.out-of-range {
-  opacity: 0.38;
-}
-
-.status-panel {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
   gap: 7px;
 }
 
-.status-chip {
-  max-width: 100%;
-  min-height: 28px;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 9px;
-  border-radius: 999px;
-  background: #f8fafc;
-  color: var(--te-neutral-600);
+.advanced-grid label span,
+.decode-grid label span {
+  color: #6b7280;
   font-size: 11px;
   font-weight: 800;
-  white-space: nowrap;
 }
 
-.status-chip.success {
-  background: #ecfdf5;
-  color: #047857;
-}
-
-.status-chip.warning {
-  background: #fff7ed;
-  color: #c2410c;
-}
-
-.status-chain {
-  max-width: min(520px, 100%);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.resume-option,
-.audio-output-option {
-  display: flex;
-  min-height: 54px;
-  min-width: 0;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--te-neutral-700);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background 0.16s,
-    border-color 0.16s,
-    color 0.16s,
-    box-shadow 0.16s;
-}
-
-.resume-option:hover,
-.audio-output-option:hover {
-  background: rgba(255, 255, 255, 0.76);
-  color: var(--te-neutral-900);
-}
-
-.resume-option.active,
-.audio-output-option.active {
-  border-color: color-mix(in srgb, var(--te-primary-500) 28%, transparent);
-  background: #fff;
-  color: var(--te-neutral-900);
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
-}
-
-.resume-option span,
-.audio-output-option span {
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.resume-option small,
-.audio-output-option small {
-  overflow: hidden;
-  color: var(--te-neutral-500);
-  font-size: 11px;
-  font-weight: 400;
-  line-height: 1.3;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.select-control {
-  width: 100%;
-  min-height: 38px;
-  border: 1px solid rgba(17, 24, 39, 0.12);
-  border-radius: 7px;
-  background: #fff;
-  color: var(--te-neutral-800);
-  font-size: 13px;
-  outline: none;
-  padding: 0 10px;
-}
-
-.select-control:focus {
-  border-color: color-mix(in srgb, var(--te-primary-500) 42%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--te-primary-500) 12%, transparent);
-}
-
-.range-control {
-  width: 100%;
-  accent-color: #2563eb;
-}
-
-.stacked-control,
-.continuity-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  min-width: 0;
-}
-
-.inline-control-group.spread {
-  justify-content: space-between;
-}
-
-.inline-toggle-label {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 9px;
-  min-height: 38px;
-  color: var(--te-neutral-600);
-  font-size: 12px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.compact-range-row {
+.dsp-status-grid {
   display: grid;
-  grid-template-columns: 68px minmax(0, 1fr) 42px;
-  align-items: center;
-  gap: 9px;
-  min-width: 0;
-  color: var(--te-neutral-600);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.compact-range-row strong {
-  color: var(--te-neutral-700);
-  font-size: 12px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-.crossfade-compact {
-  flex: 1;
-  grid-template-columns: 70px minmax(110px, 1fr) 36px;
-}
-
-.compact-resume {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
 }
 
-.path-row {
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 440px);
-  align-items: start;
-}
-
-.path-actions {
+.dsp-meter {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto;
-  gap: 8px;
-  align-items: center;
-}
-
-.convolver-actions {
-  grid-template-columns: minmax(0, 1fr) auto auto;
-}
-
-.path-field {
-  height: 34px;
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  padding: 0 10px;
-  border: 1px solid rgba(17, 24, 39, 0.1);
-  border-radius: 7px;
-  background: #f8fafc;
-  color: var(--te-neutral-700);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.button-cluster {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.icon-button,
-.text-button,
-.primary-button,
-.danger-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  height: 34px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  cursor: pointer;
-  font-size: 13px;
-  white-space: nowrap;
-  transition:
-    background 0.15s,
-    border-color 0.15s,
-    color 0.15s;
-}
-
-.icon-button {
-  width: 34px;
-  padding: 0;
-  background: transparent;
-  color: var(--te-neutral-700);
-}
-
-.icon-button:hover,
-.icon-button.subtle:hover {
-  background: rgba(17, 24, 39, 0.06);
-}
-
-.icon-button.subtle {
-  background: #f8fafc;
-  border-color: rgba(17, 24, 39, 0.08);
-  color: var(--te-neutral-500);
-}
-
-.text-button {
-  padding: 0 12px;
-  background: #f8fafc;
-  border-color: rgba(17, 24, 39, 0.08);
-  color: var(--te-neutral-700);
-}
-
-.text-button:hover {
-  color: #2563eb;
-  border-color: rgba(37, 99, 235, 0.24);
-  background: rgba(37, 99, 235, 0.06);
-}
-
-.primary-button {
-  padding: 0 13px;
-  background: #2563eb;
-  color: #fff;
-}
-
-.primary-button:hover {
-  background: #1d4ed8;
-}
-
-.primary-button:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.icon-button:disabled,
-.text-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.danger-button {
-  padding: 0 13px;
-  background: #fef2f2;
-  color: #dc2626;
-  border-color: #fecaca;
-}
-
-.danger-button:hover {
-  background: #fee2e2;
-}
-
-.danger-button:disabled {
-  cursor: wait;
-  opacity: 0.6;
-}
-
-.inline-note {
-  padding: 9px 18px;
-  background: #eff6ff;
-  border-top: 1px solid rgba(37, 99, 235, 0.12);
-  color: #1d4ed8;
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.inline-control-group {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-}
-
-.compact-select {
-  width: 120px;
-}
-
-.shortcut-list {
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 8px;
-  overflow: hidden;
+  gap: 3px;
+  min-height: 92px;
+  padding: 18px;
+  border: 1px solid rgba(229, 231, 235, 0.72);
+  border-radius: 14px;
   background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
 }
 
-.shortcut-item {
+.dsp-meter span {
+  color: var(--brand-500);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.dsp-meter strong {
+  color: #1f2937;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.dsp-meter small {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.dsp-disabled-content {
+  opacity: 0.5;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.dsp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.dsp-module-grid {
+  display: grid;
+  gap: 18px;
+}
+
+.dsp-module-card {
+  padding: 18px;
+  border: 1px solid rgba(229, 231, 235, 0.7);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+}
+
+.mini-setting {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  min-height: 50px;
-  padding: 0 18px;
-  font-size: 14px;
+  min-height: 48px;
 }
 
-.shortcut-item + .shortcut-item {
-  border-top: 1px solid rgba(17, 24, 39, 0.06);
+.mini-setting + .mini-setting {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(243, 244, 246, 0.85);
 }
 
-.shortcut-item kbd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 28px;
-  height: 24px;
-  padding: 0 7px;
-  border-radius: 6px;
-  border: 1px solid rgba(17, 24, 39, 0.12);
-  background: #f8fafc;
-  color: var(--te-neutral-700);
-  font-family: inherit;
+.mini-setting div {
+  display: grid;
+  gap: 3px;
+}
+
+.mini-setting strong {
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.mini-setting span {
+  color: #6b7280;
   font-size: 12px;
-}
-
-.shortcut-item b {
-  margin: 0 4px;
-  color: var(--te-neutral-500);
   font-weight: 500;
 }
 
-@media (max-width: 820px) {
-  .settings-shell {
-    grid-template-columns: 1fr;
+.soft-button.compact {
+  min-height: 30px;
+  padding-inline: 12px;
+}
+
+.range-input {
+  width: 96px;
+  accent-color: var(--brand-500);
+}
+
+.decode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.path-control {
+  display: flex;
+  min-width: min(100%, 520px);
+  flex: 1;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.path-control input {
+  min-width: 0;
+  flex: 1;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  outline: none;
+  background: #f9fafb;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.plugin-empty {
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  gap: 8px;
+  border: 1px dashed #d1d5db;
+  border-radius: 14px;
+  background: rgba(249, 250, 251, 0.55);
+  color: #6b7280;
+  text-align: center;
+}
+
+.plugin-empty i {
+  color: var(--brand-400);
+  font-size: 30px;
+}
+
+.plugin-empty strong {
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.plugin-empty span {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.swatch-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.swatch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.12);
+}
+
+.swatch.active {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+}
+
+.swatch i {
+  color: #fff;
+  font-size: 10px;
+}
+
+.swatch.violet { color: #8b5cf6; background: #8b5cf6; }
+.swatch.blue { background: #3b82f6; }
+.swatch.emerald { background: #10b981; }
+.swatch.rose { background: #fb7185; }
+.swatch.amber { background: #f59e0b; }
+.swatch.slate { background: #1f2937; }
+
+.density button {
+  min-width: 56px;
+}
+
+.background-options {
+  display: flex;
+  gap: 16px;
+}
+
+.background-options button {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.16s ease;
+}
+
+.background-options button:hover,
+.background-options button.active {
+  opacity: 1;
+}
+
+.background-options span {
+  width: 64px;
+  height: 40px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.08);
+}
+
+.background-options small {
+  color: inherit;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.background-options button.active span {
+  border-color: var(--brand-500);
+  outline: 2px solid rgba(139, 92, 246, 0.3);
+  outline-offset: 1px;
+}
+
+.background-options button.active small {
+  color: var(--brand-600);
+}
+
+.blur-cover {
+  filter: blur(2px);
+  background: linear-gradient(135deg, #93c5fd, #c4b5fd 52%, #f9a8d4);
+}
+
+.background-options button:hover .blur-cover {
+  filter: blur(0);
+}
+
+.fluid-cover {
+  background: linear-gradient(90deg, #22d3ee, #3b82f6);
+}
+
+.solid-cover {
+  background: #111827;
+}
+
+.range-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #f9fafb;
+}
+
+.range-pill span {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.shortcut-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  padding: 16px;
+  border: 1px solid rgba(229, 231, 235, 0.75);
+  border-radius: 12px;
+  background: #f9fafb;
+}
+
+.shortcut-grid div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.shortcut-grid span {
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.shortcut-grid kbd {
+  display: inline-flex;
+  min-height: 26px;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  color: #4b5563;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.about-section {
+  position: relative;
+  overflow: hidden;
+}
+
+.about-glow {
+  position: absolute;
+  top: -128px;
+  right: -128px;
+  width: 320px;
+  height: 320px;
+  border-radius: 999px;
+  background: rgba(167, 139, 250, 0.1);
+  filter: blur(100px);
+  pointer-events: none;
+}
+
+.about-hero {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 32px;
+}
+
+.logo-shell {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.logo-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  background: var(--brand-500);
+  filter: blur(12px);
+  opacity: 0.3;
+  transition: opacity 0.5s ease;
+}
+
+.logo-shell:hover .logo-glow {
+  opacity: 0.6;
+}
+
+.logo-mark {
+  position: relative;
+  display: flex;
+  width: 96px;
+  height: 96px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #374151;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #111827, #000);
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.24);
+}
+
+.logo-mark i {
+  background: linear-gradient(135deg, var(--brand-400), #e879f9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-size: 42px;
+}
+
+.about-copy {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  text-align: left;
+}
+
+.about-copy h3 {
+  margin: 0;
+  color: #1f2937;
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+
+.about-copy span {
+  display: inline-flex;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--brand-50);
+  color: var(--brand-600);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.about-copy p {
+  max-width: 560px;
+  margin: 0;
+  color: #6b7280;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.about-cards {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+.update-card,
+.sponsor-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 12px;
+}
+
+.update-card {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.06);
+}
+
+.status-icon {
+  display: flex;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #dcfce7;
+  border-radius: 10px;
+  background: #f0fdf4;
+  color: #22c55e;
+}
+
+.update-card > div:nth-child(2) {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+}
+
+.update-card strong {
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.update-card span {
+  color: #9ca3af;
+  font-size: 11px;
+}
+
+.sponsor-card {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(251, 191, 36, 0.6);
+  background: linear-gradient(90deg, #fffbeb, rgba(255, 247, 237, 0.5));
+  box-shadow: 0 1px 5px rgba(245, 158, 11, 0.08);
+}
+
+.sponsor-watermark {
+  position: absolute;
+  right: -8px;
+  bottom: -8px;
+  color: rgba(245, 158, 11, 0.1);
+  font-size: 60px;
+  transform: rotate(12deg);
+  pointer-events: none;
+}
+
+.sponsor-card h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 2px;
+  color: #92400e;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.sponsor-card p {
+  max-width: 540px;
+  margin: 0;
+  color: rgba(146, 64, 14, 0.8);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.sponsor-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.sponsor-button,
+.sponsor-list-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+  transition: transform 0.16s ease;
+}
+
+.sponsor-button {
+  border: 0;
+  background: linear-gradient(90deg, #fbbf24, #fb923c);
+  color: #fff;
+  box-shadow: 0 8px 18px rgba(249, 115, 22, 0.2);
+}
+
+.sponsor-button:hover,
+.sponsor-list-button:hover,
+.about-links button:hover {
+  transform: translateY(-1px);
+}
+
+.sponsor-list-button {
+  border: 1px solid #fde68a;
+  background: #fff;
+  color: #b45309;
+  box-shadow: 0 1px 5px rgba(245, 158, 11, 0.08);
+}
+
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding-top: 32px;
+}
+
+.about-links button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 12px 24px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #fff;
+  color: #374151;
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.06);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 900;
+  transition:
+    transform 0.16s ease,
+    box-shadow 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.about-links button:hover {
+  border-color: #d1d5db;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+}
+
+.about-links button:nth-child(2):hover {
+  border-color: var(--brand-300);
+  color: var(--brand-600);
+}
+
+.about-links button:nth-child(3):hover {
+  border-color: #fda4af;
+  color: #e11d48;
+}
+
+@media (max-width: 1024px) {
+  .settings-preview-page {
+    padding: 0 24px 24px;
   }
 
-  .settings-tabs {
+  .settings-preview-layout {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+    padding-top: 32px;
+  }
+
+  .settings-preview-nav {
+    position: sticky;
+    top: 0;
+    left: auto;
+    width: 100%;
+    max-width: 100%;
+    flex: 0 0 auto;
     flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: auto;
     overflow-x: auto;
-    border-right: none;
-    border-bottom: 1px solid rgba(17, 24, 39, 0.08);
+    padding-bottom: 8px;
+    transform: none;
   }
 
-  .tab-btn {
+  .preview-nav-item {
     flex: 0 0 auto;
   }
 
-  .settings-body {
-    padding: 20px 16px 40px;
+  .settings-preview-stack {
+    width: 100%;
+  }
+}
+
+@media (max-width: 760px) {
+  .settings-preview-page {
+    padding: 0 16px 40px;
   }
 
-  .device-board {
-    padding: 14px;
+  .preview-section {
+    padding: 24px;
   }
 
-  .device-board-head {
+  .setting-item,
+  .setting-item.top-align,
+  .mini-setting,
+  .update-card,
+  .sponsor-card,
+  .about-hero {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .device-board-head .icon-button {
-    align-self: flex-end;
-  }
-
-  .device-card-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .dsp-board {
-    padding: 0;
-  }
-
-  .dsp-hero,
-  .dsp-summary-grid,
-  .dsp-card-grid,
-  .dsp-control-row,
-  .dsp-control-row.replaygain-row,
-  .dsp-control-row.range-row,
-  .dsp-control-row.path-row {
-    grid-template-columns: 1fr;
-  }
-
-  .dsp-master-toggle {
-    justify-self: start;
-  }
-
-  .dsp-card {
-    grid-template-columns: 44px minmax(0, 1fr);
-  }
-
-  .dsp-card-actions,
-  .dsp-card-pill {
-    grid-column: 1 / -1;
-    justify-self: start;
-  }
-
-  .setting-row,
-  .path-row,
-  .skin-row,
-  .color-mode-row,
-  .audio-output-row,
-  .audio-device-row,
-  .buffer-row,
-  .status-row,
-  .dsp-control-row,
-  .replaygain-row,
-  .continuity-row,
-  .resume-row,
-  .range-row {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
-
-  .path-actions {
-    grid-template-columns: minmax(0, 1fr) auto auto auto;
-  }
-
-  .convolver-actions {
-    grid-template-columns: minmax(0, 1fr) auto auto;
-  }
-
-  .chip-segment {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .status-panel,
-  .inline-control-group {
-    justify-content: flex-start;
-  }
-
-  .inline-control-group.spread {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .compact-range-row,
-  .crossfade-compact {
-    grid-template-columns: 72px minmax(0, 1fr) 42px;
+  .folder-list,
+  .preview-select,
+  .preview-select.wide,
+  .path-control,
+  .path-control input,
+  .soft-button,
+  .muted-button,
+  .danger-soft-button,
+  .brand-soft-button {
     width: 100%;
   }
 
-  .help-dot::after {
-    left: 0;
-    top: calc(100% + 8px);
-    transform: translateY(-3px);
+  .device-grid,
+  .dsp-status-grid,
+  .advanced-grid,
+  .decode-grid,
+  .shortcut-grid {
+    grid-template-columns: 1fr;
   }
 
-  .help-dot:hover::after,
-  .help-dot:focus-visible::after {
-    transform: translateY(0);
-  }
-
-  .restart-strip {
-    align-items: flex-start;
+  .path-control,
+  .inline-controls,
+  .background-options,
+  .sponsor-actions,
+  .about-links {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .theme-segment,
+  .segmented-control {
+    width: 100%;
+  }
+
+  .theme-segment button,
+  .segmented-control button {
+    flex: 1;
+  }
+
+  .about-copy {
+    justify-items: center;
+    text-align: center;
+  }
+
+  .about-links button {
+    flex: 1;
   }
 }
 </style>
