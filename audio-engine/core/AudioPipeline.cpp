@@ -923,6 +923,19 @@ TAE_Result AudioPipeline::playInternal(
     if (outputConfig.routingMode != ChannelRoutingMode::Auto) {
       decodeFormat_.channelCount = std::max(1, stream_.sourceFormat.channelCount);
     }
+    // 初始化声道路由器：采样率 + 上混参数 + 重置状态
+    channelRouter_.setSampleRate(outputFormat_.sampleRate);
+    {
+      UpmixConfig upmix;
+      upmix.centerGain = outputConfig.upmixCenterGain;
+      upmix.lfeGain = outputConfig.upmixLfeGain;
+      upmix.lfeLowpassHz = outputConfig.upmixLfeLowpassHz;
+      upmix.surroundGain = outputConfig.upmixSurroundGain;
+      upmix.sideGain = outputConfig.upmixSideGain;
+      upmix.surroundDelayMs = outputConfig.upmixSurroundDelayMs;
+      channelRouter_.setUpmixConfig(upmix);
+    }
+    channelRouter_.reset();
     currentItem_ = item;
     backendId_ = backendId == "wasapi-shared" ? "wasapi" : backendId;
     deviceName_ = output_->deviceName();
@@ -1235,6 +1248,15 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
 bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* error) {
   std::lock_guard lock(mutex_);
   outputConfig_ = config;
+  // 同步上混参数到路由器（允许播放中实时调整）
+  UpmixConfig upmix;
+  upmix.centerGain = outputConfig_.upmixCenterGain;
+  upmix.lfeGain = outputConfig_.upmixLfeGain;
+  upmix.lfeLowpassHz = outputConfig_.upmixLfeLowpassHz;
+  upmix.surroundGain = outputConfig_.upmixSurroundGain;
+  upmix.sideGain = outputConfig_.upmixSideGain;
+  upmix.surroundDelayMs = outputConfig_.upmixSurroundDelayMs;
+  channelRouter_.setUpmixConfig(upmix);
   if (output_ && !output_->setOutputConfig(outputConfig_, error)) return false;
   if (output_) {
     outputInfo_ = output_->outputInfo();
@@ -1740,7 +1762,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     if (read > 0 && !dopPathActive) {
       dspChain_.process(readBuffer, read);
       if (routingRequired) {
-        routeChannels(readBuffer, segment, read, decodeChannels, channels, outputConfig.routingMode);
+        channelRouter_.route(readBuffer, segment, read, decodeChannels, channels, outputConfig.routingMode);
       }
     }
     totalRead += read;
@@ -1786,7 +1808,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
         if (mixedFrames > 0 && !dopPathActive) {
           preloadDspChain_.process(preloadReadBuffer, mixedFrames);
           if (routingRequired) {
-            routeChannels(preloadReadBuffer, preloadFrames.data(), mixedFrames, decodeChannels, channels, outputConfig.routingMode);
+            channelRouter_.route(preloadReadBuffer, preloadFrames.data(), mixedFrames, decodeChannels, channels, outputConfig.routingMode);
           }
           const uint64_t totalFrames = std::max<uint64_t>(1, crossfadeTotalFrames);
           for (size_t frame = 0; frame < mixedFrames; ++frame) {

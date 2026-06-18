@@ -7,6 +7,7 @@
 #include "../decoder/FFmpegDecoder.h"
 #include "../dsp/DspChain.h"
 #include "../dsp/FftSpectrumAnalyzer.h"
+#include "../dsp/ChannelRouter.h"
 #include "../output/IOutputBackend.h"
 
 #include "twilight_audio_engine.h"
@@ -204,6 +205,7 @@ class AudioPipeline {
   std::string outputEventMessage_;
   std::vector<float> routingScratch_;
   std::vector<float> preloadRoutingScratch_;
+  ChannelRouter channelRouter_;
 };
 
 }  // namespace twilight::audio
