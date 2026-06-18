@@ -53,6 +53,13 @@ struct OutputConfig {
   uint32_t preferredBufferSize = 0;
   ChannelRoutingMode routingMode = ChannelRoutingMode::Auto;
   bool wasapiExclusivePushMode = false;
+  // 上混参数（5.1/7.1 声道扩展），默认值对应标准 audiophile 配置
+  float upmixCenterGain = 0.7071f;     // -3dB
+  float upmixLfeGain = 0.5f;           // -6dB
+  float upmixLfeLowpassHz = 120.0f;    // LFE 低通截止
+  float upmixSurroundGain = 0.5f;      // -6dB
+  float upmixSideGain = 0.3f;          // -10dB (仅 7.1)
+  float upmixSurroundDelayMs = 0.0f;   // 环绕延迟
 };
 
 struct ReplayGainInfo {

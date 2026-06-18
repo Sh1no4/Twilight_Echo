@@ -577,11 +577,31 @@ bool parseBoolField(const std::string& json, const std::string& key, bool fallba
   const size_t pos = json.find(marker);
   if (pos == std::string::npos) return fallback;
   const size_t start = pos + marker.size();
-  size_t idx = start;
-  while (idx < json.size() && std::isspace(static_cast<unsigned char>(json[idx]))) ++idx;
-  if (idx + 4 <= json.size() && json.substr(idx, 4) == "true") return true;
-  if (idx + 5 <= json.size() && json.substr(idx, 5) == "false") return false;
+  if (start + 4 <= json.size() && json.substr(start, 4) == "true") return true;
+  if (start + 5 <= json.size() && json.substr(start, 5) == "false") return false;
   return fallback;
+}
+
+float parseFloatField(const std::string& json, const std::string& key, float fallback) {
+  const std::string marker = "\"" + key + "\":";
+  const size_t pos = json.find(marker);
+  if (pos == std::string::npos) return fallback;
+  const size_t start = pos + marker.size();
+  size_t end = start;
+  // 允许负号、小数点、数字
+  if (end < json.size() && (json[end] == '-' || json[end] == '+')) ++end;
+  while (end < json.size() &&
+         (std::isdigit(static_cast<unsigned char>(json[end])) || json[end] == '.' ||
+          json[end] == 'e' || json[end] == 'E' ||
+          ((json[end] == '-' || json[end] == '+') && end > start))) {
+    ++end;
+  }
+  if (end == start) return fallback;
+  try {
+    return std::stof(json.substr(start, end - start));
+  } catch (...) {
+    return fallback;
+  }
 }
 
 OutputConfig parseOutputConfigJson(const std::string& json) {
@@ -589,6 +609,13 @@ OutputConfig parseOutputConfigJson(const std::string& json) {
   config.preferredBufferSize = parseUintField(json, "preferredBufferSize", 0);
   config.routingMode = parseChannelRoutingMode(parseStringField(json, "routingMode", "auto"));
   config.wasapiExclusivePushMode = parseBoolField(json, "wasapiExclusivePushMode", false);
+  // 上混参数（可选，缺省走 OutputConfig 默认值）
+  config.upmixCenterGain = parseFloatField(json, "upmixCenterGain", config.upmixCenterGain);
+  config.upmixLfeGain = parseFloatField(json, "upmixLfeGain", config.upmixLfeGain);
+  config.upmixLfeLowpassHz = parseFloatField(json, "upmixLfeLowpassHz", config.upmixLfeLowpassHz);
+  config.upmixSurroundGain = parseFloatField(json, "upmixSurroundGain", config.upmixSurroundGain);
+  config.upmixSideGain = parseFloatField(json, "upmixSideGain", config.upmixSideGain);
+  config.upmixSurroundDelayMs = parseFloatField(json, "upmixSurroundDelayMs", config.upmixSurroundDelayMs);
   return config;
 }
 
