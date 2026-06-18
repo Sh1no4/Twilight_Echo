@@ -119,6 +119,12 @@ export interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
   wasapiExclusivePushMode?: boolean
+  upmixCenterGain?: number
+  upmixLfeGain?: number
+  upmixLfeLowpassHz?: number
+  upmixSurroundGain?: number
+  upmixSideGain?: number
+  upmixSurroundDelayMs?: number
 }
 
 export interface LatencyInfo {
@@ -521,7 +527,13 @@ export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
 const DEFAULT_OUTPUT_CONFIG: OutputConfig = {
   preferredBufferSize: 0,
   routingMode: 'auto',
-  wasapiExclusivePushMode: false
+  wasapiExclusivePushMode: false,
+  upmixCenterGain: 0.7071,
+  upmixLfeGain: 0.5,
+  upmixLfeLowpassHz: 120,
+  upmixSurroundGain: 0.5,
+  upmixSideGain: 0.3,
+  upmixSurroundDelayMs: 0
 }
 
 const DEFAULT_AUDIO_ENGINE_SCHEDULER: AudioEngineScheduler = {
@@ -620,7 +632,13 @@ function normalizeOutputConfig(config?: Partial<OutputConfig>): OutputConfig {
       ? clampNumber(Math.trunc(config?.preferredBufferSize ?? 0), 0, 2048, 0)
       : DEFAULT_OUTPUT_CONFIG.preferredBufferSize,
     routingMode: normalizeChannelRoutingMode(config?.routingMode),
-    wasapiExclusivePushMode: config?.wasapiExclusivePushMode === true
+    wasapiExclusivePushMode: config?.wasapiExclusivePushMode === true,
+    upmixCenterGain: clampNumber(config?.upmixCenterGain, 0, 2, 0.7071),
+    upmixLfeGain: clampNumber(config?.upmixLfeGain, 0, 2, 0.5),
+    upmixLfeLowpassHz: clampNumber(config?.upmixLfeLowpassHz, 20, 500, 120),
+    upmixSurroundGain: clampNumber(config?.upmixSurroundGain, 0, 2, 0.5),
+    upmixSideGain: clampNumber(config?.upmixSideGain, 0, 2, 0.3),
+    upmixSurroundDelayMs: clampNumber(config?.upmixSurroundDelayMs, 0, 100, 0)
   }
 }
 
