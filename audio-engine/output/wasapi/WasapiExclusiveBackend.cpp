@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <deque>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -68,6 +69,16 @@ struct WasapiExclusiveBackend::Impl {
   std::vector<float> renderScratch;
   std::vector<uint8_t> waveFormatBytes;
   bool ownerComInitialized = false;
+
+  // ── 自动恢复状态 ──
+  std::atomic<bool> recoveryInProgress{false};
+  int recoveryAttempts = 0;
+  uint64_t recoveryCount = 0;
+  std::chrono::steady_clock::time_point recoveryCooldownUntil{};
+  std::deque<std::chrono::steady_clock::time_point> recoveryWindow;
+  // 恢复所需的上下文快照（open 时保存，reopen 时使用）
+  std::string openDeviceId;
+  AudioFormat openRequestedFormat;
 
   void resetFailureInfo() {
     OutputInfo::Diagnostics lifetime = diagnostics;
@@ -286,15 +297,12 @@ struct WasapiExclusiveBackend::Impl {
     return failHr(error, "WASAPI 独占 init failure：无法获取渲染客户端", hr);
   }
 
-  bool renderPacket(UINT32 frameCount) {
-    if (frameCount == 0) return true;
+  HRESULT renderPacket(UINT32 frameCount) {
+    if (frameCount == 0) return S_OK;
 
     BYTE* data = nullptr;
     HRESULT hr = renderClient->GetBuffer(frameCount, &data);
-    if (FAILED(hr)) {
-      notifyFailure(hr, "无法获取独占输出缓冲区");
-      return false;
-    }
+    if (FAILED(hr)) return hr;
     const size_t byteCount = static_cast<size_t>(frameCount) * audioFormatBytesPerFrame(outputFormat);
     if (data && byteCount > 0) std::memset(data, 0, byteCount);
 
@@ -307,11 +315,8 @@ struct WasapiExclusiveBackend::Impl {
       const size_t rendered = typedCallback(block);
       if (rendered > 0) {
         hr = renderClient->ReleaseBuffer(frameCount, 0);
-        if (FAILED(hr)) {
-          notifyFailure(hr, "无法提交独占输出缓冲区");
-          return false;
-        }
-        return true;
+        if (FAILED(hr)) return hr;
+        return S_OK;
       }
     }
 
@@ -329,18 +334,15 @@ struct WasapiExclusiveBackend::Impl {
         data);
 
     hr = renderClient->ReleaseBuffer(frameCount, 0);
-    if (FAILED(hr)) {
-      notifyFailure(hr, "无法提交独占输出缓冲区");
-      return false;
-    }
-    return true;
+    if (FAILED(hr)) return hr;
+    return S_OK;
   }
 
   void notifyFailure(HRESULT hr, const char* fallbackMessage) {
     if (wasapi::isDeviceInvalidated(hr)) {
       ++diagnostics.deviceLostCount;
       recordFailure("device_lost", fallbackMessage + std::string(" (错误码 ") + hresultSuffix(hr) + ")");
-      if (eventCallback) eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+      // 不在此处通知上层 DeviceInvalidated — 由 handleRenderFailure 决定恢复或通知
       return;
     }
     char buffer[160] = {};
@@ -404,14 +406,18 @@ struct WasapiExclusiveBackend::Impl {
       UINT32 padding = 0;
       HRESULT hr = audioClient->GetCurrentPadding(&padding);
       if (FAILED(hr)) {
-        notifyFailure(hr, "无法读取独占输出缓冲状态");
-        break;
+        if (!handleRenderFailure(hr, "无法读取独占输出缓冲状态")) break;
+        continue;
       }
 
       const UINT32 framesAvailable =
           wasapi::exclusiveRenderFrames(bufferFrameCount, padding, outputConfig.wasapiExclusivePushMode);
       if (framesAvailable == 0) continue;
-      if (!renderPacket(framesAvailable)) break;
+      const HRESULT renderHr = renderPacket(framesAvailable);
+      if (FAILED(renderHr)) {
+        if (!handleRenderFailure(renderHr, "独占输出渲染失败")) break;
+        continue;
+      }
     }
 
     if (mmcssHandle) AvRevertMmThreadCharacteristics(mmcssHandle);
@@ -445,6 +451,111 @@ struct WasapiExclusiveBackend::Impl {
       CoUninitialize();
       ownerComInitialized = false;
     }
+  }
+
+  // ── 自动恢复：重新打开设备 ──
+  bool reopenDevice() {
+    if (audioClient) {
+      audioClient->Stop();
+      audioClient->Reset();
+    }
+    renderClient.Reset();
+    audioClient.Reset();
+    samplesReadyEvent.reset();
+
+    // 重新枚举设备（设备可能已变化/被拔出后重新插入）
+    Microsoft::WRL::ComPtr<IMMDeviceEnumerator> enumerator;
+    HRESULT hr = CoCreateInstance(
+        __uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator));
+    if (FAILED(hr)) return false;
+
+    device.Reset();
+    if (wasapi::isDefaultDeviceAlias(openDeviceId)) {
+      hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
+    } else {
+      const std::wstring id = wasapi::utf8ToWide(openDeviceId);
+      hr = enumerator->GetDevice(id.c_str(), &device);
+    }
+    if (FAILED(hr)) return false;
+
+    loadDeviceName();
+    if (!activateAudioClient(nullptr)) return false;
+    if (!configureStream(openRequestedFormat, nullptr)) return false;
+    if (!attachEventAndRenderClient(nullptr)) return false;
+    return true;
+  }
+
+  // ── 自动恢复：带退避/限流的重试 ──
+  bool attemptRecovery(const std::string& reason) {
+    static constexpr int kMaxAttempts = 3;
+    static constexpr int kBackoffMs[] = {500, 1000, 2000};
+    static constexpr auto kRecoveryWindow = std::chrono::seconds(10);
+    static constexpr auto kRecoveryCooldown = std::chrono::seconds(10);
+
+    const auto now = std::chrono::steady_clock::now();
+
+    // 清理过期的窗口记录
+    while (!recoveryWindow.empty() && now - recoveryWindow.front() > kRecoveryWindow) {
+      recoveryWindow.pop_front();
+    }
+
+    // 已有恢复在进行中
+    if (recoveryInProgress.load()) return false;
+
+    // 冷却期内不恢复
+    if (now < recoveryCooldownUntil) return false;
+
+    // 窗口内恢复次数超限 → 进入冷却
+    if (recoveryWindow.size() >= static_cast<size_t>(kMaxAttempts)) {
+      recoveryCooldownUntil = now + kRecoveryCooldown;
+      return false;
+    }
+
+    recoveryWindow.push_back(now);
+    recoveryInProgress = true;
+    recoveryAttempts = 0;
+
+    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+      recoveryAttempts = attempt;
+      std::this_thread::sleep_for(std::chrono::milliseconds(kBackoffMs[attempt]));
+
+      if (!reopenDevice()) continue;
+
+      // 恢复成功：预填充缓冲并启动
+      const UINT32 initialFrames = wasapi::exclusiveInitialRenderFrames(
+          bufferFrameCount, outputConfig.wasapiExclusivePushMode);
+      if (FAILED(renderPacket(initialFrames))) continue;
+
+      HRESULT startHr = audioClient->Start();
+      if (FAILED(startHr)) continue;
+
+      // 成功
+      recoveryInProgress = false;
+      recoveryAttempts = 0;
+      ++recoveryCount;
+      ++diagnostics.sessionRecoveryCount;
+      ++diagnostics.lifetimeRecoveryCount;
+      outputInfo.deviceRecovered = true;
+      outputInfo.recoveryCount = static_cast<int>(recoveryCount);
+      outputInfo.diagnostics = diagnostics;
+      return true;
+    }
+
+    // 全部失败
+    recoveryInProgress = false;
+    recoveryAttempts = kMaxAttempts;
+    return false;
+  }
+
+  // ── 统一渲染失败处理：记录 + 恢复 + 通知 ──
+  // 返回 true = 已恢复可以继续渲染；false = 需退出渲染循环
+  bool handleRenderFailure(HRESULT hr, const char* message) {
+    const bool devInvalidated = wasapi::isDeviceInvalidated(hr);
+    notifyFailure(hr, message);
+    if (!devInvalidated) return false;
+    if (attemptRecovery(message)) return true;
+    if (eventCallback) eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+    return false;
   }
 #else
   void stop() {}
@@ -504,6 +615,15 @@ bool WasapiExclusiveBackend::open(const std::string& deviceId, const AudioFormat
   if (!impl_->configureStream(requestedFormat, error)) return failAfterCom();
   if (!impl_->attachEventAndRenderClient(error)) return failAfterCom();
 
+  // 保存恢复所需的上下文
+  impl_->openDeviceId = deviceId;
+  impl_->openRequestedFormat = requestedFormat;
+  impl_->recoveryInProgress = false;
+  impl_->recoveryAttempts = 0;
+  impl_->recoveryCount = 0;
+  impl_->recoveryWindow.clear();
+  impl_->recoveryCooldownUntil = {};
+
   return true;
 #else
   (void)deviceId;
@@ -530,9 +650,9 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
   impl_->typedCallback = nullptr;
   impl_->eventCallback = std::move(eventCallback);
 
-  if (!impl_->renderPacket(wasapi::exclusiveInitialRenderFrames(
+  if (FAILED(impl_->renderPacket(wasapi::exclusiveInitialRenderFrames(
           impl_->bufferFrameCount,
-          impl_->outputConfig.wasapiExclusivePushMode))) {
+          impl_->outputConfig.wasapiExclusivePushMode)))) {
     if (error) *error = impl_->diagnostics.lastError.empty() ? "无法预填充独占输出缓冲区" : impl_->diagnostics.lastError;
     return false;
   }
@@ -582,9 +702,9 @@ bool WasapiExclusiveBackend::startTyped(
   impl_->callback = std::move(fallbackCallback);
   impl_->eventCallback = std::move(eventCallback);
 
-  if (!impl_->renderPacket(wasapi::exclusiveInitialRenderFrames(
+  if (FAILED(impl_->renderPacket(wasapi::exclusiveInitialRenderFrames(
           impl_->bufferFrameCount,
-          impl_->outputConfig.wasapiExclusivePushMode))) {
+          impl_->outputConfig.wasapiExclusivePushMode)))) {
     if (error) *error = impl_->diagnostics.lastError.empty() ? "无法预填充独占输出缓冲区" : impl_->diagnostics.lastError;
     return false;
   }
