@@ -55,6 +55,10 @@ class DsdReader {
 
   const DsdStreamInfo& streamInfo() const;
 
+  // Forward a DSD-preserving DST decoder provider to the SACD ISO demuxer so
+  // DST-compressed tracks become playable. No-op for DSF/DFF sources.
+  void setDstDecoderProvider(SacdDstDecoderProvider* provider);
+
  private:
   bool openDsf(std::string* error);
   bool openDff(std::string* error);

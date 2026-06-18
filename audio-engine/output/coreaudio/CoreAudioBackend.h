@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ICoreAudioHost.h"
 #include "../IOutputBackend.h"
 
 #include <memory>
@@ -10,6 +11,7 @@ namespace twilight::audio {
 class CoreAudioBackend final : public IOutputBackend {
  public:
   CoreAudioBackend();
+  explicit CoreAudioBackend(std::unique_ptr<ICoreAudioHost> host);
   ~CoreAudioBackend() override;
 
   const char* id() const override;

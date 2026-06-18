@@ -332,11 +332,13 @@ export interface VisualizationOptions {
   spectrumPoints?: number
   waveformPoints?: number
   spectrogramFrames?: number
+  oscilloscopePoints?: number
 }
 
 export interface VisualizationData {
   spectrum: number[]
   waveform: number[]
+  oscilloscope: number[]
   peakDb: number
   rmsDb: number
   lufsMomentary: number | null
@@ -469,9 +471,9 @@ const AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
   {
     id: 'coreaudio',
     label: '苹果系统音频',
-    description: '苹果系统原生音频输出后端。',
+    description: '苹果系统原生音频输出后端。开启独占模式时使用 Hog Mode 绕过系统混音器。',
     platform: 'darwin',
-    supportsExclusive: false
+    supportsExclusive: true
   },
   {
     id: 'alsa',
@@ -626,7 +628,8 @@ function normalizeVisualizationOptions(options?: VisualizationOptions): Required
   return {
     spectrumPoints: Math.trunc(clampNumber(options?.spectrumPoints, 8, 256, 64)),
     waveformPoints: Math.trunc(clampNumber(options?.waveformPoints, 16, 512, 128)),
-    spectrogramFrames: Math.trunc(clampNumber(options?.spectrogramFrames, 1, 96, 48))
+    spectrogramFrames: Math.trunc(clampNumber(options?.spectrogramFrames, 1, 96, 48)),
+    oscilloscopePoints: Math.trunc(clampNumber(options?.oscilloscopePoints, 64, 4096, 1024))
   }
 }
 
@@ -820,6 +823,7 @@ function createInactiveVisualizationData(
   return {
     spectrum: Array.from({ length: options.spectrumPoints }, () => 0),
     waveform: Array.from({ length: options.waveformPoints }, () => 0),
+    oscilloscope: Array.from({ length: options.oscilloscopePoints }, () => 0),
     peakDb: -120,
     rmsDb: -120,
     lufsMomentary: null,
@@ -836,6 +840,7 @@ function normalizeVisualizationData(
   return {
     spectrum: normalizeNumberArray(data.spectrum, options.spectrumPoints),
     waveform: normalizeNumberArray(data.waveform, options.waveformPoints),
+    oscilloscope: normalizeNumberArray(data.oscilloscope, options.oscilloscopePoints),
     peakDb: typeof data.peakDb === 'number' && Number.isFinite(data.peakDb) ? data.peakDb : -120,
     rmsDb: typeof data.rmsDb === 'number' && Number.isFinite(data.rmsDb) ? data.rmsDb : -120,
     lufsMomentary:
@@ -887,13 +892,33 @@ function createDefaultPlaybackInfo(
   exclusiveMode: boolean,
   outputConfig: OutputConfig
 ): PlaybackInfo {
-  const exclusive = output === 'wasapi' ? exclusiveMode : output === 'asio'
-  const supportsOutputPerfect = output === 'asio' || (output === 'wasapi' && exclusiveMode)
+  const exclusive =
+    output === 'wasapi'
+      ? exclusiveMode
+      : output === 'asio'
+        ? true
+        : output === 'coreaudio'
+          ? exclusiveMode
+          : false
+  const supportsOutputPerfect =
+    output === 'asio' ||
+    (output === 'wasapi' && exclusiveMode) ||
+    (output === 'coreaudio' && exclusiveMode)
   const accessMode =
-    output === 'asio' ? 'exclusive' : output === 'wasapi' ? (exclusiveMode ? 'exclusive' : 'shared') : 'shared'
+    output === 'asio'
+      ? 'exclusive'
+      : output === 'wasapi' || output === 'coreaudio'
+        ? exclusiveMode
+          ? 'exclusive'
+          : 'shared'
+        : 'shared'
   const devicePathKind =
     output === 'asio' ? 'asio' : output === 'coreaudio' ? 'hal' : 'default'
-  const perfectReasonCode = supportsOutputPerfect ? '' : output === 'wasapi' ? 'shared_mixer' : 'backend_not_output_perfect'
+  const perfectReasonCode = supportsOutputPerfect
+    ? ''
+    : output === 'wasapi' || output === 'coreaudio'
+      ? 'shared_mixer'
+      : 'backend_not_output_perfect'
   const perfectReason = supportsOutputPerfect
     ? ''
     : output === 'wasapi'
@@ -1900,6 +1925,7 @@ export class AudioEngineManager extends EventEmitter {
 
   private getNativeBackendId(): string {
     if (this.output === 'wasapi' && this.exclusiveMode) return 'wasapi-exclusive'
+    if (this.output === 'coreaudio' && this.exclusiveMode) return 'coreaudio-exclusive'
     return this.output
   }
 
@@ -2066,7 +2092,7 @@ export class AudioEngineManager extends EventEmitter {
       this.playbackInfo.outputBitDepth > 0 &&
       this.playbackInfo.sourceBitDepth === this.playbackInfo.outputBitDepth
     const noResample = !this.playbackInfo.outputInfo.resampled
-    const shared = this.output === 'wasapi' && !this.exclusiveMode
+    const shared = (this.output === 'wasapi' || this.output === 'coreaudio') && !this.exclusiveMode
     const perfectReason =
       this.playbackInfo.outputInfo.perfectReason ||
       (shared
@@ -2088,7 +2114,9 @@ export class AudioEngineManager extends EventEmitter {
     this.playbackInfo.outputInfo = {
       ...this.playbackInfo.outputInfo,
       exclusive:
-        this.output === 'wasapi' ? this.exclusiveMode : this.playbackInfo.outputInfo.exclusive,
+        this.output === 'wasapi' || this.output === 'coreaudio'
+          ? this.exclusiveMode
+          : this.playbackInfo.outputInfo.exclusive,
       supportsOutputPerfect,
       sourceExact: false,
       outputPerfect: false,
@@ -2098,7 +2126,7 @@ export class AudioEngineManager extends EventEmitter {
         this.playbackInfo.outputInfo.accessMode ||
         (this.output === 'asio'
           ? 'exclusive'
-          : this.output === 'wasapi'
+          : this.output === 'wasapi' || this.output === 'coreaudio'
             ? this.exclusiveMode
               ? 'exclusive'
               : 'shared'

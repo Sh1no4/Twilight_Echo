@@ -1,5 +1,6 @@
 #pragma once
 
+#include "IAlsaHost.h"
 #include "../IOutputBackend.h"
 
 #include <memory>
@@ -10,12 +11,18 @@ namespace twilight::audio {
 class AlsaBackend final : public IOutputBackend {
  public:
   AlsaBackend();
+  explicit AlsaBackend(std::unique_ptr<IAlsaHost> host);
   ~AlsaBackend() override;
 
   const char* id() const override;
   bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) override;
   bool setOutputConfig(const OutputConfig& config, std::string* error) override;
   bool start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) override;
+  bool startTyped(
+      TypedRenderCallback callback,
+      RenderCallback fallbackCallback,
+      OutputEventCallback eventCallback,
+      std::string* error) override;
   void stop() override;
   void close() override;
 

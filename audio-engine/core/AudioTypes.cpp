@@ -94,7 +94,8 @@ bool hasConcreteFormat(const AudioFormat& format) {
 }
 
 bool dopCarrierMatchesExpected(const PerfectEvaluation& evaluation) {
-  const auto expected = dopCarrierFormatForDsd(evaluation.dsdRate, evaluation.sourceFormat.channelCount);
+  const auto expected =
+      dopCarrierFormatForDsd(evaluation.dsdRate, evaluation.sourceFormat.sampleRate, evaluation.sourceFormat.channelCount);
   if (!expected.has_value()) return false;
   if (evaluation.dopCarrierMatched) return true;
   return hasConcreteFormat(evaluation.dopCarrierFormat) && pcmFormatsExactMatch(evaluation.dopCarrierFormat, *expected) &&
@@ -116,7 +117,8 @@ std::string dsdPerfectReason(const PerfectEvaluation& evaluation) {
     return evaluation.backendPerfectReason.empty() ? "DSD converted to PCM" : evaluation.backendPerfectReason;
   }
   if (evaluation.dsdMode == DsdMode::Dop) {
-    if (!dopCarrierFormatForDsd(evaluation.dsdRate, evaluation.sourceFormat.channelCount).has_value()) {
+    if (!dopCarrierFormatForDsd(evaluation.dsdRate, evaluation.sourceFormat.sampleRate, evaluation.sourceFormat.channelCount)
+             .has_value()) {
       return "DSD source unsupported";
     }
     if (!dopCarrierMatchesExpected(evaluation)) return "DoP carrier mismatch";
@@ -142,7 +144,8 @@ std::string dsdPerfectReasonCode(const PerfectEvaluation& evaluation) {
     return dsdPcmFallbackReasonCode(evaluation.backendPerfectReason);
   }
   if (evaluation.dsdMode == DsdMode::Dop) {
-    if (!dopCarrierFormatForDsd(evaluation.dsdRate, evaluation.sourceFormat.channelCount).has_value()) {
+    if (!dopCarrierFormatForDsd(evaluation.dsdRate, evaluation.sourceFormat.sampleRate, evaluation.sourceFormat.channelCount)
+             .has_value()) {
       return "dsd_source_unsupported";
     }
     if (!dopCarrierMatchesExpected(evaluation)) return "dop_carrier_mismatch";
@@ -283,7 +286,7 @@ bool dsdFormatsExactMatch(const AudioFormat& left, const AudioFormat& right) {
          left.sampleFormat == right.sampleFormat;
 }
 
-std::optional<AudioFormat> dopCarrierFormatForDsd(int dsdRate, int channelCount) {
+std::optional<AudioFormat> dopCarrierFormatForDsd(int dsdRate, int sourceSampleRate, int channelCount) {
   if (channelCount <= 0) return std::nullopt;
 
   AudioFormat carrier;
@@ -291,12 +294,21 @@ std::optional<AudioFormat> dopCarrierFormatForDsd(int dsdRate, int channelCount)
   carrier.bitDepth = 24;
   carrier.sampleFormat = AudioSampleFormat::Int24Interleaved;
 
+  const bool is48kFamily = sourceSampleRate > 0 && sourceSampleRate % 48000 == 0;
+  const bool is441kFamily = sourceSampleRate <= 0 || sourceSampleRate % 44100 == 0;
+
   switch (dsdRate) {
     case 64:
-      carrier.sampleRate = 176400;
+      carrier.sampleRate = is48kFamily && !is441kFamily ? 192000 : 176400;
       return carrier;
     case 128:
-      carrier.sampleRate = 352800;
+      carrier.sampleRate = is48kFamily && !is441kFamily ? 384000 : 352800;
+      return carrier;
+    case 256:
+      carrier.sampleRate = is48kFamily && !is441kFamily ? 768000 : 705600;
+      return carrier;
+    case 512:
+      carrier.sampleRate = is48kFamily && !is441kFamily ? 1536000 : 1411200;
       return carrier;
     default:
       return std::nullopt;

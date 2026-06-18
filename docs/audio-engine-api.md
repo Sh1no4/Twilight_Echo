@@ -37,6 +37,7 @@
 - `spectrumPoints`：8-256，默认 64。
 - `waveformPoints`：16-512，默认 128。
 - `spectrogramFrames`：1-96，默认 48；native 侧保留固定滚动窗口，不无限增长。
+- `oscilloscopePoints`：64-4096，默认 1024；请求的时域示波器样本数，独立于 `fftResolution` 与 `waveformPoints`，由专门的 decoupled tap 返回。
 
 返回 JSON 固定包含：
 
@@ -46,10 +47,13 @@
 - `rmsDb: number`
 - `lufsMomentary: number | null`
 - `spectrogram: number[][]`
+- `oscilloscope: number[]`
 - `sampleRate: number`
 - `active: boolean`
 
-当没有播放采样或 FFT tap 禁用时，`active=false`，`spectrum` / `waveform` 返回固定长度零数组，`spectrogram=[]`，`lufsMomentary=null`。UI 必须把它展示为空闲态，不能生成假成功数据。当前 LUFS 为基于当前 PCM 块 RMS 的 momentary 估算，用于播放器可视化，不作为合规响度计量。
+`oscilloscope` 是与 `waveform` 解耦的独立时域采样数组，长度由 `oscilloscopePoints` 决定，不随 `fftResolution` 或 `waveformPoints` 变化；返回 N 个 signed time-domain 样本，供 UI 做稳定波形触发与绘制。PlayerBar 在 `oscilloscope` 基础上提供独立的示波器子面板（canvas polyline、客户端零交叉触发、`transition:none`、渐变描边 `#2563eb`→`#14b8a6`），与频谱面板互不影响。
+
+当没有播放采样或 FFT tap 禁用时，`active=false`，`spectrum` / `waveform` / `oscilloscope` 返回固定长度零数组，`spectrogram=[]`，`lufsMomentary=null`。UI 必须把它展示为空闲态，不能生成假成功数据。当前 LUFS 为基于当前 PCM 块 RMS 的 momentary 估算，用于播放器可视化，不作为合规响度计量。
 
 ## Capabilities 与错误 JSON
 
@@ -61,7 +65,7 @@
 - `htmlAudioFallbackDefault`：Electron 是否默认允许 HTMLAudio 兜底；现阶段为 `false`。
 - `backends` / `backendCapabilities`：后端能力列表，两个字段保持兼容。
 - `features`：FFmpeg、WASAPI、ASIO、CoreAudio、ALSA、Native DSD、DoP、SACD ISO 能力布尔值。
-- `dsd`：DSD 能力模型。DSF/DFF 与 SACD ISO 未压缩 DSD area 可进入 Native DSD / DoP / PCM fallback 决策链；DST 压缩 SACD 曲目只接受 DSD-preserving provider。当前 provider 不可用时 `sacdIsoDst=false`、`sacdIsoDstMode=unavailable`、`sacdIsoDstReasonCode=dst_dsd_provider_unavailable`。
+- `dsd`：DSD 能力模型。DSF/DFF 与 SACD ISO 未压缩 DSD area 可进入 Native DSD / DoP / PCM fallback 决策链；DST 压缩 SACD 曲目通过 DSD-preserving provider（vendored FFmpeg dstdec 算术核心，LGPL-2.1+，输出原始 DSD 字节而非 PCM）解出 DSD 后，同样进入该决策链。provider 默认可用，此时 `sacdIsoDst=true`、`sacdIsoDstMode="native"`、`sacdIsoDstDsdProvider=true`；provider 不可用时退回 `sacdIsoDst=false`、`sacdIsoDstMode=unavailable`、`sacdIsoDstReasonCode=dst_dsd_provider_unavailable`。
 
 `TAE_GetLastError()` 同样使用 buffer/required-size 模式，返回 `hasError`、`code`、`message`、`backend`、`context`、`recoverable`。
 
@@ -83,19 +87,19 @@
 
 ## DSD / DoP / SACD 语义
 
-- DoP carrier：DSF/DFF DSD64/128 在后端、设备、声道数和实际 PCM carrier 格式满足条件时可进入 `dsdMode=dop`。UI 展示为 DSD 源到 `DoP carrier` 再到后端实际输出；它不同于 PCM fallback，因为 carrier 保留 DSD bitstream。
-- PCM fallback：DSF/DFF DSD256/512、DoP carrier 条件不满足，或软件音量、ReplayGain、EQ、Convolver、Crossfeed、Crossfade 等处理启用时，必须走 PCM fallback。UI 展示为 DSD 源到 PCM 工作格式再到后端实际 PCM 格式，不把它标为 Native DSD 或 DoP。
-- Native DSD：指后端和设备直接接收 DSD bitstream。首版只承诺 ASIO，且只有运行态证明为 `proven` 才能声明 native。
-- SACD ISO：首版支持未压缩 DSD area 的曲目切片播放；`?area=stereo|multichannel&track=N` 可选择具体 program/track。DST 压缩曲目必须走 DSD-preserving provider 才能进入 Native DSD / DoP；provider 不可用时报 `dst_dsd_provider_unavailable`，provider 失败时报 `dst_dsd_provider_failed`，禁止把 FFmpeg PCM DST decode 包装成 Native DSD/DoP 成功。
+- DoP carrier：DSF/DFF DSD64/128/256/512 在后端、设备、声道数和实际 PCM carrier 格式满足条件时可进入 `dsdMode=dop`，遵循 dCS DoP open standard v1.1（24-bit、`0x05`/`0xFA` marker 交替）。carrier 采样率：DSD64=176.4kHz、DSD128=352.8kHz、DSD256=705.6kHz（44.1k family）/768kHz（48k family）、DSD512=1411.2kHz（44.1k family）/1536kHz（48k family）。carrier 上限从 DSD128 提升到 DSD512，但运行时仍由设备 carrier-rate 能力决定：ASIO 读取 `dopCarrierSampleRates`，WASAPI Exclusive / CoreAudio Exclusive 通过 `IsFormatSupported` 运行时探测。UI 展示为 DSD 源到 `DoP carrier` 再到后端实际输出；它不同于 PCM fallback，因为 carrier 保留 DSD bitstream。
+- PCM fallback：DoP carrier 条件不满足（包括设备不支持 DSD256/512 carrier 速率），或软件音量、ReplayGain、EQ、Convolver、Crossfeed、Crossfade 等处理启用时，必须走 PCM fallback。UI 展示为 DSD 源到 PCM 工作格式再到后端实际 PCM 格式，不把它标为 Native DSD 或 DoP。
+- Native DSD：指后端和设备直接接收 DSD bitstream。当前支持 ASIO 与 Linux ALSA `hw:` 设备（通过 `SND_PCM_FORMAT_DSD_U8` / `DSD_U16_LE` / `DSD_U32_LE` 直送 DSD，rate = DSD bit-clock / phys_width：DSD64→U8@352.8k、DSD128→U8@705.6k、DSD256→U16_LE@705.6k、DSD512→U32_LE@705.6k，静音字节 `0x69`，格式选择顺序按 MPD 约定 U8→U32_LE→U16_LE），`backendCanAttemptNativeDsd("alsa")==true`，nativeDsdRuntimeFacts 在打开时为 Candidate、首次成功 `writei` 后为 Proven。只有运行态证明为 `proven` 才能声明 native。WASAPI 与 CoreAudio 没有 native DSD 通道（WASAPI 无 UAC2 native DSD path、CoreAudio 无 DSD path），属平台限制而非代码缺口；这两个后端走 DoP（Exclusive / Hog）或 PCM fallback。
+- SACD ISO：支持未压缩 DSD area 的曲目切片播放；`?area=stereo|multichannel&track=N` 可选择具体 program/track。DST 压缩曲目通过 DSD-preserving provider（vendored FFmpeg dstdec 算术核心，LGPL-2.1+，输出原始 DSD 字节而非 PCM）解出 DSD 后，进入与未压缩 DSD 相同的 Native DSD / DoP / PCM 决策链。provider 默认可用；provider 失败时报 `dst_dsd_provider_failed`，provider 不可用时退回 `dst_dsd_provider_unavailable`，禁止把 FFmpeg PCM DST decode 包装成 Native DSD/DoP 成功。
 
-`GetMetadata()` 对 SACD ISO 返回 `isoTracks[]`。每个 track 带有 `playable`、`reasonCode` 和 `outputModes`：未压缩 DSD track 为 `playable=true` 且 `outputModes=["native","dop","pcm"]`；DST track 在 provider 不可用时为 `playable=false`、`codec=dst`、`reasonCode=dst_dsd_provider_unavailable`、`outputModes=[]`。
+`GetMetadata()` 对 SACD ISO 返回 `isoTracks[]`。每个 track 带有 `playable`、`reasonCode` 和 `outputModes`：未压缩 DSD track 为 `playable=true` 且 `outputModes=["native","dop","pcm"]`；DST track 在 provider 可用时（默认）同样为 `playable=true`、`codec=dst`、`outputModes=["native","dop","pcm"]`，仅当 provider 不可用时才退回 `playable=false`、`reasonCode=dst_dsd_provider_unavailable`、`outputModes=[]`。
 
 Phase 6B 的后端规则：
 
 - WASAPI Shared 永远不进入 `outputPerfect=true`，原因应说明系统 shared mixer。
 - WASAPI Exclusive 只有独占打开成功、实际 PCM 格式完整上报且与 decoded PCM 完全匹配时，才允许进入 evaluator 判定；协商失败要区分 sample rate、bit depth、channel、sample format 或 exclusive open。
 - ASIO 只有驱动成功加载、buffer 创建成功、实际 sample format/采样率/声道/位深完整上报且与 decoded PCM 匹配时，才允许进入 evaluator 判定。
-- CoreAudio 默认输出路径继续 `outputPerfect=false`，除非后续实现并验证 Hog/Exclusive 语义。
+- CoreAudio shared 路径继续 `outputPerfect=false`；`coreaudio-exclusive` 后端在 Hog Mode 获取成功、采样率匹配且整数 PCM 直通时进入 evaluator 判定。
 - ALSA `default` / `plughw:` 默认可能经过插件转换，继续 `outputPerfect=false`；只有显式 `hw:` 且实际格式完全匹配时才允许进入 evaluator 判定。
 
 ## Recovery Diagnostics
@@ -118,9 +122,10 @@ ASIO 保留冷却与恢复诊断策略。ALSA 提供基础 xrun 恢复：`snd_pc
 | WASAPI shared | Windows | 已接入并通过 MinGW 测试矩阵 | `supportsOutputPerfect=false`，经过系统混音 |
 | WASAPI exclusive | Windows | 已接入格式协商和 smoke 覆盖 | 独占成功且 actual PCM format 与 decoded PCM 完全匹配后进入 evaluator |
 | ASIO | Windows | SDK 可选；无 SDK 时构建通过并报告不可用 | mock 覆盖 Int16/Int24/Int24-in32/Int32/Float32；真实设备 smoke opt-in |
-| CoreAudio | macOS | 源码后端存在，需 macOS 工具链验证 | 默认 false；Hog/Exclusive 未验证前不能声明 perfect |
-| ALSA | Linux | 源码后端存在，需 Linux 工具链/设备验证 | `default`/`plughw:` 默认 false；仅显式 `hw:` 且格式完全匹配时可为 true |
+| CoreAudio shared | macOS | 源码后端存在，需 macOS 工具链验证 | `supportsOutputPerfect=false`，经过系统混音 |
+| CoreAudio exclusive (Hog) | macOS | 已实现 Hog Mode + 采样率匹配 + 整数 PCM 直通，需 macOS 工具链/设备验证 | Hog 获取成功且 actual PCM format 与 decoded PCM 完全匹配后进入 evaluator |
+| ALSA | Linux | 源码后端存在，需 Linux 工具链/设备验证 | `default`/`plughw:` 默认 false；仅显式 `hw:` 且格式完全匹配时可为 true。`hw:` 支持 native DSD 直送（`DSD_U8`/`DSD_U16_LE`/`DSD_U32_LE`），`backendCanAttemptNativeDsd("alsa")==true` |
 
 ## 当前非闭环范围
 
-当前不包含可投入生产的 DSD-preserving SACD DST provider、CoreAudio hog mode、高级设备独占、多设备同步或复杂热插拔监听。Native DSD 首版只承诺 ASIO；真实设备 smoke 是 opt-in，不作为当前 CI 必需条件；没有 ASIO SDK、macOS/Linux 工具链或对应设备时必须跳过并保持默认验证通过。
+当前不包含高级设备独占、多设备同步或复杂热插拔监听。SACD DST 已通过 DSD-preserving provider 闭环（provider 默认可用）。Native DSD 支持 ASIO 与 ALSA `hw:`；WASAPI 与 CoreAudio 没有 native DSD 通道，属平台限制而非代码缺口，这两个后端走 DoP 或 PCM fallback。真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；没有 ASIO SDK、macOS/Linux 工具链或对应设备时必须跳过并保持默认验证通过。

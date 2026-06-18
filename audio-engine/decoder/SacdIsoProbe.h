@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -66,6 +67,37 @@ class SacdDstProvider {
   virtual bool available(std::string* reason) const = 0;
   virtual bool preservesDsd() const { return false; }
 };
+
+// Decode-capable DSD-preserving DST provider contract. Selection (above) stays
+// separate from decode mechanics: the demuxer owns a SacdDstDecoderProvider
+// instance and drives frame-by-frame decode through this interface. The output
+// is raw DSD bytes (MSB-first, DffInterleaved) matching the pipeline expected
+// by DsdReader::openSacdIso.
+class SacdDstDecoderProvider {
+ public:
+  virtual ~SacdDstDecoderProvider() = default;
+  virtual const char* name() const = 0;
+  virtual bool available(std::string* reason) const = 0;
+  // Prepare to decode a track with the given channel count and DSD sample rate
+  // (e.g. 2822400 for DSD64). Returns false on unsupported config.
+  virtual bool open(int channels, int sampleRate, std::string* error) = 0;
+  // Decode one compressed DST frame into dsdOut. dstFrameBytes/dstFrameSize is
+  // exactly one DST access unit. dsdOut must hold channels*frameBytesPerChannel
+  // bytes. Returns bytes written (0 on error). Each frame is independently
+  // decodable, so callers may reset between frames.
+  virtual size_t decodeFrame(const uint8_t* dstFrameBytes,
+                             size_t dstFrameSize,
+                             uint8_t* dsdOut,
+                             size_t dsdOutSize,
+                             std::string* error) = 0;
+  // Bytes of raw DSD produced per channel per frame (e.g. 4704 for DSD64).
+  virtual size_t frameBytesPerChannel(int sampleRate) const = 0;
+  virtual void reset() = 0;
+};
+
+// Factory: returns the built-in DstDecoder-backed provider, or nullptr if the
+// DSD-preserving DST decoder is unavailable in this build.
+std::unique_ptr<SacdDstDecoderProvider> createDefaultSacdDstDecoderProvider();
 
 struct SacdDstProviderSelection {
   bool available = false;

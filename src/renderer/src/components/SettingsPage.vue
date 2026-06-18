@@ -97,7 +97,7 @@ const playbackHelp = {
   audioDevice:
     '选择当前后端要使用的具体设备或驱动。Auto 会跟随系统默认输出，指定设备适合外置 DAC、专业声卡或 ALSA hw/plughw。',
   exclusive:
-    '独占模式会尝试绕过系统混音器。WASAPI Exclusive/ASIO 更可能 bit-perfect；CoreAudio 默认输出 and ALSA default 通常不保证。',
+    '独占模式会尝试绕过系统混音器。WASAPI Exclusive/ASIO/CoreAudio Hog Mode 更可能 bit-perfect；ALSA default 通常不保证。',
   wasapiExclusivePushMode:
     'WASAPI 独占驱动模式。默认的“事件驱动”模式延迟低且性能好，但部分声卡/USB DAC 驱动不兼容，可能引发无声或爆音。切换到“推送模式（定时器驱动）”通常能有效解决此类硬件兼容性问题。',
   buffer:
@@ -210,6 +210,7 @@ const backendLabels: Record<string, string> = {
   'wasapi-exclusive': 'WASAPI Exclusive',
   asio: 'ASIO',
   coreaudio: 'CoreAudio',
+  'coreaudio-exclusive': 'CoreAudio Hog',
   alsa: 'ALSA'
 }
 const reasonCodeLabels: Record<string, string> = {
@@ -222,6 +223,8 @@ const reasonCodeLabels: Record<string, string> = {
   crossfade_active: 'Crossfade 正在改变播放连续性',
   volume_not_unity: '软件音量不是 100%',
   routing_changes_semantics: '声道路由或通道语义发生变化',
+  hog_mode_failed: '无法获取 CoreAudio Hog Mode 独占访问',
+  sample_rate_unsupported: '设备不支持请求的采样率',
   pcm_converted: 'PCM 格式或采样率发生转换',
   integer_passthrough_unavailable: '源格式与设备实际输出格式不一致，无法 PCM 直通',
   source_lossy: '源文件是有损格式，不能 Source Exact',

@@ -15,7 +15,7 @@ npm run typecheck
 npm run build
 ```
 
-当前 `ctest -N` 注册 13 个 MinGW 测试目标，`npm run test:audio-engine:mingw` 是 native 闭环验证入口。`npm run test:no-real-device` 串联 MinGW configure/build、native CTest、Electron manager 测试、typecheck 和前端 build；真实设备 smoke 继续 opt-in，不进入默认门禁。
+当前 `ctest -N` 注册 17 个 MinGW 测试目标，`npm run test:audio-engine:mingw` 是 native 闭环验证入口。`npm run test:no-real-device` 串联 MinGW configure/build、native CTest、Electron manager 测试、typecheck 和前端 build；真实设备 smoke 继续 opt-in，不进入默认门禁。
 
 ## 边界
 
@@ -37,7 +37,7 @@ npm run build
 
 ## 可视化 tap
 
-FFT tap 已扩展为只读 visualization tap，监听最终 PCM 渲染缓冲，不影响音频输出。C ABI / Node-API 通过 `GetVisualizationData` 返回 spectrum、waveform、peak、RMS、momentary LUFS 估算、固定滚动窗口 spectrogram、sampleRate 和 active 状态。无播放采样或 tap 禁用时返回 inactive 空闲态，Renderer 只能展示空闲态，不能生成假数据。
+FFT tap 已扩展为只读 visualization tap，监听最终 PCM 渲染缓冲，不影响音频输出。C ABI / Node-API 通过 `GetVisualizationData` 返回 spectrum、waveform、peak、RMS、momentary LUFS 估算、固定滚动窗口 spectrogram、decoupled 示波器时域采样（`oscilloscopePoints` 64-4096，默认 1024，独立于 `fftResolution`）、sampleRate 和 active 状态。无播放采样或 tap 禁用时返回 inactive 空闲态，Renderer 只能展示空闲态，不能生成假数据。
 
 Phase 6B 的后端判定边界：
 
@@ -54,14 +54,28 @@ DSP 默认 bypass。ReplayGain、EQ、FIR Convolver、Crossfeed、Crossfade 和�
 
 Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer 展示优先消费 `outputInfo.isDsd` / `dsdMode` / `dsdRate` 表示当前 runtime 传输状态，顶层字段只做兼容镜像；当 DoP 运行时回退到 PCM 时，canonical mirror 必须清成 `isDsd=false`、`dsdMode='pcm'`、`dsdRate=0`，而源侧 DSD 标签可继续由文件元数据提供。
 
-- DoP carrier：Phase 6D 允许 DSF/DFF DSD64/128 在后端、设备、声道数和实际 PCM carrier 格式满足条件时进入 `dsdMode=dop`；UI 展示 `DoP carrier`，不把它写成 PCM fallback。
-- PCM fallback：DSF/DFF DSD256/512、DoP 条件不满足，或软件音量、ReplayGain、EQ、Convolver、Crossfeed、Crossfade 等处理启用时，实际链路回到 DSD 源 -> decoded PCM -> 后端 PCM 输出；UI 需要明确展示 fallback。
-- Native DSD：首版只承诺 ASIO；驱动运行态证明为 `proven` 时可直接输出 DSD bitstream，否则回退 DoP 或 PCM。
-- SACD ISO：首版支持未压缩 DSD area 的曲目切片播放；DST 压缩曲目只允许 DSD-preserving provider。当前 provider 不可用时报告 `dst_dsd_provider_unavailable`，禁止把 FFmpeg PCM DST decode 包装成 Native DSD/DoP 成功。
+- DoP carrier：允许 DSF/DFF DSD64/128/256/512 在后端、设备、声道数和实际 PCM carrier 格式满足条件时进入 `dsdMode=dop`，遵循 dCS DoP open standard v1.1（24-bit、`0x05`/`0xFA` marker 交替）；carrier 速率 DSD64=176.4k、DSD128=352.8k、DSD256=705.6k（44.1k）/768k（48k）、DSD512=1411.2k（44.1k）/1536k（48k），上限从 DSD128 提升到 DSD512，运行时由设备 carrier-rate 能力门控（ASIO `dopCarrierSampleRates` 或 WASAPI/CoreAudio Exclusive `IsFormatSupported` 探测）。UI 展示 `DoP carrier`，不把它写成 PCM fallback。
+- PCM fallback：DoP 条件不满足（含设备不支持 DSD256/512 carrier 速率），或软件音量、ReplayGain、EQ、Convolver、Crossfeed、Crossfade 等处理启用时，实际链路回到 DSD 源 -> decoded PCM -> 后端 PCM 输出；UI 需要明确展示 fallback。
+- Native DSD：支持 ASIO 与 ALSA `hw:`（`SND_PCM_FORMAT_DSD_U8` / `DSD_U16_LE` / `DSD_U32_LE` 直送，rate = DSD bit-clock / phys_width，静音字节 `0x69`，格式顺序 U8→U32_LE→U16_LE，`backendCanAttemptNativeDsd("alsa")==true`，nativeDsdRuntimeFacts 开打开时 Candidate、首次成功 `writei` 后 Proven）。运行态证明为 `proven` 时可直接输出 DSD bitstream，否则回退 DoP 或 PCM。WASAPI 与 CoreAudio 没有 native DSD 通道（平台限制），走 DoP 或 PCM。
+- SACD ISO：支持未压缩 DSD area 的曲目切片播放；DST 压缩曲目通过 DSD-preserving provider（vendored FFmpeg dstdec 算术核心，LGPL-2.1+，输出原始 DSD 字节）解出 DSD 后进入与未压缩 DSD 相同的 Native DSD / DoP / PCM 决策链。provider 默认可用；不可用时报告 `dst_dsd_provider_unavailable`，失败时报 `dst_dsd_provider_failed`，禁止把 FFmpeg PCM DST decode 包装成 Native DSD/DoP 成功。
+
+## 已闭环
+
+- SACD DST：通过 DSD-preserving provider（vendored FFmpeg dstdec，LGPL-2.1+，输出原始 DSD 字节）解出 DSD，进入与未压缩 DSD 相同的 Native DSD / DoP / PCM 决策链；provider 默认可用，`sacdIsoDst=true`、`sacdIsoDstMode="native"`、`sacdIsoDstDsdProvider=true`，DST 曲目 `playable=true`、`outputModes=["native","dop","pcm"]`。
+- DoP DSD256/512：carrier 上限从 DSD128 提升到 DSD512，遵循 dCS DoP open standard v1.1，运行时由设备 carrier-rate 能力门控。
+- ALSA native DSD：`hw:` 设备通过 `DSD_U8` / `DSD_U16_LE` / `DSD_U32_LE` 直送 DSD，`backendCanAttemptNativeDsd("alsa")==true`，nativeDsdRuntimeFacts 开打开时 Candidate、首次成功 `writei` 后 Proven。
+- 示波器视图：`GetVisualizationData` 新增 decoupled `oscilloscope` 时域采样（`oscilloscopePoints` 64-4096，默认 1024），独立于 `fftResolution`；PlayerBar 提供独立示波器子面板（canvas polyline、零交叉触发、`transition:none`）。
+- CoreAudio Hog Mode 加固：预检现有 hog owner、安装 device-lost listener、跟踪 IOProc underrun 诊断；ICoreAudioHost / MockCoreAudioHost seam 使 CoreAudio 后端逻辑可在 Windows 单元测试。
+- ALSA 后端 seam：IAlsaHost / MockAlsaHost 使 ALSA 后端逻辑可在 Windows 单元测试（此前只能靠真实 Linux 硬件验证）。
+
+## 平台限制（非代码缺口）
+
+- WASAPI native DSD：Windows WASAPI 没有 UAC2 native DSD 通道；DoP 可在 WASAPI Exclusive 工作，native DSD 不行。
+- CoreAudio native DSD：macOS CoreAudio 没有 DSD 通道；DoP 可在 CoreAudio Exclusive（Hog）工作，native DSD 不行。
+- 真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果。
 
 ## 后续顺序
 
 1. 继续收口 ASIO、CoreAudio、ALSA 的 actual format、failure reason 与 opt-in smoke；WASAPI Exclusive 已增加真实设备多格式矩阵 smoke。
 2. 扩充真实音频 fixture 样本集；当前默认门禁覆盖 generated WAV/DSF，`TAE_AUDIO_FIXTURE_MANIFEST` 可指向外部 JSON 矩阵，`TAE_AUDIO_FIXTURES_DIR` 继续作为 MP3/FLAC/M4A/OGG/AAC/DSF/DFF 等外部小样本目录扫描 fallback。
-3. 后续补齐可投入生产的 DSD-preserving SACD DST provider、真实 ASIO Native DSD DAC smoke 和跨平台独占输出验证。
-4. 在 macOS/Linux 工具链与真实设备 smoke 通过后补平台产物路径和打包检查。
+3. 在 macOS/Linux 工具链与真实设备 smoke 通过后补平台产物路径和打包检查；WASAPI / CoreAudio 的 native DSD 属平台限制，不作为待补代码项。

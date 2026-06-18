@@ -183,22 +183,36 @@ void testSampleFormatEffectiveBitDepth() {
 }
 
 void testDopCarrierHelper() {
-  const auto dsd64 = dopCarrierFormatForDsd(64, 2);
+  const auto dsd64 = dopCarrierFormatForDsd(64, 2822400, 2);
   assert(dsd64.has_value());
   assert(dsd64->sampleRate == 176400);
   assert(dsd64->bitDepth == 24);
   assert(dsd64->channelCount == 2);
   assert(dsd64->sampleFormat == AudioSampleFormat::Int24Interleaved);
 
-  const auto dsd128 = dopCarrierFormatForDsd(128, 6);
+  const auto dsd128 = dopCarrierFormatForDsd(128, 5644800, 6);
   assert(dsd128.has_value());
   assert(dsd128->sampleRate == 352800);
   assert(dsd128->bitDepth == 24);
   assert(dsd128->channelCount == 6);
 
-  assert(!dopCarrierFormatForDsd(256, 2).has_value());
-  assert(!dopCarrierFormatForDsd(512, 2).has_value());
-  assert(!dopCarrierFormatForDsd(64, 0).has_value());
+  const auto dsd256 = dopCarrierFormatForDsd(256, 11289600, 2);
+  assert(dsd256.has_value());
+  assert(dsd256->sampleRate == 705600);
+
+  const auto dsd512 = dopCarrierFormatForDsd(512, 22579200, 2);
+  assert(dsd512.has_value());
+  assert(dsd512->sampleRate == 1411200);
+
+  const auto dsd256x48 = dopCarrierFormatForDsd(256, 12288000, 2);
+  assert(dsd256x48.has_value());
+  assert(dsd256x48->sampleRate == 768000);
+
+  const auto dsd512x48 = dopCarrierFormatForDsd(512, 24576000, 2);
+  assert(dsd512x48.has_value());
+  assert(dsd512x48->sampleRate == 1536000);
+
+  assert(!dopCarrierFormatForDsd(64, 2822400, 0).has_value());
 }
 
 void testProcessingFlags() {
@@ -323,7 +337,8 @@ void testDopCandidateRequiresBackendPassthroughProof() {
   dop.sourceDsd = true;
   dop.dsdMode = DsdMode::Dop;
   dop.dsdRate = 64;
-  dop.dopCarrierFormat = dopCarrierFormatForDsd(64, 2).value();
+  dop.sourceFormat = pcm(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  dop.dopCarrierFormat = dopCarrierFormatForDsd(64, 2822400, 2).value();
   dop.outputFormat = dop.dopCarrierFormat;
   dop.decodedFormat = dop.dopCarrierFormat;
   dop.dopCarrierMatched = true;
@@ -343,7 +358,7 @@ void testDopPerfectWhenBackendProvesPassthrough() {
   dop.sourceLossless = true;
   dop.dsdMode = DsdMode::Dop;
   dop.dsdRate = 64;
-  dop.dopCarrierFormat = dopCarrierFormatForDsd(64, 2).value();
+  dop.dopCarrierFormat = dopCarrierFormatForDsd(64, 2822400, 2).value();
   dop.decodedFormat = dop.dopCarrierFormat;
   dop.outputFormat = dop.dopCarrierFormat;
   dop.dopCarrierMatched = true;
@@ -436,7 +451,8 @@ void testDsdDopRoutingSemanticChangeUsesProcessingFallbackCode() {
   dop.sourceDsd = true;
   dop.dsdMode = DsdMode::Dop;
   dop.dsdRate = 64;
-  dop.dopCarrierFormat = dopCarrierFormatForDsd(64, 2).value();
+  dop.sourceFormat = pcm(2822400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
+  dop.dopCarrierFormat = dopCarrierFormatForDsd(64, 2822400, 2).value();
   dop.decodedFormat = dop.dopCarrierFormat;
   dop.outputFormat = dop.dopCarrierFormat;
   dop.outputFormat.channelCount = 6;
@@ -455,6 +471,7 @@ void testDsdDopRoutingSemanticChangeUsesProcessingFallbackCode() {
 
 void testDsdHighRateFallbackReason() {
   auto dsd = baseEvaluation();
+  dsd.sourceFormat = pcm(11289600, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
   dsd.sourceDsd = true;
   dsd.dsdMode = DsdMode::Pcm;
   dsd.dsdRate = 256;
@@ -467,9 +484,10 @@ void testDsdHighRateFallbackReason() {
 
 void testUnsupportedDsdRateRejectsDopPerfect() {
   auto dop = baseEvaluation();
+  dop.sourceFormat = pcm(45158400, 1, 2, AudioSampleFormat::DsdInt8Lsb1);
   dop.sourceDsd = true;
   dop.dsdMode = DsdMode::Dop;
-  dop.dsdRate = 256;
+  dop.dsdRate = 1024;
   dop.dopCarrierMatched = true;
 
   const PerfectResult result = evaluatePerfect(dop);

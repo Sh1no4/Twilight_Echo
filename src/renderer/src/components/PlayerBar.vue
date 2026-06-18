@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useExtensionRegistry } from '../extensions/registry'
 import { normalizeAccentColor } from '../utils/colorExtractor'
@@ -154,6 +154,7 @@ const backendLabels: Record<string, string> = {
   'wasapi-exclusive': 'WASAPI Exclusive',
   asio: 'ASIO',
   coreaudio: 'CoreAudio',
+  'coreaudio-exclusive': 'CoreAudio Hog',
   alsa: 'ALSA'
 }
 const reasonCodeLabels: Record<string, string> = {
@@ -166,6 +167,8 @@ const reasonCodeLabels: Record<string, string> = {
   crossfade_active: 'Crossfade 正在改变播放连续性',
   volume_not_unity: '软件音量不是 100%',
   routing_changes_semantics: '声道路由或通道语义发生变化',
+  hog_mode_failed: '无法获取 CoreAudio Hog Mode 独占访问',
+  sample_rate_unsupported: '设备不支持请求的采样率',
   pcm_converted: 'PCM 格式或采样率发生转换',
   integer_passthrough_unavailable: '源格式与设备实际输出格式不一致，无法 PCM 直通',
   source_lossy: '源文件是有损格式，不能 Source Exact',
@@ -476,6 +479,96 @@ const spectrogramCells = computed(() => {
   return cells
 })
 
+const oscilloscopeCanvasRef = ref<HTMLCanvasElement | null>(null)
+
+function drawOscilloscope(): void {
+  const canvas = oscilloscopeCanvasRef.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const dpr = window.devicePixelRatio || 1
+  const cssWidth = canvas.clientWidth
+  const cssHeight = canvas.clientHeight
+  if (cssWidth <= 0 || cssHeight <= 0) return
+
+  // Resize drawing buffer to CSS size × DPR for crisp rendering. Only
+  // re-assigns when the dimensions change to avoid clearing the canvas
+  // unnecessarily.
+  const bufferWidth = Math.round(cssWidth * dpr)
+  const bufferHeight = Math.round(cssHeight * dpr)
+  if (canvas.width !== bufferWidth || canvas.height !== bufferHeight) {
+    canvas.width = bufferWidth
+    canvas.height = bufferHeight
+  }
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, cssWidth, cssHeight)
+
+  const midY = cssHeight / 2
+  const samples = visualizationData.value.oscilloscope
+  const active = visualizationActive.value
+
+  if (!active || !samples || samples.length === 0) {
+    // Idle: flat center line (matches how waveform-strip/spectrogram-grid
+    // show inactive state).
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.28)'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(0, midY)
+    ctx.lineTo(cssWidth, midY)
+    ctx.stroke()
+    return
+  }
+
+  // Client-side zero-crossing trigger: find the first rising zero-crossing
+  // (sample[i-1] < 0 && sample[i] >= 0) and start the trace there. Without
+  // this, periodic waveforms wander because the 120ms poll is not
+  // phase-locked to the audio callback. If no crossing is found, render
+  // from index 0.
+  let triggerIndex = 0
+  for (let i = 1; i < samples.length; i++) {
+    if (samples[i - 1] < 0 && samples[i] >= 0) {
+      triggerIndex = i
+      break
+    }
+  }
+
+  // Map the triggered trace onto the canvas. sample +1 → top (y=0),
+  // -1 → bottom (y=height), center = height/2.
+  const traceLength = samples.length - triggerIndex
+  const stepX = cssWidth / Math.max(1, traceLength - 1)
+
+  const gradient = ctx.createLinearGradient(0, 0, cssWidth, 0)
+  gradient.addColorStop(0, '#2563eb')
+  gradient.addColorStop(1, '#14b8a6')
+
+  // transition: none — do NOT smear time-domain samples (contrast with
+  // LocalDashboard's 55ms spectrum transition which is wrong for a trace).
+  ctx.strokeStyle = gradient
+  ctx.lineWidth = 1.5
+  ctx.lineJoin = 'round'
+  ctx.lineCap = 'round'
+  ctx.beginPath()
+  for (let i = 0; i < traceLength; i++) {
+    const sample = samples[triggerIndex + i]
+    const x = i * stepX
+    const y = midY - sample * midY
+    if (i === 0) ctx.moveTo(x, y)
+    else ctx.lineTo(x, y)
+  }
+  ctx.stroke()
+}
+
+// Redraw on every visualization data update (120ms poll). flush:'post'
+// ensures the DOM is patched before drawing (canvas may have just mounted).
+watch(visualizationData, drawOscilloscope, { flush: 'post' })
+// Draw immediately when the drawer opens so the trace appears before the
+// next poll. requestAnimationFrame lets Vue mount the canvas first.
+watch(moreOpen, (open) => {
+  if (open) requestAnimationFrame(drawOscilloscope)
+})
+
 function playTrackAt(index: number): void {
   const track = queue.value[index]
   if (track) {
@@ -736,6 +829,9 @@ onBeforeUnmount(() => {
                     class="waveform-bar"
                     :style="{ height: `${bar.height}%`, opacity: bar.opacity }"
                   ></span>
+                </div>
+                <div class="oscilloscope-panel" aria-hidden="true">
+                  <canvas ref="oscilloscopeCanvasRef" class="oscilloscope-canvas"></canvas>
                 </div>
                 <div class="meter-row">
                   <span><strong>Peak</strong>{{ peakText }}</span>
@@ -1906,6 +2002,24 @@ onBeforeUnmount(() => {
 
 .visualization-panel.inactive .waveform-bar {
   background: rgba(148, 163, 184, 0.28);
+}
+
+.oscilloscope-panel {
+  height: 48px;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+
+.oscilloscope-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transition: none;
+}
+
+.drawer-glass .oscilloscope-panel {
+  background: #111827;
 }
 
 .meter-row {

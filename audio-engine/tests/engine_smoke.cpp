@@ -18,9 +18,9 @@ int main() {
   assert(std::strstr(capabilities.data(), "\"outputPerfectRequiresPcmPassthrough\":true") != nullptr);
   assert(std::strstr(capabilities.data(), "\"htmlAudioFallbackDefault\":false") != nullptr);
   assert(std::strstr(capabilities.data(), "\"dsdModes\":[\"pcm\",\"dop\",\"native\",\"unsupported\"]") != nullptr);
-  assert(std::strstr(capabilities.data(), "\"sacdIsoDstMode\":\"unavailable\"") != nullptr);
-  assert(std::strstr(capabilities.data(), "\"sacdIsoDstReasonCode\":\"dst_dsd_provider_unavailable\"") != nullptr);
-  assert(std::strstr(capabilities.data(), "\"sacdIsoDstDsdProvider\":false") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"sacdIsoDst\":true") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"sacdIsoDstMode\":\"native\"") != nullptr);
+  assert(std::strstr(capabilities.data(), "\"sacdIsoDstDsdProvider\":true") != nullptr);
   assert(std::strstr(capabilities.data(), "\"devicePathKinds\":[\"default\",\"hw\",\"plughw\",\"hal\",\"asio\"]") != nullptr);
   assert(std::strstr(capabilities.data(), "\"output\":{\"accessModes\":[\"shared\",\"exclusive\",\"hog\",\"direct\",\"plugin\"]}") != nullptr);
   assert(std::strstr(capabilities.data(), "\"backendCapabilities\"") != nullptr);

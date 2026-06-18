@@ -19,7 +19,7 @@ bool isDopSampleFormat(AudioSampleFormat format) {
 }  // namespace
 
 bool DopPacker::configure(const DopPackerConfig& config, std::string* error) {
-  const auto carrier = dopCarrierFormatForDsd(config.dsdRate, config.channelCount);
+  const auto carrier = dopCarrierFormatForDsd(config.dsdRate, config.sourceSampleRate, config.channelCount);
   if (!carrier.has_value()) {
     if (error) *error = "Unsupported DSD rate for DoP";
     return false;

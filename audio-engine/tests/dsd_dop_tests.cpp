@@ -292,6 +292,7 @@ void testDopPackerInt24() {
   DopPackerConfig config;
   config.channelCount = 2;
   config.dsdRate = 64;
+  config.sourceSampleRate = 2822400;
   config.outputFormat = AudioSampleFormat::Int24Interleaved;
   std::string error;
   assert(packer.configure(config, &error));
@@ -305,11 +306,58 @@ void testDopPackerInt24() {
   assert(pcm[9] == 0x77 && pcm[10] == 0x88 && pcm[11] == 0xfa);
 }
 
+void testDopPackerDsd256() {
+  DopPacker packer;
+  DopPackerConfig config;
+  config.channelCount = 2;
+  config.dsdRate = 256;
+  config.sourceSampleRate = 11289600;
+  config.outputFormat = AudioSampleFormat::Int24Interleaved;
+  std::string error;
+  assert(packer.configure(config, &error));
+  assert(packer.carrierFormat().sampleRate == 705600);
+  assert(packer.carrierFormat().bitDepth == 24);
+  assert(packer.carrierFormat().sampleFormat == AudioSampleFormat::Int24Interleaved);
+
+  const uint8_t dsd[] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+  std::vector<uint8_t> pcm;
+  assert(packer.pack(dsd, sizeof(dsd), &pcm) == 2);
+  assert(pcm.size() == 12);
+  assert(pcm[0] == 0x11 && pcm[1] == 0x22 && pcm[2] == 0x05);
+  assert(pcm[3] == 0x55 && pcm[4] == 0x66 && pcm[5] == 0x05);
+  assert(pcm[6] == 0x33 && pcm[7] == 0x44 && pcm[8] == 0xfa);
+  assert(pcm[9] == 0x77 && pcm[10] == 0x88 && pcm[11] == 0xfa);
+}
+
+void testDopPackerDsd512() {
+  DopPacker packer;
+  DopPackerConfig config;
+  config.channelCount = 2;
+  config.dsdRate = 512;
+  config.sourceSampleRate = 22579200;
+  config.outputFormat = AudioSampleFormat::Int24Interleaved;
+  std::string error;
+  assert(packer.configure(config, &error));
+  assert(packer.carrierFormat().sampleRate == 1411200);
+  assert(packer.carrierFormat().bitDepth == 24);
+  assert(packer.carrierFormat().sampleFormat == AudioSampleFormat::Int24Interleaved);
+
+  const uint8_t dsd[] = {0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0};
+  std::vector<uint8_t> pcm;
+  assert(packer.pack(dsd, sizeof(dsd), &pcm) == 2);
+  assert(pcm.size() == 12);
+  assert(pcm[0] == 0x12 && pcm[1] == 0x34 && pcm[2] == 0x05);
+  assert(pcm[3] == 0x9a && pcm[4] == 0xbc && pcm[5] == 0x05);
+  assert(pcm[6] == 0x56 && pcm[7] == 0x78 && pcm[8] == 0xfa);
+  assert(pcm[9] == 0xde && pcm[10] == 0xf0 && pcm[11] == 0xfa);
+}
+
 void testDopPackerInt24In32() {
   DopPacker packer;
   DopPackerConfig config;
   config.channelCount = 1;
   config.dsdRate = 128;
+  config.sourceSampleRate = 5644800;
   config.outputFormat = AudioSampleFormat::Int24In32Interleaved;
   std::string error;
   assert(packer.configure(config, &error));
@@ -473,16 +521,83 @@ void testSacdDstProviderSelection() {
   assert(accepted.reasonCode.empty());
 }
 
+void testSacdDstTrackPlayableWithProvider() {
+  // When a DSD-preserving DST decoder provider is registered, SACD ISO DST
+  // tracks flip to playable and selectTrack succeeds (no longer rejected with
+  // dst_dsd_provider_unavailable). The fixture's DST track carries synthetic
+  // payload (not a real compressed DST frame), so readBytes may stop at EOF
+  // when the decoder cannot parse it; the contract under test is that the
+  // track is selectable and the provider is wired up.
+  const auto iso = writeSacdIsoFixture("twilight-sacd-dst-provider-fixture.iso");
+  auto provider = createDefaultSacdDstDecoderProvider();
+  assert(provider != nullptr);
+  std::string reason;
+  assert(provider->available(&reason));
+
+  SacdIsoDemuxer demuxer;
+  demuxer.setDstDecoderProvider(provider.get());
+  std::string error;
+  assert(demuxer.open(iso.string(), &error));
+  // The fixture has a DST track (stereo track 2). With a provider registered
+  // it must report playable=true (no dst_dsd_provider_unavailable reason).
+  bool foundDst = false;
+  for (const auto& track : demuxer.tracks()) {
+    if (track.isDst) {
+      foundDst = true;
+      assert(track.playable);
+      assert(track.reasonCode.empty());
+      assert(track.reason.empty());
+    }
+  }
+  assert(foundDst);
+  // selectTrack on the DST track must succeed now that a provider is wired up.
+  assert(demuxer.selectTrack("stereo", 2, &error));
+  assert(demuxer.streamInfo().isDsd);
+  assert(demuxer.streamInfo().codec == "dst");
+  {
+    std::error_code ignored;
+    std::filesystem::remove(iso, ignored);
+  }
+}
+
+void testSacdDstTrackUnplayableWithoutProvider() {
+  // Without a provider, DST tracks remain unplayable (regression guard for
+  // the dst_dsd_provider_unavailable contract).
+  const auto iso = writeSacdIsoFixture("twilight-sacd-dst-no-provider-fixture.iso");
+  SacdIsoDemuxer demuxer;
+  std::string error;
+  assert(demuxer.open(iso.string(), &error));
+  bool foundDst = false;
+  for (const auto& track : demuxer.tracks()) {
+    if (track.isDst) {
+      foundDst = true;
+      assert(!track.playable);
+      assert(track.reasonCode == kSacdDstDsdProviderUnavailableReasonCode);
+    }
+  }
+  assert(foundDst);
+  assert(!demuxer.selectTrack("stereo", 2, &error));
+  assert(error == kSacdDstDsdProviderUnavailableReason);
+  {
+    std::error_code ignored;
+    std::filesystem::remove(iso, ignored);
+  }
+}
+
 }  // namespace
 
 int main() {
   testDsfReader();
   testDffReader();
   testDopPackerInt24();
+  testDopPackerDsd256();
+  testDopPackerDsd512();
   testDopPackerInt24In32();
   testSacdIsoProbePlayableEntry();
   testSacdIsoDemuxerTracksAndSeek();
   testSacdDstProviderSelection();
+  testSacdDstTrackPlayableWithProvider();
+  testSacdDstTrackUnplayableWithoutProvider();
   assert(sourceLooksDsfOrDff("song.DSF"));
   assert(sourceLooksDsfOrDff("song.dff"));
   assert(inferDsdRateFromSampleRate(11289600) == 256);

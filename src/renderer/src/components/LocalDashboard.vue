@@ -474,7 +474,7 @@ function playDashboardTrack(track: Track | undefined): void {
             </div>
 
             <!-- Horizontal Spectrum Analyzer (Right to Left) -->
-            <div class="visualizer-container">
+            <div class="visualizer-container" v-show="visualizationData.active">
                 <div class="visualizer">
                     <div
                       v-for="(scale, index) in spectrumBars"

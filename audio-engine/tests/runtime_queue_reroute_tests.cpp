@@ -313,7 +313,11 @@ std::atomic<int> g_decodeFirstReadDelayMs{0};
 std::atomic<int> g_decodeEveryReadDelayMs{0};
 
 bool formatLooksDopCarrier(const AudioFormat& format) {
-  return (format.sampleRate == 176400 || format.sampleRate == 352800) && format.channelCount == 2 &&
+  return (format.sampleRate == 176400 || format.sampleRate == 192000 ||
+          format.sampleRate == 352800 || format.sampleRate == 384000 ||
+          format.sampleRate == 705600 || format.sampleRate == 768000 ||
+          format.sampleRate == 1411200 || format.sampleRate == 1536000) &&
+         format.channelCount == 2 &&
          format.bitDepth == 24 &&
          (format.sampleFormat == AudioSampleFormat::Int24Interleaved ||
           format.sampleFormat == AudioSampleFormat::Int24In32Interleaved);
@@ -566,7 +570,7 @@ class FakeOutputBackend final : public IOutputBackend {
     info.actualChannels = opened.channelCount;
     info.actualOutputFormat = sampleFormatToString(opened.sampleFormat);
     info.driverDopCapable = formatLooksDopCarrier(requestedFormat);
-    info.driverDopCarrierSampleRates = {176400, 352800};
+    info.driverDopCarrierSampleRates = {176400, 192000, 352800, 384000, 705600, 768000, 1411200, 1536000};
     info.driverDopCarrierFormats = {"int24", "int24-in32"};
     info.driverNativeDsdCapable = state_->backendId == "asio";
     info.driverNativeDsdSampleRates = {kDsd64Rate, kDsd128Rate, kDsd256Rate, kDsd512Rate};
@@ -1009,7 +1013,11 @@ void testAsioNativeDsdAndDopFailureFallsBackToPcm() {
   assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dop_passthrough_unproven\"");
 }
 
-void testDsd256FallsBackToPcm() {
+void testDsd256StartsOnWasapiExclusiveDop() {
+  // After G2 (DoP DSD256/512 support), DSD256 on wasapi-exclusive now enters
+  // DoP with a 705600 carrier instead of falling back to PCM. The fake
+  // wasapi-exclusive backend proves DoP passthrough when the carrier is
+  // accepted, so dsdMode resolves to "dop".
   EngineHarness harness("twilight-phase6d-runtime-reroute-dsd256.dsf", kDsd256Rate);
   auto& engine = harness.engine();
 
@@ -1018,11 +1026,11 @@ void testDsd256FallsBackToPcm() {
 
   const auto snapshots = g_backendRegistry.snapshots();
   assert(snapshots.size() == 1);
-  assertFormatLooksDsdPcmFallbackRequest(snapshots.front().requestedFormat, 705600);
+  assert(formatLooksDopCarrier(snapshots.front().requestedFormat));
+  assert(snapshots.front().requestedFormat.sampleRate == 705600);
   assertLatestPlaybackContains(engine, "\"isDsd\":true");
-  assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
+  assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
   assertLatestPlaybackContains(engine, "\"dsdRate\":256");
-  assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dsd_high_rate_pcm_fallback\"");
 }
 
 void testDsd256StartsOnAsioNativeDsd() {
@@ -1491,7 +1499,7 @@ int main() {
   testAsioPcmModeDoesNotTryNativeDsd();
   testAsioNativeDsdMismatchFallsBackToDop();
   testAsioNativeDsdAndDopFailureFallsBackToPcm();
-  testDsd256FallsBackToPcm();
+  testDsd256StartsOnWasapiExclusiveDop();
   testDsd256StartsOnAsioNativeDsd();
   testDsd512StartsOnAsioNativeDsd();
   testSacdIsoTrackUsesAsioNativeDsd();

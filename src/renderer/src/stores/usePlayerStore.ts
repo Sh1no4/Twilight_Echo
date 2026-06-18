@@ -215,11 +215,13 @@ const outputInfo = computed<NativeOutputInfo | null>(() => playbackInfo.value?.o
 const visualizationOptions = {
   spectrumPoints: 48,
   waveformPoints: 96,
-  spectrogramFrames: 48
+  spectrogramFrames: 48,
+  oscilloscopePoints: 1024
 } as const
 const createInactiveVisualizationData = (): NativeVisualizationData => ({
   spectrum: Array.from({ length: visualizationOptions.spectrumPoints }, () => 0),
   waveform: Array.from({ length: visualizationOptions.waveformPoints }, () => 0),
+  oscilloscope: Array.from({ length: visualizationOptions.oscilloscopePoints }, () => 0),
   peakDb: -120,
   rmsDb: -120,
   lufsMomentary: null,

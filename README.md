@@ -34,7 +34,7 @@ Twilight Echo 是一款基于 Electron + Vue 3 + TypeScript 的桌面音乐播�
 
 ### HiFi 原生音频
 
-内置自研原生音频引擎，Windows 支持 WASAPI 独占/共享模式，追求高保真输出，用户无需自行配置 mpv。
+内置自研原生音频引擎，Windows 支持 WASAPI 独占/共享模式，追求高保真输出，用户无需自行配置 mpv。引擎还支持 SACD ISO（含 DST 压缩曲目，通过 DSD-preserving provider 还原原始 DSD 字节）、DoP（DSD64/128/256/512，遵循 dCS DoP open standard v1.1）、Linux ALSA `hw:` 设备的 native DSD 直送，以及独立的示波器可视化视图。WASAPI 与 CoreAudio 没有 native DSD 通道，属平台限制，这两个后端走 DoP 或 PCM。
 
 ## 支持的音频格式
 
@@ -77,10 +77,11 @@ npm run dev
 
 ## 已知限制
 
-- macOS 与 Linux 的原生音频引擎仍在验证阶段。
+- macOS 与 Linux 的原生音频引擎仍在验证阶段（代码已 release-ready，真实设备 smoke 保持 opt-in）。
 - 网易云音乐相关功能依赖本地启动的 `@neteasecloudmusicapienhanced/api` 服务。
 - 共享模式（Shared Mode）会经过系统混音，属正常现象。
-- DST 压缩的 SACD 曲目暂不支持。
+- WASAPI 与 CoreAudio 没有 native DSD 通道（平台限制）；DSD 在这两个后端走 DoP 或 PCM fallback。
+- 真实硬件 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）为 opt-in，不进入默认门禁。
 
 ## 更多文档
 

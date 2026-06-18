@@ -44,12 +44,22 @@ void FftSpectrumAnalyzer::prepare(const AudioFormat& format, size_t resolution) 
                                                         static_cast<double>(std::max<size_t>(1, resolution_ - 1))));
   }
   timeDomain_.assign(resolution_, 0.0f);
+  // (Re)initialize the decoupled oscilloscope ring buffer. Its size is
+  // independent of resolution_ so the visualization tap can serve more
+  // time-domain samples than the FFT window allows.
+  oscilloscopeBuffer_.assign(oscilloscopeResolution_, 0.0f);
   magnitudes_.assign(resolution_ / 2, 0.0f);
   spectrogram_.clear();
   peakDb_ = -120.0;
   rmsDb_ = -120.0;
   lufsMomentary_ = -70.0;
   hasCapture_ = false;
+}
+
+void FftSpectrumAnalyzer::prepareOscilloscope(size_t points) {
+  std::lock_guard lock(mutex_);
+  oscilloscopeResolution_ = std::clamp<size_t>(points == 0 ? 1024 : points, 64, 4096);
+  oscilloscopeBuffer_.assign(oscilloscopeResolution_, 0.0f);
 }
 
 void FftSpectrumAnalyzer::setEnabled(bool enabled) {
@@ -73,6 +83,7 @@ void FftSpectrumAnalyzer::resetCapture() {
   rmsDb_ = -120.0;
   lufsMomentary_ = -70.0;
   std::fill(timeDomain_.begin(), timeDomain_.end(), 0.0f);
+  std::fill(oscilloscopeBuffer_.begin(), oscilloscopeBuffer_.end(), 0.0f);
   std::fill(magnitudes_.begin(), magnitudes_.end(), 0.0f);
 }
 
@@ -82,26 +93,58 @@ void FftSpectrumAnalyzer::capture(const float* interleaved, size_t frames, int c
   std::lock_guard lock(mutex_);
   if (!enabled_ || resolution_ == 0) return;
 
-  const size_t copyFrames = std::min(frames, resolution_);
-  if (copyFrames < resolution_) {
-    std::move(timeDomain_.begin() + static_cast<std::ptrdiff_t>(copyFrames), timeDomain_.end(), timeDomain_.begin());
+  // FFT window (timeDomain_) — sized by resolution_.
+  const size_t timeCopyFrames = std::min(frames, resolution_);
+  if (timeCopyFrames < resolution_) {
+    std::move(timeDomain_.begin() + static_cast<std::ptrdiff_t>(timeCopyFrames), timeDomain_.end(), timeDomain_.begin());
   }
+  const size_t timeDstStart = resolution_ - timeCopyFrames;
+  const size_t timeSrcStart = frames - timeCopyFrames;
 
-  const size_t dstStart = resolution_ - copyFrames;
-  const size_t srcStart = frames - copyFrames;
+  // Decoupled oscilloscope window — sized by oscilloscopeResolution_,
+  // independent of resolution_ so the tap can serve more time-domain samples
+  // than the FFT window allows. Sliding window, newest at end (same convention
+  // as timeDomain_).
+  const size_t oscResolution =
+      (oscilloscopeResolution_ > 0 && !oscilloscopeBuffer_.empty()) ? oscilloscopeResolution_ : 0;
+  const size_t oscCopyFrames = oscResolution > 0 ? std::min(frames, oscResolution) : 0;
+  if (oscCopyFrames > 0 && oscCopyFrames < oscResolution) {
+    std::move(oscilloscopeBuffer_.begin() + static_cast<std::ptrdiff_t>(oscCopyFrames),
+              oscilloscopeBuffer_.end(), oscilloscopeBuffer_.begin());
+  }
+  const size_t oscDstStart = oscResolution - oscCopyFrames;
+  const size_t oscSrcStart = frames - oscCopyFrames;
+
   double peakSample = 0.0;
   double sumSquares = 0.0;
   size_t measuredSamples = 0;
-  for (size_t i = 0; i < copyFrames; ++i) {
+
+  // Process the union of both windows in a single pass. Each source frame's
+  // mono value is computed once and distributed to whichever buffer(s) include
+  // it, so the oscilloscope tap adds zero extra per-channel cost for frames
+  // already needed by the FFT window. Peak/RMS measurement scope is kept on
+  // the FFT window (timeCopyFrames) to preserve existing behavior.
+  const size_t primaryCopyFrames = std::max(timeCopyFrames, oscCopyFrames);
+  const size_t primarySrcStart = frames - primaryCopyFrames;
+  for (size_t i = 0; i < primaryCopyFrames; ++i) {
+    const size_t srcIdx = primarySrcStart + i;
     double mono = 0.0;
     for (int channel = 0; channel < channels; ++channel) {
-      const float sample = interleaved[(srcStart + i) * static_cast<size_t>(channels) + static_cast<size_t>(channel)];
+      const float sample = interleaved[srcIdx * static_cast<size_t>(channels) + static_cast<size_t>(channel)];
       mono += sample;
-      peakSample = std::max(peakSample, std::abs(static_cast<double>(sample)));
-      sumSquares += static_cast<double>(sample) * static_cast<double>(sample);
-      ++measuredSamples;
+      if (srcIdx >= timeSrcStart) {
+        peakSample = std::max(peakSample, std::abs(static_cast<double>(sample)));
+        sumSquares += static_cast<double>(sample) * static_cast<double>(sample);
+        ++measuredSamples;
+      }
     }
-    timeDomain_[dstStart + i] = static_cast<float>(mono / static_cast<double>(channels));
+    const float monoValue = static_cast<float>(mono / static_cast<double>(channels));
+    if (srcIdx >= timeSrcStart) {
+      timeDomain_[timeDstStart + (srcIdx - timeSrcStart)] = monoValue;
+    }
+    if (oscCopyFrames > 0 && srcIdx >= oscSrcStart) {
+      oscilloscopeBuffer_[oscDstStart + (srcIdx - oscSrcStart)] = monoValue;
+    }
   }
   const double rms = measuredSamples > 0 ? std::sqrt(sumSquares / static_cast<double>(measuredSamples)) : 0.0;
   peakDb_ = 20.0 * std::log10(std::max(peakSample, 1.0e-6));
@@ -153,11 +196,13 @@ size_t FftSpectrumAnalyzer::read(float* output, size_t points, double idlePhase)
 std::string FftSpectrumAnalyzer::readVisualizationJson(
     size_t spectrumPoints,
     size_t waveformPoints,
-    size_t spectrogramFrames) const {
+    size_t spectrogramFrames,
+    size_t oscilloscopePoints) const {
   std::lock_guard lock(mutex_);
   spectrumPoints = std::clamp<size_t>(spectrumPoints == 0 ? 64 : spectrumPoints, 8, 256);
   waveformPoints = std::clamp<size_t>(waveformPoints == 0 ? 128 : waveformPoints, 16, 512);
   spectrogramFrames = std::clamp<size_t>(spectrogramFrames == 0 ? 48 : spectrogramFrames, 1, 96);
+  oscilloscopePoints = std::clamp<size_t>(oscilloscopePoints == 0 ? 1024 : oscilloscopePoints, 64, 4096);
   const bool active = enabled_ && hasCapture_;
 
   auto writeArray = [](std::ostringstream& json, const std::vector<float>& values) {
@@ -185,6 +230,18 @@ std::string FftSpectrumAnalyzer::readVisualizationJson(
     }
   }
 
+  // Decoupled high-resolution time-domain oscilloscope tap. Sourced from
+  // oscilloscopeBuffer_ (sized independently of resolution_), so it can yield
+  // far more distinct samples than the FFT-coupled waveform. Signed mono PCM
+  // in [-1, 1]; zero-filled when inactive.
+  std::vector<float> oscilloscope(oscilloscopePoints, 0.0f);
+  if (active && !oscilloscopeBuffer_.empty()) {
+    for (size_t i = 0; i < oscilloscopePoints; ++i) {
+      const size_t bucket = i * oscilloscopeBuffer_.size() / oscilloscopePoints;
+      oscilloscope[i] = std::clamp(oscilloscopeBuffer_[std::min(bucket, oscilloscopeBuffer_.size() - 1)], -1.0f, 1.0f);
+    }
+  }
+
   const size_t firstFrame =
       spectrogram_.size() > spectrogramFrames ? spectrogram_.size() - spectrogramFrames : 0;
 
@@ -193,6 +250,8 @@ std::string FftSpectrumAnalyzer::readVisualizationJson(
   writeArray(json, spectrum);
   json << ",\"waveform\":";
   writeArray(json, waveform);
+  json << ",\"oscilloscope\":";
+  writeArray(json, oscilloscope);
   json << ",\"peakDb\":" << (active ? peakDb_ : -120.0)
        << ",\"rmsDb\":" << (active ? rmsDb_ : -120.0)
        << ",\"lufsMomentary\":";

@@ -217,9 +217,9 @@ std::string enumeratePlatformDevicesJson() {
   std::ostringstream json;
   const std::string defaultUid = defaultCoreAudioUid();
   json << "[{\"id\":\"auto\",\"label\":\"\\u7cfb\\u7edf\\u9ed8\\u8ba4\",\"isDefault\":true,"
-       << "\"supportsExclusive\":false,\"supportsHogMode\":false,\"supportsDirectHw\":false,"
+       << "\"supportsExclusive\":true,\"supportsHogMode\":true,\"supportsDirectHw\":false,"
        << "\"supportsDop\":false,\"supportsNativeDsd\":false,\"supportedDsdRates\":[],"
-       << "\"pathKind\":\"hal\",\"capabilityReason\":\"CoreAudio shared path available; Hog/Exclusive pending runtime support\"}";
+       << "\"pathKind\":\"hal\",\"capabilityReason\":\"CoreAudio HAL path; Hog Mode exclusive available\"}";
 
   AudioObjectPropertyAddress address{
       kAudioHardwarePropertyDevices,
@@ -239,9 +239,9 @@ std::string enumeratePlatformDevicesJson() {
         if (label.empty()) label = uid;
         json << ",{\"id\":\"" << escapeJson(uid) << "\",\"label\":\"" << escapeJson(label)
              << "\",\"isDefault\":" << (uid == defaultUid ? "true" : "false")
-             << ",\"supportsExclusive\":false,\"supportsHogMode\":false,\"supportsDirectHw\":false,"
+             << ",\"supportsExclusive\":true,\"supportsHogMode\":true,\"supportsDirectHw\":false,"
              << "\"supportsDop\":false,\"supportsNativeDsd\":false,\"supportedDsdRates\":[],"
-             << "\"pathKind\":\"hal\",\"capabilityReason\":\"CoreAudio shared path available; Hog/Exclusive pending runtime support\"}";
+             << "\"pathKind\":\"hal\",\"capabilityReason\":\"CoreAudio HAL path; Hog Mode exclusive available\"}";
       }
     }
   }
@@ -268,14 +268,16 @@ std::string enumeratePlatformDevicesJson() {
         const bool plugHw = name.rfind("plughw:", 0) == 0;
         const std::string pathKind = directHw ? "hw" : (plugHw ? "plughw" : "default");
         const std::string capabilityReason = directHw
-                                                 ? ""
+                                                 ? "ALSA hw: direct device; native DSD probed at runtime via DSD_U8/U16_LE/U32_LE"
                                                  : (plugHw ? "plughw may insert format conversion"
                                                            : "ALSA default route may include plugin or mixer stages");
         json << ",{\"id\":\"" << escapeJson(name) << "\",\"label\":\"" << escapeJson(label)
              << "\",\"isDefault\":" << (name == "default" ? "true" : "false")
              << ",\"supportsExclusive\":false,\"supportsHogMode\":false,\"supportsDirectHw\":"
-             << boolJson(directHw) << ",\"supportsDop\":false,\"supportsNativeDsd\":false,"
-             << "\"supportedDsdRates\":[],\"pathKind\":\"" << pathKind
+             << boolJson(directHw) << ",\"supportsDop\":false,\"supportsNativeDsd\":"
+             << boolJson(directHw) << ",\"supportedDsdRates\":"
+             << (directHw ? "[2822400,5644800,11289600,22579200]" : "[]")
+             << ",\"pathKind\":\"" << pathKind
              << "\",\"capabilityReason\":\"" << escapeJson(capabilityReason) << "\"}";
       }
       if (rawName) free(rawName);

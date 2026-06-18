@@ -201,20 +201,20 @@ void testDsd128FailureReasonNamesDopCarrierFacts() {
   assert(facts.reason == error);
 }
 
-void testUnsupportedDsdRateDoesNotTryNativeDsd() {
+void testDsd256FailureReasonNamesDopCarrierFacts() {
   FakeAudioClient client({});
   WasapiFormatNegotiator negotiator(&client);
   std::string error;
 
   assert(!negotiator.negotiate(dsdSource(11289600), &error));
-  assert(client.probes.empty());
-  assert(error.find("暂无可用 DoP carrier") != std::string::npos);
+  assert(!client.probes.empty());
+  assert(error.find("DoP carrier sample rate 705600Hz") != std::string::npos);
   assert(error.find("未启用 Native DSD") != std::string::npos);
 
   const DopRuntimeFacts facts = negotiator.dopRuntimeFacts();
   assert(facts.state == DopRuntimeFactState::Unproven);
   assert(!facts.explicitlyCapable);
-  assert(!hasConcreteAudioFormat(facts.candidateFormat));
+  assert(facts.candidateFormat.sampleRate == 705600);
 }
 
 void testExclusiveBufferPolicyAvoidsMinimumPeriodForAuto() {
@@ -255,7 +255,7 @@ int main() {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   testDsd64NegotiatesDopCarrier();
   testDsd128FailureReasonNamesDopCarrierFacts();
-  testUnsupportedDsdRateDoesNotTryNativeDsd();
+  testDsd256FailureReasonNamesDopCarrierFacts();
   testExclusiveBufferPolicyAvoidsMinimumPeriodForAuto();
   testExclusiveInitialRenderLeavesWakeupHeadroom();
   testExclusiveRenderFramePolicySeparatesEventAndPushMode();

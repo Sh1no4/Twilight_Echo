@@ -12,6 +12,7 @@ namespace twilight::audio {
 struct DopPackerConfig {
   int channelCount = 0;
   int dsdRate = 0;
+  int sourceSampleRate = 0;
   DsdBitOrder bitOrder = DsdBitOrder::LsbFirst;
   DsdPacking packing = DsdPacking::DsfPlanarBlocks;
   AudioSampleFormat outputFormat = AudioSampleFormat::Int24Interleaved;

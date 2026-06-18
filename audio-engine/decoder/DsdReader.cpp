@@ -103,6 +103,10 @@ DsdReader::~DsdReader() {
   close();
 }
 
+void DsdReader::setDstDecoderProvider(SacdDstDecoderProvider* provider) {
+  sacd_.setDstDecoderProvider(provider);
+}
+
 bool DsdReader::open(const std::string& source, std::string* error) {
   close();
   info_.source = source;
@@ -131,8 +135,7 @@ bool DsdReader::open(const std::string& source, std::string* error) {
   return true;
 }
 
-void DsdReader::close() {
-  if (file_.is_open()) file_.close();
+void DsdReader::close() {  if (file_.is_open()) file_.close();
   sacd_.close();
   info_ = {};
   readOffset_ = 0;
@@ -367,3 +370,4 @@ bool DsdReader::openSacdIso(const std::string& source, std::string* error) {
 }
 
 }  // namespace twilight::audio
+

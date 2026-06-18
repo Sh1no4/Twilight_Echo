@@ -339,12 +339,17 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
 
   SetOutputBackend = (backend: string): void => {
-    const exclusive = backend === 'asio' || backend === 'wasapi-exclusive'
-    const accessMode = backend === 'wasapi' ? 'shared' : 'exclusive'
-    const devicePathKind = backend === 'asio' ? 'asio' : 'default'
-    const supportsOutputPerfect = backend === 'asio' || backend === 'wasapi-exclusive'
-    const perfectReasonCode = backend === 'wasapi' ? 'shared_mixer' : ''
-    const perfectReason = backend === 'wasapi' ? '共享输出经过系统混音' : ''
+    const exclusive = backend === 'asio' || backend === 'wasapi-exclusive' || backend === 'coreaudio-exclusive'
+    const accessMode = backend === 'wasapi' || backend === 'coreaudio' ? 'shared' : 'exclusive'
+    const devicePathKind =
+      backend === 'asio'
+        ? 'asio'
+        : backend === 'coreaudio' || backend === 'coreaudio-exclusive'
+          ? 'hal'
+          : 'default'
+    const supportsOutputPerfect = backend === 'asio' || backend === 'wasapi-exclusive' || backend === 'coreaudio-exclusive'
+    const perfectReasonCode = backend === 'wasapi' || backend === 'coreaudio' ? 'shared_mixer' : ''
+    const perfectReason = backend === 'wasapi' || backend === 'coreaudio' ? '共享输出经过系统混音' : ''
     const capabilityReason = perfectReason
     const outputInfo = {
       ...this.playbackInfo.outputInfo,
@@ -390,13 +395,15 @@ class FakeNativeBinding implements NativeAudioBinding {
     const perfectReasonCode =
       this.lastOutputConfig.routingMode && this.lastOutputConfig.routingMode !== 'auto'
         ? 'routing_changes_semantics'
-        : this.playbackInfo.outputInfo.actualBackend === 'wasapi'
+        : this.playbackInfo.outputInfo.actualBackend === 'wasapi' ||
+          this.playbackInfo.outputInfo.actualBackend === 'coreaudio'
           ? 'shared_mixer'
           : ''
     const perfectReason =
       perfectReasonCode === 'routing_changes_semantics'
         ? '声道映射改变声道语义'
-        : this.playbackInfo.outputInfo.actualBackend === 'wasapi'
+        : this.playbackInfo.outputInfo.actualBackend === 'wasapi' ||
+          this.playbackInfo.outputInfo.actualBackend === 'coreaudio'
           ? '共享输出经过系统混音'
           : ''
     const outputInfo = {
@@ -492,7 +499,7 @@ class FakeNativeBinding implements NativeAudioBinding {
     })
   }
   EnumerateDevices = (): string => JSON.stringify(this.devices)
-  EnumerateBackends = (): string => JSON.stringify(['wasapi', 'wasapi-exclusive', 'asio'])
+  EnumerateBackends = (): string => JSON.stringify(['wasapi', 'wasapi-exclusive', 'asio', 'coreaudio', 'coreaudio-exclusive'])
   GetEngineCapabilities = (): string => JSON.stringify({})
   GetLastError = (): string => JSON.stringify({ message: this.lastErrorMessage })
 
@@ -660,6 +667,65 @@ test('setExclusiveMode refreshes backend facts immediately', async () => {
   assert.equal(info.outputInfo.supportsOutputPerfect, true)
   assert.equal(info.outputInfo.perfectReasonCode, '')
   assertPlaybackMirrorsOutputInfo(info)
+})
+
+test('coreaudio exclusive mode maps to coreaudio-exclusive backend', async () => {
+  const originalPlatform = process.platform
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+  try {
+    const nativeBinding = new FakeNativeBinding()
+    const manager = makeManager(
+      {
+        exclusiveMode: false,
+        audioOutput: 'coreaudio',
+        audioDevice: 'auto'
+      },
+      nativeBinding
+    )
+
+    await manager.setExclusiveMode(true)
+    const info = await manager.getPlaybackInfo()
+
+    assert.equal(info.outputBackend, 'coreaudio-exclusive')
+    assert.equal(info.actualBackend, 'coreaudio-exclusive')
+    assert.equal(info.outputInfo.actualBackend, 'coreaudio-exclusive')
+    assert.equal(info.outputInfo.accessMode, 'exclusive')
+    assert.equal(info.outputInfo.devicePathKind, 'hal')
+    assert.equal(info.outputInfo.exclusive, true)
+    assert.equal(info.outputInfo.supportsOutputPerfect, true)
+    assert.equal(info.outputInfo.perfectReasonCode, '')
+    assertPlaybackMirrorsOutputInfo(info)
+  } finally {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+  }
+})
+
+test('coreaudio shared mode stays coreaudio with shared_mixer reason', async () => {
+  const originalPlatform = process.platform
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
+  try {
+    const nativeBinding = new FakeNativeBinding()
+    const manager = makeManager(
+      {
+        exclusiveMode: false,
+        audioOutput: 'coreaudio',
+        audioDevice: 'auto'
+      },
+      nativeBinding
+    )
+
+    const info = await manager.getPlaybackInfo()
+
+    assert.equal(info.outputBackend, 'coreaudio')
+    assert.equal(info.actualBackend, 'coreaudio')
+    assert.equal(info.outputInfo.accessMode, 'shared')
+    assert.equal(info.outputInfo.exclusive, false)
+    assert.equal(info.outputInfo.supportsOutputPerfect, false)
+    assert.equal(info.outputInfo.perfectReasonCode, 'shared_mixer')
+    assertPlaybackMirrorsOutputInfo(info)
+  } finally {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true })
+  }
 })
 
 test('setAudioDevice refreshes canonical device names immediately', async () => {

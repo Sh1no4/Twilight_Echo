@@ -1,5 +1,6 @@
 #include "AudioPipeline.h"
 #include "../dsp/ChannelRouter.h"
+#include "../decoder/SacdIsoProbe.h"
 
 #include <algorithm>
 #include <chrono>
@@ -75,15 +76,15 @@ AudioFormat actualOutputFormat(const AudioFormat& fallback, const OutputInfo& in
 }
 
 bool backendCanAttemptDop(const std::string& backendId) {
-  return backendId == "asio" || backendId == "wasapi-exclusive";
+  return backendId == "asio" || backendId == "wasapi-exclusive" || backendId == "coreaudio-exclusive";
 }
 
 bool backendCanAttemptNativeDsd(const std::string& backendId) {
-  return backendId == "asio";
+  return backendId == "asio" || backendId == "alsa";
 }
 
 bool backendCanTypedPassthrough(const std::string& backendId) {
-  return backendId == "asio" || backendId == "wasapi-exclusive";
+  return backendId == "asio" || backendId == "wasapi-exclusive" || backendId == "coreaudio-exclusive";
 }
 
 bool formatCanTypedPassthrough(const AudioFormat& format) {
@@ -107,8 +108,8 @@ AudioFormat nativeDsdFormatForStream(const DsdStreamInfo& dsd) {
   return format;
 }
 
-bool formatCanCarryDop(const AudioFormat& format, int dsdRate, int channels) {
-  const auto expected = dopCarrierFormatForDsd(dsdRate, channels);
+bool formatCanCarryDop(const AudioFormat& format, int dsdRate, int sourceSampleRate, int channels) {
+  const auto expected = dopCarrierFormatForDsd(dsdRate, sourceSampleRate, channels);
   return expected.has_value() && format.sampleRate == expected->sampleRate &&
          format.channelCount == expected->channelCount && effectivePcmBitDepth(format) == 24 &&
          sampleFormatCanCarryDop(format.sampleFormat);
@@ -339,6 +340,9 @@ struct AudioPipeline::DecodeStream {
   AudioFormat decodeFormat;
   std::unique_ptr<FFmpegDecoder> decoder;
   std::unique_ptr<DsdReader> dsdReader;
+  // DSD-preserving DST decoder provider, injected into dsdReader so SACD ISO
+  // DST-compressed tracks are playable through the DoP / native-DSD pipeline.
+  std::unique_ptr<SacdDstDecoderProvider> dstProvider = createDefaultSacdDstDecoderProvider();
   DopPacker dopPacker;
   AudioBuffer buffer;
   std::atomic<bool> running{false};
@@ -373,6 +377,7 @@ struct AudioPipeline::DecodeStream {
     item = queueItem;
     mode = Mode::Dop;
     dsdReader = std::make_unique<DsdReader>();
+    dsdReader->setDstDecoderProvider(dstProvider.get());
     if (!dsdReader->open(item.source, error)) {
       dsdReader.reset();
       return false;
@@ -387,6 +392,7 @@ struct AudioPipeline::DecodeStream {
     item = queueItem;
     mode = Mode::NativeDsd;
     dsdReader = std::make_unique<DsdReader>();
+    dsdReader->setDstDecoderProvider(dstProvider.get());
     if (!dsdReader->open(item.source, error)) {
       dsdReader.reset();
       return false;
@@ -437,7 +443,7 @@ struct AudioPipeline::DecodeStream {
       return false;
     }
     const DsdStreamInfo& dsd = dsdReader->streamInfo();
-    if (!formatCanCarryDop(outputFormat, dsd.dsdRate, dsd.channelCount)) {
+    if (!formatCanCarryDop(outputFormat, dsd.dsdRate, dsd.dsdSampleRate, dsd.channelCount)) {
       if (error) *error = "DoP carrier format mismatch";
       return false;
     }
@@ -445,6 +451,7 @@ struct AudioPipeline::DecodeStream {
     DopPackerConfig config;
     config.channelCount = dsd.channelCount;
     config.dsdRate = dsd.dsdRate;
+    config.sourceSampleRate = dsd.dsdSampleRate;
     config.bitOrder = dsdBitOrderFromInfo(dsd);
     config.packing = dsdPackingFromInfo(dsd);
     config.outputFormat = outputFormat.sampleFormat;
@@ -821,11 +828,12 @@ TAE_Result AudioPipeline::playInternal(
       } else if (!output->setOutputConfig(outputConfig, &dopAttemptError)) {
         output.reset();
       } else {
-        AudioFormat requested = dopCarrierFormatForDsd(dsdProbe->dsdRate, dsdProbe->channelCount).value();
+        AudioFormat requested =
+            dopCarrierFormatForDsd(dsdProbe->dsdRate, dsdProbe->dsdSampleRate, dsdProbe->channelCount).value();
         requested.sampleFormat = AudioSampleFormat::Int24Interleaved;
         if (output->open(deviceId, requested, &dopAttemptError)) {
           outputFormat = output->outputFormat();
-          if (formatCanCarryDop(outputFormat, dsdProbe->dsdRate, dsdProbe->channelCount) &&
+          if (formatCanCarryDop(outputFormat, dsdProbe->dsdRate, dsdProbe->dsdSampleRate, dsdProbe->channelCount) &&
               dopActive->configure(outputFormat, startTimeSeconds, &dopAttemptError)) {
             active = dopActive;
             dopPath = true;
@@ -1058,7 +1066,7 @@ bool AudioPipeline::shouldAttemptDopForCurrentConfig(
       std::abs(volume - 1.0) > kUnityVolumeEpsilon;
   if (processingRequiresPcm) return false;
   if (!backendCanAttemptDop(backendId)) return false;
-  return dopCarrierFormatForDsd(dsdProbe->dsdRate, dsdProbe->channelCount).has_value();
+  return dopCarrierFormatForDsd(dsdProbe->dsdRate, dsdProbe->dsdSampleRate, dsdProbe->channelCount).has_value();
 }
 
 bool AudioPipeline::shouldAttemptNativeDsdForCurrentConfig(
@@ -1519,8 +1527,9 @@ size_t AudioPipeline::getSpectrumData(float* buffer, size_t pointCount) const {
 std::string AudioPipeline::getVisualizationDataJson(
     size_t spectrumPoints,
     size_t waveformPoints,
-    size_t spectrogramFrames) const {
-  return spectrum_.readVisualizationJson(spectrumPoints, waveformPoints, spectrogramFrames);
+    size_t spectrogramFrames,
+    size_t oscilloscopePoints) const {
+  return spectrum_.readVisualizationJson(spectrumPoints, waveformPoints, spectrogramFrames, oscilloscopePoints);
 }
 
 bool AudioPipeline::configureActiveStreamLocked(

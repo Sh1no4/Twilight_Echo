@@ -1671,8 +1671,20 @@ async function setupNcmApi(): Promise<void> {
   }
 }
 
-app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.electron')
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    const win = mainWindow
+    if (!win || win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
+
+  app.whenReady().then(() => {
+    electronApp.setAppUserModelId('com.TwilightEcho.music')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
@@ -1879,3 +1891,4 @@ app.on('will-quit', () => {
     ncmServer = null
   }
 })
+}

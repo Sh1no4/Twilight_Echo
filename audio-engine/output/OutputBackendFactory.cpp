@@ -11,6 +11,7 @@
 
 #if defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)
 #include "coreaudio/CoreAudioBackend.h"
+#include "coreaudio/CoreAudioExclusiveBackend.h"
 #endif
 
 #if defined(__linux__) && defined(TAE_ENABLE_ALSA)
@@ -50,6 +51,9 @@ std::unique_ptr<IOutputBackend> createOutputBackend(const std::string& backendId
 #if defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)
   if (backendId == "coreaudio") {
     return std::make_unique<CoreAudioBackend>();
+  }
+  if (backendId == "coreaudio-exclusive") {
+    return std::make_unique<CoreAudioExclusiveBackend>();
   }
 #endif
 #if defined(__linux__) && defined(TAE_ENABLE_ALSA)

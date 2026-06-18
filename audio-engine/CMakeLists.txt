@@ -51,6 +51,9 @@ add_library(twilight_audio_engine SHARED
   core/TwilightAudioEngine.cpp
   decoder/DopPacker.cpp
   decoder/DsdReader.cpp
+  decoder/DstDecoder.cpp
+  decoder/SacdDstDecoderProvider.cpp
+  decoder/vendor/dstdec/dstdec.cpp
   decoder/FFmpegDecoder.cpp
   decoder/SacdIsoDemuxer.cpp
   devices/DeviceManager.cpp
@@ -71,7 +74,9 @@ add_library(twilight_audio_engine SHARED
   output/asio/DeviceCapabilityCache.cpp
   output/asio/RealAsioHost.cpp
   output/coreaudio/CoreAudioBackend.cpp
+  output/coreaudio/CoreAudioExclusiveBackend.cpp
   output/alsa/AlsaBackend.cpp
+  output/alsa/RealAlsaHost.cpp
   playlist/QueueManager.cpp
   plugins/PluginRegistry.cpp
   utils/StringUtils.cpp
@@ -152,6 +157,7 @@ if(TAE_ASIO_AVAILABLE)
 endif()
 
 if(TAE_COREAUDIO_AVAILABLE)
+  target_sources(twilight_audio_engine PRIVATE output/coreaudio/RealCoreAudioHost.cpp)
   target_compile_definitions(twilight_audio_engine PRIVATE TAE_ENABLE_COREAUDIO=1)
   target_link_libraries(twilight_audio_engine PRIVATE
     "-framework CoreAudio"
@@ -269,6 +275,9 @@ if(TAE_BUILD_TESTS)
     metadata/metadata_tests.cpp
     metadata/AudioMetadataService.cpp
     decoder/SacdIsoDemuxer.cpp
+    decoder/DstDecoder.cpp
+    decoder/SacdDstDecoderProvider.cpp
+    decoder/vendor/dstdec/dstdec.cpp
     core/AudioTypes.cpp
   )
   target_include_directories(twilight_metadata_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -305,6 +314,9 @@ if(TAE_BUILD_TESTS)
     decoder/DopPacker.cpp
     decoder/DsdReader.cpp
     decoder/SacdIsoDemuxer.cpp
+    decoder/DstDecoder.cpp
+    decoder/SacdDstDecoderProvider.cpp
+    decoder/vendor/dstdec/dstdec.cpp
     core/AudioTypes.cpp
   )
   target_include_directories(twilight_dsd_dop_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -338,7 +350,10 @@ if(TAE_BUILD_TESTS)
     target_link_libraries(twilight_platform_backend_smoke PRIVATE ole32 uuid avrt)
   endif()
   if(TAE_COREAUDIO_AVAILABLE)
-    target_sources(twilight_platform_backend_smoke PRIVATE output/coreaudio/CoreAudioBackend.cpp)
+    target_sources(twilight_platform_backend_smoke PRIVATE
+      output/coreaudio/CoreAudioBackend.cpp
+      output/coreaudio/CoreAudioExclusiveBackend.cpp
+    )
     target_compile_definitions(twilight_platform_backend_smoke PRIVATE TAE_ENABLE_COREAUDIO=1)
     target_link_libraries(twilight_platform_backend_smoke PRIVATE
       "-framework CoreAudio"
@@ -418,6 +433,9 @@ if(TAE_BUILD_TESTS)
     decoder/DopPacker.cpp
     decoder/DsdReader.cpp
     decoder/SacdIsoDemuxer.cpp
+    decoder/DstDecoder.cpp
+    decoder/SacdDstDecoderProvider.cpp
+    decoder/vendor/dstdec/dstdec.cpp
     dsp/ChannelRouter.cpp
     dsp/ConvolverProcessor.cpp
     dsp/CrossfeedProcessor.cpp
@@ -435,6 +453,49 @@ if(TAE_BUILD_TESTS)
   )
   target_link_libraries(twilight_runtime_queue_reroute_tests PRIVATE ${CMAKE_DL_LIBS})
   add_test(NAME twilight_runtime_queue_reroute_unit COMMAND twilight_runtime_queue_reroute_tests)
+
+  add_executable(twilight_dst_decoder_tests
+    tests/dst_decoder_tests.cpp
+    decoder/DstDecoder.cpp
+    decoder/vendor/dstdec/dstdec.cpp
+  )
+  target_include_directories(twilight_dst_decoder_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME twilight_dst_decoder_unit COMMAND twilight_dst_decoder_tests)
+
+  add_executable(twilight_coreaudio_backend_tests
+    tests/coreaudio_backend_tests.cpp
+    output/coreaudio/CoreAudioBackend.cpp
+    output/coreaudio/CoreAudioExclusiveBackend.cpp
+    output/coreaudio/MockCoreAudioHost.cpp
+    core/AudioTypes.cpp
+  )
+  target_include_directories(twilight_coreaudio_backend_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  if(TAE_COREAUDIO_AVAILABLE)
+    target_sources(twilight_coreaudio_backend_tests PRIVATE output/coreaudio/RealCoreAudioHost.cpp)
+    target_compile_definitions(twilight_coreaudio_backend_tests PRIVATE TAE_ENABLE_COREAUDIO=1)
+    target_link_libraries(twilight_coreaudio_backend_tests PRIVATE
+      "-framework CoreAudio"
+      "-framework CoreFoundation"
+      "-framework AudioToolbox"
+      "-framework AudioUnit"
+    )
+  endif()
+  add_test(NAME twilight_coreaudio_backend_unit COMMAND twilight_coreaudio_backend_tests)
+
+  add_executable(twilight_alsa_backend_tests
+    tests/alsa_backend_tests.cpp
+    output/alsa/AlsaBackend.cpp
+    output/alsa/MockAlsaHost.cpp
+    output/alsa/RealAlsaHost.cpp
+    core/AudioTypes.cpp
+  )
+  target_include_directories(twilight_alsa_backend_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  if(TAE_ALSA_AVAILABLE)
+    target_compile_definitions(twilight_alsa_backend_tests PRIVATE TAE_ENABLE_ALSA=1)
+    target_include_directories(twilight_alsa_backend_tests PRIVATE ${ALSA_INCLUDE_DIRS})
+    target_link_libraries(twilight_alsa_backend_tests PRIVATE ${ALSA_LIBRARIES})
+  endif()
+  add_test(NAME twilight_alsa_backend_unit COMMAND twilight_alsa_backend_tests)
 
   add_executable(audio_output_benchmark
     tests/output_backend_benchmark.cpp

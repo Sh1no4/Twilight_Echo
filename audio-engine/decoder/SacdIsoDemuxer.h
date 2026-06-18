@@ -8,6 +8,8 @@
 
 namespace twilight::audio {
 
+class SacdDstDecoderProvider;
+
 struct SacdIsoTrackInfo {
   int trackNumber = 0;
   std::string area = "stereo";
@@ -45,9 +47,18 @@ class SacdIsoDemuxer {
 
   const AudioStreamInfo& streamInfo() const;
 
+  // Inject a DSD-preserving DST decoder provider. When set, DST-compressed
+  // SACD tracks become playable: readBytes decodes DST frames into raw DSD
+  // bytes via the provider. When unset, DST tracks remain unplayable with
+  // reason dst_dsd_provider_unavailable. The demuxer does not take ownership
+  // of the pointer; the caller must keep it alive for the demuxer's lifetime.
+  void setDstDecoderProvider(SacdDstDecoderProvider* provider);
+
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
+
+  size_t readDstBytes(const SacdIsoTrackInfo& track, uint8_t* output, size_t maxBytes);
 };
 
 } // namespace twilight::audio

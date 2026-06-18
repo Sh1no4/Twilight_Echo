@@ -70,7 +70,10 @@ inline bool isDopCarrierSampleFormat(AudioSampleFormat format) {
 }
 
 inline bool isDopCarrierFormat(const AudioFormat& format) {
-  return format.sampleRate > 0 && format.channelCount > 0 && (format.sampleRate == 176400 || format.sampleRate == 352800) &&
+  return format.sampleRate > 0 && format.channelCount > 0 &&
+         (format.sampleRate == 176400 || format.sampleRate == 192000 || format.sampleRate == 352800 ||
+          format.sampleRate == 384000 || format.sampleRate == 705600 || format.sampleRate == 768000 ||
+          format.sampleRate == 1411200 || format.sampleRate == 1536000) &&
          effectivePcmBitDepth(format) == 24 && isDopCarrierSampleFormat(format.sampleFormat);
 }
 

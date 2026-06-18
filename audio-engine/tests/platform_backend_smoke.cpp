@@ -1,6 +1,7 @@
 #include "../core/AudioTypes.h"
 #include "../output/alsa/AlsaBackend.h"
 #include "../output/coreaudio/CoreAudioBackend.h"
+#include "../output/coreaudio/CoreAudioExclusiveBackend.h"
 #include "../output/wasapi/WasapiExclusiveBackend.h"
 #include "../output/wasapi/WasapiSharedBackend.h"
 
@@ -125,6 +126,32 @@ int main() {
       backend.close();
     }
   }
+
+  {
+    CoreAudioExclusiveBackend backend;
+    assert(std::string(backend.id()) == "coreaudio-exclusive");
+    if (runRealBackendTests() && coreAudioExclusiveBackendAvailable()) {
+      std::string error;
+      if (backend.open("auto", pcm(), &error)) {
+        const OutputInfo info = backend.outputInfo();
+        assert(info.actualBackend == "coreaudio-exclusive");
+        assert(!info.actualDeviceName.empty());
+        assertActualFormatFacts(info);
+        assert(info.exclusive);
+        assert(info.accessMode == "exclusive");
+        assertLatencyFacts(info);
+        assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        backend.stop();
+        backend.close();
+      } else {
+        const OutputInfo info = backend.outputInfo();
+        assert(!error.empty());
+        assert(info.actualBackend == "coreaudio-exclusive");
+        assert(!info.perfectReason.empty());
+      }
+    }
+  }
 #endif
 
 #if defined(__linux__)
@@ -145,6 +172,32 @@ int main() {
       std::this_thread::sleep_for(std::chrono::milliseconds(30));
       backend.stop();
       backend.close();
+    }
+  }
+
+  {
+    CoreAudioExclusiveBackend backend;
+    assert(std::string(backend.id()) == "coreaudio-exclusive");
+    if (runRealBackendTests() && coreAudioExclusiveBackendAvailable()) {
+      std::string error;
+      if (backend.open("auto", pcm(), &error)) {
+        const OutputInfo info = backend.outputInfo();
+        assert(info.actualBackend == "coreaudio-exclusive");
+        assert(!info.actualDeviceName.empty());
+        assertActualFormatFacts(info);
+        assert(info.exclusive);
+        assert(info.accessMode == "exclusive");
+        assertLatencyFacts(info);
+        assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        backend.stop();
+        backend.close();
+      } else {
+        const OutputInfo info = backend.outputInfo();
+        assert(!error.empty());
+        assert(info.actualBackend == "coreaudio-exclusive");
+        assert(!info.perfectReason.empty());
+      }
     }
   }
 #endif

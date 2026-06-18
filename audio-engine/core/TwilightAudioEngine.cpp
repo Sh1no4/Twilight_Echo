@@ -214,6 +214,7 @@ std::string backendCapabilitiesJson() {
 
 #if defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)
   append("coreaudio", "苹果系统音频", true, true, false, false, "shared", "hal");
+  append("coreaudio-exclusive", "独占输出 (Hog Mode)", true, true, true, true, "exclusive", "hal");
 #else
   append(
       "coreaudio",
@@ -225,6 +226,16 @@ std::string backendCapabilitiesJson() {
       "shared",
       "hal",
       "CoreAudio is only available in macOS builds with TAE_ENABLE_COREAUDIO");
+  append(
+      "coreaudio-exclusive",
+      "独占输出 (Hog Mode)",
+      false,
+      false,
+      true,
+      false,
+      "exclusive",
+      "hal",
+      "CoreAudio Hog Mode exclusive is only available in macOS builds with TAE_ENABLE_COREAUDIO");
 #endif
 
 #if defined(__linux__) && defined(TAE_ENABLE_ALSA)
@@ -585,6 +596,7 @@ struct VisualizationQuery {
   size_t spectrumPoints = 64;
   size_t waveformPoints = 128;
   size_t spectrogramFrames = 48;
+  size_t oscilloscopePoints = 1024;
 };
 
 VisualizationQuery parseVisualizationQueryJson(const std::string& json) {
@@ -592,6 +604,7 @@ VisualizationQuery parseVisualizationQueryJson(const std::string& json) {
   query.spectrumPoints = std::clamp<uint32_t>(parseUintField(json, "spectrumPoints", 64), 8, 256);
   query.waveformPoints = std::clamp<uint32_t>(parseUintField(json, "waveformPoints", 128), 16, 512);
   query.spectrogramFrames = std::clamp<uint32_t>(parseUintField(json, "spectrogramFrames", 48), 1, 96);
+  query.oscilloscopePoints = std::clamp<uint32_t>(parseUintField(json, "oscilloscopePoints", 1024), 64, 4096);
   return query;
 }
 
@@ -609,6 +622,8 @@ std::string inactiveVisualizationJson(const VisualizationQuery& query, int sampl
   writeZeros(json, query.spectrumPoints);
   json << ",\"waveform\":";
   writeZeros(json, query.waveformPoints);
+  json << ",\"oscilloscope\":";
+  writeZeros(json, query.oscilloscopePoints);
   json << ",\"peakDb\":-120,\"rmsDb\":-120,\"lufsMomentary\":null,\"spectrogram\":[],"
        << "\"sampleRate\":" << sampleRate << ",\"active\":false}";
   return json.str();
@@ -1318,6 +1333,7 @@ std::string TwilightAudioEngine::enumerateBackendsJson() const {
 #endif
 #if defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)
   append("coreaudio", "苹果系统音频", false);
+  append("coreaudio-exclusive", "独占输出 (Hog Mode)", true);
 #endif
 #if defined(__linux__) && defined(TAE_ENABLE_ALSA)
   append("alsa", "Linux ALSA 输出", false);
@@ -1336,6 +1352,26 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
     nativeDsdCapable = info_.outputInfo.driverNativeDsdCapable;
     dopCapable = info_.outputInfo.driverDopCapable;
   }
+  // The built-in DSD-preserving DST decoder (vendored dstdec) makes SACD ISO
+  // DST-compressed tracks playable. Report the capability honestly: when the
+  // provider is available, sacdIsoDst=true and DST tracks enter the same
+  // Native DSD / DoP / PCM decision chain as uncompressed DSD.
+  bool sacdDstAvailable = false;
+  bool sacdDstProviderRegistered = false;
+  std::string sacdDstReasonCode;
+  std::string sacdDstReason;
+  if (auto provider = createDefaultSacdDstDecoderProvider()) {
+    sacdDstProviderRegistered = true;
+    std::string reason;
+    sacdDstAvailable = provider->available(&reason);
+    if (!sacdDstAvailable) {
+      sacdDstReasonCode = kSacdDstDsdProviderUnavailableReasonCode;
+      sacdDstReason = reason.empty() ? kSacdDstDsdProviderUnavailableReason : reason;
+    }
+  } else {
+    sacdDstReasonCode = kSacdDstDsdProviderUnavailableReasonCode;
+    sacdDstReason = kSacdDstDsdProviderUnavailableReason;
+  }
   std::ostringstream json;
   json << "{"
        << "\"version\":\"" << TAE_GetVersion() << "\","
@@ -1347,9 +1383,10 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
        << "\"sacdProgramModes\":[\"auto\",\"stereo\",\"multichannel\"],"
        << "\"devicePathKinds\":[\"default\",\"hw\",\"plughw\",\"hal\",\"asio\"],"
        << "\"dsd\":{\"native\":" << (nativeDsdCapable ? "true" : "false") << ",\"dop\":" << (dopCapable ? "true" : "false")
-       << ",\"sacdIso\":true,\"sacdIsoDst\":false,\"sacdIsoDstMode\":\"unavailable\","
-       << "\"sacdIsoDstReasonCode\":\"" << kSacdDstDsdProviderUnavailableReasonCode << "\","
-       << "\"sacdIsoDstReason\":\"" << escapeJson(kSacdDstDsdProviderUnavailableReason) << "\",\"mode\":\"pcm\"},"
+        << ",\"sacdIso\":true,\"sacdIsoDst\":" << (sacdDstAvailable ? "true" : "false")
+        << ",\"sacdIsoDstMode\":\"" << (sacdDstAvailable ? "native" : "unavailable") << "\","
+        << "\"sacdIsoDstReasonCode\":\"" << escapeJson(sacdDstReasonCode) << "\","
+        << "\"sacdIsoDstReason\":\"" << escapeJson(sacdDstReason) << "\",\"mode\":\"pcm\"},"
        << "\"features\":{"
        << "\"ffmpeg\":"
 #if defined(TAE_HAS_FFMPEG)
@@ -1382,7 +1419,8 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
        << "false"
 #endif
        << ",\"nativeDsd\":" << (nativeDsdCapable ? "true" : "false") << ",\"dop\":" << (dopCapable ? "true" : "false")
-       << ",\"sacdIso\":true,\"sacdIsoDst\":false,\"sacdIsoDstDsdProvider\":false,"
+        << ",\"sacdIso\":true,\"sacdIsoDst\":" << (sacdDstAvailable ? "true" : "false")
+        << ",\"sacdIsoDstDsdProvider\":" << (sacdDstProviderRegistered ? "true" : "false") << ","
        << "\"audioPluginSystem\":true,\"nativeDsp\":true"
        << "},\"backends\":" << backends
        << ",\"backendCapabilities\":" << backendCapabilities
@@ -1430,7 +1468,8 @@ std::string TwilightAudioEngine::getVisualizationDataJson(const std::string& opt
     return pipeline_->getVisualizationDataJson(
         query.spectrumPoints,
         query.waveformPoints,
-        query.spectrogramFrames);
+        query.spectrogramFrames,
+        query.oscilloscopePoints);
   }
   std::lock_guard lock(mutex_);
   return inactiveVisualizationJson(query, info_.actualSampleRate);

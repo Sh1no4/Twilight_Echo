@@ -18,12 +18,16 @@
 namespace twilight::audio {
 namespace {
 
-constexpr std::array<int, 8> kSupportedSampleRates = {
-    44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000};
+constexpr std::array<int, 12> kSupportedSampleRates = {
+    44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000, 705600, 768000, 1411200, 1536000};
 
 constexpr int kDsd64SampleRate = 2822400;
 constexpr int kDsd128SampleRate = 5644800;
-constexpr std::array<int, 2> kDopCarrierSampleRates = {176400, 352800};
+constexpr int kDsd256SampleRate = 11289600;
+constexpr int kDsd256x48SampleRate = 12288000;
+constexpr int kDsd512SampleRate = 22579200;
+constexpr int kDsd512x48SampleRate = 24576000;
+constexpr std::array<int, 8> kDopCarrierSampleRates = {176400, 192000, 352800, 384000, 705600, 768000, 1411200, 1536000};
 
 const GUID kPcmSubFormat = {
     0x00000001, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
@@ -50,7 +54,8 @@ std::array<int, 3> bitDepthPriority(int sourceBitDepth) {
 }
 
 bool isDsdRate(int sampleRate) {
-  return sampleRate == kDsd64SampleRate || sampleRate == kDsd128SampleRate;
+  return sampleRate == kDsd64SampleRate || sampleRate == kDsd128SampleRate || sampleRate == kDsd256SampleRate ||
+         sampleRate == kDsd256x48SampleRate || sampleRate == kDsd512SampleRate || sampleRate == kDsd512x48SampleRate;
 }
 
 bool looksLikeDsdRate(int sampleRate) {
@@ -65,6 +70,10 @@ bool isDopCarrierRate(int sampleRate) {
 int dopCarrierRateForSource(const AudioFormat& sourceFormat) {
   if (sourceFormat.sampleRate == kDsd64SampleRate) return 176400;
   if (sourceFormat.sampleRate == kDsd128SampleRate) return 352800;
+  if (sourceFormat.sampleRate == kDsd256SampleRate) return 705600;
+  if (sourceFormat.sampleRate == kDsd256x48SampleRate) return 768000;
+  if (sourceFormat.sampleRate == kDsd512SampleRate) return 1411200;
+  if (sourceFormat.sampleRate == kDsd512x48SampleRate) return 1536000;
   if (isDopCarrierFormat(sourceFormat)) return sourceFormat.sampleRate;
   return 0;
 }
@@ -400,7 +409,7 @@ std::string WasapiFormatNegotiator::buildFailureReason(
   if (dopCarrierRequested && expectedDopCarrierRate <= 0) {
     return "WASAPI 独占 DoP carrier 协商失败：" + formatSummary(sourceFormat) +
            "；source sample rate " + std::to_string(sourceFormat.sampleRate) +
-           "Hz 暂无可用 DoP carrier（本阶段仅协商 DSD64/DSD128 -> 176400/352800Hz，24-bit int24/int24-in32；未启用 Native DSD）";
+           "Hz 暂无可用 DoP carrier（本阶段协商 DSD64/DSD128/DSD256/DSD512 -> 176400/192000/352800/384000/705600/768000/1411200/1536000Hz，24-bit int24/int24-in32；未启用 Native DSD）";
   }
 
   const int sourceBitDepth = dopCarrierRequested ? 24 : normalizeBitDepth(sourceFormat.bitDepth);

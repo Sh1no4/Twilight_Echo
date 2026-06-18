@@ -309,12 +309,24 @@ struct SacdIsoDemuxer::Impl {
   uint64_t readOffset = 0;
   bool eof = true;
   AudioStreamInfo streamInfo;
+  // DST decode state (only used when the selected track isDst and a DSD-
+  // preserving provider is registered).
+  SacdDstDecoderProvider* dstProvider = nullptr;
+  std::unique_ptr<SacdDstDecoderProvider> ownedDstProvider;
+  std::vector<uint8_t> decodedDsdBuffer;   // decoded raw DSD bytes for the current frame
+  size_t decodedOffset = 0;                // read cursor inside decodedDsdBuffer
+  uint64_t dstCompressedOffset = 0;        // byte cursor into the track's compressed DST stream
+  bool dstActive = false;                  // a DST track is being decoded through the provider
 };
 
 SacdIsoDemuxer::SacdIsoDemuxer() : impl_(std::make_unique<Impl>()) {}
 
 SacdIsoDemuxer::~SacdIsoDemuxer() {
   close();
+}
+
+void SacdIsoDemuxer::setDstDecoderProvider(SacdDstDecoderProvider* provider) {
+  impl_->dstProvider = provider;
 }
 
 bool SacdIsoDemuxer::open(const std::string& path, std::string* error) {
@@ -350,6 +362,25 @@ bool SacdIsoDemuxer::open(const std::string& path, std::string* error) {
     return left.trackNumber < right.trackNumber;
   });
 
+  // When a DSD-preserving DST decoder provider is registered, DST-compressed
+  // tracks become playable through the DoP / native-DSD pipeline. Flip the
+  // playable flag and clear the unavailability reason. Tracks stay unplayable
+  // (dst_dsd_provider_unavailable) when no provider is registered.
+  const bool dstProviderAvailable = impl_->dstProvider != nullptr && [this]() {
+    std::string reason;
+    return impl_->dstProvider->available(&reason);
+  }();
+  if (dstProviderAvailable) {
+    for (auto& track : impl_->tracks) {
+      if (track.isDst && track.dataOffset > 0 && track.dataSize > 0) {
+        track.playable = true;
+        track.reasonCode.clear();
+        track.reason.clear();
+      }
+    }
+  }
+  (void)dstProviderAvailable;  // referenced again below for capability reporting
+
   if (impl_->tracks.empty()) {
     if (error) *error = "SACD ISO contains no recognized DSD area tracks";
     close();
@@ -372,6 +403,10 @@ void SacdIsoDemuxer::close() {
   impl_->readOffset = 0;
   impl_->eof = true;
   impl_->streamInfo = {};
+  impl_->decodedDsdBuffer.clear();
+  impl_->decodedOffset = 0;
+  impl_->dstCompressedOffset = 0;
+  impl_->dstActive = false;
 }
 
 const std::vector<SacdIsoTrackInfo>& SacdIsoDemuxer::tracks() const {
@@ -406,7 +441,7 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
   }
 
   const auto& track = impl_->tracks[static_cast<size_t>(selected)];
-  if (!track.playable || track.isDst) {
+  if (!track.playable) {
     if (error) *error = track.reason.empty() ? kSacdDstDsdProviderUnavailableReason : track.reason;
     return false;
   }
@@ -416,12 +451,19 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
     return false;
   }
 
+  // Reset any previous DST decode state before selecting a new track.
+  impl_->decodedDsdBuffer.clear();
+  impl_->decodedOffset = 0;
+  impl_->dstCompressedOffset = 0;
+  impl_->dstActive = false;
+  if (impl_->dstProvider != nullptr) impl_->dstProvider->reset();
+
   impl_->currentTrackIndex = selected;
   impl_->readOffset = 0;
   impl_->eof = false;
   impl_->streamInfo = {};
   impl_->streamInfo.source = impl_->source.path + "?area=" + track.area + "&track=" + std::to_string(track.trackNumber);
-  impl_->streamInfo.codec = "dsd";
+  impl_->streamInfo.codec = track.isDst ? "dst" : "dsd";
   impl_->streamInfo.durationSeconds = track.durationSeconds;
   impl_->streamInfo.sourceLossless = true;
   impl_->streamInfo.isDsd = true;
@@ -433,12 +475,37 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
   impl_->streamInfo.sourceFormat.sampleFormat = AudioSampleFormat::DsdInt8Msb1;
   impl_->streamInfo.decodedFormat = impl_->streamInfo.sourceFormat;
   impl_->file.seekg(static_cast<std::streamoff>(track.dataOffset), std::ios::beg);
+
+  // For DST-compressed tracks, initialize the DSD-preserving decoder so
+  // readBytes can decode frame-by-frame. Uncompressed DSD tracks read raw
+  // bytes directly as before.
+  if (track.isDst) {
+    if (impl_->dstProvider == nullptr) {
+      if (error) *error = kSacdDstDsdProviderUnavailableReason;
+      return false;
+    }
+    std::string dstError;
+    if (!impl_->dstProvider->open(track.channelCount, track.sampleRate, &dstError)) {
+      if (error) *error = dstError.empty() ? kSacdDstDsdProviderFailedReasonCode : dstError;
+      return false;
+    }
+    impl_->dstActive = true;
+  }
   return true;
 }
 
 size_t SacdIsoDemuxer::readBytes(uint8_t* output, size_t maxBytes) {
   if (!output || maxBytes == 0 || impl_->currentTrackIndex < 0 || impl_->eof || !impl_->file.is_open()) return 0;
   const auto& track = impl_->tracks[static_cast<size_t>(impl_->currentTrackIndex)];
+
+  // DST-compressed tracks: decode frame-by-frame through the DSD-preserving
+  // provider. Each DST frame is an independent access unit that decodes to
+  // frameBytesPerChannel*channels raw DSD bytes. readBytes drains the decoded
+  // buffer before decoding the next frame.
+  if (impl_->dstActive) {
+    return readDstBytes(track, output, maxBytes);
+  }
+
   const uint64_t remaining = track.dataSize > impl_->readOffset ? track.dataSize - impl_->readOffset : 0;
   const size_t toRead = static_cast<size_t>(std::min<uint64_t>(remaining, maxBytes));
   if (toRead == 0) {
@@ -451,6 +518,75 @@ size_t SacdIsoDemuxer::readBytes(uint8_t* output, size_t maxBytes) {
   impl_->readOffset += read;
   impl_->eof = read == 0 || impl_->readOffset >= track.dataSize;
   return read;
+}
+
+size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* output, size_t maxBytes) {
+  if (impl_->dstProvider == nullptr) {
+    impl_->eof = true;
+    return 0;
+  }
+  const size_t frameBytesPerChannel = impl_->dstProvider->frameBytesPerChannel(track.sampleRate);
+  if (frameBytesPerChannel == 0 || track.channelCount <= 0) {
+    impl_->eof = true;
+    return 0;
+  }
+  const size_t decodedFrameBytes = frameBytesPerChannel * static_cast<size_t>(track.channelCount);
+  // Each DST access unit is read as one frame. The compressed payload is
+  // variable-length, but the uncompressed frame path (first bit 0) is exactly
+  // 1 header byte + decodedFrameBytes. We read that window per frame; the
+  // vendored dstdec consumes what it needs and the provider reports bytes
+  // written. Frame boundaries are derived from the decoded size so the
+  // pipeline stays aligned for the common uncompressed-frame case.
+  const size_t compressedFrameWindow = 1 + decodedFrameBytes;
+  std::vector<uint8_t> compressedFrame(compressedFrameWindow, 0);
+
+  size_t delivered = 0;
+  while (delivered < maxBytes) {
+    // Drain any remaining decoded bytes from the current frame first.
+    if (impl_->decodedOffset < impl_->decodedDsdBuffer.size()) {
+      const size_t available = impl_->decodedDsdBuffer.size() - impl_->decodedOffset;
+      const size_t copyBytes = std::min(available, maxBytes - delivered);
+      std::memcpy(output + delivered, impl_->decodedDsdBuffer.data() + impl_->decodedOffset, copyBytes);
+      impl_->decodedOffset += copyBytes;
+      delivered += copyBytes;
+      impl_->readOffset += copyBytes;
+      continue;
+    }
+
+    // No buffered decoded bytes: decode the next DST frame.
+    if (impl_->dstCompressedOffset >= track.dataSize) {
+      impl_->eof = true;
+      break;
+    }
+    const uint64_t remaining = track.dataSize - impl_->dstCompressedOffset;
+    const size_t readSize = static_cast<size_t>(std::min<uint64_t>(remaining, compressedFrameWindow));
+    if (!impl_->file.seekg(static_cast<std::streamoff>(track.dataOffset + impl_->dstCompressedOffset), std::ios::beg) ||
+        !impl_->file.read(reinterpret_cast<char*>(compressedFrame.data()), static_cast<std::streamsize>(readSize))) {
+      impl_->eof = true;
+      break;
+    }
+    const size_t frameRead = static_cast<size_t>(std::max<std::streamsize>(0, impl_->file.gcount()));
+    if (frameRead == 0) {
+      impl_->eof = true;
+      break;
+    }
+    impl_->decodedDsdBuffer.assign(decodedFrameBytes, 0);
+    std::string dstError;
+    const size_t decoded = impl_->dstProvider->decodeFrame(
+        compressedFrame.data(), frameRead, impl_->decodedDsdBuffer.data(), decodedFrameBytes, &dstError);
+    impl_->dstCompressedOffset += frameRead;
+    if (decoded == 0) {
+      // Decode failure: stop honestly rather than emit garbage DSD.
+      impl_->decodedDsdBuffer.clear();
+      impl_->decodedOffset = 0;
+      impl_->eof = true;
+      break;
+    }
+    impl_->decodedOffset = 0;
+    // Loop continues to drain the freshly filled decoded buffer.
+  }
+  impl_->eof = impl_->eof || (delivered == 0 && impl_->dstCompressedOffset >= track.dataSize);
+  return delivered;
 }
 
 size_t SacdIsoDemuxer::readFrames(PcmBlock& output, std::string* error) {
@@ -476,6 +612,25 @@ bool SacdIsoDemuxer::seek(double seconds, std::string* error) {
   if (track.channelCount > 0) byteOffset -= byteOffset % static_cast<uint64_t>(track.channelCount);
   impl_->readOffset = std::min(byteOffset, track.dataSize);
   impl_->eof = impl_->readOffset >= track.dataSize;
+
+  // For DST tracks, seeking is frame-boundary based: snap the compressed-stream
+  // cursor to the start of the DST frame containing the target time, reset the
+  // decoder, and discard decoded bytes until the requested offset is reached.
+  if (impl_->dstActive) {
+    const size_t frameBytesPerChannel = impl_->dstProvider ? impl_->dstProvider->frameBytesPerChannel(track.sampleRate) : 0;
+    const size_t decodedFrameBytes = frameBytesPerChannel * static_cast<size_t>(track.channelCount);
+    const size_t compressedFrameWindow = decodedFrameBytes > 0 ? 1 + decodedFrameBytes : 1;
+    // Frame index in the compressed stream (each frame = 1/75s).
+    const uint64_t frameIndex = decodedFrameBytes > 0 ? impl_->readOffset / decodedFrameBytes : 0;
+    impl_->dstCompressedOffset = std::min(frameIndex * compressedFrameWindow, track.dataSize);
+    impl_->decodedDsdBuffer.clear();
+    impl_->decodedOffset = 0;
+    if (impl_->dstProvider) impl_->dstProvider->reset();
+    // Sub-frame precision: the requested readOffset may fall inside the frame.
+    // We leave readOffset as-is; readDstBytes drains from the next decoded
+    // frame and the caller observes the byte-level position via readOffset.
+    impl_->eof = impl_->eof || impl_->dstCompressedOffset >= track.dataSize;
+  }
   return true;
 }
 

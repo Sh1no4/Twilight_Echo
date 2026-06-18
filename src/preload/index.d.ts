@@ -148,11 +148,13 @@ interface VisualizationOptions {
   spectrumPoints?: number
   waveformPoints?: number
   spectrogramFrames?: number
+  oscilloscopePoints?: number
 }
 
 interface VisualizationData {
   spectrum: number[]
   waveform: number[]
+  oscilloscope: number[]
   peakDb: number
   rmsDb: number
   lufsMomentary: number | null

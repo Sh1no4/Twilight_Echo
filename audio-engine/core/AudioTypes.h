@@ -212,7 +212,7 @@ int effectivePcmBitDepth(const AudioFormat& format);
 bool pcmFormatsExactMatch(const AudioFormat& left, const AudioFormat& right);
 bool isDsdSampleFormat(AudioSampleFormat format);
 bool dsdFormatsExactMatch(const AudioFormat& left, const AudioFormat& right);
-std::optional<AudioFormat> dopCarrierFormatForDsd(int dsdRate, int channelCount);
+std::optional<AudioFormat> dopCarrierFormatForDsd(int dsdRate, int sourceSampleRate, int channelCount);
 PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation);
 
 }  // namespace twilight::audio
