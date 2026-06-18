@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Twilight Echo - 设置预览 (完全同步原版功能)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/primeicons/primeicons.css" />
+    <style>
+        body {
+            font-family: 'Outfit', 'Noto Sans SC', sans-serif;
+            background-color: #f4f4f7;
+            color: #111827;
+        }
+        .glass-card {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 1);
+            box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.05);
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.15);
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(0, 0, 0, 0.25);
+        }
+        .toggle-switch {
+            width: 40px;
+            height: 20px;
+            border-radius: 999px;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .toggle-switch::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            width: 16px;
+            height: 16px;
+            background: white;
+            border-radius: 50%;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+        }
+        .toggle-switch.active { background: #8b5cf6; }
+        .toggle-switch.active::after { left: 22px; }
+        .toggle-switch.inactive { background: #d1d5db; }
+        .toggle-switch.inactive::after { left: 2px; }
+    </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f5f3ff', 100: '#ede9fe', 200: '#ddd6fe', 300: '#c4b5fd', 400: '#a78bfa',
+                            500: '#8b5cf6', 600: '#7c3aed', 700: '#6d28d9', 800: '#5b21b6', 900: '#4c1d95',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="h-screen flex overflow-hidden w-full">
+    <div id="app" class="flex w-full h-full relative">
+        <!-- No background gradients -->
+
+        <main class="flex-1 p-6 lg:p-12 overflow-y-auto z-10 relative scroll-smooth max-w-7xl mx-auto w-full">
+            <header class="mb-8 flex justify-between items-center">
+                <div>
+                    <h1 class="text-3xl font-extrabold mb-1 text-gray-800 tracking-tight">设置</h1>
+                    <p class="text-sm text-gray-500 font-medium">定制您的 Twilight Echo 体验</p>
+                </div>
+            </header>
+
+            <div class="flex flex-col lg:flex-row gap-8">
+                <!-- Settings Navigation (Sticky) -->
+                <div class="lg:w-48 flex shrink-0 lg:flex-col gap-1.5 overflow-x-auto lg:overflow-visible pb-2 lg:pb-0 lg:sticky lg:top-0 lg:h-fit z-20">
+                    <div onclick="document.getElementById('general').scrollIntoView({behavior: 'smooth'})" class="px-4 py-2.5 rounded-xl bg-white shadow-sm border border-brand-100 text-brand-600 font-bold text-[13px] cursor-pointer flex items-center gap-3 hover:shadow-md">
+                        <i class="pi pi-sliders-h"></i> 常规
+                    </div>
+                    <div onclick="document.getElementById('playback').scrollIntoView({behavior: 'smooth'})" class="px-4 py-2.5 rounded-xl text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium text-[13px] cursor-pointer transition flex items-center gap-3">
+                        <i class="pi pi-volume-up"></i> 播放
+                    </div>
+                    <div onclick="document.getElementById('dsp').scrollIntoView({behavior: 'smooth'})" class="px-4 py-2.5 rounded-xl text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium text-[13px] cursor-pointer transition flex items-center gap-3">
+                        <i class="pi pi-sliders-v"></i> DSP
+                    </div>
+                    <div onclick="document.getElementById('cache').scrollIntoView({behavior: 'smooth'})" class="px-4 py-2.5 rounded-xl text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium text-[13px] cursor-pointer transition flex items-center gap-3">
+                        <i class="pi pi-database"></i> 缓存
+                    </div>
+                    <div onclick="document.getElementById('plugins').scrollIntoView({behavior: 'smooth'})" class="px-4 py-2.5 rounded-xl text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium text-[13px] cursor-pointer transition flex items-center gap-3">
+                        <i class="pi pi-box"></i> 插件
+                    </div>
+                    <div onclick="document.getElementById('performance').scrollIntoView({behavior: 'smooth'})" class="px-4 py-2.5 rounded-xl text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium text-[13px] cursor-pointer transition flex items-center gap-3">
+                        <i class="pi pi-bolt"></i> 性能
+                    </div>
+                    <div onclick="document.getElementById('appearance').scrollIntoView({behavior: 'smooth'})" class="px-4 py-2.5 rounded-xl text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium text-[13px] cursor-pointer transition flex items-center gap-3">
+                        <i class="pi pi-palette"></i> 外观
+                    </div>
+                    <div onclick="document.getElementById('shortcuts').scrollIntoView({behavior: 'smooth'})" class="px-4 py-2.5 rounded-xl text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium text-[13px] cursor-pointer transition flex items-center gap-3">
+                        <i class="pi pi-keyboard"></i> 快捷键
+                    </div>
+                    <div onclick="document.getElementById('about').scrollIntoView({behavior: 'smooth'})" class="px-4 py-2.5 rounded-xl text-gray-600 hover:text-gray-900 hover:bg-white/60 font-medium text-[13px] cursor-pointer transition flex items-center gap-3">
+                        <i class="pi pi-info-circle"></i> 关于
+                    </div>
+                </div>
+
+                <!-- Settings Panels -->
+                <div class="flex-1 flex flex-col gap-8 max-w-4xl pb-10">
+                    
+                    <!-- 1. 常规 (General) -->
+                    <!-- 1. 常规 (General) -->
+                    <div id="general" class="glass-card rounded-2xl p-6 lg:p-8 scroll-mt-6">
+                        <div class="flex items-center gap-2 mb-6">
+                            <i class="pi pi-sliders-h text-brand-500 text-lg"></i>
+                            <h3 class="text-lg font-bold text-gray-800">常规 (General)</h3>
+                        </div>
+                        
+                        <div class="flex flex-col gap-8">
+                            
+                            <!-- 1. 媒体库与文件 (Library & Sync) -->
+                            <div>
+                                <h4 class="text-[11px] font-bold text-brand-500 uppercase tracking-widest mb-4">媒体库管理 (Library & Sync)</h4>
+                                <div class="flex flex-col gap-4">
+                                    <div class="flex justify-between items-start">
+                                        <div class="pr-6">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1">扫描文件夹</div>
+                                            <div class="text-[12px] text-gray-500">添加包含您本地音乐文件的目录。</div>
+                                        </div>
+                                        <div class="flex flex-col gap-2 w-64">
+                                            <div class="flex items-center justify-between bg-white border border-gray-200 shadow-sm px-3 py-2 rounded-lg text-[12px] font-bold text-gray-700">
+                                                <span class="truncate">D:\Music\Hi-Res</span>
+                                                <i class="pi pi-times text-gray-400 hover:text-red-500 cursor-pointer transition"></i>
+                                            </div>
+                                            <button class="w-full py-2 bg-gray-50/50 border border-dashed border-gray-300 hover:border-brand-500 hover:text-brand-600 hover:bg-brand-50 text-gray-500 rounded-lg text-[12px] font-bold transition flex justify-center items-center gap-1">
+                                                <i class="pi pi-plus"></i> 添加文件夹
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <hr class="border-gray-100/80">
+                                    <div class="flex justify-between items-center">
+                                        <div class="pr-6">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1">实时监控文件夹变动</div>
+                                            <div class="text-[12px] text-gray-500">当添加新音乐时自动同步到媒体库，无需手动刷新。</div>
+                                        </div>
+                                        <div class="toggle-switch active" onclick="this.classList.toggle('active'); this.classList.toggle('inactive');"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 2. 存储与缓存 (Storage & Cache) -->
+                            <div>
+                                <h4 class="text-[11px] font-bold text-brand-500 uppercase tracking-widest mb-4">存储与清理 (Storage)</h4>
+                                <div class="flex flex-col gap-4">
+                                    <div class="flex justify-between items-center">
+                                        <div class="pr-6">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1">图片与歌词缓存位置</div>
+                                            <div class="text-[12px] text-gray-500">当前：C:\Users\Admin\AppData\...</div>
+                                        </div>
+                                        <button class="px-4 py-1.5 bg-white border border-gray-200 shadow-sm hover:border-gray-300 text-gray-700 rounded-lg text-[12px] font-bold transition">更改目录</button>
+                                    </div>
+                                    <hr class="border-gray-100/80">
+                                    <div class="flex justify-between items-center">
+                                        <div class="pr-6">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1">清理应用缓存</div>
+                                            <div class="text-[12px] text-gray-500">当前占用：<span class="font-bold text-brand-600">1.2 GB</span>。清理不会删除您的本地音乐文件。</div>
+                                        </div>
+                                        <button class="px-4 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 rounded-lg text-[12px] font-bold transition flex items-center gap-1 shadow-sm">
+                                            <i class="pi pi-trash"></i> 立即清理
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 3. 系统集成与社交 (Integration & Social) -->
+                            <div>
+                                <h4 class="text-[11px] font-bold text-brand-500 uppercase tracking-widest mb-4">集成与社交 (Integration & Social)</h4>
+                                <div class="flex flex-col gap-4">
+                                    <div class="flex justify-between items-center">
+                                        <div class="pr-6">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1">原生媒体控制 (SMTC)</div>
+                                            <div class="text-[12px] text-gray-500">响应键盘多媒体按键，并在系统锁屏界面显示播放控制。</div>
+                                        </div>
+                                        <div class="toggle-switch active" onclick="this.classList.toggle('active'); this.classList.toggle('inactive');"></div>
+                                    </div>
+                                    <hr class="border-gray-100/80">
+                                    <div class="flex justify-between items-center">
+                                        <div class="pr-6">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1 flex items-center gap-1.5">
+                                                Discord Rich Presence <i class="pi pi-discord text-indigo-500 text-[14px]"></i>
+                                            </div>
+                                            <div class="text-[12px] text-gray-500">在 Discord 状态中向好友展示您正在播放的音乐。</div>
+                                        </div>
+                                        <div class="toggle-switch inactive" onclick="this.classList.toggle('active'); this.classList.toggle('inactive');"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- 4. 启动与窗口 (Startup & Window) -->
+                            <div>
+                                <h4 class="text-[11px] font-bold text-brand-500 uppercase tracking-widest mb-4">启动与窗口 (Startup)</h4>
+                                <div class="flex flex-col gap-4">
+                                    <div class="flex justify-between items-center">
+                                        <div class="pr-6">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1">开机自动启动</div>
+                                            <div class="text-[12px] text-gray-500">在系统启动时自动在后台运行。</div>
+                                        </div>
+                                        <div class="toggle-switch inactive" onclick="this.classList.toggle('active'); this.classList.toggle('inactive');"></div>
+                                    </div>
+                                    <hr class="border-gray-100/80">
+                                    <div class="flex justify-between items-center">
+                                        <div class="pr-6">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1">关闭主面板时的行为</div>
+                                        </div>
+                                        <select class="appearance-none bg-white border border-gray-200 shadow-sm text-[12px] font-bold rounded-lg px-3 py-1.5 outline-none text-gray-700 w-44 cursor-pointer focus:border-brand-500">
+                                            <option>退出程序</option>
+                                            <option selected>最小化到系统托盘</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <!-- 2. 播放 (Playback) -->
+                    <div id="playback" class="glass-card rounded-2xl p-6 lg:p-8 scroll-mt-6">
+                        <h3 class="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
+                            <i class="pi pi-volume-up text-brand-500"></i> 播放
+                        </h3>
+                        <div class="flex flex-col gap-6">
+                            
+                            <div class="p-4 bg-gray-50 border border-gray-200/60 rounded-xl">
+                                <div class="flex justify-between items-start mb-3">
+                                    <div class="text-[10px] font-bold tracking-widest text-brand-600 uppercase">输出状态诊断</div>
+                                    <div class="text-xs font-bold text-red-500">Not Bit Perfect (当前处理链正在改变样本)</div>
+                                </div>
+                                <div class="text-sm font-medium text-gray-700 mb-2">FLAC 16bit 44.1kHz -> PCM 16bit -> WASAPI Shared -> float32 48kHz</div>
+                                <div class="text-[11px] text-gray-500 flex gap-4">
+                                    <span><i class="pi pi-clock"></i> Latency Buffer 5.8 ms · Total 20.0 ms</span>
+                                    <span><i class="pi pi-exclamation-triangle"></i> Underrun 0 · Drop 0</span>
+                                </div>
+                            </div>
+
+                            <!-- 可用输出设备卡片网格 -->
+                            <div class="flex flex-col gap-4 mb-2">
+                                <div class="flex justify-between items-center">
+                                    <div>
+                                        <div class="font-bold text-gray-800 text-base flex items-center gap-2">
+                                            可用输出设备 <i class="pi pi-question-circle text-gray-400 cursor-pointer hover:text-brand-500 transition text-[13px]" title="选择最适合的音频输出设备"></i>
+                                        </div>
+                                        <div class="text-[13px] text-gray-500 font-medium mt-1">当前选择：扬声器 (EDIFIER M30)</div>
+                                    </div>
+                                    <button class="w-8 h-8 rounded-lg border border-gray-200 bg-white shadow-sm flex items-center justify-center text-gray-600 hover:text-brand-600 hover:border-brand-300 hover:shadow transition" title="刷新设备列表">
+                                        <i class="pi pi-sync text-sm"></i>
+                                    </button>
+                                </div>
+                                
+                                <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                                    <!-- 设备卡片 1 (系统默认) -->
+                                    <div class="p-5 min-h-[140px] rounded-2xl border border-gray-200 bg-white hover:border-brand-300 hover:shadow-lg cursor-pointer transition-all flex flex-col justify-between group relative overflow-hidden">
+                                        <div class="absolute top-4 right-4 px-2 py-0.5 rounded bg-gray-100 text-gray-500 text-[10px] font-extrabold tracking-wider border border-gray-200">AUTO</div>
+                                        <div class="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center group-hover:scale-110 group-hover:bg-brand-50 transition-all duration-300">
+                                            <i class="pi pi-desktop text-2xl text-gray-400 group-hover:text-brand-500 transition-colors"></i>
+                                        </div>
+                                        <div class="mt-5">
+                                            <div class="font-bold text-gray-800 text-[14px] truncate" title="系统默认">系统默认</div>
+                                            <div class="text-[10px] font-bold text-gray-400 tracking-widest mt-1 uppercase">WASAPI Shared</div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- 设备卡片 2 (当前选中) -->
+                                    <div class="p-5 min-h-[140px] rounded-2xl border-2 border-brand-500 bg-white ring-4 ring-brand-500/10 cursor-pointer transition-all flex flex-col justify-between relative shadow-md">
+                                        <div class="absolute top-4 right-4 px-2 py-0.5 rounded bg-brand-500 text-white text-[10px] font-extrabold tracking-wider flex items-center gap-1 shadow-sm">
+                                            <i class="pi pi-check text-[9px]"></i> 当前
+                                        </div>
+                                        <div class="w-12 h-12 rounded-2xl bg-brand-50 flex items-center justify-center">
+                                            <i class="pi pi-volume-up text-2xl text-brand-500"></i>
+                                        </div>
+                                        <div class="mt-5">
+                                            <div class="font-bold text-gray-900 text-[14px] truncate" title="扬声器 (EDIFIER M30)">扬声器 (EDIFIER M30)</div>
+                                            <div class="text-[10px] font-bold text-brand-500 tracking-widest mt-1 uppercase">WASAPI Exclusive</div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- 设备卡片 3 -->
+                                    <div class="p-5 min-h-[140px] rounded-2xl border border-gray-200 bg-white hover:border-brand-300 hover:shadow-lg cursor-pointer transition-all flex flex-col justify-between group relative overflow-hidden">
+                                        <div class="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center group-hover:scale-110 group-hover:bg-brand-50 transition-all duration-300">
+                                            <i class="pi pi-headphones text-2xl text-gray-400 group-hover:text-brand-500 transition-colors"></i>
+                                        </div>
+                                        <div class="mt-5">
+                                            <div class="font-bold text-gray-800 text-[14px] truncate" title="4 - G3 (AMD High Definition Audio Device)">4 - G3 (AMD High Def...)</div>
+                                            <div class="text-[10px] font-bold text-gray-400 tracking-widest mt-1 uppercase">WASAPI Shared</div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 设备卡片 4 (带 Hi-Res 金标) -->
+                                    <div class="p-5 min-h-[140px] rounded-2xl border border-gray-200 bg-white hover:border-brand-300 hover:shadow-lg cursor-pointer transition-all flex flex-col justify-between group relative overflow-hidden">
+                                        <div class="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center group-hover:scale-110 group-hover:bg-brand-50 transition-all duration-300">
+                                            <i class="pi pi-headphones text-2xl text-gray-400 group-hover:text-brand-500 transition-colors"></i>
+                                        </div>
+                                        <div class="mt-5">
+                                            <div class="font-bold text-gray-800 text-[14px] truncate" title="耳机 (2- FRANSUN CX31993 HiFi)">耳机 (FRANSUN CX31993)</div>
+                                            <div class="flex items-center gap-2 mt-1">
+                                                <div class="text-[10px] font-bold text-gray-400 tracking-widest uppercase">WASAPI</div>
+                                                <!-- Hi-Res 金色小标 -->
+                                                <div class="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 border border-amber-200 text-[9px] font-extrabold tracking-wider flex items-center gap-1">
+                                                    <i class="pi pi-bolt text-[8px]"></i> 384kHz
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 设备卡片 5 (ASIO 带 DSD 标) -->
+                                    <div class="p-5 min-h-[140px] rounded-2xl border border-gray-200 bg-white hover:border-brand-300 hover:shadow-lg cursor-pointer transition-all flex flex-col justify-between group relative overflow-hidden">
+                                        <div class="absolute top-4 right-4 px-2 py-0.5 rounded bg-gray-100 text-gray-500 text-[10px] font-extrabold tracking-wider border border-gray-200">默认 ASIO</div>
+                                        <div class="w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center group-hover:scale-110 group-hover:bg-brand-50 transition-all duration-300">
+                                            <i class="pi pi-headphones text-2xl text-gray-400 group-hover:text-brand-500 transition-colors"></i>
+                                        </div>
+                                        <div class="mt-5">
+                                            <div class="font-bold text-gray-800 text-[14px] truncate" title="FiiO ASIO Driver">FiiO ASIO Driver</div>
+                                            <div class="flex items-center gap-2 mt-1">
+                                                <div class="text-[10px] font-bold text-gray-400 tracking-widest uppercase">ASIO</div>
+                                                <!-- DSD 小标 -->
+                                                <div class="px-1.5 py-0.5 rounded bg-purple-50 text-purple-600 border border-purple-200 text-[9px] font-extrabold tracking-wider">
+                                                    Native DSD
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <hr class="border-gray-100/80">
+                            <div class="flex justify-between items-center">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">独占模式 (Exclusive Mode)</div>
+                                    <div class="text-[13px] text-gray-500">尝试绕过系统混音器。更可能实现 bit-perfect。</div>
+                                </div>
+                                <div class="toggle-switch inactive" onclick="this.classList.toggle('active'); this.classList.toggle('inactive');"></div>
+                            </div>
+                            <hr class="border-gray-100/80">
+                            <div class="flex justify-between items-center">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">无缝播放 (Gapless Playback)</div>
+                                    <div class="text-[13px] text-gray-500">消除连续曲目之间的静态间隙或进行交叉淡入淡出。</div>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <div class="flex items-center gap-2">
+                                        <span class="text-[12px] text-gray-500">交叉淡入淡出 (秒)</span>
+                                        <input type="number" value="0" class="w-14 bg-gray-50 border border-gray-200 rounded px-2 py-1 text-xs outline-none focus:border-brand-500">
+                                    </div>
+                                    <div class="toggle-switch active" onclick="this.classList.toggle('active'); this.classList.toggle('inactive');"></div>
+                                </div>
+                            </div>
+                            <hr class="border-gray-100/80">
+                            <div class="flex justify-between items-center">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">恢复播放 (Resume Playback)</div>
+                                    <div class="text-[13px] text-gray-500">启动播放器时自动记住并恢复上次关闭时的进度。</div>
+                                </div>
+                                <select class="appearance-none bg-gray-50 border border-gray-200 text-[13px] rounded-lg px-3 py-1.5 outline-none text-gray-700 w-36 cursor-pointer focus:border-brand-500">
+                                    <option>关闭 (Off)</option>
+                                    <option>记住曲目 (Track)</option>
+                                    <option selected>曲目和精确位置</option>
+                                </select>
+                            </div>
+                            <!-- 底层引擎参数折叠面板 -->
+                            <div class="mt-6 border border-gray-200/80 rounded-xl bg-gray-50/50 overflow-hidden">
+                                <button class="w-full px-5 py-4 flex items-center justify-between text-left hover:bg-gray-100/50 transition-colors group" onclick="const content = document.getElementById('advanced-engine-params'); const icon = document.getElementById('advanced-engine-icon'); content.classList.toggle('hidden'); icon.classList.toggle('rotate-180');">
+                                    <div class="flex items-center gap-2">
+                                        <i class="pi pi-cog text-gray-500 group-hover:text-brand-500 transition-colors"></i>
+                                        <span class="font-bold text-gray-800 text-[13px]">底层引擎参数 (Advanced Engine)</span>
+                                    </div>
+                                    <i id="advanced-engine-icon" class="pi pi-chevron-down text-gray-400 transition-transform duration-300"></i>
+                                </button>
+                                
+                                <div id="advanced-engine-params" class="hidden px-5 pb-5 pt-2 border-t border-gray-200/50">
+                                    <div class="mb-5 px-3 py-2.5 bg-orange-50 border border-orange-200 rounded-lg text-orange-700 text-[12px] flex items-start gap-2 shadow-sm">
+                                        <i class="pi pi-exclamation-triangle mt-0.5 text-orange-500"></i>
+                                        <span>警告：以下参数直接与声卡底层交互，调节不当可能导致音频卡顿、无声或爆音。</span>
+                                    </div>
+                                    
+                                    <div class="flex flex-col gap-5">
+                                        <div class="flex justify-between items-center">
+                                            <div class="pr-6">
+                                                <div class="font-bold text-gray-800 text-[13px] mb-1">WASAPI 独占推送模式</div>
+                                                <div class="text-[12px] text-gray-500">如果默认的事件驱动模式导致无声或爆音，请尝试开启此模式。</div>
+                                            </div>
+                                            <div class="toggle-switch inactive" onclick="this.classList.toggle('active'); this.classList.toggle('inactive');"></div>
+                                        </div>
+                                        <hr class="border-gray-200/60">
+                                        <div class="flex justify-between items-center">
+                                            <div class="pr-6">
+                                                <div class="font-bold text-gray-800 text-[13px] mb-1">缓冲区大小 (Buffer Size)</div>
+                                                <div class="text-[12px] text-gray-500">缓冲越小延迟越低，缓冲越大越稳。Auto 通常优先稳定。</div>
+                                            </div>
+                                            <select class="appearance-none bg-white border border-gray-200 shadow-sm text-[12px] font-bold rounded-lg px-3 py-1.5 outline-none text-gray-700 w-24 cursor-pointer focus:border-brand-500">
+                                                <option>Auto</option>
+                                                <option>64</option>
+                                                <option>128</option>
+                                                <option>256</option>
+                                                <option>512</option>
+                                                <option>1024</option>
+                                                <option>2048</option>
+                                            </select>
+                                        </div>
+                                        <hr class="border-gray-200/60">
+                                        <div class="flex justify-between items-center">
+                                            <div class="pr-6">
+                                                <div class="font-bold text-gray-800 text-[13px] mb-1">声道路由 (Routing Mode)</div>
+                                                <div class="text-[12px] text-gray-500">可能让 bit-perfect 失效。普通耳机建议 Auto 或 Stereo。</div>
+                                            </div>
+                                            <select class="appearance-none bg-white border border-gray-200 shadow-sm text-[12px] font-bold rounded-lg px-3 py-1.5 outline-none text-gray-700 w-32 cursor-pointer focus:border-brand-500">
+                                                <option>Auto</option>
+                                                <option>Stereo</option>
+                                                <option>Stereo -> 5.1</option>
+                                                <option>Stereo -> 7.1</option>
+                                                <option>Mono -> Stereo</option>
+                                                <option>Mono -> Multichannel</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <!-- 3. DSP (音频处理) -->
+                    <div id="dsp" class="glass-card rounded-2xl p-6 lg:p-8 scroll-mt-6">
+                        <div class="flex justify-between items-center mb-6">
+                            <h3 class="text-lg font-bold text-gray-800 flex items-center gap-2">
+                                <i class="pi pi-sliders-v text-brand-500"></i> DSP (音频处理)
+                            </h3>
+                            <div class="flex items-center gap-3">
+                                <span class="text-[13px] font-bold text-gray-500">DSP 总开关</span>
+                                <div class="toggle-switch inactive" onclick="this.classList.toggle('active'); this.classList.toggle('inactive'); document.getElementById('dsp-content').classList.toggle('opacity-50'); document.getElementById('dsp-content').classList.toggle('pointer-events-none');"></div>
+                            </div>
+                        </div>
+
+                        <!-- 信号流可视化 (Signal Chain UI) -->
+                        <div class="mb-8 p-6 rounded-2xl border border-gray-200/80 bg-gray-50/50 relative overflow-hidden">
+
+                            
+                            <div class="relative flex items-center justify-between z-10 w-full px-2 lg:px-6">
+                                <!-- SOURCE -->
+                                <div class="flex flex-col items-center gap-2.5 group">
+                                    <div class="w-12 h-12 rounded-full bg-white border-2 border-brand-500 flex items-center justify-center shadow-[0_0_15px_rgba(139,92,246,0.15)] relative overflow-hidden group-hover:border-brand-400 transition-colors">
+                                        <div class="absolute inset-0 bg-brand-50/50"></div>
+                                        <i class="pi pi-file-audio text-brand-500 text-xl group-hover:text-brand-400 transition-colors"></i>
+                                    </div>
+                                    <div class="text-center">
+                                        <span class="block text-[9px] text-brand-500 font-extrabold tracking-[0.2em] uppercase mb-0.5">Input</span>
+                                        <span class="block text-[12px] text-gray-800 font-bold tracking-wider">SOURCE</span>
+                                    </div>
+                                </div>
+
+                                <!-- Line 1 (Active Signal) -->
+                                <div class="flex-1 flex items-center justify-center px-3">
+                                    <div class="w-full h-[3px] rounded-full bg-gradient-to-r from-brand-500 to-gray-300 relative overflow-hidden">
+                                        <!-- 流光效果 -->
+                                        <div class="absolute left-0 top-0 bottom-0 w-1/2 bg-white/50 blur-[1px]"></div>
+                                    </div>
+                                </div>
+
+                                <!-- EQ (Bypassed) -->
+                                <div class="flex flex-col items-center gap-2.5 group opacity-50 hover:opacity-100 transition-opacity cursor-pointer">
+                                    <div class="w-12 h-12 rounded-full bg-white border-2 border-dashed border-gray-300 flex items-center justify-center relative group-hover:border-gray-400 transition-colors">
+                                        <i class="pi pi-sliders-h text-gray-400 text-xl group-hover:text-gray-600 transition-colors"></i>
+                                    </div>
+                                    <div class="text-center">
+                                        <span class="block text-[9px] text-gray-400 font-extrabold tracking-[0.2em] uppercase mb-0.5">Bypass</span>
+                                        <span class="block text-[12px] text-gray-500 font-bold tracking-wider">EQ</span>
+                                    </div>
+                                </div>
+
+                                <!-- Line 2 (Inactive) -->
+                                <div class="flex-1 flex items-center justify-center px-3">
+                                    <div class="w-full h-[2px] border-b-2 border-dashed border-gray-300"></div>
+                                </div>
+
+                                <!-- CROSSFEED (Bypassed) -->
+                                <div class="flex flex-col items-center gap-2.5 group opacity-50 hover:opacity-100 transition-opacity cursor-pointer">
+                                    <div class="w-12 h-12 rounded-full bg-white border-2 border-dashed border-gray-300 flex items-center justify-center relative group-hover:border-gray-400 transition-colors">
+                                        <i class="pi pi-arrows-h text-gray-400 text-xl group-hover:text-gray-600 transition-colors"></i>
+                                    </div>
+                                    <div class="text-center">
+                                        <span class="block text-[9px] text-gray-400 font-extrabold tracking-[0.2em] uppercase mb-0.5">Bypass</span>
+                                        <span class="block text-[12px] text-gray-500 font-bold tracking-wider">CROSSFEED</span>
+                                    </div>
+                                </div>
+
+                                <!-- Line 3 (Inactive) -->
+                                <div class="flex-1 flex items-center justify-center px-3 hidden md:flex">
+                                    <div class="w-full h-[2px] border-b-2 border-dashed border-gray-300"></div>
+                                </div>
+                                
+                                <!-- CONVOLVER (Bypassed) -->
+                                <div class="flex flex-col items-center gap-2.5 group opacity-50 hover:opacity-100 transition-opacity cursor-pointer hidden md:flex">
+                                    <div class="w-12 h-12 rounded-full bg-white border-2 border-dashed border-gray-300 flex items-center justify-center relative group-hover:border-gray-400 transition-colors">
+                                        <i class="pi pi-microchip text-gray-400 text-xl group-hover:text-gray-600 transition-colors"></i>
+                                    </div>
+                                    <div class="text-center">
+                                        <span class="block text-[9px] text-gray-400 font-extrabold tracking-[0.2em] uppercase mb-0.5">Bypass</span>
+                                        <span class="block text-[12px] text-gray-500 font-bold tracking-wider">CONVOLVER</span>
+                                    </div>
+                                </div>
+
+                                <!-- Line 4 (Inactive) -->
+                                <div class="flex-1 flex items-center justify-center px-3">
+                                    <div class="w-full h-[2px] border-b-2 border-dashed border-gray-300"></div>
+                                </div>
+
+                                <!-- OUTPUT -->
+                                <div class="flex flex-col items-center gap-2.5 group">
+                                    <div class="w-12 h-12 rounded-full bg-white border-2 border-brand-500 flex items-center justify-center shadow-[0_0_15px_rgba(139,92,246,0.15)] relative overflow-hidden">
+                                        <div class="absolute inset-0 bg-brand-50/50"></div>
+                                        <i class="pi pi-volume-up text-brand-500 text-xl"></i>
+                                    </div>
+                                    <div class="text-center">
+                                        <span class="block text-[9px] text-brand-500 font-extrabold tracking-[0.2em] uppercase mb-0.5">DAC</span>
+                                        <span class="block text-[12px] text-gray-800 font-bold tracking-wider">OUTPUT</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="dsp-content" class="flex flex-col gap-6 opacity-50 pointer-events-none transition-opacity duration-300">
+                            
+                            <!-- 快速情景预设 -->
+                            <div class="flex gap-3 mb-2 overflow-x-auto pb-2">
+                                <button class="shrink-0 px-4 py-2 rounded-lg border border-brand-200 bg-brand-50 text-brand-700 text-sm font-bold shadow-sm hover:bg-brand-100 transition flex items-center gap-2">
+                                    <i class="pi pi-headphones"></i> 耳机护耳模式
+                                </button>
+                                <button class="shrink-0 px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 text-sm font-bold shadow-sm hover:bg-gray-50 transition flex items-center gap-2">
+                                    <i class="pi pi-bolt"></i> 动态增强
+                                </button>
+                                <button class="shrink-0 px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 text-sm font-bold shadow-sm hover:bg-gray-50 transition flex items-center gap-2">
+                                    <i class="pi pi-stop-circle"></i> 纯净直通 (Bit-perfect)
+                                </button>
+                            </div>
+
+                            <!-- Group 1: 基础处理 -->
+                            <div class="p-5 rounded-xl border border-gray-200/60 bg-gray-50/50">
+                                <h4 class="text-sm font-bold text-gray-800 mb-4 uppercase tracking-wider text-brand-600">基础处理 (Core)</h4>
+                                <div class="flex flex-col gap-5">
+                                    <div class="flex justify-between items-center">
+                                        <div class="pr-6">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1">防破音保护 (Clip Guard)</div>
+                                            <div class="text-[12px] text-gray-500">动态压缩超载信号，防止数字削波失真</div>
+                                        </div>
+                                        <div class="toggle-switch active"></div>
+                                    </div>
+                                    <hr class="border-gray-200/80">
+                                    <div class="flex justify-between items-start lg:items-center flex-col lg:flex-row gap-4 lg:gap-0">
+                                        <div class="pr-6">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1">音量标准化 (ReplayGain)</div>
+                                            <div class="text-[12px] text-gray-500">基于响度信息的智能音量平衡。</div>
+                                        </div>
+                                        <div class="flex flex-wrap items-center gap-3">
+                                            <select class="appearance-none bg-white border border-gray-200 shadow-sm text-[12px] font-bold rounded-lg px-3 py-1.5 outline-none text-gray-700 w-28 cursor-pointer focus:border-brand-500">
+                                                <option>Off</option>
+                                                <option selected>Track</option>
+                                                <option>Album</option>
+                                                <option>Loudnorm</option>
+                                            </select>
+                                            <div class="flex items-center gap-2 bg-white px-2 py-1.5 rounded-lg border border-gray-200 shadow-sm">
+                                                <span class="text-[11px] font-bold text-gray-500 uppercase">Preamp</span>
+                                                <input type="number" value="0.0" step="0.5" class="w-12 bg-transparent text-[12px] font-bold text-gray-800 outline-none text-right">
+                                                <span class="text-[11px] text-gray-400">dB</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Group 2: 空间与声学 -->
+                            <div class="p-5 rounded-xl border border-gray-200/60 bg-gray-50/50">
+                                <h4 class="text-sm font-bold text-gray-800 mb-4 uppercase tracking-wider text-brand-600">空间与声学 (Spatial & Acoustic)</h4>
+                                <div class="flex flex-col gap-5">
+                                    <div class="flex justify-between items-center">
+                                        <div class="pr-6">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1 flex items-center gap-2">均衡器 (Equalizer)</div>
+                                            <div class="text-[12px] text-gray-500">调节各频段增益。开启后不再满足 bit-perfect。</div>
+                                        </div>
+                                        <div class="flex items-center gap-4">
+                                            <div class="hidden sm:flex items-end gap-[2px] h-6 w-16 opacity-70">
+                                                <div class="w-1.5 bg-brand-300 rounded-t-sm" style="height: 60%"></div>
+                                                <div class="w-1.5 bg-brand-400 rounded-t-sm" style="height: 40%"></div>
+                                                <div class="w-1.5 bg-brand-500 rounded-t-sm" style="height: 30%"></div>
+                                                <div class="w-1.5 bg-brand-400 rounded-t-sm" style="height: 50%"></div>
+                                                <div class="w-1.5 bg-brand-300 rounded-t-sm" style="height: 80%"></div>
+                                                <div class="w-1.5 bg-brand-400 rounded-t-sm" style="height: 90%"></div>
+                                                <div class="w-1.5 bg-brand-500 rounded-t-sm" style="height: 100%"></div>
+                                            </div>
+                                            <button class="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-bold text-gray-700 hover:text-brand-600 hover:border-brand-300 shadow-sm transition"><i class="pi pi-sliders-h mr-1"></i> 打开面板</button>
+                                            <div class="toggle-switch inactive"></div>
+                                        </div>
+                                    </div>
+                                    <hr class="border-gray-200/80">
+                                    <div class="flex justify-between items-center">
+                                        <div class="pr-6 w-1/2">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1">耳机交叉馈电 (Crossfeed)</div>
+                                            <div class="text-[12px] text-gray-500">减轻耳机声像过宽的“头中效应”。</div>
+                                        </div>
+                                        <div class="flex-1 flex items-center justify-end gap-3">
+                                            <!-- 声场宽度缩影图 -->
+                                            <svg class="w-6 h-6 text-brand-400" viewBox="0 0 24 24" fill="currentColor">
+                                                <path d="M12 4C7.58 4 4 7.58 4 12s3.58 8 8 8 8-3.58 8-8-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z"/>
+                                                <circle cx="12" cy="12" r="3" class="text-brand-600"/>
+                                            </svg>
+                                            <input type="range" min="0" max="100" value="40" class="w-24 accent-brand-500">
+                                            <span class="text-[12px] font-bold text-gray-600 w-8 text-right">40%</span>
+                                            <div class="toggle-switch active ml-2"></div>
+                                        </div>
+                                    </div>
+                                    <hr class="border-gray-200/80">
+                                    <div class="flex justify-between items-center">
+                                        <div class="pr-6">
+                                            <div class="font-bold text-gray-800 text-[13px] mb-1 flex items-center gap-2">
+                                                卷积脉冲响应 (Convolver)
+                                                <span class="px-1.5 py-0.5 rounded bg-orange-100 text-orange-600 text-[9px] font-bold tracking-wider border border-orange-200 flex items-center gap-1"><i class="pi pi-microchip text-[9px]"></i> 高算力消耗</span>
+                                            </div>
+                                            <div class="text-[12px] text-gray-500">加载 IR 脉冲文件用于空间音效。当前路径：未加载</div>
+                                        </div>
+                                        <div class="flex items-center gap-4">
+                                            <button class="px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs font-bold text-gray-700 hover:text-brand-600 shadow-sm transition">选择文件</button>
+                                            <div class="toggle-switch inactive"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Group 3: 硬核解码与硬件 -->
+                            <div class="p-5 rounded-xl border border-gray-200/60 bg-gray-50/50">
+                                <h4 class="text-sm font-bold text-gray-800 mb-4 uppercase tracking-wider text-brand-600">硬核解码 (Decoding)</h4>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5">
+                                    <div>
+                                        <div class="font-bold text-gray-800 text-[13px] mb-1">DSD 输出模式</div>
+                                        <select class="mt-1 appearance-none bg-white border border-gray-200 shadow-sm text-[12px] font-bold rounded-lg px-3 py-2 outline-none text-gray-700 w-full cursor-pointer focus:border-brand-500">
+                                            <option>Auto (自动协商)</option>
+                                            <option>PCM (转换为PCM)</option>
+                                            <option>DoP (DSD over PCM)</option>
+                                            <option>Native (原生DSD)</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <div class="font-bold text-gray-800 text-[13px] mb-1">SACD Program 模式</div>
+                                        <select class="mt-1 appearance-none bg-white border border-gray-200 shadow-sm text-[12px] font-bold rounded-lg px-3 py-2 outline-none text-gray-700 w-full cursor-pointer focus:border-brand-500">
+                                            <option>Auto</option>
+                                            <option>Stereo (双声道优先)</option>
+                                            <option>Multichannel (多声道优先)</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <div class="font-bold text-gray-800 text-[13px] mb-1 flex items-center justify-between">
+                                            FFT 分辨率
+                                            <span class="text-orange-500 text-[10px]"><i class="pi pi-bolt"></i> 仅影响可视化</span>
+                                        </div>
+                                        <select class="mt-1 appearance-none bg-white border border-gray-200 shadow-sm text-[12px] font-bold rounded-lg px-3 py-2 outline-none text-gray-700 w-full cursor-pointer focus:border-brand-500">
+                                            <option>512</option>
+                                            <option>1024</option>
+                                            <option selected>2048 (高精度)</option>
+                                        </select>
+                                    </div>
+                                    <div class="flex flex-col justify-center">
+                                        <div class="font-bold text-gray-800 text-[13px] mb-1">高解析度处理 (High-Res)</div>
+                                        <div class="flex items-center justify-between mt-1">
+                                            <div class="text-[12px] text-gray-500">内部启用 64-bit 浮点精度</div>
+                                            <div class="toggle-switch active"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 4. 缓存 (Cache) -->
+                    <div id="cache" class="glass-card rounded-2xl p-6 lg:p-8 scroll-mt-6">
+                        <h3 class="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
+                            <i class="pi pi-database text-brand-500"></i> 缓存
+                        </h3>
+                        <div class="flex flex-col gap-6">
+                            <div class="flex flex-col gap-2">
+                                <div class="font-bold text-gray-800 text-sm">系统缓存目录 (Cache Path)</div>
+                                <div class="flex items-center gap-2">
+                                    <input type="text" readonly placeholder="C:\Users\Admin\AppData\Roaming\TwilightEcho\Cache" class="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none text-gray-500">
+                                    <button class="px-4 py-2 bg-white shadow-sm border border-gray-200 rounded-lg text-sm font-bold text-gray-700 hover:text-brand-600">选择文件夹</button>
+                                    <button class="px-4 py-2 bg-gray-100 rounded-lg text-sm font-bold text-gray-600 hover:bg-gray-200">恢复默认</button>
+                                </div>
+                            </div>
+                            <hr class="border-gray-100/80">
+                            <div class="flex flex-col gap-2">
+                                <div class="font-bold text-gray-800 text-sm">音乐存储/下载目录 (Music Cache Path)</div>
+                                <div class="flex items-center gap-2">
+                                    <input type="text" readonly placeholder="未设置" class="flex-1 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-sm outline-none text-gray-500">
+                                    <button class="px-4 py-2 bg-white shadow-sm border border-gray-200 rounded-lg text-sm font-bold text-gray-700 hover:text-brand-600">选择文件夹</button>
+                                </div>
+                            </div>
+                            <hr class="border-gray-100/80">
+                            <div class="flex justify-between items-center">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">清理缓存文件</div>
+                                    <div class="text-[13px] text-gray-500">清除临时文件、封面缓存等。当前占用: 154.2 MB</div>
+                                </div>
+                                <button class="px-4 py-2 bg-red-50 border border-red-100 rounded-lg text-[13px] font-bold text-red-600 hover:bg-red-500 hover:text-white transition-colors shadow-sm shrink-0">
+                                    立即清理
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 5. 插件 (Plugins) -->
+                    <div id="plugins" class="glass-card rounded-2xl p-6 lg:p-8 scroll-mt-6">
+                        <h3 class="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
+                            <i class="pi pi-box text-brand-500"></i> 插件
+                        </h3>
+                        <div class="flex flex-col gap-6">
+                            <div class="p-8 text-center bg-gray-50/50 rounded-xl border border-dashed border-gray-300">
+                                <i class="pi pi-box text-3xl text-gray-300 mb-2"></i>
+                                <div class="text-sm font-bold text-gray-600">尚未安装或启用任何提供设置面板的插件</div>
+                                <div class="text-xs text-gray-400 mt-1">您可以在此处管理第三方音源、解析器等扩展插件的配置。</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 6. 性能 (Performance) -->
+                    <div id="performance" class="glass-card rounded-2xl p-6 lg:p-8 scroll-mt-6">
+                        <h3 class="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
+                            <i class="pi pi-bolt text-brand-500"></i> 性能
+                        </h3>
+                        <div class="flex flex-col gap-6">
+                            <div class="flex justify-between items-center">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">硬件加速 (Hardware Acceleration)</div>
+                                    <div class="text-[13px] text-gray-500">使用 GPU 渲染界面以提升流畅度。如遇白屏或花屏请尝试关闭。需要重启。</div>
+                                </div>
+                                <div class="toggle-switch active" onclick="this.classList.toggle('active'); this.classList.toggle('inactive');"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 7. 外观 (Appearance) -->
+                    <div id="appearance" class="glass-card rounded-2xl p-6 lg:p-8 scroll-mt-6">
+                        <div class="flex items-center gap-2 mb-6">
+                            <i class="pi pi-palette text-brand-500 text-lg"></i>
+                            <h3 class="text-lg font-bold text-gray-800">外观 (Appearance)</h3>
+                        </div>
+                        <div class="flex flex-col gap-6">
+                            
+                            <!-- 主题模式 -->
+                            <div class="flex justify-between items-center">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">主题模式 (Theme Mode)</div>
+                                    <div class="text-[13px] text-gray-500">选择深色或浅色界面风格。</div>
+                                </div>
+                                <div class="flex bg-gray-100/80 p-1 rounded-xl shadow-sm border border-gray-200/50">
+                                    <button class="px-4 py-2 rounded-lg bg-white shadow-sm text-[13px] font-bold text-gray-800 flex items-center gap-2 transition"><i class="pi pi-desktop text-brand-500"></i> 系统</button>
+                                    <button class="px-4 py-2 rounded-lg text-[13px] font-bold text-gray-500 hover:text-gray-700 flex items-center gap-2 transition"><i class="pi pi-sun"></i> 浅色</button>
+                                    <button class="px-4 py-2 rounded-lg text-[13px] font-bold text-gray-500 hover:text-gray-700 flex items-center gap-2 transition"><i class="pi pi-moon"></i> 深色</button>
+                                </div>
+                            </div>
+                            <hr class="border-gray-100/80">
+
+                            <!-- 强调色选择 -->
+                            <div class="flex justify-between items-center">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">强调色 (Accent Color)</div>
+                                    <div class="text-[13px] text-gray-500">定制界面的全局高亮主题色。</div>
+                                </div>
+                                <div class="flex items-center gap-3">
+                                    <button class="w-7 h-7 rounded-full bg-violet-500 ring-2 ring-violet-500 ring-offset-2 flex items-center justify-center shadow-sm"><i class="pi pi-check text-white text-[10px]"></i></button>
+                                    <button class="w-7 h-7 rounded-full bg-blue-500 hover:scale-110 transition-transform shadow-sm"></button>
+                                    <button class="w-7 h-7 rounded-full bg-emerald-500 hover:scale-110 transition-transform shadow-sm"></button>
+                                    <button class="w-7 h-7 rounded-full bg-rose-400 hover:scale-110 transition-transform shadow-sm"></button>
+                                    <button class="w-7 h-7 rounded-full bg-amber-500 hover:scale-110 transition-transform shadow-sm"></button>
+                                    <button class="w-7 h-7 rounded-full bg-slate-800 hover:scale-110 transition-transform shadow-sm"></button>
+                                </div>
+                            </div>
+                            <hr class="border-gray-100/80">
+
+                            <!-- 窗口材质与毛玻璃 -->
+                            <div class="flex justify-between items-center">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">原生半透明材质 (Mica / Acrylic)</div>
+                                    <div class="text-[13px] text-gray-500">启用系统级视窗模糊效果，让背景透出桌面壁纸。</div>
+                                </div>
+                                <div class="toggle-switch active" onclick="this.classList.toggle('active'); this.classList.toggle('inactive');"></div>
+                            </div>
+                            <hr class="border-gray-100/80">
+
+                            <!-- 全局字体 -->
+                            <div class="flex justify-between items-center">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">全局字体 (Typography)</div>
+                                    <div class="text-[13px] text-gray-500">更换界面的主要显示字体。</div>
+                                </div>
+                                <select class="appearance-none bg-gray-50 border border-gray-200 text-[13px] rounded-lg px-3 py-2 outline-none text-gray-700 w-40 cursor-pointer">
+                                    <option selected>系统默认 (System)</option>
+                                    <option>Inter / Roboto</option>
+                                    <option>霞鹜文楷 (LXGW)</option>
+                                    <option>Sarasa Gothic</option>
+                                    <option>Comic Sans MS</option>
+                                </select>
+                            </div>
+                            <hr class="border-gray-100/80">
+
+                            <!-- 界面紧凑度 -->
+                            <div class="flex justify-between items-center">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">界面排版密度 (UI Density)</div>
+                                    <div class="text-[13px] text-gray-500">控制列表项的间距与信息密度。</div>
+                                </div>
+                                <div class="flex bg-gray-100/80 p-1 rounded-xl shadow-sm border border-gray-200/50">
+                                    <button class="px-4 py-2 rounded-lg text-[13px] font-bold text-gray-500 hover:text-gray-700 transition">紧凑</button>
+                                    <button class="px-4 py-2 rounded-lg bg-white shadow-sm text-[13px] font-bold text-gray-800 transition">标准</button>
+                                    <button class="px-4 py-2 rounded-lg text-[13px] font-bold text-gray-500 hover:text-gray-700 transition">舒展</button>
+                                </div>
+                            </div>
+                            <hr class="border-gray-100/80">
+
+                            <!-- 沉浸式播放背景 -->
+                            <div class="flex justify-between items-start lg:items-center flex-col lg:flex-row gap-4 lg:gap-0">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">沉浸式播放页背景 (Now Playing)</div>
+                                    <div class="text-[13px] text-gray-500">全屏播放或详情页的背景视觉风格。</div>
+                                </div>
+                                <div class="flex gap-4">
+                                    <div class="flex flex-col items-center gap-2 cursor-pointer group">
+                                        <div class="w-16 h-10 rounded-lg bg-gradient-to-br from-blue-300 via-purple-300 to-pink-300 border border-brand-500 ring-2 ring-brand-500/30 blur-[2px] group-hover:blur-none transition-all"></div>
+                                        <span class="text-[10px] font-bold text-brand-600">专辑高斯模糊</span>
+                                    </div>
+                                    <div class="flex flex-col items-center gap-2 cursor-pointer group opacity-60 hover:opacity-100 transition-opacity">
+                                        <div class="w-16 h-10 rounded-lg bg-gradient-to-r from-cyan-400 to-blue-500 border border-gray-200 shadow-sm"></div>
+                                        <span class="text-[10px] font-bold text-gray-500">动态流体渐变</span>
+                                    </div>
+                                    <div class="flex flex-col items-center gap-2 cursor-pointer group opacity-60 hover:opacity-100 transition-opacity">
+                                        <div class="w-16 h-10 rounded-lg bg-gray-900 border border-gray-200 shadow-sm"></div>
+                                        <span class="text-[10px] font-bold text-gray-500">纯粹极简纯色</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <hr class="border-gray-100/80">
+
+                            <!-- 歌词样式定制 -->
+                            <div class="flex justify-between items-center">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">歌词显示样式 (Lyrics Style)</div>
+                                    <div class="text-[13px] text-gray-500">翻译对齐方式及未播放行暗度。</div>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <select class="appearance-none bg-gray-50 border border-gray-200 text-[13px] rounded-lg px-3 py-1.5 outline-none text-gray-700 w-28 cursor-pointer">
+                                        <option selected>居中对齐</option>
+                                        <option>靠左对齐</option>
+                                    </select>
+                                    <div class="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-1.5">
+                                        <span class="text-[12px] font-bold text-gray-500">未播放暗度</span>
+                                        <input type="range" min="10" max="100" value="40" class="w-20 accent-brand-500">
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <!-- 8. 快捷键 (Shortcuts) -->
+                    <div id="shortcuts" class="glass-card rounded-2xl p-6 lg:p-8 scroll-mt-6">
+                        <h3 class="text-lg font-bold text-gray-800 mb-6 flex items-center gap-2">
+                            <i class="pi pi-keyboard text-brand-500"></i> 快捷键
+                        </h3>
+                        <div class="flex flex-col gap-6">
+                            <div class="flex justify-between items-center">
+                                <div class="pr-6">
+                                    <div class="font-bold text-gray-800 text-sm mb-1">全局快捷键 (Global Shortcuts)</div>
+                                    <div class="text-[13px] text-gray-500">在应用位于后台时，依然响应系统媒体播放快捷键（上一首、下一首、播放/暂停）</div>
+                                </div>
+                                <div class="toggle-switch inactive" onclick="this.classList.toggle('active'); this.classList.toggle('inactive');"></div>
+                            </div>
+                            <hr class="border-gray-100/80">
+                            <div class="p-4 bg-gray-50 border border-gray-200/60 rounded-xl">
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-[13px] font-medium text-gray-700">播放 / 暂停</span>
+                                        <kbd class="px-2 py-1 bg-white border border-gray-300 rounded shadow-sm text-xs font-mono text-gray-600">Space</kbd>
+                                    </div>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-[13px] font-medium text-gray-700">上一首</span>
+                                        <kbd class="px-2 py-1 bg-white border border-gray-300 rounded shadow-sm text-xs font-mono text-gray-600">Ctrl + Left</kbd>
+                                    </div>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-[13px] font-medium text-gray-700">下一首</span>
+                                        <kbd class="px-2 py-1 bg-white border border-gray-300 rounded shadow-sm text-xs font-mono text-gray-600">Ctrl + Right</kbd>
+                                    </div>
+                                    <div class="flex justify-between items-center">
+                                        <span class="text-[13px] font-medium text-gray-700">音量加/减</span>
+                                        <kbd class="px-2 py-1 bg-white border border-gray-300 rounded shadow-sm text-xs font-mono text-gray-600">Up / Down</kbd>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 9. 关于 (About) -->
+                    <div id="about" class="glass-card rounded-2xl p-6 lg:p-8 scroll-mt-6 relative overflow-hidden">
+                        <!-- 背景装饰光晕 -->
+                        <div class="absolute -top-32 -right-32 w-80 h-80 bg-brand-400/10 rounded-full blur-[100px] pointer-events-none"></div>
+
+                        <div class="flex items-center gap-2 mb-8 relative z-10">
+                            <i class="pi pi-info-circle text-brand-500 text-lg"></i>
+                            <h3 class="text-lg font-bold text-gray-800">关于 (About)</h3>
+                        </div>
+                        
+                        <div class="flex flex-col gap-8 relative z-10">
+                            
+                            <!-- 顶部：发光 Logo 与版本信息 -->
+                            <div class="flex flex-col md:flex-row items-center md:items-start gap-6">
+                                <!-- 动态光效 Logo -->
+                                <div class="relative group cursor-pointer shrink-0">
+                                    <div class="absolute inset-0 bg-brand-500 rounded-2xl blur-md opacity-30 group-hover:opacity-60 transition-opacity duration-500"></div>
+                                    <div class="w-24 h-24 bg-gradient-to-br from-gray-900 to-black rounded-2xl flex items-center justify-center text-white shadow-xl relative border border-gray-700">
+                                        <i class="pi pi-headphones text-[42px] text-transparent bg-clip-text bg-gradient-to-br from-brand-400 to-fuchsia-400"></i>
+                                    </div>
+                                </div>
+                                
+                                <div class="flex flex-col items-center md:items-start text-center md:text-left flex-1">
+                                    <h2 class="text-2xl font-black text-gray-800 tracking-tight">Twilight Echo</h2>
+                                    <div class="text-[11px] font-bold text-brand-600 mt-1 mb-3 bg-brand-50 px-2 py-0.5 rounded uppercase tracking-widest">Version 1.2.0-beta.4</div>
+                                    <p class="text-[13px] text-gray-500 leading-relaxed mb-0">
+                                        一款专为发烧友打造的现代级桌面音乐枢纽，支持海量本地高解析度音频与插件化流媒体扩展。
+                                    </p>
+                                </div>
+                            </div>
+
+                            <!-- 检查更新栏 & 赞助栏 组合 -->
+                            <div class="flex flex-col gap-3">
+                                <!-- 检查更新栏 -->
+                                <div class="bg-white rounded-xl p-4 border border-gray-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+                                    <div class="flex items-center gap-3 text-center md:text-left flex-1">
+                                        <div class="w-10 h-10 rounded-lg bg-green-50 flex items-center justify-center text-green-500 border border-green-100 shadow-sm shrink-0">
+                                            <i class="pi pi-check-circle text-lg"></i>
+                                        </div>
+                                        <div>
+                                            <div class="text-[13px] font-bold text-gray-800">当前已是最新版本</div>
+                                            <div class="text-[11px] text-gray-400 mt-0.5">上次检查：今天 10:42</div>
+                                        </div>
+                                    </div>
+                                    <div class="shrink-0 flex items-center mt-3 md:mt-0">
+                                        <button class="px-5 py-2 bg-gray-50 hover:bg-gray-100 border border-gray-200 text-gray-700 rounded-lg text-[12px] font-bold transition flex items-center gap-1.5 shadow-sm">
+                                            <i class="pi pi-sync"></i> 检查更新
+                                        </button>
+                                    </div>
+                                </div>
+                                
+                                <!-- 赞助与致谢 (Donation) -->
+                                <div class="bg-gradient-to-r from-amber-50 to-orange-50/50 rounded-xl p-4 border border-amber-200/60 shadow-sm relative overflow-hidden">
+                                    <!-- 装饰元素 -->
+                                    <i class="pi pi-heart-fill absolute -right-2 -bottom-2 text-[60px] text-amber-500/10 rotate-12 pointer-events-none"></i>
+                                    
+                                    <div class="relative z-10 flex flex-col md:flex-row items-center justify-between gap-4">
+                                        <div class="text-center md:text-left flex-1">
+                                            <h4 class="text-[12px] font-bold text-amber-800 mb-0.5 flex items-center justify-center md:justify-start gap-1.5">
+                                                <i class="pi pi-heart text-amber-600"></i> 支持项目发展
+                                            </h4>
+                                            <p class="text-[11px] text-amber-700/80 leading-relaxed max-w-lg">
+                                                Twilight Echo 是一个由热情驱动的免费开源项目。您的慷慨赞助将直接用于服务器开销、持续更新以及给开发者的深夜咖啡。
+                                            </p>
+                                        </div>
+                                        <div class="flex gap-2 shrink-0 mt-3 md:mt-0">
+                                            <button class="px-4 py-2 bg-gradient-to-r from-amber-400 to-orange-400 hover:from-amber-500 hover:to-orange-500 text-white rounded-lg text-[12px] font-bold transition shadow-sm shadow-orange-500/20 flex items-center gap-1.5">
+                                                <i class="pi pi-wallet"></i> 赞助支持
+                                            </button>
+                                            <button class="px-3 py-2 bg-white border border-amber-200 text-amber-700 hover:bg-amber-100 rounded-lg text-[12px] font-bold transition flex items-center gap-1.5 shadow-sm">
+                                                <i class="pi pi-users"></i> 赞助名单
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <hr class="border-gray-100/80">
+
+                            <!-- 底部：链接与致谢 -->
+                            <div class="flex flex-wrap justify-center md:justify-start gap-4 w-full">
+                                <button class="px-6 py-3 bg-white border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 hover:-translate-y-0.5 rounded-xl text-[14px] font-bold text-gray-700 transition-all flex items-center gap-2 flex-1 md:flex-none justify-center">
+                                    <i class="pi pi-github text-gray-900 text-lg"></i> GitHub
+                                </button>
+                                <button class="px-6 py-3 bg-white border border-gray-200 shadow-sm hover:shadow-md hover:border-brand-300 hover:text-brand-600 hover:-translate-y-0.5 rounded-xl text-[14px] font-bold text-gray-700 transition-all flex items-center gap-2 flex-1 md:flex-none justify-center">
+                                    <i class="pi pi-file-o text-brand-500 text-lg"></i> 更新日志
+                                </button>
+                                <button class="px-6 py-3 bg-white border border-gray-200 shadow-sm hover:shadow-md hover:border-rose-300 hover:text-rose-600 hover:-translate-y-0.5 rounded-xl text-[14px] font-bold text-gray-700 transition-all flex items-center gap-2 flex-1 md:flex-none justify-center">
+                                    <i class="pi pi-heart-fill text-rose-500 text-lg"></i> 开源致谢
+                                </button>
+                            </div>
+
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </main>
+    </div>
+</body>
+</html>
