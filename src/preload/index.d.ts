@@ -147,6 +147,19 @@ interface AudioProcessingSettings {
   crossfadeSeconds: number
 }
 
+interface HeadphoneCompensationSettings {
+  enabled: boolean
+  productId: string
+  productName: string
+  vendorName: string
+  eqId: string
+  author: string
+  details: string
+  link: string
+  preampDb: number
+  bands: EqualizerBand[]
+}
+
 interface VisualizationOptions {
   spectrumPoints?: number
   waveformPoints?: number
@@ -229,8 +242,36 @@ interface AppSettings {
   audioExclusiveMode: boolean
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
+  headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
+}
+
+interface OpraCatalogStatus {
+  loaded: boolean
+  loading: boolean
+  source: 'empty' | 'cache' | 'network'
+  cachePath: string
+  vendorCount: number
+  productCount: number
+  profileCount: number
+  lastUpdatedAt: string | null
+  lastError: string
+}
+
+interface OpraProfile {
+  eqId: string
+  productId: string
+  productName: string
+  vendorName: string
+  author: string
+  details: string
+  link: string
+  attributionUrl: string
+  preampDb: number
+  bands: EqualizerBand[]
+  applicable: boolean
+  unsupportedBandTypes: string[]
 }
 
 interface ConvolverInfo {
@@ -677,6 +718,13 @@ interface AudioEngineAPI {
   onPlaybackInfo: (cb: (info: PlaybackInfo) => void) => () => void
 }
 
+interface OpraAPI {
+  search: (query: string) => Promise<OpraProfile[]>
+  getProfile: (eqId: string) => Promise<OpraProfile | null>
+  refresh: () => Promise<OpraCatalogStatus>
+  getStatus: () => Promise<OpraCatalogStatus>
+}
+
 interface WindowAPI {
   window: {
     minimize: () => void
@@ -710,6 +758,7 @@ interface WindowAPI {
     onScanProgress: (cb: (progress: { current: number; total: number }) => void) => () => void
   }
   audioEngine: AudioEngineAPI
+  opra: OpraAPI
   app: {
     relaunch: () => Promise<void>
     checkForUpdates: () => Promise<{

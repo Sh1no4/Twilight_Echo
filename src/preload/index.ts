@@ -136,6 +136,19 @@ interface AudioProcessingSettings {
   crossfadeSeconds: number
 }
 
+interface HeadphoneCompensationSettings {
+  enabled: boolean
+  productId: string
+  productName: string
+  vendorName: string
+  eqId: string
+  author: string
+  details: string
+  link: string
+  preampDb: number
+  bands: EqualizerBand[]
+}
+
 interface AudioEqPreset {
   id: string
   name: string
@@ -277,8 +290,36 @@ interface AppSettings {
   audioExclusiveMode: boolean
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
+  headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
+}
+
+interface OpraCatalogStatus {
+  loaded: boolean
+  loading: boolean
+  source: 'empty' | 'cache' | 'network'
+  cachePath: string
+  vendorCount: number
+  productCount: number
+  profileCount: number
+  lastUpdatedAt: string | null
+  lastError: string
+}
+
+interface OpraProfile {
+  eqId: string
+  productId: string
+  productName: string
+  vendorName: string
+  author: string
+  details: string
+  link: string
+  attributionUrl: string
+  preampDb: number
+  bands: EqualizerBand[]
+  applicable: boolean
+  unsupportedBandTypes: string[]
 }
 
 interface SettingsSnapshot extends AppSettings {
@@ -879,6 +920,13 @@ const api = {
       return () => audioEnginePlaybackInfoCallbacks.delete(cb)
     }
   },
+  opra: {
+    search: (query: string): Promise<OpraProfile[]> => ipcRenderer.invoke('opra:search', query),
+    getProfile: (eqId: string): Promise<OpraProfile | null> =>
+      ipcRenderer.invoke('opra:getProfile', eqId),
+    refresh: (): Promise<OpraCatalogStatus> => ipcRenderer.invoke('opra:refresh'),
+    getStatus: (): Promise<OpraCatalogStatus> => ipcRenderer.invoke('opra:getStatus')
+  },
   app: {
     relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
     checkForUpdates: (): Promise<{
@@ -904,9 +952,10 @@ const api = {
       ipcRenderer.invoke('ncm:cacheSong', songId, url, fileName)
   },
   data: {
-    saveMusicLibrary: (tracks: unknown[]): Promise<void> =>
-      ipcRenderer.invoke('data:saveMusicLibrary', tracks),
-    loadMusicLibrary: (): Promise<unknown[]> => ipcRenderer.invoke('data:loadMusicLibrary'),
+    saveMusicLibrary: (data: { tracks: unknown[]; folders: string[] }): Promise<void> =>
+      ipcRenderer.invoke('data:saveMusicLibrary', data),
+    loadMusicLibrary: (): Promise<{ tracks: unknown[]; folders: string[] } | unknown[]> =>
+      ipcRenderer.invoke('data:loadMusicLibrary'),
     savePlaybackSession: (session: PlaybackSession | null): Promise<void> =>
       ipcRenderer.invoke('data:savePlaybackSession', session),
     loadPlaybackSession: (): Promise<PlaybackSession | null> =>

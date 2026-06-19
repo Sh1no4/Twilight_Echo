@@ -1,71 +1,23 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
+import type {
+  AppSettings,
+  AudioEqPreset,
+  AudioProcessingSettings,
+  EqualizerBand,
+  EqualizerFilterType,
+  EqMode,
+  HeadphoneCompensationSettings
+} from '../types/settings'
 
 const emit = defineEmits<{
   back: []
 }>()
 
-type EqMode = 'graphic' | 'parametric'
 type EqualizerTab = EqMode | 'square'
-type EqualizerFilterType =
-  | 'peak'
-  | 'lowShelf'
-  | 'highShelf'
-  | 'bandPass'
-  | 'lowPass'
-  | 'highPass'
-  | 'allPass'
-
-interface EqualizerBand {
-  frequency: number
-  gain: number
-  q: number
-  filterType: EqualizerFilterType
-}
-
-interface AudioProcessingSettings {
-  dspEnabled: boolean
-  clipGuard: boolean
-  fftEnabled: boolean
-  fftResolution: number
-  highResolution: boolean
-  dsdToPcm: boolean
-  dsdOutputMode: 'auto' | 'pcm' | 'dop' | 'native'
-  sacdProgramMode: 'auto' | 'stereo' | 'multichannel'
-  eqEnabled: boolean
-  eqMode: EqMode
-  eqPreamp: number
-  eqBands: EqualizerBand[]
-  volumeNormalization: 'off' | 'track' | 'album' | 'loudnorm'
-  replayGainPreamp: number
-  replayGainFallback: number
-  replayGainClip: boolean
-  convolverEnabled: boolean
-  convolverIrPath: string
-  crossfeedEnabled: boolean
-  crossfeedStrength: number
-  gapless: boolean
-  crossfadeSeconds: number
-}
-
-interface AudioEqPreset {
-  id: string
-  name: string
-  eqMode: EqMode
-  eqPreamp: number
-  eqBands: EqualizerBand[]
-}
-
-interface AppSettings {
-  autoLaunch: boolean
-  hardwareAcceleration: boolean
-  globalShortcuts: boolean
-  musicCachePath: string
-  closeToTray: boolean
-  audioProcessing: AudioProcessingSettings
-  audioEqPresets: AudioEqPreset[]
-}
+type OpraProfile = Awaited<ReturnType<typeof window.api.opra.search>>[number]
+type OpraCatalogStatus = Awaited<ReturnType<typeof window.api.opra.getStatus>>
 
 const chartWidth = 720
 const chartHeight = 270
@@ -186,8 +138,30 @@ const saving = ref(false)
 const presetMenuOpen = ref(false)
 const filterMenuOpen = ref(false)
 const selectedBandIndex = ref(0)
+const opraQuery = ref('')
+const opraResults = ref<OpraProfile[]>([])
+const opraStatus = ref<OpraCatalogStatus | null>(null)
+const opraSearching = ref(false)
+const opraRefreshing = ref(false)
+const opraApplyingEqId = ref('')
+const opraError = ref('')
+let opraSearchTimer: number | null = null
 
 const userPresets = computed(() => appSettings.value?.audioEqPresets ?? [])
+const headphoneCompensation = computed<HeadphoneCompensationSettings>(
+  () => appSettings.value?.headphoneCompensation ?? {
+    enabled: false,
+    productId: '',
+    productName: '',
+    vendorName: '',
+    eqId: '',
+    author: '',
+    details: '',
+    link: '',
+    preampDb: 0,
+    bands: []
+  }
+)
 const activeTabMeta = computed(() => tabs.find((tab) => tab.key === activeTab.value) ?? tabs[0])
 const selectedBand = computed(
   () => audioProcessing.value.eqBands[selectedBandIndex.value] ?? audioProcessing.value.eqBands[0]
@@ -225,6 +199,23 @@ const responsePoints = computed(() => {
   return points
 })
 
+const opraStatusText = computed(() => {
+  const status = opraStatus.value
+  if (!status) return 'OPRA 未加载'
+  if (status.loading) return 'OPRA 正在加载'
+  if (status.loaded) {
+    const source = status.source === 'network' ? '已刷新' : '本地缓存'
+    return `${source} · ${status.profileCount.toLocaleString()} profiles`
+  }
+  return status.lastError ? `离线：${status.lastError}` : '离线，暂无缓存'
+})
+
+const activeCompensationTitle = computed(() => {
+  const hp = headphoneCompensation.value
+  if (!hp.enabled || !hp.eqId) return '未启用耳机补偿'
+  return `${hp.vendorName} ${hp.productName}`.trim()
+})
+
 function cloneBands(bands: EqualizerBand[]): EqualizerBand[] {
   return bands.map((band) => ({ ...band }))
 }
@@ -252,10 +243,32 @@ function normalizeFilterType(value: unknown): EqualizerFilterType {
 function normalizeAudioProcessing(
   settings?: Partial<AudioProcessingSettings>
 ): AudioProcessingSettings {
+  const eqMode: EqMode = settings?.eqMode === 'parametric' ? 'parametric' : 'graphic'
   const rawBands = Array.isArray(settings?.eqBands) ? settings.eqBands : defaultEqBands
+  const eqBands =
+    eqMode === 'parametric'
+      ? rawBands.slice(0, 32).map((band, index) => {
+          const defaultBand = defaultEqBands[index % defaultEqBands.length]
+          return {
+            frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
+            gain: clampNumber(band.gain, -24, 24, 0),
+            q: clampNumber(band.q, 0.1, 20, 1),
+            filterType: normalizeFilterType(band.filterType)
+          }
+        })
+      : defaultEqBands.map((defaultBand, index) => {
+          const band = rawBands[index] ?? defaultBand
+          return {
+            frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
+            gain: clampNumber(band.gain, -12, 12, 0),
+            q: clampNumber(band.q, 0.25, 8, 1),
+            filterType: normalizeFilterType(band.filterType)
+          }
+        })
   return {
     ...defaultAudioProcessing,
     ...settings,
+    eqMode,
     dsdOutputMode:
       settings?.dsdOutputMode === 'pcm' ||
       settings?.dsdOutputMode === 'dop' ||
@@ -269,20 +282,12 @@ function normalizeAudioProcessing(
         ? settings.sacdProgramMode
         : 'auto',
     fftResolution: clampNumber(settings?.fftResolution, 64, 2048, 64),
-    eqPreamp: clampNumber(settings?.eqPreamp, -12, 12, 0),
+    eqPreamp: clampNumber(settings?.eqPreamp, -24, 24, 0),
     replayGainPreamp: clampNumber(settings?.replayGainPreamp, -12, 12, 0),
     replayGainFallback: clampNumber(settings?.replayGainFallback, -12, 12, 0),
     crossfeedStrength: clampNumber(settings?.crossfeedStrength, 0, 1, 0),
     crossfadeSeconds: clampNumber(settings?.crossfadeSeconds, 0, 12, 0),
-    eqBands: defaultEqBands.map((defaultBand, index) => {
-      const band = rawBands[index] ?? defaultBand
-      return {
-        frequency: clampNumber(band.frequency, 20, 20000, defaultBand.frequency),
-        gain: clampNumber(band.gain, -12, 12, 0),
-        q: clampNumber(band.q, 0.25, 8, 1),
-        filterType: normalizeFilterType(band.filterType)
-      }
-    })
+    eqBands: eqBands.length > 0 ? eqBands : cloneBands(defaultEqBands)
   }
 }
 
@@ -296,6 +301,10 @@ async function loadAppSettings(): Promise<void> {
         ...preset,
         eqBands: normalizeAudioProcessing({ eqBands: preset.eqBands }).eqBands
       }))
+    }
+    appSettings.value.headphoneCompensation = {
+      ...settings.headphoneCompensation,
+      bands: cloneBands(settings.headphoneCompensation?.bands ?? [])
     }
     audioProcessing.value = appSettings.value.audioProcessing
     if (audioProcessing.value.eqMode === 'parametric') {
@@ -335,19 +344,114 @@ async function updateEqBand(index: number, patch: Partial<EqualizerBand>): Promi
     ...patch,
     frequency:
       patch.frequency !== undefined
-        ? clampNumber(patch.frequency, 20, 20000, bands[index].frequency)
+        ? clampNumber(patch.frequency, 20, 24000, bands[index].frequency)
         : bands[index].frequency,
     gain:
       patch.gain !== undefined
-        ? clampNumber(patch.gain, -12, 12, bands[index].gain)
+        ? clampNumber(
+            patch.gain,
+            audioProcessing.value.eqMode === 'parametric' ? -24 : -12,
+            audioProcessing.value.eqMode === 'parametric' ? 24 : 12,
+            bands[index].gain
+          )
         : bands[index].gain,
-    q: patch.q !== undefined ? clampNumber(patch.q, 0.25, 8, bands[index].q) : bands[index].q,
+    q:
+      patch.q !== undefined
+        ? clampNumber(
+            patch.q,
+            audioProcessing.value.eqMode === 'parametric' ? 0.1 : 0.25,
+            audioProcessing.value.eqMode === 'parametric' ? 20 : 8,
+            bands[index].q
+          )
+        : bands[index].q,
     filterType:
       patch.filterType !== undefined
         ? normalizeFilterType(patch.filterType)
         : bands[index].filterType
   }
   await updateAudioProcessing({ eqBands: bands })
+}
+
+async function loadOpraStatus(): Promise<void> {
+  try {
+    opraStatus.value = await window.api.opra.getStatus()
+  } catch (err) {
+    opraError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function searchOpraProfiles(): Promise<void> {
+  const query = opraQuery.value.trim()
+  if (!query) {
+    opraResults.value = []
+    return
+  }
+  opraSearching.value = true
+  opraError.value = ''
+  try {
+    opraResults.value = await window.api.opra.search(query)
+    opraStatus.value = await window.api.opra.getStatus()
+  } catch (err) {
+    opraError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    opraSearching.value = false
+  }
+}
+
+async function refreshOpraCatalog(): Promise<void> {
+  opraRefreshing.value = true
+  opraError.value = ''
+  try {
+    opraStatus.value = await window.api.opra.refresh()
+    await searchOpraProfiles()
+  } catch (err) {
+    opraError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    opraRefreshing.value = false
+  }
+}
+
+async function applyOpraProfile(profile: OpraProfile): Promise<void> {
+  if (!profile.applicable || opraApplyingEqId.value) return
+  opraApplyingEqId.value = profile.eqId
+  opraError.value = ''
+  try {
+    const fullProfile = (await window.api.opra.getProfile(profile.eqId)) ?? profile
+    if (!fullProfile.applicable) {
+      opraError.value = `该 profile 包含暂不支持的滤波器：${fullProfile.unsupportedBandTypes.join(', ')}`
+      return
+    }
+    const savedSettings = await window.api.settings.update({
+      headphoneCompensation: {
+        enabled: true,
+        productId: fullProfile.productId,
+        productName: fullProfile.productName,
+        vendorName: fullProfile.vendorName,
+        eqId: fullProfile.eqId,
+        author: fullProfile.author,
+        details: fullProfile.details,
+        link: fullProfile.link,
+        preampDb: fullProfile.preampDb,
+        bands: cloneBands(fullProfile.bands)
+      }
+    })
+    appSettings.value = savedSettings
+  } catch (err) {
+    opraError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    opraApplyingEqId.value = ''
+  }
+}
+
+async function disableOpraCompensation(): Promise<void> {
+  if (!appSettings.value) return
+  const savedSettings = await window.api.settings.update({
+    headphoneCompensation: {
+      ...headphoneCompensation.value,
+      enabled: false
+    }
+  })
+  appSettings.value = savedSettings
 }
 
 async function applyEqPreset(preset: AudioEqPreset): Promise<void> {
@@ -510,6 +614,14 @@ function isGainDisabled(band: EqualizerBand | undefined): boolean {
 
 onMounted(() => {
   void loadAppSettings()
+  void loadOpraStatus()
+})
+
+watch(opraQuery, () => {
+  if (opraSearchTimer !== null) window.clearTimeout(opraSearchTimer)
+  opraSearchTimer = window.setTimeout(() => {
+    void searchOpraProfiles()
+  }, 250)
 })
 </script>
 
@@ -557,6 +669,83 @@ onMounted(() => {
           <span class="eq-switch"><span></span></span>
         </button>
       </header>
+
+      <section v-if="activeTab !== 'square'" class="opra-panel">
+        <div class="opra-head">
+          <div>
+            <span class="opra-kicker">OPRA 耳机补偿</span>
+            <h2>{{ activeCompensationTitle }}</h2>
+            <p>
+              手动 EQ 与耳机补偿会独立叠加；启用后 native 引擎使用合成后的参数 EQ。
+            </p>
+          </div>
+          <button
+            v-if="headphoneCompensation.enabled"
+            type="button"
+            class="eq-command soft"
+            @click="disableOpraCompensation"
+          >
+            Disable
+          </button>
+        </div>
+
+        <div v-if="headphoneCompensation.enabled" class="opra-active">
+          <span>{{ headphoneCompensation.vendorName }}</span>
+          <strong>{{ headphoneCompensation.productName }}</strong>
+          <span>Profile by {{ headphoneCompensation.author }}</span>
+          <span>Preamp {{ headphoneCompensation.preampDb.toFixed(1) }} dB</span>
+          <a v-if="headphoneCompensation.link" :href="headphoneCompensation.link" target="_blank">
+            来源
+          </a>
+        </div>
+
+        <div class="opra-search-row">
+          <input
+            v-model="opraQuery"
+            type="search"
+            placeholder="搜索耳机型号或厂商，例如 HD 600、Sony、Moondrop"
+          />
+          <button type="button" class="eq-command" :disabled="opraRefreshing" @click="refreshOpraCatalog">
+            {{ opraRefreshing ? '刷新中' : '刷新 OPRA' }}
+          </button>
+        </div>
+
+        <div class="opra-meta">
+          <span>{{ opraStatusText }}</span>
+          <span v-if="opraSearching">搜索中</span>
+          <span v-if="opraError" class="opra-error">{{ opraError }}</span>
+        </div>
+
+        <div v-if="opraResults.length > 0" class="opra-results">
+          <article v-for="profile in opraResults" :key="profile.eqId" class="opra-result">
+            <div>
+              <span>{{ profile.vendorName }}</span>
+              <strong>{{ profile.productName }}</strong>
+              <p>
+                {{ profile.author }}
+                <template v-if="profile.details"> · {{ profile.details }}</template>
+              </p>
+              <small v-if="!profile.applicable">
+                暂不支持：{{ profile.unsupportedBandTypes.join(', ') || '未知滤波器' }}
+              </small>
+            </div>
+            <button
+              type="button"
+              class="eq-command"
+              :disabled="!profile.applicable || opraApplyingEqId === profile.eqId"
+              @click="applyOpraProfile(profile)"
+            >
+              {{ opraApplyingEqId === profile.eqId ? 'Applying' : 'Apply' }}
+            </button>
+          </article>
+        </div>
+
+        <p class="opra-attribution">
+          Data from
+          <a href="https://github.com/opra-project/OPRA" target="_blank">OPRA</a>
+          via the Roon/Cloudflare mirror. Profile authors are credited in each result.
+        </p>
+      </section>
 
       <section v-if="activeTab === 'graphic'" class="eq-workbench">
         <div class="eq-toolbar">
@@ -677,8 +866,8 @@ onMounted(() => {
             <span class="band-gain">{{ audioProcessing.eqPreamp.toFixed(1) }}</span>
             <input
               type="range"
-              min="-12"
-              max="12"
+              min="-24"
+              max="24"
               step="0.5"
               :value="audioProcessing.eqPreamp"
               @input="
@@ -856,11 +1045,11 @@ onMounted(() => {
             <strong>{{ selectedFilter.label }}</strong>
           </div>
           <label class="editor-row">
-            <span>FREQ(Hz)[20~20k]</span>
+            <span>FREQ(Hz)[20~24k]</span>
             <input
               type="number"
               min="20"
-              max="20000"
+              max="24000"
               step="1"
               :value="Math.round(selectedBand.frequency)"
               @change="
@@ -891,12 +1080,12 @@ onMounted(() => {
             </div>
           </div>
           <label class="editor-row range-row" :class="{ disabled: isGainDisabled(selectedBand) }">
-            <span>GAIN(dB)[-12.0~12.0]</span>
+            <span>GAIN(dB)[-24.0~24.0]</span>
             <strong>{{ selectedBand.gain.toFixed(1) }}</strong>
             <input
               type="range"
-              min="-12"
-              max="12"
+              min="-24"
+              max="24"
               step="0.5"
               :disabled="isGainDisabled(selectedBand)"
               :value="selectedBand.gain"
@@ -908,12 +1097,12 @@ onMounted(() => {
             />
           </label>
           <label class="editor-row range-row">
-            <span>Q[0.25~8.00]</span>
+            <span>Q[0.10~20.00]</span>
             <strong>{{ selectedBand.q.toFixed(2) }}</strong>
             <input
               type="range"
-              min="0.25"
-              max="8"
+              min="0.1"
+              max="20"
               step="0.05"
               :value="selectedBand.q"
               @input="
@@ -1267,6 +1456,152 @@ onMounted(() => {
   overflow-x: hidden;
   padding: 18px 28px 28px;
   scrollbar-gutter: stable;
+}
+
+.opra-panel {
+  position: relative;
+  z-index: 1;
+  margin: 16px 28px 0;
+  padding: 14px;
+  border: 1px solid #e8ebf2;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 10px 24px rgba(34, 42, 68, 0.05);
+}
+
+.opra-head,
+.opra-search-row,
+.opra-active,
+.opra-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.opra-head {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.opra-kicker {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--te-primary-500);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.opra-head h2 {
+  margin: 0;
+  color: var(--te-neutral-900);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.opra-head p,
+.opra-attribution,
+.opra-result p,
+.opra-meta {
+  margin: 4px 0 0;
+  color: rgba(80, 88, 116, 0.66);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.opra-active {
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  background: #f7f5ff;
+  color: rgba(80, 88, 116, 0.78);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.opra-active strong {
+  color: var(--te-neutral-900);
+}
+
+.opra-search-row {
+  margin-top: 12px;
+}
+
+.opra-search-row input {
+  flex: 1;
+  min-width: 180px;
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid #e8ebf2;
+  border-radius: 8px;
+  background: #fff;
+  color: rgba(52, 61, 87, 0.88);
+  font-size: 12px;
+  font-weight: 760;
+  outline: none;
+}
+
+.opra-search-row input:focus {
+  border-color: rgba(124, 77, 255, 0.48);
+}
+
+.opra-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.opra-error {
+  color: #d94c68;
+}
+
+.opra-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.opra-result {
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid #edf0f6;
+  border-radius: 8px;
+  background: #fbfcff;
+}
+
+.opra-result > div {
+  min-width: 0;
+}
+
+.opra-result span,
+.opra-result small {
+  display: block;
+  color: rgba(80, 88, 116, 0.58);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.opra-result strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--te-neutral-900);
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+.opra-result small {
+  margin-top: 4px;
+  color: #d94c68;
+}
+
+.opra-attribution a,
+.opra-active a {
+  color: var(--te-primary-500);
+  text-decoration: none;
 }
 
 .eq-toolbar,

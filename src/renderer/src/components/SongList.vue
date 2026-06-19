@@ -20,11 +20,13 @@ type WindowWithIdleCallback = Window & {
 }
 
 type GridItem = {
+  id?: string
   name: string
   trackCount?: number
   cover?: string | null
   path?: string
   trackIds?: string[]
+  isDefault?: boolean
 }
 
 const props = defineProps<{
@@ -47,6 +49,7 @@ const {
   getPlaylistTracks,
   removeTrack,
   addToPlaylist,
+  removeFromPlaylist,
   createPlaylist,
   deletePlaylist
 } = useMusicStore()
@@ -101,6 +104,13 @@ const viewTitle = computed(() => {
   }
   return '我的音乐'
 })
+
+const currentPlaylistName = computed(() => {
+  if (props.category !== 'playlists' || !props.filter?.startsWith('playlist:')) return null
+  return props.filter.slice(9)
+})
+
+const isPlaylistDetail = computed(() => currentPlaylistName.value !== null)
 
 const displayTracks = computed(() => {
   const q = searchQuery.value.trim().toLowerCase()
@@ -306,6 +316,13 @@ function handleAddToPlaylist(playlistName: string): void {
     addToPlaylist(playlistName, selectedTrack.value.id)
     closeContextMenu()
   }
+}
+
+function handleRemoveFromCurrentPlaylist(): void {
+  const playlistName = currentPlaylistName.value
+  if (!playlistName || !selectedTrack.value) return
+  removeFromPlaylist(playlistName, selectedTrack.value.id)
+  closeContextMenu()
 }
 
 // Create Playlist Dialog
@@ -537,7 +554,7 @@ watch(
                   v-if="!playlist.isDefault"
                   class="playlist-delete-btn"
                   title="删除歌单"
-                  @click="handleDeletePlaylist(playlist.id, $event)"
+                  @click="handleDeletePlaylist(playlist.id || '', $event)"
                 >
                   <i class="pi pi-trash" style="font-size: 12px"></i>
                 </div>
@@ -675,7 +692,15 @@ watch(
             >
               <div class="menu-item" @click="handleDelete">
                 <i class="pi pi-trash"></i>
-                <span>删除</span>
+                <span>{{ isPlaylistDetail ? '从本地库删除' : '删除' }}</span>
+              </div>
+              <div
+                v-if="isPlaylistDetail"
+                class="menu-item"
+                @click="handleRemoveFromCurrentPlaylist"
+              >
+                <i class="pi pi-minus-circle"></i>
+                <span>从歌单移除</span>
               </div>
               <div class="menu-item" @click="handleOpenFolder">
                 <i class="pi pi-folder-open"></i>

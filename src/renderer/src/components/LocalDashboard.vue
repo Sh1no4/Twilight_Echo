@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useListeningStatsStore } from '../stores/useListeningStatsStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
@@ -26,6 +26,9 @@ interface DspNode {
 const DEFAULT_COVER = '/icon.png'
 const FALLBACK_THUMB = '/icon.png'
 const HEATMAP_DAYS = 140
+const dashboardSpectrumCanvasRef = ref<HTMLCanvasElement | null>(null)
+let dashboardSpectrumResizeObserver: ResizeObserver | null = null
+let dashboardSpectrumRaf = 0
 
 function onCoverError(event: Event): void {
   const img = event.target as HTMLImageElement
@@ -208,14 +211,110 @@ const dspNodes = computed<DspNode[]>(() => {
   ]
 })
 
-const spectrumBars = computed(() => {
-  const values = visualizationData.value.spectrum.slice(0, 24)
-  const normalized = values.length > 0 ? values : Array.from({ length: 24 }, () => 0)
-  return normalized.map((value) => {
+function resolveCanvasColor(canvas: HTMLCanvasElement, name: string, fallback: string): string {
+  const value = getComputedStyle(canvas).getPropertyValue(name).trim()
+  return value || fallback
+}
+
+function prepareCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+  const cssWidth = canvas.clientWidth
+  const cssHeight = canvas.clientHeight
+  if (cssWidth <= 0 || cssHeight <= 0) return null
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
+  const bufferWidth = Math.max(1, Math.round(cssWidth * dpr))
+  const bufferHeight = Math.max(1, Math.round(cssHeight * dpr))
+  if (canvas.width !== bufferWidth || canvas.height !== bufferHeight) {
+    canvas.width = bufferWidth
+    canvas.height = bufferHeight
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, cssWidth, cssHeight)
+  return ctx
+}
+
+function normalizedSpectrumValues(points = 24): number[] {
+  const source = visualizationData.value.spectrum
+  return Array.from({ length: points }, (_, index) => {
+    const value = source[index] ?? 0
     if (!visualizationData.value.active) return 0.14
     const width = Math.max(12, Math.min(132, 12 + Math.sqrt(Math.max(0, value)) * 120))
     return Math.min(1, Math.max(0.08, width / 132))
   })
+}
+
+function drawDashboardSpectrumNow(): void {
+  dashboardSpectrumRaf = 0
+  const canvas = dashboardSpectrumCanvasRef.value
+  if (!canvas) return
+  const ctx = prepareCanvas(canvas)
+  if (!ctx) return
+
+  const width = canvas.clientWidth
+  const height = canvas.clientHeight
+  const values = normalizedSpectrumValues()
+  const accent = resolveCanvasColor(canvas, '--accent', '#7c4dff')
+  const accentLight = resolveCanvasColor(canvas, '--accent-light', '#22d3ee')
+  const compactLayout = width < 360 || height < 140
+
+  if (compactLayout) {
+    const gap = 4
+    const barWidth = Math.max(2, Math.min(4, (width - gap * (values.length - 1)) / values.length))
+    const totalWidth = values.length * barWidth + (values.length - 1) * gap
+    const startX = Math.max(0, (width - totalWidth) / 2)
+    const maxHeight = Math.min(58, height - 4)
+    const gradient = ctx.createLinearGradient(0, height - maxHeight, 0, height)
+    gradient.addColorStop(0, accentLight)
+    gradient.addColorStop(1, accent)
+    ctx.fillStyle = gradient
+    values.forEach((scale, index) => {
+      const barHeight = Math.max(4, maxHeight * scale)
+      const x = startX + index * (barWidth + gap)
+      ctx.fillRect(x, height - barHeight, barWidth, barHeight)
+    })
+    return
+  }
+
+  const gap = 4
+  const barHeight = Math.max(2, Math.min(4, (height - gap * (values.length - 1)) / values.length))
+  const totalHeight = values.length * barHeight + (values.length - 1) * gap
+  const startY = Math.max(0, (height - totalHeight) / 2)
+  const maxWidth = Math.min(132, width - 4)
+  const gradient = ctx.createLinearGradient(width - maxWidth, 0, width, 0)
+  gradient.addColorStop(0, accentLight)
+  gradient.addColorStop(1, accent)
+  ctx.fillStyle = gradient
+  values.forEach((scale, index) => {
+    const barWidth = Math.max(12, maxWidth * scale)
+    const x = width - barWidth
+    const y = startY + index * (barHeight + gap)
+    ctx.fillRect(x, y, barWidth, barHeight)
+  })
+}
+
+function queueDashboardSpectrumDraw(): void {
+  if (dashboardSpectrumRaf !== 0) return
+  dashboardSpectrumRaf = window.requestAnimationFrame(drawDashboardSpectrumNow)
+}
+
+watch(visualizationData, queueDashboardSpectrumDraw, { flush: 'post' })
+
+onMounted(() => {
+  if (dashboardSpectrumCanvasRef.value) {
+    dashboardSpectrumResizeObserver = new ResizeObserver(queueDashboardSpectrumDraw)
+    dashboardSpectrumResizeObserver.observe(dashboardSpectrumCanvasRef.value)
+  }
+  queueDashboardSpectrumDraw()
+})
+
+onBeforeUnmount(() => {
+  if (dashboardSpectrumRaf !== 0) {
+    window.cancelAnimationFrame(dashboardSpectrumRaf)
+    dashboardSpectrumRaf = 0
+  }
+  dashboardSpectrumResizeObserver?.disconnect()
+  dashboardSpectrumResizeObserver = null
 })
 
 function normalizeNativeDspPlugin(plugin: unknown): DspNode | null {
@@ -482,14 +581,11 @@ function playDashboardTrack(track: Track | undefined): void {
 
             <!-- Horizontal Spectrum Analyzer (Right to Left) -->
             <div class="visualizer-container" v-show="visualizationData.active">
-                <div class="visualizer">
-                    <div
-                      v-for="(scale, index) in spectrumBars"
-                      :key="index"
-                      class="bar"
-                      :style="{ '--bar-scale': scale }"
-                    ></div>
-                </div>
+                <canvas
+                  ref="dashboardSpectrumCanvasRef"
+                  class="visualizer-canvas"
+                  aria-hidden="true"
+                ></canvas>
             </div>
         </div>
 
@@ -1100,25 +1196,11 @@ function playDashboardTrack(track: Track | undefined): void {
     padding-right: 0.5rem;
 }
 
-.visualizer {
-    display: flex;
-    flex-direction: column; /* Stack bars vertically */
-    align-items: flex-end;  /* Align bars to the right */
-    gap: 4px;
-    width: max-content;
-    max-width: 100%;
-}
-
-:deep(.bar) {
-    width: 132px;
-    height: 4px; /* Fixed height for horizontal bars */
-    background: linear-gradient(to left, var(--accent), var(--accent-light)); /* Gradient right to left */
-    border-radius: 3px 0 0 3px;
-    opacity: 0.95;
-    transform: scaleX(var(--bar-scale, 0.12));
-    transform-origin: right center;
-    transition: transform 55ms linear, opacity 55ms linear;
-    will-change: transform;
+.visualizer-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    min-height: 160px;
 }
 
 /* Responsive */
@@ -1132,15 +1214,7 @@ function playDashboardTrack(track: Track | undefined): void {
     .dsp-nodes::before { top: 50%; bottom: auto; left: 0; right: 0; width: 100%; height: 2px; transform: translateY(-50%); }
     .dsp-node { flex-direction: column; }
     .visualizer-container { min-height: 120px; }
-    .visualizer { flex-direction: row; align-items: flex-end; padding-right: 0; }
-    :deep(.bar) {
-        width: 4px;
-        height: 58px;
-        background: linear-gradient(to top, var(--accent), var(--accent-light));
-        border-radius: 2px 2px 0 0;
-        transform: scaleY(var(--bar-scale, 0.12));
-        transform-origin: center bottom;
-    }
+    .visualizer-canvas { min-height: 120px; }
 }
 @media (max-width: 950px) {
     .dashboard {

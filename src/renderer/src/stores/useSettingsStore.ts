@@ -44,6 +44,19 @@ const fallbackAudioProcessing: AudioProcessingSettings = {
   crossfadeSeconds: 0
 }
 
+const fallbackHeadphoneCompensation = {
+  enabled: false,
+  productId: '',
+  productName: '',
+  vendorName: '',
+  eqId: '',
+  author: '',
+  details: '',
+  link: '',
+  preampDb: 0,
+  bands: []
+}
+
 const fallbackSettings: AppSettings = {
   autoCheckLogin: true,
   autoLaunch: false,
@@ -78,6 +91,7 @@ const fallbackSettings: AppSettings = {
     routingMode: 'auto'
   },
   audioProcessing: fallbackAudioProcessing,
+  headphoneCompensation: fallbackHeadphoneCompensation,
   audioEqPresets: [],
   desktopLyrics: {
     enabled: false,

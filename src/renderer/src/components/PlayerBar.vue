@@ -470,44 +470,19 @@ const waveformBars = computed(() => {
 })
 const spectrogramFrameCount = 32
 const spectrogramBinCount = 24
-const spectrogramCells = computed(() => {
-  if (!visualizationActive.value) return []
-  const frames = visualizationData.value.spectrogram.slice(-spectrogramFrameCount)
-  const cells: { key: string; color: string }[] = []
-  for (let bin = spectrogramBinCount - 1; bin >= 0; bin -= 1) {
-    for (let frame = 0; frame < spectrogramFrameCount; frame += 1) {
-      const row = frames[frames.length - spectrogramFrameCount + frame]
-      const valueIndex = row ? Math.min(row.length - 1, Math.floor((bin * row.length) / spectrogramBinCount)) : -1
-      const energy = valueIndex >= 0 ? clamp01(finiteNumber(row?.[valueIndex])) : 0
-      const alpha = 0.08 + energy * 0.82
-      const red = Math.round(38 + energy * 186)
-      const green = Math.round(92 + energy * 116)
-      const blue = Math.round(132 - energy * 68)
-      cells.push({
-        key: `${bin}-${frame}`,
-        color: `rgba(${red}, ${green}, ${blue}, ${alpha})`
-      })
-    }
-  }
-  return cells
-})
 
 const oscilloscopeCanvasRef = ref<HTMLCanvasElement | null>(null)
+const spectrogramCanvasRef = ref<HTMLCanvasElement | null>(null)
 
-function drawOscilloscope(): void {
-  const canvas = oscilloscopeCanvasRef.value
-  if (!canvas) return
+function prepareVisualizationCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
   const ctx = canvas.getContext('2d')
-  if (!ctx) return
+  if (!ctx) return null
 
-  const dpr = window.devicePixelRatio || 1
+  const dpr = Math.min(window.devicePixelRatio || 1, 2)
   const cssWidth = canvas.clientWidth
   const cssHeight = canvas.clientHeight
-  if (cssWidth <= 0 || cssHeight <= 0) return
+  if (cssWidth <= 0 || cssHeight <= 0) return null
 
-  // Resize drawing buffer to CSS size × DPR for crisp rendering. Only
-  // re-assigns when the dimensions change to avoid clearing the canvas
-  // unnecessarily.
   const bufferWidth = Math.round(cssWidth * dpr)
   const bufferHeight = Math.round(cssHeight * dpr)
   if (canvas.width !== bufferWidth || canvas.height !== bufferHeight) {
@@ -517,7 +492,17 @@ function drawOscilloscope(): void {
 
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, cssWidth, cssHeight)
+  return ctx
+}
 
+function drawOscilloscope(): void {
+  const canvas = oscilloscopeCanvasRef.value
+  if (!canvas) return
+  const ctx = prepareVisualizationCanvas(canvas)
+  if (!ctx) return
+
+  const cssWidth = canvas.clientWidth
+  const cssHeight = canvas.clientHeight
   const midY = cssHeight / 2
   const samples = visualizationData.value.oscilloscope
   const active = visualizationActive.value
@@ -573,13 +558,57 @@ function drawOscilloscope(): void {
   ctx.stroke()
 }
 
+function drawSpectrogram(): void {
+  const canvas = spectrogramCanvasRef.value
+  if (!canvas) return
+  const ctx = prepareVisualizationCanvas(canvas)
+  if (!ctx) return
+
+  const cssWidth = canvas.clientWidth
+  const cssHeight = canvas.clientHeight
+  const gap = 1
+  const cellWidth = Math.max(1, (cssWidth - gap * (spectrogramFrameCount - 1)) / spectrogramFrameCount)
+  const cellHeight = Math.max(1, (cssHeight - gap * (spectrogramBinCount - 1)) / spectrogramBinCount)
+
+  if (!visualizationActive.value) {
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.12)'
+    for (let bin = 0; bin < spectrogramBinCount; bin += 1) {
+      for (let frame = 0; frame < spectrogramFrameCount; frame += 1) {
+        ctx.fillRect(frame * (cellWidth + gap), bin * (cellHeight + gap), cellWidth, cellHeight)
+      }
+    }
+    return
+  }
+
+  const frames = visualizationData.value.spectrogram.slice(-spectrogramFrameCount)
+  for (let bin = spectrogramBinCount - 1; bin >= 0; bin -= 1) {
+    const y = (spectrogramBinCount - 1 - bin) * (cellHeight + gap)
+    for (let frame = 0; frame < spectrogramFrameCount; frame += 1) {
+      const row = frames[frames.length - spectrogramFrameCount + frame]
+      const valueIndex = row ? Math.min(row.length - 1, Math.floor((bin * row.length) / spectrogramBinCount)) : -1
+      const energy = valueIndex >= 0 ? clamp01(finiteNumber(row?.[valueIndex])) : 0
+      const alpha = 0.08 + energy * 0.82
+      const red = Math.round(38 + energy * 186)
+      const green = Math.round(92 + energy * 116)
+      const blue = Math.round(132 - energy * 68)
+      ctx.fillStyle = `rgba(${red}, ${green}, ${blue}, ${alpha})`
+      ctx.fillRect(frame * (cellWidth + gap), y, cellWidth, cellHeight)
+    }
+  }
+}
+
+function drawVisualizationCanvases(): void {
+  drawOscilloscope()
+  drawSpectrogram()
+}
+
 // Redraw on every visualization data update (120ms poll). flush:'post'
 // ensures the DOM is patched before drawing (canvas may have just mounted).
-watch(visualizationData, drawOscilloscope, { flush: 'post' })
+watch(visualizationData, drawVisualizationCanvases, { flush: 'post' })
 // Draw immediately when the drawer opens so the trace appears before the
 // next poll. requestAnimationFrame lets Vue mount the canvas first.
 watch(moreOpen, (open) => {
-  if (open) requestAnimationFrame(drawOscilloscope)
+  if (open) requestAnimationFrame(drawVisualizationCanvases)
 })
 
 function playTrackAt(index: number): void {
@@ -776,12 +805,14 @@ onBeforeUnmount(() => {
         </button>
 
         <button
-          class="icon-btn"
+          class="icon-btn desktop-lyrics-btn"
           :class="{ active: desktopLyricsOn }"
           title="桌面歌词"
+          aria-label="桌面歌词"
+          :aria-pressed="desktopLyricsOn"
           @click="toggleDesktopLyrics"
         >
-          <i class="pi pi-window-maximize"></i>
+          <span class="desktop-lyrics-icon" aria-hidden="true">词</span>
         </button>
 
         <!-- 更多按钮 + 向上弹出抽屉 -->
@@ -861,21 +892,11 @@ onBeforeUnmount(() => {
                   <span><strong>LUFS</strong>{{ lufsText }}</span>
                 </div>
                 <div class="spectrogram-grid" :class="{ inactive: !visualizationActive }">
-                  <template v-if="!visualizationActive">
-                    <span
-                      v-for="index in spectrogramFrameCount * spectrogramBinCount"
-                      :key="`idle-${index}`"
-                      class="spectrogram-cell idle"
-                    ></span>
-                  </template>
-                  <template v-else>
-                    <span
-                      v-for="cell in spectrogramCells"
-                      :key="cell.key"
-                      class="spectrogram-cell"
-                      :style="{ background: cell.color }"
-                    ></span>
-                  </template>
+                  <canvas
+                    ref="spectrogramCanvasRef"
+                    class="spectrogram-canvas"
+                    aria-hidden="true"
+                  ></canvas>
                 </div>
               </div>
               <div class="more-item">
@@ -1736,6 +1757,27 @@ onBeforeUnmount(() => {
   background: color-mix(in srgb, var(--accent-color, #7c4dff) 12%, transparent);
 }
 
+.desktop-lyrics-icon {
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+  font-family: 'Microsoft YaHei UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.desktop-lyrics-btn.active,
+.player-bar-glass .desktop-lyrics-btn.active {
+  background: transparent;
+  box-shadow: none;
+}
+
 .icon-btn:active {
   transform: scale(0.88);
   transition-duration: 0.1s;
@@ -2101,33 +2143,21 @@ onBeforeUnmount(() => {
 }
 
 .spectrogram-grid {
-  display: grid;
-  grid-template-columns: repeat(32, minmax(0, 1fr));
-  grid-template-rows: repeat(24, 2px);
-  gap: 1px;
+  display: block;
   height: 71px;
   overflow: hidden;
   border-radius: 6px;
   background: rgba(15, 23, 42, 0.08);
 }
 
-.spectrogram-cell {
+.spectrogram-canvas {
   display: block;
-  min-width: 0;
-  min-height: 0;
-  border-radius: 1px;
-}
-
-.spectrogram-cell.idle {
-  background: rgba(148, 163, 184, 0.12);
+  width: 100%;
+  height: 100%;
 }
 
 .drawer-glass .spectrogram-grid {
   background: #111827;
-}
-
-.drawer-glass .spectrogram-cell.idle {
-  background: #263244;
 }
 
 .more-item-header {

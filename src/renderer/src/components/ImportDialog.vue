@@ -11,7 +11,15 @@ const emit = defineEmits<{
   close: []
 }>()
 
-const { scannedFolders, addFolder, addTracks, isScanning, saveLibrary, syncFolders } = useMusicStore()
+const {
+  scannedFolders,
+  addFolder,
+  addTracks,
+  isScanning,
+  saveLibrary,
+  refreshLibraryIndex,
+  syncFolders
+} = useMusicStore()
 
 const progress = ref({ current: 0, total: 0 })
 const selectedFolders = ref<Set<string>>(new Set())
@@ -55,14 +63,15 @@ async function startScan(): Promise<void> {
         const batchSize = 500
         for (let i = 0; i < tracks.length; i += batchSize) {
           const batch = (tracks as Track[]).slice(i, i + batchSize)
-          await addTracks(batch)
+          await addTracks(batch, { deferRebuild: true })
           // 让界面有机会刷新导入进度。
           await new Promise((resolve) => setTimeout(resolve, 50))
         }
       }
     }
 
-    // 全部导入完成后统一保存。
+    // 全部导入完成后统一重建索引并保存，避免每 500 首全量重算。
+    refreshLibraryIndex()
     await saveLibrary()
     newlyAddedFolders.value = []
     emit('close')

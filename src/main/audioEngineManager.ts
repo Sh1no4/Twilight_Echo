@@ -501,6 +501,18 @@ const DEFAULT_EQ_BANDS: EqualizerBand[] = [
   filterType: 'peak'
 }))
 
+const MAX_PARAMETRIC_EQ_BANDS = 32
+const EQ_PREAMP_MIN_DB = -24
+const EQ_PREAMP_MAX_DB = 24
+const GRAPHIC_EQ_GAIN_MIN_DB = -12
+const GRAPHIC_EQ_GAIN_MAX_DB = 12
+const PARAMETRIC_EQ_GAIN_MIN_DB = -24
+const PARAMETRIC_EQ_GAIN_MAX_DB = 24
+const GRAPHIC_EQ_Q_MIN = 0.25
+const GRAPHIC_EQ_Q_MAX = 8
+const PARAMETRIC_EQ_Q_MIN = 0.1
+const PARAMETRIC_EQ_Q_MAX = 20
+
 export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
   dspEnabled: false,
   clipGuard: true,
@@ -757,16 +769,45 @@ function normalizeEqualizerFilterType(value: unknown): EqualizerFilterType {
 export function normalizeAudioProcessingSettings(
   settings?: Partial<AudioProcessingSettings>
 ): AudioProcessingSettings {
+  const eqMode: EqMode = settings?.eqMode === 'parametric' ? 'parametric' : 'graphic'
   const rawBands = Array.isArray(settings?.eqBands) ? settings.eqBands : DEFAULT_EQ_BANDS
-  const eqBands = DEFAULT_EQ_BANDS.map((defaultBand, index) => {
-    const band = rawBands[index] ?? defaultBand
-    return {
-      frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
-      gain: clampNumber(band.gain, -12, 12, 0),
-      q: clampNumber(band.q, 0.25, 8, 1),
-      filterType: normalizeEqualizerFilterType(band.filterType)
+  const eqBands =
+    eqMode === 'parametric'
+      ? rawBands
+          .slice(0, MAX_PARAMETRIC_EQ_BANDS)
+          .map((band, index) => {
+            const defaultBand = DEFAULT_EQ_BANDS[index % DEFAULT_EQ_BANDS.length]
+            return {
+              frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
+              gain: clampNumber(
+                band.gain,
+                PARAMETRIC_EQ_GAIN_MIN_DB,
+                PARAMETRIC_EQ_GAIN_MAX_DB,
+                0
+              ),
+              q: clampNumber(band.q, PARAMETRIC_EQ_Q_MIN, PARAMETRIC_EQ_Q_MAX, 1),
+              filterType: normalizeEqualizerFilterType(band.filterType)
+            }
+          })
+      : DEFAULT_EQ_BANDS.map((defaultBand, index) => {
+          const band = rawBands[index] ?? defaultBand
+          return {
+            frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
+            gain: clampNumber(band.gain, GRAPHIC_EQ_GAIN_MIN_DB, GRAPHIC_EQ_GAIN_MAX_DB, 0),
+            q: clampNumber(band.q, GRAPHIC_EQ_Q_MIN, GRAPHIC_EQ_Q_MAX, 1),
+            filterType: normalizeEqualizerFilterType(band.filterType)
+          }
+        })
+
+  if (eqBands.length === 0) {
+    eqBands.push({
+      frequency: DEFAULT_EQ_BANDS[0].frequency,
+      gain: 0,
+      q: 1,
+      filterType: 'peak'
     }
-  })
+    )
+  }
 
   const volumeNormalization: VolumeNormalizationMode =
     settings?.volumeNormalization === 'track' ||
@@ -798,8 +839,8 @@ export function normalizeAudioProcessingSettings(
     dsdOutputMode,
     sacdProgramMode,
     eqEnabled: settings?.eqEnabled === true,
-    eqMode: settings?.eqMode === 'parametric' ? 'parametric' : 'graphic',
-    eqPreamp: clampNumber(settings?.eqPreamp, -12, 12, 0),
+    eqMode,
+    eqPreamp: clampNumber(settings?.eqPreamp, EQ_PREAMP_MIN_DB, EQ_PREAMP_MAX_DB, 0),
     eqBands,
     volumeNormalization,
     replayGainPreamp: clampNumber(settings?.replayGainPreamp, -12, 12, 0),

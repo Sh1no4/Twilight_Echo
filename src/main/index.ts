@@ -36,6 +36,13 @@ import {
   type EqMode,
   type EqualizerBand
 } from './audioEngineManager'
+import {
+  DEFAULT_HEADPHONE_COMPENSATION,
+  buildEffectiveAudioProcessingSettings,
+  normalizeHeadphoneCompensationSettings,
+  type HeadphoneCompensationSettings
+} from './audioProcessingEffective'
+import { OpraCatalog } from './opraCatalog'
 import { TwilightPluginManager } from './plugins/manager'
 import { PluginIndexService } from './plugins/indexService'
 import { derivePlaybackEvents } from './plugins/events'
@@ -135,6 +142,7 @@ interface AppSettings {
   audioExclusiveMode: boolean
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
+  headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
 }
@@ -199,6 +207,7 @@ const DEFAULT_SETTINGS: AppSettings = {
     wasapiExclusivePushMode: false
   },
   audioProcessing: DEFAULT_AUDIO_PROCESSING,
+  headphoneCompensation: DEFAULT_HEADPHONE_COMPENSATION,
   audioEqPresets: [],
   desktopLyrics: { ...DEFAULT_DESKTOP_LYRICS }
 }
@@ -215,6 +224,10 @@ function getSettingsFilePath(): string {
 
 function getDefaultCachePath(): string {
   return join(app.getPath('userData'), 'music-cache')
+}
+
+function getOpraDatabaseCachePath(): string {
+  return join(app.getPath('userData'), 'opra', 'database_v1.jsonl')
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
@@ -434,6 +447,7 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
     audioExclusiveMode: settings.audioExclusiveMode === true,
     audioOutputConfig: normalizeOutputConfig(settings.audioOutputConfig),
     audioProcessing: normalizeAudioProcessingSettings(settings.audioProcessing),
+    headphoneCompensation: normalizeHeadphoneCompensationSettings(settings.headphoneCompensation),
     audioEqPresets: normalizeAudioEqPresets(settings.audioEqPresets),
     desktopLyrics: normalizeDesktopLyrics(settings.desktopLyrics)
   }
@@ -509,6 +523,7 @@ let appSettings = readAppSettings()
 const launchSettings = { ...appSettings }
 let pluginManager: TwilightPluginManager | null = null
 let pluginIndexService: PluginIndexService | null = null
+let opraCatalog: OpraCatalog | null = null
 
 if (!appSettings.hardwareAcceleration) {
   app.disableHardwareAcceleration()
@@ -1368,9 +1383,37 @@ function persistAudioProcessingState(processing: AudioProcessingSettings): Setti
   return snapshot
 }
 
+function getEffectiveAudioProcessing(settings: AppSettings = appSettings): AudioProcessingSettings {
+  return buildEffectiveAudioProcessingSettings(
+    settings.audioProcessing,
+    settings.headphoneCompensation
+  )
+}
+
+async function applyEffectiveAudioProcessingToEngine(): Promise<AudioProcessingSettings | null> {
+  if (!audioEngineManager) return null
+  return await audioEngineManager.setAudioProcessing(getEffectiveAudioProcessing())
+}
+
+async function persistAndApplyAudioProcessingState(
+  processing: AudioProcessingSettings
+): Promise<SettingsSnapshot> {
+  const snapshot = persistAudioProcessingState(processing)
+  try {
+    await applyEffectiveAudioProcessingToEngine()
+  } catch (err) {
+    console.warn('应用合成 DSP 设置到音频引擎失败，已保留用户设置：', err)
+  }
+  return snapshot
+}
+
 async function updateAppSettings(patch: Partial<AppSettings>): Promise<SettingsSnapshot> {
   const previousCachePath = appSettings.musicCachePath
   const shouldUpdateAudioProcessing = Object.prototype.hasOwnProperty.call(patch, 'audioProcessing')
+  const shouldUpdateHeadphoneCompensation = Object.prototype.hasOwnProperty.call(
+    patch,
+    'headphoneCompensation'
+  )
   const shouldUpdateAudioOutputConfig = Object.prototype.hasOwnProperty.call(
     patch,
     'audioOutputConfig'
@@ -1421,11 +1464,11 @@ async function updateAppSettings(patch: Partial<AppSettings>): Promise<SettingsS
     }
   }
 
-  if (shouldUpdateAudioProcessing && audioEngineManager) {
+  if ((shouldUpdateAudioProcessing || shouldUpdateHeadphoneCompensation) && audioEngineManager) {
     try {
-      await audioEngineManager.setAudioProcessing(appSettings.audioProcessing)
+      await applyEffectiveAudioProcessingToEngine()
     } catch (err) {
-      console.warn('应用 DSP 设置到音频引擎失败，已保留设置：', err)
+      console.warn('应用合成 DSP 设置到音频引擎失败，已保留设置：', err)
     }
   }
 
@@ -1537,7 +1580,7 @@ function setupAudioEngineIpc(): void {
     audioOutput: appSettings.audioOutput,
     audioDevice: appSettings.audioDevice,
     audioOutputConfig: appSettings.audioOutputConfig,
-    audioProcessing: appSettings.audioProcessing
+    audioProcessing: getEffectiveAudioProcessing()
   }, {
     audioServiceEntry: join(__dirname, 'audioEngineService.js')
   })
@@ -1703,14 +1746,17 @@ function setupAudioEngineIpc(): void {
   ipcMain.handle(
     'audioEngine:setAudioProcessing',
     async (_event, settings: Partial<AudioProcessingSettings>) => {
-      const normalized = await requireAudioEngine().setAudioProcessing(settings)
-      persistAudioProcessingState(normalized)
-      return normalized
+      const normalized = normalizeAudioProcessingSettings({
+        ...appSettings.audioProcessing,
+        ...settings
+      })
+      await persistAndApplyAudioProcessingState(normalized)
+      return appSettings.audioProcessing
     }
   )
 
   ipcMain.handle('audioEngine:getAudioProcessing', async () => {
-    return requireAudioEngine().getAudioProcessing()
+    return appSettings.audioProcessing
   })
 
   ipcMain.handle('audioEngine:selectImpulseResponse', async () => {
@@ -1731,15 +1777,24 @@ function setupAudioEngineIpc(): void {
   })
 
   ipcMain.handle('audioEngine:loadImpulseResponse', async (_event, path: string) => {
-    const info = await requireAudioEngine().loadImpulseResponse(path)
-    persistAudioProcessingState(requireAudioEngine().getAudioProcessing())
-    return info
+    const normalized = normalizeAudioProcessingSettings({
+      ...appSettings.audioProcessing,
+      dspEnabled: true,
+      convolverEnabled: true,
+      convolverIrPath: path
+    })
+    await persistAndApplyAudioProcessingState(normalized)
+    return requireAudioEngine().getConvolverInfo()
   })
 
   ipcMain.handle('audioEngine:unloadImpulseResponse', async () => {
-    const info = await requireAudioEngine().unloadImpulseResponse()
-    persistAudioProcessingState(requireAudioEngine().getAudioProcessing())
-    return info
+    const normalized = normalizeAudioProcessingSettings({
+      ...appSettings.audioProcessing,
+      convolverEnabled: false,
+      convolverIrPath: ''
+    })
+    await persistAndApplyAudioProcessingState(normalized)
+    return requireAudioEngine().getConvolverInfo()
   })
 
   ipcMain.handle('audioEngine:getConvolverInfo', async () => {
@@ -1749,9 +1804,14 @@ function setupAudioEngineIpc(): void {
   ipcMain.handle(
     'audioEngine:setEqBands',
     async (_event, settings: Partial<AudioProcessingSettings>) => {
-      const normalized = await requireAudioEngine().setEqBands(settings)
-      persistAudioProcessingState(normalized)
-      return normalized
+      const normalized = normalizeAudioProcessingSettings({
+        ...appSettings.audioProcessing,
+        ...settings,
+        dspEnabled: true,
+        eqEnabled: true
+      })
+      await persistAndApplyAudioProcessingState(normalized)
+      return appSettings.audioProcessing
     }
   )
 
@@ -1765,16 +1825,27 @@ function setupAudioEngineIpc(): void {
         eqBands: EqualizerBand[]
       }
     ) => {
-      const normalized = await requireAudioEngine().setEqPreset(preset)
-      persistAudioProcessingState(normalized)
-      return normalized
+      const normalized = normalizeAudioProcessingSettings({
+        ...appSettings.audioProcessing,
+        ...preset,
+        dspEnabled: true,
+        eqEnabled: true
+      })
+      await persistAndApplyAudioProcessingState(normalized)
+      return appSettings.audioProcessing
     }
   )
 
   ipcMain.handle('audioEngine:setCrossfeedStrength', async (_event, strength: number) => {
-    const normalized = await requireAudioEngine().setCrossfeedStrength(Number(strength))
-    persistAudioProcessingState(normalized)
-    return normalized
+    const normalizedStrength = Number(strength)
+    const normalized = normalizeAudioProcessingSettings({
+      ...appSettings.audioProcessing,
+      dspEnabled: true,
+      crossfeedEnabled: normalizedStrength > 0,
+      crossfeedStrength: normalizedStrength
+    })
+    await persistAndApplyAudioProcessingState(normalized)
+    return appSettings.audioProcessing
   })
 
   ipcMain.handle(
@@ -1786,9 +1857,16 @@ function setupAudioEngineIpc(): void {
       fallback?: number,
       clip?: boolean
     ) => {
-      const normalized = await requireAudioEngine().setReplayGainMode(mode, preamp, fallback, clip)
-      persistAudioProcessingState(normalized)
-      return normalized
+      const normalized = normalizeAudioProcessingSettings({
+        ...appSettings.audioProcessing,
+        dspEnabled: true,
+        volumeNormalization: mode,
+        replayGainPreamp: preamp ?? appSettings.audioProcessing.replayGainPreamp,
+        replayGainFallback: fallback ?? appSettings.audioProcessing.replayGainFallback,
+        replayGainClip: clip ?? appSettings.audioProcessing.replayGainClip
+      })
+      await persistAndApplyAudioProcessingState(normalized)
+      return appSettings.audioProcessing
     }
   )
 
@@ -1834,6 +1912,34 @@ function setupAudioEngineIpc(): void {
 
   ipcMain.handle('ncm:request', async (_event, path: string, cookie?: string) => {
     return requestNcmApi(path, cookie)
+  })
+}
+
+function setupOpraIpc(): void {
+  opraCatalog = new OpraCatalog(getOpraDatabaseCachePath())
+  void opraCatalog.loadFromCache()
+
+  function requireOpraCatalog(): OpraCatalog {
+    if (!opraCatalog) {
+      opraCatalog = new OpraCatalog(getOpraDatabaseCachePath())
+    }
+    return opraCatalog
+  }
+
+  ipcMain.handle('opra:search', async (_event, query: string) => {
+    return await requireOpraCatalog().search(typeof query === 'string' ? query : '')
+  })
+
+  ipcMain.handle('opra:getProfile', async (_event, eqId: string) => {
+    return await requireOpraCatalog().getProfile(typeof eqId === 'string' ? eqId : '')
+  })
+
+  ipcMain.handle('opra:refresh', async () => {
+    return await requireOpraCatalog().refresh()
+  })
+
+  ipcMain.handle('opra:getStatus', async () => {
+    return requireOpraCatalog().getStatus()
   })
 }
 
@@ -2182,14 +2288,14 @@ if (!gotSingleInstanceLock) {
   const PLAYBACK_SESSION_FILE = join(userDataPath, 'playback-session.json')
   const PLAYLISTS_FILE = join(userDataPath, 'playlists.json')
 
-  ipcMain.handle('data:saveMusicLibrary', async (_event, tracks: unknown[]) => {
-    await writeFile(MUSIC_LIBRARY_FILE, JSON.stringify(tracks), 'utf-8')
+  ipcMain.handle('data:saveMusicLibrary', async (_event, library: { tracks: unknown[]; folders?: string[] } | unknown[]) => {
+    await writeFile(MUSIC_LIBRARY_FILE, JSON.stringify(library), 'utf-8')
   })
 
   ipcMain.handle('data:loadMusicLibrary', async () => {
     if (!existsSync(MUSIC_LIBRARY_FILE)) return []
     try {
-      const raw = readFileSync(MUSIC_LIBRARY_FILE, 'utf-8')
+      const raw = await readFile(MUSIC_LIBRARY_FILE, 'utf-8')
       return JSON.parse(raw)
     } catch {
       return []
@@ -2413,6 +2519,7 @@ if (!gotSingleInstanceLock) {
   applyRuntimeSettings()
 
   setupAudioEngineIpc()
+  setupOpraIpc()
   setupPluginIpc()
   setupNcmApi()
 

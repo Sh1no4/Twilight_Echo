@@ -1,4 +1,4 @@
-import { ref, type Ref } from 'vue'
+import { ref, shallowRef, type Ref } from 'vue'
 import type { Track } from '../types/music'
 
 interface Playlist {
@@ -18,14 +18,19 @@ interface LibraryItem {
   path?: string
 }
 
-const tracks = ref<Track[]>([])
+interface AddTracksOptions {
+  deferRebuild?: boolean
+}
+
+const tracks = shallowRef<Track[]>([])
 const scannedFolders = ref<string[]>([])
 const isScanning = ref(false)
-const artists = ref<LibraryItem[]>([])
-const albums = ref<LibraryItem[]>([])
-const folders = ref<LibraryItem[]>([])
+const artists = shallowRef<LibraryItem[]>([])
+const albums = shallowRef<LibraryItem[]>([])
+const folders = shallowRef<LibraryItem[]>([])
 const playlists = ref<Playlist[]>([])
 const trackById = new Map<string, Track>()
+const trackPathSet = new Set<string>()
 
 export function useMusicStore(): {
   tracks: Ref<Track[]>
@@ -33,7 +38,7 @@ export function useMusicStore(): {
   albums: Ref<LibraryItem[]>
   folders: Ref<LibraryItem[]>
   playlists: Ref<Playlist[]>
-  addTracks: (newTracks: Track[]) => Promise<void>
+  addTracks: (newTracks: Track[], options?: AddTracksOptions) => Promise<void>
   removeTrack: (id: string) => void
   clearTracks: () => void
   createPlaylist: (name: string) => string
@@ -45,6 +50,7 @@ export function useMusicStore(): {
   loadPlaylists: () => Promise<void>
   saveLibrary: () => Promise<void>
   loadLibrary: () => Promise<void>
+  refreshLibraryIndex: () => void
   scannedFolders: Ref<string[]>
   isScanning: Ref<boolean>
   addFolder: (path: string) => void
@@ -53,12 +59,14 @@ export function useMusicStore(): {
 } {
   function rebuildDerivedCollections(): void {
     trackById.clear()
+    trackPathSet.clear()
     const artistMap = new Map<string, Track[]>()
     const albumMap = new Map<string, Track[]>()
     const folderMap = new Map<string, Track[]>()
 
     for (const track of tracks.value) {
       trackById.set(track.id, track)
+      trackPathSet.add(track.filePath)
       const artistName = track.artist || '未知艺术家'
       if (!artistMap.has(artistName)) artistMap.set(artistName, [])
       artistMap.get(artistName)!.push(track)
@@ -116,9 +124,10 @@ export function useMusicStore(): {
   }
 
   async function saveLibrary(): Promise<void> {
-    const plainTracks = JSON.parse(JSON.stringify(tracks.value))
-    const plainFolders = JSON.parse(JSON.stringify(scannedFolders.value))
-    await window.api.data.saveMusicLibrary({ tracks: plainTracks, folders: plainFolders })
+    await window.api.data.saveMusicLibrary({
+      tracks: tracks.value,
+      folders: [...scannedFolders.value]
+    })
   }
 
   async function loadLibrary(): Promise<void> {
@@ -134,13 +143,20 @@ export function useMusicStore(): {
     rebuildDerivedCollections()
   }
 
-  async function addTracks(newTracks: Track[]): Promise<void> {
-    const existingPaths = new Set(tracks.value.map((t) => t.filePath))
-    const unique = newTracks.filter((t) => !existingPaths.has(t.filePath))
+  async function addTracks(newTracks: Track[], options: AddTracksOptions = {}): Promise<void> {
+    const unique: Track[] = []
+    for (const track of newTracks) {
+      if (trackPathSet.has(track.filePath)) continue
+      trackPathSet.add(track.filePath)
+      trackById.set(track.id, track)
+      unique.push(track)
+    }
     if (unique.length === 0) return
 
     tracks.value = [...tracks.value, ...unique]
-    rebuildDerivedCollections()
+    if (!options.deferRebuild) {
+      rebuildDerivedCollections()
+    }
     if (!isScanning.value) {
       await saveLibrary()
     }
@@ -251,6 +267,7 @@ export function useMusicStore(): {
     loadPlaylists,
     saveLibrary,
     loadLibrary,
+    refreshLibraryIndex: rebuildDerivedCollections,
     scannedFolders,
     isScanning,
     addFolder(path: string): void {

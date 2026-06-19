@@ -81,6 +81,19 @@ export interface AudioProcessingSettings {
   crossfadeSeconds: number
 }
 
+export interface HeadphoneCompensationSettings {
+  enabled: boolean
+  productId: string
+  productName: string
+  vendorName: string
+  eqId: string
+  author: string
+  details: string
+  link: string
+  preampDb: number
+  bands: EqualizerBand[]
+}
+
 export interface AudioEqPreset {
   id: string
   name: string
@@ -171,6 +184,7 @@ export interface AppSettings {
   audioExclusiveMode: boolean
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
+  headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
 }
