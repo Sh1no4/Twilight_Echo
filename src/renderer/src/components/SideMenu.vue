@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import ImportDialog from './ImportDialog.vue'
+import PuzzleIcon from './icons/PuzzleIcon.vue'
 import type { UiContribution } from '../extensions/registry'
 
 const props = defineProps<{
@@ -73,7 +74,8 @@ function handleImportClick(): void {
           :class="{ active: props.activeKey === `plugin:${page.pluginId}:${page.id}` }"
           @click="selectPluginPage(page)"
         >
-          <i class="item-icon" :class="page.icon || 'pi pi-box'"></i>
+          <i v-if="page.icon" class="item-icon" :class="page.icon"></i>
+          <PuzzleIcon v-else class="item-icon" />
           <span class="item-label">{{ page.title }}</span>
         </div>
         <div v-if="(props.pluginPages?.length ?? 0) > 0" class="menu-separator"></div>

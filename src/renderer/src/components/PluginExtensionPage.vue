@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import PuzzleIcon from './icons/PuzzleIcon.vue'
 import type { UiContribution } from '../extensions/registry'
 
 const props = defineProps<{
@@ -46,7 +47,8 @@ async function runPageCommand(): Promise<void> {
         <i class="pi pi-arrow-left"></i>
       </button>
       <div class="plugin-extension-icon">
-        <i :class="page.icon || 'pi pi-box'"></i>
+        <i v-if="page.icon" :class="page.icon"></i>
+        <PuzzleIcon v-else />
       </div>
       <div class="plugin-extension-heading">
         <span>{{ page.pluginId }}</span>

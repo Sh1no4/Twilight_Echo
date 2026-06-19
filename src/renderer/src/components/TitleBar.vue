@@ -1,6 +1,7 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { ref } from 'vue'
 import { useNcmStore } from '../stores/useNcmStore'
+import PuzzleIcon from './icons/PuzzleIcon.vue'
 
 withDefaults(
   defineProps<{
@@ -20,6 +21,7 @@ defineEmits<{
   back: []
   login: []
   settings: []
+  plugins: []
 }>()
 
 const { isLoggedIn, profile } = useNcmStore()
@@ -67,6 +69,9 @@ function close(): void {
       </button>
       <button class="settings-btn" title="设置" @click="$emit('settings')">
         <i class="pi pi-cog"></i>
+      </button>
+      <button class="plugins-btn" title="扩展中心" @click="$emit('plugins')">
+        <PuzzleIcon />
       </button>
       <button
         v-if="streaming"
@@ -223,6 +228,26 @@ function close(): void {
 }
 
 .settings-btn:hover {
+  background: rgba(124, 77, 255, 0.1);
+}
+
+.plugins-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--te-neutral-900);
+  cursor: pointer;
+  transition: background 0.15s;
+  padding: 0;
+  flex-shrink: 0;
+  font-size: 17px;
+}
+
+.plugins-btn:hover {
   background: rgba(124, 77, 255, 0.1);
 }
 

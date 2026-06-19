@@ -3,7 +3,6 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useExtensionRegistry } from '../extensions/registry'
-import PluginSettingsPanel from './PluginSettingsPanel.vue'
 import type {
   AppSettings,
   AppTheme,
@@ -27,7 +26,6 @@ type SectionKey =
   | 'playback'
   | 'dsp'
   | 'cache'
-  | 'plugins'
   | 'performance'
   | 'appearance'
   | 'desktopLyrics'
@@ -58,7 +56,6 @@ const sections: { key: SectionKey; label: string; icon: string }[] = [
   { key: 'playback', label: '播放', icon: 'pi pi-volume-up' },
   { key: 'dsp', label: 'DSP', icon: 'pi pi-sliders-v' },
   { key: 'cache', label: '缓存', icon: 'pi pi-database' },
-  { key: 'plugins', label: '插件', icon: 'pi pi-box' },
   { key: 'performance', label: '性能', icon: 'pi pi-bolt' },
   { key: 'appearance', label: '外观', icon: 'pi pi-palette' },
   { key: 'desktopLyrics', label: '桌面歌词', icon: 'pi pi-window-maximize' },
@@ -210,9 +207,7 @@ const {
 } = usePlayerStore()
 
 const { uiContributions, syncExtensions } = useExtensionRegistry()
-const pluginSettingsPanels = computed(() =>
-  uiContributions.value.filter((contribution) => contribution.kind === 'settingsPanel')
-)
+
 
 const volumePercent = computed({
   get: () => Math.round(volume.value * 100),
@@ -1442,36 +1437,7 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section id="plugins" class="glass-card preview-section">
-          <div class="section-title-row">
-            <i class="pi pi-box"></i>
-            <h2>插件 (Plugins)</h2>
-          </div>
-          <PluginSettingsPanel />
-          <div v-if="pluginSettingsPanels.length > 0" class="plugin-extension-group">
-            <h3>插件配置区</h3>
-            <div class="setting-list">
-              <div
-                v-for="panel in pluginSettingsPanels"
-                :key="panel.id"
-                class="setting-item"
-              >
-                <div class="setting-copy">
-                  <strong>{{ panel.title }}</strong>
-                  <span>{{ panel.description || '由插件提供的受控配置入口' }}</span>
-                </div>
-                <button
-                  type="button"
-                  class="soft-button"
-                  :disabled="!panel.command"
-                  @click="runSettingsExtension(panel.command)"
-                >
-                  打开
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
+
 
         <section id="performance" class="glass-card preview-section">
           <div class="section-title-row">
@@ -2608,6 +2574,7 @@ onBeforeUnmount(() => {
 }
 
 .accordion-preview {
+  margin-top: 24px;
   overflow: hidden;
   border: 1px solid rgba(229, 231, 235, 0.65);
   border-radius: 12px;

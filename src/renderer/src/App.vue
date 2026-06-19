@@ -9,6 +9,7 @@ import PlayingMusic from './components/PlayingMusic.vue'
 import StreamingPage from './components/StreamingPage.vue'
 const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
+const PluginPage = defineAsyncComponent(() => import('./components/PluginPage.vue'))
 const EqualizerPage = defineAsyncComponent(() => import('./components/EqualizerPage.vue'))
 const PluginExtensionPage = defineAsyncComponent(() => import('./components/PluginExtensionPage.vue'))
 import { useMusicStore } from './stores/useMusicStore'
@@ -27,6 +28,7 @@ const showStreamingPage = ref(false)
 const showLoginPage = ref(false)
 const loginPageMode = ref<'login' | 'profile'>('login')
 const showSettingsPage = ref(false)
+const showPluginPage = ref(false)
 const showEqualizerPage = ref(false)
 const activePluginPage = ref<UiContribution | null>(null)
 type SettingsSection =
@@ -50,7 +52,7 @@ const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
 
 const streamingMenuOpen = ref(false)
 const titleMenuOpen = computed(() =>
-  showStreamingPage.value ? streamingMenuOpen.value : menuOpen.value
+  showPluginPage.value ? false : showStreamingPage.value ? streamingMenuOpen.value : menuOpen.value
 )
 const showStreamingSurface = computed(
   () =>
@@ -59,11 +61,13 @@ const showStreamingSurface = computed(
     !showLoginPage.value &&
     !showSettingsPage.value &&
     !showEqualizerPage.value &&
+    !showPluginPage.value &&
     !activePluginPage.value
 )
 
 function toggleMenu(): void {
   if (showLoginPage.value) return
+  if (showPluginPage.value) return
   if (showStreamingPage.value) {
     toggleStreamingMenu()
     return
@@ -91,6 +95,7 @@ function onSelectView(category: string, filter: string | null): void {
   }
   activeCategory.value = category
   activeFilter.value = filter
+  showPluginPage.value = false
   activePluginPage.value = null
 }
 
@@ -113,6 +118,7 @@ function onSelectPluginPage(page: UiContribution): void {
   showLoginPage.value = false
   showSettingsPage.value = false
   showEqualizerPage.value = false
+  showPluginPage.value = false
   activePluginPage.value = page
 }
 
@@ -138,6 +144,7 @@ function enterStreamingMode(): void {
   showPlayingPage.value = false
   showSettingsPage.value = false
   showEqualizerPage.value = false
+  showPluginPage.value = false
   activePluginPage.value = null
   showStreamingPage.value = true
 }
@@ -160,6 +167,7 @@ function closeLoginPage(): void {
 
 function openSettingsPage(section: SettingsSection = 'general'): void {
   settingsInitialSection.value = section
+  showPluginPage.value = false
   showEqualizerPage.value = false
   activePluginPage.value = null
   showSettingsPage.value = true
@@ -185,8 +193,29 @@ function openDspSettings(): void {
   openSettingsPage('dsp')
 }
 
+function openPluginPage(): void {
+  menuOpen.value = false
+  showSettingsPage.value = false
+  showEqualizerPage.value = false
+  activePluginPage.value = null
+  showPluginPage.value = true
+}
+
+function hidePluginPage(): void {
+  showPluginPage.value = false
+}
+
+function togglePluginPage(): void {
+  if (showPluginPage.value) {
+    hidePluginPage()
+    return
+  }
+  openPluginPage()
+}
+
 function openEqualizerPage(): void {
   showSettingsPage.value = false
+  showPluginPage.value = false
   activePluginPage.value = null
   showEqualizerPage.value = true
 }
@@ -208,6 +237,7 @@ const hasPlayerBar = computed(
     !showLoginPage.value &&
     !showSettingsPage.value &&
     !showEqualizerPage.value &&
+    !showPluginPage.value &&
     !activePluginPage.value &&
     !!currentTrack.value
 )
@@ -217,7 +247,8 @@ const showLocalSidebar = computed(
     !showStreamingPage.value &&
     !showLoginPage.value &&
     !showSettingsPage.value &&
-    !showEqualizerPage.value
+    !showEqualizerPage.value &&
+    !showPluginPage.value
 )
 const localViewVisible = computed(
   () =>
@@ -226,6 +257,7 @@ const localViewVisible = computed(
     !showLoginPage.value &&
     !showSettingsPage.value &&
     !showEqualizerPage.value &&
+    !showPluginPage.value &&
     !activePluginPage.value
 )
 const sideMenuActiveKey = computed(() =>
@@ -234,7 +266,11 @@ const sideMenuActiveKey = computed(() =>
     : activeCategory.value
 )
 const mainContentMinHeight = computed(() =>
-  hasPlayerBar.value ? 'calc(100vh - 32px)' : 'calc(100vh - 32px)'
+  showPluginPage.value
+    ? '100vh'
+    : hasPlayerBar.value
+      ? 'calc(100vh - 32px)'
+      : 'calc(100vh - 32px)'
 )
 const sideMenuBottomOffset = ref(0)
 const sideMenuOverlapGap = 10
@@ -376,7 +412,15 @@ watch(
 watch(
   showSettingsPage,
   (visible) => {
-    document.body.classList.toggle('te-settings-surface', visible)
+    document.body.classList.toggle('te-settings-surface', visible || showPluginPage.value)
+  },
+  { immediate: true }
+)
+
+watch(
+  showPluginPage,
+  (visible) => {
+    document.body.classList.toggle('te-settings-surface', visible || showSettingsPage.value)
   },
   { immediate: true }
 )
@@ -414,6 +458,7 @@ const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOri
 const titleSurface = computed<TitleSurface>(() => {
   if (showPlayingPage.value) return 'default'
   if (showSettingsPage.value) return 'settings'
+  if (showPluginPage.value) return 'settings'
   if (showStreamingPage.value) return 'streaming'
   if (activePluginPage.value) return 'settings'
   return 'default'
@@ -431,6 +476,7 @@ const titleSurface = computed<TitleSurface>(() => {
     @back="handleTitleBack"
     @login="openLoginPage"
     @settings="toggleSettingsPage"
+    @plugins="togglePluginPage"
   />
   <SideMenu
     v-if="showLocalSidebar"
@@ -443,7 +489,11 @@ const titleSurface = computed<TitleSurface>(() => {
   />
   <div
     class="main-content"
-    :class="{ 'menu-open': menuOpen && showLocalSidebar, 'playing-open': showPlayingPage }"
+    :class="{
+      'menu-open': menuOpen && showLocalSidebar,
+      'playing-open': showPlayingPage,
+      'plugin-open': showPluginPage
+    }"
     :style="{ minHeight: mainContentMinHeight }"
   >
     <Transition :name="songlistTransitionName">
@@ -482,7 +532,10 @@ const titleSurface = computed<TitleSurface>(() => {
         @login-success="closeLoginPage"
       />
     </Transition>
-    <Transition name="login-page">
+    <Transition name="settings-page">
+      <PluginPage v-if="showPluginPage" @back="hidePluginPage" />
+    </Transition>
+    <Transition name="settings-page">
       <SettingsPage
         v-if="showSettingsPage"
         :initial-section="settingsInitialSection"
@@ -593,6 +646,11 @@ body.te-no-blur .login-page-leave-to {
 
 .main-content.playing-open {
   overflow: visible;
+}
+
+.main-content.plugin-open {
+  min-height: 100vh !important;
+  height: 100vh;
 }
 
 @keyframes light-orbit {

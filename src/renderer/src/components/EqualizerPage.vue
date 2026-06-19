@@ -19,9 +19,7 @@ type EqualizerTab = EqMode | 'square'
 type OpraProfile = Awaited<ReturnType<typeof window.api.opra.search>>[number]
 type OpraCatalogStatus = Awaited<ReturnType<typeof window.api.opra.getStatus>>
 
-const chartWidth = 720
-const chartHeight = 270
-const chartPad = { left: 48, right: 24, top: 18, bottom: 34 }
+const opraDrawerOpen = ref(true)
 const graphMinFrequency = 20
 const graphMaxFrequency = 20000
 const graphMinGain = -18
@@ -162,13 +160,8 @@ const headphoneCompensation = computed<HeadphoneCompensationSettings>(
     bands: []
   }
 )
-const activeTabMeta = computed(() => tabs.find((tab) => tab.key === activeTab.value) ?? tabs[0])
 const selectedBand = computed(
   () => audioProcessing.value.eqBands[selectedBandIndex.value] ?? audioProcessing.value.eqBands[0]
-)
-const selectedFilter = computed(
-  () =>
-    filterTypes.find((filter) => filter.value === selectedBand.value?.filterType) ?? filterTypes[0]
 )
 
 const responsePath = computed(() =>
@@ -528,11 +521,6 @@ function togglePresetMenu(): void {
   if (presetMenuOpen.value) filterMenuOpen.value = false
 }
 
-function toggleFilterMenu(): void {
-  filterMenuOpen.value = !filterMenuOpen.value
-  if (filterMenuOpen.value) presetMenuOpen.value = false
-}
-
 async function selectFilterType(filterType: EqualizerFilterType): Promise<void> {
   filterMenuOpen.value = false
   await updateEqBand(selectedBandIndex.value, { filterType })
@@ -544,13 +532,10 @@ function selectBand(index: number): void {
 }
 
 function formatFrequency(frequency: number): string {
-  if (frequency >= 1000)
-    return `${Number((frequency / 1000).toFixed(frequency % 1000 === 0 ? 0 : 1))}k`
-  return `${Math.round(frequency)}`
-}
-
-function formatFrequencyLong(frequency: number): string {
-  return frequency >= 1000 ? `${formatFrequency(frequency)}Hz` : `${Math.round(frequency)}Hz`
+  if (frequency >= 1000) {
+    return (frequency / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
+  }
+  return Math.round(frequency).toString()
 }
 
 function frequencyToX(frequency: number): number {
@@ -560,7 +545,7 @@ function frequencyToX(frequency: number): number {
     (Math.log10(clampNumber(frequency, graphMinFrequency, graphMaxFrequency, graphMinFrequency)) -
       min) /
     (max - min)
-  return chartPad.left + ratio * (chartWidth - chartPad.left - chartPad.right)
+  return ratio * 100
 }
 
 function frequencyFromRatio(ratio: number): number {
@@ -573,7 +558,7 @@ function gainToY(gain: number): number {
   const ratio =
     (clampNumber(gain, graphMinGain, graphMaxGain, 0) - graphMinGain) /
     (graphMaxGain - graphMinGain)
-  return chartHeight - chartPad.bottom - ratio * (chartHeight - chartPad.top - chartPad.bottom)
+  return 100 - (ratio * 100)
 }
 
 function estimateBandGainAtFrequency(band: EqualizerBand, frequency: number): number {
@@ -596,6 +581,21 @@ function estimateBandGainAtFrequency(band: EqualizerBand, frequency: number): nu
     case 'peak':
     default:
       return band.gain * Math.exp(-(ratio * ratio) / (2 * width * width))
+  }
+}
+
+function getThumbTop(val: number, max: number) {
+  const ratio = (max - val) / (2 * max)
+  return (ratio * 100) + '%'
+}
+
+function getFillStyle(val: number, max: number) {
+  if (val >= 0) {
+    const heightRatio = (val / max) * 50
+    return { bottom: '50%', height: heightRatio + '%' }
+  } else {
+    const heightRatio = (-val / max) * 50
+    return { top: '50%', height: heightRatio + '%' }
   }
 }
 
@@ -631,1442 +631,577 @@ watch(opraQuery, () => {
       <i class="pi pi-chevron-left"></i>
     </button>
 
-    <aside class="eq-sidebar">
-      <nav class="eq-nav">
-        <button
-          v-for="tab in tabs"
-          :key="tab.key"
-          type="button"
-          class="eq-nav-item"
-          :class="{ active: activeTab === tab.key }"
-          @click="switchTab(tab.key)"
-        >
-          <span>
-            <span class="eq-nav-label">{{ tab.label }}</span>
-            <span class="eq-nav-desc">{{ tab.desc }}</span>
-          </span>
-        </button>
-      </nav>
-    </aside>
-
-    <main class="eq-content">
-      <header class="eq-header">
-        <div class="eq-heading">
-          <div>
-            <h1>{{ activeTabMeta.label }}</h1>
-            <p>{{ activeTabMeta.desc }}</p>
-          </div>
+    <div class="eq-container">
+      <aside class="eq-sidebar">
+        <div v-for="tab in tabs" :key="tab.key" class="nav-item" :class="{ active: activeTab === tab.key }" @click="switchTab(tab.key)">
+          <i :class="tab.icon"></i>
+          <div class="nav-info"><span>{{ tab.label }}</span><small>{{ tab.desc }}</small></div>
         </div>
+      </aside>
 
-        <button
-          v-if="activeTab !== 'square'"
-          class="eq-enable"
-          :class="{ active: audioProcessing.eqEnabled }"
-          type="button"
-          @click="updateAudioProcessing({ eqEnabled: !audioProcessing.eqEnabled })"
-        >
-          <span>{{ audioProcessing.eqEnabled ? '已启用' : '已关闭' }}</span>
-          <span class="eq-switch"><span></span></span>
-        </button>
-      </header>
-
-      <section v-if="activeTab !== 'square'" class="opra-panel">
-        <div class="opra-head">
-          <div>
-            <span class="opra-kicker">OPRA 耳机补偿</span>
-            <h2>{{ activeCompensationTitle }}</h2>
-            <p>
-              手动 EQ 与耳机补偿会独立叠加；启用后 native 引擎使用合成后的参数 EQ。
-            </p>
-          </div>
-          <button
-            v-if="headphoneCompensation.enabled"
-            type="button"
-            class="eq-command soft"
-            @click="disableOpraCompensation"
-          >
-            Disable
-          </button>
-        </div>
-
-        <div v-if="headphoneCompensation.enabled" class="opra-active">
-          <span>{{ headphoneCompensation.vendorName }}</span>
-          <strong>{{ headphoneCompensation.productName }}</strong>
-          <span>Profile by {{ headphoneCompensation.author }}</span>
-          <span>Preamp {{ headphoneCompensation.preampDb.toFixed(1) }} dB</span>
-          <a v-if="headphoneCompensation.link" :href="headphoneCompensation.link" target="_blank">
-            来源
-          </a>
-        </div>
-
-        <div class="opra-search-row">
-          <input
-            v-model="opraQuery"
-            type="search"
-            placeholder="搜索耳机型号或厂商，例如 HD 600、Sony、Moondrop"
-          />
-          <button type="button" class="eq-command" :disabled="opraRefreshing" @click="refreshOpraCatalog">
-            {{ opraRefreshing ? '刷新中' : '刷新 OPRA' }}
-          </button>
-        </div>
-
-        <div class="opra-meta">
-          <span>{{ opraStatusText }}</span>
-          <span v-if="opraSearching">搜索中</span>
-          <span v-if="opraError" class="opra-error">{{ opraError }}</span>
-        </div>
-
-        <div v-if="opraResults.length > 0" class="opra-results">
-          <article v-for="profile in opraResults" :key="profile.eqId" class="opra-result">
-            <div>
-              <span>{{ profile.vendorName }}</span>
-              <strong>{{ profile.productName }}</strong>
-              <p>
-                {{ profile.author }}
-                <template v-if="profile.details"> · {{ profile.details }}</template>
-              </p>
-              <small v-if="!profile.applicable">
-                暂不支持：{{ profile.unsupportedBandTypes.join(', ') || '未知滤波器' }}
-              </small>
-            </div>
-            <button
-              type="button"
-              class="eq-command"
-              :disabled="!profile.applicable || opraApplyingEqId === profile.eqId"
-              @click="applyOpraProfile(profile)"
-            >
-              {{ opraApplyingEqId === profile.eqId ? 'Applying' : 'Apply' }}
-            </button>
-          </article>
-        </div>
-
-        <p class="opra-attribution">
-          Data from
-          <a href="https://github.com/opra-project/OPRA" target="_blank">OPRA</a>
-          via the Roon/Cloudflare mirror. Profile authors are credited in each result.
-        </p>
-      </section>
-
-      <section v-if="activeTab === 'graphic'" class="eq-workbench">
-        <div class="eq-toolbar">
+      <main class="eq-content">
+        <!-- Toolbar for Presets across Graphic and Parametric -->
+        <div v-if="activeTab !== 'square'" class="eq-toolbar-modern">
           <div class="preset-menu-anchor">
-            <button type="button" class="eq-command preset-menu-button" @click="togglePresetMenu">
-              选择预设
-              <i class="pi pi-chevron-down"></i>
-            </button>
+            <button type="button" class="eq-command preset-menu-button" @click="togglePresetMenu">选择预设 <i class="pi pi-chevron-down"></i></button>
             <div v-if="presetMenuOpen" class="preset-menu">
               <div class="preset-menu-section">
                 <span class="preset-menu-title">内置预设</span>
-                <button
-                  v-for="preset in builtInEqPresets"
-                  :key="preset.id"
-                  type="button"
-                  class="preset-menu-item"
-                  @click="applyEqPreset(preset)"
-                >
-                  {{ preset.name }}
-                </button>
+                <button v-for="preset in builtInEqPresets" :key="preset.id" type="button" class="preset-menu-item" @click="applyEqPreset(preset)">{{ preset.name }}</button>
               </div>
               <div class="preset-menu-section">
                 <span class="preset-menu-title">自定义预设</span>
-                <button
-                  v-for="preset in userPresets"
-                  :key="preset.id"
-                  type="button"
-                  class="preset-menu-item"
-                  @click="applyEqPreset(preset)"
-                >
-                  {{ preset.name }}
-                </button>
+                <button v-for="preset in userPresets" :key="preset.id" type="button" class="preset-menu-item" @click="applyEqPreset(preset)">{{ preset.name }}</button>
                 <span v-if="userPresets.length === 0" class="preset-empty">暂无自定义预设</span>
               </div>
               <div class="preset-create">
                 <input v-model="presetName" type="text" placeholder="新建预设名称" />
-                <button
-                  type="button"
-                  :disabled="saving || !presetName.trim()"
-                  @click="saveEqPreset"
-                >
-                  新建
-                </button>
+                <button type="button" :disabled="saving || !presetName.trim()" @click="saveEqPreset">新建</button>
               </div>
             </div>
           </div>
-          <button type="button" class="eq-command" @click="openAdvancedSettings()">高级设置</button>
+          <button v-if="activeTab === 'graphic'" type="button" class="eq-command" @click="openAdvancedSettings()">高级设置</button>
+          <button v-else type="button" class="eq-command" @click="switchTab('graphic')">返回图形</button>
           <button type="button" class="eq-command soft" @click="resetEqualizer">重置</button>
-          <button type="button" class="eq-command" :disabled="saving" @click="saveAsCurrentPreset">
-            另存为
-          </button>
+          <button type="button" class="eq-command" :disabled="saving" @click="saveAsCurrentPreset">另存为</button>
         </div>
 
-        <div class="response-card">
-          <svg
-            class="response-chart"
-            :viewBox="`0 0 ${chartWidth} ${chartHeight}`"
-            role="img"
-            aria-label="均衡器响应曲线"
-          >
-            <defs>
-              <linearGradient id="eqStroke" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="#7c4dff" />
-                <stop offset="52%" stop-color="#22d3ee" />
-                <stop offset="100%" stop-color="#ff7eb6" />
-              </linearGradient>
-              <linearGradient id="eqFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#7c4dff" stop-opacity="0.22" />
-                <stop offset="100%" stop-color="#22d3ee" stop-opacity="0.02" />
-              </linearGradient>
-            </defs>
-            <g class="chart-grid">
-              <line
-                v-for="gain in gainTicks"
-                :key="'gain-' + gain"
-                :x1="chartPad.left"
-                :x2="chartWidth - chartPad.right"
-                :y1="gainToY(gain)"
-                :y2="gainToY(gain)"
-                :class="{ zero: gain === 0 }"
-              />
-              <line
-                v-for="frequency in frequencyTicks"
-                :key="'freq-' + frequency"
-                :x1="frequencyToX(frequency)"
-                :x2="frequencyToX(frequency)"
-                :y1="chartPad.top"
-                :y2="chartHeight - chartPad.bottom"
-              />
-            </g>
-            <g class="chart-labels">
-              <text
-                v-for="gain in gainTicks"
-                :key="'gain-label-' + gain"
-                :x="chartPad.left - 14"
-                :y="gainToY(gain) + 4"
-                text-anchor="end"
-              >
-                {{ gain > 0 ? `+${gain}` : gain }}
-              </text>
-              <text
-                v-for="frequency in frequencyTicks"
-                :key="'freq-label-' + frequency"
-                :x="frequencyToX(frequency)"
-                :y="chartHeight - 10"
-                text-anchor="middle"
-              >
-                {{ formatFrequency(frequency) }}
-              </text>
-            </g>
-            <path class="response-fill" :d="responseFillPath" />
-            <path class="response-line" :d="responsePath" />
-          </svg>
-        </div>
+        <div v-if="activeTab === 'graphic'" class="tab-pane active">
+          <header class="eq-header">
+            <div class="eq-title"><h1>图形均衡器</h1><p>全局频率响应塑形工具，调整此面板将改变最终输出听感。</p></div>
+            <div class="master-switch" :class="{ off: !audioProcessing.eqEnabled }" @click="updateAudioProcessing({ eqEnabled: !audioProcessing.eqEnabled })">{{ audioProcessing.eqEnabled ? '已启用' : '已关闭' }}<div class="toggle-track"><div class="toggle-thumb"></div></div></div>
+          </header>
 
-        <div class="graphic-board">
-          <div class="graphic-band master-band">
-            <span class="band-gain">{{ audioProcessing.eqPreamp.toFixed(1) }}</span>
-            <input
-              type="range"
-              min="-24"
-              max="24"
-              step="0.5"
-              :value="audioProcessing.eqPreamp"
-              @input="
-                updateAudioProcessing({
-                  eqPreamp: Number(($event.target as HTMLInputElement).value)
-                })
-              "
-            />
-            <span class="band-frequency">MASTER</span>
-          </div>
-          <div
-            v-for="(band, index) in audioProcessing.eqBands"
-            :key="index + '-' + band.frequency"
-            class="graphic-band"
-            :class="{ selected: selectedBandIndex === index }"
-            @click="selectBand(index)"
-            @dblclick="openAdvancedSettings(index)"
-          >
-            <span class="band-gain">{{ band.gain.toFixed(1) }}</span>
-            <input
-              type="range"
-              min="-12"
-              max="12"
-              step="0.5"
-              :disabled="isGainDisabled(band)"
-              :value="band.gain"
-              @input="
-                updateEqBand(index, {
-                  gain: Number(($event.target as HTMLInputElement).value)
-                })
-              "
-            />
-            <span class="band-frequency">{{ formatFrequency(band.frequency) }}</span>
-          </div>
-        </div>
-      </section>
-
-      <section v-else-if="activeTab === 'parametric'" class="eq-workbench parametric-workbench">
-        <div class="eq-toolbar">
-          <div class="preset-menu-anchor">
-            <button type="button" class="eq-command preset-menu-button" @click="togglePresetMenu">
-              选择预设
-              <i class="pi pi-chevron-down"></i>
-            </button>
-            <div v-if="presetMenuOpen" class="preset-menu">
-              <div class="preset-menu-section">
-                <span class="preset-menu-title">内置预设</span>
-                <button
-                  v-for="preset in builtInEqPresets"
-                  :key="preset.id"
-                  type="button"
-                  class="preset-menu-item"
-                  @click="applyEqPreset(preset)"
-                >
-                  {{ preset.name }}
-                </button>
+          <section class="opra-panel">
+            <div class="opra-header">
+              <div class="opra-info">
+                <h3>{{ activeCompensationTitle }} <span v-if="headphoneCompensation.enabled" class="badge">已启用补偿</span></h3>
+                <p>OPRA (AutoEQ) 自动耳机频响校正曲线。独立处理，不干扰您的手动 EQ 设置。</p>
               </div>
-              <div class="preset-menu-section">
-                <span class="preset-menu-title">自定义预设</span>
-                <button
-                  v-for="preset in userPresets"
-                  :key="preset.id"
-                  type="button"
-                  class="preset-menu-item"
-                  @click="applyEqPreset(preset)"
-                >
-                  {{ preset.name }}
-                </button>
-                <span v-if="userPresets.length === 0" class="preset-empty">暂无自定义预设</span>
-              </div>
-              <div class="preset-create">
-                <input v-model="presetName" type="text" placeholder="新建预设名称" />
-                <button
-                  type="button"
-                  :disabled="saving || !presetName.trim()"
-                  @click="saveEqPreset"
-                >
-                  新建
-                </button>
-              </div>
-            </div>
-          </div>
-          <button type="button" class="eq-command" @click="switchTab('graphic')">返回图形</button>
-          <button type="button" class="eq-command soft" @click="resetEqualizer">重置</button>
-          <button type="button" class="eq-command" :disabled="saving" @click="saveAsCurrentPreset">
-            另存为
-          </button>
-        </div>
-
-        <div class="response-card compact">
-          <svg
-            class="response-chart"
-            :viewBox="`0 0 ${chartWidth} ${chartHeight}`"
-            role="img"
-            aria-label="参数均衡器响应曲线"
-          >
-            <defs>
-              <linearGradient id="eqStrokeParametric" x1="0" y1="0" x2="1" y2="0">
-                <stop offset="0%" stop-color="#7c4dff" />
-                <stop offset="52%" stop-color="#22d3ee" />
-                <stop offset="100%" stop-color="#ff7eb6" />
-              </linearGradient>
-              <linearGradient id="eqFillParametric" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#7c4dff" stop-opacity="0.22" />
-                <stop offset="100%" stop-color="#22d3ee" stop-opacity="0.02" />
-              </linearGradient>
-            </defs>
-            <g class="chart-grid">
-              <line
-                v-for="gain in gainTicks"
-                :key="'p-gain-' + gain"
-                :x1="chartPad.left"
-                :x2="chartWidth - chartPad.right"
-                :y1="gainToY(gain)"
-                :y2="gainToY(gain)"
-                :class="{ zero: gain === 0 }"
-              />
-              <line
-                v-for="frequency in frequencyTicks"
-                :key="'p-freq-' + frequency"
-                :x1="frequencyToX(frequency)"
-                :x2="frequencyToX(frequency)"
-                :y1="chartPad.top"
-                :y2="chartHeight - chartPad.bottom"
-              />
-              <line
-                v-if="selectedBand"
-                class="selected-frequency"
-                :x1="frequencyToX(selectedBand.frequency)"
-                :x2="frequencyToX(selectedBand.frequency)"
-                :y1="chartPad.top"
-                :y2="chartHeight - chartPad.bottom"
-              />
-            </g>
-            <g class="chart-labels">
-              <text
-                v-for="gain in gainTicks"
-                :key="'p-gain-label-' + gain"
-                :x="chartPad.left - 14"
-                :y="gainToY(gain) + 4"
-                text-anchor="end"
-              >
-                {{ gain > 0 ? `+${gain}` : gain }}
-              </text>
-              <text
-                v-for="frequency in frequencyTicks"
-                :key="'p-freq-label-' + frequency"
-                :x="frequencyToX(frequency)"
-                :y="chartHeight - 10"
-                text-anchor="middle"
-              >
-                {{ formatFrequency(frequency) }}
-              </text>
-            </g>
-            <path class="response-fill parametric-fill" :d="responseFillPath" />
-            <path class="response-line parametric-line" :d="responsePath" />
-          </svg>
-        </div>
-
-        <div class="band-selector frequency-tabs">
-          <button
-            v-for="(band, index) in audioProcessing.eqBands"
-            :key="'select-' + index"
-            type="button"
-            :class="{ active: selectedBandIndex === index }"
-            @click="selectBand(index)"
-          >
-            {{ formatFrequency(band.frequency) }}
-          </button>
-        </div>
-
-        <div v-if="selectedBand" class="parameter-editor">
-          <div class="editor-title">
-            <span>{{ formatFrequencyLong(selectedBand.frequency) }}</span>
-            <strong>{{ selectedFilter.label }}</strong>
-          </div>
-          <label class="editor-row">
-            <span>FREQ(Hz)[20~24k]</span>
-            <input
-              type="number"
-              min="20"
-              max="24000"
-              step="1"
-              :value="Math.round(selectedBand.frequency)"
-              @change="
-                updateEqBand(selectedBandIndex, {
-                  frequency: Number(($event.target as HTMLInputElement).value)
-                })
-              "
-            />
-          </label>
-          <div class="editor-row filter-row">
-            <span>滤波器类型</span>
-            <div class="filter-menu-anchor">
-              <button type="button" class="filter-select-button" @click="toggleFilterMenu">
-                <strong>{{ selectedFilter.label }}</strong>
+              <button class="opra-action-btn" :class="{ active: opraDrawerOpen }" @click="opraDrawerOpen = !opraDrawerOpen">
+                <span>{{ opraDrawerOpen ? '收起设备搜索' : '展开设备搜索' }}</span>
                 <i class="pi pi-chevron-down"></i>
               </button>
-              <div v-if="filterMenuOpen" class="filter-menu">
-                <button
-                  v-for="filter in filterTypes"
-                  :key="filter.value"
-                  type="button"
-                  :class="{ active: selectedBand.filterType === filter.value }"
-                  @click="selectFilterType(filter.value)"
-                >
-                  {{ filter.label }}
-                </button>
+            </div>
+            
+            <div class="opra-drawer-wrapper" :class="{ collapsed: !opraDrawerOpen }">
+              <div class="opra-drawer">
+                <div class="opra-drawer-inner">
+                  <div class="opra-search">
+                    <div class="opra-search-input-wrap">
+                      <i class="pi pi-search search-icon"></i>
+                      <input type="text" v-model="opraQuery" placeholder="搜索耳机型号或厂商，例如 HD 600、Sony、Moondrop" />
+                    </div>
+                    <button class="opra-refresh" :disabled="opraRefreshing" @click="refreshOpraCatalog">{{ opraRefreshing ? '刷新中' : '刷新缓存' }}</button>
+                  </div>
+                  
+                  <div style="font-size: 12px; font-weight: 700; color: var(--te-neutral-500); display: flex; justify-content: space-between;">
+                    <span>{{ opraStatusText }} <span v-if="opraSearching">搜索中...</span></span>
+                    <span v-if="opraError" style="color: #ec4899;">{{ opraError }}</span>
+                    <button v-if="headphoneCompensation.enabled" @click="disableOpraCompensation" style="background: none; border: none; color: #ec4899; cursor: pointer; font-weight: 700;">停用补偿</button>
+                  </div>
+
+                  <div class="opra-results" v-if="opraResults.length > 0">
+                    <div v-for="profile in opraResults" :key="profile.eqId" class="opra-result-item">
+                      <div class="result-info">
+                        <span class="result-brand">{{ profile.vendorName }}</span>
+                        <span class="result-model">{{ profile.productName }}</span>
+                        <span class="result-author">Profile by {{ profile.author }}</span>
+                        <span class="result-author" v-if="!profile.applicable" style="color: #ec4899;">不支持: {{ profile.unsupportedBandTypes.join(', ') }}</span>
+                      </div>
+                      <button class="result-apply" 
+                        :style="headphoneCompensation.eqId === profile.eqId ? 'background: var(--te-primary-500); color: #fff;' : ''"
+                        :disabled="!profile.applicable || opraApplyingEqId === profile.eqId"
+                        @click="applyOpraProfile(profile)">
+                        <template v-if="headphoneCompensation.eqId === profile.eqId">In Use</template>
+                        <template v-else-if="opraApplyingEqId === profile.eqId">Applying</template>
+                        <template v-else>Apply</template>
+                      </button>
+                    </div>
+                  </div>
+                  
+                  <p class="opra-attribution">
+                    Data sourced from <a href="https://github.com/opra-project/OPRA" target="_blank">OPRA</a>. Profile authors are credited in each result.
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
-          <label class="editor-row range-row" :class="{ disabled: isGainDisabled(selectedBand) }">
-            <span>GAIN(dB)[-24.0~24.0]</span>
-            <strong>{{ selectedBand.gain.toFixed(1) }}</strong>
-            <input
-              type="range"
-              min="-24"
-              max="24"
-              step="0.5"
-              :disabled="isGainDisabled(selectedBand)"
-              :value="selectedBand.gain"
-              @input="
-                updateEqBand(selectedBandIndex, {
-                  gain: Number(($event.target as HTMLInputElement).value)
-                })
-              "
-            />
-          </label>
-          <label class="editor-row range-row">
-            <span>Q[0.10~20.00]</span>
-            <strong>{{ selectedBand.q.toFixed(2) }}</strong>
-            <input
-              type="range"
-              min="0.1"
-              max="20"
-              step="0.05"
-              :value="selectedBand.q"
-              @input="
-                updateEqBand(selectedBandIndex, {
-                  q: Number(($event.target as HTMLInputElement).value)
-                })
-              "
-            />
-          </label>
-        </div>
-      </section>
+          </section>
 
-      <section v-else class="eq-square">
-        <div class="square-panel">
-          <span class="square-icon"><i class="pi pi-compass"></i></span>
-          <h2>配置广场</h2>
-          <p>这里会用于展示、导入和分享均衡器配置。当前先保留页面结构，后续可以接入在线预设源。</p>
+          <section class="chart-card">
+            <div class="svg-container">
+              <div class="chart-labels-y"><span v-for="gain in [...gainTicks].reverse()" :key="'g-'+gain" :class="{zero: gain===0}">{{ gain > 0 ? '+'+gain : gain }}</span></div>
+              <div class="chart-labels-x"><span v-for="freq in frequencyTicks" :key="'f-'+freq" :style="{ left: frequencyToX(freq) + '%' }">{{ formatFrequency(freq) }}</span></div>
+              
+              <div v-for="(band, idx) in audioProcessing.eqBands" :key="'point-'+idx" v-show="!isGainDisabled(band)" class="chart-point" :style="{ left: frequencyToX(band.frequency) + '%', top: gainToY(band.gain) + '%', borderColor: 'var(--te-primary-500)' }"></div>
+
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="curveGradient" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#6366f1" /><stop offset="50%" stop-color="#22d3ee" /><stop offset="100%" stop-color="#ec4899" /></linearGradient>
+                  <linearGradient id="fillGradient" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6366f1" stop-opacity="0.25" /><stop offset="100%" stop-color="#22d3ee" stop-opacity="0.0" /></linearGradient>
+                </defs>
+                <line v-for="gain in gainTicks" :key="'gl-'+gain" x1="0" x2="100" :y1="gainToY(gain)" :y2="gainToY(gain)" class="grid-line" :class="{zero: gain===0}" />
+                <line v-for="freq in frequencyTicks" :key="'fl-'+freq" :x1="frequencyToX(freq)" :x2="frequencyToX(freq)" y1="0" y2="100" class="grid-line" />
+                <path :d="responseFillPath" fill="url(#fillGradient)" />
+                <path :d="responsePath" fill="none" stroke="url(#curveGradient)" stroke-width="3px" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </div>
+          </section>
+
+          <section class="sliders-board">
+            <div class="slider-column master-column">
+              <div class="slider-gain">{{ audioProcessing.eqPreamp > 0 ? '+'+audioProcessing.eqPreamp.toFixed(1) : audioProcessing.eqPreamp.toFixed(1) }}</div>
+              <div class="slider-track">
+                <div class="slider-fill" :style="getFillStyle(audioProcessing.eqPreamp, 24)"></div>
+                <div class="slider-thumb" :style="{ top: getThumbTop(audioProcessing.eqPreamp, 24) }"></div>
+                <input type="range" min="-24" max="24" step="0.5" :value="audioProcessing.eqPreamp" @input="updateAudioProcessing({ eqPreamp: Number(($event.target as HTMLInputElement).value) })" class="invisible-range" />
+              </div>
+              <div class="slider-freq">PREAMP</div>
+            </div>
+            
+            <div v-for="(band, index) in audioProcessing.eqBands" :key="'band-'+index" class="slider-column">
+              <div class="slider-gain">{{ band.gain > 0 ? '+'+band.gain.toFixed(1) : band.gain.toFixed(1) }}</div>
+              <div class="slider-track">
+                <div class="slider-fill" :style="getFillStyle(band.gain, 12)"></div>
+                <div class="slider-thumb" :style="{ top: getThumbTop(band.gain, 12) }"></div>
+                <input type="range" min="-12" max="12" step="0.5" :value="band.gain" :disabled="isGainDisabled(band)" @input="updateEqBand(index, { gain: Number(($event.target as HTMLInputElement).value) })" class="invisible-range" />
+              </div>
+              <div class="slider-freq" @click="openAdvancedSettings(index)" style="cursor: pointer;">{{ formatFrequency(band.frequency) }}</div>
+            </div>
+          </section>
         </div>
-      </section>
-    </main>
+
+        <div v-else-if="activeTab === 'parametric'" class="tab-pane active">
+          <header class="eq-header">
+            <div class="eq-title"><h1>参数均衡器</h1><p>精确控制每个波段的中心频率、增益和品质因数（Q值）。</p></div>
+          </header>
+
+          <section class="chart-card">
+            <div class="svg-container">
+              <div class="chart-labels-y"><span v-for="gain in [...gainTicks].reverse()" :key="'py-'+gain" :class="{zero: gain===0}">{{ gain > 0 ? '+'+gain : gain }}</span></div>
+              <div class="chart-labels-x"><span v-for="freq in frequencyTicks" :key="'px-'+freq" :style="{ left: frequencyToX(freq) + '%' }">{{ formatFrequency(freq) }}</span></div>
+
+              <div v-if="selectedBand" class="chart-point" 
+                   :style="{ left: frequencyToX(selectedBand.frequency) + '%', top: gainToY(selectedBand.gain) + '%', borderColor: '#6366f1', width: '12px', height: '12px', boxShadow: '0 0 10px rgba(99,102,241,0.5)' }"></div>
+
+              <svg viewBox="0 0 100 100" preserveAspectRatio="none">
+                <defs>
+                  <linearGradient id="curveGradientP" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#6366f1" /><stop offset="50%" stop-color="#22d3ee" /><stop offset="100%" stop-color="#ec4899" /></linearGradient>
+                  <linearGradient id="fillGradientP" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#6366f1" stop-opacity="0.25" /><stop offset="100%" stop-color="#22d3ee" stop-opacity="0.0" /></linearGradient>
+                </defs>
+                <line v-for="gain in gainTicks" :key="'pgl-'+gain" x1="0" x2="100" :y1="gainToY(gain)" :y2="gainToY(gain)" class="grid-line" :class="{zero: gain===0}" />
+                <line v-for="freq in frequencyTicks" :key="'pfl-'+freq" :x1="frequencyToX(freq)" :x2="frequencyToX(freq)" y1="0" y2="100" class="grid-line" />
+                <line v-if="selectedBand" :x1="frequencyToX(selectedBand.frequency)" :x2="frequencyToX(selectedBand.frequency)" y1="0" y2="100" stroke="#6366f1" stroke-width="2px" stroke-dasharray="4 4" vector-effect="non-scaling-stroke" />
+
+                <path :d="responseFillPath" fill="url(#fillGradientP)" />
+                <path :d="responsePath" fill="none" stroke="url(#curveGradientP)" stroke-width="3px" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" />
+              </svg>
+            </div>
+          </section>
+
+          <section class="band-selector">
+            <button v-for="(band, idx) in audioProcessing.eqBands" :key="'btab-'+idx" class="band-tab" :class="{ active: selectedBandIndex === idx }" @click="selectBand(idx)">
+              {{ formatFrequency(band.frequency) }}
+            </button>
+          </section>
+
+          <section v-if="selectedBand" class="parameter-card">
+            <div class="param-group">
+              <label>频率 FREQ (Hz)</label>
+              <input type="number" min="20" max="24000" :value="Math.round(selectedBand.frequency)" @change="updateEqBand(selectedBandIndex, { frequency: Number(($event.target as HTMLInputElement).value) })" />
+            </div>
+            <div class="param-group">
+              <label>滤波器类型</label>
+              <select :value="selectedBand.filterType" @change="selectFilterType(($event.target as HTMLSelectElement).value as EqualizerFilterType)">
+                <option v-for="filter in filterTypes" :key="filter.value" :value="filter.value">{{ filter.label }}</option>
+              </select>
+            </div>
+            <div class="param-group">
+              <label>品质因数 Q</label>
+              <input type="number" step="0.1" min="0.1" max="20" :value="selectedBand.q" @input="updateEqBand(selectedBandIndex, { q: Number(($event.target as HTMLInputElement).value) })" />
+            </div>
+            <div class="param-group">
+              <label>增益 GAIN (dB)</label>
+              <input type="number" step="0.5" min="-24" max="24" :value="selectedBand.gain" :disabled="isGainDisabled(selectedBand)" @input="updateEqBand(selectedBandIndex, { gain: Number(($event.target as HTMLInputElement).value) })" />
+            </div>
+          </section>
+        </div>
+
+        <div v-else class="tab-pane active">
+          <header class="eq-header">
+            <div class="eq-title"><h1>配置广场</h1><p>浏览、下载并分享优秀的 EQ 预设方案。</p></div>
+          </header>
+          <section class="square-card">
+            <i class="pi pi-compass"></i><h2>配置广场功能建设中</h2><p>这里将用于展示、导入和分享均衡器配置。当前界面仅作为布局演示，敬请期待后续接入的在线预设源和 OPRA 云端数据库。</p>
+          </section>
+        </div>
+      </main>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.eq-page {
-  position: fixed;
-  inset: 48px 0 0;
-  z-index: 1300;
-  display: grid;
-  grid-template-columns: 176px minmax(0, 1fr);
-  height: calc(100vh - 48px);
-  min-height: 0;
-  gap: 0;
-  padding: 0;
-  background: #f7f8fb;
-  overflow: hidden;
-}
 
-.eq-back-button {
-  position: absolute;
-  top: 14px;
-  left: 14px;
-  z-index: 40;
-  width: 36px;
-  height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: rgba(52, 61, 87, 0.86);
-  font-size: 18px;
-  cursor: pointer;
-  transition:
-    background 0.2s,
-    color 0.2s;
-}
-
-.eq-back-button:hover {
-  background: #f7f5ff;
-  color: var(--te-primary-500);
-}
-
-.eq-sidebar,
-.eq-content {
-  position: relative;
-  overflow: hidden;
-  border: 0;
-  border-radius: 0;
-  background: #fff;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.eq-sidebar::before,
-.eq-content::before {
-  display: none;
-}
-
-.eq-sidebar {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  justify-content: center;
-  padding: 16px 12px;
-  border-right: 1px solid #e8ebf2;
-}
-
-.eq-content {
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  background: #f7f8fb;
-  overflow: hidden;
-}
-
-.eq-nav,
-.eq-header,
-.eq-workbench,
-.eq-square {
-  position: relative;
-  z-index: 1;
-}
-
-.eq-nav-icon,
-.eq-heading-icon,
-.square-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  border-radius: 8px;
-  color: var(--te-primary-500);
-  background: #f3f0ff;
-}
-
-.eq-title,
-.eq-subtitle,
-.eq-nav-label,
-.eq-nav-desc {
-  display: block;
-}
-
-.eq-title {
-  font-size: 16px;
-  line-height: 1.1;
-  font-weight: 800;
-  color: var(--te-neutral-900);
-}
-
-.eq-subtitle {
-  margin-top: 2px;
-  font-size: 10px;
-  font-weight: 500;
-  color: rgba(80, 88, 116, 0.58);
-}
-
-.eq-nav {
-  display: grid;
-  width: 100%;
-  height: auto;
-  align-content: center;
-  justify-items: stretch;
-  gap: 6px;
-}
-
-.eq-nav-item {
-  position: relative;
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  gap: 0;
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: transparent;
-  color: rgba(52, 61, 87, 0.72);
-  cursor: pointer;
-  text-align: left;
-  justify-content: flex-start;
-  overflow: hidden;
-  transition:
-    transform 0.22s var(--te-ease-soft),
-    border-color 0.22s,
-    box-shadow 0.22s;
-}
-
-.eq-nav-item::before {
-  display: none;
-}
-
-.eq-nav-item:hover,
-.eq-nav-item.active {
-  transform: none;
-  background: #f7f5ff;
-  border-color: #e8e2ff;
-  box-shadow: none;
-}
-
-.eq-nav-item.active::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 9px;
-  bottom: 9px;
-  width: 3px;
-  border-radius: 999px;
-  background: #7c4dff;
-}
-
-.eq-nav-icon {
-  position: relative;
-  z-index: 1;
-  width: 34px;
-  height: 34px;
-}
-
-.eq-nav-item > span:last-child {
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  text-align: left;
-}
-
-.eq-nav-label {
-  font-size: 12px;
-  font-weight: 800;
-  color: var(--te-neutral-900);
-}
-
-.eq-nav-desc {
-  display: none;
-}
-
-.eq-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 18px 28px 14px;
-  border-bottom: 1px solid #edf0f6;
-  background: #fff;
-}
-
-.eq-heading {
-  display: flex;
-  align-items: center;
-  gap: 0;
-}
-
-.eq-heading-icon {
-  width: 44px;
-  height: 44px;
-  font-size: 18px;
-  box-shadow: 0 14px 30px rgba(86, 70, 160, 0.1);
-}
-
-.eq-header h1 {
-  margin: 0;
-  font-size: 22px;
-  line-height: 1.1;
-  font-weight: 800;
-  color: var(--te-neutral-900);
-}
-
-.eq-header p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  font-weight: 700;
-  color: rgba(80, 88, 116, 0.62);
-}
-
-.eq-enable,
-.eq-command,
-.preset-chip,
-.preset-create button,
-.save-row button {
-  border: 1px solid #e5e8f0;
-  border-radius: 8px;
-  background: #fff;
-  color: rgba(52, 61, 87, 0.86);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  box-shadow: 0 8px 18px rgba(34, 42, 68, 0.05);
-  transition:
-    transform 0.2s var(--te-ease-soft),
-    background 0.2s,
-    box-shadow 0.2s;
-}
-
-.eq-enable {
-  height: 38px;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 12px;
-  border-radius: 10px;
-}
-
-.eq-command,
-.preset-chip,
-.preset-create button,
-.save-row button {
-  height: 32px;
-  padding: 0 12px;
-}
-
-.eq-command:disabled,
-.preset-create button:disabled,
-.save-row button:disabled {
-  cursor: default;
-  opacity: 0.56;
-}
-
-.eq-command.soft {
-  background:
-    linear-gradient(135deg, rgba(170, 120, 110, 0.16), rgba(124, 77, 255, 0.08)),
-    rgba(255, 255, 255, 0.5);
-}
-
-.eq-command:hover,
-.preset-chip:hover,
-.preset-create button:hover:not(:disabled),
-.save-row button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  background: #f7f5ff;
-  box-shadow: 0 10px 22px rgba(34, 42, 68, 0.08);
-}
-
-.eq-switch {
-  position: relative;
-  width: 38px;
-  height: 22px;
-  border-radius: 999px;
-  background: rgba(210, 216, 230, 0.72);
-  box-shadow: inset 0 1px 2px rgba(80, 88, 116, 0.16);
-}
-
-.eq-switch span {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 4px 10px rgba(32, 38, 62, 0.18);
-  transition: transform 0.22s var(--te-ease-soft);
-}
-
-.eq-enable.active .eq-switch {
-  background: linear-gradient(135deg, var(--te-primary-500), var(--te-accent-cyan));
-}
-
-.eq-enable.active .eq-switch span {
-  transform: translateX(16px);
-}
-
-.eq-workbench,
-.eq-square {
-  flex: 1;
-  min-height: 0;
-  max-height: 100%;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 18px 28px 28px;
-  scrollbar-gutter: stable;
-}
-
-.opra-panel {
-  position: relative;
-  z-index: 1;
-  margin: 16px 28px 0;
-  padding: 14px;
-  border: 1px solid #e8ebf2;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 10px 24px rgba(34, 42, 68, 0.05);
-}
-
-.opra-head,
-.opra-search-row,
-.opra-active,
-.opra-result {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.opra-head {
-  justify-content: space-between;
-  align-items: flex-start;
-}
-
-.opra-kicker {
-  display: block;
-  margin-bottom: 4px;
-  color: var(--te-primary-500);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.opra-head h2 {
-  margin: 0;
-  color: var(--te-neutral-900);
-  font-size: 16px;
-  line-height: 1.2;
-}
-
-.opra-head p,
-.opra-attribution,
-.opra-result p,
-.opra-meta {
-  margin: 4px 0 0;
-  color: rgba(80, 88, 116, 0.66);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.opra-active {
-  flex-wrap: wrap;
-  margin-top: 12px;
-  padding: 9px 10px;
-  border-radius: 8px;
-  background: #f7f5ff;
-  color: rgba(80, 88, 116, 0.78);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.opra-active strong {
-  color: var(--te-neutral-900);
-}
-
-.opra-search-row {
-  margin-top: 12px;
-}
-
-.opra-search-row input {
-  flex: 1;
-  min-width: 180px;
-  height: 34px;
-  padding: 0 11px;
-  border: 1px solid #e8ebf2;
-  border-radius: 8px;
-  background: #fff;
-  color: rgba(52, 61, 87, 0.88);
-  font-size: 12px;
-  font-weight: 760;
-  outline: none;
-}
-
-.opra-search-row input:focus {
-  border-color: rgba(124, 77, 255, 0.48);
-}
-
-.opra-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.opra-error {
-  color: #d94c68;
-}
-
-.opra-results {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 8px;
-  margin-top: 12px;
-  max-height: 220px;
-  overflow-y: auto;
-}
-
-.opra-result {
-  justify-content: space-between;
-  align-items: flex-start;
-  padding: 10px;
-  border: 1px solid #edf0f6;
-  border-radius: 8px;
-  background: #fbfcff;
-}
-
-.opra-result > div {
-  min-width: 0;
-}
-
-.opra-result span,
-.opra-result small {
-  display: block;
-  color: rgba(80, 88, 116, 0.58);
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.opra-result strong {
-  display: block;
-  margin-top: 2px;
-  color: var(--te-neutral-900);
-  font-size: 13px;
-  line-height: 1.2;
-}
-
-.opra-result small {
-  margin-top: 4px;
-  color: #d94c68;
-}
-
-.opra-attribution a,
-.opra-active a {
-  color: var(--te-primary-500);
-  text-decoration: none;
-}
-
-.eq-toolbar,
-.band-selector {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.eq-toolbar {
-  justify-content: flex-start;
-  margin-bottom: 12px;
-  overflow: visible;
-  position: relative;
-  z-index: 20;
-}
-
-.preset-menu-anchor {
-  position: relative;
-  z-index: 30;
-}
-
-.preset-menu-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.preset-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  width: 260px;
-  max-height: min(420px, calc(100vh - 170px));
-  overflow-y: auto;
-  padding: 10px;
-  border: 1px solid #e8ebf2;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 22px 54px rgba(34, 42, 68, 0.16);
-}
-
-.preset-menu-section {
-  display: grid;
-  gap: 6px;
-  padding-bottom: 10px;
-}
-
-.preset-menu-section + .preset-menu-section {
-  padding-top: 10px;
-  border-top: 1px solid #edf0f6;
-}
-
-.preset-menu-title,
-.preset-empty {
-  font-size: 11px;
-  font-weight: 800;
-  color: rgba(80, 88, 116, 0.56);
-}
-
-.preset-menu-item {
-  width: 100%;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--te-neutral-900);
-  font-size: 12px;
-  font-weight: 800;
-  text-align: left;
-  cursor: pointer;
-}
-
-.preset-menu-item:hover {
-  background: #f7f5ff;
-}
-
-.preset-create {
-  display: flex;
-  gap: 8px;
-  padding-top: 10px;
-  border-top: 1px solid #edf0f6;
-}
-
-.preset-create input {
-  min-width: 0;
-  flex: 1;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid #e8ebf2;
-  border-radius: 8px;
-  background: #fff;
-  color: rgba(52, 61, 87, 0.86);
-  font-size: 12px;
-  font-weight: 760;
-  outline: none;
-}
-
-.response-card,
-.graphic-board,
-.parameter-editor,
-.square-panel {
-  position: relative;
-  overflow: hidden;
-  border-radius: 8px;
-  border: 1px solid #e8ebf2;
-  background: #fff;
-  box-shadow: 0 12px 28px rgba(34, 42, 68, 0.06);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.response-card {
-  min-height: 180px;
-  padding: 12px;
-}
-
-.response-card.compact {
-  min-height: 180px;
-}
-
-.response-chart {
-  display: block;
-  width: 100%;
-  height: 190px;
-  min-height: 0;
-}
-
-.response-card.compact .response-chart {
-  height: 180px;
-  min-height: 0;
-}
-
-.chart-grid line {
-  stroke: rgba(80, 88, 116, 0.18);
-  stroke-width: 1;
-}
-
-.chart-grid line.zero {
-  stroke: rgba(124, 77, 255, 0.32);
-  stroke-width: 1.4;
-}
-
-.chart-grid .selected-frequency {
-  stroke: rgba(124, 77, 255, 0.48);
-  stroke-width: 1.8;
-}
-
-.chart-labels text {
-  fill: rgba(80, 88, 116, 0.58);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.response-fill {
-  fill: url(#eqFill);
-}
-
-.response-line {
-  fill: none;
-  stroke: url(#eqStroke);
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  filter: drop-shadow(0 10px 18px rgba(124, 77, 255, 0.16));
-}
-
-.parametric-fill {
-  fill: url(#eqFillParametric);
-}
-
-.parametric-line {
-  stroke: url(#eqStrokeParametric);
-}
-
-.editor-row input,
-.editor-row select {
-  height: 34px;
-  min-width: 220px;
-  padding: 0 10px;
-  border: 1px solid #e8ebf2;
-  border-radius: 8px;
-  background: #fff;
-  color: rgba(52, 61, 87, 0.86);
-  font-size: 12px;
-  font-weight: 760;
-  outline: none;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.56);
-}
-
-.filter-row {
-  position: relative;
-  z-index: 12;
-}
-
-.filter-menu-anchor {
-  position: relative;
-  min-width: 220px;
-}
-
-.filter-select-button {
-  width: 100%;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 0 10px;
-  border: 1px solid #e8ebf2;
-  border-radius: 8px;
-  background: #fff;
-  color: rgba(52, 61, 87, 0.86);
-  cursor: pointer;
-}
-
-.filter-select-button strong {
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.filter-menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  width: min(260px, 80vw);
-  max-height: 360px;
-  display: grid;
-  gap: 4px;
-  overflow-y: auto;
-  padding: 8px;
-  border: 1px solid #e8ebf2;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 22px 54px rgba(34, 42, 68, 0.16);
-}
-
-.filter-menu button {
-  min-height: 34px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: rgba(52, 61, 87, 0.82);
-  font-size: 13px;
-  font-weight: 700;
-  text-align: left;
-  cursor: pointer;
-}
-
-.filter-menu button:hover,
-.filter-menu button.active {
-  background: #f7f5ff;
-  color: var(--te-primary-500);
-}
-
-.graphic-board {
-  display: grid;
-  grid-template-columns: repeat(11, minmax(48px, 1fr));
-  gap: 8px;
-  min-height: 278px;
-  padding: 18px 14px 14px;
-}
-
-.graphic-band {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: space-between;
-  min-width: 0;
-  border-radius: 8px;
-  padding: 8px 2px;
-  cursor: pointer;
-  transition:
-    background 0.2s,
-    transform 0.2s var(--te-ease-soft);
-}
-
-.graphic-band:hover,
-.graphic-band.selected {
-  background: #f3f0ff;
-  transform: translateY(-1px);
-}
-
-.graphic-band input {
-  width: 150px;
-  height: 28px;
-  margin: 58px -52px;
-  transform: rotate(-90deg);
-  accent-color: var(--te-primary-500);
-}
-
-.graphic-band input:disabled {
-  opacity: 0.42;
-}
-
-.band-gain,
-.band-frequency {
-  font-size: 11px;
-  font-weight: 700;
-  color: rgba(80, 88, 116, 0.64);
-}
-
-.master-band .band-frequency {
-  color: var(--te-primary-500);
-}
-
-.band-selector {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 14px 0;
-  padding: 7px;
-  border-radius: 8px;
-  background: #fff;
-  border: 1px solid #e8ebf2;
-}
-
-.frequency-tabs {
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(124, 77, 255, 0.26) transparent;
-}
-
-.band-selector button {
-  height: 32px;
-  min-width: 72px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: rgba(80, 88, 116, 0.72);
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.band-selector button.active {
-  background: #f3f0ff;
-  color: var(--te-primary-500);
-}
-
-.parameter-editor {
-  max-width: 760px;
-  padding: 16px;
-}
-
-.editor-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 16px;
-}
-
-.editor-title span {
-  font-size: 24px;
-  font-weight: 800;
-  color: var(--te-neutral-900);
-}
-
-.editor-title strong {
-  padding: 7px 10px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.5);
-  color: rgba(80, 88, 116, 0.74);
-  font-size: 12px;
-}
-
-.editor-row {
-  min-height: 52px;
-  display: grid;
-  grid-template-columns: 190px minmax(180px, 1fr);
-  align-items: center;
-  gap: 14px;
-  padding: 10px 0;
-  border-top: 1px solid #edf0f6;
-}
-
-.editor-row span {
-  color: rgba(80, 88, 116, 0.66);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.editor-row strong {
-  color: rgba(52, 61, 87, 0.88);
-  font-size: 13px;
-  font-weight: 800;
-}
-
-.range-row {
-  grid-template-columns: 190px 54px minmax(180px, 1fr);
-}
-
-.range-row input[type='range'] {
-  width: 100%;
-  min-width: 0;
-  accent-color: var(--te-primary-500);
-}
-
-.range-row.disabled {
-  opacity: 0.56;
-}
-
-.square-panel {
-  min-height: 320px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 34px;
-}
-
-.square-icon {
-  width: 54px;
-  height: 54px;
-  font-size: 22px;
-  box-shadow: 0 16px 34px rgba(86, 70, 160, 0.1);
-}
-
-.square-panel h2 {
-  margin: 16px 0 8px;
-  font-size: 24px;
-  font-weight: 800;
-  color: var(--te-neutral-900);
-}
-
-.square-panel p {
-  max-width: 460px;
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.7;
-  font-weight: 700;
-  color: rgba(80, 88, 116, 0.64);
-}
-
-@media (max-width: 980px) {
-  .eq-page {
-    grid-template-columns: 1fr;
-    padding: 12px;
-  }
-
-  .eq-sidebar {
-    max-height: 220px;
-    justify-content: flex-start;
-  }
-
-  .eq-nav {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .eq-header,
-  .save-row,
-  .editor-row,
-  .range-row {
-    align-items: flex-start;
-    grid-template-columns: 1fr;
-  }
-
-  .graphic-board {
-    grid-template-columns: repeat(4, minmax(52px, 1fr));
-    row-gap: 18px;
-  }
-}
+    .eq-back-button {
+      position: absolute;
+      top: 32px;
+      left: 32px;
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.7);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--te-neutral-700);
+      font-size: 16px;
+      transition: all 0.2s;
+      z-index: 100;
+    }
+    
+    .eq-back-button:hover {
+      background: #fff;
+      color: var(--te-primary-500);
+      transform: translateX(-2px);
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+    }
+    
+    /* Ensure eq-page allows absolute positioning of the back button */
+    .eq-page {
+      position: relative;
+    }
+
+
+    .eq-toolbar-modern {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 0 20px 0;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+      margin-bottom: 24px;
+    }
+    
+    .eq-command {
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(15, 23, 42, 0.1);
+      padding: 8px 16px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--te-neutral-700);
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .eq-command:hover:not(:disabled) {
+      background: #fff;
+      border-color: var(--te-primary-400);
+      color: var(--te-primary-500);
+      box-shadow: 0 4px 12px rgba(99, 102, 241, 0.1);
+    }
+    
+    .eq-command.soft {
+      background: transparent;
+      border-color: transparent;
+    }
+    .eq-command.soft:hover {
+      background: rgba(15, 23, 42, 0.04);
+      color: var(--te-neutral-900);
+    }
+    
+    .eq-command:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    .preset-menu-anchor {
+      position: relative;
+    }
+    
+    .preset-menu {
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 0;
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      border-radius: 16px;
+      box-shadow: 0 10px 40px rgba(15, 23, 42, 0.1);
+      padding: 12px;
+      width: 240px;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    
+    .preset-menu-section {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    
+    .preset-menu-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--te-neutral-400);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 0 8px 4px;
+    }
+    
+    .preset-menu-item {
+      background: transparent;
+      border: none;
+      padding: 8px;
+      text-align: left;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--te-neutral-700);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .preset-menu-item:hover {
+      background: var(--te-primary-50);
+      color: var(--te-primary-600);
+    }
+    
+    .preset-empty {
+      font-size: 12px;
+      color: var(--te-neutral-400);
+      padding: 4px 8px;
+    }
+    
+    .preset-create {
+      display: flex;
+      gap: 8px;
+      padding-top: 12px;
+      border-top: 1px solid rgba(15, 23, 42, 0.06);
+    }
+    
+    .preset-create input {
+      flex: 1;
+      background: rgba(15, 23, 42, 0.04);
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 12px;
+      outline: none;
+      transition: all 0.2s;
+      width: 100%;
+    }
+    
+    .preset-create input:focus {
+      background: #fff;
+      border-color: var(--te-primary-400);
+    }
+    
+    .preset-create button {
+      background: var(--te-primary-500);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 0 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    
+    .preset-create button:hover:not(:disabled) {
+      background: var(--te-primary-600);
+    }
+    .preset-create button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+:root {
+      --te-primary-500: #6366f1;
+      --te-primary-rgb: 99, 102, 241;
+      --te-neutral-900: #1e293b;
+      --te-neutral-500: #64748b;
+      --te-ease-soft: cubic-bezier(0.4, 0, 0.2, 1);
+      --transition: all 0.3s var(--te-ease-soft);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: radial-gradient(circle at 15% 50%, rgba(99, 102, 241, 0.08), transparent 25%),
+                  radial-gradient(circle at 85% 30%, rgba(236, 72, 153, 0.08), transparent 25%),
+                  #f8fafc;
+      color: var(--te-neutral-900); min-height: 100vh; display: flex; padding: 40px;
+    }
+
+    .eq-container {
+      width: 100%; max-width: 1440px; margin: 0 auto;
+      background: rgba(255, 255, 255, 0.6); backdrop-filter: blur(24px) saturate(150%);
+      -webkit-backdrop-filter: blur(24px) saturate(150%);
+      border: 1px solid rgba(255, 255, 255, 0.8); border-radius: 24px;
+      box-shadow: 0 24px 48px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 1);
+      display: flex; overflow: hidden; height: 85vh;
+    }
+
+    /* Sidebar Navigation */
+    .eq-sidebar { width: 240px; background: rgba(255, 255, 255, 0.4); border-right: 1px solid rgba(255, 255, 255, 0.6); padding: 90px 20px 32px; display: flex; flex-direction: column; gap: 12px; }
+    .nav-item { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px; cursor: pointer; transition: var(--transition); color: var(--te-neutral-500); }
+    .nav-item:hover { background: rgba(255, 255, 255, 0.6); color: var(--te-neutral-900); }
+    .nav-item.active { background: #fff; color: var(--te-primary-500); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04); border: 1px solid rgba(255, 255, 255, 0.8); }
+    .nav-item i { font-size: 1.2rem; background: #f1f5f9; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 10px; transition: var(--transition); }
+    .nav-item.active i { background: rgba(var(--te-primary-rgb), 0.1); color: var(--te-primary-500); }
+    .nav-info { display: flex; flex-direction: column; }
+    .nav-info span { font-weight: 700; font-size: 14px; }
+    .nav-info small { font-size: 11px; font-weight: 500; opacity: 0.7; }
+
+    /* Content Area */
+    .eq-content { flex: 1; padding: 40px; overflow-y: auto; display: flex; flex-direction: column; gap: 30px; }
+    .tab-pane { display: none; flex-direction: column; gap: 30px; animation: fadeIn 0.4s var(--te-ease-soft); }
+    .tab-pane.active { display: flex; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    .eq-header { display: flex; justify-content: space-between; align-items: center; }
+    .eq-title h1 { font-size: 28px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 6px; }
+    .eq-title p { color: var(--te-neutral-500); font-size: 14px; font-weight: 500; }
+
+    .master-switch {
+      display: flex; align-items: center; gap: 12px; background: #fff; padding: 8px 16px 8px 20px;
+      border-radius: 999px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04); border: 1px solid rgba(255, 255, 255, 0.8);
+      font-weight: 700; font-size: 14px; color: var(--te-primary-500); cursor: pointer;
+    }
+    .toggle-track { width: 44px; height: 24px; background: linear-gradient(135deg, var(--te-primary-500), #22d3ee); border-radius: 999px; position: relative; }
+    .toggle-thumb { width: 20px; height: 20px; background: #fff; border-radius: 50%; position: absolute; top: 2px; right: 2px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+
+    /* OPRA Panel */
+    .opra-panel { background: #fff; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.8); box-shadow: 0 12px 32px rgba(15, 23, 42, 0.03); overflow: hidden; }
+    .opra-header { padding: 24px; display: flex; justify-content: space-between; align-items: center; background: #fff; z-index: 2; position: relative; }
+    .opra-info h3 { font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
+    .opra-info h3 span.badge { background: #f0fdf4; color: #16a34a; font-size: 11px; padding: 2px 8px; border-radius: 6px; }
+    .opra-info p { font-size: 13px; color: var(--te-neutral-500); margin-top: 6px; font-weight: 500; }
+    .opra-action-btn { background: rgba(15, 23, 42, 0.04); border: none; padding: 10px 20px; border-radius: 10px; font-weight: 700; color: var(--te-neutral-900); cursor: pointer; transition: var(--transition); display: flex; align-items: center; gap: 8px; }
+    .opra-action-btn i { font-size: 10px; transition: transform 0.4s var(--te-ease-soft); }
+    .opra-action-btn:hover { background: #f1f5f9; transform: translateY(-2px); }
+    .opra-action-btn.active { background: #eff6ff; color: #3b82f6; transform: translateY(0); }
+    .opra-action-btn.active i { transform: rotate(180deg); }
+
+    .opra-drawer-wrapper { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 0.4s var(--te-ease-soft); }
+    .opra-drawer-wrapper.collapsed { grid-template-rows: 0fr; }
+    .opra-drawer { overflow: hidden; }
+    .opra-drawer-inner { border-top: 1px solid rgba(15, 23, 42, 0.05); background: rgba(248, 250, 252, 0.5); padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 16px; }
+    
+    .opra-search { display: flex; gap: 12px; align-items: center; }
+    .opra-search-input-wrap { flex: 1; position: relative; }
+    .opra-search-input-wrap .search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--te-neutral-500); }
+    .opra-search-input-wrap input { width: 100%; padding: 12px 16px 12px 40px; border-radius: 12px; border: 1px solid rgba(15, 23, 42, 0.1); background: #fff; font-family: inherit; font-size: 14px; color: var(--te-neutral-900); outline: none; transition: var(--transition); font-weight: 500; }
+    .opra-search-input-wrap input:focus { border-color: var(--te-primary-500); box-shadow: 0 0 0 3px rgba(var(--te-primary-rgb), 0.1); }
+    .opra-refresh { background: #fff; border: 1px solid rgba(15, 23, 42, 0.1); padding: 11px 20px; border-radius: 12px; font-weight: 700; color: var(--te-neutral-900); cursor: pointer; box-shadow: 0 2px 4px rgba(15,23,42,0.02); transition: var(--transition); }
+    .opra-refresh:hover { background: #f8fafc; border-color: rgba(15, 23, 42, 0.2); }
+
+    .opra-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; max-height: 200px; overflow-y: auto; padding-right: 4px; }
+    .opra-results::-webkit-scrollbar { width: 6px; }
+    .opra-results::-webkit-scrollbar-track { background: transparent; }
+    .opra-results::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.1); border-radius: 999px; }
+
+    .opra-result-item { background: #fff; border: 1px solid rgba(15, 23, 42, 0.05); padding: 16px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; transition: var(--transition); box-shadow: 0 2px 8px rgba(15, 23, 42, 0.02); }
+    .opra-result-item:hover { border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 8px 16px rgba(99, 102, 241, 0.08); transform: translateY(-2px); }
+    .result-info { display: flex; flex-direction: column; gap: 2px; }
+    .result-brand { font-size: 11px; font-weight: 800; color: var(--te-neutral-500); text-transform: uppercase; letter-spacing: 0.5px; }
+    .result-model { font-size: 15px; font-weight: 800; color: var(--te-neutral-900); }
+    .result-author { font-size: 12px; font-weight: 500; color: rgba(15, 23, 42, 0.4); margin-top: 4px;}
+    .result-apply { background: rgba(99, 102, 241, 0.1); color: var(--te-primary-500); border: none; padding: 8px 16px; border-radius: 8px; font-weight: 700; cursor: pointer; transition: var(--transition); }
+    .result-apply:hover { background: var(--te-primary-500); color: #fff; }
+
+    .opra-attribution { font-size: 12px; font-weight: 500; color: var(--te-neutral-500); margin-top: 4px; }
+    .opra-attribution a { color: var(--te-primary-500); text-decoration: none; font-weight: 700; }
+    .opra-attribution a:hover { text-decoration: underline; }
+
+    /* Detailed SVG Chart Area */
+    .chart-card {
+      background: #fff; border-radius: 20px; padding: 16px 16px 36px 40px; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.03);
+      border: 1px solid rgba(255, 255, 255, 0.8); position: relative;
+    }
+    .svg-container { width: 100%; height: 210px; position: relative; }
+    svg { width: 100%; height: 100%; display: block; overflow: visible; }
+    
+    .grid-line { stroke: rgba(15, 23, 42, 0.05); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+    .grid-line.zero { stroke: rgba(15, 23, 42, 0.15); stroke-width: 2px; stroke-dasharray: 4 4; vector-effect: non-scaling-stroke;}
+    
+    /* HTML based labels & points */
+    .chart-labels-y {
+      position: absolute; top: 0; left: -32px; height: 100%; display: flex; flex-direction: column; justify-content: space-between;
+      color: var(--te-neutral-500); font-size: 11px; font-weight: 600; font-family: 'Inter', sans-serif; text-align: right; width: 24px;
+    }
+    .chart-labels-y span.zero { font-weight: 800; color: var(--te-neutral-900); }
+    
+    .chart-labels-x {
+      position: absolute; bottom: -24px; left: 0; width: 100%; height: 16px;
+      color: var(--te-neutral-500); font-size: 11px; font-weight: 600; font-family: 'Inter', sans-serif;
+    }
+    .chart-labels-x span { position: absolute; transform: translateX(-50%); text-align: center; }
+
+    /* Pure HTML perfect circles for points to avoid SVG transform stretching */
+    .chart-point {
+      position: absolute; width: 10px; height: 10px; border-radius: 50%;
+      background: #fff; border: 3px solid; transform: translate(-50%, -50%);
+      box-shadow: 0 0 0 2px rgba(255,255,255,0.5); z-index: 10;
+    }
+
+    /* Graphic Sliders Board */
+    .sliders-board {
+      display: flex; justify-content: space-between; align-items: center; gap: 10px;
+      background: rgba(255, 255, 255, 0.4); padding: 30px 40px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.6);
+    }
+    .slider-column { display: flex; flex-direction: column; align-items: center; gap: 16px; flex: 1; }
+    .slider-gain { font-size: 13px; font-weight: 700; color: var(--te-primary-500); background: #fff; padding: 4px 10px; border-radius: 8px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04); }
+    .slider-freq { font-size: 12px; font-weight: 600; color: var(--te-neutral-500); }
+    .slider-track { width: 6px; height: 180px; background: rgba(15, 23, 42, 0.06); border-radius: 999px; position: relative; }
+    .slider-fill { position: absolute; left: 0; width: 100%; background: linear-gradient(to top, var(--te-primary-500), #818cf8); border-radius: 999px; z-index: 1; }
+    .slider-thumb { width: 20px; height: 20px; background: #fff; border-radius: 50%; position: absolute; left: 50%; transform: translate(-50%, -50%); box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 2px solid var(--te-primary-500); cursor: grab; transition: transform 0.1s; z-index: 2; }
+    .slider-thumb:hover { transform: translate(-50%, -50%) scale(1.2); }
+    
+    .invisible-range {
+      position: absolute;
+      width: 180px;
+      height: 24px;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) rotate(-90deg);
+      opacity: 0;
+      cursor: pointer;
+      -webkit-appearance: none;
+      appearance: none;
+      margin: 0;
+      z-index: 3;
+    }
+    
+    .master-column { padding-right: 20px; margin-right: 10px; border-right: 2px dashed rgba(15, 23, 42, 0.08); }
+    .master-column .slider-gain { color: #ec4899; }
+    .master-column .slider-fill { background: linear-gradient(to top, #ec4899, #f472b6); }
+    .master-column .slider-thumb { border-color: #ec4899; }
+
+    /* Parametric Specific Styles */
+    .band-selector { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 20px; background: rgba(255, 255, 255, 0.5); border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.8); box-shadow: 0 4px 12px rgba(15, 23, 42, 0.02); }
+    .band-tab { padding: 8px 16px; border-radius: 10px; border: 1px solid rgba(15, 23, 42, 0.06); background: #fff; font-size: 13px; font-weight: 700; color: var(--te-neutral-500); cursor: pointer; transition: var(--transition); }
+    .band-tab:hover { background: #f8fafc; color: var(--te-neutral-900); }
+    .band-tab.active { background: #e0e7ff; color: var(--te-primary-500); border-color: #c7d2fe; box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15); }
+
+    .parameter-card { background: rgba(255, 255, 255, 0.6); border-radius: 20px; padding: 30px; border: 1px solid rgba(255, 255, 255, 0.8); display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+    .param-group { display: flex; flex-direction: column; gap: 8px; }
+    .param-group label { font-size: 12px; font-weight: 700; color: var(--te-neutral-500); }
+    .param-group input, .param-group select { background: #fff; border: 1px solid rgba(15, 23, 42, 0.1); padding: 12px 16px; border-radius: 12px; font-family: inherit; font-size: 14px; font-weight: 600; color: var(--te-neutral-900); outline: none; width: 100%; }
+    .param-group input:focus, .param-group select:focus { border-color: var(--te-primary-500); box-shadow: 0 0 0 3px rgba(var(--te-primary-rgb), 0.1); }
+
+    .square-card { background: rgba(255, 255, 255, 0.6); border-radius: 20px; padding: 40px; border: 1px solid rgba(255, 255, 255, 0.8); text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 400px; }
+    .square-card i { font-size: 48px; color: var(--te-primary-500); background: #fff; width: 100px; height: 100px; display: flex; align-items: center; justify-content: center; border-radius: 50%; box-shadow: 0 16px 32px rgba(15, 23, 42, 0.05); margin-bottom: 24px; }
+    .square-card h2 { font-size: 24px; font-weight: 800; margin-bottom: 12px; }
+    .square-card p { color: var(--te-neutral-500); max-width: 400px; line-height: 1.6; }
 </style>
