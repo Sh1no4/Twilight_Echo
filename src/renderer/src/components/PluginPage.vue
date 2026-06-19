@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import PuzzleIcon from './icons/PuzzleIcon.vue'
 
 const emit = defineEmits<{
@@ -8,10 +8,192 @@ const emit = defineEmits<{
 
 const activeTab = ref('installed')
 const devMode = ref(false)
+const searchText = ref('')
+
+const installedPlugins = ref<TwilightPluginDescriptor[]>([])
+const indexEntries = ref<TwilightPluginIndexEntry[]>([])
+const loading = ref(false)
+const errorMsg = ref('')
+const busyIds = ref(new Set<string>())
 
 function switchTab(tabId: string) {
   activeTab.value = tabId
 }
+
+/* ---------- helpers ---------- */
+
+function getIconInfo(id: string, type: string[]): { cls: string; icon: string; style?: string } {
+  if (id.includes('ncm')) return { cls: 'ncm', icon: 'pi pi-cloud' }
+  if (id.includes('bili')) return { cls: 'bili', icon: 'pi pi-video' }
+  if (type.includes('dsp')) return { cls: 'dsp', icon: 'pi pi-wave-pulse' }
+  return { cls: '', icon: 'pi pi-puzzle', style: 'background: linear-gradient(135deg, #e0e7ff, #c7d2fe); color: #4f46e5;' }
+}
+
+function getTags(type: string[]): Array<{ label: string; cls: string; style?: string }> {
+  const tags: Array<{ label: string; cls: string; style?: string }> = []
+  for (const t of type) {
+    if (t === 'provider') tags.push({ label: 'PROVIDER', cls: 'provider' })
+    else if (t === 'ui') tags.push({ label: 'UI', cls: 'ui' })
+    else if (t === 'dsp') tags.push({ label: 'DSP NATIVE', cls: 'dsp' })
+    else if (t === 'tool') tags.push({ label: 'TOOL', cls: 'tool' })
+    else if (t === 'theme') tags.push({ label: 'THEME', cls: '', style: 'background: rgba(168, 85, 247, 0.1); color: #a855f7;' })
+  }
+  return tags
+}
+
+/* ---------- computed ---------- */
+
+const filteredInstalled = computed(() => {
+  const list = installedPlugins.value
+  if (!searchText.value.trim()) return list
+  const q = searchText.value.toLowerCase()
+  return list.filter(p =>
+    p.name.toLowerCase().includes(q) ||
+    p.author.toLowerCase().includes(q) ||
+    p.id.toLowerCase().includes(q)
+  )
+})
+
+const filteredIndex = computed(() => {
+  const list = indexEntries.value.filter(e => e.installState !== 'built-in-blocked')
+  if (!searchText.value.trim()) return list
+  const q = searchText.value.toLowerCase()
+  return list.filter(e =>
+    e.name.toLowerCase().includes(q) ||
+    e.author.toLowerCase().includes(q) ||
+    e.id.toLowerCase().includes(q)
+  )
+})
+
+const updateEntries = computed(() => {
+  return indexEntries.value.filter(e => e.installState === 'update-available')
+})
+
+const marketRepoUrl = computed(() => {
+  const entry = indexEntries.value.find(e => e.repository || e.homepage)
+  return entry?.repository || entry?.homepage || ''
+})
+
+/* ---------- API ---------- */
+
+async function refreshInstalled() {
+  try {
+    installedPlugins.value = await window.api.plugins.list()
+  } catch (e) {
+    errorMsg.value = `加载已安装插件失败：${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+async function refreshIndex() {
+  try {
+    indexEntries.value = await window.api.plugins.listIndex()
+  } catch (e) {
+    errorMsg.value = `加载插件市场失败：${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+async function loadAll() {
+  loading.value = true
+  errorMsg.value = ''
+  await Promise.all([refreshInstalled(), refreshIndex()])
+  loading.value = false
+}
+
+async function togglePlugin(plugin: TwilightPluginDescriptor) {
+  if (busyIds.value.has(plugin.id)) return
+  busyIds.value.add(plugin.id)
+  try {
+    if (plugin.enabled) {
+      await window.api.plugins.disable(plugin.id)
+    } else {
+      await window.api.plugins.enable(plugin.id)
+    }
+    await refreshInstalled()
+  } catch (e) {
+    errorMsg.value = `${plugin.enabled ? '停用' : '启用'}失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    busyIds.value.delete(plugin.id)
+  }
+}
+
+async function uninstallPlugin(plugin: TwilightPluginDescriptor) {
+  if (busyIds.value.has(plugin.id)) return
+  busyIds.value.add(plugin.id)
+  try {
+    await window.api.plugins.uninstall(plugin.id)
+    await loadAll()
+  } catch (e) {
+    errorMsg.value = `卸载失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    busyIds.value.delete(plugin.id)
+  }
+}
+
+async function openLog(plugin: TwilightPluginDescriptor) {
+  try {
+    await window.api.plugins.openLog(plugin.id)
+  } catch (e) {
+    errorMsg.value = `打开日志失败：${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+async function installFromLocal() {
+  try {
+    const result = await window.api.plugins.chooseAndInstall()
+    if (result) await loadAll()
+  } catch (e) {
+    errorMsg.value = `安装失败：${e instanceof Error ? e.message : String(e)}`
+  }
+}
+
+async function installFromIndex(entry: TwilightPluginIndexEntry) {
+  if (busyIds.value.has(entry.id)) return
+  busyIds.value.add(entry.id)
+  try {
+    await window.api.plugins.installFromIndex(entry.id)
+    await loadAll()
+  } catch (e) {
+    errorMsg.value = `安装失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    busyIds.value.delete(entry.id)
+  }
+}
+
+async function updateAll() {
+  for (const entry of updateEntries.value) {
+    await installFromIndex(entry)
+  }
+}
+
+async function refreshMarket() {
+  loading.value = true
+  errorMsg.value = ''
+  try {
+    indexEntries.value = await window.api.plugins.refreshIndex()
+  } catch (e) {
+    errorMsg.value = `刷新市场失败：${e instanceof Error ? e.message : String(e)}`
+  } finally {
+    loading.value = false
+  }
+}
+
+function openExternal(url: string) {
+  if (url) window.open(url, '_blank')
+}
+
+let unsubChanged: (() => void) | null = null
+
+onMounted(() => {
+  loadAll()
+  unsubChanged = window.api.plugins.onChanged(() => {
+    refreshInstalled()
+    refreshIndex()
+  })
+})
+
+onUnmounted(() => {
+  unsubChanged?.()
+})
 </script>
 
 <template>
@@ -34,7 +216,7 @@ function switchTab(tabId: string) {
           </div>
           <div class="nav-item" :class="{ active: activeTab === 'updates' }" @click="switchTab('updates')">
             <i class="pi pi-cloud-download"></i>
-            <span>更新 <span style="background: #ef4444; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 100px; margin-left: 4px;">2</span></span>
+            <span>更新 <span v-if="updateEntries.length > 0" style="background: #ef4444; color: #fff; font-size: 10px; padding: 2px 6px; border-radius: 100px; margin-left: 4px;">{{ updateEntries.length }}</span></span>
           </div>
         </nav>
 
@@ -55,141 +237,89 @@ function switchTab(tabId: string) {
             <i class="pi pi-search"></i>
             <input 
               type="text" 
+              v-model="searchText"
               :placeholder="activeTab === 'installed' ? '搜索已安装插件名称或作者...' : activeTab === 'discover' ? '搜索官方插件市场...' : '在可用更新中搜索...'"
             >
           </div>
           <div class="top-actions">
-            <button v-if="activeTab === 'installed'" class="btn btn-outline" id="localInstallBtn">
+            <button v-if="activeTab === 'installed'" class="btn btn-outline" @click="installFromLocal">
               <i class="pi pi-folder-open"></i> 从本地安装包 (.tep)
+            </button>
+            <button v-if="activeTab === 'discover'" class="btn btn-outline" @click="refreshMarket" :disabled="loading">
+              <i class="pi pi-refresh"></i> {{ loading ? '刷新中...' : '刷新市场' }}
             </button>
           </div>
         </header>
 
+        <!-- Error banner -->
+        <div v-if="errorMsg" style="margin: 0 32px 16px; padding: 12px 16px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; color: #b91c1c; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+          <i class="pi pi-exclamation-triangle"></i>
+          {{ errorMsg }}
+        </div>
+
         <!-- Scroll Area: Installed -->
         <div class="scroll-area" v-if="activeTab === 'installed'">
           <div class="page-title">
-            已安装扩展 <span class="badge">4</span>
+            已安装扩展 <span class="badge">{{ filteredInstalled.length }}</span>
           </div>
 
-          <div class="plugin-grid">
+          <!-- Empty state -->
+          <div v-if="filteredInstalled.length === 0" style="text-align: center; padding: 60px 20px; color: var(--te-neutral-400, #9ca3af); font-size: 14px;">
+            <i class="pi pi-inbox" style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3;"></i>
+            {{ searchText ? '没有匹配的插件' : '暂无已安装插件' }}
+          </div>
+
+          <div class="plugin-grid" v-else>
             
-            <!-- Card 1: NCM (Built-in) -->
-            <div class="plugin-card">
-              <div class="builtin-label">系统内置</div>
+            <div 
+              v-for="plugin in filteredInstalled" 
+              :key="plugin.id" 
+              class="plugin-card"
+              :style="{ opacity: plugin.enabled ? 1 : 0.7 }"
+            >
+              <div v-if="plugin.builtIn" class="builtin-label">系统内置</div>
               <div class="plugin-card-header">
-                <div class="plugin-icon ncm"><i class="pi pi-cloud"></i></div>
+                <div class="plugin-icon" :class="getIconInfo(plugin.id, plugin.type).cls" :style="getIconInfo(plugin.id, plugin.type).style">
+                  <i :class="getIconInfo(plugin.id, plugin.type).icon"></i>
+                </div>
                 <div class="plugin-info">
                   <div class="plugin-title-row">
-                    <div class="plugin-name">网易云音乐源</div>
-                    <div class="plugin-version">v1.2.0</div>
+                    <div class="plugin-name">{{ plugin.name }}</div>
+                    <div class="plugin-version">v{{ plugin.version }}</div>
                   </div>
-                  <div class="plugin-author"><i class="pi pi-verified" style="color:#6366f1"></i> Twilight Echo 官方团队</div>
+                  <div class="plugin-author">
+                    <i class="pi pi-verified" style="color:#6366f1"></i>
+                    {{ plugin.author }}
+                  </div>
                   <div class="plugin-tags">
-                    <span class="tag provider">PROVIDER</span>
-                    <span class="tag ui">UI</span>
+                    <span 
+                      v-for="(tag, idx) in getTags(plugin.type)" 
+                      :key="idx" 
+                      class="tag" 
+                      :class="tag.cls"
+                      :style="tag.style"
+                    >{{ tag.label }}</span>
                   </div>
                 </div>
               </div>
               <div class="plugin-desc">
-                Twilight Echo 官方维护的基础流媒体供应商。提供网易云音乐曲库搜索、歌单解析、歌词与封面抓取功能。
+                {{ plugin.description }}
+                <div v-if="plugin.error" style="margin-top: 8px; color: #ef4444; font-size: 12px;">
+                  <i class="pi pi-exclamation-circle"></i> {{ plugin.error }}
+                </div>
               </div>
               <div class="plugin-footer">
-                <div class="switch-wrap">
-                  <div class="switch on"></div>
-                  <span class="switch-label">已启用</span>
+                <div class="switch-wrap" @click="togglePlugin(plugin)">
+                  <div class="switch" :class="{ on: plugin.enabled }"></div>
+                  <span class="switch-label">{{ plugin.enabled ? '已启用' : '已停用' }}</span>
                 </div>
                 <div class="plugin-actions">
-                  <button class="icon-btn" title="插件设置"><i class="pi pi-cog"></i></button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Card 2: Bilibili -->
-            <div class="plugin-card">
-              <div class="plugin-card-header">
-                <div class="plugin-icon bili"><i class="pi pi-video"></i></div>
-                <div class="plugin-info">
-                  <div class="plugin-title-row">
-                    <div class="plugin-name">Bilibili 收藏夹音源</div>
-                    <div class="plugin-version">v0.8.4</div>
-                  </div>
-                  <div class="plugin-author"><i class="pi pi-user"></i> Asenyarzc</div>
-                  <div class="plugin-tags">
-                    <span class="tag provider">PROVIDER</span>
-                  </div>
-                </div>
-              </div>
-              <div class="plugin-desc">
-                解析并在 Twilight Echo 流媒体区展示 B 站收藏夹内容。通过 DASH 音频提取进行高音质无缝播放。
-              </div>
-              <div class="plugin-footer">
-                <div class="switch-wrap">
-                  <div class="switch on"></div>
-                  <span class="switch-label">已启用</span>
-                </div>
-                <div class="plugin-actions">
-                  <button class="icon-btn" title="查看日志"><i class="pi pi-align-left"></i></button>
-                  <button class="icon-btn" title="插件设置"><i class="pi pi-cog"></i></button>
-                  <button class="icon-btn danger" title="卸载"><i class="pi pi-trash"></i></button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Card 3: AutoEQ -->
-            <div class="plugin-card">
-              <div class="plugin-card-header">
-                <div class="plugin-icon dsp"><i class="pi pi-wave-pulse"></i></div>
-                <div class="plugin-info">
-                  <div class="plugin-title-row">
-                    <div class="plugin-name">OPRA (AutoEQ) 补偿</div>
-                    <div class="plugin-version">v2.0.1</div>
-                  </div>
-                  <div class="plugin-author"><i class="pi pi-verified" style="color:#6366f1"></i> Twilight Echo 官方团队</div>
-                  <div class="plugin-tags">
-                    <span class="tag dsp">DSP NATIVE</span>
-                    <span class="tag ui">UI</span>
-                  </div>
-                </div>
-              </div>
-              <div class="plugin-desc">
-                基于原生 C++ DSP 模块的高性能耳机频响自动补偿。接入 JaakkoPasanen/AutoEq 数据集。
-              </div>
-              <div class="plugin-footer">
-                <div class="switch-wrap">
-                  <div class="switch on"></div>
-                  <span class="switch-label">已启用</span>
-                </div>
-                <div class="plugin-actions">
-                  <button class="icon-btn" title="卸载"><i class="pi pi-trash"></i></button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Card 4: Discord RPC -->
-            <div class="plugin-card" style="opacity: 0.7;">
-              <div class="plugin-card-header">
-                <div class="plugin-icon" style="background: linear-gradient(135deg, #e0e7ff, #c7d2fe); color: #4f46e5;"><i class="pi pi-discord"></i></div>
-                <div class="plugin-info">
-                  <div class="plugin-title-row">
-                    <div class="plugin-name">Discord Rich Presence</div>
-                    <div class="plugin-version">v1.1.0</div>
-                  </div>
-                  <div class="plugin-author"><i class="pi pi-user"></i> Community</div>
-                  <div class="plugin-tags">
-                    <span class="tag tool">TOOL</span>
-                  </div>
-                </div>
-              </div>
-              <div class="plugin-desc">
-                在 Discord 个人资料中实时展示当前正在 Twilight Echo 中播放的高解析度音频信息。
-              </div>
-              <div class="plugin-footer">
-                <div class="switch-wrap">
-                  <div class="switch"></div>
-                  <span class="switch-label">已停用</span>
-                </div>
-                <div class="plugin-actions">
-                  <button class="icon-btn danger" title="卸载"><i class="pi pi-trash"></i></button>
+                  <button v-if="!plugin.builtIn" class="icon-btn" title="查看日志" @click="openLog(plugin)">
+                    <i class="pi pi-align-left"></i>
+                  </button>
+                  <button v-if="!plugin.builtIn" class="icon-btn danger" title="卸载" @click="uninstallPlugin(plugin)">
+                    <i class="pi pi-trash"></i>
+                  </button>
                 </div>
               </div>
             </div>
@@ -208,59 +338,95 @@ function switchTab(tabId: string) {
             <div class="banner-art">
               <i class="pi pi-server"></i>
             </div>
-            <button class="btn btn-outline" style="position: absolute; right: 32px; bottom: 32px; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); color: #fff;">浏览 GitHub 仓库 <i class="pi pi-external-link"></i></button>
+            <button 
+              v-if="marketRepoUrl" 
+              class="btn btn-outline" 
+              style="position: absolute; right: 32px; bottom: 32px; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); color: #fff;"
+              @click="openExternal(marketRepoUrl)"
+            >浏览 GitHub 仓库 <i class="pi pi-external-link"></i></button>
           </div>
 
           <div class="page-title" style="font-size: 18px; margin-bottom: 16px;">
-            本周推荐
+            可用插件
           </div>
 
-          <div class="plugin-grid">
-            <!-- Market Card 1 -->
-            <div class="plugin-card">
-              <div class="plugin-card-header">
-                <div class="plugin-icon" style="background: linear-gradient(135deg, #fce7f3, #fbcfe8); color: #db2777;"><i class="pi pi-globe"></i></div>
-                <div class="plugin-info">
-                  <div class="plugin-title-row">
-                    <div class="plugin-name">Spotify Source</div>
-                    <div class="plugin-version">v0.9.1</div>
-                  </div>
-                  <div class="plugin-author"><i class="pi pi-user"></i> EchoDev</div>
-                  <div class="plugin-tags">
-                    <span class="tag provider">PROVIDER</span>
-                  </div>
-                </div>
-              </div>
-              <div class="plugin-desc">
-                接入 Spotify Premium 账号，提供 Spotify 歌单同步、流媒体检索功能。（需 Premium 账号与 Ogg Vorbis 原生解码支持）
-              </div>
-              <div class="plugin-footer">
-                <div style="font-size: 12px; color: var(--te-neutral-400);"><i class="pi pi-download"></i> 12.5k</div>
-                <button class="btn btn-primary" style="padding: 6px 16px;">获取</button>
-              </div>
-            </div>
+          <!-- Empty state -->
+          <div v-if="filteredIndex.length === 0" style="text-align: center; padding: 60px 20px; color: var(--te-neutral-400, #9ca3af); font-size: 14px;">
+            <i class="pi pi-search" style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3;"></i>
+            {{ searchText ? '没有匹配的插件' : '插件市场暂无可用插件' }}
+          </div>
 
-            <!-- Market Card 2 -->
-            <div class="plugin-card">
+          <div class="plugin-grid" v-else>
+            
+            <div 
+              v-for="entry in filteredIndex" 
+              :key="entry.id" 
+              class="plugin-card"
+              :style="{ opacity: entry.installState === 'incompatible' ? 0.6 : 1 }"
+            >
               <div class="plugin-card-header">
-                <div class="plugin-icon" style="background: linear-gradient(135deg, #dcfce7, #bbf7d0); color: #16a34a;"><i class="pi pi-image"></i></div>
+                <div class="plugin-icon" :class="getIconInfo(entry.id, entry.type).cls" :style="getIconInfo(entry.id, entry.type).style">
+                  <i :class="getIconInfo(entry.id, entry.type).icon"></i>
+                </div>
                 <div class="plugin-info">
                   <div class="plugin-title-row">
-                    <div class="plugin-name">Last.fm Scrobbler</div>
-                    <div class="plugin-version">v2.1.0</div>
+                    <div class="plugin-name">{{ entry.name }}</div>
+                    <div class="plugin-version">v{{ entry.version }}</div>
                   </div>
-                  <div class="plugin-author"><i class="pi pi-user"></i> ScrobbleFan</div>
+                  <div class="plugin-author">
+                    <i v-if="entry.verified" class="pi pi-verified" style="color:#6366f1"></i>
+                    <i v-else class="pi pi-user"></i>
+                    {{ entry.author }}
+                  </div>
                   <div class="plugin-tags">
-                    <span class="tag tool">TOOL</span>
+                    <span 
+                      v-for="(tag, idx) in getTags(entry.type)" 
+                      :key="idx" 
+                      class="tag" 
+                      :class="tag.cls"
+                      :style="tag.style"
+                    >{{ tag.label }}</span>
                   </div>
                 </div>
               </div>
               <div class="plugin-desc">
-                自动将 Twilight Echo 的播放记录同步到你的 Last.fm 账户。支持多音源混合记录模式。
+                {{ entry.description }}
               </div>
               <div class="plugin-footer">
-                <div style="font-size: 12px; color: var(--te-neutral-400);"><i class="pi pi-download"></i> 8.2k</div>
-                <button class="btn btn-primary" style="padding: 6px 16px;">获取</button>
+                <div v-if="entry.tags" style="font-size: 12px; color: var(--te-neutral-400); display: flex; gap: 6px; align-items: center;">
+                  <i class="pi pi-tag"></i> {{ entry.tags.join(', ') }}
+                </div>
+                <div v-else style="font-size: 12px; color: var(--te-neutral-400);">
+                  <i class="pi pi-download"></i> {{ entry.verified ? '已验证' : '社区' }}
+                </div>
+                
+                <!-- Install states -->
+                <button 
+                  v-if="entry.installState === 'not-installed'" 
+                  class="btn btn-primary" 
+                  style="padding: 6px 16px;"
+                  :disabled="busyIds.has(entry.id)"
+                  @click="installFromIndex(entry)"
+                >
+                  <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
+                  {{ busyIds.has(entry.id) ? '安装中' : '获取' }}
+                </button>
+                <span v-else-if="entry.installState === 'installed'" style="font-size: 13px; font-weight: 600; color: var(--te-neutral-400); display: flex; align-items: center; gap: 4px;">
+                  <i class="pi pi-check"></i> 已安装
+                </span>
+                <button 
+                  v-else-if="entry.installState === 'update-available'" 
+                  class="btn btn-primary" 
+                  style="padding: 6px 16px;"
+                  :disabled="busyIds.has(entry.id)"
+                  @click="installFromIndex(entry)"
+                >
+                  <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
+                  {{ busyIds.has(entry.id) ? '更新中' : '更新' }}
+                </button>
+                <span v-else-if="entry.installState === 'incompatible'" style="font-size: 13px; font-weight: 600; color: var(--te-neutral-400);">
+                  不兼容
+                </span>
               </div>
             </div>
 
@@ -271,53 +437,57 @@ function switchTab(tabId: string) {
         <div class="scroll-area" v-else-if="activeTab === 'updates'">
           
           <div class="page-title">
-            可用更新 <span class="badge" style="background: #fee2e2; color: #ef4444;">2</span>
-          </div>
-          
-          <div style="margin-bottom: 24px; padding: 16px; background: rgba(99, 102, 241, 0.05); border: 1px solid rgba(99, 102, 241, 0.1); border-radius: 16px; display: flex; justify-content: space-between; align-items: center;">
-            <div style="font-size: 14px; font-weight: 600; color: var(--te-primary-600);">有 2 个插件可以更新。</div>
-            <button class="btn btn-primary">全部更新</button>
+            可用更新 <span v-if="updateEntries.length > 0" class="badge" style="background: #fee2e2; color: #ef4444;">{{ updateEntries.length }}</span>
           </div>
 
-          <div class="plugin-grid" style="grid-template-columns: 1fr;">
-            
-            <!-- Update Card 1 -->
-            <div class="plugin-card" style="flex-direction: row; align-items: center; justify-content: space-between; padding: 20px;">
-              <div class="plugin-card-header" style="align-items: center; margin-bottom: 0;">
-                <div class="plugin-icon dsp" style="width: 48px; height: 48px; font-size: 20px;"><i class="pi pi-wave-pulse"></i></div>
-                <div class="plugin-info" style="margin-left: 16px;">
-                  <div class="plugin-title-row">
-                    <div class="plugin-name" style="font-size: 16px;">OPRA (AutoEQ) 补偿</div>
-                  </div>
-                  <div class="plugin-author">v2.0.1 <i class="pi pi-arrow-right" style="font-size: 10px; margin: 0 4px;"></i> <span style="color: var(--te-primary-600); font-weight: 600;">v2.1.0</span></div>
-                </div>
-              </div>
-              <div style="flex: 1; margin: 0 32px; font-size: 13px; color: var(--te-neutral-500);">
-                - 同步最新的 AutoEq 数据集<br>
-                - 优化高采样率下卷积处理的 CPU 占用
-              </div>
-              <button class="btn btn-primary" style="padding: 6px 16px;">更新</button>
+          <!-- Empty state -->
+          <div v-if="updateEntries.length === 0" style="text-align: center; padding: 60px 20px; color: var(--te-neutral-400, #9ca3af); font-size: 14px;">
+            <i class="pi pi-check-circle" style="font-size: 48px; display: block; margin-bottom: 16px; opacity: 0.3;"></i>
+            所有插件均为最新版本
+          </div>
+
+          <template v-else>
+            <div style="margin-bottom: 24px; padding: 16px; background: rgba(99, 102, 241, 0.05); border: 1px solid rgba(99, 102, 241, 0.1); border-radius: 16px; display: flex; justify-content: space-between; align-items: center;">
+              <div style="font-size: 14px; font-weight: 600; color: var(--te-primary-600);">有 {{ updateEntries.length }} 个插件可以更新。</div>
+              <button class="btn btn-primary" @click="updateAll">全部更新</button>
             </div>
 
-            <!-- Update Card 2 -->
-            <div class="plugin-card" style="flex-direction: row; align-items: center; justify-content: space-between; padding: 20px;">
-              <div class="plugin-card-header" style="align-items: center; margin-bottom: 0;">
-                <div class="plugin-icon bili" style="width: 48px; height: 48px; font-size: 20px;"><i class="pi pi-video"></i></div>
-                <div class="plugin-info" style="margin-left: 16px;">
-                  <div class="plugin-title-row">
-                    <div class="plugin-name" style="font-size: 16px;">Bilibili 收藏夹音源</div>
+            <div class="plugin-grid" style="grid-template-columns: 1fr;">
+              
+              <div 
+                v-for="entry in updateEntries" 
+                :key="entry.id"
+                class="plugin-card" 
+                style="flex-direction: row; align-items: center; justify-content: space-between; padding: 20px;"
+              >
+                <div class="plugin-card-header" style="align-items: center; margin-bottom: 0;">
+                  <div class="plugin-icon" :class="getIconInfo(entry.id, entry.type).cls" :style="getIconInfo(entry.id, entry.type).style" style="width: 48px; height: 48px; font-size: 20px;">
+                    <i :class="getIconInfo(entry.id, entry.type).icon"></i>
                   </div>
-                  <div class="plugin-author">v0.8.4 <i class="pi pi-arrow-right" style="font-size: 10px; margin: 0 4px;"></i> <span style="color: var(--te-primary-600); font-weight: 600;">v0.9.0</span></div>
+                  <div class="plugin-info" style="margin-left: 16px;">
+                    <div class="plugin-title-row">
+                      <div class="plugin-name" style="font-size: 16px;">{{ entry.name }}</div>
+                    </div>
+                    <div class="plugin-author">{{ entry.installedVersion ? `v${entry.installedVersion}` : '未知版本' }} <i class="pi pi-arrow-right" style="font-size: 10px; margin: 0 4px;"></i> <span style="color: var(--te-primary-600); font-weight: 600;">v{{ entry.version }}</span></div>
+                  </div>
                 </div>
+                <div style="flex: 1; margin: 0 32px; font-size: 13px; color: var(--te-neutral-500);">
+                  {{ entry.description }}
+                </div>
+                <button 
+                  class="btn btn-primary" 
+                  style="padding: 6px 16px;"
+                  :disabled="busyIds.has(entry.id)"
+                  @click="installFromIndex(entry)"
+                >
+                  <i v-if="busyIds.has(entry.id)" class="pi pi-spin pi-spinner"></i>
+                  {{ busyIds.has(entry.id) ? '更新中' : '更新' }}
+                </button>
               </div>
-              <div style="flex: 1; margin: 0 32px; font-size: 13px; color: var(--te-neutral-500);">
-                - 修复部分视频获取 DASH 链接失败的问题<br>
-                - 支持自定义获取音质等级（默认最高 192k）
-              </div>
-              <button class="btn btn-primary" style="padding: 6px 16px;">更新</button>
-            </div>
 
-          </div>
+            </div>
+          </template>
+
         </div>
 
       </main>
