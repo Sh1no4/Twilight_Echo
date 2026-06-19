@@ -60,6 +60,16 @@ lerna-debug.log*
 Thumbs.db
 Desktop.ini
 
+# AI editor rules (personal development configs)
+.clinerules
+.cursorrules
+
+# AI agent session state
+.omo/
+
+# Prototype / preview files (not used in build)
+plugin-preview.html
+
 # Editor and local tool state
 .idea/
 .vscode/*
