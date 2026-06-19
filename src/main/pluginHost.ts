@@ -113,6 +113,8 @@ const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
   'fetchUserPlaylistsByUid',
   'fetchUserFollows',
   'fetchUserFolloweds',
+  'fetchPlayRecords',
+  'fetchRecentSongs',
   'likeTrack',
   'isTrackLiked'
 ]

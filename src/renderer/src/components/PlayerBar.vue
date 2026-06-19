@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
+import { useSettingsStore } from '../stores/useSettingsStore'
 import { useExtensionRegistry } from '../extensions/registry'
 import { normalizeAccentColor } from '../utils/colorExtractor'
 import nextTrackIcon from '../assets/icons/next-track.svg'
@@ -49,6 +50,18 @@ const { uiContributions, syncExtensions } = useExtensionRegistry()
 const playerBarButtons = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'playerBarButton')
 )
+const { settings } = useSettingsStore()
+const desktopLyricsOn = ref(settings.value.desktopLyrics.enabled)
+
+async function toggleDesktopLyrics(): Promise<void> {
+  const enabled = await window.api.desktopLyrics.toggle()
+  desktopLyricsOn.value = enabled
+}
+
+// Keep in sync when toggled from settings
+window.api.desktopLyrics.onToggle((enabled: boolean) => {
+  desktopLyricsOn.value = enabled
+})
 
 const emit = defineEmits<{
   clickCover: [rect: { x: number; y: number; w: number; h: number }]
@@ -760,6 +773,15 @@ onBeforeUnmount(() => {
           @click="togglePlaylist"
         >
           <i class="pi pi-list"></i>
+        </button>
+
+        <button
+          class="icon-btn"
+          :class="{ active: desktopLyricsOn }"
+          title="桌面歌词"
+          @click="toggleDesktopLyrics"
+        >
+          <i class="pi pi-window-maximize"></i>
         </button>
 
         <!-- 更多按钮 + 向上弹出抽屉 -->

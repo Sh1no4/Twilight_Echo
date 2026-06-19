@@ -27,6 +27,13 @@ const DEFAULT_COVER = '/icon.png'
 const FALLBACK_THUMB = '/icon.png'
 const HEATMAP_DAYS = 140
 
+function onCoverError(event: Event): void {
+  const img = event.target as HTMLImageElement
+  if (img && img.src !== DEFAULT_COVER) {
+    img.src = DEFAULT_COVER
+  }
+}
+
 const { tracks, albums } = useMusicStore()
 const { listeningStats } = useListeningStatsStore()
 const {
@@ -291,7 +298,7 @@ function playDashboardTrack(track: Track | undefined): void {
         <div class="card now-playing">
             <div class="album-art-container">
                 <div class="album-art">
-                    <img :src="nowPlayingCover" alt="Album Art">
+                    <img :src="nowPlayingCover" alt="Album Art" @error="onCoverError">
                 </div>
             </div>
             
@@ -417,7 +424,7 @@ function playDashboardTrack(track: Track | undefined): void {
                   class="recent-item"
                   @click="playDashboardTrack(track)"
                 >
-                    <img :src="track.cover || FALLBACK_THUMB" alt="Album">
+                    <img :src="track.cover || FALLBACK_THUMB" alt="Album" @error="onCoverError">
                     <div class="recent-info">
                         <h4>{{ track.title }}</h4>
                         <p>{{ track.artist || 'Unknown Artist' }}</p>
@@ -441,7 +448,7 @@ function playDashboardTrack(track: Track | undefined): void {
                   @click="playDashboardTrack(entry.track)"
                 >
                     <div class="rank">{{ index + 1 }}</div>
-                    <img :src="entry.track?.cover || entry.stat.cover || FALLBACK_THUMB" alt="Track">
+                    <img :src="entry.track?.cover || entry.stat.cover || FALLBACK_THUMB" alt="Track" @error="onCoverError">
                     <div class="track-info">
                         <h4>{{ entry.track?.title || entry.stat.title }}</h4>
                         <p>{{ entry.track?.artist || entry.stat.artist }} • {{ entry.stat.plays }} plays</p>

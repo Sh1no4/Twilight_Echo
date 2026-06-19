@@ -91,7 +91,9 @@ function getProviderCallTimeoutMs(method: TwilightMediaProviderMethod): number {
       'fetchArtistPlaylists',
       'fetchUserPlaylistsByUid',
       'fetchUserFollows',
-      'fetchUserFolloweds'
+      'fetchUserFolloweds',
+      'fetchPlayRecords',
+      'fetchRecentSongs'
     ].includes(method)
   ) {
     return PLUGIN_PROVIDER_SLOW_TIMEOUT_MS

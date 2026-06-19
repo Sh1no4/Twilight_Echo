@@ -112,6 +112,8 @@ export interface MediaProvider {
     limit?: number,
     offset?: number
   ) => Promise<MediaProviderUserSummary[]>
+  fetchPlayRecords?: (type?: number) => Promise<Track[]>
+  fetchRecentSongs?: (limit?: number) => Promise<Track[]>
   likeTrack?: (trackId: number | string, like: boolean) => Promise<void>
   isTrackLiked?: (trackId: number | string | undefined) => boolean | Promise<boolean>
 }

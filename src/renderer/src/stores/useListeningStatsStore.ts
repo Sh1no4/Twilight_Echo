@@ -5,6 +5,7 @@ import { usePlayerStore } from './usePlayerStore'
 export interface ListeningTrackStat {
   seconds: number
   plays: number
+  lastPlayed: number
   title: string
   artist: string
   cover: string | null
@@ -44,9 +45,11 @@ function normalizeTrackStats(value: Record<string, unknown>): Record<string, Lis
     if (!isRecord(raw)) continue
     const seconds = Number(raw.seconds)
     const plays = Number(raw.plays)
+    const lastPlayed = Number(raw.lastPlayed)
     result[id] = {
       seconds: Number.isFinite(seconds) && seconds > 0 ? seconds : 0,
       plays: Number.isFinite(plays) && plays > 0 ? plays : 0,
+      lastPlayed: Number.isFinite(lastPlayed) && lastPlayed > 0 ? lastPlayed : 0,
       title: typeof raw.title === 'string' ? raw.title : 'Unknown Track',
       artist: typeof raw.artist === 'string' ? raw.artist : 'Unknown Artist',
       cover: typeof raw.cover === 'string' && raw.cover ? raw.cover : null,
@@ -108,6 +111,7 @@ function addListeningSeconds(track: Track, seconds: number): void {
   const previous = nextStats.tracks[track.id] ?? {
     seconds: 0,
     plays: 0,
+    lastPlayed: 0,
     title: track.title,
     artist: track.artist,
     cover: track.cover
@@ -115,6 +119,7 @@ function addListeningSeconds(track: Track, seconds: number): void {
   nextStats.tracks[track.id] = {
     seconds: previous.seconds + seconds,
     plays: previous.plays + (lastCountedTrackId === track.id ? 0 : 1),
+    lastPlayed: Date.now(),
     title: track.title || previous.title,
     artist: track.artist || previous.artist,
     cover: track.cover || previous.cover,
@@ -169,4 +174,12 @@ export function useListeningStatsStore(): {
   return {
     listeningStats
   }
+}
+
+export function getRecentTracks(limit = 100): Array<ListeningTrackStat & { id: string }> {
+  return Object.entries(listeningStats.value.tracks)
+    .filter(([, stat]) => stat.lastPlayed > 0)
+    .sort(([, a], [, b]) => b.lastPlayed - a.lastPlayed)
+    .slice(0, limit)
+    .map(([id, stat]) => ({ id, ...stat }))
 }

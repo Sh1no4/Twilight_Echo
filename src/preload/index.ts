@@ -11,6 +11,32 @@ type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+type LyricAlign = 'center' | 'left'
+
+interface DesktopLyricsSettings {
+  enabled: boolean
+  fontSize: number
+  fontFamily: string
+  fontWeight: number
+  color: string
+  highlightColor: string
+  bgColor: string
+  bgOpacity: number
+  align: LyricAlign
+  showTranslation: boolean
+  lineSpacing: number
+  shadow: boolean
+  shadowBlur: number
+  shadowColor: string
+  windowWidth: number
+  windowHeight: number
+  windowX: number
+  windowY: number
+  alwaysOnTop: boolean
+  clickThrough: boolean
+  maxLines: number
+}
+
 type BuiltInTrackSource = 'local' | 'ncm'
 type TrackSource = BuiltInTrackSource | (string & {})
 type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
@@ -252,6 +278,7 @@ interface AppSettings {
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
+  desktopLyrics: DesktopLyricsSettings
 }
 
 interface SettingsSnapshot extends AppSettings {
@@ -596,6 +623,11 @@ const audioEngineDisconnectedCallbacks = new Set<AudioEngineSimpleCallback>()
 const audioEnginePlaybackInfoCallbacks = new Set<AudioEnginePlaybackInfoCallback>()
 const playerShortcutCallbacks = new Set<(action: PlayerShortcutAction) => void>()
 const settingsChangedCallbacks = new Set<(snapshot: SettingsSnapshot) => void>()
+const desktopLyricsToggleCallbacks = new Set<(enabled: boolean) => void>()
+const desktopLyricsInitSettingsCallbacks = new Set<(settings: DesktopLyricsSettings) => void>()
+const desktopLyricsTrackCallbacks = new Set<(data: { lyrics: string | null; translatedLyrics?: string | null; title?: string; artist?: string }) => void>()
+const desktopLyricsTimeCallbacks = new Set<(time: number) => void>()
+const desktopLyricsSettingsUpdateCallbacks = new Set<(settings: DesktopLyricsSettings) => void>()
 const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
 const pluginChangedCallbacks = new Set<() => void>()
 
@@ -657,6 +689,41 @@ ipcRenderer.on('plugins:changed', () => {
   for (const cb of pluginChangedCallbacks) {
     cb()
   }
+})
+
+ipcRenderer.on('desktopLyrics:toggleChanged', (_event, enabled: boolean) => {
+  for (const cb of desktopLyricsToggleCallbacks) {
+    cb(enabled)
+  }
+})
+
+ipcRenderer.on('desktopLyrics:initSettings', (_event, settings: DesktopLyricsSettings) => {
+  for (const cb of desktopLyricsInitSettingsCallbacks) {
+    cb(settings)
+  }
+})
+
+ipcRenderer.on('desktopLyrics:updateTrack', (_event, data: { lyrics: string | null; translatedLyrics?: string | null; title?: string; artist?: string }) => {
+  for (const cb of desktopLyricsTrackCallbacks) {
+    cb(data)
+  }
+})
+
+ipcRenderer.on('desktopLyrics:updateTime', (_event, time: number) => {
+  for (const cb of desktopLyricsTimeCallbacks) {
+    cb(time)
+  }
+})
+
+ipcRenderer.on('desktopLyrics:updateSettings', (_event, settings: DesktopLyricsSettings) => {
+  for (const cb of desktopLyricsSettingsUpdateCallbacks) {
+    cb(settings)
+  }
+})
+
+ipcRenderer.on('desktopLyrics:position', (_event, pos: { x: number; y: number }) => {
+  // Forward to a temporary global that the HTML page can read
+  ;(window as unknown as Record<string, unknown>).__dlPos = pos
 })
 
 ipcRenderer.on('app:save-playback-session', async (_event, requestId: string) => {
@@ -845,6 +912,8 @@ const api = {
     loadPlaybackSession: (): Promise<PlaybackSession | null> =>
       ipcRenderer.invoke('data:loadPlaybackSession'),
     clearPlaybackSession: (): Promise<void> => ipcRenderer.invoke('data:clearPlaybackSession'),
+    savePlaylists: (playlists: unknown): Promise<void> => ipcRenderer.invoke('data:savePlaylists', playlists),
+    loadPlaylists: (): Promise<unknown> => ipcRenderer.invoke('data:loadPlaylists'),
     saveCookie: (cookie: string): Promise<void> => ipcRenderer.invoke('data:saveCookie', cookie),
     loadCookie: (): Promise<string> => ipcRenderer.invoke('data:loadCookie')
   },
@@ -904,6 +973,49 @@ const api = {
       ipcRenderer.invoke('extensions:executeCommand', command, args),
     readThemeStylesheet: (stylesheetPath: string): Promise<string> =>
       ipcRenderer.invoke('extensions:readThemeStylesheet', stylesheetPath)
+  },
+  desktopLyrics: {
+    toggle: (): Promise<boolean> => ipcRenderer.invoke('desktopLyrics:toggle'),
+    show: (): Promise<void> => ipcRenderer.invoke('desktopLyrics:show'),
+    hide: (): Promise<void> => ipcRenderer.invoke('desktopLyrics:hide'),
+    updateTrack: (data: { lyrics: string | null; translatedLyrics?: string | null; title?: string; artist?: string }): void => {
+      ipcRenderer.send('desktopLyrics:updateTrack', data)
+    },
+    updateTime: (time: number): void => {
+      ipcRenderer.send('desktopLyrics:updateTime', time)
+    },
+    updateSettings: (settings: DesktopLyricsSettings): void => {
+      ipcRenderer.send('desktopLyrics:updateSettings', settings)
+    },
+    onToggle: (cb: (enabled: boolean) => void): (() => void) => {
+      desktopLyricsToggleCallbacks.add(cb)
+      return () => desktopLyricsToggleCallbacks.delete(cb)
+    },
+    onInitSettings: (cb: (settings: DesktopLyricsSettings) => void): (() => void) => {
+      desktopLyricsInitSettingsCallbacks.add(cb)
+      return () => desktopLyricsInitSettingsCallbacks.delete(cb)
+    },
+    onTrackUpdate: (cb: (data: { lyrics: string | null; translatedLyrics?: string | null; title?: string; artist?: string }) => void): (() => void) => {
+      desktopLyricsTrackCallbacks.add(cb)
+      return () => desktopLyricsTrackCallbacks.delete(cb)
+    },
+    onTimeUpdate: (cb: (time: number) => void): (() => void) => {
+      desktopLyricsTimeCallbacks.add(cb)
+      return () => desktopLyricsTimeCallbacks.delete(cb)
+    },
+    onSettingsUpdate: (cb: (settings: DesktopLyricsSettings) => void): (() => void) => {
+      desktopLyricsSettingsUpdateCallbacks.add(cb)
+      return () => desktopLyricsSettingsUpdateCallbacks.delete(cb)
+    },
+    getPosition: (): void => {
+      ipcRenderer.send('desktopLyrics:getPosition')
+    },
+    move: (x: number, y: number): void => {
+      ipcRenderer.send('desktopLyrics:move', { x, y })
+    },
+    requestClose: (): void => {
+      ipcRenderer.send('desktopLyrics:requestClose')
+    }
   }
 }
 

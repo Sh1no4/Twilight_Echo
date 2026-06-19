@@ -43,6 +43,8 @@ export async function activate(context) {
     fetchUserPlaylistsByUid,
     fetchUserFollows,
     fetchUserFolloweds,
+    fetchPlayRecords,
+    fetchRecentSongs,
     likeTrack,
     isTrackLiked
   })
@@ -395,27 +397,29 @@ async function fetchPlaylistTracks(playlistId, force = false) {
   const cacheKey = String(playlistId)
   if (!force && playlistTrackCache.has(cacheKey)) return playlistTrackCache.get(cacheKey) ?? []
 
-  const trackAllData = await requestAuthed(`/playlist/track/all?id=${encodeURIComponent(String(playlistId))}`)
+  // 一次性获取全部歌曲（limit 设为足够大，API 内部会先取 trackIds 再按 limit 切片请求详情）
+  const trackAllData = await requestAuthed(
+    `/playlist/track/all?id=${encodeURIComponent(String(playlistId))}&limit=100000`
+  )
   let songs = getSongItems(trackAllData)
-  let playlistDetailData = null
 
+  // 回退：用 playlist/detail 拿 trackIds，再分批请求详情
   if (songs.length === 0) {
-    playlistDetailData = await requestAuthed(`/playlist/detail?id=${encodeURIComponent(String(playlistId))}`)
-    songs = getSongItems(playlistDetailData)
-  }
+    const detailData = await requestAuthed(`/playlist/detail?id=${encodeURIComponent(String(playlistId))}`)
+    songs = getSongItems(detailData)
 
-  if (songs.length === 0) {
-    const detailSource = playlistDetailData ?? trackAllData
-    const ids = getPlaylistTrackIds(detailSource)
-    if (ids.length > 0) {
-      const detailSongs = []
-      const chunkSize = 200
-      for (let index = 0; index < ids.length; index += chunkSize) {
-        const chunk = ids.slice(index, index + chunkSize)
-        const detail = await requestAuthed(`/song/detail?ids=${chunk.join(',')}`)
-        detailSongs.push(...getSongItems(detail))
+    if (songs.length === 0) {
+      const ids = getPlaylistTrackIds(detailData)
+      if (ids.length > 0) {
+        const detailSongs = []
+        const chunkSize = 200
+        for (let index = 0; index < ids.length; index += chunkSize) {
+          const chunk = ids.slice(index, index + chunkSize)
+          const detail = await requestAuthed(`/song/detail?ids=${chunk.join(',')}`)
+          detailSongs.push(...getSongItems(detail))
+        }
+        songs = detailSongs
       }
-      songs = detailSongs
     }
   }
 
@@ -754,4 +758,39 @@ function syncLikedIds(tracks) {
       .map((track) => Number(track.ncmSongId))
       .filter((id) => Number.isFinite(id) && id > 0)
   )
+}
+
+// ── 听歌排行 (user/record) ──────────────────────────────────────────
+// type: 0 = 全部时间, 1 = 最近一周
+async function fetchPlayRecords(type = 1) {
+  const currentProfile = await ensureProfile()
+  const data = await requestAuthed(`/user/record?uid=${currentProfile.userId}&type=${type}`)
+  const list =
+    Array.isArray(data.weekData) ? data.weekData :
+    Array.isArray(data.allData) ? data.allData :
+    Array.isArray(data.data?.weekData) ? data.data.weekData :
+    Array.isArray(data.data?.allData) ? data.data.allData :
+    []
+  return list.map((item) => {
+    const track = normalizeTrack(item.song || item)
+    track.playCount = Number(item.playCount ?? item.playcount ?? 0) || 0
+    track.score = Number(item.score ?? 0) || 0
+    return track
+  })
+}
+
+// ── 最近播放歌曲 (record/recent/song) ────────────────────────────────
+async function fetchRecentSongs(limit = 100) {
+  const data = await requestAuthed(`/record/recent/song?limit=${limit}`)
+  const list =
+    Array.isArray(data.data?.list) ? data.data.list :
+    Array.isArray(data.list) ? data.list :
+    []
+  return list.map((item) => {
+    // /record/recent/song 返回结构: { resourceId, playTime, resourceType, data: { song fields } }
+    const song = item.data ?? item.song ?? item
+    const track = normalizeTrack(song)
+    track.playTime = Number(item.playTime ?? 0) || 0
+    return track
+  })
 }

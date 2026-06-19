@@ -32,6 +32,8 @@ export interface PlaybackSession {
   mode: PlaybackResumeMode
   track: Track
   position: number
+  queue?: Track[]
+  queueIndex?: number
 }
 
 export const SUPPORTED_EXTENSIONS = [

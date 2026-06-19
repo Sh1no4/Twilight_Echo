@@ -237,7 +237,7 @@ let nativePlaybackActive = false
 let activeLoadToken = 0
 let rendererPlaybackWatchdogTimer: number | null = null
 const RENDERER_PLAYBACK_WATCHDOG_MS = 220
-const PLAYBACK_TOGGLE_INTENT_GRACE_MS = 650
+const PLAYBACK_TOGGLE_INTENT_GRACE_MS = 300
 const NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS = 2500
 let playbackToggleIntent: { playing: boolean; expiresAt: number } | null = null
 let nativePlaybackInfoIntent:
@@ -653,7 +653,19 @@ function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
     info.queueIndex >= 0 &&
     info.queueIndex < queue.value.length
   ) {
-    return info.queueIndex
+    // 验证 queueIndex 指向的曲目与原生引擎实际播放的 source 一致。
+    // 队列重排（如切换 shuffle 模式）后，原生引擎可能仍报告旧 index，
+    // 旧 index 在新队列中可能指向不同曲目。
+    const trackAt = queue.value[info.queueIndex]
+    const source = typeof info.source === 'string' ? info.source.trim() : ''
+    if (trackAt && source.length > 0) {
+      if (getTrackAudioSource(trackAt) === source || trackAt.id === source) {
+        return info.queueIndex
+      }
+      // queueIndex 与 source 不匹配，队列可能已被重排，回退到 source 查找
+    } else if (trackAt && !source) {
+      return info.queueIndex
+    }
   }
 
   if (!info.source) return -1
@@ -1300,7 +1312,9 @@ async function togglePlayState(): Promise<void> {
       isPlaying.value = nextPlaying
       setPlaybackToggleIntent(nextPlaying)
       await window.api.audioEngine.togglePause()
-      setPlaybackToggleIntent(nextPlaying)
+      // togglePause 已等待原生引擎确认真实状态并发布。
+      // 清除意图，让后续原生状态回传（tick 轮询/property-change）能立即生效。
+      clearPlaybackToggleIntent()
     } else {
       const audio = getPlaybackAudio()
       if (audio.paused) {
@@ -1416,9 +1430,19 @@ function restorePlaybackSession(session: PlaybackSession): void {
   clearNativePlaybackInfoIntent()
   clearPlaybackToggleIntent()
   currentTrack.value = track
-  queue.value = [track]
-  originalQueue.value = [track]
-  queueIndex.value = 0
+
+  // 恢复完整播放队列，而非只恢复当前一首歌
+  const savedQueue = Array.isArray(session.queue) && session.queue.length > 0
+    ? session.queue.map(cloneTrackForPlaybackSession)
+    : [track]
+  const rawIndex = session.queueIndex
+  const savedIndex = typeof rawIndex === 'number' && Number.isFinite(rawIndex) && rawIndex >= 0 && rawIndex < savedQueue.length
+    ? rawIndex
+    : 0
+  queue.value = savedQueue
+  originalQueue.value = [...savedQueue]
+  queueIndex.value = savedIndex
+
   duration.value = Math.max(0, track.duration || 0)
   isPlaying.value = false
   isLoading.value = false
@@ -1448,7 +1472,9 @@ function createPlaybackSession(mode: PlaybackResumeMode): PlaybackSession | null
     savedAt: new Date().toISOString(),
     mode,
     track: cloneTrackForPlaybackSession(track),
-    position
+    position,
+    queue: queue.value.map(cloneTrackForPlaybackSession),
+    queueIndex: queueIndex.value
   }
 }
 
@@ -1638,6 +1664,31 @@ export function usePlayerStore(): {
     updateDiscordActivity()
   })
   // ── end Discord Rich Presence ─────────────────────────────────────
+
+  // ── Desktop Lyrics ──────────────────────────────────────────────────
+  let desktopLyricsTimeThrottle = 0
+
+  watch(currentTrack, (track) => {
+    if (!track) return
+    window.api.desktopLyrics.updateTrack({
+      lyrics: track.lyrics ?? null,
+      translatedLyrics: track.translatedLyrics ?? null,
+      title: track.title || '',
+      artist: track.artist || ''
+    })
+  }, { immediate: true })
+
+  watch(currentTime, (time) => {
+    const now = Date.now()
+    if (now - desktopLyricsTimeThrottle < 200) return
+    desktopLyricsTimeThrottle = now
+    window.api.desktopLyrics.updateTime(time)
+  })
+
+  watch(() => appSettings.value.desktopLyrics, (dl) => {
+    window.api.desktopLyrics.updateSettings(dl)
+  }, { deep: true })
+  // ── end Desktop Lyrics ──────────────────────────────────────────────
 
   function setVolume(vol: number): void {
     volume.value = vol

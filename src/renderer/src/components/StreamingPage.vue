@@ -37,6 +37,8 @@ type DetailView =
   | { type: 'artist'; artist: NcmArtistSummary; user?: NcmUserSummary }
   | { type: 'user_list'; listType: 'follows' | 'followers'; users: NcmUserSummary[]; title: string }
   | { type: 'user_playlists'; user: NcmUserSummary; playlists: NcmPlaylistSummary[] }
+  | { type: 'recent' }
+  | { type: 'ranking' }
 
 defineProps<{
   menuOpen: boolean
@@ -61,6 +63,7 @@ const privateContentSongs = ref<Track[]>([])
 const recommendPlaylists = ref<NcmPlaylistSummary[]>([])
 const recsLoading = ref(false)
 const recsError = ref('')
+const avatarLoadFailed = ref(false)
 const providerStore = useProviderStore()
 const biliLoggedIn = ref(false)
 const biliProfile = ref<{
@@ -186,6 +189,8 @@ const {
   fetchArtistPlaylists,
   fetchUserFollows,
   fetchUserFolloweds,
+  fetchPlayRecords,
+  fetchRecentSongs,
   likeTrack,
   isTrackLiked,
   syncLikedIds
@@ -346,6 +351,8 @@ const headerTitle = computed(() => {
   if (isSearching.value) return `搜索: ${searchQuery.value.trim()}`
   if (currentDetail.value?.type === 'rec') return currentDetail.value.section.title
   if (currentDetail.value?.type === 'liked') return '我收藏的歌曲'
+  if (currentDetail.value?.type === 'recent') return '最近播放'
+  if (currentDetail.value?.type === 'ranking') return '听歌排行'
   if (currentDetail.value?.type === 'playlist') return currentDetail.value.playlist.name
   return currentView.value?.label ?? '流媒体'
 })
@@ -388,7 +395,8 @@ const hasTrackDetailLoadingSurface = computed(
   () =>
     currentDetail.value?.type === 'liked' ||
     currentDetail.value?.type === 'playlist' ||
-    currentDetail.value?.type === 'artist'
+    currentDetail.value?.type === 'artist' ||
+    currentDetail.value?.type === 'ranking'
 )
 const showDetailInitialLoading = computed(
   () =>
@@ -457,6 +465,22 @@ const detailHeaderInfo = computed(() => {
       cover: currentDetail.value.user.picUrl,
       desc: `共 ${currentDetail.value.playlists.length} 个歌单`,
       icon: 'pi pi-user'
+    }
+  }
+  if (currentDetail.value.type === 'recent') {
+    return {
+      title: '最近播放',
+      cover: detailTracks.value.length > 0 ? detailTracks.value[0].cover : null,
+      desc: `共 ${detailTracks.value.length} 首歌曲`,
+      icon: 'pi pi-history'
+    }
+  }
+  if (currentDetail.value.type === 'ranking') {
+    return {
+      title: '听歌排行',
+      cover: detailTracks.value.length > 0 ? detailTracks.value[0].cover : null,
+      desc: `共 ${detailTracks.value.length} 首歌曲`,
+      icon: 'pi pi-chart-bar'
     }
   }
   return null
@@ -805,6 +829,46 @@ async function openUserPlaylists(user: NcmUserSummary): Promise<void> {
   }
 }
 
+async function openRecent(): Promise<void> {
+  streamingTransitionName.value = 'stream-page-down'
+  currentDetail.value = { type: 'recent' }
+  const token = beginDetailLoad()
+
+  try {
+    const tracks = await fetchRecentSongs()
+    if (!isActiveDetailLoad(token)) return
+    detailTracks.value = tracks
+  } catch (error) {
+    if (!isActiveDetailLoad(token)) return
+    detailError.value = error instanceof Error ? error.message : '加载最近播放失败'
+    detailTracks.value = []
+  } finally {
+    if (isActiveDetailLoad(token)) {
+      detailLoading.value = false
+    }
+  }
+}
+
+async function openRanking(): Promise<void> {
+  streamingTransitionName.value = 'stream-page-down'
+  currentDetail.value = { type: 'ranking' }
+  const token = beginDetailLoad()
+
+  try {
+    const tracks = await fetchPlayRecords(1)
+    if (!isActiveDetailLoad(token)) return
+    detailTracks.value = tracks
+  } catch (error) {
+    if (!isActiveDetailLoad(token)) return
+    detailError.value = error instanceof Error ? error.message : '加载听歌排行失败'
+    detailTracks.value = []
+  } finally {
+    if (isActiveDetailLoad(token)) {
+      detailLoading.value = false
+    }
+  }
+}
+
 async function onUserClick(user: NcmUserSummary): Promise<void> {
   if (user.userType === 2 || user.userType === 4 || user.userType === 6) {
     await openArtist({
@@ -847,6 +911,14 @@ async function retryCurrentView(): Promise<void> {
   }
   if (currentDetail.value?.type === 'artist') {
     await openArtist(currentDetail.value.artist)
+    return
+  }
+  if (currentDetail.value?.type === 'recent') {
+    await openRecent()
+    return
+  }
+  if (currentDetail.value?.type === 'ranking') {
+    await openRanking()
     return
   }
   await ensureLibraryLoaded(true)
@@ -1002,7 +1074,12 @@ onMounted(async () => {
             title="个人资料"
             @click="$emit('toggleMenu')"
           >
-            <img v-if="activeProfile?.avatarUrl" :src="activeProfile.avatarUrl" alt="" />
+            <img
+              v-if="activeProfile?.avatarUrl && !avatarLoadFailed"
+              :src="activeProfile.avatarUrl"
+              alt=""
+              @error="avatarLoadFailed = true"
+            />
             <i v-else class="pi pi-user"></i>
           </button>
         </div>
@@ -1345,9 +1422,13 @@ onMounted(async () => {
               v-else-if="detailTracks.length === 0 && !detailLoading"
               class="streaming-placeholder detail-placeholder"
             >
-              <i class="pi pi-wave-pulse" style="font-size: 40px; color: #ccc"></i>
-              <p class="placeholder-title">暂无内容</p>
-              <p class="placeholder-hint">这个页面目前没有可展示的歌曲或歌单</p>
+              <i :class="currentDetail?.type === 'recent' ? 'pi pi-history' : 'pi pi-wave-pulse'" style="font-size: 40px; color: #ccc"></i>
+              <p class="placeholder-title">
+                {{ currentDetail?.type === 'recent' ? '还没有播放记录' : '暂无内容' }}
+              </p>
+              <p class="placeholder-hint">
+                {{ currentDetail?.type === 'recent' ? '在 Twilight Echo 中播放歌曲后，这里会显示您的最近播放记录' : '这个页面目前没有可展示的歌曲或歌单' }}
+              </p>
             </div>
 
             <div v-else class="detail-content">
@@ -1475,6 +1556,8 @@ onMounted(async () => {
             @play-liked-songs="playLikedSongs"
             @open-playlist="openPlaylist"
             @toggle-pinned-playlist="toggleBiliPinnedPlaylist"
+            @open-recent="openRecent"
+            @open-ranking="openRanking"
           />
         </div>
       </Transition>

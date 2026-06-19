@@ -16,6 +16,30 @@ export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 export type LyricAlign = 'center' | 'left'
 
+export interface DesktopLyricsSettings {
+  enabled: boolean
+  fontSize: number
+  fontFamily: string
+  fontWeight: number
+  color: string
+  highlightColor: string
+  bgColor: string
+  bgOpacity: number
+  align: LyricAlign
+  showTranslation: boolean
+  lineSpacing: number
+  shadow: boolean
+  shadowBlur: number
+  shadowColor: string
+  windowWidth: number
+  windowHeight: number
+  windowX: number
+  windowY: number
+  alwaysOnTop: boolean
+  clickThrough: boolean
+  maxLines: number
+}
+
 export type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -148,6 +172,7 @@ export interface AppSettings {
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
+  desktopLyrics: DesktopLyricsSettings
 }
 
 export interface SettingsSnapshot {

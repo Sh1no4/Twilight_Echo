@@ -11,6 +11,7 @@ import type {
   AudioOutputId,
   AudioProcessingSettings,
   ChannelRoutingMode,
+  DesktopLyricsSettings,
   DsdOutputMode,
   LyricAlign,
   NowPlayingBackground,
@@ -29,6 +30,7 @@ type SectionKey =
   | 'plugins'
   | 'performance'
   | 'appearance'
+  | 'desktopLyrics'
   | 'shortcuts'
   | 'about'
 
@@ -59,6 +61,7 @@ const sections: { key: SectionKey; label: string; icon: string }[] = [
   { key: 'plugins', label: '插件', icon: 'pi pi-box' },
   { key: 'performance', label: '性能', icon: 'pi pi-bolt' },
   { key: 'appearance', label: '外观', icon: 'pi pi-palette' },
+  { key: 'desktopLyrics', label: '桌面歌词', icon: 'pi pi-window-maximize' },
   { key: 'shortcuts', label: '快捷键', icon: 'pi pi-keyboard' },
   { key: 'about', label: '关于', icon: 'pi pi-info-circle' }
 ]
@@ -366,6 +369,16 @@ function deviceSpecText(device: AudioDeviceOption): string {
 
 function toggleSetting(key: BooleanSettingKey): void {
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
+}
+
+async function toggleDesktopLyrics(): Promise<void> {
+  const enabled = await window.api.desktopLyrics.toggle()
+  await updateSettings({ desktopLyrics: { ...settings.value.desktopLyrics, enabled } })
+}
+
+function updateDl<K extends keyof DesktopLyricsSettings>(key: K, value: DesktopLyricsSettings[K]): void {
+  const dl = { ...settings.value.desktopLyrics, [key]: value }
+  void updateSettings({ desktopLyrics: dl })
 }
 
 function setTheme(theme: AppTheme): void {
@@ -1635,6 +1648,153 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
+        <section id="desktopLyrics" class="glass-card preview-section">
+          <div class="section-title-row">
+            <i class="pi pi-window-maximize"></i>
+            <h2>桌面歌词</h2>
+          </div>
+          <div class="section-block">
+            <h3>开关</h3>
+            <div class="setting-row">
+              <div class="setting-info">
+                <strong>启用桌面歌词</strong>
+                <span>在独立窗口中显示桌面歌词，可拖拽移动位置。</span>
+              </div>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.desktopLyrics.enabled, inactive: !settings.desktopLyrics.enabled }"
+                role="switch"
+                :aria-checked="settings.desktopLyrics.enabled"
+                @click="toggleDesktopLyrics"
+              ></span>
+            </div>
+          </div>
+          <div class="section-block">
+            <h3>字体</h3>
+            <div class="setting-row">
+              <div class="setting-info"><strong>字体大小</strong><span>{{ settings.desktopLyrics.fontSize }}px</span></div>
+              <input type="range" min="12" max="80" :value="settings.desktopLyrics.fontSize"
+                @input="updateDl('fontSize', Number(($event.target as HTMLInputElement).value))" class="range-slider" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><strong>字体粗细</strong><span>{{ settings.desktopLyrics.fontWeight }}</span></div>
+              <select class="select-control" :value="settings.desktopLyrics.fontWeight"
+                @change="updateDl('fontWeight', Number(($event.target as HTMLSelectElement).value))">
+                <option :value="300">细体 300</option>
+                <option :value="400">常规 400</option>
+                <option :value="500">中等 500</option>
+                <option :value="600">半粗 600</option>
+                <option :value="700">粗体 700</option>
+                <option :value="800">特粗 800</option>
+                <option :value="900">黑体 900</option>
+              </select>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><strong>行间距</strong><span>{{ settings.desktopLyrics.lineSpacing.toFixed(1) }}</span></div>
+              <input type="range" min="1" max="3" step="0.1" :value="settings.desktopLyrics.lineSpacing"
+                @input="updateDl('lineSpacing', Number(($event.target as HTMLInputElement).value))" class="range-slider" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><strong>最大显示行数</strong><span>{{ settings.desktopLyrics.maxLines }} 行</span></div>
+              <input type="range" min="1" max="5" :value="settings.desktopLyrics.maxLines"
+                @input="updateDl('maxLines', Number(($event.target as HTMLInputElement).value))" class="range-slider" />
+            </div>
+          </div>
+          <div class="section-block">
+            <h3>颜色</h3>
+            <div class="setting-row">
+              <div class="setting-info"><strong>默认文字颜色</strong></div>
+              <input type="color" :value="settings.desktopLyrics.color" @input="updateDl('color', ($event.target as HTMLInputElement).value)" class="color-picker" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><strong>高亮文字颜色</strong></div>
+              <input type="color" :value="settings.desktopLyrics.highlightColor" @input="updateDl('highlightColor', ($event.target as HTMLInputElement).value)" class="color-picker" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><strong>背景颜色</strong></div>
+              <input type="color" :value="settings.desktopLyrics.bgColor" @input="updateDl('bgColor', ($event.target as HTMLInputElement).value)" class="color-picker" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><strong>背景透明度</strong><span>{{ settings.desktopLyrics.bgOpacity }}%</span></div>
+              <input type="range" min="0" max="100" :value="settings.desktopLyrics.bgOpacity"
+                @input="updateDl('bgOpacity', Number(($event.target as HTMLInputElement).value))" class="range-slider" />
+            </div>
+          </div>
+          <div class="section-block">
+            <h3>阴影与对齐</h3>
+            <div class="setting-row">
+              <div class="setting-info"><strong>文字阴影</strong></div>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.desktopLyrics.shadow, inactive: !settings.desktopLyrics.shadow }"
+                role="switch"
+                :aria-checked="settings.desktopLyrics.shadow"
+                @click="updateDl('shadow', !settings.desktopLyrics.shadow)"
+              ></span>
+            </div>
+            <div class="setting-row" v-if="settings.desktopLyrics.shadow">
+              <div class="setting-info"><strong>阴影模糊度</strong><span>{{ settings.desktopLyrics.shadowBlur }}px</span></div>
+              <input type="range" min="0" max="30" :value="settings.desktopLyrics.shadowBlur"
+                @input="updateDl('shadowBlur', Number(($event.target as HTMLInputElement).value))" class="range-slider" />
+            </div>
+            <div class="setting-row" v-if="settings.desktopLyrics.shadow">
+              <div class="setting-info"><strong>阴影颜色</strong></div>
+              <input type="color" :value="settings.desktopLyrics.shadowColor" @input="updateDl('shadowColor', ($event.target as HTMLInputElement).value)" class="color-picker" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><strong>对齐方式</strong></div>
+              <select class="select-control" :value="settings.desktopLyrics.align"
+                @change="updateDl('align', ($event.target as HTMLSelectElement).value as LyricAlign)">
+                <option value="center">居中</option>
+                <option value="left">左对齐</option>
+              </select>
+            </div>
+          </div>
+          <div class="section-block">
+            <h3>窗口行为</h3>
+            <div class="setting-row">
+              <div class="setting-info"><strong>窗口宽度</strong><span>{{ settings.desktopLyrics.windowWidth }}px</span></div>
+              <input type="range" min="200" max="3000" step="10" :value="settings.desktopLyrics.windowWidth"
+                @input="updateDl('windowWidth', Number(($event.target as HTMLInputElement).value))" class="range-slider" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><strong>窗口高度</strong><span>{{ settings.desktopLyrics.windowHeight }}px</span></div>
+              <input type="range" min="60" max="800" step="10" :value="settings.desktopLyrics.windowHeight"
+                @input="updateDl('windowHeight', Number(($event.target as HTMLInputElement).value))" class="range-slider" />
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><strong>始终置顶</strong><span>桌面歌词窗口始终显示在最前。</span></div>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.desktopLyrics.alwaysOnTop, inactive: !settings.desktopLyrics.alwaysOnTop }"
+                role="switch"
+                :aria-checked="settings.desktopLyrics.alwaysOnTop"
+                @click="updateDl('alwaysOnTop', !settings.desktopLyrics.alwaysOnTop)"
+              ></span>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><strong>鼠标穿透</strong><span>开启后鼠标点击会穿透歌词窗口。</span></div>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.desktopLyrics.clickThrough, inactive: !settings.desktopLyrics.clickThrough }"
+                role="switch"
+                :aria-checked="settings.desktopLyrics.clickThrough"
+                @click="updateDl('clickThrough', !settings.desktopLyrics.clickThrough)"
+              ></span>
+            </div>
+            <div class="setting-row">
+              <div class="setting-info"><strong>显示翻译</strong><span>在原文下方显示翻译歌词。</span></div>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.desktopLyrics.showTranslation, inactive: !settings.desktopLyrics.showTranslation }"
+                role="switch"
+                :aria-checked="settings.desktopLyrics.showTranslation"
+                @click="updateDl('showTranslation', !settings.desktopLyrics.showTranslation)"
+              ></span>
+            </div>
+          </div>
+        </section>
+
         <section id="shortcuts" class="glass-card preview-section">
           <div class="section-title-row">
             <i class="pi pi-keyboard"></i>
@@ -1782,6 +1942,7 @@ onBeforeUnmount(() => {
   --brand-700: #6d28d9;
   position: fixed;
   inset: 0;
+  z-index: 60;
   width: 100%;
   height: 100vh;
   overflow-y: auto;
@@ -1832,7 +1993,7 @@ onBeforeUnmount(() => {
   position: fixed;
   left: max(24px, calc((100vw - 896px) / 4 - 96px));
   top: 44%;
-  z-index: 20;
+  z-index: 100;
   display: flex;
   width: 192px;
   flex-direction: column;
@@ -2155,6 +2316,51 @@ onBeforeUnmount(() => {
 .icon-button:hover {
   border-color: var(--brand-300);
   color: var(--brand-600);
+}
+
+/* Desktop Lyrics controls */
+.range-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 200px;
+  height: 6px;
+  border-radius: 3px;
+  background: #e5e7eb;
+  outline: none;
+  cursor: pointer;
+}
+.range-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--brand-500, #7c3aed);
+  cursor: pointer;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+}
+.color-picker {
+  width: 40px;
+  height: 32px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  cursor: pointer;
+  background: #fff;
+  padding: 2px;
+}
+.select-control {
+  padding: 6px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #333;
+  background: #fff;
+  cursor: pointer;
+  outline: none;
+}
+.select-control:focus {
+  border-color: var(--brand-400, #8b5cf6);
 }
 
 .toggle-switch {

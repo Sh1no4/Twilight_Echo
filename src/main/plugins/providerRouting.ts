@@ -31,6 +31,8 @@ const PROVIDER_METHOD_CAPABILITIES: Partial<
   fetchUserPlaylistsByUid: 'library',
   fetchUserFollows: 'library',
   fetchUserFolloweds: 'library',
+  fetchPlayRecords: 'library',
+  fetchRecentSongs: 'library',
   likeTrack: 'library',
   isTrackLiked: 'library'
 }

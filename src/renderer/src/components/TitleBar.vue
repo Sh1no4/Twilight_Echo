@@ -1,4 +1,5 @@
 ﻿<script setup lang="ts">
+import { ref } from 'vue'
 import { useNcmStore } from '../stores/useNcmStore'
 
 withDefaults(
@@ -22,6 +23,7 @@ defineEmits<{
 }>()
 
 const { isLoggedIn, profile } = useNcmStore()
+const avatarLoadFailed = ref(false)
 
 function minimize(): void {
   window.api.window.minimize()
@@ -73,10 +75,11 @@ function close(): void {
         @click="$emit('login')"
       >
         <img
-          v-if="isLoggedIn && profile?.avatarUrl"
+          v-if="isLoggedIn && profile?.avatarUrl && !avatarLoadFailed"
           :src="profile.avatarUrl"
           class="user-avatar"
           alt=""
+          @error="avatarLoadFailed = true"
         />
         <i v-else class="pi pi-user"></i>
       </button>

@@ -92,6 +92,14 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     this.start()
   }
 
+  /**
+   * 异步调用原生方法并等待 utility 进程返回结果。
+   * 用于 play/pause 等需要确认真实状态的控制命令。
+   */
+  callAsync(method: string, args: unknown[]): Promise<unknown> {
+    return this.call(method as keyof NativeAudioBinding, args)
+  }
+
   Play(source: string, startTime?: number): void {
     this.fireAndForget('Play', [source, startTime])
   }

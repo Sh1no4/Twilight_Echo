@@ -9,7 +9,8 @@ import {
   nativeTheme,
   nativeImage,
   session,
-  Tray
+  Tray,
+  screen
 } from 'electron'
 import { join, extname, basename, dirname, resolve } from 'path'
 import { readdirSync, statSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs'
@@ -46,6 +47,54 @@ type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 type UiDensity = 'compact' | 'standard' | 'comfortable'
 type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 type LyricAlign = 'center' | 'left'
+
+interface DesktopLyricsSettings {
+  enabled: boolean
+  fontSize: number
+  fontFamily: string
+  fontWeight: number
+  color: string
+  highlightColor: string
+  bgColor: string
+  bgOpacity: number
+  align: LyricAlign
+  showTranslation: boolean
+  lineSpacing: number
+  shadow: boolean
+  shadowBlur: number
+  shadowColor: string
+  windowWidth: number
+  windowHeight: number
+  windowX: number
+  windowY: number
+  alwaysOnTop: boolean
+  clickThrough: boolean
+  maxLines: number
+}
+
+const DEFAULT_DESKTOP_LYRICS: DesktopLyricsSettings = {
+  enabled: false,
+  fontSize: 32,
+  fontFamily: 'system',
+  fontWeight: 700,
+  color: '#ffffff',
+  highlightColor: '#FFD700',
+  bgColor: '#000000',
+  bgOpacity: 30,
+  align: 'center',
+  showTranslation: true,
+  lineSpacing: 1.6,
+  shadow: true,
+  shadowBlur: 8,
+  shadowColor: '#000000',
+  windowWidth: 900,
+  windowHeight: 160,
+  windowX: -1,
+  windowY: -1,
+  alwaysOnTop: true,
+  clickThrough: false,
+  maxLines: 2
+}
 
 interface AudioEqPreset {
   id: string
@@ -87,6 +136,7 @@ interface AppSettings {
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
+  desktopLyrics: DesktopLyricsSettings
 }
 
 interface PlaybackSession {
@@ -149,7 +199,8 @@ const DEFAULT_SETTINGS: AppSettings = {
     wasapiExclusivePushMode: false
   },
   audioProcessing: DEFAULT_AUDIO_PROCESSING,
-  audioEqPresets: []
+  audioEqPresets: [],
+  desktopLyrics: { ...DEFAULT_DESKTOP_LYRICS }
 }
 
 const PLAYER_SHORTCUTS: { accelerator: string; action: PlayerShortcutAction; label: string }[] = [
@@ -296,6 +347,35 @@ function normalizeOutputConfig(config: unknown): OutputConfig {
   }
 }
 
+function normalizeDesktopLyrics(raw: unknown): DesktopLyricsSettings {
+  const d = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  return {
+    enabled: d.enabled === true,
+    fontSize: clampNumber(d.fontSize, 12, 80, DEFAULT_DESKTOP_LYRICS.fontSize),
+    fontFamily: typeof d.fontFamily === 'string' && d.fontFamily.trim()
+      ? d.fontFamily.trim().slice(0, 64)
+      : DEFAULT_DESKTOP_LYRICS.fontFamily,
+    fontWeight: clampNumber(d.fontWeight, 100, 900, DEFAULT_DESKTOP_LYRICS.fontWeight),
+    color: typeof d.color === 'string' ? d.color : DEFAULT_DESKTOP_LYRICS.color,
+    highlightColor: typeof d.highlightColor === 'string' ? d.highlightColor : DEFAULT_DESKTOP_LYRICS.highlightColor,
+    bgColor: typeof d.bgColor === 'string' ? d.bgColor : DEFAULT_DESKTOP_LYRICS.bgColor,
+    bgOpacity: clampNumber(d.bgOpacity, 0, 100, DEFAULT_DESKTOP_LYRICS.bgOpacity),
+    align: d.align === 'left' ? 'left' : 'center',
+    showTranslation: d.showTranslation !== false,
+    lineSpacing: clampNumber(d.lineSpacing, 1.0, 3.0, DEFAULT_DESKTOP_LYRICS.lineSpacing),
+    shadow: d.shadow !== false,
+    shadowBlur: clampNumber(d.shadowBlur, 0, 30, DEFAULT_DESKTOP_LYRICS.shadowBlur),
+    shadowColor: typeof d.shadowColor === 'string' ? d.shadowColor : DEFAULT_DESKTOP_LYRICS.shadowColor,
+    windowWidth: clampNumber(d.windowWidth, 200, 3000, DEFAULT_DESKTOP_LYRICS.windowWidth),
+    windowHeight: clampNumber(d.windowHeight, 60, 800, DEFAULT_DESKTOP_LYRICS.windowHeight),
+    windowX: typeof d.windowX === 'number' ? d.windowX : -1,
+    windowY: typeof d.windowY === 'number' ? d.windowY : -1,
+    alwaysOnTop: d.alwaysOnTop !== false,
+    clickThrough: d.clickThrough === true,
+    maxLines: clampNumber(d.maxLines, 1, 5, DEFAULT_DESKTOP_LYRICS.maxLines)
+  }
+}
+
 function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
   const rawCachePath =
     typeof settings.cachePath === 'string' && settings.cachePath.trim()
@@ -354,7 +434,8 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
     audioExclusiveMode: settings.audioExclusiveMode === true,
     audioOutputConfig: normalizeOutputConfig(settings.audioOutputConfig),
     audioProcessing: normalizeAudioProcessingSettings(settings.audioProcessing),
-    audioEqPresets: normalizeAudioEqPresets(settings.audioEqPresets)
+    audioEqPresets: normalizeAudioEqPresets(settings.audioEqPresets),
+    desktopLyrics: normalizeDesktopLyrics(settings.desktopLyrics)
   }
 }
 
@@ -798,6 +879,7 @@ function getMimeType(filePath: string): string {
 
 let audioEngineManager: AudioEngineManager | null = null
 let mainWindow: BrowserWindow | null = null
+let desktopLyricsWindow: BrowserWindow | null = null
 let ncmServer: import('http').Server | null = null
 let tray: Tray | null = null
 let forceQuit = false
@@ -1360,6 +1442,24 @@ async function updateAppSettings(patch: Partial<AppSettings>): Promise<SettingsS
     Object.prototype.hasOwnProperty.call(patch, 'watchLibrary')
   ) {
     applyLibraryWatchers(appSettings.libraryFolders, appSettings.watchLibrary)
+  }
+
+  // Forward desktop lyrics settings changes directly to the lyrics window
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'desktopLyrics') &&
+    desktopLyricsWindow &&
+    !desktopLyricsWindow.isDestroyed()
+  ) {
+    const dl = appSettings.desktopLyrics
+    desktopLyricsWindow.setAlwaysOnTop(dl.alwaysOnTop, 'screen-saver')
+    desktopLyricsWindow.setIgnoreMouseEvents(dl.clickThrough, { forward: true })
+    if (
+      dl.windowWidth !== desktopLyricsWindow.getBounds().width ||
+      dl.windowHeight !== desktopLyricsWindow.getBounds().height
+    ) {
+      desktopLyricsWindow.setSize(dl.windowWidth, dl.windowHeight)
+    }
+    desktopLyricsWindow.webContents.send('desktopLyrics:initSettings', dl)
   }
 
   applyRuntimeSettings()
@@ -2080,6 +2180,7 @@ if (!gotSingleInstanceLock) {
   const MUSIC_LIBRARY_FILE = join(userDataPath, 'music-library.json')
   const NCM_COOKIE_FILE = join(userDataPath, 'ncm-cookie.json')
   const PLAYBACK_SESSION_FILE = join(userDataPath, 'playback-session.json')
+  const PLAYLISTS_FILE = join(userDataPath, 'playlists.json')
 
   ipcMain.handle('data:saveMusicLibrary', async (_event, tracks: unknown[]) => {
     await writeFile(MUSIC_LIBRARY_FILE, JSON.stringify(tracks), 'utf-8')
@@ -2117,6 +2218,20 @@ if (!gotSingleInstanceLock) {
     await rm(PLAYBACK_SESSION_FILE, { force: true })
   })
 
+  ipcMain.handle('data:savePlaylists', async (_event, playlists: unknown) => {
+    await writeFile(PLAYLISTS_FILE, JSON.stringify(playlists), 'utf-8')
+  })
+
+  ipcMain.handle('data:loadPlaylists', async () => {
+    if (!existsSync(PLAYLISTS_FILE)) return null
+    try {
+      const raw = readFileSync(PLAYLISTS_FILE, 'utf-8')
+      return JSON.parse(raw)
+    } catch {
+      return null
+    }
+  })
+
   ipcMain.handle('data:saveCookie', async (_event, cookie: string) => {
     await writeFile(NCM_COOKIE_FILE, JSON.stringify({ cookie }), 'utf-8')
   })
@@ -2129,6 +2244,169 @@ if (!gotSingleInstanceLock) {
     } catch {
       return ''
     }
+  })
+
+  // === Desktop Lyrics Window ===
+  function createDesktopLyricsWindow(): void {
+    if (desktopLyricsWindow && !desktopLyricsWindow.isDestroyed()) return
+
+    const dl = appSettings.desktopLyrics
+    const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize
+    const x = dl.windowX >= 0 ? dl.windowX : Math.round((screenWidth - dl.windowWidth) / 2)
+    const y = dl.windowY >= 0 ? dl.windowY : screenHeight - dl.windowHeight - 60
+
+    desktopLyricsWindow = new BrowserWindow({
+      width: dl.windowWidth,
+      height: dl.windowHeight,
+      x,
+      y,
+      frame: false,
+      transparent: true,
+      alwaysOnTop: dl.alwaysOnTop,
+      skipTaskbar: true,
+      resizable: false,
+      minimizable: false,
+      maximizable: false,
+      hasShadow: false,
+      show: false,
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        sandbox: false
+      }
+    })
+
+    desktopLyricsWindow.setAlwaysOnTop(dl.alwaysOnTop, 'screen-saver')
+    if (dl.clickThrough) {
+      desktopLyricsWindow.setIgnoreMouseEvents(true, { forward: true })
+    }
+
+    desktopLyricsWindow.on('ready-to-show', () => {
+      desktopLyricsWindow?.show()
+      // Send initial settings
+      desktopLyricsWindow?.webContents.send('desktopLyrics:initSettings', appSettings.desktopLyrics)
+    })
+
+    desktopLyricsWindow.on('closed', () => {
+      desktopLyricsWindow = null
+    })
+
+    // Save position on move
+    let moveSaveTimer: NodeJS.Timeout | null = null
+    desktopLyricsWindow.on('move', () => {
+      if (moveSaveTimer) clearTimeout(moveSaveTimer)
+      moveSaveTimer = setTimeout(() => {
+        if (!desktopLyricsWindow || desktopLyricsWindow.isDestroyed()) return
+        const [px, py] = desktopLyricsWindow.getPosition()
+        appSettings.desktopLyrics.windowX = px
+        appSettings.desktopLyrics.windowY = py
+        writeAppSettings(appSettings)
+      }, 500)
+    })
+
+    if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+      // In dev mode, we can't load a separate HTML file from the dev server easily
+      // So load the file directly
+      desktopLyricsWindow.loadFile(join(__dirname, '../../resources/desktop-lyrics.html'))
+    } else {
+      desktopLyricsWindow.loadFile(join(__dirname, '../../resources/desktop-lyrics.html'))
+    }
+  }
+
+  function showDesktopLyrics(): void {
+    if (!desktopLyricsWindow || desktopLyricsWindow.isDestroyed()) {
+      createDesktopLyricsWindow()
+    } else {
+      desktopLyricsWindow.show()
+    }
+  }
+
+  function hideDesktopLyrics(): void {
+    if (desktopLyricsWindow && !desktopLyricsWindow.isDestroyed()) {
+      desktopLyricsWindow.hide()
+    }
+  }
+
+  function toggleDesktopLyrics(): boolean {
+    const shouldShow = !appSettings.desktopLyrics.enabled
+    appSettings.desktopLyrics.enabled = shouldShow
+    writeAppSettings(appSettings)
+    if (shouldShow) {
+      showDesktopLyrics()
+    } else {
+      hideDesktopLyrics()
+    }
+    // Notify renderer
+    mainWindow?.webContents.send('desktopLyrics:toggleChanged', shouldShow)
+    return shouldShow
+  }
+
+  function applyDesktopLyricsSettings(settings: DesktopLyricsSettings): void {
+    appSettings.desktopLyrics = { ...settings }
+    writeAppSettings(appSettings)
+    if (desktopLyricsWindow && !desktopLyricsWindow.isDestroyed()) {
+      // Update window properties
+      desktopLyricsWindow.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver')
+      desktopLyricsWindow.setIgnoreMouseEvents(settings.clickThrough, { forward: true })
+      if (settings.windowWidth !== desktopLyricsWindow.getBounds().width ||
+          settings.windowHeight !== desktopLyricsWindow.getBounds().height) {
+        desktopLyricsWindow.setSize(settings.windowWidth, settings.windowHeight)
+      }
+      desktopLyricsWindow.webContents.send('desktopLyrics:initSettings', settings)
+    }
+  }
+
+  // Forward track/time updates from renderer to lyrics window
+  ipcMain.on('desktopLyrics:updateTrack', (_event, data: { lyrics: string | null; translatedLyrics?: string | null; title?: string; artist?: string }) => {
+    if (desktopLyricsWindow && !desktopLyricsWindow.isDestroyed()) {
+      desktopLyricsWindow.webContents.send('desktopLyrics:updateTrack', data)
+    }
+  })
+
+  ipcMain.on('desktopLyrics:updateTime', (_event, time: number) => {
+    if (desktopLyricsWindow && !desktopLyricsWindow.isDestroyed()) {
+      desktopLyricsWindow.webContents.send('desktopLyrics:updateTime', time)
+    }
+  })
+
+  ipcMain.on('desktopLyrics:updateSettings', (_event, settings: DesktopLyricsSettings) => {
+    applyDesktopLyricsSettings(settings)
+  })
+
+  ipcMain.handle('desktopLyrics:toggle', async () => {
+    return toggleDesktopLyrics()
+  })
+
+  ipcMain.handle('desktopLyrics:show', async () => {
+    showDesktopLyrics()
+  })
+
+  ipcMain.handle('desktopLyrics:hide', async () => {
+    hideDesktopLyrics()
+  })
+
+  // Lyrics window → main: get current position (for drag start)
+  ipcMain.on('desktopLyrics:getPosition', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win && !win.isDestroyed()) {
+      const [x, y] = win.getPosition()
+      event.sender.send('desktopLyrics:position', { x, y })
+    }
+  })
+
+  // Lyrics window → main: move window
+  ipcMain.on('desktopLyrics:move', (event, data: { x: number; y: number }) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win && !win.isDestroyed()) {
+      win.setPosition(data.x, data.y)
+    }
+  })
+
+  // Lyrics window → main: request close (close button in toolbar)
+  ipcMain.on('desktopLyrics:requestClose', () => {
+    appSettings.desktopLyrics.enabled = false
+    writeAppSettings(appSettings)
+    hideDesktopLyrics()
+    mainWindow?.webContents.send('desktopLyrics:toggleChanged', false)
   })
 
   createWindow()

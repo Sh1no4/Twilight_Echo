@@ -174,6 +174,30 @@ interface AudioEqPreset {
   eqBands: EqualizerBand[]
 }
 
+interface DesktopLyricsSettings {
+  enabled: boolean
+  fontSize: number
+  fontFamily: string
+  fontWeight: number
+  color: string
+  highlightColor: string
+  bgColor: string
+  bgOpacity: number
+  align: LyricAlign
+  showTranslation: boolean
+  lineSpacing: number
+  shadow: boolean
+  shadowBlur: number
+  shadowColor: string
+  windowWidth: number
+  windowHeight: number
+  windowX: number
+  windowY: number
+  alwaysOnTop: boolean
+  clickThrough: boolean
+  maxLines: number
+}
+
 interface AppSettings {
   autoCheckLogin: boolean
   autoLaunch: boolean
@@ -206,6 +230,7 @@ interface AppSettings {
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
   audioEqPresets: AudioEqPreset[]
+  desktopLyrics: DesktopLyricsSettings
 }
 
 interface ConvolverInfo {
@@ -709,6 +734,8 @@ interface WindowAPI {
     savePlaybackSession: (session: PlaybackSession | null) => Promise<void>
     loadPlaybackSession: () => Promise<PlaybackSession | null>
     clearPlaybackSession: () => Promise<void>
+    savePlaylists: (playlists: unknown) => Promise<void>
+    loadPlaylists: () => Promise<unknown>
     saveCookie: (cookie: string) => Promise<void>
     loadCookie: () => Promise<string>
   }
@@ -745,6 +772,32 @@ interface WindowAPI {
     list: () => Promise<TwilightPluginExtensionContribution[]>
     executeCommand: (command: string, args?: unknown[]) => Promise<unknown>
     readThemeStylesheet: (stylesheetPath: string) => Promise<string>
+  }
+  desktopLyrics: {
+    toggle: () => Promise<boolean>
+    show: () => Promise<void>
+    hide: () => Promise<void>
+    updateTrack: (data: {
+      lyrics: string | null
+      translatedLyrics?: string | null
+      title?: string
+      artist?: string
+    }) => void
+    updateTime: (time: number) => void
+    updateSettings: (settings: DesktopLyricsSettings) => void
+    onToggle: (cb: (enabled: boolean) => void) => () => void
+    onInitSettings: (cb: (settings: DesktopLyricsSettings) => void) => () => void
+    onTrackUpdate: (cb: (data: {
+      lyrics: string | null
+      translatedLyrics?: string | null
+      title?: string
+      artist?: string
+    }) => void) => () => void
+    onTimeUpdate: (cb: (time: number) => void) => () => void
+    onSettingsUpdate: (cb: (settings: DesktopLyricsSettings) => void) => () => void
+    getPosition: () => void
+    move: (x: number, y: number) => void
+    requestClose: () => void
   }
 }
 

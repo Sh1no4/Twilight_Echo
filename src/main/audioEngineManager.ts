@@ -390,6 +390,8 @@ export interface NativeAudioBinding {
   EnumerateBackends?: () => string
   GetEngineCapabilities?: () => string
   GetLastError?: () => string
+  /** 异步调用原生方法（service 模式下等待 utility 进程返回）。直接 N-API 模式不实现此方法。 */
+  callAsync?: (method: string, args: unknown[]) => Promise<unknown>
 }
 
 export interface AudioEngineServiceNativeBinding extends NativeAudioBinding {
@@ -1309,14 +1311,50 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async togglePause(): Promise<void> {
-    this.tryNative('暂停/继续', (native) => native.Pause())
-    this.playbackInfo.state = this.playbackInfo.state === 'paused' ? 'playing' : 'paused'
+    const native = this.native
+    if (!native) {
+      this.lastNativeError = '未加载 twilight_audio_node.node'
+      return
+    }
+
+    // Service 模式：异步等待 utility 进程执行完毕，读取真实状态
+    if (typeof native.callAsync === 'function') {
+      try {
+        await native.callAsync('Pause', [])
+        // 等待原生引擎更新状态后读取真实播放信息
+        const raw = await native.callAsync('GetPlaybackInfo', [])
+        const realInfo = parseNativeJson(raw as string | PlaybackInfo | undefined, null as PlaybackInfo | null)
+        if (realInfo) {
+          this.playbackInfo = { ...this.playbackInfo, ...this.normalizePlaybackInfo(realInfo) }
+        }
+        this.lastTick = this.scheduler.now()
+        this.publishProperty('pause', this.playbackInfo.state !== 'playing')
+        this.publishPlaybackInfo()
+        return
+      } catch (err) {
+        // 异步调用失败，回退到同步路径
+        const message = err instanceof Error ? err.message : String(err)
+        this.lastNativeError = message
+        console.warn('原生音频引擎异步暂停/继续失败，回退同步路径：', message)
+      }
+    }
+
+    // 直接 N-API 模式：Pause() 同步阻塞，GetPlaybackInfo() 立即返回真实状态
+    this.tryNative('暂停/继续', (n) => n.Pause())
+    const nativeInfo = this.readNativePlaybackInfo()
+    if (nativeInfo) {
+      this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+    }
     this.lastTick = this.scheduler.now()
     this.publishProperty('pause', this.playbackInfo.state !== 'playing')
     this.publishPlaybackInfo()
   }
 
   async pause(): Promise<void> {
+    // 真正的硬暂停：如果已经暂停则不操作，避免 toggle 语义导致的反向翻转
+    if (this.playbackInfo.state === 'paused' || this.playbackInfo.state === 'stopped') {
+      return
+    }
     await this.togglePause()
   }
 
@@ -1915,7 +1953,9 @@ export class AudioEngineManager extends EventEmitter {
         if (wasPlaying && nativeInfo.state === 'stopped') {
           const isAtEnd = this.queue.length === 0 || nativeInfo.queueIndex >= this.queue.length - 1
           if (isAtEnd) {
-            this.nativePlaybackActive = false
+            // 播放结束：保持 nativePlaybackActive=true 以便持续轮询原生真实状态，
+            // 避免状态发散后无法自我纠正。下次 play() 会重新设置状态。
+            this.publishProperty('eof-reached', true)
           }
         }
       }

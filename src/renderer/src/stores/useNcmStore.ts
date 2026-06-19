@@ -99,6 +99,8 @@ export interface NcmStore {
   fetchUserPlaylistsByUid: (uid: number) => Promise<NcmPlaylistSummary[]>
   fetchUserFollows: (uid: number, limit?: number, offset?: number) => Promise<NcmUserSummary[]>
   fetchUserFolloweds: (uid: number, limit?: number, offset?: number) => Promise<NcmUserSummary[]>
+  fetchPlayRecords: (type?: number) => Promise<Track[]>
+  fetchRecentSongs: (limit?: number) => Promise<Track[]>
   likeTrack: (songId: number, like: boolean) => Promise<void>
   isTrackLiked: (ncmSongId: number | undefined) => boolean
   syncLikedIds: (tracks: Track[]) => void
@@ -379,6 +381,14 @@ export function useNcmStore(): NcmStore {
     return ncmSongId != null && likedSongIds.value.has(ncmSongId)
   }
 
+  async function fetchPlayRecords(type = 0): Promise<Track[]> {
+    return callNcmProvider<Track[]>('fetchPlayRecords', [type])
+  }
+
+  async function fetchRecentSongs(limit = 100): Promise<Track[]> {
+    return callNcmProvider<Track[]>('fetchRecentSongs', [limit])
+  }
+
   return {
     providerAvailable,
     providerError,
@@ -415,6 +425,8 @@ export function useNcmStore(): NcmStore {
     fetchUserPlaylistsByUid,
     fetchUserFollows,
     fetchUserFolloweds,
+    fetchPlayRecords,
+    fetchRecentSongs,
     likeTrack,
     isTrackLiked,
     syncLikedIds

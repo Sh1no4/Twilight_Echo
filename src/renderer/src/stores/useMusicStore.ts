@@ -1,6 +1,14 @@
 import { ref, type Ref } from 'vue'
 import type { Track } from '../types/music'
 
+interface Playlist {
+  id: string
+  name: string
+  trackIds: string[]
+  isDefault?: boolean
+  createdAt: string
+}
+
 interface LibraryItem {
   name: string
   trackCount: number
@@ -16,7 +24,7 @@ const isScanning = ref(false)
 const artists = ref<LibraryItem[]>([])
 const albums = ref<LibraryItem[]>([])
 const folders = ref<LibraryItem[]>([])
-const playlists = ref<{ name: string; trackIds: Set<string> }[]>([])
+const playlists = ref<Playlist[]>([])
 const trackById = new Map<string, Track>()
 
 export function useMusicStore(): {
@@ -24,14 +32,17 @@ export function useMusicStore(): {
   artists: Ref<LibraryItem[]>
   albums: Ref<LibraryItem[]>
   folders: Ref<LibraryItem[]>
-  playlists: Ref<{ name: string; trackIds: Set<string> }[]>
+  playlists: Ref<Playlist[]>
   addTracks: (newTracks: Track[]) => Promise<void>
   removeTrack: (id: string) => void
   clearTracks: () => void
-  createPlaylist: (name: string) => void
+  createPlaylist: (name: string) => string
   addToPlaylist: (playlistName: string, trackId: string) => void
   removeFromPlaylist: (playlistName: string, trackId: string) => void
+  deletePlaylist: (playlistId: string) => void
   getPlaylistTracks: (playlistName: string) => Track[]
+  savePlaylists: () => Promise<void>
+  loadPlaylists: () => Promise<void>
   saveLibrary: () => Promise<void>
   loadLibrary: () => Promise<void>
   scannedFolders: Ref<string[]>
@@ -145,28 +156,79 @@ export function useMusicStore(): {
     rebuildDerivedCollections()
   }
 
-  function createPlaylist(name: string): void {
-    if (!playlists.value.find((p) => p.name === name)) {
-      playlists.value = [...playlists.value, { name, trackIds: new Set() }]
-    }
+  function createPlaylist(name: string): string {
+    const existing = playlists.value.find((p) => p.name === name)
+    if (existing) return existing.id
+    const id = `pl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    playlists.value = [...playlists.value, {
+      id,
+      name,
+      trackIds: [],
+      createdAt: new Date().toISOString()
+    }]
+    void savePlaylists()
+    return id
+  }
+
+  function deletePlaylist(playlistId: string): void {
+    const pl = playlists.value.find((p) => p.id === playlistId)
+    if (pl?.isDefault) return
+    playlists.value = playlists.value.filter((p) => p.id !== playlistId)
+    void savePlaylists()
   }
 
   function addToPlaylist(playlistName: string, trackId: string): void {
     const pl = playlists.value.find((p) => p.name === playlistName)
-    if (pl) pl.trackIds.add(trackId)
+    if (pl && !pl.trackIds.includes(trackId)) {
+      pl.trackIds = [...pl.trackIds, trackId]
+      void savePlaylists()
+    }
   }
 
   function removeFromPlaylist(playlistName: string, trackId: string): void {
     const pl = playlists.value.find((p) => p.name === playlistName)
-    if (pl) pl.trackIds.delete(trackId)
+    if (pl) {
+      pl.trackIds = pl.trackIds.filter((id) => id !== trackId)
+      void savePlaylists()
+    }
   }
 
   function getPlaylistTracks(playlistName: string): Track[] {
     const pl = playlists.value.find((p) => p.name === playlistName)
     if (!pl) return []
-    return Array.from(pl.trackIds)
+    return pl.trackIds
       .map((trackId) => trackById.get(trackId))
       .filter((track): track is Track => !!track)
+  }
+
+  async function savePlaylists(): Promise<void> {
+    const plain = JSON.parse(JSON.stringify(playlists.value))
+    await window.api.data.savePlaylists(plain)
+  }
+
+  async function loadPlaylists(): Promise<void> {
+    const saved = await window.api.data.loadPlaylists()
+    const DEFAULT_PLAYLIST: Playlist = {
+      id: 'pl_favorites',
+      name: '我收藏的音乐',
+      trackIds: [],
+      isDefault: true,
+      createdAt: new Date().toISOString()
+    }
+
+    if (!saved || !Array.isArray(saved) || saved.length === 0) {
+      // First launch: create default playlist
+      playlists.value = [DEFAULT_PLAYLIST]
+      void savePlaylists()
+      return
+    }
+
+    const loaded = saved as Playlist[]
+    // Ensure default playlist exists
+    if (!loaded.find((p) => p.isDefault)) {
+      loaded.unshift(DEFAULT_PLAYLIST)
+    }
+    playlists.value = loaded
   }
 
   rebuildDerivedCollections()
@@ -183,7 +245,10 @@ export function useMusicStore(): {
     createPlaylist,
     addToPlaylist,
     removeFromPlaylist,
+    deletePlaylist,
     getPlaylistTracks,
+    savePlaylists,
+    loadPlaylists,
     saveLibrary,
     loadLibrary,
     scannedFolders,

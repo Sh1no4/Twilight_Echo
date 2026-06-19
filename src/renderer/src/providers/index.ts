@@ -157,6 +157,12 @@ export async function syncPluginProviders(): Promise<void> {
                   offset
                 ])
             : undefined,
+          fetchPlayRecords: provider.capabilities.includes('library')
+            ? (type) => callProvider<Track[]>('fetchPlayRecords', [type])
+            : undefined,
+          fetchRecentSongs: provider.capabilities.includes('library')
+            ? (limit) => callProvider<Track[]>('fetchRecentSongs', [limit])
+            : undefined,
           likeTrack: provider.capabilities.includes('library')
             ? (trackId, like) => callProvider<void>('likeTrack', [trackId, like])
             : undefined,

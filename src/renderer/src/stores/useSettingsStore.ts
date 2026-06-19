@@ -78,7 +78,30 @@ const fallbackSettings: AppSettings = {
     routingMode: 'auto'
   },
   audioProcessing: fallbackAudioProcessing,
-  audioEqPresets: []
+  audioEqPresets: [],
+  desktopLyrics: {
+    enabled: false,
+    fontSize: 32,
+    fontFamily: 'system',
+    fontWeight: 700,
+    color: '#ffffff',
+    highlightColor: '#FFD700',
+    bgColor: '#000000',
+    bgOpacity: 30,
+    align: 'center',
+    showTranslation: true,
+    lineSpacing: 1.6,
+    shadow: true,
+    shadowBlur: 8,
+    shadowColor: '#000000',
+    windowWidth: 900,
+    windowHeight: 160,
+    windowX: -1,
+    windowY: -1,
+    alwaysOnTop: true,
+    clickThrough: false,
+    maxLines: 2
+  }
 }
 
 const settings = ref<AppSettings>({ ...fallbackSettings })

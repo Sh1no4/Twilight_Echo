@@ -195,7 +195,7 @@ function closeEqualizerPage(): void {
   showEqualizerPage.value = false
 }
 
-const { loadLibrary } = useMusicStore()
+const { loadLibrary, loadPlaylists } = useMusicStore()
 const { checkLogin } = useNcmStore()
 const { currentTrack, restorePlaybackSession, createPlaybackSession } = usePlayerStore()
 const { loadSettings, settings } = useSettingsStore()
@@ -346,6 +346,7 @@ onMounted(async () => {
   )
   const loadedSettings = await loadSettings()
   await loadLibrary()
+  await loadPlaylists()
   await checkLogin()
   await syncExtensions()
   await restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)

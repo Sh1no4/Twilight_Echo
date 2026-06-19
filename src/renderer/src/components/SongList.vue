@@ -24,7 +24,7 @@ type GridItem = {
   trackCount?: number
   cover?: string | null
   path?: string
-  trackIds?: Set<string>
+  trackIds?: string[]
 }
 
 const props = defineProps<{
@@ -46,7 +46,9 @@ const {
   folders,
   getPlaylistTracks,
   removeTrack,
-  addToPlaylist
+  addToPlaylist,
+  createPlaylist,
+  deletePlaylist
 } = useMusicStore()
 const { currentTrack, playTrack } = usePlayerStore()
 
@@ -306,6 +308,39 @@ function handleAddToPlaylist(playlistName: string): void {
   }
 }
 
+// Create Playlist Dialog
+const showCreatePlaylistDialog = ref(false)
+const newPlaylistName = ref('')
+const createPlaylistForTrack = ref<Track | null>(null)
+
+function openCreatePlaylistDialog(track?: Track): void {
+  createPlaylistForTrack.value = track ?? null
+  newPlaylistName.value = ''
+  showCreatePlaylistDialog.value = true
+  closeContextMenu()
+}
+
+function handleCreatePlaylist(): void {
+  const name = newPlaylistName.value.trim()
+  if (!name) return
+  createPlaylist(name)
+  if (createPlaylistForTrack.value) {
+    addToPlaylist(name, createPlaylistForTrack.value.id)
+  }
+  showCreatePlaylistDialog.value = false
+  createPlaylistForTrack.value = null
+  newPlaylistName.value = ''
+}
+
+function handleCreatePlaylistFromMenu(): void {
+  openCreatePlaylistDialog(selectedTrack.value ?? undefined)
+}
+
+function handleDeletePlaylist(playlistId: string, event: MouseEvent): void {
+  event.stopPropagation()
+  deletePlaylist(playlistId)
+}
+
 onUnmounted(() => {
   window.removeEventListener('click', closeContextMenu)
   stopGridRendering()
@@ -439,7 +474,7 @@ watch(
           </div>
           <div v-else-if="category === 'playlists' && playlists.length === 0" class="empty-state">
             <p class="empty-text">暂无歌单</p>
-            <p class="empty-hint">通过歌单「添加文件夹」导入音乐</p>
+            <p class="empty-hint">点击下方卡片创建你的第一个歌单</p>
           </div>
           <div v-else class="card-grid">
             <!-- Artist Cards -->
@@ -479,17 +514,33 @@ watch(
             </template>
             <!-- Playlist Cards -->
             <template v-if="category === 'playlists'">
+              <!-- Create Playlist Card -->
+              <div class="playlist-card create-playlist-card" @click="openCreatePlaylistDialog()">
+                <div class="playlist-cover-placeholder create-placeholder">
+                  <i class="pi pi-plus" style="font-size: 32px; color: #999"></i>
+                </div>
+                <div class="playlist-name">创建歌单</div>
+                <div class="playlist-count">点击创建新歌单</div>
+              </div>
               <div
                 v-for="playlist in visiblePlaylists"
-                :key="playlist.name"
+                :key="playlist.id"
                 class="playlist-card"
                 @click="emit('selectView', 'playlists', `playlist:${playlist.name}`)"
               >
-                <div class="playlist-cover-placeholder">
-                  <i class="pi pi-list" style="font-size: 32px; color: #ccc"></i>
+                <div class="playlist-cover-placeholder" :class="{ 'default-playlist-cover': playlist.isDefault }">
+                  <i :class="playlist.isDefault ? 'pi pi-heart' : 'pi pi-list'" style="font-size: 32px; color: #ccc"></i>
                 </div>
                 <div class="playlist-name">{{ playlist.name }}</div>
-                <div class="playlist-count">{{ playlist.trackIds?.size ?? 0 }} 首</div>
+                <div class="playlist-count">{{ playlist.trackIds?.length ?? 0 }} 首</div>
+                <div
+                  v-if="!playlist.isDefault"
+                  class="playlist-delete-btn"
+                  title="删除歌单"
+                  @click="handleDeletePlaylist(playlist.id, $event)"
+                >
+                  <i class="pi pi-trash" style="font-size: 12px"></i>
+                </div>
               </div>
             </template>
             <template v-if="category === 'folders'">
@@ -615,6 +666,7 @@ watch(
             </table>
 
             <!-- Context Menu -->
+            <Teleport to="body">
             <div
               v-if="showContextMenu"
               class="context-menu"
@@ -639,10 +691,17 @@ watch(
                 <i class="pi pi-chevron-right submenu-icon"></i>
 
                 <div v-if="showPlaylistSubmenu" class="submenu">
+                  <div
+                    class="menu-item create-playlist-menu-item"
+                    @click="handleCreatePlaylistFromMenu"
+                  >
+                    <i class="pi pi-plus" style="font-size: 14px; margin-right: 6px"></i>
+                    <span>创建新歌单</span>
+                  </div>
                   <div v-if="playlists.length === 0" class="menu-item disabled">暂无歌单</div>
                   <div
                     v-for="pl in playlists"
-                    :key="pl.name"
+                    :key="pl.id"
                     class="menu-item"
                     @click="handleAddToPlaylist(pl.name)"
                   >
@@ -651,10 +710,39 @@ watch(
                 </div>
               </div>
             </div>
+            </Teleport>
           </div>
         </template>
       </div>
     </Transition>
+
+    <!-- Create Playlist Dialog -->
+    <Teleport to="body">
+    <Transition name="dialog-fade">
+      <div v-if="showCreatePlaylistDialog" class="dialog-overlay" @click.self="showCreatePlaylistDialog = false">
+        <div class="create-playlist-dialog" @click.stop>
+          <h3 class="dialog-title">创建歌单</h3>
+          <input
+            v-model="newPlaylistName"
+            class="dialog-input"
+            type="text"
+            placeholder="请输入歌单名称"
+            maxlength="50"
+            autofocus
+            @keyup.enter="handleCreatePlaylist"
+          />
+          <div class="dialog-actions">
+            <button class="dialog-btn cancel" @click="showCreatePlaylistDialog = false">取消</button>
+            <button
+              class="dialog-btn confirm"
+              :disabled="!newPlaylistName.trim()"
+              @click="handleCreatePlaylist"
+            >创建</button>
+          </div>
+        </div>
+      </div>
+    </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -1473,6 +1561,187 @@ watch(
 
 .search-clear:hover {
   background: rgba(124, 77, 255, 0.2);
+}
+
+/* ── Create Playlist Card ── */
+.create-playlist-card {
+  border: 2px dashed rgba(255, 255, 255, 0.15);
+  transition: border-color 0.2s, transform 0.15s;
+}
+
+.create-playlist-card:hover {
+  border-color: rgba(124, 77, 255, 0.5);
+  transform: translateY(-2px);
+}
+
+.create-placeholder {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* ── Default Playlist Cover ── */
+.default-playlist-cover {
+  background: linear-gradient(135deg, rgba(124, 77, 255, 0.15), rgba(214, 51, 108, 0.15));
+}
+
+/* ── Playlist Delete Button ── */
+.playlist-delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.playlist-card {
+  position: relative;
+}
+
+.playlist-card:hover .playlist-delete-btn {
+  opacity: 1;
+}
+
+.playlist-delete-btn:hover {
+  background: rgba(220, 50, 50, 0.8);
+}
+
+/* ── Create Playlist Menu Item ── */
+.create-playlist-menu-item {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  margin-bottom: 2px;
+  padding-bottom: 10px;
+}
+
+.create-playlist-menu-item:hover {
+  background: rgba(124, 77, 255, 0.1);
+}
+
+/* ── Create Playlist Dialog ── */
+.dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.create-playlist-dialog {
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 16px;
+  padding: 28px;
+  width: 380px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(20px) saturate(150%);
+}
+
+.dialog-title {
+  margin: 0 0 20px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #333;
+}
+
+.dialog-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.03);
+  color: #333;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.2s;
+  box-sizing: border-box;
+}
+
+.dialog-input:focus {
+  border-color: rgba(124, 77, 255, 0.5);
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.dialog-input::placeholder {
+  color: rgba(0, 0, 0, 0.3);
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.dialog-btn {
+  padding: 8px 22px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+}
+
+.dialog-btn.cancel {
+  background: rgba(0, 0, 0, 0.05);
+  color: #666;
+}
+
+.dialog-btn.cancel:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.dialog-btn.confirm {
+  background: linear-gradient(135deg, #7c4dff, #d6336c);
+  color: #fff;
+}
+
+.dialog-btn.confirm:hover {
+  opacity: 0.9;
+}
+
+.dialog-btn.confirm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* ── Dialog Transition ── */
+.dialog-fade-enter-active,
+.dialog-fade-leave-active {
+  transition: opacity 0.2s;
+}
+
+.dialog-fade-enter-from,
+.dialog-fade-leave-to {
+  opacity: 0;
+}
+
+.dialog-fade-enter-active .create-playlist-dialog {
+  transition: transform 0.25s var(--te-ease-soft, ease), opacity 0.2s;
+}
+
+.dialog-fade-leave-active .create-playlist-dialog {
+  transition: transform 0.2s, opacity 0.15s;
+}
+
+.dialog-fade-enter-from .create-playlist-dialog {
+  transform: scale(0.92) translateY(10px);
+  opacity: 0;
+}
+
+.dialog-fade-leave-to .create-playlist-dialog {
+  transform: scale(0.95);
+  opacity: 0;
 }
 
 </style>
