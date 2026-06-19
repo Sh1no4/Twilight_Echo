@@ -1542,6 +1542,103 @@ export function usePlayerStore(): {
     if (nativePlaybackActive) window.api.audioEngine.seek(time).catch(() => {})
   }
 
+  // ── SMTC / MediaSession integration ──────────────────────────────
+  let mediaSessionHandlersBound = false
+
+  function updateMediaSessionMetadata(): void {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+    if (!appSettings.value.smtcEnabled) {
+      navigator.mediaSession.metadata = null
+      navigator.mediaSession.playbackState = 'none'
+      return
+    }
+    const track = currentTrack.value
+    if (!track) {
+      navigator.mediaSession.metadata = null
+      navigator.mediaSession.playbackState = 'none'
+      return
+    }
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: track.title || '',
+      artist: track.artist || '',
+      album: track.album || '',
+      artwork: track.cover ? [{ src: track.cover, sizes: '512x512', type: 'image/png' }] : []
+    })
+    navigator.mediaSession.playbackState = isPlaying.value ? 'playing' : 'paused'
+    if (duration.value > 0 && Number.isFinite(currentTime.value)) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: duration.value,
+          position: Math.min(currentTime.value, duration.value),
+          playbackRate: 1
+        })
+      } catch {
+        // setPositionState can throw if values are invalid; ignore
+      }
+    }
+  }
+
+  function setupMediaSessionHandlers(): void {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+    if (mediaSessionHandlersBound) return
+    mediaSessionHandlersBound = true
+    const ms = navigator.mediaSession
+    ms.setActionHandler('play', () => { void togglePlay() })
+    ms.setActionHandler('pause', () => { void togglePlay() })
+    ms.setActionHandler('previoustrack', () => { prev() })
+    ms.setActionHandler('nexttrack', () => { next() })
+    ms.setActionHandler('seekto', (details) => {
+      if (details.seekTime != null) seek(details.seekTime)
+    })
+    ms.setActionHandler('seekbackward', () => { seek(Math.max(0, currentTime.value - 10)) })
+    ms.setActionHandler('seekforward', () => { seek(Math.min(duration.value, currentTime.value + 10)) })
+  }
+
+  watch(() => appSettings.value.smtcEnabled, () => {
+    if (appSettings.value.smtcEnabled) setupMediaSessionHandlers()
+    updateMediaSessionMetadata()
+  }, { immediate: true })
+
+  watch([currentTrack, isPlaying], () => updateMediaSessionMetadata(), { immediate: true })
+
+  watch([currentTime, duration], () => {
+    if (appSettings.value.smtcEnabled && isPlaying.value) updateMediaSessionMetadata()
+  })
+  // ── end SMTC / MediaSession ──────────────────────────────────────
+
+  // ── Discord Rich Presence ─────────────────────────────────────────
+  let discordPlayStartTimestamp: number | null = null
+
+  function updateDiscordActivity(): void {
+    if (!appSettings.value.discordRpcEnabled) {
+      window.api.discord.clearActivity().catch(() => {})
+      return
+    }
+    const track = currentTrack.value
+    if (!track || !isPlaying.value) {
+      discordPlayStartTimestamp = null
+      window.api.discord.clearActivity().catch(() => {})
+      return
+    }
+    if (discordPlayStartTimestamp === null) {
+      discordPlayStartTimestamp = Date.now()
+    }
+    window.api.discord.updateActivity({
+      title: track.title || '',
+      artist: track.artist || '',
+      album: track.album || '',
+      playing: true,
+      startTime: discordPlayStartTimestamp
+    }).catch(() => {})
+  }
+
+  watch(() => appSettings.value.discordRpcEnabled, () => updateDiscordActivity(), { immediate: true })
+  watch([currentTrack, isPlaying], () => {
+    if (!isPlaying.value) discordPlayStartTimestamp = null
+    updateDiscordActivity()
+  })
+  // ── end Discord Rich Presence ─────────────────────────────────────
+
   function setVolume(vol: number): void {
     volume.value = vol
   }

@@ -681,7 +681,25 @@ const api = {
   shell: {
     showItemInFolder: (filePath: string): Promise<void> =>
       ipcRenderer.invoke('shell:showItemInFolder', filePath),
-    openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:openPath', path)
+    openPath: (path: string): Promise<string> => ipcRenderer.invoke('shell:openPath', path),
+    openExternal: (url: string): Promise<void> => ipcRenderer.invoke('shell:openExternal', url)
+  },
+  discord: {
+    updateActivity: (data: {
+      title: string
+      artist: string
+      album?: string
+      playing: boolean
+      startTime?: number
+    }): Promise<void> => ipcRenderer.invoke('discord:updateActivity', data),
+    clearActivity: (): Promise<void> => ipcRenderer.invoke('discord:clearActivity')
+  },
+  library: {
+    onChanged: (cb: () => void): (() => void) => {
+      const handler = (): void => cb()
+      ipcRenderer.on('library:changed', handler)
+      return () => ipcRenderer.removeListener('library:changed', handler)
+    }
   },
   fs: {
     scanMusicFiles: (folderPath: string): Promise<unknown[]> =>
@@ -796,6 +814,14 @@ const api = {
   },
   app: {
     relaunch: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
+    checkForUpdates: (): Promise<{
+      hasUpdate: boolean
+      currentVersion: string
+      latestVersion?: string
+      releaseUrl?: string
+      releaseNotes?: string
+      error?: string
+    }> => ipcRenderer.invoke('app:checkForUpdates'),
     onSavePlaybackSession: (cb: () => Promise<void> | void): (() => void) => {
       savePlaybackSessionCallbacks.add(cb)
       return () => savePlaybackSessionCallbacks.delete(cb)

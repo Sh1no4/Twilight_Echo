@@ -18,6 +18,7 @@ import { randomUUID } from 'crypto'
 import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { parseFile } from 'music-metadata'
+import DiscordRPC from 'discord-rpc'
 import {
   DEFAULT_AUDIO_PROCESSING,
   AudioEngineManager,
@@ -42,6 +43,9 @@ import type { TwilightPluginUninstallOptions } from './plugins/types'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+type UiDensity = 'compact' | 'standard' | 'comfortable'
+type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
+type LyricAlign = 'center' | 'left'
 
 interface AudioEqPreset {
   id: string
@@ -66,6 +70,16 @@ interface AppSettings {
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number
+  libraryFolders: string[]
+  watchLibrary: boolean
+  smtcEnabled: boolean
+  discordRpcEnabled: boolean
+  accentColor: string
+  fontFamily: string
+  uiDensity: UiDensity
+  nowPlayingBackground: NowPlayingBackground
+  lyricAlign: LyricAlign
+  lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
   audioOutput: AudioOutputId
   audioDevice: string
@@ -114,6 +128,16 @@ const DEFAULT_SETTINGS: AppSettings = {
   blurEffect: true,
   useCoverTheme: true,
   lyricFontSize: 18,
+  libraryFolders: [],
+  watchLibrary: true,
+  smtcEnabled: true,
+  discordRpcEnabled: false,
+  accentColor: 'violet',
+  fontFamily: 'system',
+  uiDensity: 'standard',
+  nowPlayingBackground: 'blur',
+  lyricAlign: 'center',
+  lyricDimOpacity: 40,
   playbackResumeMode: 'off',
   audioOutput:
     process.platform === 'darwin' ? 'coreaudio' : process.platform === 'linux' ? 'alsa' : 'wasapi',
@@ -145,6 +169,19 @@ function getDefaultCachePath(): string {
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.min(max, Math.max(min, value))
+}
+
+function compareVersions(a: string, b: string): number {
+  const partsA = a.split('.').map((n) => parseInt(n, 10) || 0)
+  const partsB = b.split('.').map((n) => parseInt(n, 10) || 0)
+  const maxLen = Math.max(partsA.length, partsB.length)
+  for (let i = 0; i < maxLen; i++) {
+    const va = partsA[i] ?? 0
+    const vb = partsB[i] ?? 0
+    if (va > vb) return 1
+    if (va < vb) return -1
+  }
+  return 0
 }
 
 function normalizeAudioEqPresets(presets: unknown): AudioEqPreset[] {
@@ -182,6 +219,31 @@ function normalizePlaybackResumeMode(mode: unknown): PlaybackResumeMode {
   return mode === 'track' || mode === 'trackAndPosition' || mode === 'off'
     ? mode
     : DEFAULT_SETTINGS.playbackResumeMode
+}
+
+const ACCENT_COLORS = ['violet', 'blue', 'emerald', 'rose', 'amber', 'slate']
+
+function normalizeAccentColor(value: unknown): string {
+  return typeof value === 'string' && ACCENT_COLORS.includes(value)
+    ? value
+    : DEFAULT_SETTINGS.accentColor
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .slice(0, 64)
+}
+
+function normalizeUiDensity(value: unknown): UiDensity {
+  return value === 'compact' || value === 'comfortable' ? value : 'standard'
+}
+
+function normalizeNowPlayingBackground(value: unknown): NowPlayingBackground {
+  return value === 'fluid' || value === 'solid' ? value : 'blur'
 }
 
 function normalizePluginThemeId(value: unknown): string | null {
@@ -274,6 +336,18 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
     blurEffect: settings.blurEffect !== false,
     useCoverTheme: settings.useCoverTheme !== false,
     lyricFontSize: clampNumber(settings.lyricFontSize, 14, 28, DEFAULT_SETTINGS.lyricFontSize),
+    libraryFolders: normalizeStringArray(settings.libraryFolders),
+    watchLibrary: settings.watchLibrary !== false,
+    smtcEnabled: settings.smtcEnabled !== false,
+    discordRpcEnabled: settings.discordRpcEnabled === true,
+    accentColor: normalizeAccentColor(settings.accentColor),
+    fontFamily: typeof settings.fontFamily === 'string' && settings.fontFamily.trim()
+      ? settings.fontFamily.trim().slice(0, 64)
+      : DEFAULT_SETTINGS.fontFamily,
+    uiDensity: normalizeUiDensity(settings.uiDensity),
+    nowPlayingBackground: normalizeNowPlayingBackground(settings.nowPlayingBackground),
+    lyricAlign: settings.lyricAlign === 'left' ? 'left' : 'center',
+    lyricDimOpacity: clampNumber(settings.lyricDimOpacity, 10, 100, DEFAULT_SETTINGS.lyricDimOpacity),
     playbackResumeMode: normalizePlaybackResumeMode(settings.playbackResumeMode),
     audioOutput: normalizeAudioOutput(settings.audioOutput),
     audioDevice: normalizeAudioDevice(settings.audioDevice),
@@ -928,10 +1002,107 @@ function applyAutoLaunch(enabled: boolean): void {
       openAtLogin: enabled,
       path: process.execPath
     })
-  } catch (err) {
-    console.warn('设置开机自启动失败：', err)
+  } catch {
+    // Some platforms / sandboxed environments don't support setLoginItemSettings
   }
 }
+
+// ── Discord Rich Presence ──────────────────────────────────────────
+const DISCORD_CLIENT_ID = '1390521943809896488' // Twilight Echo application ID
+interface DiscordActivityData {
+  title: string
+  artist: string
+  album?: string
+  playing: boolean
+  startTime?: number
+}
+
+let discordClient: DiscordRPC.Client | null = null
+let discordConnected = false
+let discordConnectAttempted = false
+let discordReconnectTimer: NodeJS.Timeout | null = null
+let lastDiscordActivity: DiscordActivityData | null = null
+
+function connectDiscord(): void {
+  if (discordConnectAttempted || discordConnected) return
+  discordConnectAttempted = true
+  try {
+    discordClient = new DiscordRPC.Client({ transport: 'ipc' })
+    discordClient.once('connected', () => {
+      discordConnected = true
+      if (lastDiscordActivity) updateDiscordActivity(lastDiscordActivity)
+    })
+    discordClient.once('disconnected', () => {
+      discordConnected = false
+      discordClient = null
+      if (discordReconnectTimer) clearTimeout(discordReconnectTimer)
+      discordReconnectTimer = setTimeout(() => {
+        discordConnectAttempted = false
+        if (appSettings.discordRpcEnabled) connectDiscord()
+      }, 15000)
+    })
+    void discordClient.login({ clientId: DISCORD_CLIENT_ID }).catch(() => {
+      // Discord not running or IPC unavailable — silently retry later
+      discordConnected = false
+      discordClient = null
+      if (discordReconnectTimer) clearTimeout(discordReconnectTimer)
+      discordReconnectTimer = setTimeout(() => {
+        discordConnectAttempted = false
+        if (appSettings.discordRpcEnabled) connectDiscord()
+      }, 30000)
+    })
+  } catch {
+    discordConnectAttempted = false
+  }
+}
+
+function disconnectDiscord(): void {
+  if (discordReconnectTimer) {
+    clearTimeout(discordReconnectTimer)
+    discordReconnectTimer = null
+  }
+  if (discordClient) {
+    try { void discordClient.destroy() } catch { /* ignore */ }
+    discordClient = null
+  }
+  discordConnected = false
+  discordConnectAttempted = false
+}
+
+function updateDiscordActivity(data: DiscordActivityData): void {
+  lastDiscordActivity = data
+  if (!discordConnected || !discordClient) return
+  const activity: DiscordRPC.Presence = {
+    details: data.title || 'Unknown track',
+    state: data.artist ? `by ${data.artist}` : '',
+    instance: false
+  }
+  if (data.playing && data.startTime) {
+    activity.startTimestamp = data.startTime
+    activity.type = 2 // ActivityType.Listening
+  }
+  try {
+    void discordClient.setActivity(activity)
+  } catch {
+    // ignore transient errors
+  }
+}
+
+function clearDiscordActivity(): void {
+  lastDiscordActivity = null
+  if (!discordConnected || !discordClient) return
+  try { void discordClient.clearActivity() } catch { /* ignore */ }
+}
+
+function applyDiscordRpcSetting(enabled: boolean): void {
+  if (enabled) {
+    connectDiscord()
+  } else {
+    clearDiscordActivity()
+    disconnectDiscord()
+  }
+}
+// ── end Discord Rich Presence ──────────────────────────────────────
 
 function unregisterPlayerShortcuts(): void {
   for (const shortcut of PLAYER_SHORTCUTS) {
@@ -1006,9 +1177,67 @@ function syncTrayState(): void {
 
 function applyRuntimeSettings(): void {
   applyAutoLaunch(appSettings.autoLaunch)
+  applyDiscordRpcSetting(appSettings.discordRpcEnabled)
+  applyLibraryWatchers(appSettings.libraryFolders, appSettings.watchLibrary)
   registerPlayerShortcuts()
   syncTrayState()
 }
+
+// ── Library folder watchers ───────────────────────────────────────
+const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.wav', '.ape', '.m4a', '.ogg', '.opus', '.wma', '.aac', '.dsf', '.dff', '.iso'])
+const libraryWatchers = new Map<string, { watcher: ReturnType<typeof import('fs')['watch']>; debounce: NodeJS.Timeout | null }>()
+let libraryWatcherDebounceMs = 2000
+
+function notifyLibraryChanged(): void {
+  mainWindow?.webContents.send('library:changed')
+}
+
+function createFolderWatcher(folder: string): void {
+  if (libraryWatchers.has(folder)) return
+  try {
+    const { watch } = require('fs') as typeof import('fs')
+    const watcher = watch(folder, { recursive: true }, (_eventType, filename) => {
+      if (!filename) return
+      const ext = extname(filename).toLowerCase()
+      if (!AUDIO_EXTENSIONS.has(ext)) return
+      const entry = libraryWatchers.get(folder)
+      if (!entry) return
+      if (entry.debounce) clearTimeout(entry.debounce)
+      entry.debounce = setTimeout(() => {
+        entry.debounce = null
+        notifyLibraryChanged()
+      }, libraryWatcherDebounceMs)
+    })
+    libraryWatchers.set(folder, { watcher, debounce: null })
+  } catch {
+    // Folder may not exist yet or watching unsupported — skip silently
+  }
+}
+
+function removeFolderWatcher(folder: string): void {
+  const entry = libraryWatchers.get(folder)
+  if (!entry) return
+  if (entry.debounce) clearTimeout(entry.debounce)
+  try { entry.watcher.close() } catch { /* ignore */ }
+  libraryWatchers.delete(folder)
+}
+
+function applyLibraryWatchers(folders: string[], enabled: boolean): void {
+  // Remove watchers for folders no longer in the list
+  for (const folder of libraryWatchers.keys()) {
+    if (!folders.includes(folder)) removeFolderWatcher(folder)
+  }
+  if (!enabled) {
+    // Remove all watchers when monitoring is disabled
+    for (const folder of libraryWatchers.keys()) removeFolderWatcher(folder)
+    return
+  }
+  // Add watchers for new folders
+  for (const folder of folders) {
+    if (!libraryWatchers.has(folder)) createFolderWatcher(folder)
+  }
+}
+// ── end Library folder watchers ───────────────────────────────────
 
 function persistAudioOutputState(state: AudioOutputState): SettingsSnapshot {
   appSettings = normalizeAppSettings({
@@ -1120,6 +1349,17 @@ async function updateAppSettings(patch: Partial<AppSettings>): Promise<SettingsS
 
   if (shouldUpdateAudioOutputConfig) {
     await audioEngineManager?.setOutputConfig(appSettings.audioOutputConfig)
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, 'discordRpcEnabled')) {
+    applyDiscordRpcSetting(appSettings.discordRpcEnabled)
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'libraryFolders') ||
+    Object.prototype.hasOwnProperty.call(patch, 'watchLibrary')
+  ) {
+    applyLibraryWatchers(appSettings.libraryFolders, appSettings.watchLibrary)
   }
 
   applyRuntimeSettings()
@@ -1289,10 +1529,6 @@ function setupAudioEngineIpc(): void {
 
   ipcMain.handle('audioEngine:togglePause', async () => {
     await requireAudioEngine().togglePause()
-  })
-
-  ipcMain.handle('audioEngine:pause', async () => {
-    await requireAudioEngine().pause()
   })
 
   ipcMain.handle('audioEngine:seek', async (_event, time: number) => {
@@ -1732,6 +1968,45 @@ if (!gotSingleInstanceLock) {
 
   ipcMain.handle('shell:openPath', async (_event, targetPath: string) => {
     return await shell.openPath(targetPath)
+  })
+
+  ipcMain.handle('shell:openExternal', async (_event, url: string) => {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return
+    await shell.openExternal(url)
+  })
+
+  ipcMain.handle('discord:updateActivity', (_event, data: DiscordActivityData) => {
+    if (appSettings.discordRpcEnabled) updateDiscordActivity(data)
+    return true
+  })
+
+  ipcMain.handle('discord:clearActivity', () => {
+    clearDiscordActivity()
+    return true
+  })
+
+  ipcMain.handle('app:checkForUpdates', async () => {
+    try {
+      const currentVersion = app.getVersion()
+      const response = await fetch(
+        'https://api.github.com/repos/nousresearch/twilight-echo/releases/latest',
+        { headers: { 'User-Agent': 'TwilightEcho-Updater' } }
+      )
+      if (!response.ok) return { hasUpdate: false, currentVersion, error: 'network' }
+      const release = await response.json() as { tag_name?: string; html_url?: string; body?: string }
+      const latestTag = (release.tag_name || '').replace(/^v/, '')
+      if (!latestTag) return { hasUpdate: false, currentVersion }
+      const hasUpdate = compareVersions(latestTag, currentVersion) > 0
+      return {
+        hasUpdate,
+        currentVersion,
+        latestVersion: latestTag,
+        releaseUrl: release.html_url || '',
+        releaseNotes: release.body || ''
+      }
+    } catch {
+      return { hasUpdate: false, currentVersion: app.getVersion(), error: 'network' }
+    }
   })
 
   ipcMain.handle('settings:get', async () => {

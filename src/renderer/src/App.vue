@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch, defineAsyncComponent } from 'vue'
 import TitleBar from './components/TitleBar.vue'
 import SideMenu from './components/SideMenu.vue'
 import SongList from './components/SongList.vue'
@@ -7,10 +7,10 @@ import LocalDashboard from './components/LocalDashboard.vue'
 import PlayerBar from './components/PlayerBar.vue'
 import PlayingMusic from './components/PlayingMusic.vue'
 import StreamingPage from './components/StreamingPage.vue'
-import LoginPage from './components/LoginPage.vue'
-import SettingsPage from './components/SettingsPage.vue'
-import EqualizerPage from './components/EqualizerPage.vue'
-import PluginExtensionPage from './components/PluginExtensionPage.vue'
+const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'))
+const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
+const EqualizerPage = defineAsyncComponent(() => import('./components/EqualizerPage.vue'))
+const PluginExtensionPage = defineAsyncComponent(() => import('./components/PluginExtensionPage.vue'))
 import { useMusicStore } from './stores/useMusicStore'
 import { useNcmStore } from './stores/useNcmStore'
 import { setupListeningStatsTracking } from './stores/useListeningStatsStore'
@@ -241,6 +241,7 @@ const sideMenuOverlapGap = 10
 
 let sideMenuMonitorFrame: number | null = null
 let removePlaybackSessionSaveListener: (() => void) | null = null
+let removeLibraryChangedListener: (() => void) | null = null
 
 async function restoreSavedPlaybackSession(mode: PlaybackResumeMode): Promise<void> {
   if (mode === 'off') {
@@ -348,6 +349,9 @@ onMounted(async () => {
   await checkLogin()
   await syncExtensions()
   await restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
+  removeLibraryChangedListener = window.api.library.onChanged(() => {
+    loadLibrary().catch(() => {})
+  })
 })
 
 watch(
@@ -398,6 +402,8 @@ watch(sidebarPages, (pages) => {
 onBeforeUnmount(() => {
   removePlaybackSessionSaveListener?.()
   removePlaybackSessionSaveListener = null
+  removeLibraryChangedListener?.()
+  removeLibraryChangedListener = null
   stopSideMenuMonitor()
   document.body.classList.remove('te-settings-surface')
   document.body.classList.remove('te-streaming-surface')

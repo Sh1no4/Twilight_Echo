@@ -13,6 +13,7 @@ import {
   type ComponentPublicInstance
 } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
+import { useSettingsStore } from '../stores/useSettingsStore'
 
 interface LyricLine {
   time: number
@@ -21,6 +22,17 @@ interface LyricLine {
 }
 
 const { currentTrack, dominantColor, currentTime, duration, seek, formatTime } = usePlayerStore()
+const { settings } = useSettingsStore()
+
+const nowPlayingBackground = computed(() => settings.value.nowPlayingBackground)
+const lyricAlign = computed(() => settings.value.lyricAlign)
+const lyricDimOpacity = computed(() => settings.value.lyricDimOpacity / 100)
+
+const isBlurBackground = computed(() => nowPlayingBackground.value === 'blur')
+const isFluidBackground = computed(() => nowPlayingBackground.value === 'fluid')
+const isSolidBackground = computed(() => nowPlayingBackground.value === 'solid')
+
+const lyricAlignClass = computed(() => `lyric-align-${lyricAlign.value}`)
 
 const bgSrc = ref(currentTrack.value?.cover ?? '')
 const lyricsEl = ref<HTMLElement | null>(null)
@@ -435,11 +447,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="playing-music" :style="{ '--accent-color': dominantColor }">
+  <div class="playing-music" :class="`bg-${nowPlayingBackground}`" :style="{ '--accent-color': dominantColor, '--lyric-dim': lyricDimOpacity }">
     <div class="backdrop" aria-hidden="true">
       <Transition name="backdrop-cover-fade" appear>
-        <img v-if="bgSrc" :key="bgSrc" :src="bgSrc" class="backdrop-cover" alt="" />
+        <img v-if="bgSrc && isBlurBackground" :key="bgSrc" :src="bgSrc" class="backdrop-cover" alt="" />
       </Transition>
+      <div v-if="isFluidBackground" class="backdrop-fluid" />
+      <div v-if="isSolidBackground" class="backdrop-solid" />
       <div class="backdrop-scrim" />
       <div class="backdrop-accent" />
     </div>
@@ -474,6 +488,7 @@ onBeforeUnmount(() => {
           <div
             ref="lyricsEl"
             class="lyrics-scroll"
+            :class="lyricAlignClass"
             @scroll.passive="onLyricsScroll"
             @wheel.passive="onLyricsManualScroll"
             @pointerdown="onLyricsManualScroll"
@@ -594,6 +609,27 @@ onBeforeUnmount(() => {
     ),
     radial-gradient(circle at 88% 20%, rgba(255, 255, 255, 0.12), transparent 26%);
   opacity: 0.8;
+}
+
+.backdrop-fluid {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, #0f172a, #1e3a5f, #312e81, #1e3a5f, #0f172a);
+  background-size: 400% 400%;
+  animation: fluid-drift 18s ease-in-out infinite;
+}
+
+.backdrop-solid {
+  position: absolute;
+  inset: 0;
+  background: #05070b;
+}
+
+@keyframes fluid-drift {
+  0%, 100% { background-position: 0% 50%; }
+  25% { background-position: 100% 50%; }
+  50% { background-position: 100% 100%; }
+  75% { background-position: 0% 100%; }
 }
 
 .stage {
@@ -804,19 +840,19 @@ onBeforeUnmount(() => {
 }
 
 .lyric-row.idle {
-  opacity: 0.56;
+  opacity: var(--lyric-dim, 0.56);
 }
 
 .lyric-row.far {
-  opacity: 0.3;
+  opacity: calc(var(--lyric-dim, 0.56) * 0.54);
 }
 
 .lyric-row.mid {
-  opacity: 0.52;
+  opacity: calc(var(--lyric-dim, 0.56) * 0.93);
 }
 
 .lyric-row.near {
-  opacity: 0.84;
+  opacity: calc(var(--lyric-dim, 0.56) * 1.5);
 }
 
 .lyric-row.active {
@@ -837,6 +873,11 @@ onBeforeUnmount(() => {
   line-height: 1.85;
   text-align: center;
   word-break: break-word;
+}
+
+.lyrics-scroll.lyric-align-left .lyric-text,
+.lyrics-scroll.lyric-align-left .lyric-translation {
+  text-align: left;
 }
 
 .lyric-row.active .lyric-text {

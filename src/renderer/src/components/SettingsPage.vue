@@ -1,5 +1,25 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { usePlayerStore } from '../stores/usePlayerStore'
+import { useSettingsStore } from '../stores/useSettingsStore'
+import { useExtensionRegistry } from '../extensions/registry'
+import PluginSettingsPanel from './PluginSettingsPanel.vue'
+import type {
+  AppSettings,
+  AppTheme,
+  AudioDeviceOption,
+  AudioOutputId,
+  AudioProcessingSettings,
+  ChannelRoutingMode,
+  DsdOutputMode,
+  LyricAlign,
+  NowPlayingBackground,
+  OutputConfig,
+  PlaybackResumeMode,
+  SacdProgramMode,
+  UiDensity,
+  VolumeNormalizationMode
+} from '../types/settings'
 
 type SectionKey =
   | 'general'
@@ -12,11 +32,21 @@ type SectionKey =
   | 'shortcuts'
   | 'about'
 
+type BooleanSettingKey =
+  | 'launchAtLogin'
+  | 'hardwareAcceleration'
+  | 'blurEffect'
+  | 'useCoverTheme'
+  | 'globalShortcuts'
+  | 'watchLibrary'
+  | 'smtcEnabled'
+  | 'discordRpcEnabled'
+
 const props = defineProps<{
   initialSection?: SectionKey
 }>()
 
-defineEmits<{
+const emit = defineEmits<{
   back: []
   openEqualizer: []
 }>()
@@ -33,8 +63,527 @@ const sections: { key: SectionKey; label: string; icon: string }[] = [
   { key: 'about', label: '关于', icon: 'pi pi-info-circle' }
 ]
 
+const colorModeOptions: { value: AppTheme; label: string; icon: string }[] = [
+  { value: 'system', label: '系统', icon: 'pi pi-desktop' },
+  { value: 'pureWhite', label: '浅色', icon: 'pi pi-sun' },
+  { value: 'dark', label: '深色', icon: 'pi pi-moon' }
+]
+
+const playbackResumeOptions: { value: PlaybackResumeMode; label: string }[] = [
+  { value: 'off', label: '关闭' },
+  { value: 'track', label: '记住曲目' },
+  { value: 'trackAndPosition', label: '曲目和位置' }
+]
+
+const bufferSizeOptions = [
+  { value: 0, label: 'Auto' },
+  { value: 64, label: '64' },
+  { value: 128, label: '128' },
+  { value: 256, label: '256' },
+  { value: 512, label: '512' },
+  { value: 1024, label: '1024' },
+  { value: 2048, label: '2048' }
+] as const
+
+const routingModeOptions: { value: ChannelRoutingMode; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'stereo', label: 'Stereo' },
+  { value: 'stereo-to-5.1', label: 'Stereo → 5.1' },
+  { value: 'stereo-to-7.1', label: 'Stereo → 7.1' },
+  { value: 'mono-to-stereo', label: 'Mono → Stereo' },
+  { value: 'mono-to-multichannel', label: 'Mono → Multichannel' }
+]
+
+const replayGainOptions: { value: VolumeNormalizationMode; label: string }[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'track', label: 'Track' },
+  { value: 'album', label: 'Album' },
+  { value: 'loudnorm', label: 'Loudnorm' }
+]
+
+const dsdOutputModeOptions: { value: DsdOutputMode; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'pcm', label: 'PCM' },
+  { value: 'dop', label: 'DoP' },
+  { value: 'native', label: 'Native' }
+]
+
+const sacdProgramModeOptions: { value: SacdProgramMode; label: string }[] = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'stereo', label: 'Stereo' },
+  { value: 'multichannel', label: 'Multichannel' }
+]
+
+const fftResolutionOptions = [64, 128, 256, 512, 1024, 2048] as const
+
+const accentColorOptions: { value: string; label: string; class: string }[] = [
+  { value: 'violet', label: '紫罗兰', class: 'violet' },
+  { value: 'blue', label: '蓝', class: 'blue' },
+  { value: 'emerald', label: '翠绿', class: 'emerald' },
+  { value: 'rose', label: '玫瑰', class: 'rose' },
+  { value: 'amber', label: '琥珀', class: 'amber' },
+  { value: 'slate', label: '石板', class: 'slate' }
+]
+
+const fontFamilyOptions: { value: string; label: string }[] = [
+  { value: 'system', label: '系统默认 (System)' },
+  { value: 'inter', label: 'Inter / Roboto' },
+  { value: 'lxgw', label: '霞鹜文楷 (LXGW)' },
+  { value: 'sarasa', label: 'Sarasa Gothic' },
+  { value: 'comic', label: 'Comic Sans MS' }
+]
+
+const uiDensityOptions: { value: UiDensity; label: string }[] = [
+  { value: 'compact', label: '紧凑' },
+  { value: 'standard', label: '标准' },
+  { value: 'comfortable', label: '舒展' }
+]
+
+const nowPlayingBackgroundOptions: { value: NowPlayingBackground; label: string; class: string }[] = [
+  { value: 'blur', label: '专辑高斯模糊', class: 'blur-cover' },
+  { value: 'fluid', label: '动态流体渐变', class: 'fluid-cover' },
+  { value: 'solid', label: '纯粹极简纯色', class: 'solid-cover' }
+]
+
+const lyricAlignOptions: { value: LyricAlign; label: string }[] = [
+  { value: 'center', label: '居中对齐' },
+  { value: 'left', label: '靠左对齐' }
+]
+
+const GITHUB_URL = 'https://github.com/nousresearch/twilight-echo'
+const HOMEPAGE_URL = 'https://twilightecho.com'
+
+const updateCheckState = ref<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle')
+const latestVersion = ref('')
+const lastUpdateCheck = ref('')
+
 const activeSection = ref<SectionKey>(props.initialSection ?? 'general')
 const pageRef = ref<HTMLElement | null>(null)
+
+const {
+  settings,
+  paths,
+  appVersion,
+  clearingCache,
+  formattedCacheSize,
+  restartRequired,
+  restartReasons,
+  loadSettings,
+  updateSettings,
+  chooseCacheFolder,
+  resetCacheFolder,
+  refreshCacheSize,
+  clearCache,
+  relaunch,
+  addLibraryFolder,
+  removeLibraryFolder,
+  openExternalUrl
+} = useSettingsStore()
+
+const {
+  exclusiveMode,
+  audioOutput,
+  audioDevice,
+  audioOutputOptions,
+  audioDeviceOptions,
+  audioProcessing,
+  audioOutputConfig,
+  playbackInfo,
+  outputInfo,
+  audioEngineError,
+  volume,
+  toggleExclusiveMode,
+  setAudioOutput,
+  setAudioDevice,
+  setAudioOutputConfig,
+  setAudioProcessing,
+  setReplayGainMode,
+  setCrossfeedStrength,
+  selectImpulseResponse,
+  clearImpulseResponse,
+  refreshAudioOutputState,
+  setVolume,
+  toggleGapless
+} = usePlayerStore()
+
+const { uiContributions, syncExtensions } = useExtensionRegistry()
+const pluginSettingsPanels = computed(() =>
+  uiContributions.value.filter((contribution) => contribution.kind === 'settingsPanel')
+)
+
+const volumePercent = computed({
+  get: () => Math.round(volume.value * 100),
+  set: (value: number) => {
+    setVolume(value / 100)
+  }
+})
+
+const activeCachePath = computed(
+  () => paths.value?.activeCachePath ?? settings.value.cachePath ?? ''
+)
+const selectedAudioOutput = computed(() =>
+  audioOutputOptions.value.find((option) => option.id === audioOutput.value)
+)
+const exclusiveAvailable = computed(() => selectedAudioOutput.value?.supportsExclusive ?? false)
+const isUpmixActive = computed(
+  () =>
+    audioOutputConfig.value.routingMode === 'stereo-to-5.1' ||
+    audioOutputConfig.value.routingMode === 'stereo-to-7.1'
+)
+const showWasapiPushMode = computed(() => audioOutput.value === 'wasapi' && exclusiveMode.value)
+
+// 高级引擎参数折叠状态
+const advancedParamsOpen = ref(false)
+
+// DSP 信号链状态
+const eqChainActive = computed(() => audioProcessing.value.dspEnabled && audioProcessing.value.eqEnabled)
+const crossfeedChainActive = computed(() => audioProcessing.value.dspEnabled && audioProcessing.value.crossfeedEnabled)
+const convolverChainActive = computed(() => audioProcessing.value.dspEnabled && audioProcessing.value.convolverEnabled)
+
+// 输出诊断信息
+const outputChainText = computed(() => {
+  const info = playbackInfo.value
+  if (!info) return '等待音频引擎'
+  const codec = info.codec || 'Source'
+  const depth = info.sourceBitDepth > 0 ? `${info.sourceBitDepth}bit` : ''
+  const rate = info.sourceSampleRate > 0 ? compactRate(info.sourceSampleRate) : ''
+  const src = [codec, depth, rate].filter(Boolean).join(' ')
+  const out = outputInfo.value
+  const backend = out?.actualBackend || info.actualBackend || audioOutput.value
+  const actualDepth = (out?.actualBitDepth || info.actualBitDepth || 0) > 0 ? `${out?.actualBitDepth || info.actualBitDepth}bit` : ''
+  const actualRate = (out?.actualSampleRate || info.actualSampleRate || 0) > 0 ? compactRate(out?.actualSampleRate || info.actualSampleRate) : ''
+  return `${src} -> ${backend.toUpperCase()} ${actualDepth} ${actualRate}`.trim()
+})
+
+const outputLatencyText = computed(() => {
+  const info = outputInfo.value
+  if (!info) return ''
+  const total = info.latencyInfo?.totalLatencyMs ?? info.latencyMs ?? 0
+  return `Latency ${total.toFixed(1)} ms`
+})
+
+const outputDiagnosticsText = computed(() => {
+  const diagnostics = outputInfo.value?.diagnostics ?? playbackInfo.value?.diagnostics
+  if (!diagnostics) return 'Underrun 0 · Drop 0'
+  return `Underrun ${diagnostics.sessionUnderrunCount} · Drop ${diagnostics.sessionBufferDropCount}`
+})
+
+// Crossfeed 百分比
+const crossfeedPercent = computed(() => Math.round(audioProcessing.value.crossfeedStrength * 100))
+
+function compactRate(rate: number): string {
+  return rate > 0 ? `${Math.round(rate / 100) / 10}kHz` : ''
+}
+
+const dspInputText = computed(() => {
+  const info = playbackInfo.value
+  if (!info) return '待命'
+  const depth = info.sourceBitDepth > 0 ? `${info.sourceBitDepth}bit` : ''
+  const rate = info.sourceSampleRate > 0 ? compactRate(info.sourceSampleRate) : ''
+  const codec = info.codec || 'PCM'
+  return [codec, depth, rate].filter(Boolean).join(' ') || 'PCM'
+})
+
+const dspProcessText = computed(() => {
+  if (!audioProcessing.value.dspEnabled) return 'Bypass'
+  return playbackInfo.value?.dspActive ? '正在处理' : '处理链待命'
+})
+
+const dspOutputText = computed(() => {
+  const out = outputInfo.value
+  if (!out) return audioOutput.value.toUpperCase()
+  const backend = out.actualBackend || audioOutput.value
+  const mode = out.accessMode ? ` · ${out.accessMode}` : ''
+  return `${backend}${mode}`
+})
+
+const outputFormatText = computed(() => {
+  const info = outputInfo.value
+  if (!info) return '等待音频引擎'
+  const format = info.actualOutputFormat || playbackInfo.value?.actualOutputFormat || ''
+  const rate =
+    info.actualSampleRate || info.outputSampleRate || playbackInfo.value?.actualSampleRate || 0
+  const bitDepth =
+    info.actualBitDepth || info.outputBitDepth || playbackInfo.value?.actualBitDepth || 0
+  const channels = info.actualChannels || playbackInfo.value?.actualChannels || 0
+  const parts = [
+    format,
+    rate > 0 ? `${rate} Hz` : '',
+    bitDepth > 0 ? `${bitDepth} bit` : '',
+    channels > 0 ? `${channels} ch` : ''
+  ].filter(Boolean)
+  return parts.length > 0 ? parts.join(' · ') : '未开始播放'
+})
+
+const dspModuleCount = computed(() => {
+  const p = audioProcessing.value
+  let count = 0
+  if (p.eqEnabled) count++
+  if (p.volumeNormalization !== 'off') count++
+  if (p.crossfeedEnabled) count++
+  if (p.convolverEnabled) count++
+  return count
+})
+
+const convolverPathLabel = computed(() => {
+  const path = audioProcessing.value.convolverIrPath
+  if (!path) return '未加载'
+  return path.split(/[\\/]/).pop() || path
+})
+
+const replayGainModeLabel = computed(
+  () =>
+    replayGainOptions.find((option) => option.value === audioProcessing.value.volumeNormalization)
+      ?.label ?? 'Off'
+)
+const eqSummaryText = computed(() =>
+  audioProcessing.value.eqEnabled
+    ? `${audioProcessing.value.eqMode === 'parametric' ? '参数' : '图形'} · Preamp ${audioProcessing.value.eqPreamp.toFixed(1)} dB`
+    : '未启用'
+)
+
+function deviceIcon(device: AudioDeviceOption): string {
+  const text = `${device.id} ${device.label} ${device.backend || ''}`.toLowerCase()
+  if (/speaker|soundbar|monitor|音响|音箱|扬声器|喇叭/.test(text)) return 'pi pi-volume-up'
+  if (/usb|dac|asio|hifi|exclusive/.test(text)) return 'pi pi-microchip'
+  return 'pi pi-headphones'
+}
+
+function deviceSpecText(device: AudioDeviceOption): string {
+  const parts = [
+    device.backend || audioOutput.value,
+    typeof device.channels === 'number' && device.channels > 0 ? `${device.channels}ch` : '',
+    device.sampleRates && device.sampleRates.length > 0
+      ? compactRate(Math.max(...device.sampleRates))
+      : '',
+    device.bitDepths && device.bitDepths.length > 0 ? `${Math.max(...device.bitDepths)}bit` : ''
+  ].filter(Boolean)
+  if (parts.length > 0) return parts.join(' · ')
+  if (device.id === 'auto') return '跟随系统默认输出'
+  if (device.isDefault) return '系统默认设备'
+  return '原生输出设备'
+}
+
+function toggleSetting(key: BooleanSettingKey): void {
+  void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
+}
+
+function setTheme(theme: AppTheme): void {
+  if (settings.value.theme === theme) return
+  void updateSettings({ theme })
+}
+
+function setPlaybackResumeMode(playbackResumeMode: PlaybackResumeMode): void {
+  if (settings.value.playbackResumeMode === playbackResumeMode) return
+  void updateSettings({ playbackResumeMode })
+}
+
+function setPlaybackResumeModeFromSelect(event: Event): void {
+  setPlaybackResumeMode((event.target as HTMLSelectElement).value as PlaybackResumeMode)
+}
+
+function selectAudioOutput(output: AudioOutputId): void {
+  if (audioOutput.value === output) return
+  void setAudioOutput(output)
+}
+
+function selectAudioDevice(deviceId: string): void {
+  if (audioDevice.value === deviceId) return
+  void setAudioDevice(deviceId)
+}
+
+function setPreferredBufferSize(event: Event): void {
+  const value = Number((event.target as HTMLSelectElement).value)
+  if (audioOutputConfig.value.preferredBufferSize === value) return
+  void setAudioOutputConfig({ preferredBufferSize: value })
+}
+
+function setRoutingMode(event: Event): void {
+  const target = event.target as HTMLSelectElement
+  void setAudioOutputConfig({ routingMode: target.value as ChannelRoutingMode })
+}
+
+function setUpmixParam(field: keyof OutputConfig, event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  void setAudioOutputConfig({ [field]: value } as Partial<OutputConfig>)
+}
+
+function toggleWasapiExclusivePushMode(): void {
+  void setAudioOutputConfig({
+    wasapiExclusivePushMode: !audioOutputConfig.value.wasapiExclusivePushMode
+  })
+}
+
+function updateAudioProcessing(patch: Partial<AudioProcessingSettings>): void {
+  void setAudioProcessing(patch)
+}
+
+function setReplayGainFromSelect(event: Event): void {
+  void setReplayGainMode((event.target as HTMLSelectElement).value as VolumeNormalizationMode)
+}
+
+function setReplayGainPreamp(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  updateAudioProcessing({ dspEnabled: true, replayGainPreamp: value })
+}
+
+function setCrossfeedFromInput(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  void setCrossfeedStrength(value)
+}
+
+function setDsdOutputMode(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value as DsdOutputMode
+  updateAudioProcessing({ dsdOutputMode: value, dsdToPcm: value === 'pcm' })
+}
+
+function setSacdProgramMode(event: Event): void {
+  updateAudioProcessing({
+    sacdProgramMode: (event.target as HTMLSelectElement).value as SacdProgramMode
+  })
+}
+
+function setFftResolution(event: Event): void {
+  updateAudioProcessing({ fftResolution: Number((event.target as HTMLSelectElement).value) })
+}
+
+function setVolumeFromInput(event: Event): void {
+  volumePercent.value = Number((event.target as HTMLInputElement).value)
+}
+
+function setCloseBehavior(event: Event): void {
+  void updateSettings({ closeToTray: (event.target as HTMLSelectElement).value === 'tray' })
+}
+
+function setAccentColor(color: string): void {
+  if (settings.value.accentColor === color) return
+  void updateSettings({ accentColor: color })
+}
+
+function setFontFamily(event: Event): void {
+  void updateSettings({ fontFamily: (event.target as HTMLSelectElement).value })
+}
+
+function setUiDensity(density: UiDensity): void {
+  if (settings.value.uiDensity === density) return
+  void updateSettings({ uiDensity: density })
+}
+
+function setNowPlayingBackground(bg: NowPlayingBackground): void {
+  if (settings.value.nowPlayingBackground === bg) return
+  void updateSettings({ nowPlayingBackground: bg })
+}
+
+function setLyricAlign(event: Event): void {
+  void updateSettings({ lyricAlign: (event.target as HTMLSelectElement).value as LyricAlign })
+}
+
+function setLyricDimOpacity(event: Event): void {
+  void updateSettings({
+    lyricDimOpacity: Number((event.target as HTMLInputElement).value)
+  })
+}
+
+function openGithub(): void {
+  void openExternalUrl(GITHUB_URL)
+}
+
+function openHomepage(): void {
+  void openExternalUrl(HOMEPAGE_URL)
+}
+
+async function checkForUpdates(): Promise<void> {
+  updateCheckState.value = 'checking'
+  try {
+    const result = await window.api.app.checkForUpdates()
+    const now = new Date()
+    lastUpdateCheck.value = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
+    if (result.error) {
+      updateCheckState.value = 'error'
+    } else if (result.hasUpdate) {
+      updateCheckState.value = 'available'
+      latestVersion.value = result.latestVersion || ''
+    } else {
+      updateCheckState.value = 'up-to-date'
+    }
+  } catch {
+    updateCheckState.value = 'error'
+  }
+}
+
+function toggleClipGuard(): void {
+  updateAudioProcessing({ clipGuard: !audioProcessing.value.clipGuard })
+}
+
+function toggleGaplessPlayback(): void {
+  void toggleGapless()
+}
+
+function setCrossfadeSeconds(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  updateAudioProcessing({ crossfadeSeconds: value })
+}
+
+function toggleHighResolution(): void {
+  updateAudioProcessing({ highResolution: !audioProcessing.value.highResolution })
+}
+
+function toggleConvolver(): void {
+  updateAudioProcessing({
+    dspEnabled: true,
+    convolverEnabled: !audioProcessing.value.convolverEnabled
+  })
+}
+
+function applyDspPreset(preset: 'headphone' | 'dynamic' | 'bypass'): void {
+  if (preset === 'bypass') {
+    updateAudioProcessing({ dspEnabled: false })
+    return
+  }
+  if (preset === 'headphone') {
+    updateAudioProcessing({
+      dspEnabled: true,
+      crossfeedEnabled: true,
+      crossfeedStrength: 0.4,
+      eqEnabled: false
+    })
+    return
+  }
+  if (preset === 'dynamic') {
+    updateAudioProcessing({
+      dspEnabled: true,
+      eqEnabled: true,
+      crossfeedEnabled: false
+    })
+  }
+}
+
+function toggleDspMaster(): void {
+  updateAudioProcessing({ dspEnabled: !audioProcessing.value.dspEnabled })
+}
+
+function toggleEqFromDsp(): void {
+  updateAudioProcessing({
+    dspEnabled: true,
+    eqEnabled: !audioProcessing.value.eqEnabled
+  })
+}
+
+function openEqualizerFromDsp(): void {
+  emit('openEqualizer')
+}
+
+async function chooseMusicCacheFolder(): Promise<void> {
+  const folder = await window.api.settings.selectMusicCachePath()
+  if (folder) {
+    await updateSettings({ musicCachePath: folder })
+  }
+}
+
+async function runSettingsExtension(command?: string): Promise<void> {
+  if (!command) return
+  await window.api.extensions.executeCommand(command, [])
+}
 
 function scrollToSection(section: SectionKey): void {
   activeSection.value = section
@@ -44,11 +593,9 @@ function scrollToSection(section: SectionKey): void {
 function updateActiveSection(): void {
   const page = pageRef.value
   if (!page) return
-
   const pageTop = page.getBoundingClientRect().top
   let closest = activeSection.value
   let closestDistance = Number.POSITIVE_INFINITY
-
   for (const section of sections) {
     const el = document.getElementById(section.key)
     if (!el) continue
@@ -58,11 +605,13 @@ function updateActiveSection(): void {
       closestDistance = distance
     }
   }
-
   activeSection.value = closest
 }
 
 onMounted(async () => {
+  await Promise.all([loadSettings(), refreshAudioOutputState()])
+  await refreshCacheSize()
+  await syncExtensions()
   await nextTick()
   pageRef.value?.addEventListener('scroll', updateActiveSection, { passive: true })
   if (props.initialSection && props.initialSection !== 'general') {
@@ -108,11 +657,18 @@ onBeforeUnmount(() => {
                   <span>添加包含您本地音乐文件的目录。</span>
                 </div>
                 <div class="folder-list">
-                  <div class="folder-chip">
-                    <span>D:\Music\Hi-Res</span>
-                    <i class="pi pi-times"></i>
+                  <div
+                    v-for="folder in settings.libraryFolders"
+                    :key="folder"
+                    class="folder-chip"
+                  >
+                    <span>{{ folder }}</span>
+                    <i class="pi pi-times" @click="removeLibraryFolder(folder)"></i>
                   </div>
-                  <button type="button" class="dashed-button">
+                  <div v-if="settings.libraryFolders.length === 0" class="folder-empty-hint">
+                    暂未添加任何文件夹
+                  </div>
+                  <button type="button" class="dashed-button" @click="addLibraryFolder">
                     <i class="pi pi-plus"></i>
                     添加文件夹
                   </button>
@@ -124,7 +680,13 @@ onBeforeUnmount(() => {
                   <strong>实时监控文件夹变动</strong>
                   <span>当添加新音乐时自动同步到媒体库，无需手动刷新。</span>
                 </div>
-                <span class="toggle-switch active" aria-hidden="true"></span>
+                <span
+                  class="toggle-switch"
+                  :class="{ active: settings.watchLibrary, inactive: !settings.watchLibrary }"
+                  role="switch"
+                  :aria-checked="settings.watchLibrary"
+                  @click="toggleSetting('watchLibrary')"
+                ></span>
               </div>
             </div>
           </div>
@@ -135,19 +697,24 @@ onBeforeUnmount(() => {
               <div class="setting-item">
                 <div class="setting-copy">
                   <strong>图片与歌词缓存位置</strong>
-                  <span>当前：C:\Users\Admin\AppData\...</span>
+                  <span>当前：{{ activeCachePath || '默认目录' }}</span>
                 </div>
-                <button type="button" class="soft-button">更改目录</button>
+                <button type="button" class="soft-button" @click="chooseCacheFolder">更改目录</button>
               </div>
               <hr />
               <div class="setting-item">
                 <div class="setting-copy">
                   <strong>清理应用缓存</strong>
-                  <span>当前占用：<b>1.2 GB</b>。清理不会删除您的本地音乐文件。</span>
+                  <span>当前占用：<b>{{ formattedCacheSize }}</b>。清理不会删除您的本地音乐文件。</span>
                 </div>
-                <button type="button" class="danger-soft-button">
+                <button
+                  type="button"
+                  class="danger-soft-button"
+                  :disabled="clearingCache"
+                  @click="clearCache"
+                >
                   <i class="pi pi-trash"></i>
-                  立即清理
+                  {{ clearingCache ? '清理中…' : '立即清理' }}
                 </button>
               </div>
             </div>
@@ -161,7 +728,13 @@ onBeforeUnmount(() => {
                   <strong>原生媒体控制 (SMTC)</strong>
                   <span>响应键盘多媒体按键，并在系统锁屏界面显示播放控制。</span>
                 </div>
-                <span class="toggle-switch active" aria-hidden="true"></span>
+                <span
+                  class="toggle-switch"
+                  :class="{ active: settings.smtcEnabled, inactive: !settings.smtcEnabled }"
+                  role="switch"
+                  :aria-checked="settings.smtcEnabled"
+                  @click="toggleSetting('smtcEnabled')"
+                ></span>
               </div>
               <hr />
               <div class="setting-item">
@@ -169,7 +742,13 @@ onBeforeUnmount(() => {
                   <strong>Discord Rich Presence <i class="pi pi-discord discord-icon"></i></strong>
                   <span>在 Discord 状态中向好友展示您正在播放的音乐。</span>
                 </div>
-                <span class="toggle-switch inactive" aria-hidden="true"></span>
+                <span
+                  class="toggle-switch"
+                  :class="{ active: settings.discordRpcEnabled, inactive: !settings.discordRpcEnabled }"
+                  role="switch"
+                  :aria-checked="settings.discordRpcEnabled"
+                  @click="toggleSetting('discordRpcEnabled')"
+                ></span>
               </div>
             </div>
           </div>
@@ -182,7 +761,13 @@ onBeforeUnmount(() => {
                   <strong>开机自动启动</strong>
                   <span>在系统启动时自动在后台运行。</span>
                 </div>
-                <span class="toggle-switch inactive" aria-hidden="true"></span>
+                <span
+                  class="toggle-switch"
+                  :class="{ active: settings.launchAtLogin, inactive: !settings.launchAtLogin }"
+                  role="switch"
+                  :aria-checked="settings.launchAtLogin"
+                  @click="toggleSetting('launchAtLogin')"
+                ></span>
               </div>
               <hr />
               <div class="setting-item">
@@ -190,8 +775,13 @@ onBeforeUnmount(() => {
                   <strong>关闭主窗口时</strong>
                   <span>选择点击关闭按钮后的应用行为。</span>
                 </div>
-                <select class="preview-select">
-                  <option>最小化到系统托盘</option>
+                <select
+                  class="preview-select"
+                  :value="settings.closeToTray ? 'tray' : 'quit'"
+                  @change="setCloseBehavior"
+                >
+                  <option value="tray">最小化到系统托盘</option>
+                  <option value="quit">退出应用</option>
                 </select>
               </div>
             </div>
@@ -204,32 +794,48 @@ onBeforeUnmount(() => {
             <h2>播放 (Playback)</h2>
           </div>
 
+          <div v-if="audioEngineError" class="engine-error">{{ audioEngineError }}</div>
+
+          <div v-if="playbackInfo" class="output-diagnostic-panel">
+            <div class="diagnostic-head">
+              <span class="diagnostic-label">输出状态诊断</span>
+              <span class="diagnostic-status">{{ outputDiagnosticsText }}</span>
+            </div>
+            <div class="diagnostic-chain">{{ outputChainText }}</div>
+            <div class="diagnostic-meta">
+              <span v-if="outputLatencyText"><i class="pi pi-clock"></i> {{ outputLatencyText }}</span>
+              <span><i class="pi pi-exclamation-triangle"></i> {{ outputDiagnosticsText }}</span>
+            </div>
+          </div>
+
           <div class="device-panel">
             <div class="device-panel-head">
               <div>
                 <p>Audio Output</p>
                 <h3>输出设备与链路</h3>
               </div>
-              <button type="button" class="icon-button" title="刷新设备列表">
+              <button
+                type="button"
+                class="icon-button"
+                title="刷新设备列表"
+                @click="refreshAudioOutputState"
+              >
                 <i class="pi pi-refresh"></i>
               </button>
             </div>
             <div class="device-grid">
-              <button type="button" class="device-card active">
-                <i class="pi pi-headphones"></i>
-                <span>系统默认输出</span>
-                <small>WASAPI · 2ch · 48kHz</small>
-                <b>当前</b>
-              </button>
-              <button type="button" class="device-card">
-                <i class="pi pi-volume-up"></i>
-                <span>Realtek Audio</span>
-                <small>Shared · 24bit · 96kHz</small>
-              </button>
-              <button type="button" class="device-card">
-                <i class="pi pi-microchip"></i>
-                <span>USB DAC</span>
-                <small>Exclusive · Native DSD</small>
+              <button
+                v-for="device in audioDeviceOptions"
+                :key="device.id"
+                type="button"
+                class="device-card"
+                :class="{ active: audioDevice === device.id }"
+                @click="selectAudioDevice(device.id)"
+              >
+                <i :class="deviceIcon(device)"></i>
+                <span>{{ device.label }}</span>
+                <small>{{ deviceSpecText(device) }}</small>
+                <b v-if="audioDevice === device.id">当前</b>
               </button>
             </div>
           </div>
@@ -243,9 +849,15 @@ onBeforeUnmount(() => {
                   <span>选择音频后端和系统混音路径。</span>
                 </div>
                 <div class="segmented-control">
-                  <button class="active" type="button">WASAPI</button>
-                  <button type="button">ASIO</button>
-                  <button type="button">ALSA</button>
+                  <button
+                    v-for="option in audioOutputOptions"
+                    :key="option.id"
+                    type="button"
+                    :class="{ active: audioOutput === option.id }"
+                    @click="selectAudioOutput(option.id)"
+                  >
+                    {{ option.label }}
+                  </button>
                 </div>
               </div>
               <hr />
@@ -254,7 +866,14 @@ onBeforeUnmount(() => {
                   <strong>独占模式 (Exclusive)</strong>
                   <span>尝试绕过系统混音器以获得更直接的输出链路。</span>
                 </div>
-                <span class="toggle-switch inactive" aria-hidden="true"></span>
+                <span
+                  class="toggle-switch"
+                  :class="{ active: exclusiveMode, inactive: !exclusiveMode }"
+                  role="switch"
+                  :aria-checked="exclusiveMode"
+                  :title="exclusiveAvailable ? '' : '当前后端不支持独占模式'"
+                  @click="exclusiveAvailable && toggleExclusiveMode()"
+                ></span>
               </div>
               <hr />
               <div class="setting-item compact-row">
@@ -263,8 +882,49 @@ onBeforeUnmount(() => {
                   <span>应用音量低于 100% 会改变样本值。</span>
                 </div>
                 <div class="inline-controls">
-                  <input class="number-input" type="number" value="100" />
-                  <span class="toggle-switch active" aria-hidden="true"></span>
+                  <input
+                    class="number-input"
+                    type="number"
+                    min="0"
+                    max="100"
+                    :value="volumePercent"
+                    @input="setVolumeFromInput"
+                  />
+                  <span
+                    class="toggle-switch"
+                    :class="{ active: audioProcessing.clipGuard, inactive: !audioProcessing.clipGuard }"
+                    role="switch"
+                    :aria-checked="audioProcessing.clipGuard"
+                    @click="toggleClipGuard"
+                  ></span>
+                </div>
+              </div>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>无缝播放 (Gapless Playback)</strong>
+                  <span>消除连续曲目之间的静态间隙或进行交叉淡入淡出。</span>
+                </div>
+                <div class="inline-controls">
+                  <div class="crossfade-group">
+                    <span>交叉淡入淡出 (秒)</span>
+                    <input
+                      class="number-input"
+                      type="number"
+                      min="0"
+                      max="12"
+                      step="0.5"
+                      :value="audioProcessing.crossfadeSeconds"
+                      @input="setCrossfadeSeconds"
+                    />
+                  </div>
+                  <span
+                    class="toggle-switch"
+                    :class="{ active: audioProcessing.gapless, inactive: !audioProcessing.gapless }"
+                    role="switch"
+                    :aria-checked="audioProcessing.gapless"
+                    @click="toggleGaplessPlayback"
+                  ></span>
                 </div>
               </div>
               <hr />
@@ -273,43 +933,161 @@ onBeforeUnmount(() => {
                   <strong>启动时恢复播放</strong>
                   <span>记住上次播放的曲目和播放位置。</span>
                 </div>
-                <select class="preview-select">
-                  <option>曲目和精确位置</option>
+                <select
+                  class="preview-select"
+                  :value="settings.playbackResumeMode"
+                  @change="setPlaybackResumeModeFromSelect"
+                >
+                  <option
+                    v-for="option in playbackResumeOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
                 </select>
               </div>
             </div>
           </div>
 
-          <div class="accordion-preview">
-            <div class="accordion-head">
+          <div class="accordion-preview" :class="{ open: advancedParamsOpen }">
+            <button type="button" class="accordion-head" @click="advancedParamsOpen = !advancedParamsOpen">
               <div>
-                <strong>高级引擎参数</strong>
+                <strong>高级引擎参数 (Advanced Engine)</strong>
                 <span>缓冲、声道路由、DSD 输出和 SACD program。</span>
               </div>
-              <i class="pi pi-chevron-down"></i>
-            </div>
+              <i class="pi pi-chevron-down" :class="{ rotated: advancedParamsOpen }"></i>
+            </button>
+            <div v-if="advancedParamsOpen" class="accordion-body">
+              <div class="engine-warning">
+                <i class="pi pi-exclamation-triangle"></i>
+                <span>警告：以下参数直接与声卡底层交互，调节不当可能导致音频卡顿、无声或爆音。</span>
+              </div>
             <div class="advanced-grid">
               <label>
                 <span>Buffer Size</span>
-                <select class="preview-select">
-                  <option>Auto</option>
-                  <option>256</option>
+                <select
+                  class="preview-select"
+                  :value="audioOutputConfig.preferredBufferSize"
+                  @change="setPreferredBufferSize"
+                >
+                  <option
+                    v-for="option in bufferSizeOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
                 </select>
               </label>
               <label>
                 <span>Routing</span>
-                <select class="preview-select">
-                  <option>Auto</option>
-                  <option>Stereo</option>
+                <select
+                  class="preview-select"
+                  :value="audioOutputConfig.routingMode"
+                  @change="setRoutingMode"
+                >
+                  <option
+                    v-for="option in routingModeOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
                 </select>
               </label>
               <label>
                 <span>DSD Output</span>
-                <select class="preview-select">
-                  <option>Auto</option>
-                  <option>DoP</option>
+                <select
+                  class="preview-select"
+                  :value="audioProcessing.dsdOutputMode"
+                  @change="setDsdOutputMode"
+                >
+                  <option
+                    v-for="option in dsdOutputModeOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
                 </select>
               </label>
+            </div>
+            <div v-if="isUpmixActive" class="advanced-grid">
+              <label>
+                <span>Center Gain</span>
+                <input
+                  class="number-input"
+                  type="number"
+                  step="0.1"
+                  :value="audioOutputConfig.upmixCenterGain ?? 0"
+                  @input="(e) => setUpmixParam('upmixCenterGain', e)"
+                />
+              </label>
+              <label>
+                <span>LFE Gain</span>
+                <input
+                  class="number-input"
+                  type="number"
+                  step="0.1"
+                  :value="audioOutputConfig.upmixLfeGain ?? 0"
+                  @input="(e) => setUpmixParam('upmixLfeGain', e)"
+                />
+              </label>
+              <label>
+                <span>LFE Lowpass (Hz)</span>
+                <input
+                  class="number-input"
+                  type="number"
+                  step="1"
+                  :value="audioOutputConfig.upmixLfeLowpassHz ?? 80"
+                  @input="(e) => setUpmixParam('upmixLfeLowpassHz', e)"
+                />
+              </label>
+              <label>
+                <span>Surround Gain</span>
+                <input
+                  class="number-input"
+                  type="number"
+                  step="0.1"
+                  :value="audioOutputConfig.upmixSurroundGain ?? 0"
+                  @input="(e) => setUpmixParam('upmixSurroundGain', e)"
+                />
+              </label>
+              <label>
+                <span>Side Gain</span>
+                <input
+                  class="number-input"
+                  type="number"
+                  step="0.1"
+                  :value="audioOutputConfig.upmixSideGain ?? 0"
+                  @input="(e) => setUpmixParam('upmixSideGain', e)"
+                />
+              </label>
+              <label>
+                <span>Surround Delay (ms)</span>
+                <input
+                  class="number-input"
+                  type="number"
+                  step="0.1"
+                  :value="audioOutputConfig.upmixSurroundDelayMs ?? 0"
+                  @input="(e) => setUpmixParam('upmixSurroundDelayMs', e)"
+                />
+              </label>
+            </div>
+            <div v-if="showWasapiPushMode" class="setting-item wasapi-push-row">
+              <div class="setting-copy">
+                <strong>WASAPI 独占推送模式</strong>
+                <span>事件驱动不兼容时切换到定时器驱动，可解决部分声卡无声/爆音。</span>
+              </div>
+              <span
+                class="toggle-switch"
+                :class="{ active: !!audioOutputConfig.wasapiExclusivePushMode, inactive: !audioOutputConfig.wasapiExclusivePushMode }"
+                role="switch"
+                :aria-checked="!!audioOutputConfig.wasapiExclusivePushMode"
+                @click="toggleWasapiExclusivePushMode"
+              ></span>
+            </div>
             </div>
           </div>
         </section>
@@ -320,40 +1098,100 @@ onBeforeUnmount(() => {
               <i class="pi pi-sliders-v"></i>
               <h2>DSP 处理器</h2>
             </div>
-            <span class="toggle-switch inactive large" aria-hidden="true"></span>
+            <span
+              class="toggle-switch large"
+              :class="{ active: audioProcessing.dspEnabled, inactive: !audioProcessing.dspEnabled }"
+              role="switch"
+              :aria-checked="audioProcessing.dspEnabled"
+              @click="toggleDspMaster"
+            ></span>
+          </div>
+
+          <div class="dsp-signal-chain">
+            <div class="signal-node" :class="{ active: true }">
+              <div class="signal-node-circle active">
+                <i class="pi pi-file-audio"></i>
+              </div>
+              <span class="signal-node-label">Input</span>
+              <span class="signal-node-name">SOURCE</span>
+            </div>
+            <div class="signal-line" :class="{ active: eqChainActive }"></div>
+            <div class="signal-node" :class="{ active: eqChainActive }" @click="toggleEqFromDsp">
+              <div class="signal-node-circle" :class="{ active: eqChainActive }">
+                <i class="pi pi-sliders-h"></i>
+              </div>
+              <span class="signal-node-label">{{ eqChainActive ? 'Active' : 'Bypass' }}</span>
+              <span class="signal-node-name">EQ</span>
+            </div>
+            <div class="signal-line" :class="{ active: crossfeedChainActive }"></div>
+            <div class="signal-node" :class="{ active: crossfeedChainActive }">
+              <div class="signal-node-circle" :class="{ active: crossfeedChainActive }">
+                <i class="pi pi-arrows-h"></i>
+              </div>
+              <span class="signal-node-label">{{ crossfeedChainActive ? 'Active' : 'Bypass' }}</span>
+              <span class="signal-node-name">CROSSFEED</span>
+            </div>
+            <div class="signal-line" :class="{ active: convolverChainActive }"></div>
+            <div class="signal-node" :class="{ active: convolverChainActive }" @click="toggleConvolver">
+              <div class="signal-node-circle" :class="{ active: convolverChainActive }">
+                <i class="pi pi-microchip"></i>
+              </div>
+              <span class="signal-node-label">{{ convolverChainActive ? 'Active' : 'Bypass' }}</span>
+              <span class="signal-node-name">CONVOLVER</span>
+            </div>
+            <div class="signal-line active"></div>
+            <div class="signal-node" :class="{ active: true }">
+              <div class="signal-node-circle active">
+                <i class="pi pi-volume-up"></i>
+              </div>
+              <span class="signal-node-label">DAC</span>
+              <span class="signal-node-name">OUTPUT</span>
+            </div>
           </div>
 
           <div class="dsp-status-grid">
             <div class="dsp-meter">
               <span>Input</span>
-              <strong>PCM 24bit</strong>
-              <small>96 kHz · 2ch</small>
+              <strong>{{ dspInputText }}</strong>
+              <small>源信号格式</small>
             </div>
             <div class="dsp-meter">
               <span>Process</span>
-              <strong>Bypass</strong>
-              <small>0 modules active</small>
+              <strong>{{ dspProcessText }}</strong>
+              <small>{{ dspModuleCount }} 个模块激活</small>
             </div>
             <div class="dsp-meter">
               <span>Output</span>
-              <strong>WASAPI</strong>
-              <small>Shared path</small>
+              <strong>{{ dspOutputText }}</strong>
+              <small>{{ outputFormatText }}</small>
             </div>
           </div>
 
-          <div class="dsp-disabled-content">
+          <div :class="{ 'dsp-disabled-content': !audioProcessing.dspEnabled }">
             <div class="dsp-actions">
-              <button class="brand-soft-button" type="button">
+              <button class="brand-soft-button" type="button" @click="openEqualizerFromDsp">
                 <i class="pi pi-sliders-h"></i>
                 打开均衡器
               </button>
-              <button class="soft-button" type="button">
+              <button class="soft-button" type="button" @click="selectImpulseResponse">
                 <i class="pi pi-folder-open"></i>
-                载入 IR
+                载入 IR · {{ convolverPathLabel }}
               </button>
-              <button class="soft-button" type="button">
+              <button class="soft-button" type="button" @click="clearImpulseResponse">
                 <i class="pi pi-undo"></i>
                 重置
+              </button>
+            </div>
+
+            <div class="dsp-presets">
+              <button class="preset-btn" type="button" @click="applyDspPreset('headphone')">
+                <i class="pi pi-headphones"></i> 耳机护耳模式
+              </button>
+              <button class="preset-btn" type="button" @click="applyDspPreset('dynamic')">
+                <i class="pi pi-bolt"></i> 动态增强
+              </button>
+              <button class="preset-btn" type="button" @click="applyDspPreset('bypass')">
+                <i class="pi pi-stop-circle"></i> 纯净直通 (Bit-perfect)
               </button>
             </div>
 
@@ -362,19 +1200,48 @@ onBeforeUnmount(() => {
                 <h3>基础处理 (Core)</h3>
                 <div class="mini-setting">
                   <div>
-                    <strong>ReplayGain</strong>
-                    <span>响度归一化</span>
+                    <strong>防破音保护 (Clip Guard)</strong>
+                    <span>动态压缩超载信号，防止数字削波失真</span>
                   </div>
-                  <select class="preview-select">
-                    <option>Track</option>
+                  <span
+                    class="toggle-switch"
+                    :class="{ active: audioProcessing.clipGuard, inactive: !audioProcessing.clipGuard }"
+                    role="switch"
+                    :aria-checked="audioProcessing.clipGuard"
+                    @click="toggleClipGuard"
+                  ></span>
+                </div>
+                <div class="mini-setting">
+                  <div>
+                    <strong>音量标准化 (ReplayGain)</strong>
+                    <span>响度归一化 · {{ replayGainModeLabel }}</span>
+                  </div>
+                  <select
+                    class="preview-select"
+                    :value="audioProcessing.volumeNormalization"
+                    @change="setReplayGainFromSelect"
+                  >
+                    <option
+                      v-for="option in replayGainOptions"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
                   </select>
                 </div>
                 <div class="mini-setting">
                   <div>
                     <strong>Preamp</strong>
-                    <span>预增益</span>
+                    <span>预增益 (dB)</span>
                   </div>
-                  <input class="number-input" type="number" value="0.0" />
+                  <input
+                    class="number-input"
+                    type="number"
+                    step="0.1"
+                    :value="audioProcessing.replayGainPreamp"
+                    @input="setReplayGainPreamp"
+                  />
                 </div>
               </div>
 
@@ -383,19 +1250,67 @@ onBeforeUnmount(() => {
                 <div class="mini-setting">
                   <div>
                     <strong>Parametric EQ</strong>
-                    <span>10 段均衡器</span>
+                    <span>{{ eqSummaryText }}</span>
                   </div>
-                  <button class="soft-button compact" type="button">
-                    <i class="pi pi-sliders-h"></i>
-                    打开面板
-                  </button>
+                  <div class="inline-controls">
+                    <span
+                      class="toggle-switch"
+                      :class="{ active: audioProcessing.eqEnabled, inactive: !audioProcessing.eqEnabled }"
+                      role="switch"
+                      :aria-checked="audioProcessing.eqEnabled"
+                      @click="toggleEqFromDsp"
+                    ></span>
+                    <button class="soft-button compact" type="button" @click="openEqualizerFromDsp">
+                      <i class="pi pi-sliders-h"></i>
+                      打开面板
+                    </button>
+                  </div>
                 </div>
                 <div class="mini-setting">
                   <div>
-                    <strong>Crossfeed</strong>
-                    <span>耳机声场融合</span>
+                    <strong>耳机交叉馈电 (Crossfeed)</strong>
+                    <span>减轻耳机声像过宽的"头中效应"。</span>
                   </div>
-                  <input class="range-input" type="range" min="0" max="100" value="40" />
+                  <div class="inline-controls">
+                    <input
+                      class="range-input"
+                      type="range"
+                      min="0"
+                      max="100"
+                      :value="crossfeedPercent"
+                      @input="setCrossfeedFromInput"
+                    />
+                    <span class="crossfeed-percent">{{ crossfeedPercent }}%</span>
+                    <span
+                      class="toggle-switch"
+                      :class="{ active: audioProcessing.crossfeedEnabled, inactive: !audioProcessing.crossfeedEnabled }"
+                      role="switch"
+                      :aria-checked="audioProcessing.crossfeedEnabled"
+                      @click="updateAudioProcessing({ dspEnabled: true, crossfeedEnabled: !audioProcessing.crossfeedEnabled })"
+                    ></span>
+                  </div>
+                </div>
+                <div class="mini-setting">
+                  <div>
+                    <strong>
+                      卷积脉冲响应 (Convolver)
+                      <span class="compute-badge"><i class="pi pi-microchip"></i> 高算力消耗</span>
+                    </strong>
+                    <span>加载 IR 脉冲文件用于空间音效。当前路径：{{ convolverPathLabel }}</span>
+                  </div>
+                  <div class="inline-controls">
+                    <button class="soft-button compact" type="button" @click="selectImpulseResponse">
+                      <i class="pi pi-folder-open"></i>
+                      选择文件
+                    </button>
+                    <span
+                      class="toggle-switch"
+                      :class="{ active: audioProcessing.convolverEnabled, inactive: !audioProcessing.convolverEnabled }"
+                      role="switch"
+                      :aria-checked="audioProcessing.convolverEnabled"
+                      @click="toggleConvolver"
+                    ></span>
+                  </div>
                 </div>
               </div>
 
@@ -404,21 +1319,60 @@ onBeforeUnmount(() => {
                 <div class="decode-grid">
                   <label>
                     <span>DSD Mode</span>
-                    <select class="preview-select">
-                      <option>Auto</option>
+                    <select
+                      class="preview-select"
+                      :value="audioProcessing.dsdOutputMode"
+                      @change="setDsdOutputMode"
+                    >
+                      <option
+                        v-for="option in dsdOutputModeOptions"
+                        :key="option.value"
+                        :value="option.value"
+                      >
+                        {{ option.label }}
+                      </option>
                     </select>
                   </label>
                   <label>
                     <span>SACD Program</span>
-                    <select class="preview-select">
-                      <option>Auto</option>
+                    <select
+                      class="preview-select"
+                      :value="audioProcessing.sacdProgramMode"
+                      @change="setSacdProgramMode"
+                    >
+                      <option
+                        v-for="option in sacdProgramModeOptions"
+                        :key="option.value"
+                        :value="option.value"
+                      >
+                        {{ option.label }}
+                      </option>
                     </select>
                   </label>
                   <label>
                     <span>FFT Resolution</span>
-                    <select class="preview-select">
-                      <option>2048 (高精度)</option>
+                    <select
+                      class="preview-select"
+                      :value="audioProcessing.fftResolution"
+                      @change="setFftResolution"
+                    >
+                      <option v-for="option in fftResolutionOptions" :key="option" :value="option">
+                        {{ option }}
+                      </option>
                     </select>
+                  </label>
+                  <label class="decode-highres">
+                    <span>高解析度处理 (High-Res)</span>
+                    <div class="mini-highres">
+                      <small>内部启用 64-bit 浮点精度</small>
+                      <span
+                        class="toggle-switch"
+                        :class="{ active: audioProcessing.highResolution, inactive: !audioProcessing.highResolution }"
+                        role="switch"
+                        :aria-checked="audioProcessing.highResolution"
+                        @click="toggleHighResolution"
+                      ></span>
+                    </div>
                   </label>
                 </div>
               </div>
@@ -438,9 +1392,9 @@ onBeforeUnmount(() => {
                 <span>保存图片、歌词和在线资源缓存。</span>
               </div>
               <div class="path-control">
-                <input readonly value="C:\Users\Admin\AppData\Roaming\TwilightEcho\Cache" />
-                <button type="button" class="soft-button">选择文件夹</button>
-                <button type="button" class="muted-button">恢复默认</button>
+                <input readonly :value="activeCachePath || '未设置'" />
+                <button type="button" class="soft-button" @click="chooseCacheFolder">选择文件夹</button>
+                <button type="button" class="muted-button" @click="resetCacheFolder">恢复默认</button>
               </div>
             </div>
             <hr />
@@ -450,19 +1404,26 @@ onBeforeUnmount(() => {
                 <span>单独存放可复用的流媒体缓存。</span>
               </div>
               <div class="path-control">
-                <input readonly value="未设置" />
-                <button type="button" class="soft-button">选择文件夹</button>
+                <input readonly :value="settings.musicCachePath || '未设置'" />
+                <button type="button" class="soft-button" @click="chooseMusicCacheFolder">
+                  选择文件夹
+                </button>
               </div>
             </div>
             <hr />
             <div class="setting-item">
               <div class="setting-copy">
                 <strong>缓存占用</strong>
-                <span>当前估算：<b>1.2 GB</b></span>
+                <span>当前估算：<b>{{ formattedCacheSize }}</b></span>
               </div>
-              <button class="danger-soft-button solid-hover" type="button">
+              <button
+                class="danger-soft-button solid-hover"
+                type="button"
+                :disabled="clearingCache"
+                @click="clearCache"
+              >
                 <i class="pi pi-trash"></i>
-                清理缓存
+                {{ clearingCache ? '清理中…' : '清理缓存' }}
               </button>
             </div>
           </div>
@@ -473,10 +1434,29 @@ onBeforeUnmount(() => {
             <i class="pi pi-box"></i>
             <h2>插件 (Plugins)</h2>
           </div>
-          <div class="plugin-empty">
-            <i class="pi pi-box"></i>
-            <strong>插件生态准备中</strong>
-            <span>安装、启用、权限和插件设置区域将显示在这里。</span>
+          <PluginSettingsPanel />
+          <div v-if="pluginSettingsPanels.length > 0" class="plugin-extension-group">
+            <h3>插件配置区</h3>
+            <div class="setting-list">
+              <div
+                v-for="panel in pluginSettingsPanels"
+                :key="panel.id"
+                class="setting-item"
+              >
+                <div class="setting-copy">
+                  <strong>{{ panel.title }}</strong>
+                  <span>{{ panel.description || '由插件提供的受控配置入口' }}</span>
+                </div>
+                <button
+                  type="button"
+                  class="soft-button"
+                  :disabled="!panel.command"
+                  @click="runSettingsExtension(panel.command)"
+                >
+                  打开
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -485,13 +1465,29 @@ onBeforeUnmount(() => {
             <i class="pi pi-bolt"></i>
             <h2>性能 (Performance)</h2>
           </div>
+          <div v-if="restartRequired" class="restart-banner">
+            <div>
+              <strong>需要重启以应用更改</strong>
+              <span>{{ restartReasons.join('、') }}</span>
+            </div>
+            <button class="brand-soft-button" type="button" @click="relaunch">
+              <i class="pi pi-refresh"></i>
+              立即重启
+            </button>
+          </div>
           <div class="setting-list">
             <div class="setting-item">
               <div class="setting-copy">
                 <strong>硬件加速</strong>
                 <span>使用 GPU 加速界面渲染、动画与模糊效果。</span>
               </div>
-              <span class="toggle-switch active" aria-hidden="true"></span>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.hardwareAcceleration, inactive: !settings.hardwareAcceleration }"
+                role="switch"
+                :aria-checked="settings.hardwareAcceleration"
+                @click="toggleSetting('hardwareAcceleration')"
+              ></span>
             </div>
           </div>
         </section>
@@ -509,17 +1505,15 @@ onBeforeUnmount(() => {
                 <span>跟随系统或固定为浅色、深色。</span>
               </div>
               <div class="theme-segment">
-                <button class="active" type="button">
-                  <i class="pi pi-desktop"></i>
-                  系统
-                </button>
-                <button type="button">
-                  <i class="pi pi-sun"></i>
-                  浅色
-                </button>
-                <button type="button">
-                  <i class="pi pi-moon"></i>
-                  深色
+                <button
+                  v-for="option in colorModeOptions"
+                  :key="option.value"
+                  type="button"
+                  :class="{ active: settings.theme === option.value }"
+                  @click="setTheme(option.value)"
+                >
+                  <i :class="option.icon"></i>
+                  {{ option.label }}
                 </button>
               </div>
             </div>
@@ -529,13 +1523,17 @@ onBeforeUnmount(() => {
                 <strong>强调色</strong>
                 <span>选择界面中的主要品牌色。</span>
               </div>
-              <div class="swatch-row" aria-hidden="true">
-                <span class="swatch violet active"><i class="pi pi-check"></i></span>
-                <span class="swatch blue"></span>
-                <span class="swatch emerald"></span>
-                <span class="swatch rose"></span>
-                <span class="swatch amber"></span>
-                <span class="swatch slate"></span>
+              <div class="swatch-row">
+                <span
+                  v-for="option in accentColorOptions"
+                  :key="option.value"
+                  class="swatch"
+                  :class="[option.class, { active: settings.accentColor === option.value }]"
+                  :title="option.label"
+                  @click="setAccentColor(option.value)"
+                >
+                  <i v-if="settings.accentColor === option.value" class="pi pi-check"></i>
+                </span>
               </div>
             </div>
             <hr />
@@ -544,7 +1542,13 @@ onBeforeUnmount(() => {
                 <strong>原生半透明材质 (Mica / Acrylic)</strong>
                 <span>启用系统级视窗模糊效果，让背景透出桌面壁纸。</span>
               </div>
-              <span class="toggle-switch active" aria-hidden="true"></span>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.blurEffect, inactive: !settings.blurEffect }"
+                role="switch"
+                :aria-checked="settings.blurEffect"
+                @click="toggleSetting('blurEffect')"
+              ></span>
             </div>
             <hr />
             <div class="setting-item">
@@ -552,12 +1556,14 @@ onBeforeUnmount(() => {
                 <strong>全局字体 (Typography)</strong>
                 <span>更换界面的主要显示字体。</span>
               </div>
-              <select class="preview-select wide">
-                <option>系统默认 (System)</option>
-                <option>Inter / Roboto</option>
-                <option>霞鹜文楷 (LXGW)</option>
-                <option>Sarasa Gothic</option>
-                <option>Comic Sans MS</option>
+              <select
+                class="preview-select wide"
+                :value="settings.fontFamily"
+                @change="setFontFamily"
+              >
+                <option v-for="option in fontFamilyOptions" :key="option.value" :value="option.value">
+                  {{ option.label }}
+                </option>
               </select>
             </div>
             <hr />
@@ -567,9 +1573,15 @@ onBeforeUnmount(() => {
                 <span>控制列表项的间距与信息密度。</span>
               </div>
               <div class="segmented-control density">
-                <button type="button">紧凑</button>
-                <button class="active" type="button">标准</button>
-                <button type="button">舒展</button>
+                <button
+                  v-for="option in uiDensityOptions"
+                  :key="option.value"
+                  type="button"
+                  :class="{ active: settings.uiDensity === option.value }"
+                  @click="setUiDensity(option.value)"
+                >
+                  {{ option.label }}
+                </button>
               </div>
             </div>
             <hr />
@@ -579,17 +1591,15 @@ onBeforeUnmount(() => {
                 <span>全屏播放或详情页的背景视觉风格。</span>
               </div>
               <div class="background-options">
-                <button class="active" type="button">
-                  <span class="blur-cover"></span>
-                  <small>专辑高斯模糊</small>
-                </button>
-                <button type="button">
-                  <span class="fluid-cover"></span>
-                  <small>动态流体渐变</small>
-                </button>
-                <button type="button">
-                  <span class="solid-cover"></span>
-                  <small>纯粹极简纯色</small>
+                <button
+                  v-for="option in nowPlayingBackgroundOptions"
+                  :key="option.value"
+                  type="button"
+                  :class="{ active: settings.nowPlayingBackground === option.value }"
+                  @click="setNowPlayingBackground(option.value)"
+                >
+                  <span :class="option.class"></span>
+                  <small>{{ option.label }}</small>
                 </button>
               </div>
             </div>
@@ -600,13 +1610,25 @@ onBeforeUnmount(() => {
                 <span>翻译对齐方式及未播放行暗度。</span>
               </div>
               <div class="inline-controls">
-                <select class="preview-select">
-                  <option>居中对齐</option>
-                  <option>靠左对齐</option>
+                <select
+                  class="preview-select"
+                  :value="settings.lyricAlign"
+                  @change="setLyricAlign"
+                >
+                  <option v-for="option in lyricAlignOptions" :key="option.value" :value="option.value">
+                    {{ option.label }}
+                  </option>
                 </select>
                 <div class="range-pill">
                   <span>未播放暗度</span>
-                  <input class="range-input" type="range" min="10" max="100" value="40" />
+                  <input
+                    class="range-input"
+                    type="range"
+                    min="10"
+                    max="100"
+                    :value="settings.lyricDimOpacity"
+                    @input="setLyricDimOpacity"
+                  />
                 </div>
               </div>
             </div>
@@ -624,7 +1646,13 @@ onBeforeUnmount(() => {
                 <strong>全局快捷键 (Global Shortcuts)</strong>
                 <span>在应用位于后台时，依然响应系统媒体播放快捷键。</span>
               </div>
-              <span class="toggle-switch inactive" aria-hidden="true"></span>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.globalShortcuts, inactive: !settings.globalShortcuts }"
+                role="switch"
+                :aria-checked="settings.globalShortcuts"
+                @click="toggleSetting('globalShortcuts')"
+              ></span>
             </div>
             <hr />
             <div class="shortcut-grid">
@@ -645,26 +1673,47 @@ onBeforeUnmount(() => {
 
           <div class="about-hero">
             <div class="logo-shell">
-              <div class="logo-glow"></div>
               <div class="logo-mark">
-                <i class="pi pi-headphones"></i>
+                <img src="/icon.png" alt="Twilight Echo" class="logo-icon" />
               </div>
             </div>
             <div class="about-copy">
               <h3>Twilight Echo</h3>
-              <span>Version 1.2.0-beta.4</span>
+              <span>Version {{ appVersion || '—' }}</span>
               <p>一款专为发烧友打造的现代级桌面音乐枢纽，支持海量本地高解析度音频与插件化流媒体扩展。</p>
             </div>
           </div>
 
           <div class="about-cards">
             <div class="update-card">
-              <div class="status-icon"><i class="pi pi-check-circle"></i></div>
-              <div>
-                <strong>当前已是最新版本</strong>
-                <span>上次检查：今天 10:42</span>
+              <div class="status-icon">
+                <i
+                  :class="updateCheckState === 'available' ? 'pi pi-download' : updateCheckState === 'error' ? 'pi pi-exclamation-circle' : 'pi pi-check-circle'"
+                ></i>
               </div>
-              <button class="soft-button" type="button">
+              <div>
+                <strong v-if="updateCheckState === 'checking'">正在检查更新…</strong>
+                <strong v-else-if="updateCheckState === 'available'">发现新版本 v{{ latestVersion }}</strong>
+                <strong v-else-if="updateCheckState === 'error'">检查更新失败</strong>
+                <strong v-else>当前已是最新版本</strong>
+                <span>上次检查：{{ lastUpdateCheck || '—' }}</span>
+              </div>
+              <button
+                v-if="updateCheckState === 'available'"
+                class="brand-soft-button"
+                type="button"
+                @click="openGithub"
+              >
+                <i class="pi pi-download"></i>
+                前往下载
+              </button>
+              <button
+                v-else
+                class="soft-button"
+                type="button"
+                :disabled="updateCheckState === 'checking'"
+                @click="checkForUpdates"
+              >
                 <i class="pi pi-sync"></i>
                 检查更新
               </button>
@@ -692,9 +1741,9 @@ onBeforeUnmount(() => {
           <hr />
 
           <div class="about-links">
-            <button type="button"><i class="pi pi-github"></i> GitHub</button>
-            <button type="button"><i class="pi pi-file-o"></i> 更新日志</button>
-            <button type="button"><i class="pi pi-heart-fill"></i> 开源致谢</button>
+            <button type="button" @click="openGithub"><i class="pi pi-github"></i> GitHub</button>
+            <button type="button" @click="openGithub"><i class="pi pi-file-o"></i> 更新日志</button>
+            <button type="button" @click="openHomepage"><i class="pi pi-heart-fill"></i> 开源致谢</button>
           </div>
         </section>
       </div>
@@ -705,7 +1754,7 @@ onBeforeUnmount(() => {
 <style>
 @font-face {
   font-family: 'Outfit';
-  src: url('/font/Outfit-VariableFont_wght.ttf') format('truetype');
+  src: url('/font/Outfit-VariableFont_wght.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -713,7 +1762,7 @@ onBeforeUnmount(() => {
 
 @font-face {
   font-family: 'Noto Sans SC';
-  src: url('/font/NotoSansSC-VariableFont_wght.ttf') format('truetype');
+  src: url('/font/NotoSansSC-VariableFont_wght.woff2') format('woff2');
   font-weight: 100 900;
   font-style: normal;
   font-display: swap;
@@ -995,6 +2044,14 @@ onBeforeUnmount(() => {
 .folder-chip i {
   color: #9ca3af;
   font-size: 12px;
+  cursor: pointer;
+}
+
+.folder-empty-hint {
+  padding: 8px 12px;
+  color: #9ca3af;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .dashed-button,
@@ -1746,20 +2803,6 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
-.logo-glow {
-  position: absolute;
-  inset: 0;
-  border-radius: 16px;
-  background: var(--brand-500);
-  filter: blur(12px);
-  opacity: 0.3;
-  transition: opacity 0.5s ease;
-}
-
-.logo-shell:hover .logo-glow {
-  opacity: 0.6;
-}
-
 .logo-mark {
   position: relative;
   display: flex;
@@ -1767,18 +2810,14 @@ onBeforeUnmount(() => {
   height: 96px;
   align-items: center;
   justify-content: center;
-  border: 1px solid #374151;
   border-radius: 16px;
-  background: linear-gradient(135deg, #111827, #000);
-  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.24);
 }
 
-.logo-mark i {
-  background: linear-gradient(135deg, var(--brand-400), #e879f9);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  font-size: 42px;
+.logo-mark img {
+  width: 88px;
+  height: 88px;
+  object-fit: contain;
+  border-radius: 12px;
 }
 
 .about-copy {
@@ -2095,5 +3134,334 @@ onBeforeUnmount(() => {
   .about-links button {
     flex: 1;
   }
+}
+</style>
+
+
+<style scoped>
+.engine-error {
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fef2f2;
+  color: #dc2626;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.plugin-extension-group {
+  margin-top: 24px;
+}
+
+.plugin-extension-group h3 {
+  margin: 0 0 16px;
+  color: var(--brand-500);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.wasapi-push-row {
+  padding: 14px 20px;
+  border-top: 1px solid rgba(229, 231, 235, 0.6);
+}
+
+.restart-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  padding: 14px 18px;
+  border: 1px solid #fde68a;
+  border-radius: 12px;
+  background: linear-gradient(90deg, #fffbeb, rgba(255, 247, 237, 0.6));
+}
+
+.restart-banner strong {
+  color: #92400e;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.restart-banner span {
+  color: rgba(146, 64, 14, 0.8);
+  font-size: 12px;
+}
+
+/* ── 输出状态诊断面板 ── */
+.output-diagnostic-panel {
+  margin-bottom: 24px;
+  padding: 16px 20px;
+  border: 1px solid rgba(229, 231, 235, 0.6);
+  border-radius: 12px;
+  background: rgba(249, 250, 251, 0.5);
+}
+
+.diagnostic-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.diagnostic-label {
+  color: var(--brand-600);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.diagnostic-status {
+  color: #ef4444;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.diagnostic-chain {
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.diagnostic-meta {
+  display: flex;
+  gap: 16px;
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.diagnostic-meta i {
+  margin-right: 4px;
+}
+
+/* ── 无缝播放 Crossfade ── */
+.crossfade-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* ── 高级引擎参数折叠 ── */
+.accordion-preview .accordion-head {
+  cursor: pointer;
+  border: 0;
+  background: transparent;
+  width: 100%;
+  text-align: left;
+}
+
+.accordion-preview .accordion-head i {
+  transition: transform 0.3s ease;
+}
+
+.accordion-preview .accordion-head i.rotated {
+  transform: rotate(180deg);
+}
+
+.accordion-body {
+  border-top: 1px solid rgba(229, 231, 235, 0.6);
+  padding: 14px 20px 20px;
+}
+
+.engine-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  border: 1px solid #fed7aa;
+  border-radius: 10px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.engine-warning i {
+  color: #f97316;
+  margin-top: 1px;
+  flex-shrink: 0;
+}
+
+/* ── DSP 信号流可视化链路图 ── */
+.dsp-signal-chain {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0;
+  margin-bottom: 24px;
+  padding: 24px 16px;
+  border: 1px solid rgba(229, 231, 235, 0.8);
+  border-radius: 16px;
+  background: rgba(249, 250, 251, 0.5);
+}
+
+.signal-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: opacity 0.3s ease;
+  opacity: 0.45;
+}
+
+.signal-node.active {
+  opacity: 1;
+}
+
+.signal-node-circle {
+  display: flex;
+  width: 44px;
+  height: 44px;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed #d1d5db;
+  border-radius: 50%;
+  background: #fff;
+  transition: all 0.3s ease;
+}
+
+.signal-node-circle.active {
+  border: 2px solid var(--brand-500);
+  box-shadow: 0 0 15px rgba(139, 92, 246, 0.15);
+  background: var(--brand-50);
+}
+
+.signal-node-circle i {
+  color: #9ca3af;
+  font-size: 18px;
+  transition: color 0.3s ease;
+}
+
+.signal-node-circle.active i {
+  color: var(--brand-500);
+}
+
+.signal-node-label {
+  color: #9ca3af;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.signal-node.active .signal-node-label {
+  color: var(--brand-500);
+}
+
+.signal-node-name {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.signal-node.active .signal-node-name {
+  color: #1f2937;
+}
+
+.signal-line {
+  flex: 1;
+  height: 2px;
+  min-width: 20px;
+  border-bottom: 2px dashed #d1d5db;
+  transition: all 0.3s ease;
+}
+
+.signal-line.active {
+  border-bottom: 2px solid var(--brand-500);
+  background: linear-gradient(90deg, var(--brand-500), transparent);
+}
+
+/* ── DSP 快速情景预设 ── */
+.dsp-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 20px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 8px 16px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fff;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.04);
+  transition: all 0.16s ease;
+}
+
+.preset-btn:hover {
+  border-color: var(--brand-300);
+  color: var(--brand-600);
+  background: var(--brand-50);
+}
+
+/* ── Crossfeed 百分比 ── */
+.crossfeed-percent {
+  min-width: 32px;
+  text-align: right;
+  color: #4b5563;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+/* ── Convolver 高算力消耗标签 ── */
+.compute-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border: 1px solid #fed7aa;
+  border-radius: 4px;
+  background: #fff7ed;
+  color: #c2410c;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.compute-badge i {
+  font-size: 9px;
+}
+
+/* ── High-Res 解码组 ── */
+.decode-highres {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.mini-highres {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mini-highres small {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 500;
 }
 </style>

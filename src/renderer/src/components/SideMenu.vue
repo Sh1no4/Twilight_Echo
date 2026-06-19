@@ -99,19 +99,20 @@ function handleImportClick(): void {
   left: 0;
   bottom: 0;
   width: var(--te-menu-width);
-  background: #ffffff;
-  border-right: 1px solid rgba(17, 24, 39, 0.06);
+  background: rgba(255, 255, 255, 0.7);
+  border-right: 1px solid rgba(0, 0, 0, 0.05);
   z-index: 1000;
   overflow: hidden;
-  box-shadow: 8px 0 24px rgba(15, 23, 42, 0.04);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  box-shadow: 4px 0 24px rgba(15, 23, 42, 0.03);
+  backdrop-filter: blur(24px) saturate(180%);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
   transform: translate3d(-100%, 0, 0);
   transform-origin: left center;
   will-change: transform;
   transition:
-    transform 0.32s var(--te-ease-soft),
+    transform 0.32s cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 0.32s;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
 }
 
 .side-menu.open {
@@ -123,7 +124,7 @@ function handleImportClick(): void {
   opacity: 0;
   transform-origin: left center;
   transition:
-    transform 0.28s var(--te-ease-soft),
+    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
     opacity 0.2s ease;
 }
 
@@ -139,80 +140,93 @@ function handleImportClick(): void {
   width: 100%;
   min-width: 132px;
   max-width: 216px;
-  padding: 14px 9px 14px 1px;
+  padding: 16px 12px 16px 4px;
 }
 
 .menu-nav {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .menu-bottom {
   flex-shrink: 0;
   margin-top: auto;
+  padding-top: 8px;
 }
 
 .menu-item {
   position: relative;
   display: flex;
   align-items: center;
-  height: 42px;
-  padding: 0 12px 0 18px;
+  height: 40px;
+  padding: 0 12px 0 16px;
+  margin-left: 8px;
   cursor: pointer;
-  border-radius: 11px;
-  gap: 12px;
+  border-radius: 10px;
+  gap: 14px;
   white-space: nowrap;
-  color: #111827;
+  color: #475569;
   transition:
-    background 0.18s,
-    color 0.18s;
+    background 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+    transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .menu-item:hover {
-  background: #f3f4f6;
+  background: rgba(15, 23, 42, 0.04);
+  color: #0f172a;
+  transform: translateX(3px);
 }
 
 .menu-item.active {
-  background: #e8e8e8;
-  color: #0f172a;
-  box-shadow: none;
+  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.08);
+  color: var(--te-primary-500, #6366f1);
+  font-weight: 600;
 }
 
 .menu-item.active::before {
   content: '';
   position: absolute;
-  left: -1px;
+  left: -8px;
   top: 10px;
   bottom: 10px;
   width: 4px;
-  border-radius: 0 999px 999px 0;
-  background: #020617;
+  border-radius: 0 4px 4px 0;
+  background: var(--te-primary-500, #6366f1);
+  opacity: 0.8;
+  box-shadow: 0 0 8px rgba(var(--te-primary-rgb, 99, 102, 241), 0.5);
 }
 
 .item-icon {
-  width: 17px;
-  height: 17px;
+  width: 18px;
+  height: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #4b5563;
+  color: #64748b;
   font-size: 16px;
-  transition: color 0.15s;
+  transition: color 0.2s, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.menu-item:hover .item-icon {
+  transform: scale(1.1);
+  color: #334155;
 }
 
 .menu-item.active .item-icon,
 .menu-item-streaming .item-icon,
 .menu-item-import .item-icon {
-  color: #111827;
+  color: inherit;
 }
 
 .item-label {
   font-size: 14px;
-  font-weight: 700;
+  font-weight: 500;
   color: currentColor;
   opacity: 0;
+  letter-spacing: 0.3px;
   transition: opacity 0.2s ease;
 }
 
@@ -222,25 +236,26 @@ function handleImportClick(): void {
 
 .menu-separator {
   height: 1px;
-  margin: 10px 10px 8px 14px;
-  background: #e5e7eb;
+  margin: 12px 10px 12px 16px;
+  background: linear-gradient(to right, rgba(0, 0, 0, 0.06), transparent);
 }
 
 .menu-item-streaming,
 .menu-item-import {
-  color: #111827;
+  color: #334155;
 }
 
 .menu-item-streaming:hover,
 .menu-item-import:hover {
-  background: #f3f4f6;
+  background: rgba(15, 23, 42, 0.04);
 }
 
 .scanning-text {
   display: block;
-  padding: 4px 12px;
-  color: #999;
+  padding: 8px 16px;
+  color: #94a3b8;
   font-size: 12px;
+  font-weight: 500;
 }
 
 @keyframes spin {
@@ -252,7 +267,7 @@ function handleImportClick(): void {
 .scanning-spinner {
   width: 12px;
   height: 12px;
-  border: 2px solid #ccc;
+  border: 2px solid #e2e8f0;
   border-top-color: var(--te-primary-500);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;

@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>音乐库 - 全新界面预览</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary-color: #6366f1;
+      --primary-light: rgba(99, 102, 241, 0.1);
+      --text-main: #1e293b;
+      --text-sub: #64748b;
+      --glass-bg: rgba(255, 255, 255, 0.75);
+      --glass-border: rgba(255, 255, 255, 0.6);
+      --glass-shadow: 0 20px 40px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+      --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    body {
+      background: radial-gradient(circle at 15% 50%, rgba(224, 231, 255, 0.6), transparent 25%),
+                  radial-gradient(circle at 85% 30%, rgba(250, 232, 255, 0.6), transparent 25%),
+                  linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%);
+      background-attachment: fixed;
+      color: var(--text-main);
+      min-height: 100vh;
+      padding: 40px;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    /* Top Header */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 40px;
+    }
+
+    .page-title {
+      font-size: 32px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #0f172a, #334155);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .search-bar {
+      display: flex;
+      align-items: center;
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-border);
+      padding: 10px 20px;
+      border-radius: 999px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.03);
+      transition: var(--transition);
+      width: 300px;
+    }
+
+    .search-bar:focus-within {
+      box-shadow: 0 12px 32px rgba(99, 102, 241, 0.12);
+      border-color: rgba(99, 102, 241, 0.3);
+      width: 340px;
+    }
+
+    .search-bar input {
+      border: none;
+      outline: none;
+      background: transparent;
+      width: 100%;
+      font-size: 14px;
+      color: var(--text-main);
+      margin-left: 10px;
+    }
+
+    .search-bar input::placeholder {
+      color: #94a3b8;
+    }
+
+    .avatar {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      object-fit: cover;
+      box-shadow: 0 8px 16px rgba(15, 23, 42, 0.08);
+      border: 2px solid #fff;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .avatar:hover {
+      transform: scale(1.05);
+    }
+
+    /* Top Grid Cards */
+    .top-cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+      margin-bottom: 30px;
+    }
+
+    /* Glass Card Base */
+    .glass-card {
+      background: var(--glass-bg);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border: 1px solid var(--glass-border);
+      border-radius: 24px;
+      padding: 32px;
+      box-shadow: var(--glass-shadow);
+      position: relative;
+      overflow: hidden;
+      transition: var(--transition);
+      cursor: pointer;
+    }
+
+    .glass-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 24px 48px rgba(15, 23, 42, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    }
+
+    /* User Profile Card */
+    .profile-card {
+      display: flex;
+      align-items: center;
+      gap: 24px;
+      cursor: default;
+    }
+    .profile-card:hover {
+      transform: none;
+      box-shadow: var(--glass-shadow);
+    }
+
+    .profile-avatar-wrap {
+      position: relative;
+    }
+
+    .profile-avatar {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 4px solid #fff;
+      box-shadow: 0 12px 24px rgba(15, 23, 42, 0.1);
+    }
+
+    .profile-platform-icon {
+      position: absolute;
+      bottom: 0;
+      right: 0;
+      width: 28px;
+      height: 28px;
+      background: #fff;
+      border-radius: 50%;
+      padding: 4px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+
+    .profile-info h3 {
+      font-size: 13px;
+      color: var(--text-sub);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .profile-info h1 {
+      font-size: 28px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-bottom: 4px;
+      letter-spacing: -0.5px;
+    }
+
+    .profile-info p {
+      font-size: 14px;
+      color: var(--text-sub);
+      margin-bottom: 16px;
+    }
+
+    .profile-stats {
+      display: flex;
+      gap: 16px;
+    }
+
+    .stat-badge {
+      background: rgba(15, 23, 42, 0.04);
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .stat-badge span {
+      color: var(--text-sub);
+      font-weight: 500;
+    }
+
+    /* Favorites Card */
+    .favorites-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.8) 0%, rgba(240, 245, 255, 0.6) 100%);
+    }
+
+    .favorites-card::before {
+      content: '';
+      position: absolute;
+      top: -50px;
+      right: -50px;
+      width: 200px;
+      height: 200px;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.15) 0%, transparent 70%);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+
+    .favorites-info .tag {
+      display: inline-block;
+      background: var(--primary-light);
+      color: var(--primary-color);
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+
+    .favorites-info h2 {
+      font-size: 26px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-bottom: 6px;
+      letter-spacing: -0.5px;
+    }
+
+    .favorites-info p {
+      font-size: 14px;
+      color: var(--text-sub);
+      font-weight: 500;
+      margin-bottom: 24px;
+    }
+
+    .btn-play {
+      background: linear-gradient(135deg, var(--primary-color), #818cf8);
+      color: #fff;
+      border: none;
+      padding: 12px 32px;
+      border-radius: 999px;
+      font-size: 14px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 10px 24px rgba(99, 102, 241, 0.3);
+      transition: var(--transition);
+      pointer-events: none;
+    }
+
+    .favorites-cover {
+      position: relative;
+      width: 140px;
+      height: 140px;
+      border-radius: 20px;
+      box-shadow: 0 16px 32px rgba(15, 23, 42, 0.15);
+      overflow: hidden;
+      transform: perspective(1000px) rotateY(-5deg);
+      transition: var(--transition);
+    }
+
+    .favorites-card:hover .favorites-cover {
+      transform: perspective(1000px) rotateY(0deg) scale(1.05);
+    }
+
+    .favorites-cover img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .favorites-cover .heart-icon {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 50px;
+      height: 50px;
+      background: rgba(255, 255, 255, 0.2);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .heart-icon svg {
+      width: 24px;
+      height: 24px;
+      fill: #fff;
+    }
+
+    /* Feature Cards (Recent & Ranking portals) */
+    .feature-cards {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+      margin-bottom: 40px;
+    }
+
+    .feature-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 24px 32px;
+    }
+
+    .feature-card.recent-card {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.8) 0%, rgba(238, 242, 255, 0.5) 100%);
+    }
+
+    .feature-card.ranking-card {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.8) 0%, rgba(255, 241, 242, 0.5) 100%);
+    }
+
+    .feature-info .icon-wrap {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      margin-bottom: 12px;
+    }
+
+    .recent-card .icon-wrap {
+      background: rgba(99, 102, 241, 0.15);
+      color: #6366f1;
+    }
+
+    .ranking-card .icon-wrap {
+      background: rgba(244, 63, 94, 0.15);
+      color: #f43f5e;
+    }
+
+    .feature-info h3 {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-bottom: 4px;
+    }
+
+    .feature-info p {
+      font-size: 14px;
+      color: var(--text-sub);
+      font-weight: 500;
+    }
+
+    .feature-card .enter-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+      transition: var(--transition);
+      color: var(--text-main);
+    }
+
+    .feature-card:hover .enter-btn {
+      transform: scale(1.1) translateX(4px);
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.1);
+      color: var(--primary-color);
+    }
+
+    .enter-btn svg {
+      width: 20px;
+      height: 20px;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .feature-preview {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding-right: 20px;
+    }
+
+    .preview-image {
+      width: 64px;
+      height: 64px;
+      border-radius: 12px;
+      object-fit: cover;
+      box-shadow: 0 8px 16px rgba(15, 23, 42, 0.08);
+      transition: var(--transition);
+    }
+    
+    .feature-card:hover .preview-image {
+      transform: scale(1.05);
+    }
+
+    /* Common Section Header */
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-bottom: 20px;
+    }
+
+    .section-header h2 {
+      font-size: 22px;
+      font-weight: 800;
+      color: var(--text-main);
+      margin-bottom: 4px;
+    }
+
+    .section-header p {
+      font-size: 14px;
+      color: var(--text-sub);
+      font-weight: 500;
+    }
+
+    /* Playlists Section */
+    .playlist-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 24px;
+    }
+
+    .playlist-item {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--glass-border);
+      padding: 16px;
+      border-radius: 20px;
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.02);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .playlist-item:hover {
+      transform: translateY(-3px);
+      box-shadow: 0 16px 32px rgba(15, 23, 42, 0.06);
+      background: rgba(255, 255, 255, 0.9);
+    }
+
+    .playlist-item-cover {
+      width: 64px;
+      height: 64px;
+      border-radius: 12px;
+      object-fit: cover;
+      box-shadow: 0 8px 16px rgba(15, 23, 42, 0.1);
+      transition: var(--transition);
+    }
+
+    .playlist-item:hover .playlist-item-cover {
+      transform: scale(1.05);
+    }
+
+    .playlist-item-info {
+      flex: 1;
+    }
+
+    .playlist-item-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 4px;
+    }
+
+    .playlist-item-count {
+      font-size: 13px;
+      color: var(--text-sub);
+      font-weight: 500;
+    }
+
+    .playlist-item-arrow {
+      color: #cbd5e1;
+      transition: var(--transition);
+    }
+
+    .playlist-item:hover .playlist-item-arrow {
+      color: var(--primary-color);
+      transform: translateX(4px);
+    }
+
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header class="header">
+      <h1 class="page-title">音乐库</h1>
+      <div class="header-actions">
+        <div class="search-bar">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" placeholder="搜索音乐、歌手、专辑...">
+        </div>
+        <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?ixlib=rb-1.2.1&auto=format&fit=crop&w=100&q=80" alt="Avatar" class="avatar">
+      </div>
+    </header>
+
+    <!-- Top Cards -->
+    <div class="top-cards">
+      <!-- Profile Card -->
+      <div class="glass-card profile-card">
+        <div class="profile-avatar-wrap">
+          <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?ixlib=rb-1.2.1&auto=format&fit=crop&w=200&q=80" alt="Pxasen" class="profile-avatar">
+          <img src="https://upload.wikimedia.org/wikipedia/commons/e/e1/NetEase_Cloud_Music_logo.svg" alt="Netease" class="profile-platform-icon">
+        </div>
+        <div class="profile-info">
+          <h3>网易云音乐个人音乐库</h3>
+          <h1>Pxasen</h1>
+          <p>Fallen Symphony</p>
+          <div class="profile-stats">
+            <div class="stat-badge">
+              24 <span>关注</span>
+            </div>
+            <div class="stat-badge">
+              5 <span>粉丝</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Favorites Card -->
+      <div class="glass-card favorites-card">
+        <div class="favorites-info">
+          <span class="tag">我的收藏</span>
+          <h2>我收藏的歌曲</h2>
+          <p>945 首歌曲</p>
+          <div class="btn-play">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M8 5v14l11-7z"/>
+            </svg>
+            播放全部
+          </div>
+        </div>
+        <div class="favorites-cover">
+          <img src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80" alt="Favorites Cover">
+          <div class="heart-icon">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Feature Cards: Recent & Ranking portals -->
+    <div class="feature-cards">
+      <!-- Recent Played Card -->
+      <div class="glass-card feature-card recent-card">
+        <div class="feature-info">
+          <div class="icon-wrap">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <polyline points="12 6 12 12 16 14"></polyline>
+            </svg>
+          </div>
+          <h3>最近播放</h3>
+          <p>回顾您最近的音乐足迹</p>
+        </div>
+        <div class="feature-preview">
+          <!-- Subtle preview image -->
+          <img src="https://images.unsplash.com/photo-1493225457124-a1a2a5f5f4b5?ixlib=rb-1.2.1&auto=format&fit=crop&w=150&q=80" alt="Recent Preview" class="preview-image">
+          <div class="enter-btn">
+            <svg viewBox="0 0 24 24">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top Ranking Card -->
+      <div class="glass-card feature-card ranking-card">
+        <div class="feature-info">
+          <div class="icon-wrap">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 15l-4-4h8l-4 4z" />
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+              <path d="M20 21H4"></path>
+              <path d="M4 17h16"></path>
+            </svg>
+          </div>
+          <h3>听歌排行</h3>
+          <p>探索您的最常播放榜单</p>
+        </div>
+        <div class="feature-preview">
+          <!-- Subtle preview image -->
+          <img src="https://images.unsplash.com/photo-1614113489855-66422ad300a4?ixlib=rb-1.2.1&auto=format&fit=crop&w=150&q=80" alt="Ranking Preview" class="preview-image">
+          <div class="enter-btn">
+            <svg viewBox="0 0 24 24">
+              <polyline points="9 18 15 12 9 6"></polyline>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Playlists Section -->
+    <div class="section-header">
+      <div>
+        <h2>我的收藏夹</h2>
+        <p>1 个在线列表</p>
+      </div>
+    </div>
+
+    <div class="playlist-grid">
+      <!-- Playlist Item -->
+      <div class="playlist-item">
+        <img src="https://images.unsplash.com/photo-1614113489855-66422ad300a4?ixlib=rb-1.2.1&auto=format&fit=crop&w=150&q=80" alt="Playlist 1" class="playlist-item-cover">
+        <div class="playlist-item-info">
+          <h4 class="playlist-item-title">1</h4>
+          <span class="playlist-item-count">42 首</span>
+        </div>
+        <div class="playlist-item-arrow">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </div>
+      </div>
+
+      <!-- Add more items for preview demonstration -->
+      <div class="playlist-item">
+        <img src="https://images.unsplash.com/photo-1493225457124-a1a2a5f5f4b5?ixlib=rb-1.2.1&auto=format&fit=crop&w=150&q=80" alt="Playlist 2" class="playlist-item-cover">
+        <div class="playlist-item-info">
+          <h4 class="playlist-item-title">ACG 音乐推荐</h4>
+          <span class="playlist-item-count">128 首</span>
+        </div>
+        <div class="playlist-item-arrow">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </div>
+      </div>
+      
+      <div class="playlist-item">
+        <img src="https://images.unsplash.com/photo-1470225620780-dba8ba36b745?ixlib=rb-1.2.1&auto=format&fit=crop&w=150&q=80" alt="Playlist 3" class="playlist-item-cover">
+        <div class="playlist-item-info">
+          <h4 class="playlist-item-title">轻音乐 / 钢琴</h4>
+          <span class="playlist-item-count">65 首</span>
+        </div>
+        <div class="playlist-item-arrow">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

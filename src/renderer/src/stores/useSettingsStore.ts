@@ -59,6 +59,16 @@ const fallbackSettings: AppSettings = {
   blurEffect: true,
   useCoverTheme: true,
   lyricFontSize: 18,
+  libraryFolders: [],
+  watchLibrary: true,
+  smtcEnabled: true,
+  discordRpcEnabled: false,
+  accentColor: 'violet',
+  fontFamily: 'system',
+  uiDensity: 'standard',
+  nowPlayingBackground: 'blur',
+  lyricAlign: 'center',
+  lyricDimOpacity: 40,
   playbackResumeMode: 'off',
   audioOutput: getFallbackAudioOutput(),
   audioDevice: 'auto',
@@ -108,6 +118,23 @@ function resolveTheme(theme: AppTheme): Exclude<AppTheme, 'system'> {
   return systemThemeQuery?.matches ? 'dark' : 'pureWhite'
 }
 
+const ACCENT_COLOR_VARS: Record<string, string> = {
+  violet: '#8b5cf6',
+  blue: '#3b82f6',
+  emerald: '#10b981',
+  rose: '#fb7185',
+  amber: '#f59e0b',
+  slate: '#1f2937'
+}
+
+const FONT_FAMILY_MAP: Record<string, string> = {
+  system: "var(--te-font-sans, system-ui, -apple-system, 'Segoe UI', sans-serif)",
+  inter: "'Inter', 'Roboto', system-ui, sans-serif",
+  lxgw: "'LXGW WenKai', '霞鹜文楷', serif",
+  sarasa: "'Sarasa Gothic', '更纱黑体', monospace",
+  comic: "'Comic Sans MS', cursive"
+}
+
 function applyDomSettings(): void {
   const resolvedTheme = resolveTheme(settings.value.theme)
   document.documentElement.dataset.theme = resolvedTheme
@@ -117,6 +144,19 @@ function applyDomSettings(): void {
   document.documentElement.style.setProperty(
     '--te-lyric-font-size',
     `${settings.value.lyricFontSize}px`
+  )
+  const accent = settings.value.accentColor
+  document.documentElement.style.setProperty('--te-accent', ACCENT_COLOR_VARS[accent] ?? ACCENT_COLOR_VARS.violet)
+  document.documentElement.style.setProperty(
+    '--te-font-sans',
+    FONT_FAMILY_MAP[settings.value.fontFamily] ?? FONT_FAMILY_MAP.system
+  )
+  document.documentElement.dataset.density = settings.value.uiDensity
+  document.documentElement.dataset.nowPlayingBg = settings.value.nowPlayingBackground
+  document.documentElement.dataset.lyricAlign = settings.value.lyricAlign
+  document.documentElement.style.setProperty(
+    '--te-lyric-dim-opacity',
+    `${settings.value.lyricDimOpacity / 100}`
   )
 }
 
@@ -187,6 +227,9 @@ export function useSettingsStore(): {
   clearCache: () => Promise<void>
   openCacheFolder: () => Promise<void>
   relaunch: () => Promise<void>
+  addLibraryFolder: () => Promise<void>
+  removeLibraryFolder: (folder: string) => Promise<void>
+  openExternalUrl: (url: string) => Promise<void>
 } {
   const formattedCacheSize = computed(() => formatBytes(cacheSize.value))
   const restartRequired = computed(() => restartReasons.value.length > 0)
@@ -250,6 +293,23 @@ export function useSettingsStore(): {
     await window.api.app.relaunch()
   }
 
+  async function addLibraryFolder(): Promise<void> {
+    const folder = await window.api.dialog.openFolder()
+    if (!folder) return
+    if (settings.value.libraryFolders.includes(folder)) return
+    await updateSettings({ libraryFolders: [...settings.value.libraryFolders, folder] })
+  }
+
+  async function removeLibraryFolder(folder: string): Promise<void> {
+    const next = settings.value.libraryFolders.filter((item) => item !== folder)
+    if (next.length === settings.value.libraryFolders.length) return
+    await updateSettings({ libraryFolders: next })
+  }
+
+  async function openExternalUrl(url: string): Promise<void> {
+    await window.api.shell.openExternal(url)
+  }
+
   return {
     settings,
     defaults,
@@ -271,6 +331,9 @@ export function useSettingsStore(): {
     refreshCacheSize,
     clearCache,
     openCacheFolder,
-    relaunch
+    relaunch,
+    addLibraryFolder,
+    removeLibraryFolder,
+    openExternalUrl
   }
 }

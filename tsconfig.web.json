@@ -5,6 +5,9 @@
     "src/renderer/src/**/*",
     "src/preload/*.d.ts"
   ],
+  "exclude": [
+    "src/renderer/src/**/*.test.ts"
+  ],
   "compilerOptions": {
     "composite": true,
     "paths": {

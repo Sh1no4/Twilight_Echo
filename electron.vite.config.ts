@@ -22,6 +22,18 @@ export default defineConfig({
       }
     },
     publicDir: resolve('resources'),
-    plugins: [vue()]
+    plugins: [vue()],
+    build: {
+      chunkSizeWarningLimit: 600,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'vendor-vue': ['vue'],
+            'vendor-music-metadata': ['music-metadata'],
+            'vendor-qrcode': ['qrcode']
+          }
+        }
+      }
+    }
   }
 })

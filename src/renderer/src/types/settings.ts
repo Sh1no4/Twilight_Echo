@@ -12,6 +12,10 @@ export type ChannelRoutingMode =
   | 'mono-to-multichannel'
 export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
 export type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
+export type UiDensity = 'compact' | 'standard' | 'comfortable'
+export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
+export type LyricAlign = 'center' | 'left'
+
 export type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -127,6 +131,16 @@ export interface AppSettings {
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number
+  libraryFolders: string[]
+  watchLibrary: boolean
+  smtcEnabled: boolean
+  discordRpcEnabled: boolean
+  accentColor: string
+  fontFamily: string
+  uiDensity: UiDensity
+  nowPlayingBackground: NowPlayingBackground
+  lyricAlign: LyricAlign
+  lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
   audioOutput: AudioOutputId
   audioDevice: string

@@ -12,6 +12,8 @@ files:
   - '!out/renderer/plugins/**'
   - '!out/renderer/plugin-index/**'
   - '!out/renderer/font/Alibaba-PuHuiTi-Medium.ttf'
+  - '!out/renderer/font/**/*.ttf'
+  - '!out/renderer/font/**/*.otf'
   - '!node_modules/**/{test,tests,__tests__,docs,doc,example,examples,benchmark,benchmarks}/**'
   - '!node_modules/**/*.map'
   - '!node_modules/**/*.ts'

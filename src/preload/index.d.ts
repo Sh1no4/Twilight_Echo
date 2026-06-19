@@ -32,6 +32,9 @@ type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+type UiDensity = 'compact' | 'standard' | 'comfortable'
+type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
+type LyricAlign = 'center' | 'left'
 type BuiltInTrackSource = 'local' | 'ncm'
 type TrackSource = BuiltInTrackSource | (string & {})
 type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
@@ -186,6 +189,16 @@ interface AppSettings {
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number
+  libraryFolders: string[]
+  watchLibrary: boolean
+  smtcEnabled: boolean
+  discordRpcEnabled: boolean
+  accentColor: string
+  fontFamily: string
+  uiDensity: UiDensity
+  nowPlayingBackground: NowPlayingBackground
+  lyricAlign: LyricAlign
+  lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
   audioOutput: AudioOutputId
   audioDevice: string
@@ -651,6 +664,20 @@ interface WindowAPI {
   shell: {
     showItemInFolder: (filePath: string) => Promise<void>
     openPath: (path: string) => Promise<string>
+    openExternal: (url: string) => Promise<void>
+  }
+  discord: {
+    updateActivity: (data: {
+      title: string
+      artist: string
+      album?: string
+      playing: boolean
+      startTime?: number
+    }) => Promise<void>
+    clearActivity: () => Promise<void>
+  }
+  library: {
+    onChanged: (cb: () => void) => () => void
   }
   fs: {
     scanMusicFiles: (folderPath: string) => Promise<TrackData[]>
@@ -660,6 +687,14 @@ interface WindowAPI {
   audioEngine: AudioEngineAPI
   app: {
     relaunch: () => Promise<void>
+    checkForUpdates: () => Promise<{
+      hasUpdate: boolean
+      currentVersion: string
+      latestVersion?: string
+      releaseUrl?: string
+      releaseNotes?: string
+      error?: string
+    }>
     onSavePlaybackSession: (cb: () => Promise<void> | void) => () => void
   }
   ncm: {
