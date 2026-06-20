@@ -15,12 +15,8 @@ import {
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useCover } from '../utils/coverLoader'
-
-interface LyricLine {
-  time: number
-  text: string
-  translation: string | null
-}
+import { buildLyricLines } from '../utils/lyrics'
+import type { LyricLine } from '../utils/lyrics'
 
 const { currentTrack, dominantColor, currentTime, duration, seek, formatTime } = usePlayerStore()
 const { settings } = useSettingsStore()
@@ -159,89 +155,8 @@ onBeforeUnmount(() => {
   lyricResizeObserver = null
 })
 
-interface ParsedLyricLine {
-  time: number
-  text: string
-}
-
-function parseLrc(lrc: string | null | undefined): ParsedLyricLine[] {
-  if (!lrc) return []
-
-  const lines: ParsedLyricLine[] = []
-  const lineRe = /\[(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?\]/g
-
-  for (const raw of lrc.split('\n')) {
-    const trimmed = raw.trim()
-    if (!trimmed) continue
-
-    const timestamps: Array<{ time: number; index: number; end: number }> = []
-    let match: RegExpExecArray | null
-    lineRe.lastIndex = 0
-
-    while ((match = lineRe.exec(trimmed)) !== null) {
-      const min = Number.parseInt(match[1], 10)
-      const sec = Number.parseInt(match[2], 10)
-      let ms = 0
-
-      if (match[3]) {
-        ms = Number.parseInt(match[3], 10)
-        if (match[3].length === 2) {
-          ms *= 10
-        }
-      }
-
-      timestamps.push({
-        time: min * 60 + sec + ms / 1000,
-        index: match.index,
-        end: match.index + match[0].length
-      })
-    }
-
-    const text = trimmed.replace(lineRe, '').trim()
-    if (!text || timestamps.length === 0) continue
-
-    const hasInlineTimestamps = timestamps.some((timestamp, index) => {
-      if (index === 0) return timestamp.index > 0
-      const previous = timestamps[index - 1]
-      return trimmed.slice(previous.end, timestamp.index).trim().length > 0
-    })
-
-    if (hasInlineTimestamps) {
-      lines.push({ time: timestamps[0].time, text })
-      continue
-    }
-
-    for (const ts of timestamps) {
-      lines.push({ time: ts.time, text })
-    }
-  }
-
-  lines.sort((a, b) => a.time - b.time)
-  return lines
-}
-
 const lyricLines = computed<LyricLine[]>(() => {
-  const originalLines = parseLrc(currentTrack.value?.lyrics)
-  const translatedLines = parseLrc(currentTrack.value?.translatedLyrics ?? null)
-
-  if (originalLines.length === 0) {
-    return translatedLines.map((line) => ({
-      time: line.time,
-      text: line.text,
-      translation: null
-    }))
-  }
-
-  const translatedMap = new Map<number, string>()
-  for (const line of translatedLines) {
-    translatedMap.set(Math.round(line.time * 1000), line.text)
-  }
-
-  return originalLines.map((line) => ({
-    time: line.time,
-    text: line.text,
-    translation: translatedMap.get(Math.round(line.time * 1000)) ?? null
-  }))
+  return buildLyricLines(currentTrack.value?.lyrics, currentTrack.value?.translatedLyrics ?? null)
 })
 
 const hasLyrics = computed(() => lyricLines.value.length > 0)
@@ -251,7 +166,8 @@ const activeLyricIndex = computed(() => {
   let idx = -1
 
   for (let i = 0; i < lyricLines.value.length; i++) {
-    if (lyricLines.value[i].time <= t) {
+    const lineTime = lyricLines.value[i].time
+    if (lineTime != null && lineTime <= t) {
       idx = i
     } else {
       break
@@ -278,7 +194,8 @@ function lyricTone(index: number): 'idle' | 'far' | 'mid' | 'near' | 'active' {
   return 'far'
 }
 
-function jumpToLyric(time: number): void {
+function jumpToLyric(time: number | null): void {
+  if (time == null) return
   seek(time)
 }
 
@@ -507,7 +424,8 @@ onBeforeUnmount(() => {
                 :ref="(el) => setLyricLineRef(i, el)"
                 type="button"
                 class="lyric-row"
-                :class="lyricTone(i)"
+                :class="[lyricTone(i), { 'is-plain': !line.timed }]"
+                :disabled="!line.timed"
                 @click="jumpToLyric(line.time)"
               >
                 <span class="lyric-text">{{ line.text }}</span>

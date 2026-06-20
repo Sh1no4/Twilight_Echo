@@ -6,6 +6,9 @@ const emit = defineEmits<{
   back: []
 }>()
 
+type TwilightPluginDescriptor = Awaited<ReturnType<typeof window.api.plugins.list>>[number]
+type TwilightPluginIndexEntry = Awaited<ReturnType<typeof window.api.plugins.listIndex>>[number]
+
 const activeTab = ref('installed')
 const devMode = ref(false)
 const searchText = ref('')

@@ -814,6 +814,8 @@ const api = {
       ipcRenderer.invoke('fs:scanMusicFiles', folderPath),
     readAudioFile: (filePath: string): Promise<{ buffer: ArrayBuffer; mimeType: string }> =>
       ipcRenderer.invoke('fs:readAudioFile', filePath),
+    getAudioFileUrl: (filePath: string): Promise<string> =>
+      ipcRenderer.invoke('fs:getAudioFileUrl', filePath),
     onScanProgress: (cb: (progress: { current: number; total: number }) => void): (() => void) => {
       const handler = (_event, data: { current: number; total: number }): void => cb(data)
       ipcRenderer.on('fs:scanProgress', handler)
@@ -821,7 +823,7 @@ const api = {
     }
   },
   audioEngine: {
-    loadQueue: (items: TrackData[], startIndex?: number): Promise<void> =>
+    loadQueue: (items: AudioEngineQueueItem[], startIndex?: number): Promise<void> =>
       ipcRenderer.invoke('audioEngine:loadQueue', items, startIndex),
     play: (filePath: string, startTime?: number): Promise<AudioEnginePlayResult> =>
       ipcRenderer.invoke('audioEngine:play', filePath, startTime),

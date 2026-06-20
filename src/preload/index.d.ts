@@ -669,7 +669,7 @@ interface AudioEnginePlayResult {
 }
 
 interface AudioEngineAPI {
-  loadQueue: (items: TrackData[], startIndex?: number) => Promise<void>
+  loadQueue: (items: AudioEngineQueueItem[], startIndex?: number) => Promise<void>
   play: (filePath: string, startTime?: number) => Promise<AudioEnginePlayResult>
   togglePause: () => Promise<void>
   seek: (time: number) => Promise<void>
@@ -755,6 +755,7 @@ interface WindowAPI {
   fs: {
     scanMusicFiles: (folderPath: string) => Promise<TrackData[]>
     readAudioFile: (filePath: string) => Promise<{ buffer: ArrayBuffer; mimeType: string }>
+    getAudioFileUrl: (filePath: string) => Promise<string>
     onScanProgress: (cb: (progress: { current: number; total: number }) => void) => () => void
   }
   audioEngine: AudioEngineAPI

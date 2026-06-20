@@ -9,6 +9,7 @@ import {
   nativeTheme,
   nativeImage,
   protocol,
+  net,
   session,
   Tray,
   screen
@@ -18,6 +19,7 @@ import { readdirSync, statSync, readFileSync, existsSync, writeFileSync, mkdirSy
 import { readFile, writeFile, readdir, stat, rm } from 'fs/promises'
 import { randomUUID, createHash } from 'crypto'
 import { tmpdir } from 'os'
+import { pathToFileURL } from 'url'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { parseFile } from 'music-metadata'
 import DiscordRPC from 'discord-rpc'
@@ -648,6 +650,33 @@ const SUPPORTED_EXTENSIONS = [
   '.mqa',
   '.iso'
 ]
+
+function encodeAudioFileUrlPath(filePath: string): string {
+  return Buffer.from(filePath, 'utf-8')
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '')
+}
+
+function decodeAudioFileUrlPath(encoded: string): string {
+  const base64 = encoded.replace(/-/g, '+').replace(/_/g, '/')
+  return Buffer.from(base64.padEnd(Math.ceil(base64.length / 4) * 4, '='), 'base64').toString(
+    'utf-8'
+  )
+}
+
+async function resolvePlayableAudioFile(filePath: string): Promise<string> {
+  const resolvedPath = resolve(filePath)
+  const fileStat = await stat(resolvedPath)
+  if (!fileStat.isFile()) {
+    throw new Error('音频路径不是文件')
+  }
+  if (!SUPPORTED_EXTENSIONS.includes(extname(resolvedPath).toLowerCase())) {
+    throw new Error('不支持的音频文件类型')
+  }
+  return resolvedPath
+}
 
 const COVER_NAMES = [
   'cover.jpg',
@@ -1724,15 +1753,17 @@ function setupAudioEngineIpc(): void {
     if (!raw || typeof raw !== 'object') return null
     const item = raw as Record<string, unknown>
     const source =
-      typeof item.audioSource === 'string'
-        ? item.audioSource
-        : typeof item.playUrl === 'string'
-          ? item.playUrl
-          : typeof item.filePath === 'string'
-            ? item.filePath
-            : typeof item.streamUrl === 'string'
-              ? item.streamUrl
-              : ''
+      typeof item.source === 'string'
+        ? item.source
+        : typeof item.audioSource === 'string'
+          ? item.audioSource
+          : typeof item.playUrl === 'string'
+            ? item.playUrl
+            : typeof item.filePath === 'string'
+              ? item.filePath
+              : typeof item.streamUrl === 'string'
+                ? item.streamUrl
+                : ''
     if (!source) return null
     return {
       id: typeof item.id === 'string' ? item.id : source,
@@ -2206,6 +2237,18 @@ const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
 } else {
+  protocol.registerSchemesAsPrivileged([
+    {
+      scheme: 'twilight-audio',
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true,
+        stream: true
+      }
+    }
+  ])
+
   app.on('second-instance', () => {
     const win = mainWindow
     if (!win || win.isDestroyed()) return
@@ -2235,6 +2278,22 @@ if (!gotSingleInstanceLock) {
       return new Response(data, {
         headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'max-age=86400' }
       })
+    })
+
+    protocol.handle('twilight-audio', async (request) => {
+      try {
+        const url = new URL(request.url)
+        const encodedPath = url.pathname.replace(/^\/+/, '')
+        if (!encodedPath) return new Response('Bad Request', { status: 400 })
+        const filePath = await resolvePlayableAudioFile(decodeAudioFileUrlPath(encodedPath))
+        return net.fetch(pathToFileURL(filePath).toString(), {
+          headers: request.headers,
+          bypassCustomProtocolHandlers: true
+        })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : '无法读取音频文件'
+        return new Response(message, { status: 404 })
+      }
     })
 
   app.on('browser-window-created', (_, window) => {
@@ -2389,6 +2448,11 @@ if (!gotSingleInstanceLock) {
       buffer: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
       mimeType: getMimeType(filePath)
     }
+  })
+
+  ipcMain.handle('fs:getAudioFileUrl', async (_event, filePath: string) => {
+    const resolvedPath = await resolvePlayableAudioFile(filePath)
+    return `twilight-audio:///${encodeAudioFileUrlPath(resolvedPath)}`
   })
 
   const userDataPath = app.getPath('userData')

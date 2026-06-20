@@ -93,6 +93,7 @@ const libraryDays = computed(() => {
 })
 
 const recentlyAddedTracks = computed(() => tracks.value.slice(-3).reverse())
+const DASHBOARD_QUEUE_WINDOW = 200
 const topTracks = computed(() => {
   const byId = new Map(tracks.value.map((track) => [track.id, track]))
   const stats = Object.entries(listeningStats.value.tracks)
@@ -388,7 +389,17 @@ function handleSeek(event: MouseEvent): void {
 
 function playDashboardTrack(track: Track | undefined): void {
   if (!track) return
-  playTrack(track, tracks.value)
+  const sourceIndex = tracks.value.findIndex((item) => item.id === track.id)
+  if (sourceIndex < 0) {
+    playTrack(track, [track])
+    return
+  }
+
+  const halfWindow = Math.floor(DASHBOARD_QUEUE_WINDOW / 2)
+  const start = Math.max(0, sourceIndex - halfWindow)
+  const end = Math.min(tracks.value.length, start + DASHBOARD_QUEUE_WINDOW)
+  const queueStart = Math.max(0, end - DASHBOARD_QUEUE_WINDOW)
+  playTrack(track, tracks.value.slice(queueStart, end))
 }
 </script>
 

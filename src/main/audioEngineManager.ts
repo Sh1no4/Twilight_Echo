@@ -1179,6 +1179,7 @@ export class AudioEngineManager extends EventEmitter {
   private destroyed = false
   private nativePlaybackActive = false
   private lastNativeError = ''
+  private pendingNativeSource: string | null = null
 
   constructor(
     config: AudioEngineConfig = { exclusiveMode: false },
@@ -1314,12 +1315,17 @@ export class AudioEngineManager extends EventEmitter {
       throw new Error(`原生音频播放失败：${detail}`)
     }
     this.nativePlaybackActive = nativeStarted
+    this.pendingNativeSource = nativeStarted ? source : null
     const nativeInfo = nativeStarted ? this.readNativePlaybackInfo() : null
+    if (nativeInfo?.source === source) {
+      this.pendingNativeSource = null
+    }
     const isDsd = sourceLooksDsd(source)
     const nativeDsd = nativeInfo ? normalizeDsdState(nativeInfo.outputInfo, nativeInfo) : null
     const playbackIsDsd = isDsd || nativeDsd?.isDsd === true
     const playbackDsdMode = nativeDsd?.isDsd ? nativeDsd.dsdMode : playbackIsDsd ? 'unsupported' : 'pcm'
     const playbackDsdRate = nativeDsd?.isDsd ? nativeDsd.dsdRate : 0
+    const sourceQueueIndex = this.queue.findIndex((item) => item.source === source)
     this.playbackInfo = {
       ...this.playbackInfo,
       ...nativeInfo,
@@ -1327,6 +1333,7 @@ export class AudioEngineManager extends EventEmitter {
       position: Math.max(0, Number.isFinite(startTime) ? startTime : 0),
       duration,
       source,
+      queueIndex: sourceQueueIndex >= 0 ? sourceQueueIndex : this.playbackInfo.queueIndex,
       codec: inferCodec(source),
       isDsd: playbackIsDsd,
       dsdMode: playbackDsdMode,
@@ -1366,7 +1373,7 @@ export class AudioEngineManager extends EventEmitter {
         const raw = await native.callAsync('GetPlaybackInfo', [])
         const realInfo = parseNativeJson(raw as string | PlaybackInfo | undefined, null as PlaybackInfo | null)
         if (realInfo) {
-          this.playbackInfo = { ...this.playbackInfo, ...this.normalizePlaybackInfo(realInfo) }
+          this.playbackInfo = this.mergeNativePlaybackInfo(this.normalizePlaybackInfo(realInfo))
         }
         this.lastTick = this.scheduler.now()
         this.publishProperty('pause', this.playbackInfo.state !== 'playing')
@@ -1384,7 +1391,7 @@ export class AudioEngineManager extends EventEmitter {
     this.tryNative('暂停/继续', (n) => n.Pause())
     const nativeInfo = this.readNativePlaybackInfo()
     if (nativeInfo) {
-      this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+      this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
     }
     this.lastTick = this.scheduler.now()
     this.publishProperty('pause', this.playbackInfo.state !== 'playing')
@@ -1419,6 +1426,7 @@ export class AudioEngineManager extends EventEmitter {
   async stop(): Promise<void> {
     this.tryNative('停止', (native) => native.Stop())
     this.nativePlaybackActive = false
+    this.pendingNativeSource = null
     this.playbackInfo.state = 'stopped'
     this.playbackInfo.position = 0
     this.publishProperty('pause', true)
@@ -1440,19 +1448,22 @@ export class AudioEngineManager extends EventEmitter {
     if (this.queue.length === 0) return
     const fallbackIndex = (this.playbackInfo.queueIndex + 1) % this.queue.length
     let nextIndex = fallbackIndex
-    let targetSource = this.queue[nextIndex]?.source
+    const targetSource = this.queue[nextIndex]?.source
     if (
       this.nativePlaybackActive &&
       this.native?.Next &&
       this.tryNative('下一首', (native) => native.Next?.())
     ) {
       const nativeInfo = this.readNativePlaybackInfo()
-      if (nativeInfo && nativeInfo.queueIndex >= 0 && nativeInfo.queueIndex < this.queue.length) {
+      if (
+        nativeInfo &&
+        nativeInfo.state === 'playing' &&
+        nativeInfo.source === targetSource &&
+        nativeInfo.queueIndex >= 0 &&
+        nativeInfo.queueIndex < this.queue.length
+      ) {
         nextIndex = nativeInfo.queueIndex
-        targetSource = this.queue[nextIndex]?.source
-      }
-      if (nativeInfo && nativeInfo.state === 'playing' && nativeInfo.source === targetSource) {
-        this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+        this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
         this.emit('start-file')
         this.publishPlaybackInfo()
         return
@@ -1467,19 +1478,22 @@ export class AudioEngineManager extends EventEmitter {
     const fallbackIndex =
       this.playbackInfo.queueIndex <= 0 ? this.queue.length - 1 : this.playbackInfo.queueIndex - 1
     let nextIndex = fallbackIndex
-    let targetSource = this.queue[nextIndex]?.source
+    const targetSource = this.queue[nextIndex]?.source
     if (
       this.nativePlaybackActive &&
       this.native?.Previous &&
       this.tryNative('上一首', (native) => native.Previous?.())
     ) {
       const nativeInfo = this.readNativePlaybackInfo()
-      if (nativeInfo && nativeInfo.queueIndex >= 0 && nativeInfo.queueIndex < this.queue.length) {
+      if (
+        nativeInfo &&
+        nativeInfo.state === 'playing' &&
+        nativeInfo.source === targetSource &&
+        nativeInfo.queueIndex >= 0 &&
+        nativeInfo.queueIndex < this.queue.length
+      ) {
         nextIndex = nativeInfo.queueIndex
-        targetSource = this.queue[nextIndex]?.source
-      }
-      if (nativeInfo && nativeInfo.state === 'playing' && nativeInfo.source === targetSource) {
-        this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+        this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
         this.emit('start-file')
         this.publishPlaybackInfo()
         return
@@ -1734,7 +1748,7 @@ export class AudioEngineManager extends EventEmitter {
     this.playbackInfo.playMode = mode
     this.tryNative('切换播放模式', (native) => native.SetPlayMode?.(mode))
     const nativeInfo = this.readNativePlaybackInfo()
-    if (nativeInfo) this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+    if (nativeInfo) this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
     this.publishPlaybackInfo()
   }
 
@@ -1750,7 +1764,7 @@ export class AudioEngineManager extends EventEmitter {
     if (this.nativePlaybackActive) {
       const nativeInfo = this.readNativePlaybackInfo()
       if (nativeInfo) {
-        this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+        this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
       }
     }
     return { ...this.playbackInfo, nativePlaybackActive: this.nativePlaybackActive }
@@ -1807,6 +1821,37 @@ export class AudioEngineManager extends EventEmitter {
       return info ? this.normalizePlaybackInfo(info) : null
     } catch {
       return null
+    }
+  }
+
+  private mergeNativePlaybackInfo(nativeInfo: PlaybackInfo): PlaybackInfo {
+    if (!this.pendingNativeSource) {
+      return this.withQueueIndexForSource({ ...this.playbackInfo, ...nativeInfo })
+    }
+
+    if (nativeInfo.source === this.pendingNativeSource) {
+      this.pendingNativeSource = null
+      return this.withQueueIndexForSource({ ...this.playbackInfo, ...nativeInfo })
+    }
+
+    return {
+      ...this.playbackInfo,
+      state: nativeInfo.state,
+      position: nativeInfo.position,
+      duration: this.playbackInfo.duration || nativeInfo.duration,
+      volume: nativeInfo.volume,
+      outputInfo: nativeInfo.outputInfo,
+      nativePlaybackActive: nativeInfo.nativePlaybackActive
+    }
+  }
+
+  private withQueueIndexForSource(info: PlaybackInfo): PlaybackInfo {
+    if (!info.source) return info
+    const sourceQueueIndex = this.queue.findIndex((item) => item.source === info.source)
+    if (sourceQueueIndex < 0 || sourceQueueIndex === info.queueIndex) return info
+    return {
+      ...info,
+      queueIndex: sourceQueueIndex
     }
   }
 
@@ -1977,7 +2022,7 @@ export class AudioEngineManager extends EventEmitter {
       const previousQueueIndex = this.playbackInfo.queueIndex
       const nativeInfo = this.readNativePlaybackInfo()
       if (nativeInfo) {
-        this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+        this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
         this.lastTick = this.scheduler.now()
         this.publishProperty('time-pos', this.playbackInfo.position)
         if (this.playbackInfo.duration > 0) {
@@ -2108,7 +2153,7 @@ export class AudioEngineManager extends EventEmitter {
   private refreshOutputInfoFromNative(resetDefaults: boolean): void {
     if (resetDefaults) this.resetOutputInfoDefaults()
     const nativeInfo = this.readNativePlaybackInfo()
-    if (nativeInfo) this.playbackInfo = { ...this.playbackInfo, ...nativeInfo }
+    if (nativeInfo) this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
   }

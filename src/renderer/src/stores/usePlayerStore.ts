@@ -430,16 +430,13 @@ async function createPlayableUrl(
     return target
   }
 
-  const file = await window.api.fs.readAudioFile(target)
+  const fileUrl = await window.api.fs.getAudioFileUrl(target)
   if (!isActiveLoad(loadToken, track)) return null
-
-  const blob = new Blob([file.buffer], { type: file.mimeType || 'audio/mpeg' })
   releasePlaybackObjectUrl()
-  playbackObjectUrl = URL.createObjectURL(blob)
   if (!duration.value && track.duration) {
     duration.value = track.duration
   }
-  return playbackObjectUrl
+  return fileUrl
 }
 
 async function playWithRendererAudio(
@@ -647,6 +644,25 @@ function getTrackAudioSource(track: Track): string {
   return track.subTrack || track.streamUrl || track.filePath
 }
 
+function mergeTrackTransientData(nextTrack: Track, previousTrack: Track | null): Track {
+  if (!previousTrack || previousTrack.id !== nextTrack.id) return nextTrack
+  const lyrics = nextTrack.lyrics ?? previousTrack.lyrics
+  const translatedLyrics = nextTrack.translatedLyrics ?? previousTrack.translatedLyrics
+  if (lyrics === nextTrack.lyrics && translatedLyrics === nextTrack.translatedLyrics) return nextTrack
+  return {
+    ...nextTrack,
+    lyrics,
+    translatedLyrics
+  }
+}
+
+function patchTrackInQueues(updatedTrack: Track): void {
+  queue.value = queue.value.map((track) => track.id === updatedTrack.id ? updatedTrack : track)
+  originalQueue.value = originalQueue.value.map((track) =>
+    track.id === updatedTrack.id ? updatedTrack : track
+  )
+}
+
 function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
   if (
     Number.isInteger(info.queueIndex) &&
@@ -687,9 +703,13 @@ function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
   if (infoIndex >= 0) {
     const track = queue.value[infoIndex]
     switchedTrack = currentTrack.value?.id !== track.id
+    const mergedTrack = mergeTrackTransientData(track, currentTrack.value)
     queueIndex.value = infoIndex
-    currentTrack.value = track
-    loadedTrackId = track.id
+    if (mergedTrack !== track) {
+      queue.value = queue.value.map((item, index) => index === infoIndex ? mergedTrack : item)
+    }
+    currentTrack.value = mergedTrack
+    loadedTrackId = mergedTrack.id
   }
 
   const nextDuration =
@@ -727,16 +747,7 @@ function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
 async function syncNativeQueueState(): Promise<void> {
   const engineQueue = queue.value.map((item) => ({
     id: item.id,
-    title: item.title,
-    artist: item.artist,
-    album: item.album,
-    filePath: item.filePath,
-    fileName: item.fileName,
-    dir: item.dir,
     duration: item.duration,
-    size: item.size,
-    cover: null,
-    lyrics: null,
     source: getTrackAudioSource(item),
     format: item.format,
     sampleRate: item.sampleRate,
@@ -836,24 +847,15 @@ watch(
 )
 
 watch(
-  () => [currentTrack.value?.id, currentTrack.value?.translatedLyrics] as const,
+  () => [currentTrack.value?.id, currentTrack.value?.lyrics, currentTrack.value?.translatedLyrics] as const,
   async ([id], [prevId]) => {
     const track = currentTrack.value
-    if (!track || track.id !== id || track.id === prevId) return
+    if (!track || track.id !== id) return
 
     // Lazy-load lyrics for local tracks (lyrics not loaded during scan)
-    if (getTrackSource(track) === 'local' && track.lyrics == null && track.dir && track.fileName) {
-      try {
-        const lrc = await window.api.data.getLyrics(track.dir, track.fileName, track.filePath)
-        if (lrc && currentTrack.value?.id === track.id) {
-          currentTrack.value = { ...currentTrack.value, lyrics: lrc }
-        }
-      } catch {
-        // ignore — no lyrics file found
-      }
-    }
+    await ensureCurrentTrackLyricsLoaded(track)
 
-    if (getTrackSource(track) !== 'local' && track.translatedLyrics == null) {
+    if (track.id !== prevId && getTrackSource(track) !== 'local' && track.translatedLyrics == null) {
       await syncPluginProviders()
       const lyricData = await useMediaProviders().resolveLyrics(track)
       if (currentTrack.value?.id === track.id && (lyricData.lyrics || lyricData.translatedLyrics)) {
@@ -985,6 +987,33 @@ function getTrackSource(track: Track): string {
   if (track.source) return track.source
   const separatorIndex = track.id.indexOf(':')
   return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
+}
+
+async function ensureCurrentTrackLyricsLoaded(triggerTrack: Track | null = currentTrack.value): Promise<void> {
+  if (
+    !triggerTrack ||
+    getTrackSource(triggerTrack) !== 'local' ||
+    triggerTrack.lyrics != null ||
+    !triggerTrack.dir ||
+    !triggerTrack.fileName
+  ) {
+    return
+  }
+
+  try {
+    const lrc = await window.api.data.getLyrics(
+      triggerTrack.dir,
+      triggerTrack.fileName,
+      triggerTrack.filePath
+    )
+    if (lrc && currentTrack.value?.id === triggerTrack.id && currentTrack.value.lyrics == null) {
+      const updatedTrack = { ...currentTrack.value, lyrics: lrc }
+      currentTrack.value = updatedTrack
+      patchTrackInQueues(updatedTrack)
+    }
+  } catch {
+    // ignore — no lyrics file found
+  }
 }
 
 async function resolvePlayTarget(track: Track): Promise<string> {
@@ -1227,16 +1256,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
 
     const engineQueue = queue.value.map((item) => ({
       id: item.id,
-      title: item.title,
-      artist: item.artist,
-      album: item.album,
-      filePath: item.filePath,
-      fileName: item.fileName,
-      dir: item.dir,
       duration: item.duration,
-      size: item.size,
-      cover: null,
-      lyrics: null,
       source: item.id === track.id ? playTarget : getTrackAudioSource(item),
       format: item.format,
       sampleRate: item.sampleRate,
@@ -1407,6 +1427,196 @@ function previous(): void {
   }
 }
 
+function seekPlayback(time: number): void {
+  if (currentTrack.value && loadedTrackId !== currentTrack.value.id) {
+    restoredPlaybackPending = true
+    restoredPlaybackPosition = Math.max(0, Number.isFinite(time) ? time : 0)
+    setCurrentTimeImmediate(restoredPlaybackPosition)
+    return
+  }
+  setCurrentTimeImmediate(time)
+  if (!nativePlaybackActive && playbackAudio) playbackAudio.currentTime = Math.max(0, time)
+  if (nativePlaybackActive) window.api.audioEngine.seek(time).catch(() => {})
+}
+
+let playerIntegrationSideEffectsSetup = false
+let mediaSessionHandlersBound = false
+let mediaSessionMetadataKey = ''
+let discordPlayStartTimestamp: number | null = null
+let desktopLyricsTimeThrottle = 0
+
+function updateMediaSessionPlaybackState(): void {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+  navigator.mediaSession.playbackState =
+    appSettings.value.smtcEnabled && currentTrack.value
+      ? isPlaying.value ? 'playing' : 'paused'
+      : 'none'
+}
+
+function updateMediaSessionPositionState(): void {
+  if (
+    typeof navigator === 'undefined' ||
+    !('mediaSession' in navigator) ||
+    !appSettings.value.smtcEnabled ||
+    !currentTrack.value ||
+    duration.value <= 0 ||
+    !Number.isFinite(currentTime.value)
+  ) {
+    return
+  }
+
+  try {
+    navigator.mediaSession.setPositionState({
+      duration: duration.value,
+      position: Math.min(currentTime.value, duration.value),
+      playbackRate: 1
+    })
+  } catch {
+    // setPositionState can throw if values are invalid; ignore
+  }
+}
+
+function updateMediaSessionMetadata(): void {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+  if (!appSettings.value.smtcEnabled) {
+    mediaSessionMetadataKey = ''
+    navigator.mediaSession.metadata = null
+    navigator.mediaSession.playbackState = 'none'
+    return
+  }
+
+  const track = currentTrack.value
+  if (!track) {
+    mediaSessionMetadataKey = ''
+    navigator.mediaSession.metadata = null
+    navigator.mediaSession.playbackState = 'none'
+    return
+  }
+
+  const nextMetadataKey = [
+    track.id,
+    track.title || '',
+    track.artist || '',
+    track.album || '',
+    track.cover || ''
+  ].join('\u0000')
+
+  if (mediaSessionMetadataKey !== nextMetadataKey) {
+    mediaSessionMetadataKey = nextMetadataKey
+    navigator.mediaSession.metadata = typeof MediaMetadata !== 'undefined'
+      ? new MediaMetadata({
+          title: track.title || '',
+          artist: track.artist || '',
+          album: track.album || '',
+          artwork: track.cover ? [{ src: track.cover, sizes: '512x512', type: 'image/jpeg' }] : []
+        })
+      : null
+  }
+
+  updateMediaSessionPlaybackState()
+  updateMediaSessionPositionState()
+}
+
+function setupMediaSessionHandlers(): void {
+  if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
+  if (mediaSessionHandlersBound) return
+  mediaSessionHandlersBound = true
+  const ms = navigator.mediaSession
+  ms.setActionHandler('play', () => {
+    if (!isPlaying.value) void togglePlayState()
+  })
+  ms.setActionHandler('pause', () => {
+    if (isPlaying.value) void togglePlayState()
+  })
+  ms.setActionHandler('previoustrack', () => { previous() })
+  ms.setActionHandler('nexttrack', () => { next() })
+  ms.setActionHandler('seekto', (details) => {
+    if (details.seekTime != null) seekPlayback(details.seekTime)
+  })
+  ms.setActionHandler('seekbackward', () => { seekPlayback(Math.max(0, currentTime.value - 10)) })
+  ms.setActionHandler('seekforward', () => {
+    seekPlayback(Math.min(duration.value, currentTime.value + 10))
+  })
+}
+
+function updateDiscordActivity(): void {
+  if (!appSettings.value.discordRpcEnabled) {
+    window.api.discord.clearActivity().catch(() => {})
+    return
+  }
+  const track = currentTrack.value
+  if (!track || !isPlaying.value) {
+    discordPlayStartTimestamp = null
+    window.api.discord.clearActivity().catch(() => {})
+    return
+  }
+  if (discordPlayStartTimestamp === null) {
+    discordPlayStartTimestamp = Date.now()
+  }
+  window.api.discord.updateActivity({
+    title: track.title || '',
+    artist: track.artist || '',
+    album: track.album || '',
+    playing: true,
+    startTime: discordPlayStartTimestamp
+  }).catch(() => {})
+}
+
+function setupPlayerIntegrationSideEffects(): void {
+  if (playerIntegrationSideEffectsSetup) return
+  playerIntegrationSideEffectsSetup = true
+
+  watch(() => appSettings.value.smtcEnabled, () => {
+    if (appSettings.value.smtcEnabled) setupMediaSessionHandlers()
+    updateMediaSessionMetadata()
+  }, { immediate: true })
+
+  watch(
+    [
+      () => currentTrack.value?.id,
+      () => currentTrack.value?.title,
+      () => currentTrack.value?.artist,
+      () => currentTrack.value?.album,
+      () => currentTrack.value?.cover
+    ],
+    () => updateMediaSessionMetadata(),
+    { immediate: true }
+  )
+
+  watch(isPlaying, () => {
+    updateMediaSessionPlaybackState()
+    if (!isPlaying.value) discordPlayStartTimestamp = null
+    updateDiscordActivity()
+  }, { immediate: true })
+
+  watch([currentTime, duration], () => {
+    if (appSettings.value.smtcEnabled && isPlaying.value) updateMediaSessionPositionState()
+  })
+
+  watch(() => appSettings.value.discordRpcEnabled, () => updateDiscordActivity(), { immediate: true })
+
+  watch(currentTrack, (track) => {
+    if (!track) return
+    window.api.desktopLyrics.updateTrack({
+      lyrics: track.lyrics ?? null,
+      translatedLyrics: track.translatedLyrics ?? null,
+      title: track.title || '',
+      artist: track.artist || ''
+    })
+  }, { immediate: true })
+
+  watch(currentTime, (time) => {
+    const now = Date.now()
+    if (now - desktopLyricsTimeThrottle < 200) return
+    desktopLyricsTimeThrottle = now
+    window.api.desktopLyrics.updateTime(time)
+  })
+
+  watch(() => appSettings.value.desktopLyrics, (dl) => {
+    window.api.desktopLyrics.updateSettings(dl)
+  }, { deep: true })
+}
+
 function shuffleArray<T>(arr: T[]): T[] {
   const a = [...arr]
   for (let i = a.length - 1; i > 0; i--) {
@@ -1512,6 +1722,7 @@ function restorePlaybackSession(session: PlaybackSession): void {
   autoAdvanceInFlight = false
   advancingFromEndedTrackId = ''
   setCurrentTimeImmediate(position)
+  void ensureCurrentTrackLyricsLoaded(track)
 }
 
 function createPlaybackSession(mode: PlaybackResumeMode): PlaybackSession | null {
@@ -1587,6 +1798,8 @@ export function usePlayerStore(): {
   createPlaybackSession: (mode: PlaybackResumeMode) => PlaybackSession | null
   formatTime: (seconds: number) => string
 } {
+  setupPlayerIntegrationSideEffects()
+
   function playTrack(track: Track, trackList?: Track[]): void {
     if (trackList) {
       originalQueue.value = [...trackList]
@@ -1616,138 +1829,8 @@ export function usePlayerStore(): {
   }
 
   function seek(time: number): void {
-    if (currentTrack.value && loadedTrackId !== currentTrack.value.id) {
-      restoredPlaybackPending = true
-      restoredPlaybackPosition = Math.max(0, Number.isFinite(time) ? time : 0)
-      setCurrentTimeImmediate(restoredPlaybackPosition)
-      return
-    }
-    setCurrentTimeImmediate(time)
-    if (!nativePlaybackActive && playbackAudio) playbackAudio.currentTime = Math.max(0, time)
-    if (nativePlaybackActive) window.api.audioEngine.seek(time).catch(() => {})
+    seekPlayback(time)
   }
-
-  // ── SMTC / MediaSession integration ──────────────────────────────
-  let mediaSessionHandlersBound = false
-
-  function updateMediaSessionMetadata(): void {
-    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
-    if (!appSettings.value.smtcEnabled) {
-      navigator.mediaSession.metadata = null
-      navigator.mediaSession.playbackState = 'none'
-      return
-    }
-    const track = currentTrack.value
-    if (!track) {
-      navigator.mediaSession.metadata = null
-      navigator.mediaSession.playbackState = 'none'
-      return
-    }
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: track.title || '',
-      artist: track.artist || '',
-      album: track.album || '',
-      artwork: track.cover ? [{ src: track.cover, sizes: '512x512', type: 'image/jpeg' }] : []
-    })
-    navigator.mediaSession.playbackState = isPlaying.value ? 'playing' : 'paused'
-    if (duration.value > 0 && Number.isFinite(currentTime.value)) {
-      try {
-        navigator.mediaSession.setPositionState({
-          duration: duration.value,
-          position: Math.min(currentTime.value, duration.value),
-          playbackRate: 1
-        })
-      } catch {
-        // setPositionState can throw if values are invalid; ignore
-      }
-    }
-  }
-
-  function setupMediaSessionHandlers(): void {
-    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
-    if (mediaSessionHandlersBound) return
-    mediaSessionHandlersBound = true
-    const ms = navigator.mediaSession
-    ms.setActionHandler('play', () => { void togglePlay() })
-    ms.setActionHandler('pause', () => { void togglePlay() })
-    ms.setActionHandler('previoustrack', () => { prev() })
-    ms.setActionHandler('nexttrack', () => { next() })
-    ms.setActionHandler('seekto', (details) => {
-      if (details.seekTime != null) seek(details.seekTime)
-    })
-    ms.setActionHandler('seekbackward', () => { seek(Math.max(0, currentTime.value - 10)) })
-    ms.setActionHandler('seekforward', () => { seek(Math.min(duration.value, currentTime.value + 10)) })
-  }
-
-  watch(() => appSettings.value.smtcEnabled, () => {
-    if (appSettings.value.smtcEnabled) setupMediaSessionHandlers()
-    updateMediaSessionMetadata()
-  }, { immediate: true })
-
-  watch([currentTrack, isPlaying], () => updateMediaSessionMetadata(), { immediate: true })
-
-  watch([currentTime, duration], () => {
-    if (appSettings.value.smtcEnabled && isPlaying.value) updateMediaSessionMetadata()
-  })
-  // ── end SMTC / MediaSession ──────────────────────────────────────
-
-  // ── Discord Rich Presence ─────────────────────────────────────────
-  let discordPlayStartTimestamp: number | null = null
-
-  function updateDiscordActivity(): void {
-    if (!appSettings.value.discordRpcEnabled) {
-      window.api.discord.clearActivity().catch(() => {})
-      return
-    }
-    const track = currentTrack.value
-    if (!track || !isPlaying.value) {
-      discordPlayStartTimestamp = null
-      window.api.discord.clearActivity().catch(() => {})
-      return
-    }
-    if (discordPlayStartTimestamp === null) {
-      discordPlayStartTimestamp = Date.now()
-    }
-    window.api.discord.updateActivity({
-      title: track.title || '',
-      artist: track.artist || '',
-      album: track.album || '',
-      playing: true,
-      startTime: discordPlayStartTimestamp
-    }).catch(() => {})
-  }
-
-  watch(() => appSettings.value.discordRpcEnabled, () => updateDiscordActivity(), { immediate: true })
-  watch([currentTrack, isPlaying], () => {
-    if (!isPlaying.value) discordPlayStartTimestamp = null
-    updateDiscordActivity()
-  })
-  // ── end Discord Rich Presence ─────────────────────────────────────
-
-  // ── Desktop Lyrics ──────────────────────────────────────────────────
-  let desktopLyricsTimeThrottle = 0
-
-  watch(currentTrack, (track) => {
-    if (!track) return
-    window.api.desktopLyrics.updateTrack({
-      lyrics: track.lyrics ?? null,
-      translatedLyrics: track.translatedLyrics ?? null,
-      title: track.title || '',
-      artist: track.artist || ''
-    })
-  }, { immediate: true })
-
-  watch(currentTime, (time) => {
-    const now = Date.now()
-    if (now - desktopLyricsTimeThrottle < 200) return
-    desktopLyricsTimeThrottle = now
-    window.api.desktopLyrics.updateTime(time)
-  })
-
-  watch(() => appSettings.value.desktopLyrics, (dl) => {
-    window.api.desktopLyrics.updateSettings(dl)
-  }, { deep: true })
-  // ── end Desktop Lyrics ──────────────────────────────────────────────
 
   function setVolume(vol: number): void {
     volume.value = vol

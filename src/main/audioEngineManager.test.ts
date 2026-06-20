@@ -287,7 +287,8 @@ class FakeNativeBinding implements NativeAudioBinding {
       ...this.playbackInfo,
       state: 'playing',
       source,
-      position: startTime
+      position: startTime,
+      nativePlaybackActive: true
     }
   }
 
@@ -974,6 +975,32 @@ test('next falls back to Play when native Next advances but does not keep playba
   assert.equal(nativeBinding.nextCalls, 1)
   assert.deepEqual(nativeBinding.playCalls.map((call) => call.source), ['first.flac', 'second.flac'])
   assert.equal(info.state, 'playing')
+  assert.equal(info.queueIndex, 1)
+  assert.equal(info.source, 'second.flac')
+})
+
+test('next falls back to target track when native Next reports stale playback info', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const queue = [
+    { id: '1', source: 'first.flac', title: 'First' },
+    { id: '2', source: 'second.flac', title: 'Second' }
+  ]
+
+  await manager.loadQueue(queue, 0)
+  await manager.play(queue[0].source, 0)
+  await manager.next()
+  const info = await manager.getPlaybackInfo()
+
+  assert.equal(nativeBinding.nextCalls, 1)
+  assert.deepEqual(nativeBinding.playCalls.map((call) => call.source), ['first.flac', 'second.flac'])
   assert.equal(info.queueIndex, 1)
   assert.equal(info.source, 'second.flac')
 })

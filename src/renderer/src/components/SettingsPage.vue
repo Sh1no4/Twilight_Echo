@@ -206,7 +206,7 @@ const {
   toggleGapless
 } = usePlayerStore()
 
-const { uiContributions, syncExtensions } = useExtensionRegistry()
+const { syncExtensions } = useExtensionRegistry()
 
 
 const volumePercent = computed({
@@ -589,11 +589,6 @@ async function chooseMusicCacheFolder(): Promise<void> {
   if (folder) {
     await updateSettings({ musicCachePath: folder })
   }
-}
-
-async function runSettingsExtension(command?: string): Promise<void> {
-  if (!command) return
-  await window.api.extensions.executeCommand(command, [])
 }
 
 function scrollToSection(section: SectionKey): void {
