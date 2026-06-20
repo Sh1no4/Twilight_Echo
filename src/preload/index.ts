@@ -978,8 +978,6 @@ const api = {
       ipcRenderer.invoke('settings:update', patch),
     chooseCacheFolder: (): Promise<string | null> =>
       ipcRenderer.invoke('settings:chooseCacheFolder'),
-    selectMusicCachePath: (): Promise<string | null> =>
-      ipcRenderer.invoke('settings:selectMusicCachePath'),
     getCacheSize: (): Promise<number> => ipcRenderer.invoke('settings:getCacheSize'),
     clearCache: (): Promise<number> => ipcRenderer.invoke('settings:clearCache'),
     onChanged: (cb: (snapshot: SettingsSnapshot) => void): (() => void) => {

@@ -400,14 +400,13 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
         ? settings.musicCachePath.trim()
         : getDefaultCachePath()
   const cachePath = resolve(rawCachePath)
-  const autoLaunch =
-    typeof settings.autoLaunch === 'boolean'
-      ? settings.autoLaunch
-      : typeof settings.launchAtLogin === 'boolean'
-        ? settings.launchAtLogin
-        : DEFAULT_SETTINGS.autoLaunch
   const launchAtLogin =
-    typeof settings.launchAtLogin === 'boolean' ? settings.launchAtLogin : autoLaunch
+    typeof settings.launchAtLogin === 'boolean'
+      ? settings.launchAtLogin
+      : typeof settings.autoLaunch === 'boolean'
+        ? settings.autoLaunch
+        : DEFAULT_SETTINGS.launchAtLogin
+  const autoLaunch = launchAtLogin
   const closeToTray =
     typeof settings.closeToTray === 'boolean'
       ? settings.closeToTray
@@ -538,6 +537,7 @@ function ensureMusicCacheDirectories(rootPath: string): void {
   mkdirSync(join(rootPath, 'renderer-cache'), { recursive: true })
   mkdirSync(join(rootPath, 'audio-engine-cache'), { recursive: true })
   mkdirSync(join(rootPath, 'ncm-cache'), { recursive: true })
+  mkdirSync(join(rootPath, 'cover-cache'), { recursive: true })
 }
 
 function getMusicCacheRoot(): string {
@@ -702,6 +702,10 @@ const COVER_JPEG_QUALITY = 85
 const COVER_BLUR_WIDTH = 32
 
 function getCoverCacheDir(): string {
+  return join(getMusicCacheRoot(), 'cover-cache')
+}
+
+function getLegacyCoverCacheDir(): string {
   return join(app.getPath('userData'), 'cover-cache')
 }
 
@@ -709,6 +713,13 @@ function ensureCoverCacheDir(): string {
   const dir = getCoverCacheDir()
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   return dir
+}
+
+function resolveCoverCacheFile(fileName: string): string | null {
+  const currentPath = join(getCoverCacheDir(), fileName)
+  if (existsSync(currentPath)) return currentPath
+  const legacyPath = join(getLegacyCoverCacheDir(), fileName)
+  return existsSync(legacyPath) ? legacyPath : null
 }
 
 /** Extract cover from image buffer, resize, save to disk cache. Returns cover:// handle.
@@ -757,8 +768,8 @@ function cacheCoverFromFile(filePath: string): string | null {
 function readCachedCover(handle: string): string | null {
   if (!handle.startsWith('cover://')) return null
   const fileName = handle.slice('cover://'.length)
-  const fullPath = join(getCoverCacheDir(), fileName)
-  if (!existsSync(fullPath)) return null
+  const fullPath = resolveCoverCacheFile(fileName)
+  if (!fullPath) return null
   try {
     const data = readFileSync(fullPath)
     return `data:image/jpeg;base64,${data.toString('base64')}`
@@ -1391,7 +1402,7 @@ function syncTrayState(): void {
 }
 
 function applyRuntimeSettings(): void {
-  applyAutoLaunch(appSettings.autoLaunch)
+  applyAutoLaunch(appSettings.launchAtLogin)
   applyDiscordRpcSetting(appSettings.discordRpcEnabled)
   applyLibraryWatchers(appSettings.libraryFolders, appSettings.watchLibrary)
   registerPlayerShortcuts()
@@ -2270,8 +2281,8 @@ if (!gotSingleInstanceLock) {
       if (!safeName.endsWith('.jpg')) {
         return new Response('Forbidden', { status: 403 })
       }
-      const filePath = join(getCoverCacheDir(), safeName)
-      if (!existsSync(filePath)) {
+      const filePath = resolveCoverCacheFile(safeName)
+      if (!filePath) {
         return new Response('Not Found', { status: 404 })
       }
       const data = readFileSync(filePath)
@@ -2404,19 +2415,6 @@ if (!gotSingleInstanceLock) {
     return result.filePaths[0]
   })
 
-  ipcMain.handle('settings:selectMusicCachePath', async () => {
-    const win = BrowserWindow.getFocusedWindow() ?? mainWindow
-    const options: Electron.OpenDialogOptions = {
-      title: '选择音乐缓存位置',
-      properties: ['openDirectory', 'createDirectory']
-    }
-    const result = win
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options)
-    if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
-  })
-
   ipcMain.handle('settings:getCacheSize', async () => {
     return await getDirectorySize(appSettings.musicCachePath || getDefaultCachePath())
   })
@@ -2425,6 +2423,7 @@ if (!gotSingleInstanceLock) {
     const cachePath = appSettings.musicCachePath || getDefaultCachePath()
     try {
       await rm(cachePath, { recursive: true, force: true })
+      await rm(getLegacyCoverCacheDir(), { recursive: true, force: true })
     } catch (error) {
       console.warn('清理缓存失败：', error)
     }

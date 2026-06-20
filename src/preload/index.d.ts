@@ -795,7 +795,6 @@ interface WindowAPI {
     get: () => Promise<SettingsSnapshot>
     update: (patch: Partial<AppSettings>) => Promise<SettingsSnapshot>
     chooseCacheFolder: () => Promise<string | null>
-    selectMusicCachePath: () => Promise<string | null>
     getCacheSize: () => Promise<number>
     clearCache: () => Promise<number>
     onChanged: (cb: (snapshot: SettingsSnapshot) => void) => () => void

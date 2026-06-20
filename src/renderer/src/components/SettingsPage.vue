@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useExtensionRegistry } from '../extensions/registry'
+import { getPluginThemeKey } from '../extensions/themeSelection'
 import type {
   AppSettings,
   AppTheme,
@@ -151,6 +152,7 @@ const lyricAlignOptions: { value: LyricAlign; label: string }[] = [
 ]
 
 const GITHUB_URL = 'https://github.com/nousresearch/twilight-echo'
+const RELEASES_URL = 'https://github.com/nousresearch/twilight-echo/releases'
 const HOMEPAGE_URL = 'https://twilightecho.com'
 
 const updateCheckState = ref<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle')
@@ -206,7 +208,7 @@ const {
   toggleGapless
 } = usePlayerStore()
 
-const { syncExtensions } = useExtensionRegistry()
+const { syncExtensions, themeContributions } = useExtensionRegistry()
 
 
 const volumePercent = computed({
@@ -218,6 +220,12 @@ const volumePercent = computed({
 
 const activeCachePath = computed(
   () => paths.value?.activeCachePath ?? settings.value.cachePath ?? ''
+)
+const pluginThemeOptions = computed(() =>
+  themeContributions.value.map((theme) => ({
+    value: getPluginThemeKey(theme),
+    label: `${theme.name} (${theme.pluginId})`
+  }))
 )
 const selectedAudioOutput = computed(() =>
   audioOutputOptions.value.find((option) => option.id === audioOutput.value)
@@ -475,6 +483,11 @@ function setFontFamily(event: Event): void {
   void updateSettings({ fontFamily: (event.target as HTMLSelectElement).value })
 }
 
+function setPluginTheme(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value
+  void updateSettings({ pluginThemeId: value || null })
+}
+
 function setUiDensity(density: UiDensity): void {
   if (settings.value.uiDensity === density) return
   void updateSettings({ uiDensity: density })
@@ -495,8 +508,18 @@ function setLyricDimOpacity(event: Event): void {
   })
 }
 
+function setLyricFontSize(event: Event): void {
+  void updateSettings({
+    lyricFontSize: Number((event.target as HTMLInputElement).value)
+  })
+}
+
 function openGithub(): void {
   void openExternalUrl(GITHUB_URL)
+}
+
+function openReleases(): void {
+  void openExternalUrl(RELEASES_URL)
 }
 
 function openHomepage(): void {
@@ -580,15 +603,15 @@ function toggleEqFromDsp(): void {
   })
 }
 
-function openEqualizerFromDsp(): void {
-  emit('openEqualizer')
+function toggleCrossfeedFromDsp(): void {
+  updateAudioProcessing({
+    dspEnabled: true,
+    crossfeedEnabled: !audioProcessing.value.crossfeedEnabled
+  })
 }
 
-async function chooseMusicCacheFolder(): Promise<void> {
-  const folder = await window.api.settings.selectMusicCachePath()
-  if (folder) {
-    await updateSettings({ musicCachePath: folder })
-  }
+function openEqualizerFromDsp(): void {
+  emit('openEqualizer')
 }
 
 function scrollToSection(section: SectionKey): void {
@@ -702,8 +725,8 @@ onBeforeUnmount(() => {
             <div class="setting-list">
               <div class="setting-item">
                 <div class="setting-copy">
-                  <strong>图片与歌词缓存位置</strong>
-                  <span>当前：{{ activeCachePath || '默认目录' }}</span>
+                  <strong>缓存目录</strong>
+                  <span>保存图片、歌词、在线资源和流媒体缓存。当前：{{ activeCachePath || '默认目录' }}</span>
                 </div>
                 <button type="button" class="soft-button" @click="chooseCacheFolder">更改目录</button>
               </div>
@@ -1114,7 +1137,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="dsp-signal-chain">
-            <div class="signal-node" :class="{ active: true }">
+            <div class="signal-node static" :class="{ active: true }">
               <div class="signal-node-circle active">
                 <i class="pi pi-file-audio"></i>
               </div>
@@ -1130,7 +1153,11 @@ onBeforeUnmount(() => {
               <span class="signal-node-name">EQ</span>
             </div>
             <div class="signal-line" :class="{ active: crossfeedChainActive }"></div>
-            <div class="signal-node" :class="{ active: crossfeedChainActive }">
+            <div
+              class="signal-node"
+              :class="{ active: crossfeedChainActive }"
+              @click="toggleCrossfeedFromDsp"
+            >
               <div class="signal-node-circle" :class="{ active: crossfeedChainActive }">
                 <i class="pi pi-arrows-h"></i>
               </div>
@@ -1146,7 +1173,7 @@ onBeforeUnmount(() => {
               <span class="signal-node-name">CONVOLVER</span>
             </div>
             <div class="signal-line active"></div>
-            <div class="signal-node" :class="{ active: true }">
+            <div class="signal-node static" :class="{ active: true }">
               <div class="signal-node-circle active">
                 <i class="pi pi-volume-up"></i>
               </div>
@@ -1395,25 +1422,12 @@ onBeforeUnmount(() => {
             <div class="setting-item top-align">
               <div class="setting-copy">
                 <strong>缓存目录</strong>
-                <span>保存图片、歌词和在线资源缓存。</span>
+                <span>保存图片、歌词、在线资源和可复用的流媒体缓存。</span>
               </div>
               <div class="path-control">
                 <input readonly :value="activeCachePath || '未设置'" />
                 <button type="button" class="soft-button" @click="chooseCacheFolder">选择文件夹</button>
                 <button type="button" class="muted-button" @click="resetCacheFolder">恢复默认</button>
-              </div>
-            </div>
-            <hr />
-            <div class="setting-item top-align">
-              <div class="setting-copy">
-                <strong>音乐缓存目录</strong>
-                <span>单独存放可复用的流媒体缓存。</span>
-              </div>
-              <div class="path-control">
-                <input readonly :value="settings.musicCachePath || '未设置'" />
-                <button type="button" class="soft-button" @click="chooseMusicCacheFolder">
-                  选择文件夹
-                </button>
               </div>
             </div>
             <hr />
@@ -1857,10 +1871,9 @@ onBeforeUnmount(() => {
             </div>
             <hr />
             <div class="shortcut-grid">
-              <div><span>播放 / 暂停</span><kbd>Space</kbd></div>
-              <div><span>上一首</span><kbd>Ctrl + Left</kbd></div>
-              <div><span>下一首</span><kbd>Ctrl + Right</kbd></div>
-              <div><span>音量加/减</span><kbd>Up / Down</kbd></div>
+              <div><span>播放 / 暂停</span><kbd>Ctrl + Alt + Space</kbd></div>
+              <div><span>上一首</span><kbd>Ctrl + Alt + Left</kbd></div>
+              <div><span>下一首</span><kbd>Ctrl + Alt + Right</kbd></div>
             </div>
           </div>
         </section>
@@ -1926,16 +1939,7 @@ onBeforeUnmount(() => {
                 <h3><i class="pi pi-heart"></i> 支持项目发展</h3>
                 <p>Twilight Echo 是一个由热情驱动的免费开源项目。您的慷慨赞助将直接用于服务器开销、持续更新以及给开发者的深夜咖啡。</p>
               </div>
-              <div class="sponsor-actions">
-                <button class="sponsor-button" type="button">
-                  <i class="pi pi-wallet"></i>
-                  赞助支持
-                </button>
-                <button class="sponsor-list-button" type="button">
-                  <i class="pi pi-users"></i>
-                  赞助名单
-                </button>
-              </div>
+              <span class="sponsor-pending">赞助入口暂未接入</span>
             </div>
           </div>
 
@@ -1943,7 +1947,7 @@ onBeforeUnmount(() => {
 
           <div class="about-links">
             <button type="button" @click="openGithub"><i class="pi pi-github"></i> GitHub</button>
-            <button type="button" @click="openGithub"><i class="pi pi-file-o"></i> 更新日志</button>
+            <button type="button" @click="openReleases"><i class="pi pi-file-o"></i> 更新日志</button>
             <button type="button" @click="openHomepage"><i class="pi pi-heart-fill"></i> 开源致谢</button>
           </div>
         </section>
@@ -3193,45 +3197,23 @@ onBeforeUnmount(() => {
   line-height: 1.6;
 }
 
-.sponsor-actions {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 8px;
-}
-
-.sponsor-button,
-.sponsor-list-button {
+.sponsor-pending {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
   min-height: 36px;
   padding: 8px 16px;
-  border-radius: 8px;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 900;
-  transition: transform 0.16s ease;
-}
-
-.sponsor-button {
-  border: 0;
-  background: linear-gradient(90deg, #fbbf24, #fb923c);
-  color: #fff;
-  box-shadow: 0 8px 18px rgba(249, 115, 22, 0.2);
-}
-
-.sponsor-button:hover,
-.sponsor-list-button:hover,
-.about-links button:hover {
-  transform: translateY(-1px);
-}
-
-.sponsor-list-button {
   border: 1px solid #fde68a;
+  border-radius: 8px;
   background: #fff;
   color: #b45309;
-  box-shadow: 0 1px 5px rgba(245, 158, 11, 0.08);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.about-links button:hover {
+  transform: translateY(-1px);
 }
 
 .about-links {
@@ -3358,7 +3340,6 @@ onBeforeUnmount(() => {
   .path-control,
   .inline-controls,
   .background-options,
-  .sponsor-actions,
   .about-links {
     flex-direction: column;
     align-items: stretch;
@@ -3561,6 +3542,10 @@ onBeforeUnmount(() => {
   cursor: pointer;
   transition: opacity 0.3s ease;
   opacity: 0.45;
+}
+
+.signal-node.static {
+  cursor: default;
 }
 
 .signal-node.active {
