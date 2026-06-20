@@ -3,6 +3,7 @@ import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import type { Track } from '../types/music'
+import CoverImg from './CoverImg.vue'
 
 type LocalTransitionName = 'local-page-down' | 'local-page-up'
 type IdleDeadlineLike = {
@@ -502,7 +503,7 @@ watch(
                 class="artist-card"
                 @click="emit('selectView', 'artists', `artist:${artist.name}`)"
               >
-                <img v-if="artist.cover" :src="artist.cover" class="artist-cover" alt="cover" />
+                <CoverImg v-if="artist.cover" :cover="artist.cover" class="artist-cover" alt="cover" />
                 <div v-else class="artist-cover-placeholder">
                   <i class="pi pi-user" style="font-size: 28px; color: #bbb"></i>
                 </div>
@@ -521,7 +522,7 @@ watch(
                 class="album-card"
                 @click="emit('selectView', 'albums', `album:${album.name}`)"
               >
-                <img v-if="album.cover" :src="album.cover" class="album-cover" alt="cover" />
+                <CoverImg v-if="album.cover" :cover="album.cover" class="album-cover" alt="cover" />
                 <div v-else class="album-cover-placeholder">
                   <i class="pi pi-images" style="font-size: 28px; color: #bbb"></i>
                 </div>
@@ -567,7 +568,7 @@ watch(
                 class="playlist-card folder-card"
                 @click="emit('selectView', 'folders', `folder:${folder.path}`)"
               >
-                <img v-if="folder.cover" :src="folder.cover" class="album-cover" alt="cover" />
+                <CoverImg v-if="folder.cover" :cover="folder.cover" class="album-cover" alt="cover" />
                 <div v-else class="playlist-cover-placeholder">
                   <i class="pi pi-folder" style="font-size: 32px; color: #fff"></i>
                 </div>
@@ -650,7 +651,7 @@ watch(
                   @contextmenu="onContextMenu($event, track)"
                 >
                   <td class="col-cover">
-                    <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
+                    <CoverImg v-if="track.cover" :cover="track.cover" class="cover-img" alt="cover" />
                     <div v-else class="cover-placeholder">
                       <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
                     </div>

@@ -14,6 +14,7 @@ import {
 } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
+import { useCover } from '../utils/coverLoader'
 
 interface LyricLine {
   time: number
@@ -34,19 +35,18 @@ const isSolidBackground = computed(() => nowPlayingBackground.value === 'solid')
 
 const lyricAlignClass = computed(() => `lyric-align-${lyricAlign.value}`)
 
-const bgSrc = ref(currentTrack.value?.cover ?? '')
+const resolvedCover = useCover(computed(() => currentTrack.value?.cover ?? null))
+const bgSrc = computed(() => resolvedCover.value ?? '')
 const lyricsEl = ref<HTMLElement | null>(null)
 const lyricLineEls = ref<Array<HTMLElement | null>>([])
 let lyricScrollRaf = 0
 let lyricCenterTimer = 0
-let lyricOpenCenterTimer = 0
 let lyricManualScrollTimer = 0
 let lyricManualScrollLocked = false
 let lyricResizeObserver: ResizeObserver | null = null
 let restoringLyricScroll = false
 const LYRIC_SCROLL_DURATION_MS = 420
 const LYRIC_RESIZE_SCROLL_DURATION_MS = 260
-const LYRIC_OPEN_CENTER_DELAY_MS = 620
 const LYRIC_MANUAL_RETURN_DELAY_MS = 3000
 const LYRIC_CENTER_OFFSET_RATIO = 0.08
 const LYRIC_CENTER_OFFSET_MAX = 72
@@ -81,18 +81,27 @@ function restoreLyricScrollPosition(): boolean {
 
 async function restoreOrCenterLyrics(): Promise<void> {
   await nextTick()
-  if (restoreLyricScrollPosition()) return
+  // Use rAF to ensure the DOM layout is fully computed before measuring
+  // element positions. On re-mount, nextTick resolves after Vue's virtual
+  // DOM patch but the browser may not have performed layout yet.
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
   lyricManualScrollLocked = false
-  scheduleLyricOpenCenter()
+  cancelLyricScrollAnimation()
+  if (activeLyricIndex.value >= 0) {
+    // Retry up to 3 frames in case lyricLineEls isn't populated yet
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (lyricLineEls.value[activeLyricIndex.value]) {
+        focusLyricLine(activeLyricIndex.value, 0)
+        return
+      }
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    }
+    // Final attempt without duration constraint
+    focusLyricLine(activeLyricIndex.value)
+  } else if (lyricsEl.value) {
+    lyricsEl.value.scrollTo({ top: 0, behavior: 'auto' })
+  }
 }
-
-watch(
-  () => currentTrack.value?.cover,
-  (newCover) => {
-    bgSrc.value = newCover ?? ''
-  },
-  { immediate: true }
-)
 
 watch(
   () =>
@@ -111,9 +120,15 @@ watch(
       lyricLineEls.value = []
       await nextTick()
       if (lyricsEl.value) {
-        if (!restoreLyricScrollPosition()) {
+        if (restoreLyricScrollPosition()) {
+          // Restored saved scroll position for this track
+        } else {
           lyricManualScrollLocked = false
-          lyricsEl.value.scrollTo({ top: 0, behavior: 'auto' })
+          if (activeLyricIndex.value >= 0) {
+            focusLyricLine(activeLyricIndex.value)
+          } else {
+            lyricsEl.value.scrollTo({ top: 0, behavior: 'auto' })
+          }
         }
       }
       return
@@ -129,8 +144,7 @@ watch(
         focusLyricLine(activeLyricIndex.value)
       }
     }
-  },
-  { immediate: true }
+  }
 )
 
 onBeforeUnmount(() => {
@@ -139,10 +153,6 @@ onBeforeUnmount(() => {
   if (lyricCenterTimer !== 0) {
     window.clearTimeout(lyricCenterTimer)
     lyricCenterTimer = 0
-  }
-  if (lyricOpenCenterTimer !== 0) {
-    window.clearTimeout(lyricOpenCenterTimer)
-    lyricOpenCenterTimer = 0
   }
   clearLyricManualScrollTimer()
   lyricResizeObserver?.disconnect()
@@ -289,16 +299,25 @@ function getLyricTargetTop(index: number): number | null {
 
   if (!container || !line) return null
 
-  const containerRect = container.getBoundingClientRect()
-  const lineRect = line.getBoundingClientRect()
+  // Use offsetTop traversal instead of getBoundingClientRect().
+  // getBoundingClientRect() returns positions affected by CSS transforms
+  // (e.g. the scale(0.12) transition on the parent .playing-music), which
+  // gives incorrect scroll targets during the enter/leave animation.
+  // offsetTop / offsetHeight are layout properties unaffected by transforms.
+  let lineOffsetTop = 0
+  let current: HTMLElement | null = line
+  while (current && current !== container) {
+    lineOffsetTop += current.offsetTop
+    current = current.offsetParent as HTMLElement | null
+  }
+
   const centerOffset = Math.min(
     LYRIC_CENTER_OFFSET_MAX,
     container.clientHeight * LYRIC_CENTER_OFFSET_RATIO
   )
   const targetTop =
-    container.scrollTop +
-    (lineRect.top - containerRect.top) -
-    (container.clientHeight - lineRect.height) * 0.5 +
+    lineOffsetTop -
+    (container.clientHeight - line.offsetHeight) * 0.5 +
     centerOffset
   const maxTop = Math.max(0, container.scrollHeight - container.clientHeight)
 
@@ -393,20 +412,7 @@ function scheduleActiveLyricCenter(duration = LYRIC_RESIZE_SCROLL_DURATION_MS, d
   }, delay)
 }
 
-function scheduleLyricOpenCenter(): void {
-  scheduleActiveLyricCenter()
 
-  if (lyricOpenCenterTimer !== 0) {
-    window.clearTimeout(lyricOpenCenterTimer)
-  }
-
-  lyricOpenCenterTimer = window.setTimeout(() => {
-    lyricOpenCenterTimer = 0
-    if (!lyricManualScrollLocked) {
-      void centerActiveLyric()
-    }
-  }, LYRIC_OPEN_CENTER_DELAY_MS)
-}
 
 function onLyricLayoutResize(): void {
   if (lyricManualScrollLocked) return
@@ -463,8 +469,8 @@ onBeforeUnmount(() => {
         <section class="cover-column">
           <div class="cover-frame">
             <img
-              v-if="currentTrack.cover"
-              :src="currentTrack.cover"
+              v-if="resolvedCover"
+              :src="resolvedCover"
               class="cover-image"
               alt="cover"
             />

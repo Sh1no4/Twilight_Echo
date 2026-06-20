@@ -131,7 +131,27 @@ function addListeningSeconds(track: Track, seconds: number): void {
 }
 
 function cloneTrack(track: Track): Track {
-  return JSON.parse(JSON.stringify(track)) as Track
+  // Shallow copy — cover is now a lightweight handle, lyrics excluded to save memory
+  return {
+    id: track.id,
+    title: track.title,
+    artist: track.artist,
+    album: track.album,
+    filePath: track.filePath,
+    fileName: track.fileName,
+    dir: track.dir,
+    duration: track.duration,
+    size: track.size,
+    cover: track.cover,
+    lyrics: null,
+    source: track.source,
+    ncmSongId: track.ncmSongId,
+    streamUrl: track.streamUrl,
+    format: track.format,
+    sampleRate: track.sampleRate,
+    bitrate: track.bitrate,
+    bitDepth: track.bitDepth
+  }
 }
 
 function startListeningTimer(): void {

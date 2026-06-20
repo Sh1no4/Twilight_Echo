@@ -726,8 +726,22 @@ function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
 
 async function syncNativeQueueState(): Promise<void> {
   const engineQueue = queue.value.map((item) => ({
-    ...item,
-    audioSource: getTrackAudioSource(item)
+    id: item.id,
+    title: item.title,
+    artist: item.artist,
+    album: item.album,
+    filePath: item.filePath,
+    fileName: item.fileName,
+    dir: item.dir,
+    duration: item.duration,
+    size: item.size,
+    cover: null,
+    lyrics: null,
+    source: getTrackAudioSource(item),
+    format: item.format,
+    sampleRate: item.sampleRate,
+    bitrate: item.bitrate,
+    bitDepth: item.bitDepth
   }))
   await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
   const nativePlayMode = playMode.value === 'repeat' ? 'repeat' : 'sequential'
@@ -799,6 +813,7 @@ watch(
     }
 
     if (cover) {
+      // cover:// and http(s): URLs can be loaded directly by Image
       dominantColor.value = await extractDominantColor(cover)
     } else {
       dominantColor.value = '#1a73e8'
@@ -826,6 +841,18 @@ watch(
     const track = currentTrack.value
     if (!track || track.id !== id || track.id === prevId) return
 
+    // Lazy-load lyrics for local tracks (lyrics not loaded during scan)
+    if (getTrackSource(track) === 'local' && track.lyrics == null && track.dir && track.fileName) {
+      try {
+        const lrc = await window.api.data.getLyrics(track.dir, track.fileName, track.filePath)
+        if (lrc && currentTrack.value?.id === track.id) {
+          currentTrack.value = { ...currentTrack.value, lyrics: lrc }
+        }
+      } catch {
+        // ignore — no lyrics file found
+      }
+    }
+
     if (getTrackSource(track) !== 'local' && track.translatedLyrics == null) {
       await syncPluginProviders()
       const lyricData = await useMediaProviders().resolveLyrics(track)
@@ -848,7 +875,7 @@ let visualizationTimer: number | null = null
 let visualizationRequestInFlight = false
 let crossfadeTrackId = ''
 const TIME_UPDATE_INTERVAL_MS = 250
-const VISUALIZATION_UPDATE_INTERVAL_MS = 120
+const VISUALIZATION_UPDATE_INTERVAL_MS = 200
 let latestPlaybackTime = 0
 let lastTimePublishAt = 0
 let pendingTimePublishTimer: number | null = null
@@ -1199,8 +1226,22 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     setNativePlaybackInfoIntent(loadToken, track, playTarget)
 
     const engineQueue = queue.value.map((item) => ({
-      ...item,
-      audioSource: item.id === track.id ? playTarget : getTrackAudioSource(item)
+      id: item.id,
+      title: item.title,
+      artist: item.artist,
+      album: item.album,
+      filePath: item.filePath,
+      fileName: item.fileName,
+      dir: item.dir,
+      duration: item.duration,
+      size: item.size,
+      cover: null,
+      lyrics: null,
+      source: item.id === track.id ? playTarget : getTrackAudioSource(item),
+      format: item.format,
+      sampleRate: item.sampleRate,
+      bitrate: item.bitrate,
+      bitDepth: item.bitDepth
     }))
     let nativeStarted = false
     let nativeFallbackReason = ''
@@ -1412,9 +1453,27 @@ const progress = computed(() => {
 })
 
 function cloneTrackForPlaybackSession(track: Track): Track {
-  const cloned = JSON.parse(JSON.stringify(track)) as Track
-  if (cloned.source === 'ncm') {
-    cloned.streamUrl = null
+  // Shallow copy — strip lyrics/translatedLyrics to avoid massive memory usage
+  // when the entire queue is cloned for session persistence
+  const cloned: Track = {
+    id: track.id,
+    title: track.title,
+    artist: track.artist,
+    album: track.album,
+    filePath: track.filePath,
+    fileName: track.fileName,
+    dir: track.dir,
+    duration: track.duration,
+    size: track.size,
+    cover: track.cover,
+    lyrics: null,
+    source: track.source,
+    ncmSongId: track.ncmSongId,
+    streamUrl: track.source === 'ncm' ? null : track.streamUrl,
+    format: track.format,
+    sampleRate: track.sampleRate,
+    bitrate: track.bitrate,
+    bitDepth: track.bitDepth
   }
   return cloned
 }
@@ -1588,7 +1647,7 @@ export function usePlayerStore(): {
       title: track.title || '',
       artist: track.artist || '',
       album: track.album || '',
-      artwork: track.cover ? [{ src: track.cover, sizes: '512x512', type: 'image/png' }] : []
+      artwork: track.cover ? [{ src: track.cover, sizes: '512x512', type: 'image/jpeg' }] : []
     })
     navigator.mediaSession.playbackState = isPlaying.value ? 'playing' : 'paused'
     if (duration.value > 0 && Number.isFinite(currentTime.value)) {

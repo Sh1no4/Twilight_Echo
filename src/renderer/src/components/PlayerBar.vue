@@ -4,6 +4,8 @@ import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useExtensionRegistry } from '../extensions/registry'
 import { normalizeAccentColor } from '../utils/colorExtractor'
+import { useCover } from '../utils/coverLoader'
+import CoverImg from './CoverImg.vue'
 import nextTrackIcon from '../assets/icons/next-track.svg'
 import pauseIcon from '../assets/icons/pause.svg'
 import playIcon from '../assets/icons/play.svg'
@@ -42,6 +44,8 @@ const {
   toggleExclusiveMode,
   formatTime
 } = usePlayerStore()
+
+const resolvedCurrentCover = useCover(computed(() => currentTrack.value?.cover ?? null))
 
 const coverRef = ref<HTMLElement | null>(null)
 const playerBarShellRef = ref<HTMLElement | null>(null)
@@ -687,7 +691,7 @@ onBeforeUnmount(() => {
               <i v-if="i === queueIndex" class="pi pi-volume-up playing-dot"></i>
               <span v-else>{{ i + 1 }}</span>
             </span>
-            <img v-if="track.cover" :src="track.cover" class="playlist-cover" alt="" />
+            <CoverImg v-if="track.cover" :cover="track.cover" class="playlist-cover" alt="" />
             <div v-else class="playlist-cover-placeholder">
               <i class="pi pi-wave-pulse" style="font-size: 12px; color: #bbb"></i>
             </div>
@@ -712,9 +716,9 @@ onBeforeUnmount(() => {
       <!-- 左侧 -->
       <div class="player-left">
         <img
-          v-if="currentTrack.cover"
+          v-if="resolvedCurrentCover"
           ref="coverRef"
-          :src="currentTrack.cover"
+          :src="resolvedCurrentCover"
           class="player-cover"
           alt="cover"
           title="打开播放页面"

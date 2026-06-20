@@ -8,6 +8,7 @@ import {
   Menu,
   nativeTheme,
   nativeImage,
+  protocol,
   session,
   Tray,
   screen
@@ -15,7 +16,7 @@ import {
 import { join, extname, basename, dirname, resolve } from 'path'
 import { readdirSync, statSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs'
 import { readFile, writeFile, readdir, stat, rm } from 'fs/promises'
-import { randomUUID } from 'crypto'
+import { randomUUID, createHash } from 'crypto'
 import { tmpdir } from 'os'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { parseFile } from 'music-metadata'
@@ -662,6 +663,93 @@ const COVER_NAMES = [
   'artwork.png'
 ]
 
+// ─── Cover thumbnail disk cache ─────────────────────────────────────
+// Covers are resized to 500px JPEG (~30-80KB each) and stored on disk.
+// Track.cover stores "cover://<hash>.jpg" instead of multi-MB base64 strings.
+// A pre-blurred 32px version ("cover://<hash>_blur.jpg") is also generated
+// for background use, eliminating expensive CSS filter: blur() at runtime.
+const COVER_THUMBNAIL_WIDTH = 500
+const COVER_JPEG_QUALITY = 85
+const COVER_BLUR_WIDTH = 32
+
+function getCoverCacheDir(): string {
+  return join(app.getPath('userData'), 'cover-cache')
+}
+
+function ensureCoverCacheDir(): string {
+  const dir = getCoverCacheDir()
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+/** Extract cover from image buffer, resize, save to disk cache. Returns cover:// handle.
+ *  Also generates a tiny pre-blurred version for background use. */
+function cacheCoverFromBuffer(data: Buffer, _mime?: string): string | null {
+  try {
+    const img = nativeImage.createFromBuffer(data)
+    if (img.isEmpty()) return null
+    const originalSize = img.getSize()
+    let resized = img
+    if (originalSize.width > COVER_THUMBNAIL_WIDTH) {
+      resized = img.resize({ width: COVER_THUMBNAIL_WIDTH, quality: 'good' })
+    }
+    const jpegBuf = resized.toJPEG(COVER_JPEG_QUALITY)
+    const hash = createHash('md5').update(jpegBuf).digest('hex').slice(0, 16)
+    const fileName = `${hash}.jpg`
+    const cacheDir = ensureCoverCacheDir()
+    const fullPath = join(cacheDir, fileName)
+    if (!existsSync(fullPath)) {
+      writeFileSync(fullPath, jpegBuf)
+    }
+    // Generate pre-blurred tiny version for background (eliminates CSS blur at runtime)
+    const blurFileName = `${hash}_blur.jpg`
+    const blurPath = join(cacheDir, blurFileName)
+    if (!existsSync(blurPath)) {
+      const blurred = resized.resize({ width: COVER_BLUR_WIDTH, quality: 'good' })
+      writeFileSync(blurPath, blurred.toJPEG(60))
+    }
+    return `cover://${fileName}`
+  } catch {
+    return null
+  }
+}
+
+/** Extract cover from an image file on disk, resize, save to cache. Returns cover:// handle. */
+function cacheCoverFromFile(filePath: string): string | null {
+  try {
+    const data = readFileSync(filePath)
+    return cacheCoverFromBuffer(data)
+  } catch {
+    return null
+  }
+}
+
+/** Read a cached cover file and return as base64 data URL. */
+function readCachedCover(handle: string): string | null {
+  if (!handle.startsWith('cover://')) return null
+  const fileName = handle.slice('cover://'.length)
+  const fullPath = join(getCoverCacheDir(), fileName)
+  if (!existsSync(fullPath)) return null
+  try {
+    const data = readFileSync(fullPath)
+    return `data:image/jpeg;base64,${data.toString('base64')}`
+  } catch {
+    return null
+  }
+}
+
+/** Migrate a base64 data: URL cover to disk cache. Returns cover:// handle. */
+function migrateBase64Cover(dataUrl: string): string | null {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/)
+  if (!match) return null
+  try {
+    const buf = Buffer.from(match[2], 'base64')
+    return cacheCoverFromBuffer(buf, match[1])
+  } catch {
+    return null
+  }
+}
+
 const coverCache = new Map<string, string | null>()
 
 function findCoverInDir(dir: string): string | null {
@@ -669,15 +757,10 @@ function findCoverInDir(dir: string): string | null {
   for (const name of COVER_NAMES) {
     const fullPath = join(dir, name)
     if (existsSync(fullPath)) {
-      try {
-        const data = readFileSync(fullPath)
-        const ext = extname(name).slice(1)
-        const mime = ext === 'jpg' ? 'image/jpeg' : ext === 'png' ? 'image/png' : 'image/webp'
-        const dataUrl = `data:${mime};base64,${data.toString('base64')}`
-        coverCache.set(dir, dataUrl)
-        return dataUrl
-      } catch {
-        /* skip */
+      const handle = cacheCoverFromFile(fullPath)
+      if (handle) {
+        coverCache.set(dir, handle)
+        return handle
       }
     }
   }
@@ -718,33 +801,40 @@ interface FileEntry {
 
 async function collectFilesAsync(dirPath: string): Promise<FileEntry[]> {
   const results: FileEntry[] = []
-  try {
-    const entries = readdirSync(dirPath)
-    for (const entry of entries) {
-      const fullPath = join(dirPath, entry)
-      try {
-        const st = statSync(fullPath)
-        if (st.isFile()) {
-          const ext = extname(entry).toLowerCase()
-          if (SUPPORTED_EXTENSIONS.includes(ext)) {
-            results.push({
-              fullPath,
-              fileName: entry,
-              dir: dirname(fullPath),
-              size: st.size
-            })
+  const queue: string[] = [dirPath]
+
+  while (queue.length > 0) {
+    const currentDir = queue.shift()!
+    try {
+      const entries = readdirSync(currentDir)
+      for (const entry of entries) {
+        const fullPath = join(currentDir, entry)
+        try {
+          const st = statSync(fullPath)
+          if (st.isDirectory()) {
+            queue.push(fullPath)
+          } else if (st.isFile()) {
+            const ext = extname(entry).toLowerCase()
+            if (SUPPORTED_EXTENSIONS.includes(ext)) {
+              results.push({
+                fullPath,
+                fileName: entry,
+                dir: dirname(fullPath),
+                size: st.size
+              })
+            }
           }
+        } catch {
+          /* skip */
         }
-      } catch {
-        /* skip */
+        // Yield to event loop every few files
+        if (results.length % 100 === 0) {
+          await new Promise((resolve) => setImmediate(resolve))
+        }
       }
-      // Yield to event loop every few files
-      if (results.length % 100 === 0) {
-        await new Promise((resolve) => setImmediate(resolve))
-      }
+    } catch {
+      /* skip */
     }
-  } catch {
-    /* skip */
   }
   return results
 }
@@ -789,9 +879,7 @@ async function parseTrack(file: FileEntry): Promise<unknown[]> {
 
     if (common.picture && common.picture.length > 0) {
       const pic = common.picture[0]
-      const mime = pic.format || 'image/jpeg'
-      const base64 = Buffer.from(pic.data).toString('base64')
-      cover = `data:${mime};base64,${base64}`
+      cover = cacheCoverFromBuffer(Buffer.from(pic.data), pic.format)
     }
 
     if (!cover) {
@@ -804,7 +892,8 @@ async function parseTrack(file: FileEntry): Promise<unknown[]> {
 
     const fileName = getNameFromFile(file.fullPath)
 
-    const lyrics = findLyricsInDir(file.dir, file.fileName)
+    // Lyrics are NOT loaded during scan — they're lazy-loaded on playback
+    // to avoid keeping hundreds of MB of LRC text in memory permanently.
 
     return [{
       id,
@@ -817,7 +906,7 @@ async function parseTrack(file: FileEntry): Promise<unknown[]> {
       duration: Math.round(meta.format.duration || 0),
       size: file.size,
       cover,
-      lyrics,
+      lyrics: null,
       format: meta.format.container,
       sampleRate: meta.format.sampleRate,
       bitrate: meta.format.bitrate,
@@ -836,7 +925,7 @@ async function parseTrack(file: FileEntry): Promise<unknown[]> {
       duration: 0,
       size: file.size,
       cover: findCoverInDir(file.dir),
-      lyrics: findLyricsInDir(file.dir, file.fileName)
+      lyrics: null
     }]
   }
 }
@@ -2128,6 +2217,26 @@ if (!gotSingleInstanceLock) {
   app.whenReady().then(() => {
     electronApp.setAppUserModelId('com.TwilightEcho.music')
 
+    // Register cover:// protocol — Chromium reads JPEGs directly from disk,
+    // no IPC, no base64, browser manages decode cache natively.
+    protocol.handle('cover', (request) => {
+      const url = new URL(request.url)
+      const fileName = url.hostname + url.pathname
+      // Sanitize: only allow alphanumeric/hash filenames
+      const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '')
+      if (!safeName.endsWith('.jpg')) {
+        return new Response('Forbidden', { status: 403 })
+      }
+      const filePath = join(getCoverCacheDir(), safeName)
+      if (!existsSync(filePath)) {
+        return new Response('Not Found', { status: 404 })
+      }
+      const data = readFileSync(filePath)
+      return new Response(data, {
+        headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'max-age=86400' }
+      })
+    })
+
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
   })
@@ -2296,10 +2405,65 @@ if (!gotSingleInstanceLock) {
     if (!existsSync(MUSIC_LIBRARY_FILE)) return []
     try {
       const raw = await readFile(MUSIC_LIBRARY_FILE, 'utf-8')
-      return JSON.parse(raw)
+      const data = JSON.parse(raw)
+      // Strip lyrics from saved library — lyrics are lazy-loaded on playback
+      const tracks = Array.isArray(data) ? data : data.tracks
+      if (Array.isArray(tracks)) {
+        let changed = false
+        for (const track of tracks) {
+          if (track.lyrics) {
+            track.lyrics = null
+            changed = true
+          }
+          // Migrate old base64 covers to disk cache
+          if (track.cover && typeof track.cover === 'string' && track.cover.startsWith('data:')) {
+            const handle = migrateBase64Cover(track.cover)
+            if (handle) {
+              track.cover = handle
+              changed = true
+            }
+          }
+        }
+        if (changed) {
+          await writeFile(MUSIC_LIBRARY_FILE, JSON.stringify(data), 'utf-8')
+        }
+      }
+      return data
     } catch {
       return []
     }
+  })
+
+  // Cover thumbnail loader — returns base64 data URL for a cover:// handle
+  ipcMain.handle('cover:get', async (_event, handle: string): Promise<string | null> => {
+    if (!handle || typeof handle !== 'string') return null
+    // Pass through existing data: URLs (e.g. from plugins)
+    if (handle.startsWith('data:')) return handle
+    return readCachedCover(handle)
+  })
+
+  // Lyrics lazy loader — reads .lrc file on demand, falls back to embedded lyrics
+  ipcMain.handle('lyrics:get', async (_event, dir: string, fileName: string, filePath?: string): Promise<string | null> => {
+    // 1. Try external .lrc file
+    const lrc = findLyricsInDir(dir, fileName)
+    if (lrc) return lrc
+
+    // 2. Try embedded lyrics from audio file metadata
+    if (filePath) {
+      try {
+        const meta = await parseFile(filePath, { skipCovers: true })
+        const common = meta.common
+        if (common.lyrics && common.lyrics.length > 0) {
+          // music-metadata returns lyrics as { language, text } objects or strings
+          const first = common.lyrics[0]
+          const text = typeof first === 'string' ? first : first?.text
+          if (text) return text
+        }
+      } catch {
+        // ignore parse errors
+      }
+    }
+    return null
   })
 
   ipcMain.handle('data:savePlaybackSession', async (_event, session: PlaybackSession | null) => {

@@ -780,6 +780,8 @@ interface WindowAPI {
   data: {
     saveMusicLibrary: (data: { tracks: unknown[]; folders: string[] }) => Promise<void>
     loadMusicLibrary: () => Promise<{ tracks: unknown[]; folders: string[] } | unknown[]>
+    getCover: (handle: string) => Promise<string | null>
+    getLyrics: (dir: string, fileName: string, filePath?: string) => Promise<string | null>
     savePlaybackSession: (session: PlaybackSession | null) => Promise<void>
     loadPlaybackSession: () => Promise<PlaybackSession | null>
     clearPlaybackSession: () => Promise<void>

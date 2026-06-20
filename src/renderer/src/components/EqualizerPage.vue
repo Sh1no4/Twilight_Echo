@@ -428,7 +428,7 @@ async function applyOpraProfile(profile: OpraProfile): Promise<void> {
         bands: cloneBands(fullProfile.bands)
       }
     })
-    appSettings.value = savedSettings
+    appSettings.value = { ...appSettings.value, ...savedSettings }
   } catch (err) {
     opraError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -438,13 +438,33 @@ async function applyOpraProfile(profile: OpraProfile): Promise<void> {
 
 async function disableOpraCompensation(): Promise<void> {
   if (!appSettings.value) return
-  const savedSettings = await window.api.settings.update({
-    headphoneCompensation: {
-      ...headphoneCompensation.value,
-      enabled: false
+  try {
+    const savedSettings = await window.api.settings.update({
+      headphoneCompensation: {
+        ...headphoneCompensation.value,
+        enabled: false
+      }
+    })
+    // Explicitly construct a new object to guarantee Vue reactivity triggers
+    appSettings.value = {
+      ...appSettings.value,
+      ...savedSettings,
+      headphoneCompensation: {
+        ...headphoneCompensation.value,
+        enabled: false
+      }
     }
-  })
-  appSettings.value = savedSettings
+  } catch (err) {
+    console.error('停用 OPRA 补偿失败：', err)
+    // Fallback: at least update local state so the UI reflects the change
+    appSettings.value = {
+      ...appSettings.value,
+      headphoneCompensation: {
+        ...headphoneCompensation.value,
+        enabled: false
+      }
+    }
+  }
 }
 
 async function applyEqPreset(preset: AudioEqPreset): Promise<void> {
@@ -843,9 +863,9 @@ watch(opraQuery, () => {
 <style scoped>
 
     .eq-back-button {
-      position: absolute;
-      top: 32px;
-      left: 32px;
+      position: fixed;
+      top: 42px;
+      left: 42px;
       width: 40px;
       height: 40px;
       border-radius: 50%;
@@ -871,7 +891,11 @@ watch(opraQuery, () => {
     
     /* Ensure eq-page allows absolute positioning of the back button */
     .eq-page {
-      position: relative;
+      position: fixed;
+      inset: 0;
+      z-index: 1100;
+      overflow: hidden;
+      background: #f4f4f7;
     }
 
 
@@ -1035,21 +1059,13 @@ watch(opraQuery, () => {
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background: radial-gradient(circle at 15% 50%, rgba(99, 102, 241, 0.08), transparent 25%),
-                  radial-gradient(circle at 85% 30%, rgba(236, 72, 153, 0.08), transparent 25%),
-                  #f8fafc;
-      color: var(--te-neutral-900); min-height: 100vh; display: flex; padding: 40px;
-    }
-
     .eq-container {
-      width: 100%; max-width: 1440px; margin: 0 auto;
+      width: 100%; height: 100%; margin: 0; max-width: none;
       background: rgba(255, 255, 255, 0.6); backdrop-filter: blur(24px) saturate(150%);
       -webkit-backdrop-filter: blur(24px) saturate(150%);
-      border: 1px solid rgba(255, 255, 255, 0.8); border-radius: 24px;
-      box-shadow: 0 24px 48px rgba(15, 23, 42, 0.04), inset 0 1px 0 rgba(255, 255, 255, 1);
-      display: flex; overflow: hidden; height: 85vh;
+      border: none; border-radius: 0;
+      box-shadow: none;
+      display: flex; overflow: hidden;
     }
 
     /* Sidebar Navigation */
@@ -1077,9 +1093,13 @@ watch(opraQuery, () => {
       display: flex; align-items: center; gap: 12px; background: #fff; padding: 8px 16px 8px 20px;
       border-radius: 999px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04); border: 1px solid rgba(255, 255, 255, 0.8);
       font-weight: 700; font-size: 14px; color: var(--te-primary-500); cursor: pointer;
+      transition: color 0.2s;
     }
-    .toggle-track { width: 44px; height: 24px; background: linear-gradient(135deg, var(--te-primary-500), #22d3ee); border-radius: 999px; position: relative; }
-    .toggle-thumb { width: 20px; height: 20px; background: #fff; border-radius: 50%; position: absolute; top: 2px; right: 2px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+    .master-switch.off { color: var(--te-neutral-500); }
+    .toggle-track { width: 44px; height: 24px; background: linear-gradient(135deg, var(--te-primary-500), #22d3ee); border-radius: 999px; position: relative; transition: background 0.2s; }
+    .master-switch.off .toggle-track { background: rgba(15, 23, 42, 0.12); }
+    .toggle-thumb { width: 20px; height: 20px; background: #fff; border-radius: 50%; position: absolute; top: 2px; right: 2px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); transition: right 0.2s, left 0.2s; }
+    .master-switch.off .toggle-thumb { right: auto; left: 2px; }
 
     /* OPRA Panel */
     .opra-panel { background: #fff; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.8); box-shadow: 0 12px 32px rgba(15, 23, 42, 0.03); overflow: hidden; }

@@ -956,6 +956,10 @@ const api = {
       ipcRenderer.invoke('data:saveMusicLibrary', data),
     loadMusicLibrary: (): Promise<{ tracks: unknown[]; folders: string[] } | unknown[]> =>
       ipcRenderer.invoke('data:loadMusicLibrary'),
+    getCover: (handle: string): Promise<string | null> =>
+      ipcRenderer.invoke('cover:get', handle),
+    getLyrics: (dir: string, fileName: string, filePath?: string): Promise<string | null> =>
+      ipcRenderer.invoke('lyrics:get', dir, fileName, filePath),
     savePlaybackSession: (session: PlaybackSession | null): Promise<void> =>
       ipcRenderer.invoke('data:savePlaybackSession', session),
     loadPlaybackSession: (): Promise<PlaybackSession | null> =>

@@ -4,6 +4,8 @@ import { useMusicStore } from '../stores/useMusicStore'
 import { useListeningStatsStore } from '../stores/useListeningStatsStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import type { Track } from '../types/music'
+import { useCover } from '../utils/coverLoader'
+import CoverImg from './CoverImg.vue'
 import nextTrackIcon from '../assets/icons/next-track.svg'
 import pauseIcon from '../assets/icons/pause.svg'
 import playIcon from '../assets/icons/play.svg'
@@ -73,7 +75,8 @@ function isBiliTrack(track: Track | undefined): boolean {
 
 const nowPlayingTitle = computed(() => currentTrack.value?.title || '暂无正在播放')
 const nowPlayingArtist = computed(() => currentTrack.value?.artist || '选择一首本地或在线音乐开始')
-const nowPlayingCover = computed(() => currentTrack.value?.cover || DEFAULT_COVER)
+const resolvedCurrentCover = useCover(computed(() => currentTrack.value?.cover ?? null))
+const nowPlayingCover = computed(() => resolvedCurrentCover.value || DEFAULT_COVER)
 const nowPlayingMeta = computed(() => {
   const track = currentTrack.value
   if (!track) return 'Ready'
@@ -523,7 +526,7 @@ function playDashboardTrack(track: Track | undefined): void {
                   class="recent-item"
                   @click="playDashboardTrack(track)"
                 >
-                    <img :src="track.cover || FALLBACK_THUMB" alt="Album" @error="onCoverError">
+                    <CoverImg :cover="track.cover" :fallback="FALLBACK_THUMB" alt="Album" class="recent-img" @error="onCoverError" />
                     <div class="recent-info">
                         <h4>{{ track.title }}</h4>
                         <p>{{ track.artist || 'Unknown Artist' }}</p>
@@ -547,7 +550,7 @@ function playDashboardTrack(track: Track | undefined): void {
                   @click="playDashboardTrack(entry.track)"
                 >
                     <div class="rank">{{ index + 1 }}</div>
-                    <img :src="entry.track?.cover || entry.stat.cover || FALLBACK_THUMB" alt="Track" @error="onCoverError">
+                    <CoverImg :cover="entry.track?.cover || entry.stat.cover" :fallback="FALLBACK_THUMB" alt="Track" class="rank-img" @error="onCoverError" />
                     <div class="track-info">
                         <h4>{{ entry.track?.title || entry.stat.title }}</h4>
                         <p>{{ entry.track?.artist || entry.stat.artist }} • {{ entry.stat.plays }} plays</p>

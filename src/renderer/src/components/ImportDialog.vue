@@ -23,6 +23,8 @@ const {
 
 const progress = ref({ current: 0, total: 0 })
 const selectedFolders = ref<Set<string>>(new Set())
+const scanStatus = ref<'idle' | 'scanning' | 'done' | 'empty'>('idle')
+const scannedTrackCount = ref(0)
 
 let cleanupProgress: (() => void) | null = null
 
@@ -49,9 +51,15 @@ async function startScan(): Promise<void> {
   if (isScanning.value) return
 
   const foldersToScan = Array.from(selectedFolders.value)
+  if (foldersToScan.length === 0) {
+    scanStatus.value = 'empty'
+    return
+  }
 
   isScanning.value = true
+  scanStatus.value = 'scanning'
   progress.value = { current: 0, total: 0 }
+  scannedTrackCount.value = 0
 
   try {
     syncFolders(foldersToScan)
@@ -59,6 +67,7 @@ async function startScan(): Promise<void> {
     for (const folder of foldersToScan) {
       const tracks = await window.api.fs.scanMusicFiles(folder)
       if (tracks && tracks.length > 0) {
+        scannedTrackCount.value += tracks.length
         // 每批导入 500 首，避免一次性更新过重。
         const batchSize = 500
         for (let i = 0; i < tracks.length; i += batchSize) {
@@ -74,9 +83,15 @@ async function startScan(): Promise<void> {
     refreshLibraryIndex()
     await saveLibrary()
     newlyAddedFolders.value = []
-    emit('close')
+
+    if (scannedTrackCount.value > 0) {
+      emit('close')
+    } else {
+      scanStatus.value = 'empty'
+    }
   } catch (err) {
     console.error('扫描音乐文件失败：', err)
+    scanStatus.value = 'idle'
   } finally {
     isScanning.value = false
     progress.value = { current: 0, total: 0 }
@@ -139,6 +154,10 @@ onUnmounted(() => {
                   }"
                 ></div>
               </div>
+            </div>
+
+            <div v-if="scanStatus === 'empty' && !isScanning" class="empty-result">
+              <span>未找到音乐文件。请确认文件夹中包含支持的音频格式，或添加其他文件夹。</span>
             </div>
           </div>
 
@@ -344,6 +363,17 @@ onUnmounted(() => {
   height: 100%;
   background: linear-gradient(90deg, var(--te-primary-500), var(--te-primary-300));
   transition: width 0.3s ease;
+}
+
+.empty-result {
+  margin-top: 10px;
+  padding: 12px 16px;
+  background: rgba(255, 180, 80, 0.12);
+  border: 1px solid rgba(255, 180, 80, 0.24);
+  border-radius: 14px;
+  font-size: 13px;
+  color: #b8780d;
+  text-align: center;
 }
 
 .dialog-footer {
