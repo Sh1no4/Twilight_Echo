@@ -383,7 +383,9 @@ onMounted(async () => {
   const loadedSettings = await loadSettings()
   await loadLibrary()
   await loadPlaylists()
-  await checkLogin()
+  if (loadedSettings.autoCheckLogin) {
+    await checkLogin()
+  }
   await syncExtensions()
   await restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
   removeLibraryChangedListener = window.api.library.onChanged(() => {

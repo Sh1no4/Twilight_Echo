@@ -34,6 +34,7 @@ type SectionKey =
   | 'about'
 
 type BooleanSettingKey =
+  | 'autoCheckLogin'
   | 'launchAtLogin'
   | 'hardwareAcceleration'
   | 'blurEffect'
@@ -158,6 +159,9 @@ const HOMEPAGE_URL = 'https://twilightecho.com'
 const updateCheckState = ref<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle')
 const latestVersion = ref('')
 const lastUpdateCheck = ref('')
+const runningPluginSettingsCommand = ref('')
+const pluginSettingsResult = ref<Record<string, string>>({})
+const pluginSettingsError = ref<Record<string, string>>({})
 
 const activeSection = ref<SectionKey>(props.initialSection ?? 'general')
 const pageRef = ref<HTMLElement | null>(null)
@@ -208,7 +212,7 @@ const {
   toggleGapless
 } = usePlayerStore()
 
-const { syncExtensions, themeContributions } = useExtensionRegistry()
+const { syncExtensions, themeContributions, uiContributions } = useExtensionRegistry()
 
 
 const volumePercent = computed({
@@ -226,6 +230,9 @@ const pluginThemeOptions = computed(() =>
     value: getPluginThemeKey(theme),
     label: `${theme.name} (${theme.pluginId})`
   }))
+)
+const pluginSettingsPanels = computed(() =>
+  uiContributions.value.filter((contribution) => contribution.kind === 'settingsPanel')
 )
 const selectedAudioOutput = computed(() =>
   audioOutputOptions.value.find((option) => option.id === audioOutput.value)
@@ -526,6 +533,32 @@ function openHomepage(): void {
   void openExternalUrl(HOMEPAGE_URL)
 }
 
+async function runPluginSettingsPanel(command: string | undefined, panelId: string): Promise<void> {
+  if (!command || runningPluginSettingsCommand.value) return
+  runningPluginSettingsCommand.value = panelId
+  pluginSettingsError.value = { ...pluginSettingsError.value, [panelId]: '' }
+  pluginSettingsResult.value = { ...pluginSettingsResult.value, [panelId]: '' }
+  try {
+    const result = await window.api.extensions.executeCommand(command, [
+      {
+        source: 'settingsPanel',
+        panelId
+      }
+    ])
+    pluginSettingsResult.value = {
+      ...pluginSettingsResult.value,
+      [panelId]: result == null ? '已执行' : typeof result === 'string' ? result : JSON.stringify(result)
+    }
+  } catch (err) {
+    pluginSettingsError.value = {
+      ...pluginSettingsError.value,
+      [panelId]: err instanceof Error ? err.message : String(err)
+    }
+  } finally {
+    runningPluginSettingsCommand.value = ''
+  }
+}
+
 async function checkForUpdates(): Promise<void> {
   updateCheckState.value = 'checking'
   try {
@@ -754,6 +787,20 @@ onBeforeUnmount(() => {
             <div class="setting-list">
               <div class="setting-item">
                 <div class="setting-copy">
+                  <strong>启动时检查网易云登录</strong>
+                  <span>应用启动后自动刷新内置网易云音源的登录状态。</span>
+                </div>
+                <span
+                  class="toggle-switch"
+                  :class="{ active: settings.autoCheckLogin, inactive: !settings.autoCheckLogin }"
+                  role="switch"
+                  :aria-checked="settings.autoCheckLogin"
+                  @click="toggleSetting('autoCheckLogin')"
+                ></span>
+              </div>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
                   <strong>原生媒体控制 (SMTC)</strong>
                   <span>响应键盘多媒体按键，并在系统锁屏界面显示播放控制。</span>
                 </div>
@@ -813,6 +860,36 @@ onBeforeUnmount(() => {
                   <option value="quit">退出应用</option>
                 </select>
               </div>
+            </div>
+          </div>
+
+          <div v-if="pluginSettingsPanels.length > 0" class="section-block">
+            <h3>插件设置 (Plugin Settings)</h3>
+            <div class="setting-list">
+              <template v-for="(panel, index) in pluginSettingsPanels" :key="`${panel.pluginId}:${panel.id}`">
+                <hr v-if="index > 0" />
+                <div class="setting-item top-align">
+                  <div class="setting-copy">
+                    <strong>{{ panel.title }}</strong>
+                    <span>{{ panel.description || panel.pluginId }}</span>
+                    <small v-if="pluginSettingsResult[panel.id]" class="plugin-command-result">
+                      {{ pluginSettingsResult[panel.id] }}
+                    </small>
+                    <small v-if="pluginSettingsError[panel.id]" class="plugin-command-error">
+                      {{ pluginSettingsError[panel.id] }}
+                    </small>
+                  </div>
+                  <button
+                    type="button"
+                    class="soft-button"
+                    :disabled="!panel.command || runningPluginSettingsCommand === panel.id"
+                    @click="runPluginSettingsPanel(panel.command, panel.id)"
+                  >
+                    <i v-if="panel.icon" :class="panel.icon"></i>
+                    {{ runningPluginSettingsCommand === panel.id ? '执行中…' : '打开设置' }}
+                  </button>
+                </div>
+              </template>
             </div>
           </div>
         </section>
@@ -1511,6 +1588,28 @@ onBeforeUnmount(() => {
             <hr />
             <div class="setting-item">
               <div class="setting-copy">
+                <strong>插件主题</strong>
+                <span>从已启用主题插件中选择声明式主题样式。</span>
+              </div>
+              <select
+                class="preview-select wide"
+                :value="settings.pluginThemeId ?? ''"
+                :disabled="pluginThemeOptions.length === 0"
+                @change="setPluginTheme"
+              >
+                <option value="">不使用插件主题</option>
+                <option
+                  v-for="option in pluginThemeOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </div>
+            <hr />
+            <div class="setting-item">
+              <div class="setting-copy">
                 <strong>强调色</strong>
                 <span>选择界面中的主要品牌色。</span>
               </div>
@@ -1526,6 +1625,20 @@ onBeforeUnmount(() => {
                   <i v-if="settings.accentColor === option.value" class="pi pi-check"></i>
                 </span>
               </div>
+            </div>
+            <hr />
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>封面主题色</strong>
+                <span>播放页和底栏使用当前专辑封面提取的主题色。</span>
+              </div>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.useCoverTheme, inactive: !settings.useCoverTheme }"
+                role="switch"
+                :aria-checked="settings.useCoverTheme"
+                @click="toggleSetting('useCoverTheme')"
+              ></span>
             </div>
             <hr />
             <div class="setting-item">
@@ -1598,7 +1711,7 @@ onBeforeUnmount(() => {
             <div class="setting-item">
               <div class="setting-copy">
                 <strong>歌词显示样式 (Lyrics Style)</strong>
-                <span>翻译对齐方式及未播放行暗度。</span>
+                <span>翻译对齐方式、字号及未播放行暗度。</span>
               </div>
               <div class="inline-controls">
                 <select
@@ -1610,6 +1723,18 @@ onBeforeUnmount(() => {
                     {{ option.label }}
                   </option>
                 </select>
+                <div class="range-pill">
+                  <span>字号</span>
+                  <input
+                    class="range-input"
+                    type="range"
+                    min="14"
+                    max="28"
+                    :value="settings.lyricFontSize"
+                    @input="setLyricFontSize"
+                  />
+                  <span>{{ settings.lyricFontSize }}px</span>
+                </div>
                 <div class="range-pill">
                   <span>未播放暗度</span>
                   <input
@@ -1876,6 +2001,7 @@ onBeforeUnmount(() => {
               <div><span>下一首</span><kbd>Ctrl + Alt + Right</kbd></div>
             </div>
           </div>
+
         </section>
 
         <section id="about" class="glass-card preview-section about-section">
@@ -2206,6 +2332,21 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 500;
   line-height: 1.45;
+}
+
+.setting-copy small {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.plugin-command-result {
+  color: #047857;
+  font-weight: 800;
+}
+
+.plugin-command-error {
+  color: #dc2626;
+  font-weight: 800;
 }
 
 .setting-copy b {
