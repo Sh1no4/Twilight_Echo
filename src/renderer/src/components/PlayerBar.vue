@@ -2,9 +2,12 @@
 import { ref, computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
+import { useMusicStore } from '../stores/useMusicStore'
 import { useExtensionRegistry } from '../extensions/registry'
+import { getNcmSongId, syncPluginProviders, useMediaProviders } from '../providers'
 import { normalizeAccentColor } from '../utils/colorExtractor'
 import { useCover } from '../utils/coverLoader'
+import type { Track } from '../types/music'
 import CoverImg from './CoverImg.vue'
 import nextTrackIcon from '../assets/icons/next-track.svg'
 import pauseIcon from '../assets/icons/pause.svg'
@@ -46,6 +49,9 @@ const {
 } = usePlayerStore()
 
 const resolvedCurrentCover = useCover(computed(() => currentTrack.value?.cover ?? null))
+const DEFAULT_FAVORITE_PLAYLIST_NAME = '我收藏的音乐'
+const { playlists, addToPlaylist, removeFromPlaylist, createPlaylist } = useMusicStore()
+const mediaProviders = useMediaProviders()
 
 const coverRef = ref<HTMLElement | null>(null)
 const playerBarShellRef = ref<HTMLElement | null>(null)
@@ -56,6 +62,9 @@ const playerBarButtons = computed(() =>
 )
 const { settings } = useSettingsStore()
 const desktopLyricsOn = ref(settings.value.desktopLyrics.enabled)
+const ncmFavoriteLoading = ref(false)
+const ncmFavoriteLiked = ref(false)
+let ncmFavoriteRequestId = 0
 
 async function toggleDesktopLyrics(): Promise<void> {
   const enabled = await window.api.desktopLyrics.toggle()
@@ -152,6 +161,134 @@ function toggleMore(): void {
   if (moreOpen.value) {
     volumeOpen.value = false
     playlistOpen.value = false
+  }
+}
+
+function isBiliTrack(track: Pick<Track, 'id' | 'source'>): boolean {
+  return (
+    track.source === 'bili' ||
+    track.source === 'bilibili' ||
+    track.id.startsWith('bili:') ||
+    track.id.startsWith('bilibili:')
+  )
+}
+
+function isNcmTrack(track: Pick<Track, 'id' | 'source' | 'ncmSongId'>): boolean {
+  return track.source === 'ncm' || track.id.startsWith('ncm:') || getNcmSongId(track) != null
+}
+
+function isLocalTrack(track: Pick<Track, 'id' | 'source'>): boolean {
+  return !track.source || track.source === 'local' || track.id.startsWith('local:')
+}
+
+const defaultFavoritePlaylist = computed(() =>
+  playlists.value.find((playlist) => playlist.isDefault) ??
+  playlists.value.find((playlist) => playlist.name === DEFAULT_FAVORITE_PLAYLIST_NAME) ??
+  null
+)
+
+const localFavoriteLiked = computed(() => {
+  const track = currentTrack.value
+  const playlist = defaultFavoritePlaylist.value
+  return !!track && !!playlist && playlist.trackIds.includes(track.id)
+})
+
+const favoriteButtonVisible = computed(() => {
+  const track = currentTrack.value
+  if (!track || isBiliTrack(track)) return false
+  return isLocalTrack(track) || isNcmTrack(track)
+})
+
+const favoriteButtonLiked = computed(() => {
+  const track = currentTrack.value
+  if (!track) return false
+  if (isNcmTrack(track)) return ncmFavoriteLiked.value
+  return localFavoriteLiked.value
+})
+
+const favoriteButtonLoading = computed(() => {
+  const track = currentTrack.value
+  return !!track && isNcmTrack(track) && ncmFavoriteLoading.value
+})
+
+const favoriteButtonTitle = computed(() =>
+  favoriteButtonLiked.value ? '取消收藏' : '添加到收藏'
+)
+
+async function refreshNcmFavoriteState(track: Track | null | undefined): Promise<void> {
+  const requestId = ++ncmFavoriteRequestId
+  ncmFavoriteLiked.value = false
+  if (!track || !isNcmTrack(track)) return
+
+  const songId = getNcmSongId(track)
+  if (songId == null) return
+
+  await syncPluginProviders()
+  if (requestId !== ncmFavoriteRequestId) return
+
+  const provider = mediaProviders.get('ncm')
+  if (!provider?.isTrackLiked) return
+
+  try {
+    const liked = await provider.isTrackLiked(songId)
+    if (requestId === ncmFavoriteRequestId) {
+      ncmFavoriteLiked.value = liked
+    }
+  } catch (error) {
+    console.warn('Failed to read NetEase favorite state', error)
+  }
+}
+
+function toggleLocalFavorite(track: Track): void {
+  let playlist = defaultFavoritePlaylist.value
+  if (!playlist) {
+    createPlaylist(DEFAULT_FAVORITE_PLAYLIST_NAME)
+    playlist = defaultFavoritePlaylist.value
+  }
+  if (!playlist) return
+
+  if (playlist.trackIds.includes(track.id)) {
+    removeFromPlaylist(playlist.name, track.id)
+  } else {
+    addToPlaylist(playlist.name, track.id)
+  }
+}
+
+async function toggleNcmFavorite(track: Track): Promise<void> {
+  if (ncmFavoriteLoading.value) return
+  const songId = getNcmSongId(track)
+  if (songId == null) return
+
+  const trackId = track.id
+  await syncPluginProviders()
+  const provider = mediaProviders.get('ncm')
+  if (!provider?.likeTrack) return
+
+  const nextLiked = !ncmFavoriteLiked.value
+  ncmFavoriteLoading.value = true
+  try {
+    await provider.likeTrack(songId, nextLiked)
+    if (currentTrack.value?.id === trackId) {
+      ncmFavoriteLiked.value = nextLiked
+    }
+  } catch (error) {
+    console.warn('Failed to toggle NetEase favorite state', error)
+  } finally {
+    ncmFavoriteLoading.value = false
+  }
+}
+
+async function toggleFavorite(): Promise<void> {
+  const track = currentTrack.value
+  if (!track || isBiliTrack(track)) return
+
+  if (isNcmTrack(track)) {
+    await toggleNcmFavorite(track)
+    return
+  }
+
+  if (isLocalTrack(track)) {
+    toggleLocalFavorite(track)
   }
 }
 
@@ -614,6 +751,13 @@ watch(visualizationData, drawVisualizationCanvases, { flush: 'post' })
 watch(moreOpen, (open) => {
   if (open) requestAnimationFrame(drawVisualizationCanvases)
 })
+watch(
+  () => [currentTrack.value?.id, currentTrack.value?.source, currentTrack.value?.ncmSongId] as const,
+  () => {
+    void refreshNcmFavoriteState(currentTrack.value)
+  },
+  { immediate: true }
+)
 
 function playTrackAt(index: number): void {
   const track = queue.value[index]
@@ -764,6 +908,27 @@ onBeforeUnmount(() => {
 
       <!-- 右侧 -->
       <div class="player-right">
+        <button
+          v-if="favoriteButtonVisible"
+          class="icon-btn favorite-btn"
+          :class="{ active: favoriteButtonLiked }"
+          :title="favoriteButtonTitle"
+          :aria-label="favoriteButtonTitle"
+          :aria-pressed="favoriteButtonLiked"
+          :disabled="favoriteButtonLoading"
+          @click="toggleFavorite"
+        >
+          <i
+            :class="
+              favoriteButtonLoading
+                ? 'pi pi-spin pi-spinner'
+                : favoriteButtonLiked
+                  ? 'pi pi-heart-fill'
+                  : 'pi pi-heart'
+            "
+          ></i>
+        </button>
+
         <button class="ctrl-btn mode-btn-right" :title="modeTitle" @click="cyclePlayMode">
           <img v-if="playMode === 'sequential'" :src="sequentialIcon" alt="顺序" />
           <img v-else-if="playMode === 'repeat'" :src="repeatIcon" alt="单曲循环" />
@@ -1760,6 +1925,33 @@ onBeforeUnmount(() => {
   color: var(--accent-color, #7c4dff);
   background: color-mix(in srgb, var(--accent-color, #7c4dff) 12%, transparent);
 }
+.icon-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.favorite-btn,
+.favorite-btn:hover,
+.favorite-btn:focus,
+.favorite-btn:focus-visible,
+.favorite-btn.active,
+.favorite-btn.active:hover,
+.player-bar-glass .favorite-btn,
+.player-bar-glass .favorite-btn:hover,
+.player-bar-glass .favorite-btn:focus,
+.player-bar-glass .favorite-btn:focus-visible,
+.player-bar-glass .favorite-btn.active,
+.player-bar-glass .favorite-btn.active:hover {
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.favorite-btn.active,
+.favorite-btn.active:hover,
+.player-bar-glass .favorite-btn.active,
+.player-bar-glass .favorite-btn.active:hover {
+  color: var(--te-favorite-500, #ef4444);
+}
 
 .desktop-lyrics-icon {
   box-sizing: border-box;
@@ -1776,10 +1968,20 @@ onBeforeUnmount(() => {
   letter-spacing: 0;
 }
 
+.desktop-lyrics-btn,
+.desktop-lyrics-btn:hover,
+.desktop-lyrics-btn:focus,
+.desktop-lyrics-btn:focus-visible,
 .desktop-lyrics-btn.active,
-.player-bar-glass .desktop-lyrics-btn.active {
-  background: transparent;
-  box-shadow: none;
+.desktop-lyrics-btn.active:hover,
+.player-bar-glass .desktop-lyrics-btn,
+.player-bar-glass .desktop-lyrics-btn:hover,
+.player-bar-glass .desktop-lyrics-btn:focus,
+.player-bar-glass .desktop-lyrics-btn:focus-visible,
+.player-bar-glass .desktop-lyrics-btn.active,
+.player-bar-glass .desktop-lyrics-btn.active:hover {
+  background: transparent !important;
+  box-shadow: none !important;
 }
 
 .icon-btn:active {
