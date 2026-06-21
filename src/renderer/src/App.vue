@@ -19,6 +19,7 @@ import { usePlayerStore } from './stores/usePlayerStore'
 import { useSettingsStore } from './stores/useSettingsStore'
 import { setupPluginThemeRuntime } from './extensions/themeRuntime'
 import { useExtensionRegistry, type UiContribution } from './extensions/registry'
+import { syncPluginProviders } from './providers'
 import type { PlaybackSession } from './types/music'
 import type { PlaybackResumeMode } from './types/settings'
 
@@ -287,6 +288,8 @@ async function restoreSavedPlaybackSession(mode: PlaybackResumeMode): Promise<vo
 
   const session = await window.api.data.loadPlaybackSession()
   if (!session?.track?.id) return
+
+  await syncPluginProviders()
 
   const restoredSession: PlaybackSession = {
     ...session,

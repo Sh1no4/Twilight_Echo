@@ -506,18 +506,6 @@ async function getPlaybackUrl(track, options = {}) {
   if (songId == null) throw new Error('Missing NetEase song ID, cannot play')
   const force = options?.force === true
 
-  if (!force) {
-    try {
-      const cached = await ncmApi.getCachedSong(songId)
-      if (cached) {
-        streamUrlCache.set(songId, cached)
-        return cached
-      }
-    } catch {
-      // Cache miss falls through.
-    }
-  }
-
   if (!force && streamUrlCache.has(songId)) return streamUrlCache.get(songId)
 
   let lastFailureMessage = ''
@@ -532,9 +520,6 @@ async function getPlaybackUrl(track, options = {}) {
         streamUrlCache.set(songId, url)
         void ncmApi
           .cacheSong(songId, url, track?.fileName)
-          .then((cached) => {
-            if (cached && streamUrlCache.get(songId) === url) streamUrlCache.set(songId, cached)
-          })
           .catch(() => {})
         return url
       }

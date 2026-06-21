@@ -13,6 +13,8 @@ const { getNcmSongId } = (await import(
 test('extracts provider prefixes from source or track id', () => {
   assert.equal(getTrackProviderId({ id: 'bili:BV1xx', source: undefined }), 'bili')
   assert.equal(getTrackProviderId({ id: 'ignored:123', source: 'ncm' }), 'ncm')
+  assert.equal(getTrackProviderId({ id: 'D:\\Music\\track.flac', source: undefined }), null)
+  assert.equal(getTrackProviderId({ id: '/Users/me/Music/track.flac', source: undefined }), null)
   assert.equal(getProviderLocalId('bili:BV1xx', 'bili'), 'BV1xx')
   assert.equal(getProviderLocalId('ncm:12345', 'bili'), null)
 })

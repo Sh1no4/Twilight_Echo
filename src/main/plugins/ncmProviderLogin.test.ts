@@ -183,6 +183,78 @@ test('bundled NCM provider falls back when the preferred playback endpoint fails
   providerModule.deactivate()
 })
 
+test('bundled NCM provider does not return local cache paths as playback URLs', async () => {
+  const requests: NcmRequest[] = []
+  const registeredProvider: { current?: TestNcmProvider } = {}
+  const settings = new Map<string, unknown>([['cookie', 'MUSIC_U=test-token']])
+  const cachedPath = 'D:\\TwilightCache\\ncm-cache\\2609824992.flac'
+
+  const providerModule = (await import(
+    new URL('../../../resources/plugins/ncm-provider/index.mjs', import.meta.url).href
+  )) as {
+    activate(context: unknown): Promise<void>
+    deactivate(): void
+  }
+
+  await providerModule.activate({
+    twilight: {
+      internal: {
+        ncm: {
+          async request(path: string, cookie?: string): Promise<unknown> {
+            requests.push({ path, cookie })
+            return {
+              code: 200,
+              data: [{ id: 2609824992, url: 'https://music.example/song.flac', br: 999000 }]
+            }
+          },
+          async getCachedSong(): Promise<string> {
+            return cachedPath
+          },
+          async cacheSong(): Promise<string> {
+            return cachedPath
+          }
+        }
+      },
+      providers: {
+        async register(provider: TestNcmProvider): Promise<void> {
+          registeredProvider.current = provider
+        }
+      }
+    },
+    settings: {
+      async get(key?: string): Promise<unknown> {
+        return key ? settings.get(key) : Object.fromEntries(settings)
+      },
+      async set(key: string, value: unknown): Promise<void> {
+        settings.set(key, value)
+      },
+      async delete(key: string): Promise<void> {
+        settings.delete(key)
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {}
+    }
+  })
+
+  assert.equal(
+    await registeredProvider.current?.getPlaybackUrl({ id: 'ncm:2609824992' }),
+    'https://music.example/song.flac'
+  )
+  assert.equal(requests.length, 1)
+
+  assert.equal(
+    await registeredProvider.current?.getPlaybackUrl({ id: 'ncm:2609824992' }),
+    'https://music.example/song.flac'
+  )
+  assert.equal(requests.length, 1)
+
+  providerModule.deactivate()
+})
+
 test('bundled NCM provider does not cache empty playback lookups', async () => {
   const requests: NcmRequest[] = []
   const registeredProvider: { current?: TestNcmProvider } = {}

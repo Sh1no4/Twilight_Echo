@@ -146,6 +146,16 @@
     return lines;
   }
 
+  function parsePlainLyrics(lyrics) {
+    if (!lyrics) return [];
+    var timeTagRe = /\[\d{1,3}:\d{2}(?:[.:]\d{2,3})?\]/g;
+    var metadataTagRe = /^\[[a-zA-Z]+:.*\]$/;
+    return lyrics
+      .split('\n')
+      .map(function (line) { return line.replace(timeTagRe, '').trim(); })
+      .filter(function (line) { return line.length > 0 && !metadataTagRe.test(line); });
+  }
+
   function mergeLyrics(original, translated) {
     if (original.length === 0) {
       return translated.map(function (l) { return { time: l.time, text: l.text, translation: null }; });
@@ -162,6 +172,23 @@
       }
     }
     return result;
+  }
+
+  function buildMergedLyrics(lyrics, translatedLyrics) {
+    var original = parseLrc(lyrics);
+    var translated = parseLrc(translatedLyrics);
+    if (original.length > 0 || translated.length > 0) return mergeLyrics(original, translated);
+
+    var plain = parsePlainLyrics(lyrics);
+    var plainTranslated = parsePlainLyrics(translatedLyrics);
+    var source = plain.length > 0 ? plain : plainTranslated;
+    return source.map(function (line, index) {
+      return {
+        time: null,
+        text: line,
+        translation: plain.length > 0 ? plainTranslated[index] || null : null
+      };
+    });
   }
 
   // ── Rendering ──
@@ -254,6 +281,7 @@
   function updateActiveIndex() {
     var newActive = -1;
     for (var i = 0; i < mergedLines.length; i++) {
+      if (mergedLines[i].time == null) continue;
       if (mergedLines[i].time <= currentTime) {
         newActive = i;
       } else {
@@ -271,7 +299,7 @@
   api.onTrackUpdate(function (data) {
     parsedLines = parseLrc(data.lyrics);
     translatedLines = parseLrc(data.translatedLyrics);
-    mergedLines = mergeLyrics(parsedLines, translatedLines);
+    mergedLines = buildMergedLyrics(data.lyrics, data.translatedLyrics);
     activeIndex = -1;
     if (data.title) {
       songInfoEl.textContent = (data.artist ? data.artist + ' - ' : '') + data.title;

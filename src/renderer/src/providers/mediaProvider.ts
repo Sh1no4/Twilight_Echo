@@ -182,6 +182,7 @@ export class MediaProviderRegistry {
 
 export function getTrackProviderId(track: Pick<Track, 'id' | 'source'>): string | null {
   if (track.source) return normalizeProviderId(track.source)
+  if (/^[a-zA-Z]:[\\/]/.test(track.id) || /^[\\/]/.test(track.id)) return null
   const separatorIndex = track.id.indexOf(':')
   if (separatorIndex <= 0) return null
   return normalizeProviderId(track.id.slice(0, separatorIndex))

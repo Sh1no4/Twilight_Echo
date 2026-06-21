@@ -380,7 +380,13 @@ function getPlaybackAudio(): HTMLAudioElement {
 
   audio.addEventListener('error', () => {
     const code = audio.error?.code ?? 0
-    audioEngineError.value = `Audio playback failed (code ${code})`
+    const message = `Audio playback failed (code ${code})`
+    console.error('[audio-engine] Renderer audio error:', {
+      code,
+      message: audio.error?.message ?? '',
+      src: audio.src ? audio.src.slice(0, 120) : ''
+    })
+    audioEngineError.value = message
     isPlaying.value = false
     isLoading.value = false
   })
@@ -407,6 +413,44 @@ function stopRendererAudio(clearSource = false): void {
   }
 }
 
+function resetPlaybackRuntimeStateForRestore(): void {
+  activeLoadToken += 1
+  nativePlaybackActive = false
+  loadedTrackId = ''
+  playbackInfo.value = null
+  clearNativePlaybackInfoIntent()
+  clearPlaybackToggleIntent()
+  stopVisualizationPolling(true)
+  stopRendererAudio(true)
+  void stopNativeAudio()
+}
+
+function seekRendererAudioWhenReady(
+  audio: HTMLAudioElement,
+  startTime: number,
+  track: Track,
+  loadToken: number
+): void {
+  const targetTime = Math.max(0, Number.isFinite(startTime) ? startTime : 0)
+  if (targetTime <= 0) return
+
+  const applySeek = (): void => {
+    if (!isActiveLoad(loadToken, track)) return
+    try {
+      audio.currentTime = targetTime
+    } catch (err) {
+      console.warn('[audio-engine] Failed to restore renderer playback position:', err)
+    }
+  }
+
+  if (audio.readyState >= HTMLMediaElement.HAVE_METADATA) {
+    applySeek()
+    return
+  }
+
+  audio.addEventListener('loadedmetadata', applySeek, { once: true })
+}
+
 async function stopNativeAudio(): Promise<void> {
   try {
     await window.api.audioEngine.stop()
@@ -417,6 +461,10 @@ async function stopNativeAudio(): Promise<void> {
 
 function shouldUseNativePlayback(track: Track, target: string): boolean {
   return shouldUseNativePlaybackTarget(getTrackSource(track), target)
+}
+
+function canUseNativeQueuePlayback(): boolean {
+  return queue.value.length > 0 && queue.value.every((track) => getTrackSource(track) === 'local')
 }
 
 async function createPlayableUrl(
@@ -456,7 +504,7 @@ async function playWithRendererAudio(
   audio.volume = volume.value
   if (!isActiveLoad(loadToken, track)) return false
 
-  audio.currentTime = Math.max(0, startTime)
+  seekRendererAudioWhenReady(audio, startTime, track, loadToken)
   if (!isActiveLoad(loadToken, track)) return false
 
   try {
@@ -470,6 +518,10 @@ async function playWithRendererAudio(
     try {
       await audio.play()
     } catch {
+      console.error('[audio-engine] Renderer audio play failed:', {
+        message: err instanceof Error ? err.message : String(err),
+        src: audio.src ? audio.src.slice(0, 120) : ''
+      })
       throw err
     }
   }
@@ -745,6 +797,11 @@ function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
 }
 
 async function syncNativeQueueState(): Promise<void> {
+  if (!canUseNativeQueuePlayback()) {
+    await stopNativeAudio()
+    return
+  }
+
   const engineQueue = queue.value.map((item) => ({
     id: item.id,
     duration: item.duration,
@@ -985,6 +1042,7 @@ function handlePlaybackEnded(): void {
 
 function getTrackSource(track: Track): string {
   if (track.source) return track.source
+  if (/^[a-zA-Z]:[\\/]/.test(track.id) || /^[\\/]/.test(track.id)) return 'local'
   const separatorIndex = track.id.indexOf(':')
   return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
 }
@@ -1096,7 +1154,7 @@ function setupAudioEngineListeners(): void {
     api.onPlaybackInfo((info) => {
       playbackInfo.value = normalizeNativePlaybackInfo(info)
       if (info.nativePlaybackActive !== undefined) {
-        nativePlaybackActive = info.nativePlaybackActive
+        nativePlaybackActive = info.nativePlaybackActive && canUseNativeQueuePlayback()
       }
       if (!nativePlaybackActive) return
       applyNativePlaybackInfo(info)
@@ -1252,44 +1310,43 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
 
     const playTarget = await resolvePlayTarget(track)
     if (!isActiveLoad(loadToken, track)) return
+    patchTrackInQueues(track)
     setNativePlaybackInfoIntent(loadToken, track, playTarget)
+    const useNativePlayback = shouldUseNativePlayback(track, playTarget) && canUseNativeQueuePlayback()
 
-    const engineQueue = queue.value.map((item) => ({
-      id: item.id,
-      duration: item.duration,
-      source: item.id === track.id ? playTarget : getTrackAudioSource(item),
-      format: item.format,
-      sampleRate: item.sampleRate,
-      bitrate: item.bitrate,
-      bitDepth: item.bitDepth
-    }))
     let nativeStarted = false
     let nativeFallbackReason = ''
 
-    try {
-      await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
-      if (!isActiveLoad(loadToken, track)) return
+    if (useNativePlayback) {
+      const engineQueue = queue.value.map((item) => ({
+        id: item.id,
+        duration: item.duration,
+        source: item.id === track.id ? playTarget : getTrackAudioSource(item),
+        format: item.format,
+        sampleRate: item.sampleRate,
+        bitrate: item.bitrate,
+        bitDepth: item.bitDepth
+      }))
 
-      const nativePlayMode = playMode.value === 'repeat' ? 'repeat' : 'sequential'
-      await window.api.audioEngine.setPlayMode(nativePlayMode)
-      if (!isActiveLoad(loadToken, track)) return
+      try {
+        await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
+        if (!isActiveLoad(loadToken, track)) return
 
-      if (shouldUseNativePlayback(track, playTarget)) {
+        const nativePlayMode = playMode.value === 'repeat' ? 'repeat' : 'sequential'
+        await window.api.audioEngine.setPlayMode(nativePlayMode)
+        if (!isActiveLoad(loadToken, track)) return
+
         const playResult = await window.api.audioEngine.play(playTarget, normalizedStartTime)
         if (!isActiveLoad(loadToken, track)) return
         nativeStarted = playResult?.nativeStarted === true
         nativeFallbackReason = playResult?.fallbackReason ?? ''
-      }
-    } catch (engineErr) {
-      if (!isActiveLoad(loadToken, track)) return
-      if (shouldUseNativePlayback(track, playTarget)) {
+      } catch (engineErr) {
+        if (!isActiveLoad(loadToken, track)) return
         nativeFallbackReason = engineErr instanceof Error ? engineErr.message : String(engineErr)
         console.warn(
           '[audio-engine] Native output unavailable, falling back to Electron playback:',
           engineErr
         )
-      } else {
-        console.warn('[audio-engine] Failed to sync native playback queue:', engineErr)
       }
     }
 
@@ -1341,7 +1398,7 @@ function next(): void {
   if (queue.value.length === 0) return
   clearCrossfadeTimer()
 
-  if (nativePlaybackActive) {
+  if (nativePlaybackActive && canUseNativeQueuePlayback()) {
     void advanceNativePlayback('next')
     return
   }
@@ -1368,7 +1425,7 @@ async function togglePlayState(): Promise<void> {
     return
   }
   try {
-    if (nativePlaybackActive) {
+    if (nativePlaybackActive && canUseNativeQueuePlayback()) {
       const nextPlaying = !isPlaying.value
       isPlaying.value = nextPlaying
       setPlaybackToggleIntent(nextPlaying)
@@ -1385,7 +1442,7 @@ async function togglePlayState(): Promise<void> {
       }
     }
   } catch (err) {
-    if (nativePlaybackActive) {
+    if (nativePlaybackActive && canUseNativeQueuePlayback()) {
       isPlaying.value = !isPlaying.value
       clearPlaybackToggleIntent()
     }
@@ -1402,13 +1459,16 @@ function previous(): void {
       restoredPlaybackPending = true
       restoredPlaybackPosition = 0
     } else {
-      if (!nativePlaybackActive && playbackAudio) playbackAudio.currentTime = 0
-      if (nativePlaybackActive) window.api.audioEngine.seek(0).catch(() => {})
+      if (nativePlaybackActive && canUseNativeQueuePlayback()) {
+        window.api.audioEngine.seek(0).catch(() => {})
+      } else if (playbackAudio) {
+        playbackAudio.currentTime = 0
+      }
     }
     return
   }
   const prevIndex = queueIndex.value - 1
-  if (nativePlaybackActive) {
+  if (nativePlaybackActive && canUseNativeQueuePlayback()) {
     void advanceNativePlayback('previous')
     return
   }
@@ -1435,8 +1495,11 @@ function seekPlayback(time: number): void {
     return
   }
   setCurrentTimeImmediate(time)
-  if (!nativePlaybackActive && playbackAudio) playbackAudio.currentTime = Math.max(0, time)
-  if (nativePlaybackActive) window.api.audioEngine.seek(time).catch(() => {})
+  if (nativePlaybackActive && canUseNativeQueuePlayback()) {
+    window.api.audioEngine.seek(time).catch(() => {})
+  } else if (playbackAudio) {
+    playbackAudio.currentTime = Math.max(0, time)
+  }
 }
 
 let playerIntegrationSideEffectsSetup = false
@@ -1444,6 +1507,26 @@ let mediaSessionHandlersBound = false
 let mediaSessionMetadataKey = ''
 let discordPlayStartTimestamp: number | null = null
 let desktopLyricsTimeThrottle = 0
+
+function syncDesktopLyricsSnapshot(): void {
+  const track = currentTrack.value
+  if (track) {
+    window.api.desktopLyrics.updateTrack({
+      lyrics: track.lyrics ?? null,
+      translatedLyrics: track.translatedLyrics ?? null,
+      title: track.title || '',
+      artist: track.artist || ''
+    })
+  } else {
+    window.api.desktopLyrics.updateTrack({
+      lyrics: null,
+      translatedLyrics: null,
+      title: '',
+      artist: ''
+    })
+  }
+  window.api.desktopLyrics.updateTime(currentTime.value)
+}
 
 function updateMediaSessionPlaybackState(): void {
   if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
@@ -1595,15 +1678,7 @@ function setupPlayerIntegrationSideEffects(): void {
 
   watch(() => appSettings.value.discordRpcEnabled, () => updateDiscordActivity(), { immediate: true })
 
-  watch(currentTrack, (track) => {
-    if (!track) return
-    window.api.desktopLyrics.updateTrack({
-      lyrics: track.lyrics ?? null,
-      translatedLyrics: track.translatedLyrics ?? null,
-      title: track.title || '',
-      artist: track.artist || ''
-    })
-  }, { immediate: true })
+  watch(currentTrack, () => syncDesktopLyricsSnapshot(), { immediate: true })
 
   watch(currentTime, (time) => {
     const now = Date.now()
@@ -1615,6 +1690,10 @@ function setupPlayerIntegrationSideEffects(): void {
   watch(() => appSettings.value.desktopLyrics, (dl) => {
     window.api.desktopLyrics.updateSettings(dl)
   }, { deep: true })
+
+  window.api.desktopLyrics.onToggle((enabled: boolean) => {
+    if (enabled) syncDesktopLyricsSnapshot()
+  })
 }
 
 function shuffleArray<T>(arr: T[]): T[] {
@@ -1695,9 +1774,8 @@ function restorePlaybackSession(session: PlaybackSession): void {
       ? Math.max(0, Number.isFinite(session.position) ? session.position : 0)
       : 0
 
+  resetPlaybackRuntimeStateForRestore()
   clearCrossfadeTimer()
-  clearNativePlaybackInfoIntent()
-  clearPlaybackToggleIntent()
   currentTrack.value = track
 
   // 恢复完整播放队列，而非只恢复当前一首歌
@@ -1715,7 +1793,6 @@ function restorePlaybackSession(session: PlaybackSession): void {
   duration.value = Math.max(0, track.duration || 0)
   isPlaying.value = false
   isLoading.value = false
-  loadedTrackId = ''
   restoredPlaybackPending = true
   restoredPlaybackPosition = position
   pendingLoadStartTime = 0

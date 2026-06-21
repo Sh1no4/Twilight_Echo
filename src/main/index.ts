@@ -524,6 +524,7 @@ async function getDirectorySize(directory: string): Promise<number> {
 let appSettings = readAppSettings()
 const launchSettings = { ...appSettings }
 let pluginManager: TwilightPluginManager | null = null
+let pluginManagerReady: Promise<void> | null = null
 let pluginIndexService: PluginIndexService | null = null
 let opraCatalog: OpraCatalog | null = null
 
@@ -627,6 +628,10 @@ if (appSettings.musicCachePath) {
     console.warn('无法使用自定义缓存目录：', err)
   }
 }
+
+// Streaming provider URLs are resolved asynchronously after user commands.
+// Desktop playback must not be blocked by Chromium's web-page autoplay policy.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 const SUPPORTED_EXTENSIONS = [
   '.mp3',
@@ -1024,6 +1029,10 @@ function getMimeType(filePath: string): string {
 let audioEngineManager: AudioEngineManager | null = null
 let mainWindow: BrowserWindow | null = null
 let desktopLyricsWindow: BrowserWindow | null = null
+let latestDesktopLyricsTrack:
+  | { lyrics: string | null; translatedLyrics?: string | null; title?: string; artist?: string }
+  | null = null
+let latestDesktopLyricsTime = 0
 let ncmServer: import('http').Server | null = null
 let tray: Tray | null = null
 let forceQuit = false
@@ -2125,7 +2134,7 @@ function setupPluginIpc(): void {
     bundledPluginIds
   })
 
-  void pluginManager
+  pluginManagerReady = pluginManager
     .initialize()
     .then(() => {
       void pluginManager?.broadcastEvent('app:ready', {
@@ -2142,31 +2151,40 @@ function setupPluginIpc(): void {
   })
 
   ipcMain.handle('plugins:list', async () => {
+    await pluginManagerReady
     return await pluginManager!.list()
   })
   ipcMain.handle('plugins:installFromPath', async (_event, sourcePath: string) => {
+    await pluginManagerReady
     return await pluginManager!.installFromPath(sourcePath)
   })
   ipcMain.handle('plugins:chooseAndInstall', async () => {
+    await pluginManagerReady
     return await pluginManager!.chooseAndInstall()
   })
   ipcMain.handle('plugins:enable', async (_event, id: string) => {
+    await pluginManagerReady
     return await pluginManager!.enable(id)
   })
   ipcMain.handle('plugins:disable', async (_event, id: string) => {
+    await pluginManagerReady
     return await pluginManager!.disable(id)
   })
   ipcMain.handle('plugins:uninstall', async (_event, id: string, options?: TwilightPluginUninstallOptions) => {
+    await pluginManagerReady
     await pluginManager!.uninstall(id, options)
     return true
   })
   ipcMain.handle('plugins:openLog', async (_event, id: string) => {
+    await pluginManagerReady
     await pluginManager!.openLog(id)
   })
   ipcMain.handle('plugins:getLog', async (_event, id: string) => {
+    await pluginManagerReady
     return await pluginManager!.getLog(id)
   })
   ipcMain.handle('plugins:listIndex', async () => {
+    await pluginManagerReady
     const [entries, installed] = await Promise.all([
       pluginIndexService!.list(),
       pluginManager!.list()
@@ -2178,6 +2196,7 @@ function setupPluginIpc(): void {
     }))
   })
   ipcMain.handle('plugins:refreshIndex', async () => {
+    await pluginManagerReady
     const [entries, installed] = await Promise.all([
       pluginIndexService!.refresh(),
       pluginManager!.list()
@@ -2189,6 +2208,7 @@ function setupPluginIpc(): void {
     }))
   })
   ipcMain.handle('plugins:installFromIndex', async (_event, id: string) => {
+    await pluginManagerReady
     const downloaded = await pluginIndexService!.downloadPackage(id)
     try {
       return await pluginManager!.installFromPath(downloaded.packagePath, {
@@ -2200,24 +2220,30 @@ function setupPluginIpc(): void {
     }
   })
   ipcMain.handle('plugins:setNativeDspParameters', async (_event, id: string, parameters: Record<string, number>) => {
+    await pluginManagerReady
     return await pluginManager!.setNativeDspPluginParameters(id, parameters)
   })
   ipcMain.handle('providers:list', async () => {
+    await pluginManagerReady
     return pluginManager!.listProviders()
   })
   ipcMain.handle(
     'providers:call',
     async (_event, providerId: string, method: Parameters<TwilightPluginManager['callProvider']>[1], args: unknown[]) => {
+      await pluginManagerReady
       return await pluginManager!.callProvider(providerId, method, Array.isArray(args) ? args : [])
     }
   )
   ipcMain.handle('extensions:list', async () => {
+    await pluginManagerReady
     return pluginManager!.listExtensions()
   })
   ipcMain.handle('extensions:executeCommand', async (_event, command: string, args?: unknown[]) => {
+    await pluginManagerReady
     return await pluginManager!.executeUiCommand(command, Array.isArray(args) ? args : [])
   })
   ipcMain.handle('extensions:readThemeStylesheet', async (_event, stylesheetPath: string) => {
+    await pluginManagerReady
     const normalized = resolve(stylesheetPath)
     const allowed = pluginManager!.listExtensions().some((entry) =>
       entry.themes.some((theme) => theme.stylesheet && resolve(theme.stylesheet) === normalized)
@@ -2580,6 +2606,16 @@ if (!gotSingleInstanceLock) {
   })
 
   // === Desktop Lyrics Window ===
+  function sendDesktopLyricsSnapshot(): void {
+    if (!desktopLyricsWindow || desktopLyricsWindow.isDestroyed()) return
+
+    desktopLyricsWindow.webContents.send('desktopLyrics:initSettings', appSettings.desktopLyrics)
+    if (latestDesktopLyricsTrack) {
+      desktopLyricsWindow.webContents.send('desktopLyrics:updateTrack', latestDesktopLyricsTrack)
+    }
+    desktopLyricsWindow.webContents.send('desktopLyrics:updateTime', latestDesktopLyricsTime)
+  }
+
   function createDesktopLyricsWindow(): void {
     if (desktopLyricsWindow && !desktopLyricsWindow.isDestroyed()) return
 
@@ -2615,8 +2651,7 @@ if (!gotSingleInstanceLock) {
 
     desktopLyricsWindow.on('ready-to-show', () => {
       desktopLyricsWindow?.show()
-      // Send initial settings
-      desktopLyricsWindow?.webContents.send('desktopLyrics:initSettings', appSettings.desktopLyrics)
+      sendDesktopLyricsSnapshot()
     })
 
     desktopLyricsWindow.on('closed', () => {
@@ -2650,6 +2685,7 @@ if (!gotSingleInstanceLock) {
       createDesktopLyricsWindow()
     } else {
       desktopLyricsWindow.show()
+      sendDesktopLyricsSnapshot()
     }
   }
 
@@ -2690,12 +2726,14 @@ if (!gotSingleInstanceLock) {
 
   // Forward track/time updates from renderer to lyrics window
   ipcMain.on('desktopLyrics:updateTrack', (_event, data: { lyrics: string | null; translatedLyrics?: string | null; title?: string; artist?: string }) => {
+    latestDesktopLyricsTrack = data
     if (desktopLyricsWindow && !desktopLyricsWindow.isDestroyed()) {
       desktopLyricsWindow.webContents.send('desktopLyrics:updateTrack', data)
     }
   })
 
   ipcMain.on('desktopLyrics:updateTime', (_event, time: number) => {
+    latestDesktopLyricsTime = time
     if (desktopLyricsWindow && !desktopLyricsWindow.isDestroyed()) {
       desktopLyricsWindow.webContents.send('desktopLyrics:updateTime', time)
     }
@@ -2741,6 +2779,10 @@ if (!gotSingleInstanceLock) {
     hideDesktopLyrics()
     mainWindow?.webContents.send('desktopLyrics:toggleChanged', false)
   })
+
+  if (appSettings.desktopLyrics.enabled) {
+    showDesktopLyrics()
+  }
 
   createWindow()
   applyRuntimeSettings()

@@ -9,6 +9,7 @@ import { EventEmitter } from 'events'
 import { planPluginStartup } from './dependencies'
 import { isCompatibleTwilightRange, validatePluginManifest } from './manifest'
 import { dedupeProviderRegistrations, findProviderRoute } from './providerRouting'
+import { isRecoverableBundledPluginFailure } from './stateRecovery'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -114,6 +115,7 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly player: TwilightPluginManagerOptions['player']
   private readonly running = new Map<string, RunningPlugin>()
   private readonly stopping = new Set<string>()
+  private shuttingDown = false
   private readonly providerCalls = new Map<
     string,
     {
@@ -456,6 +458,7 @@ export class TwilightPluginManager extends EventEmitter {
   }
 
   async destroy(): Promise<void> {
+    this.shuttingDown = true
     await Promise.all([...this.running.keys()].map((id) => this.stopPlugin(id)))
   }
 
@@ -492,12 +495,18 @@ export class TwilightPluginManager extends EventEmitter {
 
         const now = new Date().toISOString()
         const previous = this.state[manifest.id]
+        const shouldRecoverBundledFailure =
+          previous?.enabled === false &&
+          previous?.source === 'bundled' &&
+          isRecoverableBundledPluginFailure(previous.lastError)
         this.state[manifest.id] = {
-          enabled: previous?.enabled ?? bundled.defaultEnabled === true,
+          enabled: shouldRecoverBundledFailure
+            ? bundled.defaultEnabled === true
+            : previous?.enabled ?? bundled.defaultEnabled === true,
           installedAt: previous?.installedAt ?? now,
           updatedAt: previous?.updatedAt ?? now,
           source: 'bundled',
-          lastError: previous?.lastError
+          lastError: shouldRecoverBundledFailure ? undefined : previous?.lastError
         }
       } catch (error) {
         console.error(
@@ -556,7 +565,7 @@ export class TwilightPluginManager extends EventEmitter {
     child.on('exit', (code) => {
       const wasStopping = this.stopping.delete(descriptor.id)
       this.running.delete(descriptor.id)
-      if (this.state[descriptor.id]?.enabled && !wasStopping) {
+      if (this.state[descriptor.id]?.enabled && !wasStopping && !this.shuttingDown) {
         this.markFailed(descriptor.id, `插件宿主进程退出：${code}`)
       }
     })

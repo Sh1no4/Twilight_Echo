@@ -754,35 +754,6 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="section-block">
-            <h3>存储与清理 (Storage)</h3>
-            <div class="setting-list">
-              <div class="setting-item">
-                <div class="setting-copy">
-                  <strong>缓存目录</strong>
-                  <span>保存图片、歌词、在线资源和流媒体缓存。当前：{{ activeCachePath || '默认目录' }}</span>
-                </div>
-                <button type="button" class="soft-button" @click="chooseCacheFolder">更改目录</button>
-              </div>
-              <hr />
-              <div class="setting-item">
-                <div class="setting-copy">
-                  <strong>清理应用缓存</strong>
-                  <span>当前占用：<b>{{ formattedCacheSize }}</b>。清理不会删除您的本地音乐文件。</span>
-                </div>
-                <button
-                  type="button"
-                  class="danger-soft-button"
-                  :disabled="clearingCache"
-                  @click="clearCache"
-                >
-                  <i class="pi pi-trash"></i>
-                  {{ clearingCache ? '清理中…' : '立即清理' }}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="section-block">
             <h3>集成与社交 (Integration & Social)</h3>
             <div class="setting-list">
               <div class="setting-item">

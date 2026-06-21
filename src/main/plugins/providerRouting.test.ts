@@ -4,6 +4,9 @@ import test from 'node:test'
 const { dedupeProviderRegistrations, findProviderRoute, providerSupportsMethod } = (await import(
   new URL('./providerRouting.ts', import.meta.url).href
 )) as typeof import('./providerRouting')
+const { isRecoverableBundledPluginFailure } = (await import(
+  new URL('./stateRecovery.ts', import.meta.url).href
+)) as typeof import('./stateRecovery')
 
 type TestRunningProvider = {
   pluginId: string
@@ -56,4 +59,10 @@ test('prefers the latest registration when multiple plugins expose the same prov
     fullProvider.pluginId
   )
   assert.deepEqual(dedupeProviderRegistrations([skeleton, fullProvider]), fullProvider.providers)
+})
+
+test('treats bundled plugin host-exit failures as recoverable startup state', () => {
+  assert.equal(isRecoverableBundledPluginFailure('插件宿主进程退出：18446744073709552000'), true)
+  assert.equal(isRecoverableBundledPluginFailure('Provider 调用超时：ncm.getPlaybackUrl'), false)
+  assert.equal(isRecoverableBundledPluginFailure(undefined), false)
 })
