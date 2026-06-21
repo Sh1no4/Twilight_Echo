@@ -1663,6 +1663,17 @@ function getWindowBackgroundColor(settings: AppSettings): string {
   return '#ffffff'
 }
 
+function getAppIconPath(): string {
+  if (process.platform === 'win32') {
+    return is.dev
+      ? join(app.getAppPath(), 'build', 'icon.ico')
+      : join(process.resourcesPath, 'icon.ico')
+  }
+  return is.dev
+    ? join(app.getAppPath(), 'build', 'icon.png')
+    : join(process.resourcesPath, 'icon.png')
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1495,
@@ -1670,7 +1681,7 @@ function createWindow(): void {
     show: false,
     frame: false,
     backgroundColor: getWindowBackgroundColor(appSettings),
-    icon: join(app.getAppPath(), 'resources', 'icon.png'),
+    icon: getAppIconPath(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false

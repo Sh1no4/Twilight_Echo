@@ -1,7 +1,7 @@
 {
   "name": "TwilightEcho",
   "version": "1.0.0",
-  "description": "An Electron application with Vue and TypeScript",
+  "description": "Twilight Echo music player",
   "license": "Apache-2.0",
   "main": "./out/main/index.js",
   "author": "Pxasen.com",

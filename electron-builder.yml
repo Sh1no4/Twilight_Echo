@@ -4,6 +4,7 @@ directories:
   buildResources: build
 asar: true
 icon: build/icon.png
+afterPack: scripts/after-pack-windows.cjs
 files:
   - out/**
   - node_modules/**
@@ -20,6 +21,10 @@ files:
   - '!node_modules/**/*.md'
   - '!node_modules/@neteasecloudmusicapienhanced/api/public/**'
 extraResources:
+  - from: build/icon.ico
+    to: icon.ico
+  - from: build/icon.png
+    to: icon.png
   - from: resources/audio-engine
     to: audio-engine
     filter:
