@@ -269,6 +269,13 @@ if(TAE_BUILD_TESTS)
       $<TARGET_FILE:twilight_test_bad_abi_dsp_plugin>
       $<TARGET_FILE:twilight_test_invalid_param_dsp_plugin>
       $<TARGET_FILE:twilight_crossfeed_dsp_plugin>
+      $<TARGET_FILE:twilight_test_crash_dsp_plugin>
+  )
+  add_test(
+    NAME twilight_native_dsp_plugin_crash_fixture
+    COMMAND twilight_native_dsp_plugin_tests
+      --expect-crash-fixture
+      $<TARGET_FILE:twilight_test_crash_dsp_plugin>
   )
 
   add_executable(twilight_metadata_tests

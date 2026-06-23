@@ -233,6 +233,9 @@ const { uiContributions, syncExtensions } = useExtensionRegistry()
 const sidebarPages = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'sidebarPage')
 )
+const localSidebarItems = computed(() =>
+  uiContributions.value.filter((contribution) => contribution.kind === 'localSidebarItem')
+)
 const hasPlayerBar = computed(
   () =>
     !showLoginPage.value &&
@@ -488,6 +491,7 @@ const titleSurface = computed<TitleSurface>(() => {
     :open="menuOpen"
     :active-key="sideMenuActiveKey"
     :plugin-pages="sidebarPages"
+    :local-items="localSidebarItems"
     @select-view="onSelectView"
     @select-plugin-page="onSelectPluginPage"
     @enter-streaming="enterStreamingMode"

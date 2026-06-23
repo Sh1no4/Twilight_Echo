@@ -8,6 +8,7 @@ const props = defineProps<{
   open: boolean
   activeKey: string
   pluginPages?: UiContribution[]
+  localItems?: UiContribution[]
 }>()
 
 const emit = defineEmits<{
@@ -66,6 +67,18 @@ function handleImportClick(): void {
         </div>
       </div>
       <div class="menu-bottom">
+        <div v-if="(props.localItems?.length ?? 0) > 0" class="menu-separator"></div>
+        <div
+          v-for="item in props.localItems ?? []"
+          :key="`local:${item.pluginId}:${item.id}`"
+          class="menu-item menu-item-plugin"
+          :class="{ active: props.activeKey === `plugin:${item.pluginId}:${item.id}` }"
+          @click="selectPluginPage(item)"
+        >
+          <i v-if="item.icon" class="item-icon" :class="item.icon"></i>
+          <PuzzleIcon v-else class="item-icon" />
+          <span class="item-label">{{ item.title }}</span>
+        </div>
         <div class="menu-separator"></div>
         <div
           v-for="page in props.pluginPages ?? []"

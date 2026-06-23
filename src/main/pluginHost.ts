@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'url'
 import { deletePluginSetting, getPluginSetting, setPluginSetting } from './plugins/settingsStore'
+import { initProxy } from './plugins/proxyBootstrap'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -53,16 +54,19 @@ interface TwilightPluginContext {
         id: string
         name: string
         capabilities: string[]
+        ui?: Record<string, unknown>
       } & ProviderHandler) => Promise<void>
-    }
+    },
     ui: {
       register: (contribution: {
         id: string
-        kind: 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
+        kind: 'sidebarPage' | 'playerBarButton' | 'settingsPanel' | 'localSidebarItem' | 'streamingHome'
         title: string
         description?: string
         icon?: string
         command?: string
+        renderMode?: 'command' | 'html'
+        autoLoad?: boolean
       }) => Promise<void>
       onCommand: (command: string, handler: CommandHandler) => () => void
     }
@@ -156,6 +160,9 @@ parentPort.on('message', (event) => {
 
 async function activatePlugin(message: Extract<PluginHostRequest, { kind: 'activate' }>): Promise<void> {
   try {
+    // Initialize proxy before loading any plugin code — plugins that access
+    // blocked external APIs (YouTube, etc.) need the proxy tunnel active.
+    await initProxy()
     const module = (await import(pathToFileURL(message.mainPath).href)) as PluginModule
     activePlugin = module.default && (module.default.activate || module.default.deactivate)
       ? module.default
@@ -218,7 +225,8 @@ function createContext(pluginId: string, apiVersion: number, storagePath: string
         await callProviderApi('register', {
           id: provider.id,
           name: provider.name,
-          capabilities: provider.capabilities
+          capabilities: provider.capabilities,
+          ui: provider.ui
         })
       }
     },

@@ -2,6 +2,7 @@
 
 #include "../decoder/SacdIsoProbe.h"
 #include "../metadata/AudioMetadataService.h"
+#include "../utils/JsonUtils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -47,34 +48,6 @@ const char* resultToString(TAE_Result result) {
   }
 }
 
-std::string escapeJson(const std::string& value) {
-  std::string out;
-  out.reserve(value.size() + 8);
-  for (char ch : value) {
-    switch (ch) {
-      case '\\':
-        out += "\\\\";
-        break;
-      case '"':
-        out += "\\\"";
-        break;
-      case '\n':
-        out += "\\n";
-        break;
-      case '\r':
-        out += "\\r";
-        break;
-      case '\t':
-        out += "\\t";
-        break;
-      default:
-        out += ch;
-        break;
-    }
-  }
-  return out;
-}
-
 void writeLatencyInfoJson(std::ostringstream& json, const OutputInfo::LatencyInfo& latency) {
   json << "{"
        << "\"bufferLatencyMs\":" << latency.bufferLatencyMs << ","
@@ -93,7 +66,7 @@ void writeDiagnosticsJson(std::ostringstream& json, const OutputInfo::Diagnostic
        << "\"lifetimeRecoveryCount\":" << diagnostics.lifetimeRecoveryCount << ","
        << "\"driverRestartCount\":" << diagnostics.driverRestartCount << ","
        << "\"deviceLostCount\":" << diagnostics.deviceLostCount << ","
-       << "\"lastError\":\"" << escapeJson(diagnostics.lastError) << "\""
+       << "\"lastError\":\"" << json_utils::escape(diagnostics.lastError) << "\""
        << "}";
 }
 
@@ -117,14 +90,14 @@ void writeBackendCapabilityJson(
     const char* devicePathKind,
     const std::string& unavailableReason = {},
     bool optional = false) {
-  json << "{\"id\":\"" << escapeJson(id) << "\",\"label\":\"" << escapeJson(label) << "\","
+  json << "{\"id\":\"" << json_utils::escape(id) << "\",\"label\":\"" << json_utils::escape(label) << "\","
        << "\"compiled\":" << boolJson(compiled) << ","
        << "\"runtimeAvailable\":" << boolJson(runtimeAvailable) << ","
        << "\"supportsExclusive\":" << boolJson(supportsExclusive) << ","
        << "\"supportsOutputPerfect\":" << boolJson(supportsOutputPerfect) << ","
-       << "\"accessMode\":\"" << escapeJson(accessMode) << "\","
-       << "\"devicePathKind\":\"" << escapeJson(devicePathKind) << "\","
-       << "\"unavailableReason\":\"" << escapeJson(runtimeAvailable ? std::string{} : unavailableReason) << "\"";
+       << "\"accessMode\":\"" << json_utils::escape(accessMode) << "\","
+       << "\"devicePathKind\":\"" << json_utils::escape(devicePathKind) << "\","
+       << "\"unavailableReason\":\"" << json_utils::escape(runtimeAvailable ? std::string{} : unavailableReason) << "\"";
   if (optional) json << ",\"optional\":true";
   json << "}";
 }
@@ -342,46 +315,46 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"duration\":" << info.durationSeconds << ","
        << "\"volume\":" << info.volume << ","
        << "\"queueIndex\":" << info.queueIndex << ","
-       << "\"playMode\":\"" << escapeJson(info.playMode) << "\","
-       << "\"source\":\"" << escapeJson(info.source) << "\","
-       << "\"codec\":\"" << escapeJson(info.codec) << "\","
+       << "\"playMode\":\"" << json_utils::escape(info.playMode) << "\","
+       << "\"source\":\"" << json_utils::escape(info.source) << "\","
+       << "\"codec\":\"" << json_utils::escape(info.codec) << "\","
        << "\"bitrate\":" << info.bitrate << ","
        << "\"sourceSampleRate\":" << info.sourceSampleRate << ","
        << "\"sourceBitDepth\":" << info.sourceBitDepth << ","
        << "\"decodedSampleRate\":" << info.decodedSampleRate << ","
        << "\"decodedBitDepth\":" << info.decodedBitDepth << ","
        << "\"decodedChannels\":" << info.decodedChannels << ","
-       << "\"decodedSampleFormat\":\"" << escapeJson(info.decodedSampleFormat) << "\","
-       << "\"outputBackend\":\"" << escapeJson(info.outputBackend) << "\","
-       << "\"outputDevice\":\"" << escapeJson(info.outputDevice) << "\","
+       << "\"decodedSampleFormat\":\"" << json_utils::escape(info.decodedSampleFormat) << "\","
+       << "\"outputBackend\":\"" << json_utils::escape(info.outputBackend) << "\","
+       << "\"outputDevice\":\"" << json_utils::escape(info.outputDevice) << "\","
        << "\"outputInfo\":{"
        << "\"exclusive\":" << (out.exclusive ? "true" : "false") << ","
-       << "\"accessMode\":\"" << escapeJson(out.accessMode) << "\","
+       << "\"accessMode\":\"" << json_utils::escape(out.accessMode) << "\","
        << "\"supportsOutputPerfect\":" << (out.supportsOutputPerfect ? "true" : "false") << ","
        << "\"sourceExact\":" << (out.sourceExact ? "true" : "false") << ","
        << "\"outputPerfect\":" << (out.outputPerfect ? "true" : "false") << ","
        << "\"pcmPassthrough\":" << (out.pcmPassthrough ? "true" : "false") << ","
        << "\"resampled\":" << (out.resampled ? "true" : "false") << ","
        << "\"isDsd\":" << (out.isDsd ? "true" : "false") << ","
-       << "\"dsdMode\":\"" << escapeJson(out.dsdMode) << "\","
+       << "\"dsdMode\":\"" << json_utils::escape(out.dsdMode) << "\","
        << "\"dsdRate\":" << out.dsdRate << ","
        << "\"outputSampleRate\":" << out.outputSampleRate << ","
        << "\"outputBitDepth\":" << out.outputBitDepth << ","
-       << "\"backend\":\"" << escapeJson(out.backend) << "\","
-       << "\"actualBackend\":\"" << escapeJson(out.actualBackend) << "\","
-       << "\"devicePathKind\":\"" << escapeJson(out.devicePathKind) << "\","
-       << "\"deviceName\":\"" << escapeJson(out.deviceName) << "\","
-       << "\"actualDeviceName\":\"" << escapeJson(out.actualDeviceName) << "\","
-       << "\"driverName\":\"" << escapeJson(out.driverName) << "\","
-       << "\"actualDriverName\":\"" << escapeJson(out.actualDriverName) << "\","
+       << "\"backend\":\"" << json_utils::escape(out.backend) << "\","
+       << "\"actualBackend\":\"" << json_utils::escape(out.actualBackend) << "\","
+       << "\"devicePathKind\":\"" << json_utils::escape(out.devicePathKind) << "\","
+       << "\"deviceName\":\"" << json_utils::escape(out.deviceName) << "\","
+       << "\"actualDeviceName\":\"" << json_utils::escape(out.actualDeviceName) << "\","
+       << "\"driverName\":\"" << json_utils::escape(out.driverName) << "\","
+       << "\"actualDriverName\":\"" << json_utils::escape(out.actualDriverName) << "\","
        << "\"driverVersion\":" << out.driverVersion << ","
        << "\"actualDriverVersion\":" << out.actualDriverVersion << ","
-       << "\"actualOutputFormat\":\"" << escapeJson(out.actualOutputFormat) << "\","
+       << "\"actualOutputFormat\":\"" << json_utils::escape(out.actualOutputFormat) << "\","
        << "\"actualSampleRate\":" << out.actualSampleRate << ","
        << "\"actualBitDepth\":" << out.actualBitDepth << ","
        << "\"actualChannels\":" << out.actualChannels << ","
-       << "\"perfectReasonCode\":\"" << escapeJson(out.perfectReasonCode) << "\","
-       << "\"capabilityReason\":\"" << escapeJson(out.capabilityReason) << "\","
+       << "\"perfectReasonCode\":\"" << json_utils::escape(out.perfectReasonCode) << "\","
+       << "\"capabilityReason\":\"" << json_utils::escape(out.capabilityReason) << "\","
        << "\"driverDopCapable\":" << (out.driverDopCapable ? "true" : "false") << ","
        << "\"driverNativeDsdCapable\":" << (out.driverNativeDsdCapable ? "true" : "false") << ","
        << "\"driverDopCarrierSampleRates\":[";
@@ -392,7 +365,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
   json << "],\"driverDopCarrierFormats\":[";
   for (size_t i = 0; i < out.driverDopCarrierFormats.size(); ++i) {
     if (i > 0) json << ",";
-    json << "\"" << escapeJson(out.driverDopCarrierFormats[i]) << "\"";
+    json << "\"" << json_utils::escape(out.driverDopCarrierFormats[i]) << "\"";
   }
   json << "],\"driverNativeDsdSampleRates\":[";
   for (size_t i = 0; i < out.driverNativeDsdSampleRates.size(); ++i) {
@@ -400,7 +373,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
     json << out.driverNativeDsdSampleRates[i];
   }
   json << "],"
-       << "\"nativeDsdRuntimeState\":\"" << escapeJson(out.nativeDsdRuntimeState) << "\","
+       << "\"nativeDsdRuntimeState\":\"" << json_utils::escape(out.nativeDsdRuntimeState) << "\","
        << "\"nativeDsdRequestedRate\":" << out.nativeDsdRequestedRate << ","
        << "\"nativeDsdActualRate\":" << out.nativeDsdActualRate << ","
        << "\"nativeDsdChannels\":" << out.nativeDsdChannels << ","
@@ -411,15 +384,15 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
     json << out.nativeDsdAdvertisedSampleRates[i];
   }
   json << "],"
-       << "\"nativeDsdRuntimeReason\":\"" << escapeJson(out.nativeDsdRuntimeReason) << "\","
+       << "\"nativeDsdRuntimeReason\":\"" << json_utils::escape(out.nativeDsdRuntimeReason) << "\","
        << "\"bufferSizeFrames\":" << out.bufferSizeFrames << ","
        << "\"latencyFrames\":" << out.latencyFrames << ","
        << "\"latencyMs\":" << out.latencyMs << ","
        << "\"latencyInfo\":";
   writeLatencyInfoJson(json, out.latencyInfo);
   json << ","
-       << "\"channelRoutingMode\":\"" << escapeJson(out.channelRoutingMode) << "\","
-       << "\"perfectReason\":\"" << escapeJson(out.perfectReason) << "\","
+       << "\"channelRoutingMode\":\"" << json_utils::escape(out.channelRoutingMode) << "\","
+       << "\"perfectReason\":\"" << json_utils::escape(out.perfectReason) << "\","
        << "\"diagnostics\":";
   writeDiagnosticsJson(json, out.diagnostics);
   json << ","
@@ -427,10 +400,10 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"recoveryCount\":" << out.recoveryCount << ","
        << "\"nativeDsp\":" << (out.nativeDspJson.empty() ? "{\"plugins\":[]}" : out.nativeDspJson)
        << "},"
-       << "\"actualBackend\":\"" << escapeJson(out.actualBackend) << "\","
-       << "\"driverName\":\"" << escapeJson(out.driverName.empty() ? out.actualDriverName : out.driverName) << "\","
+       << "\"actualBackend\":\"" << json_utils::escape(out.actualBackend) << "\","
+       << "\"driverName\":\"" << json_utils::escape(out.driverName.empty() ? out.actualDriverName : out.driverName) << "\","
        << "\"driverVersion\":" << (out.driverVersion != 0 ? out.driverVersion : out.actualDriverVersion) << ","
-       << "\"actualOutputFormat\":\"" << escapeJson(out.actualOutputFormat) << "\","
+       << "\"actualOutputFormat\":\"" << json_utils::escape(out.actualOutputFormat) << "\","
        << "\"actualSampleRate\":" << out.actualSampleRate << ","
        << "\"actualBitDepth\":" << out.actualBitDepth << ","
        << "\"actualChannels\":" << out.actualChannels << ","
@@ -440,7 +413,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"latencyInfo\":";
   writeLatencyInfoJson(json, out.latencyInfo);
   json << ","
-       << "\"channelRoutingMode\":\"" << escapeJson(out.channelRoutingMode) << "\","
+       << "\"channelRoutingMode\":\"" << json_utils::escape(out.channelRoutingMode) << "\","
        << "\"diagnostics\":";
   writeDiagnosticsJson(json, out.diagnostics);
   json << ","
@@ -466,11 +439,11 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"crossfadeSeconds\":" << info.crossfadeSeconds << ","
        << "\"convolverLatencyFrames\":" << info.convolverLatencyFrames << ","
        << "\"partitionSize\":" << info.partitionSize << ","
-       << "\"channelMappingMode\":\"" << escapeJson(info.channelMappingMode) << "\","
-       << "\"perfectReasonCode\":\"" << escapeJson(info.perfectReasonCode) << "\","
-       << "\"perfectReason\":\"" << escapeJson(info.perfectReason) << "\","
+       << "\"channelMappingMode\":\"" << json_utils::escape(info.channelMappingMode) << "\","
+       << "\"perfectReasonCode\":\"" << json_utils::escape(info.perfectReasonCode) << "\","
+       << "\"perfectReason\":\"" << json_utils::escape(info.perfectReason) << "\","
        << "\"isDsd\":" << (info.isDsd ? "true" : "false") << ","
-       << "\"dsdMode\":\"" << escapeJson(info.dsdMode) << "\","
+       << "\"dsdMode\":\"" << json_utils::escape(info.dsdMode) << "\","
        << "\"dsdRate\":" << info.dsdRate << ","
        << "\"gaplessActive\":" << (info.gaplessActive ? "true" : "false") << ","
        << "\"preloadReady\":" << (info.preloadReady ? "true" : "false") << ","
@@ -512,16 +485,16 @@ std::string convolverInfoToJson(const ConvolverInfo& info) {
        << "\"loaded\":" << (info.loaded ? "true" : "false") << ","
        << "\"active\":" << (info.active ? "true" : "false") << ","
        << "\"irResampled\":" << (info.irResampled ? "true" : "false") << ","
-       << "\"path\":\"" << escapeJson(info.path) << "\","
+       << "\"path\":\"" << json_utils::escape(info.path) << "\","
        << "\"sampleRate\":" << info.sampleRate << ","
        << "\"channels\":" << info.channels << ","
        << "\"lengthFrames\":" << info.lengthFrames << ","
        << "\"lengthMs\":" << info.lengthMs << ","
        << "\"partitionSize\":" << info.partitionSize << ","
        << "\"latencyFrames\":" << info.latencyFrames << ","
-       << "\"channelMappingMode\":\"" << escapeJson(info.channelMappingMode) << "\","
-       << "\"warning\":\"" << escapeJson(info.warning) << "\","
-       << "\"lastError\":\"" << escapeJson(info.lastError) << "\""
+       << "\"channelMappingMode\":\"" << json_utils::escape(info.channelMappingMode) << "\","
+       << "\"warning\":\"" << json_utils::escape(info.warning) << "\","
+       << "\"lastError\":\"" << json_utils::escape(info.lastError) << "\""
        << "}";
   return json.str();
 }
@@ -569,7 +542,7 @@ std::string parseStringField(const std::string& json, const std::string& key, co
     }
     if (json[end] == '"') break;
   }
-  return escapeJson(json.substr(start, end - start));
+  return json_utils::escape(json.substr(start, end - start));
 }
 
 bool parseBoolField(const std::string& json, const std::string& key, bool fallback) {
@@ -1402,7 +1375,7 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
   std::ostringstream json;
   json << "{"
        << "\"version\":\"" << TAE_GetVersion() << "\","
-       << "\"defaultBackend\":\"" << escapeJson(defaultBackendId()) << "\","
+       << "\"defaultBackend\":\"" << json_utils::escape(defaultBackendId()) << "\","
        << "\"pcmPassthrough\":true,"
        << "\"outputPerfectRequiresPcmPassthrough\":true,"
        << "\"htmlAudioFallbackDefault\":false,"
@@ -1412,8 +1385,8 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
        << "\"dsd\":{\"native\":" << (nativeDsdCapable ? "true" : "false") << ",\"dop\":" << (dopCapable ? "true" : "false")
         << ",\"sacdIso\":true,\"sacdIsoDst\":" << (sacdDstAvailable ? "true" : "false")
         << ",\"sacdIsoDstMode\":\"" << (sacdDstAvailable ? "native" : "unavailable") << "\","
-        << "\"sacdIsoDstReasonCode\":\"" << escapeJson(sacdDstReasonCode) << "\","
-        << "\"sacdIsoDstReason\":\"" << escapeJson(sacdDstReason) << "\",\"mode\":\"pcm\"},"
+        << "\"sacdIsoDstReasonCode\":\"" << json_utils::escape(sacdDstReasonCode) << "\","
+        << "\"sacdIsoDstReason\":\"" << json_utils::escape(sacdDstReason) << "\",\"mode\":\"pcm\"},"
        << "\"features\":{"
        << "\"ffmpeg\":"
 #if defined(TAE_HAS_FFMPEG)
@@ -1463,8 +1436,8 @@ std::string TwilightAudioEngine::getLastErrorJson() const {
   std::ostringstream json;
   json << "{\"hasError\":" << (hasError ? "true" : "false") << ",\"code\":\""
        << resultToString(hasError ? lastErrorCode_ : TAE_RESULT_OK) << "\",\"message\":\""
-       << escapeJson(lastError_) << "\",\"backend\":\"\",\"context\":\""
-       << escapeJson(lastErrorContext_.empty() ? "native" : lastErrorContext_) << "\",\"recoverable\":"
+       << json_utils::escape(lastError_) << "\",\"backend\":\"\",\"context\":\""
+       << json_utils::escape(lastErrorContext_.empty() ? "native" : lastErrorContext_) << "\",\"recoverable\":"
        << (hasError && lastErrorCode_ != TAE_RESULT_INVALID_ARGUMENT ? "true" : "false") << "}";
   return json.str();
 }
@@ -1646,8 +1619,8 @@ void TwilightAudioEngine::emitError(const std::string& message, TAE_Result code,
     lastErrorCode_ = code;
     lastErrorContext_ = context.empty() ? "native" : context;
   }
-  emit("error", "{\"code\":\"" + std::string(resultToString(code)) + "\",\"message\":\"" + escapeJson(message) +
-                    "\",\"context\":\"" + escapeJson(lastErrorContext_) + "\"}");
+  emit("error", "{\"code\":\"" + std::string(resultToString(code)) + "\",\"message\":\"" + json_utils::escape(message) +
+                    "\",\"context\":\"" + json_utils::escape(lastErrorContext_) + "\"}");
 }
 
 void TwilightAudioEngine::publishStateLocked() const {

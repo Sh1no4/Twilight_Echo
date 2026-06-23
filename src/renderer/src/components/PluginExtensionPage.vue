@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import PuzzleIcon from './icons/PuzzleIcon.vue'
 import type { UiContribution } from '../extensions/registry'
 
@@ -11,33 +11,65 @@ const emit = defineEmits<{
   back: []
 }>()
 
-const running = ref(false)
+const loading = ref(false)
 const error = ref('')
-const lastResult = ref('')
+const htmlContent = ref('')
+const textResult = ref('')
 
 const subtitle = computed(() => props.page.description || props.page.pluginId)
+const isHtmlMode = computed(() => props.page.renderMode === 'html')
+const shouldAutoLoad = computed(() => props.page.autoLoad ?? isHtmlMode.value)
 
-async function runPageCommand(): Promise<void> {
-  if (!props.page.command || running.value) return
-  running.value = true
+async function loadContent(): Promise<void> {
+  if (!props.page.command || loading.value) return
+  loading.value = true
   error.value = ''
-  lastResult.value = ''
+  htmlContent.value = ''
+  textResult.value = ''
   try {
     const result = await window.api.extensions.executeCommand(props.page.command, [
       {
-        source: 'sidebarPage',
+        source: props.page.kind,
         pageId: props.page.id
       }
     ])
-    if (result != null) {
-      lastResult.value = typeof result === 'string' ? result : JSON.stringify(result)
+    if (result == null) {
+      // Command returned null/undefined — nothing to render
+    } else if (typeof result === 'string') {
+      // Check if it looks like HTML
+      if (isHtmlMode.value || result.trim().startsWith('<')) {
+        htmlContent.value = result
+      } else {
+        textResult.value = result
+      }
+    } else if (typeof result === 'object') {
+      textResult.value = JSON.stringify(result, null, 2)
+    } else {
+      textResult.value = String(result)
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
-    running.value = false
+    loading.value = false
   }
 }
+
+function runPageCommand(): Promise<void> {
+  return loadContent()
+}
+
+onMounted(() => {
+  if (shouldAutoLoad.value) {
+    void loadContent()
+  }
+})
+
+// Reload when page changes
+watch(() => props.page.id, () => {
+  if (shouldAutoLoad.value) {
+    void loadContent()
+  }
+})
 </script>
 
 <template>
@@ -56,23 +88,58 @@ async function runPageCommand(): Promise<void> {
         <p>{{ subtitle }}</p>
       </div>
       <button
+        v-if="page.command"
         class="plugin-extension-action"
         type="button"
-        :disabled="!page.command || running"
+        :disabled="loading"
         @click="runPageCommand"
       >
-        <i class="pi pi-play"></i>
-        {{ running ? '执行中' : '运行' }}
+        <i :class="loading ? 'pi pi-spin pi-spinner' : 'pi pi-refresh'"></i>
+        {{ loading ? '加载中' : '刷新' }}
       </button>
     </header>
 
     <div class="plugin-extension-body">
-      <div class="plugin-extension-card">
+      <!-- Loading state -->
+      <div v-if="loading" class="plugin-extension-loading">
+        <i class="pi pi-spin pi-spinner" style="font-size: 32px; color: #999"></i>
+        <p>正在加载...</p>
+      </div>
+
+      <!-- Error state -->
+      <div v-else-if="error" class="plugin-extension-error-state">
+        <i class="pi pi-exclamation-triangle" style="font-size: 32px; color: #e74c3c"></i>
+        <p class="error-text">{{ error }}</p>
+        <button class="plugin-extension-retry-btn" @click="runPageCommand">重试</button>
+      </div>
+
+      <!-- HTML render mode: iframe with srcdoc -->
+      <iframe
+        v-else-if="htmlContent"
+        class="plugin-extension-iframe"
+        :srcdoc="htmlContent"
+        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+        @load="($event.target as HTMLIFrameElement).style.height = ($event.target as HTMLIFrameElement).contentWindow?.document.body?.scrollHeight + 'px'"
+      ></iframe>
+
+      <!-- Text/data result -->
+      <div v-else-if="textResult" class="plugin-extension-text-result">
+        <pre>{{ textResult }}</pre>
+      </div>
+
+      <!-- Empty state (command mode without autoLoad) -->
+      <div v-else class="plugin-extension-card">
         <span class="plugin-extension-kicker">受控插件页面</span>
         <h2>{{ page.title }}</h2>
-        <p>{{ page.description || '该页面由插件注册，渲染入口由宿主控制。' }}</p>
-        <div v-if="lastResult" class="plugin-extension-result">{{ lastResult }}</div>
-        <div v-if="error" class="plugin-extension-error">{{ error }}</div>
+        <p>{{ page.description || '该页面由插件注册，点击刷新按钮执行命令。' }}</p>
+        <button
+          v-if="page.command"
+          class="plugin-extension-run-btn"
+          @click="runPageCommand"
+        >
+          <i class="pi pi-play"></i>
+          执行
+        </button>
       </div>
     </div>
   </section>
@@ -168,6 +235,66 @@ async function runPageCommand(): Promise<void> {
   margin: 0 auto;
 }
 
+.plugin-extension-loading,
+.plugin-extension-error-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 60px 20px;
+  text-align: center;
+}
+
+.plugin-extension-loading p,
+.plugin-extension-error-state p {
+  margin: 0;
+  color: #666;
+  font-size: 14px;
+}
+
+.error-text {
+  color: #e74c3c !important;
+}
+
+.plugin-extension-retry-btn {
+  padding: 8px 20px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  background: #fff;
+  color: #333;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.plugin-extension-retry-btn:hover {
+  background: #f5f5f5;
+}
+
+.plugin-extension-iframe {
+  width: 100%;
+  min-height: 400px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.plugin-extension-text-result {
+  padding: 18px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  border-radius: 8px;
+  background: #fff;
+  overflow-x: auto;
+}
+
+.plugin-extension-text-result pre {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #333;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .plugin-extension-card {
   display: grid;
   gap: 8px;
@@ -189,9 +316,7 @@ async function runPageCommand(): Promise<void> {
   font-size: 17px;
 }
 
-.plugin-extension-card p,
-.plugin-extension-result,
-.plugin-extension-error {
+.plugin-extension-card p {
   margin: 0;
   color: var(--te-neutral-600);
   font-size: 13px;
@@ -199,15 +324,18 @@ async function runPageCommand(): Promise<void> {
   line-height: 1.5;
 }
 
-.plugin-extension-result,
-.plugin-extension-error {
-  padding: 10px 12px;
+.plugin-extension-run-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border: 0;
   border-radius: 7px;
-  background: #f8fafc;
-}
-
-.plugin-extension-error {
-  background: #fef2f2;
-  color: #b91c1c;
+  background: #2563eb;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  width: fit-content;
 }
 </style>

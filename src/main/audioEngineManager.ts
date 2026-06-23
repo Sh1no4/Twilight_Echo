@@ -1180,6 +1180,7 @@ export class AudioEngineManager extends EventEmitter {
   private nativePlaybackActive = false
   private lastNativeError = ''
   private pendingNativeSource: string | null = null
+  private nativeDspPluginChainJson = ''
 
   constructor(
     config: AudioEngineConfig = { exclusiveMode: false },
@@ -1224,6 +1225,7 @@ export class AudioEngineManager extends EventEmitter {
           serviceEntry: dependencies.audioServiceEntry ?? join(__dirname, 'audioEngineService.js')
         })
       service.on('crash', (reason: string) => this.handleAudioServiceCrash(reason))
+      service.on('ready', () => this.handleAudioServiceReady())
       service.on('error-log', (message: string) => {
         if (message.trim()) console.warn('[音频服务]', message.trim())
       })
@@ -1261,6 +1263,30 @@ export class AudioEngineManager extends EventEmitter {
       recoveryCount: this.playbackInfo.recoveryCount + 1
     }
     this.emit('audio-service-crash', { reason })
+    this.publishPlaybackInfo()
+  }
+
+  private handleAudioServiceReady(): void {
+    this.tryNative('音频服务恢复后应用输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
+    this.tryNative('音频服务恢复后应用输出设备', (native) => native.SetOutputDevice(this.device))
+    this.applyNativeOutputConfig('音频服务恢复后应用输出配置')
+    this.applyNativeDspSettings('音频服务恢复后应用 DSP 配置')
+    if (this.nativeDspPluginChainJson) {
+      this.tryNative('音频服务恢复后应用原生 DSP 插件链', (native) =>
+        native.SetDspPluginChain?.(this.nativeDspPluginChainJson)
+      )
+    }
+    if (this.queue.length > 0) {
+      this.tryNative('音频服务恢复后加载队列', (native) =>
+        native.LoadQueue?.(JSON.stringify(this.queue), this.playbackInfo.queueIndex)
+      )
+    }
+    this.nativePlaybackActive = false
+    this.playbackInfo = {
+      ...this.playbackInfo,
+      state: 'stopped',
+      nativePlaybackActive: false
+    }
     this.publishPlaybackInfo()
   }
 
@@ -1720,6 +1746,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   setNativeDspPluginChain(chainJson: string): void {
+    this.nativeDspPluginChainJson = chainJson
     this.tryNative('更新原生 DSP 插件链', (native) => {
       native.SetDspPluginChain?.(chainJson)
     })

@@ -19,6 +19,24 @@ export async function activate(context) {
     id: PROVIDER_ID,
     name: 'NetEase Cloud Music',
     capabilities: ['search', 'playbackUrl', 'lyrics', 'cover', 'playlist', 'library', 'login'],
+    ui: {
+      icon: 'pi pi-cloud',
+      color: '#c20c0c',
+      description: '内置基础音源',
+      authType: 'qr',
+      loginInstructions: '请使用网易云音乐 App 扫码登录',
+      qrStatusCodes: { waiting: 801, scanned: 802, expired: 800, success: 803 },
+      loginExtraActions: [
+        { label: '使用官方网页登录', icon: 'pi pi-external-link', method: 'openOfficialLogin' }
+      ],
+      streamingSections: [
+        { id: 'daily', title: '每日推荐', icon: 'pi pi-calendar', method: 'fetchRecommendSongs' },
+        { id: 'fm', title: '私人漫游', icon: 'pi pi-compass', method: 'fetchPersonalFm' },
+        { id: 'radar', title: '私人雷达', icon: 'pi pi-send', method: 'fetchPrivateContent' }
+      ],
+      streamingLibraryTab: true,
+      streamingSearch: true
+    },
     getPlaybackUrl,
     getLyrics,
     searchSongs,
@@ -29,6 +47,7 @@ export async function activate(context) {
     getProfile,
     logout,
     openOfficialLogin,
+    getQrLogin,
     getQrKey,
     getQrImage,
     checkQrLogin,
@@ -367,6 +386,13 @@ async function getQrImage(key) {
   if (data.code !== 200 || !data.data?.qrimg) return null
   const raw = data.data.qrimg
   return raw.startsWith('data:') ? raw : `data:image/png;base64,${raw}`
+}
+
+async function getQrLogin() {
+  const key = await getQrKey()
+  if (!key) return null
+  const imageDataUrl = await getQrImage(key)
+  return { key, imageDataUrl }
 }
 
 async function checkQrLogin(key) {

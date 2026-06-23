@@ -83,7 +83,38 @@ type TwilightMediaProviderMethod =
   | 'fetchUserFolloweds'
   | 'likeTrack'
   | 'isTrackLiked'
-type TwilightUiContributionKind = 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
+
+interface TwilightProviderStreamingSection {
+  id: string
+  title: string
+  icon: string
+  method: string
+  args?: unknown[]
+}
+
+interface TwilightProviderUiMetadata {
+  icon: string
+  color?: string
+  description?: string
+  authType: 'qr' | 'oauth' | 'cookie'
+  loginInstructions?: string
+  qrStatusCodes?: {
+    waiting: number
+    scanned: number | null
+    expired: number
+    denied?: number
+    success: number
+  }
+  showBrowserButton?: boolean
+  loginExtraActions?: Array<{
+    label: string
+    icon: string
+    method: string
+  }>
+  streamingSections?: TwilightProviderStreamingSection[]
+  streamingLibraryTab?: boolean
+  streamingSearch?: boolean
+}
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type ChannelRoutingMode =
@@ -438,7 +469,15 @@ interface TwilightMediaProviderRegistration {
   id: string
   name: string
   capabilities: TwilightMediaProviderCapability[]
+  ui?: TwilightProviderUiMetadata
 }
+
+type TwilightUiContributionKind =
+  | 'sidebarPage'
+  | 'playerBarButton'
+  | 'settingsPanel'
+  | 'localSidebarItem'
+  | 'streamingHome'
 
 interface TwilightUiContribution {
   id: string
@@ -447,6 +486,8 @@ interface TwilightUiContribution {
   description?: string
   icon?: string
   command?: string
+  renderMode?: 'command' | 'html'
+  autoLoad?: boolean
 }
 
 interface TwilightThemeContribution {

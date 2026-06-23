@@ -205,6 +205,8 @@ class AudioPipeline {
   std::string outputEventMessage_;
   std::vector<float> routingScratch_;
   std::vector<float> preloadRoutingScratch_;
+  std::vector<float> preloadMixScratch_;
+  std::vector<float> typedVisualizationScratch_;
   ChannelRouter channelRouter_;
 };
 

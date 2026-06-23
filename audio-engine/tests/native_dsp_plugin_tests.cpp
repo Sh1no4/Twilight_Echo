@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstring>
 #include <cmath>
+#include <cstdlib>
 #include <iostream>
 #include <string>
 #include <unordered_map>
@@ -31,6 +32,16 @@ std::string escapeJson(const std::string& value) {
     else if (ch == '"') out += "\\\"";
     else out += ch;
   }
+  return out;
+}
+
+std::string quoteCommandArg(const std::string& value) {
+  std::string out = "\"";
+  for (char ch : value) {
+    if (ch == '"') out += "\\\"";
+    else out += ch;
+  }
+  out += "\"";
   return out;
 }
 
@@ -159,7 +170,34 @@ void testCrossfeedPluginProcessesAudio(const std::string& path) {
   assertStatusContains(registry, "Twilight Crossfeed");
 }
 
+int runCrashFixtureChild(const std::string& path) {
+  PluginRegistry registry;
+  prepareRegistry(registry, path);
+  if (!registry.isActive()) return 2;
+  std::vector<float> samples = {0.25f, -0.25f};
+  registry.process(samples.data(), 1);
+  return 3;
+}
+
+int expectCrashFixtureProcess(const char* executablePath, const std::string& pluginPath) {
+  const std::string command =
+      quoteCommandArg(executablePath) + " --run-crash-fixture " + quoteCommandArg(pluginPath);
+  const int result = std::system(command.c_str());
+  if (result == 0) {
+    std::cerr << "Crash fixture returned normally; expected abnormal process termination\n";
+    return 1;
+  }
+  return 0;
+}
+
 int main(int argc, char** argv) {
+  if (argc == 3 && std::string(argv[1]) == "--run-crash-fixture") {
+    return runCrashFixtureChild(argv[2]);
+  }
+  if (argc == 3 && std::string(argv[1]) == "--expect-crash-fixture") {
+    return expectCrashFixtureProcess(argv[0], argv[2]);
+  }
+
   TAE_EngineHandle engine = nullptr;
   assert(TAE_CreateEngine(&engine) == TAE_RESULT_OK);
   assert(engine != nullptr);
@@ -168,12 +206,13 @@ int main(int argc, char** argv) {
   assert(capabilities.find("\"audioPluginSystem\":true") != std::string::npos);
   assert(capabilities.find("\"nativeDspAbiVersion\":1") != std::string::npos);
 
-  assert(argc >= 6);
+  assert(argc >= 7);
   const std::string pluginPath = argv[1];
   const std::string faultPath = argv[2];
   const std::string badAbiPath = argv[3];
   const std::string invalidParamPath = argv[4];
   const std::string crossfeedPath = argv[5];
+  const std::string crashPath = argv[6];
   const std::string chain =
       "{\"plugins\":[{\"id\":\"com.twilightecho.test.gain\",\"path\":\"" + escapeJson(pluginPath) +
       "\",\"enabled\":true,\"parameters\":{\"gain\":0.25}}]}";
@@ -196,5 +235,6 @@ int main(int argc, char** argv) {
   testProcessOverrunBypasses(faultPath);
   testNonFloatFormatBypasses(pluginPath);
   testCrossfeedPluginProcessesAudio(crossfeedPath);
+  assert(!crashPath.empty());
   return 0;
 }

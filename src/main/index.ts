@@ -55,6 +55,7 @@ type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 type UiDensity = 'compact' | 'standard' | 'comfortable'
+type ProxyMode = 'auto' | 'custom' | 'off'
 type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 type LyricAlign = 'center' | 'left'
 
@@ -148,6 +149,9 @@ interface AppSettings {
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
+  proxyMode: ProxyMode
+  proxyHost: string
+  proxyPort: number
 }
 
 interface PlaybackSession {
@@ -212,7 +216,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   audioProcessing: DEFAULT_AUDIO_PROCESSING,
   headphoneCompensation: DEFAULT_HEADPHONE_COMPENSATION,
   audioEqPresets: [],
-  desktopLyrics: { ...DEFAULT_DESKTOP_LYRICS }
+  desktopLyrics: { ...DEFAULT_DESKTOP_LYRICS },
+  proxyMode: 'auto',
+  proxyHost: '',
+  proxyPort: 0
 }
 
 const PLAYER_SHORTCUTS: { accelerator: string; action: PlayerShortcutAction; label: string }[] = [
@@ -236,6 +243,11 @@ function getOpraDatabaseCachePath(): string {
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.min(max, Math.max(min, value))
+}
+
+function normalizeProxyMode(value: unknown): ProxyMode {
+  if (value === 'auto' || value === 'custom' || value === 'off') return value
+  return 'auto'
 }
 
 function compareVersions(a: string, b: string): number {
@@ -451,7 +463,10 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
     audioProcessing: normalizeAudioProcessingSettings(settings.audioProcessing),
     headphoneCompensation: normalizeHeadphoneCompensationSettings(settings.headphoneCompensation),
     audioEqPresets: normalizeAudioEqPresets(settings.audioEqPresets),
-    desktopLyrics: normalizeDesktopLyrics(settings.desktopLyrics)
+    desktopLyrics: normalizeDesktopLyrics(settings.desktopLyrics),
+    proxyMode: normalizeProxyMode(settings.proxyMode),
+    proxyHost: typeof settings.proxyHost === 'string' ? settings.proxyHost.trim().slice(0, 255) : '',
+    proxyPort: clampNumber(settings.proxyPort, 0, 65535, 0)
   }
 }
 
@@ -2136,6 +2151,13 @@ function setupPluginIpc(): void {
       previous: async () => {
         await audioEngineManager?.previous()
       }
+    },
+    getProxyEnv: (): Record<string, string> => {
+      if (appSettings.proxyMode === 'off') return {}
+      if (appSettings.proxyMode === 'custom' && appSettings.proxyHost && appSettings.proxyPort > 0) {
+        return { HTTPS_PROXY: `http://${appSettings.proxyHost}:${appSettings.proxyPort}` }
+      }
+      return {}
     }
   })
   pluginIndexService = new PluginIndexService({

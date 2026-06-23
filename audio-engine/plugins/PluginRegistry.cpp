@@ -1,4 +1,5 @@
 #include "PluginRegistry.h"
+#include "../utils/JsonUtils.h"
 
 #include <algorithm>
 #include <chrono>
@@ -19,34 +20,6 @@
 
 namespace twilight::audio {
 namespace {
-
-std::string escapeJson(const std::string& value) {
-  std::string out;
-  out.reserve(value.size() + 8);
-  for (char ch : value) {
-    switch (ch) {
-      case '\\':
-        out += "\\\\";
-        break;
-      case '"':
-        out += "\\\"";
-        break;
-      case '\n':
-        out += "\\n";
-        break;
-      case '\r':
-        out += "\\r";
-        break;
-      case '\t':
-        out += "\\t";
-        break;
-      default:
-        out += ch;
-        break;
-    }
-  }
-  return out;
-}
 
 bool extractBoolField(const std::string& json, const std::string& key, bool fallback = false) {
   const std::string marker = "\"" + key + "\"";
@@ -620,16 +593,16 @@ std::string PluginRegistry::statusJson() const {
     const auto& status = statusList[i];
     if (i > 0) json << ",";
     json << "{"
-         << "\"id\":\"" << escapeJson(status.id) << "\","
-         << "\"name\":\"" << escapeJson(status.name) << "\","
-         << "\"version\":\"" << escapeJson(status.version) << "\","
-         << "\"path\":\"" << escapeJson(status.path) << "\","
+         << "\"id\":\"" << json_utils::escape(status.id) << "\","
+         << "\"name\":\"" << json_utils::escape(status.name) << "\","
+         << "\"version\":\"" << json_utils::escape(status.version) << "\","
+         << "\"path\":\"" << json_utils::escape(status.path) << "\","
          << "\"enabled\":" << (status.enabled ? "true" : "false") << ","
          << "\"loaded\":" << (status.loaded ? "true" : "false") << ","
          << "\"active\":" << (status.active ? "true" : "false") << ","
          << "\"bypassed\":" << (status.bypassed ? "true" : "false") << ","
-         << "\"bypassReason\":\"" << escapeJson(status.bypassReason) << "\","
-         << "\"lastError\":\"" << escapeJson(status.lastError) << "\","
+         << "\"bypassReason\":\"" << json_utils::escape(status.bypassReason) << "\","
+         << "\"lastError\":\"" << json_utils::escape(status.lastError) << "\","
          << "\"processCalls\":" << status.processCalls << ","
          << "\"overrunCount\":" << status.overrunCount << ","
          << "\"lastProcessMs\":" << status.lastProcessMs << ","
@@ -639,14 +612,14 @@ std::string PluginRegistry::statusJson() const {
       const auto& parameter = status.parameters[parameterIndex];
       if (parameterIndex > 0) json << ",";
       json << "{"
-           << "\"id\":\"" << escapeJson(parameter.id) << "\","
-           << "\"name\":\"" << escapeJson(parameter.name) << "\","
-           << "\"type\":\"" << escapeJson(parameter.type) << "\","
+           << "\"id\":\"" << json_utils::escape(parameter.id) << "\","
+           << "\"name\":\"" << json_utils::escape(parameter.name) << "\","
+           << "\"type\":\"" << json_utils::escape(parameter.type) << "\","
            << "\"defaultValue\":" << parameter.defaultValue << ","
            << "\"minValue\":" << parameter.minValue << ","
            << "\"maxValue\":" << parameter.maxValue << ","
            << "\"step\":" << parameter.step << ","
-           << "\"unit\":\"" << escapeJson(parameter.unit) << "\","
+           << "\"unit\":\"" << json_utils::escape(parameter.unit) << "\","
            << "\"enumValues\":" << (parameter.enumValuesJson.empty() ? "null" : parameter.enumValuesJson) << ","
            << "\"currentValue\":" << parameter.currentValue
            << "}";

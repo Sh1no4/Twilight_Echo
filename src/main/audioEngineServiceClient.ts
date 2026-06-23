@@ -76,6 +76,8 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private restartDelayMs: number
   private stopped = false
   private restarting = false
+  private generation = 0
+  private cacheRequestSerial = new Map<keyof NativeAudioBinding, number>()
   private lastPlaybackInfo: string | PlaybackInfo | null = null
   private lastDspStatus: string | { plugins: unknown[] } = { plugins: [] }
   private lastConvolverInfo: string | ConvolverInfo | null = null
@@ -306,6 +308,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     if (this.stopped) return
     this.recordFailure(reason)
     this.child = null
+    this.generation += 1
     this.lastDspStatus = { plugins: [] }
     this.lastPlaybackInfo = '{"state":"stopped"}'
     this.emit('crash', reason)
@@ -328,9 +331,15 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     args: unknown[],
     apply: (value: unknown) => void
   ): void {
+    const serial = (this.cacheRequestSerial.get(method) ?? 0) + 1
+    this.cacheRequestSerial.set(method, serial)
     void this.call(method, args)
-      .then(apply)
+      .then((value) => {
+        if (this.cacheRequestSerial.get(method) !== serial) return
+        apply(value)
+      })
       .catch((error) => {
+        if (this.cacheRequestSerial.get(method) !== serial) return
         this.lastErrorJson = JSON.stringify({
           message: error instanceof Error ? error.message : String(error)
         })
@@ -340,12 +349,20 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private call(method: keyof NativeAudioBinding, args: unknown[]): Promise<unknown> {
     if (!this.child) return Promise.reject(new Error('音频服务不可用'))
     const requestId = randomUUID()
+    const generation = this.generation
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId)
         reject(new Error(`音频服务调用超时：${String(method)}`))
       }, this.requestTimeoutMs)
-      this.pending.set(requestId, { resolve, reject, timer })
+      this.pending.set(requestId, {
+        resolve: (value) => {
+          if (generation !== this.generation) return
+          resolve(value)
+        },
+        reject,
+        timer
+      })
       this.child?.postMessage({ kind: 'request', requestId, method, args })
     })
   }

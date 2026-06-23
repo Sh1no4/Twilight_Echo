@@ -17,6 +17,8 @@ import type {
   TwilightMediaProviderMethod,
   TwilightMediaProviderRegistration,
   TwilightPluginExtensionContribution,
+  TwilightProviderStreamingSection,
+  TwilightProviderUiMetadata,
   TwilightThemeContribution,
   TwilightUiContribution,
   TwilightPluginDescriptor,
@@ -53,6 +55,8 @@ export interface TwilightPluginManagerOptions {
     next: () => Promise<void> | void
     previous: () => Promise<void> | void
   }
+,
+  getProxyEnv?: () => Record<string, string>
 }
 
 interface RunningPlugin {
@@ -113,6 +117,7 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly getPlaybackInfo: TwilightPluginManagerOptions['getPlaybackInfo']
   private readonly applyNativeDspPluginChain: TwilightPluginManagerOptions['applyNativeDspPluginChain']
   private readonly player: TwilightPluginManagerOptions['player']
+  private readonly getProxyEnv: TwilightPluginManagerOptions['getProxyEnv']
   private readonly running = new Map<string, RunningPlugin>()
   private readonly stopping = new Set<string>()
   private shuttingDown = false
@@ -144,6 +149,7 @@ export class TwilightPluginManager extends EventEmitter {
     this.getPlaybackInfo = options.getPlaybackInfo
     this.applyNativeDspPluginChain = options.applyNativeDspPluginChain
     this.player = options.player
+    this.getProxyEnv = options.getProxyEnv
   }
 
   get roots(): {
@@ -546,9 +552,12 @@ export class TwilightPluginManager extends EventEmitter {
       throw new Error('插件 main 入口不存在或越界')
     }
     mkdirSync(descriptor.paths.dataDir, { recursive: true })
+    const proxyEnv = this.getProxyEnv?.() ?? {}
+    const env = Object.keys(proxyEnv).length > 0 ? { ...process.env, ...proxyEnv } : undefined
     const child = utilityProcess.fork(this.hostEntry, [], {
       serviceName: `twilight-plugin-${descriptor.id}`,
-      stdio: 'pipe'
+      stdio: 'pipe',
+      env
     })
     const running: RunningPlugin = {
       process: child,
@@ -763,10 +772,76 @@ export class TwilightPluginManager extends EventEmitter {
     }
     if (!name) throw new Error('Provider name 必填')
     if (capabilities.length === 0) throw new Error('Provider capabilities 必须声明至少一项能力')
-    const provider = { id: providerId, name, capabilities }
+    const ui = this.normalizeProviderUi(record.ui, capabilities)
+    const provider: TwilightMediaProviderRegistration = { id: providerId, name, capabilities, ui }
     running.providers.push(provider)
     this.emit('changed')
     return provider
+  }
+
+  /**
+   * 解析插件声明的 UI 元数据。如果插件未声明 ui，则根据 capabilities 生成默认值。
+   * 只要插件声明了 login 能力，就必须有 icon 和 qrStatusCodes（否则登录页无法渲染）。
+   */
+  private normalizeProviderUi(
+    raw: unknown,
+    _capabilities: TwilightMediaProviderRegistration['capabilities']
+  ): TwilightMediaProviderRegistration['ui'] {
+    if (!raw || typeof raw !== 'object') return undefined
+    const record = raw as Record<string, unknown>
+    const icon = typeof record.icon === 'string' ? record.icon.trim() : ''
+    const authType =
+      record.authType === 'qr' || record.authType === 'oauth' || record.authType === 'cookie'
+        ? record.authType
+        : 'qr'
+    // 解析 qrStatusCodes
+    let qrStatusCodes: TwilightProviderUiMetadata['qrStatusCodes'] | undefined
+    if (record.qrStatusCodes && typeof record.qrStatusCodes === 'object') {
+      const codes = record.qrStatusCodes as Record<string, unknown>
+      qrStatusCodes = {
+        waiting: typeof codes.waiting === 'number' ? codes.waiting : -1,
+        scanned: typeof codes.scanned === 'number' ? codes.scanned : null,
+        expired: typeof codes.expired === 'number' ? codes.expired : -1,
+        denied: typeof codes.denied === 'number' ? codes.denied : undefined,
+        success: typeof codes.success === 'number' ? codes.success : 0
+      }
+    }
+    // 解析 streamingSections
+    let streamingSections: TwilightProviderStreamingSection[] | undefined
+    if (Array.isArray(record.streamingSections)) {
+      streamingSections = record.streamingSections
+        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+        .map((item) => ({
+          id: typeof item.id === 'string' ? item.id : '',
+          title: typeof item.title === 'string' ? item.title : '',
+          icon: typeof item.icon === 'string' ? item.icon : 'pi pi-music',
+          method: typeof item.method === 'string' ? item.method : '',
+          args: Array.isArray(item.args) ? item.args : undefined
+        }))
+        .filter((section) => section.id && section.title && section.method)
+    }
+    return {
+      icon,
+      color: typeof record.color === 'string' ? record.color : undefined,
+      description: typeof record.description === 'string' ? record.description : undefined,
+      authType,
+      loginInstructions: typeof record.loginInstructions === 'string' ? record.loginInstructions : undefined,
+      qrStatusCodes,
+      showBrowserButton: typeof record.showBrowserButton === 'boolean' ? record.showBrowserButton : undefined,
+      loginExtraActions: Array.isArray(record.loginExtraActions)
+        ? record.loginExtraActions
+            .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+            .map((item) => ({
+              label: typeof item.label === 'string' ? item.label : '',
+              icon: typeof item.icon === 'string' ? item.icon : 'pi pi-external-link',
+              method: typeof item.method === 'string' ? item.method : ''
+            }))
+            .filter((action) => action.label && action.method)
+        : undefined,
+      streamingSections,
+      streamingLibraryTab: typeof record.streamingLibraryTab === 'boolean' ? record.streamingLibraryTab : undefined,
+      streamingSearch: typeof record.streamingSearch === 'boolean' ? record.streamingSearch : undefined
+    }
   }
 
   private async handleInternalApiCall(
@@ -833,21 +908,25 @@ export class TwilightPluginManager extends EventEmitter {
     const record = raw as Record<string, unknown>
     const id = normalizeContributionId(record.id)
     const kind = typeof record.kind === 'string' ? record.kind : ''
-    if (!['sidebarPage', 'playerBarButton', 'settingsPanel'].includes(kind)) {
+    if (!['sidebarPage', 'playerBarButton', 'settingsPanel', 'localSidebarItem', 'streamingHome'].includes(kind)) {
       throw new Error('未知 UI 扩展点')
     }
     const title = normalizeText(record.title, 'UI 扩展标题必填')
     const command = typeof record.command === 'string' ? record.command.trim() : undefined
-    if ((kind === 'playerBarButton' || kind === 'sidebarPage') && !command) {
+    if ((kind === 'playerBarButton' || kind === 'sidebarPage' || kind === 'localSidebarItem') && !command) {
       throw new Error(`${kind} 扩展必须声明 command`)
     }
+    const renderMode = record.renderMode === 'html' ? 'html' : 'command'
+    const autoLoad = typeof record.autoLoad === 'boolean' ? record.autoLoad : renderMode === 'html'
     return {
       id,
       kind: kind as TwilightUiContribution['kind'],
       title,
       description: typeof record.description === 'string' ? record.description.trim() : undefined,
       icon: typeof record.icon === 'string' ? record.icon.trim() : undefined,
-      command
+      command,
+      renderMode,
+      autoLoad
     }
   }
 

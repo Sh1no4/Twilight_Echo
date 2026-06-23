@@ -29,7 +29,7 @@ interface RecSection {
 }
 
 type StreamingTab = 'home' | 'library'
-type StreamingProvider = 'ncm' | 'bili'
+type StreamingProvider = string
 type DetailView =
   | { type: 'liked' }
   | { type: 'playlist'; playlist: MediaProviderPlaylistSummary }
@@ -506,9 +506,14 @@ function selectProvider(provider: StreamingProvider): void {
     activeTab.value = 'library'
     void refreshBiliState()
     void ensureBiliLibraryLoaded()
-  }
-  if (provider === 'ncm' && activeTab.value === 'home' && isLoggedIn.value) {
+  } else if (provider === 'ncm' && activeTab.value === 'home' && isLoggedIn.value) {
     void loadRecommendations()
+  } else {
+    // 通用 provider：默认显示资料库标签
+    const providerInfo = providerStore.getProvider(provider)
+    if (providerInfo?.ui?.streamingLibraryTab !== false) {
+      activeTab.value = 'library'
+    }
   }
 }
 

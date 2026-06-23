@@ -1,6 +1,11 @@
 import { computed, ref } from 'vue'
 
-export type UiContributionKind = 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
+export type UiContributionKind =
+  | 'sidebarPage'
+  | 'playerBarButton'
+  | 'settingsPanel'
+  | 'localSidebarItem'
+  | 'streamingHome'
 
 export interface UiContribution {
   pluginId: string
@@ -10,6 +15,8 @@ export interface UiContribution {
   description?: string
   icon?: string
   command?: string
+  renderMode?: 'command' | 'html'
+  autoLoad?: boolean
 }
 
 export interface ThemeContribution {

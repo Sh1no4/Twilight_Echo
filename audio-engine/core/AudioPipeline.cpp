@@ -345,6 +345,7 @@ struct AudioPipeline::DecodeStream {
   std::unique_ptr<SacdDstDecoderProvider> dstProvider = createDefaultSacdDstDecoderProvider();
   DopPacker dopPacker;
   AudioBuffer buffer;
+  std::vector<uint8_t> floatReadScratch;
   std::atomic<bool> running{false};
   std::atomic<bool> eof{false};
   std::thread decodeThread;
@@ -530,12 +531,15 @@ struct AudioPipeline::DecodeStream {
 
     const size_t bytesPerFrame = audioFormatBytesPerFrame(bufferFormat);
     if (bytesPerFrame == 0) return 0;
-    std::vector<uint8_t> scratch(frameCount * bytesPerFrame);
+    const size_t requiredBytes = frameCount * bytesPerFrame;
+    if (floatReadScratch.size() < requiredBytes) {
+      floatReadScratch.resize(requiredBytes);
+    }
     PcmBlock block;
     block.format = bufferFormat;
-    block.data = scratch.data();
+    block.data = floatReadScratch.data();
     block.frames = frameCount;
-    block.byteSize = scratch.size();
+    block.byteSize = requiredBytes;
     const size_t read = buffer.read(block);
     block.frames = read;
     typedPcmToFloat(block, output, frameCount);
@@ -1680,12 +1684,19 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
       spectrum_.resetCapture();
     } else {
       const int channels = std::max(1, output.format.channelCount);
-      std::vector<float> visualization(output.frames * static_cast<size_t>(channels), 0.0f);
+      const size_t visualizationSamples = output.frames * static_cast<size_t>(channels);
+      if (typedVisualizationScratch_.size() < visualizationSamples) {
+        typedVisualizationScratch_.resize(visualizationSamples);
+      }
+      std::fill(
+          typedVisualizationScratch_.begin(),
+          typedVisualizationScratch_.begin() + static_cast<std::ptrdiff_t>(visualizationSamples),
+          0.0f);
       PcmBlock captured = output;
       captured.frames = read;
       captured.byteSize = read * audioFormatBytesPerFrame(output.format);
-      typedPcmToFloat(captured, visualization.data(), output.frames);
-      spectrum_.capture(visualization.data(), output.frames, channels);
+      typedPcmToFloat(captured, typedVisualizationScratch_.data(), output.frames);
+      spectrum_.capture(typedVisualizationScratch_.data(), output.frames, channels);
     }
   } else if (active->drained()) {
     ended_ = true;
@@ -1797,18 +1808,25 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
       }
 
       if (crossfadeMixActive) {
-        std::vector<float> preloadFrames((frameCount - totalRead + read) * static_cast<size_t>(channels), 0.0f);
+        const size_t preloadSampleCount = read * static_cast<size_t>(channels);
+        if (preloadMixScratch_.size() < preloadSampleCount) {
+          preloadMixScratch_.resize(preloadSampleCount);
+        }
+        std::fill(
+            preloadMixScratch_.begin(),
+            preloadMixScratch_.begin() + static_cast<std::ptrdiff_t>(preloadSampleCount),
+            0.0f);
         if (routingRequired) {
           if (preloadRoutingScratch_.size() < read * static_cast<size_t>(decodeChannels)) {
             preloadRoutingScratch_.resize(read * static_cast<size_t>(decodeChannels));
           }
         }
-        float* preloadReadBuffer = routingRequired ? preloadRoutingScratch_.data() : preloadFrames.data();
+        float* preloadReadBuffer = routingRequired ? preloadRoutingScratch_.data() : preloadMixScratch_.data();
         const size_t mixedFrames = preload->readFloat(preloadReadBuffer, read);
         if (mixedFrames > 0 && !dopPathActive) {
           preloadDspChain_.process(preloadReadBuffer, mixedFrames);
           if (routingRequired) {
-            channelRouter_.route(preloadReadBuffer, preloadFrames.data(), mixedFrames, decodeChannels, channels, outputConfig.routingMode);
+            channelRouter_.route(preloadReadBuffer, preloadMixScratch_.data(), mixedFrames, decodeChannels, channels, outputConfig.routingMode);
           }
           const uint64_t totalFrames = std::max<uint64_t>(1, crossfadeTotalFrames);
           for (size_t frame = 0; frame < mixedFrames; ++frame) {
@@ -1820,7 +1838,9 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
               const size_t index = (totalRead - read + frame) * static_cast<size_t>(channels) + static_cast<size_t>(channel);
               output[index] = static_cast<float>(std::clamp(
                   static_cast<double>(output[index]) * fadeOut +
-                      static_cast<double>(preloadFrames[frame * static_cast<size_t>(channels) + static_cast<size_t>(channel)]) * fadeIn,
+                      static_cast<double>(
+                          preloadMixScratch_[frame * static_cast<size_t>(channels) + static_cast<size_t>(channel)]) *
+                          fadeIn,
                   -1.0,
                   1.0));
             }

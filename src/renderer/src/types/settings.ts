@@ -15,6 +15,7 @@ export type SacdProgramMode = 'auto' | 'stereo' | 'multichannel'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 export type LyricAlign = 'center' | 'left'
+export type ProxyMode = 'auto' | 'custom' | 'off'
 
 export interface DesktopLyricsSettings {
   enabled: boolean
@@ -187,6 +188,9 @@ export interface AppSettings {
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
+  proxyMode: ProxyMode
+  proxyHost: string
+  proxyPort: number
 }
 
 export interface SettingsSnapshot {

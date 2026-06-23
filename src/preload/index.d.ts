@@ -35,6 +35,7 @@ type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 type UiDensity = 'compact' | 'standard' | 'comfortable'
 type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 type LyricAlign = 'center' | 'left'
+type ProxyMode = 'auto' | 'custom' | 'off'
 type BuiltInTrackSource = 'local' | 'ncm'
 type TrackSource = BuiltInTrackSource | (string & {})
 type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
@@ -81,7 +82,6 @@ type TwilightMediaProviderMethod =
   | 'fetchUserFolloweds'
   | 'likeTrack'
   | 'isTrackLiked'
-type TwilightUiContributionKind = 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type ChannelRoutingMode =
@@ -245,6 +245,9 @@ interface AppSettings {
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
+  proxyMode: ProxyMode
+  proxyHost: string
+  proxyPort: number
 }
 
 interface OpraCatalogStatus {
@@ -454,11 +457,51 @@ interface TwilightPluginIndexEntry {
   installedVersion?: string
 }
 
+interface TwilightProviderStreamingSection {
+  id: string
+  title: string
+  icon: string
+  method: string
+  args?: unknown[]
+}
+
+interface TwilightProviderUiMetadata {
+  icon: string
+  color?: string
+  description?: string
+  authType: 'qr' | 'oauth' | 'cookie'
+  loginInstructions?: string
+  qrStatusCodes?: {
+    waiting: number
+    scanned: number | null
+    expired: number
+    denied?: number
+    success: number
+  }
+  showBrowserButton?: boolean
+  loginExtraActions?: Array<{
+    label: string
+    icon: string
+    method: string
+  }>
+  streamingSections?: TwilightProviderStreamingSection[]
+  streamingLibraryTab?: boolean
+  streamingSearch?: boolean
+}
+
 interface TwilightMediaProviderRegistration {
   id: string
   name: string
   capabilities: TwilightMediaProviderCapability[]
+  ui?: TwilightProviderUiMetadata
 }
+
+type TwilightUiContributionKind =
+  | 'sidebarPage'
+  | 'playerBarButton'
+  | 'settingsPanel'
+  | 'localSidebarItem'
+  | 'streamingHome'
 
 interface TwilightUiContribution {
   id: string
@@ -467,6 +510,8 @@ interface TwilightUiContribution {
   description?: string
   icon?: string
   command?: string
+  renderMode?: 'command' | 'html'
+  autoLoad?: boolean
 }
 
 interface TwilightThemeContribution {

@@ -13,6 +13,18 @@ class SilentUtilityProcess extends EventEmitter {
   }
 }
 
+class ManualUtilityProcess extends EventEmitter {
+  stdout = new EventEmitter()
+  stderr = new EventEmitter()
+  messages: unknown[] = []
+  postMessage(message: unknown): void {
+    this.messages.push(message)
+  }
+  kill(): void {
+    this.emit('exit', 0)
+  }
+}
+
 test('cached audio service calls swallow timeout rejections', async () => {
   const child = new SilentUtilityProcess()
   const electron = {
@@ -42,4 +54,81 @@ test('cached audio service calls swallow timeout rejections', async () => {
   } finally {
     process.off('unhandledRejection', onUnhandled)
   }
+})
+
+test('stale audio service responses after crash do not repopulate playback cache', async () => {
+  const children: ManualUtilityProcess[] = []
+  const electron = {
+    utilityProcess: {
+      fork: () => {
+        const child = new ManualUtilityProcess()
+        children.push(child)
+        return child
+      }
+    }
+  }
+
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 100,
+    restartDelayMs: 5,
+    electron
+  })
+
+  assert.equal(binding.GetPlaybackInfo(), '{"state":"stopped"}')
+  const firstChild = children[0]
+  const request = firstChild.messages[0] as { requestId: string }
+  firstChild.emit('exit', 1)
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  firstChild.emit('message', {
+    kind: 'response',
+    requestId: request.requestId,
+    ok: true,
+    value: '{"state":"playing"}'
+  })
+
+  assert.equal(binding.GetPlaybackInfo(), '{"state":"stopped"}')
+  binding.destroy()
+})
+
+test('older same-generation cache responses do not overwrite newer playback info', async () => {
+  const child = new ManualUtilityProcess()
+  const electron = {
+    utilityProcess: {
+      fork: () => child
+    }
+  }
+
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 100,
+    restartDelayMs: 1000,
+    electron
+  })
+
+  assert.equal(binding.GetPlaybackInfo(), '{"state":"stopped"}')
+  assert.equal(binding.GetPlaybackInfo(), '{"state":"stopped"}')
+  const older = child.messages[0] as { requestId: string }
+  const newer = child.messages[1] as { requestId: string }
+
+  child.emit('message', {
+    kind: 'response',
+    requestId: newer.requestId,
+    ok: true,
+    value: '{"state":"playing","position":20}'
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(binding.GetPlaybackInfo(), '{"state":"playing","position":20}')
+
+  child.emit('message', {
+    kind: 'response',
+    requestId: older.requestId,
+    ok: true,
+    value: '{"state":"paused","position":1}'
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(binding.GetPlaybackInfo(), '{"state":"playing","position":20}')
+  binding.destroy()
 })

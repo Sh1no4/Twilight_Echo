@@ -580,9 +580,16 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   volume = 1
   backend = 'wasapi'
   device = 'auto'
+  outputConfig: Partial<OutputConfig> = {}
+  dspConfig: Partial<AudioProcessingSettings> = {}
+  dspPluginChain = ''
+  queue: AudioEngineQueueItem[] = []
+  queueIndex = -1
+  playCalls = 0
   playbackInfo = makePlaybackInfo({ state: 'playing', nativePlaybackActive: true })
 
   Play = (): void => {
+    this.playCalls += 1
     this.playbackInfo = makePlaybackInfo({ state: 'playing', nativePlaybackActive: true })
   }
   Pause = (): void => {
@@ -602,8 +609,19 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   SetOutputBackend = (backend: string): void => {
     this.backend = backend
   }
-  SetOutputConfig = (): void => {}
-  SetDspConfig = (): void => {}
+  SetOutputConfig = (json: string): void => {
+    this.outputConfig = JSON.parse(json) as Partial<OutputConfig>
+  }
+  LoadQueue = (queueJson: string, startIndex: number): void => {
+    this.queue = JSON.parse(queueJson) as AudioEngineQueueItem[]
+    this.queueIndex = startIndex
+  }
+  SetDspConfig = (json: string): void => {
+    this.dspConfig = JSON.parse(json) as Partial<AudioProcessingSettings>
+  }
+  SetDspPluginChain = (json: string): void => {
+    this.dspPluginChain = json
+  }
   GetMetadata = (): string => JSON.stringify({ title: 'sync fallback', error: '' })
   GetPlaybackInfo = (): string => JSON.stringify(this.playbackInfo)
   GetDspPluginStatus = (): string => JSON.stringify({ plugins: [] })
@@ -1369,6 +1387,62 @@ test('audio service crash stops native playback and keeps manager usable', async
   assert.equal(info.outputInfo.diagnostics.lastError, 'native dsp crash fixture exited')
   assert.equal(info.outputInfo.nativeDsp?.plugins.length, 0)
   assert.equal(info.outputInfo.recoveryCount, 1)
+
+  manager.destroy()
+})
+
+test('audio service ready after restart restores configuration and queue without auto-resume', async () => {
+  const service = new FakeAudioServiceBinding()
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioOutputConfig: { preferredBufferSize: 512, routingMode: 'stereo-to-5.1' },
+      audioProcessing: { eqEnabled: true, crossfeedEnabled: true, crossfeedStrength: 0.35 }
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  const queue: AudioEngineQueueItem[] = [
+    { id: 'local:one', source: 'one.flac', title: 'One' },
+    { id: 'local:two', source: 'two.flac', title: 'Two' }
+  ]
+
+  await manager.start()
+  await manager.setAudioOutput('asio', 'asio:studio')
+  await manager.loadQueue(queue, 1)
+  manager.setNativeDspPluginChain('{"plugins":[{"id":"com.example.eq"}]}')
+  await manager.play('two.flac', 12)
+  service.emit('crash', 'service crashed')
+
+  service.backend = 'wasapi'
+  service.device = 'auto'
+  service.outputConfig = {}
+  service.dspConfig = {}
+  service.dspPluginChain = ''
+  service.queue = []
+  service.queueIndex = -1
+  service.playCalls = 0
+  service.emit('ready')
+
+  assert.equal(service.backend, 'asio')
+  assert.equal(service.device, 'asio:studio')
+  assert.equal(service.outputConfig.preferredBufferSize, 512)
+  assert.equal(service.outputConfig.routingMode, 'stereo-to-5.1')
+  assert.equal(service.dspConfig.eqEnabled, true)
+  assert.equal(service.dspConfig.crossfeedStrength, 0.35)
+  assert.equal(service.dspPluginChain, '{"plugins":[{"id":"com.example.eq"}]}')
+  assert.deepEqual(service.queue, queue)
+  assert.equal(service.queueIndex, 1)
+  assert.equal(service.playCalls, 0)
+
+  const info = await manager.getPlaybackInfo()
+  assert.equal(info.state, 'stopped')
+  assert.equal(info.nativePlaybackActive, false)
 
   manager.destroy()
 })

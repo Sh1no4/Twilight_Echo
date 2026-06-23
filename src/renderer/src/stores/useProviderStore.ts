@@ -11,15 +11,55 @@ export interface ProviderLoginState {
   profile: MediaProviderProfile | null
 }
 
+/** 插件声明的 UI 元数据（镜像 preload 类型） */
+export interface ProviderUiMetadata {
+  icon: string
+  color?: string
+  description?: string
+  authType: 'qr' | 'oauth' | 'cookie'
+  loginInstructions?: string
+  qrStatusCodes?: {
+    waiting: number
+    scanned: number | null
+    expired: number
+    denied?: number
+    success: number
+  }
+  showBrowserButton?: boolean
+  loginExtraActions?: Array<{
+    label: string
+    icon: string
+    method: string
+  }>
+  streamingSections?: Array<{
+    id: string
+    title: string
+    icon: string
+    method: string
+    args?: unknown[]
+  }>
+  streamingLibraryTab?: boolean
+  streamingSearch?: boolean
+}
+
+export interface ProviderInfo {
+  id: string
+  name: string
+  capabilities: string[]
+  ui?: ProviderUiMetadata
+}
+
 export interface OnlineProviderStore {
-  providers: Ref<Array<{ id: string; name: string; capabilities: string[] }>>
+  providers: Ref<ProviderInfo[]>
   syncProviders: () => Promise<void>
   hasProvider: (id: string) => boolean
+  getProvider: (id: string) => ProviderInfo | undefined
   checkLogin: (id: string) => Promise<ProviderLoginState>
   getQrLogin: (id: string) => Promise<MediaProviderQrLogin | null>
   getQrImage: (id: string, key: string) => Promise<string | null>
   checkQrLogin: (id: string, key: string) => Promise<{ code: number; message?: string }>
   logout: (id: string) => Promise<void>
+  callProvider: <T>(providerId: string, method: string, args?: unknown[]) => Promise<T>
   fetchUserLibrary: (id: string, force?: boolean) => Promise<{
     likedPlaylist: MediaProviderPlaylistSummary | null
     playlists: MediaProviderPlaylistSummary[]
@@ -27,7 +67,7 @@ export interface OnlineProviderStore {
   fetchPlaylistTracks: (id: string, playlistId: string | number, force?: boolean) => Promise<Track[]>
 }
 
-const providers = ref<Array<{ id: string; name: string; capabilities: string[] }>>([])
+const providers = ref<ProviderInfo[]>([])
 const providerIds = computed(() => new Set(providers.value.map((provider) => provider.id)))
 
 async function callProvider<T>(providerId: string, method: string, args: unknown[] = []): Promise<T> {
@@ -40,12 +80,17 @@ export function useProviderStore(): OnlineProviderStore {
     providers.value = list.map((provider) => ({
       id: provider.id,
       name: provider.name,
-      capabilities: provider.capabilities
+      capabilities: provider.capabilities,
+      ui: provider.ui as ProviderUiMetadata | undefined
     }))
   }
 
   function hasProvider(id: string): boolean {
     return providerIds.value.has(id)
+  }
+
+  function getProvider(id: string): ProviderInfo | undefined {
+    return providers.value.find((item) => item.id === id)
   }
 
   async function checkLogin(id: string): Promise<ProviderLoginState> {
@@ -107,11 +152,13 @@ export function useProviderStore(): OnlineProviderStore {
     providers,
     syncProviders,
     hasProvider,
+    getProvider,
     checkLogin,
     getQrLogin,
     getQrImage,
     checkQrLogin,
     logout,
+    callProvider,
     fetchUserLibrary,
     fetchPlaylistTracks
   }

@@ -115,7 +115,10 @@ const fallbackSettings: AppSettings = {
     alwaysOnTop: true,
     clickThrough: false,
     maxLines: 2
-  }
+  },
+  proxyMode: 'auto',
+  proxyHost: '',
+  proxyPort: 0
 }
 
 const settings = ref<AppSettings>({ ...fallbackSettings })
