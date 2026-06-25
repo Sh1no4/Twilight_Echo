@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const { dedupeProviderRegistrations, findProviderRoute, providerSupportsMethod } = (await import(
@@ -63,6 +64,18 @@ test('prefers the latest registration when multiple plugins expose the same prov
 
 test('treats bundled plugin host-exit failures as recoverable startup state', () => {
   assert.equal(isRecoverableBundledPluginFailure('插件宿主进程退出：18446744073709552000'), true)
+  assert.equal(isRecoverableBundledPluginFailure('Invalid value for env'), true)
   assert.equal(isRecoverableBundledPluginFailure('Provider 调用超时：ncm.getPlaybackUrl'), false)
   assert.equal(isRecoverableBundledPluginFailure(undefined), false)
+})
+
+test('omits utility process env option when no proxy env is configured', () => {
+  const source = readFileSync(new URL('./manager.ts', import.meta.url), 'utf8')
+
+  assert.match(source, /\.\.\.\(Object\.keys\(proxyEnv\)\.length > 0 \? \{ env:/)
+  assert.equal(
+    /const env = Object\.keys\(proxyEnv\)\.length > 0[\s\S]*utilityProcess\.fork[\s\S]*\benv\b/.test(source),
+    false,
+    'Electron utilityProcess.fork rejects an explicit env: undefined option'
+  )
 })

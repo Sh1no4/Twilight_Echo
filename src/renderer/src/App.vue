@@ -643,6 +643,8 @@ body.te-no-blur .page-up-leave-to,
 body.te-no-blur .page-up-enter-from,
 body.te-no-blur .playing-page-enter-from,
 body.te-no-blur .playing-page-leave-to,
+body.te-no-blur .settings-page-enter-from,
+body.te-no-blur .settings-page-leave-to,
 body.te-no-blur .login-page-enter-from,
 body.te-no-blur .login-page-leave-to {
   filter: none !important;
@@ -752,6 +754,38 @@ body.te-no-blur .login-page-leave-to {
   border-radius: 28px;
   opacity: 0;
   filter: blur(10px);
+}
+
+/* Settings and plugin pages: shared overlay transition */
+.settings-page-enter-active {
+  z-index: 70;
+  transition:
+    opacity 0.34s ease,
+    transform 0.42s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform, filter;
+}
+
+.settings-page-leave-active {
+  z-index: 69;
+  pointer-events: none;
+  transition:
+    opacity 0.22s ease,
+    transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+    filter 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  will-change: opacity, transform, filter;
+}
+
+.settings-page-enter-from {
+  opacity: 0;
+  transform: translate3d(28px, 0, 0) scale(0.988);
+  filter: blur(10px);
+}
+
+.settings-page-leave-to {
+  opacity: 0;
+  transform: translate3d(18px, 0, 0) scale(0.992);
+  filter: blur(8px);
 }
 
 /* Login page transition */

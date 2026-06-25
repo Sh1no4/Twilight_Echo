@@ -38,7 +38,6 @@ type BooleanSettingKey =
   | 'autoCheckLogin'
   | 'launchAtLogin'
   | 'hardwareAcceleration'
-  | 'blurEffect'
   | 'useCoverTheme'
   | 'globalShortcuts'
   | 'watchLibrary'
@@ -1677,20 +1676,6 @@ onBeforeUnmount(() => {
                 role="switch"
                 :aria-checked="settings.useCoverTheme"
                 @click="toggleSetting('useCoverTheme')"
-              ></span>
-            </div>
-            <hr />
-            <div class="setting-item">
-              <div class="setting-copy">
-                <strong>原生半透明材质 (Mica / Acrylic)</strong>
-                <span>启用系统级视窗模糊效果，让背景透出桌面壁纸。</span>
-              </div>
-              <span
-                class="toggle-switch"
-                :class="{ active: settings.blurEffect, inactive: !settings.blurEffect }"
-                role="switch"
-                :aria-checked="settings.blurEffect"
-                @click="toggleSetting('blurEffect')"
               ></span>
             </div>
             <hr />

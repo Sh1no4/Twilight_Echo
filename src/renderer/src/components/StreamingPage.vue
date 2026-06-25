@@ -991,7 +991,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="streaming-page" :style="{ bottom: hasPlayer ? '96px' : '0px' }">
+  <div class="streaming-page" :class="{ 'has-player': hasPlayer }">
     <div
       class="streaming-sidebar"
       :class="{ open: menuOpen }"
@@ -1575,7 +1575,7 @@ onMounted(async () => {
 <style scoped>
 .streaming-page {
   position: fixed;
-  inset: 0 0 96px 0;
+  inset: 0;
   z-index: 50;
   display: flex;
   box-sizing: border-box;
@@ -1772,6 +1772,10 @@ onMounted(async () => {
   padding: 14px clamp(36px, 6vw, 84px) 34px;
   scrollbar-width: thin;
   scrollbar-color: rgba(124, 77, 255, 0.28) transparent;
+}
+
+.streaming-page.has-player .streaming-content-body {
+  padding-bottom: 126px;
 }
 
 .streaming-sidebar-bottom {

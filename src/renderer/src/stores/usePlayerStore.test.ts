@@ -221,3 +221,23 @@ test('local dashboard playback keeps a multi-track queue for next and previous c
     'dashboard playback should only fall back to a single-track queue when the track is not in the local library'
   )
 })
+
+test('playback session strips transient provider stream URLs before restore', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const cloneTrackForPlaybackSession = extractInternalFunctionBody(
+    source,
+    'cloneTrackForPlaybackSession'
+  )
+
+  assert.equal(
+    /streamUrl: track\.source === 'ncm' \? null : track\.streamUrl/.test(cloneTrackForPlaybackSession),
+    false,
+    'provider URL stripping must not be limited to the built-in ncm provider'
+  )
+  assert.match(cloneTrackForPlaybackSession, /const source = getTrackSource\(track\)/)
+  assert.match(
+    cloneTrackForPlaybackSession,
+    /streamUrl: source === 'local' \? track\.streamUrl : null/,
+    'restored provider playback should resolve a fresh stream URL instead of reusing a stale proxy URL'
+  )
+})

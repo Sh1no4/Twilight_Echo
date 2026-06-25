@@ -203,7 +203,6 @@ body.te-no-blur * {
 
 body.te-settings-surface,
 html[data-theme='pureWhite'] body.te-settings-surface {
-  padding-top: 0 !important;
   background: #f4f4f7 !important;
 }
 

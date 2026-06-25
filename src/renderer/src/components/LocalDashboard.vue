@@ -652,12 +652,14 @@ function playDashboardTrack(track: Track | undefined): void {
 
 .card {
     background: var(--card-bg);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(18px) saturate(126%);
+    -webkit-backdrop-filter: blur(18px) saturate(126%);
     border: 1px solid var(--card-border);
-    border-radius: 28px;
+    border-radius: 26px;
     padding: 1.8rem;
-    box-shadow: 0 10px 40px rgba(31, 38, 135, 0.06);
+    box-shadow:
+      0 18px 54px rgba(15, 23, 42, 0.1),
+      inset 0 1px 0 rgba(255, 255, 255, 0.72);
     transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.4s ease;
     position: relative;
     overflow: hidden;

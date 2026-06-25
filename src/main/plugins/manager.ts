@@ -553,11 +553,10 @@ export class TwilightPluginManager extends EventEmitter {
     }
     mkdirSync(descriptor.paths.dataDir, { recursive: true })
     const proxyEnv = this.getProxyEnv?.() ?? {}
-    const env = Object.keys(proxyEnv).length > 0 ? { ...process.env, ...proxyEnv } : undefined
     const child = utilityProcess.fork(this.hostEntry, [], {
       serviceName: `twilight-plugin-${descriptor.id}`,
       stdio: 'pipe',
-      env
+      ...(Object.keys(proxyEnv).length > 0 ? { env: { ...process.env, ...proxyEnv } } : {})
     })
     const running: RunningPlugin = {
       process: child,

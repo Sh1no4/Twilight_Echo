@@ -1744,6 +1744,7 @@ const progress = computed(() => {
 function cloneTrackForPlaybackSession(track: Track): Track {
   // Shallow copy — strip lyrics/translatedLyrics to avoid massive memory usage
   // when the entire queue is cloned for session persistence
+  const source = getTrackSource(track)
   const cloned: Track = {
     id: track.id,
     title: track.title,
@@ -1758,7 +1759,7 @@ function cloneTrackForPlaybackSession(track: Track): Track {
     lyrics: null,
     source: track.source,
     ncmSongId: track.ncmSongId,
-    streamUrl: track.source === 'ncm' ? null : track.streamUrl,
+    streamUrl: source === 'local' ? track.streamUrl : null,
     format: track.format,
     sampleRate: track.sampleRate,
     bitrate: track.bitrate,
