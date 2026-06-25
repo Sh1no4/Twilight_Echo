@@ -15,7 +15,7 @@ const emit = defineEmits<{
 
 const providerStore = useProviderStore()
 
-const POLL_INTERVAL = 3000
+const POLL_INTERVAL = 5000
 const QR_KEY_COOLDOWN = 5000
 
 type PageState =
@@ -56,8 +56,20 @@ const qrKey = ref('')
 const lastKeyGenTime = ref(0)
 const authUrl = ref('') // OAuth device flow URL (for showBrowserButton providers)
 const accountStates = ref<Record<string, AccountState>>({})
+const accountLoginMode = ref<'phoneCaptcha' | 'phonePassword' | 'emailPassword'>('phoneCaptcha')
+const accountPhone = ref('')
+const accountCountryCode = ref('86')
+const accountCaptcha = ref('')
+const accountEmail = ref('')
+const accountPassword = ref('')
+const accountLoginBusy = ref(false)
+const captchaBusy = ref(false)
+const accountLoginMessage = ref('')
+const loginBlockedUntil = ref(0)
+const loginBlockedReason = ref('')
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
+let cooldownTimer: ReturnType<typeof setInterval> | null = null
 
 /** 所有声明了 login 能力的 provider（无论是否声明 ui 元数据，都显示在登录页） */
 const loginProviders = computed<ProviderInfo[]>(() =>
@@ -114,6 +126,15 @@ const activeProfile = computed(() =>
 )
 
 const activeUi = computed(() => activeProvider.value?.ui)
+const showNcmAccountLogin = computed(() => activeProviderId.value === 'ncm' && pageState.value !== 'login_success')
+const loginCooldownRemaining = ref(0)
+const isLoginCoolingDown = computed(() => loginCooldownRemaining.value > 0)
+const loginCooldownText = computed(() => {
+  if (!isLoginCoolingDown.value) return ''
+  const minutes = Math.floor(loginCooldownRemaining.value / 60)
+  const seconds = loginCooldownRemaining.value % 60
+  return minutes > 0 ? `${minutes}分${String(seconds).padStart(2, '0')}秒` : `${seconds}秒`
+})
 
 const statusText = computed(() => {
   const providerName = activeCard.value?.name ?? '在线账号'
@@ -194,12 +215,65 @@ function openAccount(providerId: string): void {
   void startQrLogin()
 }
 
-async function checkQrScan(providerId: string, key: string): Promise<{ code: number }> {
+function clearAccountLoginFeedback(): void {
+  accountLoginMessage.value = ''
+}
+
+function refreshCooldownRemaining(): void {
+  loginCooldownRemaining.value = Math.max(0, Math.ceil((loginBlockedUntil.value - Date.now()) / 1000))
+  if (loginCooldownRemaining.value === 0) {
+    loginBlockedReason.value = ''
+    if (cooldownTimer) {
+      clearInterval(cooldownTimer)
+      cooldownTimer = null
+    }
+  }
+}
+
+function startLoginCooldown(seconds: number, reason: string): void {
+  loginBlockedUntil.value = Date.now() + seconds * 1000
+  loginBlockedReason.value = reason
+  refreshCooldownRemaining()
+  if (!cooldownTimer) {
+    cooldownTimer = setInterval(refreshCooldownRemaining, 1000)
+  }
+}
+
+function applyLoginCooldownFromMessage(message: string): void {
+  if (/安全风险|设备环境异常|操作已拦截|24 小时|24小时/i.test(message)) {
+    startLoginCooldown(24 * 60 * 60, '网易云已拦截当前网络或设备环境')
+    return
+  }
+  if (/503|高频|风控/i.test(message)) {
+    startLoginCooldown(180, '网易云登录接口触发高频或风控限制')
+  }
+}
+
+async function checkQrScan(
+  providerId: string,
+  key: string
+): Promise<{ code: number; message?: string; retryAfterSeconds?: number }> {
   try {
     return await providerStore.checkQrLogin(providerId, key)
-  } catch {
-    return { code: -1 }
+  } catch (error) {
+    return {
+      code: -1,
+      message: error instanceof Error ? error.message : String(error)
+    }
   }
+}
+
+function getQrErrorMessage(result: {
+  code: number
+  message?: string
+  retryAfterSeconds?: number
+}): string {
+  if (result.message) return result.message
+  if (result.code === 301) return '登录态无效或接口缓存了未登录结果，请重新登录或等待 2 分钟后重试'
+  if (result.code === 502) return '二维码状态检查失败，请刷新二维码后重试'
+  if (result.code === 503) return '登录接口触发高频限制，请等待几分钟后再试'
+  if (result.code === 460) return '当前网络环境被网易云限制，请切换网络或稍后重试'
+  return '二维码登录状态异常，请刷新二维码后重试'
 }
 
 function isQrStatus(code: number, type: 'waiting' | 'scanned' | 'expired' | 'success'): boolean {
@@ -224,6 +298,13 @@ function startPolling(providerId: string, key: string): void {
     const result = await checkQrScan(providerId, key)
     if (isQrStatus(result.code, 'expired')) {
       pageState.value = 'qr_expired'
+      stopPolling()
+      return
+    }
+    if (result.code === -1 || result.code === 301 || result.code === 502 || result.code === 503 || result.code === 460) {
+      errorMsg.value = getQrErrorMessage(result)
+      applyLoginCooldownFromMessage(errorMsg.value)
+      pageState.value = 'error'
       stopPolling()
       return
     }
@@ -317,6 +398,89 @@ async function handleExtraAction(method: string): Promise<void> {
   }
 }
 
+function normalizeLoginError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/301/.test(message)) return '登录态无效或接口缓存了未登录结果，请等待 2 分钟或重新生成登录请求'
+  if (/安全风险|设备环境异常|操作已拦截/i.test(message)) {
+    return '网易云拦截了当前网络或设备环境。请停止频繁重试，切换网络/设备或按官方提示 24 小时后再试。'
+  }
+  if (/503|高频|风控/i.test(message)) return '登录接口触发高频或风控限制，请等待几分钟后再试'
+  if (/460/.test(message)) return '当前网络环境被网易云限制，请切换网络或稍后重试'
+  return message || '登录失败，请检查账号信息后重试'
+}
+
+async function handleSendCaptcha(): Promise<void> {
+  if (!activeProviderId.value || captchaBusy.value) return
+  refreshCooldownRemaining()
+  if (isLoginCoolingDown.value) {
+    accountLoginMessage.value = `${loginBlockedReason.value || '登录请求正在冷却'}，请 ${loginCooldownText.value} 后再试`
+    return
+  }
+  clearAccountLoginFeedback()
+  const phone = accountPhone.value.trim()
+  if (!phone) {
+    accountLoginMessage.value = '请先输入手机号'
+    return
+  }
+  captchaBusy.value = true
+  try {
+    const result = await providerStore.callProvider<{ code: number; message?: string }>(
+      activeProviderId.value,
+      'sendCaptcha',
+      [phone, accountCountryCode.value.trim() || '86']
+    )
+    accountLoginMessage.value =
+      result.code === 200 ? '验证码已发送' : result.message || '验证码发送失败'
+    if (result.code !== 200) applyLoginCooldownFromMessage(accountLoginMessage.value)
+  } catch (error) {
+    accountLoginMessage.value = normalizeLoginError(error)
+    applyLoginCooldownFromMessage(accountLoginMessage.value)
+  } finally {
+    captchaBusy.value = false
+  }
+}
+
+async function handleAccountLogin(): Promise<void> {
+  if (!activeProviderId.value || accountLoginBusy.value) return
+  refreshCooldownRemaining()
+  if (isLoginCoolingDown.value) {
+    accountLoginMessage.value = `${loginBlockedReason.value || '登录请求正在冷却'}，请 ${loginCooldownText.value} 后再试`
+    return
+  }
+  stopPolling()
+  clearAccountLoginFeedback()
+  accountLoginBusy.value = true
+  try {
+    const providerId = activeProviderId.value
+    if (accountLoginMode.value === 'phoneCaptcha') {
+      await providerStore.callProvider(providerId, 'loginByPhoneCaptcha', [
+        accountPhone.value.trim(),
+        accountCaptcha.value.trim(),
+        accountCountryCode.value.trim() || '86'
+      ])
+    } else if (accountLoginMode.value === 'phonePassword') {
+      await providerStore.callProvider(providerId, 'loginByPhonePassword', [
+        accountPhone.value.trim(),
+        accountPassword.value,
+        accountCountryCode.value.trim() || '86'
+      ])
+    } else {
+      await providerStore.callProvider(providerId, 'loginByEmailPassword', [
+        accountEmail.value.trim(),
+        accountPassword.value
+      ])
+    }
+    pageState.value = 'login_success'
+    await refreshAccounts()
+    emit('loginSuccess')
+  } catch (error) {
+    accountLoginMessage.value = normalizeLoginError(error)
+    applyLoginCooldownFromMessage(accountLoginMessage.value)
+  } finally {
+    accountLoginBusy.value = false
+  }
+}
+
 async function handleLogout(): Promise<void> {
   if (!activeProviderId.value) return
   await providerStore.logout(activeProviderId.value)
@@ -332,6 +496,7 @@ function backToAccounts(): void {
   qrKey.value = ''
   authUrl.value = ''
   errorMsg.value = ''
+  clearAccountLoginFeedback()
 }
 
 function handleBack(): void {
@@ -349,6 +514,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopPolling()
+  if (cooldownTimer) clearInterval(cooldownTimer)
 })
 </script>
 
@@ -466,6 +632,104 @@ onUnmounted(() => {
         <p v-if="activeUi?.loginExtraActions?.length && pageState !== 'login_success'" class="qr-login-hint">
           如果登录失败，请尝试其他方式
         </p>
+
+        <form v-if="showNcmAccountLogin" class="account-login-form" @submit.prevent="handleAccountLogin">
+          <div class="account-login-tabs" role="tablist" aria-label="网易云账号登录方式">
+            <button
+              type="button"
+              class="account-login-tab"
+              :class="{ active: accountLoginMode === 'phoneCaptcha' }"
+              @click="accountLoginMode = 'phoneCaptcha'; clearAccountLoginFeedback()"
+            >
+              验证码
+            </button>
+            <button
+              type="button"
+              class="account-login-tab"
+              :class="{ active: accountLoginMode === 'phonePassword' }"
+              @click="accountLoginMode = 'phonePassword'; clearAccountLoginFeedback()"
+            >
+              手机密码
+            </button>
+            <button
+              type="button"
+              class="account-login-tab"
+              :class="{ active: accountLoginMode === 'emailPassword' }"
+              @click="accountLoginMode = 'emailPassword'; clearAccountLoginFeedback()"
+            >
+              邮箱密码
+            </button>
+          </div>
+
+          <div v-if="accountLoginMode !== 'emailPassword'" class="account-login-row">
+            <input
+              v-model="accountCountryCode"
+              class="account-login-input country"
+              autocomplete="tel-country-code"
+              inputmode="numeric"
+              placeholder="86"
+            />
+            <input
+              v-model="accountPhone"
+              class="account-login-input"
+              autocomplete="tel"
+              inputmode="tel"
+              placeholder="手机号"
+            />
+          </div>
+
+          <input
+            v-if="accountLoginMode === 'emailPassword'"
+            v-model="accountEmail"
+            class="account-login-input full"
+            autocomplete="email"
+            type="email"
+            placeholder="网易邮箱"
+          />
+
+          <div v-if="accountLoginMode === 'phoneCaptcha'" class="account-login-row captcha">
+            <input
+              v-model="accountCaptcha"
+              class="account-login-input"
+              autocomplete="one-time-code"
+              inputmode="numeric"
+              placeholder="短信验证码"
+            />
+            <button
+              type="button"
+              class="account-login-small-btn"
+              :disabled="captchaBusy || isLoginCoolingDown"
+              @click="handleSendCaptcha"
+            >
+              {{ captchaBusy ? '发送中' : isLoginCoolingDown ? loginCooldownText : '发验证码' }}
+            </button>
+          </div>
+
+          <input
+            v-if="accountLoginMode !== 'phoneCaptcha'"
+            v-model="accountPassword"
+            class="account-login-input full"
+            autocomplete="current-password"
+            type="password"
+            placeholder="密码"
+          />
+
+          <button
+            class="login-action-btn account-login-submit"
+            type="submit"
+            :disabled="accountLoginBusy || isLoginCoolingDown"
+          >
+            <i
+              :class="accountLoginBusy ? 'pi pi-spin pi-spinner' : 'pi pi-sign-in'"
+              style="margin-right: 6px"
+            ></i>
+            {{ accountLoginBusy ? '登录中' : isLoginCoolingDown ? `等待 ${loginCooldownText}` : '账号登录' }}
+          </button>
+          <p v-if="isLoginCoolingDown" class="account-login-message">
+            {{ loginBlockedReason || '登录请求正在冷却' }}，请 {{ loginCooldownText }} 后再试
+          </p>
+          <p v-if="accountLoginMessage" class="account-login-message">{{ accountLoginMessage }}</p>
+        </form>
 
         <button v-if="pageState === 'qr_expired'" class="login-action-btn" @click="handleRefresh">
           <i class="pi pi-refresh" style="margin-right: 6px"></i>
@@ -768,6 +1032,7 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   gap: 16px;
+  width: min(420px, 100%);
 }
 
 .qr-wrapper {
@@ -839,5 +1104,103 @@ onUnmounted(() => {
   color: rgba(90, 90, 104, 0.72);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.account-login-form {
+  width: min(360px, 100%);
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.account-login-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  min-height: 34px;
+}
+
+.account-login-tab {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid rgba(124, 77, 255, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.62);
+  color: rgba(36, 41, 70, 0.72);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.account-login-tab.active {
+  background: rgba(124, 77, 255, 0.12);
+  color: var(--te-primary-500);
+  border-color: rgba(124, 77, 255, 0.34);
+}
+
+.account-login-row {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.account-login-row.captcha {
+  grid-template-columns: minmax(0, 1fr) 104px;
+}
+
+.account-login-input {
+  min-width: 0;
+  height: 38px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 8px;
+  padding: 0 11px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #242946;
+  font-size: 13px;
+  outline: none;
+}
+
+.account-login-input:focus {
+  border-color: rgba(124, 77, 255, 0.48);
+  box-shadow: 0 0 0 3px rgba(124, 77, 255, 0.1);
+}
+
+.account-login-input.country {
+  text-align: center;
+}
+
+.account-login-input.full {
+  width: 100%;
+}
+
+.account-login-small-btn {
+  height: 38px;
+  border: 1px solid rgba(124, 77, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(124, 77, 255, 0.1);
+  color: var(--te-primary-500);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.account-login-small-btn:disabled,
+.account-login-submit:disabled {
+  opacity: 0.68;
+  cursor: wait;
+}
+
+.account-login-submit {
+  width: 100%;
+  margin-top: 0;
+}
+
+.account-login-message {
+  margin: -2px 0 0;
+  min-height: 18px;
+  color: rgba(82, 90, 122, 0.72);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
 }
 </style>

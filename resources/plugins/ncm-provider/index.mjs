@@ -3,6 +3,9 @@ let ncmApi = null
 
 const PROVIDER_ID = 'ncm'
 const COOKIE_KEY = 'cookie'
+const PC_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0'
+const TRANSIENT_LOGIN_ERROR_CODES = new Set([301, 502, 503, 460])
 const playlistTrackCache = new Map()
 const streamUrlCache = new Map()
 let likedTracksCache = null
@@ -47,6 +50,10 @@ export async function activate(context) {
     getProfile,
     logout,
     openOfficialLogin,
+    sendCaptcha,
+    loginByPhonePassword,
+    loginByPhoneCaptcha,
+    loginByEmailPassword,
     getQrLogin,
     getQrKey,
     getQrImage,
@@ -77,14 +84,66 @@ export function deactivate() {
   resetCaches()
 }
 
-function withPcUa(path) {
+function appendQueryParam(path, key, value) {
   const sep = path.includes('?') ? '&' : '?'
-  return `${path}${sep}ua=pc`
+  return `${path}${sep}${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`
+}
+
+function appendQueryParams(path, params) {
+  return Object.entries(params).reduce(
+    (nextPath, [key, value]) => appendQueryParam(nextPath, key, value),
+    path
+  )
+}
+
+function withPcUa(path) {
+  return appendQueryParam(path, 'ua', PC_UA)
+}
+
+function withQrLoginParams(path) {
+  return appendQueryParams(path, { ua: 'pc' })
 }
 
 function shouldUsePcUa(path) {
   if (path.startsWith('/song/url')) return false
   return !path.startsWith('/login/')
+}
+
+function normalizeApiMessage(data, fallback) {
+  const message = data?.message ?? data?.msg ?? data?.data?.message ?? data?.body?.message
+  return typeof message === 'string' && message.trim() ? message.trim() : fallback
+}
+
+function isRiskControlMessage(message) {
+  return /安全风险|设备环境异常|操作已拦截|高频|风控|ip 高频|IP 高频/i.test(message)
+}
+
+function describeApiError(code, data) {
+  const rawMessage = normalizeApiMessage(data, '')
+  if (rawMessage && isRiskControlMessage(rawMessage)) {
+    if (/安全风险|设备环境异常|操作已拦截/i.test(rawMessage)) {
+      return `网易云拦截了当前网络或设备环境：${rawMessage}。请停止频繁重试，切换网络/设备或按官方提示 24 小时后再试。`
+    }
+    return `网易云登录接口触发高频或风控限制：${rawMessage}。请等待几分钟后再试。`
+  }
+  if (code === 301) return '网易云登录态无效或接口缓存了未登录结果，请重新登录或等待 2 分钟后重试。'
+  if (code === 400) return normalizeApiMessage(data, '网易云登录参数无效，请检查账号、密码或验证码。')
+  if (code === 502) return '网易云二维码状态检查失败，已尝试无 Cookie 模式，请刷新二维码后重试。'
+  if (code === 503) return '网易云登录接口触发高频/风控限制，请等待几分钟后再试。'
+  if (code === 460) return '网易云限制了当前网络环境，请切换到国内网络或稍后重试。'
+  return normalizeApiMessage(data, 'NetEase API request failed')
+}
+
+function requireNonEmptyString(value, fieldName) {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${fieldName}不能为空`)
+  }
+  return value.trim()
+}
+
+function normalizeCountryCode(countrycode) {
+  const normalized = typeof countrycode === 'string' && countrycode.trim() ? countrycode.trim() : '86'
+  return /^[0-9]{1,6}$/.test(normalized) ? normalized : '86'
 }
 
 function resetCaches() {
@@ -118,6 +177,14 @@ async function request(path, cookie) {
     throw new Error(data.message || 'NetEase API request failed')
   }
   return data && typeof data === 'object' ? data : {}
+}
+
+function assertSuccessfulLoginResponse(data) {
+  const code = Number(data?.code ?? data?.body?.code)
+  if (code !== 200 || typeof data?.cookie !== 'string' || !data.cookie.includes('MUSIC_U=')) {
+    throw new Error(describeApiError(Number.isFinite(code) ? code : -1, data))
+  }
+  return data.cookie
 }
 
 async function requestAuthed(path) {
@@ -376,13 +443,66 @@ async function openOfficialLogin() {
   return await checkLogin()
 }
 
+async function sendCaptcha(phone, countrycode = '86') {
+  const normalizedPhone = requireNonEmptyString(phone, '手机号')
+  const data = await request(
+    `/captcha/sent?phone=${encodeURIComponent(normalizedPhone)}&ctcode=${encodeURIComponent(
+      normalizeCountryCode(countrycode)
+    )}`
+  )
+  const code = Number(data.code)
+  if (code !== 200) {
+    return { code: Number.isFinite(code) ? code : -1, message: describeApiError(code, data) }
+  }
+  return { code: 200, message: normalizeApiMessage(data, '验证码已发送') }
+}
+
+async function finishAccountLogin(data) {
+  const cookie = assertSuccessfulLoginResponse(data)
+  await saveCookie(cookie)
+  return await checkLogin()
+}
+
+async function loginByPhonePassword(phone, password, countrycode = '86') {
+  const normalizedPhone = requireNonEmptyString(phone, '手机号')
+  const normalizedPassword = requireNonEmptyString(password, '密码')
+  const data = await request(
+    `/login/cellphone?phone=${encodeURIComponent(normalizedPhone)}&password=${encodeURIComponent(
+      normalizedPassword
+    )}&countrycode=${encodeURIComponent(normalizeCountryCode(countrycode))}`
+  )
+  return await finishAccountLogin(data)
+}
+
+async function loginByPhoneCaptcha(phone, captcha, countrycode = '86') {
+  const normalizedPhone = requireNonEmptyString(phone, '手机号')
+  const normalizedCaptcha = requireNonEmptyString(captcha, '验证码')
+  const data = await request(
+    `/login/cellphone?phone=${encodeURIComponent(normalizedPhone)}&captcha=${encodeURIComponent(
+      normalizedCaptcha
+    )}&countrycode=${encodeURIComponent(normalizeCountryCode(countrycode))}`
+  )
+  return await finishAccountLogin(data)
+}
+
+async function loginByEmailPassword(email, password) {
+  const normalizedEmail = requireNonEmptyString(email, '邮箱')
+  const normalizedPassword = requireNonEmptyString(password, '密码')
+  const data = await request(
+    `/login?email=${encodeURIComponent(normalizedEmail)}&password=${encodeURIComponent(normalizedPassword)}`
+  )
+  return await finishAccountLogin(data)
+}
+
 async function getQrKey() {
   const data = await request('/login/qr/key')
   return data.code === 200 && data.data?.unikey ? data.data.unikey : null
 }
 
 async function getQrImage(key) {
-  const data = await request(`/login/qr/create?key=${encodeURIComponent(String(key))}&qrimg=true`)
+  const data = await request(
+    withQrLoginParams(`/login/qr/create?key=${encodeURIComponent(String(key))}&platform=web&qrimg=true`)
+  )
   if (data.code !== 200 || !data.data?.qrimg) return null
   const raw = data.data.qrimg
   return raw.startsWith('data:') ? raw : `data:image/png;base64,${raw}`
@@ -396,12 +516,30 @@ async function getQrLogin() {
 }
 
 async function checkQrLogin(key) {
-  const data = await request(`/login/qr/check?key=${encodeURIComponent(String(key))}`)
-  const code = Number(data.code)
+  const encodedKey = encodeURIComponent(String(key))
+  let data = await request(withQrLoginParams(`/login/qr/check?key=${encodedKey}`))
+  let code = Number(data.code)
+
+  if (code === 502) {
+    data = await request(withQrLoginParams(`/login/qr/check?key=${encodedKey}&noCookie=true`))
+    code = Number(data.code)
+  }
+
+  if (TRANSIENT_LOGIN_ERROR_CODES.has(code)) {
+    return {
+      code,
+      message: describeApiError(code, data),
+      retryAfterSeconds: code === 503 || code === 460 ? 180 : 120
+    }
+  }
+
   if (code === 803 && data.cookie) {
     await saveCookie(data.cookie)
   }
-  return { code: Number.isFinite(code) ? code : -1 }
+  return {
+    code: Number.isFinite(code) ? code : -1,
+    message: Number.isFinite(code) ? undefined : normalizeApiMessage(data, '二维码登录状态异常')
+  }
 }
 
 async function fetchUserLibrary(force = false) {

@@ -124,6 +124,9 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly providerCalls = new Map<
     string,
     {
+      pluginId: string
+      providerId: string
+      method: TwilightMediaProviderMethod
       resolve: (value: unknown) => void
       reject: (error: Error) => void
       timer: NodeJS.Timeout
@@ -434,9 +437,12 @@ export class TwilightPluginManager extends EventEmitter {
       candidate.providers.some((provider) => provider.id === normalizedProviderId)
     )
     if (!running) {
+      const isBundledProvider = this.isBundledPluginId(normalizedProviderId)
       throw new Error(
         hasProvider
-          ? `Provider ${normalizedProviderId} does not implement ${method}`
+          ? isBundledProvider
+            ? `Provider ${normalizedProviderId} does not implement ${method}。内置音源插件尚未加载最新代码，请重启应用。`
+            : `Provider ${normalizedProviderId} does not implement ${method}`
           : `Provider 未启用：${normalizedProviderId}`
       )
     }
@@ -456,6 +462,9 @@ export class TwilightPluginManager extends EventEmitter {
         rejectCall(new Error(`Provider 调用超时：${normalizedProviderId}.${method}`))
       }, getProviderCallTimeoutMs(method))
       this.providerCalls.set(requestId, {
+        pluginId: running.descriptor.id,
+        providerId: normalizedProviderId,
+        method,
         resolve: resolveCall,
         reject: rejectCall,
         timer
@@ -974,7 +983,16 @@ export class TwilightPluginManager extends EventEmitter {
     if (message.ok) {
       pending.resolve(message.value)
     } else {
-      pending.reject(new Error(message.error))
+      const staleBundledProvider =
+        this.isBundledPluginId(pending.pluginId) &&
+        /^Provider .+ does not implement /i.test(message.error)
+      pending.reject(
+        new Error(
+          staleBundledProvider
+            ? `${message.error}。内置音源插件尚未加载最新代码，请重启应用。`
+            : message.error
+        )
+      )
     }
   }
 

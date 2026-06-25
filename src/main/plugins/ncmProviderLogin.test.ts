@@ -6,15 +6,37 @@ type NcmRequest = {
   cookie?: string
 }
 
+function queryValue(path: string, key: string): string | null {
+  const queryStart = path.indexOf('?')
+  if (queryStart < 0) return null
+  const params = new URLSearchParams(path.slice(queryStart + 1))
+  return params.get(key)
+}
+
 interface TestNcmProvider {
   getQrKey(): Promise<unknown>
   getQrImage(key: string): Promise<unknown>
-  checkQrLogin(key: string): Promise<unknown>
+  checkQrLogin(key: string): Promise<{ code: number; message?: string }>
+  sendCaptcha(phone: string, countrycode?: string): Promise<{ code: number; message?: string }>
+  loginByPhonePassword(
+    phone: string,
+    password: string,
+    countrycode?: string
+  ): Promise<{ loggedIn: boolean; profile: unknown }>
+  loginByPhoneCaptcha(
+    phone: string,
+    captcha: string,
+    countrycode?: string
+  ): Promise<{ loggedIn: boolean; profile: unknown }>
+  loginByEmailPassword(
+    email: string,
+    password: string
+  ): Promise<{ loggedIn: boolean; profile: unknown }>
   searchSongs(keywords: string): Promise<unknown>
   getPlaybackUrl(track: unknown): Promise<string | null>
 }
 
-test('bundled NCM provider keeps QR login requests free of PC/Web fingerprint params', async () => {
+test('bundled NCM provider follows documented QR login request params', async () => {
   const requests: NcmRequest[] = []
   const registeredProvider: { current?: TestNcmProvider } = {}
   const settings = new Map<string, unknown>([['cookie', 'MUSIC_U=test-token']])
@@ -88,21 +110,21 @@ test('bundled NCM provider keeps QR login requests free of PC/Web fingerprint pa
 
   const loginRequests = requests.filter((request) => request.path.startsWith('/login/qr/'))
   assert.equal(loginRequests.length, 3)
-  for (const request of loginRequests) {
-    assert.equal(request.path.includes('ua=pc'), false, request.path)
-    assert.equal(request.path.includes('platform=web'), false, request.path)
-    assert.equal(request.path.includes('chainId='), false, request.path)
-  }
+  assert.equal(queryValue(loginRequests[0].path, 'ua'), null, loginRequests[0].path)
+  assert.equal(queryValue(loginRequests[1].path, 'platform'), 'web', loginRequests[1].path)
+  assert.equal(queryValue(loginRequests[1].path, 'ua'), 'pc', loginRequests[1].path)
+  assert.equal(queryValue(loginRequests[2].path, 'ua'), 'pc', loginRequests[2].path)
+  for (const request of loginRequests) assert.equal(request.path.includes('chainId='), false, request.path)
 
   await provider.searchSongs('hello')
   const searchRequest = requests.find((request) => request.path.startsWith('/cloudsearch'))
   assert.ok(searchRequest)
-  assert.equal(searchRequest.path.includes('ua=pc'), true, searchRequest.path)
+  assert.match(queryValue(searchRequest.path, 'ua') ?? '', /Chrome\/123\.0\.0\.0/, searchRequest.path)
 
   await provider.getPlaybackUrl({ id: 'ncm:1' })
   const playbackRequest = requests.find((request) => request.path.startsWith('/song/url'))
   assert.ok(playbackRequest)
-  assert.equal(playbackRequest.path.includes('ua=pc'), false, playbackRequest.path)
+  assert.equal(queryValue(playbackRequest.path, 'ua'), null, playbackRequest.path)
 
   providerModule.deactivate()
 })
@@ -179,6 +201,418 @@ test('bundled NCM provider falls back when the preferred playback endpoint fails
 
   await registeredProvider.current?.getPlaybackUrl({ id: 'ncm:2609824992' })
   assert.equal(requests.length, 2)
+
+  providerModule.deactivate()
+})
+
+test('bundled NCM provider sends captcha with phone and country code', async () => {
+  const requests: NcmRequest[] = []
+  const registeredProvider: { current?: TestNcmProvider } = {}
+  const settings = new Map<string, unknown>()
+
+  const providerModule = (await import(
+    new URL('../../../resources/plugins/ncm-provider/index.mjs', import.meta.url).href
+  )) as {
+    activate(context: unknown): Promise<void>
+    deactivate(): void
+  }
+
+  await providerModule.activate({
+    twilight: {
+      internal: {
+        ncm: {
+          async request(path: string, cookie?: string): Promise<unknown> {
+            requests.push({ path, cookie })
+            if (path.startsWith('/captcha/sent')) return { code: 200, data: true }
+            return { code: 200 }
+          },
+          async getCachedSong(): Promise<null> {
+            return null
+          },
+          async cacheSong(): Promise<null> {
+            return null
+          }
+        }
+      },
+      providers: {
+        async register(provider: TestNcmProvider): Promise<void> {
+          registeredProvider.current = provider
+        }
+      }
+    },
+    settings: {
+      async get(key?: string): Promise<unknown> {
+        return key ? settings.get(key) : Object.fromEntries(settings)
+      },
+      async set(key: string, value: unknown): Promise<void> {
+        settings.set(key, value)
+      },
+      async delete(key: string): Promise<void> {
+        settings.delete(key)
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {}
+    }
+  })
+
+  const result = await registeredProvider.current?.sendCaptcha('13800138000', '86')
+  assert.equal(result?.code, 200)
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].path.startsWith('/captcha/sent?'), true, requests[0].path)
+  assert.equal(queryValue(requests[0].path, 'phone'), '13800138000')
+  assert.equal(queryValue(requests[0].path, 'ctcode'), '86')
+
+  providerModule.deactivate()
+})
+
+test('bundled NCM provider logs in with phone password and stores returned cookie', async () => {
+  const requests: NcmRequest[] = []
+  const registeredProvider: { current?: TestNcmProvider } = {}
+  const settings = new Map<string, unknown>()
+
+  const providerModule = (await import(
+    new URL('../../../resources/plugins/ncm-provider/index.mjs', import.meta.url).href
+  )) as {
+    activate(context: unknown): Promise<void>
+    deactivate(): void
+  }
+
+  await providerModule.activate({
+    twilight: {
+      internal: {
+        ncm: {
+          async request(path: string, cookie?: string): Promise<unknown> {
+            requests.push({ path, cookie })
+            if (path.startsWith('/login/cellphone')) {
+              return { code: 200, cookie: 'MUSIC_U=phone-token;__csrf=csrf-token' }
+            }
+            if (path.startsWith('/login/status')) {
+              return {
+                code: 200,
+                data: {
+                  code: 200,
+                  profile: { userId: 1001, nickname: 'phone-user', avatarUrl: 'avatar.jpg' }
+                }
+              }
+            }
+            return { code: 200 }
+          },
+          async getCachedSong(): Promise<null> {
+            return null
+          },
+          async cacheSong(): Promise<null> {
+            return null
+          }
+        }
+      },
+      providers: {
+        async register(provider: TestNcmProvider): Promise<void> {
+          registeredProvider.current = provider
+        }
+      }
+    },
+    settings: {
+      async get(key?: string): Promise<unknown> {
+        return key ? settings.get(key) : Object.fromEntries(settings)
+      },
+      async set(key: string, value: unknown): Promise<void> {
+        settings.set(key, value)
+      },
+      async delete(key: string): Promise<void> {
+        settings.delete(key)
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {}
+    }
+  })
+
+  const login = await registeredProvider.current?.loginByPhonePassword('13800138000', 'p@ss#word', '86')
+  assert.equal(login?.loggedIn, true)
+  const loginRequest = requests.find((request) => request.path.startsWith('/login/cellphone'))
+  assert.ok(loginRequest)
+  assert.equal(queryValue(loginRequest.path, 'phone'), '13800138000')
+  assert.equal(queryValue(loginRequest.path, 'countrycode'), '86')
+  assert.equal(queryValue(loginRequest.path, 'password'), 'p@ss#word')
+  assert.equal(settings.get('cookie'), 'MUSIC_U=phone-token;__csrf=csrf-token')
+
+  providerModule.deactivate()
+})
+
+test('bundled NCM provider logs in with phone captcha and email password', async () => {
+  const requests: NcmRequest[] = []
+  const registeredProvider: { current?: TestNcmProvider } = {}
+  const settings = new Map<string, unknown>()
+
+  const providerModule = (await import(
+    new URL('../../../resources/plugins/ncm-provider/index.mjs', import.meta.url).href
+  )) as {
+    activate(context: unknown): Promise<void>
+    deactivate(): void
+  }
+
+  await providerModule.activate({
+    twilight: {
+      internal: {
+        ncm: {
+          async request(path: string, cookie?: string): Promise<unknown> {
+            requests.push({ path, cookie })
+            if (path.startsWith('/login/cellphone') && queryValue(path, 'captcha') === '246810') {
+              return { code: 200, cookie: 'MUSIC_U=captcha-token' }
+            }
+            if (path.startsWith('/login?')) {
+              return { code: 200, cookie: 'MUSIC_U=email-token' }
+            }
+            if (path.startsWith('/login/status')) {
+              return {
+                code: 200,
+                data: {
+                  code: 200,
+                  profile: { userId: 1002, nickname: 'login-user', avatarUrl: 'avatar.jpg' }
+                }
+              }
+            }
+            return { code: 200 }
+          },
+          async getCachedSong(): Promise<null> {
+            return null
+          },
+          async cacheSong(): Promise<null> {
+            return null
+          }
+        }
+      },
+      providers: {
+        async register(provider: TestNcmProvider): Promise<void> {
+          registeredProvider.current = provider
+        }
+      }
+    },
+    settings: {
+      async get(key?: string): Promise<unknown> {
+        return key ? settings.get(key) : Object.fromEntries(settings)
+      },
+      async set(key: string, value: unknown): Promise<void> {
+        settings.set(key, value)
+      },
+      async delete(key: string): Promise<void> {
+        settings.delete(key)
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {}
+    }
+  })
+
+  const captchaLogin = await registeredProvider.current?.loginByPhoneCaptcha('13800138000', '246810', '86')
+  assert.equal(captchaLogin?.loggedIn, true)
+  const captchaRequest = requests.find((request) => queryValue(request.path, 'captcha') === '246810')
+  assert.ok(captchaRequest)
+  assert.equal(queryValue(captchaRequest.path, 'phone'), '13800138000')
+  assert.equal(settings.get('cookie'), 'MUSIC_U=captcha-token')
+
+  const emailLogin = await registeredProvider.current?.loginByEmailPassword('user@example.com', 'email-password')
+  assert.equal(emailLogin?.loggedIn, true)
+  const emailRequest = requests.find((request) => request.path.startsWith('/login?'))
+  assert.ok(emailRequest)
+  assert.equal(queryValue(emailRequest.path, 'email'), 'user@example.com')
+  assert.equal(queryValue(emailRequest.path, 'password'), 'email-password')
+  assert.equal(settings.get('cookie'), 'MUSIC_U=email-token')
+
+  providerModule.deactivate()
+})
+
+test('bundled NCM provider retries QR checks without cookies after API 502', async () => {
+  const requests: NcmRequest[] = []
+  const registeredProvider: { current?: TestNcmProvider } = {}
+  const settings = new Map<string, unknown>()
+
+  const providerModule = (await import(
+    new URL('../../../resources/plugins/ncm-provider/index.mjs', import.meta.url).href
+  )) as {
+    activate(context: unknown): Promise<void>
+    deactivate(): void
+  }
+
+  await providerModule.activate({
+    twilight: {
+      internal: {
+        ncm: {
+          async request(path: string, cookie?: string): Promise<unknown> {
+            requests.push({ path, cookie })
+            if (path.startsWith('/login/qr/check') && !path.includes('noCookie=true')) {
+              return { code: 502, message: 'bad gateway' }
+            }
+            if (path.startsWith('/login/qr/check') && path.includes('noCookie=true')) {
+              return { code: 801 }
+            }
+            return { code: 200 }
+          },
+          async getCachedSong(): Promise<null> {
+            return null
+          },
+          async cacheSong(): Promise<null> {
+            return null
+          }
+        }
+      },
+      providers: {
+        async register(provider: TestNcmProvider): Promise<void> {
+          registeredProvider.current = provider
+        }
+      }
+    },
+    settings: {
+      async get(key?: string): Promise<unknown> {
+        return key ? settings.get(key) : Object.fromEntries(settings)
+      },
+      async set(key: string, value: unknown): Promise<void> {
+        settings.set(key, value)
+      },
+      async delete(key: string): Promise<void> {
+        settings.delete(key)
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {}
+    }
+  })
+
+  assert.equal((await registeredProvider.current?.checkQrLogin('qr-key'))?.code, 801)
+  assert.deepEqual(
+    requests.map((request) => request.path),
+    ['/login/qr/check?key=qr-key&ua=pc', '/login/qr/check?key=qr-key&noCookie=true&ua=pc']
+  )
+
+  providerModule.deactivate()
+})
+
+test('bundled NCM provider reports login risk-control errors to the login UI', async () => {
+  const registeredProvider: { current?: TestNcmProvider } = {}
+  const settings = new Map<string, unknown>()
+
+  const providerModule = (await import(
+    new URL('../../../resources/plugins/ncm-provider/index.mjs', import.meta.url).href
+  )) as {
+    activate(context: unknown): Promise<void>
+    deactivate(): void
+  }
+
+  await providerModule.activate({
+    twilight: {
+      internal: {
+        ncm: {
+          async request(): Promise<unknown> {
+            return { code: 503, message: 'Service Unavailable' }
+          },
+          async getCachedSong(): Promise<null> {
+            return null
+          },
+          async cacheSong(): Promise<null> {
+            return null
+          }
+        }
+      },
+      providers: {
+        async register(provider: TestNcmProvider): Promise<void> {
+          registeredProvider.current = provider
+        }
+      }
+    },
+    settings: {
+      async get(key?: string): Promise<unknown> {
+        return key ? settings.get(key) : Object.fromEntries(settings)
+      },
+      async set(key: string, value: unknown): Promise<void> {
+        settings.set(key, value)
+      },
+      async delete(key: string): Promise<void> {
+        settings.delete(key)
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {}
+    }
+  })
+
+  const result = await registeredProvider.current?.checkQrLogin('qr-key')
+  assert.equal(result?.code, 503)
+  assert.match(result?.message ?? '', /高频|风控/)
+
+  providerModule.deactivate()
+})
+
+test('bundled NCM provider preserves NetEase network risk messages', async () => {
+  const registeredProvider: { current?: TestNcmProvider } = {}
+  const settings = new Map<string, unknown>()
+
+  const providerModule = (await import(
+    new URL('../../../resources/plugins/ncm-provider/index.mjs', import.meta.url).href
+  )) as {
+    activate(context: unknown): Promise<void>
+    deactivate(): void
+  }
+
+  await providerModule.activate({
+    twilight: {
+      internal: {
+        ncm: {
+          async request(): Promise<unknown> {
+            return { code: 400, message: '您当前的网络环境存在安全风险' }
+          },
+          async getCachedSong(): Promise<null> {
+            return null
+          },
+          async cacheSong(): Promise<null> {
+            return null
+          }
+        }
+      },
+      providers: {
+        async register(provider: TestNcmProvider): Promise<void> {
+          registeredProvider.current = provider
+        }
+      }
+    },
+    settings: {
+      async get(key?: string): Promise<unknown> {
+        return key ? settings.get(key) : Object.fromEntries(settings)
+      },
+      async set(key: string, value: unknown): Promise<void> {
+        settings.set(key, value)
+      },
+      async delete(key: string): Promise<void> {
+        settings.delete(key)
+      }
+    },
+    logger: {
+      info() {},
+      warn() {},
+      error() {},
+      debug() {}
+    }
+  })
+
+  const result = await registeredProvider.current?.sendCaptcha('13800138000', '86')
+  assert.equal(result?.code, 400)
+  assert.match(result?.message ?? '', /网络环境存在安全风险/)
+  assert.match(result?.message ?? '', /24 小时/)
 
   providerModule.deactivate()
 })

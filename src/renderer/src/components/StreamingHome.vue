@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { Track } from '../types/music'
 import type { NcmPlaylistSummary } from '../stores/useNcmStore'
 
@@ -61,6 +62,47 @@ function openFeature(key: FeatureCard['key']): void {
     emit('openRecSection', section)
   }
 }
+
+const playlistRailRef = ref<HTMLElement | null>(null)
+const canScrollLeft = ref(false)
+const canScrollRight = ref(false)
+
+function updatePlaylistScrollState(): void {
+  const el = playlistRailRef.value
+  if (!el) return
+  canScrollLeft.value = el.scrollLeft > 4
+  canScrollRight.value = el.scrollLeft + el.clientWidth < el.scrollWidth - 4
+}
+
+function scrollPlaylists(direction: 'left' | 'right'): void {
+  const el = playlistRailRef.value
+  if (!el) return
+  const amount = Math.round(el.clientWidth * 0.8)
+  el.scrollBy({ left: direction === 'right' ? amount : -amount, behavior: 'smooth' })
+}
+
+let playlistResizeObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  updatePlaylistScrollState()
+  if (playlistRailRef.value && typeof ResizeObserver !== 'undefined') {
+    playlistResizeObserver = new ResizeObserver(() => updatePlaylistScrollState())
+    playlistResizeObserver.observe(playlistRailRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  playlistResizeObserver?.disconnect()
+  playlistResizeObserver = null
+})
+
+watch(
+  () => props.recommendPlaylists,
+  () => {
+    void nextTick(updatePlaylistScrollState)
+  }
+)
+
 </script>
 
 <template>
@@ -120,7 +162,7 @@ function openFeature(key: FeatureCard['key']): void {
         <div class="section-heading recommend-heading">
           <div>
             <h3>推荐歌单</h3>
-            <p>精选 {{ Math.min(recommendPlaylists.length, 8) }} 个内容</p>
+            <p>精选 {{ recommendPlaylists.length }} 个内容</p>
           </div>
           <button type="button" class="more-btn">
             更多
@@ -128,22 +170,46 @@ function openFeature(key: FeatureCard['key']): void {
           </button>
         </div>
 
-        <div v-if="recommendPlaylists.length > 0" class="playlist-rail">
+        <div v-if="recommendPlaylists.length > 0" class="playlist-scroller">
           <button
-            v-for="playlist in recommendPlaylists.slice(0, 8)"
-            :key="playlist.id"
-            class="playlist-tile"
+            v-show="canScrollLeft"
             type="button"
-            @click="emit('openPlaylist', playlist)"
+            class="scroll-arrow scroll-arrow-left"
+            aria-label="向左查看"
+            @click="scrollPlaylists('left')"
           >
-            <span class="playlist-cover-wrap">
-              <img v-if="playlist.cover" :src="playlist.cover" class="playlist-cover" alt="" />
-              <span v-else class="playlist-cover placeholder-cover">
-                <i class="pi pi-list"></i>
+            <i class="pi pi-chevron-left"></i>
+          </button>
+          <div
+            ref="playlistRailRef"
+            class="playlist-rail"
+            @scroll.passive="updatePlaylistScrollState"
+          >
+            <button
+              v-for="playlist in recommendPlaylists"
+              :key="playlist.id"
+              class="playlist-tile"
+              type="button"
+              @click="emit('openPlaylist', playlist)"
+            >
+              <span class="playlist-cover-wrap">
+                <img v-if="playlist.cover" :src="playlist.cover" class="playlist-cover" alt="" />
+                <span v-else class="playlist-cover placeholder-cover">
+                  <i class="pi pi-list"></i>
+                </span>
               </span>
-            </span>
-            <span class="playlist-name">{{ playlist.name }}</span>
-            <span class="playlist-count">{{ playlist.trackCount }} 首</span>
+              <span class="playlist-name">{{ playlist.name }}</span>
+              <span class="playlist-count">{{ playlist.trackCount }} 首</span>
+            </button>
+          </div>
+          <button
+            v-show="canScrollRight"
+            type="button"
+            class="scroll-arrow scroll-arrow-right"
+            aria-label="向右查看更多"
+            @click="scrollPlaylists('right')"
+          >
+            <i class="pi pi-chevron-right"></i>
           </button>
         </div>
 
@@ -996,6 +1062,108 @@ function openFeature(key: FeatureCard['key']): void {
 
   .feature-art {
     height: 130px;
+  }
+}
+
+/* ===== Featured playlists horizontal scroller ===== */
+.playlist-scroller {
+  position: relative;
+  width: min(100%, var(--stream-grid-width));
+  --playlist-tile-width: 168px;
+  --playlist-tile-gap: 20px;
+}
+
+.playlist-rail {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  grid-template-columns: none;
+  gap: var(--playlist-tile-gap);
+  width: 100%;
+  margin: 0;
+  padding: 6px 2px 12px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.playlist-rail::-webkit-scrollbar {
+  display: none;
+}
+
+.playlist-tile {
+  flex: 0 0 var(--playlist-tile-width);
+  width: var(--playlist-tile-width);
+  max-width: var(--playlist-tile-width);
+}
+
+.scroll-arrow {
+  position: absolute;
+  top: calc(6px + var(--playlist-tile-width) / 2);
+  transform: translateY(-50%);
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(10px) saturate(150%);
+  -webkit-backdrop-filter: blur(10px) saturate(150%);
+  color: var(--te-neutral-900);
+  font-size: 15px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  box-shadow: 0 10px 24px rgba(34, 42, 68, 0.16);
+  transition:
+    opacity 0.22s var(--te-ease-soft),
+    background 0.22s,
+    transform 0.22s var(--te-ease-soft);
+}
+
+.playlist-scroller:hover .scroll-arrow {
+  opacity: 0.92;
+  pointer-events: auto;
+}
+
+.scroll-arrow-right {
+  right: 2px;
+}
+
+.scroll-arrow-left {
+  left: 2px;
+}
+
+.scroll-arrow:hover {
+  background: rgba(255, 255, 255, 0.88);
+  transform: translateY(-50%) scale(1.06);
+}
+
+.scroll-arrow:focus-visible {
+  outline: 2px solid var(--te-primary-500);
+  outline-offset: 2px;
+}
+
+@media (max-width: 1180px) {
+  .playlist-scroller {
+    --playlist-tile-width: 150px;
+  }
+}
+
+@media (max-width: 920px) {
+  .playlist-scroller {
+    --playlist-tile-width: 132px;
+    --playlist-tile-gap: 14px;
+  }
+
+  .scroll-arrow {
+    width: 34px;
+    height: 34px;
+    font-size: 14px;
   }
 }
 </style>
