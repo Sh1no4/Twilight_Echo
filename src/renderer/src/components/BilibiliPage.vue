@@ -15,7 +15,6 @@ defineProps<{
 }>()
 
 const emit = defineEmits<{
-  toggleMenu: []
   backToLocal: []
 }>()
 
@@ -462,13 +461,6 @@ onBeforeUnmount(() => {
     <header class="bili-header">
       <div class="bili-header-left">
         <button
-          class="bili-icon-btn hamburger"
-          :title="menuOpen ? '关闭菜单' : '打开菜单'"
-          @click="emit('toggleMenu')"
-        >
-          <i :class="menuOpen ? 'pi pi-times' : 'pi pi-bars'"></i>
-        </button>
-        <button
           v-if="currentDetail || isSearching"
           class="bili-icon-btn btn-back"
           title="返回"
@@ -504,10 +496,6 @@ onBeforeUnmount(() => {
             <i class="pi pi-times"></i>
           </button>
         </div>
-        <button class="bili-local-btn" title="返回流媒体" @click="emit('backToLocal')">
-          <i class="pi pi-globe"></i>
-          <span>流媒体</span>
-        </button>
         <div
           v-if="loggedIn && profile?.avatarUrl"
           class="bili-avatar"
@@ -899,10 +887,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  background:
-    radial-gradient(circle at 30% 10%, rgba(0, 161, 214, 0.1), transparent 28%),
-    radial-gradient(circle at 78% 12%, rgba(148, 210, 255, 0.12), transparent 30%),
-    linear-gradient(180deg, rgba(252, 253, 255, 0.96), rgba(244, 250, 253, 0.92));
+  background: #fff;
 }
 
 /* ===== Header ===== */
@@ -1069,37 +1054,6 @@ onBeforeUnmount(() => {
 
 .bili-search-clear:hover {
   background: rgba(0, 161, 214, 0.2);
-}
-
-.bili-local-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 34px;
-  padding: 0 14px;
-  border: 1px solid #eef1f6;
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 12px 28px rgba(34, 42, 68, 0.06);
-  color: #4b5563;
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition:
-    background 0.18s,
-    color 0.18s,
-    transform 0.18s var(--te-ease-soft, ease);
-}
-
-.bili-local-btn:hover {
-  background: var(--bili-accent-soft);
-  color: var(--bili-accent);
-  transform: translateY(-1px);
-}
-
-.bili-local-btn i {
-  font-size: 15px;
 }
 
 .bili-avatar {

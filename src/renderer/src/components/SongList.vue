@@ -4,6 +4,7 @@ import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import type { Track } from '../types/music'
 import CoverImg from './CoverImg.vue'
+import { filterLocalGridItems } from '../utils/localLibrarySearch'
 
 type LocalTransitionName = 'local-page-down' | 'local-page-up'
 type IdleDeadlineLike = {
@@ -149,8 +150,9 @@ const currentGridItems = computed<GridItem[]>(() => {
   return []
 })
 
-const visibleGridItems = computed(() => currentGridItems.value.slice(0, renderedGridCount.value))
-const gridTotalCount = computed(() => currentGridItems.value.length)
+const filteredGridItems = computed(() => filterLocalGridItems(currentGridItems.value, searchQuery.value))
+const visibleGridItems = computed(() => filteredGridItems.value.slice(0, renderedGridCount.value))
+const gridTotalCount = computed(() => filteredGridItems.value.length)
 const visibleArtists = computed(() => (props.category === 'artists' ? visibleGridItems.value : []))
 const visibleAlbums = computed(() => (props.category === 'albums' ? visibleGridItems.value : []))
 const visiblePlaylists = computed(() =>
@@ -432,7 +434,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', updateViewportHeight)
 })
 
-watch([() => props.category, () => props.filter], resetScrollAndMeasure, { flush: 'post' })
+watch([() => props.category, () => props.filter, searchQuery], resetScrollAndMeasure, { flush: 'post' })
 
 watch(
   searchQuery,

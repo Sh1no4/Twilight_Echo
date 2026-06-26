@@ -18,6 +18,10 @@ import StreamingHome from './StreamingHome.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
 import StreamingSearch from './StreamingSearch.vue'
 import BilibiliPage from './BilibiliPage.vue'
+import {
+  isSidebarItemActiveForProvider,
+  shouldShowBilibiliViewForSidebarProvider
+} from '../utils/streamingNavigation'
 
 interface PageState {
   first: number
@@ -617,18 +621,18 @@ function selectProvider(provider: string): void {
 }
 
 function isSidebarItemActive(item: SidebarItem): boolean {
-  if (item.provider === 'bili') {
-    return showBilibiliView.value
-  }
-  if (item.provider === NCM_PROVIDER_ID) {
-    return activeProvider.value === NCM_PROVIDER_ID && activeTab.value === item.key
-  }
-  return activeProvider.value === item.provider
+  return isSidebarItemActiveForProvider({
+    itemProvider: item.provider,
+    itemKey: item.key,
+    activeProvider: activeProvider.value,
+    activeTab: activeTab.value,
+    showBilibiliView: showBilibiliView.value
+  })
 }
 
 function selectSidebarItem(item: SidebarItem): void {
+  showBilibiliView.value = shouldShowBilibiliViewForSidebarProvider(item.provider)
   if (item.provider === 'bili') {
-    showBilibiliView.value = true
     return
   }
   if (item.provider !== NCM_PROVIDER_ID) {
@@ -1201,7 +1205,6 @@ onMounted(async () => {
       class="streaming-content"
       :menu-open="menuOpen"
       :has-player="hasPlayer"
-      @toggle-menu="emit('toggleMenu')"
       @back-to-local="showBilibiliView = false"
     />
     <div v-else class="streaming-content">
