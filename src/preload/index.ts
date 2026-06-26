@@ -118,6 +118,7 @@ interface TwilightProviderUiMetadata {
   streamingSections?: TwilightProviderStreamingSection[]
   streamingLibraryTab?: boolean
   streamingSearch?: boolean
+  unifiedLibrary?: boolean
 }
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
@@ -328,6 +329,7 @@ interface AppSettings {
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
+  streamingActiveProvider: string
 }
 
 interface OpraCatalogStatus {

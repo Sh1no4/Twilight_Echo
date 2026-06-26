@@ -118,7 +118,8 @@ const fallbackSettings: AppSettings = {
   },
   proxyMode: 'auto',
   proxyHost: '',
-  proxyPort: 0
+  proxyPort: 0,
+  streamingActiveProvider: 'ncm'
 }
 
 const settings = ref<AppSettings>({ ...fallbackSettings })

@@ -1,5 +1,12 @@
 <script setup lang="ts">
+import { computed, ref } from 'vue'
 import type { MediaProviderPlaylistSummary, MediaProviderProfile } from '../providers/mediaProvider'
+
+interface ProviderOption {
+  id: string
+  name: string
+  icon: string
+}
 
 const props = defineProps<{
   isLoggedIn: boolean
@@ -11,9 +18,12 @@ const props = defineProps<{
   userPlaylistEntries: MediaProviderPlaylistSummary[]
   showLikedPanel?: boolean
   showSocialStats?: boolean
+  showFeatureCards?: boolean
   allowPinPlaylists?: boolean
   pinnedPlaylistIds?: Array<string | number>
   pinningPlaylistId?: string | number | null
+  availableProviders?: ProviderOption[]
+  activeProvider?: string
 }>()
 
 const emit = defineEmits<{
@@ -24,7 +34,39 @@ const emit = defineEmits<{
   togglePinnedPlaylist: [playlist: MediaProviderPlaylistSummary]
   openRecent: []
   openRanking: []
+  switchProvider: [id: string]
 }>()
+
+// ─── Provider switcher (music library toggle) ───────────────────────────
+// Only renders when more than one library provider is available, so the
+// toggle button appears once a second provider (e.g. ytmusic) is loaded and
+// disappears when it is gone.
+const providerMenuOpen = ref(false)
+
+const providerOptions = computed<ProviderOption[]>(() => props.availableProviders ?? [])
+const canSwitchProvider = computed(() => providerOptions.value.length > 1)
+
+const activeProviderName = computed(() => {
+  const active = providerOptions.value.find((p) => p.id === props.activeProvider)
+  return active?.name ?? props.providerLabel ?? '在线音源'
+})
+
+const activeProviderIcon = computed(() => {
+  const active = providerOptions.value.find((p) => p.id === props.activeProvider)
+  return active?.icon ?? 'pi pi-music'
+})
+
+function onProviderMenuBlur(): void {
+  // Defer so a menu-item click can register before the menu closes.
+  setTimeout(() => {
+    providerMenuOpen.value = false
+  }, 120)
+}
+
+function selectProvider(id: string): void {
+  providerMenuOpen.value = false
+  emit('switchProvider', id)
+}
 
 function playlistId(playlist: MediaProviderPlaylistSummary): string {
   return String(playlist.id)
@@ -62,7 +104,40 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
           </span>
         </div>
         <div class="profile-info">
-          <h3>{{ providerLabel || '在线音源' }}个人音乐库</h3>
+          <div class="profile-title-row">
+            <h3>{{ providerLabel || '在线音源' }}个人音乐库</h3>
+            <div v-if="canSwitchProvider" class="provider-switcher">
+              <button
+                type="button"
+                class="provider-switch-btn"
+                :class="{ active: providerMenuOpen }"
+                :title="`切换音源（当前：${activeProviderName}）`"
+                @click="providerMenuOpen = !providerMenuOpen"
+                @blur="onProviderMenuBlur"
+              >
+                <i :class="activeProviderIcon"></i>
+                <span class="provider-switch-name">{{ activeProviderName }}</span>
+                <i class="pi pi-chevron-down provider-switch-caret"></i>
+              </button>
+              <div v-if="providerMenuOpen" class="provider-menu">
+                <button
+                  v-for="provider in providerOptions"
+                  :key="provider.id"
+                  type="button"
+                  class="provider-menu-item"
+                  :class="{ active: provider.id === activeProvider }"
+                  @mousedown.prevent="selectProvider(provider.id)"
+                >
+                  <i :class="provider.icon"></i>
+                  <span>{{ provider.name }}</span>
+                  <i
+                    v-if="provider.id === activeProvider"
+                    class="pi pi-check provider-menu-check"
+                  ></i>
+                </button>
+              </div>
+            </div>
+          </div>
           <h1>{{ profile?.nickname || '未登录用户' }}</h1>
           <p>{{ profileSignature || '这里空空如也~' }}</p>
           <div v-if="isLoggedIn && showSocialStats !== false" class="profile-stats">
@@ -105,8 +180,8 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
       </div>
     </section>
 
-    <!-- Feature Cards: Recent & Ranking portals -->
-    <section class="feature-cards" v-if="isLoggedIn && providerLabel !== 'Bilibili'">
+    <!-- Feature Cards: Recent & Ranking portals (ncm only — external providers don't implement these) -->
+    <section class="feature-cards" v-if="isLoggedIn && showFeatureCards !== false">
       <!-- Recent Played Card -->
       <div class="glass-card feature-card recent-card" @click="emit('openRecent')">
         <div class="feature-info">
@@ -290,6 +365,111 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   color: var(--te-neutral-500, #64748b);
   font-weight: 600;
   margin: 0 0 4px 0;
+}
+
+/* Provider switcher (music library toggle) */
+.profile-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 4px;
+}
+.profile-title-row h3 {
+  margin: 0;
+  min-width: 0;
+}
+.provider-switcher {
+  position: relative;
+  flex-shrink: 0;
+}
+.provider-switch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--te-neutral-700, #334155);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.provider-switch-btn:hover,
+.provider-switch-btn.active {
+  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.1);
+  border-color: rgba(var(--te-primary-rgb, 99, 102, 241), 0.3);
+  color: var(--te-primary-500, #6366f1);
+}
+.provider-switch-btn i:first-child {
+  font-size: 13px;
+}
+.provider-switch-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-switch-caret {
+  font-size: 10px;
+  transition: transform 0.2s;
+}
+.provider-switch-btn.active .provider-switch-caret {
+  transform: rotate(180deg);
+}
+.provider-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  background: #fff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
+  padding: 6px;
+  z-index: 20;
+  animation: provider-menu-in 0.16s ease both;
+}
+.provider-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  color: var(--te-neutral-700, #334155);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  text-align: left;
+}
+.provider-menu-item:hover {
+  background: rgba(15, 23, 42, 0.04);
+}
+.provider-menu-item.active {
+  color: var(--te-primary-500, #6366f1);
+  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.08);
+}
+.provider-menu-item span {
+  flex: 1;
+}
+.provider-menu-check {
+  font-size: 12px;
+}
+@keyframes provider-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .profile-info h1 {
   font-size: 28px;

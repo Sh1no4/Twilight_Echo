@@ -191,6 +191,7 @@ export interface AppSettings {
   proxyMode: ProxyMode
   proxyHost: string
   proxyPort: number
+  streamingActiveProvider: string
 }
 
 export interface SettingsSnapshot {

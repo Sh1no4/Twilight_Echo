@@ -7,6 +7,7 @@ import LocalDashboard from './components/LocalDashboard.vue'
 import PlayerBar from './components/PlayerBar.vue'
 import PlayingMusic from './components/PlayingMusic.vue'
 import StreamingPage from './components/StreamingPage.vue'
+import BilibiliPage from './components/BilibiliPage.vue'
 const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
 const PluginPage = defineAsyncComponent(() => import('./components/PluginPage.vue'))
@@ -26,6 +27,7 @@ import type { PlaybackResumeMode } from './types/settings'
 const menuOpen = ref(false)
 const showPlayingPage = ref(false)
 const showStreamingPage = ref(false)
+const showBilibiliPage = ref(false)
 const showLoginPage = ref(false)
 const loginPageMode = ref<'login' | 'profile'>('login')
 const showSettingsPage = ref(false)
@@ -63,7 +65,8 @@ const showStreamingSurface = computed(
     !showSettingsPage.value &&
     !showEqualizerPage.value &&
     !showPluginPage.value &&
-    !activePluginPage.value
+    !activePluginPage.value &&
+    !showBilibiliPage.value
 )
 
 function toggleMenu(): void {
@@ -98,6 +101,7 @@ function onSelectView(category: string, filter: string | null): void {
   activeFilter.value = filter
   showPluginPage.value = false
   activePluginPage.value = null
+  showBilibiliPage.value = false
 }
 
 function closePluginPage(): void {
@@ -121,6 +125,7 @@ function onSelectPluginPage(page: UiContribution): void {
   showEqualizerPage.value = false
   showPluginPage.value = false
   activePluginPage.value = page
+  showBilibiliPage.value = false
 }
 
 function openPlayingPage(rect: { x: number; y: number; w: number; h: number }): void {
@@ -147,7 +152,19 @@ function enterStreamingMode(): void {
   showEqualizerPage.value = false
   showPluginPage.value = false
   activePluginPage.value = null
+  showBilibiliPage.value = false
   showStreamingPage.value = true
+}
+
+function enterBilibiliMode(): void {
+  menuOpen.value = false
+  showPlayingPage.value = false
+  showStreamingPage.value = false
+  showSettingsPage.value = false
+  showEqualizerPage.value = false
+  showPluginPage.value = false
+  activePluginPage.value = null
+  showBilibiliPage.value = true
 }
 
 async function openLoginPage(): Promise<void> {
@@ -157,6 +174,7 @@ async function openLoginPage(): Promise<void> {
   showSettingsPage.value = false
   showEqualizerPage.value = false
   activePluginPage.value = null
+  showBilibiliPage.value = false
   loginPageMode.value = 'login'
   showLoginPage.value = true
 }
@@ -171,6 +189,7 @@ function openSettingsPage(section: SettingsSection = 'general'): void {
   showPluginPage.value = false
   showEqualizerPage.value = false
   activePluginPage.value = null
+  showBilibiliPage.value = false
   showSettingsPage.value = true
 }
 
@@ -199,6 +218,7 @@ function openPluginPage(): void {
   showSettingsPage.value = false
   showEqualizerPage.value = false
   activePluginPage.value = null
+  showBilibiliPage.value = false
   showPluginPage.value = true
 }
 
@@ -218,6 +238,7 @@ function openEqualizerPage(): void {
   showSettingsPage.value = false
   showPluginPage.value = false
   activePluginPage.value = null
+  showBilibiliPage.value = false
   showEqualizerPage.value = true
 }
 
@@ -262,12 +283,15 @@ const localViewVisible = computed(
     !showSettingsPage.value &&
     !showEqualizerPage.value &&
     !showPluginPage.value &&
-    !activePluginPage.value
+    !activePluginPage.value &&
+    !showBilibiliPage.value
 )
 const sideMenuActiveKey = computed(() =>
   activePluginPage.value
     ? `plugin:${activePluginPage.value.pluginId}:${activePluginPage.value.id}`
-    : activeCategory.value
+    : showBilibiliPage.value
+      ? 'bilibili'
+      : activeCategory.value
 )
 const mainContentMinHeight = computed(() =>
   showPluginPage.value
@@ -495,6 +519,7 @@ const titleSurface = computed<TitleSurface>(() => {
     @select-view="onSelectView"
     @select-plugin-page="onSelectPluginPage"
     @enter-streaming="enterStreamingMode"
+    @enter-bilibili="enterBilibiliMode"
   />
   <div
     class="main-content"
@@ -532,6 +557,13 @@ const titleSurface = computed<TitleSurface>(() => {
       :has-player="hasPlayerBar"
       @toggle-menu="toggleStreamingMenu"
       @back-to-local="showStreamingPage = false"
+    />
+    <BilibiliPage
+      v-if="showBilibiliPage"
+      :menu-open="menuOpen"
+      :has-player="hasPlayerBar"
+      @toggle-menu="toggleMenu"
+      @back-to-local="showBilibiliPage = false"
     />
     <Transition name="login-page">
       <LoginPage

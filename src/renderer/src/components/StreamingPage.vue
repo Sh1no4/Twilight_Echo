@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import type { Track } from '../types/music'
 import {
   useNcmStore,
@@ -8,8 +8,12 @@ import {
   type NcmUserSummary
 } from '../stores/useNcmStore'
 import { useProviderStore } from '../stores/useProviderStore'
+import { useSettingsStore } from '../stores/useSettingsStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
-import type { MediaProviderPlaylistSummary } from '../providers/mediaProvider'
+import type {
+  MediaProviderPlaylistSummary,
+  MediaProviderProfile
+} from '../providers/mediaProvider'
 import StreamingHome from './StreamingHome.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
 import StreamingSearch from './StreamingSearch.vue'
@@ -29,7 +33,6 @@ interface RecSection {
 }
 
 type StreamingTab = 'home' | 'library'
-type StreamingProvider = string
 type DetailView =
   | { type: 'liked' }
   | { type: 'playlist'; playlist: MediaProviderPlaylistSummary }
@@ -46,7 +49,6 @@ defineProps<{
 }>()
 
 const activeTab = ref<StreamingTab>('home')
-const activeProvider = ref<StreamingProvider>('ncm')
 const streamingTransitionName = ref('stream-page-down')
 const currentDetail = ref<DetailView | null>(null)
 const detailTracks = ref<Track[]>([])
@@ -65,28 +67,107 @@ const recsLoading = ref(false)
 const recsError = ref('')
 const avatarLoadFailed = ref(false)
 const providerStore = useProviderStore()
-const biliLoggedIn = ref(false)
-const biliProfile = ref<{
-  userId: number
-  nickname: string
-  avatarUrl: string
-  signature: string
-  follows: number
-  followeds: number
-} | null>(null)
-const biliLibraryLoading = ref(false)
-const biliLibraryLoaded = ref(false)
-const biliLibraryError = ref('')
-const biliPlaylists = ref<MediaProviderPlaylistSummary[]>([])
-const biliLikedPlaylist = ref<MediaProviderPlaylistSummary | null>(null)
-const biliPinnedPlaylistIds = ref<string[]>([])
-const biliPinningPlaylistId = ref<string | null>(null)
+const settingsStore = useSettingsStore()
 
+const NCM_PROVIDER_ID = 'ncm'
+
+// ─── Generic external provider state (bili / ytmusic / future) ───────────
+// Replaces the previously bili-only refs so any provider declaring a library
+// tab can plug into the streaming library view without app-side changes.
+interface ExternalProviderState {
+  loggedIn: boolean
+  profile: MediaProviderProfile | null
+  libraryLoading: boolean
+  libraryLoaded: boolean
+  libraryError: string
+  playlists: MediaProviderPlaylistSummary[]
+  likedPlaylist: MediaProviderPlaylistSummary | null
+  pinnedPlaylistIds: string[]
+  pinningPlaylistId: string | number | null
+}
+
+function createExternalProviderState(): ExternalProviderState {
+  return {
+    loggedIn: false,
+    profile: null,
+    libraryLoading: false,
+    libraryLoaded: false,
+    libraryError: '',
+    playlists: [],
+    likedPlaylist: null,
+    pinnedPlaylistIds: [],
+    pinningPlaylistId: null
+  }
+}
+
+const externalStates = reactive<Record<string, ExternalProviderState>>({})
+
+function ensureExternalState(id: string): ExternalProviderState {
+  if (!externalStates[id]) {
+    externalStates[id] = createExternalProviderState()
+  }
+  return externalStates[id]
+}
+
+function isProviderAvailable(id: string): boolean {
+  return id === NCM_PROVIDER_ID ? true : providerStore.hasProvider(id)
+}
+
+// User's persisted preferred provider — only explicit user toggles change it.
+const preferredProvider = ref<string>(
+  settingsStore.settings.value.streamingActiveProvider || NCM_PROVIDER_ID
+)
+
+// Resolved active provider: preferred when available, else fall back to ncm.
+// Keeps the user's choice across restarts while degrading gracefully when a
+// plugin is disabled (falls back to ncm until the plugin returns).
+// Providers that opt out of the streaming library tab (e.g. Bilibili, now a
+// standalone top-level page) no longer participate in the streaming view and
+// also fall back to ncm here, so a persisted preference never strands the user
+// on a provider with no streaming sidebar entry.
+const activeProvider = computed<string>(() => {
+  const preferred = preferredProvider.value
+  if (!isProviderAvailable(preferred)) return NCM_PROVIDER_ID
+  const info = providerStore.getProvider(preferred)
+  if (info?.ui?.streamingLibraryTab === false) return NCM_PROVIDER_ID
+  return preferred
+})
+
+const isExternalActive = computed(() => activeProvider.value !== NCM_PROVIDER_ID)
 const isBiliActive = computed(() => activeProvider.value === 'bili')
-const biliProviderAvailable = computed(() => providerStore.hasProvider('bili'))
+const activeExternalState = computed<ExternalProviderState | null>(() =>
+  isExternalActive.value ? (externalStates[activeProvider.value] ?? null) : null
+)
+
+const activeProviderInfo = computed(() => providerStore.getProvider(activeProvider.value))
+const activeProviderLabel = computed(() => {
+  if (activeProvider.value === NCM_PROVIDER_ID) return '网易云音乐'
+  return activeProviderInfo.value?.name ?? '在线音源'
+})
+
+// Providers eligible for the unified music-library toggle (the dropdown on
+// the profile card). ncm is always first; other providers opt in by declaring
+// `ui.unifiedLibrary: true`. Providers that don't opt in (e.g. Bilibili, a
+// video-favorites feature) keep their own sidebar entry instead.
+const libraryProviders = computed(() => {
+  const list: Array<{ id: string; name: string; icon: string }> = [
+    { id: NCM_PROVIDER_ID, name: '网易云音乐', icon: 'pi pi-cloud' }
+  ]
+  for (const provider of providerStore.providers.value) {
+    if (provider.id === NCM_PROVIDER_ID) continue
+    if (provider.capabilities.includes('library') && provider.ui?.unifiedLibrary === true) {
+      list.push({
+        id: provider.id,
+        name: provider.name,
+        icon: provider.ui?.icon || 'pi pi-music'
+      })
+    }
+  }
+  return list
+})
 
 async function loadRecommendations(): Promise<void> {
-  if (isBiliActive.value) return
+  if (isExternalActive.value) return
   if (!isLoggedIn.value) return
   if (dailySongs.value.length > 0 && personalFmSongs.value.length > 0) return
   recsLoading.value = true
@@ -130,27 +211,47 @@ interface TabItem {
   icon: string
 }
 
-type SidebarItem =
-  | { key: StreamingTab; provider: 'ncm'; label: string; icon: string }
-  | { key: 'bili-library'; provider: 'bili'; label: string; icon: string }
+interface SidebarItem {
+  key: string
+  provider: string
+  label: string
+  icon: string
+  tab?: StreamingTab
+}
 
 const tabs: TabItem[] = [
   { key: 'home', label: '主页', icon: 'pi pi-sparkles' },
   { key: 'library', label: '音乐库', icon: 'pi pi-heart' }
 ]
-const sidebarItems = computed<SidebarItem[]>(() => [
-  ...tabs.map((tab) => ({ ...tab, provider: 'ncm' as const })),
-  ...(biliProviderAvailable.value
-    ? [
-        {
-          key: 'bili-library' as const,
-          provider: 'bili' as const,
-          label: 'Bilibili 收藏夹',
-          icon: 'pi pi-video'
-        }
-      ]
-    : [])
-])
+const sidebarItems = computed<SidebarItem[]>(() => {
+  const items: SidebarItem[] = tabs.map((tab) => ({
+    key: tab.key,
+    provider: NCM_PROVIDER_ID,
+    label: tab.label,
+    icon: tab.icon,
+    tab: tab.key
+  }))
+  for (const provider of providerStore.providers.value) {
+    if (provider.id === NCM_PROVIDER_ID) continue
+    // Unified-library providers (e.g. YouTube Music) are reached via the
+    // profile-card dropdown, NOT a sidebar entry — they share the single
+    // "音乐库" item with ncm. Providers that don't opt in (e.g. Bilibili,
+    // a video-favorites feature) keep their own sidebar entry.
+    if (
+      provider.capabilities.includes('library') &&
+      provider.ui?.unifiedLibrary !== true &&
+      provider.ui?.streamingLibraryTab !== false
+    ) {
+      items.push({
+        key: `${provider.id}-library`,
+        provider: provider.id,
+        label: provider.name,
+        icon: provider.ui?.icon || 'pi pi-music'
+      })
+    }
+  }
+  return items
+})
 
 const currentView = computed(() => tabs.find((t) => t.key === activeTab.value))
 
@@ -323,31 +424,36 @@ function onSearchTrackClick(track: Track): void {
 
 const { currentTrack, playTrack, formatTime } = usePlayerStore()
 
-const activeProfile = computed(() => (isBiliActive.value ? biliProfile.value : profile.value))
-const activeLoggedIn = computed(() => (isBiliActive.value ? biliLoggedIn.value : isLoggedIn.value))
+const activeProfile = computed(() =>
+  isExternalActive.value ? (activeExternalState.value?.profile ?? null) : profile.value
+)
+const activeLoggedIn = computed(() =>
+  isExternalActive.value ? (activeExternalState.value?.loggedIn ?? false) : isLoggedIn.value
+)
 const activeProviderAvailable = computed(() =>
-  isBiliActive.value ? biliProviderAvailable.value : providerAvailable.value
+  isExternalActive.value ? isProviderAvailable(activeProvider.value) : providerAvailable.value
 )
 const activeProviderError = computed(() =>
-  isBiliActive.value ? biliLibraryError.value : providerError.value
+  isExternalActive.value ? (activeExternalState.value?.libraryError ?? '') : providerError.value
 )
 const activeLibraryLoaded = computed(() =>
-  isBiliActive.value ? biliLibraryLoaded.value : libraryLoaded.value
+  isExternalActive.value ? (activeExternalState.value?.libraryLoaded ?? false) : libraryLoaded.value
 )
 const activeLibraryError = computed(() =>
-  isBiliActive.value ? biliLibraryError.value : libraryError.value
+  isExternalActive.value ? (activeExternalState.value?.libraryError ?? '') : libraryError.value
 )
 const activeProviderUnavailable = computed(() => {
   const error = activeProviderError.value
   return /Provider 未启用|provider is disabled|does not implement/i.test(error)
 })
-const showNcmSearch = computed(() => !isBiliActive.value && isLoggedIn.value)
+const showNcmSearch = computed(() => !isExternalActive.value && isLoggedIn.value)
 const trackUnitLabel = computed(() => (isBiliActive.value ? '个视频' : '首歌曲'))
 const profileSignature = computed(() => activeProfile.value?.signature?.trim() || '暂无个人简介')
 
 const headerTitle = computed(() => {
-  if (isBiliActive.value && currentDetail.value?.type === 'playlist') return currentDetail.value.playlist.name
-  if (isBiliActive.value) return 'Bilibili 收藏夹'
+  if (isExternalActive.value && currentDetail.value?.type === 'playlist')
+    return currentDetail.value.playlist.name
+  if (isExternalActive.value) return activeProviderLabel.value
   if (isSearching.value) return `搜索: ${searchQuery.value.trim()}`
   if (currentDetail.value?.type === 'rec') return currentDetail.value.section.title
   if (currentDetail.value?.type === 'liked') return '我收藏的歌曲'
@@ -357,7 +463,8 @@ const headerTitle = computed(() => {
   return currentView.value?.label ?? '流媒体'
 })
 const headerSubtitle = computed(() => {
-  if (isBiliActive.value) return activeLoggedIn.value ? '已登录账号的视频收藏夹' : '登录后展示全部视频收藏夹'
+  if (isExternalActive.value)
+    return activeLoggedIn.value ? '已登录账号的音乐库' : '登录后展示全部音乐库'
   return timeGreeting.value
 })
 
@@ -371,21 +478,31 @@ const timeGreeting = computed(() => {
   return '夜深了，放一首安静的歌'
 })
 const rootLoading = computed(() =>
-  isBiliActive.value
-    ? biliLibraryLoading.value && !currentDetail.value
+  isExternalActive.value
+    ? (activeExternalState.value?.libraryLoading ?? false) && !currentDetail.value
     : libraryLoading.value && !currentDetail.value
 )
 
-const likedSummary = computed(() => ({
-  name: isBiliActive.value ? 'Bilibili 收藏夹' : '我收藏的歌曲',
-  cover: isBiliActive.value ? (biliLikedPlaylist.value?.cover ?? null) : (likedPlaylist.value?.cover ?? null),
-  trackCount: isBiliActive.value
-    ? biliPlaylists.value.length
-    : (likedCount.value ?? likedPlaylist.value?.trackCount ?? 0)
-}))
+const likedSummary = computed(() => {
+  if (isExternalActive.value) {
+    const state = activeExternalState.value
+    return {
+      name: isBiliActive.value ? 'Bilibili 收藏夹' : '我喜欢的音乐',
+      cover: state?.likedPlaylist?.cover ?? null,
+      trackCount: isBiliActive.value
+        ? (state?.playlists.length ?? 0)
+        : (state?.likedPlaylist?.trackCount ?? 0)
+    }
+  }
+  return {
+    name: '我收藏的歌曲',
+    cover: likedPlaylist.value?.cover ?? null,
+    trackCount: likedCount.value ?? likedPlaylist.value?.trackCount ?? 0
+  }
+})
 
 const userPlaylistEntries = computed(() =>
-  isBiliActive.value ? biliPlaylists.value : userPlaylists.value
+  isExternalActive.value ? (activeExternalState.value?.playlists ?? []) : userPlaylists.value
 )
 
 const currentArtistPlaylists = computed(() =>
@@ -487,7 +604,7 @@ const detailHeaderInfo = computed(() => {
 })
 
 function selectTab(key: StreamingTab): void {
-  if (isBiliActive.value && key !== 'library') return
+  if (isExternalActive.value && key !== 'library') return
   if (activeTab.value !== key) {
     const oldIndex = getStreamingTabIndex(activeTab.value)
     const newIndex = getStreamingTabIndex(key)
@@ -497,40 +614,30 @@ function selectTab(key: StreamingTab): void {
   activeTab.value = key
 }
 
-function selectProvider(provider: StreamingProvider): void {
-  if (activeProvider.value === provider) return
-  activeProvider.value = provider
-  resetDetail()
-  clearSearch()
-  if (provider === 'bili') {
-    activeTab.value = 'library'
-    void refreshBiliState()
-    void ensureBiliLibraryLoaded()
-  } else if (provider === 'ncm' && activeTab.value === 'home' && isLoggedIn.value) {
-    void loadRecommendations()
-  } else {
-    // 通用 provider：默认显示资料库标签
-    const providerInfo = providerStore.getProvider(provider)
-    if (providerInfo?.ui?.streamingLibraryTab !== false) {
-      activeTab.value = 'library'
-    }
-  }
+function selectProvider(provider: string): void {
+  if (preferredProvider.value === provider) return
+  // Only an explicit user action changes the persisted preference; availability
+  // fallbacks never write back, so the choice survives restarts and plugin toggles.
+  preferredProvider.value = provider
+  void settingsStore.updateSettings({ streamingActiveProvider: provider })
 }
 
 function isSidebarItemActive(item: SidebarItem): boolean {
-  if (item.provider === 'bili') return isBiliActive.value
-  return activeProvider.value === 'ncm' && activeTab.value === item.key
+  if (item.provider === NCM_PROVIDER_ID) {
+    return activeProvider.value === NCM_PROVIDER_ID && activeTab.value === item.key
+  }
+  return activeProvider.value === item.provider
 }
 
 function selectSidebarItem(item: SidebarItem): void {
-  if (item.provider === 'bili') {
-    selectProvider('bili')
+  if (item.provider !== NCM_PROVIDER_ID) {
+    selectProvider(item.provider)
     return
   }
-  if (activeProvider.value !== 'ncm') {
-    selectProvider('ncm')
+  if (activeProvider.value !== NCM_PROVIDER_ID) {
+    selectProvider(NCM_PROVIDER_ID)
   }
-  selectTab(item.key)
+  selectTab(item.key as StreamingTab)
 }
 
 function resetDetail(): void {
@@ -591,8 +698,8 @@ async function findArtistByUserName(user: NcmUserSummary): Promise<NcmArtistSumm
 }
 
 async function ensureLibraryLoaded(force = false): Promise<void> {
-  if (isBiliActive.value) {
-    await ensureBiliLibraryLoaded(force)
+  if (isExternalActive.value) {
+    await ensureExternalLibraryLoaded(activeProvider.value, force)
     return
   }
   if (!isLoggedIn.value) return
@@ -603,89 +710,109 @@ async function ensureLibraryLoaded(force = false): Promise<void> {
   }
 }
 
-async function refreshBiliState(): Promise<void> {
+function externalProviderName(id: string): string {
+  return providerStore.getProvider(id)?.name ?? id
+}
+
+async function refreshExternalProviderState(id: string): Promise<void> {
   await providerStore.syncProviders().catch(() => undefined)
-  if (!biliProviderAvailable.value) {
-    biliLoggedIn.value = false
-    biliProfile.value = null
-    biliPlaylists.value = []
-    biliLikedPlaylist.value = null
-    biliPinnedPlaylistIds.value = []
-    biliLibraryLoaded.value = false
+  const state = ensureExternalState(id)
+  if (!isProviderAvailable(id)) {
+    state.loggedIn = false
+    state.profile = null
+    state.playlists = []
+    state.likedPlaylist = null
+    state.pinnedPlaylistIds = []
+    state.libraryLoaded = false
+    state.libraryError = ''
     return
   }
   try {
-    const state = await providerStore.checkLogin('bili')
-    biliLoggedIn.value = state.loggedIn
-    biliProfile.value = state.profile
-      ? {
-          userId: Number(state.profile.userId) || 0,
-          nickname: state.profile.nickname || 'Bilibili 用户',
-          avatarUrl: state.profile.avatarUrl || '',
-          signature: state.profile.signature ?? '',
-          follows: Number(state.profile.follows) || 0,
-          followeds: Number(state.profile.followeds) || 0
-        }
-      : null
-    if (!state.loggedIn) {
-      biliPlaylists.value = []
-      biliLikedPlaylist.value = null
-      biliPinnedPlaylistIds.value = []
-      biliLibraryLoaded.value = false
+    const loginState = await providerStore.checkLogin(id)
+    state.loggedIn = loginState.loggedIn
+    state.profile = loginState.profile ?? null
+    if (!loginState.loggedIn) {
+      state.playlists = []
+      state.likedPlaylist = null
+      state.pinnedPlaylistIds = []
+      state.libraryLoaded = false
     }
-    biliLibraryError.value = ''
+    state.libraryError = ''
   } catch (error) {
-    biliLoggedIn.value = false
-    biliProfile.value = null
-    biliLibraryError.value = error instanceof Error ? error.message : 'Bilibili 登录状态检查失败'
+    state.loggedIn = false
+    state.profile = null
+    state.libraryError =
+      error instanceof Error ? error.message : `${externalProviderName(id)} 登录状态检查失败`
   }
 }
 
-async function ensureBiliLibraryLoaded(force = false): Promise<void> {
-  if (!biliProviderAvailable.value || !biliLoggedIn.value) return
-  if (biliLibraryLoaded.value && !force) return
-  biliLibraryLoading.value = true
-  biliLibraryError.value = ''
+async function ensureExternalLibraryLoaded(id: string, force = false): Promise<void> {
+  const state = ensureExternalState(id)
+  if (!isProviderAvailable(id) || !state.loggedIn) return
+  if (state.libraryLoaded && !force) return
+  state.libraryLoading = true
+  state.libraryError = ''
   try {
-    const library = await providerStore.fetchUserLibrary('bili', force)
-    biliLikedPlaylist.value = library.likedPlaylist ?? null
-    biliPlaylists.value = library.playlists
-    biliPinnedPlaylistIds.value = library.playlists
+    const library = await providerStore.fetchUserLibrary(id, force)
+    state.likedPlaylist = library.likedPlaylist ?? null
+    state.playlists = library.playlists
+    state.pinnedPlaylistIds = library.playlists
       .filter((playlist) => {
         const playlistWithPinned = playlist as MediaProviderPlaylistSummary & { pinned?: boolean }
         return playlistWithPinned.pinned === true
       })
       .map((playlist) => String(playlist.id))
-    biliLibraryLoaded.value = true
+    state.libraryLoaded = true
   } catch (error) {
-    biliLibraryError.value = error instanceof Error ? error.message : '加载 Bilibili 收藏夹失败'
+    state.libraryError =
+      error instanceof Error ? error.message : `加载 ${externalProviderName(id)} 音乐库失败`
   } finally {
-    biliLibraryLoading.value = false
+    state.libraryLoading = false
   }
 }
 
-async function toggleBiliPinnedPlaylist(playlist: MediaProviderPlaylistSummary): Promise<void> {
-  if (!isBiliActive.value || biliPinningPlaylistId.value) return
+async function togglePinnedPlaylist(playlist: MediaProviderPlaylistSummary): Promise<void> {
+  // Pinning is currently a Bilibili-specific extension command; gated by the
+  // bili provider. Future providers can plug in their own pinning command here.
+  if (!isBiliActive.value) return
+  const state = activeExternalState.value
+  if (!state || state.pinningPlaylistId) return
   const playlistId = String(playlist.id)
-  biliPinningPlaylistId.value = playlistId
-  biliLibraryError.value = ''
+  state.pinningPlaylistId = playlistId
+  state.libraryError = ''
   try {
     const result = await window.api.extensions.executeCommand('bilibili.setPinnedFavoriteFolder', [
       { id: playlistId }
     ])
     const record = result && typeof result === 'object' ? (result as Record<string, unknown>) : {}
-    biliPinnedPlaylistIds.value = Array.isArray(record.pinnedFavoriteFolderIds)
+    state.pinnedPlaylistIds = Array.isArray(record.pinnedFavoriteFolderIds)
       ? record.pinnedFavoriteFolderIds.map((id) => String(id)).filter(Boolean)
       : []
-    await ensureBiliLibraryLoaded(true)
+    await ensureExternalLibraryLoaded('bili', true)
   } catch (error) {
-    biliLibraryError.value = error instanceof Error ? error.message : '设置 Bilibili 收藏夹置顶失败'
+    state.libraryError = error instanceof Error ? error.message : '设置 Bilibili 收藏夹置顶失败'
   } finally {
-    biliPinningPlaylistId.value = null
+    state.pinningPlaylistId = null
   }
 }
 
 async function openLikedTracks(force = false): Promise<void> {
+  // External providers (e.g. YouTube Music) expose liked music as a playlist
+  // (ytm's "LM"), so open it through the generic playlist path rather than the
+  // ncm-only fetchLikedTracks.
+  if (isExternalActive.value) {
+    const liked = activeExternalState.value?.likedPlaylist
+    if (liked) {
+      await openPlaylist(liked, force)
+      return
+    }
+    streamingTransitionName.value = 'stream-page-down'
+    currentDetail.value = { type: 'liked' }
+    detailTracks.value = []
+    detailLoading.value = false
+    return
+  }
+
   streamingTransitionName.value = 'stream-page-down'
   currentDetail.value = { type: 'liked' }
   const token = beginDetailLoad()
@@ -713,8 +840,8 @@ async function openPlaylist(playlist: MediaProviderPlaylistSummary, force = fals
   const token = beginDetailLoad()
 
   try {
-    const tracks = isBiliActive.value
-      ? await providerStore.fetchPlaylistTracks('bili', playlist.id, force)
+    const tracks = isExternalActive.value
+      ? await providerStore.fetchPlaylistTracks(activeProvider.value, playlist.id, force)
       : await fetchPlaylistTracks(playlist.id, force)
     if (!isActiveDetailLoad(token)) return
     detailTracks.value = tracks
@@ -897,7 +1024,15 @@ function onTrackClick(track: Track): void {
 }
 
 async function playLikedSongs(): Promise<void> {
-  if (currentDetail.value?.type !== 'liked') {
+  // For external providers the liked view is a playlist detail; detect it so we
+  // don't re-open it on every play click.
+  const likedId = activeExternalState.value?.likedPlaylist?.id
+  const isViewingLiked =
+    currentDetail.value?.type === 'liked' ||
+    (isExternalActive.value &&
+      currentDetail.value?.type === 'playlist' &&
+      currentDetail.value.playlist.id === likedId)
+  if (!isViewingLiked) {
     await openLikedTracks()
   }
   if (detailTracks.value.length > 0) {
@@ -929,10 +1064,51 @@ async function retryCurrentView(): Promise<void> {
   await ensureLibraryLoaded(true)
 }
 
+// Keep preferredProvider in sync with persisted settings (initial load and
+// any external change). This is how the app restores the user's last provider
+// choice after restart.
+watch(
+  () => settingsStore.settings.value.streamingActiveProvider,
+  (pref) => {
+    if (typeof pref === 'string' && pref && pref !== preferredProvider.value) {
+      preferredProvider.value = pref
+    }
+  }
+)
+
+// Side effects of switching the resolved active provider (user toggle, plugin
+// enable/disable, or restore after restart). activeProvider falls back to ncm
+// automatically when the preferred provider is unavailable, so we only act on
+// real changes.
+watch(activeProvider, async (provider, oldProvider) => {
+  if (provider === oldProvider) return
+  resetDetail()
+  clearSearch()
+  if (provider === NCM_PROVIDER_ID) {
+    if (activeTab.value === 'home' && isLoggedIn.value) {
+      loadRecommendations()
+    } else if (activeTab.value === 'library') {
+      await ensureLibraryLoaded()
+    }
+    return
+  }
+  // External provider: default to the library tab and load its state.
+  const providerInfo = providerStore.getProvider(provider)
+  if (providerInfo?.ui?.streamingLibraryTab !== false) {
+    activeTab.value = 'library'
+  }
+  await refreshExternalProviderState(provider)
+  await ensureExternalLibraryLoaded(provider)
+})
+
 watch(activeTab, async (tab) => {
-  if (isBiliActive.value) {
-    if (tab !== 'library') activeTab.value = 'library'
-    if (biliLoggedIn.value) await ensureBiliLibraryLoaded()
+  if (isExternalActive.value) {
+    if (tab !== 'library') {
+      activeTab.value = 'library'
+      return
+    }
+    const state = ensureExternalState(activeProvider.value)
+    if (state.loggedIn) await ensureExternalLibraryLoaded(activeProvider.value)
     return
   }
   if (tab === 'home' && isLoggedIn.value) {
@@ -954,6 +1130,7 @@ watch(
       privateContentSongs.value = []
       return
     }
+    if (isExternalActive.value) return
     if (activeTab.value === 'home') {
       loadRecommendations()
     }
@@ -963,29 +1140,25 @@ watch(
   }
 )
 
-watch(
-  () => biliProviderAvailable.value,
-  async (available) => {
-    if (!available && isBiliActive.value) {
-      selectProvider('ncm')
-      return
-    }
-    if (available) {
-      await refreshBiliState()
-    }
-  }
-)
-
 onMounted(async () => {
   await providerStore.syncProviders().catch(() => undefined)
-  if (biliProviderAvailable.value) {
-    await refreshBiliState()
+  // syncProviders may have resolved the preferred external provider, in which
+  // case the activeProvider watcher above already handles the initial load.
+  if (activeProvider.value === NCM_PROVIDER_ID) {
+    if (activeTab.value === 'home' && isLoggedIn.value) {
+      loadRecommendations()
+    } else if (activeTab.value === 'library') {
+      await ensureLibraryLoaded()
+    }
+    return
   }
-  if (activeTab.value === 'home' && isLoggedIn.value) {
-    loadRecommendations()
-  }
-  if (activeTab.value === 'library') {
-    await ensureLibraryLoaded()
+  // External provider active (e.g. returning from a successful login on the
+  // login page): re-check login state and load the library. The provider id
+  // didn't change, so the activeProvider watcher won't fire — we must refresh
+  // explicitly here, otherwise a just-completed login wouldn't be reflected.
+  await refreshExternalProviderState(activeProvider.value)
+  if (activeExternalState.value?.loggedIn) {
+    await ensureExternalLibraryLoaded(activeProvider.value)
   }
 })
 </script>
@@ -1042,7 +1215,7 @@ onMounted(async () => {
               {{ headerSubtitle }}
             </p>
             <p
-              v-else-if="isBiliActive && !currentDetail && !isSearching"
+              v-else-if="isExternalActive && !currentDetail && !isSearching"
               class="streaming-content-subtitle"
             >
               {{ headerSubtitle }}
@@ -1159,13 +1332,13 @@ onMounted(async () => {
           <div v-else-if="(!activeProviderAvailable || activeProviderUnavailable) && !currentDetail" class="streaming-placeholder">
             <i class="pi pi-ban" style="font-size: 48px; color: #ccc"></i>
             <p class="placeholder-title">
-              {{ isBiliActive ? 'Bilibili 插件已停用' : '网易云音乐插件已停用' }}
+              {{ isExternalActive ? `${activeProviderLabel} 插件已停用` : '网易云音乐插件已停用' }}
             </p>
             <p class="placeholder-hint">
               {{
                 activeProviderError ||
-                (isBiliActive
-                  ? '请在设置的插件页重新启用 Bilibili Provider。'
+                (isExternalActive
+                  ? `请在设置的插件页重新启用 ${activeProviderLabel}。`
                   : '请在设置的插件页重新启用 NetEase Cloud Music。')
               }}
             </p>
@@ -1174,12 +1347,12 @@ onMounted(async () => {
           <div v-else-if="!activeLoggedIn && !currentDetail" class="streaming-placeholder">
             <i class="pi pi-user" style="font-size: 48px; color: #ccc"></i>
             <p class="placeholder-title">
-              {{ isBiliActive ? '请先登录 Bilibili' : '请先登录网易云音乐' }}
+              {{ isExternalActive ? `请先登录 ${activeProviderLabel}` : '请先登录网易云音乐' }}
             </p>
             <p class="placeholder-hint">
               {{
-                isBiliActive
-                  ? '登录后即可加载全部视频收藏夹'
+                isExternalActive
+                  ? '登录后即可加载全部音乐库'
                   : '登录后即可加载我收藏的歌曲和在线歌单'
               }}
             </p>
@@ -1250,7 +1423,7 @@ onMounted(async () => {
                       <th class="col-cover-header"></th>
                       <th class="col-index">#</th>
                       <th class="col-info">标题</th>
-                      <th v-if="!isBiliActive" class="col-like-header"></th>
+                      <th v-if="!isExternalActive" class="col-like-header"></th>
                       <th class="col-album">专辑</th>
                       <th class="col-duration">时长</th>
                     </tr>
@@ -1279,7 +1452,7 @@ onMounted(async () => {
                           :style="{ animationDelay: `${i * 0.05}s` }"
                         ></div>
                       </td>
-                      <td v-if="!isBiliActive" class="col-like"></td>
+                      <td v-if="!isExternalActive" class="col-like"></td>
                       <td class="col-album">
                         <div
                           class="skeleton-box skeleton-album-box"
@@ -1444,7 +1617,7 @@ onMounted(async () => {
                       <th class="col-cover-header">{{ detailTracks.length }} 首</th>
                       <th class="col-index">#</th>
                       <th class="col-info">标题</th>
-                      <th v-if="!isBiliActive" class="col-like-header"></th>
+                      <th v-if="!isExternalActive" class="col-like-header"></th>
                       <th class="col-album">专辑</th>
                       <th class="col-duration">时长</th>
                     </tr>
@@ -1474,7 +1647,7 @@ onMounted(async () => {
                         <div class="track-title">{{ track.title }}</div>
                         <div class="track-artist">{{ track.artist }}</div>
                       </td>
-                      <td v-if="!isBiliActive" class="col-like">
+                      <td v-if="!isExternalActive" class="col-like">
                         <button
                           class="btn-like"
                           :class="{
@@ -1545,22 +1718,26 @@ onMounted(async () => {
           <StreamingLibrary
             v-else-if="activeTab === 'library' && !currentDetail"
             :is-logged-in="activeLoggedIn"
-            :provider-label="isBiliActive ? 'Bilibili' : '网易云音乐'"
+            :provider-label="activeProviderLabel"
             :profile="activeProfile"
             :profile-signature="profileSignature"
             :liked-summary="likedSummary"
             :library-loaded="activeLibraryLoaded"
             :user-playlist-entries="userPlaylistEntries"
             :show-liked-panel="!isBiliActive"
-            :show-social-stats="!isBiliActive"
+            :show-social-stats="!isExternalActive"
+            :show-feature-cards="!isExternalActive"
             :allow-pin-playlists="isBiliActive"
-            :pinned-playlist-ids="biliPinnedPlaylistIds"
-            :pinning-playlist-id="biliPinningPlaylistId"
+            :pinned-playlist-ids="activeExternalState?.pinnedPlaylistIds ?? []"
+            :pinning-playlist-id="activeExternalState?.pinningPlaylistId ?? null"
+            :available-providers="libraryProviders"
+            :active-provider="activeProvider"
+            @switch-provider="selectProvider"
             @open-user-list="openUserList"
             @open-liked-tracks="openLikedTracks"
             @play-liked-songs="playLikedSongs"
             @open-playlist="openPlaylist"
-            @toggle-pinned-playlist="toggleBiliPinnedPlaylist"
+            @toggle-pinned-playlist="togglePinnedPlaylist"
             @open-recent="openRecent"
             @open-ranking="openRanking"
           />

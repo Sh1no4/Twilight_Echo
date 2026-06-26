@@ -848,7 +848,8 @@ export class TwilightPluginManager extends EventEmitter {
         : undefined,
       streamingSections,
       streamingLibraryTab: typeof record.streamingLibraryTab === 'boolean' ? record.streamingLibraryTab : undefined,
-      streamingSearch: typeof record.streamingSearch === 'boolean' ? record.streamingSearch : undefined
+      streamingSearch: typeof record.streamingSearch === 'boolean' ? record.streamingSearch : undefined,
+      unifiedLibrary: typeof record.unifiedLibrary === 'boolean' ? record.unifiedLibrary : undefined
     }
   }
 

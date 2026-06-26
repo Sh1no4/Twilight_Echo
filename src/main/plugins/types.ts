@@ -180,6 +180,13 @@ export interface TwilightProviderUiMetadata {
   streamingLibraryTab?: boolean
   /** 是否在流媒体页显示"搜索"功能 */
   streamingSearch?: boolean
+  /**
+   * 是否接入统一的"音乐库"切换器（个人资料卡上的音源下拉）。
+   * 设为 true 的 provider 会出现在音乐库下拉中，与网易云音乐并列切换，
+   * 不再在侧边栏占据独立条目；未设置或为 false 的 provider 仍以独立
+   * 侧边栏条目展示（如 Bilibili 收藏夹）。便于未来新音源插件直接接入。
+   */
+  unifiedLibrary?: boolean
 }
 
 /**

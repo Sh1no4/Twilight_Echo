@@ -152,6 +152,7 @@ interface AppSettings {
   proxyMode: ProxyMode
   proxyHost: string
   proxyPort: number
+  streamingActiveProvider: string
 }
 
 interface PlaybackSession {
@@ -219,7 +220,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   desktopLyrics: { ...DEFAULT_DESKTOP_LYRICS },
   proxyMode: 'auto',
   proxyHost: '',
-  proxyPort: 0
+  proxyPort: 0,
+  streamingActiveProvider: 'ncm'
 }
 
 const PLAYER_SHORTCUTS: { accelerator: string; action: PlayerShortcutAction; label: string }[] = [
@@ -466,7 +468,12 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
     desktopLyrics: normalizeDesktopLyrics(settings.desktopLyrics),
     proxyMode: normalizeProxyMode(settings.proxyMode),
     proxyHost: typeof settings.proxyHost === 'string' ? settings.proxyHost.trim().slice(0, 255) : '',
-    proxyPort: clampNumber(settings.proxyPort, 0, 65535, 0)
+    proxyPort: clampNumber(settings.proxyPort, 0, 65535, 0),
+    streamingActiveProvider:
+      typeof settings.streamingActiveProvider === 'string' &&
+      settings.streamingActiveProvider.trim()
+        ? settings.streamingActiveProvider.trim()
+        : DEFAULT_SETTINGS.streamingActiveProvider
   }
 }
 

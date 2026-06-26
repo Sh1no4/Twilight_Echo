@@ -15,6 +15,7 @@ const emit = defineEmits<{
   selectView: [category: string, filter: string | null]
   selectPluginPage: [page: UiContribution]
   enterStreaming: []
+  enterBilibili: []
 }>()
 
 
@@ -92,6 +93,14 @@ function handleImportClick(): void {
           <span class="item-label">{{ page.title }}</span>
         </div>
         <div v-if="(props.pluginPages?.length ?? 0) > 0" class="menu-separator"></div>
+        <div
+          class="menu-item menu-item-streaming"
+          :class="{ active: props.activeKey === 'bilibili' }"
+          @click="emit('enterBilibili')"
+        >
+          <i class="item-icon pi pi-video"></i>
+          <span class="item-label">Bilibili</span>
+        </div>
         <div class="menu-item menu-item-streaming" @click="emit('enterStreaming')">
           <i class="item-icon pi pi-globe"></i>
           <span class="item-label">流媒体</span>

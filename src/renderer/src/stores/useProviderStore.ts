@@ -40,6 +40,8 @@ export interface ProviderUiMetadata {
   }>
   streamingLibraryTab?: boolean
   streamingSearch?: boolean
+  /** 接入统一音乐库切换器（资料卡音源下拉），不再占侧边栏独立条目 */
+  unifiedLibrary?: boolean
 }
 
 export interface ProviderInfo {
@@ -70,20 +72,36 @@ export interface OnlineProviderStore {
 const providers = ref<ProviderInfo[]>([])
 const providerIds = computed(() => new Set(providers.value.map((provider) => provider.id)))
 
+async function syncProviders(): Promise<void> {
+  const list = await window.api.providers.list()
+  providers.value = list.map((provider) => ({
+    id: provider.id,
+    name: provider.name,
+    capabilities: provider.capabilities,
+    ui: provider.ui as ProviderUiMetadata | undefined
+  }))
+}
+
+// Keep the provider list in sync with the plugin lifecycle so the streaming
+// library toggle reacts to providers being enabled/disabled at runtime — the
+// toggle button appears once a second library provider registers and disappears
+// again when that provider is gone.
+let pluginChangeListenerSetup = false
+function ensurePluginChangeListener(): void {
+  if (pluginChangeListenerSetup) return
+  if (typeof window === 'undefined' || !window.api?.plugins?.onChanged) return
+  pluginChangeListenerSetup = true
+  window.api.plugins.onChanged(() => {
+    void syncProviders().catch(() => undefined)
+  })
+}
+
 async function callProvider<T>(providerId: string, method: string, args: unknown[] = []): Promise<T> {
   return (await window.api.providers.call(providerId, method as never, args)) as T
 }
 
 export function useProviderStore(): OnlineProviderStore {
-  async function syncProviders(): Promise<void> {
-    const list = await window.api.providers.list()
-    providers.value = list.map((provider) => ({
-      id: provider.id,
-      name: provider.name,
-      capabilities: provider.capabilities,
-      ui: provider.ui as ProviderUiMetadata | undefined
-    }))
-  }
+  ensurePluginChangeListener()
 
   function hasProvider(id: string): boolean {
     return providerIds.value.has(id)

@@ -252,6 +252,7 @@ interface AppSettings {
   proxyMode: ProxyMode
   proxyHost: string
   proxyPort: number
+  streamingActiveProvider: string
 }
 
 interface OpraCatalogStatus {
@@ -491,6 +492,7 @@ interface TwilightProviderUiMetadata {
   streamingSections?: TwilightProviderStreamingSection[]
   streamingLibraryTab?: boolean
   streamingSearch?: boolean
+  unifiedLibrary?: boolean
 }
 
 interface TwilightMediaProviderRegistration {
