@@ -1064,13 +1064,17 @@ async function ensureCurrentTrackLyricsLoaded(triggerTrack: Track | null = curre
       triggerTrack.fileName,
       triggerTrack.filePath
     )
-    if (lrc && currentTrack.value?.id === triggerTrack.id && currentTrack.value.lyrics == null) {
-      const updatedTrack = { ...currentTrack.value, lyrics: lrc }
+    if (currentTrack.value?.id === triggerTrack.id && currentTrack.value.lyrics == null) {
+      const updatedTrack = { ...currentTrack.value, lyrics: lrc ?? '' }
       currentTrack.value = updatedTrack
       patchTrackInQueues(updatedTrack)
     }
   } catch {
-    // ignore — no lyrics file found
+    if (currentTrack.value?.id === triggerTrack.id && currentTrack.value.lyrics == null) {
+      const updatedTrack = { ...currentTrack.value, lyrics: '' }
+      currentTrack.value = updatedTrack
+      patchTrackInQueues(updatedTrack)
+    }
   }
 }
 

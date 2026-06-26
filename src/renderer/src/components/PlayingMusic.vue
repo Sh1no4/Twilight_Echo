@@ -17,6 +17,7 @@ import { useSettingsStore } from '../stores/useSettingsStore'
 import { useCover } from '../utils/coverLoader'
 import { buildLyricLines } from '../utils/lyrics'
 import type { LyricLine } from '../utils/lyrics'
+import { getTrackSource, shouldReserveLyricsColumn } from '../utils/nowPlayingLayout'
 
 const { currentTrack, dominantColor, currentTime, duration, seek, formatTime } = usePlayerStore()
 const { settings } = useSettingsStore()
@@ -159,6 +160,14 @@ const lyricLines = computed<LyricLine[]>(() => {
 })
 
 const hasLyrics = computed(() => lyricLines.value.length > 0)
+const reserveLyricsColumn = computed(() =>
+  shouldReserveLyricsColumn({
+    source: getTrackSource(currentTrack.value),
+    hasLyrics: hasLyrics.value,
+    lyrics: currentTrack.value?.lyrics,
+    translatedLyrics: currentTrack.value?.translatedLyrics
+  })
+)
 
 const activeLyricIndex = computed(() => {
   const t = currentTime.value
@@ -376,7 +385,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="currentTrack" class="stage">
-      <main class="layout" :class="{ 'layout--single': !hasLyrics }">
+      <main class="layout" :class="{ 'layout--single': !reserveLyricsColumn }">
         <section class="cover-column">
           <div class="cover-frame">
             <img
@@ -397,7 +406,11 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section v-if="hasLyrics" class="lyrics-column">
+        <section
+          v-if="reserveLyricsColumn"
+          class="lyrics-column"
+          :class="{ 'lyrics-column--pending': !hasLyrics }"
+        >
           <div class="lyrics-head">
             <div class="time-chip">{{ formatTime(currentTime) }} / {{ trackDurationLabel }}</div>
           </div>
@@ -666,6 +679,11 @@ onBeforeUnmount(() => {
   flex-direction: column;
   padding-left: 6px;
   align-self: stretch;
+}
+
+.lyrics-column--pending {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .lyrics-head {
