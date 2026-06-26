@@ -1165,14 +1165,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <BilibiliPage
-    v-if="showBilibiliView"
-    :menu-open="menuOpen"
-    :has-player="hasPlayer"
-    @toggle-menu="emit('toggleMenu')"
-    @back-to-local="showBilibiliView = false"
-  />
-  <div v-else class="streaming-page" :class="{ 'has-player': hasPlayer }">
+  <div class="streaming-page" :class="{ 'has-player': hasPlayer }">
     <div
       class="streaming-sidebar"
       :class="{ open: menuOpen }"
@@ -1203,7 +1196,15 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div class="streaming-content">
+    <BilibiliPage
+      v-if="showBilibiliView"
+      class="streaming-content"
+      :menu-open="menuOpen"
+      :has-player="hasPlayer"
+      @toggle-menu="emit('toggleMenu')"
+      @back-to-local="showBilibiliView = false"
+    />
+    <div v-else class="streaming-content">
       <div class="streaming-content-header">
         <div class="streaming-header-left">
           <button

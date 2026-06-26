@@ -893,9 +893,9 @@ onBeforeUnmount(() => {
   --bili-accent: #00a1d6;
   --bili-accent-soft: rgba(0, 161, 214, 0.12);
   --bili-accent-ring: rgba(0, 161, 214, 0.16);
-  position: fixed;
-  inset: 0;
-  z-index: 50;
+  position: relative;
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
