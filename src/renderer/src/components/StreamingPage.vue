@@ -17,6 +17,7 @@ import type {
 import StreamingHome from './StreamingHome.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
 import StreamingSearch from './StreamingSearch.vue'
+import BilibiliPage from './BilibiliPage.vue'
 
 interface PageState {
   first: number
@@ -51,6 +52,7 @@ defineProps<{
 const activeTab = ref<StreamingTab>('home')
 const streamingTransitionName = ref('stream-page-down')
 const currentDetail = ref<DetailView | null>(null)
+const showBilibiliView = ref(false)
 const detailTracks = ref<Track[]>([])
 const detailUsers = ref<NcmUserSummary[]>([])
 const artistPlaylists = ref<NcmPlaylistSummary[]>([])
@@ -121,17 +123,9 @@ const preferredProvider = ref<string>(
 // Resolved active provider: preferred when available, else fall back to ncm.
 // Keeps the user's choice across restarts while degrading gracefully when a
 // plugin is disabled (falls back to ncm until the plugin returns).
-// Providers that opt out of the streaming library tab (e.g. Bilibili, now a
-// standalone top-level page) no longer participate in the streaming view and
-// also fall back to ncm here, so a persisted preference never strands the user
-// on a provider with no streaming sidebar entry.
-const activeProvider = computed<string>(() => {
-  const preferred = preferredProvider.value
-  if (!isProviderAvailable(preferred)) return NCM_PROVIDER_ID
-  const info = providerStore.getProvider(preferred)
-  if (info?.ui?.streamingLibraryTab === false) return NCM_PROVIDER_ID
-  return preferred
-})
+const activeProvider = computed<string>(() =>
+  isProviderAvailable(preferredProvider.value) ? preferredProvider.value : NCM_PROVIDER_ID
+)
 
 const isExternalActive = computed(() => activeProvider.value !== NCM_PROVIDER_ID)
 const isBiliActive = computed(() => activeProvider.value === 'bili')
@@ -623,6 +617,9 @@ function selectProvider(provider: string): void {
 }
 
 function isSidebarItemActive(item: SidebarItem): boolean {
+  if (item.provider === 'bili') {
+    return showBilibiliView.value
+  }
   if (item.provider === NCM_PROVIDER_ID) {
     return activeProvider.value === NCM_PROVIDER_ID && activeTab.value === item.key
   }
@@ -630,6 +627,10 @@ function isSidebarItemActive(item: SidebarItem): boolean {
 }
 
 function selectSidebarItem(item: SidebarItem): void {
+  if (item.provider === 'bili') {
+    showBilibiliView.value = true
+    return
+  }
   if (item.provider !== NCM_PROVIDER_ID) {
     selectProvider(item.provider)
     return
@@ -1164,7 +1165,14 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="streaming-page" :class="{ 'has-player': hasPlayer }">
+  <BilibiliPage
+    v-if="showBilibiliView"
+    :menu-open="menuOpen"
+    :has-player="hasPlayer"
+    @toggle-menu="emit('toggleMenu')"
+    @back-to-local="showBilibiliView = false"
+  />
+  <div v-else class="streaming-page" :class="{ 'has-player': hasPlayer }">
     <div
       class="streaming-sidebar"
       :class="{ open: menuOpen }"

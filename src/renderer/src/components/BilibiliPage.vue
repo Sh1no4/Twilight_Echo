@@ -504,9 +504,9 @@ onBeforeUnmount(() => {
             <i class="pi pi-times"></i>
           </button>
         </div>
-        <button class="bili-local-btn" title="返回本地音乐" @click="emit('backToLocal')">
-          <i class="pi pi-desktop"></i>
-          <span>本地</span>
+        <button class="bili-local-btn" title="返回流媒体" @click="emit('backToLocal')">
+          <i class="pi pi-globe"></i>
+          <span>流媒体</span>
         </button>
         <div
           v-if="loggedIn && profile?.avatarUrl"
