@@ -325,7 +325,7 @@ html[data-theme='pureWhite'] .title-bar.title-bar-settings::before {
 }
 
 html[data-theme='pureWhite'] .title-bar.title-bar-streaming {
-  background: var(--te-streaming-surface);
+  background: #fff;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -335,7 +335,7 @@ html[data-theme='pureWhite'] .title-bar.title-bar-menu-open:not(.title-bar-glass
 }
 
 html[data-theme='pureWhite'] .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
-  background: var(--te-streaming-surface);
+  background: #fff;
 }
 
 html[data-theme='pureWhite'] .title-bar::before {
@@ -697,7 +697,7 @@ html[data-theme='dark'] .title-bar.title-bar-settings {
 }
 
 html[data-theme='dark'] .title-bar.title-bar-streaming {
-  background: #080b12;
+  background: #fff;
   border-bottom-color: transparent;
   box-shadow: none;
 }

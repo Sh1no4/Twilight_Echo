@@ -44,8 +44,7 @@ let restoringLyricScroll = false
 const LYRIC_SCROLL_DURATION_MS = 420
 const LYRIC_RESIZE_SCROLL_DURATION_MS = 260
 const LYRIC_MANUAL_RETURN_DELAY_MS = 3000
-const LYRIC_CENTER_OFFSET_RATIO = 0.08
-const LYRIC_CENTER_OFFSET_MAX = 72
+const LYRIC_ACTIVE_ANCHOR_RATIO = 0.58
 
 function currentTrackId(): string {
   return currentTrack.value?.id ?? ''
@@ -228,14 +227,9 @@ function getLyricTargetTop(index: number): number | null {
     current = current.offsetParent as HTMLElement | null
   }
 
-  const centerOffset = Math.min(
-    LYRIC_CENTER_OFFSET_MAX,
-    container.clientHeight * LYRIC_CENTER_OFFSET_RATIO
-  )
   const targetTop =
     lineOffsetTop -
-    (container.clientHeight - line.offsetHeight) * 0.5 +
-    centerOffset
+    (container.clientHeight - line.offsetHeight) * LYRIC_ACTIVE_ANCHOR_RATIO
   const maxTop = Math.max(0, container.scrollHeight - container.clientHeight)
 
   return Math.min(maxTop, Math.max(0, targetTop))
@@ -596,7 +590,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 18px;
   align-self: center;
-  transform: translateX(28px);
+  transform: translateX(44px);
 }
 
 .cover-frame {

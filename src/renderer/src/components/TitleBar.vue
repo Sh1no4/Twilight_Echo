@@ -153,7 +153,7 @@ function close(): void {
 }
 
 .title-bar.title-bar-streaming {
-  background: var(--te-streaming-surface);
+  background: #fff;
   border-bottom-color: transparent;
   box-shadow: none;
   backdrop-filter: none;
@@ -165,7 +165,7 @@ function close(): void {
 }
 
 .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
-  background: var(--te-streaming-surface);
+  background: #fff;
 }
 
 .title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings)::before {

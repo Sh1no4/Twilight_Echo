@@ -3131,7 +3131,7 @@ onMounted(async () => {
 
 /* ===== White Card Streaming Refinement ===== */
 .streaming-page {
-  background: #fafbfe;
+  background: #fff;
 }
 
 .streaming-sidebar.open {

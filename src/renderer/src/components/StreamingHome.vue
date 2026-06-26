@@ -28,7 +28,19 @@ const dailySection = computed(() => props.recSections.find((item) => item.key ==
 
 const dailyDesc = '根据你的音乐口味与听歌习惯，为你生成专属的今日推荐歌单。每日 06:00 更新，开启新的一天。'
 
-const dailyCover = computed(() => dailySection.value?.tracks[0]?.cover ?? null)
+const dailyCoverIndex = ref(0)
+const dailyCovers = computed(() =>
+  (dailySection.value?.tracks ?? [])
+    .map((track) => track.cover)
+    .filter((cover): cover is string => Boolean(cover))
+)
+const dailyCover = computed(() => dailyCovers.value[dailyCoverIndex.value] ?? null)
+
+function showNextDailyCover(): void {
+  const covers = dailyCovers.value
+  if (covers.length <= 1) return
+  dailyCoverIndex.value = (dailyCoverIndex.value + 1) % covers.length
+}
 
 function openDaily(): void {
   const section = dailySection.value
@@ -74,6 +86,15 @@ watch(
   () => props.recommendPlaylists,
   () => {
     void nextTick(updatePlaylistScrollState)
+  }
+)
+
+watch(
+  dailyCovers,
+  (covers) => {
+    if (dailyCoverIndex.value >= covers.length) {
+      dailyCoverIndex.value = 0
+    }
   }
 )
 </script>
@@ -122,7 +143,14 @@ watch(
               </span>
             </span>
             <span class="feature-hero-cover" :class="{ 'is-placeholder': !dailyCover }">
-              <img v-if="dailyCover" :src="dailyCover" class="feature-hero-cover-img" alt="" />
+              <img
+                v-if="dailyCover"
+                :key="dailyCover"
+                :src="dailyCover"
+                class="feature-hero-cover-img"
+                alt=""
+                @animationend="showNextDailyCover"
+              />
               <template v-else>
                 <i class="pi pi-calendar"></i>
               </template>
@@ -889,6 +917,7 @@ watch(
   border-radius: 24px;
   overflow: hidden;
   text-align: left;
+  box-shadow: 0 12px 28px rgba(34, 42, 68, 0.06);
 }
 
 .feature-hero-copy {
@@ -1028,7 +1057,7 @@ watch(
 
 .feature-hero:hover {
   transform: translateY(-4px);
-  box-shadow: 0 24px 48px rgba(34, 42, 68, 0.13);
+  box-shadow: 0 14px 32px rgba(34, 42, 68, 0.075);
 }
 
 .feature-hero:hover .feature-hero-cta i {
