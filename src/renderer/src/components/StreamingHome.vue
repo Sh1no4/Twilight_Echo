@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { Track } from '../types/music'
 import type { NcmPlaylistSummary } from '../stores/useNcmStore'
 
@@ -8,14 +8,6 @@ interface RecSection {
   title: string
   tracks: Track[]
   icon: string
-}
-
-interface FeatureCard {
-  key: 'daily' | 'fm' | 'radar'
-  title: string
-  desc: string
-  icon: string
-  accent: string
 }
 
 const props = defineProps<{
@@ -32,32 +24,14 @@ const emit = defineEmits<{
   openPlaylist: [playlist: NcmPlaylistSummary]
 }>()
 
-const featureCards: FeatureCard[] = [
-  {
-    key: 'daily',
-    title: '每日推荐',
-    desc: '为你精选好音乐',
-    icon: 'pi pi-heart-fill',
-    accent: 'lilac'
-  },
-  {
-    key: 'fm',
-    title: '私人漫游',
-    desc: '基于你的音乐偏好',
-    icon: 'pi pi-compass',
-    accent: 'sunset'
-  },
-  {
-    key: 'radar',
-    title: '私人雷达',
-    desc: '发现你可能喜欢',
-    icon: 'pi pi-send',
-    accent: 'aqua'
-  }
-]
+const dailySection = computed(() => props.recSections.find((item) => item.key === 'daily') ?? null)
 
-function openFeature(key: FeatureCard['key']): void {
-  const section = props.recSections.find((item) => item.key === key)
+const dailyDesc = '根据你的音乐口味与听歌习惯，为你生成专属的今日推荐歌单。每日 06:00 更新，开启新的一天。'
+
+const dailyCover = computed(() => dailySection.value?.tracks[0]?.cover ?? null)
+
+function openDaily(): void {
+  const section = dailySection.value
   if (section) {
     emit('openRecSection', section)
   }
@@ -102,7 +76,6 @@ watch(
     void nextTick(updatePlaylistScrollState)
   }
 )
-
 </script>
 
 <template>
@@ -138,21 +111,21 @@ watch(
     <div v-else class="stream-home-content">
       <section class="quick-section" aria-label="快捷推荐">
         <div class="feature-strip">
-          <button
-            v-for="card in featureCards"
-            :key="card.key"
-            class="feature-card"
-            :class="`feature-${card.accent}`"
-            type="button"
-            @click="openFeature(card.key)"
-          >
-            <span class="feature-glow"></span>
-            <span class="feature-art">
-              <i :class="card.icon"></i>
+          <button class="feature-card feature-hero" type="button" @click="openDaily">
+            <span class="feature-hero-copy">
+              <span class="feature-hero-title">每日推荐</span>
+              <span class="feature-hero-subtitle">Daily Mix</span>
+              <span class="feature-hero-desc">{{ dailyDesc }}</span>
+              <span class="feature-hero-cta">
+                <i class="pi pi-play"></i>
+                播放全部
+              </span>
             </span>
-            <span class="feature-copy">
-              <span class="feature-title">{{ card.title }}</span>
-              <span class="feature-desc">{{ card.desc }}</span>
+            <span class="feature-hero-cover" :class="{ 'is-placeholder': !dailyCover }">
+              <img v-if="dailyCover" :src="dailyCover" class="feature-hero-cover-img" alt="" />
+              <template v-else>
+                <i class="pi pi-calendar"></i>
+              </template>
             </span>
           </button>
         </div>
@@ -474,98 +447,6 @@ watch(
   opacity: 0.72;
 }
 
-.feature-glow {
-  position: absolute;
-  right: -22px;
-  top: -24px;
-  width: 112px;
-  height: 112px;
-  border-radius: 999px;
-  opacity: 0.82;
-  filter: blur(5px);
-  transition: transform 0.32s var(--te-ease-soft);
-}
-
-.feature-card:hover .feature-glow {
-  transform: translate3d(-8px, 8px, 0) scale(1.08);
-}
-
-.feature-lilac .feature-glow {
-  background:
-    radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.62), transparent 22%),
-    radial-gradient(circle, rgba(124, 77, 255, 0.16), transparent 72%);
-}
-
-.feature-sunset .feature-glow {
-  background:
-    radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.62), transparent 22%),
-    radial-gradient(circle, rgba(255, 126, 182, 0.15), transparent 72%);
-}
-
-.feature-aqua .feature-glow {
-  background:
-    radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.62), transparent 22%),
-    radial-gradient(circle, rgba(34, 211, 238, 0.13), transparent 72%);
-}
-
-.feature-magenta .feature-glow {
-  background:
-    radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.62), transparent 22%),
-    radial-gradient(circle, rgba(232, 67, 147, 0.13), transparent 72%);
-}
-
-.feature-art,
-.feature-copy {
-  position: relative;
-  z-index: 1;
-}
-
-.feature-art {
-  display: grid;
-  place-items: center;
-  width: 48px;
-  height: 48px;
-  border-radius: 10px;
-  color: var(--te-primary-500);
-  background:
-    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.92), transparent 36%),
-    linear-gradient(135deg, rgba(124, 77, 255, 0.15), rgba(34, 211, 238, 0.09));
-  box-shadow:
-    0 14px 30px rgba(86, 70, 160, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.66);
-}
-
-.feature-art i {
-  font-size: 17px;
-}
-
-.feature-copy {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  margin-top: 24px;
-}
-
-.feature-title {
-  font-size: 15px;
-  line-height: 1.25;
-  font-weight: 800;
-  color: var(--te-neutral-900);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.feature-desc {
-  margin-top: 6px;
-  font-size: 12px;
-  font-weight: 500;
-  color: rgba(80, 88, 116, 0.62);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .more-btn {
   display: inline-flex;
   align-items: center;
@@ -853,30 +734,10 @@ watch(
     inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
-.feature-glow {
-  right: -18px;
-  top: -20px;
-  width: 88px;
-  height: 88px;
-  opacity: 0.72;
-}
-
-.feature-art {
-  width: 42px;
-  height: 42px;
-  border-radius: 8px;
-}
-
-.feature-copy {
-  margin-top: 18px;
-}
-
-.feature-title,
 .playlist-name {
   color: #232743;
 }
 
-.feature-desc,
 .playlist-count,
 .section-heading p {
   color: rgba(82, 90, 122, 0.62);
@@ -920,7 +781,7 @@ watch(
   width: 100%;
   height: auto;
   aspect-ratio: 1;
-  border-radius: 8px;
+  border-radius: 16px;
   box-shadow: 0 16px 32px rgba(86, 70, 160, 0.14);
 }
 
@@ -973,8 +834,7 @@ watch(
 }
 
 .feature-card::before,
-.feature-card::after,
-.feature-glow {
+.feature-card::after {
   display: none;
 }
 
@@ -991,49 +851,6 @@ watch(
 .feature-card:hover {
   transform: translateY(-3px);
   box-shadow: 0 18px 38px rgba(34, 42, 68, 0.1);
-}
-
-.feature-art {
-  width: 100%;
-  height: 138px;
-  border-radius: 0;
-  background:
-    radial-gradient(circle at 52% 50%, rgba(255, 255, 255, 0.58), transparent 18%),
-    linear-gradient(135deg, #eee6ff, #e8f7ff);
-  box-shadow: none;
-}
-
-.feature-sunset .feature-art {
-  background:
-    radial-gradient(circle at 52% 50%, rgba(255, 255, 255, 0.58), transparent 18%),
-    linear-gradient(135deg, #e6e6ff, #ffe7ee);
-}
-
-.feature-aqua .feature-art {
-  background:
-    radial-gradient(circle at 52% 50%, rgba(255, 255, 255, 0.58), transparent 18%),
-    linear-gradient(135deg, #dff8fb, #e2f7ff);
-}
-
-.feature-magenta .feature-art {
-  background:
-    radial-gradient(circle at 52% 50%, rgba(255, 255, 255, 0.58), transparent 18%),
-    linear-gradient(135deg, #f5cbff, #e2b5fa);
-}
-
-.feature-art i {
-  display: grid;
-  place-items: center;
-  width: 42px;
-  height: 42px;
-  border-radius: 999px;
-  color: #fff;
-  background: rgba(124, 77, 255, 0.52);
-}
-
-.feature-copy {
-  margin: 0;
-  padding: 16px 16px 18px;
 }
 
 .playlist-rail {
@@ -1055,13 +872,226 @@ watch(
   box-shadow: 0 8px 18px rgba(34, 42, 68, 0.05);
 }
 
+/* ===== Daily Recommendation Hero Card ===== */
+.feature-strip {
+  display: block;
+  width: min(100%, var(--stream-grid-width));
+}
+
+.feature-hero {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  width: 100%;
+  height: clamp(260px, 28vw, 316px);
+  min-height: 0;
+  padding: 0;
+  border-radius: 24px;
+  overflow: hidden;
+  text-align: left;
+}
+
+.feature-hero-copy {
+  flex: 0 0 46%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 30px 28px 30px 46px;
+}
+
+.feature-hero-title {
+  font-family:
+    'Source Han Sans SC',
+    'PingFang SC',
+    'Microsoft YaHei UI',
+    'Microsoft YaHei',
+    var(--te-font-sans);
+  font-size: clamp(34px, 4.4vw, 56px);
+  line-height: 0.98;
+  font-weight: 950;
+  letter-spacing: 0;
+  color: #11131f;
+}
+
+.feature-hero-subtitle {
+  margin-top: 4px;
+  font-family:
+    Inter,
+    'Segoe UI',
+    Arial,
+    var(--te-font-sans);
+  font-size: clamp(32px, 4.1vw, 52px);
+  line-height: 0.96;
+  font-weight: 900;
+  letter-spacing: 0;
+  color: #11131f;
+}
+
+.feature-hero-desc {
+  max-width: 460px;
+  margin-top: 24px;
+  font-size: clamp(14px, 1.45vw, 17px);
+  line-height: 1.65;
+  font-weight: 700;
+  color: rgba(64, 68, 88, 0.8);
+}
+
+.feature-hero-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-width: 136px;
+  height: 48px;
+  margin-top: 30px;
+  padding: 0 24px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #ff675f 0%, #ff8b4a 100%);
+  box-shadow: 0 18px 34px rgba(255, 103, 95, 0.24);
+  font-size: 15px;
+  font-weight: 800;
+  color: #fff;
+}
+
+.feature-hero-cta i {
+  font-size: 12px;
+  transition: transform 0.24s var(--te-ease-soft);
+}
+
+.feature-hero-cover {
+  position: relative;
+  flex: 1 1 0;
+  display: grid;
+  place-items: center;
+  align-self: stretch;
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+.feature-hero-cover-img {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  animation: daily-cover-preview 42s ease-out 1 forwards;
+  transition: transform 0.42s var(--te-ease-soft);
+  will-change: object-position, transform;
+}
+
+/* Left-edge fade so the text/image boundary feels designed. */
+.feature-hero-cover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0) 14%);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* No-cover fallback: lilac gradient panel + calendar icon placeholder. */
+.feature-hero-cover.is-placeholder {
+  background:
+    radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.5), transparent 42%),
+    linear-gradient(135deg, #7c4dff 0%, #b388ff 46%, #5e35b1 100%);
+}
+
+.feature-hero-cover.is-placeholder::after {
+  background:
+    radial-gradient(circle at 80% 84%, rgba(34, 211, 238, 0.18), transparent 55%),
+    radial-gradient(circle at 20% 80%, rgba(255, 126, 182, 0.12), transparent 52%);
+}
+
+.feature-hero-cover.is-placeholder i {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 999px;
+  font-size: 30px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
+  box-shadow:
+    0 18px 40px rgba(56, 36, 120, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.feature-hero:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 24px 48px rgba(34, 42, 68, 0.13);
+}
+
+.feature-hero:hover .feature-hero-cta i {
+  transform: translateX(4px);
+}
+
+@keyframes daily-cover-preview {
+  from {
+    object-position: center top;
+    transform: scale(1.03);
+  }
+  to {
+    object-position: center 75%;
+    transform: scale(1.03);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .feature-hero-cover-img {
+    animation: none;
+    height: 100%;
+    transform: none;
+  }
+}
+
 @media (max-width: 920px) {
-  .feature-card {
-    min-height: 212px;
+  .feature-hero {
+    flex-direction: column;
+    height: auto;
+    min-height: 0;
   }
 
-  .feature-art {
-    height: 130px;
+  /* Copy on top, cover below — text is the primary content on mobile. */
+  .feature-hero-copy {
+    flex: 0 0 auto;
+    padding: 28px 24px 24px;
+  }
+
+  .feature-hero-title {
+    font-size: clamp(32px, 9vw, 44px);
+  }
+
+  .feature-hero-subtitle {
+    font-size: clamp(30px, 8.4vw, 42px);
+  }
+
+  .feature-hero-desc {
+    margin-top: 18px;
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .feature-hero-cta {
+    height: 44px;
+    margin-top: 22px;
+    padding: 0 20px;
+    font-size: 14px;
+  }
+
+  .feature-hero-cover {
+    flex: 0 0 auto;
+    width: 100%;
+    height: 196px;
   }
 }
 

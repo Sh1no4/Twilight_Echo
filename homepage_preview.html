@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Twilight Echo - 浅色主题主页</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-primary: #f8f9fc;
+      --bg-secondary: rgba(255, 255, 255, 0.7);
+      --glass-bg: rgba(255, 255, 255, 0.75);
+      --glass-border: rgba(255, 255, 255, 0.6);
+      --accent-gradient: linear-gradient(135deg, #ff6b6b, #ff8e53);
+      --accent-hover: linear-gradient(135deg, #ff8787, #ffa270);
+      --text-primary: #12121a;
+      --text-secondary: #5a5a6e;
+      --font-main: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: var(--font-main);
+      background-color: var(--bg-primary);
+      /* Stunning dynamic mesh gradient background */
+      background-image: 
+        radial-gradient(at 0% 0%, rgba(255, 107, 107, 0.08) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, rgba(80, 97, 255, 0.08) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(255, 142, 83, 0.08) 0px, transparent 50%),
+        radial-gradient(at 0% 100%, rgba(80, 200, 255, 0.08) 0px, transparent 50%);
+      background-attachment: fixed;
+      color: var(--text-primary);
+      height: 100vh; overflow-y: auto; overflow-x: hidden;
+    }
+
+    ::-webkit-scrollbar { width: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.1); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.2); }
+
+    .main-content {
+      max-width: 1400px; margin: 0 auto; padding: 0 40px 80px; position: relative;
+    }
+
+    .topbar {
+      display: flex; justify-content: space-between; align-items: center;
+      position: sticky; top: 0; z-index: 100;
+      background: var(--glass-bg);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      margin: 0 -40px; padding: 24px 40px;
+      box-shadow: 0 4px 30px rgba(0,0,0,0.02);
+      border-bottom: 1px solid rgba(255,255,255,0.4);
+    }
+
+    .brand {
+      display: flex; align-items: center; gap: 12px; font-size: 24px; font-weight: 800;
+      background: var(--accent-gradient);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      letter-spacing: -0.5px;
+    }
+    .brand svg { width: 32px; height: 32px; fill: url(#brand-gradient); filter: drop-shadow(0 2px 4px rgba(255,107,107,0.3)); }
+
+    .search-container { position: relative; width: 400px; margin-left: 40px; }
+    .search-input {
+      width: 100%; padding: 14px 20px 14px 48px; border-radius: 24px;
+      border: 1px solid rgba(255,255,255,0.8);
+      background: rgba(255, 255, 255, 0.5);
+      color: var(--text-primary); font-family: var(--font-main); font-size: 15px;
+      outline: none; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      box-shadow: inset 0 2px 4px rgba(0,0,0,0.02), 0 4px 10px rgba(0,0,0,0.02);
+    }
+    .search-input:focus {
+      background: #ffffff; border-color: rgba(255, 107, 107, 0.4);
+      box-shadow: 0 8px 20px rgba(255, 107, 107, 0.15), inset 0 0 0 transparent;
+      transform: translateY(-1px);
+    }
+    .search-input::placeholder { color: #8e8e9e; font-weight: 500; }
+    .search-icon { position: absolute; left: 18px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; color: #8e8e9e; }
+
+    .top-nav-links { display: flex; gap: 32px; margin-left: auto; margin-right: 40px; }
+    .top-nav-link {
+      color: var(--text-secondary); font-weight: 600; text-decoration: none; font-size: 15px;
+      transition: all 0.3s ease; position: relative; padding: 4px 0;
+    }
+    .top-nav-link:hover, .top-nav-link.active { color: var(--text-primary); }
+    .top-nav-link.active::after {
+      content: ''; position: absolute; bottom: -2px; left: 0; width: 100%; height: 2px;
+      background: var(--accent-gradient); border-radius: 2px;
+    }
+
+    .profile-controls { display: flex; align-items: center; gap: 20px; }
+    .icon-btn { background: none; border: none; color: var(--text-secondary); cursor: pointer; transition: all 0.3s ease; }
+    .icon-btn:hover { color: var(--text-primary); transform: scale(1.1); }
+    .avatar {
+      width: 44px; height: 44px; border-radius: 50%;
+      background: url('https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=100&q=80') center/cover;
+      cursor: pointer; border: 2px solid #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+      transition: all 0.3s ease;
+    }
+    .avatar:hover { transform: scale(1.05); box-shadow: 0 6px 16px rgba(255,107,107,0.2); border-color: #ffeaea; }
+
+    /* Exquisite Hero Banner */
+    .hero {
+      margin-top: 40px; height: 400px; border-radius: 32px; position: relative;
+      display: flex; align-items: center; padding: 60px;
+      background: rgba(255, 255, 255, 0.4);
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.05), inset 0 0 0 1px rgba(255, 255, 255, 0.5);
+      overflow: visible; /* To allow image to pop out slightly if needed */
+    }
+
+    .hero-content { position: relative; z-index: 3; max-width: 50%; }
+    .hero-tag {
+      display: inline-block; padding: 8px 16px;
+      background: linear-gradient(135deg, rgba(255, 107, 107, 0.15), rgba(255, 142, 83, 0.15));
+      color: #ff4a4a; border-radius: 20px; font-size: 13px; font-weight: 800;
+      letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 24px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.5);
+    }
+    .hero-title {
+      font-size: 64px; font-weight: 900; line-height: 1.1; margin-bottom: 20px;
+      color: var(--text-primary); letter-spacing: -2px;
+    }
+    .hero-desc {
+      font-size: 18px; color: var(--text-secondary); margin-bottom: 36px; line-height: 1.6; font-weight: 500;
+    }
+    .btn-play {
+      background: var(--accent-gradient); color: white; border: none;
+      padding: 16px 36px; border-radius: 30px; font-family: var(--font-main);
+      font-weight: 700; font-size: 16px; cursor: pointer;
+      display: inline-flex; align-items: center; gap: 12px;
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      box-shadow: 0 12px 24px rgba(255, 107, 107, 0.3), inset 0 1px 0 rgba(255,255,255,0.4);
+    }
+    .btn-play:hover {
+      transform: translateY(-3px) scale(1.02);
+      box-shadow: 0 16px 32px rgba(255, 107, 107, 0.4), inset 0 1px 0 rgba(255,255,255,0.6);
+    }
+
+    .hero-image-wrapper {
+      position: absolute; right: 40px; top: 50%; transform: translateY(-50%);
+      width: 45%; height: 88%; border-radius: 24px; overflow: hidden;
+      box-shadow: 0 30px 60px rgba(0,0,0,0.15), 0 0 0 8px rgba(255,255,255,0.5);
+      transition: all 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .hero-image { width: 100%; height: 100%; object-fit: cover; transition: transform 0.8s ease; }
+    .hero:hover .hero-image-wrapper { transform: translateY(-50%) scale(1.02); box-shadow: 0 35px 70px rgba(0,0,0,0.2), 0 0 0 8px rgba(255,255,255,0.8); }
+    .hero:hover .hero-image { transform: scale(1.05); }
+
+    /* Section Component */
+    .section { margin-top: 70px; }
+    .section-header { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 30px; }
+    .section-title { font-size: 28px; font-weight: 800; color: var(--text-primary); letter-spacing: -0.5px; }
+    .section-more {
+      font-size: 15px; color: var(--text-secondary); text-decoration: none; font-weight: 700;
+      transition: all 0.3s ease; padding: 8px 16px; border-radius: 20px;
+      background: rgba(255,255,255,0.5); box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+      border: 1px solid rgba(255,255,255,0.8);
+    }
+    .section-more:hover { color: #ff6b6b; background: #fff; box-shadow: 0 4px 12px rgba(255,107,107,0.1); transform: translateY(-2px); }
+
+    .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 32px; }
+
+    /* Premium Card Item */
+    .card {
+      background: rgba(255, 255, 255, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.8);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+      border-radius: 24px; padding: 16px; cursor: pointer;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.03), inset 0 1px 0 rgba(255,255,255,1);
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    }
+    .card:hover {
+      transform: translateY(-8px); background: #ffffff;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,1);
+    }
+
+    .card-img-wrapper {
+      position: relative; border-radius: 16px; overflow: hidden; aspect-ratio: 1; margin-bottom: 20px;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.06);
+    }
+    .card-img { width: 100%; height: 100%; object-fit: cover; transition: transform 0.6s ease; }
+    .card:hover .card-img { transform: scale(1.08); }
+
+    .card-play-btn {
+      position: absolute; bottom: 16px; right: 16px; width: 48px; height: 48px;
+      background: var(--accent-gradient); border-radius: 50%;
+      display: flex; align-items: center; justify-content: center; color: white;
+      opacity: 0; transform: translateY(15px) scale(0.9);
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+      box-shadow: 0 8px 20px rgba(255, 107, 107, 0.4), inset 0 1px 0 rgba(255,255,255,0.3);
+    }
+    .card:hover .card-play-btn { opacity: 1; transform: translateY(0) scale(1); }
+    .card-play-btn:hover { transform: scale(1.1) !important; box-shadow: 0 12px 24px rgba(255, 107, 107, 0.5); }
+
+    .card-title { font-weight: 800; font-size: 17px; margin-bottom: 6px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.3px; }
+    .card-subtitle { font-size: 14px; font-weight: 500; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Trending Artist Overrides */
+    .section:nth-of-type(2) .card-img-wrapper { border-radius: 50%; box-shadow: 0 12px 24px rgba(0,0,0,0.08); }
+    .section:nth-of-type(2) .card-play-btn { bottom: 20px; right: 20px; }
+  </style>
+</head>
+<body>
+
+  <!-- SVG Gradients -->
+  <svg style="width:0;height:0;position:absolute;" aria-hidden="true" focusable="false">
+    <linearGradient id="brand-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ff6b6b" />
+      <stop offset="100%" stop-color="#ff8e53" />
+    </linearGradient>
+  </svg>
+
+  <!-- Main Content Area -->
+  <main class="main-content">
+    
+
+
+    <!-- Hero Banner -->
+    <div class="hero">
+      <div class="hero-content">
+        <div class="hero-tag">TODAY'S MIX</div>
+        <h1 class="hero-title">每日推荐<br>Daily Mix</h1>
+        <p class="hero-desc">根据你的音乐口味与听歌习惯，为你生成专属的今日推荐歌单。每日 06:00 更新，开启新的一天。</p>
+        <button class="btn-play">
+          <svg width="20" height="20" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          播放全部
+        </button>
+      </div>
+      <div class="hero-image-wrapper">
+        <!-- Using a more abstract/dynamic cover to represent a mix of songs -->
+        <img src="https://images.unsplash.com/photo-1614613535308-eb5fbd3d2c17?auto=format&fit=crop&w=1200&q=80" class="hero-image" alt="Daily Mix Cover">
+      </div>
+    </div>
+
+    <!-- Recommended Section -->
+    <section class="section">
+      <div class="section-header">
+        <h2 class="section-title">推荐歌单</h2>
+        <a href="#" class="section-more">查看全部</a>
+      </div>
+      
+      <div class="cards-grid">
+        <!-- Card 1 -->
+        <div class="card">
+          <div class="card-img-wrapper">
+            <img src="https://images.unsplash.com/photo-1493225457124-a1a2a5ea3a8e?auto=format&fit=crop&w=400&q=80" class="card-img" alt="Album Cover">
+            <div class="card-play-btn">
+              <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+          </div>
+          <div class="card-title">专注时刻</div>
+          <div class="card-subtitle">Lo-fi 纯音乐</div>
+        </div>
+        
+        <!-- Card 2 -->
+        <div class="card">
+          <div class="card-img-wrapper">
+            <img src="https://images.unsplash.com/photo-1514525253161-7a46d19cd819?auto=format&fit=crop&w=400&q=80" class="card-img" alt="Album Cover">
+            <div class="card-play-btn">
+              <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+          </div>
+          <div class="card-title">现场录音</div>
+          <div class="card-subtitle">原声不插电</div>
+        </div>
+
+        <!-- Card 3 -->
+        <div class="card">
+          <div class="card-img-wrapper">
+            <img src="https://images.unsplash.com/photo-1470225620780-dba8ba36b745?auto=format&fit=crop&w=400&q=80" class="card-img" alt="Album Cover">
+            <div class="card-play-btn">
+              <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+          </div>
+          <div class="card-title">电子脉冲</div>
+          <div class="card-subtitle">深邃浩室</div>
+        </div>
+
+        <!-- Card 4 -->
+        <div class="card">
+          <div class="card-img-wrapper">
+            <img src="https://images.unsplash.com/photo-1621360811013-c76831f1628c?auto=format&fit=crop&w=400&q=80" class="card-img" alt="Album Cover">
+            <div class="card-play-btn">
+              <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+          </div>
+          <div class="card-title">城市律动</div>
+          <div class="card-subtitle">经典嘻哈</div>
+        </div>
+
+        <!-- Card 5 -->
+        <div class="card">
+          <div class="card-img-wrapper">
+            <img src="https://images.unsplash.com/photo-1619983081563-430f63602796?auto=format&fit=crop&w=400&q=80" class="card-img" alt="Album Cover">
+            <div class="card-play-btn">
+              <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+          </div>
+          <div class="card-title">霓虹之夜</div>
+          <div class="card-subtitle">合成器波精选</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Trending Artists Section -->
+    <section class="section">
+      <div class="section-header">
+        <h2 class="section-title">热门歌手</h2>
+        <a href="#" class="section-more">查看全部</a>
+      </div>
+      <div class="cards-grid">
+        <div class="card">
+          <div class="card-img-wrapper" style="border-radius: 50%;">
+            <img src="https://images.unsplash.com/photo-1549834125-82d3c48159a3?auto=format&fit=crop&w=400&q=80" class="card-img" alt="Artist Cover">
+            <div class="card-play-btn">
+              <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+          </div>
+          <div class="card-title" style="text-align: center;">Aurora</div>
+          <div class="card-subtitle" style="text-align: center;">另类音乐</div>
+        </div>
+        <div class="card">
+          <div class="card-img-wrapper" style="border-radius: 50%;">
+            <img src="https://images.unsplash.com/photo-1618609377866-63d052c00215?auto=format&fit=crop&w=400&q=80" class="card-img" alt="Artist Cover">
+            <div class="card-play-btn">
+              <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+          </div>
+          <div class="card-title" style="text-align: center;">The Midnight</div>
+          <div class="card-subtitle" style="text-align: center;">电子合成器</div>
+        </div>
+        <div class="card">
+          <div class="card-img-wrapper" style="border-radius: 50%;">
+            <img src="https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?auto=format&fit=crop&w=400&q=80" class="card-img" alt="Artist Cover">
+            <div class="card-play-btn">
+              <svg width="24" height="24" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+          </div>
+          <div class="card-title" style="text-align: center;">John Mayer</div>
+          <div class="card-subtitle" style="text-align: center;">流行 / 蓝调</div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</body>
+</html>

@@ -1898,10 +1898,13 @@ onMounted(async () => {
   flex: 0 0 100%;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   width: 100%;
   transform: translate3d(0, 0, 0);
   will-change: transform, flex-basis, width;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124, 77, 255, 0.28) transparent;
   transition:
     transform 0.32s var(--te-ease-soft),
     flex-basis 0.32s var(--te-ease-soft),
@@ -1953,11 +1956,9 @@ onMounted(async () => {
 }
 
 .streaming-content-body {
-  flex: 1;
-  overflow-y: auto;
+  flex: 0 0 auto;
+  overflow: visible;
   padding: 14px clamp(36px, 6vw, 84px) 34px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(124, 77, 255, 0.28) transparent;
 }
 
 .streaming-page.has-player .streaming-content-body {
@@ -2965,7 +2966,7 @@ onMounted(async () => {
 .detail-playlist-cover-placeholder {
   width: 168px;
   height: 168px;
-  border-radius: 8px;
+  border-radius: 16px;
   box-shadow: 0 24px 50px rgba(86, 70, 160, 0.18);
 }
 
@@ -3030,7 +3031,7 @@ onMounted(async () => {
 .cover-placeholder {
   width: 42px;
   height: 42px;
-  border-radius: 8px;
+  border-radius: 14px;
 }
 
 .track-title {
@@ -3072,7 +3073,7 @@ onMounted(async () => {
 
 .playlist-grid-cover,
 .playlist-grid-cover-placeholder {
-  border-radius: 8px;
+  border-radius: 16px;
 }
 
 .playlist-grid-name {
