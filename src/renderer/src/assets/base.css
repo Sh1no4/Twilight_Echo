@@ -1,4 +1,4 @@
-﻿@font-face {
+@font-face {
   font-family: 'Source Han Sans SC';
   src: url('/font/SourceHanSansSC-Regular-2.woff2') format('woff2');
   font-weight: 400;
@@ -80,6 +80,16 @@
   --te-text-body: 500;
   --te-text-meta: 400;
   --te-text-strong: 700;
+  --te-app-bg: #f4f4f7;
+  --te-app-bg-image: none;
+  --te-local-bg: var(--te-app-bg);
+  --te-local-bg-image: var(--te-app-bg-image);
+  --te-settings-bg: var(--te-app-bg);
+  --te-settings-bg-image: var(--te-app-bg-image);
+  --te-streaming-bg: var(--te-app-bg);
+  --te-streaming-bg-image: var(--te-app-bg-image);
+  --te-player-bg: var(--te-app-bg);
+  --te-player-bg-image: var(--te-app-bg-image);
   --te-streaming-surface: #fafbfe;
   --te-card-bg: #ffffff;
   --te-card-border: rgba(15, 23, 42, 0.08);
@@ -163,7 +173,12 @@
   --te-glow-soft: rgba(217, 79, 125, 0.12);
   --te-glow-cyan: rgba(45, 212, 191, 0.1);
   --color-text: var(--te-neutral-900);
-  --te-streaming-surface: #080808;
+  --te-app-bg: #17181a;
+  --te-local-bg: var(--te-app-bg);
+  --te-settings-bg: var(--te-app-bg);
+  --te-streaming-bg: var(--te-app-bg);
+  --te-player-bg: var(--te-app-bg);
+  --te-streaming-surface: var(--te-streaming-bg);
   --te-card-bg: #181818;
   --te-card-border: rgba(255, 255, 255, 0.1);
   --te-subtle-bg: #121212;
@@ -209,11 +224,11 @@ body {
   min-height: 100vh;
   padding-top: 32px;
   color: var(--color-text);
-  background:
-    linear-gradient(115deg, rgba(124, 77, 255, 0.12) 0%, transparent 29%),
-    linear-gradient(42deg, rgba(34, 211, 238, 0.13) 0%, transparent 34%),
-    linear-gradient(155deg, transparent 38%, rgba(255, 126, 182, 0.16) 71%, transparent 100%),
-    linear-gradient(180deg, #ffffff 0%, #f8f7ff 48%, #fbfdff 100%);
+  background-color: var(--te-app-bg);
+  background-image: var(--te-app-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   background-attachment: fixed;
   line-height: 1.65;
   font-family: var(--te-font-sans);
@@ -246,11 +261,19 @@ body.te-no-blur * {
 
 body.te-settings-surface,
 html[data-theme='pureWhite'] body.te-settings-surface {
-  background: #f4f4f7 !important;
+  background-color: var(--te-settings-bg) !important;
+  background-image: var(--te-settings-bg-image) !important;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 html[data-theme='dark'] body.te-settings-surface {
-  background: #080808 !important;
+  background-color: var(--te-settings-bg) !important;
+  background-image: var(--te-settings-bg-image) !important;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 body.te-settings-surface::before,
@@ -260,14 +283,19 @@ html[data-theme='pureWhite'] body.te-settings-surface::before {
 
 body.te-streaming-surface,
 html[data-theme='pureWhite'] body.te-streaming-surface {
-  background: var(--te-streaming-surface) !important;
+  background-color: var(--te-streaming-bg) !important;
+  background-image: var(--te-streaming-bg-image) !important;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 html[data-theme='dark'] body {
-  background:
-    linear-gradient(115deg, rgba(var(--te-primary-rgb), 0.055) 0%, transparent 30%),
-    linear-gradient(155deg, transparent 42%, rgba(217, 79, 125, 0.05) 74%, transparent 100%),
-    linear-gradient(180deg, #050505 0%, #080808 54%, #050505 100%);
+  background-color: var(--te-app-bg);
+  background-image: var(--te-app-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 html[data-theme='dark'] body::before {
@@ -705,16 +733,28 @@ html[data-theme='pureWhite'] .playing-music .cover-placeholder {
 
 html[data-theme='dark'],
 html[data-theme='dark'] body {
-  background: #080b12;
+  background-color: var(--te-app-bg);
+  background-image: var(--te-app-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 html[data-theme='dark'] body {
   color: var(--te-neutral-900);
-  background: #080b12;
+  background-color: var(--te-app-bg);
+  background-image: var(--te-app-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 html[data-theme='dark'] body.te-streaming-surface {
-  background: #080b12 !important;
+  background-color: var(--te-streaming-bg) !important;
+  background-image: var(--te-streaming-bg-image) !important;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 html[data-theme='dark'] body::before {
@@ -731,7 +771,11 @@ html[data-theme='dark'] .main-content::after {
 
 html[data-theme='dark'] .title-bar {
   border-bottom-color: transparent;
-  background: transparent;
+  background-color: var(--te-local-bg);
+  background-image: var(--te-local-bg-image);
+  background-position: center top;
+  background-size: cover;
+  background-repeat: no-repeat;
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -744,13 +788,21 @@ html[data-theme='dark'] .title-bar.title-bar-settings {
 }
 
 html[data-theme='dark'] .title-bar.title-bar-streaming {
-  background: transparent;
+  background-color: var(--te-streaming-bg);
+  background-image: var(--te-streaming-bg-image);
+  background-position: center top;
+  background-size: cover;
+  background-repeat: no-repeat;
   border-bottom-color: transparent;
   box-shadow: none;
 }
 
 html[data-theme='dark'] .title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
-  background: transparent;
+  background-color: var(--te-local-bg);
+  background-image: var(--te-local-bg-image);
+  background-position: center top;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 html[data-theme='dark'] .title-bar::before {
@@ -778,15 +830,23 @@ html[data-theme='dark'] .control-btn:hover {
 }
 
 html[data-theme='dark'] .side-menu {
-  border-right-color: var(--te-card-border);
-  background: var(--te-card-bg);
-  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.24);
+  border-right-color: transparent;
+  background-color: var(--te-local-bg);
+  background-image: var(--te-local-bg-image);
+  background-position: left center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  box-shadow: none;
 }
 
 html[data-theme='dark'] .streaming-sidebar {
-  border-right-color: rgba(148, 163, 184, 0.14);
-  background: rgba(15, 23, 42, 0.86);
-  box-shadow: 22px 0 70px rgba(0, 0, 0, 0.24);
+  border-right-color: transparent;
+  background-color: var(--te-streaming-bg);
+  background-image: var(--te-streaming-bg-image);
+  background-position: left center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  box-shadow: none;
 }
 
 html[data-theme='dark'] .menu-separator {
@@ -825,7 +885,11 @@ html[data-theme='dark'] .streaming-menu-label {
 }
 
 html[data-theme='dark'] .song-list {
-  background: #0d1320;
+  background-color: var(--te-local-bg);
+  background-image: var(--te-local-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   scrollbar-color: rgba(var(--te-primary-rgb), 0.38) transparent;
 }
 
@@ -1046,7 +1110,11 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .mode-btn-right img {
 
 html[data-theme='dark'] .settings-page,
 html[data-theme='dark'] .settings-header {
-  background: #080b12;
+  background-color: var(--te-settings-bg);
+  background-image: var(--te-settings-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   color: rgba(248, 250, 252, 0.95);
 }
 
@@ -1141,7 +1209,11 @@ html[data-theme='dark'] .danger-button {
 html[data-theme='dark'] .streaming-page,
 html[data-theme='dark'] .login-page,
 html[data-theme='dark'] .eq-page {
-  background: #080b12;
+  background-color: var(--te-streaming-bg);
+  background-image: var(--te-streaming-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   color: rgba(248, 250, 252, 0.94);
 }
 
@@ -1499,7 +1571,11 @@ html[data-theme='dark'] .plugin-extension-input::placeholder {
 
 /* ===== Settings & Plugin pages: dark backgrounds ===== */
 html[data-theme='dark'] .settings-preview-layout {
-  background: #080b12;
+  background-color: var(--te-settings-bg);
+  background-image: var(--te-settings-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 html[data-theme='dark'] .preview-select,
@@ -1579,12 +1655,20 @@ html[data-theme='dark'] .plugin-extension-icon {
 /* body.te-settings-surface forces #f4f4f7 !important on settings/plugin pages;
    override it for dark mode so the page background isn't white. */
 html[data-theme='dark'] body.te-settings-surface {
-  background: #080b12 !important;
+  background-color: var(--te-settings-bg) !important;
+  background-image: var(--te-settings-bg-image) !important;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 /* --- Settings page: page-level background & hardcoded text --- */
 html[data-theme='dark'] .settings-preview-page {
-  background: #080b12;
+  background-color: var(--te-settings-bg);
+  background-image: var(--te-settings-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   color: rgba(248, 250, 252, 0.95);
 }
 
@@ -1631,7 +1715,11 @@ html[data-theme='dark'] .plugin-page,
 html[data-theme='dark'] .plugin-page .plugin-window,
 html[data-theme='dark'] .plugin-page .main-content,
 html[data-theme='dark'] .plugin-page .topbar {
-  background: #080b12;
+  background-color: var(--te-settings-bg);
+  background-image: var(--te-settings-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   color: rgba(248, 250, 252, 0.92);
 }
 

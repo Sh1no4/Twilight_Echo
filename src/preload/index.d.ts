@@ -215,6 +215,25 @@ interface DesktopLyricsSettings {
   maxLines: number
 }
 
+type AppBackgroundPage = 'local' | 'settings' | 'streaming' | 'player'
+type AppBackgroundKind = 'color' | 'image'
+
+interface AppBackgroundColorPair {
+  light: string
+  dark: string
+  kind: AppBackgroundKind
+  image: string
+}
+
+interface AppBackgroundPageOverride extends AppBackgroundColorPair {
+  inherit: boolean
+}
+
+interface AppBackgroundSettings {
+  global: AppBackgroundColorPair
+  pages: Record<AppBackgroundPage, AppBackgroundPageOverride>
+}
+
 interface AppSettings {
   autoCheckLogin: boolean
   autoLaunch: boolean
@@ -239,6 +258,7 @@ interface AppSettings {
   darkAccentColor: string
   fontFamily: string
   uiDensity: UiDensity
+  appBackground: AppBackgroundSettings
   nowPlayingBackground: NowPlayingBackground
   lyricAlign: LyricAlign
   lyricDimOpacity: number
@@ -848,6 +868,8 @@ interface WindowAPI {
     get: () => Promise<SettingsSnapshot>
     update: (patch: Partial<AppSettings>) => Promise<SettingsSnapshot>
     chooseCacheFolder: () => Promise<string | null>
+    chooseBackgroundImage: () => Promise<string | null>
+    importBackgroundImage: (fileName: string, data: ArrayBuffer) => Promise<string | null>
     getCacheSize: () => Promise<number>
     clearCache: () => Promise<number>
     onChanged: (cb: (snapshot: SettingsSnapshot) => void) => () => void

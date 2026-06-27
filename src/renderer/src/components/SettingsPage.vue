@@ -7,6 +7,8 @@ import { getPluginThemeKey } from '../extensions/themeSelection'
 import type {
   AppSettings,
   AppTheme,
+  AppBackgroundKind,
+  AppBackgroundPage,
   ProxyMode,
   AudioDeviceOption,
   AudioOutputId,
@@ -147,6 +149,13 @@ const nowPlayingBackgroundOptions: { value: NowPlayingBackground; label: string;
   { value: 'solid', label: '纯粹极简纯色', class: 'solid-cover' }
 ]
 
+const appBackgroundPageOptions: { value: AppBackgroundPage; label: string; desc: string }[] = [
+  { value: 'local', label: '本地主页', desc: '本地音乐首页和资料概览背景。' },
+  { value: 'settings', label: '设置与插件', desc: '设置页、插件中心等管理界面背景。' },
+  { value: 'streaming', label: '流媒体页', desc: '在线音乐浏览、搜索和详情页背景。' },
+  { value: 'player', label: '播放页', desc: '沉浸式播放页和全屏播放背景。' }
+]
+
 const lyricAlignOptions: { value: LyricAlign; label: string }[] = [
   { value: 'center', label: '居中对齐' },
   { value: 'left', label: '靠左对齐' }
@@ -165,6 +174,10 @@ const pluginSettingsError = ref<Record<string, string>>({})
 
 const activeSection = ref<SectionKey>(props.initialSection ?? 'general')
 const pageRef = ref<HTMLElement | null>(null)
+const customBackgroundOpen = ref(false)
+const backgroundPageOpen = ref<AppBackgroundPage | null>(null)
+const backgroundFileInputRef = ref<HTMLInputElement | null>(null)
+const pendingBackgroundTarget = ref<'global' | AppBackgroundPage | null>(null)
 
 const {
   settings,
@@ -177,6 +190,7 @@ const {
   loadSettings,
   updateSettings,
   chooseCacheFolder,
+  importBackgroundImage,
   resetCacheFolder,
   refreshCacheSize,
   clearCache,
@@ -525,6 +539,173 @@ function setNowPlayingBackground(bg: NowPlayingBackground): void {
   void updateSettings({ nowPlayingBackground: bg })
 }
 
+function setGlobalBackgroundColor(mode: 'light' | 'dark', color: string): void {
+  if (settings.value.appBackground.global[mode] === color) return
+  void updateSettings({
+    appBackground: {
+      ...settings.value.appBackground,
+      global: {
+        ...settings.value.appBackground.global,
+        [mode]: color
+      }
+    }
+  })
+}
+
+function setGlobalBackgroundKind(kind: AppBackgroundKind): void {
+  if (settings.value.appBackground.global.kind === kind) return
+  void updateSettings({
+    appBackground: {
+      ...settings.value.appBackground,
+      global: {
+        ...settings.value.appBackground.global,
+        kind
+      }
+    }
+  })
+}
+
+function openBackgroundFilePicker(target: 'global' | AppBackgroundPage): void {
+  pendingBackgroundTarget.value = target
+  backgroundFileInputRef.value?.click()
+}
+
+async function applyGlobalBackgroundImage(image: string): Promise<void> {
+  void updateSettings({
+    appBackground: {
+      ...settings.value.appBackground,
+      global: {
+        ...settings.value.appBackground.global,
+        kind: 'image',
+        image
+      }
+    }
+  })
+}
+
+async function handleBackgroundFileSelected(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  const target = pendingBackgroundTarget.value
+  input.value = ''
+  pendingBackgroundTarget.value = null
+  if (!file || !target) return
+  const image = await importBackgroundImage(file)
+  if (!image) return
+  if (target === 'global') {
+    await applyGlobalBackgroundImage(image)
+    return
+  }
+  await applyPageBackgroundImage(target, image)
+}
+
+function clearGlobalBackgroundImage(): void {
+  if (!settings.value.appBackground.global.image && settings.value.appBackground.global.kind === 'color') return
+  void updateSettings({
+    appBackground: {
+      ...settings.value.appBackground,
+      global: {
+        ...settings.value.appBackground.global,
+        kind: 'color',
+        image: ''
+      }
+    }
+  })
+}
+
+function setPageBackgroundInherited(page: AppBackgroundPage, inherit: boolean): void {
+  const current = settings.value.appBackground.pages[page]
+  if (current.inherit === inherit) return
+  void updateSettings({
+    appBackground: {
+      ...settings.value.appBackground,
+      pages: {
+        ...settings.value.appBackground.pages,
+        [page]: {
+          ...current,
+          inherit
+        }
+      }
+    }
+  })
+}
+
+function setPageBackgroundKind(page: AppBackgroundPage, kind: AppBackgroundKind): void {
+  const current = settings.value.appBackground.pages[page]
+  if (current.kind === kind) return
+  void updateSettings({
+    appBackground: {
+      ...settings.value.appBackground,
+      pages: {
+        ...settings.value.appBackground.pages,
+        [page]: {
+          ...current,
+          inherit: false,
+          kind
+        }
+      }
+    }
+  })
+}
+
+function setPageBackgroundColor(page: AppBackgroundPage, mode: 'light' | 'dark', color: string): void {
+  const current = settings.value.appBackground.pages[page]
+  if (current[mode] === color && !current.inherit) return
+  void updateSettings({
+    appBackground: {
+      ...settings.value.appBackground,
+      pages: {
+        ...settings.value.appBackground.pages,
+        [page]: {
+          ...current,
+          inherit: false,
+          [mode]: color
+        }
+      }
+    }
+  })
+}
+
+async function applyPageBackgroundImage(page: AppBackgroundPage, image: string): Promise<void> {
+  const current = settings.value.appBackground.pages[page]
+  void updateSettings({
+    appBackground: {
+      ...settings.value.appBackground,
+      pages: {
+        ...settings.value.appBackground.pages,
+        [page]: {
+          ...current,
+          inherit: false,
+          kind: 'image',
+          image
+        }
+      }
+    }
+  })
+}
+
+function clearPageBackgroundImage(page: AppBackgroundPage): void {
+  const current = settings.value.appBackground.pages[page]
+  if (!current.image && current.kind === 'color') return
+  void updateSettings({
+    appBackground: {
+      ...settings.value.appBackground,
+      pages: {
+        ...settings.value.appBackground.pages,
+        [page]: {
+          ...current,
+          kind: 'color',
+          image: ''
+        }
+      }
+    }
+  })
+}
+
+function toggleBackgroundPage(page: AppBackgroundPage): void {
+  backgroundPageOpen.value = backgroundPageOpen.value === page ? null : page
+}
+
 function setLyricAlign(event: Event): void {
   void updateSettings({ lyricAlign: (event.target as HTMLSelectElement).value as LyricAlign })
 }
@@ -708,6 +889,13 @@ onBeforeUnmount(() => {
 
 <template>
   <main ref="pageRef" class="settings-preview-page">
+    <input
+      ref="backgroundFileInputRef"
+      class="visually-hidden-file-input"
+      type="file"
+      accept="image/jpeg,image/png,image/webp"
+      @change="handleBackgroundFileSelected"
+    />
     <div class="settings-preview-layout">
       <nav class="settings-preview-nav" aria-label="设置分区">
         <button
@@ -1689,6 +1877,203 @@ onBeforeUnmount(() => {
               </div>
             </div>
             <hr />
+            <div class="setting-item top-align">
+              <div class="setting-copy">
+                <strong>自定义背景</strong>
+                <span>控制整个 App 的统一主背景，可上传图片，也可给不同页面单独覆盖。</span>
+              </div>
+              <div class="background-accordion">
+                <button
+                  type="button"
+                  class="background-accordion-trigger"
+                  :class="{ active: customBackgroundOpen }"
+                  @click="customBackgroundOpen = !customBackgroundOpen"
+                >
+                  <span>
+                    {{ settings.appBackground.global.kind === 'image' && settings.appBackground.global.image ? '图片背景' : '纯色背景' }}
+                  </span>
+                  <i class="pi pi-chevron-down"></i>
+                </button>
+                <div v-if="customBackgroundOpen" class="background-accordion-panel">
+                  <section class="background-editor">
+                    <div class="background-editor-head">
+                      <div>
+                        <strong>统一背景</strong>
+                        <span>深色模式默认 #17181a，图片模式下颜色会作为回退底色。</span>
+                      </div>
+                      <div class="background-kind-toggle">
+                        <button
+                          type="button"
+                          :class="{ active: settings.appBackground.global.kind === 'color' }"
+                          @click="setGlobalBackgroundKind('color')"
+                        >
+                          纯色
+                        </button>
+                        <button
+                          type="button"
+                          :class="{ active: settings.appBackground.global.kind === 'image' }"
+                          @click="setGlobalBackgroundKind('image')"
+                        >
+                          图片
+                        </button>
+                      </div>
+                    </div>
+                    <div class="background-color-stack">
+                      <label class="color-field">
+                        <span>浅色</span>
+                        <input
+                          type="color"
+                          :value="settings.appBackground.global.light"
+                          @input="setGlobalBackgroundColor('light', ($event.target as HTMLInputElement).value)"
+                        />
+                        <code>{{ settings.appBackground.global.light }}</code>
+                      </label>
+                      <label class="color-field">
+                        <span>深色</span>
+                        <input
+                          type="color"
+                          :value="settings.appBackground.global.dark"
+                          @input="setGlobalBackgroundColor('dark', ($event.target as HTMLInputElement).value)"
+                        />
+                        <code>{{ settings.appBackground.global.dark }}</code>
+                      </label>
+                    </div>
+                    <div class="background-image-actions">
+                      <span
+                        v-if="settings.appBackground.global.image"
+                        class="background-image-preview"
+                        :style="{ backgroundImage: `url(${settings.appBackground.global.image})` }"
+                      ></span>
+                      <button type="button" class="pill-action" @click="openBackgroundFilePicker('global')">
+                        <i class="pi pi-image"></i>
+                        <span>{{ settings.appBackground.global.image ? '更换图片' : '选择图片' }}</span>
+                      </button>
+                      <button
+                        type="button"
+                        class="pill-action ghost"
+                        :disabled="!settings.appBackground.global.image"
+                        @click="clearGlobalBackgroundImage"
+                      >
+                        移除图片
+                      </button>
+                      <small>{{ settings.appBackground.global.image ? '已选择图片' : '支持 JPG / PNG / WebP' }}</small>
+                    </div>
+                  </section>
+
+                  <section class="background-editor">
+                    <div class="background-editor-head">
+                      <div>
+                        <strong>页面背景覆盖</strong>
+                        <span>默认继承统一背景，展开后可给单个页面单独设置纯色或图片。</span>
+                      </div>
+                    </div>
+                    <div class="page-background-list">
+                      <div
+                        v-for="page in appBackgroundPageOptions"
+                        :key="page.value"
+                        class="page-background-row"
+                        :class="{ expanded: backgroundPageOpen === page.value }"
+                      >
+                        <button
+                          type="button"
+                          class="page-background-header"
+                          @click="toggleBackgroundPage(page.value)"
+                        >
+                          <span class="page-background-copy">
+                            <strong>{{ page.label }}</strong>
+                            <span>{{ page.desc }}</span>
+                          </span>
+                          <span class="page-background-state">
+                            {{ settings.appBackground.pages[page.value].inherit ? '继承' : settings.appBackground.pages[page.value].kind === 'image' ? '图片' : '纯色' }}
+                          </span>
+                          <i class="pi pi-chevron-down"></i>
+                        </button>
+                        <div v-if="backgroundPageOpen === page.value" class="page-background-controls">
+                          <button
+                            type="button"
+                            class="inherit-toggle"
+                            :class="{ active: settings.appBackground.pages[page.value].inherit }"
+                            @click="setPageBackgroundInherited(page.value, !settings.appBackground.pages[page.value].inherit)"
+                          >
+                            {{ settings.appBackground.pages[page.value].inherit ? '当前继承统一背景' : '当前使用自定义背景' }}
+                          </button>
+                          <div
+                            class="background-kind-toggle"
+                            :class="{ disabled: settings.appBackground.pages[page.value].inherit }"
+                          >
+                            <button
+                              type="button"
+                              :class="{ active: settings.appBackground.pages[page.value].kind === 'color' }"
+                              @click="setPageBackgroundKind(page.value, 'color')"
+                            >
+                              纯色
+                            </button>
+                            <button
+                              type="button"
+                              :class="{ active: settings.appBackground.pages[page.value].kind === 'image' }"
+                              @click="setPageBackgroundKind(page.value, 'image')"
+                            >
+                              图片
+                            </button>
+                          </div>
+                          <div
+                            class="background-color-stack compact"
+                            :class="{ disabled: settings.appBackground.pages[page.value].inherit }"
+                          >
+                            <label class="color-field">
+                              <span>浅色</span>
+                              <input
+                                type="color"
+                                :value="settings.appBackground.pages[page.value].light"
+                                @input="setPageBackgroundColor(page.value, 'light', ($event.target as HTMLInputElement).value)"
+                              />
+                              <code>{{ settings.appBackground.pages[page.value].light }}</code>
+                            </label>
+                            <label class="color-field">
+                              <span>深色</span>
+                              <input
+                                type="color"
+                                :value="settings.appBackground.pages[page.value].dark"
+                                @input="setPageBackgroundColor(page.value, 'dark', ($event.target as HTMLInputElement).value)"
+                              />
+                              <code>{{ settings.appBackground.pages[page.value].dark }}</code>
+                            </label>
+                          </div>
+                          <div
+                            class="background-image-actions"
+                            :class="{ disabled: settings.appBackground.pages[page.value].inherit }"
+                          >
+                            <span
+                              v-if="settings.appBackground.pages[page.value].image"
+                              class="background-image-preview"
+                              :style="{ backgroundImage: `url(${settings.appBackground.pages[page.value].image})` }"
+                            ></span>
+                            <button
+                              type="button"
+                              class="pill-action"
+                              @click="openBackgroundFilePicker(page.value)"
+                            >
+                              <i class="pi pi-image"></i>
+                              <span>{{ settings.appBackground.pages[page.value].image ? '更换图片' : '选择图片' }}</span>
+                            </button>
+                            <button
+                              type="button"
+                              class="pill-action ghost"
+                              :disabled="!settings.appBackground.pages[page.value].image"
+                              @click="clearPageBackgroundImage(page.value)"
+                            >
+                              移除图片
+                            </button>
+                            <small>{{ settings.appBackground.pages[page.value].image ? '已选择图片' : '未设置图片' }}</small>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </div>
+            <hr />
             <div class="setting-item">
               <div class="setting-copy">
                 <strong>封面主题色</strong>
@@ -2159,7 +2544,11 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   overflow-x: hidden;
   padding: 0 48px 48px;
-  background: #f4f4f7;
+  background-color: var(--te-settings-bg);
+  background-image: var(--te-settings-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   color: #111827;
   font-family: 'Outfit', 'Noto Sans SC', var(--te-font-sans), sans-serif;
   scroll-behavior: smooth;
@@ -2187,6 +2576,15 @@ onBeforeUnmount(() => {
 .settings-preview-page input,
 .settings-preview-page select {
   font: inherit;
+}
+
+.visually-hidden-file-input {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .settings-preview-layout {
@@ -3115,6 +3513,336 @@ onBeforeUnmount(() => {
 .swatch.amber { color: #f59e0b; background: #f59e0b; }
 .swatch.slate { color: #334155; background: #334155; }
 
+.background-accordion {
+  display: grid;
+  width: min(100%, 620px);
+  overflow: hidden;
+  border: 1px solid rgba(229, 231, 235, 0.72);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.background-accordion-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  color: #374151;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.background-accordion-trigger i {
+  color: #9ca3af;
+  font-size: 12px;
+  transition: transform 0.18s ease;
+}
+
+.background-accordion-trigger.active i {
+  transform: rotate(180deg);
+}
+
+.background-accordion-panel {
+  display: grid;
+  gap: 12px;
+  padding: 0 12px 12px;
+}
+
+.background-editor {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid rgba(229, 231, 235, 0.72);
+  border-radius: 10px;
+  background: rgba(249, 250, 251, 0.58);
+}
+
+.background-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.background-editor-head div {
+  display: grid;
+  gap: 3px;
+}
+
+.background-editor-head strong {
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.background-editor-head span {
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.background-kind-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid rgba(229, 231, 235, 0.82);
+  border-radius: 9px;
+  background: var(--te-card-bg);
+}
+
+.background-kind-toggle.disabled {
+  opacity: 0.45;
+}
+
+.background-kind-toggle button {
+  min-height: 28px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #6b7280;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.background-kind-toggle button:disabled {
+  cursor: default;
+}
+
+.background-kind-toggle button.active {
+  background: rgba(var(--te-primary-rgb), 0.1);
+  color: var(--brand-600);
+}
+
+.background-color-stack {
+  display: grid;
+  min-width: min(100%, 320px);
+  gap: 10px;
+}
+
+.background-color-stack.compact {
+  min-width: 0;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.background-color-stack.disabled {
+  opacity: 0.45;
+}
+
+.color-field {
+  display: grid;
+  grid-template-columns: 44px 32px minmax(88px, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid rgba(229, 231, 235, 0.72);
+  border-radius: 8px;
+  background: var(--te-card-bg);
+}
+
+.color-field span {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.color-field input {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(229, 231, 235, 0.86);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.color-field input:disabled {
+  cursor: default;
+}
+
+.color-field input::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.color-field input::-webkit-color-swatch {
+  border: 0;
+  border-radius: 50%;
+}
+
+.color-field code {
+  overflow: hidden;
+  color: #374151;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.background-image-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.background-image-actions.disabled {
+  opacity: 0.45;
+}
+
+.background-image-actions small {
+  color: #6b7280;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.background-image-preview {
+  width: 46px;
+  height: 30px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(229, 231, 235, 0.82);
+  border-radius: 7px;
+  background-color: var(--te-subtle-bg);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+}
+
+.pill-action {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(var(--te-primary-rgb), 0.22);
+  border-radius: 8px;
+  background: rgba(var(--te-primary-rgb), 0.1);
+  color: var(--brand-600);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.pill-action.ghost {
+  border-color: rgba(229, 231, 235, 0.82);
+  background: var(--te-card-bg);
+  color: #6b7280;
+}
+
+.pill-action:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.page-background-list {
+  display: grid;
+  width: 100%;
+  gap: 10px;
+}
+
+.page-background-row {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid rgba(229, 231, 235, 0.72);
+  border-radius: 10px;
+  background: rgba(249, 250, 251, 0.5);
+}
+
+.page-background-row.expanded {
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.page-background-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.page-background-header i {
+  color: #9ca3af;
+  font-size: 12px;
+  transition: transform 0.18s ease;
+}
+
+.page-background-row.expanded .page-background-header i {
+  transform: rotate(180deg);
+}
+
+.page-background-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.page-background-copy strong {
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.page-background-copy span {
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.page-background-state {
+  min-width: 44px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(var(--te-primary-rgb), 0.08);
+  color: var(--brand-600);
+  font-size: 11px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.page-background-controls {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px;
+}
+
+.inherit-toggle {
+  align-self: start;
+  min-width: 64px;
+  min-height: 30px;
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: var(--te-card-bg);
+  color: #4b5563;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.inherit-toggle.active {
+  border-color: var(--brand-200);
+  background: rgba(var(--te-primary-rgb), 0.1);
+  color: var(--brand-600);
+}
+
 .density button {
   min-width: 56px;
 }
@@ -3916,7 +4644,11 @@ onBeforeUnmount(() => {
 <style>
 
 html[data-theme='dark'] .settings-preview-page {
-  background: #080b12;
+  background-color: var(--te-settings-bg);
+  background-image: var(--te-settings-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   color: rgba(248, 250, 252, 0.95);
 }
 
@@ -3960,6 +4692,14 @@ html[data-theme='dark'] .settings-preview-page .update-card,
 html[data-theme='dark'] .settings-preview-page .about-links button,
 html[data-theme='dark'] .settings-preview-page .output-diagnostic-panel,
 html[data-theme='dark'] .settings-preview-page .preset-btn,
+html[data-theme='dark'] .settings-preview-page .background-accordion,
+html[data-theme='dark'] .settings-preview-page .background-editor,
+html[data-theme='dark'] .settings-preview-page .background-kind-toggle,
+html[data-theme='dark'] .settings-preview-page .color-field,
+html[data-theme='dark'] .settings-preview-page .page-background-row,
+html[data-theme='dark'] .settings-preview-page .page-background-row.expanded,
+html[data-theme='dark'] .settings-preview-page .inherit-toggle,
+html[data-theme='dark'] .settings-preview-page .pill-action.ghost,
 html[data-theme='dark'] .settings-preview-page .dashed-button {
   border-color: var(--te-card-border);
   background: var(--te-card-bg);
@@ -3989,12 +4729,16 @@ html[data-theme='dark'] .settings-preview-page .theme-segment {
 
 html[data-theme='dark'] .settings-preview-page .segmented-control button,
 html[data-theme='dark'] .settings-preview-page .theme-segment button,
-html[data-theme='dark'] .settings-preview-page .background-options button {
+html[data-theme='dark'] .settings-preview-page .background-options button,
+html[data-theme='dark'] .settings-preview-page .background-accordion-trigger,
+html[data-theme='dark'] .settings-preview-page .background-kind-toggle button,
+html[data-theme='dark'] .settings-preview-page .page-background-header {
   color: rgba(148, 163, 184, 0.88);
 }
 
 html[data-theme='dark'] .settings-preview-page .segmented-control button.active,
-html[data-theme='dark'] .settings-preview-page .theme-segment button.active {
+html[data-theme='dark'] .settings-preview-page .theme-segment button.active,
+html[data-theme='dark'] .settings-preview-page .background-kind-toggle button.active {
   background: var(--te-card-bg);
   color: rgba(248, 250, 252, 0.95);
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
@@ -4023,6 +4767,8 @@ html[data-theme='dark'] .settings-preview-page .plugin-empty strong,
 html[data-theme='dark'] .settings-preview-page .shortcut-grid span,
 html[data-theme='dark'] .settings-preview-page .about-copy h3,
 html[data-theme='dark'] .settings-preview-page .update-card strong,
+html[data-theme='dark'] .settings-preview-page .background-editor-head strong,
+html[data-theme='dark'] .settings-preview-page .page-background-copy strong,
 html[data-theme='dark'] .settings-preview-page .signal-node.active .signal-node-name {
   color: rgba(248, 250, 252, 0.95);
 }
@@ -4041,6 +4787,12 @@ html[data-theme='dark'] .settings-preview-page .range-pill span,
 html[data-theme='dark'] .settings-preview-page .shortcut-grid kbd,
 html[data-theme='dark'] .settings-preview-page .about-copy p,
 html[data-theme='dark'] .settings-preview-page .update-card span,
+html[data-theme='dark'] .settings-preview-page .background-editor-head span,
+html[data-theme='dark'] .settings-preview-page .background-image-actions small,
+html[data-theme='dark'] .settings-preview-page .color-field span,
+html[data-theme='dark'] .settings-preview-page .color-field code,
+html[data-theme='dark'] .settings-preview-page .page-background-copy span,
+html[data-theme='dark'] .settings-preview-page .page-background-state,
 html[data-theme='dark'] .settings-preview-page .signal-node-name,
 html[data-theme='dark'] .settings-preview-page .crossfade-group,
 html[data-theme='dark'] .settings-preview-page .crossfeed-percent,
@@ -4083,11 +4835,18 @@ html[data-theme='dark'] .settings-preview-page .wasapi-push-row {
 html[data-theme='dark'] .settings-preview-page .muted-button,
 html[data-theme='dark'] .settings-preview-page .soft-button,
 html[data-theme='dark'] .settings-preview-page .icon-button,
-html[data-theme='dark'] .settings-preview-page .brand-soft-button {
+html[data-theme='dark'] .settings-preview-page .brand-soft-button,
+html[data-theme='dark'] .settings-preview-page .inherit-toggle {
   border-color: var(--te-card-border);
   background: var(--te-subtle-bg);
   color: rgba(203, 213, 225, 0.9);
   box-shadow: none;
+}
+
+html[data-theme='dark'] .settings-preview-page .inherit-toggle.active {
+  border-color: rgba(var(--te-primary-rgb), 0.34);
+  background: rgba(var(--te-primary-rgb), 0.14);
+  color: var(--te-primary-300);
 }
 
 html[data-theme='dark'] .settings-preview-page .dashed-button:hover,

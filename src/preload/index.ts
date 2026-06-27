@@ -307,6 +307,25 @@ interface PlaybackSession {
   position: number
 }
 
+type AppBackgroundPage = 'local' | 'settings' | 'streaming' | 'player'
+type AppBackgroundKind = 'color' | 'image'
+
+interface AppBackgroundColorPair {
+  light: string
+  dark: string
+  kind: AppBackgroundKind
+  image: string
+}
+
+interface AppBackgroundPageOverride extends AppBackgroundColorPair {
+  inherit: boolean
+}
+
+interface AppBackgroundSettings {
+  global: AppBackgroundColorPair
+  pages: Record<AppBackgroundPage, AppBackgroundPageOverride>
+}
+
 interface AppSettings {
   autoCheckLogin: boolean
   autoLaunch: boolean
@@ -331,6 +350,7 @@ interface AppSettings {
   darkAccentColor: string
   fontFamily: string
   uiDensity: UiDensity
+  appBackground: AppBackgroundSettings
   nowPlayingBackground: NowPlayingBackground
   lyricAlign: LyricAlign
   lyricDimOpacity: number
@@ -1039,6 +1059,10 @@ const api = {
       ipcRenderer.invoke('settings:update', patch),
     chooseCacheFolder: (): Promise<string | null> =>
       ipcRenderer.invoke('settings:chooseCacheFolder'),
+    chooseBackgroundImage: (): Promise<string | null> =>
+      ipcRenderer.invoke('settings:chooseBackgroundImage'),
+    importBackgroundImage: (fileName: string, data: ArrayBuffer): Promise<string | null> =>
+      ipcRenderer.invoke('settings:importBackgroundImage', fileName, data),
     getCacheSize: (): Promise<number> => ipcRenderer.invoke('settings:getCacheSize'),
     clearCache: (): Promise<number> => ipcRenderer.invoke('settings:clearCache'),
     onChanged: (cb: (snapshot: SettingsSnapshot) => void): (() => void) => {

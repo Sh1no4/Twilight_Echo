@@ -462,7 +462,11 @@ onBeforeUnmount(() => {
   z-index: 1100;
   overflow: hidden;
   color: #f4f7fb;
-  background: #05070b;
+  background-color: var(--te-player-bg);
+  background-image: var(--te-player-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   --accent-color: #7c4dff;
 }
 
@@ -471,7 +475,11 @@ onBeforeUnmount(() => {
   inset: 0;
   z-index: 0;
   overflow: hidden;
-  background: #05070b;
+  background-color: var(--te-player-bg);
+  background-image: var(--te-player-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 .backdrop-cover {
@@ -553,7 +561,11 @@ onBeforeUnmount(() => {
 .backdrop-solid {
   position: absolute;
   inset: 0;
-  background: #05070b;
+  background-color: var(--te-player-bg);
+  background-image: var(--te-player-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 @keyframes fluid-drift {

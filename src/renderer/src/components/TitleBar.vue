@@ -185,6 +185,28 @@ function close(): void {
   transform: translate3d(-100%, 0, 0);
 }
 
+:global(html[data-theme='dark']) .title-bar {
+  background-color: var(--te-local-bg);
+  background-image: var(--te-local-bg-image);
+  background-position: center top;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+:global(html[data-theme='dark']) .title-bar.title-bar-streaming,
+:global(html[data-theme='dark']) .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
+  background-color: var(--te-streaming-bg);
+  background-image: var(--te-streaming-bg-image);
+  background-position: center top;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+:global(html[data-theme='dark']) .title-bar.title-bar-settings,
+:global(html[data-theme='dark']) .title-bar.title-bar-glass {
+  background: transparent;
+}
+
 .title-bar-start {
   display: flex;
   height: 100%;

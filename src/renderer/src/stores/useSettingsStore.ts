@@ -1,8 +1,10 @@
-﻿import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, type ComputedRef, type Ref } from 'vue'
 import type {
   AppSettings,
   AppTheme,
   AudioOutputId,
+  AppBackgroundColorPair,
+  AppBackgroundPage,
   AudioProcessingSettings,
   SettingsSnapshot
 } from '../types/settings'
@@ -81,6 +83,20 @@ const fallbackSettings: AppSettings = {
   darkAccentColor: 'amber',
   fontFamily: 'system',
   uiDensity: 'standard',
+  appBackground: {
+    global: {
+      light: '#f4f4f7',
+      dark: '#17181a',
+      kind: 'color',
+      image: ''
+    },
+    pages: {
+      local: { inherit: true, light: '#ffffff', dark: '#17181a', kind: 'color', image: '' },
+      settings: { inherit: true, light: '#f4f4f7', dark: '#17181a', kind: 'color', image: '' },
+      streaming: { inherit: true, light: '#fafbfe', dark: '#17181a', kind: 'color', image: '' },
+      player: { inherit: true, light: '#080e17', dark: '#17181a', kind: 'color', image: '' }
+    }
+  },
   nowPlayingBackground: 'blur',
   lyricAlign: 'center',
   lyricDimOpacity: 40,
@@ -292,6 +308,13 @@ const FONT_FAMILY_MAP: Record<string, string> = {
   comic: "'Comic Sans MS', cursive"
 }
 
+const BACKGROUND_PAGES: AppBackgroundPage[] = ['local', 'settings', 'streaming', 'player']
+
+function getBackgroundImageValue(background: AppBackgroundColorPair): string {
+  if (background.kind !== 'image' || !background.image) return 'none'
+  return `url("${background.image.replace(/"/g, '\\"')}")`
+}
+
 function applyDomSettings(): void {
   const resolvedTheme = resolveTheme(settings.value.theme)
   const accent =
@@ -299,6 +322,10 @@ function applyDomSettings(): void {
       ? settings.value.darkAccentColor || settings.value.accentColor
       : settings.value.lightAccentColor || settings.value.accentColor
   const palette = ACCENT_PALETTES[accent] ?? ACCENT_PALETTES.blue
+  const tone = resolvedTheme === 'dark' ? 'dark' : 'light'
+  const appBackground = settings.value.appBackground ?? fallbackSettings.appBackground
+  const globalSettings = appBackground.global ?? fallbackSettings.appBackground.global
+  const globalBackground = globalSettings[tone] ?? fallbackSettings.appBackground.global[tone]
   document.documentElement.dataset.theme = resolvedTheme
   document.documentElement.dataset.themePreference = settings.value.theme
   document.documentElement.style.colorScheme = resolvedTheme === 'dark' ? 'dark' : 'light'
@@ -328,6 +355,21 @@ function applyDomSettings(): void {
     '--te-font-sans',
     FONT_FAMILY_MAP[settings.value.fontFamily] ?? FONT_FAMILY_MAP.system
   )
+  document.documentElement.style.setProperty('--te-app-bg', globalBackground)
+  document.documentElement.style.setProperty('--te-app-bg-image', getBackgroundImageValue(globalSettings))
+  for (const page of BACKGROUND_PAGES) {
+    const pageSettings = appBackground.pages?.[page] ?? fallbackSettings.appBackground.pages[page]
+    const resolvedPageSettings = pageSettings.inherit ? globalSettings : pageSettings
+    const pageBackground = pageSettings.inherit
+      ? globalBackground
+      : resolvedPageSettings[tone] || fallbackSettings.appBackground.pages[page][tone]
+    document.documentElement.style.setProperty(`--te-${page}-bg`, pageBackground)
+    document.documentElement.style.setProperty(
+      `--te-${page}-bg-image`,
+      getBackgroundImageValue(resolvedPageSettings)
+    )
+  }
+  document.documentElement.style.setProperty('--te-streaming-surface', 'var(--te-streaming-bg)')
   document.documentElement.dataset.density = settings.value.uiDensity
   document.documentElement.dataset.nowPlayingBg = settings.value.nowPlayingBackground
   document.documentElement.dataset.lyricAlign = settings.value.lyricAlign
@@ -399,6 +441,8 @@ export function useSettingsStore(): {
   loadSettings: () => Promise<AppSettings>
   updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>
   chooseCacheFolder: () => Promise<void>
+  chooseBackgroundImage: () => Promise<string | null>
+  importBackgroundImage: (file: File) => Promise<string | null>
   resetCacheFolder: () => Promise<void>
   refreshCacheSize: () => Promise<void>
   clearCache: () => Promise<void>
@@ -439,6 +483,15 @@ export function useSettingsStore(): {
     if (folder) {
       await updateSettings({ cachePath: folder })
     }
+  }
+
+  async function chooseBackgroundImage(): Promise<string | null> {
+    return await window.api.settings.chooseBackgroundImage()
+  }
+
+  async function importBackgroundImage(file: File): Promise<string | null> {
+    const data = await file.arrayBuffer()
+    return await window.api.settings.importBackgroundImage(file.name, data)
   }
 
   async function resetCacheFolder(): Promise<void> {
@@ -504,6 +557,8 @@ export function useSettingsStore(): {
     loadSettings,
     updateSettings,
     chooseCacheFolder,
+    chooseBackgroundImage,
+    importBackgroundImage,
     resetCacheFolder,
     refreshCacheSize,
     clearCache,

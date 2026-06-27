@@ -16,6 +16,24 @@ export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 export type LyricAlign = 'center' | 'left'
 export type ProxyMode = 'auto' | 'custom' | 'off'
+export type AppBackgroundPage = 'local' | 'settings' | 'streaming' | 'player'
+export type AppBackgroundKind = 'color' | 'image'
+
+export interface AppBackgroundColorPair {
+  light: string
+  dark: string
+  kind: AppBackgroundKind
+  image: string
+}
+
+export interface AppBackgroundPageOverride extends AppBackgroundColorPair {
+  inherit: boolean
+}
+
+export interface AppBackgroundSettings {
+  global: AppBackgroundColorPair
+  pages: Record<AppBackgroundPage, AppBackgroundPageOverride>
+}
 
 export interface DesktopLyricsSettings {
   enabled: boolean
@@ -178,6 +196,7 @@ export interface AppSettings {
   darkAccentColor: string
   fontFamily: string
   uiDensity: UiDensity
+  appBackground: AppBackgroundSettings
   nowPlayingBackground: NowPlayingBackground
   lyricAlign: LyricAlign
   lyricDimOpacity: number

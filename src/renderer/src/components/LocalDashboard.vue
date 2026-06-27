@@ -621,6 +621,11 @@ function playDashboardTrack(track: Track | undefined): void {
 
   font-family: 'Inter', sans-serif;
   color: var(--text-main);
+  background-color: var(--te-local-bg);
+  background-image: var(--te-local-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   width: 100%;
   height: 100%;
   padding: 2rem 1rem;

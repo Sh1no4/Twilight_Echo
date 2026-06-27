@@ -134,6 +134,18 @@ function handleImportClick(): void {
   transform: translate3d(0, 0, 0);
 }
 
+:global(html[data-theme='dark']) .side-menu {
+  border-right-color: transparent;
+  background-color: var(--te-local-bg);
+  background-image: var(--te-local-bg-image);
+  background-position: left center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .side-menu .menu-items {
   transform: translate3d(-8px, 0, 0);
   opacity: 0;

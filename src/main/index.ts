@@ -58,6 +58,24 @@ type UiDensity = 'compact' | 'standard' | 'comfortable'
 type ProxyMode = 'auto' | 'custom' | 'off'
 type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 type LyricAlign = 'center' | 'left'
+type AppBackgroundPage = 'local' | 'settings' | 'streaming' | 'player'
+type AppBackgroundKind = 'color' | 'image'
+
+interface AppBackgroundColorPair {
+  light: string
+  dark: string
+  kind: AppBackgroundKind
+  image: string
+}
+
+interface AppBackgroundPageOverride extends AppBackgroundColorPair {
+  inherit: boolean
+}
+
+interface AppBackgroundSettings {
+  global: AppBackgroundColorPair
+  pages: Record<AppBackgroundPage, AppBackgroundPageOverride>
+}
 
 interface DesktopLyricsSettings {
   enabled: boolean
@@ -139,6 +157,7 @@ interface AppSettings {
   darkAccentColor: string
   fontFamily: string
   uiDensity: UiDensity
+  appBackground: AppBackgroundSettings
   nowPlayingBackground: NowPlayingBackground
   lyricAlign: LyricAlign
   lyricDimOpacity: number
@@ -205,6 +224,20 @@ const DEFAULT_SETTINGS: AppSettings = {
   darkAccentColor: 'amber',
   fontFamily: 'system',
   uiDensity: 'standard',
+  appBackground: {
+    global: {
+      light: '#f4f4f7',
+      dark: '#17181a',
+      kind: 'color',
+      image: ''
+    },
+    pages: {
+      local: { inherit: true, light: '#ffffff', dark: '#17181a', kind: 'color', image: '' },
+      settings: { inherit: true, light: '#f4f4f7', dark: '#17181a', kind: 'color', image: '' },
+      streaming: { inherit: true, light: '#fafbfe', dark: '#17181a', kind: 'color', image: '' },
+      player: { inherit: true, light: '#080e17', dark: '#17181a', kind: 'color', image: '' }
+    }
+  },
   nowPlayingBackground: 'blur',
   lyricAlign: 'center',
   lyricDimOpacity: 40,
@@ -343,6 +376,56 @@ function normalizeNowPlayingBackground(value: unknown): NowPlayingBackground {
   return value === 'fluid' || value === 'solid' ? value : 'blur'
 }
 
+function normalizeHexColor(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const normalized = value.trim()
+  if (/^#[0-9a-fA-F]{6}$/.test(normalized)) return normalized.toLowerCase()
+  if (/^[0-9a-fA-F]{6}$/.test(normalized)) return `#${normalized.toLowerCase()}`
+  return fallback
+}
+
+function normalizeBackgroundKind(value: unknown): AppBackgroundKind {
+  return value === 'image' ? 'image' : 'color'
+}
+
+function normalizeBackgroundImageHandle(value: unknown): string {
+  return typeof value === 'string' && /^background:\/\/[a-zA-Z0-9._-]+$/.test(value)
+    ? value
+    : ''
+}
+
+const APP_BACKGROUND_PAGES: AppBackgroundPage[] = ['local', 'settings', 'streaming', 'player']
+
+function normalizeAppBackground(raw: unknown): AppBackgroundSettings {
+  const value = (typeof raw === 'object' && raw !== null ? raw : {}) as {
+    global?: Partial<AppBackgroundColorPair>
+    pages?: Partial<Record<AppBackgroundPage, Partial<AppBackgroundPageOverride>>>
+  }
+  const defaultBackground = DEFAULT_SETTINGS.appBackground
+  const global = {
+    light: normalizeHexColor(value.global?.light, defaultBackground.global.light),
+    dark: normalizeHexColor(value.global?.dark, defaultBackground.global.dark),
+    kind: normalizeBackgroundKind(value.global?.kind),
+    image: normalizeBackgroundImageHandle(value.global?.image)
+  }
+  const pages = APP_BACKGROUND_PAGES.reduce(
+    (acc, page) => {
+      const defaults = defaultBackground.pages[page]
+      const override = value.pages?.[page]
+      acc[page] = {
+        inherit: override?.inherit !== false,
+        light: normalizeHexColor(override?.light, defaults.light),
+        dark: normalizeHexColor(override?.dark, defaults.dark),
+        kind: normalizeBackgroundKind(override?.kind),
+        image: normalizeBackgroundImageHandle(override?.image)
+      }
+      return acc
+    },
+    {} as Record<AppBackgroundPage, AppBackgroundPageOverride>
+  )
+  return { global, pages }
+}
+
 function normalizePluginThemeId(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const normalized = value.trim()
@@ -472,6 +555,7 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
       ? settings.fontFamily.trim().slice(0, 64)
       : DEFAULT_SETTINGS.fontFamily,
     uiDensity: normalizeUiDensity(settings.uiDensity),
+    appBackground: normalizeAppBackground(settings.appBackground),
     nowPlayingBackground: normalizeNowPlayingBackground(settings.nowPlayingBackground),
     lyricAlign: settings.lyricAlign === 'left' ? 'left' : 'center',
     lyricDimOpacity: clampNumber(settings.lyricDimOpacity, 10, 100, DEFAULT_SETTINGS.lyricDimOpacity),
@@ -758,6 +842,45 @@ function ensureCoverCacheDir(): string {
   const dir = getCoverCacheDir()
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   return dir
+}
+
+const BACKGROUND_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
+
+function getBackgroundImageDir(): string {
+  return join(app.getPath('userData'), 'backgrounds')
+}
+
+function ensureBackgroundImageDir(): string {
+  const dir = getBackgroundImageDir()
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+function resolveBackgroundImageFile(fileName: string): string | null {
+  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '')
+  if (!safeName || safeName !== fileName) return null
+  const filePath = join(getBackgroundImageDir(), safeName)
+  return existsSync(filePath) ? filePath : null
+}
+
+function importBackgroundImageBuffer(fileName: string, data: Buffer): string {
+  const ext = extname(fileName).toLowerCase()
+  if (!BACKGROUND_IMAGE_EXTENSIONS.has(ext)) {
+    throw new Error('不支持的背景图片格式')
+  }
+  const hash = createHash('sha256').update(data).digest('hex').slice(0, 24)
+  const targetName = `${hash}${ext === '.jpeg' ? '.jpg' : ext}`
+  const targetPath = join(ensureBackgroundImageDir(), targetName)
+  if (!existsSync(targetPath)) {
+    writeFileSync(targetPath, data)
+  }
+  return `background://${targetName}`
+}
+
+function importBackgroundImage(sourcePath: string): string {
+  const resolvedPath = resolve(sourcePath)
+  const data = readFileSync(resolvedPath)
+  return importBackgroundImageBuffer(resolvedPath, data)
 }
 
 function resolveCoverCacheFile(fileName: string): string | null {
@@ -1667,7 +1790,13 @@ async function updateAppSettings(patch: Partial<AppSettings>): Promise<SettingsS
     patch,
     'audioExclusiveMode'
   )
+  const shouldUpdateWindowBackground =
+    Object.prototype.hasOwnProperty.call(patch, 'theme') ||
+    Object.prototype.hasOwnProperty.call(patch, 'appBackground')
   appSettings = normalizeAppSettings({ ...appSettings, ...patch })
+  if (shouldUpdateWindowBackground) {
+    mainWindow?.setBackgroundColor(getWindowBackgroundColor(appSettings))
+  }
 
   if (
     audioEngineManager &&
@@ -1763,9 +1892,11 @@ function relaunchApplication(): void {
 }
 
 function getWindowBackgroundColor(settings: AppSettings): string {
-  if (settings.theme === 'dark') return '#080b12'
-  if (settings.theme === 'system' && nativeTheme.shouldUseDarkColors) return '#080b12'
-  return '#ffffff'
+  if (settings.theme === 'dark') return settings.appBackground.global.dark
+  if (settings.theme === 'system' && nativeTheme.shouldUseDarkColors) {
+    return settings.appBackground.global.dark
+  }
+  return settings.appBackground.global.light
 }
 
 function getAppIconPath(): string {
@@ -2406,6 +2537,14 @@ if (!gotSingleInstanceLock) {
         supportFetchAPI: true,
         stream: true
       }
+    },
+    {
+      scheme: 'background',
+      privileges: {
+        standard: true,
+        secure: true,
+        supportFetchAPI: true
+      }
     }
   ])
 
@@ -2437,6 +2576,22 @@ if (!gotSingleInstanceLock) {
       const data = readFileSync(filePath)
       return new Response(data, {
         headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'max-age=86400' }
+      })
+    })
+
+    protocol.handle('background', (request) => {
+      const url = new URL(request.url)
+      const fileName = (url.hostname + url.pathname).replace(/^\/+/, '')
+      const filePath = resolveBackgroundImageFile(fileName)
+      if (!filePath) {
+        return new Response('Not Found', { status: 404 })
+      }
+      const ext = extname(filePath).toLowerCase()
+      const contentType =
+        ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
+      const data = readFileSync(filePath)
+      return new Response(data, {
+        headers: { 'Content-Type': contentType, 'Cache-Control': 'max-age=86400' }
       })
     })
 
@@ -2486,6 +2641,24 @@ if (!gotSingleInstanceLock) {
     })
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths[0]
+  })
+
+  ipcMain.handle('settings:chooseBackgroundImage', async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const options: Electron.OpenDialogOptions = {
+      properties: ['openFile'],
+      filters: [{ name: '背景图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+    }
+    const result = win && !win.isDestroyed()
+      ? await dialog.showOpenDialog(win, options)
+      : await dialog.showOpenDialog(options)
+    if (result.canceled || result.filePaths.length === 0) return null
+    return importBackgroundImage(result.filePaths[0])
+  })
+
+  ipcMain.handle('settings:importBackgroundImage', async (_event, fileName: string, data: ArrayBuffer) => {
+    if (typeof fileName !== 'string' || !(data instanceof ArrayBuffer)) return null
+    return importBackgroundImageBuffer(fileName, Buffer.from(data))
   })
 
   ipcMain.handle('app:relaunch', () => {

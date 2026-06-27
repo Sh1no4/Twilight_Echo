@@ -1768,7 +1768,11 @@ onMounted(async () => {
   z-index: 50;
   display: flex;
   box-sizing: border-box;
-  background: #fafbfe;
+  background-color: var(--te-streaming-bg);
+  background-image: var(--te-streaming-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 .streaming-sidebar {
@@ -1794,6 +1798,16 @@ onMounted(async () => {
 
 .streaming-sidebar.open {
   transform: translate3d(0, 0, 0);
+}
+
+:global(html[data-theme='dark']) .streaming-sidebar {
+  border-right-color: transparent;
+  background-color: var(--te-streaming-bg);
+  background-image: var(--te-streaming-bg-image);
+  background-position: left center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  box-shadow: none;
 }
 
 .streaming-sidebar-inner {
@@ -2792,11 +2806,11 @@ onMounted(async () => {
 
 /* ===== Reference-style Streaming Content Refresh ===== */
 .streaming-page {
-  background:
-    radial-gradient(circle at 30% 10%, rgba(184, 143, 255, 0.12), transparent 28%),
-    radial-gradient(circle at 78% 12%, rgba(148, 210, 255, 0.14), transparent 30%),
-    radial-gradient(circle at 44% 90%, rgba(255, 169, 210, 0.1), transparent 34%),
-    linear-gradient(180deg, rgba(252, 253, 255, 0.96), rgba(247, 250, 255, 0.92));
+  background-color: var(--te-streaming-bg);
+  background-image: var(--te-streaming-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 .streaming-content {
@@ -3134,7 +3148,11 @@ onMounted(async () => {
 
 /* ===== White Card Streaming Refinement ===== */
 .streaming-page {
-  background: var(--te-card-bg);
+  background-color: var(--te-streaming-bg);
+  background-image: var(--te-streaming-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 .streaming-sidebar.open {
@@ -3326,7 +3344,11 @@ onMounted(async () => {
 }
 
 :global(html[data-theme='dark']) .streaming-page {
-  background: var(--te-streaming-surface);
+  background-color: var(--te-streaming-bg);
+  background-image: var(--te-streaming-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
 }
 
 :global(html[data-theme='dark']) .streaming-search-box,
