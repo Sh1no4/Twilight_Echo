@@ -231,8 +231,13 @@ const { currentTrack, currentTime, isPlaying, restorePlaybackSession, createPlay
   usePlayerStore()
 const { loadSettings, settings } = useSettingsStore()
 const { uiContributions, syncExtensions } = useExtensionRegistry()
+const STREAMING_ACCOUNT_PAGE_KEYS = new Set(['com.twilightecho.provider.ytmusic:ytmusic-account'])
 const sidebarPages = computed(() =>
-  uiContributions.value.filter((contribution) => contribution.kind === 'sidebarPage')
+  uiContributions.value.filter(
+    (contribution) =>
+      contribution.kind === 'sidebarPage' &&
+      !STREAMING_ACCOUNT_PAGE_KEYS.has(`${contribution.pluginId}:${contribution.id}`)
+  )
 )
 const localSidebarItems = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'localSidebarItem')
@@ -591,6 +596,7 @@ const titleSurface = computed<TitleSurface>(() => {
       :has-player="hasPlayerBar"
       @toggle-menu="toggleStreamingMenu"
       @back-to-local="showStreamingPage = false"
+      @login="openLoginPage"
     />
     <Transition name="login-page">
       <LoginPage

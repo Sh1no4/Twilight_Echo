@@ -261,6 +261,7 @@ function getStreamingTabIndex(key: StreamingTab): number {
 const emit = defineEmits<{
   toggleMenu: []
   backToLocal: []
+  login: []
 }>()
 
 const {
@@ -1368,6 +1369,10 @@ onMounted(async () => {
                   : '登录后即可加载我收藏的歌曲和在线歌单'
               }}
             </p>
+            <button type="button" class="stream-action-btn" @click="emit('login')">
+              <i class="pi pi-user"></i>
+              <span>账号登录</span>
+            </button>
           </div>
 
           <div v-else-if="rootLoading && !currentDetail" class="streaming-placeholder">

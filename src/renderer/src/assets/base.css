@@ -1507,6 +1507,12 @@ html[data-theme='dark'] .dashboard-wrapper .section-title {
   -webkit-text-fill-color: transparent;
 }
 
+html[data-theme='dark'] .dashboard-wrapper .song-info h2 {
+  background: none;
+  color: rgba(255, 255, 255, 0.96);
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.96);
+}
+
 html[data-theme='dark'] .dashboard-wrapper .control-btn {
   color: rgba(248, 250, 252, 0.85);
 }
