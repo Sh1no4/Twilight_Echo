@@ -786,7 +786,7 @@ onUnmounted(() => {
   gap: 12px;
   padding: 14px 24px;
   border-bottom: 1px solid rgba(15, 23, 42, 0.06);
-  background: rgba(255, 255, 255, 0.92);
+  background: var(--te-card-bg);
   flex-shrink: 0;
 }
 
@@ -843,7 +843,7 @@ onUnmounted(() => {
   padding: 14px;
   border: 1px solid #eef1f6;
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #242946;
   text-align: left;
   cursor: pointer;
@@ -903,7 +903,7 @@ onUnmounted(() => {
   height: 32px;
   padding: 0 12px;
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--te-subtle-bg);
   color: var(--te-primary-500);
   font-size: 12px;
   font-weight: 800;
@@ -935,7 +935,7 @@ onUnmounted(() => {
   padding: 8px 20px;
   border: 1px solid rgba(255, 255, 255, 0.62);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.5);
+  background: var(--te-subtle-bg);
   color: var(--te-neutral-900);
   font-size: 14px;
   cursor: pointer;
@@ -1016,7 +1016,7 @@ onUnmounted(() => {
   padding: 6px 16px;
   border: 1px solid #e0e0e0;
   border-radius: 6px;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #e74c3c;
   font-size: 13px;
   cursor: pointer;
@@ -1024,7 +1024,7 @@ onUnmounted(() => {
 }
 
 .logout-btn:hover {
-  background: #fef0f0;
+  background: var(--te-danger-soft-bg);
 }
 
 .login-qr-section {
@@ -1045,7 +1045,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.66);
+  background: var(--te-subtle-bg);
   box-shadow: 0 24px 70px rgba(86, 70, 160, 0.16);
 }
 
@@ -1067,7 +1067,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: rgba(255, 255, 255, 0.85);
+  background: var(--te-glass-bg-strong);
   color: #999;
   font-size: 14px;
   backdrop-filter: blur(2px);
@@ -1125,7 +1125,7 @@ onUnmounted(() => {
   height: 34px;
   border: 1px solid rgba(124, 77, 255, 0.18);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--te-subtle-bg);
   color: rgba(36, 41, 70, 0.72);
   font-size: 12px;
   font-weight: 800;
@@ -1154,7 +1154,7 @@ onUnmounted(() => {
   border: 1px solid rgba(148, 163, 184, 0.34);
   border-radius: 8px;
   padding: 0 11px;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--te-subtle-bg);
   color: #242946;
   font-size: 13px;
   outline: none;

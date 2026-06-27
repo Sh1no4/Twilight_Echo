@@ -227,7 +227,8 @@ function closeEqualizerPage(): void {
 
 const { loadLibrary, loadPlaylists } = useMusicStore()
 const { checkLogin } = useNcmStore()
-const { currentTrack, restorePlaybackSession, createPlaybackSession } = usePlayerStore()
+const { currentTrack, currentTime, isPlaying, restorePlaybackSession, createPlaybackSession } =
+  usePlayerStore()
 const { loadSettings, settings } = useSettingsStore()
 const { uiContributions, syncExtensions } = useExtensionRegistry()
 const sidebarPages = computed(() =>
@@ -279,8 +280,12 @@ const mainContentMinHeight = computed(() =>
 )
 const sideMenuBottomOffset = ref(0)
 const sideMenuOverlapGap = 10
+const PLAYBACK_SESSION_AUTOSAVE_DEBOUNCE_MS = 1200
+const PLAYBACK_SESSION_POSITION_AUTOSAVE_MS = 15000
 
 let sideMenuMonitorFrame: number | null = null
+let playbackSessionAutosaveTimer: number | null = null
+let lastPlaybackSessionPositionSaveAt = 0
 let removePlaybackSessionSaveListener: (() => void) | null = null
 let removeLibraryChangedListener: (() => void) | null = null
 
@@ -304,6 +309,11 @@ async function restoreSavedPlaybackSession(mode: PlaybackResumeMode): Promise<vo
 }
 
 async function savePlaybackSessionForQuit(): Promise<void> {
+  clearPlaybackSessionAutosave()
+  await savePlaybackSessionSnapshot()
+}
+
+async function savePlaybackSessionSnapshot(): Promise<void> {
   const mode = settings.value.playbackResumeMode
   if (mode === 'off') {
     await window.api.data.clearPlaybackSession()
@@ -317,6 +327,24 @@ async function savePlaybackSessionForQuit(): Promise<void> {
   }
 
   await window.api.data.savePlaybackSession(session)
+}
+
+function clearPlaybackSessionAutosave(): void {
+  if (playbackSessionAutosaveTimer !== null) {
+    window.clearTimeout(playbackSessionAutosaveTimer)
+    playbackSessionAutosaveTimer = null
+  }
+}
+
+function schedulePlaybackSessionAutosave(delay = PLAYBACK_SESSION_AUTOSAVE_DEBOUNCE_MS): void {
+  clearPlaybackSessionAutosave()
+  playbackSessionAutosaveTimer = window.setTimeout(() => {
+    playbackSessionAutosaveTimer = null
+    lastPlaybackSessionPositionSaveAt = Date.now()
+    void savePlaybackSessionSnapshot().catch((err) => {
+      console.warn('自动保存播放会话失败：', err)
+    })
+  }, delay)
 }
 
 function setSideMenuBottomOffset(offset: number): void {
@@ -419,6 +447,35 @@ watch(
 )
 
 watch(
+  [() => currentTrack.value?.id, () => settings.value.playbackResumeMode],
+  ([trackId]) => {
+    if (!trackId || settings.value.playbackResumeMode === 'off') {
+      schedulePlaybackSessionAutosave()
+      return
+    }
+
+    lastPlaybackSessionPositionSaveAt = Date.now()
+    schedulePlaybackSessionAutosave()
+  },
+  { flush: 'post' }
+)
+
+watch(
+  [currentTime, isPlaying],
+  ([, playing]) => {
+    if (!playing || !currentTrack.value || settings.value.playbackResumeMode !== 'trackAndPosition') {
+      return
+    }
+
+    const now = Date.now()
+    if (now - lastPlaybackSessionPositionSaveAt < PLAYBACK_SESSION_POSITION_AUTOSAVE_MS) return
+    lastPlaybackSessionPositionSaveAt = now
+    schedulePlaybackSessionAutosave()
+  },
+  { flush: 'post' }
+)
+
+watch(
   showSettingsPage,
   (visible) => {
     document.body.classList.toggle('te-settings-surface', visible || showPluginPage.value)
@@ -454,6 +511,7 @@ watch(sidebarPages, (pages) => {
 })
 
 onBeforeUnmount(() => {
+  clearPlaybackSessionAutosave()
   removePlaybackSessionSaveListener?.()
   removePlaybackSessionSaveListener = null
   removeLibraryChangedListener?.()

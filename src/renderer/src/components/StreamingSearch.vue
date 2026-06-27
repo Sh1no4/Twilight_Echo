@@ -253,7 +253,7 @@ function emitPage(first: number): void {
   padding: 60px 20px;
   text-align: center;
   border-radius: 20px;
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--te-glass-bg);
   border: 1px solid rgba(255, 255, 255, 0.58);
   box-shadow: 0 20px 70px rgba(86, 70, 160, 0.12);
   backdrop-filter: blur(18px) saturate(145%);
@@ -282,7 +282,7 @@ function emitPage(first: number): void {
   overflow-x: auto;
   border-radius: 8px;
   border: 1px solid #eef1f6;
-  background: #fff;
+  background: var(--te-card-bg);
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
 }
 
@@ -660,7 +660,7 @@ function emitPage(first: number): void {
 .search-action-btn,
 .pager-btn {
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.58);
+  background: var(--te-card-bg);
   border-color: rgba(255, 255, 255, 0.72);
 }
 
@@ -673,7 +673,7 @@ function emitPage(first: number): void {
 .playlist-grid-card,
 .search-action-btn,
 .pager-btn {
-  background: #fff;
+  background: var(--te-card-bg);
   border-color: #eef1f6;
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
   backdrop-filter: none;

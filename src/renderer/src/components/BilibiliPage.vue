@@ -887,7 +887,7 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-  background: #fff;
+  background: var(--te-card-bg);
 }
 
 /* ===== Header ===== */
@@ -952,7 +952,7 @@ onBeforeUnmount(() => {
   height: 34px;
   border: 1px solid #eef1f6;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.58);
+  background: var(--te-card-bg);
   box-shadow: 0 12px 28px rgba(34, 42, 68, 0.06);
   color: #4b5563;
   cursor: pointer;
@@ -980,7 +980,7 @@ onBeforeUnmount(() => {
   height: 32px;
   padding: 0 16px;
   border-radius: 999px;
-  background: #fff;
+  background: var(--te-card-bg);
   border: 1px solid #eef1f6;
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
   transition:
@@ -993,7 +993,7 @@ onBeforeUnmount(() => {
 
 .bili-search-box.focused {
   border-color: rgba(0, 161, 214, 0.42);
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--te-card-bg);
   box-shadow: 0 0 0 4px var(--bili-accent-ring);
 }
 
@@ -1098,7 +1098,7 @@ onBeforeUnmount(() => {
   padding: 0 16px;
   border: 1px solid #eef1f6;
   border-radius: 999px;
-  background: #fff;
+  background: var(--te-card-bg);
   box-shadow: 0 10px 24px rgba(34, 42, 68, 0.05);
   color: rgba(64, 73, 108, 0.68);
   font-size: 13px;
@@ -1152,7 +1152,7 @@ onBeforeUnmount(() => {
   padding: 32px 28px;
   border: 1px solid #eef1f6;
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
 }
 
@@ -1184,7 +1184,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #fff;
+  background: var(--te-card-bg);
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
 }
 
@@ -1214,7 +1214,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--te-card-bg);
   color: #999;
   font-size: 13px;
 }
@@ -1284,7 +1284,7 @@ onBeforeUnmount(() => {
   padding: 0 14px;
   border: 1px solid #eef1f6;
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #4b5563;
   font-size: 13px;
   font-weight: 700;
@@ -1320,7 +1320,7 @@ onBeforeUnmount(() => {
   gap: 12px;
   text-align: center;
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   border: 1px solid #eef1f6;
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
 }
@@ -1355,7 +1355,7 @@ onBeforeUnmount(() => {
   padding: 18px;
   border: 1px solid #eef1f6;
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
   margin-bottom: 18px;
 }
@@ -1417,7 +1417,7 @@ onBeforeUnmount(() => {
   overflow-x: auto;
   border-radius: 8px;
   border: 1px solid #eef1f6;
-  background: #fff;
+  background: var(--te-card-bg);
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
 }
 
@@ -1565,7 +1565,7 @@ onBeforeUnmount(() => {
   padding: 0 16px;
   border: 1px solid #eef1f6;
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   color: rgba(52, 61, 87, 0.86);
   font-size: 13px;
   font-weight: 700;
@@ -1640,7 +1640,7 @@ onBeforeUnmount(() => {
   padding: 12px;
   border: 1px solid #eef1f6;
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
   transition:
     transform 0.24s var(--te-ease-soft, ease),
@@ -1690,7 +1690,7 @@ onBeforeUnmount(() => {
   padding: 0;
   border: none;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--te-card-bg);
   color: rgba(0, 161, 214, 0.5);
   cursor: pointer;
   box-shadow: 0 8px 18px rgba(34, 42, 68, 0.12);
@@ -1708,7 +1708,7 @@ onBeforeUnmount(() => {
 
 .pin-btn.pinned {
   color: var(--bili-accent);
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--te-card-bg);
 }
 
 .pin-btn.pinned:hover:not(:disabled) {

@@ -255,7 +255,7 @@ onUnmounted(() => {
         </header>
 
         <!-- Error banner -->
-        <div v-if="errorMsg" style="margin: 0 32px 16px; padding: 12px 16px; background: #fef2f2; border: 1px solid #fecaca; border-radius: 12px; color: #b91c1c; font-size: 13px; display: flex; align-items: center; gap: 8px;">
+        <div v-if="errorMsg" style="margin: 0 32px 16px; padding: 12px 16px; background: var(--te-danger-soft-bg); border: 1px solid var(--te-danger-soft-fg); border-radius: 12px; color: var(--te-danger-soft-fg); font-size: 13px; display: flex; align-items: center; gap: 8px;">
           <i class="pi pi-exclamation-triangle"></i>
           {{ errorMsg }}
         </div>
@@ -440,7 +440,7 @@ onUnmounted(() => {
         <div class="scroll-area" v-else-if="activeTab === 'updates'">
           
           <div class="page-title">
-            可用更新 <span v-if="updateEntries.length > 0" class="badge" style="background: #fee2e2; color: #ef4444;">{{ updateEntries.length }}</span>
+            可用更新 <span v-if="updateEntries.length > 0" class="badge" style="background: var(--te-danger-soft-bg); color: var(--te-danger-soft-fg);">{{ updateEntries.length }}</span>
           </div>
 
           <!-- Empty state -->
@@ -621,7 +621,7 @@ onUnmounted(() => {
   left: 2px;
   width: 16px;
   height: 16px;
-  background: #fff;
+  background: #fff; /* keep-white: toggle knob */
   border-radius: 50%;
   transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
@@ -665,7 +665,7 @@ onUnmounted(() => {
 }
 
 .search-box:focus-within {
-  background: #fff;
+  background: var(--te-card-bg);
   box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
 }
 
@@ -944,8 +944,8 @@ onUnmounted(() => {
 }
 
 .icon-btn.danger:hover {
-  background: #fee2e2;
-  color: #ef4444;
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
 }
 
 /* Discover Banner */

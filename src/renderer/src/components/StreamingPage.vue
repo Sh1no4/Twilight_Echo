@@ -1778,7 +1778,7 @@ onMounted(async () => {
   bottom: 0;
   width: var(--te-menu-width);
   box-sizing: border-box;
-  background: #ffffff;
+  background: var(--te-card-bg);
   border-right: 1px solid rgba(17, 24, 39, 0.06);
   z-index: 1000;
   overflow: hidden;
@@ -1842,11 +1842,11 @@ onMounted(async () => {
 }
 
 .streaming-menu-item:hover {
-  background: #f3f4f6;
+  background: var(--te-hover-bg);
 }
 
 .streaming-menu-item.active {
-  background: #e8e8e8;
+  background: var(--te-active-bg);
   color: #0f172a;
   box-shadow: none;
 }
@@ -1975,7 +1975,7 @@ onMounted(async () => {
 
 .streaming-menu-separator {
   height: 1px;
-  background: #e5e7eb;
+  background: var(--te-card-border);
   margin: 10px 10px 8px 14px;
 }
 
@@ -1984,7 +1984,7 @@ onMounted(async () => {
 }
 
 .streaming-local-btn:hover {
-  background: #f3f4f6;
+  background: var(--te-hover-bg);
 }
 
 .btn-back {
@@ -2021,7 +2021,7 @@ onMounted(async () => {
   gap: 12px;
   text-align: center;
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   border: 1px solid #eef1f6;
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
   backdrop-filter: none;
@@ -2067,7 +2067,7 @@ onMounted(async () => {
   padding: 0 13px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.74);
-  background: rgba(255, 255, 255, 0.82);
+  background: var(--te-glass-bg-strong);
   color: rgba(80, 88, 116, 0.72);
   font-size: 12px;
   font-weight: 700;
@@ -2115,7 +2115,7 @@ onMounted(async () => {
   color: #999;
   text-transform: uppercase;
   letter-spacing: 0;
-  background: rgba(255, 255, 255, 0.32);
+  background: var(--te-glass-bg);
   border-bottom: 1px solid rgba(209, 213, 219, 0.42);
   backdrop-filter: blur(14px) saturate(140%);
   -webkit-backdrop-filter: blur(14px) saturate(140%);
@@ -2138,7 +2138,7 @@ onMounted(async () => {
 }
 
 .track-row:hover {
-  background: rgba(255, 255, 255, 0.44);
+  background: var(--te-subtle-bg);
   transform: translateX(4px);
   box-shadow: 0 12px 30px rgba(86, 70, 160, 0.08);
 }
@@ -2286,7 +2286,7 @@ onMounted(async () => {
   height: 32px;
   padding: 0 16px;
   border-radius: 999px;
-  background: #fff;
+  background: var(--te-card-bg);
   border: 1px solid #eef1f6;
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
   backdrop-filter: none;
@@ -2301,7 +2301,7 @@ onMounted(async () => {
 
 .streaming-search-box.focused {
   border-color: rgba(124, 77, 255, 0.42);
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--te-subtle-bg);
   box-shadow: 0 0 0 4px rgba(124, 77, 255, 0.1);
 }
 
@@ -2315,7 +2315,7 @@ onMounted(async () => {
   border: 0;
   border-radius: 999px;
   color: var(--te-neutral-700);
-  background: rgba(255, 255, 255, 0.48);
+  background: var(--te-glass-bg);
   box-shadow: 0 12px 32px rgba(86, 70, 160, 0.08);
   cursor: pointer;
   backdrop-filter: blur(16px) saturate(145%);
@@ -2329,7 +2329,7 @@ onMounted(async () => {
 .streaming-round-btn:hover,
 .streaming-avatar-btn:hover {
   transform: translateY(-2px);
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--te-subtle-bg);
   box-shadow: 0 16px 36px rgba(86, 70, 160, 0.12);
 }
 
@@ -2465,7 +2465,7 @@ onMounted(async () => {
   padding: 18px;
   border: 1px solid #eef1f6;
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
   margin-bottom: 18px;
 }
@@ -2590,7 +2590,7 @@ onMounted(async () => {
   cursor: pointer;
   padding: 10px;
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   border: 1px solid #eef1f6;
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
   backdrop-filter: none;
@@ -2847,7 +2847,7 @@ onMounted(async () => {
 .streaming-avatar-btn {
   border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.58);
+  background: var(--te-subtle-bg);
   box-shadow:
     0 12px 28px rgba(86, 70, 160, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.7);
@@ -2861,7 +2861,7 @@ onMounted(async () => {
   height: 36px;
   width: clamp(260px, 34vw, 460px);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.64);
+  background: var(--te-subtle-bg);
   border-color: rgba(255, 255, 255, 0.78);
   box-shadow:
     0 14px 34px rgba(86, 70, 160, 0.08),
@@ -2869,7 +2869,7 @@ onMounted(async () => {
 }
 
 .streaming-search-box.focused {
-  background: rgba(255, 255, 255, 0.78);
+  background: var(--te-subtle-bg);
   border-color: rgba(168, 133, 247, 0.46);
   box-shadow:
     0 0 0 4px rgba(124, 77, 255, 0.09),
@@ -2895,7 +2895,7 @@ onMounted(async () => {
   font-size: 13px;
   font-weight: 700;
   color: rgba(64, 73, 108, 0.68);
-  background: rgba(255, 255, 255, 0.52);
+  background: var(--te-subtle-bg);
   border-color: rgba(255, 255, 255, 0.72);
   box-shadow: 0 10px 24px rgba(86, 70, 160, 0.06);
 }
@@ -3006,7 +3006,7 @@ onMounted(async () => {
   color: rgba(82, 90, 122, 0.54);
   font-size: 11px;
   font-weight: 700;
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--te-subtle-bg);
   border-bottom-color: rgba(213, 219, 235, 0.5);
 }
 
@@ -3017,7 +3017,7 @@ onMounted(async () => {
 }
 
 .track-row:hover {
-  background: rgba(255, 255, 255, 0.54);
+  background: var(--te-subtle-bg);
   transform: none;
   box-shadow: inset 3px 0 0 rgba(124, 77, 255, 0.34);
 }
@@ -3134,7 +3134,7 @@ onMounted(async () => {
 
 /* ===== White Card Streaming Refinement ===== */
 .streaming-page {
-  background: #fff;
+  background: var(--te-card-bg);
 }
 
 .streaming-sidebar.open {
@@ -3214,7 +3214,7 @@ onMounted(async () => {
 .track-table-wrapper,
 .detail-playlist-header,
 .playlist-grid-card {
-  background: #fff;
+  background: var(--te-card-bg);
   border-color: #eef1f6;
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
   backdrop-filter: none;
@@ -3222,7 +3222,7 @@ onMounted(async () => {
 }
 
 .streaming-search-box.focused {
-  background: #fff;
+  background: var(--te-card-bg);
   border-color: #d9d1ff;
   box-shadow: 0 0 0 4px rgba(124, 77, 255, 0.08);
 }
@@ -3288,7 +3288,7 @@ onMounted(async () => {
 }
 
 .detail-playlist-header {
-  background: #fff;
+  background: var(--te-card-bg);
   border: 1px solid #eef1f6;
 }
 

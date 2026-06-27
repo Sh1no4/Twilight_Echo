@@ -114,7 +114,7 @@ function handleImportClick(): void {
   left: 0;
   bottom: 0;
   width: var(--te-menu-width);
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--te-glass-bg);
   border-right: 1px solid rgba(0, 0, 0, 0.05);
   z-index: 1000;
   overflow: hidden;

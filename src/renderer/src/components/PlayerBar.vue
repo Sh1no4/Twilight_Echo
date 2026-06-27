@@ -1173,7 +1173,7 @@ onBeforeUnmount(() => {
   transform: translateX(-50%);
   margin-bottom: 10px;
   z-index: 2;
-  background: #ffffff;
+  background: var(--te-card-bg);
   border: 1px solid #e2e8f0;
   border-radius: 14px;
   box-shadow: 0 18px 55px rgba(86, 70, 160, 0.16);
@@ -1288,7 +1288,7 @@ onBeforeUnmount(() => {
   position: relative;
   z-index: 2;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--te-glass-bg);
   border: 1px solid rgba(0, 0, 0, 0.05);
   border-radius: 12px;
   box-shadow:
@@ -2037,7 +2037,7 @@ onBeforeUnmount(() => {
   bottom: 100%;
   right: -8px;
   margin-bottom: 10px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--te-glass-bg);
   border: 1px solid rgba(0, 0, 0, 0.05);
   border-radius: 16px;
   box-shadow: 0 18px 55px rgba(86, 70, 160, 0.08);
@@ -2095,7 +2095,7 @@ onBeforeUnmount(() => {
   padding: 8px 12px;
   border: 0;
   border-radius: 10px;
-  background: #f8fafc;
+  background: var(--te-subtle-bg);
   color: rgba(52, 61, 87, 0.88);
   cursor: pointer;
   text-align: left;
@@ -2166,7 +2166,7 @@ onBeforeUnmount(() => {
   align-items: center;
   padding: 0 8px;
   border-radius: 999px;
-  background: #f1f5f9;
+  background: var(--te-subtle-bg);
   color: #475569;
   font-size: 10px;
   font-weight: 900;
@@ -2232,7 +2232,7 @@ onBeforeUnmount(() => {
   margin: 2px 2px 8px;
   padding: 8px;
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--te-subtle-bg);
   overflow: hidden;
 }
 
@@ -2325,7 +2325,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 4px;
   border-radius: 7px;
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--te-subtle-bg);
   color: rgba(52, 61, 87, 0.72);
   font-size: 10px;
   font-weight: 800;
@@ -2384,7 +2384,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   padding: 3px 8px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--te-subtle-bg);
   color: rgba(80, 88, 116, 0.68);
   font-size: 11px;
   font-weight: 800;
@@ -2460,7 +2460,7 @@ onBeforeUnmount(() => {
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  background: #fff;
+  background: #fff; /* keep-white: toggle knob */
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.28);
   transition: transform 0.2s ease;
 }

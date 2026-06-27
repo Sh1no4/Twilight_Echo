@@ -306,7 +306,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
 
 /* Glass Card Base */
 .glass-card {
-  background: rgba(255, 255, 255, 0.75);
+  background: var(--te-glass-bg-strong);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, 0.6);
@@ -390,7 +390,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   padding: 5px 10px;
   border-radius: 999px;
   border: 1px solid rgba(15, 23, 42, 0.1);
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--te-subtle-bg);
   color: var(--te-neutral-700, #334155);
   font-size: 12px;
   font-weight: 600;
@@ -424,7 +424,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   top: calc(100% + 6px);
   right: 0;
   min-width: 180px;
-  background: #fff;
+  background: var(--te-card-bg);
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-radius: 14px;
   box-shadow: 0 16px 40px rgba(15, 23, 42, 0.14);
@@ -521,7 +521,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.8) 0%, rgba(240, 245, 255, 0.6) 100%);
+  background: var(--te-card-bg);
 }
 .favorites-card::before {
   content: '';
@@ -609,7 +609,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
 }
 .liked-card-cover-placeholder {
   color: var(--te-favorite-500, #ef4444);
-  background: #f3f0ff;
+  background: var(--te-subtle-bg);
 }
 
 .heart-icon {
@@ -619,7 +619,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   transform: translate(-50%, -50%);
   width: 50px;
   height: 50px;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--te-glass-bg);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   border-radius: 50%;
@@ -693,7 +693,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   width: 48px;
   height: 48px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--te-card-bg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -775,7 +775,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   display: flex;
   align-items: center;
   gap: 16px;
-  background: rgba(255, 255, 255, 0.75);
+  background: var(--te-glass-bg-strong);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255, 255, 255, 0.6);
@@ -790,7 +790,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
 .playlist-item:hover {
   transform: translateY(-3px);
   box-shadow: 0 16px 32px rgba(15, 23, 42, 0.06);
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--te-hover-bg);
 }
 
 .playlist-item-cover {
@@ -859,7 +859,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   height: 32px;
   border: 1px solid rgba(80, 88, 116, 0.1);
   border-radius: 50%;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #94a3b8;
   cursor: pointer;
   transition: all 0.2s;
@@ -869,7 +869,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
 .playlist-pin-button:hover,
 .playlist-pin-button.active {
   border-color: #fed7aa;
-  background: #fff7ed;
+  background: var(--te-warning-soft-bg);
   color: #d97706;
 }
 
@@ -891,7 +891,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   justify-content: center;
   padding: 42px 20px;
   text-align: center;
-  background: rgba(255, 255, 255, 0.5);
+  background: var(--te-card-bg);
   border-radius: 20px;
   border: 1px dashed rgba(80, 88, 116, 0.2);
 }

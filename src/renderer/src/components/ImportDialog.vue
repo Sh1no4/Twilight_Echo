@@ -275,7 +275,7 @@ onUnmounted(() => {
 }
 
 .folder-list {
-  background: rgba(255, 255, 255, 0.44);
+  background: var(--te-subtle-bg);
   border: 1px solid rgba(255, 255, 255, 0.58);
   border-radius: 14px;
   max-height: 200px;
@@ -368,7 +368,7 @@ onUnmounted(() => {
 .empty-result {
   margin-top: 10px;
   padding: 12px 16px;
-  background: rgba(255, 180, 80, 0.12);
+  background: var(--te-warning-soft-bg);
   border: 1px solid rgba(255, 180, 80, 0.24);
   border-radius: 14px;
   font-size: 13px;
@@ -384,7 +384,7 @@ onUnmounted(() => {
 }
 
 .btn-cancel {
-  background: rgba(255, 255, 255, 0.56);
+  background: var(--te-subtle-bg);
   border: 1px solid rgba(255, 255, 255, 0.62);
   padding: 8px 16px;
   border-radius: 12px;

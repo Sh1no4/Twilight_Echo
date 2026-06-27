@@ -1,4 +1,4 @@
-@font-face {
+﻿@font-face {
   font-family: 'Source Han Sans SC';
   src: url('/font/SourceHanSansSC-Regular-2.woff2') format('woff2');
   font-weight: 400;
@@ -80,6 +80,19 @@
   --te-text-meta: 400;
   --te-text-strong: 700;
   --te-streaming-surface: #fafbfe;
+  --te-card-bg: #ffffff;
+  --te-card-border: rgba(15, 23, 42, 0.08);
+  --te-subtle-bg: #f8fafc;
+  --te-hover-bg: #f3f4f6;
+  --te-active-bg: #e8e8e8;
+  --te-success-soft-bg: #f0fdf4;
+  --te-success-soft-fg: #16a34a;
+  --te-info-soft-bg: #eff6ff;
+  --te-info-soft-fg: #3b82f6;
+  --te-warning-soft-bg: #fff7ed;
+  --te-warning-soft-fg: #d97706;
+  --te-danger-soft-bg: #fef2f2;
+  --te-danger-soft-fg: #b91c1c;
 }
 
 :root,
@@ -107,6 +120,19 @@
   --te-glow-soft: rgba(59, 130, 246, 0.08);
   --te-glow-cyan: rgba(8, 145, 178, 0.08);
   --color-text: var(--te-neutral-900);
+  --te-card-bg: #ffffff;
+  --te-card-border: rgba(15, 23, 42, 0.08);
+  --te-subtle-bg: #f8fafc;
+  --te-hover-bg: #f3f4f6;
+  --te-active-bg: #e8e8e8;
+  --te-success-soft-bg: #f0fdf4;
+  --te-success-soft-fg: #16a34a;
+  --te-info-soft-bg: #eff6ff;
+  --te-info-soft-fg: #3b82f6;
+  --te-warning-soft-bg: #fff7ed;
+  --te-warning-soft-fg: #d97706;
+  --te-danger-soft-bg: #fef2f2;
+  --te-danger-soft-fg: #b91c1c;
 }
 
 :root[data-theme='dark'] {
@@ -134,6 +160,19 @@
   --te-glow-soft: rgba(244, 114, 182, 0.16);
   --te-glow-cyan: rgba(34, 211, 238, 0.16);
   --color-text: var(--te-neutral-900);
+  --te-card-bg: #101623;
+  --te-card-border: rgba(148, 163, 184, 0.16);
+  --te-subtle-bg: #0d1320;
+  --te-hover-bg: rgba(30, 41, 59, 0.56);
+  --te-active-bg: rgba(139, 92, 246, 0.18);
+  --te-success-soft-bg: rgba(74, 222, 128, 0.16);
+  --te-success-soft-fg: #86efac;
+  --te-info-soft-bg: rgba(96, 165, 250, 0.16);
+  --te-info-soft-fg: #93c5fd;
+  --te-warning-soft-bg: rgba(251, 191, 36, 0.16);
+  --te-warning-soft-fg: #fcd34d;
+  --te-danger-soft-bg: rgba(248, 113, 113, 0.16);
+  --te-danger-soft-fg: #fecaca;
 }
 
 *,
@@ -642,11 +681,7 @@ html[data-theme='dark'] body {
 
 html[data-theme='dark'] body {
   color: var(--te-neutral-900);
-  background:
-    radial-gradient(circle at 16% 8%, rgba(139, 92, 246, 0.18), transparent 30%),
-    radial-gradient(circle at 82% 12%, rgba(34, 211, 238, 0.12), transparent 30%),
-    radial-gradient(circle at 58% 92%, rgba(244, 114, 182, 0.1), transparent 34%),
-    linear-gradient(180deg, #080b12 0%, #0d1320 52%, #090f19 100%);
+  background: #080b12;
 }
 
 html[data-theme='dark'] body.te-streaming-surface {
@@ -654,32 +689,15 @@ html[data-theme='dark'] body.te-streaming-surface {
 }
 
 html[data-theme='dark'] body::before {
-  background:
-    conic-gradient(
-      from 24deg at 76% 16%,
-      transparent 0deg,
-      rgba(139, 92, 246, 0.22) 56deg,
-      rgba(34, 211, 238, 0.1) 106deg,
-      transparent 164deg,
-      transparent 360deg
-    ),
-    linear-gradient(135deg, rgba(8, 11, 18, 0.74), rgba(17, 24, 39, 0.72));
-  opacity: 0.82;
+  display: none;
 }
 
 html[data-theme='dark'] .main-content::before {
-  background:
-    radial-gradient(circle at 35% 30%, rgba(139, 92, 246, 0.14), transparent 30%),
-    radial-gradient(circle at 58% 55%, rgba(34, 211, 238, 0.08), transparent 64%),
-    radial-gradient(circle at 72% 66%, rgba(244, 114, 182, 0.06), transparent 70%);
-  opacity: 0.72;
+  display: none;
 }
 
 html[data-theme='dark'] .main-content::after {
-  background:
-    radial-gradient(circle at 36% 45%, rgba(34, 211, 238, 0.11), transparent 62%),
-    radial-gradient(circle at 72% 48%, rgba(168, 85, 247, 0.12), transparent 68%);
-  opacity: 0.7;
+  display: none;
 }
 
 html[data-theme='dark'] .title-bar {
@@ -697,7 +715,7 @@ html[data-theme='dark'] .title-bar.title-bar-settings {
 }
 
 html[data-theme='dark'] .title-bar.title-bar-streaming {
-  background: #fff;
+  background: transparent;
   border-bottom-color: transparent;
   box-shadow: none;
 }
@@ -731,32 +749,30 @@ html[data-theme='dark'] .control-btn:hover {
 }
 
 html[data-theme='dark'] .side-menu {
-  border-right-color: rgba(15, 23, 42, 0.08);
-  background: #ffffff;
-  box-shadow: 8px 0 24px rgba(15, 23, 42, 0.06);
+  border-right-color: var(--te-card-border);
+  background: var(--te-card-bg);
+  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.24);
 }
 
 html[data-theme='dark'] .streaming-sidebar {
   border-right-color: rgba(148, 163, 184, 0.14);
-  background:
-    linear-gradient(180deg, rgba(15, 23, 42, 0.9), rgba(17, 24, 39, 0.74)),
-    rgba(8, 11, 18, 0.86);
+  background: rgba(15, 23, 42, 0.86);
   box-shadow: 22px 0 70px rgba(0, 0, 0, 0.24);
 }
 
 html[data-theme='dark'] .menu-separator {
-  background: #e5e7eb;
+  background: rgba(148, 163, 184, 0.16);
 }
 
 html[data-theme='dark'] .menu-item:hover,
 html[data-theme='dark'] .menu-item-streaming:hover,
 html[data-theme='dark'] .menu-item-import:hover,
 html[data-theme='dark'] .streaming-menu-item:hover {
-  background: #f3f4f6;
+  background: var(--te-hover-bg);
 }
 
 html[data-theme='dark'] .menu-item.active {
-  background: #e8e8e8;
+  background: var(--te-active-bg);
   box-shadow: none;
 }
 
@@ -771,7 +787,7 @@ html[data-theme='dark'] .streaming-menu-item.active {
 
 html[data-theme='dark'] .item-icon,
 html[data-theme='dark'] .item-label {
-  color: #111827;
+  color: rgba(226, 232, 240, 0.9);
 }
 
 html[data-theme='dark'] .streaming-menu-icon,
@@ -780,19 +796,13 @@ html[data-theme='dark'] .streaming-menu-label {
 }
 
 html[data-theme='dark'] .song-list {
-  background:
-    radial-gradient(circle at 18% 7%, rgba(139, 92, 246, 0.12), transparent 34%),
-    radial-gradient(circle at 86% 12%, rgba(34, 211, 238, 0.08), transparent 36%),
-    linear-gradient(180deg, rgba(8, 11, 18, 0.98), rgba(13, 19, 32, 0.96));
+  background: #0d1320;
   scrollbar-color: rgba(167, 139, 250, 0.38) transparent;
 }
 
 html[data-theme='dark'] .grid-view::before,
 html[data-theme='dark'] .table-view::before {
-  background:
-    radial-gradient(circle at 16% 40%, rgba(139, 92, 246, 0.12), transparent 46%),
-    radial-gradient(circle at 52% 24%, rgba(244, 114, 182, 0.08), transparent 40%),
-    radial-gradient(circle at 86% 18%, rgba(34, 211, 238, 0.08), transparent 42%);
+  display: none;
 }
 
 html[data-theme='dark'] .artist-card,
@@ -803,9 +813,7 @@ html[data-theme='dark'] .track-table-wrapper,
 html[data-theme='dark'] .context-menu,
 html[data-theme='dark'] .submenu {
   border-color: rgba(148, 163, 184, 0.16);
-  background:
-    linear-gradient(145deg, rgba(15, 23, 42, 0.82), rgba(17, 24, 39, 0.58)),
-    rgba(8, 11, 18, 0.72);
+  background: var(--te-card-bg);
   box-shadow: 0 22px 64px rgba(0, 0, 0, 0.26);
 }
 
@@ -813,9 +821,7 @@ html[data-theme='dark'] .artist-card:hover,
 html[data-theme='dark'] .album-card:hover,
 html[data-theme='dark'] .playlist-card:hover {
   border-color: rgba(167, 139, 250, 0.32);
-  background:
-    linear-gradient(145deg, rgba(30, 41, 59, 0.88), rgba(15, 23, 42, 0.72)),
-    rgba(17, 24, 39, 0.82);
+  background: rgba(30, 41, 59, 0.82);
   box-shadow:
     0 24px 70px rgba(0, 0, 0, 0.34),
     0 0 0 1px rgba(139, 92, 246, 0.12);
@@ -828,9 +834,7 @@ html[data-theme='dark'] .cover-placeholder,
 html[data-theme='dark'] .player-cover-placeholder,
 html[data-theme='dark'] .playlist-cover-placeholder,
 html[data-theme='dark'] .playlist-grid-cover-placeholder {
-  background:
-    radial-gradient(circle at 35% 30%, rgba(248, 250, 252, 0.14), transparent 34%),
-    linear-gradient(135deg, rgba(139, 92, 246, 0.34), rgba(34, 211, 238, 0.16));
+  background: rgba(30, 41, 59, 0.6);
 }
 
 html[data-theme='dark'] .song-list-title,
@@ -901,14 +905,7 @@ html[data-theme='dark'] .track-row td {
 
 html[data-theme='dark'] .track-row::before {
   border-color: rgba(148, 163, 184, 0.16);
-  background:
-    linear-gradient(135deg, rgba(30, 41, 59, 0.74), rgba(15, 23, 42, 0.48)),
-    linear-gradient(
-      90deg,
-      rgba(139, 92, 246, 0.1),
-      rgba(244, 114, 182, 0.06),
-      rgba(34, 211, 238, 0.08)
-    );
+  background: rgba(30, 41, 59, 0.74);
 }
 
 html[data-theme='dark'] .track-row:hover {
@@ -916,8 +913,7 @@ html[data-theme='dark'] .track-row:hover {
 }
 
 html[data-theme='dark'] .track-playing {
-  background:
-    linear-gradient(90deg, rgba(139, 92, 246, 0.22), rgba(34, 211, 238, 0.08)) !important;
+  background: rgba(139, 92, 246, 0.18) !important;
   box-shadow: 0 20px 48px rgba(0, 0, 0, 0.28);
 }
 
@@ -948,9 +944,7 @@ html[data-theme='dark'] .playlist-panel:not(.panel-glass),
 html[data-theme='dark'] .volume-drawer:not(.drawer-glass),
 html[data-theme='dark'] .more-drawer:not(.drawer-glass) {
   border-color: rgba(148, 163, 184, 0.16);
-  background:
-    linear-gradient(145deg, rgba(15, 23, 42, 0.92), rgba(17, 24, 39, 0.74)),
-    rgba(8, 11, 18, 0.78);
+  background: rgba(15, 23, 42, 0.92);
   box-shadow:
     0 24px 80px rgba(0, 0, 0, 0.36),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
@@ -1118,10 +1112,7 @@ html[data-theme='dark'] .danger-button {
 html[data-theme='dark'] .streaming-page,
 html[data-theme='dark'] .login-page,
 html[data-theme='dark'] .eq-page {
-  background:
-    radial-gradient(circle at 30% 10%, rgba(139, 92, 246, 0.12), transparent 28%),
-    radial-gradient(circle at 78% 12%, rgba(34, 211, 238, 0.1), transparent 30%),
-    linear-gradient(180deg, #080b12, #0d1320);
+  background: #080b12;
   color: rgba(248, 250, 252, 0.94);
 }
 
@@ -1161,9 +1152,7 @@ html[data-theme='dark'] .profile-panel,
 html[data-theme='dark'] .liked-panel,
 html[data-theme='dark'] .playlist-list-item {
   border-color: rgba(148, 163, 184, 0.16);
-  background:
-    linear-gradient(145deg, rgba(15, 23, 42, 0.88), rgba(17, 24, 39, 0.68)),
-    rgba(8, 11, 18, 0.72);
+  background: var(--te-card-bg);
   box-shadow:
     0 20px 58px rgba(0, 0, 0, 0.26),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
@@ -1171,6 +1160,57 @@ html[data-theme='dark'] .playlist-list-item {
 
 html[data-theme='dark'] .track-table th {
   background: #101623;
+}
+
+/* ===== Streaming Home: dark cards & readable text ===== */
+html[data-theme='dark'] .feature-card,
+html[data-theme='dark'] .streaming-placeholder,
+html[data-theme='dark'] .empty-recommend,
+html[data-theme='dark'] .more-btn,
+html[data-theme='dark'] .retry-btn {
+  border-color: var(--te-card-border);
+}
+
+html[data-theme='dark'] .feature-hero-title,
+html[data-theme='dark'] .feature-hero-subtitle {
+  color: rgba(248, 250, 252, 0.96);
+}
+
+html[data-theme='dark'] .feature-hero-desc {
+  color: rgba(203, 213, 225, 0.82);
+}
+
+html[data-theme='dark'] .playlist-name {
+  color: rgba(248, 250, 252, 0.92);
+}
+
+html[data-theme='dark'] .playlist-count,
+html[data-theme='dark'] .section-heading p,
+html[data-theme='dark'] .placeholder-hint,
+html[data-theme='dark'] .empty-recommend {
+  color: rgba(148, 163, 184, 0.78);
+}
+
+html[data-theme='dark'] .more-btn {
+  color: rgba(148, 163, 184, 0.82);
+}
+
+html[data-theme='dark'] .feature-card::before,
+html[data-theme='dark'] .feature-card::after,
+html[data-theme='dark'] .playlist-tile::before,
+html[data-theme='dark'] .playlist-tile::after {
+  display: none;
+}
+
+html[data-theme='dark'] .playlist-tile {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+html[data-theme='dark'] .placeholder-icon,
+html[data-theme='dark'] .placeholder-cover {
+  background: rgba(30, 41, 59, 0.6);
 }
 
 html[data-theme='dark'] .track-row:hover {
@@ -1256,9 +1296,7 @@ html[data-theme='dark'] .square-panel,
 html[data-theme='dark'] .preset-menu,
 html[data-theme='dark'] .filter-menu {
   border-color: rgba(148, 163, 184, 0.16);
-  background:
-    linear-gradient(145deg, rgba(15, 23, 42, 0.88), rgba(17, 24, 39, 0.66)),
-    rgba(8, 11, 18, 0.74);
+  background: var(--te-card-bg);
   color: rgba(248, 250, 252, 0.94);
   box-shadow: 0 20px 58px rgba(0, 0, 0, 0.26);
 }
@@ -1303,4 +1341,474 @@ html[data-theme='dark'] input,
 html[data-theme='dark'] select,
 html[data-theme='dark'] textarea {
   color-scheme: dark;
+}
+
+/* ===== Streaming Library: favorites (我喜欢的) card dark fix ===== */
+html[data-theme='dark'] .glass-card,
+html[data-theme='dark'] .favorites-card {
+  background: var(--te-card-bg);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-color: var(--te-card-border);
+  box-shadow:
+    0 20px 40px rgba(0, 0, 0, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+html[data-theme='dark'] .glass-card:hover,
+html[data-theme='dark'] .favorites-card:hover {
+  box-shadow:
+    0 24px 48px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme='dark'] .favorites-card::before {
+  display: none;
+}
+
+html[data-theme='dark'] .liked-card-cover-placeholder {
+  background: rgba(30, 41, 59, 0.6);
+}
+
+html[data-theme='dark'] .heart-icon {
+  background: var(--te-glass-bg);
+}
+
+/* ===== Local Dashboard: dark cards & readable text ===== */
+html[data-theme='dark'] .dashboard-wrapper {
+  --card-bg: var(--te-card-bg);
+  --card-border: var(--te-card-border);
+  --text-main: rgba(248, 250, 252, 0.95);
+  --text-muted: rgba(148, 163, 184, 0.78);
+  --accent: #a78bfa;
+  --accent-light: #c4b5fd;
+  --accent-glow: rgba(167, 139, 250, 0.18);
+  --success: #4ade80;
+}
+
+html[data-theme='dark'] .dashboard-wrapper .card {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow:
+    0 18px 54px rgba(0, 0, 0, 0.26),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+html[data-theme='dark'] .dashboard-wrapper .card:hover {
+  box-shadow: 0 15px 50px rgba(0, 0, 0, 0.3);
+}
+
+html[data-theme='dark'] .dashboard-wrapper .section-title {
+  background: linear-gradient(135deg, #e2e8f0 0%, #94a3b8 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+html[data-theme='dark'] .dashboard-wrapper .control-btn {
+  color: rgba(248, 250, 252, 0.85);
+}
+
+html[data-theme='dark'] .dashboard-wrapper .control-btn:hover {
+  color: rgba(248, 250, 252, 0.98);
+}
+
+/* ===== Settings & Plugin pages: dark readable text ===== */
+html[data-theme='dark'] .settings-preview-layout,
+html[data-theme='dark'] .plugin-page,
+html[data-theme='dark'] .plugin-panel,
+html[data-theme='dark'] .plugin-extension-page {
+  color: rgba(248, 250, 252, 0.92);
+}
+
+html[data-theme='dark'] .settings-preview-layout strong,
+html[data-theme='dark'] .plugin-page strong,
+html[data-theme='dark'] .plugin-panel strong,
+html[data-theme='dark'] .plugin-extension-page strong,
+html[data-theme='dark'] .settings-preview-layout h1,
+html[data-theme='dark'] .settings-preview-layout h2,
+html[data-theme='dark'] .settings-preview-layout h3,
+html[data-theme='dark'] .plugin-page h1,
+html[data-theme='dark'] .plugin-page h2,
+html[data-theme='dark'] .plugin-panel h2,
+html[data-theme='dark'] .plugin-panel h3,
+html[data-theme='dark'] .plugin-extension-page h1,
+html[data-theme='dark'] .plugin-extension-page h2,
+html[data-theme='dark'] .plugin-extension-page h3,
+html[data-theme='dark'] .section-title-row,
+html[data-theme='dark'] .accordion-head,
+html[data-theme='dark'] .dsp-meter strong,
+html[data-theme='dark'] .mini-setting strong,
+html[data-theme='dark'] .plugin-empty strong,
+html[data-theme='dark'] .update-card strong,
+html[data-theme='dark'] .signal-node.active .signal-node-name,
+html[data-theme='dark'] .diagnostic-chain {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .settings-preview-layout .shortcut-grid span,
+html[data-theme='dark'] .settings-preview-layout .setting-value,
+html[data-theme='dark'] .plugin-page .plugin-summary,
+html[data-theme='dark'] .plugin-page .plugin-empty,
+html[data-theme='dark'] .plugin-extension-page .plugin-extension-desc,
+html[data-theme='dark'] .plugin-extension-page .plugin-extension-meta,
+html[data-theme='dark'] .plugin-extension-text-result,
+html[data-theme='dark'] .plugin-extension-card small {
+  color: rgba(148, 163, 184, 0.78);
+}
+
+html[data-theme='dark'] .plugin-extension-input,
+html[data-theme='dark'] .plugin-extension-select,
+html[data-theme='dark'] .plugin-extension-text-result {
+  color: rgba(226, 232, 240, 0.88);
+}
+
+html[data-theme='dark'] .plugin-extension-input::placeholder {
+  color: rgba(148, 163, 184, 0.5);
+}
+
+/* ===== Settings & Plugin pages: dark backgrounds ===== */
+html[data-theme='dark'] .settings-preview-layout {
+  background: #080b12;
+}
+
+html[data-theme='dark'] .preview-select,
+html[data-theme='dark'] .preview-select.wide,
+html[data-theme='dark'] .shortcut-grid,
+html[data-theme='dark'] .range-pill {
+  background: var(--te-subtle-bg);
+  border-color: var(--te-card-border);
+}
+
+html[data-theme='dark'] .toggle-switch.inactive {
+  background: rgba(148, 163, 184, 0.24);
+}
+
+html[data-theme='dark'] .danger-soft-button:hover,
+html[data-theme='dark'] .danger-soft-button.solid-hover:hover {
+  background: var(--te-danger-soft-bg);
+}
+
+html[data-theme='dark'] .sponsor-card {
+  border-color: rgba(251, 191, 36, 0.3);
+  background: var(--te-warning-soft-bg);
+}
+
+html[data-theme='dark'] .restart-banner {
+  border-color: rgba(251, 191, 36, 0.3);
+  background: var(--te-warning-soft-bg);
+}
+
+html[data-theme='dark'] .restart-banner strong {
+  color: var(--te-warning-soft-fg);
+}
+
+html[data-theme='dark'] .plugin-extension-retry-btn:hover {
+  background: var(--te-hover-bg);
+}
+
+/* ===== Settings & Plugin pages: dark borders ===== */
+html[data-theme='dark'] .settings-preview-layout .muted-button,
+html[data-theme='dark'] .settings-preview-layout .icon-button,
+html[data-theme='dark'] .settings-preview-layout .color-picker,
+html[data-theme='dark'] .settings-preview-layout .select-control,
+html[data-theme='dark'] .settings-preview-layout .number-input,
+html[data-theme='dark'] .settings-preview-layout .device-panel,
+html[data-theme='dark'] .settings-preview-layout .theme-segment,
+html[data-theme='dark'] .settings-preview-layout .accordion-preview,
+html[data-theme='dark'] .settings-preview-layout .advanced-grid,
+html[data-theme='dark'] .settings-preview-layout .dsp-meter,
+html[data-theme='dark'] .settings-preview-layout .dsp-module-card,
+html[data-theme='dark'] .settings-preview-layout .path-control input,
+html[data-theme='dark'] .settings-preview-layout .background-options span,
+html[data-theme='dark'] .settings-preview-layout .range-pill,
+html[data-theme='dark'] .settings-preview-layout .shortcut-grid,
+html[data-theme='dark'] .settings-preview-layout .update-card,
+html[data-theme='dark'] .settings-preview-layout .wasapi-push-row,
+html[data-theme='dark'] .settings-preview-layout .output-diagnostic-panel,
+html[data-theme='dark'] .settings-preview-layout .accordion-body,
+html[data-theme='dark'] .settings-preview-layout .preset-btn,
+html[data-theme='dark'] .settings-preview-layout .preview-select,
+html[data-theme='dark'] .settings-preview-layout .preview-select.wide,
+html[data-theme='dark'] .plugin-extension-iframe,
+html[data-theme='dark'] .plugin-extension-text-result,
+html[data-theme='dark'] .plugin-extension-card,
+html[data-theme='dark'] .plugin-extension-select {
+  border-color: var(--te-card-border);
+}
+
+html[data-theme='dark'] .settings-preview-layout .danger-soft-button {
+  border-color: rgba(248, 113, 113, 0.24);
+}
+
+html[data-theme='dark'] .plugin-extension-icon {
+  background: var(--te-subtle-bg);
+}
+
+/* ===== Dark mode: settings & plugin page surface fix ===== */
+/* body.te-settings-surface forces #f4f4f7 !important on settings/plugin pages;
+   override it for dark mode so the page background isn't white. */
+html[data-theme='dark'] body.te-settings-surface {
+  background: #080b12 !important;
+}
+
+/* --- Settings page: page-level background & hardcoded text --- */
+html[data-theme='dark'] .settings-preview-page {
+  background: #080b12;
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .settings-preview-page::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.3);
+}
+
+html[data-theme='dark'] .settings-preview-page::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.5);
+}
+
+html[data-theme='dark'] .settings-preview-layout .section-title-row h2,
+html[data-theme='dark'] .settings-preview-layout .setting-copy strong,
+html[data-theme='dark'] .settings-preview-layout .device-panel-head h3,
+html[data-theme='dark'] .settings-preview-layout .update-card strong,
+html[data-theme='dark'] .settings-preview-layout .plugin-empty strong {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .settings-preview-layout .setting-copy span,
+html[data-theme='dark'] .settings-preview-layout .update-card span {
+  color: rgba(148, 163, 184, 0.78);
+}
+
+html[data-theme='dark'] .settings-preview-layout .setting-list hr,
+html[data-theme='dark'] .settings-preview-layout .about-section hr {
+  background: rgba(148, 163, 184, 0.14);
+}
+
+html[data-theme='dark'] .settings-preview-layout .path-control input {
+  background: var(--te-subtle-bg);
+  border-color: var(--te-card-border);
+  color: rgba(203, 213, 225, 0.88);
+}
+
+html[data-theme='dark'] .settings-preview-layout .plugin-empty {
+  background: var(--te-subtle-bg);
+  border-color: var(--te-card-border);
+  color: rgba(148, 163, 184, 0.78);
+}
+
+/* --- Plugin page (extension center): backgrounds --- */
+html[data-theme='dark'] .plugin-page,
+html[data-theme='dark'] .plugin-page .plugin-window,
+html[data-theme='dark'] .plugin-page .main-content,
+html[data-theme='dark'] .plugin-page .topbar {
+  background: #080b12;
+  color: rgba(248, 250, 252, 0.92);
+}
+
+html[data-theme='dark'] .plugin-page .sidebar {
+  background: var(--te-card-bg);
+  border-right-color: var(--te-card-border);
+}
+
+html[data-theme='dark'] .plugin-page .sidebar-header h1,
+html[data-theme='dark'] .plugin-page .sidebar-header h1 i,
+html[data-theme='dark'] .plugin-page .sidebar-header h1 .puzzle-icon {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .plugin-page .sidebar-footer {
+  border-top-color: var(--te-card-border);
+}
+
+html[data-theme='dark'] .plugin-page .dev-mode-toggle {
+  color: rgba(148, 163, 184, 0.82);
+}
+
+html[data-theme='dark'] .plugin-page .switch {
+  background: rgba(148, 163, 184, 0.24);
+}
+
+html[data-theme='dark'] .plugin-page .switch.on {
+  background: var(--te-primary-500);
+}
+
+/* --- Plugin page: navigation --- */
+html[data-theme='dark'] .plugin-page .nav-item {
+  color: rgba(148, 163, 184, 0.82);
+}
+
+html[data-theme='dark'] .plugin-page .nav-item:hover {
+  background: var(--te-hover-bg);
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .plugin-page .nav-item.active {
+  background: var(--te-active-bg);
+  color: #ddd6fe;
+}
+
+/* --- Plugin page: search box & topbar actions --- */
+html[data-theme='dark'] .plugin-page .search-box {
+  background: rgba(15, 23, 42, 0.74);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+html[data-theme='dark'] .plugin-page .search-box:focus-within {
+  background: rgba(17, 24, 39, 0.92);
+  border-color: rgba(167, 139, 250, 0.48);
+}
+
+html[data-theme='dark'] .plugin-page .search-box input {
+  color: rgba(248, 250, 252, 0.92);
+}
+
+html[data-theme='dark'] .plugin-page .search-box input::placeholder {
+  color: rgba(148, 163, 184, 0.5);
+}
+
+html[data-theme='dark'] .plugin-page .btn-outline {
+  border-color: var(--te-card-border);
+  color: rgba(203, 213, 225, 0.88);
+}
+
+html[data-theme='dark'] .plugin-page .btn-outline:hover {
+  background: var(--te-hover-bg);
+}
+
+/* --- Plugin page: content text & badges --- */
+html[data-theme='dark'] .plugin-page .page-title {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .plugin-page .badge {
+  background: rgba(148, 163, 184, 0.16);
+  color: rgba(148, 163, 184, 0.82);
+}
+
+/* --- Plugin page: cards --- */
+html[data-theme='dark'] .plugin-page .plugin-card {
+  background: var(--te-card-bg);
+  border-color: var(--te-card-border);
+  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.26);
+}
+
+html[data-theme='dark'] .plugin-page .plugin-card:hover {
+  border-color: rgba(167, 139, 250, 0.32);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+}
+
+html[data-theme='dark'] .plugin-page .plugin-name {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .plugin-page .plugin-version {
+  background: rgba(148, 163, 184, 0.16);
+  color: rgba(148, 163, 184, 0.82);
+}
+
+html[data-theme='dark'] .plugin-page .plugin-author {
+  color: rgba(148, 163, 184, 0.78);
+}
+
+html[data-theme='dark'] .plugin-page .plugin-desc {
+  color: rgba(203, 213, 225, 0.82);
+}
+
+html[data-theme='dark'] .plugin-page .plugin-footer {
+  border-top-color: rgba(148, 163, 184, 0.12);
+}
+
+html[data-theme='dark'] .plugin-page .switch-label {
+  color: rgba(148, 163, 184, 0.78);
+}
+
+html[data-theme='dark'] .plugin-page .icon-btn {
+  background: rgba(148, 163, 184, 0.12);
+  color: rgba(203, 213, 225, 0.82);
+}
+
+html[data-theme='dark'] .plugin-page .icon-btn:hover {
+  background: rgba(139, 92, 246, 0.16);
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .plugin-page .icon-btn.danger:hover {
+  background: var(--te-danger-soft-bg);
+  color: var(--te-danger-soft-fg);
+}
+
+html[data-theme='dark'] .plugin-page .builtin-label {
+  color: rgba(148, 163, 184, 0.62);
+}
+
+/* --- Settings page: about section & shortcut kbd dark mode --- */
+html[data-theme='dark'] .settings-preview-layout .shortcut-grid kbd {
+  border-color: var(--te-card-border);
+  background: var(--te-card-bg);
+  color: rgba(203, 213, 225, 0.88);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+html[data-theme='dark'] .settings-preview-layout .shortcut-grid span {
+  color: rgba(203, 213, 225, 0.88);
+}
+
+html[data-theme='dark'] .settings-preview-layout .about-copy h3 {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .settings-preview-layout .about-copy p {
+  color: rgba(148, 163, 184, 0.78);
+}
+
+html[data-theme='dark'] .settings-preview-layout .about-copy span {
+  background: rgba(139, 92, 246, 0.16);
+  color: #c4b5fd;
+}
+
+html[data-theme='dark'] .settings-preview-layout .sponsor-card h3 {
+  color: var(--te-warning-soft-fg);
+}
+
+html[data-theme='dark'] .settings-preview-layout .sponsor-card p {
+  color: rgba(252, 211, 77, 0.72);
+}
+
+html[data-theme='dark'] .settings-preview-layout .sponsor-pending {
+  border-color: rgba(251, 191, 36, 0.3);
+  background: var(--te-card-bg);
+  color: var(--te-warning-soft-fg);
+}
+
+html[data-theme='dark'] .settings-preview-layout .about-links button {
+  border-color: var(--te-card-border);
+  background: var(--te-card-bg);
+  color: rgba(203, 213, 225, 0.88);
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.2);
+}
+
+html[data-theme='dark'] .settings-preview-layout .about-links button:hover {
+  border-color: rgba(167, 139, 250, 0.32);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.24);
+}
+
+html[data-theme='dark'] .settings-preview-layout .about-links button:nth-child(2):hover {
+  border-color: var(--te-primary-400);
+  color: var(--te-primary-400);
+}
+
+html[data-theme='dark'] .settings-preview-layout .status-icon {
+  border-color: rgba(74, 222, 128, 0.24);
+  background: var(--te-success-soft-bg);
+  color: var(--te-success-soft-fg);
+}
+
+/* --- Plugin page: discover banner & inline error states --- */
+html[data-theme='dark'] .plugin-page .discover-banner {
+  background: linear-gradient(135deg, #4338ca, #6d28d9);
+}
+
+html[data-theme='dark'] .plugin-page .engine-error,
+html[data-theme='dark'] .plugin-page [style*='background: var(--te-danger-soft-bg)'] {
+  color: var(--te-danger-soft-fg);
 }

@@ -343,7 +343,7 @@ watch(
   padding: 0 14px;
   border: 1px solid rgba(255, 255, 255, 0.74);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.58);
+  background: var(--te-card-bg);
   color: var(--te-neutral-900);
   font-size: 13px;
   font-weight: 500;
@@ -357,7 +357,7 @@ watch(
 
 .retry-btn:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.82);
+  background: var(--te-card-bg);
   box-shadow: 0 16px 34px rgba(86, 70, 160, 0.13);
 }
 
@@ -483,7 +483,7 @@ watch(
   padding: 0 10px;
   border: 1px solid rgba(255, 255, 255, 0.68);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.42);
+  background: var(--te-subtle-bg);
   color: rgba(80, 88, 116, 0.72);
   font-size: 12px;
   font-weight: 500;
@@ -497,7 +497,7 @@ watch(
 
 .more-btn:hover {
   color: var(--te-primary-500);
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--te-hover-bg);
   transform: translateX(2px);
 }
 
@@ -596,7 +596,7 @@ watch(
   height: 64px;
   border-radius: 10px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.34);
+  background: var(--te-subtle-bg);
   box-shadow:
     0 16px 34px rgba(86, 70, 160, 0.13),
     inset 0 1px 0 rgba(255, 255, 255, 0.42);
@@ -782,7 +782,7 @@ watch(
 .more-btn,
 .retry-btn {
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.58);
+  background: var(--te-card-bg);
 }
 
 .playlist-rail {
@@ -854,7 +854,7 @@ watch(
 .feature-card,
 .streaming-placeholder,
 .empty-recommend {
-  background: #fff;
+  background: var(--te-card-bg);
   border: 1px solid #eef1f6;
   box-shadow: 0 14px 32px rgba(34, 42, 68, 0.07);
   backdrop-filter: none;
@@ -895,7 +895,7 @@ watch(
 
 .more-btn,
 .retry-btn {
-  background: #fff;
+  background: var(--te-card-bg);
   border-color: #eef1f6;
   box-shadow: 0 8px 18px rgba(34, 42, 68, 0.05);
 }
@@ -1169,7 +1169,7 @@ watch(
   height: 38px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.7);
-  background: rgba(255, 255, 255, 0.5);
+  background: var(--te-glass-bg);
   backdrop-filter: blur(10px) saturate(150%);
   -webkit-backdrop-filter: blur(10px) saturate(150%);
   color: var(--te-neutral-900);
@@ -1198,7 +1198,7 @@ watch(
 }
 
 .scroll-arrow:hover {
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--te-glass-bg-strong);
   transform: translateY(-50%) scale(1.06);
 }
 

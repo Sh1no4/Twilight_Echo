@@ -149,7 +149,7 @@ watch(() => props.page.id, () => {
 .plugin-extension-page {
   min-height: calc(100vh - 32px);
   padding: 46px clamp(24px, 5vw, 76px) 120px;
-  background: #f8fafc;
+  background: var(--te-subtle-bg);
 }
 
 .plugin-extension-header {
@@ -168,7 +168,7 @@ watch(() => props.page.id, () => {
   place-items: center;
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 7px;
-  background: #fff;
+  background: var(--te-card-bg);
   color: var(--te-neutral-700);
   cursor: pointer;
 }
@@ -260,7 +260,7 @@ watch(() => props.page.id, () => {
   padding: 8px 20px;
   border: 1px solid rgba(0, 0, 0, 0.1);
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #333;
   font-size: 14px;
   cursor: pointer;
@@ -275,14 +275,14 @@ watch(() => props.page.id, () => {
   min-height: 400px;
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
 }
 
 .plugin-extension-text-result {
   padding: 18px;
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   overflow-x: auto;
 }
 
@@ -301,7 +301,7 @@ watch(() => props.page.id, () => {
   padding: 18px;
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
 }
 
 .plugin-extension-kicker {

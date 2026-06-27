@@ -2187,16 +2187,46 @@ onBeforeUnmount(() => {
 .settings-preview-nav {
   position: fixed;
   left: max(24px, calc((100vw - 896px) / 4 - 96px));
-  top: 44%;
+  top: max(32px, calc(44vh - 218px));
   z-index: 100;
   display: flex;
   width: 192px;
+  height: 436px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 6px;
   max-height: calc(100vh - 96px);
-  transform: translateY(-50%);
+}
+
+.settings-preview-page.settings-page-enter-active,
+.settings-preview-page.settings-page-leave-active {
+  transform: none;
+  filter: none;
+}
+
+.settings-preview-page.settings-page-enter-from,
+.settings-preview-page.settings-page-leave-to {
+  transform: none;
+  filter: none;
+}
+
+.settings-preview-page.settings-page-enter-active .settings-preview-stack,
+.settings-preview-page.settings-page-leave-active .settings-preview-stack {
+  transition:
+    transform 0.42s cubic-bezier(0.16, 1, 0.3, 1),
+    filter 0.42s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform, filter;
+}
+
+.settings-preview-page.settings-page-enter-from .settings-preview-stack {
+  transform: translate3d(28px, 0, 0) scale(0.988);
+  filter: blur(10px);
+}
+
+.settings-preview-page.settings-page-leave-to .settings-preview-stack {
+  transform: translate3d(18px, 0, 0) scale(0.992);
+  filter: blur(8px);
 }
 
 .preview-nav-item {
@@ -2206,7 +2236,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 12px;
   width: 100%;
-  min-height: 40px;
+  height: 40px;
   padding: 10px 16px;
   border: 1px solid transparent;
   border-radius: 12px;
@@ -2215,6 +2245,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
+  line-height: 18px;
   text-align: center;
   transition:
     background 0.18s ease,
@@ -2229,13 +2260,13 @@ onBeforeUnmount(() => {
 }
 
 .preview-nav-item:hover {
-  background: rgba(255, 255, 255, 0.6);
+  background: var(--te-card-bg);
   color: #111827;
 }
 
 .preview-nav-item.active {
   border-color: var(--brand-100);
-  background: #ffffff;
+  background: var(--te-card-bg);
   color: var(--brand-600);
   font-weight: 800;
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.08);
@@ -2253,7 +2284,7 @@ onBeforeUnmount(() => {
 .glass-card {
   border: 1px solid rgba(255, 255, 255, 1);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.7);
+  background: var(--te-glass-bg);
   box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.05);
   -webkit-backdrop-filter: blur(24px);
   backdrop-filter: blur(24px);
@@ -2399,7 +2430,7 @@ onBeforeUnmount(() => {
   padding: 8px 12px;
   border: 1px solid #e5e7eb;
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #374151;
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
   font-size: 12px;
@@ -2466,7 +2497,7 @@ onBeforeUnmount(() => {
   min-height: 30px;
   padding: 6px 16px;
   border: 1px solid #e5e7eb;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #374151;
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.06);
 }
@@ -2476,7 +2507,7 @@ onBeforeUnmount(() => {
 }
 
 .muted-button {
-  background: #f3f4f6;
+  background: var(--te-hover-bg);
   color: #4b5563;
   box-shadow: none;
 }
@@ -2485,7 +2516,7 @@ onBeforeUnmount(() => {
   min-height: 30px;
   padding: 6px 16px;
   border: 1px solid #fecaca;
-  background: #fef2f2;
+  background: var(--te-danger-soft-bg);
   color: #dc2626;
   box-shadow: 0 1px 5px rgba(220, 38, 38, 0.08);
 }
@@ -2518,7 +2549,7 @@ onBeforeUnmount(() => {
   width: 32px;
   height: 32px;
   border: 1px solid #e5e7eb;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #4b5563;
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.06);
 }
@@ -2535,7 +2566,7 @@ onBeforeUnmount(() => {
   width: 200px;
   height: 6px;
   border-radius: 3px;
-  background: #e5e7eb;
+  background: var(--te-card-border);
   outline: none;
   cursor: pointer;
 }
@@ -2556,7 +2587,7 @@ onBeforeUnmount(() => {
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   cursor: pointer;
-  background: #fff;
+  background: var(--te-card-bg);
   padding: 2px;
 }
 .select-control {
@@ -2565,7 +2596,7 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   font-size: 13px;
   color: #333;
-  background: #fff;
+  background: var(--te-card-bg);
   cursor: pointer;
   outline: none;
 }
@@ -2591,7 +2622,7 @@ onBeforeUnmount(() => {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: #fff;
+  background: var(--te-card-bg);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
   transition: all 0.3s ease;
 }
@@ -2633,7 +2664,7 @@ onBeforeUnmount(() => {
   border: 1px solid #e5e7eb;
   border-radius: 8px;
   outline: none;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #374151;
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.05);
   font-size: 12px;
@@ -2668,7 +2699,7 @@ onBeforeUnmount(() => {
   overflow: hidden;
   border: 1px solid rgba(229, 231, 235, 0.75);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.62);
+  background: var(--te-card-bg);
 }
 
 .device-panel-head {
@@ -2791,7 +2822,7 @@ onBeforeUnmount(() => {
 
 .segmented-control button.active,
 .theme-segment button.active {
-  background: #fff;
+  background: var(--te-card-bg);
   color: #1f2937;
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.08);
 }
@@ -2889,7 +2920,7 @@ onBeforeUnmount(() => {
   padding: 18px;
   border: 1px solid rgba(229, 231, 235, 0.72);
   border-radius: 14px;
-  background: #fff;
+  background: var(--te-card-bg);
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
 }
 
@@ -2935,7 +2966,7 @@ onBeforeUnmount(() => {
   padding: 18px;
   border: 1px solid rgba(229, 231, 235, 0.7);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.76);
+  background: var(--te-card-bg);
 }
 
 .mini-setting {
@@ -3181,7 +3212,7 @@ onBeforeUnmount(() => {
   padding: 4px 8px;
   border: 1px solid #d1d5db;
   border-radius: 6px;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #4b5563;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
@@ -3292,7 +3323,7 @@ onBeforeUnmount(() => {
 
 .update-card {
   border: 1px solid #e5e7eb;
-  background: #fff;
+  background: var(--te-card-bg);
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.06);
 }
 
@@ -3305,7 +3336,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   border: 1px solid #dcfce7;
   border-radius: 10px;
-  background: #f0fdf4;
+  background: var(--te-success-soft-bg);
   color: #22c55e;
 }
 
@@ -3370,7 +3401,7 @@ onBeforeUnmount(() => {
   padding: 8px 16px;
   border: 1px solid #fde68a;
   border-radius: 8px;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #b45309;
   font-size: 12px;
   font-weight: 900;
@@ -3398,7 +3429,7 @@ onBeforeUnmount(() => {
   padding: 12px 24px;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #374151;
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.06);
   cursor: pointer;
@@ -3538,7 +3569,7 @@ onBeforeUnmount(() => {
   padding: 12px 16px;
   border: 1px solid #fecaca;
   border-radius: 10px;
-  background: #fef2f2;
+  background: var(--te-danger-soft-bg);
   color: #dc2626;
   font-size: 12px;
   font-weight: 700;
@@ -3674,7 +3705,7 @@ onBeforeUnmount(() => {
   padding: 10px 14px;
   border: 1px solid #fed7aa;
   border-radius: 10px;
-  background: #fff7ed;
+  background: var(--te-warning-soft-bg);
   color: #c2410c;
   font-size: 12px;
   font-weight: 600;
@@ -3725,7 +3756,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   border: 2px dashed #d1d5db;
   border-radius: 50%;
-  background: #fff;
+  background: var(--te-card-bg);
   transition: all 0.3s ease;
 }
 
@@ -3799,7 +3830,7 @@ onBeforeUnmount(() => {
   padding: 8px 16px;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
-  background: #fff;
+  background: var(--te-card-bg);
   color: #6b7280;
   cursor: pointer;
   font-size: 13px;
@@ -3832,7 +3863,7 @@ onBeforeUnmount(() => {
   padding: 2px 6px;
   border: 1px solid #fed7aa;
   border-radius: 4px;
-  background: #fff7ed;
+  background: var(--te-warning-soft-bg);
   color: #c2410c;
   font-size: 9px;
   font-weight: 800;

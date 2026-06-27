@@ -1074,7 +1074,7 @@ watch(
   height: 60vh;
   text-align: center;
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--te-glass-bg);
   border: 1px solid rgba(255, 255, 255, 0.58);
   box-shadow: var(--te-glass-shadow);
   backdrop-filter: blur(18px) saturate(145%);
@@ -1121,7 +1121,7 @@ watch(
   top: 0;
   z-index: 2;
   display: block;
-  background: rgba(255, 255, 255, 0.22);
+  background: var(--te-glass-bg);
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   width: 100%;
@@ -1321,7 +1321,7 @@ watch(
 
 .track-playing::before {
   border-color: rgba(124, 77, 255, 0.18);
-  background: linear-gradient(rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.2));
+  background: linear-gradient(rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.2)); /* keep-white: decorative overlay */
 }
 
 .cover-img {
@@ -1412,7 +1412,7 @@ watch(
 .context-menu {
   position: fixed;
   z-index: 1000;
-  background: rgba(255, 255, 255, 0.72);
+  background: var(--te-glass-bg);
   border-radius: 14px;
   box-shadow: 0 20px 60px rgba(86, 70, 160, 0.18);
   padding: 6px;
@@ -1458,7 +1458,7 @@ watch(
   position: absolute;
   left: 100%;
   top: 0;
-  background: rgba(255, 255, 255, 0.76);
+  background: var(--te-glass-bg-strong);
   border-radius: 14px;
   box-shadow: 0 20px 60px rgba(86, 70, 160, 0.18);
   padding: 6px;
@@ -1502,7 +1502,7 @@ watch(
   height: 40px;
   padding: 0 18px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.52);
+  background: var(--te-glass-bg);
   border: 1px solid rgba(255, 255, 255, 0.72);
   box-shadow: 0 14px 36px rgba(86, 70, 160, 0.08);
   backdrop-filter: blur(16px) saturate(145%);
@@ -1533,7 +1533,7 @@ watch(
 
 .search-box.focused {
   border-color: rgba(124, 77, 255, 0.34);
-  background: rgba(255, 255, 255, 0.68);
+  background: var(--te-glass-bg);
   box-shadow:
     0 0 0 4px rgba(124, 77, 255, 0.08),
     0 16px 42px rgba(86, 70, 160, 0.1);
@@ -1603,7 +1603,7 @@ watch(
 }
 
 .create-placeholder {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.03); /* keep-white: decorative overlay */
 }
 
 /* ── Default Playlist Cover ── */
@@ -1665,7 +1665,7 @@ watch(
 }
 
 .create-playlist-dialog {
-  background: rgba(255, 255, 255, 0.95);
+  background: var(--te-glass-bg-strong);
   border-radius: 16px;
   padding: 28px;
   width: 380px;
@@ -1696,7 +1696,7 @@ watch(
 
 .dialog-input:focus {
   border-color: rgba(124, 77, 255, 0.5);
-  background: rgba(255, 255, 255, 0.8);
+  background: var(--te-subtle-bg);
 }
 
 .dialog-input::placeholder {

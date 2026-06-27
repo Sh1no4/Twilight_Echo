@@ -579,7 +579,7 @@ onUnmounted(() => {
 .plugin-log {
   border: 1px solid rgba(17, 24, 39, 0.08);
   border-radius: 10px;
-  background: #fff;
+  background: var(--te-card-bg);
 }
 
 .plugin-hero {
@@ -633,7 +633,7 @@ onUnmounted(() => {
 .plugin-error {
   padding: 10px 14px;
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--te-subtle-bg);
   color: var(--te-neutral-600);
   font-size: 12px;
   font-weight: 800;
@@ -641,7 +641,7 @@ onUnmounted(() => {
 
 .plugin-error,
 .plugin-card-error {
-  background: #fef2f2;
+  background: var(--te-danger-soft-bg);
   color: #dc2626;
 }
 
@@ -683,7 +683,7 @@ onUnmounted(() => {
 .plugin-permissions code {
   border-radius: 999px;
   padding: 4px 8px;
-  background: #f1f5f9;
+  background: var(--te-subtle-bg);
   color: var(--te-neutral-600);
   font-size: 11px;
   font-weight: 900;
@@ -697,12 +697,12 @@ onUnmounted(() => {
 .plugin-pill.failed,
 .plugin-pill.invalid,
 .plugin-pill.native {
-  background: #fff7ed;
+  background: var(--te-warning-soft-bg);
   color: #c2410c;
 }
 
 .plugin-pill.builtin {
-  background: #eff6ff;
+  background: var(--te-info-soft-bg);
   color: #1d4ed8;
 }
 
@@ -714,7 +714,7 @@ onUnmounted(() => {
 
 .plugin-pill.incompatible,
 .plugin-pill.built-in-blocked {
-  background: #f1f5f9;
+  background: var(--te-subtle-bg);
   color: var(--te-neutral-500);
 }
 
@@ -729,7 +729,7 @@ onUnmounted(() => {
   margin-top: 12px;
   border-radius: 8px;
   padding: 8px 10px;
-  background: #fff7ed;
+  background: var(--te-warning-soft-bg);
   color: #9a3412;
   font-weight: 800;
 }
@@ -766,7 +766,7 @@ onUnmounted(() => {
   min-height: 28px;
   border: 1px solid rgba(17, 24, 39, 0.12);
   border-radius: 6px;
-  background: #fff;
+  background: var(--te-card-bg);
   color: var(--te-neutral-800);
   padding: 4px 6px;
 }

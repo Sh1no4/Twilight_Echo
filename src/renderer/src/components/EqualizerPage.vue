@@ -869,7 +869,7 @@ watch(opraQuery, () => {
       width: 40px;
       height: 40px;
       border-radius: 50%;
-      background: rgba(255, 255, 255, 0.7);
+      background: var(--te-glass-bg);
       backdrop-filter: blur(10px);
       border: 1px solid rgba(15, 23, 42, 0.08);
       display: flex;
@@ -883,7 +883,7 @@ watch(opraQuery, () => {
     }
     
     .eq-back-button:hover {
-      background: #fff;
+      background: var(--te-card-bg);
       color: var(--te-primary-500);
       transform: translateX(-2px);
       box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
@@ -909,8 +909,8 @@ watch(opraQuery, () => {
     }
     
     .eq-command {
-      background: rgba(255, 255, 255, 0.7);
-      border: 1px solid rgba(15, 23, 42, 0.1);
+      background: var(--te-glass-bg);
+      border: 1px solid var(--te-glass-border);
       padding: 8px 16px;
       border-radius: 12px;
       font-size: 13px;
@@ -924,7 +924,7 @@ watch(opraQuery, () => {
     }
     
     .eq-command:hover:not(:disabled) {
-      background: #fff;
+      background: var(--te-card-bg);
       border-color: var(--te-primary-400);
       color: var(--te-primary-500);
       box-shadow: 0 4px 12px rgba(99, 102, 241, 0.1);
@@ -952,9 +952,9 @@ watch(opraQuery, () => {
       position: absolute;
       top: calc(100% + 8px);
       left: 0;
-      background: rgba(255, 255, 255, 0.95);
+      background: var(--te-glass-bg-strong);
       backdrop-filter: blur(20px);
-      border: 1px solid rgba(255, 255, 255, 0.8);
+      border: 1px solid var(--te-glass-border);
       border-radius: 16px;
       box-shadow: 0 10px 40px rgba(15, 23, 42, 0.1);
       padding: 12px;
@@ -1024,7 +1024,7 @@ watch(opraQuery, () => {
     }
     
     .preset-create input:focus {
-      background: #fff;
+      background: var(--te-card-bg);
       border-color: var(--te-primary-400);
     }
     
@@ -1061,7 +1061,7 @@ watch(opraQuery, () => {
 
     .eq-container {
       width: 100%; height: 100%; margin: 0; max-width: none;
-      background: rgba(255, 255, 255, 0.6); backdrop-filter: blur(24px) saturate(150%);
+      background: var(--te-glass-bg); backdrop-filter: blur(24px) saturate(150%);
       -webkit-backdrop-filter: blur(24px) saturate(150%);
       border: none; border-radius: 0;
       box-shadow: none;
@@ -1069,11 +1069,11 @@ watch(opraQuery, () => {
     }
 
     /* Sidebar Navigation */
-    .eq-sidebar { width: 240px; background: rgba(255, 255, 255, 0.4); border-right: 1px solid rgba(255, 255, 255, 0.6); padding: 90px 20px 32px; display: flex; flex-direction: column; gap: 12px; }
+    .eq-sidebar { width: 240px; background: var(--te-glass-bg); border-right: 1px solid var(--te-glass-border); padding: 90px 20px 32px; display: flex; flex-direction: column; gap: 12px; }
     .nav-item { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border-radius: 16px; cursor: pointer; transition: var(--transition); color: var(--te-neutral-500); }
-    .nav-item:hover { background: rgba(255, 255, 255, 0.6); color: var(--te-neutral-900); }
-    .nav-item.active { background: #fff; color: var(--te-primary-500); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04); border: 1px solid rgba(255, 255, 255, 0.8); }
-    .nav-item i { font-size: 1.2rem; background: #f1f5f9; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 10px; transition: var(--transition); }
+    .nav-item:hover { background: var(--te-hover-bg); color: var(--te-neutral-900); }
+    .nav-item.active { background: var(--te-active-bg); color: var(--te-primary-500); box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04); border: 1px solid var(--te-card-border); }
+    .nav-item i { font-size: 1.2rem; background: var(--te-subtle-bg); width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border-radius: 10px; transition: var(--transition); }
     .nav-item.active i { background: rgba(var(--te-primary-rgb), 0.1); color: var(--te-primary-500); }
     .nav-info { display: flex; flex-direction: column; }
     .nav-info span { font-weight: 700; font-size: 14px; }
@@ -1090,48 +1090,48 @@ watch(opraQuery, () => {
     .eq-title p { color: var(--te-neutral-500); font-size: 14px; font-weight: 500; }
 
     .master-switch {
-      display: flex; align-items: center; gap: 12px; background: #fff; padding: 8px 16px 8px 20px;
-      border-radius: 999px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04); border: 1px solid rgba(255, 255, 255, 0.8);
+      display: flex; align-items: center; gap: 12px; background: var(--te-card-bg); padding: 8px 16px 8px 20px;
+      border-radius: 999px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.04); border: 1px solid var(--te-card-border);
       font-weight: 700; font-size: 14px; color: var(--te-primary-500); cursor: pointer;
       transition: color 0.2s;
     }
     .master-switch.off { color: var(--te-neutral-500); }
     .toggle-track { width: 44px; height: 24px; background: linear-gradient(135deg, var(--te-primary-500), #22d3ee); border-radius: 999px; position: relative; transition: background 0.2s; }
     .master-switch.off .toggle-track { background: rgba(15, 23, 42, 0.12); }
-    .toggle-thumb { width: 20px; height: 20px; background: #fff; border-radius: 50%; position: absolute; top: 2px; right: 2px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); transition: right 0.2s, left 0.2s; }
+    .toggle-thumb { width: 20px; height: 20px; background: #fff; /* keep-white: toggle knob */ border-radius: 50%; position: absolute; top: 2px; right: 2px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); transition: right 0.2s, left 0.2s; }
     .master-switch.off .toggle-thumb { right: auto; left: 2px; }
 
     /* OPRA Panel */
-    .opra-panel { background: #fff; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.8); box-shadow: 0 12px 32px rgba(15, 23, 42, 0.03); overflow: hidden; }
-    .opra-header { padding: 24px; display: flex; justify-content: space-between; align-items: center; background: #fff; z-index: 2; position: relative; }
+    .opra-panel { background: var(--te-card-bg); border-radius: 20px; border: 1px solid var(--te-card-border); box-shadow: 0 12px 32px rgba(15, 23, 42, 0.03); overflow: hidden; }
+    .opra-header { padding: 24px; display: flex; justify-content: space-between; align-items: center; background: var(--te-card-bg); z-index: 2; position: relative; }
     .opra-info h3 { font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 8px; }
-    .opra-info h3 span.badge { background: #f0fdf4; color: #16a34a; font-size: 11px; padding: 2px 8px; border-radius: 6px; }
+    .opra-info h3 span.badge { background: var(--te-success-soft-bg); color: var(--te-success-soft-fg); font-size: 11px; padding: 2px 8px; border-radius: 6px; }
     .opra-info p { font-size: 13px; color: var(--te-neutral-500); margin-top: 6px; font-weight: 500; }
     .opra-action-btn { background: rgba(15, 23, 42, 0.04); border: none; padding: 10px 20px; border-radius: 10px; font-weight: 700; color: var(--te-neutral-900); cursor: pointer; transition: var(--transition); display: flex; align-items: center; gap: 8px; }
     .opra-action-btn i { font-size: 10px; transition: transform 0.4s var(--te-ease-soft); }
-    .opra-action-btn:hover { background: #f1f5f9; transform: translateY(-2px); }
-    .opra-action-btn.active { background: #eff6ff; color: #3b82f6; transform: translateY(0); }
+    .opra-action-btn:hover { background: var(--te-subtle-bg); transform: translateY(-2px); }
+    .opra-action-btn.active { background: var(--te-info-soft-bg); color: var(--te-info-soft-fg); transform: translateY(0); }
     .opra-action-btn.active i { transform: rotate(180deg); }
 
     .opra-drawer-wrapper { display: grid; grid-template-rows: 1fr; transition: grid-template-rows 0.4s var(--te-ease-soft); }
     .opra-drawer-wrapper.collapsed { grid-template-rows: 0fr; }
     .opra-drawer { overflow: hidden; }
-    .opra-drawer-inner { border-top: 1px solid rgba(15, 23, 42, 0.05); background: rgba(248, 250, 252, 0.5); padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 16px; }
+    .opra-drawer-inner { border-top: 1px solid var(--te-card-border); background: var(--te-subtle-bg); padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 16px; }
     
     .opra-search { display: flex; gap: 12px; align-items: center; }
     .opra-search-input-wrap { flex: 1; position: relative; }
     .opra-search-input-wrap .search-icon { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--te-neutral-500); }
-    .opra-search-input-wrap input { width: 100%; padding: 12px 16px 12px 40px; border-radius: 12px; border: 1px solid rgba(15, 23, 42, 0.1); background: #fff; font-family: inherit; font-size: 14px; color: var(--te-neutral-900); outline: none; transition: var(--transition); font-weight: 500; }
+    .opra-search-input-wrap input { width: 100%; padding: 12px 16px 12px 40px; border-radius: 12px; border: 1px solid var(--te-card-border); background: var(--te-card-bg); font-family: inherit; font-size: 14px; color: var(--te-neutral-900); outline: none; transition: var(--transition); font-weight: 500; }
     .opra-search-input-wrap input:focus { border-color: var(--te-primary-500); box-shadow: 0 0 0 3px rgba(var(--te-primary-rgb), 0.1); }
-    .opra-refresh { background: #fff; border: 1px solid rgba(15, 23, 42, 0.1); padding: 11px 20px; border-radius: 12px; font-weight: 700; color: var(--te-neutral-900); cursor: pointer; box-shadow: 0 2px 4px rgba(15,23,42,0.02); transition: var(--transition); }
-    .opra-refresh:hover { background: #f8fafc; border-color: rgba(15, 23, 42, 0.2); }
+    .opra-refresh { background: var(--te-card-bg); border: 1px solid var(--te-card-border); padding: 11px 20px; border-radius: 12px; font-weight: 700; color: var(--te-neutral-900); cursor: pointer; box-shadow: 0 2px 4px rgba(15,23,42,0.02); transition: var(--transition); }
+    .opra-refresh:hover { background: var(--te-hover-bg); border-color: var(--te-active-bg); }
 
     .opra-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; max-height: 200px; overflow-y: auto; padding-right: 4px; }
     .opra-results::-webkit-scrollbar { width: 6px; }
     .opra-results::-webkit-scrollbar-track { background: transparent; }
     .opra-results::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, 0.1); border-radius: 999px; }
 
-    .opra-result-item { background: #fff; border: 1px solid rgba(15, 23, 42, 0.05); padding: 16px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; transition: var(--transition); box-shadow: 0 2px 8px rgba(15, 23, 42, 0.02); }
+    .opra-result-item { background: var(--te-card-bg); border: 1px solid var(--te-card-border); padding: 16px; border-radius: 12px; display: flex; justify-content: space-between; align-items: center; transition: var(--transition); box-shadow: 0 2px 8px rgba(15, 23, 42, 0.02); }
     .opra-result-item:hover { border-color: rgba(99, 102, 241, 0.3); box-shadow: 0 8px 16px rgba(99, 102, 241, 0.08); transform: translateY(-2px); }
     .result-info { display: flex; flex-direction: column; gap: 2px; }
     .result-brand { font-size: 11px; font-weight: 800; color: var(--te-neutral-500); text-transform: uppercase; letter-spacing: 0.5px; }
@@ -1146,8 +1146,8 @@ watch(opraQuery, () => {
 
     /* Detailed SVG Chart Area */
     .chart-card {
-      background: #fff; border-radius: 20px; padding: 16px 16px 36px 40px; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.03);
-      border: 1px solid rgba(255, 255, 255, 0.8); position: relative;
+      background: var(--te-card-bg); border-radius: 20px; padding: 16px 16px 36px 40px; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.03);
+      border: 1px solid var(--te-card-border); position: relative;
     }
     .svg-container { width: 100%; height: 210px; position: relative; }
     svg { width: 100%; height: 100%; display: block; overflow: visible; }
@@ -1171,21 +1171,21 @@ watch(opraQuery, () => {
     /* Pure HTML perfect circles for points to avoid SVG transform stretching */
     .chart-point {
       position: absolute; width: 10px; height: 10px; border-radius: 50%;
-      background: #fff; border: 3px solid; transform: translate(-50%, -50%);
+      background: #fff; /* keep-white: chart point center */ border: 3px solid; transform: translate(-50%, -50%);
       box-shadow: 0 0 0 2px rgba(255,255,255,0.5); z-index: 10;
     }
 
     /* Graphic Sliders Board */
     .sliders-board {
       display: flex; justify-content: space-between; align-items: center; gap: 10px;
-      background: rgba(255, 255, 255, 0.4); padding: 30px 40px; border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.6);
+      background: var(--te-glass-bg); padding: 30px 40px; border-radius: 20px; border: 1px solid var(--te-glass-border);
     }
     .slider-column { display: flex; flex-direction: column; align-items: center; gap: 16px; flex: 1; }
-    .slider-gain { font-size: 13px; font-weight: 700; color: var(--te-primary-500); background: #fff; padding: 4px 10px; border-radius: 8px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04); }
+    .slider-gain { font-size: 13px; font-weight: 700; color: var(--te-primary-500); background: var(--te-card-bg); padding: 4px 10px; border-radius: 8px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04); }
     .slider-freq { font-size: 12px; font-weight: 600; color: var(--te-neutral-500); }
     .slider-track { width: 6px; height: 180px; background: rgba(15, 23, 42, 0.06); border-radius: 999px; position: relative; }
     .slider-fill { position: absolute; left: 0; width: 100%; background: linear-gradient(to top, var(--te-primary-500), #818cf8); border-radius: 999px; z-index: 1; }
-    .slider-thumb { width: 20px; height: 20px; background: #fff; border-radius: 50%; position: absolute; left: 50%; transform: translate(-50%, -50%); box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 2px solid var(--te-primary-500); cursor: grab; transition: transform 0.1s; z-index: 2; }
+    .slider-thumb { width: 20px; height: 20px; background: #fff; /* keep-white: slider knob */ border-radius: 50%; position: absolute; left: 50%; transform: translate(-50%, -50%); box-shadow: 0 4px 12px rgba(0,0,0,0.15); border: 2px solid var(--te-primary-500); cursor: grab; transition: transform 0.1s; z-index: 2; }
     .slider-thumb:hover { transform: translate(-50%, -50%) scale(1.2); }
     
     .invisible-range {
@@ -1209,19 +1209,19 @@ watch(opraQuery, () => {
     .master-column .slider-thumb { border-color: #ec4899; }
 
     /* Parametric Specific Styles */
-    .band-selector { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 20px; background: rgba(255, 255, 255, 0.5); border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.8); box-shadow: 0 4px 12px rgba(15, 23, 42, 0.02); }
-    .band-tab { padding: 8px 16px; border-radius: 10px; border: 1px solid rgba(15, 23, 42, 0.06); background: #fff; font-size: 13px; font-weight: 700; color: var(--te-neutral-500); cursor: pointer; transition: var(--transition); }
-    .band-tab:hover { background: #f8fafc; color: var(--te-neutral-900); }
-    .band-tab.active { background: #e0e7ff; color: var(--te-primary-500); border-color: #c7d2fe; box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15); }
+    .band-selector { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px 20px; background: var(--te-glass-bg); border-radius: 16px; border: 1px solid var(--te-glass-border); box-shadow: 0 4px 12px rgba(15, 23, 42, 0.02); }
+    .band-tab { padding: 8px 16px; border-radius: 10px; border: 1px solid var(--te-card-border); background: var(--te-card-bg); font-size: 13px; font-weight: 700; color: var(--te-neutral-500); cursor: pointer; transition: var(--transition); }
+    .band-tab:hover { background: var(--te-hover-bg); color: var(--te-neutral-900); }
+    .band-tab.active { background: var(--te-active-bg); color: var(--te-primary-500); border-color: var(--te-active-bg); box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15); }
 
-    .parameter-card { background: rgba(255, 255, 255, 0.6); border-radius: 20px; padding: 30px; border: 1px solid rgba(255, 255, 255, 0.8); display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+    .parameter-card { background: var(--te-glass-bg); border-radius: 20px; padding: 30px; border: 1px solid var(--te-glass-border); display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
     .param-group { display: flex; flex-direction: column; gap: 8px; }
     .param-group label { font-size: 12px; font-weight: 700; color: var(--te-neutral-500); }
-    .param-group input, .param-group select { background: #fff; border: 1px solid rgba(15, 23, 42, 0.1); padding: 12px 16px; border-radius: 12px; font-family: inherit; font-size: 14px; font-weight: 600; color: var(--te-neutral-900); outline: none; width: 100%; }
+    .param-group input, .param-group select { background: var(--te-card-bg); border: 1px solid var(--te-card-border); padding: 12px 16px; border-radius: 12px; font-family: inherit; font-size: 14px; font-weight: 600; color: var(--te-neutral-900); outline: none; width: 100%; }
     .param-group input:focus, .param-group select:focus { border-color: var(--te-primary-500); box-shadow: 0 0 0 3px rgba(var(--te-primary-rgb), 0.1); }
 
-    .square-card { background: rgba(255, 255, 255, 0.6); border-radius: 20px; padding: 40px; border: 1px solid rgba(255, 255, 255, 0.8); text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 400px; }
-    .square-card i { font-size: 48px; color: var(--te-primary-500); background: #fff; width: 100px; height: 100px; display: flex; align-items: center; justify-content: center; border-radius: 50%; box-shadow: 0 16px 32px rgba(15, 23, 42, 0.05); margin-bottom: 24px; }
+    .square-card { background: var(--te-glass-bg); border-radius: 20px; padding: 40px; border: 1px solid var(--te-glass-border); text-align: center; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 400px; }
+    .square-card i { font-size: 48px; color: var(--te-primary-500); background: #fff; /* keep-white: icon circle */ width: 100px; height: 100px; display: flex; align-items: center; justify-content: center; border-radius: 50%; box-shadow: 0 16px 32px rgba(15, 23, 42, 0.05); margin-bottom: 24px; }
     .square-card h2 { font-size: 24px; font-weight: 800; margin-bottom: 12px; }
     .square-card p { color: var(--te-neutral-500); max-width: 400px; line-height: 1.6; }
 </style>

@@ -1139,7 +1139,7 @@ function playDashboardTrack(track: Track | undefined): void {
 .dsp-node {
     position: relative;
     z-index: 1;
-    background: rgba(255, 255, 255, 0.95);
+    background: var(--te-card-bg);
     border: 1px solid rgba(0,0,0,0.05);
     padding: 0.8rem 1rem;
     border-radius: 14px;
@@ -1153,14 +1153,14 @@ function playDashboardTrack(track: Track | undefined): void {
 }
 
 .dsp-node:hover {
-    background: #ffffff;
+    background: var(--te-card-bg);
     transform: translateX(-4px);
     box-shadow: 0 8px 15px rgba(0,0,0,0.05);
 }
 
 .dsp-node.active {
     border-color: var(--accent);
-    background: #fff;
+    background: var(--te-card-bg);
     box-shadow: 0 6px 16px var(--accent-glow);
 }
 

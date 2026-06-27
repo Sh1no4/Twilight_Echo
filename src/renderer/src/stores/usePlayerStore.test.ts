@@ -114,6 +114,20 @@ test('streaming playback resume waits for plugin providers before restoring', ()
   )
 })
 
+test('playback session autosaves while playback changes instead of only on window close', () => {
+  const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+
+  assert.match(appSource, /function schedulePlaybackSessionAutosave\(/)
+  assert.match(appSource, /async function savePlaybackSessionSnapshot\(/)
+  assert.match(appSource, /currentTrack, currentTime, isPlaying/)
+  assert.match(
+    appSource,
+    /watch\(\s*\[\(\) => currentTrack\.value\?\.id, \(\) => settings\.value\.playbackResumeMode\]/
+  )
+  assert.match(appSource, /PLAYBACK_SESSION_POSITION_AUTOSAVE_MS/)
+  assert.match(appSource, /window\.api\.data\.savePlaybackSession\(session\)/)
+})
+
 test('renderer streaming resume seeks only after media metadata is available', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const playWithRendererAudio = source.match(/async function playWithRendererAudio[\s\S]*?\n}/)?.[0] ?? ''
