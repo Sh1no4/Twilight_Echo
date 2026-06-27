@@ -873,7 +873,7 @@ watch(volume, (val) => {
 })
 
 watch(
-  [() => currentTrack.value?.cover, () => appSettings.value.useCoverTheme],
+  [() => currentTrack.value?.cover, () => appSettings.value?.useCoverTheme],
   async ([cover, useCoverTheme]) => {
     if (!useCoverTheme) {
       dominantColor.value = '#7c4dff'
@@ -890,7 +890,7 @@ watch(
 )
 
 watch(
-  () => appSettings.value.audioOutputConfig,
+  () => appSettings.value?.audioOutputConfig,
   (config) => {
     audioOutputConfig.value = {
       preferredBufferSize:
@@ -1173,7 +1173,9 @@ function setupAudioEngineListeners(): void {
       await refreshAudioOutputState()
       try {
         const nativeInfo = await api.getPlaybackInfo()
-        audioOutputConfig.value = { ...appSettings.value.audioOutputConfig }
+        audioOutputConfig.value = {
+          ...(appSettings.value?.audioOutputConfig ?? defaultAudioOutputConfig)
+        }
         playbackInfo.value = normalizeNativePlaybackInfo(nativeInfo)
       } catch {
         // keep default
@@ -1513,29 +1515,32 @@ let discordPlayStartTimestamp: number | null = null
 let desktopLyricsTimeThrottle = 0
 
 function syncDesktopLyricsSnapshot(): void {
+  const desktopLyricsApi = window.api?.desktopLyrics
+  if (!desktopLyricsApi) return
+
   const track = currentTrack.value
   if (track) {
-    window.api.desktopLyrics.updateTrack({
+    desktopLyricsApi.updateTrack({
       lyrics: track.lyrics ?? null,
       translatedLyrics: track.translatedLyrics ?? null,
       title: track.title || '',
       artist: track.artist || ''
     })
   } else {
-    window.api.desktopLyrics.updateTrack({
+    desktopLyricsApi.updateTrack({
       lyrics: null,
       translatedLyrics: null,
       title: '',
       artist: ''
     })
   }
-  window.api.desktopLyrics.updateTime(currentTime.value)
+  desktopLyricsApi.updateTime(currentTime.value)
 }
 
 function updateMediaSessionPlaybackState(): void {
   if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
   navigator.mediaSession.playbackState =
-    appSettings.value.smtcEnabled && currentTrack.value
+    appSettings.value?.smtcEnabled && currentTrack.value
       ? isPlaying.value ? 'playing' : 'paused'
       : 'none'
 }
@@ -1544,7 +1549,7 @@ function updateMediaSessionPositionState(): void {
   if (
     typeof navigator === 'undefined' ||
     !('mediaSession' in navigator) ||
-    !appSettings.value.smtcEnabled ||
+    !appSettings.value?.smtcEnabled ||
     !currentTrack.value ||
     duration.value <= 0 ||
     !Number.isFinite(currentTime.value)
@@ -1565,7 +1570,7 @@ function updateMediaSessionPositionState(): void {
 
 function updateMediaSessionMetadata(): void {
   if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
-  if (!appSettings.value.smtcEnabled) {
+  if (!appSettings.value?.smtcEnabled) {
     mediaSessionMetadataKey = ''
     navigator.mediaSession.metadata = null
     navigator.mediaSession.playbackState = 'none'
@@ -1627,20 +1632,23 @@ function setupMediaSessionHandlers(): void {
 }
 
 function updateDiscordActivity(): void {
-  if (!appSettings.value.discordRpcEnabled) {
-    window.api.discord.clearActivity().catch(() => {})
+  const discordApi = window.api?.discord
+  if (!discordApi) return
+
+  if (appSettings.value?.discordRpcEnabled !== true) {
+    discordApi.clearActivity().catch(() => {})
     return
   }
   const track = currentTrack.value
   if (!track || !isPlaying.value) {
     discordPlayStartTimestamp = null
-    window.api.discord.clearActivity().catch(() => {})
+    discordApi.clearActivity().catch(() => {})
     return
   }
   if (discordPlayStartTimestamp === null) {
     discordPlayStartTimestamp = Date.now()
   }
-  window.api.discord.updateActivity({
+  discordApi.updateActivity({
     title: track.title || '',
     artist: track.artist || '',
     album: track.album || '',
@@ -1653,8 +1661,8 @@ function setupPlayerIntegrationSideEffects(): void {
   if (playerIntegrationSideEffectsSetup) return
   playerIntegrationSideEffectsSetup = true
 
-  watch(() => appSettings.value.smtcEnabled, () => {
-    if (appSettings.value.smtcEnabled) setupMediaSessionHandlers()
+  watch(() => appSettings.value?.smtcEnabled, () => {
+    if (appSettings.value?.smtcEnabled) setupMediaSessionHandlers()
     updateMediaSessionMetadata()
   }, { immediate: true })
 
@@ -1677,10 +1685,10 @@ function setupPlayerIntegrationSideEffects(): void {
   }, { immediate: true })
 
   watch([currentTime, duration], () => {
-    if (appSettings.value.smtcEnabled && isPlaying.value) updateMediaSessionPositionState()
+    if (appSettings.value?.smtcEnabled && isPlaying.value) updateMediaSessionPositionState()
   })
 
-  watch(() => appSettings.value.discordRpcEnabled, () => updateDiscordActivity(), { immediate: true })
+  watch(() => appSettings.value?.discordRpcEnabled, () => updateDiscordActivity(), { immediate: true })
 
   watch(currentTrack, () => syncDesktopLyricsSnapshot(), { immediate: true })
 
@@ -1688,14 +1696,15 @@ function setupPlayerIntegrationSideEffects(): void {
     const now = Date.now()
     if (now - desktopLyricsTimeThrottle < 200) return
     desktopLyricsTimeThrottle = now
-    window.api.desktopLyrics.updateTime(time)
+    window.api?.desktopLyrics?.updateTime(time)
   })
 
-  watch(() => appSettings.value.desktopLyrics, (dl) => {
-    window.api.desktopLyrics.updateSettings(dl)
+  watch(() => appSettings.value?.desktopLyrics, (dl) => {
+    if (!dl) return
+    window.api?.desktopLyrics?.updateSettings(dl)
   }, { deep: true })
 
-  window.api.desktopLyrics.onToggle((enabled: boolean) => {
+  window.api?.desktopLyrics?.onToggle((enabled: boolean) => {
     if (enabled) syncDesktopLyricsSnapshot()
   })
 }

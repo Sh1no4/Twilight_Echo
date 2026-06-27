@@ -1324,10 +1324,10 @@ onBeforeUnmount(() => {
   opacity: 0;
 }
 .playlist-panel.panel-glass {
-  background: rgba(21, 26, 36, 0.75);
+  background: rgba(16, 16, 16, 0.88);
   backdrop-filter: blur(30px) saturate(180%);
   -webkit-backdrop-filter: blur(30px) saturate(180%);
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.1);
   box-shadow:
     0 26px 70px rgba(0, 0, 0, 0.34),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
@@ -1583,10 +1583,10 @@ onBeforeUnmount(() => {
 
 .player-bar-glass {
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.06)),
-    rgba(8, 10, 16, 0.72);
-  border-color: rgba(255, 255, 255, 0.18);
-  border-top-color: rgba(255, 255, 255, 0.2);
+    linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.035)),
+    rgba(14, 14, 14, 0.86);
+  border-color: rgba(255, 255, 255, 0.12);
+  border-top-color: rgba(255, 255, 255, 0.14);
   box-shadow:
     0 -18px 62px rgba(0, 0, 0, 0.34),
     inset 0 1px 0 rgba(255, 255, 255, 0.16);
@@ -2061,8 +2061,8 @@ onBeforeUnmount(() => {
 }
 
 .more-drawer.drawer-glass {
-  background: rgba(21, 26, 36, 0.75);
-  border-color: rgba(255, 255, 255, 0.08);
+  background: rgba(16, 16, 16, 0.88);
+  border-color: rgba(255, 255, 255, 0.1);
   box-shadow:
     0 26px 70px rgba(0, 0, 0, 0.34),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);

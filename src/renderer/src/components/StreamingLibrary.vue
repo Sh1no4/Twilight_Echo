@@ -921,6 +921,109 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   color: var(--te-neutral-500, #64748b);
 }
 
+:global(html[data-theme='dark']) .glass-card,
+:global(html[data-theme='dark']) .playlist-item,
+:global(html[data-theme='dark']) .empty-state {
+  background: var(--te-glass-bg-strong);
+  border-color: var(--te-glass-border);
+  box-shadow: var(--te-glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+
+:global(html[data-theme='dark']) .glass-card:hover,
+:global(html[data-theme='dark']) .playlist-item:hover {
+  background: #202020;
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.055);
+}
+
+:global(html[data-theme='dark']) .profile-card:hover {
+  box-shadow: var(--te-glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.045);
+}
+
+:global(html[data-theme='dark']) .profile-avatar {
+  border-color: #242424;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.32);
+}
+
+:global(html[data-theme='dark']) .profile-avatar-placeholder,
+:global(html[data-theme='dark']) .playlist-cover-placeholder,
+:global(html[data-theme='dark']) .empty-icon {
+  background: #242016;
+  color: var(--te-primary-400);
+}
+
+:global(html[data-theme='dark']) .provider-switch-btn,
+:global(html[data-theme='dark']) .stat-badge,
+:global(html[data-theme='dark']) .playlist-pin-button {
+  background: #141414;
+  border-color: var(--te-card-border);
+  color: var(--te-neutral-700);
+}
+
+:global(html[data-theme='dark']) .provider-switch-btn:hover,
+:global(html[data-theme='dark']) .provider-switch-btn.active,
+:global(html[data-theme='dark']) .provider-menu-item.active {
+  background: rgba(245, 158, 11, 0.11);
+  border-color: rgba(var(--te-primary-rgb), 0.32);
+  color: var(--te-primary-400);
+}
+
+:global(html[data-theme='dark']) .provider-menu {
+  background: #181818;
+  border-color: var(--te-card-border);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.44);
+}
+
+:global(html[data-theme='dark']) .provider-menu-item:hover,
+:global(html[data-theme='dark']) .stat-badge:hover {
+  background: rgba(255, 255, 255, 0.065);
+}
+
+:global(html[data-theme='dark']) .favorites-card::before {
+  background: radial-gradient(circle, rgba(var(--te-primary-rgb), 0.11) 0%, transparent 70%);
+}
+
+:global(html[data-theme='dark']) .favorites-info .tag,
+:global(html[data-theme='dark']) .recent-card .icon-wrap {
+  background: rgba(var(--te-primary-rgb), 0.13);
+  color: var(--te-primary-400);
+}
+
+:global(html[data-theme='dark']) .btn-play {
+  background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-400));
+  color: #111111;
+  box-shadow: 0 10px 24px rgba(var(--te-primary-rgb), 0.22);
+}
+
+:global(html[data-theme='dark']) .btn-play:hover {
+  box-shadow: 0 14px 32px rgba(var(--te-primary-rgb), 0.3);
+}
+
+:global(html[data-theme='dark']) .recent-card,
+:global(html[data-theme='dark']) .ranking-card {
+  background: linear-gradient(135deg, rgba(31, 31, 31, 0.96) 0%, rgba(24, 24, 24, 0.84) 100%);
+}
+
+:global(html[data-theme='dark']) .feature-card .enter-btn {
+  background: #141414;
+  color: var(--te-neutral-500);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+}
+
+:global(html[data-theme='dark']) .feature-card:hover .enter-btn,
+:global(html[data-theme='dark']) .playlist-item:hover .playlist-item-arrow {
+  color: var(--te-primary-400);
+}
+
+:global(html[data-theme='dark']) .placeholder-img {
+  background: #242016;
+  color: var(--te-primary-400);
+}
+
+:global(html[data-theme='dark']) .ranking-card .placeholder-img {
+  background: rgba(217, 79, 125, 0.14);
+  color: #f08aad;
+}
+
 @keyframes library-in {
   from {
     opacity: 0;

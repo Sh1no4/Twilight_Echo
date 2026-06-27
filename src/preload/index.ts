@@ -11,6 +11,8 @@ type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+type UiDensity = 'compact' | 'standard' | 'comfortable'
+type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 type LyricAlign = 'center' | 'left'
 
 interface DesktopLyricsSettings {
@@ -320,6 +322,18 @@ interface AppSettings {
   blurEffect: boolean
   useCoverTheme: boolean
   lyricFontSize: number
+  libraryFolders: string[]
+  watchLibrary: boolean
+  smtcEnabled: boolean
+  discordRpcEnabled: boolean
+  accentColor: string
+  lightAccentColor: string
+  darkAccentColor: string
+  fontFamily: string
+  uiDensity: UiDensity
+  nowPlayingBackground: NowPlayingBackground
+  lyricAlign: LyricAlign
+  lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
   audioOutput: AudioOutputId
   audioDevice: string

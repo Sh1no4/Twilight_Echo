@@ -3325,6 +3325,71 @@ onMounted(async () => {
   box-shadow: 0 18px 38px rgba(34, 42, 68, 0.1);
 }
 
+:global(html[data-theme='dark']) .streaming-page {
+  background: var(--te-streaming-surface);
+}
+
+:global(html[data-theme='dark']) .streaming-search-box,
+:global(html[data-theme='dark']) .btn-back,
+:global(html[data-theme='dark']) .streaming-round-btn,
+:global(html[data-theme='dark']) .streaming-avatar-btn,
+:global(html[data-theme='dark']) .search-tab-pill,
+:global(html[data-theme='dark']) .streaming-placeholder,
+:global(html[data-theme='dark']) .track-table-wrapper,
+:global(html[data-theme='dark']) .detail-playlist-header,
+:global(html[data-theme='dark']) .playlist-grid-card {
+  background: var(--te-card-bg);
+  border-color: var(--te-card-border);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
+}
+
+:global(html[data-theme='dark']) .streaming-search-box.focused {
+  background: #1d1d1d;
+  border-color: rgba(var(--te-primary-rgb), 0.42);
+  box-shadow: 0 0 0 4px rgba(var(--te-primary-rgb), 0.12);
+}
+
+:global(html[data-theme='dark']) .search-tab-pill.active,
+:global(html[data-theme='dark']) .stream-action-btn {
+  background: var(--te-primary-500);
+  color: #111111;
+  box-shadow: 0 12px 24px rgba(var(--te-primary-rgb), 0.18);
+}
+
+:global(html[data-theme='dark']) .detail-playlist-header {
+  background: var(--te-card-bg);
+  border-color: var(--te-card-border);
+}
+
+:global(html[data-theme='dark']) .track-table th {
+  background: #141414;
+  border-bottom-color: var(--te-card-border);
+}
+
+:global(html[data-theme='dark']) .track-row td {
+  border-bottom-color: rgba(255, 255, 255, 0.075);
+}
+
+:global(html[data-theme='dark']) .track-row:hover {
+  background: rgba(245, 158, 11, 0.08);
+  box-shadow: inset 3px 0 0 rgba(var(--te-primary-rgb), 0.42);
+}
+
+:global(html[data-theme='dark']) .track-playing {
+  background: rgba(245, 158, 11, 0.12) !important;
+}
+
+:global(html[data-theme='dark']) .cover-placeholder,
+:global(html[data-theme='dark']) .playlist-grid-cover-placeholder,
+:global(html[data-theme='dark']) .detail-playlist-cover-placeholder {
+  background: #242016;
+  color: var(--te-primary-400);
+}
+
+:global(html[data-theme='dark']) .playlist-grid-card:hover {
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
+}
+
 @media (max-width: 900px) {
   .streaming-content-header,
   .streaming-content-body,

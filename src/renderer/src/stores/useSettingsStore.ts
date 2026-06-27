@@ -76,7 +76,9 @@ const fallbackSettings: AppSettings = {
   watchLibrary: true,
   smtcEnabled: true,
   discordRpcEnabled: false,
-  accentColor: 'violet',
+  accentColor: 'blue',
+  lightAccentColor: 'blue',
+  darkAccentColor: 'amber',
   fontFamily: 'system',
   uiDensity: 'standard',
   nowPlayingBackground: 'blur',
@@ -159,13 +161,127 @@ function resolveTheme(theme: AppTheme): Exclude<AppTheme, 'system'> {
   return systemThemeQuery?.matches ? 'dark' : 'pureWhite'
 }
 
-const ACCENT_COLOR_VARS: Record<string, string> = {
-  violet: '#8b5cf6',
-  blue: '#3b82f6',
-  emerald: '#10b981',
-  rose: '#fb7185',
-  amber: '#f59e0b',
-  slate: '#1f2937'
+interface AccentPalette {
+  primary500: string
+  primary400: string
+  primary300: string
+  rgb: string
+  glow: string
+  soft: string
+  active: string
+  brand50: string
+  brand100: string
+  brand200: string
+  brand300: string
+  brand400: string
+  brand500: string
+  brand600: string
+  brand700: string
+}
+
+const ACCENT_PALETTES: Record<string, AccentPalette> = {
+  violet: {
+    primary500: '#8b5cf6',
+    primary400: '#a78bfa',
+    primary300: '#c4b5fd',
+    rgb: '139, 92, 246',
+    glow: 'rgba(139, 92, 246, 0.18)',
+    soft: 'rgba(139, 92, 246, 0.08)',
+    active: 'rgba(139, 92, 246, 0.16)',
+    brand50: '#f5f3ff',
+    brand100: '#ede9fe',
+    brand200: '#ddd6fe',
+    brand300: '#c4b5fd',
+    brand400: '#a78bfa',
+    brand500: '#8b5cf6',
+    brand600: '#7c3aed',
+    brand700: '#6d28d9'
+  },
+  blue: {
+    primary500: '#2563eb',
+    primary400: '#3b82f6',
+    primary300: '#93c5fd',
+    rgb: '37, 99, 235',
+    glow: 'rgba(37, 99, 235, 0.14)',
+    soft: 'rgba(37, 99, 235, 0.08)',
+    active: 'rgba(37, 99, 235, 0.14)',
+    brand50: '#eff6ff',
+    brand100: '#dbeafe',
+    brand200: '#bfdbfe',
+    brand300: '#93c5fd',
+    brand400: '#60a5fa',
+    brand500: '#2563eb',
+    brand600: '#1d4ed8',
+    brand700: '#1e40af'
+  },
+  emerald: {
+    primary500: '#10b981',
+    primary400: '#34d399',
+    primary300: '#6ee7b7',
+    rgb: '16, 185, 129',
+    glow: 'rgba(16, 185, 129, 0.16)',
+    soft: 'rgba(16, 185, 129, 0.08)',
+    active: 'rgba(16, 185, 129, 0.15)',
+    brand50: '#ecfdf5',
+    brand100: '#d1fae5',
+    brand200: '#a7f3d0',
+    brand300: '#6ee7b7',
+    brand400: '#34d399',
+    brand500: '#10b981',
+    brand600: '#059669',
+    brand700: '#047857'
+  },
+  rose: {
+    primary500: '#e11d48',
+    primary400: '#fb7185',
+    primary300: '#fda4af',
+    rgb: '225, 29, 72',
+    glow: 'rgba(225, 29, 72, 0.16)',
+    soft: 'rgba(225, 29, 72, 0.08)',
+    active: 'rgba(225, 29, 72, 0.14)',
+    brand50: '#fff1f2',
+    brand100: '#ffe4e6',
+    brand200: '#fecdd3',
+    brand300: '#fda4af',
+    brand400: '#fb7185',
+    brand500: '#e11d48',
+    brand600: '#be123c',
+    brand700: '#9f1239'
+  },
+  amber: {
+    primary500: '#f59e0b',
+    primary400: '#fbbf24',
+    primary300: '#fde68a',
+    rgb: '245, 158, 11',
+    glow: 'rgba(245, 158, 11, 0.18)',
+    soft: 'rgba(245, 158, 11, 0.09)',
+    active: 'rgba(245, 158, 11, 0.16)',
+    brand50: '#fffbeb',
+    brand100: '#fef3c7',
+    brand200: '#fde68a',
+    brand300: '#fcd34d',
+    brand400: '#fbbf24',
+    brand500: '#f59e0b',
+    brand600: '#d97706',
+    brand700: '#b45309'
+  },
+  slate: {
+    primary500: '#334155',
+    primary400: '#64748b',
+    primary300: '#94a3b8',
+    rgb: '51, 65, 85',
+    glow: 'rgba(51, 65, 85, 0.16)',
+    soft: 'rgba(51, 65, 85, 0.08)',
+    active: 'rgba(51, 65, 85, 0.14)',
+    brand50: '#f8fafc',
+    brand100: '#f1f5f9',
+    brand200: '#e2e8f0',
+    brand300: '#cbd5e1',
+    brand400: '#94a3b8',
+    brand500: '#334155',
+    brand600: '#1f2937',
+    brand700: '#0f172a'
+  }
 }
 
 const FONT_FAMILY_MAP: Record<string, string> = {
@@ -178,6 +294,11 @@ const FONT_FAMILY_MAP: Record<string, string> = {
 
 function applyDomSettings(): void {
   const resolvedTheme = resolveTheme(settings.value.theme)
+  const accent =
+    resolvedTheme === 'dark'
+      ? settings.value.darkAccentColor || settings.value.accentColor
+      : settings.value.lightAccentColor || settings.value.accentColor
+  const palette = ACCENT_PALETTES[accent] ?? ACCENT_PALETTES.blue
   document.documentElement.dataset.theme = resolvedTheme
   document.documentElement.dataset.themePreference = settings.value.theme
   document.documentElement.style.colorScheme = resolvedTheme === 'dark' ? 'dark' : 'light'
@@ -186,8 +307,23 @@ function applyDomSettings(): void {
     '--te-lyric-font-size',
     `${settings.value.lyricFontSize}px`
   )
-  const accent = settings.value.accentColor
-  document.documentElement.style.setProperty('--te-accent', ACCENT_COLOR_VARS[accent] ?? ACCENT_COLOR_VARS.violet)
+  document.documentElement.dataset.accent = accent
+  document.documentElement.style.setProperty('--te-accent', palette.primary500)
+  document.documentElement.style.setProperty('--te-primary-500', palette.primary500)
+  document.documentElement.style.setProperty('--te-primary-400', palette.primary400)
+  document.documentElement.style.setProperty('--te-primary-300', palette.primary300)
+  document.documentElement.style.setProperty('--te-primary-rgb', palette.rgb)
+  document.documentElement.style.setProperty('--te-glow-main', palette.glow)
+  document.documentElement.style.setProperty('--te-accent-soft', palette.soft)
+  document.documentElement.style.setProperty('--te-active-bg', palette.active)
+  document.documentElement.style.setProperty('--brand-50', palette.brand50)
+  document.documentElement.style.setProperty('--brand-100', palette.brand100)
+  document.documentElement.style.setProperty('--brand-200', palette.brand200)
+  document.documentElement.style.setProperty('--brand-300', palette.brand300)
+  document.documentElement.style.setProperty('--brand-400', palette.brand400)
+  document.documentElement.style.setProperty('--brand-500', palette.brand500)
+  document.documentElement.style.setProperty('--brand-600', palette.brand600)
+  document.documentElement.style.setProperty('--brand-700', palette.brand700)
   document.documentElement.style.setProperty(
     '--te-font-sans',
     FONT_FAMILY_MAP[settings.value.fontFamily] ?? FONT_FAMILY_MAP.system

@@ -614,9 +614,9 @@ function playDashboardTrack(track: Track | undefined): void {
   --card-border: rgba(255, 255, 255, 0.8);
   --text-main: #1f2937;
   --text-muted: #6b7280;
-  --accent: #4f46e5;      /* Indigo */
-  --accent-light: #818cf8;
-  --accent-glow: rgba(79, 70, 229, 0.15);
+  --accent: var(--te-primary-500);
+  --accent-light: var(--te-primary-400);
+  --accent-glow: var(--te-glow-main);
   --success: #10b981;
 
   font-family: 'Inter', sans-serif;
@@ -854,19 +854,19 @@ function playDashboardTrack(track: Track | undefined): void {
     width: 70px;
     height: 70px;
     border-radius: 50%;
-    background: #5e60f6;
+    background: var(--accent);
     color: white;
     display: flex;
     justify-content: center;
     align-items: center;
     font-size: 2rem;
     opacity: 1;
-    box-shadow: 0 10px 20px rgba(94, 96, 246, 0.28);
+    box-shadow: 0 10px 20px var(--accent-glow);
 }
 
 .play-btn:hover {
     transform: scale(1.08);
-    box-shadow: 0 14px 28px rgba(94, 96, 246, 0.34);
+    box-shadow: 0 14px 28px var(--accent-glow);
     color: white;
 }
 
@@ -945,10 +945,10 @@ function playDashboardTrack(track: Track | undefined): void {
     transform: translateX(-50%) translateY(0);
 }
 
-:deep(.level-1) { background: rgba(79, 70, 229, 0.2); border-color: rgba(79, 70, 229, 0.1); }
-:deep(.level-2) { background: rgba(79, 70, 229, 0.45); border-color: rgba(79, 70, 229, 0.2); }
-:deep(.level-3) { background: rgba(79, 70, 229, 0.75); border-color: rgba(79, 70, 229, 0.4); }
-:deep(.level-4) { background: rgba(79, 70, 229, 1); box-shadow: 0 0 12px var(--accent-glow); border-color: var(--accent); }
+:deep(.level-1) { background: rgba(var(--te-primary-rgb), 0.2); border-color: rgba(var(--te-primary-rgb), 0.1); }
+:deep(.level-2) { background: rgba(var(--te-primary-rgb), 0.45); border-color: rgba(var(--te-primary-rgb), 0.2); }
+:deep(.level-3) { background: rgba(var(--te-primary-rgb), 0.75); border-color: rgba(var(--te-primary-rgb), 0.4); }
+:deep(.level-4) { background: rgb(var(--te-primary-rgb)); box-shadow: 0 0 12px var(--accent-glow); border-color: var(--accent); }
 
 .calendar-stats {
     display: flex;

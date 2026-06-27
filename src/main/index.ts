@@ -135,6 +135,8 @@ interface AppSettings {
   smtcEnabled: boolean
   discordRpcEnabled: boolean
   accentColor: string
+  lightAccentColor: string
+  darkAccentColor: string
   fontFamily: string
   uiDensity: UiDensity
   nowPlayingBackground: NowPlayingBackground
@@ -198,7 +200,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   watchLibrary: true,
   smtcEnabled: true,
   discordRpcEnabled: false,
-  accentColor: 'violet',
+  accentColor: 'blue',
+  lightAccentColor: 'blue',
+  darkAccentColor: 'amber',
   fontFamily: 'system',
   uiDensity: 'standard',
   nowPlayingBackground: 'blur',
@@ -308,6 +312,18 @@ function normalizeAccentColor(value: unknown): string {
   return typeof value === 'string' && ACCENT_COLORS.includes(value)
     ? value
     : DEFAULT_SETTINGS.accentColor
+}
+
+function normalizeLightAccentColor(value: unknown): string {
+  return typeof value === 'string' && ACCENT_COLORS.includes(value)
+    ? value
+    : DEFAULT_SETTINGS.lightAccentColor
+}
+
+function normalizeDarkAccentColor(value: unknown, legacyValue: unknown): string {
+  if (typeof value === 'string' && ACCENT_COLORS.includes(value)) return value
+  if (typeof legacyValue === 'string' && ACCENT_COLORS.includes(legacyValue)) return legacyValue
+  return DEFAULT_SETTINGS.darkAccentColor
 }
 
 function normalizeStringArray(value: unknown): string[] {
@@ -449,7 +465,9 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
     watchLibrary: settings.watchLibrary !== false,
     smtcEnabled: settings.smtcEnabled !== false,
     discordRpcEnabled: settings.discordRpcEnabled === true,
-    accentColor: normalizeAccentColor(settings.accentColor),
+    accentColor: normalizeAccentColor(settings.lightAccentColor ?? DEFAULT_SETTINGS.lightAccentColor),
+    lightAccentColor: normalizeLightAccentColor(settings.lightAccentColor),
+    darkAccentColor: normalizeDarkAccentColor(settings.darkAccentColor, settings.accentColor),
     fontFamily: typeof settings.fontFamily === 'string' && settings.fontFamily.trim()
       ? settings.fontFamily.trim().slice(0, 64)
       : DEFAULT_SETTINGS.fontFamily,
@@ -482,7 +500,7 @@ function readAppSettings(): AppSettings {
     const filePath = getSettingsFilePath()
     if (!existsSync(filePath)) return { ...DEFAULT_SETTINGS }
     const raw = readFileSync(filePath, 'utf-8')
-    return normalizeAppSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(raw) })
+    return normalizeAppSettings(JSON.parse(raw))
   } catch {
     return { ...DEFAULT_SETTINGS }
   }
@@ -805,6 +823,12 @@ function readCachedCover(handle: string): string | null {
   }
 }
 
+function coverHandleExists(handle: unknown): boolean {
+  if (typeof handle !== 'string' || !handle.startsWith('cover://')) return false
+  const fileName = handle.slice('cover://'.length)
+  return resolveCoverCacheFile(fileName) !== null
+}
+
 /** Migrate a base64 data: URL cover to disk cache. Returns cover:// handle. */
 function migrateBase64Cover(dataUrl: string): string | null {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/)
@@ -833,6 +857,65 @@ function findCoverInDir(dir: string): string | null {
   }
   coverCache.set(dir, null)
   return null
+}
+
+async function rebuildMissingTrackCover(track: Record<string, unknown>): Promise<boolean> {
+  const cover = track.cover
+  if (typeof cover !== 'string' || !cover.startsWith('cover://') || coverHandleExists(cover)) {
+    return false
+  }
+
+  const filePath = typeof track.filePath === 'string' ? track.filePath : ''
+  const dir =
+    typeof track.dir === 'string' && track.dir
+      ? track.dir
+      : filePath
+        ? dirname(filePath)
+        : ''
+  let repairedCover: string | null = null
+
+  if (filePath && existsSync(filePath) && !filePath.toLowerCase().endsWith('.iso')) {
+    try {
+      const meta = await parseFile(filePath, { skipCovers: false })
+      const pic = meta.common.picture?.[0]
+      if (pic) {
+        repairedCover = cacheCoverFromBuffer(Buffer.from(pic.data), pic.format)
+      }
+    } catch {
+      /* keep folder-art fallback */
+    }
+  }
+
+  if (!repairedCover && dir) {
+    repairedCover = findCoverInDir(dir)
+  }
+
+  if (!repairedCover) return false
+  track.cover = repairedCover
+  return repairedCover !== cover
+}
+
+async function repairMissingLibraryCovers(tracks: unknown[]): Promise<boolean> {
+  const candidates = tracks.filter(
+    (track): track is Record<string, unknown> =>
+      !!track &&
+      typeof track === 'object' &&
+      !Array.isArray(track) &&
+      typeof (track as Record<string, unknown>).cover === 'string' &&
+      ((track as Record<string, unknown>).cover as string).startsWith('cover://') &&
+      !coverHandleExists((track as Record<string, unknown>).cover)
+  )
+  if (candidates.length === 0) return false
+
+  let changed = false
+  const batchSize = 4
+  for (let i = 0; i < candidates.length; i += batchSize) {
+    const batch = candidates.slice(i, i + batchSize)
+    const repaired = await Promise.all(batch.map(rebuildMissingTrackCover))
+    changed = repaired.some(Boolean) || changed
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+  return changed
 }
 
 function findLyricsInDir(dir: string, musicFileName: string): string | null {
@@ -2553,6 +2636,7 @@ if (!gotSingleInstanceLock) {
             }
           }
         }
+        changed = (await repairMissingLibraryCovers(tracks)) || changed
         if (changed) {
           await writeFile(MUSIC_LIBRARY_FILE, JSON.stringify(data), 'utf-8')
         }

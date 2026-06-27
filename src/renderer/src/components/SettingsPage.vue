@@ -496,9 +496,14 @@ function setCloseBehavior(event: Event): void {
   void updateSettings({ closeToTray: (event.target as HTMLSelectElement).value === 'tray' })
 }
 
-function setAccentColor(color: string): void {
-  if (settings.value.accentColor === color) return
-  void updateSettings({ accentColor: color })
+function setAccentColor(mode: 'light' | 'dark', color: string): void {
+  if (mode === 'light') {
+    if (settings.value.lightAccentColor === color) return
+    void updateSettings({ accentColor: color, lightAccentColor: color })
+    return
+  }
+  if (settings.value.darkAccentColor === color) return
+  void updateSettings({ darkAccentColor: color })
 }
 
 function setFontFamily(event: Event): void {
@@ -1648,19 +1653,38 @@ onBeforeUnmount(() => {
             <hr />
             <div class="setting-item">
               <div class="setting-copy">
-                <strong>强调色</strong>
-                <span>选择界面中的主要品牌色。</span>
+                <strong>浅色强调色</strong>
+                <span>浅色模式下设置、本地主页和主要控件使用的主题色。</span>
               </div>
               <div class="swatch-row">
                 <span
                   v-for="option in accentColorOptions"
                   :key="option.value"
                   class="swatch"
-                  :class="[option.class, { active: settings.accentColor === option.value }]"
+                  :class="[option.class, { active: settings.lightAccentColor === option.value }]"
                   :title="option.label"
-                  @click="setAccentColor(option.value)"
+                  @click="setAccentColor('light', option.value)"
                 >
-                  <i v-if="settings.accentColor === option.value" class="pi pi-check"></i>
+                  <i v-if="settings.lightAccentColor === option.value" class="pi pi-check"></i>
+                </span>
+              </div>
+            </div>
+            <hr />
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>深色强调色</strong>
+                <span>深色模式下复用同一组选项，可与浅色模式独立保存。</span>
+              </div>
+              <div class="swatch-row">
+                <span
+                  v-for="option in accentColorOptions"
+                  :key="option.value"
+                  class="swatch"
+                  :class="[option.class, { active: settings.darkAccentColor === option.value }]"
+                  :title="option.label"
+                  @click="setAccentColor('dark', option.value)"
+                >
+                  <i v-if="settings.darkAccentColor === option.value" class="pi pi-check"></i>
                 </span>
               </div>
             </div>
@@ -2127,14 +2151,6 @@ onBeforeUnmount(() => {
 <style scoped>
 
 .settings-preview-page {
-  --brand-50: #f5f3ff;
-  --brand-100: #ede9fe;
-  --brand-200: #ddd6fe;
-  --brand-300: #c4b5fd;
-  --brand-400: #a78bfa;
-  --brand-500: #8b5cf6;
-  --brand-600: #7c3aed;
-  --brand-700: #6d28d9;
   position: fixed;
   inset: 0;
   z-index: 60;
@@ -2538,7 +2554,7 @@ onBeforeUnmount(() => {
   border: 1px solid var(--brand-200);
   background: var(--brand-50);
   color: var(--brand-700);
-  box-shadow: 0 1px 5px rgba(124, 58, 237, 0.08);
+  box-shadow: 0 1px 5px rgba(var(--te-primary-rgb), 0.08);
 }
 
 .brand-soft-button:hover {
@@ -2576,7 +2592,7 @@ onBeforeUnmount(() => {
   width: 16px;
   height: 16px;
   border-radius: 50%;
-  background: var(--brand-500, #7c3aed);
+  background: var(--brand-500, #2563eb);
   cursor: pointer;
   border: 2px solid #fff;
   box-shadow: 0 1px 4px rgba(0,0,0,0.15);
@@ -2601,7 +2617,7 @@ onBeforeUnmount(() => {
   outline: none;
 }
 .select-control:focus {
-  border-color: var(--brand-400, #8b5cf6);
+  border-color: var(--brand-400, #3b82f6);
 }
 
 .toggle-switch {
@@ -2754,7 +2770,7 @@ onBeforeUnmount(() => {
 .device-card:hover,
 .device-card.active {
   border-color: var(--brand-300);
-  box-shadow: 0 14px 32px rgba(124, 58, 237, 0.12);
+  box-shadow: 0 14px 32px rgba(var(--te-primary-rgb), 0.12);
 }
 
 .device-card i {
@@ -3078,6 +3094,7 @@ onBeforeUnmount(() => {
   width: 28px;
   height: 28px;
   border-radius: 50%;
+  cursor: pointer;
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.12);
 }
 
@@ -3092,11 +3109,11 @@ onBeforeUnmount(() => {
 }
 
 .swatch.violet { color: #8b5cf6; background: #8b5cf6; }
-.swatch.blue { background: #3b82f6; }
-.swatch.emerald { background: #10b981; }
-.swatch.rose { background: #fb7185; }
-.swatch.amber { background: #f59e0b; }
-.swatch.slate { background: #1f2937; }
+.swatch.blue { color: #2563eb; background: #2563eb; }
+.swatch.emerald { color: #10b981; background: #10b981; }
+.swatch.rose { color: #e11d48; background: #e11d48; }
+.swatch.amber { color: #f59e0b; background: #f59e0b; }
+.swatch.slate { color: #334155; background: #334155; }
 
 .density button {
   min-width: 56px;
@@ -3140,7 +3157,7 @@ onBeforeUnmount(() => {
 
 .background-options button.active span {
   border-color: var(--brand-500);
-  outline: 2px solid rgba(139, 92, 246, 0.3);
+  outline: 2px solid rgba(var(--te-primary-rgb), 0.3);
   outline-offset: 1px;
 }
 
@@ -3150,7 +3167,7 @@ onBeforeUnmount(() => {
 
 .blur-cover {
   filter: blur(2px);
-  background: linear-gradient(135deg, #93c5fd, #c4b5fd 52%, #f9a8d4);
+  background: linear-gradient(135deg, var(--te-primary-300), var(--te-primary-400) 52%, var(--te-primary-500));
 }
 
 .background-options button:hover .blur-cover {
@@ -3232,7 +3249,7 @@ onBeforeUnmount(() => {
   width: 320px;
   height: 320px;
   border-radius: 999px;
-  background: rgba(167, 139, 250, 0.1);
+  background: rgba(var(--te-primary-rgb), 0.1);
   filter: blur(100px);
   pointer-events: none;
 }
@@ -3762,7 +3779,7 @@ onBeforeUnmount(() => {
 
 .signal-node-circle.active {
   border: 2px solid var(--brand-500);
-  box-shadow: 0 0 15px rgba(139, 92, 246, 0.15);
+  box-shadow: 0 0 15px rgba(var(--te-primary-rgb), 0.15);
   background: var(--brand-50);
 }
 
@@ -3892,5 +3909,218 @@ onBeforeUnmount(() => {
   color: #6b7280;
   font-size: 12px;
   font-weight: 500;
+}
+
+</style>
+
+<style>
+
+html[data-theme='dark'] .settings-preview-page {
+  background: #080b12;
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .settings-preview-page::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.28);
+}
+
+html[data-theme='dark'] .settings-preview-page::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.42);
+}
+
+html[data-theme='dark'] .settings-preview-page .preview-nav-item {
+  color: rgba(148, 163, 184, 0.86);
+}
+
+html[data-theme='dark'] .settings-preview-page .preview-nav-item:hover,
+html[data-theme='dark'] .settings-preview-page .preview-nav-item.active {
+  border-color: rgba(var(--te-primary-rgb), 0.28);
+  background: var(--te-card-bg);
+  color: rgba(248, 250, 252, 0.95);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.28);
+}
+
+html[data-theme='dark'] .settings-preview-page .glass-card,
+html[data-theme='dark'] .settings-preview-page .device-panel,
+html[data-theme='dark'] .settings-preview-page .device-card,
+html[data-theme='dark'] .settings-preview-page .accordion-preview,
+html[data-theme='dark'] .settings-preview-page .dsp-module-card,
+html[data-theme='dark'] .settings-preview-page .dsp-meter,
+html[data-theme='dark'] .settings-preview-page .folder-chip,
+html[data-theme='dark'] .settings-preview-page .preview-select,
+html[data-theme='dark'] .settings-preview-page .preview-select.wide,
+html[data-theme='dark'] .settings-preview-page .select-control,
+html[data-theme='dark'] .settings-preview-page .number-input,
+html[data-theme='dark'] .settings-preview-page .path-control input,
+html[data-theme='dark'] .settings-preview-page .plugin-empty,
+html[data-theme='dark'] .settings-preview-page .range-pill,
+html[data-theme='dark'] .settings-preview-page .shortcut-grid,
+html[data-theme='dark'] .settings-preview-page .shortcut-grid kbd,
+html[data-theme='dark'] .settings-preview-page .update-card,
+html[data-theme='dark'] .settings-preview-page .about-links button,
+html[data-theme='dark'] .settings-preview-page .output-diagnostic-panel,
+html[data-theme='dark'] .settings-preview-page .preset-btn,
+html[data-theme='dark'] .settings-preview-page .dashed-button {
+  border-color: var(--te-card-border);
+  background: var(--te-card-bg);
+  color: rgba(226, 232, 240, 0.9);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+
+html[data-theme='dark'] .settings-preview-page .accordion-head,
+html[data-theme='dark'] .settings-preview-page .accordion-body,
+html[data-theme='dark'] .settings-preview-page .advanced-grid,
+html[data-theme='dark'] .settings-preview-page .wasapi-push-row {
+  border-color: var(--te-card-border);
+  background: transparent;
+}
+
+html[data-theme='dark'] .settings-preview-page .setting-list hr,
+html[data-theme='dark'] .settings-preview-page .about-section hr {
+  background: var(--te-card-border);
+}
+
+html[data-theme='dark'] .settings-preview-page .segmented-control,
+html[data-theme='dark'] .settings-preview-page .theme-segment {
+  border-color: var(--te-card-border);
+  background: var(--te-subtle-bg);
+  box-shadow: none;
+}
+
+html[data-theme='dark'] .settings-preview-page .segmented-control button,
+html[data-theme='dark'] .settings-preview-page .theme-segment button,
+html[data-theme='dark'] .settings-preview-page .background-options button {
+  color: rgba(148, 163, 184, 0.88);
+}
+
+html[data-theme='dark'] .settings-preview-page .segmented-control button.active,
+html[data-theme='dark'] .settings-preview-page .theme-segment button.active {
+  background: var(--te-card-bg);
+  color: rgba(248, 250, 252, 0.95);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22);
+}
+
+html[data-theme='dark'] .settings-preview-page .dsp-signal-chain {
+  border-color: var(--te-card-border);
+  background: var(--te-subtle-bg);
+}
+
+html[data-theme='dark'] .settings-preview-page .device-card:hover,
+html[data-theme='dark'] .settings-preview-page .device-card.active {
+  border-color: rgba(var(--te-primary-rgb), 0.42);
+  background: rgba(var(--te-primary-rgb), 0.1);
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
+}
+
+html[data-theme='dark'] .settings-preview-page .section-title-row h2,
+html[data-theme='dark'] .settings-preview-page .setting-copy strong,
+html[data-theme='dark'] .settings-preview-page .accordion-head strong,
+html[data-theme='dark'] .settings-preview-page .device-panel-head h3,
+html[data-theme='dark'] .settings-preview-page .device-card span,
+html[data-theme='dark'] .settings-preview-page .dsp-meter strong,
+html[data-theme='dark'] .settings-preview-page .mini-setting strong,
+html[data-theme='dark'] .settings-preview-page .plugin-empty strong,
+html[data-theme='dark'] .settings-preview-page .shortcut-grid span,
+html[data-theme='dark'] .settings-preview-page .about-copy h3,
+html[data-theme='dark'] .settings-preview-page .update-card strong,
+html[data-theme='dark'] .settings-preview-page .signal-node.active .signal-node-name {
+  color: rgba(248, 250, 252, 0.95);
+}
+
+html[data-theme='dark'] .settings-preview-page .setting-copy span,
+html[data-theme='dark'] .settings-preview-page .accordion-head span,
+html[data-theme='dark'] .settings-preview-page .advanced-grid label span,
+html[data-theme='dark'] .settings-preview-page .decode-grid label span,
+html[data-theme='dark'] .settings-preview-page .dsp-meter small,
+html[data-theme='dark'] .settings-preview-page .mini-setting span,
+html[data-theme='dark'] .settings-preview-page .folder-chip,
+html[data-theme='dark'] .settings-preview-page .folder-empty-hint,
+html[data-theme='dark'] .settings-preview-page .device-card small,
+html[data-theme='dark'] .settings-preview-page .plugin-empty,
+html[data-theme='dark'] .settings-preview-page .range-pill span,
+html[data-theme='dark'] .settings-preview-page .shortcut-grid kbd,
+html[data-theme='dark'] .settings-preview-page .about-copy p,
+html[data-theme='dark'] .settings-preview-page .update-card span,
+html[data-theme='dark'] .settings-preview-page .signal-node-name,
+html[data-theme='dark'] .settings-preview-page .crossfade-group,
+html[data-theme='dark'] .settings-preview-page .crossfeed-percent,
+html[data-theme='dark'] .settings-preview-page .diagnostic-chain,
+html[data-theme='dark'] .settings-preview-page .diagnostic-meta,
+html[data-theme='dark'] .settings-preview-page .mini-highres small {
+  color: rgba(148, 163, 184, 0.82);
+}
+
+html[data-theme='dark'] .settings-preview-page .background-options span {
+  border-color: var(--te-card-border);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.2);
+}
+
+html[data-theme='dark'] .settings-preview-page .background-options button.active small {
+  color: var(--te-primary-300);
+}
+
+html[data-theme='dark'] .settings-preview-page .signal-node-circle {
+  border-color: rgba(148, 163, 184, 0.34);
+  background: var(--te-card-bg);
+}
+
+html[data-theme='dark'] .settings-preview-page .signal-node-circle.active {
+  border-color: var(--brand-500);
+  background: rgba(var(--te-primary-rgb), 0.14);
+}
+
+html[data-theme='dark'] .settings-preview-page .signal-line {
+  border-bottom-color: rgba(148, 163, 184, 0.34);
+}
+
+html[data-theme='dark'] .settings-preview-page .mini-setting + .mini-setting,
+html[data-theme='dark'] .settings-preview-page .accordion-body,
+html[data-theme='dark'] .settings-preview-page .advanced-grid,
+html[data-theme='dark'] .settings-preview-page .wasapi-push-row {
+  border-top-color: var(--te-card-border);
+}
+
+html[data-theme='dark'] .settings-preview-page .muted-button,
+html[data-theme='dark'] .settings-preview-page .soft-button,
+html[data-theme='dark'] .settings-preview-page .icon-button,
+html[data-theme='dark'] .settings-preview-page .brand-soft-button {
+  border-color: var(--te-card-border);
+  background: var(--te-subtle-bg);
+  color: rgba(203, 213, 225, 0.9);
+  box-shadow: none;
+}
+
+html[data-theme='dark'] .settings-preview-page .dashed-button:hover,
+html[data-theme='dark'] .settings-preview-page .brand-soft-button:hover,
+html[data-theme='dark'] .settings-preview-page .preset-btn:hover {
+  border-color: rgba(var(--te-primary-rgb), 0.34);
+  background: rgba(var(--te-primary-rgb), 0.14);
+  color: var(--te-primary-300);
+}
+
+html[data-theme='dark'] .settings-preview-page .restart-banner,
+html[data-theme='dark'] .settings-preview-page .engine-warning,
+html[data-theme='dark'] .settings-preview-page .compute-badge,
+html[data-theme='dark'] .settings-preview-page .sponsor-card,
+html[data-theme='dark'] .settings-preview-page .sponsor-pending {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+}
+
+html[data-theme='dark'] .settings-preview-page .restart-banner strong,
+html[data-theme='dark'] .settings-preview-page .sponsor-card h3 {
+  color: #fde68a;
+}
+
+html[data-theme='dark'] .settings-preview-page .restart-banner span,
+html[data-theme='dark'] .settings-preview-page .sponsor-card p {
+  color: rgba(253, 230, 138, 0.78);
+}
+
+html[data-theme='dark'] .settings-preview-page .engine-error {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(127, 29, 29, 0.26);
+  color: #fca5a5;
 }
 </style>

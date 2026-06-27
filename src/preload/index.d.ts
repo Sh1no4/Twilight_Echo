@@ -235,6 +235,8 @@ interface AppSettings {
   smtcEnabled: boolean
   discordRpcEnabled: boolean
   accentColor: string
+  lightAccentColor: string
+  darkAccentColor: string
   fontFamily: string
   uiDensity: UiDensity
   nowPlayingBackground: NowPlayingBackground
