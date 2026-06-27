@@ -883,6 +883,15 @@ function importBackgroundImage(sourcePath: string): string {
   return importBackgroundImageBuffer(resolvedPath, data)
 }
 
+function normalizeBackgroundImageImportData(data: unknown): Buffer | null {
+  if (Buffer.isBuffer(data)) return data
+  if (data instanceof ArrayBuffer) return Buffer.from(data)
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength)
+  }
+  return null
+}
+
 function resolveCoverCacheFile(fileName: string): string | null {
   const currentPath = join(getCoverCacheDir(), fileName)
   if (existsSync(currentPath)) return currentPath
@@ -2656,9 +2665,10 @@ if (!gotSingleInstanceLock) {
     return importBackgroundImage(result.filePaths[0])
   })
 
-  ipcMain.handle('settings:importBackgroundImage', async (_event, fileName: string, data: ArrayBuffer) => {
-    if (typeof fileName !== 'string' || !(data instanceof ArrayBuffer)) return null
-    return importBackgroundImageBuffer(fileName, Buffer.from(data))
+  ipcMain.handle('settings:importBackgroundImage', async (_event, fileName: string, data: unknown) => {
+    const buffer = normalizeBackgroundImageImportData(data)
+    if (typeof fileName !== 'string' || !buffer) return null
+    return importBackgroundImageBuffer(fileName, buffer)
   })
 
   ipcMain.handle('app:relaunch', () => {

@@ -153,6 +153,9 @@ const clearingCache = ref(false)
 const cacheSize = ref<number | null>(null)
 let listenerSetup = false
 let systemThemeListenerSetup = false
+let settingsUpdateQueue: Promise<void> = Promise.resolve()
+let pendingSettingsUpdates = 0
+let settingsUpdateSequence = 0
 
 const systemThemeQuery =
   typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -407,6 +410,7 @@ function setupListener(): void {
   listenerSetup = true
   setupSystemThemeListener()
   window.api.settings.onChanged((snapshot) => {
+    if (pendingSettingsUpdates > 0) return
     applySnapshot(snapshot)
   })
 }
@@ -468,13 +472,35 @@ export function useSettingsStore(): {
   }
 
   async function updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+    const sequence = ++settingsUpdateSequence
+    pendingSettingsUpdates += 1
     saving.value = true
-    try {
+    if (
+      Object.prototype.hasOwnProperty.call(patch, 'appBackground') &&
+      patch.appBackground
+    ) {
+      settings.value = {
+        ...settings.value,
+        appBackground: patch.appBackground
+      }
+      applyDomSettings()
+    }
+    const runUpdate = settingsUpdateQueue.then(async () => {
       const snapshot = await window.api.settings.update(patch)
-      applySnapshot(snapshot)
+      if (sequence === settingsUpdateSequence) {
+        applySnapshot(snapshot)
+      }
       return settings.value
+    })
+    settingsUpdateQueue = runUpdate.then(
+      () => undefined,
+      () => undefined
+    )
+    try {
+      return await runUpdate
     } finally {
-      saving.value = false
+      pendingSettingsUpdates = Math.max(0, pendingSettingsUpdates - 1)
+      saving.value = pendingSettingsUpdates > 0
     }
   }
 
