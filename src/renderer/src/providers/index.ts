@@ -1,6 +1,7 @@
 import { MediaProviderRegistry, toProviderIpcArgs } from './mediaProvider'
 import type {
   MediaProviderArtistSummary,
+  MediaProviderAlbumSummary,
   MediaProviderPlaylistSummary,
   MediaProviderProfile,
   MediaProviderSearchResult,
@@ -133,13 +134,23 @@ export async function syncPluginProviders(): Promise<void> {
           fetchArtistTopSongs: provider.capabilities.includes('search')
             ? (artistId) => callProvider<Track[]>('fetchArtistTopSongs', [artistId])
             : undefined,
+          fetchArtistAlbums: provider.capabilities.includes('library')
+            ? (artistId) =>
+                callProvider<MediaProviderAlbumSummary[]>('fetchArtistAlbums', [artistId])
+            : undefined,
+          fetchAlbumTracks: provider.capabilities.includes('playlist')
+            ? (albumId) => callProvider<Track[]>('fetchAlbumTracks', [albumId])
+            : undefined,
           fetchArtistPlaylists: provider.capabilities.includes('playlist')
             ? (artistId) =>
                 callProvider<MediaProviderPlaylistSummary[]>('fetchArtistPlaylists', [artistId])
             : undefined,
           fetchUserPlaylistsByUid: provider.capabilities.includes('library')
-            ? (uid) =>
-                callProvider<MediaProviderPlaylistSummary[]>('fetchUserPlaylistsByUid', [uid])
+            ? (uid, createdOnly) =>
+                callProvider<MediaProviderPlaylistSummary[]>('fetchUserPlaylistsByUid', [
+                  uid,
+                  createdOnly
+                ])
             : undefined,
           fetchUserFollows: provider.capabilities.includes('library')
             ? (uid, limit, offset) =>

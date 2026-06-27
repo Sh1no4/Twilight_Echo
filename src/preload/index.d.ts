@@ -80,6 +80,8 @@ type TwilightMediaProviderMethod =
   | 'fetchPersonalFm'
   | 'fetchPrivateContent'
   | 'fetchArtistTopSongs'
+  | 'fetchArtistAlbums'
+  | 'fetchAlbumTracks'
   | 'fetchArtistPlaylists'
   | 'fetchUserPlaylistsByUid'
   | 'fetchUserFollows'

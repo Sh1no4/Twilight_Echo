@@ -163,6 +163,14 @@ export interface PlaylistSummary {
   creatorName?: string
 }
 
+export interface AlbumSummary {
+  id: string | number
+  name: string
+  cover?: string | null
+  trackCount?: number
+  publishTime?: number
+}
+
 export interface ArtistSummary {
   id: string | number
   name: string
@@ -221,8 +229,10 @@ export interface TwilightMediaProviderRegistration {
   fetchPersonalFm?(): Promise<Track[]>
   fetchPrivateContent?(): Promise<Track[]>
   fetchArtistTopSongs?(artistId: string | number): Promise<Track[]>
+  fetchArtistAlbums?(artistId: string | number): Promise<AlbumSummary[]>
+  fetchAlbumTracks?(albumId: string | number): Promise<Track[]>
   fetchArtistPlaylists?(artistId: string | number): Promise<PlaylistSummary[]>
-  fetchUserPlaylistsByUid?(uid: string | number): Promise<PlaylistSummary[]>
+  fetchUserPlaylistsByUid?(uid: string | number, createdOnly?: boolean): Promise<PlaylistSummary[]>
   fetchUserFollows?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
   fetchUserFolloweds?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
   likeTrack?(trackId: string | number, like: boolean): Promise<void>

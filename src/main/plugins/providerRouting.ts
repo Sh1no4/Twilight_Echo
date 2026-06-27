@@ -31,6 +31,8 @@ const PROVIDER_METHOD_CAPABILITIES: Partial<
   fetchPersonalFm: 'library',
   fetchPrivateContent: 'library',
   fetchArtistTopSongs: 'library',
+  fetchArtistAlbums: 'library',
+  fetchAlbumTracks: 'playlist',
   fetchArtistPlaylists: 'library',
   fetchUserPlaylistsByUid: 'library',
   fetchUserFollows: 'library',

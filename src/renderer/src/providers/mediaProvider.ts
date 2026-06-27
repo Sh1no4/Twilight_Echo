@@ -27,6 +27,14 @@ export interface MediaProviderPlaylistSummary {
   trackCount: number
 }
 
+export interface MediaProviderAlbumSummary {
+  id: number | string
+  name: string
+  cover: string | null
+  trackCount: number
+  publishTime?: number
+}
+
 export interface MediaProviderArtistSummary {
   id: number | string
   name: string
@@ -100,8 +108,13 @@ export interface MediaProvider {
   fetchPersonalFm?: () => Promise<Track[]>
   fetchPrivateContent?: () => Promise<Track[]>
   fetchArtistTopSongs?: (artistId: number | string) => Promise<Track[]>
+  fetchArtistAlbums?: (artistId: number | string) => Promise<MediaProviderAlbumSummary[]>
+  fetchAlbumTracks?: (albumId: number | string) => Promise<Track[]>
   fetchArtistPlaylists?: (artistId: number | string) => Promise<MediaProviderPlaylistSummary[]>
-  fetchUserPlaylistsByUid?: (uid: number | string) => Promise<MediaProviderPlaylistSummary[]>
+  fetchUserPlaylistsByUid?: (
+    uid: number | string,
+    createdOnly?: boolean
+  ) => Promise<MediaProviderPlaylistSummary[]>
   fetchUserFollows?: (
     uid: number | string,
     limit?: number,

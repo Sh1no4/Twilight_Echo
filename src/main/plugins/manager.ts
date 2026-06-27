@@ -93,6 +93,8 @@ function getProviderCallTimeoutMs(method: TwilightMediaProviderMethod): number {
       'fetchPersonalFm',
       'fetchPrivateContent',
       'fetchArtistTopSongs',
+      'fetchArtistAlbums',
+      'fetchAlbumTracks',
       'fetchArtistPlaylists',
       'fetchUserPlaylistsByUid',
       'fetchUserFollows',

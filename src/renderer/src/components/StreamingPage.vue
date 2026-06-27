@@ -4,6 +4,7 @@ import type { Track } from '../types/music'
 import {
   useNcmStore,
   type NcmPlaylistSummary,
+  type NcmAlbumSummary,
   type NcmArtistSummary,
   type NcmUserSummary
 } from '../stores/useNcmStore'
@@ -38,9 +39,11 @@ interface RecSection {
 }
 
 type StreamingTab = 'home' | 'library'
+type ArtistDetailTab = 'songs' | 'albums' | 'playlists'
 type DetailView =
   | { type: 'liked' }
   | { type: 'playlist'; playlist: MediaProviderPlaylistSummary }
+  | { type: 'album'; album: NcmAlbumSummary }
   | { type: 'rec'; section: RecSection }
   | { type: 'artist'; artist: NcmArtistSummary; user?: NcmUserSummary }
   | { type: 'user_list'; listType: 'follows' | 'followers'; users: NcmUserSummary[]; title: string }
@@ -59,7 +62,9 @@ const currentDetail = ref<DetailView | null>(null)
 const showBilibiliView = ref(false)
 const detailTracks = ref<Track[]>([])
 const detailUsers = ref<NcmUserSummary[]>([])
+const artistAlbums = ref<NcmAlbumSummary[]>([])
 const artistPlaylists = ref<NcmPlaylistSummary[]>([])
+const activeArtistTab = ref<ArtistDetailTab>('songs')
 const detailLoading = ref(false)
 const detailError = ref('')
 const likedCount = ref<number | null>(null)
@@ -286,6 +291,8 @@ const {
   searchPlaylists,
   searchArtists,
   fetchArtistTopSongs,
+  fetchArtistAlbums,
+  fetchAlbumTracks,
   fetchArtistPlaylists,
   fetchUserFollows,
   fetchUserFolloweds,
@@ -459,6 +466,7 @@ const headerTitle = computed(() => {
   if (currentDetail.value?.type === 'recent') return '最近播放'
   if (currentDetail.value?.type === 'ranking') return '听歌排行'
   if (currentDetail.value?.type === 'playlist') return currentDetail.value.playlist.name
+  if (currentDetail.value?.type === 'album') return currentDetail.value.album.name
   return currentView.value?.label ?? '流媒体'
 })
 const headerSubtitle = computed(() => {
@@ -507,10 +515,21 @@ const userPlaylistEntries = computed(() =>
 const currentArtistPlaylists = computed(() =>
   currentDetail.value?.type === 'artist' ? artistPlaylists.value : []
 )
+const currentArtistAlbums = computed(() =>
+  currentDetail.value?.type === 'artist' ? artistAlbums.value : []
+)
+const artistDetailTabs = computed<Array<{ key: ArtistDetailTab; label: string; count: number }>>(
+  () => [
+    { key: 'songs', label: '全部歌曲', count: detailTracks.value.length },
+    { key: 'albums', label: '专辑', count: currentArtistAlbums.value.length },
+    { key: 'playlists', label: '创建的歌单', count: currentArtistPlaylists.value.length }
+  ]
+)
 const hasTrackDetailLoadingSurface = computed(
   () =>
     currentDetail.value?.type === 'liked' ||
     currentDetail.value?.type === 'playlist' ||
+    currentDetail.value?.type === 'album' ||
     currentDetail.value?.type === 'artist' ||
     currentDetail.value?.type === 'ranking'
 )
@@ -519,6 +538,7 @@ const showDetailInitialLoading = computed(
     hasTrackDetailLoadingSurface.value &&
     detailLoading.value &&
     detailTracks.value.length === 0 &&
+    currentArtistAlbums.value.length === 0 &&
     currentArtistPlaylists.value.length === 0
 )
 const showDetailOverlayLoading = computed(
@@ -554,11 +574,21 @@ const detailHeaderInfo = computed(() => {
       icon: currentDetail.value.section.icon
     }
   }
+  if (currentDetail.value.type === 'album') {
+    return {
+      title: currentDetail.value.album.name,
+      cover: currentDetail.value.album.cover,
+      desc: `共 ${detailTracks.value.length || currentDetail.value.album.trackCount} 首歌曲`,
+      icon: 'pi pi-clone'
+    }
+  }
   if (currentDetail.value.type === 'artist') {
     const songCount = detailTracks.value.length
+    const albumCount = artistAlbums.value.length
     const playlistCount = artistPlaylists.value.length
     const descParts: string[] = []
-    if (songCount > 0) descParts.push(`${songCount} 首热门单曲`)
+    if (songCount > 0) descParts.push(`${songCount} 首歌曲`)
+    if (albumCount > 0) descParts.push(`${albumCount} 张专辑`)
     if (playlistCount > 0) descParts.push(`${playlistCount} 个歌单`)
     return {
       title: currentDetail.value.artist.name,
@@ -654,7 +684,9 @@ function resetDetail(): void {
   currentDetail.value = null
   detailTracks.value = []
   detailUsers.value = []
+  artistAlbums.value = []
   artistPlaylists.value = []
+  activeArtistTab.value = 'songs'
   detailLoading.value = false
   detailError.value = ''
 }
@@ -663,6 +695,7 @@ function beginDetailLoad(): number {
   const token = ++detailLoadToken
   detailTracks.value = []
   detailUsers.value = []
+  artistAlbums.value = []
   artistPlaylists.value = []
   detailLoading.value = true
   detailError.value = ''
@@ -862,17 +895,39 @@ async function openPlaylist(playlist: MediaProviderPlaylistSummary, force = fals
   }
 }
 
-async function openArtist(artist: NcmArtistSummary, linkedUser?: NcmUserSummary): Promise<void> {
+async function openAlbum(album: NcmAlbumSummary): Promise<void> {
   streamingTransitionName.value = 'stream-page-down'
-  currentDetail.value = { type: 'artist', artist, user: linkedUser }
+  currentDetail.value = { type: 'album', album }
   const token = beginDetailLoad()
 
   try {
-    let [tracks, artistOwnedPlaylists, userOwnedPlaylists] = await Promise.all([
+    const tracks = await fetchAlbumTracks(album.id)
+    if (!isActiveDetailLoad(token)) return
+    detailTracks.value = tracks
+  } catch (error) {
+    if (!isActiveDetailLoad(token)) return
+    detailError.value = error instanceof Error ? error.message : '加载专辑失败'
+    detailTracks.value = []
+  } finally {
+    if (isActiveDetailLoad(token)) {
+      detailLoading.value = false
+    }
+  }
+}
+
+async function openArtist(artist: NcmArtistSummary, linkedUser?: NcmUserSummary): Promise<void> {
+  streamingTransitionName.value = 'stream-page-down'
+  currentDetail.value = { type: 'artist', artist, user: linkedUser }
+  activeArtistTab.value = 'songs'
+  const token = beginDetailLoad()
+
+  try {
+    let [tracks, albums, artistOwnedPlaylists, userOwnedPlaylists] = await Promise.all([
       fetchArtistTopSongs(artist.id).catch(() => [] as Track[]),
+      fetchArtistAlbums(artist.id).catch(() => [] as NcmAlbumSummary[]),
       fetchArtistPlaylists(artist.id).catch(() => [] as NcmPlaylistSummary[]),
       linkedUser
-        ? fetchUserPlaylistsByUid(linkedUser.id).catch(() => [] as NcmPlaylistSummary[])
+        ? fetchUserPlaylistsByUid(linkedUser.id, true).catch(() => [] as NcmPlaylistSummary[])
         : Promise.resolve([] as NcmPlaylistSummary[])
     ])
 
@@ -880,16 +935,18 @@ async function openArtist(artist: NcmArtistSummary, linkedUser?: NcmUserSummary)
     if (linkedUser && tracks.length === 0) {
       const matchedArtist = await findArtistByUserName(linkedUser).catch(() => null)
       if (matchedArtist && matchedArtist.id !== artist.id) {
-        const [matchedTracks, matchedPlaylists] = await Promise.all([
+        const [matchedTracks, matchedAlbums, matchedPlaylists] = await Promise.all([
           fetchArtistTopSongs(matchedArtist.id).catch(() => [] as Track[]),
+          fetchArtistAlbums(matchedArtist.id).catch(() => [] as NcmAlbumSummary[]),
           fetchArtistPlaylists(matchedArtist.id).catch(() => [] as NcmPlaylistSummary[])
         ])
-        if (matchedTracks.length > 0 || matchedPlaylists.length > 0) {
+        if (matchedTracks.length > 0 || matchedAlbums.length > 0 || matchedPlaylists.length > 0) {
           resolvedArtist = {
             ...matchedArtist,
             picUrl: matchedArtist.picUrl ?? artist.picUrl
           }
           tracks = matchedTracks
+          albums = matchedAlbums
           artistOwnedPlaylists = mergePlaylistSummaries(artistOwnedPlaylists, matchedPlaylists)
         }
       }
@@ -900,11 +957,13 @@ async function openArtist(artist: NcmArtistSummary, linkedUser?: NcmUserSummary)
       currentDetail.value.artist = resolvedArtist
     }
     detailTracks.value = tracks
+    artistAlbums.value = albums
     artistPlaylists.value = mergePlaylistSummaries(artistOwnedPlaylists, userOwnedPlaylists)
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
     detailError.value = error instanceof Error ? error.message : '加载歌手页面失败'
     detailTracks.value = []
+    artistAlbums.value = []
     artistPlaylists.value = []
   } finally {
     if (isActiveDetailLoad(token)) {
@@ -1053,6 +1112,10 @@ async function retryCurrentView(): Promise<void> {
   }
   if (currentDetail.value?.type === 'playlist') {
     await openPlaylist(currentDetail.value.playlist, true)
+    return
+  }
+  if (currentDetail.value?.type === 'album') {
+    await openAlbum(currentDetail.value.album)
     return
   }
   if (currentDetail.value?.type === 'artist') {
@@ -1577,21 +1640,146 @@ onMounted(async () => {
 
             <div
               v-else-if="
-                currentDetail?.type === 'artist' &&
-                detailTracks.length === 0 &&
-                currentArtistPlaylists.length > 0
+                currentDetail?.type === 'artist'
               "
-              class="artist-playlists-only"
+              class="artist-detail-panel"
             >
-              <div class="artist-section-heading">
-                <div>
-                  <h3>创建或收藏的歌单</h3>
-                  <p>
-                    {{ currentDetail.user?.name ?? currentDetail.artist.name }} 创建或收藏的歌单
-                  </p>
+              <div class="artist-detail-tabs" role="tablist" aria-label="歌手内容">
+                <button
+                  v-for="tab in artistDetailTabs"
+                  :key="tab.key"
+                  type="button"
+                  class="artist-detail-tab"
+                  :class="{ active: activeArtistTab === tab.key }"
+                  role="tab"
+                  :aria-selected="activeArtistTab === tab.key"
+                  @click="activeArtistTab = tab.key"
+                >
+                  <span>{{ tab.label }}</span>
+                  <strong>{{ tab.count }}</strong>
+                </button>
+              </div>
+
+              <div
+                v-if="activeArtistTab === 'songs' && detailTracks.length === 0"
+                class="streaming-placeholder detail-placeholder"
+              >
+                <i class="pi pi-wave-pulse" style="font-size: 40px; color: #ccc"></i>
+                <p class="placeholder-title">暂无歌曲</p>
+                <p class="placeholder-hint">这个歌手目前没有可展示的歌曲</p>
+              </div>
+
+              <div v-else-if="activeArtistTab === 'songs'" class="track-table-wrapper">
+                <table class="track-table">
+                  <thead>
+                    <tr>
+                      <th class="col-cover-header">{{ detailTracks.length }} 首</th>
+                      <th class="col-index">#</th>
+                      <th class="col-info">标题</th>
+                      <th class="col-like-header"></th>
+                      <th class="col-album">专辑</th>
+                      <th class="col-duration">时长</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr
+                      v-for="(track, index) in detailTracks"
+                      :key="track.id"
+                      class="track-row"
+                      :class="{ 'track-playing': currentTrack?.id === track.id }"
+                      @click="onTrackClick(track)"
+                      @dblclick="onTrackClick(track)"
+                    >
+                      <td class="col-cover">
+                        <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
+                        <div v-else class="cover-placeholder">
+                          <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+                        </div>
+                      </td>
+                      <td class="col-index">
+                        <span v-if="currentTrack?.id === track.id" class="playing-indicator">
+                          <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
+                        </span>
+                        <span v-else>{{ index + 1 }}</span>
+                      </td>
+                      <td class="col-info">
+                        <div class="track-title">{{ track.title }}</div>
+                        <div class="track-artist">{{ track.artist }}</div>
+                      </td>
+                      <td class="col-like">
+                        <button
+                          class="btn-like"
+                          :class="{
+                            liked: isTrackLiked(track.ncmSongId),
+                            loading: likingTracks.has(track.ncmSongId ?? 0)
+                          }"
+                          :disabled="likingTracks.has(track.ncmSongId ?? 0)"
+                          title="喜欢"
+                          @click="onLikeTrack(track, $event)"
+                        >
+                          <i
+                            v-if="likingTracks.has(track.ncmSongId ?? 0)"
+                            class="pi pi-spin pi-spinner"
+                            style="font-size: 14px"
+                          ></i>
+                          <i
+                            v-else
+                            :class="
+                              isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'
+                            "
+                            style="font-size: 14px"
+                          ></i>
+                        </button>
+                      </td>
+                      <td class="col-album">{{ track.album }}</td>
+                      <td class="col-duration">{{ formatTime(track.duration) }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div
+                v-else-if="activeArtistTab === 'albums' && currentArtistAlbums.length === 0"
+                class="streaming-placeholder detail-placeholder"
+              >
+                <i class="pi pi-clone" style="font-size: 40px; color: #ccc"></i>
+                <p class="placeholder-title">暂无专辑</p>
+                <p class="placeholder-hint">这个歌手目前没有可展示的专辑</p>
+              </div>
+
+              <div v-else-if="activeArtistTab === 'albums'" class="playlist-grid">
+                <div
+                  v-for="album in currentArtistAlbums"
+                  :key="album.id"
+                  class="playlist-grid-card"
+                  @click="openAlbum(album)"
+                >
+                  <img
+                    v-if="album.cover"
+                    :src="album.cover"
+                    class="playlist-grid-cover"
+                    alt=""
+                  />
+                  <div v-else class="playlist-grid-cover-placeholder">
+                    <i class="pi pi-clone" style="font-size: 28px; color: #bbb"></i>
+                  </div>
+                  <div class="playlist-grid-name">{{ album.name }}</div>
+                  <div class="playlist-grid-count">{{ album.trackCount }} 首</div>
                 </div>
               </div>
-              <div class="playlist-grid">
+
+              <div
+                v-else-if="currentArtistPlaylists.length === 0"
+                class="streaming-placeholder detail-placeholder"
+              >
+                <i class="pi pi-list" style="font-size: 40px; color: #ccc"></i>
+                <p class="placeholder-title">暂无创建的歌单</p>
+                <p class="placeholder-hint">
+                  {{ currentDetail.user?.name ?? currentDetail.artist.name }} 目前没有公开创建的歌单
+                </p>
+              </div>
+
+              <div v-else class="playlist-grid">
                 <div
                   v-for="playlist in currentArtistPlaylists"
                   :key="playlist.id"
@@ -1695,40 +1883,6 @@ onMounted(async () => {
                   </tbody>
                 </table>
               </div>
-
-              <section
-                v-if="currentDetail?.type === 'artist' && currentArtistPlaylists.length > 0"
-                class="artist-playlist-section"
-              >
-                <div class="artist-section-heading">
-                  <div>
-                    <h3>创建或收藏的歌单</h3>
-                    <p>
-                      {{ currentDetail.user?.name ?? currentDetail.artist.name }} 创建或收藏的歌单
-                    </p>
-                  </div>
-                </div>
-                <div class="playlist-grid">
-                  <div
-                    v-for="playlist in currentArtistPlaylists"
-                    :key="playlist.id"
-                    class="playlist-grid-card"
-                    @click="openPlaylist(playlist, false)"
-                  >
-                    <img
-                      v-if="playlist.cover"
-                      :src="playlist.cover"
-                      class="playlist-grid-cover"
-                      alt=""
-                    />
-                    <div v-else class="playlist-grid-cover-placeholder">
-                      <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
-                    </div>
-                    <div class="playlist-grid-name">{{ playlist.name }}</div>
-                    <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
-                  </div>
-                </div>
-              </section>
             </div>
           </div>
 
@@ -2572,9 +2726,65 @@ onMounted(async () => {
   opacity: 0.45;
 }
 
+.artist-detail-panel,
 .artist-playlists-only,
 .artist-playlist-section {
   margin-top: 24px;
+}
+
+.artist-detail-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.artist-detail-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid #e7ebf4;
+  border-radius: 999px;
+  background: var(--te-card-bg);
+  color: rgba(42, 49, 74, 0.72);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 10px 24px rgba(34, 42, 68, 0.06);
+  transition:
+    transform 0.2s var(--te-ease-soft),
+    border-color 0.2s,
+    background 0.2s,
+    color 0.2s;
+}
+
+.artist-detail-tab strong {
+  min-width: 18px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(26, 115, 232, 0.1);
+  color: #1a73e8;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.artist-detail-tab:hover {
+  transform: translateY(-1px);
+  border-color: rgba(26, 115, 232, 0.26);
+}
+
+.artist-detail-tab.active {
+  background: #1a73e8;
+  border-color: #1a73e8;
+  color: #fff;
+  box-shadow: 0 14px 30px rgba(26, 115, 232, 0.22);
+}
+
+.artist-detail-tab.active strong {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
 }
 
 .artist-section-heading {

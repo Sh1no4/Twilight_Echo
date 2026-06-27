@@ -17,6 +17,14 @@ export interface NcmPlaylistSummary {
   trackCount: number
 }
 
+export interface NcmAlbumSummary {
+  id: number
+  name: string
+  cover: string | null
+  trackCount: number
+  publishTime?: number
+}
+
 export interface NcmArtistSummary {
   id: number
   name: string
@@ -95,8 +103,10 @@ export interface NcmStore {
     offset?: number
   ) => Promise<{ artists: NcmArtistSummary[]; total: number }>
   fetchArtistTopSongs: (artistId: number) => Promise<Track[]>
+  fetchArtistAlbums: (artistId: number) => Promise<NcmAlbumSummary[]>
+  fetchAlbumTracks: (albumId: number) => Promise<Track[]>
   fetchArtistPlaylists: (artistId: number) => Promise<NcmPlaylistSummary[]>
-  fetchUserPlaylistsByUid: (uid: number) => Promise<NcmPlaylistSummary[]>
+  fetchUserPlaylistsByUid: (uid: number, createdOnly?: boolean) => Promise<NcmPlaylistSummary[]>
   fetchUserFollows: (uid: number, limit?: number, offset?: number) => Promise<NcmUserSummary[]>
   fetchUserFolloweds: (uid: number, limit?: number, offset?: number) => Promise<NcmUserSummary[]>
   fetchPlayRecords: (type?: number) => Promise<Track[]>
@@ -342,12 +352,23 @@ export function useNcmStore(): NcmStore {
     return callNcmProvider<Track[]>('fetchArtistTopSongs', [artistId])
   }
 
+  async function fetchArtistAlbums(artistId: number): Promise<NcmAlbumSummary[]> {
+    return callNcmProvider<NcmAlbumSummary[]>('fetchArtistAlbums', [artistId])
+  }
+
+  async function fetchAlbumTracks(albumId: number): Promise<Track[]> {
+    return callNcmProvider<Track[]>('fetchAlbumTracks', [albumId])
+  }
+
   async function fetchArtistPlaylists(artistId: number): Promise<NcmPlaylistSummary[]> {
     return callNcmProvider<NcmPlaylistSummary[]>('fetchArtistPlaylists', [artistId])
   }
 
-  async function fetchUserPlaylistsByUid(uid: number): Promise<NcmPlaylistSummary[]> {
-    return callNcmProvider<NcmPlaylistSummary[]>('fetchUserPlaylistsByUid', [uid])
+  async function fetchUserPlaylistsByUid(
+    uid: number,
+    createdOnly = false
+  ): Promise<NcmPlaylistSummary[]> {
+    return callNcmProvider<NcmPlaylistSummary[]>('fetchUserPlaylistsByUid', [uid, createdOnly])
   }
 
   async function fetchUserFollows(
@@ -421,6 +442,8 @@ export function useNcmStore(): NcmStore {
     searchPlaylists,
     searchArtists,
     fetchArtistTopSongs,
+    fetchArtistAlbums,
+    fetchAlbumTracks,
     fetchArtistPlaylists,
     fetchUserPlaylistsByUid,
     fetchUserFollows,

@@ -65,6 +65,8 @@ export async function activate(context) {
     fetchPersonalFm,
     fetchPrivateContent,
     fetchArtistTopSongs,
+    fetchArtistAlbums,
+    fetchAlbumTracks,
     fetchArtistPlaylists,
     fetchUserPlaylistsByUid,
     fetchUserFollows,
@@ -305,9 +307,32 @@ function normalizePlaylist(playlist) {
   }
 }
 
+function normalizeAlbum(album) {
+  return {
+    id: Number(album.id),
+    name: album.name || '未命名专辑',
+    cover: album.picUrl || album.blurPicUrl || null,
+    trackCount: typeof album.size === 'number' ? album.size : (album.songCount ?? 0),
+    publishTime:
+      typeof album.publishTime === 'number'
+        ? album.publishTime
+        : typeof album.publishTime === 'string'
+          ? Number(album.publishTime)
+          : undefined
+  }
+}
+
 function getPlaylistItems(data) {
   if (Array.isArray(data.playlist)) return data.playlist
   if (Array.isArray(data.data?.playlist)) return data.data.playlist
+  return []
+}
+
+function getAlbumItems(data) {
+  if (Array.isArray(data.hotAlbums)) return data.hotAlbums
+  if (Array.isArray(data.albums)) return data.albums
+  if (Array.isArray(data.data?.hotAlbums)) return data.data.hotAlbums
+  if (Array.isArray(data.data?.albums)) return data.data.albums
   return []
 }
 
@@ -324,6 +349,32 @@ function getSongItems(data) {
   if (Array.isArray(data.hotSongs)) return data.hotSongs
   if (Array.isArray(data.data)) return data.data
   return []
+}
+
+async function fetchPagedItems({ makePath, getItems, limit = 100, maxPages = 100 }) {
+  const items = []
+  const seen = new Set()
+  let offset = 0
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const data = await requestAuthed(makePath(limit, offset))
+    const pageItems = getItems(data)
+    if (!Array.isArray(pageItems) || pageItems.length === 0) break
+
+    let added = 0
+    for (const item of pageItems) {
+      const key = String(item?.id ?? `${offset}:${added}`)
+      if (seen.has(key)) continue
+      seen.add(key)
+      items.push(item)
+      added += 1
+    }
+
+    if (pageItems.length < limit || added === 0) break
+    offset += limit
+  }
+
+  return items
 }
 
 function addPositiveId(target, value) {
@@ -441,6 +492,12 @@ async function openOfficialLogin() {
   }
   await saveCookie(cookie)
   return await checkLogin()
+}
+
+function isPlaylistCreatedByUid(playlist, uid) {
+  const ownerId = Number(playlist.userId ?? playlist.creator?.userId)
+  const targetUid = Number(uid)
+  return Number.isFinite(ownerId) && Number.isFinite(targetUid) && ownerId === targetUid
 }
 
 async function sendCaptcha(phone, countrycode = '86') {
@@ -800,24 +857,45 @@ async function searchArtists(keywords, limit = 30, offset = 0) {
 
 async function fetchArtistTopSongs(artistId) {
   const encodedId = encodeURIComponent(String(artistId))
-  const endpoints = [
-    `/artist/top/song?id=${encodedId}`,
-    `/artist/songs?id=${encodedId}&order=hot&limit=50&offset=0`,
-    `/artists?id=${encodedId}`
-  ]
-
-  let lastError = null
-  for (const endpoint of endpoints) {
-    try {
-      const data = await requestAuthed(endpoint)
-      const songs = getSongItems(data)
-      if (songs.length > 0) return songs.map(normalizeTrack)
-    } catch (error) {
-      lastError = error
+  try {
+    const songs = await fetchPagedItems({
+      makePath: (limit, offset) =>
+        `/artist/songs?id=${encodedId}&order=hot&limit=${limit}&offset=${offset}`,
+      getItems: getSongItems,
+      limit: 100
+    })
+    if (songs.length > 0) return songs.map(normalizeTrack)
+  } catch (error) {
+    const fallbackEndpoints = [`/artist/top/song?id=${encodedId}`, `/artists?id=${encodedId}`]
+    for (const endpoint of fallbackEndpoints) {
+      try {
+        const data = await requestAuthed(endpoint)
+        const songs = getSongItems(data)
+        if (songs.length > 0) return songs.map(normalizeTrack)
+      } catch {
+        // Continue to the next fallback endpoint.
+      }
     }
+    throw error
   }
-  if (lastError) throw lastError
+
   return []
+}
+
+async function fetchArtistAlbums(artistId) {
+  const encodedId = encodeURIComponent(String(artistId))
+  const albums = await fetchPagedItems({
+    makePath: (limit, offset) =>
+      `/artist/album?id=${encodedId}&limit=${limit}&offset=${offset}`,
+    getItems: getAlbumItems,
+    limit: 100
+  })
+  return albums.map(normalizeAlbum)
+}
+
+async function fetchAlbumTracks(albumId) {
+  const data = await requestAuthed(`/album?id=${encodeURIComponent(String(albumId))}`)
+  return getSongItems(data).map(normalizeTrack)
 }
 
 async function fetchArtistPlaylists(artistId) {
@@ -844,7 +922,7 @@ async function fetchArtistPlaylists(artistId) {
   const playlistGroups = []
   for (const uid of candidateUserIds) {
     try {
-      const playlists = await fetchUserPlaylistsByUid(uid)
+      const playlists = await fetchUserPlaylistsByUid(uid, true)
       if (playlists.length > 0) playlistGroups.push(playlists)
     } catch {
       // Try the next candidate account id.
@@ -853,12 +931,15 @@ async function fetchArtistPlaylists(artistId) {
   return mergePlaylists(...playlistGroups)
 }
 
-async function fetchUserPlaylistsByUid(uid) {
+async function fetchUserPlaylistsByUid(uid, createdOnly = false) {
   const data = await requestAuthed(
     `/user/playlist?uid=${encodeURIComponent(String(uid))}&limit=1000`
   )
   const playlists = getPlaylistItems(data)
-  return playlists.map(normalizePlaylist)
+  const visiblePlaylists = createdOnly
+    ? playlists.filter((playlist) => isPlaylistCreatedByUid(playlist, uid))
+    : playlists
+  return visiblePlaylists.map(normalizePlaylist)
 }
 
 async function fetchUserFollows(uid, limit = 30, offset = 0) {
