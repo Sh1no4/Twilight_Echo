@@ -857,8 +857,9 @@ function ensureBackgroundImageDir(): string {
 }
 
 function resolveBackgroundImageFile(fileName: string): string | null {
-  const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '')
-  if (!safeName || safeName !== fileName) return null
+  const normalizedName = fileName.replace(/^\/+|\/+$/g, '')
+  const safeName = normalizedName.replace(/[^a-zA-Z0-9._-]/g, '')
+  if (!safeName || safeName !== normalizedName) return null
   const filePath = join(getBackgroundImageDir(), safeName)
   return existsSync(filePath) ? filePath : null
 }

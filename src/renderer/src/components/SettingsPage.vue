@@ -20,6 +20,7 @@ import type {
   NowPlayingBackground,
   OutputConfig,
   PlaybackResumeMode,
+  AppBackgroundSettings,
   SacdProgramMode,
   UiDensity,
   VolumeNormalizationMode
@@ -539,29 +540,38 @@ function setNowPlayingBackground(bg: NowPlayingBackground): void {
   void updateSettings({ nowPlayingBackground: bg })
 }
 
+function toBackgroundImageStyle(image: string): string {
+  return image ? `url("${image.replace(/"/g, '\\"')}")` : 'none'
+}
+
+function cloneAppBackground(): AppBackgroundSettings {
+  const background = settings.value.appBackground
+  return {
+    global: { ...background.global },
+    pages: {
+      local: { ...background.pages.local },
+      settings: { ...background.pages.settings },
+      streaming: { ...background.pages.streaming },
+      player: { ...background.pages.player }
+    }
+  }
+}
+
 function setGlobalBackgroundColor(mode: 'light' | 'dark', color: string): void {
   if (settings.value.appBackground.global[mode] === color) return
+  const appBackground = cloneAppBackground()
+  appBackground.global[mode] = color
   void updateSettings({
-    appBackground: {
-      ...settings.value.appBackground,
-      global: {
-        ...settings.value.appBackground.global,
-        [mode]: color
-      }
-    }
+    appBackground
   })
 }
 
 function setGlobalBackgroundKind(kind: AppBackgroundKind): void {
   if (settings.value.appBackground.global.kind === kind) return
+  const appBackground = cloneAppBackground()
+  appBackground.global.kind = kind
   void updateSettings({
-    appBackground: {
-      ...settings.value.appBackground,
-      global: {
-        ...settings.value.appBackground.global,
-        kind
-      }
-    }
+    appBackground
   })
 }
 
@@ -571,15 +581,11 @@ function openBackgroundFilePicker(target: 'global' | AppBackgroundPage): void {
 }
 
 async function applyGlobalBackgroundImage(image: string): Promise<void> {
+  const appBackground = cloneAppBackground()
+  appBackground.global.kind = 'image'
+  appBackground.global.image = image
   void updateSettings({
-    appBackground: {
-      ...settings.value.appBackground,
-      global: {
-        ...settings.value.appBackground.global,
-        kind: 'image',
-        image
-      }
-    }
+    appBackground
   })
 }
 
@@ -601,104 +607,64 @@ async function handleBackgroundFileSelected(event: Event): Promise<void> {
 
 function clearGlobalBackgroundImage(): void {
   if (!settings.value.appBackground.global.image && settings.value.appBackground.global.kind === 'color') return
+  const appBackground = cloneAppBackground()
+  appBackground.global.kind = 'color'
+  appBackground.global.image = ''
   void updateSettings({
-    appBackground: {
-      ...settings.value.appBackground,
-      global: {
-        ...settings.value.appBackground.global,
-        kind: 'color',
-        image: ''
-      }
-    }
+    appBackground
   })
 }
 
 function setPageBackgroundInherited(page: AppBackgroundPage, inherit: boolean): void {
   const current = settings.value.appBackground.pages[page]
   if (current.inherit === inherit) return
+  const appBackground = cloneAppBackground()
+  appBackground.pages[page].inherit = inherit
   void updateSettings({
-    appBackground: {
-      ...settings.value.appBackground,
-      pages: {
-        ...settings.value.appBackground.pages,
-        [page]: {
-          ...current,
-          inherit
-        }
-      }
-    }
+    appBackground
   })
 }
 
 function setPageBackgroundKind(page: AppBackgroundPage, kind: AppBackgroundKind): void {
   const current = settings.value.appBackground.pages[page]
   if (current.kind === kind) return
+  const appBackground = cloneAppBackground()
+  appBackground.pages[page].inherit = false
+  appBackground.pages[page].kind = kind
   void updateSettings({
-    appBackground: {
-      ...settings.value.appBackground,
-      pages: {
-        ...settings.value.appBackground.pages,
-        [page]: {
-          ...current,
-          inherit: false,
-          kind
-        }
-      }
-    }
+    appBackground
   })
 }
 
 function setPageBackgroundColor(page: AppBackgroundPage, mode: 'light' | 'dark', color: string): void {
   const current = settings.value.appBackground.pages[page]
   if (current[mode] === color && !current.inherit) return
+  const appBackground = cloneAppBackground()
+  appBackground.pages[page].inherit = false
+  appBackground.pages[page][mode] = color
   void updateSettings({
-    appBackground: {
-      ...settings.value.appBackground,
-      pages: {
-        ...settings.value.appBackground.pages,
-        [page]: {
-          ...current,
-          inherit: false,
-          [mode]: color
-        }
-      }
-    }
+    appBackground
   })
 }
 
 async function applyPageBackgroundImage(page: AppBackgroundPage, image: string): Promise<void> {
-  const current = settings.value.appBackground.pages[page]
+  const appBackground = cloneAppBackground()
+  appBackground.pages[page].inherit = false
+  appBackground.pages[page].kind = 'image'
+  appBackground.pages[page].image = image
   void updateSettings({
-    appBackground: {
-      ...settings.value.appBackground,
-      pages: {
-        ...settings.value.appBackground.pages,
-        [page]: {
-          ...current,
-          inherit: false,
-          kind: 'image',
-          image
-        }
-      }
-    }
+    appBackground
   })
 }
 
 function clearPageBackgroundImage(page: AppBackgroundPage): void {
   const current = settings.value.appBackground.pages[page]
   if (!current.image && current.kind === 'color') return
+  const appBackground = cloneAppBackground()
+  appBackground.pages[page].kind = 'color'
+  appBackground.pages[page].image = ''
   void updateSettings({
-    appBackground: {
-      ...settings.value.appBackground,
-      pages: {
-        ...settings.value.appBackground.pages,
-        [page]: {
-          ...current,
-          kind: 'color',
-          image: ''
-        }
-      }
-    }
+    appBackground
   })
 }
 
@@ -1942,7 +1908,7 @@ onBeforeUnmount(() => {
                       <span
                         v-if="settings.appBackground.global.image"
                         class="background-image-preview"
-                        :style="{ backgroundImage: `url(${settings.appBackground.global.image})` }"
+                        :style="{ backgroundImage: toBackgroundImageStyle(settings.appBackground.global.image) }"
                       ></span>
                       <button type="button" class="pill-action" @click="openBackgroundFilePicker('global')">
                         <i class="pi pi-image"></i>
@@ -2046,7 +2012,7 @@ onBeforeUnmount(() => {
                             <span
                               v-if="settings.appBackground.pages[page.value].image"
                               class="background-image-preview"
-                              :style="{ backgroundImage: `url(${settings.appBackground.pages[page.value].image})` }"
+                              :style="{ backgroundImage: toBackgroundImageStyle(settings.appBackground.pages[page.value].image) }"
                             ></span>
                             <button
                               type="button"

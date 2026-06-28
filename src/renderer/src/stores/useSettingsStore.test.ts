@@ -24,3 +24,33 @@ test('background image import accepts ArrayBuffer views from Electron IPC', () =
   assert.match(source, /Buffer\.from\(data\.buffer, data\.byteOffset, data\.byteLength\)/)
   assert.match(source, /const buffer = normalizeBackgroundImageImportData\(data\)/)
 })
+
+test('background protocol accepts chromium-normalized trailing slash urls', () => {
+  const source = readFileSync(new URL('../../../main/index.ts', import.meta.url), 'utf8')
+
+  assert.ok(source.includes("const normalizedName = fileName.replace(/^\\/+|\\/+$/g, '')"))
+  assert.ok(source.includes("const safeName = normalizedName.replace(/[^a-zA-Z0-9._-]/g, '')"))
+  assert.ok(source.includes('safeName !== normalizedName'))
+})
+
+test('settings page quotes background image handles when building css url values', () => {
+  const source = readFileSync(new URL('../components/SettingsPage.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /function toBackgroundImageStyle\(image: string\): string/)
+  assert.ok(source.includes('return image ? `url("${image.replace(/"/g, \'\\\\"\')}")` : \'none\''))
+  assert.match(source, /backgroundImage: toBackgroundImageStyle\(settings\.appBackground\.global\.image\)/)
+  assert.match(source, /backgroundImage: toBackgroundImageStyle\(settings\.appBackground\.pages\[page\.value\]\.image\)/)
+})
+
+test('settings page sends plain app background objects through Electron IPC', () => {
+  const source = readFileSync(new URL('../components/SettingsPage.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /function cloneAppBackground\(\): AppBackgroundSettings/)
+  assert.match(source, /global: \{ \.\.\.background\.global \}/)
+  assert.match(source, /local: \{ \.\.\.background\.pages\.local \}/)
+  assert.match(source, /settings: \{ \.\.\.background\.pages\.settings \}/)
+  assert.match(source, /streaming: \{ \.\.\.background\.pages\.streaming \}/)
+  assert.match(source, /player: \{ \.\.\.background\.pages\.player \}/)
+  assert.doesNotMatch(source, /\.\.\.settings\.value\.appBackground/)
+  assert.doesNotMatch(source, /\.\.\.settings\.value\.appBackground\.pages/)
+})
