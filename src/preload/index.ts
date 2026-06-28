@@ -328,6 +328,42 @@ interface AppBackgroundSettings {
   pages: Record<AppBackgroundPage, AppBackgroundPageOverride>
 }
 
+type CardShadowStrength = 'none' | 'subtle' | 'medium' | 'strong'
+type CardHoverEffect = 'none' | 'lift' | 'zoom' | 'glow'
+
+interface CardAppearanceTheme {
+  blurRadius: number
+  blurSaturation: number
+  backgroundColor: string
+  backgroundOpacity: number
+  borderColor: string
+  borderOpacity: number
+  borderWidth: number
+  borderRadius: number
+  shadowStrength: CardShadowStrength
+  hoverEffect: CardHoverEffect
+  glassHighlight: boolean
+}
+
+interface BackgroundEffectTheme {
+  blur: number
+  brightness: number
+  dim: number
+}
+
+interface BackgroundEffectSettings {
+  enabled: boolean
+  light: BackgroundEffectTheme
+  dark: BackgroundEffectTheme
+}
+
+interface CardAppearanceSettings {
+  enabled: boolean
+  light: CardAppearanceTheme
+  dark: CardAppearanceTheme
+  background: BackgroundEffectSettings
+}
+
 interface AppSettings {
   autoCheckLogin: boolean
   autoLaunch: boolean
@@ -353,6 +389,7 @@ interface AppSettings {
   fontFamily: string
   uiDensity: UiDensity
   appBackground: AppBackgroundSettings
+  cardAppearance: CardAppearanceSettings
   nowPlayingBackground: NowPlayingBackground
   lyricAlign: LyricAlign
   lyricDimOpacity: number

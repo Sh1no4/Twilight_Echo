@@ -35,6 +35,42 @@ export interface AppBackgroundSettings {
   pages: Record<AppBackgroundPage, AppBackgroundPageOverride>
 }
 
+export type CardShadowStrength = 'none' | 'subtle' | 'medium' | 'strong'
+export type CardHoverEffect = 'none' | 'lift' | 'zoom' | 'glow'
+
+export interface CardAppearanceTheme {
+  blurRadius: number
+  blurSaturation: number
+  backgroundColor: string
+  backgroundOpacity: number
+  borderColor: string
+  borderOpacity: number
+  borderWidth: number
+  borderRadius: number
+  shadowStrength: CardShadowStrength
+  hoverEffect: CardHoverEffect
+  glassHighlight: boolean
+}
+
+export interface BackgroundEffectTheme {
+  blur: number
+  brightness: number
+  dim: number
+}
+
+export interface BackgroundEffectSettings {
+  enabled: boolean
+  light: BackgroundEffectTheme
+  dark: BackgroundEffectTheme
+}
+
+export interface CardAppearanceSettings {
+  enabled: boolean
+  light: CardAppearanceTheme
+  dark: CardAppearanceTheme
+  background: BackgroundEffectSettings
+}
+
 export interface DesktopLyricsSettings {
   enabled: boolean
   fontSize: number
@@ -197,6 +233,7 @@ export interface AppSettings {
   fontFamily: string
   uiDensity: UiDensity
   appBackground: AppBackgroundSettings
+  cardAppearance: CardAppearanceSettings
   nowPlayingBackground: NowPlayingBackground
   lyricAlign: LyricAlign
   lyricDimOpacity: number

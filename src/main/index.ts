@@ -77,6 +77,42 @@ interface AppBackgroundSettings {
   pages: Record<AppBackgroundPage, AppBackgroundPageOverride>
 }
 
+type CardShadowStrength = 'none' | 'subtle' | 'medium' | 'strong'
+type CardHoverEffect = 'none' | 'lift' | 'zoom' | 'glow'
+
+interface CardAppearanceTheme {
+  blurRadius: number
+  blurSaturation: number
+  backgroundColor: string
+  backgroundOpacity: number
+  borderColor: string
+  borderOpacity: number
+  borderWidth: number
+  borderRadius: number
+  shadowStrength: CardShadowStrength
+  hoverEffect: CardHoverEffect
+  glassHighlight: boolean
+}
+
+interface BackgroundEffectTheme {
+  blur: number
+  brightness: number
+  dim: number
+}
+
+interface BackgroundEffectSettings {
+  enabled: boolean
+  light: BackgroundEffectTheme
+  dark: BackgroundEffectTheme
+}
+
+interface CardAppearanceSettings {
+  enabled: boolean
+  light: CardAppearanceTheme
+  dark: CardAppearanceTheme
+  background: BackgroundEffectSettings
+}
+
 interface DesktopLyricsSettings {
   enabled: boolean
   fontSize: number
@@ -158,6 +194,7 @@ interface AppSettings {
   fontFamily: string
   uiDensity: UiDensity
   appBackground: AppBackgroundSettings
+  cardAppearance: CardAppearanceSettings
   nowPlayingBackground: NowPlayingBackground
   lyricAlign: LyricAlign
   lyricDimOpacity: number
@@ -236,6 +273,40 @@ const DEFAULT_SETTINGS: AppSettings = {
       settings: { inherit: true, light: '#f4f4f7', dark: '#17181a', kind: 'color', image: '' },
       streaming: { inherit: true, light: '#fafbfe', dark: '#17181a', kind: 'color', image: '' },
       player: { inherit: true, light: '#080e17', dark: '#17181a', kind: 'color', image: '' }
+    }
+  },
+  cardAppearance: {
+    enabled: false,
+    light: {
+      blurRadius: 20,
+      blurSaturation: 150,
+      backgroundColor: '#ffffff',
+      backgroundOpacity: 100,
+      borderColor: '#0f172a',
+      borderOpacity: 8,
+      borderWidth: 1,
+      borderRadius: 16,
+      shadowStrength: 'medium',
+      hoverEffect: 'lift',
+      glassHighlight: true
+    },
+    dark: {
+      blurRadius: 20,
+      blurSaturation: 150,
+      backgroundColor: '#181818',
+      backgroundOpacity: 100,
+      borderColor: '#ffffff',
+      borderOpacity: 10,
+      borderWidth: 1,
+      borderRadius: 16,
+      shadowStrength: 'medium',
+      hoverEffect: 'lift',
+      glassHighlight: true
+    },
+    background: {
+      enabled: false,
+      light: { blur: 0, brightness: 100, dim: 0 },
+      dark: { blur: 0, brightness: 100, dim: 0 }
     }
   },
   nowPlayingBackground: 'blur',
@@ -426,6 +497,72 @@ function normalizeAppBackground(raw: unknown): AppBackgroundSettings {
   return { global, pages }
 }
 
+const CARD_SHADOW_STRENGTHS: CardShadowStrength[] = ['none', 'subtle', 'medium', 'strong']
+const CARD_HOVER_EFFECTS: CardHoverEffect[] = ['none', 'lift', 'zoom', 'glow']
+
+function normalizeCardShadowStrength(value: unknown): CardShadowStrength {
+  return typeof value === 'string' && CARD_SHADOW_STRENGTHS.includes(value as CardShadowStrength)
+    ? (value as CardShadowStrength)
+    : 'medium'
+}
+
+function normalizeCardHoverEffect(value: unknown): CardHoverEffect {
+  return typeof value === 'string' && CARD_HOVER_EFFECTS.includes(value as CardHoverEffect)
+    ? (value as CardHoverEffect)
+    : 'lift'
+}
+
+function normalizeCardAppearanceTheme(
+  raw: unknown,
+  defaults: CardAppearanceTheme
+): CardAppearanceTheme {
+  const t = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  return {
+    blurRadius: clampNumber(t.blurRadius, 0, 40, defaults.blurRadius),
+    blurSaturation: clampNumber(t.blurSaturation, 80, 180, defaults.blurSaturation),
+    backgroundColor: normalizeHexColor(t.backgroundColor, defaults.backgroundColor),
+    backgroundOpacity: clampNumber(t.backgroundOpacity, 0, 100, defaults.backgroundOpacity),
+    borderColor: normalizeHexColor(t.borderColor, defaults.borderColor),
+    borderOpacity: clampNumber(t.borderOpacity, 0, 100, defaults.borderOpacity),
+    borderWidth: clampNumber(t.borderWidth, 0, 3, defaults.borderWidth),
+    borderRadius: clampNumber(t.borderRadius, 0, 24, defaults.borderRadius),
+    shadowStrength: normalizeCardShadowStrength(t.shadowStrength),
+    hoverEffect: normalizeCardHoverEffect(t.hoverEffect),
+    glassHighlight: t.glassHighlight !== false
+  }
+}
+
+function normalizeBackgroundEffectTheme(
+  raw: unknown,
+  defaults: BackgroundEffectTheme
+): BackgroundEffectTheme {
+  const t = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  return {
+    blur: clampNumber(t.blur, 0, 30, defaults.blur),
+    brightness: clampNumber(t.brightness, 50, 120, defaults.brightness),
+    dim: clampNumber(t.dim, 0, 80, defaults.dim)
+  }
+}
+
+function normalizeCardAppearance(raw: unknown): CardAppearanceSettings {
+  const value =
+    (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  const defaults = DEFAULT_SETTINGS.cardAppearance
+  const bgRaw = (typeof value.background === 'object' && value.background !== null
+    ? value.background
+    : {}) as Record<string, unknown>
+  return {
+    enabled: value.enabled === true,
+    light: normalizeCardAppearanceTheme(value.light, defaults.light),
+    dark: normalizeCardAppearanceTheme(value.dark, defaults.dark),
+    background: {
+      enabled: bgRaw.enabled === true,
+      light: normalizeBackgroundEffectTheme(bgRaw.light, defaults.background.light),
+      dark: normalizeBackgroundEffectTheme(bgRaw.dark, defaults.background.dark)
+    }
+  }
+}
+
 function normalizePluginThemeId(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const normalized = value.trim()
@@ -556,6 +693,7 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
       : DEFAULT_SETTINGS.fontFamily,
     uiDensity: normalizeUiDensity(settings.uiDensity),
     appBackground: normalizeAppBackground(settings.appBackground),
+    cardAppearance: normalizeCardAppearance(settings.cardAppearance),
     nowPlayingBackground: normalizeNowPlayingBackground(settings.nowPlayingBackground),
     lyricAlign: settings.lyricAlign === 'left' ? 'left' : 'center',
     lyricDimOpacity: clampNumber(settings.lyricDimOpacity, 10, 100, DEFAULT_SETTINGS.lyricDimOpacity),
