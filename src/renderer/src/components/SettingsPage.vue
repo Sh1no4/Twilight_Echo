@@ -21,7 +21,6 @@ import type {
   DesktopLyricsSettings,
   DsdOutputMode,
   LyricAlign,
-  NowPlayingBackground,
   OutputConfig,
   PlaybackResumeMode,
   AppBackgroundSettings,
@@ -146,12 +145,6 @@ const uiDensityOptions: { value: UiDensity; label: string }[] = [
   { value: 'compact', label: '紧凑' },
   { value: 'standard', label: '标准' },
   { value: 'comfortable', label: '舒展' }
-]
-
-const nowPlayingBackgroundOptions: { value: NowPlayingBackground; label: string; class: string }[] = [
-  { value: 'blur', label: '专辑高斯模糊', class: 'blur-cover' },
-  { value: 'fluid', label: '动态流体渐变', class: 'fluid-cover' },
-  { value: 'solid', label: '纯粹极简纯色', class: 'solid-cover' }
 ]
 
 const appBackgroundPageOptions: { value: AppBackgroundPage; label: string; desc: string }[] = [
@@ -538,11 +531,6 @@ function setPluginTheme(event: Event): void {
 function setUiDensity(density: UiDensity): void {
   if (settings.value.uiDensity === density) return
   void updateSettings({ uiDensity: density })
-}
-
-function setNowPlayingBackground(bg: NowPlayingBackground): void {
-  if (settings.value.nowPlayingBackground === bg) return
-  void updateSettings({ nowPlayingBackground: bg })
 }
 
 function toBackgroundImageStyle(image: string): string {
@@ -2151,25 +2139,6 @@ onBeforeUnmount(() => {
                   @click="setUiDensity(option.value)"
                 >
                   {{ option.label }}
-                </button>
-              </div>
-            </div>
-            <hr />
-            <div class="setting-item top-align">
-              <div class="setting-copy">
-                <strong>沉浸式播放页背景 (Now Playing)</strong>
-                <span>全屏播放或详情页的背景视觉风格。</span>
-              </div>
-              <div class="background-options">
-                <button
-                  v-for="option in nowPlayingBackgroundOptions"
-                  :key="option.value"
-                  type="button"
-                  :class="{ active: settings.nowPlayingBackground === option.value }"
-                  @click="setNowPlayingBackground(option.value)"
-                >
-                  <span :class="option.class"></span>
-                  <small>{{ option.label }}</small>
                 </button>
               </div>
             </div>

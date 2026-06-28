@@ -1975,73 +1975,88 @@ html[data-card-bg-effect='on'] body::after {
   background: rgba(0, 0, 0, var(--te-bg-dim, 0));
 }
 
-/* ===== Card appearance: hover effects ===== */
-/* When data-card-custom='on', card hover transform and extra shadow are
-   driven by CSS variables set by applyCardAppearance(). */
-html[data-card-custom='on'] .artist-card:hover,
-html[data-card-custom='on'] .album-card:hover,
-html[data-card-custom='on'] .playlist-card:hover,
-html[data-card-custom='on'] .glass-card:hover,
-html[data-card-custom='on'] .feature-card:hover,
-html[data-card-custom='on'] .playlist-grid-card:hover,
-html[data-card-custom='on'] .favorites-card:hover,
-html[data-card-custom='on'] .profile-card:hover,
-html[data-card-custom='on'] .recent-card:hover,
-html[data-card-custom='on'] .ranking-card:hover,
-html[data-card-custom='on'] .create-playlist-card:hover,
-html[data-card-custom='on'] .folder-card:hover,
-html[data-card-custom='on'] .empty-list-card:hover,
-html[data-card-custom='on'] .filter-card:hover,
-html[data-card-custom='on'] .sponsor-card:hover,
-html[data-card-custom='on'] .update-card:hover,
-html[data-card-custom='on'] .dsp-module-card:hover,
-html[data-card-custom='on'] .device-card:hover {
-  transform: var(--te-card-hover-transform, none) !important;
-  box-shadow: var(--te-card-shadow, none), var(--te-card-hover-shadow, 0 0 0 0 transparent) !important;
-}
-
-/* ===== Card appearance: custom shadow override ===== */
-/* When data-card-custom='on', the card shadow variable takes precedence. */
-html[data-card-custom='on'] .artist-card,
-html[data-card-custom='on'] .album-card,
-html[data-card-custom='on'] .playlist-card,
-html[data-card-custom='on'] .glass-card,
-html[data-card-custom='on'] .feature-card,
-html[data-card-custom='on'] .playlist-grid-card,
-html[data-card-custom='on'] .favorites-card,
-html[data-card-custom='on'] .profile-card,
-html[data-card-custom='on'] .recent-card,
-html[data-card-custom='on'] .ranking-card,
-html[data-card-custom='on'] .create-playlist-card,
-html[data-card-custom='on'] .folder-card,
-html[data-card-custom='on'] .empty-list-card,
-html[data-card-custom='on'] .filter-card,
-html[data-card-custom='on'] .sponsor-card,
-html[data-card-custom='on'] .update-card,
-html[data-card-custom='on'] .dsp-module-card,
-html[data-card-custom='on'] .device-card {
-  box-shadow: var(--te-card-shadow, none) !important;
-  border-radius: var(--te-card-radius, 16px) !important;
-  border-width: var(--te-card-border-width, 1px) !important;
-}
-
-/* ===== Card appearance: blur / background / border variable overrides ===== */
-html[data-card-custom='on'] .artist-card,
-html[data-card-custom='on'] .album-card,
-html[data-card-custom='on'] .playlist-card,
-html[data-card-custom='on'] .glass-card,
-html[data-card-custom='on'] .feature-card,
-html[data-card-custom='on'] .playlist-grid-card,
-html[data-card-custom='on'] .favorites-card,
-html[data-card-custom='on'] .profile-card,
-html[data-card-custom='on'] .recent-card,
-html[data-card-custom='on'] .ranking-card,
-html[data-card-custom='on'] .create-playlist-card,
-html[data-card-custom='on'] .folder-card,
-html[data-card-custom='on'] .empty-list-card,
-html[data-card-custom='on'] .filter-card {
-  backdrop-filter: blur(var(--te-card-blur, 20px)) saturate(var(--te-card-saturate, 150%)) !important;
-  -webkit-backdrop-filter: blur(var(--te-card-blur, 20px)) saturate(var(--te-card-saturate, 150%)) !important;
+/* ===== Card appearance: custom card surface overrides ===== */
+/* Keep this list to host-owned card/panel surfaces. Controls and nav pills keep
+   their local sizing so sliders, selects and buttons do not inherit card radius. */
+html[data-card-custom='on']
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .glass-card,
+    .feature-card,
+    .playlist-grid-card,
+    .favorites-card,
+    .profile-card,
+    .recent-card,
+    .ranking-card,
+    .create-playlist-card,
+    .folder-card,
+    .empty-list-card,
+    .filter-card,
+    .sponsor-card,
+    .update-card,
+    .dsp-module-card,
+    .device-card,
+    .card,
+    .account-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card,
+    .bili-qr-card,
+    .chart-card,
+    .parameter-card,
+    .square-card,
+    .opra-panel,
+    .opra-result-item,
+    .device-panel,
+    .plugin-panel,
+    .output-diagnostic-panel,
+    .background-accordion-panel
+  ) {
   background: var(--te-card-bg) !important;
   border-color: var(--te-card-border) !important;
+  border-style: solid !important;
+  border-width: var(--te-card-border-width, 1px) !important;
+  border-radius: var(--te-card-radius, 16px) !important;
+  box-shadow: var(--te-card-shadow, none) !important;
+  backdrop-filter: blur(var(--te-card-blur, 20px)) saturate(var(--te-card-saturate, 150%)) !important;
+  -webkit-backdrop-filter: blur(var(--te-card-blur, 20px)) saturate(var(--te-card-saturate, 150%)) !important;
+}
+
+/* ===== Card appearance: hover effects ===== */
+html[data-card-custom='on']
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .glass-card,
+    .feature-card,
+    .playlist-grid-card,
+    .favorites-card,
+    .profile-card,
+    .recent-card,
+    .ranking-card,
+    .create-playlist-card,
+    .folder-card,
+    .empty-list-card,
+    .filter-card,
+    .sponsor-card,
+    .update-card,
+    .dsp-module-card,
+    .device-card,
+    .card,
+    .account-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card,
+    .bili-qr-card,
+    .chart-card,
+    .parameter-card,
+    .square-card,
+    .opra-panel,
+    .opra-result-item
+  ):hover {
+  transform: var(--te-card-hover-transform, none) !important;
+  box-shadow: var(--te-card-shadow, none), var(--te-card-hover-shadow, 0 0 0 0 transparent) !important;
 }
