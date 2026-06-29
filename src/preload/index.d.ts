@@ -32,6 +32,7 @@ type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+type StartupHomePage = 'local' | 'streaming'
 type UiDensity = 'compact' | 'standard' | 'comfortable'
 type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 type LyricAlign = 'center' | 'left'
@@ -282,6 +283,7 @@ interface AppSettings {
   musicCachePath: string
   cachePath: string
   closeToTray: boolean
+  startupHomePage: StartupHomePage
   theme: AppTheme
   pluginThemeId: string | null
   blurEffect: boolean
@@ -302,6 +304,7 @@ interface AppSettings {
   lyricAlign: LyricAlign
   lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
+  playMode: PlayMode
   audioOutput: AudioOutputId
   audioDevice: string
   audioExclusiveMode: boolean
@@ -399,6 +402,7 @@ interface PlaybackSession {
   version: 1
   savedAt: string
   mode: PlaybackResumeMode
+  playMode?: PlayMode
   track: TrackData
   position: number
 }

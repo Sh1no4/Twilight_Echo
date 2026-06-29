@@ -427,6 +427,9 @@ onMounted(async () => {
     await checkLogin()
   }
   await syncExtensions()
+  if (loadedSettings.startupHomePage === 'streaming') {
+    enterStreamingMode()
+  }
   await restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
   removeLibraryChangedListener = window.api.library.onChanged(() => {
     loadLibrary().catch(() => {})

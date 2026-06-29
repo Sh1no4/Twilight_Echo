@@ -54,3 +54,28 @@ test('settings page sends plain app background objects through Electron IPC', ()
   assert.doesNotMatch(source, /\.\.\.settings\.value\.appBackground/)
   assert.doesNotMatch(source, /\.\.\.settings\.value\.appBackground\.pages/)
 })
+
+test('startup home page setting is persisted and selectable from general settings', () => {
+  const mainSource = readFileSync(new URL('../../../main/index.ts', import.meta.url), 'utf8')
+  const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
+  const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+  const settingsPageSource = readFileSync(
+    new URL('../components/SettingsPage.vue', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(settingsTypes, /export type StartupHomePage = 'local' \| 'streaming'/)
+  assert.match(settingsTypes, /startupHomePage: StartupHomePage/)
+  assert.match(mainSource, /type StartupHomePage = 'local' \| 'streaming'/)
+  assert.match(mainSource, /startupHomePage: 'local'/)
+  assert.match(mainSource, /function normalizeStartupHomePage\(value: unknown\): StartupHomePage/)
+  assert.match(mainSource, /startupHomePage: normalizeStartupHomePage\(settings\.startupHomePage\)/)
+  assert.match(storeSource, /startupHomePage: 'local'/)
+  assert.match(appSource, /if \(loadedSettings\.startupHomePage === 'streaming'\) \{/)
+  assert.match(settingsPageSource, /const startupHomePageOptions/)
+  assert.match(settingsPageSource, /function setStartupHomePage\(startupHomePage: StartupHomePage\)/)
+  assert.match(settingsPageSource, /启动后进入/)
+  assert.match(settingsPageSource, /本地音乐主页/)
+  assert.match(settingsPageSource, /流媒体主页/)
+})

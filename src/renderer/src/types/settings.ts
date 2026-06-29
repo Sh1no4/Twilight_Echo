@@ -1,5 +1,7 @@
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+export type StartupHomePage = 'local' | 'streaming'
+export type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 export type EqMode = 'graphic' | 'parametric'
 export type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
@@ -218,6 +220,7 @@ export interface AppSettings {
   musicCachePath: string
   cachePath: string
   closeToTray: boolean
+  startupHomePage: StartupHomePage
   theme: AppTheme
   pluginThemeId: string | null
   blurEffect: boolean
@@ -238,6 +241,7 @@ export interface AppSettings {
   lyricAlign: LyricAlign
   lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
+  playMode: PlayMode
   audioOutput: AudioOutputId
   audioDevice: string
   audioExclusiveMode: boolean

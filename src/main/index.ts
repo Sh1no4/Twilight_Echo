@@ -54,6 +54,7 @@ import type { TwilightPluginUninstallOptions } from './plugins/types'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+type StartupHomePage = 'local' | 'streaming'
 type UiDensity = 'compact' | 'standard' | 'comfortable'
 type ProxyMode = 'auto' | 'custom' | 'off'
 type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
@@ -179,6 +180,7 @@ interface AppSettings {
   musicCachePath: string
   cachePath: string
   closeToTray: boolean
+  startupHomePage: StartupHomePage
   theme: AppTheme
   pluginThemeId: string | null
   blurEffect: boolean
@@ -199,6 +201,7 @@ interface AppSettings {
   lyricAlign: LyricAlign
   lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
+  playMode: PlayMode
   audioOutput: AudioOutputId
   audioDevice: string
   audioExclusiveMode: boolean
@@ -217,6 +220,7 @@ interface PlaybackSession {
   version: number
   savedAt: string
   mode: PlaybackResumeMode
+  playMode?: PlayMode
   track: unknown
   position: number
 }
@@ -247,6 +251,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   musicCachePath: '',
   cachePath: '',
   closeToTray: false,
+  startupHomePage: 'local',
   theme: 'system',
   pluginThemeId: null,
   blurEffect: true,
@@ -313,6 +318,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   lyricAlign: 'center',
   lyricDimOpacity: 40,
   playbackResumeMode: 'off',
+  playMode: 'sequential',
   audioOutput:
     process.platform === 'darwin' ? 'coreaudio' : process.platform === 'linux' ? 'alsa' : 'wasapi',
   audioDevice: 'auto',
@@ -408,6 +414,14 @@ function normalizePlaybackResumeMode(mode: unknown): PlaybackResumeMode {
   return mode === 'track' || mode === 'trackAndPosition' || mode === 'off'
     ? mode
     : DEFAULT_SETTINGS.playbackResumeMode
+}
+
+function normalizeStartupHomePage(value: unknown): StartupHomePage {
+  return value === 'streaming' ? 'streaming' : 'local'
+}
+
+function normalizePlayMode(mode: unknown): PlayMode {
+  return mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential'
 }
 
 const ACCENT_COLORS = ['violet', 'blue', 'emerald', 'rose', 'amber', 'slate']
@@ -676,6 +690,7 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
     musicCachePath: cachePath,
     cachePath,
     closeToTray,
+    startupHomePage: normalizeStartupHomePage(settings.startupHomePage),
     theme: normalizeAppTheme(settings.theme),
     pluginThemeId: normalizePluginThemeId(settings.pluginThemeId),
     blurEffect: settings.blurEffect !== false,
@@ -698,6 +713,7 @@ function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
     lyricAlign: settings.lyricAlign === 'left' ? 'left' : 'center',
     lyricDimOpacity: clampNumber(settings.lyricDimOpacity, 10, 100, DEFAULT_SETTINGS.lyricDimOpacity),
     playbackResumeMode: normalizePlaybackResumeMode(settings.playbackResumeMode),
+    playMode: normalizePlayMode(settings.playMode),
     audioOutput: normalizeAudioOutput(settings.audioOutput),
     audioDevice: normalizeAudioDevice(settings.audioDevice),
     audioExclusiveMode: settings.audioExclusiveMode === true,

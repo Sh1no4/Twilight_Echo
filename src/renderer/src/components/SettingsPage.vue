@@ -23,6 +23,7 @@ import type {
   LyricAlign,
   OutputConfig,
   PlaybackResumeMode,
+  StartupHomePage,
   AppBackgroundSettings,
   SacdProgramMode,
   UiDensity,
@@ -81,6 +82,11 @@ const playbackResumeOptions: { value: PlaybackResumeMode; label: string }[] = [
   { value: 'off', label: '关闭' },
   { value: 'track', label: '记住曲目' },
   { value: 'trackAndPosition', label: '曲目和位置' }
+]
+
+const startupHomePageOptions: { value: StartupHomePage; label: string; icon: string }[] = [
+  { value: 'local', label: '本地音乐主页', icon: 'pi pi-home' },
+  { value: 'streaming', label: '流媒体主页', icon: 'pi pi-compass' }
 ]
 
 const bufferSizeOptions = [
@@ -430,6 +436,11 @@ function setTheme(theme: AppTheme): void {
 function setPlaybackResumeMode(playbackResumeMode: PlaybackResumeMode): void {
   if (settings.value.playbackResumeMode === playbackResumeMode) return
   void updateSettings({ playbackResumeMode })
+}
+
+function setStartupHomePage(startupHomePage: StartupHomePage): void {
+  if (settings.value.startupHomePage === startupHomePage) return
+  void updateSettings({ startupHomePage })
 }
 
 function setPlaybackResumeModeFromSelect(event: Event): void {
@@ -1032,6 +1043,25 @@ onBeforeUnmount(() => {
           <div class="section-block">
             <h3>启动与窗口 (Startup)</h3>
             <div class="setting-list">
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>启动后进入</strong>
+                  <span>选择每次打开应用时默认显示的主页。</span>
+                </div>
+                <div class="segmented-control">
+                  <button
+                    v-for="option in startupHomePageOptions"
+                    :key="option.value"
+                    type="button"
+                    :class="{ active: settings.startupHomePage === option.value }"
+                    @click="setStartupHomePage(option.value)"
+                  >
+                    <i :class="option.icon"></i>
+                    {{ option.label }}
+                  </button>
+                </div>
+              </div>
+              <hr />
               <div class="setting-item">
                 <div class="setting-copy">
                   <strong>开机自动启动</strong>

@@ -63,11 +63,12 @@ test('desktop lyrics receives the current playback snapshot when enabled', () =>
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
 
   assert.match(source, /function syncDesktopLyricsSnapshot\(\)/)
-  assert.match(source, /window\.api\.desktopLyrics\.updateTrack\(\{/)
-  assert.match(source, /window\.api\.desktopLyrics\.updateTime\(currentTime\.value\)/)
+  assert.match(source, /const desktopLyricsApi = window\.api\?\.desktopLyrics/)
+  assert.match(source, /desktopLyricsApi\.updateTrack\(\{/)
+  assert.match(source, /desktopLyricsApi\.updateTime\(currentTime\.value\)/)
   assert.match(
     source,
-    /window\.api\.desktopLyrics\.onToggle\(\(enabled: boolean\) => \{\s*if \(enabled\) syncDesktopLyricsSnapshot\(\)\s*\}\)/
+    /window\.api\?\.desktopLyrics\?\.onToggle\(\(enabled: boolean\) => \{\s*if \(enabled\) syncDesktopLyricsSnapshot\(\)\s*\}\)/
   )
 })
 
@@ -254,4 +255,35 @@ test('playback session strips transient provider stream URLs before restore', ()
     /streamUrl: source === 'local' \? track\.streamUrl : null/,
     'restored provider playback should resolve a fresh stream URL instead of reusing a stale proxy URL'
   )
+})
+
+test('play mode is persisted in settings and restored on launch', () => {
+  const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
+  const settingsStoreSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const mainSource = readFileSync(new URL('../../../main/index.ts', import.meta.url), 'utf8')
+  const setPlayModeInternal = extractInternalFunctionBody(playerSource, 'setPlayModeInternal')
+
+  assert.match(settingsTypes, /export type PlayMode = 'sequential' \| 'repeat' \| 'shuffle'/)
+  assert.match(settingsTypes, /playMode: PlayMode/)
+  assert.match(settingsStoreSource, /playMode: 'sequential'/)
+  assert.match(mainSource, /type PlayMode,/)
+  assert.match(mainSource, /function normalizePlayMode\(mode: unknown\): PlayMode/)
+  assert.match(mainSource, /playMode: normalizePlayMode\(settings\.playMode\)/)
+  assert.match(playerSource, /import type \{[\s\S]*PlayMode[\s\S]*\} from '\.\.\/types\/settings'/)
+  assert.match(playerSource, /watch\(\s*\(\) => appSettings\.value\.playMode,/)
+  assert.match(setPlayModeInternal, /void updateSettings\(\{ playMode: mode \}\)/)
+})
+
+test('playback session carries play mode for quit-time restore', () => {
+  const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const musicTypes = readFileSync(new URL('../types/music.ts', import.meta.url), 'utf8')
+  const restorePlaybackSession = extractInternalFunctionBody(playerSource, 'restorePlaybackSession')
+  const createPlaybackSession = extractInternalFunctionBody(playerSource, 'createPlaybackSession')
+
+  assert.match(musicTypes, /import type \{ PlaybackResumeMode, PlayMode \} from '\.\/settings'/)
+  assert.match(musicTypes, /playMode\?: PlayMode/)
+  assert.match(createPlaybackSession, /playMode: playMode\.value/)
+  assert.match(restorePlaybackSession, /if \(session\.playMode\) \{/)
+  assert.match(restorePlaybackSession, /setPlayModeInternal\(session\.playMode, \{ persist: false \}\)/)
 })

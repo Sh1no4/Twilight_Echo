@@ -1,4 +1,4 @@
-import type { PlaybackResumeMode } from './settings'
+import type { PlaybackResumeMode, PlayMode } from './settings'
 
 export type BuiltInTrackSource = 'local' | 'ncm'
 export type TrackSource = BuiltInTrackSource | (string & {})
@@ -30,6 +30,7 @@ export interface PlaybackSession {
   version: 1
   savedAt: string
   mode: PlaybackResumeMode
+  playMode?: PlayMode
   track: Track
   position: number
   queue?: Track[]

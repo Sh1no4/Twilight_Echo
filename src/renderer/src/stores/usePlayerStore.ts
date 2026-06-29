@@ -6,14 +6,14 @@ import type {
   AudioOutputOption,
   AudioProcessingSettings,
   OutputConfig,
-  PlaybackResumeMode
+  PlaybackResumeMode,
+  PlayMode
 } from '../types/settings'
 import { extractDominantColor } from '../utils/colorExtractor'
 import { shouldReuseResolvedStreamUrl, shouldUseNativePlaybackTarget } from '../utils/playbackRouting'
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useSettingsStore } from './useSettingsStore'
 
-type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
 type NativeVisualizationData = Awaited<ReturnType<typeof window.api.audioEngine.getVisualizationData>>
@@ -1690,6 +1690,16 @@ function setupPlayerIntegrationSideEffects(): void {
 
   watch(() => appSettings.value?.discordRpcEnabled, () => updateDiscordActivity(), { immediate: true })
 
+  watch(
+    () => appSettings.value.playMode,
+    (savedPlayMode) => {
+      if (savedPlayMode && savedPlayMode !== playMode.value) {
+        setPlayModeInternal(savedPlayMode, { persist: false })
+      }
+    },
+    { immediate: true }
+  )
+
   watch(currentTrack, () => syncDesktopLyricsSnapshot(), { immediate: true })
 
   watch(currentTime, (time) => {
@@ -1740,9 +1750,14 @@ function cyclePlayMode(): void {
   setPlayModeInternal(modes[(idx + 1) % modes.length])
 }
 
-function setPlayModeInternal(mode: PlayMode): void {
+function setPlayModeInternal(mode: PlayMode, options: { persist?: boolean } = {}): void {
   playMode.value = mode
   applyPlayMode()
+  if (options.persist !== false) {
+    void updateSettings({ playMode: mode }).catch((err) => {
+      console.error('[音频引擎] 保存播放模式失败:', err)
+    })
+  }
   void queueNativeQueueStateSync().catch((err) => {
     audioEngineError.value = err instanceof Error ? err.message : String(err)
     console.error('[音频引擎] 同步播放模式失败:', err)
@@ -1790,6 +1805,9 @@ function restorePlaybackSession(session: PlaybackSession): void {
 
   resetPlaybackRuntimeStateForRestore()
   clearCrossfadeTimer()
+  if (session.playMode) {
+    setPlayModeInternal(session.playMode, { persist: false })
+  }
   currentTrack.value = track
 
   // 恢复完整播放队列，而非只恢复当前一首歌
@@ -1832,6 +1850,7 @@ function createPlaybackSession(mode: PlaybackResumeMode): PlaybackSession | null
     version: 1,
     savedAt: new Date().toISOString(),
     mode,
+    playMode: playMode.value,
     track: cloneTrackForPlaybackSession(track),
     position,
     queue: queue.value.map(cloneTrackForPlaybackSession),

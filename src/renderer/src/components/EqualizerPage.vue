@@ -774,7 +774,7 @@ watch(opraQuery, () => {
               <div class="slider-track">
                 <div class="slider-fill" :style="getFillStyle(audioProcessing.eqPreamp, 24)"></div>
                 <div class="slider-thumb" :style="{ top: getThumbTop(audioProcessing.eqPreamp, 24) }"></div>
-                <input type="range" min="-24" max="24" step="0.5" :value="audioProcessing.eqPreamp" @input="updateAudioProcessing({ eqPreamp: Number(($event.target as HTMLInputElement).value) })" class="invisible-range" />
+                <input type="range" min="-24" max="24" step="0.1" :value="audioProcessing.eqPreamp" @input="updateAudioProcessing({ eqPreamp: Number(($event.target as HTMLInputElement).value) })" class="invisible-range" />
               </div>
               <div class="slider-freq">PREAMP</div>
             </div>
@@ -784,7 +784,7 @@ watch(opraQuery, () => {
               <div class="slider-track">
                 <div class="slider-fill" :style="getFillStyle(band.gain, 12)"></div>
                 <div class="slider-thumb" :style="{ top: getThumbTop(band.gain, 12) }"></div>
-                <input type="range" min="-12" max="12" step="0.5" :value="band.gain" :disabled="isGainDisabled(band)" @input="updateEqBand(index, { gain: Number(($event.target as HTMLInputElement).value) })" class="invisible-range" />
+                <input type="range" min="-12" max="12" step="0.1" :value="band.gain" :disabled="isGainDisabled(band)" @input="updateEqBand(index, { gain: Number(($event.target as HTMLInputElement).value) })" class="invisible-range" />
               </div>
               <div class="slider-freq" @click="openAdvancedSettings(index)" style="cursor: pointer;">{{ formatFrequency(band.frequency) }}</div>
             </div>
