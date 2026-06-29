@@ -138,6 +138,12 @@ export async function syncPluginProviders(): Promise<void> {
             ? (artistId) =>
                 callProvider<MediaProviderAlbumSummary[]>('fetchArtistAlbums', [artistId])
             : undefined,
+          fetchArtistIntro: provider.capabilities.includes('library')
+            ? (artistId) => callProvider<string>('fetchArtistIntro', [artistId])
+            : undefined,
+          fetchArtistFollowState: provider.capabilities.includes('library')
+            ? (artistId) => callProvider<boolean | null>('fetchArtistFollowState', [artistId])
+            : undefined,
           fetchAlbumTracks: provider.capabilities.includes('playlist')
             ? (albumId) => callProvider<Track[]>('fetchAlbumTracks', [albumId])
             : undefined,
@@ -173,6 +179,12 @@ export async function syncPluginProviders(): Promise<void> {
             : undefined,
           fetchRecentSongs: provider.capabilities.includes('library')
             ? (limit) => callProvider<Track[]>('fetchRecentSongs', [limit])
+            : undefined,
+          followArtist: provider.capabilities.includes('library')
+            ? (artistId, follow) => callProvider<void>('followArtist', [artistId, follow])
+            : undefined,
+          followUser: provider.capabilities.includes('library')
+            ? (userId, follow) => callProvider<void>('followUser', [userId, follow])
             : undefined,
           likeTrack: provider.capabilities.includes('library')
             ? (trackId, like) => callProvider<void>('likeTrack', [trackId, like])

@@ -1,21 +1,193 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
-const source = readFileSync(new URL('./index.mjs', import.meta.url), 'utf8')
+import * as ncmProvider from './index.mjs'
 
-test('artist songs are fetched with the paged all-songs endpoint before top-song fallback', () => {
-  const artistSongsIndex = source.indexOf('/artist/songs?id=')
-  const topSongIndex = source.indexOf('/artist/top/song?id=')
+function song(id) {
+  return {
+    id,
+    name: `song-${id}`,
+    ar: [{ name: 'artist' }],
+    al: { name: `album-${id}`, picUrl: null },
+    dt: 180000
+  }
+}
 
-  assert.notEqual(artistSongsIndex, -1)
-  assert.notEqual(topSongIndex, -1)
-  assert.ok(artistSongsIndex < topSongIndex)
-  assert.match(source, /fetchPagedItems\(\{\s*makePath:[\s\S]*\/artist\/songs\?id=/)
-  assert.doesNotMatch(source, /\/artist\/songs\?id=\$\{encodedId\}&order=hot&limit=50&offset=0/)
+function album(id) {
+  return {
+    id,
+    name: `album-${id}`,
+    picUrl: null,
+    size: 10
+  }
+}
+
+async function activateProvider(request) {
+  let registeredProvider = null
+  await ncmProvider.activate({
+    twilight: {
+      internal: {
+        ncm: {
+          request,
+          officialLogin: async () => 'MUSIC_U=test;',
+          getCachedSong: async () => null,
+          cacheSong: async () => null
+        }
+      },
+      providers: {
+        register: async (provider) => {
+          registeredProvider = provider
+        }
+      }
+    },
+    settings: {
+      get: async () => 'MUSIC_U=test;',
+      set: async () => undefined,
+      delete: async () => undefined
+    },
+    logger: {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined
+    }
+  })
+  assert.ok(registeredProvider)
+  return registeredProvider
+}
+
+function parseRequest(path) {
+  return new URL(path, 'http://twilight.local')
+}
+
+test('artist songs keep paging when a short page reports more items', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/artist/songs')
+    assert.equal(url.searchParams.get('id'), '6452')
+    assert.equal(url.searchParams.get('order'), 'hot')
+    assert.equal(url.searchParams.get('limit'), '100')
+
+    const offset = Number(url.searchParams.get('offset'))
+    if (offset === 0) return { songs: [song(1), song(2)], more: true }
+    if (offset === 2) return { songs: [song(3)], more: false }
+    throw new Error(`unexpected offset: ${offset}`)
+  })
+
+  try {
+    const tracks = await provider.fetchArtistTopSongs(6452)
+    assert.deepEqual(
+      tracks.map((track) => track.ncmSongId),
+      [1, 2, 3]
+    )
+    assert.equal(requests.length, 2)
+    assert.equal(parseRequest(requests[1]).searchParams.get('offset'), '2')
+  } finally {
+    ncmProvider.deactivate()
+  }
 })
 
-test('artist albums are fetched through the shared pagination helper', () => {
-  assert.match(source, /fetchPagedItems\(\{\s*makePath:[\s\S]*\/artist\/album\?id=/)
-  assert.doesNotMatch(source, /\/artist\/album\?id=\$\{encodeURIComponent\(String\(artistId\)\)\}&limit=100&offset=0/)
+test('artist albums keep paging when a short page reports more items', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/artist/album')
+    assert.equal(url.searchParams.get('id'), '6452')
+    assert.equal(url.searchParams.get('limit'), '100')
+
+    const offset = Number(url.searchParams.get('offset'))
+    if (offset === 0) return { hotAlbums: [album(1), album(2)], more: true }
+    if (offset === 2) return { hotAlbums: [album(3)], more: false }
+    throw new Error(`unexpected offset: ${offset}`)
+  })
+
+  try {
+    const albums = await provider.fetchArtistAlbums(6452)
+    assert.deepEqual(
+      albums.map((item) => item.id),
+      [1, 2, 3]
+    )
+    assert.equal(requests.length, 2)
+    assert.equal(parseRequest(requests[1]).searchParams.get('offset'), '2')
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('artist songs still fall back to the top-song endpoint when all-song paging fails', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/artist/songs') throw new Error('all songs unavailable')
+    if (url.pathname === '/artist/top/song') return { songs: [song(9)] }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const tracks = await provider.fetchArtistTopSongs(6452)
+    assert.deepEqual(
+      tracks.map((track) => track.ncmSongId),
+      [9]
+    )
+    assert.equal(parseRequest(requests[0]).pathname, '/artist/songs')
+    assert.equal(parseRequest(requests[1]).pathname, '/artist/top/song')
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('artist intro and follow state use dedicated artist endpoints', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/artist/desc') return { briefDesc: '  artist introduction  ' }
+    if (url.pathname === '/artist/detail/dynamic') return { data: { followed: true } }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    assert.equal(await provider.fetchArtistIntro(6452), 'artist introduction')
+    assert.equal(await provider.fetchArtistFollowState(6452), true)
+    assert.deepEqual(
+      requests.map((path) => parseRequest(path).pathname),
+      ['/artist/desc', '/artist/detail/dynamic']
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('artist and user follow actions call NetEase follow endpoints', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    return { code: 200 }
+  })
+
+  try {
+    await provider.followArtist(6452, true)
+    await provider.followArtist(6452, false)
+    await provider.followUser(32953014, true)
+    await provider.followUser(32953014, false)
+
+    assert.deepEqual(
+      requests.map((path) => {
+        const url = parseRequest(path)
+        return `${url.pathname}?id=${url.searchParams.get('id')}&t=${url.searchParams.get('t')}`
+      }),
+      [
+        '/artist/sub?id=6452&t=1',
+        '/artist/sub?id=6452&t=0',
+        '/follow?id=32953014&t=1',
+        '/follow?id=32953014&t=0'
+      ]
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
 })

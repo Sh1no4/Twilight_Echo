@@ -23,6 +23,10 @@ import {
   isSidebarItemActiveForProvider,
   shouldShowBilibiliViewForSidebarProvider
 } from '../utils/streamingNavigation'
+import {
+  findBestStreamingArtistMatch,
+  resolveLinkedStreamingArtist
+} from '../utils/streamingArtistResolution'
 
 interface PageState {
   first: number
@@ -36,6 +40,14 @@ interface RecSection {
   title: string
   tracks: Track[]
   icon: string
+}
+
+interface DetailHeaderInfo {
+  title: string
+  cover: string | null
+  desc: string
+  icon: string
+  intro?: string
 }
 
 type StreamingTab = 'home' | 'library'
@@ -64,9 +76,13 @@ const detailTracks = ref<Track[]>([])
 const detailUsers = ref<NcmUserSummary[]>([])
 const artistAlbums = ref<NcmAlbumSummary[]>([])
 const artistPlaylists = ref<NcmPlaylistSummary[]>([])
+const artistIntro = ref('')
+const artistFollowed = ref<boolean | null>(null)
 const activeArtistTab = ref<ArtistDetailTab>('songs')
 const detailLoading = ref(false)
 const detailError = ref('')
+const followActionLoading = ref(false)
+const followActionError = ref('')
 const likedCount = ref<number | null>(null)
 let detailLoadToken = 0
 
@@ -292,12 +308,16 @@ const {
   searchArtists,
   fetchArtistTopSongs,
   fetchArtistAlbums,
+  fetchArtistIntro,
+  fetchArtistFollowState,
   fetchAlbumTracks,
   fetchArtistPlaylists,
   fetchUserFollows,
   fetchUserFolloweds,
   fetchPlayRecords,
   fetchRecentSongs,
+  followArtist,
+  followUser,
   likeTrack,
   isTrackLiked,
   syncLikedIds
@@ -545,7 +565,7 @@ const showDetailOverlayLoading = computed(
   () => detailLoading.value && !showDetailInitialLoading.value
 )
 
-const detailHeaderInfo = computed(() => {
+const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
   if (!currentDetail.value) return null
   if (currentDetail.value.type === 'liked') {
     return {
@@ -594,6 +614,7 @@ const detailHeaderInfo = computed(() => {
       title: currentDetail.value.artist.name,
       cover: currentDetail.value.artist.picUrl,
       desc: descParts.length > 0 ? `共 ${descParts.join('，')}` : '暂无可展示内容',
+      intro: artistIntro.value,
       icon: 'pi pi-user'
     }
   }
@@ -631,6 +652,28 @@ const detailHeaderInfo = computed(() => {
   }
   return null
 })
+
+const detailFollowState = computed<boolean>(() => {
+  if (currentDetail.value?.type === 'artist') return artistFollowed.value === true
+  if (currentDetail.value?.type === 'user_playlists') return currentDetail.value.user.followed === true
+  return false
+})
+
+const showDetailFollowButton = computed(
+  () => currentDetail.value?.type === 'artist' || currentDetail.value?.type === 'user_playlists'
+)
+
+const detailFollowButtonLabel = computed(() =>
+  detailFollowState.value ? '取消关注' : '关注'
+)
+
+const detailFollowButtonIcon = computed(() =>
+  followActionLoading.value
+    ? 'pi pi-spin pi-spinner'
+    : detailFollowState.value
+      ? 'pi pi-user-minus'
+      : 'pi pi-user-plus'
+)
 
 function selectTab(key: StreamingTab): void {
   if (isExternalActive.value && key !== 'library') return
@@ -686,9 +729,13 @@ function resetDetail(): void {
   detailUsers.value = []
   artistAlbums.value = []
   artistPlaylists.value = []
+  artistIntro.value = ''
+  artistFollowed.value = null
   activeArtistTab.value = 'songs'
   detailLoading.value = false
   detailError.value = ''
+  followActionLoading.value = false
+  followActionError.value = ''
 }
 
 function beginDetailLoad(): number {
@@ -697,8 +744,11 @@ function beginDetailLoad(): number {
   detailUsers.value = []
   artistAlbums.value = []
   artistPlaylists.value = []
+  artistIntro.value = ''
+  artistFollowed.value = null
   detailLoading.value = true
   detailError.value = ''
+  followActionError.value = ''
   return token
 }
 
@@ -719,21 +769,11 @@ function mergePlaylistSummaries(...groups: NcmPlaylistSummary[][]): NcmPlaylistS
   return merged
 }
 
-function normalizeNameForMatch(value: string): string {
-  return value.trim().toLowerCase().replace(/\s+/g, '')
-}
-
 async function findArtistByUserName(user: NcmUserSummary): Promise<NcmArtistSummary | null> {
   const keyword = user.name.trim()
   if (!keyword) return null
   const { artists } = await searchArtists(keyword, 8, 0)
-  if (artists.length === 0) return null
-  const normalizedKeyword = normalizeNameForMatch(keyword)
-  return (
-    artists.find((artist) => normalizeNameForMatch(artist.name) === normalizedKeyword) ??
-    artists[0] ??
-    null
-  )
+  return findBestStreamingArtistMatch(keyword, artists)
 }
 
 async function ensureLibraryLoaded(force = false): Promise<void> {
@@ -922,23 +962,44 @@ async function openArtist(artist: NcmArtistSummary, linkedUser?: NcmUserSummary)
   const token = beginDetailLoad()
 
   try {
-    let [tracks, albums, artistOwnedPlaylists, userOwnedPlaylists] = await Promise.all([
-      fetchArtistTopSongs(artist.id).catch(() => [] as Track[]),
-      fetchArtistAlbums(artist.id).catch(() => [] as NcmAlbumSummary[]),
-      fetchArtistPlaylists(artist.id).catch(() => [] as NcmPlaylistSummary[]),
+    let resolvedArtist = await resolveLinkedStreamingArtist(
+      artist,
+      linkedUser,
+      findArtistByUserName
+    )
+    let [
+      tracks,
+      albums,
+      artistOwnedPlaylists,
+      userOwnedPlaylists,
+      intro,
+      followed
+    ] = await Promise.all([
+      fetchArtistTopSongs(resolvedArtist.id).catch(() => [] as Track[]),
+      fetchArtistAlbums(resolvedArtist.id).catch(() => [] as NcmAlbumSummary[]),
+      fetchArtistPlaylists(resolvedArtist.id).catch(() => [] as NcmPlaylistSummary[]),
       linkedUser
         ? fetchUserPlaylistsByUid(linkedUser.id, true).catch(() => [] as NcmPlaylistSummary[])
-        : Promise.resolve([] as NcmPlaylistSummary[])
+        : Promise.resolve([] as NcmPlaylistSummary[]),
+      fetchArtistIntro(resolvedArtist.id).catch(() => ''),
+      fetchArtistFollowState(resolvedArtist.id).catch(() => null)
     ])
 
-    let resolvedArtist = artist
-    if (linkedUser && tracks.length === 0) {
+    if (linkedUser && resolvedArtist.id === artist.id && tracks.length === 0) {
       const matchedArtist = await findArtistByUserName(linkedUser).catch(() => null)
       if (matchedArtist && matchedArtist.id !== artist.id) {
-        const [matchedTracks, matchedAlbums, matchedPlaylists] = await Promise.all([
+        const [
+          matchedTracks,
+          matchedAlbums,
+          matchedPlaylists,
+          matchedIntro,
+          matchedFollowed
+        ] = await Promise.all([
           fetchArtistTopSongs(matchedArtist.id).catch(() => [] as Track[]),
           fetchArtistAlbums(matchedArtist.id).catch(() => [] as NcmAlbumSummary[]),
-          fetchArtistPlaylists(matchedArtist.id).catch(() => [] as NcmPlaylistSummary[])
+          fetchArtistPlaylists(matchedArtist.id).catch(() => [] as NcmPlaylistSummary[]),
+          fetchArtistIntro(matchedArtist.id).catch(() => ''),
+          fetchArtistFollowState(matchedArtist.id).catch(() => null)
         ])
         if (matchedTracks.length > 0 || matchedAlbums.length > 0 || matchedPlaylists.length > 0) {
           resolvedArtist = {
@@ -948,6 +1009,8 @@ async function openArtist(artist: NcmArtistSummary, linkedUser?: NcmUserSummary)
           tracks = matchedTracks
           albums = matchedAlbums
           artistOwnedPlaylists = mergePlaylistSummaries(artistOwnedPlaylists, matchedPlaylists)
+          intro = matchedIntro
+          followed = matchedFollowed
         }
       }
     }
@@ -959,6 +1022,8 @@ async function openArtist(artist: NcmArtistSummary, linkedUser?: NcmUserSummary)
     detailTracks.value = tracks
     artistAlbums.value = albums
     artistPlaylists.value = mergePlaylistSummaries(artistOwnedPlaylists, userOwnedPlaylists)
+    artistIntro.value = intro
+    artistFollowed.value = followed
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
     detailError.value = error instanceof Error ? error.message : '加载歌手页面失败'
@@ -1077,6 +1142,30 @@ async function onUserClick(user: NcmUserSummary): Promise<void> {
     }, user)
   } else {
     await openUserPlaylists(user)
+  }
+}
+
+async function toggleCurrentDetailFollow(): Promise<void> {
+  const detail = currentDetail.value
+  if (!detail || followActionLoading.value) return
+  const nextFollowState = !detailFollowState.value
+  followActionLoading.value = true
+  followActionError.value = ''
+  try {
+    if (detail.type === 'artist') {
+      await followArtist(detail.artist.id, nextFollowState)
+      artistFollowed.value = nextFollowState
+      return
+    }
+    if (detail.type === 'user_playlists') {
+      await followUser(detail.user.id, nextFollowState)
+      detail.user.followed = nextFollowState
+    }
+  } catch (error) {
+    followActionError.value =
+      error instanceof Error ? error.message : nextFollowState ? '关注失败' : '取消关注失败'
+  } finally {
+    followActionLoading.value = false
   }
 }
 
@@ -1476,8 +1565,22 @@ onMounted(async () => {
               <div class="detail-playlist-info">
                 <h2 class="detail-playlist-name">{{ detailHeaderInfo.title }}</h2>
                 <p class="detail-playlist-desc">{{ detailHeaderInfo.desc }}</p>
+                <p v-if="detailHeaderInfo.intro" class="detail-artist-intro">
+                  {{ detailHeaderInfo.intro }}
+                </p>
                 <button
-                  v-if="
+                  v-if="showDetailFollowButton"
+                  type="button"
+                  class="stream-action-btn detail-play-btn detail-follow-btn"
+                  :class="{ followed: detailFollowState }"
+                  :disabled="followActionLoading"
+                  @click="toggleCurrentDetailFollow"
+                >
+                  <i :class="detailFollowButtonIcon"></i>
+                  <span>{{ detailFollowButtonLabel }}</span>
+                </button>
+                <button
+                  v-else-if="
                     currentDetail?.type !== 'user_list' && currentDetail?.type !== 'user_playlists'
                   "
                   type="button"
@@ -1488,6 +1591,9 @@ onMounted(async () => {
                   <i class="pi pi-play"></i>
                   <span>播放全部</span>
                 </button>
+                <p v-if="followActionError" class="detail-follow-error">
+                  {{ followActionError }}
+                </p>
               </div>
             </div>
 
@@ -2682,11 +2788,40 @@ onMounted(async () => {
 .detail-playlist-desc {
   font-size: 14px;
   color: #666;
-  margin: 0 0 24px 0;
+  margin: 0 0 12px 0;
+}
+
+.detail-artist-intro {
+  max-width: min(720px, 100%);
+  margin: 0 0 22px 0;
+  color: #5e6477;
+  font-size: 13px;
+  line-height: 1.7;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .detail-play-btn {
   align-self: flex-start;
+}
+
+.detail-follow-btn.followed {
+  background:
+    radial-gradient(circle at 34% 24%, rgba(255, 255, 255, 0.42), transparent 26%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(245, 247, 252, 0.88));
+  color: var(--te-neutral-800);
+  border-color: rgba(132, 146, 178, 0.34);
+  box-shadow:
+    0 16px 34px rgba(82, 92, 126, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.detail-follow-error {
+  margin: 10px 0 0;
+  color: #d04444;
+  font-size: 12px;
 }
 
 .stream-action-btn {

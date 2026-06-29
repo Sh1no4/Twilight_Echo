@@ -66,6 +66,8 @@ export async function activate(context) {
     fetchPrivateContent,
     fetchArtistTopSongs,
     fetchArtistAlbums,
+    fetchArtistIntro,
+    fetchArtistFollowState,
     fetchAlbumTracks,
     fetchArtistPlaylists,
     fetchUserPlaylistsByUid,
@@ -73,6 +75,8 @@ export async function activate(context) {
     fetchUserFolloweds,
     fetchPlayRecords,
     fetchRecentSongs,
+    followArtist,
+    followUser,
     likeTrack,
     isTrackLiked
   })
@@ -351,6 +355,12 @@ function getSongItems(data) {
   return []
 }
 
+function getPagedMoreFlag(data) {
+  const candidates = [data?.more, data?.hasMore, data?.data?.more, data?.data?.hasMore]
+  const value = candidates.find((candidate) => typeof candidate === 'boolean')
+  return typeof value === 'boolean' ? value : undefined
+}
+
 async function fetchPagedItems({ makePath, getItems, limit = 100, maxPages = 100 }) {
   const items = []
   const seen = new Set()
@@ -370,8 +380,10 @@ async function fetchPagedItems({ makePath, getItems, limit = 100, maxPages = 100
       added += 1
     }
 
-    if (pageItems.length < limit || added === 0) break
-    offset += limit
+    const hasMore = getPagedMoreFlag(data)
+    if (added === 0 || hasMore === false) break
+    if (pageItems.length < limit && hasMore !== true) break
+    offset += pageItems.length || limit
   }
 
   return items
@@ -380,6 +392,12 @@ async function fetchPagedItems({ makePath, getItems, limit = 100, maxPages = 100
 function addPositiveId(target, value) {
   const normalized = Number(value)
   if (Number.isFinite(normalized) && normalized > 0) target.add(normalized)
+}
+
+function normalizeFollowed(value) {
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'number') return value > 0
+  return undefined
 }
 
 function mergePlaylists(...groups) {
@@ -893,6 +911,35 @@ async function fetchArtistAlbums(artistId) {
   return albums.map(normalizeAlbum)
 }
 
+async function fetchArtistIntro(artistId) {
+  const data = await requestAuthed(`/artist/desc?id=${encodeURIComponent(String(artistId))}`)
+  const candidates = [
+    data.briefDesc,
+    data.data?.briefDesc,
+    data.introduction?.[0]?.txt,
+    data.data?.introduction?.[0]?.txt
+  ]
+  const intro = candidates.find((value) => typeof value === 'string' && value.trim())
+  return typeof intro === 'string' ? intro.trim() : ''
+}
+
+async function fetchArtistFollowState(artistId) {
+  const data = await requestAuthed(`/artist/detail/dynamic?id=${encodeURIComponent(String(artistId))}`)
+  const candidates = [
+    data.followed,
+    data.isSub,
+    data.sub,
+    data.data?.followed,
+    data.data?.isSub,
+    data.data?.sub
+  ]
+  for (const candidate of candidates) {
+    const followed = normalizeFollowed(candidate)
+    if (typeof followed === 'boolean') return followed
+  }
+  return null
+}
+
 async function fetchAlbumTracks(albumId) {
   const data = await requestAuthed(`/album?id=${encodeURIComponent(String(albumId))}`)
   return getSongItems(data).map(normalizeTrack)
@@ -950,7 +997,8 @@ async function fetchUserFollows(uid, limit = 30, offset = 0) {
     name: item.nickname || '未知用户',
     picUrl: item.avatarUrl || null,
     musicSize: item.playlistCount || 0,
-    userType: item.userType || 0
+    userType: item.userType || 0,
+    followed: normalizeFollowed(item.followed ?? item.followMe ?? item.mutual)
   }))
 }
 
@@ -962,8 +1010,29 @@ async function fetchUserFolloweds(uid, limit = 30, offset = 0) {
     name: item.nickname || '未知用户',
     picUrl: item.avatarUrl || null,
     musicSize: item.playlistCount || 0,
-    userType: item.userType || 0
+    userType: item.userType || 0,
+    followed: normalizeFollowed(item.followed ?? item.followMe ?? item.mutual)
   }))
+}
+
+async function followArtist(artistId, follow) {
+  const data = await requestAuthed(
+    `/artist/sub?id=${encodeURIComponent(String(artistId))}&t=${follow ? '1' : '0'}`
+  )
+  const code = Number(data.code)
+  if (Number.isFinite(code) && code !== 200) {
+    throw new Error(normalizeApiMessage(data, follow ? '关注歌手失败' : '取消关注歌手失败'))
+  }
+}
+
+async function followUser(userId, follow) {
+  const data = await requestAuthed(
+    `/follow?id=${encodeURIComponent(String(userId))}&t=${follow ? '1' : '0'}`
+  )
+  const code = Number(data.code)
+  if (Number.isFinite(code) && code !== 200) {
+    throw new Error(normalizeApiMessage(data, follow ? '关注用户失败' : '取消关注用户失败'))
+  }
 }
 
 async function likeTrack(songId, like) {

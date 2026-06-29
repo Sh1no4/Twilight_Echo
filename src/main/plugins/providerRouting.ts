@@ -32,6 +32,8 @@ const PROVIDER_METHOD_CAPABILITIES: Partial<
   fetchPrivateContent: 'library',
   fetchArtistTopSongs: 'library',
   fetchArtistAlbums: 'library',
+  fetchArtistIntro: 'library',
+  fetchArtistFollowState: 'library',
   fetchAlbumTracks: 'playlist',
   fetchArtistPlaylists: 'library',
   fetchUserPlaylistsByUid: 'library',
@@ -39,6 +41,8 @@ const PROVIDER_METHOD_CAPABILITIES: Partial<
   fetchUserFolloweds: 'library',
   fetchPlayRecords: 'library',
   fetchRecentSongs: 'library',
+  followArtist: 'library',
+  followUser: 'library',
   likeTrack: 'library',
   isTrackLiked: 'library'
 }

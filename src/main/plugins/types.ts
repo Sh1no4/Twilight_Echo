@@ -239,6 +239,8 @@ export type TwilightMediaProviderMethod =
   | 'fetchPrivateContent'
   | 'fetchArtistTopSongs'
   | 'fetchArtistAlbums'
+  | 'fetchArtistIntro'
+  | 'fetchArtistFollowState'
   | 'fetchAlbumTracks'
   | 'fetchArtistPlaylists'
   | 'fetchUserPlaylistsByUid'
@@ -246,6 +248,8 @@ export type TwilightMediaProviderMethod =
   | 'fetchUserFolloweds'
   | 'fetchPlayRecords'
   | 'fetchRecentSongs'
+  | 'followArtist'
+  | 'followUser'
   | 'likeTrack'
   | 'isTrackLiked'
 

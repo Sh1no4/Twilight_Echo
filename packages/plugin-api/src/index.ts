@@ -181,6 +181,7 @@ export interface UserSummary {
   id: string | number
   name: string
   avatar?: string | null
+  followed?: boolean
 }
 
 export interface ProviderProfile {
@@ -230,11 +231,15 @@ export interface TwilightMediaProviderRegistration {
   fetchPrivateContent?(): Promise<Track[]>
   fetchArtistTopSongs?(artistId: string | number): Promise<Track[]>
   fetchArtistAlbums?(artistId: string | number): Promise<AlbumSummary[]>
+  fetchArtistIntro?(artistId: string | number): Promise<string>
+  fetchArtistFollowState?(artistId: string | number): Promise<boolean | null>
   fetchAlbumTracks?(albumId: string | number): Promise<Track[]>
   fetchArtistPlaylists?(artistId: string | number): Promise<PlaylistSummary[]>
   fetchUserPlaylistsByUid?(uid: string | number, createdOnly?: boolean): Promise<PlaylistSummary[]>
   fetchUserFollows?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
   fetchUserFolloweds?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
+  followArtist?(artistId: string | number, follow: boolean): Promise<void>
+  followUser?(userId: string | number, follow: boolean): Promise<void>
   likeTrack?(trackId: string | number, like: boolean): Promise<void>
   isTrackLiked?(trackId: string | number | undefined): Promise<boolean> | boolean
 }

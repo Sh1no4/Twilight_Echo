@@ -39,6 +39,7 @@ export interface NcmUserSummary {
   picUrl: string | null
   musicSize: number
   userType: number
+  followed?: boolean
 }
 
 export interface NcmLoginState {
@@ -104,6 +105,8 @@ export interface NcmStore {
   ) => Promise<{ artists: NcmArtistSummary[]; total: number }>
   fetchArtistTopSongs: (artistId: number) => Promise<Track[]>
   fetchArtistAlbums: (artistId: number) => Promise<NcmAlbumSummary[]>
+  fetchArtistIntro: (artistId: number) => Promise<string>
+  fetchArtistFollowState: (artistId: number) => Promise<boolean | null>
   fetchAlbumTracks: (albumId: number) => Promise<Track[]>
   fetchArtistPlaylists: (artistId: number) => Promise<NcmPlaylistSummary[]>
   fetchUserPlaylistsByUid: (uid: number, createdOnly?: boolean) => Promise<NcmPlaylistSummary[]>
@@ -111,6 +114,8 @@ export interface NcmStore {
   fetchUserFolloweds: (uid: number, limit?: number, offset?: number) => Promise<NcmUserSummary[]>
   fetchPlayRecords: (type?: number) => Promise<Track[]>
   fetchRecentSongs: (limit?: number) => Promise<Track[]>
+  followArtist: (artistId: number, follow: boolean) => Promise<void>
+  followUser: (userId: number, follow: boolean) => Promise<void>
   likeTrack: (songId: number, like: boolean) => Promise<void>
   isTrackLiked: (ncmSongId: number | undefined) => boolean
   syncLikedIds: (tracks: Track[]) => void
@@ -356,6 +361,14 @@ export function useNcmStore(): NcmStore {
     return callNcmProvider<NcmAlbumSummary[]>('fetchArtistAlbums', [artistId])
   }
 
+  async function fetchArtistIntro(artistId: number): Promise<string> {
+    return callNcmProvider<string>('fetchArtistIntro', [artistId])
+  }
+
+  async function fetchArtistFollowState(artistId: number): Promise<boolean | null> {
+    return callNcmProvider<boolean | null>('fetchArtistFollowState', [artistId])
+  }
+
   async function fetchAlbumTracks(albumId: number): Promise<Track[]> {
     return callNcmProvider<Track[]>('fetchAlbumTracks', [albumId])
   }
@@ -410,6 +423,14 @@ export function useNcmStore(): NcmStore {
     return callNcmProvider<Track[]>('fetchRecentSongs', [limit])
   }
 
+  async function followArtist(artistId: number, follow: boolean): Promise<void> {
+    await callNcmProvider<void>('followArtist', [artistId, follow])
+  }
+
+  async function followUser(userId: number, follow: boolean): Promise<void> {
+    await callNcmProvider<void>('followUser', [userId, follow])
+  }
+
   return {
     providerAvailable,
     providerError,
@@ -443,6 +464,8 @@ export function useNcmStore(): NcmStore {
     searchArtists,
     fetchArtistTopSongs,
     fetchArtistAlbums,
+    fetchArtistIntro,
+    fetchArtistFollowState,
     fetchAlbumTracks,
     fetchArtistPlaylists,
     fetchUserPlaylistsByUid,
@@ -450,6 +473,8 @@ export function useNcmStore(): NcmStore {
     fetchUserFolloweds,
     fetchPlayRecords,
     fetchRecentSongs,
+    followArtist,
+    followUser,
     likeTrack,
     isTrackLiked,
     syncLikedIds
