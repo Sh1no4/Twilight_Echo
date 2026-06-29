@@ -181,6 +181,7 @@ export interface UserSummary {
   id: string | number
   name: string
   avatar?: string | null
+  artistId?: string | number
   followed?: boolean
 }
 

@@ -65,6 +65,7 @@ export interface MediaProviderUserSummary {
   picUrl: string | null
   musicSize?: number
   userType?: number
+  artistId?: number | string
   followed?: boolean
 }
 

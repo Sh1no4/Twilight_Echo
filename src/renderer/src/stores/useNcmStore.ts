@@ -39,6 +39,7 @@ export interface NcmUserSummary {
   picUrl: string | null
   musicSize: number
   userType: number
+  artistId?: number
   followed?: boolean
 }
 

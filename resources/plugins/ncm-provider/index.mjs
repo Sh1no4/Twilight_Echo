@@ -326,6 +326,16 @@ function normalizeAlbum(album) {
   }
 }
 
+function normalizeArtist(item) {
+  return {
+    id: Number(item.id),
+    name: item.name || item.artistName || '未知歌手',
+    picUrl: item.picUrl || item.img1v1Url || item.avatarUrl || null,
+    albumSize: item.albumSize || 0,
+    musicSize: item.musicSize || 0
+  }
+}
+
 function getPlaylistItems(data) {
   if (Array.isArray(data.playlist)) return data.playlist
   if (Array.isArray(data.data?.playlist)) return data.data.playlist
@@ -337,6 +347,16 @@ function getAlbumItems(data) {
   if (Array.isArray(data.albums)) return data.albums
   if (Array.isArray(data.data?.hotAlbums)) return data.data.hotAlbums
   if (Array.isArray(data.data?.albums)) return data.data.albums
+  return []
+}
+
+function getArtistItems(data) {
+  if (Array.isArray(data.artists)) return data.artists
+  if (Array.isArray(data.data?.artists)) return data.data.artists
+  if (Array.isArray(data.data)) return data.data
+  if (Array.isArray(data.data?.data)) return data.data.data
+  if (Array.isArray(data.list)) return data.list
+  if (Array.isArray(data.data?.list)) return data.data.list
   return []
 }
 
@@ -862,13 +882,7 @@ async function searchArtists(keywords, limit = 30, offset = 0) {
   const artists = Array.isArray(result.artists) ? result.artists : []
   const total = typeof result.artistCount === 'number' ? result.artistCount : artists.length
   return {
-    items: artists.map((item) => ({
-      id: Number(item.id),
-      name: item.name || '未知歌手',
-      picUrl: item.picUrl || item.img1v1Url || null,
-      albumSize: item.albumSize || 0,
-      musicSize: item.musicSize || 0
-    })),
+    items: artists.map(normalizeArtist),
     total
   }
 }
@@ -990,16 +1004,20 @@ async function fetchUserPlaylistsByUid(uid, createdOnly = false) {
 }
 
 async function fetchUserFollows(uid, limit = 30, offset = 0) {
-  const data = await requestAuthed(`/user/follows?uid=${uid}&limit=${limit}&offset=${offset}`)
-  const follows = Array.isArray(data.follow) ? data.follow : []
-  return follows.map((item) => ({
-    id: Number(item.userId),
-    name: item.nickname || '未知用户',
-    picUrl: item.avatarUrl || null,
-    musicSize: item.playlistCount || 0,
-    userType: item.userType || 0,
-    followed: normalizeFollowed(item.followed ?? item.followMe ?? item.mutual)
-  }))
+  const data = await requestAuthed(`/artist/sublist?limit=${limit}&offset=${offset}`)
+  const artists = getArtistItems(data)
+  return artists.map((item) => {
+    const artist = normalizeArtist(item)
+    return {
+      id: artist.id,
+      name: artist.name,
+      picUrl: artist.picUrl,
+      musicSize: artist.musicSize,
+      userType: 2,
+      artistId: artist.id,
+      followed: true
+    }
+  })
 }
 
 async function fetchUserFolloweds(uid, limit = 30, offset = 0) {

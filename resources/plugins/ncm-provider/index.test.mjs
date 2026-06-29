@@ -191,3 +191,49 @@ test('artist and user follow actions call NetEase follow endpoints', async () =>
     ncmProvider.deactivate()
   }
 })
+
+test('follow list uses artist sublist and returns artist identities', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname !== '/artist/sublist') {
+      throw new Error(`unexpected endpoint: ${url.pathname}`)
+    }
+    assert.equal(url.searchParams.get('limit'), '100')
+    assert.equal(url.searchParams.get('offset'), '0')
+    return {
+      data: [
+        { id: 101, name: 'aiss', picUrl: 'https://img.test/aiss.jpg', musicSize: 12 },
+        { id: 202, name: '7FIV6', img1v1Url: 'https://img.test/7fiv6.jpg', musicSize: 8 }
+      ]
+    }
+  })
+
+  try {
+    const follows = await provider.fetchUserFollows(12345, 100, 0)
+    assert.deepEqual(follows, [
+      {
+        id: 101,
+        name: 'aiss',
+        picUrl: 'https://img.test/aiss.jpg',
+        musicSize: 12,
+        userType: 2,
+        artistId: 101,
+        followed: true
+      },
+      {
+        id: 202,
+        name: '7FIV6',
+        picUrl: 'https://img.test/7fiv6.jpg',
+        musicSize: 8,
+        userType: 2,
+        artistId: 202,
+        followed: true
+      }
+    ])
+    assert.equal(requests.length, 1)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})

@@ -1132,9 +1132,10 @@ async function openRanking(): Promise<void> {
 }
 
 async function onUserClick(user: NcmUserSummary): Promise<void> {
-  if (user.userType === 2 || user.userType === 4 || user.userType === 6) {
+  const artistId = Number(user.artistId ?? user.id)
+  if ((user.userType === 2 || user.userType === 4 || user.userType === 6) && Number.isFinite(artistId) && artistId > 0) {
     await openArtist({
-      id: user.id,
+      id: artistId,
       name: user.name,
       picUrl: user.picUrl,
       albumSize: 0,
