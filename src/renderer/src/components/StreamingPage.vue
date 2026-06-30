@@ -20,8 +20,14 @@ import StreamingLibrary from './StreamingLibrary.vue'
 import StreamingSearch from './StreamingSearch.vue'
 import BilibiliPage from './BilibiliPage.vue'
 import {
+  buildStreamingSidebarItems,
+  getFirstVisibleStreamingTab,
+  getUnifiedLibraryProviders,
+  hasStreamingSidebarEntries,
   isSidebarItemActiveForProvider,
-  shouldShowBilibiliViewForSidebarProvider
+  shouldShowBilibiliViewForSidebarProvider,
+  type StreamingSidebarItem,
+  type StreamingTabKey
 } from '../utils/streamingNavigation'
 import {
   findBestStreamingArtistMatch,
@@ -50,7 +56,7 @@ interface DetailHeaderInfo {
   intro?: string
 }
 
-type StreamingTab = 'home' | 'library'
+type StreamingTab = StreamingTabKey
 type ArtistDetailTab = 'songs' | 'albums' | 'playlists'
 type DetailView =
   | { type: 'liked' }
@@ -97,6 +103,7 @@ const providerStore = useProviderStore()
 const settingsStore = useSettingsStore()
 
 const NCM_PROVIDER_ID = 'ncm'
+const ncmNavigationAvailable = computed(() => providerStore.hasProvider(NCM_PROVIDER_ID))
 
 // ─── Generic external provider state (bili / ytmusic / future) ───────────
 // Replaces the previously bili-only refs so any provider declaring a library
@@ -137,20 +144,25 @@ function ensureExternalState(id: string): ExternalProviderState {
 }
 
 function isProviderAvailable(id: string): boolean {
-  return id === NCM_PROVIDER_ID ? true : providerStore.hasProvider(id)
+  return id === NCM_PROVIDER_ID ? ncmNavigationAvailable.value : providerStore.hasProvider(id)
 }
 
 // User's persisted preferred provider — only explicit user toggles change it.
 const preferredProvider = ref<string>(
   settingsStore.settings.value.streamingActiveProvider || NCM_PROVIDER_ID
 )
+const fallbackProvider = ref<string | null>(null)
 
-// Resolved active provider: preferred when available, else fall back to ncm.
-// Keeps the user's choice across restarts while degrading gracefully when a
-// plugin is disabled (falls back to ncm until the plugin returns).
-const activeProvider = computed<string>(() =>
-  isProviderAvailable(preferredProvider.value) ? preferredProvider.value : NCM_PROVIDER_ID
-)
+// Resolved active provider: preferred when available, else the first provider
+// that can back the shared music-library surface. If none exists, keep the
+// ncm id as an inert fallback so the empty streaming state can render.
+const activeProvider = computed<string>(() => {
+  if (isProviderAvailable(preferredProvider.value)) return preferredProvider.value
+  if (fallbackProvider.value && isProviderAvailable(fallbackProvider.value)) {
+    return fallbackProvider.value
+  }
+  return libraryProviders.value[0]?.id ?? NCM_PROVIDER_ID
+})
 
 const isExternalActive = computed(() => activeProvider.value !== NCM_PROVIDER_ID)
 const isBiliActive = computed(() => activeProvider.value === 'bili')
@@ -165,25 +177,13 @@ const activeProviderLabel = computed(() => {
 })
 
 // Providers eligible for the unified music-library toggle (the dropdown on
-// the profile card). ncm is always first; other providers opt in by declaring
-// `ui.unifiedLibrary: true`. Providers that don't opt in (e.g. Bilibili, a
-// video-favorites feature) keep their own sidebar entry instead.
-const libraryProviders = computed(() => {
-  const list: Array<{ id: string; name: string; icon: string }> = [
-    { id: NCM_PROVIDER_ID, name: '网易云音乐', icon: 'pi pi-cloud' }
-  ]
-  for (const provider of providerStore.providers.value) {
-    if (provider.id === NCM_PROVIDER_ID) continue
-    if (provider.capabilities.includes('library') && provider.ui?.unifiedLibrary === true) {
-      list.push({
-        id: provider.id,
-        name: provider.name,
-        icon: provider.ui?.icon || 'pi pi-music'
-      })
-    }
-  }
-  return list
-})
+// the profile card). Providers opt in by declaring `ui.unifiedLibrary: true`.
+const libraryProviders = computed(() =>
+  getUnifiedLibraryProviders({
+    ncmAvailable: ncmNavigationAvailable.value,
+    providers: providerStore.providers.value
+  })
+)
 
 async function loadRecommendations(): Promise<void> {
   if (isExternalActive.value) return
@@ -224,58 +224,24 @@ async function openRecSection(section: RecSection): Promise<void> {
   detailError.value = ''
 }
 
-interface TabItem {
-  key: StreamingTab
-  label: string
-  icon: string
-}
+type SidebarItem = StreamingSidebarItem
 
-interface SidebarItem {
-  key: string
-  provider: string
-  label: string
-  icon: string
-  tab?: StreamingTab
-}
-
-const tabs: TabItem[] = [
-  { key: 'home', label: '主页', icon: 'pi pi-sparkles' },
-  { key: 'library', label: '音乐库', icon: 'pi pi-heart' }
-]
-const sidebarItems = computed<SidebarItem[]>(() => {
-  const items: SidebarItem[] = tabs.map((tab) => ({
-    key: tab.key,
-    provider: NCM_PROVIDER_ID,
-    label: tab.label,
-    icon: tab.icon,
-    tab: tab.key
-  }))
-  for (const provider of providerStore.providers.value) {
-    if (provider.id === NCM_PROVIDER_ID) continue
-    // Unified-library providers (e.g. YouTube Music) are reached via the
-    // profile-card dropdown, NOT a sidebar entry — they share the single
-    // "音乐库" item with ncm. Providers that don't opt in (e.g. Bilibili,
-    // a video-favorites feature) keep their own sidebar entry.
-    if (
-      provider.capabilities.includes('library') &&
-      provider.ui?.unifiedLibrary !== true &&
-      provider.ui?.streamingLibraryTab !== false
-    ) {
-      items.push({
-        key: `${provider.id}-library`,
-        provider: provider.id,
-        label: provider.name,
-        icon: provider.ui?.icon || 'pi pi-music'
-      })
-    }
-  }
-  return items
-})
-
-const currentView = computed(() => tabs.find((t) => t.key === activeTab.value))
+const sidebarItems = computed<SidebarItem[]>(() =>
+  buildStreamingSidebarItems({
+    ncmAvailable: ncmNavigationAvailable.value,
+    providers: providerStore.providers.value
+  })
+)
+const hasOnlineNavigationEntries = computed(() => hasStreamingSidebarEntries(sidebarItems.value))
+const visibleTabs = computed(() =>
+  sidebarItems.value.filter(
+    (item): item is SidebarItem & { tab: StreamingTab } => item.tab === 'home' || item.tab === 'library'
+  )
+)
+const currentView = computed(() => visibleTabs.value.find((item) => item.tab === activeTab.value))
 
 function getStreamingTabIndex(key: StreamingTab): number {
-  const index = tabs.findIndex((tab) => tab.key === key)
+  const index = visibleTabs.value.findIndex((tab) => tab.tab === key)
   return index === -1 ? 0 : index
 }
 
@@ -457,7 +423,9 @@ const activeLoggedIn = computed(() =>
   isExternalActive.value ? (activeExternalState.value?.loggedIn ?? false) : isLoggedIn.value
 )
 const activeProviderAvailable = computed(() =>
-  isExternalActive.value ? isProviderAvailable(activeProvider.value) : providerAvailable.value
+  isExternalActive.value
+    ? isProviderAvailable(activeProvider.value)
+    : ncmNavigationAvailable.value && providerAvailable.value
 )
 const activeProviderError = computed(() =>
   isExternalActive.value ? (activeExternalState.value?.libraryError ?? '') : providerError.value
@@ -472,7 +440,7 @@ const activeProviderUnavailable = computed(() => {
   const error = activeProviderError.value
   return /Provider 未启用|provider is disabled|does not implement/i.test(error)
 })
-const showNcmSearch = computed(() => !isExternalActive.value && isLoggedIn.value)
+const showNcmSearch = computed(() => ncmNavigationAvailable.value && !isExternalActive.value && isLoggedIn.value)
 const trackUnitLabel = computed(() => (isBiliActive.value ? '个视频' : '首歌曲'))
 const profileSignature = computed(() => activeProfile.value?.signature?.trim() || '暂无个人简介')
 
@@ -686,7 +654,12 @@ function selectTab(key: StreamingTab): void {
   activeTab.value = key
 }
 
-function selectProvider(provider: string): void {
+function selectProvider(provider: string, persist = true): void {
+  if (!persist) {
+    fallbackProvider.value = provider
+    return
+  }
+  fallbackProvider.value = null
   if (preferredProvider.value === provider) return
   // Only an explicit user action changes the persisted preference; availability
   // fallbacks never write back, so the choice survives restarts and plugin toggles.
@@ -695,6 +668,13 @@ function selectProvider(provider: string): void {
 }
 
 function isSidebarItemActive(item: SidebarItem): boolean {
+  if (item.tab === 'library') {
+    return (
+      !showBilibiliView.value &&
+      activeTab.value === 'library' &&
+      libraryProviders.value.some((provider) => provider.id === activeProvider.value)
+    )
+  }
   return isSidebarItemActiveForProvider({
     itemProvider: item.provider,
     itemKey: item.key,
@@ -704,19 +684,36 @@ function isSidebarItemActive(item: SidebarItem): boolean {
   })
 }
 
-function selectSidebarItem(item: SidebarItem): void {
+function getSharedLibraryProviderId(): string {
+  if (libraryProviders.value.some((provider) => provider.id === activeProvider.value)) {
+    return activeProvider.value
+  }
+  return libraryProviders.value[0]?.id ?? NCM_PROVIDER_ID
+}
+
+function selectSidebarItem(item: SidebarItem, options: { persistProvider?: boolean } = {}): void {
+  const persistProvider = options.persistProvider !== false
   showBilibiliView.value = shouldShowBilibiliViewForSidebarProvider(item.provider)
   if (item.provider === 'bili') {
     return
   }
+  if (item.tab === 'library') {
+    const provider = getSharedLibraryProviderId()
+    if (activeProvider.value !== provider) {
+      selectProvider(provider, persistProvider)
+    }
+    selectTab('library')
+    return
+  }
   if (item.provider !== NCM_PROVIDER_ID) {
-    selectProvider(item.provider)
+    selectProvider(item.provider, persistProvider)
+    if (item.tab) selectTab(item.tab)
     return
   }
   if (activeProvider.value !== NCM_PROVIDER_ID) {
-    selectProvider(NCM_PROVIDER_ID)
+    selectProvider(NCM_PROVIDER_ID, persistProvider)
   }
-  selectTab(item.key as StreamingTab)
+  if (item.tab) selectTab(item.tab)
 }
 
 function resetDetail(): void {
@@ -736,6 +733,32 @@ function resetDetail(): void {
   detailError.value = ''
   followActionLoading.value = false
   followActionError.value = ''
+}
+
+function getSidebarItemsSignature(): string {
+  return sidebarItems.value
+    .map((item) => `${item.key}:${item.provider}:${item.tab ?? 'external'}`)
+    .join('|')
+}
+
+function ensureVisibleSidebarSelection(): void {
+  if (!hasOnlineNavigationEntries.value) {
+    fallbackProvider.value = null
+    showBilibiliView.value = false
+    resetDetail()
+    clearSearch()
+    return
+  }
+  if (sidebarItems.value.some((item) => isSidebarItemActive(item))) {
+    return
+  }
+  const firstTab = getFirstVisibleStreamingTab(sidebarItems.value)
+  const nextItem = firstTab
+    ? sidebarItems.value.find((item) => item.tab === firstTab)
+    : sidebarItems.value[0]
+  if (nextItem) {
+    selectSidebarItem(nextItem, { persistProvider: false })
+  }
 }
 
 function beginDetailLoad(): number {
@@ -1235,15 +1258,24 @@ watch(
   }
 )
 
+watch(
+  getSidebarItemsSignature,
+  () => {
+    ensureVisibleSidebarSelection()
+  },
+  { flush: 'post' }
+)
+
 // Side effects of switching the resolved active provider (user toggle, plugin
-// enable/disable, or restore after restart). activeProvider falls back to ncm
-// automatically when the preferred provider is unavailable, so we only act on
-// real changes.
+// enable/disable, or restore after restart). activeProvider falls back to the
+// first provider that can back the current streaming surface, so we only act
+// on real changes.
 watch(activeProvider, async (provider, oldProvider) => {
   if (provider === oldProvider) return
   resetDetail()
   clearSearch()
   if (provider === NCM_PROVIDER_ID) {
+    if (!ncmNavigationAvailable.value) return
     if (activeTab.value === 'home' && isLoggedIn.value) {
       loadRecommendations()
     } else if (activeTab.value === 'library') {
@@ -1270,6 +1302,7 @@ watch(activeTab, async (tab) => {
     if (state.loggedIn) await ensureExternalLibraryLoaded(activeProvider.value)
     return
   }
+  if (!ncmNavigationAvailable.value) return
   if (tab === 'home' && isLoggedIn.value) {
     loadRecommendations()
   }
@@ -1290,6 +1323,7 @@ watch(
       return
     }
     if (isExternalActive.value) return
+    if (!ncmNavigationAvailable.value) return
     if (activeTab.value === 'home') {
       loadRecommendations()
     }
@@ -1304,6 +1338,7 @@ onMounted(async () => {
   // syncProviders may have resolved the preferred external provider, in which
   // case the activeProvider watcher above already handles the initial load.
   if (activeProvider.value === NCM_PROVIDER_ID) {
+    if (!ncmNavigationAvailable.value) return
     if (activeTab.value === 'home' && isLoggedIn.value) {
       loadRecommendations()
     } else if (activeTab.value === 'library') {
@@ -1483,8 +1518,14 @@ onMounted(async () => {
           />
         </div>
         <div v-else :key="activeTab" class="streaming-content-body">
+          <div v-if="!hasOnlineNavigationEntries && !currentDetail" class="streaming-placeholder">
+            <i class="pi pi-plug" style="font-size: 48px; color: #ccc"></i>
+            <p class="placeholder-title">未启用可用的在线音源</p>
+            <p class="placeholder-hint">请在设置的插件页启用网易云音乐或其它音源插件。</p>
+          </div>
+
           <StreamingHome
-            v-if="activeTab === 'home' && !currentDetail && activeProviderAvailable"
+            v-else-if="activeTab === 'home' && !currentDetail && activeProviderAvailable"
             :is-logged-in="isLoggedIn"
             :recs-loading="recsLoading"
             :recs-error="recsError"
