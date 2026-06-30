@@ -2049,7 +2049,7 @@ onMounted(async () => {
   width: var(--te-menu-width);
   box-sizing: border-box;
   background: var(--te-card-bg);
-  border-right: 1px solid rgba(17, 24, 39, 0.06);
+  border-right: 1px solid var(--te-card-border);
   z-index: 1000;
   overflow: hidden;
   box-shadow: 8px 0 24px rgba(15, 23, 42, 0.04);

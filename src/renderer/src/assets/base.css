@@ -421,7 +421,7 @@ html[data-theme='pureWhite'] .title-bar.title-bar-settings::before {
 }
 
 html[data-theme='pureWhite'] .title-bar.title-bar-streaming {
-  background: #fff;
+  background: transparent !important;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -431,7 +431,7 @@ html[data-theme='pureWhite'] .title-bar.title-bar-menu-open:not(.title-bar-glass
 }
 
 html[data-theme='pureWhite'] .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
-  background: #fff;
+  background: transparent !important;
 }
 
 html[data-theme='pureWhite'] .title-bar::before {
@@ -1986,7 +1986,15 @@ html[data-card-custom='on']
     .glass-card,
     .feature-card,
     .playlist-grid-card,
+    .playlist-tile,
     .favorites-card,
+    .streaming-placeholder,
+    .empty-recommend,
+    .detail-playlist-header,
+    .track-table-wrapper,
+    .profile-panel,
+    .liked-panel,
+    .playlist-list-item,
     .profile-card,
     .recent-card,
     .ranking-card,
@@ -2024,6 +2032,16 @@ html[data-card-custom='on']
   -webkit-backdrop-filter: blur(var(--te-card-blur, 20px)) saturate(var(--te-card-saturate, 150%)) !important;
 }
 
+html[data-card-custom='on'] .streaming-sidebar {
+  background: var(--te-card-bg) !important;
+  border-right-color: var(--te-card-border) !important;
+  border-right-style: solid !important;
+  border-right-width: var(--te-card-border-width, 1px) !important;
+  box-shadow: var(--te-card-shadow, none) !important;
+  backdrop-filter: blur(var(--te-card-blur, 20px)) saturate(var(--te-card-saturate, 150%)) !important;
+  -webkit-backdrop-filter: blur(var(--te-card-blur, 20px)) saturate(var(--te-card-saturate, 150%)) !important;
+}
+
 /* ===== Card appearance: hover effects ===== */
 html[data-card-custom='on']
   :is(
@@ -2033,7 +2051,15 @@ html[data-card-custom='on']
     .glass-card,
     .feature-card,
     .playlist-grid-card,
+    .playlist-tile,
     .favorites-card,
+    .streaming-placeholder,
+    .empty-recommend,
+    .detail-playlist-header,
+    .track-table-wrapper,
+    .profile-panel,
+    .liked-panel,
+    .playlist-list-item,
     .profile-card,
     .recent-card,
     .ranking-card,

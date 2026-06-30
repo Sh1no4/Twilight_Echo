@@ -52,6 +52,7 @@ const songlistOrder = ['dashboard', 'allSongs', 'artists', 'albums', 'playlists'
 const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
 
 const streamingMenuOpen = ref(false)
+const localMenuOpenBeforeStreaming = ref(false)
 const titleMenuOpen = computed(() =>
   showPluginPage.value ? false : showStreamingPage.value ? streamingMenuOpen.value : menuOpen.value
 )
@@ -68,6 +69,10 @@ const showStreamingSurface = computed(
 
 function toggleMenu(): void {
   if (showLoginPage.value) return
+  if (showSettingsPage.value) {
+    closeSettingsPage()
+    return
+  }
   if (showPluginPage.value) return
   if (showStreamingPage.value) {
     toggleStreamingMenu()
@@ -141,6 +146,7 @@ function handleCoverClick(rect: { x: number; y: number; w: number; h: number }):
 }
 
 function enterStreamingMode(): void {
+  localMenuOpenBeforeStreaming.value = menuOpen.value
   menuOpen.value = false
   showPlayingPage.value = false
   showSettingsPage.value = false
@@ -148,6 +154,12 @@ function enterStreamingMode(): void {
   showPluginPage.value = false
   activePluginPage.value = null
   showStreamingPage.value = true
+}
+
+function returnToLocalMode(): void {
+  showStreamingPage.value = false
+  streamingMenuOpen.value = false
+  menuOpen.value = localMenuOpenBeforeStreaming.value
 }
 
 async function openLoginPage(): Promise<void> {
@@ -168,6 +180,7 @@ function closeLoginPage(): void {
 
 function openSettingsPage(section: SettingsSection = 'general'): void {
   settingsInitialSection.value = section
+  showPlayingPage.value = false
   showPluginPage.value = false
   showEqualizerPage.value = false
   activePluginPage.value = null
@@ -598,7 +611,7 @@ const titleSurface = computed<TitleSurface>(() => {
       :menu-open="streamingMenuOpen"
       :has-player="hasPlayerBar"
       @toggle-menu="toggleStreamingMenu"
-      @back-to-local="showStreamingPage = false"
+      @back-to-local="returnToLocalMode"
       @login="openLoginPage"
     />
     <Transition name="login-page">

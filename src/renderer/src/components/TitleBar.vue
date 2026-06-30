@@ -50,6 +50,7 @@ function close(): void {
       'title-bar-menu-open': menuOpen
     }"
   >
+    <div class="title-bar-background" aria-hidden="true"></div>
     <div v-if="!glass" class="title-bar-start no-drag">
       <button class="menu-btn" title="菜单" @click="$emit('toggleMenu')">
         <svg
@@ -109,11 +110,13 @@ function close(): void {
 
 <style scoped>
 .title-bar {
+  --title-bar-bg-color: var(--te-local-bg);
+  --title-bar-bg-image: var(--te-local-bg-image);
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: 32px;
-  background: transparent;
+  background: transparent !important;
   user-select: none;
   position: fixed;
   top: 0;
@@ -130,11 +133,28 @@ function close(): void {
     box-shadow 0.3s;
 }
 
+.title-bar-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--title-bar-bg-color);
+  background-image: var(--title-bar-bg-image);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
 .title-bar::before {
   display: none;
 }
 
 .title-bar-glass {
+  --title-bar-bg-color: transparent;
+  --title-bar-bg-image: none;
   background: transparent;
   border-bottom-color: transparent;
   box-shadow: none;
@@ -143,6 +163,8 @@ function close(): void {
 }
 
 .title-bar.title-bar-settings {
+  --title-bar-bg-color: var(--te-settings-bg);
+  --title-bar-bg-image: var(--te-settings-bg-image);
   background: transparent !important;
   border-bottom-color: transparent;
   box-shadow: none;
@@ -153,7 +175,9 @@ function close(): void {
 }
 
 .title-bar.title-bar-streaming {
-  background: var(--te-card-bg);
+  --title-bar-bg-color: var(--te-streaming-bg);
+  --title-bar-bg-image: var(--te-streaming-bg-image);
+  background: transparent !important;
   border-bottom-color: transparent;
   box-shadow: none;
   backdrop-filter: none;
@@ -165,7 +189,7 @@ function close(): void {
 }
 
 .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
-  background: var(--te-card-bg);
+  background: transparent !important;
 }
 
 .title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings)::before {
@@ -186,25 +210,17 @@ function close(): void {
 }
 
 :global(html[data-theme='dark']) .title-bar {
-  background-color: var(--te-local-bg);
-  background-image: var(--te-local-bg-image);
-  background-position: center top;
-  background-size: cover;
-  background-repeat: no-repeat;
+  background: transparent !important;
 }
 
 :global(html[data-theme='dark']) .title-bar.title-bar-streaming,
 :global(html[data-theme='dark']) .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
-  background-color: var(--te-streaming-bg);
-  background-image: var(--te-streaming-bg-image);
-  background-position: center top;
-  background-size: cover;
-  background-repeat: no-repeat;
+  background: transparent !important;
 }
 
 :global(html[data-theme='dark']) .title-bar.title-bar-settings,
 :global(html[data-theme='dark']) .title-bar.title-bar-glass {
-  background: transparent;
+  background: transparent !important;
 }
 
 .title-bar-start {
