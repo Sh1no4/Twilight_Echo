@@ -36,6 +36,7 @@ type StartupHomePage = 'local' | 'streaming'
 type UiDensity = 'compact' | 'standard' | 'comfortable'
 type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 type LyricAlign = 'center' | 'left'
+type LibraryChange = { kind: 'add' | 'remove' | 'unknown'; path?: string }
 type ProxyMode = 'auto' | 'custom' | 'off'
 type BuiltInTrackSource = 'local' | 'ncm'
 type TrackSource = BuiltInTrackSource | (string & {})
@@ -872,7 +873,8 @@ interface WindowAPI {
     clearActivity: () => Promise<void>
   }
   library: {
-    onChanged: (cb: () => void) => () => void
+    onChanged: (cb: (change: LibraryChange | undefined) => void) => () => void
+    onCoversMissing: (cb: (info: { dirtyCount: number }) => void) => () => void
   }
   fs: {
     scanMusicFiles: (folderPath: string) => Promise<TrackData[]>

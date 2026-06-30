@@ -32,6 +32,14 @@ const playlists = ref<Playlist[]>([])
 const trackById = new Map<string, Track>()
 const trackPathSet = new Set<string>()
 
+// Rebuild coalescing state — module-level so it persists across useMusicStore() calls.
+let rebuildScheduled = false
+let rebuildCount = 0
+
+// Save debounce state — module-level so it persists across useMusicStore() calls.
+let saveLibraryTimer: ReturnType<typeof setTimeout> | null = null
+const pendingSaveResolvers: Array<() => void> = []
+
 export function useMusicStore(): {
   tracks: Ref<Track[]>
   artists: Ref<LibraryItem[]>
@@ -49,13 +57,18 @@ export function useMusicStore(): {
   savePlaylists: () => Promise<void>
   loadPlaylists: () => Promise<void>
   saveLibrary: () => Promise<void>
+  scheduleSaveLibrary: () => Promise<void>
+  flushSaveLibrary: () => void
   loadLibrary: () => Promise<void>
+  handleLibraryChange: (change: { kind: 'add' | 'remove' | 'unknown'; path?: string } | undefined) => Promise<void>
   refreshLibraryIndex: () => void
   scannedFolders: Ref<string[]>
   isScanning: Ref<boolean>
   addFolder: (path: string) => void
   removeFolder: (path: string) => void
   syncFolders: (folders: string[]) => void
+  flushRebuild: () => void
+  getRebuildCount: () => number
 } {
   function rebuildDerivedCollections(): void {
     trackById.clear()
@@ -123,11 +136,66 @@ export function useMusicStore(): {
       .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
   }
 
-  async function saveLibrary(): Promise<void> {
+  async function doSaveLibrary(): Promise<void> {
     await window.api.data.saveMusicLibrary({
       tracks: tracks.value,
       folders: [...scannedFolders.value]
     })
+    const resolvers = pendingSaveResolvers.splice(0)
+    for (const resolve of resolvers) resolve()
+  }
+
+  async function saveLibrary(): Promise<void> {
+    // Direct save: flush any pending timer and write immediately
+    if (saveLibraryTimer !== null) {
+      clearTimeout(saveLibraryTimer)
+      saveLibraryTimer = null
+    }
+    await doSaveLibrary()
+  }
+
+  function scheduleSaveLibrary(): Promise<void> {
+    return new Promise<void>((resolve) => {
+      pendingSaveResolvers.push(resolve)
+      if (saveLibraryTimer !== null) clearTimeout(saveLibraryTimer)
+      saveLibraryTimer = setTimeout(() => {
+        saveLibraryTimer = null
+        void doSaveLibrary()
+      }, 500)
+    })
+  }
+
+  function flushSaveLibrary(): void {
+    if (saveLibraryTimer !== null) {
+      clearTimeout(saveLibraryTimer)
+      saveLibraryTimer = null
+    }
+    // Best-effort synchronous save for quit-flush (beforeunload)
+    void window.api.data.saveMusicLibrary({
+      tracks: tracks.value,
+      folders: [...scannedFolders.value]
+    })
+    const resolvers = pendingSaveResolvers.splice(0)
+    for (const resolve of resolvers) resolve()
+  }
+
+  function scheduleRebuild(): void {
+    if (rebuildScheduled) return
+    rebuildScheduled = true
+    queueMicrotask(() => {
+      if (!rebuildScheduled) return
+      rebuildScheduled = false
+      rebuildDerivedCollections()
+      rebuildCount++
+    })
+  }
+
+  function flushRebuild(): void {
+    if (rebuildScheduled) {
+      rebuildScheduled = false
+      rebuildDerivedCollections()
+      rebuildCount++
+    }
   }
 
   async function loadLibrary(): Promise<void> {
@@ -143,6 +211,50 @@ export function useMusicStore(): {
     rebuildDerivedCollections()
   }
 
+  async function handleLibraryChange(
+    change: { kind: 'add' | 'remove' | 'unknown'; path?: string } | undefined
+  ): Promise<void> {
+    try {
+      // Single file removal
+      if (change?.kind === 'remove' && change.path) {
+        const track = tracks.value.find((t) => t.filePath === change.path)
+        if (track) {
+          removeTrack(track.id)
+          void scheduleSaveLibrary()
+          return
+        }
+        // Track not found — fall through to full reload
+      }
+
+      // Single file addition or content change
+      if (change?.kind === 'add' && change.path) {
+        const lastSep = Math.max(change.path.lastIndexOf('\\'), change.path.lastIndexOf('/'))
+        const dir = lastSep >= 0 ? change.path.slice(0, lastSep) : change.path
+        const scanned = await window.api.fs.scanMusicFiles(dir)
+        const newTracks = (scanned as Track[]).filter((t) => t.filePath === change.path)
+        if (newTracks.length > 0) {
+          // If path already in trackPathSet (content change / tag edit):
+          // remove old track first, then add new (remove-then-add)
+          if (trackPathSet.has(change.path)) {
+            const oldTrack = tracks.value.find((t) => t.filePath === change.path)
+            if (oldTrack) {
+              removeTrack(oldTrack.id)
+            }
+          }
+          await addTracks(newTracks)
+          return
+        }
+        // No tracks found in scan — fall through to full reload
+      }
+
+      // Fallback: full reload for unknown/no-path/incremental failure
+      await loadLibrary()
+    } catch {
+      // Incremental parse failed — fallback to full reload
+      await loadLibrary()
+    }
+  }
+
   async function addTracks(newTracks: Track[], options: AddTracksOptions = {}): Promise<void> {
     const unique: Track[] = []
     for (const track of newTracks) {
@@ -155,19 +267,25 @@ export function useMusicStore(): {
 
     tracks.value = [...tracks.value, ...unique]
     if (!options.deferRebuild) {
-      rebuildDerivedCollections()
+      scheduleRebuild()
     }
     if (!isScanning.value) {
-      await saveLibrary()
+      void scheduleSaveLibrary()
     }
   }
 
   function removeTrack(id: string): void {
+    const track = trackById.get(id)
+    if (track) {
+      trackPathSet.delete(track.filePath)
+      trackById.delete(id)
+    }
     tracks.value = tracks.value.filter((t) => t.id !== id)
-    rebuildDerivedCollections()
+    scheduleRebuild()
   }
 
   function clearTracks(): void {
+    rebuildScheduled = false
     tracks.value = []
     rebuildDerivedCollections()
   }
@@ -293,6 +411,11 @@ export function useMusicStore(): {
       )
       rebuildDerivedCollections()
       saveLibrary()
-    }
+    },
+    flushRebuild,
+    getRebuildCount: () => rebuildCount,
+    scheduleSaveLibrary,
+    flushSaveLibrary,
+    handleLibraryChange
   }
 }

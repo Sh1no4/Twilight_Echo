@@ -15,7 +15,7 @@ import {
   screen
 } from 'electron'
 import { join, extname, basename, dirname, resolve } from 'path'
-import { readdirSync, statSync, readFileSync, existsSync, writeFileSync, mkdirSync } from 'fs'
+import { readdirSync, statSync, readFileSync, existsSync, writeFileSync, mkdirSync, renameSync, copyFileSync, unlinkSync } from 'fs'
 import { readFile, writeFile, readdir, stat, rm } from 'fs/promises'
 import { randomUUID, createHash } from 'crypto'
 import { tmpdir } from 'os'
@@ -1182,7 +1182,7 @@ async function rebuildMissingTrackCover(track: Record<string, unknown>): Promise
   return repairedCover !== cover
 }
 
-async function repairMissingLibraryCovers(tracks: unknown[]): Promise<boolean> {
+export async function repairMissingLibraryCovers(tracks: unknown[]): Promise<boolean> {
   const candidates = tracks.filter(
     (track): track is Record<string, unknown> =>
       !!track &&
@@ -1812,11 +1812,18 @@ function applyRuntimeSettings(): void {
 
 // ── Library folder watchers ───────────────────────────────────────
 const AUDIO_EXTENSIONS = new Set(['.mp3', '.flac', '.wav', '.ape', '.m4a', '.ogg', '.opus', '.wma', '.aac', '.dsf', '.dff', '.iso'])
-const libraryWatchers = new Map<string, { watcher: ReturnType<typeof import('fs')['watch']>; debounce: NodeJS.Timeout | null }>()
+const libraryWatchers = new Map<string, {
+  watcher: ReturnType<typeof import('fs')['watch']>
+  debounce: NodeJS.Timeout | null
+  changes: Map<string, { kind: 'add' | 'remove'; path: string }>
+}>()
 let libraryWatcherDebounceMs = 2000
 
-function notifyLibraryChanged(): void {
-  mainWindow?.webContents.send('library:changed')
+// Once-per-session flag: prevents repeated library:covers-missing notifications
+let coversMissingNotified = false
+
+function notifyLibraryChanged(change?: { kind: 'add' | 'remove' | 'unknown'; path?: string }): void {
+  mainWindow?.webContents.send('library:changed', change)
 }
 
 function createFolderWatcher(folder: string): void {
@@ -1827,15 +1834,27 @@ function createFolderWatcher(folder: string): void {
       if (!filename) return
       const ext = extname(filename).toLowerCase()
       if (!AUDIO_EXTENSIONS.has(ext)) return
+      const fullPath = join(folder, filename)
       const entry = libraryWatchers.get(folder)
       if (!entry) return
+      // Determine kind using existsSync (rename events are ambiguous)
+      const kind: 'add' | 'remove' = existsSync(fullPath) ? 'add' : 'remove'
+      // Dedupe by kind:path — same event (rename+change) coalesces to 1
+      const key = `${kind}:${fullPath}`
+      entry.changes.set(key, { kind, path: fullPath })
       if (entry.debounce) clearTimeout(entry.debounce)
       entry.debounce = setTimeout(() => {
         entry.debounce = null
-        notifyLibraryChanged()
+        const changes = Array.from(entry.changes.values())
+        entry.changes.clear()
+        if (changes.length === 1) {
+          notifyLibraryChanged(changes[0])
+        } else if (changes.length > 1) {
+          notifyLibraryChanged({ kind: 'unknown' })
+        }
       }, libraryWatcherDebounceMs)
     })
-    libraryWatchers.set(folder, { watcher, debounce: null })
+    libraryWatchers.set(folder, { watcher, debounce: null, changes: new Map() })
   } catch {
     // Folder may not exist yet or watching unsupported — skip silently
   }
@@ -1845,6 +1864,7 @@ function removeFolderWatcher(folder: string): void {
   const entry = libraryWatchers.get(folder)
   if (!entry) return
   if (entry.debounce) clearTimeout(entry.debounce)
+  entry.changes.clear()
   try { entry.watcher.close() } catch { /* ignore */ }
   libraryWatchers.delete(folder)
 }
@@ -2948,41 +2968,118 @@ if (!gotSingleInstanceLock) {
   const PLAYLISTS_FILE = join(userDataPath, 'playlists.json')
 
   ipcMain.handle('data:saveMusicLibrary', async (_event, library: { tracks: unknown[]; folders?: string[] } | unknown[]) => {
-    await writeFile(MUSIC_LIBRARY_FILE, JSON.stringify(library), 'utf-8')
+    const tmpPath = MUSIC_LIBRARY_FILE + '.tmp'
+    const bakPath = MUSIC_LIBRARY_FILE + '.bak'
+    try {
+      writeFileSync(tmpPath, JSON.stringify(library), 'utf-8')
+      // Copy current dest to .bak (keep dest intact — avoids rename-to-bak window)
+      if (existsSync(MUSIC_LIBRARY_FILE)) {
+        copyFileSync(MUSIC_LIBRARY_FILE, bakPath)
+      }
+      // Atomic rename (Windows: MoveFileEx + REPLACE_EXISTING)
+      try {
+        renameSync(tmpPath, MUSIC_LIBRARY_FILE)
+      } catch {
+        // EPERM/EBUSY fallback: unlink dest then rename tmp
+        if (existsSync(MUSIC_LIBRARY_FILE)) {
+          unlinkSync(MUSIC_LIBRARY_FILE)
+        }
+        renameSync(tmpPath, MUSIC_LIBRARY_FILE)
+      }
+      // Success: clean up .bak
+      try { unlinkSync(bakPath) } catch { /* bak may not exist on first save */ }
+    } catch (err) {
+      // Failure: restore .bak → dest if available
+      try {
+        if (existsSync(bakPath)) {
+          copyFileSync(bakPath, MUSIC_LIBRARY_FILE)
+        }
+      } catch { /* best-effort restore */ }
+      // Clean up orphaned tmp
+      try { unlinkSync(tmpPath) } catch { /* ignore */ }
+      throw err
+    }
   })
 
   ipcMain.handle('data:loadMusicLibrary', async () => {
-    if (!existsSync(MUSIC_LIBRARY_FILE)) return []
-    try {
-      const raw = await readFile(MUSIC_LIBRARY_FILE, 'utf-8')
-      const data = JSON.parse(raw)
-      // Strip lyrics from saved library — lyrics are lazy-loaded on playback
-      const tracks = Array.isArray(data) ? data : data.tracks
-      if (Array.isArray(tracks)) {
-        let changed = false
-        for (const track of tracks) {
-          if (track.lyrics) {
-            track.lyrics = null
-            changed = true
-          }
-          // Migrate old base64 covers to disk cache
-          if (track.cover && typeof track.cover === 'string' && track.cover.startsWith('data:')) {
-            const handle = migrateBase64Cover(track.cover)
-            if (handle) {
-              track.cover = handle
-              changed = true
-            }
-          }
-        }
-        changed = (await repairMissingLibraryCovers(tracks)) || changed
-        if (changed) {
-          await writeFile(MUSIC_LIBRARY_FILE, JSON.stringify(data), 'utf-8')
-        }
+    // Auto-recovery from .bak if dest is missing, empty, or corrupt
+    if (!existsSync(MUSIC_LIBRARY_FILE) || statSync(MUSIC_LIBRARY_FILE).size === 0) {
+      const bakPath = MUSIC_LIBRARY_FILE + '.bak'
+      if (existsSync(bakPath)) {
+        try { copyFileSync(bakPath, MUSIC_LIBRARY_FILE) } catch { /* best-effort */ }
       }
-      return data
+    }
+
+    if (!existsSync(MUSIC_LIBRARY_FILE)) return []
+
+    let raw: string
+    try {
+      raw = readFileSync(MUSIC_LIBRARY_FILE, 'utf-8')
     } catch {
       return []
     }
+
+    let data: unknown
+    try {
+      data = JSON.parse(raw)
+    } catch {
+      // JSON.parse failed — try .bak recovery
+      const bakPath = MUSIC_LIBRARY_FILE + '.bak'
+      if (existsSync(bakPath)) {
+        try {
+          copyFileSync(bakPath, MUSIC_LIBRARY_FILE)
+          raw = readFileSync(MUSIC_LIBRARY_FILE, 'utf-8')
+          data = JSON.parse(raw)
+        } catch {
+          return []
+        }
+      } else {
+        return []
+      }
+    }
+
+    // Strip lyrics from saved library — lyrics are lazy-loaded on playback
+    const tracks = Array.isArray(data) ? data : (data as { tracks?: unknown[] }).tracks
+    if (Array.isArray(tracks)) {
+      let changed = false
+      for (const track of tracks) {
+        const t = track as Record<string, unknown>
+        if (t.lyrics) {
+          t.lyrics = null
+          changed = true
+        }
+        // Migrate old base64 covers to disk cache
+        if (t.cover && typeof t.cover === 'string' && (t.cover as string).startsWith('data:')) {
+          const handle = migrateBase64Cover(t.cover as string)
+          if (handle) {
+            t.cover = handle
+            changed = true
+          }
+        }
+      }
+      // Cover repair removed from load path (scan responsibility).
+      // Lightweight coverHandleExists sweep — only existsSync, no parseFile
+      let dirtyCount = 0
+      for (const track of tracks) {
+        const t = track as Record<string, unknown>
+        if (
+          typeof t.cover === 'string' &&
+          (t.cover as string).startsWith('cover://') &&
+          !coverHandleExists(t.cover)
+        ) {
+          dirtyCount++
+        }
+      }
+      if (dirtyCount > 0 && !coversMissingNotified) {
+        coversMissingNotified = true
+        mainWindow?.webContents.send('library:covers-missing', { dirtyCount })
+      }
+
+      if (changed) {
+        try { writeFileSync(MUSIC_LIBRARY_FILE, JSON.stringify(data), 'utf-8') } catch { /* best-effort */ }
+      }
+    }
+    return data
   })
 
   // Cover thumbnail loader — returns base64 data URL for a cover:// handle

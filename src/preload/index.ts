@@ -16,6 +16,11 @@ type UiDensity = 'compact' | 'standard' | 'comfortable'
 type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 type LyricAlign = 'center' | 'left'
 
+export interface LibraryChange {
+  kind: 'add' | 'remove' | 'unknown'
+  path?: string
+}
+
 interface DesktopLyricsSettings {
   enabled: boolean
   fontSize: number
@@ -933,10 +938,15 @@ const api = {
     clearActivity: (): Promise<void> => ipcRenderer.invoke('discord:clearActivity')
   },
   library: {
-    onChanged: (cb: () => void): (() => void) => {
-      const handler = (): void => cb()
+    onChanged: (cb: (change: LibraryChange | undefined) => void): (() => void) => {
+      const handler = (_event, change: LibraryChange | undefined): void => cb(change)
       ipcRenderer.on('library:changed', handler)
       return () => ipcRenderer.removeListener('library:changed', handler)
+    },
+    onCoversMissing: (cb: (info: { dirtyCount: number }) => void): (() => void) => {
+      const handler = (_event, info: { dirtyCount: number }): void => cb(info)
+      ipcRenderer.on('library:covers-missing', handler)
+      return () => ipcRenderer.removeListener('library:covers-missing', handler)
     }
   },
   fs: {

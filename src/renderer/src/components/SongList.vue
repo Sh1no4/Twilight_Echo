@@ -58,7 +58,17 @@ const {
 const { currentTrack, playTrack } = usePlayerStore()
 
 const searchQuery = ref('')
+const debouncedSearchQuery = ref('')
 const searchInputFocused = ref(false)
+let searchDebounceTimer: number | null = null
+
+watch(searchQuery, (value) => {
+  if (searchDebounceTimer !== null) clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = window.setTimeout(() => {
+    debouncedSearchQuery.value = value
+    searchDebounceTimer = null
+  }, 180)
+})
 
 const baseDisplayTracks = computed(() => {
   if (props.category === 'allSongs') return tracks.value
@@ -115,7 +125,7 @@ const currentPlaylistName = computed(() => {
 const isPlaylistDetail = computed(() => currentPlaylistName.value !== null)
 
 const displayTracks = computed(() => {
-  const q = searchQuery.value.trim().toLowerCase()
+  const q = debouncedSearchQuery.value.trim().toLowerCase()
   if (!q) return baseDisplayTracks.value
   return baseDisplayTracks.value.filter(
     (t) =>
@@ -150,7 +160,7 @@ const currentGridItems = computed<GridItem[]>(() => {
   return []
 })
 
-const filteredGridItems = computed(() => filterLocalGridItems(currentGridItems.value, searchQuery.value))
+const filteredGridItems = computed(() => filterLocalGridItems(currentGridItems.value, debouncedSearchQuery.value))
 const visibleGridItems = computed(() => filteredGridItems.value.slice(0, renderedGridCount.value))
 const gridTotalCount = computed(() => filteredGridItems.value.length)
 const visibleArtists = computed(() => (props.category === 'artists' ? visibleGridItems.value : []))
@@ -397,11 +407,24 @@ function onScroll(e: Event): void {
   scrollTop.value = target.scrollTop
 }
 
-function onRowPointerMove(event: PointerEvent): void {
+let pointerMoveRafId: number | null = null
+let lastPointerEvent: PointerEvent | null = null
+
+function flushPointerMove(): void {
+  const event = lastPointerEvent
+  pointerMoveRafId = null
+  if (!event) return
   const row = event.currentTarget as HTMLElement
   const rect = row.getBoundingClientRect()
   row.style.setProperty('--track-pointer-x', `${event.clientX - rect.left}px`)
   row.style.setProperty('--track-pointer-y', `${event.clientY - rect.top}px`)
+}
+
+function onRowPointerMove(event: PointerEvent): void {
+  lastPointerEvent = event
+  if (pointerMoveRafId === null) {
+    pointerMoveRafId = requestAnimationFrame(flushPointerMove)
+  }
 }
 
 function updateViewportHeight(): void {
@@ -432,12 +455,14 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('click', closeContextMenu)
   window.removeEventListener('resize', updateViewportHeight)
+  if (searchDebounceTimer !== null) clearTimeout(searchDebounceTimer)
+  if (pointerMoveRafId !== null) cancelAnimationFrame(pointerMoveRafId)
 })
 
-watch([() => props.category, () => props.filter, searchQuery], resetScrollAndMeasure, { flush: 'post' })
+watch([() => props.category, () => props.filter, debouncedSearchQuery], resetScrollAndMeasure, { flush: 'post' })
 
 watch(
-  searchQuery,
+  debouncedSearchQuery,
   () => {
     if (showTable.value) {
       resetScrollAndMeasure()

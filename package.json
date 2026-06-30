@@ -22,6 +22,7 @@
     "stage:audio-engine": "node scripts/stage-audio-engine.cjs",
     "test:playback-routing": "node --experimental-strip-types --test src/renderer/src/utils/playbackRouting.test.ts src/renderer/src/utils/lyrics.test.ts src/renderer/src/utils/streamingArtistResolution.test.ts src/renderer/src/stores/usePlayerStore.test.ts",
     "test:audio-manager": "node --experimental-strip-types --test src/main/audioEngineManager.test.ts src/main/audioEngineServiceClient.test.ts src/main/audioEngineIpcQueue.test.ts",
+    "test:local-perf": "node --experimental-strip-types --test src/renderer/src/stores/localMusicPerf.test.ts",
     "test:plugins": "node --experimental-strip-types --test src/main/plugins/manifest.test.ts src/main/plugins/dependencies.test.ts src/main/plugins/settingsStore.test.ts src/main/plugins/events.test.ts src/main/plugins/indexService.test.ts src/main/plugins/ncmProviderLogin.test.ts src/main/plugins/providerRouting.test.ts src/renderer/src/providers/mediaProvider.test.ts src/renderer/src/extensions/themeSelection.test.ts resources/plugins/ncm-provider/index.test.mjs",
     "test:audio-engine": "ctest --test-dir audio-engine/build/default --output-on-failure",
     "test:audio-engine:mingw": "ctest --test-dir audio-engine/build/mingw-static --output-on-failure",

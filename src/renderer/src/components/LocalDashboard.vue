@@ -90,8 +90,9 @@ const libraryDays = computed(() => {
 
 const recentlyAddedTracks = computed(() => tracks.value.slice(-3).reverse())
 const DASHBOARD_QUEUE_WINDOW = 200
+const byIdMap = computed(() => new Map(tracks.value.map((track) => [track.id, track])))
 const topTracks = computed(() => {
-  const byId = new Map(tracks.value.map((track) => [track.id, track]))
+  const byId = byIdMap.value
   const stats = Object.entries(listeningStats.value.tracks)
     .filter(([id, stat]) => !id.startsWith('bili:') && !isBiliTrack(stat.track))
     .sort(([, a], [, b]) => b.seconds - a.seconds)

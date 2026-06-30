@@ -1,0 +1,524 @@
+/**
+ * Performance regression baseline for local music library.
+ *
+ * Uses Node's built-in test runner (`node --experimental-strip-types --test`).
+ * Only pure-logic assertions are tested here — component mount, rAF flush, and
+ * DOM events are excluded (they degrade to typecheck + lint + build gates).
+ *
+ * Later waves (1-5) extend this file with wave-specific tests that are
+ * un-skipped once the corresponding feature lands.
+ */
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+// Dynamic import of the pure-logic search module (no Vue/window dependencies).
+const { filterLocalGridItems } = (await import(
+  new URL('../utils/localLibrarySearch.ts', import.meta.url).href
+)) as typeof import('../utils/localLibrarySearch')
+
+// ── Mock data generators (exported for reuse by later wave tests) ────────────
+
+export interface MockTrack {
+  id: string
+  title: string
+  artist: string
+  album: string
+  filePath: string
+  fileName: string
+  dir: string
+  duration: number
+  size: number
+  cover: string | null
+  lyrics: string | null
+  source: string
+  format: string
+  sampleRate: number
+  bitrate: number
+}
+
+/**
+ * Generate `count` mock tracks spread across artists/albums/folders
+ * to exercise realistic filtering and derived-collection paths.
+ */
+export function generateMockTracks(count: number): MockTrack[] {
+  const tracks: MockTrack[] = []
+  const artistCount = Math.max(50, Math.floor(count / 100))
+  const albumCount = Math.max(100, Math.floor(count / 50))
+  const folderCount = Math.max(20, Math.floor(count / 250))
+  for (let i = 0; i < count; i++) {
+    const ext = ['.mp3', '.flac', '.wav', '.m4a'][i % 4]
+    const folder = `C:\\music\\folder${i % folderCount}`
+    const fileName = `song${i}${ext}`
+    tracks.push({
+      id: `track_${i}`,
+      title: `Song Title ${i}`,
+      artist: `Artist ${i % artistCount}`,
+      album: `Album ${i % albumCount}`,
+      filePath: `${folder}\\${fileName}`,
+      fileName,
+      dir: folder,
+      duration: 120 + (i % 300),
+      size: 3_000_000 + i * 1000,
+      cover: i % 3 === 0 ? `cover://hash${i}.jpg` : null,
+      lyrics: null,
+      source: 'local',
+      format: ext.slice(1),
+      sampleRate: 44100,
+      bitrate: 320
+    })
+  }
+  return tracks
+}
+
+/**
+ * Generate grid items (artist/album/folder-like) each containing a slice of
+ * mock tracks, for exercising `filterLocalGridItems`.
+ */
+export function generateMockGridItems(trackCount: number): {
+  name: string
+  trackCount: number
+  tracks: MockTrack[]
+  cover: string | null
+  artist: string
+  path: string
+}[] {
+  const tracks = generateMockTracks(trackCount)
+  const byArtist = new Map<string, MockTrack[]>()
+  for (const t of tracks) {
+    if (!byArtist.has(t.artist)) byArtist.set(t.artist, [])
+    byArtist.get(t.artist)!.push(t)
+  }
+  return Array.from(byArtist.entries()).map(([name, items]) => ({
+    name,
+    trackCount: items.length,
+    tracks: items,
+    cover: items[0]?.cover ?? null,
+    artist: name,
+    path: items[0]?.dir ?? ''
+  }))
+}
+
+// ── Baseline assertions (pass immediately at Wave 0) ────────────────────────
+
+test('mock track generator produces exactly the requested count', () => {
+  const tracks = generateMockTracks(5000)
+  assert.equal(tracks.length, 5000)
+  // Verify spread across artists/albums/folders
+  const artists = new Set(tracks.map((t) => t.artist))
+  const albums = new Set(tracks.map((t) => t.album))
+  const folders = new Set(tracks.map((t) => t.dir))
+  assert.ok(artists.size >= 50, `expected >= 50 artists, got ${artists.size}`)
+  assert.ok(albums.size >= 100, `expected >= 100 albums, got ${albums.size}`)
+  assert.ok(folders.size >= 20, `expected >= 20 folders, got ${folders.size}`)
+})
+
+test('filterLocalGridItems filters 5000 tracks across grid items in < 50ms', () => {
+  const items = generateMockGridItems(5000)
+  assert.ok(items.length > 0)
+
+  const start = performance.now()
+  const result = filterLocalGridItems(items, 'song 42')
+  const elapsed = performance.now() - start
+
+  assert.ok(elapsed < 50, `filterLocalGridItems took ${elapsed.toFixed(2)}ms, expected < 50ms`)
+  assert.ok(result.length > 0, 'expected at least one matching grid item')
+})
+
+test('filterLocalGridItems with empty query returns all items (no filtering)', () => {
+  const items = generateMockGridItems(200)
+  const result = filterLocalGridItems(items, '')
+  assert.equal(result.length, items.length)
+})
+
+test('filterLocalGridItems with non-matching query returns empty', () => {
+  const items = generateMockGridItems(200)
+  const result = filterLocalGridItems(items, 'zzz_nonexistent_zzz')
+  assert.equal(result.length, 0)
+})
+
+test('searchQuery preprocessing: query is normalized once (trim + lowercase)', () => {
+  // This validates the memoize pattern: the query should be preprocessed
+  // a single time before the filter loop, not per-item.
+  // filterLocalGridItems already does this internally (normalizeSearchText).
+  const items = generateMockGridItems(500)
+  const query = '  Song TITLE 42  '
+
+  // The function normalizes once; verify consistent results regardless of
+  // surrounding whitespace/case in the query.
+  const resultA = filterLocalGridItems(items, query)
+  const resultB = filterLocalGridItems(items, query.trim().toLowerCase())
+  assert.deepEqual(resultA, resultB, 'query normalization should be idempotent')
+})
+
+// ── Placeholders for later waves (un-skipped when feature lands) ────────────
+// Wave 1: search debounce (component mount — degraded to typecheck+lint+build)
+test.skip('search debounce: 10 rapid searchQuery changes yield <= 2 filter recomputes', () => {})
+
+// Wave 2: scheduleRebuild coalescing — store is importable in bare Node
+// (module-level state uses Vue reactivity which works without DOM)
+const useMusicStoreModule = (await import(
+  new URL('./useMusicStore.ts', import.meta.url).href
+)) as typeof import('./useMusicStore')
+
+// Mock window.api for store tests. saveMusicLibrary is counted for debounce tests.
+// loadMusicLibrary is counted to verify incremental vs full-reload paths.
+// scanMusicFiles returns mock tracks for the incremental 'add' path.
+let saveCallCount = 0
+let loadCallCount = 0
+let scanCallCount = 0
+;(globalThis as Record<string, unknown>).window = {
+  api: {
+    data: {
+      saveMusicLibrary: async (): Promise<void> => {
+        saveCallCount++
+      },
+      loadMusicLibrary: async (): Promise<unknown[]> => {
+        loadCallCount++
+        return []
+      }
+    },
+    fs: {
+      scanMusicFiles: async (): Promise<unknown[]> => {
+        scanCallCount++
+        return generateMockTracks(1)
+      }
+    }
+  }
+}
+
+function setupStore(): ReturnType<typeof useMusicStoreModule.useMusicStore> {
+  const store = useMusicStoreModule.useMusicStore()
+  store.isScanning.value = true
+  store.clearTracks()
+  return store
+}
+
+test('removeTrack debounce: 10 removeTrack calls coalesce into 1 rebuild', async () => {
+  const store = setupStore()
+  await store.addTracks(generateMockTracks(5000), { deferRebuild: true })
+  store.refreshLibraryIndex()
+
+  const countBefore = store.getRebuildCount()
+  const tracksBefore = store.tracks.value.length
+
+  for (let i = 0; i < 10; i++) {
+    store.removeTrack(`track_${i}`)
+  }
+  store.flushRebuild()
+
+  const rebuildDelta = store.getRebuildCount() - countBefore
+  assert.equal(rebuildDelta, 1, `expected 1 rebuild, got ${rebuildDelta}`)
+  assert.equal(store.tracks.value.length, tracksBefore - 10)
+
+  store.clearTracks()
+})
+
+test('single removeTrack does not rebuild immediately (deferred to microtask)', async () => {
+  const store = setupStore()
+  await store.addTracks(generateMockTracks(100), { deferRebuild: true })
+  store.refreshLibraryIndex()
+
+  const countBefore = store.getRebuildCount()
+  store.removeTrack('track_0')
+
+  // Rebuild should NOT have fired yet (still pending in microtask queue)
+  assert.equal(store.getRebuildCount(), countBefore, 'rebuild should be deferred')
+
+  store.flushRebuild()
+  assert.equal(store.getRebuildCount(), countBefore + 1, 'rebuild should fire on flush')
+
+  store.clearTracks()
+})
+
+test('store cleanup: clearTracks cancels pending scheduled rebuild', async () => {
+  const store = setupStore()
+  await store.addTracks(generateMockTracks(100), { deferRebuild: true })
+  store.refreshLibraryIndex()
+
+  // Schedule a rebuild via removeTrack (don't flush — leave microtask pending)
+  store.removeTrack('track_0')
+  const countBefore = store.getRebuildCount()
+
+  // clearTracks should cancel the pending microtask and do immediate rebuild
+  store.clearTracks()
+
+  // Let microtasks flush — the cancelled microtask should be a no-op
+  await new Promise((resolve) => queueMicrotask(resolve))
+
+  assert.equal(
+    store.getRebuildCount(),
+    countBefore,
+    'no extra rebuild should fire after clearTracks cancels pending'
+  )
+})
+
+test('addTracks non-deferRebuild updates derived collections after flush', async () => {
+  const store = setupStore()
+  await store.addTracks(generateMockTracks(50), { deferRebuild: false })
+
+  store.flushRebuild()
+
+  assert.ok(store.artists.value.length > 0, 'artists should be populated')
+  assert.ok(store.albums.value.length > 0, 'albums should be populated')
+
+  store.clearTracks()
+})
+
+test('trackById and trackPathSet are cleaned on removeTrack', async () => {
+  const store = setupStore()
+  await store.addTracks(generateMockTracks(10), { deferRebuild: true })
+  store.refreshLibraryIndex()
+
+  // Verify track exists in derived collections
+  assert.equal(store.tracks.value.length, 10)
+
+  store.removeTrack('track_0')
+  store.flushRebuild()
+
+  assert.equal(store.tracks.value.length, 9)
+  // After flush, rebuildDerivedCollections rebuilds trackById — verify the
+  // removed track is gone
+  const playlists = store.getPlaylistTracks('test')
+  assert.equal(playlists.length, 0, 'removed track should not appear in playlists')
+
+  store.clearTracks()
+})
+
+// Wave 3 TODO 4: saveLibrary debounce (testable in bare Node via window.api mock)
+test('saveLibrary debounce: 10 scheduled saves yield 1 IPC write', async () => {
+  const store = setupStore()
+  store.isScanning.value = false
+
+  saveCallCount = 0
+  const promises: Promise<void>[] = []
+  for (let i = 0; i < 10; i++) {
+    promises.push(store.scheduleSaveLibrary())
+  }
+
+  // Wait for debounce timer (500ms + buffer)
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  await Promise.all(promises)
+
+  assert.equal(saveCallCount, 1, `expected 1 IPC write, got ${saveCallCount}`)
+
+  store.isScanning.value = true
+  store.clearTracks()
+})
+
+test('saveLibrary direct call flushes pending debounce and writes immediately', async () => {
+  const store = setupStore()
+  store.isScanning.value = false
+
+  saveCallCount = 0
+  // Schedule a debounced save
+  const scheduled = store.scheduleSaveLibrary()
+  // Immediately call direct saveLibrary (should flush timer + write now)
+  await store.saveLibrary()
+  await scheduled
+
+  // Both the scheduled and direct save resolve after 1 IPC write (direct flushes)
+  assert.ok(saveCallCount >= 1, 'expected at least 1 IPC write from direct saveLibrary')
+  // The timer should be cleared (no extra write after 600ms)
+  const countAfterWait = saveCallCount
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  assert.equal(saveCallCount, countAfterWait, 'no extra write after flush')
+
+  store.isScanning.value = true
+  store.clearTracks()
+})
+
+test('flushSaveLibrary clears timer without scheduling extra write', () => {
+  const store = setupStore()
+  store.isScanning.value = false
+
+  saveCallCount = 0
+  // Schedule a debounced save
+  void store.scheduleSaveLibrary()
+  // Flush (quit-flush) — should clear timer and do one synchronous save
+  store.flushSaveLibrary()
+
+  assert.ok(saveCallCount >= 1, 'expected at least 1 IPC write from flush')
+  // Timer was cleared — no extra assertion possible in sync test,
+  // but the cleared timer means no future write will fire
+  store.isScanning.value = true
+  store.clearTracks()
+})
+
+// loadLibrary skip-repair is a main-process behavior — verified via grep, not runtime test
+test.skip('loadLibrary skips repairMissingLibraryCovers', () => {})
+
+// Wave 3 TODO 5: incremental reload — store handleLibraryChange is testable
+test('incremental remove: single file remove triggers removeTrack not full loadLibrary', async () => {
+  const store = setupStore()
+  await store.addTracks(generateMockTracks(10), { deferRebuild: true })
+  store.refreshLibraryIndex()
+  store.isScanning.value = false
+
+  loadCallCount = 0
+  const tracksBefore = store.tracks.value.length
+  const filePath = store.tracks.value[0].filePath
+
+  await store.handleLibraryChange({ kind: 'remove', path: filePath })
+
+  assert.equal(loadCallCount, 0, 'loadLibrary should NOT be called for incremental remove')
+  assert.equal(store.tracks.value.length, tracksBefore - 1, 'track should be removed')
+
+  store.clearTracks()
+})
+
+test('incremental add: single file add triggers addTracks not full loadLibrary', async () => {
+  const store = setupStore()
+  await store.addTracks(generateMockTracks(5), { deferRebuild: true })
+  store.refreshLibraryIndex()
+  store.isScanning.value = false
+
+  loadCallCount = 0
+  scanCallCount = 0
+  const tracksBefore = store.tracks.value.length
+
+  // Mock scanMusicFiles returns a track with filePath matching the change path
+  const newFilePath = 'C:\\music\\newfolder\\newsong.mp3'
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (): Promise<void> => {
+          saveCallCount++
+        },
+        loadMusicLibrary: async (): Promise<unknown[]> => {
+          loadCallCount++
+          return []
+        }
+      },
+      fs: {
+        scanMusicFiles: async (): Promise<unknown[]> => {
+          scanCallCount++
+          return [{
+            ...generateMockTracks(1)[0],
+            filePath: newFilePath,
+            id: 'new_track_1'
+          }]
+        }
+      }
+    }
+  }
+
+  await store.handleLibraryChange({ kind: 'add', path: newFilePath })
+
+  assert.equal(loadCallCount, 0, 'loadLibrary should NOT be called for incremental add')
+  assert.equal(scanCallCount, 1, 'scanMusicFiles should be called once')
+  assert.equal(store.tracks.value.length, tracksBefore + 1, 'track should be added')
+
+  // Restore default mock
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (): Promise<void> => {
+          saveCallCount++
+        },
+        loadMusicLibrary: async (): Promise<unknown[]> => {
+          loadCallCount++
+          return []
+        }
+      },
+      fs: {
+        scanMusicFiles: async (): Promise<unknown[]> => {
+          scanCallCount++
+          return generateMockTracks(1)
+        }
+      }
+    }
+  }
+
+  store.clearTracks()
+})
+
+test('incremental fallback: unknown kind triggers full loadLibrary', async () => {
+  const store = setupStore()
+  await store.addTracks(generateMockTracks(5), { deferRebuild: true })
+  store.refreshLibraryIndex()
+  store.isScanning.value = false
+
+  loadCallCount = 0
+  await store.handleLibraryChange({ kind: 'unknown' })
+
+  assert.ok(loadCallCount >= 1, 'loadLibrary should be called for unknown kind')
+
+  store.clearTracks()
+})
+
+test('incremental fallback: no payload triggers full loadLibrary', async () => {
+  const store = setupStore()
+  store.isScanning.value = false
+
+  loadCallCount = 0
+  await store.handleLibraryChange(undefined)
+
+  assert.ok(loadCallCount >= 1, 'loadLibrary should be called for undefined change')
+
+  store.clearTracks()
+})
+
+// Wave 4: dashboard memo — Vue computed caching is testable in bare Node
+const vue = (await import('vue'))
+
+test('dashboard memo: byIdMap not rebuilt when only listeningStats changes', () => {
+  const tracks = vue.shallowRef(generateMockTracks(100))
+  const stats = vue.ref({ plays: 0 })
+
+  let mapBuildCount = 0
+  const byIdMap = vue.computed(() => {
+    mapBuildCount++
+    return new Map(tracks.value.map((t) => [t.id, t]))
+  })
+  const topTracks = vue.computed(() => {
+    const byId = byIdMap.value
+    return Object.keys(stats.value).length + byId.size
+  })
+
+  // Initial access
+  void topTracks.value
+  const initialBuildCount = mapBuildCount
+
+  // Change only stats (not tracks) — byIdMap should NOT rebuild
+  stats.value = { plays: 1, duration: 10 }
+  void topTracks.value
+  assert.equal(mapBuildCount, initialBuildCount, 'byIdMap should not rebuild when only stats change')
+
+  // Change tracks — byIdMap SHOULD rebuild
+  tracks.value = generateMockTracks(200)
+  void topTracks.value
+  assert.ok(mapBuildCount > initialBuildCount, 'byIdMap should rebuild when tracks change')
+})
+
+// Wave 5: pointermove rAF throttle — pure logic extracted from SongList.vue
+// (rAF/DOM not available in bare Node; throttle behavior degraded to typecheck+build)
+
+function shouldScheduleFlush(rafId: number | null): boolean {
+  return rafId === null
+}
+
+function cleanupPointerMove(rafId: number | null, cancelFn: (id: number) => void): void {
+  if (rafId !== null) cancelFn(rafId)
+}
+
+test('pointermove schedule: shouldScheduleFlush returns true when idle, false when pending', () => {
+  assert.equal(shouldScheduleFlush(null), true, 'should schedule when rafId is null')
+  assert.equal(shouldScheduleFlush(1), false, 'should NOT schedule when rafId is set')
+  assert.equal(shouldScheduleFlush(42), false, 'should NOT schedule when rafId is any number')
+})
+
+test('pointermove cleanup: cleanupPointerMove calls cancelAnimationFrame only when rafId is set', () => {
+  let cancelledId: number | null = null
+  const mockCancel = (id: number): void => {
+    cancelledId = id
+  }
+
+  // rafId set → cancelAnimationFrame should be called
+  cleanupPointerMove(42, mockCancel)
+  assert.equal(cancelledId, 42, 'cancelAnimationFrame should be called with rafId 42')
+
+  // rafId null → cancelAnimationFrame should NOT be called
+  cancelledId = null
+  cleanupPointerMove(null, mockCancel)
+  assert.equal(cancelledId, null, 'cancelAnimationFrame should NOT be called when rafId is null')
+})

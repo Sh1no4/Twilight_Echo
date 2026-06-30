@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch, defineAsyncComponent } from 'vue'
 import TitleBar from './components/TitleBar.vue'
 import SideMenu from './components/SideMenu.vue'
@@ -238,7 +238,7 @@ function closeEqualizerPage(): void {
   showEqualizerPage.value = false
 }
 
-const { loadLibrary, loadPlaylists } = useMusicStore()
+const { loadLibrary, loadPlaylists, flushSaveLibrary, handleLibraryChange } = useMusicStore()
 const { checkLogin } = useNcmStore()
 const { currentTrack, currentTime, isPlaying, restorePlaybackSession, createPlaybackSession } =
   usePlayerStore()
@@ -306,6 +306,9 @@ let playbackSessionAutosaveTimer: number | null = null
 let lastPlaybackSessionPositionSaveAt = 0
 let removePlaybackSessionSaveListener: (() => void) | null = null
 let removeLibraryChangedListener: (() => void) | null = null
+let removeCoversMissingListener: (() => void) | null = null
+let quitFlushHandler: (() => void) | null = null
+let pageHideFlushHandler: (() => void) | null = null
 
 async function restoreSavedPlaybackSession(mode: PlaybackResumeMode): Promise<void> {
   if (mode === 'off') {
@@ -444,9 +447,18 @@ onMounted(async () => {
     enterStreamingMode()
   }
   await restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
-  removeLibraryChangedListener = window.api.library.onChanged(() => {
-    loadLibrary().catch(() => {})
+  removeLibraryChangedListener = window.api.library.onChanged((change) => {
+    handleLibraryChange(change).catch(() => {})
   })
+  // Notify user when covers are missing (independent of library:changed to avoid reload loop)
+  removeCoversMissingListener = window.api.library.onCoversMissing((info) => {
+    console.warn(`检测到 ${info.dirtyCount} 首封面缺失,建议重新扫描以修复封面`)
+  })
+  // Quit-flush: save pending debounced library writes before window closes
+  quitFlushHandler = (): void => flushSaveLibrary()
+  pageHideFlushHandler = (): void => flushSaveLibrary()
+  window.addEventListener('beforeunload', quitFlushHandler)
+  window.addEventListener('pagehide', pageHideFlushHandler)
 })
 
 watch(
@@ -537,6 +549,12 @@ onBeforeUnmount(() => {
   removePlaybackSessionSaveListener = null
   removeLibraryChangedListener?.()
   removeLibraryChangedListener = null
+  removeCoversMissingListener?.()
+  removeCoversMissingListener = null
+  if (quitFlushHandler) window.removeEventListener('beforeunload', quitFlushHandler)
+  if (pageHideFlushHandler) window.removeEventListener('pagehide', pageHideFlushHandler)
+  quitFlushHandler = null
+  pageHideFlushHandler = null
   stopSideMenuMonitor()
   document.body.classList.remove('te-settings-surface')
   document.body.classList.remove('te-streaming-surface')
