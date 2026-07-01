@@ -1,0 +1,90 @@
+import { app } from 'electron'
+import { mkdirSync, readdirSync, existsSync } from 'fs'
+import { writeFile } from 'fs/promises'
+import { join, extname } from 'path'
+import { runtime } from '../core/runtime'
+
+export function ensureMusicCacheDirectories(rootPath: string): void {
+  if (!rootPath) return
+  mkdirSync(rootPath, { recursive: true })
+  mkdirSync(join(rootPath, 'renderer-cache'), { recursive: true })
+  mkdirSync(join(rootPath, 'audio-engine-cache'), { recursive: true })
+  mkdirSync(join(rootPath, 'ncm-cache'), { recursive: true })
+  mkdirSync(join(rootPath, 'cover-cache'), { recursive: true })
+}
+
+export function getMusicCacheRoot(): string {
+  const root = runtime.appSettings.musicCachePath || join(app.getPath('userData'), 'music-cache')
+  ensureMusicCacheDirectories(root)
+  return root
+}
+
+export function getNcmCacheDir(): string {
+  const dir = join(getMusicCacheRoot(), 'ncm-cache')
+  mkdirSync(dir, { recursive: true })
+  return dir
+}
+
+export function inferNcmCacheExtension(
+  url: string,
+  contentType?: string | null,
+  fileName?: string
+): string {
+  const nameExt = fileName ? extname(fileName).toLowerCase() : ''
+  if (nameExt && /^[a-z0-9.]+$/i.test(nameExt)) return nameExt
+
+  const mime = (contentType || '').toLowerCase()
+  if (mime.includes('flac')) return '.flac'
+  if (mime.includes('wav')) return '.wav'
+  if (mime.includes('aac')) return '.aac'
+  if (mime.includes('mp4') || mime.includes('m4a')) return '.m4a'
+  if (mime.includes('ogg')) return '.ogg'
+
+  try {
+    const parsed = new URL(url)
+    const pathExt = extname(parsed.pathname).toLowerCase()
+    if (pathExt && /^[a-z0-9.]+$/i.test(pathExt)) return pathExt
+  } catch {
+    /* keep fallback */
+  }
+
+  return '.mp3'
+}
+
+export function getCachedNcmSong(songId: number): string | null {
+  const dir = getNcmCacheDir()
+  const prefix = `${songId}.`
+  const file = readdirSync(dir).find((name) => name.startsWith(prefix))
+  if (!file) return null
+  const fullPath = join(dir, file)
+  return existsSync(fullPath) ? fullPath : null
+}
+
+export async function cacheNcmSong(
+  songId: number,
+  url: string,
+  fileName?: string
+): Promise<string | null> {
+  if (!Number.isFinite(songId) || songId <= 0 || !/^https?:\/\//i.test(url)) return null
+
+  const cached = getCachedNcmSong(songId)
+  if (cached) return cached
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 45000)
+  try {
+    const res = await fetch(url, { signal: controller.signal })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const ext = inferNcmCacheExtension(url, res.headers.get('content-type'), fileName)
+    const target = join(getNcmCacheDir(), `${songId}${ext}`)
+    const buffer = Buffer.from(await res.arrayBuffer())
+    await writeFile(target, buffer)
+    return target
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn('网易云歌曲缓存失败：', songId, message)
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
