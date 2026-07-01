@@ -140,7 +140,7 @@ JS 插件实现两个函数：
 | `twilight.events` | 事件总线，订阅曲目切换、播放暂停、进度、队列变更、应用启停 |
 | `twilight.player` | 播放器控制与状态查询 |
 | `twilight.providers` | 注册 provider 能力、查询已注册 provider |
-| `twilight.ui` | 注册 UI 扩展点（侧边栏页面、播放栏按钮、设置面板） |
+| `twilight.ui` | 注册 UI 扩展点（侧边栏页面、播放栏按钮、设置面板、流媒体/本地侧栏入口） |
 | `twilight.themes` | 主题资源声明 |
 
 不要试图绕过网关直接拿宿主内部对象。API 主版本内只加不改不删（见 [spec §3](./twilight-echo-plugin-spec.md#3-api-版本与兼容性承诺)），所以绑在 `twilight` 上的调用是稳的。
@@ -165,13 +165,17 @@ JS 插件实现两个函数：
 
 ## 9. UI 扩展点
 
-`ui` 类型插件贡献三类扩展点，均需 `ui:inject` 权限：
+`ui` 类型插件贡献受控扩展点，均需 `ui:inject` 权限：
 
 - `sidebarPage`：侧边栏自定义页面
 - `playerBarButton`：播放栏附加按钮
 - `settingsPanel`：设置页配置区
+- `localSidebarItem`：本地音乐侧栏入口
+- `streamingHome`：流媒体首页入口
 
 这三类都通过 **command 回到插件宿主进程**执行业务逻辑。宿主只渲染它批准的 DTO，不向插件开放任意 DOM 权限。这是 Phase 3 受控 UI 注入的核心设计：渲染在 renderer，逻辑在 utilityProcess，中间是受限桥接。
+
+UI contribution 可声明 `renderMode`：默认 `command` 只执行命令；`html` 表示命令返回 HTML 字符串，由宿主放入受控 iframe 渲染。`autoLoad` 可控制页面打开时是否自动执行 command；`html` 模式默认自动加载。
 
 不要试图在 UI 入口里直接操纵 DOM 或调 Electron renderer API。所有交互走 command 协议回宿主进程，再由宿主决定渲染什么。
 
@@ -230,9 +234,9 @@ npm run pack
 
 包格式与路径规则见 [spec §2](./twilight-echo-plugin-spec.md#2-插件包格式)。
 
-## 13. 静态索引与分发
+## 13. 动态索引与分发
 
-官方静态索引是一个 `plugins.json` 文件，当前 `schemaVersion` 固定为 `1`。每个 entry 复用 manifest 字段，并额外增加：
+官方插件市场消费一个远程 `plugins.json` 文件，当前 `schemaVersion` 固定为 `1`。每个 entry 复用 manifest 字段，并额外增加：
 
 | 字段 | 说明 |
 |---|---|
@@ -242,9 +246,9 @@ npm run pack
 | `tags` | 标签，用于搜索和分类 |
 | `verified` | 是否经过人工审核，只有审核通过才为 `true` |
 
-示例索引在 [`../resources/plugin-index/plugins.json`](../resources/plugin-index/plugins.json)，可以照着写。
+默认远程索引是 `https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json`。第三方插件源码和发布 `.tep` 包不放在主仓库；开发和发布时应写入外部插件仓库，由外部仓库生成 `plugins.json`。
 
-应用内插件市场默认读取随应用分发的本地索引。开发环境用 `TWILIGHT_PLUGIN_INDEX_URL` 环境变量指向远程 GitHub raw `plugins.json` 或自托管 HTTPS `plugins.json`，来消费第三方插件索引。
+`TWILIGHT_PLUGIN_INDEX_URL` 环境变量优先级最高，可指向自托管 HTTPS `plugins.json` 或本机 HTTP 测试索引。远程读取成功后宿主会缓存索引；远程失败时先使用缓存并标记 stale，缓存也不可用时才回退到随应用分发的离线索引 [`../resources/plugin-index/plugins.json`](../resources/plugin-index/plugins.json)。
 
 安装前宿主必须校验：`sourceUrl` 可达、包大小合理、sha256 匹配、包内 `plugin.json` 与索引 entry 字段一致。校验不过就拒绝安装。
 
@@ -265,11 +269,11 @@ packages/                 # .tep 打包产物
 plugins.json              # 索引文件
 ```
 
-新增第三方插件时，源码放 `plugins/<plugin-name>/`，打包产物放 `packages/`，索引写入 `plugins.json`。
+新增第三方插件时，源码放 `plugins/<plugin-name>/`，打包产物放 `packages/`。运行 `npm run index` 会扫描 `packages/*.tep`、读取包根 `plugin.json`、计算 sha256 并写入 `plugins.json`；`npm run validate:index` 用于发布前确认索引未过期。
 
 应用主仓库（`D:\Twilight_Echo-main`）只存：宿主与运行时代码、插件 API typings（`@twilight-echo/plugin-api`）、插件工具链（`create-twilight-plugin`）、内置 NCM provider、随应用分发的静态索引客户端。这是 `AGENTS.md` 明确规定的插件仓库边界，本文严格遵守。
 
-主项目通过 `TWILIGHT_PLUGIN_INDEX_URL` 指向外部仓库的 `plugins.json` 来消费第三方插件。边界规则见 [spec §2.1](./twilight-echo-plugin-spec.md#21-插件源码仓库边界)。
+主项目默认通过 GitHub raw `plugins.json` 消费外部仓库，也可通过 `TWILIGHT_PLUGIN_INDEX_URL` 覆盖。边界规则见 [spec §2.1](./twilight-echo-plugin-spec.md#21-插件源码仓库边界)。
 
 ## 15. 内置 NCM provider 参考
 

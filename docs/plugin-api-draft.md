@@ -247,11 +247,18 @@ Initial controlled UI contribution kinds:
 - `settingsPanel`: rendered as a plugin settings entry and may declare `command`.
 - `sidebarPage`: rendered in the local sidebar as a controlled host page and
   must declare `command`.
+- `localSidebarItem`: rendered in the local music sidebar and must declare `command`.
+- `streamingHome`: rendered as a controlled streaming entry point.
 
 UI commands are request/response calls. The host waits for completion with a
 short timeout and returns the plugin handler result to the renderer. Command
 failures mark only the owning plugin as failed and are written to that plugin's
 log.
+
+UI contributions may set `renderMode` to `command` or `html`. `command` is the
+default and only runs the command. `html` expects the command to return an HTML
+string for controlled iframe rendering. `autoLoad` controls whether the command
+runs when the page opens; `html` contributions default to auto-loading.
 
 UI contributions require `type` containing `ui` or `tool` and permission
 `ui:inject`.
@@ -348,8 +355,18 @@ interface TwilightPluginIndexEntry extends TwilightPluginManifest {
   installedVersion?: string
 }
 
+interface TwilightPluginIndexStatus {
+  sourceUrl: string
+  sourceKind: 'github' | 'custom' | 'bundled'
+  loadedFrom: 'remote' | 'cache' | 'bundled'
+  lastFetchedAt: string | null
+  stale: boolean
+  error: string | null
+}
+
 window.api.plugins.listIndex(): Promise<TwilightPluginIndexEntry[]>
 window.api.plugins.refreshIndex(): Promise<TwilightPluginIndexEntry[]>
+window.api.plugins.getIndexStatus(): Promise<TwilightPluginIndexStatus>
 window.api.plugins.installFromIndex(id: string): Promise<TwilightPluginInstallResult>
 ```
 

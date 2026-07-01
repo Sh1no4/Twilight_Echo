@@ -12,3 +12,8 @@ export async function activate(context: TwilightPluginContext): Promise<void> {
 
 This package is types-first. Runtime capabilities are injected by Twilight Echo
 through `activate(context)`.
+
+The v1 UI typings include the controlled extension points currently exposed by
+the host: `playerBarButton`, `settingsPanel`, `sidebarPage`,
+`localSidebarItem`, and `streamingHome`. UI contributions may also declare
+`renderMode` and `autoLoad`.

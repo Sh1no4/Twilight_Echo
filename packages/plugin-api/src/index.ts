@@ -83,6 +83,18 @@ export type TwilightPluginIndexInstallState =
   | 'incompatible'
   | 'built-in-blocked'
 
+export type TwilightPluginIndexSourceKind = 'github' | 'custom' | 'bundled'
+export type TwilightPluginIndexLoadedFrom = 'remote' | 'cache' | 'bundled'
+
+export interface TwilightPluginIndexStatus {
+  sourceUrl: string
+  sourceKind: TwilightPluginIndexSourceKind
+  loadedFrom: TwilightPluginIndexLoadedFrom
+  lastFetchedAt: string | null
+  stale: boolean
+  error: string | null
+}
+
 export interface PluginPrivateSettings {
   get(key?: string): Promise<unknown>
   set(key: string, value: unknown): Promise<void>
@@ -254,7 +266,12 @@ export interface TwilightProvidersApi {
   register(provider: TwilightMediaProviderRegistration): Promise<void>
 }
 
-export type TwilightUiContributionKind = 'sidebarPage' | 'playerBarButton' | 'settingsPanel'
+export type TwilightUiContributionKind =
+  | 'sidebarPage'
+  | 'playerBarButton'
+  | 'settingsPanel'
+  | 'localSidebarItem'
+  | 'streamingHome'
 
 export interface TwilightUiContribution {
   id: string
@@ -263,6 +280,14 @@ export interface TwilightUiContribution {
   description?: string
   icon?: string
   command?: string
+  renderMode?: 'command' | 'html'
+  autoLoad?: boolean
+}
+
+export interface TwilightPluginExtensionContribution {
+  pluginId: string
+  ui: TwilightUiContribution[]
+  themes: TwilightThemeContribution[]
 }
 
 export interface TwilightUiApi {

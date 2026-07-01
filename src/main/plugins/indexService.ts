@@ -1,9 +1,10 @@
 import { createHash } from 'crypto'
 import { existsSync } from 'fs'
-import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
+import extract from 'extract-zip'
 import { isCompatibleTwilightRange, validatePluginManifest } from './manifest.ts'
 import type {
   TwilightPluginDescriptor,
@@ -20,6 +21,7 @@ export interface PluginIndexServiceOptions {
   appVersion: string
   localIndexPath: string
   remoteIndexUrl?: string
+  cacheIndexPath?: string
   bundledPluginIds?: string[]
   fetchImpl?: typeof fetch
   indexSizeLimitBytes?: number
@@ -27,11 +29,26 @@ export interface PluginIndexServiceOptions {
   timeoutMs?: number
 }
 
+export type PluginIndexSourceKind = 'github' | 'custom' | 'bundled'
+export type PluginIndexLoadedFrom = 'remote' | 'cache' | 'bundled'
+
+export interface PluginIndexStatus {
+  sourceUrl: string
+  sourceKind: PluginIndexSourceKind
+  loadedFrom: PluginIndexLoadedFrom
+  lastFetchedAt: string | null
+  stale: boolean
+  error: string | null
+}
+
 export interface DownloadedPluginPackage {
   entry: TwilightPluginIndexEntry
   packagePath: string
   cleanup: () => Promise<void>
 }
+
+export const DEFAULT_PLUGIN_INDEX_URL =
+  'https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json'
 
 const INDEX_SCHEMA_VERSION = 1
 const DEFAULT_INDEX_SIZE_LIMIT_BYTES = 1024 * 1024
@@ -43,37 +60,96 @@ export class PluginIndexService {
   private readonly appVersion: string
   private readonly localIndexPath: string
   private readonly remoteIndexUrl?: string
+  private readonly cacheIndexPath?: string
   private readonly bundledPluginIds: Set<string>
   private readonly fetchImpl: typeof fetch
   private readonly indexSizeLimitBytes: number
   private readonly packageSizeLimitBytes: number
   private readonly timeoutMs: number
   private cachedEntries: TwilightPluginIndexEntry[] | null = null
+  private currentBaseUrl: string
+  private status: PluginIndexStatus
 
   constructor(options: PluginIndexServiceOptions) {
     this.appVersion = options.appVersion
     this.localIndexPath = options.localIndexPath
-    this.remoteIndexUrl = options.remoteIndexUrl
+    this.remoteIndexUrl = options.remoteIndexUrl?.trim() || undefined
+    this.cacheIndexPath = options.cacheIndexPath
     this.bundledPluginIds = new Set(options.bundledPluginIds ?? [])
     this.fetchImpl = options.fetchImpl ?? fetch
     this.indexSizeLimitBytes = options.indexSizeLimitBytes ?? DEFAULT_INDEX_SIZE_LIMIT_BYTES
     this.packageSizeLimitBytes = options.packageSizeLimitBytes ?? DEFAULT_PACKAGE_SIZE_LIMIT_BYTES
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    this.currentBaseUrl = this.remoteIndexUrl || pathToFileURL(this.localIndexPath).toString()
+    this.status = {
+      sourceUrl: this.currentBaseUrl,
+      sourceKind: this.remoteIndexUrl ? sourceKindForUrl(this.remoteIndexUrl) : 'bundled',
+      loadedFrom: this.remoteIndexUrl ? 'remote' : 'bundled',
+      lastFetchedAt: null,
+      stale: false,
+      error: null
+    }
   }
 
   async list(forceRefresh = false): Promise<TwilightPluginIndexEntry[]> {
     if (!forceRefresh && this.cachedEntries) return this.cachedEntries
-    const source = this.remoteIndexUrl?.trim() || this.localIndexPath
-    const raw = await this.readIndexSource(source)
-    const baseUrl = this.remoteIndexUrl?.trim()
-      ? this.remoteIndexUrl.trim()
-      : pathToFileURL(this.localIndexPath).toString()
-    this.cachedEntries = this.validateIndex(JSON.parse(raw), baseUrl)
+    const remoteUrl = this.remoteIndexUrl
+    const localUrl = pathToFileURL(this.localIndexPath).toString()
+    if (!remoteUrl) {
+      const raw = await this.readIndexSource(this.localIndexPath)
+      this.currentBaseUrl = localUrl
+      this.cachedEntries = this.validateIndex(JSON.parse(raw), localUrl)
+      this.status = {
+        sourceUrl: localUrl,
+        sourceKind: 'bundled',
+        loadedFrom: 'bundled',
+        lastFetchedAt: new Date().toISOString(),
+        stale: false,
+        error: null
+      }
+      return this.cachedEntries
+    }
+
+    try {
+      const raw = await this.readIndexSource(remoteUrl)
+      this.currentBaseUrl = remoteUrl
+      this.cachedEntries = this.validateIndex(JSON.parse(raw), remoteUrl)
+      await this.writeCache(raw)
+      this.status = {
+        sourceUrl: remoteUrl,
+        sourceKind: sourceKindForUrl(remoteUrl),
+        loadedFrom: 'remote',
+        lastFetchedAt: new Date().toISOString(),
+        stale: false,
+        error: null
+      }
+      return this.cachedEntries
+    } catch (remoteError) {
+      const message = errorMessage(remoteError)
+      if (!isRecoverableIndexError(message)) throw remoteError
+      const cached = await this.tryReadCache(remoteUrl, message)
+      if (cached) return cached
+      const raw = await this.readIndexSource(this.localIndexPath)
+      this.currentBaseUrl = localUrl
+      this.cachedEntries = this.validateIndex(JSON.parse(raw), localUrl)
+      this.status = {
+        sourceUrl: remoteUrl,
+        sourceKind: sourceKindForUrl(remoteUrl),
+        loadedFrom: 'bundled',
+        lastFetchedAt: null,
+        stale: true,
+        error: message
+      }
+    }
     return this.cachedEntries
   }
 
   async refresh(): Promise<TwilightPluginIndexEntry[]> {
     return this.list(true)
+  }
+
+  getStatus(): PluginIndexStatus {
+    return { ...this.status }
   }
 
   async downloadPackage(id: string): Promise<DownloadedPluginPackage> {
@@ -94,13 +170,19 @@ export class PluginIndexService {
     }
     const tempRoot = await mkdtemp(join(tmpdir(), 'twilight-plugin-index-'))
     const packagePath = join(tempRoot, `${entry.id}-${entry.version}.tep`)
-    await writeFile(packagePath, buffer)
-    return {
-      entry,
-      packagePath,
-      cleanup: async () => {
-        await rm(tempRoot, { recursive: true, force: true })
+    try {
+      await writeFile(packagePath, buffer)
+      await this.validateDownloadedPackageManifest(entry, packagePath, tempRoot)
+      return {
+        entry,
+        packagePath,
+        cleanup: async () => {
+          await rm(tempRoot, { recursive: true, force: true })
+        }
       }
+    } catch (error) {
+      await rm(tempRoot, { recursive: true, force: true })
+      throw error
     }
   }
 
@@ -117,7 +199,36 @@ export class PluginIndexService {
   }
 
   private indexBaseUrl(): string {
-    return this.remoteIndexUrl?.trim() || pathToFileURL(this.localIndexPath).toString()
+    return this.currentBaseUrl
+  }
+
+  private async writeCache(raw: string): Promise<void> {
+    if (!this.cacheIndexPath) return
+    await mkdir(dirname(this.cacheIndexPath), { recursive: true })
+    await writeFile(this.cacheIndexPath, raw, 'utf-8')
+  }
+
+  private async tryReadCache(
+    remoteUrl: string,
+    remoteError: string
+  ): Promise<TwilightPluginIndexEntry[] | null> {
+    if (!this.cacheIndexPath) return null
+    try {
+      const raw = await this.readIndexSource(this.cacheIndexPath)
+      this.currentBaseUrl = remoteUrl
+      this.cachedEntries = this.validateIndex(JSON.parse(raw), remoteUrl)
+      this.status = {
+        sourceUrl: remoteUrl,
+        sourceKind: sourceKindForUrl(remoteUrl),
+        loadedFrom: 'cache',
+        lastFetchedAt: null,
+        stale: true,
+        error: remoteError
+      }
+      return this.cachedEntries
+    } catch {
+      return null
+    }
   }
 
   private validateIndex(raw: unknown, baseUrl: string): TwilightPluginIndexEntry[] {
@@ -214,7 +325,48 @@ export class PluginIndexService {
     }
     return new URL(trimmed, baseUrl).toString()
   }
+
+  private async validateDownloadedPackageManifest(
+    entry: TwilightPluginIndexEntry,
+    packagePath: string,
+    tempRoot: string
+  ): Promise<void> {
+    const extractedRoot = join(tempRoot, 'manifest-check')
+    await extract(packagePath, { dir: extractedRoot })
+    const manifest = validatePluginManifest(
+      JSON.parse(await readFile(join(extractedRoot, 'plugin.json'), 'utf-8'))
+    )
+    const mismatches = manifestComparisonKeys.filter((key) =>
+      JSON.stringify(manifest[key]) !== JSON.stringify(entry[key])
+    )
+    if (mismatches.length > 0) {
+      throw new Error(`插件包 manifest 与索引 entry 不一致：${entry.id} (${mismatches.join(', ')})`)
+    }
+  }
 }
+
+export function resolvePluginIndexUrl(value?: string): string {
+  return value?.trim() || DEFAULT_PLUGIN_INDEX_URL
+}
+
+const manifestComparisonKeys: Array<keyof TwilightPluginManifest> = [
+  'id',
+  'name',
+  'version',
+  'description',
+  'author',
+  'license',
+  'type',
+  'main',
+  'binary',
+  'dependencies',
+  'engines',
+  'apiVersion',
+  'permissions',
+  'contributes',
+  'icon',
+  'signature'
+]
 
 function isPluginIndexRaw(value: unknown): value is PluginIndexRaw {
   return (
@@ -244,6 +396,26 @@ function isAllowedHttpUrl(url: URL): boolean {
   if (url.protocol === 'https:') return true
   if (url.protocol !== 'http:') return false
   return url.hostname === 'localhost' || url.hostname === '127.0.0.1' || url.hostname === '::1'
+}
+
+function sourceKindForUrl(url: string): PluginIndexSourceKind {
+  return url === DEFAULT_PLUGIN_INDEX_URL ? 'github' : 'custom'
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function isRecoverableIndexError(message: string): boolean {
+  return !(
+    message.includes('只允许 https 或本机 http URL') ||
+    message.includes('协议不受支持') ||
+    message.includes('schemaVersion') ||
+    message.includes('插件索引必须是') ||
+    message.includes('sourceUrl') ||
+    message.includes('checksumSha256') ||
+    message.includes('自带插件')
+  )
 }
 
 function fileUrlToPath(value: string): string {

@@ -202,6 +202,6 @@ Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playe
 
 - `@twilight-echo/plugin-api` 是开发者侧权威 typings 包，API v1 类型从这里导出；宿主内部实现可复用自身类型，但不得改变 v1 语义。
 - `create-twilight-plugin` 提供 `init` 与 `pack`：模板覆盖 `tool`、`provider`、`ui-tool`、`theme`；`pack` 产物为 `.tep` zip，根目录必须包含 `plugin.json`。
-- 官方静态索引为 `plugins.json`，当前 schemaVersion 固定为 `1`。索引 entry 复用 manifest 字段，并增加 `sourceUrl`、`checksumSha256`、`tags`、`verified`。
-- 应用内市场默认读取随应用分发的本地索引；开发环境可用 `TWILIGHT_PLUGIN_INDEX_URL` 指向远程 GitHub raw JSON 或自托管 HTTPS `plugins.json`。安装前必须校验 sourceUrl、包大小、sha256 与包内 manifest。
+- 官方索引为远程 `plugins.json`，当前 schemaVersion 固定为 `1`。索引 entry 复用 manifest 字段，并增加 `sourceUrl`、`checksumSha256`、`tags`、`verified`。
+- 应用内市场默认读取 `https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json`；`TWILIGHT_PLUGIN_INDEX_URL` 可覆盖为自托管 HTTPS `plugins.json` 或本机 HTTP 测试索引。远程成功后缓存到用户数据目录，远程失败时回退到缓存，再失败才使用随应用分发的本地离线索引。安装前必须校验 sourceUrl、包大小、sha256 与包内 manifest。
 - Phase 5 仍是信任式安装：索引只提高可发现性和完整性校验，不代表运行时权限 enforcement 或恶意代码沙箱。

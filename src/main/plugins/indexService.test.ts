@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
 import test from 'node:test'
-import { PluginIndexService } from './indexService.ts'
+import {
+  DEFAULT_PLUGIN_INDEX_URL,
+  PluginIndexService,
+  resolvePluginIndexUrl
+} from './indexService.ts'
 import type { TwilightPluginDescriptor } from './types.ts'
 
 const require = createRequire(import.meta.url)
@@ -87,6 +91,23 @@ test('rejects checksum mismatch during package download', async () => {
   await assert.rejects(() => service.downloadPackage(baseManifest.id), /checksum/)
 })
 
+test('rejects index packages whose manifest does not match the index entry', async () => {
+  const fixture = await createIndexFixture({
+    manifest: {
+      ...baseManifest,
+      id: 'com.example.package-tool',
+      name: 'Package Tool'
+    },
+    indexManifest: baseManifest
+  })
+  const service = new PluginIndexService({
+    appVersion: '0.20.0',
+    localIndexPath: fixture.indexPath
+  })
+
+  await assert.rejects(() => service.downloadPackage(baseManifest.id), /manifest/i)
+})
+
 test('blocks incompatible and bundled index plugins', async () => {
   const incompatible = await createIndexFixture({
     manifest: {
@@ -136,17 +157,150 @@ test('downloads a valid package after checksum validation', async () => {
   }
 })
 
+test('uses the default GitHub index URL unless an override is provided', () => {
+  assert.equal(resolvePluginIndexUrl(undefined), DEFAULT_PLUGIN_INDEX_URL)
+  assert.equal(resolvePluginIndexUrl('  '), DEFAULT_PLUGIN_INDEX_URL)
+  assert.equal(resolvePluginIndexUrl('https://example.test/plugins.json'), 'https://example.test/plugins.json')
+})
+
+test('loads remote index, records source status, and writes cache', async () => {
+  const fixture = await createIndexFixture()
+  const cachePath = join(fixture.root, 'cache', 'plugins.json')
+  const remoteUrl = 'https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json'
+  const service = new PluginIndexService({
+    appVersion: '0.20.0',
+    localIndexPath: fixture.indexPath,
+    remoteIndexUrl: remoteUrl,
+    cacheIndexPath: cachePath,
+    fetchImpl: createFetch({
+      [remoteUrl]: await readFile(fixture.indexPath)
+    })
+  })
+
+  const entries = await service.list()
+  const cachedRaw = JSON.parse(await readFile(cachePath, 'utf-8')) as { plugins: unknown[] }
+
+  assert.equal(entries[0].id, baseManifest.id)
+  assert.equal(cachedRaw.plugins.length, 1)
+  assert.deepEqual(service.getStatus(), {
+    sourceUrl: remoteUrl,
+    sourceKind: 'github',
+    loadedFrom: 'remote',
+    lastFetchedAt: service.getStatus().lastFetchedAt,
+    stale: false,
+    error: null
+  })
+  assert.match(service.getStatus().lastFetchedAt ?? '', /^\d{4}-\d{2}-\d{2}T/)
+})
+
+test('falls back to cached remote index when refresh fails', async () => {
+  const fixture = await createIndexFixture()
+  const cachePath = join(fixture.root, 'cache', 'plugins.json')
+  const remoteUrl = 'https://example.test/plugins.json'
+  await mkdir(join(fixture.root, 'cache'), { recursive: true })
+  await writeFile(cachePath, await readFile(fixture.indexPath), 'utf-8')
+  const service = new PluginIndexService({
+    appVersion: '0.20.0',
+    localIndexPath: fixture.indexPath,
+    remoteIndexUrl: remoteUrl,
+    cacheIndexPath: cachePath,
+    fetchImpl: async () => new Response('unavailable', { status: 503 })
+  })
+
+  const entries = await service.refresh()
+  const status = service.getStatus()
+
+  assert.equal(entries[0].id, baseManifest.id)
+  assert.equal(status.sourceUrl, remoteUrl)
+  assert.equal(status.sourceKind, 'custom')
+  assert.equal(status.loadedFrom, 'cache')
+  assert.equal(status.stale, true)
+  assert.match(status.error ?? '', /HTTP 503/)
+})
+
+test('falls back to bundled index when remote and cache fail', async () => {
+  const fixture = await createIndexFixture()
+  const cachePath = join(fixture.root, 'missing', 'plugins.json')
+  const remoteUrl = 'https://example.test/plugins.json'
+  const service = new PluginIndexService({
+    appVersion: '0.20.0',
+    localIndexPath: fixture.indexPath,
+    remoteIndexUrl: remoteUrl,
+    cacheIndexPath: cachePath,
+    fetchImpl: async () => {
+      throw new Error('network down')
+    }
+  })
+
+  const entries = await service.refresh()
+  const status = service.getStatus()
+
+  assert.equal(entries[0].id, baseManifest.id)
+  assert.equal(status.loadedFrom, 'bundled')
+  assert.equal(status.stale, true)
+  assert.match(status.error ?? '', /network down/)
+})
+
+test('loads remote https indexes and resolves relative package URLs', async () => {
+  const fixture = await createIndexFixture()
+  const indexContent = await readFile(fixture.indexPath, 'utf-8')
+  const packageBuffer = await readFile(fixture.packagePath)
+  const requested: string[] = []
+  const service = new PluginIndexService({
+    appVersion: '0.20.0',
+    localIndexPath: fixture.indexPath,
+    remoteIndexUrl: 'https://example.test/plugins.json',
+    fetchImpl: async (url) => {
+      requested.push(String(url))
+      return responseFor(String(url).endsWith('/plugins.json') ? indexContent : packageBuffer)
+    }
+  })
+
+  const downloaded = await service.downloadPackage(baseManifest.id)
+  try {
+    assert.equal(downloaded.entry.id, baseManifest.id)
+    assert.deepEqual(requested, [
+      'https://example.test/plugins.json',
+      `https://example.test/packages/${baseManifest.id}-${baseManifest.version}.tep`
+    ])
+  } finally {
+    await downloaded.cleanup()
+  }
+})
+
+test('allows localhost http indexes and rejects non-local http indexes', async () => {
+  const fixture = await createIndexFixture()
+  const indexContent = await readFile(fixture.indexPath, 'utf-8')
+  const localhostService = new PluginIndexService({
+    appVersion: '0.20.0',
+    localIndexPath: fixture.indexPath,
+    remoteIndexUrl: 'http://127.0.0.1/plugins.json',
+    fetchImpl: async () => responseFor(indexContent)
+  })
+  assert.equal((await localhostService.list()).length, 1)
+
+  const externalHttpService = new PluginIndexService({
+    appVersion: '0.20.0',
+    localIndexPath: fixture.indexPath,
+    remoteIndexUrl: 'http://example.test/plugins.json',
+    fetchImpl: async () => responseFor(indexContent)
+  })
+  await assert.rejects(() => externalHttpService.list(), /https|本机 http/)
+})
+
 async function createIndexFixture(options: {
   manifest?: typeof baseManifest
+  indexManifest?: typeof baseManifest
   sourceUrl?: string
   checksumSha256?: string
-} = {}): Promise<{ root: string; indexPath: string }> {
+} = {}): Promise<{ root: string; indexPath: string; packagePath: string }> {
   const root = await mkdtemp(join(tmpdir(), 'twilight-index-test-'))
   const packageRoot = join(root, 'plugin')
   const packageDir = join(root, 'packages')
   await mkdir(packageRoot, { recursive: true })
   await mkdir(packageDir, { recursive: true })
   const manifest = options.manifest ?? baseManifest
+  const indexManifest = options.indexManifest ?? manifest
   await writeFile(join(packageRoot, 'plugin.json'), JSON.stringify(manifest, null, 2), 'utf-8')
   await writeFile(join(packageRoot, 'index.mjs'), 'export function activate() {}', 'utf-8')
   const packageFileName = `${manifest.id}-${manifest.version}.tep`
@@ -163,7 +317,7 @@ async function createIndexFixture(options: {
         schemaVersion: 1,
         plugins: [
           {
-            ...manifest,
+            ...indexManifest,
             sourceUrl: options.sourceUrl ?? `packages/${packageFileName}`,
             checksumSha256,
             repository: 'https://example.test/repo',
@@ -178,7 +332,18 @@ async function createIndexFixture(options: {
     ),
     'utf-8'
   )
-  return { root, indexPath }
+  return { root, indexPath, packagePath }
+}
+
+function responseFor(body: string | Buffer): Response {
+  return {
+    ok: true,
+    status: 200,
+    arrayBuffer: async () => {
+      const buffer = typeof body === 'string' ? Buffer.from(body, 'utf-8') : body
+      return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+    }
+  } as Response
 }
 
 function descriptor(overrides: Partial<TwilightPluginDescriptor> = {}): TwilightPluginDescriptor {
@@ -201,4 +366,13 @@ function descriptor(overrides: Partial<TwilightPluginDescriptor> = {}): Twilight
     },
     ...overrides
   } as TwilightPluginDescriptor
+}
+
+function createFetch(responses: Record<string, Buffer>): typeof fetch {
+  return async (url) => {
+    const key = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url
+    const buffer = responses[key]
+    if (!buffer) return new Response('not found', { status: 404 })
+    return new Response(new Uint8Array(buffer))
+  }
 }

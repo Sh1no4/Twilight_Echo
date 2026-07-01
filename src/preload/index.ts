@@ -55,6 +55,8 @@ type TwilightPluginIndexInstallState =
   | 'update-available'
   | 'incompatible'
   | 'built-in-blocked'
+type TwilightPluginIndexSourceKind = 'github' | 'custom' | 'bundled'
+type TwilightPluginIndexLoadedFrom = 'remote' | 'cache' | 'bundled'
 type TwilightMediaProviderCapability =
   | 'search'
   | 'playbackUrl'
@@ -557,6 +559,15 @@ interface TwilightPluginIndexEntry {
   verified?: boolean
   installState?: TwilightPluginIndexInstallState
   installedVersion?: string
+}
+
+interface TwilightPluginIndexStatus {
+  sourceUrl: string
+  sourceKind: TwilightPluginIndexSourceKind
+  loadedFrom: TwilightPluginIndexLoadedFrom
+  lastFetchedAt: string | null
+  stale: boolean
+  error: string | null
 }
 
 interface TwilightMediaProviderRegistration {
@@ -1150,6 +1161,8 @@ const api = {
     listIndex: (): Promise<TwilightPluginIndexEntry[]> => ipcRenderer.invoke('plugins:listIndex'),
     refreshIndex: (): Promise<TwilightPluginIndexEntry[]> =>
       ipcRenderer.invoke('plugins:refreshIndex'),
+    getIndexStatus: (): Promise<TwilightPluginIndexStatus> =>
+      ipcRenderer.invoke('plugins:getIndexStatus'),
     installFromIndex: (id: string): Promise<TwilightPluginInstallResult> =>
       ipcRenderer.invoke('plugins:installFromIndex', id),
     setNativeDspParameters: (id: string, parameters: Record<string, number>): Promise<TwilightPluginDescriptor> =>

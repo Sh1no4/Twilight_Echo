@@ -3,7 +3,7 @@ import { join, resolve } from 'path'
 import { readFileSync } from 'fs'
 import { runtime } from '../core/runtime'
 import { TwilightPluginManager } from '../plugins/manager'
-import { PluginIndexService } from '../plugins/indexService'
+import { PluginIndexService, resolvePluginIndexUrl } from '../plugins/indexService'
 import type { TwilightPluginUninstallOptions } from '../plugins/types'
 import {
   bundledPluginPath,
@@ -67,7 +67,8 @@ export function setupPluginIpc(): void {
   runtime.pluginIndexService = new PluginIndexService({
     appVersion: app.getVersion(),
     localIndexPath: bundledPluginIndexPath(),
-    remoteIndexUrl: process.env.TWILIGHT_PLUGIN_INDEX_URL,
+    remoteIndexUrl: resolvePluginIndexUrl(process.env.TWILIGHT_PLUGIN_INDEX_URL),
+    cacheIndexPath: join(app.getPath('userData'), 'plugin-index', 'cache', 'plugins.json'),
     bundledPluginIds
   })
 
@@ -143,6 +144,10 @@ export function setupPluginIpc(): void {
       installState: runtime.pluginIndexService!.describeInstallState(entry, installed),
       installedVersion: installed.find((plugin) => plugin.id === entry.id)?.version
     }))
+  })
+  ipcMain.handle('plugins:getIndexStatus', async () => {
+    await runtime.pluginManagerReady
+    return runtime.pluginIndexService!.getStatus()
   })
   ipcMain.handle('plugins:installFromIndex', async (_event, id: string) => {
     await runtime.pluginManagerReady

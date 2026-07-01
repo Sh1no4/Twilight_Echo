@@ -715,3 +715,40 @@ if (FAILED(startHr)) {
 | **P2** | 上混参数 UI | ~0.5 天 | 可选增强：让用户调节增益/延迟 |
 
 建议先做 P0（WASAPI 恢复），因为它是现有功能的健壮性补全，改动集中在一个文件，风险低。P1 涉及数据结构变更和跨层接口修改，需要更充分的测试。
+
+---
+
+## 实施状态追踪（2026-07-02 更新）
+
+### 方案一：Channel Routing 真实上混矩阵 — ✅ 已完成
+
+核心实现和测试均已落地，CTest 19/19 通过。
+
+| 子项 | 状态 | 说明 |
+|------|------|------|
+| `ChannelRouter` 类（自由函数→有状态类） | ✅ 已完成 | `audio-engine/dsp/ChannelRouter.h` + `.cpp`，含 `UpmixConfig`、LFE 一阶低通、环绕延迟线 |
+| 5.1 上混（ITU-R BS.775 布局） | ✅ 已完成 | `processUpmix51`：L/R 直通、Center 提取、LFE 低通、RL/RR 增益 + 可选延迟 |
+| 7.1 上混（8 通道） | ✅ 已完成 | `processUpmix71`：5.1 + SL/SR 侧环绕 |
+| `OutputConfig` 扩展 upmix 字段 | ✅ 已完成 | `audio-engine/core/AudioTypes.h` + TS 侧 `audioEngineManager.ts` + `preload/index.d.ts` 均已同步 |
+| `AudioPipeline` 集成 | ✅ 已完成 | `channelRouter_` 成员 + `route()` 调用 + `setSampleRate`/`reset`/`setUpmixConfig` |
+| 单元测试 | ✅ 已完成 | `audio-engine/tests/channel_router_tests.cpp`（14 个用例），CTest target `twilight_channel_router_unit` |
+| 上混参数 UI（P2） | ⬚ 未实施 | 可选增强，不在本次补全范围 |
+
+### 方案二：WASAPI Exclusive 自动恢复 — ⚠️ 实现已完成，测试暂缓
+
+| 子项 | 状态 | 说明 |
+|------|------|------|
+| `attemptRecovery` + `reopenDevice` | ✅ 已完成 | 3 次退避（500/1000/2000ms）+ 10 秒窗口限流 + 10 秒冷却 |
+| `handleRenderFailure` 统一入口 | ✅ 已完成 | 设备失效时先尝试恢复，成功则继续渲染；失败才通知上层 `DeviceInvalidated` |
+| `notifyFailure` 改造 | ✅ 已完成 | 设备失效时不直接通知上层，交由 `handleRenderFailure` 决定 |
+| 恢复后预填充 + Start | ✅ 已完成 | `attemptRecovery` 成功后调 `renderPacket(initialFrames)` + `audioClient->Start()` |
+| `open()` 保存恢复上下文 | ✅ 已完成 | `openDeviceId` + `openRequestedFormat` 保存 |
+| 单元测试 | ⬚ 暂缓 | 见下方说明 |
+
+#### WASAPI Recovery 测试暂缓原因
+
+WASAPI 独占后端当前**没有 mock seam**（不像 ASIO 有 `IAsioHost` + `MockAsioHost`、CoreAudio 有 `ICoreAudioHost` + `MockCoreAudioHost`、ALSA 有 `IAlsaHost` + `MockAlsaHost`）。`WasapiExclusiveBackend::Impl` 直接调用 COM API（`IMMDeviceEnumerator`、`IAudioClient`、`IAudioRenderClient`），无法在测试中注入模拟设备失效。
+
+补全测试需要先引入 `IWasapiHost` 抽象接口 + `MockWasapiHost` 实现（类似 ASIO 的 seam 模式），将 `WasapiExclusiveBackend::Impl` 中的 COM 调用改为通过接口调用。这是一项独立的架构改造（影响 `WasapiExclusiveBackend.cpp` 全部 ~780 行 + 新增 mock 文件），超出本次"补全缺失测试"的范围，建议作为独立任务后续推进。
+
+真实设备 smoke（`npm run smoke:wasapi`）可通过 `--device` + `--buffer` 参数在真机上验证恢复行为，但不在默认 CI 门禁内（opt-in via `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1`）。

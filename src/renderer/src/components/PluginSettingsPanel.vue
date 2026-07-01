@@ -59,6 +59,18 @@ interface PluginIndexEntry {
   installedVersion?: string
 }
 
+type PluginIndexSourceKind = 'github' | 'custom' | 'bundled'
+type PluginIndexLoadedFrom = 'remote' | 'cache' | 'bundled'
+
+interface PluginIndexStatus {
+  sourceUrl: string
+  sourceKind: PluginIndexSourceKind
+  loadedFrom: PluginIndexLoadedFrom
+  lastFetchedAt: string | null
+  stale: boolean
+  error: string | null
+}
+
 interface NativeDspParameter {
   id: string
   name: string
@@ -84,6 +96,7 @@ interface NativeDspStatus {
 
 const plugins = ref<PluginDescriptor[]>([])
 const indexEntries = ref<PluginIndexEntry[]>([])
+const indexStatus = ref<PluginIndexStatus | null>(null)
 const nativeDspStatuses = ref<Record<string, NativeDspStatus>>({})
 const loading = ref(false)
 const marketLoading = ref(false)
@@ -96,6 +109,21 @@ let removePluginListener: (() => void) | null = null
 
 const enabledCount = computed(() => plugins.value.filter((plugin) => plugin.enabled).length)
 const marketCount = computed(() => indexEntries.value.length)
+const indexSourceLabel = computed(() => {
+  const status = indexStatus.value
+  if (!status) return '索引未加载'
+  if (status.loadedFrom === 'bundled') return '内置离线索引'
+  if (status.sourceKind === 'github') return 'GitHub 动态索引'
+  return '自定义远程索引'
+})
+
+const indexLoadedFromLabel = computed(() => {
+  const loadedFrom = indexStatus.value?.loadedFrom
+  if (loadedFrom === 'remote') return '远程'
+  if (loadedFrom === 'cache') return '缓存'
+  if (loadedFrom === 'bundled') return '内置'
+  return '未知'
+})
 const pluginGroups = computed(() => [
   {
     id: 'regular',
@@ -139,8 +167,10 @@ async function refreshIndex(force = false): Promise<void> {
     indexEntries.value = force
       ? await window.api.plugins.refreshIndex()
       : await window.api.plugins.listIndex()
+    indexStatus.value = await window.api.plugins.getIndexStatus()
   } catch (err) {
     marketError.value = err instanceof Error ? err.message : String(err)
+    indexStatus.value = await window.api.plugins.getIndexStatus().catch(() => null)
     indexEntries.value = []
   } finally {
     marketLoading.value = false
@@ -313,6 +343,12 @@ function formatDate(value: string | null): string {
   return date.toLocaleString()
 }
 
+function formatIndexTime(value: string | null | undefined): string {
+  if (!value) return '未记录'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
+}
+
 onMounted(() => {
   void refreshPlugins()
   void refreshIndex()
@@ -363,13 +399,21 @@ onUnmounted(() => {
     <section class="plugin-market">
       <div class="plugin-group-head">
         <strong>插件市场</strong>
-        <span>静态索引来源；安装前仍会展示权限与信任式安装警告。</span>
+        <span>通过远程 plugins.json 发现插件包；安装前仍会展示权限与信任式安装警告。</span>
       </div>
       <div class="plugin-market-actions">
         <button class="text-button" :disabled="marketLoading" @click="refreshIndex(true)">
           <i class="pi pi-refresh"></i>
           刷新市场
         </button>
+      </div>
+      <div v-if="indexStatus" class="plugin-index-status">
+        <span>{{ indexSourceLabel }}</span>
+        <span>{{ indexLoadedFromLabel }}</span>
+        <span>刷新 {{ formatIndexTime(indexStatus.lastFetchedAt) }}</span>
+        <span v-if="indexStatus.stale" class="warn">使用回退索引</span>
+        <span v-if="indexStatus.error" class="warn">最近错误：{{ indexStatus.error }}</span>
+        <span class="source-url" :title="indexStatus.sourceUrl">{{ indexStatus.sourceUrl }}</span>
       </div>
       <div v-if="marketError" class="plugin-error">{{ marketError }}</div>
       <div v-if="indexEntries.length === 0 && !marketLoading && !marketError" class="plugin-empty">
@@ -637,6 +681,35 @@ onUnmounted(() => {
   color: var(--te-neutral-600);
   font-size: 12px;
   font-weight: 800;
+}
+
+.plugin-index-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--te-neutral-500);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.plugin-index-status span {
+  max-width: 100%;
+  border-radius: 999px;
+  background: var(--te-subtle-bg);
+  padding: 5px 8px;
+}
+
+.plugin-index-status .warn {
+  background: var(--te-warning-soft-bg);
+  color: #c2410c;
+}
+
+.plugin-index-status .source-url {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .plugin-error,

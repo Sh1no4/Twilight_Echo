@@ -8,6 +8,7 @@ const emit = defineEmits<{
 
 type TwilightPluginDescriptor = Awaited<ReturnType<typeof window.api.plugins.list>>[number]
 type TwilightPluginIndexEntry = Awaited<ReturnType<typeof window.api.plugins.listIndex>>[number]
+type TwilightPluginIndexStatus = Awaited<ReturnType<typeof window.api.plugins.getIndexStatus>>
 
 const activeTab = ref('installed')
 const devMode = ref(false)
@@ -15,6 +16,7 @@ const searchText = ref('')
 
 const installedPlugins = ref<TwilightPluginDescriptor[]>([])
 const indexEntries = ref<TwilightPluginIndexEntry[]>([])
+const indexStatus = ref<TwilightPluginIndexStatus | null>(null)
 const loading = ref(false)
 const errorMsg = ref('')
 const busyIds = ref(new Set<string>())
@@ -77,6 +79,22 @@ const marketRepoUrl = computed(() => {
   return entry?.repository || entry?.homepage || ''
 })
 
+const indexSourceLabel = computed(() => {
+  const status = indexStatus.value
+  if (!status) return '索引未加载'
+  if (status.loadedFrom === 'bundled') return '内置离线索引'
+  if (status.sourceKind === 'github') return 'GitHub 动态索引'
+  return '自定义远程索引'
+})
+
+const indexLoadedFromLabel = computed(() => {
+  const loadedFrom = indexStatus.value?.loadedFrom
+  if (loadedFrom === 'remote') return '远程'
+  if (loadedFrom === 'cache') return '缓存'
+  if (loadedFrom === 'bundled') return '内置'
+  return '未知'
+})
+
 /* ---------- API ---------- */
 
 async function refreshInstalled() {
@@ -90,8 +108,10 @@ async function refreshInstalled() {
 async function refreshIndex() {
   try {
     indexEntries.value = await window.api.plugins.listIndex()
+    indexStatus.value = await window.api.plugins.getIndexStatus()
   } catch (e) {
     errorMsg.value = `加载插件市场失败：${e instanceof Error ? e.message : String(e)}`
+    indexStatus.value = await window.api.plugins.getIndexStatus().catch(() => null)
   }
 }
 
@@ -173,11 +193,19 @@ async function refreshMarket() {
   errorMsg.value = ''
   try {
     indexEntries.value = await window.api.plugins.refreshIndex()
+    indexStatus.value = await window.api.plugins.getIndexStatus()
   } catch (e) {
     errorMsg.value = `刷新市场失败：${e instanceof Error ? e.message : String(e)}`
+    indexStatus.value = await window.api.plugins.getIndexStatus().catch(() => null)
   } finally {
     loading.value = false
   }
+}
+
+function formatIndexTime(value: string | null | undefined): string {
+  if (!value) return '未记录'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
 function openExternal(url: string) {
@@ -335,8 +363,8 @@ onUnmounted(() => {
           
           <div class="discover-banner">
             <div class="banner-text">
-              <h2>官方插件市场</h2>
-              <p>基于受信任的索引仓库分发，为 Twilight Echo 赋予无尽可能。</p>
+              <h2>{{ indexSourceLabel }}</h2>
+              <p>通过远程 plugins.json 发现插件包，安装前校验 manifest、checksum 和权限声明。</p>
             </div>
             <div class="banner-art">
               <i class="pi pi-server"></i>
@@ -347,6 +375,14 @@ onUnmounted(() => {
               style="position: absolute; right: 32px; bottom: 32px; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); color: #fff;"
               @click="openExternal(marketRepoUrl)"
             >浏览 GitHub 仓库 <i class="pi pi-external-link"></i></button>
+          </div>
+
+          <div v-if="indexStatus" class="market-status">
+            <span><i class="pi pi-database"></i> {{ indexLoadedFromLabel }}</span>
+            <span>刷新：{{ formatIndexTime(indexStatus.lastFetchedAt) }}</span>
+            <span v-if="indexStatus.stale" class="warn">使用回退索引</span>
+            <span v-if="indexStatus.error" class="warn">最近错误：{{ indexStatus.error }}</span>
+            <span class="source-url" :title="indexStatus.sourceUrl">{{ indexStatus.sourceUrl }}</span>
           </div>
 
           <div class="page-title" style="font-size: 18px; margin-bottom: 16px;">
@@ -753,6 +789,37 @@ onUnmounted(() => {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 20px;
+}
+
+.market-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: -16px 0 24px;
+  color: var(--te-neutral-500, #6b7280);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.market-status span {
+  max-width: 100%;
+  border-radius: 999px;
+  background: rgba(0,0,0,0.04);
+  padding: 6px 10px;
+}
+
+.market-status .warn {
+  background: var(--te-warning-soft-bg, #fff7ed);
+  color: #c2410c;
+}
+
+.market-status .source-url {
+  min-width: 0;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* Cards */

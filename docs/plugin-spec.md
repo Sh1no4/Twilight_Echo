@@ -185,13 +185,16 @@ Twilight Echo ships local-publishable ecosystem tooling:
   native DSP diagnostics.
 - `create-twilight-plugin` scaffolds `tool`, `provider`, `ui-tool`, and `theme`
   plugins, then packages any valid plugin root as a `.tep` archive.
-- `resources/plugin-index/plugins.json` is a static schemaVersion 1 index.
-  Entries repeat the plugin manifest fields and add `sourceUrl`,
-  `checksumSha256`, `tags`, and `verified`.
+- `plugins.json` is a schemaVersion 1 index. Entries repeat the plugin
+  manifest fields and add `sourceUrl`, `checksumSha256`, `tags`, and
+  `verified`.
 
-The app reads the bundled index by default. Development builds may set
-`TWILIGHT_PLUGIN_INDEX_URL` to any HTTPS `plugins.json` endpoint, including a
-GitHub raw URL or a private server. Index installation validates protocol,
+The app reads the GitHub raw index at
+`https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json`
+by default. `TWILIGHT_PLUGIN_INDEX_URL` may override it with any HTTPS
+`plugins.json` endpoint or a localhost HTTP test index. Successful remote
+loads are cached in user data; remote failures fall back to the cached index,
+then to the bundled offline index. Index installation validates protocol,
 package size, sha256 checksum, and the packaged manifest before delegating to
 the normal trust-based installer. The index cannot install or overwrite bundled
 plugins such as `com.twilightecho.provider.ncm`.
