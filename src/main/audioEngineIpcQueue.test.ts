@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+const source = readFileSync(new URL('./audio/engineIpc.ts', import.meta.url), 'utf8')
 
 test('audioEngine loadQueue IPC accepts renderer queue items with source field', () => {
   const start = source.indexOf('function toQueueItem')

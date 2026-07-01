@@ -73,15 +73,16 @@ test('desktop lyrics receives the current playback snapshot when enabled', () =>
 })
 
 test('desktop lyrics window replays cached track and time on creation', () => {
-  const source = readFileSync(new URL('../../../main/index.ts', import.meta.url), 'utf8')
+  const desktopLyricsSource = readFileSync(new URL('../../../main/integrations/desktopLyrics.ts', import.meta.url), 'utf8')
+  const runtimeSource = readFileSync(new URL('../../../main/core/runtime.ts', import.meta.url), 'utf8')
 
-  assert.match(source, /let latestDesktopLyricsTrack:/)
-  assert.match(source, /let latestDesktopLyricsTime = 0/)
-  assert.match(source, /function sendDesktopLyricsSnapshot\(\): void/)
-  assert.match(source, /desktopLyricsWindow\.webContents\.send\('desktopLyrics:updateTrack', latestDesktopLyricsTrack\)/)
-  assert.match(source, /desktopLyricsWindow\.webContents\.send\('desktopLyrics:updateTime', latestDesktopLyricsTime\)/)
-  assert.match(source, /latestDesktopLyricsTrack = data/)
-  assert.match(source, /latestDesktopLyricsTime = time/)
+  assert.match(runtimeSource, /latestDesktopLyricsTrack:/)
+  assert.match(runtimeSource, /latestDesktopLyricsTime: 0,/)
+  assert.match(desktopLyricsSource, /function sendDesktopLyricsSnapshot\(\): void/)
+  assert.match(desktopLyricsSource, /runtime\.desktopLyricsWindow\.webContents\.send\('desktopLyrics:updateTrack', runtime\.latestDesktopLyricsTrack\)/)
+  assert.match(desktopLyricsSource, /runtime\.desktopLyricsWindow\.webContents\.send\('desktopLyrics:updateTime', runtime\.latestDesktopLyricsTime\)/)
+  assert.match(desktopLyricsSource, /runtime\.latestDesktopLyricsTrack = data/)
+  assert.match(desktopLyricsSource, /runtime\.latestDesktopLyricsTime = time/)
 })
 
 test('desktop lyrics html falls back to untimed plain lyrics', () => {
@@ -96,22 +97,23 @@ test('desktop lyrics html falls back to untimed plain lyrics', () => {
 
 test('streaming playback resume waits for plugin providers before restoring', () => {
   const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
-  const mainSource = readFileSync(new URL('../../../main/index.ts', import.meta.url), 'utf8')
+  const pluginsSource = readFileSync(new URL('../../../main/ipc/plugins.ts', import.meta.url), 'utf8')
+  const runtimeSource = readFileSync(new URL('../../../main/core/runtime.ts', import.meta.url), 'utf8')
 
   assert.match(appSource, /import \{ syncPluginProviders \} from '\.\/providers'/)
   assert.match(
     appSource,
     /await syncPluginProviders\(\)[\s\S]*const restoredSession: PlaybackSession/
   )
-  assert.match(mainSource, /let pluginManagerReady: Promise<void> \| null = null/)
-  assert.match(mainSource, /pluginManagerReady = pluginManager\s*\.\s*initialize\(\)/)
+  assert.match(runtimeSource, /pluginManagerReady: null as Promise<void> \| null,/)
+  assert.match(pluginsSource, /runtime\.pluginManagerReady = runtime\.pluginManager\s*\.\s*initialize\(\)/)
   assert.match(
-    mainSource,
-    /ipcMain\.handle\('providers:list', async \(\) => \{\s*await pluginManagerReady\s*return pluginManager!\.listProviders\(\)\s*\}\)/
+    pluginsSource,
+    /ipcMain\.handle\('providers:list', async \(\) => \{\s*await runtime\.pluginManagerReady\s*return runtime\.pluginManager!\.listProviders\(\)\s*\}\)/
   )
   assert.match(
-    mainSource,
-    /'providers:call',[\s\S]*await pluginManagerReady[\s\S]*pluginManager!\.callProvider/
+    pluginsSource,
+    /'providers:call',[\s\S]*await runtime\.pluginManagerReady[\s\S]*runtime\.pluginManager!\.callProvider/
   )
 })
 
@@ -145,7 +147,7 @@ test('renderer streaming resume seeks only after media metadata is available', (
 })
 
 test('streaming renderer playback is allowed after asynchronous provider URL resolution', () => {
-  const mainSource = readFileSync(new URL('../../../main/index.ts', import.meta.url), 'utf8')
+  const mainSource = readFileSync(new URL('../../../main/app/lifecycle.ts', import.meta.url), 'utf8')
 
   assert.match(
     mainSource,
@@ -261,14 +263,14 @@ test('play mode is persisted in settings and restored on launch', () => {
   const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
   const settingsStoreSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
-  const mainSource = readFileSync(new URL('../../../main/index.ts', import.meta.url), 'utf8')
+  const mainSource = readFileSync(new URL('../../../main/core/settings.ts', import.meta.url), 'utf8')
   const setPlayModeInternal = extractInternalFunctionBody(playerSource, 'setPlayModeInternal')
 
   assert.match(settingsTypes, /export type PlayMode = 'sequential' \| 'repeat' \| 'shuffle'/)
   assert.match(settingsTypes, /playMode: PlayMode/)
   assert.match(settingsStoreSource, /playMode: 'sequential'/)
-  assert.match(mainSource, /type PlayMode,/)
-  assert.match(mainSource, /function normalizePlayMode\(mode: unknown\): PlayMode/)
+  assert.match(mainSource, /import type \{ PlayMode \} from '\.\.\/audioEngineManager'/)
+  assert.match(mainSource, /export function normalizePlayMode\(mode: unknown\): PlayMode/)
   assert.match(mainSource, /playMode: normalizePlayMode\(settings\.playMode\)/)
   assert.match(playerSource, /import type \{[\s\S]*PlayMode[\s\S]*\} from '\.\.\/types\/settings'/)
   assert.match(playerSource, /watch\(\s*\(\) => appSettings\.value\.playMode,/)
