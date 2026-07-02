@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { reactive } from 'vue'
 
@@ -73,4 +74,70 @@ test('normalizes reactive provider call args before IPC', () => {
   const args = toProviderIpcArgs([track])
   assert.deepEqual(structuredClone(args), args)
   assert.equal((args[0] as { nested: { value: string } }).nested.value, 'ok')
+})
+
+test('registry performs unified song search across local tracks and enabled providers', async () => {
+  const registry = new MediaProviderRegistry()
+  registry.register({
+    id: 'ncm',
+    name: 'NetEase',
+    source: 'plugin',
+    capabilities: ['search'],
+    searchSongs: async () => ({
+      items: [
+        {
+          id: 'ncm:1',
+          title: 'Moon River',
+          artist: 'Audrey',
+          album: 'Album',
+          filePath: 'ncm:1',
+          fileName: 'Moon River',
+          duration: 180,
+          size: 0,
+          cover: null,
+          lyrics: null,
+          source: 'ncm'
+        }
+      ],
+      total: 1
+    })
+  })
+
+  const result = await registry.searchAllSongs({
+    query: 'moon',
+    localTracks: [
+      {
+        id: 'local:1',
+        title: 'Moon River',
+        artist: 'Audrey',
+        album: 'Album',
+        filePath: 'D:\\Music\\Moon River.flac',
+        fileName: 'Moon River.flac',
+        duration: 181,
+        size: 1,
+        cover: null,
+        lyrics: null,
+        source: 'local',
+        format: 'flac'
+      }
+    ]
+  })
+
+  assert.deepEqual(
+    result.items.map((item) => item.track.id),
+    ['local:1', 'ncm:1']
+  )
+  assert.equal(result.logicalItems.length, 1)
+  assert.deepEqual(
+    result.logicalItems[0].variants.map((variant) => variant.track.id),
+    ['local:1', 'ncm:1']
+  )
+  assert.equal(result.health.ncm.available, true)
+})
+
+test('renderer provider sync carries host health into registered providers', () => {
+  const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+
+  assert.match(source, /health: provider\.health/)
+  assert.match(source, /isEnabled: \(\) => provider\.health\?\.available !== false/)
 })

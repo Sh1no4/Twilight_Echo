@@ -38,6 +38,7 @@ type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 type LyricAlign = 'center' | 'left'
 type LibraryChange = { kind: 'add' | 'remove' | 'unknown'; path?: string }
 type ProxyMode = 'auto' | 'custom' | 'off'
+type StreamingAudioCachePolicy = 'off' | 'provider'
 type BuiltInTrackSource = 'local' | 'ncm'
 type TrackSource = BuiltInTrackSource | (string & {})
 type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
@@ -159,6 +160,8 @@ interface AudioProcessingSettings {
   convolverIrPath: string
   crossfeedEnabled: boolean
   crossfeedStrength: number
+  crossfeedDelayMs: number
+  crossfeedCutoffHz: number
   gapless: boolean
   crossfadeSeconds: number
 }
@@ -227,6 +230,13 @@ interface DesktopLyricsSettings {
   maxLines: number
 }
 
+interface MusicCachePolicySettings {
+  cover: boolean
+  lyrics: boolean
+  metadata: boolean
+  streamingAudio: StreamingAudioCachePolicy
+}
+
 type AppBackgroundPage = 'local' | 'settings' | 'streaming' | 'player'
 type AppBackgroundKind = 'color' | 'image'
 
@@ -291,6 +301,7 @@ interface AppSettings {
   minimizeToTray: boolean
   musicCachePath: string
   cachePath: string
+  cachePolicy: MusicCachePolicySettings
   closeToTray: boolean
   startupHomePage: StartupHomePage
   theme: AppTheme
@@ -583,6 +594,30 @@ interface TwilightMediaProviderRegistration {
   name: string
   capabilities: TwilightMediaProviderCapability[]
   ui?: TwilightProviderUiMetadata
+  health?: TwilightMediaProviderHealth
+}
+
+interface TwilightMediaProviderHealth {
+  providerId: string
+  pluginId: string
+  pluginStatus: TwilightPluginStatus
+  available: boolean
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  methodStats?: Partial<Record<TwilightMediaProviderMethod, TwilightMediaProviderMethodHealth>>
+  lastError: string | null
+  lastCheckedAt: string | null
+}
+
+interface TwilightMediaProviderMethodHealth {
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  lastError: string | null
+  lastCheckedAt: string | null
 }
 
 type TwilightUiContributionKind =

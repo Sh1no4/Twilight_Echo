@@ -1,4 +1,13 @@
-import { nextTick, onMounted, onUnmounted, ref, type ComputedRef, type Ref } from 'vue'
+import {
+  computed,
+  getCurrentInstance,
+  nextTick,
+  onMounted,
+  onUnmounted,
+  ref,
+  type ComputedRef,
+  type Ref
+} from 'vue'
 import type { Track } from '../../types/music'
 import type { PlaylistActions } from './types'
 
@@ -11,6 +20,7 @@ export function useSongListContextMenu({
   removeTrack,
   addToPlaylist,
   removeFromPlaylist,
+  rematchTrack,
   createPlaylist,
   deletePlaylist
 }: UseSongListContextMenuOptions): {
@@ -27,6 +37,8 @@ export function useSongListContextMenu({
   handleOpenFolder: () => Promise<void>
   handleAddToPlaylist: (playlistName: string) => void
   handleRemoveFromCurrentPlaylist: () => void
+  canRematchSelectedTrack: ComputedRef<boolean>
+  handleRematchTrack: () => Promise<void>
   openCreatePlaylistDialog: (track?: Track) => void
   handleCreatePlaylist: () => void
   handleCreatePlaylistFromMenu: () => void
@@ -40,6 +52,11 @@ export function useSongListContextMenu({
   const showCreatePlaylistDialog = ref(false)
   const newPlaylistName = ref('')
   const createPlaylistForTrack = ref<Track | null>(null)
+  const canRematchSelectedTrack = computed(() => {
+    const track = selectedTrack.value
+    if (!track || !rematchTrack) return false
+    return getTrackSource(track) !== 'local'
+  })
 
   function onContextMenu(event: MouseEvent, track: Track): void {
     event.preventDefault()
@@ -84,7 +101,7 @@ export function useSongListContextMenu({
 
   function handleAddToPlaylist(playlistName: string): void {
     if (selectedTrack.value) {
-      addToPlaylist(playlistName, selectedTrack.value.id)
+      addToPlaylist(playlistName, selectedTrack.value.id, selectedTrack.value)
       closeContextMenu()
     }
   }
@@ -93,6 +110,12 @@ export function useSongListContextMenu({
     const playlistName = currentPlaylistName.value
     if (!playlistName || !selectedTrack.value) return
     removeFromPlaylist(playlistName, selectedTrack.value.id)
+    closeContextMenu()
+  }
+
+  async function handleRematchTrack(): Promise<void> {
+    if (!selectedTrack.value || !canRematchSelectedTrack.value || !rematchTrack) return
+    await rematchTrack(selectedTrack.value)
     closeContextMenu()
   }
 
@@ -108,7 +131,7 @@ export function useSongListContextMenu({
     if (!name) return
     createPlaylist(name)
     if (createPlaylistForTrack.value) {
-      addToPlaylist(name, createPlaylistForTrack.value.id)
+      addToPlaylist(name, createPlaylistForTrack.value.id, createPlaylistForTrack.value)
     }
     showCreatePlaylistDialog.value = false
     createPlaylistForTrack.value = null
@@ -124,13 +147,15 @@ export function useSongListContextMenu({
     deletePlaylist(playlistId)
   }
 
-  onMounted(() => {
-    window.addEventListener('click', closeContextMenu)
-  })
+  if (getCurrentInstance()) {
+    onMounted(() => {
+      window.addEventListener('click', closeContextMenu)
+    })
 
-  onUnmounted(() => {
-    window.removeEventListener('click', closeContextMenu)
-  })
+    onUnmounted(() => {
+      window.removeEventListener('click', closeContextMenu)
+    })
+  }
 
   return {
     showContextMenu,
@@ -146,9 +171,18 @@ export function useSongListContextMenu({
     handleOpenFolder,
     handleAddToPlaylist,
     handleRemoveFromCurrentPlaylist,
+    canRematchSelectedTrack,
+    handleRematchTrack,
     openCreatePlaylistDialog,
     handleCreatePlaylist,
     handleCreatePlaylistFromMenu,
     handleDeletePlaylist
   }
+}
+
+function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
+  if (track.source) return track.source
+  if (/^[a-zA-Z]:[\\/]/.test(track.id) || /^[\\/]/.test(track.id)) return 'local'
+  const separatorIndex = track.id.indexOf(':')
+  return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
 }

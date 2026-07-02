@@ -28,11 +28,13 @@ import type {
   CardHoverEffect,
   CardShadowStrength,
   DesktopLyricsSettings,
+  MusicCachePolicySettings,
   NowPlayingBackground,
   PlaybackResumeMode,
   ProxyMode,
   SettingsSnapshot,
   StartupHomePage,
+  StreamingAudioCachePolicy,
   UiDensity
 } from './types'
 import type { PlayMode } from '../audioEngineManager'
@@ -61,6 +63,13 @@ export const DEFAULT_DESKTOP_LYRICS: DesktopLyricsSettings = {
   maxLines: 2
 }
 
+export const DEFAULT_MUSIC_CACHE_POLICY: MusicCachePolicySettings = {
+  cover: true,
+  lyrics: true,
+  metadata: true,
+  streamingAudio: 'provider'
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   autoCheckLogin: true,
   autoLaunch: false,
@@ -70,6 +79,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   minimizeToTray: false,
   musicCachePath: '',
   cachePath: '',
+  cachePolicy: DEFAULT_MUSIC_CACHE_POLICY,
   closeToTray: false,
   startupHomePage: 'local',
   theme: 'system',
@@ -232,6 +242,20 @@ export function normalizePlaybackResumeMode(mode: unknown): PlaybackResumeMode {
 
 export function normalizeStartupHomePage(value: unknown): StartupHomePage {
   return value === 'streaming' ? 'streaming' : 'local'
+}
+
+export function normalizeStreamingAudioCachePolicy(value: unknown): StreamingAudioCachePolicy {
+  return value === 'off' ? 'off' : 'provider'
+}
+
+export function normalizeMusicCachePolicy(raw: unknown): MusicCachePolicySettings {
+  const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  return {
+    cover: value.cover !== false,
+    lyrics: value.lyrics !== false,
+    metadata: value.metadata !== false,
+    streamingAudio: normalizeStreamingAudioCachePolicy(value.streamingAudio)
+  }
 }
 
 export function normalizePlayMode(mode: unknown): PlayMode {
@@ -430,14 +454,20 @@ export function normalizeChannelRoutingMode(value: unknown): ChannelRoutingMode 
 
 export function normalizeOutputConfig(config: unknown): OutputConfig {
   if (!config || typeof config !== 'object') return { ...DEFAULT_SETTINGS.audioOutputConfig }
-  const value = config as { preferredBufferSize?: unknown; routingMode?: unknown; wasapiExclusivePushMode?: unknown }
+  const value = config as Partial<Record<keyof OutputConfig, unknown>>
   return {
     preferredBufferSize:
       typeof value.preferredBufferSize === 'number'
         ? clampNumber(Math.trunc(value.preferredBufferSize), 0, 8192, 0)
         : DEFAULT_SETTINGS.audioOutputConfig.preferredBufferSize,
     routingMode: normalizeChannelRoutingMode(value.routingMode),
-    wasapiExclusivePushMode: value.wasapiExclusivePushMode === true
+    wasapiExclusivePushMode: value.wasapiExclusivePushMode === true,
+    upmixCenterGain: clampNumber(value.upmixCenterGain, 0, 2, 0.7071),
+    upmixLfeGain: clampNumber(value.upmixLfeGain, 0, 2, 0.5),
+    upmixLfeLowpassHz: clampNumber(value.upmixLfeLowpassHz, 20, 500, 120),
+    upmixSurroundGain: clampNumber(value.upmixSurroundGain, 0, 2, 0.5),
+    upmixSideGain: clampNumber(value.upmixSideGain, 0, 2, 0.3),
+    upmixSurroundDelayMs: clampNumber(value.upmixSurroundDelayMs, 0, 100, 0)
   }
 }
 
@@ -503,6 +533,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     minimizeToTray,
     musicCachePath: cachePath,
     cachePath,
+    cachePolicy: normalizeMusicCachePolicy(settings.cachePolicy),
     closeToTray,
     startupHomePage: normalizeStartupHomePage(settings.startupHomePage),
     theme: normalizeAppTheme(settings.theme),

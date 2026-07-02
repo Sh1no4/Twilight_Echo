@@ -145,6 +145,7 @@ interface MediaProviderRegistration {
   id: string
   name: string
   capabilities: MediaProviderCapability[]
+  health?: TwilightMediaProviderHealth
   getPlaybackUrl?(track: Track, options?: { force?: boolean }): Promise<string | null>
   getLyrics?(track: Track): Promise<{ lyrics: string | null; translatedLyrics: string | null }>
   searchSongs?(keywords: string, limit?: number, offset?: number): Promise<{ items: Track[]; total: number }>
@@ -171,6 +172,29 @@ interface MediaProviderRegistration {
   fetchUserFolloweds?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
   likeTrack?(trackId: string | number, like: boolean): Promise<void>
   isTrackLiked?(trackId: string | number | undefined): Promise<boolean> | boolean
+}
+
+interface TwilightMediaProviderHealth {
+  providerId: string
+  pluginId: string
+  pluginStatus: TwilightPluginStatus
+  available: boolean
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  methodStats: Partial<Record<TwilightMediaProviderMethod, TwilightMediaProviderMethodHealth>>
+  lastError: string | null
+  lastCheckedAt: string | null
+}
+
+interface TwilightMediaProviderMethodHealth {
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  lastError: string | null
+  lastCheckedAt: string | null
 }
 
 await context.twilight.providers.register({
@@ -200,6 +224,15 @@ API and is rejected for all other plugin ids.
 Provider login UIs should prefer `getQrLogin()` when present. It lets a plugin
 return a provider-native QR payload such as a URL, while the renderer owns QR
 image generation. Older providers can keep `getQrKey()` plus `getQrImage()`.
+
+Provider health is part of the public API contract. Plugins may provide an
+initial `health` snapshot when registering, and the host records aggregate and
+per-method call health while routing provider calls. Streaming UI should prefer
+`methodStats.getPlaybackUrl` when explaining playback URL failures, because a
+provider can be logged in and searchable while still failing to produce playable
+URLs. Health status must remain provider-generic; platform-specific risk-control
+or login messages belong in provider errors and logs, not host-side platform
+branches.
 
 Provider tracks must keep their source prefix throughout queue, library, and
 session persistence:

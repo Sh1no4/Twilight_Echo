@@ -11,6 +11,8 @@ import {
 import { useProviderStore } from '../stores/useProviderStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
+import { useMusicStore } from '../stores/useMusicStore'
+import { useMediaProviders } from '../providers'
 import type {
   MediaProviderPlaylistSummary,
   MediaProviderProfile
@@ -33,6 +35,12 @@ import {
   findBestStreamingArtistMatch,
   resolveLinkedStreamingArtist
 } from '../utils/streamingArtistResolution'
+import { getRecentTracks, getTopTracks } from '../stores/useListeningStatsStore'
+import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
+import {
+  resolveUnifiedFavoriteTracks,
+  summarizeUnifiedFavorites
+} from '../utils/unifiedFavoriteTracks'
 import type { PageState } from './streaming-page/types'
 import { useStreamingSearch } from './streaming-page/useStreamingSearch'
 
@@ -96,6 +104,8 @@ const recsError = ref('')
 const avatarLoadFailed = ref(false)
 const providerStore = useProviderStore()
 const settingsStore = useSettingsStore()
+const musicStore = useMusicStore()
+const mediaProviders = useMediaProviders()
 
 const NCM_PROVIDER_ID = 'ncm'
 const ncmNavigationAvailable = computed(() => providerStore.hasProvider(NCM_PROVIDER_ID))
@@ -178,6 +188,16 @@ const libraryProviders = computed(() =>
     ncmAvailable: ncmNavigationAvailable.value,
     providers: providerStore.providers.value
   })
+)
+const libraryProviderOptions = computed(() =>
+  libraryProviders.value.map((provider) => ({
+    ...provider,
+    health: providerStore.getProvider(provider.id)?.health,
+    loggedIn:
+      provider.id === NCM_PROVIDER_ID
+        ? isLoggedIn.value
+        : (externalStates[provider.id]?.loggedIn ?? false)
+  }))
 )
 
 async function loadRecommendations(): Promise<void> {
@@ -286,6 +306,23 @@ const {
 
 const { currentTrack, playTrack, formatTime } = usePlayerStore()
 
+async function searchUnifiedSongs(
+  keywords: string,
+  limit?: number,
+  offset?: number
+): Promise<{ tracks: Track[]; total: number }> {
+  const result = await mediaProviders.searchAllSongs({
+    query: keywords,
+    localTracks: musicStore.tracks.value,
+    limit,
+    offset
+  })
+  return {
+    tracks: result.items.map((item) => item.track),
+    total: result.items.length
+  }
+}
+
 const {
   searchQuery,
   searchType,
@@ -304,6 +341,7 @@ const {
   onSearchTrackClick
 } = useStreamingSearch({
   searchSongs,
+  searchUnifiedSongs,
   searchPlaylists,
   searchArtists,
   playTrack
@@ -351,9 +389,10 @@ const activeProviderUnavailable = computed(() => {
   const error = activeProviderError.value
   return /Provider 未启用|provider is disabled|does not implement/i.test(error)
 })
-const showNcmSearch = computed(() => ncmNavigationAvailable.value && !isExternalActive.value && isLoggedIn.value)
+const showUnifiedSearch = computed(() => hasOnlineNavigationEntries.value && activeProviderAvailable.value && activeLoggedIn.value)
 const trackUnitLabel = computed(() => (isBiliActive.value ? '个视频' : '首歌曲'))
 const profileSignature = computed(() => activeProfile.value?.signature?.trim() || '暂无个人简介')
+const unifiedFavoriteTracks = computed(() => musicStore.getPlaylistTracks('我收藏的音乐'))
 
 const headerTitle = computed(() => {
   if (isExternalActive.value && currentDetail.value?.type === 'playlist')
@@ -390,21 +429,28 @@ const rootLoading = computed(() =>
 )
 
 const likedSummary = computed(() => {
+  const unifiedTracks = unifiedFavoriteTracks.value
   if (isExternalActive.value) {
     const state = activeExternalState.value
-    return {
-      name: isBiliActive.value ? 'Bilibili 收藏夹' : '我喜欢的音乐',
-      cover: state?.likedPlaylist?.cover ?? null,
-      trackCount: isBiliActive.value
-        ? (state?.playlists.length ?? 0)
-        : (state?.likedPlaylist?.trackCount ?? 0)
+    return summarizeUnifiedFavorites({
+      unifiedTracks,
+      providerSummary: {
+        name: isBiliActive.value ? 'Bilibili 收藏夹' : '我喜欢的音乐',
+        cover: state?.likedPlaylist?.cover ?? null,
+        trackCount: isBiliActive.value
+          ? (state?.playlists.length ?? 0)
+          : (state?.likedPlaylist?.trackCount ?? 0)
+      }
+    })
+  }
+  return summarizeUnifiedFavorites({
+    unifiedTracks,
+    providerSummary: {
+      name: '我收藏的歌曲',
+      cover: likedPlaylist.value?.cover ?? null,
+      trackCount: likedCount.value ?? likedPlaylist.value?.trackCount ?? 0
     }
-  }
-  return {
-    name: '我收藏的歌曲',
-    cover: likedPlaylist.value?.cover ?? null,
-    trackCount: likedCount.value ?? likedPlaylist.value?.trackCount ?? 0
-  }
+  })
 })
 
 const userPlaylistEntries = computed(() =>
@@ -449,8 +495,8 @@ const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
   if (currentDetail.value.type === 'liked') {
     return {
       title: '我收藏的歌曲',
-      cover: likedPlaylist.value?.cover ?? null,
-      desc: `共 ${likedCount.value ?? 0} 首歌曲`,
+      cover: likedSummary.value.cover,
+      desc: `共 ${likedSummary.value.trackCount} 首歌曲`,
       icon: 'pi pi-heart-fill'
     }
   }
@@ -810,6 +856,20 @@ async function togglePinnedPlaylist(playlist: MediaProviderPlaylistSummary): Pro
 }
 
 async function openLikedTracks(force = false): Promise<void> {
+  const unifiedTracks = unifiedFavoriteTracks.value
+  if (unifiedTracks.length > 0) {
+    streamingTransitionName.value = 'stream-page-down'
+    currentDetail.value = { type: 'liked' }
+    detailTracks.value = resolveUnifiedFavoriteTracks({
+      unifiedTracks,
+      providerTracks: []
+    }).tracks
+    likedCount.value = detailTracks.value.length
+    detailError.value = ''
+    detailLoading.value = false
+    return
+  }
+
   // External providers (e.g. YouTube Music) expose liked music as a playlist
   // (ytm's "LM"), so open it through the generic playlist path rather than the
   // ncm-only fetchLikedTracks.
@@ -1031,7 +1091,14 @@ async function openRecent(): Promise<void> {
   const token = beginDetailLoad()
 
   try {
-    const tracks = await fetchRecentSongs()
+    const recentStats = getRecentTracks()
+    let tracks = resolveUnifiedRecentTracks({
+      recentStats,
+      localTracks: musicStore.tracks.value
+    })
+    if (tracks.length === 0) {
+      tracks = await fetchRecentSongs()
+    }
     if (!isActiveDetailLoad(token)) return
     detailTracks.value = tracks
   } catch (error) {
@@ -1051,7 +1118,14 @@ async function openRanking(): Promise<void> {
   const token = beginDetailLoad()
 
   try {
-    const tracks = await fetchPlayRecords(1)
+    const topStats = getTopTracks()
+    let tracks = resolveUnifiedRecentTracks({
+      recentStats: topStats,
+      localTracks: musicStore.tracks.value
+    })
+    if (tracks.length === 0) {
+      tracks = await fetchPlayRecords(1)
+    }
     if (!isActiveDetailLoad(token)) return
     detailTracks.value = tracks
   } catch (error) {
@@ -1336,7 +1410,7 @@ onMounted(async () => {
         </div>
         <div class="streaming-header-right">
           <div
-            v-if="showNcmSearch"
+            v-if="showUnifiedSearch"
             class="streaming-search-box"
             :class="{ focused: searchInputFocused }"
           >
@@ -1354,7 +1428,7 @@ onMounted(async () => {
               <i class="pi pi-times"></i>
             </button>
           </div>
-          <button v-if="showNcmSearch" class="streaming-round-btn" title="通知">
+          <button v-if="!isExternalActive && showUnifiedSearch" class="streaming-round-btn" title="通知">
             <i class="pi pi-bell"></i>
             <span class="notify-dot"></span>
           </button>
@@ -1376,7 +1450,7 @@ onMounted(async () => {
       </div>
 
       <!-- Search Type Tabs -->
-      <div v-if="showNcmSearch && isSearching && !currentDetail" class="streaming-search-tabs">
+      <div v-if="showUnifiedSearch && isSearching && !currentDetail" class="streaming-search-tabs">
         <div
           class="search-tab-pill"
           :class="{ active: searchType === 'songs' }"
@@ -1402,7 +1476,7 @@ onMounted(async () => {
 
       <Transition :name="streamingTransitionName" mode="out-in">
         <div
-          v-if="showNcmSearch && isSearching && !currentDetail"
+          v-if="showUnifiedSearch && isSearching && !currentDetail"
           key="search-results"
           class="streaming-content-body"
           :class="{ 'has-search-tabs': isSearching }"
@@ -1960,7 +2034,7 @@ onMounted(async () => {
             :allow-pin-playlists="isBiliActive"
             :pinned-playlist-ids="activeExternalState?.pinnedPlaylistIds ?? []"
             :pinning-playlist-id="activeExternalState?.pinningPlaylistId ?? null"
-            :available-providers="libraryProviders"
+            :available-providers="libraryProviderOptions"
             :active-provider="activeProvider"
             @switch-provider="selectProvider"
             @open-user-list="openUserList"

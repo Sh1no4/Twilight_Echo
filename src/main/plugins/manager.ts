@@ -15,6 +15,7 @@ import type {
   PluginHostRequest,
   PluginHostResponse,
   TwilightMediaProviderMethod,
+  TwilightMediaProviderHealth,
   TwilightMediaProviderRegistration,
   TwilightPluginExtensionContribution,
   TwilightProviderStreamingSection,
@@ -73,6 +74,25 @@ interface InstallFromPathOptions {
   sourceLabel?: string
 }
 
+interface ProviderHealthRecord {
+  providerId: string
+  pluginId: string
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  methodStats: Partial<Record<TwilightMediaProviderMethod, ProviderMethodHealthRecord>>
+  lastError: string | null
+  lastCheckedAt: string | null
+}
+
+interface ProviderMethodHealthRecord {
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  lastError: string | null
+  lastCheckedAt: string | null
+}
+
 const STATE_FILE = 'plugin-state.json'
 const PLUGIN_ACTIVATE_TIMEOUT_MS = 5000
 const PLUGIN_DEACTIVATE_TIMEOUT_MS = 1500
@@ -121,6 +141,7 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly player: TwilightPluginManagerOptions['player']
   private readonly getProxyEnv: TwilightPluginManagerOptions['getProxyEnv']
   private readonly running = new Map<string, RunningPlugin>()
+  private readonly providerHealth = new Map<string, ProviderHealthRecord>()
   private readonly stopping = new Set<string>()
   private shuttingDown = false
   private readonly providerCalls = new Map<
@@ -380,7 +401,10 @@ export class TwilightPluginManager extends EventEmitter {
   }
 
   listProviders(): TwilightMediaProviderRegistration[] {
-    return dedupeProviderRegistrations(this.running.values())
+    return dedupeProviderRegistrations(this.running.values()).map((provider) => ({
+      ...provider,
+      health: this.getProviderHealth(provider.id)
+    }))
   }
 
   listExtensions(): TwilightPluginExtensionContribution[] {
@@ -461,6 +485,12 @@ export class TwilightPluginManager extends EventEmitter {
     return new Promise((resolveCall, rejectCall) => {
       const timer = setTimeout(() => {
         this.providerCalls.delete(requestId)
+        this.recordProviderCallFailure(
+          normalizedProviderId,
+          running.descriptor.id,
+          method,
+          `Provider 调用超时：${normalizedProviderId}.${method}`
+        )
         rejectCall(new Error(`Provider 调用超时：${normalizedProviderId}.${method}`))
       }, getProviderCallTimeoutMs(method))
       this.providerCalls.set(requestId, {
@@ -783,10 +813,48 @@ export class TwilightPluginManager extends EventEmitter {
     if (!name) throw new Error('Provider name 必填')
     if (capabilities.length === 0) throw new Error('Provider capabilities 必须声明至少一项能力')
     const ui = this.normalizeProviderUi(record.ui, capabilities)
+    const health = this.normalizeProviderHealth(record.health, providerId, pluginId)
+    if (health) this.providerHealth.set(providerId, health)
     const provider: TwilightMediaProviderRegistration = { id: providerId, name, capabilities, ui }
     running.providers.push(provider)
     this.emit('changed')
     return provider
+  }
+
+  private normalizeProviderHealth(
+    raw: unknown,
+    providerId: string,
+    pluginId: string
+  ): ProviderHealthRecord | null {
+    if (!raw || typeof raw !== 'object') return null
+    const record = raw as Record<string, unknown>
+    const totalCalls = normalizeCount(record.totalCalls)
+    const successfulCalls = normalizeCount(record.successfulCalls)
+    const failedCalls = normalizeCount(record.failedCalls)
+    const methodStats: ProviderHealthRecord['methodStats'] = {}
+    if (record.methodStats && typeof record.methodStats === 'object') {
+      for (const [method, value] of Object.entries(record.methodStats as Record<string, unknown>)) {
+        if (!isTwilightMediaProviderMethod(method) || !value || typeof value !== 'object') continue
+        const methodRecord = value as Record<string, unknown>
+        methodStats[method] = {
+          totalCalls: normalizeCount(methodRecord.totalCalls),
+          successfulCalls: normalizeCount(methodRecord.successfulCalls),
+          failedCalls: normalizeCount(methodRecord.failedCalls),
+          lastError: normalizeNullableString(methodRecord.lastError),
+          lastCheckedAt: normalizeNullableString(methodRecord.lastCheckedAt)
+        }
+      }
+    }
+    return {
+      providerId,
+      pluginId,
+      totalCalls,
+      successfulCalls,
+      failedCalls,
+      methodStats,
+      lastError: normalizeNullableString(record.lastError),
+      lastCheckedAt: normalizeNullableString(record.lastCheckedAt)
+    }
   }
 
   /**
@@ -984,19 +1052,138 @@ export class TwilightPluginManager extends EventEmitter {
     this.providerCalls.delete(message.requestId)
     clearTimeout(pending.timer)
     if (message.ok) {
+      this.recordProviderCallSuccess(pending.providerId, pending.pluginId, pending.method)
       pending.resolve(message.value)
     } else {
       const staleBundledProvider =
         this.isBundledPluginId(pending.pluginId) &&
         /^Provider .+ does not implement /i.test(message.error)
-      pending.reject(
-        new Error(
-          staleBundledProvider
-            ? `${message.error}。内置音源插件尚未加载最新代码，请重启应用。`
-            : message.error
-        )
-      )
+      const error = staleBundledProvider
+        ? `${message.error}。内置音源插件尚未加载最新代码，请重启应用。`
+        : message.error
+      this.recordProviderCallFailure(pending.providerId, pending.pluginId, pending.method, error)
+      pending.reject(new Error(error))
     }
+  }
+
+  private getProviderHealth(providerId: string): TwilightMediaProviderHealth {
+    const normalizedProviderId = providerId.trim().toLowerCase()
+    const running = [...this.running.values()].find((candidate) =>
+      candidate.providers.some((provider) => provider.id === normalizedProviderId)
+    )
+    const pluginId = running?.descriptor.id ?? normalizedProviderId
+    const pluginStatus = running?.descriptor.status ?? 'disabled'
+    const health = this.providerHealth.get(normalizedProviderId)
+    const totalCalls = health?.totalCalls ?? 0
+    const successfulCalls = health?.successfulCalls ?? 0
+    const failedCalls = health?.failedCalls ?? 0
+    return {
+      providerId: normalizedProviderId,
+      pluginId,
+      pluginStatus: pluginStatus,
+      available: pluginStatus === 'enabled' && (health?.lastError ? failedCalls === 0 || successfulCalls > 0 : true),
+      totalCalls,
+      successfulCalls,
+      failedCalls,
+      successRate: totalCalls > 0 ? successfulCalls / totalCalls : 1,
+      methodStats: this.getProviderMethodStats(health),
+      lastError: health?.lastError ?? running?.descriptor.error ?? null,
+      lastCheckedAt: health?.lastCheckedAt ?? null
+    }
+  }
+
+  private recordProviderCallSuccess(
+    providerId: string,
+    pluginId: string,
+    method: TwilightMediaProviderMethod
+  ): void {
+    const health = this.ensureProviderHealth(providerId, pluginId)
+    health.totalCalls += 1
+    health.successfulCalls += 1
+    health.lastError = null
+    health.lastCheckedAt = new Date().toISOString()
+    const methodHealth = this.ensureProviderMethodHealth(health, method)
+    methodHealth.totalCalls += 1
+    methodHealth.successfulCalls += 1
+    methodHealth.lastError = null
+    methodHealth.lastCheckedAt = health.lastCheckedAt
+  }
+
+  private recordProviderCallFailure(
+    providerId: string,
+    pluginId: string,
+    method: TwilightMediaProviderMethod,
+    message: string
+  ): void {
+    const health = this.ensureProviderHealth(providerId, pluginId)
+    health.totalCalls += 1
+    health.failedCalls += 1
+    health.lastError = message
+    health.lastCheckedAt = new Date().toISOString()
+    const methodHealth = this.ensureProviderMethodHealth(health, method)
+    methodHealth.totalCalls += 1
+    methodHealth.failedCalls += 1
+    methodHealth.lastError = message
+    methodHealth.lastCheckedAt = health.lastCheckedAt
+  }
+
+  private ensureProviderHealth(providerId: string, pluginId: string): ProviderHealthRecord {
+    const normalizedProviderId = providerId.trim().toLowerCase()
+    const existing = this.providerHealth.get(normalizedProviderId)
+    if (existing) {
+      existing.pluginId = pluginId
+      return existing
+    }
+    const created: ProviderHealthRecord = {
+      providerId: normalizedProviderId,
+      pluginId,
+      totalCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      methodStats: {},
+      lastError: null,
+      lastCheckedAt: null
+    }
+    this.providerHealth.set(normalizedProviderId, created)
+    return created
+  }
+
+  private ensureProviderMethodHealth(
+    health: ProviderHealthRecord,
+    method: TwilightMediaProviderMethod
+  ): ProviderMethodHealthRecord {
+    const existing = health.methodStats[method]
+    if (existing) return existing
+    const created: ProviderMethodHealthRecord = {
+      totalCalls: 0,
+      successfulCalls: 0,
+      failedCalls: 0,
+      lastError: null,
+      lastCheckedAt: null
+    }
+    health.methodStats[method] = created
+    return created
+  }
+
+  private getProviderMethodStats(
+    health: ProviderHealthRecord | undefined
+  ): TwilightMediaProviderHealth['methodStats'] {
+    if (!health) return {}
+    const stats: TwilightMediaProviderHealth['methodStats'] = {}
+    for (const [method, record] of Object.entries(health.methodStats)) {
+      const totalCalls = record?.totalCalls ?? 0
+      const successfulCalls = record?.successfulCalls ?? 0
+      const failedCalls = record?.failedCalls ?? 0
+      stats[method as TwilightMediaProviderMethod] = {
+        totalCalls,
+        successfulCalls,
+        failedCalls,
+        successRate: totalCalls > 0 ? successfulCalls / totalCalls : 1,
+        lastError: record?.lastError ?? null,
+        lastCheckedAt: record?.lastCheckedAt ?? null
+      }
+    }
+    return stats
   }
 
   private handleUiCommandResult(
@@ -1309,6 +1496,60 @@ function normalizeText(value: unknown, message: string): string {
   const text = typeof value === 'string' ? value.trim() : ''
   if (!text) throw new Error(message)
   return text.slice(0, 120)
+}
+
+function normalizeCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+function normalizeNullableString(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  return normalized ? normalized.slice(0, 500) : null
+}
+
+function isTwilightMediaProviderMethod(method: string): method is TwilightMediaProviderMethod {
+  return [
+    'getPlaybackUrl',
+    'getLyrics',
+    'searchSongs',
+    'searchPlaylists',
+    'searchArtists',
+    'fetchPlaylistTracks',
+    'checkLogin',
+    'getProfile',
+    'logout',
+    'openOfficialLogin',
+    'sendCaptcha',
+    'loginByPhonePassword',
+    'loginByPhoneCaptcha',
+    'loginByEmailPassword',
+    'getQrLogin',
+    'getQrKey',
+    'getQrImage',
+    'checkQrLogin',
+    'fetchUserLibrary',
+    'fetchLikedTracks',
+    'fetchRecommendSongs',
+    'fetchRecommendPlaylists',
+    'fetchPersonalFm',
+    'fetchPrivateContent',
+    'fetchArtistTopSongs',
+    'fetchArtistAlbums',
+    'fetchArtistIntro',
+    'fetchArtistFollowState',
+    'fetchAlbumTracks',
+    'fetchArtistPlaylists',
+    'fetchUserPlaylistsByUid',
+    'fetchUserFollows',
+    'fetchUserFolloweds',
+    'fetchPlayRecords',
+    'fetchRecentSongs',
+    'followArtist',
+    'followUser',
+    'likeTrack',
+    'isTrackLiked'
+  ].includes(method)
 }
 
 function normalizeCssVariables(raw: Record<string, unknown>): Record<string, string> {

@@ -44,6 +44,8 @@ const fallbackAudioProcessing: AudioProcessingSettings = {
   convolverIrPath: '',
   crossfeedEnabled: false,
   crossfeedStrength: 0,
+  crossfeedDelayMs: 0.35,
+  crossfeedCutoffHz: 700,
   gapless: true,
   crossfadeSeconds: 0
 }
@@ -70,6 +72,12 @@ const fallbackSettings: AppSettings = {
   globalShortcuts: false,
   musicCachePath: '',
   cachePath: '',
+  cachePolicy: {
+    cover: true,
+    lyrics: true,
+    metadata: true,
+    streamingAudio: 'provider'
+  },
   closeToTray: false,
   startupHomePage: 'local',
   theme: 'system',
@@ -529,6 +537,10 @@ function applySnapshot(snapshot: SettingsSnapshot): void {
   settings.value = {
     ...fallbackSettings,
     ...incoming,
+    cachePolicy: {
+      ...fallbackSettings.cachePolicy,
+      ...(incoming.cachePolicy ?? {})
+    },
     cardAppearance: {
       ...fallbackSettings.cardAppearance,
       ...(incoming.cardAppearance ?? {}),

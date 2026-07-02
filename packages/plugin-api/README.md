@@ -17,3 +17,8 @@ The v1 UI typings include the controlled extension points currently exposed by
 the host: `playerBarButton`, `settingsPanel`, `sidebarPage`,
 `localSidebarItem`, and `streamingHome`. UI contributions may also declare
 `renderMode` and `autoLoad`.
+
+Provider registrations may expose optional `health` metadata through
+`TwilightMediaProviderHealth`. The host also records aggregate and per-method
+health, including `methodStats.getPlaybackUrl`, so streaming UI can distinguish
+login, API, playback URL, network, disabled-provider, and plugin failure states.

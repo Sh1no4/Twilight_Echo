@@ -1,5 +1,6 @@
 import { toRaw } from 'vue'
 import type { Track } from '../types/music'
+import { unifiedSearchSongs, type UnifiedSearchResult } from '../utils/unifiedMusicSearch.ts'
 
 export type MediaProviderCapability =
   | 'search'
@@ -59,6 +60,29 @@ export interface MediaProviderQrLogin {
   expiresInSeconds?: number
 }
 
+export interface MediaProviderHealth {
+  providerId: string
+  pluginId: string
+  pluginStatus: string
+  available: boolean
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  methodStats?: Record<string, MediaProviderMethodHealth | undefined>
+  lastError: string | null
+  lastCheckedAt: string | null
+}
+
+export interface MediaProviderMethodHealth {
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  lastError: string | null
+  lastCheckedAt: string | null
+}
+
 export interface MediaProviderUserSummary {
   id: number | string
   name: string
@@ -74,6 +98,7 @@ export interface MediaProvider {
   name: string
   source: 'internal' | 'plugin'
   capabilities: MediaProviderCapability[]
+  health?: MediaProviderHealth
   isEnabled?: () => boolean | Promise<boolean>
   getPlaybackUrl?: (track: Track, options?: { force?: boolean }) => Promise<string | null>
   getLyrics?: (track: Track) => Promise<MediaProviderLyrics>
@@ -197,6 +222,29 @@ export class MediaProviderRegistry {
     await assertProviderEnabled(provider)
     return provider.getLyrics(track)
   }
+
+  async searchAllSongs(options: {
+    query: string
+    localTracks: Track[]
+    limit?: number
+    offset?: number
+  }): Promise<UnifiedSearchResult> {
+    const providers = this.list()
+    return unifiedSearchSongs({
+      ...options,
+      providers: await Promise.all(
+        providers.map(async (provider) => ({
+          id: provider.id,
+          name: provider.name,
+          capabilities: provider.capabilities,
+          available: await isProviderAvailable(provider),
+          health: provider.health
+        }))
+      ),
+      searchProviderSongs: (providerId, keywords, limit, offset) =>
+        this.searchSongs(providerId, keywords, limit, offset)
+    })
+  }
 }
 
 export function getTrackProviderId(track: Pick<Track, 'id' | 'source'>): string | null {
@@ -243,5 +291,14 @@ async function assertProviderEnabled(provider: MediaProvider): Promise<void> {
   if (!provider.isEnabled) return
   if (!(await provider.isEnabled())) {
     throw new Error(`${provider.name} provider is disabled or not logged in`)
+  }
+}
+
+async function isProviderAvailable(provider: MediaProvider): Promise<boolean> {
+  if (!provider.isEnabled) return true
+  try {
+    return await provider.isEnabled()
+  } catch {
+    return false
   }
 }

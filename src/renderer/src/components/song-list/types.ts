@@ -14,8 +14,9 @@ export type GridItem = {
 
 export type PlaylistActions = {
   removeTrack: (trackId: string) => void
-  addToPlaylist: (playlistName: string, trackId: string) => void
+  addToPlaylist: (playlistName: string, trackId: string, trackSnapshot?: Track) => void
   removeFromPlaylist: (playlistName: string, trackId: string) => void
+  rematchTrack?: (track: Track) => Promise<void> | void
   createPlaylist: (name: string) => void
   deletePlaylist: (playlistId: string) => void
 }

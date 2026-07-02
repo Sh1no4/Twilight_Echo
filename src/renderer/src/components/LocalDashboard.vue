@@ -5,6 +5,7 @@ import { useListeningStatsStore } from '../stores/useListeningStatsStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import type { Track } from '../types/music'
 import { useCover } from '../utils/coverLoader'
+import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
 import CoverImg from './CoverImg.vue'
 import nextTrackIcon from '../assets/icons/next-track.svg'
 import pauseIcon from '../assets/icons/pause.svg'
@@ -90,14 +91,21 @@ const libraryDays = computed(() => {
 
 const recentlyAddedTracks = computed(() => tracks.value.slice(-3).reverse())
 const DASHBOARD_QUEUE_WINDOW = 200
-const byIdMap = computed(() => new Map(tracks.value.map((track) => [track.id, track])))
 const topTracks = computed(() => {
-  const byId = byIdMap.value
-  const stats = Object.entries(listeningStats.value.tracks)
+  const rankedStats = Object.entries(listeningStats.value.tracks)
     .filter(([id, stat]) => !id.startsWith('bili:') && !isBiliTrack(stat.track))
     .sort(([, a], [, b]) => b.seconds - a.seconds)
     .slice(0, 3)
-    .map(([id, stat]) => ({ id, stat, track: byId.get(id) ?? stat.track }))
+    .map(([id, stat]) => ({ id, ...stat }))
+  const resolvedTracks = resolveUnifiedRecentTracks({
+    recentStats: rankedStats,
+    localTracks: tracks.value
+  })
+  const stats = rankedStats.map((stat, index) => ({
+    id: stat.id,
+    stat,
+    track: resolvedTracks[index] ?? stat.track
+  }))
 
   if (stats.length > 0) return stats
 

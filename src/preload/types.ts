@@ -12,6 +12,7 @@ export type StartupHomePage = 'local' | 'streaming'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 export type LyricAlign = 'center' | 'left'
+export type StreamingAudioCachePolicy = 'off' | 'provider'
 
 export interface LibraryChange {
   kind: 'add' | 'remove' | 'unknown'
@@ -40,6 +41,13 @@ export interface DesktopLyricsSettings {
   alwaysOnTop: boolean
   clickThrough: boolean
   maxLines: number
+}
+
+export interface MusicCachePolicySettings {
+  cover: boolean
+  lyrics: boolean
+  metadata: boolean
+  streamingAudio: StreamingAudioCachePolicy
 }
 
 export type BuiltInTrackSource = 'local' | 'ncm'
@@ -183,6 +191,8 @@ export interface AudioProcessingSettings {
   convolverIrPath: string
   crossfeedEnabled: boolean
   crossfeedStrength: number
+  crossfeedDelayMs: number
+  crossfeedCutoffHz: number
   gapless: boolean
   crossfadeSeconds: number
 }
@@ -385,6 +395,7 @@ export interface AppSettings {
   minimizeToTray: boolean
   musicCachePath: string
   cachePath: string
+  cachePolicy: MusicCachePolicySettings
   closeToTray: boolean
   startupHomePage: StartupHomePage
   theme: AppTheme
@@ -572,6 +583,30 @@ export interface TwilightMediaProviderRegistration {
   name: string
   capabilities: TwilightMediaProviderCapability[]
   ui?: TwilightProviderUiMetadata
+  health?: TwilightMediaProviderHealth
+}
+
+export interface TwilightMediaProviderHealth {
+  providerId: string
+  pluginId: string
+  pluginStatus: TwilightPluginStatus
+  available: boolean
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  methodStats?: Partial<Record<TwilightMediaProviderMethod, TwilightMediaProviderMethodHealth>>
+  lastError: string | null
+  lastCheckedAt: string | null
+}
+
+export interface TwilightMediaProviderMethodHealth {
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  lastError: string | null
+  lastCheckedAt: string | null
 }
 
 export type TwilightUiContributionKind =

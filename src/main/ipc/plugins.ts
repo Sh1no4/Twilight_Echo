@@ -30,7 +30,10 @@ export function setupPluginIpc(): void {
       request: requestNcmApi,
       officialLogin: openNcmOfficialLogin,
       getCachedSong: async (songId) => getCachedNcmSong(Number(songId)),
-      cacheSong: async (songId, url, fileName) => cacheNcmSong(Number(songId), url, fileName)
+      cacheSong: async (songId, url, fileName) => {
+        if (runtime.appSettings.cachePolicy.streamingAudio !== 'provider') return null
+        return cacheNcmSong(Number(songId), url, fileName)
+      }
     },
     getPlaybackInfo: async () => runtime.audioEngineManager?.getPlaybackInfo() ?? null,
     applyNativeDspPluginChain: async (chainJson) => {

@@ -50,7 +50,15 @@ const {
 } = usePlayerStore()
 
 const resolvedCurrentCover = useCover(computed(() => currentTrack.value?.cover ?? null))
-const { playlists, addToPlaylist, removeFromPlaylist, createPlaylist } = useMusicStore()
+const {
+  playlists,
+  addToPlaylist,
+  removeFromPlaylist,
+  createPlaylist,
+  isFavoriteTrack,
+  addFavoriteTrack,
+  removeFavoriteTrack
+} = useMusicStore()
 const mediaProviders = useMediaProviders()
 
 const coverRef = ref<HTMLElement | null>(null)
@@ -138,7 +146,10 @@ const {
   mediaProviders,
   addToPlaylist,
   removeFromPlaylist,
-  createPlaylist
+  createPlaylist,
+  isFavoriteTrack,
+  addFavoriteTrack,
+  removeFavoriteTrack
 })
 
 const modeLabels: Record<string, string> = {

@@ -11,6 +11,29 @@ export interface ProviderLoginState {
   profile: MediaProviderProfile | null
 }
 
+export interface ProviderHealth {
+  providerId: string
+  pluginId: string
+  pluginStatus: string
+  available: boolean
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  methodStats?: Record<string, ProviderMethodHealth | undefined>
+  lastError: string | null
+  lastCheckedAt: string | null
+}
+
+export interface ProviderMethodHealth {
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  lastError: string | null
+  lastCheckedAt: string | null
+}
+
 /** 插件声明的 UI 元数据（镜像 preload 类型） */
 export interface ProviderUiMetadata {
   icon: string
@@ -49,6 +72,7 @@ export interface ProviderInfo {
   name: string
   capabilities: string[]
   ui?: ProviderUiMetadata
+  health?: ProviderHealth
 }
 
 export interface OnlineProviderStore {
@@ -78,7 +102,8 @@ async function syncProviders(): Promise<void> {
     id: provider.id,
     name: provider.name,
     capabilities: provider.capabilities,
-    ui: provider.ui as ProviderUiMetadata | undefined
+    ui: provider.ui as ProviderUiMetadata | undefined,
+    health: provider.health as ProviderHealth | undefined
   }))
 }
 

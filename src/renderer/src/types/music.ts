@@ -2,6 +2,7 @@ import type { PlaybackResumeMode, PlayMode } from './settings'
 
 export type BuiltInTrackSource = 'local' | 'ncm'
 export type TrackSource = BuiltInTrackSource | (string & {})
+export type LyricSource = 'embedded' | 'local' | 'provider'
 
 export interface Track {
   id: string
@@ -17,6 +18,8 @@ export interface Track {
   cover: string | null
   lyrics: string | null
   translatedLyrics?: string | null
+  lyricsSource?: LyricSource | null
+  translatedLyricsSource?: LyricSource | null
   source?: TrackSource
   ncmSongId?: number
   streamUrl?: string | null

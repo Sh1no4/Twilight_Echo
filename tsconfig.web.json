@@ -10,6 +10,7 @@
   ],
   "compilerOptions": {
     "composite": true,
+    "allowImportingTsExtensions": true,
     "paths": {
       "@renderer/*": ["./src/renderer/src/*"]
     }

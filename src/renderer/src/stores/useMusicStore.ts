@@ -1,10 +1,15 @@
 import { ref, shallowRef, type Ref } from 'vue'
 import type { Track } from '../types/music'
+import { syncPluginProviders, useMediaProviders } from '../providers/index.ts'
+import { enrichLocalTracksFromProviders } from '../utils/libraryMetadataEnrichment.ts'
+import { getLogicalTrackKey } from '../utils/logicalTrackIdentity.ts'
+import { repairMovedLocalTracks } from '../utils/libraryRepair.ts'
 
 interface Playlist {
   id: string
   name: string
   trackIds: string[]
+  trackSnapshots?: Record<string, Track>
   isDefault?: boolean
   createdAt: string
 }
@@ -21,6 +26,8 @@ interface LibraryItem {
 interface AddTracksOptions {
   deferRebuild?: boolean
 }
+
+const DEFAULT_FAVORITE_PLAYLIST_NAME = '我收藏的音乐'
 
 const tracks = shallowRef<Track[]>([])
 const scannedFolders = ref<string[]>([])
@@ -50,8 +57,12 @@ export function useMusicStore(): {
   removeTrack: (id: string) => void
   clearTracks: () => void
   createPlaylist: (name: string) => string
-  addToPlaylist: (playlistName: string, trackId: string) => void
+  addToPlaylist: (playlistName: string, trackId: string, trackSnapshot?: Track) => void
   removeFromPlaylist: (playlistName: string, trackId: string) => void
+  replaceTrackReference: (oldTrackId: string, replacementTrack: Track) => number
+  isFavoriteTrack: (track: Track) => boolean
+  addFavoriteTrack: (track: Track) => void
+  removeFavoriteTrack: (track: Track) => void
   deletePlaylist: (playlistId: string) => void
   getPlaylistTracks: (playlistName: string) => Track[]
   savePlaylists: () => Promise<void>
@@ -202,13 +213,38 @@ export function useMusicStore(): {
     const saved = await window.api.data.loadMusicLibrary()
     if (!saved) return
 
+    let loadedTracks: Track[]
     if (Array.isArray(saved)) {
-      tracks.value = saved as Track[]
+      loadedTracks = saved as Track[]
     } else {
-      tracks.value = (saved.tracks || []) as Track[]
+      loadedTracks = (saved.tracks || []) as Track[]
       scannedFolders.value = (saved.folders || []) as string[]
     }
+    const repairedTracks = await repairMovedTracksFromScannedFolders(loadedTracks)
+    tracks.value = await enrichTracksFromProviders(repairedTracks)
     rebuildDerivedCollections()
+  }
+
+  async function repairMovedTracksFromScannedFolders(loadedTracks: Track[]): Promise<Track[]> {
+    if (scannedFolders.value.length === 0 || loadedTracks.length === 0) return loadedTracks
+    try {
+      const scanned = (
+        await Promise.all(scannedFolders.value.map((folder) => window.api.fs.scanMusicFiles(folder)))
+      ).flat() as Track[]
+      const scannedPaths = new Set(scanned.map((track) => track.filePath))
+      const repaired = repairMovedLocalTracks({
+        existingTracks: loadedTracks,
+        scannedTracks: scanned,
+        fileExists: (path) => scannedPaths.has(path)
+      })
+      if (repaired.repairedTracks.length === 0) return loadedTracks
+      const repairedById = new Map(repaired.repairedTracks.map((track) => [track.id, track]))
+      const nextTracks = loadedTracks.map((track) => repairedById.get(track.id) ?? track)
+      void scheduleSaveLibrary()
+      return nextTracks
+    } catch {
+      return loadedTracks
+    }
   }
 
   async function handleLibraryChange(
@@ -265,7 +301,8 @@ export function useMusicStore(): {
     }
     if (unique.length === 0) return
 
-    tracks.value = [...tracks.value, ...unique]
+    const enriched = await enrichTracksFromProviders(unique)
+    tracks.value = [...tracks.value, ...enriched]
     if (!options.deferRebuild) {
       scheduleRebuild()
     }
@@ -311,11 +348,46 @@ export function useMusicStore(): {
     void savePlaylists()
   }
 
-  function addToPlaylist(playlistName: string, trackId: string): void {
+  function addToPlaylist(playlistName: string, trackId: string, trackSnapshot?: Track): void {
     const pl = playlists.value.find((p) => p.name === playlistName)
-    if (pl && !pl.trackIds.includes(trackId)) {
-      pl.trackIds = [...pl.trackIds, trackId]
+    if (pl) {
+      let changed = false
+      if (!pl.trackIds.includes(trackId)) {
+        pl.trackIds = [...pl.trackIds, trackId]
+        changed = true
+      }
+      if (trackSnapshot) {
+        pl.trackSnapshots = {
+          ...(pl.trackSnapshots ?? {}),
+          [trackId]: toPlaylistTrackSnapshot(trackSnapshot)
+        }
+        changed = true
+      }
+      if (!changed) return
       void savePlaylists()
+    }
+  }
+
+  async function enrichTracksFromProviders(inputTracks: Track[]): Promise<Track[]> {
+    try {
+      await syncPluginProviders()
+      const providers = useMediaProviders()
+      const enriched = await enrichLocalTracksFromProviders(inputTracks, {
+        searchSongs: async (query, limit, offset) => {
+          const result = await providers.searchAllSongs({
+            query,
+            localTracks: [],
+            limit,
+            offset
+          })
+          const items = result.items.map((item) => item.track)
+          return { items, total: items.length }
+        }
+      })
+      if (enriched !== inputTracks) void scheduleSaveLibrary()
+      return enriched
+    } catch {
+      return inputTracks
     }
   }
 
@@ -323,15 +395,133 @@ export function useMusicStore(): {
     const pl = playlists.value.find((p) => p.name === playlistName)
     if (pl) {
       pl.trackIds = pl.trackIds.filter((id) => id !== trackId)
+      if (pl.trackSnapshots?.[trackId]) {
+        const { [trackId]: _removed, ...remaining } = pl.trackSnapshots
+        pl.trackSnapshots = Object.keys(remaining).length > 0 ? remaining : undefined
+      }
       void savePlaylists()
     }
+  }
+
+  function getDefaultFavoritePlaylist(): Playlist | null {
+    return (
+      playlists.value.find((playlist) => playlist.isDefault) ??
+      playlists.value.find((playlist) => playlist.name === DEFAULT_FAVORITE_PLAYLIST_NAME) ??
+      null
+    )
+  }
+
+  function getPlaylistTrackSnapshot(playlist: Playlist, trackId: string): Track | undefined {
+    return trackById.get(trackId) ?? playlist.trackSnapshots?.[trackId]
+  }
+
+  function resolvePlaylistTrack(playlist: Playlist, trackId: string): Track | undefined {
+    const exact = trackById.get(trackId)
+    if (exact) return exact
+    const snapshot = playlist.trackSnapshots?.[trackId]
+    if (!snapshot) return undefined
+    const key = getLogicalTrackKey(snapshot)
+    return tracks.value.find((track) =>
+      getTrackSource(track) === 'local' && getLogicalTrackKey(track) === key
+    ) ?? snapshot
+  }
+
+  function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
+    if (track.source) return track.source
+    if (/^[a-zA-Z]:[\\/]/.test(track.id) || /^[\\/]/.test(track.id)) return 'local'
+    const separatorIndex = track.id.indexOf(':')
+    return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
+  }
+
+  function isFavoriteTrack(track: Track): boolean {
+    const playlist = getDefaultFavoritePlaylist()
+    if (!playlist) return false
+    const key = getLogicalTrackKey(track)
+    return playlist.trackIds.some((trackId) => {
+      if (trackId === track.id) return true
+      const snapshot = getPlaylistTrackSnapshot(playlist, trackId)
+      return !!snapshot && getLogicalTrackKey(snapshot) === key
+    })
+  }
+
+  function addFavoriteTrack(track: Track): void {
+    let playlist = getDefaultFavoritePlaylist()
+    if (!playlist) {
+      createPlaylist(DEFAULT_FAVORITE_PLAYLIST_NAME)
+      playlist = getDefaultFavoritePlaylist()
+    }
+    if (!playlist || isFavoriteTrack(track)) return
+    addToPlaylist(playlist.name, track.id, track)
+  }
+
+  function removeFavoriteTrack(track: Track): void {
+    const playlist = getDefaultFavoritePlaylist()
+    if (!playlist) return
+    const key = getLogicalTrackKey(track)
+    const nextTrackIds = playlist.trackIds.filter((trackId) => {
+      if (trackId === track.id) return false
+      const snapshot = getPlaylistTrackSnapshot(playlist, trackId)
+      return !snapshot || getLogicalTrackKey(snapshot) !== key
+    })
+    if (nextTrackIds.length === playlist.trackIds.length) return
+    const removed = new Set(playlist.trackIds.filter((trackId) => !nextTrackIds.includes(trackId)))
+    playlist.trackIds = nextTrackIds
+    if (playlist.trackSnapshots) {
+      const snapshots = { ...playlist.trackSnapshots }
+      for (const trackId of removed) delete snapshots[trackId]
+      playlist.trackSnapshots = Object.keys(snapshots).length > 0 ? snapshots : undefined
+    }
+    void savePlaylists()
+  }
+
+  function replaceTrackReference(oldTrackId: string, replacementTrack: Track): number {
+    if (!oldTrackId || oldTrackId === replacementTrack.id) return 0
+    let replacementCount = 0
+    let libraryChanged = false
+    let playlistsChanged = false
+
+    if (trackById.has(oldTrackId)) {
+      const oldTrack = trackById.get(oldTrackId)
+      if (oldTrack) trackPathSet.delete(oldTrack.filePath)
+      trackById.delete(oldTrackId)
+      trackById.set(replacementTrack.id, replacementTrack)
+      trackPathSet.add(replacementTrack.filePath)
+      tracks.value = tracks.value.map((track) =>
+        track.id === oldTrackId ? replacementTrack : track
+      )
+      libraryChanged = true
+      replacementCount++
+    }
+
+    for (const playlist of playlists.value) {
+      if (!playlist.trackIds.includes(oldTrackId)) continue
+      const nextTrackIds: string[] = []
+      for (const trackId of playlist.trackIds) {
+        const nextTrackId = trackId === oldTrackId ? replacementTrack.id : trackId
+        if (!nextTrackIds.includes(nextTrackId)) nextTrackIds.push(nextTrackId)
+      }
+      playlist.trackIds = nextTrackIds
+      const snapshots = { ...(playlist.trackSnapshots ?? {}) }
+      delete snapshots[oldTrackId]
+      snapshots[replacementTrack.id] = toPlaylistTrackSnapshot(replacementTrack)
+      playlist.trackSnapshots = Object.keys(snapshots).length > 0 ? snapshots : undefined
+      playlistsChanged = true
+      replacementCount++
+    }
+
+    if (libraryChanged) {
+      scheduleRebuild()
+      void scheduleSaveLibrary()
+    }
+    if (playlistsChanged) void savePlaylists()
+    return replacementCount
   }
 
   function getPlaylistTracks(playlistName: string): Track[] {
     const pl = playlists.value.find((p) => p.name === playlistName)
     if (!pl) return []
     return pl.trackIds
-      .map((trackId) => trackById.get(trackId))
+      .map((trackId) => resolvePlaylistTrack(pl, trackId))
       .filter((track): track is Track => !!track)
   }
 
@@ -379,6 +569,10 @@ export function useMusicStore(): {
     createPlaylist,
     addToPlaylist,
     removeFromPlaylist,
+    replaceTrackReference,
+    isFavoriteTrack,
+    addFavoriteTrack,
+    removeFavoriteTrack,
     deletePlaylist,
     getPlaylistTracks,
     savePlaylists,
@@ -417,5 +611,15 @@ export function useMusicStore(): {
     scheduleSaveLibrary,
     flushSaveLibrary,
     handleLibraryChange
+  }
+}
+
+function toPlaylistTrackSnapshot(track: Track): Track {
+  if (track.source && track.source !== 'local') {
+    const { streamUrl: _streamUrl, ...snapshot } = track
+    return snapshot
+  }
+  return {
+    ...track
   }
 }

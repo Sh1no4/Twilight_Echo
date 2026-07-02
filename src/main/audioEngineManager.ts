@@ -72,6 +72,8 @@ export interface AudioProcessingSettings {
   convolverIrPath: string
   crossfeedEnabled: boolean
   crossfeedStrength: number
+  crossfeedDelayMs: number
+  crossfeedCutoffHz: number
   gapless: boolean
   crossfadeSeconds: number
 }
@@ -534,6 +536,8 @@ export const DEFAULT_AUDIO_PROCESSING: AudioProcessingSettings = {
   convolverIrPath: '',
   crossfeedEnabled: false,
   crossfeedStrength: 0,
+  crossfeedDelayMs: 0.35,
+  crossfeedCutoffHz: 700,
   gapless: true,
   crossfadeSeconds: 0
 }
@@ -850,6 +854,8 @@ export function normalizeAudioProcessingSettings(
     convolverIrPath: typeof settings?.convolverIrPath === 'string' ? settings.convolverIrPath : '',
     crossfeedEnabled: settings?.crossfeedEnabled === true,
     crossfeedStrength: clampNumber(settings?.crossfeedStrength, 0, 1, 0),
+    crossfeedDelayMs: clampNumber(settings?.crossfeedDelayMs, 0.05, 2, 0.35),
+    crossfeedCutoffHz: clampNumber(settings?.crossfeedCutoffHz, 80, 4000, 700),
     gapless: settings?.gapless !== false,
     crossfadeSeconds: clampNumber(settings?.crossfadeSeconds, 0, 12, 0)
   }

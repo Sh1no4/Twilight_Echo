@@ -382,7 +382,16 @@ class FakeNativeBinding implements NativeAudioBinding {
       preferredBufferSize:
         typeof parsed.preferredBufferSize === 'number' ? parsed.preferredBufferSize : this.lastOutputConfig.preferredBufferSize,
       routingMode:
-        typeof parsed.routingMode === 'string' ? parsed.routingMode : this.lastOutputConfig.routingMode
+        typeof parsed.routingMode === 'string' ? parsed.routingMode : this.lastOutputConfig.routingMode,
+      wasapiExclusivePushMode:
+        parsed.wasapiExclusivePushMode ?? this.lastOutputConfig.wasapiExclusivePushMode,
+      upmixCenterGain: parsed.upmixCenterGain ?? this.lastOutputConfig.upmixCenterGain,
+      upmixLfeGain: parsed.upmixLfeGain ?? this.lastOutputConfig.upmixLfeGain,
+      upmixLfeLowpassHz: parsed.upmixLfeLowpassHz ?? this.lastOutputConfig.upmixLfeLowpassHz,
+      upmixSurroundGain: parsed.upmixSurroundGain ?? this.lastOutputConfig.upmixSurroundGain,
+      upmixSideGain: parsed.upmixSideGain ?? this.lastOutputConfig.upmixSideGain,
+      upmixSurroundDelayMs:
+        parsed.upmixSurroundDelayMs ?? this.lastOutputConfig.upmixSurroundDelayMs
     }
     const actualBufferSize =
       this.playbackInfo.outputInfo.actualBackend === 'asio'
@@ -663,6 +672,22 @@ test('legacy dsdToPcm still maps to PCM when dsdOutputMode is absent', () => {
   assert.equal(normalized.dsdToPcm, true)
 })
 
+test('audio processing normalization preserves advanced replaygain, fft, and crossfeed settings', () => {
+  const normalized = normalizeAudioProcessingSettings({
+    fftEnabled: false,
+    replayGainFallback: 20,
+    replayGainClip: false,
+    crossfeedDelayMs: 5,
+    crossfeedCutoffHz: 10
+  })
+
+  assert.equal(normalized.fftEnabled, false)
+  assert.equal(normalized.replayGainFallback, 12)
+  assert.equal(normalized.replayGainClip, false)
+  assert.equal(normalized.crossfeedDelayMs, 2)
+  assert.equal(normalized.crossfeedCutoffHz, 80)
+})
+
 test('setExclusiveMode refreshes backend facts immediately', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
@@ -686,6 +711,38 @@ test('setExclusiveMode refreshes backend facts immediately', async () => {
   assert.equal(info.outputInfo.supportsOutputPerfect, true)
   assert.equal(info.outputInfo.perfectReasonCode, '')
   assertPlaybackMirrorsOutputInfo(info)
+})
+
+test('setOutputConfig forwards and keeps advanced upmix parameters', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+
+  await manager.setOutputConfig({
+    preferredBufferSize: 512,
+    routingMode: 'stereo-to-7.1',
+    upmixCenterGain: 1.1,
+    upmixLfeGain: 0.25,
+    upmixLfeLowpassHz: 180,
+    upmixSurroundGain: 0.75,
+    upmixSideGain: 0.4,
+    upmixSurroundDelayMs: 12
+  })
+
+  assert.equal(nativeBinding.lastOutputConfig.preferredBufferSize, 512)
+  assert.equal(nativeBinding.lastOutputConfig.routingMode, 'stereo-to-7.1')
+  assert.equal(nativeBinding.lastOutputConfig.upmixCenterGain, 1.1)
+  assert.equal(nativeBinding.lastOutputConfig.upmixLfeGain, 0.25)
+  assert.equal(nativeBinding.lastOutputConfig.upmixLfeLowpassHz, 180)
+  assert.equal(nativeBinding.lastOutputConfig.upmixSurroundGain, 0.75)
+  assert.equal(nativeBinding.lastOutputConfig.upmixSideGain, 0.4)
+  assert.equal(nativeBinding.lastOutputConfig.upmixSurroundDelayMs, 12)
 })
 
 test('coreaudio exclusive mode maps to coreaudio-exclusive backend', async () => {

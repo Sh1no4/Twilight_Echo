@@ -133,6 +133,30 @@ export interface TwilightMediaProviderRegistration {
   name: string
   capabilities: TwilightMediaProviderCapability[]
   ui?: TwilightProviderUiMetadata
+  health?: TwilightMediaProviderHealth
+}
+
+export interface TwilightMediaProviderHealth {
+  providerId: string
+  pluginId: string
+  pluginStatus: TwilightPluginStatus
+  available: boolean
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  methodStats: Partial<Record<TwilightMediaProviderMethod, TwilightMediaProviderMethodHealth>>
+  lastError: string | null
+  lastCheckedAt: string | null
+}
+
+export interface TwilightMediaProviderMethodHealth {
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  lastError: string | null
+  lastCheckedAt: string | null
 }
 
 /**

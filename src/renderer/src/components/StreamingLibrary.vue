@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { MediaProviderPlaylistSummary, MediaProviderProfile } from '../providers/mediaProvider'
+import {
+  buildProviderHealthPresentation,
+  type ProviderHealthInput
+} from '../utils/providerHealthPresentation'
 
 interface ProviderOption {
   id: string
   name: string
   icon: string
+  health?: ProviderHealthInput
+  loggedIn?: boolean
 }
 
 const props = defineProps<{
@@ -56,6 +62,26 @@ const activeProviderIcon = computed(() => {
   return active?.icon ?? 'pi pi-music'
 })
 
+const activeProviderHealth = computed(() => {
+  const active = providerOptions.value.find((p) => p.id === props.activeProvider)
+  return buildProviderHealthPresentation({
+    health: active?.health,
+    loggedIn: active?.loggedIn ?? props.isLoggedIn
+  })
+})
+
+const activeProviderHealthState = computed(() =>
+  activeProviderHealth.value.state
+)
+
+const activeProviderHealthLabel = computed(() =>
+  activeProviderHealth.value.label
+)
+
+const activeProviderHealthDetail = computed(() =>
+  activeProviderHealth.value.detail
+)
+
 function onProviderMenuBlur(): void {
   // Defer so a menu-item click can register before the menu closes.
   setTimeout(() => {
@@ -66,6 +92,13 @@ function onProviderMenuBlur(): void {
 function selectProvider(id: string): void {
   providerMenuOpen.value = false
   emit('switchProvider', id)
+}
+
+function providerMenuHealthLabel(provider: ProviderOption): string {
+  return buildProviderHealthPresentation({
+    health: provider.health,
+    loggedIn: provider.loggedIn ?? props.isLoggedIn
+  }).label
 }
 
 function playlistId(playlist: MediaProviderPlaylistSummary): string {
@@ -129,7 +162,12 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
                   @mousedown.prevent="selectProvider(provider.id)"
                 >
                   <i :class="provider.icon"></i>
-                  <span>{{ provider.name }}</span>
+                  <span>
+                    {{ provider.name }}
+                    <small class="provider-menu-health">
+                      {{ providerMenuHealthLabel(provider) }}
+                    </small>
+                  </span>
                   <i
                     v-if="provider.id === activeProvider"
                     class="pi pi-check provider-menu-check"
@@ -140,6 +178,23 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
           </div>
           <h1>{{ profile?.nickname || '未登录用户' }}</h1>
           <p>{{ profileSignature || '这里空空如也~' }}</p>
+          <div
+            class="provider-health-strip"
+            :class="activeProviderHealthState"
+            :title="activeProviderHealthDetail"
+          >
+            <i
+              :class="
+                activeProviderHealthState === 'ok'
+                  ? 'pi pi-check-circle'
+                  : activeProviderHealthState === 'warning'
+                    ? 'pi pi-exclamation-triangle'
+                    : 'pi pi-times-circle'
+              "
+            ></i>
+            <span>{{ activeProviderHealthLabel }}</span>
+            <small>{{ activeProviderHealthDetail }}</small>
+          </div>
           <div v-if="isLoggedIn && showSocialStats !== false" class="profile-stats">
             <button type="button" class="stat-badge" @click="emit('openUserList', 'follows')">
               {{ profile?.follows || 0 }} <span>关注</span>
@@ -457,9 +512,18 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
 }
 .provider-menu-item span {
   flex: 1;
+  min-width: 0;
 }
 .provider-menu-check {
   font-size: 12px;
+}
+.provider-menu-health {
+  display: block;
+  margin-top: 2px;
+  color: var(--te-neutral-500, #64748b);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
 }
 @keyframes provider-menu-in {
   from {
@@ -488,6 +552,60 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.provider-health-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: min(100%, 560px);
+  min-height: 30px;
+  margin: 0 0 14px;
+  padding: 6px 10px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.035);
+  color: var(--te-neutral-700, #334155);
+}
+.provider-health-strip i {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+.provider-health-strip span {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 800;
+}
+.provider-health-strip small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--te-neutral-500, #64748b);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.provider-health-strip.ok {
+  border-color: rgba(16, 185, 129, 0.18);
+  background: rgba(16, 185, 129, 0.08);
+}
+.provider-health-strip.ok i {
+  color: #059669;
+}
+.provider-health-strip.warning {
+  border-color: rgba(245, 158, 11, 0.24);
+  background: rgba(245, 158, 11, 0.1);
+}
+.provider-health-strip.warning i {
+  color: #d97706;
+}
+.provider-health-strip.error {
+  border-color: rgba(225, 29, 72, 0.18);
+  background: rgba(225, 29, 72, 0.08);
+}
+.provider-health-strip.error i {
+  color: #e11d48;
 }
 
 .profile-stats {
@@ -965,6 +1083,26 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   background: rgba(245, 158, 11, 0.11);
   border-color: rgba(var(--te-primary-rgb), 0.32);
   color: var(--te-primary-400);
+}
+
+:global(html[data-theme='dark']) .provider-health-strip {
+  border-color: var(--te-card-border);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+:global(html[data-theme='dark']) .provider-health-strip.ok {
+  border-color: rgba(16, 185, 129, 0.22);
+  background: rgba(16, 185, 129, 0.1);
+}
+
+:global(html[data-theme='dark']) .provider-health-strip.warning {
+  border-color: rgba(var(--te-primary-rgb), 0.26);
+  background: rgba(var(--te-primary-rgb), 0.1);
+}
+
+:global(html[data-theme='dark']) .provider-health-strip.error {
+  border-color: rgba(225, 29, 72, 0.28);
+  background: rgba(225, 29, 72, 0.11);
 }
 
 :global(html[data-theme='dark']) .provider-menu {

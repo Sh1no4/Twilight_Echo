@@ -16,6 +16,7 @@ export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type ProxyMode = 'auto' | 'custom' | 'off'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 export type LyricAlign = 'center' | 'left'
+export type StreamingAudioCachePolicy = 'off' | 'provider'
 export type AppBackgroundPage = 'local' | 'settings' | 'streaming' | 'player'
 export type AppBackgroundKind = 'color' | 'image'
 
@@ -95,6 +96,13 @@ export interface DesktopLyricsSettings {
   maxLines: number
 }
 
+export interface MusicCachePolicySettings {
+  cover: boolean
+  lyrics: boolean
+  metadata: boolean
+  streamingAudio: StreamingAudioCachePolicy
+}
+
 export interface AudioEqPreset {
   id: string
   name: string
@@ -112,6 +120,7 @@ export interface AppSettings {
   minimizeToTray: boolean
   musicCachePath: string
   cachePath: string
+  cachePolicy: MusicCachePolicySettings
   closeToTray: boolean
   startupHomePage: StartupHomePage
   theme: AppTheme

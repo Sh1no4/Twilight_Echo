@@ -11,12 +11,16 @@ import type {
 } from '../types/settings'
 import { extractDominantColor } from '../utils/colorExtractor'
 import { shouldReuseResolvedStreamUrl, shouldUseNativePlaybackTarget } from '../utils/playbackRouting'
+import { findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
+import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
+import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useSettingsStore } from './useSettingsStore'
 
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
 type NativeVisualizationData = Awaited<ReturnType<typeof window.api.audioEngine.getVisualizationData>>
+type ProviderSourceReliability = Record<string, number>
 
 interface AudioOutputState {
   output: AudioOutputId
@@ -200,6 +204,8 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   convolverIrPath: '',
   crossfeedEnabled: false,
   crossfeedStrength: 0,
+  crossfeedDelayMs: 0.35,
+  crossfeedCutoffHz: 700,
   gapless: true,
   crossfadeSeconds: 0
 }
@@ -897,7 +903,15 @@ watch(
         config?.preferredBufferSize ?? defaultAudioOutputConfig.preferredBufferSize,
       routingMode: config?.routingMode ?? defaultAudioOutputConfig.routingMode,
       wasapiExclusivePushMode:
-        config?.wasapiExclusivePushMode ?? defaultAudioOutputConfig.wasapiExclusivePushMode
+        config?.wasapiExclusivePushMode ?? defaultAudioOutputConfig.wasapiExclusivePushMode,
+      upmixCenterGain: config?.upmixCenterGain ?? defaultAudioOutputConfig.upmixCenterGain,
+      upmixLfeGain: config?.upmixLfeGain ?? defaultAudioOutputConfig.upmixLfeGain,
+      upmixLfeLowpassHz:
+        config?.upmixLfeLowpassHz ?? defaultAudioOutputConfig.upmixLfeLowpassHz,
+      upmixSurroundGain: config?.upmixSurroundGain ?? defaultAudioOutputConfig.upmixSurroundGain,
+      upmixSideGain: config?.upmixSideGain ?? defaultAudioOutputConfig.upmixSideGain,
+      upmixSurroundDelayMs:
+        config?.upmixSurroundDelayMs ?? defaultAudioOutputConfig.upmixSurroundDelayMs
     }
   },
   { deep: true, immediate: true }
@@ -909,21 +923,7 @@ watch(
     const track = currentTrack.value
     if (!track || track.id !== id) return
 
-    // Lazy-load lyrics for local tracks (lyrics not loaded during scan)
-    await ensureCurrentTrackLyricsLoaded(track)
-
-    if (track.id !== prevId && getTrackSource(track) !== 'local' && track.translatedLyrics == null) {
-      await syncPluginProviders()
-      const lyricData = await useMediaProviders().resolveLyrics(track)
-      if (currentTrack.value?.id === track.id && (lyricData.lyrics || lyricData.translatedLyrics)) {
-        currentTrack.value = {
-          ...currentTrack.value,
-          lyrics: lyricData.lyrics ?? currentTrack.value?.lyrics ?? null,
-          translatedLyrics:
-            lyricData.translatedLyrics ?? currentTrack.value?.translatedLyrics ?? null
-        }
-      }
-    }
+    await ensureCurrentTrackLyricsLoaded(track, track.id !== prevId)
   }
 )
 
@@ -1047,35 +1047,48 @@ function getTrackSource(track: Track): string {
   return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
 }
 
-async function ensureCurrentTrackLyricsLoaded(triggerTrack: Track | null = currentTrack.value): Promise<void> {
-  if (
-    !triggerTrack ||
-    getTrackSource(triggerTrack) !== 'local' ||
-    triggerTrack.lyrics != null ||
-    !triggerTrack.dir ||
-    !triggerTrack.fileName
-  ) {
-    return
-  }
+async function ensureCurrentTrackLyricsLoaded(
+  triggerTrack: Track | null = currentTrack.value,
+  allowProviderLookup = true
+): Promise<void> {
+  if (!triggerTrack) return
 
-  try {
-    const lrc = await window.api.data.getLyrics(
-      triggerTrack.dir,
-      triggerTrack.fileName,
-      triggerTrack.filePath
-    )
-    if (currentTrack.value?.id === triggerTrack.id && currentTrack.value.lyrics == null) {
-      const updatedTrack = { ...currentTrack.value, lyrics: lrc ?? '' }
-      currentTrack.value = updatedTrack
-      patchTrackInQueues(updatedTrack)
-    }
-  } catch {
-    if (currentTrack.value?.id === triggerTrack.id && currentTrack.value.lyrics == null) {
-      const updatedTrack = { ...currentTrack.value, lyrics: '' }
-      currentTrack.value = updatedTrack
-      patchTrackInQueues(updatedTrack)
-    }
+  const source = getTrackSource(triggerTrack)
+  const canLoadLocalLyrics =
+    source === 'local' &&
+    triggerTrack.lyrics == null &&
+    !!triggerTrack.dir &&
+    !!triggerTrack.fileName
+  const canLoadProviderLyrics =
+    allowProviderLookup && (triggerTrack.lyrics == null || triggerTrack.translatedLyrics == null)
+  if (!canLoadLocalLyrics && !canLoadProviderLyrics) return
+
+  const resolved = await resolveLyricsWithSources({
+    track: triggerTrack,
+    loadLocalLyrics: canLoadLocalLyrics
+      ? () =>
+          window.api.data
+            .getLyrics(triggerTrack.dir!, triggerTrack.fileName, triggerTrack.filePath)
+            .catch(() => null)
+      : undefined,
+    loadProviderLyrics: canLoadProviderLyrics
+      ? async () => {
+          await syncPluginProviders()
+          return useMediaProviders().resolveLyrics(triggerTrack)
+        }
+      : undefined
+  })
+
+  if (currentTrack.value?.id !== triggerTrack.id) return
+  const updatedTrack = {
+    ...currentTrack.value,
+    lyrics: resolved.lyrics ?? '',
+    translatedLyrics: resolved.translatedLyrics ?? currentTrack.value.translatedLyrics ?? null,
+    lyricsSource: resolved.lyricsSource,
+    translatedLyricsSource: resolved.translatedLyricsSource
   }
+  currentTrack.value = updatedTrack
+  patchTrackInQueues(updatedTrack)
 }
 
 async function resolvePlayTarget(track: Track): Promise<string> {
@@ -1096,6 +1109,87 @@ async function resolvePlayTarget(track: Track): Promise<string> {
 
   track.streamUrl = streamUrl
   return streamUrl
+}
+
+async function handlePlaybackFallback(
+  failedTrack: Track,
+  reason: unknown,
+  loadToken: number
+): Promise<boolean> {
+  if (!isActiveLoad(loadToken, failedTrack)) return false
+  const failedSource = getTrackSource(failedTrack)
+  const fallback = findPlaybackFallbackTrack({
+    failedTrack,
+    candidates: queue.value,
+    unavailableSources: [failedSource],
+    sourceReliability: getProviderSourceReliability()
+  })
+  if (!fallback) return await handleProviderRematchFallback(failedTrack, loadToken)
+
+  audioEngineError.value = `播放 ${failedTrack.title || '当前曲目'} 失败，已尝试切换到 ${fallback.source ?? getTrackSource(fallback)} 来源：${reason instanceof Error ? reason.message : String(reason)}`
+  nativePlaybackActive = false
+  loadedTrackId = ''
+  stopVisualizationPolling(true)
+  stopRendererAudio(true)
+
+  queue.value = queue.value.map((track) => track.id === failedTrack.id ? fallback : track)
+  originalQueue.value = originalQueue.value.map((track) => track.id === failedTrack.id ? fallback : track)
+  queueIndex.value = queue.value.findIndex((track) => track.id === fallback.id)
+  if (queueIndex.value < 0) queueIndex.value = 0
+  currentTrack.value = fallback
+  void loadAndPlay(fallback)
+  return true
+}
+
+function getProviderSourceReliability(): ProviderSourceReliability {
+  const reliability: ProviderSourceReliability = {}
+  for (const provider of useMediaProviders().list()) {
+    const playbackUrlRate = provider.health?.methodStats?.getPlaybackUrl?.successRate
+    const successRate = typeof playbackUrlRate === 'number'
+      ? playbackUrlRate
+      : provider.health?.successRate
+    reliability[provider.id] = clampProviderReliability(successRate)
+  }
+  return reliability
+}
+
+function clampProviderReliability(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 1
+  return Math.max(0, Math.min(1, value))
+}
+
+async function handleProviderRematchFallback(
+  failedTrack: Track,
+  loadToken: number
+): Promise<boolean> {
+  if (!isActiveLoad(loadToken, failedTrack)) return false
+  const failedSource = getTrackSource(failedTrack)
+  if (failedSource === 'local') return false
+
+  await syncPluginProviders()
+  const searchResult = await useMediaProviders().searchAllSongs({
+    query: [failedTrack.title, failedTrack.artist].filter(Boolean).join(' '),
+    localTracks: queue.value
+  })
+  const candidates = searchResult.items
+    .map((item) => item.track)
+    .filter((track) => getTrackSource(track) !== failedSource || track.id !== failedTrack.id)
+  const rematched = findProviderRematchCandidate(failedTrack, candidates)
+  if (!rematched || !isActiveLoad(loadToken, failedTrack)) return false
+
+  audioEngineError.value = `播放 ${failedTrack.title || '当前曲目'} 失败，已重新匹配到 ${rematched.source ?? getTrackSource(rematched)} 来源`
+  nativePlaybackActive = false
+  loadedTrackId = ''
+  stopVisualizationPolling(true)
+  stopRendererAudio(true)
+
+  queue.value = queue.value.map((track) => track.id === failedTrack.id ? rematched : track)
+  originalQueue.value = originalQueue.value.map((track) => track.id === failedTrack.id ? rematched : track)
+  queueIndex.value = queue.value.findIndex((track) => track.id === rematched.id)
+  if (queueIndex.value < 0) queueIndex.value = 0
+  currentTrack.value = rematched
+  void loadAndPlay(rematched)
+  return true
 }
 
 function setupAudioEngineListeners(): void {
@@ -1390,6 +1484,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   } catch (err) {
     if (!isActiveLoad(loadToken, track)) return
     clearNativePlaybackInfoIntentForLoad(loadToken)
+    if (await handlePlaybackFallback(track, err, loadToken)) return
     console.error('[audio-engine] Playback failed:', err)
     audioEngineError.value = err instanceof Error ? err.message : String(err)
     autoAdvanceInFlight = false

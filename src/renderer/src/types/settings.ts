@@ -18,6 +18,7 @@ export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 export type LyricAlign = 'center' | 'left'
 export type ProxyMode = 'auto' | 'custom' | 'off'
+export type StreamingAudioCachePolicy = 'off' | 'provider'
 export type AppBackgroundPage = 'local' | 'settings' | 'streaming' | 'player'
 export type AppBackgroundKind = 'color' | 'image'
 
@@ -97,6 +98,13 @@ export interface DesktopLyricsSettings {
   maxLines: number
 }
 
+export interface MusicCachePolicySettings {
+  cover: boolean
+  lyrics: boolean
+  metadata: boolean
+  streamingAudio: StreamingAudioCachePolicy
+}
+
 export type EqualizerFilterType =
   | 'peak'
   | 'lowShelf'
@@ -134,6 +142,8 @@ export interface AudioProcessingSettings {
   convolverIrPath: string
   crossfeedEnabled: boolean
   crossfeedStrength: number
+  crossfeedDelayMs: number
+  crossfeedCutoffHz: number
   gapless: boolean
   crossfadeSeconds: number
 }
@@ -219,6 +229,7 @@ export interface AppSettings {
   globalShortcuts: boolean
   musicCachePath: string
   cachePath: string
+  cachePolicy: MusicCachePolicySettings
   closeToTray: boolean
   startupHomePage: StartupHomePage
   theme: AppTheme

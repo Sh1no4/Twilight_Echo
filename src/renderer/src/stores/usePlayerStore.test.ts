@@ -95,6 +95,21 @@ test('desktop lyrics html falls back to untimed plain lyrics', () => {
   assert.match(source, /mergedLines = buildMergedLyrics\(data\.lyrics, data\.translatedLyrics\)/)
 })
 
+test('player lyric loading records local and provider lyric sources', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const ensureCurrentTrackLyricsLoaded = extractInternalFunctionBody(
+    source,
+    'ensureCurrentTrackLyricsLoaded'
+  )
+
+  assert.match(source, /import \{ resolveLyricsWithSources \} from '\.\.\/utils\/lyricSourceResolution\.ts'/)
+  assert.match(ensureCurrentTrackLyricsLoaded, /resolveLyricsWithSources\(\{/)
+  assert.match(ensureCurrentTrackLyricsLoaded, /loadLocalLyrics:/)
+  assert.match(ensureCurrentTrackLyricsLoaded, /loadProviderLyrics:/)
+  assert.match(ensureCurrentTrackLyricsLoaded, /lyricsSource: resolved\.lyricsSource/)
+  assert.match(ensureCurrentTrackLyricsLoaded, /translatedLyricsSource: resolved\.translatedLyricsSource/)
+})
+
 test('streaming playback resume waits for plugin providers before restoring', () => {
   const sessionPersistenceSource = readFileSync(
     new URL('../app/usePlaybackSessionPersistence.ts', import.meta.url),
@@ -264,6 +279,52 @@ test('playback session strips transient provider stream URLs before restore', ()
     /streamUrl: source === 'local' \? track\.streamUrl : null/,
     'restored provider playback should resolve a fresh stream URL instead of reusing a stale proxy URL'
   )
+})
+
+test('playback failure tries a same-song fallback variant from the queue', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const handlePlaybackFallback = extractInternalFunctionBody(source, 'handlePlaybackFallback')
+  const loadAndPlay = source.match(/async function loadAndPlay[\s\S]*?function next\(\)/)?.[0] ?? ''
+
+  assert.match(source, /import \{ findPlaybackFallbackTrack \} from '\.\.\/utils\/playbackFallback\.ts'/)
+  assert.match(handlePlaybackFallback, /findPlaybackFallbackTrack\(\{/)
+  assert.match(handlePlaybackFallback, /failedTrack/)
+  assert.match(handlePlaybackFallback, /candidates: queue\.value/)
+  assert.match(handlePlaybackFallback, /sourceReliability: getProviderSourceReliability\(\)/)
+  assert.match(handlePlaybackFallback, /queue\.value = queue\.value\.map/)
+  assert.match(handlePlaybackFallback, /currentTrack\.value = fallback/)
+  assert.match(handlePlaybackFallback, /void loadAndPlay\(fallback/)
+  assert.match(loadAndPlay, /if \(await handlePlaybackFallback\(track, err, loadToken\)\) return/)
+})
+
+test('playback fallback ranks provider variants by playback url health', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const helper = extractInternalFunctionBody(source, 'getProviderSourceReliability')
+  const handlePlaybackFallback = extractInternalFunctionBody(source, 'handlePlaybackFallback')
+
+  assert.match(helper, /useMediaProviders\(\)\.list\(\)/)
+  assert.match(helper, /provider\.health\?\.methodStats\?\.getPlaybackUrl\?\.successRate/)
+  assert.match(helper, /provider\.health\?\.successRate/)
+  assert.match(helper, /reliability\[provider\.id\] = clampProviderReliability/)
+  assert.match(source, /function clampProviderReliability\(/)
+  assert.match(handlePlaybackFallback, /sourceReliability: getProviderSourceReliability\(\)/)
+})
+
+test('provider playback failure searches provider results to rematch expired ids when queue fallback misses', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const handleProviderRematchFallback = extractInternalFunctionBody(
+    source,
+    'handleProviderRematchFallback'
+  )
+  const handlePlaybackFallback = extractInternalFunctionBody(source, 'handlePlaybackFallback')
+
+  assert.match(source, /import \{[\s\S]*findProviderRematchCandidate[\s\S]*\} from '\.\.\/utils\/libraryRepair\.ts'/)
+  assert.match(handlePlaybackFallback, /await handleProviderRematchFallback\(failedTrack, loadToken\)/)
+  assert.match(handleProviderRematchFallback, /useMediaProviders\(\)\.searchAllSongs\(\{/)
+  assert.match(handleProviderRematchFallback, /findProviderRematchCandidate\(failedTrack, candidates\)/)
+  assert.match(handleProviderRematchFallback, /queue\.value = queue\.value\.map/)
+  assert.match(handleProviderRematchFallback, /currentTrack\.value = rematched/)
+  assert.match(handleProviderRematchFallback, /void loadAndPlay\(rematched\)/)
 })
 
 test('play mode is persisted in settings and restored on launch', () => {

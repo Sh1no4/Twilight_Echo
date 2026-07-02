@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const managerSource = readFileSync(new URL('./manager.ts', import.meta.url), 'utf8')
+const pluginHostSource = readFileSync(new URL('../pluginHost.ts', import.meta.url), 'utf8')
 
 test('plugin manager keeps UI command failures isolated to the owning plugin', () => {
   assert.match(managerSource, /const PLUGIN_UI_COMMAND_TIMEOUT_MS = 5000/)
@@ -43,4 +44,30 @@ test('plugin manager exposes per-plugin logs for troubleshooting', () => {
   assert.match(managerSource, /raw\.slice\(-20000\)/)
   assert.match(managerSource, /private appendLog\(descriptor: TwilightPluginDescriptor/)
   assert.match(managerSource, /logs', 'plugins'/)
+})
+
+test('plugin manager tracks provider health for calls and plugin failures', () => {
+  assert.match(managerSource, /interface ProviderHealthRecord/)
+  assert.match(managerSource, /private readonly providerHealth = new Map/)
+  assert.match(managerSource, /private getProviderHealth\(/)
+  assert.match(managerSource, /private normalizeProviderHealth\(/)
+  assert.match(managerSource, /private recordProviderCallSuccess\(/)
+  assert.match(managerSource, /private recordProviderCallFailure\(/)
+  assert.match(managerSource, /interface ProviderMethodHealthRecord/)
+  assert.match(managerSource, /methodStats:/)
+  assert.match(managerSource, /successRate:/)
+  assert.match(managerSource, /totalCalls:/)
+  assert.match(managerSource, /failedCalls:/)
+  assert.match(managerSource, /lastError:/)
+  assert.match(managerSource, /pluginStatus:/)
+  assert.match(managerSource, /const health = this\.normalizeProviderHealth\(record\.health,\s*providerId,\s*pluginId/)
+  assert.match(managerSource, /if \(health\) this\.providerHealth\.set\(providerId,\s*health\)/)
+  assert.match(managerSource, /this\.recordProviderCallSuccess\(pending\.providerId,\s*pending\.pluginId,\s*pending\.method/)
+  assert.match(managerSource, /this\.recordProviderCallFailure\(\s*pending\.providerId,\s*pending\.pluginId,\s*pending\.method/)
+  assert.match(managerSource, /health: this\.getProviderHealth/)
+})
+
+test('plugin host forwards provider health registration metadata', () => {
+  assert.match(pluginHostSource, /health\?: Record<string, unknown>/)
+  assert.match(pluginHostSource, /health: provider\.health/)
 })

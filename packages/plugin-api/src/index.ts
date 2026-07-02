@@ -215,6 +215,7 @@ export interface TwilightMediaProviderRegistration {
   id: string
   name: string
   capabilities: TwilightMediaProviderCapability[]
+  health?: TwilightMediaProviderHealth
   getPlaybackUrl?(track: Track, options?: { force?: boolean }): Promise<string | null>
   getLyrics?(track: Track): Promise<{ lyrics: string | null; translatedLyrics: string | null }>
   searchSongs?(keywords: string, limit?: number, offset?: number): Promise<{ items: Track[]; total: number }>
@@ -259,8 +260,31 @@ export interface TwilightMediaProviderRegistration {
 
 export type TwilightMediaProviderMethod = Exclude<
   keyof TwilightMediaProviderRegistration,
-  'id' | 'name' | 'capabilities'
+  'id' | 'name' | 'capabilities' | 'health'
 >
+
+export interface TwilightMediaProviderHealth {
+  providerId: string
+  pluginId: string
+  pluginStatus: TwilightPluginStatus
+  available: boolean
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  methodStats: Partial<Record<TwilightMediaProviderMethod, TwilightMediaProviderMethodHealth>>
+  lastError: string | null
+  lastCheckedAt: string | null
+}
+
+export interface TwilightMediaProviderMethodHealth {
+  totalCalls: number
+  successfulCalls: number
+  failedCalls: number
+  successRate: number
+  lastError: string | null
+  lastCheckedAt: string | null
+}
 
 export interface TwilightProvidersApi {
   register(provider: TwilightMediaProviderRegistration): Promise<void>

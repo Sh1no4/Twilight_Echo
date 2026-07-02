@@ -1,8 +1,10 @@
 ﻿<script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
+import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import type { Track } from '../types/music'
+import { findProviderRematchCandidate } from '../utils/libraryRepair'
 import CoverImg from './CoverImg.vue'
 import { formatDuration } from './song-list/formatDuration'
 import type { GridItem } from './song-list/types'
@@ -32,10 +34,12 @@ const {
   removeTrack,
   addToPlaylist,
   removeFromPlaylist,
+  replaceTrackReference,
   createPlaylist,
   deletePlaylist
 } = useMusicStore()
 const { currentTrack, playTrack } = usePlayerStore()
+const mediaProviders = useMediaProviders()
 
 const { searchQuery, debouncedSearchQuery, searchInputFocused } = useSongListSearch()
 
@@ -92,6 +96,7 @@ const currentPlaylistName = computed(() => {
 })
 
 const isPlaylistDetail = computed(() => currentPlaylistName.value !== null)
+const repairMessage = ref('')
 
 const displayTracks = computed(() => {
   const q = debouncedSearchQuery.value.trim().toLowerCase()
@@ -132,6 +137,35 @@ function onRowDblClick(track: Track): void {
   playTrack(track, displayTracks.value)
 }
 
+async function handleManualRematch(track: Track): Promise<void> {
+  repairMessage.value = `正在重新匹配 ${track.title || '当前曲目'}...`
+  try {
+    await syncPluginProviders()
+    const query = [track.title, track.artist].filter(Boolean).join(' ')
+    const result = await mediaProviders.searchAllSongs({
+      query,
+      localTracks: tracks.value,
+      limit: 20,
+      offset: 0
+    })
+    const rematched = findProviderRematchCandidate(
+      track,
+      result.items.map((item) => item.track)
+    )
+    if (!rematched) {
+      repairMessage.value = `未找到可替换 ${track.title || '当前曲目'} 的音源`
+      return
+    }
+    const replacedCount = replaceTrackReference(track.id, rematched)
+    repairMessage.value =
+      replacedCount > 0
+        ? `已重新匹配到 ${rematched.source ?? getTrackSource(rematched)}：${rematched.title || track.title}`
+        : `找到 ${rematched.title || track.title}，但没有需要替换的引用`
+  } catch (error) {
+    repairMessage.value = error instanceof Error ? error.message : '重新匹配音源失败'
+  }
+}
+
 const {
   showContextMenu,
   menuX,
@@ -144,6 +178,8 @@ const {
   handleOpenFolder,
   handleAddToPlaylist,
   handleRemoveFromCurrentPlaylist,
+  canRematchSelectedTrack,
+  handleRematchTrack,
   openCreatePlaylistDialog,
   handleCreatePlaylist,
   handleCreatePlaylistFromMenu,
@@ -153,6 +189,7 @@ const {
   removeTrack,
   addToPlaylist,
   removeFromPlaylist,
+  rematchTrack: handleManualRematch,
   createPlaylist,
   deletePlaylist
 })
@@ -198,6 +235,13 @@ const {
   showGrid,
   updateViewportHeight
 })
+
+function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
+  if (track.source) return track.source
+  if (/^[a-zA-Z]:[\\/]/.test(track.id) || /^[\\/]/.test(track.id)) return 'local'
+  const separatorIndex = track.id.indexOf(':')
+  return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
+}
 </script>
 
 <template>
@@ -346,6 +390,7 @@ const {
               </button>
               <div class="title-group">
                 <h2 class="song-list-title">{{ viewTitle }}</h2>
+                <span v-if="repairMessage" class="repair-status">{{ repairMessage }}</span>
               </div>
             </div>
             <div class="header-right">
@@ -457,6 +502,14 @@ const {
               >
                 <i class="pi pi-minus-circle"></i>
                 <span>从歌单移除</span>
+              </div>
+              <div
+                v-if="canRematchSelectedTrack"
+                class="menu-item"
+                @click="handleRematchTrack"
+              >
+                <i class="pi pi-refresh"></i>
+                <span>重新匹配音源</span>
               </div>
               <div class="menu-item" @click="handleOpenFolder">
                 <i class="pi pi-folder-open"></i>

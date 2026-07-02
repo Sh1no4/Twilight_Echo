@@ -1,12 +1,13 @@
-import { MediaProviderRegistry, toProviderIpcArgs } from './mediaProvider'
+import { MediaProviderRegistry, toProviderIpcArgs } from './mediaProvider.ts'
 import type {
   MediaProviderArtistSummary,
   MediaProviderAlbumSummary,
+  MediaProviderHealth,
   MediaProviderPlaylistSummary,
   MediaProviderProfile,
   MediaProviderSearchResult,
   MediaProviderUserSummary
-} from './mediaProvider'
+} from './mediaProvider.ts'
 import type { Track } from '../types/music'
 
 const mediaProviders = new MediaProviderRegistry()
@@ -45,7 +46,8 @@ export async function syncPluginProviders(): Promise<void> {
           name: provider.name,
           source: 'plugin',
           capabilities: provider.capabilities,
-          isEnabled: () => true,
+          health: provider.health as MediaProviderHealth | undefined,
+          isEnabled: () => provider.health?.available !== false,
           getPlaybackUrl: provider.capabilities.includes('playbackUrl')
             ? (track, options) => callProvider<string | null>('getPlaybackUrl', [track, options])
             : undefined,
@@ -202,5 +204,5 @@ export async function syncPluginProviders(): Promise<void> {
   return pluginProvidersSyncing
 }
 
-export * from './mediaProvider'
-export * from './ncmTrack'
+export * from './mediaProvider.ts'
+export * from './ncmTrack.ts'

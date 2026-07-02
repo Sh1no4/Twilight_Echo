@@ -175,7 +175,9 @@ let scanCallCount = 0
       loadMusicLibrary: async (): Promise<unknown[]> => {
         loadCallCount++
         return []
-      }
+      },
+      savePlaylists: async (): Promise<void> => {},
+      loadPlaylists: async (): Promise<unknown[]> => []
     },
     fs: {
       scanMusicFiles: async (): Promise<unknown[]> => {
@@ -387,7 +389,9 @@ test('incremental add: single file add triggers addTracks not full loadLibrary',
         loadMusicLibrary: async (): Promise<unknown[]> => {
           loadCallCount++
           return []
-        }
+        },
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
       },
       fs: {
         scanMusicFiles: async (): Promise<unknown[]> => {
@@ -418,7 +422,9 @@ test('incremental add: single file add triggers addTracks not full loadLibrary',
         loadMusicLibrary: async (): Promise<unknown[]> => {
           loadCallCount++
           return []
-        }
+        },
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
       },
       fs: {
         scanMusicFiles: async (): Promise<unknown[]> => {
@@ -454,6 +460,172 @@ test('incremental fallback: no payload triggers full loadLibrary', async () => {
   await store.handleLibraryChange(undefined)
 
   assert.ok(loadCallCount >= 1, 'loadLibrary should be called for undefined change')
+
+  store.clearTracks()
+})
+
+test('loadLibrary repairs moved local files from scanned folders while preserving track ids', async () => {
+  const store = setupStore()
+  const oldTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'local:stable-id',
+    title: 'Moon River',
+    artist: 'Audrey',
+    album: 'Old Album',
+    filePath: 'D:\\Old\\Moon River.flac',
+    fileName: 'Moon River.flac',
+    dir: 'D:\\Old',
+    duration: 181
+  }
+  const movedTrack = {
+    ...oldTrack,
+    id: 'local:new-scan-id',
+    filePath: 'E:\\Music\\Audrey\\Moon River.flac',
+    fileName: 'Moon River.flac',
+    dir: 'E:\\Music\\Audrey',
+    duration: 179,
+    cover: 'cover://new'
+  }
+
+  saveCallCount = 0
+  scanCallCount = 0
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (): Promise<void> => {
+          saveCallCount++
+        },
+        loadMusicLibrary: async (): Promise<unknown> => {
+          loadCallCount++
+          return { tracks: [oldTrack], folders: ['E:\\Music'] }
+        },
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: {
+        scanMusicFiles: async (): Promise<unknown[]> => {
+          scanCallCount++
+          return [movedTrack]
+        }
+      }
+    }
+  }
+
+  await store.loadLibrary()
+
+  assert.equal(scanCallCount, 1)
+  assert.equal(store.tracks.value.length, 1)
+  assert.equal(store.tracks.value[0].id, 'local:stable-id')
+  assert.equal(store.tracks.value[0].filePath, 'E:\\Music\\Audrey\\Moon River.flac')
+  assert.equal(store.tracks.value[0].cover, 'cover://new')
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  assert.equal(saveCallCount, 1, 'repaired library should be saved')
+
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (): Promise<void> => {
+          saveCallCount++
+        },
+        loadMusicLibrary: async (): Promise<unknown[]> => {
+          loadCallCount++
+          return []
+        },
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: {
+        scanMusicFiles: async (): Promise<unknown[]> => {
+          scanCallCount++
+          return generateMockTracks(1)
+        }
+      }
+    }
+  }
+
+  store.clearTracks()
+})
+
+test('loadLibrary enriches missing local metadata from provider search without changing local identity', async () => {
+  const store = setupStore()
+  const localTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'local:moon',
+    title: 'Moon River',
+    artist: 'Audrey',
+    album: '',
+    filePath: 'D:\\Music\\Moon River.flac',
+    fileName: 'Moon River.flac',
+    duration: 181,
+    cover: null,
+    lyrics: null,
+    source: 'local' as const,
+    format: 'flac'
+  }
+
+  saveCallCount = 0
+  scanCallCount = 0
+  let providerSearchCalls = 0
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (): Promise<void> => {
+          saveCallCount++
+        },
+        loadMusicLibrary: async (): Promise<unknown> => {
+          loadCallCount++
+          return { tracks: [localTrack], folders: [] }
+        },
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: {
+        scanMusicFiles: async (): Promise<unknown[]> => {
+          scanCallCount++
+          return []
+        }
+      },
+      providers: {
+        list: async (): Promise<unknown[]> => [{
+          id: 'ncm',
+          name: 'NetEase',
+          capabilities: ['search'],
+          health: { available: true }
+        }],
+        call: async (): Promise<unknown> => {
+          providerSearchCalls++
+          return {
+            items: [{
+              ...localTrack,
+              id: 'ncm:123',
+              filePath: 'ncm:123',
+              fileName: 'Moon River',
+              album: 'Online Album',
+              duration: 179,
+              cover: 'https://cover.example/album.jpg',
+              lyrics: '[00:00.00]Moon River',
+              translatedLyrics: '[00:00.00]月亮河',
+              source: 'ncm'
+            }],
+            total: 1
+          }
+        }
+      }
+    }
+  }
+
+  await store.loadLibrary()
+
+  assert.equal(providerSearchCalls, 1)
+  assert.equal(store.tracks.value[0].id, 'local:moon')
+  assert.equal(store.tracks.value[0].filePath, 'D:\\Music\\Moon River.flac')
+  assert.equal(store.tracks.value[0].album, 'Online Album')
+  assert.equal(store.tracks.value[0].cover, 'https://cover.example/album.jpg')
+  assert.equal(store.tracks.value[0].lyrics, '[00:00.00]Moon River')
+  assert.equal(store.tracks.value[0].translatedLyrics, '[00:00.00]月亮河')
+  assert.equal(store.tracks.value[0].streamUrl, undefined)
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  assert.equal(saveCallCount, 1, 'enriched library should be saved')
 
   store.clearTracks()
 })
@@ -521,4 +693,216 @@ test('pointermove cleanup: cleanupPointerMove calls cancelAnimationFrame only wh
   cancelledId = null
   cleanupPointerMove(null, mockCancel)
   assert.equal(cancelledId, null, 'cancelAnimationFrame should NOT be called when rafId is null')
+})
+
+test('mixed-source playlists keep provider track snapshots when the track is not in the local library', async () => {
+  const store = setupStore()
+  store.playlists.value = []
+  const providerTrack = {
+    id: 'ncm:12345',
+    title: 'Online Song',
+    artist: 'Remote Artist',
+    album: 'Remote Album',
+    filePath: 'ncm:12345',
+    fileName: 'Online Song',
+    duration: 180,
+    size: 0,
+    cover: null,
+    lyrics: null,
+    source: 'ncm'
+  }
+
+  store.createPlaylist('mixed-source')
+  store.addToPlaylist('mixed-source', providerTrack.id, providerTrack)
+
+  assert.deepEqual(store.getPlaylistTracks('mixed-source'), [providerTrack])
+
+  store.clearTracks()
+})
+
+test('mixed-source playlists prefer a local library variant over a provider snapshot for the same logical track', async () => {
+  const store = setupStore()
+  store.playlists.value = []
+  const providerTrack = {
+    id: 'ncm:12345',
+    title: 'Moon River',
+    artist: 'Audrey',
+    album: 'Remote Album',
+    filePath: 'ncm:12345',
+    fileName: 'Moon River',
+    duration: 180,
+    size: 0,
+    cover: null,
+    lyrics: null,
+    source: 'ncm'
+  }
+  const localTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'local:moon',
+    title: 'Moon River',
+    artist: 'Audrey',
+    album: 'Local Album',
+    filePath: 'D:\\Music\\Moon River.flac',
+    fileName: 'Moon River.flac',
+    duration: 181,
+    source: 'local',
+    format: 'flac'
+  }
+
+  store.createPlaylist('mixed-source')
+  store.addToPlaylist('mixed-source', providerTrack.id, providerTrack)
+  await store.addTracks([localTrack])
+
+  const tracks = store.getPlaylistTracks('mixed-source')
+
+  assert.equal(tracks.length, 1)
+  assert.equal(tracks[0].id, 'local:moon')
+
+  store.clearTracks()
+})
+
+test('mixed-source playlists can replace expired provider ids with rematched provider snapshots', async () => {
+  const store = setupStore()
+  store.playlists.value = []
+  const expiredTrack = {
+    id: 'ncm:expired',
+    title: 'Online Song',
+    artist: 'Remote Artist',
+    album: 'Remote Album',
+    filePath: 'ncm:expired',
+    fileName: 'Online Song',
+    duration: 180,
+    size: 0,
+    cover: null,
+    lyrics: null,
+    source: 'ncm'
+  }
+  const rematchedTrack = {
+    ...expiredTrack,
+    id: 'ncm:fresh',
+    filePath: 'ncm:fresh',
+    cover: 'https://cover.example/fresh.jpg'
+  }
+
+  store.createPlaylist('mixed-source')
+  store.addToPlaylist('mixed-source', expiredTrack.id, expiredTrack)
+
+  const replacedCount = store.replaceTrackReference(expiredTrack.id, rematchedTrack)
+
+  assert.equal(replacedCount, 1)
+  assert.deepEqual(store.playlists.value[0].trackIds, ['ncm:fresh'])
+  assert.equal(store.playlists.value[0].trackSnapshots?.['ncm:expired'], undefined)
+  assert.equal(store.playlists.value[0].trackSnapshots?.['ncm:fresh']?.cover, 'https://cover.example/fresh.jpg')
+  assert.deepEqual(store.getPlaylistTracks('mixed-source'), [rematchedTrack])
+
+  store.clearTracks()
+})
+
+test('mixed-source playlist rematch de-duplicates when replacement id already exists', async () => {
+  const store = setupStore()
+  store.playlists.value = []
+  const expiredTrack = {
+    id: 'ncm:expired',
+    title: 'Online Song',
+    artist: 'Remote Artist',
+    album: 'Remote Album',
+    filePath: 'ncm:expired',
+    fileName: 'Online Song',
+    duration: 180,
+    size: 0,
+    cover: null,
+    lyrics: null,
+    source: 'ncm'
+  }
+  const rematchedTrack = {
+    ...expiredTrack,
+    id: 'ncm:fresh',
+    filePath: 'ncm:fresh'
+  }
+
+  store.createPlaylist('mixed-source')
+  store.addToPlaylist('mixed-source', expiredTrack.id, expiredTrack)
+  store.addToPlaylist('mixed-source', rematchedTrack.id, rematchedTrack)
+
+  const replacedCount = store.replaceTrackReference(expiredTrack.id, rematchedTrack)
+
+  assert.equal(replacedCount, 1)
+  assert.deepEqual(store.playlists.value[0].trackIds, ['ncm:fresh'])
+  assert.equal(store.playlists.value[0].trackSnapshots?.['ncm:expired'], undefined)
+  assert.deepEqual(store.getPlaylistTracks('mixed-source'), [rematchedTrack])
+
+  store.clearTracks()
+})
+
+test('default favorites match logical tracks across local and provider variants', async () => {
+  const store = setupStore()
+  store.playlists.value = []
+  const localTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'local:moon',
+    title: 'Moon River',
+    artist: 'Audrey',
+    album: 'Local Album',
+    filePath: 'D:\\Music\\Moon River.flac',
+    fileName: 'Moon River.flac',
+    duration: 181,
+    source: 'local'
+  }
+  const providerTrack = {
+    ...localTrack,
+    id: 'ncm:123',
+    album: 'Online Album',
+    filePath: 'ncm:123',
+    fileName: 'Moon River',
+    duration: 180,
+    size: 0,
+    source: 'ncm'
+  }
+
+  store.createPlaylist('我收藏的音乐')
+  store.addToPlaylist('我收藏的音乐', localTrack.id, localTrack)
+
+  assert.equal(store.isFavoriteTrack(providerTrack), true)
+  assert.equal(store.isFavoriteTrack(localTrack), true)
+
+  store.clearTracks()
+})
+
+test('removing a logical favorite removes all source variants from default favorites', async () => {
+  const store = setupStore()
+  store.playlists.value = []
+  const localTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'local:moon',
+    title: 'Moon River',
+    artist: 'Audrey',
+    album: 'Local Album',
+    filePath: 'D:\\Music\\Moon River.flac',
+    fileName: 'Moon River.flac',
+    duration: 181,
+    source: 'local'
+  }
+  const providerTrack = {
+    ...localTrack,
+    id: 'ncm:123',
+    album: 'Online Album',
+    filePath: 'ncm:123',
+    fileName: 'Moon River',
+    duration: 180,
+    size: 0,
+    source: 'ncm'
+  }
+
+  store.createPlaylist('我收藏的音乐')
+  store.addToPlaylist('我收藏的音乐', localTrack.id, localTrack)
+  store.addToPlaylist('我收藏的音乐', providerTrack.id, providerTrack)
+
+  store.removeFavoriteTrack(providerTrack)
+
+  const favorite = store.playlists.value.find((playlist) => playlist.name === '我收藏的音乐')
+  assert.deepEqual(favorite?.trackIds, [])
+  assert.equal(store.isFavoriteTrack(localTrack), false)
+  assert.equal(store.isFavoriteTrack(providerTrack), false)
+
+  store.clearTracks()
 })

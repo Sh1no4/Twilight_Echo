@@ -1,7 +1,7 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from 'vue'
-import type { Track } from '../../types/music'
-import { getNcmSongId, syncPluginProviders } from '../../providers'
-import type { MediaProviderRegistry } from '../../providers/mediaProvider'
+import type { Track } from '../../types/music.ts'
+import { getNcmSongId, syncPluginProviders } from '../../providers/index.ts'
+import type { MediaProviderRegistry } from '../../providers/mediaProvider.ts'
 
 const DEFAULT_FAVORITE_PLAYLIST_NAME = '我收藏的音乐'
 
@@ -19,6 +19,9 @@ type UseFavoriteButtonOptions = {
   addToPlaylist: (playlistName: string, trackId: string) => void
   removeFromPlaylist: (playlistName: string, trackId: string) => void
   createPlaylist: (name: string) => void
+  isFavoriteTrack?: (track: Track) => boolean
+  addFavoriteTrack?: (track: Track) => void
+  removeFavoriteTrack?: (track: Track) => void
 }
 
 function isBiliTrack(track: Pick<Track, 'id' | 'source'>): boolean {
@@ -44,7 +47,10 @@ export function useFavoriteButton({
   mediaProviders,
   addToPlaylist,
   removeFromPlaylist,
-  createPlaylist
+  createPlaylist,
+  isFavoriteTrack,
+  addFavoriteTrack,
+  removeFavoriteTrack
 }: UseFavoriteButtonOptions): {
   favoriteButtonVisible: ComputedRef<boolean>
   favoriteButtonLiked: ComputedRef<boolean>
@@ -64,6 +70,7 @@ export function useFavoriteButton({
 
   const localFavoriteLiked = computed(() => {
     const track = currentTrack.value
+    if (track && isFavoriteTrack) return isFavoriteTrack(track)
     const playlist = defaultFavoritePlaylist.value
     return !!track && !!playlist && playlist.trackIds.includes(track.id)
   })
@@ -77,6 +84,7 @@ export function useFavoriteButton({
   const favoriteButtonLiked = computed(() => {
     const track = currentTrack.value
     if (!track) return false
+    if (localFavoriteLiked.value) return true
     if (isNcmTrack(track)) return ncmFavoriteLiked.value
     return localFavoriteLiked.value
   })
@@ -98,6 +106,8 @@ export function useFavoriteButton({
     const songId = getNcmSongId(track)
     if (songId == null) return
 
+    if (typeof window === 'undefined' || !window.api?.providers) return
+
     await syncPluginProviders()
     if (requestId !== ncmFavoriteRequestId) return
 
@@ -115,6 +125,15 @@ export function useFavoriteButton({
   }
 
   function toggleLocalFavorite(track: Track): void {
+    if (isFavoriteTrack && addFavoriteTrack && removeFavoriteTrack) {
+      if (isFavoriteTrack(track)) {
+        removeFavoriteTrack(track)
+      } else {
+        addFavoriteTrack(track)
+      }
+      return
+    }
+
     let playlist = defaultFavoritePlaylist.value
     if (!playlist) {
       createPlaylist(DEFAULT_FAVORITE_PLAYLIST_NAME)
@@ -156,6 +175,11 @@ export function useFavoriteButton({
   async function toggleFavorite(): Promise<void> {
     const track = currentTrack.value
     if (!track || isBiliTrack(track)) return
+
+    if (isFavoriteTrack?.(track)) {
+      removeFavoriteTrack?.(track)
+      return
+    }
 
     if (isNcmTrack(track)) {
       await toggleNcmFavorite(track)

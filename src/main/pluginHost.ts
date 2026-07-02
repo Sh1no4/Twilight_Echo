@@ -55,6 +55,7 @@ interface TwilightPluginContext {
         name: string
         capabilities: string[]
         ui?: Record<string, unknown>
+        health?: Record<string, unknown>
       } & ProviderHandler) => Promise<void>
     },
     ui: {
@@ -236,7 +237,8 @@ function createContext(pluginId: string, apiVersion: number, storagePath: string
           id: provider.id,
           name: provider.name,
           capabilities: provider.capabilities,
-          ui: provider.ui
+          ui: provider.ui,
+          health: provider.health
         })
       }
     },

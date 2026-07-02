@@ -66,6 +66,8 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   convolverIrPath: '',
   crossfeedEnabled: false,
   crossfeedStrength: 0,
+  crossfeedDelayMs: 0.35,
+  crossfeedCutoffHz: 700,
   gapless: true,
   crossfadeSeconds: 0
 }
@@ -279,6 +281,8 @@ function normalizeAudioProcessing(
     replayGainPreamp: clampNumber(settings?.replayGainPreamp, -12, 12, 0),
     replayGainFallback: clampNumber(settings?.replayGainFallback, -12, 12, 0),
     crossfeedStrength: clampNumber(settings?.crossfeedStrength, 0, 1, 0),
+    crossfeedDelayMs: clampNumber(settings?.crossfeedDelayMs, 0.05, 2, 0.35),
+    crossfeedCutoffHz: clampNumber(settings?.crossfeedCutoffHz, 80, 4000, 700),
     crossfadeSeconds: clampNumber(settings?.crossfadeSeconds, 0, 12, 0),
     eqBands: eqBands.length > 0 ? eqBands : cloneBands(defaultEqBands)
   }

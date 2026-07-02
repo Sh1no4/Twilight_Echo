@@ -21,11 +21,13 @@ import type {
   DesktopLyricsSettings,
   DsdOutputMode,
   LyricAlign,
+  MusicCachePolicySettings,
   OutputConfig,
   PlaybackResumeMode,
   StartupHomePage,
   AppBackgroundSettings,
   SacdProgramMode,
+  StreamingAudioCachePolicy,
   UiDensity,
   VolumeNormalizationMode
 } from '../types/settings'
@@ -110,9 +112,8 @@ const routingModeOptions: { value: ChannelRoutingMode; label: string }[] = [
 
 const replayGainOptions: { value: VolumeNormalizationMode; label: string }[] = [
   { value: 'off', label: 'Off' },
-  { value: 'track', label: 'Track' },
-  { value: 'album', label: 'Album' },
-  { value: 'loudnorm', label: 'Loudnorm' }
+  { value: 'track', label: 'Track / R128' },
+  { value: 'album', label: 'Album / R128' }
 ]
 
 const dsdOutputModeOptions: { value: DsdOutputMode; label: string }[] = [
@@ -163,6 +164,14 @@ const appBackgroundPageOptions: { value: AppBackgroundPage; label: string; desc:
 const lyricAlignOptions: { value: LyricAlign; label: string }[] = [
   { value: 'center', label: '居中对齐' },
   { value: 'left', label: '靠左对齐' }
+]
+
+const streamingAudioCachePolicyOptions: {
+  value: StreamingAudioCachePolicy
+  label: string
+}[] = [
+  { value: 'provider', label: '由 Provider 规则控制' },
+  { value: 'off', label: '不缓存流媒体音频' }
 ]
 
 const GITHUB_URL = 'https://github.com/nousresearch/twilight-echo'
@@ -415,6 +424,26 @@ function toggleSetting(key: BooleanSettingKey): void {
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
 }
 
+function toggleCacheArtifact(key: keyof MusicCachePolicySettings): void {
+  if (key === 'streamingAudio') return
+  void updateSettings({
+    cachePolicy: {
+      ...settings.value.cachePolicy,
+      [key]: !settings.value.cachePolicy[key]
+    }
+  })
+}
+
+function setStreamingAudioCachePolicy(event: Event): void {
+  const streamingAudio = (event.target as HTMLSelectElement).value as StreamingAudioCachePolicy
+  void updateSettings({
+    cachePolicy: {
+      ...settings.value.cachePolicy,
+      streamingAudio
+    }
+  })
+}
+
 async function toggleDesktopLyrics(): Promise<void> {
   const enabled = await window.api.desktopLyrics.toggle()
   await updateSettings({ desktopLyrics: { ...settings.value.desktopLyrics, enabled } })
@@ -492,9 +521,28 @@ function setReplayGainPreamp(event: Event): void {
   updateAudioProcessing({ dspEnabled: true, replayGainPreamp: value })
 }
 
+function setReplayGainFallback(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  updateAudioProcessing({ dspEnabled: true, replayGainFallback: value })
+}
+
+function toggleReplayGainClip(): void {
+  updateAudioProcessing({ dspEnabled: true, replayGainClip: !audioProcessing.value.replayGainClip })
+}
+
 function setCrossfeedFromInput(event: Event): void {
   const value = Number((event.target as HTMLInputElement).value)
   void setCrossfeedStrength(value)
+}
+
+function setCrossfeedDelay(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  updateAudioProcessing({ dspEnabled: true, crossfeedDelayMs: value })
+}
+
+function setCrossfeedCutoff(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  updateAudioProcessing({ dspEnabled: true, crossfeedCutoffHz: value })
 }
 
 function setDsdOutputMode(event: Event): void {
@@ -510,6 +558,10 @@ function setSacdProgramMode(event: Event): void {
 
 function setFftResolution(event: Event): void {
   updateAudioProcessing({ fftResolution: Number((event.target as HTMLSelectElement).value) })
+}
+
+function toggleFftEnabled(): void {
+  updateAudioProcessing({ fftEnabled: !audioProcessing.value.fftEnabled })
 }
 
 function setVolumeFromInput(event: Event): void {
@@ -822,10 +874,6 @@ function toggleGaplessPlayback(): void {
 function setCrossfadeSeconds(event: Event): void {
   const value = Number((event.target as HTMLInputElement).value)
   updateAudioProcessing({ crossfadeSeconds: value })
-}
-
-function toggleHighResolution(): void {
-  updateAudioProcessing({ highResolution: !audioProcessing.value.highResolution })
 }
 
 function toggleConvolver(): void {
@@ -1635,6 +1683,34 @@ onBeforeUnmount(() => {
                     @input="setReplayGainPreamp"
                   />
                 </div>
+                <div class="mini-setting">
+                  <div>
+                    <strong>Fallback Gain</strong>
+                    <span>曲目缺少 ReplayGain/R128 标签时使用的增益 (dB)</span>
+                  </div>
+                  <input
+                    class="number-input"
+                    type="number"
+                    step="0.1"
+                    min="-12"
+                    max="12"
+                    :value="audioProcessing.replayGainFallback"
+                    @input="setReplayGainFallback"
+                  />
+                </div>
+                <div class="mini-setting">
+                  <div>
+                    <strong>ReplayGain Clip</strong>
+                    <span>应用 ReplayGain 后限制到 [-1, 1]，避免标准化造成数字削波。</span>
+                  </div>
+                  <span
+                    class="toggle-switch"
+                    :class="{ active: audioProcessing.replayGainClip, inactive: !audioProcessing.replayGainClip }"
+                    role="switch"
+                    :aria-checked="audioProcessing.replayGainClip"
+                    @click="toggleReplayGainClip"
+                  ></span>
+                </div>
               </div>
 
               <div class="dsp-module-card">
@@ -1681,6 +1757,36 @@ onBeforeUnmount(() => {
                       @click="updateAudioProcessing({ dspEnabled: true, crossfeedEnabled: !audioProcessing.crossfeedEnabled })"
                     ></span>
                   </div>
+                </div>
+                <div class="mini-setting">
+                  <div>
+                    <strong>Crossfeed Delay</strong>
+                    <span>左右声道串音延迟，范围 0.05-2.0 ms。</span>
+                  </div>
+                  <input
+                    class="number-input"
+                    type="number"
+                    step="0.05"
+                    min="0.05"
+                    max="2"
+                    :value="audioProcessing.crossfeedDelayMs"
+                    @input="setCrossfeedDelay"
+                  />
+                </div>
+                <div class="mini-setting">
+                  <div>
+                    <strong>Crossfeed Cutoff</strong>
+                    <span>串音低通截止频率，范围 80-4000 Hz。</span>
+                  </div>
+                  <input
+                    class="number-input"
+                    type="number"
+                    step="10"
+                    min="80"
+                    max="4000"
+                    :value="audioProcessing.crossfeedCutoffHz"
+                    @input="setCrossfeedCutoff"
+                  />
                 </div>
                 <div class="mini-setting">
                   <div>
@@ -1742,27 +1848,37 @@ onBeforeUnmount(() => {
                     </select>
                   </label>
                   <label>
-                    <span>FFT Resolution</span>
-                    <select
-                      class="preview-select"
-                      :value="audioProcessing.fftResolution"
-                      @change="setFftResolution"
-                    >
-                      <option v-for="option in fftResolutionOptions" :key="option" :value="option">
-                        {{ option }}
-                      </option>
-                    </select>
+                    <span>FFT Capture</span>
+                    <div class="mini-highres">
+                      <select
+                        class="preview-select"
+                        :value="audioProcessing.fftResolution"
+                        :disabled="!audioProcessing.fftEnabled"
+                        @change="setFftResolution"
+                      >
+                        <option v-for="option in fftResolutionOptions" :key="option" :value="option">
+                          {{ option }}
+                        </option>
+                      </select>
+                      <span
+                        class="toggle-switch"
+                        :class="{ active: audioProcessing.fftEnabled, inactive: !audioProcessing.fftEnabled }"
+                        role="switch"
+                        :aria-checked="audioProcessing.fftEnabled"
+                        @click="toggleFftEnabled"
+                      ></span>
+                    </div>
                   </label>
                   <label class="decode-highres">
                     <span>高解析度处理 (High-Res)</span>
                     <div class="mini-highres">
-                      <small>内部启用 64-bit 浮点精度</small>
+                      <small>预留项，当前原生 DSP 链未消费该开关</small>
                       <span
                         class="toggle-switch"
-                        :class="{ active: audioProcessing.highResolution, inactive: !audioProcessing.highResolution }"
+                        :class="{ active: false, inactive: true }"
                         role="switch"
-                        :aria-checked="audioProcessing.highResolution"
-                        @click="toggleHighResolution"
+                        aria-checked="false"
+                        title="当前版本暂未接入原生处理链"
                       ></span>
                     </div>
                   </label>
@@ -1788,6 +1904,65 @@ onBeforeUnmount(() => {
                 <button type="button" class="soft-button" @click="chooseCacheFolder">选择文件夹</button>
                 <button type="button" class="muted-button" @click="resetCacheFolder">恢复默认</button>
               </div>
+            </div>
+            <hr />
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>封面缓存</strong>
+                <span>允许本地库和 Provider 复用已获取的专辑封面。</span>
+              </div>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.cachePolicy.cover, inactive: !settings.cachePolicy.cover }"
+                role="switch"
+                :aria-checked="settings.cachePolicy.cover"
+                @click="toggleCacheArtifact('cover')"
+              ></span>
+            </div>
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>歌词缓存</strong>
+                <span>缓存 LRC、翻译歌词和 Provider 返回的歌词增强结果。</span>
+              </div>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.cachePolicy.lyrics, inactive: !settings.cachePolicy.lyrics }"
+                role="switch"
+                :aria-checked="settings.cachePolicy.lyrics"
+                @click="toggleCacheArtifact('lyrics')"
+              ></span>
+            </div>
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>元数据缓存</strong>
+                <span>缓存在线匹配得到的艺人、专辑和曲目信息，不覆盖本地文件身份。</span>
+              </div>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.cachePolicy.metadata, inactive: !settings.cachePolicy.metadata }"
+                role="switch"
+                :aria-checked="settings.cachePolicy.metadata"
+                @click="toggleCacheArtifact('metadata')"
+              ></span>
+            </div>
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>流媒体音频缓存</strong>
+                <span>仅在插件和平台规则允许时缓存音频；关闭后 Provider 请求不会落盘音频。</span>
+              </div>
+              <select
+                class="preview-select compact-select"
+                :value="settings.cachePolicy.streamingAudio"
+                @change="setStreamingAudioCachePolicy"
+              >
+                <option
+                  v-for="option in streamingAudioCachePolicyOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
             </div>
             <hr />
             <div class="setting-item">

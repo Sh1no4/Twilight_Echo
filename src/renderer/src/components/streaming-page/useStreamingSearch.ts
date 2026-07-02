@@ -1,4 +1,4 @@
-import { computed, onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
+import { computed, getCurrentInstance, onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
 import type { Track } from '../../types/music'
 import type { NcmArtistSummary, NcmPlaylistSummary } from '../../stores/useNcmStore'
 import type { PageState } from './types'
@@ -7,6 +7,11 @@ type SearchType = 'songs' | 'playlists' | 'artists'
 
 type UseStreamingSearchOptions = {
   searchSongs: (
+    keywords: string,
+    limit?: number,
+    offset?: number
+  ) => Promise<{ tracks: Track[]; total: number }>
+  searchUnifiedSongs?: (
     keywords: string,
     limit?: number,
     offset?: number
@@ -26,6 +31,7 @@ type UseStreamingSearchOptions = {
 
 export function useStreamingSearch({
   searchSongs,
+  searchUnifiedSongs,
   searchPlaylists,
   searchArtists,
   playTrack
@@ -82,7 +88,11 @@ export function useStreamingSearch({
     searchError.value = ''
     try {
       if (searchType.value === 'songs') {
-        const { tracks, total } = await searchSongs(keywords.trim(), 30, searchOffset.value)
+        const { tracks, total } = await (searchUnifiedSongs ?? searchSongs)(
+          keywords.trim(),
+          30,
+          searchOffset.value
+        )
         if (searchQuery.value.trim() === keywords.trim() && searchType.value === 'songs') {
           searchResults.value = tracks
           searchTotal.value = total
@@ -147,9 +157,11 @@ export function useStreamingSearch({
     playTrack(track, searchResults.value)
   }
 
-  onBeforeUnmount(() => {
-    if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
-  })
+  if (getCurrentInstance()) {
+    onBeforeUnmount(() => {
+      if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+    })
+  }
 
   return {
     searchQuery,
