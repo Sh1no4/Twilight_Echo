@@ -3,7 +3,10 @@ import type { Track } from '../types/music'
 import { syncPluginProviders, useMediaProviders } from '../providers/index.ts'
 import { enrichLocalTracksFromProviders } from '../utils/libraryMetadataEnrichment.ts'
 import { getLogicalTrackKey } from '../utils/logicalTrackIdentity.ts'
+import { buildLogicalTracks, getTrackSource, type LogicalTrack } from '../utils/logicalTrackModel.ts'
 import { repairMovedLocalTracks } from '../utils/libraryRepair.ts'
+import { enrichLocalTrackMetadata, type MetadataMatchConfidence } from '../utils/musicMetadataMatching.ts'
+import { useSettingsStore } from './useSettingsStore.ts'
 
 interface Playlist {
   id: string
@@ -25,6 +28,11 @@ interface LibraryItem {
 
 interface AddTracksOptions {
   deferRebuild?: boolean
+}
+
+interface ManualMetadataMatchOptions {
+  confidence: MetadataMatchConfidence
+  score: number
 }
 
 const DEFAULT_FAVORITE_PLAYLIST_NAME = '我收藏的音乐'
@@ -55,6 +63,12 @@ export function useMusicStore(): {
   playlists: Ref<Playlist[]>
   addTracks: (newTracks: Track[], options?: AddTracksOptions) => Promise<void>
   removeTrack: (id: string) => void
+  clearTrackMetadataMatch: (trackId: string) => boolean
+  applyTrackMetadataMatch: (
+    trackId: string,
+    providerTrack: Track,
+    options: ManualMetadataMatchOptions
+  ) => boolean
   clearTracks: () => void
   createPlaylist: (name: string) => string
   addToPlaylist: (playlistName: string, trackId: string, trackSnapshot?: Track) => void
@@ -321,6 +335,48 @@ export function useMusicStore(): {
     scheduleRebuild()
   }
 
+  function clearTrackMetadataMatch(trackId: string): boolean {
+    const index = tracks.value.findIndex((track) => track.id === trackId)
+    if (index < 0 || !tracks.value[index].metadataMatch) return false
+
+    const nextTrack = {
+      ...tracks.value[index],
+      metadataMatch: null
+    }
+    const nextTracks = tracks.value.slice()
+    nextTracks[index] = nextTrack
+    tracks.value = nextTracks
+    trackById.set(trackId, nextTrack)
+    void scheduleSaveLibrary()
+    return true
+  }
+
+  function applyTrackMetadataMatch(
+    trackId: string,
+    providerTrack: Track,
+    options: ManualMetadataMatchOptions
+  ): boolean {
+    const index = tracks.value.findIndex((track) => track.id === trackId)
+    if (index < 0 || getTrackSource(tracks.value[index]) !== 'local') return false
+
+    const { settings } = useSettingsStore()
+    const nextTrack = enrichLocalTrackMetadata(
+      tracks.value[index],
+      {
+        track: providerTrack,
+        confidence: options.confidence,
+        score: options.score
+      },
+      settings.value.cachePolicy
+    )
+    const nextTracks = tracks.value.slice()
+    nextTracks[index] = nextTrack
+    tracks.value = nextTracks
+    trackById.set(trackId, nextTrack)
+    void scheduleSaveLibrary()
+    return true
+  }
+
   function clearTracks(): void {
     rebuildScheduled = false
     tracks.value = []
@@ -370,6 +426,9 @@ export function useMusicStore(): {
 
   async function enrichTracksFromProviders(inputTracks: Track[]): Promise<Track[]> {
     try {
+      const { settings } = useSettingsStore()
+      const cachePolicy = settings.value.cachePolicy
+      if (!cachePolicy.cover && !cachePolicy.lyrics && !cachePolicy.metadata) return inputTracks
       await syncPluginProviders()
       const providers = useMediaProviders()
       const enriched = await enrichLocalTracksFromProviders(inputTracks, {
@@ -383,6 +442,8 @@ export function useMusicStore(): {
           const items = result.items.map((item) => item.track)
           return { items, total: items.length }
         }
+      }, {
+        cachePolicy
       })
       if (enriched !== inputTracks) void scheduleSaveLibrary()
       return enriched
@@ -415,22 +476,34 @@ export function useMusicStore(): {
     return trackById.get(trackId) ?? playlist.trackSnapshots?.[trackId]
   }
 
-  function resolvePlaylistTrack(playlist: Playlist, trackId: string): Track | undefined {
+  function resolvePlaylistTrack(
+    playlist: Playlist,
+    trackId: string,
+    localLogicalTracks: Map<string, LogicalTrack>
+  ): Track | undefined {
     const exact = trackById.get(trackId)
     if (exact) return exact
     const snapshot = playlist.trackSnapshots?.[trackId]
     if (!snapshot) return undefined
     const key = getLogicalTrackKey(snapshot)
-    return tracks.value.find((track) =>
-      getTrackSource(track) === 'local' && getLogicalTrackKey(track) === key
-    ) ?? snapshot
+    return localLogicalTracks.get(key)?.preferredTrack ?? snapshot
   }
 
-  function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
-    if (track.source) return track.source
-    if (/^[a-zA-Z]:[\\/]/.test(track.id) || /^[\\/]/.test(track.id)) return 'local'
-    const separatorIndex = track.id.indexOf(':')
-    return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
+  function getLocalLogicalTrackMap(): Map<string, LogicalTrack> {
+    const result = new Map<string, LogicalTrack>()
+    for (const logicalTrack of buildLogicalTracks(
+      tracks.value
+        .filter((track) => getTrackSource(track) === 'local')
+        .map((track) => ({
+          track,
+          source: 'local',
+          sourceName: '本地音乐',
+          providerAvailable: true
+        }))
+    )) {
+      if (!result.has(logicalTrack.id)) result.set(logicalTrack.id, logicalTrack)
+    }
+    return result
   }
 
   function isFavoriteTrack(track: Track): boolean {
@@ -520,8 +593,9 @@ export function useMusicStore(): {
   function getPlaylistTracks(playlistName: string): Track[] {
     const pl = playlists.value.find((p) => p.name === playlistName)
     if (!pl) return []
+    const localLogicalTracks = getLocalLogicalTrackMap()
     return pl.trackIds
-      .map((trackId) => resolvePlaylistTrack(pl, trackId))
+      .map((trackId) => resolvePlaylistTrack(pl, trackId, localLogicalTracks))
       .filter((track): track is Track => !!track)
   }
 
@@ -565,6 +639,8 @@ export function useMusicStore(): {
     playlists,
     addTracks,
     removeTrack,
+    clearTrackMetadataMatch,
+    applyTrackMetadataMatch,
     clearTracks,
     createPlaylist,
     addToPlaylist,

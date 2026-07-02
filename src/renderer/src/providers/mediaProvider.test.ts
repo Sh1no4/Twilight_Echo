@@ -135,9 +135,87 @@ test('registry performs unified song search across local tracks and enabled prov
   assert.equal(result.health.ncm.available, true)
 })
 
+test('registry updates provider health without replacing method handlers', async () => {
+  const registry = new MediaProviderRegistry()
+  registry.register({
+    id: 'ncm',
+    name: 'NetEase',
+    source: 'plugin',
+    capabilities: ['playbackUrl'],
+    health: {
+      providerId: 'ncm',
+      pluginId: 'com.twilightecho.provider.ncm',
+      pluginStatus: 'enabled',
+      available: true,
+      totalCalls: 1,
+      successfulCalls: 1,
+      failedCalls: 0,
+      successRate: 1,
+      methodStats: {},
+      lastError: null,
+      lastCheckedAt: '2026-07-02T12:00:00.000Z'
+    },
+    getPlaybackUrl: async () => 'https://example.test/song.mp3'
+  })
+
+  const updated = registry.update('ncm', {
+    health: {
+      providerId: 'ncm',
+      pluginId: 'com.twilightecho.provider.ncm',
+      pluginStatus: 'enabled',
+      available: false,
+      totalCalls: 2,
+      successfulCalls: 1,
+      failedCalls: 1,
+      successRate: 0.5,
+      methodStats: {
+        getPlaybackUrl: {
+          totalCalls: 1,
+          successfulCalls: 0,
+          failedCalls: 1,
+          successRate: 0,
+          lastError: 'stream expired',
+          lastCheckedAt: '2026-07-02T12:01:00.000Z'
+        }
+      },
+      lastError: 'stream expired',
+      lastCheckedAt: '2026-07-02T12:01:00.000Z'
+    }
+  })
+
+  assert.equal(updated, true)
+  assert.equal(registry.get('ncm')?.health?.available, false)
+  assert.equal(registry.get('ncm')?.health?.methodStats?.getPlaybackUrl?.lastError, 'stream expired')
+  assert.equal(
+    await registry.get('ncm')?.getPlaybackUrl?.({
+      id: 'ncm:1',
+      title: 'Song',
+      artist: 'Artist',
+      album: 'Album',
+      filePath: 'ncm:1',
+      fileName: 'Song',
+      duration: 1,
+      size: 0,
+      cover: null,
+      lyrics: null,
+      source: 'ncm'
+    }),
+    'https://example.test/song.mp3'
+  )
+})
+
 test('renderer provider sync carries host health into registered providers', () => {
   const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
 
   assert.match(source, /health: provider\.health/)
   assert.match(source, /isEnabled: \(\) => provider\.health\?\.available !== false/)
+  assert.match(source, /mediaProviders\.update\(provider\.id/)
+})
+
+test('renderer provider calls refresh host health snapshots after IPC settles', () => {
+  const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+
+  assert.match(source, /async function refreshPluginProviderHealth\(\): Promise<void>/)
+  assert.match(source, /void refreshPluginProviderHealth\(\)/)
+  assert.match(source, /finally \{\s*void refreshPluginProviderHealth\(\)\s*\}/)
 })

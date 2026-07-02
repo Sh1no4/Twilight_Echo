@@ -8,6 +8,23 @@ export interface MetadataMatch {
   score: number
 }
 
+export interface MetadataMatchCandidate extends MetadataMatch {
+  providerId: string
+  sourceLabel: string
+  fills: {
+    cover: boolean
+    lyrics: boolean
+    translatedLyrics: boolean
+    metadata: boolean
+  }
+}
+
+export interface MetadataEnrichmentPolicy {
+  cover: boolean
+  lyrics: boolean
+  metadata: boolean
+}
+
 interface IndexedMetadataMatch extends MetadataMatch {
   index: number
 }
@@ -27,18 +44,100 @@ export function findBestMetadataMatch(localTrack: Track, candidates: Track[]): M
   return matches[0] ?? null
 }
 
-export function enrichLocalTrackMetadata(localTrack: Track, match: MetadataMatch | null): Track {
+export function buildMetadataMatchCandidates(
+  localTrack: Track,
+  candidates: Track[]
+): MetadataMatchCandidate[] {
+  return candidates
+    .map((candidate, index) => {
+      if (getProviderId(candidate) === 'local') return null
+      const match = scoreMetadataMatch(localTrack, candidate)
+      if (!match) return null
+      const providerId = getProviderId(candidate)
+      return {
+        ...match,
+        providerId,
+        sourceLabel: providerId || 'unknown',
+        fills: {
+          cover: !metadataAvailable(localTrack.cover) && metadataAvailable(candidate.cover),
+          lyrics: !metadataAvailable(localTrack.lyrics) && metadataAvailable(candidate.lyrics),
+          translatedLyrics:
+            !metadataAvailable(localTrack.translatedLyrics) && metadataAvailable(candidate.translatedLyrics),
+          metadata: !metadataAvailable(localTrack.album) && metadataAvailable(candidate.album)
+        },
+        index
+      }
+    })
+    .filter((match): match is MetadataMatchCandidate & { index: number } => match !== null)
+    .sort((left, right) => right.score - left.score || left.index - right.index)
+    .map(({ index: _index, ...match }) => match)
+}
+
+export function enrichLocalTrackMetadata(
+  localTrack: Track,
+  match: MetadataMatch | null,
+  policy: MetadataEnrichmentPolicy = DEFAULT_METADATA_ENRICHMENT_POLICY
+): Track {
   if (!match) return localTrack
   const metadata = match.track
+  const nextLyrics = policy.lyrics ? localTrack.lyrics ?? metadata.lyrics ?? null : localTrack.lyrics
+  const nextTranslatedLyrics = policy.lyrics
+    ? localTrack.translatedLyrics ?? metadata.translatedLyrics ?? null
+    : localTrack.translatedLyrics
   const enriched: Track = {
     ...localTrack,
-    album: localTrack.album || metadata.album,
-    cover: localTrack.cover ?? metadata.cover ?? null,
-    lyrics: localTrack.lyrics ?? metadata.lyrics ?? null,
-    translatedLyrics: localTrack.translatedLyrics ?? metadata.translatedLyrics ?? null
+    album: policy.metadata ? localTrack.album || metadata.album : localTrack.album,
+    cover: policy.cover ? localTrack.cover ?? metadata.cover ?? null : localTrack.cover,
+    lyrics: nextLyrics,
+    translatedLyrics: nextTranslatedLyrics,
+    lyricsSource: resolveEnrichedLyricSource(
+      localTrack.lyrics,
+      localTrack.lyricsSource,
+      metadata.lyrics,
+      nextLyrics,
+      policy.lyrics
+    ),
+    translatedLyricsSource: resolveEnrichedLyricSource(
+      localTrack.translatedLyrics,
+      localTrack.translatedLyricsSource,
+      metadata.translatedLyrics,
+      nextTranslatedLyrics,
+      policy.lyrics
+    ),
+    metadataMatch: {
+      providerId: getProviderId(metadata),
+      trackId: metadata.id,
+      confidence: match.confidence,
+      score: match.score
+    }
   }
   delete enriched.streamUrl
   return enriched
+}
+
+const DEFAULT_METADATA_ENRICHMENT_POLICY: MetadataEnrichmentPolicy = {
+  cover: true,
+  lyrics: true,
+  metadata: true
+}
+
+function resolveEnrichedLyricSource(
+  localValue: string | null | undefined,
+  localSource: Track['lyricsSource'],
+  providerValue: string | null | undefined,
+  nextValue: string | null | undefined,
+  enabled: boolean
+): Track['lyricsSource'] {
+  if (!enabled) return localSource
+  if (localValue != null && localValue !== '') return localSource
+  if (providerValue != null && providerValue !== '' && nextValue === providerValue) return 'provider'
+  return localSource ?? null
+}
+
+function getProviderId(track: Track): string {
+  if (track.source && track.source !== 'local') return track.source
+  const separatorIndex = track.id.indexOf(':')
+  return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : track.source ?? ''
 }
 
 function scoreMetadataMatch(localTrack: Track, candidate: Track): MetadataMatch | null {

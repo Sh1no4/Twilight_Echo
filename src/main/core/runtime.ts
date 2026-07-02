@@ -1,5 +1,6 @@
 import { readAppSettings } from './settings'
 import type { AppSettings } from './types'
+import type { DesktopLyricsTrackPayload } from '../../preload/types'
 import type { BrowserWindow, Tray } from 'electron'
 import type { AudioEngineManager, PlaybackInfo } from '../audioEngineManager'
 import type { OpraCatalog } from '../opraCatalog'
@@ -25,12 +26,7 @@ export const runtime = {
   audioEngineManager: null as AudioEngineManager | null,
   mainWindow: null as BrowserWindow | null,
   desktopLyricsWindow: null as BrowserWindow | null,
-  latestDesktopLyricsTrack: null as {
-    lyrics: string | null
-    translatedLyrics?: string | null
-    title?: string
-    artist?: string
-  } | null,
+  latestDesktopLyricsTrack: null as DesktopLyricsTrackPayload | null,
   latestDesktopLyricsTime: 0,
   ncmServer: null as import('http').Server | null,
   tray: null as Tray | null,

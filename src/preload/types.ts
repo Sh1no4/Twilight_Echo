@@ -43,6 +43,15 @@ export interface DesktopLyricsSettings {
   maxLines: number
 }
 
+export interface DesktopLyricsTrackPayload {
+  lyrics: string | null
+  translatedLyrics?: string | null
+  lyricsSource?: LyricSource | null
+  translatedLyricsSource?: LyricSource | null
+  title?: string
+  artist?: string
+}
+
 export interface MusicCachePolicySettings {
   cover: boolean
   lyrics: boolean
@@ -52,6 +61,14 @@ export interface MusicCachePolicySettings {
 
 export type BuiltInTrackSource = 'local' | 'ncm'
 export type TrackSource = BuiltInTrackSource | (string & {})
+export type LyricSource = 'embedded' | 'local' | 'provider'
+export type MetadataMatchConfidence = 'high' | 'medium'
+export interface TrackMetadataMatch {
+  providerId: string
+  trackId: string
+  confidence: MetadataMatchConfidence
+  score: number
+}
 export type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
 export type TwilightPluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
 export type TwilightPluginIndexInstallState =
@@ -300,6 +317,7 @@ export interface TrackData {
   cover: string | null
   lyrics: string | null
   translatedLyrics?: string | null
+  metadataMatch?: TrackMetadataMatch | null
   source?: TrackSource
   ncmSongId?: number
   streamUrl?: string | null

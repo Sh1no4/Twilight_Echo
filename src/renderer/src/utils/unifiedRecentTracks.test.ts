@@ -110,6 +110,47 @@ test('unified recent tracks prefer newly available local variants even when hist
   )
 })
 
+test('unified recent tracks prefer the best local source variant for a logical track', () => {
+  const localMp3: Track = {
+    ...localTrack,
+    id: 'local:moon-mp3',
+    filePath: 'D:\\Music\\Moon River.mp3',
+    fileName: 'Moon River.mp3',
+    format: 'mp3',
+    bitDepth: undefined
+  }
+  const localFlac: Track = {
+    ...localTrack,
+    id: 'local:moon-flac',
+    filePath: 'D:\\Music\\Moon River.flac',
+    fileName: 'Moon River.flac',
+    format: 'flac',
+    bitDepth: 24
+  }
+
+  const tracks = resolveUnifiedRecentTracks({
+    recentStats: [
+      {
+        id: 'logic:moon river::audrey',
+        seconds: 60,
+        plays: 2,
+        lastPlayed: 2_000,
+        title: 'Moon River',
+        artist: 'Audrey',
+        cover: providerTrack.cover,
+        sourceIds: [{ source: 'ncm', trackId: providerTrack.id }],
+        track: providerTrack
+      }
+    ],
+    localTracks: [localMp3, localFlac]
+  })
+
+  assert.deepEqual(
+    tracks.map((track) => track.id),
+    ['local:moon-flac']
+  )
+})
+
 test('unified recent tracks de-duplicate legacy split local and provider stats by logical track', () => {
   const tracks = resolveUnifiedRecentTracks({
     recentStats: [

@@ -24,7 +24,7 @@ export async function resolveLyricsWithSources(
   let translatedLyricsSource = translatedLyrics ? (track.translatedLyricsSource ?? 'embedded') : null
 
   if (!lyrics && options.loadLocalLyrics) {
-    const localLyrics = normalizeLyricValue(await options.loadLocalLyrics())
+    const localLyrics = normalizeLyricValue(await loadOptionalLyrics(options.loadLocalLyrics))
     if (localLyrics) {
       lyrics = localLyrics
       lyricsSource = 'local'
@@ -32,7 +32,7 @@ export async function resolveLyricsWithSources(
   }
 
   if ((!lyrics || !translatedLyrics) && options.loadProviderLyrics) {
-    const providerLyrics = await options.loadProviderLyrics()
+    const providerLyrics = await loadOptionalProviderLyrics(options.loadProviderLyrics)
     if (!lyrics) {
       const providerOriginal = normalizeLyricValue(providerLyrics.lyrics)
       if (providerOriginal) {
@@ -62,3 +62,20 @@ function normalizeLyricValue(value: string | null | undefined): string | null {
   return value.length > 0 ? value : null
 }
 
+async function loadOptionalLyrics(loader: () => Promise<string | null>): Promise<string | null> {
+  try {
+    return await loader()
+  } catch {
+    return null
+  }
+}
+
+async function loadOptionalProviderLyrics(
+  loader: () => Promise<MediaProviderLyrics>
+): Promise<MediaProviderLyrics> {
+  try {
+    return await loader()
+  } catch {
+    return { lyrics: null, translatedLyrics: null }
+  }
+}

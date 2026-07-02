@@ -78,3 +78,36 @@ test('lyric resolution preserves existing embedded lyrics and only asks provider
   assert.equal(result.translatedLyrics, '[00:01.00]Provider translation')
   assert.equal(result.translatedLyricsSource, 'provider')
 })
+
+test('lyric resolution keeps local lyrics when provider lookup fails', async () => {
+  const result = await resolveLyricsWithSources({
+    track: localTrack,
+    loadLocalLyrics: async () => '[00:01.00]Local lyric',
+    loadProviderLyrics: async () => {
+      throw new Error('provider unavailable')
+    }
+  })
+
+  assert.equal(result.lyrics, '[00:01.00]Local lyric')
+  assert.equal(result.lyricsSource, 'local')
+  assert.equal(result.translatedLyrics, null)
+  assert.equal(result.translatedLyricsSource, null)
+})
+
+test('lyric resolution can still use provider lyrics when local lookup fails', async () => {
+  const result = await resolveLyricsWithSources({
+    track: localTrack,
+    loadLocalLyrics: async () => {
+      throw new Error('local lrc unreadable')
+    },
+    loadProviderLyrics: async () => ({
+      lyrics: '[00:01.00]Provider lyric',
+      translatedLyrics: '[00:01.00]Provider translation'
+    })
+  })
+
+  assert.equal(result.lyrics, '[00:01.00]Provider lyric')
+  assert.equal(result.lyricsSource, 'provider')
+  assert.equal(result.translatedLyrics, '[00:01.00]Provider translation')
+  assert.equal(result.translatedLyricsSource, 'provider')
+})

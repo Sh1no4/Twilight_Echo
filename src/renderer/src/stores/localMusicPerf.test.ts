@@ -159,6 +159,9 @@ test.skip('search debounce: 10 rapid searchQuery changes yield <= 2 filter recom
 const useMusicStoreModule = (await import(
   new URL('./useMusicStore.ts', import.meta.url).href
 )) as typeof import('./useMusicStore')
+const useSettingsStoreModule = (await import(
+  new URL('./useSettingsStore.ts', import.meta.url).href
+)) as typeof import('./useSettingsStore')
 
 // Mock window.api for store tests. saveMusicLibrary is counted for debounce tests.
 // loadMusicLibrary is counted to verify incremental vs full-reload paths.
@@ -623,11 +626,273 @@ test('loadLibrary enriches missing local metadata from provider search without c
   assert.equal(store.tracks.value[0].cover, 'https://cover.example/album.jpg')
   assert.equal(store.tracks.value[0].lyrics, '[00:00.00]Moon River')
   assert.equal(store.tracks.value[0].translatedLyrics, '[00:00.00]月亮河')
+  assert.deepEqual(store.tracks.value[0].metadataMatch, {
+    providerId: 'ncm',
+    trackId: 'ncm:123',
+    confidence: 'high',
+    score: 96
+  })
   assert.equal(store.tracks.value[0].streamUrl, undefined)
   await new Promise((resolve) => setTimeout(resolve, 600))
   assert.equal(saveCallCount, 1, 'enriched library should be saved')
 
   store.clearTracks()
+})
+
+test('clearTrackMetadataMatch removes provider match without dropping cached local metadata', async () => {
+  const store = setupStore()
+  const matchedTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'local:matched',
+    filePath: 'D:\\Music\\Matched.flac',
+    fileName: 'Matched.flac',
+    title: 'Matched',
+    album: 'Cached Album',
+    cover: 'https://cover.example/matched.jpg',
+    lyrics: '[00:00.00]Matched lyric',
+    metadataMatch: {
+      providerId: 'ncm',
+      trackId: 'ncm:matched',
+      confidence: 'medium' as const,
+      score: 82
+    }
+  }
+
+  await store.addTracks([matchedTrack])
+  saveCallCount = 0
+
+  const changed = store.clearTrackMetadataMatch('local:matched')
+
+  assert.equal(changed, true)
+  assert.equal(store.tracks.value[0].metadataMatch, null)
+  assert.equal(store.tracks.value[0].id, 'local:matched')
+  assert.equal(store.tracks.value[0].filePath, 'D:\\Music\\Matched.flac')
+  assert.equal(store.tracks.value[0].source, 'local')
+  assert.equal(store.tracks.value[0].album, 'Cached Album')
+  assert.equal(store.tracks.value[0].cover, 'https://cover.example/matched.jpg')
+  assert.equal(store.tracks.value[0].lyrics, '[00:00.00]Matched lyric')
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  assert.equal(saveCallCount, 1, 'cleared metadata match should be saved')
+
+  store.clearTracks()
+})
+
+test('applyTrackMetadataMatch applies a selected provider match without replacing local playback identity', async () => {
+  const store = setupStore()
+  const localTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'local:selected',
+    title: 'Selected Song',
+    artist: 'Selected Artist',
+    album: '',
+    filePath: 'D:\\Music\\Selected Song.flac',
+    fileName: 'Selected Song.flac',
+    duration: 200,
+    cover: null,
+    lyrics: null,
+    source: 'local' as const,
+    format: 'flac'
+  }
+  const providerTrack = {
+    ...localTrack,
+    id: 'ncm:selected',
+    album: 'Provider Album',
+    filePath: 'ncm:selected',
+    fileName: 'Selected Song',
+    duration: 202,
+    cover: 'https://cover.example/selected.jpg',
+    lyrics: '[00:00.00]Selected lyric',
+    translatedLyrics: '[00:00.00]选择的歌词',
+    source: 'ncm' as const,
+    streamUrl: 'https://temporary.example/selected.mp3'
+  }
+
+  await store.addTracks([localTrack])
+  saveCallCount = 0
+
+  const changed = store.applyTrackMetadataMatch('local:selected', providerTrack, {
+    confidence: 'medium',
+    score: 88
+  })
+
+  assert.equal(changed, true)
+  assert.equal(store.tracks.value[0].id, 'local:selected')
+  assert.equal(store.tracks.value[0].filePath, 'D:\\Music\\Selected Song.flac')
+  assert.equal(store.tracks.value[0].source, 'local')
+  assert.equal(store.tracks.value[0].album, 'Provider Album')
+  assert.equal(store.tracks.value[0].cover, 'https://cover.example/selected.jpg')
+  assert.equal(store.tracks.value[0].lyrics, '[00:00.00]Selected lyric')
+  assert.equal(store.tracks.value[0].translatedLyrics, '[00:00.00]选择的歌词')
+  assert.equal(store.tracks.value[0].lyricsSource, 'provider')
+  assert.equal(store.tracks.value[0].translatedLyricsSource, 'provider')
+  assert.deepEqual(store.tracks.value[0].metadataMatch, {
+    providerId: 'ncm',
+    trackId: 'ncm:selected',
+    confidence: 'medium',
+    score: 88
+  })
+  assert.equal(store.tracks.value[0].streamUrl, undefined)
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  assert.equal(saveCallCount, 1, 'manual metadata match should be saved')
+
+  store.clearTracks()
+})
+
+test('applyTrackMetadataMatch respects disabled metadata cache policy for manual provider matches', async () => {
+  const store = setupStore()
+  const settingsStore = useSettingsStoreModule.useSettingsStore()
+  const previousSettings = settingsStore.settings.value
+  settingsStore.settings.value = {
+    ...previousSettings,
+    cachePolicy: {
+      ...previousSettings.cachePolicy,
+      cover: false,
+      lyrics: false,
+      metadata: false
+    }
+  }
+  const localTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'local:policy',
+    title: 'Policy Song',
+    artist: 'Policy Artist',
+    album: '',
+    filePath: 'D:\\Music\\Policy Song.flac',
+    fileName: 'Policy Song.flac',
+    duration: 200,
+    cover: null,
+    lyrics: null,
+    source: 'local' as const,
+    format: 'flac'
+  }
+  const providerTrack = {
+    ...localTrack,
+    id: 'ncm:policy',
+    album: 'Provider Album',
+    filePath: 'ncm:policy',
+    fileName: 'Policy Song',
+    duration: 200,
+    cover: 'https://cover.example/policy.jpg',
+    lyrics: '[00:00.00]Policy lyric',
+    translatedLyrics: '[00:00.00]策略歌词',
+    source: 'ncm' as const
+  }
+
+  try {
+    await store.addTracks([localTrack])
+    saveCallCount = 0
+
+    const changed = store.applyTrackMetadataMatch('local:policy', providerTrack, {
+      confidence: 'high',
+      score: 95
+    })
+
+    assert.equal(changed, true)
+    assert.equal(store.tracks.value[0].id, 'local:policy')
+    assert.equal(store.tracks.value[0].album, '')
+    assert.equal(store.tracks.value[0].cover, null)
+    assert.equal(store.tracks.value[0].lyrics, null)
+    assert.equal(store.tracks.value[0].translatedLyrics, undefined)
+    assert.deepEqual(store.tracks.value[0].metadataMatch, {
+      providerId: 'ncm',
+      trackId: 'ncm:policy',
+      confidence: 'high',
+      score: 95
+    })
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    assert.equal(saveCallCount, 1, 'manual metadata match trace should be saved')
+  } finally {
+    settingsStore.settings.value = previousSettings
+    store.clearTracks()
+  }
+})
+
+test('loadLibrary respects cache policy when provider metadata is available', async () => {
+  const store = setupStore()
+  const settingsStore = useSettingsStoreModule.useSettingsStore()
+  const previousSettings = settingsStore.settings.value
+  settingsStore.settings.value = {
+    ...previousSettings,
+    cachePolicy: {
+      ...previousSettings.cachePolicy,
+      cover: false,
+      lyrics: false,
+      metadata: false
+    }
+  }
+  const localTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'local:moon',
+    title: 'Moon River',
+    artist: 'Audrey',
+    album: '',
+    filePath: 'D:\\Music\\Moon River.flac',
+    fileName: 'Moon River.flac',
+    duration: 181,
+    cover: null,
+    lyrics: null,
+    source: 'local' as const,
+    format: 'flac'
+  }
+
+  saveCallCount = 0
+  let providerSearchCalls = 0
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (): Promise<void> => {
+          saveCallCount++
+        },
+        loadMusicLibrary: async (): Promise<unknown> => ({ tracks: [localTrack], folders: [] }),
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: {
+        scanMusicFiles: async (): Promise<unknown[]> => []
+      },
+      providers: {
+        list: async (): Promise<unknown[]> => [{
+          id: 'ncm',
+          name: 'NetEase',
+          capabilities: ['search'],
+          health: { available: true }
+        }],
+        call: async (): Promise<unknown> => {
+          providerSearchCalls++
+          return {
+            items: [{
+              ...localTrack,
+              id: 'ncm:123',
+              filePath: 'ncm:123',
+              fileName: 'Moon River',
+              album: 'Online Album',
+              duration: 179,
+              cover: 'https://cover.example/album.jpg',
+              lyrics: '[00:00.00]Moon River',
+              translatedLyrics: '[00:00.00]月亮河',
+              source: 'ncm'
+            }],
+            total: 1
+          }
+        }
+      }
+    }
+  }
+
+  try {
+    await store.loadLibrary()
+
+    assert.equal(providerSearchCalls, 0)
+    assert.equal(store.tracks.value[0].album, '')
+    assert.equal(store.tracks.value[0].cover, null)
+    assert.equal(store.tracks.value[0].lyrics, null)
+    assert.equal(store.tracks.value[0].translatedLyrics, undefined)
+    await new Promise((resolve) => setTimeout(resolve, 600))
+    assert.equal(saveCallCount, 0, 'unchanged library should not be saved')
+  } finally {
+    settingsStore.settings.value = previousSettings
+    store.clearTracks()
+  }
 })
 
 // Wave 4: dashboard memo — Vue computed caching is testable in bare Node
@@ -757,6 +1022,56 @@ test('mixed-source playlists prefer a local library variant over a provider snap
 
   assert.equal(tracks.length, 1)
   assert.equal(tracks[0].id, 'local:moon')
+
+  store.clearTracks()
+})
+
+test('mixed-source playlists prefer the best local library variant over a provider snapshot', async () => {
+  const store = setupStore()
+  store.playlists.value = []
+  const providerTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'ncm:moon',
+    title: 'Moon River',
+    artist: 'Audrey',
+    album: 'Online Album',
+    filePath: 'ncm:moon',
+    fileName: 'Moon River',
+    duration: 180,
+    source: 'ncm',
+    format: 'aac'
+  }
+  const localMp3 = {
+    ...providerTrack,
+    id: 'local:moon-mp3',
+    album: 'Local Album',
+    filePath: 'D:\\Music\\Moon River.mp3',
+    fileName: 'Moon River.mp3',
+    duration: 181,
+    source: 'local',
+    format: 'mp3',
+    bitDepth: undefined
+  }
+  const localFlac = {
+    ...providerTrack,
+    id: 'local:moon-flac',
+    album: 'Local Album',
+    filePath: 'D:\\Music\\Moon River.flac',
+    fileName: 'Moon River.flac',
+    duration: 181,
+    source: 'local',
+    format: 'flac',
+    bitDepth: 24
+  }
+
+  store.createPlaylist('mixed-source')
+  store.addToPlaylist('mixed-source', providerTrack.id, providerTrack)
+  await store.addTracks([localMp3, localFlac])
+
+  const tracks = store.getPlaylistTracks('mixed-source')
+
+  assert.equal(tracks.length, 1)
+  assert.equal(tracks[0].id, 'local:moon-flac')
 
   store.clearTracks()
 })

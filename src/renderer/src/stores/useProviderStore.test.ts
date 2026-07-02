@@ -18,6 +18,8 @@ test('streaming library surfaces provider health diagnostics to users', () => {
   assert.match(streamingSource, /health\?: ProviderHealthInput/)
   assert.match(streamingSource, /loggedIn\?: boolean/)
   assert.match(streamingSource, /providerMenuHealthLabel/)
+  assert.match(streamingSource, /providerMenuHealthDetail/)
   assert.match(streamingSource, /provider-health-strip/)
   assert.match(streamingSource, /provider-menu-health/)
+  assert.match(streamingSource, /:title="providerMenuHealthDetail\(provider\)"/)
 })

@@ -191,6 +191,69 @@ test('unified search ranks healthier provider results before degraded provider r
   assert.equal(result.logicalItems[0].preferredTrack.id, 'healthy:1')
 })
 
+test('unified search carries provider plugin and playback URL diagnostics', async () => {
+  const result = await unifiedSearchSongs({
+    query: 'moon',
+    localTracks: [],
+    providers: [
+      {
+        id: 'ncm',
+        name: 'NetEase',
+        capabilities: ['search'],
+        available: true,
+        health: {
+          available: true,
+          pluginStatus: 'enabled',
+          successRate: 0.8,
+          lastError: 'login expired',
+          methodStats: {
+            getPlaybackUrl: {
+              successRate: 0.25,
+              lastError: 'stream expired'
+            }
+          }
+        }
+      }
+    ],
+    searchProviderSongs: async () => ({ items: [], total: 0 })
+  })
+
+  assert.equal(result.health.ncm.pluginStatus, 'enabled')
+  assert.equal(result.health.ncm.successRate, 0.8)
+  assert.equal(result.health.ncm.playbackUrlSuccessRate, 0.25)
+  assert.equal(result.health.ncm.playbackUrlLastError, 'stream expired')
+  assert.equal(result.health.ncm.lastError, 'login expired')
+})
+
+test('unified search keeps artist as the text tie-breaker before track id', async () => {
+  const result = await unifiedSearchSongs({
+    query: 'moon',
+    localTracks: [
+      track({
+        id: 'local:a',
+        title: 'Moon River',
+        artist: 'Beta Artist',
+        source: 'local',
+        format: 'mp3'
+      }),
+      track({
+        id: 'local:z',
+        title: 'Moon River',
+        artist: 'Alpha Artist',
+        source: 'local',
+        format: 'mp3'
+      })
+    ],
+    providers: [],
+    searchProviderSongs: async () => ({ items: [], total: 0 })
+  })
+
+  assert.deepEqual(
+    result.items.map((item) => item.track.id),
+    ['local:z', 'local:a']
+  )
+})
+
 test('logical preferred track preserves unified provider reliability ordering', async () => {
   const result = await unifiedSearchSongs({
     query: 'moon',

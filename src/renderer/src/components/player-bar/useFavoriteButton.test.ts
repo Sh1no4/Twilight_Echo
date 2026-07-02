@@ -57,3 +57,91 @@ test('favorite button can use logical favorite state across source variants', as
 
   assert.deepEqual(calls, ['logical-remove:ncm:123'])
 })
+
+test('favorite button adds NetEase provider tracks to unified local favorites when logical favorites are available', async () => {
+  const currentTrack = ref<Track | null>(providerVariant)
+  const playlists = ref([])
+  const calls: string[] = []
+
+  const button = useFavoriteButton({
+    currentTrack,
+    playlists,
+    mediaProviders: {
+      get: () => ({
+        likeTrack: async () => calls.push('remote-like')
+      })
+    } as never,
+    addToPlaylist: (playlistName, trackId) => calls.push(`legacy-add:${playlistName}:${trackId}`),
+    removeFromPlaylist: (playlistName, trackId) => calls.push(`legacy-remove:${playlistName}:${trackId}`),
+    createPlaylist: (name) => calls.push(`legacy-create:${name}`),
+    isFavoriteTrack: () => false,
+    addFavoriteTrack: (track) => calls.push(`logical-add:${track.id}`),
+    removeFavoriteTrack: (track) => calls.push(`logical-remove:${track.id}`)
+  })
+
+  assert.equal(button.favoriteButtonVisible.value, true)
+
+  await button.toggleFavorite()
+
+  assert.deepEqual(calls, ['logical-add:ncm:123'])
+})
+
+test('favorite button removes NetEase provider tracks from unified local favorites when already liked logically', async () => {
+  const currentTrack = ref<Track | null>(providerVariant)
+  const playlists = ref([])
+  const calls: string[] = []
+
+  const button = useFavoriteButton({
+    currentTrack,
+    playlists,
+    mediaProviders: {
+      get: () => ({
+        likeTrack: async () => calls.push('remote-unlike')
+      })
+    } as never,
+    addToPlaylist: (playlistName, trackId) => calls.push(`legacy-add:${playlistName}:${trackId}`),
+    removeFromPlaylist: (playlistName, trackId) => calls.push(`legacy-remove:${playlistName}:${trackId}`),
+    createPlaylist: (name) => calls.push(`legacy-create:${name}`),
+    isFavoriteTrack: () => true,
+    addFavoriteTrack: (track) => calls.push(`logical-add:${track.id}`),
+    removeFavoriteTrack: (track) => calls.push(`logical-remove:${track.id}`)
+  })
+
+  assert.equal(button.favoriteButtonLiked.value, true)
+
+  await button.toggleFavorite()
+
+  assert.deepEqual(calls, ['logical-remove:ncm:123'])
+})
+
+test('favorite button supports third-party provider tracks through logical favorites', async () => {
+  const currentTrack = ref<Track | null>({
+    ...localTrack,
+    id: 'bili:BV1xx',
+    filePath: 'bili:BV1xx',
+    source: 'bili',
+    ncmSongId: undefined
+  })
+  const playlists = ref([])
+  const calls: string[] = []
+
+  const button = useFavoriteButton({
+    currentTrack,
+    playlists,
+    mediaProviders: {
+      get: () => null
+    } as never,
+    addToPlaylist: (playlistName, trackId) => calls.push(`legacy-add:${playlistName}:${trackId}`),
+    removeFromPlaylist: (playlistName, trackId) => calls.push(`legacy-remove:${playlistName}:${trackId}`),
+    createPlaylist: (name) => calls.push(`legacy-create:${name}`),
+    isFavoriteTrack: () => false,
+    addFavoriteTrack: (track) => calls.push(`logical-add:${track.id}`),
+    removeFavoriteTrack: (track) => calls.push(`logical-remove:${track.id}`)
+  })
+
+  assert.equal(button.favoriteButtonVisible.value, true)
+
+  await button.toggleFavorite()
+
+  assert.deepEqual(calls, ['logical-add:bili:BV1xx'])
+})

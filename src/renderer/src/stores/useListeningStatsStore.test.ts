@@ -66,6 +66,28 @@ test('listening stats aggregate same logical track across local and provider var
   assert.equal(recent[0].track?.id, 'ncm:123')
 })
 
+test('listening stats include third-party provider tracks in cross-source history', () => {
+  resetListeningStatsForTest()
+
+  recordListeningForTest(
+    {
+      ...providerTrack,
+      id: 'bili:BV1xx',
+      filePath: 'bili:BV1xx',
+      source: 'bili'
+    },
+    15,
+    3_000
+  )
+
+  const recent = getRecentTracks()
+
+  assert.equal(recent.length, 1)
+  assert.equal(recent[0].id, 'logic:moon river::audrey')
+  assert.equal(recent[0].seconds, 15)
+  assert.deepEqual(recent[0].sourceIds, [{ source: 'bili', trackId: 'bili:BV1xx' }])
+})
+
 test('listening stats rank logical tracks across sources by plays then listening time', () => {
   resetListeningStatsForTest()
 

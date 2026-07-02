@@ -5,38 +5,38 @@ const {
   buildStreamingSidebarItems,
   getFirstVisibleStreamingTab,
   hasStreamingSidebarEntries,
-  isSidebarItemActiveForProvider,
-  shouldShowBilibiliViewForSidebarProvider
+  isSidebarItemActiveForProvider
 } = (await import(new URL('./streamingNavigation.ts', import.meta.url).href)) as typeof import(
   './streamingNavigation'
 )
 
-test('selecting a non-Bilibili sidebar item exits the dedicated Bilibili page', () => {
-  assert.equal(shouldShowBilibiliViewForSidebarProvider('bili'), true)
-  assert.equal(shouldShowBilibiliViewForSidebarProvider('ncm'), false)
-  assert.equal(shouldShowBilibiliViewForSidebarProvider('ytmusic'), false)
-})
-
-test('dedicated Bilibili page suppresses stale NetEase sidebar active state', () => {
+test('provider sidebar active state is provider driven without dedicated provider pages', () => {
   assert.equal(
     isSidebarItemActiveForProvider({
       itemProvider: 'ncm',
       itemKey: 'home',
       activeProvider: 'ncm',
-      activeTab: 'home',
-      showBilibiliView: true
+      activeTab: 'home'
     }),
-    false
+    true
   )
   assert.equal(
     isSidebarItemActiveForProvider({
       itemProvider: 'bili',
       itemKey: 'bili-library',
-      activeProvider: 'ncm',
-      activeTab: 'home',
-      showBilibiliView: true
+      activeProvider: 'bili',
+      activeTab: 'library'
     }),
     true
+  )
+  assert.equal(
+    isSidebarItemActiveForProvider({
+      itemProvider: 'ncm',
+      itemKey: 'home',
+      activeProvider: 'bili',
+      activeTab: 'library'
+    }),
+    false
   )
 })
 

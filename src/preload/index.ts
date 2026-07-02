@@ -10,6 +10,7 @@ import type {
   PlaybackInfo,
   SettingsSnapshot,
   DesktopLyricsSettings,
+  DesktopLyricsTrackPayload,
   LibraryChange,
   PlayMode,
   AudioEngineQueueItem,
@@ -49,7 +50,7 @@ const playerShortcutCallbacks = new Set<(action: PlayerShortcutAction) => void>(
 const settingsChangedCallbacks = new Set<(snapshot: SettingsSnapshot) => void>()
 const desktopLyricsToggleCallbacks = new Set<(enabled: boolean) => void>()
 const desktopLyricsInitSettingsCallbacks = new Set<(settings: DesktopLyricsSettings) => void>()
-const desktopLyricsTrackCallbacks = new Set<(data: { lyrics: string | null; translatedLyrics?: string | null; title?: string; artist?: string }) => void>()
+const desktopLyricsTrackCallbacks = new Set<(data: DesktopLyricsTrackPayload) => void>()
 const desktopLyricsTimeCallbacks = new Set<(time: number) => void>()
 const desktopLyricsSettingsUpdateCallbacks = new Set<(settings: DesktopLyricsSettings) => void>()
 const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
@@ -127,7 +128,7 @@ ipcRenderer.on('desktopLyrics:initSettings', (_event, settings: DesktopLyricsSet
   }
 })
 
-ipcRenderer.on('desktopLyrics:updateTrack', (_event, data: { lyrics: string | null; translatedLyrics?: string | null; title?: string; artist?: string }) => {
+ipcRenderer.on('desktopLyrics:updateTrack', (_event, data: DesktopLyricsTrackPayload) => {
   for (const cb of desktopLyricsTrackCallbacks) {
     cb(data)
   }
@@ -425,7 +426,7 @@ const api = {
     toggle: (): Promise<boolean> => ipcRenderer.invoke('desktopLyrics:toggle'),
     show: (): Promise<void> => ipcRenderer.invoke('desktopLyrics:show'),
     hide: (): Promise<void> => ipcRenderer.invoke('desktopLyrics:hide'),
-    updateTrack: (data: { lyrics: string | null; translatedLyrics?: string | null; title?: string; artist?: string }): void => {
+    updateTrack: (data: DesktopLyricsTrackPayload): void => {
       ipcRenderer.send('desktopLyrics:updateTrack', data)
     },
     updateTime: (time: number): void => {
@@ -442,7 +443,7 @@ const api = {
       desktopLyricsInitSettingsCallbacks.add(cb)
       return () => desktopLyricsInitSettingsCallbacks.delete(cb)
     },
-    onTrackUpdate: (cb: (data: { lyrics: string | null; translatedLyrics?: string | null; title?: string; artist?: string }) => void): (() => void) => {
+    onTrackUpdate: (cb: (data: DesktopLyricsTrackPayload) => void): (() => void) => {
       desktopLyricsTrackCallbacks.add(cb)
       return () => desktopLyricsTrackCallbacks.delete(cb)
     },

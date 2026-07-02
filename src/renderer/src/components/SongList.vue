@@ -1,10 +1,12 @@
 ﻿<script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { useUnifiedMusicSearch } from '../app/useUnifiedMusicSearch'
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import type { Track } from '../types/music'
-import { findProviderRematchCandidate } from '../utils/libraryRepair'
+import { getTrackSource as getLogicalTrackSource, isLosslessTrack } from '../utils/logicalTrackModel'
+import { buildMetadataMatchCandidates } from '../utils/musicMetadataMatching'
 import CoverImg from './CoverImg.vue'
 import { formatDuration } from './song-list/formatDuration'
 import type { GridItem } from './song-list/types'
@@ -32,6 +34,8 @@ const {
   folders,
   getPlaylistTracks,
   removeTrack,
+  clearTrackMetadataMatch,
+  applyTrackMetadataMatch,
   addToPlaylist,
   removeFromPlaylist,
   replaceTrackReference,
@@ -40,6 +44,7 @@ const {
 } = useMusicStore()
 const { currentTrack, playTrack } = usePlayerStore()
 const mediaProviders = useMediaProviders()
+const unifiedSearch = useUnifiedMusicSearch()
 
 const { searchQuery, debouncedSearchQuery, searchInputFocused } = useSongListSearch()
 
@@ -98,15 +103,62 @@ const currentPlaylistName = computed(() => {
 const isPlaylistDetail = computed(() => currentPlaylistName.value !== null)
 const repairMessage = ref('')
 
+const shouldUseUnifiedSearch = computed(() => props.category === 'allSongs' && !props.filter)
+
+watch(
+  [debouncedSearchQuery, () => props.category, () => props.filter],
+  ([query]) => {
+    const q = query.trim()
+    if (!q || !shouldUseUnifiedSearch.value) {
+      unifiedSearch.clear()
+      return
+    }
+    void unifiedSearch.search(q, { limit: 100, offset: 0 })
+  },
+  { immediate: true }
+)
+
 const displayTracks = computed(() => {
-  const q = debouncedSearchQuery.value.trim().toLowerCase()
+  const q = debouncedSearchQuery.value.trim()
   if (!q) return baseDisplayTracks.value
+  if (shouldUseUnifiedSearch.value) {
+    return unifiedSearch.items.value.map((item) => item.track)
+  }
+  const normalizedQuery = q.toLowerCase()
   return baseDisplayTracks.value.filter(
     (t) =>
-      t.title.toLowerCase().includes(q) ||
-      t.artist.toLowerCase().includes(q) ||
-      t.album.toLowerCase().includes(q)
+      t.title.toLowerCase().includes(normalizedQuery) ||
+      t.artist.toLowerCase().includes(normalizedQuery) ||
+      t.album.toLowerCase().includes(normalizedQuery)
   )
+})
+
+const unifiedSearchSourceNames = computed(
+  () => new Map(unifiedSearch.items.value.map((item) => [item.track.id, item.sourceName]))
+)
+
+const showUnifiedSearchStatus = computed(
+  () => shouldUseUnifiedSearch.value && debouncedSearchQuery.value.trim().length > 0
+)
+
+const unifiedSearchHealthItems = computed(() =>
+  Object.values(unifiedSearch.providerHealth.value).map((health) => ({
+    ...health,
+    state: unifiedSearchHealthState(health),
+    label: unifiedSearchHealthLabel(health),
+    detail: unifiedSearchHealthDetail(health)
+  }))
+)
+
+const unifiedSearchStatusText = computed(() => {
+  if (!showUnifiedSearchStatus.value) return ''
+  if (unifiedSearch.loading.value) return '正在同时搜索本地库和在线音源'
+  if (unifiedSearch.error.value) return `统一搜索失败：${unifiedSearch.error.value}`
+  const providerCount = unifiedSearchHealthItems.value.length
+  const failedCount = unifiedSearchHealthItems.value.filter((item) => item.state === 'error').length
+  const resultCount = displayTracks.value.length
+  if (failedCount > 0) return `找到 ${resultCount} 首，${failedCount}/${providerCount} 个在线音源不可用`
+  return `找到 ${resultCount} 首，已合并本地库和 ${providerCount} 个在线音源`
 })
 
 const showGrid = computed(() => {
@@ -137,6 +189,103 @@ function onRowDblClick(track: Track): void {
   playTrack(track, displayTracks.value)
 }
 
+function metadataMatchLabel(track: Track): string {
+  const match = track.metadataMatch
+  if (!match) return ''
+  const confidence = match.confidence === 'high' ? '高置信度' : '中置信度'
+  return `已匹配 ${match.providerId} · ${confidence}`
+}
+
+function metadataMatchTitle(track: Track): string {
+  const match = track.metadataMatch
+  if (!match) return ''
+  const confidence = match.confidence === 'high' ? '高置信度' : '中置信度'
+  return `流媒体元数据匹配：${match.providerId} / ${match.trackId} · ${confidence} · ${match.score} 分`
+}
+
+function unifiedSearchHealthLabel(
+  health: {
+    searchable: boolean
+    available: boolean
+    resultCount: number
+    lastError: string | null
+    pluginStatus: string | null
+    playbackUrlSuccessRate: number | null
+  }
+): string {
+  if (health.pluginStatus && health.pluginStatus !== 'enabled') return `插件 ${health.pluginStatus}`
+  if (!health.searchable) return '不支持搜索'
+  if (health.lastError) return health.lastError
+  if (!health.available) return '音源不可用'
+  if (health.playbackUrlSuccessRate !== null && health.playbackUrlSuccessRate < 0.95) {
+    return `播放 URL ${formatPercent(health.playbackUrlSuccessRate)}`
+  }
+  return `${health.resultCount} 首`
+}
+
+function unifiedSearchHealthState(health: {
+  searchable: boolean
+  available: boolean
+  lastError: string | null
+  pluginStatus: string | null
+  successRate: number | null
+  playbackUrlSuccessRate: number | null
+}): 'ok' | 'warning' | 'error' {
+  if (health.pluginStatus && health.pluginStatus !== 'enabled') return 'error'
+  if (!health.searchable || !health.available || health.lastError) return 'error'
+  if (
+    (health.successRate !== null && health.successRate < 0.95) ||
+    (health.playbackUrlSuccessRate !== null && health.playbackUrlSuccessRate < 0.95)
+  ) {
+    return 'warning'
+  }
+  return 'ok'
+}
+
+function unifiedSearchHealthDetail(health: {
+  searchable: boolean
+  available: boolean
+  resultCount: number
+  lastError: string | null
+  pluginStatus: string | null
+  successRate: number | null
+  playbackUrlSuccessRate: number | null
+  playbackUrlLastError: string | null
+  lastCheckedAt: string | null
+}): string {
+  return [
+    `搜索 ${health.searchable ? '支持' : '不支持'}`,
+    `可用性 ${health.available ? '可用' : '不可用'}`,
+    health.pluginStatus ? `插件 ${health.pluginStatus}` : '',
+    health.successRate !== null ? `API 成功率 ${formatPercent(health.successRate)}` : '',
+    health.playbackUrlSuccessRate !== null
+      ? `播放 URL 成功率 ${formatPercent(health.playbackUrlSuccessRate)}`
+      : '',
+    `结果 ${health.resultCount} 首`,
+    health.lastError ? `最近错误 ${health.lastError}` : '',
+    health.playbackUrlLastError ? `播放 URL 最近错误 ${health.playbackUrlLastError}` : '',
+    health.lastCheckedAt ? `最后检查 ${health.lastCheckedAt}` : ''
+  ].filter(Boolean).join(' · ')
+}
+
+function formatPercent(value: number): string {
+  return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`
+}
+
+function trackSourceLabel(track: Track): string {
+  const searchSourceName = unifiedSearchSourceNames.value.get(track.id)
+  if (searchSourceName) {
+    return getLogicalTrackSource(track) === 'local' && isLosslessTrack(track) ? '本地无损' : searchSourceName
+  }
+  const source = getLogicalTrackSource(track)
+  if (source === 'local') return isLosslessTrack(track) ? '本地无损' : '本地'
+  return source
+}
+
+function trackSourceClass(track: Track): string {
+  return getLogicalTrackSource(track) === 'local' ? 'local' : 'provider'
+}
+
 async function handleManualRematch(track: Track): Promise<void> {
   repairMessage.value = `正在重新匹配 ${track.title || '当前曲目'}...`
   try {
@@ -148,10 +297,11 @@ async function handleManualRematch(track: Track): Promise<void> {
       limit: 20,
       offset: 0
     })
-    const rematched = findProviderRematchCandidate(
+    const candidates = buildMetadataMatchCandidates(
       track,
       result.items.map((item) => item.track)
     )
+    const rematched = candidates[0]?.track
     if (!rematched) {
       repairMessage.value = `未找到可替换 ${track.title || '当前曲目'} 的音源`
       return
@@ -163,6 +313,38 @@ async function handleManualRematch(track: Track): Promise<void> {
         : `找到 ${rematched.title || track.title}，但没有需要替换的引用`
   } catch (error) {
     repairMessage.value = error instanceof Error ? error.message : '重新匹配音源失败'
+  }
+}
+
+async function handleMetadataRematch(track: Track): Promise<void> {
+  repairMessage.value = `正在匹配 ${track.title || '当前曲目'} 的流媒体元数据...`
+  try {
+    await syncPluginProviders()
+    const query = [track.title, track.artist].filter(Boolean).join(' ')
+    const result = await mediaProviders.searchAllSongs({
+      query,
+      localTracks: tracks.value,
+      limit: 20,
+      offset: 0
+    })
+    const candidates = buildMetadataMatchCandidates(
+      track,
+      result.items.map((item) => item.track)
+    )
+    const best = candidates[0]
+    if (!best) {
+      repairMessage.value = `未找到可匹配 ${track.title || '当前曲目'} 的流媒体元数据`
+      return
+    }
+    const changed = applyTrackMetadataMatch(track.id, best.track, {
+      confidence: best.confidence,
+      score: best.score
+    })
+    repairMessage.value = changed
+      ? `已匹配 ${best.sourceLabel}：${best.track.title || track.title}`
+      : `找到 ${best.track.title || track.title}，但未能应用到本地曲目`
+  } catch (error) {
+    repairMessage.value = error instanceof Error ? error.message : '重新匹配流媒体元数据失败'
   }
 }
 
@@ -180,6 +362,10 @@ const {
   handleRemoveFromCurrentPlaylist,
   canRematchSelectedTrack,
   handleRematchTrack,
+  canRematchMetadataSelectedTrack,
+  handleRematchMetadata,
+  canClearMetadataMatchSelectedTrack,
+  handleClearMetadataMatch,
   openCreatePlaylistDialog,
   handleCreatePlaylist,
   handleCreatePlaylistFromMenu,
@@ -190,6 +376,10 @@ const {
   addToPlaylist,
   removeFromPlaylist,
   rematchTrack: handleManualRematch,
+  rematchMetadata: handleMetadataRematch,
+  clearMetadataMatch: (track) => {
+    clearTrackMetadataMatch(track.id)
+  },
   createPlaylist,
   deletePlaylist
 })
@@ -410,6 +600,35 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               </div>
             </div>
           </div>
+          <div
+            v-if="showUnifiedSearchStatus"
+            class="unified-search-status"
+            :class="{ error: !!unifiedSearch.error.value }"
+          >
+            <div class="unified-search-summary">
+              <i
+                :class="
+                  unifiedSearch.loading.value
+                    ? 'pi pi-spin pi-spinner'
+                    : unifiedSearch.error.value
+                      ? 'pi pi-times-circle'
+                      : 'pi pi-search'
+                "
+              ></i>
+              <span>{{ unifiedSearchStatusText }}</span>
+            </div>
+            <div v-if="unifiedSearchHealthItems.length" class="unified-search-health-list">
+              <span
+                v-for="health in unifiedSearchHealthItems"
+                :key="health.providerId"
+                class="unified-search-health-chip"
+                :class="health.state"
+                :title="health.detail"
+              >
+                {{ health.providerName }} · {{ health.label }}
+              </span>
+            </div>
+          </div>
           <div v-if="displayTracks.length === 0" class="empty-state">
             <div class="empty-icon">
               <i class="pi pi-wave-pulse" style="font-size: 48px; color: #ccc"></i>
@@ -465,6 +684,22 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <td class="col-info">
                     <div class="track-title-row">
                       <div class="track-title">{{ track.title }}</div>
+                      <div class="track-badges">
+                        <span
+                          class="track-source-chip"
+                          :class="trackSourceClass(track)"
+                          :title="`来源：${trackSourceLabel(track)}`"
+                        >
+                          {{ trackSourceLabel(track) }}
+                        </span>
+                        <span
+                          v-if="track.metadataMatch"
+                          class="metadata-match-chip"
+                          :title="metadataMatchTitle(track)"
+                        >
+                          {{ metadataMatchLabel(track) }}
+                        </span>
+                      </div>
                     </div>
                     <div class="track-artist">{{ track.artist }}</div>
                   </td>
@@ -510,6 +745,22 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               >
                 <i class="pi pi-refresh"></i>
                 <span>重新匹配音源</span>
+              </div>
+              <div
+                v-if="canRematchMetadataSelectedTrack"
+                class="menu-item"
+                @click="handleRematchMetadata"
+              >
+                <i class="pi pi-sync"></i>
+                <span>重新匹配流媒体元数据</span>
+              </div>
+              <div
+                v-if="canClearMetadataMatchSelectedTrack"
+                class="menu-item"
+                @click="handleClearMetadataMatch"
+              >
+                <i class="pi pi-times-circle"></i>
+                <span>取消流媒体匹配</span>
               </div>
               <div class="menu-item" @click="handleOpenFolder">
                 <i class="pi pi-folder-open"></i>

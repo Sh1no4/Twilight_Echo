@@ -191,6 +191,22 @@
     });
   }
 
+  function lyricSourceLabel(source) {
+    if (source === 'embedded') return '内嵌';
+    if (source === 'local') return '本地 LRC';
+    if (source === 'provider') return 'Provider';
+    return '';
+  }
+
+  function buildSourceLabel(data) {
+    var labels = [];
+    var original = lyricSourceLabel(data.lyricsSource);
+    var translated = lyricSourceLabel(data.translatedLyricsSource);
+    if (original) labels.push('原文: ' + original);
+    if (translated) labels.push('翻译: ' + translated);
+    return labels.join(' / ');
+  }
+
   // ── Rendering ──
   function hexToRgba(hex, alpha) {
     if (!hex || !hex.startsWith('#')) return 'rgba(0,0,0,' + alpha + ')';
@@ -301,11 +317,16 @@
     translatedLines = parseLrc(data.translatedLyrics);
     mergedLines = buildMergedLyrics(data.lyrics, data.translatedLyrics);
     activeIndex = -1;
+    var sourceLabel = buildSourceLabel(data);
     if (data.title) {
-      songInfoEl.textContent = (data.artist ? data.artist + ' - ' : '') + data.title;
+      songInfoEl.textContent =
+        (data.artist ? data.artist + ' - ' : '') +
+        data.title +
+        (sourceLabel ? ' · ' + sourceLabel : '');
     } else {
-      songInfoEl.textContent = '';
+      songInfoEl.textContent = sourceLabel;
     }
+    songInfoEl.title = sourceLabel;
     renderLines();
   });
   api.onTimeUpdate(function (time) {

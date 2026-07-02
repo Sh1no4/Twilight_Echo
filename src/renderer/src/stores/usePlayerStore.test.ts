@@ -65,6 +65,8 @@ test('desktop lyrics receives the current playback snapshot when enabled', () =>
   assert.match(source, /function syncDesktopLyricsSnapshot\(\)/)
   assert.match(source, /const desktopLyricsApi = window\.api\?\.desktopLyrics/)
   assert.match(source, /desktopLyricsApi\.updateTrack\(\{/)
+  assert.match(source, /lyricsSource: track\.lyricsSource \?\? null/)
+  assert.match(source, /translatedLyricsSource: track\.translatedLyricsSource \?\? null/)
   assert.match(source, /desktopLyricsApi\.updateTime\(currentTime\.value\)/)
   assert.match(
     source,
@@ -297,6 +299,15 @@ test('playback failure tries a same-song fallback variant from the queue', () =>
   assert.match(loadAndPlay, /if \(await handlePlaybackFallback\(track, err, loadToken\)\) return/)
 })
 
+test('player bar surfaces playback fallback diagnostics from the player store', () => {
+  const source = readFileSync(new URL('../components/PlayerBar.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /audioEngineError/)
+  assert.match(source, /class="player-playback-diagnostic"/)
+  assert.match(source, /v-if="audioEngineError"/)
+  assert.match(source, /\{\{ audioEngineError \}\}/)
+})
+
 test('playback fallback ranks provider variants by playback url health', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const helper = extractInternalFunctionBody(source, 'getProviderSourceReliability')
@@ -325,6 +336,21 @@ test('provider playback failure searches provider results to rematch expired ids
   assert.match(handleProviderRematchFallback, /queue\.value = queue\.value\.map/)
   assert.match(handleProviderRematchFallback, /currentTrack\.value = rematched/)
   assert.match(handleProviderRematchFallback, /void loadAndPlay\(rematched\)/)
+})
+
+test('missing local playback searches provider results instead of stopping at the local file error', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const handleProviderRematchFallback = extractInternalFunctionBody(
+    source,
+    'handleProviderRematchFallback'
+  )
+
+  assert.doesNotMatch(handleProviderRematchFallback, /if \(failedSource === 'local'\) return false/)
+  assert.match(
+    handleProviderRematchFallback,
+    /failedSource === 'local'\s*\?\s*getTrackSource\(track\) !== 'local'/
+  )
+  assert.match(handleProviderRematchFallback, /已重新匹配到/)
 })
 
 test('play mode is persisted in settings and restored on launch', () => {

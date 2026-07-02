@@ -21,6 +21,8 @@ export function useSongListContextMenu({
   addToPlaylist,
   removeFromPlaylist,
   rematchTrack,
+  rematchMetadata,
+  clearMetadataMatch,
   createPlaylist,
   deletePlaylist
 }: UseSongListContextMenuOptions): {
@@ -39,6 +41,10 @@ export function useSongListContextMenu({
   handleRemoveFromCurrentPlaylist: () => void
   canRematchSelectedTrack: ComputedRef<boolean>
   handleRematchTrack: () => Promise<void>
+  canRematchMetadataSelectedTrack: ComputedRef<boolean>
+  handleRematchMetadata: () => Promise<void>
+  canClearMetadataMatchSelectedTrack: ComputedRef<boolean>
+  handleClearMetadataMatch: () => Promise<void>
   openCreatePlaylistDialog: (track?: Track) => void
   handleCreatePlaylist: () => void
   handleCreatePlaylistFromMenu: () => void
@@ -56,6 +62,16 @@ export function useSongListContextMenu({
     const track = selectedTrack.value
     if (!track || !rematchTrack) return false
     return getTrackSource(track) !== 'local'
+  })
+  const canRematchMetadataSelectedTrack = computed(() => {
+    const track = selectedTrack.value
+    if (!track || !rematchMetadata) return false
+    return getTrackSource(track) === 'local'
+  })
+  const canClearMetadataMatchSelectedTrack = computed(() => {
+    const track = selectedTrack.value
+    if (!track || !clearMetadataMatch || !track.metadataMatch) return false
+    return getTrackSource(track) === 'local'
   })
 
   function onContextMenu(event: MouseEvent, track: Track): void {
@@ -119,6 +135,18 @@ export function useSongListContextMenu({
     closeContextMenu()
   }
 
+  async function handleRematchMetadata(): Promise<void> {
+    if (!selectedTrack.value || !canRematchMetadataSelectedTrack.value || !rematchMetadata) return
+    await rematchMetadata(selectedTrack.value)
+    closeContextMenu()
+  }
+
+  async function handleClearMetadataMatch(): Promise<void> {
+    if (!selectedTrack.value || !canClearMetadataMatchSelectedTrack.value || !clearMetadataMatch) return
+    await clearMetadataMatch(selectedTrack.value)
+    closeContextMenu()
+  }
+
   function openCreatePlaylistDialog(track?: Track): void {
     createPlaylistForTrack.value = track ?? null
     newPlaylistName.value = ''
@@ -173,6 +201,10 @@ export function useSongListContextMenu({
     handleRemoveFromCurrentPlaylist,
     canRematchSelectedTrack,
     handleRematchTrack,
+    canRematchMetadataSelectedTrack,
+    handleRematchMetadata,
+    canClearMetadataMatchSelectedTrack,
+    handleClearMetadataMatch,
     openCreatePlaylistDialog,
     handleCreatePlaylist,
     handleCreatePlaylistFromMenu,

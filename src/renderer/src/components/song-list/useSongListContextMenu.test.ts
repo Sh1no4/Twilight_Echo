@@ -29,6 +29,8 @@ const localTrack = {
 
 function createMenu(overrides: {
   rematchTrack?: (track: typeof providerTrack) => Promise<void> | void
+  rematchMetadata?: (track: typeof providerTrack) => Promise<void> | void
+  clearMetadataMatch?: (track: typeof providerTrack) => Promise<void> | void
 } = {}): ReturnType<typeof useSongListContextMenu> {
   ;(globalThis as Record<string, unknown>).window = {
     addEventListener: () => {},
@@ -52,7 +54,9 @@ function createMenu(overrides: {
     removeFromPlaylist: () => {},
     createPlaylist: () => 'playlist-id',
     deletePlaylist: () => {},
-    rematchTrack: overrides.rematchTrack
+    rematchTrack: overrides.rematchTrack,
+    rematchMetadata: overrides.rematchMetadata,
+    clearMetadataMatch: overrides.clearMetadataMatch
   }))
   if (!menu) throw new Error('context menu setup failed')
   return menu
@@ -80,4 +84,59 @@ test('context menu does not expose rematch action for local tracks', () => {
   menu.selectedTrack.value = localTrack
 
   assert.equal(menu.canRematchSelectedTrack.value, false)
+})
+
+test('context menu exposes metadata rematch action for local tracks', async () => {
+  let rematchedTrackId = ''
+  const menu = createMenu({
+    rematchMetadata: (track) => {
+      rematchedTrackId = track.id
+    }
+  })
+  menu.selectedTrack.value = localTrack
+
+  assert.equal(menu.canRematchMetadataSelectedTrack.value, true)
+
+  await menu.handleRematchMetadata()
+
+  assert.equal(rematchedTrackId, 'local:hash')
+  assert.equal(menu.showContextMenu.value, false)
+
+  menu.selectedTrack.value = providerTrack
+  assert.equal(menu.canRematchMetadataSelectedTrack.value, false)
+})
+
+test('context menu exposes clear metadata match action only for matched local tracks', async () => {
+  let clearedTrackId = ''
+  const matchedLocalTrack = {
+    ...localTrack,
+    metadataMatch: {
+      providerId: 'ncm',
+      trackId: 'ncm:expired',
+      confidence: 'high' as const,
+      score: 94
+    }
+  }
+  const menu = createMenu({
+    clearMetadataMatch: (track) => {
+      clearedTrackId = track.id
+    }
+  })
+
+  menu.selectedTrack.value = matchedLocalTrack
+  assert.equal(menu.canClearMetadataMatchSelectedTrack.value, true)
+
+  await menu.handleClearMetadataMatch()
+
+  assert.equal(clearedTrackId, 'local:hash')
+  assert.equal(menu.showContextMenu.value, false)
+
+  menu.selectedTrack.value = localTrack
+  assert.equal(menu.canClearMetadataMatchSelectedTrack.value, false)
+
+  menu.selectedTrack.value = {
+    ...providerTrack,
+    metadataMatch: matchedLocalTrack.metadataMatch
+  }
+  assert.equal(menu.canClearMetadataMatchSelectedTrack.value, false)
 })

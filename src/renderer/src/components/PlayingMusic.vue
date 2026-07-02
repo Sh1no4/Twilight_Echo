@@ -18,6 +18,7 @@ import { useCover } from '../utils/coverLoader'
 import { buildLyricLines } from '../utils/lyrics'
 import type { LyricLine } from '../utils/lyrics'
 import { getTrackSource, shouldReserveLyricsColumn } from '../utils/nowPlayingLayout'
+import type { LyricSource } from '../types/music'
 
 const { currentTrack, dominantColor, currentTime, duration, seek, formatTime } = usePlayerStore()
 const { settings } = useSettingsStore()
@@ -186,6 +187,23 @@ const activeLyricIndex = computed(() => {
 })
 
 const trackDurationLabel = computed(() => formatTime(duration.value))
+const lyricSourceLabel = computed(() =>
+  getLyricSourceLabel(currentTrack.value?.lyricsSource, '原文')
+)
+const translatedLyricSourceLabel = computed(() =>
+  getLyricSourceLabel(currentTrack.value?.translatedLyricsSource, '翻译')
+)
+
+function getLyricSourceLabel(source: LyricSource | null | undefined, label: string): string {
+  if (!source) return ''
+  const sourceLabel =
+    source === 'embedded'
+      ? '内嵌'
+      : source === 'local'
+        ? '本地 LRC'
+        : 'Provider'
+  return `${label}: ${sourceLabel}`
+}
 
 function setLyricLineRef(index: number, el: Element | ComponentPublicInstance | null): void {
   lyricLineEls.value[index] = el instanceof HTMLElement ? el : null
@@ -413,6 +431,12 @@ onBeforeUnmount(() => {
         >
           <div class="lyrics-head">
             <div class="time-chip">{{ formatTime(currentTime) }} / {{ trackDurationLabel }}</div>
+            <div class="lyric-source-chips" aria-label="歌词来源">
+              <span v-if="lyricSourceLabel" class="lyric-source-chip">{{ lyricSourceLabel }}</span>
+              <span v-if="translatedLyricSourceLabel" class="lyric-source-chip">{{
+                translatedLyricSourceLabel
+              }}</span>
+            </div>
           </div>
 
           <div
@@ -705,6 +729,28 @@ onBeforeUnmount(() => {
   gap: 16px;
   padding-bottom: 18px;
   min-width: 0;
+}
+
+.lyric-source-chips {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.lyric-source-chip {
+  max-width: 160px;
+  padding: 5px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .time-chip {

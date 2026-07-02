@@ -13,6 +13,7 @@ interface TrackData {
   cover: string | null
   lyrics: string | null
   translatedLyrics?: string | null
+  metadataMatch?: TrackMetadataMatch | null
   source?: TrackSource
   ncmSongId?: number
   streamUrl?: string | null
@@ -41,6 +42,13 @@ type ProxyMode = 'auto' | 'custom' | 'off'
 type StreamingAudioCachePolicy = 'off' | 'provider'
 type BuiltInTrackSource = 'local' | 'ncm'
 type TrackSource = BuiltInTrackSource | (string & {})
+type MetadataMatchConfidence = 'high' | 'medium'
+interface TrackMetadataMatch {
+  providerId: string
+  trackId: string
+  confidence: MetadataMatchConfidence
+  score: number
+}
 type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
 type TwilightPluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
 type TwilightPluginIndexInstallState =
@@ -1004,6 +1012,8 @@ interface WindowAPI {
     updateTrack: (data: {
       lyrics: string | null
       translatedLyrics?: string | null
+      lyricsSource?: 'embedded' | 'local' | 'provider' | null
+      translatedLyricsSource?: 'embedded' | 'local' | 'provider' | null
       title?: string
       artist?: string
     }) => void
@@ -1014,6 +1024,8 @@ interface WindowAPI {
     onTrackUpdate: (cb: (data: {
       lyrics: string | null
       translatedLyrics?: string | null
+      lyricsSource?: 'embedded' | 'local' | 'provider' | null
+      translatedLyricsSource?: 'embedded' | 'local' | 'provider' | null
       title?: string
       artist?: string
     }) => void) => () => void

@@ -196,3 +196,27 @@ test('does not fallback to a different performance with a far duration', () => {
 
   assert.equal(fallback, null)
 })
+
+test('does not merge provider variants with incomplete logical identity', () => {
+  const failed = track({
+    id: 'ncm:missing-artist',
+    title: 'Moon River',
+    artist: '',
+    source: 'ncm'
+  })
+
+  const fallback = findPlaybackFallbackTrack({
+    failedTrack: failed,
+    unavailableSources: ['ncm'],
+    candidates: [
+      track({
+        id: 'bili:missing-artist',
+        title: 'Moon River',
+        artist: '',
+        source: 'bili'
+      })
+    ]
+  })
+
+  assert.equal(fallback, null)
+})

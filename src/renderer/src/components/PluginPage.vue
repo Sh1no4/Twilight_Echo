@@ -29,7 +29,7 @@ function switchTab(tabId: string) {
 
 function getIconInfo(id: string, type: string[]): { cls: string; icon: string; style?: string } {
   if (id.includes('ncm')) return { cls: 'ncm', icon: 'pi pi-cloud' }
-  if (id.includes('bili')) return { cls: 'bili', icon: 'pi pi-video' }
+  if (type.includes('provider')) return { cls: 'provider', icon: 'pi pi-music' }
   if (type.includes('dsp')) return { cls: 'dsp', icon: 'pi pi-wave-pulse' }
   return { cls: '', icon: 'pi pi-puzzle', style: 'background: linear-gradient(135deg, #e0e7ff, #c7d2fe); color: #4f46e5;' }
 }
@@ -874,9 +874,9 @@ onUnmounted(() => {
   color: #ef4444;
 }
 
-.plugin-icon.bili {
-  background: linear-gradient(135deg, #f3e8ff, #e9d5ff);
-  color: #a855f7;
+.plugin-icon.provider {
+  background: linear-gradient(135deg, #e0f2fe, #ccfbf1);
+  color: #0891b2;
 }
 
 .plugin-icon.dsp {

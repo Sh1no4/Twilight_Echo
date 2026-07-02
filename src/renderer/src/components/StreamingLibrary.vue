@@ -101,6 +101,13 @@ function providerMenuHealthLabel(provider: ProviderOption): string {
   }).label
 }
 
+function providerMenuHealthDetail(provider: ProviderOption): string {
+  return buildProviderHealthPresentation({
+    health: provider.health,
+    loggedIn: provider.loggedIn ?? props.isLoggedIn
+  }).detail
+}
+
 function playlistId(playlist: MediaProviderPlaylistSummary): string {
   return String(playlist.id)
 }
@@ -159,6 +166,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
                   type="button"
                   class="provider-menu-item"
                   :class="{ active: provider.id === activeProvider }"
+                  :title="providerMenuHealthDetail(provider)"
                   @mousedown.prevent="selectProvider(provider.id)"
                 >
                   <i :class="provider.icon"></i>

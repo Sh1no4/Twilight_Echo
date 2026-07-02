@@ -1,6 +1,14 @@
 import type { MediaProviderCapability, MediaProviderSearchResult } from '../providers/mediaProvider'
 import type { Track, TrackSource } from '../types/music'
-import { getLogicalTrackKey } from './logicalTrackIdentity.ts'
+import {
+  buildLogicalTracks,
+  clampReliability,
+  compareSourceVariantPriority,
+  getTrackSource,
+  isLosslessTrack,
+  type LogicalTrack,
+  type SourceVariant
+} from './logicalTrackModel.ts'
 
 export interface UnifiedSearchProvider {
   id: string
@@ -12,8 +20,11 @@ export interface UnifiedSearchProvider {
 
 export interface UnifiedSearchProviderReliabilityInput {
   available?: boolean
+  pluginStatus?: string
   successRate?: number
-  methodStats?: Record<string, { successRate?: number } | undefined>
+  methodStats?: Record<string, { successRate?: number; lastError?: string | null } | undefined>
+  lastError?: string | null
+  lastCheckedAt?: string | null
 }
 
 export interface UnifiedSearchProviderHealth {
@@ -23,6 +34,11 @@ export interface UnifiedSearchProviderHealth {
   searchable: boolean
   resultCount: number
   lastError: string | null
+  pluginStatus: string | null
+  successRate: number | null
+  playbackUrlSuccessRate: number | null
+  playbackUrlLastError: string | null
+  lastCheckedAt: string | null
 }
 
 export interface UnifiedSearchTrackItem {
@@ -36,23 +52,8 @@ export interface UnifiedSearchTrackItem {
   providerReliability: number
 }
 
-export interface LogicalMusicVariant {
-  track: Track
-  source: TrackSource
-  local: boolean
-  lossless: boolean
-  providerAvailable: boolean
-  providerReliability: number
-}
-
-export interface LogicalMusicItem {
-  id: string
-  title: string
-  artist: string
-  album: string
-  preferredTrack: Track
-  variants: LogicalMusicVariant[]
-}
+export type LogicalMusicVariant = SourceVariant
+export type LogicalMusicItem = LogicalTrack
 
 export interface UnifiedSearchOptions {
   query: string
@@ -74,9 +75,6 @@ export interface UnifiedSearchResult {
   health: Record<string, UnifiedSearchProviderHealth>
 }
 
-const LOSSLESS_FORMATS = new Set(['flac', 'alac', 'wav', 'wave', 'aiff', 'aif', 'ape', 'wv', 'dsf', 'dff', 'mqa'])
-const LOGICAL_DURATION_TOLERANCE_SECONDS = 8
-
 export async function unifiedSearchSongs(options: UnifiedSearchOptions): Promise<UnifiedSearchResult> {
   const query = options.query.trim()
   const limit = options.limit ?? 30
@@ -95,13 +93,20 @@ export async function unifiedSearchSongs(options: UnifiedSearchOptions): Promise
         const providerAvailable = provider.available !== false && provider.health?.available !== false
         const providerReliability = getProviderReliability(provider)
         const searchable = provider.capabilities.includes('search')
+        const playbackUrlHealth = provider.health?.methodStats?.getPlaybackUrl
         const baseHealth: UnifiedSearchProviderHealth = {
           providerId: provider.id,
           providerName: provider.name,
           available: providerAvailable,
           searchable,
           resultCount: 0,
-          lastError: null
+          lastError: provider.health?.lastError ?? null,
+          pluginStatus: provider.health?.pluginStatus ?? null,
+          successRate: typeof provider.health?.successRate === 'number' ? provider.health.successRate : null,
+          playbackUrlSuccessRate:
+            typeof playbackUrlHealth?.successRate === 'number' ? playbackUrlHealth.successRate : null,
+          playbackUrlLastError: playbackUrlHealth?.lastError ?? null,
+          lastCheckedAt: provider.health?.lastCheckedAt ?? null
         }
         health[provider.id] = baseHealth
         if (!query || !searchable || !providerAvailable) return []
@@ -146,33 +151,7 @@ export function buildLogicalMusicItems(tracks: Track[]): LogicalMusicItem[] {
 }
 
 function buildLogicalMusicItemsFromSearchItems(searchItems: UnifiedSearchTrackItem[]): LogicalMusicItem[] {
-  const groups: LogicalMusicItem[] = []
-
-  for (const searchItem of searchItems) {
-    const track = searchItem.track
-    const candidateKey = getLogicalTrackKey(track)
-    const existing = groups.find((item) => {
-      if (item.id !== candidateKey) return false
-      return canShareLogicalItem(item.preferredTrack, track)
-    })
-    const variant = toLogicalVariant(searchItem)
-    if (existing) {
-      existing.variants = [...existing.variants, variant].sort(compareLogicalVariants)
-      existing.preferredTrack = existing.variants[0].track
-      continue
-    }
-
-    groups.push({
-      id: candidateKey,
-      title: track.title.trim() || '未知歌曲',
-      artist: track.artist.trim() || '未知艺术家',
-      album: track.album.trim() || '未知专辑',
-      preferredTrack: track,
-      variants: [variant]
-    })
-  }
-
-  return groups
+  return buildLogicalTracks(searchItems)
 }
 
 function searchLocalTracks(tracks: Track[], query: string): Track[] {
@@ -208,43 +187,13 @@ function toSearchItem(
   }
 }
 
-function toLogicalVariant(item: UnifiedSearchTrackItem): LogicalMusicVariant {
-  return {
-    track: item.track,
-    source: item.source,
-    local: item.local,
-    lossless: item.lossless,
-    providerAvailable: item.providerAvailable,
-    providerReliability: item.providerReliability
-  }
-}
-
 function compareSearchItems(left: UnifiedSearchTrackItem, right: UnifiedSearchTrackItem): number {
   return (
-    compareBoolean(right.local, left.local) ||
-    compareBoolean(right.lossless, left.lossless) ||
-    compareBoolean(right.providerAvailable, left.providerAvailable) ||
-    right.providerReliability - left.providerReliability ||
+    compareSourceVariantPriority(left, right) ||
     left.track.title.localeCompare(right.track.title, 'zh') ||
     left.track.artist.localeCompare(right.track.artist, 'zh') ||
     left.track.id.localeCompare(right.track.id)
   )
-}
-
-function compareLogicalVariants(left: LogicalMusicVariant, right: LogicalMusicVariant): number {
-  return (
-    compareBoolean(right.local, left.local) ||
-    compareBoolean(right.lossless, left.lossless) ||
-    compareBoolean(right.providerAvailable, left.providerAvailable) ||
-    right.providerReliability - left.providerReliability ||
-    left.track.title.localeCompare(right.track.title, 'zh') ||
-    left.track.id.localeCompare(right.track.id)
-  )
-}
-
-function compareBoolean(left: boolean, right: boolean): number {
-  if (left === right) return 0
-  return left ? 1 : -1
 }
 
 function getProviderReliability(provider: UnifiedSearchProvider): number {
@@ -254,35 +203,10 @@ function getProviderReliability(provider: UnifiedSearchProvider): number {
   return provider.available === false || provider.health?.available === false ? 0 : 1
 }
 
-function clampReliability(value: number): number {
-  if (!Number.isFinite(value)) return 0
-  return Math.max(0, Math.min(1, value))
-}
-
-function canShareLogicalItem(left: Track, right: Track): boolean {
-  if (!left.duration || !right.duration) return true
-  return Math.abs(left.duration - right.duration) <= LOGICAL_DURATION_TOLERANCE_SECONDS
-}
-
 function normalizeSearchText(value: string | undefined): string {
   return (value ?? '')
     .normalize('NFKC')
     .trim()
     .toLowerCase()
     .replace(/\s+/g, ' ')
-}
-
-function getTrackSource(track: Pick<Track, 'id' | 'source'>, fallback?: string): TrackSource {
-  if (track.source) return track.source
-  if (fallback) return fallback
-  if (/^[a-zA-Z]:[\\/]/.test(track.id) || /^[\\/]/.test(track.id)) return 'local'
-  const separatorIndex = track.id.indexOf(':')
-  return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
-}
-
-function isLosslessTrack(track: Track): boolean {
-  const format = track.format?.trim().toLowerCase()
-  if (format && LOSSLESS_FORMATS.has(format)) return true
-  if (typeof track.bitDepth === 'number' && track.bitDepth >= 16) return true
-  return false
 }

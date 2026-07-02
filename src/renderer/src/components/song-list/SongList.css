@@ -317,6 +317,86 @@
   margin: 0;
 }
 
+.unified-search-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 34px;
+  margin: -4px 32px 14px;
+  padding: 8px 12px;
+  border: 1px solid rgba(124, 77, 255, 0.12);
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.52), rgba(248, 245, 255, 0.28)),
+    rgba(255, 255, 255, 0.18);
+  color: var(--te-neutral-700);
+  box-shadow: 0 12px 32px rgba(86, 70, 160, 0.07);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+}
+
+.unified-search-status.error {
+  border-color: rgba(225, 29, 72, 0.2);
+  background: rgba(225, 29, 72, 0.06);
+}
+
+.unified-search-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.unified-search-summary i {
+  flex-shrink: 0;
+  color: var(--te-primary-500);
+  font-size: 13px;
+}
+
+.unified-search-status.error .unified-search-summary i {
+  color: #e11d48;
+}
+
+.unified-search-summary span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unified-search-health-list {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.unified-search-health-chip {
+  max-width: 180px;
+  padding: 4px 8px;
+  border: 1px solid rgba(16, 185, 129, 0.18);
+  border-radius: 999px;
+  background: rgba(16, 185, 129, 0.08);
+  color: #047857;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.unified-search-health-chip.error {
+  border-color: rgba(225, 29, 72, 0.18);
+  background: rgba(225, 29, 72, 0.08);
+  color: #be123c;
+}
+
 /* Table View */
 .track-table-wrapper {
   overflow-x: auto;
@@ -616,6 +696,51 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.track-badges {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  max-width: 260px;
+}
+
+.track-source-chip,
+.metadata-match-chip {
+  max-width: 150px;
+  padding: 2px 7px;
+  border: 1px solid rgba(124, 77, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(124, 77, 255, 0.08);
+  color: #6f4ee8;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.track-source-chip {
+  flex-shrink: 0;
+  max-width: 92px;
+  border-color: rgba(80, 88, 116, 0.12);
+  background: rgba(80, 88, 116, 0.07);
+  color: rgba(52, 61, 87, 0.78);
+}
+
+.track-source-chip.local {
+  border-color: rgba(16, 185, 129, 0.18);
+  background: rgba(16, 185, 129, 0.08);
+  color: #047857;
+}
+
+.track-source-chip.provider {
+  border-color: rgba(124, 77, 255, 0.18);
+  background: rgba(124, 77, 255, 0.08);
+  color: #6f4ee8;
+}
 .track-playing .track-title {
   color: #6f4ee8;
 }
@@ -746,6 +871,17 @@
   .song-list-header {
     gap: 16px;
     padding: 0 10px;
+  }
+
+  .unified-search-status {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-right: 10px;
+    margin-left: 10px;
+  }
+
+  .unified-search-summary span {
+    white-space: normal;
   }
 
   .header-right {
@@ -994,4 +1130,4 @@
   transform: scale(0.95);
   opacity: 0;
 }
-
+

@@ -1164,7 +1164,6 @@ async function handleProviderRematchFallback(
 ): Promise<boolean> {
   if (!isActiveLoad(loadToken, failedTrack)) return false
   const failedSource = getTrackSource(failedTrack)
-  if (failedSource === 'local') return false
 
   await syncPluginProviders()
   const searchResult = await useMediaProviders().searchAllSongs({
@@ -1173,7 +1172,11 @@ async function handleProviderRematchFallback(
   })
   const candidates = searchResult.items
     .map((item) => item.track)
-    .filter((track) => getTrackSource(track) !== failedSource || track.id !== failedTrack.id)
+    .filter((track) =>
+      failedSource === 'local'
+        ? getTrackSource(track) !== 'local'
+        : getTrackSource(track) !== failedSource || track.id !== failedTrack.id
+    )
   const rematched = findProviderRematchCandidate(failedTrack, candidates)
   if (!rematched || !isActiveLoad(loadToken, failedTrack)) return false
 
@@ -1618,6 +1621,8 @@ function syncDesktopLyricsSnapshot(): void {
     desktopLyricsApi.updateTrack({
       lyrics: track.lyrics ?? null,
       translatedLyrics: track.translatedLyrics ?? null,
+      lyricsSource: track.lyricsSource ?? null,
+      translatedLyricsSource: track.translatedLyricsSource ?? null,
       title: track.title || '',
       artist: track.artist || ''
     })
@@ -1625,6 +1630,8 @@ function syncDesktopLyricsSnapshot(): void {
     desktopLyricsApi.updateTrack({
       lyrics: null,
       translatedLyrics: null,
+      lyricsSource: null,
+      translatedLyricsSource: null,
       title: '',
       artist: ''
     })

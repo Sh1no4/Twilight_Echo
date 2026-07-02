@@ -50,12 +50,28 @@ test('provider health presentation distinguishes login expiration from generic a
   })
 
   assert.equal(status.state, 'error')
+  assert.equal(status.reason, 'login-expired')
   assert.equal(status.label, '登录已失效')
   assert.match(status.detail, /登录状态 未登录/)
   assert.match(status.detail, /最近错误 login expired/)
 })
 
-test('provider health presentation reports plugin state before call success rate', () => {
+test('provider health presentation reports disabled plugins directly', () => {
+  const status = buildProviderHealthPresentation({
+    health: {
+      ...healthy,
+      pluginStatus: 'disabled',
+      available: false
+    },
+    loggedIn: true
+  })
+
+  assert.equal(status.state, 'error')
+  assert.equal(status.reason, 'plugin-disabled')
+  assert.equal(status.label, '音源已停用')
+})
+
+test('provider health presentation reports plugin failure before call success rate', () => {
   const status = buildProviderHealthPresentation({
     health: {
       ...healthy,
@@ -67,7 +83,8 @@ test('provider health presentation reports plugin state before call success rate
   })
 
   assert.equal(status.state, 'error')
-  assert.equal(status.label, '插件状态异常')
+  assert.equal(status.reason, 'plugin-failed')
+  assert.equal(status.label, '插件运行失败')
 })
 
 test('provider health presentation warns when recent calls failed', () => {
@@ -84,6 +101,7 @@ test('provider health presentation warns when recent calls failed', () => {
   })
 
   assert.equal(status.state, 'warning')
+  assert.equal(status.reason, 'api-degraded')
   assert.equal(status.label, '部分请求失败')
   assert.match(status.detail, /成功率 75%/)
   assert.match(status.detail, /播放 URL 成功率 100%/)
@@ -109,8 +127,28 @@ test('provider health presentation reports playback URL success rate separately'
   })
 
   assert.equal(status.state, 'warning')
+  assert.equal(status.reason, 'playback-url-degraded')
+  assert.equal(status.label, '播放 URL 不稳定')
   assert.match(status.detail, /播放 URL 成功率 40%/)
   assert.match(status.detail, /播放 URL 最近错误 stream expired/)
+})
+
+test('provider health presentation reports unavailable network or API failures', () => {
+  const status = buildProviderHealthPresentation({
+    health: {
+      ...healthy,
+      available: false,
+      failedCalls: 3,
+      successRate: 0,
+      lastError: 'network timeout'
+    },
+    loggedIn: true
+  })
+
+  assert.equal(status.state, 'error')
+  assert.equal(status.reason, 'network-or-api-failed')
+  assert.equal(status.label, '网络或 API 不可用')
+  assert.match(status.detail, /最近错误 network timeout/)
 })
 
 test('provider health presentation reports healthy logged in providers as available', () => {
@@ -120,6 +158,7 @@ test('provider health presentation reports healthy logged in providers as availa
   })
 
   assert.equal(status.state, 'ok')
+  assert.equal(status.reason, 'ok')
   assert.equal(status.label, '音源可用')
   assert.match(status.detail, /登录状态 已登录/)
 })

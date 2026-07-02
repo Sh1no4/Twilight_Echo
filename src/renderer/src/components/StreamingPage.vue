@@ -20,14 +20,12 @@ import type {
 import StreamingHome from './StreamingHome.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
 import StreamingSearch from './StreamingSearch.vue'
-import BilibiliPage from './BilibiliPage.vue'
 import {
   buildStreamingSidebarItems,
   getFirstVisibleStreamingTab,
   getUnifiedLibraryProviders,
   hasStreamingSidebarEntries,
   isSidebarItemActiveForProvider,
-  shouldShowBilibiliViewForSidebarProvider,
   type StreamingSidebarItem,
   type StreamingTabKey
 } from '../utils/streamingNavigation'
@@ -80,7 +78,6 @@ defineProps<{
 const activeTab = ref<StreamingTab>('home')
 const streamingTransitionName = ref('stream-page-down')
 const currentDetail = ref<DetailView | null>(null)
-const showBilibiliView = ref(false)
 const detailTracks = ref<Track[]>([])
 const detailUsers = ref<NcmUserSummary[]>([])
 const artistAlbums = ref<NcmAlbumSummary[]>([])
@@ -170,7 +167,6 @@ const activeProvider = computed<string>(() => {
 })
 
 const isExternalActive = computed(() => activeProvider.value !== NCM_PROVIDER_ID)
-const isBiliActive = computed(() => activeProvider.value === 'bili')
 const activeExternalState = computed<ExternalProviderState | null>(() =>
   isExternalActive.value ? (externalStates[activeProvider.value] ?? null) : null
 )
@@ -390,9 +386,15 @@ const activeProviderUnavailable = computed(() => {
   return /Provider 未启用|provider is disabled|does not implement/i.test(error)
 })
 const showUnifiedSearch = computed(() => hasOnlineNavigationEntries.value && activeProviderAvailable.value && activeLoggedIn.value)
-const trackUnitLabel = computed(() => (isBiliActive.value ? '个视频' : '首歌曲'))
+const trackUnitLabel = computed(() => (isExternalActive.value ? '项' : '首歌曲'))
 const profileSignature = computed(() => activeProfile.value?.signature?.trim() || '暂无个人简介')
 const unifiedFavoriteTracks = computed(() => musicStore.getPlaylistTracks('我收藏的音乐'))
+const showActiveLikedPanel = computed(
+  () =>
+    !isExternalActive.value ||
+    unifiedFavoriteTracks.value.length > 0 ||
+    Boolean(activeExternalState.value?.likedPlaylist)
+)
 
 const headerTitle = computed(() => {
   if (isExternalActive.value && currentDetail.value?.type === 'playlist')
@@ -435,11 +437,9 @@ const likedSummary = computed(() => {
     return summarizeUnifiedFavorites({
       unifiedTracks,
       providerSummary: {
-        name: isBiliActive.value ? 'Bilibili 收藏夹' : '我喜欢的音乐',
+        name: state?.likedPlaylist?.name ?? '我喜欢的音乐',
         cover: state?.likedPlaylist?.cover ?? null,
-        trackCount: isBiliActive.value
-          ? (state?.playlists.length ?? 0)
-          : (state?.likedPlaylist?.trackCount ?? 0)
+        trackCount: state?.likedPlaylist?.trackCount ?? 0
       }
     })
   }
@@ -627,7 +627,6 @@ function selectProvider(provider: string, persist = true): void {
 function isSidebarItemActive(item: SidebarItem): boolean {
   if (item.tab === 'library') {
     return (
-      !showBilibiliView.value &&
       activeTab.value === 'library' &&
       libraryProviders.value.some((provider) => provider.id === activeProvider.value)
     )
@@ -636,8 +635,7 @@ function isSidebarItemActive(item: SidebarItem): boolean {
     itemProvider: item.provider,
     itemKey: item.key,
     activeProvider: activeProvider.value,
-    activeTab: activeTab.value,
-    showBilibiliView: showBilibiliView.value
+    activeTab: activeTab.value
   })
 }
 
@@ -650,10 +648,6 @@ function getSharedLibraryProviderId(): string {
 
 function selectSidebarItem(item: SidebarItem, options: { persistProvider?: boolean } = {}): void {
   const persistProvider = options.persistProvider !== false
-  showBilibiliView.value = shouldShowBilibiliViewForSidebarProvider(item.provider)
-  if (item.provider === 'bili') {
-    return
-  }
   if (item.tab === 'library') {
     const provider = getSharedLibraryProviderId()
     if (activeProvider.value !== provider) {
@@ -664,7 +658,7 @@ function selectSidebarItem(item: SidebarItem, options: { persistProvider?: boole
   }
   if (item.provider !== NCM_PROVIDER_ID) {
     selectProvider(item.provider, persistProvider)
-    if (item.tab) selectTab(item.tab)
+    selectTab(item.tab ?? 'library')
     return
   }
   if (activeProvider.value !== NCM_PROVIDER_ID) {
@@ -701,7 +695,6 @@ function getSidebarItemsSignature(): string {
 function ensureVisibleSidebarSelection(): void {
   if (!hasOnlineNavigationEntries.value) {
     fallbackProvider.value = null
-    showBilibiliView.value = false
     resetDetail()
     clearSearch()
     return
@@ -827,31 +820,6 @@ async function ensureExternalLibraryLoaded(id: string, force = false): Promise<v
       error instanceof Error ? error.message : `加载 ${externalProviderName(id)} 音乐库失败`
   } finally {
     state.libraryLoading = false
-  }
-}
-
-async function togglePinnedPlaylist(playlist: MediaProviderPlaylistSummary): Promise<void> {
-  // Pinning is currently a Bilibili-specific extension command; gated by the
-  // bili provider. Future providers can plug in their own pinning command here.
-  if (!isBiliActive.value) return
-  const state = activeExternalState.value
-  if (!state || state.pinningPlaylistId) return
-  const playlistId = String(playlist.id)
-  state.pinningPlaylistId = playlistId
-  state.libraryError = ''
-  try {
-    const result = await window.api.extensions.executeCommand('bilibili.setPinnedFavoriteFolder', [
-      { id: playlistId }
-    ])
-    const record = result && typeof result === 'object' ? (result as Record<string, unknown>) : {}
-    state.pinnedPlaylistIds = Array.isArray(record.pinnedFavoriteFolderIds)
-      ? record.pinnedFavoriteFolderIds.map((id) => String(id)).filter(Boolean)
-      : []
-    await ensureExternalLibraryLoaded('bili', true)
-  } catch (error) {
-    state.libraryError = error instanceof Error ? error.message : '设置 Bilibili 收藏夹置顶失败'
-  } finally {
-    state.pinningPlaylistId = null
   }
 }
 
@@ -1374,14 +1342,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <BilibiliPage
-      v-if="showBilibiliView"
-      class="streaming-content"
-      :menu-open="menuOpen"
-      :has-player="hasPlayer"
-      @back-to-local="showBilibiliView = false"
-    />
-    <div v-else class="streaming-content">
+    <div class="streaming-content">
       <div class="streaming-content-header">
         <div class="streaming-header-left">
           <button
@@ -2028,10 +1989,10 @@ onMounted(async () => {
             :liked-summary="likedSummary"
             :library-loaded="activeLibraryLoaded"
             :user-playlist-entries="userPlaylistEntries"
-            :show-liked-panel="!isBiliActive"
+            :show-liked-panel="showActiveLikedPanel"
             :show-social-stats="!isExternalActive"
             :show-feature-cards="!isExternalActive"
-            :allow-pin-playlists="isBiliActive"
+            :allow-pin-playlists="false"
             :pinned-playlist-ids="activeExternalState?.pinnedPlaylistIds ?? []"
             :pinning-playlist-id="activeExternalState?.pinningPlaylistId ?? null"
             :available-providers="libraryProviderOptions"
@@ -2041,7 +2002,6 @@ onMounted(async () => {
             @open-liked-tracks="openLikedTracks"
             @play-liked-songs="playLikedSongs"
             @open-playlist="openPlaylist"
-            @toggle-pinned-playlist="togglePinnedPlaylist"
             @open-recent="openRecent"
             @open-ranking="openRanking"
           />

@@ -66,10 +66,6 @@ function dayKey(date: Date): string {
   return date.toISOString().slice(0, 10)
 }
 
-function isBiliTrack(track: Track | undefined): boolean {
-  return track?.source === 'bili' || track?.id.startsWith('bili:') === true
-}
-
 const nowPlayingTitle = computed(() => currentTrack.value?.title || '暂无正在播放')
 const nowPlayingArtist = computed(() => currentTrack.value?.artist || '选择一首本地或在线音乐开始')
 const resolvedCurrentCover = useCover(computed(() => currentTrack.value?.cover ?? null))
@@ -93,7 +89,6 @@ const recentlyAddedTracks = computed(() => tracks.value.slice(-3).reverse())
 const DASHBOARD_QUEUE_WINDOW = 200
 const topTracks = computed(() => {
   const rankedStats = Object.entries(listeningStats.value.tracks)
-    .filter(([id, stat]) => !id.startsWith('bili:') && !isBiliTrack(stat.track))
     .sort(([, a], [, b]) => b.seconds - a.seconds)
     .slice(0, 3)
     .map(([id, stat]) => ({ id, ...stat }))
@@ -247,7 +242,8 @@ function formatTrackFormat(track: Track): string {
   if (track.bitDepth) parts.push(`${track.bitDepth}-bit`)
   if (track.sampleRate) parts.push(`${Math.round(track.sampleRate / 1000)}kHz`)
   if (parts.length > 0) return parts.join(' / ')
-  return track.source === 'ncm' ? 'NCM Stream' : track.source === 'bili' ? 'Bilibili Audio' : 'Local Audio'
+  if (track.source && track.source !== 'local') return `${track.source.toUpperCase()} Stream`
+  return 'Local Audio'
 }
 
 function formatCompactNumber(value: number): string {

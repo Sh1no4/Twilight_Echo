@@ -3,6 +3,14 @@ import type { PlaybackResumeMode, PlayMode } from './settings'
 export type BuiltInTrackSource = 'local' | 'ncm'
 export type TrackSource = BuiltInTrackSource | (string & {})
 export type LyricSource = 'embedded' | 'local' | 'provider'
+export type MetadataMatchConfidence = 'high' | 'medium'
+
+export interface TrackMetadataMatch {
+  providerId: string
+  trackId: string
+  confidence: MetadataMatchConfidence
+  score: number
+}
 
 export interface Track {
   id: string
@@ -20,6 +28,7 @@ export interface Track {
   translatedLyrics?: string | null
   lyricsSource?: LyricSource | null
   translatedLyricsSource?: LyricSource | null
+  metadataMatch?: TrackMetadataMatch | null
   source?: TrackSource
   ncmSongId?: number
   streamUrl?: string | null

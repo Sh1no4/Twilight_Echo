@@ -53,6 +53,12 @@ test('enrichLocalTracksFromProviders fills missing local metadata from provider 
   assert.equal(enriched[0].cover, 'https://cover.example/album.jpg')
   assert.equal(enriched[0].lyrics, '[00:00.00]Moon River')
   assert.equal(enriched[0].translatedLyrics, '[00:00.00]月亮河')
+  assert.deepEqual(enriched[0].metadataMatch, {
+    providerId: 'ncm',
+    trackId: 'ncm:123',
+    confidence: 'high',
+    score: 96
+  })
   assert.equal(enriched[0].streamUrl, undefined)
 })
 
@@ -64,6 +70,77 @@ test('enrichLocalTracksFromProviders keeps local playback working when provider 
   })
 
   assert.deepEqual(enriched, [localTrack])
+})
+
+test('enrichLocalTracksFromProviders respects disabled provider metadata cache policy', async () => {
+  const enriched = await enrichLocalTracksFromProviders(
+    [localTrack],
+    {
+      searchSongs: async () => ({
+        items: [{
+          id: 'ncm:123',
+          title: 'Moon River',
+          artist: 'Audrey',
+          album: 'Online Album',
+          filePath: 'ncm:123',
+          fileName: 'Moon River',
+          duration: 179,
+          size: 0,
+          cover: 'https://cover.example/album.jpg',
+          lyrics: '[00:00.00]Moon River',
+          translatedLyrics: '[00:00.00]月亮河',
+          source: 'ncm' as const
+        }],
+        total: 1
+      })
+    },
+    {
+      cachePolicy: {
+        cover: false,
+        lyrics: false,
+        metadata: false
+      }
+    }
+  )
+
+  assert.deepEqual(enriched, [localTrack])
+})
+
+test('enrichLocalTracksFromProviders can cache cover without lyrics or album metadata', async () => {
+  const enriched = await enrichLocalTracksFromProviders(
+    [localTrack],
+    {
+      searchSongs: async () => ({
+        items: [{
+          id: 'ncm:123',
+          title: 'Moon River',
+          artist: 'Audrey',
+          album: 'Online Album',
+          filePath: 'ncm:123',
+          fileName: 'Moon River',
+          duration: 179,
+          size: 0,
+          cover: 'https://cover.example/album.jpg',
+          lyrics: '[00:00.00]Moon River',
+          translatedLyrics: '[00:00.00]月亮河',
+          source: 'ncm' as const
+        }],
+        total: 1
+      })
+    },
+    {
+      cachePolicy: {
+        cover: true,
+        lyrics: false,
+        metadata: false
+      }
+    }
+  )
+
+  assert.equal(enriched[0].album, '')
+  assert.equal(enriched[0].cover, 'https://cover.example/album.jpg')
+  assert.equal(enriched[0].lyrics, null)
+  assert.equal(enriched[0].translatedLyrics, undefined)
 })
 
 test('enrichLocalTracksFromProviders skips local tracks that already have enrichment metadata', async () => {

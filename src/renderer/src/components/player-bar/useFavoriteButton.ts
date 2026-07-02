@@ -24,15 +24,6 @@ type UseFavoriteButtonOptions = {
   removeFavoriteTrack?: (track: Track) => void
 }
 
-function isBiliTrack(track: Pick<Track, 'id' | 'source'>): boolean {
-  return (
-    track.source === 'bili' ||
-    track.source === 'bilibili' ||
-    track.id.startsWith('bili:') ||
-    track.id.startsWith('bilibili:')
-  )
-}
-
 function isNcmTrack(track: Pick<Track, 'id' | 'source' | 'ncmSongId'>): boolean {
   return track.source === 'ncm' || track.id.startsWith('ncm:') || getNcmSongId(track) != null
 }
@@ -77,8 +68,8 @@ export function useFavoriteButton({
 
   const favoriteButtonVisible = computed(() => {
     const track = currentTrack.value
-    if (!track || isBiliTrack(track)) return false
-    return isLocalTrack(track) || isNcmTrack(track)
+    if (!track) return false
+    return isLocalTrack(track) || isNcmTrack(track) || Boolean(addFavoriteTrack && removeFavoriteTrack)
   })
 
   const favoriteButtonLiked = computed(() => {
@@ -174,10 +165,14 @@ export function useFavoriteButton({
 
   async function toggleFavorite(): Promise<void> {
     const track = currentTrack.value
-    if (!track || isBiliTrack(track)) return
+    if (!track) return
 
-    if (isFavoriteTrack?.(track)) {
-      removeFavoriteTrack?.(track)
+    if (isFavoriteTrack && addFavoriteTrack && removeFavoriteTrack) {
+      if (isFavoriteTrack(track)) {
+        removeFavoriteTrack(track)
+      } else {
+        addFavoriteTrack(track)
+      }
       return
     }
 

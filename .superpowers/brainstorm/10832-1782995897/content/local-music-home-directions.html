@@ -1,0 +1,642 @@
+<style>
+  .direction-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+    align-items: stretch;
+  }
+
+  .direction-card {
+    border: 1px solid rgba(15, 23, 42, 0.12);
+    border-radius: 18px;
+    background: #fff;
+    overflow: hidden;
+    cursor: pointer;
+    box-shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+    transition:
+      transform 0.2s ease,
+      border-color 0.2s ease,
+      box-shadow 0.2s ease;
+  }
+
+  .direction-card:hover {
+    transform: translateY(-3px);
+    border-color: rgba(37, 99, 235, 0.38);
+    box-shadow: 0 24px 64px rgba(15, 23, 42, 0.12);
+  }
+
+  .direction-card.selected {
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16), 0 24px 64px rgba(15, 23, 42, 0.12);
+  }
+
+  .direction-body {
+    padding: 14px;
+  }
+
+  .direction-title {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: baseline;
+    margin: 0 0 8px;
+  }
+
+  .direction-title h3 {
+    margin: 0;
+    font-size: 17px;
+    line-height: 1.2;
+    color: #0f172a;
+  }
+
+  .direction-title span {
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    color: #64748b;
+    text-transform: uppercase;
+  }
+
+  .direction-body p {
+    margin: 0;
+    color: #64748b;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .mock-screen {
+    height: 430px;
+    padding: 13px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .mock-topbar {
+    height: 19px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 11px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .mock-window-actions {
+    display: flex;
+    gap: 4px;
+  }
+
+  .mock-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.34;
+  }
+
+  .cover-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .glass-panel {
+    border: 1px solid rgba(255, 255, 255, 0.72);
+    background: rgba(255, 255, 255, 0.72);
+    box-shadow: 0 12px 28px rgba(15, 23, 42, 0.1);
+    backdrop-filter: blur(12px);
+  }
+
+  .mini-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .mini-cover {
+    width: 30px;
+    height: 30px;
+    border-radius: 8px;
+    overflow: hidden;
+    flex: 0 0 auto;
+    background: rgba(255, 255, 255, 0.5);
+  }
+
+  .text-lines {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .line {
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.72;
+    margin-bottom: 5px;
+  }
+
+  .line.sub {
+    width: 62%;
+    opacity: 0.32;
+    margin-bottom: 0;
+  }
+
+  .stat-line {
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+    opacity: 0.22;
+  }
+
+  .heat-row {
+    display: grid;
+    grid-template-columns: repeat(16, 1fr);
+    gap: 3px;
+  }
+
+  .heat-cell {
+    aspect-ratio: 1;
+    border-radius: 2px;
+    background: rgba(37, 99, 235, 0.12);
+  }
+
+  .heat-cell:nth-child(3n) {
+    background: rgba(37, 99, 235, 0.32);
+  }
+
+  .heat-cell:nth-child(5n) {
+    background: rgba(37, 99, 235, 0.58);
+  }
+
+  .option-a {
+    background:
+      radial-gradient(circle at 18% 14%, rgba(255, 255, 255, 0.95), transparent 28%),
+      radial-gradient(circle at 82% 8%, rgba(37, 99, 235, 0.18), transparent 34%),
+      linear-gradient(135deg, #f8fbff 0%, #eef4ff 54%, #fff7fb 100%);
+    color: #0f172a;
+  }
+
+  .studio-main {
+    display: grid;
+    grid-template-columns: 1.12fr 0.88fr;
+    gap: 11px;
+    height: 196px;
+  }
+
+  .studio-cover {
+    border-radius: 20px;
+    overflow: hidden;
+    box-shadow: 0 24px 44px rgba(37, 99, 235, 0.18);
+  }
+
+  .studio-player {
+    border-radius: 20px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .studio-player h4,
+  .workbench h4,
+  .console h4 {
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.15;
+    color: inherit;
+  }
+
+  .studio-player small,
+  .workbench small,
+  .console small {
+    color: inherit;
+    opacity: 0.55;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+  }
+
+  .progress-track {
+    height: 7px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.1);
+    overflow: hidden;
+  }
+
+  .progress-fill {
+    width: 58%;
+    height: 100%;
+    border-radius: inherit;
+    background: #2563eb;
+  }
+
+  .control-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .control-pill {
+    height: 25px;
+    min-width: 25px;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, 0.08);
+  }
+
+  .control-pill.play {
+    width: 42px;
+    background: #2563eb;
+  }
+
+  .studio-bottom {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 11px;
+    margin-top: 11px;
+  }
+
+  .studio-panel {
+    border-radius: 18px;
+    padding: 12px;
+    min-height: 158px;
+  }
+
+  .option-b {
+    background: #ffffff;
+    color: #0f172a;
+  }
+
+  .workbench-layout {
+    display: grid;
+    grid-template-columns: 72px 1fr 86px;
+    gap: 9px;
+    height: 374px;
+  }
+
+  .workbench-sidebar {
+    border-right: 1px solid rgba(15, 23, 42, 0.08);
+    padding-right: 8px;
+  }
+
+  .nav-chip {
+    height: 24px;
+    border-radius: 9px;
+    background: #f1f5f9;
+    margin-bottom: 7px;
+  }
+
+  .nav-chip.active {
+    background: #e0edff;
+  }
+
+  .workbench-main {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .metric-strip {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 7px;
+  }
+
+  .metric {
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 11px;
+    padding: 8px;
+    background: #f8fafc;
+  }
+
+  .metric strong {
+    display: block;
+    font-size: 17px;
+    line-height: 1;
+  }
+
+  .metric span {
+    color: #64748b;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+  }
+
+  .table-surface {
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 13px;
+    overflow: hidden;
+    background: #fff;
+    flex: 1;
+  }
+
+  .table-row {
+    display: grid;
+    grid-template-columns: 28px 1fr 44px;
+    gap: 8px;
+    align-items: center;
+    padding: 8px;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  }
+
+  .table-row:last-child {
+    border-bottom: 0;
+  }
+
+  .workbench-side {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+
+  .side-panel {
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    border-radius: 14px;
+    background: #f8fafc;
+    padding: 9px;
+  }
+
+  .option-c {
+    background:
+      radial-gradient(circle at 70% 20%, rgba(245, 158, 11, 0.16), transparent 28%),
+      linear-gradient(145deg, #101113 0%, #181818 58%, #0f172a 100%);
+    color: rgba(248, 250, 252, 0.94);
+  }
+
+  .console-grid {
+    display: grid;
+    grid-template-columns: 1fr 94px;
+    grid-template-rows: 142px 1fr;
+    gap: 10px;
+    height: 374px;
+  }
+
+  .console-now {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, 0.055);
+    padding: 12px;
+    display: grid;
+    grid-template-columns: 82px 1fr;
+    gap: 12px;
+  }
+
+  .console-cover {
+    border-radius: 15px;
+    overflow: hidden;
+  }
+
+  .meter-stack {
+    display: flex;
+    align-items: end;
+    gap: 4px;
+    height: 44px;
+    margin-top: 12px;
+  }
+
+  .meter {
+    flex: 1;
+    min-width: 3px;
+    border-radius: 999px 999px 0 0;
+    background: linear-gradient(180deg, #fbbf24, #14b8a6);
+    opacity: 0.88;
+  }
+
+  .meter:nth-child(2n) {
+    height: 68%;
+  }
+
+  .meter:nth-child(3n) {
+    height: 36%;
+  }
+
+  .meter:nth-child(5n) {
+    height: 92%;
+  }
+
+  .console-dsp {
+    grid-row: 1 / span 2;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 17px;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 10px;
+  }
+
+  .dsp-node {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 8px 7px;
+    margin-bottom: 8px;
+    background: rgba(255, 255, 255, 0.045);
+    font-size: 9px;
+    font-weight: 800;
+    color: rgba(248, 250, 252, 0.76);
+  }
+
+  .dsp-node.active {
+    color: #fde68a;
+    border-color: rgba(245, 158, 11, 0.44);
+    background: rgba(245, 158, 11, 0.12);
+  }
+
+  .console-lower {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 17px;
+    background: rgba(255, 255, 255, 0.05);
+    padding: 10px;
+  }
+
+  .console-rows {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 9px;
+    margin-top: 10px;
+  }
+
+  .console-tile {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 12px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  @media (max-width: 1100px) {
+    .direction-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<h2>本地音乐首页：3 个 UI 方向</h2>
+<p class="subtitle">点击你更想继续的方向。三版都基于当前 Twilight Echo 首页能力，只调整信息层级、空间组织和视觉气质。</p>
+
+<div class="direction-grid">
+  <div class="direction-card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="mock-screen option-a">
+      <div class="mock-topbar">
+        <span>Twilight Echo / Local</span>
+        <div class="mock-window-actions"><i class="mock-dot"></i><i class="mock-dot"></i><i class="mock-dot"></i></div>
+      </div>
+      <div class="studio-main">
+        <div class="studio-cover"><img class="cover-img" src="/files/twilight-logo.png" alt="Twilight Echo cover"></div>
+        <div class="studio-player glass-panel">
+          <div>
+            <small>NOW PLAYING</small>
+            <h4>Silent Horizon</h4>
+            <div class="stat-line" style="width:72%;margin-top:9px"></div>
+            <div class="stat-line" style="width:44%;margin-top:6px"></div>
+          </div>
+          <div>
+            <div class="progress-track"><div class="progress-fill"></div></div>
+            <div class="control-strip" style="margin-top:13px">
+              <div class="control-pill"></div>
+              <div class="control-pill play"></div>
+              <div class="control-pill"></div>
+              <div class="control-pill"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="studio-bottom">
+        <div class="studio-panel glass-panel">
+          <small>LISTENING JOURNEY</small>
+          <div style="display:grid;gap:4px;margin-top:14px">
+            <div class="heat-row"><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i></div>
+            <div class="heat-row"><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i></div>
+            <div class="heat-row"><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i><i class="heat-cell"></i></div>
+          </div>
+        </div>
+        <div class="studio-panel glass-panel">
+          <small>LOCAL LIBRARY</small>
+          <h4 style="font-size:28px;margin-top:12px">12.4k</h4>
+          <div class="mini-row" style="margin-top:14px">
+            <div class="mini-cover"><img class="cover-img" src="/files/twilight-logo.png" alt=""></div>
+            <div class="text-lines"><div class="line" style="width:80%"></div><div class="line sub"></div></div>
+          </div>
+          <div class="mini-row" style="margin-top:11px">
+            <div class="mini-cover"><img class="cover-img" src="/files/twilight-logo.png" alt=""></div>
+            <div class="text-lines"><div class="line" style="width:68%"></div><div class="line sub"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="direction-body">
+      <div class="direction-title"><h3>A. Listening Studio</h3><span>Immersive</span></div>
+      <p>把“正在播放”变成首页主角，适合想让本地音乐首页更有情绪和停留感。</p>
+    </div>
+  </div>
+
+  <div class="direction-card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="mock-screen option-b workbench">
+      <div class="mock-topbar" style="color:#64748b">
+        <span>Local Library</span>
+        <div class="mock-window-actions"><i class="mock-dot"></i><i class="mock-dot"></i><i class="mock-dot"></i></div>
+      </div>
+      <div class="workbench-layout">
+        <div class="workbench-sidebar">
+          <div class="nav-chip active"></div>
+          <div class="nav-chip"></div>
+          <div class="nav-chip"></div>
+          <div class="nav-chip"></div>
+          <div class="nav-chip" style="margin-top:24px"></div>
+        </div>
+        <div class="workbench-main">
+          <div>
+            <small style="color:#64748b">OVERVIEW</small>
+            <h4 style="font-size:20px">Music Library</h4>
+          </div>
+          <div class="metric-strip">
+            <div class="metric"><strong>12.4k</strong><span>TRACKS</span></div>
+            <div class="metric"><strong>842</strong><span>ALBUMS</span></div>
+            <div class="metric"><strong>38d</strong><span>DURATION</span></div>
+          </div>
+          <div class="table-surface">
+            <div class="table-row">
+              <div class="mini-cover"><img class="cover-img" src="/files/twilight-logo.png" alt=""></div>
+              <div class="text-lines"><div class="line" style="width:88%"></div><div class="line sub" style="width:48%"></div></div>
+              <div class="stat-line"></div>
+            </div>
+            <div class="table-row">
+              <div class="mini-cover"><img class="cover-img" src="/files/twilight-logo.png" alt=""></div>
+              <div class="text-lines"><div class="line" style="width:70%"></div><div class="line sub" style="width:58%"></div></div>
+              <div class="stat-line"></div>
+            </div>
+            <div class="table-row">
+              <div class="mini-cover"><img class="cover-img" src="/files/twilight-logo.png" alt=""></div>
+              <div class="text-lines"><div class="line" style="width:78%"></div><div class="line sub" style="width:38%"></div></div>
+              <div class="stat-line"></div>
+            </div>
+            <div class="table-row">
+              <div class="mini-cover"><img class="cover-img" src="/files/twilight-logo.png" alt=""></div>
+              <div class="text-lines"><div class="line" style="width:64%"></div><div class="line sub" style="width:52%"></div></div>
+              <div class="stat-line"></div>
+            </div>
+          </div>
+        </div>
+        <div class="workbench-side">
+          <div class="side-panel">
+            <small>NOW</small>
+            <div class="mini-cover" style="width:54px;height:54px;margin-top:9px"><img class="cover-img" src="/files/twilight-logo.png" alt=""></div>
+            <div class="stat-line" style="margin-top:9px"></div>
+          </div>
+          <div class="side-panel" style="flex:1">
+            <small>TOP</small>
+            <div class="stat-line" style="margin-top:13px;width:82%"></div>
+            <div class="stat-line" style="margin-top:10px;width:64%"></div>
+            <div class="stat-line" style="margin-top:10px;width:76%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="direction-body">
+      <div class="direction-title"><h3>B. Library Workbench</h3><span>Efficient</span></div>
+      <p>更像资料库工作台，信息密度高、查找效率强，适合大量本地曲库用户。</p>
+    </div>
+  </div>
+
+  <div class="direction-card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="mock-screen option-c console">
+      <div class="mock-topbar">
+        <span>Signal Console</span>
+        <div class="mock-window-actions"><i class="mock-dot"></i><i class="mock-dot"></i><i class="mock-dot"></i></div>
+      </div>
+      <div class="console-grid">
+        <div class="console-now">
+          <div class="console-cover"><img class="cover-img" src="/files/twilight-logo.png" alt="Twilight Echo cover"></div>
+          <div>
+            <small>PLAYBACK SIGNAL</small>
+            <h4>Silent Horizon</h4>
+            <div class="meter-stack">
+              <i class="meter" style="height:76%"></i><i class="meter"></i><i class="meter"></i><i class="meter"></i><i class="meter"></i><i class="meter"></i><i class="meter"></i><i class="meter"></i><i class="meter"></i><i class="meter"></i>
+            </div>
+          </div>
+        </div>
+        <div class="console-dsp">
+          <small>DSP CHAIN</small>
+          <div class="dsp-node active" style="margin-top:12px">SOURCE FILE</div>
+          <div class="dsp-node active">SOXR</div>
+          <div class="dsp-node active">PARAMETRIC EQ</div>
+          <div class="dsp-node">REPLAYGAIN</div>
+          <div class="dsp-node active">WASAPI OUTPUT</div>
+        </div>
+        <div class="console-lower">
+          <small>LIBRARY TELEMETRY</small>
+          <div class="console-rows">
+            <div class="console-tile"><h4>12.4k</h4><div class="stat-line" style="margin-top:8px;background:rgba(248,250,252,.48)"></div></div>
+            <div class="console-tile"><h4>38d</h4><div class="stat-line" style="margin-top:8px;background:rgba(248,250,252,.48)"></div></div>
+            <div class="console-tile"><h4>42h</h4><div class="stat-line" style="margin-top:8px;background:rgba(248,250,252,.48)"></div></div>
+            <div class="console-tile"><h4>7</h4><div class="stat-line" style="margin-top:8px;background:rgba(248,250,252,.48)"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="direction-body">
+      <div class="direction-title"><h3>C. Signal Console</h3><span>Technical</span></div>
+      <p>突出音频链路、DSP 和播放信号，适合把 Twilight Echo 做得更专业、更发烧。</p>
+    </div>
+  </div>
+</div>

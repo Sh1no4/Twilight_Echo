@@ -1,0 +1,170 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+import type { Track } from '../types/music'
+
+const { buildLogicalTracks, getTrackSource } = (await import(
+  new URL('./logicalTrackModel.ts', import.meta.url).href
+)) as typeof import('./logicalTrackModel')
+
+function track(overrides: Partial<Track> & Pick<Track, 'id' | 'title' | 'artist'>): Track {
+  return {
+    album: 'Album',
+    filePath: overrides.id,
+    fileName: `${overrides.title || 'Unknown'}.flac`,
+    duration: 180,
+    size: 1,
+    cover: null,
+    lyrics: null,
+    ...overrides
+  }
+}
+
+test('buildLogicalTracks groups source variants and prefers local lossless tracks', () => {
+  const logicalTracks = buildLogicalTracks([
+    {
+      track: track({
+        id: 'ncm:moon',
+        title: 'Moon River',
+        artist: 'Audrey',
+        source: 'ncm',
+        format: 'aac'
+      }),
+      source: 'ncm',
+      sourceName: 'NetEase',
+      providerAvailable: true,
+      providerReliability: 1
+    },
+    {
+      track: track({
+        id: 'local:moon',
+        title: ' moon river ',
+        artist: 'AUDREY',
+        source: 'local',
+        duration: 181,
+        format: 'flac',
+        bitDepth: 24
+      }),
+      source: 'local',
+      sourceName: '本地音乐',
+      providerAvailable: true,
+      providerReliability: 0.3
+    }
+  ])
+
+  assert.equal(logicalTracks.length, 1)
+  assert.equal(logicalTracks[0].id, 'logic:moon river::audrey')
+  assert.equal(logicalTracks[0].preferredTrack.id, 'local:moon')
+  assert.deepEqual(
+    logicalTracks[0].variants.map((variant) => variant.track.id),
+    ['local:moon', 'ncm:moon']
+  )
+})
+
+test('buildLogicalTracks keeps different performances separate by duration', () => {
+  const logicalTracks = buildLogicalTracks([
+    {
+      track: track({
+        id: 'ncm:studio',
+        title: 'Moon River',
+        artist: 'Audrey',
+        source: 'ncm',
+        duration: 180
+      }),
+      source: 'ncm',
+      sourceName: 'NetEase',
+      providerAvailable: true
+    },
+    {
+      track: track({
+        id: 'bili:live',
+        title: 'Moon River',
+        artist: 'Audrey',
+        source: 'bili',
+        duration: 260
+      }),
+      source: 'bili',
+      sourceName: 'Bilibili',
+      providerAvailable: true
+    }
+  ])
+
+  assert.equal(logicalTracks.length, 2)
+  assert.deepEqual(
+    logicalTracks.map((item) => item.preferredTrack.id),
+    ['ncm:studio', 'bili:live']
+  )
+})
+
+test('buildLogicalTracks prefers healthier provider variants when local is absent', () => {
+  const logicalTracks = buildLogicalTracks([
+    {
+      track: track({
+        id: 'unstable:moon',
+        title: 'Moon River',
+        artist: 'Audrey',
+        source: 'unstable'
+      }),
+      source: 'unstable',
+      sourceName: 'Unstable',
+      providerAvailable: true,
+      providerReliability: 0.2
+    },
+    {
+      track: track({
+        id: 'healthy:moon',
+        title: 'Moon River',
+        artist: 'Audrey',
+        source: 'healthy'
+      }),
+      source: 'healthy',
+      sourceName: 'Healthy',
+      providerAvailable: true,
+      providerReliability: 1
+    }
+  ])
+
+  assert.equal(logicalTracks[0].preferredTrack.id, 'healthy:moon')
+  assert.deepEqual(
+    logicalTracks[0].variants.map((variant) => variant.track.id),
+    ['healthy:moon', 'unstable:moon']
+  )
+})
+
+test('buildLogicalTracks does not merge incomplete logical identities', () => {
+  const logicalTracks = buildLogicalTracks([
+    {
+      track: track({
+        id: 'ncm:unknown-artist',
+        title: 'Moon River',
+        artist: '',
+        source: 'ncm'
+      }),
+      source: 'ncm',
+      sourceName: 'NetEase',
+      providerAvailable: true
+    },
+    {
+      track: track({
+        id: 'bili:unknown-artist',
+        title: 'Moon River',
+        artist: '',
+        source: 'bili'
+      }),
+      source: 'bili',
+      sourceName: 'Bilibili',
+      providerAvailable: true
+    }
+  ])
+
+  assert.equal(logicalTracks.length, 2)
+  assert.deepEqual(
+    logicalTracks.map((item) => item.id),
+    ['ncm:unknown-artist', 'bili:unknown-artist']
+  )
+})
+
+test('getTrackSource normalizes explicit source and provider-prefixed ids', () => {
+  assert.equal(getTrackSource({ id: 'ignored:1', source: ' NCM ' }), 'ncm')
+  assert.equal(getTrackSource({ id: ' BILI:BV1 ', source: undefined }), 'bili')
+  assert.equal(getTrackSource({ id: 'D:\\Music\\Track.flac', source: undefined }), 'local')
+})

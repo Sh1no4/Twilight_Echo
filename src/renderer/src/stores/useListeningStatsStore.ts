@@ -146,16 +146,11 @@ function dayKey(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10)
 }
 
-function shouldTrackListeningStats(track: Track): boolean {
-  return track.source !== 'bili' && !track.id.startsWith('bili:')
-}
-
 function addListeningSeconds(track: Track, seconds: number): void {
   recordListening(track, seconds, Date.now())
 }
 
 function recordListening(track: Track, seconds: number, timestamp: number): void {
-  if (!shouldTrackListeningStats(track)) return
   const today = dayKey(timestamp)
   const statKey = getListeningStatKey(track)
   const nextStats: ListeningStats = {
@@ -203,7 +198,6 @@ function recordPlaybackOutcome(
     timestamp: number
   }
 ): void {
-  if (!shouldTrackListeningStats(track)) return
   const normalizedDuration =
     Number.isFinite(duration) && duration > 0 ? duration : track.duration
   if (!Number.isFinite(position) || !Number.isFinite(normalizedDuration) || normalizedDuration <= 0) {

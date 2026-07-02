@@ -172,6 +172,18 @@ export class MediaProviderRegistry {
     this.providers.set(id, { ...provider, id })
   }
 
+  update(id: string, patch: Partial<MediaProvider>): boolean {
+    const normalizedId = normalizeProviderId(id)
+    const current = this.providers.get(normalizedId)
+    if (!current) return false
+    this.providers.set(normalizedId, {
+      ...current,
+      ...patch,
+      id: normalizedId
+    })
+    return true
+  }
+
   unregister(id: string): void {
     this.providers.delete(normalizeProviderId(id))
   }

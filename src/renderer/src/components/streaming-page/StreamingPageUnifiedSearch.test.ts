@@ -16,6 +16,15 @@ test('streaming page exposes unified song search beyond the NetEase-only surface
   assert.doesNotMatch(source, /const showNcmSearch = computed/)
 })
 
+test('streaming page keeps third-party providers on the generic provider library surface', () => {
+  assert.doesNotMatch(source, /import BilibiliPage/)
+  assert.doesNotMatch(source, /<BilibiliPage/)
+  assert.doesNotMatch(source, /showBilibiliView/)
+  assert.doesNotMatch(source, /shouldShowBilibiliViewForSidebarProvider/)
+  assert.doesNotMatch(source, /activeProvider\.value === 'bili'/)
+  assert.doesNotMatch(source, /bilibili\.setPinnedFavoriteFolder/)
+})
+
 test('recent playback detail uses local unified listening history before provider recent APIs', () => {
   assert.match(source, /getRecentTracks\(\)/)
   assert.match(source, /resolveUnifiedRecentTracks\(\{/)

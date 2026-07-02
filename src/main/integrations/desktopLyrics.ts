@@ -3,6 +3,7 @@ import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import type { DesktopLyricsSettings } from '../core/types'
+import type { DesktopLyricsTrackPayload } from '../../preload/types'
 import { writeAppSettings } from '../core/settings'
 
 function sendDesktopLyricsSnapshot(): void {
@@ -125,7 +126,7 @@ export function applyDesktopLyricsSettings(settings: DesktopLyricsSettings): voi
 
 export function setupDesktopLyricsIpc(): void {
   // Forward track/time updates from renderer to lyrics window
-  ipcMain.on('desktopLyrics:updateTrack', (_event, data: { lyrics: string | null; translatedLyrics?: string | null; title?: string; artist?: string }) => {
+  ipcMain.on('desktopLyrics:updateTrack', (_event, data: DesktopLyricsTrackPayload) => {
     runtime.latestDesktopLyricsTrack = data
     if (runtime.desktopLyricsWindow && !runtime.desktopLyricsWindow.isDestroyed()) {
       runtime.desktopLyricsWindow.webContents.send('desktopLyrics:updateTrack', data)

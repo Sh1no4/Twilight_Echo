@@ -17,6 +17,8 @@ export type PlaylistActions = {
   addToPlaylist: (playlistName: string, trackId: string, trackSnapshot?: Track) => void
   removeFromPlaylist: (playlistName: string, trackId: string) => void
   rematchTrack?: (track: Track) => Promise<void> | void
+  rematchMetadata?: (track: Track) => Promise<void> | void
+  clearMetadataMatch?: (track: Track) => Promise<void> | void
   createPlaylist: (name: string) => void
   deletePlaylist: (playlistId: string) => void
 }

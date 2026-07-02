@@ -13,6 +13,7 @@ import type { Track } from '../types/music'
 const mediaProviders = new MediaProviderRegistry()
 let defaultsRegistered = false
 let pluginProvidersSyncing: Promise<void> | null = null
+let pluginProviderHealthRefreshing: Promise<void> | null = null
 
 export function useMediaProviders(): MediaProviderRegistry {
   registerDefaultProviders()
@@ -23,6 +24,33 @@ export function useMediaProviders(): MediaProviderRegistry {
 export function registerDefaultProviders(): void {
   if (defaultsRegistered) return
   defaultsRegistered = true
+}
+
+async function refreshPluginProviderHealth(): Promise<void> {
+  if (pluginProviderHealthRefreshing) return pluginProviderHealthRefreshing
+  const api = window.api?.providers
+  if (!api) return
+
+  pluginProviderHealthRefreshing = (async () => {
+    try {
+      const providers = await api.list()
+      for (const provider of providers) {
+        if (!mediaProviders.get(provider.id)) continue
+        mediaProviders.update(provider.id, {
+          name: provider.name,
+          capabilities: provider.capabilities,
+          health: provider.health as MediaProviderHealth | undefined,
+          isEnabled: () => provider.health?.available !== false
+        })
+      }
+    } catch {
+      // Health refresh follows provider calls opportunistically; callers should keep their result.
+    } finally {
+      pluginProviderHealthRefreshing = null
+    }
+  })()
+
+  return pluginProviderHealthRefreshing
 }
 
 export async function syncPluginProviders(): Promise<void> {
@@ -38,9 +66,22 @@ export async function syncPluginProviders(): Promise<void> {
         (provider) => provider.source === 'plugin' && !activePluginProviderIds.has(provider.id)
       )
       for (const provider of providers) {
-        if (mediaProviders.get(provider.id)) continue
-        const callProvider = <T>(method: string, args: unknown[] = []): Promise<T> =>
-          api.call(provider.id, method as never, toProviderIpcArgs(args)) as Promise<T>
+        if (mediaProviders.get(provider.id)) {
+          mediaProviders.update(provider.id, {
+            name: provider.name,
+            capabilities: provider.capabilities,
+            health: provider.health as MediaProviderHealth | undefined,
+            isEnabled: () => provider.health?.available !== false
+          })
+          continue
+        }
+        const callProvider = async <T>(method: string, args: unknown[] = []): Promise<T> => {
+          try {
+            return (await api.call(provider.id, method as never, toProviderIpcArgs(args))) as T
+          } finally {
+            void refreshPluginProviderHealth()
+          }
+        }
         mediaProviders.register({
           id: provider.id,
           name: provider.name,

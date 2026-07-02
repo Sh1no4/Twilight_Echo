@@ -36,6 +36,7 @@ const {
   exclusiveMode,
   audioOutput,
   audioOutputOptions,
+  audioEngineError,
   playbackInfo,
   outputInfo,
   visualizationData,
@@ -722,6 +723,13 @@ onMounted(() => {
         <div class="player-track-info">
           <div class="player-title">{{ currentTrack.title }}</div>
           <div class="player-artist">{{ currentTrack.artist }}</div>
+          <div
+            v-if="audioEngineError"
+            class="player-playback-diagnostic"
+            :title="audioEngineError"
+          >
+            {{ audioEngineError }}
+          </div>
         </div>
       </div>
 
