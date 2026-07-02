@@ -211,6 +211,39 @@ test('enrichLocalTrackMetadata fills missing cover and lyrics without replacing 
   assert.equal(enriched.streamUrl, undefined)
 })
 
+test('enrichLocalTrackMetadata can fill missing artist and album from a close provider match', () => {
+  const localMissingArtist = {
+    ...localTrack,
+    artist: '',
+    album: ''
+  }
+  const match = findBestMetadataMatch(localMissingArtist, [
+    {
+      id: 'ncm:123',
+      title: 'Moon River',
+      artist: 'Audrey',
+      album: 'Online Album',
+      filePath: 'ncm:123',
+      fileName: 'Moon River',
+      duration: 180,
+      size: 0,
+      cover: null,
+      lyrics: null,
+      source: 'ncm'
+    }
+  ])
+
+  const candidates = buildMetadataMatchCandidates(localMissingArtist, [match!.track])
+  const enriched = enrichLocalTrackMetadata(localMissingArtist, match)
+
+  assert.equal(match?.confidence, 'medium')
+  assert.equal(candidates[0].fills.metadata, true)
+  assert.equal(enriched.artist, 'Audrey')
+  assert.equal(enriched.album, 'Online Album')
+  assert.equal(enriched.id, 'local:abc')
+  assert.equal(enriched.source, 'local')
+})
+
 test('enrichLocalTrackMetadata preserves existing lyric source labels', () => {
   const enriched = enrichLocalTrackMetadata(
     {

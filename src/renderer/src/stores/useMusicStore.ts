@@ -35,6 +35,14 @@ interface ManualMetadataMatchOptions {
   score: number
 }
 
+interface LibraryRepairReport {
+  checkedAt: string
+  repairedCount: number
+  unresolvedCount: number
+  repairedTrackIds: string[]
+  unresolvedTrackIds: string[]
+}
+
 const DEFAULT_FAVORITE_PLAYLIST_NAME = '我收藏的音乐'
 
 const tracks = shallowRef<Track[]>([])
@@ -44,6 +52,7 @@ const artists = shallowRef<LibraryItem[]>([])
 const albums = shallowRef<LibraryItem[]>([])
 const folders = shallowRef<LibraryItem[]>([])
 const playlists = ref<Playlist[]>([])
+const libraryRepairReport = ref<LibraryRepairReport | null>(null)
 const trackById = new Map<string, Track>()
 const trackPathSet = new Set<string>()
 
@@ -61,6 +70,7 @@ export function useMusicStore(): {
   albums: Ref<LibraryItem[]>
   folders: Ref<LibraryItem[]>
   playlists: Ref<Playlist[]>
+  libraryRepairReport: Ref<LibraryRepairReport | null>
   addTracks: (newTracks: Track[], options?: AddTracksOptions) => Promise<void>
   removeTrack: (id: string) => void
   clearTrackMetadataMatch: (trackId: string) => boolean
@@ -240,7 +250,10 @@ export function useMusicStore(): {
   }
 
   async function repairMovedTracksFromScannedFolders(loadedTracks: Track[]): Promise<Track[]> {
-    if (scannedFolders.value.length === 0 || loadedTracks.length === 0) return loadedTracks
+    if (scannedFolders.value.length === 0 || loadedTracks.length === 0) {
+      libraryRepairReport.value = null
+      return loadedTracks
+    }
     try {
       const scanned = (
         await Promise.all(scannedFolders.value.map((folder) => window.api.fs.scanMusicFiles(folder)))
@@ -251,12 +264,20 @@ export function useMusicStore(): {
         scannedTracks: scanned,
         fileExists: (path) => scannedPaths.has(path)
       })
+      libraryRepairReport.value = {
+        checkedAt: new Date().toISOString(),
+        repairedCount: repaired.repairedTracks.length,
+        unresolvedCount: repaired.unresolvedTracks.length,
+        repairedTrackIds: repaired.repairedTracks.map((track) => track.id),
+        unresolvedTrackIds: repaired.unresolvedTracks.map((track) => track.id)
+      }
       if (repaired.repairedTracks.length === 0) return loadedTracks
       const repairedById = new Map(repaired.repairedTracks.map((track) => [track.id, track]))
       const nextTracks = loadedTracks.map((track) => repairedById.get(track.id) ?? track)
       void scheduleSaveLibrary()
       return nextTracks
     } catch {
+      libraryRepairReport.value = null
       return loadedTracks
     }
   }
@@ -637,6 +658,7 @@ export function useMusicStore(): {
     albums,
     folders,
     playlists,
+    libraryRepairReport,
     addTracks,
     removeTrack,
     clearTrackMetadataMatch,

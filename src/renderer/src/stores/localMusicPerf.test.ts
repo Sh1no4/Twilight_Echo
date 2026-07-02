@@ -549,6 +549,65 @@ test('loadLibrary repairs moved local files from scanned folders while preservin
   store.clearTracks()
 })
 
+test('loadLibrary exposes a repair report for repaired and unresolved local files', async () => {
+  const store = setupStore()
+  const repairedOldTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'local:stable-id',
+    title: 'Moon River',
+    artist: 'Audrey',
+    album: 'Old Album',
+    filePath: 'D:\\Old\\Moon River.flac',
+    fileName: 'Moon River.flac',
+    dir: 'D:\\Old',
+    duration: 181
+  }
+  const unresolvedTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'local:missing-id',
+    title: 'Lost Song',
+    artist: 'Unknown Artist',
+    album: 'Old Album',
+    filePath: 'D:\\Old\\Lost Song.flac',
+    fileName: 'Lost Song.flac',
+    dir: 'D:\\Old',
+    duration: 200
+  }
+  const movedTrack = {
+    ...repairedOldTrack,
+    id: 'local:new-scan-id',
+    filePath: 'E:\\Music\\Audrey\\Moon River.flac',
+    fileName: 'Moon River.flac',
+    dir: 'E:\\Music\\Audrey',
+    duration: 179
+  }
+
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (): Promise<void> => {},
+        loadMusicLibrary: async (): Promise<unknown> => {
+          return { tracks: [repairedOldTrack, unresolvedTrack], folders: ['E:\\Music'] }
+        },
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: {
+        scanMusicFiles: async (): Promise<unknown[]> => [movedTrack]
+      }
+    }
+  }
+
+  await store.loadLibrary()
+
+  assert.equal(store.libraryRepairReport.value?.repairedCount, 1)
+  assert.equal(store.libraryRepairReport.value?.unresolvedCount, 1)
+  assert.deepEqual(store.libraryRepairReport.value?.repairedTrackIds, ['local:stable-id'])
+  assert.deepEqual(store.libraryRepairReport.value?.unresolvedTrackIds, ['local:missing-id'])
+
+  store.clearTracks()
+})
+
 test('loadLibrary enriches missing local metadata from provider search without changing local identity', async () => {
   const store = setupStore()
   const localTrack = {

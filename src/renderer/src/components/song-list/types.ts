@@ -9,6 +9,7 @@ export type GridItem = {
   cover?: string | null
   path?: string
   trackIds?: string[]
+  trackSnapshots?: Record<string, Track>
   isDefault?: boolean
 }
 

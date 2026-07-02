@@ -7,6 +7,7 @@ import { usePlayerStore } from '../stores/usePlayerStore'
 import type { Track } from '../types/music'
 import { getTrackSource as getLogicalTrackSource, isLosslessTrack } from '../utils/logicalTrackModel'
 import { buildMetadataMatchCandidates } from '../utils/musicMetadataMatching'
+import { formatPlaylistSourceSummary, summarizePlaylistSources } from '../utils/playlistSourceSummary'
 import CoverImg from './CoverImg.vue'
 import { formatDuration } from './song-list/formatDuration'
 import type { GridItem } from './song-list/types'
@@ -32,6 +33,7 @@ const {
   albums,
   playlists,
   folders,
+  libraryRepairReport,
   getPlaylistTracks,
   removeTrack,
   clearTrackMetadataMatch,
@@ -104,6 +106,18 @@ const isPlaylistDetail = computed(() => currentPlaylistName.value !== null)
 const repairMessage = ref('')
 
 const shouldUseUnifiedSearch = computed(() => props.category === 'allSongs' && !props.filter)
+
+const libraryRepairStatusText = computed(() => {
+  if (props.category !== 'allSongs' || props.filter) return ''
+  const report = libraryRepairReport.value
+  if (!report || (report.repairedCount === 0 && report.unresolvedCount === 0)) return ''
+  const parts: string[] = []
+  if (report.repairedCount > 0) parts.push(`已自动重定位 ${report.repairedCount} 首`)
+  if (report.unresolvedCount > 0) {
+    parts.push(`${report.unresolvedCount} 首本地文件未找到，可右键重新匹配音源`)
+  }
+  return parts.join('，')
+})
 
 watch(
   [debouncedSearchQuery, () => props.category, () => props.filter],
@@ -284,6 +298,10 @@ function trackSourceLabel(track: Track): string {
 
 function trackSourceClass(track: Track): string {
   return getLogicalTrackSource(track) === 'local' ? 'local' : 'provider'
+}
+
+function playlistSourceSummaryLabel(playlist: GridItem): string {
+  return formatPlaylistSourceSummary(summarizePlaylistSources(playlist))
 }
 
 async function handleManualRematch(track: Track): Promise<void> {
@@ -540,6 +558,9 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 </div>
                 <div class="playlist-name">{{ playlist.name }}</div>
                 <div class="playlist-count">{{ playlist.trackIds?.length ?? 0 }} 首</div>
+                <div v-if="playlistSourceSummaryLabel(playlist)" class="playlist-source-summary">
+                  {{ playlistSourceSummaryLabel(playlist) }}
+                </div>
                 <div
                   v-if="!playlist.isDefault"
                   class="playlist-delete-btn"
@@ -581,6 +602,9 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               <div class="title-group">
                 <h2 class="song-list-title">{{ viewTitle }}</h2>
                 <span v-if="repairMessage" class="repair-status">{{ repairMessage }}</span>
+                <span v-else-if="libraryRepairStatusText" class="library-repair-status">
+                  {{ libraryRepairStatusText }}
+                </span>
               </div>
             </div>
             <div class="header-right">

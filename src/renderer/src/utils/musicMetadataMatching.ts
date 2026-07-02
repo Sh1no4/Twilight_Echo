@@ -63,7 +63,9 @@ export function buildMetadataMatchCandidates(
           lyrics: !metadataAvailable(localTrack.lyrics) && metadataAvailable(candidate.lyrics),
           translatedLyrics:
             !metadataAvailable(localTrack.translatedLyrics) && metadataAvailable(candidate.translatedLyrics),
-          metadata: !metadataAvailable(localTrack.album) && metadataAvailable(candidate.album)
+          metadata:
+            (!metadataAvailable(localTrack.artist) && metadataAvailable(candidate.artist)) ||
+            (!metadataAvailable(localTrack.album) && metadataAvailable(candidate.album))
         },
         index
       }
@@ -86,6 +88,7 @@ export function enrichLocalTrackMetadata(
     : localTrack.translatedLyrics
   const enriched: Track = {
     ...localTrack,
+    artist: policy.metadata ? localTrack.artist || metadata.artist : localTrack.artist,
     album: policy.metadata ? localTrack.album || metadata.album : localTrack.album,
     cover: policy.cover ? localTrack.cover ?? metadata.cover ?? null : localTrack.cover,
     lyrics: nextLyrics,
@@ -146,12 +149,14 @@ function scoreMetadataMatch(localTrack: Track, candidate: Track): MetadataMatch 
   const localArtist = normalizeMetadataText(localTrack.artist)
   const candidateArtist = normalizeMetadataText(candidate.artist)
   if (!localTitle || !candidateTitle || localTitle !== candidateTitle) return null
-  if (!localArtist || !candidateArtist || localArtist !== candidateArtist) return null
+  if (localArtist && (!candidateArtist || localArtist !== candidateArtist)) return null
 
   const durationDelta = durationDeltaSeconds(localTrack, candidate)
   if (durationDelta != null && durationDelta > LOOSE_DURATION_TOLERANCE_SECONDS) return null
+  if (!localArtist && durationDelta != null && durationDelta > EXACT_DURATION_TOLERANCE_SECONDS) return null
 
   let score = 70
+  if (!localArtist && candidateArtist) score -= 12
   if (durationDelta == null) {
     score += 5
   } else if (durationDelta <= EXACT_DURATION_TOLERANCE_SECONDS) {

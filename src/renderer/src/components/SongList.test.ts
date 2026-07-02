@@ -87,3 +87,28 @@ test('song list shows generic source badges for mixed local and provider search 
   assert.match(source, /本地无损/)
   assert.match(source, /item\.sourceName/)
 })
+
+test('song list playlist cards expose mixed-source composition', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
+
+  assert.match(source, /summarizePlaylistSources/)
+  assert.match(source, /formatPlaylistSourceSummary/)
+  assert.match(source, /function playlistSourceSummaryLabel\(playlist: GridItem\): string/)
+  assert.match(source, /class="playlist-source-summary"/)
+  assert.match(source, /playlistSourceSummaryLabel\(playlist\)/)
+  assert.match(styles, /\.playlist-source-summary/)
+})
+
+test('song list surfaces library repair status for moved or unresolved local files', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
+
+  assert.match(source, /libraryRepairReport/)
+  assert.match(source, /libraryRepairStatusText/)
+  assert.match(source, /已自动重定位/)
+  assert.match(source, /本地文件未找到/)
+  assert.match(source, /重新匹配音源/)
+  assert.match(source, /class="library-repair-status"/)
+  assert.match(styles, /\.library-repair-status/)
+})

@@ -117,6 +117,21 @@
   min-width: 0;
 }
 
+.repair-status,
+.library-repair-status {
+  max-width: min(52vw, 620px);
+  color: var(--te-neutral-600);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.library-repair-status {
+  color: var(--te-primary-600);
+}
+
 .btn-back {
   width: 32px;
   height: 32px;
@@ -286,6 +301,17 @@
   font-size: 12px;
   color: var(--te-neutral-500);
   padding: 0 2px;
+}
+
+.playlist-source-summary {
+  margin-top: 4px;
+  padding: 0 2px;
+  color: var(--te-neutral-500);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Empty State */
