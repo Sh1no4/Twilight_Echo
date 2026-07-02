@@ -73,6 +73,7 @@ export interface UnifiedSearchResult {
   items: UnifiedSearchTrackItem[]
   logicalItems: LogicalMusicItem[]
   health: Record<string, UnifiedSearchProviderHealth>
+  total: number
 }
 
 export async function unifiedSearchSongs(options: UnifiedSearchOptions): Promise<UnifiedSearchResult> {
@@ -86,6 +87,7 @@ export async function unifiedSearchSongs(options: UnifiedSearchOptions): Promise
     })
   )
   const health: Record<string, UnifiedSearchProviderHealth> = {}
+  let total = localItems.length
 
   const providerItems = (
     await Promise.all(
@@ -114,6 +116,7 @@ export async function unifiedSearchSongs(options: UnifiedSearchOptions): Promise
         try {
           const result = await options.searchProviderSongs(provider.id, query, limit, offset)
           baseHealth.resultCount = result.items.length
+          total += result.total
           return result.items.map((track) =>
             toSearchItem(track, {
               sourceName: provider.name,
@@ -135,7 +138,8 @@ export async function unifiedSearchSongs(options: UnifiedSearchOptions): Promise
   return {
     items,
     logicalItems: buildLogicalMusicItemsFromSearchItems(items),
-    health
+    health,
+    total
   }
 }
 

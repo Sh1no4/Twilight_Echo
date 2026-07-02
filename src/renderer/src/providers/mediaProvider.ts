@@ -228,6 +228,30 @@ export class MediaProviderRegistry {
     return provider.searchSongs(keywords, limit, offset)
   }
 
+  async searchPlaylists(
+    providerId: string,
+    keywords: string,
+    limit?: number,
+    offset?: number
+  ): Promise<MediaProviderSearchResult<MediaProviderPlaylistSummary>> {
+    const provider = this.get(providerId)
+    if (!provider?.searchPlaylists) return { items: [], total: 0 }
+    await assertProviderEnabled(provider)
+    return provider.searchPlaylists(keywords, limit, offset)
+  }
+
+  async searchArtists(
+    providerId: string,
+    keywords: string,
+    limit?: number,
+    offset?: number
+  ): Promise<MediaProviderSearchResult<MediaProviderArtistSummary>> {
+    const provider = this.get(providerId)
+    if (!provider?.searchArtists) return { items: [], total: 0 }
+    await assertProviderEnabled(provider)
+    return provider.searchArtists(keywords, limit, offset)
+  }
+
   async resolveLyrics(track: Track): Promise<MediaProviderLyrics> {
     const provider = this.getForTrack(track)
     if (!provider?.getLyrics) return { lyrics: null, translatedLyrics: null }

@@ -78,6 +78,7 @@ export interface ProviderInfo {
 export interface OnlineProviderStore {
   providers: Ref<ProviderInfo[]>
   syncProviders: () => Promise<void>
+  stopProviderHealthPolling: () => void
   hasProvider: (id: string) => boolean
   getProvider: (id: string) => ProviderInfo | undefined
   checkLogin: (id: string) => Promise<ProviderLoginState>
@@ -112,6 +113,24 @@ async function syncProviders(): Promise<void> {
 // toggle button appears once a second library provider registers and disappears
 // again when that provider is gone.
 let pluginChangeListenerSetup = false
+let healthPollingTimer: number | null = null
+const PROVIDER_HEALTH_POLL_INTERVAL_MS = 30_000
+
+function startProviderHealthPolling(): void {
+  if (healthPollingTimer !== null) return
+  if (typeof window === 'undefined') return
+  healthPollingTimer = window.setInterval(() => {
+    void syncProviders().catch(() => undefined)
+  }, PROVIDER_HEALTH_POLL_INTERVAL_MS)
+}
+
+function stopProviderHealthPolling(): void {
+  if (healthPollingTimer !== null) {
+    window.clearInterval(healthPollingTimer)
+    healthPollingTimer = null
+  }
+}
+
 function ensurePluginChangeListener(): void {
   if (pluginChangeListenerSetup) return
   if (typeof window === 'undefined' || !window.api?.plugins?.onChanged) return
@@ -119,6 +138,10 @@ function ensurePluginChangeListener(): void {
   window.api.plugins.onChanged(() => {
     void syncProviders().catch(() => undefined)
   })
+  // Poll provider health so the streaming UI's health badges reflect the
+  // main-process diagnostics (success rates, recent errors, plugin status)
+  // without waiting for a plugin lifecycle event.
+  startProviderHealthPolling()
 }
 
 async function callProvider<T>(providerId: string, method: string, args: unknown[] = []): Promise<T> {
@@ -194,6 +217,7 @@ export function useProviderStore(): OnlineProviderStore {
   return {
     providers,
     syncProviders,
+    stopProviderHealthPolling,
     hasProvider,
     getProvider,
     checkLogin,

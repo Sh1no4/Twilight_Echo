@@ -4,7 +4,10 @@ import { useUnifiedMusicSearch } from '../app/useUnifiedMusicSearch'
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
+import { useProviderStore } from '../stores/useProviderStore'
+import { getRecentTracks } from '../stores/useListeningStatsStore'
 import type { Track } from '../types/music'
+import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
 import { getTrackSource as getLogicalTrackSource, isLosslessTrack } from '../utils/logicalTrackModel'
 import { buildMetadataMatchCandidates } from '../utils/musicMetadataMatching'
 import { formatPlaylistSourceSummary, summarizePlaylistSources } from '../utils/playlistSourceSummary'
@@ -47,11 +50,57 @@ const {
 const { currentTrack, playTrack } = usePlayerStore()
 const mediaProviders = useMediaProviders()
 const unifiedSearch = useUnifiedMusicSearch()
+const providerStore = useProviderStore()
 
 const { searchQuery, debouncedSearchQuery, searchInputFocused } = useSongListSearch()
 
+// ─── Recent playback source selector ──────────────────────────────────────
+const recentSource = ref('local')
+const recentSourceMenuOpen = ref(false)
+
+const recentSourceOptions = computed(() => {
+  const options = [
+    { id: 'local', label: '本地音乐', icon: 'pi pi-desktop' },
+    { id: 'all', label: '全平台', icon: 'pi pi-bolt' }
+  ]
+  for (const provider of providerStore.providers.value) {
+    if (provider.capabilities.includes('library')) {
+      options.push({
+        id: provider.id,
+        label: provider.name,
+        icon: provider.ui?.icon || 'pi pi-cloud'
+      })
+    }
+  }
+  return options
+})
+
+const activeRecentSourceLabel = computed(
+  () => recentSourceOptions.value.find((o) => o.id === recentSource.value)?.label ?? '本地音乐'
+)
+
+function selectRecentSource(sourceId: string): void {
+  recentSourceMenuOpen.value = false
+  recentSource.value = sourceId
+}
+
+function closeRecentSourceMenuDelayed(): void {
+  setTimeout(() => { recentSourceMenuOpen.value = false }, 150)
+}
+
 const baseDisplayTracks = computed(() => {
   if (props.category === 'allSongs') return tracks.value
+  if (props.category === 'recent') {
+    const recentStats = getRecentTracks()
+    const source = recentSource.value
+    if (source === 'all') {
+      return resolveUnifiedRecentTracks({ recentStats, localTracks: tracks.value })
+    }
+    const filteredStats = source === 'local'
+      ? recentStats.filter((stat) => stat.sourceIds?.some((sid) => sid.source === 'local'))
+      : recentStats.filter((stat) => stat.sourceIds?.some((sid) => sid.source === source))
+    return resolveUnifiedRecentTracks({ recentStats: filteredStats, localTracks: tracks.value })
+  }
   if (props.filter) {
     if (props.filter.startsWith('artist:')) {
       const name = props.filter.slice(7)
@@ -82,6 +131,7 @@ const viewTitle = computed(() => {
     return '文件夹'
   }
   if (props.category === 'allSongs') return '本地音乐'
+  if (props.category === 'recent') return '最近播放'
   if (props.category === 'artists') {
     if (props.filter && props.filter.startsWith('artist:')) return props.filter.slice(7)
     return '艺术家'
@@ -176,12 +226,12 @@ const unifiedSearchStatusText = computed(() => {
 })
 
 const showGrid = computed(() => {
-  if (props.category === 'allSongs') return false
+  if (props.category === 'allSongs' || props.category === 'recent') return false
   return !props.filter
 })
 
 const showTable = computed(() => {
-  if (props.category === 'allSongs') return true
+  if (props.category === 'allSongs' || props.category === 'recent') return true
   return !!props.filter
 })
 
@@ -608,6 +658,30 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               </div>
             </div>
             <div class="header-right">
+              <div v-if="category === 'recent'" class="recent-source-dropdown" :class="{ open: recentSourceMenuOpen }">
+                <button
+                  class="recent-source-trigger"
+                  @click="recentSourceMenuOpen = !recentSourceMenuOpen"
+                  @blur="closeRecentSourceMenuDelayed"
+                >
+                  <i class="pi pi-bolt" style="font-size: 13px"></i>
+                  <span>{{ activeRecentSourceLabel }}</span>
+                  <i class="pi pi-chevron-down" style="font-size: 10px"></i>
+                </button>
+                <div v-if="recentSourceMenuOpen" class="recent-source-menu">
+                  <div
+                    v-for="opt in recentSourceOptions"
+                    :key="opt.id"
+                    class="recent-source-option"
+                    :class="{ active: recentSource === opt.id }"
+                    @mousedown.prevent="selectRecentSource(opt.id)"
+                  >
+                    <i class="pi" :class="opt.icon" style="font-size: 13px"></i>
+                    <span>{{ opt.label }}</span>
+                    <i v-if="recentSource === opt.id" class="pi pi-check" style="font-size: 12px; margin-left: auto"></i>
+                  </div>
+                </div>
+              </div>
               <div class="search-box" :class="{ focused: searchInputFocused }">
                 <i class="pi pi-search search-icon"></i>
                 <input

@@ -1,4 +1,4 @@
-export type StreamingTabKey = 'home' | 'library'
+export type StreamingTabKey = 'home' | 'library' | 'recent'
 
 export interface StreamingNavigationProvider {
   id: string
@@ -69,6 +69,13 @@ export function buildStreamingSidebarItems({
       label: '音乐库',
       icon: 'pi pi-heart',
       tab: 'library'
+    })
+    items.push({
+      key: 'recent',
+      provider: NCM_PROVIDER_ID,
+      label: '最近播放',
+      icon: 'pi pi-history',
+      tab: 'recent'
     })
   }
   for (const provider of providers) {

@@ -515,6 +515,7 @@ test('loadLibrary repairs moved local files from scanned folders while preservin
   }
 
   await store.loadLibrary()
+  await store.whenLibrarySettled()
 
   assert.equal(scanCallCount, 1)
   assert.equal(store.tracks.value.length, 1)
@@ -599,6 +600,7 @@ test('loadLibrary exposes a repair report for repaired and unresolved local file
   }
 
   await store.loadLibrary()
+  await store.whenLibrarySettled()
 
   assert.equal(store.libraryRepairReport.value?.repairedCount, 1)
   assert.equal(store.libraryRepairReport.value?.unresolvedCount, 1)
@@ -677,6 +679,7 @@ test('loadLibrary enriches missing local metadata from provider search without c
   }
 
   await store.loadLibrary()
+  await store.whenLibrarySettled()
 
   assert.equal(providerSearchCalls, 1)
   assert.equal(store.tracks.value[0].id, 'local:moon')
@@ -940,6 +943,7 @@ test('loadLibrary respects cache policy when provider metadata is available', as
 
   try {
     await store.loadLibrary()
+    await store.whenLibrarySettled()
 
     assert.equal(providerSearchCalls, 0)
     assert.equal(store.tracks.value[0].album, '')

@@ -11,7 +11,7 @@ export type SettingsSection =
   | 'shortcuts'
   | 'about'
 
-const songlistOrder = ['dashboard', 'allSongs', 'artists', 'albums', 'playlists', 'folders'] as const
+const songlistOrder = ['dashboard', 'allSongs', 'artists', 'albums', 'playlists', 'folders', 'recent'] as const
 
 export function useAppNavigation() {
   const menuOpen = ref(false)

@@ -64,6 +64,11 @@ let rebuildCount = 0
 let saveLibraryTimer: ReturnType<typeof setTimeout> | null = null
 const pendingSaveResolvers: Array<() => void> = []
 
+// Background post-load state — tracks the in-flight repair + enrichment promise
+// so callers (and tests) can await it without blocking the initial track render.
+let librarySettlementToken = 0
+let librarySettlementInFlight: Promise<void> | null = null
+
 export function useMusicStore(): {
   tracks: Ref<Track[]>
   artists: Ref<LibraryItem[]>
@@ -95,6 +100,7 @@ export function useMusicStore(): {
   scheduleSaveLibrary: () => Promise<void>
   flushSaveLibrary: () => void
   loadLibrary: () => Promise<void>
+  whenLibrarySettled: () => Promise<void>
   handleLibraryChange: (change: { kind: 'add' | 'remove' | 'unknown'; path?: string } | undefined) => Promise<void>
   refreshLibraryIndex: () => void
   scannedFolders: Ref<string[]>
@@ -244,9 +250,40 @@ export function useMusicStore(): {
       loadedTracks = (saved.tracks || []) as Track[]
       scannedFolders.value = (saved.folders || []) as string[]
     }
-    const repairedTracks = await repairMovedTracksFromScannedFolders(loadedTracks)
-    tracks.value = await enrichTracksFromProviders(repairedTracks)
+    // Set tracks immediately so the UI renders local music without waiting for
+    // file-system repair scans (can take 30s+ for large libraries) or provider
+    // metadata enrichment (can take 30s+ if the provider is unreachable).
+    tracks.value = loadedTracks
     rebuildDerivedCollections()
+    // Repair + enrichment run in the background. Results are merged back by
+    // track id so concurrently-added/removed tracks are safe. A token guards
+    // against stale results from a previous loadLibrary call.
+    const token = ++librarySettlementToken
+    librarySettlementInFlight = (async () => {
+      // Stage 1: repair moved/missing local files (scans file system — slow)
+      const repairedTracks = await repairMovedTracksFromScannedFolders(loadedTracks)
+      if (token !== librarySettlementToken) return
+      if (repairedTracks !== loadedTracks) {
+        const repairedById = new Map(repairedTracks.map((t) => [t.id, t]))
+        tracks.value = tracks.value.map((t) => repairedById.get(t.id) ?? t)
+        rebuildDerivedCollections()
+      }
+      // Stage 2: enrich metadata from providers (network calls — slow)
+      const enriched = await enrichTracksFromProviders(repairedTracks)
+      if (token !== librarySettlementToken) return
+      if (enriched !== repairedTracks) {
+        const enrichedById = new Map(enriched.map((t) => [t.id, t]))
+        tracks.value = tracks.value.map((t) => enrichedById.get(t.id) ?? t)
+        rebuildDerivedCollections()
+      }
+    })()
+      .finally(() => {
+        if (token === librarySettlementToken) librarySettlementInFlight = null
+      })
+  }
+
+  function whenLibrarySettled(): Promise<void> {
+    return librarySettlementInFlight ?? Promise.resolve()
   }
 
   async function repairMovedTracksFromScannedFolders(loadedTracks: Track[]): Promise<Track[]> {
@@ -677,6 +714,7 @@ export function useMusicStore(): {
     loadPlaylists,
     saveLibrary,
     loadLibrary,
+    whenLibrarySettled,
     refreshLibraryIndex: rebuildDerivedCollections,
     scannedFolders,
     isScanning,

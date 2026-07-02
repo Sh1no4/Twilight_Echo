@@ -16,6 +16,7 @@ import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
 import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useSettingsStore } from './useSettingsStore'
+import { useMusicStore } from './useMusicStore'
 
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
@@ -241,6 +242,7 @@ let playbackAudio: HTMLAudioElement | null = null
 let playbackObjectUrl: string | null = null
 let nativePlaybackActive = false
 let activeLoadToken = 0
+let rendererFallbackInProgress = false
 let rendererPlaybackWatchdogTimer: number | null = null
 const RENDERER_PLAYBACK_WATCHDOG_MS = 220
 const PLAYBACK_TOGGLE_INTENT_GRACE_MS = 300
@@ -392,6 +394,25 @@ function getPlaybackAudio(): HTMLAudioElement {
       message: audio.error?.message ?? '',
       src: audio.src ? audio.src.slice(0, 120) : ''
     })
+    // Renderer (non-native) playback failed — attempt cross-source fallback
+    // before surfacing the error. loadAndPlay's catch block already handles
+    // failures during initial load; this covers mid-stream CDN drops / 403 /
+    // decode errors that occur after playback has started.
+    const track = currentTrack.value
+    if (track && !nativePlaybackActive && !rendererFallbackInProgress) {
+      rendererFallbackInProgress = true
+      void handlePlaybackFallback(track, new Error(message), activeLoadToken).then(
+        (handled) => {
+          rendererFallbackInProgress = false
+          if (!handled) {
+            audioEngineError.value = message
+            isPlaying.value = false
+            isLoading.value = false
+          }
+        }
+      )
+      return
+    }
     audioEngineError.value = message
     isPlaying.value = false
     isLoading.value = false
@@ -1191,6 +1212,9 @@ async function handleProviderRematchFallback(
   queueIndex.value = queue.value.findIndex((track) => track.id === rematched.id)
   if (queueIndex.value < 0) queueIndex.value = 0
   currentTrack.value = rematched
+  // Persist the rematch so playlists/library references to the expired
+  // provider track are replaced — not just the transient playback queue.
+  useMusicStore().replaceTrackReference(failedTrack.id, rematched)
   void loadAndPlay(rematched)
   return true
 }

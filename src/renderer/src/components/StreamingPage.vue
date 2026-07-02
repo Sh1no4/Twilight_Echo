@@ -14,6 +14,7 @@ import { usePlayerStore } from '../stores/usePlayerStore'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useMediaProviders } from '../providers'
 import type {
+  MediaProviderArtistSummary,
   MediaProviderPlaylistSummary,
   MediaProviderProfile
 } from '../providers/mediaProvider'
@@ -40,7 +41,7 @@ import {
   summarizeUnifiedFavorites
 } from '../utils/unifiedFavoriteTracks'
 import type { PageState } from './streaming-page/types'
-import { useStreamingSearch } from './streaming-page/useStreamingSearch'
+import { useStreamingSearch, type SearchSource, type SearchSourceOption } from './streaming-page/useStreamingSearch'
 
 interface RecSection {
   key: string
@@ -314,14 +315,137 @@ async function searchUnifiedSongs(
     offset
   })
   return {
-    tracks: result.items.map((item) => item.track),
-    total: result.items.length
+    tracks: result.logicalItems.map((item) => item.preferredTrack),
+    total: result.total
   }
 }
+
+// ─── Per-provider and local search functions for source switching ──────────
+
+async function searchProviderSongs(
+  providerId: string,
+  keywords: string,
+  limit?: number,
+  offset?: number
+): Promise<{ tracks: Track[]; total: number }> {
+  const result = await mediaProviders.searchSongs(providerId, keywords, limit, offset)
+  return { tracks: result.items, total: result.total }
+}
+
+async function searchProviderPlaylists(
+  providerId: string,
+  keywords: string,
+  limit?: number,
+  offset?: number
+): Promise<{ playlists: MediaProviderPlaylistSummary[]; total: number }> {
+  const result = await mediaProviders.searchPlaylists(providerId, keywords, limit, offset)
+  return { playlists: result.items, total: result.total }
+}
+
+async function searchProviderArtists(
+  providerId: string,
+  keywords: string,
+  limit?: number,
+  offset?: number
+): Promise<{ artists: MediaProviderArtistSummary[]; total: number }> {
+  const result = await mediaProviders.searchArtists(providerId, keywords, limit, offset)
+  return { artists: result.items, total: result.total }
+}
+
+function normalizeLocalQuery(q: string): string {
+  return q.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+}
+
+async function searchLocalSongs(
+  keywords: string,
+  limit: number = 30,
+  offset: number = 0
+): Promise<{ tracks: Track[]; total: number }> {
+  const q = normalizeLocalQuery(keywords.trim())
+  if (!q) return { tracks: [], total: 0 }
+  const all = musicStore.tracks.value
+  const matched = all.filter(
+    (t) =>
+      normalizeLocalQuery(t.title).includes(q) ||
+      normalizeLocalQuery(t.artist).includes(q) ||
+      normalizeLocalQuery(t.album).includes(q)
+  )
+  return { tracks: matched.slice(offset, offset + limit), total: matched.length }
+}
+
+async function searchLocalPlaylists(
+  keywords: string,
+  limit: number = 30,
+  offset: number = 0
+): Promise<{ playlists: MediaProviderPlaylistSummary[]; total: number }> {
+  const q = normalizeLocalQuery(keywords.trim())
+  if (!q) return { playlists: [], total: 0 }
+  const matched = musicStore.playlists.value.filter((pl) => normalizeLocalQuery(pl.name).includes(q))
+  const summaries: MediaProviderPlaylistSummary[] = matched.map((pl) => ({
+    id: pl.id,
+    name: pl.name,
+    cover: null,
+    trackCount: pl.trackIds.length
+  }))
+  return { playlists: summaries.slice(offset, offset + limit), total: summaries.length }
+}
+
+async function searchLocalArtists(
+  keywords: string,
+  limit: number = 30,
+  offset: number = 0
+): Promise<{ artists: MediaProviderArtistSummary[]; total: number }> {
+  const q = normalizeLocalQuery(keywords.trim())
+  if (!q) return { artists: [], total: 0 }
+  const matched = musicStore.artists.value.filter((a) => normalizeLocalQuery(a.name).includes(q))
+  const summaries: MediaProviderArtistSummary[] = matched.map((a) => ({
+    id: a.name,
+    name: a.name,
+    picUrl: a.cover,
+    musicSize: a.trackCount
+  }))
+  return { artists: summaries.slice(offset, offset + limit), total: summaries.length }
+}
+
+const searchSources = computed<SearchSourceOption[]>(() => {
+  const sources: SearchSourceOption[] = [
+    {
+      id: 'all',
+      label: '全部音源',
+      icon: 'pi pi-bolt',
+      available: true,
+      supportedTypes: ['songs', 'playlists', 'artists']
+    },
+    {
+      id: 'local',
+      label: '本地音乐',
+      icon: 'pi pi-desktop',
+      available: musicStore.tracks.value.length > 0,
+      supportedTypes: ['songs', 'playlists', 'artists']
+    }
+  ]
+  for (const provider of providerStore.providers.value) {
+    const hasSearch = provider.capabilities.includes('search')
+    const hasPlaylist = provider.capabilities.includes('playlist')
+    const supportedTypes: SearchSourceOption['supportedTypes'] = []
+    if (hasSearch) supportedTypes.push('songs', 'artists')
+    if (hasPlaylist) supportedTypes.push('playlists')
+    if (supportedTypes.length === 0) continue
+    sources.push({
+      id: provider.id,
+      label: provider.name,
+      icon: provider.ui?.icon || 'pi pi-cloud',
+      available: provider.health?.available !== false,
+      supportedTypes
+    })
+  }
+  return sources
+})
 
 const {
   searchQuery,
   searchType,
+  searchSource,
   searchResults,
   searchPlaylistsResults,
   searchArtistsResults,
@@ -331,6 +455,7 @@ const {
   searchError,
   searchInputFocused,
   isSearching,
+  availableSearchTypes,
   clearSearch,
   performSearch,
   onPageChange,
@@ -340,8 +465,30 @@ const {
   searchUnifiedSongs,
   searchPlaylists,
   searchArtists,
+  searchProviderSongs,
+  searchProviderPlaylists,
+  searchProviderArtists,
+  searchLocalSongs,
+  searchLocalPlaylists,
+  searchLocalArtists,
+  searchSources,
   playTrack
 })
+
+const sourceMenuOpen = ref(false)
+const activeSourceOption = computed(() =>
+  searchSources.value.find((s) => s.id === searchSource.value) ?? searchSources.value[0] ?? null
+)
+function selectSearchSource(sourceId: SearchSource): void {
+  const source = searchSources.value.find((s) => s.id === sourceId)
+  if (!source || !source.available) return
+  searchSource.value = sourceId
+  sourceMenuOpen.value = false
+}
+
+function closeSourceMenuDelayed(): void {
+  setTimeout(() => { sourceMenuOpen.value = false }, 150)
+}
 
 // Like button state
 const likingTracks = ref<Set<number>>(new Set())
@@ -601,7 +748,7 @@ const detailFollowButtonIcon = computed(() =>
 )
 
 function selectTab(key: StreamingTab): void {
-  if (isExternalActive.value && key !== 'library') return
+  if (isExternalActive.value && key !== 'library' && key !== 'recent') return
   if (activeTab.value !== key) {
     const oldIndex = getStreamingTabIndex(activeTab.value)
     const newIndex = getStreamingTabIndex(key)
@@ -648,6 +795,11 @@ function getSharedLibraryProviderId(): string {
 
 function selectSidebarItem(item: SidebarItem, options: { persistProvider?: boolean } = {}): void {
   const persistProvider = options.persistProvider !== false
+  if (item.tab === 'recent') {
+    selectTab('recent')
+    void openRecent()
+    return
+  }
   if (item.tab === 'library') {
     const provider = getSharedLibraryProviderId()
     if (activeProvider.value !== provider) {
@@ -917,15 +1069,22 @@ async function openAlbum(album: NcmAlbumSummary): Promise<void> {
   }
 }
 
-async function openArtist(artist: NcmArtistSummary, linkedUser?: NcmUserSummary): Promise<void> {
+async function openArtist(artist: MediaProviderArtistSummary, linkedUser?: NcmUserSummary): Promise<void> {
+  const ncmArtist: NcmArtistSummary = {
+    id: Number(artist.id),
+    name: artist.name,
+    picUrl: artist.picUrl,
+    albumSize: artist.albumSize ?? 0,
+    musicSize: artist.musicSize ?? 0
+  }
   streamingTransitionName.value = 'stream-page-down'
-  currentDetail.value = { type: 'artist', artist, user: linkedUser }
+  currentDetail.value = { type: 'artist', artist: ncmArtist, user: linkedUser }
   activeArtistTab.value = 'songs'
   const token = beginDetailLoad()
 
   try {
     let resolvedArtist = await resolveLinkedStreamingArtist(
-      artist,
+      ncmArtist,
       linkedUser,
       findArtistByUserName
     )
@@ -1060,13 +1219,25 @@ async function openRecent(): Promise<void> {
 
   try {
     const recentStats = getRecentTracks()
+    const providerId = activeProvider.value
+    const filteredStats = recentStats.filter(
+      (stat) => stat.sourceIds?.some((sid) => sid.source === providerId)
+    )
     let tracks = resolveUnifiedRecentTracks({
-      recentStats,
+      recentStats: filteredStats,
       localTracks: musicStore.tracks.value
     })
-    if (tracks.length === 0) {
-      tracks = await fetchRecentSongs()
+    if (providerId === NCM_PROVIDER_ID) {
+      const serverRecent = await fetchRecentSongs().catch(() => [] as Track[])
+      const seenIds = new Set(tracks.map((t) => t.id))
+      for (const t of serverRecent) {
+        if (!seenIds.has(t.id)) {
+          tracks.push(t)
+          seenIds.add(t.id)
+        }
+      }
     }
+
     if (!isActiveDetailLoad(token)) return
     detailTracks.value = tracks
   } catch (error) {
@@ -1410,28 +1581,54 @@ onMounted(async () => {
         </div>
       </div>
 
-      <!-- Search Type Tabs -->
+      <!-- Search Type Tabs + Source Selector -->
       <div v-if="showUnifiedSearch && isSearching && !currentDetail" class="streaming-search-tabs">
-        <div
-          class="search-tab-pill"
-          :class="{ active: searchType === 'songs' }"
-          @click="searchType = 'songs'"
-        >
-          单曲
+        <div class="search-type-group">
+          <div
+            class="search-tab-pill"
+            :class="{ active: searchType === 'songs', disabled: !availableSearchTypes.includes('songs') }"
+            @click="availableSearchTypes.includes('songs') && (searchType = 'songs')"
+          >
+            单曲
+          </div>
+          <div
+            class="search-tab-pill"
+            :class="{ active: searchType === 'playlists', disabled: !availableSearchTypes.includes('playlists') }"
+            @click="availableSearchTypes.includes('playlists') && (searchType = 'playlists')"
+          >
+            歌单
+          </div>
+          <div
+            class="search-tab-pill"
+            :class="{ active: searchType === 'artists', disabled: !availableSearchTypes.includes('artists') }"
+            @click="availableSearchTypes.includes('artists') && (searchType = 'artists')"
+          >
+            歌手
+          </div>
         </div>
-        <div
-          class="search-tab-pill"
-          :class="{ active: searchType === 'playlists' }"
-          @click="searchType = 'playlists'"
-        >
-          歌单
-        </div>
-        <div
-          class="search-tab-pill"
-          :class="{ active: searchType === 'artists' }"
-          @click="searchType = 'artists'"
-        >
-          歌手
+        <div class="search-source-dropdown" :class="{ open: sourceMenuOpen }">
+          <button
+            class="search-source-trigger"
+            @click="sourceMenuOpen = !sourceMenuOpen"
+            @blur="closeSourceMenuDelayed"
+          >
+            <i v-if="activeSourceOption?.icon" class="pi" :class="activeSourceOption.icon" style="font-size: 13px"></i>
+            <span>{{ activeSourceOption?.label ?? '音源' }}</span>
+            <i class="pi pi-chevron-down" style="font-size: 10px"></i>
+          </button>
+          <div v-if="sourceMenuOpen" class="search-source-menu">
+            <div
+              v-for="source in searchSources"
+              :key="source.id"
+              class="search-source-option"
+              :class="{ active: searchSource === source.id, disabled: !source.available }"
+              @mousedown.prevent="selectSearchSource(source.id)"
+            >
+              <i v-if="source.icon" class="pi" :class="source.icon" style="font-size: 13px"></i>
+              <span>{{ source.label }}</span>
+              <i v-if="searchSource === source.id" class="pi pi-check" style="font-size: 12px; margin-left: auto"></i>
+            </div>
+          </div>
         </div>
       </div>
 

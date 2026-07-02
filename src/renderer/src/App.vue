@@ -173,16 +173,30 @@ onMounted(async () => {
   )
   playbackSessionPersistence.startAutosaveWatchers()
   const loadedSettings = await loadSettings()
-  await loadLibrary()
-  await loadPlaylists()
-  if (loadedSettings.autoCheckLogin) {
-    await checkLogin()
-  }
-  await syncExtensions()
+
+  // Enter streaming mode immediately if configured — must not block on
+  // library/login/extensions which can take 30s+ (provider timeouts).
   if (loadedSettings.startupHomePage === 'streaming') {
     enterStreamingMode()
   }
+
+  // Run independent startup operations in parallel so none blocks the others.
+  const libraryPromise = loadLibrary()
+  const playlistsPromise = loadPlaylists()
+  const extensionsPromise = syncExtensions()
+  if (loadedSettings.autoCheckLogin) {
+    void checkLogin()
+  }
+
+  // Restore playback session once the library is available (may reference
+  // local tracks). Enrichment itself runs in the background inside loadLibrary.
+  await libraryPromise
   await playbackSessionPersistence.restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
+
+  // Ensure extensions are loaded before wiring listeners that depend on them.
+  await extensionsPromise
+  await playlistsPromise
+
   removeLibraryChangedListener = window.api.library.onChanged((change) => {
     handleLibraryChange(change).catch(() => {})
   })

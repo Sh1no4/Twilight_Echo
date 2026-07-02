@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { ref } from 'vue'
 
 const { useStreamingSearch } = (await import(
   new URL('./useStreamingSearch.ts', import.meta.url).href
@@ -34,6 +35,12 @@ const providerTrack = {
   source: 'ncm'
 }
 
+const defaultSources = ref([
+  { id: 'all' as const, label: '全部', available: true, supportedTypes: ['songs', 'playlists', 'artists'] as const },
+  { id: 'local' as const, label: '本地音乐', available: true, supportedTypes: ['songs'] as const },
+  { id: 'ncm', label: '网易云', available: true, supportedTypes: ['songs', 'playlists', 'artists'] as const }
+])
+
 test('song search uses unified local and provider results when available', async () => {
   let legacySearchCalls = 0
   let unifiedSearchQuery = ''
@@ -48,8 +55,10 @@ test('song search uses unified local and provider results when available', async
     },
     searchPlaylists: async () => ({ playlists: [], total: 0 }),
     searchArtists: async () => ({ artists: [], total: 0 }),
+    searchSources: defaultSources,
     playTrack: () => {}
   })
+  search.searchSource.value = 'all'
   search.searchQuery.value = 'Moon River'
 
   await search.performSearch('Moon River')
@@ -71,11 +80,13 @@ test('song result click plays the visible unified result queue', async () => {
     searchUnifiedSongs: async () => ({ tracks: [localTrack, providerTrack], total: 2 }),
     searchPlaylists: async () => ({ playlists: [], total: 0 }),
     searchArtists: async () => ({ artists: [], total: 0 }),
+    searchSources: defaultSources,
     playTrack: (track, queue) => {
       playedTrackId = track.id
       queueIds = queue?.map((item) => item.id) ?? []
     }
   })
+  search.searchSource.value = 'all'
   search.searchQuery.value = 'Moon River'
   await search.performSearch('Moon River')
 
@@ -83,4 +94,51 @@ test('song result click plays the visible unified result queue', async () => {
 
   assert.equal(playedTrackId, 'ncm:moon')
   assert.deepEqual(queueIds, ['local:moon', 'ncm:moon'])
+})
+
+test('switching source routes to per-provider search', async () => {
+  let providerSearchCalls = 0
+  let providerSearchId = ''
+  const search = useStreamingSearch({
+    searchSongs: async () => ({ tracks: [providerTrack], total: 1 }),
+    searchPlaylists: async () => ({ playlists: [], total: 0 }),
+    searchArtists: async () => ({ artists: [], total: 0 }),
+    searchProviderSongs: async (providerId, keywords) => {
+      providerSearchCalls++
+      providerSearchId = providerId
+      assert.equal(keywords, 'Moon River')
+      return { tracks: [providerTrack], total: 1 }
+    },
+    searchSources: defaultSources,
+    playTrack: () => {}
+  })
+  search.searchSource.value = 'ncm'
+  search.searchQuery.value = 'Moon River'
+
+  await search.performSearch('Moon River')
+
+  assert.equal(providerSearchCalls, 1)
+  assert.equal(providerSearchId, 'ncm')
+  assert.deepEqual(
+    search.searchResults.value.map((track) => track.id),
+    ['ncm:moon']
+  )
+})
+
+test('availableSearchTypes reflects the selected source capabilities', async () => {
+  const search = useStreamingSearch({
+    searchSongs: async () => ({ tracks: [], total: 0 }),
+    searchPlaylists: async () => ({ playlists: [], total: 0 }),
+    searchArtists: async () => ({ artists: [], total: 0 }),
+    searchSources: defaultSources,
+    playTrack: () => {}
+  })
+
+  assert.deepEqual(search.availableSearchTypes.value, ['songs', 'playlists', 'artists'])
+
+  search.searchSource.value = 'local'
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.deepEqual(search.availableSearchTypes.value, ['songs'])
+  assert.equal(search.searchType.value, 'songs', 'searchType should auto-switch to songs for local')
 })

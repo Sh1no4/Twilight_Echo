@@ -620,9 +620,16 @@
 /* ===== Search Tabs ===== */
 .streaming-search-tabs {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 8px;
   padding: 0 clamp(36px, 6vw, 84px) 14px;
   margin-top: -8px;
+}
+
+.search-type-group {
+  display: flex;
+  gap: 8px;
 }
 
 .search-tab-pill {
@@ -647,6 +654,166 @@
   background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-300));
   color: #fff;
   box-shadow: 0 12px 30px rgba(124, 77, 255, 0.24);
+}
+
+.search-tab-pill.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ===== Source Dropdown ===== */
+.search-source-dropdown {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.search-source-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--te-neutral-700);
+  background: var(--te-card-bg);
+  border: 1px solid var(--te-card-border, #eef1f6);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.search-source-trigger:hover {
+  background: rgba(124, 77, 255, 0.08);
+  color: var(--te-primary-500);
+}
+
+.search-source-dropdown.open .search-source-trigger {
+  background: rgba(124, 77, 255, 0.1);
+  color: var(--te-primary-500);
+}
+
+.search-source-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 160px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--te-card-bg);
+  border: 1px solid var(--te-card-border, #eef1f6);
+  box-shadow: 0 16px 40px rgba(34, 42, 68, 0.14);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.search-source-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--te-neutral-700);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.search-source-option:hover:not(.disabled) {
+  background: rgba(124, 77, 255, 0.08);
+  color: var(--te-primary-500);
+}
+
+.search-source-option.active {
+  color: var(--te-primary-500);
+  background: rgba(124, 77, 255, 0.06);
+}
+
+.search-source-option.disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ===== Recent Source Dropdown (in detail header) ===== */
+.recent-source-dropdown {
+  position: relative;
+  display: inline-block;
+  margin-left: 12px;
+}
+
+.recent-source-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--te-neutral-700);
+  background: var(--te-card-bg);
+  border: 1px solid var(--te-card-border, #eef1f6);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.recent-source-trigger:hover {
+  background: rgba(124, 77, 255, 0.08);
+  color: var(--te-primary-500);
+}
+
+.recent-source-dropdown.open .recent-source-trigger {
+  background: rgba(124, 77, 255, 0.1);
+  color: var(--te-primary-500);
+}
+
+.recent-source-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 150px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--te-card-bg);
+  border: 1px solid var(--te-card-border, #eef1f6);
+  box-shadow: 0 16px 40px rgba(34, 42, 68, 0.14);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.recent-source-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--te-neutral-700);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.recent-source-option:hover {
+  background: rgba(124, 77, 255, 0.08);
+  color: var(--te-primary-500);
+}
+
+.recent-source-option.active {
+  color: var(--te-primary-500);
+  background: rgba(124, 77, 255, 0.06);
 }
 
 .has-search-tabs {
@@ -1677,6 +1844,10 @@
 :global(html[data-theme='dark']) .streaming-round-btn,
 :global(html[data-theme='dark']) .streaming-avatar-btn,
 :global(html[data-theme='dark']) .search-tab-pill,
+:global(html[data-theme='dark']) .search-source-trigger,
+:global(html[data-theme='dark']) .search-source-menu,
+:global(html[data-theme='dark']) .recent-source-trigger,
+:global(html[data-theme='dark']) .recent-source-menu,
 :global(html[data-theme='dark']) .streaming-placeholder,
 :global(html[data-theme='dark']) .track-table-wrapper,
 :global(html[data-theme='dark']) .detail-playlist-header,
@@ -1697,6 +1868,20 @@
   background: var(--te-primary-500);
   color: #111111;
   box-shadow: 0 12px 24px rgba(var(--te-primary-rgb), 0.18);
+}
+
+:global(html[data-theme='dark']) .search-source-trigger:hover,
+:global(html[data-theme='dark']) .search-source-option:hover:not(.disabled),
+:global(html[data-theme='dark']) .recent-source-trigger:hover,
+:global(html[data-theme='dark']) .recent-source-option:hover {
+  background: rgba(245, 158, 11, 0.1);
+  color: var(--te-primary-400);
+}
+
+:global(html[data-theme='dark']) .search-source-option.active,
+:global(html[data-theme='dark']) .recent-source-option.active {
+  background: rgba(245, 158, 11, 0.08);
+  color: var(--te-primary-400);
 }
 
 :global(html[data-theme='dark']) .detail-playlist-header {

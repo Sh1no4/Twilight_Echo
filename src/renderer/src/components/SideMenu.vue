@@ -30,7 +30,8 @@ const menuItems: MenuItem[] = [
   { key: 'artists', label: '艺术家', icon: 'pi pi-microphone' },
   { key: 'albums', label: '专辑', icon: 'pi pi-clone' },
   { key: 'playlists', label: '歌单', icon: 'pi pi-list-check' },
-  { key: 'folders', label: '文件夹', icon: 'pi pi-folder-open' }
+  { key: 'folders', label: '文件夹', icon: 'pi pi-folder-open' },
+  { key: 'recent', label: '最近播放', icon: 'pi pi-history' }
 ]
 
 const scanning = ref(false)
