@@ -1,0 +1,25 @@
+import type { Track } from '../../types/music'
+
+export type LocalTransitionName = 'local-page-down' | 'local-page-up'
+
+export type GridItem = {
+  id?: string
+  name: string
+  trackCount?: number
+  cover?: string | null
+  path?: string
+  trackIds?: string[]
+  isDefault?: boolean
+}
+
+export type PlaylistActions = {
+  removeTrack: (trackId: string) => void
+  addToPlaylist: (playlistName: string, trackId: string) => void
+  removeFromPlaylist: (playlistName: string, trackId: string) => void
+  createPlaylist: (name: string) => void
+  deletePlaylist: (playlistId: string) => void
+}
+
+export type TrackPlayback = {
+  playTrack: (track: Track, queue?: Track[]) => void
+}
