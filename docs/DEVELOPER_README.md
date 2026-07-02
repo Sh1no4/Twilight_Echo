@@ -276,3 +276,5 @@ npm run build:linux
 4. 全部通过后提交并发起 PR，在描述中说明改动范围与验证结果。
 
 更多背景请参阅 [`../README.md`](../README.md)。插件相关开发指南见 [PLUGIN_README.md](./PLUGIN_README.md)，插件规范见 [`./twilight-echo-plugin-spec.md`](./twilight-echo-plugin-spec.md)。项目采用 Apache License 2.0 开源，详见 [`../LICENSE`](../LICENSE)。
+
+Windows 发布前的最小门禁见 [windows-release-gate.md](./windows-release-gate.md)。

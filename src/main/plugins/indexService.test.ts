@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { extname, join } from 'node:path'
 import { createRequire } from 'node:module'
 import test from 'node:test'
 import {
@@ -288,6 +288,18 @@ test('allows localhost http indexes and rejects non-local http indexes', async (
   await assert.rejects(() => externalHttpService.list(), /https|本机 http/)
 })
 
+test('bundled plugin index does not carry third-party tep packages', async () => {
+  const pluginIndexRoot = new URL('../../../resources/plugin-index/', import.meta.url)
+  const packageFiles = await listFiles(pluginIndexRoot)
+  const tepFiles = packageFiles.filter((file) => extname(file).toLowerCase() === '.tep')
+
+  assert.deepEqual(
+    tepFiles,
+    [],
+    'third-party .tep packages belong in D:\\Twilight-Echo-plugins, not the app repository'
+  )
+})
+
 async function createIndexFixture(options: {
   manifest?: typeof baseManifest
   indexManifest?: typeof baseManifest
@@ -375,4 +387,18 @@ function createFetch(responses: Record<string, Buffer>): typeof fetch {
     if (!buffer) return new Response('not found', { status: 404 })
     return new Response(new Uint8Array(buffer))
   }
+}
+
+async function listFiles(root: URL): Promise<string[]> {
+  const entries = await readdir(root, { withFileTypes: true })
+  const files: string[] = []
+  for (const entry of entries) {
+    const child = new URL(`${entry.name}${entry.isDirectory() ? '/' : ''}`, root)
+    if (entry.isDirectory()) {
+      files.push(...(await listFiles(child)))
+    } else {
+      files.push(child.pathname)
+    }
+  }
+  return files
 }

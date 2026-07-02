@@ -96,14 +96,16 @@ test('desktop lyrics html falls back to untimed plain lyrics', () => {
 })
 
 test('streaming playback resume waits for plugin providers before restoring', () => {
-  const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+  const sessionPersistenceSource = readFileSync(
+    new URL('../app/usePlaybackSessionPersistence.ts', import.meta.url),
+    'utf8'
+  )
   const pluginsSource = readFileSync(new URL('../../../main/ipc/plugins.ts', import.meta.url), 'utf8')
   const runtimeSource = readFileSync(new URL('../../../main/core/runtime.ts', import.meta.url), 'utf8')
 
-  assert.match(appSource, /import \{ syncPluginProviders \} from '\.\/providers'/)
   assert.match(
-    appSource,
-    /await syncPluginProviders\(\)[\s\S]*const restoredSession: PlaybackSession/
+    sessionPersistenceSource,
+    /await options\.syncPluginProviders\(\)[\s\S]*const restoredSession: PlaybackSession/
   )
   assert.match(runtimeSource, /pluginManagerReady: null as Promise<void> \| null,/)
   assert.match(pluginsSource, /runtime\.pluginManagerReady = runtime\.pluginManager\s*\.\s*initialize\(\)/)
@@ -119,16 +121,21 @@ test('streaming playback resume waits for plugin providers before restoring', ()
 
 test('playback session autosaves while playback changes instead of only on window close', () => {
   const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+  const sessionPersistenceSource = readFileSync(
+    new URL('../app/usePlaybackSessionPersistence.ts', import.meta.url),
+    'utf8'
+  )
 
-  assert.match(appSource, /function schedulePlaybackSessionAutosave\(/)
-  assert.match(appSource, /async function savePlaybackSessionSnapshot\(/)
+  assert.match(appSource, /createPlaybackSessionPersistence\(\{/)
+  assert.match(sessionPersistenceSource, /function schedulePlaybackSessionAutosave\(/)
+  assert.match(sessionPersistenceSource, /async function savePlaybackSessionSnapshot\(/)
   assert.match(appSource, /currentTrack, currentTime, isPlaying/)
   assert.match(
-    appSource,
-    /watch\(\s*\[\(\) => currentTrack\.value\?\.id, \(\) => settings\.value\.playbackResumeMode\]/
+    sessionPersistenceSource,
+    /watch\(\s*\[\(\) => options\.currentTrack\.value\?\.id, \(\) => getPlaybackResumeMode\(\)\]/
   )
-  assert.match(appSource, /PLAYBACK_SESSION_POSITION_AUTOSAVE_MS/)
-  assert.match(appSource, /window\.api\.data\.savePlaybackSession\(session\)/)
+  assert.match(sessionPersistenceSource, /DEFAULT_PLAYBACK_SESSION_POSITION_AUTOSAVE_MS/)
+  assert.match(sessionPersistenceSource, /options\.dataApi\.savePlaybackSession\(session\)/)
 })
 
 test('renderer streaming resume seeks only after media metadata is available', () => {

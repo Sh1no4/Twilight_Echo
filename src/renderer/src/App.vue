@@ -18,96 +18,59 @@ import { setupListeningStatsTracking } from './stores/useListeningStatsStore'
 import { usePlayerStore } from './stores/usePlayerStore'
 import { useSettingsStore } from './stores/useSettingsStore'
 import { setupPluginThemeRuntime } from './extensions/themeRuntime'
-import { useExtensionRegistry, type UiContribution } from './extensions/registry'
+import { useExtensionRegistry } from './extensions/registry'
 import { syncPluginProviders } from './providers'
-import type { PlaybackSession } from './types/music'
-import type { PlaybackResumeMode } from './types/settings'
+import { useAppNavigation } from './app/useAppNavigation'
+import { createPlaybackSessionPersistence } from './app/usePlaybackSessionPersistence'
+import { useSideMenuClearance } from './app/useSideMenuClearance'
 
-const menuOpen = ref(false)
-const showPlayingPage = ref(false)
-const showStreamingPage = ref(false)
-const showLoginPage = ref(false)
-const loginPageMode = ref<'login' | 'profile'>('login')
-const showSettingsPage = ref(false)
-const showPluginPage = ref(false)
-const showEqualizerPage = ref(false)
-const activePluginPage = ref<UiContribution | null>(null)
-type SettingsSection =
-  | 'general'
-  | 'playback'
-  | 'dsp'
-  | 'cache'
-  | 'performance'
-  | 'appearance'
-  | 'shortcuts'
-  | 'about'
 type TitleSurface = 'default' | 'settings' | 'streaming'
-const settingsInitialSection = ref<SettingsSection>('general')
 
-const activeCategory = ref('dashboard')
-const activeFilter = ref<string | null>(null)
-const songlistTransitionName = ref<'page-down' | 'page-up'>('page-down')
-const songlistOrder = ['dashboard', 'allSongs', 'artists', 'albums', 'playlists', 'folders'] as const
+const navigation = useAppNavigation()
+const {
+  menuOpen,
+  showPlayingPage,
+  showStreamingPage,
+  showLoginPage,
+  loginPageMode,
+  showSettingsPage,
+  showPluginPage,
+  showEqualizerPage,
+  activePluginPage,
+  settingsInitialSection,
+  activeCategory,
+  activeFilter,
+  songlistTransitionName,
+  streamingMenuOpen,
+  showStreamingSurface,
+  localViewVisible,
+  toggleStreamingMenu,
+  collapseMenu,
+  onSelectView,
+  closePluginPage,
+  onSelectPluginPage,
+  openPlayingPage: showPlaying,
+  closePlayingPage,
+  enterStreamingMode,
+  returnToLocalMode,
+  openLoginPage,
+  closeLoginPage,
+  closeSettingsPage,
+  openPlaybackSettings,
+  openDspSettings,
+  hidePluginPage,
+  openEqualizerPage,
+  closeEqualizerPage,
+  closeMissingPluginPage
+} = navigation
+const toggleMenu = navigation.createToggleMenuHandler()
+const toggleSettingsPage = navigation.createToggleSettingsHandler()
+const togglePluginPage = navigation.createTogglePluginHandler()
 
 const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
-
-const streamingMenuOpen = ref(false)
-const localMenuOpenBeforeStreaming = ref(false)
 const titleMenuOpen = computed(() =>
   showPluginPage.value ? false : showStreamingPage.value ? streamingMenuOpen.value : menuOpen.value
 )
-const showStreamingSurface = computed(
-  () =>
-    showStreamingPage.value &&
-    !showPlayingPage.value &&
-    !showLoginPage.value &&
-    !showSettingsPage.value &&
-    !showEqualizerPage.value &&
-    !showPluginPage.value &&
-    !activePluginPage.value
-)
-
-function toggleMenu(): void {
-  if (showLoginPage.value) return
-  if (showSettingsPage.value) {
-    closeSettingsPage()
-    return
-  }
-  if (showPluginPage.value) return
-  if (showStreamingPage.value) {
-    toggleStreamingMenu()
-    return
-  }
-  menuOpen.value = !menuOpen.value
-}
-
-function toggleStreamingMenu(): void {
-  streamingMenuOpen.value = !streamingMenuOpen.value
-}
-
-function collapseMenu(): void {
-  if (showStreamingPage.value) {
-    streamingMenuOpen.value = false
-    return
-  }
-  menuOpen.value = false
-}
-
-function onSelectView(category: string, filter: string | null): void {
-  const currentIndex = songlistOrder.indexOf(activeCategory.value as (typeof songlistOrder)[number])
-  const nextIndex = songlistOrder.indexOf(category as (typeof songlistOrder)[number])
-  if (currentIndex !== -1 && nextIndex !== -1) {
-    songlistTransitionName.value = nextIndex > currentIndex ? 'page-down' : 'page-up'
-  }
-  activeCategory.value = category
-  activeFilter.value = filter
-  showPluginPage.value = false
-  activePluginPage.value = null
-}
-
-function closePluginPage(): void {
-  activePluginPage.value = null
-}
 
 function handleTitleBack(): void {
   if (activePluginPage.value) {
@@ -117,24 +80,9 @@ function handleTitleBack(): void {
   closePlayingPage()
 }
 
-function onSelectPluginPage(page: UiContribution): void {
-  menuOpen.value = false
-  showPlayingPage.value = false
-  showStreamingPage.value = false
-  showLoginPage.value = false
-  showSettingsPage.value = false
-  showEqualizerPage.value = false
-  showPluginPage.value = false
-  activePluginPage.value = page
-}
-
 function openPlayingPage(rect: { x: number; y: number; w: number; h: number }): void {
   coverOrigin.value = { x: rect.x + rect.w / 2, y: rect.y + rect.h / 2, w: rect.w, h: rect.h }
-  showPlayingPage.value = true
-}
-
-function closePlayingPage(): void {
-  showPlayingPage.value = false
+  showPlaying()
 }
 
 function handleCoverClick(rect: { x: number; y: number; w: number; h: number }): void {
@@ -143,99 +91,6 @@ function handleCoverClick(rect: { x: number; y: number; w: number; h: number }):
   } else {
     openPlayingPage(rect)
   }
-}
-
-function enterStreamingMode(): void {
-  localMenuOpenBeforeStreaming.value = menuOpen.value
-  menuOpen.value = false
-  showPlayingPage.value = false
-  showSettingsPage.value = false
-  showEqualizerPage.value = false
-  showPluginPage.value = false
-  activePluginPage.value = null
-  showStreamingPage.value = true
-}
-
-function returnToLocalMode(): void {
-  showStreamingPage.value = false
-  streamingMenuOpen.value = false
-  menuOpen.value = localMenuOpenBeforeStreaming.value
-}
-
-async function openLoginPage(): Promise<void> {
-  menuOpen.value = false
-  showPlayingPage.value = false
-  showStreamingPage.value = false
-  showSettingsPage.value = false
-  showEqualizerPage.value = false
-  activePluginPage.value = null
-  loginPageMode.value = 'login'
-  showLoginPage.value = true
-}
-
-function closeLoginPage(): void {
-  showLoginPage.value = false
-  showStreamingPage.value = true
-}
-
-function openSettingsPage(section: SettingsSection = 'general'): void {
-  settingsInitialSection.value = section
-  showPlayingPage.value = false
-  showPluginPage.value = false
-  showEqualizerPage.value = false
-  activePluginPage.value = null
-  showSettingsPage.value = true
-}
-
-function closeSettingsPage(): void {
-  showSettingsPage.value = false
-}
-
-function toggleSettingsPage(): void {
-  if (showSettingsPage.value) {
-    closeSettingsPage()
-    return
-  }
-  openSettingsPage()
-}
-
-function openPlaybackSettings(): void {
-  openSettingsPage('playback')
-}
-
-function openDspSettings(): void {
-  openSettingsPage('dsp')
-}
-
-function openPluginPage(): void {
-  menuOpen.value = false
-  showSettingsPage.value = false
-  showEqualizerPage.value = false
-  activePluginPage.value = null
-  showPluginPage.value = true
-}
-
-function hidePluginPage(): void {
-  showPluginPage.value = false
-}
-
-function togglePluginPage(): void {
-  if (showPluginPage.value) {
-    hidePluginPage()
-    return
-  }
-  openPluginPage()
-}
-
-function openEqualizerPage(): void {
-  showSettingsPage.value = false
-  showPluginPage.value = false
-  activePluginPage.value = null
-  showEqualizerPage.value = true
-}
-
-function closeEqualizerPage(): void {
-  showEqualizerPage.value = false
 }
 
 const { loadLibrary, loadPlaylists, flushSaveLibrary, handleLibraryChange } = useMusicStore()
@@ -273,16 +128,6 @@ const showLocalSidebar = computed(
     !showEqualizerPage.value &&
     !showPluginPage.value
 )
-const localViewVisible = computed(
-  () =>
-    !showPlayingPage.value &&
-    !showStreamingPage.value &&
-    !showLoginPage.value &&
-    !showSettingsPage.value &&
-    !showEqualizerPage.value &&
-    !showPluginPage.value &&
-    !activePluginPage.value
-)
 
 const sideMenuActiveKey = computed(() =>
   activePluginPage.value
@@ -296,146 +141,37 @@ const mainContentMinHeight = computed(() =>
       ? 'calc(100vh - 32px)'
       : 'calc(100vh - 32px)'
 )
-const sideMenuBottomOffset = ref(0)
-const sideMenuOverlapGap = 10
-const PLAYBACK_SESSION_AUTOSAVE_DEBOUNCE_MS = 1200
-const PLAYBACK_SESSION_POSITION_AUTOSAVE_MS = 15000
 
-let sideMenuMonitorFrame: number | null = null
-let playbackSessionAutosaveTimer: number | null = null
-let lastPlaybackSessionPositionSaveAt = 0
+const playbackSessionPersistence = createPlaybackSessionPersistence({
+  settings,
+  currentTrack,
+  currentTime,
+  isPlaying,
+  restorePlaybackSession,
+  createPlaybackSession,
+  syncPluginProviders,
+  dataApi: window.api.data
+})
+const {
+  sideMenuBottomOffset,
+  startSideMenuMonitor,
+  stopSideMenuMonitor,
+  resetSideMenuClearance
+} = useSideMenuClearance({ showLocalSidebar, hasPlayerBar, menuOpen })
+
 let removePlaybackSessionSaveListener: (() => void) | null = null
 let removeLibraryChangedListener: (() => void) | null = null
 let removeCoversMissingListener: (() => void) | null = null
 let quitFlushHandler: (() => void) | null = null
 let pageHideFlushHandler: (() => void) | null = null
 
-async function restoreSavedPlaybackSession(mode: PlaybackResumeMode): Promise<void> {
-  if (mode === 'off') {
-    await window.api.data.clearPlaybackSession()
-    return
-  }
-
-  const session = await window.api.data.loadPlaybackSession()
-  if (!session?.track?.id) return
-
-  await syncPluginProviders()
-
-  const restoredSession: PlaybackSession = {
-    ...session,
-    mode,
-    position: mode === 'trackAndPosition' ? session.position : 0
-  }
-  restorePlaybackSession(restoredSession)
-}
-
-async function savePlaybackSessionForQuit(): Promise<void> {
-  clearPlaybackSessionAutosave()
-  await savePlaybackSessionSnapshot()
-}
-
-async function savePlaybackSessionSnapshot(): Promise<void> {
-  const mode = settings.value.playbackResumeMode
-  if (mode === 'off') {
-    await window.api.data.clearPlaybackSession()
-    return
-  }
-
-  const session = createPlaybackSession(mode)
-  if (!session) {
-    await window.api.data.clearPlaybackSession()
-    return
-  }
-
-  await window.api.data.savePlaybackSession(session)
-}
-
-function clearPlaybackSessionAutosave(): void {
-  if (playbackSessionAutosaveTimer !== null) {
-    window.clearTimeout(playbackSessionAutosaveTimer)
-    playbackSessionAutosaveTimer = null
-  }
-}
-
-function schedulePlaybackSessionAutosave(delay = PLAYBACK_SESSION_AUTOSAVE_DEBOUNCE_MS): void {
-  clearPlaybackSessionAutosave()
-  playbackSessionAutosaveTimer = window.setTimeout(() => {
-    playbackSessionAutosaveTimer = null
-    lastPlaybackSessionPositionSaveAt = Date.now()
-    void savePlaybackSessionSnapshot().catch((err) => {
-      console.warn('自动保存播放会话失败：', err)
-    })
-  }, delay)
-}
-
-function setSideMenuBottomOffset(offset: number): void {
-  const nextOffset = Math.max(0, Math.round(offset))
-  if (sideMenuBottomOffset.value !== nextOffset) {
-    sideMenuBottomOffset.value = nextOffset
-  }
-}
-
-function measureSideMenuClearance(): void {
-  if (!showLocalSidebar.value || !hasPlayerBar.value) {
-    setSideMenuBottomOffset(0)
-    return
-  }
-
-  const sideMenu = document.querySelector<HTMLElement>('.side-menu')
-  const playerBar = document.querySelector<HTMLElement>('.player-bar-shell')
-
-  if (!sideMenu || !playerBar) {
-    setSideMenuBottomOffset(0)
-    return
-  }
-
-  const sideMenuRect = sideMenu.getBoundingClientRect()
-  const playerBarRect = playerBar.getBoundingClientRect()
-  const overlapsHorizontally =
-    playerBarRect.left < sideMenuRect.right && playerBarRect.right > sideMenuRect.left
-  const overlapsVertically =
-    playerBarRect.top < sideMenuRect.bottom && playerBarRect.bottom > sideMenuRect.top
-
-  if (!overlapsHorizontally || !overlapsVertically) {
-    setSideMenuBottomOffset(0)
-    return
-  }
-
-  setSideMenuBottomOffset(window.innerHeight - playerBarRect.top + sideMenuOverlapGap)
-}
-
-function stopSideMenuMonitor(): void {
-  if (sideMenuMonitorFrame !== null) {
-    cancelAnimationFrame(sideMenuMonitorFrame)
-    sideMenuMonitorFrame = null
-  }
-}
-
-function startSideMenuMonitor(): void {
-  if (sideMenuMonitorFrame !== null) return
-
-  const tick = (): void => {
-    measureSideMenuClearance()
-    if (
-      showLocalSidebar.value &&
-      hasPlayerBar.value &&
-      (menuOpen.value || sideMenuBottomOffset.value > 0)
-    ) {
-      sideMenuMonitorFrame = requestAnimationFrame(tick)
-      return
-    }
-    sideMenuMonitorFrame = null
-  }
-
-  sideMenuMonitorFrame = requestAnimationFrame(tick)
-}
-
 onMounted(async () => {
   setupPluginThemeRuntime()
   setupListeningStatsTracking()
   removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(
-    savePlaybackSessionForQuit
+    playbackSessionPersistence.savePlaybackSessionForQuit
   )
+  playbackSessionPersistence.startAutosaveWatchers()
   const loadedSettings = await loadSettings()
   await loadLibrary()
   await loadPlaylists()
@@ -446,13 +182,13 @@ onMounted(async () => {
   if (loadedSettings.startupHomePage === 'streaming') {
     enterStreamingMode()
   }
-  await restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
+  await playbackSessionPersistence.restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
   removeLibraryChangedListener = window.api.library.onChanged((change) => {
     handleLibraryChange(change).catch(() => {})
   })
   // Notify user when covers are missing (independent of library:changed to avoid reload loop)
   removeCoversMissingListener = window.api.library.onCoversMissing((info) => {
-    console.warn(`检测到 ${info.dirtyCount} 首封面缺失,建议重新扫描以修复封面`)
+    console.warn(`??? ${info.dirtyCount} ?????,???????????`)
   })
   // Quit-flush: save pending debounced library writes before window closes
   quitFlushHandler = (): void => flushSaveLibrary()
@@ -473,39 +209,9 @@ watch(
       return
     }
 
-    stopSideMenuMonitor()
-    setSideMenuBottomOffset(0)
+    resetSideMenuClearance()
   },
   { immediate: true, flush: 'post' }
-)
-
-watch(
-  [() => currentTrack.value?.id, () => settings.value.playbackResumeMode],
-  ([trackId]) => {
-    if (!trackId || settings.value.playbackResumeMode === 'off') {
-      schedulePlaybackSessionAutosave()
-      return
-    }
-
-    lastPlaybackSessionPositionSaveAt = Date.now()
-    schedulePlaybackSessionAutosave()
-  },
-  { flush: 'post' }
-)
-
-watch(
-  [currentTime, isPlaying],
-  ([, playing]) => {
-    if (!playing || !currentTrack.value || settings.value.playbackResumeMode !== 'trackAndPosition') {
-      return
-    }
-
-    const now = Date.now()
-    if (now - lastPlaybackSessionPositionSaveAt < PLAYBACK_SESSION_POSITION_AUTOSAVE_MS) return
-    lastPlaybackSessionPositionSaveAt = now
-    schedulePlaybackSessionAutosave()
-  },
-  { flush: 'post' }
 )
 
 watch(
@@ -532,19 +238,10 @@ watch(
   { immediate: true }
 )
 
-watch(sidebarPages, (pages) => {
-  const active = activePluginPage.value
-  if (!active) return
-  const stillRegistered = pages.some(
-    (page) => page.pluginId === active.pluginId && page.id === active.id
-  )
-  if (!stillRegistered) {
-    activePluginPage.value = null
-  }
-})
+watch(sidebarPages, (pages) => closeMissingPluginPage(pages))
 
 onBeforeUnmount(() => {
-  clearPlaybackSessionAutosave()
+  playbackSessionPersistence.stop()
   removePlaybackSessionSaveListener?.()
   removePlaybackSessionSaveListener = null
   removeLibraryChangedListener?.()

@@ -27,3 +27,20 @@ test('plugin manager blocks bundled plugin uninstall while allowing disable', ()
   assert.match(managerSource, /this\.isBundledPluginId\(id\)/)
   assert.match(managerSource, /自带插件不能卸载/)
 })
+
+test('plugin manager isolates startup failures and keeps other enabled plugins loading', () => {
+  assert.match(managerSource, /private async scanAndStartEnabled\(\)/)
+  assert.match(managerSource, /for \(const descriptor of startupPlan\.ordered\)/)
+  assert.match(
+    managerSource,
+    /await this\.startPlugin\(descriptor\)\.catch\(\(error\) => \{\s*this\.markFailed\(descriptor\.id/
+  )
+})
+
+test('plugin manager exposes per-plugin logs for troubleshooting', () => {
+  assert.match(managerSource, /async openLog\(id: string\)/)
+  assert.match(managerSource, /async getLog\(id: string\)/)
+  assert.match(managerSource, /raw\.slice\(-20000\)/)
+  assert.match(managerSource, /private appendLog\(descriptor: TwilightPluginDescriptor/)
+  assert.match(managerSource, /logs', 'plugins'/)
+})
