@@ -69,8 +69,29 @@ test('requires native permission for DSP plugins', () => {
   assert.deepEqual(manifest.permissions, ['dsp:native'])
 })
 
-test('requires either JS main or native binary', () => {
+test('requires either executable entry or declarative theme contribution', () => {
   assert.throws(() => validatePluginManifest({ ...validManifest, main: undefined }), /main 或 binary/)
+  const manifest = validatePluginManifest({
+    ...validManifest,
+    id: 'com.example.declarative-theme',
+    type: ['theme'],
+    main: undefined,
+    permissions: [],
+    contributes: {
+      themes: [
+        {
+          id: 'nocturne',
+          name: 'Nocturne',
+          variables: {
+            '--te-primary-500': '#2563eb'
+          },
+          stylesheet: 'theme.css'
+        }
+      ]
+    }
+  })
+  assert.equal(manifest.main, undefined)
+  assert.deepEqual(manifest.type, ['theme'])
 })
 
 test('rejects paths outside plugin root', () => {
@@ -152,7 +173,17 @@ test('accepts Phase 3 UI and theme sample manifests', () => {
       ...validManifest,
       id: 'com.example.theme',
       type: ['theme'],
-      permissions: []
+      main: undefined,
+      permissions: [],
+      contributes: {
+        themes: [
+          {
+            id: 'sample',
+            name: 'Sample Theme',
+            stylesheet: 'theme.css'
+          }
+        ]
+      }
     }).type,
     ['theme']
   )

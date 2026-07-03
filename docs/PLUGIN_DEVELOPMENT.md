@@ -88,7 +88,7 @@ Twilight Echo 的设计理念是：**软件本体除架构外，一切皆可由�
 | `author` | 是 | 作者 |
 | `license` | 是 | 许可证 |
 | `type` | 是 | 插件类型数组 |
-| `main` | 是* | 入口文件（JS 插件） |
+| `main` | 是* | 入口文件（JS 插件；纯 theme 插件可省略） |
 | `binary` | 是* | 原生二进制文件（DSP 插件） |
 | `engines.twilightEcho` | 是 | 兼容的宿主版本范围 |
 | `apiVersion` | 是 | 插件 API 版本（当前为 `1`） |
@@ -98,7 +98,8 @@ Twilight Echo 的设计理念是：**软件本体除架构外，一切皆可由�
 | `repository` | 否 | 代码仓库 URL |
 | `icon` | 否 | 图标文件路径（相对路径） |
 
-> *`main` 和 `binary` 至少声明一个。`dsp` 类型必须声明 `binary`。
+> *JS 插件声明 `main`；DSP 插件声明 `binary`；纯 theme 插件可用
+> `contributes.themes` 声明 CSS 变量/样式表并省略二者。`dsp` 类型必须声明 `binary`。
 
 ---
 
@@ -367,22 +368,32 @@ async function getPlayerInfo() {
 
 ## 6. 主题插件
 
-```javascript
-await context.twilight.themes.register({
-  id: 'midnight',
-  name: '午夜蓝',
-  description: '深蓝色暗色主题',
-  variables: {
-    '--te-bg-base': '#0f172a',
-    '--te-bg-card': '#1e1e2e',
-    '--te-text-primary': '#fff',
-    '--te-text-secondary': '#a0a0b0',
-    '--te-primary-500': '#6366f1',
-    '--te-primary-rgb': '99, 102, 241'
-  },
-  // 或者提供一个 CSS 文件路径
-  // stylesheet: 'theme.css'
-})
+纯主题插件是声明式包，不执行 `activate()` 脚本。主题资源写在 `plugin.json`
+的 `contributes.themes` 中：
+
+```json
+{
+  "type": ["theme"],
+  "permissions": [],
+  "contributes": {
+    "themes": [
+      {
+        "id": "midnight",
+        "name": "午夜蓝",
+        "description": "深蓝色暗色主题",
+        "variables": {
+          "--te-bg-base": "#0f172a",
+          "--te-bg-card": "#1e1e2e",
+          "--te-text-primary": "#fff",
+          "--te-text-secondary": "#a0a0b0",
+          "--te-primary-500": "#6366f1",
+          "--te-primary-rgb": "99, 102, 241"
+        },
+        "stylesheet": "theme.css"
+      }
+    ]
+  }
+}
 ```
 
 ### 变量 vs 样式表
@@ -509,7 +520,7 @@ const all = await context.settings.get()
 ```
 my-plugin/
 ├── plugin.json       # 清单文件
-├── index.mjs         # 入口文件（ESM）
+├── index.mjs         # JS 插件入口文件（ESM；纯 theme 插件没有该文件）
 ├── README.md         # 文档（可选）
 └── theme.css         # 主题样式表（可选）
 ```

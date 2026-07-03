@@ -5,7 +5,8 @@ import type {
   PluginHostApiResult,
   PluginHostRequest,
   PluginHostResponse,
-  TwilightMediaProviderMethod
+  TwilightMediaProviderMethod,
+  TwilightPluginPermission
 } from './plugins/types'
 
 type ParentPort = {
@@ -181,7 +182,9 @@ async function activatePlugin(message: Extract<PluginHostRequest, { kind: 'activ
     if (typeof activePlugin.activate !== 'function') {
       throw new Error('插件入口必须导出 activate(context)')
     }
-    await activePlugin.activate(createContext(message.pluginId, message.apiVersion, message.dataDir))
+    await activePlugin.activate(
+      createContext(message.pluginId, message.apiVersion, message.dataDir, message.manifest.permissions)
+    )
     post({ kind: 'activated', pluginId: message.pluginId })
   } catch (error) {
     reportError(error)
@@ -204,7 +207,12 @@ async function deactivatePlugin(requestId: string): Promise<void> {
   }
 }
 
-function createContext(pluginId: string, apiVersion: number, storagePath: string): TwilightPluginContext {
+function createContext(
+  pluginId: string,
+  apiVersion: number,
+  storagePath: string,
+  permissions: TwilightPluginPermission[]
+): TwilightPluginContext {
   const twilight: TwilightPluginContext['twilight'] = {
     events: {
       on: (eventName, callback) => {
@@ -277,12 +285,37 @@ function createContext(pluginId: string, apiVersion: number, storagePath: string
       warn: (message) => log('warn', message),
       error: (message) => log('error', message)
     },
-    settings: {
-      get: (key) => getPluginSetting(storagePath, key),
-      set: (key, value) => setPluginSetting(storagePath, key, value),
-      delete: (key) => deletePluginSetting(storagePath, key)
-    },
+    settings: createSettingsApi(storagePath, permissions),
     twilight
+  }
+}
+
+function createSettingsApi(
+  storagePath: string,
+  permissions: TwilightPluginPermission[]
+): TwilightPluginContext['settings'] {
+  return {
+    get: (key) => {
+      requireLocalPermission(permissions, 'settings')
+      return getPluginSetting(storagePath, key)
+    },
+    set: (key, value) => {
+      requireLocalPermission(permissions, 'settings')
+      return setPluginSetting(storagePath, key, value)
+    },
+    delete: (key) => {
+      requireLocalPermission(permissions, 'settings')
+      return deletePluginSetting(storagePath, key)
+    }
+  }
+}
+
+function requireLocalPermission(
+  permissions: TwilightPluginPermission[],
+  permission: TwilightPluginPermission
+): void {
+  if (!permissions.includes(permission)) {
+    throw new Error(`插件未声明 ${permission} 权限`)
   }
 }
 

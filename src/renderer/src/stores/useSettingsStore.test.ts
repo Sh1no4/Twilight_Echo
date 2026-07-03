@@ -111,6 +111,28 @@ test('audio settings expose advanced replaygain, fft, and crossfeed controls wit
   assert.match(settingsPageSource, /预留项，当前原生 DSP 链未消费该开关/)
 })
 
+test('strict bit-perfect mode is persisted and exposed in audio settings', () => {
+  const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
+  const preloadTypes = readFileSync(new URL('../../../preload/types.ts', import.meta.url), 'utf8')
+  const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
+  const mainSettings = readFileSync(new URL('../../../main/core/settings.ts', import.meta.url), 'utf8')
+  const settingsStoreSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const settingsPageSource = readFileSync(
+    new URL('../components/SettingsPage.vue', import.meta.url),
+    'utf8'
+  )
+
+  for (const source of [settingsTypes, preloadTypes, mainTypes]) {
+    assert.match(source, /strictBitPerfectMode: boolean/)
+  }
+  assert.match(mainSettings, /strictBitPerfectMode: false/)
+  assert.match(mainSettings, /strictBitPerfectMode: settings\.strictBitPerfectMode === true/)
+  assert.match(settingsStoreSource, /strictBitPerfectMode: false/)
+  assert.match(settingsPageSource, /function toggleStrictBitPerfectMode\(\): void/)
+  assert.match(settingsPageSource, /updateSettings\(\{ strictBitPerfectMode: next \}\)/)
+  assert.match(settingsPageSource, /严格 Bit-Perfect/)
+})
+
 test('cache strategy settings expose separate artifact and provider-controlled audio policies', () => {
   const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
   const mainSettings = readFileSync(new URL('../../../main/core/settings.ts', import.meta.url), 'utf8')

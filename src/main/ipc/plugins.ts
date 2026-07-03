@@ -181,7 +181,7 @@ export function setupPluginIpc(): void {
   )
   ipcMain.handle('extensions:list', async () => {
     await runtime.pluginManagerReady
-    return runtime.pluginManager!.listExtensions()
+    return await runtime.pluginManager!.listExtensions()
   })
   ipcMain.handle('extensions:executeCommand', async (_event, command: string, args?: unknown[]) => {
     await runtime.pluginManagerReady
@@ -190,7 +190,8 @@ export function setupPluginIpc(): void {
   ipcMain.handle('extensions:readThemeStylesheet', async (_event, stylesheetPath: string) => {
     await runtime.pluginManagerReady
     const normalized = resolve(stylesheetPath)
-    const allowed = runtime.pluginManager!.listExtensions().some((entry) =>
+    const extensions = await runtime.pluginManager!.listExtensions()
+    const allowed = extensions.some((entry) =>
       entry.themes.some((theme) => theme.stylesheet && resolve(theme.stylesheet) === normalized)
     )
     if (!allowed) throw new Error('主题 stylesheet 未注册')

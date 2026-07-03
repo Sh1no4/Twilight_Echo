@@ -241,6 +241,7 @@ const { settings: appSettings, updateSettings } = useSettingsStore()
 let playbackAudio: HTMLAudioElement | null = null
 let playbackObjectUrl: string | null = null
 let nativePlaybackActive = false
+let nativeQueueDelegated = false
 let activeLoadToken = 0
 let rendererFallbackInProgress = false
 let rendererPlaybackWatchdogTimer: number | null = null
@@ -443,6 +444,7 @@ function stopRendererAudio(clearSource = false): void {
 function resetPlaybackRuntimeStateForRestore(): void {
   activeLoadToken += 1
   nativePlaybackActive = false
+  nativeQueueDelegated = false
   loadedTrackId = ''
   playbackInfo.value = null
   clearNativePlaybackInfoIntent()
@@ -479,6 +481,7 @@ function seekRendererAudioWhenReady(
 }
 
 async function stopNativeAudio(): Promise<void> {
+  nativeQueueDelegated = false
   try {
     await window.api.audioEngine.stop()
   } catch {
@@ -491,7 +494,13 @@ function shouldUseNativePlayback(track: Track, target: string): boolean {
 }
 
 function canUseNativeQueuePlayback(): boolean {
-  return queue.value.length > 0 && queue.value.every((track) => getTrackSource(track) === 'local')
+  return queue.value.length > 0 && queue.value.every((track) =>
+    shouldUseNativePlayback(track, getTrackAudioSource(track))
+  )
+}
+
+function isNativeQueueDelegated(): boolean {
+  return nativeQueueDelegated && canUseNativeQueuePlayback()
 }
 
 async function createPlayableUrl(
@@ -1279,7 +1288,7 @@ function setupAudioEngineListeners(): void {
     api.onPlaybackInfo((info) => {
       playbackInfo.value = normalizeNativePlaybackInfo(info)
       if (info.nativePlaybackActive !== undefined) {
-        nativePlaybackActive = info.nativePlaybackActive && canUseNativeQueuePlayback()
+        nativePlaybackActive = info.nativePlaybackActive === true
       }
       if (!nativePlaybackActive) return
       applyNativePlaybackInfo(info)
@@ -1424,6 +1433,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   stopVisualizationPolling(false)
   isLoading.value = true
   nativePlaybackActive = false
+  nativeQueueDelegated = false
   stopRendererAudio(true)
   if (playbackAudio) playbackAudio.muted = false
   pendingLoadStartTime = normalizedStartTime
@@ -1439,13 +1449,15 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     if (!isActiveLoad(loadToken, track)) return
     patchTrackInQueues(track)
     setNativePlaybackInfoIntent(loadToken, track, playTarget)
-    const useNativePlayback = shouldUseNativePlayback(track, playTarget) && canUseNativeQueuePlayback()
+    const useNativePlayback = shouldUseNativePlayback(track, playTarget)
 
     let nativeStarted = false
     let nativeFallbackReason = ''
 
     if (useNativePlayback) {
-      const engineQueue = queue.value.map((item) => ({
+      const canDelegateNativeQueue = canUseNativeQueuePlayback()
+      const engineQueueSource = canDelegateNativeQueue ? queue.value : [track]
+      const engineQueue = engineQueueSource.map((item) => ({
         id: item.id,
         duration: item.duration,
         source: item.id === track.id ? playTarget : getTrackAudioSource(item),
@@ -1456,8 +1468,12 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       }))
 
       try {
-        await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
+        await window.api.audioEngine.loadQueue(
+          engineQueue,
+          canDelegateNativeQueue ? Math.max(0, queueIndex.value) : 0
+        )
         if (!isActiveLoad(loadToken, track)) return
+        nativeQueueDelegated = canDelegateNativeQueue
 
         const nativePlayMode = playMode.value === 'repeat' ? 'repeat' : 'sequential'
         await window.api.audioEngine.setPlayMode(nativePlayMode)
@@ -1469,6 +1485,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         nativeFallbackReason = playResult?.fallbackReason ?? ''
       } catch (engineErr) {
         if (!isActiveLoad(loadToken, track)) return
+        nativeQueueDelegated = false
         nativeFallbackReason = engineErr instanceof Error ? engineErr.message : String(engineErr)
         console.warn(
           '[audio-engine] Native output unavailable, falling back to Electron playback:',
@@ -1484,6 +1501,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
       audioEngineError.value = ''
       stopRendererAudio(true)
     } else {
+      nativeQueueDelegated = false
       clearNativePlaybackInfoIntentForLoad(loadToken)
       audioEngineError.value = nativeFallbackReason
         ? `原生音频引擎不可用，已启用临时播放通道：${nativeFallbackReason}`
@@ -1518,6 +1536,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     isLoading.value = false
     isPlaying.value = false
     nativePlaybackActive = false
+    nativeQueueDelegated = false
     stopVisualizationPolling(true)
   }
 }
@@ -1526,7 +1545,7 @@ function next(): void {
   if (queue.value.length === 0) return
   clearCrossfadeTimer()
 
-  if (nativePlaybackActive && canUseNativeQueuePlayback()) {
+  if (nativePlaybackActive && isNativeQueueDelegated()) {
     void advanceNativePlayback('next')
     return
   }
@@ -1553,7 +1572,7 @@ async function togglePlayState(): Promise<void> {
     return
   }
   try {
-    if (nativePlaybackActive && canUseNativeQueuePlayback()) {
+    if (nativePlaybackActive) {
       const nextPlaying = !isPlaying.value
       isPlaying.value = nextPlaying
       setPlaybackToggleIntent(nextPlaying)
@@ -1570,7 +1589,7 @@ async function togglePlayState(): Promise<void> {
       }
     }
   } catch (err) {
-    if (nativePlaybackActive && canUseNativeQueuePlayback()) {
+    if (nativePlaybackActive) {
       isPlaying.value = !isPlaying.value
       clearPlaybackToggleIntent()
     }
@@ -1587,7 +1606,7 @@ function previous(): void {
       restoredPlaybackPending = true
       restoredPlaybackPosition = 0
     } else {
-      if (nativePlaybackActive && canUseNativeQueuePlayback()) {
+      if (nativePlaybackActive) {
         window.api.audioEngine.seek(0).catch(() => {})
       } else if (playbackAudio) {
         playbackAudio.currentTime = 0
@@ -1596,7 +1615,7 @@ function previous(): void {
     return
   }
   const prevIndex = queueIndex.value - 1
-  if (nativePlaybackActive && canUseNativeQueuePlayback()) {
+  if (nativePlaybackActive && isNativeQueueDelegated()) {
     void advanceNativePlayback('previous')
     return
   }
@@ -1623,7 +1642,7 @@ function seekPlayback(time: number): void {
     return
   }
   setCurrentTimeImmediate(time)
-  if (nativePlaybackActive && canUseNativeQueuePlayback()) {
+  if (nativePlaybackActive) {
     window.api.audioEngine.seek(time).catch(() => {})
   } else if (playbackAudio) {
     playbackAudio.currentTime = Math.max(0, time)

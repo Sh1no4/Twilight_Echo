@@ -42,6 +42,12 @@ function normalizeRelativePath(value, key) {
   return normalized
 }
 
+function hasDeclarativeThemeContribution(raw, type) {
+  if (!type.includes('theme')) return false
+  if (!isRecord(raw.contributes)) return false
+  return Array.isArray(raw.contributes.themes) && raw.contributes.themes.length > 0
+}
+
 function isSupportedSemverRange(range) {
   if (range === '*') return true
   if (SEMVER_PATTERN.test(range)) return true
@@ -83,7 +89,9 @@ function validatePluginManifest(raw) {
       normalizeRelativePath(binaryPath, `binary.${platform}`)
     }
   }
-  if (!main && !binary) throw new Error('plugin.json must declare main or binary')
+  if (!main && !binary && !hasDeclarativeThemeContribution(raw, type)) {
+    throw new Error('plugin.json must declare main or binary, or contributes.themes for theme plugins')
+  }
   if (type.includes('dsp') && !binary) throw new Error('plugin.json type dsp requires binary')
 
   if (!Array.isArray(raw.permissions)) throw new Error('plugin.json permissions must be an array')
@@ -119,7 +127,8 @@ function validatePluginManifest(raw) {
     dependencies: raw.dependencies,
     engines: { twilightEcho: raw.engines.twilightEcho.trim() },
     apiVersion: raw.apiVersion,
-    permissions: [...new Set(raw.permissions)]
+    permissions: [...new Set(raw.permissions)],
+    contributes: raw.contributes
   }
 }
 

@@ -191,11 +191,12 @@ test('resolved streaming targets are patched back into restored queues', () => {
   )
 })
 
-test('restored provider queues stay out of native queue playback', () => {
+test('provider queues use native for resolved current targets without native queue delegation', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const syncNativeQueueState = extractInternalFunctionBody(source, 'syncNativeQueueState')
   const loadAndPlay = source.match(/async function loadAndPlay[\s\S]*?function next\(\)/)?.[0] ?? ''
   const getTrackSource = extractInternalFunctionBody(source, 'getTrackSource')
+  const canUseNativeQueuePlayback = extractInternalFunctionBody(source, 'canUseNativeQueuePlayback')
   const restorePlaybackSession = extractInternalFunctionBody(source, 'restorePlaybackSession')
   const resetPlaybackRuntimeStateForRestore = extractInternalFunctionBody(
     source,
@@ -214,35 +215,57 @@ test('restored provider queues stay out of native queue playback', () => {
     'legacy local tracks whose id is a Windows path must not be mistaken for a provider prefix'
   )
   assert.match(
-    source,
-    /queue\.value\.every\(\(track\) => getTrackSource\(track\) === 'local'\)/,
-    'only all-local queues may be delegated to native queue controls'
+    canUseNativeQueuePlayback,
+    /queue\.value\.every\(\(track\) =>\s*shouldUseNativePlayback\(track, getTrackAudioSource\(track\)\)\s*\)/,
+    'native queue controls require every queued target to already be native-capable'
   )
   assert.match(
     syncNativeQueueState,
     /if \(!canUseNativeQueuePlayback\(\)\) \{\s*await stopNativeAudio\(\)\s*return\s*\}/,
-    'provider queues must clear native queue state instead of syncing ncm:<id> placeholders'
+    'unresolved provider queues must clear native queue state instead of syncing provider id placeholders'
   )
   assert.match(
     loadAndPlay,
-    /const useNativePlayback = shouldUseNativePlayback\(track, playTarget\) && canUseNativeQueuePlayback\(\)/
+    /const useNativePlayback = shouldUseNativePlayback\(track, playTarget\)/
   )
   assert.match(loadAndPlay, /if \(useNativePlayback\) \{[\s\S]*window\.api\.audioEngine\.loadQueue/)
 })
 
-test('provider next and previous controls re-enter renderer playback even if native state is stale', () => {
+test('next and previous only use native controls when the native queue is delegated', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const nextBody = extractInternalFunctionBody(source, 'next')
   const previousBody = extractInternalFunctionBody(source, 'previous')
   const togglePlayState = extractInternalFunctionBody(source, 'togglePlayState')
   const seekPlayback = extractInternalFunctionBody(source, 'seekPlayback')
 
-  assert.match(nextBody, /if \(nativePlaybackActive && canUseNativeQueuePlayback\(\)\)/)
-  assert.match(previousBody, /if \(nativePlaybackActive && canUseNativeQueuePlayback\(\)\)/)
-  assert.match(togglePlayState, /if \(nativePlaybackActive && canUseNativeQueuePlayback\(\)\)/)
-  assert.match(seekPlayback, /if \(nativePlaybackActive && canUseNativeQueuePlayback\(\)\)/)
+  assert.match(nextBody, /if \(nativePlaybackActive && isNativeQueueDelegated\(\)\)/)
+  assert.match(previousBody, /if \(nativePlaybackActive && isNativeQueueDelegated\(\)\)/)
+  assert.match(togglePlayState, /if \(nativePlaybackActive\)/)
+  assert.match(seekPlayback, /if \(nativePlaybackActive\)/)
   assert.match(nextBody, /currentTrack\.value = track[\s\S]*void loadAndPlay\(track\)/)
   assert.match(previousBody, /currentTrack\.value = track[\s\S]*void loadAndPlay\(track\)/)
+})
+
+test('strict bit-perfect mode blocks DSP, software volume, renderer fallback, and non-perfect native output', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const loadAndPlay = source.match(/async function loadAndPlay[\s\S]*?function next\(\)/)?.[0] ?? ''
+  const setVolume = extractInternalFunctionBody(source, 'setVolume')
+
+  assert.match(source, /function strictBitPerfectModeEnabled\(\)/)
+  assert.match(source, /function getStrictBitPerfectPlaybackBlockReason\(/)
+  assert.match(source, /function handleStrictBitPerfectPlaybackInfo\(/)
+  assert.match(source, /appSettings\.value\?\.strictBitPerfectMode === true/)
+  assert.match(source, /audioProcessing\.value\.dspEnabled/)
+  assert.match(source, /audioProcessing\.value\.volumeNormalization !== 'off'/)
+  assert.match(source, /audioProcessing\.value\.crossfadeSeconds > 0/)
+  assert.match(source, /audioOutputConfig\.value\.routingMode !== 'auto'/)
+  assert.match(source, /Math\.abs\(volume\.value - 1\) > 0\.001/)
+  assert.match(source, /!\(audioOutput\.value === 'asio' \|\| exclusiveMode\.value\)/)
+  assert.match(loadAndPlay, /const strictBlockReason = getStrictBitPerfectPlaybackBlockReason\(track, playTarget\)/)
+  assert.match(loadAndPlay, /if \(strictBlockReason\) throw new Error\(strictBlockReason\)/)
+  assert.match(loadAndPlay, /if \(strictBitPerfectModeEnabled\(\)\) \{\s*throw new Error\(`严格 Bit-Perfect 模式拒绝 renderer fallback/)
+  assert.match(loadAndPlay, /if \(strictBitPerfectModeEnabled\(\) && !nativeStarted\)/)
+  assert.match(setVolume, /if \(strictBitPerfectModeEnabled\(\)\) \{\s*volume\.value = 1/)
 })
 
 test('local dashboard playback keeps a multi-track queue for next and previous controls', () => {

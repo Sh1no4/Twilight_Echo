@@ -298,19 +298,27 @@ UI contributions require `type` containing `ui` or `tool` and permission
 
 ## Themes
 
-Theme plugins register CSS variables and/or one packaged stylesheet. Theme
-stylesheets are resolved inside the installed plugin directory and cannot point
-outside the package.
+Pure theme plugins declare CSS variables and/or one packaged stylesheet in
+`plugin.json` and do not execute plugin scripts. Theme stylesheets are resolved
+inside the installed plugin directory and cannot point outside the package.
 
-```ts
-await context.twilight.themes.register({
-  id: 'nocturne',
-  name: 'Nocturne',
-  variables: {
-    '--te-primary-500': '#38bdf8'
-  },
-  stylesheet: 'theme.css'
-})
+```json
+{
+  "type": ["theme"],
+  "permissions": [],
+  "contributes": {
+    "themes": [
+      {
+        "id": "nocturne",
+        "name": "Nocturne",
+        "variables": {
+          "--te-primary-500": "#38bdf8"
+        },
+        "stylesheet": "theme.css"
+      }
+    ]
+  }
+}
 ```
 
 Theme plugins are declarative only. They must not execute renderer scripts or

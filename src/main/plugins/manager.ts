@@ -25,6 +25,7 @@ import type {
   TwilightPluginDescriptor,
   TwilightPluginInstallResult,
   TwilightPluginManifest,
+  TwilightPluginPermission,
   TwilightPluginSource,
   TwilightPluginStateRecord,
   TwilightPluginUninstallOptions
@@ -407,14 +408,25 @@ export class TwilightPluginManager extends EventEmitter {
     }))
   }
 
-  listExtensions(): TwilightPluginExtensionContribution[] {
-    return [...this.running.values()]
+  async listExtensions(): Promise<TwilightPluginExtensionContribution[]> {
+    const runningExtensions = [...this.running.values()]
       .filter((running) => running.ui.length > 0 || running.themes.length > 0)
       .map((running) => ({
         pluginId: running.descriptor.id,
         ui: running.ui,
         themes: running.themes
       }))
+    const runningPluginIds = new Set(runningExtensions.map((entry) => entry.pluginId))
+    const manifestThemeExtensions = (await this.list())
+      .filter((descriptor) => descriptor.enabled && descriptor.status !== 'invalid')
+      .filter((descriptor) => !runningPluginIds.has(descriptor.id))
+      .map((descriptor) => ({
+        pluginId: descriptor.id,
+        ui: [],
+        themes: this.normalizeDeclarativeThemeContributions(descriptor)
+      }))
+      .filter((entry) => entry.themes.length > 0)
+    return [...runningExtensions, ...manifestThemeExtensions]
   }
 
   async executeUiCommand(command: string, args: unknown[] = []): Promise<unknown> {
@@ -722,6 +734,16 @@ export class TwilightPluginManager extends EventEmitter {
       return
     }
     if (message.kind === 'api-event-subscribe') {
+      try {
+        if (message.eventName.startsWith('player:')) {
+          this.requirePermission(id, 'player:observe', `订阅 ${message.eventName}`)
+        }
+      } catch (error) {
+        const messageText = error instanceof Error ? error.message : String(error)
+        this.markFailed(id, messageText, running?.descriptor)
+        await this.stopPlugin(id)
+        return
+      }
       running.subscriptions.add(message.eventName)
       return
     }
@@ -769,9 +791,11 @@ export class TwilightPluginManager extends EventEmitter {
       if (message.namespace !== 'player') throw new Error('未知 API 命名空间')
       const method = message.method
       if (method === 'getPlaybackInfo') {
+        this.requirePermission(id, 'player:observe', 'player.getPlaybackInfo')
         return { kind: 'api-result', requestId: message.requestId, ok: true, value: await this.getPlaybackInfo() }
       }
       if (['play', 'pause', 'togglePause', 'stop', 'next', 'previous'].includes(method)) {
+        this.requirePermission(id, 'player:control', `player.${method}`)
         await this.player[method as keyof typeof this.player]()
         return { kind: 'api-result', requestId: message.requestId, ok: true, value: null }
       }
@@ -1009,14 +1033,32 @@ export class TwilightPluginManager extends EventEmitter {
     }
   }
 
+  private normalizeDeclarativeThemeContributions(descriptor: TwilightPluginDescriptor): TwilightThemeContribution[] {
+    const contributes = descriptor.contributes
+    if (!contributes || typeof contributes !== 'object' || Array.isArray(contributes)) return []
+    const themes = (contributes as Record<string, unknown>).themes
+    if (!Array.isArray(themes)) return []
+    return themes.map((theme) =>
+      this.normalizeThemeContributionFromDescriptor(descriptor, theme, 'manifest theme')
+    )
+  }
+
   private normalizeThemeContribution(
     running: RunningPlugin,
     raw: unknown
   ): TwilightThemeContribution {
-    if (!running.descriptor.type.includes('theme')) {
+    return this.normalizeThemeContributionFromDescriptor(running.descriptor, raw, 'theme API')
+  }
+
+  private normalizeThemeContributionFromDescriptor(
+    descriptor: TwilightPluginDescriptor,
+    raw: unknown,
+    source: string
+  ): TwilightThemeContribution {
+    if (!descriptor.type.includes('theme')) {
       throw new Error('只有 theme 类型插件可以注册主题')
     }
-    if (!raw || typeof raw !== 'object') throw new Error('主题注册信息必须是对象')
+    if (!raw || typeof raw !== 'object') throw new Error(`${source} 注册信息必须是对象`)
     const record = raw as Record<string, unknown>
     const id = normalizeContributionId(record.id)
     const name = normalizeText(record.name, '主题名称必填')
@@ -1026,7 +1068,7 @@ export class TwilightPluginManager extends EventEmitter {
         : undefined
     const stylesheet =
       typeof record.stylesheet === 'string' && record.stylesheet.trim()
-        ? this.resolveThemeStylesheet(running.descriptor, record.stylesheet.trim())
+        ? this.resolveThemeStylesheet(descriptor, record.stylesheet.trim())
         : undefined
     if (!variables && !stylesheet) throw new Error('主题必须声明 variables 或 stylesheet')
     return {
@@ -1035,6 +1077,18 @@ export class TwilightPluginManager extends EventEmitter {
       description: typeof record.description === 'string' ? record.description.trim() : undefined,
       variables,
       stylesheet
+    }
+  }
+
+  private requirePermission(
+    pluginId: string,
+    permission: TwilightPluginPermission,
+    capability: string
+  ): void {
+    const running = this.running.get(pluginId)
+    if (!running) throw new Error('插件未运行')
+    if (!running.descriptor.permissions.includes(permission)) {
+      throw new Error(`插件 ${running.descriptor.id} 未声明 ${permission} 权限，不能调用 ${capability}`)
     }
   }
 

@@ -15,16 +15,18 @@ test('local files use native playback without requiring exclusive output', () =>
   }
 })
 
-test('renderer-direct targets stay on renderer audio path', () => {
-  assert.equal(isRendererDirectAudioTarget('https://example.test/track.mp3'), true)
+test('provider file and stream targets can enter the native playback path', () => {
+  assert.equal(shouldUseNativePlaybackTarget('ncm', 'D:\\cache\\track.flac'), true)
+  assert.equal(shouldUseNativePlaybackTarget('bili', 'http://127.0.0.1:39127/audio.flac'), true)
+  assert.equal(shouldUseNativePlaybackTarget('ncm', 'https://example.test/track.flac'), true)
+})
+
+test('renderer-only targets stay on renderer audio path', () => {
   assert.equal(isRendererDirectAudioTarget('blob:twilight-track'), true)
   assert.equal(isRendererDirectAudioTarget('data:audio/mpeg;base64,AAAA'), true)
 
-  assert.equal(shouldUseNativePlaybackTarget('local', 'https://example.test/track.mp3'), false)
   assert.equal(shouldUseNativePlaybackTarget('local', 'blob:twilight-track'), false)
   assert.equal(shouldUseNativePlaybackTarget('local', 'data:audio/mpeg;base64,AAAA'), false)
-  assert.equal(shouldUseNativePlaybackTarget('ncm', 'D:\\cache\\track.flac'), false)
-  assert.equal(shouldUseNativePlaybackTarget('bili', 'D:\\cache\\track.flac'), false)
 })
 
 test('Bilibili proxy stream URLs are treated as transient', () => {

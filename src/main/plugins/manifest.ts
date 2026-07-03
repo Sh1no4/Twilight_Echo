@@ -88,6 +88,13 @@ function normalizeBinary(value: unknown): Record<string, string> | undefined {
   return Object.keys(binary).length > 0 ? binary : undefined
 }
 
+function hasDeclarativeThemeContribution(raw: Record<string, unknown>, type: TwilightPluginType[]): boolean {
+  if (!type.includes('theme')) return false
+  const contributes = raw.contributes
+  if (!isRecord(contributes)) return false
+  return Array.isArray(contributes.themes) && contributes.themes.length > 0
+}
+
 function normalizeDependencies(value: unknown): Record<string, string> | undefined {
   if (value == null) return undefined
   if (!isRecord(value)) throw new Error('plugin.json 字段 dependencies 必须是对象')
@@ -138,7 +145,9 @@ export function validatePluginManifest(raw: unknown): TwilightPluginManifest {
   const main = normalizeRelativePath(raw.main, 'main')
   const binary = normalizeBinary(raw.binary)
   const dependencies = normalizeDependencies(raw.dependencies)
-  if (!main && !binary) throw new Error('plugin.json 必须声明 main 或 binary')
+  if (!main && !binary && !hasDeclarativeThemeContribution(raw, type)) {
+    throw new Error('plugin.json 必须声明 main 或 binary，或为 theme 声明 contributes.themes')
+  }
   if (type.includes('dsp') && !binary) throw new Error('type 包含 dsp 时必须声明 binary')
   const permissions = normalizePermissions(raw.permissions)
   if (type.includes('dsp') && !permissions.includes('dsp:native')) {

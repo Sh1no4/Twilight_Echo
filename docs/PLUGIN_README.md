@@ -28,7 +28,7 @@ Twilight Echo 插件是一段随应用加载、通过统一 `twilight` API 句�
 
 一个插件包要么是一个目录，要么是一个扩展名为 `.tep` 的 zip 归档。无论哪种形式，根目录都必须有一个 `plugin.json`。
 
-`.tep` 本质就是 zip，`pack` 命令会校验 manifest、确认 `main` 或 `binary` 存在、剔除 `node_modules` 和缓存目录，最后产出根目录带 `plugin.json` 的 zip。解包后宿主按目录结构加载。
+`.tep` 本质就是 zip，`pack` 命令会校验 manifest、确认存在 JS `main`、DSP `binary` 或纯 theme 的 `contributes.themes`、剔除 `node_modules` 和缓存目录，最后产出根目录带 `plugin.json` 的 zip。解包后宿主按目录结构加载。
 
 JS 插件运行在 Electron 的 `utilityProcess` 里。这是一个独立进程，插件死循环、内存泄漏、崩溃都不会拖垮主进程和音频链路。UI 插件的渲染部分注入到 renderer，但业务逻辑仍在宿主进程，渲染入口只拿到一个受限桥接对象，没有任意 DOM 权限。
 
@@ -53,7 +53,7 @@ JS 插件运行在 Electron 的 `utilityProcess` 里。这是一个独立进程�
 | `apiVersion` | number | 使用的插件 API 主版本号 |
 | `permissions` | string[] | 权限声明，安装时展示给用户 |
 
-`main` 与 `binary` 至少填一个。`type` 包含 `dsp` 时 `binary` 必填。
+JS 插件填写 `main`，DSP 插件填写 `binary`，纯 theme 插件可用 `contributes.themes` 声明 CSS 变量/样式表并省略二者。`type` 包含 `dsp` 时 `binary` 必填。
 
 ### 4.2 可选字段
 
@@ -197,7 +197,7 @@ UI contribution 可声明 `renderMode`：默认 `command` 只执行命令；`htm
 `create-twilight-plugin` 是官方脚手架，提供两个子命令：
 
 - `init`：生成插件模板。模板有四种：`tool` / `provider` / `ui-tool` / `theme`。
-- `pack`：校验 manifest、检查 `main` 或 `binary`、排除 `node_modules` 和缓存、产出根目录带 `plugin.json` 的 `.tep` zip。
+- `pack`：校验 manifest、检查 JS `main`、DSP `binary` 或纯 theme `contributes.themes`、排除 `node_modules` 和缓存、产出根目录带 `plugin.json` 的 `.tep` zip。
 
 TypeScript typings 来自 `@twilight-echo/plugin-api` 包，这是 API v1 的权威类型来源：
 

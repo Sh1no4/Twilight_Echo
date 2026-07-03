@@ -34,8 +34,31 @@ test('init creates provider, ui-tool, and theme manifests', async () => {
       JSON.parse(await fs.readFile(path.join(target, 'plugin.json'), 'utf-8'))
     )
     assert.equal(manifest.id, `com.example.${type}`)
-    if (type === 'theme') assert.equal(await exists(path.join(target, 'theme.css')), true)
+    if (type === 'theme') {
+      assert.equal(manifest.main, undefined)
+      assert.equal(await exists(path.join(target, 'theme.css')), true)
+      assert.equal(await exists(path.join(target, 'src', 'index.mts')), false)
+      assert.equal(Array.isArray(manifest.contributes?.themes), true)
+    }
   }
+})
+
+test('pack creates a tep for declarative theme plugins without a JS build', async () => {
+  const root = await tempDir()
+  const target = path.join(root, 'my-theme')
+  await initCommand([target, '--type', 'theme', '--id', 'com.example.theme-pack'])
+
+  const outDir = path.join(root, 'packed')
+  const result = await packCommand([target, '--out', outDir])
+  assert.equal(path.extname(result.outputFile), '.tep')
+
+  const extracted = path.join(root, 'extracted-theme')
+  await fs.mkdir(extracted, { recursive: true })
+  await extract(result.outputFile, { dir: extracted })
+  const manifest = JSON.parse(await fs.readFile(path.join(extracted, 'plugin.json'), 'utf-8'))
+  assert.equal(manifest.main, undefined)
+  assert.equal(await exists(path.join(extracted, 'theme.css')), true)
+  assert.equal(await exists(path.join(extracted, 'src', 'index.mts')), false)
 })
 
 test('pack creates a tep with plugin.json at root and excludes node_modules', async () => {

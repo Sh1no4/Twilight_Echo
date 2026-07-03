@@ -54,14 +54,15 @@ Required `plugin.json` fields:
 - `author`
 - `license`: SPDX identifier
 - `type`: array of `provider`, `tool`, `ui`, `theme`, `dsp`
-- `main`: JS entry path, required for JS plugins unless `binary` is present
+- `main`: JS entry path, required for JS plugins unless `binary` is present; pure theme plugins can omit it
 - `binary`: platform dynamic-library map for native DSP plugins
 - `engines.twilightEcho`: compatible host version range
 - `apiVersion`: plugin API major version
 - `permissions`: explicit permission declarations
 
-`main` and `binary` are mutually compatible but at least one must exist. If
-`type` contains `dsp`, `binary` is required. Optional fields are `contributes`,
+JS plugins declare `main`, DSP plugins declare `binary`, and pure theme plugins
+can use `contributes.themes` to declare CSS variables/stylesheets without an
+executable entry. If `type` contains `dsp`, `binary` is required. Optional fields are `contributes`,
 `dependencies`, `homepage`, `repository`, `icon`, and reserved `signature`.
 `dependencies` is a map of plugin id to supported semver range, for example
 `{ "com.example.base": ">=1.0.0" }`. It controls enable-time validation and

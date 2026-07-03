@@ -19,13 +19,14 @@
 | `author` | string | 作者名或组织 |
 | `license` | string | SPDX 标识符 |
 | `type` | string[] | `provider` \| `tool` \| `ui` \| `theme` \| `dsp`，可组合 |
-| `main` | string | JS 轨入口文件（相对包根路径）；DSP 轨改用 `binary` |
+| `main` | string | JS 轨入口文件（相对包根路径）；DSP 轨改用 `binary`；纯 theme 插件可省略 |
 | `binary` | object | DSP 轨：按平台声明动态库路径，如 `{ "win32-x64": "...", "darwin-arm64": "...", "linux-x64": "..." }` |
 | `engines.twilightEcho` | string | 兼容的宿主版本范围（semver range） |
 | `apiVersion` | number | 使用的插件 API 主版本 |
 | `permissions` | string[] | 权限声明（见 1.3）。**信任式安装下声明仍为必填**，安装时展示给用户 |
 
-> `main` 与 `binary` 至少其一；`type` 含 `dsp` 时 `binary` 必填。
+> JS 插件声明 `main`；DSP 插件声明 `binary`；纯 theme 插件可用 `contributes.themes`
+> 声明 CSS 变量/样式表并省略 `main` 与 `binary`。`type` 含 `dsp` 时 `binary` 必填。
 
 ### 1.2 可选字段
 

@@ -22,6 +22,27 @@ test('plugin manager enforces controlled UI and theme extension contracts', () =
   assert.match(managerSource, /\^--te-\[a-z0-9-_\]\+\$/)
 })
 
+test('plugin manager enforces plugin API namespace permissions at the gateway', () => {
+  assert.match(managerSource, /private requirePermission\(/)
+  assert.match(managerSource, /'player:observe'/)
+  assert.match(managerSource, /'player:control'/)
+  assert.match(managerSource, /this\.requirePermission\(id,\s*'player:observe'/)
+  assert.match(managerSource, /this\.requirePermission\(id,\s*'player:control'/)
+  assert.match(managerSource, /message\.kind === 'api-event-subscribe'[\s\S]*this\.requirePermission\(id,\s*'player:observe'/)
+})
+
+test('plugin host enforces declared settings permission before private settings access', () => {
+  assert.match(pluginHostSource, /message\.manifest\.permissions/)
+  assert.match(pluginHostSource, /createSettingsApi\(/)
+  assert.match(pluginHostSource, /requireLocalPermission\([^)]*'settings'/)
+})
+
+test('plugin manager exposes declarative manifest themes without executing theme scripts', () => {
+  assert.match(managerSource, /normalizeDeclarativeThemeContributions/)
+  assert.match(managerSource, /descriptor\.contributes/)
+  assert.match(managerSource, /manifest theme/)
+})
+
 test('plugin manager blocks bundled plugin uninstall while allowing disable', () => {
   assert.match(managerSource, /async disable\(id: string\)/)
   assert.match(managerSource, /async uninstall\(id: string/)

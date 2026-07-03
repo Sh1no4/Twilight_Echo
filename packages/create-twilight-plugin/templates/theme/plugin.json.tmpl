@@ -6,10 +6,23 @@
   "author": "Example Author",
   "license": "Apache-2.0",
   "type": ["theme"],
-  "main": "dist/index.mjs",
   "engines": {
     "twilightEcho": ">=0.20.0"
   },
   "apiVersion": 1,
-  "permissions": []
+  "permissions": [],
+  "contributes": {
+    "themes": [
+      {
+        "id": "{{packageName}}",
+        "name": "{{pluginName}}",
+        "description": "A declarative Twilight Echo theme.",
+        "variables": {
+          "--te-primary-500": "#2563eb",
+          "--te-accent-500": "#16a34a"
+        },
+        "stylesheet": "theme.css"
+      }
+    ]
+  }
 }
