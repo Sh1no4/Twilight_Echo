@@ -15,6 +15,7 @@ namespace twilight::audio {
 namespace {
 
 constexpr size_t kDecodeChunkFrames = 2048;
+constexpr size_t kVisualizationFftResolution = 8192;
 constexpr double kUnityVolumeEpsilon = 0.0001;
 constexpr double kDefaultRenderReadWaitMs = 10.0;
 constexpr double kMaxRenderReadWaitMs = 20.0;
@@ -963,7 +964,7 @@ TAE_Result AudioPipeline::playInternal(
     dspStatus_ = dspChain_.status();
     volume_ = std::clamp(volume, 0.0, 1.0);
     dspActive_ = dspStatus_.dspActive || std::abs(volume - 1.0) > 0.0001;
-    spectrum_.prepare(outputFormat_, dspConfig_.fftResolution);
+    spectrum_.prepare(outputFormat_, std::max(dspConfig_.fftResolution, kVisualizationFftResolution));
     spectrum_.setEnabled(dspConfig_.fftEnabled);
     gaplessEnabled_ = gaplessEnabled && !dopPath && !nativeDsdPath && !activeStream_->typedPassthrough;
     dopPathActive_ = dopPath;
@@ -1239,7 +1240,7 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
       dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
       preloadDspChain_.prepare(outputFormat_);
       preloadDspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
-      spectrum_.prepare(outputFormat_, dspConfig_.fftResolution);
+      spectrum_.prepare(outputFormat_, std::max(dspConfig_.fftResolution, kVisualizationFftResolution));
     }
     spectrum_.setEnabled(dspConfig_.fftEnabled);
     dspStatus_ = dspChain_.status();

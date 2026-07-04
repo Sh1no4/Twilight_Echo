@@ -266,6 +266,26 @@ int main() {
 
   {
     FftSpectrumAnalyzer analyzer;
+    analyzer.prepare(testFormat(), 8192);
+    std::vector<float> samples(8192 * 2, 0.0f);
+    for (size_t i = 0; i < 8192; ++i) {
+      samples[i * 2] = static_cast<float>(std::sin(2.0 * 3.141592653589793 * i / 256.0));
+      samples[i * 2 + 1] = samples[i * 2];
+    }
+    analyzer.capture(samples.data(), 8192, 2);
+    const std::string json = analyzer.readVisualizationJson(4096, 32, 8);
+    const std::vector<float> spectrum = extractJsonArray(json, "spectrum");
+    assert(spectrum.size() == 4096);
+    bool anyNonZero = false;
+    for (float value : spectrum) {
+      assert(std::isfinite(value));
+      if (value > 0.0f) anyNonZero = true;
+    }
+    assert(anyNonZero);
+  }
+
+  {
+    FftSpectrumAnalyzer analyzer;
     analyzer.prepare(testFormat(), 256);
     analyzer.setEnabled(false);
     const std::string json = analyzer.readVisualizationJson(24, 32, 8, 1024);

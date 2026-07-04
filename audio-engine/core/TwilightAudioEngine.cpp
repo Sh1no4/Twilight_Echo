@@ -601,7 +601,7 @@ struct VisualizationQuery {
 
 VisualizationQuery parseVisualizationQueryJson(const std::string& json) {
   VisualizationQuery query;
-  query.spectrumPoints = std::clamp<uint32_t>(parseUintField(json, "spectrumPoints", 64), 8, 256);
+  query.spectrumPoints = std::clamp<uint32_t>(parseUintField(json, "spectrumPoints", 64), 8, 4096);
   query.waveformPoints = std::clamp<uint32_t>(parseUintField(json, "waveformPoints", 128), 16, 512);
   query.spectrogramFrames = std::clamp<uint32_t>(parseUintField(json, "spectrogramFrames", 48), 1, 96);
   query.oscilloscopePoints = std::clamp<uint32_t>(parseUintField(json, "oscilloscopePoints", 1024), 64, 4096);

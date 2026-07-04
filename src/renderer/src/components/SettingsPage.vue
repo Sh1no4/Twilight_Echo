@@ -129,7 +129,7 @@ const sacdProgramModeOptions: { value: SacdProgramMode; label: string }[] = [
   { value: 'multichannel', label: 'Multichannel' }
 ]
 
-const fftResolutionOptions = [64, 128, 256, 512, 1024, 2048] as const
+const fftResolutionOptions = [64, 128, 256, 512, 1024, 2048, 4096, 8192] as const
 
 const accentColorOptions: { value: string; label: string; class: string }[] = [
   { value: 'violet', label: '紫罗兰', class: 'violet' },

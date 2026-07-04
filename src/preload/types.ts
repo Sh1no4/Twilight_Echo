@@ -291,11 +291,13 @@ export interface VisualizationOptions {
   spectrumPoints?: number
   waveformPoints?: number
   spectrogramFrames?: number
+  oscilloscopePoints?: number
 }
 
 export interface VisualizationData {
   spectrum: number[]
   waveform: number[]
+  oscilloscope: number[]
   peakDb: number
   rmsDb: number
   lufsMomentary: number | null

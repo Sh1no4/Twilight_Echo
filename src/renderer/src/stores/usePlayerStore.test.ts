@@ -331,6 +331,37 @@ test('player bar surfaces playback fallback diagnostics from the player store', 
   assert.match(source, /\{\{ audioEngineError \}\}/)
 })
 
+test('audio visualizer iframe controls are wired to the player store', () => {
+  const panelSource = readFileSync(
+    new URL('../components/AudioVisualizerPanel.vue', import.meta.url),
+    'utf8'
+  )
+  const visualizerSource = readFileSync(
+    new URL('../../../../resources/audio-visualizer/index.html', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(panelSource, /togglePlay,\s*next,\s*prev,\s*seek/)
+  assert.match(panelSource, /event\.data\?\.kind !== 'control'/)
+  assert.match(panelSource, /case 'togglePlay':\s*void togglePlay\(\)/)
+  assert.match(panelSource, /case 'previous':\s*prev\(\)/)
+  assert.match(panelSource, /case 'next':\s*next\(\)/)
+  assert.match(panelSource, /case 'seek':[\s\S]*seek\(position\)/)
+  assert.match(panelSource, /window\.api\.audioEngine\.getVisualizationData\(visualizationOptions\)/)
+  assert.match(panelSource, /spectrumPoints: 4096/)
+  assert.match(panelSource, /VISUALIZER_POLL_INTERVAL_MS = 50/)
+  assert.match(panelSource, /kind: 'spectrum'/)
+  assert.match(panelSource, /waveform: v\.waveform/)
+  assert.match(panelSource, /startVisualizationPolling\(\)/)
+
+  assert.match(visualizerSource, /function postHostControl\(action, payload = \{\}\)/)
+  assert.match(visualizerSource, /kind: 'control'/)
+  assert.match(visualizerSource, /btnPlayPause\.addEventListener\('click'[\s\S]*'togglePlay'/)
+  assert.match(visualizerSource, /btn-prev'\)\.addEventListener\('click'[\s\S]*'previous'/)
+  assert.match(visualizerSource, /btn-next'\)\.addEventListener\('click'[\s\S]*'next'/)
+  assert.match(visualizerSource, /scrubber\.addEventListener\('click'[\s\S]*postHostControl\('seek', \{ position \}\)/)
+})
+
 test('playback fallback ranks provider variants by playback url health', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const helper = extractInternalFunctionBody(source, 'getProviderSourceReliability')

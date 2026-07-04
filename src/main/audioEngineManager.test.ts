@@ -645,11 +645,15 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
 
 function makeManager(
   config: ConstructorParameters<typeof AudioEngineManager>[0],
-  nativeBinding: FakeNativeBinding
+  nativeBinding: FakeNativeBinding,
+  scheduler?: AudioEngineManagerDependencies['scheduler']
 ): InstanceType<typeof AudioEngineManager> {
   return new AudioEngineManager(config, {
     nativeBinding,
-    scheduler: TEST_SCHEDULER,
+    scheduler: {
+      ...TEST_SCHEDULER,
+      ...scheduler
+    },
     deviceOptionsProvider: () => DEVICE_OPTIONS
   })
 }
@@ -1215,7 +1219,28 @@ test('getVisualizationData normalizes native visualization data', () => {
   assert.equal(data.lufsMomentary, -15)
 })
 
-test('getVisualizationData returns inactive shape when native visualization is unavailable', () => {
+test('getVisualizationData preserves high-resolution spectrum requests for the visualizer', () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+
+  const data = manager.getVisualizationData({
+    spectrumPoints: 4096,
+    waveformPoints: 20,
+    spectrogramFrames: 1
+  })
+
+  assert.equal(data.spectrum.length, 4096)
+  assert.equal(data.spectrogram[0].length, 4096)
+})
+
+test('getVisualizationData returns inactive shape when native visualization is unavailable while stopped', () => {
   const nativeBinding = new FakeNativeBinding()
   delete (nativeBinding as Partial<NativeAudioBinding>).GetVisualizationData
   const manager = makeManager(
@@ -1241,6 +1266,102 @@ test('getVisualizationData returns inactive shape when native visualization is u
   assert.equal(data.peakDb, -120)
   assert.equal(data.rmsDb, -120)
   assert.equal(data.lufsMomentary, null)
+})
+
+test('getVisualizationData returns animated fallback data when native visualization is unavailable while playing', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  delete (nativeBinding as Partial<NativeAudioBinding>).GetVisualizationData
+  let now = 1000
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+
+  await manager.play('file:///music.flac')
+  const data = manager.getVisualizationData({
+    spectrumPoints: 12,
+    waveformPoints: 20,
+    spectrogramFrames: 4
+  })
+  now += 250
+  const nextData = manager.getVisualizationData({
+    spectrumPoints: 12,
+    waveformPoints: 20,
+    spectrogramFrames: 4
+  })
+
+  assert.equal(data.active, true)
+  assert.ok(data.sampleRate > 0)
+  assert.equal(data.spectrum.length, 12)
+  assert.equal(data.waveform.length, 20)
+  assert.equal(data.spectrogram.length, 1)
+  assert.equal(data.spectrogram[0].length, 12)
+  assert.notDeepEqual(nextData.spectrum, data.spectrum)
+  assert.ok(data.spectrum.some((value) => value > 0))
+  assert.ok(data.waveform.some((value) => value !== 0))
+  assert.equal(data.peakDb, -18)
+  assert.equal(data.rmsDb, -28)
+  assert.equal(data.lufsMomentary, -24)
+})
+
+test('getVisualizationData falls back while playback is active but native visualization is inactive', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  nativeBinding.GetVisualizationData = (optionsJson: string): string => {
+    const options = JSON.parse(optionsJson || '{}') as {
+      spectrumPoints?: number
+      waveformPoints?: number
+      oscilloscopePoints?: number
+    }
+    return JSON.stringify({
+      spectrum: Array.from({ length: options.spectrumPoints ?? 64 }, () => 0),
+      waveform: Array.from({ length: options.waveformPoints ?? 128 }, () => 0),
+      oscilloscope: Array.from({ length: options.oscilloscopePoints ?? 1024 }, () => 0),
+      peakDb: -120,
+      rmsDb: -120,
+      lufsMomentary: null,
+      spectrogram: [],
+      sampleRate: 0,
+      active: false
+    })
+  }
+  let now = 1000
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+
+  await manager.play('file:///music.flac')
+  const data = manager.getVisualizationData({
+    spectrumPoints: 12,
+    waveformPoints: 20,
+    spectrogramFrames: 4
+  })
+  now += 250
+  const nextData = manager.getVisualizationData({
+    spectrumPoints: 12,
+    waveformPoints: 20,
+    spectrogramFrames: 4
+  })
+
+  assert.equal(data.active, true)
+  assert.ok(data.sampleRate > 0)
+  assert.notDeepEqual(nextData.spectrum, data.spectrum)
+  assert.ok(data.spectrum.some((value) => value > 0))
+  assert.ok(data.waveform.some((value) => value !== 0))
 })
 
 test('DSP module updates enable the native DSP chain instead of only toggling UI state', async () => {

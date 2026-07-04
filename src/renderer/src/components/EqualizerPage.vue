@@ -49,7 +49,7 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   dspEnabled: false,
   clipGuard: true,
   fftEnabled: true,
-  fftResolution: 64,
+  fftResolution: 8192,
   highResolution: true,
   dsdToPcm: false,
   dsdOutputMode: 'auto',
@@ -276,7 +276,7 @@ function normalizeAudioProcessing(
       settings?.sacdProgramMode === 'stereo' || settings?.sacdProgramMode === 'multichannel'
         ? settings.sacdProgramMode
         : 'auto',
-    fftResolution: clampNumber(settings?.fftResolution, 64, 2048, 64),
+    fftResolution: clampNumber(settings?.fftResolution, 64, 8192, 8192),
     eqPreamp: clampNumber(settings?.eqPreamp, -24, 24, 0),
     replayGainPreamp: clampNumber(settings?.replayGainPreamp, -12, 12, 0),
     replayGainFallback: clampNumber(settings?.replayGainFallback, -12, 12, 0),

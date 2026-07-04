@@ -53,7 +53,7 @@ struct DspConfig {
   bool enabled = false;
   bool clipGuard = true;
   bool fftEnabled = true;
-  size_t fftResolution = 64;
+  size_t fftResolution = 8192;
   bool gapless = true;
   DsdOutputMode dsdOutputMode = DsdOutputMode::Auto;
   SacdProgramMode sacdProgramMode = SacdProgramMode::Auto;

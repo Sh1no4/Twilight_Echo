@@ -28,9 +28,9 @@ class ManualUtilityProcess extends EventEmitter {
 test('cached audio service calls swallow timeout rejections', async () => {
   const child = new SilentUtilityProcess()
   const electron = {
-      utilityProcess: {
-        fork: () => child
-      }
+    utilityProcess: {
+      fork: () => child
+    }
   }
   const unhandled: unknown[] = []
   const onUnhandled = (reason: unknown): void => {
@@ -92,7 +92,7 @@ test('stale audio service responses after crash do not repopulate playback cache
   binding.destroy()
 })
 
-test('older same-generation cache responses do not overwrite newer playback info', async () => {
+test('cache refreshes coalesce while a same-method service request is in flight', async () => {
   const child = new ManualUtilityProcess()
   const electron = {
     utilityProcess: {
@@ -107,28 +107,31 @@ test('older same-generation cache responses do not overwrite newer playback info
     electron
   })
 
-  assert.equal(binding.GetPlaybackInfo(), '{"state":"stopped"}')
-  assert.equal(binding.GetPlaybackInfo(), '{"state":"stopped"}')
-  const older = child.messages[0] as { requestId: string }
-  const newer = child.messages[1] as { requestId: string }
+  assert.equal(
+    binding.GetVisualizationData('{"spectrumPoints":4096}'),
+    '{"spectrum":[],"waveform":[],"peakDb":-120,"rmsDb":-120,"lufsMomentary":null,"spectrogram":[],"sampleRate":0,"active":false}'
+  )
+  assert.equal(
+    binding.GetVisualizationData('{"spectrumPoints":4096}'),
+    '{"spectrum":[],"waveform":[],"peakDb":-120,"rmsDb":-120,"lufsMomentary":null,"spectrogram":[],"sampleRate":0,"active":false}'
+  )
+  assert.equal(child.messages.length, 1)
+
+  const request = child.messages[0] as { requestId: string }
 
   child.emit('message', {
     kind: 'response',
-    requestId: newer.requestId,
+    requestId: request.requestId,
     ok: true,
-    value: '{"state":"playing","position":20}'
+    value:
+      '{"spectrum":[1],"waveform":[],"peakDb":-3,"rmsDb":-12,"lufsMomentary":null,"spectrogram":[],"sampleRate":48000,"active":true}'
   })
   await new Promise((resolve) => setTimeout(resolve, 0))
-  assert.equal(binding.GetPlaybackInfo(), '{"state":"playing","position":20}')
+  assert.equal(
+    binding.GetVisualizationData('{"spectrumPoints":4096}'),
+    '{"spectrum":[1],"waveform":[],"peakDb":-3,"rmsDb":-12,"lufsMomentary":null,"spectrogram":[],"sampleRate":48000,"active":true}'
+  )
+  assert.equal(child.messages.length, 2)
 
-  child.emit('message', {
-    kind: 'response',
-    requestId: older.requestId,
-    ok: true,
-    value: '{"state":"paused","position":1}'
-  })
-  await new Promise((resolve) => setTimeout(resolve, 0))
-
-  assert.equal(binding.GetPlaybackInfo(), '{"state":"playing","position":20}')
   binding.destroy()
 })

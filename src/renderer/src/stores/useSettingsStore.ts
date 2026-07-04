@@ -22,7 +22,7 @@ const fallbackAudioProcessing: AudioProcessingSettings = {
   dspEnabled: false,
   clipGuard: true,
   fftEnabled: true,
-  fftResolution: 64,
+  fftResolution: 8192,
   highResolution: true,
   dsdToPcm: false,
   dsdOutputMode: 'auto',

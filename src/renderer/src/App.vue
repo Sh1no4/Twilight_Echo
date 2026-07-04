@@ -95,8 +95,14 @@ function handleCoverClick(rect: { x: number; y: number; w: number; h: number }):
 
 const { loadLibrary, loadPlaylists, flushSaveLibrary, handleLibraryChange } = useMusicStore()
 const { checkLogin } = useNcmStore()
-const { currentTrack, currentTime, isPlaying, restorePlaybackSession, createPlaybackSession } =
-  usePlayerStore()
+const {
+  currentTrack,
+  currentTime,
+  isPlaying,
+  restorePlaybackSession,
+  createPlaybackSession,
+  visualizerActive
+} = usePlayerStore()
 const { loadSettings, settings } = useSettingsStore()
 const { uiContributions, syncExtensions } = useExtensionRegistry()
 const STREAMING_ACCOUNT_PAGE_KEYS = new Set(['com.twilightecho.provider.ytmusic:ytmusic-account'])
@@ -117,6 +123,7 @@ const hasPlayerBar = computed(
     !showEqualizerPage.value &&
     !showPluginPage.value &&
     !activePluginPage.value &&
+    !visualizerActive.value &&
     !!currentTrack.value
 )
 const showLocalSidebar = computed(

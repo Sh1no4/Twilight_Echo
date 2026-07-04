@@ -38,7 +38,7 @@ npm run build
 
 ## 可视化 tap
 
-FFT tap 已扩展为只读 visualization tap，监听最终 PCM 渲染缓冲，不影响音频输出。C ABI / Node-API 通过 `GetVisualizationData` 返回 spectrum、waveform、peak、RMS、momentary LUFS 估算、固定滚动窗口 spectrogram、decoupled 示波器时域采样（`oscilloscopePoints` 64-4096，默认 1024，独立于 `fftResolution`）、sampleRate 和 active 状态。无播放采样或 tap 禁用时返回 inactive 空闲态，Renderer 只能展示空闲态，不能生成假数据。
+FFT tap 已扩展为只读 visualization tap，监听最终 PCM 渲染缓冲，不影响音频输出。C ABI / Node-API 通过 `GetVisualizationData` 返回 spectrum、waveform、peak、RMS、momentary LUFS 估算、固定滚动窗口 spectrogram、decoupled 示波器时域采样（`oscilloscopePoints` 64-4096，默认 1024，独立于 `fftResolution`）、sampleRate 和 active 状态。`spectrumPoints` 支持 8-4096，播放页可请求 4096 个线性 FFT bins 并在 UI 侧做 log-Hz 映射。无播放采样或 tap 禁用时返回 inactive 空闲态，Renderer 只能展示空闲态，不能生成假数据。
 
 Phase 6B 的后端判定边界：
 

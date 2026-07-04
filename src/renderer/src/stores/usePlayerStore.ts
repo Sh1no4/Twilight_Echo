@@ -175,6 +175,9 @@ const originalQueue = ref<Track[]>([])
 const audioEngineReady = ref(false)
 const audioEngineError = ref<string | null>(null)
 const exclusiveMode = ref(false)
+// Tracks whether the in-PlayingMusic audio visualizer surface is active.
+// App.vue reads this to hide the PlayerBar while the visualizer is open.
+const visualizerActive = ref(false)
 const audioOutput = ref<AudioOutputId>(getFallbackAudioOutput())
 const audioDevice = ref('auto')
 const audioOutputOptions = ref<AudioOutputOption[]>(getFallbackAudioOutputOptions())
@@ -183,7 +186,7 @@ const defaultAudioProcessing: AudioProcessingSettings = {
   dspEnabled: false,
   clipGuard: true,
   fftEnabled: true,
-  fftResolution: 64,
+  fftResolution: 8192,
   highResolution: true,
   dsdToPcm: false,
   dsdOutputMode: 'auto',
@@ -220,7 +223,7 @@ const audioOutputConfig = ref<OutputConfig>({ ...defaultAudioOutputConfig })
 const playbackInfo = ref<NativePlaybackInfo | null>(null)
 const outputInfo = computed<NativeOutputInfo | null>(() => playbackInfo.value?.outputInfo ?? null)
 const visualizationOptions = {
-  spectrumPoints: 48,
+  spectrumPoints: 4096,
   waveformPoints: 96,
   spectrogramFrames: 48,
   oscilloscopePoints: 1024
@@ -2018,6 +2021,7 @@ export function usePlayerStore(): {
   audioEngineReady: Ref<boolean>
   audioEngineError: Ref<string | null>
   exclusiveMode: Ref<boolean>
+  visualizerActive: Ref<boolean>
   audioOutput: Ref<AudioOutputId>
   audioDevice: Ref<string>
   audioOutputOptions: Ref<AudioOutputOption[]>
@@ -2250,6 +2254,7 @@ export function usePlayerStore(): {
     audioEngineReady,
     audioEngineError,
     exclusiveMode,
+    visualizerActive,
     audioOutput,
     audioDevice,
     audioOutputOptions,

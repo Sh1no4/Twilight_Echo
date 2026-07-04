@@ -19,8 +19,17 @@ import { buildLyricLines } from '../utils/lyrics'
 import type { LyricLine } from '../utils/lyrics'
 import { getTrackSource, shouldReserveLyricsColumn } from '../utils/nowPlayingLayout'
 import type { LyricSource } from '../types/music'
+import AudioVisualizerPanel from './AudioVisualizerPanel.vue'
 
-const { currentTrack, dominantColor, currentTime, duration, seek, formatTime } = usePlayerStore()
+const {
+  currentTrack,
+  dominantColor,
+  currentTime,
+  duration,
+  seek,
+  formatTime,
+  visualizerActive
+} = usePlayerStore()
 const { settings } = useSettingsStore()
 
 const nowPlayingBackground = computed(() => settings.value.nowPlayingBackground)
@@ -32,6 +41,25 @@ const isFluidBackground = computed(() => nowPlayingBackground.value === 'fluid')
 const isSolidBackground = computed(() => nowPlayingBackground.value === 'solid')
 
 const lyricAlignClass = computed(() => `lyric-align-${lyricAlign.value}`)
+
+// Visualizer toggle: replaces the cover+lyrics layout with the native-engine
+// spectrum visualizer surface.
+const viewMode = ref<'cover' | 'visualizer'>('cover')
+function toggleVisualizer(): void {
+  viewMode.value = viewMode.value === 'cover' ? 'visualizer' : 'cover'
+}
+// Mirror viewMode into the player store so App.vue can hide the PlayerBar while
+// the visualizer surface is active.
+watch(
+  viewMode,
+  (mode) => {
+    visualizerActive.value = mode === 'visualizer'
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => {
+  visualizerActive.value = false
+})
 
 const resolvedCover = useCover(computed(() => currentTrack.value?.cover ?? null))
 const bgSrc = computed(() => resolvedCover.value ?? '')
@@ -392,6 +420,15 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="playing-music" :class="`bg-${nowPlayingBackground}`" :style="{ '--accent-color': dominantColor, '--lyric-dim': lyricDimOpacity }">
+    <button
+      type="button"
+      class="visualizer-toggle-button"
+      :title="viewMode === 'cover' ? '音频可视化' : '返回封面'"
+      @click="toggleVisualizer"
+    >
+      <i :class="viewMode === 'cover' ? 'pi pi-chart-bar' : 'pi pi-times'"></i>
+    </button>
+
     <div class="backdrop" aria-hidden="true">
       <Transition name="backdrop-cover-fade" appear>
         <img v-if="bgSrc && isBlurBackground" :key="bgSrc" :src="bgSrc" class="backdrop-cover" alt="" />
@@ -403,7 +440,12 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="currentTrack" class="stage">
-      <main class="layout" :class="{ 'layout--single': !reserveLyricsColumn }">
+      <AudioVisualizerPanel
+        v-if="viewMode === 'visualizer'"
+        class="visualizer-surface"
+        :active="viewMode === 'visualizer'"
+      />
+      <main v-else class="layout" :class="{ 'layout--single': !reserveLyricsColumn }">
         <section class="cover-column">
           <div class="cover-frame">
             <img
@@ -971,5 +1013,53 @@ onBeforeUnmount(() => {
   .lyric-row {
     padding-inline: 12px;
   }
+}
+
+/* Visualizer toggle button (floating, top-right) */
+.visualizer-toggle-button {
+  position: fixed;
+  top: 42px;
+  right: 42px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--te-glass-bg, rgba(255, 255, 255, 0.55));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--te-neutral-700, #334155);
+  font-size: 16px;
+  transition: all 0.2s;
+  z-index: 1200;
+}
+
+.visualizer-toggle-button:hover {
+  background: var(--te-card-bg, rgba(255, 255, 255, 0.85));
+  color: var(--te-primary-500, #6366f1);
+  transform: scale(1.06);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+
+/* Visualizer surface fills the stage area */
+.visualizer-surface {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+:global(html[data-theme='dark']) .visualizer-toggle-button {
+  background: rgba(30, 32, 40, 0.6);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.85);
+}
+
+:global(html[data-theme='dark']) .visualizer-toggle-button:hover {
+  background: rgba(40, 42, 52, 0.85);
+  color: var(--te-primary-500, #8b9bff);
 }
 </style>

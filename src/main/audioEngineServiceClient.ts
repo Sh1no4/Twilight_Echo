@@ -31,7 +31,11 @@ type UtilityProcessLike = {
 
 type ElectronModule = {
   utilityProcess?: {
-    fork: (modulePath: string, args?: string[], options?: { serviceName?: string; stdio?: 'pipe' }) => UtilityProcessLike
+    fork: (
+      modulePath: string,
+      args?: string[],
+      options?: { serviceName?: string; stdio?: 'pipe' }
+    ) => UtilityProcessLike
   }
 }
 
@@ -78,6 +82,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private restarting = false
   private generation = 0
   private cacheRequestSerial = new Map<keyof NativeAudioBinding, number>()
+  private cacheRequestsInFlight = new Set<keyof NativeAudioBinding>()
   private lastPlaybackInfo: string | PlaybackInfo | null = null
   private lastDspStatus: string | { plugins: unknown[] } = { plugins: [] }
   private lastConvolverInfo: string | ConvolverInfo | null = null
@@ -181,7 +186,12 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     this.fireAndForget('SetCrossfeedStrength', [strength])
   }
 
-  SetReplayGainMode(mode: VolumeNormalizationMode, preamp: number, fallback: number, clip: boolean): void {
+  SetReplayGainMode(
+    mode: VolumeNormalizationMode,
+    preamp: number,
+    fallback: number,
+    clip: boolean
+  ): void {
     this.fireAndForget('SetReplayGainMode', [mode, preamp, fallback, clip])
   }
 
@@ -224,7 +234,10 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     this.refreshCache('GetVisualizationData', [optionsJson], (value) => {
       this.lastVisualizationData = value as string | VisualizationData
     })
-    return this.lastVisualizationData ?? '{"spectrum":[],"waveform":[],"peakDb":-120,"rmsDb":-120,"lufsMomentary":null,"spectrogram":[],"sampleRate":0,"active":false}'
+    return (
+      this.lastVisualizationData ??
+      '{"spectrum":[],"waveform":[],"peakDb":-120,"rmsDb":-120,"lufsMomentary":null,"spectrogram":[],"sampleRate":0,"active":false}'
+    )
   }
 
   EnumerateDevices(): string | AudioDeviceOption[] {
@@ -277,7 +290,9 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       child.on('message', (message) => this.handleMessage(message))
       child.on('exit', (code) => this.handleExit(`音频服务进程退出：${code ?? 'unknown'}`))
       child.on('error', (error, location) =>
-        this.handleExit(`音频服务进程错误：${location ?? ''} ${error instanceof Error ? error.message : String(error)}`)
+        this.handleExit(
+          `音频服务进程错误：${location ?? ''} ${error instanceof Error ? error.message : String(error)}`
+        )
       )
       child.stdout?.on('data', (chunk) => this.emit('log', chunk.toString()))
       child.stderr?.on('data', (chunk) => this.emit('error-log', chunk.toString()))
@@ -331,6 +346,8 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     args: unknown[],
     apply: (value: unknown) => void
   ): void {
+    if (this.cacheRequestsInFlight.has(method)) return
+    this.cacheRequestsInFlight.add(method)
     const serial = (this.cacheRequestSerial.get(method) ?? 0) + 1
     this.cacheRequestSerial.set(method, serial)
     void this.call(method, args)
@@ -343,6 +360,9 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         this.lastErrorJson = JSON.stringify({
           message: error instanceof Error ? error.message : String(error)
         })
+      })
+      .finally(() => {
+        this.cacheRequestsInFlight.delete(method)
       })
   }
 

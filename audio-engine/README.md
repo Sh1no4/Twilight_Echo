@@ -70,7 +70,7 @@ resources/audio-engine/twilight_audio_node.node
 
 WASAPI Exclusive / ASIO 已具备 typed PCM passthrough 分支：当无 DSP、音量为 1.0、routing 不改变语义，且源 PCM 格式与后端实际输出格式完全一致时，FFmpeg decode、AudioBuffer 和后端 typed render 会按 Int16/Int24/Int32/Float32 直通，允许 `pcmPassthrough=true` / `outputPerfect=true`。如果源格式和设备实际格式不一致，或处理链需要 Float32，则继续报告 `integer_passthrough_unavailable` 或 `pcm_converted`，避免误报 bit-perfect。
 
-`TAE_GetVisualizationData` / Node-API `GetVisualizationData` 返回只读可视化数据：`spectrum`、`waveform`、`peakDb`、`rmsDb`、`lufsMomentary`、`spectrogram`、`oscilloscope`、`sampleRate`、`active`。`oscilloscope` 是与 `waveform` 解耦的独立时域采样数组，长度由 `oscilloscopePoints`（64-4096，默认 1024）决定，独立于 `fftResolution`，供 UI 做稳定波形触发与绘制。无播放采样时返回 inactive 空闲态；旧的 `TAE_GetSpectrumData` 保留兼容。
+`TAE_GetVisualizationData` / Node-API `GetVisualizationData` 返回只读可视化数据：`spectrum`、`waveform`、`peakDb`、`rmsDb`、`lufsMomentary`、`spectrogram`、`oscilloscope`、`sampleRate`、`active`。`spectrumPoints` 支持 8-4096，播放页可请求 4096 个线性 FFT bins 并在 UI 侧做 log-Hz 映射。`oscilloscope` 是与 `waveform` 解耦的独立时域采样数组，长度由 `oscilloscopePoints`（64-4096，默认 1024）决定，独立于 `fftResolution`，供 UI 做稳定波形触发与绘制。无播放采样时返回 inactive 空闲态；旧的 `TAE_GetSpectrumData` 保留兼容。
 
 Phase 6B 中，后端只上报事实：WASAPI Shared 始终按系统混音路径报告 false；WASAPI Exclusive/ASIO 只有实际格式完整上报并与 decoded PCM 完全匹配时才进入 evaluator；CoreAudio 默认路径在 Hog/Exclusive 未验证前继续 false；ALSA `default` / `plughw:` 默认 false，只有显式 `hw:` 且格式匹配才可能 true。
 

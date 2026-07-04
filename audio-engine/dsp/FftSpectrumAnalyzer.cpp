@@ -11,7 +11,7 @@ namespace twilight::audio {
 namespace {
 
 size_t normalizeResolution(size_t value) {
-  const size_t allowed[] = {64, 128, 256, 512, 1024, 2048};
+  const size_t allowed[] = {64, 128, 256, 512, 1024, 2048, 4096, 8192};
   size_t best = allowed[0];
   size_t bestDistance = value > best ? value - best : best - value;
   for (size_t candidate : allowed) {
@@ -54,6 +54,7 @@ void FftSpectrumAnalyzer::prepare(const AudioFormat& format, size_t resolution) 
   rmsDb_ = -120.0;
   lufsMomentary_ = -70.0;
   hasCapture_ = false;
+  spectrumDirty_ = false;
 }
 
 void FftSpectrumAnalyzer::prepareOscilloscope(size_t points) {
@@ -71,6 +72,7 @@ void FftSpectrumAnalyzer::setEnabled(bool enabled) {
     peakDb_ = -120.0;
     rmsDb_ = -120.0;
     lufsMomentary_ = -70.0;
+    spectrumDirty_ = false;
     std::fill(magnitudes_.begin(), magnitudes_.end(), 0.0f);
   }
 }
@@ -82,6 +84,7 @@ void FftSpectrumAnalyzer::resetCapture() {
   peakDb_ = -120.0;
   rmsDb_ = -120.0;
   lufsMomentary_ = -70.0;
+  spectrumDirty_ = false;
   std::fill(timeDomain_.begin(), timeDomain_.end(), 0.0f);
   std::fill(oscilloscopeBuffer_.begin(), oscilloscopeBuffer_.end(), 0.0f);
   std::fill(magnitudes_.begin(), magnitudes_.end(), 0.0f);
@@ -90,7 +93,8 @@ void FftSpectrumAnalyzer::resetCapture() {
 void FftSpectrumAnalyzer::capture(const float* interleaved, size_t frames, int channels) {
   if (!interleaved || frames == 0 || channels <= 0) return;
 
-  std::lock_guard lock(mutex_);
+  std::unique_lock lock(mutex_, std::try_to_lock);
+  if (!lock.owns_lock()) return;
   if (!enabled_ || resolution_ == 0) return;
 
   // FFT window (timeDomain_) — sized by resolution_.
@@ -150,7 +154,12 @@ void FftSpectrumAnalyzer::capture(const float* interleaved, size_t frames, int c
   peakDb_ = 20.0 * std::log10(std::max(peakSample, 1.0e-6));
   rmsDb_ = 20.0 * std::log10(std::max(rms, 1.0e-6));
   lufsMomentary_ = std::max(-70.0, rmsDb_ - 0.691);
+  spectrumDirty_ = true;
+  hasCapture_ = true;
+}
 
+void FftSpectrumAnalyzer::updateSpectrumLocked() const {
+  if (!enabled_ || !hasCapture_ || !spectrumDirty_ || resolution_ == 0 || timeDomain_.empty()) return;
   std::vector<float> fftInput(resolution_, 0.0f);
   for (size_t i = 0; i < resolution_; ++i) {
     fftInput[i] = timeDomain_[i] * window_[i];
@@ -175,12 +184,15 @@ void FftSpectrumAnalyzer::capture(const float* interleaved, size_t frames, int c
   if (spectrogram_.size() > kMaxSpectrogramFrames) {
     spectrogram_.erase(spectrogram_.begin(), spectrogram_.begin() + static_cast<std::ptrdiff_t>(spectrogram_.size() - kMaxSpectrogramFrames));
   }
-  hasCapture_ = true;
+  spectrumDirty_ = false;
 }
 
 size_t FftSpectrumAnalyzer::read(float* output, size_t points, double idlePhase) const {
   if (!output || points == 0) return 0;
   std::lock_guard lock(mutex_);
+  if (spectrumDirty_) {
+    updateSpectrumLocked();
+  }
   if (!enabled_ || !hasCapture_ || magnitudes_.empty()) {
     fillIdleSpectrum(output, points, idlePhase);
     return points;
@@ -199,11 +211,12 @@ std::string FftSpectrumAnalyzer::readVisualizationJson(
     size_t spectrogramFrames,
     size_t oscilloscopePoints) const {
   std::lock_guard lock(mutex_);
-  spectrumPoints = std::clamp<size_t>(spectrumPoints == 0 ? 64 : spectrumPoints, 8, 256);
+  spectrumPoints = std::clamp<size_t>(spectrumPoints == 0 ? 64 : spectrumPoints, 8, 4096);
   waveformPoints = std::clamp<size_t>(waveformPoints == 0 ? 128 : waveformPoints, 16, 512);
   spectrogramFrames = std::clamp<size_t>(spectrogramFrames == 0 ? 48 : spectrogramFrames, 1, 96);
   oscilloscopePoints = std::clamp<size_t>(oscilloscopePoints == 0 ? 1024 : oscilloscopePoints, 64, 4096);
   const bool active = enabled_ && hasCapture_;
+  if (active) updateSpectrumLocked();
 
   auto writeArray = [](std::ostringstream& json, const std::vector<float>& values) {
     json << "[";

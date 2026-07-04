@@ -387,7 +387,7 @@ DspConfig DspChain::parseConfigJson(const std::string& json) {
   config.clipGuard = extractBoolField(json, "clipGuard").value_or(true);
   config.fftEnabled = extractBoolField(json, "fftEnabled").value_or(true);
   config.fftResolution =
-      static_cast<size_t>(std::clamp(extractNumberField(json, "fftResolution").value_or(64.0), 64.0, 2048.0));
+      static_cast<size_t>(std::clamp(extractNumberField(json, "fftResolution").value_or(8192.0), 64.0, 8192.0));
   config.gapless = extractBoolField(json, "gapless").value_or(true);
   config.dsdOutputMode = parseDsdOutputMode(extractStringField(json, "dsdOutputMode").value_or(
       extractBoolField(json, "dsdToPcm").value_or(false) ? "pcm" : "auto"));

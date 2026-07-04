@@ -34,7 +34,7 @@
 
 `options_json` 支持：
 
-- `spectrumPoints`：8-256，默认 64。
+- `spectrumPoints`：8-4096，默认 64。高保真播放页可请求 4096 个线性 FFT bins，并在 UI 侧按参考可视化实现做 log-Hz 映射与插值。
 - `waveformPoints`：16-512，默认 128。
 - `spectrogramFrames`：1-96，默认 48；native 侧保留固定滚动窗口，不无限增长。
 - `oscilloscopePoints`：64-4096，默认 1024；请求的时域示波器样本数，独立于 `fftResolution` 与 `waveformPoints`，由专门的 decoupled tap 返回。

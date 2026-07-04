@@ -28,20 +28,23 @@ class FftSpectrumAnalyzer {
   bool isActive() const;
 
  private:
+  void updateSpectrumLocked() const;
+
   mutable std::mutex mutex_;
   AudioFormat format_;
   size_t resolution_ = 64;
   size_t oscilloscopeResolution_ = 1024;
   bool enabled_ = true;
   bool hasCapture_ = false;
+  mutable bool spectrumDirty_ = false;
   double peakDb_ = -120.0;
   double rmsDb_ = -120.0;
   double lufsMomentary_ = -70.0;
   std::vector<float> window_;
   std::vector<float> timeDomain_;
   std::vector<float> oscilloscopeBuffer_;
-  std::vector<float> magnitudes_;
-  std::vector<std::vector<float>> spectrogram_;
+  mutable std::vector<float> magnitudes_;
+  mutable std::vector<std::vector<float>> spectrogram_;
 };
 
 void fillIdleSpectrum(float* buffer, size_t count, double phase);
