@@ -22,6 +22,17 @@ inline int32_t signed24FromBytes(uint8_t low, uint8_t mid, uint8_t high) {
   return value;
 }
 
+inline int16_t signed16FromBytes(const uint8_t* bytes) {
+  const uint16_t value = static_cast<uint16_t>(bytes[0]) | (static_cast<uint16_t>(bytes[1]) << 8);
+  return static_cast<int16_t>(value);
+}
+
+inline int32_t signed32FromBytes(const uint8_t* bytes) {
+  uint32_t value = 0;
+  std::memcpy(&value, bytes, sizeof(value));
+  return static_cast<int32_t>(value);
+}
+
 inline float signed24ToFloat(int32_t value) {
   return static_cast<float>(std::clamp(static_cast<double>(value) / 8388608.0, -1.0, 1.0));
 }
@@ -56,8 +67,7 @@ inline size_t typedPcmToFloatWithTailSilence(const PcmBlock& block, float* outpu
 
   switch (block.format.sampleFormat) {
     case AudioSampleFormat::Int16Interleaved: {
-      const auto* input = reinterpret_cast<const int16_t*>(block.data);
-      for (size_t i = 0; i < samples; ++i) output[i] = int16ToFloat(input[i]);
+      for (size_t i = 0; i < samples; ++i) output[i] = int16ToFloat(signed16FromBytes(block.data + i * 2));
       break;
     }
     case AudioSampleFormat::Int24Interleaved: {
@@ -69,13 +79,11 @@ inline size_t typedPcmToFloatWithTailSilence(const PcmBlock& block, float* outpu
       break;
     }
     case AudioSampleFormat::Int24In32Interleaved: {
-      const auto* input = reinterpret_cast<const int32_t*>(block.data);
-      for (size_t i = 0; i < samples; ++i) output[i] = signed24ToFloat(input[i] >> 8);
+      for (size_t i = 0; i < samples; ++i) output[i] = signed24ToFloat(signed32FromBytes(block.data + i * 4) >> 8);
       break;
     }
     case AudioSampleFormat::Int32Interleaved: {
-      const auto* input = reinterpret_cast<const int32_t*>(block.data);
-      for (size_t i = 0; i < samples; ++i) output[i] = int32ToFloat(input[i]);
+      for (size_t i = 0; i < samples; ++i) output[i] = int32ToFloat(signed32FromBytes(block.data + i * 4));
       break;
     }
     case AudioSampleFormat::Float32Interleaved:

@@ -64,11 +64,11 @@ inline void appendConvertedSamples(
     std::vector<uint8_t>* pending) {
   if (!source || !pending || sampleCount == 0) return;
   if (outputFormat == AudioSampleFormat::Int24Interleaved) {
-    const auto* values = reinterpret_cast<const int32_t*>(source);
     const size_t start = pending->size();
     pending->resize(start + sampleCount * 3);
     for (size_t i = 0; i < sampleCount; ++i) {
-      const auto value = static_cast<uint32_t>(values[i]);
+      uint32_t value = 0;
+      std::memcpy(&value, source + i * sizeof(uint32_t), sizeof(value));
       (*pending)[start + i * 3 + 0] = static_cast<uint8_t>((value >> 8) & 0xff);
       (*pending)[start + i * 3 + 1] = static_cast<uint8_t>((value >> 16) & 0xff);
       (*pending)[start + i * 3 + 2] = static_cast<uint8_t>((value >> 24) & 0xff);

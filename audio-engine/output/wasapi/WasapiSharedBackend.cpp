@@ -99,6 +99,7 @@ struct WasapiSharedBackend::Impl {
   RenderCallback callback;
   OutputEventCallback eventCallback;
   bool ownerComInitialized = false;
+  std::atomic<bool> deviceInvalidatedEventQueued{false};
 
   static std::wstring utf8ToWide(const std::string& value) {
     if (value.empty()) return {};
@@ -284,8 +285,9 @@ struct WasapiSharedBackend::Impl {
       HRESULT hr = audioClient->GetCurrentPadding(&padding);
       if (FAILED(hr)) {
         recordRenderFailureFromRenderThread(hr, "无法读取共享输出缓冲状态");
-        if (eventCallback && isDeviceInvalidated(hr)) {
-          eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+        if (isDeviceInvalidated(hr)) {
+          deviceInvalidatedEventQueued.store(true);
+          running = false;
           break;
         }
         continue;
@@ -297,8 +299,9 @@ struct WasapiSharedBackend::Impl {
       hr = renderClient->GetBuffer(framesAvailable, &data);
       if (FAILED(hr)) {
         recordRenderFailureFromRenderThread(hr, "无法获取共享输出缓冲区");
-        if (eventCallback && isDeviceInvalidated(hr)) {
-          eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+        if (isDeviceInvalidated(hr)) {
+          deviceInvalidatedEventQueued.store(true);
+          running = false;
           break;
         }
         continue;
@@ -312,8 +315,9 @@ struct WasapiSharedBackend::Impl {
       hr = renderClient->ReleaseBuffer(framesAvailable, 0);
       if (FAILED(hr)) {
         recordRenderFailureFromRenderThread(hr, "无法提交共享输出缓冲区");
-        if (eventCallback && isDeviceInvalidated(hr)) {
-          eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+        if (isDeviceInvalidated(hr)) {
+          deviceInvalidatedEventQueued.store(true);
+          running = false;
           break;
         }
       }
@@ -321,6 +325,9 @@ struct WasapiSharedBackend::Impl {
 
     if (mmcssHandle) AvRevertMmThreadCharacteristics(mmcssHandle);
     CoUninitialize();
+    if (deviceInvalidatedEventQueued.exchange(false) && eventCallback) {
+      eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+    }
   }
 
   void launchRenderThread() {

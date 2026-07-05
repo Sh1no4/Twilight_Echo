@@ -75,6 +75,21 @@ void testWasapiExclusiveRenderPacketDoesNotResizeScratch() {
   assert(renderPacketBody.find("renderScratch.resize") == std::string::npos);
 }
 
+void testWasapiExclusiveFloat32RenderPacketBypassesScratchPackCopy() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiExclusiveBackend.cpp";
+  const std::string renderPacketBody = extractFunctionBody(readTextFile(sourcePath), "HRESULT renderPacket(UINT32 frameCount)");
+
+  const size_t directBranch = renderPacketBody.find("outputFormat.sampleFormat == AudioSampleFormat::Float32Interleaved");
+  const size_t scratchRender = renderPacketBody.find("renderScratch.data()");
+  const size_t packCall = renderPacketBody.find("wasapi::packFloatToPcm");
+  assert(directBranch != std::string::npos);
+  assert(renderPacketBody.find("reinterpret_cast<float*>(data)", directBranch) != std::string::npos);
+  assert(scratchRender == std::string::npos || directBranch < scratchRender);
+  assert(packCall == std::string::npos || directBranch < packCall);
+}
+
 void testWasapiSharedRenderLoopUsesMmcss() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath =
@@ -96,6 +111,20 @@ void testWasapiSharedRenderLoopUsesNonBlockingFailureTelemetry() {
   assert(renderLoopBody.find("recordRenderFailure(hr") == std::string::npos);
   assert(renderFailureBody.find("std::try_to_lock") != std::string::npos);
   assert(renderFailureBody.find("std::lock_guard lock(infoMutex)") == std::string::npos);
+}
+
+void testWasapiSharedRenderLoopDefersDeviceInvalidatedCallbackUntilAfterMmcss() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiSharedBackend.cpp";
+  const std::string renderLoopBody = extractFunctionBody(readTextFile(sourcePath), "void renderLoop()");
+  const size_t revertPos = renderLoopBody.find("AvRevertMmThreadCharacteristics");
+  const size_t callbackPos = renderLoopBody.find("eventCallback(");
+
+  assert(revertPos != std::string::npos);
+  assert(callbackPos != std::string::npos);
+  assert(revertPos < callbackPos);
+  assert(renderLoopBody.find("deviceInvalidatedEventQueued.store(true)") != std::string::npos);
 }
 
 void testWasapiSharedStopDoesNotJoinCurrentRenderThread() {
@@ -204,6 +233,7 @@ void testWasapiExclusiveRenderFailureQueuesRecoveryOffRenderThread() {
       testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiExclusiveBackend.cpp";
   const std::string source = readTextFile(sourcePath);
   const std::string handleFailureBody = extractFunctionBody(source, "bool handleRenderFailure(HRESULT hr, const char* message)");
+  const std::string queueRecoveryBody = extractFunctionBody(source, "bool queueRecoveryFromRenderThread(const char* reason)");
 
   assert(handleFailureBody.find("queueRecoveryFromRenderThread") != std::string::npos);
   assert(handleFailureBody.find("attemptRecovery(") == std::string::npos);
@@ -213,6 +243,11 @@ void testWasapiExclusiveRenderFailureQueuesRecoveryOffRenderThread() {
   assert(handleFailureBody.find("GetDevice") == std::string::npos);
   assert(handleFailureBody.find("Activate") == std::string::npos);
   assert(handleFailureBody.find("Start(") == std::string::npos);
+  assert(handleFailureBody.find("eventCallback(") == std::string::npos);
+  assert(queueRecoveryBody.find("joinRecoveryThread()") == std::string::npos);
+  assert(queueRecoveryBody.find("std::lock_guard lock(threadMutex)") == std::string::npos);
+  assert(queueRecoveryBody.find("std::thread(") == std::string::npos);
+  assert(queueRecoveryBody.find("eventCallback(") == std::string::npos);
 }
 
 void testWasapiExclusiveRecoveryStopsBeforeReopenOrNotifyAfterClose() {
@@ -232,6 +267,22 @@ void testWasapiExclusiveRecoveryStopsBeforeReopenOrNotifyAfterClose() {
   assert(recoveryBody.find("stopRequested.load()", sleepPos) < reopenPos);
   assert(recoveryBody.find("stopRequested.load()", reopenPos) < startPos);
   assert(queuedRecoveryBody.find("!stopRequested.load() && eventCallback") != std::string::npos);
+}
+
+void testWasapiExclusiveOpenClearsDeferredRenderFailureState() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiExclusiveBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string openBody = extractFunctionBody(
+      source,
+      "bool WasapiExclusiveBackend::open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error)");
+
+  assert(openBody.find("impl_->queuedRecoveryReason = nullptr") != std::string::npos);
+  assert(openBody.find("impl_->queuedRenderFailureMessage = nullptr") != std::string::npos);
+  assert(openBody.find("impl_->queuedRenderFailureHr.store(S_OK)") != std::string::npos);
+  assert(openBody.find("impl_->renderErrorEventQueued.store(false)") != std::string::npos);
+  assert(openBody.find("impl_->deviceInvalidatedEventQueued.store(false)") != std::string::npos);
 }
 
 struct SupportedFormat {
@@ -571,8 +622,10 @@ void testFloatRenderHelperZerosAllWithoutCallback() {
 int main() {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
   testWasapiExclusiveRenderPacketDoesNotResizeScratch();
+  testWasapiExclusiveFloat32RenderPacketBypassesScratchPackCopy();
   testWasapiSharedRenderLoopUsesMmcss();
   testWasapiSharedRenderLoopUsesNonBlockingFailureTelemetry();
+  testWasapiSharedRenderLoopDefersDeviceInvalidatedCallbackUntilAfterMmcss();
   testWasapiSharedStopDoesNotJoinCurrentRenderThread();
   testWasapiStartEntrypointsRejectAlreadyRunningBackend();
   testWasapiOpenFailurePathsClosePartiallyOpenedResources();
@@ -581,6 +634,7 @@ int main() {
   testWasapiExclusiveRecoveryDoesNotWriteSharedTelemetryDirectly();
   testWasapiExclusiveRenderFailureQueuesRecoveryOffRenderThread();
   testWasapiExclusiveRecoveryStopsBeforeReopenOrNotifyAfterClose();
+  testWasapiExclusiveOpenClearsDeferredRenderFailureState();
   testInt16PackerUsesSpecializedConversion();
   testPackedInt24PackerUsesSpecializedConversion();
   testInt32PackerUsesSpecializedConversion();

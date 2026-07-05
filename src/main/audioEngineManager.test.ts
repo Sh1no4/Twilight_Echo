@@ -952,6 +952,46 @@ class DeferredAudioServiceBinding extends FakeAudioServiceBinding {
   }
 }
 
+class DeferredNextAudioServiceBinding extends FakeAudioServiceBinding {
+  nextCalls = 0
+  private nextResolvers: Array<() => void> = []
+
+  Next = (): void => {
+    this.nextCalls += 1
+  }
+
+  override async callAsync(method: string, args: unknown[]): Promise<unknown> {
+    if (method !== 'Next') return await super.callAsync(method, args)
+    this.nextCalls += 1
+    return await new Promise((resolve) => {
+      this.nextResolvers.push(() => {
+        this.queueIndex = Math.min(this.queueIndex + 1, this.queue.length - 1)
+        const item = this.queue[this.queueIndex]
+        this.playbackInfo = makePlaybackInfo({
+          state: 'playing',
+          source: item?.source ?? '',
+          queueIndex: this.queueIndex,
+          nativePlaybackActive: true
+        })
+        resolve(undefined)
+      })
+    })
+  }
+
+  resolveNext(): void {
+    const resolve = this.nextResolvers.shift()
+    if (resolve) resolve()
+  }
+}
+
+async function resolveDeferredRouteCalls(service: DeferredAudioServiceBinding): Promise<void> {
+  for (let index = 0; index < 3; ++index) {
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    service.resolveNextDeferredCall()
+  }
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
 function makeManager(
   config: ConstructorParameters<typeof AudioEngineManager>[0],
   nativeBinding: FakeNativeBinding,
@@ -1366,6 +1406,200 @@ test('setAudioOutput skips native calls and playback fanout when output and devi
   assert.equal(playbackUpdates.length, fullUpdatesAfterChange)
 })
 
+test('audio service output switches wait for route RPCs before marking synced', async () => {
+  const service = new DeferredAudioServiceBinding([
+    'SetOutputBackend',
+    'SetOutputDevice',
+    'SetOutputConfig'
+  ])
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioOutputConfig: { preferredBufferSize: 512 }
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  const internals = manager as unknown as {
+    nativeOutputRouteSynced: boolean
+  }
+
+  const startup = manager.start()
+  await resolveDeferredRouteCalls(service)
+  await startup
+
+  const switchPromise = manager.setAudioOutput('asio', 'asio:studio')
+  let resolved = false
+  switchPromise.then(() => {
+    resolved = true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(resolved, false)
+  assert.equal(internals.nativeOutputRouteSynced, false)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputBackend']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(resolved, false)
+  assert.equal(internals.nativeOutputRouteSynced, false)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputDevice']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(resolved, false)
+  assert.equal(internals.nativeOutputRouteSynced, false)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputConfig']
+  )
+
+  service.resolveNextDeferredCall()
+  const state = await switchPromise
+
+  assert.equal(resolved, true)
+  assert.equal(internals.nativeOutputRouteSynced, true)
+  assert.equal(state.output, 'asio')
+  assert.equal(state.device, 'asio:studio')
+  assert.equal(service.backend, 'asio')
+  assert.equal(service.device, 'asio:studio')
+  assert.equal(service.outputConfig.preferredBufferSize, 512)
+
+  manager.destroy()
+})
+
+test('audio service startup waits for route RPCs before emitting ready', async () => {
+  const service = new DeferredAudioServiceBinding([
+    'SetOutputBackend',
+    'SetOutputDevice',
+    'SetOutputConfig'
+  ])
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'dac-1',
+      audioOutputConfig: { preferredBufferSize: 512 }
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  const internals = manager as unknown as {
+    nativeOutputRouteSynced: boolean
+  }
+  let ready = false
+  manager.on('ready', () => {
+    ready = true
+  })
+
+  const startPromise = manager.start()
+  let resolved = false
+  startPromise.then(() => {
+    resolved = true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(resolved, false)
+  assert.equal(ready, false)
+  assert.equal(internals.nativeOutputRouteSynced, false)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputBackend']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(resolved, false)
+  assert.equal(ready, false)
+  assert.equal(internals.nativeOutputRouteSynced, false)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputDevice']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(resolved, false)
+  assert.equal(ready, false)
+  assert.equal(internals.nativeOutputRouteSynced, false)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputConfig']
+  )
+
+  service.resolveNextDeferredCall()
+  await startPromise
+
+  assert.equal(resolved, true)
+  assert.equal(ready, true)
+  assert.equal(internals.nativeOutputRouteSynced, true)
+  assert.equal(service.backend, 'wasapi-exclusive')
+  assert.equal(service.device, 'dac-1')
+  assert.equal(service.outputConfig.preferredBufferSize, 512)
+
+  manager.destroy()
+})
+
+test('audio service device switches wait for device RPC before marking synced', async () => {
+  const service = new DeferredAudioServiceBinding(['SetOutputDevice'])
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  const internals = manager as unknown as {
+    nativeOutputRouteSynced: boolean
+  }
+
+  const startup = manager.start()
+  await resolveDeferredRouteCalls(service)
+  await startup
+  const switchPromise = manager.setAudioDevice('dac-1')
+  let resolved = false
+  switchPromise.then(() => {
+    resolved = true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(resolved, false)
+  assert.equal(internals.nativeOutputRouteSynced, false)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputDevice']
+  )
+
+  service.resolveNextDeferredCall()
+  const state = await switchPromise
+
+  assert.equal(resolved, true)
+  assert.equal(internals.nativeOutputRouteSynced, true)
+  assert.equal(state.device, 'dac-1')
+  assert.equal(service.device, 'dac-1')
+
+  manager.destroy()
+})
+
 test('backend and device switches do not leave stale output facts', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
@@ -1536,6 +1770,51 @@ test('next falls back to target track when native Next reports stale playback in
   )
   assert.equal(info.queueIndex, 1)
   assert.equal(info.source, 'second.flac')
+})
+
+test('audio service next waits for Next ack before falling back to Play', async () => {
+  const service = new DeferredNextAudioServiceBinding()
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  const queue = [
+    { id: '1', source: 'first.flac', title: 'First' },
+    { id: '2', source: 'second.flac', title: 'Second' }
+  ]
+
+  await manager.loadQueue(queue, 0)
+  await manager.play(queue[0].source, 0)
+  const nextPromise = manager.next()
+  let resolved = false
+  nextPromise.then(() => {
+    resolved = true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(resolved, false)
+  assert.equal(service.nextCalls, 1)
+  assert.equal(service.playCalls, 1)
+
+  service.resolveNext()
+  await nextPromise
+  const info = await manager.getPlaybackInfo()
+
+  assert.equal(service.playCalls, 1)
+  assert.equal(resolved, true)
+  assert.equal(info.state, 'playing')
+  assert.equal(info.queueIndex, 1)
+  assert.equal(info.source, 'second.flac')
+
+  manager.destroy()
 })
 
 test('loadQueue skips native call and queue fanout when normalized queue is unchanged', async () => {
@@ -2169,6 +2448,47 @@ test('device hotplug polling refreshes device options while playback is stopped'
   assert.equal(refreshed.deviceOptions.length, first.deviceOptions.length + 1)
   assert.equal(refreshed.deviceOptions.some((device) => device.id === 'usb-dac-new'), true)
   assert.equal(refreshReasons.includes('audio-device-hotplug'), true)
+})
+
+test('platform device change notifications refresh device options immediately', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    {
+      nativeBinding,
+      scheduler: TEST_SCHEDULER
+    }
+  )
+  const refreshReasons: string[] = []
+  manager.on('audio-device-options-changed', ({ reason }) => {
+    refreshReasons.push(reason)
+  })
+
+  const first = await manager.getAudioOutputState()
+  const enumerateCallsAfterFirstRead = nativeBinding.enumerateDeviceCalls
+  nativeBinding.devices = [
+    ...nativeBinding.devices,
+    {
+      id: 'wm-devicechange-dac',
+      label: 'WM_DEVICECHANGE DAC',
+      isDefault: false,
+      backend: 'wasapi',
+      pathKind: 'endpoint'
+    }
+  ]
+  assert.equal((await manager.getAudioOutputState()).deviceOptions.length, first.deviceOptions.length)
+
+  manager.notifyAudioDeviceOptionsChanged('platform-device-change:wm-devicechange')
+  const refreshed = await manager.getAudioOutputState()
+
+  assert.ok(nativeBinding.enumerateDeviceCalls > enumerateCallsAfterFirstRead)
+  assert.equal(refreshed.deviceOptions.length, first.deviceOptions.length + 1)
+  assert.equal(refreshed.deviceOptions.some((device) => device.id === 'wm-devicechange-dac'), true)
+  assert.equal(refreshReasons.includes('platform-device-change:wm-devicechange'), true)
 })
 
 test('getSpectrumData reuses native spectrum data within one visual frame', () => {
@@ -2964,6 +3284,42 @@ test('audio service play waits for utility process confirmation before marking p
   }
 })
 
+test('audio service stop waits for utility process confirmation before marking stopped', async () => {
+  const service = new DeferredAudioServiceBinding(['Stop'])
+  service.playbackInfo = makePlaybackInfo({
+    state: 'playing',
+    source: 'service-track.flac',
+    nativePlaybackActive: true
+  })
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  await manager.play('service-track.flac', 0)
+
+  const stopPromise = manager.stop()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  let info = await manager.getPlaybackInfo()
+  assert.equal(service.stopCalls, 0)
+  assert.equal(info.state, 'playing')
+  assert.equal(info.nativePlaybackActive, true)
+
+  service.resolveNextDeferredCall()
+  await stopPromise
+
+  info = await manager.getPlaybackInfo()
+  assert.equal(service.stopCalls, 1)
+  assert.equal(info.state, 'stopped')
+  assert.equal(info.nativePlaybackActive, false)
+
+  manager.destroy()
+})
+
 test('destroy skips duplicate native Stop after the manager is already destroyed', () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
@@ -3144,7 +3500,8 @@ test('audio service ready keeps output route unsynced until restore RPCs acknowl
       exclusiveMode: true,
       audioOutput: 'wasapi',
       audioDevice: 'auto',
-      audioOutputConfig: { preferredBufferSize: 512 }
+      audioOutputConfig: { preferredBufferSize: 512 },
+      audioProcessing: { eqEnabled: true, crossfeedEnabled: true, crossfeedStrength: 0.35 }
     },
     {
       audioServiceFactory: () => service,
@@ -3162,12 +3519,26 @@ test('audio service ready keeps output route unsynced until restore RPCs acknowl
     serviceReadyOutputRouteSynced = outputRouteSynced
   })
 
-  await manager.start()
-  await manager.setAudioOutput('asio', 'asio:studio')
+  const startup = manager.start()
+  await resolveDeferredRouteCalls(service)
+  await startup
+  const initialRouteSwitch = manager.setAudioOutput('asio', 'asio:studio')
+  await resolveDeferredRouteCalls(service)
+  await initialRouteSwitch
+  const queue: AudioEngineQueueItem[] = [
+    { id: 'local:one', source: 'one.flac', title: 'One' },
+    { id: 'local:two', source: 'two.flac', title: 'Two' }
+  ]
+  await manager.loadQueue(queue, 1)
+  manager.setNativeDspPluginChain('{"plugins":[{"id":"com.example.eq"}]}')
   service.emit('crash', 'service crashed before route restore')
   service.backend = 'wasapi'
   service.device = 'auto'
   service.outputConfig = {}
+  service.dspConfig = {}
+  service.dspPluginChain = ''
+  service.queue = []
+  service.queueIndex = -1
 
   service.emit('ready')
   await new Promise((resolve) => setTimeout(resolve, 0))
@@ -3175,6 +3546,9 @@ test('audio service ready keeps output route unsynced until restore RPCs acknowl
   assert.equal(internals.nativeOutputRouteSynced, false)
   assert.equal(serviceReadyManualResumeRequired, false)
   assert.equal(serviceReadyOutputRouteSynced, false)
+  assert.deepEqual(service.dspConfig, {})
+  assert.equal(service.dspPluginChain, '')
+  assert.deepEqual(service.queue, [])
   assert.deepEqual(
     service.deferredCalls.map((call) => call.method),
     ['SetOutputBackend']
@@ -3205,6 +3579,11 @@ test('audio service ready keeps output route unsynced until restore RPCs acknowl
   assert.equal(service.backend, 'asio')
   assert.equal(service.device, 'asio:studio')
   assert.equal(service.outputConfig.preferredBufferSize, 512)
+  assert.equal(service.dspConfig.eqEnabled, true)
+  assert.equal(service.dspConfig.crossfeedStrength, 0.35)
+  assert.equal(service.dspPluginChain, '{"plugins":[{"id":"com.example.eq"}]}')
+  assert.deepEqual(service.queue, queue)
+  assert.equal(service.queueIndex, 1)
 
   manager.destroy()
 })
@@ -3236,8 +3615,12 @@ test('audio service ready reports output route restore failures without enabling
     serviceReadyEvents.push(event)
   })
 
-  await manager.start()
-  await manager.setAudioOutput('asio', 'asio:studio')
+  const startup = manager.start()
+  await resolveDeferredRouteCalls(service)
+  await startup
+  const initialRouteSwitch = manager.setAudioOutput('asio', 'asio:studio')
+  await resolveDeferredRouteCalls(service)
+  await initialRouteSwitch
   service.emit('crash', 'service crashed before route restore failure')
   service.emit('ready')
   await new Promise((resolve) => setTimeout(resolve, 0))

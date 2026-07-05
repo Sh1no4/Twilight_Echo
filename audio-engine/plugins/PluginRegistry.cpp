@@ -316,6 +316,8 @@ enum class NativeDspRealtimeBypassReason {
   ProcessReturnedError
 };
 
+constexpr uint64_t kNativeDspRealtimeBypassOverrunThreshold = 3;
+
 const char* realtimeBypassReasonText(NativeDspRealtimeBypassReason reason) {
   switch (reason) {
     case NativeDspRealtimeBypassReason::ProcessThrew:
@@ -382,6 +384,7 @@ class PluginRegistry::NativePlugin {
       return;
     }
     prepared_ = true;
+    consecutiveOverruns_ = 0;
     realtimeBypassReason_ = NativeDspRealtimeBypassReason::None;
     status_.bypassed = false;
     status_.bypassReason.clear();
@@ -409,9 +412,13 @@ class PluginRegistry::NativePlugin {
     status_.processCalls += 1;
     if (elapsedMs > budgetMs) {
       status_.overrunCount += 1;
-      bypassRealtime(NativeDspRealtimeBypassReason::ProcessExceededBudget);
+      consecutiveOverruns_ += 1;
+      if (consecutiveOverruns_ >= kNativeDspRealtimeBypassOverrunThreshold) {
+        bypassRealtime(NativeDspRealtimeBypassReason::ProcessExceededBudget);
+      }
       return;
     }
+    consecutiveOverruns_ = 0;
     if (result == TAE_DSP_RESULT_BYPASS) {
       bypassRealtime(NativeDspRealtimeBypassReason::ProcessRequestedBypass);
     } else if (result != TAE_DSP_RESULT_OK) {
@@ -560,6 +567,7 @@ class PluginRegistry::NativePlugin {
 
   void fail(const std::string& message) {
     realtimeBypassReason_ = NativeDspRealtimeBypassReason::None;
+    consecutiveOverruns_ = 0;
     status_.loaded = false;
     status_.active = false;
     status_.bypassed = true;
@@ -570,6 +578,7 @@ class PluginRegistry::NativePlugin {
 
   void bypass(const std::string& reason) {
     realtimeBypassReason_ = NativeDspRealtimeBypassReason::None;
+    consecutiveOverruns_ = 0;
     status_.active = false;
     status_.bypassed = true;
     status_.bypassReason = reason;
@@ -577,6 +586,7 @@ class PluginRegistry::NativePlugin {
   }
 
   void bypassRealtime(NativeDspRealtimeBypassReason reason) {
+    if (reason != NativeDspRealtimeBypassReason::ProcessExceededBudget) consecutiveOverruns_ = 0;
     status_.active = false;
     status_.bypassed = true;
     realtimeBypassReason_ = reason;
@@ -596,6 +606,7 @@ class PluginRegistry::NativePlugin {
   std::unordered_map<std::string, double> parameterValues_;
   bool configEnabled_ = false;
   bool prepared_ = false;
+  uint64_t consecutiveOverruns_ = 0;
   NativeDspRealtimeBypassReason realtimeBypassReason_ = NativeDspRealtimeBypassReason::None;
 };
 

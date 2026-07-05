@@ -29,14 +29,12 @@ size_t normalizeResolution(size_t value) {
 
 float webAudioNormalizedMagnitude(double magnitude, size_t resolution) {
   if (resolution == 0) return 0.0f;
-  // Approximate WebAudio AnalyserNode.getByteFrequencyData() while keeping
-  // enough headroom for mastered tracks. The visualizer uses the full 0..1
-  // range as height, so low ceilings clip dense bass/mid bins into a flat
-  // shelf. A generous positive ceiling preserves real differences between
-  // strong neighboring bins before the iframe does any visual shaping.
+  // Approximate WebAudio AnalyserNode.getByteFrequencyData() for a display
+  // analyzer. The renderer owns the final visual headroom and anti-flattening
+  // curve, so this native layer only normalizes captured FFT magnitudes.
   const double amplitude = magnitude / std::max(1.0, static_cast<double>(resolution) * 0.25);
-  constexpr double minDb = -100.0;
-  constexpr double maxDb = 18.0;
+  constexpr double minDb = -92.0;
+  constexpr double maxDb = -18.0;
   const double db = 20.0 * std::log10(std::max(amplitude, 1.0e-6));
   return static_cast<float>(std::clamp((db - minDb) / (maxDb - minDb), 0.0, 1.0));
 }
@@ -61,10 +59,14 @@ void FftSpectrumAnalyzer::prepare(const AudioFormat& format, size_t resolution) 
                                                         static_cast<double>(std::max<size_t>(1, resolution_ - 1))));
   }
   timeDomain_.assign(resolution_, 0.0f);
+  timeDomainWriteIndex_ = 0;
+  timeDomainFilled_ = 0;
   // (Re)initialize the decoupled oscilloscope ring buffer. Its size is
   // independent of resolution_ so the visualization tap can serve more
   // time-domain samples than the FFT window allows.
   oscilloscopeBuffer_.assign(oscilloscopeResolution_, 0.0f);
+  oscilloscopeWriteIndex_ = 0;
+  oscilloscopeFilled_ = 0;
   magnitudes_.assign(resolution_ / 2, 0.0f);
   spectrogram_.clear();
   peakDb_ = -120.0;
@@ -81,6 +83,8 @@ void FftSpectrumAnalyzer::prepareOscilloscope(size_t points) {
   std::lock_guard lock(mutex_);
   oscilloscopeResolution_ = std::clamp<size_t>(points == 0 ? 1024 : points, 64, 4096);
   oscilloscopeBuffer_.assign(oscilloscopeResolution_, 0.0f);
+  oscilloscopeWriteIndex_ = 0;
+  oscilloscopeFilled_ = 0;
 }
 
 void FftSpectrumAnalyzer::setEnabled(bool enabled) {
@@ -131,9 +135,41 @@ void FftSpectrumAnalyzer::resetCaptureLocked() {
   spectrogramDirty_ = false;
   std::fill(timeDomain_.begin(), timeDomain_.end(), 0.0f);
   std::fill(oscilloscopeBuffer_.begin(), oscilloscopeBuffer_.end(), 0.0f);
+  timeDomainWriteIndex_ = 0;
+  timeDomainFilled_ = 0;
+  oscilloscopeWriteIndex_ = 0;
+  oscilloscopeFilled_ = 0;
   std::fill(magnitudes_.begin(), magnitudes_.end(), 0.0f);
   captureBuffersSilent_ = true;
   ++spectrumGeneration_;
+}
+
+void FftSpectrumAnalyzer::copyRingWindow(
+    const std::vector<float>& ring,
+    size_t writeIndex,
+    size_t filled,
+    std::vector<float>* output) {
+  if (!output) return;
+  output->assign(ring.size(), 0.0f);
+  if (ring.empty() || filled == 0) return;
+
+  const size_t available = std::min(filled, ring.size());
+  const size_t dstStart = ring.size() - available;
+  const size_t srcStart = (writeIndex + ring.size() - available) % ring.size();
+  for (size_t i = 0; i < available; ++i) {
+    (*output)[dstStart + i] = ring[(srcStart + i) % ring.size()];
+  }
+}
+
+void FftSpectrumAnalyzer::writeRingSample(
+    std::vector<float>* ring,
+    size_t* writeIndex,
+    size_t* filled,
+    float sample) {
+  if (!ring || ring->empty() || !writeIndex || !filled) return;
+  (*ring)[*writeIndex] = sample;
+  *writeIndex = (*writeIndex + 1) % ring->size();
+  *filled = std::min(*filled + 1, ring->size());
 }
 
 void FftSpectrumAnalyzer::capture(const float* interleaved, size_t frames, int channels) {
@@ -145,24 +181,15 @@ void FftSpectrumAnalyzer::capture(const float* interleaved, size_t frames, int c
 
   // FFT window (timeDomain_) — sized by resolution_.
   const size_t timeCopyFrames = std::min(frames, resolution_);
-  if (timeCopyFrames < resolution_) {
-    std::move(timeDomain_.begin() + static_cast<std::ptrdiff_t>(timeCopyFrames), timeDomain_.end(), timeDomain_.begin());
-  }
-  const size_t timeDstStart = resolution_ - timeCopyFrames;
   const size_t timeSrcStart = frames - timeCopyFrames;
 
   // Decoupled oscilloscope window — sized by oscilloscopeResolution_,
   // independent of resolution_ so the tap can serve more time-domain samples
-  // than the FFT window allows. Sliding window, newest at end (same convention
-  // as timeDomain_).
+  // than the FFT window allows. The buffers are stored as rings and expanded to
+  // newest-at-end windows on read.
   const size_t oscResolution =
       (oscilloscopeResolution_ > 0 && !oscilloscopeBuffer_.empty()) ? oscilloscopeResolution_ : 0;
   const size_t oscCopyFrames = oscResolution > 0 ? std::min(frames, oscResolution) : 0;
-  if (oscCopyFrames > 0 && oscCopyFrames < oscResolution) {
-    std::move(oscilloscopeBuffer_.begin() + static_cast<std::ptrdiff_t>(oscCopyFrames),
-              oscilloscopeBuffer_.end(), oscilloscopeBuffer_.begin());
-  }
-  const size_t oscDstStart = oscResolution - oscCopyFrames;
   const size_t oscSrcStart = frames - oscCopyFrames;
 
   double peakSample = 0.0;
@@ -190,10 +217,10 @@ void FftSpectrumAnalyzer::capture(const float* interleaved, size_t frames, int c
     }
     const float monoValue = static_cast<float>(mono / static_cast<double>(channels));
     if (srcIdx >= timeSrcStart) {
-      timeDomain_[timeDstStart + (srcIdx - timeSrcStart)] = monoValue;
+      writeRingSample(&timeDomain_, &timeDomainWriteIndex_, &timeDomainFilled_, monoValue);
     }
     if (oscCopyFrames > 0 && srcIdx >= oscSrcStart) {
-      oscilloscopeBuffer_[oscDstStart + (srcIdx - oscSrcStart)] = monoValue;
+      writeRingSample(&oscilloscopeBuffer_, &oscilloscopeWriteIndex_, &oscilloscopeFilled_, monoValue);
     }
   }
   const double rms = measuredSamples > 0 ? std::sqrt(sumSquares / static_cast<double>(measuredSamples)) : 0.0;
@@ -222,7 +249,7 @@ bool FftSpectrumAnalyzer::buildSpectrumUpdateSnapshot(
   snapshot.generation = spectrumGeneration_;
   snapshot.resolution = resolution_;
   if (needsSpectrum) {
-    snapshot.timeDomain = timeDomain_;
+    copyRingWindow(timeDomain_, timeDomainWriteIndex_, timeDomainFilled_, &snapshot.timeDomain);
     snapshot.window = window_;
   }
   return true;
@@ -320,10 +347,14 @@ std::string FftSpectrumAnalyzer::readVisualizationJson(
     if (active) {
       magnitudes = magnitudes_;
       if (waveformPoints > 0) {
-        timeDomain = timeDomain_;
+        copyRingWindow(timeDomain_, timeDomainWriteIndex_, timeDomainFilled_, &timeDomain);
       }
       if (oscilloscopePoints > 0) {
-        oscilloscopeBuffer = oscilloscopeBuffer_;
+        copyRingWindow(
+            oscilloscopeBuffer_,
+            oscilloscopeWriteIndex_,
+            oscilloscopeFilled_,
+            &oscilloscopeBuffer);
       }
       if (spectrogramFrames > 0) {
         const size_t firstFrame =

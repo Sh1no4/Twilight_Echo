@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <iostream>
+#include <numeric>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -38,13 +40,18 @@ std::string readTextFile(const std::filesystem::path& path) {
   return buffer.str();
 }
 
+[[noreturn]] void failTest(const char* message) {
+  std::cerr << message << '\n';
+  std::abort();
+}
+
 void testSacdDstDecodePathDoesNotPreclearDecodedFrameBuffer() {
   const std::filesystem::path sourcePath =
       std::filesystem::path(__FILE__).parent_path().parent_path() / "decoder" / "SacdIsoDemuxer.cpp";
   const std::string source = readTextFile(sourcePath);
 
   if (source.empty() || source.find("decodedDsdBuffer.assign(decodedFrameBytes, 0)") != std::string::npos) {
-    std::abort();
+    failTest("SacdIsoDemuxer DST decode path still preclears decodedDsdBuffer");
   }
 }
 
@@ -96,6 +103,20 @@ void writeTwilightTrack(
   writeLe32To(toc.data() + offset + 24, sampleRate);
   writeLe32To(toc.data() + offset + 28, dst ? 1U : 0U);
   std::copy(fileName.begin(), fileName.end(), toc.begin() + static_cast<std::ptrdiff_t>(offset + 32));
+}
+
+void writeTwilightDstFrameTable(
+    std::vector<uint8_t>& toc,
+    size_t offset,
+    int trackNumber,
+    const std::vector<uint32_t>& frameSizes) {
+  assert(offset + 16 + frameSizes.size() * 4 <= toc.size());
+  std::memcpy(toc.data() + offset, "TWDSTFRM", 8);
+  writeLe32To(toc.data() + offset + 8, static_cast<uint32_t>(trackNumber));
+  writeLe32To(toc.data() + offset + 12, static_cast<uint32_t>(frameSizes.size()));
+  for (size_t index = 0; index < frameSizes.size(); ++index) {
+    writeLe32To(toc.data() + offset + 16 + index * 4, frameSizes[index]);
+  }
 }
 
 void writeDirectoryRecord(
@@ -183,6 +204,71 @@ std::filesystem::path writeDsfFixture(const std::string& name, int sampleRate = 
   return path;
 }
 
+std::filesystem::path writeTwoBlockDsfFixture(const std::string& name, int sampleRate = 2822400) {
+  const auto path = std::filesystem::temp_directory_path() / name;
+  constexpr uint32_t kChannels = 2;
+  constexpr uint32_t kBlockSizePerChannel = 4;
+  constexpr uint32_t kBlockCount = 2;
+  constexpr uint64_t kDataBytes =
+      static_cast<uint64_t>(kChannels) * kBlockSizePerChannel * kBlockCount;
+  constexpr uint64_t kFileSize = 28 + 52 + 12 + kDataBytes;
+
+  std::ofstream out(path, std::ios::binary);
+  out.write("DSD ", 4);
+  writeLe64(out, 28);
+  writeLe64(out, kFileSize);
+  writeLe64(out, 0);
+  out.write("fmt ", 4);
+  writeLe64(out, 52);
+  writeLe32(out, 1);
+  writeLe32(out, 0);
+  writeLe32(out, 2);
+  writeLe32(out, kChannels);
+  writeLe32(out, static_cast<uint32_t>(sampleRate));
+  writeLe32(out, 1);
+  writeLe64(out, static_cast<uint64_t>(kBlockSizePerChannel) * kBlockCount * 8);
+  writeLe32(out, kBlockSizePerChannel);
+  writeLe32(out, 0);
+  out.write("data", 4);
+  writeLe64(out, 12 + kDataBytes);
+  for (uint8_t byte : {0x10, 0x11, 0x12, 0x13}) out.put(static_cast<char>(byte));
+  for (uint8_t byte : {0x20, 0x21, 0x22, 0x23}) out.put(static_cast<char>(byte));
+  for (uint8_t byte : {0x30, 0x31, 0x32, 0x33}) out.put(static_cast<char>(byte));
+  for (uint8_t byte : {0x40, 0x41, 0x42, 0x43}) out.put(static_cast<char>(byte));
+  return path;
+}
+
+std::filesystem::path writeMalformedDsfFixture(
+    const std::string& name,
+    uint32_t sampleRate,
+    uint32_t channels,
+    uint32_t blockSizePerChannel,
+    uint64_t dataBytes) {
+  const auto path = std::filesystem::temp_directory_path() / name;
+  const uint64_t fileSize = 28 + 52 + 12 + dataBytes;
+
+  std::ofstream out(path, std::ios::binary);
+  out.write("DSD ", 4);
+  writeLe64(out, 28);
+  writeLe64(out, fileSize);
+  writeLe64(out, 0);
+  out.write("fmt ", 4);
+  writeLe64(out, 52);
+  writeLe32(out, 1);
+  writeLe32(out, 0);
+  writeLe32(out, 2);
+  writeLe32(out, channels);
+  writeLe32(out, sampleRate);
+  writeLe32(out, 1);
+  writeLe64(out, dataBytes * 8 / std::max<uint32_t>(1, channels));
+  writeLe32(out, blockSizePerChannel);
+  writeLe32(out, 0);
+  out.write("data", 4);
+  writeLe64(out, 12 + dataBytes);
+  for (uint64_t i = 0; i < dataBytes; ++i) out.put(static_cast<char>(0x80 + (i & 0x0f)));
+  return path;
+}
+
 std::filesystem::path writeDffFixture(const std::string& name) {
   const auto path = std::filesystem::temp_directory_path() / name;
   const uint64_t propPayload = 4 + (12 + 4) + (12 + 2);
@@ -208,12 +294,19 @@ std::filesystem::path writeDffFixture(const std::string& name) {
   return path;
 }
 
-std::filesystem::path writeSacdIsoFixture(const std::string& name) {
+std::filesystem::path writeSacdIsoFixture(
+    const std::string& name,
+    uint32_t dstSampleRate = 2822400,
+    const std::vector<uint32_t>& dstFrameSizes = {}) {
   const auto path = std::filesystem::temp_directory_path() / name;
   constexpr uint32_t kRootSector = 20;
   constexpr uint32_t kSacdSector = 21;
   constexpr uint32_t kSectorSize = 2048;
   std::vector<uint8_t> image(28 * kSectorSize, 0);
+  const uint32_t dstPayloadSize =
+      dstFrameSizes.empty()
+          ? 256U
+          : static_cast<uint32_t>(std::accumulate(dstFrameSizes.begin(), dstFrameSizes.end(), 0U));
 
   uint8_t* pvd = image.data() + 16 * kSectorSize;
   pvd[0] = 1;
@@ -249,14 +342,17 @@ std::filesystem::path writeSacdIsoFixture(const std::string& name) {
   writeDirectoryRecord(sacd, 112, 23, 2048, false, "TWOCH_AREA.TOC");
   writeDirectoryRecord(sacd, 160, 24, 2048, false, "MCH_AREA.TOC");
   writeDirectoryRecord(sacd, 206, 25, 256, false, "TRACK01.DSD");
-  writeDirectoryRecord(sacd, 250, 26, 256, false, "TRACK01.DST");
+  writeDirectoryRecord(sacd, 250, 26, dstPayloadSize, false, "TRACK01.DST");
   std::copy(sacd.begin(), sacd.end(), image.begin() + kSacdSector * kSectorSize);
 
   std::vector<uint8_t> twoch(kSectorSize, 0);
   std::memcpy(twoch.data(), "TWTEAREA", 8);
   writeLe32To(twoch.data() + 8, 2);
   writeTwilightTrack(twoch, 16, 1, 25, 1, 2, 2822400, false, "TRACK01.DSD");
-  writeTwilightTrack(twoch, 80, 2, 26, 1, 2, 2822400, true, "TRACK01.DST");
+  writeTwilightTrack(twoch, 80, 2, 26, 1, 2, dstSampleRate, true, "TRACK01.DST");
+  if (!dstFrameSizes.empty()) {
+    writeTwilightDstFrameTable(twoch, 144, 2, dstFrameSizes);
+  }
   std::copy(twoch.begin(), twoch.end(), image.begin() + 23 * kSectorSize);
 
   std::vector<uint8_t> mch(kSectorSize, 0);
@@ -266,7 +362,18 @@ std::filesystem::path writeSacdIsoFixture(const std::string& name) {
   std::copy(mch.begin(), mch.end(), image.begin() + 24 * kSectorSize);
 
   for (int i = 0; i < 256; ++i) image[25 * kSectorSize + i] = static_cast<uint8_t>(0x80 + (i & 0x3f));
-  for (int i = 0; i < 256; ++i) image[26 * kSectorSize + i] = static_cast<uint8_t>(0x40 + (i & 0x3f));
+  if (dstFrameSizes.empty()) {
+    for (int i = 0; i < 256; ++i) image[26 * kSectorSize + i] = static_cast<uint8_t>(0x40 + (i & 0x3f));
+  } else {
+    size_t offset = 0;
+    for (size_t frameIndex = 0; frameIndex < dstFrameSizes.size(); ++frameIndex) {
+      for (uint32_t byteIndex = 0; byteIndex < dstFrameSizes[frameIndex]; ++byteIndex) {
+        image[26 * kSectorSize + offset + byteIndex] =
+            static_cast<uint8_t>(0x40 + ((frameIndex * 0x10 + byteIndex) & 0x3f));
+      }
+      offset += dstFrameSizes[frameIndex];
+    }
+  }
 
   std::ofstream out(path, std::ios::binary);
   out.write(reinterpret_cast<const char*>(image.data()), static_cast<std::streamsize>(image.size()));
@@ -301,6 +408,56 @@ void testDsfReader() {
   assert(bytes[8] == 0x99);
   reader.close();
   std::filesystem::remove(path);
+}
+
+void testDsfSeekAlignsToPlanarBlockBoundary() {
+  const auto path = writeTwoBlockDsfFixture("twilight-dsd-reader-seek-planar-block.dsf");
+  DsdReader reader;
+  std::string error;
+  if (!reader.open(path.string(), &error)) {
+    std::cerr << "DSF planar fixture failed to open: " << error << '\n';
+    failTest("DSF planar seek fixture did not open");
+  }
+  const auto info = reader.streamInfo();
+  if (info.packing != DsdPacking::DsfPlanarBlocks || info.channelCount != 2 ||
+      info.blockSizePerChannel != 4 || info.durationSeconds <= 0.0 || info.dataSize != 16 ||
+      info.dataOffset == 0) {
+    failTest("DSF planar seek fixture parsed with unexpected stream info");
+  }
+
+  const double seekSeconds = 40.0 / 2822400.0;
+  if (!reader.seek(seekSeconds, &error)) {
+    std::cerr << "DSF planar seek failed: " << error << '\n';
+    failTest("DSF planar seek failed");
+  }
+  std::vector<uint8_t> bytes(8, 0xee);
+  const size_t read = reader.readBytes(bytes.data(), bytes.size());
+  const std::vector<uint8_t> expected = {0x30, 0x31, 0x32, 0x33, 0x40, 0x41, 0x42, 0x43};
+  if (read != expected.size() || bytes != expected) {
+    std::cerr << "DSF planar seek read=" << read << " first=" << static_cast<int>(bytes[0]) << '\n';
+    failTest("DSF seek did not align to a planar block boundary");
+  }
+
+  reader.close();
+  std::filesystem::remove(path);
+}
+
+void testDsfReaderRejectsBlockSizeLargerThanDataChunk() {
+  const auto path = writeMalformedDsfFixture(
+      "twilight-dsd-reader-huge-block-small-data.dsf",
+      2822400,
+      2,
+      UINT32_MAX,
+      2);
+  DsdReader reader;
+  std::string error;
+  if (reader.open(path.string(), &error)) {
+    std::abort();
+  }
+  {
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+  }
 }
 
 void testDffReader() {
@@ -600,7 +757,6 @@ class PartialDstDecoderProvider final : public SacdDstDecoderProvider {
     (void)channels;
     (void)sampleRate;
     if (error) error->clear();
-    frameIndex_ = 0;
     return true;
   }
 
@@ -633,6 +789,101 @@ class PartialDstDecoderProvider final : public SacdDstDecoderProvider {
 
  private:
   size_t frameIndex_ = 0;
+};
+
+class EchoDstDecoderProvider final : public SacdDstDecoderProvider {
+ public:
+  const char* name() const override {
+    return "echo-dst-decoder-test-provider";
+  }
+
+  bool available(std::string* reason) const override {
+    if (reason) reason->clear();
+    return true;
+  }
+
+  bool open(int channels, int sampleRate, std::string* error) override {
+    (void)channels;
+    (void)sampleRate;
+    if (error) error->clear();
+    return true;
+  }
+
+  size_t decodeFrame(
+      const uint8_t* dstFrameBytes,
+      size_t dstFrameSize,
+      uint8_t* dsdOut,
+      size_t dsdOutSize,
+      std::string* error) override {
+    if (error) error->clear();
+    if (!dstFrameBytes || dstFrameSize == 0 || dsdOutSize < 8) return 0;
+    for (size_t index = 0; index < 8; ++index) {
+      dsdOut[index] = static_cast<uint8_t>(dstFrameBytes[0] + index);
+    }
+    return 8;
+  }
+
+  size_t frameBytesPerChannel(int sampleRate) const override {
+    (void)sampleRate;
+    return 4;
+  }
+
+  void reset() override {}
+};
+
+class ExactSizeDstDecoderProvider final : public SacdDstDecoderProvider {
+ public:
+  explicit ExactSizeDstDecoderProvider(std::vector<size_t> expectedFrameSizes)
+      : expectedFrameSizes_(std::move(expectedFrameSizes)) {}
+
+  const char* name() const override {
+    return "exact-size-dst-decoder-test-provider";
+  }
+
+  bool available(std::string* reason) const override {
+    if (reason) reason->clear();
+    return true;
+  }
+
+  bool open(int channels, int sampleRate, std::string* error) override {
+    (void)channels;
+    (void)sampleRate;
+    if (error) error->clear();
+    return true;
+  }
+
+  size_t decodeFrame(
+      const uint8_t* dstFrameBytes,
+      size_t dstFrameSize,
+      uint8_t* dsdOut,
+      size_t dsdOutSize,
+      std::string* error) override {
+    if (!dstFrameBytes || dstFrameSize == 0 || dsdOutSize < 8 || dstFrameBytes[0] < 0x40) {
+      if (error) *error = "unexpected DST frame";
+      return 0;
+    }
+    const size_t frameIndex = static_cast<size_t>((dstFrameBytes[0] - 0x40) / 0x10);
+    if (frameIndex >= expectedFrameSizes_.size() || dstFrameSize != expectedFrameSizes_[frameIndex]) {
+      if (error) *error = "DST frame size did not match frame table";
+      return 0;
+    }
+    const uint8_t base = static_cast<uint8_t>(0xa0 + frameIndex * 0x10);
+    for (size_t index = 0; index < 8; ++index) {
+      dsdOut[index] = static_cast<uint8_t>(base + index);
+    }
+    if (error) error->clear();
+    return 8;
+  }
+
+  size_t frameBytesPerChannel(int sampleRate) const override {
+    (void)sampleRate;
+    return 4;
+  }
+
+  void reset() override {}
+
+ private:
+  std::vector<size_t> expectedFrameSizes_;
 };
 
 class PcmOnlyDstProvider final : public SacdDstProvider {
@@ -726,14 +977,115 @@ void testSacdDstReadBytesDrainsOnlyDecodedBytes() {
   demuxer.setDstDecoderProvider(&provider);
   std::string error;
   if (!demuxer.open(iso.string(), &error) || !demuxer.selectTrack("stereo", 2, &error)) {
-    std::abort();
+    failTest("partial DST provider fixture failed to open/select");
   }
 
   std::vector<uint8_t> bytes(8, 0xee);
   const size_t read = demuxer.readBytes(bytes.data(), bytes.size());
   const std::vector<uint8_t> expected = {0x10, 0x11, 0x12, 0x20, 0x21, 0x22, 0x30, 0x31};
   if (read != bytes.size() || bytes != expected) {
-    std::abort();
+    failTest("DST readBytes drained padded bytes instead of decoded byte count");
+  }
+
+  {
+    std::error_code ignored;
+    std::filesystem::remove(iso, ignored);
+  }
+}
+
+void testSacdDstReadBytesUsesFrameTableForVariableFrames() {
+  const std::vector<uint32_t> frameSizes = {3, 7, 2};
+  const auto iso = writeSacdIsoFixture("twilight-sacd-dst-variable-frame-fixture.iso", 2400, frameSizes);
+  ExactSizeDstDecoderProvider provider({3, 7, 2});
+  SacdIsoDemuxer demuxer;
+  demuxer.setDstDecoderProvider(&provider);
+  std::string error;
+  if (!demuxer.open(iso.string(), &error) || !demuxer.selectTrack("stereo", 2, &error)) {
+    failTest("variable DST frame fixture failed to open/select");
+  }
+
+  std::vector<uint8_t> bytes(16, 0xee);
+  const size_t read = demuxer.readBytes(bytes.data(), bytes.size());
+  const std::vector<uint8_t> expected = {
+      0xa0,
+      0xa1,
+      0xa2,
+      0xa3,
+      0xa4,
+      0xa5,
+      0xa6,
+      0xa7,
+      0xb0,
+      0xb1,
+      0xb2,
+      0xb3,
+      0xb4,
+      0xb5,
+      0xb6,
+      0xb7};
+  if (read != bytes.size() || bytes != expected) {
+    failTest("DST readBytes ignored variable frame sizes from the frame table");
+  }
+
+  {
+    std::error_code ignored;
+    std::filesystem::remove(iso, ignored);
+  }
+}
+
+void testSacdDstSeekUsesDecodedFrameTimeInsteadOfCompressedByteRatio() {
+  const auto iso = writeSacdIsoFixture("twilight-sacd-dst-seek-fixture.iso", 2400);
+  EchoDstDecoderProvider provider;
+  SacdIsoDemuxer demuxer;
+  demuxer.setDstDecoderProvider(&provider);
+  std::string error;
+  if (!demuxer.open(iso.string(), &error) || !demuxer.selectTrack("stereo", 2, &error)) {
+    failTest("echo DST provider fixture failed to open/select");
+  }
+
+  if (!demuxer.seek(10.0 / 75.0, &error) || demuxer.eof()) {
+    failTest("DST seek unexpectedly reached EOF");
+  }
+  std::vector<uint8_t> bytes(4, 0xee);
+  const size_t read = demuxer.readBytes(bytes.data(), bytes.size());
+  const uint8_t expectedFrameFirstByte = static_cast<uint8_t>(0x40 + ((10 * 9) & 0x3f));
+  const std::vector<uint8_t> expected = {
+      expectedFrameFirstByte,
+      static_cast<uint8_t>(expectedFrameFirstByte + 1),
+      static_cast<uint8_t>(expectedFrameFirstByte + 2),
+      static_cast<uint8_t>(expectedFrameFirstByte + 3)};
+  if (read != bytes.size() || bytes != expected) {
+    std::cerr << "DST seek read=" << read << " expectedFirst=" << static_cast<int>(expectedFrameFirstByte)
+              << " actualFirst=" << static_cast<int>(bytes[0]) << '\n';
+    failTest("DST seek did not land on the expected compressed frame");
+  }
+
+  {
+    std::error_code ignored;
+    std::filesystem::remove(iso, ignored);
+  }
+}
+
+void testSacdDstSeekUsesFrameTableForVariableFrames() {
+  const std::vector<uint32_t> frameSizes = {3, 7, 2};
+  const auto iso = writeSacdIsoFixture("twilight-sacd-dst-variable-frame-seek-fixture.iso", 2400, frameSizes);
+  ExactSizeDstDecoderProvider provider({3, 7, 2});
+  SacdIsoDemuxer demuxer;
+  demuxer.setDstDecoderProvider(&provider);
+  std::string error;
+  if (!demuxer.open(iso.string(), &error) || !demuxer.selectTrack("stereo", 2, &error)) {
+    failTest("variable DST seek fixture failed to open/select");
+  }
+
+  if (!demuxer.seek(16.0 / 600.0, &error) || demuxer.eof()) {
+    failTest("DST variable-frame seek unexpectedly reached EOF");
+  }
+
+  std::vector<uint8_t> bytes(8, 0xee);
+  const size_t read = demuxer.readBytes(bytes.data(), bytes.size());
+  const std::vector<uint8_t> expected = {0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7};
+  if (read != bytes.size() || bytes != expected) {
+    failTest("DST seek ignored variable frame sizes from the frame table");
   }
 
   {
@@ -772,6 +1124,8 @@ int main() {
   testSacdIsoByteScratchResizePreservesSameSizedScratch();
   testSacdDstDecodePathDoesNotPreclearDecodedFrameBuffer();
   testDsfReader();
+  testDsfSeekAlignsToPlanarBlockBoundary();
+  testDsfReaderRejectsBlockSizeLargerThanDataChunk();
   testDffReader();
   testDsdInterleaveHelperConvertsPlanarBlocks();
   testDsdInterleaveHelperConvertsBitOrderWithoutPreclearSentinel();
@@ -786,6 +1140,9 @@ int main() {
   testSacdDstProviderSelection();
   testSacdDstTrackPlayableWithProvider();
   testSacdDstReadBytesDrainsOnlyDecodedBytes();
+  testSacdDstReadBytesUsesFrameTableForVariableFrames();
+  testSacdDstSeekUsesDecodedFrameTimeInsteadOfCompressedByteRatio();
+  testSacdDstSeekUsesFrameTableForVariableFrames();
   testSacdDstTrackUnplayableWithoutProvider();
   assert(sourceLooksDsfOrDff("song.DSF"));
   assert(sourceLooksDsfOrDff("song.dff"));

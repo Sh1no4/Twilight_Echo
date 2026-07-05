@@ -5,7 +5,9 @@
 #include <cassert>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -14,6 +16,32 @@ using namespace twilight::audio;
 using namespace twilight::audio::test;
 
 namespace {
+
+std::string readTextFile(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+  return buffer.str();
+}
+
+void assertDecoderInt24AppendAvoidsUnalignedInt32Reads() {
+  const std::filesystem::path sourcePath =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "decoder" / "FFmpegDecoderUtils.h";
+  const std::string source = readTextFile(sourcePath);
+  if (source.empty() || source.find("reinterpret_cast<const int32_t*>(source)") != std::string::npos) {
+    std::abort();
+  }
+}
+
+void assertDecoderContinuesWhenResamplerOutputsNoSamples() {
+  const std::filesystem::path sourcePath =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "decoder" / "FFmpegDecoder.cpp";
+  const std::string source = readTextFile(sourcePath);
+  if (source.empty() || source.find("return ok && !pending.empty();") != std::string::npos ||
+      source.find("if (pending.empty())") == std::string::npos) {
+    std::abort();
+  }
+}
 
 void assertDecoderReportsPcm(const std::string& name, int bitsPerSample) {
   const auto fixture = writePcmWavFixture({name, 48000, 2, bitsPerSample, 32, false});
@@ -170,6 +198,8 @@ void assertDecoderOpensExternalFixturesWhenProvided() {
 }  // namespace
 
 int main() {
+  assertDecoderInt24AppendAvoidsUnalignedInt32Reads();
+  assertDecoderContinuesWhenResamplerOutputsNoSamples();
   assertDecoderTailZeroHelperPreservesCopiedFrames();
   assertDecoderDirectPendingHelperShrinksToActualSamples();
 #if defined(TAE_HAS_FFMPEG)

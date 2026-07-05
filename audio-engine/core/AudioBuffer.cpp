@@ -27,6 +27,11 @@ void zeroBlockFrames(PcmBlock& block, size_t startFrame, size_t frameCount, size
   std::memset(block.data + offset, 0, byteCount);
 }
 
+size_t pcmBlockFrameCapacity(const PcmBlock& block, size_t bytesPerFrame) {
+  if (block.byteSize == 0 || bytesPerFrame == 0) return 0;
+  return block.byteSize / bytesPerFrame;
+}
+
 }  // namespace
 
 void AudioBuffer::reset(int channels, size_t capacityFrames) {
@@ -101,8 +106,10 @@ size_t AudioBuffer::writeBlocking(const PcmBlock& block, const std::atomic<bool>
   if (!block.data || block.frames == 0) return 0;
   const size_t sourceBytesPerFrame = audioFormatBytesPerFrame(block.format);
   if (sourceBytesPerFrame == 0) return 0;
+  const size_t sourceFrames = std::min(block.frames, pcmBlockFrameCapacity(block, sourceBytesPerFrame));
+  if (sourceFrames == 0) return 0;
   size_t written = 0;
-  while (written < block.frames && running.load()) {
+  while (written < sourceFrames && running.load()) {
     std::unique_lock lock(mutex_);
     if (!bufferFormatsCompatible(block.format, format_)) return written;
     notFull_.wait(lock, [&] {
@@ -111,7 +118,7 @@ size_t AudioBuffer::writeBlocking(const PcmBlock& block, const std::atomic<bool>
     if (!running.load()) break;
     if (!bufferFormatsCompatible(block.format, format_)) return written;
 
-    const size_t writable = std::min(block.frames - written, contiguousWritableFramesLocked());
+    const size_t writable = std::min(sourceFrames - written, contiguousWritableFramesLocked());
     if (writable == 0) continue;
 
     const size_t dstOffset = writeFrame_ * bytesPerFrame_;
@@ -162,12 +169,19 @@ size_t AudioBuffer::read(PcmBlock& block) {
     if (block.byteSize > 0) std::memset(block.data, 0, block.byteSize);
     return 0;
   }
-  std::unique_lock lock(mutex_, std::try_to_lock);
-  if (!lock.owns_lock()) {
-    zeroBlockFrames(block, 0, block.frames, targetBytesPerFrame);
+  const size_t targetFrames = std::min(block.frames, pcmBlockFrameCapacity(block, targetBytesPerFrame));
+  if (targetFrames == 0) {
+    if (block.byteSize > 0) std::memset(block.data, 0, block.byteSize);
     return 0;
   }
-  const size_t read = readLocked(block, targetBytesPerFrame);
+  PcmBlock boundedBlock = block;
+  boundedBlock.frames = targetFrames;
+  std::unique_lock lock(mutex_, std::try_to_lock);
+  if (!lock.owns_lock()) {
+    zeroBlockFrames(boundedBlock, 0, boundedBlock.frames, targetBytesPerFrame);
+    return 0;
+  }
+  const size_t read = readLocked(boundedBlock, targetBytesPerFrame);
   lock.unlock();
   notFull_.notify_one();
   return read;

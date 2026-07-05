@@ -22,17 +22,22 @@ const resolvedCover = useCover(computed(() => currentTrack.value?.cover ?? null)
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const iframeReady = ref(false)
-const visualizerSrc = `./audio-visualizer/index.html?v=${Date.now()}`
+const visualizerSrc = ref(buildVisualizerSrc())
+const VISUALIZER_BAR_COUNT = 140
+const VISUALIZER_ANALYSIS_POINTS = 4096
 const visualizationOptions = {
-  spectrumPoints: 4096,
+  spectrumPoints: VISUALIZER_ANALYSIS_POINTS,
   waveformPoints: 256,
   spectrogramFrames: 0,
-  oscilloscopePoints: 0
+  oscilloscopePoints: 0,
+  visualizerBarCount: VISUALIZER_BAR_COUNT
 } as const
 const VISUALIZER_POLL_INTERVAL_MS = 50
+const CONTROL_VISUALIZATION_PAUSE_MS = 220
 let visualizationTimer: number | null = null
 let visualizationRequestInFlight = false
 let visualizerUnmounted = false
+let visualizationPausedUntil = 0
 const shouldPollVisualization = computed(
   () =>
     props.active &&
@@ -53,8 +58,13 @@ function post(msg: unknown, transfer: Transferable[] = []): void {
   }
 }
 
+function buildVisualizerSrc(): string {
+  return `./audio-visualizer/index.html?v=${Date.now()}`
+}
+
 async function pollVisualizationFrame(): Promise<void> {
   if (visualizerUnmounted || !shouldPollVisualization.value || visualizationRequestInFlight) return
+  if (performance.now() < visualizationPausedUntil) return
   visualizationRequestInFlight = true
   try {
     const v = await window.api.audioEngine.getVisualizationData(visualizationOptions)
@@ -63,11 +73,11 @@ async function pollVisualizationFrame(): Promise<void> {
       postInactiveVisualizationFrame()
       return
     }
-    const spectrum = Float32Array.from(v.spectrum)
+    const bars = Float32Array.from(v.visualizerBars ?? [])
     const waveform = Float32Array.from(v.waveform)
     post({
       kind: 'spectrum',
-      data: spectrum,
+      bars,
       waveform,
       sampleRate: v.sampleRate,
       maxFrequency: v.maxFrequency,
@@ -75,7 +85,7 @@ async function pollVisualizationFrame(): Promise<void> {
       rmsDb: v.rmsDb,
       lufsMomentary: v.lufsMomentary,
       active: v.active
-    }, [spectrum.buffer, waveform.buffer])
+    }, [bars.buffer, waveform.buffer])
   } catch {
     // The playback controls remain usable if visualization sampling is unavailable.
   } finally {
@@ -85,11 +95,11 @@ async function pollVisualizationFrame(): Promise<void> {
 
 function postInactiveVisualizationFrame(): void {
   if (!iframeReady.value) return
-  const spectrum = new Float32Array(visualizationOptions.spectrumPoints)
+  const bars = new Float32Array(VISUALIZER_BAR_COUNT)
   const waveform = new Float32Array(visualizationOptions.waveformPoints)
   post({
     kind: 'spectrum',
-    data: spectrum,
+    bars,
     waveform,
     sampleRate: 0,
     maxFrequency: 20000,
@@ -97,7 +107,7 @@ function postInactiveVisualizationFrame(): void {
     rmsDb: -120,
     lufsMomentary: null,
     active: false
-  }, [spectrum.buffer, waveform.buffer])
+  }, [bars.buffer, waveform.buffer])
 }
 
 function startVisualizationPolling(): void {
@@ -124,6 +134,10 @@ function syncVisualizationPolling(): void {
   const wasPolling = visualizationTimer !== null
   stopVisualizationPolling()
   if (wasPolling) postInactiveVisualizationFrame()
+}
+
+function pauseVisualizationForControl(): void {
+  visualizationPausedUntil = performance.now() + CONTROL_VISUALIZATION_PAUSE_MS
 }
 
 // Buffer the latest track/cover/playback payloads so they can be re-sent once
@@ -161,6 +175,7 @@ function onMessage(event: MessageEvent): void {
   }
 
   if (event.data?.kind !== 'control') return
+  pauseVisualizationForControl()
   switch (event.data.action) {
     case 'togglePlay':
       void togglePlay()
@@ -192,6 +207,15 @@ watch(
   [() => props.active, iframeReady, isPlaying, audioEngineReady, () => currentTrack.value?.id],
   () => syncVisualizationPolling(),
   { immediate: true }
+)
+
+watch(
+  () => props.active,
+  (active, wasActive) => {
+    if (!active || wasActive) return
+    iframeReady.value = false
+    visualizerSrc.value = buildVisualizerSrc()
+  }
 )
 
 // Post track metadata when the current track changes.

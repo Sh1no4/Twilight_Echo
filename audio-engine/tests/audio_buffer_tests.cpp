@@ -104,6 +104,54 @@ void testResetMakesOldFramesUnreadableAndEmptyReadsSilent() {
   }
 }
 
+void testReadPcmBlockCapsFramesToByteSize() {
+  AudioBuffer buffer;
+  buffer.reset(2, 4);
+
+  std::atomic<bool> running{true};
+  const std::array<float, 4> input{0.25f, -0.25f, 0.5f, -0.5f};
+  assert(buffer.writeBlocking(input.data(), 2, running) == 2);
+
+  std::array<uint8_t, 16> output{};
+  output.fill(0xee);
+  PcmBlock block;
+  block.format = buffer.format();
+  block.data = output.data();
+  block.frames = 2;
+  block.byteSize = sizeof(float) * 2;
+
+  assert(buffer.read(block) == 1);
+  assert(buffer.availableFrames() == 1);
+  assert(reinterpret_cast<float*>(output.data())[0] == 0.25f);
+  assert(reinterpret_cast<float*>(output.data())[1] == -0.25f);
+  for (size_t index = block.byteSize; index < output.size(); ++index) {
+    assert(output[index] == 0xee);
+  }
+}
+
+void testWritePcmBlockCapsFramesToByteSize() {
+  AudioBuffer buffer;
+  buffer.reset(2, 4);
+
+  std::atomic<bool> running{true};
+  std::array<float, 4> input{0.25f, -0.25f, 99.0f, 99.0f};
+  PcmBlock block;
+  block.format = buffer.format();
+  block.data = reinterpret_cast<uint8_t*>(input.data());
+  block.frames = 2;
+  block.byteSize = sizeof(float) * 2;
+
+  assert(buffer.writeBlocking(block, running) == 1);
+  assert(buffer.availableFrames() == 1);
+
+  std::array<float, 4> output{0.0f, 0.0f, 0.0f, 0.0f};
+  assert(buffer.read(output.data(), 2) == 1);
+  assert(output[0] == 0.25f);
+  assert(output[1] == -0.25f);
+  assert(output[2] == 0.0f);
+  assert(output[3] == 0.0f);
+}
+
 void testResetStorageResizeDoesNotRewriteSameSizedStorage() {
   std::vector<uint8_t> storage{0x11, 0x22, 0x33, 0x44};
   const uint8_t* before = storage.data();
@@ -128,6 +176,8 @@ int main() {
   testAudioBufferFormatStateIsReadUnderMutex();
   testAudioBufferRenderReadablePathsUseNonBlockingLocks();
   testResetMakesOldFramesUnreadableAndEmptyReadsSilent();
+  testReadPcmBlockCapsFramesToByteSize();
+  testWritePcmBlockCapsFramesToByteSize();
   testResetStorageResizeDoesNotRewriteSameSizedStorage();
   testResetStorageResizeShrinksWithoutClearingPrefix();
   return 0;

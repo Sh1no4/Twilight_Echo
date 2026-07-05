@@ -341,6 +341,7 @@ bool AsioBackend::open(const std::string& deviceId, const AudioFormat& requested
     nativeDsdRuntimeFacts_ = unsupportedNativeDsdRuntimeFacts("No Native DSD stream was requested");
     actualOutputFormatObserved_ = false;
     actualOutputChannelFormatsMatch_ = true;
+    nativeDsdTypedCallbackMissing_ = false;
     outputInfo_ = {};
     outputInfo_.exclusive = true;
     outputInfo_.accessMode = "exclusive";
@@ -523,6 +524,7 @@ bool AsioBackend::start(RenderCallback callback, OutputEventCallback eventCallba
     eventCallback_ = std::move(eventCallback);
     lastRenderTime_ = {};
     renderCallbacksSeen_ = 0;
+    nativeDsdTypedCallbackMissing_ = false;
   }
   return createAndStartHost(error);
 }
@@ -544,11 +546,19 @@ bool AsioBackend::startTyped(
     eventCallback_ = std::move(eventCallback);
     lastRenderTime_ = {};
     renderCallbacksSeen_ = 0;
+    nativeDsdTypedCallbackMissing_ = false;
   }
   return createAndStartHost(error);
 }
 
 void AsioBackend::stop() {
+  {
+    std::lock_guard queueLock(recoveryQueueMutex_);
+    stopRequested_ = true;
+    recoveryRequests_.clear();
+  }
+  recoveryQueueCv_.notify_all();
+  joinRecoveryThread();
   running_ = false;
   if (host_) host_->stop();
 }
@@ -576,6 +586,7 @@ void AsioBackend::close() {
   nativeDsdRuntimeFacts_ = unsupportedNativeDsdRuntimeFacts("No Native DSD stream was requested");
   actualOutputFormatObserved_ = false;
   actualOutputChannelFormatsMatch_ = true;
+  nativeDsdTypedCallbackMissing_ = false;
   opened_ = false;
 }
 
@@ -589,6 +600,13 @@ OutputInfo AsioBackend::outputInfo() const {
   info.deviceRecovered = deviceRecovered_;
   info.recoveryCount = recoveryCount_;
   info.diagnostics = diagnostics_;
+  if (nativeDsdTypedCallbackMissing_) {
+    const std::string reason = "ASIO Native DSD render requires a typed raw DSD callback";
+    info.perfectReasonCode = "native_dsd_typed_callback_missing";
+    info.perfectReason = reason;
+    info.capabilityReason = reason;
+    if (info.diagnostics.lastError.empty()) info.diagnostics.lastError = reason;
+  }
   return info;
 }
 
@@ -948,11 +966,7 @@ void AsioBackend::renderBuffer(long bufferIndex) {
       if (lock.owns_lock()) {
         ++diagnostics_.sessionBufferDropCount;
         ++diagnostics_.lifetimeBufferDropCount;
-        diagnostics_.lastError = "ASIO Native DSD render requires a typed raw DSD callback";
-        outputInfo_.perfectReasonCode = "native_dsd_typed_callback_missing";
-        outputInfo_.perfectReason = diagnostics_.lastError;
-        outputInfo_.capabilityReason = diagnostics_.lastError;
-        outputInfo_.diagnostics = diagnostics_;
+        nativeDsdTypedCallbackMissing_ = true;
       }
     }
     host_->outputReady();
@@ -1107,6 +1121,14 @@ bool AsioBackend::recover(AsioHostEvent event, const std::string& message) {
     outputInfo_.diagnostics = diagnostics_;
   }
 
+  const auto cancelRecovery = [this]() {
+    std::lock_guard lock(mutex_);
+    recoveryInProgress_ = false;
+    recoveryAttempts_ = 0;
+    outputInfo_.recoveryCount = recoveryCount_;
+    outputInfo_.diagnostics = diagnostics_;
+  };
+
   std::string lastAttemptError;
   for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
     {
@@ -1115,18 +1137,46 @@ bool AsioBackend::recover(AsioHostEvent event, const std::string& message) {
       outputInfo_.recoveryCount = recoveryCount_;
       outputInfo_.diagnostics = diagnostics_;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(kBackoffMs[attempt]));
+    {
+      std::unique_lock queueLock(recoveryQueueMutex_);
+      if (recoveryQueueCv_.wait_for(
+              queueLock,
+              std::chrono::milliseconds(kBackoffMs[attempt]),
+              [this] { return stopRequested_.load(); })) {
+        cancelRecovery();
+        return false;
+      }
+    }
+    if (stopRequested_.load()) {
+      cancelRecovery();
+      return false;
+    }
     std::string error;
     host_->stop();
     host_->close();
+    if (stopRequested_.load()) {
+      cancelRecovery();
+      return false;
+    }
     AsioOpenResult result;
     if (!host_->open(openConfig_, &result, &error)) {
       lastAttemptError = error;
       continue;
     }
+    if (stopRequested_.load()) {
+      host_->close();
+      cancelRecovery();
+      return false;
+    }
     if (!createAndStartHost(&error)) {
       lastAttemptError = error;
       continue;
+    }
+    if (stopRequested_.load()) {
+      host_->stop();
+      host_->close();
+      cancelRecovery();
+      return false;
     }
 
     std::lock_guard lock(mutex_);

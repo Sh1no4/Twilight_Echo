@@ -1839,39 +1839,41 @@ export class AudioEngineManager extends EventEmitter {
     void this.restoreAudioServiceOutputRoute().then((result) => {
       if (this.destroyed || restoreSerial !== this.audioServiceReadyRestoreSerial) return
       this.nativeOutputRouteSynced = result.synced
+      this.applyNativeDspSettings('音频服务恢复后应用 DSP 配置')
+      if (this.nativeDspPluginChainJson) {
+        this.tryNative('音频服务恢复后应用原生 DSP 插件链', (native) =>
+          native.SetDspPluginChain?.(this.nativeDspPluginChainJson)
+        )
+      }
+      if (this.queue.length > 0) {
+        this.tryNative('音频服务恢复后加载队列', (native) =>
+          native.LoadQueue?.(JSON.stringify(this.queue), this.playbackInfo.queueIndex)
+        )
+      }
+      this.nativePlaybackActive = false
+      this.invalidateUpcomingTrackCache()
+      this.playbackInfo = {
+        ...this.playbackInfo,
+        state: 'stopped',
+        nativePlaybackActive: false
+      }
+      this.publishPlaybackInfo()
       this.emit('audio-service-ready', {
         manualResumeRequired: true,
         outputRouteSynced: result.synced,
         restoreErrors: result.errors
       })
     })
-    this.applyNativeDspSettings('音频服务恢复后应用 DSP 配置')
-    if (this.nativeDspPluginChainJson) {
-      this.tryNative('音频服务恢复后应用原生 DSP 插件链', (native) =>
-        native.SetDspPluginChain?.(this.nativeDspPluginChainJson)
-      )
-    }
-    if (this.queue.length > 0) {
-      this.tryNative('音频服务恢复后加载队列', (native) =>
-        native.LoadQueue?.(JSON.stringify(this.queue), this.playbackInfo.queueIndex)
-      )
-    }
-    this.nativePlaybackActive = false
-    this.invalidateUpcomingTrackCache()
-    this.playbackInfo = {
-      ...this.playbackInfo,
-      state: 'stopped',
-      nativePlaybackActive: false
-    }
-    this.publishPlaybackInfo()
   }
 
-  private async restoreAudioServiceOutputRoute(): Promise<{ synced: boolean; errors: string[] }> {
+  private async restoreAudioServiceOutputRoute(
+    contextPrefix = '音频服务恢复后应用'
+  ): Promise<{ synced: boolean; errors: string[] }> {
     const results: Array<{ ok: boolean; error: string }> = []
     results.push(
       await this.restoreAudioServiceOutputRouteStep(
         'output-backend',
-        '音频服务恢复后应用输出后端',
+        `${contextPrefix}输出后端`,
         'SetOutputBackend',
         this.getNativeBackendId()
       )
@@ -1879,7 +1881,7 @@ export class AudioEngineManager extends EventEmitter {
     results.push(
       await this.restoreAudioServiceOutputRouteStep(
         'output-device',
-        '音频服务恢复后应用输出设备',
+        `${contextPrefix}输出设备`,
         'SetOutputDevice',
         this.device
       )
@@ -1887,7 +1889,7 @@ export class AudioEngineManager extends EventEmitter {
     results.push(
       await this.restoreAudioServiceOutputRouteStep(
         'output-config',
-        '音频服务恢复后应用输出配置',
+        `${contextPrefix}输出配置`,
         'SetOutputConfig',
         JSON.stringify(this.outputConfig)
       )
@@ -1912,10 +1914,9 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async start(): Promise<void> {
-    this.tryNative('初始化输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
-    this.tryNative('初始化输出设备', (native) => native.SetOutputDevice(this.device))
-    this.applyNativeOutputConfig('初始化输出配置')
-    this.nativeOutputRouteSynced = true
+    this.nativeOutputRouteSynced = false
+    const routeRestore = await this.restoreAudioServiceOutputRoute('初始化')
+    this.nativeOutputRouteSynced = routeRestore.synced
     this.applyNativeDspSettings('初始化 DSP 配置')
     this.startClock()
     this.scheduler.setImmediate(() => this.emit('ready'))
@@ -2096,7 +2097,17 @@ export class AudioEngineManager extends EventEmitter {
     ) {
       return
     }
-    this.tryNative('停止', (native) => native.Stop())
+    if (this.nativePlaybackActive) {
+      const stopped = await this.callNativeMaybeAsync('停止', 'Stop')
+      if (!stopped) {
+        const nativeInfo = await this.readNativePlaybackInfoAsync()
+        if (nativeInfo) this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
+        this.publishPlaybackInfo()
+        throw new Error(`原生音频停止失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+      }
+    } else {
+      this.tryNative('停止', (native) => native.Stop())
+    }
     this.nativePlaybackActive = false
     this.pendingNativeSource = null
     this.playbackInfo.state = 'stopped'
@@ -2127,12 +2138,19 @@ export class AudioEngineManager extends EventEmitter {
     const fallbackIndex = (this.playbackInfo.queueIndex + 1) % this.queue.length
     let nextIndex = fallbackIndex
     const targetSource = this.queue[nextIndex]?.source
-    if (
-      this.nativePlaybackActive &&
-      this.native?.Next &&
-      this.tryNative('下一首', (native) => native.Next?.())
-    ) {
-      const nativeInfo = this.readNativePlaybackInfo()
+    if (this.nativePlaybackActive && this.native?.Next) {
+      let nativeInfo: PlaybackInfo | null = null
+      if (typeof this.native.callAsync === 'function') {
+        try {
+          await this.native.callAsync('Next', [])
+          nativeInfo = await this.readNativePlaybackInfoAsync()
+          this.lastNativeError = ''
+        } catch (err) {
+          this.lastNativeError = err instanceof Error ? err.message : String(err)
+        }
+      } else if (this.tryNative('下一首', (native) => native.Next?.())) {
+        nativeInfo = this.readNativePlaybackInfo()
+      }
       if (
         nativeInfo &&
         nativeInfo.state === 'playing' &&
@@ -2141,6 +2159,7 @@ export class AudioEngineManager extends EventEmitter {
         nativeInfo.queueIndex < this.queue.length
       ) {
         nextIndex = nativeInfo.queueIndex
+        this.pendingNativeSource = null
         this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
         this.emit('start-file')
         this.publishPlaybackInfo()
@@ -2158,12 +2177,19 @@ export class AudioEngineManager extends EventEmitter {
       this.playbackInfo.queueIndex <= 0 ? this.queue.length - 1 : this.playbackInfo.queueIndex - 1
     let nextIndex = fallbackIndex
     const targetSource = this.queue[nextIndex]?.source
-    if (
-      this.nativePlaybackActive &&
-      this.native?.Previous &&
-      this.tryNative('上一首', (native) => native.Previous?.())
-    ) {
-      const nativeInfo = this.readNativePlaybackInfo()
+    if (this.nativePlaybackActive && this.native?.Previous) {
+      let nativeInfo: PlaybackInfo | null = null
+      if (typeof this.native.callAsync === 'function') {
+        try {
+          await this.native.callAsync('Previous', [])
+          nativeInfo = await this.readNativePlaybackInfoAsync()
+          this.lastNativeError = ''
+        } catch (err) {
+          this.lastNativeError = err instanceof Error ? err.message : String(err)
+        }
+      } else if (this.tryNative('上一首', (native) => native.Previous?.())) {
+        nativeInfo = this.readNativePlaybackInfo()
+      }
       if (
         nativeInfo &&
         nativeInfo.state === 'playing' &&
@@ -2172,6 +2198,7 @@ export class AudioEngineManager extends EventEmitter {
         nativeInfo.queueIndex < this.queue.length
       ) {
         nextIndex = nativeInfo.queueIndex
+        this.pendingNativeSource = null
         this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
         this.emit('start-file')
         this.publishPlaybackInfo()
@@ -2221,21 +2248,28 @@ export class AudioEngineManager extends EventEmitter {
     this.device = nextDevice
     this.exclusiveMode = nextExclusiveMode
     this.invalidateAudioDeviceOptionsCache('audio-output-changed')
-    this.tryNative('切换输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
-    this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
-    this.applyNativeOutputConfig('切换输出配置')
-    this.nativeOutputRouteSynced = true
+    this.nativeOutputRouteSynced = false
+    const routeRestore = await this.restoreAudioServiceOutputRoute('切换')
+    this.nativeOutputRouteSynced = routeRestore.synced
     this.refreshOutputInfoFromNative(true)
     return await this.getAudioOutputState()
   }
 
   async setAudioDevice(device: string): Promise<AudioOutputState> {
     const nextDevice = this.resolveCompatibleDevice(this.output, normalizeAudioDevice(device))
-    if (nextDevice === this.device) return await this.getAudioOutputState()
+    if (this.nativeOutputRouteSynced && nextDevice === this.device) return await this.getAudioOutputState()
 
+    const previousDevice = this.device
     this.device = nextDevice
     this.invalidateAudioDeviceOptionsCache('audio-device-changed')
-    this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
+    this.nativeOutputRouteSynced = false
+    const deviceSynced = await this.callNativeMaybeAsync('切换输出设备', 'SetOutputDevice', this.device)
+    if (!deviceSynced) {
+      this.device = previousDevice
+      this.invalidateAudioDeviceOptionsCache('audio-device-restore-after-failure')
+      throw new Error(`原生音频输出设备切换失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+    }
+    this.nativeOutputRouteSynced = true
     this.refreshOutputInfoFromNative(true)
     return await this.getAudioOutputState()
   }
@@ -2276,6 +2310,12 @@ export class AudioEngineManager extends EventEmitter {
       outputOptions: getAudioOutputOptions(),
       deviceOptions: this.getAudioDeviceOptions()
     }
+  }
+
+  notifyAudioDeviceOptionsChanged(reason = 'platform-device-change'): void {
+    if (this.destroyed) return
+    this.lastAudioDeviceOptionsProbeAt = Number.NEGATIVE_INFINITY
+    this.invalidateAudioDeviceOptionsCache(reason)
   }
 
   async setAudioProcessing(
@@ -2676,6 +2716,20 @@ export class AudioEngineManager extends EventEmitter {
   private readNativePlaybackInfo(): PlaybackInfo | null {
     try {
       const info = parseNativeJson(this.native?.GetPlaybackInfo?.(), null as PlaybackInfo | null)
+      if (!info) return null
+      return this.normalizePlaybackInfo(info)
+    } catch {
+      return null
+    }
+  }
+
+  private async readNativePlaybackInfoAsync(): Promise<PlaybackInfo | null> {
+    if (!this.native || typeof this.native.callAsync !== 'function') return this.readNativePlaybackInfo()
+    try {
+      const info = parseNativeJson(
+        await this.native.callAsync('GetPlaybackInfo', []),
+        null as PlaybackInfo | null
+      )
       if (!info) return null
       return this.normalizePlaybackInfo(info)
     } catch {

@@ -7,6 +7,7 @@ const test = require('node:test')
 
 const {
   buildAudioSmokeEvidenceReport,
+  buildCollectionActionPlan,
   buildEntriesFromSmokeSummary,
   buildCoverageSummary,
   readEntriesFromInputs
@@ -47,6 +48,13 @@ test('audio smoke evidence report records opt-in real-device surfaces', () => {
   assert.equal(report.json.entries[0].status, 'pass')
   assert.equal(report.json.entries[1].status, 'not-run')
   assert.equal(report.json.coverage.complete, false)
+  assert.equal(report.json.actionPlan.length, 4)
+  assert.equal(
+    report.json.actionPlan.some(
+      (item) => item.surface === 'SACD ISO' && item.artifact.endsWith('sacd-iso.json')
+    ),
+    true
+  )
   assert.deepEqual(report.json.coverage.missingSurfaces, [
     'ASIO',
     'DoP DAC',
@@ -63,6 +71,9 @@ test('audio smoke evidence report records opt-in real-device surfaces', () => {
   assert.match(report.markdown, /\| SACD ISO \| not-run \|/)
   assert.match(report.markdown, /Coverage: 1\/5 required surfaces passed/)
   assert.match(report.markdown, /Complete: no/)
+  assert.match(report.markdown, /## Collection Action Plan/)
+  assert.match(report.markdown, /npm run smoke:asio-native-dsd/)
+  assert.match(report.markdown, /output\/audio-smoke-evidence\/sacd-iso\.json/)
 })
 
 test('audio smoke evidence report can derive entries from smoke JSON summaries', () => {
@@ -125,7 +136,8 @@ test('audio smoke evidence coverage is complete only when every required surface
   const coverage = buildCoverageSummary(
     ['WASAPI Exclusive', 'ASIO', 'DoP DAC', 'Native DSD', 'SACD ISO'].map((surface) => ({
       surface,
-      status: 'pass'
+      status: 'pass',
+      artifact: `output/audio-smoke-evidence/${surface.toLowerCase().replaceAll(' ', '-')}.json`
     }))
   )
 
@@ -133,6 +145,92 @@ test('audio smoke evidence coverage is complete only when every required surface
   assert.equal(coverage.passCount, 5)
   assert.deepEqual(coverage.missingSurfaces, [])
   assert.deepEqual(coverage.failedSurfaces, [])
+  assert.deepEqual(coverage.unbackedPassSurfaces, [])
+  assert.deepEqual(coverage.missingArtifactSurfaces, [])
+  assert.deepEqual(buildCollectionActionPlan(coverage), [])
+})
+
+test('audio smoke evidence does not count pass rows without artifacts as complete evidence', () => {
+  const report = buildAudioSmokeEvidenceReport({
+    generatedAt: '2026-07-05T00:00:00.000Z',
+    platform: 'win32',
+    entries: [
+      {
+        surface: 'WASAPI Exclusive',
+        id: 'wasapi-exclusive-no-artifact',
+        label: 'WASAPI Exclusive hardware smoke',
+        status: 'pass',
+        notes: 'This pass row is missing its JSON artifact'
+      }
+    ]
+  })
+
+  assert.equal(report.json.coverage.complete, false)
+  assert.equal(report.json.coverage.passCount, 0)
+  assert.deepEqual(report.json.coverage.unbackedPassSurfaces, ['WASAPI Exclusive'])
+  assert.equal(report.json.coverage.unbackedPassCount, 1)
+  assert.deepEqual(report.json.coverage.missingArtifactSurfaces, [])
+  assert.equal(report.json.actionPlan[0].surface, 'WASAPI Exclusive')
+  assert.equal(report.json.actionPlan[0].status, 'insufficient-evidence')
+  assert.match(report.markdown, /only counts as passed when at least one `pass` row includes an artifact path/)
+})
+
+test('audio smoke evidence can require local pass artifacts to exist', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-audio-evidence-artifact-test-'))
+  try {
+    const artifactPath = path.join(dir, 'wasapi-exclusive.json')
+    fs.writeFileSync(artifactPath, '{}')
+    const coverage = buildCoverageSummary(
+      [
+        {
+          surface: 'WASAPI Exclusive',
+          status: 'pass',
+          artifact: artifactPath
+        },
+        {
+          surface: 'ASIO',
+          status: 'pass',
+          artifact: path.join(dir, 'missing-asio.json')
+        }
+      ],
+      { verifyArtifacts: true }
+    )
+
+    assert.deepEqual(coverage.passedSurfaces, ['WASAPI Exclusive'])
+    assert.deepEqual(coverage.missingArtifactSurfaces, ['ASIO'])
+    const actionPlan = buildCollectionActionPlan(coverage)
+    assert.equal(actionPlan[0].surface, 'ASIO')
+    assert.equal(actionPlan[0].status, 'missing-artifact')
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('audio smoke evidence action plan lists only unresolved required surfaces', () => {
+  const coverage = buildCoverageSummary([
+    {
+      surface: 'WASAPI Exclusive',
+      status: 'pass',
+      artifact: 'output/audio-smoke-evidence/wasapi-exclusive.json'
+    },
+    { surface: 'ASIO', status: 'fail' },
+    { surface: 'DoP DAC', status: 'skip' },
+    { surface: 'Native DSD', status: 'not-run' },
+    {
+      surface: 'SACD ISO',
+      status: 'pass',
+      artifact: 'output/audio-smoke-evidence/sacd-iso.json'
+    }
+  ])
+
+  const actionPlan = buildCollectionActionPlan(coverage)
+  assert.deepEqual(
+    actionPlan.map((item) => `${item.surface}:${item.status}`),
+    ['ASIO:fail', 'Native DSD:not-run', 'DoP DAC:skip']
+  )
+  assert.match(actionPlan[0].command, /smoke:audio-format-matrix/)
+  assert.match(actionPlan[1].command, /smoke:asio-native-dsd/)
+  assert.match(actionPlan[2].requiredEvidence, /dsdMode=dop/)
 })
 
 test('audio smoke evidence CLI rejects missing flag values', () => {
@@ -240,6 +338,73 @@ test('audio smoke evidence CLI can read a directory of smoke JSON summaries', ()
     const markdown = fs.readFileSync(path.join(outputDir, 'audio-smoke-evidence.md'), 'utf8')
     assert.match(markdown, /\| DoP DAC \| pass \|/)
     assert.match(markdown, /\| SACD ISO \| pass \|/)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('audio smoke evidence CLI treats an input entries file as the fallback artifact', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-audio-evidence-entry-artifact-test-'))
+  try {
+    const inputPath = path.join(dir, 'entries.json')
+    fs.writeFileSync(
+      inputPath,
+      JSON.stringify([
+        {
+          surface: 'WASAPI Exclusive',
+          id: 'wasapi-entry-pass',
+          label: 'WASAPI Exclusive entry smoke',
+          status: 'pass'
+        }
+      ])
+    )
+
+    const entries = readEntriesFromInputs([inputPath])
+    assert.equal(entries[0].artifact, inputPath)
+    const report = buildAudioSmokeEvidenceReport({
+      entries,
+      verifyArtifacts: true,
+      artifactBaseDir: dir
+    })
+    assert.deepEqual(report.json.coverage.passedSurfaces, ['WASAPI Exclusive'])
+    assert.deepEqual(report.json.coverage.unbackedPassSurfaces, [])
+    assert.deepEqual(report.json.coverage.missingArtifactSurfaces, [])
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('audio smoke evidence CLI reports missing artifact paths as incomplete evidence', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-audio-evidence-missing-artifact-test-'))
+  try {
+    const inputPath = path.join(dir, 'entries.json')
+    fs.writeFileSync(
+      inputPath,
+      JSON.stringify([
+        {
+          surface: 'WASAPI Exclusive',
+          id: 'wasapi-missing-artifact',
+          label: 'WASAPI Exclusive missing artifact smoke',
+          status: 'pass',
+          artifact: 'missing-wasapi.json'
+        }
+      ])
+    )
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(__dirname, 'audio-smoke-evidence.cjs'),
+        '--input',
+        inputPath,
+        '--output-dir',
+        dir,
+        '--require-complete'
+      ],
+      { encoding: 'utf8' }
+    )
+
+    assert.equal(result.status, 1)
+    assert.match(result.stderr, /WASAPI Exclusive=missing-artifact/)
   } finally {
     fs.rmSync(dir, { recursive: true, force: true })
   }

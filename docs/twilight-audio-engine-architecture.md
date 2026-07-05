@@ -73,7 +73,7 @@ Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer
 
 - WASAPI native DSD：Windows WASAPI 没有 UAC2 native DSD 通道；DoP 可在 WASAPI Exclusive 工作，native DSD 不行。
 - CoreAudio native DSD：macOS CoreAudio 没有 DSD 通道；DoP 可在 CoreAudio Exclusive（Hog）工作，native DSD 不行。
-- 真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；`npm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 将多台机器/多设备结果沉淀为可读 Markdown/JSON，并把缺失 surfaces 显示为 `not-run`。报告 JSON 带 `coverage.complete`，发布前可手动加 `--require-complete` 做 opt-in 证据完整性检查。
+- 真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；`npm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 将多台机器/多设备结果沉淀为可读 Markdown/JSON，并把缺失 surfaces 显示为 `not-run`。报告 JSON 带 `coverage.complete` 和未闭环 surface 的 `actionPlan`；CLI 会校验本地 artifact 文件存在，输入 JSON 本身可作为缺省 artifact，只有有可追溯 artifact 的 `pass` 行才计入 complete；发布前可手动加 `--require-complete` 做 opt-in 证据完整性检查。
 
 ## 后续顺序
 

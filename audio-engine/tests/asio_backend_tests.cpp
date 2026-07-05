@@ -126,6 +126,17 @@ void testAsioRenderCallbackDoesNotBlockOnBackendMutex() {
   assert(renderBody.find("std::lock_guard lock(mutex_)") == std::string::npos);
 }
 
+void testAsioRenderCallbackDoesNotCopyStringDiagnostics() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "output" / "asio" / "AsioBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderBody = extractFunctionBody(source, "void AsioBackend::renderBuffer(long bufferIndex)");
+
+  assert(!renderBody.empty());
+  assert(renderBody.find("lastError =") == std::string::npos);
+  assert(renderBody.find("outputInfo_.diagnostics =") == std::string::npos);
+}
+
 void testAsioHostEventCallbackQueuesRecoveryOffDriverCallback() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "output" / "asio" / "AsioBackend.cpp";
@@ -861,6 +872,30 @@ void testRecovery() {
   assert(failedInfo.diagnostics.lastError == "mock open failure");
 }
 
+void testRecoveryBackoffIsCancelledByStop() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  AsioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("asio:mock", sourceFormat(96000, 32), &error));
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+
+  rawHost->triggerEvent(AsioHostEvent::BufferFailure, "stop requested");
+  assert(waitUntil([&] {
+    return backend.outputInfo().diagnostics.lastError.find("ASIO buffer failure") != std::string::npos;
+  }));
+  const int openCalls = rawHost->openCalls;
+  const int createBuffersCalls = rawHost->createBuffersCalls;
+  const int startCalls = rawHost->startCalls;
+
+  backend.stop();
+  std::this_thread::sleep_for(std::chrono::milliseconds(650));
+
+  assert(rawHost->openCalls == openCalls);
+  assert(rawHost->createBuffersCalls == createBuffersCalls);
+  assert(rawHost->startCalls == startCalls);
+}
+
 void testRecoveryEventDiagnostics() {
   {
     auto host = makeHost();
@@ -972,6 +1007,7 @@ void testRealAsioSmokeOptIn() {
 int main() {
   testAsioRenderCallbackDoesNotResizeScratchBuffers();
   testAsioRenderCallbackDoesNotBlockOnBackendMutex();
+  testAsioRenderCallbackDoesNotCopyStringDiagnostics();
   testAsioHostEventCallbackQueuesRecoveryOffDriverCallback();
   testAsioRecoveryQueueChecksStopRequestedWhileHoldingQueueLock();
   testFormatNegotiation();
@@ -995,6 +1031,7 @@ int main() {
   testTypedPassthroughPacking();
   testStartFailurePaths();
   testRecovery();
+  testRecoveryBackoffIsCancelledByStop();
   testRecoveryEventDiagnostics();
   testRecoveryCooldown();
   testRealAsioSmokeOptIn();

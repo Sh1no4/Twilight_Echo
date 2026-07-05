@@ -9,6 +9,44 @@ const REQUIRED_SURFACES = [
   'SACD ISO'
 ]
 
+const SURFACE_COLLECTION_GUIDES = {
+  'WASAPI Exclusive': {
+    command:
+      'npm run smoke:wasapi -- --device "<wasapi-endpoint>" --buffer 256 --format-matrix --json > output/audio-smoke-evidence/wasapi-exclusive.json',
+    artifact: 'output/audio-smoke-evidence/wasapi-exclusive.json',
+    evidence:
+      'actualBackend=wasapi-exclusive, exclusive=true, actual output format facts, and outputPerfect/perfectReason for every probed PCM format'
+  },
+  ASIO: {
+    command:
+      'npm run smoke:audio-format-matrix -- --fixture-dir "<pcm-fixtures>" --playback --backend asio --device "<asio-driver>" --json > output/audio-smoke-evidence/asio-pcm.json',
+    artifact: 'output/audio-smoke-evidence/asio-pcm.json',
+    evidence:
+      'actualBackend=asio, selected driver/device, actual output format facts, and explicit pass/fail reason'
+  },
+  'DoP DAC': {
+    command:
+      'npm run smoke:audio-format-matrix -- --fixture-dir "<dsd-fixtures>" --playback --backend wasapi-exclusive --device "<dop-capable-dac>" --json > output/audio-smoke-evidence/dop-dac.json',
+    artifact: 'output/audio-smoke-evidence/dop-dac.json',
+    evidence:
+      'dsdMode=dop, carrier sample rate, actual output format facts, and fallback reason when the DAC rejects DoP'
+  },
+  'Native DSD': {
+    command:
+      'npm run smoke:asio-native-dsd -- --device "<native-dsd-asio-driver>" --fixture-dir "<dsd-fixtures>" --json > output/audio-smoke-evidence/native-dsd.json',
+    artifact: 'output/audio-smoke-evidence/native-dsd.json',
+    evidence:
+      'nativeDsdRuntimeState=proven for at least one DSD rate, plus explicit driver/device and fallback reason for unsupported rates'
+  },
+  'SACD ISO': {
+    command:
+      'npm run smoke:audio-format-matrix -- --manifest "<sacd-iso-matrix.json>" --playback --backend wasapi-exclusive --device "<dac>" --json > output/audio-smoke-evidence/sacd-iso.json',
+    artifact: 'output/audio-smoke-evidence/sacd-iso.json',
+    evidence:
+      'SACD ISO source metadata, selected track/area, dsdMode/native-or-dop-or-pcm result, and explicit DST/provider reason when applicable'
+  }
+}
+
 function inferSurface(entry) {
   const explicit = entry && entry.surface ? String(entry.surface) : ''
   if (REQUIRED_SURFACES.includes(explicit)) return explicit
@@ -39,8 +77,39 @@ function normalizeEntry(entry) {
   }
 }
 
+function withFallbackArtifact(entry, artifact) {
+  const normalized = normalizeEntry(entry)
+  if (normalized.artifact || !artifact) return normalized
+  return {
+    ...normalized,
+    artifact
+  }
+}
+
 function markdownEscape(value) {
   return String(value || '').replaceAll('|', '\\|').replace(/\r?\n/g, '<br>')
+}
+
+function isRemoteArtifact(artifact) {
+  return /^https?:\/\//i.test(String(artifact || ''))
+}
+
+function resolveLocalArtifactPath(artifact, baseDir = process.cwd()) {
+  if (!artifact || isRemoteArtifact(artifact)) return ''
+  return path.isAbsolute(artifact) ? artifact : path.resolve(baseDir, artifact)
+}
+
+function artifactExists(artifact, baseDir = process.cwd()) {
+  if (!artifact) return false
+  if (isRemoteArtifact(artifact)) return true
+  return fs.existsSync(resolveLocalArtifactPath(artifact, baseDir))
+}
+
+function passHasUsableArtifact(entry, options = {}) {
+  const artifact = String(entry && entry.artifact ? entry.artifact : '').trim()
+  if (!artifact) return false
+  if (options.verifyArtifacts !== true) return true
+  return artifactExists(artifact, options.artifactBaseDir)
 }
 
 function materializeRequiredSurfaceRows(entries) {
@@ -76,17 +145,26 @@ function materializeRequiredSurfaceRows(entries) {
   return rows
 }
 
-function buildCoverageSummary(surfaceRows) {
+function buildCoverageSummary(surfaceRows, options = {}) {
   const required = surfaceRows.filter((entry) => REQUIRED_SURFACES.includes(entry.surface))
   const passedSurfaces = []
   const failedSurfaces = []
   const missingSurfaces = []
   const skippedSurfaces = []
+  const unbackedPassSurfaces = []
+  const missingArtifactSurfaces = []
 
   for (const surface of REQUIRED_SURFACES) {
     const rows = required.filter((entry) => entry.surface === surface)
-    if (rows.some((entry) => entry.status === 'pass')) {
+    const passRows = rows.filter((entry) => entry.status === 'pass')
+    const artifactPassRows = passRows.filter((entry) => entry.artifact.trim().length > 0)
+    const backedPassRows = passRows.filter((entry) => passHasUsableArtifact(entry, options))
+    if (backedPassRows.length > 0) {
       passedSurfaces.push(surface)
+    } else if (artifactPassRows.length > 0) {
+      missingArtifactSurfaces.push(surface)
+    } else if (passRows.length > 0) {
+      unbackedPassSurfaces.push(surface)
     } else if (rows.some((entry) => entry.status === 'fail')) {
       failedSurfaces.push(surface)
     } else if (rows.some((entry) => entry.status === 'skip')) {
@@ -103,11 +181,41 @@ function buildCoverageSummary(surfaceRows) {
     failCount: failedSurfaces.length,
     missingCount: missingSurfaces.length,
     skipCount: skippedSurfaces.length,
+    unbackedPassCount: unbackedPassSurfaces.length,
+    missingArtifactCount: missingArtifactSurfaces.length,
     passedSurfaces,
     failedSurfaces,
     missingSurfaces,
-    skippedSurfaces
+    skippedSurfaces,
+    unbackedPassSurfaces,
+    missingArtifactSurfaces
   }
+}
+
+function buildCollectionActionPlan(coverage) {
+  const surfaces = [
+    ...coverage.failedSurfaces.map((surface) => ({ surface, status: 'fail' })),
+    ...coverage.unbackedPassSurfaces.map((surface) => ({
+      surface,
+      status: 'insufficient-evidence'
+    })),
+    ...coverage.missingArtifactSurfaces.map((surface) => ({
+      surface,
+      status: 'missing-artifact'
+    })),
+    ...coverage.missingSurfaces.map((surface) => ({ surface, status: 'not-run' })),
+    ...coverage.skippedSurfaces.map((surface) => ({ surface, status: 'skip' }))
+  ]
+  return surfaces.map(({ surface, status }) => {
+    const guide = SURFACE_COLLECTION_GUIDES[surface] || {}
+    return {
+      surface,
+      status,
+      command: guide.command || '',
+      artifact: guide.artifact || '',
+      requiredEvidence: guide.evidence || ''
+    }
+  })
 }
 
 function compactSmokeInfo(info) {
@@ -148,15 +256,23 @@ function buildEntriesFromSmokeSummary(summary, artifact = '', command = '') {
 function buildAudioSmokeEvidenceReport(options = {}) {
   const generatedAt = options.generatedAt || new Date().toISOString()
   const platform = options.platform || process.platform
+  const verifyArtifacts = options.verifyArtifacts === true
+  const artifactBaseDir = options.artifactBaseDir || process.cwd()
   const entries = Array.isArray(options.entries) ? options.entries.map(normalizeEntry) : []
   const surfaceRows = materializeRequiredSurfaceRows(entries)
-  const coverage = buildCoverageSummary(surfaceRows)
+  const coverage = buildCoverageSummary(surfaceRows, { verifyArtifacts, artifactBaseDir })
+  const actionPlan = buildCollectionActionPlan(coverage)
   const json = {
     schemaVersion: 1,
     generatedAt,
     platform,
     requiredSurfaces: [...REQUIRED_SURFACES],
+    artifactVerification: {
+      enabled: verifyArtifacts,
+      baseDir: artifactBaseDir
+    },
     coverage,
+    actionPlan,
     entries,
     surfaceRows
   }
@@ -186,6 +302,27 @@ function buildAudioSmokeEvidenceReport(options = {}) {
     )
   }
 
+  if (actionPlan.length > 0) {
+    lines.push(
+      '',
+      verifyArtifacts
+        ? 'A required surface only counts as passed when at least one `pass` row includes an existing local artifact path or a remote artifact URL.'
+        : 'A required surface only counts as passed when at least one `pass` row includes an artifact path.',
+      '',
+      '## Collection Action Plan',
+      '',
+      '| Surface | Current status | Suggested command | Artifact | Required evidence |',
+      '|---|---|---|---|---|'
+    )
+    for (const item of actionPlan) {
+      lines.push(
+        `| ${markdownEscape(item.surface)} | ${markdownEscape(item.status)} | ${markdownEscape(
+          item.command
+        )} | ${markdownEscape(item.artifact)} | ${markdownEscape(item.requiredEvidence)} |`
+      )
+    }
+  }
+
   return {
     json,
     markdown: `${lines.join('\n')}\n`
@@ -196,8 +333,10 @@ function readEntries(filePath) {
   if (!filePath) return []
   const raw = fs.readFileSync(filePath, 'utf8').replace(/^\uFEFF/, '')
   const parsed = JSON.parse(raw)
-  if (Array.isArray(parsed)) return parsed
-  if (Array.isArray(parsed.entries)) return parsed.entries
+  if (Array.isArray(parsed)) return parsed.map((entry) => withFallbackArtifact(entry, filePath))
+  if (Array.isArray(parsed.entries)) {
+    return parsed.entries.map((entry) => withFallbackArtifact(entry, filePath))
+  }
   return buildEntriesFromSmokeSummary(parsed, filePath)
 }
 
@@ -252,7 +391,9 @@ function main() {
       ? argValue(args, '--output-dir')
       : path.join(process.cwd(), 'output', 'audio-smoke-evidence')
   const report = buildAudioSmokeEvidenceReport({
-    entries: readEntriesFromInputs(inputFiles)
+    entries: readEntriesFromInputs(inputFiles),
+    verifyArtifacts: true,
+    artifactBaseDir: process.cwd()
   })
 
   fs.mkdirSync(outputDir, { recursive: true })
@@ -265,6 +406,12 @@ function main() {
   if (requireComplete && !report.json.coverage.complete) {
     const missing = [
       ...report.json.coverage.failedSurfaces.map((surface) => `${surface}=fail`),
+      ...report.json.coverage.unbackedPassSurfaces.map(
+        (surface) => `${surface}=insufficient-evidence`
+      ),
+      ...report.json.coverage.missingArtifactSurfaces.map(
+        (surface) => `${surface}=missing-artifact`
+      ),
       ...report.json.coverage.missingSurfaces.map((surface) => `${surface}=not-run`),
       ...report.json.coverage.skippedSurfaces.map((surface) => `${surface}=skip`)
     ].join(', ')
@@ -280,6 +427,7 @@ if (require.main === module) {
 module.exports = {
   REQUIRED_SURFACES,
   buildAudioSmokeEvidenceReport,
+  buildCollectionActionPlan,
   buildEntriesFromSmokeSummary,
   buildCoverageSummary,
   readEntriesFromInputs

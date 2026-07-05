@@ -109,6 +109,7 @@ void testAlsaRenderLoopsQueueRecoveryOffRenderThread() {
   const std::string source = readTextFile(sourcePath);
   const std::string renderLoopBody = extractFunctionBody(source, "void renderLoop()");
   const std::string typedRenderLoopBody = extractFunctionBody(source, "void typedRenderLoop()");
+  const std::string queueBody = extractFunctionBody(source, "void queueWriteRecoveryFromRenderThread(");
 
   assert(renderLoopBody.find("queueWriteRecoveryFromRenderThread") != std::string::npos);
   assert(typedRenderLoopBody.find("queueWriteRecoveryFromRenderThread") != std::string::npos);
@@ -116,6 +117,43 @@ void testAlsaRenderLoopsQueueRecoveryOffRenderThread() {
   assert(typedRenderLoopBody.find("recoverFromWriteError") == std::string::npos);
   assert(renderLoopBody.find("failureCallback") == std::string::npos);
   assert(typedRenderLoopBody.find("failureCallback") == std::string::npos);
+  assert(queueBody.find("recoverFromWriteError") == std::string::npos);
+  assert(queueBody.find("joinRecoveryThread") == std::string::npos);
+  assert(queueBody.find("std::thread") == std::string::npos);
+  assert(queueBody.find("std::string") == std::string::npos);
+  assert(queueBody.find("std::lock_guard") == std::string::npos);
+}
+
+void testAlsaStartRejectsRepeatedStartBeforeLaunchingThread() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "output" / "alsa" / "AlsaBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string startBody = extractFunctionBody(source, "bool AlsaBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error)");
+  const std::string startTypedBody = extractFunctionBody(source, "bool AlsaBackend::startTyped(");
+
+  assert(startBody.find("running.load()") != std::string::npos);
+  assert(startBody.find("launchRenderThread") != std::string::npos);
+  assert(startBody.find("running.load()") < startBody.find("launchRenderThread"));
+  assert(startTypedBody.find("running.load()") != std::string::npos);
+  assert(startTypedBody.find("launchRenderThread") != std::string::npos);
+  assert(startTypedBody.find("running.load()") < startTypedBody.find("launchRenderThread"));
+}
+
+void testAlsaRepeatedStartReturnsFalseWithoutRelaunchingThread() {
+  auto host = std::make_unique<MockAlsaHost>();
+  AlsaBackend backend(std::move(host));
+  std::string error;
+
+  assert(backend.open("default", sourceFormat(48000, 16, 2, AudioSampleFormat::Int16Interleaved), &error));
+  assert(backend.start([](float*, size_t frames) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    return frames;
+  }, nullptr, &error));
+
+  error.clear();
+  assert(!backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+  assert(!error.empty());
+  backend.stop();
 }
 
 void testAlsaOpenNegotiatesPcm() {
@@ -325,6 +363,45 @@ void testAlsaNativeDsdRuntimeFactsProvenAfterWritei() {
   const NativeDsdRuntimeFacts facts = backend.nativeDsdRuntimeFacts();
   assert(facts.state == NativeDsdRuntimeFactState::Proven);
   assert(facts.actualDsdRate == 2822400);
+}
+
+void testAlsaNativeDsdOutputInfoReflectsRuntimeProof() {
+  auto host = std::make_unique<MockAlsaHost>();
+  host->acceptedFormats = {AlsaPcmFormat::DsdU8};
+  auto* rawHost = host.get();
+  AlsaBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("hw:0,0", dsdFormat(2822400), &error));
+
+  const OutputInfo candidateInfo = backend.outputInfo();
+  assert(candidateInfo.nativeDsdRuntimeState == "candidate");
+  assert(candidateInfo.nativeDsdRequestedRate == 2822400);
+  assert(candidateInfo.nativeDsdActualRate == 2822400);
+  assert(candidateInfo.nativeDsdChannels == 2);
+  assert(candidateInfo.nativeDsdExplicitlyCapable);
+  assert(!candidateInfo.supportsOutputPerfect);
+
+  assert(backend.startTyped(
+      [](PcmBlock& block) {
+        std::memset(block.data, 0x69, block.byteSize);
+        return block.frames;
+      },
+      [](float*, size_t frames) { return frames; },
+      nullptr,
+      &error));
+  assert(waitForWrites(rawHost, 1));
+  backend.stop();
+
+  const OutputInfo provenInfo = backend.outputInfo();
+  assert(provenInfo.nativeDsdRuntimeState == "proven");
+  assert(provenInfo.nativeDsdRequestedRate == 2822400);
+  assert(provenInfo.nativeDsdActualRate == 2822400);
+  assert(provenInfo.nativeDsdChannels == 2);
+  assert(provenInfo.nativeDsdExplicitlyCapable);
+  assert(provenInfo.supportsOutputPerfect);
+  assert(!provenInfo.resampled);
+  assert(provenInfo.perfectReasonCode.empty());
+  assert(provenInfo.perfectReason.empty());
 }
 
 void testAlsaDsdBypassesFloat() {
@@ -594,6 +671,8 @@ int main() {
   testAlsaRenderLoopsUseNoResizeHelpers();
   testAlsaRenderLoopsDoNotBlockOnBackendMutex();
   testAlsaRenderLoopsQueueRecoveryOffRenderThread();
+  testAlsaStartRejectsRepeatedStartBeforeLaunchingThread();
+  testAlsaRepeatedStartReturnsFalseWithoutRelaunchingThread();
   testAlsaOpenNegotiatesPcm();
   testAlsaFormatFallback();
   testAlsaXrunRecovery();
@@ -604,6 +683,7 @@ int main() {
   testAlsaDsd512SelectsU32Le();
   testAlsaNativeDsdRuntimeFactsCandidateAtOpen();
   testAlsaNativeDsdRuntimeFactsProvenAfterWritei();
+  testAlsaNativeDsdOutputInfoReflectsRuntimeProof();
   testAlsaDsdBypassesFloat();
   testAlsaDsdSilenceIs0x69();
   testAlsaFloatRenderHelperZerosOnlyUnrenderedTail();

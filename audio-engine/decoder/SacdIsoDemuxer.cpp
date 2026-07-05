@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 
@@ -207,6 +208,7 @@ bool parseTwilightAreaToc(
     std::vector<SacdIsoTrackInfo>* tracks) {
   if (bytes.size() < 16 || std::memcmp(bytes.data(), "TWTEAREA", 8) != 0 || !tracks) return false;
   const uint32_t count = readLe32(bytes.data() + 8);
+  const size_t firstTrackIndex = tracks->size();
   size_t offset = 16;
   bool parsed = false;
   for (uint32_t i = 0; i < count && offset + 64 <= bytes.size(); ++i) {
@@ -246,6 +248,36 @@ bool parseTwilightAreaToc(
     tracks->push_back(track);
     parsed = true;
     offset += 64;
+  }
+  while (offset + 16 <= bytes.size()) {
+    if (std::memcmp(bytes.data() + offset, "TWDSTFRM", 8) != 0) break;
+    const int trackNumber = static_cast<int>(readLe32(bytes.data() + offset + 8));
+    const uint32_t frameCount = readLe32(bytes.data() + offset + 12);
+    const size_t tableBytes = static_cast<size_t>(frameCount) * sizeof(uint32_t);
+    if (offset + 16 + tableBytes > bytes.size()) break;
+
+    auto trackIt = std::find_if(
+        tracks->begin() + static_cast<std::ptrdiff_t>(firstTrackIndex),
+        tracks->end(),
+        [&](const SacdIsoTrackInfo& track) {
+          return track.area == area && track.trackNumber == trackNumber && track.isDst;
+        });
+    if (trackIt != tracks->end()) {
+      trackIt->dstFrameSizes.clear();
+      trackIt->dstFrameSizes.reserve(frameCount);
+      uint64_t frameBytes = 0;
+      bool validTable = frameCount > 0;
+      for (uint32_t frameIndex = 0; frameIndex < frameCount; ++frameIndex) {
+        const uint32_t frameSize = readLe32(bytes.data() + offset + 16 + frameIndex * 4);
+        validTable = validTable && frameSize > 0;
+        frameBytes += frameSize;
+        trackIt->dstFrameSizes.push_back(frameSize);
+      }
+      if (!validTable || frameBytes > trackIt->dataSize) {
+        trackIt->dstFrameSizes.clear();
+      }
+    }
+    offset += 16 + tableBytes;
   }
   return parsed;
 }
@@ -300,6 +332,38 @@ bool preferTrack(const SacdIsoTrackInfo& left, const SacdIsoTrackInfo& right, co
   return left.trackNumber < right.trackNumber;
 }
 
+uint64_t dstFrameCountForCompressedWindow(uint64_t compressedBytes, size_t compressedFrameWindow) {
+  if (compressedBytes == 0 || compressedFrameWindow == 0) return 0;
+  return (compressedBytes + static_cast<uint64_t>(compressedFrameWindow) - 1) /
+         static_cast<uint64_t>(compressedFrameWindow);
+}
+
+uint64_t dstFrameCount(const SacdIsoTrackInfo& track, size_t compressedFrameWindow) {
+  if (!track.dstFrameSizes.empty()) return track.dstFrameSizes.size();
+  return dstFrameCountForCompressedWindow(track.dataSize, compressedFrameWindow);
+}
+
+uint64_t dstCompressedOffsetForFrame(const SacdIsoTrackInfo& track, uint64_t frameIndex, size_t compressedFrameWindow) {
+  if (track.dstFrameSizes.empty()) {
+    return std::min(frameIndex * static_cast<uint64_t>(compressedFrameWindow), track.dataSize);
+  }
+  uint64_t offset = 0;
+  const size_t count = std::min<size_t>(static_cast<size_t>(frameIndex), track.dstFrameSizes.size());
+  for (size_t index = 0; index < count; ++index) {
+    offset += track.dstFrameSizes[index];
+  }
+  return std::min(offset, track.dataSize);
+}
+
+double dstDurationSecondsForDecodedFrames(const SacdIsoTrackInfo& track, size_t decodedFrameBytes, uint64_t frameCount) {
+  if (decodedFrameBytes == 0 || frameCount == 0 || track.sampleRate <= 0 || track.channelCount <= 0) return 0.0;
+  const long double decodedBytes = static_cast<long double>(decodedFrameBytes) * static_cast<long double>(frameCount);
+  const long double decodedBits = decodedBytes * 8.0L;
+  const long double bitsPerSecond =
+      static_cast<long double>(track.sampleRate) * static_cast<long double>(track.channelCount);
+  return static_cast<double>(decodedBits / bitsPerSecond);
+}
+
 }  // namespace
 
 struct SacdIsoDemuxer::Impl {
@@ -318,7 +382,9 @@ struct SacdIsoDemuxer::Impl {
   std::vector<uint8_t> compressedFrameBuffer;
   size_t decodedSize = 0;                  // valid decoded bytes in decodedDsdBuffer
   size_t decodedOffset = 0;                // read cursor inside decodedDsdBuffer
+  size_t dstDecodedSkipBytes = 0;          // decoded bytes to discard after a DST seek
   uint64_t dstCompressedOffset = 0;        // byte cursor into the track's compressed DST stream
+  uint64_t dstFrameIndex = 0;              // frame cursor for indexed variable-size DST streams
   bool dstActive = false;                  // a DST track is being decoded through the provider
 };
 
@@ -409,7 +475,9 @@ void SacdIsoDemuxer::close() {
   impl_->decodedDsdBuffer.clear();
   impl_->decodedSize = 0;
   impl_->decodedOffset = 0;
+  impl_->dstDecodedSkipBytes = 0;
   impl_->dstCompressedOffset = 0;
+  impl_->dstFrameIndex = 0;
   impl_->dstActive = false;
 }
 
@@ -459,6 +527,7 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
   impl_->decodedDsdBuffer.clear();
   impl_->decodedSize = 0;
   impl_->decodedOffset = 0;
+  impl_->dstDecodedSkipBytes = 0;
   impl_->dstCompressedOffset = 0;
   impl_->dstActive = false;
   if (impl_->dstProvider != nullptr) impl_->dstProvider->reset();
@@ -494,6 +563,11 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
       if (error) *error = dstError.empty() ? kSacdDstDsdProviderFailedReasonCode : dstError;
       return false;
     }
+    const size_t frameBytesPerChannel = impl_->dstProvider->frameBytesPerChannel(track.sampleRate);
+    const size_t decodedFrameBytes = frameBytesPerChannel * static_cast<size_t>(track.channelCount);
+    const size_t compressedFrameWindow = decodedFrameBytes > 0 ? 1 + decodedFrameBytes : 0;
+    const uint64_t decodedFrameCount = dstFrameCount(track, compressedFrameWindow);
+    impl_->streamInfo.durationSeconds = dstDurationSecondsForDecodedFrames(track, decodedFrameBytes, decodedFrameCount);
     impl_->dstActive = true;
   }
   return true;
@@ -564,7 +638,18 @@ size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* outp
       break;
     }
     const uint64_t remaining = track.dataSize - impl_->dstCompressedOffset;
-    const size_t readSize = static_cast<size_t>(std::min<uint64_t>(remaining, compressedFrameWindow));
+    size_t readSize = static_cast<size_t>(std::min<uint64_t>(remaining, compressedFrameWindow));
+    if (!track.dstFrameSizes.empty()) {
+      if (impl_->dstFrameIndex >= track.dstFrameSizes.size()) {
+        impl_->eof = true;
+        break;
+      }
+      readSize = track.dstFrameSizes[static_cast<size_t>(impl_->dstFrameIndex)];
+      if (readSize == 0 || readSize > remaining) {
+        impl_->eof = true;
+        break;
+      }
+    }
     if (!impl_->file.seekg(static_cast<std::streamoff>(track.dataOffset + impl_->dstCompressedOffset), std::ios::beg) ||
         !impl_->file.read(
             reinterpret_cast<char*>(impl_->compressedFrameBuffer.data()),
@@ -586,16 +671,20 @@ size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* outp
         decodedFrameBytes,
         &dstError);
     impl_->dstCompressedOffset += frameRead;
+    ++impl_->dstFrameIndex;
     if (decoded == 0) {
       // Decode failure: stop honestly rather than emit garbage DSD.
       impl_->decodedDsdBuffer.clear();
       impl_->decodedSize = 0;
       impl_->decodedOffset = 0;
+      impl_->dstDecodedSkipBytes = 0;
       impl_->eof = true;
       break;
     }
     impl_->decodedSize = std::min(decoded, decodedFrameBytes);
-    impl_->decodedOffset = 0;
+    const size_t skipBytes = std::min(impl_->dstDecodedSkipBytes, impl_->decodedSize);
+    impl_->decodedOffset = skipBytes;
+    impl_->dstDecodedSkipBytes -= skipBytes;
     // Loop continues to drain the freshly filled decoded buffer.
   }
   impl_->eof = impl_->eof || (delivered == 0 && impl_->dstCompressedOffset >= track.dataSize);
@@ -617,6 +706,36 @@ bool SacdIsoDemuxer::seek(double seconds, std::string* error) {
     return false;
   }
   const auto& track = impl_->tracks[static_cast<size_t>(impl_->currentTrackIndex)];
+
+  if (impl_->dstActive) {
+    const size_t frameBytesPerChannel = impl_->dstProvider ? impl_->dstProvider->frameBytesPerChannel(track.sampleRate) : 0;
+    const size_t decodedFrameBytes = frameBytesPerChannel * static_cast<size_t>(track.channelCount);
+    const size_t compressedFrameWindow = decodedFrameBytes > 0 ? 1 + decodedFrameBytes : 0;
+    const uint64_t frameCount = dstFrameCount(track, compressedFrameWindow);
+    const uint64_t decodedDataSize = static_cast<uint64_t>(decodedFrameBytes) * frameCount;
+    if (decodedFrameBytes == 0 || decodedDataSize == 0 || track.sampleRate <= 0 || track.channelCount <= 0) {
+      impl_->eof = true;
+      return true;
+    }
+
+    const long double decodedBytesPerSecond =
+        (static_cast<long double>(track.sampleRate) * static_cast<long double>(track.channelCount)) / 8.0L;
+    uint64_t byteOffset = static_cast<uint64_t>(std::llround(std::max(0.0, seconds) * decodedBytesPerSecond));
+    byteOffset = std::min(byteOffset, decodedDataSize);
+    byteOffset -= byteOffset % static_cast<uint64_t>(track.channelCount);
+    impl_->readOffset = byteOffset;
+    impl_->eof = impl_->readOffset >= decodedDataSize;
+    impl_->decodedDsdBuffer.clear();
+    impl_->decodedSize = 0;
+    impl_->decodedOffset = 0;
+    impl_->dstDecodedSkipBytes = static_cast<size_t>(impl_->readOffset % decodedFrameBytes);
+    const uint64_t frameIndex = impl_->readOffset / decodedFrameBytes;
+    impl_->dstFrameIndex = impl_->eof ? frameCount : frameIndex;
+    impl_->dstCompressedOffset = impl_->eof ? track.dataSize : dstCompressedOffsetForFrame(track, frameIndex, compressedFrameWindow);
+    if (impl_->dstProvider) impl_->dstProvider->reset();
+    return true;
+  }
+
   uint64_t byteOffset = 0;
   if (track.durationSeconds > 0.0) {
     const double ratio = std::clamp(std::max(0.0, seconds) / track.durationSeconds, 0.0, 1.0);
@@ -626,25 +745,6 @@ bool SacdIsoDemuxer::seek(double seconds, std::string* error) {
   impl_->readOffset = std::min(byteOffset, track.dataSize);
   impl_->eof = impl_->readOffset >= track.dataSize;
 
-  // For DST tracks, seeking is frame-boundary based: snap the compressed-stream
-  // cursor to the start of the DST frame containing the target time, reset the
-  // decoder, and discard decoded bytes until the requested offset is reached.
-  if (impl_->dstActive) {
-    const size_t frameBytesPerChannel = impl_->dstProvider ? impl_->dstProvider->frameBytesPerChannel(track.sampleRate) : 0;
-    const size_t decodedFrameBytes = frameBytesPerChannel * static_cast<size_t>(track.channelCount);
-    const size_t compressedFrameWindow = decodedFrameBytes > 0 ? 1 + decodedFrameBytes : 1;
-    // Frame index in the compressed stream (each frame = 1/75s).
-    const uint64_t frameIndex = decodedFrameBytes > 0 ? impl_->readOffset / decodedFrameBytes : 0;
-    impl_->dstCompressedOffset = std::min(frameIndex * compressedFrameWindow, track.dataSize);
-    impl_->decodedDsdBuffer.clear();
-    impl_->decodedSize = 0;
-    impl_->decodedOffset = 0;
-    if (impl_->dstProvider) impl_->dstProvider->reset();
-    // Sub-frame precision: the requested readOffset may fall inside the frame.
-    // We leave readOffset as-is; readDstBytes drains from the next decoded
-    // frame and the caller observes the byte-level position via readOffset.
-    impl_->eof = impl_->eof || impl_->dstCompressedOffset >= track.dataSize;
-  }
   return true;
 }
 

@@ -456,8 +456,18 @@ const lufsText = computed(() => {
   return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)} LUFS` : 'Inactive'
 })
 const visualizationStateText = computed(() => {
+  const status = visualizationData.value.tapStatus
+  if (status === 'synthetic-fallback') return 'Fallback'
+  if (status === 'native-unavailable') return 'Native unavailable'
+  if (status === 'disabled') return 'Tap disabled'
+  if (status === 'no-samples') return 'No samples'
+  if (status === 'stopped') return 'Stopped'
   if (!visualizationActive.value) return 'Inactive'
   return visualizationData.value.sampleRate > 0 ? compactRate(visualizationData.value.sampleRate) : 'Active'
+})
+const visualizationStateTitle = computed(() => {
+  const reason = visualizationData.value.reason?.trim()
+  return reason || `Visualization tap: ${visualizationData.value.tapStatus}`
 })
 const waveformBars = computed(() => {
   const source = visualizationData.value.waveform
@@ -917,7 +927,7 @@ onMounted(() => {
               <div class="visualization-panel" :class="{ inactive: !visualizationActive }">
                 <div class="visualization-header">
                   <span>Visualization</span>
-                  <span>{{ visualizationStateText }}</span>
+                  <span :title="visualizationStateTitle">{{ visualizationStateText }}</span>
                 </div>
                 <div class="waveform-strip" aria-hidden="true">
                   <span

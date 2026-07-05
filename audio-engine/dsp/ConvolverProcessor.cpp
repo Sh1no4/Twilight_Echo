@@ -16,6 +16,12 @@ namespace {
 constexpr uint16_t kWavePcm = 0x0001;
 constexpr uint16_t kWaveFloat = 0x0003;
 constexpr uint16_t kWaveExtensible = 0xfffe;
+constexpr std::array<unsigned char, 16> kWaveSubFormatPcm = {
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+    0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71};
+constexpr std::array<unsigned char, 16> kWaveSubFormatFloat = {
+    0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+    0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71};
 
 uint16_t readU16(const std::array<unsigned char, 2>& bytes) {
   return static_cast<uint16_t>(bytes[0] | (bytes[1] << 8));
@@ -23,6 +29,10 @@ uint16_t readU16(const std::array<unsigned char, 2>& bytes) {
 
 uint32_t readU32(const std::array<unsigned char, 4>& bytes) {
   return static_cast<uint32_t>(bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24));
+}
+
+bool bytesEqual(const unsigned char* data, const std::array<unsigned char, 16>& expected) {
+  return std::equal(expected.begin(), expected.end(), data);
 }
 
 float pcmToFloat(const unsigned char* data, uint16_t bitsPerSample, uint16_t formatTag) {
@@ -267,8 +277,14 @@ bool ConvolverProcessor::readWaveImpulse(const std::string& path, IrData* out, s
       sampleRate = static_cast<uint32_t>(fmt[4] | (fmt[5] << 8) | (fmt[6] << 16) | (fmt[7] << 24));
       blockAlign = static_cast<uint16_t>(fmt[12] | (fmt[13] << 8));
       bitsPerSample = static_cast<uint16_t>(fmt[14] | (fmt[15] << 8));
-      if (formatTag == kWaveExtensible && fmt.size() >= 26) {
-        formatTag = bitsPerSample == 32 ? kWaveFloat : kWavePcm;
+      if (formatTag == kWaveExtensible && fmt.size() >= 40) {
+        const uint16_t cbSize = static_cast<uint16_t>(fmt[16] | (fmt[17] << 8));
+        const unsigned char* subFormat = fmt.data() + 24;
+        if (cbSize >= 22 && bytesEqual(subFormat, kWaveSubFormatPcm)) {
+          formatTag = kWavePcm;
+        } else if (cbSize >= 22 && bytesEqual(subFormat, kWaveSubFormatFloat)) {
+          formatTag = kWaveFloat;
+        }
       }
     } else if (std::strncmp(id, "data", 4) == 0) {
       audioData.resize(size);

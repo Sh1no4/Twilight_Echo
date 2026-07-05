@@ -870,10 +870,15 @@ TAE_Result TwilightAudioEngine::setOutputDevice(const std::string& deviceId) {
   PlaybackState state = PlaybackState::Stopped;
   {
     std::lock_guard lock(mutex_);
-    info_.outputDevice = deviceId.empty() ? "auto" : deviceId;
+    const std::string nextDevice = deviceId.empty() ? "auto" : deviceId;
+    info_.outputDevice = nextDevice;
     source = info_.source;
     position = info_.positionSeconds;
     state = info_.state;
+    if (state == PlaybackState::Stopped) {
+      info_.outputInfo.deviceName = nextDevice;
+      info_.outputInfo.actualDeviceName = nextDevice;
+    }
     publishStateLocked();
   }
   if (state != PlaybackState::Stopped && !source.empty()) {
@@ -1496,13 +1501,16 @@ void TwilightAudioEngine::clockLoop() {
     PipelineStatus pipelineStatus;
     const bool hasPipelineStatus = pipeline_ != nullptr;
     bool deviceInvalidated = false;
+    bool renderError = false;
     bool trackStarted = false;
     QueueItem startedItem;
     std::string deviceInvalidatedMessage;
+    std::string renderErrorMessage;
     if (hasPipelineStatus) {
       pipelineStatus = pipeline_->status();
       emitEnded = pipeline_->consumeEnded();
       deviceInvalidated = pipeline_->consumeDeviceInvalidated(&deviceInvalidatedMessage);
+      renderError = pipeline_->consumeRenderError(&renderErrorMessage);
       trackStarted = pipeline_->consumeTrackStarted(&startedItem);
     }
     if (deviceInvalidated) {
@@ -1545,6 +1553,21 @@ void TwilightAudioEngine::clockLoop() {
             "device");
         if (emitTick) emit("property-change", payload);
       }
+      continue;
+    }
+    if (renderError) {
+      {
+        std::lock_guard lock(mutex_);
+        if (hasPipelineStatus) applyPipelineStatusLocked(pipelineStatus);
+        info_.state = PlaybackState::Stopped;
+        payload = playbackInfoToJson(info_);
+        emitTick = true;
+      }
+      emitError(
+          renderErrorMessage.empty() ? "音频渲染失败" : renderErrorMessage,
+          TAE_RESULT_BACKEND_UNAVAILABLE,
+          "render");
+      if (emitTick) emit("property-change", payload);
       continue;
     }
     if (trackStarted) {

@@ -130,7 +130,7 @@ Electron IPC 会在 audio service crash 时同时发送结构化 `audioEngine:se
 - `unsupported`：平台或路径不支持，例如 WASAPI/CoreAudio native DSD。
 - `unknown`：当前枚举信息不足，UI 应避免展示为已支持或不支持。
 
-main 进程会在输出后端、设备、独占模式、audio service recovery、native 输出诊断变化时清空设备能力缓存，并向 renderer 发送 `audioEngine:device-options-changed`。同时 manager 有 5s 低频设备选项轮询，用于捕捉常见 USB DAC/ASIO 设备插拔；这不是高级多设备同步或平台原生热插拔监听的完整替代。
+main 进程会在输出后端、设备、独占模式、audio service recovery、native 输出诊断变化时清空设备能力缓存，并向 renderer 发送 `audioEngine:device-options-changed`。Windows 主窗口监听 `WM_DEVICECHANGE`，经过短 debounce 后触发 `platform-device-change:wm-devicechange` 刷新，用于更快捕捉常见 USB DAC/ASIO 设备插拔。Linux 监听 `/dev/snd`，当 ALSA `hw:` 设备节点变化时触发 `platform-device-change:alsa-dev-snd` 刷新；如果该目录暂不存在、watcher 创建失败或关闭，会保留轮询兜底并低频重试 watcher。CoreAudio shared/exclusive 后端在打开设备后监听设备在线状态和 HAL 设备列表变化，用于触发播放路径的 device-lost/recovery；manager 保留 5s 低频设备选项轮询作为兜底。这不是高级多设备同步的完整替代。
 
 ## 后端支持矩阵
 
@@ -145,4 +145,4 @@ main 进程会在输出后端、设备、独占模式、audio service recovery�
 
 ## 当前非闭环范围
 
-当前不包含高级多设备同步或平台原生复杂热插拔监听；已提供轻量设备选项轮询和 recovery-triggered 能力刷新。SACD DST 已通过 DSD-preserving provider 闭环（provider 默认可用）。Native DSD 支持 ASIO 与 ALSA `hw:`；WASAPI 与 CoreAudio 没有 native DSD 通道，属平台限制而非代码缺口，这两个后端走 DoP 或 PCM fallback。真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；没有 ASIO SDK、macOS/Linux 工具链或对应设备时必须跳过并保持默认验证通过。`npm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 可把多台机器/多设备的 opt-in 结果沉淀为 Markdown/JSON 报告，并显式列出未覆盖的 required surfaces。报告 JSON 包含 `coverage.complete`、缺失/失败 surface 列表；发布前可手动加 `--require-complete` 让证据不完整时退出非 0。
+当前不包含高级多设备同步；Windows 已接入 `WM_DEVICECHANGE` 事件刷新，Linux 已接入 ALSA `/dev/snd` 节点 watcher，CoreAudio 播放后端已接入设备失效监听，但 macOS 枚举级复杂热插拔同步仍待真实设备验证和补充。所有平台仍保留轻量设备选项轮询和 recovery-triggered 能力刷新。SACD DST 已通过 DSD-preserving provider 闭环（provider 默认可用）。Native DSD 支持 ASIO 与 ALSA `hw:`；WASAPI 与 CoreAudio 没有 native DSD 通道，属平台限制而非代码缺口，这两个后端走 DoP 或 PCM fallback。真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；没有 ASIO SDK、macOS/Linux 工具链或对应设备时必须跳过并保持默认验证通过。`npm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 可把多台机器/多设备的 opt-in 结果沉淀为 Markdown/JSON 报告，并显式列出未覆盖的 required surfaces。报告 JSON 包含 `coverage.complete`、缺失/失败 surface 列表和未闭环 surface 的 `actionPlan` 采集命令/目标 artifact；CLI 生成报告时会校验本地 artifact 文件存在，输入 JSON 本身可作为缺省 artifact，`coverage.complete` 只把有可追溯 artifact 的 `pass` 行计为已验证；发布前可手动加 `--require-complete` 让证据不完整时退出非 0。证据库采集与判定细节见 [Audio Smoke Evidence](./audio-smoke-evidence.md)。

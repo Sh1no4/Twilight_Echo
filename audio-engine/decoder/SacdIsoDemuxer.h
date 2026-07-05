@@ -23,6 +23,7 @@ struct SacdIsoTrackInfo {
   int channelCount = 2;
   int sampleRate = 2822400;
   bool isDst = false;
+  std::vector<uint32_t> dstFrameSizes;
   bool playable = false;
   std::string reasonCode;
   std::string reason;

@@ -71,6 +71,7 @@ uint64_t tell(std::ifstream& file) {
 }
 
 void skipTo(std::ifstream& file, uint64_t position) {
+  file.clear();
   file.seekg(static_cast<std::streamoff>(position), std::ios::beg);
 }
 
@@ -160,7 +161,11 @@ bool DsdReader::seek(double seconds, std::string* error) {
     const double ratio = std::min(1.0, clamped / info_.durationSeconds);
     byteOffset = static_cast<uint64_t>(static_cast<double>(info_.dataSize) * ratio);
   }
-  if (info_.channelCount > 0) {
+  if (info_.packing == DsdPacking::DsfPlanarBlocks && info_.blockSizePerChannel > 0 && info_.channelCount > 0) {
+    const uint64_t blockBytes =
+        static_cast<uint64_t>(info_.blockSizePerChannel) * static_cast<uint64_t>(info_.channelCount);
+    if (blockBytes > 0) byteOffset -= byteOffset % blockBytes;
+  } else if (info_.channelCount > 0) {
     byteOffset -= byteOffset % static_cast<uint64_t>(info_.channelCount);
   }
   readOffset_ = std::min(byteOffset, info_.dataSize);
@@ -247,6 +252,11 @@ bool DsdReader::openDsf(std::string* error) {
 
   if (!sawFmt || !sawData || info_.channelCount <= 0 || info_.dsdRate <= 0 || info_.dataSize == 0) {
     if (error) *error = "Unsupported or incomplete DSF stream";
+    return false;
+  }
+  if (info_.blockSizePerChannel == 0 ||
+      info_.blockSizePerChannel > info_.dataSize / static_cast<uint64_t>(info_.channelCount)) {
+    if (error) *error = "Invalid DSF block size";
     return false;
   }
   return true;

@@ -6,6 +6,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -28,6 +31,23 @@ AudioFormat pcm(
   format.bitDepth = bitDepth;
   format.sampleFormat = sampleFormat;
   return format;
+}
+
+std::string readTextFile(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+  return buffer.str();
+}
+
+void testTypedPcmToFloatAvoidsUnalignedWideReads() {
+  const std::filesystem::path sourcePath =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "core" / "AudioPipelineRenderUtils.h";
+  const std::string source = readTextFile(sourcePath);
+
+  require(!source.empty());
+  require(source.find("reinterpret_cast<const int16_t*>(block.data)") == std::string::npos);
+  require(source.find("reinterpret_cast<const int32_t*>(block.data)") == std::string::npos);
 }
 
 PerfectEvaluation baseEvaluation() {
@@ -643,6 +663,7 @@ void testUnsupportedDsdRateRejectsDopPerfect() {
 }  // namespace
 
 int main() {
+  testTypedPcmToFloatAvoidsUnalignedWideReads();
   testVolumeAppliesOnlyToRenderedFrames();
   testUnityVolumeSkipsRenderedFrameProcessing();
   testZeroVolumeSilencesRenderedFramesWithoutTouchingTail();

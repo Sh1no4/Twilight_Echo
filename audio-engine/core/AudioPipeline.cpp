@@ -111,6 +111,31 @@ bool formatCanCarryDop(const AudioFormat& format, int dsdRate, int sourceSampleR
          sampleFormatCanCarryDop(format.sampleFormat);
 }
 
+bool nativeDsdRuntimeFactsMatchRequested(const NativeDsdRuntimeFacts& facts, const AudioFormat& requested) {
+  return facts.explicitlyCapable &&
+         (facts.state == NativeDsdRuntimeFactState::Candidate || facts.state == NativeDsdRuntimeFactState::Proven) &&
+         facts.requestedDsdRate == requested.sampleRate && facts.actualDsdRate == requested.sampleRate &&
+         facts.channelCount == requested.channelCount;
+}
+
+bool nativeDsdOutputMatchesRequested(
+    const AudioFormat& outputFormat,
+    const AudioFormat& requested,
+    const NativeDsdRuntimeFacts& facts) {
+  if (!isDsdSampleFormat(outputFormat.sampleFormat) || outputFormat.channelCount != requested.channelCount) {
+    return false;
+  }
+  if (outputFormat.sampleRate == requested.sampleRate) return true;
+  return nativeDsdRuntimeFactsMatchRequested(facts, requested);
+}
+
+int positionSampleRateForStream(const AudioStreamInfo& stream, const AudioFormat& outputFormat) {
+  if (stream.isDsd && stream.dsdMode == DsdMode::Native && stream.decodedFormat.sampleRate > 0) {
+    return stream.decodedFormat.sampleRate;
+  }
+  return outputFormat.sampleRate;
+}
+
 std::string nativeDsdRuntimeStateToString(NativeDsdRuntimeFactState state) {
   switch (state) {
     case NativeDsdRuntimeFactState::Candidate:
@@ -182,6 +207,10 @@ size_t dsdBytesToInterleaved(
     AudioSampleFormat targetFormat,
     std::vector<uint8_t>* output) {
   return render::dsdBytesToInterleavedResizeOnly(dsdBytes, byteCount, info, targetFormat, output);
+}
+
+uint64_t dsdRenderedFrameUnits(size_t byteFrames, const AudioFormat& format) {
+  return static_cast<uint64_t>(byteFrames) * (isDsdSampleFormat(format.sampleFormat) ? 8U : 1U);
 }
 
 DsdBitOrder dsdBitOrderFromInfo(const DsdStreamInfo& info) {
@@ -399,18 +428,17 @@ struct AudioPipeline::DecodeStream {
       return false;
     }
     const DsdStreamInfo& dsd = dsdReader->streamInfo();
-    if (!isDsdSampleFormat(outputFormat.sampleFormat) || outputFormat.sampleRate != dsd.dsdSampleRate ||
-        outputFormat.channelCount != dsd.channelCount) {
+    if (!isDsdSampleFormat(outputFormat.sampleFormat) || outputFormat.channelCount != dsd.channelCount) {
       if (error) *error = "Native DSD output format mismatch";
       return false;
     }
     if (startTimeSeconds > 0.0 && !dsdReader->seek(startTimeSeconds, error)) return false;
     decodeFormat = outputFormat;
-    stream.decodedFormat = decodeFormat;
+    stream.decodedFormat = nativeDsdFormatForStream(dsd);
     stream.dsdMode = DsdMode::Native;
     typedPassthrough = true;
     eof = false;
-    buffer.reset(decodeFormat, static_cast<size_t>(std::max(decodeFormat.sampleRate / 8, 8192)));
+    buffer.reset(decodeFormat, static_cast<size_t>(std::max(dsd.dsdSampleRate / 8, 8192)));
     return true;
   }
 
@@ -473,16 +501,19 @@ struct AudioPipeline::DecodeStream {
 
     const size_t bytesPerFrame = audioFormatBytesPerFrame(bufferFormat);
     if (bytesPerFrame == 0) return 0;
-    const size_t requiredBytes = frameCount * bytesPerFrame;
-    if (floatReadScratch.size() < requiredBytes) {
+    size_t readableFrames = frameCount;
+    const size_t scratchFrames = floatReadScratch.size() / bytesPerFrame;
+    if (scratchFrames == 0) {
       const size_t samples = frameCount * static_cast<size_t>(std::max(1, bufferFormat.channelCount));
       std::fill(output, output + samples, 0.0f);
       return 0;
     }
+    readableFrames = std::min(readableFrames, scratchFrames);
+    const size_t requiredBytes = readableFrames * bytesPerFrame;
     PcmBlock block;
     block.format = bufferFormat;
     block.data = floatReadScratch.data();
-    block.frames = frameCount;
+    block.frames = readableFrames;
     block.byteSize = requiredBytes;
     const size_t read = buffer.read(block);
     block.frames = read;
@@ -776,8 +807,8 @@ TAE_Result AudioPipeline::playInternal(
         AudioFormat requested = nativeDsdFormatForStream(dsdProbe.value());
         if (output->open(deviceId, requested, &nativeAttemptError)) {
           outputFormat = output->outputFormat();
-          if (isDsdSampleFormat(outputFormat.sampleFormat) && outputFormat.sampleRate == requested.sampleRate &&
-              outputFormat.channelCount == requested.channelCount &&
+          const NativeDsdRuntimeFacts nativeFacts = output->nativeDsdRuntimeFacts();
+          if (nativeDsdOutputMatchesRequested(outputFormat, requested, nativeFacts) &&
               nativeActive->configure(outputFormat, startTimeSeconds, &nativeAttemptError)) {
             active = nativeActive;
             nativeDsdPath = true;
@@ -948,7 +979,8 @@ TAE_Result AudioPipeline::playInternal(
     if (preloadStream_) preloadStream_->prepareFloatReadScratch(maxRenderFrames);
     updatePerfectLocked();
     state_ = PipelineState::Playing;
-    renderedFrames_ = static_cast<uint64_t>(std::max(0.0, startTimeSeconds) * outputFormat_.sampleRate);
+    renderedFrames_ = static_cast<uint64_t>(
+        std::max(0.0, startTimeSeconds) * static_cast<double>(positionSampleRateForStream(stream_, outputFormat_)));
     ended_ = false;
     deviceInvalidated_ = false;
     trackStarted_ = false;
@@ -972,6 +1004,8 @@ TAE_Result AudioPipeline::playInternal(
     outputEventMessage_ = message;
     if (event == OutputBackendEvent::DeviceInvalidated) {
       deviceInvalidated_ = true;
+    } else if (event == OutputBackendEvent::RenderError) {
+      renderError_ = true;
     }
     state_ = PipelineState::Stopped;
   };
@@ -1196,7 +1230,8 @@ TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
 
   {
     std::lock_guard lock(mutex_);
-    renderedFrames_ = static_cast<uint64_t>(std::max(0.0, seconds) * outputFormat_.sampleRate);
+    renderedFrames_ = static_cast<uint64_t>(
+        std::max(0.0, seconds) * static_cast<double>(positionSampleRateForStream(stream_, outputFormat_)));
     ended_ = false;
     DspChain& activeDspChain = activeDspChainLocked();
     activeDspChain.setTrackContext(DspTrackContext{stream_, currentItem_});
@@ -1230,14 +1265,16 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
     DspChain& spareDspChain = spareDspChainLocked();
     activeDspChain.configure(dspConfig_);
     spareDspChain.configure(dspConfig_);
-    if (outputFormat_.sampleRate > 0 && outputFormat_.channelCount > 0) {
-      activeDspChain.prepare(outputFormat_);
+    if (decodeFormat_.sampleRate > 0 && decodeFormat_.channelCount > 0) {
+      activeDspChain.prepare(decodeFormat_);
       activeDspChain.setTrackContext(DspTrackContext{stream_, currentItem_});
-      spareDspChain.prepare(outputFormat_);
+      spareDspChain.prepare(decodeFormat_);
       const DspTrackContext preloadContext =
           preloadStream_ ? DspTrackContext{preloadStream_->stream, preloadStream_->item}
                          : DspTrackContext{stream_, currentItem_};
       spareDspChain.setTrackContext(preloadContext);
+    }
+    if (outputFormat_.sampleRate > 0 && outputFormat_.channelCount > 0) {
       spectrum_.prepare(outputFormat_, visualizationFftResolutionForConfig(dspConfig_.fftResolution));
     }
     spectrum_.setEnabled(dspConfig_.fftEnabled);
@@ -1459,9 +1496,10 @@ PipelineStatus AudioPipeline::status() const {
   std::lock_guard lock(mutex_);
   PipelineStatus status;
   status.state = state_;
+  const int positionSampleRate = positionSampleRateForStream(stream_, outputFormat_);
   status.positionSeconds =
-      outputFormat_.sampleRate > 0
-          ? static_cast<double>(renderedFrames_.load()) / static_cast<double>(outputFormat_.sampleRate)
+      positionSampleRate > 0
+          ? static_cast<double>(renderedFrames_.load()) / static_cast<double>(positionSampleRate)
           : 0.0;
   status.stream = stream_;
   status.outputFormat = outputFormat_;
@@ -1585,6 +1623,14 @@ bool AudioPipeline::consumeDeviceInvalidated(std::string* message) {
   return true;
 }
 
+bool AudioPipeline::consumeRenderError(std::string* message) {
+  if (!renderError_.exchange(false)) return false;
+  std::lock_guard lock(mutex_);
+  if (message) *message = outputEventMessage_.empty() ? "音频渲染失败" : outputEventMessage_;
+  outputEventMessage_.clear();
+  return true;
+}
+
 bool AudioPipeline::consumeTrackStarted(QueueItem* item) {
   if (!trackStarted_.exchange(false)) return false;
   std::lock_guard lock(mutex_);
@@ -1594,8 +1640,9 @@ bool AudioPipeline::consumeTrackStarted(QueueItem* item) {
 
 size_t AudioPipeline::getSpectrumData(float* buffer, size_t pointCount) const {
   const double phase =
-      outputFormat_.sampleRate > 0
-          ? static_cast<double>(renderedFrames_.load()) / static_cast<double>(outputFormat_.sampleRate)
+      positionSampleRateForStream(stream_, outputFormat_) > 0
+          ? static_cast<double>(renderedFrames_.load()) /
+                static_cast<double>(positionSampleRateForStream(stream_, outputFormat_))
           : 0.0;
   return spectrum_.read(buffer, pointCount, phase);
 }
@@ -1756,7 +1803,7 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
 
   const size_t read = active->read(output);
   if (read > 0) {
-    renderedFrames_ += read;
+    renderedFrames_ += dsdRenderedFrameUnits(read, output.format);
     if (nativeDsdPathActive || isDsdSampleFormat(output.format.sampleFormat)) {
       spectrum_.tryResetCapture();
     } else {
@@ -1841,8 +1888,11 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     const int decodeChannels = std::max(1, decodeFormat.channelCount);
     const bool routingRequired = !dopPathActive && (decodeChannels != channels || outputConfig.routingMode != ChannelRoutingMode::Auto);
 
-    const size_t requestedFrames = frameCount - totalRead;
-    if (routingRequired && routingScratch_.size() < requestedFrames * static_cast<size_t>(decodeChannels)) {
+    size_t requestedFrames = frameCount - totalRead;
+    if (routingRequired) {
+      requestedFrames = std::min(requestedFrames, routingScratch_.size() / static_cast<size_t>(decodeChannels));
+    }
+    if (requestedFrames == 0) {
       break;
     }
 
@@ -1951,6 +2001,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
       activeStream_ = preloadStream_;
       preloadStream_.reset();
       active = activeStream_;
+      preload.reset();
       next = activeStream_;
       stream_ = activeStream_->stream;
       currentItem_ = activeStream_->item;
@@ -1963,6 +2014,9 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
       dspStatus_ = preloadDspStatus_;
       preloadDspStatus_ = {};
       dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+      crossfadeMixActive = false;
+      crossfadeFramesProcessed = 0;
+      crossfadeTotalFrames = 0;
       crossfadeMixActive_ = false;
       crossfadeFramesProcessed_ = 0;
       crossfadeTotalFrames_ = 0;

@@ -81,6 +81,11 @@ struct WasapiExclusiveBackend::Impl {
   uint64_t recoveryCount = 0;
   std::chrono::steady_clock::time_point recoveryCooldownUntil{};
   std::deque<std::chrono::steady_clock::time_point> recoveryWindow;
+  const char* queuedRecoveryReason = nullptr;
+  const char* queuedRenderFailureMessage = nullptr;
+  std::atomic<long> queuedRenderFailureHr{S_OK};
+  std::atomic<bool> renderErrorEventQueued{false};
+  std::atomic<bool> deviceInvalidatedEventQueued{false};
   // 恢复所需的上下文快照（open 时保存，reopen 时使用）
   std::string openDeviceId;
   AudioFormat openRequestedFormat;
@@ -331,6 +336,17 @@ struct WasapiExclusiveBackend::Impl {
       }
     }
 
+    if (outputFormat.sampleFormat == AudioSampleFormat::Float32Interleaved) {
+      wasapi::renderFloatCallbackWithTailSilence(
+          reinterpret_cast<float*>(data),
+          frameCount,
+          outputFormat.channelCount,
+          callback);
+      hr = renderClient->ReleaseBuffer(frameCount, 0);
+      if (FAILED(hr)) return hr;
+      return S_OK;
+    }
+
     const size_t sampleCount = static_cast<size_t>(frameCount) * static_cast<size_t>(outputFormat.channelCount);
     const size_t scratchFrames =
         outputFormat.channelCount > 0
@@ -479,6 +495,26 @@ struct WasapiExclusiveBackend::Impl {
 
     if (mmcssHandle) AvRevertMmThreadCharacteristics(mmcssHandle);
     CoUninitialize();
+
+    if (recoveryQueued.load() && !stopRequested.load()) {
+      startQueuedRecoveryAfterRenderExit(queuedRecoveryReason);
+      return;
+    }
+
+    if (renderErrorEventQueued.exchange(false) && eventCallback) {
+      char buffer[160] = {};
+      const char* message = queuedRenderFailureMessage ? queuedRenderFailureMessage : "独占输出渲染失败";
+      std::snprintf(
+          buffer,
+          sizeof(buffer),
+          "%s (错误码 0x%08lx)",
+          message,
+          static_cast<unsigned long>(queuedRenderFailureHr.load()));
+      eventCallback(OutputBackendEvent::RenderError, buffer);
+    }
+    if (deviceInvalidatedEventQueued.exchange(false) && eventCallback) {
+      eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+    }
   }
 
   void launchRenderThread() {
@@ -662,20 +698,27 @@ struct WasapiExclusiveBackend::Impl {
       eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
     }
     recoveryQueued = false;
+    queuedRecoveryReason = nullptr;
   }
 
-  bool queueRecoveryFromRenderThread(const std::string& reason) {
+  void startQueuedRecoveryAfterRenderExit(const char* reason) {
+    joinRecoveryThread();
+    const char* fallbackReason = reason ? reason : "输出设备已失效";
+    {
+      std::lock_guard lock(threadMutex);
+      recoveryThread = std::thread([this, recoveryReason = std::string(fallbackReason)] {
+        runQueuedRecovery(recoveryReason);
+      });
+    }
+  }
+
+  bool queueRecoveryFromRenderThread(const char* reason) {
     bool expected = false;
     if (!recoveryQueued.compare_exchange_strong(expected, true)) return false;
 
     running = false;
+    queuedRecoveryReason = reason;
     if (samplesReadyEvent) SetEvent(samplesReadyEvent.get());
-
-    joinRecoveryThread();
-    {
-      std::lock_guard lock(threadMutex);
-      recoveryThread = std::thread([this, reason] { runQueuedRecovery(reason); });
-    }
     return true;
   }
 
@@ -685,13 +728,15 @@ struct WasapiExclusiveBackend::Impl {
     const bool devInvalidated = wasapi::isDeviceInvalidated(hr);
     recordRenderFailureFromRenderThread(hr, message);
     if (!devInvalidated) {
-      char buffer[160] = {};
-      std::snprintf(buffer, sizeof(buffer), "%s (错误码 0x%08lx)", message, static_cast<unsigned long>(hr));
-      if (eventCallback) eventCallback(OutputBackendEvent::RenderError, buffer);
+      queuedRenderFailureMessage = message;
+      queuedRenderFailureHr.store(hr);
+      renderErrorEventQueued.store(true);
+      running = false;
+      if (samplesReadyEvent) SetEvent(samplesReadyEvent.get());
       return false;
     }
     if (queueRecoveryFromRenderThread(message)) return false;
-    if (eventCallback) eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+    deviceInvalidatedEventQueued.store(true);
     return false;
   }
 #else
@@ -758,6 +803,11 @@ bool WasapiExclusiveBackend::open(const std::string& deviceId, const AudioFormat
   impl_->recoveryCount = 0;
   impl_->recoveryWindow.clear();
   impl_->recoveryCooldownUntil = {};
+  impl_->queuedRecoveryReason = nullptr;
+  impl_->queuedRenderFailureMessage = nullptr;
+  impl_->queuedRenderFailureHr.store(S_OK);
+  impl_->renderErrorEventQueued.store(false);
+  impl_->deviceInvalidatedEventQueued.store(false);
 
   return true;
 #else

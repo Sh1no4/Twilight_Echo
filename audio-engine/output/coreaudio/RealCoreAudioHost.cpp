@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstring>
 #include <mutex>
+#include <unordered_map>
 #include <utility>
 
 namespace twilight::audio {
@@ -19,6 +20,12 @@ namespace twilight::audio {
 namespace {
 
 constexpr size_t kMaxCoreAudioCallbackBuffers = 32;
+
+struct DeviceLostListener {
+  CoreAudioListenerToken token = 0;
+  CoreAudioDeviceID deviceId = 0;
+  CoreAudioDeviceLostCallback callback;
+};
 
 CoreAudioStreamBasicDescription toHostDescription(const AudioStreamBasicDescription& format) {
   CoreAudioStreamBasicDescription out;
@@ -79,6 +86,64 @@ void silenceNative(AudioBufferList* ioData) {
   }
 }
 
+AudioObjectPropertyAddress deviceAlivePropertyAddress() {
+  return AudioObjectPropertyAddress{
+      kAudioDevicePropertyDeviceIsAlive,
+      kAudioObjectPropertyScopeGlobal,
+      kAudioObjectPropertyElementMain};
+}
+
+AudioObjectPropertyAddress hardwareDevicesPropertyAddress() {
+  return AudioObjectPropertyAddress{
+      kAudioHardwarePropertyDevices,
+      kAudioObjectPropertyScopeGlobal,
+      kAudioObjectPropertyElementMain};
+}
+
+bool coreAudioDeviceExists(AudioDeviceID deviceId) {
+  AudioObjectPropertyAddress address = hardwareDevicesPropertyAddress();
+  UInt32 size = 0;
+  OSStatus status = AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &address, 0, nullptr, &size);
+  if (status != noErr || size == 0 || size % sizeof(AudioDeviceID) != 0) return false;
+  std::vector<AudioDeviceID> devices(size / sizeof(AudioDeviceID));
+  status = AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size, devices.data());
+  if (status != noErr) return false;
+  return std::find(devices.begin(), devices.end(), deviceId) != devices.end();
+}
+
+bool coreAudioDeviceAlive(AudioDeviceID deviceId) {
+  AudioObjectPropertyAddress address = deviceAlivePropertyAddress();
+  UInt32 alive = 0;
+  UInt32 size = sizeof(alive);
+  const OSStatus status = AudioObjectGetPropertyData(deviceId, &address, 0, nullptr, &size, &alive);
+  return status == noErr && alive != 0;
+}
+
+void notifyCoreAudioDeviceLostIfNeeded(DeviceLostListener* listener) {
+  if (!listener || !listener->callback) return;
+  const AudioDeviceID deviceId = static_cast<AudioDeviceID>(listener->deviceId);
+  if (coreAudioDeviceExists(deviceId) && coreAudioDeviceAlive(deviceId)) return;
+  const auto callback = listener->callback;
+  callback("CoreAudio output device was removed or became unavailable");
+}
+
+OSStatus coreAudioDeviceLostListenerProc(
+    AudioObjectID,
+    UInt32 numberAddresses,
+    const AudioObjectPropertyAddress* addresses,
+    void* clientData) {
+  auto* listener = static_cast<DeviceLostListener*>(clientData);
+  if (!listener) return noErr;
+  for (UInt32 index = 0; index < numberAddresses; ++index) {
+    const AudioObjectPropertySelector selector = addresses[index].mSelector;
+    if (selector == kAudioDevicePropertyDeviceIsAlive || selector == kAudioHardwarePropertyDevices) {
+      notifyCoreAudioDeviceLostIfNeeded(listener);
+      break;
+    }
+  }
+  return noErr;
+}
+
 }  // namespace
 
 struct RealCoreAudioHost::Impl {
@@ -89,6 +154,9 @@ struct RealCoreAudioHost::Impl {
 
   CoreAudioRenderCallback renderCallback;
   CoreAudioBufferList callbackBufferList;
+  std::mutex listenerMutex;
+  CoreAudioListenerToken nextListenerToken = 1;
+  std::unordered_map<CoreAudioListenerToken, std::unique_ptr<DeviceLostListener>> deviceLostListeners;
 };
 
 RealCoreAudioHost::RealCoreAudioHost() : impl_(std::make_unique<Impl>()) {}
@@ -304,14 +372,74 @@ CoreAudioListenerToken RealCoreAudioHost::addDeviceLostListener(
     CoreAudioDeviceID deviceId,
     CoreAudioDeviceLostCallback callback,
     std::string* error) {
-  (void)callback;
-  (void)error;
-  return static_cast<CoreAudioListenerToken>(deviceId);
+  if (!callback) {
+    if (error) *error = "CoreAudio device lost callback is empty";
+    return 0;
+  }
+
+  auto listener = std::make_unique<DeviceLostListener>();
+  {
+    std::lock_guard lock(impl_->listenerMutex);
+    listener->token = impl_->nextListenerToken++;
+  }
+  listener->deviceId = deviceId;
+  listener->callback = std::move(callback);
+  auto* rawListener = listener.get();
+
+  AudioObjectPropertyAddress aliveAddress = deviceAlivePropertyAddress();
+  OSStatus status = AudioObjectAddPropertyListener(
+      static_cast<AudioDeviceID>(deviceId),
+      &aliveAddress,
+      coreAudioDeviceLostListenerProc,
+      rawListener);
+  if (!coreaudio::ok(status, error, "无法监听 CoreAudio 设备在线状态")) return 0;
+
+  AudioObjectPropertyAddress devicesAddress = hardwareDevicesPropertyAddress();
+  status = AudioObjectAddPropertyListener(
+      kAudioObjectSystemObject,
+      &devicesAddress,
+      coreAudioDeviceLostListenerProc,
+      rawListener);
+  if (!coreaudio::ok(status, error, "无法监听 CoreAudio 设备列表变化")) {
+    AudioObjectRemovePropertyListener(
+        static_cast<AudioDeviceID>(deviceId),
+        &aliveAddress,
+        coreAudioDeviceLostListenerProc,
+        rawListener);
+    return 0;
+  }
+
+  const CoreAudioListenerToken token = listener->token;
+  {
+    std::lock_guard lock(impl_->listenerMutex);
+    impl_->deviceLostListeners[token] = std::move(listener);
+  }
+  if (error) error->clear();
+  return token;
 }
 
 void RealCoreAudioHost::removeDeviceLostListener(CoreAudioDeviceID deviceId, CoreAudioListenerToken token) {
-  (void)deviceId;
-  (void)token;
+  std::unique_ptr<DeviceLostListener> listener;
+  {
+    std::lock_guard lock(impl_->listenerMutex);
+    auto it = impl_->deviceLostListeners.find(token);
+    if (it == impl_->deviceLostListeners.end()) return;
+    listener = std::move(it->second);
+    impl_->deviceLostListeners.erase(it);
+  }
+
+  AudioObjectPropertyAddress aliveAddress = deviceAlivePropertyAddress();
+  AudioObjectRemovePropertyListener(
+      static_cast<AudioDeviceID>(deviceId),
+      &aliveAddress,
+      coreAudioDeviceLostListenerProc,
+      listener.get());
+  AudioObjectPropertyAddress devicesAddress = hardwareDevicesPropertyAddress();
+  AudioObjectRemovePropertyListener(
+      kAudioObjectSystemObject,
+      &devicesAddress,
+      coreAudioDeviceLostListenerProc,
+      listener.get());
 }
 
 std::unique_ptr<ICoreAudioHost> createRealCoreAudioHost() {

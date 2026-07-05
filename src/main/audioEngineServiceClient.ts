@@ -514,7 +514,15 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         reject,
         timer
       })
-      this.child?.postMessage({ kind: 'request', requestId, method, args })
+      try {
+        this.child?.postMessage({ kind: 'request', requestId, method, args })
+      } catch (err) {
+        clearTimeout(timer)
+        this.pending.delete(requestId)
+        const message = err instanceof Error ? err.message : String(err)
+        this.recordTransientFailure(message)
+        reject(err)
+      }
     })
   }
 

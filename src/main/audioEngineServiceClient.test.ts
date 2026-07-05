@@ -27,6 +27,12 @@ class ManualUtilityProcess extends EventEmitter {
   }
 }
 
+class ThrowingUtilityProcess extends ManualUtilityProcess {
+  override postMessage(): void {
+    throw new Error('utility pipe closed')
+  }
+}
+
 test('cached audio service calls swallow timeout rejections', async () => {
   const child = new SilentUtilityProcess()
   const electron = {
@@ -55,6 +61,36 @@ test('cached audio service calls swallow timeout rejections', async () => {
     binding.destroy()
   } finally {
     process.off('unhandledRejection', onUnhandled)
+  }
+})
+
+test('audio service postMessage failures clear pending RPCs immediately', async () => {
+  const child = new ThrowingUtilityProcess()
+  const electron = {
+    utilityProcess: {
+      fork: () => child
+    }
+  }
+
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 1000,
+    restartDelayMs: 1000,
+    maxInFlightRequests: 1,
+    electron
+  })
+  const internals = binding as unknown as {
+    pending: Map<string, unknown>
+  }
+
+  try {
+    await assert.rejects(() => binding.getMetadataAsync('pipe-closed.flac'), /utility pipe closed/)
+    assert.equal(internals.pending.size, 0)
+
+    await assert.rejects(() => binding.getMetadataAsync('second-call.flac'), /utility pipe closed/)
+    assert.equal(internals.pending.size, 0)
+  } finally {
+    binding.destroy()
   }
 })
 

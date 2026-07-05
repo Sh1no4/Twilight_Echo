@@ -120,20 +120,29 @@ void testNativeDspProcessFailurePathUsesFixedReasons() {
   assert(realtimeBypassBody.find("status_.lastError") == std::string::npos);
 }
 
-void testNativeDspOverrunBypassesOnFirstBudgetMiss() {
+void testNativeDspOverrunBypassesAfterRepeatedBudgetMisses() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath =
       testFilePath.parent_path().parent_path() / "plugins" / "PluginRegistry.cpp";
   const std::string source = readTextFile(sourcePath);
   const std::string processBody = extractFunctionBody(source, "void process(float* samples, size_t frameCount)");
   const size_t overrunCheck = processBody.find("elapsedMs > budgetMs");
-  const size_t bypassCall = processBody.find(
-      "bypassRealtime(NativeDspRealtimeBypassReason::ProcessExceededBudget)",
-      overrunCheck);
 
   assert(overrunCheck != std::string::npos);
-  assert(bypassCall != std::string::npos);
-  assert(processBody.find("consecutiveOverruns_ >=", overrunCheck) == std::string::npos);
+  assert(processBody.find("consecutiveOverruns_ +=", overrunCheck) != std::string::npos);
+  assert(processBody.find("consecutiveOverruns_ >= kNativeDspRealtimeBypassOverrunThreshold", overrunCheck) !=
+         std::string::npos);
+}
+
+void testDspChainProcessRefreshesNativeDspStatusAfterRealtimeBypass() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "dsp" / "DspChain.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string processBody = extractFunctionBody(source, "void DspChain::process(float* samples, size_t frameCount)");
+
+  assert(processBody.find("const bool nativeDspWasActive = status_.nativeDspActive") != std::string::npos);
+  assert(processBody.find("nativePlugins_->isActive() != nativeDspWasActive") != std::string::npos);
+  assert(processBody.find("refreshStatusLocked()") != std::string::npos);
 }
 
 void testGainPluginProcessesAudio(const std::string& path) {
@@ -181,14 +190,25 @@ void testProcessErrorBypasses(const std::string& path) {
   assertStatusContains(registry, "process returned an error");
 }
 
-void testProcessOverrunBypasses(const std::string& path) {
+void testProcessOverrunBypassesAfterRepeatedMisses(const std::string& path) {
   PluginRegistry registry;
   prepareRegistry(registry, path, {{"mode", 2.0}});
   std::vector<float> samples(128, 0.1f);
+
+  registry.process(samples.data(), 64);
+  assert(registry.isActive());
+  assertStatusContains(registry, "\"bypassed\":false");
+  assertStatusContains(registry, "\"overrunCount\":1");
+
+  registry.process(samples.data(), 64);
+  assert(registry.isActive());
+  assertStatusContains(registry, "\"bypassed\":false");
+  assertStatusContains(registry, "\"overrunCount\":2");
+
   registry.process(samples.data(), 64);
   assert(!registry.isActive());
   assertStatusContains(registry, "process exceeded realtime budget");
-  assertStatusContains(registry, "\"overrunCount\":1");
+  assertStatusContains(registry, "\"overrunCount\":3");
 }
 
 void testNonFloatFormatBypasses(const std::string& path) {
@@ -288,13 +308,14 @@ int main(int argc, char** argv) {
 
   TAE_DestroyEngine(engine);
   testNativeDspProcessFailurePathUsesFixedReasons();
-  testNativeDspOverrunBypassesOnFirstBudgetMiss();
+  testNativeDspOverrunBypassesAfterRepeatedBudgetMisses();
+  testDspChainProcessRefreshesNativeDspStatusAfterRealtimeBypass();
   testGainPluginProcessesAudio(pluginPath);
   testBadAbiBypasses(badAbiPath);
   testInvalidParameterMetadataBypasses(invalidParamPath);
   testPrepareErrorBypasses(faultPath);
   testProcessErrorBypasses(faultPath);
-  testProcessOverrunBypasses(faultPath);
+  testProcessOverrunBypassesAfterRepeatedMisses(faultPath);
   testNonFloatFormatBypasses(pluginPath);
   testCrossfeedPluginProcessesAudio(crossfeedPath);
   assert(!crashPath.empty());

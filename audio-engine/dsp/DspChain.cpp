@@ -272,8 +272,12 @@ void DspChain::process(float* samples, size_t frameCount) {
   if (!samples || frameCount == 0) return;
   std::unique_lock lock(mutex_, std::try_to_lock);
   if (!lock.owns_lock()) return;
+  const bool nativeDspWasActive = status_.nativeDspActive;
   for (IAudioProcessor* processor : activeProcessors_) {
     processor->process(samples, frameCount);
+  }
+  if (nativePlugins_ && nativePlugins_->isActive() != nativeDspWasActive) {
+    refreshStatusLocked();
   }
   if (config_.clipGuard && status_.dspActive) {
     clampOutput(samples, frameCount);
@@ -381,8 +385,6 @@ void DspChain::setNativeDspPluginChain(const std::string& json) {
   std::lock_guard lock(mutex_);
   if (!nativePlugins_) return;
   nativePlugins_->setPluginChain(PluginRegistry::parseChainJson(json));
-  nativePlugins_->configure(config_);
-  nativePlugins_->prepare(format_);
   nativePlugins_->setTrackContext(trackContext_);
   refreshStatusLocked();
 }

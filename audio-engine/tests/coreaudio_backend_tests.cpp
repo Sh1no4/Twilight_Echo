@@ -108,6 +108,26 @@ void testCoreAudioRenderCallbacksDoNotBlockOnBackendMutex() {
   assert(exclusiveRender.find("std::lock_guard lock(mutex)") == std::string::npos);
 }
 
+void testCoreAudioRenderCallbacksDoNotCopyStringDiagnostics() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path coreAudioPath =
+      testFilePath.parent_path().parent_path() / "output" / "coreaudio" / "CoreAudioBackend.cpp";
+  const std::filesystem::path exclusivePath =
+      testFilePath.parent_path().parent_path() / "output" / "coreaudio" / "CoreAudioExclusiveBackend.cpp";
+
+  const std::string sharedRender = extractFunctionBody(
+      readTextFile(coreAudioPath),
+      "size_t render(uint32_t frameCount, CoreAudioBufferList* ioData)");
+  const std::string exclusiveRender = extractFunctionBody(
+      readTextFile(exclusivePath),
+      "size_t render(uint32_t frameCount, CoreAudioBufferList* ioData)");
+
+  assert(sharedRender.find("lastError =") == std::string::npos);
+  assert(exclusiveRender.find("lastError =") == std::string::npos);
+  assert(sharedRender.find("outputInfo.diagnostics =") == std::string::npos);
+  assert(exclusiveRender.find("outputInfo.diagnostics =") == std::string::npos);
+}
+
 void testRealCoreAudioHostAudioUnitCallbackUsesNonOwningBuffers() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath =
@@ -120,6 +140,26 @@ void testRealCoreAudioHostAudioUnitCallbackUsesNonOwningBuffers() {
   assert(setCallbackBody.find("copyToNative(ioData, hostList)") == std::string::npos);
   assert(source.find("buffer.data.assign") == std::string::npos);
   assert(source.find("out.buffers.resize") == std::string::npos);
+}
+
+void testRealCoreAudioHostInstallsNativeDeviceLostListeners() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "coreaudio" / "RealCoreAudioHost.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string addListenerBody =
+      extractFunctionBody(source, "CoreAudioListenerToken RealCoreAudioHost::addDeviceLostListener(");
+  const std::string removeListenerBody =
+      extractFunctionBody(source, "void RealCoreAudioHost::removeDeviceLostListener(");
+
+  assert(addListenerBody.find("(void)callback") == std::string::npos);
+  assert(addListenerBody.find("AudioObjectAddPropertyListener") != std::string::npos);
+  assert(addListenerBody.find("deviceAlivePropertyAddress()") != std::string::npos);
+  assert(addListenerBody.find("hardwareDevicesPropertyAddress()") != std::string::npos);
+  assert(source.find("kAudioDevicePropertyDeviceIsAlive") != std::string::npos);
+  assert(source.find("kAudioHardwarePropertyDevices") != std::string::npos);
+  assert(addListenerBody.find("coreAudioDeviceLostListenerProc") != std::string::npos);
+  assert(removeListenerBody.find("AudioObjectRemovePropertyListener") != std::string::npos);
 }
 
 void testCoreAudioHogPrecheckRejectsOwnedDevice() {
@@ -174,6 +214,48 @@ void testCoreAudioSharedCloseStopsAudioUnitBeforeDispose() {
   assert(stopIndex < disposeIndex);
 }
 
+void testCoreAudioSharedDeviceLostCloseStopsBeforeDispose() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  CoreAudioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("auto", sourceFormat(), &error));
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+
+  rawHost->triggerDeviceLost("mock device lost");
+  backend.close();
+
+  const auto findCall = [&](const std::string& prefix) {
+    for (size_t index = 0; index < rawHost->callLog.size(); ++index) {
+      if (rawHost->callLog[index].find(prefix) == 0) return index;
+    }
+    return rawHost->callLog.size();
+  };
+  const size_t stopIndex = findCall("audioUnitStop:");
+  const size_t uninitializeIndex = findCall("audioUnitUninitialize:");
+  const size_t disposeIndex = findCall("disposeAudioUnit:");
+  assert(rawHost->audioUnitStopCalls == 1);
+  assert(stopIndex < uninitializeIndex);
+  assert(stopIndex < disposeIndex);
+}
+
+void testCoreAudioSharedRejectsRepeatedStart() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  CoreAudioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("auto", sourceFormat(), &error));
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+
+  error.clear();
+  assert(!backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+
+  assert(!error.empty());
+  assert(rawHost->audioUnitStartCalls == 1);
+  backend.stop();
+  assert(rawHost->audioUnitStopCalls == 1);
+}
+
 void testCoreAudioExclusiveStopIsIdempotentAcrossClose() {
   auto host = makeHost();
   auto* rawHost = host.get();
@@ -186,6 +268,76 @@ void testCoreAudioExclusiveStopIsIdempotentAcrossClose() {
   backend.close();
 
   assert(rawHost->audioUnitStopCalls == 1);
+}
+
+void testCoreAudioExclusiveDeviceLostCloseStopsBeforeDispose() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  CoreAudioExclusiveBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("auto", sourceFormat(), &error));
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+
+  rawHost->triggerDeviceLost("mock device lost");
+  backend.close();
+
+  const auto findCall = [&](const std::string& prefix) {
+    for (size_t index = 0; index < rawHost->callLog.size(); ++index) {
+      if (rawHost->callLog[index].find(prefix) == 0) return index;
+    }
+    return rawHost->callLog.size();
+  };
+  const size_t stopIndex = findCall("audioUnitStop:");
+  const size_t uninitializeIndex = findCall("audioUnitUninitialize:");
+  const size_t disposeIndex = findCall("disposeAudioUnit:");
+  assert(rawHost->audioUnitStopCalls == 1);
+  assert(stopIndex < uninitializeIndex);
+  assert(stopIndex < disposeIndex);
+}
+
+void testCoreAudioExclusiveRejectsRepeatedStart() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  CoreAudioExclusiveBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("auto", sourceFormat(), &error));
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+
+  error.clear();
+  assert(!backend.startTyped(
+      [](PcmBlock& block) { return block.frames; },
+      [](float*, size_t frames) { return frames; },
+      nullptr,
+      &error));
+
+  assert(!error.empty());
+  assert(rawHost->audioUnitStartCalls == 1);
+  backend.stop();
+  assert(rawHost->audioUnitStopCalls == 1);
+}
+
+void testCoreAudioExclusiveTypedZeroFallsBackToFloatCallback() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  CoreAudioExclusiveBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("auto", sourceFormat(), &error));
+  bool fallbackCalled = false;
+  assert(backend.startTyped(
+      [](PcmBlock&) { return static_cast<size_t>(0); },
+      [&](float* output, size_t frames) {
+        fallbackCalled = true;
+        for (size_t sample = 0; sample < frames * 2; ++sample) {
+          output[sample] = 0.25f;
+        }
+        return frames;
+      },
+      nullptr,
+      &error));
+
+  const size_t rendered = rawHost->triggerRender(64);
+  assert(fallbackCalled);
+  assert(rendered == 64);
 }
 
 void testCoreAudioDeviceLostFiresInvalidated() {
@@ -375,11 +527,18 @@ void testCoreAudioTypedRenderHelperZerosOnlyUnrenderedTail() {
 int main() {
   testCoreAudioRenderCallbacksDoNotResizeScratchBuffers();
   testCoreAudioRenderCallbacksDoNotBlockOnBackendMutex();
+  testCoreAudioRenderCallbacksDoNotCopyStringDiagnostics();
   testRealCoreAudioHostAudioUnitCallbackUsesNonOwningBuffers();
+  testRealCoreAudioHostInstallsNativeDeviceLostListeners();
   testCoreAudioHogPrecheckRejectsOwnedDevice();
   testCoreAudioHogAcquireRelease();
   testCoreAudioSharedCloseStopsAudioUnitBeforeDispose();
+  testCoreAudioSharedDeviceLostCloseStopsBeforeDispose();
+  testCoreAudioSharedRejectsRepeatedStart();
   testCoreAudioExclusiveStopIsIdempotentAcrossClose();
+  testCoreAudioExclusiveDeviceLostCloseStopsBeforeDispose();
+  testCoreAudioExclusiveRejectsRepeatedStart();
+  testCoreAudioExclusiveTypedZeroFallsBackToFloatCallback();
   testCoreAudioDeviceLostFiresInvalidated();
   testCoreAudioUnderrunDiagnostics();
   testCoreAudioSampleRateMatch();

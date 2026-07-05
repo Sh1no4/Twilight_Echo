@@ -120,7 +120,6 @@ struct CoreAudioExclusiveBackend::Impl {
   }
 
   void handleDeviceLost(const std::string& message) {
-    running = false;
     {
       std::lock_guard lock(mutex);
       ++diagnostics.deviceLostCount;
@@ -168,17 +167,18 @@ struct CoreAudioExclusiveBackend::Impl {
           bytesPerFrame > 0 ? std::min(frames, buffer.byteSize() / bytesPerFrame) : static_cast<size_t>(0);
       const size_t writableByteCount = writableFrames * bytesPerFrame;
 
-      size_t rendered = writableFrames;
+      size_t rendered = 0;
       if (typedCb) {
         rendered = coreaudio::renderTypedCallbackWithTailSilence(buffer.writableData(), writableFrames, format, typedCb);
-      } else if (floatCb) {
+      }
+      if ((!typedCb || rendered == 0) && floatCb) {
         const size_t scratchFrames = std::min(writableFrames, floatScratch.size() / static_cast<size_t>(channels));
         rendered = coreaudio::renderFloatCallbackWithTailSilence(floatScratch.data(), scratchFrames, channels, floatCb);
         std::memcpy(
             buffer.writableData(),
             floatScratch.data(),
             std::min(floatScratch.size() * sizeof(float), writableByteCount));
-      } else {
+      } else if (!typedCb && !floatCb) {
         std::memset(buffer.writableData(), 0, writableByteCount);
       }
 
@@ -187,7 +187,8 @@ struct CoreAudioExclusiveBackend::Impl {
         if (lock.owns_lock()) {
           ++diagnostics.sessionUnderrunCount;
           ++diagnostics.lifetimeUnderrunCount;
-          outputInfo.diagnostics = diagnostics;
+          ++outputInfo.diagnostics.sessionUnderrunCount;
+          ++outputInfo.diagnostics.lifetimeUnderrunCount;
           outputInfo.deviceRecovered = false;
           underrunObserved = true;
         }
@@ -213,7 +214,8 @@ struct CoreAudioExclusiveBackend::Impl {
       if (lock.owns_lock()) {
         ++diagnostics.sessionUnderrunCount;
         ++diagnostics.lifetimeUnderrunCount;
-        outputInfo.diagnostics = diagnostics;
+        ++outputInfo.diagnostics.sessionUnderrunCount;
+        ++outputInfo.diagnostics.lifetimeUnderrunCount;
         outputInfo.deviceRecovered = false;
         underrunObserved = true;
       }
@@ -491,14 +493,20 @@ bool CoreAudioExclusiveBackend::start(RenderCallback callback, OutputEventCallba
     if (error) *error = "CoreAudio 独占后端尚未打开";
     return false;
   }
+  if (impl_->running.exchange(true)) {
+    if (error) *error = "CoreAudio 独占后端已经在运行";
+    return false;
+  }
   {
     std::lock_guard lock(impl_->mutex);
     impl_->callback = std::move(callback);
     impl_->typedCallback = nullptr;
     impl_->eventCallback = std::move(eventCallback);
   }
-  if (!impl_->host->audioUnitStart(impl_->unit, error)) return false;
-  impl_->running = true;
+  if (!impl_->host->audioUnitStart(impl_->unit, error)) {
+    impl_->running = false;
+    return false;
+  }
   return true;
 }
 
@@ -511,14 +519,20 @@ bool CoreAudioExclusiveBackend::startTyped(
     if (error) *error = "CoreAudio 独占后端尚未打开";
     return false;
   }
+  if (impl_->running.exchange(true)) {
+    if (error) *error = "CoreAudio 独占后端已经在运行";
+    return false;
+  }
   {
     std::lock_guard lock(impl_->mutex);
     impl_->typedCallback = std::move(callback);
     impl_->callback = std::move(fallbackCallback);
     impl_->eventCallback = std::move(eventCallback);
   }
-  if (!impl_->host->audioUnitStart(impl_->unit, error)) return false;
-  impl_->running = true;
+  if (!impl_->host->audioUnitStart(impl_->unit, error)) {
+    impl_->running = false;
+    return false;
+  }
   return true;
 }
 
@@ -539,7 +553,11 @@ AudioFormat CoreAudioExclusiveBackend::outputFormat() const {
 
 OutputInfo CoreAudioExclusiveBackend::outputInfo() const {
   std::lock_guard lock(impl_->mutex);
-  return impl_->outputInfo;
+  OutputInfo info = impl_->outputInfo;
+  if (info.diagnostics.lastError.empty() && info.diagnostics.sessionUnderrunCount > 0) {
+    info.diagnostics.lastError = "CoreAudio IOProc underrun";
+  }
+  return info;
 }
 
 DopRuntimeFacts CoreAudioExclusiveBackend::dopRuntimeFacts() const {

@@ -312,7 +312,11 @@ struct FFmpegDecoder::Impl {
       if (ret == 0) {
         const bool ok = convertFrame(error);
         av_frame_unref(frame);
-        return ok && !pending.empty();
+        if (!ok) return false;
+        if (pending.empty()) {
+          continue;
+        }
+        return true;
       }
       if (ret == AVERROR_EOF) {
         eof = true;

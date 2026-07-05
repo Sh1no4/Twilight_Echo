@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto'
 import { is } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { getWindowBackgroundColor } from '../audio/state'
+import { installAudioDeviceHotplugWatcher } from '../audio/deviceHotplug'
 
 const PLAYBACK_SESSION_SAVE_TIMEOUT_MS = 1800
 const pendingPlaybackSessionSaves = new Map<string, () => void>()
@@ -104,6 +105,8 @@ export function createWindow(): void {
   runtime.mainWindow.on('closed', () => {
     runtime.mainWindow = null
   })
+
+  installAudioDeviceHotplugWatcher(runtime.mainWindow)
 
   runtime.mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)

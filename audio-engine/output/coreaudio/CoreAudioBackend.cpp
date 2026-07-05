@@ -110,7 +110,6 @@ struct CoreAudioBackend::Impl {
   }
 
   void handleDeviceLost(const std::string& message) {
-    running = false;
     {
       std::lock_guard lock(mutex);
       ++outputInfo.diagnostics.deviceLostCount;
@@ -159,8 +158,6 @@ struct CoreAudioBackend::Impl {
         if (lock.owns_lock()) {
           ++outputInfo.diagnostics.sessionUnderrunCount;
           ++outputInfo.diagnostics.lifetimeUnderrunCount;
-          outputInfo.diagnostics.lastError = "CoreAudio IOProc underrun";
-          outputInfo.diagnostics = outputInfo.diagnostics;
           outputInfo.deviceRecovered = false;
           underrunObserved = true;
         }
@@ -182,7 +179,6 @@ struct CoreAudioBackend::Impl {
       if (lock.owns_lock()) {
         ++outputInfo.diagnostics.sessionUnderrunCount;
         ++outputInfo.diagnostics.lifetimeUnderrunCount;
-        outputInfo.diagnostics.lastError = "CoreAudio IOProc underrun";
         outputInfo.deviceRecovered = false;
         underrunObserved = true;
       }
@@ -365,13 +361,19 @@ bool CoreAudioBackend::start(RenderCallback callback, OutputEventCallback eventC
     if (error) *error = "CoreAudio 后端尚未打开";
     return false;
   }
+  if (impl_->running.exchange(true)) {
+    if (error) *error = "CoreAudio 后端已经在运行";
+    return false;
+  }
   {
     std::lock_guard lock(impl_->mutex);
     impl_->callback = std::move(callback);
     impl_->eventCallback = std::move(eventCallback);
   }
-  if (!impl_->host->audioUnitStart(impl_->unit, error)) return false;
-  impl_->running = true;
+  if (!impl_->host->audioUnitStart(impl_->unit, error)) {
+    impl_->running = false;
+    return false;
+  }
   return true;
 }
 
@@ -413,7 +415,11 @@ AudioFormat CoreAudioBackend::outputFormat() const {
 
 OutputInfo CoreAudioBackend::outputInfo() const {
   std::lock_guard lock(impl_->mutex);
-  return impl_->outputInfo;
+  OutputInfo info = impl_->outputInfo;
+  if (info.diagnostics.lastError.empty() && info.diagnostics.sessionUnderrunCount > 0) {
+    info.diagnostics.lastError = "CoreAudio IOProc underrun";
+  }
+  return info;
 }
 
 DopRuntimeFacts CoreAudioBackend::dopRuntimeFacts() const {

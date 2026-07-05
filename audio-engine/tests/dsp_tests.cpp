@@ -101,6 +101,19 @@ void testFftAnalyzerReadSideRefreshesSpectrumOutsideCaptureMutex() {
   requireAnalyzerReadRefreshesBeforeLock(jsonBody);
 }
 
+void testFftAnalyzerCaptureDoesNotSlideFullWindows() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "dsp" / "FftSpectrumAnalyzer.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string captureBody =
+      extractFunctionBody(source, "void FftSpectrumAnalyzer::capture(const float* interleaved, size_t frames, int channels)");
+
+  require(captureBody.find("std::move") == std::string::npos);
+  require(captureBody.find("timeDomainWriteIndex_") != std::string::npos);
+  require(captureBody.find("oscilloscopeWriteIndex_") != std::string::npos);
+}
+
 void testParametricEqPreampOnlyProcessesContiguousSamples() {
   std::vector<float> samples = {-0.5f, 0.25f, 3.0f, -3.0f};
 
@@ -312,6 +325,30 @@ void testDspProcessBypassesWhenConfigurationLockBusy() {
   require(samples == original);
 }
 
+void testNativeDspPluginChainSetupDoesNotPreparePluginsTwice() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "dsp" / "DspChain.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string body = extractFunctionBody(source, "void DspChain::setNativeDspPluginChain(const std::string& json)");
+  const size_t setChain = body.find("nativePlugins_->setPluginChain");
+  require(setChain != std::string::npos);
+
+  const std::string afterSetChain = body.substr(setChain);
+  require(afterSetChain.find("nativePlugins_->configure") == std::string::npos);
+  require(afterSetChain.find("nativePlugins_->prepare") == std::string::npos);
+  require(afterSetChain.find("nativePlugins_->setTrackContext") != std::string::npos);
+}
+
+void testConvolverWaveExtensibleParsingUsesSubFormatGuid() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "dsp" / "ConvolverProcessor.cpp";
+  const std::string source = readTextFile(sourcePath);
+  require(source.find("formatTag = bitsPerSample == 32 ? kWaveFloat : kWavePcm") == std::string::npos);
+  require(source.find("kWaveSubFormatPcm") != std::string::npos);
+  require(source.find("kWaveSubFormatFloat") != std::string::npos);
+}
+
 void writeImpulseWav(const std::filesystem::path& path, int sampleRate, int channels) {
   const int bitsPerSample = 16;
   const int frames = 8;
@@ -349,6 +386,53 @@ void writeImpulseWav(const std::filesystem::path& path, int sampleRate, int chan
   }
 }
 
+void writeExtensiblePcm32ImpulseWav(const std::filesystem::path& path) {
+  constexpr int sampleRate = 48000;
+  constexpr int channels = 1;
+  constexpr int bitsPerSample = 32;
+  constexpr int frames = 8;
+  constexpr int blockAlign = channels * bitsPerSample / 8;
+  constexpr int byteRate = sampleRate * blockAlign;
+  constexpr int dataSize = frames * blockAlign;
+  std::ofstream out(path, std::ios::binary);
+  out.write("RIFF", 4);
+  const uint32_t riffSize = static_cast<uint32_t>(4 + (8 + 40) + (8 + dataSize));
+  out.write(reinterpret_cast<const char*>(&riffSize), 4);
+  out.write("WAVE", 4);
+  out.write("fmt ", 4);
+  const uint32_t fmtSize = 40;
+  const uint16_t audioFormat = 0xfffe;
+  const uint16_t channelCount = static_cast<uint16_t>(channels);
+  const uint32_t rate = static_cast<uint32_t>(sampleRate);
+  const uint32_t bytesPerSecond = static_cast<uint32_t>(byteRate);
+  const uint16_t align = static_cast<uint16_t>(blockAlign);
+  const uint16_t bits = static_cast<uint16_t>(bitsPerSample);
+  const uint16_t cbSize = 22;
+  const uint16_t validBits = bits;
+  const uint32_t channelMask = 0x4;
+  const std::array<unsigned char, 16> pcmSubFormat = {
+      0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
+      0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71};
+  out.write(reinterpret_cast<const char*>(&fmtSize), 4);
+  out.write(reinterpret_cast<const char*>(&audioFormat), 2);
+  out.write(reinterpret_cast<const char*>(&channelCount), 2);
+  out.write(reinterpret_cast<const char*>(&rate), 4);
+  out.write(reinterpret_cast<const char*>(&bytesPerSecond), 4);
+  out.write(reinterpret_cast<const char*>(&align), 2);
+  out.write(reinterpret_cast<const char*>(&bits), 2);
+  out.write(reinterpret_cast<const char*>(&cbSize), 2);
+  out.write(reinterpret_cast<const char*>(&validBits), 2);
+  out.write(reinterpret_cast<const char*>(&channelMask), 4);
+  out.write(reinterpret_cast<const char*>(pcmSubFormat.data()), static_cast<std::streamsize>(pcmSubFormat.size()));
+  out.write("data", 4);
+  const uint32_t dataBytes = static_cast<uint32_t>(dataSize);
+  out.write(reinterpret_cast<const char*>(&dataBytes), 4);
+  for (int frame = 0; frame < frames; ++frame) {
+    const int32_t sample = frame == 0 ? std::numeric_limits<int32_t>::max() : 0;
+    out.write(reinterpret_cast<const char*>(&sample), 4);
+  }
+}
+
 // Extracts a flat JSON numeric array field (e.g. "oscilloscope":[0.1,-0.2,...])
 // into a vector<float>. Returns empty vector if the key is absent or the array
 // cannot be parsed. Non-numeric tokens (e.g. null) are skipped.
@@ -376,6 +460,7 @@ std::vector<float> extractJsonArray(const std::string& json, const std::string& 
 
 int main() {
   testFftAnalyzerReadSideRefreshesSpectrumOutsideCaptureMutex();
+  testFftAnalyzerCaptureDoesNotSlideFullWindows();
   testParametricEqPreampOnlyProcessesContiguousSamples();
   testWindowedFftInputOverwritesScratchWithoutPreclear();
   testWindowResizeKeepsSameSizedBufferForOverwrite();
@@ -389,6 +474,8 @@ int main() {
   testCrossfeedDelayIndexAdvancesAndWraps();
   testReplayGainApplySplitsClippedAndUnclippedPaths();
   testDspProcessBypassesWhenConfigurationLockBusy();
+  testNativeDspPluginChainSetupDoesNotPreparePluginsTwice();
+  testConvolverWaveExtensibleParsingUsesSubFormatGuid();
   {
     CountingProcessor inactive(false);
     CountingProcessor active(true);
@@ -529,6 +616,24 @@ int main() {
     assert(status.convolverActive);
     assert(status.partitionSize == 1024);
     assert(status.channelMappingMode == "mono-to-all");
+    std::filesystem::remove(wavPath);
+  }
+
+  {
+    DspChain chain;
+    DspConfig config;
+    config.enabled = true;
+    chain.configure(config);
+    chain.prepare(testFormat());
+
+    const auto wavPath = std::filesystem::temp_directory_path() / "twilight-ir-extensible-pcm32.wav";
+    writeExtensiblePcm32ImpulseWav(wavPath);
+    std::string error;
+    assert(chain.loadImpulseResponse(wavPath.string(), &error));
+    std::vector<float> samples(2048 * 2, 0.0f);
+    samples[0] = 1.0f;
+    chain.process(samples.data(), 2048);
+    assert(samples[1024 * 2] > 0.2f);
     std::filesystem::remove(wavPath);
   }
 

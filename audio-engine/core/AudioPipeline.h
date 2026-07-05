@@ -113,6 +113,7 @@ class AudioPipeline {
   PipelineStatus status() const;
   bool consumeEnded();
   bool consumeDeviceInvalidated(std::string* message);
+  bool consumeRenderError(std::string* message);
   bool consumeTrackStarted(QueueItem* item);
   size_t getSpectrumData(float* buffer, size_t pointCount) const;
   std::string getVisualizationDataJson(
@@ -201,6 +202,7 @@ class AudioPipeline {
   OutputInfo outputInfo_;
   std::atomic<bool> ended_{false};
   std::atomic<bool> deviceInvalidated_{false};
+  std::atomic<bool> renderError_{false};
   std::atomic<bool> trackStarted_{false};
   std::atomic<double> volume_{1.0};
   std::atomic<uint64_t> renderedFrames_{0};

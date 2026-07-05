@@ -41,6 +41,16 @@ class FftSpectrumAnalyzer {
   };
 
   void resetCaptureLocked();
+  static void copyRingWindow(
+      const std::vector<float>& ring,
+      size_t writeIndex,
+      size_t filled,
+      std::vector<float>* output);
+  static void writeRingSample(
+      std::vector<float>* ring,
+      size_t* writeIndex,
+      size_t* filled,
+      float sample);
   bool buildSpectrumUpdateSnapshot(bool retainSpectrogram, SpectrumUpdateSnapshot& snapshot) const;
   void publishSpectrumUpdate(SpectrumUpdateSnapshot& snapshot) const;
   void updateSpectrumForRead(bool retainSpectrogram) const;
@@ -61,6 +71,10 @@ class FftSpectrumAnalyzer {
   std::vector<float> window_;
   std::vector<float> timeDomain_;
   std::vector<float> oscilloscopeBuffer_;
+  size_t timeDomainWriteIndex_ = 0;
+  size_t timeDomainFilled_ = 0;
+  size_t oscilloscopeWriteIndex_ = 0;
+  size_t oscilloscopeFilled_ = 0;
   mutable std::vector<float> magnitudes_;
   mutable std::vector<std::vector<float>> spectrogram_;
 };

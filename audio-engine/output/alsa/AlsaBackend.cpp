@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -120,6 +121,33 @@ const std::vector<int>& nativeDsdAdvertisedRates() {
   return rates;
 }
 
+std::string nativeDsdRuntimeStateName(NativeDsdRuntimeFactState state) {
+  switch (state) {
+    case NativeDsdRuntimeFactState::Candidate:
+      return "candidate";
+    case NativeDsdRuntimeFactState::Unproven:
+      return "unproven";
+    case NativeDsdRuntimeFactState::Mismatch:
+      return "mismatch";
+    case NativeDsdRuntimeFactState::Proven:
+      return "proven";
+    case NativeDsdRuntimeFactState::Unsupported:
+    default:
+      return "unsupported";
+  }
+}
+
+void applyNativeDsdFactsToOutputInfo(OutputInfo* info, const NativeDsdRuntimeFacts& facts) {
+  if (!info) return;
+  info->nativeDsdRuntimeState = nativeDsdRuntimeStateName(facts.state);
+  info->nativeDsdRequestedRate = facts.requestedDsdRate;
+  info->nativeDsdActualRate = facts.actualDsdRate;
+  info->nativeDsdChannels = facts.channelCount;
+  info->nativeDsdExplicitlyCapable = facts.explicitlyCapable;
+  info->nativeDsdAdvertisedSampleRates = facts.advertisedSampleRates;
+  info->nativeDsdRuntimeReason = facts.reason;
+}
+
 }  // namespace
 
 struct AlsaBackend::Impl {
@@ -136,7 +164,12 @@ struct AlsaBackend::Impl {
   std::atomic<bool> running{false};
   std::atomic<bool> stopRequested{false};
   std::atomic<bool> recoveryQueued{false};
+  std::atomic<int> queuedRecoveryCode{0};
+  std::atomic<int> queuedRecoveryKind{0};
+  std::atomic<const char*> queuedRecoveryMessage{nullptr};
   std::mutex threadMutex;
+  std::mutex recoveryMutex;
+  std::condition_variable recoveryCv;
   std::thread renderThread;
   std::thread recoveryThread;
   std::vector<float> renderScratch;
@@ -343,7 +376,27 @@ struct AlsaBackend::Impl {
     if (threadToJoin.joinable()) threadToJoin.join();
   }
 
-  void runQueuedWriteRecovery(int code, RenderLoopKind kind, std::string failureMessage) {
+  void launchRecoveryThread() {
+    std::lock_guard lock(threadMutex);
+    if (recoveryThread.joinable()) return;
+    recoveryThread = std::thread([this] { recoveryLoop(); });
+  }
+
+  void recoveryLoop() {
+    while (!stopRequested.load()) {
+      {
+        std::unique_lock lock(recoveryMutex);
+        recoveryCv.wait(lock, [this] { return stopRequested.load() || recoveryQueued.load(); });
+      }
+      if (stopRequested.load()) break;
+      const int code = queuedRecoveryCode.load();
+      const auto kind = static_cast<RenderLoopKind>(queuedRecoveryKind.load());
+      const char* failureMessage = queuedRecoveryMessage.load();
+      runQueuedWriteRecovery(code, kind, failureMessage ? failureMessage : "ALSA 输出写入失败");
+    }
+  }
+
+  void runQueuedWriteRecovery(int code, RenderLoopKind kind, const char* failureMessage) {
     joinRenderThread();
     if (stopRequested.load()) {
       recoveryQueued = false;
@@ -352,6 +405,7 @@ struct AlsaBackend::Impl {
 
     const bool recovered = recoverFromWriteError(code);
     if (recovered && !stopRequested.load()) {
+      recoveryQueued = false;
       running = true;
       launchRenderThread(kind);
     } else {
@@ -362,22 +416,19 @@ struct AlsaBackend::Impl {
       }
       running = false;
       if (failureCallback) failureCallback(OutputBackendEvent::RenderError, failureMessage);
+      recoveryQueued = false;
     }
-    recoveryQueued = false;
   }
 
   void queueWriteRecoveryFromRenderThread(int code, RenderLoopKind kind, const char* failureMessage) {
+    queuedRecoveryCode.store(code);
+    queuedRecoveryKind.store(static_cast<int>(kind));
+    queuedRecoveryMessage.store(failureMessage);
     bool expected = false;
     if (!recoveryQueued.compare_exchange_strong(expected, true)) return;
 
     running = false;
-    joinRecoveryThread();
-    {
-      std::lock_guard lock(threadMutex);
-      recoveryThread = std::thread([this, code, kind, message = std::string(failureMessage)] {
-        runQueuedWriteRecovery(code, kind, message);
-      });
-    }
+    recoveryCv.notify_one();
   }
 
   void renderLoop() {
@@ -744,6 +795,10 @@ bool AlsaBackend::start(RenderCallback callback, OutputEventCallback eventCallba
     if (error) *error = "ALSA 后端尚未打开";
     return false;
   }
+  if (impl_->running.load()) {
+    if (error) *error = "ALSA 后端已在运行";
+    return false;
+  }
   {
     std::lock_guard lock(impl_->mutex);
     impl_->callback = std::move(callback);
@@ -755,7 +810,9 @@ bool AlsaBackend::start(RenderCallback callback, OutputEventCallback eventCallba
     return false;
   }
   impl_->stopRequested = false;
+  impl_->recoveryQueued = false;
   impl_->running = true;
+  impl_->launchRecoveryThread();
   impl_->launchRenderThread(AlsaBackend::Impl::RenderLoopKind::Float);
   return true;
 }
@@ -767,6 +824,10 @@ bool AlsaBackend::startTyped(
     std::string* error) {
   if (!impl_->host || !impl_->host->isOpen()) {
     if (error) *error = "ALSA 后端尚未打开";
+    return false;
+  }
+  if (impl_->running.load()) {
+    if (error) *error = "ALSA 后端已在运行";
     return false;
   }
   {
@@ -781,7 +842,9 @@ bool AlsaBackend::startTyped(
     return false;
   }
   impl_->stopRequested = false;
+  impl_->recoveryQueued = false;
   impl_->running = true;
+  impl_->launchRecoveryThread();
   // DSD bypasses float: use the typed render loop that writes raw DSD bytes via writei.
   // PCM falls back to the float render loop.
   if (impl_->dsdMode) {
@@ -795,6 +858,7 @@ bool AlsaBackend::startTyped(
 void AlsaBackend::stop() {
   impl_->stopRequested = true;
   impl_->running = false;
+  impl_->recoveryCv.notify_one();
   impl_->joinRenderThread();
   impl_->joinRecoveryThread();
   if (impl_->host && impl_->host->isOpen()) impl_->host->drop();
@@ -823,7 +887,22 @@ AudioFormat AlsaBackend::outputFormat() const {
 
 OutputInfo AlsaBackend::outputInfo() const {
   std::lock_guard lock(impl_->mutex);
-  return impl_->outputInfo;
+  OutputInfo info = impl_->outputInfo;
+  NativeDsdRuntimeFacts facts = impl_->nativeDsdFacts;
+  if (impl_->dsdWriteProven.load() && facts.state == NativeDsdRuntimeFactState::Candidate) {
+    facts.state = NativeDsdRuntimeFactState::Proven;
+    facts.reason = "ALSA hw: device accepted and successfully wrote DSD bitstream via writei";
+  }
+  applyNativeDsdFactsToOutputInfo(&info, facts);
+  if (impl_->dsdMode && Impl::isDirectHwDevice(impl_->deviceId) &&
+      facts.state == NativeDsdRuntimeFactState::Proven) {
+    info.supportsOutputPerfect = true;
+    info.resampled = false;
+    info.perfectReasonCode.clear();
+    info.perfectReason.clear();
+    info.capabilityReason.clear();
+  }
+  return info;
 }
 
 DopRuntimeFacts AlsaBackend::dopRuntimeFacts() const {
