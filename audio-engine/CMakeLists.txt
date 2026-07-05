@@ -242,6 +242,14 @@ if(TAE_BUILD_TESTS)
   target_include_directories(twilight_channel_router_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   add_test(NAME twilight_channel_router_unit COMMAND twilight_channel_router_tests)
 
+  add_executable(twilight_audio_buffer_tests
+    tests/audio_buffer_tests.cpp
+    core/AudioBuffer.cpp
+    core/AudioTypes.cpp
+  )
+  target_include_directories(twilight_audio_buffer_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME twilight_audio_buffer_unit COMMAND twilight_audio_buffer_tests)
+
   add_library(twilight_test_gain_dsp_plugin SHARED tests/test_gain_dsp_plugin.cpp)
   target_include_directories(twilight_test_gain_dsp_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_library(twilight_test_fault_dsp_plugin SHARED tests/test_fault_dsp_plugin.cpp)

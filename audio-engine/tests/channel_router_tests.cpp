@@ -1,8 +1,10 @@
 #include "../dsp/ChannelRouter.h"
+#include "../dsp/ChannelRouterDelayUtils.h"
 #include "../core/AudioTypes.h"
 
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
 #include <vector>
 
 using namespace twilight::audio;
@@ -13,6 +15,26 @@ constexpr float kTolerance = 1e-4f;
 
 bool closeTo(float actual, float expected, float tolerance = kTolerance) {
   return std::abs(actual - expected) <= tolerance;
+}
+
+void require(bool condition) {
+  if (!condition) std::abort();
+}
+
+void testSurroundDelayLineOverwritesRingSlot() {
+  std::vector<float> delay = {0.0f, 0.0f};
+  size_t cursor = 0;
+
+  const float first = channel_router::pushDelaySample(delay, cursor, 0.5f);
+  const float second = channel_router::pushDelaySample(delay, cursor, 0.25f);
+  const float third = channel_router::pushDelaySample(delay, cursor, 0.0f);
+
+  assert(closeTo(first, 0.0f));
+  assert(closeTo(second, 0.0f));
+  assert(closeTo(third, 0.5f));
+  assert(cursor == 1);
+  assert(closeTo(delay[0], 0.0f));
+  assert(closeTo(delay[1], 0.25f));
 }
 
 /// 默认配置下的一阶低通系数 alpha
@@ -327,6 +349,12 @@ void testMonoToStereoRouting() {
   assert(closeTo(output[3], 0.6f));
 }
 
+void testMonoToStereoFastRoutePredicate() {
+  require(channel_router::canFastRouteMonoToStereo(1, 2, ChannelRoutingMode::MonoToStereo));
+  require(!channel_router::canFastRouteMonoToStereo(1, 6, ChannelRoutingMode::MonoToMultichannel));
+  require(!channel_router::canFastRouteMonoToStereo(2, 2, ChannelRoutingMode::Stereo));
+}
+
 // ──────────────────────────────────────────────
 // 13. 5.1 多帧连续处理：L/R 直通在多帧下正确
 // ──────────────────────────────────────────────
@@ -372,6 +400,7 @@ void testZeroFramesNoCrash() {
 }  // namespace
 
 int main() {
+  testSurroundDelayLineOverwritesRingSlot();
   testUpmix51Basic();
   testUpmix71Basic();
   testLfeLowpassSteadyState();
@@ -384,6 +413,7 @@ int main() {
   testCustomUpmixConfig();
   testSetSampleRateRecomputesDelay();
   testMonoToStereoRouting();
+  testMonoToStereoFastRoutePredicate();
   testUpmix51MultipleFrames();
   testZeroFramesNoCrash();
   return 0;

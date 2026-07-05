@@ -1,4 +1,5 @@
 #include "AudioBuffer.h"
+#include "AudioBufferResetUtils.h"
 
 #include <algorithm>
 #include <cstring>
@@ -16,6 +17,14 @@ bool bufferFormatsCompatible(const AudioFormat& left, const AudioFormat& right) 
          left.channelCount == right.channelCount &&
          effectivePcmBitDepth(left) == effectivePcmBitDepth(right) &&
          left.sampleFormat == right.sampleFormat;
+}
+
+void zeroBlockFrames(PcmBlock& block, size_t startFrame, size_t frameCount, size_t bytesPerFrame) {
+  if (!block.data || block.byteSize == 0 || frameCount == 0 || bytesPerFrame == 0) return;
+  const size_t offset = startFrame * bytesPerFrame;
+  if (offset >= block.byteSize) return;
+  const size_t byteCount = std::min(frameCount * bytesPerFrame, block.byteSize - offset);
+  std::memset(block.data + offset, 0, byteCount);
 }
 
 }  // namespace
@@ -42,7 +51,7 @@ void AudioBuffer::reset(const AudioFormat& format, size_t capacityFrames) {
     format_.bitDepth = 32;
     bytesPerFrame_ = sizeof(float) * static_cast<size_t>(channels_);
   }
-  data_.assign(capacityFrames_ * bytesPerFrame_, 0);
+  resetStorageForAudioBuffer(data_, capacityFrames_ * bytesPerFrame_);
   readFrame_ = 0;
   writeFrame_ = 0;
   availableFrames_ = 0;
@@ -109,8 +118,10 @@ size_t AudioBuffer::writeBlocking(const PcmBlock& block, const std::atomic<bool>
 
 size_t AudioBuffer::read(float* data, size_t frames) {
   if (!data || frames == 0) return 0;
-  std::fill(data, data + frames * static_cast<size_t>(std::max(1, channels_)), 0.0f);
-  if (format_.sampleFormat != AudioSampleFormat::Float32Interleaved) return 0;
+  if (format_.sampleFormat != AudioSampleFormat::Float32Interleaved) {
+    std::fill(data, data + frames * static_cast<size_t>(std::max(1, channels_)), 0.0f);
+    return 0;
+  }
   PcmBlock block;
   block.format = format_;
   block.data = reinterpret_cast<uint8_t*>(data);
@@ -121,12 +132,20 @@ size_t AudioBuffer::read(float* data, size_t frames) {
 
 size_t AudioBuffer::read(PcmBlock& block) {
   if (!block.data || block.frames == 0) return 0;
-  if (block.byteSize > 0) std::memset(block.data, 0, block.byteSize);
-  if (!bufferFormatsCompatible(block.format, format_)) return 0;
   const size_t targetBytesPerFrame = audioFormatBytesPerFrame(block.format);
-  if (targetBytesPerFrame == 0) return 0;
+  if (targetBytesPerFrame == 0) {
+    if (block.byteSize > 0) std::memset(block.data, 0, block.byteSize);
+    return 0;
+  }
+  if (!bufferFormatsCompatible(block.format, format_)) {
+    zeroBlockFrames(block, 0, block.frames, targetBytesPerFrame);
+    return 0;
+  }
   std::lock_guard lock(mutex_);
-  if (availableFrames_ == 0 || capacityFrames_ == 0 || channels_ <= 0) return 0;
+  if (availableFrames_ == 0 || capacityFrames_ == 0 || channels_ <= 0) {
+    zeroBlockFrames(block, 0, block.frames, targetBytesPerFrame);
+    return 0;
+  }
 
   size_t read = 0;
   while (read < block.frames && availableFrames_ > 0) {
@@ -139,6 +158,9 @@ size_t AudioBuffer::read(PcmBlock& block) {
     readFrame_ = (readFrame_ + readable) % capacityFrames_;
     availableFrames_ -= readable;
     read += readable;
+  }
+  if (read < block.frames) {
+    zeroBlockFrames(block, read, block.frames - read, targetBytesPerFrame);
   }
   notFull_.notify_one();
   return read;

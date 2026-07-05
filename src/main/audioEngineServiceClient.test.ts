@@ -135,3 +135,30 @@ test('cache refreshes coalesce while a same-method service request is in flight'
 
   binding.destroy()
 })
+
+test('cache refreshes keep distinct visualization options in flight independently', () => {
+  const child = new ManualUtilityProcess()
+  const electron = {
+    utilityProcess: {
+      fork: () => child
+    }
+  }
+
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 100,
+    restartDelayMs: 1000,
+    electron
+  })
+
+  binding.GetVisualizationData('{"spectrumPoints":64}')
+  binding.GetVisualizationData('{"spectrumPoints":4096}')
+
+  assert.equal(child.messages.length, 2)
+  assert.deepEqual(
+    child.messages.map((message) => (message as { args: unknown[] }).args),
+    [['{"spectrumPoints":64}'], ['{"spectrumPoints":4096}']]
+  )
+
+  binding.destroy()
+})

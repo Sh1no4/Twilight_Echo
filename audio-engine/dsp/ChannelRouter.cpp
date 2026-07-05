@@ -1,5 +1,7 @@
 #include "ChannelRouter.h"
 
+#include "ChannelRouterDelayUtils.h"
+
 #include <algorithm>
 #include <cstring>
 #include <cmath>
@@ -19,8 +21,8 @@ void ChannelRouter::setSampleRate(int sampleRate) {
 
 void ChannelRouter::reset() {
   lfePrev_ = 0.0f;
-  surroundLeftDelay_.clear();
-  surroundRightDelay_.clear();
+  channel_router::prepareDelayLine(surroundLeftDelay_, surroundDelaySamples_, surroundLeftDelayCursor_);
+  channel_router::prepareDelayLine(surroundRightDelay_, surroundDelaySamples_, surroundRightDelayCursor_);
 }
 
 void ChannelRouter::recomputeCoefficients() {
@@ -35,8 +37,8 @@ void ChannelRouter::recomputeCoefficients() {
       std::max(0.0f, config_.surroundDelayMs) * 0.001f * static_cast<float>(sampleRate_));
   if (surroundDelaySamples_ != newDelay) {
     surroundDelaySamples_ = newDelay;
-    surroundLeftDelay_.assign(surroundDelaySamples_, 0.0f);
-    surroundRightDelay_.assign(surroundDelaySamples_, 0.0f);
+    channel_router::prepareDelayLine(surroundLeftDelay_, surroundDelaySamples_, surroundLeftDelayCursor_);
+    channel_router::prepareDelayLine(surroundRightDelay_, surroundDelaySamples_, surroundRightDelayCursor_);
   }
 }
 
@@ -104,12 +106,8 @@ void ChannelRouter::processUpmix51(const float* src, float* dst, size_t frames) 
     const float rl = l * sg;
     const float rr = r * sg;
     if (surroundDelaySamples_ > 0) {
-      surroundLeftDelay_.push_back(rl);
-      surroundRightDelay_.push_back(rr);
-      out[4] = surroundLeftDelay_.front();
-      out[5] = surroundRightDelay_.front();
-      surroundLeftDelay_.pop_front();
-      surroundRightDelay_.pop_front();
+      out[4] = channel_router::pushDelaySample(surroundLeftDelay_, surroundLeftDelayCursor_, rl);
+      out[5] = channel_router::pushDelaySample(surroundRightDelay_, surroundRightDelayCursor_, rr);
     } else {
       out[4] = rl;                       // RL = L × surroundGain
       out[5] = rr;                       // RR = R × surroundGain
@@ -152,6 +150,11 @@ void ChannelRouter::processUpmix71(const float* src, float* dst, size_t frames) 
 void ChannelRouter::processPassthrough(const float* src, float* dst,
                                        size_t frames, int srcCh, int dstCh,
                                        ChannelRoutingMode mode) {
+  if (channel_router::canFastRouteMonoToStereo(srcCh, dstCh, mode)) {
+    channel_router::routeMonoToStereo(src, dst, frames);
+    return;
+  }
+
   for (size_t frame = 0; frame < frames; ++frame) {
     const float* srcFrame = src + frame * static_cast<size_t>(srcCh);
     float* dstFrame = dst + frame * static_cast<size_t>(dstCh);

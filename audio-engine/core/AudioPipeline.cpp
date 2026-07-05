@@ -1,4 +1,6 @@
 #include "AudioPipeline.h"
+#include "AudioPipelineDsdUtils.h"
+#include "AudioPipelineRenderUtils.h"
 #include "../dsp/ChannelRouter.h"
 #include "../decoder/SacdIsoProbe.h"
 
@@ -154,48 +156,8 @@ float signed24ToFloat(int32_t value) {
   return static_cast<float>(std::clamp(static_cast<double>(value) / 8388608.0, -1.0, 1.0));
 }
 
-float int16ToFloat(int16_t value) {
-  return static_cast<float>(std::clamp(static_cast<double>(value) / 32768.0, -1.0, 1.0));
-}
-
-float int32ToFloat(int32_t value) {
-  return static_cast<float>(std::clamp(static_cast<double>(value) / 2147483648.0, -1.0, 1.0));
-}
-
 void typedPcmToFloat(const PcmBlock& block, float* output, size_t frames) {
-  if (!block.data || !output || frames == 0 || block.format.channelCount <= 0) return;
-  const int channels = std::max(1, block.format.channelCount);
-  const size_t availableFrames = std::min(frames, block.frames);
-  const size_t samples = availableFrames * static_cast<size_t>(channels);
-  std::fill(output, output + frames * static_cast<size_t>(channels), 0.0f);
-  switch (block.format.sampleFormat) {
-    case AudioSampleFormat::Int16Interleaved: {
-      const auto* input = reinterpret_cast<const int16_t*>(block.data);
-      for (size_t i = 0; i < samples; ++i) output[i] = int16ToFloat(input[i]);
-      break;
-    }
-    case AudioSampleFormat::Int24Interleaved: {
-      for (size_t i = 0; i < samples; ++i) {
-        const size_t offset = i * 3;
-        output[i] = signed24ToFloat(signed24FromBytes(block.data[offset], block.data[offset + 1], block.data[offset + 2]));
-      }
-      break;
-    }
-    case AudioSampleFormat::Int24In32Interleaved: {
-      const auto* input = reinterpret_cast<const int32_t*>(block.data);
-      for (size_t i = 0; i < samples; ++i) output[i] = signed24ToFloat(input[i] >> 8);
-      break;
-    }
-    case AudioSampleFormat::Int32Interleaved: {
-      const auto* input = reinterpret_cast<const int32_t*>(block.data);
-      for (size_t i = 0; i < samples; ++i) output[i] = int32ToFloat(input[i]);
-      break;
-    }
-    case AudioSampleFormat::Float32Interleaved:
-    default:
-      std::memcpy(output, block.data, samples * sizeof(float));
-      break;
-  }
+  render::typedPcmToFloatWithTailSilence(block, output, frames);
 }
 
 void dopBytesToFloatCarrier(
@@ -220,50 +182,13 @@ void dopBytesToFloatCarrier(
   std::fill(output + count, output + sampleCount, 0.0f);
 }
 
-uint8_t reverseDsdBits(uint8_t value) {
-  value = static_cast<uint8_t>(((value & 0xf0) >> 4) | ((value & 0x0f) << 4));
-  value = static_cast<uint8_t>(((value & 0xcc) >> 2) | ((value & 0x33) << 2));
-  value = static_cast<uint8_t>(((value & 0xaa) >> 1) | ((value & 0x55) << 1));
-  return value;
-}
-
-uint8_t convertDsdByte(uint8_t value, DsdBitOrder sourceOrder, AudioSampleFormat targetFormat) {
-  if (targetFormat == AudioSampleFormat::DsdInt8Ner8) return value;
-  const bool targetMsb = targetFormat == AudioSampleFormat::DsdInt8Msb1;
-  const bool sourceMsb = sourceOrder == DsdBitOrder::MsbFirst;
-  return targetMsb == sourceMsb ? value : reverseDsdBits(value);
-}
-
 size_t dsdBytesToInterleaved(
     const uint8_t* dsdBytes,
     size_t byteCount,
     const DsdStreamInfo& info,
     AudioSampleFormat targetFormat,
     std::vector<uint8_t>* output) {
-  if (!dsdBytes || !output || info.channelCount <= 0) return 0;
-  const size_t channels = static_cast<size_t>(info.channelCount);
-  const size_t frames = byteCount / channels;
-  if (frames == 0) return 0;
-  output->assign(frames * channels, 0);
-  if (info.packing == DsdPacking::DsfPlanarBlocks) {
-    const size_t channelBlock = byteCount / channels;
-    const size_t usableFrames = channelBlock;
-    output->assign(usableFrames * channels, 0);
-    for (size_t frame = 0; frame < usableFrames; ++frame) {
-      for (size_t channel = 0; channel < channels; ++channel) {
-        const size_t sourceIndex = channel * channelBlock + frame;
-        (*output)[frame * channels + channel] = convertDsdByte(dsdBytes[sourceIndex], info.bitOrder, targetFormat);
-      }
-    }
-    return usableFrames;
-  }
-  for (size_t frame = 0; frame < frames; ++frame) {
-    for (size_t channel = 0; channel < channels; ++channel) {
-      const size_t index = frame * channels + channel;
-      (*output)[index] = convertDsdByte(dsdBytes[index], info.bitOrder, targetFormat);
-    }
-  }
-  return frames;
+  return render::dsdBytesToInterleavedResizeOnly(dsdBytes, byteCount, info, targetFormat, output);
 }
 
 DsdBitOrder dsdBitOrderFromInfo(const DsdStreamInfo& info) {
@@ -869,7 +794,7 @@ TAE_Result AudioPipeline::playInternal(
     }
     AudioFormat requestedPcmFormat =
         active->stream.isDsd ? pcmFallbackRequestFormat(active->stream, dsdProbe) : active->stream.sourceFormat;
-    
+
     switch (outputConfig.routingMode) {
       case ChannelRoutingMode::MonoToStereo:
       case ChannelRoutingMode::Stereo:
@@ -1641,7 +1566,6 @@ bool AudioPipeline::updatePerfectLocked() {
 
 size_t AudioPipeline::renderTyped(PcmBlock& output) {
   if (!output.data || output.frames == 0) return 0;
-  if (output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
 
   PipelineState state = PipelineState::Stopped;
   std::shared_ptr<DecodeStream> active;
@@ -1661,6 +1585,7 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
   }
 
   if (state != PipelineState::Playing || !active) {
+    if (typedPassthroughActive && output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
     spectrum_.resetCapture();
     return typedPassthroughActive ? output.frames : 0;
   }
@@ -1674,6 +1599,7 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
           ? dsdFormatsExactMatch(active->bufferFormat(), output.format)
           : pcmFormatsExactMatch(active->bufferFormat(), output.format);
   if (!typedPassthroughActive || !outputMatches || !bufferMatches) {
+    if (output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
     return 0;
   }
 
@@ -1685,19 +1611,15 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
       spectrum_.resetCapture();
     } else {
       const int channels = std::max(1, output.format.channelCount);
-      const size_t visualizationSamples = output.frames * static_cast<size_t>(channels);
+      const size_t visualizationSamples = read * static_cast<size_t>(channels);
       if (typedVisualizationScratch_.size() < visualizationSamples) {
         typedVisualizationScratch_.resize(visualizationSamples);
       }
-      std::fill(
-          typedVisualizationScratch_.begin(),
-          typedVisualizationScratch_.begin() + static_cast<std::ptrdiff_t>(visualizationSamples),
-          0.0f);
       PcmBlock captured = output;
       captured.frames = read;
       captured.byteSize = read * audioFormatBytesPerFrame(output.format);
-      typedPcmToFloat(captured, typedVisualizationScratch_.data(), output.frames);
-      spectrum_.capture(typedVisualizationScratch_.data(), output.frames, channels);
+      typedPcmToFloat(captured, typedVisualizationScratch_.data(), read);
+      spectrum_.capture(typedVisualizationScratch_.data(), read, channels);
     }
   } else if (active->drained()) {
     ended_ = true;
@@ -1747,8 +1669,8 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     renderReadWait = renderReadWaitForLatency(outputInfo_.latencyInfo.bufferLatencyMs);
   }
 
-  std::fill(output, output + frameCount * static_cast<size_t>(channels), 0.0f);
   if (state != PipelineState::Playing || !active) {
+    std::fill(output, output + frameCount * static_cast<size_t>(channels), 0.0f);
     spectrum_.resetCapture();
     return frameCount;
   }
@@ -1770,7 +1692,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     float* readBuffer = routingRequired ? routingScratch_.data() : segment;
     active->waitForRenderFrames(frameCount - totalRead, renderReadWait);
     const size_t read = active->readFloat(readBuffer, frameCount - totalRead);
-    
+
     if (read > 0 && !dopPathActive) {
       dspChain_.process(readBuffer, read);
       if (routingRequired) {
@@ -1810,13 +1732,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
 
       if (crossfadeMixActive) {
         const size_t preloadSampleCount = read * static_cast<size_t>(channels);
-        if (preloadMixScratch_.size() < preloadSampleCount) {
-          preloadMixScratch_.resize(preloadSampleCount);
-        }
-        std::fill(
-            preloadMixScratch_.begin(),
-            preloadMixScratch_.begin() + static_cast<std::ptrdiff_t>(preloadSampleCount),
-            0.0f);
+        render::resizeFloatScratchForOverwrite(preloadMixScratch_, preloadSampleCount);
         if (routingRequired) {
           if (preloadRoutingScratch_.size() < read * static_cast<size_t>(decodeChannels)) {
             preloadRoutingScratch_.resize(read * static_cast<size_t>(decodeChannels));
@@ -1829,23 +1745,13 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
           if (routingRequired) {
             channelRouter_.route(preloadReadBuffer, preloadMixScratch_.data(), mixedFrames, decodeChannels, channels, outputConfig.routingMode);
           }
-          const uint64_t totalFrames = std::max<uint64_t>(1, crossfadeTotalFrames);
-          for (size_t frame = 0; frame < mixedFrames; ++frame) {
-            const double fadeOut =
-                1.0 - std::clamp(static_cast<double>(crossfadeFramesProcessed + frame) / static_cast<double>(totalFrames), 0.0, 1.0);
-            const double fadeIn =
-                std::clamp(static_cast<double>(crossfadeFramesProcessed + frame) / static_cast<double>(totalFrames), 0.0, 1.0);
-            for (int channel = 0; channel < channels; ++channel) {
-              const size_t index = (totalRead - read + frame) * static_cast<size_t>(channels) + static_cast<size_t>(channel);
-              output[index] = static_cast<float>(std::clamp(
-                  static_cast<double>(output[index]) * fadeOut +
-                      static_cast<double>(
-                          preloadMixScratch_[frame * static_cast<size_t>(channels) + static_cast<size_t>(channel)]) *
-                          fadeIn,
-                  -1.0,
-                  1.0));
-            }
-          }
+          render::mixCrossfadeSegment(
+              output + (totalRead - read) * static_cast<size_t>(channels),
+              preloadMixScratch_.data(),
+              mixedFrames,
+              channels,
+              crossfadeFramesProcessed,
+              crossfadeTotalFrames);
           crossfadeFramesProcessed += mixedFrames;
           {
             std::lock_guard lock(mutex_);
@@ -1890,16 +1796,20 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     if (!next) break;
   }
 
+  if (totalRead < frameCount) {
+    std::fill(
+        output + totalRead * static_cast<size_t>(channels),
+        output + frameCount * static_cast<size_t>(channels),
+        0.0f);
+  }
+
   if (!dopPathActive && std::abs(volume - 1.0) > 0.0001) {
-    const size_t sampleCount = frameCount * static_cast<size_t>(channels);
-    for (size_t i = 0; i < sampleCount; ++i) {
-      output[i] = static_cast<float>(std::clamp(static_cast<double>(output[i]) * volume, -1.0, 1.0));
-    }
+    render::applyVolumeToRenderedFrames(output, totalRead, frameCount, channels, volume);
   }
 
   if (positionRead > 0) {
     renderedFrames_ += positionRead;
-    spectrum_.capture(output, frameCount, channels);
+    spectrum_.capture(output, totalRead, channels);
   } else if (active->drained()) {
     ended_ = true;
     std::lock_guard lock(mutex_);

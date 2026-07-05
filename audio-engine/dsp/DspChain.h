@@ -7,6 +7,7 @@
 #include "ReplayGainProcessor.h"
 #include "../plugins/PluginRegistry.h"
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -48,12 +49,14 @@ class DspChain {
   AudioFormat format_;
   DspTrackContext trackContext_;
   DspStatus status_;
+  std::atomic<bool> processingRequired_{false};
   ReplayGainProcessor* replayGain_ = nullptr;
   ParametricEqProcessor* eq_ = nullptr;
   ConvolverProcessor* convolver_ = nullptr;
   CrossfeedProcessor* crossfeed_ = nullptr;
   PluginRegistry* nativePlugins_ = nullptr;
   std::vector<std::unique_ptr<IAudioProcessor>> processors_;
+  std::vector<IAudioProcessor*> activeProcessors_;
 };
 
 bool dspConfigRequiresProcessing(const std::string& json);

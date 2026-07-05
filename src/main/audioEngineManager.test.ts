@@ -7,6 +7,7 @@ import type {
   AudioDeviceOption,
   AudioEngineManagerDependencies,
   AudioEngineQueueItem,
+  ConvolverInfo,
   LatencyInfo,
   NativeAudioBinding,
   OutputConfig,
@@ -18,7 +19,12 @@ import type {
   VolumeNormalizationMode
 } from './audioEngineManager'
 
-const { AudioEngineManager, DEFAULT_AUDIO_PROCESSING, normalizeAudioProcessingSettings } =
+const {
+  AudioEngineManager,
+  DEFAULT_AUDIO_PROCESSING,
+  createPlaybackInfoFanoutSignature,
+  normalizeAudioProcessingSettings
+} =
   (await import(
     new URL('./audioEngineManager.ts', import.meta.url).href
   )) as typeof import('./audioEngineManager')
@@ -249,12 +255,139 @@ function assertPlaybackMirrorsOutputInfo(info: PlaybackInfo): void {
   assert.equal(info.dsdRate, info.outputInfo.dsdRate)
 }
 
+test('playback fanout signature ignores native tick position changes', () => {
+  const info = makePlaybackInfo({
+    state: 'playing',
+    position: 12.5,
+    duration: 240,
+    queueIndex: 0,
+    source: 'track.flac',
+    nativePlaybackActive: true
+  })
+  const positionOnlyTick: PlaybackInfo = {
+    ...info,
+    position: 13
+  }
+
+  assert.equal(
+    createPlaybackInfoFanoutSignature(info, true),
+    createPlaybackInfoFanoutSignature(positionOnlyTick, true)
+  )
+})
+
+test('playback fanout signature changes for non-position playback facts', () => {
+  const info = makePlaybackInfo({
+    state: 'playing',
+    position: 12.5,
+    duration: 240,
+    queueIndex: 0,
+    source: 'track.flac',
+    dspActive: false,
+    nativePlaybackActive: true,
+    outputInfo: makeOutputInfo({
+      actualBackend: 'wasapi',
+      perfectReasonCode: 'shared_mixer',
+      nativeDsp: {
+        plugins: [
+          {
+            id: 'com.example.eq',
+            active: true,
+            bypassed: false,
+            lastError: ''
+          }
+        ]
+      }
+    })
+  })
+  const base = createPlaybackInfoFanoutSignature(info, true)
+  const cases: Array<[string, PlaybackInfo, boolean]> = [
+    ['state', { ...info, state: 'paused' }, true],
+    ['duration', { ...info, duration: 241 }, true],
+    ['queueIndex', { ...info, queueIndex: 1 }, true],
+    ['source', { ...info, source: 'other.flac' }, true],
+    [
+      'actualBackend',
+      {
+        ...info,
+        actualBackend: 'asio',
+        outputInfo: { ...info.outputInfo, actualBackend: 'asio' }
+      },
+      true
+    ],
+    [
+      'perfectReasonCode',
+      {
+        ...info,
+        perfectReasonCode: 'native_dsp_active',
+        outputInfo: { ...info.outputInfo, perfectReasonCode: 'native_dsp_active' }
+      },
+      true
+    ],
+    [
+      'dsdMode',
+      {
+        ...info,
+        isDsd: true,
+        dsdMode: 'dop',
+        outputInfo: { ...info.outputInfo, isDsd: true, dsdMode: 'dop' }
+      },
+      true
+    ],
+    ['dspActive', { ...info, dspActive: true }, true],
+    [
+      'diagnostics',
+      {
+        ...info,
+        recoveryCount: 1,
+        diagnostics: { ...info.diagnostics, lastError: 'driver restart' },
+        outputInfo: {
+          ...info.outputInfo,
+          recoveryCount: 1,
+          diagnostics: { ...info.outputInfo.diagnostics, lastError: 'driver restart' }
+        }
+      },
+      true
+    ],
+    [
+      'nativeDspStatus',
+      {
+        ...info,
+        outputInfo: {
+          ...info.outputInfo,
+          nativeDsp: {
+            plugins: [
+              {
+                id: 'com.example.eq',
+                active: false,
+                bypassed: true,
+                bypassReason: 'process exceeded realtime budget',
+                lastError: 'process exceeded realtime budget'
+              }
+            ]
+          }
+        }
+      },
+      true
+    ],
+    ['nativePlaybackActive', info, false]
+  ]
+
+  for (const [label, changedInfo, nativePlaybackActive] of cases) {
+    assert.notEqual(
+      createPlaybackInfoFanoutSignature(changedInfo, nativePlaybackActive),
+      base,
+      label
+    )
+  }
+})
+
 class FakeNativeBinding implements NativeAudioBinding {
   playbackInfo: PlaybackInfo
   devices: AudioDeviceOption[]
   lastOutputConfig: OutputConfig = { preferredBufferSize: 0, routingMode: 'auto' }
   lastDspConfig: Partial<AudioProcessingSettings> = {}
   lastEqConfig: Partial<AudioProcessingSettings> = {}
+  lastEqPresetConfig: Partial<AudioProcessingSettings> = {}
   lastReplayGainConfig: {
     mode: VolumeNormalizationMode
     preamp: number
@@ -263,10 +396,37 @@ class FakeNativeBinding implements NativeAudioBinding {
   } | null = null
   lastCrossfeedStrength = 0
   loadedImpulseResponsePath = ''
+  nativeDspPluginChainJson = ''
+  lastLoadedQueue: AudioEngineQueueItem[] = []
+  lastLoadedQueueIndex = -1
   failAsioPlayWith = ''
   lastErrorMessage = ''
   nextLeavesStopped = false
   nextCalls = 0
+  playbackInfoReads = 0
+  spectrumReads = 0
+  visualizationReads = 0
+  volumeCalls = 0
+  playModeCalls = 0
+  metadataReads = 0
+  upcomingTrackReads = 0
+  outputConfigCalls = 0
+  outputDeviceCalls = 0
+  outputBackendCalls = 0
+  loadQueueCalls = 0
+  stopCalls = 0
+  seekCalls = 0
+  enumerateDeviceCalls = 0
+  dspConfigCalls = 0
+  eqBandsCalls = 0
+  eqPresetCalls = 0
+  replayGainCalls = 0
+  crossfeedCalls = 0
+  loadImpulseResponseCalls = 0
+  unloadImpulseResponseCalls = 0
+  nativeDspPluginChainCalls = 0
+  nativeDspPluginStatusReads = 0
+  convolverInfoReads = 0
   playCalls: Array<{ backend: string; device: string; source: string; startTime: number }> = []
 
   constructor(playbackInfo?: Partial<PlaybackInfo>, devices = DEVICE_OPTIONS) {
@@ -300,6 +460,7 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
 
   Stop = (): void => {
+    this.stopCalls += 1
     this.playbackInfo = {
       ...this.playbackInfo,
       state: 'stopped',
@@ -308,6 +469,7 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
 
   Seek = (time: number): void => {
+    this.seekCalls += 1
     this.playbackInfo = {
       ...this.playbackInfo,
       position: time
@@ -315,6 +477,7 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
 
   SetVolume = (volume: number): void => {
+    this.volumeCalls += 1
     this.playbackInfo = {
       ...this.playbackInfo,
       volume
@@ -322,6 +485,7 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
 
   SetOutputDevice = (device: string): void => {
+    this.outputDeviceCalls += 1
     const currentBackend = this.playbackInfo.outputInfo.actualBackend
     const nextDevice =
       device === 'auto' && currentBackend === 'asio'
@@ -340,6 +504,7 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
 
   SetOutputBackend = (backend: string): void => {
+    this.outputBackendCalls += 1
     const exclusive = backend === 'asio' || backend === 'wasapi-exclusive' || backend === 'coreaudio-exclusive'
     const accessMode = backend === 'wasapi' || backend === 'coreaudio' ? 'shared' : 'exclusive'
     const devicePathKind =
@@ -377,6 +542,7 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
 
   SetOutputConfig = (json: string): void => {
+    this.outputConfigCalls += 1
     const parsed = JSON.parse(json) as Partial<OutputConfig>
     this.lastOutputConfig = {
       preferredBufferSize:
@@ -433,7 +599,10 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
 
   LoadQueue = (queueJson: string, startIndex: number): void => {
+    this.loadQueueCalls += 1
     const queue = JSON.parse(queueJson) as AudioEngineQueueItem[]
+    this.lastLoadedQueue = queue
+    this.lastLoadedQueueIndex = startIndex
     this.playbackInfo = {
       ...this.playbackInfo,
       queueIndex: queue.length > 0 ? Math.min(Math.max(0, startIndex), queue.length - 1) : -1
@@ -451,6 +620,7 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
   Previous = (): void => {}
   SetPlayMode = (mode: PlayMode): void => {
+    this.playModeCalls += 1
     this.playbackInfo = {
       ...this.playbackInfo,
       playMode: mode
@@ -458,20 +628,31 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
 
   SetDspConfig = (json: string): void => {
+    this.dspConfigCalls += 1
     this.lastDspConfig = JSON.parse(json) as Partial<AudioProcessingSettings>
   }
   LoadImpulseResponse = (path: string): void => {
+    this.loadImpulseResponseCalls += 1
     this.loadedImpulseResponsePath = path
   }
   UnloadImpulseResponse = (): void => {
+    this.unloadImpulseResponseCalls += 1
     this.loadedImpulseResponsePath = ''
   }
-  GetConvolverInfo = (): string => JSON.stringify({ loaded: false, active: false })
+  GetConvolverInfo = (): string => {
+    this.convolverInfoReads += 1
+    return JSON.stringify({ loaded: false, active: false, reads: this.convolverInfoReads })
+  }
   SetEqBands = (json: string): void => {
+    this.eqBandsCalls += 1
     this.lastEqConfig = JSON.parse(json) as Partial<AudioProcessingSettings>
   }
-  SetEqPreset = (_json: string): void => {}
+  SetEqPreset = (json: string): void => {
+    this.eqPresetCalls += 1
+    this.lastEqPresetConfig = JSON.parse(json) as Partial<AudioProcessingSettings>
+  }
   SetCrossfeedStrength = (strength: number): void => {
+    this.crossfeedCalls += 1
     this.lastCrossfeedStrength = strength
   }
   SetReplayGainMode = (
@@ -480,13 +661,43 @@ class FakeNativeBinding implements NativeAudioBinding {
     fallback: number,
     clip: boolean
   ): void => {
+    this.replayGainCalls += 1
     this.lastReplayGainConfig = { mode, preamp, fallback, clip }
   }
-  GetMetadata = (_source: string): string => JSON.stringify(null)
-  GetPlaybackInfo = (): string => JSON.stringify(this.playbackInfo)
-  GetUpcomingTrack = (): AudioEngineQueueItem | null => null
-  GetSpectrumData = (): number[] => []
+  SetDspPluginChain = (json: string): void => {
+    this.nativeDspPluginChainCalls += 1
+    this.nativeDspPluginChainJson = json
+  }
+  GetMetadata = (source: string): string => {
+    this.metadataReads += 1
+    return JSON.stringify({
+      source,
+      title: `sync metadata ${this.metadataReads}`,
+      error: ''
+    })
+  }
+  GetDspPluginStatus = (): string => {
+    this.nativeDspPluginStatusReads += 1
+    return JSON.stringify({ plugins: [{ id: 'com.example.eq', reads: this.nativeDspPluginStatusReads }] })
+  }
+  GetPlaybackInfo = (): string => {
+    this.playbackInfoReads += 1
+    return JSON.stringify(this.playbackInfo)
+  }
+  GetUpcomingTrack = (): AudioEngineQueueItem | null => {
+    this.upcomingTrackReads += 1
+    return {
+      id: `upcoming-${this.upcomingTrackReads}`,
+      source: `file:///upcoming-${this.upcomingTrackReads}.flac`,
+      title: `Upcoming ${this.upcomingTrackReads}`
+    }
+  }
+  GetSpectrumData = (points = 64): number[] => {
+    this.spectrumReads += 1
+    return Array.from({ length: points }, (_, index) => this.spectrumReads + index / 100)
+  }
   GetVisualizationData = (optionsJson: string): string => {
+    this.visualizationReads += 1
     const options = JSON.parse(optionsJson || '{}') as {
       spectrumPoints?: number
       waveformPoints?: number
@@ -508,7 +719,10 @@ class FakeNativeBinding implements NativeAudioBinding {
       active: true
     })
   }
-  EnumerateDevices = (): string => JSON.stringify(this.devices)
+  EnumerateDevices = (): string => {
+    this.enumerateDeviceCalls += 1
+    return JSON.stringify(this.devices)
+  }
   EnumerateBackends = (): string => JSON.stringify(['wasapi', 'wasapi-exclusive', 'asio', 'coreaudio', 'coreaudio-exclusive'])
   GetEngineCapabilities = (): string => JSON.stringify({})
   GetLastError = (): string => JSON.stringify({ message: this.lastErrorMessage })
@@ -586,12 +800,18 @@ class FakeNativeBinding implements NativeAudioBinding {
 
 class FakeAudioServiceBinding extends EventEmitter implements AudioEngineServiceNativeBinding {
   stopped = false
+  stopCalls = 0
+  destroyCalls = 0
   volume = 1
   backend = 'wasapi'
   device = 'auto'
   outputConfig: Partial<OutputConfig> = {}
   dspConfig: Partial<AudioProcessingSettings> = {}
   dspPluginChain = ''
+  eqBandsCalls = 0
+  replayGainCalls = 0
+  crossfeedCalls = 0
+  metadataReads = 0
   queue: AudioEngineQueueItem[] = []
   queueIndex = -1
   playCalls = 0
@@ -605,6 +825,7 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
     this.playbackInfo = { ...this.playbackInfo, state: 'paused' }
   }
   Stop = (): void => {
+    this.stopCalls += 1
     this.stopped = true
     this.playbackInfo = { ...this.playbackInfo, state: 'stopped', nativePlaybackActive: false }
   }
@@ -628,6 +849,15 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   SetDspConfig = (json: string): void => {
     this.dspConfig = JSON.parse(json) as Partial<AudioProcessingSettings>
   }
+  SetEqBands = (): void => {
+    this.eqBandsCalls += 1
+  }
+  SetReplayGainMode = (): void => {
+    this.replayGainCalls += 1
+  }
+  SetCrossfeedStrength = (): void => {
+    this.crossfeedCalls += 1
+  }
   SetDspPluginChain = (json: string): void => {
     this.dspPluginChain = json
   }
@@ -636,9 +866,11 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   GetDspPluginStatus = (): string => JSON.stringify({ plugins: [] })
   GetLastError = (): string => JSON.stringify({ message: '' })
   async getMetadataAsync(source: string): Promise<string> {
-    return JSON.stringify({ source, title: 'service metadata', error: '' })
+    this.metadataReads += 1
+    return JSON.stringify({ source, title: `service metadata ${this.metadataReads}`, error: '' })
   }
   destroy(): void {
+    this.destroyCalls += 1
     this.stopped = true
   }
 }
@@ -717,6 +949,33 @@ test('setExclusiveMode refreshes backend facts immediately', async () => {
   assertPlaybackMirrorsOutputInfo(info)
 })
 
+test('setExclusiveMode skips native calls and playback fanout when mode is unchanged', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+
+  const firstState = await manager.setExclusiveMode(true)
+  assert.equal(firstState.exclusiveMode, true)
+  assert.equal(nativeBinding.outputBackendCalls, 1)
+  assert.equal(nativeBinding.outputConfigCalls, 1)
+  assert.equal(playbackUpdates.at(-1)?.outputBackend, 'wasapi-exclusive')
+  const fullUpdatesAfterChange = playbackUpdates.length
+
+  const secondState = await manager.setExclusiveMode(true)
+  assert.equal(secondState.exclusiveMode, true)
+  assert.equal(nativeBinding.outputBackendCalls, 1)
+  assert.equal(nativeBinding.outputConfigCalls, 1)
+  assert.equal(playbackUpdates.length, fullUpdatesAfterChange)
+})
+
 test('setOutputConfig forwards and keeps advanced upmix parameters', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
@@ -747,6 +1006,29 @@ test('setOutputConfig forwards and keeps advanced upmix parameters', async () =>
   assert.equal(nativeBinding.lastOutputConfig.upmixSurroundGain, 0.75)
   assert.equal(nativeBinding.lastOutputConfig.upmixSideGain, 0.4)
   assert.equal(nativeBinding.lastOutputConfig.upmixSurroundDelayMs, 12)
+})
+
+test('setOutputConfig skips native call and playback fanout when normalized config is unchanged', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+
+  await manager.setOutputConfig({ preferredBufferSize: 512, routingMode: 'stereo-to-7.1' })
+  assert.equal(nativeBinding.outputConfigCalls, 1)
+  assert.equal(playbackUpdates.at(-1)?.outputInfo.channelRoutingMode, 'stereo-to-7.1')
+  const fullUpdatesAfterChange = playbackUpdates.length
+
+  await manager.setOutputConfig({ preferredBufferSize: 512, routingMode: 'stereo-to-7.1' })
+  assert.equal(nativeBinding.outputConfigCalls, 1)
+  assert.equal(playbackUpdates.length, fullUpdatesAfterChange)
 })
 
 test('coreaudio exclusive mode maps to coreaudio-exclusive backend', async () => {
@@ -827,6 +1109,31 @@ test('setAudioDevice refreshes canonical device names immediately', async () => 
   assert.equal(info.outputInfo.actualDeviceName, 'Desk DAC')
   assert.equal(info.outputInfo.devicePathKind, 'default')
   assertPlaybackMirrorsOutputInfo(info)
+})
+
+test('setAudioDevice skips native call and playback fanout when normalized device is unchanged', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+
+  const firstState = await manager.setAudioDevice('dac-1')
+  assert.equal(firstState.device, 'dac-1')
+  assert.equal(nativeBinding.outputDeviceCalls, 1)
+  assert.equal(playbackUpdates.at(-1)?.outputDevice, 'dac-1')
+  const fullUpdatesAfterChange = playbackUpdates.length
+
+  const secondState = await manager.setAudioDevice('dac-1')
+  assert.equal(secondState.device, 'dac-1')
+  assert.equal(nativeBinding.outputDeviceCalls, 1)
+  assert.equal(playbackUpdates.length, fullUpdatesAfterChange)
 })
 
 test('default output device display labels normalize to auto', async () => {
@@ -922,6 +1229,37 @@ test('ASIO output config uses the native applied buffer and capability facts', a
   assert.deepEqual(asioDevice?.dopCarrierFormats, ['int24-in32'])
   assert.equal(asioDevice?.capabilityVersion, 3)
   assertPlaybackMirrorsOutputInfo(info)
+})
+
+test('setAudioOutput skips native calls and playback fanout when output and device are unchanged', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+
+  const firstState = await manager.setAudioOutput('asio', 'asio:studio')
+  assert.equal(firstState.output, 'asio')
+  assert.equal(firstState.device, 'asio:studio')
+  assert.equal(nativeBinding.outputBackendCalls, 1)
+  assert.equal(nativeBinding.outputDeviceCalls, 1)
+  assert.equal(nativeBinding.outputConfigCalls, 1)
+  assert.equal(playbackUpdates.at(-1)?.outputBackend, 'asio')
+  const fullUpdatesAfterChange = playbackUpdates.length
+
+  const secondState = await manager.setAudioOutput('asio', 'asio:studio')
+  assert.equal(secondState.output, 'asio')
+  assert.equal(secondState.device, 'asio:studio')
+  assert.equal(nativeBinding.outputBackendCalls, 1)
+  assert.equal(nativeBinding.outputDeviceCalls, 1)
+  assert.equal(nativeBinding.outputConfigCalls, 1)
+  assert.equal(playbackUpdates.length, fullUpdatesAfterChange)
 })
 
 test('backend and device switches do not leave stale output facts', async () => {
@@ -1084,6 +1422,382 @@ test('next falls back to target track when native Next reports stale playback in
   assert.equal(info.source, 'second.flac')
 })
 
+test('loadQueue skips native call and queue fanout when normalized queue is unchanged', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const queue: AudioEngineQueueItem[] = [
+    { id: 'local:one', source: 'one.flac', title: 'One' },
+    { id: 'local:two', source: 'two.flac', title: 'Two' }
+  ]
+  const queueChanges: AudioEngineQueueItem[][] = []
+  manager.on('queue-change', (items: AudioEngineQueueItem[]) => queueChanges.push(items))
+
+  await manager.loadQueue(queue, 1)
+  assert.equal(nativeBinding.loadQueueCalls, 1)
+  assert.deepEqual(nativeBinding.lastLoadedQueue, queue)
+  assert.equal(nativeBinding.lastLoadedQueueIndex, 1)
+  assert.equal(queueChanges.length, 1)
+
+  await manager.loadQueue(queue.map((item) => ({ ...item })), 99)
+  assert.equal(nativeBinding.loadQueueCalls, 1)
+  assert.deepEqual(nativeBinding.lastLoadedQueue, queue)
+  assert.equal(nativeBinding.lastLoadedQueueIndex, 1)
+  assert.equal(queueChanges.length, 1)
+})
+
+test('getPlaybackInfo reuses fresh native playback info from the manager tick', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  let now = 1000
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+
+  await manager.play('track.flac', 0)
+  assert.equal(nativeBinding.playbackInfoReads, 1)
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    position: 0.25
+  }
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+  assert.equal(nativeBinding.playbackInfoReads, 2)
+
+  const cachedInfo = await manager.getPlaybackInfo()
+  assert.equal(nativeBinding.playbackInfoReads, 2)
+  assert.equal(cachedInfo.position, 0.25)
+
+  now += 250
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    position: 0.5
+  }
+  const refreshedInfo = await manager.getPlaybackInfo()
+  assert.equal(nativeBinding.playbackInfoReads, 3)
+  assert.equal(refreshedInfo.position, 0.5)
+})
+
+test('native tick skips full playback-info fanout when only position changes', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  const timePositions: number[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+  manager.on('property-change', ({ name, data }) => {
+    if (name === 'time-pos') timePositions.push(data as number)
+  })
+
+  await manager.play('track.flac', 0)
+  const fullUpdatesAfterPlay = playbackUpdates.length
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    position: 0.25
+  }
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+
+  assert.equal(timePositions.at(-1), 0.25)
+  assert.equal(playbackUpdates.length, fullUpdatesAfterPlay)
+})
+
+test('native tick publishes playback-info when non-position playback facts change', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+  const queue = [
+    { id: '1', source: 'first.flac', title: 'First' },
+    { id: '2', source: 'second.flac', title: 'Second' }
+  ]
+
+  await manager.loadQueue(queue, 0)
+  await manager.play(queue[0].source, 0)
+  playbackUpdates.length = 0
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    position: 0.25,
+    source: queue[1].source,
+    queueIndex: 1
+  }
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+
+  assert.equal(playbackUpdates.length, 1)
+  assert.equal(playbackUpdates[0].source, queue[1].source)
+  assert.equal(playbackUpdates[0].queueIndex, 1)
+})
+
+test('native tick skips repeated duration property changes until duration changes', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const durations: number[] = []
+  manager.on('property-change', ({ name, data }) => {
+    if (name === 'duration') durations.push(data as number)
+  })
+  const queue = [{ id: '1', source: 'track.flac', title: 'Track', duration: 120 }]
+
+  await manager.loadQueue(queue, 0)
+  await manager.play(queue[0].source, 0)
+  assert.deepEqual(durations, [120])
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    position: 0.25,
+    duration: 120
+  }
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+  assert.deepEqual(durations, [120])
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    position: 0.5,
+    duration: 121
+  }
+  tickManager.tick()
+  assert.deepEqual(durations, [120, 121])
+})
+
+test('setVolume skips native call and playback fanout when normalized volume is unchanged', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+
+  await manager.setVolume(0.5)
+  assert.equal(nativeBinding.volumeCalls, 1)
+  assert.equal(playbackUpdates.at(-1)?.volume, 0.5)
+  const fullUpdatesAfterChange = playbackUpdates.length
+
+  await manager.setVolume(0.5)
+  assert.equal(nativeBinding.volumeCalls, 1)
+  assert.equal(playbackUpdates.length, fullUpdatesAfterChange)
+})
+
+test('seek skips native call and fanout when paused position is unchanged', async () => {
+  const nativeBinding = new FakeNativeBinding({ state: 'paused', position: 32 })
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  const timePositions: number[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+  manager.on('property-change', (event: { name: string; data: unknown }) => {
+    if (event.name === 'time-pos') timePositions.push(event.data as number)
+  })
+
+  await manager.seek(48)
+  assert.equal(nativeBinding.seekCalls, 1)
+  assert.deepEqual(timePositions, [48])
+  assert.equal(playbackUpdates.at(-1)?.position, 48)
+  const fullUpdatesAfterSeek = playbackUpdates.length
+
+  await manager.seek(48)
+  assert.equal(nativeBinding.seekCalls, 1)
+  assert.deepEqual(timePositions, [48])
+  assert.equal(playbackUpdates.length, fullUpdatesAfterSeek)
+})
+
+test('stop skips native call and playback fanout when already idle', async () => {
+  const nativeBinding = new FakeNativeBinding({ state: 'stopped', position: 0 })
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  const propertyChanges: Array<{ name: string; data: unknown }> = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+  manager.on('property-change', (event: { name: string; data: unknown }) =>
+    propertyChanges.push(event)
+  )
+
+  await manager.stop()
+
+  assert.equal(nativeBinding.stopCalls, 0)
+  assert.equal(playbackUpdates.length, 0)
+  assert.equal(propertyChanges.length, 0)
+})
+
+test('setPlayMode skips native call and playback fanout when mode is unchanged', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+
+  await manager.setPlayMode('repeat')
+  assert.equal(nativeBinding.playModeCalls, 1)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.at(-1)?.playMode, 'repeat')
+  const fullUpdatesAfterChange = playbackUpdates.length
+
+  await manager.setPlayMode('repeat')
+  assert.equal(nativeBinding.playModeCalls, 1)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.length, fullUpdatesAfterChange)
+})
+
+test('getUpcomingTrack reuses native result briefly and invalidates on play mode change', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  let now = 1000
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+
+  const first = manager.getUpcomingTrack()
+  const second = manager.getUpcomingTrack()
+
+  assert.equal(nativeBinding.upcomingTrackReads, 1)
+  assert.deepEqual(second, first)
+
+  now += 250
+  const refreshed = manager.getUpcomingTrack()
+  assert.equal(nativeBinding.upcomingTrackReads, 2)
+  assert.notDeepEqual(refreshed, first)
+
+  const cached = manager.getUpcomingTrack()
+  assert.equal(nativeBinding.upcomingTrackReads, 2)
+  assert.deepEqual(cached, refreshed)
+
+  await manager.setPlayMode('repeat')
+  const afterModeChange = manager.getUpcomingTrack()
+
+  assert.equal(nativeBinding.upcomingTrackReads, 3)
+  assert.notDeepEqual(afterModeChange, refreshed)
+})
+
+test('getMetadata reuses native metadata for the same source within the cache window', () => {
+  const nativeBinding = new FakeNativeBinding()
+  let now = 1000
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+
+  const first = manager.getMetadata('file:///album/track.flac')
+  const second = manager.getMetadata('file:///album/track.flac')
+
+  assert.equal(nativeBinding.metadataReads, 1)
+  assert.deepEqual(second, first)
+
+  const other = manager.getMetadata('file:///album/other.flac')
+  assert.equal(nativeBinding.metadataReads, 2)
+  assert.notDeepEqual(other, first)
+
+  now += 1250
+  const refreshed = manager.getMetadata('file:///album/track.flac')
+  assert.equal(nativeBinding.metadataReads, 3)
+  assert.notDeepEqual(refreshed, first)
+})
+
+test('getMetadataAsync reuses service metadata for the same source within the cache window', async () => {
+  const service = new FakeAudioServiceBinding()
+  let now = 1000
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false },
+    {
+      audioServiceFactory: () => service,
+      scheduler: {
+        ...TEST_SCHEDULER,
+        now: () => now
+      },
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+
+  const first = await manager.getMetadataAsync('service-track.flac')
+  const second = await manager.getMetadataAsync('service-track.flac')
+
+  assert.equal(service.metadataReads, 1)
+  assert.deepEqual(second, first)
+
+  const other = await manager.getMetadataAsync('other-service-track.flac')
+  assert.equal(service.metadataReads, 2)
+  assert.notDeepEqual(other, first)
+
+  now += 1250
+  const refreshed = await manager.getMetadataAsync('service-track.flac')
+  assert.equal(service.metadataReads, 3)
+  assert.notDeepEqual(refreshed, first)
+
+  manager.destroy()
+})
+
 test('setOutputConfig keeps routing and non-perfect reasons in sync', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
@@ -1191,6 +1905,63 @@ test('getAudioOutputState can use injected device options without native enumera
   assert.equal(state.deviceOptions[2].capabilityVersion, 3)
 })
 
+test('getAudioOutputState reuses native device options within the output state cache window', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    {
+      nativeBinding,
+      scheduler: TEST_SCHEDULER
+    }
+  )
+  const enumerateCallsAfterConstruction = nativeBinding.enumerateDeviceCalls
+
+  const first = await manager.getAudioOutputState()
+  const enumerateCallsAfterFirstRead = nativeBinding.enumerateDeviceCalls
+  const second = await manager.getAudioOutputState()
+
+  assert.ok(enumerateCallsAfterFirstRead <= enumerateCallsAfterConstruction + 1)
+  assert.equal(nativeBinding.enumerateDeviceCalls, enumerateCallsAfterFirstRead)
+  assert.deepEqual(second.deviceOptions, first.deviceOptions)
+})
+
+test('getSpectrumData reuses native spectrum data within one visual frame', () => {
+  const nativeBinding = new FakeNativeBinding()
+  let now = 1000
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+
+  const first = manager.getSpectrumData(12)
+  const second = manager.getSpectrumData(12)
+
+  assert.equal(nativeBinding.spectrumReads, 1)
+  assert.deepEqual(second, first)
+  assert.notStrictEqual(second, first)
+
+  first[0] = 999
+  const third = manager.getSpectrumData(12)
+  assert.equal(nativeBinding.spectrumReads, 1)
+  assert.notEqual(third[0], 999)
+
+  now += 100
+  const refreshed = manager.getSpectrumData(12)
+  assert.equal(nativeBinding.spectrumReads, 2)
+  assert.notDeepEqual(refreshed, second)
+})
+
 test('getVisualizationData normalizes native visualization data', () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
@@ -1238,6 +2009,45 @@ test('getVisualizationData preserves high-resolution spectrum requests for the v
 
   assert.equal(data.spectrum.length, 4096)
   assert.equal(data.spectrogram[0].length, 4096)
+})
+
+test('getVisualizationData reuses native visualization data within one visual frame', () => {
+  const nativeBinding = new FakeNativeBinding()
+  let now = 1000
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+
+  const first = manager.getVisualizationData({
+    spectrumPoints: 12,
+    waveformPoints: 20,
+    spectrogramFrames: 1
+  })
+  const second = manager.getVisualizationData({
+    spectrumPoints: 12,
+    waveformPoints: 20,
+    spectrogramFrames: 1
+  })
+
+  assert.equal(nativeBinding.visualizationReads, 1)
+  assert.strictEqual(second, first)
+
+  now += 100
+  const refreshed = manager.getVisualizationData({
+    spectrumPoints: 12,
+    waveformPoints: 20,
+    spectrogramFrames: 1
+  })
+  assert.equal(nativeBinding.visualizationReads, 2)
+  assert.notStrictEqual(refreshed, first)
 })
 
 test('getVisualizationData returns inactive shape when native visualization is unavailable while stopped', () => {
@@ -1418,6 +2228,189 @@ test('DSP module updates enable the native DSP chain instead of only toggling UI
   assert.equal(nativeBinding.loadedImpulseResponsePath, '')
 })
 
+test('setAudioProcessing skips native DSP fanout when normalized settings are unchanged', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioProcessing: {
+        dspEnabled: false,
+        eqEnabled: false,
+        volumeNormalization: 'off',
+        crossfeedEnabled: false,
+        crossfeedStrength: 0,
+        convolverIrPath: ''
+      }
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+
+  await manager.setAudioProcessing({ eqEnabled: true })
+  assert.equal(nativeBinding.dspConfigCalls, 1)
+  assert.equal(nativeBinding.eqBandsCalls, 1)
+  assert.equal(nativeBinding.replayGainCalls, 0)
+  assert.equal(nativeBinding.crossfeedCalls, 0)
+  assert.equal(nativeBinding.unloadImpulseResponseCalls, 0)
+  assert.equal(playbackUpdates.length, 1)
+
+  const unchanged = await manager.setAudioProcessing({ eqEnabled: true })
+
+  assert.equal(unchanged.dspEnabled, true)
+  assert.equal(unchanged.eqEnabled, true)
+  assert.equal(nativeBinding.dspConfigCalls, 1)
+  assert.equal(nativeBinding.eqBandsCalls, 1)
+  assert.equal(nativeBinding.replayGainCalls, 0)
+  assert.equal(nativeBinding.crossfeedCalls, 0)
+  assert.equal(nativeBinding.unloadImpulseResponseCalls, 0)
+  assert.equal(playbackUpdates.length, 1)
+})
+
+test('unloadImpulseResponse skips native fanout when no impulse response is loaded', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioProcessing: {
+        dspEnabled: false,
+        convolverEnabled: false,
+        convolverIrPath: ''
+      }
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+
+  const convolver = await manager.unloadImpulseResponse()
+
+  assert.equal(convolver.loaded, false)
+  assert.equal(manager.getAudioProcessing().convolverEnabled, false)
+  assert.equal(manager.getAudioProcessing().convolverIrPath, '')
+  assert.equal(nativeBinding.unloadImpulseResponseCalls, 0)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.length, 0)
+})
+
+test('getConvolverInfo reuses idle native convolver info within the polling cache window', () => {
+  const nativeBinding = new FakeNativeBinding()
+  let now = 1000
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioProcessing: {
+        dspEnabled: false,
+        convolverEnabled: false,
+        convolverIrPath: ''
+      }
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+
+  const first = manager.getConvolverInfo() as ConvolverInfo & { reads?: number }
+  const second = manager.getConvolverInfo() as ConvolverInfo & { reads?: number }
+
+  assert.equal(nativeBinding.convolverInfoReads, 1)
+  assert.equal(second.reads, first.reads)
+
+  now += 250
+  const refreshed = manager.getConvolverInfo() as ConvolverInfo & { reads?: number }
+
+  assert.equal(nativeBinding.convolverInfoReads, 2)
+  assert.equal(refreshed.reads, 2)
+})
+
+test('specialized DSP setters skip native calls when normalized settings are unchanged', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+
+  await manager.setEqBands({ eqEnabled: true, eqPreamp: 1 })
+  assert.equal(nativeBinding.eqBandsCalls, 1)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.length, 0)
+
+  await manager.setEqBands({ eqEnabled: true, eqPreamp: 1 })
+  assert.equal(nativeBinding.eqBandsCalls, 1)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.length, 0)
+
+  await manager.setCrossfeedStrength(0.35)
+  assert.equal(nativeBinding.crossfeedCalls, 1)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.length, 0)
+
+  await manager.setCrossfeedStrength(0.35)
+  assert.equal(nativeBinding.crossfeedCalls, 1)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.length, 0)
+
+  await manager.setReplayGainMode('track', 1.5, -3, true)
+  assert.equal(nativeBinding.replayGainCalls, 1)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.length, 0)
+
+  await manager.setReplayGainMode('track', 1.5, -3, true)
+  assert.equal(nativeBinding.replayGainCalls, 1)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.length, 0)
+})
+
+test('setEqPreset skips native calls when normalized preset is unchanged', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+  const preset = {
+    eqMode: 'graphic' as const,
+    eqPreamp: 2,
+    eqBands: DEFAULT_AUDIO_PROCESSING.eqBands.map((band, index) => ({
+      ...band,
+      gain: index === 0 ? 1.5 : 0
+    }))
+  }
+
+  const first = await manager.setEqPreset(preset)
+  assert.equal(first.eqEnabled, true)
+  assert.equal(first.eqPreamp, 2)
+  assert.equal(nativeBinding.eqPresetCalls, 1)
+  assert.equal(nativeBinding.lastEqPresetConfig.eqEnabled, true)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.length, 0)
+
+  const second = await manager.setEqPreset(preset)
+  assert.equal(second.eqEnabled, true)
+  assert.equal(second.eqPreamp, 2)
+  assert.equal(nativeBinding.eqPresetCalls, 1)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.length, 0)
+})
+
 test('turning the DSP master switch off still bypasses processing modules', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
@@ -1554,7 +2547,7 @@ test('audio service crash stops native playback and keeps manager usable', async
   })
 
   const meta = await manager.getMetadataAsync('service-track.flac')
-  assert.equal(meta?.title, 'service metadata')
+  assert.equal(meta?.title, 'service metadata 1')
 
   service.emit('crash', 'native dsp crash fixture exited')
   const info = await manager.getPlaybackInfo()
@@ -1567,6 +2560,103 @@ test('audio service crash stops native playback and keeps manager usable', async
   assert.equal(info.outputInfo.recoveryCount, 1)
 
   manager.destroy()
+})
+
+test('destroy skips duplicate native Stop after the manager is already destroyed', () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+
+  manager.destroy()
+  manager.destroy()
+
+  assert.equal(nativeBinding.stopCalls, 1)
+})
+
+test('destroy skips duplicate audio service teardown after the manager is already destroyed', () => {
+  const service = new FakeAudioServiceBinding()
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+
+  manager.destroy()
+  manager.destroy()
+
+  assert.equal(service.stopCalls, 1)
+  assert.equal(service.destroyCalls, 1)
+})
+
+test('setNativeDspPluginChain skips native calls when chain JSON is unchanged', () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const playbackUpdates: PlaybackInfo[] = []
+  manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
+  const chainJson = '{"plugins":[{"id":"com.example.eq"}]}'
+
+  manager.setNativeDspPluginChain(chainJson)
+  assert.equal(nativeBinding.nativeDspPluginChainCalls, 1)
+  assert.equal(nativeBinding.nativeDspPluginChainJson, chainJson)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.length, 0)
+
+  manager.setNativeDspPluginChain(chainJson)
+  assert.equal(nativeBinding.nativeDspPluginChainCalls, 1)
+  assert.equal(nativeBinding.playbackInfoReads, 0)
+  assert.equal(playbackUpdates.length, 0)
+})
+
+test('getNativeDspPluginStatus reuses native status within the polling cache window', () => {
+  const nativeBinding = new FakeNativeBinding()
+  let now = 1000
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+
+  const first = manager.getNativeDspPluginStatus() as { plugins: Array<{ reads: number }> }
+  const second = manager.getNativeDspPluginStatus() as { plugins: Array<{ reads: number }> }
+
+  assert.equal(nativeBinding.nativeDspPluginStatusReads, 1)
+  assert.equal(second.plugins[0]?.reads, first.plugins[0]?.reads)
+
+  manager.setNativeDspPluginChain('{"plugins":[{"id":"com.example.eq"}]}')
+  const afterChainUpdate = manager.getNativeDspPluginStatus() as {
+    plugins: Array<{ reads: number }>
+  }
+
+  assert.equal(nativeBinding.nativeDspPluginStatusReads, 2)
+  assert.equal(afterChainUpdate.plugins[0]?.reads, 2)
+
+  now += 250
+  const refreshed = manager.getNativeDspPluginStatus() as { plugins: Array<{ reads: number }> }
+
+  assert.equal(nativeBinding.nativeDspPluginStatusReads, 3)
+  assert.equal(refreshed.plugins[0]?.reads, 3)
 })
 
 test('audio service ready after restart restores configuration and queue without auto-resume', async () => {
@@ -1591,6 +2681,10 @@ test('audio service ready after restart restores configuration and queue without
   ]
 
   await manager.start()
+  assert.equal(service.eqBandsCalls, 1)
+  assert.equal(service.replayGainCalls, 1)
+  assert.equal(service.crossfeedCalls, 1)
+
   await manager.setAudioOutput('asio', 'asio:studio')
   await manager.loadQueue(queue, 1)
   manager.setNativeDspPluginChain('{"plugins":[{"id":"com.example.eq"}]}')
@@ -1613,6 +2707,9 @@ test('audio service ready after restart restores configuration and queue without
   assert.equal(service.outputConfig.routingMode, 'stereo-to-5.1')
   assert.equal(service.dspConfig.eqEnabled, true)
   assert.equal(service.dspConfig.crossfeedStrength, 0.35)
+  assert.equal(service.eqBandsCalls, 2)
+  assert.equal(service.replayGainCalls, 2)
+  assert.equal(service.crossfeedCalls, 2)
   assert.equal(service.dspPluginChain, '{"plugins":[{"id":"com.example.eq"}]}')
   assert.deepEqual(service.queue, queue)
   assert.equal(service.queueIndex, 1)

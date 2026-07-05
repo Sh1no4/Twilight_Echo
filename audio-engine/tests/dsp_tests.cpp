@@ -1,5 +1,12 @@
 #include "../dsp/DspChain.h"
+#include "../dsp/DspChainActiveUtils.h"
+#include "../dsp/ConvolverProcessorUtils.h"
+#include "../dsp/CrossfeedProcessorUtils.h"
 #include "../dsp/FftSpectrumAnalyzer.h"
+#include "../dsp/FftSpectrumAnalyzerUtils.h"
+#include "../dsp/KissFftAdapterUtils.h"
+#include "../dsp/ParametricEqProcessorUtils.h"
+#include "../dsp/ReplayGainProcessorUtils.h"
 
 #include <cassert>
 #include <cmath>
@@ -14,8 +21,195 @@ using namespace twilight::audio;
 
 namespace {
 
+class CountingProcessor final : public IAudioProcessor {
+ public:
+  explicit CountingProcessor(bool active) : active_(active) {}
+
+  void configure(const DspConfig&) override {}
+  void prepare(const AudioFormat&) override {}
+  void setTrackContext(const DspTrackContext&) override {}
+  void process(float*, size_t) override { ++processCalls; }
+  void reset() override {}
+  bool isActive() const override { return active_; }
+
+  int processCalls = 0;
+
+ private:
+  bool active_ = false;
+};
+
 bool closeTo(double actual, double expected, double tolerance = 0.02) {
   return std::abs(actual - expected) <= tolerance;
+}
+
+void require(bool condition) {
+  if (!condition) std::abort();
+}
+
+void testParametricEqPreampOnlyProcessesContiguousSamples() {
+  std::vector<float> samples = {-0.5f, 0.25f, 3.0f, -3.0f};
+
+  eq::applyPreampOnly(samples.data(), samples.size(), 2.0);
+
+  require(closeTo(samples[0], -1.0f, 0.0001));
+  require(closeTo(samples[1], 0.5f, 0.0001));
+  require(closeTo(samples[2], 4.0f, 0.0001));
+  require(closeTo(samples[3], -4.0f, 0.0001));
+}
+
+void testWindowedFftInputOverwritesScratchWithoutPreclear() {
+  std::vector<float> scratch = {99.0f, 99.0f, 99.0f};
+  const std::vector<float> input = {1.0f, -2.0f, 0.5f};
+  const std::vector<float> window = {0.25f, 0.5f, 2.0f};
+
+  fft::writeWindowedFftInput(input, window, 3, scratch);
+
+  assert(closeTo(scratch[0], 0.25f, 0.0001));
+  assert(closeTo(scratch[1], -1.0f, 0.0001));
+  assert(closeTo(scratch[2], 1.0f, 0.0001));
+}
+
+void testWindowResizeKeepsSameSizedBufferForOverwrite() {
+  std::vector<float> window = {0.1f, 0.2f, 0.3f};
+  const float* before = window.data();
+
+  fft::resizeWindowForOverwrite(window, 3);
+
+  assert(window.data() == before);
+  assert(closeTo(window[0], 0.1f, 0.0001));
+  assert(closeTo(window[1], 0.2f, 0.0001));
+  assert(closeTo(window[2], 0.3f, 0.0001));
+}
+
+void testMagnitudeResizeKeepsSameSizedBufferForOverwrite() {
+  std::vector<float> magnitudes = {0.25f, 0.5f, 0.75f};
+  const float* before = magnitudes.data();
+
+  fft::resizeMagnitudesForOverwrite(magnitudes, 3);
+
+  assert(magnitudes.data() == before);
+  assert(closeTo(magnitudes[0], 0.25f, 0.0001));
+  assert(closeTo(magnitudes[1], 0.5f, 0.0001));
+  assert(closeTo(magnitudes[2], 0.75f, 0.0001));
+}
+
+void testReducedArrayJsonWritesDirectlyWithOptionalClamp() {
+  std::ostringstream json;
+  const std::vector<float> values = {-2.0f, 0.5f, 2.0f};
+
+  fft::writeReducedArrayJson(json, values, 3, true, true);
+
+  assert(json.str() == "[-1,0.5,1]");
+}
+
+void testFftOutputResizeKeepsSameSizedBufferForOverwrite() {
+  std::vector<KissFftAdapter::Complex> output = {
+      {1.0f, 1.0f},
+      {2.0f, 2.0f},
+      {3.0f, 3.0f},
+  };
+  const KissFftAdapter::Complex* before = output.data();
+
+  fft::resizeComplexOutputForOverwrite(output, 3);
+
+  assert(output.data() == before);
+  assert(output[0] == KissFftAdapter::Complex(1.0f, 1.0f));
+  assert(output[1] == KissFftAdapter::Complex(2.0f, 2.0f));
+  assert(output[2] == KissFftAdapter::Complex(3.0f, 3.0f));
+}
+
+void testResetCaptureSkipsBufferClearOnlyWhenAlreadySilent() {
+  const bool alreadySilent = fft::resetCaptureCanSkipBufferClear(false, false, true, true, -120.0, -120.0, -70.0);
+  const bool hasCapture = fft::resetCaptureCanSkipBufferClear(true, false, true, true, -120.0, -120.0, -70.0);
+  const bool buffersDirty = fft::resetCaptureCanSkipBufferClear(false, false, true, false, -120.0, -120.0, -70.0);
+  const bool spectrumDirty = fft::resetCaptureCanSkipBufferClear(false, true, true, true, -120.0, -120.0, -70.0);
+
+  assert(alreadySilent);
+  assert(!hasCapture);
+  assert(!buffersDirty);
+  assert(!spectrumDirty);
+}
+
+void testConvolverScratchWritePreservesInputAndClearsOnlyTail() {
+  const std::vector<float> inputBlock = {1.0f, -2.0f, 0.5f};
+  const std::vector<float> originalInput = inputBlock;
+  std::vector<float> scratch = {9.0f, 9.0f, 9.0f, 9.0f, 9.0f, 9.0f};
+
+  convolver::writeInputBlockToPaddedScratch(inputBlock, scratch, 3, 6);
+
+  assert(inputBlock == originalInput);
+  assert(closeTo(scratch[0], 1.0f, 0.0001));
+  assert(closeTo(scratch[1], -2.0f, 0.0001));
+  assert(closeTo(scratch[2], 0.5f, 0.0001));
+  assert(closeTo(scratch[3], 0.0f, 0.0001));
+  assert(closeTo(scratch[4], 0.0f, 0.0001));
+  assert(closeTo(scratch[5], 0.0f, 0.0001));
+}
+
+void testConvolverImpulsePartitionWriteClearsOnlyUncoveredTail() {
+  const std::vector<float> impulse = {0.1f, 0.2f, 0.3f, 0.4f, 0.5f};
+  std::vector<float> scratch = {9.0f, 9.0f, 9.0f, 9.0f, 9.0f, 9.0f};
+
+  convolver::writeImpulsePartitionToPaddedScratch(impulse, 3, scratch, 3, 6);
+
+  assert(closeTo(scratch[0], 0.4f, 0.0001));
+  assert(closeTo(scratch[1], 0.5f, 0.0001));
+  assert(closeTo(scratch[2], 0.0f, 0.0001));
+  assert(closeTo(scratch[3], 0.0f, 0.0001));
+  assert(closeTo(scratch[4], 0.0f, 0.0001));
+  assert(closeTo(scratch[5], 0.0f, 0.0001));
+}
+
+void testConvolverSpectrumAccumulationOverwritesScratchWithoutPreclear() {
+  using Complex = KissFftAdapter::Complex;
+  const std::vector<std::vector<Complex>> inputHistory = {
+      {Complex(10.0f, 0.0f), Complex(20.0f, 0.0f)},
+      {Complex(1.0f, 0.0f), Complex(2.0f, 0.0f)},
+  };
+  const std::vector<std::vector<Complex>> impulsePartitions = {
+      {Complex(3.0f, 0.0f), Complex(4.0f, 0.0f)},
+      {Complex(5.0f, 0.0f), Complex(6.0f, 0.0f)},
+  };
+  std::vector<Complex> scratch = {Complex(99.0f, 0.0f), Complex(99.0f, 0.0f)};
+
+  convolver::writePartitionedSpectrumProduct(
+      inputHistory,
+      impulsePartitions,
+      1,
+      2,
+      scratch);
+
+  assert(scratch[0] == Complex(53.0f, 0.0f));
+  assert(scratch[1] == Complex(128.0f, 0.0f));
+}
+
+void testCrossfeedDelayIndexAdvancesAndWraps() {
+  size_t index = 0;
+
+  crossfeed::advanceDelayIndex(index, 3);
+  assert(index == 1);
+  crossfeed::advanceDelayIndex(index, 3);
+  assert(index == 2);
+  crossfeed::advanceDelayIndex(index, 3);
+  assert(index == 0);
+  crossfeed::advanceDelayIndex(index, 0);
+  assert(index == 0);
+}
+
+void testReplayGainApplySplitsClippedAndUnclippedPaths() {
+  std::vector<float> unclipped = {-0.75f, 0.5f, 0.75f};
+  replaygain::applyReplayGain(unclipped.data(), unclipped.size(), 2.0, false);
+
+  assert(closeTo(unclipped[0], -1.5f, 0.0001));
+  assert(closeTo(unclipped[1], 1.0f, 0.0001));
+  assert(closeTo(unclipped[2], 1.5f, 0.0001));
+
+  std::vector<float> clipped = {-0.75f, 0.5f, 0.75f};
+  replaygain::applyReplayGain(clipped.data(), clipped.size(), 2.0, true);
+
+  assert(closeTo(clipped[0], -1.0f, 0.0001));
+  assert(closeTo(clipped[1], 1.0f, 0.0001));
+  assert(closeTo(clipped[2], 1.0f, 0.0001));
 }
 
 AudioFormat testFormat() {
@@ -90,6 +284,28 @@ std::vector<float> extractJsonArray(const std::string& json, const std::string& 
 }  // namespace
 
 int main() {
+  testParametricEqPreampOnlyProcessesContiguousSamples();
+  testWindowedFftInputOverwritesScratchWithoutPreclear();
+  testWindowResizeKeepsSameSizedBufferForOverwrite();
+  testMagnitudeResizeKeepsSameSizedBufferForOverwrite();
+  testReducedArrayJsonWritesDirectlyWithOptionalClamp();
+  testFftOutputResizeKeepsSameSizedBufferForOverwrite();
+  testResetCaptureSkipsBufferClearOnlyWhenAlreadySilent();
+  testConvolverScratchWritePreservesInputAndClearsOnlyTail();
+  testConvolverImpulsePartitionWriteClearsOnlyUncoveredTail();
+  testConvolverSpectrumAccumulationOverwritesScratchWithoutPreclear();
+  testCrossfeedDelayIndexAdvancesAndWraps();
+  testReplayGainApplySplitsClippedAndUnclippedPaths();
+  {
+    CountingProcessor inactive(false);
+    CountingProcessor active(true);
+    std::vector<IAudioProcessor*> processors{&inactive, &active};
+    const std::vector<IAudioProcessor*> activeProcessors = dsp::collectActiveProcessors(processors);
+
+    assert(activeProcessors.size() == 1);
+    assert(activeProcessors[0] == &active);
+  }
+
   {
     DspChain chain;
     DspConfig config;

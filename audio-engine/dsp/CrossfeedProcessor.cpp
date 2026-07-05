@@ -1,4 +1,5 @@
 #include "CrossfeedProcessor.h"
+#include "CrossfeedProcessorUtils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -42,7 +43,7 @@ void CrossfeedProcessor::process(float* samples, size_t frameCount) {
     const double delayedRight = delayRight_[delayIndex_];
     delayLeft_[delayIndex_] = static_cast<float>(left);
     delayRight_[delayIndex_] = static_cast<float>(right);
-    delayIndex_ = (delayIndex_ + 1) % delayLeft_.size();
+    crossfeed::advanceDelayIndex(delayIndex_, delayLeft_.size());
 
     lowpassLeft_ += alpha_ * (delayedLeft - lowpassLeft_);
     lowpassRight_ += alpha_ * (delayedRight - lowpassRight_);

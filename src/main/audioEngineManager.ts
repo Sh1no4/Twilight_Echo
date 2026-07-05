@@ -553,6 +553,15 @@ const DEFAULT_OUTPUT_CONFIG: OutputConfig = {
   upmixSideGain: 0.3,
   upmixSurroundDelayMs: 0
 }
+const PLAYBACK_INFO_CACHE_TTL_MS = 200
+const VISUALIZATION_CACHE_TTL_MS = 80
+const AUDIO_DEVICE_OPTIONS_CACHE_TTL_MS = 1000
+const NATIVE_DSP_PLUGIN_STATUS_CACHE_TTL_MS = 200
+const CONVOLVER_INFO_CACHE_TTL_MS = 200
+const UPCOMING_TRACK_CACHE_TTL_MS = 200
+const METADATA_CACHE_TTL_MS = 1000
+const PLAYBACK_FANOUT_FIELD_SEPARATOR = '\x1f'
+const PLAYBACK_FANOUT_RECORD_SEPARATOR = '\x1e'
 
 const DEFAULT_AUDIO_ENGINE_SCHEDULER: AudioEngineScheduler = {
   now: () => Date.now(),
@@ -582,6 +591,194 @@ export function normalizeAudioOutput(
   const options = getAudioOutputOptions(platform)
   if (isAudioOutputId(output) && options.some((option) => option.id === output)) return output
   return getDefaultAudioOutput(platform)
+}
+
+function fanoutValue(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  const text = String(value)
+  return text
+    .replaceAll(PLAYBACK_FANOUT_FIELD_SEPARATOR, ' ')
+    .replaceAll(PLAYBACK_FANOUT_RECORD_SEPARATOR, ' ')
+}
+
+function fanoutArray(values: unknown[] | undefined): string {
+  if (!Array.isArray(values) || values.length === 0) return ''
+  return values.map(fanoutValue).join(',')
+}
+
+function nativeDspPluginFanoutSignature(nativeDsp: OutputInfo['nativeDsp'] | undefined): string {
+  const plugins = nativeDsp?.plugins
+  if (!Array.isArray(plugins) || plugins.length === 0) return '0'
+  return plugins
+    .map((plugin, index) => {
+      if (!plugin || typeof plugin !== 'object') return `${index}:${fanoutValue(plugin)}`
+      const record = plugin as Record<string, unknown>
+      return [
+        index,
+        record.id,
+        record.name,
+        record.path,
+        record.version,
+        record.loaded,
+        record.enabled,
+        record.active,
+        record.bypassed,
+        record.bypassReason,
+        record.lastError,
+        record.lastProcessTimeUs,
+        record.maxProcessTimeUs,
+        record.timeoutCount,
+        record.overBudgetCount,
+        record.processOverBudgetCount,
+        record.prepareStatus,
+        record.state,
+        record.status
+      ]
+        .map(fanoutValue)
+        .join(':')
+    })
+    .join(PLAYBACK_FANOUT_RECORD_SEPARATOR)
+}
+
+export function createPlaybackInfoFanoutSignature(
+  info: PlaybackInfo,
+  nativePlaybackActive: boolean
+): string {
+  const outputInfo = info.outputInfo
+  const latencyInfo = outputInfo.latencyInfo ?? info.latencyInfo
+  const diagnostics = outputInfo.diagnostics ?? info.diagnostics
+  const upcomingTrack = info.upcomingTrack
+  return [
+    info.state,
+    info.duration,
+    info.volume,
+    info.queueIndex,
+    info.playMode,
+    info.source,
+    info.codec,
+    nativePlaybackActive,
+    info.bitrate,
+    info.sourceSampleRate,
+    info.sourceBitDepth,
+    info.decodedSampleRate,
+    info.decodedBitDepth,
+    info.decodedChannels,
+    info.decodedSampleFormat,
+    info.outputBackend,
+    info.outputDevice,
+    info.actualBackend,
+    info.driverName,
+    info.driverVersion,
+    info.actualOutputFormat,
+    info.actualSampleRate,
+    info.actualBitDepth,
+    info.actualChannels,
+    info.bufferSizeFrames,
+    info.latencyFrames,
+    info.latencyMs,
+    latencyInfo.bufferLatencyMs,
+    latencyInfo.outputLatencyMs,
+    latencyInfo.totalLatencyMs,
+    info.channelRoutingMode,
+    info.supportsOutputPerfect,
+    info.sourceExact,
+    info.deviceRecovered,
+    info.recoveryCount,
+    info.outputSampleRate,
+    info.outputBitDepth,
+    info.channelCount,
+    info.outputPerfect,
+    info.pcmPassthrough,
+    info.dspActive,
+    info.replayGainActive,
+    info.eqActive,
+    info.convolverActive,
+    info.crossfeedActive,
+    info.crossfadeActive,
+    info.fftActive,
+    info.irResampled,
+    info.replayGainDb,
+    info.crossfeedStrength,
+    info.crossfadeSeconds,
+    info.convolverLatencyFrames,
+    info.partitionSize,
+    info.channelMappingMode,
+    info.perfectReason,
+    info.perfectReasonCode,
+    info.isDsd,
+    info.dsdMode,
+    info.dsdRate,
+    info.gaplessActive,
+    info.preloadReady,
+    upcomingTrack?.id,
+    upcomingTrack?.source,
+    upcomingTrack?.title,
+    upcomingTrack?.artist,
+    upcomingTrack?.album,
+    upcomingTrack?.duration,
+    upcomingTrack?.codec,
+    upcomingTrack?.sampleRate,
+    upcomingTrack?.bitrate,
+    upcomingTrack?.bitDepth,
+    outputInfo.exclusive,
+    outputInfo.supportsOutputPerfect,
+    outputInfo.sourceExact,
+    outputInfo.outputPerfect,
+    outputInfo.pcmPassthrough,
+    outputInfo.resampled,
+    outputInfo.perfectReason,
+    outputInfo.outputSampleRate,
+    outputInfo.outputBitDepth,
+    outputInfo.backend,
+    outputInfo.actualBackend,
+    outputInfo.deviceName,
+    outputInfo.actualDeviceName,
+    outputInfo.driverName,
+    outputInfo.actualDriverName,
+    outputInfo.driverVersion,
+    outputInfo.actualDriverVersion,
+    outputInfo.actualOutputFormat,
+    outputInfo.actualSampleRate,
+    outputInfo.actualBitDepth,
+    outputInfo.actualChannels,
+    outputInfo.accessMode,
+    outputInfo.devicePathKind,
+    outputInfo.perfectReasonCode,
+    outputInfo.capabilityReason,
+    outputInfo.driverDopCapable,
+    outputInfo.driverNativeDsdCapable,
+    fanoutArray(outputInfo.driverDopCarrierSampleRates),
+    fanoutArray(outputInfo.driverDopCarrierFormats),
+    fanoutArray(outputInfo.driverNativeDsdSampleRates),
+    outputInfo.nativeDsdRuntimeState,
+    outputInfo.nativeDsdRequestedRate,
+    outputInfo.nativeDsdActualRate,
+    outputInfo.nativeDsdChannels,
+    outputInfo.nativeDsdExplicitlyCapable,
+    fanoutArray(outputInfo.nativeDsdAdvertisedSampleRates),
+    outputInfo.nativeDsdRuntimeReason,
+    outputInfo.bufferSizeFrames,
+    outputInfo.latencyFrames,
+    outputInfo.latencyMs,
+    outputInfo.channelRoutingMode,
+    diagnostics.sessionUnderrunCount,
+    diagnostics.sessionBufferDropCount,
+    diagnostics.sessionRecoveryCount,
+    diagnostics.lifetimeUnderrunCount,
+    diagnostics.lifetimeBufferDropCount,
+    diagnostics.lifetimeRecoveryCount,
+    diagnostics.driverRestartCount,
+    diagnostics.deviceLostCount,
+    diagnostics.lastError,
+    outputInfo.deviceRecovered,
+    outputInfo.recoveryCount,
+    nativeDspPluginFanoutSignature(outputInfo.nativeDsp),
+    outputInfo.isDsd,
+    outputInfo.dsdMode,
+    outputInfo.dsdRate
+  ]
+    .map(fanoutValue)
+    .join(PLAYBACK_FANOUT_FIELD_SEPARATOR)
 }
 
 function supportsAudioExclusive(output: AudioOutputId): boolean {
@@ -658,6 +855,65 @@ function normalizeOutputConfig(config?: Partial<OutputConfig>): OutputConfig {
     upmixSideGain: clampNumber(config?.upmixSideGain, 0, 2, 0.3),
     upmixSurroundDelayMs: clampNumber(config?.upmixSurroundDelayMs, 0, 100, 0)
   }
+}
+
+function outputConfigsEqual(left: OutputConfig, right: OutputConfig): boolean {
+  return (
+    left.preferredBufferSize === right.preferredBufferSize &&
+    left.routingMode === right.routingMode &&
+    left.wasapiExclusivePushMode === right.wasapiExclusivePushMode &&
+    left.upmixCenterGain === right.upmixCenterGain &&
+    left.upmixLfeGain === right.upmixLfeGain &&
+    left.upmixLfeLowpassHz === right.upmixLfeLowpassHz &&
+    left.upmixSurroundGain === right.upmixSurroundGain &&
+    left.upmixSideGain === right.upmixSideGain &&
+    left.upmixSurroundDelayMs === right.upmixSurroundDelayMs
+  )
+}
+
+function eqBandsEqual(left: EqualizerBand[], right: EqualizerBand[]): boolean {
+  if (left.length !== right.length) return false
+  return left.every((band, index) => {
+    const other = right[index]
+    return (
+      band.frequency === other.frequency &&
+      band.gain === other.gain &&
+      band.q === other.q &&
+      band.filterType === other.filterType
+    )
+  })
+}
+
+function audioProcessingSettingsEqual(
+  left: AudioProcessingSettings,
+  right: AudioProcessingSettings
+): boolean {
+  return (
+    left.dspEnabled === right.dspEnabled &&
+    left.clipGuard === right.clipGuard &&
+    left.fftEnabled === right.fftEnabled &&
+    left.fftResolution === right.fftResolution &&
+    left.highResolution === right.highResolution &&
+    left.dsdToPcm === right.dsdToPcm &&
+    left.dsdOutputMode === right.dsdOutputMode &&
+    left.sacdProgramMode === right.sacdProgramMode &&
+    left.eqEnabled === right.eqEnabled &&
+    left.eqMode === right.eqMode &&
+    left.eqPreamp === right.eqPreamp &&
+    eqBandsEqual(left.eqBands, right.eqBands) &&
+    left.volumeNormalization === right.volumeNormalization &&
+    left.replayGainPreamp === right.replayGainPreamp &&
+    left.replayGainFallback === right.replayGainFallback &&
+    left.replayGainClip === right.replayGainClip &&
+    left.convolverEnabled === right.convolverEnabled &&
+    left.convolverIrPath === right.convolverIrPath &&
+    left.crossfeedEnabled === right.crossfeedEnabled &&
+    left.crossfeedStrength === right.crossfeedStrength &&
+    left.crossfeedDelayMs === right.crossfeedDelayMs &&
+    left.crossfeedCutoffHz === right.crossfeedCutoffHz &&
+    left.gapless === right.gapless &&
+    left.crossfadeSeconds === right.crossfadeSeconds
+  )
 }
 
 function normalizeVisualizationOptions(options?: VisualizationOptions): Required<VisualizationOptions> {
@@ -1216,13 +1472,69 @@ export class AudioEngineManager extends EventEmitter {
   private scheduler: AudioEngineScheduler
   private deviceOptionsProvider?: () => AudioDeviceOption[] | null
   private queue: AudioEngineQueueItem[] = []
+  private queueJson = '[]'
   private playbackInfo: PlaybackInfo
   private timer: NodeJS.Timeout | null = null
   private lastTick = 0
+  private lastNativePlaybackInfoTickReadAt = Number.NEGATIVE_INFINITY
+  private lastPlaybackInfoFanoutKey = ''
+  private lastPublishedDuration: number | null = null
+  private lastVisualizationCache:
+    | {
+        key: string
+        state: PlaybackInfo['state']
+        source: string
+        readAt: number
+        data: VisualizationData
+      }
+    | null = null
+  private lastSpectrumCache:
+    | {
+        points: number
+        state: PlaybackInfo['state']
+        source: string
+        readAt: number
+        data: number[]
+      }
+    | null = null
+  private lastAudioDeviceOptionsCache:
+    | {
+        selectedDevice: string
+        readAt: number
+        options: AudioDeviceOption[]
+      }
+    | null = null
+  private lastNativeDspPluginStatusCache:
+    | {
+        readAt: number
+        status: unknown
+      }
+    | null = null
+  private lastConvolverInfoCache:
+    | {
+        readAt: number
+        info: ConvolverInfo
+      }
+    | null = null
+  private lastUpcomingTrackCache:
+    | {
+        readAt: number
+        track: AudioEngineQueueItem | null
+      }
+    | null = null
+  private metadataCache = new Map<
+    string,
+    {
+      readAt: number
+      metadata: NativeAudioMetadata | null
+    }
+  >()
   private destroyed = false
   private nativePlaybackActive = false
+  private nativeOutputRouteSynced = false
   private lastNativeError = ''
   private pendingNativeSource: string | null = null
+  private nativeConvolverIrPath: string | null = null
   private nativeDspPluginChainJson = ''
 
   constructor(
@@ -1281,6 +1593,11 @@ export class AudioEngineManager extends EventEmitter {
   private handleAudioServiceCrash(reason: string): void {
     this.lastNativeError = reason
     this.nativePlaybackActive = false
+    this.nativeConvolverIrPath = null
+    this.lastNativeDspPluginStatusCache = null
+    this.lastConvolverInfoCache = null
+    this.invalidateUpcomingTrackCache()
+    this.metadataCache.clear()
     const nextDiagnostics = {
       ...this.playbackInfo.outputInfo.diagnostics,
       lastError: reason,
@@ -1313,6 +1630,7 @@ export class AudioEngineManager extends EventEmitter {
     this.tryNative('音频服务恢复后应用输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.tryNative('音频服务恢复后应用输出设备', (native) => native.SetOutputDevice(this.device))
     this.applyNativeOutputConfig('音频服务恢复后应用输出配置')
+    this.nativeOutputRouteSynced = true
     this.applyNativeDspSettings('音频服务恢复后应用 DSP 配置')
     if (this.nativeDspPluginChainJson) {
       this.tryNative('音频服务恢复后应用原生 DSP 插件链', (native) =>
@@ -1325,6 +1643,7 @@ export class AudioEngineManager extends EventEmitter {
       )
     }
     this.nativePlaybackActive = false
+    this.invalidateUpcomingTrackCache()
     this.playbackInfo = {
       ...this.playbackInfo,
       state: 'stopped',
@@ -1337,6 +1656,7 @@ export class AudioEngineManager extends EventEmitter {
     this.tryNative('初始化输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.tryNative('初始化输出设备', (native) => native.SetOutputDevice(this.device))
     this.applyNativeOutputConfig('初始化输出配置')
+    this.nativeOutputRouteSynced = true
     this.applyNativeDspSettings('初始化 DSP 配置')
     this.startClock()
     this.scheduler.setImmediate(() => this.emit('ready'))
@@ -1344,6 +1664,7 @@ export class AudioEngineManager extends EventEmitter {
 
   async play(source: string, startTime = 0): Promise<AudioEnginePlayResult> {
     if (!source) throw new Error('音频地址为空')
+    this.invalidateUpcomingTrackCache()
     const current = this.queue[this.playbackInfo.queueIndex]
     const duration = current?.source === source ? (current.duration ?? 0) : 0
     const firstErrorContext = {
@@ -1368,6 +1689,7 @@ export class AudioEngineManager extends EventEmitter {
       )
       this.tryNative('ASIO 失败后切换到 WASAPI 默认设备', (native) => native.SetOutputDevice(this.device))
       this.applyNativeOutputConfig('ASIO 失败后应用 WASAPI 兜底配置')
+      this.nativeOutputRouteSynced = true
       nativeStarted = this.tryNative('WASAPI 兜底播放', (native) => native.Play(source, startTime))
       if (!nativeStarted) {
         this.output = firstErrorContext.output
@@ -1418,7 +1740,7 @@ export class AudioEngineManager extends EventEmitter {
     }
     this.lastTick = this.scheduler.now()
     this.emit('start-file')
-    this.publishProperty('duration', this.playbackInfo.duration)
+    this.publishDuration(this.playbackInfo.duration, { force: true })
     this.publishProperty('pause', false)
     this.publishPlaybackInfo()
     return {
@@ -1477,6 +1799,9 @@ export class AudioEngineManager extends EventEmitter {
 
   async seek(time: number): Promise<void> {
     const position = Math.max(0, Number.isFinite(time) ? time : 0)
+    if (this.playbackInfo.state !== 'playing' && Object.is(position, this.playbackInfo.position)) {
+      return
+    }
     this.tryNative('跳转', (native) => native.Seek(position))
     this.playbackInfo.position = position
     this.lastTick = this.scheduler.now()
@@ -1486,6 +1811,7 @@ export class AudioEngineManager extends EventEmitter {
 
   async setVolume(volume: number): Promise<void> {
     const normalized = clampNumber(volume, 0, 1, 1)
+    if (Object.is(normalized, this.playbackInfo.volume)) return
     this.tryNative('设置音量', (native) => native.SetVolume(normalized))
     this.playbackInfo.volume = normalized
     this.updateOutputPerfect()
@@ -1493,6 +1819,13 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    if (
+      this.playbackInfo.state === 'stopped' &&
+      this.playbackInfo.position === 0 &&
+      !this.nativePlaybackActive
+    ) {
+      return
+    }
     this.tryNative('停止', (native) => native.Stop())
     this.nativePlaybackActive = false
     this.pendingNativeSource = null
@@ -1504,17 +1837,23 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async loadQueue(items: AudioEngineQueueItem[], startIndex = 0): Promise<void> {
-    this.queue = [...items]
-    this.playbackInfo.queueIndex =
-      this.queue.length > 0 ? Math.min(Math.max(0, startIndex), this.queue.length - 1) : -1
-    this.tryNative('加载队列', (native) =>
-      native.LoadQueue?.(JSON.stringify(this.queue), this.playbackInfo.queueIndex)
-    )
+    const nextQueue = [...items]
+    const nextQueueIndex =
+      nextQueue.length > 0 ? Math.min(Math.max(0, startIndex), nextQueue.length - 1) : -1
+    const nextQueueJson = JSON.stringify(nextQueue)
+    if (nextQueueJson === this.queueJson && nextQueueIndex === this.playbackInfo.queueIndex) return
+
+    this.queue = nextQueue
+    this.queueJson = nextQueueJson
+    this.playbackInfo.queueIndex = nextQueueIndex
+    this.invalidateUpcomingTrackCache()
+    this.tryNative('加载队列', (native) => native.LoadQueue?.(nextQueueJson, nextQueueIndex))
     this.emit('queue-change', this.queue)
   }
 
   async next(): Promise<void> {
     if (this.queue.length === 0) return
+    this.invalidateUpcomingTrackCache()
     const fallbackIndex = (this.playbackInfo.queueIndex + 1) % this.queue.length
     let nextIndex = fallbackIndex
     const targetSource = this.queue[nextIndex]?.source
@@ -1544,6 +1883,7 @@ export class AudioEngineManager extends EventEmitter {
 
   async previous(): Promise<void> {
     if (this.queue.length === 0) return
+    this.invalidateUpcomingTrackCache()
     const fallbackIndex =
       this.playbackInfo.queueIndex <= 0 ? this.queue.length - 1 : this.playbackInfo.queueIndex - 1
     let nextIndex = fallbackIndex
@@ -1576,6 +1916,8 @@ export class AudioEngineManager extends EventEmitter {
     if (enabled && !supportsAudioExclusive(this.output)) {
       throw new Error(`${this.output} 不支持独占模式`)
     }
+    if (enabled === this.exclusiveMode) return await this.getAudioOutputState()
+
     this.exclusiveMode = enabled
     this.tryNative('切换独占模式', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.applyNativeOutputConfig('切换输出配置')
@@ -1590,20 +1932,36 @@ export class AudioEngineManager extends EventEmitter {
   async setAudioOutput(output: AudioOutputId, device?: string): Promise<AudioOutputState> {
     const nextOutput = normalizeAudioOutput(output)
     const outputChanged = nextOutput !== this.output
+    const nextDevice = this.resolveCompatibleDevice(
+      nextOutput,
+      normalizeAudioDevice(device ?? (outputChanged ? 'auto' : this.device))
+    )
+    const nextExclusiveMode = supportsAudioExclusive(nextOutput) ? this.exclusiveMode : false
+    if (
+      this.nativeOutputRouteSynced &&
+      nextOutput === this.output &&
+      nextDevice === this.device &&
+      nextExclusiveMode === this.exclusiveMode
+    ) {
+      return await this.getAudioOutputState()
+    }
+
     this.output = nextOutput
-    this.device = normalizeAudioDevice(device ?? (outputChanged ? 'auto' : this.device))
-    this.device = this.resolveCompatibleDevice(this.output, this.device)
-    if (!supportsAudioExclusive(this.output)) this.exclusiveMode = false
+    this.device = nextDevice
+    this.exclusiveMode = nextExclusiveMode
     this.tryNative('切换输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
     this.applyNativeOutputConfig('切换输出配置')
+    this.nativeOutputRouteSynced = true
     this.refreshOutputInfoFromNative(true)
     return await this.getAudioOutputState()
   }
 
   async setAudioDevice(device: string): Promise<AudioOutputState> {
-    this.device = normalizeAudioDevice(device)
-    this.device = this.resolveCompatibleDevice(this.output, this.device)
+    const nextDevice = this.resolveCompatibleDevice(this.output, normalizeAudioDevice(device))
+    if (nextDevice === this.device) return await this.getAudioOutputState()
+
+    this.device = nextDevice
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
     this.refreshOutputInfoFromNative(true)
     return await this.getAudioOutputState()
@@ -1611,7 +1969,10 @@ export class AudioEngineManager extends EventEmitter {
 
   async setOutputConfig(config: Partial<OutputConfig>): Promise<void> {
     const prevBufferSize = this.outputConfig.preferredBufferSize
-    this.outputConfig = normalizeOutputConfig(config)
+    const nextConfig = normalizeOutputConfig(config)
+    if (outputConfigsEqual(nextConfig, this.outputConfig)) return
+
+    this.outputConfig = nextConfig
     const bufferSizeChanged = this.outputConfig.preferredBufferSize !== prevBufferSize
     const needsReopen = bufferSizeChanged && this.output === 'asio'
     if (needsReopen) {
@@ -1647,7 +2008,11 @@ export class AudioEngineManager extends EventEmitter {
   async setAudioProcessing(
     settings: Partial<AudioProcessingSettings>
   ): Promise<AudioProcessingSettings> {
-    this.processing = this.mergeAudioProcessingSettings(settings)
+    const nextProcessing = this.mergeAudioProcessingSettings(settings)
+    if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.processing
+
+    const previousProcessing = this.processing
+    this.processing = nextProcessing
     const sourceIsDsd =
       sourceLooksDsd(this.playbackInfo.source) ||
       this.playbackInfo.codec.trim().toLowerCase() === 'dsd' ||
@@ -1681,7 +2046,7 @@ export class AudioEngineManager extends EventEmitter {
       }
       this.syncPlaybackOutputMirrorsFromOutputInfo()
     }
-    this.applyNativeDspSettings('更新 DSP 配置')
+    this.applyNativeDspSettings('更新 DSP 配置', { previousProcessing })
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
     return this.processing
@@ -1696,23 +2061,38 @@ export class AudioEngineManager extends EventEmitter {
       convolverEnabled: true,
       convolverIrPath: path
     })
-    this.tryNative('加载脉冲响应', (native) => native.LoadImpulseResponse?.(path))
+    this.lastConvolverInfoCache = null
+    if (this.tryNative('加载脉冲响应', (native) => native.LoadImpulseResponse?.(path))) {
+      this.nativeConvolverIrPath = path
+    }
     this.updateNativeInfoSnapshot()
     return this.getConvolverInfo()
   }
 
   async unloadImpulseResponse(): Promise<ConvolverInfo> {
-    this.processing = this.mergeAudioProcessingSettings({
+    const nextProcessing = this.mergeAudioProcessingSettings({
       convolverEnabled: false,
       convolverIrPath: ''
     })
-    this.tryNative('卸载脉冲响应', (native) => native.UnloadImpulseResponse?.())
+    if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.getConvolverInfo()
+
+    this.processing = nextProcessing
+    this.lastConvolverInfoCache = null
+    if (this.tryNative('卸载脉冲响应', (native) => native.UnloadImpulseResponse?.())) {
+      this.nativeConvolverIrPath = ''
+    }
     this.updateNativeInfoSnapshot()
     return this.getConvolverInfo()
   }
 
   getConvolverInfo(): ConvolverInfo {
-    return parseNativeJson(this.native?.GetConvolverInfo?.(), {
+    const canUseIdleCache = !this.processing.convolverIrPath && !this.nativeConvolverIrPath
+    const now = this.scheduler.now()
+    const cached = this.lastConvolverInfoCache
+    if (canUseIdleCache && cached && now - cached.readAt <= CONVOLVER_INFO_CACHE_TTL_MS) {
+      return cached.info
+    }
+    const info = parseNativeJson(this.native?.GetConvolverInfo?.(), {
       loaded: false,
       active: false,
       irResampled: false,
@@ -1727,12 +2107,21 @@ export class AudioEngineManager extends EventEmitter {
       warning: '',
       lastError: ''
     })
+    if (canUseIdleCache && !info.loaded && !info.active) {
+      this.lastConvolverInfoCache = {
+        readAt: now,
+        info
+      }
+    }
+    return info
   }
 
   async setEqBands(settings: Partial<AudioProcessingSettings>): Promise<AudioProcessingSettings> {
-    this.processing = this.mergeAudioProcessingSettings(settings)
+    const nextProcessing = this.mergeAudioProcessingSettings(settings)
+    if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.processing
+
+    this.processing = nextProcessing
     this.tryNative('更新均衡器', (native) => native.SetEqBands?.(JSON.stringify(this.processing)))
-    this.updateNativeInfoSnapshot()
     return this.processing
   }
 
@@ -1741,26 +2130,30 @@ export class AudioEngineManager extends EventEmitter {
     eqPreamp: number
     eqBands: EqualizerBand[]
   }): Promise<AudioProcessingSettings> {
-    this.processing = this.mergeAudioProcessingSettings({
+    const nextProcessing = this.mergeAudioProcessingSettings({
       ...preset,
       eqEnabled: true
     })
+    if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.processing
+
+    this.processing = nextProcessing
     this.tryNative('应用均衡器预设', (native) =>
       native.SetEqPreset?.(JSON.stringify(this.processing))
     )
-    this.updateNativeInfoSnapshot()
     return this.processing
   }
 
   async setCrossfeedStrength(strength: number): Promise<AudioProcessingSettings> {
-    this.processing = this.mergeAudioProcessingSettings({
+    const nextProcessing = this.mergeAudioProcessingSettings({
       crossfeedEnabled: strength > 0,
       crossfeedStrength: strength
     })
+    if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.processing
+
+    this.processing = nextProcessing
     this.tryNative('设置串音强度', (native) =>
       native.SetCrossfeedStrength?.(this.processing.crossfeedStrength)
     )
-    this.updateNativeInfoSnapshot()
     return this.processing
   }
 
@@ -1770,12 +2163,15 @@ export class AudioEngineManager extends EventEmitter {
     fallback = this.processing.replayGainFallback,
     clip = this.processing.replayGainClip
   ): Promise<AudioProcessingSettings> {
-    this.processing = this.mergeAudioProcessingSettings({
+    const nextProcessing = this.mergeAudioProcessingSettings({
       volumeNormalization: mode,
       replayGainPreamp: preamp,
       replayGainFallback: fallback,
       replayGainClip: clip
     })
+    if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.processing
+
+    this.processing = nextProcessing
     this.tryNative('设置 ReplayGain', (native) =>
       native.SetReplayGainMode?.(
         this.processing.volumeNormalization,
@@ -1784,54 +2180,93 @@ export class AudioEngineManager extends EventEmitter {
         this.processing.replayGainClip
       )
     )
-    this.updateNativeInfoSnapshot()
     return this.processing
   }
 
   setNativeDspPluginChain(chainJson: string): void {
+    if (chainJson === this.nativeDspPluginChainJson) return
+
     this.nativeDspPluginChainJson = chainJson
+    this.lastNativeDspPluginStatusCache = null
     this.tryNative('更新原生 DSP 插件链', (native) => {
       native.SetDspPluginChain?.(chainJson)
     })
-    this.updateNativeInfoSnapshot()
   }
 
   getNativeDspPluginStatus(): unknown {
-    return parseNativeJson(this.native?.GetDspPluginStatus?.(), { plugins: [] })
+    const now = this.scheduler.now()
+    const cached = this.lastNativeDspPluginStatusCache
+    if (cached && now - cached.readAt <= NATIVE_DSP_PLUGIN_STATUS_CACHE_TTL_MS) {
+      return cached.status
+    }
+    const status = parseNativeJson(this.native?.GetDspPluginStatus?.(), { plugins: [] })
+    this.lastNativeDspPluginStatusCache = {
+      readAt: now,
+      status
+    }
+    return status
   }
 
   getMetadata(source: string): NativeAudioMetadata | null {
-    return parseNativeJson(this.native?.GetMetadata?.(source), null as NativeAudioMetadata | null)
+    const cached = this.getCachedMetadata(source)
+    if (cached.found) return cached.metadata
+
+    const metadata = parseNativeJson(
+      this.native?.GetMetadata?.(source),
+      null as NativeAudioMetadata | null
+    )
+    this.cacheMetadata(source, metadata)
+    return metadata
   }
 
   async getMetadataAsync(source: string): Promise<NativeAudioMetadata | null> {
+    const cached = this.getCachedMetadata(source)
+    if (cached.found) return cached.metadata
+
     if (this.audioServiceBinding) {
-      return parseNativeJson(
+      const metadata = parseNativeJson(
         await this.audioServiceBinding.getMetadataAsync(source),
         null as NativeAudioMetadata | null
       )
+      this.cacheMetadata(source, metadata)
+      return metadata
     }
-    return this.getMetadata(source)
+    const metadata = this.getMetadata(source)
+    this.cacheMetadata(source, metadata)
+    return metadata
   }
 
   async setPlayMode(mode: PlayMode): Promise<void> {
+    if (mode === this.playbackInfo.playMode) return
     this.playbackInfo.playMode = mode
+    this.invalidateUpcomingTrackCache()
     this.tryNative('切换播放模式', (native) => native.SetPlayMode?.(mode))
-    const nativeInfo = this.readNativePlaybackInfo()
-    if (nativeInfo) this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
     this.publishPlaybackInfo()
   }
 
   getUpcomingTrack(): AudioEngineQueueItem | null {
+    const now = this.scheduler.now()
+    const cached = this.lastUpcomingTrackCache
+    if (cached && now - cached.readAt <= UPCOMING_TRACK_CACHE_TTL_MS) {
+      return cached.track
+    }
     try {
-      return parseNativeJson(this.native?.GetUpcomingTrack?.(), null as AudioEngineQueueItem | null)
+      const track = parseNativeJson(
+        this.native?.GetUpcomingTrack?.(),
+        null as AudioEngineQueueItem | null
+      )
+      this.lastUpcomingTrackCache = { readAt: now, track }
+      return track
     } catch {
       return this.playbackInfo.upcomingTrack
     }
   }
 
   async getPlaybackInfo(): Promise<PlaybackInfo> {
-    if (this.nativePlaybackActive) {
+    if (
+      this.nativePlaybackActive &&
+      this.scheduler.now() - this.lastNativePlaybackInfoTickReadAt > PLAYBACK_INFO_CACHE_TTL_MS
+    ) {
       const nativeInfo = this.readNativePlaybackInfo()
       if (nativeInfo) {
         this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
@@ -1841,45 +2276,86 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   getSpectrumData(points = 64): number[] {
+    const now = this.scheduler.now()
+    const cached = this.lastSpectrumCache
+    if (
+      cached &&
+      cached.points === points &&
+      cached.state === this.playbackInfo.state &&
+      cached.source === this.playbackInfo.source &&
+      now - cached.readAt <= VISUALIZATION_CACHE_TTL_MS
+    ) {
+      return [...cached.data]
+    }
+    const cache = (data: number[]): number[] => {
+      this.lastSpectrumCache = {
+        points,
+        state: this.playbackInfo.state,
+        source: this.playbackInfo.source,
+        readAt: now,
+        data: [...data]
+      }
+      return [...data]
+    }
     try {
       const nativeSpectrum = this.native?.GetSpectrumData?.(points)
-      if (nativeSpectrum) return [...nativeSpectrum]
+      if (nativeSpectrum) return cache(nativeSpectrum)
     } catch {
       // Keep the visualizer alive while native playback is still optional.
     }
-    return Array.from({ length: points }, (_, index) => {
+    return cache(Array.from({ length: points }, (_, index) => {
       const x = index / Math.max(1, points - 1)
       return (Math.sin((x * 12 + this.playbackInfo.position) * Math.PI) + 1) * 0.25
-    })
+    }))
   }
 
   getVisualizationData(options: VisualizationOptions = {}): VisualizationData {
     const normalizedOptions = normalizeVisualizationOptions(options)
+    const cacheKey = JSON.stringify(normalizedOptions)
+    const now = this.scheduler.now()
+    const cached = this.lastVisualizationCache
+    if (
+      cached &&
+      cached.key === cacheKey &&
+      cached.state === this.playbackInfo.state &&
+      cached.source === this.playbackInfo.source &&
+      now - cached.readAt <= VISUALIZATION_CACHE_TTL_MS
+    ) {
+      return cached.data
+    }
+    const cache = (data: VisualizationData): VisualizationData => {
+      this.lastVisualizationCache = {
+        key: cacheKey,
+        state: this.playbackInfo.state,
+        source: this.playbackInfo.source,
+        readAt: now,
+        data
+      }
+      return data
+    }
     try {
       const nativeData = parseNativeJson(
-        this.native?.GetVisualizationData?.(JSON.stringify(normalizedOptions)),
+        this.native?.GetVisualizationData?.(cacheKey),
         null as VisualizationData | null
       )
       if (nativeData) {
         const normalizedData = normalizeVisualizationData(nativeData, normalizedOptions)
         if (normalizedData.active || this.playbackInfo.state !== 'playing') {
-          return normalizedData
+          return cache(normalizedData)
         }
       }
     } catch {
       // Keep the renderer visualizer alive while native playback is still optional.
     }
     if (this.playbackInfo.state === 'playing') {
-      return createFallbackVisualizationData(
-        normalizedOptions,
-        this.playbackInfo.actualSampleRate,
-        this.scheduler.now() / 1000
-      )
+      return cache(createFallbackVisualizationData(normalizedOptions, this.playbackInfo.actualSampleRate, now / 1000))
     }
-    return createInactiveVisualizationData(normalizedOptions, this.playbackInfo.actualSampleRate)
+    return cache(createInactiveVisualizationData(normalizedOptions, this.playbackInfo.actualSampleRate))
   }
 
   destroy(): void {
+    if (this.destroyed) return
+
     this.destroyed = true
     this.nativePlaybackActive = false
     if (this.timer) {
@@ -1900,7 +2376,8 @@ export class AudioEngineManager extends EventEmitter {
   private readNativePlaybackInfo(): PlaybackInfo | null {
     try {
       const info = parseNativeJson(this.native?.GetPlaybackInfo?.(), null as PlaybackInfo | null)
-      return info ? this.normalizePlaybackInfo(info) : null
+      if (!info) return null
+      return this.normalizePlaybackInfo(info)
     } catch {
       return null
     }
@@ -2106,11 +2583,12 @@ export class AudioEngineManager extends EventEmitter {
       if (nativeInfo) {
         this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
         this.lastTick = this.scheduler.now()
+        this.lastNativePlaybackInfoTickReadAt = this.lastTick
         this.publishProperty('time-pos', this.playbackInfo.position)
         if (this.playbackInfo.duration > 0) {
-          this.publishProperty('duration', this.playbackInfo.duration)
+          this.publishDuration(this.playbackInfo.duration)
         }
-        this.publishPlaybackInfo()
+        this.publishPlaybackInfo({ dedupePositionOnly: true })
         const switchedTrack =
           nativeInfo.state !== 'stopped' &&
           ((nativeInfo.source && nativeInfo.source !== previousSource) ||
@@ -2183,23 +2661,61 @@ export class AudioEngineManager extends EventEmitter {
     }
   }
 
-  private applyNativeDspSettings(context: string): void {
+  private applyNativeDspSettings(
+    context: string,
+    options: { previousProcessing?: AudioProcessingSettings } = {}
+  ): void {
+    const previous = options.previousProcessing
+    const force = !previous
+    const eqChanged =
+      force ||
+      previous.eqEnabled !== this.processing.eqEnabled ||
+      previous.eqMode !== this.processing.eqMode ||
+      previous.eqPreamp !== this.processing.eqPreamp ||
+      !eqBandsEqual(previous.eqBands, this.processing.eqBands)
+    const replayGainChanged =
+      force ||
+      previous.volumeNormalization !== this.processing.volumeNormalization ||
+      previous.replayGainPreamp !== this.processing.replayGainPreamp ||
+      previous.replayGainFallback !== this.processing.replayGainFallback ||
+      previous.replayGainClip !== this.processing.replayGainClip
+    const crossfeedChanged =
+      force ||
+      previous.crossfeedEnabled !== this.processing.crossfeedEnabled ||
+      previous.crossfeedStrength !== this.processing.crossfeedStrength ||
+      previous.crossfeedDelayMs !== this.processing.crossfeedDelayMs ||
+      previous.crossfeedCutoffHz !== this.processing.crossfeedCutoffHz
+    const convolverChanged =
+      force ||
+      previous.convolverEnabled !== this.processing.convolverEnabled ||
+      previous.convolverIrPath !== this.processing.convolverIrPath
+
     this.tryNative(context, (native) => {
       native.SetDspConfig?.(JSON.stringify(this.processing))
-      native.SetEqBands?.(JSON.stringify(this.processing))
-      native.SetReplayGainMode?.(
-        this.processing.volumeNormalization,
-        this.processing.replayGainPreamp,
-        this.processing.replayGainFallback,
-        this.processing.replayGainClip
-      )
-      native.SetCrossfeedStrength?.(
-        this.processing.crossfeedEnabled ? this.processing.crossfeedStrength : 0
-      )
-      if (this.processing.convolverIrPath) {
-        native.LoadImpulseResponse?.(this.processing.convolverIrPath)
-      } else {
+      if (eqChanged) {
+        native.SetEqBands?.(JSON.stringify(this.processing))
+      }
+      if (replayGainChanged) {
+        native.SetReplayGainMode?.(
+          this.processing.volumeNormalization,
+          this.processing.replayGainPreamp,
+          this.processing.replayGainFallback,
+          this.processing.replayGainClip
+        )
+      }
+      if (crossfeedChanged) {
+        native.SetCrossfeedStrength?.(
+          this.processing.crossfeedEnabled ? this.processing.crossfeedStrength : 0
+        )
+      }
+      if (convolverChanged && this.processing.convolverIrPath) {
+        if (this.processing.convolverIrPath !== this.nativeConvolverIrPath) {
+          native.LoadImpulseResponse?.(this.processing.convolverIrPath)
+          this.nativeConvolverIrPath = this.processing.convolverIrPath
+        }
+      } else if (convolverChanged && this.nativeConvolverIrPath) {
         native.UnloadImpulseResponse?.()
+        this.nativeConvolverIrPath = ''
       }
     })
   }
@@ -2232,6 +2748,28 @@ export class AudioEngineManager extends EventEmitter {
     this.refreshOutputInfoFromNative(false)
   }
 
+  private invalidateUpcomingTrackCache(): void {
+    this.lastUpcomingTrackCache = null
+  }
+
+  private getCachedMetadata(source: string): {
+    found: boolean
+    metadata: NativeAudioMetadata | null
+  } {
+    const cached = this.metadataCache.get(source)
+    if (!cached || this.scheduler.now() - cached.readAt > METADATA_CACHE_TTL_MS) {
+      return { found: false, metadata: null }
+    }
+    return { found: true, metadata: cached.metadata }
+  }
+
+  private cacheMetadata(source: string, metadata: NativeAudioMetadata | null): void {
+    this.metadataCache.set(source, {
+      readAt: this.scheduler.now(),
+      metadata
+    })
+  }
+
   private refreshOutputInfoFromNative(resetDefaults: boolean): void {
     if (resetDefaults) this.resetOutputInfoDefaults()
     const nativeInfo = this.readNativePlaybackInfo()
@@ -2245,6 +2783,15 @@ export class AudioEngineManager extends EventEmitter {
     if (Array.isArray(injectedDevices) && injectedDevices.length > 0) {
       return normalizeAudioDeviceOptions(injectedDevices, this.device)
     }
+    const now = this.scheduler.now()
+    const cached = this.lastAudioDeviceOptionsCache
+    if (
+      cached &&
+      cached.selectedDevice === this.device &&
+      now - cached.readAt <= AUDIO_DEVICE_OPTIONS_CACHE_TTL_MS
+    ) {
+      return cached.options
+    }
     let nativeDevices: unknown = null
     try {
       nativeDevices = parseNativeJson(
@@ -2255,8 +2802,13 @@ export class AudioEngineManager extends EventEmitter {
       // Fall through to the stable default device.
     }
     const normalizedDevices = normalizeAudioDeviceOptions(nativeDevices, this.device)
-    if (normalizedDevices.length > 0) return normalizedDevices
-    return [DEFAULT_AUDIO_DEVICE_OPTION]
+    const options = normalizedDevices.length > 0 ? normalizedDevices : [DEFAULT_AUDIO_DEVICE_OPTION]
+    this.lastAudioDeviceOptionsCache = {
+      selectedDevice: this.device,
+      readAt: now,
+      options
+    }
+    return options
   }
 
   private tryNative(
@@ -2380,7 +2932,21 @@ export class AudioEngineManager extends EventEmitter {
     this.emit('property-change', { name, data })
   }
 
-  private publishPlaybackInfo(): void {
+  private publishDuration(duration: number, options: { force?: boolean } = {}): void {
+    if (!options.force && Object.is(duration, this.lastPublishedDuration)) return
+    this.lastPublishedDuration = duration
+    this.publishProperty('duration', duration)
+  }
+
+  private createPlaybackInfoFanoutKey(): string {
+    return createPlaybackInfoFanoutSignature(this.playbackInfo, this.nativePlaybackActive)
+  }
+
+  private publishPlaybackInfo(options: { dedupePositionOnly?: boolean } = {}): void {
+    const fanoutKey = this.createPlaybackInfoFanoutKey()
+    if (options.dedupePositionOnly && fanoutKey === this.lastPlaybackInfoFanoutKey) return
+
+    this.lastPlaybackInfoFanoutKey = fanoutKey
     this.emit('playback-info', { ...this.playbackInfo, nativePlaybackActive: this.nativePlaybackActive })
   }
 }

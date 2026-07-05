@@ -1,6 +1,6 @@
 #include "ReplayGainProcessor.h"
+#include "ReplayGainProcessorUtils.h"
 
-#include <algorithm>
 #include <cmath>
 
 namespace twilight::audio {
@@ -31,10 +31,7 @@ void ReplayGainProcessor::process(float* samples, size_t frameCount) {
   if (!active_ || !samples || frameCount == 0) return;
 
   const size_t sampleCount = frameCount * static_cast<size_t>(std::max(1, format_.channelCount));
-  for (size_t i = 0; i < sampleCount; ++i) {
-    const double value = static_cast<double>(samples[i]) * gainLinear_;
-    samples[i] = static_cast<float>(config_.replayGainClip ? std::clamp(value, -1.0, 1.0) : value);
-  }
+  replaygain::applyReplayGain(samples, sampleCount, gainLinear_, config_.replayGainClip);
 }
 
 void ReplayGainProcessor::reset() {

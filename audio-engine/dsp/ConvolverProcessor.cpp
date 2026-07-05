@@ -1,5 +1,6 @@
 #include "ConvolverProcessor.h"
 
+#include "ConvolverProcessorUtils.h"
 #include "KissFftAdapter.h"
 
 #include <algorithm>
@@ -68,6 +69,8 @@ struct ConvolverProcessor::FftChannel {
   std::vector<float> inputBlock;
   std::vector<float> outputBlock;
   std::vector<float> overlap;
+  std::vector<float> paddedScratch;
+  std::vector<Complex> spectrumScratch;
   size_t inputPos = 0;
 
   void configure(const std::vector<float>& impulse, uint32_t requestedPartitionSize) {
@@ -78,12 +81,12 @@ struct ConvolverProcessor::FftChannel {
 
     impulsePartitions.assign(partitionCount, std::vector<Complex>(fftSize));
     inputHistory.assign(partitionCount, std::vector<Complex>(fftSize));
+    paddedScratch.assign(fftSize, 0.0f);
+    spectrumScratch.assign(fftSize, Complex{});
     for (size_t partition = 0; partition < partitionCount; ++partition) {
-      std::vector<float> padded(fftSize, 0.0f);
       const size_t offset = partition * static_cast<size_t>(partitionSize);
-      const size_t count = std::min(static_cast<size_t>(partitionSize), impulse.size() - std::min(offset, impulse.size()));
-      for (size_t i = 0; i < count; ++i) padded[i] = impulse[offset + i];
-      KissFftAdapter::forward(padded, &impulsePartitions[partition]);
+      convolver::writeImpulsePartitionToPaddedScratch(impulse, offset, paddedScratch, partitionSize, fftSize);
+      KissFftAdapter::forward(paddedScratch, &impulsePartitions[partition]);
     }
 
     inputBlock.assign(partitionSize, 0.0f);
@@ -118,26 +121,21 @@ struct ConvolverProcessor::FftChannel {
     const size_t partitionCount = impulsePartitions.size();
     currentIndex = (currentIndex + partitionCount - 1) % partitionCount;
 
-    std::vector<float> padded(fftSize, 0.0f);
-    std::copy(inputBlock.begin(), inputBlock.end(), padded.begin());
-    KissFftAdapter::forward(padded, &inputHistory[currentIndex]);
-    std::fill(inputBlock.begin(), inputBlock.end(), 0.0f);
+    convolver::writeInputBlockToPaddedScratch(inputBlock, paddedScratch, partitionSize, fftSize);
+    KissFftAdapter::forward(paddedScratch, &inputHistory[currentIndex]);
 
-    std::vector<Complex> spectrum(fftSize, Complex{});
-    for (size_t partition = 0; partition < partitionCount; ++partition) {
-      const size_t historyIndex = (currentIndex + partition) % partitionCount;
-      const auto& inputSpectrum = inputHistory[historyIndex];
-      const auto& irSpectrum = impulsePartitions[partition];
-      for (size_t bin = 0; bin < fftSize; ++bin) {
-        spectrum[bin] += inputSpectrum[bin] * irSpectrum[bin];
-      }
-    }
+    convolver::writePartitionedSpectrumProduct(
+        inputHistory,
+        impulsePartitions,
+        currentIndex,
+        fftSize,
+        spectrumScratch);
 
-    KissFftAdapter::inverse(&spectrum);
+    KissFftAdapter::inverse(&spectrumScratch);
     for (size_t i = 0; i < partitionSize; ++i) {
       outputBlock[i] = static_cast<float>(std::clamp(
-          static_cast<double>(spectrum[i].real()) + static_cast<double>(overlap[i]), -8.0, 8.0));
-      overlap[i] = spectrum[i + partitionSize].real();
+          static_cast<double>(spectrumScratch[i].real()) + static_cast<double>(overlap[i]), -8.0, 8.0));
+      overlap[i] = spectrumScratch[i + partitionSize].real();
     }
   }
 };

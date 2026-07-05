@@ -3,6 +3,7 @@
 #include "../core/AudioTypes.h"
 
 #include <cstddef>
+#include <complex>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -36,6 +37,7 @@ class FftSpectrumAnalyzer {
   size_t oscilloscopeResolution_ = 1024;
   bool enabled_ = true;
   bool hasCapture_ = false;
+  bool captureBuffersSilent_ = true;
   mutable bool spectrumDirty_ = false;
   double peakDb_ = -120.0;
   double rmsDb_ = -120.0;
@@ -43,6 +45,8 @@ class FftSpectrumAnalyzer {
   std::vector<float> window_;
   std::vector<float> timeDomain_;
   std::vector<float> oscilloscopeBuffer_;
+  mutable std::vector<float> fftInputScratch_;
+  mutable std::vector<std::complex<float>> spectrumScratch_;
   mutable std::vector<float> magnitudes_;
   mutable std::vector<std::vector<float>> spectrogram_;
 };

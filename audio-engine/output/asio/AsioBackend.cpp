@@ -1,4 +1,5 @@
 #include "AsioBackend.h"
+#include "AsioRenderUtils.h"
 #include "DeviceCapabilityCache.h"
 
 #include <algorithm>
@@ -36,73 +37,6 @@ int bitDepthForFormat(AudioSampleFormat format) {
     case AudioSampleFormat::Float32Interleaved:
     default:
       return 32;
-  }
-}
-
-int32_t floatToSignedInt(float sample, int bits) {
-  const double clamped = std::clamp(static_cast<double>(sample), -1.0, 1.0);
-  if (bits == 16) {
-    return static_cast<int32_t>(std::clamp(
-        std::llround(clamped * 32768.0),
-        static_cast<long long>(std::numeric_limits<int16_t>::min()),
-        static_cast<long long>(std::numeric_limits<int16_t>::max())));
-  }
-  if (bits == 24) {
-    return static_cast<int32_t>(std::clamp(std::llround(clamped * 8388608.0), -8388608LL, 8388607LL));
-  }
-  const long long value = std::clamp(
-      std::llround(clamped * 2147483648.0),
-      static_cast<long long>(std::numeric_limits<int32_t>::min()),
-      static_cast<long long>(std::numeric_limits<int32_t>::max()));
-  return static_cast<int32_t>(value);
-}
-
-void writePackedSample(float sample, AudioSampleFormat format, uint8_t* output) {
-  switch (format) {
-    case AudioSampleFormat::Int16Interleaved: {
-      const int16_t value = static_cast<int16_t>(floatToSignedInt(sample, 16));
-      std::memcpy(output, &value, sizeof(value));
-      break;
-    }
-    case AudioSampleFormat::Int24Interleaved: {
-      const auto value = static_cast<uint32_t>(floatToSignedInt(sample, 24));
-      output[0] = static_cast<uint8_t>(value & 0xff);
-      output[1] = static_cast<uint8_t>((value >> 8) & 0xff);
-      output[2] = static_cast<uint8_t>((value >> 16) & 0xff);
-      break;
-    }
-    case AudioSampleFormat::Int24In32Interleaved: {
-      const int32_t value = static_cast<int32_t>(static_cast<uint32_t>(floatToSignedInt(sample, 24)) << 8);
-      std::memcpy(output, &value, sizeof(value));
-      break;
-    }
-    case AudioSampleFormat::Int32Interleaved: {
-      const int32_t value = floatToSignedInt(sample, 32);
-      std::memcpy(output, &value, sizeof(value));
-      break;
-    }
-    case AudioSampleFormat::Float32Interleaved:
-    default:
-      std::memcpy(output, &sample, sizeof(sample));
-      break;
-  }
-}
-
-size_t bytesPerSample(AudioSampleFormat format) {
-  switch (format) {
-    case AudioSampleFormat::DsdInt8Lsb1:
-    case AudioSampleFormat::DsdInt8Msb1:
-    case AudioSampleFormat::DsdInt8Ner8:
-      return 1;
-    case AudioSampleFormat::Int16Interleaved:
-      return 2;
-    case AudioSampleFormat::Int24Interleaved:
-      return 3;
-    case AudioSampleFormat::Int24In32Interleaved:
-    case AudioSampleFormat::Int32Interleaved:
-    case AudioSampleFormat::Float32Interleaved:
-    default:
-      return 4;
   }
 }
 
@@ -832,6 +766,13 @@ bool AsioBackend::createAndStartHost(std::string* error) {
     outputInfo_.actualBitDepth = outputFormat_.bitDepth;
     outputInfo_.outputBitDepth = outputFormat_.bitDepth;
     outputInfo_.resampled = !sameFormat(openConfig_.format, outputFormat_);
+    const size_t callbackFrames = static_cast<size_t>(std::max<long>(1, bufferSizeFrames_));
+    const size_t renderSamples = callbackFrames * static_cast<size_t>(std::max(1, outputFormat_.channelCount));
+    renderScratch_.resize(renderSamples);
+    const size_t typedBytesPerFrame = audioFormatBytesPerFrame(outputFormat_);
+    if (typedCallback_ && typedBytesPerFrame > 0) {
+      typedRenderScratch_.resize(callbackFrames * typedBytesPerFrame);
+    }
     if (outputInfo_.resampled && outputInfo_.perfectReason.empty()) {
       outputInfo_.perfectReasonCode = isNativeDsdRequest(openConfig_.format) ? "native_dsd_format_mismatch"
                                                                              : "pcm_converted";
@@ -929,9 +870,9 @@ void AsioBackend::renderBuffer(long bufferIndex) {
   if (typedCallback && outputConfig.routingMode == ChannelRoutingMode::Auto && sourceChannels == outputChannels &&
       actualOutputChannelFormatsMatch && host_->outputSampleFormat(0) == outputFormat.sampleFormat &&
       audioFormatBytesPerFrame(outputFormat) > 0) {
-    const size_t sampleStride = bytesPerSample(outputFormat.sampleFormat);
+    const size_t sampleStride = asio::bytesPerSample(outputFormat.sampleFormat);
     const size_t bytesPerFrame = audioFormatBytesPerFrame(outputFormat);
-    typedRenderScratch_.assign(frames * bytesPerFrame, 0);
+    typedRenderScratch_.resize(frames * bytesPerFrame);
     PcmBlock block;
     block.format = outputFormat;
     block.data = typedRenderScratch_.data();
@@ -939,15 +880,24 @@ void AsioBackend::renderBuffer(long bufferIndex) {
     block.byteSize = typedRenderScratch_.size();
     const size_t rendered = typedCallback(block);
     if (rendered > 0) {
+      const size_t renderedFrames = std::min(rendered, frames);
+      if (renderedFrames < frames) {
+        std::memset(
+            typedRenderScratch_.data() + renderedFrames * bytesPerFrame,
+            0,
+            (frames - renderedFrames) * bytesPerFrame);
+      }
       for (int channel = 0; channel < outputChannels; ++channel) {
         auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
         if (!output) continue;
         if (host_->outputSampleFormat(channel) != outputFormat.sampleFormat) continue;
-        for (size_t frame = 0; frame < frames; ++frame) {
-          const size_t sourceOffset =
-              (frame * static_cast<size_t>(sourceChannels) + static_cast<size_t>(channel)) * sampleStride;
-          std::memcpy(output + frame * sampleStride, typedRenderScratch_.data() + sourceOffset, sampleStride);
-        }
+        asio::writeInterleavedTypedChannelToPlanar(
+            typedRenderScratch_.data(),
+            frames,
+            sourceChannels,
+            channel,
+            sampleStride,
+            output);
       }
       host_->outputReady();
       return;
@@ -960,7 +910,7 @@ void AsioBackend::renderBuffer(long bufferIndex) {
       if (!output) continue;
       const AudioSampleFormat sampleFormat = host_->outputSampleFormat(channel);
       if (!isDsdSampleFormat(sampleFormat)) continue;
-      std::memset(output, 0x69, frames * bytesPerSample(sampleFormat));
+      std::memset(output, 0x69, frames * asio::bytesPerSample(sampleFormat));
     }
     {
       std::lock_guard lock(mutex_);
@@ -977,25 +927,28 @@ void AsioBackend::renderBuffer(long bufferIndex) {
   }
 
   const size_t samples = frames * static_cast<size_t>(sourceChannels);
-  renderScratch_.assign(samples, 0.0f);
-  if (callback) callback(renderScratch_.data(), frames);
+  renderScratch_.resize(samples);
+  const size_t renderedFrames = callback ? std::min(callback(renderScratch_.data(), frames), frames) : 0;
+  if (renderedFrames < frames) {
+    const size_t renderedSamples = renderedFrames * static_cast<size_t>(sourceChannels);
+    std::fill(
+        renderScratch_.begin() + static_cast<std::ptrdiff_t>(renderedSamples),
+        renderScratch_.begin() + static_cast<std::ptrdiff_t>(samples),
+        0.0f);
+  }
 
   for (int channel = 0; channel < outputChannels; ++channel) {
     auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
     if (!output) continue;
     const AudioSampleFormat sampleFormat = host_->outputSampleFormat(channel);
-    const size_t stride = bytesPerSample(sampleFormat);
-    for (size_t frame = 0; frame < frames; ++frame) {
-      float sample = 0.0f;
-      if (sourceChannels == 1 && outputConfig.routingMode == ChannelRoutingMode::MonoToMultichannel) {
-        if (channel < 2) sample = renderScratch_[frame];
-      } else if (sourceChannels == 1 && outputConfig.routingMode == ChannelRoutingMode::MonoToStereo) {
-        if (channel < 2) sample = renderScratch_[frame];
-      } else if (channel < sourceChannels) {
-        sample = renderScratch_[frame * static_cast<size_t>(sourceChannels) + static_cast<size_t>(channel)];
-      }
-      writePackedSample(sample, sampleFormat, output + frame * stride);
-    }
+    asio::writePackedChannelFromFloatScratch(
+        renderScratch_.data(),
+        frames,
+        sourceChannels,
+        channel,
+        outputConfig.routingMode,
+        sampleFormat,
+        output);
   }
   host_->outputReady();
 }

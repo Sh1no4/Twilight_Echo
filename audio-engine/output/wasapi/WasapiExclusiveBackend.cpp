@@ -304,7 +304,6 @@ struct WasapiExclusiveBackend::Impl {
     HRESULT hr = renderClient->GetBuffer(frameCount, &data);
     if (FAILED(hr)) return hr;
     const size_t byteCount = static_cast<size_t>(frameCount) * audioFormatBytesPerFrame(outputFormat);
-    if (data && byteCount > 0) std::memset(data, 0, byteCount);
 
     if (typedCallback) {
       PcmBlock block;
@@ -314,6 +313,9 @@ struct WasapiExclusiveBackend::Impl {
       block.byteSize = byteCount;
       const size_t rendered = typedCallback(block);
       if (rendered > 0) {
+        const size_t renderedFrames = std::min<size_t>(rendered, frameCount);
+        const size_t renderedBytes = renderedFrames * audioFormatBytesPerFrame(outputFormat);
+        if (data && renderedBytes < byteCount) std::memset(data + renderedBytes, 0, byteCount - renderedBytes);
         hr = renderClient->ReleaseBuffer(frameCount, 0);
         if (FAILED(hr)) return hr;
         return S_OK;
@@ -321,10 +323,12 @@ struct WasapiExclusiveBackend::Impl {
     }
 
     const size_t sampleCount = static_cast<size_t>(frameCount) * static_cast<size_t>(outputFormat.channelCount);
-    renderScratch.assign(sampleCount, 0.0f);
-    if (callback) {
-      callback(renderScratch.data(), frameCount);
-    }
+    renderScratch.resize(sampleCount);
+    wasapi::renderFloatCallbackWithTailSilence(
+        renderScratch.data(),
+        frameCount,
+        outputFormat.channelCount,
+        callback);
 
     wasapi::packFloatToPcm(
         renderScratch.data(),

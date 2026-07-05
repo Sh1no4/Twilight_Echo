@@ -1,5 +1,6 @@
 #include "FftSpectrumAnalyzer.h"
 
+#include "FftSpectrumAnalyzerUtils.h"
 #include "KissFftAdapter.h"
 
 #include <algorithm>
@@ -38,7 +39,7 @@ void FftSpectrumAnalyzer::prepare(const AudioFormat& format, size_t resolution) 
   std::lock_guard lock(mutex_);
   format_ = format;
   resolution_ = normalizeResolution(resolution);
-  window_.assign(resolution_, 1.0f);
+  fft::resizeWindowForOverwrite(window_, resolution_);
   for (size_t i = 0; i < resolution_; ++i) {
     window_[i] = static_cast<float>(0.5 - 0.5 * std::cos(2.0 * std::numbers::pi * static_cast<double>(i) /
                                                         static_cast<double>(std::max<size_t>(1, resolution_ - 1))));
@@ -54,6 +55,7 @@ void FftSpectrumAnalyzer::prepare(const AudioFormat& format, size_t resolution) 
   rmsDb_ = -120.0;
   lufsMomentary_ = -70.0;
   hasCapture_ = false;
+  captureBuffersSilent_ = true;
   spectrumDirty_ = false;
 }
 
@@ -79,6 +81,16 @@ void FftSpectrumAnalyzer::setEnabled(bool enabled) {
 
 void FftSpectrumAnalyzer::resetCapture() {
   std::lock_guard lock(mutex_);
+  if (fft::resetCaptureCanSkipBufferClear(
+          hasCapture_,
+          spectrumDirty_,
+          spectrogram_.empty(),
+          captureBuffersSilent_,
+          peakDb_,
+          rmsDb_,
+          lufsMomentary_)) {
+    return;
+  }
   hasCapture_ = false;
   spectrogram_.clear();
   peakDb_ = -120.0;
@@ -88,6 +100,7 @@ void FftSpectrumAnalyzer::resetCapture() {
   std::fill(timeDomain_.begin(), timeDomain_.end(), 0.0f);
   std::fill(oscilloscopeBuffer_.begin(), oscilloscopeBuffer_.end(), 0.0f);
   std::fill(magnitudes_.begin(), magnitudes_.end(), 0.0f);
+  captureBuffersSilent_ = true;
 }
 
 void FftSpectrumAnalyzer::capture(const float* interleaved, size_t frames, int channels) {
@@ -156,22 +169,19 @@ void FftSpectrumAnalyzer::capture(const float* interleaved, size_t frames, int c
   lufsMomentary_ = std::max(-70.0, rmsDb_ - 0.691);
   spectrumDirty_ = true;
   hasCapture_ = true;
+  captureBuffersSilent_ = false;
 }
 
 void FftSpectrumAnalyzer::updateSpectrumLocked() const {
   if (!enabled_ || !hasCapture_ || !spectrumDirty_ || resolution_ == 0 || timeDomain_.empty()) return;
-  std::vector<float> fftInput(resolution_, 0.0f);
-  for (size_t i = 0; i < resolution_; ++i) {
-    fftInput[i] = timeDomain_[i] * window_[i];
-  }
+  fft::writeWindowedFftInput(timeDomain_, window_, resolution_, fftInputScratch_);
 
-  std::vector<KissFftAdapter::Complex> spectrum;
-  KissFftAdapter::forward(fftInput, &spectrum);
+  KissFftAdapter::forward(fftInputScratch_, &spectrumScratch_);
   const size_t bins = resolution_ / 2;
-  magnitudes_.assign(bins, 0.0f);
+  fft::resizeMagnitudesForOverwrite(magnitudes_, bins);
   double peak = 1.0e-9;
   for (size_t i = 0; i < bins; ++i) {
-    const double magnitude = std::abs(spectrum[i]);
+    const double magnitude = std::abs(spectrumScratch_[i]);
     peak = std::max(peak, magnitude);
     magnitudes_[i] = static_cast<float>(magnitude);
   }
@@ -210,85 +220,78 @@ std::string FftSpectrumAnalyzer::readVisualizationJson(
     size_t waveformPoints,
     size_t spectrogramFrames,
     size_t oscilloscopePoints) const {
-  std::lock_guard lock(mutex_);
   spectrumPoints = std::clamp<size_t>(spectrumPoints == 0 ? 64 : spectrumPoints, 8, 4096);
   waveformPoints = std::clamp<size_t>(waveformPoints == 0 ? 128 : waveformPoints, 16, 512);
   spectrogramFrames = std::clamp<size_t>(spectrogramFrames == 0 ? 48 : spectrogramFrames, 1, 96);
   oscilloscopePoints = std::clamp<size_t>(oscilloscopePoints == 0 ? 1024 : oscilloscopePoints, 64, 4096);
-  const bool active = enabled_ && hasCapture_;
-  if (active) updateSpectrumLocked();
 
-  auto writeArray = [](std::ostringstream& json, const std::vector<float>& values) {
+  bool active = false;
+  double peakDb = -120.0;
+  double rmsDb = -120.0;
+  double lufsMomentary = -70.0;
+  int sampleRate = 0;
+  std::vector<float> magnitudes;
+  std::vector<float> timeDomain;
+  std::vector<float> oscilloscopeBuffer;
+  std::vector<std::vector<float>> spectrogram;
+  {
+    std::lock_guard lock(mutex_);
+    active = enabled_ && hasCapture_;
+    if (active) updateSpectrumLocked();
+    peakDb = active ? peakDb_ : -120.0;
+    rmsDb = active ? rmsDb_ : -120.0;
+    lufsMomentary = active ? lufsMomentary_ : -70.0;
+    sampleRate = format_.sampleRate;
+    if (active) {
+      magnitudes = magnitudes_;
+      timeDomain = timeDomain_;
+      oscilloscopeBuffer = oscilloscopeBuffer_;
+      const size_t firstFrame =
+          spectrogram_.size() > spectrogramFrames ? spectrogram_.size() - spectrogramFrames : 0;
+      spectrogram.reserve(spectrogram_.size() - firstFrame);
+      for (size_t frame = firstFrame; frame < spectrogram_.size(); ++frame) {
+        spectrogram.push_back(spectrogram_[frame]);
+      }
+    }
+  }
+
+  auto writeReducedArray = [](std::ostringstream& json, const std::vector<float>& values, size_t points) {
     json << "[";
-    for (size_t i = 0; i < values.size(); ++i) {
+    for (size_t i = 0; i < points; ++i) {
       if (i > 0) json << ",";
-      json << values[i];
+      if (values.empty()) {
+        json << 0.0f;
+      } else {
+        const size_t bucket = i * values.size() / points;
+        json << values[std::min(bucket, values.size() - 1)];
+      }
     }
     json << "]";
   };
 
-  std::vector<float> spectrum(spectrumPoints, 0.0f);
-  if (active && !magnitudes_.empty()) {
-    for (size_t i = 0; i < spectrumPoints; ++i) {
-      const size_t bucket = i * magnitudes_.size() / spectrumPoints;
-      spectrum[i] = magnitudes_[std::min(bucket, magnitudes_.size() - 1)];
-    }
-  }
-
-  std::vector<float> waveform(waveformPoints, 0.0f);
-  if (active && !timeDomain_.empty()) {
-    for (size_t i = 0; i < waveformPoints; ++i) {
-      const size_t bucket = i * timeDomain_.size() / waveformPoints;
-      waveform[i] = std::clamp(timeDomain_[std::min(bucket, timeDomain_.size() - 1)], -1.0f, 1.0f);
-    }
-  }
-
-  // Decoupled high-resolution time-domain oscilloscope tap. Sourced from
-  // oscilloscopeBuffer_ (sized independently of resolution_), so it can yield
-  // far more distinct samples than the FFT-coupled waveform. Signed mono PCM
-  // in [-1, 1]; zero-filled when inactive.
-  std::vector<float> oscilloscope(oscilloscopePoints, 0.0f);
-  if (active && !oscilloscopeBuffer_.empty()) {
-    for (size_t i = 0; i < oscilloscopePoints; ++i) {
-      const size_t bucket = i * oscilloscopeBuffer_.size() / oscilloscopePoints;
-      oscilloscope[i] = std::clamp(oscilloscopeBuffer_[std::min(bucket, oscilloscopeBuffer_.size() - 1)], -1.0f, 1.0f);
-    }
-  }
-
-  const size_t firstFrame =
-      spectrogram_.size() > spectrogramFrames ? spectrogram_.size() - spectrogramFrames : 0;
-
   std::ostringstream json;
   json << "{\"spectrum\":";
-  writeArray(json, spectrum);
+  fft::writeReducedArrayJson(json, magnitudes, spectrumPoints, active);
   json << ",\"waveform\":";
-  writeArray(json, waveform);
+  fft::writeReducedArrayJson(json, timeDomain, waveformPoints, active, true);
   json << ",\"oscilloscope\":";
-  writeArray(json, oscilloscope);
-  json << ",\"peakDb\":" << (active ? peakDb_ : -120.0)
-       << ",\"rmsDb\":" << (active ? rmsDb_ : -120.0)
+  fft::writeReducedArrayJson(json, oscilloscopeBuffer, oscilloscopePoints, active, true);
+  json << ",\"peakDb\":" << peakDb
+       << ",\"rmsDb\":" << rmsDb
        << ",\"lufsMomentary\":";
   if (active) {
-    json << lufsMomentary_;
+    json << lufsMomentary;
   } else {
     json << "null";
   }
   json << ",\"spectrogram\":[";
   if (active) {
-    for (size_t frame = firstFrame; frame < spectrogram_.size(); ++frame) {
-      if (frame > firstFrame) json << ",";
-      const auto& bins = spectrogram_[frame];
-      std::vector<float> reduced(spectrumPoints, 0.0f);
-      if (!bins.empty()) {
-        for (size_t i = 0; i < spectrumPoints; ++i) {
-          const size_t bucket = i * bins.size() / spectrumPoints;
-          reduced[i] = bins[std::min(bucket, bins.size() - 1)];
-        }
-      }
-      writeArray(json, reduced);
+    for (size_t frame = 0; frame < spectrogram.size(); ++frame) {
+      if (frame > 0) json << ",";
+      writeReducedArray(json, spectrogram[frame], spectrumPoints);
     }
   }
-  json << "],\"sampleRate\":" << format_.sampleRate
+  json << "],\"sampleRate\":" << sampleRate
        << ",\"active\":" << (active ? "true" : "false") << "}";
   return json.str();
 }

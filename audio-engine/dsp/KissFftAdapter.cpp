@@ -1,5 +1,7 @@
 #include "KissFftAdapter.h"
 
+#include "KissFftAdapterUtils.h"
+
 #include <algorithm>
 #include <cmath>
 #include <numbers>
@@ -17,7 +19,7 @@ size_t KissFftAdapter::nextPowerOfTwo(size_t value) {
 
 void KissFftAdapter::forward(const std::vector<float>& input, std::vector<Complex>* output) {
   if (!output) return;
-  output->assign(input.size(), {});
+  fft::resizeComplexOutputForOverwrite(*output, input.size());
   for (size_t i = 0; i < input.size(); ++i) {
     (*output)[i] = Complex(input[i], 0.0f);
   }

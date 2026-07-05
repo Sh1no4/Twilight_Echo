@@ -1,4 +1,5 @@
 #include "DspChain.h"
+#include "DspChainActiveUtils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -227,6 +228,7 @@ DspChain::DspChain() {
 }
 
 void DspChain::configure(const DspConfig& config) {
+  processingRequired_.store(true, std::memory_order_relaxed);
   std::lock_guard lock(mutex_);
   DspConfig next = config;
   if (next.impulseResponsePath.empty() && !next.convolverEnabled) {
@@ -256,6 +258,7 @@ void DspChain::prepare(const AudioFormat& format) {
 }
 
 void DspChain::setTrackContext(const DspTrackContext& context) {
+  processingRequired_.store(true, std::memory_order_relaxed);
   std::lock_guard lock(mutex_);
   trackContext_ = context;
   for (auto& processor : processors_) {
@@ -265,9 +268,10 @@ void DspChain::setTrackContext(const DspTrackContext& context) {
 }
 
 void DspChain::process(float* samples, size_t frameCount) {
+  if (!processingRequired_.load(std::memory_order_relaxed)) return;
   std::lock_guard lock(mutex_);
   if (!samples || frameCount == 0) return;
-  for (auto& processor : processors_) {
+  for (IAudioProcessor* processor : activeProcessors_) {
     processor->process(samples, frameCount);
   }
   if (config_.clipGuard && status_.dspActive) {
@@ -288,6 +292,7 @@ DspStatus DspChain::status() const {
 }
 
 bool DspChain::loadImpulseResponse(const std::string& path, std::string* error) {
+  processingRequired_.store(true, std::memory_order_relaxed);
   std::lock_guard lock(mutex_);
   if (!convolver_) return false;
   const bool ok = convolver_->loadImpulseResponse(path, error);
@@ -302,6 +307,7 @@ bool DspChain::loadImpulseResponse(const std::string& path, std::string* error) 
 }
 
 void DspChain::unloadImpulseResponse() {
+  processingRequired_.store(true, std::memory_order_relaxed);
   std::lock_guard lock(mutex_);
   if (convolver_) convolver_->unloadImpulseResponse();
   config_.convolverEnabled = false;
@@ -315,6 +321,7 @@ ConvolverInfo DspChain::convolverInfo() const {
 }
 
 void DspChain::setEqBands(const std::vector<DspEqBand>& bands, EqMode mode, double preampDb, bool enabled) {
+  processingRequired_.store(true, std::memory_order_relaxed);
   std::lock_guard lock(mutex_);
   config_.eqBands = bands;
   config_.eqMode = mode;
@@ -341,6 +348,7 @@ bool DspChain::setEqPresetFromJson(const std::string& json, std::string* error) 
 }
 
 void DspChain::setCrossfeedStrength(double strength) {
+  processingRequired_.store(true, std::memory_order_relaxed);
   std::lock_guard lock(mutex_);
   config_.crossfeedStrength = std::clamp(strength, 0.0, 1.0);
   config_.crossfeedEnabled = config_.crossfeedStrength > 0.0001;
@@ -353,6 +361,7 @@ void DspChain::setCrossfeedStrength(double strength) {
 }
 
 void DspChain::setReplayGainMode(ReplayGainMode mode, double preampDb, double fallbackDb, bool clip) {
+  processingRequired_.store(true, std::memory_order_relaxed);
   std::lock_guard lock(mutex_);
   config_.replayGainMode = mode;
   config_.replayGainPreampDb = std::clamp(preampDb, -24.0, 24.0);
@@ -367,6 +376,7 @@ void DspChain::setReplayGainMode(ReplayGainMode mode, double preampDb, double fa
 }
 
 void DspChain::setNativeDspPluginChain(const std::string& json) {
+  processingRequired_.store(true, std::memory_order_relaxed);
   std::lock_guard lock(mutex_);
   if (!nativePlugins_) return;
   nativePlugins_->setPluginChain(PluginRegistry::parseChainJson(json));
@@ -433,6 +443,8 @@ void DspChain::refreshStatusLocked() {
   status_.nativeDspJson = nativePlugins_ ? nativePlugins_->statusJson() : std::string("{\"plugins\":[]}");
   status_.dspActive = status_.replayGainActive || status_.eqActive || status_.convolverActive ||
                       status_.crossfeedActive || status_.nativeDspActive;
+  activeProcessors_ = dsp::collectActiveProcessors(processors_);
+  processingRequired_.store(!activeProcessors_.empty(), std::memory_order_relaxed);
 }
 
 void DspChain::clampOutput(float* samples, size_t frameCount) {

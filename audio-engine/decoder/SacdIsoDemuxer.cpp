@@ -1,5 +1,6 @@
 #include "SacdIsoDemuxer.h"
 
+#include "SacdIsoDemuxerUtils.h"
 #include "SacdIsoProbe.h"
 
 #include <algorithm>
@@ -314,6 +315,7 @@ struct SacdIsoDemuxer::Impl {
   SacdDstDecoderProvider* dstProvider = nullptr;
   std::unique_ptr<SacdDstDecoderProvider> ownedDstProvider;
   std::vector<uint8_t> decodedDsdBuffer;   // decoded raw DSD bytes for the current frame
+  std::vector<uint8_t> compressedFrameBuffer;
   size_t decodedOffset = 0;                // read cursor inside decodedDsdBuffer
   uint64_t dstCompressedOffset = 0;        // byte cursor into the track's compressed DST stream
   bool dstActive = false;                  // a DST track is being decoded through the provider
@@ -538,7 +540,7 @@ size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* outp
   // written. Frame boundaries are derived from the decoded size so the
   // pipeline stays aligned for the common uncompressed-frame case.
   const size_t compressedFrameWindow = 1 + decodedFrameBytes;
-  std::vector<uint8_t> compressedFrame(compressedFrameWindow, 0);
+  sacd::resizeByteScratchForOverwrite(impl_->compressedFrameBuffer, compressedFrameWindow);
 
   size_t delivered = 0;
   while (delivered < maxBytes) {
@@ -561,7 +563,9 @@ size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* outp
     const uint64_t remaining = track.dataSize - impl_->dstCompressedOffset;
     const size_t readSize = static_cast<size_t>(std::min<uint64_t>(remaining, compressedFrameWindow));
     if (!impl_->file.seekg(static_cast<std::streamoff>(track.dataOffset + impl_->dstCompressedOffset), std::ios::beg) ||
-        !impl_->file.read(reinterpret_cast<char*>(compressedFrame.data()), static_cast<std::streamsize>(readSize))) {
+        !impl_->file.read(
+            reinterpret_cast<char*>(impl_->compressedFrameBuffer.data()),
+            static_cast<std::streamsize>(readSize))) {
       impl_->eof = true;
       break;
     }
@@ -573,7 +577,11 @@ size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* outp
     impl_->decodedDsdBuffer.assign(decodedFrameBytes, 0);
     std::string dstError;
     const size_t decoded = impl_->dstProvider->decodeFrame(
-        compressedFrame.data(), frameRead, impl_->decodedDsdBuffer.data(), decodedFrameBytes, &dstError);
+        impl_->compressedFrameBuffer.data(),
+        frameRead,
+        impl_->decodedDsdBuffer.data(),
+        decodedFrameBytes,
+        &dstError);
     impl_->dstCompressedOffset += frameRead;
     if (decoded == 0) {
       // Decode failure: stop honestly rather than emit garbage DSD.

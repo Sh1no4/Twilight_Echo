@@ -1,4 +1,5 @@
 #include "../core/TwilightAudioEngine.h"
+#include "../core/AudioPipelineRenderUtils.h"
 #include "../decoder/DsdReader.h"
 #include "../decoder/FFmpegDecoder.h"
 #include "../output/IOutputBackend.h"
@@ -31,6 +32,18 @@ constexpr int kDsd64Rate = 2822400;
 constexpr int kDsd128Rate = 5644800;
 constexpr int kDsd256Rate = 11289600;
 constexpr int kDsd512Rate = 22579200;
+
+void testFloatScratchResizeForOverwritePreservesSameSizedScratch() {
+  std::vector<float> scratch = {0.25f, -0.5f, 0.75f};
+  const float* before = scratch.data();
+
+  render::resizeFloatScratchForOverwrite(scratch, scratch.size());
+
+  assert(scratch.data() == before);
+  assert(scratch[0] == 0.25f);
+  assert(scratch[1] == -0.5f);
+  assert(scratch[2] == 0.75f);
+}
 
 void writeLe16(std::ofstream& out, uint16_t value) {
   out.put(static_cast<char>(value & 0xff));
@@ -1488,6 +1501,7 @@ const AudioFormat& FFmpegDecoder::outputFormat() const {
 }  // namespace twilight::audio
 
 int main() {
+  testFloatScratchResizeForOverwritePreservesSameSizedScratch();
   testDsd64StartsOnDop();
   testPcmTypedPassthroughIsOutputPerfect();
   testOutputStartWaitsForFirstDecodedFrames();

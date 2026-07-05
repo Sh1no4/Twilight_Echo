@@ -1,4 +1,5 @@
 #include "ParametricEqProcessor.h"
+#include "ParametricEqProcessorUtils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -135,6 +136,11 @@ void ParametricEqProcessor::process(float* samples, size_t frameCount) {
   if (!active_ || !samples || frameCount == 0) return;
 
   const int channels = std::max(1, format_.channelCount);
+  if (filters_.empty()) {
+    eq::applyPreampOnly(samples, frameCount * static_cast<size_t>(channels), preampLinear_);
+    return;
+  }
+
   for (size_t frame = 0; frame < frameCount; ++frame) {
     for (int channel = 0; channel < channels; ++channel) {
       const size_t index = frame * static_cast<size_t>(channels) + static_cast<size_t>(channel);

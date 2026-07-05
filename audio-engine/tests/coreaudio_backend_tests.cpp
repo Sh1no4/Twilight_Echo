@@ -1,10 +1,14 @@
 #include "../output/coreaudio/CoreAudioBackend.h"
 #include "../output/coreaudio/CoreAudioExclusiveBackend.h"
+#include "../output/coreaudio/CoreAudioRenderUtils.h"
 #include "../output/coreaudio/MockCoreAudioHost.h"
 
 #include <cassert>
+#include <cstdint>
+#include <cstring>
 #include <memory>
 #include <string>
+#include <vector>
 
 using namespace twilight::audio;
 
@@ -121,6 +125,130 @@ void testCoreAudioNativeDsdUnsupported() {
   assert(exclusive.nativeDsdRuntimeFacts().reason.find("no native DSD path") != std::string::npos);
 }
 
+void testCoreAudioFloatRenderHelperZerosOnlyUnrenderedTail() {
+  std::vector<float> buffer = {
+      -1.0f, -1.0f,
+      -1.0f, -1.0f,
+      -1.0f, -1.0f,
+  };
+
+  const size_t rendered = coreaudio::renderFloatCallbackWithTailSilence(
+      buffer.data(),
+      3,
+      2,
+      [](float* output, size_t frames) {
+        assert(frames == 3);
+        output[0] = 0.125f;
+        output[1] = -0.125f;
+        return static_cast<size_t>(1);
+      });
+
+  assert(rendered == 1);
+  assert(buffer[0] == 0.125f);
+  assert(buffer[1] == -0.125f);
+  for (size_t index = 2; index < buffer.size(); ++index) {
+    assert(buffer[index] == 0.0f);
+  }
+}
+
+void testCoreAudioFloatRenderHelperDoesNotPreclearFullRender() {
+  std::vector<float> buffer = {
+      -1.0f, -1.0f,
+      -1.0f, -1.0f,
+  };
+
+  const size_t rendered = coreaudio::renderFloatCallbackWithTailSilence(
+      buffer.data(),
+      2,
+      2,
+      [](float* output, size_t frames) {
+        assert(frames == 2);
+        for (size_t sample = 0; sample < frames * 2; ++sample) {
+          assert(output[sample] == -1.0f);
+          output[sample] = static_cast<float>(sample + 1);
+        }
+        return frames;
+      });
+
+  assert(rendered == 2);
+  assert(buffer[0] == 1.0f);
+  assert(buffer[1] == 2.0f);
+  assert(buffer[2] == 3.0f);
+  assert(buffer[3] == 4.0f);
+}
+
+void testCoreAudioFloatRenderHelperZerosAllWithoutCallback() {
+  std::vector<float> buffer = {
+      -1.0f, -1.0f,
+      -1.0f, -1.0f,
+  };
+
+  const size_t rendered = coreaudio::renderFloatCallbackWithTailSilence(
+      buffer.data(),
+      2,
+      2,
+      RenderCallback{});
+
+  assert(rendered == 0);
+  for (float sample : buffer) {
+    assert(sample == 0.0f);
+  }
+}
+
+void testCoreAudioTypedRenderHelperDoesNotPreclearFullRender() {
+  std::vector<uint8_t> buffer = {
+      0xee, 0xee,
+      0xee, 0xee,
+      0xee, 0xee,
+      0xee, 0xee,
+  };
+
+  AudioFormat format = sourceFormat(48000, 16, 2, AudioSampleFormat::Int16Interleaved);
+  const size_t rendered = coreaudio::renderTypedCallbackWithTailSilence(
+      buffer.data(),
+      2,
+      format,
+      [&](PcmBlock& block) {
+        assert(block.frames == 2);
+        assert(block.byteSize == buffer.size());
+        for (uint8_t byte : buffer) {
+          assert(byte == 0xee);
+        }
+        const uint8_t bytes[] = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+        std::memcpy(block.data, bytes, sizeof(bytes));
+        return block.frames;
+      });
+
+  assert(rendered == 2);
+  const std::vector<uint8_t> expected = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
+  assert(buffer == expected);
+}
+
+void testCoreAudioTypedRenderHelperZerosOnlyUnrenderedTail() {
+  std::vector<uint8_t> buffer = {
+      0xee, 0xee,
+      0xee, 0xee,
+      0xee, 0xee,
+      0xee, 0xee,
+  };
+
+  AudioFormat format = sourceFormat(48000, 16, 2, AudioSampleFormat::Int16Interleaved);
+  const size_t rendered = coreaudio::renderTypedCallbackWithTailSilence(
+      buffer.data(),
+      2,
+      format,
+      [&](PcmBlock& block) {
+        assert(block.frames == 2);
+        const uint8_t bytes[] = {0x11, 0x22, 0x33, 0x44};
+        std::memcpy(block.data, bytes, sizeof(bytes));
+        return static_cast<size_t>(1);
+      });
+
+  assert(rendered == 1);
+  const std::vector<uint8_t> expected = {0x11, 0x22, 0x33, 0x44, 0x00, 0x00, 0x00, 0x00};
+  assert(buffer == expected);
+}
+
 }  // namespace
 
 int main() {
@@ -130,5 +258,10 @@ int main() {
   testCoreAudioUnderrunDiagnostics();
   testCoreAudioSampleRateMatch();
   testCoreAudioNativeDsdUnsupported();
+  testCoreAudioFloatRenderHelperZerosOnlyUnrenderedTail();
+  testCoreAudioFloatRenderHelperDoesNotPreclearFullRender();
+  testCoreAudioFloatRenderHelperZerosAllWithoutCallback();
+  testCoreAudioTypedRenderHelperDoesNotPreclearFullRender();
+  testCoreAudioTypedRenderHelperZerosOnlyUnrenderedTail();
   return 0;
 }

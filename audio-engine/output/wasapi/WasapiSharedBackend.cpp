@@ -279,11 +279,11 @@ struct WasapiSharedBackend::Impl {
         continue;
       }
 
-      const size_t samples = static_cast<size_t>(framesAvailable) * static_cast<size_t>(outputFormat.channelCount);
-      std::fill(reinterpret_cast<float*>(data), reinterpret_cast<float*>(data) + samples, 0.0f);
-      if (callback) {
-        callback(reinterpret_cast<float*>(data), framesAvailable);
-      }
+      wasapi::renderFloatCallbackWithTailSilence(
+          reinterpret_cast<float*>(data),
+          framesAvailable,
+          outputFormat.channelCount,
+          callback);
       hr = renderClient->ReleaseBuffer(framesAvailable, 0);
       if (FAILED(hr)) {
         recordRenderFailure(hr, "无法提交共享输出缓冲区");
@@ -509,12 +509,11 @@ bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eve
   BYTE* data = nullptr;
   HRESULT hr = impl_->renderClient->GetBuffer(impl_->bufferFrameCount, &data);
   if (!impl_->renderSucceeded(hr, error, "无法预填充输出缓冲区")) return false;
-  const size_t samples =
-      static_cast<size_t>(impl_->bufferFrameCount) * static_cast<size_t>(impl_->outputFormat.channelCount);
-  std::fill(reinterpret_cast<float*>(data), reinterpret_cast<float*>(data) + samples, 0.0f);
-  if (impl_->callback) {
-    impl_->callback(reinterpret_cast<float*>(data), impl_->bufferFrameCount);
-  }
+  wasapi::renderFloatCallbackWithTailSilence(
+      reinterpret_cast<float*>(data),
+      impl_->bufferFrameCount,
+      impl_->outputFormat.channelCount,
+      impl_->callback);
   hr = impl_->renderClient->ReleaseBuffer(impl_->bufferFrameCount, 0);
   if (!impl_->renderSucceeded(hr, error, "无法提交预填充输出缓冲区")) return false;
 

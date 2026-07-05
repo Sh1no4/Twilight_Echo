@@ -1,13 +1,12 @@
 #include "AlsaBackend.h"
 
+#include "AlsaRenderUtils.h"
 #include "RealAlsaHost.h"
 
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <cmath>
 #include <cstdint>
-#include <cstring>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -16,49 +15,6 @@
 
 namespace twilight::audio {
 namespace {
-
-float clampSample(float sample) {
-  return std::clamp(sample, -1.0f, 1.0f);
-}
-
-int32_t floatToInt24(float sample) {
-  const float clamped = clampSample(sample);
-  if (clamped <= -1.0f) return -8388608;
-  return static_cast<int32_t>(std::lrint(static_cast<double>(clamped) * 8388607.0));
-}
-
-int16_t floatToInt16(float sample) {
-  const float clamped = clampSample(sample);
-  if (clamped <= -1.0f) return -32768;
-  return static_cast<int16_t>(std::lrint(static_cast<double>(clamped) * 32767.0));
-}
-
-int32_t floatToInt32(float sample) {
-  const float clamped = clampSample(sample);
-  if (clamped <= -1.0f) return -2147483647 - 1;
-  return static_cast<int32_t>(std::lrint(static_cast<double>(clamped) * 2147483647.0));
-}
-
-void writeLe16(uint8_t* out, int16_t value) {
-  const auto raw = static_cast<uint16_t>(value);
-  out[0] = static_cast<uint8_t>(raw & 0xffu);
-  out[1] = static_cast<uint8_t>((raw >> 8) & 0xffu);
-}
-
-void writeLe24(uint8_t* out, int32_t value) {
-  const auto raw = static_cast<uint32_t>(value);
-  out[0] = static_cast<uint8_t>(raw & 0xffu);
-  out[1] = static_cast<uint8_t>((raw >> 8) & 0xffu);
-  out[2] = static_cast<uint8_t>((raw >> 16) & 0xffu);
-}
-
-void writeLe32(uint8_t* out, int32_t value) {
-  const auto raw = static_cast<uint32_t>(value);
-  out[0] = static_cast<uint8_t>(raw & 0xffu);
-  out[1] = static_cast<uint8_t>((raw >> 8) & 0xffu);
-  out[2] = static_cast<uint8_t>((raw >> 16) & 0xffu);
-  out[3] = static_cast<uint8_t>((raw >> 24) & 0xffu);
-}
 
 bool exactFormatMatch(const AudioFormat& requested, const AudioFormat& actual) {
   if (isDsdSampleFormat(requested.sampleFormat) || isDsdSampleFormat(actual.sampleFormat)) {
@@ -158,9 +114,6 @@ bool isNativeDsdRequest(const AudioFormat& requested) {
          requested.sampleRate >= 2822400;
 }
 
-// DSD silence byte per Sony/Phillips SACD spec (idle = 0x69 alternating pattern).
-constexpr uint8_t kDsdSilenceByte = 0x69;
-
 // Advertised Native DSD rates for a direct hw: device (DSD64/128/256/512, 44.1k family).
 const std::vector<int>& nativeDsdAdvertisedRates() {
   static const std::vector<int> rates = {2822400, 5644800, 11289600, 22579200};
@@ -184,6 +137,7 @@ struct AlsaBackend::Impl {
   std::thread renderThread;
   std::vector<float> renderScratch;
   std::vector<uint8_t> packedScratch;
+  bool packedScratchDsdSilence = false;
   std::unique_ptr<IAlsaHost> host;
   AlsaPcmFormat pcmFormat = AlsaPcmFormat::FloatLe;
   uint64_t periodSize = 512;
@@ -287,63 +241,25 @@ struct AlsaBackend::Impl {
   }
 
   static size_t bytesPerSample(AudioSampleFormat format) {
-    switch (format) {
-      case AudioSampleFormat::Int16Interleaved:
-        return 2;
-      case AudioSampleFormat::Int24Interleaved:
-        return 3;
-      case AudioSampleFormat::DsdInt8Lsb1:
-      case AudioSampleFormat::DsdInt8Msb1:
-      case AudioSampleFormat::DsdInt8Ner8:
-        return 1;
-      case AudioSampleFormat::Int24In32Interleaved:
-      case AudioSampleFormat::Int32Interleaved:
-      case AudioSampleFormat::Float32Interleaved:
-      default:
-        return 4;
-    }
+    return alsa::pcmBytesPerSample(format);
   }
 
   void pack(const float* input, size_t frames, int channels) {
     const size_t bytesPerSampleValue = bytesPerSample(outputFormat.sampleFormat);
     bytesPerFrame = bytesPerSampleValue * static_cast<size_t>(channels);
-    packedScratch.assign(frames * bytesPerFrame, 0);
 
     // DSD raw-copy branch: no float→int conversion. DSD cannot be synthesized from float,
     // so fill with DSD silence (0x69) when the float path is used as fallback. The typed
     // path (startTyped) handles real DSD byte transfer without going through pack().
     if (isDsdSampleFormat(outputFormat.sampleFormat)) {
-      std::memset(packedScratch.data(), kDsdSilenceByte, packedScratch.size());
+      alsa::prepareDsdSilenceScratch(packedScratch, frames * bytesPerFrame, packedScratchDsdSilence);
       (void)input;
       return;
     }
 
-    for (size_t frame = 0; frame < frames; ++frame) {
-      for (int channel = 0; channel < channels; ++channel) {
-        const float sample = input[frame * static_cast<size_t>(channels) + static_cast<size_t>(channel)];
-        uint8_t* out = packedScratch.data() + frame * bytesPerFrame + static_cast<size_t>(channel) * bytesPerSampleValue;
-        switch (outputFormat.sampleFormat) {
-          case AudioSampleFormat::Float32Interleaved: {
-            const float clamped = clampSample(sample);
-            std::memcpy(out, &clamped, sizeof(clamped));
-            break;
-          }
-          case AudioSampleFormat::Int16Interleaved:
-            writeLe16(out, floatToInt16(sample));
-            break;
-          case AudioSampleFormat::Int24Interleaved:
-            writeLe24(out, floatToInt24(sample));
-            break;
-          case AudioSampleFormat::Int24In32Interleaved:
-            writeLe32(out, floatToInt24(sample) << 8);
-            break;
-          case AudioSampleFormat::Int32Interleaved:
-          default:
-            writeLe32(out, floatToInt32(sample));
-            break;
-        }
-      }
-    }
+    bytesPerFrame =
+        alsa::packFloatScratchToPcmScratch(input, frames, channels, outputFormat.sampleFormat, packedScratch);
+    packedScratchDsdSilence = false;
   }
 
   void recordXrun(const std::string& message) {
@@ -393,16 +309,7 @@ struct AlsaBackend::Impl {
       }
 
       const size_t frameCount = static_cast<size_t>(frames);
-      renderScratch.assign(frameCount * static_cast<size_t>(channels), 0.0f);
-      if (renderCallback) {
-        const size_t rendered = std::min(renderCallback(renderScratch.data(), frameCount), frameCount);
-        if (rendered < frameCount) {
-          std::fill(
-              renderScratch.begin() + static_cast<std::ptrdiff_t>(rendered * static_cast<size_t>(channels)),
-              renderScratch.end(),
-              0.0f);
-        }
-      }
+      alsa::renderFloatPeriodWithTailSilence(renderScratch, frameCount, channels, renderCallback);
       pack(renderScratch.data(), frameCount, channels);
 
       int64_t offset = 0;
@@ -455,48 +362,16 @@ struct AlsaBackend::Impl {
       if (physWidthBytes <= 0) physWidthBytes = 1;
 
       const size_t alsaFrames = static_cast<size_t>(period);
-      const size_t dsdByteFrames = alsaFrames * static_cast<size_t>(physWidthBytes);
-      const size_t dsdByteSize = dsdByteFrames * static_cast<size_t>(channels);
-      typedScratch.assign(dsdByteSize, kDsdSilenceByte);
-
-      size_t rendered = 0;
-      if (renderTyped) {
-        PcmBlock block;
-        block.format = blockFormat;
-        block.data = typedScratch.data();
-        block.frames = dsdByteFrames;
-        block.byteSize = dsdByteSize;
-        rendered = std::min(renderTyped(block), dsdByteFrames);
-      }
-      // Fill unrendered remainder with DSD silence (0x69, not 0x00).
-      if (rendered < dsdByteFrames) {
-        std::fill(typedScratch.begin() + static_cast<std::ptrdiff_t>(rendered * static_cast<size_t>(channels)),
-                  typedScratch.end(),
-                  kDsdSilenceByte);
-      }
-
-      // Repack from DSD-byte-interleaved to ALSA-sample-interleaved when physWidthBytes > 1.
-      // Input layout:  [f0c0, f0c1, ..., f1c0, f1c1, ...]  (1 byte/sample, interleaved)
-      // Output layout: [a0c0_b0, a0c0_b1, a0c1_b0, a0c1_b1, ...]  (physWidthBytes bytes/sample)
-      const uint8_t* writeData = typedScratch.data();
-      if (physWidthBytes > 1) {
-        dsdRepack.assign(alsaFrames * frameBytes, kDsdSilenceByte);
-        for (size_t a = 0; a < alsaFrames; ++a) {
-          for (int c = 0; c < channels; ++c) {
-            for (int b = 0; b < physWidthBytes; ++b) {
-              const size_t srcIdx = (a * static_cast<size_t>(physWidthBytes) + static_cast<size_t>(b)) *
-                                        static_cast<size_t>(channels) +
-                                    static_cast<size_t>(c);
-              const size_t dstIdx = a * frameBytes + static_cast<size_t>(c) * static_cast<size_t>(physWidthBytes) +
-                                    static_cast<size_t>(b);
-              if (srcIdx < dsdByteSize && dstIdx < dsdRepack.size()) {
-                dsdRepack[dstIdx] = typedScratch[srcIdx];
-              }
-            }
-          }
-        }
-        writeData = dsdRepack.data();
-      }
+      const auto renderedPeriod = alsa::renderDsdPeriodWithTailSilenceAndRepack(
+          typedScratch,
+          dsdRepack,
+          blockFormat,
+          alsaFrames,
+          channels,
+          frameBytes,
+          physWidthBytes,
+          renderTyped);
+      const uint8_t* writeData = renderedPeriod.writeData;
 
       int64_t offset = 0;
       while (running.load() && offset < static_cast<int64_t>(alsaFrames)) {
@@ -539,6 +414,7 @@ struct AlsaBackend::Impl {
     dsdRequestedBitClock = 0;
     dsdWriteProven.store(false);
     typedCallback = nullptr;
+    packedScratchDsdSilence = false;
     deviceId = "default";
     deviceName = "ALSA default";
   }
@@ -837,6 +713,7 @@ void AlsaBackend::close() {
     impl_->eventCallback = nullptr;
     impl_->renderScratch.clear();
     impl_->packedScratch.clear();
+    impl_->packedScratchDsdSilence = false;
     impl_->typedScratch.clear();
     impl_->dsdRepack.clear();
   }

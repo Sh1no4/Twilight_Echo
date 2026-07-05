@@ -1,5 +1,7 @@
 #include "CoreAudioBackend.h"
 
+#include "CoreAudioRenderUtils.h"
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -136,11 +138,9 @@ struct CoreAudioBackend::Impl {
       auto& buffer = ioData->buffers.front();
       buffer.data.resize(samples * sizeof(float));
       auto* out = reinterpret_cast<float*>(buffer.data.data());
-      std::fill(out, out + samples, 0.0f);
-      size_t rendered = frames;
-      if (renderCallback) rendered = std::min(renderCallback(out, frames), frames);
+      const size_t rendered =
+          coreaudio::renderFloatCallbackWithTailSilence(out, frames, channels, renderCallback);
       if (rendered < frames) {
-        std::fill(out + rendered * static_cast<size_t>(channels), out + samples, 0.0f);
         std::lock_guard lock(mutex);
         ++outputInfo.diagnostics.sessionUnderrunCount;
         ++outputInfo.diagnostics.lifetimeUnderrunCount;
@@ -156,11 +156,10 @@ struct CoreAudioBackend::Impl {
       return rendered;
     }
 
-    renderScratch.assign(samples, 0.0f);
-    size_t rendered = frames;
-    if (renderCallback) rendered = std::min(renderCallback(renderScratch.data(), frames), frames);
+    renderScratch.resize(samples);
+    const size_t rendered =
+        coreaudio::renderFloatCallbackWithTailSilence(renderScratch.data(), frames, channels, renderCallback);
     if (rendered < frames) {
-      std::fill(renderScratch.begin() + rendered * static_cast<size_t>(channels), renderScratch.end(), 0.0f);
       std::lock_guard lock(mutex);
       ++outputInfo.diagnostics.sessionUnderrunCount;
       ++outputInfo.diagnostics.lifetimeUnderrunCount;

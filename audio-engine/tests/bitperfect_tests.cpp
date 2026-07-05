@@ -1,11 +1,21 @@
 #include "../core/AudioTypes.h"
+#include "../core/AudioPipelineRenderUtils.h"
 
 #include <cassert>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <string>
+#include <vector>
 
 using namespace twilight::audio;
 
 namespace {
+
+void require(bool condition) {
+  if (!condition) std::abort();
+}
 
 AudioFormat pcm(
     int sampleRate = 48000,
@@ -43,6 +53,140 @@ void assertOutputPerfect(PerfectEvaluation evaluation) {
 void assertNotOutputPerfect(PerfectEvaluation evaluation) {
   const PerfectResult result = evaluatePerfect(evaluation);
   assert(!result.outputPerfect);
+}
+
+void testVolumeAppliesOnlyToRenderedFrames() {
+  std::vector<float> samples = {
+      2.0f, -2.0f,
+      0.5f, -0.5f,
+      9.0f, -9.0f,
+  };
+
+  render::applyVolumeToRenderedFrames(samples.data(), 2, 3, 2, 0.5);
+
+  assert(samples[0] == 1.0f);
+  assert(samples[1] == -1.0f);
+  assert(std::abs(samples[2] - 0.25f) < 0.0001f);
+  assert(std::abs(samples[3] + 0.25f) < 0.0001f);
+  assert(samples[4] == 9.0f);
+  assert(samples[5] == -9.0f);
+}
+
+void testUnityVolumeSkipsRenderedFrameProcessing() {
+  require(!render::volumeNeedsProcessing(2, 3, 2, 1.0));
+  require(!render::volumeNeedsProcessing(0, 3, 2, 0.5));
+  require(!render::volumeNeedsProcessing(2, 0, 2, 0.5));
+  require(!render::volumeNeedsProcessing(2, 3, 0, 0.5));
+  require(render::volumeNeedsProcessing(2, 3, 2, 0.5));
+}
+
+void testZeroVolumeSilencesRenderedFramesWithoutTouchingTail() {
+  std::vector<float> samples = {
+      0.25f, -0.25f,
+      2.0f, -2.0f,
+      9.0f, -9.0f,
+  };
+
+  require(render::volumeSilencesRenderedFrames(2, 3, 2, 0.0));
+  require(!render::volumeSilencesRenderedFrames(2, 3, 2, 0.5));
+
+  render::applyVolumeToRenderedFrames(samples.data(), 2, 3, 2, 0.0);
+
+  assert(samples[0] == 0.0f);
+  assert(samples[1] == 0.0f);
+  assert(samples[2] == 0.0f);
+  assert(samples[3] == 0.0f);
+  assert(samples[4] == 9.0f);
+  assert(samples[5] == -9.0f);
+}
+
+void testCrossfadeSegmentMixesWithIncrementalFade() {
+  std::vector<float> output = {
+      0.8f, -0.8f,
+      0.8f, -0.8f,
+      0.8f, -0.8f,
+  };
+  const std::vector<float> preload = {
+      -0.8f, 0.8f,
+      0.0f, 2.0f,
+      2.0f, -2.0f,
+  };
+
+  render::mixCrossfadeSegment(output.data(), preload.data(), 3, 2, 0, 2);
+
+  assert(std::abs(output[0] - 0.8f) < 0.0001f);
+  assert(std::abs(output[1] + 0.8f) < 0.0001f);
+  assert(std::abs(output[2] - 0.4f) < 0.0001f);
+  assert(std::abs(output[3] - 0.6f) < 0.0001f);
+  assert(output[4] == 1.0f);
+  assert(output[5] == -1.0f);
+}
+
+void testCrossfadeSegmentDetectsBoundedFadeRange() {
+  require(render::crossfadeSegmentFadeIsBounded(3, 2, 8));
+  require(render::crossfadeSegmentFadeIsBounded(1, 8, 8));
+  require(!render::crossfadeSegmentFadeIsBounded(2, 8, 8));
+  require(!render::crossfadeSegmentFadeIsBounded(3, 0, 0));
+}
+
+void testTypedPcmToFloatZerosOnlyUnconvertedTail() {
+  const int16_t input[] = {
+      8192,
+      -8192,
+  };
+  std::vector<float> output = {
+      -9.0f, -9.0f,
+      -9.0f, -9.0f,
+  };
+
+  AudioFormat format = pcm(48000, 16, 2, AudioSampleFormat::Int16Interleaved);
+  PcmBlock block;
+  block.format = format;
+  block.data = reinterpret_cast<uint8_t*>(const_cast<int16_t*>(input));
+  block.frames = 1;
+  block.byteSize = sizeof(input);
+
+  const size_t converted = render::typedPcmToFloatWithTailSilence(block, output.data(), 2);
+
+  assert(converted == 1);
+  assert(std::abs(output[0] - 0.25f) < 0.0001f);
+  assert(std::abs(output[1] + 0.25f) < 0.0001f);
+  assert(output[2] == 0.0f);
+  assert(output[3] == 0.0f);
+}
+
+void testTypedPcmToFloatFloat32AllowsInPlaceFullConversion() {
+  std::vector<float> samples = {
+      0.125f, -0.25f,
+      0.5f, -0.75f,
+  };
+
+  AudioFormat format = pcm(48000, 32, 2, AudioSampleFormat::Float32Interleaved);
+  PcmBlock block;
+  block.format = format;
+  block.data = reinterpret_cast<uint8_t*>(samples.data());
+  block.frames = 2;
+  block.byteSize = samples.size() * sizeof(float);
+
+  const size_t converted = render::typedPcmToFloatWithTailSilence(block, samples.data(), 2);
+
+  assert(converted == 2);
+  assert(samples[0] == 0.125f);
+  assert(samples[1] == -0.25f);
+  assert(samples[2] == 0.5f);
+  assert(samples[3] == -0.75f);
+}
+
+void testFloat32PcmConversionSkipsCopyWhenAlreadyInPlace() {
+  std::vector<float> samples = {
+      0.125f, -0.25f,
+      0.5f, -0.75f,
+  };
+  PcmBlock block;
+  block.data = reinterpret_cast<uint8_t*>(samples.data());
+
+  const bool copyNeeded = render::float32PcmCopyNeeded(block, samples.data(), samples.size());
+  require(!copyNeeded);
 }
 
 void testLosslessSourceExact() {
@@ -499,6 +643,14 @@ void testUnsupportedDsdRateRejectsDopPerfect() {
 }  // namespace
 
 int main() {
+  testVolumeAppliesOnlyToRenderedFrames();
+  testUnityVolumeSkipsRenderedFrameProcessing();
+  testZeroVolumeSilencesRenderedFramesWithoutTouchingTail();
+  testCrossfadeSegmentMixesWithIncrementalFade();
+  testCrossfadeSegmentDetectsBoundedFadeRange();
+  testTypedPcmToFloatZerosOnlyUnconvertedTail();
+  testTypedPcmToFloatFloat32AllowsInPlaceFullConversion();
+  testFloat32PcmConversionSkipsCopyWhenAlreadyInPlace();
   testLosslessSourceExact();
   testLossyOutputPerfect();
   testLosslessIntegerDecodedConversionBlocksOutputPerfect();

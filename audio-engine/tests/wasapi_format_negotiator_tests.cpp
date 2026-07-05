@@ -3,6 +3,9 @@
 #include "../output/wasapi/WasapiFormatNegotiator.h"
 
 #include <cassert>
+#include <cstdint>
+#include <cstdlib>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -141,6 +144,51 @@ class FakeAudioClient final : public IAudioClient {
   std::vector<SupportedFormat> supported_;
 };
 
+void require(bool condition) {
+  if (!condition) std::abort();
+}
+
+void testInt16PackerUsesSpecializedConversion() {
+  const float input[] = {-1.5f, -1.0f, -0.5f, 0.5f, 1.0f, 1.5f};
+  int16_t output[] = {123, 123, 123, 123, 123, 123};
+
+  wasapi::packFloatToInt16(input, 6, output);
+
+  require(output[0] == -32768);
+  require(output[1] == -32768);
+  require(output[2] == -16384);
+  require(output[3] == 16384);
+  require(output[4] == 32767);
+  require(output[5] == 32767);
+}
+
+void testPackedInt24PackerUsesSpecializedConversion() {
+  const float input[] = {-1.0f, -0.5f, 0.5f, 1.0f};
+  std::vector<uint8_t> output(12, 0xee);
+
+  wasapi::packFloatToPackedInt24(input, 4, output.data());
+
+  const std::vector<uint8_t> expected = {
+      0x00, 0x00, 0x80,
+      0x00, 0x00, 0xc0,
+      0x00, 0x00, 0x40,
+      0xff, 0xff, 0x7f,
+  };
+  require(output == expected);
+}
+
+void testInt32PackerUsesSpecializedConversion() {
+  const float input[] = {-1.0f, -0.5f, 0.5f, 1.0f};
+  int32_t output[] = {123, 123, 123, 123};
+
+  wasapi::packFloatToInt32(input, 4, output);
+
+  require(output[0] == std::numeric_limits<int32_t>::min());
+  require(output[1] == -1073741824);
+  require(output[2] == 1073741824);
+  require(output[3] == std::numeric_limits<int32_t>::max());
+}
+
 void testDsd64NegotiatesDopCarrier() {
   FakeAudioClient client({{176400, 24, 32}});
   WasapiFormatNegotiator negotiator(&client);
@@ -247,12 +295,85 @@ void testExclusiveDeviceInUseIsRetryableStartupFailure() {
   assert(!wasapi::isDeviceInUse(AUDCLNT_E_UNSUPPORTED_FORMAT));
 }
 
+void testFloatRenderHelperZerosOnlyUnrenderedTail() {
+  std::vector<float> buffer = {
+      -1.0f, -1.0f,
+      -1.0f, -1.0f,
+      -1.0f, -1.0f,
+  };
+
+  const size_t rendered = wasapi::renderFloatCallbackWithTailSilence(
+      buffer.data(),
+      3,
+      2,
+      [](float* output, size_t frames) {
+        assert(frames == 3);
+        output[0] = 0.25f;
+        output[1] = -0.25f;
+        return static_cast<size_t>(1);
+      });
+
+  assert(rendered == 1);
+  assert(buffer[0] == 0.25f);
+  assert(buffer[1] == -0.25f);
+  for (size_t index = 2; index < buffer.size(); ++index) {
+    assert(buffer[index] == 0.0f);
+  }
+}
+
+void testFloatRenderHelperDoesNotPreclearFullRender() {
+  std::vector<float> buffer = {
+      -1.0f, -1.0f,
+      -1.0f, -1.0f,
+  };
+
+  const size_t rendered = wasapi::renderFloatCallbackWithTailSilence(
+      buffer.data(),
+      2,
+      2,
+      [](float* output, size_t frames) {
+        assert(frames == 2);
+        for (size_t sample = 0; sample < frames * 2; ++sample) {
+          assert(output[sample] == -1.0f);
+          output[sample] = static_cast<float>(sample + 1);
+        }
+        return frames;
+      });
+
+  assert(rendered == 2);
+  assert(buffer[0] == 1.0f);
+  assert(buffer[1] == 2.0f);
+  assert(buffer[2] == 3.0f);
+  assert(buffer[3] == 4.0f);
+}
+
+void testFloatRenderHelperZerosAllWithoutCallback() {
+  std::vector<float> buffer = {
+      -1.0f, -1.0f,
+      -1.0f, -1.0f,
+  };
+
+  const size_t rendered = wasapi::renderFloatCallbackWithTailSilence(
+      buffer.data(),
+      2,
+      2,
+      RenderCallback{});
+
+  assert(rendered == 0);
+  for (float sample : buffer) {
+    assert(sample == 0.0f);
+  }
+}
+
 #endif
 
 }  // namespace
 
 int main() {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+  testInt16PackerUsesSpecializedConversion();
+  testPackedInt24PackerUsesSpecializedConversion();
+  testInt32PackerUsesSpecializedConversion();
   testDsd64NegotiatesDopCarrier();
   testDsd128FailureReasonNamesDopCarrierFacts();
   testDsd256FailureReasonNamesDopCarrierFacts();
@@ -260,6 +381,9 @@ int main() {
   testExclusiveInitialRenderLeavesWakeupHeadroom();
   testExclusiveRenderFramePolicySeparatesEventAndPushMode();
   testExclusiveDeviceInUseIsRetryableStartupFailure();
+  testFloatRenderHelperZerosOnlyUnrenderedTail();
+  testFloatRenderHelperDoesNotPreclearFullRender();
+  testFloatRenderHelperZerosAllWithoutCallback();
 #endif
   return 0;
 }

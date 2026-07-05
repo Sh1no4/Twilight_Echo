@@ -1,4 +1,5 @@
 #include "../decoder/FFmpegDecoder.h"
+#include "../decoder/FFmpegDecoderUtils.h"
 #include "AudioFixtureLibrary.h"
 
 #include <cassert>
@@ -7,6 +8,7 @@
 #include <iostream>
 #include <string>
 #include <system_error>
+#include <vector>
 
 using namespace twilight::audio;
 using namespace twilight::audio::test;
@@ -35,6 +37,56 @@ void assertDecoderReportsPcm(const std::string& name, int bitsPerSample) {
     assert(stream.decodedFormat.sampleFormat == AudioSampleFormat::Int32Interleaved);
   }
   decoder.close();
+}
+
+void assertDecoderTailZeroHelperPreservesCopiedFrames() {
+  AudioFormat format;
+  format.sampleRate = 48000;
+  format.channelCount = 2;
+  format.bitDepth = 32;
+  format.sampleFormat = AudioSampleFormat::Float32Interleaved;
+
+  std::vector<uint8_t> bytes(3 * audioFormatBytesPerFrame(format), 0x7f);
+  PcmBlock block;
+  block.format = format;
+  block.data = bytes.data();
+  block.frames = 3;
+  block.byteSize = bytes.size();
+
+  ffmpeg::zeroPcmBlockTail(block, 1);
+
+  const size_t bytesPerFrame = audioFormatBytesPerFrame(format);
+  for (size_t i = 0; i < bytesPerFrame; ++i) {
+    assert(bytes[i] == 0x7f);
+  }
+  for (size_t i = bytesPerFrame; i < bytes.size(); ++i) {
+    assert(bytes[i] == 0);
+  }
+}
+
+void assertDecoderDirectPendingHelperShrinksToActualSamples() {
+  std::vector<uint8_t> pending = {0xaa, 0xbb};
+  const size_t start = pending.size();
+  uint8_t* write = ffmpeg::resizePendingForDirectWrite(
+      pending,
+      4,
+      AudioSampleFormat::Float32Interleaved);
+  assert(write == pending.data() + start);
+  assert(pending.size() == start + 4 * sizeof(float));
+
+  ffmpeg::commitPendingDirectWrite(
+      pending,
+      start,
+      2,
+      AudioSampleFormat::Float32Interleaved);
+  assert(pending.size() == start + 2 * sizeof(float));
+  assert(pending[0] == 0xaa);
+  assert(pending[1] == 0xbb);
+
+  assert(ffmpeg::resizePendingForDirectWrite(
+             pending,
+             4,
+             AudioSampleFormat::Int24Interleaved) == nullptr);
 }
 
 void assertDecoderReportsDsdFallbackWhenSupported() {
@@ -118,6 +170,8 @@ void assertDecoderOpensExternalFixturesWhenProvided() {
 }  // namespace
 
 int main() {
+  assertDecoderTailZeroHelperPreservesCopiedFrames();
+  assertDecoderDirectPendingHelperShrinksToActualSamples();
 #if defined(TAE_HAS_FFMPEG)
   assertDecoderReportsPcm("twilight-fixture-s16.wav", 16);
   assertDecoderReportsPcm("twilight-fixture-s24.wav", 24);

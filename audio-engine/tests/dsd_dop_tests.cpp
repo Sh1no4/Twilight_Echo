@@ -1,10 +1,14 @@
 #include "../decoder/DopPacker.h"
+#include "../decoder/DopPackerUtils.h"
 #include "../decoder/DsdReader.h"
 #include "../decoder/SacdIsoDemuxer.h"
+#include "../decoder/SacdIsoDemuxerUtils.h"
 #include "../decoder/SacdIsoProbe.h"
+#include "../core/AudioPipelineDsdUtils.h"
 
 #include <cassert>
 #include <array>
+#include <cstdlib>
 #include <cstring>
 #include <cstdint>
 #include <filesystem>
@@ -15,6 +19,16 @@
 using namespace twilight::audio;
 
 namespace {
+
+void testSacdIsoByteScratchResizePreservesSameSizedScratch() {
+  std::vector<uint8_t> scratch = {0x11, 0x22, 0x33};
+  const uint8_t* before = scratch.data();
+
+  sacd::resizeByteScratchForOverwrite(scratch, scratch.size());
+
+  assert(scratch.data() == before);
+  assert((scratch == std::vector<uint8_t>{0x11, 0x22, 0x33}));
+}
 
 void writeLe16(std::ofstream& out, uint16_t value) {
   out.put(static_cast<char>(value & 0xff));
@@ -287,6 +301,56 @@ void testDffReader() {
   std::filesystem::remove(path);
 }
 
+void testDsdInterleaveHelperConvertsPlanarBlocks() {
+  DsdStreamInfo info;
+  info.channelCount = 2;
+  info.bitOrder = DsdBitOrder::LsbFirst;
+  info.packing = DsdPacking::DsfPlanarBlocks;
+
+  const uint8_t dsd[] = {
+      0x11, 0x22,
+      0x99, 0xaa,
+  };
+  std::vector<uint8_t> output(4, 0xee);
+
+  const size_t frames =
+      render::dsdBytesToInterleavedResizeOnly(dsd, sizeof(dsd), info, AudioSampleFormat::DsdInt8Lsb1, &output);
+
+  const std::vector<uint8_t> expected = {0x11, 0x99, 0x22, 0xaa};
+  assert(frames == 2);
+  assert(output == expected);
+}
+
+void testDsdInterleaveHelperConvertsBitOrderWithoutPreclearSentinel() {
+  DsdStreamInfo info;
+  info.channelCount = 2;
+  info.bitOrder = DsdBitOrder::LsbFirst;
+  info.packing = DsdPacking::DffInterleaved;
+
+  const uint8_t dsd[] = {
+      0x80, 0x01,
+      0xf0, 0x0f,
+  };
+  std::vector<uint8_t> output(4, 0xee);
+
+  const size_t frames =
+      render::dsdBytesToInterleavedResizeOnly(dsd, sizeof(dsd), info, AudioSampleFormat::DsdInt8Msb1, &output);
+
+  const std::vector<uint8_t> expected = {0x01, 0x80, 0x0f, 0xf0};
+  assert(frames == 2);
+  assert(output == expected);
+}
+
+void testDsdInterleaveHelperCanCopyDffWhenBitOrderMatches() {
+  DsdStreamInfo info;
+  info.channelCount = 2;
+  info.bitOrder = DsdBitOrder::MsbFirst;
+  info.packing = DsdPacking::DffInterleaved;
+
+  if (!render::canCopyDsdBytesToInterleaved(info, AudioSampleFormat::DsdInt8Msb1)) std::abort();
+  if (render::canCopyDsdBytesToInterleaved(info, AudioSampleFormat::DsdInt8Lsb1)) std::abort();
+}
+
 void testDopPackerInt24() {
   DopPacker packer;
   DopPackerConfig config;
@@ -304,6 +368,33 @@ void testDopPackerInt24() {
   assert(pcm[3] == 0x55 && pcm[4] == 0x66 && pcm[5] == 0x05);
   assert(pcm[6] == 0x33 && pcm[7] == 0x44 && pcm[8] == 0xfa);
   assert(pcm[9] == 0x77 && pcm[10] == 0x88 && pcm[11] == 0xfa);
+}
+
+void testDopPackerHelperPacksInterleavedInt24In32WithoutPreclear() {
+  const uint8_t dsd[] = {
+      0x80, 0x01,
+      0xf0, 0x0f,
+  };
+  std::vector<uint8_t> pcm(16, 0xee);
+  size_t markerIndex = 0;
+
+  const size_t frames = dop::packDopFramesResizeOnly(
+      dsd,
+      sizeof(dsd),
+      1,
+      DsdPacking::DffInterleaved,
+      DsdBitOrder::MsbFirst,
+      AudioSampleFormat::Int24In32Interleaved,
+      markerIndex,
+      &pcm);
+
+  const std::vector<uint8_t> expected = {
+      0x00, 0x01, 0x80, 0x05,
+      0x00, 0x0f, 0xf0, 0xfa,
+  };
+  assert(frames == 2);
+  assert(markerIndex == 2);
+  assert(pcm == expected);
 }
 
 void testDopPackerDsd256() {
@@ -587,8 +678,13 @@ void testSacdDstTrackUnplayableWithoutProvider() {
 }  // namespace
 
 int main() {
+  testSacdIsoByteScratchResizePreservesSameSizedScratch();
   testDsfReader();
   testDffReader();
+  testDsdInterleaveHelperConvertsPlanarBlocks();
+  testDsdInterleaveHelperConvertsBitOrderWithoutPreclearSentinel();
+  testDsdInterleaveHelperCanCopyDffWhenBitOrderMatches();
+  testDopPackerHelperPacksInterleavedInt24In32WithoutPreclear();
   testDopPackerInt24();
   testDopPackerDsd256();
   testDopPackerDsd512();

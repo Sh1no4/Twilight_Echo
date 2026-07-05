@@ -81,8 +81,8 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private stopped = false
   private restarting = false
   private generation = 0
-  private cacheRequestSerial = new Map<keyof NativeAudioBinding, number>()
-  private cacheRequestsInFlight = new Set<keyof NativeAudioBinding>()
+  private cacheRequestSerial = new Map<string, number>()
+  private cacheRequestsInFlight = new Set<string>()
   private lastPlaybackInfo: string | PlaybackInfo | null = null
   private lastDspStatus: string | { plugins: unknown[] } = { plugins: [] }
   private lastConvolverInfo: string | ConvolverInfo | null = null
@@ -346,23 +346,24 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     args: unknown[],
     apply: (value: unknown) => void
   ): void {
-    if (this.cacheRequestsInFlight.has(method)) return
-    this.cacheRequestsInFlight.add(method)
-    const serial = (this.cacheRequestSerial.get(method) ?? 0) + 1
-    this.cacheRequestSerial.set(method, serial)
+    const cacheKey = `${String(method)}:${JSON.stringify(args)}`
+    if (this.cacheRequestsInFlight.has(cacheKey)) return
+    this.cacheRequestsInFlight.add(cacheKey)
+    const serial = (this.cacheRequestSerial.get(cacheKey) ?? 0) + 1
+    this.cacheRequestSerial.set(cacheKey, serial)
     void this.call(method, args)
       .then((value) => {
-        if (this.cacheRequestSerial.get(method) !== serial) return
+        if (this.cacheRequestSerial.get(cacheKey) !== serial) return
         apply(value)
       })
       .catch((error) => {
-        if (this.cacheRequestSerial.get(method) !== serial) return
+        if (this.cacheRequestSerial.get(cacheKey) !== serial) return
         this.lastErrorJson = JSON.stringify({
           message: error instanceof Error ? error.message : String(error)
         })
       })
       .finally(() => {
-        this.cacheRequestsInFlight.delete(method)
+        this.cacheRequestsInFlight.delete(cacheKey)
       })
   }
 

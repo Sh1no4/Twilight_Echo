@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../../core/AudioTypes.h"
+#include "../IOutputBackend.h"
 
 #include <algorithm>
 #include <cmath>
@@ -178,6 +179,26 @@ inline UINT32 exclusiveRenderFrames(UINT32 bufferFrameCount, UINT32 padding, boo
   return bufferFrameCount > padding ? bufferFrameCount - padding : 0;
 }
 
+inline size_t renderFloatCallbackWithTailSilence(
+    float* output,
+    size_t frameCount,
+    int channelCount,
+    const RenderCallback& callback) {
+  if (!output || frameCount == 0 || channelCount <= 0) return 0;
+
+  size_t renderedFrames = 0;
+  if (callback) {
+    renderedFrames = std::min(callback(output, frameCount), frameCount);
+  }
+
+  if (renderedFrames < frameCount) {
+    const size_t renderedSamples = renderedFrames * static_cast<size_t>(channelCount);
+    const size_t totalSamples = frameCount * static_cast<size_t>(channelCount);
+    std::fill(output + renderedSamples, output + totalSamples, 0.0f);
+  }
+  return renderedFrames;
+}
+
 inline UINT32 referenceTimeToFrames(REFERENCE_TIME duration, int sampleRate) {
   if (duration <= 0 || sampleRate <= 0) return 0;
   return static_cast<UINT32>(
@@ -205,6 +226,52 @@ inline int32_t floatToSignedInt(float sample, int bits) {
   return static_cast<int32_t>(value);
 }
 
+inline int16_t floatToSignedInt16(float sample) {
+  const double clamped = std::clamp(static_cast<double>(sample), -1.0, 1.0);
+  return static_cast<int16_t>(std::clamp(
+      std::llround(clamped * 32768.0),
+      static_cast<long long>(std::numeric_limits<int16_t>::min()),
+      static_cast<long long>(std::numeric_limits<int16_t>::max())));
+}
+
+inline int32_t floatToSignedInt24(float sample) {
+  const double clamped = std::clamp(static_cast<double>(sample), -1.0, 1.0);
+  return static_cast<int32_t>(std::clamp(std::llround(clamped * 8388608.0), -8388608LL, 8388607LL));
+}
+
+inline int32_t floatToSignedInt32(float sample) {
+  const double clamped = std::clamp(static_cast<double>(sample), -1.0, 1.0);
+  const long long value = std::clamp(
+      std::llround(clamped * 2147483648.0),
+      static_cast<long long>(std::numeric_limits<int32_t>::min()),
+      static_cast<long long>(std::numeric_limits<int32_t>::max()));
+  return static_cast<int32_t>(value);
+}
+
+inline void packFloatToInt16(const float* input, size_t sampleCount, int16_t* output) {
+  if (!input || !output || sampleCount == 0) return;
+  for (size_t i = 0; i < sampleCount; ++i) {
+    output[i] = floatToSignedInt16(input[i]);
+  }
+}
+
+inline void packFloatToPackedInt24(const float* input, size_t sampleCount, BYTE* output) {
+  if (!input || !output || sampleCount == 0) return;
+  for (size_t i = 0; i < sampleCount; ++i) {
+    const auto value = static_cast<uint32_t>(floatToSignedInt24(input[i]));
+    output[i * 3 + 0] = static_cast<BYTE>(value & 0xff);
+    output[i * 3 + 1] = static_cast<BYTE>((value >> 8) & 0xff);
+    output[i * 3 + 2] = static_cast<BYTE>((value >> 16) & 0xff);
+  }
+}
+
+inline void packFloatToInt32(const float* input, size_t sampleCount, int32_t* output) {
+  if (!input || !output || sampleCount == 0) return;
+  for (size_t i = 0; i < sampleCount; ++i) {
+    output[i] = floatToSignedInt32(input[i]);
+  }
+}
+
 inline void packFloatToPcm(
     const float* input,
     size_t frameCount,
@@ -217,32 +284,23 @@ inline void packFloatToPcm(
   switch (sampleFormat) {
     case AudioSampleFormat::Int16Interleaved: {
       auto* out = reinterpret_cast<int16_t*>(output);
-      for (size_t i = 0; i < sampleCount; ++i) {
-        out[i] = static_cast<int16_t>(floatToSignedInt(input[i], 16));
-      }
+      packFloatToInt16(input, sampleCount, out);
       break;
     }
     case AudioSampleFormat::Int24Interleaved: {
-      for (size_t i = 0; i < sampleCount; ++i) {
-        const auto value = static_cast<uint32_t>(floatToSignedInt(input[i], 24));
-        output[i * 3 + 0] = static_cast<BYTE>(value & 0xff);
-        output[i * 3 + 1] = static_cast<BYTE>((value >> 8) & 0xff);
-        output[i * 3 + 2] = static_cast<BYTE>((value >> 16) & 0xff);
-      }
+      packFloatToPackedInt24(input, sampleCount, output);
       break;
     }
     case AudioSampleFormat::Int24In32Interleaved: {
       auto* out = reinterpret_cast<int32_t*>(output);
       for (size_t i = 0; i < sampleCount; ++i) {
-        out[i] = static_cast<int32_t>(static_cast<uint32_t>(floatToSignedInt(input[i], 24)) << 8);
+        out[i] = static_cast<int32_t>(static_cast<uint32_t>(floatToSignedInt24(input[i])) << 8);
       }
       break;
     }
     case AudioSampleFormat::Int32Interleaved: {
       auto* out = reinterpret_cast<int32_t*>(output);
-      for (size_t i = 0; i < sampleCount; ++i) {
-        out[i] = floatToSignedInt(input[i], 32);
-      }
+      packFloatToInt32(input, sampleCount, out);
       break;
     }
     case AudioSampleFormat::Float32Interleaved:

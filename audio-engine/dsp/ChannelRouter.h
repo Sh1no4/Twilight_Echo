@@ -2,7 +2,6 @@
 
 #include "../core/AudioTypes.h"
 #include <cstddef>
-#include <deque>
 #include <vector>
 
 namespace twilight::audio {
@@ -54,9 +53,11 @@ class ChannelRouter {
   float lfeAlpha_ = 0.0f;
 
   // 环绕延迟线
-  std::deque<float> surroundLeftDelay_;
-  std::deque<float> surroundRightDelay_;
+  std::vector<float> surroundLeftDelay_;
+  std::vector<float> surroundRightDelay_;
   size_t surroundDelaySamples_ = 0;
+  size_t surroundLeftDelayCursor_ = 0;
+  size_t surroundRightDelayCursor_ = 0;
 
   void recomputeCoefficients();
   void processUpmix51(const float* src, float* dst, size_t frames);

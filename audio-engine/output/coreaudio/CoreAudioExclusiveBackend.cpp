@@ -1,4 +1,5 @@
 #include "CoreAudioExclusiveBackend.h"
+#include "CoreAudioRenderUtils.h"
 
 #include <algorithm>
 #include <atomic>
@@ -151,20 +152,16 @@ struct CoreAudioExclusiveBackend::Impl {
     if (ioData->buffers.size() == 1 && !ioData->buffers[0].data.empty()) {
       auto& buffer = ioData->buffers.front();
       buffer.data.resize(byteCount);
-      std::memset(buffer.data.data(), 0, byteCount);
 
       size_t rendered = frames;
       if (typedCb) {
-        PcmBlock block;
-        block.format = format;
-        block.data = buffer.data.data();
-        block.frames = frames;
-        block.byteSize = byteCount;
-        rendered = std::min(typedCb(block), frames);
+        rendered = coreaudio::renderTypedCallbackWithTailSilence(buffer.data.data(), frames, format, typedCb);
       } else if (floatCb) {
-        floatScratch.assign(frames * static_cast<size_t>(channels), 0.0f);
-        rendered = std::min(floatCb(floatScratch.data(), frames), frames);
+        floatScratch.resize(frames * static_cast<size_t>(channels));
+        rendered = coreaudio::renderFloatCallbackWithTailSilence(floatScratch.data(), frames, channels, floatCb);
         std::memcpy(buffer.data.data(), floatScratch.data(), std::min(floatScratch.size() * sizeof(float), byteCount));
+      } else {
+        std::memset(buffer.data.data(), 0, byteCount);
       }
 
       if (rendered < frames) {
@@ -182,9 +179,13 @@ struct CoreAudioExclusiveBackend::Impl {
       return rendered;
     }
 
-    floatScratch.assign(frames * static_cast<size_t>(channels), 0.0f);
+    floatScratch.resize(frames * static_cast<size_t>(channels));
     size_t rendered = frames;
-    if (floatCb) rendered = std::min(floatCb(floatScratch.data(), frames), frames);
+    if (floatCb) {
+      rendered = coreaudio::renderFloatCallbackWithTailSilence(floatScratch.data(), frames, channels, floatCb);
+    } else {
+      std::fill(floatScratch.begin(), floatScratch.end(), 0.0f);
+    }
     if (rendered < frames) {
       std::lock_guard lock(mutex);
       ++diagnostics.sessionUnderrunCount;

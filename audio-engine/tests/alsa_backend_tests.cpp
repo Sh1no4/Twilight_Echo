@@ -1,9 +1,11 @@
 #include "../output/alsa/AlsaBackend.h"
+#include "../output/alsa/AlsaRenderUtils.h"
 #include "../output/alsa/MockAlsaHost.h"
 
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <memory>
@@ -27,7 +29,10 @@ AudioFormat sourceFormat(
   return format;
 }
 
-bool waitForWrites(MockAlsaHost* host, int minimumWrites, std::chrono::milliseconds timeout = std::chrono::milliseconds(80)) {
+bool waitForWrites(
+    MockAlsaHost* host,
+    int minimumWrites,
+    std::chrono::milliseconds timeout = std::chrono::milliseconds(80)) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;
   while (std::chrono::steady_clock::now() < deadline) {
     if (host->writeCalls >= minimumWrites) return true;
@@ -303,6 +308,209 @@ void testAlsaDsdSilenceIs0x69() {
   }
 }
 
+void testAlsaFloatRenderHelperZerosOnlyUnrenderedTail() {
+  std::vector<float> scratch = {
+      -1.0f, -1.0f,
+      -1.0f, -1.0f,
+      -1.0f, -1.0f,
+  };
+
+  const size_t rendered = alsa::renderFloatPeriodWithTailSilence(
+      scratch,
+      3,
+      2,
+      [](float* output, size_t frames) {
+        assert(frames == 3);
+        output[0] = 0.5f;
+        output[1] = -0.5f;
+        return static_cast<size_t>(1);
+      });
+
+  assert(rendered == 1);
+  assert(scratch[0] == 0.5f);
+  assert(scratch[1] == -0.5f);
+  for (size_t index = 2; index < scratch.size(); ++index) {
+    assert(scratch[index] == 0.0f);
+  }
+}
+
+void testAlsaFloatRenderHelperDoesNotPreclearFullRender() {
+  std::vector<float> scratch = {
+      -1.0f, -1.0f,
+      -1.0f, -1.0f,
+  };
+
+  const size_t rendered = alsa::renderFloatPeriodWithTailSilence(
+      scratch,
+      2,
+      2,
+      [](float* output, size_t frames) {
+        assert(frames == 2);
+        for (size_t sample = 0; sample < frames * 2; ++sample) {
+          assert(output[sample] == -1.0f);
+          output[sample] = static_cast<float>(sample + 1);
+        }
+        return frames;
+      });
+
+  assert(rendered == 2);
+  assert(scratch[0] == 1.0f);
+  assert(scratch[1] == 2.0f);
+  assert(scratch[2] == 3.0f);
+  assert(scratch[3] == 4.0f);
+}
+
+void testAlsaFloatRenderHelperZerosAllWithoutCallback() {
+  std::vector<float> scratch = {
+      -1.0f, -1.0f,
+      -1.0f, -1.0f,
+  };
+
+  const size_t rendered = alsa::renderFloatPeriodWithTailSilence(
+      scratch,
+      2,
+      2,
+      RenderCallback{});
+
+  assert(rendered == 0);
+  for (float sample : scratch) {
+    assert(sample == 0.0f);
+  }
+}
+
+void testAlsaDsdRepackPrepareSilencesPaddingWithoutClearingSourceSlots() {
+  const size_t frames = 2;
+  const int channels = 2;
+  const int physWidthBytes = 2;
+  const size_t frameBytes = 6;
+  std::vector<uint8_t> repackScratch(frames * frameBytes, 0x44);
+
+  alsa::prepareDsdRepackScratchWithSilencePadding(
+      repackScratch,
+      frames,
+      frameBytes,
+      channels,
+      physWidthBytes);
+
+  const std::vector<uint8_t> expected = {
+      0x44, 0x44, 0x44, 0x44, 0x69, 0x69,
+      0x44, 0x44, 0x44, 0x44, 0x69, 0x69,
+  };
+  if (repackScratch != expected) std::abort();
+}
+
+void testAlsaDsdSilenceScratchSkipsRewriteWhenAlreadySilent() {
+  std::vector<uint8_t> scratch(4, 0x69);
+  bool knownSilence = true;
+
+  const size_t rewritten = alsa::prepareDsdSilenceScratch(scratch, 4, knownSilence);
+
+  assert(rewritten == 0);
+  assert(knownSilence);
+  assert((scratch == std::vector<uint8_t>{0x69, 0x69, 0x69, 0x69}));
+}
+
+void testAlsaDsdRenderHelperReusesScratchAndRepackBuffers() {
+  std::vector<uint8_t> typedScratch(1, 0x11);
+  std::vector<uint8_t> repackScratch(1, 0x22);
+  const size_t frames = 2;
+  const int channels = 2;
+  const int physWidthBytes = 2;
+  const size_t frameBytes = static_cast<size_t>(channels * physWidthBytes);
+
+  const auto result = alsa::renderDsdPeriodWithTailSilenceAndRepack(
+      typedScratch,
+      repackScratch,
+      dsdFormat(2822400),
+      frames,
+      channels,
+      frameBytes,
+      physWidthBytes,
+      [](PcmBlock& block) {
+        assert(block.frames == 4);
+        assert(block.byteSize == 8);
+        block.data[0] = 0x10;
+        block.data[1] = 0x20;
+        block.data[2] = 0x11;
+        block.data[3] = 0x21;
+        return size_t{2};
+      });
+
+  assert(result.renderedDsdByteFrames == 2);
+  assert(result.writeData == repackScratch.data());
+  assert(result.writeByteSize == frames * frameBytes);
+  const std::vector<uint8_t> expected = {
+      0x10, 0x11, 0x20, 0x21,
+      0x69, 0x69, 0x69, 0x69,
+  };
+  assert(repackScratch == expected);
+}
+
+void testAlsaDsdRenderHelperSkipsRepackForMonoWideDsd() {
+  std::vector<uint8_t> typedScratch(1, 0x11);
+  std::vector<uint8_t> repackScratch(4, 0x22);
+  const size_t frames = 2;
+  const int channels = 1;
+  const int physWidthBytes = 2;
+  const size_t frameBytes = static_cast<size_t>(channels * physWidthBytes);
+
+  const auto result = alsa::renderDsdPeriodWithTailSilenceAndRepack(
+      typedScratch,
+      repackScratch,
+      dsdFormat(2822400, channels),
+      frames,
+      channels,
+      frameBytes,
+      physWidthBytes,
+      [](PcmBlock& block) {
+        if (block.frames != 4 || block.byteSize != 4) std::abort();
+        const uint8_t bytes[] = {0x10, 0x11, 0x12, 0x13};
+        std::memcpy(block.data, bytes, sizeof(bytes));
+        return block.frames;
+      });
+
+  if (result.renderedDsdByteFrames != 4) std::abort();
+  if (result.writeData != typedScratch.data()) std::abort();
+  if (result.writeByteSize != frames * frameBytes) std::abort();
+  if ((typedScratch != std::vector<uint8_t>{0x10, 0x11, 0x12, 0x13})) std::abort();
+  if ((repackScratch != std::vector<uint8_t>{0x22, 0x22, 0x22, 0x22})) std::abort();
+}
+
+void testAlsaPcmPackHelperWritesTypedScratchWithoutPerSampleFormatBranch() {
+  std::vector<uint8_t> scratch(16, 0xee);
+  const std::vector<float> input = {-1.0f, 0.5f, 0.25f, 2.0f};
+
+  const size_t bytesPerFrame = alsa::packFloatScratchToPcmScratch(
+      input.data(),
+      2,
+      2,
+      AudioSampleFormat::Int24In32Interleaved,
+      scratch);
+
+  assert(bytesPerFrame == 8);
+  const std::vector<uint8_t> expectedInt24In32 = {
+      0x00, 0x00, 0x00, 0x80,
+      0x00, 0x00, 0x00, 0x40,
+      0x00, 0x00, 0x00, 0x20,
+      0x00, 0xff, 0xff, 0x7f,
+  };
+  assert(scratch == expectedInt24In32);
+
+  const float floatInput[] = {-2.0f, 0.25f};
+  const size_t floatBytesPerFrame = alsa::packFloatScratchToPcmScratch(
+      floatInput,
+      1,
+      2,
+      AudioSampleFormat::Float32Interleaved,
+      scratch);
+
+  assert(floatBytesPerFrame == 8);
+  assert(scratch.size() == 8);
+  const float* packed = reinterpret_cast<const float*>(scratch.data());
+  assert(packed[0] == -1.0f);
+  assert(packed[1] == 0.25f);
+}
+
 }  // namespace
 
 int main() {
@@ -318,5 +526,13 @@ int main() {
   testAlsaNativeDsdRuntimeFactsProvenAfterWritei();
   testAlsaDsdBypassesFloat();
   testAlsaDsdSilenceIs0x69();
+  testAlsaFloatRenderHelperZerosOnlyUnrenderedTail();
+  testAlsaFloatRenderHelperDoesNotPreclearFullRender();
+  testAlsaFloatRenderHelperZerosAllWithoutCallback();
+  testAlsaDsdRepackPrepareSilencesPaddingWithoutClearingSourceSlots();
+  testAlsaDsdSilenceScratchSkipsRewriteWhenAlreadySilent();
+  testAlsaDsdRenderHelperReusesScratchAndRepackBuffers();
+  testAlsaDsdRenderHelperSkipsRepackForMonoWideDsd();
+  testAlsaPcmPackHelperWritesTypedScratchWithoutPerSampleFormatBranch();
   return 0;
 }

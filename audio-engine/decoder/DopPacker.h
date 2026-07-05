@@ -27,10 +27,6 @@ class DopPacker {
   const AudioFormat& carrierFormat() const;
 
  private:
-  uint8_t nextMarker();
-  uint8_t normalizeDsdByte(uint8_t value) const;
-  bool readDsdPair(const uint8_t* dsdBytes, size_t byteCount, size_t frame, int channel, uint8_t* first, uint8_t* second) const;
-
   DopPackerConfig config_;
   AudioFormat carrierFormat_;
   size_t markerIndex_ = 0;
