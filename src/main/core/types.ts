@@ -183,6 +183,14 @@ export interface SettingsSnapshot extends AppSettings {
   restartReasons: string[]
 }
 
+export interface PlayerShortcutStatus {
+  accelerator: string
+  action: PlayerShortcutAction
+  label: string
+  registered: boolean
+  error: string | null
+}
+
 export const PLAYER_SHORTCUTS: { accelerator: string; action: PlayerShortcutAction; label: string }[] = [
   { accelerator: 'CommandOrControl+Alt+Left', action: 'previous', label: '上一首' },
   { accelerator: 'CommandOrControl+Alt+Right', action: 'next', label: '下一首' },

@@ -23,11 +23,11 @@ const {
   AudioEngineManager,
   DEFAULT_AUDIO_PROCESSING,
   createPlaybackInfoFanoutSignature,
+  mapSpectrumToVisualizerBars,
   normalizeAudioProcessingSettings
-} =
-  (await import(
-    new URL('./audioEngineManager.ts', import.meta.url).href
-  )) as typeof import('./audioEngineManager')
+} = (await import(
+  new URL('./audioEngineManager.ts', import.meta.url).href
+)) as typeof import('./audioEngineManager')
 
 const DEVICE_OPTIONS: AudioDeviceOption[] = [
   {
@@ -505,7 +505,8 @@ class FakeNativeBinding implements NativeAudioBinding {
 
   SetOutputBackend = (backend: string): void => {
     this.outputBackendCalls += 1
-    const exclusive = backend === 'asio' || backend === 'wasapi-exclusive' || backend === 'coreaudio-exclusive'
+    const exclusive =
+      backend === 'asio' || backend === 'wasapi-exclusive' || backend === 'coreaudio-exclusive'
     const accessMode = backend === 'wasapi' || backend === 'coreaudio' ? 'shared' : 'exclusive'
     const devicePathKind =
       backend === 'asio'
@@ -513,9 +514,11 @@ class FakeNativeBinding implements NativeAudioBinding {
         : backend === 'coreaudio' || backend === 'coreaudio-exclusive'
           ? 'hal'
           : 'default'
-    const supportsOutputPerfect = backend === 'asio' || backend === 'wasapi-exclusive' || backend === 'coreaudio-exclusive'
+    const supportsOutputPerfect =
+      backend === 'asio' || backend === 'wasapi-exclusive' || backend === 'coreaudio-exclusive'
     const perfectReasonCode = backend === 'wasapi' || backend === 'coreaudio' ? 'shared_mixer' : ''
-    const perfectReason = backend === 'wasapi' || backend === 'coreaudio' ? '共享输出经过系统混音' : ''
+    const perfectReason =
+      backend === 'wasapi' || backend === 'coreaudio' ? '共享输出经过系统混音' : ''
     const capabilityReason = perfectReason
     const outputInfo = {
       ...this.playbackInfo.outputInfo,
@@ -546,9 +549,13 @@ class FakeNativeBinding implements NativeAudioBinding {
     const parsed = JSON.parse(json) as Partial<OutputConfig>
     this.lastOutputConfig = {
       preferredBufferSize:
-        typeof parsed.preferredBufferSize === 'number' ? parsed.preferredBufferSize : this.lastOutputConfig.preferredBufferSize,
+        typeof parsed.preferredBufferSize === 'number'
+          ? parsed.preferredBufferSize
+          : this.lastOutputConfig.preferredBufferSize,
       routingMode:
-        typeof parsed.routingMode === 'string' ? parsed.routingMode : this.lastOutputConfig.routingMode,
+        typeof parsed.routingMode === 'string'
+          ? parsed.routingMode
+          : this.lastOutputConfig.routingMode,
       wasapiExclusivePushMode:
         parsed.wasapiExclusivePushMode ?? this.lastOutputConfig.wasapiExclusivePushMode,
       upmixCenterGain: parsed.upmixCenterGain ?? this.lastOutputConfig.upmixCenterGain,
@@ -563,8 +570,8 @@ class FakeNativeBinding implements NativeAudioBinding {
       this.playbackInfo.outputInfo.actualBackend === 'asio'
         ? this.resolveAsioBufferSize(this.lastOutputConfig.preferredBufferSize)
         : this.playbackInfo.outputInfo.actualBackend === 'wasapi-exclusive'
-        ? this.resolveExclusiveBufferSize(this.lastOutputConfig.preferredBufferSize)
-        : this.resolveSharedBufferSize(this.lastOutputConfig.preferredBufferSize)
+          ? this.resolveExclusiveBufferSize(this.lastOutputConfig.preferredBufferSize)
+          : this.resolveSharedBufferSize(this.lastOutputConfig.preferredBufferSize)
     const sampleRate = this.playbackInfo.outputInfo.actualSampleRate || 48000
     const bufferLatencyMs = actualBufferSize > 0 ? (actualBufferSize * 1000) / sampleRate : 0
     const driverLatencyMs = this.playbackInfo.outputInfo.actualBackend === 'asio' ? 2 : 1
@@ -572,14 +579,14 @@ class FakeNativeBinding implements NativeAudioBinding {
       this.lastOutputConfig.routingMode && this.lastOutputConfig.routingMode !== 'auto'
         ? 'routing_changes_semantics'
         : this.playbackInfo.outputInfo.actualBackend === 'wasapi' ||
-          this.playbackInfo.outputInfo.actualBackend === 'coreaudio'
+            this.playbackInfo.outputInfo.actualBackend === 'coreaudio'
           ? 'shared_mixer'
           : ''
     const perfectReason =
       perfectReasonCode === 'routing_changes_semantics'
         ? '声道映射改变声道语义'
         : this.playbackInfo.outputInfo.actualBackend === 'wasapi' ||
-          this.playbackInfo.outputInfo.actualBackend === 'coreaudio'
+            this.playbackInfo.outputInfo.actualBackend === 'coreaudio'
           ? '共享输出经过系统混音'
           : ''
     const outputInfo = {
@@ -587,7 +594,11 @@ class FakeNativeBinding implements NativeAudioBinding {
       bufferSizeFrames: actualBufferSize,
       latencyFrames: actualBufferSize,
       latencyMs: bufferLatencyMs + driverLatencyMs,
-      latencyInfo: makeLatencyInfo(bufferLatencyMs, driverLatencyMs, bufferLatencyMs + driverLatencyMs),
+      latencyInfo: makeLatencyInfo(
+        bufferLatencyMs,
+        driverLatencyMs,
+        bufferLatencyMs + driverLatencyMs
+      ),
       channelRoutingMode: this.lastOutputConfig.routingMode,
       perfectReasonCode,
       perfectReason,
@@ -678,7 +689,9 @@ class FakeNativeBinding implements NativeAudioBinding {
   }
   GetDspPluginStatus = (): string => {
     this.nativeDspPluginStatusReads += 1
-    return JSON.stringify({ plugins: [{ id: 'com.example.eq', reads: this.nativeDspPluginStatusReads }] })
+    return JSON.stringify({
+      plugins: [{ id: 'com.example.eq', reads: this.nativeDspPluginStatusReads }]
+    })
   }
   GetPlaybackInfo = (): string => {
     this.playbackInfoReads += 1
@@ -706,7 +719,10 @@ class FakeNativeBinding implements NativeAudioBinding {
     const spectrumPoints = options.spectrumPoints ?? 64
     const waveformPoints = options.waveformPoints ?? 128
     return JSON.stringify({
-      spectrum: Array.from({ length: spectrumPoints }, (_, index) => index / Math.max(1, spectrumPoints - 1)),
+      spectrum: Array.from(
+        { length: spectrumPoints },
+        (_, index) => index / Math.max(1, spectrumPoints - 1)
+      ),
       waveform: Array.from({ length: waveformPoints }, (_, index) => Math.sin(index / 8)),
       peakDb: -3,
       rmsDb: -12,
@@ -723,7 +739,8 @@ class FakeNativeBinding implements NativeAudioBinding {
     this.enumerateDeviceCalls += 1
     return JSON.stringify(this.devices)
   }
-  EnumerateBackends = (): string => JSON.stringify(['wasapi', 'wasapi-exclusive', 'asio', 'coreaudio', 'coreaudio-exclusive'])
+  EnumerateBackends = (): string =>
+    JSON.stringify(['wasapi', 'wasapi-exclusive', 'asio', 'coreaudio', 'coreaudio-exclusive'])
   GetEngineCapabilities = (): string => JSON.stringify({})
   GetLastError = (): string => JSON.stringify({ message: this.lastErrorMessage })
 
@@ -815,6 +832,7 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   queue: AudioEngineQueueItem[] = []
   queueIndex = -1
   playCalls = 0
+  playAsyncError: Error | null = null
   playbackInfo = makePlaybackInfo({ state: 'playing', nativePlaybackActive: true })
 
   Play = (): void => {
@@ -865,6 +883,16 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   GetPlaybackInfo = (): string => JSON.stringify(this.playbackInfo)
   GetDspPluginStatus = (): string => JSON.stringify({ plugins: [] })
   GetLastError = (): string => JSON.stringify({ message: '' })
+  async callAsync(method: string, args: unknown[]): Promise<unknown> {
+    if (method === 'Play' && this.playAsyncError) {
+      throw this.playAsyncError
+    }
+    const target = this[method as keyof this]
+    if (typeof target === 'function') {
+      return (target as (...args: unknown[]) => unknown).apply(this, args)
+    }
+    return undefined
+  }
   async getMetadataAsync(source: string): Promise<string> {
     this.metadataReads += 1
     return JSON.stringify({ source, title: `service metadata ${this.metadataReads}`, error: '' })
@@ -872,6 +900,55 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   destroy(): void {
     this.destroyCalls += 1
     this.stopped = true
+  }
+}
+
+class DeferredAudioServiceBinding extends FakeAudioServiceBinding {
+  deferredMethods = new Set<string>()
+  deferredCalls: Array<{
+    method: string
+    args: unknown[]
+    resolve: (value: unknown) => void
+    reject: (error: unknown) => void
+  }> = []
+
+  constructor(deferredMethods: string[]) {
+    super()
+    this.deferredMethods = new Set(deferredMethods)
+  }
+
+  override async callAsync(method: string, args: unknown[]): Promise<unknown> {
+    if (!this.deferredMethods.has(method)) {
+      return await super.callAsync(method, args)
+    }
+    return await new Promise((resolve, reject) => {
+      this.deferredCalls.push({ method, args, resolve, reject })
+    })
+  }
+
+  resolveDeferredCalls(): void {
+    while (this.deferredCalls.length > 0) {
+      this.resolveNextDeferredCall()
+    }
+  }
+
+  resolveNextDeferredCall(): void {
+    const call = this.deferredCalls.shift()
+    if (!call) return
+    const target = this[call.method as keyof this]
+    if (typeof target === 'function') {
+      call.resolve((target as (...args: unknown[]) => unknown).apply(this, call.args))
+    } else {
+      call.resolve(undefined)
+    }
+  }
+
+  rejectDeferredCalls(error: Error): void {
+    while (this.deferredCalls.length > 0) {
+      const call = this.deferredCalls.shift()
+      if (!call) return
+      call.reject(error)
+    }
   }
 }
 
@@ -1179,7 +1256,10 @@ test('setOutputConfig uses the actual native buffer size and latency facts', asy
   assert.equal(info.outputInfo.latencyFrames, 448)
   assert.equal(info.latencyFrames, 448)
   assert.equal(info.outputInfo.latencyInfo.bufferLatencyMs > 0, true)
-  assert.equal(info.outputInfo.latencyInfo.totalLatencyMs >= info.outputInfo.latencyInfo.bufferLatencyMs, true)
+  assert.equal(
+    info.outputInfo.latencyInfo.totalLatencyMs >= info.outputInfo.latencyInfo.bufferLatencyMs,
+    true
+  )
   assert.equal(info.outputInfo.latencyMs, info.outputInfo.latencyInfo.totalLatencyMs)
   assert.equal(info.latencyInfo.totalLatencyMs, info.outputInfo.latencyInfo.totalLatencyMs)
   assertPlaybackMirrorsOutputInfo(info)
@@ -1221,7 +1301,9 @@ test('ASIO output config uses the native applied buffer and capability facts', a
   assert.equal(asioDevice?.granularity, 64)
   assert.equal(asioDevice?.preferredBufferSize, 256)
   assert.equal(asioDevice?.supportsDop, true)
+  assert.equal(asioDevice?.dopSupportState, 'verified')
   assert.equal(asioDevice?.supportsNativeDsd, true)
+  assert.equal(asioDevice?.nativeDsdSupportState, 'verified')
   assert.deepEqual(asioDevice?.supportedDsdRates, [64])
   assert.deepEqual(asioDevice?.nativeDsdSampleRates, [2822400, 5644800, 11289600])
   assert.deepEqual(asioDevice?.nativeDsdSampleFormats, ['dsd-int8-msb1'])
@@ -1229,6 +1311,28 @@ test('ASIO output config uses the native applied buffer and capability facts', a
   assert.deepEqual(asioDevice?.dopCarrierFormats, ['int24-in32'])
   assert.equal(asioDevice?.capabilityVersion, 3)
   assertPlaybackMirrorsOutputInfo(info)
+})
+
+test('audio device options expose runtime-probed DSD support states without forcing boolean support', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'dac-1'
+    },
+    nativeBinding
+  )
+
+  const state = await manager.getAudioOutputState()
+  const defaultDevice = state.deviceOptions.find((device) => device.id === 'auto')
+  const dac = state.deviceOptions.find((device) => device.id === 'dac-1')
+
+  assert.equal(defaultDevice?.dopSupportState, 'runtime-probed')
+  assert.equal(defaultDevice?.nativeDsdSupportState, 'unsupported')
+  assert.equal(dac?.supportsDop, undefined)
+  assert.equal(dac?.dopSupportState, 'runtime-probed')
+  assert.equal(dac?.nativeDsdSupportState, 'unsupported')
 })
 
 test('setAudioOutput skips native calls and playback fanout when output and device are unchanged', async () => {
@@ -1332,7 +1436,10 @@ test('switching to ASIO does not keep a WASAPI endpoint device id', async () => 
   assert.equal(state.device, 'auto')
   assert.equal(info.outputInfo.actualBackend, 'asio')
   assert.equal(info.outputInfo.devicePathKind, 'asio')
-  assert.notEqual(info.outputInfo.deviceName, '{0.0.0.00000000}.{f968bbfb-342c-4419-adef-8082728d6c2d}')
+  assert.notEqual(
+    info.outputInfo.deviceName,
+    '{0.0.0.00000000}.{f968bbfb-342c-4419-adef-8082728d6c2d}'
+  )
   assertPlaybackMirrorsOutputInfo(info)
 })
 
@@ -1356,7 +1463,10 @@ test('ASIO play failure falls back to native WASAPI instead of throwing to HTMLA
 
   assert.equal(result.nativeStarted, true)
   assert.match(result.fallbackReason, /无法找到请求的 ASIO 设备/)
-  assert.deepEqual(nativeBinding.playCalls.map((call) => call.backend), ['asio', 'wasapi'])
+  assert.deepEqual(
+    nativeBinding.playCalls.map((call) => call.backend),
+    ['asio', 'wasapi']
+  )
   assert.equal(state.output, 'wasapi')
   assert.equal(state.device, 'auto')
   assert.equal(info.state, 'playing')
@@ -1390,7 +1500,10 @@ test('next falls back to Play when native Next advances but does not keep playba
   const info = await manager.getPlaybackInfo()
 
   assert.equal(nativeBinding.nextCalls, 1)
-  assert.deepEqual(nativeBinding.playCalls.map((call) => call.source), ['first.flac', 'second.flac'])
+  assert.deepEqual(
+    nativeBinding.playCalls.map((call) => call.source),
+    ['first.flac', 'second.flac']
+  )
   assert.equal(info.state, 'playing')
   assert.equal(info.queueIndex, 1)
   assert.equal(info.source, 'second.flac')
@@ -1417,7 +1530,10 @@ test('next falls back to target track when native Next reports stale playback in
   const info = await manager.getPlaybackInfo()
 
   assert.equal(nativeBinding.nextCalls, 1)
-  assert.deepEqual(nativeBinding.playCalls.map((call) => call.source), ['first.flac', 'second.flac'])
+  assert.deepEqual(
+    nativeBinding.playCalls.map((call) => call.source),
+    ['first.flac', 'second.flac']
+  )
   assert.equal(info.queueIndex, 1)
   assert.equal(info.source, 'second.flac')
 })
@@ -1445,7 +1561,10 @@ test('loadQueue skips native call and queue fanout when normalized queue is unch
   assert.equal(nativeBinding.lastLoadedQueueIndex, 1)
   assert.equal(queueChanges.length, 1)
 
-  await manager.loadQueue(queue.map((item) => ({ ...item })), 99)
+  await manager.loadQueue(
+    queue.map((item) => ({ ...item })),
+    99
+  )
   assert.equal(nativeBinding.loadQueueCalls, 1)
   assert.deepEqual(nativeBinding.lastLoadedQueue, queue)
   assert.equal(nativeBinding.lastLoadedQueueIndex, 1)
@@ -1490,6 +1609,10 @@ test('getPlaybackInfo reuses fresh native playback info from the manager tick', 
   const refreshedInfo = await manager.getPlaybackInfo()
   assert.equal(nativeBinding.playbackInfoReads, 3)
   assert.equal(refreshedInfo.position, 0.5)
+
+  const repeatedInfo = await manager.getPlaybackInfo()
+  assert.equal(nativeBinding.playbackInfoReads, 3)
+  assert.equal(repeatedInfo.position, 0.5)
 })
 
 test('native tick skips full playback-info fanout when only position changes', async () => {
@@ -1765,6 +1888,41 @@ test('getMetadata reuses native metadata for the same source within the cache wi
   assert.notDeepEqual(refreshed, first)
 })
 
+test('getMetadata bounds expired and unique metadata cache entries', () => {
+  const nativeBinding = new FakeNativeBinding()
+  let now = 1000
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+  const internals = manager as unknown as {
+    metadataCache: Map<string, unknown>
+  }
+
+  for (let index = 0; index < 260; ++index) {
+    manager.getMetadata(`file:///album/side-a-${index}.flac`)
+  }
+
+  now += 1250
+
+  for (let index = 0; index < 260; ++index) {
+    manager.getMetadata(`file:///album/side-b-${index}.flac`)
+  }
+
+  assert.ok(
+    internals.metadataCache.size <= 256,
+    `metadata cache retained ${internals.metadataCache.size} entries`
+  )
+  assert.equal(internals.metadataCache.has('file:///album/side-a-0.flac'), false)
+})
+
 test('getMetadataAsync reuses service metadata for the same source within the cache window', async () => {
   const service = new FakeAudioServiceBinding()
   let now = 1000
@@ -1929,6 +2087,90 @@ test('getAudioOutputState reuses native device options within the output state c
   assert.deepEqual(second.deviceOptions, first.deviceOptions)
 })
 
+test('native device recovery diagnostics invalidate device options cache', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    {
+      nativeBinding,
+      scheduler: TEST_SCHEDULER
+    }
+  )
+  const refreshReasons: string[] = []
+  manager.on('audio-device-options-changed', ({ reason }) => {
+    refreshReasons.push(reason)
+  })
+
+  await manager.play('file:///music.flac')
+  const first = await manager.getAudioOutputState()
+  const enumerateCallsAfterFirstRead = nativeBinding.enumerateDeviceCalls
+  nativeBinding.devices = [
+    ...nativeBinding.devices,
+    {
+      id: 'dac-hotplug',
+      label: 'Hotplug DAC',
+      isDefault: false,
+      backend: 'wasapi',
+      pathKind: 'endpoint'
+    }
+  ]
+  assert.equal((await manager.getAudioOutputState()).deviceOptions.length, first.deviceOptions.length)
+
+  nativeBinding.setDiagnostics({ deviceLostCount: 1 }, { deviceRecovered: true, recoveryCount: 1 })
+  ;(manager as unknown as { tick: () => void }).tick()
+  const refreshed = await manager.getAudioOutputState()
+
+  assert.ok(nativeBinding.enumerateDeviceCalls > enumerateCallsAfterFirstRead)
+  assert.equal(refreshed.deviceOptions.some((device) => device.id === 'dac-hotplug'), true)
+  assert.equal(refreshReasons.includes('native-output-diagnostics-changed'), true)
+})
+
+test('device hotplug polling refreshes device options while playback is stopped', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  let now = 1000
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    {
+      nativeBinding,
+      scheduler: {
+        ...TEST_SCHEDULER,
+        now: () => now
+      }
+    }
+  )
+  const refreshReasons: string[] = []
+  manager.on('audio-device-options-changed', ({ reason }) => {
+    refreshReasons.push(reason)
+  })
+
+  const first = await manager.getAudioOutputState()
+  nativeBinding.devices = [
+    ...nativeBinding.devices,
+    {
+      id: 'usb-dac-new',
+      label: 'New USB DAC',
+      isDefault: false,
+      backend: 'wasapi',
+      pathKind: 'endpoint'
+    }
+  ]
+  now += 5001
+  ;(manager as unknown as { tick: () => void }).tick()
+  const refreshed = await manager.getAudioOutputState()
+
+  assert.equal(refreshed.deviceOptions.length, first.deviceOptions.length + 1)
+  assert.equal(refreshed.deviceOptions.some((device) => device.id === 'usb-dac-new'), true)
+  assert.equal(refreshReasons.includes('audio-device-hotplug'), true)
+})
+
 test('getSpectrumData reuses native spectrum data within one visual frame', () => {
   const nativeBinding = new FakeNativeBinding()
   let now = 1000
@@ -1984,10 +2226,12 @@ test('getVisualizationData normalizes native visualization data', () => {
   assert.equal(data.spectrum.length, 12)
   assert.equal(data.waveform.length, 20)
   assert.equal(data.spectrogram.length, 1)
-  assert.equal(data.spectrogram[0].length, 12)
-  assert.equal(data.peakDb, -3)
-  assert.equal(data.rmsDb, -12)
-  assert.equal(data.lufsMomentary, -15)
+    assert.equal(data.spectrogram[0].length, 12)
+    assert.equal(data.peakDb, -3)
+    assert.equal(data.rmsDb, -12)
+    assert.equal(data.lufsMomentary, -15)
+    assert.equal(data.tapStatus, 'active')
+    assert.equal(data.reason, '')
 })
 
 test('getVisualizationData preserves high-resolution spectrum requests for the visualizer', () => {
@@ -2009,6 +2253,131 @@ test('getVisualizationData preserves high-resolution spectrum requests for the v
 
   assert.equal(data.spectrum.length, 4096)
   assert.equal(data.spectrogram[0].length, 4096)
+})
+
+test('getVisualizationData caps native maxFrequency at Nyquist', () => {
+  const nativeBinding = new FakeNativeBinding()
+  nativeBinding.GetVisualizationData = () =>
+    JSON.stringify({
+      spectrum: Array.from({ length: 64 }, () => 0.5),
+      waveform: Array.from({ length: 20 }, () => 0),
+      peakDb: -6,
+      rmsDb: -16,
+      lufsMomentary: -18,
+      spectrogram: [],
+      sampleRate: 32000,
+      maxFrequency: 20000,
+      active: true
+    })
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+
+  const data = manager.getVisualizationData({
+    spectrumPoints: 64,
+    waveformPoints: 20,
+    spectrogramFrames: 0
+  })
+
+  assert.equal(data.sampleRate, 32000)
+  assert.equal(data.maxFrequency, 16000)
+})
+
+test('getVisualizationData can precompute visualizer bars without returning the full spectrum payload', () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+
+  const data = manager.getVisualizationData({
+    spectrumPoints: 4096,
+    waveformPoints: 20,
+    spectrogramFrames: 0,
+    oscilloscopePoints: 0,
+    visualizerBarCount: 130
+  })
+
+  assert.equal(data.active, true)
+  assert.equal(data.spectrum.length, 0)
+  assert.equal(data.visualizerBars?.length, 130)
+  assert.equal(data.waveform.length, 20)
+  assert.ok(data.visualizerBars?.some((value) => value > 0))
+})
+
+test('mapSpectrumToVisualizerBars keeps flat spectrum visually flat', () => {
+  const bars = mapSpectrumToVisualizerBars(Array.from({ length: 4096 }, () => 0.5), 48000, 130)
+
+  assert.equal(bars.length, 130)
+  const min = Math.min(...bars)
+  const max = Math.max(...bars)
+  assert.ok(max - min < 0.0001, `expected flat bars, got range ${max - min}`)
+  assert.ok(Math.abs(bars[0] - 0.5) < 0.0001, `expected raw normalized value, got ${bars[0]}`)
+})
+
+test('mapSpectrumToVisualizerBars maps a 1kHz peak near the 1kHz visual band', () => {
+  const sampleRate = 48000
+  const spectrumLength = 4096
+  const fftSize = spectrumLength * 2
+  const peakFrequency = 1000
+  const spectrum = Array.from({ length: spectrumLength }, (_, bin) => {
+    const frequency = bin * (sampleRate / fftSize)
+    const distance = (frequency - peakFrequency) / 80
+    return Math.exp(-distance * distance)
+  })
+
+  const bars = mapSpectrumToVisualizerBars(spectrum, sampleRate, 130)
+  const peakBar = bars.reduce((best, value, index) => (value > bars[best] ? index : best), 0)
+  const minFrequency = 20
+  const maxFrequency = 20000
+  const ratio = maxFrequency / minFrequency
+  const centerFrequency = minFrequency * Math.pow(ratio, peakBar / (130 - 1))
+
+  assert.ok(
+    centerFrequency >= 900 && centerFrequency <= 1125,
+    `expected 1kHz near peak bar center ${centerFrequency.toFixed(1)}Hz`
+  )
+})
+
+test('mapSpectrumToVisualizerBars caps visual frequency range at Nyquist', () => {
+  const bars = mapSpectrumToVisualizerBars(Array.from({ length: 4096 }, () => 1), 32000, 130)
+
+  assert.equal(bars.length, 130)
+  assert.ok(bars.every((value) => value > 0 && value <= 1))
+})
+
+test('getVisualizationData can omit unused visualization payloads', () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+
+  const data = manager.getVisualizationData({
+    spectrumPoints: 2048,
+    waveformPoints: 96,
+    spectrogramFrames: 0,
+    oscilloscopePoints: 0
+  })
+
+  assert.equal(data.active, true)
+  assert.equal(data.spectrum.length, 2048)
+  assert.equal(data.waveform.length, 96)
+  assert.equal(data.spectrogram.length, 0)
+  assert.equal(data.oscilloscope.length, 0)
 })
 
 test('getVisualizationData reuses native visualization data within one visual frame', () => {
@@ -2072,10 +2441,12 @@ test('getVisualizationData returns inactive shape when native visualization is u
   assert.equal(data.sampleRate, 0)
   assert.equal(data.spectrum.length, 12)
   assert.equal(data.waveform.length, 20)
-  assert.equal(data.spectrogram.length, 0)
-  assert.equal(data.peakDb, -120)
-  assert.equal(data.rmsDb, -120)
-  assert.equal(data.lufsMomentary, null)
+    assert.equal(data.spectrogram.length, 0)
+    assert.equal(data.peakDb, -120)
+    assert.equal(data.rmsDb, -120)
+    assert.equal(data.lufsMomentary, null)
+    assert.equal(data.tapStatus, 'native-unavailable')
+    assert.equal(data.reason, 'Native visualization tap unavailable')
 })
 
 test('getVisualizationData returns animated fallback data when native visualization is unavailable while playing', async () => {
@@ -2116,9 +2487,11 @@ test('getVisualizationData returns animated fallback data when native visualizat
   assert.notDeepEqual(nextData.spectrum, data.spectrum)
   assert.ok(data.spectrum.some((value) => value > 0))
   assert.ok(data.waveform.some((value) => value !== 0))
-  assert.equal(data.peakDb, -18)
-  assert.equal(data.rmsDb, -28)
-  assert.equal(data.lufsMomentary, -24)
+    assert.equal(data.peakDb, -18)
+    assert.equal(data.rmsDb, -28)
+    assert.equal(data.lufsMomentary, -24)
+    assert.equal(data.tapStatus, 'synthetic-fallback')
+    assert.equal(data.reason, 'Native visualization tap unavailable')
 })
 
 test('getVisualizationData falls back while playback is active but native visualization is inactive', async () => {
@@ -2167,11 +2540,13 @@ test('getVisualizationData falls back while playback is active but native visual
     spectrogramFrames: 4
   })
 
-  assert.equal(data.active, true)
-  assert.ok(data.sampleRate > 0)
-  assert.notDeepEqual(nextData.spectrum, data.spectrum)
-  assert.ok(data.spectrum.some((value) => value > 0))
-  assert.ok(data.waveform.some((value) => value !== 0))
+    assert.equal(data.active, true)
+    assert.ok(data.sampleRate > 0)
+    assert.notDeepEqual(nextData.spectrum, data.spectrum)
+    assert.ok(data.spectrum.some((value) => value > 0))
+    assert.ok(data.waveform.some((value) => value !== 0))
+    assert.equal(data.tapStatus, 'synthetic-fallback')
+    assert.equal(data.reason, 'Native visualization tap returned no samples')
 })
 
 test('DSP module updates enable the native DSP chain instead of only toggling UI state', async () => {
@@ -2562,6 +2937,33 @@ test('audio service crash stops native playback and keeps manager usable', async
   manager.destroy()
 })
 
+test('audio service play waits for utility process confirmation before marking playing', async () => {
+  const service = new FakeAudioServiceBinding()
+  service.playAsyncError = new Error('audio service child missing')
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  const originalWarn = console.warn
+  console.warn = () => {}
+
+  try {
+    await assert.rejects(() => manager.play('service-track.flac', 0), /audio service child missing/)
+
+    const info = await manager.getPlaybackInfo()
+    assert.equal(info.state, 'stopped')
+    assert.equal(info.nativePlaybackActive, false)
+    assert.equal(service.playCalls, 0)
+  } finally {
+    console.warn = originalWarn
+    manager.destroy()
+  }
+})
+
 test('destroy skips duplicate native Stop after the manager is already destroyed', () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
@@ -2679,6 +3081,12 @@ test('audio service ready after restart restores configuration and queue without
     { id: 'local:one', source: 'one.flac', title: 'One' },
     { id: 'local:two', source: 'two.flac', title: 'Two' }
   ]
+  let serviceReadyManualResumeRequired = false
+  let serviceReadyOutputRouteSynced = false
+  manager.on('audio-service-ready', ({ manualResumeRequired, outputRouteSynced }) => {
+    serviceReadyManualResumeRequired = manualResumeRequired
+    serviceReadyOutputRouteSynced = outputRouteSynced
+  })
 
   await manager.start()
   assert.equal(service.eqBandsCalls, 1)
@@ -2700,7 +3108,10 @@ test('audio service ready after restart restores configuration and queue without
   service.queueIndex = -1
   service.playCalls = 0
   service.emit('ready')
+  await new Promise((resolve) => setTimeout(resolve, 0))
 
+  assert.equal(serviceReadyManualResumeRequired, true)
+  assert.equal(serviceReadyOutputRouteSynced, true)
   assert.equal(service.backend, 'asio')
   assert.equal(service.device, 'asio:studio')
   assert.equal(service.outputConfig.preferredBufferSize, 512)
@@ -2718,6 +3129,130 @@ test('audio service ready after restart restores configuration and queue without
   const info = await manager.getPlaybackInfo()
   assert.equal(info.state, 'stopped')
   assert.equal(info.nativePlaybackActive, false)
+
+  manager.destroy()
+})
+
+test('audio service ready keeps output route unsynced until restore RPCs acknowledge', async () => {
+  const service = new DeferredAudioServiceBinding([
+    'SetOutputBackend',
+    'SetOutputDevice',
+    'SetOutputConfig'
+  ])
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioOutputConfig: { preferredBufferSize: 512 }
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  const internals = manager as unknown as {
+    nativeOutputRouteSynced: boolean
+  }
+  let serviceReadyManualResumeRequired = false
+  let serviceReadyOutputRouteSynced = false
+  manager.on('audio-service-ready', ({ manualResumeRequired, outputRouteSynced }) => {
+    serviceReadyManualResumeRequired = manualResumeRequired
+    serviceReadyOutputRouteSynced = outputRouteSynced
+  })
+
+  await manager.start()
+  await manager.setAudioOutput('asio', 'asio:studio')
+  service.emit('crash', 'service crashed before route restore')
+  service.backend = 'wasapi'
+  service.device = 'auto'
+  service.outputConfig = {}
+
+  service.emit('ready')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(internals.nativeOutputRouteSynced, false)
+  assert.equal(serviceReadyManualResumeRequired, false)
+  assert.equal(serviceReadyOutputRouteSynced, false)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputBackend']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(internals.nativeOutputRouteSynced, false)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputDevice']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(internals.nativeOutputRouteSynced, false)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputConfig']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(internals.nativeOutputRouteSynced, true)
+  assert.equal(serviceReadyManualResumeRequired, true)
+  assert.equal(serviceReadyOutputRouteSynced, true)
+  assert.equal(service.backend, 'asio')
+  assert.equal(service.device, 'asio:studio')
+  assert.equal(service.outputConfig.preferredBufferSize, 512)
+
+  manager.destroy()
+})
+
+test('audio service ready reports output route restore failures without enabling resume', async () => {
+  const service = new DeferredAudioServiceBinding(['SetOutputDevice'])
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioOutputConfig: { preferredBufferSize: 512 }
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  const internals = manager as unknown as {
+    nativeOutputRouteSynced: boolean
+  }
+  const serviceReadyEvents: Array<{
+    manualResumeRequired: boolean
+    outputRouteSynced: boolean
+    restoreErrors: string[]
+  }> = []
+  manager.on('audio-service-ready', (event) => {
+    serviceReadyEvents.push(event)
+  })
+
+  await manager.start()
+  await manager.setAudioOutput('asio', 'asio:studio')
+  service.emit('crash', 'service crashed before route restore failure')
+  service.emit('ready')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(serviceReadyEvents.length, 0)
+  assert.equal(internals.nativeOutputRouteSynced, false)
+
+  service.rejectDeferredCalls(new Error('device disappeared'))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(internals.nativeOutputRouteSynced, false)
+  assert.equal(serviceReadyEvents.length, 1)
+  assert.equal(serviceReadyEvents[0].manualResumeRequired, true)
+  assert.equal(serviceReadyEvents[0].outputRouteSynced, false)
+  assert.match(serviceReadyEvents[0].restoreErrors.join('\n'), /device disappeared/)
 
   manager.destroy()
 })

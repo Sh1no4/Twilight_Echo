@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -28,6 +29,23 @@ void testSacdIsoByteScratchResizePreservesSameSizedScratch() {
 
   assert(scratch.data() == before);
   assert((scratch == std::vector<uint8_t>{0x11, 0x22, 0x33}));
+}
+
+std::string readTextFile(const std::filesystem::path& path) {
+  std::ifstream input(path);
+  std::ostringstream buffer;
+  buffer << input.rdbuf();
+  return buffer.str();
+}
+
+void testSacdDstDecodePathDoesNotPreclearDecodedFrameBuffer() {
+  const std::filesystem::path sourcePath =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "decoder" / "SacdIsoDemuxer.cpp";
+  const std::string source = readTextFile(sourcePath);
+
+  if (source.empty() || source.find("decodedDsdBuffer.assign(decodedFrameBytes, 0)") != std::string::npos) {
+    std::abort();
+  }
 }
 
 void writeLe16(std::ofstream& out, uint16_t value) {
@@ -567,6 +585,56 @@ class AcceptingDstProvider final : public SacdDstProvider {
   }
 };
 
+class PartialDstDecoderProvider final : public SacdDstDecoderProvider {
+ public:
+  const char* name() const override {
+    return "partial-dst-decoder-test-provider";
+  }
+
+  bool available(std::string* reason) const override {
+    if (reason) reason->clear();
+    return true;
+  }
+
+  bool open(int channels, int sampleRate, std::string* error) override {
+    (void)channels;
+    (void)sampleRate;
+    if (error) error->clear();
+    frameIndex_ = 0;
+    return true;
+  }
+
+  size_t decodeFrame(
+      const uint8_t* dstFrameBytes,
+      size_t dstFrameSize,
+      uint8_t* dsdOut,
+      size_t dsdOutSize,
+      std::string* error) override {
+    (void)dstFrameBytes;
+    (void)dstFrameSize;
+    if (error) error->clear();
+    if (dsdOutSize < 3) return 0;
+    const uint8_t base = static_cast<uint8_t>(0x10 + frameIndex_ * 0x10);
+    dsdOut[0] = base;
+    dsdOut[1] = static_cast<uint8_t>(base + 1);
+    dsdOut[2] = static_cast<uint8_t>(base + 2);
+    ++frameIndex_;
+    return 3;
+  }
+
+  size_t frameBytesPerChannel(int sampleRate) const override {
+    (void)sampleRate;
+    return 4;
+  }
+
+  void reset() override {
+    frameIndex_ = 0;
+  }
+
+ private:
+  size_t frameIndex_ = 0;
+};
+
 class PcmOnlyDstProvider final : public SacdDstProvider {
  public:
   const char* name() const override {
@@ -651,6 +719,29 @@ void testSacdDstTrackPlayableWithProvider() {
   }
 }
 
+void testSacdDstReadBytesDrainsOnlyDecodedBytes() {
+  const auto iso = writeSacdIsoFixture("twilight-sacd-dst-partial-decode-fixture.iso");
+  PartialDstDecoderProvider provider;
+  SacdIsoDemuxer demuxer;
+  demuxer.setDstDecoderProvider(&provider);
+  std::string error;
+  if (!demuxer.open(iso.string(), &error) || !demuxer.selectTrack("stereo", 2, &error)) {
+    std::abort();
+  }
+
+  std::vector<uint8_t> bytes(8, 0xee);
+  const size_t read = demuxer.readBytes(bytes.data(), bytes.size());
+  const std::vector<uint8_t> expected = {0x10, 0x11, 0x12, 0x20, 0x21, 0x22, 0x30, 0x31};
+  if (read != bytes.size() || bytes != expected) {
+    std::abort();
+  }
+
+  {
+    std::error_code ignored;
+    std::filesystem::remove(iso, ignored);
+  }
+}
+
 void testSacdDstTrackUnplayableWithoutProvider() {
   // Without a provider, DST tracks remain unplayable (regression guard for
   // the dst_dsd_provider_unavailable contract).
@@ -679,6 +770,7 @@ void testSacdDstTrackUnplayableWithoutProvider() {
 
 int main() {
   testSacdIsoByteScratchResizePreservesSameSizedScratch();
+  testSacdDstDecodePathDoesNotPreclearDecodedFrameBuffer();
   testDsfReader();
   testDffReader();
   testDsdInterleaveHelperConvertsPlanarBlocks();
@@ -693,6 +785,7 @@ int main() {
   testSacdIsoDemuxerTracksAndSeek();
   testSacdDstProviderSelection();
   testSacdDstTrackPlayableWithProvider();
+  testSacdDstReadBytesDrainsOnlyDecodedBytes();
   testSacdDstTrackUnplayableWithoutProvider();
   assert(sourceLooksDsfOrDff("song.DSF"));
   assert(sourceLooksDsfOrDff("song.dff"));

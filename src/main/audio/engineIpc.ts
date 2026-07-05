@@ -93,8 +93,18 @@ export function setupAudioEngineIpc(): void {
 
   runtime.audioEngineManager.on('audio-service-crash', ({ reason }) => {
     console.error('[音频服务]', reason)
+    runtime.mainWindow?.webContents.send('audioEngine:service-crash', { reason })
     runtime.mainWindow?.webContents.send('audioEngine:error', `音频服务已重启：${reason}`)
     void runtime.pluginManager?.handleNativeDspHostCrash(reason)
+  })
+
+  runtime.audioEngineManager.on('audio-service-ready', (event) => {
+    runtime.mainWindow?.webContents.send('audioEngine:service-ready', event)
+    void runtime.pluginManager?.broadcastEvent('audioEngine:service-ready', event)
+  })
+
+  runtime.audioEngineManager.on('audio-device-options-changed', ({ reason }) => {
+    runtime.mainWindow?.webContents.send('audioEngine:device-options-changed', { reason })
   })
 
   runtime.audioEngineManager.on('ready', () => {

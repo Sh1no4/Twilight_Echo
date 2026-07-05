@@ -123,10 +123,24 @@ struct CoreAudioBackend::Impl {
 
   size_t render(uint32_t frameCount, CoreAudioBufferList* ioData) {
     if (!ioData || frameCount == 0) return 0;
+    const auto fillOutputSilence = [&]() {
+      for (size_t index = 0; index < ioData->bufferCount(); ++index) {
+        auto& buffer = ioData->bufferAt(index);
+        if (buffer.hasData()) {
+          std::memset(buffer.writableData(), 0, buffer.byteSize());
+          buffer.dataByteSize = static_cast<uint32_t>(buffer.byteSize());
+        }
+      }
+    };
+
     RenderCallback renderCallback;
     int channels = 0;
     {
-      std::lock_guard lock(mutex);
+      std::unique_lock lock(mutex, std::try_to_lock);
+      if (!lock.owns_lock()) {
+        fillOutputSilence();
+        return 0;
+      }
       renderCallback = callback;
       channels = std::max(1, outputFormat.channelCount);
     }
@@ -134,47 +148,56 @@ struct CoreAudioBackend::Impl {
     const size_t frames = static_cast<size_t>(frameCount);
     const size_t samples = frames * static_cast<size_t>(channels);
 
-    if (ioData->buffers.size() == 1) {
-      auto& buffer = ioData->buffers.front();
-      buffer.data.resize(samples * sizeof(float));
-      auto* out = reinterpret_cast<float*>(buffer.data.data());
+    if (ioData->bufferCount() == 1) {
+      auto& buffer = ioData->bufferAt(0);
+      auto* out = reinterpret_cast<float*>(buffer.writableData());
+      const size_t writableFrames = std::min(frames, buffer.byteSize() / sizeof(float) / static_cast<size_t>(channels));
       const size_t rendered =
-          coreaudio::renderFloatCallbackWithTailSilence(out, frames, channels, renderCallback);
-      if (rendered < frames) {
-        std::lock_guard lock(mutex);
-        ++outputInfo.diagnostics.sessionUnderrunCount;
-        ++outputInfo.diagnostics.lifetimeUnderrunCount;
-        outputInfo.diagnostics.lastError = "CoreAudio IOProc underrun";
-        outputInfo.diagnostics = outputInfo.diagnostics;
-        outputInfo.deviceRecovered = false;
-        underrunObserved = true;
+          coreaudio::renderFloatCallbackWithTailSilence(out, writableFrames, channels, renderCallback);
+      if (rendered < frames || writableFrames < frames) {
+        std::unique_lock lock(mutex, std::try_to_lock);
+        if (lock.owns_lock()) {
+          ++outputInfo.diagnostics.sessionUnderrunCount;
+          ++outputInfo.diagnostics.lifetimeUnderrunCount;
+          outputInfo.diagnostics.lastError = "CoreAudio IOProc underrun";
+          outputInfo.diagnostics = outputInfo.diagnostics;
+          outputInfo.deviceRecovered = false;
+          underrunObserved = true;
+        }
       } else if (underrunObserved) {
-        std::lock_guard lock(mutex);
-        outputInfo.deviceRecovered = true;
+        std::unique_lock lock(mutex, std::try_to_lock);
+        if (lock.owns_lock() && underrunObserved) {
+          outputInfo.deviceRecovered = true;
+        }
       }
-      buffer.dataByteSize = static_cast<uint32_t>(buffer.data.size());
+      buffer.dataByteSize = static_cast<uint32_t>(std::min(buffer.byteSize(), samples * sizeof(float)));
       return rendered;
     }
 
-    renderScratch.resize(samples);
+    const size_t scratchFrames = std::min(frames, renderScratch.size() / static_cast<size_t>(channels));
     const size_t rendered =
-        coreaudio::renderFloatCallbackWithTailSilence(renderScratch.data(), frames, channels, renderCallback);
-    if (rendered < frames) {
-      std::lock_guard lock(mutex);
-      ++outputInfo.diagnostics.sessionUnderrunCount;
-      ++outputInfo.diagnostics.lifetimeUnderrunCount;
-      outputInfo.diagnostics.lastError = "CoreAudio IOProc underrun";
-      outputInfo.deviceRecovered = false;
-      underrunObserved = true;
+        coreaudio::renderFloatCallbackWithTailSilence(renderScratch.data(), scratchFrames, channels, renderCallback);
+    if (rendered < frames || scratchFrames < frames) {
+      std::unique_lock lock(mutex, std::try_to_lock);
+      if (lock.owns_lock()) {
+        ++outputInfo.diagnostics.sessionUnderrunCount;
+        ++outputInfo.diagnostics.lifetimeUnderrunCount;
+        outputInfo.diagnostics.lastError = "CoreAudio IOProc underrun";
+        outputInfo.deviceRecovered = false;
+        underrunObserved = true;
+      }
     } else if (underrunObserved) {
-      std::lock_guard lock(mutex);
-      outputInfo.deviceRecovered = true;
+      std::unique_lock lock(mutex, std::try_to_lock);
+      if (lock.owns_lock() && underrunObserved) {
+        outputInfo.deviceRecovered = true;
+      }
     }
 
-    for (auto& buffer : ioData->buffers) {
-      if (!buffer.data.empty()) {
-        const size_t bytes = std::min(buffer.data.size(), renderScratch.size() * sizeof(float));
-        std::memcpy(buffer.data.data(), renderScratch.data(), bytes);
+    for (size_t index = 0; index < ioData->bufferCount(); ++index) {
+      auto& buffer = ioData->bufferAt(index);
+      if (buffer.hasData()) {
+        const size_t bytes = std::min(buffer.byteSize(), renderScratch.size() * sizeof(float));
+        std::memcpy(buffer.writableData(), renderScratch.data(), bytes);
         buffer.dataByteSize = static_cast<uint32_t>(bytes);
       }
     }
@@ -288,6 +311,7 @@ bool CoreAudioBackend::open(const std::string& deviceId, const AudioFormat& requ
   impl_->outputFormat.sampleRate = actualFormat.sampleRate;
   impl_->outputFormat.channelCount = channels;
   impl_->outputFormat.bitDepth = effectivePcmBitDepth(impl_->outputFormat);
+  impl_->renderScratch.resize(static_cast<size_t>(bufferFrames) * static_cast<size_t>(std::max(1, channels)));
   impl_->outputInfo = {};
   impl_->outputInfo.exclusive = false;
   impl_->outputInfo.accessMode = "shared";
@@ -352,8 +376,8 @@ bool CoreAudioBackend::start(RenderCallback callback, OutputEventCallback eventC
 }
 
 void CoreAudioBackend::stop() {
-  impl_->running = false;
-  if (impl_->unit) impl_->host->audioUnitStop(impl_->unit);
+  const bool wasRunning = impl_->running.exchange(false);
+  if (wasRunning && impl_->unit) impl_->host->audioUnitStop(impl_->unit);
 }
 
 void CoreAudioBackend::close() {
@@ -367,6 +391,7 @@ void CoreAudioBackend::close() {
     impl_->host->removeDeviceLostListener(impl_->deviceId, impl_->listenerToken);
     impl_->listenerToken = 0;
   }
+  stop();
   if (impl_->unit) {
     impl_->host->audioUnitUninitialize(impl_->unit);
     impl_->host->disposeAudioUnit(impl_->unit);

@@ -133,6 +133,58 @@ inline size_t packFloatScratchToPcmScratch(
   return bytesPerFrame;
 }
 
+inline size_t packFloatScratchToPcmScratchNoResize(
+    const float* input,
+    size_t frames,
+    int channels,
+    AudioSampleFormat sampleFormat,
+    std::vector<uint8_t>& scratch) {
+  if (!input || frames == 0 || channels <= 0) return 0;
+
+  const size_t bytesPerSample = pcmBytesPerSample(sampleFormat);
+  const size_t bytesPerFrame = bytesPerSample * static_cast<size_t>(channels);
+  const size_t requiredBytes = frames * bytesPerFrame;
+  if (scratch.size() < requiredBytes) return 0;
+
+  const size_t sampleCount = frames * static_cast<size_t>(channels);
+  uint8_t* output = scratch.data();
+
+  switch (sampleFormat) {
+    case AudioSampleFormat::Float32Interleaved: {
+      auto* out = reinterpret_cast<float*>(output);
+      for (size_t i = 0; i < sampleCount; ++i) out[i] = clampSample(input[i]);
+      break;
+    }
+    case AudioSampleFormat::Int16Interleaved: {
+      for (size_t i = 0; i < sampleCount; ++i) {
+        writeLe16(output + i * bytesPerSample, floatToInt16(input[i]));
+      }
+      break;
+    }
+    case AudioSampleFormat::Int24Interleaved: {
+      for (size_t i = 0; i < sampleCount; ++i) {
+        writeLe24(output + i * bytesPerSample, floatToInt24(input[i]));
+      }
+      break;
+    }
+    case AudioSampleFormat::Int24In32Interleaved: {
+      for (size_t i = 0; i < sampleCount; ++i) {
+        writeLe32(output + i * bytesPerSample, floatToInt24(input[i]) << 8);
+      }
+      break;
+    }
+    case AudioSampleFormat::Int32Interleaved:
+    default: {
+      for (size_t i = 0; i < sampleCount; ++i) {
+        writeLe32(output + i * bytesPerSample, floatToInt32(input[i]));
+      }
+      break;
+    }
+  }
+
+  return bytesPerFrame;
+}
+
 inline size_t renderFloatPeriodWithTailSilence(
     std::vector<float>& scratch,
     size_t frames,
@@ -154,6 +206,31 @@ inline size_t renderFloatPeriodWithTailSilence(
   if (renderedFrames < frames) {
     const size_t renderedSamples = renderedFrames * static_cast<size_t>(channels);
     std::fill(scratch.begin() + static_cast<std::ptrdiff_t>(renderedSamples), scratch.end(), 0.0f);
+  }
+  return renderedFrames;
+}
+
+inline size_t renderFloatPeriodWithTailSilenceNoResize(
+    std::vector<float>& scratch,
+    size_t frames,
+    int channels,
+    const RenderCallback& callback) {
+  if (frames == 0 || channels <= 0) return 0;
+
+  const size_t sampleCount = frames * static_cast<size_t>(channels);
+  if (scratch.size() < sampleCount) return 0;
+
+  size_t renderedFrames = 0;
+  if (callback) {
+    renderedFrames = std::min(callback(scratch.data(), frames), frames);
+  }
+
+  if (renderedFrames < frames) {
+    const size_t renderedSamples = renderedFrames * static_cast<size_t>(channels);
+    std::fill(
+        scratch.begin() + static_cast<std::ptrdiff_t>(renderedSamples),
+        scratch.begin() + static_cast<std::ptrdiff_t>(sampleCount),
+        0.0f);
   }
   return renderedFrames;
 }
@@ -184,6 +261,25 @@ inline size_t prepareDsdSilenceScratch(
   }
 
   return 0;
+}
+
+inline size_t prepareDsdSilenceScratchNoResize(
+    std::vector<uint8_t>& scratch,
+    size_t byteSize,
+    bool& knownSilence) {
+  if (scratch.size() < byteSize) return 0;
+  if (byteSize == 0) {
+    knownSilence = true;
+    return 0;
+  }
+  if (knownSilence) return 0;
+
+  std::fill(
+      scratch.begin(),
+      scratch.begin() + static_cast<std::ptrdiff_t>(byteSize),
+      kDsdSilenceByte);
+  knownSilence = true;
+  return byteSize;
 }
 
 inline void prepareDsdRepackScratchWithSilencePadding(
@@ -217,6 +313,30 @@ inline void prepareDsdRepackScratchWithSilencePadding(
         repackScratch.begin() + static_cast<std::ptrdiff_t>(frameOffset + frameBytes),
         kDsdSilenceByte);
   }
+}
+
+inline bool prepareDsdRepackScratchWithSilencePaddingNoResize(
+    std::vector<uint8_t>& repackScratch,
+    size_t frames,
+    size_t frameBytes,
+    int channels,
+    int physWidthBytes) {
+  if (frames == 0 || frameBytes == 0 || channels <= 0 || physWidthBytes <= 0) return false;
+
+  const size_t writeByteSize = frames * frameBytes;
+  if (repackScratch.size() < writeByteSize) return false;
+
+  const size_t usedFrameBytes = static_cast<size_t>(channels) * static_cast<size_t>(physWidthBytes);
+  if (usedFrameBytes >= frameBytes) return true;
+
+  for (size_t frame = 0; frame < frames; ++frame) {
+    const size_t frameOffset = frame * frameBytes;
+    std::fill(
+        repackScratch.begin() + static_cast<std::ptrdiff_t>(frameOffset + usedFrameBytes),
+        repackScratch.begin() + static_cast<std::ptrdiff_t>(frameOffset + frameBytes),
+        kDsdSilenceByte);
+  }
+  return true;
 }
 
 inline DsdPeriodRenderResult renderDsdPeriodWithTailSilenceAndRepack(
@@ -276,6 +396,78 @@ inline DsdPeriodRenderResult renderDsdPeriodWithTailSilenceAndRepack(
         frameBytes,
         channels,
         physWidthBytes);
+  }
+
+  for (size_t frame = 0; frame < frames; ++frame) {
+    for (int channel = 0; channel < channels; ++channel) {
+      for (int byte = 0; byte < physWidthBytes; ++byte) {
+        const size_t srcIdx =
+            (frame * physicalBytes + static_cast<size_t>(byte)) * channelCount + static_cast<size_t>(channel);
+        const size_t dstIdx =
+            frame * frameBytes + static_cast<size_t>(channel) * physicalBytes + static_cast<size_t>(byte);
+        if (srcIdx < dsdByteSize && dstIdx < repackScratch.size()) {
+          repackScratch[dstIdx] = typedScratch[srcIdx];
+        }
+      }
+    }
+  }
+
+  return DsdPeriodRenderResult{repackScratch.data(), writeByteSize, rendered};
+}
+
+inline DsdPeriodRenderResult renderDsdPeriodWithTailSilenceAndRepackNoResize(
+    std::vector<uint8_t>& typedScratch,
+    std::vector<uint8_t>& repackScratch,
+    const AudioFormat& blockFormat,
+    size_t frames,
+    int channels,
+    size_t frameBytes,
+    int physWidthBytes,
+    const TypedRenderCallback& callback) {
+  if (frames == 0 || channels <= 0 || frameBytes == 0 || physWidthBytes <= 0) return {};
+
+  const size_t channelCount = static_cast<size_t>(channels);
+  const size_t physicalBytes = static_cast<size_t>(physWidthBytes);
+  const size_t dsdByteFrames = frames * physicalBytes;
+  const size_t dsdByteSize = dsdByteFrames * channelCount;
+  if (typedScratch.size() < dsdByteSize) return {};
+
+  size_t rendered = 0;
+  if (callback) {
+    PcmBlock block;
+    block.format = blockFormat;
+    block.data = typedScratch.data();
+    block.frames = dsdByteFrames;
+    block.byteSize = dsdByteSize;
+    rendered = std::min(callback(block), dsdByteFrames);
+  }
+
+  if (rendered < dsdByteFrames) {
+    std::fill(
+        typedScratch.begin() + static_cast<std::ptrdiff_t>(rendered * channelCount),
+        typedScratch.begin() + static_cast<std::ptrdiff_t>(dsdByteSize),
+        kDsdSilenceByte);
+  }
+
+  if (physWidthBytes <= 1) {
+    return DsdPeriodRenderResult{typedScratch.data(), dsdByteSize, rendered};
+  }
+
+  const size_t writeByteSize = frames * frameBytes;
+  if (channels == 1 && frameBytes == physicalBytes) {
+    return DsdPeriodRenderResult{typedScratch.data(), writeByteSize, rendered};
+  }
+
+  if (repackScratch.size() < writeByteSize) return {};
+  const bool repackFullyOverwritesOutput = frameBytes == channelCount * physicalBytes;
+  if (!repackFullyOverwritesOutput &&
+      !prepareDsdRepackScratchWithSilencePaddingNoResize(
+          repackScratch,
+          frames,
+          frameBytes,
+          channels,
+          physWidthBytes)) {
+    return {};
   }
 
   for (size_t frame = 0; frame < frames; ++frame) {

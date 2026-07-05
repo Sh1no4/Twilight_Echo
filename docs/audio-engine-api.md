@@ -36,8 +36,9 @@
 
 - `spectrumPoints`：8-4096，默认 64。高保真播放页可请求 4096 个线性 FFT bins，并在 UI 侧按参考可视化实现做 log-Hz 映射与插值。
 - `waveformPoints`：16-512，默认 128。
-- `spectrogramFrames`：1-96，默认 48；native 侧保留固定滚动窗口，不无限增长。
-- `oscilloscopePoints`：64-4096，默认 1024；请求的时域示波器样本数，独立于 `fftResolution` 与 `waveformPoints`，由专门的 decoupled tap 返回。
+- `spectrogramFrames`：0-96，默认 48；native 侧保留固定滚动窗口，不无限增长；传 0 表示本次查询不返回 spectrogram payload，适合全屏可视化高频轮询。
+- `oscilloscopePoints`：0-4096，默认 1024；请求的时域示波器样本数，独立于 `fftResolution` 与 `waveformPoints`，由专门的 decoupled tap 返回；传 0 表示本次查询不返回 oscilloscope payload。
+- `visualizerBarCount`：0-256，默认 0；main 进程可为全屏可视化预聚合 log-Hz 频谱柱，减少 renderer 与 iframe 间传输。
 
 返回 JSON 固定包含：
 
@@ -48,12 +49,15 @@
 - `lufsMomentary: number | null`
 - `spectrogram: number[][]`
 - `oscilloscope: number[]`
+- `visualizerBars?: number[]`
 - `sampleRate: number`
 - `active: boolean`
+- `tapStatus: "active" | "stopped" | "disabled" | "no-samples" | "native-unavailable" | "synthetic-fallback"`
+- `reason: string`
 
 `oscilloscope` 是与 `waveform` 解耦的独立时域采样数组，长度由 `oscilloscopePoints` 决定，不随 `fftResolution` 或 `waveformPoints` 变化；返回 N 个 signed time-domain 样本，供 UI 做稳定波形触发与绘制。PlayerBar 在 `oscilloscope` 基础上提供独立的示波器子面板（canvas polyline、客户端零交叉触发、`transition:none`、渐变描边 `#2563eb`→`#14b8a6`），与频谱面板互不影响。
 
-当没有播放采样或 FFT tap 禁用时，`active=false`，`spectrum` / `waveform` / `oscilloscope` 返回固定长度零数组，`spectrogram=[]`，`lufsMomentary=null`。UI 必须把它展示为空闲态，不能生成假成功数据。当前 LUFS 为基于当前 PCM 块 RMS 的 momentary 估算，用于播放器可视化，不作为合规响度计量。
+当没有播放采样或 FFT tap 禁用时，`active=false`，`spectrum` / `waveform` / `oscilloscope` 返回请求长度的零数组，`spectrogram=[]`，`lufsMomentary=null`，并通过 `tapStatus` / `reason` 区分 `stopped`、`disabled`、`no-samples`、`native-unavailable`。main 进程在播放中遇到旧 native binding 或 native tap 无采样时允许返回 `tapStatus="synthetic-fallback"` 的兼容数据；UI 必须把它识别为诊断 fallback，不能标成真实 native 采样成功。当前 LUFS 为基于当前 PCM 块 RMS 的 momentary 估算，用于播放器可视化，不作为合规响度计量。
 
 ## Capabilities 与错误 JSON
 
@@ -115,6 +119,19 @@ Phase 6B 的后端规则：
 
 ASIO 保留冷却与恢复诊断策略。ALSA 提供基础 xrun 恢复：`snd_pcm_prepare()` / `snd_pcm_resume()` 成功后更新 underrun 与 recovery 计数。
 
+Electron IPC 会在 audio service crash 时同时发送结构化 `audioEngine:service-crash { reason }` 与兼容错误文案。Renderer 恢复提示应优先订阅结构化事件；service ready 后只恢复配置、队列和状态，不自动续播，由用户通过提示按钮手动继续。输出路由恢复必须按 `output-backend -> output-device -> output-config` 顺序等待 RPC ACK，避免设备或 buffer 配置套到旧后端。`audioEngine:service-ready` 会携带 `{ manualResumeRequired, outputRouteSynced, restoreErrors }`，只有输出后端、设备和输出配置恢复成功时 UI 才应展示“继续播放”动作；失败时提示用户重新选择输出设备。
+
+## 设备能力与刷新事件
+
+`AudioDeviceOption` 可携带 `dopSupportState` 与 `nativeDsdSupportState`，取值为：
+
+- `verified`：设备枚举或驱动事实已明确提供能力，例如 ASIO 枚举到 carrier/native DSD 格式。
+- `runtime-probed`：枚举阶段不能静态证明，但播放打开时可通过后端格式探测确认，例如 WASAPI/CoreAudio DoP carrier 或 ALSA `hw:` native DSD。
+- `unsupported`：平台或路径不支持，例如 WASAPI/CoreAudio native DSD。
+- `unknown`：当前枚举信息不足，UI 应避免展示为已支持或不支持。
+
+main 进程会在输出后端、设备、独占模式、audio service recovery、native 输出诊断变化时清空设备能力缓存，并向 renderer 发送 `audioEngine:device-options-changed`。同时 manager 有 5s 低频设备选项轮询，用于捕捉常见 USB DAC/ASIO 设备插拔；这不是高级多设备同步或平台原生热插拔监听的完整替代。
+
 ## 后端支持矩阵
 
 | 后端 | 平台 | 当前状态 | outputPerfect 能力 |
@@ -128,4 +145,4 @@ ASIO 保留冷却与恢复诊断策略。ALSA 提供基础 xrun 恢复：`snd_pc
 
 ## 当前非闭环范围
 
-当前不包含高级设备独占、多设备同步或复杂热插拔监听。SACD DST 已通过 DSD-preserving provider 闭环（provider 默认可用）。Native DSD 支持 ASIO 与 ALSA `hw:`；WASAPI 与 CoreAudio 没有 native DSD 通道，属平台限制而非代码缺口，这两个后端走 DoP 或 PCM fallback。真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；没有 ASIO SDK、macOS/Linux 工具链或对应设备时必须跳过并保持默认验证通过。
+当前不包含高级多设备同步或平台原生复杂热插拔监听；已提供轻量设备选项轮询和 recovery-triggered 能力刷新。SACD DST 已通过 DSD-preserving provider 闭环（provider 默认可用）。Native DSD 支持 ASIO 与 ALSA `hw:`；WASAPI 与 CoreAudio 没有 native DSD 通道，属平台限制而非代码缺口，这两个后端走 DoP 或 PCM fallback。真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；没有 ASIO SDK、macOS/Linux 工具链或对应设备时必须跳过并保持默认验证通过。`npm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 可把多台机器/多设备的 opt-in 结果沉淀为 Markdown/JSON 报告，并显式列出未覆盖的 required surfaces。报告 JSON 包含 `coverage.complete`、缺失/失败 surface 列表；发布前可手动加 `--require-complete` 让证据不完整时退出非 0。

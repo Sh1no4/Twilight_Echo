@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-05T13:36:09.966Z",
+  "platform": "win32",
+  "requiredSurfaces": [
+    "WASAPI Exclusive",
+    "ASIO",
+    "DoP DAC",
+    "Native DSD",
+    "SACD ISO"
+  ],
+  "coverage": {
+    "complete": false,
+    "requiredCount": 5,
+    "passCount": 0,
+    "failCount": 0,
+    "missingCount": 5,
+    "skipCount": 0,
+    "passedSurfaces": [],
+    "failedSurfaces": [],
+    "missingSurfaces": [
+      "WASAPI Exclusive",
+      "ASIO",
+      "DoP DAC",
+      "Native DSD",
+      "SACD ISO"
+    ],
+    "skippedSurfaces": []
+  },
+  "entries": [],
+  "surfaceRows": [
+    {
+      "surface": "WASAPI Exclusive",
+      "id": "wasapi-exclusive",
+      "label": "WASAPI Exclusive",
+      "status": "not-run",
+      "command": "",
+      "artifact": "",
+      "notes": "No opt-in real-device smoke evidence recorded yet."
+    },
+    {
+      "surface": "ASIO",
+      "id": "asio",
+      "label": "ASIO",
+      "status": "not-run",
+      "command": "",
+      "artifact": "",
+      "notes": "No opt-in real-device smoke evidence recorded yet."
+    },
+    {
+      "surface": "DoP DAC",
+      "id": "dop-dac",
+      "label": "DoP DAC",
+      "status": "not-run",
+      "command": "",
+      "artifact": "",
+      "notes": "No opt-in real-device smoke evidence recorded yet."
+    },
+    {
+      "surface": "Native DSD",
+      "id": "native-dsd",
+      "label": "Native DSD",
+      "status": "not-run",
+      "command": "",
+      "artifact": "",
+      "notes": "No opt-in real-device smoke evidence recorded yet."
+    },
+    {
+      "surface": "SACD ISO",
+      "id": "sacd-iso",
+      "label": "SACD ISO",
+      "status": "not-run",
+      "command": "",
+      "artifact": "",
+      "notes": "No opt-in real-device smoke evidence recorded yet."
+    }
+  ]
+}

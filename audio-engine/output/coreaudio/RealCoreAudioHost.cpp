@@ -18,6 +18,8 @@ namespace twilight::audio {
 
 namespace {
 
+constexpr size_t kMaxCoreAudioCallbackBuffers = 32;
+
 CoreAudioStreamBasicDescription toHostDescription(const AudioStreamBasicDescription& format) {
   CoreAudioStreamBasicDescription out;
   out.sampleRate = format.mSampleRate;
@@ -44,32 +46,35 @@ AudioStreamBasicDescription toNativeDescription(const CoreAudioStreamBasicDescri
   return out;
 }
 
-CoreAudioBufferList toHostBufferList(AudioBufferList* ioData) {
-  CoreAudioBufferList out;
-  if (!ioData) return out;
-  out.buffers.resize(ioData->mNumberBuffers);
+bool bindHostBufferList(AudioBufferList* ioData, CoreAudioBufferList* out) {
+  if (!ioData || !out || ioData->mNumberBuffers > out->buffers.size()) return false;
+  out->setActiveBufferCount(ioData->mNumberBuffers);
   for (UInt32 index = 0; index < ioData->mNumberBuffers; ++index) {
-    auto& buffer = out.buffers[static_cast<size_t>(index)];
+    auto& buffer = out->bufferAt(static_cast<size_t>(index));
     buffer.numberChannels = ioData->mBuffers[index].mNumberChannels;
     buffer.dataByteSize = ioData->mBuffers[index].mDataByteSize;
-    if (ioData->mBuffers[index].mData && ioData->mBuffers[index].mDataByteSize > 0) {
-      buffer.data.assign(
-          static_cast<uint8_t*>(ioData->mBuffers[index].mData),
-          static_cast<uint8_t*>(ioData->mBuffers[index].mData) + ioData->mBuffers[index].mDataByteSize);
-    }
+    buffer.bindExternal(
+        static_cast<uint8_t*>(ioData->mBuffers[index].mData),
+        ioData->mBuffers[index].mDataByteSize);
   }
-  return out;
+  return true;
 }
 
-void copyToNative(AudioBufferList* ioData, const CoreAudioBufferList& hostList) {
+void publishHostBufferSizes(AudioBufferList* ioData, const CoreAudioBufferList& hostList) {
   if (!ioData) return;
-  const UInt32 buffers = std::min<UInt32>(ioData->mNumberBuffers, static_cast<UInt32>(hostList.buffers.size()));
+  const UInt32 buffers = std::min<UInt32>(ioData->mNumberBuffers, static_cast<UInt32>(hostList.bufferCount()));
   for (UInt32 index = 0; index < buffers; ++index) {
-    const auto& buffer = hostList.buffers[static_cast<size_t>(index)];
+    const auto& buffer = hostList.bufferAt(static_cast<size_t>(index));
     ioData->mBuffers[index].mNumberChannels = buffer.numberChannels;
     ioData->mBuffers[index].mDataByteSize = buffer.dataByteSize;
-    if (ioData->mBuffers[index].mData && !buffer.data.empty()) {
-      std::memcpy(ioData->mBuffers[index].mData, buffer.data.data(), std::min<size_t>(buffer.data.size(), buffer.dataByteSize));
+  }
+}
+
+void silenceNative(AudioBufferList* ioData) {
+  if (!ioData) return;
+  for (UInt32 index = 0; index < ioData->mNumberBuffers; ++index) {
+    if (ioData->mBuffers[index].mData && ioData->mBuffers[index].mDataByteSize > 0) {
+      std::memset(ioData->mBuffers[index].mData, 0, ioData->mBuffers[index].mDataByteSize);
     }
   }
 }
@@ -77,7 +82,13 @@ void copyToNative(AudioBufferList* ioData, const CoreAudioBufferList& hostList) 
 }  // namespace
 
 struct RealCoreAudioHost::Impl {
+  Impl() {
+    callbackBufferList.buffers.resize(kMaxCoreAudioCallbackBuffers);
+    callbackBufferList.setActiveBufferCount(0);
+  }
+
   CoreAudioRenderCallback renderCallback;
+  CoreAudioBufferList callbackBufferList;
 };
 
 RealCoreAudioHost::RealCoreAudioHost() : impl_(std::make_unique<Impl>()) {}
@@ -249,9 +260,13 @@ bool RealCoreAudioHost::setRenderCallback(CoreAudioAudioUnit unit, CoreAudioRend
   renderCallback.inputProc = [](void* userData, AudioUnitRenderActionFlags*, const AudioTimeStamp*, UInt32, UInt32 frameCount, AudioBufferList* ioData) -> OSStatus {
     auto* self = static_cast<RealCoreAudioHost*>(userData);
     if (!self || !self->impl_->renderCallback) return noErr;
-    CoreAudioBufferList hostList = toHostBufferList(ioData);
+    CoreAudioBufferList& hostList = self->impl_->callbackBufferList;
+    if (!bindHostBufferList(ioData, &hostList)) {
+      silenceNative(ioData);
+      return noErr;
+    }
     const size_t rendered = self->impl_->renderCallback(frameCount, hostList);
-    copyToNative(ioData, hostList);
+    publishHostBufferSizes(ioData, hostList);
     return rendered <= frameCount ? noErr : noErr;
   };
   renderCallback.inputProcRefCon = this;

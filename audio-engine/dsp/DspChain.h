@@ -40,6 +40,10 @@ class DspChain {
   static DspConfig parseConfigJson(const std::string& json);
   static std::vector<DspEqBand> parseEqBandsJson(const std::string& json, EqMode mode);
 
+#ifdef TAE_DSP_CHAIN_TESTS
+  std::unique_lock<std::mutex> holdProcessLockForTests() { return std::unique_lock<std::mutex>(mutex_); }
+#endif
+
  private:
   void refreshStatusLocked();
   void clampOutput(float* samples, size_t frameCount);

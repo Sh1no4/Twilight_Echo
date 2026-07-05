@@ -15,7 +15,7 @@ npm run typecheck
 npm run build
 ```
 
-当前 `ctest -N` 注册 18 个 MinGW 测试目标，`npm run test:audio-engine:mingw` 是 native 闭环验证入口。`npm run test:no-real-device` 串联 MinGW configure/build、native CTest、Electron manager 测试、typecheck 和前端 build；真实设备 smoke 继续 opt-in，不进入默认门禁。
+当前 `ctest -N` 注册 20 个 MinGW 测试目标，`npm run test:audio-engine:mingw` 是 native 闭环验证入口。`npm run test:no-real-device` 串联 MinGW configure/build、native CTest、Electron manager 测试、typecheck 和前端 build；真实设备 smoke 继续 opt-in，不进入默认门禁。
 
 ## 边界
 
@@ -38,7 +38,7 @@ npm run build
 
 ## 可视化 tap
 
-FFT tap 已扩展为只读 visualization tap，监听最终 PCM 渲染缓冲，不影响音频输出。C ABI / Node-API 通过 `GetVisualizationData` 返回 spectrum、waveform、peak、RMS、momentary LUFS 估算、固定滚动窗口 spectrogram、decoupled 示波器时域采样（`oscilloscopePoints` 64-4096，默认 1024，独立于 `fftResolution`）、sampleRate 和 active 状态。`spectrumPoints` 支持 8-4096，播放页可请求 4096 个线性 FFT bins 并在 UI 侧做 log-Hz 映射。无播放采样或 tap 禁用时返回 inactive 空闲态，Renderer 只能展示空闲态，不能生成假数据。
+FFT tap 已扩展为只读 visualization tap，监听最终 PCM 渲染缓冲，不影响音频输出。C ABI / Node-API 通过 `GetVisualizationData` 返回 spectrum、waveform、peak、RMS、momentary LUFS 估算、固定滚动窗口 spectrogram、decoupled 示波器时域采样（`oscilloscopePoints` 0-4096，默认 1024，独立于 `fftResolution`）、可选预聚合 `visualizerBars`、sampleRate、active、`tapStatus` 和 `reason`。`spectrumPoints` 支持 8-4096，播放页可请求 4096 个线性 FFT bins 并在 UI 侧做 log-Hz 映射；高频全屏可视化可把 `spectrogramFrames` / `oscilloscopePoints` 设为 0 关闭未使用 payload。无播放采样或 tap 禁用时返回 inactive 空闲态；播放中 native tap 不可用时 main 可返回显式标记的 `synthetic-fallback` 兼容数据，Renderer 必须把它当诊断 fallback 或空闲态处理，不能展示为真实 native 采样成功。
 
 Phase 6B 的后端判定边界：
 
@@ -65,7 +65,7 @@ Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer
 - SACD DST：通过 DSD-preserving provider（vendored FFmpeg dstdec，LGPL-2.1+，输出原始 DSD 字节）解出 DSD，进入与未压缩 DSD 相同的 Native DSD / DoP / PCM 决策链；provider 默认可用，`sacdIsoDst=true`、`sacdIsoDstMode="native"`、`sacdIsoDstDsdProvider=true`，DST 曲目 `playable=true`、`outputModes=["native","dop","pcm"]`。
 - DoP DSD256/512：carrier 上限从 DSD128 提升到 DSD512，遵循 dCS DoP open standard v1.1，运行时由设备 carrier-rate 能力门控。
 - ALSA native DSD：`hw:` 设备通过 `DSD_U8` / `DSD_U16_LE` / `DSD_U32_LE` 直送 DSD，`backendCanAttemptNativeDsd("alsa")==true`，nativeDsdRuntimeFacts 开打开时 Candidate、首次成功 `writei` 后 Proven。
-- 示波器视图：`GetVisualizationData` 新增 decoupled `oscilloscope` 时域采样（`oscilloscopePoints` 64-4096，默认 1024），独立于 `fftResolution`；PlayerBar 提供独立示波器子面板（canvas polyline、零交叉触发、`transition:none`）。
+- 示波器视图：`GetVisualizationData` 新增 decoupled `oscilloscope` 时域采样（`oscilloscopePoints` 0-4096，默认 1024；0 表示关闭该 payload），独立于 `fftResolution`；PlayerBar 提供独立示波器子面板（canvas polyline、零交叉触发、`transition:none`）。`tapStatus/reason` 区分 stopped、disabled、no samples、native unavailable 与 synthetic fallback。
 - CoreAudio Hog Mode 加固：预检现有 hog owner、安装 device-lost listener、跟踪 IOProc underrun 诊断；ICoreAudioHost / MockCoreAudioHost seam 使 CoreAudio 后端逻辑可在 Windows 单元测试。
 - ALSA 后端 seam：IAlsaHost / MockAlsaHost 使 ALSA 后端逻辑可在 Windows 单元测试（此前只能靠真实 Linux 硬件验证）。
 
@@ -73,10 +73,10 @@ Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer
 
 - WASAPI native DSD：Windows WASAPI 没有 UAC2 native DSD 通道；DoP 可在 WASAPI Exclusive 工作，native DSD 不行。
 - CoreAudio native DSD：macOS CoreAudio 没有 DSD 通道；DoP 可在 CoreAudio Exclusive（Hog）工作，native DSD 不行。
-- 真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果。
+- 真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；`npm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 将多台机器/多设备结果沉淀为可读 Markdown/JSON，并把缺失 surfaces 显示为 `not-run`。报告 JSON 带 `coverage.complete`，发布前可手动加 `--require-complete` 做 opt-in 证据完整性检查。
 
 ## 后续顺序
 
-1. 继续收口 ASIO、CoreAudio、ALSA 的 actual format、failure reason 与 opt-in smoke；WASAPI Exclusive 已增加真实设备多格式矩阵 smoke。
+1. 继续收口 ASIO、CoreAudio、ALSA 的 actual format、failure reason 与 opt-in smoke；WASAPI Exclusive 已增加真实设备多格式矩阵 smoke，并有 audio smoke evidence 报告工具沉淀结果。
 2. 扩充真实音频 fixture 样本集；当前默认门禁覆盖 generated WAV/DSF，`TAE_AUDIO_FIXTURE_MANIFEST` 可指向外部 JSON 矩阵，`TAE_AUDIO_FIXTURES_DIR` 继续作为 MP3/FLAC/M4A/OGG/AAC/DSF/DFF 等外部小样本目录扫描 fallback。
 3. 在 macOS/Linux 工具链与真实设备 smoke 通过后补平台产物路径和打包检查；WASAPI / CoreAudio 的 native DSD 属平台限制，不作为待补代码项。

@@ -19,8 +19,8 @@ Windows MinGW 当前验证结果：
 
 - `npm run configure:audio-engine:mingw`
 - `npm run build:audio-engine:mingw`
-- `ctest --test-dir audio-engine/build/mingw-static -N` 注册 17 个测试
-- `npm run test:audio-engine:mingw` 17/17 通过
+- `ctest --test-dir audio-engine/build/mingw-static -N` 注册 20 个测试
+- `npm run test:audio-engine:mingw` 20/20 通过
 - `npm run typecheck`
 - `npm run build`
 
@@ -51,7 +51,7 @@ npm run test:audio-engine:mingw
 `configure:audio-engine:mingw` 由 `scripts/configure-audio-engine-mingw.cjs` 包装 CMake preset，处理两件事：
 
 - 如果 vcpkg/FFmpeg 解压或 rename 遇到 `Access is denied` / `拒绝访问`，清理 `buildtrees/ffmpeg/src/*.tmp` 后重试 configure。
-- configure 后强制检查 17 个 CTest 目标是否进入 `audio-engine/build/mingw-static`；如果目标缺失，会清理 CMake 配置缓存并重试。
+- configure 后强制检查 20 个 CTest 目标是否进入 `audio-engine/build/mingw-static`；如果目标缺失，会清理 CMake 配置缓存并重试。
 
 生成并暂存的运行文件：
 
@@ -70,7 +70,7 @@ resources/audio-engine/twilight_audio_node.node
 
 WASAPI Exclusive / ASIO 已具备 typed PCM passthrough 分支：当无 DSP、音量为 1.0、routing 不改变语义，且源 PCM 格式与后端实际输出格式完全一致时，FFmpeg decode、AudioBuffer 和后端 typed render 会按 Int16/Int24/Int32/Float32 直通，允许 `pcmPassthrough=true` / `outputPerfect=true`。如果源格式和设备实际格式不一致，或处理链需要 Float32，则继续报告 `integer_passthrough_unavailable` 或 `pcm_converted`，避免误报 bit-perfect。
 
-`TAE_GetVisualizationData` / Node-API `GetVisualizationData` 返回只读可视化数据：`spectrum`、`waveform`、`peakDb`、`rmsDb`、`lufsMomentary`、`spectrogram`、`oscilloscope`、`sampleRate`、`active`。`spectrumPoints` 支持 8-4096，播放页可请求 4096 个线性 FFT bins 并在 UI 侧做 log-Hz 映射。`oscilloscope` 是与 `waveform` 解耦的独立时域采样数组，长度由 `oscilloscopePoints`（64-4096，默认 1024）决定，独立于 `fftResolution`，供 UI 做稳定波形触发与绘制。无播放采样时返回 inactive 空闲态；旧的 `TAE_GetSpectrumData` 保留兼容。
+`TAE_GetVisualizationData` / Node-API `GetVisualizationData` 返回只读可视化数据：`spectrum`、`waveform`、`peakDb`、`rmsDb`、`lufsMomentary`、`spectrogram`、`oscilloscope`、可选 `visualizerBars`、`sampleRate`、`active`、`tapStatus`、`reason`。`spectrumPoints` 支持 8-4096；播放页全屏可视化默认请求 4096 个频谱点，并在 UI 侧预聚合成 130 根 log-Hz 频谱柱后发送给 iframe。可视化采样器默认使用 8192 FFT，对齐 WebAudio `AnalyserNode` 参考页的 4096-bin 频谱；高频轮询时通过关闭 unused `spectrogram` / `oscilloscope` payload 和 iframe bars 模式避免阻塞渲染。`oscilloscope` 是与 `waveform` 解耦的独立时域采样数组，长度由 `oscilloscopePoints`（0-4096，默认 1024；0 表示不返回该 payload）决定，独立于 `fftResolution`，供 UI 做稳定波形触发与绘制。无播放采样时返回 inactive 空闲态；播放中 native tap 不可用时 main 可返回显式 `synthetic-fallback` 诊断 fallback；旧的 `TAE_GetSpectrumData` 保留兼容。
 
 Phase 6B 中，后端只上报事实：WASAPI Shared 始终按系统混音路径报告 false；WASAPI Exclusive/ASIO 只有实际格式完整上报并与 decoded PCM 完全匹配时才进入 evaluator；CoreAudio 默认路径在 Hog/Exclusive 未验证前继续 false；ALSA `default` / `plughw:` 默认 false，只有显式 `hw:` 且格式匹配才可能 true。
 
@@ -100,4 +100,5 @@ $env:TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK="1"
 - Metadata 默认测试覆盖空 source、缺失文件 shape、generated DSF DSD64/128/256 和 SACD ISO `isoTracks`。FFmpeg decoder 默认测试通过生成 WAV/DSF fixture 覆盖 PCM/DSD shape；如设置 `TAE_AUDIO_FIXTURE_MANIFEST`，会读取外部 JSON 矩阵；如设置 `TAE_AUDIO_FIXTURES_DIR`，会额外扫描 MP3/FLAC/M4A/OGG/AAC 等真实小样本做 opt-in 解码 smoke，真实样本不作为默认门禁依赖。
 - 外部格式矩阵 runner：`npm run smoke:audio-format-matrix -- --manifest "<matrix.json>" --json` 默认执行 metadata/assertion；加 `--playback --backend wasapi-exclusive --device "<device>"` 或 `--backend asio` 可生成真实硬件 playback evidence。
 - WASAPI 真实设备 smoke 可用 `npm run smoke:wasapi -- --device "M30" --buffer 256 --expect-bit-perfect --format-matrix` 跑多格式矩阵；矩阵只要求实际匹配格式 bit-perfect，不支持或被协商到其它格式的样本必须给出明确 non-perfect reason。
+- 真实设备 smoke 结果可用 `npm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 汇总到 `output/audio-smoke-evidence/audio-smoke-evidence.md` 与 `.json`；报告会固定列出 WASAPI Exclusive、ASIO、DoP DAC、Native DSD、SACD ISO，未覆盖项显示为 `not-run`，JSON 会写入 `coverage` 摘要。发布前可手动加 `--require-complete`，证据不完整时退出非 0；该检查不进入默认 CI。
 - macOS/Linux 后端需要对应平台工具链和真实设备 smoke 后才能声明发布级能力；CoreAudio / ALSA 后端逻辑已通过 ICoreAudioHost / IAlsaHost + Mock 在 Windows 单元测试覆盖，真实硬件 smoke 保持 opt-in（`TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1`），不伪造结果。

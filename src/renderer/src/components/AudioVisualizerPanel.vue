@@ -2,11 +2,22 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useCover } from '../utils/coverLoader'
+import { buildVisualizerQualityString, formatVisualizerBitrate } from './audioVisualizerFormatting'
 
 const props = defineProps<{ active: boolean }>()
 
-const { currentTrack, isPlaying, currentTime, duration, formatTime, togglePlay, next, prev, seek } =
-  usePlayerStore()
+const {
+  currentTrack,
+  isPlaying,
+  audioEngineReady,
+  currentTime,
+  duration,
+  formatTime,
+  togglePlay,
+  next,
+  prev,
+  seek
+} = usePlayerStore()
 const resolvedCover = useCover(computed(() => currentTrack.value?.cover ?? null))
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
@@ -14,39 +25,57 @@ const iframeReady = ref(false)
 const visualizerSrc = `./audio-visualizer/index.html?v=${Date.now()}`
 const visualizationOptions = {
   spectrumPoints: 4096,
-  waveformPoints: 96,
-  spectrogramFrames: 48,
-  oscilloscopePoints: 1024
+  waveformPoints: 256,
+  spectrogramFrames: 0,
+  oscilloscopePoints: 0
 } as const
-const VISUALIZER_POLL_INTERVAL_MS = 100
+const VISUALIZER_POLL_INTERVAL_MS = 50
 let visualizationTimer: number | null = null
 let visualizationRequestInFlight = false
+let visualizerUnmounted = false
+const shouldPollVisualization = computed(
+  () =>
+    props.active &&
+    iframeReady.value &&
+    isPlaying.value &&
+    audioEngineReady.value &&
+    currentTrack.value
+)
 
-function post(msg: unknown): void {
+function post(msg: unknown, transfer: Transferable[] = []): void {
   const targetWindow = iframeRef.value?.contentWindow
   if (!targetWindow) return
+  const targetOrigin = window.location.protocol === 'file:' ? '*' : window.location.origin
   try {
-    targetWindow.postMessage(
-      msg,
-      window.location.protocol === 'file:' ? '*' : window.location.origin
-    )
+    targetWindow.postMessage(msg, targetOrigin, transfer)
   } catch {
-    targetWindow.postMessage(msg, '*')
+    targetWindow.postMessage(msg, '*', transfer)
   }
 }
 
 async function pollVisualizationFrame(): Promise<void> {
-  if (!props.active || !iframeReady.value || visualizationRequestInFlight) return
+  if (visualizerUnmounted || !shouldPollVisualization.value || visualizationRequestInFlight) return
   visualizationRequestInFlight = true
   try {
     const v = await window.api.audioEngine.getVisualizationData(visualizationOptions)
+    if (visualizerUnmounted || !shouldPollVisualization.value) return
+    if (v.tapStatus === 'synthetic-fallback') {
+      postInactiveVisualizationFrame()
+      return
+    }
+    const spectrum = Float32Array.from(v.spectrum)
+    const waveform = Float32Array.from(v.waveform)
     post({
       kind: 'spectrum',
-      data: v.spectrum,
-      waveform: v.waveform,
+      data: spectrum,
+      waveform,
       sampleRate: v.sampleRate,
+      maxFrequency: v.maxFrequency,
+      peakDb: v.peakDb,
+      rmsDb: v.rmsDb,
+      lufsMomentary: v.lufsMomentary,
       active: v.active
-    })
+    }, [spectrum.buffer, waveform.buffer])
   } catch {
     // The playback controls remain usable if visualization sampling is unavailable.
   } finally {
@@ -54,7 +83,25 @@ async function pollVisualizationFrame(): Promise<void> {
   }
 }
 
+function postInactiveVisualizationFrame(): void {
+  if (!iframeReady.value) return
+  const spectrum = new Float32Array(visualizationOptions.spectrumPoints)
+  const waveform = new Float32Array(visualizationOptions.waveformPoints)
+  post({
+    kind: 'spectrum',
+    data: spectrum,
+    waveform,
+    sampleRate: 0,
+    maxFrequency: 20000,
+    peakDb: -120,
+    rmsDb: -120,
+    lufsMomentary: null,
+    active: false
+  }, [spectrum.buffer, waveform.buffer])
+}
+
 function startVisualizationPolling(): void {
+  if (!shouldPollVisualization.value) return
   if (visualizationTimer !== null) return
   void pollVisualizationFrame()
   visualizationTimer = window.setInterval(
@@ -67,6 +114,16 @@ function stopVisualizationPolling(): void {
   if (visualizationTimer === null) return
   window.clearInterval(visualizationTimer)
   visualizationTimer = null
+}
+
+function syncVisualizationPolling(): void {
+  if (shouldPollVisualization.value) {
+    startVisualizationPolling()
+    return
+  }
+  const wasPolling = visualizationTimer !== null
+  stopVisualizationPolling()
+  if (wasPolling) postInactiveVisualizationFrame()
 }
 
 // Buffer the latest track/cover/playback payloads so they can be re-sent once
@@ -99,7 +156,7 @@ function onMessage(event: MessageEvent): void {
   if (event.data?.kind === 'ready') {
     iframeReady.value = true
     flushPending()
-    startVisualizationPolling()
+    syncVisualizationPolling()
     return
   }
 
@@ -126,19 +183,14 @@ function onMessage(event: MessageEvent): void {
 
 window.addEventListener('message', onMessage)
 onBeforeUnmount(() => {
+  visualizerUnmounted = true
   stopVisualizationPolling()
   window.removeEventListener('message', onMessage)
 })
 
 watch(
-  () => props.active,
-  (active) => {
-    if (active && iframeReady.value) {
-      startVisualizationPolling()
-      return
-    }
-    stopVisualizationPolling()
-  },
+  [() => props.active, iframeReady, isPlaying, audioEngineReady, () => currentTrack.value?.id],
+  () => syncVisualizationPolling(),
   { immediate: true }
 )
 
@@ -153,7 +205,7 @@ watch(
         title: track.title,
         artist: track.artist,
         album: track.album,
-        quality: buildQualityString(track),
+        quality: buildVisualizerQualityString(track),
         bpm: '',
         genre: '',
         duration: formatTime(track.duration),
@@ -163,7 +215,7 @@ watch(
         samplerate: track.sampleRate ? `${(track.sampleRate / 1000).toFixed(1)} kHz` : '',
         bitdepth: track.bitDepth ? `${track.bitDepth}-bit` : '',
         channels: '',
-        bitrate: track.bitrate ? `${track.bitrate} kbps` : '',
+        bitrate: formatVisualizerBitrate(track.bitrate),
         filesize: track.size ? `${(track.size / (1024 * 1024)).toFixed(1)} MB` : '',
         format: track.format || ''
       }
@@ -205,19 +257,6 @@ onBeforeUnmount(() => {
   post({ kind: 'playback', isPlaying: false, position: 0, duration: 0 })
 })
 
-function buildQualityString(track: {
-  format?: string
-  sampleRate?: number
-  bitrate?: number
-  bitDepth?: number
-}): string {
-  const parts: string[] = []
-  if (track.format) parts.push(track.format.toUpperCase())
-  if (track.bitDepth) parts.push(`${track.bitDepth}-bit`)
-  if (track.sampleRate) parts.push(`${(track.sampleRate / 1000).toFixed(1)}kHz`)
-  if (track.bitrate) parts.push(`${track.bitrate}kbps`)
-  return parts.join(' / ')
-}
 </script>
 
 <template>

@@ -316,6 +316,7 @@ struct SacdIsoDemuxer::Impl {
   std::unique_ptr<SacdDstDecoderProvider> ownedDstProvider;
   std::vector<uint8_t> decodedDsdBuffer;   // decoded raw DSD bytes for the current frame
   std::vector<uint8_t> compressedFrameBuffer;
+  size_t decodedSize = 0;                  // valid decoded bytes in decodedDsdBuffer
   size_t decodedOffset = 0;                // read cursor inside decodedDsdBuffer
   uint64_t dstCompressedOffset = 0;        // byte cursor into the track's compressed DST stream
   bool dstActive = false;                  // a DST track is being decoded through the provider
@@ -406,6 +407,7 @@ void SacdIsoDemuxer::close() {
   impl_->eof = true;
   impl_->streamInfo = {};
   impl_->decodedDsdBuffer.clear();
+  impl_->decodedSize = 0;
   impl_->decodedOffset = 0;
   impl_->dstCompressedOffset = 0;
   impl_->dstActive = false;
@@ -455,6 +457,7 @@ bool SacdIsoDemuxer::selectTrack(const std::string& area, int trackNumber, std::
 
   // Reset any previous DST decode state before selecting a new track.
   impl_->decodedDsdBuffer.clear();
+  impl_->decodedSize = 0;
   impl_->decodedOffset = 0;
   impl_->dstCompressedOffset = 0;
   impl_->dstActive = false;
@@ -545,8 +548,8 @@ size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* outp
   size_t delivered = 0;
   while (delivered < maxBytes) {
     // Drain any remaining decoded bytes from the current frame first.
-    if (impl_->decodedOffset < impl_->decodedDsdBuffer.size()) {
-      const size_t available = impl_->decodedDsdBuffer.size() - impl_->decodedOffset;
+    if (impl_->decodedOffset < impl_->decodedSize) {
+      const size_t available = impl_->decodedSize - impl_->decodedOffset;
       const size_t copyBytes = std::min(available, maxBytes - delivered);
       std::memcpy(output + delivered, impl_->decodedDsdBuffer.data() + impl_->decodedOffset, copyBytes);
       impl_->decodedOffset += copyBytes;
@@ -574,7 +577,7 @@ size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* outp
       impl_->eof = true;
       break;
     }
-    impl_->decodedDsdBuffer.assign(decodedFrameBytes, 0);
+    sacd::resizeByteScratchForOverwrite(impl_->decodedDsdBuffer, decodedFrameBytes);
     std::string dstError;
     const size_t decoded = impl_->dstProvider->decodeFrame(
         impl_->compressedFrameBuffer.data(),
@@ -586,10 +589,12 @@ size_t SacdIsoDemuxer::readDstBytes(const SacdIsoTrackInfo& track, uint8_t* outp
     if (decoded == 0) {
       // Decode failure: stop honestly rather than emit garbage DSD.
       impl_->decodedDsdBuffer.clear();
+      impl_->decodedSize = 0;
       impl_->decodedOffset = 0;
       impl_->eof = true;
       break;
     }
+    impl_->decodedSize = std::min(decoded, decodedFrameBytes);
     impl_->decodedOffset = 0;
     // Loop continues to drain the freshly filled decoded buffer.
   }
@@ -632,6 +637,7 @@ bool SacdIsoDemuxer::seek(double seconds, std::string* error) {
     const uint64_t frameIndex = decodedFrameBytes > 0 ? impl_->readOffset / decodedFrameBytes : 0;
     impl_->dstCompressedOffset = std::min(frameIndex * compressedFrameWindow, track.dataSize);
     impl_->decodedDsdBuffer.clear();
+    impl_->decodedSize = 0;
     impl_->decodedOffset = 0;
     if (impl_->dstProvider) impl_->dstProvider->reset();
     // Sub-frame precision: the requested readOffset may fall inside the frame.

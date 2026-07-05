@@ -3,9 +3,16 @@ import { join } from 'path'
 import { existsSync } from 'fs'
 import { runtime } from '../core/runtime'
 import { PLAYER_SHORTCUTS } from '../core/types'
-import type { PlayerShortcutAction } from '../core/types'
+import type { PlayerShortcutAction, PlayerShortcutStatus } from '../core/types'
+import { buildPlayerShortcutStatuses } from '../core/shortcutStatus'
 import { applyDiscordRpcSetting } from './discord'
 import { applyLibraryWatchers } from '../library/watcher'
+
+let playerShortcutStatuses: PlayerShortcutStatus[] = buildPlayerShortcutStatuses(
+  PLAYER_SHORTCUTS,
+  false,
+  () => false
+)
 
 export function sendPlayerShortcut(action: PlayerShortcutAction): void {
   if (runtime.mainWindow?.isDestroyed() === false) {
@@ -32,16 +39,29 @@ export function unregisterPlayerShortcuts(): void {
 
 export function registerPlayerShortcuts(): void {
   unregisterPlayerShortcuts()
-  if (!runtime.appSettings.globalShortcuts) return
-
-  for (const shortcut of PLAYER_SHORTCUTS) {
-    const ok = globalShortcut.register(shortcut.accelerator, () => {
-      sendPlayerShortcut(shortcut.action)
-    })
-    if (!ok) {
-      console.warn(`全局快捷键注册失败：${shortcut.label} ${shortcut.accelerator}`)
+  playerShortcutStatuses = buildPlayerShortcutStatuses(
+    PLAYER_SHORTCUTS,
+    runtime.appSettings.globalShortcuts,
+    (accelerator) => {
+      const shortcut = PLAYER_SHORTCUTS.find((item) => item.accelerator === accelerator)
+      if (!shortcut) return false
+      const ok = globalShortcut.register(shortcut.accelerator, () => {
+        sendPlayerShortcut(shortcut.action)
+      })
+      if (!ok) {
+        console.warn(`全局快捷键注册失败：${shortcut.label} ${shortcut.accelerator}`)
+      }
+      return ok
     }
-  }
+  )
+}
+
+export function getPlayerShortcutStatuses(): PlayerShortcutStatus[] {
+  return playerShortcutStatuses.map((status) => ({ ...status }))
+}
+
+export function resetPlayerShortcutStatuses(): void {
+  playerShortcutStatuses = buildPlayerShortcutStatuses(PLAYER_SHORTCUTS, false, () => false)
 }
 
 export function createTray(): void {

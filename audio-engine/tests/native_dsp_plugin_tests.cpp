@@ -1,11 +1,17 @@
 #include "twilight_audio_engine.h"
 #include "../plugins/PluginRegistry.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstring>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -74,6 +80,62 @@ void assertStatusContains(PluginRegistry& registry, const std::string& needle) {
   assert(status.find(needle) != std::string::npos);
 }
 
+std::string readTextFile(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  std::ostringstream buffer;
+  buffer << in.rdbuf();
+  return buffer.str();
+}
+
+std::string extractFunctionBody(const std::string& source, const std::string& signature) {
+  const size_t signaturePos = source.find(signature);
+  assert(signaturePos != std::string::npos);
+  const size_t bodyStart = source.find('{', signaturePos);
+  assert(bodyStart != std::string::npos);
+  int depth = 0;
+  for (size_t i = bodyStart; i < source.size(); ++i) {
+    if (source[i] == '{') {
+      ++depth;
+    } else if (source[i] == '}') {
+      --depth;
+      if (depth == 0) return source.substr(bodyStart, i - bodyStart + 1);
+    }
+  }
+  assert(false);
+  return {};
+}
+
+void testNativeDspProcessFailurePathUsesFixedReasons() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "plugins" / "PluginRegistry.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string processBody = extractFunctionBody(source, "void process(float* samples, size_t frameCount)");
+  const std::string realtimeBypassBody =
+      extractFunctionBody(source, "void bypassRealtime(NativeDspRealtimeBypassReason reason)");
+
+  assert(processBody.find("bypassRealtime(") != std::string::npos);
+  assert(processBody.find("bypass(\"process") == std::string::npos);
+  assert(realtimeBypassBody.find("status_.bypassReason") == std::string::npos);
+  assert(realtimeBypassBody.find("status_.lastError") == std::string::npos);
+}
+
+void testNativeDspOverrunBypassesOnFirstBudgetMiss() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "plugins" / "PluginRegistry.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string processBody = extractFunctionBody(source, "void process(float* samples, size_t frameCount)");
+  const size_t overrunCheck = processBody.find("elapsedMs > budgetMs");
+  const size_t bypassCall = processBody.find(
+      "bypassRealtime(NativeDspRealtimeBypassReason::ProcessExceededBudget)",
+      overrunCheck);
+
+  assert(overrunCheck != std::string::npos);
+  assert(bypassCall != std::string::npos);
+  assert(processBody.find("consecutiveOverruns_ >=", overrunCheck) == std::string::npos);
+}
+
 void testGainPluginProcessesAudio(const std::string& path) {
   PluginRegistry registry;
   prepareRegistry(registry, path, {{"gain", 0.25}});
@@ -124,11 +186,9 @@ void testProcessOverrunBypasses(const std::string& path) {
   prepareRegistry(registry, path, {{"mode", 2.0}});
   std::vector<float> samples(128, 0.1f);
   registry.process(samples.data(), 64);
-  registry.process(samples.data(), 64);
-  registry.process(samples.data(), 64);
   assert(!registry.isActive());
   assertStatusContains(registry, "process exceeded realtime budget");
-  assertStatusContains(registry, "\"overrunCount\":3");
+  assertStatusContains(registry, "\"overrunCount\":1");
 }
 
 void testNonFloatFormatBypasses(const std::string& path) {
@@ -227,6 +287,8 @@ int main(int argc, char** argv) {
   assert(playbackInfo.find("\"nativeDsp\"") != std::string::npos);
 
   TAE_DestroyEngine(engine);
+  testNativeDspProcessFailurePathUsesFixedReasons();
+  testNativeDspOverrunBypassesOnFirstBudgetMiss();
   testGainPluginProcessesAudio(pluginPath);
   testBadAbiBypasses(badAbiPath);
   testInvalidParameterMetadataBypasses(invalidParamPath);

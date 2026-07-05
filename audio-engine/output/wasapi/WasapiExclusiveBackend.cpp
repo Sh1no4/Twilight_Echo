@@ -60,9 +60,13 @@ struct WasapiExclusiveBackend::Impl {
   Microsoft::WRL::ComPtr<IAudioRenderClient> renderClient;
   wasapi::UniqueHandle samplesReadyEvent;
   std::thread renderThread;
+  std::thread recoveryThread;
+  std::mutex threadMutex;
   std::atomic<bool> running{false};
+  std::atomic<bool> stopRequested{false};
   UINT32 bufferFrameCount = 0;
   REFERENCE_TIME bufferDuration = 0;
+  std::atomic<double> renderBufferLatencyMs{0.0};
   RenderCallback callback;
   TypedRenderCallback typedCallback;
   OutputEventCallback eventCallback;
@@ -72,6 +76,7 @@ struct WasapiExclusiveBackend::Impl {
 
   // ── 自动恢复状态 ──
   std::atomic<bool> recoveryInProgress{false};
+  std::atomic<bool> recoveryQueued{false};
   int recoveryAttempts = 0;
   uint64_t recoveryCount = 0;
   std::chrono::steady_clock::time_point recoveryCooldownUntil{};
@@ -104,6 +109,7 @@ struct WasapiExclusiveBackend::Impl {
     outputInfo.deviceName = deviceName;
     outputInfo.actualDeviceName = deviceName;
     outputInfo.diagnostics = diagnostics;
+    renderBufferLatencyMs.store(0.0);
   }
 
   void recordFailure(const char* reasonCode, const std::string& reason, std::string* error = nullptr) {
@@ -273,6 +279,8 @@ struct WasapiExclusiveBackend::Impl {
 
     hr = audioClient->GetBufferSize(&bufferFrameCount);
     if (FAILED(hr)) return failHr(error, "WASAPI 独占 init failure：无法读取缓冲区大小", hr);
+    renderScratch.resize(
+        static_cast<size_t>(bufferFrameCount) * static_cast<size_t>(std::max(1, outputFormat.channelCount)));
     outputInfo.bufferSizeFrames = static_cast<int>(bufferFrameCount);
     outputInfo.latencyFrames = static_cast<int>(bufferFrameCount);
     outputInfo.latencyInfo.bufferLatencyMs =
@@ -291,6 +299,7 @@ struct WasapiExclusiveBackend::Impl {
       outputInfo.latencyInfo.totalLatencyMs = outputInfo.latencyInfo.bufferLatencyMs;
     }
     outputInfo.latencyMs = outputInfo.latencyInfo.totalLatencyMs;
+    renderBufferLatencyMs.store(outputInfo.latencyInfo.bufferLatencyMs);
 
     hr = audioClient->GetService(IID_PPV_ARGS(&renderClient));
     if (SUCCEEDED(hr)) return true;
@@ -323,19 +332,27 @@ struct WasapiExclusiveBackend::Impl {
     }
 
     const size_t sampleCount = static_cast<size_t>(frameCount) * static_cast<size_t>(outputFormat.channelCount);
-    renderScratch.resize(sampleCount);
+    const size_t scratchFrames =
+        outputFormat.channelCount > 0
+            ? std::min<size_t>(frameCount, renderScratch.size() / static_cast<size_t>(outputFormat.channelCount))
+            : 0;
     wasapi::renderFloatCallbackWithTailSilence(
         renderScratch.data(),
-        frameCount,
+        scratchFrames,
         outputFormat.channelCount,
         callback);
 
     wasapi::packFloatToPcm(
         renderScratch.data(),
-        frameCount,
+        scratchFrames,
         outputFormat.channelCount,
         outputFormat.sampleFormat,
         data);
+    if (scratchFrames < frameCount) {
+      const size_t bytesPerFrame = audioFormatBytesPerFrame(outputFormat);
+      const size_t renderedBytes = scratchFrames * bytesPerFrame;
+      if (data && renderedBytes < byteCount) std::memset(data + renderedBytes, 0, byteCount - renderedBytes);
+    }
 
     hr = renderClient->ReleaseBuffer(frameCount, 0);
     if (FAILED(hr)) return hr;
@@ -357,6 +374,48 @@ struct WasapiExclusiveBackend::Impl {
     if (eventCallback) eventCallback(OutputBackendEvent::RenderError, buffer);
   }
 
+  void recordRenderFailureFromRenderThread(HRESULT hr, const char* message) {
+    char buffer[160] = {};
+    std::snprintf(buffer, sizeof(buffer), "%s (错误码 0x%08lx)", message, static_cast<unsigned long>(hr));
+
+    std::unique_lock lock(infoMutex, std::try_to_lock);
+    if (!lock.owns_lock()) return;
+
+    diagnostics.lastError = buffer;
+    if (wasapi::isDeviceInvalidated(hr)) {
+      ++diagnostics.deviceLostCount;
+      outputInfo.perfectReasonCode = "device_lost";
+    } else {
+      ++diagnostics.sessionBufferDropCount;
+      ++diagnostics.lifetimeBufferDropCount;
+      outputInfo.perfectReasonCode = "render_failure";
+    }
+    outputInfo.capabilityReason = buffer;
+    outputInfo.perfectReason = buffer;
+    outputInfo.diagnostics = diagnostics;
+  }
+
+  void recordRenderUnderrun() {
+    std::unique_lock lock(infoMutex, std::try_to_lock);
+    if (!lock.owns_lock()) return;
+    ++diagnostics.sessionUnderrunCount;
+    ++diagnostics.lifetimeUnderrunCount;
+    outputInfo.diagnostics = diagnostics;
+  }
+
+  void refreshLatencyTelemetry() {
+    REFERENCE_TIME streamLatency = 0;
+    if (FAILED(audioClient->GetStreamLatency(&streamLatency))) return;
+
+    const double bufferLatencyMs = renderBufferLatencyMs.load();
+    const double streamLatencyMs = referenceTimeToMilliseconds(streamLatency);
+    std::unique_lock lock(infoMutex, std::try_to_lock);
+    if (!lock.owns_lock()) return;
+    outputInfo.latencyInfo.outputLatencyMs = std::max(0.0, streamLatencyMs - bufferLatencyMs);
+    outputInfo.latencyInfo.totalLatencyMs = bufferLatencyMs + outputInfo.latencyInfo.outputLatencyMs;
+    outputInfo.latencyMs = outputInfo.latencyInfo.totalLatencyMs;
+  }
+
   void renderLoop() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
@@ -366,7 +425,8 @@ struct WasapiExclusiveBackend::Impl {
     auto lastWakeTime = std::chrono::high_resolution_clock::now();
     auto lastLatencyQueryTime = lastWakeTime;
 
-    const double sleepMsDouble = outputInfo.latencyInfo.bufferLatencyMs > 0 ? outputInfo.latencyInfo.bufferLatencyMs * 0.5 : 5.0;
+    const double initialBufferLatencyMs = renderBufferLatencyMs.load();
+    const double sleepMsDouble = initialBufferLatencyMs > 0 ? initialBufferLatencyMs * 0.5 : 5.0;
     const DWORD sleepMs = std::max<DWORD>(1, static_cast<DWORD>(sleepMsDouble));
 
     while (running.load()) {
@@ -378,8 +438,7 @@ struct WasapiExclusiveBackend::Impl {
         if (!running.load()) break;
         if (waitResult != WAIT_OBJECT_0) {
           if (waitResult == WAIT_TIMEOUT) {
-             ++diagnostics.sessionUnderrunCount;
-             ++diagnostics.lifetimeUnderrunCount;
+             recordRenderUnderrun();
           }
           continue;
         }
@@ -391,20 +450,14 @@ struct WasapiExclusiveBackend::Impl {
 
       // In exclusive mode, the expected wakeup interval is roughly bufferLatencyMs.
       // If we wake up much later than expected, we missed a deadline.
-      if (!outputConfig.wasapiExclusivePushMode && outputInfo.latencyInfo.bufferLatencyMs > 0 && elapsedMs > outputInfo.latencyInfo.bufferLatencyMs * 1.5) {
-        ++diagnostics.sessionUnderrunCount;
-        ++diagnostics.lifetimeUnderrunCount;
+      const double bufferLatencyMs = renderBufferLatencyMs.load();
+      if (!outputConfig.wasapiExclusivePushMode && bufferLatencyMs > 0 && elapsedMs > bufferLatencyMs * 1.5) {
+        recordRenderUnderrun();
       }
 
       if (std::chrono::duration<double, std::milli>(now - lastLatencyQueryTime).count() > 1000.0) {
         lastLatencyQueryTime = now;
-        REFERENCE_TIME streamLatency = 0;
-        if (SUCCEEDED(audioClient->GetStreamLatency(&streamLatency))) {
-          const double streamLatencyMs = referenceTimeToMilliseconds(streamLatency);
-          outputInfo.latencyInfo.outputLatencyMs = std::max(0.0, streamLatencyMs - outputInfo.latencyInfo.bufferLatencyMs);
-          outputInfo.latencyInfo.totalLatencyMs = outputInfo.latencyInfo.bufferLatencyMs + outputInfo.latencyInfo.outputLatencyMs;
-          outputInfo.latencyMs = outputInfo.latencyInfo.totalLatencyMs;
-        }
+        refreshLatencyTelemetry();
       }
 
       UINT32 padding = 0;
@@ -428,10 +481,39 @@ struct WasapiExclusiveBackend::Impl {
     CoUninitialize();
   }
 
+  void launchRenderThread() {
+    std::lock_guard lock(threadMutex);
+    renderThread = std::thread([this] { renderLoop(); });
+  }
+
+  void joinRenderThread() {
+    std::thread threadToJoin;
+    {
+      std::lock_guard lock(threadMutex);
+      if (renderThread.joinable() && renderThread.get_id() != std::this_thread::get_id()) {
+        threadToJoin = std::move(renderThread);
+      }
+    }
+    if (threadToJoin.joinable()) threadToJoin.join();
+  }
+
+  void joinRecoveryThread() {
+    std::thread threadToJoin;
+    {
+      std::lock_guard lock(threadMutex);
+      if (recoveryThread.joinable() && recoveryThread.get_id() != std::this_thread::get_id()) {
+        threadToJoin = std::move(recoveryThread);
+      }
+    }
+    if (threadToJoin.joinable()) threadToJoin.join();
+  }
+
   void stop() {
+    stopRequested = true;
     running = false;
     if (samplesReadyEvent) SetEvent(samplesReadyEvent.get());
-    if (renderThread.joinable()) renderThread.join();
+    joinRenderThread();
+    joinRecoveryThread();
     if (audioClient) {
       audioClient->Stop();
       audioClient->Reset();
@@ -446,6 +528,7 @@ struct WasapiExclusiveBackend::Impl {
     samplesReadyEvent.reset();
     bufferFrameCount = 0;
     bufferDuration = 0;
+    renderBufferLatencyMs.store(0.0);
     callback = nullptr;
     typedCallback = nullptr;
     eventCallback = nullptr;
@@ -489,6 +572,16 @@ struct WasapiExclusiveBackend::Impl {
     return true;
   }
 
+  void recordRecoverySuccess() {
+    std::lock_guard lock(infoMutex);
+    ++recoveryCount;
+    ++diagnostics.sessionRecoveryCount;
+    ++diagnostics.lifetimeRecoveryCount;
+    outputInfo.deviceRecovered = true;
+    outputInfo.recoveryCount = static_cast<int>(recoveryCount);
+    outputInfo.diagnostics = diagnostics;
+  }
+
   // ── 自动恢复：带退避/限流的重试 ──
   bool attemptRecovery(const std::string& reason) {
     static constexpr int kMaxAttempts = 3;
@@ -523,7 +616,15 @@ struct WasapiExclusiveBackend::Impl {
       recoveryAttempts = attempt;
       std::this_thread::sleep_for(std::chrono::milliseconds(kBackoffMs[attempt]));
 
+      if (stopRequested.load()) {
+        recoveryInProgress = false;
+        return false;
+      }
       if (!reopenDevice()) continue;
+      if (stopRequested.load()) {
+        recoveryInProgress = false;
+        return false;
+      }
 
       // 恢复成功：预填充缓冲并启动
       const UINT32 initialFrames = wasapi::exclusiveInitialRenderFrames(
@@ -536,12 +637,7 @@ struct WasapiExclusiveBackend::Impl {
       // 成功
       recoveryInProgress = false;
       recoveryAttempts = 0;
-      ++recoveryCount;
-      ++diagnostics.sessionRecoveryCount;
-      ++diagnostics.lifetimeRecoveryCount;
-      outputInfo.deviceRecovered = true;
-      outputInfo.recoveryCount = static_cast<int>(recoveryCount);
-      outputInfo.diagnostics = diagnostics;
+      recordRecoverySuccess();
       return true;
     }
 
@@ -551,13 +647,50 @@ struct WasapiExclusiveBackend::Impl {
     return false;
   }
 
+  void runQueuedRecovery(std::string reason) {
+    joinRenderThread();
+    if (stopRequested.load()) {
+      recoveryQueued = false;
+      return;
+    }
+
+    const bool recovered = attemptRecovery(reason);
+    if (recovered && !stopRequested.load()) {
+      running = true;
+      launchRenderThread();
+    } else if (!recovered && !stopRequested.load() && eventCallback) {
+      eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
+    }
+    recoveryQueued = false;
+  }
+
+  bool queueRecoveryFromRenderThread(const std::string& reason) {
+    bool expected = false;
+    if (!recoveryQueued.compare_exchange_strong(expected, true)) return false;
+
+    running = false;
+    if (samplesReadyEvent) SetEvent(samplesReadyEvent.get());
+
+    joinRecoveryThread();
+    {
+      std::lock_guard lock(threadMutex);
+      recoveryThread = std::thread([this, reason] { runQueuedRecovery(reason); });
+    }
+    return true;
+  }
+
   // ── 统一渲染失败处理：记录 + 恢复 + 通知 ──
   // 返回 true = 已恢复可以继续渲染；false = 需退出渲染循环
   bool handleRenderFailure(HRESULT hr, const char* message) {
     const bool devInvalidated = wasapi::isDeviceInvalidated(hr);
-    notifyFailure(hr, message);
-    if (!devInvalidated) return false;
-    if (attemptRecovery(message)) return true;
+    recordRenderFailureFromRenderThread(hr, message);
+    if (!devInvalidated) {
+      char buffer[160] = {};
+      std::snprintf(buffer, sizeof(buffer), "%s (错误码 0x%08lx)", message, static_cast<unsigned long>(hr));
+      if (eventCallback) eventCallback(OutputBackendEvent::RenderError, buffer);
+      return false;
+    }
+    if (queueRecoveryFromRenderThread(message)) return false;
     if (eventCallback) eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
     return false;
   }
@@ -586,10 +719,7 @@ bool WasapiExclusiveBackend::open(const std::string& deviceId, const AudioFormat
   impl_->ownerComInitialized = SUCCEEDED(hr);
   if (hr == RPC_E_CHANGED_MODE) hr = S_OK;
   auto failAfterCom = [&]() {
-    if (impl_->ownerComInitialized) {
-      CoUninitialize();
-      impl_->ownerComInitialized = false;
-    }
+    impl_->close();
     return false;
   };
   if (FAILED(hr)) {
@@ -623,6 +753,7 @@ bool WasapiExclusiveBackend::open(const std::string& deviceId, const AudioFormat
   impl_->openDeviceId = deviceId;
   impl_->openRequestedFormat = requestedFormat;
   impl_->recoveryInProgress = false;
+  impl_->recoveryQueued = false;
   impl_->recoveryAttempts = 0;
   impl_->recoveryCount = 0;
   impl_->recoveryWindow.clear();
@@ -649,10 +780,15 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
     impl_->recordFailure("backend_start_failure", "独占输出后端尚未打开", error);
     return false;
   }
+  if (impl_->running.load()) {
+    impl_->recordFailure("backend_start_failure", "独占输出后端已经在运行", error);
+    return false;
+  }
 
   impl_->callback = std::move(callback);
   impl_->typedCallback = nullptr;
   impl_->eventCallback = std::move(eventCallback);
+  impl_->stopRequested = false;
 
   if (FAILED(impl_->renderPacket(wasapi::exclusiveInitialRenderFrames(
           impl_->bufferFrameCount,
@@ -663,7 +799,7 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
 
   if (!impl_->outputConfig.wasapiExclusivePushMode) {
     impl_->running = true;
-    impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+    impl_->launchRenderThread();
   }
 
   HRESULT hr = impl_->audioClient->Start();
@@ -679,7 +815,7 @@ bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback 
 
   if (impl_->outputConfig.wasapiExclusivePushMode) {
     impl_->running = true;
-    impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+    impl_->launchRenderThread();
   }
 
   return true;
@@ -701,10 +837,15 @@ bool WasapiExclusiveBackend::startTyped(
     impl_->recordFailure("backend_start_failure", "独占输出后端尚未打开", error);
     return false;
   }
+  if (impl_->running.load()) {
+    impl_->recordFailure("backend_start_failure", "独占输出后端已经在运行", error);
+    return false;
+  }
 
   impl_->typedCallback = std::move(callback);
   impl_->callback = std::move(fallbackCallback);
   impl_->eventCallback = std::move(eventCallback);
+  impl_->stopRequested = false;
 
   if (FAILED(impl_->renderPacket(wasapi::exclusiveInitialRenderFrames(
           impl_->bufferFrameCount,
@@ -715,7 +856,7 @@ bool WasapiExclusiveBackend::startTyped(
 
   if (!impl_->outputConfig.wasapiExclusivePushMode) {
     impl_->running = true;
-    impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+    impl_->launchRenderThread();
   }
 
   HRESULT hr = impl_->audioClient->Start();
@@ -731,7 +872,7 @@ bool WasapiExclusiveBackend::startTyped(
 
   if (impl_->outputConfig.wasapiExclusivePushMode) {
     impl_->running = true;
-    impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+    impl_->launchRenderThread();
   }
 
   return true;

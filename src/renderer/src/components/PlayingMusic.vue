@@ -429,7 +429,7 @@ onBeforeUnmount(() => {
       <i :class="viewMode === 'cover' ? 'pi pi-chart-bar' : 'pi pi-times'"></i>
     </button>
 
-    <div class="backdrop" aria-hidden="true">
+    <div v-if="viewMode !== 'visualizer'" class="backdrop" aria-hidden="true">
       <Transition name="backdrop-cover-fade" appear>
         <img v-if="bgSrc && isBlurBackground" :key="bgSrc" :src="bgSrc" class="backdrop-cover" alt="" />
       </Transition>

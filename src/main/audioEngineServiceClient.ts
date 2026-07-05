@@ -59,16 +59,31 @@ type AudioServiceEvent = {
   error?: string
 }
 
+const MAX_VISUALIZATION_CACHE_KEYS = 8
+const DEFAULT_MAX_IN_FLIGHT_REQUESTS = 128
+const AUDIO_SERVICE_BUSY_CODE = 'ERR_AUDIO_SERVICE_BUSY'
+
 type PendingRequest = {
   resolve: (value: unknown) => void
   reject: (error: Error) => void
   timer: NodeJS.Timeout
 }
 
+type AudioServiceError = Error & {
+  code?: string
+}
+
+type CoalescedControlRequest = {
+  args: unknown[]
+  inFlight: boolean
+  scheduled: boolean
+}
+
 export interface AudioEngineServiceBindingOptions {
   serviceEntry: string
   requestTimeoutMs?: number
   restartDelayMs?: number
+  maxInFlightRequests?: number
   electron?: ElectronModule
 }
 
@@ -78,6 +93,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private pending = new Map<string, PendingRequest>()
   private requestTimeoutMs: number
   private restartDelayMs: number
+  private maxInFlightRequests: number
   private stopped = false
   private restarting = false
   private generation = 0
@@ -86,16 +102,23 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private lastPlaybackInfo: string | PlaybackInfo | null = null
   private lastDspStatus: string | { plugins: unknown[] } = { plugins: [] }
   private lastConvolverInfo: string | ConvolverInfo | null = null
-  private lastVisualizationData: string | VisualizationData | null = null
+  private lastVisualizationDataByKey = new Map<string, string | VisualizationData>()
+  private visualizationCacheKeys = new Set<string>()
+  private visualizationRequestKeyByCacheKey = new Map<string, string>()
   private lastDevices: string | AudioDeviceOption[] | null = null
   private lastUpcomingTrack: string | AudioEngineQueueItem | null = null
   private lastErrorJson = '{"message":""}'
+  private coalescedControls = new Map<keyof NativeAudioBinding, CoalescedControlRequest>()
 
   constructor(options: AudioEngineServiceBindingOptions) {
     super()
     this.options = options
     this.requestTimeoutMs = options.requestTimeoutMs ?? 1500
     this.restartDelayMs = options.restartDelayMs ?? 500
+    this.maxInFlightRequests = Math.max(
+      1,
+      Math.floor(options.maxInFlightRequests ?? DEFAULT_MAX_IN_FLIGHT_REQUESTS)
+    )
     this.start()
   }
 
@@ -120,11 +143,11 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   Seek(time: number): void {
-    this.fireAndForget('Seek', [time])
+    this.coalescedFireAndForget('Seek', [time])
   }
 
   SetVolume(volume: number): void {
-    this.fireAndForget('SetVolume', [volume])
+    this.coalescedFireAndForget('SetVolume', [volume])
   }
 
   SetOutputDevice(device: string): void {
@@ -231,11 +254,14 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   GetVisualizationData(optionsJson: string): string | VisualizationData {
+    const cacheKey = optionsJson || '{}'
+    this.touchVisualizationCacheKey(cacheKey, optionsJson)
     this.refreshCache('GetVisualizationData', [optionsJson], (value) => {
-      this.lastVisualizationData = value as string | VisualizationData
+      this.touchVisualizationCacheKey(cacheKey, optionsJson)
+      this.lastVisualizationDataByKey.set(cacheKey, value as string | VisualizationData)
     })
     return (
-      this.lastVisualizationData ??
+      this.lastVisualizationDataByKey.get(cacheKey) ??
       '{"spectrum":[],"waveform":[],"peakDb":-120,"rmsDb":-120,"lufsMomentary":null,"spectrogram":[],"sampleRate":0,"active":false}'
     )
   }
@@ -270,6 +296,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       pending.reject(new Error('音频服务已停止'))
     }
     this.pending.clear()
+    this.coalescedControls.clear()
     this.child?.kill()
     this.child = null
   }
@@ -287,13 +314,20 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         stdio: 'pipe'
       })
       this.child = child
-      child.on('message', (message) => this.handleMessage(message))
-      child.on('exit', (code) => this.handleExit(`音频服务进程退出：${code ?? 'unknown'}`))
-      child.on('error', (error, location) =>
+      child.on('message', (message) => {
+        if (this.child !== child) return
+        this.handleMessage(message)
+      })
+      child.on('exit', (code) => {
+        if (this.child !== child) return
+        this.handleExit(`音频服务进程退出：${code ?? 'unknown'}`)
+      })
+      child.on('error', (error, location) => {
+        if (this.child !== child) return
         this.handleExit(
           `音频服务进程错误：${location ?? ''} ${error instanceof Error ? error.message : String(error)}`
         )
-      )
+      })
       child.stdout?.on('data', (chunk) => this.emit('log', chunk.toString()))
       child.stderr?.on('data', (chunk) => this.emit('error-log', chunk.toString()))
     } catch (error) {
@@ -307,7 +341,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       return
     }
     if (message.kind === 'fatal') {
-      this.handleExit(message.error ?? '音频服务启动失败')
+      this.handleFatal(message.error ?? '音频服务启动失败')
       return
     }
     if (message.kind !== 'response') return
@@ -319,14 +353,25 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     else pending.reject(new Error(message.error ?? '音频服务调用失败'))
   }
 
-  private handleExit(reason: string): void {
+  private handleFatal(reason: string): void {
+    const child = this.child
+    this.child = null
+    try {
+      child?.kill()
+    } catch {
+      // The service already reported fatal startup failure; keep the original reason.
+    }
+    this.handleExit(reason, { restart: false })
+  }
+
+  private handleExit(reason: string, options: { restart?: boolean } = {}): void {
     if (this.stopped) return
     this.recordFailure(reason)
     this.child = null
     this.generation += 1
-    this.lastDspStatus = { plugins: [] }
-    this.lastPlaybackInfo = '{"state":"stopped"}'
+    this.clearServiceDerivedCaches()
     this.emit('crash', reason)
+    if (options.restart === false) return
     if (this.restarting) return
     this.restarting = true
     setTimeout(() => {
@@ -337,8 +382,54 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
 
   private fireAndForget(method: keyof NativeAudioBinding, args: unknown[]): void {
     void this.call(method, args).catch((error) => {
+      if (isAudioServiceBusyError(error)) {
+        this.recordTransientFailure(error.message)
+        return
+      }
       this.recordFailure(error instanceof Error ? error.message : String(error))
     })
+  }
+
+  private coalescedFireAndForget(method: keyof NativeAudioBinding, args: unknown[]): void {
+    let request = this.coalescedControls.get(method)
+    if (!request) {
+      request = { args, inFlight: false, scheduled: false }
+      this.coalescedControls.set(method, request)
+    } else {
+      request.args = args
+    }
+
+    if (request.inFlight || request.scheduled) return
+    request.scheduled = true
+    queueMicrotask(() => this.flushCoalescedControl(method))
+  }
+
+  private flushCoalescedControl(method: keyof NativeAudioBinding): void {
+    const request = this.coalescedControls.get(method)
+    if (!request || request.inFlight || this.stopped) return
+
+    request.scheduled = false
+    request.inFlight = true
+    const args = request.args
+    void this.call(method, args)
+      .catch((error) => {
+        if (isAudioServiceBusyError(error)) {
+          this.recordTransientFailure(error.message)
+          return
+        }
+        this.recordFailure(error instanceof Error ? error.message : String(error))
+      })
+      .finally(() => {
+        const latest = this.coalescedControls.get(method)
+        if (!latest) return
+        latest.inFlight = false
+        if (latest.args === args || this.stopped) {
+          this.coalescedControls.delete(method)
+          return
+        }
+        latest.scheduled = true
+        queueMicrotask(() => this.flushCoalescedControl(method))
+      })
   }
 
   private refreshCache(
@@ -367,8 +458,47 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       })
   }
 
+  private touchVisualizationCacheKey(cacheKey: string, optionsJson: string): void {
+    const requestCacheKey = this.visualizationRequestCacheKey(optionsJson)
+    this.visualizationRequestKeyByCacheKey.set(cacheKey, requestCacheKey)
+    this.visualizationCacheKeys.delete(cacheKey)
+    this.visualizationCacheKeys.add(cacheKey)
+    while (this.visualizationCacheKeys.size > MAX_VISUALIZATION_CACHE_KEYS) {
+      const oldest = this.visualizationCacheKeys.values().next().value as string | undefined
+      if (!oldest) return
+      this.visualizationCacheKeys.delete(oldest)
+      this.lastVisualizationDataByKey.delete(oldest)
+      const oldestRequestCacheKey = this.visualizationRequestKeyByCacheKey.get(oldest)
+      this.visualizationRequestKeyByCacheKey.delete(oldest)
+      if (oldestRequestCacheKey) {
+        this.cacheRequestSerial.delete(oldestRequestCacheKey)
+        this.cacheRequestsInFlight.delete(oldestRequestCacheKey)
+      }
+    }
+  }
+
+  private visualizationRequestCacheKey(optionsJson: string): string {
+    return `GetVisualizationData:${JSON.stringify([optionsJson])}`
+  }
+
+  private clearServiceDerivedCaches(): void {
+    this.lastDspStatus = { plugins: [] }
+    this.lastPlaybackInfo = '{"state":"stopped"}'
+    this.lastConvolverInfo = null
+    this.lastVisualizationDataByKey.clear()
+    this.visualizationCacheKeys.clear()
+    this.visualizationRequestKeyByCacheKey.clear()
+    this.lastDevices = null
+    this.lastUpcomingTrack = null
+    this.cacheRequestSerial.clear()
+    this.cacheRequestsInFlight.clear()
+  }
+
   private call(method: keyof NativeAudioBinding, args: unknown[]): Promise<unknown> {
     if (!this.child) return Promise.reject(new Error('音频服务不可用'))
+    if (this.pending.size >= this.maxInFlightRequests) {
+      return Promise.reject(createAudioServiceBusyError(method))
+    }
     const requestId = randomUUID()
     const generation = this.generation
     return new Promise((resolve, reject) => {
@@ -390,11 +520,16 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
 
   private recordFailure(message: string): void {
     this.lastErrorJson = JSON.stringify({ message })
+    this.coalescedControls.clear()
     for (const [requestId, pending] of this.pending.entries()) {
       clearTimeout(pending.timer)
       pending.reject(new Error(message))
       this.pending.delete(requestId)
     }
+  }
+
+  private recordTransientFailure(message: string): void {
+    this.lastErrorJson = JSON.stringify({ message })
   }
 }
 
@@ -410,4 +545,14 @@ function resolveElectron(): ElectronModule | null {
   } catch {
     return null
   }
+}
+
+function createAudioServiceBusyError(method: keyof NativeAudioBinding): AudioServiceError {
+  const error = new Error(`音频服务请求过多：${String(method)}`) as AudioServiceError
+  error.code = AUDIO_SERVICE_BUSY_CODE
+  return error
+}
+
+function isAudioServiceBusyError(error: unknown): error is AudioServiceError {
+  return error instanceof Error && (error as AudioServiceError).code === AUDIO_SERVICE_BUSY_CODE
 }

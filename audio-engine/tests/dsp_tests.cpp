@@ -8,13 +8,16 @@
 #include "../dsp/ParametricEqProcessorUtils.h"
 #include "../dsp/ReplayGainProcessorUtils.h"
 
+#include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <set>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 using namespace twilight::audio;
@@ -44,6 +47,58 @@ bool closeTo(double actual, double expected, double tolerance = 0.02) {
 
 void require(bool condition) {
   if (!condition) std::abort();
+}
+
+std::string readTextFile(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  std::ostringstream buffer;
+  buffer << in.rdbuf();
+  return buffer.str();
+}
+
+std::string extractFunctionBody(const std::string& source, const std::string& signature) {
+  const size_t signaturePos = source.find(signature);
+  require(signaturePos != std::string::npos);
+  const size_t bodyStart = source.find('{', signaturePos);
+  require(bodyStart != std::string::npos);
+  int depth = 0;
+  for (size_t i = bodyStart; i < source.size(); ++i) {
+    if (source[i] == '{') {
+      ++depth;
+    } else if (source[i] == '}') {
+      --depth;
+      if (depth == 0) return source.substr(bodyStart, i - bodyStart + 1);
+    }
+  }
+  require(false);
+  return {};
+}
+
+void requireAnalyzerReadRefreshesBeforeLock(const std::string& body) {
+  const size_t refresh = body.find("updateSpectrumForRead");
+  const size_t lock = body.find("std::lock_guard lock(mutex_)");
+  require(refresh != std::string::npos);
+  require(lock != std::string::npos);
+  require(refresh < lock);
+
+  const std::string lockTail = body.substr(lock);
+  require(lockTail.find("updateSpectrumLocked") == std::string::npos);
+  require(lockTail.find("KissFftAdapter::forward") == std::string::npos);
+}
+
+void testFftAnalyzerReadSideRefreshesSpectrumOutsideCaptureMutex() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "dsp" / "FftSpectrumAnalyzer.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string readBody =
+      extractFunctionBody(source, "size_t FftSpectrumAnalyzer::read(float* output, size_t points, double idlePhase) const");
+  const std::string jsonBody = extractFunctionBody(
+      source,
+      "std::string FftSpectrumAnalyzer::readVisualizationJson(");
+
+  requireAnalyzerReadRefreshesBeforeLock(readBody);
+  requireAnalyzerReadRefreshesBeforeLock(jsonBody);
 }
 
 void testParametricEqPreampOnlyProcessesContiguousSamples() {
@@ -221,6 +276,42 @@ AudioFormat testFormat() {
   return format;
 }
 
+void testDspProcessBypassesWhenConfigurationLockBusy() {
+  DspChain chain;
+  DspConfig config;
+  config.enabled = true;
+  config.replayGainMode = ReplayGainMode::Track;
+  config.replayGainClip = true;
+  chain.configure(config);
+  chain.prepare(testFormat());
+
+  DspTrackContext context;
+  context.stream.replayGain.trackGainDb = -6.0;
+  chain.setTrackContext(context);
+
+  std::vector<float> samples = {1.0f, -1.0f, 0.5f, -0.5f};
+  const std::vector<float> original = samples;
+  auto hold = chain.holdProcessLockForTests();
+
+  std::atomic<bool> started{false};
+  std::atomic<bool> finished{false};
+  std::thread renderThread([&] {
+    started.store(true, std::memory_order_release);
+    chain.process(samples.data(), 2);
+    finished.store(true, std::memory_order_release);
+  });
+
+  while (!started.load(std::memory_order_acquire)) {
+    std::this_thread::yield();
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+  require(finished.load(std::memory_order_acquire));
+  hold.unlock();
+  renderThread.join();
+  require(samples == original);
+}
+
 void writeImpulseWav(const std::filesystem::path& path, int sampleRate, int channels) {
   const int bitsPerSample = 16;
   const int frames = 8;
@@ -284,6 +375,7 @@ std::vector<float> extractJsonArray(const std::string& json, const std::string& 
 }  // namespace
 
 int main() {
+  testFftAnalyzerReadSideRefreshesSpectrumOutsideCaptureMutex();
   testParametricEqPreampOnlyProcessesContiguousSamples();
   testWindowedFftInputOverwritesScratchWithoutPreclear();
   testWindowResizeKeepsSameSizedBufferForOverwrite();
@@ -296,6 +388,7 @@ int main() {
   testConvolverSpectrumAccumulationOverwritesScratchWithoutPreclear();
   testCrossfeedDelayIndexAdvancesAndWraps();
   testReplayGainApplySplitsClippedAndUnclippedPaths();
+  testDspProcessBypassesWhenConfigurationLockBusy();
   {
     CountingProcessor inactive(false);
     CountingProcessor active(true);
@@ -478,6 +571,17 @@ int main() {
     assert(json.find("\"sampleRate\":48000") != std::string::npos);
     assert(json.find("nan") == std::string::npos);
     assert(json.find("inf") == std::string::npos);
+
+    const std::string lightJson = analyzer.readVisualizationJson(24, 32, 0, 0);
+    assert(lightJson.find("\"spectrogram\":[]") != std::string::npos);
+    const std::vector<float> omittedOscilloscope = extractJsonArray(lightJson, "oscilloscope");
+    assert(omittedOscilloscope.empty());
+
+    for (int read = 0; read < 120; ++read) {
+      analyzer.capture(samples.data(), 256, 2);
+      const std::string repeatedLightJson = analyzer.readVisualizationJson(24, 32, 0, 0);
+      assert(repeatedLightJson.find("\"spectrogram\":[]") != std::string::npos);
+    }
   }
 
   {
@@ -498,6 +602,58 @@ int main() {
       if (value > 0.0f) anyNonZero = true;
     }
     assert(anyNonZero);
+  }
+
+  {
+    FftSpectrumAnalyzer analyzer;
+    analyzer.prepare(testFormat(), 1024);
+
+    auto captureSine = [&](float amplitude) {
+      std::vector<float> samples(1024 * 2, 0.0f);
+      for (size_t i = 0; i < 1024; ++i) {
+        const float value =
+            amplitude * static_cast<float>(std::sin(2.0 * 3.141592653589793 * static_cast<double>(i) / 64.0));
+        samples[i * 2] = value;
+        samples[i * 2 + 1] = value;
+      }
+      analyzer.resetCapture();
+      analyzer.capture(samples.data(), 1024, 2);
+      const std::string json = analyzer.readVisualizationJson(128, 32, 0, 0);
+      return extractJsonArray(json, "spectrum");
+    };
+
+    const std::vector<float> loudSpectrum = captureSine(1.0f);
+    const std::vector<float> halfSpectrum = captureSine(0.5f);
+    const std::vector<float> quietSpectrum = captureSine(0.001f);
+    const float loudPeak = *std::max_element(loudSpectrum.begin(), loudSpectrum.end());
+    const float halfPeak = *std::max_element(halfSpectrum.begin(), halfSpectrum.end());
+    const float quietPeak = *std::max_element(quietSpectrum.begin(), quietSpectrum.end());
+
+    assert(loudPeak > 0.82f);
+    assert(loudPeak < 0.96f);
+    assert(halfPeak > 0.0f);
+    assert(halfPeak < loudPeak - 0.02f);
+    assert(quietPeak > 0.0f);
+    assert(quietPeak < loudPeak - 0.4f);
+  }
+
+  {
+    FftSpectrumAnalyzer analyzer;
+    analyzer.prepare(testFormat(), 1024);
+    std::vector<float> samples(1024 * 2, 0.0f);
+    for (size_t i = 0; i < 1024; ++i) {
+      const float value =
+          static_cast<float>(std::sin(2.0 * 3.141592653589793 * static_cast<double>(i) / 64.0));
+      samples[i * 2] = value;
+      samples[i * 2 + 1] = value;
+    }
+
+    analyzer.capture(samples.data(), 1024, 2);
+    float legacySpectrum[64] = {};
+    require(analyzer.read(legacySpectrum, 64, 0.0) == 64);
+
+    const std::string json = analyzer.readVisualizationJson(64, 32, 1, 0);
+    require(json.find("\"spectrogram\":[[") != std::string::npos);
   }
 
   {

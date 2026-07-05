@@ -9,8 +9,13 @@ import {
   compareVersions,
   createSettingsSnapshot,
   getDirectorySize,
-  getDefaultCachePath
+  getDefaultCachePath,
+  normalizeAppSettings
 } from '../core/settings'
+import {
+  exportAppSettingsForBackup,
+  importAppSettingsFromBackup
+} from '../core/settingsBackup'
 import {
   ensureMusicCacheDirectories
 } from '../cache/ncmCache'
@@ -39,6 +44,7 @@ import {
   relaunchApplication
 } from '../audio/state'
 import { resolvePlaybackSessionSave } from '../app/window'
+import { getPlayerShortcutStatuses } from '../integrations/shortcutsTray'
 
 export function setupDataIpc(): void {
   ipcMain.on('window:minimize', (event) => {
@@ -123,7 +129,7 @@ export function setupDataIpc(): void {
     try {
       const currentVersion = app.getVersion()
       const response = await fetch(
-        'https://api.github.com/repos/nousresearch/twilight-echo/releases/latest',
+        'https://api.github.com/repos/asenyarzc-cpu/Twilight_Echo/releases/latest',
         { headers: { 'User-Agent': 'TwilightEcho-Updater' } }
       )
       if (!response.ok) return { hasUpdate: false, currentVersion, error: 'network' }
@@ -149,6 +155,26 @@ export function setupDataIpc(): void {
 
   ipcMain.handle('settings:update', async (_event, patch: Partial<AppSettings>) => {
     return await updateAppSettings(patch)
+  })
+
+  ipcMain.handle('settings:export', async () => {
+    return exportAppSettingsForBackup(runtime.appSettings)
+  })
+
+  ipcMain.handle('settings:import', async (_event, json: string) => {
+    if (typeof json !== 'string') {
+      throw new Error('Settings backup must be a JSON string')
+    }
+    const importedSettings = importAppSettingsFromBackup(
+      json,
+      runtime.appSettings,
+      normalizeAppSettings
+    )
+    return await updateAppSettings(importedSettings)
+  })
+
+  ipcMain.handle('settings:getShortcutStatuses', async () => {
+    return getPlayerShortcutStatuses()
   })
 
   ipcMain.handle('settings:chooseCacheFolder', async () => {

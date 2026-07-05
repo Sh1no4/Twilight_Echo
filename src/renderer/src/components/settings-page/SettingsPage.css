@@ -159,6 +159,102 @@
   padding-bottom: 40px;
 }
 
+.settings-command-bar {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.settings-search-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid rgba(229, 231, 235, 0.78);
+  border-radius: 10px;
+  background: var(--te-card-bg);
+  box-shadow: 0 1px 5px rgba(15, 23, 42, 0.05);
+}
+
+.settings-search-box i {
+  color: var(--brand-500);
+  font-size: 13px;
+}
+
+.settings-search-box input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.settings-search-box input::placeholder {
+  color: #9ca3af;
+}
+
+.settings-command-actions,
+.reset-group-actions {
+  flex-wrap: wrap;
+}
+
+.settings-command-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.settings-search-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-search-results button {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid rgba(var(--te-primary-rgb), 0.2);
+  border-radius: 8px;
+  background: rgba(var(--te-primary-rgb), 0.08);
+  color: var(--brand-600);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.settings-search-empty,
+.settings-inline-notice,
+.settings-inline-error {
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.settings-search-empty {
+  border: 1px dashed rgba(156, 163, 175, 0.55);
+  color: #6b7280;
+}
+
+.settings-inline-notice {
+  border: 1px solid rgba(16, 185, 129, 0.28);
+  background: rgba(16, 185, 129, 0.1);
+  color: #047857;
+}
+
+.settings-inline-error {
+  border: 1px solid rgba(220, 38, 38, 0.26);
+  background: rgba(220, 38, 38, 0.08);
+  color: #dc2626;
+}
+
 .glass-card {
   border: 1px solid rgba(255, 255, 255, 1);
   border-radius: 16px;
@@ -717,6 +813,52 @@
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.device-capability-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 4px;
+}
+
+.device-capability-chip {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 3px 6px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+  color: #4b5563;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-capability-chip.verified {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #15803d;
+}
+
+.device-capability-chip.runtime {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.device-capability-chip.unsupported {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.device-capability-chip.unknown {
+  border-color: #e5e7eb;
+  background: #f9fafb;
+  color: #6b7280;
 }
 
 .device-card b {
@@ -1487,6 +1629,80 @@
   font-weight: 700;
 }
 
+.read-only-pill {
+  display: inline-flex;
+  min-width: 52px;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.1);
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.shortcut-status-list {
+  display: grid;
+  gap: 8px;
+}
+
+.shortcut-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 34px;
+  padding: 8px 12px;
+  border: 1px solid rgba(229, 231, 235, 0.75);
+  border-radius: 8px;
+  background: rgba(249, 250, 251, 0.68);
+}
+
+.shortcut-status-row span {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.shortcut-status-row i {
+  color: #9ca3af;
+  font-size: 13px;
+}
+
+.shortcut-status-row small {
+  color: #6b7280;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: right;
+}
+
+.shortcut-status-row.registered {
+  border-color: rgba(16, 185, 129, 0.28);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.shortcut-status-row.registered i,
+.shortcut-status-row.registered small {
+  color: #059669;
+}
+
+.shortcut-status-row.failed {
+  border-color: rgba(220, 38, 38, 0.28);
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.shortcut-status-row.failed i,
+.shortcut-status-row.failed small {
+  color: #dc2626;
+}
+
 .about-section {
   position: relative;
   overflow: hidden;
@@ -1803,9 +2019,21 @@
   .path-control,
   .inline-controls,
   .background-options,
-  .about-links {
+  .about-links,
+  .settings-command-actions {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .settings-command-actions .soft-button,
+  .shortcut-status-row {
+    width: 100%;
+  }
+
+  .shortcut-status-row {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
   }
 
   .theme-segment,

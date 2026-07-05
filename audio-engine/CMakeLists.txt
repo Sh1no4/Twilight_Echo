@@ -231,6 +231,7 @@ if(TAE_BUILD_TESTS)
     plugins/PluginRegistry.cpp
   )
   target_include_directories(twilight_dsp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_definitions(twilight_dsp_tests PRIVATE TAE_DSP_CHAIN_TESTS=1)
   target_link_libraries(twilight_dsp_tests PRIVATE ${CMAKE_DL_LIBS})
   add_test(NAME twilight_dsp_unit COMMAND twilight_dsp_tests)
 

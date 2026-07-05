@@ -3,6 +3,7 @@ export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 export type StartupHomePage = 'local' | 'streaming'
 export type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
+export type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 export type EqMode = 'graphic' | 'parametric'
 export type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 export type ChannelRoutingMode =
@@ -199,6 +200,8 @@ export interface AudioDeviceOption {
   supportsDirectHw?: boolean
   supportsDop?: boolean
   supportsNativeDsd?: boolean
+  dopSupportState?: AudioCapabilitySupportState
+  nativeDsdSupportState?: AudioCapabilitySupportState
   supportedDsdRates?: number[]
   nativeDsdSampleRates?: number[]
   nativeDsdSampleFormats?: string[]
@@ -207,6 +210,12 @@ export interface AudioDeviceOption {
   pathKind?: string
   capabilityReason?: string
 }
+
+export type AudioCapabilitySupportState =
+  | 'verified'
+  | 'runtime-probed'
+  | 'unsupported'
+  | 'unknown'
 
 export interface OutputConfig {
   preferredBufferSize: number
@@ -281,4 +290,12 @@ export interface SettingsSnapshot {
   platform: string
   restartRequired: boolean
   restartReasons: string[]
+}
+
+export interface PlayerShortcutStatus {
+  accelerator: string
+  action: PlayerShortcutAction
+  label: string
+  registered: boolean
+  error: string | null
 }

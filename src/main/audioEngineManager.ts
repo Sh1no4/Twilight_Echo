@@ -108,6 +108,8 @@ export interface AudioDeviceOption {
   supportsDirectHw?: boolean
   supportsDop?: boolean
   supportsNativeDsd?: boolean
+  dopSupportState?: AudioCapabilitySupportState
+  nativeDsdSupportState?: AudioCapabilitySupportState
   supportedDsdRates?: number[]
   nativeDsdSampleRates?: number[]
   nativeDsdSampleFormats?: string[]
@@ -116,6 +118,12 @@ export interface AudioDeviceOption {
   pathKind?: string
   capabilityReason?: string
 }
+
+export type AudioCapabilitySupportState =
+  | 'verified'
+  | 'runtime-probed'
+  | 'unsupported'
+  | 'unknown'
 
 export interface OutputConfig {
   preferredBufferSize: number
@@ -341,10 +349,12 @@ export interface VisualizationOptions {
   waveformPoints?: number
   spectrogramFrames?: number
   oscilloscopePoints?: number
+  visualizerBarCount?: number
 }
 
 export interface VisualizationData {
   spectrum: number[]
+  visualizerBars?: number[]
   waveform: number[]
   oscilloscope: number[]
   peakDb: number
@@ -352,8 +362,19 @@ export interface VisualizationData {
   lufsMomentary: number | null
   spectrogram: number[][]
   sampleRate: number
+  maxFrequency: number
   active: boolean
+  tapStatus: VisualizationTapStatus
+  reason: string
 }
+
+export type VisualizationTapStatus =
+  | 'active'
+  | 'stopped'
+  | 'disabled'
+  | 'no-samples'
+  | 'native-unavailable'
+  | 'synthetic-fallback'
 
 export interface NativeAudioBinding {
   Play: (source: string, startTime?: number) => void
@@ -399,7 +420,10 @@ export interface NativeAudioBinding {
 export interface AudioEngineServiceNativeBinding extends NativeAudioBinding {
   getMetadataAsync: (source: string) => Promise<string | NativeAudioMetadata>
   destroy: () => void
-  on: (event: 'crash' | 'error-log' | 'log' | 'ready', listener: (...args: any[]) => void) => unknown
+  on: (
+    event: 'crash' | 'error-log' | 'log' | 'ready',
+    listener: (...args: any[]) => void
+  ) => unknown
 }
 
 export interface AudioEngineManagerDependencies {
@@ -554,12 +578,14 @@ const DEFAULT_OUTPUT_CONFIG: OutputConfig = {
   upmixSurroundDelayMs: 0
 }
 const PLAYBACK_INFO_CACHE_TTL_MS = 200
-const VISUALIZATION_CACHE_TTL_MS = 80
+const VISUALIZATION_CACHE_TTL_MS = 24
 const AUDIO_DEVICE_OPTIONS_CACHE_TTL_MS = 1000
+const AUDIO_DEVICE_OPTIONS_HOTPLUG_POLL_MS = 5000
 const NATIVE_DSP_PLUGIN_STATUS_CACHE_TTL_MS = 200
 const CONVOLVER_INFO_CACHE_TTL_MS = 200
 const UPCOMING_TRACK_CACHE_TTL_MS = 200
 const METADATA_CACHE_TTL_MS = 1000
+const MAX_METADATA_CACHE_ENTRIES = 256
 const PLAYBACK_FANOUT_FIELD_SEPARATOR = '\x1f'
 const PLAYBACK_FANOUT_RECORD_SEPARATOR = '\x1e'
 
@@ -916,13 +942,21 @@ function audioProcessingSettingsEqual(
   )
 }
 
-function normalizeVisualizationOptions(options?: VisualizationOptions): Required<VisualizationOptions> {
+function normalizeVisualizationOptions(
+  options?: VisualizationOptions
+): Required<VisualizationOptions> {
   return {
     spectrumPoints: Math.trunc(clampNumber(options?.spectrumPoints, 8, 4096, 64)),
     waveformPoints: Math.trunc(clampNumber(options?.waveformPoints, 16, 512, 128)),
-    spectrogramFrames: Math.trunc(clampNumber(options?.spectrogramFrames, 1, 96, 48)),
-    oscilloscopePoints: Math.trunc(clampNumber(options?.oscilloscopePoints, 64, 4096, 1024))
+    spectrogramFrames: Math.trunc(clampNumber(options?.spectrogramFrames, 0, 96, 48)),
+    oscilloscopePoints: Math.trunc(clampNumber(options?.oscilloscopePoints, 0, 4096, 1024)),
+    visualizerBarCount: Math.trunc(clampNumber(options?.visualizerBarCount, 0, 256, 0))
   }
+}
+
+function visualizationMaxFrequency(sampleRate: number): number {
+  if (!Number.isFinite(sampleRate) || sampleRate <= 0) return 20000
+  return Math.max(20, Math.min(20000, Math.trunc(sampleRate) / 2))
 }
 
 const DEFAULT_AUDIO_DEVICE_OPTION: AudioDeviceOption = {
@@ -934,6 +968,8 @@ const DEFAULT_AUDIO_DEVICE_OPTION: AudioDeviceOption = {
   supportsDirectHw: false,
   supportsDop: false,
   supportsNativeDsd: false,
+  dopSupportState: 'runtime-probed',
+  nativeDsdSupportState: 'unsupported',
   supportedDsdRates: [],
   nativeDsdSampleRates: [],
   nativeDsdSampleFormats: [],
@@ -947,15 +983,101 @@ function formatAudioDeviceLabel(device: string): string {
   return device === DEFAULT_AUDIO_DEVICE_OPTION.id ? DEFAULT_AUDIO_DEVICE_OPTION.label : device
 }
 
+function normalizeAudioCapabilitySupportState(
+  value: unknown
+): AudioCapabilitySupportState | null {
+  return value === 'verified' ||
+    value === 'runtime-probed' ||
+    value === 'unsupported' ||
+    value === 'unknown'
+    ? value
+    : null
+}
+
+function hasNonEmptyArray(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0
+}
+
+function getDeviceBackend(option: Partial<AudioDeviceOption>): string {
+  const raw = option.backend || (option.id?.startsWith('asio:') ? 'asio' : '')
+  return String(raw || '').toLowerCase()
+}
+
+function getDevicePathKind(option: Partial<AudioDeviceOption>): string {
+  return String(option.pathKind || '').toLowerCase()
+}
+
+function deriveDopSupportState(option: Partial<AudioDeviceOption>): AudioCapabilitySupportState {
+  const explicit = normalizeAudioCapabilitySupportState(option.dopSupportState)
+  if (explicit) return explicit
+  if (
+    option.supportsDop === true ||
+    hasNonEmptyArray(option.dopCarrierSampleRates) ||
+    hasNonEmptyArray(option.dopCarrierFormats)
+  ) {
+    return 'verified'
+  }
+  if (option.supportsDop === false) return 'unsupported'
+
+  const backend = getDeviceBackend(option)
+  const pathKind = getDevicePathKind(option)
+  if (
+    option.isDefault === true ||
+    backend === 'wasapi' ||
+    backend === 'coreaudio' ||
+    pathKind === 'default' ||
+    pathKind === 'endpoint' ||
+    pathKind === 'hal'
+  ) {
+    return 'runtime-probed'
+  }
+  if (backend === 'asio' || pathKind === 'asio') return 'unknown'
+  return 'unknown'
+}
+
+function deriveNativeDsdSupportState(
+  option: Partial<AudioDeviceOption>
+): AudioCapabilitySupportState {
+  const explicit = normalizeAudioCapabilitySupportState(option.nativeDsdSupportState)
+  if (explicit) return explicit
+  if (
+    option.supportsNativeDsd === true ||
+    hasNonEmptyArray(option.nativeDsdSampleRates) ||
+    hasNonEmptyArray(option.nativeDsdSampleFormats) ||
+    hasNonEmptyArray(option.supportedDsdRates)
+  ) {
+    return 'verified'
+  }
+  if (option.supportsNativeDsd === false) return 'unsupported'
+
+  const backend = getDeviceBackend(option)
+  const pathKind = getDevicePathKind(option)
+  if (backend === 'wasapi' || backend === 'coreaudio' || pathKind === 'endpoint' || pathKind === 'hal') {
+    return 'unsupported'
+  }
+  if (backend === 'alsa' && pathKind === 'hw') return 'runtime-probed'
+  if (backend === 'asio' || pathKind === 'asio') return 'unknown'
+  if (option.isDefault === true || pathKind === 'default') return 'unsupported'
+  return 'unknown'
+}
+
+function withAudioCapabilitySupportStates(option: AudioDeviceOption): AudioDeviceOption {
+  return {
+    ...option,
+    dopSupportState: deriveDopSupportState(option),
+    nativeDsdSupportState: deriveNativeDsdSupportState(option)
+  }
+}
+
 function normalizeAudioDeviceOption(option: unknown): AudioDeviceOption | null {
   if (typeof option === 'string') {
     const id = option.trim()
     if (!id) return null
-    return {
+    return withAudioCapabilitySupportStates({
       id,
       label: formatAudioDeviceLabel(id),
       isDefault: id === DEFAULT_AUDIO_DEVICE_OPTION.id
-    }
+    })
   }
 
   if (!option || typeof option !== 'object') return null
@@ -963,13 +1085,13 @@ function normalizeAudioDeviceOption(option: unknown): AudioDeviceOption | null {
   const id = typeof record.id === 'string' ? record.id.trim() : ''
   if (!id) return null
   const rawLabel = typeof record.label === 'string' ? record.label.trim() : ''
-  return {
+  return withAudioCapabilitySupportStates({
     ...(record as Partial<AudioDeviceOption>),
     id,
     label:
       id === DEFAULT_AUDIO_DEVICE_OPTION.id ? DEFAULT_AUDIO_DEVICE_OPTION.label : rawLabel || id,
     isDefault: record.isDefault === true
-  }
+  })
 }
 
 function normalizeAudioDeviceOptions(
@@ -992,12 +1114,12 @@ function normalizeAudioDeviceOptions(
   }
 
   if (!seen.has(DEFAULT_AUDIO_DEVICE_OPTION.id)) {
-    options.unshift(DEFAULT_AUDIO_DEVICE_OPTION)
+    options.unshift({ ...DEFAULT_AUDIO_DEVICE_OPTION })
     seen.add(DEFAULT_AUDIO_DEVICE_OPTION.id)
   }
 
   if (selectedDevice && !seen.has(selectedDevice)) {
-    options.push({
+    addOption({
       id: selectedDevice,
       label: formatAudioDeviceLabel(selectedDevice),
       isDefault: selectedDevice === DEFAULT_AUDIO_DEVICE_OPTION.id
@@ -1033,22 +1155,15 @@ export function normalizeAudioProcessingSettings(
   const rawBands = Array.isArray(settings?.eqBands) ? settings.eqBands : DEFAULT_EQ_BANDS
   const eqBands =
     eqMode === 'parametric'
-      ? rawBands
-          .slice(0, MAX_PARAMETRIC_EQ_BANDS)
-          .map((band, index) => {
-            const defaultBand = DEFAULT_EQ_BANDS[index % DEFAULT_EQ_BANDS.length]
-            return {
-              frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
-              gain: clampNumber(
-                band.gain,
-                PARAMETRIC_EQ_GAIN_MIN_DB,
-                PARAMETRIC_EQ_GAIN_MAX_DB,
-                0
-              ),
-              q: clampNumber(band.q, PARAMETRIC_EQ_Q_MIN, PARAMETRIC_EQ_Q_MAX, 1),
-              filterType: normalizeEqualizerFilterType(band.filterType)
-            }
-          })
+      ? rawBands.slice(0, MAX_PARAMETRIC_EQ_BANDS).map((band, index) => {
+          const defaultBand = DEFAULT_EQ_BANDS[index % DEFAULT_EQ_BANDS.length]
+          return {
+            frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
+            gain: clampNumber(band.gain, PARAMETRIC_EQ_GAIN_MIN_DB, PARAMETRIC_EQ_GAIN_MAX_DB, 0),
+            q: clampNumber(band.q, PARAMETRIC_EQ_Q_MIN, PARAMETRIC_EQ_Q_MAX, 1),
+            filterType: normalizeEqualizerFilterType(band.filterType)
+          }
+        })
       : DEFAULT_EQ_BANDS.map((defaultBand, index) => {
           const band = rawBands[index] ?? defaultBand
           return {
@@ -1065,8 +1180,7 @@ export function normalizeAudioProcessingSettings(
       gain: 0,
       q: 1,
       filterType: 'peak'
-    }
-    )
+    })
   }
 
   const volumeNormalization: VolumeNormalizationMode =
@@ -1135,14 +1249,67 @@ function normalizeNumberArray(value: unknown, length: number): number[] {
 }
 
 function normalizeSpectrogram(value: unknown, frames: number, points: number): number[][] {
+  if (frames <= 0 || points <= 0) return []
   const source = Array.isArray(value) ? value.slice(-frames) : []
   return source.map((row) => normalizeNumberArray(row, points))
+}
+
+export function mapSpectrumToVisualizerBars(
+  spectrum: readonly number[],
+  sampleRate: number,
+  barCount: number
+): number[] {
+  if (barCount <= 0) return []
+  const bars = Array.from({ length: barCount }, () => 0)
+  if (spectrum.length === 0) return bars
+
+  const minFrequency = 20
+  const rate = Number.isFinite(sampleRate) && sampleRate > 0 ? sampleRate : 44100
+  const maxFrequency = Math.max(minFrequency, Math.min(20000, rate / 2))
+  const fftSize = Math.max(2, spectrum.length * 2)
+  const binWidth = rate / fftSize
+  const maxBinIndex = Math.max(0, spectrum.length - 1)
+  const frequencyRatio = maxFrequency / minFrequency
+  const frequencyStepCount = Math.max(1, barCount - 1)
+
+  for (let i = 0; i < barCount; i += 1) {
+    const frequency = minFrequency * Math.pow(frequencyRatio, i / frequencyStepCount)
+    const binIndexDecimal = frequency / binWidth
+    const indexLow = Math.min(Math.floor(binIndexDecimal), maxBinIndex)
+    const indexHigh = Math.min(indexLow + 1, maxBinIndex)
+    const fract = binIndexDecimal - indexLow
+    const valLow = spectrum[indexLow] || 0
+    const valHigh = spectrum[indexHigh] || 0
+    const value = valLow + (valHigh - valLow) * fract
+    bars[i] = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0))
+  }
+
+  return bars
+}
+
+function withPrecomputedVisualizerBars(
+  data: VisualizationData,
+  options: Required<VisualizationOptions>
+): VisualizationData {
+  if (options.visualizerBarCount <= 0) return data
+  return {
+    ...data,
+    spectrum: [],
+    spectrogram: [],
+    oscilloscope: [],
+    visualizerBars: mapSpectrumToVisualizerBars(
+      data.spectrum,
+      data.sampleRate,
+      options.visualizerBarCount
+    )
+  }
 }
 
 function createFallbackVisualizationData(
   options: Required<VisualizationOptions>,
   sampleRate: number,
-  phaseSeconds: number
+  phaseSeconds: number,
+  reason = 'Native visualization tap unavailable'
 ): VisualizationData {
   const phase = Number.isFinite(phaseSeconds) ? phaseSeconds : 0
   const spectrum = Array.from({ length: options.spectrumPoints }, (_, index) => {
@@ -1170,15 +1337,20 @@ function createFallbackVisualizationData(
     peakDb: -18,
     rmsDb: -28,
     lufsMomentary: -24,
-    spectrogram: [spectrum],
+    spectrogram: options.spectrogramFrames > 0 ? [spectrum] : [],
     sampleRate: Math.max(1, Math.trunc(sampleRate || 44100)),
-    active: true
+    maxFrequency: visualizationMaxFrequency(sampleRate || 44100),
+    active: true,
+    tapStatus: 'synthetic-fallback',
+    reason
   }
 }
 
 function createInactiveVisualizationData(
   options: Required<VisualizationOptions>,
-  sampleRate = 0
+  sampleRate = 0,
+  tapStatus: VisualizationTapStatus = 'stopped',
+  reason = ''
 ): VisualizationData {
   return {
     spectrum: Array.from({ length: options.spectrumPoints }, () => 0),
@@ -1189,14 +1361,43 @@ function createInactiveVisualizationData(
     lufsMomentary: null,
     spectrogram: [],
     sampleRate: Math.max(0, Math.trunc(sampleRate || 0)),
-    active: false
+    maxFrequency: visualizationMaxFrequency(sampleRate),
+    active: false,
+    tapStatus,
+    reason
   }
+}
+
+function normalizeVisualizationTapStatus(
+  value: unknown,
+  active: boolean
+): VisualizationTapStatus {
+  if (
+    value === 'active' ||
+    value === 'stopped' ||
+    value === 'disabled' ||
+    value === 'no-samples' ||
+    value === 'native-unavailable' ||
+    value === 'synthetic-fallback'
+  ) {
+    return value
+  }
+  return active ? 'active' : 'no-samples'
 }
 
 function normalizeVisualizationData(
   data: Partial<VisualizationData>,
   options: Required<VisualizationOptions>
 ): VisualizationData {
+  const active = data.active === true
+  const sampleRate =
+    typeof data.sampleRate === 'number' && Number.isFinite(data.sampleRate) ? data.sampleRate : 0
+  const maxFrequencyLimit = visualizationMaxFrequency(sampleRate)
+  const maxFrequency =
+    typeof data.maxFrequency === 'number' && Number.isFinite(data.maxFrequency)
+      ? Math.max(20, Math.min(maxFrequencyLimit, data.maxFrequency))
+      : maxFrequencyLimit
+
   return {
     spectrum: normalizeNumberArray(data.spectrum, options.spectrumPoints),
     waveform: normalizeNumberArray(data.waveform, options.waveformPoints),
@@ -1207,9 +1408,16 @@ function normalizeVisualizationData(
       typeof data.lufsMomentary === 'number' && Number.isFinite(data.lufsMomentary)
         ? data.lufsMomentary
         : null,
-    spectrogram: normalizeSpectrogram(data.spectrogram, options.spectrogramFrames, options.spectrumPoints),
-    sampleRate: typeof data.sampleRate === 'number' && Number.isFinite(data.sampleRate) ? data.sampleRate : 0,
-    active: data.active === true
+    spectrogram: normalizeSpectrogram(
+      data.spectrogram,
+      options.spectrogramFrames,
+      options.spectrumPoints
+    ),
+    sampleRate,
+    maxFrequency,
+    active,
+    tapStatus: normalizeVisualizationTapStatus(data.tapStatus, active),
+    reason: typeof data.reason === 'string' ? data.reason : ''
   }
 }
 
@@ -1232,7 +1440,9 @@ function rendererFallbackAllowed(): boolean {
   return process.env.TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK === '1'
 }
 
-export function loadNativeBinding(getCandidates: () => string[] = getNativeAddonCandidates): NativeAudioBinding | null {
+export function loadNativeBinding(
+  getCandidates: () => string[] = getNativeAddonCandidates
+): NativeAudioBinding | null {
   for (const candidate of getCandidates()) {
     if (!existsSync(candidate)) continue
     try {
@@ -1272,8 +1482,7 @@ function createDefaultPlaybackInfo(
           ? 'exclusive'
           : 'shared'
         : 'shared'
-  const devicePathKind =
-    output === 'asio' ? 'asio' : output === 'coreaudio' ? 'hal' : 'default'
+  const devicePathKind = output === 'asio' ? 'asio' : output === 'coreaudio' ? 'hal' : 'default'
   const perfectReasonCode = supportsOutputPerfect
     ? ''
     : output === 'wasapi' || output === 'coreaudio'
@@ -1479,49 +1688,39 @@ export class AudioEngineManager extends EventEmitter {
   private lastNativePlaybackInfoTickReadAt = Number.NEGATIVE_INFINITY
   private lastPlaybackInfoFanoutKey = ''
   private lastPublishedDuration: number | null = null
-  private lastVisualizationCache:
-    | {
-        key: string
-        state: PlaybackInfo['state']
-        source: string
-        readAt: number
-        data: VisualizationData
-      }
-    | null = null
-  private lastSpectrumCache:
-    | {
-        points: number
-        state: PlaybackInfo['state']
-        source: string
-        readAt: number
-        data: number[]
-      }
-    | null = null
-  private lastAudioDeviceOptionsCache:
-    | {
-        selectedDevice: string
-        readAt: number
-        options: AudioDeviceOption[]
-      }
-    | null = null
-  private lastNativeDspPluginStatusCache:
-    | {
-        readAt: number
-        status: unknown
-      }
-    | null = null
-  private lastConvolverInfoCache:
-    | {
-        readAt: number
-        info: ConvolverInfo
-      }
-    | null = null
-  private lastUpcomingTrackCache:
-    | {
-        readAt: number
-        track: AudioEngineQueueItem | null
-      }
-    | null = null
+  private lastVisualizationCache: {
+    key: string
+    state: PlaybackInfo['state']
+    source: string
+    readAt: number
+    data: VisualizationData
+  } | null = null
+  private lastSpectrumCache: {
+    points: number
+    state: PlaybackInfo['state']
+    source: string
+    readAt: number
+    data: number[]
+  } | null = null
+  private lastAudioDeviceOptionsCache: {
+    selectedDevice: string
+    readAt: number
+    options: AudioDeviceOption[]
+  } | null = null
+  private lastAudioDeviceOptionsSignature = ''
+  private lastAudioDeviceOptionsProbeAt = Number.NEGATIVE_INFINITY
+  private lastNativeDspPluginStatusCache: {
+    readAt: number
+    status: unknown
+  } | null = null
+  private lastConvolverInfoCache: {
+    readAt: number
+    info: ConvolverInfo
+  } | null = null
+  private lastUpcomingTrackCache: {
+    readAt: number
+    track: AudioEngineQueueItem | null
+  } | null = null
   private metadataCache = new Map<
     string,
     {
@@ -1532,6 +1731,7 @@ export class AudioEngineManager extends EventEmitter {
   private destroyed = false
   private nativePlaybackActive = false
   private nativeOutputRouteSynced = false
+  private audioServiceReadyRestoreSerial = 0
   private lastNativeError = ''
   private pendingNativeSource: string | null = null
   private nativeConvolverIrPath: string | null = null
@@ -1568,14 +1768,17 @@ export class AudioEngineManager extends EventEmitter {
     this.updateOutputPerfect()
   }
 
-  private createNativeBinding(dependencies: AudioEngineManagerDependencies): NativeAudioBinding | null {
+  private createNativeBinding(
+    dependencies: AudioEngineManagerDependencies
+  ): NativeAudioBinding | null {
     const nativeAddonCandidates = dependencies.nativeAddonCandidates ?? getNativeAddonCandidates
     if (!nativeAddonCandidates().some((candidate) => existsSync(candidate))) {
       this.lastNativeError = '未加载 twilight_audio_node.node'
       return null
     }
     if (dependencies.audioServiceFactory || canUseAudioEngineService()) {
-      const service = dependencies.audioServiceFactory?.() ??
+      const service =
+        dependencies.audioServiceFactory?.() ??
         new AudioEngineServiceBinding({
           serviceEntry: dependencies.audioServiceEntry ?? join(__dirname, 'audioEngineService.js')
         })
@@ -1593,9 +1796,12 @@ export class AudioEngineManager extends EventEmitter {
   private handleAudioServiceCrash(reason: string): void {
     this.lastNativeError = reason
     this.nativePlaybackActive = false
+    this.nativeOutputRouteSynced = false
+    this.audioServiceReadyRestoreSerial += 1
     this.nativeConvolverIrPath = null
     this.lastNativeDspPluginStatusCache = null
     this.lastConvolverInfoCache = null
+    this.invalidateAudioDeviceOptionsCache('audio-service-crash')
     this.invalidateUpcomingTrackCache()
     this.metadataCache.clear()
     const nextDiagnostics = {
@@ -1627,10 +1833,18 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   private handleAudioServiceReady(): void {
-    this.tryNative('音频服务恢复后应用输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
-    this.tryNative('音频服务恢复后应用输出设备', (native) => native.SetOutputDevice(this.device))
-    this.applyNativeOutputConfig('音频服务恢复后应用输出配置')
-    this.nativeOutputRouteSynced = true
+    const restoreSerial = ++this.audioServiceReadyRestoreSerial
+    this.nativeOutputRouteSynced = false
+    this.invalidateAudioDeviceOptionsCache('audio-service-ready')
+    void this.restoreAudioServiceOutputRoute().then((result) => {
+      if (this.destroyed || restoreSerial !== this.audioServiceReadyRestoreSerial) return
+      this.nativeOutputRouteSynced = result.synced
+      this.emit('audio-service-ready', {
+        manualResumeRequired: true,
+        outputRouteSynced: result.synced,
+        restoreErrors: result.errors
+      })
+    })
     this.applyNativeDspSettings('音频服务恢复后应用 DSP 配置')
     if (this.nativeDspPluginChainJson) {
       this.tryNative('音频服务恢复后应用原生 DSP 插件链', (native) =>
@@ -1650,6 +1864,51 @@ export class AudioEngineManager extends EventEmitter {
       nativePlaybackActive: false
     }
     this.publishPlaybackInfo()
+  }
+
+  private async restoreAudioServiceOutputRoute(): Promise<{ synced: boolean; errors: string[] }> {
+    const results: Array<{ ok: boolean; error: string }> = []
+    results.push(
+      await this.restoreAudioServiceOutputRouteStep(
+        'output-backend',
+        '音频服务恢复后应用输出后端',
+        'SetOutputBackend',
+        this.getNativeBackendId()
+      )
+    )
+    results.push(
+      await this.restoreAudioServiceOutputRouteStep(
+        'output-device',
+        '音频服务恢复后应用输出设备',
+        'SetOutputDevice',
+        this.device
+      )
+    )
+    results.push(
+      await this.restoreAudioServiceOutputRouteStep(
+        'output-config',
+        '音频服务恢复后应用输出配置',
+        'SetOutputConfig',
+        JSON.stringify(this.outputConfig)
+      )
+    )
+    return {
+      synced: results.every((result) => result.ok),
+      errors: results.filter((result) => !result.ok).map((result) => result.error)
+    }
+  }
+
+  private async restoreAudioServiceOutputRouteStep(
+    id: string,
+    context: string,
+    method: keyof NativeAudioBinding,
+    ...args: unknown[]
+  ): Promise<{ ok: boolean; error: string }> {
+    const ok = await this.callNativeMaybeAsync(context, method, ...args)
+    return {
+      ok,
+      error: ok ? '' : `${id}: ${this.lastNativeError || context}`
+    }
   }
 
   async start(): Promise<void> {
@@ -1673,9 +1932,10 @@ export class AudioEngineManager extends EventEmitter {
       exclusiveMode: this.exclusiveMode,
       outputConfig: this.outputConfig
     }
-    let nativeStarted = this.tryNative(
+    let nativeStarted = await this.tryNativePlay(
       '播放',
-      (native) => native.Play(source, startTime),
+      source,
+      startTime,
       firstErrorContext.output !== 'asio'
     )
     let nativeFallbackReason = ''
@@ -1687,10 +1947,12 @@ export class AudioEngineManager extends EventEmitter {
       this.tryNative('ASIO 失败后切换到 WASAPI 兜底后端', (native) =>
         native.SetOutputBackend(this.getNativeBackendId())
       )
-      this.tryNative('ASIO 失败后切换到 WASAPI 默认设备', (native) => native.SetOutputDevice(this.device))
+      this.tryNative('ASIO 失败后切换到 WASAPI 默认设备', (native) =>
+        native.SetOutputDevice(this.device)
+      )
       this.applyNativeOutputConfig('ASIO 失败后应用 WASAPI 兜底配置')
       this.nativeOutputRouteSynced = true
-      nativeStarted = this.tryNative('WASAPI 兜底播放', (native) => native.Play(source, startTime))
+      nativeStarted = await this.tryNativePlay('WASAPI 兜底播放', source, startTime)
       if (!nativeStarted) {
         this.output = firstErrorContext.output
         this.device = firstErrorContext.device
@@ -1714,7 +1976,11 @@ export class AudioEngineManager extends EventEmitter {
     const isDsd = sourceLooksDsd(source)
     const nativeDsd = nativeInfo ? normalizeDsdState(nativeInfo.outputInfo, nativeInfo) : null
     const playbackIsDsd = isDsd || nativeDsd?.isDsd === true
-    const playbackDsdMode = nativeDsd?.isDsd ? nativeDsd.dsdMode : playbackIsDsd ? 'unsupported' : 'pcm'
+    const playbackDsdMode = nativeDsd?.isDsd
+      ? nativeDsd.dsdMode
+      : playbackIsDsd
+        ? 'unsupported'
+        : 'pcm'
     const playbackDsdRate = nativeDsd?.isDsd ? nativeDsd.dsdRate : 0
     const sourceQueueIndex = this.queue.findIndex((item) => item.source === source)
     this.playbackInfo = {
@@ -1745,7 +2011,8 @@ export class AudioEngineManager extends EventEmitter {
     this.publishPlaybackInfo()
     return {
       nativeStarted,
-      fallbackReason: nativeFallbackReason || (nativeStarted ? '' : this.lastNativeError || '原生音频引擎不可用')
+      fallbackReason:
+        nativeFallbackReason || (nativeStarted ? '' : this.lastNativeError || '原生音频引擎不可用')
     }
   }
 
@@ -1762,7 +2029,10 @@ export class AudioEngineManager extends EventEmitter {
         await native.callAsync('Pause', [])
         // 等待原生引擎更新状态后读取真实播放信息
         const raw = await native.callAsync('GetPlaybackInfo', [])
-        const realInfo = parseNativeJson(raw as string | PlaybackInfo | undefined, null as PlaybackInfo | null)
+        const realInfo = parseNativeJson(
+          raw as string | PlaybackInfo | undefined,
+          null as PlaybackInfo | null
+        )
         if (realInfo) {
           this.playbackInfo = this.mergeNativePlaybackInfo(this.normalizePlaybackInfo(realInfo))
         }
@@ -1919,6 +2189,7 @@ export class AudioEngineManager extends EventEmitter {
     if (enabled === this.exclusiveMode) return await this.getAudioOutputState()
 
     this.exclusiveMode = enabled
+    this.invalidateAudioDeviceOptionsCache('exclusive-mode-changed')
     this.tryNative('切换独占模式', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.applyNativeOutputConfig('切换输出配置')
     this.refreshOutputInfoFromNative(true)
@@ -1949,6 +2220,7 @@ export class AudioEngineManager extends EventEmitter {
     this.output = nextOutput
     this.device = nextDevice
     this.exclusiveMode = nextExclusiveMode
+    this.invalidateAudioDeviceOptionsCache('audio-output-changed')
     this.tryNative('切换输出后端', (native) => native.SetOutputBackend(this.getNativeBackendId()))
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
     this.applyNativeOutputConfig('切换输出配置')
@@ -1962,6 +2234,7 @@ export class AudioEngineManager extends EventEmitter {
     if (nextDevice === this.device) return await this.getAudioOutputState()
 
     this.device = nextDevice
+    this.invalidateAudioDeviceOptionsCache('audio-device-changed')
     this.tryNative('切换输出设备', (native) => native.SetOutputDevice(this.device))
     this.refreshOutputInfoFromNative(true)
     return await this.getAudioOutputState()
@@ -2074,7 +2347,8 @@ export class AudioEngineManager extends EventEmitter {
       convolverEnabled: false,
       convolverIrPath: ''
     })
-    if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.getConvolverInfo()
+    if (audioProcessingSettingsEqual(nextProcessing, this.processing))
+      return this.getConvolverInfo()
 
     this.processing = nextProcessing
     this.lastConvolverInfoCache = null
@@ -2263,13 +2537,15 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async getPlaybackInfo(): Promise<PlaybackInfo> {
+    const now = this.scheduler.now()
     if (
       this.nativePlaybackActive &&
-      this.scheduler.now() - this.lastNativePlaybackInfoTickReadAt > PLAYBACK_INFO_CACHE_TTL_MS
+      now - this.lastNativePlaybackInfoTickReadAt > PLAYBACK_INFO_CACHE_TTL_MS
     ) {
       const nativeInfo = this.readNativePlaybackInfo()
       if (nativeInfo) {
         this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
+        this.lastNativePlaybackInfoTickReadAt = now
       }
     }
     return { ...this.playbackInfo, nativePlaybackActive: this.nativePlaybackActive }
@@ -2303,10 +2579,12 @@ export class AudioEngineManager extends EventEmitter {
     } catch {
       // Keep the visualizer alive while native playback is still optional.
     }
-    return cache(Array.from({ length: points }, (_, index) => {
-      const x = index / Math.max(1, points - 1)
-      return (Math.sin((x * 12 + this.playbackInfo.position) * Math.PI) + 1) * 0.25
-    }))
+    return cache(
+      Array.from({ length: points }, (_, index) => {
+        const x = index / Math.max(1, points - 1)
+        return (Math.sin((x * 12 + this.playbackInfo.position) * Math.PI) + 1) * 0.25
+      })
+    )
   }
 
   getVisualizationData(options: VisualizationOptions = {}): VisualizationData {
@@ -2324,15 +2602,19 @@ export class AudioEngineManager extends EventEmitter {
       return cached.data
     }
     const cache = (data: VisualizationData): VisualizationData => {
+      const cachedData = withPrecomputedVisualizerBars(data, normalizedOptions)
       this.lastVisualizationCache = {
         key: cacheKey,
         state: this.playbackInfo.state,
         source: this.playbackInfo.source,
         readAt: now,
-        data
+        data: cachedData
       }
-      return data
+      return cachedData
     }
+    let fallbackReason = this.native?.GetVisualizationData
+      ? 'Native visualization tap returned no samples'
+      : 'Native visualization tap unavailable'
     try {
       const nativeData = parseNativeJson(
         this.native?.GetVisualizationData?.(cacheKey),
@@ -2343,14 +2625,32 @@ export class AudioEngineManager extends EventEmitter {
         if (normalizedData.active || this.playbackInfo.state !== 'playing') {
           return cache(normalizedData)
         }
+        fallbackReason = normalizedData.reason || 'Native visualization tap returned no samples'
+      } else {
+        fallbackReason = 'Native visualization tap unavailable'
       }
     } catch {
+      fallbackReason = 'Native visualization tap unavailable'
       // Keep the renderer visualizer alive while native playback is still optional.
     }
     if (this.playbackInfo.state === 'playing') {
-      return cache(createFallbackVisualizationData(normalizedOptions, this.playbackInfo.actualSampleRate, now / 1000))
+      return cache(
+        createFallbackVisualizationData(
+          normalizedOptions,
+          this.playbackInfo.actualSampleRate,
+          now / 1000,
+          fallbackReason
+        )
+      )
     }
-    return cache(createInactiveVisualizationData(normalizedOptions, this.playbackInfo.actualSampleRate))
+    return cache(
+      createInactiveVisualizationData(
+        normalizedOptions,
+        this.playbackInfo.actualSampleRate,
+        fallbackReason === 'Native visualization tap unavailable' ? 'native-unavailable' : 'stopped',
+        fallbackReason === 'Native visualization tap unavailable' ? fallbackReason : ''
+      )
+    )
   }
 
   destroy(): void {
@@ -2431,14 +2731,16 @@ export class AudioEngineManager extends EventEmitter {
     const perfectReason = canonicalOutput?.perfectReason ?? info.perfectReason ?? ''
     const perfectReasonCode = canonicalOutput?.perfectReasonCode ?? info.perfectReasonCode ?? ''
     const supportsOutputPerfect =
-      canonicalOutput?.supportsOutputPerfect ?? info.supportsOutputPerfect ?? outputInfo.supportsOutputPerfect ?? false
+      canonicalOutput?.supportsOutputPerfect ??
+      info.supportsOutputPerfect ??
+      outputInfo.supportsOutputPerfect ??
+      false
     const normalizedDsd = normalizeDsdState(canonicalOutput, info)
     const sourceIsDsd = sourceLooksDsd(info.source || this.playbackInfo.source)
     const isDsd = normalizedDsd.isDsd || sourceIsDsd
-    const dsdMode =
-      !isDsd
-        ? 'pcm'
-        : this.processing.dsdOutputMode === 'pcm'
+    const dsdMode = !isDsd
+      ? 'pcm'
+      : this.processing.dsdOutputMode === 'pcm'
         ? 'pcm'
         : normalizedDsd.isDsd
           ? normalizedDsd.dsdMode
@@ -2462,7 +2764,11 @@ export class AudioEngineManager extends EventEmitter {
     outputInfo.isDsd = isDsd
     outputInfo.dsdMode = dsdMode
     outputInfo.dsdRate = dsdRate
-    outputInfo.backend = preferNonEmpty(canonicalOutput?.backend, info.outputBackend, this.getNativeBackendId())
+    outputInfo.backend = preferNonEmpty(
+      canonicalOutput?.backend,
+      info.outputBackend,
+      this.getNativeBackendId()
+    )
     outputInfo.actualBackend = preferNonEmpty(canonicalOutput?.actualBackend, outputInfo.backend)
     outputInfo.accessMode = preferNonEmpty(
       canonicalOutput?.accessMode,
@@ -2470,8 +2776,15 @@ export class AudioEngineManager extends EventEmitter {
     )
     outputInfo.devicePathKind = preferNonEmpty(canonicalOutput?.devicePathKind, 'default')
     outputInfo.capabilityReason = preferNonEmpty(canonicalOutput?.capabilityReason, perfectReason)
-    outputInfo.deviceName = preferNonEmpty(canonicalOutput?.deviceName, info.outputDevice, this.device)
-    outputInfo.actualDeviceName = preferNonEmpty(canonicalOutput?.actualDeviceName, outputInfo.deviceName)
+    outputInfo.deviceName = preferNonEmpty(
+      canonicalOutput?.deviceName,
+      info.outputDevice,
+      this.device
+    )
+    outputInfo.actualDeviceName = preferNonEmpty(
+      canonicalOutput?.actualDeviceName,
+      outputInfo.deviceName
+    )
     outputInfo.driverName = preferNonEmpty(canonicalOutput?.driverName, info.driverName)
     outputInfo.actualDriverName = preferNonEmpty(
       canonicalOutput?.actualDriverName,
@@ -2491,7 +2804,9 @@ export class AudioEngineManager extends EventEmitter {
     outputInfo.latencyFrames = canonicalOutput?.latencyFrames ?? info.latencyFrames ?? 0
     outputInfo.latencyMs = canonicalOutput?.latencyMs ?? info.latencyMs ?? 0
     outputInfo.channelRoutingMode =
-      canonicalOutput?.channelRoutingMode ?? info.channelRoutingMode ?? this.outputConfig.routingMode
+      canonicalOutput?.channelRoutingMode ??
+      info.channelRoutingMode ??
+      this.outputConfig.routingMode
     outputInfo.deviceRecovered = canonicalOutput?.deviceRecovered ?? info.deviceRecovered ?? false
     outputInfo.recoveryCount = canonicalOutput?.recoveryCount ?? info.recoveryCount ?? 0
     outputInfo.latencyInfo = latencyInfo
@@ -2504,8 +2819,13 @@ export class AudioEngineManager extends EventEmitter {
       actualBackend: outputInfo.actualBackend,
       accessMode: outputInfo.accessMode,
       devicePathKind: outputInfo.devicePathKind,
-      driverName: preferNonEmpty(outputInfo.driverName, outputInfo.actualDriverName, info.driverName),
-      driverVersion: outputInfo.driverVersion || outputInfo.actualDriverVersion || info.driverVersion || 0,
+      driverName: preferNonEmpty(
+        outputInfo.driverName,
+        outputInfo.actualDriverName,
+        info.driverName
+      ),
+      driverVersion:
+        outputInfo.driverVersion || outputInfo.actualDriverVersion || info.driverVersion || 0,
       actualOutputFormat: outputInfo.actualOutputFormat,
       actualSampleRate: outputInfo.actualSampleRate,
       actualBitDepth: outputInfo.actualBitDepth,
@@ -2554,7 +2874,8 @@ export class AudioEngineManager extends EventEmitter {
     this.playbackInfo.latencyFrames = outputInfo.latencyFrames || 0
     this.playbackInfo.latencyMs = outputInfo.latencyMs || 0
     this.playbackInfo.latencyInfo = outputInfo.latencyInfo
-    this.playbackInfo.channelRoutingMode = outputInfo.channelRoutingMode || this.outputConfig.routingMode
+    this.playbackInfo.channelRoutingMode =
+      outputInfo.channelRoutingMode || this.outputConfig.routingMode
     this.playbackInfo.supportsOutputPerfect = outputInfo.supportsOutputPerfect === true
     this.playbackInfo.sourceExact = outputInfo.sourceExact === true
     this.playbackInfo.diagnostics = outputInfo.diagnostics
@@ -2568,20 +2889,32 @@ export class AudioEngineManager extends EventEmitter {
     this.playbackInfo.perfectReasonCode = outputInfo.perfectReasonCode || ''
     this.playbackInfo.capabilityReason = outputInfo.capabilityReason || ''
     this.playbackInfo.isDsd = outputInfo.isDsd === true
-    this.playbackInfo.dsdMode = outputInfo.isDsd === true ? outputInfo.dsdMode || 'unsupported' : 'pcm'
+    this.playbackInfo.dsdMode =
+      outputInfo.isDsd === true ? outputInfo.dsdMode || 'unsupported' : 'pcm'
     this.playbackInfo.dsdRate = outputInfo.isDsd === true ? outputInfo.dsdRate || 0 : 0
   }
 
   private tick(): void {
     if (this.destroyed) return
 
+    this.pollAudioDeviceOptionsForChanges()
+
     if (this.nativePlaybackActive) {
+      const previousCapabilitySignature = this.createDeviceCapabilityRefreshSignature(
+        this.playbackInfo
+      )
       const wasPlaying = this.playbackInfo.state === 'playing'
       const previousSource = this.playbackInfo.source
       const previousQueueIndex = this.playbackInfo.queueIndex
       const nativeInfo = this.readNativePlaybackInfo()
       if (nativeInfo) {
         this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
+        const nextCapabilitySignature = this.createDeviceCapabilityRefreshSignature(
+          this.playbackInfo
+        )
+        if (nextCapabilitySignature !== previousCapabilitySignature) {
+          this.invalidateAudioDeviceOptionsCache('native-output-diagnostics-changed')
+        }
         this.lastTick = this.scheduler.now()
         this.lastNativePlaybackInfoTickReadAt = this.lastTick
         this.publishProperty('time-pos', this.playbackInfo.position)
@@ -2756,18 +3089,39 @@ export class AudioEngineManager extends EventEmitter {
     found: boolean
     metadata: NativeAudioMetadata | null
   } {
+    const now = this.scheduler.now()
     const cached = this.metadataCache.get(source)
-    if (!cached || this.scheduler.now() - cached.readAt > METADATA_CACHE_TTL_MS) {
+    if (!cached) {
+      return { found: false, metadata: null }
+    }
+    if (now - cached.readAt > METADATA_CACHE_TTL_MS) {
+      this.metadataCache.delete(source)
       return { found: false, metadata: null }
     }
     return { found: true, metadata: cached.metadata }
   }
 
   private cacheMetadata(source: string, metadata: NativeAudioMetadata | null): void {
+    const now = this.scheduler.now()
+    this.metadataCache.delete(source)
     this.metadataCache.set(source, {
-      readAt: this.scheduler.now(),
+      readAt: now,
       metadata
     })
+    this.pruneMetadataCache(now)
+  }
+
+  private pruneMetadataCache(now: number): void {
+    for (const [source, cached] of this.metadataCache.entries()) {
+      if (now - cached.readAt > METADATA_CACHE_TTL_MS) {
+        this.metadataCache.delete(source)
+      }
+    }
+    while (this.metadataCache.size > MAX_METADATA_CACHE_ENTRIES) {
+      const oldestSource = this.metadataCache.keys().next().value as string | undefined
+      if (!oldestSource) return
+      this.metadataCache.delete(oldestSource)
+    }
   }
 
   private refreshOutputInfoFromNative(resetDefaults: boolean): void {
@@ -2792,6 +3146,17 @@ export class AudioEngineManager extends EventEmitter {
     ) {
       return cached.options
     }
+    const options = this.readNativeAudioDeviceOptions()
+    this.lastAudioDeviceOptionsCache = {
+      selectedDevice: this.device,
+      readAt: now,
+      options
+    }
+    this.lastAudioDeviceOptionsSignature = this.createAudioDeviceOptionsSignature(options)
+    return options
+  }
+
+  private readNativeAudioDeviceOptions(): AudioDeviceOption[] {
     let nativeDevices: unknown = null
     try {
       nativeDevices = parseNativeJson(
@@ -2802,13 +3167,66 @@ export class AudioEngineManager extends EventEmitter {
       // Fall through to the stable default device.
     }
     const normalizedDevices = normalizeAudioDeviceOptions(nativeDevices, this.device)
-    const options = normalizedDevices.length > 0 ? normalizedDevices : [DEFAULT_AUDIO_DEVICE_OPTION]
-    this.lastAudioDeviceOptionsCache = {
-      selectedDevice: this.device,
-      readAt: now,
-      options
+    return normalizedDevices.length > 0 ? normalizedDevices : [{ ...DEFAULT_AUDIO_DEVICE_OPTION }]
+  }
+
+  private invalidateAudioDeviceOptionsCache(reason: string): void {
+    this.lastAudioDeviceOptionsCache = null
+    this.emit('audio-device-options-changed', { reason })
+  }
+
+  private pollAudioDeviceOptionsForChanges(): void {
+    if (!this.native || this.deviceOptionsProvider) return
+    const now = this.scheduler.now()
+    if (now - this.lastAudioDeviceOptionsProbeAt < AUDIO_DEVICE_OPTIONS_HOTPLUG_POLL_MS) return
+    this.lastAudioDeviceOptionsProbeAt = now
+
+    const options = this.readNativeAudioDeviceOptions()
+    const signature = this.createAudioDeviceOptionsSignature(options)
+    if (this.lastAudioDeviceOptionsSignature && signature !== this.lastAudioDeviceOptionsSignature) {
+      this.lastAudioDeviceOptionsCache = {
+        selectedDevice: this.device,
+        readAt: now,
+        options
+      }
+      this.lastAudioDeviceOptionsSignature = signature
+      this.emit('audio-device-options-changed', { reason: 'audio-device-hotplug' })
+      return
     }
+    this.lastAudioDeviceOptionsSignature = signature
+  }
+
+  private createAudioDeviceOptionsSignature(options: AudioDeviceOption[]): string {
     return options
+      .map((device) =>
+        [
+          device.id,
+          device.label,
+          device.backend || '',
+          device.pathKind || '',
+          device.capabilityVersion || 0,
+          device.dopSupportState || '',
+          device.nativeDsdSupportState || '',
+          (device.sampleRates || []).join(','),
+          (device.bitDepths || []).join(','),
+          (device.dopCarrierSampleRates || []).join(','),
+          (device.nativeDsdSampleRates || []).join(',')
+        ].join(':')
+      )
+      .join('|')
+  }
+
+  private createDeviceCapabilityRefreshSignature(info: PlaybackInfo): string {
+    const diagnostics = info.outputInfo.diagnostics
+    return [
+      info.outputInfo.actualBackend,
+      info.outputInfo.actualDeviceName,
+      info.outputInfo.devicePathKind,
+      diagnostics.deviceLostCount,
+      diagnostics.driverRestartCount,
+      info.outputInfo.deviceRecovered,
+      info.outputInfo.recoveryCount
+    ].join('|')
   }
 
   private tryNative(
@@ -2834,6 +3252,68 @@ export class AudioEngineManager extends EventEmitter {
       console.warn(`原生音频引擎${context}失败，${fallbackHint}：`, message)
       return false
     }
+  }
+
+  private async callNativeMaybeAsync(
+    context: string,
+    method: keyof NativeAudioBinding,
+    ...args: unknown[]
+  ): Promise<boolean> {
+    if (!this.native) {
+      this.lastNativeError = '未加载 twilight_audio_node.node'
+      return false
+    }
+    if (typeof this.native.callAsync === 'function') {
+      try {
+        await this.native.callAsync(String(method), args)
+        this.lastNativeError = ''
+        return true
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        this.lastNativeError = message
+        const fallbackHint = rendererFallbackAllowed()
+          ? '使用临时播放通道'
+          : '已阻止 HTMLAudio 静默降级'
+        console.warn(`原生音频引擎${context}失败，${fallbackHint}：`, message)
+        return false
+      }
+    }
+    return this.tryNative(context, (native) => {
+      const target = native[method]
+      if (typeof target !== 'function') {
+        throw new Error(`原生音频引擎不支持 ${String(method)}`)
+      }
+      ;(target as (...callArgs: unknown[]) => unknown).apply(native, args)
+    })
+  }
+
+  private async tryNativePlay(
+    context: string,
+    source: string,
+    startTime: number,
+    logFailure = true
+  ): Promise<boolean> {
+    if (!this.native) {
+      this.lastNativeError = '未加载 twilight_audio_node.node'
+      return false
+    }
+    if (typeof this.native.callAsync === 'function') {
+      try {
+        await this.native.callAsync('Play', [source, startTime])
+        this.lastNativeError = ''
+        return true
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        this.lastNativeError = message
+        if (!logFailure) return false
+        const fallbackHint = rendererFallbackAllowed()
+          ? '使用临时播放通道'
+          : '已阻止 HTMLAudio 静默降级'
+        console.warn(`原生音频引擎${context}失败，${fallbackHint}：`, message)
+        return false
+      }
+    }
+    return this.tryNative(context, (native) => native.Play(source, startTime), logFailure)
   }
 
   private updateOutputPerfect(): void {
@@ -2947,6 +3427,9 @@ export class AudioEngineManager extends EventEmitter {
     if (options.dedupePositionOnly && fanoutKey === this.lastPlaybackInfoFanoutKey) return
 
     this.lastPlaybackInfoFanoutKey = fanoutKey
-    this.emit('playback-info', { ...this.playbackInfo, nativePlaybackActive: this.nativePlaybackActive })
+    this.emit('playback-info', {
+      ...this.playbackInfo,
+      nativePlaybackActive: this.nativePlaybackActive
+    })
   }
 }

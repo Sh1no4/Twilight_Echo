@@ -37,6 +37,7 @@ class AudioBuffer {
   AudioFormat format() const;
 
  private:
+  size_t readLocked(PcmBlock& block, size_t targetBytesPerFrame);
   size_t contiguousWritableFramesLocked() const;
   size_t contiguousReadableFramesLocked() const;
 
@@ -51,6 +52,11 @@ class AudioBuffer {
   size_t writeFrame_ = 0;
   size_t availableFrames_ = 0;
   int channels_ = 0;
+  std::atomic<int> sampleRateSnapshot_{0};
+  std::atomic<int> channelSnapshot_{1};
+  std::atomic<int> bitDepthSnapshot_{32};
+  std::atomic<int> sampleFormatSnapshot_{static_cast<int>(AudioSampleFormat::Float32Interleaved)};
+  std::atomic<size_t> availableFramesSnapshot_{0};
 };
 
 }  // namespace twilight::audio

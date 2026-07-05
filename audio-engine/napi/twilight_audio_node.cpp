@@ -418,10 +418,12 @@ napi_value GetVisualizationData(napi_env env, napi_callback_info info) {
   napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
   const std::string options = argc > 0 ? getStringArg(env, argv[0]) : "{}";
   size_t required = 0;
-  TAE_GetVisualizationData(g_engine, options.c_str(), nullptr, 0, &required);
-  std::vector<char> buffer(required == 0 ? 1 : required);
-  const TAE_Result result =
-      TAE_GetVisualizationData(g_engine, options.c_str(), buffer.data(), buffer.size(), &required);
+  std::vector<char> buffer(65536);
+  TAE_Result result = TAE_GetVisualizationData(g_engine, options.c_str(), buffer.data(), buffer.size(), &required);
+  if (result == TAE_RESULT_INVALID_ARGUMENT && required > buffer.size()) {
+    buffer.assign(required, '\0');
+    result = TAE_GetVisualizationData(g_engine, options.c_str(), buffer.data(), buffer.size(), &required);
+  }
   if (result != TAE_RESULT_OK) return throwOnError(env, result);
   napi_value json;
   napi_create_string_utf8(env, buffer.data(), NAPI_AUTO_LENGTH, &json);

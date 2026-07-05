@@ -5,10 +5,12 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <deque>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace twilight::audio {
@@ -38,17 +40,29 @@ class AsioBackend final : public IOutputBackend {
   std::string deviceName() const override;
 
  private:
+  struct RecoveryRequest {
+    AsioHostEvent event;
+    std::string message;
+  };
+
   struct FormatCandidate;
 
   bool chooseFormat(const AsioDeviceInfo& device, const AudioFormat& requestedFormat, AudioFormat* selected) const;
   long chooseBufferSize(const AsioDeviceInfo& device) const;
   int routedOutputChannels(const AsioDeviceInfo& device, int sourceChannels) const;
   void renderBuffer(long bufferIndex);
+  void queueRecoveryFromHostCallback(AsioHostEvent event, std::string message);
+  void recoveryWorkerLoop();
+  void joinRecoveryThread();
   bool recover(AsioHostEvent event, const std::string& message);
   bool createAndStartHost(std::string* error);
 
   std::unique_ptr<IAsioHost> host_;
   mutable std::mutex mutex_;
+  std::mutex recoveryQueueMutex_;
+  std::condition_variable recoveryQueueCv_;
+  std::thread recoveryThread_;
+  std::deque<RecoveryRequest> recoveryRequests_;
   RenderCallback callback_;
   TypedRenderCallback typedCallback_;
   OutputEventCallback eventCallback_;
@@ -75,6 +89,7 @@ class AsioBackend final : public IOutputBackend {
   bool actualOutputFormatObserved_ = false;
   bool actualOutputChannelFormatsMatch_ = true;
   std::atomic<bool> running_{false};
+  std::atomic<bool> stopRequested_{false};
   std::vector<float> renderScratch_;
   std::vector<uint8_t> typedRenderScratch_;
   std::chrono::high_resolution_clock::time_point lastRenderTime_{};

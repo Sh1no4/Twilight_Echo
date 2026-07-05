@@ -515,6 +515,7 @@ bool AsioBackend::start(RenderCallback callback, OutputEventCallback eventCallba
     if (error) *error = "ASIO 后端尚未打开";
     return false;
   }
+  stopRequested_ = false;
   {
     std::lock_guard lock(mutex_);
     callback_ = std::move(callback);
@@ -535,6 +536,7 @@ bool AsioBackend::startTyped(
     if (error) *error = "ASIO 后端尚未打开";
     return false;
   }
+  stopRequested_ = false;
   {
     std::lock_guard lock(mutex_);
     typedCallback_ = std::move(callback);
@@ -552,6 +554,13 @@ void AsioBackend::stop() {
 }
 
 void AsioBackend::close() {
+  {
+    std::lock_guard queueLock(recoveryQueueMutex_);
+    stopRequested_ = true;
+    recoveryRequests_.clear();
+  }
+  recoveryQueueCv_.notify_all();
+  joinRecoveryThread();
   stop();
   if (host_) host_->close();
   std::lock_guard lock(mutex_);
@@ -733,7 +742,9 @@ int AsioBackend::routedOutputChannels(const AsioDeviceInfo& device, int sourceCh
 bool AsioBackend::createAndStartHost(std::string* error) {
   if (!host_->createBuffers(
           [this](long bufferIndex) { renderBuffer(bufferIndex); },
-          [this](AsioHostEvent event, const std::string& message) { recover(event, message); },
+          [this](AsioHostEvent event, const std::string& message) {
+            queueRecoveryFromHostCallback(event, message);
+          },
           error)) {
     std::lock_guard lock(mutex_);
     ++diagnostics_.sessionBufferDropCount;
@@ -840,8 +851,24 @@ void AsioBackend::renderBuffer(long bufferIndex) {
   OutputConfig outputConfig;
   AudioFormat outputFormat;
   bool actualOutputChannelFormatsMatch = false;
+  const auto fillOutputSilence = [&]() {
+    const int outputChannels = std::max(1, openConfig_.format.channelCount);
+    const size_t frames = static_cast<size_t>(std::max<long>(1, bufferSizeFrames_));
+    for (int channel = 0; channel < outputChannels; ++channel) {
+      auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
+      if (!output) continue;
+      const AudioSampleFormat sampleFormat = host_->outputSampleFormat(channel);
+      const int silenceByte = isDsdSampleFormat(sampleFormat) ? 0x69 : 0;
+      std::memset(output, silenceByte, frames * asio::bytesPerSample(sampleFormat));
+    }
+  };
   {
-    std::lock_guard lock(mutex_);
+    std::unique_lock lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+      fillOutputSilence();
+      host_->outputReady();
+      return;
+    }
     callback = callback_;
     typedCallback = typedCallback_;
     outputConfig = outputConfig_;
@@ -860,9 +887,11 @@ void AsioBackend::renderBuffer(long bufferIndex) {
     const double elapsedMs = std::chrono::duration<double, std::milli>(now - lastRenderTime_).count();
     const double expectedMs = static_cast<double>(frames) * 1000.0 / asioCallbackFrameRate(outputFormat);
     if (expectedMs > 0 && elapsedMs > expectedMs * 1.5) {
-      std::lock_guard lock(mutex_);
-      ++diagnostics_.sessionUnderrunCount;
-      ++diagnostics_.lifetimeUnderrunCount;
+      std::unique_lock lock(mutex_, std::try_to_lock);
+      if (lock.owns_lock()) {
+        ++diagnostics_.sessionUnderrunCount;
+        ++diagnostics_.lifetimeUnderrunCount;
+      }
     }
   }
   lastRenderTime_ = now;
@@ -872,35 +901,37 @@ void AsioBackend::renderBuffer(long bufferIndex) {
       audioFormatBytesPerFrame(outputFormat) > 0) {
     const size_t sampleStride = asio::bytesPerSample(outputFormat.sampleFormat);
     const size_t bytesPerFrame = audioFormatBytesPerFrame(outputFormat);
-    typedRenderScratch_.resize(frames * bytesPerFrame);
-    PcmBlock block;
-    block.format = outputFormat;
-    block.data = typedRenderScratch_.data();
-    block.frames = frames;
-    block.byteSize = typedRenderScratch_.size();
-    const size_t rendered = typedCallback(block);
-    if (rendered > 0) {
-      const size_t renderedFrames = std::min(rendered, frames);
-      if (renderedFrames < frames) {
-        std::memset(
-            typedRenderScratch_.data() + renderedFrames * bytesPerFrame,
-            0,
-            (frames - renderedFrames) * bytesPerFrame);
+    const size_t typedByteCount = frames * bytesPerFrame;
+    if (typedRenderScratch_.size() >= typedByteCount) {
+      PcmBlock block;
+      block.format = outputFormat;
+      block.data = typedRenderScratch_.data();
+      block.frames = frames;
+      block.byteSize = typedByteCount;
+      const size_t rendered = typedCallback(block);
+      if (rendered > 0) {
+        const size_t renderedFrames = std::min(rendered, frames);
+        if (renderedFrames < frames) {
+          std::memset(
+              typedRenderScratch_.data() + renderedFrames * bytesPerFrame,
+              0,
+              (frames - renderedFrames) * bytesPerFrame);
+        }
+        for (int channel = 0; channel < outputChannels; ++channel) {
+          auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
+          if (!output) continue;
+          if (host_->outputSampleFormat(channel) != outputFormat.sampleFormat) continue;
+          asio::writeInterleavedTypedChannelToPlanar(
+              typedRenderScratch_.data(),
+              frames,
+              sourceChannels,
+              channel,
+              sampleStride,
+              output);
+        }
+        host_->outputReady();
+        return;
       }
-      for (int channel = 0; channel < outputChannels; ++channel) {
-        auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
-        if (!output) continue;
-        if (host_->outputSampleFormat(channel) != outputFormat.sampleFormat) continue;
-        asio::writeInterleavedTypedChannelToPlanar(
-            typedRenderScratch_.data(),
-            frames,
-            sourceChannels,
-            channel,
-            sampleStride,
-            output);
-      }
-      host_->outputReady();
-      return;
     }
   }
 
@@ -913,21 +944,31 @@ void AsioBackend::renderBuffer(long bufferIndex) {
       std::memset(output, 0x69, frames * asio::bytesPerSample(sampleFormat));
     }
     {
-      std::lock_guard lock(mutex_);
-      ++diagnostics_.sessionBufferDropCount;
-      ++diagnostics_.lifetimeBufferDropCount;
-      diagnostics_.lastError = "ASIO Native DSD render requires a typed raw DSD callback";
-      outputInfo_.perfectReasonCode = "native_dsd_typed_callback_missing";
-      outputInfo_.perfectReason = diagnostics_.lastError;
-      outputInfo_.capabilityReason = diagnostics_.lastError;
-      outputInfo_.diagnostics = diagnostics_;
+      std::unique_lock lock(mutex_, std::try_to_lock);
+      if (lock.owns_lock()) {
+        ++diagnostics_.sessionBufferDropCount;
+        ++diagnostics_.lifetimeBufferDropCount;
+        diagnostics_.lastError = "ASIO Native DSD render requires a typed raw DSD callback";
+        outputInfo_.perfectReasonCode = "native_dsd_typed_callback_missing";
+        outputInfo_.perfectReason = diagnostics_.lastError;
+        outputInfo_.capabilityReason = diagnostics_.lastError;
+        outputInfo_.diagnostics = diagnostics_;
+      }
     }
     host_->outputReady();
     return;
   }
 
   const size_t samples = frames * static_cast<size_t>(sourceChannels);
-  renderScratch_.resize(samples);
+  if (renderScratch_.size() < samples) {
+    for (int channel = 0; channel < outputChannels; ++channel) {
+      auto* output = static_cast<uint8_t*>(host_->outputBuffer(channel, bufferIndex));
+      if (!output) continue;
+      std::memset(output, 0, frames * asio::bytesPerSample(host_->outputSampleFormat(channel)));
+    }
+    host_->outputReady();
+    return;
+  }
   const size_t renderedFrames = callback ? std::min(callback(renderScratch_.data(), frames), frames) : 0;
   if (renderedFrames < frames) {
     const size_t renderedSamples = renderedFrames * static_cast<size_t>(sourceChannels);
@@ -951,6 +992,46 @@ void AsioBackend::renderBuffer(long bufferIndex) {
         output);
   }
   host_->outputReady();
+}
+
+void AsioBackend::queueRecoveryFromHostCallback(AsioHostEvent event, std::string message) {
+  if (stopRequested_.load()) return;
+  {
+    std::lock_guard lock(recoveryQueueMutex_);
+    if (stopRequested_.load()) return;
+    recoveryRequests_.push_back({event, std::move(message)});
+    if (!recoveryThread_.joinable()) {
+      recoveryThread_ = std::thread([this] { recoveryWorkerLoop(); });
+    }
+  }
+  recoveryQueueCv_.notify_one();
+}
+
+void AsioBackend::recoveryWorkerLoop() {
+  for (;;) {
+    RecoveryRequest request;
+    {
+      std::unique_lock lock(recoveryQueueMutex_);
+      recoveryQueueCv_.wait(lock, [this] {
+        return stopRequested_.load() || !recoveryRequests_.empty();
+      });
+      if (stopRequested_.load()) break;
+      request = std::move(recoveryRequests_.front());
+      recoveryRequests_.pop_front();
+    }
+    recover(request.event, request.message);
+  }
+}
+
+void AsioBackend::joinRecoveryThread() {
+  std::thread threadToJoin;
+  {
+    std::lock_guard lock(recoveryQueueMutex_);
+    if (recoveryThread_.joinable() && recoveryThread_.get_id() != std::this_thread::get_id()) {
+      threadToJoin = std::move(recoveryThread_);
+    }
+  }
+  if (threadToJoin.joinable()) threadToJoin.join();
 }
 
 bool AsioBackend::recover(AsioHostEvent event, const std::string& message) {

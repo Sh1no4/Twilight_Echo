@@ -19,16 +19,9 @@ namespace {
 constexpr size_t kDecodeChunkFrames = 2048;
 constexpr size_t kVisualizationFftResolution = 8192;
 constexpr double kUnityVolumeEpsilon = 0.0001;
-constexpr double kDefaultRenderReadWaitMs = 10.0;
-constexpr double kMaxRenderReadWaitMs = 20.0;
 AudioPipeline::BackendFactory& backendFactoryOverride() {
   static AudioPipeline::BackendFactory factory;
   return factory;
-}
-
-std::chrono::milliseconds renderReadWaitForLatency(double bufferLatencyMs) {
-  const double base = bufferLatencyMs > 0.0 ? bufferLatencyMs * 0.8 : kDefaultRenderReadWaitMs;
-  return std::chrono::milliseconds(static_cast<int>(std::ceil(std::clamp(base, 2.0, kMaxRenderReadWaitMs))));
 }
 
 QueueItem makeManualItem(const std::string& source) {
@@ -254,6 +247,11 @@ AudioFormat pcmFallbackRequestFormat(
 
 }  // namespace
 
+size_t visualizationFftResolutionForConfig(size_t configuredFftResolution) {
+  if (configuredFftResolution == 0) return kVisualizationFftResolution;
+  return std::max(configuredFftResolution, kVisualizationFftResolution);
+}
+
 struct AudioPipeline::DecodeStream {
   enum class Mode {
     Pcm,
@@ -422,9 +420,13 @@ struct AudioPipeline::DecodeStream {
     decodeThread = std::thread([this] { decodeLoop(); });
   }
 
-  void stop() {
+  void requestStop() {
     running = false;
     buffer.notifyAll();
+  }
+
+  void stop() {
+    requestStop();
     if (decodeThread.joinable()) decodeThread.join();
   }
 
@@ -448,6 +450,20 @@ struct AudioPipeline::DecodeStream {
     return buffer.read(output, frameCount);
   }
 
+  void prepareFloatReadScratch(size_t maxFrames) {
+    const AudioFormat bufferFormat = buffer.format();
+    if (bufferFormat.sampleFormat == AudioSampleFormat::Float32Interleaved) {
+      floatReadScratch.clear();
+      return;
+    }
+    const size_t bytesPerFrame = audioFormatBytesPerFrame(bufferFormat);
+    if (bytesPerFrame == 0) {
+      floatReadScratch.clear();
+      return;
+    }
+    floatReadScratch.resize(std::max<size_t>(1, maxFrames) * bytesPerFrame);
+  }
+
   size_t readFloat(float* output, size_t frameCount) {
     if (!output || frameCount == 0) return 0;
     const AudioFormat bufferFormat = buffer.format();
@@ -459,7 +475,9 @@ struct AudioPipeline::DecodeStream {
     if (bytesPerFrame == 0) return 0;
     const size_t requiredBytes = frameCount * bytesPerFrame;
     if (floatReadScratch.size() < requiredBytes) {
-      floatReadScratch.resize(requiredBytes);
+      const size_t samples = frameCount * static_cast<size_t>(std::max(1, bufferFormat.channelCount));
+      std::fill(output, output + samples, 0.0f);
+      return 0;
     }
     PcmBlock block;
     block.format = bufferFormat;
@@ -492,11 +510,12 @@ struct AudioPipeline::DecodeStream {
     return buffer.waitForAvailableFrames(targetFrames, timeout, running, eof) > 0 || eof.load();
   }
 
-  void waitForRenderFrames(size_t targetFrames, std::chrono::milliseconds timeout) const {
-    buffer.waitForAvailableFrames(targetFrames, timeout, running, eof);
+ private:
+  void markEof() {
+    eof = true;
+    buffer.notifyAll();
   }
 
- private:
   void decodeLoop() {
     if (mode == Mode::Dop) {
       decodeDopLoop();
@@ -532,7 +551,7 @@ struct AudioPipeline::DecodeStream {
         decoded = decoder->readFrames(block, &error);
       }
       if (decoded == 0) {
-        eof = true;
+        markEof();
         break;
       }
       if (decodeFormat.sampleFormat == AudioSampleFormat::Float32Interleaved) {
@@ -559,7 +578,7 @@ struct AudioPipeline::DecodeStream {
       if (!dsdReader) break;
       const size_t read = dsdReader->readBytes(dsdBytes.data(), dsdBytes.size());
       if (read == 0) {
-        eof = true;
+        markEof();
         break;
       }
       const size_t packedFrames = dopPacker.pack(dsdBytes.data(), read, &pcmBytes);
@@ -585,7 +604,7 @@ struct AudioPipeline::DecodeStream {
       if (!dsdReader) break;
       const size_t read = dsdReader->readBytes(dsdBytes.data(), dsdBytes.size());
       if (read == 0) {
-        eof = true;
+        markEof();
         break;
       }
       const size_t frames = dsdBytesToInterleaved(dsdBytes.data(), read, info, decodeFormat.sampleFormat, &interleaved);
@@ -604,6 +623,30 @@ AudioPipeline::AudioPipeline() = default;
 
 AudioPipeline::~AudioPipeline() {
   stop();
+}
+
+bool AudioPipeline::retireDecodeStreamLocked(std::shared_ptr<DecodeStream> stream) {
+  if (!stream) return true;
+  if (retiredStreamCount_ >= retiredStreams_.size()) return false;
+  stream->requestStop();
+  retiredStreams_[retiredStreamCount_++] = std::move(stream);
+  return true;
+}
+
+void AudioPipeline::cleanupRetiredDecodeStreams() const {
+  std::array<std::shared_ptr<DecodeStream>, kRetiredStreamSlots> retired;
+  size_t retiredCount = 0;
+  {
+    std::lock_guard lock(mutex_);
+    retiredCount = retiredStreamCount_;
+    for (size_t i = 0; i < retiredCount; ++i) {
+      retired[i] = std::move(retiredStreams_[i]);
+    }
+    retiredStreamCount_ = 0;
+  }
+  for (size_t i = 0; i < retiredCount; ++i) {
+    if (retired[i]) retired[i]->stop();
+  }
 }
 
 void AudioPipeline::setBackendFactoryForTests(BackendFactory factory) {
@@ -854,8 +897,9 @@ TAE_Result AudioPipeline::playInternal(
       decodeFormat_.channelCount = std::max(1, stream_.sourceFormat.channelCount);
     }
     // 初始化声道路由器：采样率 + 上混参数 + 重置状态
-    channelRouter_.setSampleRate(outputFormat_.sampleRate);
     {
+      std::lock_guard channelRouterLock(channelRouterMutex_);
+      channelRouter_.setSampleRate(outputFormat_.sampleRate);
       UpmixConfig upmix;
       upmix.centerGain = outputConfig.upmixCenterGain;
       upmix.lfeGain = outputConfig.upmixLfeGain;
@@ -864,8 +908,8 @@ TAE_Result AudioPipeline::playInternal(
       upmix.sideGain = outputConfig.upmixSideGain;
       upmix.surroundDelayMs = outputConfig.upmixSurroundDelayMs;
       channelRouter_.setUpmixConfig(upmix);
+      channelRouter_.reset();
     }
-    channelRouter_.reset();
     currentItem_ = item;
     backendId_ = backendId == "wasapi-shared" ? "wasapi" : backendId;
     deviceName_ = output_->deviceName();
@@ -889,12 +933,19 @@ TAE_Result AudioPipeline::playInternal(
     dspStatus_ = dspChain_.status();
     volume_ = std::clamp(volume, 0.0, 1.0);
     dspActive_ = dspStatus_.dspActive || std::abs(volume - 1.0) > 0.0001;
-    spectrum_.prepare(outputFormat_, std::max(dspConfig_.fftResolution, kVisualizationFftResolution));
+    spectrum_.prepare(outputFormat_, visualizationFftResolutionForConfig(dspConfig_.fftResolution));
     spectrum_.setEnabled(dspConfig_.fftEnabled);
     gaplessEnabled_ = gaplessEnabled && !dopPath && !nativeDsdPath && !activeStream_->typedPassthrough;
     dopPathActive_ = dopPath;
     nativeDsdPathActive_ = nativeDsdPath;
     typedPassthroughActive_ = !dopPath && activeStream_->typedPassthrough;
+    activeUsesPreloadDspChain_ = false;
+    const size_t maxRenderFrames = outputInfo_.bufferSizeFrames > 0
+                                       ? static_cast<size_t>(outputInfo_.bufferSizeFrames)
+                                       : static_cast<size_t>(std::max(1, outputFormat_.sampleRate / 100));
+    prepareRenderScratchLocked(maxRenderFrames);
+    if (activeStream_) activeStream_->prepareFloatReadScratch(maxRenderFrames);
+    if (preloadStream_) preloadStream_->prepareFloatReadScratch(maxRenderFrames);
     updatePerfectLocked();
     state_ = PipelineState::Playing;
     renderedFrames_ = static_cast<uint64_t>(std::max(0.0, startTimeSeconds) * outputFormat_.sampleRate);
@@ -902,6 +953,8 @@ TAE_Result AudioPipeline::playInternal(
     deviceInvalidated_ = false;
     trackStarted_ = false;
     outputEventMessage_.clear();
+    preloadDspStatus_ = preloadDspChain_.status();
+    renderChannelCount_ = std::max(1, outputFormat_.channelCount);
   }
 
   const size_t prerollFrames = outputInfo_.bufferSizeFrames > 0
@@ -1072,12 +1125,19 @@ TAE_Result AudioPipeline::stop() {
   std::unique_ptr<IOutputBackend> output;
   std::shared_ptr<DecodeStream> active;
   std::shared_ptr<DecodeStream> preload;
+  std::array<std::shared_ptr<DecodeStream>, kRetiredStreamSlots> retired;
+  size_t retiredCount = 0;
   {
     std::lock_guard lock(mutex_);
     state_ = PipelineState::Stopped;
     output = std::move(output_);
     active = std::move(activeStream_);
     preload = std::move(preloadStream_);
+    retiredCount = retiredStreamCount_;
+    for (size_t i = 0; i < retiredCount; ++i) {
+      retired[i] = std::move(retiredStreams_[i]);
+    }
+    retiredStreamCount_ = 0;
   }
 
   if (output) {
@@ -1086,6 +1146,9 @@ TAE_Result AudioPipeline::stop() {
   }
   if (active) active->stop();
   if (preload) preload->stop();
+  for (size_t i = 0; i < retiredCount; ++i) {
+    if (retired[i]) retired[i]->stop();
+  }
 
   {
     std::lock_guard lock(mutex_);
@@ -1097,6 +1160,7 @@ TAE_Result AudioPipeline::stop() {
     perfectReason_.clear();
     dsdFallbackReason_.clear();
     outputInfo_ = {};
+    renderChannelCount_ = 2;
     renderedFrames_ = 0;
     ended_ = false;
     deviceInvalidated_ = false;
@@ -1110,9 +1174,11 @@ TAE_Result AudioPipeline::stop() {
     dopPathActive_ = false;
     nativeDsdPathActive_ = false;
     typedPassthroughActive_ = false;
+    activeUsesPreloadDspChain_ = false;
     crossfadeMixActive_ = false;
     crossfadeFramesProcessed_ = 0;
     crossfadeTotalFrames_ = 0;
+    preloadDspStatus_ = {};
     spectrum_.resetCapture();
   }
   return TAE_RESULT_OK;
@@ -1132,8 +1198,9 @@ TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
     std::lock_guard lock(mutex_);
     renderedFrames_ = static_cast<uint64_t>(std::max(0.0, seconds) * outputFormat_.sampleRate);
     ended_ = false;
-    dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
-    dspStatus_ = dspChain_.status();
+    DspChain& activeDspChain = activeDspChainLocked();
+    activeDspChain.setTrackContext(DspTrackContext{stream_, currentItem_});
+    dspStatus_ = activeDspChain.status();
     dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
     updatePerfectLocked();
   }
@@ -1159,16 +1226,23 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
       crossfadeFramesProcessed_ = 0;
       crossfadeTotalFrames_ = 0;
     }
-    dspChain_.configure(dspConfig_);
+    DspChain& activeDspChain = activeDspChainLocked();
+    DspChain& spareDspChain = spareDspChainLocked();
+    activeDspChain.configure(dspConfig_);
+    spareDspChain.configure(dspConfig_);
     if (outputFormat_.sampleRate > 0 && outputFormat_.channelCount > 0) {
-      dspChain_.prepare(outputFormat_);
-      dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
-      preloadDspChain_.prepare(outputFormat_);
-      preloadDspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
-      spectrum_.prepare(outputFormat_, std::max(dspConfig_.fftResolution, kVisualizationFftResolution));
+      activeDspChain.prepare(outputFormat_);
+      activeDspChain.setTrackContext(DspTrackContext{stream_, currentItem_});
+      spareDspChain.prepare(outputFormat_);
+      const DspTrackContext preloadContext =
+          preloadStream_ ? DspTrackContext{preloadStream_->stream, preloadStream_->item}
+                         : DspTrackContext{stream_, currentItem_};
+      spareDspChain.setTrackContext(preloadContext);
+      spectrum_.prepare(outputFormat_, visualizationFftResolutionForConfig(dspConfig_.fftResolution));
     }
     spectrum_.setEnabled(dspConfig_.fftEnabled);
-    dspStatus_ = dspChain_.status();
+    dspStatus_ = activeDspChain.status();
+    preloadDspStatus_ = spareDspChain.status();
     dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
     updatePerfectLocked();
   }
@@ -1186,7 +1260,10 @@ bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* err
   upmix.surroundGain = outputConfig_.upmixSurroundGain;
   upmix.sideGain = outputConfig_.upmixSideGain;
   upmix.surroundDelayMs = outputConfig_.upmixSurroundDelayMs;
-  channelRouter_.setUpmixConfig(upmix);
+  {
+    std::lock_guard channelRouterLock(channelRouterMutex_);
+    channelRouter_.setUpmixConfig(upmix);
+  }
   if (output_ && !output_->setOutputConfig(outputConfig_, error)) return false;
   if (output_) {
     outputInfo_ = output_->outputInfo();
@@ -1197,8 +1274,15 @@ bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* err
 
 bool AudioPipeline::loadImpulseResponse(const std::string& path, std::string* error) {
   std::lock_guard lock(mutex_);
-  const bool ok = dspChain_.loadImpulseResponse(path, error);
-  dspStatus_ = dspChain_.status();
+  DspChain& activeDspChain = activeDspChainLocked();
+  DspChain& spareDspChain = spareDspChainLocked();
+  const bool ok = activeDspChain.loadImpulseResponse(path, error);
+  if (ok) {
+    std::string spareError;
+    spareDspChain.loadImpulseResponse(path, &spareError);
+  }
+  dspStatus_ = activeDspChain.status();
+  preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
   return ok;
@@ -1206,20 +1290,29 @@ bool AudioPipeline::loadImpulseResponse(const std::string& path, std::string* er
 
 void AudioPipeline::unloadImpulseResponse() {
   std::lock_guard lock(mutex_);
-  dspChain_.unloadImpulseResponse();
-  dspStatus_ = dspChain_.status();
+  DspChain& activeDspChain = activeDspChainLocked();
+  DspChain& spareDspChain = spareDspChainLocked();
+  activeDspChain.unloadImpulseResponse();
+  spareDspChain.unloadImpulseResponse();
+  dspStatus_ = activeDspChain.status();
+  preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
 }
 
 ConvolverInfo AudioPipeline::convolverInfo() const {
-  return dspChain_.convolverInfo();
+  std::lock_guard lock(mutex_);
+  return activeDspChainLocked().convolverInfo();
 }
 
 bool AudioPipeline::setEqBands(const std::string& json, std::string* error) {
   std::lock_guard lock(mutex_);
-  const bool ok = dspChain_.setEqBandsFromJson(json, error);
-  dspStatus_ = dspChain_.status();
+  DspChain& activeDspChain = activeDspChainLocked();
+  DspChain& spareDspChain = spareDspChainLocked();
+  const bool ok = activeDspChain.setEqBandsFromJson(json, error);
+  if (ok) spareDspChain.setEqBandsFromJson(json, error);
+  dspStatus_ = activeDspChain.status();
+  preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
   return ok;
@@ -1227,8 +1320,12 @@ bool AudioPipeline::setEqBands(const std::string& json, std::string* error) {
 
 bool AudioPipeline::setEqPreset(const std::string& json, std::string* error) {
   std::lock_guard lock(mutex_);
-  const bool ok = dspChain_.setEqPresetFromJson(json, error);
-  dspStatus_ = dspChain_.status();
+  DspChain& activeDspChain = activeDspChainLocked();
+  DspChain& spareDspChain = spareDspChainLocked();
+  const bool ok = activeDspChain.setEqPresetFromJson(json, error);
+  if (ok) spareDspChain.setEqPresetFromJson(json, error);
+  dspStatus_ = activeDspChain.status();
+  preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
   return ok;
@@ -1236,16 +1333,24 @@ bool AudioPipeline::setEqPreset(const std::string& json, std::string* error) {
 
 void AudioPipeline::setCrossfeedStrength(double strength) {
   std::lock_guard lock(mutex_);
-  dspChain_.setCrossfeedStrength(strength);
-  dspStatus_ = dspChain_.status();
+  DspChain& activeDspChain = activeDspChainLocked();
+  DspChain& spareDspChain = spareDspChainLocked();
+  activeDspChain.setCrossfeedStrength(strength);
+  spareDspChain.setCrossfeedStrength(strength);
+  dspStatus_ = activeDspChain.status();
+  preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
 }
 
 void AudioPipeline::setReplayGainMode(ReplayGainMode mode, double preampDb, double fallbackDb, bool clip) {
   std::lock_guard lock(mutex_);
-  dspChain_.setReplayGainMode(mode, preampDb, fallbackDb, clip);
-  dspStatus_ = dspChain_.status();
+  DspChain& activeDspChain = activeDspChainLocked();
+  DspChain& spareDspChain = spareDspChainLocked();
+  activeDspChain.setReplayGainMode(mode, preampDb, fallbackDb, clip);
+  spareDspChain.setReplayGainMode(mode, preampDb, fallbackDb, clip);
+  dspStatus_ = activeDspChain.status();
+  preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
 }
@@ -1254,21 +1359,26 @@ void AudioPipeline::setNativeDspPluginChain(const std::string& json) {
   std::lock_guard lock(mutex_);
   dspChain_.setNativeDspPluginChain(json);
   preloadDspChain_.setNativeDspPluginChain(json);
-  dspStatus_ = dspChain_.status();
+  dspStatus_ = activeDspChainLocked().status();
+  preloadDspStatus_ = spareDspChainLocked().status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
 }
 
 std::string AudioPipeline::nativeDspPluginStatusJson() const {
-  return dspChain_.nativeDspPluginStatusJson();
+  std::lock_guard lock(mutex_);
+  return activeDspChainLocked().nativeDspPluginStatusJson();
 }
 
 bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::string* error) {
+  cleanupRetiredDecodeStreams();
+
   if (!item || item->source.empty()) {
     std::shared_ptr<DecodeStream> previous;
     {
       std::lock_guard lock(mutex_);
       previous = std::move(preloadStream_);
+      preloadDspStatus_ = {};
     }
     if (previous) previous->stop();
     return true;
@@ -1276,17 +1386,23 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
 
   AudioFormat outputFormat;
   bool gapless = false;
+  uint32_t bufferSizeFrames = 0;
   {
     std::lock_guard lock(mutex_);
     if (preloadStream_ && preloadStream_->item.source == item->source) return true;
     outputFormat = outputFormat_;
     gapless = gaplessEnabled_;
+    bufferSizeFrames = outputInfo_.bufferSizeFrames;
   }
   if (!gapless || outputFormat.sampleRate <= 0 || outputFormat.channelCount <= 0) return false;
 
   auto stream = std::make_shared<DecodeStream>();
   if (!stream->openSource(*item, error)) return false;
   if (!stream->configure(outputFormat, 0.0, error)) return false;
+  const size_t maxRenderFrames = bufferSizeFrames > 0
+                                     ? static_cast<size_t>(bufferSizeFrames)
+                                     : static_cast<size_t>(std::max(1, outputFormat.sampleRate / 100));
+  stream->prepareFloatReadScratch(maxRenderFrames);
   stream->start();
 
   std::shared_ptr<DecodeStream> previous;
@@ -1294,6 +1410,11 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
     std::lock_guard lock(mutex_);
     previous = std::move(preloadStream_);
     preloadStream_ = std::move(stream);
+    DspChain& spareDspChain = spareDspChainLocked();
+    spareDspChain.configure(dspConfig_);
+    spareDspChain.prepare(outputFormat_);
+    spareDspChain.setTrackContext(DspTrackContext{preloadStream_->stream, preloadStream_->item});
+    preloadDspStatus_ = spareDspChain.status();
   }
   if (previous) previous->stop();
   return true;
@@ -1319,8 +1440,9 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
     renderedFrames_ = 0;
     ended_ = false;
     trackStarted_ = true;
-    dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
-    dspStatus_ = dspChain_.status();
+    activeUsesPreloadDspChain_ = !activeUsesPreloadDspChain_;
+    dspStatus_ = preloadDspStatus_;
+    preloadDspStatus_ = {};
     dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
     crossfadeMixActive_ = false;
     crossfadeFramesProcessed_ = 0;
@@ -1332,6 +1454,8 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
 }
 
 PipelineStatus AudioPipeline::status() const {
+  cleanupRetiredDecodeStreams();
+
   std::lock_guard lock(mutex_);
   PipelineStatus status;
   status.state = state_;
@@ -1564,29 +1688,56 @@ bool AudioPipeline::updatePerfectLocked() {
   return outputPerfect_;
 }
 
+DspChain& AudioPipeline::activeDspChainLocked() {
+  return activeUsesPreloadDspChain_ ? preloadDspChain_ : dspChain_;
+}
+
+const DspChain& AudioPipeline::activeDspChainLocked() const {
+  return activeUsesPreloadDspChain_ ? preloadDspChain_ : dspChain_;
+}
+
+DspChain& AudioPipeline::spareDspChainLocked() {
+  return activeUsesPreloadDspChain_ ? dspChain_ : preloadDspChain_;
+}
+
+void AudioPipeline::prepareRenderScratchLocked(size_t maxFrames) {
+  const size_t frames = std::max<size_t>(1, maxFrames);
+  const size_t outputChannels = static_cast<size_t>(std::max(1, outputFormat_.channelCount));
+  const size_t decodeChannels = static_cast<size_t>(std::max(1, decodeFormat_.channelCount));
+  const size_t outputSamples = frames * outputChannels;
+  const size_t decodeSamples = frames * decodeChannels;
+
+  routingScratch_.resize(decodeSamples);
+  preloadRoutingScratch_.resize(decodeSamples);
+  preloadMixScratch_.resize(outputSamples);
+  typedVisualizationScratch_.resize(outputSamples);
+}
+
 size_t AudioPipeline::renderTyped(PcmBlock& output) {
   if (!output.data || output.frames == 0) return 0;
 
   PipelineState state = PipelineState::Stopped;
   std::shared_ptr<DecodeStream> active;
   AudioFormat outputFormat;
-  std::chrono::milliseconds renderReadWait =
-      std::chrono::milliseconds(static_cast<int>(kDefaultRenderReadWaitMs));
   bool typedPassthroughActive = false;
   bool nativeDsdPathActive = false;
   {
-    std::lock_guard lock(mutex_);
+    std::unique_lock lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+      if (output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
+      spectrum_.tryResetCapture();
+      return output.frames;
+    }
     state = state_;
     active = activeStream_;
     outputFormat = outputFormat_;
-    renderReadWait = renderReadWaitForLatency(outputInfo_.latencyInfo.bufferLatencyMs);
     typedPassthroughActive = typedPassthroughActive_;
     nativeDsdPathActive = nativeDsdPathActive_;
   }
 
   if (state != PipelineState::Playing || !active) {
     if (typedPassthroughActive && output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
-    spectrum_.resetCapture();
+    spectrum_.tryResetCapture();
     return typedPassthroughActive ? output.frames : 0;
   }
 
@@ -1603,31 +1754,31 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
     return 0;
   }
 
-  active->waitForRenderFrames(output.frames, renderReadWait);
   const size_t read = active->read(output);
   if (read > 0) {
     renderedFrames_ += read;
     if (nativeDsdPathActive || isDsdSampleFormat(output.format.sampleFormat)) {
-      spectrum_.resetCapture();
+      spectrum_.tryResetCapture();
     } else {
       const int channels = std::max(1, output.format.channelCount);
       const size_t visualizationSamples = read * static_cast<size_t>(channels);
-      if (typedVisualizationScratch_.size() < visualizationSamples) {
-        typedVisualizationScratch_.resize(visualizationSamples);
+      if (typedVisualizationScratch_.size() >= visualizationSamples) {
+        PcmBlock captured = output;
+        captured.frames = read;
+        captured.byteSize = read * audioFormatBytesPerFrame(output.format);
+        typedPcmToFloat(captured, typedVisualizationScratch_.data(), read);
+        spectrum_.capture(typedVisualizationScratch_.data(), read, channels);
+      } else {
+        spectrum_.tryResetCapture();
       }
-      PcmBlock captured = output;
-      captured.frames = read;
-      captured.byteSize = read * audioFormatBytesPerFrame(output.format);
-      typedPcmToFloat(captured, typedVisualizationScratch_.data(), read);
-      spectrum_.capture(typedVisualizationScratch_.data(), read, channels);
     }
   } else if (active->drained()) {
     ended_ = true;
-    std::lock_guard lock(mutex_);
-    if (state_ == PipelineState::Playing) state_ = PipelineState::Stopped;
-    spectrum_.resetCapture();
+    std::unique_lock lock(mutex_, std::try_to_lock);
+    if (lock.owns_lock() && state_ == PipelineState::Playing) state_ = PipelineState::Stopped;
+    spectrum_.tryResetCapture();
   } else {
-    spectrum_.resetCapture();
+    spectrum_.tryResetCapture();
   }
 
   return read > 0 || active->drained() ? output.frames : 0;
@@ -1645,14 +1796,19 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   AudioFormat outputFormat;
   AudioFormat decodeFormat;
   bool dopPathActive = false;
+  bool activeUsesPreloadDspChain = false;
   double volume = 1.0;
   bool crossfadeMixActive = false;
   uint64_t crossfadeFramesProcessed = 0;
   uint64_t crossfadeTotalFrames = 0;
-  std::chrono::milliseconds renderReadWait =
-      std::chrono::milliseconds(static_cast<int>(kDefaultRenderReadWaitMs));
   {
-    std::lock_guard lock(mutex_);
+    std::unique_lock lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) {
+      const size_t fallbackChannels = static_cast<size_t>(std::max(1, renderChannelCount_.load()));
+      std::fill(output, output + frameCount * fallbackChannels, 0.0f);
+      spectrum_.tryResetCapture();
+      return frameCount;
+    }
     state = state_;
     outputConfig = outputConfig_;
     outputFormat = outputFormat_;
@@ -1662,20 +1818,22 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     preload = preloadStream_;
     dspConfig = dspConfig_;
     dopPathActive = dopPathActive_;
+    activeUsesPreloadDspChain = activeUsesPreloadDspChain_;
     volume = volume_.load();
     crossfadeMixActive = crossfadeMixActive_;
     crossfadeFramesProcessed = crossfadeFramesProcessed_;
     crossfadeTotalFrames = crossfadeTotalFrames_;
-    renderReadWait = renderReadWaitForLatency(outputInfo_.latencyInfo.bufferLatencyMs);
   }
 
   if (state != PipelineState::Playing || !active) {
     std::fill(output, output + frameCount * static_cast<size_t>(channels), 0.0f);
-    spectrum_.resetCapture();
+    spectrum_.tryResetCapture();
     return frameCount;
   }
 
   const bool wantsCrossfade = dspConfig.crossfadeSeconds > 0.0001;
+  DspChain* activeDspChain = activeUsesPreloadDspChain ? &preloadDspChain_ : &dspChain_;
+  DspChain* preloadDspChain = activeUsesPreloadDspChain ? &dspChain_ : &preloadDspChain_;
   size_t totalRead = 0;
   size_t positionRead = 0;
   while (totalRead < frameCount) {
@@ -1683,20 +1841,23 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     const int decodeChannels = std::max(1, decodeFormat.channelCount);
     const bool routingRequired = !dopPathActive && (decodeChannels != channels || outputConfig.routingMode != ChannelRoutingMode::Auto);
 
-    if (routingRequired) {
-      if (routingScratch_.size() < (frameCount - totalRead) * static_cast<size_t>(decodeChannels)) {
-        routingScratch_.resize((frameCount - totalRead) * static_cast<size_t>(decodeChannels));
-      }
+    const size_t requestedFrames = frameCount - totalRead;
+    if (routingRequired && routingScratch_.size() < requestedFrames * static_cast<size_t>(decodeChannels)) {
+      break;
     }
 
     float* readBuffer = routingRequired ? routingScratch_.data() : segment;
-    active->waitForRenderFrames(frameCount - totalRead, renderReadWait);
-    const size_t read = active->readFloat(readBuffer, frameCount - totalRead);
+    const size_t read = active->readFloat(readBuffer, requestedFrames);
 
     if (read > 0 && !dopPathActive) {
-      dspChain_.process(readBuffer, read);
+      activeDspChain->process(readBuffer, read);
       if (routingRequired) {
-        channelRouter_.route(readBuffer, segment, read, decodeChannels, channels, outputConfig.routingMode);
+        std::unique_lock channelRouterLock(channelRouterMutex_, std::try_to_lock);
+        if (channelRouterLock.owns_lock()) {
+          channelRouter_.route(readBuffer, segment, read, decodeChannels, channels, outputConfig.routingMode);
+        } else {
+          std::fill(segment, segment + read * static_cast<size_t>(channels), 0.0f);
+        }
       }
     }
     totalRead += read;
@@ -1716,12 +1877,9 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
           crossfadeMixActive = true;
           crossfadeFramesProcessed = 0;
           crossfadeTotalFrames = requestedFrames;
-          preloadDspChain_.configure(dspConfig);
-          preloadDspChain_.prepare(outputFormat);
-          preloadDspChain_.setTrackContext(DspTrackContext{preload->stream, preload->item});
           {
-            std::lock_guard lock(mutex_);
-            if (preloadStream_ == preload) {
+            std::unique_lock lock(mutex_, std::try_to_lock);
+            if (lock.owns_lock() && preloadStream_ == preload) {
               crossfadeMixActive_ = true;
               crossfadeFramesProcessed_ = 0;
               crossfadeTotalFrames_ = requestedFrames;
@@ -1732,18 +1890,30 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
 
       if (crossfadeMixActive) {
         const size_t preloadSampleCount = read * static_cast<size_t>(channels);
-        render::resizeFloatScratchForOverwrite(preloadMixScratch_, preloadSampleCount);
-        if (routingRequired) {
-          if (preloadRoutingScratch_.size() < read * static_cast<size_t>(decodeChannels)) {
-            preloadRoutingScratch_.resize(read * static_cast<size_t>(decodeChannels));
-          }
-        }
+        const bool crossfadeScratchReady =
+            preloadMixScratch_.size() >= preloadSampleCount &&
+            (!routingRequired || preloadRoutingScratch_.size() >= read * static_cast<size_t>(decodeChannels));
+        if (!crossfadeScratchReady) break;
         float* preloadReadBuffer = routingRequired ? preloadRoutingScratch_.data() : preloadMixScratch_.data();
         const size_t mixedFrames = preload->readFloat(preloadReadBuffer, read);
         if (mixedFrames > 0 && !dopPathActive) {
-          preloadDspChain_.process(preloadReadBuffer, mixedFrames);
+          preloadDspChain->process(preloadReadBuffer, mixedFrames);
           if (routingRequired) {
-            channelRouter_.route(preloadReadBuffer, preloadMixScratch_.data(), mixedFrames, decodeChannels, channels, outputConfig.routingMode);
+            std::unique_lock channelRouterLock(channelRouterMutex_, std::try_to_lock);
+            if (channelRouterLock.owns_lock()) {
+              channelRouter_.route(
+                  preloadReadBuffer,
+                  preloadMixScratch_.data(),
+                  mixedFrames,
+                  decodeChannels,
+                  channels,
+                  outputConfig.routingMode);
+            } else {
+              std::fill(
+                  preloadMixScratch_.data(),
+                  preloadMixScratch_.data() + mixedFrames * static_cast<size_t>(channels),
+                  0.0f);
+            }
           }
           render::mixCrossfadeSegment(
               output + (totalRead - read) * static_cast<size_t>(channels),
@@ -1754,8 +1924,8 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
               crossfadeTotalFrames);
           crossfadeFramesProcessed += mixedFrames;
           {
-            std::lock_guard lock(mutex_);
-            if (preloadStream_ == preload && crossfadeMixActive_) {
+            std::unique_lock lock(mutex_, std::try_to_lock);
+            if (lock.owns_lock() && preloadStream_ == preload && crossfadeMixActive_) {
               crossfadeFramesProcessed_ += mixedFrames;
             }
           }
@@ -1766,14 +1936,18 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     if (totalRead >= frameCount || !active->drained()) break;
 
     std::shared_ptr<DecodeStream> next;
-    std::shared_ptr<DecodeStream> oldActive;
     {
-      std::lock_guard lock(mutex_);
+      std::unique_lock lock(mutex_, std::try_to_lock);
+      if (!lock.owns_lock()) {
+        break;
+      }
       const bool canPromotePreload = preloadStream_ && preloadStream_->readyForRender();
       if ((!gaplessEnabled_ && !crossfadeMixActive_) || !canPromotePreload) {
         break;
       }
-      oldActive = activeStream_;
+      if (!retireDecodeStreamLocked(activeStream_)) {
+        break;
+      }
       activeStream_ = preloadStream_;
       preloadStream_.reset();
       active = activeStream_;
@@ -1784,15 +1958,18 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
       positionRead = 0;
       ended_ = false;
       trackStarted_ = true;
-      dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
-      dspStatus_ = dspChain_.status();
+      activeUsesPreloadDspChain_ = !activeUsesPreloadDspChain_;
+      activeUsesPreloadDspChain = activeUsesPreloadDspChain_;
+      dspStatus_ = preloadDspStatus_;
+      preloadDspStatus_ = {};
       dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
       crossfadeMixActive_ = false;
       crossfadeFramesProcessed_ = 0;
       crossfadeTotalFrames_ = 0;
       updatePerfectLocked();
     }
-    if (oldActive) oldActive->stop();
+    activeDspChain = activeUsesPreloadDspChain ? &preloadDspChain_ : &dspChain_;
+    preloadDspChain = activeUsesPreloadDspChain ? &dspChain_ : &preloadDspChain_;
     if (!next) break;
   }
 
@@ -1812,11 +1989,11 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     spectrum_.capture(output, totalRead, channels);
   } else if (active->drained()) {
     ended_ = true;
-    std::lock_guard lock(mutex_);
-    if (state_ == PipelineState::Playing) state_ = PipelineState::Stopped;
-    spectrum_.resetCapture();
+    std::unique_lock lock(mutex_, std::try_to_lock);
+    if (lock.owns_lock() && state_ == PipelineState::Playing) state_ = PipelineState::Stopped;
+    spectrum_.tryResetCapture();
   } else {
-    spectrum_.resetCapture();
+    spectrum_.tryResetCapture();
   }
 
   return frameCount;

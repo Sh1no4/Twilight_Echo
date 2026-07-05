@@ -603,8 +603,8 @@ VisualizationQuery parseVisualizationQueryJson(const std::string& json) {
   VisualizationQuery query;
   query.spectrumPoints = std::clamp<uint32_t>(parseUintField(json, "spectrumPoints", 64), 8, 4096);
   query.waveformPoints = std::clamp<uint32_t>(parseUintField(json, "waveformPoints", 128), 16, 512);
-  query.spectrogramFrames = std::clamp<uint32_t>(parseUintField(json, "spectrogramFrames", 48), 1, 96);
-  query.oscilloscopePoints = std::clamp<uint32_t>(parseUintField(json, "oscilloscopePoints", 1024), 64, 4096);
+  query.spectrogramFrames = std::clamp<uint32_t>(parseUintField(json, "spectrogramFrames", 48), 0, 96);
+  query.oscilloscopePoints = std::clamp<uint32_t>(parseUintField(json, "oscilloscopePoints", 1024), 0, 4096);
   return query;
 }
 
@@ -625,7 +625,8 @@ std::string inactiveVisualizationJson(const VisualizationQuery& query, int sampl
   json << ",\"oscilloscope\":";
   writeZeros(json, query.oscilloscopePoints);
   json << ",\"peakDb\":-120,\"rmsDb\":-120,\"lufsMomentary\":null,\"spectrogram\":[],"
-       << "\"sampleRate\":" << sampleRate << ",\"active\":false}";
+       << "\"sampleRate\":" << sampleRate
+       << ",\"active\":false,\"tapStatus\":\"stopped\",\"reason\":\"Audio pipeline is stopped\"}";
   return json.str();
 }
 
@@ -1104,18 +1105,20 @@ TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJ
     emitError(error.empty() ? "输出配置设置失败" : error, TAE_RESULT_INVALID_ARGUMENT, "output-config");
     return TAE_RESULT_INVALID_ARGUMENT;
   }
-  std::lock_guard lock(mutex_);
-  info_.outputInfo.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
-  if (pipeline_ && info_.state != PlaybackState::Stopped) {
-    applyPipelineStatusLocked(pipeline_->status());
-    if (shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
-      // Defer publish until the reroute completes.
+  {
+    std::lock_guard lock(mutex_);
+    info_.outputInfo.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
+    if (pipeline_ && info_.state != PlaybackState::Stopped) {
+      applyPipelineStatusLocked(pipeline_->status());
+      if (shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+        // Defer publish until the reroute completes.
+      } else {
+        publishStateLocked();
+      }
     } else {
+      updatePerfectLocked();
       publishStateLocked();
     }
-  } else {
-    updatePerfectLocked();
-    publishStateLocked();
   }
   if (!rerouteReason.empty()) {
     return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "output-config");

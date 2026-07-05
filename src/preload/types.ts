@@ -3,15 +3,31 @@ export type AudioEngineEndFileCallback = (reason: string) => void
 export type AudioEngineSimpleCallback = () => void
 export type AudioEngineErrorCallback = (message: string) => void
 export type AudioEnginePlaybackInfoCallback = (info: PlaybackInfo) => void
+export type AudioEngineDeviceOptionsChangedCallback = (event: { reason: string }) => void
+export type AudioEngineServiceCrashCallback = (event: { reason: string }) => void
+export interface AudioEngineServiceReadyEvent {
+  manualResumeRequired: boolean
+  outputRouteSynced: boolean
+  restoreErrors: string[]
+}
+export type AudioEngineServiceReadyCallback = (event: AudioEngineServiceReadyEvent) => void
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 export type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 export type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
+export interface PlayerShortcutStatus {
+  accelerator: string
+  action: PlayerShortcutAction
+  label: string
+  registered: boolean
+  error: string | null
+}
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 export type StartupHomePage = 'local' | 'streaming'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 export type LyricAlign = 'center' | 'left'
+export type ProxyMode = 'auto' | 'custom' | 'off'
 export type StreamingAudioCachePolicy = 'off' | 'provider'
 
 export interface LibraryChange {
@@ -292,10 +308,12 @@ export interface VisualizationOptions {
   waveformPoints?: number
   spectrogramFrames?: number
   oscilloscopePoints?: number
+  visualizerBarCount?: number
 }
 
 export interface VisualizationData {
   spectrum: number[]
+  visualizerBars?: number[]
   waveform: number[]
   oscilloscope: number[]
   peakDb: number
@@ -303,8 +321,19 @@ export interface VisualizationData {
   lufsMomentary: number | null
   spectrogram: number[][]
   sampleRate: number
+  maxFrequency: number
   active: boolean
+  tapStatus: VisualizationTapStatus
+  reason: string
 }
+
+export type VisualizationTapStatus =
+  | 'active'
+  | 'stopped'
+  | 'disabled'
+  | 'no-samples'
+  | 'native-unavailable'
+  | 'synthetic-fallback'
 
 export interface TrackData {
   id: string
@@ -447,6 +476,9 @@ export interface AppSettings {
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
+  proxyMode: ProxyMode
+  proxyHost: string
+  proxyPort: number
   streamingActiveProvider: string
 }
 
@@ -515,6 +547,8 @@ export interface AudioDeviceOption {
   supportsDirectHw?: boolean
   supportsDop?: boolean
   supportsNativeDsd?: boolean
+  dopSupportState?: AudioCapabilitySupportState
+  nativeDsdSupportState?: AudioCapabilitySupportState
   supportedDsdRates?: number[]
   nativeDsdSampleRates?: number[]
   nativeDsdSampleFormats?: string[]
@@ -523,6 +557,12 @@ export interface AudioDeviceOption {
   pathKind?: string
   capabilityReason?: string
 }
+
+export type AudioCapabilitySupportState =
+  | 'verified'
+  | 'runtime-probed'
+  | 'unsupported'
+  | 'unknown'
 
 export interface TwilightPluginDescriptor {
   id: string

@@ -133,12 +133,25 @@ struct CoreAudioExclusiveBackend::Impl {
 
   size_t render(uint32_t frameCount, CoreAudioBufferList* ioData) {
     if (!ioData || frameCount == 0) return 0;
+    const auto fillOutputSilence = [&]() {
+      for (size_t index = 0; index < ioData->bufferCount(); ++index) {
+        auto& buffer = ioData->bufferAt(index);
+        if (buffer.hasData()) {
+          std::memset(buffer.writableData(), 0, buffer.byteSize());
+          buffer.dataByteSize = static_cast<uint32_t>(buffer.byteSize());
+        }
+      }
+    };
 
     TypedRenderCallback typedCb;
     RenderCallback floatCb;
     AudioFormat format;
     {
-      std::lock_guard lock(mutex);
+      std::unique_lock lock(mutex, std::try_to_lock);
+      if (!lock.owns_lock()) {
+        fillOutputSilence();
+        return 0;
+      }
       typedCb = typedCallback;
       floatCb = callback;
       format = outputFormat;
@@ -149,64 +162,78 @@ struct CoreAudioExclusiveBackend::Impl {
     const size_t bytesPerFrame = audioFormatBytesPerFrame(format);
     const size_t byteCount = frames * bytesPerFrame;
 
-    if (ioData->buffers.size() == 1 && !ioData->buffers[0].data.empty()) {
-      auto& buffer = ioData->buffers.front();
-      buffer.data.resize(byteCount);
+    if (ioData->bufferCount() == 1 && ioData->bufferAt(0).hasData()) {
+      auto& buffer = ioData->bufferAt(0);
+      const size_t writableFrames =
+          bytesPerFrame > 0 ? std::min(frames, buffer.byteSize() / bytesPerFrame) : static_cast<size_t>(0);
+      const size_t writableByteCount = writableFrames * bytesPerFrame;
 
-      size_t rendered = frames;
+      size_t rendered = writableFrames;
       if (typedCb) {
-        rendered = coreaudio::renderTypedCallbackWithTailSilence(buffer.data.data(), frames, format, typedCb);
+        rendered = coreaudio::renderTypedCallbackWithTailSilence(buffer.writableData(), writableFrames, format, typedCb);
       } else if (floatCb) {
-        floatScratch.resize(frames * static_cast<size_t>(channels));
-        rendered = coreaudio::renderFloatCallbackWithTailSilence(floatScratch.data(), frames, channels, floatCb);
-        std::memcpy(buffer.data.data(), floatScratch.data(), std::min(floatScratch.size() * sizeof(float), byteCount));
+        const size_t scratchFrames = std::min(writableFrames, floatScratch.size() / static_cast<size_t>(channels));
+        rendered = coreaudio::renderFloatCallbackWithTailSilence(floatScratch.data(), scratchFrames, channels, floatCb);
+        std::memcpy(
+            buffer.writableData(),
+            floatScratch.data(),
+            std::min(floatScratch.size() * sizeof(float), writableByteCount));
       } else {
-        std::memset(buffer.data.data(), 0, byteCount);
+        std::memset(buffer.writableData(), 0, writableByteCount);
       }
 
-      if (rendered < frames) {
-        std::lock_guard lock(mutex);
+      if (rendered < frames || writableFrames < frames) {
+        std::unique_lock lock(mutex, std::try_to_lock);
+        if (lock.owns_lock()) {
+          ++diagnostics.sessionUnderrunCount;
+          ++diagnostics.lifetimeUnderrunCount;
+          outputInfo.diagnostics = diagnostics;
+          outputInfo.deviceRecovered = false;
+          underrunObserved = true;
+        }
+      } else if (underrunObserved) {
+        std::unique_lock lock(mutex, std::try_to_lock);
+        if (lock.owns_lock() && underrunObserved) {
+          outputInfo.deviceRecovered = true;
+        }
+      }
+      buffer.dataByteSize = static_cast<uint32_t>(writableByteCount);
+      return rendered;
+    }
+
+    const size_t scratchFrames = std::min(frames, floatScratch.size() / static_cast<size_t>(channels));
+    size_t rendered = scratchFrames;
+    if (floatCb) {
+      rendered = coreaudio::renderFloatCallbackWithTailSilence(floatScratch.data(), scratchFrames, channels, floatCb);
+    } else {
+      std::fill(floatScratch.begin(), floatScratch.end(), 0.0f);
+    }
+    if (rendered < frames || scratchFrames < frames) {
+      std::unique_lock lock(mutex, std::try_to_lock);
+      if (lock.owns_lock()) {
         ++diagnostics.sessionUnderrunCount;
         ++diagnostics.lifetimeUnderrunCount;
         outputInfo.diagnostics = diagnostics;
         outputInfo.deviceRecovered = false;
         underrunObserved = true;
-      } else if (underrunObserved) {
-        std::lock_guard lock(mutex);
+      }
+    } else if (underrunObserved) {
+      std::unique_lock lock(mutex, std::try_to_lock);
+      if (lock.owns_lock() && underrunObserved) {
         outputInfo.deviceRecovered = true;
       }
-      buffer.dataByteSize = static_cast<uint32_t>(byteCount);
-      return rendered;
-    }
-
-    floatScratch.resize(frames * static_cast<size_t>(channels));
-    size_t rendered = frames;
-    if (floatCb) {
-      rendered = coreaudio::renderFloatCallbackWithTailSilence(floatScratch.data(), frames, channels, floatCb);
-    } else {
-      std::fill(floatScratch.begin(), floatScratch.end(), 0.0f);
-    }
-    if (rendered < frames) {
-      std::lock_guard lock(mutex);
-      ++diagnostics.sessionUnderrunCount;
-      ++diagnostics.lifetimeUnderrunCount;
-      outputInfo.diagnostics = diagnostics;
-      outputInfo.deviceRecovered = false;
-      underrunObserved = true;
-    } else if (underrunObserved) {
-      std::lock_guard lock(mutex);
-      outputInfo.deviceRecovered = true;
     }
 
     const size_t floatBytes = std::min(floatScratch.size() * sizeof(float), byteCount);
     if (!typedScratch.empty()) {
       std::fill(typedScratch.begin(), typedScratch.end(), 0);
     }
-    for (auto& buffer : ioData->buffers) {
-      if (!buffer.data.empty()) {
-        buffer.data.resize(byteCount);
-        std::memcpy(buffer.data.data(), floatScratch.data(), floatBytes);
-        buffer.dataByteSize = static_cast<uint32_t>(byteCount);
+    for (size_t index = 0; index < ioData->bufferCount(); ++index) {
+      auto& buffer = ioData->bufferAt(index);
+      if (buffer.hasData()) {
+        const size_t bytes = std::min({buffer.byteSize(), floatBytes, byteCount});
+        std::memcpy(buffer.writableData(), floatScratch.data(), bytes);
+        buffer.dataByteSize = static_cast<uint32_t>(bytes);
       }
     }
     return rendered;
@@ -354,6 +381,8 @@ bool CoreAudioExclusiveBackend::open(const std::string& deviceId, const AudioFor
   impl_->outputFormat.channelCount = channels;
   if (impl_->outputFormat.bitDepth <= 0) impl_->outputFormat.bitDepth = effectivePcmBitDepth(impl_->outputFormat);
   if (impl_->outputFormat.bitDepth <= 0) impl_->outputFormat.bitDepth = 32;
+  impl_->floatScratch.resize(static_cast<size_t>(bufferFrames) * static_cast<size_t>(std::max(1, channels)));
+  impl_->typedScratch.resize(static_cast<size_t>(bufferFrames) * audioFormatBytesPerFrame(impl_->outputFormat));
   impl_->deviceName = impl_->host->deviceName(selectedDevice);
   if (impl_->deviceName.empty()) impl_->deviceName = "CoreAudio Exclusive Output";
 
@@ -494,8 +523,8 @@ bool CoreAudioExclusiveBackend::startTyped(
 }
 
 void CoreAudioExclusiveBackend::stop() {
-  impl_->running = false;
-  if (impl_->unit) impl_->host->audioUnitStop(impl_->unit);
+  const bool wasRunning = impl_->running.exchange(false);
+  if (wasRunning && impl_->unit) impl_->host->audioUnitStop(impl_->unit);
 }
 
 void CoreAudioExclusiveBackend::close() {

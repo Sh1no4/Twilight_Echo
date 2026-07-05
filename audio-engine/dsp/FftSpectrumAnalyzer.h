@@ -3,7 +3,7 @@
 #include "../core/AudioTypes.h"
 
 #include <cstddef>
-#include <complex>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -19,6 +19,7 @@ class FftSpectrumAnalyzer {
   void prepareOscilloscope(size_t points);
   void setEnabled(bool enabled);
   void resetCapture();
+  bool tryResetCapture();
   void capture(const float* interleaved, size_t frames, int channels);
   size_t read(float* output, size_t points, double idlePhase = 0.0) const;
   std::string readVisualizationJson(
@@ -29,7 +30,20 @@ class FftSpectrumAnalyzer {
   bool isActive() const;
 
  private:
-  void updateSpectrumLocked() const;
+  struct SpectrumUpdateSnapshot {
+    bool computeSpectrum = false;
+    bool retainSpectrogram = false;
+    std::uint64_t generation = 0;
+    size_t resolution = 0;
+    std::vector<float> timeDomain;
+    std::vector<float> window;
+    std::vector<float> magnitudes;
+  };
+
+  void resetCaptureLocked();
+  bool buildSpectrumUpdateSnapshot(bool retainSpectrogram, SpectrumUpdateSnapshot& snapshot) const;
+  void publishSpectrumUpdate(SpectrumUpdateSnapshot& snapshot) const;
+  void updateSpectrumForRead(bool retainSpectrogram) const;
 
   mutable std::mutex mutex_;
   AudioFormat format_;
@@ -39,14 +53,14 @@ class FftSpectrumAnalyzer {
   bool hasCapture_ = false;
   bool captureBuffersSilent_ = true;
   mutable bool spectrumDirty_ = false;
+  mutable bool spectrogramDirty_ = false;
+  std::uint64_t spectrumGeneration_ = 0;
   double peakDb_ = -120.0;
   double rmsDb_ = -120.0;
   double lufsMomentary_ = -70.0;
   std::vector<float> window_;
   std::vector<float> timeDomain_;
   std::vector<float> oscilloscopeBuffer_;
-  mutable std::vector<float> fftInputScratch_;
-  mutable std::vector<std::complex<float>> spectrumScratch_;
   mutable std::vector<float> magnitudes_;
   mutable std::vector<std::vector<float>> spectrogram_;
 };

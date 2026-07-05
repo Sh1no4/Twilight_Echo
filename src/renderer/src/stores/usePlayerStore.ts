@@ -10,7 +10,10 @@ import type {
   PlayMode
 } from '../types/settings'
 import { extractDominantColor } from '../utils/colorExtractor'
-import { shouldReuseResolvedStreamUrl, shouldUseNativePlaybackTarget } from '../utils/playbackRouting'
+import {
+  shouldReuseResolvedStreamUrl,
+  shouldUseNativePlaybackTarget
+} from '../utils/playbackRouting'
 import { findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
 import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
 import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
@@ -20,7 +23,9 @@ import { useMusicStore } from './useMusicStore'
 
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
-type NativeVisualizationData = Awaited<ReturnType<typeof window.api.audioEngine.getVisualizationData>>
+type NativeVisualizationData = Awaited<
+  ReturnType<typeof window.api.audioEngine.getVisualizationData>
+>
 type ProviderSourceReliability = Record<string, number>
 
 interface AudioOutputState {
@@ -30,6 +35,13 @@ interface AudioOutputState {
   exclusiveAvailable: boolean
   outputOptions: AudioOutputOption[]
   deviceOptions: AudioDeviceOption[]
+}
+
+export interface AudioEngineRecoveryNotice {
+  kind: 'service-crash' | 'service-ready'
+  message: string
+  actionLabel?: string
+  canResume?: boolean
 }
 
 const FALLBACK_AUDIO_OUTPUT_OPTIONS: AudioOutputOption[] = [
@@ -174,6 +186,7 @@ const playMode = ref<PlayMode>('sequential')
 const originalQueue = ref<Track[]>([])
 const audioEngineReady = ref(false)
 const audioEngineError = ref<string | null>(null)
+const audioEngineRecoveryNotice = ref<AudioEngineRecoveryNotice | null>(null)
 const exclusiveMode = ref(false)
 // Tracks whether the in-PlayingMusic audio visualizer surface is active.
 // App.vue reads this to hide the PlayerBar while the visualizer is open.
@@ -223,10 +236,10 @@ const audioOutputConfig = ref<OutputConfig>({ ...defaultAudioOutputConfig })
 const playbackInfo = ref<NativePlaybackInfo | null>(null)
 const outputInfo = computed<NativeOutputInfo | null>(() => playbackInfo.value?.outputInfo ?? null)
 const visualizationOptions = {
-  spectrumPoints: 4096,
-  waveformPoints: 96,
-  spectrogramFrames: 48,
-  oscilloscopePoints: 1024
+  spectrumPoints: 64,
+  waveformPoints: 48,
+  spectrogramFrames: 32,
+  oscilloscopePoints: 512
 } as const
 const createInactiveVisualizationData = (): NativeVisualizationData => ({
   spectrum: Array.from({ length: visualizationOptions.spectrumPoints }, () => 0),
@@ -237,7 +250,10 @@ const createInactiveVisualizationData = (): NativeVisualizationData => ({
   lufsMomentary: null,
   spectrogram: [],
   sampleRate: 0,
-  active: false
+  maxFrequency: 20000,
+  active: false,
+  tapStatus: 'stopped',
+  reason: ''
 })
 const visualizationData = ref<NativeVisualizationData>(createInactiveVisualizationData())
 const { settings: appSettings, updateSettings } = useSettingsStore()
@@ -252,15 +268,13 @@ const RENDERER_PLAYBACK_WATCHDOG_MS = 220
 const PLAYBACK_TOGGLE_INTENT_GRACE_MS = 300
 const NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS = 2500
 let playbackToggleIntent: { playing: boolean; expiresAt: number } | null = null
-let nativePlaybackInfoIntent:
-  | {
-      loadToken: number
-      trackId: string
-      queueIndex: number
-      source: string
-      expiresAt: number
-    }
-  | null = null
+let nativePlaybackInfoIntent: {
+  loadToken: number
+  trackId: string
+  queueIndex: number
+  source: string
+  expiresAt: number
+} | null = null
 
 function isActiveLoad(loadToken: number, track: Track): boolean {
   return loadToken === activeLoadToken && currentTrack.value?.id === track.id
@@ -405,16 +419,14 @@ function getPlaybackAudio(): HTMLAudioElement {
     const track = currentTrack.value
     if (track && !nativePlaybackActive && !rendererFallbackInProgress) {
       rendererFallbackInProgress = true
-      void handlePlaybackFallback(track, new Error(message), activeLoadToken).then(
-        (handled) => {
-          rendererFallbackInProgress = false
-          if (!handled) {
-            audioEngineError.value = message
-            isPlaying.value = false
-            isLoading.value = false
-          }
+      void handlePlaybackFallback(track, new Error(message), activeLoadToken).then((handled) => {
+        rendererFallbackInProgress = false
+        if (!handled) {
+          audioEngineError.value = message
+          isPlaying.value = false
+          isLoading.value = false
         }
-      )
+      })
       return
     }
     audioEngineError.value = message
@@ -497,8 +509,9 @@ function shouldUseNativePlayback(track: Track, target: string): boolean {
 }
 
 function canUseNativeQueuePlayback(): boolean {
-  return queue.value.length > 0 && queue.value.every((track) =>
-    shouldUseNativePlayback(track, getTrackAudioSource(track))
+  return (
+    queue.value.length > 0 &&
+    queue.value.every((track) => shouldUseNativePlayback(track, getTrackAudioSource(track)))
   )
 }
 
@@ -739,7 +752,8 @@ function mergeTrackTransientData(nextTrack: Track, previousTrack: Track | null):
   if (!previousTrack || previousTrack.id !== nextTrack.id) return nextTrack
   const lyrics = nextTrack.lyrics ?? previousTrack.lyrics
   const translatedLyrics = nextTrack.translatedLyrics ?? previousTrack.translatedLyrics
-  if (lyrics === nextTrack.lyrics && translatedLyrics === nextTrack.translatedLyrics) return nextTrack
+  if (lyrics === nextTrack.lyrics && translatedLyrics === nextTrack.translatedLyrics)
+    return nextTrack
   return {
     ...nextTrack,
     lyrics,
@@ -748,7 +762,7 @@ function mergeTrackTransientData(nextTrack: Track, previousTrack: Track | null):
 }
 
 function patchTrackInQueues(updatedTrack: Track): void {
-  queue.value = queue.value.map((track) => track.id === updatedTrack.id ? updatedTrack : track)
+  queue.value = queue.value.map((track) => (track.id === updatedTrack.id ? updatedTrack : track))
   originalQueue.value = originalQueue.value.map((track) =>
     track.id === updatedTrack.id ? updatedTrack : track
   )
@@ -797,7 +811,7 @@ function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
     const mergedTrack = mergeTrackTransientData(track, currentTrack.value)
     queueIndex.value = infoIndex
     if (mergedTrack !== track) {
-      queue.value = queue.value.map((item, index) => index === infoIndex ? mergedTrack : item)
+      queue.value = queue.value.map((item, index) => (index === infoIndex ? mergedTrack : item))
     }
     currentTrack.value = mergedTrack
     loadedTrackId = mergedTrack.id
@@ -939,8 +953,7 @@ watch(
         config?.wasapiExclusivePushMode ?? defaultAudioOutputConfig.wasapiExclusivePushMode,
       upmixCenterGain: config?.upmixCenterGain ?? defaultAudioOutputConfig.upmixCenterGain,
       upmixLfeGain: config?.upmixLfeGain ?? defaultAudioOutputConfig.upmixLfeGain,
-      upmixLfeLowpassHz:
-        config?.upmixLfeLowpassHz ?? defaultAudioOutputConfig.upmixLfeLowpassHz,
+      upmixLfeLowpassHz: config?.upmixLfeLowpassHz ?? defaultAudioOutputConfig.upmixLfeLowpassHz,
       upmixSurroundGain: config?.upmixSurroundGain ?? defaultAudioOutputConfig.upmixSurroundGain,
       upmixSideGain: config?.upmixSideGain ?? defaultAudioOutputConfig.upmixSideGain,
       upmixSurroundDelayMs:
@@ -951,7 +964,12 @@ watch(
 )
 
 watch(
-  () => [currentTrack.value?.id, currentTrack.value?.lyrics, currentTrack.value?.translatedLyrics] as const,
+  () =>
+    [
+      currentTrack.value?.id,
+      currentTrack.value?.lyrics,
+      currentTrack.value?.translatedLyrics
+    ] as const,
   async ([id], [prevId]) => {
     const track = currentTrack.value
     if (!track || track.id !== id) return
@@ -965,6 +983,7 @@ let listenersSetup = false
 let crossfadeTimer: number | null = null
 let visualizationTimer: number | null = null
 let visualizationRequestInFlight = false
+let visualizationPollingGeneration = 0
 let crossfadeTrackId = ''
 const TIME_UPDATE_INTERVAL_MS = 250
 const VISUALIZATION_UPDATE_INTERVAL_MS = 200
@@ -1028,12 +1047,46 @@ function flushLatestCurrentTime(): void {
   publishCurrentTime(latestPlaybackTime)
 }
 
+function setAudioServiceCrashNotice(reason: string): void {
+  const message = reason.trim()
+  const prefix = message.startsWith('音频服务已重启') ? message : `音频服务已重启：${message || '未知原因'}`
+  audioEngineRecoveryNotice.value = {
+    kind: 'service-crash',
+    message: `${prefix}。正在恢复音频服务，恢复后不会自动续播。`,
+    actionLabel: '稍后手动继续'
+  }
+}
+
+function setAudioServiceReadyNotice(event?: {
+  outputRouteSynced?: boolean
+  restoreErrors?: string[]
+}): void {
+  const outputRouteSynced = event?.outputRouteSynced !== false
+  const restoreErrors = Array.isArray(event?.restoreErrors)
+    ? event.restoreErrors.filter((item) => item.trim())
+    : []
+  const detail = restoreErrors.length > 0 ? `（${restoreErrors.join('；')}）` : ''
+  audioEngineRecoveryNotice.value = {
+    kind: 'service-ready',
+    message: outputRouteSynced
+      ? '音频服务已恢复，播放已停止，可手动继续。'
+      : `音频服务已恢复，但输出设备/后端未完全恢复${detail}。请重新选择输出设备后继续。`,
+    actionLabel: outputRouteSynced ? '继续播放' : undefined,
+    canResume: outputRouteSynced
+  }
+}
+
 async function refreshVisualizationData(): Promise<void> {
   if (visualizationRequestInFlight) return
+  const requestGeneration = visualizationPollingGeneration
   visualizationRequestInFlight = true
   try {
-    visualizationData.value = await window.api.audioEngine.getVisualizationData(visualizationOptions)
+    const nextVisualizationData =
+      await window.api.audioEngine.getVisualizationData(visualizationOptions)
+    if (requestGeneration !== visualizationPollingGeneration) return
+    visualizationData.value = nextVisualizationData
   } catch {
+    if (requestGeneration !== visualizationPollingGeneration) return
     visualizationData.value = createInactiveVisualizationData()
   } finally {
     visualizationRequestInFlight = false
@@ -1041,6 +1094,7 @@ async function refreshVisualizationData(): Promise<void> {
 }
 
 function stopVisualizationPolling(clearData = false): void {
+  visualizationPollingGeneration += 1
   if (visualizationTimer !== null) {
     window.clearInterval(visualizationTimer)
     visualizationTimer = null
@@ -1051,6 +1105,7 @@ function stopVisualizationPolling(clearData = false): void {
 }
 
 function startVisualizationPolling(): void {
+  if (visualizerActive.value) return
   if (visualizationTimer !== null) return
   void refreshVisualizationData()
   visualizationTimer = window.setInterval(
@@ -1165,8 +1220,10 @@ async function handlePlaybackFallback(
   stopVisualizationPolling(true)
   stopRendererAudio(true)
 
-  queue.value = queue.value.map((track) => track.id === failedTrack.id ? fallback : track)
-  originalQueue.value = originalQueue.value.map((track) => track.id === failedTrack.id ? fallback : track)
+  queue.value = queue.value.map((track) => (track.id === failedTrack.id ? fallback : track))
+  originalQueue.value = originalQueue.value.map((track) =>
+    track.id === failedTrack.id ? fallback : track
+  )
   queueIndex.value = queue.value.findIndex((track) => track.id === fallback.id)
   if (queueIndex.value < 0) queueIndex.value = 0
   currentTrack.value = fallback
@@ -1178,9 +1235,8 @@ function getProviderSourceReliability(): ProviderSourceReliability {
   const reliability: ProviderSourceReliability = {}
   for (const provider of useMediaProviders().list()) {
     const playbackUrlRate = provider.health?.methodStats?.getPlaybackUrl?.successRate
-    const successRate = typeof playbackUrlRate === 'number'
-      ? playbackUrlRate
-      : provider.health?.successRate
+    const successRate =
+      typeof playbackUrlRate === 'number' ? playbackUrlRate : provider.health?.successRate
     reliability[provider.id] = clampProviderReliability(successRate)
   }
   return reliability
@@ -1219,8 +1275,10 @@ async function handleProviderRematchFallback(
   stopVisualizationPolling(true)
   stopRendererAudio(true)
 
-  queue.value = queue.value.map((track) => track.id === failedTrack.id ? rematched : track)
-  originalQueue.value = originalQueue.value.map((track) => track.id === failedTrack.id ? rematched : track)
+  queue.value = queue.value.map((track) => (track.id === failedTrack.id ? rematched : track))
+  originalQueue.value = originalQueue.value.map((track) =>
+    track.id === failedTrack.id ? rematched : track
+  )
   queueIndex.value = queue.value.findIndex((track) => track.id === rematched.id)
   if (queueIndex.value < 0) queueIndex.value = 0
   currentTrack.value = rematched
@@ -1298,10 +1356,44 @@ function setupAudioEngineListeners(): void {
     })
   )
 
+  if (api.onDeviceOptionsChanged) {
+    cleanupFns.push(
+      api.onDeviceOptionsChanged(() => {
+        void refreshAudioOutputState()
+      })
+    )
+  }
+
+  if (api.onServiceCrash) {
+    cleanupFns.push(
+      api.onServiceCrash(({ reason }) => {
+        setAudioServiceCrashNotice(reason)
+      })
+    )
+  }
+
+  if (api.onServiceReady) {
+    cleanupFns.push(
+      api.onServiceReady((event) => {
+        audioEngineReady.value = true
+        audioEngineError.value = event.outputRouteSynced
+          ? null
+          : event.restoreErrors?.join('；') || '音频输出设备/后端未完全恢复'
+        setAudioServiceReadyNotice(event)
+        void refreshAudioOutputState()
+      })
+    )
+  }
+
   cleanupFns.push(
     api.onReady(async () => {
+      const recoveredFromServiceCrash =
+        audioEngineRecoveryNotice.value?.kind === 'service-crash'
       audioEngineReady.value = true
       audioEngineError.value = null
+      if (recoveredFromServiceCrash) {
+        setAudioServiceReadyNotice()
+      }
       api.setVolume(volume.value).catch(() => {})
       await refreshAudioOutputState()
       try {
@@ -1320,6 +1412,9 @@ function setupAudioEngineListeners(): void {
     api.onError((message) => {
       console.error('[audio-engine] Playback error:', message)
       audioEngineError.value = message
+      if (message.includes('音频服务已重启')) {
+        setAudioServiceCrashNotice(message)
+      }
       clearPlaybackToggleIntent()
       clearNativePlaybackInfoIntent()
       isPlaying.value = false
@@ -1372,16 +1467,20 @@ function setupAudioEngineListeners(): void {
   void refreshAudioOutputState()
 }
 
+function dismissAudioEngineRecoveryNotice(): void {
+  audioEngineRecoveryNotice.value = null
+}
+
 setupAudioEngineListeners()
 
 watch(
-  [isPlaying, audioEngineReady, () => currentTrack.value?.id],
-  ([playing, ready, trackId]) => {
-    if (playing && ready && trackId) {
+  [isPlaying, audioEngineReady, () => currentTrack.value?.id, visualizerActive],
+  ([playing, ready, trackId, activeVisualizer]) => {
+    if (playing && ready && trackId && !activeVisualizer) {
       startVisualizationPolling()
       return
     }
-    stopVisualizationPolling(true)
+    stopVisualizationPolling(activeVisualizer ? false : true)
   },
   { immediate: true }
 )
@@ -1689,7 +1788,9 @@ function updateMediaSessionPlaybackState(): void {
   if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return
   navigator.mediaSession.playbackState =
     appSettings.value?.smtcEnabled && currentTrack.value
-      ? isPlaying.value ? 'playing' : 'paused'
+      ? isPlaying.value
+        ? 'playing'
+        : 'paused'
       : 'none'
 }
 
@@ -1743,14 +1844,15 @@ function updateMediaSessionMetadata(): void {
 
   if (mediaSessionMetadataKey !== nextMetadataKey) {
     mediaSessionMetadataKey = nextMetadataKey
-    navigator.mediaSession.metadata = typeof MediaMetadata !== 'undefined'
-      ? new MediaMetadata({
-          title: track.title || '',
-          artist: track.artist || '',
-          album: track.album || '',
-          artwork: track.cover ? [{ src: track.cover, sizes: '512x512', type: 'image/jpeg' }] : []
-        })
-      : null
+    navigator.mediaSession.metadata =
+      typeof MediaMetadata !== 'undefined'
+        ? new MediaMetadata({
+            title: track.title || '',
+            artist: track.artist || '',
+            album: track.album || '',
+            artwork: track.cover ? [{ src: track.cover, sizes: '512x512', type: 'image/jpeg' }] : []
+          })
+        : null
   }
 
   updateMediaSessionPlaybackState()
@@ -1768,12 +1870,18 @@ function setupMediaSessionHandlers(): void {
   ms.setActionHandler('pause', () => {
     if (isPlaying.value) void togglePlayState()
   })
-  ms.setActionHandler('previoustrack', () => { previous() })
-  ms.setActionHandler('nexttrack', () => { next() })
+  ms.setActionHandler('previoustrack', () => {
+    previous()
+  })
+  ms.setActionHandler('nexttrack', () => {
+    next()
+  })
   ms.setActionHandler('seekto', (details) => {
     if (details.seekTime != null) seekPlayback(details.seekTime)
   })
-  ms.setActionHandler('seekbackward', () => { seekPlayback(Math.max(0, currentTime.value - 10)) })
+  ms.setActionHandler('seekbackward', () => {
+    seekPlayback(Math.max(0, currentTime.value - 10))
+  })
   ms.setActionHandler('seekforward', () => {
     seekPlayback(Math.min(duration.value, currentTime.value + 10))
   })
@@ -1796,23 +1904,29 @@ function updateDiscordActivity(): void {
   if (discordPlayStartTimestamp === null) {
     discordPlayStartTimestamp = Date.now()
   }
-  discordApi.updateActivity({
-    title: track.title || '',
-    artist: track.artist || '',
-    album: track.album || '',
-    playing: true,
-    startTime: discordPlayStartTimestamp
-  }).catch(() => {})
+  discordApi
+    .updateActivity({
+      title: track.title || '',
+      artist: track.artist || '',
+      album: track.album || '',
+      playing: true,
+      startTime: discordPlayStartTimestamp
+    })
+    .catch(() => {})
 }
 
 function setupPlayerIntegrationSideEffects(): void {
   if (playerIntegrationSideEffectsSetup) return
   playerIntegrationSideEffectsSetup = true
 
-  watch(() => appSettings.value?.smtcEnabled, () => {
-    if (appSettings.value?.smtcEnabled) setupMediaSessionHandlers()
-    updateMediaSessionMetadata()
-  }, { immediate: true })
+  watch(
+    () => appSettings.value?.smtcEnabled,
+    () => {
+      if (appSettings.value?.smtcEnabled) setupMediaSessionHandlers()
+      updateMediaSessionMetadata()
+    },
+    { immediate: true }
+  )
 
   watch(
     [
@@ -1826,17 +1940,25 @@ function setupPlayerIntegrationSideEffects(): void {
     { immediate: true }
   )
 
-  watch(isPlaying, () => {
-    updateMediaSessionPlaybackState()
-    if (!isPlaying.value) discordPlayStartTimestamp = null
-    updateDiscordActivity()
-  }, { immediate: true })
+  watch(
+    isPlaying,
+    () => {
+      updateMediaSessionPlaybackState()
+      if (!isPlaying.value) discordPlayStartTimestamp = null
+      updateDiscordActivity()
+    },
+    { immediate: true }
+  )
 
   watch([currentTime, duration], () => {
     if (appSettings.value?.smtcEnabled && isPlaying.value) updateMediaSessionPositionState()
   })
 
-  watch(() => appSettings.value?.discordRpcEnabled, () => updateDiscordActivity(), { immediate: true })
+  watch(
+    () => appSettings.value?.discordRpcEnabled,
+    () => updateDiscordActivity(),
+    { immediate: true }
+  )
 
   watch(
     () => appSettings.value.playMode,
@@ -1857,10 +1979,14 @@ function setupPlayerIntegrationSideEffects(): void {
     window.api?.desktopLyrics?.updateTime(time)
   })
 
-  watch(() => appSettings.value?.desktopLyrics, (dl) => {
-    if (!dl) return
-    window.api?.desktopLyrics?.updateSettings(dl)
-  }, { deep: true })
+  watch(
+    () => appSettings.value?.desktopLyrics,
+    (dl) => {
+      if (!dl) return
+      window.api?.desktopLyrics?.updateSettings(dl)
+    },
+    { deep: true }
+  )
 
   window.api?.desktopLyrics?.onToggle((enabled: boolean) => {
     if (enabled) syncDesktopLyricsSnapshot()
@@ -1959,13 +2085,18 @@ function restorePlaybackSession(session: PlaybackSession): void {
   currentTrack.value = track
 
   // 恢复完整播放队列，而非只恢复当前一首歌
-  const savedQueue = Array.isArray(session.queue) && session.queue.length > 0
-    ? session.queue.map(cloneTrackForPlaybackSession)
-    : [track]
+  const savedQueue =
+    Array.isArray(session.queue) && session.queue.length > 0
+      ? session.queue.map(cloneTrackForPlaybackSession)
+      : [track]
   const rawIndex = session.queueIndex
-  const savedIndex = typeof rawIndex === 'number' && Number.isFinite(rawIndex) && rawIndex >= 0 && rawIndex < savedQueue.length
-    ? rawIndex
-    : 0
+  const savedIndex =
+    typeof rawIndex === 'number' &&
+    Number.isFinite(rawIndex) &&
+    rawIndex >= 0 &&
+    rawIndex < savedQueue.length
+      ? rawIndex
+      : 0
   queue.value = savedQueue
   originalQueue.value = [...savedQueue]
   queueIndex.value = savedIndex
@@ -2020,6 +2151,7 @@ export function usePlayerStore(): {
   playMode: Ref<PlayMode>
   audioEngineReady: Ref<boolean>
   audioEngineError: Ref<string | null>
+  audioEngineRecoveryNotice: Ref<AudioEngineRecoveryNotice | null>
   exclusiveMode: Ref<boolean>
   visualizerActive: Ref<boolean>
   audioOutput: Ref<AudioOutputId>
@@ -2044,6 +2176,7 @@ export function usePlayerStore(): {
   setAudioDevice: (device: string) => Promise<void>
   setAudioOutputConfig: (config: Partial<OutputConfig>) => Promise<void>
   refreshAudioOutputState: () => Promise<void>
+  dismissAudioEngineRecoveryNotice: () => void
   setAudioProcessing: (settings: Partial<AudioProcessingSettings>) => Promise<void>
   toggleDspEnabled: () => Promise<void>
   toggleEqEnabled: () => Promise<void>
@@ -2253,6 +2386,7 @@ export function usePlayerStore(): {
     playMode,
     audioEngineReady,
     audioEngineError,
+    audioEngineRecoveryNotice,
     exclusiveMode,
     visualizerActive,
     audioOutput,
@@ -2277,6 +2411,7 @@ export function usePlayerStore(): {
     setAudioDevice,
     setAudioOutputConfig,
     refreshAudioOutputState,
+    dismissAudioEngineRecoveryNotice,
     setAudioProcessing,
     toggleDspEnabled,
     toggleEqEnabled,

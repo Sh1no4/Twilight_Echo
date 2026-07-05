@@ -3,12 +3,18 @@
 #include "../output/alsa/MockAlsaHost.h"
 
 #include <algorithm>
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -39,6 +45,77 @@ bool waitForWrites(
     std::this_thread::sleep_for(std::chrono::milliseconds(1));
   }
   return host->writeCalls >= minimumWrites;
+}
+
+std::string readTextFile(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  std::ostringstream buffer;
+  buffer << in.rdbuf();
+  return buffer.str();
+}
+
+std::string extractFunctionBody(const std::string& source, const std::string& signature) {
+  const size_t signaturePos = source.find(signature);
+  assert(signaturePos != std::string::npos);
+  const size_t bodyStart = source.find('{', signaturePos);
+  assert(bodyStart != std::string::npos);
+  int depth = 0;
+  for (size_t i = bodyStart; i < source.size(); ++i) {
+    if (source[i] == '{') {
+      ++depth;
+    } else if (source[i] == '}') {
+      --depth;
+      if (depth == 0) return source.substr(bodyStart, i - bodyStart + 1);
+    }
+  }
+  assert(false);
+  return {};
+}
+
+void testAlsaRenderLoopsUseNoResizeHelpers() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "output" / "alsa" / "AlsaBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string packBody = extractFunctionBody(source, "void pack(const float* input, size_t frames, int channels)");
+  const std::string renderLoopBody = extractFunctionBody(source, "void renderLoop()");
+  const std::string typedRenderLoopBody = extractFunctionBody(source, "void typedRenderLoop()");
+
+  assert(packBody.find("packFloatScratchToPcmScratchNoResize") != std::string::npos);
+  assert(packBody.find("packFloatScratchToPcmScratch(") == std::string::npos);
+  assert(renderLoopBody.find("renderFloatPeriodWithTailSilenceNoResize") != std::string::npos);
+  assert(renderLoopBody.find("renderFloatPeriodWithTailSilence(") == std::string::npos);
+  assert(typedRenderLoopBody.find("renderDsdPeriodWithTailSilenceAndRepackNoResize") != std::string::npos);
+  assert(typedRenderLoopBody.find("renderDsdPeriodWithTailSilenceAndRepack(") == std::string::npos);
+}
+
+void testAlsaRenderLoopsDoNotBlockOnBackendMutex() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "output" / "alsa" / "AlsaBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderLoopBody = extractFunctionBody(source, "void renderLoop()");
+  const std::string typedRenderLoopBody = extractFunctionBody(source, "void typedRenderLoop()");
+
+  assert(renderLoopBody.find("mutex") != std::string::npos);
+  assert(typedRenderLoopBody.find("mutex") != std::string::npos);
+  assert(renderLoopBody.find("std::lock_guard lock(mutex)") == std::string::npos);
+  assert(typedRenderLoopBody.find("std::lock_guard lock(mutex)") == std::string::npos);
+  assert(renderLoopBody.find("std::try_to_lock") != std::string::npos);
+  assert(typedRenderLoopBody.find("std::try_to_lock") != std::string::npos);
+}
+
+void testAlsaRenderLoopsQueueRecoveryOffRenderThread() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "output" / "alsa" / "AlsaBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderLoopBody = extractFunctionBody(source, "void renderLoop()");
+  const std::string typedRenderLoopBody = extractFunctionBody(source, "void typedRenderLoop()");
+
+  assert(renderLoopBody.find("queueWriteRecoveryFromRenderThread") != std::string::npos);
+  assert(typedRenderLoopBody.find("queueWriteRecoveryFromRenderThread") != std::string::npos);
+  assert(renderLoopBody.find("recoverFromWriteError") == std::string::npos);
+  assert(typedRenderLoopBody.find("recoverFromWriteError") == std::string::npos);
+  assert(renderLoopBody.find("failureCallback") == std::string::npos);
+  assert(typedRenderLoopBody.find("failureCallback") == std::string::npos);
 }
 
 void testAlsaOpenNegotiatesPcm() {
@@ -514,6 +591,9 @@ void testAlsaPcmPackHelperWritesTypedScratchWithoutPerSampleFormatBranch() {
 }  // namespace
 
 int main() {
+  testAlsaRenderLoopsUseNoResizeHelpers();
+  testAlsaRenderLoopsDoNotBlockOnBackendMutex();
+  testAlsaRenderLoopsQueueRecoveryOffRenderThread();
   testAlsaOpenNegotiatesPcm();
   testAlsaFormatFallback();
   testAlsaXrunRecovery();

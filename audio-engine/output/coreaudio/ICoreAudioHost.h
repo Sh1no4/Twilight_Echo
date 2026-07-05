@@ -2,6 +2,8 @@
 
 #include "../../core/AudioTypes.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -29,11 +31,52 @@ struct CoreAudioStreamBasicDescription {
 struct CoreAudioBuffer {
   uint32_t numberChannels = 0;
   uint32_t dataByteSize = 0;
+  uint8_t* externalData = nullptr;
   std::vector<uint8_t> data;
+
+  size_t byteSize() const {
+    return externalData ? static_cast<size_t>(dataByteSize) : data.size();
+  }
+
+  uint8_t* writableData() {
+    return externalData ? externalData : data.data();
+  }
+
+  const uint8_t* readableData() const {
+    return externalData ? externalData : data.data();
+  }
+
+  bool hasData() const {
+    return byteSize() > 0 && readableData() != nullptr;
+  }
+
+  void bindExternal(uint8_t* bytes, uint32_t size) {
+    externalData = bytes;
+    dataByteSize = size;
+  }
 };
 
 struct CoreAudioBufferList {
   std::vector<CoreAudioBuffer> buffers;
+  bool usesActiveBufferCount = false;
+  size_t activeBufferCount = 0;
+
+  size_t bufferCount() const {
+    return usesActiveBufferCount ? std::min(activeBufferCount, buffers.size()) : buffers.size();
+  }
+
+  CoreAudioBuffer& bufferAt(size_t index) {
+    return buffers[index];
+  }
+
+  const CoreAudioBuffer& bufferAt(size_t index) const {
+    return buffers[index];
+  }
+
+  void setActiveBufferCount(size_t count) {
+    usesActiveBufferCount = true;
+    activeBufferCount = count;
+  }
 };
 
 using CoreAudioRenderCallback = std::function<size_t(uint32_t frameCount, CoreAudioBufferList& ioData)>;

@@ -308,6 +308,30 @@ class DynamicLibrary {
   void* handle_ = nullptr;
 };
 
+enum class NativeDspRealtimeBypassReason {
+  None,
+  ProcessThrew,
+  ProcessExceededBudget,
+  ProcessRequestedBypass,
+  ProcessReturnedError
+};
+
+const char* realtimeBypassReasonText(NativeDspRealtimeBypassReason reason) {
+  switch (reason) {
+    case NativeDspRealtimeBypassReason::ProcessThrew:
+      return "process threw across host boundary";
+    case NativeDspRealtimeBypassReason::ProcessExceededBudget:
+      return "process exceeded realtime budget";
+    case NativeDspRealtimeBypassReason::ProcessRequestedBypass:
+      return "process requested bypass";
+    case NativeDspRealtimeBypassReason::ProcessReturnedError:
+      return "process returned an error";
+    case NativeDspRealtimeBypassReason::None:
+    default:
+      return "";
+  }
+}
+
 }  // namespace
 
 class PluginRegistry::NativePlugin {
@@ -358,6 +382,7 @@ class PluginRegistry::NativePlugin {
       return;
     }
     prepared_ = true;
+    realtimeBypassReason_ = NativeDspRealtimeBypassReason::None;
     status_.bypassed = false;
     status_.bypassReason.clear();
     refreshActive();
@@ -371,7 +396,7 @@ class PluginRegistry::NativePlugin {
     try {
       result = info_->process(handle_, samples, static_cast<uint32_t>(std::min<size_t>(frameCount, UINT32_MAX)));
     } catch (...) {
-      bypass("process threw across host boundary");
+      bypassRealtime(NativeDspRealtimeBypassReason::ProcessThrew);
       return;
     }
     const auto end = std::chrono::steady_clock::now();
@@ -384,18 +409,13 @@ class PluginRegistry::NativePlugin {
     status_.processCalls += 1;
     if (elapsedMs > budgetMs) {
       status_.overrunCount += 1;
-      consecutiveOverruns_ += 1;
-      if (consecutiveOverruns_ >= 3) {
-        bypass("process exceeded realtime budget");
-        return;
-      }
-    } else {
-      consecutiveOverruns_ = 0;
+      bypassRealtime(NativeDspRealtimeBypassReason::ProcessExceededBudget);
+      return;
     }
     if (result == TAE_DSP_RESULT_BYPASS) {
-      bypass("process requested bypass");
+      bypassRealtime(NativeDspRealtimeBypassReason::ProcessRequestedBypass);
     } else if (result != TAE_DSP_RESULT_OK) {
-      bypass("process returned an error");
+      bypassRealtime(NativeDspRealtimeBypassReason::ProcessReturnedError);
     }
   }
 
@@ -414,7 +434,13 @@ class PluginRegistry::NativePlugin {
   }
 
   NativeDspPluginStatus status() const {
-    return status_;
+    NativeDspPluginStatus status = status_;
+    if (status.bypassed && realtimeBypassReason_ != NativeDspRealtimeBypassReason::None) {
+      const char* reason = realtimeBypassReasonText(realtimeBypassReason_);
+      status.bypassReason = reason;
+      status.lastError = reason;
+    }
+    return status;
   }
 
  private:
@@ -533,6 +559,7 @@ class PluginRegistry::NativePlugin {
   }
 
   void fail(const std::string& message) {
+    realtimeBypassReason_ = NativeDspRealtimeBypassReason::None;
     status_.loaded = false;
     status_.active = false;
     status_.bypassed = true;
@@ -542,10 +569,17 @@ class PluginRegistry::NativePlugin {
   }
 
   void bypass(const std::string& reason) {
+    realtimeBypassReason_ = NativeDspRealtimeBypassReason::None;
     status_.active = false;
     status_.bypassed = true;
     status_.bypassReason = reason;
     status_.lastError = reason;
+  }
+
+  void bypassRealtime(NativeDspRealtimeBypassReason reason) {
+    status_.active = false;
+    status_.bypassed = true;
+    realtimeBypassReason_ = reason;
   }
 
   void refreshActive() {
@@ -562,7 +596,7 @@ class PluginRegistry::NativePlugin {
   std::unordered_map<std::string, double> parameterValues_;
   bool configEnabled_ = false;
   bool prepared_ = false;
-  int consecutiveOverruns_ = 0;
+  NativeDspRealtimeBypassReason realtimeBypassReason_ = NativeDspRealtimeBypassReason::None;
 };
 
 PluginRegistry::PluginRegistry() = default;

@@ -37,6 +37,7 @@ const {
   audioOutput,
   audioOutputOptions,
   audioEngineError,
+  audioEngineRecoveryNotice,
   playbackInfo,
   outputInfo,
   visualizationData,
@@ -47,6 +48,7 @@ const {
   seek,
   playTrack,
   toggleExclusiveMode,
+  dismissAudioEngineRecoveryNotice,
   formatTime
 } = usePlayerStore()
 
@@ -729,6 +731,23 @@ onMounted(() => {
             :title="audioEngineError"
           >
             {{ audioEngineError }}
+          </div>
+          <div
+            v-if="audioEngineRecoveryNotice"
+            class="player-playback-diagnostic recovery"
+            :title="audioEngineRecoveryNotice.message"
+          >
+            <span>{{ audioEngineRecoveryNotice.message }}</span>
+            <button
+              v-if="audioEngineRecoveryNotice.kind === 'service-ready' && audioEngineRecoveryNotice.canResume !== false"
+              type="button"
+              @click.stop="togglePlay"
+            >
+              {{ audioEngineRecoveryNotice.actionLabel || '继续播放' }}
+            </button>
+            <button type="button" aria-label="关闭恢复提示" @click.stop="dismissAudioEngineRecoveryNotice">
+              ×
+            </button>
           </div>
         </div>
       </div>

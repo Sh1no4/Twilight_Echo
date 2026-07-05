@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -15,6 +16,7 @@
 #endif
 #include <windows.h>
 #include <audioclient.h>
+#include <avrt.h>
 #include <ksmedia.h>
 #include <mmdeviceapi.h>
 #include <mmreg.h>
@@ -90,6 +92,7 @@ struct WasapiSharedBackend::Impl {
   Microsoft::WRL::ComPtr<IAudioClient> audioClient;
   Microsoft::WRL::ComPtr<IAudioRenderClient> renderClient;
   HANDLE samplesReadyEvent = nullptr;
+  std::mutex threadMutex;
   std::thread renderThread;
   std::atomic<bool> running{false};
   UINT32 bufferFrameCount = 0;
@@ -190,6 +193,25 @@ struct WasapiSharedBackend::Impl {
     recordFailure("render_failure", reason);
   }
 
+  void recordRenderFailureFromRenderThread(HRESULT hr, const char* message) {
+    const std::string reason = hresultMessage(message, hr);
+    std::unique_lock lock(infoMutex, std::try_to_lock);
+    if (!lock.owns_lock()) return;
+
+    diagnostics.lastError = reason;
+    if (isDeviceInvalidated(hr)) {
+      ++diagnostics.deviceLostCount;
+      outputInfo.perfectReasonCode = "device_lost";
+    } else {
+      ++diagnostics.sessionBufferDropCount;
+      ++diagnostics.lifetimeBufferDropCount;
+      outputInfo.perfectReasonCode = "render_failure";
+    }
+    outputInfo.capabilityReason = reason;
+    outputInfo.perfectReason = reason;
+    outputInfo.diagnostics = diagnostics;
+  }
+
   bool renderSucceeded(HRESULT hr, std::string* error, const char* message) {
     if (SUCCEEDED(hr)) return true;
     recordRenderFailure(hr, message);
@@ -250,6 +272,9 @@ struct WasapiSharedBackend::Impl {
   void renderLoop() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
+    DWORD taskIndex = 0;
+    HANDLE mmcssHandle = AvSetMmThreadCharacteristicsW(L"Pro Audio", &taskIndex);
+
     while (running.load()) {
       const DWORD waitResult = WaitForSingleObject(samplesReadyEvent, 2000);
       if (!running.load()) break;
@@ -258,7 +283,7 @@ struct WasapiSharedBackend::Impl {
       UINT32 padding = 0;
       HRESULT hr = audioClient->GetCurrentPadding(&padding);
       if (FAILED(hr)) {
-        recordRenderFailure(hr, "无法读取共享输出缓冲状态");
+        recordRenderFailureFromRenderThread(hr, "无法读取共享输出缓冲状态");
         if (eventCallback && isDeviceInvalidated(hr)) {
           eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
           break;
@@ -271,7 +296,7 @@ struct WasapiSharedBackend::Impl {
       BYTE* data = nullptr;
       hr = renderClient->GetBuffer(framesAvailable, &data);
       if (FAILED(hr)) {
-        recordRenderFailure(hr, "无法获取共享输出缓冲区");
+        recordRenderFailureFromRenderThread(hr, "无法获取共享输出缓冲区");
         if (eventCallback && isDeviceInvalidated(hr)) {
           eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
           break;
@@ -286,7 +311,7 @@ struct WasapiSharedBackend::Impl {
           callback);
       hr = renderClient->ReleaseBuffer(framesAvailable, 0);
       if (FAILED(hr)) {
-        recordRenderFailure(hr, "无法提交共享输出缓冲区");
+        recordRenderFailureFromRenderThread(hr, "无法提交共享输出缓冲区");
         if (eventCallback && isDeviceInvalidated(hr)) {
           eventCallback(OutputBackendEvent::DeviceInvalidated, "输出设备已失效");
           break;
@@ -294,13 +319,30 @@ struct WasapiSharedBackend::Impl {
       }
     }
 
+    if (mmcssHandle) AvRevertMmThreadCharacteristics(mmcssHandle);
     CoUninitialize();
+  }
+
+  void launchRenderThread() {
+    std::lock_guard lock(threadMutex);
+    renderThread = std::thread([this] { renderLoop(); });
+  }
+
+  void joinRenderThread() {
+    std::thread threadToJoin;
+    {
+      std::lock_guard lock(threadMutex);
+      if (renderThread.joinable() && renderThread.get_id() != std::this_thread::get_id()) {
+        threadToJoin = std::move(renderThread);
+      }
+    }
+    if (threadToJoin.joinable()) threadToJoin.join();
   }
 
   void stop() {
     running = false;
     if (samplesReadyEvent) SetEvent(samplesReadyEvent);
-    if (renderThread.joinable()) renderThread.join();
+    joinRenderThread();
     if (audioClient) audioClient->Stop();
   }
 
@@ -348,10 +390,7 @@ bool WasapiSharedBackend::open(const std::string& deviceId, const AudioFormat& r
   const bool shouldUninitialize = SUCCEEDED(hr);
   impl_->ownerComInitialized = shouldUninitialize;
   auto failAfterCom = [&]() {
-    if (impl_->ownerComInitialized) {
-      CoUninitialize();
-      impl_->ownerComInitialized = false;
-    }
+    impl_->close();
     return false;
   };
   if (hr == RPC_E_CHANGED_MODE) {
@@ -502,6 +541,10 @@ bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eve
     impl_->recordFailure("backend_start_failure", "共享输出后端尚未打开", error);
     return false;
   }
+  if (impl_->running.load()) {
+    impl_->recordFailure("backend_start_failure", "共享输出后端已经在运行", error);
+    return false;
+  }
 
   impl_->callback = std::move(callback);
   impl_->eventCallback = std::move(eventCallback);
@@ -518,7 +561,7 @@ bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eve
   if (!impl_->renderSucceeded(hr, error, "无法提交预填充输出缓冲区")) return false;
 
   impl_->running = true;
-  impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+  impl_->launchRenderThread();
 
   hr = impl_->audioClient->Start();
   const char* startReasonCode = Impl::isDeviceInvalidated(hr) ? "device_lost" : "backend_start_failure";

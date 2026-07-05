@@ -8,6 +8,7 @@ import type {
   AudioProcessingSettings,
   CardAppearanceTheme,
   BackgroundEffectTheme,
+  PlayerShortcutStatus,
   SettingsSnapshot
 } from '../types/settings'
 
@@ -605,6 +606,8 @@ export function useSettingsStore(): {
   chooseCacheFolder: () => Promise<void>
   chooseBackgroundImage: () => Promise<string | null>
   importBackgroundImage: (file: File) => Promise<string | null>
+  exportSettingsBackup: () => Promise<string>
+  importSettingsBackup: (json: string) => Promise<AppSettings>
   resetCacheFolder: () => Promise<void>
   refreshCacheSize: () => Promise<void>
   clearCache: () => Promise<void>
@@ -613,6 +616,7 @@ export function useSettingsStore(): {
   addLibraryFolder: () => Promise<void>
   removeLibraryFolder: (folder: string) => Promise<void>
   openExternalUrl: (url: string) => Promise<void>
+  getShortcutStatuses: () => Promise<PlayerShortcutStatus[]>
 } {
   const formattedCacheSize = computed(() => formatBytes(cacheSize.value))
   const restartRequired = computed(() => restartReasons.value.length > 0)
@@ -688,6 +692,16 @@ export function useSettingsStore(): {
     return await window.api.settings.importBackgroundImage(file.name, data)
   }
 
+  async function exportSettingsBackup(): Promise<string> {
+    return await window.api.settings.exportBackup()
+  }
+
+  async function importSettingsBackup(json: string): Promise<AppSettings> {
+    const snapshot = await window.api.settings.importBackup(json)
+    applySnapshot(snapshot)
+    return settings.value
+  }
+
   async function resetCacheFolder(): Promise<void> {
     if (!defaults.value.cachePath) return
     await updateSettings({ cachePath: defaults.value.cachePath })
@@ -734,6 +748,10 @@ export function useSettingsStore(): {
     await window.api.shell.openExternal(url)
   }
 
+  async function getShortcutStatuses(): Promise<PlayerShortcutStatus[]> {
+    return await window.api.settings.getShortcutStatuses()
+  }
+
   return {
     settings,
     defaults,
@@ -753,6 +771,8 @@ export function useSettingsStore(): {
     chooseCacheFolder,
     chooseBackgroundImage,
     importBackgroundImage,
+    exportSettingsBackup,
+    importSettingsBackup,
     resetCacheFolder,
     refreshCacheSize,
     clearCache,
@@ -760,6 +780,7 @@ export function useSettingsStore(): {
     relaunch,
     addLibraryFolder,
     removeLibraryFolder,
-    openExternalUrl
+    openExternalUrl,
+    getShortcutStatuses
   }
 }

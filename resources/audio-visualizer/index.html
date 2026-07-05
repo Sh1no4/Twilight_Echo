@@ -46,14 +46,22 @@
 
     .app-viewport {
       width: 100vw;
-      height: 100vh;
+      height: 56.25vw;
+      max-width: 1920px;
+      max-height: 1080px;
       display: grid;
-      grid-template-columns: 40% 60%;
-      padding: 4% 3% 3% 0%;
+      grid-template-columns: 37% 63%;
+      padding: 4% 5% 3% 5%;
       position: relative;
       box-sizing: border-box;
     }
 
+    @media (min-aspect-ratio: 16/9) {
+      .app-viewport {
+        width: 177.78vh;
+        height: 100vh;
+      }
+    }
 
     /* Watermark Top Left */
     .watermark-top-left {
@@ -122,21 +130,22 @@
     .left-panel {
       display: flex;
       flex-direction: column;
-      align-items: flex-start;
+      align-items: center;
       justify-content: center;
       position: relative;
-      padding-left: 0%;
-      padding-right: 20px;
+      padding-right: 60px;
     }
 
     /* Radar Circles */
     .radar-container {
       position: relative;
       width: 100%;
-      max-width: 850px;
+      max-width: 550px;
       aspect-ratio: 1;
-      height: auto;
-      margin-right: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-right: 50px;
     }
 
     .radar-svg {
@@ -200,36 +209,36 @@
     }
 
     .coord-label.top {
-      top: 11%;
-      left: 50%;
-      transform: translate(-50%, -100%);
+      top: 0;
+      transform: translateY(-5px);
     }
     .coord-label.top span {
       line-height: 1.2;
     }
 
     .coord-label.bottom {
-      top: 89%;
-      left: 50%;
-      transform: translate(-50%, 0);
+      bottom: 0;
+      transform: translateY(5px);
     }
     .coord-label.bottom span {
       line-height: 1.2;
     }
 
     .coord-label.left {
-      left: 11%;
+      left: 0;
       top: 50%;
       transform: translate(-100%, -50%);
+      margin-left: -12px;
       flex-direction: row;
       align-items: center;
       gap: 5px;
     }
 
     .coord-label.right {
-      left: 89%;
+      right: 0;
       top: 50%;
-      transform: translate(0, -50%);
+      transform: translate(100%, -50%);
+      margin-right: -12px;
       flex-direction: row;
       align-items: center;
       gap: 3px;
@@ -250,8 +259,8 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      width: 55.15%;
-      height: 55.15%;
+      width: 59.5%;
+      aspect-ratio: 1;
       z-index: 3;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
       background-color: #d1d3d9;
@@ -262,6 +271,11 @@
       height: 100%;
       object-fit: cover;
       display: block;
+    }
+
+    .album-art-box img:not([src]),
+    .album-art-box img[src=""] {
+      visibility: hidden;
     }
 
     /* Red corners on the album art */
@@ -277,17 +291,18 @@
     .bracket.bl { bottom: -2px; left: -2px; border-right: none; border-top: none; }
     .bracket.br { bottom: -2px; right: -2px; border-left: none; border-top: none; }
 
-    /* Control Panel merged into Radar */
+    /* Control Panel below Radar */
     .controls-container {
-      position: absolute;
-      top: 95%; /* 475px / 500px - anchors exactly on outermost dashed ring */
-      left: 50%;
-      transform: translate(-50%, -50%);
+      position: relative;
+      margin-top: 35px;
       display: flex;
       justify-content: center;
       align-items: center;
       gap: 22px;
       width: 100%;
+      max-width: 280px;
+      height: 80px;
+      margin-right: 50px;
       z-index: 5;
     }
 
@@ -548,18 +563,24 @@
 
     /* Grid layout containing Hz labels on top */
     .spectrum-hz-labels {
-      display: flex;
-      justify-content: space-between;
       border-bottom: 1px solid rgba(0, 0, 0, 0.06);
       padding-bottom: 4px;
       margin-bottom: 4px;
       margin-left: 26px; /* Align with canvas start */
+      height: 14px;
       font-family: var(--font-sans);
       font-size: 9px;
       font-weight: 600;
       color: var(--text-tertiary);
       letter-spacing: 0.5px;
       position: relative;
+    }
+
+    .spectrum-hz-labels span {
+      position: absolute;
+      top: 0;
+      white-space: nowrap;
+      transform: translateX(-50%);
     }
 
     /* Vertical grid lines markers */
@@ -797,7 +818,7 @@
     <!-- --- LEFT PANEL (Circular Radar & Album Cover) --- -->
     <div class="left-panel">
       <div class="radar-container">
-        
+
         <!-- SVG Radar Concentric Circles -->
         <svg class="radar-svg" viewBox="0 0 500 500" id="radar-svg">
           <!-- Main axes -->
@@ -855,34 +876,35 @@
           <!-- album cover is fed by the host app via postMessage -->
           <img id="album-cover-img" src="" alt="Album cover">
         </div>
-        <!-- Controls Panel (Moved inside radar-container) -->
-        <div class="controls-container">
-          <!-- Concentric dashed backing circle -->
-          <div class="controls-ring"></div>
-          
-          <button class="btn-circle" id="btn-prev" title="Previous Track">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-              <path d="M6 6h2v12H6zm3.5 6L18 18V6z" />
-            </svg>
-          </button>
-          
-          <button class="btn-circle play-pause" id="btn-play-pause" title="Play / Pause Demo Synth">
-            <!-- Play icon -->
-            <svg id="svg-play" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
-              <path d="M8 5v14l11-7z" />
-            </svg>
-            <!-- Pause icon -->
-            <svg id="svg-pause" viewBox="0 0 24 24" width="24" height="24" fill="currentColor" style="display: none;">
-              <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-            </svg>
-          </button>
-          
-          <button class="btn-circle" id="btn-next" title="Next Track / Audio Upload">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-              <path d="M6 18l8.5-6L6 6zm9-12v12h2V6z" />
-            </svg>
-          </button>
-        </div>
+      </div>
+
+      <!-- Controls Panel below radar-container -->
+      <div class="controls-container">
+        <!-- Concentric dashed backing circle -->
+        <div class="controls-ring"></div>
+
+        <button class="btn-circle" id="btn-prev" title="Previous Track">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M6 6h2v12H6zm3.5 6L18 18V6z" />
+          </svg>
+        </button>
+
+        <button class="btn-circle play-pause" id="btn-play-pause" title="Play / Pause Demo Synth">
+          <!-- Play icon -->
+          <svg id="svg-play" viewBox="0 0 24 24" width="24" height="24" fill="currentColor">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          <!-- Pause icon -->
+          <svg id="svg-pause" viewBox="0 0 24 24" width="24" height="24" fill="currentColor" style="display: none;">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
+          </svg>
+        </button>
+
+        <button class="btn-circle" id="btn-next" title="Next Track / Audio Upload">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+            <path d="M6 18l8.5-6L6 6zm9-12v12h2V6z" />
+          </svg>
+        </button>
       </div>
     </div>
 
@@ -944,13 +966,13 @@
       <div class="spectrum-outer-container">
         <!-- Top X Axis (Hz) -->
         <div class="spectrum-hz-labels" id="hz-labels-row">
-          <span>20</span>
-          <span>200</span>
-          <span>1K</span>
-          <span>2K</span>
-          <span>5K</span>
-          <span>10K</span>
-          <span>20K</span>
+          <span data-frequency="20">20</span>
+          <span data-frequency="200">200</span>
+          <span data-frequency="1000">1K</span>
+          <span data-frequency="2000">2K</span>
+          <span data-frequency="5000">5K</span>
+          <span data-frequency="10000">10K</span>
+          <span data-frequency="20000">20K</span>
         </div>
 
         <!-- Main Display: dB column & Canvas plot -->
@@ -1068,11 +1090,26 @@
     let pausedTime = 0;     // Current playback position in seconds (pushed by host)
     let songDuration = 0;   // Current track duration in seconds (pushed by host)
 
-    // Spectrum data buffer — populated by host 'spectrum' messages.
-    // Length matches the posted array (256 points). Values are 0-1 floats.
-    let dataArray = new Float32Array(256);
+    // Raw FFT bins from the host. The renderer keeps the reference WebAudio
+    // visualizer's log-Hz bar mapping here so low-frequency interpolation
+    // stays visually identical to audio_visualizer_preview.html.
+    let dataArray = new Float32Array(4096);
+    let precomputedBars = new Float32Array(130);
+    let previousPrecomputedBars = new Float32Array(130);
+    let displayPrecomputedBars = new Float32Array(130);
+    let precomputedBarsTransitionStartedAt = performance.now();
+    const PRECOMPUTED_BAR_TRANSITION_MS = 50;
+    let usingPrecomputedBars = false;
     let hostSampleRate = 44100;  // Updated by host 'spectrum' messages
+    let hostMaxFrequency = 20000;
+    let nativePeakDb = null;
+    let nativeRmsDb = null;
+    let nativeLufsMomentary = null;
     let liveWaveformPoints = [];  // Time-domain waveform from host
+    let lastSpectrumFrameAt = performance.now();
+    let lastMetricsUpdateAt = 0;
+    let lastSpectrumDebug = null;
+    window.__twilightVisualizerDebug = () => lastSpectrumDebug;
 
     // UI Elements
     const btnPlayPause = document.getElementById('btn-play-pause');
@@ -1081,6 +1118,12 @@
     const playheadLine = document.getElementById('playhead-line');
     const playheadBadge = document.getElementById('playhead-badge');
     const scrubber = document.getElementById('waveform-scrubber');
+    const loudnessEl = document.getElementById('val-loudness');
+    const loudnessBar = document.getElementById('bar-loudness');
+    const dynamicRangeEl = document.getElementById('val-dynamic-range');
+    const dynamicRangeBar = document.getElementById('bar-dynamic-range');
+    const hzLabelsRow = document.getElementById('hz-labels-row');
+    const hzLabelEls = Array.from(hzLabelsRow.querySelectorAll('[data-frequency]'));
 
     // Canvas elements
     const spectrumCanvas = document.getElementById('spectrum-canvas');
@@ -1104,17 +1147,21 @@
       const specRect = spectrumCanvas.parentElement.getBoundingClientRect();
       spectrumCanvas.width = specRect.width * dpr;
       spectrumCanvas.height = specRect.height * dpr;
-      specCtx.scale(dpr, dpr);
+      specCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       const waveRect = waveformCanvas.parentElement.getBoundingClientRect();
       waveformCanvas.width = waveRect.width * dpr;
       waveformCanvas.height = waveRect.height * dpr;
-      waveCtx.scale(dpr, dpr);
+      waveCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
       drawWaveform();
+      updateHzLabels();
     }
 
     window.addEventListener('resize', resizeCanvases);
+    const canvasResizeObserver = new ResizeObserver(resizeCanvases);
+    canvasResizeObserver.observe(spectrumCanvas.parentElement);
+    canvasResizeObserver.observe(waveformCanvas.parentElement);
 
     // --- WAVEFORM RENDER (live, host-fed) ---
     function drawWaveform() {
@@ -1132,8 +1179,8 @@
       const barWidth = Math.max(1, step - gap);
 
       for (let i = 0; i < points.length; i++) {
-        // Live waveform values are 0-1 floats centered at 0.5; map to bar height.
-        const amplitude = Math.abs(points[i] - 0.5) * 2;  // 0..1
+        // Host waveform values are time-domain samples in the -1..1 range.
+        const amplitude = Math.min(1, Math.abs(points[i]));
         const h = amplitude * (height - 3);
         const x = i * step;
         const y = height - h - 1;
@@ -1143,9 +1190,143 @@
 
     // --- SPECTRUM RENDER LOOP ---
     let lastSpectrumHeights = new Float32Array(150).fill(0);
+    let spectrumAnimationFrame = 0;
+    const SPECTRUM_ATTACK_SECONDS = 0.045;
+    const SPECTRUM_DECAY_SECONDS = 0.105;
+    const FREQUENCY_TICKS = [20, 200, 1000, 2000, 5000, 10000, 20000];
+    const SPECTRUM_MIN_FREQUENCY = 20;
+    const SPECTRUM_DISPLAY_GAMMA = 0.7;
+    const LOW_FREQUENCY_CONTOUR_BAR_LIMIT = 72;
+    const LOW_FREQUENCY_CONTOUR_MIN_LEVEL = 0.5;
+    const LOW_FREQUENCY_CONTOUR_FLAT_RANGE = 0.035;
+    const LOW_FREQUENCY_CONTOUR_DEPTH = 0.16;
 
-    function drawSpectrum() {
-      requestAnimationFrame(drawSpectrum);
+    function smoothSpectrumHeight(currentHeight, targetHeight, deltaSeconds) {
+      const smoothingSeconds = targetHeight > currentHeight
+        ? SPECTRUM_ATTACK_SECONDS
+        : SPECTRUM_DECAY_SECONDS;
+      const smoothingAlpha = 1 - Math.exp(-deltaSeconds / smoothingSeconds);
+      return currentHeight + (targetHeight - currentHeight) * smoothingAlpha;
+    }
+
+    function visualizerDisplayLevel(value) {
+      const level = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+      return Math.pow(level, SPECTRUM_DISPLAY_GAMMA);
+    }
+
+    function lowFrequencySubBinContour(binIndexDecimal, barIndex) {
+      const primary = Math.sin(binIndexDecimal * 5.0);
+      const secondary = Math.sin((barIndex + 1) * 1.618 + binIndexDecimal * 0.73);
+      const contour = Math.max(0, Math.min(1, 0.5 + (primary * 0.82 + secondary * 0.18) * 0.5));
+      return 1 - LOW_FREQUENCY_CONTOUR_DEPTH * 0.5 + LOW_FREQUENCY_CONTOUR_DEPTH * contour;
+    }
+
+    function applyLowFrequencyShelfContour(rawBars, binCenters) {
+      const contoured = new Float32Array(rawBars.length);
+      contoured.set(rawBars);
+
+      for (let i = 0; i < Math.min(LOW_FREQUENCY_CONTOUR_BAR_LIMIT, rawBars.length); i++) {
+        const level = rawBars[i];
+        if (level < LOW_FREQUENCY_CONTOUR_MIN_LEVEL) continue;
+
+        const start = Math.max(0, i - 5);
+        const end = Math.min(LOW_FREQUENCY_CONTOUR_BAR_LIMIT - 1, rawBars.length - 1, i + 5);
+        let localMin = 1;
+        let localMax = 0;
+        for (let j = start; j <= end; j++) {
+          const neighbor = rawBars[j];
+          if (neighbor < localMin) localMin = neighbor;
+          if (neighbor > localMax) localMax = neighbor;
+        }
+
+        const localRange = localMax - localMin;
+        if (localRange > LOW_FREQUENCY_CONTOUR_FLAT_RANGE) continue;
+
+        const flatness = 1 - (localRange / LOW_FREQUENCY_CONTOUR_FLAT_RANGE);
+        const gain = 1 + (lowFrequencySubBinContour(binCenters[i], i) - 1) * flatness;
+        contoured[i] = Math.max(0, Math.min(1, level * gain));
+      }
+
+      return contoured;
+    }
+
+    function summarizeBarSlice(values, limit) {
+      const slice = Array.from(values.slice(0, Math.min(limit, values.length)));
+      if (slice.length === 0) return { min: 0, max: 0, uniqueHeights: 0 };
+      const rounded = slice.map((value) => Math.round(value * 240));
+      return {
+        min: Math.min(...slice),
+        max: Math.max(...slice),
+        uniqueHeights: new Set(rounded).size
+      };
+    }
+
+    function ensurePrecomputedBarBufferLength(length) {
+      if (precomputedBars.length === length) return;
+      precomputedBars = new Float32Array(length);
+      previousPrecomputedBars = new Float32Array(length);
+      displayPrecomputedBars = new Float32Array(length);
+    }
+
+    function currentPrecomputedBarValue(index, now) {
+      const elapsed = now - precomputedBarsTransitionStartedAt;
+      const progress = Math.max(0, Math.min(1, elapsed / PRECOMPUTED_BAR_TRANSITION_MS));
+      const eased = progress * progress * (3 - 2 * progress);
+      const previousValue = previousPrecomputedBars[index] || 0;
+      const targetValue = precomputedBars[index] || 0;
+      const value = previousValue + (targetValue - previousValue) * eased;
+      displayPrecomputedBars[index] = value;
+      return value;
+    }
+
+    function spectrumMaxFrequency() {
+      const nyquist = hostSampleRate > 0 ? hostSampleRate / 2 : 20000;
+      return Math.max(SPECTRUM_MIN_FREQUENCY, Math.min(20000, hostMaxFrequency || nyquist, nyquist));
+    }
+
+    function spectrumFrequencyPosition(frequency) {
+      const maxF = spectrumMaxFrequency();
+      if (frequency <= SPECTRUM_MIN_FREQUENCY) return 0;
+      if (frequency >= maxF) return 1;
+      return Math.log(frequency / SPECTRUM_MIN_FREQUENCY) / Math.log(maxF / SPECTRUM_MIN_FREQUENCY);
+    }
+
+    function updateHzLabels() {
+      const maxF = spectrumMaxFrequency();
+      for (const label of hzLabelEls) {
+        const frequency = Number(label.dataset.frequency);
+        const visible = Number.isFinite(frequency) && frequency <= maxF;
+        label.style.display = visible ? 'block' : 'none';
+        if (!visible) continue;
+        const position = spectrumFrequencyPosition(frequency);
+        label.style.left = (position * 100) + '%';
+        label.style.transform = position <= 0.001
+          ? 'translateX(0)'
+          : position >= 0.999
+            ? 'translateX(-100%)'
+            : 'translateX(-50%)';
+      }
+    }
+
+    function retargetPrecomputedBars(incomingBars) {
+      const now = performance.now();
+      ensurePrecomputedBarBufferLength(incomingBars.length);
+      for (let i = 0; i < incomingBars.length; i++) {
+        previousPrecomputedBars[i] = currentPrecomputedBarValue(i, now);
+      }
+      for (let i = 0; i < incomingBars.length; i++) {
+        const value = typeof incomingBars[i] === 'number' && isFinite(incomingBars[i])
+          ? Math.max(0, incomingBars[i])
+          : 0;
+        precomputedBars[i] = value;
+      }
+      precomputedBarsTransitionStartedAt = now;
+      usingPrecomputedBars = true;
+    }
+
+    function renderSpectrumFrame(now) {
+      const deltaSeconds = Math.min(0.05, Math.max(0.001, (now - lastSpectrumFrameAt) / 1000));
+      lastSpectrumFrameAt = now;
 
       const width = spectrumCanvas.width / (window.devicePixelRatio || 1);
       const height = spectrumCanvas.height / (window.devicePixelRatio || 1);
@@ -1165,60 +1346,70 @@
         specCtx.stroke();
       }
 
-      const numVLines = 7;
-      for (let k = 0; k < numVLines; k++) {
-        const x = (k / (numVLines - 1)) * width;
+      const maxGridFrequency = spectrumMaxFrequency();
+      for (const frequency of FREQUENCY_TICKS) {
+        if (frequency > maxGridFrequency) continue;
+        const x = spectrumFrequencyPosition(frequency) * width;
         specCtx.beginPath();
         specCtx.moveTo(x, 0);
         specCtx.lineTo(x, height);
         specCtx.stroke();
       }
 
-      // Data is fed by host via postMessage — no analyser call here.
-      // If not playing, decay to zero (dataArray stays as-is; bars slide down).
-
-      // Map host spectrum bins to 130 log-scale bars.
       const barCount = 130;
       const barSpacing = 1.5;
       const totalSpacing = barSpacing * (barCount - 1);
       const barWidth = (width - totalSpacing) / barCount;
 
       let sumSq = 0;
-
       const minF = 20;
-      const maxF = 20000;
+      const maxF = spectrumMaxFrequency();
+      const sampleRate = hostSampleRate || 44100;
       const fftSize = Math.max(2, dataArray.length * 2);
-      const binWidth = hostSampleRate / fftSize;
-      const binCount = dataArray.length;
+      const binWidth = sampleRate / fftSize;
+      const maxBinIndex = Math.max(0, dataArray.length - 1);
+      let rawComputedBars = null;
+      let binCenters = null;
+      let rawDebugBars = null;
+
+      if (!usingPrecomputedBars) {
+        rawComputedBars = new Float32Array(barCount);
+        binCenters = new Float32Array(barCount);
+        const frequencyRatio = maxF / minF;
+        for (let i = 0; i < barCount; i++) {
+          const f = minF * Math.pow(frequencyRatio, i / (barCount - 1));
+          const binIndexDecimal = f / binWidth;
+          binCenters[i] = binIndexDecimal;
+          const indexLow = Math.min(Math.floor(binIndexDecimal), maxBinIndex);
+          const indexHigh = Math.min(indexLow + 1, maxBinIndex);
+          const fract = binIndexDecimal - indexLow;
+          const valLow = (dataArray[indexLow] || 0) * 255;
+          const valHigh = (dataArray[indexHigh] || 0) * 255;
+          const val = valLow + (valHigh - valLow) * fract;
+          rawComputedBars[i] = val / 255;
+        }
+        rawDebugBars = rawComputedBars.slice();
+        rawComputedBars = applyLowFrequencyShelfContour(rawComputedBars, binCenters);
+      }
+
+      const displayDebugBars = new Float32Array(barCount);
 
       for (let i = 0; i < barCount; i++) {
-        const f = minF * Math.pow(maxF / minF, i / (barCount - 1));
-        const binIndexDecimal = f / binWidth;
-        const indexLow = Math.min(Math.floor(binIndexDecimal), binCount - 1);
-        const indexHigh = Math.min(indexLow + 1, binCount - 1);
-        const fract = binIndexDecimal - indexLow;
-
-        const valLow = (dataArray[indexLow] || 0) * 255;
-        const valHigh = (dataArray[indexHigh] || 0) * 255;
-        let val = valLow + (valHigh - valLow) * fract;
-
-        if (i < 65) {
-          const subBinTexture = 0.92 + 0.16 * (Math.sin(binIndexDecimal * 5.0) * 0.5 + 0.5);
-          val = val * subBinTexture;
-        }
+        const val = usingPrecomputedBars
+          ? currentPrecomputedBarValue(i, now) * 255
+          : visualizerDisplayLevel(rawComputedBars ? rawComputedBars[i] : 0) * 255;
+        displayDebugBars[i] = val / 255;
 
         sumSq += val * val;
 
-        let targetHeight = (val / 255) * (height - 15);
+        const targetHeight = (val / 255) * (height - 15);
+        lastSpectrumHeights[i] = smoothSpectrumHeight(
+          lastSpectrumHeights[i],
+          targetHeight,
+          deltaSeconds
+        );
 
-        // Smooth interpolation (instant rise, slow decay — preserved from original)
-        if (targetHeight > lastSpectrumHeights[i]) {
-          lastSpectrumHeights[i] = targetHeight;
-        } else {
-          lastSpectrumHeights[i] -= (lastSpectrumHeights[i] - targetHeight) * 0.15;
-        }
-
-        const finalBarH = Math.max(lastSpectrumHeights[i], 3);
+        const finalBarH = lastSpectrumHeights[i];
 
         specCtx.fillStyle = '#3c3e44';
         specCtx.fillRect(
@@ -1229,25 +1420,63 @@
         );
       }
 
-      // Dynamic Loudness and Dynamic Range (preserved from original)
-      if (isPlaying) {
+      lastSpectrumDebug = {
+        usingPrecomputedBars,
+        sampleRate,
+        maxFrequency: maxF,
+        raw: rawDebugBars ? summarizeBarSlice(rawDebugBars, 72) : null,
+        contoured: rawComputedBars ? summarizeBarSlice(rawComputedBars, 72) : null,
+        display: summarizeBarSlice(displayDebugBars, 72)
+      };
+
+      if (isPlaying && now - lastMetricsUpdateAt >= 100) {
+        lastMetricsUpdateAt = now;
         const rms = Math.sqrt(sumSq / barCount) / 128;
-        let dB = 20 * Math.log10(Math.max(rms, 0.0001));
-        dB = (dB * 0.5) - 6.0;
+        let dB = typeof nativeLufsMomentary === 'number'
+          ? nativeLufsMomentary
+          : typeof nativeRmsDb === 'number'
+            ? nativeRmsDb
+            : 20 * Math.log10(Math.max(rms, 0.0001));
+        if (typeof nativeLufsMomentary !== 'number' && typeof nativeRmsDb !== 'number') {
+          dB = (dB * 0.5) - 6.0;
+        }
         if (dB > 0) dB = 0;
         if (dB < -60) dB = -60;
 
-        const loudnessEl = document.getElementById('val-loudness');
-        const loudnessBar = document.getElementById('bar-loudness');
         loudnessEl.innerText = dB.toFixed(1);
         const fillPercent = Math.max(0, Math.min(100, ((dB + 40) / 40) * 100));
         loudnessBar.style.width = fillPercent + '%';
 
-        const peak = Math.max(...lastSpectrumHeights) / (height - 15);
+        let peakHeight = 0;
+        for (let i = 0; i < barCount; i++) {
+          if (lastSpectrumHeights[i] > peakHeight) peakHeight = lastSpectrumHeights[i];
+        }
+        const peak = typeof nativePeakDb === 'number'
+          ? Math.pow(10, Math.max(-60, nativePeakDb) / 20)
+          : peakHeight / (height - 15);
         const dynRange = Math.max(1.0, (peak / (rms + 0.05)) * 1.5).toFixed(1);
-        document.getElementById('val-dynamic-range').innerText = dynRange;
-        document.getElementById('bar-dynamic-range').style.width = Math.min(100, (dynRange / 15) * 100) + '%';
+        dynamicRangeEl.innerText = dynRange;
+        dynamicRangeBar.style.width = Math.min(100, (dynRange / 15) * 100) + '%';
       }
+    }
+
+    function drawSpectrum() {
+      spectrumAnimationFrame = 0;
+      renderSpectrumFrame(performance.now());
+      if (isPlaying) {
+        spectrumAnimationFrame = requestAnimationFrame(drawSpectrum);
+      }
+    }
+
+    function startSpectrumLoop() {
+      if (spectrumAnimationFrame !== 0) return;
+      spectrumAnimationFrame = requestAnimationFrame(drawSpectrum);
+    }
+
+    function stopSpectrumLoop() {
+      if (spectrumAnimationFrame === 0) return;
+      cancelAnimationFrame(spectrumAnimationFrame);
+      spectrumAnimationFrame = 0;
     }
 
     // --- PLAYHEAD MOVEMENT (host-driven) ---
@@ -1285,6 +1514,10 @@
       window.parent.postMessage({ kind: 'control', action, ...payload }, '*');
     }
 
+    function isNumericSequence(value) {
+      return Array.isArray(value) || ArrayBuffer.isView(value);
+    }
+
     btnPlayPause.addEventListener('click', () => {
       postHostControl('togglePlay');
     });
@@ -1318,9 +1551,11 @@
 
       switch (msg.kind) {
         case 'spectrum': {
-          const incoming = msg.data;
-          if (Array.isArray(incoming) && incoming.length > 0) {
-            // Resize dataArray to match the incoming length (256 expected).
+          const incomingBars = isNumericSequence(msg.bars) ? msg.bars : null;
+          const incoming = isNumericSequence(msg.data) ? msg.data : null;
+          if (incomingBars && incomingBars.length > 0) {
+            retargetPrecomputedBars(incomingBars);
+          } else if (incoming && incoming.length > 0) {
             if (dataArray.length !== incoming.length) {
               dataArray = new Float32Array(incoming.length);
             }
@@ -1330,12 +1565,44 @@
                 : 0;
               dataArray[i] = value;
             }
+            usingPrecomputedBars = false;
           }
           if (typeof msg.sampleRate === 'number' && msg.sampleRate > 0) {
             hostSampleRate = msg.sampleRate;
           }
+          if (typeof msg.maxFrequency === 'number' && msg.maxFrequency > 0) {
+            hostMaxFrequency = msg.maxFrequency;
+          } else if (hostSampleRate > 0) {
+            hostMaxFrequency = Math.min(20000, hostSampleRate / 2);
+          }
+          updateHzLabels();
+          nativePeakDb = typeof msg.peakDb === 'number' && isFinite(msg.peakDb) ? msg.peakDb : null;
+          nativeRmsDb = typeof msg.rmsDb === 'number' && isFinite(msg.rmsDb) ? msg.rmsDb : null;
+          nativeLufsMomentary =
+            typeof msg.lufsMomentary === 'number' && isFinite(msg.lufsMomentary)
+              ? msg.lufsMomentary
+              : null;
+          if (msg.active === false) {
+            if (isPlaying) {
+              dataArray.fill(0);
+              precomputedBars.fill(0);
+              previousPrecomputedBars.fill(0);
+              displayPrecomputedBars.fill(0);
+              startSpectrumLoop();
+            } else {
+              dataArray.fill(0);
+              precomputedBars.fill(0);
+              previousPrecomputedBars.fill(0);
+              displayPrecomputedBars.fill(0);
+              lastSpectrumHeights.fill(0);
+              stopSpectrumLoop();
+              renderSpectrumFrame(performance.now());
+            }
+          } else if (isPlaying) {
+            startSpectrumLoop();
+          }
           // Update live waveform if provided alongside spectrum
-          if (Array.isArray(msg.waveform) && msg.waveform.length > 0) {
+          if (isNumericSequence(msg.waveform) && msg.waveform.length > 0) {
             liveWaveformPoints = msg.waveform;
             drawWaveform();
           }
@@ -1374,7 +1641,9 @@
           // (Re)start playhead loop on play→playing transition
           if (isPlaying && !wasPlaying) {
             updatePlayhead();
+            startSpectrumLoop();
           } else if (!isPlaying) {
+            stopSpectrumLoop();
             // Render final paused position
             if (songDuration > 0) {
               const pct = (pausedTime / songDuration) * 100;
@@ -1463,7 +1732,7 @@
     // --- INITIALIZATION ON LOAD ---
     resizeCanvases();
     drawRadarTicks();
-    drawSpectrum();  // starts the rAF loop (renders zeros until host sends spectrum)
+    renderSpectrumFrame(performance.now());
     syncPlayPauseVisual();
 
     // Signal the host that the visualizer is ready to receive data.

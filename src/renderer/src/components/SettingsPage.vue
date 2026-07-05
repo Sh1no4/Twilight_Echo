@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
-import { useExtensionRegistry } from '../extensions/registry'
+import { useExtensionRegistry, type UiContribution } from '../extensions/registry'
 import { getPluginThemeKey } from '../extensions/themeSelection'
 import type {
   AppSettings,
@@ -10,6 +10,7 @@ import type {
   AppBackgroundKind,
   AppBackgroundPage,
   ProxyMode,
+  AudioCapabilitySupportState,
   AudioDeviceOption,
   AudioOutputId,
   AudioProcessingSettings,
@@ -23,6 +24,7 @@ import type {
   LyricAlign,
   MusicCachePolicySettings,
   OutputConfig,
+  PlayerShortcutStatus,
   PlaybackResumeMode,
   StartupHomePage,
   AppBackgroundSettings,
@@ -174,9 +176,49 @@ const streamingAudioCachePolicyOptions: {
   { value: 'off', label: '不缓存流媒体音频' }
 ]
 
-const GITHUB_URL = 'https://github.com/nousresearch/twilight-echo'
-const RELEASES_URL = 'https://github.com/nousresearch/twilight-echo/releases'
+const GITHUB_URL = 'https://github.com/asenyarzc-cpu/Twilight_Echo'
+const RELEASES_URL = 'https://github.com/asenyarzc-cpu/Twilight_Echo/releases'
 const HOMEPAGE_URL = 'https://twilightecho.com'
+
+const SETTINGS_SEARCH_INDEX: Array<{
+  section: SectionKey
+  title: string
+  terms: string
+}> = [
+  { section: 'general', title: '媒体库与启动', terms: '常规 扫描 文件夹 监控 网易云 SMTC Discord 启动 托盘 代理 插件设置 备份 恢复' },
+  { section: 'playback', title: '播放与输出', terms: '播放 输出 设备 独占 音量 削波 无缝 DSD SACD buffer routing' },
+  { section: 'dsp', title: 'DSP 处理器', terms: 'DSP EQ ReplayGain Crossfeed Convolver FFT High-Res DSD SACD' },
+  { section: 'cache', title: '缓存策略', terms: '缓存 目录 封面 歌词 元数据 流媒体 清理' },
+  { section: 'performance', title: '性能', terms: '性能 硬件加速 GPU 重启' },
+  { section: 'appearance', title: '外观与主题', terms: '外观 主题 插件主题 强调色 背景 字体 密度 歌词 卡片' },
+  { section: 'desktopLyrics', title: '桌面歌词', terms: '桌面歌词 字体 颜色 阴影 对齐 窗口 置顶 鼠标穿透 翻译' },
+  { section: 'shortcuts', title: '快捷键', terms: '快捷键 全局 播放 暂停 上一首 下一首 注册 冲突' },
+  { section: 'about', title: '关于与更新', terms: '关于 版本 更新 GitHub Releases 开源 致谢' }
+]
+
+const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
+  enabled: false,
+  fontSize: 32,
+  fontFamily: 'system',
+  fontWeight: 700,
+  color: '#ffffff',
+  highlightColor: '#FFD700',
+  bgColor: '#000000',
+  bgOpacity: 30,
+  align: 'center',
+  showTranslation: true,
+  lineSpacing: 1.6,
+  shadow: true,
+  shadowBlur: 8,
+  shadowColor: '#000000',
+  windowWidth: 900,
+  windowHeight: 160,
+  windowX: -1,
+  windowY: -1,
+  alwaysOnTop: true,
+  clickThrough: false,
+  maxLines: 2
+}
 
 const updateCheckState = ref<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle')
 const latestVersion = ref('')
@@ -184,6 +226,11 @@ const lastUpdateCheck = ref('')
 const runningPluginSettingsCommand = ref('')
 const pluginSettingsResult = ref<Record<string, string>>({})
 const pluginSettingsError = ref<Record<string, string>>({})
+const settingsSearchQuery = ref('')
+const settingsNotice = ref('')
+const settingsError = ref('')
+const importSettingsInputRef = ref<HTMLInputElement | null>(null)
+const shortcutStatuses = ref<PlayerShortcutStatus[]>([])
 
 const activeSection = ref<SectionKey>(props.initialSection ?? 'general')
 const pageRef = ref<HTMLElement | null>(null)
@@ -205,9 +252,12 @@ const {
   updateSettings,
   chooseCacheFolder,
   importBackgroundImage,
+  exportSettingsBackup: exportSettingsBackupFile,
+  importSettingsBackup: importSettingsBackupFile,
   resetCacheFolder,
   refreshCacheSize,
   clearCache,
+  getShortcutStatuses,
   relaunch,
   addLibraryFolder,
   removeLibraryFolder,
@@ -261,6 +311,19 @@ const pluginThemeOptions = computed(() =>
 )
 const pluginSettingsPanels = computed(() =>
   uiContributions.value.filter((contribution) => contribution.kind === 'settingsPanel')
+)
+const filteredSettingsSections = computed(() => {
+  const query = settingsSearchQuery.value.trim().toLowerCase()
+  if (!query) return []
+  return SETTINGS_SEARCH_INDEX.filter((item) =>
+    `${item.title} ${item.terms}`.toLowerCase().includes(query)
+  )
+})
+const hasSettingsSearchResults = computed(
+  () => settingsSearchQuery.value.trim().length > 0 && filteredSettingsSections.value.length > 0
+)
+const hasSettingsSearchNoResults = computed(
+  () => settingsSearchQuery.value.trim().length > 0 && filteredSettingsSections.value.length === 0
 )
 const selectedAudioOutput = computed(() =>
   audioOutputOptions.value.find((option) => option.id === audioOutput.value)
@@ -405,6 +468,35 @@ function deviceSpecText(device: AudioDeviceOption): string {
   return '原生输出设备'
 }
 
+function normalizeCapabilityState(
+  state: AudioCapabilitySupportState | undefined
+): AudioCapabilitySupportState {
+  return state ?? 'unknown'
+}
+
+function capabilityStateLabel(state: AudioCapabilitySupportState | undefined): string {
+  return {
+    verified: '已验证',
+    'runtime-probed': '运行时探测',
+    unsupported: '不支持',
+    unknown: '未知'
+  }[normalizeCapabilityState(state)]
+}
+
+function capabilityStateTone(state: AudioCapabilitySupportState | undefined): string {
+  return {
+    verified: 'verified',
+    'runtime-probed': 'runtime',
+    unsupported: 'unsupported',
+    unknown: 'unknown'
+  }[normalizeCapabilityState(state)]
+}
+
+function capabilityStateTitle(device: AudioDeviceOption, label: string): string {
+  const reason = device.capabilityReason?.trim()
+  return reason ? `${label}: ${reason}` : label
+}
+
 function setProxyMode(event: Event): void {
   const value = (event.target as HTMLSelectElement).value as ProxyMode
   void updateSettings({ proxyMode: value })
@@ -422,6 +514,11 @@ function setProxyPort(event: Event): void {
 
 function toggleSetting(key: BooleanSettingKey): void {
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
+}
+
+async function toggleGlobalShortcuts(): Promise<void> {
+  await updateSettings({ globalShortcuts: !settings.value.globalShortcuts })
+  await refreshShortcutStatuses()
 }
 
 function toggleCacheArtifact(key: keyof MusicCachePolicySettings): void {
@@ -447,6 +544,68 @@ function setStreamingAudioCachePolicy(event: Event): void {
 async function toggleDesktopLyrics(): Promise<void> {
   const enabled = await window.api.desktopLyrics.toggle()
   await updateSettings({ desktopLyrics: { ...settings.value.desktopLyrics, enabled } })
+}
+
+function resetSettingsGroup(group: 'appearance' | 'playback' | 'desktopLyrics'): void {
+  if (!window.confirm(`恢复${group === 'appearance' ? '外观' : group === 'playback' ? '播放' : '桌面歌词'}设置为默认值？`)) return
+  settingsNotice.value = ''
+  settingsError.value = ''
+  if (group === 'appearance') {
+    void updateSettings({
+      theme: 'system',
+      pluginThemeId: null,
+      blurEffect: true,
+      useCoverTheme: true,
+      lyricFontSize: 18,
+      lyricAlign: 'center',
+      lyricDimOpacity: 40,
+      fontFamily: 'system',
+      uiDensity: 'standard'
+    }).then(() => {
+      settingsNotice.value = '外观设置已恢复默认'
+    })
+    return
+  }
+  if (group === 'playback') {
+    void updateSettings({
+      playbackResumeMode: 'off',
+      audioExclusiveMode: false,
+      audioOutputConfig: {
+        preferredBufferSize: 0,
+        routingMode: 'auto',
+        wasapiExclusivePushMode: false
+      }
+    }).then(() => {
+      settingsNotice.value = '播放设置已恢复默认'
+    })
+    void setAudioProcessing({
+      dspEnabled: false,
+      clipGuard: true,
+      fftEnabled: true,
+      fftResolution: 8192,
+      highResolution: true,
+      dsdToPcm: false,
+      dsdOutputMode: 'auto',
+      sacdProgramMode: 'auto',
+      eqEnabled: false,
+      volumeNormalization: 'off',
+      replayGainPreamp: 0,
+      replayGainFallback: 0,
+      replayGainClip: true,
+      convolverEnabled: false,
+      convolverIrPath: '',
+      crossfeedEnabled: false,
+      crossfeedStrength: 0,
+      crossfeedDelayMs: 0.35,
+      crossfeedCutoffHz: 700,
+      gapless: true,
+      crossfadeSeconds: 0
+    })
+    return
+  }
+  void updateSettings({ desktopLyrics: { ...RESET_DESKTOP_LYRICS } }).then(() => {
+    settingsNotice.value = '桌面歌词设置已恢复默认'
+  })
 }
 
 function updateDl<K extends keyof DesktopLyricsSettings>(key: K, value: DesktopLyricsSettings[K]): void {
@@ -818,30 +977,89 @@ function openHomepage(): void {
   void openExternalUrl(HOMEPAGE_URL)
 }
 
-async function runPluginSettingsPanel(command: string | undefined, panelId: string): Promise<void> {
-  if (!command || runningPluginSettingsCommand.value) return
-  runningPluginSettingsCommand.value = panelId
-  pluginSettingsError.value = { ...pluginSettingsError.value, [panelId]: '' }
-  pluginSettingsResult.value = { ...pluginSettingsResult.value, [panelId]: '' }
+function pluginPanelStateKey(panel: UiContribution): string {
+  return `${panel.pluginId}:${panel.id}`
+}
+
+async function runPluginSettingsPanel(panel: UiContribution): Promise<void> {
+  const stateKey = pluginPanelStateKey(panel)
+  if (!panel.command || runningPluginSettingsCommand.value) return
+  runningPluginSettingsCommand.value = stateKey
+  pluginSettingsError.value = { ...pluginSettingsError.value, [stateKey]: '' }
+  pluginSettingsResult.value = { ...pluginSettingsResult.value, [stateKey]: '' }
   try {
-    const result = await window.api.extensions.executeCommand(command, [
+    const result = await window.api.extensions.executeCommand(panel.command, [
       {
         source: 'settingsPanel',
-        panelId
+        panelId: panel.id
       }
     ])
     pluginSettingsResult.value = {
       ...pluginSettingsResult.value,
-      [panelId]: result == null ? '已执行' : typeof result === 'string' ? result : JSON.stringify(result)
+      [stateKey]: result == null ? '已执行' : typeof result === 'string' ? result : JSON.stringify(result)
     }
   } catch (err) {
     pluginSettingsError.value = {
       ...pluginSettingsError.value,
-      [panelId]: err instanceof Error ? err.message : String(err)
+      [stateKey]: err instanceof Error ? err.message : String(err)
     }
   } finally {
     runningPluginSettingsCommand.value = ''
   }
+}
+
+function downloadTextFile(fileName: string, content: string): void {
+  const blob = new Blob([content], { type: 'application/json;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = fileName
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+async function exportSettingsBackup(): Promise<void> {
+  settingsNotice.value = ''
+  settingsError.value = ''
+  try {
+    const json = await exportSettingsBackupFile()
+    downloadTextFile(`twilight-echo-settings-${new Date().toISOString().slice(0, 10)}.json`, json)
+    settingsNotice.value = '设置备份已导出'
+  } catch (err) {
+    settingsError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+function importSettingsBackup(): void {
+  importSettingsInputRef.value?.click()
+}
+
+async function handleSettingsBackupSelected(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  if (!window.confirm('导入设置备份会覆盖当前设置。确认继续？')) return
+  settingsNotice.value = ''
+  settingsError.value = ''
+  try {
+    await importSettingsBackupFile(await file.text())
+    await refreshShortcutStatuses()
+    settingsNotice.value = '设置备份已导入'
+  } catch (err) {
+    settingsError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function confirmClearCache(): Promise<void> {
+  if (
+    !window.confirm(
+      `确认清理缓存？\n\n当前估算：${formattedCacheSize.value}\n将删除封面、歌词、元数据和可复用流媒体缓存。此操作不可恢复。`
+    )
+  ) {
+    return
+  }
+  await clearCache()
 }
 
 async function checkForUpdates(): Promise<void> {
@@ -933,6 +1151,20 @@ function scrollToSection(section: SectionKey): void {
   document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 }
 
+function scrollToSearchResult(section: SectionKey): void {
+  settingsSearchQuery.value = ''
+  scrollToSection(section)
+}
+
+async function refreshShortcutStatuses(): Promise<void> {
+  try {
+    shortcutStatuses.value = await getShortcutStatuses()
+  } catch (err) {
+    shortcutStatuses.value = []
+    settingsError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
 function updateActiveSection(): void {
   const page = pageRef.value
   if (!page) return
@@ -954,6 +1186,7 @@ function updateActiveSection(): void {
 onMounted(async () => {
   await Promise.all([loadSettings(), refreshAudioOutputState()])
   await refreshCacheSize()
+  await refreshShortcutStatuses()
   await syncExtensions()
   await nextTick()
   pageRef.value?.addEventListener('scroll', updateActiveSection, { passive: true })
@@ -976,6 +1209,13 @@ onBeforeUnmount(() => {
       accept="image/jpeg,image/png,image/webp"
       @change="handleBackgroundFileSelected"
     />
+    <input
+      ref="importSettingsInputRef"
+      class="visually-hidden-file-input"
+      type="file"
+      accept="application/json,.json"
+      @change="handleSettingsBackupSelected"
+    />
     <div class="settings-preview-layout">
       <nav class="settings-preview-nav" aria-label="设置分区">
         <button
@@ -992,6 +1232,44 @@ onBeforeUnmount(() => {
       </nav>
 
       <div class="settings-preview-stack">
+        <section class="settings-command-bar glass-card">
+          <div class="settings-search-box">
+            <i class="pi pi-search"></i>
+            <input
+              v-model="settingsSearchQuery"
+              type="search"
+              placeholder="搜索设置、分区或说明"
+              aria-label="搜索设置"
+            />
+          </div>
+          <div class="settings-command-actions">
+            <button type="button" class="soft-button" @click="exportSettingsBackup">
+              <i class="pi pi-download"></i>
+              导出设置
+            </button>
+            <button type="button" class="soft-button" @click="importSettingsBackup">
+              <i class="pi pi-upload"></i>
+              导入设置
+            </button>
+          </div>
+          <div v-if="hasSettingsSearchResults" class="settings-search-results">
+            <button
+              v-for="result in filteredSettingsSections"
+              :key="result.section"
+              type="button"
+              @click="scrollToSearchResult(result.section)"
+            >
+              <i :class="sections.find((section) => section.key === result.section)?.icon"></i>
+              {{ result.title }}
+            </button>
+          </div>
+          <div v-else-if="hasSettingsSearchNoResults" class="settings-search-empty">
+            没有找到匹配的设置
+          </div>
+          <div v-if="settingsNotice" class="settings-inline-notice">{{ settingsNotice }}</div>
+          <div v-if="settingsError" class="settings-inline-error">{{ settingsError }}</div>
+        </section>
+
         <section id="general" class="glass-card preview-section">
           <div class="section-title-row">
             <i class="pi pi-sliders-h"></i>
@@ -1141,6 +1419,46 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
+          <div class="section-block">
+            <h3>备份与恢复 (Backup & Reset)</h3>
+            <div class="setting-list">
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>设置备份</strong>
+                  <span>导出当前设置为 JSON，或从备份文件恢复；导入前会二次确认。</span>
+                </div>
+                <div class="inline-controls">
+                  <button type="button" class="soft-button" @click="exportSettingsBackup">
+                    <i class="pi pi-download"></i>
+                    导出
+                  </button>
+                  <button type="button" class="soft-button" @click="importSettingsBackup">
+                    <i class="pi pi-upload"></i>
+                    导入
+                  </button>
+                </div>
+              </div>
+              <hr />
+              <div class="setting-item top-align">
+                <div class="setting-copy">
+                  <strong>按分组恢复默认</strong>
+                  <span>只重置选中的设置分组，不清空媒体库、插件和本地数据。</span>
+                </div>
+                <div class="inline-controls reset-group-actions">
+                  <button type="button" class="muted-button" @click="resetSettingsGroup('appearance')">
+                    外观
+                  </button>
+                  <button type="button" class="muted-button" @click="resetSettingsGroup('playback')">
+                    播放
+                  </button>
+                  <button type="button" class="muted-button" @click="resetSettingsGroup('desktopLyrics')">
+                    桌面歌词
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div v-if="pluginSettingsPanels.length > 0" class="section-block">
             <h3>插件设置 (Plugin Settings)</h3>
             <div class="setting-list">
@@ -1150,21 +1468,27 @@ onBeforeUnmount(() => {
                   <div class="setting-copy">
                     <strong>{{ panel.title }}</strong>
                     <span>{{ panel.description || panel.pluginId }}</span>
-                    <small v-if="pluginSettingsResult[panel.id]" class="plugin-command-result">
-                      {{ pluginSettingsResult[panel.id] }}
+                    <small
+                      v-if="pluginSettingsResult[pluginPanelStateKey(panel)]"
+                      class="plugin-command-result"
+                    >
+                      {{ pluginSettingsResult[pluginPanelStateKey(panel)] }}
                     </small>
-                    <small v-if="pluginSettingsError[panel.id]" class="plugin-command-error">
-                      {{ pluginSettingsError[panel.id] }}
+                    <small
+                      v-if="pluginSettingsError[pluginPanelStateKey(panel)]"
+                      class="plugin-command-error"
+                    >
+                      {{ pluginSettingsError[pluginPanelStateKey(panel)] }}
                     </small>
                   </div>
                   <button
                     type="button"
                     class="soft-button"
-                    :disabled="!panel.command || runningPluginSettingsCommand === panel.id"
-                    @click="runPluginSettingsPanel(panel.command, panel.id)"
+                    :disabled="!panel.command || Boolean(runningPluginSettingsCommand)"
+                    @click="runPluginSettingsPanel(panel)"
                   >
                     <i v-if="panel.icon" :class="panel.icon"></i>
-                    {{ runningPluginSettingsCommand === panel.id ? '执行中…' : '打开设置' }}
+                    {{ runningPluginSettingsCommand === pluginPanelStateKey(panel) ? '执行中…' : '打开设置' }}
                   </button>
                 </div>
               </template>
@@ -1271,6 +1595,22 @@ onBeforeUnmount(() => {
                 <i :class="deviceIcon(device)"></i>
                 <span>{{ device.label }}</span>
                 <small>{{ deviceSpecText(device) }}</small>
+                <div class="device-capability-row">
+                  <span
+                    class="device-capability-chip"
+                    :class="capabilityStateTone(device.dopSupportState)"
+                    :title="capabilityStateTitle(device, 'DoP')"
+                  >
+                    DoP {{ capabilityStateLabel(device.dopSupportState) }}
+                  </span>
+                  <span
+                    class="device-capability-chip"
+                    :class="capabilityStateTone(device.nativeDsdSupportState)"
+                    :title="capabilityStateTitle(device, 'Native DSD')"
+                  >
+                    Native DSD {{ capabilityStateLabel(device.nativeDsdSupportState) }}
+                  </span>
+                </div>
                 <b v-if="audioDevice === device.id">当前</b>
               </button>
             </div>
@@ -1631,7 +1971,7 @@ onBeforeUnmount(() => {
                 <i class="pi pi-bolt"></i> 动态增强
               </button>
               <button class="preset-btn" type="button" @click="applyDspPreset('bypass')">
-                <i class="pi pi-stop-circle"></i> 纯净直通 (Bit-perfect)
+                <i class="pi pi-stop-circle"></i> DSP 旁路 (DSP Bypass)
               </button>
             </div>
 
@@ -1872,14 +2212,8 @@ onBeforeUnmount(() => {
                   <label class="decode-highres">
                     <span>高解析度处理 (High-Res)</span>
                     <div class="mini-highres">
-                      <small>预留项，当前原生 DSP 链未消费该开关</small>
-                      <span
-                        class="toggle-switch"
-                        :class="{ active: false, inactive: true }"
-                        role="switch"
-                        aria-checked="false"
-                        title="当前版本暂未接入原生处理链"
-                      ></span>
+                      <small>High-Res 当前为自动链路能力，原生 DSP 链未消费手动开关。</small>
+                      <span class="read-only-pill" title="当前版本暂未接入原生处理链">自动</span>
                     </div>
                   </label>
                 </div>
@@ -1974,7 +2308,7 @@ onBeforeUnmount(() => {
                 class="danger-soft-button solid-hover"
                 type="button"
                 :disabled="clearingCache"
-                @click="clearCache"
+                @click="confirmClearCache"
               >
                 <i class="pi pi-trash"></i>
                 {{ clearingCache ? '清理中…' : '清理缓存' }}
@@ -2935,14 +3269,51 @@ onBeforeUnmount(() => {
                 :class="{ active: settings.globalShortcuts, inactive: !settings.globalShortcuts }"
                 role="switch"
                 :aria-checked="settings.globalShortcuts"
-                @click="toggleSetting('globalShortcuts')"
+                @click="toggleGlobalShortcuts"
               ></span>
             </div>
             <hr />
-            <div class="shortcut-grid">
-              <div><span>播放 / 暂停</span><kbd>Ctrl + Alt + Space</kbd></div>
-              <div><span>上一首</span><kbd>Ctrl + Alt + Left</kbd></div>
-              <div><span>下一首</span><kbd>Ctrl + Alt + Right</kbd></div>
+            <div v-if="shortcutStatuses.length > 0" class="shortcut-grid">
+              <div v-for="shortcut in shortcutStatuses" :key="shortcut.action">
+                <span>{{ shortcut.label }}</span>
+                <kbd>{{ shortcut.accelerator }}</kbd>
+              </div>
+            </div>
+            <div v-else class="shortcut-grid">
+              <div><span>快捷键状态</span><kbd>读取中</kbd></div>
+            </div>
+            <div v-if="shortcutStatuses.length > 0" class="shortcut-status-list">
+              <div
+                v-for="shortcut in shortcutStatuses"
+                :key="`${shortcut.action}:status`"
+                class="shortcut-status-row"
+                :class="{
+                  registered: settings.globalShortcuts && shortcut.registered,
+                  failed: settings.globalShortcuts && !shortcut.registered
+                }"
+              >
+                <span>
+                  <i
+                    :class="
+                      !settings.globalShortcuts
+                        ? 'pi pi-minus-circle'
+                        : shortcut.registered
+                          ? 'pi pi-check-circle'
+                          : 'pi pi-exclamation-circle'
+                    "
+                  ></i>
+                  {{ shortcut.label }}
+                </span>
+                <small>
+                  {{
+                    !settings.globalShortcuts
+                      ? '未启用'
+                      : shortcut.registered
+                        ? '已注册'
+                        : shortcut.error || '注册失败'
+                  }}
+                </small>
+              </div>
             </div>
           </div>
 
@@ -2984,10 +3355,10 @@ onBeforeUnmount(() => {
               </div>
               <button
                 v-if="updateCheckState === 'available'"
-                class="brand-soft-button"
-                type="button"
-                @click="openGithub"
-              >
+                    class="brand-soft-button"
+                    type="button"
+                    @click="openReleases"
+                  >
                 <i class="pi pi-download"></i>
                 前往下载
               </button>
@@ -3109,7 +3480,11 @@ html[data-theme='dark'] .settings-preview-page .page-background-row,
 html[data-theme='dark'] .settings-preview-page .page-background-row.expanded,
 html[data-theme='dark'] .settings-preview-page .inherit-toggle,
 html[data-theme='dark'] .settings-preview-page .pill-action.ghost,
-html[data-theme='dark'] .settings-preview-page .dashed-button {
+html[data-theme='dark'] .settings-preview-page .dashed-button,
+html[data-theme='dark'] .settings-preview-page .settings-search-box,
+html[data-theme='dark'] .settings-preview-page .settings-search-empty,
+html[data-theme='dark'] .settings-preview-page .shortcut-status-row,
+html[data-theme='dark'] .settings-preview-page .read-only-pill {
   border-color: var(--te-card-border);
   background: var(--te-card-bg);
   color: rgba(226, 232, 240, 0.9);
@@ -3141,7 +3516,8 @@ html[data-theme='dark'] .settings-preview-page .theme-segment button,
 html[data-theme='dark'] .settings-preview-page .background-options button,
 html[data-theme='dark'] .settings-preview-page .background-accordion-trigger,
 html[data-theme='dark'] .settings-preview-page .background-kind-toggle button,
-html[data-theme='dark'] .settings-preview-page .page-background-header {
+html[data-theme='dark'] .settings-preview-page .page-background-header,
+html[data-theme='dark'] .settings-preview-page .settings-search-box input {
   color: rgba(148, 163, 184, 0.88);
 }
 
@@ -3178,7 +3554,8 @@ html[data-theme='dark'] .settings-preview-page .about-copy h3,
 html[data-theme='dark'] .settings-preview-page .update-card strong,
 html[data-theme='dark'] .settings-preview-page .background-editor-head strong,
 html[data-theme='dark'] .settings-preview-page .page-background-copy strong,
-html[data-theme='dark'] .settings-preview-page .signal-node.active .signal-node-name {
+html[data-theme='dark'] .settings-preview-page .signal-node.active .signal-node-name,
+html[data-theme='dark'] .settings-preview-page .shortcut-status-row span {
   color: rgba(248, 250, 252, 0.95);
 }
 
@@ -3207,7 +3584,8 @@ html[data-theme='dark'] .settings-preview-page .crossfade-group,
 html[data-theme='dark'] .settings-preview-page .crossfeed-percent,
 html[data-theme='dark'] .settings-preview-page .diagnostic-chain,
 html[data-theme='dark'] .settings-preview-page .diagnostic-meta,
-html[data-theme='dark'] .settings-preview-page .mini-highres small {
+html[data-theme='dark'] .settings-preview-page .mini-highres small,
+html[data-theme='dark'] .settings-preview-page .shortcut-status-row small {
   color: rgba(148, 163, 184, 0.82);
 }
 
@@ -3260,7 +3638,8 @@ html[data-theme='dark'] .settings-preview-page .inherit-toggle.active {
 
 html[data-theme='dark'] .settings-preview-page .dashed-button:hover,
 html[data-theme='dark'] .settings-preview-page .brand-soft-button:hover,
-html[data-theme='dark'] .settings-preview-page .preset-btn:hover {
+html[data-theme='dark'] .settings-preview-page .preset-btn:hover,
+html[data-theme='dark'] .settings-preview-page .settings-search-results button {
   border-color: rgba(var(--te-primary-rgb), 0.34);
   background: rgba(var(--te-primary-rgb), 0.14);
   color: var(--te-primary-300);

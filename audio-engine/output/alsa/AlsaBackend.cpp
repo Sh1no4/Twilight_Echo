@@ -134,7 +134,11 @@ struct AlsaBackend::Impl {
   std::string deviceId = "default";
   std::string deviceName = "ALSA default";
   std::atomic<bool> running{false};
+  std::atomic<bool> stopRequested{false};
+  std::atomic<bool> recoveryQueued{false};
+  std::mutex threadMutex;
   std::thread renderThread;
+  std::thread recoveryThread;
   std::vector<float> renderScratch;
   std::vector<uint8_t> packedScratch;
   bool packedScratchDsdSilence = false;
@@ -161,6 +165,11 @@ struct AlsaBackend::Impl {
     AudioSampleFormat sampleFormat;
     int bitDepth;
     const char* label;
+  };
+
+  enum class RenderLoopKind {
+    Float,
+    Typed
   };
 
   std::string alsaError(const char* context, int code) const {
@@ -252,18 +261,19 @@ struct AlsaBackend::Impl {
     // so fill with DSD silence (0x69) when the float path is used as fallback. The typed
     // path (startTyped) handles real DSD byte transfer without going through pack().
     if (isDsdSampleFormat(outputFormat.sampleFormat)) {
-      alsa::prepareDsdSilenceScratch(packedScratch, frames * bytesPerFrame, packedScratchDsdSilence);
+      alsa::prepareDsdSilenceScratchNoResize(packedScratch, frames * bytesPerFrame, packedScratchDsdSilence);
       (void)input;
       return;
     }
 
     bytesPerFrame =
-        alsa::packFloatScratchToPcmScratch(input, frames, channels, outputFormat.sampleFormat, packedScratch);
+        alsa::packFloatScratchToPcmScratchNoResize(input, frames, channels, outputFormat.sampleFormat, packedScratch);
     packedScratchDsdSilence = false;
   }
 
   void recordXrun(const std::string& message) {
-    std::lock_guard lock(mutex);
+    std::unique_lock lock(mutex, std::try_to_lock);
+    if (!lock.owns_lock()) return;
     ++diagnostics.sessionUnderrunCount;
     ++diagnostics.lifetimeUnderrunCount;
     ++diagnostics.sessionRecoveryCount;
@@ -282,7 +292,7 @@ struct AlsaBackend::Impl {
     }
     if (code == kAlsaErrEstrpipe) {
       recordXrun("ALSA suspend recovered with snd_pcm_prepare");
-      while (running.load()) {
+      while (!stopRequested.load()) {
         const int resume = host->resume();
         if (resume == 0) return host->prepare() >= 0;
         if (resume != kAlsaErrEagain) break;
@@ -290,10 +300,84 @@ struct AlsaBackend::Impl {
       }
       return host->prepare() >= 0;
     }
-    std::lock_guard lock(mutex);
-    diagnostics.lastError = alsaError("ALSA write failed", code);
-    outputInfo.diagnostics = diagnostics;
+    {
+      std::unique_lock lock(mutex, std::try_to_lock);
+      if (lock.owns_lock()) {
+        diagnostics.lastError = alsaError("ALSA write failed", code);
+        outputInfo.diagnostics = diagnostics;
+      }
+    }
     return false;
+  }
+
+  void launchRenderThread(RenderLoopKind kind) {
+    std::lock_guard lock(threadMutex);
+    renderThread = std::thread([this, kind] {
+      if (kind == RenderLoopKind::Typed) {
+        typedRenderLoop();
+      } else {
+        renderLoop();
+      }
+    });
+  }
+
+  void joinRenderThread() {
+    std::thread threadToJoin;
+    {
+      std::lock_guard lock(threadMutex);
+      if (renderThread.joinable() && renderThread.get_id() != std::this_thread::get_id()) {
+        threadToJoin = std::move(renderThread);
+      }
+    }
+    if (threadToJoin.joinable()) threadToJoin.join();
+  }
+
+  void joinRecoveryThread() {
+    std::thread threadToJoin;
+    {
+      std::lock_guard lock(threadMutex);
+      if (recoveryThread.joinable() && recoveryThread.get_id() != std::this_thread::get_id()) {
+        threadToJoin = std::move(recoveryThread);
+      }
+    }
+    if (threadToJoin.joinable()) threadToJoin.join();
+  }
+
+  void runQueuedWriteRecovery(int code, RenderLoopKind kind, std::string failureMessage) {
+    joinRenderThread();
+    if (stopRequested.load()) {
+      recoveryQueued = false;
+      return;
+    }
+
+    const bool recovered = recoverFromWriteError(code);
+    if (recovered && !stopRequested.load()) {
+      running = true;
+      launchRenderThread(kind);
+    } else {
+      OutputEventCallback failureCallback;
+      {
+        std::lock_guard lock(mutex);
+        failureCallback = eventCallback;
+      }
+      running = false;
+      if (failureCallback) failureCallback(OutputBackendEvent::RenderError, failureMessage);
+    }
+    recoveryQueued = false;
+  }
+
+  void queueWriteRecoveryFromRenderThread(int code, RenderLoopKind kind, const char* failureMessage) {
+    bool expected = false;
+    if (!recoveryQueued.compare_exchange_strong(expected, true)) return;
+
+    running = false;
+    joinRecoveryThread();
+    {
+      std::lock_guard lock(threadMutex);
+      recoveryThread = std::thread([this, code, kind, message = std::string(failureMessage)] {
+        runQueuedWriteRecovery(code, kind, message);
+      });
+    }
   }
 
   void renderLoop() {
@@ -302,14 +386,18 @@ struct AlsaBackend::Impl {
       int channels = 0;
       uint64_t frames = 0;
       {
-        std::lock_guard lock(mutex);
+        std::unique_lock lock(mutex, std::try_to_lock);
+        if (!lock.owns_lock()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+          continue;
+        }
         renderCallback = callback;
         channels = std::max(1, outputFormat.channelCount);
         frames = std::max<uint64_t>(1, periodSize);
       }
 
       const size_t frameCount = static_cast<size_t>(frames);
-      alsa::renderFloatPeriodWithTailSilence(renderScratch, frameCount, channels, renderCallback);
+      alsa::renderFloatPeriodWithTailSilenceNoResize(renderScratch, frameCount, channels, renderCallback);
       pack(renderScratch.data(), frameCount, channels);
 
       int64_t offset = 0;
@@ -321,16 +409,11 @@ struct AlsaBackend::Impl {
           offset += written;
           continue;
         }
-        if (!recoverFromWriteError(static_cast<int>(written))) {
-          OutputEventCallback failureCallback;
-          {
-            std::lock_guard lock(mutex);
-            failureCallback = eventCallback;
-          }
-          running = false;
-          if (failureCallback) failureCallback(OutputBackendEvent::RenderError, "ALSA 输出写入失败");
-          break;
-        }
+        queueWriteRecoveryFromRenderThread(
+            static_cast<int>(written),
+            RenderLoopKind::Float,
+            "ALSA 输出写入失败");
+        break;
       }
     }
   }
@@ -343,16 +426,18 @@ struct AlsaBackend::Impl {
   void typedRenderLoop() {
     while (running.load()) {
       TypedRenderCallback renderTyped;
-      RenderCallback floatFallback;
       int channels = 0;
       uint64_t period = 0;
       size_t frameBytes = 0;
       int physWidthBytes = 0;
       AudioFormat blockFormat;
       {
-        std::lock_guard lock(mutex);
+        std::unique_lock lock(mutex, std::try_to_lock);
+        if (!lock.owns_lock()) {
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+          continue;
+        }
         renderTyped = typedCallback;
-        floatFallback = callback;
         channels = std::max(1, outputFormat.channelCount);
         period = std::max<uint64_t>(1, periodSize);
         frameBytes = bytesPerFrame;
@@ -362,7 +447,7 @@ struct AlsaBackend::Impl {
       if (physWidthBytes <= 0) physWidthBytes = 1;
 
       const size_t alsaFrames = static_cast<size_t>(period);
-      const auto renderedPeriod = alsa::renderDsdPeriodWithTailSilenceAndRepack(
+      const auto renderedPeriod = alsa::renderDsdPeriodWithTailSilenceAndRepackNoResize(
           typedScratch,
           dsdRepack,
           blockFormat,
@@ -372,6 +457,9 @@ struct AlsaBackend::Impl {
           physWidthBytes,
           renderTyped);
       const uint8_t* writeData = renderedPeriod.writeData;
+      if (!writeData) {
+        continue;
+      }
 
       int64_t offset = 0;
       while (running.load() && offset < static_cast<int64_t>(alsaFrames)) {
@@ -383,16 +471,11 @@ struct AlsaBackend::Impl {
           dsdWriteProven.store(true);
           continue;
         }
-        if (!recoverFromWriteError(static_cast<int>(written))) {
-          OutputEventCallback failureCallback;
-          {
-            std::lock_guard lock(mutex);
-            failureCallback = eventCallback;
-          }
-          running = false;
-          if (failureCallback) failureCallback(OutputBackendEvent::RenderError, "ALSA DSD 输出写入失败");
-          break;
-        }
+        queueWriteRecoveryFromRenderThread(
+            static_cast<int>(written),
+            RenderLoopKind::Typed,
+            "ALSA DSD 输出写入失败");
+        break;
       }
     }
   }
@@ -545,6 +628,16 @@ bool AlsaBackend::open(const std::string& deviceId, const AudioFormat& requested
   impl_->outputFormat.sampleFormat = selected->sampleFormat;
   impl_->bytesPerFrame =
       alsaBytesPerSample(impl_->pcmFormat) * static_cast<size_t>(impl_->outputFormat.channelCount);
+  const size_t periodFrames = static_cast<size_t>(impl_->periodSize);
+  const size_t outputChannels = static_cast<size_t>(std::max(1, impl_->outputFormat.channelCount));
+  impl_->renderScratch.resize(periodFrames * outputChannels);
+  impl_->packedScratch.resize(periodFrames * impl_->bytesPerFrame);
+  impl_->packedScratchDsdSilence = false;
+  if (impl_->dsdMode) {
+    const size_t physWidthBytes = static_cast<size_t>(std::max(1, impl_->dsdPhysWidthBits / 8));
+    impl_->typedScratch.resize(periodFrames * physWidthBytes * outputChannels);
+    impl_->dsdRepack.resize(periodFrames * impl_->bytesPerFrame);
+  }
 
   impl_->host->swParamsConfigure(impl_->periodSize, impl_->periodSize);
 
@@ -661,8 +754,9 @@ bool AlsaBackend::start(RenderCallback callback, OutputEventCallback eventCallba
     if (error) *error = impl_->alsaError("无法 prepare ALSA PCM", code);
     return false;
   }
+  impl_->stopRequested = false;
   impl_->running = true;
-  impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+  impl_->launchRenderThread(AlsaBackend::Impl::RenderLoopKind::Float);
   return true;
 }
 
@@ -686,20 +780,23 @@ bool AlsaBackend::startTyped(
     if (error) *error = impl_->alsaError("无法 prepare ALSA PCM", code);
     return false;
   }
+  impl_->stopRequested = false;
   impl_->running = true;
   // DSD bypasses float: use the typed render loop that writes raw DSD bytes via writei.
   // PCM falls back to the float render loop.
   if (impl_->dsdMode) {
-    impl_->renderThread = std::thread([this] { impl_->typedRenderLoop(); });
+    impl_->launchRenderThread(AlsaBackend::Impl::RenderLoopKind::Typed);
   } else {
-    impl_->renderThread = std::thread([this] { impl_->renderLoop(); });
+    impl_->launchRenderThread(AlsaBackend::Impl::RenderLoopKind::Float);
   }
   return true;
 }
 
 void AlsaBackend::stop() {
+  impl_->stopRequested = true;
   impl_->running = false;
-  if (impl_->renderThread.joinable()) impl_->renderThread.join();
+  impl_->joinRenderThread();
+  impl_->joinRecoveryThread();
   if (impl_->host && impl_->host->isOpen()) impl_->host->drop();
 }
 

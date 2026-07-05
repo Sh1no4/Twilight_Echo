@@ -2,10 +2,16 @@
 #include "../output/wasapi/WasapiCommon.h"
 #include "../output/wasapi/WasapiFormatNegotiator.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <limits>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -34,6 +40,199 @@ AudioFormat dsdSource(int sampleRate) {
 }
 
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+
+std::string readTextFile(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  std::ostringstream buffer;
+  buffer << in.rdbuf();
+  return buffer.str();
+}
+
+std::string extractFunctionBody(const std::string& source, const std::string& signature) {
+  const size_t signaturePos = source.find(signature);
+  assert(signaturePos != std::string::npos);
+  const size_t bodyStart = source.find('{', signaturePos);
+  assert(bodyStart != std::string::npos);
+  int depth = 0;
+  for (size_t i = bodyStart; i < source.size(); ++i) {
+    if (source[i] == '{') {
+      ++depth;
+    } else if (source[i] == '}') {
+      --depth;
+      if (depth == 0) return source.substr(bodyStart, i - bodyStart + 1);
+    }
+  }
+  assert(false);
+  return {};
+}
+
+void testWasapiExclusiveRenderPacketDoesNotResizeScratch() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiExclusiveBackend.cpp";
+  const std::string renderPacketBody = extractFunctionBody(readTextFile(sourcePath), "HRESULT renderPacket(UINT32 frameCount)");
+
+  assert(renderPacketBody.find("renderScratch.resize") == std::string::npos);
+}
+
+void testWasapiSharedRenderLoopUsesMmcss() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiSharedBackend.cpp";
+  const std::string renderLoopBody = extractFunctionBody(readTextFile(sourcePath), "void renderLoop()");
+
+  assert(renderLoopBody.find("AvSetMmThreadCharacteristicsW") != std::string::npos);
+  assert(renderLoopBody.find("AvRevertMmThreadCharacteristics") != std::string::npos);
+}
+
+void testWasapiSharedRenderLoopUsesNonBlockingFailureTelemetry() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiSharedBackend.cpp";
+  const std::string renderLoopBody = extractFunctionBody(readTextFile(sourcePath), "void renderLoop()");
+  const std::string renderFailureBody = extractFunctionBody(readTextFile(sourcePath), "void recordRenderFailureFromRenderThread(HRESULT hr, const char* message)");
+
+  assert(renderLoopBody.find("recordRenderFailureFromRenderThread") != std::string::npos);
+  assert(renderLoopBody.find("recordRenderFailure(hr") == std::string::npos);
+  assert(renderFailureBody.find("std::try_to_lock") != std::string::npos);
+  assert(renderFailureBody.find("std::lock_guard lock(infoMutex)") == std::string::npos);
+}
+
+void testWasapiSharedStopDoesNotJoinCurrentRenderThread() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiSharedBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string joinSignature = "void joinRenderThread()";
+  assert(source.find(joinSignature) != std::string::npos);
+  const std::string stopBody = extractFunctionBody(source, "void stop()");
+  const std::string joinBody = extractFunctionBody(source, joinSignature);
+  const std::string startBody = extractFunctionBody(
+      source,
+      "bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error)");
+
+  assert(source.find("std::mutex threadMutex") != std::string::npos);
+  assert(startBody.find("launchRenderThread()") != std::string::npos);
+  assert(stopBody.find("joinRenderThread()") != std::string::npos);
+  assert(joinBody.find("renderThread.get_id() != std::this_thread::get_id()") != std::string::npos);
+}
+
+void testWasapiStartEntrypointsRejectAlreadyRunningBackend() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path wasapiDir = testFilePath.parent_path().parent_path() / "output" / "wasapi";
+  const std::string sharedSource = readTextFile(wasapiDir / "WasapiSharedBackend.cpp");
+  const std::string exclusiveSource = readTextFile(wasapiDir / "WasapiExclusiveBackend.cpp");
+  const std::string sharedStartBody = extractFunctionBody(
+      sharedSource,
+      "bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error)");
+  const std::string exclusiveStartBody = extractFunctionBody(
+      exclusiveSource,
+      "bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error)");
+  const std::string exclusiveStartTypedBody = extractFunctionBody(exclusiveSource, "bool WasapiExclusiveBackend::startTyped");
+
+  for (const std::string& body : {sharedStartBody, exclusiveStartBody, exclusiveStartTypedBody}) {
+    const size_t runningCheck = body.find("impl_->running.load()");
+    const size_t callbackInstall = body.find("impl_->callback");
+    const size_t launchThread = body.find("impl_->launchRenderThread()");
+    assert(runningCheck != std::string::npos);
+    assert(callbackInstall != std::string::npos);
+    assert(launchThread != std::string::npos);
+    assert(runningCheck < callbackInstall);
+    assert(runningCheck < launchThread);
+  }
+}
+
+void testWasapiOpenFailurePathsClosePartiallyOpenedResources() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path wasapiDir = testFilePath.parent_path().parent_path() / "output" / "wasapi";
+  const std::string sharedSource = readTextFile(wasapiDir / "WasapiSharedBackend.cpp");
+  const std::string exclusiveSource = readTextFile(wasapiDir / "WasapiExclusiveBackend.cpp");
+  const std::string sharedFailAfterComBody = extractFunctionBody(sharedSource, "auto failAfterCom = [&]()");
+  const std::string exclusiveFailAfterComBody = extractFunctionBody(exclusiveSource, "auto failAfterCom = [&]()");
+
+  assert(sharedFailAfterComBody.find("impl_->close()") != std::string::npos);
+  assert(exclusiveFailAfterComBody.find("impl_->close()") != std::string::npos);
+  assert(sharedFailAfterComBody.find("CoUninitialize()") == std::string::npos);
+  assert(exclusiveFailAfterComBody.find("CoUninitialize()") == std::string::npos);
+}
+
+void testWasapiExclusiveRenderFailuresUseNonBlockingTelemetry() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiExclusiveBackend.cpp";
+  const std::string handleFailureBody = extractFunctionBody(readTextFile(sourcePath), "bool handleRenderFailure(HRESULT hr, const char* message)");
+  const std::string renderFailureBody = extractFunctionBody(readTextFile(sourcePath), "void recordRenderFailureFromRenderThread(HRESULT hr, const char* message)");
+
+  assert(handleFailureBody.find("recordRenderFailureFromRenderThread(hr, message)") != std::string::npos);
+  assert(handleFailureBody.find("notifyFailure(hr, message)") == std::string::npos);
+  assert(renderFailureBody.find("std::try_to_lock") != std::string::npos);
+  assert(renderFailureBody.find("recordFailure(") == std::string::npos);
+  assert(renderFailureBody.find("std::lock_guard lock(infoMutex)") == std::string::npos);
+}
+
+void testWasapiExclusiveRenderLoopDoesNotWriteSharedTelemetryDirectly() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiExclusiveBackend.cpp";
+  const std::string renderLoopBody = extractFunctionBody(readTextFile(sourcePath), "void renderLoop()");
+
+  assert(renderLoopBody.find("recordRenderUnderrun()") != std::string::npos);
+  assert(renderLoopBody.find("refreshLatencyTelemetry()") != std::string::npos);
+  assert(renderLoopBody.find("++diagnostics.sessionUnderrunCount") == std::string::npos);
+  assert(renderLoopBody.find("++diagnostics.lifetimeUnderrunCount") == std::string::npos);
+  assert(renderLoopBody.find("outputInfo.latencyInfo.") == std::string::npos);
+  assert(renderLoopBody.find("outputInfo.latencyMs") == std::string::npos);
+}
+
+void testWasapiExclusiveRecoveryDoesNotWriteSharedTelemetryDirectly() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiExclusiveBackend.cpp";
+  const std::string recoveryBody = extractFunctionBody(readTextFile(sourcePath), "bool attemptRecovery(const std::string& reason)");
+
+  assert(recoveryBody.find("recordRecoverySuccess()") != std::string::npos);
+  assert(recoveryBody.find("++diagnostics.sessionRecoveryCount") == std::string::npos);
+  assert(recoveryBody.find("++diagnostics.lifetimeRecoveryCount") == std::string::npos);
+  assert(recoveryBody.find("outputInfo.deviceRecovered") == std::string::npos);
+  assert(recoveryBody.find("outputInfo.recoveryCount") == std::string::npos);
+  assert(recoveryBody.find("outputInfo.diagnostics") == std::string::npos);
+}
+
+void testWasapiExclusiveRenderFailureQueuesRecoveryOffRenderThread() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiExclusiveBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string handleFailureBody = extractFunctionBody(source, "bool handleRenderFailure(HRESULT hr, const char* message)");
+
+  assert(handleFailureBody.find("queueRecoveryFromRenderThread") != std::string::npos);
+  assert(handleFailureBody.find("attemptRecovery(") == std::string::npos);
+  assert(handleFailureBody.find("std::this_thread::sleep_for") == std::string::npos);
+  assert(handleFailureBody.find("reopenDevice(") == std::string::npos);
+  assert(handleFailureBody.find("CoCreateInstance") == std::string::npos);
+  assert(handleFailureBody.find("GetDevice") == std::string::npos);
+  assert(handleFailureBody.find("Activate") == std::string::npos);
+  assert(handleFailureBody.find("Start(") == std::string::npos);
+}
+
+void testWasapiExclusiveRecoveryStopsBeforeReopenOrNotifyAfterClose() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "wasapi" / "WasapiExclusiveBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string recoveryBody = extractFunctionBody(source, "bool attemptRecovery(const std::string& reason)");
+  const std::string queuedRecoveryBody = extractFunctionBody(source, "void runQueuedRecovery(std::string reason)");
+
+  const size_t sleepPos = recoveryBody.find("std::this_thread::sleep_for");
+  const size_t reopenPos = recoveryBody.find("reopenDevice()");
+  const size_t startPos = recoveryBody.find("audioClient->Start()");
+  assert(sleepPos != std::string::npos);
+  assert(reopenPos != std::string::npos);
+  assert(startPos != std::string::npos);
+  assert(recoveryBody.find("stopRequested.load()", sleepPos) < reopenPos);
+  assert(recoveryBody.find("stopRequested.load()", reopenPos) < startPos);
+  assert(queuedRecoveryBody.find("!stopRequested.load() && eventCallback") != std::string::npos);
+}
 
 struct SupportedFormat {
   int sampleRate = 0;
@@ -257,7 +456,7 @@ void testDsd256FailureReasonNamesDopCarrierFacts() {
   assert(!negotiator.negotiate(dsdSource(11289600), &error));
   assert(!client.probes.empty());
   assert(error.find("DoP carrier sample rate 705600Hz") != std::string::npos);
-  assert(error.find("未启用 Native DSD") != std::string::npos);
+  assert(error.find("未尝试 Native DSD") != std::string::npos);
 
   const DopRuntimeFacts facts = negotiator.dopRuntimeFacts();
   assert(facts.state == DopRuntimeFactState::Unproven);
@@ -371,6 +570,17 @@ void testFloatRenderHelperZerosAllWithoutCallback() {
 
 int main() {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
+  testWasapiExclusiveRenderPacketDoesNotResizeScratch();
+  testWasapiSharedRenderLoopUsesMmcss();
+  testWasapiSharedRenderLoopUsesNonBlockingFailureTelemetry();
+  testWasapiSharedStopDoesNotJoinCurrentRenderThread();
+  testWasapiStartEntrypointsRejectAlreadyRunningBackend();
+  testWasapiOpenFailurePathsClosePartiallyOpenedResources();
+  testWasapiExclusiveRenderFailuresUseNonBlockingTelemetry();
+  testWasapiExclusiveRenderLoopDoesNotWriteSharedTelemetryDirectly();
+  testWasapiExclusiveRecoveryDoesNotWriteSharedTelemetryDirectly();
+  testWasapiExclusiveRenderFailureQueuesRecoveryOffRenderThread();
+  testWasapiExclusiveRecoveryStopsBeforeReopenOrNotifyAfterClose();
   testInt16PackerUsesSpecializedConversion();
   testPackedInt24PackerUsesSpecializedConversion();
   testInt32PackerUsesSpecializedConversion();

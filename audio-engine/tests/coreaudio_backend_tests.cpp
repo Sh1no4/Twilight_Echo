@@ -3,10 +3,16 @@
 #include "../output/coreaudio/CoreAudioRenderUtils.h"
 #include "../output/coreaudio/MockCoreAudioHost.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -39,6 +45,83 @@ std::unique_ptr<MockCoreAudioHost> makeHost(double nominalRate = 48000.0) {
   return host;
 }
 
+std::string readTextFile(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  std::ostringstream buffer;
+  buffer << in.rdbuf();
+  return buffer.str();
+}
+
+std::string extractFunctionBody(const std::string& source, const std::string& signature) {
+  const size_t signaturePos = source.find(signature);
+  assert(signaturePos != std::string::npos);
+  const size_t bodyStart = source.find('{', signaturePos);
+  assert(bodyStart != std::string::npos);
+  int depth = 0;
+  for (size_t i = bodyStart; i < source.size(); ++i) {
+    if (source[i] == '{') {
+      ++depth;
+    } else if (source[i] == '}') {
+      --depth;
+      if (depth == 0) return source.substr(bodyStart, i - bodyStart + 1);
+    }
+  }
+  assert(false);
+  return {};
+}
+
+void testCoreAudioRenderCallbacksDoNotResizeScratchBuffers() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path coreAudioPath =
+      testFilePath.parent_path().parent_path() / "output" / "coreaudio" / "CoreAudioBackend.cpp";
+  const std::filesystem::path exclusivePath =
+      testFilePath.parent_path().parent_path() / "output" / "coreaudio" / "CoreAudioExclusiveBackend.cpp";
+
+  const std::string sharedRender = extractFunctionBody(
+      readTextFile(coreAudioPath),
+      "size_t render(uint32_t frameCount, CoreAudioBufferList* ioData)");
+  const std::string exclusiveRender = extractFunctionBody(
+      readTextFile(exclusivePath),
+      "size_t render(uint32_t frameCount, CoreAudioBufferList* ioData)");
+
+  assert(sharedRender.find(".resize(") == std::string::npos);
+  assert(exclusiveRender.find(".resize(") == std::string::npos);
+}
+
+void testCoreAudioRenderCallbacksDoNotBlockOnBackendMutex() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path coreAudioPath =
+      testFilePath.parent_path().parent_path() / "output" / "coreaudio" / "CoreAudioBackend.cpp";
+  const std::filesystem::path exclusivePath =
+      testFilePath.parent_path().parent_path() / "output" / "coreaudio" / "CoreAudioExclusiveBackend.cpp";
+
+  const std::string sharedRender = extractFunctionBody(
+      readTextFile(coreAudioPath),
+      "size_t render(uint32_t frameCount, CoreAudioBufferList* ioData)");
+  const std::string exclusiveRender = extractFunctionBody(
+      readTextFile(exclusivePath),
+      "size_t render(uint32_t frameCount, CoreAudioBufferList* ioData)");
+
+  assert(sharedRender.find("mutex") != std::string::npos);
+  assert(exclusiveRender.find("mutex") != std::string::npos);
+  assert(sharedRender.find("std::lock_guard lock(mutex)") == std::string::npos);
+  assert(exclusiveRender.find("std::lock_guard lock(mutex)") == std::string::npos);
+}
+
+void testRealCoreAudioHostAudioUnitCallbackUsesNonOwningBuffers() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "output" / "coreaudio" / "RealCoreAudioHost.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string setCallbackBody =
+      extractFunctionBody(source, "bool RealCoreAudioHost::setRenderCallback(CoreAudioAudioUnit unit, CoreAudioRenderCallback callback, std::string* error)");
+
+  assert(setCallbackBody.find("toHostBufferList(ioData)") == std::string::npos);
+  assert(setCallbackBody.find("copyToNative(ioData, hostList)") == std::string::npos);
+  assert(source.find("buffer.data.assign") == std::string::npos);
+  assert(source.find("out.buffers.resize") == std::string::npos);
+}
+
 void testCoreAudioHogPrecheckRejectsOwnedDevice() {
   auto host = makeHost();
   auto* rawHost = host.get();
@@ -65,6 +148,44 @@ void testCoreAudioHogAcquireRelease() {
   assert(rawHost->releaseHogModeCalls == 0);
   backend.close();
   assert(rawHost->releaseHogModeCalls == 1);
+}
+
+void testCoreAudioSharedCloseStopsAudioUnitBeforeDispose() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  CoreAudioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("auto", sourceFormat(), &error));
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+
+  backend.close();
+
+  assert(rawHost->audioUnitStopCalls == 1);
+  const auto findCall = [&](const std::string& prefix) {
+    for (size_t index = 0; index < rawHost->callLog.size(); ++index) {
+      if (rawHost->callLog[index].find(prefix) == 0) return index;
+    }
+    return rawHost->callLog.size();
+  };
+  const size_t stopIndex = findCall("audioUnitStop:");
+  const size_t uninitializeIndex = findCall("audioUnitUninitialize:");
+  const size_t disposeIndex = findCall("disposeAudioUnit:");
+  assert(stopIndex < uninitializeIndex);
+  assert(stopIndex < disposeIndex);
+}
+
+void testCoreAudioExclusiveStopIsIdempotentAcrossClose() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  CoreAudioExclusiveBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("auto", sourceFormat(), &error));
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+
+  backend.stop();
+  backend.close();
+
+  assert(rawHost->audioUnitStopCalls == 1);
 }
 
 void testCoreAudioDeviceLostFiresInvalidated() {
@@ -252,8 +373,13 @@ void testCoreAudioTypedRenderHelperZerosOnlyUnrenderedTail() {
 }  // namespace
 
 int main() {
+  testCoreAudioRenderCallbacksDoNotResizeScratchBuffers();
+  testCoreAudioRenderCallbacksDoNotBlockOnBackendMutex();
+  testRealCoreAudioHostAudioUnitCallbackUsesNonOwningBuffers();
   testCoreAudioHogPrecheckRejectsOwnedDevice();
   testCoreAudioHogAcquireRelease();
+  testCoreAudioSharedCloseStopsAudioUnitBeforeDispose();
+  testCoreAudioExclusiveStopIsIdempotentAcrossClose();
   testCoreAudioDeviceLostFiresInvalidated();
   testCoreAudioUnderrunDiagnostics();
   testCoreAudioSampleRateMatch();

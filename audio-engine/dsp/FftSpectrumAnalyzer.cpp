@@ -5,8 +5,10 @@
 
 #include <algorithm>
 #include <cmath>
+#include <complex>
 #include <numbers>
 #include <sstream>
+#include <utility>
 
 namespace twilight::audio {
 namespace {
@@ -23,6 +25,20 @@ size_t normalizeResolution(size_t value) {
     }
   }
   return best;
+}
+
+float webAudioNormalizedMagnitude(double magnitude, size_t resolution) {
+  if (resolution == 0) return 0.0f;
+  // Approximate WebAudio AnalyserNode.getByteFrequencyData() while keeping
+  // enough headroom for mastered tracks. The visualizer uses the full 0..1
+  // range as height, so low ceilings clip dense bass/mid bins into a flat
+  // shelf. A generous positive ceiling preserves real differences between
+  // strong neighboring bins before the iframe does any visual shaping.
+  const double amplitude = magnitude / std::max(1.0, static_cast<double>(resolution) * 0.25);
+  constexpr double minDb = -100.0;
+  constexpr double maxDb = 18.0;
+  const double db = 20.0 * std::log10(std::max(amplitude, 1.0e-6));
+  return static_cast<float>(std::clamp((db - minDb) / (maxDb - minDb), 0.0, 1.0));
 }
 
 }  // namespace
@@ -57,6 +73,8 @@ void FftSpectrumAnalyzer::prepare(const AudioFormat& format, size_t resolution) 
   hasCapture_ = false;
   captureBuffersSilent_ = true;
   spectrumDirty_ = false;
+  spectrogramDirty_ = false;
+  ++spectrumGeneration_;
 }
 
 void FftSpectrumAnalyzer::prepareOscilloscope(size_t points) {
@@ -75,12 +93,25 @@ void FftSpectrumAnalyzer::setEnabled(bool enabled) {
     rmsDb_ = -120.0;
     lufsMomentary_ = -70.0;
     spectrumDirty_ = false;
+    spectrogramDirty_ = false;
+    ++spectrumGeneration_;
     std::fill(magnitudes_.begin(), magnitudes_.end(), 0.0f);
   }
 }
 
 void FftSpectrumAnalyzer::resetCapture() {
   std::lock_guard lock(mutex_);
+  resetCaptureLocked();
+}
+
+bool FftSpectrumAnalyzer::tryResetCapture() {
+  std::unique_lock lock(mutex_, std::try_to_lock);
+  if (!lock.owns_lock()) return false;
+  resetCaptureLocked();
+  return true;
+}
+
+void FftSpectrumAnalyzer::resetCaptureLocked() {
   if (fft::resetCaptureCanSkipBufferClear(
           hasCapture_,
           spectrumDirty_,
@@ -97,10 +128,12 @@ void FftSpectrumAnalyzer::resetCapture() {
   rmsDb_ = -120.0;
   lufsMomentary_ = -70.0;
   spectrumDirty_ = false;
+  spectrogramDirty_ = false;
   std::fill(timeDomain_.begin(), timeDomain_.end(), 0.0f);
   std::fill(oscilloscopeBuffer_.begin(), oscilloscopeBuffer_.end(), 0.0f);
   std::fill(magnitudes_.begin(), magnitudes_.end(), 0.0f);
   captureBuffersSilent_ = true;
+  ++spectrumGeneration_;
 }
 
 void FftSpectrumAnalyzer::capture(const float* interleaved, size_t frames, int channels) {
@@ -168,41 +201,81 @@ void FftSpectrumAnalyzer::capture(const float* interleaved, size_t frames, int c
   rmsDb_ = 20.0 * std::log10(std::max(rms, 1.0e-6));
   lufsMomentary_ = std::max(-70.0, rmsDb_ - 0.691);
   spectrumDirty_ = true;
+  spectrogramDirty_ = true;
   hasCapture_ = true;
   captureBuffersSilent_ = false;
+  ++spectrumGeneration_;
 }
 
-void FftSpectrumAnalyzer::updateSpectrumLocked() const {
-  if (!enabled_ || !hasCapture_ || !spectrumDirty_ || resolution_ == 0 || timeDomain_.empty()) return;
-  fft::writeWindowedFftInput(timeDomain_, window_, resolution_, fftInputScratch_);
+bool FftSpectrumAnalyzer::buildSpectrumUpdateSnapshot(
+    bool retainSpectrogram,
+    SpectrumUpdateSnapshot& snapshot) const {
+  std::lock_guard lock(mutex_);
+  if (!enabled_ || !hasCapture_ || resolution_ == 0 || timeDomain_.empty()) return false;
 
-  KissFftAdapter::forward(fftInputScratch_, &spectrumScratch_);
-  const size_t bins = resolution_ / 2;
-  fft::resizeMagnitudesForOverwrite(magnitudes_, bins);
-  double peak = 1.0e-9;
-  for (size_t i = 0; i < bins; ++i) {
-    const double magnitude = std::abs(spectrumScratch_[i]);
-    peak = std::max(peak, magnitude);
-    magnitudes_[i] = static_cast<float>(magnitude);
+  const bool needsSpectrum = spectrumDirty_;
+  const bool needsSpectrogram = retainSpectrogram && spectrogramDirty_;
+  if (!needsSpectrum && !needsSpectrogram) return false;
+
+  snapshot.computeSpectrum = needsSpectrum;
+  snapshot.retainSpectrogram = needsSpectrogram;
+  snapshot.generation = spectrumGeneration_;
+  snapshot.resolution = resolution_;
+  if (needsSpectrum) {
+    snapshot.timeDomain = timeDomain_;
+    snapshot.window = window_;
   }
-  for (auto& value : magnitudes_) {
-    const double normalized = std::sqrt(static_cast<double>(value) / peak);
-    value = static_cast<float>(std::clamp(normalized, 0.0, 1.0));
+  return true;
+}
+
+void FftSpectrumAnalyzer::publishSpectrumUpdate(SpectrumUpdateSnapshot& snapshot) const {
+  std::lock_guard lock(mutex_);
+  if (spectrumGeneration_ != snapshot.generation || !enabled_ || !hasCapture_) return;
+
+  if (snapshot.computeSpectrum && spectrumDirty_) {
+    magnitudes_ = std::move(snapshot.magnitudes);
+    spectrumDirty_ = false;
   }
-  spectrogram_.push_back(magnitudes_);
-  constexpr size_t kMaxSpectrogramFrames = 96;
-  if (spectrogram_.size() > kMaxSpectrogramFrames) {
-    spectrogram_.erase(spectrogram_.begin(), spectrogram_.begin() + static_cast<std::ptrdiff_t>(spectrogram_.size() - kMaxSpectrogramFrames));
+
+  if (snapshot.retainSpectrogram && spectrogramDirty_) {
+    spectrogram_.push_back(magnitudes_);
+    constexpr size_t kMaxSpectrogramFrames = 96;
+    if (spectrogram_.size() > kMaxSpectrogramFrames) {
+      spectrogram_.erase(
+          spectrogram_.begin(),
+          spectrogram_.begin() +
+              static_cast<std::ptrdiff_t>(spectrogram_.size() - kMaxSpectrogramFrames));
+    }
+    spectrogramDirty_ = false;
   }
-  spectrumDirty_ = false;
+}
+
+void FftSpectrumAnalyzer::updateSpectrumForRead(bool retainSpectrogram) const {
+  SpectrumUpdateSnapshot snapshot;
+  if (!buildSpectrumUpdateSnapshot(retainSpectrogram, snapshot)) return;
+
+  if (snapshot.computeSpectrum) {
+    std::vector<float> fftInputScratch;
+    std::vector<std::complex<float>> spectrumScratch;
+    fft::writeWindowedFftInput(snapshot.timeDomain, snapshot.window, snapshot.resolution, fftInputScratch);
+
+    KissFftAdapter::forward(fftInputScratch, &spectrumScratch);
+    const size_t bins = snapshot.resolution / 2;
+    fft::resizeMagnitudesForOverwrite(snapshot.magnitudes, bins);
+    for (size_t i = 0; i < bins; ++i) {
+      const double magnitude = std::abs(spectrumScratch[i]);
+      snapshot.magnitudes[i] = webAudioNormalizedMagnitude(magnitude, snapshot.resolution);
+    }
+  }
+
+  publishSpectrumUpdate(snapshot);
 }
 
 size_t FftSpectrumAnalyzer::read(float* output, size_t points, double idlePhase) const {
   if (!output || points == 0) return 0;
+  updateSpectrumForRead(false);
+
   std::lock_guard lock(mutex_);
-  if (spectrumDirty_) {
-    updateSpectrumLocked();
-  }
   if (!enabled_ || !hasCapture_ || magnitudes_.empty()) {
     fillIdleSpectrum(output, points, idlePhase);
     return points;
@@ -222,10 +295,11 @@ std::string FftSpectrumAnalyzer::readVisualizationJson(
     size_t oscilloscopePoints) const {
   spectrumPoints = std::clamp<size_t>(spectrumPoints == 0 ? 64 : spectrumPoints, 8, 4096);
   waveformPoints = std::clamp<size_t>(waveformPoints == 0 ? 128 : waveformPoints, 16, 512);
-  spectrogramFrames = std::clamp<size_t>(spectrogramFrames == 0 ? 48 : spectrogramFrames, 1, 96);
-  oscilloscopePoints = std::clamp<size_t>(oscilloscopePoints == 0 ? 1024 : oscilloscopePoints, 64, 4096);
+  spectrogramFrames = std::clamp<size_t>(spectrogramFrames, 0, 96);
+  oscilloscopePoints = std::clamp<size_t>(oscilloscopePoints, 0, 4096);
 
   bool active = false;
+  bool enabled = false;
   double peakDb = -120.0;
   double rmsDb = -120.0;
   double lufsMomentary = -70.0;
@@ -234,23 +308,30 @@ std::string FftSpectrumAnalyzer::readVisualizationJson(
   std::vector<float> timeDomain;
   std::vector<float> oscilloscopeBuffer;
   std::vector<std::vector<float>> spectrogram;
+  updateSpectrumForRead(spectrogramFrames > 0);
   {
     std::lock_guard lock(mutex_);
+    enabled = enabled_;
     active = enabled_ && hasCapture_;
-    if (active) updateSpectrumLocked();
     peakDb = active ? peakDb_ : -120.0;
     rmsDb = active ? rmsDb_ : -120.0;
     lufsMomentary = active ? lufsMomentary_ : -70.0;
     sampleRate = format_.sampleRate;
     if (active) {
       magnitudes = magnitudes_;
-      timeDomain = timeDomain_;
-      oscilloscopeBuffer = oscilloscopeBuffer_;
-      const size_t firstFrame =
-          spectrogram_.size() > spectrogramFrames ? spectrogram_.size() - spectrogramFrames : 0;
-      spectrogram.reserve(spectrogram_.size() - firstFrame);
-      for (size_t frame = firstFrame; frame < spectrogram_.size(); ++frame) {
-        spectrogram.push_back(spectrogram_[frame]);
+      if (waveformPoints > 0) {
+        timeDomain = timeDomain_;
+      }
+      if (oscilloscopePoints > 0) {
+        oscilloscopeBuffer = oscilloscopeBuffer_;
+      }
+      if (spectrogramFrames > 0) {
+        const size_t firstFrame =
+            spectrogram_.size() > spectrogramFrames ? spectrogram_.size() - spectrogramFrames : 0;
+        spectrogram.reserve(spectrogram_.size() - firstFrame);
+        for (size_t frame = firstFrame; frame < spectrogram_.size(); ++frame) {
+          spectrogram.push_back(spectrogram_[frame]);
+        }
       }
     }
   }
@@ -291,8 +372,12 @@ std::string FftSpectrumAnalyzer::readVisualizationJson(
       writeReducedArray(json, spectrogram[frame], spectrumPoints);
     }
   }
+  const char* tapStatus = active ? "active" : (enabled ? "no-samples" : "disabled");
+  const char* reason =
+      active ? "" : (enabled ? "Native visualization tap returned no samples" : "Native visualization tap disabled");
   json << "],\"sampleRate\":" << sampleRate
-       << ",\"active\":" << (active ? "true" : "false") << "}";
+       << ",\"active\":" << (active ? "true" : "false")
+       << ",\"tapStatus\":\"" << tapStatus << "\",\"reason\":\"" << reason << "\"}";
   return json.str();
 }
 

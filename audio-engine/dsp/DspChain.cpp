@@ -269,8 +269,9 @@ void DspChain::setTrackContext(const DspTrackContext& context) {
 
 void DspChain::process(float* samples, size_t frameCount) {
   if (!processingRequired_.load(std::memory_order_relaxed)) return;
-  std::lock_guard lock(mutex_);
   if (!samples || frameCount == 0) return;
+  std::unique_lock lock(mutex_, std::try_to_lock);
+  if (!lock.owns_lock()) return;
   for (IAudioProcessor* processor : activeProcessors_) {
     processor->process(samples, frameCount);
   }

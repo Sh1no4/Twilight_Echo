@@ -2,13 +2,20 @@
 #include "../output/asio/MockAsioHost.h"
 
 #include <algorithm>
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
+#include <regex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -58,6 +65,95 @@ void writeInt16Bytes(uint8_t* output, int16_t value) {
 
 void writeInt32Bytes(uint8_t* output, int32_t value) {
   std::memcpy(output, &value, sizeof(value));
+}
+
+template <typename Predicate>
+bool waitUntil(Predicate predicate, std::chrono::milliseconds timeout = std::chrono::milliseconds(8000)) {
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    if (predicate()) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  return predicate();
+}
+
+std::string readTextFile(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  std::ostringstream buffer;
+  buffer << in.rdbuf();
+  return buffer.str();
+}
+
+std::string extractFunctionBody(const std::string& source, const std::string& signature) {
+  const size_t signaturePos = source.find(signature);
+  assert(signaturePos != std::string::npos);
+  const size_t bodyStart = source.find('{', signaturePos);
+  assert(bodyStart != std::string::npos);
+  int depth = 0;
+  for (size_t i = bodyStart; i < source.size(); ++i) {
+    if (source[i] == '{') {
+      ++depth;
+    } else if (source[i] == '}') {
+      --depth;
+      if (depth == 0) return source.substr(bodyStart, i - bodyStart + 1);
+    }
+  }
+  assert(false);
+  return {};
+}
+
+void testAsioRenderCallbackDoesNotResizeScratchBuffers() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "output" / "asio" / "AsioBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderBody = extractFunctionBody(source, "void AsioBackend::renderBuffer(long bufferIndex)");
+
+  assert(!renderBody.empty());
+  assert(renderBody.find("renderScratch_") != std::string::npos);
+  assert(renderBody.find("typedRenderScratch_") != std::string::npos);
+  assert(renderBody.find("renderScratch_.resize") == std::string::npos);
+  assert(renderBody.find("typedRenderScratch_.resize") == std::string::npos);
+}
+
+void testAsioRenderCallbackDoesNotBlockOnBackendMutex() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "output" / "asio" / "AsioBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderBody = extractFunctionBody(source, "void AsioBackend::renderBuffer(long bufferIndex)");
+
+  assert(!renderBody.empty());
+  assert(renderBody.find("mutex_") != std::string::npos);
+  assert(renderBody.find("std::lock_guard lock(mutex_)") == std::string::npos);
+}
+
+void testAsioHostEventCallbackQueuesRecoveryOffDriverCallback() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "output" / "asio" / "AsioBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string startHostBody = extractFunctionBody(source, "bool AsioBackend::createAndStartHost(std::string* error)");
+
+  assert(startHostBody.find("queueRecoveryFromHostCallback") != std::string::npos);
+  assert(startHostBody.find("{ recover(event, message); }") == std::string::npos);
+  assert(startHostBody.find("std::this_thread::sleep_for") == std::string::npos);
+}
+
+void testAsioRecoveryQueueChecksStopRequestedWhileHoldingQueueLock() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "output" / "asio" / "AsioBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string queueBody = extractFunctionBody(
+      source,
+      "void AsioBackend::queueRecoveryFromHostCallback(AsioHostEvent event, std::string message)");
+
+  const size_t lockPos = queueBody.find("std::lock_guard lock(recoveryQueueMutex_)");
+  const size_t stopCheckPos = queueBody.find("if (stopRequested_.load()) return;", lockPos);
+  const size_t pushPos = queueBody.find("recoveryRequests_.push_back");
+
+  assert(lockPos != std::string::npos);
+  assert(stopCheckPos != std::string::npos);
+  assert(pushPos != std::string::npos);
+  assert(lockPos < stopCheckPos);
+  assert(stopCheckPos < pushPos);
 }
 
 void testFormatNegotiation() {
@@ -736,6 +832,7 @@ void testRecovery() {
   assert(recoveryBackend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
   rawRecoveryHost->failOpenCount = 1;
   rawRecoveryHost->triggerEvent(AsioHostEvent::BufferFailure, "buffer failed");
+  assert(waitUntil([&] { return recoveryBackend.outputInfo().recoveryCount == 1; }));
   auto recoveredInfo = recoveryBackend.outputInfo();
   assert(recoveredInfo.deviceRecovered);
   assert(recoveredInfo.recoveryCount == 1);
@@ -755,6 +852,7 @@ void testRecovery() {
       &error));
   rawFailHost->failOpenCount = 3;
   rawFailHost->triggerEvent(AsioHostEvent::DeviceLost, "lost");
+  assert(waitUntil([&] { return gotError; }));
   assert(gotError);
   const auto failedInfo = failBackend.outputInfo();
   assert(!failedInfo.deviceRecovered);
@@ -772,6 +870,7 @@ void testRecoveryEventDiagnostics() {
     assert(backend.open("asio:mock", sourceFormat(96000, 32), &error));
     assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
     rawHost->triggerEvent(AsioHostEvent::DriverRestart, "restart requested");
+    assert(waitUntil([&] { return backend.outputInfo().deviceRecovered; }));
     const auto info = backend.outputInfo();
     assert(info.diagnostics.driverRestartCount == 1);
     assert(info.diagnostics.lastError.find("ASIO driver restart") != std::string::npos);
@@ -785,6 +884,7 @@ void testRecoveryEventDiagnostics() {
     assert(backend.open("asio:mock", sourceFormat(96000, 32), &error));
     assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
     rawHost->triggerEvent(AsioHostEvent::DeviceLost, "device disappeared");
+    assert(waitUntil([&] { return backend.outputInfo().deviceRecovered; }));
     const auto info = backend.outputInfo();
     assert(info.diagnostics.deviceLostCount == 1);
     assert(info.diagnostics.lastError.find("ASIO device lost") != std::string::npos);
@@ -801,13 +901,19 @@ void testRecoveryCooldown() {
   assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
 
   rawHost->triggerEvent(AsioHostEvent::BufferFailure, "storm 1");
+  assert(waitUntil([&] { return backend.outputInfo().recoveryCount == 1; }));
   rawHost->triggerEvent(AsioHostEvent::BufferFailure, "storm 2");
+  assert(waitUntil([&] { return backend.outputInfo().recoveryCount == 2; }));
   rawHost->triggerEvent(AsioHostEvent::BufferFailure, "storm 3");
+  assert(waitUntil([&] { return backend.outputInfo().recoveryCount == 3; }));
   const int openCalls = rawHost->openCalls;
   const int createBuffersCalls = rawHost->createBuffersCalls;
   const int startCalls = rawHost->startCalls;
 
   rawHost->triggerEvent(AsioHostEvent::BufferFailure, "storm 4");
+  assert(waitUntil([&] {
+    return backend.outputInfo().diagnostics.lastError.find("cooldown") != std::string::npos;
+  }));
   const auto info = backend.outputInfo();
   assert(info.deviceRecovered);
   assert(info.recoveryCount == 3);
@@ -864,6 +970,10 @@ void testRealAsioSmokeOptIn() {
 }  // namespace
 
 int main() {
+  testAsioRenderCallbackDoesNotResizeScratchBuffers();
+  testAsioRenderCallbackDoesNotBlockOnBackendMutex();
+  testAsioHostEventCallbackQueuesRecoveryOffDriverCallback();
+  testAsioRecoveryQueueChecksStopRequestedWhileHoldingQueueLock();
   testFormatNegotiation();
   testOpenFailureAndFallbackFormats();
   testExtremeSampleRates();

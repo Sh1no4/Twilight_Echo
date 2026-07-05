@@ -12,6 +12,7 @@
 
 #include "twilight_audio_engine.h"
 
+#include <array>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -19,8 +20,11 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace twilight::audio {
+
+size_t visualizationFftResolutionForConfig(size_t configuredFftResolution);
 
 enum class PipelineState {
   Stopped,
@@ -164,6 +168,12 @@ class AudioPipeline {
       const std::string& forcedDsdFallbackReason,
       std::string* error);
   bool updatePerfectLocked();
+  void prepareRenderScratchLocked(size_t maxFrames);
+  bool retireDecodeStreamLocked(std::shared_ptr<DecodeStream> stream);
+  void cleanupRetiredDecodeStreams() const;
+  DspChain& activeDspChainLocked();
+  const DspChain& activeDspChainLocked() const;
+  DspChain& spareDspChainLocked();
   size_t render(float* output, size_t frameCount);
   size_t renderTyped(PcmBlock& output);
 
@@ -171,12 +181,16 @@ class AudioPipeline {
   std::unique_ptr<IOutputBackend> output_;
   std::shared_ptr<DecodeStream> activeStream_;
   std::shared_ptr<DecodeStream> preloadStream_;
+  static constexpr size_t kRetiredStreamSlots = 16;
+  mutable std::array<std::shared_ptr<DecodeStream>, kRetiredStreamSlots> retiredStreams_;
+  mutable size_t retiredStreamCount_ = 0;
   FftSpectrumAnalyzer spectrum_;
   DspChain dspChain_;
   DspChain preloadDspChain_;
   DspConfig dspConfig_;
   OutputConfig outputConfig_;
   DspStatus dspStatus_;
+  DspStatus preloadDspStatus_;
   AudioStreamInfo stream_;
   AudioFormat outputFormat_;
   AudioFormat decodeFormat_;
@@ -190,6 +204,7 @@ class AudioPipeline {
   std::atomic<bool> trackStarted_{false};
   std::atomic<double> volume_{1.0};
   std::atomic<uint64_t> renderedFrames_{0};
+  std::atomic<int> renderChannelCount_{2};
   PipelineState state_ = PipelineState::Stopped;
   bool dspActive_ = false;
   bool outputPerfect_ = false;
@@ -197,6 +212,7 @@ class AudioPipeline {
   bool dopPathActive_ = false;
   bool nativeDsdPathActive_ = false;
   bool typedPassthroughActive_ = false;
+  bool activeUsesPreloadDspChain_ = false;
   bool crossfadeMixActive_ = false;
   uint64_t crossfadeFramesProcessed_ = 0;
   uint64_t crossfadeTotalFrames_ = 0;
@@ -207,6 +223,7 @@ class AudioPipeline {
   std::vector<float> preloadRoutingScratch_;
   std::vector<float> preloadMixScratch_;
   std::vector<float> typedVisualizationScratch_;
+  mutable std::mutex channelRouterMutex_;
   ChannelRouter channelRouter_;
 };
 

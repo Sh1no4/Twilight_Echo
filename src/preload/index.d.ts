@@ -31,6 +31,13 @@ interface AudioEngineEvent {
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
+interface PlayerShortcutStatus {
+  accelerator: string
+  action: PlayerShortcutAction
+  label: string
+  registered: boolean
+  error: string | null
+}
 type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 type StartupHomePage = 'local' | 'streaming'
@@ -192,10 +199,12 @@ interface VisualizationOptions {
   waveformPoints?: number
   spectrogramFrames?: number
   oscilloscopePoints?: number
+  visualizerBarCount?: number
 }
 
 interface VisualizationData {
   spectrum: number[]
+  visualizerBars?: number[]
   waveform: number[]
   oscilloscope: number[]
   peakDb: number
@@ -203,8 +212,19 @@ interface VisualizationData {
   lufsMomentary: number | null
   spectrogram: number[][]
   sampleRate: number
+  maxFrequency: number
   active: boolean
+  tapStatus: VisualizationTapStatus
+  reason: string
 }
+
+type VisualizationTapStatus =
+  | 'active'
+  | 'stopped'
+  | 'disabled'
+  | 'no-samples'
+  | 'native-unavailable'
+  | 'synthetic-fallback'
 
 interface AudioEqPreset {
   id: string
@@ -481,6 +501,8 @@ interface AudioDeviceOption {
   supportsDirectHw?: boolean
   supportsDop?: boolean
   supportsNativeDsd?: boolean
+  dopSupportState?: AudioCapabilitySupportState
+  nativeDsdSupportState?: AudioCapabilitySupportState
   supportedDsdRates?: number[]
   nativeDsdSampleRates?: number[]
   nativeDsdSampleFormats?: string[]
@@ -489,6 +511,12 @@ interface AudioDeviceOption {
   pathKind?: string
   capabilityReason?: string
 }
+
+type AudioCapabilitySupportState =
+  | 'verified'
+  | 'runtime-probed'
+  | 'unsupported'
+  | 'unknown'
 
 interface TwilightPluginDescriptor {
   id: string
@@ -893,6 +921,15 @@ interface AudioEngineAPI {
   onError: (cb: (message: string) => void) => () => void
   onDisconnected: (cb: () => void) => () => void
   onPlaybackInfo: (cb: (info: PlaybackInfo) => void) => () => void
+  onDeviceOptionsChanged: (cb: (event: { reason: string }) => void) => () => void
+  onServiceCrash: (cb: (event: { reason: string }) => void) => () => void
+  onServiceReady: (
+    cb: (event: {
+      manualResumeRequired: boolean
+      outputRouteSynced: boolean
+      restoreErrors: string[]
+    }) => void
+  ) => () => void
 }
 
 interface OpraAPI {
@@ -975,8 +1012,11 @@ interface WindowAPI {
     chooseCacheFolder: () => Promise<string | null>
     chooseBackgroundImage: () => Promise<string | null>
     importBackgroundImage: (fileName: string, data: ArrayBuffer) => Promise<string | null>
+    exportBackup: () => Promise<string>
+    importBackup: (json: string) => Promise<SettingsSnapshot>
     getCacheSize: () => Promise<number>
     clearCache: () => Promise<number>
+    getShortcutStatuses: () => Promise<PlayerShortcutStatus[]>
     onChanged: (cb: (snapshot: SettingsSnapshot) => void) => () => void
     onPlayerShortcut: (cb: (action: PlayerShortcutAction) => void) => () => void
   }

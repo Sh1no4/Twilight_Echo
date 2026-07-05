@@ -13,6 +13,12 @@ test('now playing lyrics expose original and translated lyric source labels', ()
   assert.match(source, /v-if="lyricSourceLabel"/)
 })
 
+test('visualizer mode does not keep the heavy blurred backdrop mounted', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /<div v-if="viewMode !== 'visualizer'" class="backdrop"/)
+})
+
 test('desktop lyrics html exposes lyric source metadata on hover', () => {
   const source = readFileSync(new URL('../../../../resources/desktop-lyrics.html', import.meta.url), 'utf8')
 

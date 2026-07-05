@@ -30,6 +30,7 @@
     "smoke:audio-format-matrix": "node scripts/audio-format-matrix.cjs",
     "smoke:wasapi": "node scripts/wasapi-real-smoke.cjs",
     "smoke:asio-native-dsd": "node scripts/asio-native-dsd-smoke.cjs",
+    "smoke:audio-evidence": "node scripts/audio-smoke-evidence.cjs",
     "start": "electron-vite preview",
     "dev": "electron-vite dev",
     "build": "npm run typecheck && electron-vite build",

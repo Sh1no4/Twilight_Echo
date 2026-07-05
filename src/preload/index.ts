@@ -6,7 +6,11 @@ import type {
   AudioEngineSimpleCallback,
   AudioEngineErrorCallback,
   AudioEnginePlaybackInfoCallback,
+  AudioEngineDeviceOptionsChangedCallback,
+  AudioEngineServiceCrashCallback,
+  AudioEngineServiceReadyCallback,
   PlayerShortcutAction,
+  PlayerShortcutStatus,
   PlaybackInfo,
   SettingsSnapshot,
   DesktopLyricsSettings,
@@ -46,6 +50,10 @@ const audioEngineReadyCallbacks = new Set<AudioEngineSimpleCallback>()
 const audioEngineErrorCallbacks = new Set<AudioEngineErrorCallback>()
 const audioEngineDisconnectedCallbacks = new Set<AudioEngineSimpleCallback>()
 const audioEnginePlaybackInfoCallbacks = new Set<AudioEnginePlaybackInfoCallback>()
+const audioEngineDeviceOptionsChangedCallbacks =
+  new Set<AudioEngineDeviceOptionsChangedCallback>()
+const audioEngineServiceCrashCallbacks = new Set<AudioEngineServiceCrashCallback>()
+const audioEngineServiceReadyCallbacks = new Set<AudioEngineServiceReadyCallback>()
 const playerShortcutCallbacks = new Set<(action: PlayerShortcutAction) => void>()
 const settingsChangedCallbacks = new Set<(snapshot: SettingsSnapshot) => void>()
 const desktopLyricsToggleCallbacks = new Set<(enabled: boolean) => void>()
@@ -97,6 +105,30 @@ ipcRenderer.on('audioEngine:playback-info', (_event, info: PlaybackInfo) => {
     cb(info)
   }
 })
+
+ipcRenderer.on('audioEngine:device-options-changed', (_event, event: { reason: string }) => {
+  for (const cb of audioEngineDeviceOptionsChangedCallbacks) {
+    cb(event)
+  }
+})
+
+ipcRenderer.on('audioEngine:service-crash', (_event, event: { reason: string }) => {
+  for (const cb of audioEngineServiceCrashCallbacks) {
+    cb(event)
+  }
+})
+
+ipcRenderer.on(
+  'audioEngine:service-ready',
+  (
+    _event,
+    event: { manualResumeRequired: boolean; outputRouteSynced: boolean; restoreErrors: string[] }
+  ) => {
+    for (const cb of audioEngineServiceReadyCallbacks) {
+      cb(event)
+    }
+  }
+)
 
 ipcRenderer.on('player:shortcut', (_event, action: PlayerShortcutAction) => {
   for (const cb of playerShortcutCallbacks) {
@@ -309,6 +341,23 @@ const api = {
     onPlaybackInfo: (cb: AudioEnginePlaybackInfoCallback): (() => void) => {
       audioEnginePlaybackInfoCallbacks.add(cb)
       return () => audioEnginePlaybackInfoCallbacks.delete(cb)
+    },
+
+    onDeviceOptionsChanged: (
+      cb: AudioEngineDeviceOptionsChangedCallback
+    ): (() => void) => {
+      audioEngineDeviceOptionsChangedCallbacks.add(cb)
+      return () => audioEngineDeviceOptionsChangedCallbacks.delete(cb)
+    },
+
+    onServiceCrash: (cb: AudioEngineServiceCrashCallback): (() => void) => {
+      audioEngineServiceCrashCallbacks.add(cb)
+      return () => audioEngineServiceCrashCallbacks.delete(cb)
+    },
+
+    onServiceReady: (cb: AudioEngineServiceReadyCallback): (() => void) => {
+      audioEngineServiceReadyCallbacks.add(cb)
+      return () => audioEngineServiceReadyCallbacks.delete(cb)
     }
   },
   opra: {
@@ -371,8 +420,13 @@ const api = {
       ipcRenderer.invoke('settings:chooseBackgroundImage'),
     importBackgroundImage: (fileName: string, data: ArrayBuffer): Promise<string | null> =>
       ipcRenderer.invoke('settings:importBackgroundImage', fileName, data),
+    exportBackup: (): Promise<string> => ipcRenderer.invoke('settings:export'),
+    importBackup: (json: string): Promise<SettingsSnapshot> =>
+      ipcRenderer.invoke('settings:import', json),
     getCacheSize: (): Promise<number> => ipcRenderer.invoke('settings:getCacheSize'),
     clearCache: (): Promise<number> => ipcRenderer.invoke('settings:clearCache'),
+    getShortcutStatuses: (): Promise<PlayerShortcutStatus[]> =>
+      ipcRenderer.invoke('settings:getShortcutStatuses'),
     onChanged: (cb: (snapshot: SettingsSnapshot) => void): (() => void) => {
       settingsChangedCallbacks.add(cb)
       return () => settingsChangedCallbacks.delete(cb)

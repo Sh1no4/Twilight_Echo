@@ -1,4 +1,5 @@
 #include "../core/TwilightAudioEngine.h"
+#include "../core/AudioPipeline.h"
 #include "../core/AudioPipelineRenderUtils.h"
 #include "../decoder/DsdReader.h"
 #include "../decoder/FFmpegDecoder.h"
@@ -20,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <regex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -43,6 +45,166 @@ void testFloatScratchResizeForOverwritePreservesSameSizedScratch() {
   assert(scratch[0] == 0.25f);
   assert(scratch[1] == -0.5f);
   assert(scratch[2] == 0.75f);
+}
+
+void testVisualizationFftResolutionMatchesWebAudioReference() {
+  assert(visualizationFftResolutionForConfig(0) == 8192);
+  assert(visualizationFftResolutionForConfig(2048) == 8192);
+  assert(visualizationFftResolutionForConfig(4096) == 8192);
+  assert(visualizationFftResolutionForConfig(8192) == 8192);
+}
+
+std::string readTextFile(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  std::ostringstream buffer;
+  buffer << in.rdbuf();
+  return buffer.str();
+}
+
+std::string extractFunctionBody(const std::string& source, const std::string& signature) {
+  const size_t signaturePos = source.find(signature);
+  assert(signaturePos != std::string::npos);
+  const size_t bodyStart = source.find('{', signaturePos);
+  assert(bodyStart != std::string::npos);
+  int depth = 0;
+  for (size_t i = bodyStart; i < source.size(); ++i) {
+    if (source[i] == '{') {
+      ++depth;
+    } else if (source[i] == '}') {
+      --depth;
+      if (depth == 0) return source.substr(bodyStart, i - bodyStart + 1);
+    }
+  }
+  assert(false);
+  return {};
+}
+
+void testRenderCallbacksDoNotResizePipelineScratchBuffers() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderBody = extractFunctionBody(source, "size_t AudioPipeline::render(float* output, size_t frameCount)");
+  const std::string renderTypedBody = extractFunctionBody(source, "size_t AudioPipeline::renderTyped(PcmBlock& output)");
+  const std::string realtimeBodies = renderBody + renderTypedBody;
+
+  assert(!std::regex_search(realtimeBodies, std::regex(R"((routingScratch_|preloadRoutingScratch_|preloadMixScratch_|typedVisualizationScratch_)\.resize\s*\()")));
+  assert(!std::regex_search(realtimeBodies, std::regex(R"(resizeFloatScratchForOverwrite\s*\((preloadMixScratch_|routingScratch_|preloadRoutingScratch_|typedVisualizationScratch_))")));
+}
+
+void testDecodeStreamReadFloatDoesNotResizeTypedScratch() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string readFloatBody = extractFunctionBody(source, "size_t readFloat(float* output, size_t frameCount)");
+
+  assert(readFloatBody.find("floatReadScratch") != std::string::npos);
+  assert(!std::regex_search(readFloatBody, std::regex(R"(floatReadScratch\.resize\s*\()")));
+}
+
+void testRenderCallbacksDoNotReconfigureDspChains() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderBody = extractFunctionBody(source, "size_t AudioPipeline::render(float* output, size_t frameCount)");
+  const std::string renderTypedBody = extractFunctionBody(source, "size_t AudioPipeline::renderTyped(PcmBlock& output)");
+  const std::string realtimeBodies = renderBody + renderTypedBody;
+
+  assert(!std::regex_search(realtimeBodies, std::regex(R"(\.configure\s*\()")));
+  assert(!std::regex_search(realtimeBodies, std::regex(R"(\.prepare\s*\()")));
+  assert(!std::regex_search(realtimeBodies, std::regex(R"(\.setTrackContext\s*\()")));
+}
+
+void testRenderCallbacksDoNotBlockOnPipelineMutex() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderBody = extractFunctionBody(source, "size_t AudioPipeline::render(float* output, size_t frameCount)");
+  const std::string renderTypedBody = extractFunctionBody(source, "size_t AudioPipeline::renderTyped(PcmBlock& output)");
+  const std::string realtimeBodies = renderBody + renderTypedBody;
+
+  assert(!std::regex_search(realtimeBodies, std::regex(R"(std::lock_guard\s+lock\s*\(\s*mutex_\s*\))")));
+}
+
+void testRenderCallbacksDoNotWaitForDecoderBuffers() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderBody = extractFunctionBody(source, "size_t AudioPipeline::render(float* output, size_t frameCount)");
+  const std::string renderTypedBody = extractFunctionBody(source, "size_t AudioPipeline::renderTyped(PcmBlock& output)");
+  const std::string realtimeBodies = renderBody + renderTypedBody;
+
+  assert(realtimeBodies.find("waitForRenderFrames") == std::string::npos);
+  assert(realtimeBodies.find("waitForAvailableFrames") == std::string::npos);
+}
+
+void testChannelRouterStateIsSerializedWithoutBlockingRenderCallbacks() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::filesystem::path headerPath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.h";
+  const std::string source = readTextFile(sourcePath);
+  const std::string header = readTextFile(headerPath);
+  const std::string renderBody = extractFunctionBody(source, "size_t AudioPipeline::render(float* output, size_t frameCount)");
+  const std::string setOutputConfigBody =
+      extractFunctionBody(source, "bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* error)");
+
+  assert(header.find("channelRouterMutex_") != std::string::npos);
+  assert(setOutputConfigBody.find("channelRouterMutex_") != std::string::npos);
+  assert(setOutputConfigBody.find("channelRouter_.setUpmixConfig") != std::string::npos);
+  assert(renderBody.find("channelRouterMutex_") != std::string::npos);
+  assert(renderBody.find("std::try_to_lock") != std::string::npos);
+  assert(renderBody.find("std::lock_guard channelRouter") == std::string::npos);
+  assert(renderBody.find("channelRouter_.route") != std::string::npos);
+}
+
+void testRenderCallbacksUseNonBlockingSpectrumReset() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderBody = extractFunctionBody(source, "size_t AudioPipeline::render(float* output, size_t frameCount)");
+  const std::string renderTypedBody = extractFunctionBody(source, "size_t AudioPipeline::renderTyped(PcmBlock& output)");
+  const std::string realtimeBodies = renderBody + renderTypedBody;
+
+  assert(realtimeBodies.find("spectrum_.resetCapture()") == std::string::npos);
+}
+
+void testRenderCallbackDoesNotStopDecodeStreams() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderBody = extractFunctionBody(source, "size_t AudioPipeline::render(float* output, size_t frameCount)");
+
+  assert(!std::regex_search(renderBody, std::regex(R"(->\s*stop\s*\()")));
+}
+
+void testRenderSideDecodeStreamRetirementDoesNotGrowContainers() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string boolSignature = "bool AudioPipeline::retireDecodeStreamLocked(std::shared_ptr<DecodeStream> stream)";
+  const std::string voidSignature = "void AudioPipeline::retireDecodeStreamLocked(std::shared_ptr<DecodeStream> stream)";
+  const std::string retireBody = source.find(boolSignature) != std::string::npos
+                                     ? extractFunctionBody(source, boolSignature)
+                                     : extractFunctionBody(source, voidSignature);
+
+  assert(!std::regex_search(retireBody, std::regex(R"(\.(push_back|emplace_back)\s*\()")));
+}
+
+void testSetOutputConfigReleasesEngineMutexBeforeRerouteRestart() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "TwilightAudioEngine.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string body = extractFunctionBody(
+      source,
+      "TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJson)");
+  const size_t rerouteCheck = body.find("if (!rerouteReason.empty())");
+  assert(rerouteCheck != std::string::npos);
+
+  const std::string beforeReroute = body.substr(0, rerouteCheck);
+  const size_t lockScope = beforeReroute.find("{\n    std::lock_guard lock(mutex_);\n    info_.outputInfo.channelRoutingMode");
+  assert(lockScope != std::string::npos);
+  const size_t lockScopeEnd = beforeReroute.find("\n  }\n", lockScope);
+  assert(lockScopeEnd != std::string::npos);
+  assert(lockScopeEnd < rerouteCheck);
 }
 
 void writeLe16(std::ofstream& out, uint16_t value) {
@@ -756,7 +918,10 @@ TrackProfile buildTrackProfile(const std::string& source) {
   profile.defaultOutput = profile.stream.decodedFormat;
   profile.totalFrames = 65536;
   profile.sampleValue = 0.25f;
-  if (source.find("crossfade-current") != std::string::npos) {
+  if (source.find("empty-track") != std::string::npos) {
+    profile.totalFrames = 0;
+    profile.stream.durationSeconds = 0.0;
+  } else if (source.find("crossfade-current") != std::string::npos) {
     profile.totalFrames = 4096;
     profile.sampleValue = 0.25f;
   } else if (source.find("crossfade-next") != std::string::npos) {
@@ -874,6 +1039,19 @@ void testOutputStartWaitsForFirstDecodedFrames() {
   assert(backend);
   const auto rendered = renderBackendFrames(backend, 128);
   assert(bufferHasSampleAbove(rendered, 0.10f));
+}
+
+void testOutputStartDoesNotWaitForPrerollTimeoutAtEof() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  const auto start = std::chrono::steady_clock::now();
+  assert(engine.play("empty-track.flac", 0.0) == TAE_RESULT_OK);
+  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - start);
+
+  assert(elapsed < std::chrono::milliseconds(250));
+  assert(waitForStartedBackendCount(1));
 }
 
 void testRenderWaitsForTransientDecoderLag() {
@@ -1371,6 +1549,29 @@ void testNativeCrossfadeOverlapMixesPreloadAndPromotes() {
   assertLatestPlaybackContains(engine, "\"queueIndex\":1");
 }
 
+void testPreloadedPromotionKeepsRuntimeReplayGainSettings() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  assert(engine.setDspConfig("{\"enabled\":true,\"gapless\":true}") == TAE_RESULT_OK);
+  const std::string queueJson =
+      "[{\"id\":\"current\",\"source\":\"runtime-replaygain-current.flac\",\"duration\":30},"
+      "{\"id\":\"next\",\"source\":\"runtime-replaygain-next.flac\",\"duration\":30}]";
+  assert(engine.loadQueue(queueJson, 0) == TAE_RESULT_OK);
+  assert(engine.play("runtime-replaygain-current.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+  assert(waitUntil([&engine] { return jsonContains(engine.getPlaybackInfoJson(), "\"preloadReady\":true"); }));
+
+  assert(engine.setReplayGainMode("track", 0.0, -6.0, true) == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"replayGainActive\":true");
+
+  assert(engine.next() == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"source\":\"runtime-replaygain-next.flac\"");
+  assertLatestPlaybackContains(engine, "\"replayGainActive\":true");
+  assertLatestPlaybackContains(engine, "\"replayGainDb\":-6");
+}
+
 }  // namespace
 
 namespace twilight::audio {
@@ -1502,9 +1703,21 @@ const AudioFormat& FFmpegDecoder::outputFormat() const {
 
 int main() {
   testFloatScratchResizeForOverwritePreservesSameSizedScratch();
+  testVisualizationFftResolutionMatchesWebAudioReference();
+  testRenderCallbacksDoNotResizePipelineScratchBuffers();
+  testDecodeStreamReadFloatDoesNotResizeTypedScratch();
+  testRenderCallbacksDoNotReconfigureDspChains();
+  testRenderCallbacksDoNotBlockOnPipelineMutex();
+  testRenderCallbacksDoNotWaitForDecoderBuffers();
+  testChannelRouterStateIsSerializedWithoutBlockingRenderCallbacks();
+  testRenderCallbacksUseNonBlockingSpectrumReset();
+  testRenderCallbackDoesNotStopDecodeStreams();
+  testRenderSideDecodeStreamRetirementDoesNotGrowContainers();
+  testSetOutputConfigReleasesEngineMutexBeforeRerouteRestart();
   testDsd64StartsOnDop();
   testPcmTypedPassthroughIsOutputPerfect();
   testOutputStartWaitsForFirstDecodedFrames();
+  testOutputStartDoesNotWaitForPrerollTimeoutAtEof();
   testRenderWaitsForTransientDecoderLag();
   testPcmVolumeFallsBackToFloatProcessing();
   testDsd128StartsOnDop();
@@ -1530,5 +1743,6 @@ int main() {
   testManualNextDoesNotInheritDsdPath();
   testAutoNextDoesNotInheritDsdPath();
   testNativeCrossfadeOverlapMixesPreloadAndPromotes();
+  testPreloadedPromotionKeepsRuntimeReplayGainSettings();
   return 0;
 }

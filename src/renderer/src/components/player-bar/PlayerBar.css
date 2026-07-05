@@ -638,6 +638,36 @@
   text-overflow: ellipsis;
 }
 
+.player-playback-diagnostic.recovery {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 360px;
+  border-color: rgba(37, 99, 235, 0.2);
+  background: rgba(37, 99, 235, 0.08);
+  color: #1d4ed8;
+}
+
+.player-playback-diagnostic.recovery span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-playback-diagnostic.recovery button {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.12);
+  color: inherit;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  padding: 3px 6px;
+  cursor: pointer;
+}
+
 /* ===== Player Center ===== */
 .player-center {
   display: flex;

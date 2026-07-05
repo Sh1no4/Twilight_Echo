@@ -108,10 +108,16 @@ test('audio settings expose advanced replaygain, fft, and crossfeed controls wit
   assert.match(settingsPageSource, /Crossfeed Delay/)
   assert.match(settingsPageSource, /Crossfeed Cutoff/)
   assert.doesNotMatch(settingsPageSource, /value: 'loudnorm'/)
-  assert.match(settingsPageSource, /预留项，当前原生 DSP 链未消费该开关/)
+  assert.match(settingsPageSource, /High-Res 当前为自动链路能力/)
+  assert.match(settingsPageSource, /function capabilityStateLabel/)
+  assert.match(settingsPageSource, /DoP \{\{ capabilityStateLabel\(device\.dopSupportState\) \}\}/)
+  assert.match(
+    settingsPageSource,
+    /Native DSD \{\{ capabilityStateLabel\(device\.nativeDsdSupportState\) \}\}/
+  )
 })
 
-test('strict bit-perfect mode is persisted and exposed in audio settings', () => {
+test('audio settings do not expose DSP bypass as strict bit-perfect mode', () => {
   const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
   const preloadTypes = readFileSync(new URL('../../../preload/types.ts', import.meta.url), 'utf8')
   const mainTypes = readFileSync(new URL('../../../main/core/types.ts', import.meta.url), 'utf8')
@@ -122,15 +128,13 @@ test('strict bit-perfect mode is persisted and exposed in audio settings', () =>
     'utf8'
   )
 
-  for (const source of [settingsTypes, preloadTypes, mainTypes]) {
-    assert.match(source, /strictBitPerfectMode: boolean/)
+  for (const source of [settingsTypes, preloadTypes, mainTypes, mainSettings, settingsStoreSource]) {
+    assert.doesNotMatch(source, /strictBitPerfectMode/)
   }
-  assert.match(mainSettings, /strictBitPerfectMode: false/)
-  assert.match(mainSettings, /strictBitPerfectMode: settings\.strictBitPerfectMode === true/)
-  assert.match(settingsStoreSource, /strictBitPerfectMode: false/)
-  assert.match(settingsPageSource, /function toggleStrictBitPerfectMode\(\): void/)
-  assert.match(settingsPageSource, /updateSettings\(\{ strictBitPerfectMode: next \}\)/)
-  assert.match(settingsPageSource, /严格 Bit-Perfect/)
+  assert.doesNotMatch(settingsPageSource, /function toggleStrictBitPerfectMode\(\): void/)
+  assert.doesNotMatch(settingsPageSource, /updateSettings\(\{ strictBitPerfectMode: next \}\)/)
+  assert.doesNotMatch(settingsPageSource, /严格 Bit-Perfect/)
+  assert.match(settingsPageSource, /DSP 旁路 \(DSP Bypass\)/)
 })
 
 test('cache strategy settings expose separate artifact and provider-controlled audio policies', () => {
@@ -185,4 +189,44 @@ test('cache strategy settings expose separate artifact and provider-controlled a
   assert.match(settingsPageSource, /由 Provider 规则控制/)
   assert.match(pluginIpcSource, /runtime\.appSettings\.cachePolicy\.streamingAudio !== 'provider'/)
   assert.match(pluginIpcSource, /return null/)
+})
+
+test('settings page exposes search, backup, cache confirmation, and isolated plugin panel state', () => {
+  const settingsPageSource = readFileSync(
+    new URL('../components/SettingsPage.vue', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(settingsPageSource, /const settingsSearchQuery = ref\(''\)/)
+  assert.match(settingsPageSource, /const filteredSettingsSections = computed/)
+  assert.match(settingsPageSource, /function scrollToSearchResult/)
+  assert.match(settingsPageSource, /function confirmClearCache/)
+  assert.match(settingsPageSource, /确认清理缓存/)
+  assert.match(settingsPageSource, /function exportSettingsBackup/)
+  assert.match(settingsPageSource, /function importSettingsBackup/)
+  assert.match(settingsPageSource, /function resetSettingsGroup/)
+  assert.match(settingsPageSource, /function pluginPanelStateKey/)
+  assert.match(settingsPageSource, /pluginSettingsResult\[pluginPanelStateKey\(panel\)\]/)
+  assert.match(settingsPageSource, /High-Res 当前为自动链路能力/)
+  assert.doesNotMatch(settingsPageSource, /aria-checked="false"[\s\S]{0,160}当前版本暂未接入原生处理链/)
+})
+
+test('settings backup and shortcut status APIs are exposed to the renderer', () => {
+  const preloadSource = readFileSync(new URL('../../../preload/index.ts', import.meta.url), 'utf8')
+  const preloadTypes = readFileSync(new URL('../../../preload/types.ts', import.meta.url), 'utf8')
+  const preloadDts = readFileSync(new URL('../../../preload/index.d.ts', import.meta.url), 'utf8')
+  const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+
+  for (const source of [preloadTypes, preloadDts]) {
+    assert.match(source, /interface PlayerShortcutStatus \{/)
+    assert.match(source, /registered: boolean/)
+    assert.match(source, /error: string \| null/)
+  }
+
+  assert.match(preloadSource, /exportBackup: \(\): Promise<string>/)
+  assert.match(preloadSource, /importBackup: \(json: string\): Promise<SettingsSnapshot>/)
+  assert.match(preloadSource, /getShortcutStatuses: \(\): Promise<PlayerShortcutStatus\[]>/)
+  assert.match(storeSource, /exportSettingsBackup: \(\) => Promise<string>/)
+  assert.match(storeSource, /importSettingsBackup: \(json: string\) => Promise<AppSettings>/)
+  assert.match(storeSource, /getShortcutStatuses: \(\) => Promise<PlayerShortcutStatus\[]>/)
 })
