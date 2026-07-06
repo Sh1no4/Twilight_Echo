@@ -58,7 +58,10 @@ std::string readTextFile(const std::filesystem::path& path) {
   std::ifstream in(path, std::ios::binary);
   std::ostringstream buffer;
   buffer << in.rdbuf();
-  return buffer.str();
+  std::string text = buffer.str();
+  text = std::regex_replace(text, std::regex("\r\n"), "\n");
+  text = std::regex_replace(text, std::regex("\r"), "\n");
+  return text;
 }
 
 std::string extractFunctionBody(const std::string& source, const std::string& signature) {
