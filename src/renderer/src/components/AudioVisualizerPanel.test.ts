@@ -51,13 +51,10 @@ test('audio visualizer display mapping uses deterministic low-frequency shelf co
   )
 
   assert.match(visualizer, /const SPECTRUM_BAR_COUNT = 140/)
-  assert.match(visualizer, /const SPECTRUM_DISPLAY_GAIN = 1;/)
-  assert.match(visualizer, /const SPECTRUM_DISPLAY_RANGE = 1\.45/)
+  assert.match(visualizer, /const SPECTRUM_DISPLAY_GAIN = 1\.38;/)
+  assert.match(visualizer, /const SPECTRUM_DISPLAY_RANGE = 1\.16/)
   assert.match(visualizer, /const SPECTRUM_DISPLAY_GAMMA = 0\.78/)
   assert.match(visualizer, /const SPECTRUM_DISPLAY_HEADROOM = 1/)
-  assert.match(visualizer, /const SPECTRUM_TARGET_PEAK_LEVEL = 1/)
-  assert.match(visualizer, /const SPECTRUM_MAX_ADAPTIVE_GAIN = 2\.35/)
-  assert.match(visualizer, /const SPECTRUM_FRAME_CONTRAST_MIX = 0\.46/)
   assert.match(visualizer, /const SPECTRUM_CONTRAST_FLOOR = 0\.16/)
   assert.match(visualizer, /const SPECTRUM_CONTRAST_POWER = 0\.68/)
   assert.match(visualizer, /let lowFrequencyContourPhase = 0/)
@@ -65,8 +62,6 @@ test('audio visualizer display mapping uses deterministic low-frequency shelf co
   assert.match(visualizer, /function visualizerDisplayLevel\(value\)/)
   assert.match(visualizer, /Math\.min\(SPECTRUM_DISPLAY_RANGE/)
   assert.match(visualizer, /const normalized = ranged \/ SPECTRUM_DISPLAY_RANGE/)
-  assert.match(visualizer, /function frameContrastFloor\(values, count\)/)
-  assert.match(visualizer, /function expandFrameContrast\(level, floor, peak\)/)
   assert.match(
     visualizer,
     /return Math\.pow\(level, SPECTRUM_DISPLAY_GAMMA\) \* SPECTRUM_DISPLAY_HEADROOM/
@@ -85,13 +80,9 @@ test('audio visualizer display mapping uses deterministic low-frequency shelf co
     /sourceLevels = applyLowFrequencyShelfContour\(rawPrecomputedBars, binCenters, contourPhase\)/
   )
   assert.match(visualizer, /lowFrequencyContourPhase: contourPhase/)
-  assert.match(visualizer, /const adaptiveDisplayGain = peakSourceLevel > 0/)
-  assert.match(visualizer, /const sourceFloorLevel = frameContrastFloor\(sourceLevels, barCount\)/)
-  assert.match(visualizer, /const sourceLevel = expandFrameContrast\(/)
-  assert.match(visualizer, /sourceFloorLevel,/)
   assert.match(
     visualizer,
-    /const val = visualizerDisplayLevel\(sourceLevel\) \* 255/
+    /const val = visualizerDisplayLevel\(sourceLevels\[i\]\) \* 255/
   )
   assert.match(visualizer, /const targetHeight = \(val \/ 255\) \* height \* SPECTRUM_HEIGHT_SCALE/)
   assert.doesNotMatch(visualizer, /const targetHeight = \(val \/ 255\) \* \(height - 15\)/)
@@ -118,6 +109,51 @@ test('audio visualizer panel keeps fullscreen spectrum responsive while posting 
   assert.match(panel, /const VISUALIZER_POLL_INTERVAL_MS = 33/)
   assert.match(panel, /visualizerBarCount: VISUALIZER_BAR_COUNT/)
   assert.doesNotMatch(panel, /data: spectrum/)
+})
+
+test('audio visualizer damps incoming samples without global spectrum pumping', () => {
+  const visualizer = readFileSync(
+    new URL('../../../../resources/audio-visualizer/index.html', import.meta.url),
+    'utf8'
+  )
+  const panel = readFileSync(new URL('./AudioVisualizerPanel.vue', import.meta.url), 'utf8')
+
+  assert.match(visualizer, /const PRECOMPUTED_BAR_TRANSITION_MS = 48/)
+  assert.match(visualizer, /const SPECTRUM_ATTACK_SECONDS = 0\.014/)
+  assert.match(visualizer, /const SPECTRUM_DECAY_SECONDS = 0\.16/)
+  assert.doesNotMatch(visualizer, /SPECTRUM_GAIN_TARGET_MIX/)
+  assert.doesNotMatch(visualizer, /smoothPeakSourceLevel/)
+  assert.doesNotMatch(visualizer, /adaptiveDisplayGain/)
+  assert.doesNotMatch(visualizer, /visualizerDisplayLevel\(sourceLevel\) \* loudnessScale \* 255/)
+  assert.doesNotMatch(visualizer, /const targetLoudnessScale = spectrumLoudnessScale\(\)/)
+  assert.match(panel, /const VISUALIZER_POLL_INTERVAL_MS = 33/)
+})
+
+test('audio visualizer fixed curve keeps headroom while strong peaks can touch the zero line', () => {
+  const visualizer = readFileSync(
+    new URL('../../../../resources/audio-visualizer/index.html', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(visualizer, /const SPECTRUM_DISPLAY_RANGE = 1\.16/)
+  assert.match(visualizer, /const SPECTRUM_DISPLAY_GAIN = 1\.38;/)
+  assert.match(visualizer, /const level = Math\.min\(1, contrasted \* SPECTRUM_DISPLAY_GAIN\)/)
+})
+
+test('audio visualizer uses fixed per-bin mapping so peaks can touch zero without global pumping', () => {
+  const visualizer = readFileSync(
+    new URL('../../../../resources/audio-visualizer/index.html', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(visualizer, /const SPECTRUM_DISPLAY_RANGE = 1\.16/)
+  assert.match(visualizer, /const SPECTRUM_DISPLAY_GAIN = 1\.38;/)
+  assert.doesNotMatch(visualizer, /function expandFrameContrast/)
+  assert.doesNotMatch(visualizer, /function smoothAdaptiveDisplayGain/)
+  assert.doesNotMatch(visualizer, /SPECTRUM_GAIN_TARGET_MIX/)
+  assert.doesNotMatch(visualizer, /sourceFloorLevel/)
+  assert.doesNotMatch(visualizer, /adaptiveDisplayGain/)
+  assert.match(visualizer, /const val = visualizerDisplayLevel\(sourceLevels\[i\]\) \* 255/)
 })
 
 test('audio visualizer panel sends mixed metadata and live bpm updates', () => {
@@ -151,9 +187,9 @@ test('audio visualizer render loops are bounded and avoid per-frame bar allocati
   )
 
   assert.match(visualizer, /let playheadAnimationFrame = 0/)
-  assert.match(visualizer, /const PRECOMPUTED_BAR_TRANSITION_MS = 24/)
-  assert.match(visualizer, /const SPECTRUM_ATTACK_SECONDS = 0\.018/)
-  assert.match(visualizer, /const SPECTRUM_DECAY_SECONDS = 0\.042/)
+  assert.match(visualizer, /const PRECOMPUTED_BAR_TRANSITION_MS = 48/)
+  assert.match(visualizer, /const SPECTRUM_ATTACK_SECONDS = 0\.014/)
+  assert.match(visualizer, /const SPECTRUM_DECAY_SECONDS = 0\.16/)
   assert.match(visualizer, /function startPlayheadLoop\(\)/)
   assert.match(visualizer, /if \(playheadAnimationFrame !== 0\) return/)
   assert.match(visualizer, /playheadAnimationFrame = requestAnimationFrame\(updatePlayhead\)/)
@@ -199,7 +235,9 @@ test('audio visualizer metadata typography follows target hierarchy without reco
   assert.match(visualizer, /\.track-title \{[\s\S]*height: 2\.1em/)
   assert.match(visualizer, /\.track-title \{[\s\S]*overflow: hidden/)
   assert.match(visualizer, /\.track-title \{[\s\S]*-webkit-line-clamp: 2/)
-  assert.match(visualizer, /\.track-title\.single-line \{[\s\S]*align-items: flex-end/)
+  assert.match(visualizer, /\.track-title\.single-line \{[\s\S]*align-items: center/)
+  assert.match(visualizer, /\.track-title\.single-line \{[\s\S]*justify-content: flex-start/)
+  assert.match(visualizer, /\.track-title\.single-line \{[\s\S]*text-align: left/)
   assert.match(visualizer, /\.track-title\.single-line \{[\s\S]*white-space: nowrap/)
   assert.match(visualizer, /function syncTitleLineClass\(\)/)
   assert.match(visualizer, /titleEl\.classList\.remove\('single-line'\)/)

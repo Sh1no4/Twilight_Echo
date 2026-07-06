@@ -869,7 +869,9 @@
 
     .track-title.single-line {
       display: flex;
-      align-items: flex-end;
+      align-items: center;
+      justify-content: flex-start;
+      text-align: left;
       white-space: nowrap;
       text-overflow: ellipsis;
       -webkit-line-clamp: unset;
@@ -1592,7 +1594,7 @@
     let previousPrecomputedBars = new Float32Array(SPECTRUM_BAR_COUNT);
     let displayPrecomputedBars = new Float32Array(SPECTRUM_BAR_COUNT);
     let precomputedBarsTransitionStartedAt = performance.now();
-    const PRECOMPUTED_BAR_TRANSITION_MS = 24;
+    const PRECOMPUTED_BAR_TRANSITION_MS = 48;
     let usingPrecomputedBars = false;
     let hostSampleRate = 44100;  // Updated by host 'spectrum' messages
     let hostMaxFrequency = 20000;
@@ -1719,18 +1721,15 @@
     let spectrumBinCenterKey = '';
     let spectrumAnimationFrame = 0;
     let playheadAnimationFrame = 0;
-    const SPECTRUM_ATTACK_SECONDS = 0.018;
-    const SPECTRUM_DECAY_SECONDS = 0.042;
+    const SPECTRUM_ATTACK_SECONDS = 0.014;
+    const SPECTRUM_DECAY_SECONDS = 0.16;
     const FREQUENCY_TICKS = [20, 200, 1000, 2000, 5000, 10000, 20000];
     const SPECTRUM_MIN_FREQUENCY = 20;
-    const SPECTRUM_DISPLAY_GAIN = 1;
-    const SPECTRUM_DISPLAY_RANGE = 1.45;
+    const SPECTRUM_DISPLAY_GAIN = 1.38;
+    const SPECTRUM_DISPLAY_RANGE = 1.16;
     const SPECTRUM_DISPLAY_GAMMA = 0.78;
     const SPECTRUM_DISPLAY_HEADROOM = 1;
     const SPECTRUM_HEIGHT_SCALE = 1;
-    const SPECTRUM_TARGET_PEAK_LEVEL = 1;
-    const SPECTRUM_MAX_ADAPTIVE_GAIN = 2.35;
-    const SPECTRUM_FRAME_CONTRAST_MIX = 0.46;
     const SPECTRUM_CONTRAST_FLOOR = 0.16;
     const SPECTRUM_CONTRAST_POWER = 0.68;
     const LOW_FREQUENCY_CONTOUR_BAR_LIMIT = 72;
@@ -1762,27 +1761,6 @@
           (1 - SPECTRUM_CONTRAST_FLOOR * 0.58);
       const level = Math.min(1, contrasted * SPECTRUM_DISPLAY_GAIN);
       return Math.pow(level, SPECTRUM_DISPLAY_GAMMA) * SPECTRUM_DISPLAY_HEADROOM;
-    }
-
-    function frameContrastFloor(values, count) {
-      let total = 0;
-      let activeCount = 0;
-      for (let i = 0; i < count; i++) {
-        const level = Math.max(0, Math.min(1, Number.isFinite(values[i]) ? values[i] : 0));
-        if (level <= 0.001) continue;
-        total += level;
-        activeCount += 1;
-      }
-
-      if (activeCount === 0) return 0;
-      return Math.max(0, Math.min(0.42, (total / activeCount) * 0.58));
-    }
-
-    function expandFrameContrast(level, floor, peak) {
-      const normalized = Math.max(0, Math.min(1, Number.isFinite(level) ? level : 0));
-      if (peak <= floor + 0.001) return normalized;
-      const expanded = Math.max(0, (normalized - floor) / (peak - floor));
-      return normalized * (1 - SPECTRUM_FRAME_CONTRAST_MIX) + expanded * SPECTRUM_FRAME_CONTRAST_MIX;
     }
 
     function updateLowFrequencyContourPhase(rawBars, deltaSeconds) {
@@ -2045,25 +2023,8 @@
         sourceLevels = applyLowFrequencyShelfContour(rawPrecomputedBars, binCenters, contourPhase);
       }
 
-      let peakSourceLevel = 0;
       for (let i = 0; i < barCount; i++) {
-        if (sourceLevels[i] > peakSourceLevel) peakSourceLevel = sourceLevels[i];
-      }
-      const adaptiveDisplayGain = peakSourceLevel > 0
-        ? Math.min(
-            SPECTRUM_MAX_ADAPTIVE_GAIN,
-            Math.max(1, SPECTRUM_TARGET_PEAK_LEVEL / peakSourceLevel)
-          )
-        : 1;
-      const sourceFloorLevel = frameContrastFloor(sourceLevels, barCount);
-
-      for (let i = 0; i < barCount; i++) {
-        const sourceLevel = expandFrameContrast(
-          sourceLevels[i],
-          sourceFloorLevel,
-          peakSourceLevel
-        ) * adaptiveDisplayGain;
-        const val = visualizerDisplayLevel(sourceLevel) * 255;
+        const val = visualizerDisplayLevel(sourceLevels[i]) * 255;
         displayDebugBars[i] = val / 255;
 
         sumSq += val * val;
@@ -2090,8 +2051,6 @@
         usingPrecomputedBars,
         sampleRate,
         maxFrequency: maxF,
-        adaptiveDisplayGain,
-        sourceFloorLevel,
         lowFrequencyContourPhase: contourPhase,
         raw: rawDebugBars ? summarizeBarSlice(rawDebugBars, 72) : null,
         contoured: summarizeBarSlice(sourceLevels, 72),

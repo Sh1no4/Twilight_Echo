@@ -467,7 +467,7 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   assert.match(visualizerSource, /let previousPrecomputedBars = new Float32Array\(SPECTRUM_BAR_COUNT\)/)
   assert.match(visualizerSource, /let displayPrecomputedBars = new Float32Array\(SPECTRUM_BAR_COUNT\)/)
   assert.match(visualizerSource, /let precomputedBarsTransitionStartedAt = performance\.now\(\)/)
-  assert.match(visualizerSource, /const PRECOMPUTED_BAR_TRANSITION_MS = 24/)
+  assert.match(visualizerSource, /const PRECOMPUTED_BAR_TRANSITION_MS = 48/)
   assert.match(visualizerSource, /let usingPrecomputedBars = false/)
   assert.match(visualizerSource, /function currentPrecomputedBarValue\(/)
   assert.match(visualizerSource, /function retargetPrecomputedBars\(/)
@@ -494,12 +494,11 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   assert.match(visualizerSource, /currentPrecomputedBarValue\(i, now\)/)
   assert.match(visualizerSource, /sourceLevels = applyLowFrequencyShelfContour\(rawComputedBars, binCenters, contourPhase\)/)
   assert.match(visualizerSource, /sourceLevels = applyLowFrequencyShelfContour\(rawPrecomputedBars, binCenters, contourPhase\)/)
-  assert.match(visualizerSource, /const adaptiveDisplayGain = peakSourceLevel > 0/)
-  assert.match(visualizerSource, /SPECTRUM_TARGET_PEAK_LEVEL \/ peakSourceLevel/)
-  assert.match(visualizerSource, /const sourceFloorLevel = frameContrastFloor\(sourceLevels, barCount\)/)
-  assert.match(visualizerSource, /const sourceLevel = expandFrameContrast\(/)
-  assert.match(visualizerSource, /sourceFloorLevel,/)
-  assert.match(visualizerSource, /const val = visualizerDisplayLevel\(sourceLevel\) \* 255/)
+  assert.doesNotMatch(visualizerSource, /SPECTRUM_GAIN_TARGET_MIX/)
+  assert.doesNotMatch(visualizerSource, /const sourceFloorLevel = frameContrastFloor/)
+  assert.doesNotMatch(visualizerSource, /const sourceLevel = expandFrameContrast/)
+  assert.doesNotMatch(visualizerSource, /adaptiveDisplayGain/)
+  assert.match(visualizerSource, /const val = visualizerDisplayLevel\(sourceLevels\[i\]\) \* 255/)
   assert.doesNotMatch(visualizerSource, /Math\.max\(lastSpectrumHeights\[i\], 2\)/)
   assert.match(visualizerSource, /i \* \(barWidth \+ barSpacing\)/)
   assert.match(visualizerSource, /specCtx\.setTransform\(dpr, 0, 0, dpr, 0, 0\)/)
@@ -515,15 +514,13 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   assert.match(visualizerSource, /if \(msg\.active === false\) \{/)
   assert.doesNotMatch(visualizerSource, /msg\.active === false \|\| !isPlaying/)
   assert.match(visualizerSource, /let spectrumAnimationFrame = 0/)
-  assert.match(visualizerSource, /const SPECTRUM_ATTACK_SECONDS = 0\.018/)
-  assert.match(visualizerSource, /const SPECTRUM_DECAY_SECONDS = 0\.042/)
+  assert.match(visualizerSource, /const SPECTRUM_ATTACK_SECONDS = 0\.014/)
+  assert.match(visualizerSource, /const SPECTRUM_DECAY_SECONDS = 0\.16/)
   assert.match(visualizerSource, /const SPECTRUM_BAR_COUNT = 140/)
-  assert.match(visualizerSource, /const SPECTRUM_DISPLAY_GAIN = 1;/)
+  assert.match(visualizerSource, /const SPECTRUM_DISPLAY_GAIN = 1\.38;/)
+  assert.match(visualizerSource, /const SPECTRUM_DISPLAY_RANGE = 1\.16/)
   assert.match(visualizerSource, /const SPECTRUM_DISPLAY_GAMMA = 0\.78/)
   assert.match(visualizerSource, /const SPECTRUM_DISPLAY_HEADROOM = 1/)
-  assert.match(visualizerSource, /const SPECTRUM_TARGET_PEAK_LEVEL = 1/)
-  assert.match(visualizerSource, /const SPECTRUM_MAX_ADAPTIVE_GAIN = 2\.35/)
-  assert.match(visualizerSource, /const SPECTRUM_FRAME_CONTRAST_MIX = 0\.46/)
   assert.match(visualizerSource, /const SPECTRUM_CONTRAST_FLOOR = 0\.16/)
   assert.match(visualizerSource, /const SPECTRUM_CONTRAST_POWER = 0\.68/)
   assert.match(visualizerSource, /let lowFrequencyContourPhase = 0/)
@@ -539,8 +536,9 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   assert.match(visualizerSource, /const LOW_FREQUENCY_CONTOUR_DEPTH = 0\.52/)
   assert.match(visualizerSource, /const tertiary = Math\.sin\(\(barIndex \+ 1\) \* 2\.37 \+ phase \* 0\.9\)/)
   assert.match(visualizerSource, /function visualizerDisplayLevel\(value\)/)
-  assert.match(visualizerSource, /function frameContrastFloor\(values, count\)/)
-  assert.match(visualizerSource, /function expandFrameContrast\(level, floor, peak\)/)
+  assert.doesNotMatch(visualizerSource, /function smoothPeakSourceLevel/)
+  assert.doesNotMatch(visualizerSource, /function frameContrastFloor/)
+  assert.doesNotMatch(visualizerSource, /function expandFrameContrast/)
   assert.match(
     visualizerSource,
     /return Math\.pow\(level, SPECTRUM_DISPLAY_GAMMA\) \* SPECTRUM_DISPLAY_HEADROOM/
@@ -548,11 +546,10 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   assert.match(visualizerSource, /function applyLowFrequencyShelfContour\(rawBars, binCenters, contourPhase\)/)
   assert.match(visualizerSource, /sourceLevels = applyLowFrequencyShelfContour\(rawComputedBars, binCenters, contourPhase\)/)
   assert.match(visualizerSource, /sourceLevels = applyLowFrequencyShelfContour\(rawPrecomputedBars, binCenters, contourPhase\)/)
-  assert.match(visualizerSource, /sourceFloorLevel,/)
   assert.match(visualizerSource, /lowFrequencyContourPhase: contourPhase/)
   assert.match(
     visualizerSource,
-    /const val = visualizerDisplayLevel\(sourceLevel\) \* 255/
+    /const val = visualizerDisplayLevel\(sourceLevels\[i\]\) \* 255/
   )
   assert.match(
     visualizerSource,

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EventEmitter } from 'node:events'
+import { readFileSync } from 'node:fs'
 
 import type {
   AudioEngineServiceNativeBinding,
@@ -2961,6 +2962,9 @@ test('getVisualizationData can omit unused visualization payloads', () => {
 })
 
 test('getVisualizationData reuses native visualization data within one visual frame', () => {
+  const source = readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
+  assert.match(source, /const VISUALIZATION_CACHE_TTL_MS = 24/)
+
   const nativeBinding = new FakeNativeBinding()
   let now = 1000
   const manager = makeManager(
