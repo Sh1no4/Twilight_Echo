@@ -757,6 +757,45 @@ test('play mode is persisted in settings and restored on launch', () => {
   assert.match(setPlayModeInternal, /void updateSettings\(\{ playMode: mode \}\)/)
 })
 
+test('playback end auto-advance stops at queue end without changing manual next wrap', () => {
+  const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const handlePlaybackEnded = extractInternalFunctionBody(playerSource, 'handlePlaybackEnded')
+  const handleNativePlaybackEnded = extractInternalFunctionBody(
+    playerSource,
+    'handleNativePlaybackEnded'
+  )
+  const advanceAfterPlaybackEnded = extractInternalFunctionBody(
+    playerSource,
+    'advanceAfterPlaybackEnded'
+  )
+  const setupAudioEngineListeners = extractInternalFunctionBody(
+    playerSource,
+    'setupAudioEngineListeners'
+  )
+  const next = extractInternalFunctionBody(playerSource, 'next')
+  const scheduleCrossfadeIfNeeded = extractInternalFunctionBody(
+    playerSource,
+    'scheduleCrossfadeIfNeeded'
+  )
+
+  assert.match(handlePlaybackEnded, /advanceAfterPlaybackEnded\(\)/)
+  assert.doesNotMatch(handlePlaybackEnded, /\n\s*next\(\)/)
+  assert.match(advanceAfterPlaybackEnded, /const nextIndex = queueIndex\.value \+ 1/)
+  assert.match(advanceAfterPlaybackEnded, /nextIndex < queue\.value\.length/)
+  assert.match(advanceAfterPlaybackEnded, /isPlaying\.value = false/)
+  assert.match(advanceAfterPlaybackEnded, /stopVisualizationPolling\(true\)/)
+  assert.match(handleNativePlaybackEnded, /if \(!nativePlaybackActive\) return/)
+  assert.match(handleNativePlaybackEnded, /if \(isNativeQueueDelegated\(\)\) return/)
+  assert.match(handleNativePlaybackEnded, /handlePlaybackEnded\(\)/)
+  assert.match(setupAudioEngineListeners, /case 'eof-reached':\s*handleNativePlaybackEnded\(\)/)
+  assert.match(
+    setupAudioEngineListeners,
+    /if \(nativePlaybackActive && reason === 'eof'\) \{\s*handleNativePlaybackEnded\(\)/
+  )
+  assert.match(next, /queueIndex\.value = 0/)
+  assert.match(scheduleCrossfadeIfNeeded, /queueIndex\.value \+ 1 >= queue\.value\.length/)
+})
+
 test('playback session carries play mode for quit-time restore', () => {
   const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const musicTypes = readFileSync(new URL('../types/music.ts', import.meta.url), 'utf8')

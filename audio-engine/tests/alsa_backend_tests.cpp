@@ -99,8 +99,10 @@ void testAlsaRenderLoopsDoNotBlockOnBackendMutex() {
   assert(typedRenderLoopBody.find("mutex") != std::string::npos);
   assert(renderLoopBody.find("std::lock_guard lock(mutex)") == std::string::npos);
   assert(typedRenderLoopBody.find("std::lock_guard lock(mutex)") == std::string::npos);
-  assert(renderLoopBody.find("std::try_to_lock") != std::string::npos);
-  assert(typedRenderLoopBody.find("std::try_to_lock") != std::string::npos);
+  assert(renderLoopBody.find("std::try_to_lock") == std::string::npos);
+  assert(typedRenderLoopBody.find("std::try_to_lock") == std::string::npos);
+  assert(renderLoopBody.find("sleep_for") == std::string::npos);
+  assert(typedRenderLoopBody.find("sleep_for") == std::string::npos);
 }
 
 void testAlsaRenderLoopsQueueRecoveryOffRenderThread() {

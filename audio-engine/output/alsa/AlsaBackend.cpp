@@ -432,22 +432,18 @@ struct AlsaBackend::Impl {
   }
 
   void renderLoop() {
-    while (running.load()) {
-      RenderCallback renderCallback;
-      int channels = 0;
-      uint64_t frames = 0;
-      {
-        std::unique_lock lock(mutex, std::try_to_lock);
-        if (!lock.owns_lock()) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(1));
-          continue;
-        }
-        renderCallback = callback;
-        channels = std::max(1, outputFormat.channelCount);
-        frames = std::max<uint64_t>(1, periodSize);
-      }
+    RenderCallback renderCallback;
+    int channels = 0;
+    uint64_t frames = 0;
+    {
+      std::lock_guard snapshotLock(mutex);
+      renderCallback = callback;
+      channels = std::max(1, outputFormat.channelCount);
+      frames = std::max<uint64_t>(1, periodSize);
+    }
 
-      const size_t frameCount = static_cast<size_t>(frames);
+    const size_t frameCount = static_cast<size_t>(frames);
+    while (running.load()) {
       alsa::renderFloatPeriodWithTailSilenceNoResize(renderScratch, frameCount, channels, renderCallback);
       pack(renderScratch.data(), frameCount, channels);
 
@@ -475,29 +471,25 @@ struct AlsaBackend::Impl {
   // phys_width-bytes-per-sample interleaved layout. After the first successful writei,
   // dsdWriteProven flips to true, promoting nativeDsdFacts to Proven.
   void typedRenderLoop() {
-    while (running.load()) {
-      TypedRenderCallback renderTyped;
-      int channels = 0;
-      uint64_t period = 0;
-      size_t frameBytes = 0;
-      int physWidthBytes = 0;
-      AudioFormat blockFormat;
-      {
-        std::unique_lock lock(mutex, std::try_to_lock);
-        if (!lock.owns_lock()) {
-          std::this_thread::sleep_for(std::chrono::milliseconds(1));
-          continue;
-        }
-        renderTyped = typedCallback;
-        channels = std::max(1, outputFormat.channelCount);
-        period = std::max<uint64_t>(1, periodSize);
-        frameBytes = bytesPerFrame;
-        physWidthBytes = dsdPhysWidthBits / 8;
-        blockFormat = outputFormat;
-      }
-      if (physWidthBytes <= 0) physWidthBytes = 1;
+    TypedRenderCallback renderTyped;
+    int channels = 0;
+    uint64_t period = 0;
+    size_t frameBytes = 0;
+    int physWidthBytes = 0;
+    AudioFormat blockFormat;
+    {
+      std::lock_guard snapshotLock(mutex);
+      renderTyped = typedCallback;
+      channels = std::max(1, outputFormat.channelCount);
+      period = std::max<uint64_t>(1, periodSize);
+      frameBytes = bytesPerFrame;
+      physWidthBytes = dsdPhysWidthBits / 8;
+      blockFormat = outputFormat;
+    }
+    if (physWidthBytes <= 0) physWidthBytes = 1;
 
-      const size_t alsaFrames = static_cast<size_t>(period);
+    const size_t alsaFrames = static_cast<size_t>(period);
+    while (running.load()) {
       const auto renderedPeriod = alsa::renderDsdPeriodWithTailSilenceAndRepackNoResize(
           typedScratch,
           dsdRepack,

@@ -25,7 +25,7 @@ class DspChain {
   void setTrackContext(const DspTrackContext& context);
   void process(float* samples, size_t frameCount);
   void reset();
-  DspStatus status() const;
+  DspStatus status();
   bool loadImpulseResponse(const std::string& path, std::string* error);
   void unloadImpulseResponse();
   ConvolverInfo convolverInfo() const;

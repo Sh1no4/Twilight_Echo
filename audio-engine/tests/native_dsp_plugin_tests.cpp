@@ -134,15 +134,14 @@ void testNativeDspOverrunBypassesAfterRepeatedBudgetMisses() {
          std::string::npos);
 }
 
-void testDspChainProcessRefreshesNativeDspStatusAfterRealtimeBypass() {
+void testDspChainProcessDoesNotRefreshNativeDspStatusOnRealtimeThread() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "dsp" / "DspChain.cpp";
   const std::string source = readTextFile(sourcePath);
   const std::string processBody = extractFunctionBody(source, "void DspChain::process(float* samples, size_t frameCount)");
 
-  assert(processBody.find("const bool nativeDspWasActive = status_.nativeDspActive") != std::string::npos);
-  assert(processBody.find("nativePlugins_->isActive() != nativeDspWasActive") != std::string::npos);
-  assert(processBody.find("refreshStatusLocked()") != std::string::npos);
+  assert(processBody.find("refreshStatusLocked()") == std::string::npos);
+  assert(processBody.find("statusJson()") == std::string::npos);
 }
 
 void testGainPluginProcessesAudio(const std::string& path) {
@@ -309,7 +308,7 @@ int main(int argc, char** argv) {
   TAE_DestroyEngine(engine);
   testNativeDspProcessFailurePathUsesFixedReasons();
   testNativeDspOverrunBypassesAfterRepeatedBudgetMisses();
-  testDspChainProcessRefreshesNativeDspStatusAfterRealtimeBypass();
+  testDspChainProcessDoesNotRefreshNativeDspStatusOnRealtimeThread();
   testGainPluginProcessesAudio(pluginPath);
   testBadAbiBypasses(badAbiPath);
   testInvalidParameterMetadataBypasses(invalidParamPath);

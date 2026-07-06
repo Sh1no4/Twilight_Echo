@@ -272,12 +272,8 @@ void DspChain::process(float* samples, size_t frameCount) {
   if (!samples || frameCount == 0) return;
   std::unique_lock lock(mutex_, std::try_to_lock);
   if (!lock.owns_lock()) return;
-  const bool nativeDspWasActive = status_.nativeDspActive;
   for (IAudioProcessor* processor : activeProcessors_) {
     processor->process(samples, frameCount);
-  }
-  if (nativePlugins_ && nativePlugins_->isActive() != nativeDspWasActive) {
-    refreshStatusLocked();
   }
   if (config_.clipGuard && status_.dspActive) {
     clampOutput(samples, frameCount);
@@ -291,8 +287,9 @@ void DspChain::reset() {
   }
 }
 
-DspStatus DspChain::status() const {
+DspStatus DspChain::status() {
   std::lock_guard lock(mutex_);
+  refreshStatusLocked();
   return status_;
 }
 

@@ -1259,7 +1259,30 @@ function handlePlaybackEnded(): void {
     if (track) void loadAndPlay(track)
     return
   }
-  next()
+  advanceAfterPlaybackEnded()
+}
+
+function advanceAfterPlaybackEnded(): void {
+  clearCrossfadeTimer()
+  const nextIndex = queueIndex.value + 1
+  if (nextIndex >= 0 && nextIndex < queue.value.length) {
+    queueIndex.value = nextIndex
+    const track = queue.value[nextIndex]
+    currentTrack.value = track
+    void loadAndPlay(track)
+    return
+  }
+
+  isPlaying.value = false
+  isLoading.value = false
+  autoAdvanceInFlight = false
+  stopVisualizationPolling(true)
+}
+
+function handleNativePlaybackEnded(): void {
+  if (!nativePlaybackActive) return
+  if (isNativeQueueDelegated()) return
+  handlePlaybackEnded()
 }
 
 function getTrackSource(track: Track): string {
@@ -1530,7 +1553,7 @@ function setupAudioEngineListeners(): void {
           flushLatestCurrentTime()
           break
         case 'eof-reached':
-          // Native handles auto-advance internally, so we don't trigger it here to avoid double-transition.
+          handleNativePlaybackEnded()
           break
       }
       if (name === 'time-pos' || name === 'duration') {
@@ -1542,7 +1565,7 @@ function setupAudioEngineListeners(): void {
   cleanupFns.push(
     api.onEndFile((reason) => {
       if (nativePlaybackActive && reason === 'eof') {
-        // Native handles auto-advance internally, so we don't trigger it here to avoid double-transition.
+        handleNativePlaybackEnded()
       }
     })
   )
@@ -1721,6 +1744,7 @@ function scheduleCrossfadeIfNeeded(): void {
   }
 
   if (queue.value.length <= 1) return
+  if (queueIndex.value + 1 >= queue.value.length) return
 
   const remaining = duration.value - latestPlaybackTime
   if (remaining > seconds || remaining < 0) {

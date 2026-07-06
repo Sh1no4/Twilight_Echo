@@ -3852,6 +3852,124 @@ test('audio service ready keeps output route unsynced until restore RPCs acknowl
   manager.destroy()
 })
 
+test('audio service ready waits for DSP and queue restore RPCs before enabling manual resume', async () => {
+  const service = new DeferredAudioServiceBinding([
+    'SetOutputBackend',
+    'SetOutputDevice',
+    'SetOutputConfig',
+    'SetDspConfig',
+    'SetDspPluginChain',
+    'LoadQueue'
+  ])
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioOutputConfig: { preferredBufferSize: 512 },
+      audioProcessing: { eqEnabled: true, crossfeedEnabled: true, crossfeedStrength: 0.35 }
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  const serviceReadyEvents: Array<{
+    manualResumeRequired: boolean
+    outputRouteSynced: boolean
+    restoreErrors: string[]
+  }> = []
+  manager.on('audio-service-ready', (event) => {
+    serviceReadyEvents.push(event)
+  })
+
+  const startup = manager.start()
+  await resolveDeferredRouteCalls(service)
+  await startup
+  const initialRouteSwitch = manager.setAudioOutput('asio', 'asio:studio')
+  await resolveDeferredRouteCalls(service)
+  await initialRouteSwitch
+  const queue: AudioEngineQueueItem[] = [
+    { id: 'local:one', source: 'one.flac', title: 'One' },
+    { id: 'local:two', source: 'two.flac', title: 'Two' }
+  ]
+  await manager.loadQueue(queue, 1)
+  manager.setNativeDspPluginChain('{"plugins":[{"id":"com.example.eq"}]}')
+  service.emit('crash', 'service crashed before full restore')
+  service.backend = 'wasapi'
+  service.device = 'auto'
+  service.outputConfig = {}
+  service.dspConfig = {}
+  service.dspPluginChain = ''
+  service.queue = []
+  service.queueIndex = -1
+
+  service.emit('ready')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(serviceReadyEvents.length, 0)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputBackend']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(serviceReadyEvents.length, 0)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputDevice']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(serviceReadyEvents.length, 0)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputConfig']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(serviceReadyEvents.length, 0)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetDspConfig']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(serviceReadyEvents.length, 0)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetDspPluginChain']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.equal(serviceReadyEvents.length, 0)
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['LoadQueue']
+  )
+
+  service.resolveNextDeferredCall()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  assert.equal(serviceReadyEvents.length, 1)
+  assert.equal(serviceReadyEvents[0].manualResumeRequired, true)
+  assert.equal(serviceReadyEvents[0].outputRouteSynced, true)
+  assert.deepEqual(serviceReadyEvents[0].restoreErrors, [])
+  assert.equal(service.dspConfig.eqEnabled, true)
+  assert.equal(service.dspConfig.crossfeedStrength, 0.35)
+  assert.equal(service.dspPluginChain, '{"plugins":[{"id":"com.example.eq"}]}')
+  assert.deepEqual(service.queue, queue)
+  assert.equal(service.queueIndex, 1)
+
+  manager.destroy()
+})
+
 test('audio service ready reports output route restore failures without enabling resume', async () => {
   const service = new DeferredAudioServiceBinding(['SetOutputDevice'])
   const manager = new AudioEngineManager(

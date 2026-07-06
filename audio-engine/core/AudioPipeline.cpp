@@ -1828,7 +1828,8 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
     spectrum_.tryResetCapture();
   }
 
-  return read > 0 || active->drained() ? output.frames : 0;
+  if (read > 0 || active->drained()) return output.frames;
+  return nativeDsdPathActive || isDsdSampleFormat(output.format.sampleFormat) ? 0 : output.frames;
 }
 
 size_t AudioPipeline::render(float* output, size_t frameCount) {
@@ -1838,13 +1839,13 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   int channels = 0;
   std::shared_ptr<DecodeStream> active;
   std::shared_ptr<DecodeStream> preload;
-  DspConfig dspConfig;
   OutputConfig outputConfig;
   AudioFormat outputFormat;
   AudioFormat decodeFormat;
   bool dopPathActive = false;
   bool activeUsesPreloadDspChain = false;
   double volume = 1.0;
+  double crossfadeSeconds = 0.0;
   bool crossfadeMixActive = false;
   uint64_t crossfadeFramesProcessed = 0;
   uint64_t crossfadeTotalFrames = 0;
@@ -1863,7 +1864,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     channels = std::max(1, outputFormat.channelCount);
     active = activeStream_;
     preload = preloadStream_;
-    dspConfig = dspConfig_;
+    crossfadeSeconds = dspConfig_.crossfadeSeconds;
     dopPathActive = dopPathActive_;
     activeUsesPreloadDspChain = activeUsesPreloadDspChain_;
     volume = volume_.load();
@@ -1878,7 +1879,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     return frameCount;
   }
 
-  const bool wantsCrossfade = dspConfig.crossfadeSeconds > 0.0001;
+  const bool wantsCrossfade = crossfadeSeconds > 0.0001;
   DspChain* activeDspChain = activeUsesPreloadDspChain ? &preloadDspChain_ : &dspChain_;
   DspChain* preloadDspChain = activeUsesPreloadDspChain ? &dspChain_ : &preloadDspChain_;
   size_t totalRead = 0;
@@ -1915,7 +1916,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
 
     if (wantsCrossfade && preload && preload->readyForRender() && outputFormat.sampleRate > 0) {
       const uint64_t requestedFrames =
-          static_cast<uint64_t>(std::max(1.0, dspConfig.crossfadeSeconds * static_cast<double>(outputFormat.sampleRate)));
+          static_cast<uint64_t>(std::max(1.0, crossfadeSeconds * static_cast<double>(outputFormat.sampleRate)));
       if (!crossfadeMixActive) {
         const double secondsRemaining =
             active->stream.durationSeconds > 0.0
@@ -1923,7 +1924,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
                                      (static_cast<double>(renderedFrames_.load() + positionRead) /
                                       static_cast<double>(outputFormat.sampleRate)))
                 : 0.0;
-        if (secondsRemaining <= dspConfig.crossfadeSeconds + 0.02) {
+        if (secondsRemaining <= crossfadeSeconds + 0.02) {
           crossfadeMixActive = true;
           crossfadeFramesProcessed = 0;
           crossfadeTotalFrames = requestedFrames;

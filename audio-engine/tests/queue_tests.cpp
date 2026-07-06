@@ -22,11 +22,22 @@ void testLoadAndUpcoming() {
   assert(queue.upcomingJson().find("\"source\":\"c.flac\"") != std::string::npos);
 }
 
-void testSequentialAdvanceWrapsLikeRenderer() {
+void testSequentialAdvanceStopsAtQueueEnd() {
   QueueManager queue;
   std::string error;
   assert(queue.loadFromJson(kQueueJson, 2, &error));
   auto next = queue.advanceAfterEnd();
+  assert(!next);
+  assert(queue.currentIndex() == 2);
+  assert(!queue.upcoming());
+  assert(queue.upcomingJson() == "null");
+}
+
+void testSequentialManualNextStillWraps() {
+  QueueManager queue;
+  std::string error;
+  assert(queue.loadFromJson(kQueueJson, 2, &error));
+  auto next = queue.next();
   assert(next);
   assert(queue.currentIndex() == 0);
   assert(next->source == "a.flac");
@@ -76,7 +87,8 @@ void testAddRemoveAndInvalidInput() {
 
 int main() {
   testLoadAndUpcoming();
-  testSequentialAdvanceWrapsLikeRenderer();
+  testSequentialAdvanceStopsAtQueueEnd();
+  testSequentialManualNextStillWraps();
   testRepeatAdvanceKeepsCurrentTrack();
   testRepeatManualNextUsesPlaylistOrder();
   testAddRemoveAndInvalidInput();

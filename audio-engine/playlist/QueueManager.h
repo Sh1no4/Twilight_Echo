@@ -44,7 +44,7 @@ class QueueManager {
 
  private:
   void rebuildPlayOrder();
-  int queueIndexAtOrderOffset(int offset, bool honorRepeat) const;
+  int queueIndexAtOrderOffset(int offset, bool honorRepeat, bool allowWrap) const;
 
   std::vector<QueueItem> items_;
   std::vector<int> playOrder_;

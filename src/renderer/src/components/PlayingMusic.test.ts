@@ -19,6 +19,21 @@ test('visualizer mode does not keep the heavy blurred backdrop mounted', () => {
   assert.match(source, /<div v-if="viewMode !== 'visualizer'" class="backdrop"/)
 })
 
+test('visualizer mode uses a full viewport stage without changing the regular stage cap', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+
+  assert.match(
+    source,
+    /class="\['stage', \{ 'stage--visualizer': viewMode === 'visualizer' \}\]"/
+  )
+  assert.match(source, /\.stage \{[\s\S]*width: min\(100%, 1560px\)/)
+  assert.match(source, /\.stage--visualizer \{[\s\S]*width: 100vw/)
+  assert.match(source, /\.stage--visualizer \{[\s\S]*height: 100vh/)
+  assert.match(source, /\.stage--visualizer \{[\s\S]*max-width: none/)
+  assert.match(source, /\.stage--visualizer \{[\s\S]*padding: 0/)
+  assert.match(source, /\.stage--visualizer \{[\s\S]*margin: 0/)
+})
+
 test('visualizer close button moves to the top-left titlebar area only in visualizer mode', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
 

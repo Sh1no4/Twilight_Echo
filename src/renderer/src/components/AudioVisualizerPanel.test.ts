@@ -180,6 +180,22 @@ test('audio visualizer panel sends mixed metadata and live bpm updates', () => {
   assert.match(visualizer, /updateBpmDisplay\(msg\.bpm, msg\.source/)
 })
 
+test('audio visualizer shows the current album in the header source label', () => {
+  const panel = readFileSync(new URL('./AudioVisualizerPanel.vue', import.meta.url), 'utf8')
+  const visualizer = readFileSync(
+    new URL('../../../../resources/audio-visualizer/index.html', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(panel, /album: track\.album/)
+  assert.match(visualizer, /id="display-album">From: --<\/span>/)
+  assert.match(
+    visualizer,
+    /document\.getElementById\('display-album'\)\.innerText = `From: \$\{track\.album \|\| '--'\}`/
+  )
+  assert.doesNotMatch(visualizer, /<span class="source-text">From: 20<\/span>/)
+})
+
 test('audio visualizer render loops are bounded and avoid per-frame bar allocations', () => {
   const visualizer = readFileSync(
     new URL('../../../../resources/audio-visualizer/index.html', import.meta.url),
@@ -277,6 +293,18 @@ test('audio visualizer spectrum area grows upward without moving the timeline do
     visualizer,
     /\.spectrum-outer-container \{[\s\S]*transform: translateY\(calc\(-1 \* var\(--spectrum-top-growth\)\)\)/
   )
+})
+
+test('audio visualizer uses the full vertical viewport in fullscreen mode', () => {
+  const visualizer = readFileSync(
+    new URL('../../../../resources/audio-visualizer/index.html', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(visualizer, /\.right-panel \{[^}]*min-height: 0/)
+  assert.match(visualizer, /\.right-panel \{[^}]*height: 100%/)
+  assert.match(visualizer, /\.bottom-metrics-row \{[^}]*margin-top: auto/)
+  assert.doesNotMatch(visualizer, /\.bottom-metrics-row \{[^}]*margin-top: 10px/)
 })
 
 test('audio visualizer has slow cover and playback orbit layers', () => {

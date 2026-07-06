@@ -1843,20 +1843,9 @@ export class AudioEngineManager extends EventEmitter {
     const restoreSerial = ++this.audioServiceReadyRestoreSerial
     this.nativeOutputRouteSynced = false
     this.invalidateAudioDeviceOptionsCache('audio-service-ready')
-    void this.restoreAudioServiceOutputRoute().then((result) => {
+    void this.restoreAudioServiceReadyState().then((result) => {
       if (this.destroyed || restoreSerial !== this.audioServiceReadyRestoreSerial) return
-      this.nativeOutputRouteSynced = result.synced
-      this.applyNativeDspSettings('音频服务恢复后应用 DSP 配置')
-      if (this.nativeDspPluginChainJson) {
-        this.tryNative('音频服务恢复后应用原生 DSP 插件链', (native) =>
-          native.SetDspPluginChain?.(this.nativeDspPluginChainJson)
-        )
-      }
-      if (this.queue.length > 0) {
-        this.tryNative('音频服务恢复后加载队列', (native) =>
-          native.LoadQueue?.(JSON.stringify(this.queue), this.playbackInfo.queueIndex)
-        )
-      }
+      this.nativeOutputRouteSynced = result.outputRouteSynced
       this.nativePlaybackActive = false
       this.invalidateUpcomingTrackCache()
       this.playbackInfo = {
@@ -1867,10 +1856,29 @@ export class AudioEngineManager extends EventEmitter {
       this.publishPlaybackInfo()
       this.emit('audio-service-ready', {
         manualResumeRequired: true,
-        outputRouteSynced: result.synced,
+        outputRouteSynced: result.outputRouteSynced,
         restoreErrors: result.errors
       })
     })
+  }
+
+  private async restoreAudioServiceReadyState(): Promise<{
+    outputRouteSynced: boolean
+    errors: string[]
+  }> {
+    const routeRestore = await this.restoreAudioServiceOutputRoute()
+    if (!routeRestore.synced) {
+      return {
+        outputRouteSynced: false,
+        errors: routeRestore.errors
+      }
+    }
+
+    const stateRestore = await this.restoreAudioServicePlaybackState()
+    return {
+      outputRouteSynced: stateRestore.synced,
+      errors: stateRestore.errors
+    }
   }
 
   private async restoreAudioServiceOutputRoute(
@@ -1917,6 +1925,80 @@ export class AudioEngineManager extends EventEmitter {
     return {
       ok,
       error: ok ? '' : `${id}: ${this.lastNativeError || context}`
+    }
+  }
+
+  private async restoreAudioServicePlaybackState(): Promise<{ synced: boolean; errors: string[] }> {
+    const results: Array<{ ok: boolean; error: string }> = []
+    results.push(
+      await this.restoreAudioServiceOutputRouteStep(
+        'dsp-config',
+        '音频服务恢复后应用 DSP 配置',
+        'SetDspConfig',
+        JSON.stringify(this.processing)
+      )
+    )
+    results.push(
+      await this.restoreAudioServiceOutputRouteStep(
+        'eq-bands',
+        '音频服务恢复后应用 EQ 配置',
+        'SetEqBands',
+        JSON.stringify(this.processing)
+      )
+    )
+    results.push(
+      await this.restoreAudioServiceOutputRouteStep(
+        'replay-gain',
+        '音频服务恢复后应用 ReplayGain 配置',
+        'SetReplayGainMode',
+        this.processing.volumeNormalization,
+        this.processing.replayGainPreamp,
+        this.processing.replayGainFallback,
+        this.processing.replayGainClip
+      )
+    )
+    results.push(
+      await this.restoreAudioServiceOutputRouteStep(
+        'crossfeed',
+        '音频服务恢复后应用 Crossfeed 配置',
+        'SetCrossfeedStrength',
+        this.processing.crossfeedEnabled ? this.processing.crossfeedStrength : 0
+      )
+    )
+    if (this.processing.convolverIrPath) {
+      const convolverLoaded = await this.restoreAudioServiceOutputRouteStep(
+        'convolver-ir',
+        '音频服务恢复后加载卷积脉冲响应',
+        'LoadImpulseResponse',
+        this.processing.convolverIrPath
+      )
+      if (convolverLoaded.ok) this.nativeConvolverIrPath = this.processing.convolverIrPath
+      results.push(convolverLoaded)
+    }
+    if (this.nativeDspPluginChainJson) {
+      results.push(
+        await this.restoreAudioServiceOutputRouteStep(
+          'native-dsp-plugin-chain',
+          '音频服务恢复后应用原生 DSP 插件链',
+          'SetDspPluginChain',
+          this.nativeDspPluginChainJson
+        )
+      )
+    }
+    if (this.queue.length > 0) {
+      results.push(
+        await this.restoreAudioServiceOutputRouteStep(
+          'queue',
+          '音频服务恢复后加载队列',
+          'LoadQueue',
+          JSON.stringify(this.queue),
+          this.playbackInfo.queueIndex
+        )
+      )
+    }
+    return {
+      synced: results.every((result) => result.ok),
+      errors: results.filter((result) => !result.ok).map((result) => result.error)
     }
   }
 

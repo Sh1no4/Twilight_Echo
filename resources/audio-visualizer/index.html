@@ -799,6 +799,8 @@
       position: relative;
       z-index: 2;
       padding-left: 20px;
+      min-height: 0;
+      height: 100%;
     }
 
     .right-panel > div:not(.spectrum-outer-container) {
@@ -1158,7 +1160,7 @@
       display: grid;
       grid-template-columns: 20% 28% 52%;
       align-items: end;
-      margin-top: 10px;
+      margin-top: auto;
     }
 
     .metric-box {
@@ -1412,7 +1414,7 @@
           <div>
             <div class="source-tag-row">
               <div class="source-block"></div>
-              <span class="source-text">From: 20</span>
+              <span class="source-text" id="display-album">From: --</span>
               <div class="red-line-header"></div>
             </div>
             <h1 class="track-title" id="display-title">WACCA ULTRA DREAM MEGAMIX</h1>
@@ -2307,6 +2309,7 @@
     function applyTrackToUI(track) {
       document.getElementById('display-title').innerText = track.title || '--';
       syncTitleLineClass();
+      document.getElementById('display-album').innerText = `From: ${track.album || '--'}`;
       document.getElementById('display-artist').innerText = track.artist || '--';
       document.getElementById('display-quality').innerText = track.quality || '--';
       updateBpmDisplay(track.bpm, track.bpm ? 'metadata' : 'analyzing');

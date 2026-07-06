@@ -440,7 +440,10 @@ onBeforeUnmount(() => {
       <div class="backdrop-accent" />
     </div>
 
-    <div v-if="currentTrack" class="stage">
+    <div
+      v-if="currentTrack"
+      :class="['stage', { 'stage--visualizer': viewMode === 'visualizer' }]"
+    >
       <AudioVisualizerPanel
         v-if="viewMode === 'visualizer'"
         class="visualizer-surface"
@@ -649,6 +652,14 @@ onBeforeUnmount(() => {
   height: 100%;
   margin: 0 auto;
   padding: 72px 36px 28px;
+}
+
+.stage--visualizer {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  margin: 0;
+  padding: 0;
 }
 
 .layout {

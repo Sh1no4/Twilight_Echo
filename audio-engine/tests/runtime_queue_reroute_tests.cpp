@@ -117,6 +117,16 @@ void testRenderCallbacksDoNotReconfigureDspChains() {
   assert(!std::regex_search(realtimeBodies, std::regex(R"(\.setTrackContext\s*\()")));
 }
 
+void testRenderCallbackDoesNotCopyDspConfig() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string renderBody = extractFunctionBody(source, "size_t AudioPipeline::render(float* output, size_t frameCount)");
+
+  assert(renderBody.find("DspConfig dspConfig") == std::string::npos);
+  assert(renderBody.find("dspConfig = dspConfig_") == std::string::npos);
+}
+
 void testRenderCallbacksDoNotBlockOnPipelineMutex() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
@@ -1078,6 +1088,26 @@ void testPcmTypedPassthroughIsOutputPerfect() {
   assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"\"");
 }
 
+void testPcmTypedPassthroughKeepsTypedPathDuringTransientDecoderLag() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  g_decodeEveryReadDelayMs = 50;
+  assert(engine.play("typed-transient-decoder-lag.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  renderBackendFrames(backend, 2048);
+  renderBackendFrames(backend, 2048);
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  assert(snapshots.front().typedStarted);
+  assert(snapshots.front().typedRenderCalls == 2);
+  assert(snapshots.front().floatRenderCalls == 0);
+}
+
 void testOutputStartWaitsForFirstDecodedFrames() {
   EngineHarness harness;
   auto& engine = harness.engine();
@@ -1875,6 +1905,7 @@ int main() {
   testRenderCallbacksDoNotResizePipelineScratchBuffers();
   testDecodeStreamReadFloatDoesNotResizeTypedScratch();
   testRenderCallbacksDoNotReconfigureDspChains();
+  testRenderCallbackDoesNotCopyDspConfig();
   testRenderCallbacksDoNotBlockOnPipelineMutex();
   testRenderCallbacksDoNotWaitForDecoderBuffers();
   testNativeDsdRenderPositionAccountsForBitsPerByte();
@@ -1886,6 +1917,7 @@ int main() {
   testSetOutputConfigReleasesEngineMutexBeforeRerouteRestart();
   testSetDspConfigPreparesActiveChainForPreRoutingDecodeFormat();
   testDsd64StartsOnDop();
+  testPcmTypedPassthroughKeepsTypedPathDuringTransientDecoderLag();
   testPcmTypedPassthroughIsOutputPerfect();
   testOutputStartWaitsForFirstDecodedFrames();
   testOutputStartDoesNotWaitForPrerollTimeoutAtEof();

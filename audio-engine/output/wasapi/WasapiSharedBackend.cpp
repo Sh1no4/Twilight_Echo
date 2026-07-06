@@ -100,6 +100,8 @@ struct WasapiSharedBackend::Impl {
   OutputEventCallback eventCallback;
   bool ownerComInitialized = false;
   std::atomic<bool> deviceInvalidatedEventQueued{false};
+  std::atomic<HRESULT> deferredRenderFailureHr{S_OK};
+  std::atomic<const char*> deferredRenderFailureMessage{nullptr};
 
   static std::wstring utf8ToWide(const std::string& value) {
     if (value.empty()) return {};
@@ -155,6 +157,8 @@ struct WasapiSharedBackend::Impl {
     diagnostics.lifetimeRecoveryCount = lifetime.lifetimeRecoveryCount;
     diagnostics.driverRestartCount = lifetime.driverRestartCount;
     diagnostics.deviceLostCount = lifetime.deviceLostCount;
+    deferredRenderFailureHr.store(S_OK, std::memory_order_relaxed);
+    deferredRenderFailureMessage.store(nullptr, std::memory_order_relaxed);
 
     std::lock_guard lock(infoMutex);
     outputInfo = {};
@@ -173,6 +177,8 @@ struct WasapiSharedBackend::Impl {
   }
 
   void recordFailure(const char* reasonCode, const std::string& reason, std::string* error = nullptr) {
+    deferredRenderFailureHr.store(S_OK, std::memory_order_relaxed);
+    deferredRenderFailureMessage.store(nullptr, std::memory_order_relaxed);
     diagnostics.lastError = reason;
     std::lock_guard lock(infoMutex);
     outputInfo.perfectReasonCode = reasonCode ? reasonCode : "backend_open_failure";
@@ -183,6 +189,8 @@ struct WasapiSharedBackend::Impl {
   }
 
   void recordRenderFailure(HRESULT hr, const char* message) {
+    deferredRenderFailureHr.store(S_OK, std::memory_order_relaxed);
+    deferredRenderFailureMessage.store(nullptr, std::memory_order_relaxed);
     const std::string reason = hresultMessage(message, hr);
     if (isDeviceInvalidated(hr)) {
       ++diagnostics.deviceLostCount;
@@ -195,11 +203,11 @@ struct WasapiSharedBackend::Impl {
   }
 
   void recordRenderFailureFromRenderThread(HRESULT hr, const char* message) {
-    const std::string reason = hresultMessage(message, hr);
     std::unique_lock lock(infoMutex, std::try_to_lock);
     if (!lock.owns_lock()) return;
 
-    diagnostics.lastError = reason;
+    deferredRenderFailureHr.store(hr, std::memory_order_relaxed);
+    deferredRenderFailureMessage.store(message, std::memory_order_relaxed);
     if (isDeviceInvalidated(hr)) {
       ++diagnostics.deviceLostCount;
       outputInfo.perfectReasonCode = "device_lost";
@@ -208,8 +216,6 @@ struct WasapiSharedBackend::Impl {
       ++diagnostics.lifetimeBufferDropCount;
       outputInfo.perfectReasonCode = "render_failure";
     }
-    outputInfo.capabilityReason = reason;
-    outputInfo.perfectReason = reason;
     outputInfo.diagnostics = diagnostics;
   }
 
@@ -598,8 +604,22 @@ AudioFormat WasapiSharedBackend::outputFormat() const {
 }
 
 OutputInfo WasapiSharedBackend::outputInfo() const {
-  std::lock_guard lock(impl_->infoMutex);
-  return impl_->outputInfo;
+  OutputInfo info;
+  HRESULT deferredRenderFailureHr = S_OK;
+  const char* deferredRenderFailureMessage = nullptr;
+  {
+    std::lock_guard lock(impl_->infoMutex);
+    info = impl_->outputInfo;
+    deferredRenderFailureHr = impl_->deferredRenderFailureHr.load(std::memory_order_relaxed);
+    deferredRenderFailureMessage = impl_->deferredRenderFailureMessage.load(std::memory_order_relaxed);
+  }
+  if (deferredRenderFailureMessage && FAILED(deferredRenderFailureHr)) {
+    const std::string reason = hresultMessage(deferredRenderFailureMessage, deferredRenderFailureHr);
+    info.diagnostics.lastError = reason;
+    info.capabilityReason = reason;
+    info.perfectReason = reason;
+  }
+  return info;
 }
 
 DopRuntimeFacts WasapiSharedBackend::dopRuntimeFacts() const {

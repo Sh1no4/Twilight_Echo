@@ -111,6 +111,8 @@ void testWasapiSharedRenderLoopUsesNonBlockingFailureTelemetry() {
   assert(renderLoopBody.find("recordRenderFailure(hr") == std::string::npos);
   assert(renderFailureBody.find("std::try_to_lock") != std::string::npos);
   assert(renderFailureBody.find("std::lock_guard lock(infoMutex)") == std::string::npos);
+  assert(renderFailureBody.find("hresultMessage") == std::string::npos);
+  assert(renderFailureBody.find("std::string reason") == std::string::npos);
 }
 
 void testWasapiSharedRenderLoopDefersDeviceInvalidatedCallbackUntilAfterMmcss() {
