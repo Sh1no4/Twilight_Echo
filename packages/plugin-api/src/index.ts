@@ -165,6 +165,7 @@ export interface Track {
   translatedLyrics?: string | null
   source?: string
   streamUrl?: string | null
+  bpm?: number
 }
 
 export interface PlaylistSummary {

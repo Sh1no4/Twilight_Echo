@@ -38,7 +38,9 @@ export function repairMovedLocalTracks(
       format: replacement.format ?? track.format,
       sampleRate: replacement.sampleRate ?? track.sampleRate,
       bitrate: replacement.bitrate ?? track.bitrate,
-      bitDepth: replacement.bitDepth ?? track.bitDepth
+      bitDepth: replacement.bitDepth ?? track.bitDepth,
+      bpm: replacement.bpm ?? track.bpm,
+      bpmAnalysis: replacement.bpmAnalysis ?? track.bpmAnalysis
     })
   }
 

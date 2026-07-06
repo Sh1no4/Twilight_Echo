@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <complex>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -56,6 +57,7 @@ class FftSpectrumAnalyzer {
   void updateSpectrumForRead(bool retainSpectrogram) const;
 
   mutable std::mutex mutex_;
+  mutable std::mutex spectrumUpdateMutex_;
   AudioFormat format_;
   size_t resolution_ = 64;
   size_t oscilloscopeResolution_ = 1024;
@@ -77,6 +79,8 @@ class FftSpectrumAnalyzer {
   size_t oscilloscopeFilled_ = 0;
   mutable std::vector<float> magnitudes_;
   mutable std::vector<std::vector<float>> spectrogram_;
+  mutable std::vector<float> fftInputScratch_;
+  mutable std::vector<std::complex<float>> spectrumScratch_;
 };
 
 void fillIdleSpectrum(float* buffer, size_t count, double phase);

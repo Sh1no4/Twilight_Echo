@@ -80,6 +80,12 @@ export function getNameFromFile(filePath: string): { artist: string; title: stri
   return { artist: '未知艺术家', title: nameWithoutExt }
 }
 
+function normalizeBpm(value: unknown): number | undefined {
+  const numeric = typeof value === 'string' ? Number(value.trim()) : Number(value)
+  if (!Number.isFinite(numeric) || numeric < 30 || numeric > 300) return undefined
+  return Math.round(numeric * 10) / 10
+}
+
 export interface FileEntry {
   fullPath: string
   fileName: string
@@ -177,13 +183,14 @@ export async function parseTrack(file: FileEntry): Promise<unknown[]> {
     const artist = common.artist || common.albumartist
     const title = common.title
     const album = common.album
+    const bpm = normalizeBpm(common.bpm)
 
     const fileName = getNameFromFile(file.fullPath)
 
     // Lyrics are NOT loaded during scan — they're lazy-loaded on playback
     // to avoid keeping hundreds of MB of LRC text in memory permanently.
 
-    return [{
+    const track: Record<string, unknown> = {
       id,
       title: title || fileName.title,
       artist: artist || fileName.artist,
@@ -199,7 +206,9 @@ export async function parseTrack(file: FileEntry): Promise<unknown[]> {
       sampleRate: meta.format.sampleRate,
       bitrate: meta.format.bitrate,
       bitDepth: meta.format.bitsPerSample
-    }]
+    }
+    if (bpm !== undefined) track.bpm = bpm
+    return [track]
   } catch {
     const fileName = getNameFromFile(file.fullPath)
     return [{

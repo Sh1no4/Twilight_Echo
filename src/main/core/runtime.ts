@@ -6,6 +6,7 @@ import type { AudioEngineManager, PlaybackInfo } from '../audioEngineManager'
 import type { OpraCatalog } from '../opraCatalog'
 import type { TwilightPluginManager } from '../plugins/manager'
 import type { PluginIndexService } from '../plugins/indexService'
+import type { BpmAnalysisManager } from '../bpm/bpmAnalysisManager'
 import type DiscordRPC from 'discord-rpc'
 
 export interface DiscordActivityData {
@@ -24,6 +25,7 @@ export const runtime = {
   pluginIndexService: null as PluginIndexService | null,
   opraCatalog: null as OpraCatalog | null,
   audioEngineManager: null as AudioEngineManager | null,
+  bpmAnalysisManager: null as BpmAnalysisManager | null,
   mainWindow: null as BrowserWindow | null,
   desktopLyricsWindow: null as BrowserWindow | null,
   latestDesktopLyricsTrack: null as DesktopLyricsTrackPayload | null,

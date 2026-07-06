@@ -40,7 +40,10 @@ import type {
   TwilightPluginIndexStatus,
   TwilightPluginExtensionContribution,
   TwilightMediaProviderMethod,
-  TwilightMediaProviderRegistration
+  TwilightMediaProviderRegistration,
+  BpmAnalysisCompletedEvent,
+  BpmAnalysisRequest,
+  BpmAnalysisRequestResult
 } from './types'
 
 const audioEngineEventCallbacks = new Set<AudioEngineEventCallback>()
@@ -358,6 +361,17 @@ const api = {
     onServiceReady: (cb: AudioEngineServiceReadyCallback): (() => void) => {
       audioEngineServiceReadyCallbacks.add(cb)
       return () => audioEngineServiceReadyCallbacks.delete(cb)
+    }
+  },
+  bpmAnalysis: {
+    request: (request: BpmAnalysisRequest): Promise<BpmAnalysisRequestResult> =>
+      ipcRenderer.invoke('bpmAnalysis:request', request),
+    getCacheSize: (): Promise<number> => ipcRenderer.invoke('bpmAnalysis:getCacheSize'),
+    clearCache: (): Promise<number> => ipcRenderer.invoke('bpmAnalysis:clearCache'),
+    onCompleted: (cb: (event: BpmAnalysisCompletedEvent) => void): (() => void) => {
+      const handler = (_event, data: BpmAnalysisCompletedEvent): void => cb(data)
+      ipcRenderer.on('bpmAnalysis:completed', handler)
+      return () => ipcRenderer.removeListener('bpmAnalysis:completed', handler)
     }
   },
   opra: {

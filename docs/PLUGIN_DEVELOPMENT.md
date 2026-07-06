@@ -224,6 +224,9 @@ loginExtraActions: [
 | `library` | `fetchUserLibrary`, `fetchLikedTracks`, `fetchRecommendSongs` 等 |
 | `login` | `checkLogin`, `getQrLogin`, `checkQrLogin`, `logout` 等 |
 
+Provider 返回的 Track 对象可以包含可选 `bpm` 字段，单位为 beats per minute。
+该值应为可信元数据中的有限正数；没有可靠 BPM 时请省略该字段。
+
 ---
 
 ## 4. UI 贡献点系统
@@ -620,7 +623,8 @@ export async function activate(context) {
           album: song.album,
           duration: song.duration,
           source: 'example',
-          cover: song.coverUrl
+          cover: song.coverUrl,
+          bpm: typeof song.bpm === 'number' ? song.bpm : undefined
         })),
         total: data.total
       }

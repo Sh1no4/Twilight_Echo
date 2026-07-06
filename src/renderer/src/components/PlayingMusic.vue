@@ -423,6 +423,7 @@ onBeforeUnmount(() => {
     <button
       type="button"
       class="visualizer-toggle-button"
+      :class="{ 'visualizer-toggle-button--close': viewMode === 'visualizer' }"
       :title="viewMode === 'cover' ? '音频可视化' : '返回封面'"
       @click="toggleVisualizer"
     >
@@ -1044,6 +1045,25 @@ onBeforeUnmount(() => {
   box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
 }
 
+.visualizer-toggle-button--close {
+  top: 8px;
+  left: 14px;
+  right: auto;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  z-index: 10000;
+}
+
+.visualizer-toggle-button--close:hover {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(15, 23, 42, 0.08);
+  transform: scale(1.06);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.12);
+}
+
 /* Visualizer surface fills the stage area */
 .visualizer-surface {
   position: absolute;
@@ -1062,4 +1082,17 @@ onBeforeUnmount(() => {
   background: rgba(40, 42, 52, 0.85);
   color: var(--te-primary-500, #8b9bff);
 }
+
+:global(html[data-theme='dark']) .visualizer-toggle-button--close {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+:global(html[data-theme='dark']) .visualizer-toggle-button--close:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}
+
 </style>

@@ -22,6 +22,29 @@ test('audioEngine loadQueue IPC accepts renderer queue items with source field',
   )
 })
 
+test('audio engine manager exposes optional native AnalyzeBpm method for host analysis', () => {
+  const managerSource = readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
+  const serviceClientSource = readFileSync(
+    new URL('./audioEngineServiceClient.ts', import.meta.url),
+    'utf8'
+  )
+  const nativeHeaderSource = readFileSync(
+    new URL('../../audio-engine/include/twilight_audio_engine.h', import.meta.url),
+    'utf8'
+  )
+  const nativeBridgeSource = readFileSync(
+    new URL('../../audio-engine/napi/twilight_audio_node.cpp', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(managerSource, /AnalyzeBpm\?: \(source: string, optionsJson\?: string\)/)
+  assert.match(managerSource, /async analyzeBpm\(/)
+  assert.match(managerSource, /callAsync\?\.\('AnalyzeBpm'/)
+  assert.match(serviceClientSource, /AnalyzeBpm\(source: string, optionsJson\?: string\)/)
+  assert.match(nativeHeaderSource, /TAE_AnalyzeBpm/)
+  assert.match(nativeBridgeSource, /define\(env, exports, "AnalyzeBpm", AnalyzeBpm\)/)
+})
+
 test('main window installs Windows audio device hotplug watcher', () => {
   assert.match(deviceHotplugSource, /const WM_DEVICECHANGE = 0x0219/)
   assert.match(deviceHotplugSource, /process\.platform !== 'win32'/)

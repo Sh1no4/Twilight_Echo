@@ -41,7 +41,8 @@ test('repairMovedLocalTracks relocates missing local files from newly scanned tr
         cover: 'cover://new',
         lyrics: null,
         source: 'local',
-        format: 'flac'
+        format: 'flac',
+        bpm: 128
       }
     ],
     fileExists: (path) => !path.startsWith('D:\\Old')
@@ -53,6 +54,7 @@ test('repairMovedLocalTracks relocates missing local files from newly scanned tr
   assert.equal(repaired.repairedTracks[0].dir, 'E:\\Music\\Audrey')
   assert.equal(repaired.repairedTracks[0].fileName, 'Moon River.flac')
   assert.equal(repaired.repairedTracks[0].cover, 'cover://new')
+  assert.equal(repaired.repairedTracks[0].bpm, 128)
   assert.deepEqual(repaired.unresolvedTracks, [])
 })
 

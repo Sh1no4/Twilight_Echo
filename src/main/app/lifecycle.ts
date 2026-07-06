@@ -27,6 +27,7 @@ import {
   setupNcmApi
 } from '../ncm/api'
 import { setupAudioEngineIpc } from '../audio/engineIpc'
+import { setupBpmAnalysisIpc } from '../bpm/bpmIpc'
 import { setupOpraIpc } from '../ipc/opra'
 import { setupPluginIpc } from '../ipc/plugins'
 import { setupDataIpc } from '../ipc/data'
@@ -157,6 +158,7 @@ export function startApp(): void {
       applyRuntimeSettings()
 
       setupAudioEngineIpc()
+      setupBpmAnalysisIpc()
       setupNcmIpc()
       setupOpraIpc()
       setupPluginIpc()
@@ -184,6 +186,7 @@ export function startApp(): void {
       void runtime.pluginManager?.destroy()
       runtime.audioEngineManager?.destroy()
       runtime.audioEngineManager = null
+      runtime.bpmAnalysisManager = null
       runtime.pluginManager = null
       if (runtime.ncmServer) {
         runtime.ncmServer.close()

@@ -188,7 +188,7 @@ const SETTINGS_SEARCH_INDEX: Array<{
   { section: 'general', title: '媒体库与启动', terms: '常规 扫描 文件夹 监控 网易云 SMTC Discord 启动 托盘 代理 插件设置 备份 恢复' },
   { section: 'playback', title: '播放与输出', terms: '播放 输出 设备 独占 音量 削波 无缝 DSD SACD buffer routing' },
   { section: 'dsp', title: 'DSP 处理器', terms: 'DSP EQ ReplayGain Crossfeed Convolver FFT High-Res DSD SACD' },
-  { section: 'cache', title: '缓存策略', terms: '缓存 目录 封面 歌词 元数据 流媒体 清理' },
+  { section: 'cache', title: '缓存策略', terms: '缓存 目录 封面 歌词 元数据 流媒体 BPM 分析 清理' },
   { section: 'performance', title: '性能', terms: '性能 硬件加速 GPU 重启' },
   { section: 'appearance', title: '外观与主题', terms: '外观 主题 插件主题 强调色 背景 字体 密度 歌词 卡片' },
   { section: 'desktopLyrics', title: '桌面歌词', terms: '桌面歌词 字体 颜色 阴影 对齐 窗口 置顶 鼠标穿透 翻译' },
@@ -246,6 +246,8 @@ const {
   appVersion,
   clearingCache,
   formattedCacheSize,
+  clearingBpmAnalysisCache,
+  formattedBpmAnalysisCacheSize,
   restartRequired,
   restartReasons,
   loadSettings,
@@ -257,6 +259,8 @@ const {
   resetCacheFolder,
   refreshCacheSize,
   clearCache,
+  refreshBpmAnalysisCacheSize,
+  clearBpmAnalysisCache,
   getShortcutStatuses,
   relaunch,
   addLibraryFolder,
@@ -286,6 +290,7 @@ const {
   selectImpulseResponse,
   clearImpulseResponse,
   refreshAudioOutputState,
+  clearBpmAnalysisFromPlaybackState,
   setVolume,
   toggleGapless
 } = usePlayerStore()
@@ -539,6 +544,10 @@ function setStreamingAudioCachePolicy(event: Event): void {
       streamingAudio
     }
   })
+}
+
+function toggleAutoAnalyzeBpm(): void {
+  void updateSettings({ autoAnalyzeBpm: !settings.value.autoAnalyzeBpm })
 }
 
 async function toggleDesktopLyrics(): Promise<void> {
@@ -1062,6 +1071,18 @@ async function confirmClearCache(): Promise<void> {
   await clearCache()
 }
 
+async function confirmClearBpmAnalysisCache(): Promise<void> {
+  if (
+    !window.confirm(
+      `确认清理 BPM 分析缓存？\n\n当前估算：${formattedBpmAnalysisCacheSize.value}\n已分析的歌曲下次播放时会重新后台分析。此操作不可恢复。`
+    )
+  ) {
+    return
+  }
+  await clearBpmAnalysisCache()
+  clearBpmAnalysisFromPlaybackState()
+}
+
 async function checkForUpdates(): Promise<void> {
   updateCheckState.value = 'checking'
   try {
@@ -1185,7 +1206,7 @@ function updateActiveSection(): void {
 
 onMounted(async () => {
   await Promise.all([loadSettings(), refreshAudioOutputState()])
-  await refreshCacheSize()
+  await Promise.all([refreshCacheSize(), refreshBpmAnalysisCacheSize()])
   await refreshShortcutStatuses()
   await syncExtensions()
   await nextTick()
@@ -2297,6 +2318,35 @@ onBeforeUnmount(() => {
                   {{ option.label }}
                 </option>
               </select>
+            </div>
+            <hr />
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>BPM 自动分析</strong>
+                <span>首次播放本地音频时在后台精算 BPM，并缓存结果供下次播放直接使用。</span>
+              </div>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.autoAnalyzeBpm, inactive: !settings.autoAnalyzeBpm }"
+                role="switch"
+                :aria-checked="settings.autoAnalyzeBpm"
+                @click="toggleAutoAnalyzeBpm"
+              ></span>
+            </div>
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>BPM 分析缓存</strong>
+                <span>当前估算：<b>{{ formattedBpmAnalysisCacheSize }}</b></span>
+              </div>
+              <button
+                class="danger-soft-button solid-hover"
+                type="button"
+                :disabled="clearingBpmAnalysisCache"
+                @click="confirmClearBpmAnalysisCache"
+              >
+                <i class="pi pi-trash"></i>
+                {{ clearingBpmAnalysisCache ? '清理中…' : '清理 BPM 缓存' }}
+              </button>
             </div>
             <hr />
             <div class="setting-item">

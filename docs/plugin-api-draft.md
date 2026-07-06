@@ -141,6 +141,23 @@ type MediaProviderCapability =
   | 'library'
   | 'login'
 
+interface Track {
+  id: string
+  title: string
+  artist: string
+  album: string
+  filePath: string
+  fileName: string
+  duration: number
+  size: number
+  cover: string | null
+  lyrics: string | null
+  translatedLyrics?: string | null
+  source?: string
+  streamUrl?: string | null
+  bpm?: number
+}
+
 interface MediaProviderRegistration {
   id: string
   name: string
@@ -209,6 +226,10 @@ await context.twilight.providers.register({
   }
 })
 ```
+
+`Track.bpm` is optional, measured in beats per minute, and should be a finite
+positive number in the normal music tempo range. Providers should omit it when
+the upstream source has no trustworthy BPM metadata.
 
 The NetEase Cloud Music integration is dogfooded as Twilight Echo's bundled
 base provider plugin. Its plugin id is `com.twilightecho.provider.ncm`, its

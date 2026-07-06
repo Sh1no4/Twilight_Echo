@@ -1,5 +1,6 @@
 #include "TwilightAudioEngine.h"
 
+#include "../analysis/BpmAnalyzer.h"
 #include "../decoder/SacdIsoProbe.h"
 #include "../metadata/AudioMetadataService.h"
 #include "../utils/JsonUtils.h"
@@ -2108,6 +2109,21 @@ TAE_Result TAE_GetVisualizationData(
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   return copyStringResult(
       fromHandle(engine)->getVisualizationDataJson(options_json ? options_json : "{}"),
+      buffer,
+      buffer_size,
+      required_size);
+}
+
+TAE_Result TAE_AnalyzeBpm(
+    TAE_EngineHandle engine,
+    const char* source,
+    const char* options_json,
+    char* buffer,
+    size_t buffer_size,
+    size_t* required_size) {
+  if (!engine || !source) return TAE_RESULT_INVALID_ARGUMENT;
+  return copyStringResult(
+      twilight::audio::analyzeBpmJson(source, options_json ? options_json : "{}"),
       buffer,
       buffer_size,
       required_size);

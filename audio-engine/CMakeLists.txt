@@ -49,6 +49,7 @@ add_library(twilight_audio_engine SHARED
   core/AudioPipeline.cpp
   core/AudioTypes.cpp
   core/TwilightAudioEngine.cpp
+  analysis/BpmAnalyzer.cpp
   decoder/DopPacker.cpp
   decoder/DsdReader.cpp
   decoder/DstDecoder.cpp
@@ -454,6 +455,7 @@ if(TAE_BUILD_TESTS)
     core/AudioPipeline.cpp
     core/AudioTypes.cpp
     core/TwilightAudioEngine.cpp
+    analysis/BpmAnalyzer.cpp
     decoder/DopPacker.cpp
     decoder/DsdReader.cpp
     decoder/SacdIsoDemuxer.cpp

@@ -400,6 +400,7 @@ let nativePlaybackInfoIntent: {
   source: string
   expiresAt: number
 } | null = null
+const bpmAnalysisRequests = new Set<string>()
 
 function isActiveLoad(loadToken: number, track: Track): boolean {
   return loadToken === activeLoadToken && currentTrack.value?.id === track.id
@@ -1268,6 +1269,84 @@ function getTrackSource(track: Track): string {
   return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
 }
 
+function hasAnalyzedBpm(track: Track): boolean {
+  const bpm = track.bpmAnalysis?.bpm
+  return typeof bpm === 'number' && Number.isFinite(bpm) && bpm > 0
+}
+
+function isAutoBpmAnalysisEnabled(): boolean {
+  return useSettingsStore().settings.value.autoAnalyzeBpm !== false
+}
+
+function isAnalyzableAudioPath(filePath: string | undefined): filePath is string {
+  if (!filePath) return false
+  return !/^[a-z][a-z\d+.-]*:\/\//i.test(filePath)
+}
+
+function applyBpmAnalysisToTrack(
+  trackId: string,
+  filePath: string,
+  analysis: Track['bpmAnalysis']
+): void {
+  if (!analysis) return
+  const target = currentTrack.value
+  if (target && (target.id === trackId || target.filePath === filePath)) {
+    const updatedTrack = {
+      ...target,
+      bpmAnalysis: analysis
+    }
+    currentTrack.value = updatedTrack
+    patchTrackInQueues(updatedTrack)
+  } else {
+    queue.value = queue.value.map((track) =>
+      track.id === trackId || track.filePath === filePath ? { ...track, bpmAnalysis: analysis } : track
+    )
+    originalQueue.value = originalQueue.value.map((track) =>
+      track.id === trackId || track.filePath === filePath ? { ...track, bpmAnalysis: analysis } : track
+    )
+  }
+  useMusicStore().applyBpmAnalysis(trackId, filePath, analysis)
+}
+
+function clearBpmAnalysisFromPlaybackState(): void {
+  if (currentTrack.value?.bpmAnalysis) {
+    const { bpmAnalysis: _bpmAnalysis, ...nextTrack } = currentTrack.value
+    currentTrack.value = nextTrack
+  }
+  queue.value = queue.value.map((track) => {
+    if (!track.bpmAnalysis) return track
+    const { bpmAnalysis: _bpmAnalysis, ...nextTrack } = track
+    return nextTrack
+  })
+  originalQueue.value = originalQueue.value.map((track) => {
+    if (!track.bpmAnalysis) return track
+    const { bpmAnalysis: _bpmAnalysis, ...nextTrack } = track
+    return nextTrack
+  })
+  useMusicStore().clearBpmAnalysis()
+}
+
+async function requestBpmAnalysisForTrack(track: Track): Promise<void> {
+  if (!isAutoBpmAnalysisEnabled() || hasAnalyzedBpm(track) || !isAnalyzableAudioPath(track.filePath)) return
+  const key = `${track.id}\u0000${track.filePath}`
+  if (bpmAnalysisRequests.has(key)) return
+  bpmAnalysisRequests.add(key)
+  try {
+    const result = await window.api?.bpmAnalysis?.request({
+      trackId: track.id,
+      filePath: track.filePath,
+      referenceBpm: track.bpm
+    })
+    if (result?.status === 'cached' || result?.status === 'completed') {
+      applyBpmAnalysisToTrack(track.id, track.filePath, result.analysis)
+    }
+  } catch {
+    // BPM analysis is best-effort; playback and live visualization continue.
+  } finally {
+    bpmAnalysisRequests.delete(key)
+  }
+}
+
 async function ensureCurrentTrackLyricsLoaded(
   triggerTrack: Track | null = currentTrack.value,
   allowProviderLookup = true
@@ -2105,6 +2184,15 @@ function setupPlayerIntegrationSideEffects(): void {
 
   watch(currentTrack, () => syncDesktopLyricsSnapshot(), { immediate: true })
 
+  watch(
+    [() => currentTrack.value?.id, isPlaying],
+    () => {
+      const track = currentTrack.value
+      if (track && isPlaying.value) void requestBpmAnalysisForTrack(track)
+    },
+    { immediate: true }
+  )
+
   watch(currentTime, (time) => {
     const now = Date.now()
     if (now - desktopLyricsTimeThrottle < 200) return
@@ -2123,6 +2211,10 @@ function setupPlayerIntegrationSideEffects(): void {
 
   window.api?.desktopLyrics?.onToggle((enabled: boolean) => {
     if (enabled) syncDesktopLyricsSnapshot()
+  })
+
+  window.api?.bpmAnalysis?.onCompleted((event) => {
+    applyBpmAnalysisToTrack(event.trackId, event.filePath, event.analysis)
   })
 }
 
@@ -2198,7 +2290,9 @@ function cloneTrackForPlaybackSession(track: Track): Track {
     format: track.format,
     sampleRate: track.sampleRate,
     bitrate: track.bitrate,
-    bitDepth: track.bitDepth
+    bitDepth: track.bitDepth,
+    bpm: track.bpm,
+    bpmAnalysis: track.bpmAnalysis
   }
   return cloned
 }
@@ -2321,6 +2415,7 @@ export function usePlayerStore(): {
   clearImpulseResponse: () => Promise<void>
   restorePlaybackSession: (session: PlaybackSession) => void
   createPlaybackSession: (mode: PlaybackResumeMode) => PlaybackSession | null
+  clearBpmAnalysisFromPlaybackState: () => void
   formatTime: (seconds: number) => string
 } {
   setupPlayerIntegrationSideEffects()
@@ -2556,6 +2651,7 @@ export function usePlayerStore(): {
     clearImpulseResponse,
     restorePlaybackSession,
     createPlaybackSession,
+    clearBpmAnalysisFromPlaybackState,
     formatTime
   }
 }

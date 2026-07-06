@@ -21,6 +21,8 @@ interface TrackData {
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
+  bpm?: number
+  bpmAnalysis?: BpmAnalysisResult
 }
 
 interface AudioEngineEvent {
@@ -55,6 +57,37 @@ interface TrackMetadataMatch {
   trackId: string
   confidence: MetadataMatchConfidence
   score: number
+}
+interface BpmTempoSegment {
+  startMs: number
+  endMs: number
+  bpm: number
+  confidence: number
+}
+interface BpmAnalysisResult {
+  bpm: number
+  confidence: number
+  source: 'analyzed'
+  analyzedAt: string
+  algorithmVersion: number
+  variableTempo?: boolean
+  bpmRange?: [number, number]
+  tempoMap?: BpmTempoSegment[]
+}
+interface BpmAnalysisRequest {
+  trackId: string
+  filePath: string
+  referenceBpm?: number
+}
+type BpmAnalysisRequestResult =
+  | { status: 'completed'; analysis: BpmAnalysisResult }
+  | { status: 'cached'; analysis: BpmAnalysisResult }
+  | { status: 'skipped'; reason: string }
+  | { status: 'failed'; reason: string }
+interface BpmAnalysisCompletedEvent {
+  trackId: string
+  filePath: string
+  analysis: BpmAnalysisResult
 }
 type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
 type TwilightPluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
@@ -330,6 +363,7 @@ interface AppSettings {
   musicCachePath: string
   cachePath: string
   cachePolicy: MusicCachePolicySettings
+  autoAnalyzeBpm: boolean
   closeToTray: boolean
   startupHomePage: StartupHomePage
   theme: AppTheme
@@ -974,6 +1008,12 @@ interface WindowAPI {
     onScanProgress: (cb: (progress: { current: number; total: number }) => void) => () => void
   }
   audioEngine: AudioEngineAPI
+  bpmAnalysis: {
+    request: (request: BpmAnalysisRequest) => Promise<BpmAnalysisRequestResult>
+    getCacheSize: () => Promise<number>
+    clearCache: () => Promise<number>
+    onCompleted: (cb: (event: BpmAnalysisCompletedEvent) => void) => () => void
+  }
   opra: OpraAPI
   app: {
     relaunch: () => Promise<void>

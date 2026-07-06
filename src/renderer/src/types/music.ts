@@ -12,6 +12,24 @@ export interface TrackMetadataMatch {
   score: number
 }
 
+export interface BpmTempoSegment {
+  startMs: number
+  endMs: number
+  bpm: number
+  confidence: number
+}
+
+export interface BpmAnalysisResult {
+  bpm: number
+  confidence: number
+  source: 'analyzed'
+  analyzedAt: string
+  algorithmVersion: number
+  variableTempo?: boolean
+  bpmRange?: [number, number]
+  tempoMap?: BpmTempoSegment[]
+}
+
 export interface Track {
   id: string
   title: string
@@ -36,6 +54,8 @@ export interface Track {
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
+  bpm?: number
+  bpmAnalysis?: BpmAnalysisResult
 }
 
 export interface PlaybackSession {

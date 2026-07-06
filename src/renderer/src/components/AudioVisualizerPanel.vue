@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useCover } from '../utils/coverLoader'
 import { buildVisualizerQualityString, formatVisualizerBitrate } from './audioVisualizerFormatting'
+import { AudioTempoEstimator, normalizeBpm, type TempoEstimate } from './audioTempoEstimator'
 
 const props = defineProps<{ active: boolean }>()
 
@@ -32,12 +33,16 @@ const visualizationOptions = {
   oscilloscopePoints: 0,
   visualizerBarCount: VISUALIZER_BAR_COUNT
 } as const
-const VISUALIZER_POLL_INTERVAL_MS = 50
+const VISUALIZER_POLL_INTERVAL_MS = 33
 const CONTROL_VISUALIZATION_PAUSE_MS = 220
 let visualizationTimer: number | null = null
 let visualizationRequestInFlight = false
 let visualizerUnmounted = false
 let visualizationPausedUntil = 0
+const tempoEstimator = new AudioTempoEstimator()
+let lastPostedTempo: TempoEstimate = { source: 'analyzing', confidence: 0 }
+let lastPlaybackPosition: number | null = null
+let currentMetadataBpm: number | undefined
 const shouldPollVisualization = computed(
   () =>
     props.active &&
@@ -62,6 +67,40 @@ function buildVisualizerSrc(): string {
   return `./audio-visualizer/index.html?v=${Date.now()}`
 }
 
+function formatVisualizerBpm(value: unknown): string {
+  const bpm = normalizeBpm(value)
+  return bpm === undefined ? '' : bpm.toFixed(1).replace(/\.0$/, '')
+}
+
+function getPrimaryTrackBpm(track: { bpmAnalysis?: { bpm?: number }; bpm?: number } | null): number | undefined {
+  return normalizeBpm(track?.bpmAnalysis?.bpm) ?? normalizeBpm(track?.bpm)
+}
+
+function postTempo(tempo: TempoEstimate): void {
+  if (tempo.source === 'live' && currentMetadataBpm !== undefined) return
+  if (tempo.source === 'analyzing' && currentMetadataBpm !== undefined) return
+  if (tempo.source === 'analyzing' && lastPostedTempo.bpm !== undefined) return
+  const previousBpm = lastPostedTempo.bpm ?? 0
+  const nextBpm = tempo.bpm ?? 0
+  const shouldPost =
+    tempo.source !== lastPostedTempo.source ||
+    Math.abs(nextBpm - previousBpm) >= 0.1 ||
+    Math.abs(tempo.confidence - lastPostedTempo.confidence) >= 0.05
+  if (!shouldPost) return
+  lastPostedTempo = { ...tempo }
+  post({
+    kind: 'bpm',
+    bpm: tempo.bpm,
+    confidence: tempo.confidence,
+    source: tempo.source
+  })
+}
+
+function resetTempoEstimator(): void {
+  tempoEstimator.reset()
+  lastPostedTempo = { source: 'analyzing', confidence: 0 }
+}
+
 async function pollVisualizationFrame(): Promise<void> {
   if (visualizerUnmounted || !shouldPollVisualization.value || visualizationRequestInFlight) return
   if (performance.now() < visualizationPausedUntil) return
@@ -70,11 +109,21 @@ async function pollVisualizationFrame(): Promise<void> {
     const v = await window.api.audioEngine.getVisualizationData(visualizationOptions)
     if (visualizerUnmounted || !shouldPollVisualization.value) return
     if (v.tapStatus === 'synthetic-fallback') {
+      resetTempoEstimator()
       postInactiveVisualizationFrame()
       return
     }
     const bars = Float32Array.from(v.visualizerBars ?? [])
     const waveform = Float32Array.from(v.waveform)
+    const tempo = tempoEstimator.pushFrame({
+      timestamp: performance.now(),
+      visualizerBars: bars,
+      waveform,
+      rmsDb: v.rmsDb,
+      active: v.active,
+      referenceBpm: currentMetadataBpm
+    })
+    postTempo(tempo)
     post({
       kind: 'spectrum',
       bars,
@@ -95,6 +144,7 @@ async function pollVisualizationFrame(): Promise<void> {
 
 function postInactiveVisualizationFrame(): void {
   if (!iframeReady.value) return
+  resetTempoEstimator()
   const bars = new Float32Array(VISUALIZER_BAR_COUNT)
   const waveform = new Float32Array(visualizationOptions.waveformPoints)
   post({
@@ -138,6 +188,7 @@ function syncVisualizationPolling(): void {
 
 function pauseVisualizationForControl(): void {
   visualizationPausedUntil = performance.now() + CONTROL_VISUALIZATION_PAUSE_MS
+  resetTempoEstimator()
 }
 
 // Buffer the latest track/cover/playback payloads so they can be re-sent once
@@ -223,6 +274,10 @@ watch(
   currentTrack,
   (track) => {
     if (!track) return
+    resetTempoEstimator()
+    const primaryBpm = getPrimaryTrackBpm(track)
+    const metadataBpm = primaryBpm
+    currentMetadataBpm = metadataBpm
     const trackPayload = {
       kind: 'track',
       track: {
@@ -230,7 +285,7 @@ watch(
         artist: track.artist,
         album: track.album,
         quality: buildVisualizerQualityString(track),
-        bpm: '',
+        bpm: formatVisualizerBpm(primaryBpm),
         genre: '',
         duration: formatTime(track.duration),
         durationSeconds: track.duration,
@@ -244,8 +299,16 @@ watch(
         format: track.format || ''
       }
     }
-    if (iframeReady.value) post(trackPayload)
-    else pendingTrack = trackPayload
+    if (iframeReady.value) {
+      post(trackPayload)
+      if (metadataBpm !== undefined) {
+        postTempo({
+          source: 'metadata',
+          bpm: metadataBpm,
+          confidence: track.bpmAnalysis?.confidence ?? 1
+        })
+      }
+    } else pendingTrack = trackPayload
   },
   { immediate: true }
 )
@@ -265,6 +328,10 @@ watch(
 watch(
   [isPlaying, currentTime, duration],
   ([playing, position, dur]) => {
+    if (lastPlaybackPosition !== null && Math.abs(position - lastPlaybackPosition) > 3) {
+      resetTempoEstimator()
+    }
+    lastPlaybackPosition = position
     const playbackPayload = {
       kind: 'playback',
       isPlaying: playing,

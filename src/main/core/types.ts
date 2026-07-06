@@ -121,6 +121,7 @@ export interface AppSettings {
   musicCachePath: string
   cachePath: string
   cachePolicy: MusicCachePolicySettings
+  autoAnalyzeBpm: boolean
   closeToTray: boolean
   startupHomePage: StartupHomePage
   theme: AppTheme

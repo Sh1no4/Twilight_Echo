@@ -85,6 +85,37 @@ export interface TrackMetadataMatch {
   confidence: MetadataMatchConfidence
   score: number
 }
+export interface BpmTempoSegment {
+  startMs: number
+  endMs: number
+  bpm: number
+  confidence: number
+}
+export interface BpmAnalysisResult {
+  bpm: number
+  confidence: number
+  source: 'analyzed'
+  analyzedAt: string
+  algorithmVersion: number
+  variableTempo?: boolean
+  bpmRange?: [number, number]
+  tempoMap?: BpmTempoSegment[]
+}
+export interface BpmAnalysisRequest {
+  trackId: string
+  filePath: string
+  referenceBpm?: number
+}
+export type BpmAnalysisRequestResult =
+  | { status: 'completed'; analysis: BpmAnalysisResult }
+  | { status: 'cached'; analysis: BpmAnalysisResult }
+  | { status: 'skipped'; reason: string }
+  | { status: 'failed'; reason: string }
+export interface BpmAnalysisCompletedEvent {
+  trackId: string
+  filePath: string
+  analysis: BpmAnalysisResult
+}
 export type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
 export type TwilightPluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
 export type TwilightPluginIndexInstallState =
@@ -356,6 +387,8 @@ export interface TrackData {
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
+  bpm?: number
+  bpmAnalysis?: BpmAnalysisResult
 }
 
 export interface AudioEngineQueueItem {
@@ -445,6 +478,7 @@ export interface AppSettings {
   musicCachePath: string
   cachePath: string
   cachePolicy: MusicCachePolicySettings
+  autoAnalyzeBpm: boolean
   closeToTray: boolean
   startupHomePage: StartupHomePage
   theme: AppTheme

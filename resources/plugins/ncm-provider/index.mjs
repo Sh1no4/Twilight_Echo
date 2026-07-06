@@ -216,6 +216,12 @@ function normalizeNcmFormat(rawFormat) {
   return format === 'mp4' ? 'm4a' : format
 }
 
+function normalizeBpm(value) {
+  const numeric = typeof value === 'string' ? Number(value.trim()) : Number(value)
+  if (!Number.isFinite(numeric) || numeric < 30 || numeric > 300) return undefined
+  return Math.round(numeric * 10) / 10
+}
+
 function getSongAudioMeta(song) {
   const candidates = [
     song.sq,
@@ -257,8 +263,9 @@ function normalizeTrack(song) {
   const album = song.al?.name || song.album?.name || '未知专辑'
   const cover = song.al?.picUrl || song.album?.picUrl || song.picUrl || song.coverImgUrl || null
   const audioMeta = getSongAudioMeta(song)
+  const bpm = normalizeBpm(song.bpm ?? song.tempo ?? song.mainSong?.bpm)
 
-  return {
+  const track = {
     id: `ncm:${songId}`,
     title,
     artist,
@@ -277,6 +284,8 @@ function normalizeTrack(song) {
     sampleRate: audioMeta.sampleRate,
     bitrate: audioMeta.bitrate
   }
+  if (bpm !== undefined) track.bpm = bpm
+  return track
 }
 
 function rememberStreamAudioMeta(songId, item) {

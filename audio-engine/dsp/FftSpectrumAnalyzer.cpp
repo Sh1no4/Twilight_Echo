@@ -278,19 +278,18 @@ void FftSpectrumAnalyzer::publishSpectrumUpdate(SpectrumUpdateSnapshot& snapshot
 }
 
 void FftSpectrumAnalyzer::updateSpectrumForRead(bool retainSpectrogram) const {
+  std::lock_guard updateLock(spectrumUpdateMutex_);
   SpectrumUpdateSnapshot snapshot;
   if (!buildSpectrumUpdateSnapshot(retainSpectrogram, snapshot)) return;
 
   if (snapshot.computeSpectrum) {
-    std::vector<float> fftInputScratch;
-    std::vector<std::complex<float>> spectrumScratch;
-    fft::writeWindowedFftInput(snapshot.timeDomain, snapshot.window, snapshot.resolution, fftInputScratch);
+    fft::writeWindowedFftInput(snapshot.timeDomain, snapshot.window, snapshot.resolution, fftInputScratch_);
 
-    KissFftAdapter::forward(fftInputScratch, &spectrumScratch);
+    KissFftAdapter::forward(fftInputScratch_, &spectrumScratch_);
     const size_t bins = snapshot.resolution / 2;
     fft::resizeMagnitudesForOverwrite(snapshot.magnitudes, bins);
     for (size_t i = 0; i < bins; ++i) {
-      const double magnitude = std::abs(spectrumScratch[i]);
+      const double magnitude = std::abs(spectrumScratch_[i]);
       snapshot.magnitudes[i] = webAudioNormalizedMagnitude(magnitude, snapshot.resolution);
     }
   }

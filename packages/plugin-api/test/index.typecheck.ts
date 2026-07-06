@@ -1,4 +1,5 @@
 import type {
+  Track,
   TwilightMediaProviderHealth,
   TwilightMediaProviderMethodHealth,
   TwilightMediaProviderRegistration,
@@ -64,5 +65,21 @@ const providerRegistration: TwilightMediaProviderRegistration = {
   health: providerHealth
 }
 
+const providerTrackWithBpm: Track = {
+  id: 'example:1',
+  title: 'Example Track',
+  artist: 'Example Artist',
+  album: 'Example Album',
+  filePath: 'example:1',
+  fileName: 'Example Artist - Example Track',
+  duration: 180,
+  size: 0,
+  cover: null,
+  lyrics: null,
+  streamUrl: null,
+  bpm: 128
+}
+
 void extensionContribution
 void providerRegistration
+void providerTrackWithBpm

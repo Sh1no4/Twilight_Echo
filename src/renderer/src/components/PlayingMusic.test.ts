@@ -19,6 +19,19 @@ test('visualizer mode does not keep the heavy blurred backdrop mounted', () => {
   assert.match(source, /<div v-if="viewMode !== 'visualizer'" class="backdrop"/)
 })
 
+test('visualizer close button moves to the top-left titlebar area only in visualizer mode', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /:class="\{ 'visualizer-toggle-button--close': viewMode === 'visualizer' \}"/)
+  assert.match(source, /\.visualizer-toggle-button \{[\s\S]*top: 42px[\s\S]*right: 42px/)
+  assert.match(source, /\.visualizer-toggle-button--close \{[\s\S]*top: 8px[\s\S]*left: 14px/)
+  assert.match(source, /\.visualizer-toggle-button--close \{[\s\S]*right: auto/)
+  assert.match(source, /\.visualizer-toggle-button--close \{[\s\S]*background: transparent/)
+  assert.match(source, /\.visualizer-toggle-button--close:hover \{[\s\S]*background: rgba\(255, 255, 255, 0\.85\)/)
+  assert.doesNotMatch(source, /\.visualizer-toggle-button--close \{[^}]*border-radius: 0/)
+  assert.doesNotMatch(source, /title-bar-left-controls/)
+})
+
 test('desktop lyrics html exposes lyric source metadata on hover', () => {
   const source = readFileSync(new URL('../../../../resources/desktop-lyrics.html', import.meta.url), 'utf8')
 

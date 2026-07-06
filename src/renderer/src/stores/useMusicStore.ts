@@ -89,6 +89,8 @@ export function useMusicStore(): {
   addToPlaylist: (playlistName: string, trackId: string, trackSnapshot?: Track) => void
   removeFromPlaylist: (playlistName: string, trackId: string) => void
   replaceTrackReference: (oldTrackId: string, replacementTrack: Track) => number
+  applyBpmAnalysis: (trackId: string, filePath: string, analysis: Track['bpmAnalysis']) => boolean
+  clearBpmAnalysis: () => boolean
   isFavoriteTrack: (track: Track) => boolean
   addFavoriteTrack: (track: Track) => void
   removeFavoriteTrack: (track: Track) => void
@@ -648,6 +650,84 @@ export function useMusicStore(): {
     return replacementCount
   }
 
+  function applyBpmAnalysis(
+    trackId: string,
+    filePath: string,
+    analysis: Track['bpmAnalysis']
+  ): boolean {
+    if (!analysis) return false
+    const index = tracks.value.findIndex(
+      (track) => track.id === trackId || (!!filePath && track.filePath === filePath)
+    )
+    if (index < 0) return false
+    const nextTrack = {
+      ...tracks.value[index],
+      bpmAnalysis: analysis
+    }
+    const nextTracks = tracks.value.slice()
+    nextTracks[index] = nextTrack
+    tracks.value = nextTracks
+    trackById.delete(trackId)
+    trackById.set(nextTrack.id, nextTrack)
+
+    let playlistsChanged = false
+    for (const playlist of playlists.value) {
+      const snapshot = playlist.trackSnapshots?.[trackId] ?? playlist.trackSnapshots?.[nextTrack.id]
+      if (!snapshot) continue
+      playlist.trackSnapshots = {
+        ...(playlist.trackSnapshots ?? {}),
+        [nextTrack.id]: toPlaylistTrackSnapshot({
+          ...snapshot,
+          bpmAnalysis: analysis
+        })
+      }
+      playlistsChanged = true
+    }
+
+    void scheduleSaveLibrary()
+    if (playlistsChanged) void savePlaylists()
+    return true
+  }
+
+  function clearBpmAnalysis(): boolean {
+    let libraryChanged = false
+    const nextTracks = tracks.value.map((track) => {
+      if (!track.bpmAnalysis) return track
+      const { bpmAnalysis: _bpmAnalysis, ...nextTrack } = track
+      libraryChanged = true
+      return nextTrack
+    })
+    if (libraryChanged) {
+      tracks.value = nextTracks
+      trackById.clear()
+      for (const track of nextTracks) trackById.set(track.id, track)
+      scheduleRebuild()
+      void scheduleSaveLibrary()
+    }
+
+    let playlistsChanged = false
+    for (const playlist of playlists.value) {
+      if (!playlist.trackSnapshots) continue
+      let snapshotChanged = false
+      const nextSnapshots: Record<string, Track> = {}
+      for (const [trackId, snapshot] of Object.entries(playlist.trackSnapshots)) {
+        if (snapshot.bpmAnalysis) {
+          const { bpmAnalysis: _bpmAnalysis, ...nextSnapshot } = snapshot
+          nextSnapshots[trackId] = nextSnapshot
+          snapshotChanged = true
+        } else {
+          nextSnapshots[trackId] = snapshot
+        }
+      }
+      if (snapshotChanged) {
+        playlist.trackSnapshots = nextSnapshots
+        playlistsChanged = true
+      }
+    }
+    if (playlistsChanged) void savePlaylists()
+    return libraryChanged || playlistsChanged
+  }
+
   function getPlaylistTracks(playlistName: string): Track[] {
     const pl = playlists.value.find((p) => p.name === playlistName)
     if (!pl) return []
@@ -705,6 +785,8 @@ export function useMusicStore(): {
     addToPlaylist,
     removeFromPlaylist,
     replaceTrackReference,
+    applyBpmAnalysis,
+    clearBpmAnalysis,
     isFavoriteTrack,
     addFavoriteTrack,
     removeFavoriteTrack,

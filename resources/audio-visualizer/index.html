@@ -136,6 +136,8 @@
       align-items: center;
       justify-content: center;
       position: relative;
+      z-index: 0;
+      transform: translateY(28px);
       min-width: 0;
       padding-inline: clamp(12px, 1.6vw, 28px) var(--left-panel-offset);
     }
@@ -164,7 +166,7 @@
 
     .radar-svg circle {
       fill: none;
-      stroke: rgba(0, 0, 0, 0.1);
+      stroke: rgba(0, 0, 0, 0.15);
       stroke-width: 1px;
     }
 
@@ -174,16 +176,16 @@
 
     .radar-svg circle.dashed-fine {
       stroke-dasharray: 1, 3;
-      stroke: rgba(0, 0, 0, 0.08);
+      stroke: rgba(0, 0, 0, 0.12);
     }
 
     .radar-svg line.axis {
-      stroke: rgba(0, 0, 0, 0.08);
+      stroke: rgba(0, 0, 0, 0.12);
       stroke-width: 1px;
     }
 
     .radar-svg line.diagonal {
-      stroke: rgba(0, 0, 0, 0.04);
+      stroke: rgba(0, 0, 0, 0.065);
       stroke-width: 1px;
       stroke-dasharray: 2, 8;
     }
@@ -191,6 +193,165 @@
     .radar-svg .grid-ticks {
       stroke: rgba(0, 0, 0, 0.15);
       stroke-width: 1px;
+    }
+
+    .album-orbit-system {
+      position: absolute;
+      inset: -30%;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.9;
+    }
+
+    .album-orbit-ring {
+      position: absolute;
+      border: 1px solid rgba(0, 0, 0, 0.22);
+      border-radius: 50%;
+      transform: translateZ(0);
+    }
+
+    .album-orbit-ring.time-ticks::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      animation: tick-ring-drift 52s linear infinite;
+      animation-play-state: paused;
+      background: repeating-conic-gradient(
+        from -2deg,
+        rgba(34, 36, 42, 0.34) 0deg 0.28deg,
+        transparent 0.28deg 30deg
+      );
+      mask: radial-gradient(
+        farthest-side,
+        transparent calc(100% - 15px),
+        #000 calc(100% - 15px) calc(100% - 7px),
+        transparent calc(100% - 7px)
+      );
+      -webkit-mask: radial-gradient(
+        farthest-side,
+        transparent calc(100% - 15px),
+        #000 calc(100% - 15px) calc(100% - 7px),
+        transparent calc(100% - 7px)
+      );
+    }
+
+    body.is-playing .album-orbit-ring.time-ticks::before {
+      animation-play-state: running;
+    }
+
+    .album-track-runner {
+      position: absolute;
+      inset: 6%;
+      border-radius: 50%;
+      animation: outer-track-run 44s linear infinite;
+      animation-play-state: paused;
+      will-change: transform;
+    }
+
+    body.is-playing .album-track-runner {
+      animation-play-state: running;
+    }
+
+    .album-track-runner::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-red);
+      box-shadow:
+        0 0 0 1px rgba(228, 230, 235, 0.68),
+        0 0 0 3px rgba(255, 59, 48, 0.08);
+      transform: translate(-50%, -50%);
+    }
+
+    .album-orbit-ring.dashed {
+      border-style: dashed;
+      border-color: rgba(0, 0, 0, 0.13);
+    }
+
+    .album-orbit-ring.ring-2 {
+      inset: 6%;
+    }
+
+    .album-orbit-ring.ring-3 {
+      inset: 13.4%;
+    }
+
+    .album-orbit-ring.ring-4 {
+      inset: 20.8%;
+    }
+
+    .album-orbit-ring.ring-5 {
+      inset: 28.2%;
+    }
+
+    .album-orbit-ring.ring-6 {
+      inset: 35.6%;
+    }
+
+    .album-orbit-scan {
+      position: absolute;
+      top: 50%;
+      left: -5%;
+      width: 110%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.13), transparent);
+      transform: rotate(-11deg);
+      transform-origin: 50% 50%;
+    }
+
+    .album-orbit-node,
+    .album-orbit-tick {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 0;
+      height: 0;
+      transform: translate(-50%, -50%) rotate(var(--orbit-start));
+      animation: orbit-spin var(--orbit-duration) linear infinite;
+      will-change: transform;
+    }
+
+    .album-orbit-node::before,
+    .album-orbit-tick::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform: translate(-50%, calc(-1 * var(--orbit-radius)));
+    }
+
+    .album-orbit-node::before {
+      width: var(--node-size, 4px);
+      height: var(--node-size, 4px);
+      border-radius: 50%;
+      background: rgba(70, 72, 76, 0.62);
+      box-shadow: 0 0 0 1px rgba(228, 230, 235, 0.5);
+    }
+
+    .album-orbit-node.red::before {
+      width: var(--node-size, 5px);
+      height: var(--node-size, 5px);
+      background: var(--accent-red);
+      box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.08);
+    }
+
+    .album-orbit-node.faint::before {
+      opacity: 0.62;
+    }
+
+    .album-orbit-tick::before {
+      width: 14px;
+      height: 1px;
+      background: rgba(25, 26, 30, 0.45);
+      transform:
+        translate(-50%, calc(-1 * var(--orbit-radius)))
+        rotate(var(--tick-angle, -34deg));
+      transform-origin: 50% 50%;
     }
 
     /* Coordinate text labels around radar */
@@ -282,13 +443,105 @@
       visibility: hidden;
     }
 
+    .album-cover-motion {
+      position: absolute;
+      inset: -58%;
+      z-index: 4;
+      pointer-events: none;
+      overflow: visible;
+      opacity: 0.86;
+    }
+
+    .album-edge-node,
+    .album-edge-tick {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 0;
+      height: 0;
+      transform: translate(-50%, -50%) rotate(var(--orbit-start));
+      animation: orbit-spin var(--orbit-duration) linear infinite;
+      will-change: transform;
+    }
+
+    .album-edge-node::before,
+    .album-edge-tick::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform: translate(-50%, calc(-1 * var(--orbit-radius)));
+    }
+
+    .album-edge-node::before {
+      width: var(--node-size, 4px);
+      height: var(--node-size, 4px);
+      border-radius: 50%;
+      background: rgba(54, 56, 61, 0.72);
+      box-shadow: 0 0 0 1px rgba(228, 230, 235, 0.55);
+    }
+
+    .album-edge-node.red::before {
+      width: var(--node-size, 5px);
+      height: var(--node-size, 5px);
+      background: var(--accent-red);
+      box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.09);
+    }
+
+    .album-edge-tick::before {
+      width: 13px;
+      height: 1px;
+      background: rgba(20, 22, 26, 0.58);
+      transform:
+        translate(-50%, calc(-1 * var(--orbit-radius)))
+        rotate(var(--tick-angle, -28deg));
+      transform-origin: 50% 50%;
+    }
+
+    .album-cover-badge {
+      position: absolute;
+      top: 4%;
+      right: 4%;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      border: 1px solid rgba(255, 255, 255, 0.76);
+      background: rgba(255, 255, 255, 0.1);
+      box-shadow: 0 0 0 1px rgba(255, 59, 48, 0.2);
+      z-index: 6;
+      pointer-events: none;
+    }
+
+    .album-cover-badge::before,
+    .album-cover-badge::after {
+      content: '';
+      position: absolute;
+      border: 1px solid rgba(255, 255, 255, 0.82);
+      border-radius: 50%;
+    }
+
+    .album-cover-badge::before {
+      inset: 7px;
+      border-top-color: transparent;
+      transform: rotate(-30deg);
+    }
+
+    .album-cover-badge::after {
+      width: 5px;
+      height: 5px;
+      top: 5px;
+      right: 5px;
+      border-left-color: transparent;
+      border-bottom-color: transparent;
+    }
+
     /* Red corners on the album art */
     .bracket {
       position: absolute;
       width: 16px;
       height: 16px;
       border: 2px solid var(--accent-red);
-      z-index: 4;
+      z-index: 7;
     }
     .bracket.tl { top: -2px; left: -2px; border-right: none; border-bottom: none; }
     .bracket.tr { top: -2px; right: -2px; border-left: none; border-bottom: none; }
@@ -298,80 +551,239 @@
     /* Control Panel below Radar */
     .controls-container {
       position: relative;
-      margin-top: 35px;
+      margin-top: 58px;
       display: flex;
       justify-content: center;
       align-items: center;
-      gap: 22px;
+      gap: 52px;
       width: 100%;
-      max-width: 280px;
-      height: 80px;
+      max-width: 430px;
+      height: 120px;
       margin-right: var(--left-panel-offset);
       z-index: 5;
+    }
+
+    .controls-container::before {
+      content: '';
+      position: absolute;
+      left: -22px;
+      right: -22px;
+      top: 50%;
+      height: 1px;
+      background: rgba(0, 0, 0, 0.09);
+      transform: translateY(-50%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .control-orbit-system {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 500px;
+      height: 190px;
+      transform: translate(-50%, -50%) translateZ(0);
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0.92;
+    }
+
+    .control-orbit-track {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      border: 1px solid rgba(0, 0, 0, 0.085);
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    .control-orbit-track.outer {
+      width: 142px;
+      height: 142px;
+      border-color: rgba(0, 0, 0, 0.16);
+    }
+
+    .control-orbit-track.inner {
+      width: 94px;
+      height: 94px;
+      border-color: rgba(0, 0, 0, 0.14);
+    }
+
+    .control-orbit-sweep {
+      position: absolute;
+      left: 7%;
+      top: 47%;
+      width: 86%;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.16), transparent);
+      transform: rotate(-10deg);
+      transform-origin: 50% 50%;
+    }
+
+    .control-orbit-node {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 0;
+      height: 0;
+      transform: translate(-50%, -50%) rotate(var(--orbit-start));
+      animation: orbit-spin 22s linear infinite;
+      animation-play-state: paused;
+      will-change: transform;
+    }
+
+    body.is-playing .control-orbit-node {
+      animation-play-state: running;
+    }
+
+    .control-orbit-node::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: var(--node-size, 4px);
+      height: var(--node-size, 4px);
+      border-radius: 50%;
+      transform: translate(-50%, calc(-1 * var(--orbit-radius)));
+      background: rgba(64, 66, 70, 0.64);
+      box-shadow: 0 0 0 1px rgba(228, 230, 235, 0.5);
+    }
+
+    .control-orbit-node.red::before {
+      width: var(--node-size, 6px);
+      height: var(--node-size, 6px);
+      background: var(--accent-red);
+      box-shadow: 0 0 0 2px rgba(255, 59, 48, 0.08);
+    }
+
+    .control-orbit-node.gray::before {
+      background: rgba(72, 74, 78, 0.68);
+      box-shadow: 0 0 0 1px rgba(228, 230, 235, 0.5);
+    }
+
+    body:not(.is-playing) .album-orbit-node,
+    body:not(.is-playing) .album-orbit-tick,
+    body:not(.is-playing) .album-edge-node,
+    body:not(.is-playing) .album-edge-tick,
+    body:not(.is-playing) .control-orbit-node {
+      opacity: 0.9;
+    }
+
+    @keyframes orbit-spin {
+      from {
+        transform: translate(-50%, -50%) rotate(var(--orbit-start));
+      }
+      to {
+        transform: translate(-50%, -50%) rotate(calc(var(--orbit-start) + 360deg));
+      }
+    }
+
+    @keyframes tick-ring-drift {
+      from {
+        transform: rotate(0deg);
+      }
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    @keyframes outer-track-run {
+      from {
+        transform: rotate(0deg);
+      }
+      to {
+        transform: rotate(-360deg);
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .album-orbit-node,
+      .album-orbit-tick,
+      .album-edge-node,
+      .album-edge-tick,
+      .control-orbit-node,
+      .album-orbit-ring.time-ticks::before,
+      .album-track-runner {
+        animation: none;
+      }
     }
 
     /* Circle behind controls with small red dots */
     .controls-ring {
       position: absolute;
-      width: 220px;
-      height: 220px;
-      border: 1px solid rgba(0, 0, 0, 0.05);
-      border-radius: 50%;
+      width: 480px;
+      height: 70px;
+      border: 1px solid rgba(0, 0, 0, 0.035);
+      border-radius: 0;
       z-index: 0;
       pointer-events: none;
-      top: -70px;
+      top: 50%;
+      transform: translateY(-50%);
+      opacity: 0.72;
     }
 
     .controls-ring::before {
       content: '';
       position: absolute;
-      width: 4px;
-      height: 4px;
-      background-color: var(--accent-red);
-      border-radius: 50%;
-      right: 22px;
-      top: 62px;
+      left: 50%;
+      top: -1px;
+      bottom: -1px;
+      width: 1px;
+      background: rgba(0, 0, 0, 0.035);
+      transform: translateX(-50%);
     }
 
     .controls-ring::after {
       content: '';
       position: absolute;
-      width: 4px;
-      height: 4px;
-      background-color: var(--accent-red);
-      border-radius: 50%;
-      left: 22px;
-      bottom: 55px;
+      left: 50%;
+      top: 50%;
+      width: 58%;
+      height: 1px;
+      background: rgba(0, 0, 0, 0.055);
+      transform: translate(-50%, -50%);
     }
 
     .btn-circle {
-      width: 50px;
-      height: 50px;
+      width: 74px;
+      height: 74px;
       border-radius: 50%;
-      border: 1px solid rgba(0, 0, 0, 0.12);
+      border: 1px solid rgba(0, 0, 0, 0.16);
       background-color: transparent;
-      color: var(--text-primary);
+      color: #17181c;
       display: flex;
       justify-content: center;
       align-items: center;
       cursor: pointer;
-      z-index: 1;
+      z-index: 2;
       transition: all 0.2s ease;
       outline: none;
     }
 
+    .btn-circle svg {
+      width: 34px;
+      height: 34px;
+    }
+
     .btn-circle:hover {
-      background-color: rgba(0, 0, 0, 0.04);
+      background-color: rgba(0, 0, 0, 0.035);
       border-color: rgba(0, 0, 0, 0.25);
     }
 
     .btn-circle.play-pause {
-      width: 70px;
-      height: 70px;
+      width: 84px;
+      height: 84px;
       background-color: #1c1d22;
       color: #ffffff;
       border: none;
-      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+      box-shadow:
+        0 0 0 4px rgba(255, 255, 255, 0.3),
+        0 12px 28px rgba(0, 0, 0, 0.18);
+    }
+
+    .btn-circle.play-pause svg {
+      width: 32px;
+      height: 32px;
     }
 
     .btn-circle.play-pause:hover {
@@ -384,6 +796,8 @@
       display: flex;
       flex-direction: column;
       justify-content: flex-start;
+      position: relative;
+      z-index: 2;
       padding-left: 20px;
     }
 
@@ -396,7 +810,7 @@
       display: flex;
       justify-content: space-between;
       align-items: flex-start;
-      margin-bottom: 12px;
+      margin-bottom: 16px;
     }
 
     .source-tag-row {
@@ -426,8 +840,9 @@
     .source-text {
       font-size: 11px;
       color: var(--text-secondary);
-      font-weight: 500;
-      letter-spacing: 0.5px;
+      font-family: var(--font-tech);
+      font-weight: 600;
+      letter-spacing: 0.08em;
     }
 
     .red-line-header {
@@ -438,20 +853,46 @@
 
     .track-title {
       font-family: var(--font-title);
-      font-size: 35px;
-      font-weight: 300; /* Thin geometric weight matching Futura Light/Book */
-      letter-spacing: 0.6px; /* Elegant spaced typography */
+      font-size: clamp(38px, 3.05vw, 48px);
+      font-weight: 400;
+      letter-spacing: 0.035em;
       color: var(--text-primary);
-      margin-bottom: 2px;
+      margin-bottom: 10px;
       text-transform: uppercase;
-      line-height: 1.2;
+      line-height: 1.05;
+      height: 2.1em;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+
+    .track-title.single-line {
+      display: flex;
+      align-items: flex-end;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      -webkit-line-clamp: unset;
+      -webkit-box-orient: initial;
     }
 
     .track-artist {
-      font-size: 15px;
-      font-weight: 400; /* Lighter weight for USAO / Kobaryo */
+      font-size: 18px;
+      font-weight: 400;
       color: var(--text-secondary);
-      letter-spacing: 0.3px;
+      letter-spacing: 0.025em;
+      line-height: 1.15;
+    }
+
+    .track-artist::before {
+      content: 'By';
+      display: block;
+      margin-bottom: 4px;
+      font-family: var(--font-tech);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      color: var(--text-tertiary);
     }
 
     .track-artist span {
@@ -462,15 +903,16 @@
 
     .quality-container {
       text-align: right;
-      font-family: var(--font-sans);
+      font-family: var(--font-tech);
+      padding-top: 52px;
     }
 
     .quality-label {
-      font-size: 10px;
+      font-size: 11px;
       color: var(--text-tertiary);
-      text-transform: uppercase;
+      text-transform: none;
       font-weight: 600;
-      letter-spacing: 1px;
+      letter-spacing: 0.08em;
       margin-bottom: 4px;
     }
 
@@ -478,47 +920,58 @@
       font-size: 12px;
       color: var(--text-secondary);
       font-weight: 500;
+      letter-spacing: 0.03em;
     }
 
     /* Core Stats Grid */
     .stats-grid-row {
       display: grid;
       grid-template-columns: 1fr 1fr 1fr;
-      border-top: 1px solid rgba(0, 0, 0, 0.08);
-      border-bottom: 1px solid rgba(0, 0, 0, 0.08);
-      padding: 12px 0 10px 0;
-      margin-bottom: 15px;
+      border-top: 1.5px solid rgba(0, 0, 0, 0.18);
+      padding: 16px 0 18px 0;
+      margin-bottom: 18px;
     }
 
     .stat-col {
       display: flex;
       flex-direction: column;
+      padding-inline: 0 22px;
+    }
+
+    .stat-col:not(:last-child) {
+      border-right: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    .stat-col + .stat-col {
+      padding-left: 24px;
     }
 
     .stat-label {
       font-size: 10px;
       color: var(--text-tertiary);
-      text-transform: uppercase;
-      font-weight: 400; /* Matches original light label weight */
-      letter-spacing: 1.2px;
-      margin-bottom: 8px;
+      text-transform: none;
+      font-family: var(--font-tech);
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
     }
 
     .stat-value {
       font-family: var(--font-sans);
-      font-size: 20px;
-      font-weight: 500; /* Lowered from 700 to match screenshot */
+      font-size: 18px;
+      font-weight: 400;
       color: var(--text-primary);
       display: flex;
       align-items: center;
       gap: 12px;
+      letter-spacing: 0.035em;
     }
 
     .stat-value.mono {
       font-family: var(--font-tech);
-      font-size: 24px;
-      font-weight: 400; /* Regular weight for numbers (200.00 / 5:53) */
-      letter-spacing: 0.5px;
+      font-size: 23px;
+      font-weight: 500;
+      letter-spacing: 0.055em;
     }
 
     .stat-value.right-align {
@@ -554,14 +1007,16 @@
 
     /* --- SPECTRUM ANALYZER GRID --- */
     .spectrum-outer-container {
+      --spectrum-top-growth: 24px;
       position: relative;
-      flex: 0 0 250px;
+      flex: 0 0 calc(250px + var(--spectrum-top-growth));
       min-height: 0;
-      height: 250px;
+      height: calc(250px + var(--spectrum-top-growth));
       border-bottom: 2px solid #2b2b2b;
-      margin-bottom: 20px;
+      margin-bottom: calc(20px - var(--spectrum-top-growth));
       display: flex;
       flex-direction: column;
+      transform: translateY(calc(-1 * var(--spectrum-top-growth)));
     }
 
     /* Grid layout containing Hz labels on top */
@@ -832,15 +1287,19 @@
           <line x1="100" y1="100" x2="400" y2="400" class="diagonal" />
           <line x1="100" y1="400" x2="400" y2="100" class="diagonal" />
 
-          <!-- Concentric rings -->
-          <circle cx="250" cy="250" r="225" class="dashed" />
-          <circle cx="250" cy="250" r="195" />
-          <circle cx="250" cy="250" r="165" class="dashed-fine" />
-          <circle cx="250" cy="250" r="135" />
-          
           <!-- Small tick marks on the concentric rings -->
           <!-- Generated via JS for exact spacing -->
         </svg>
+
+        <div class="album-orbit-system" aria-hidden="true">
+          <span class="album-track-runner"></span>
+          <div class="album-orbit-ring solid ring-2 time-ticks"></div>
+          <div class="album-orbit-ring dashed ring-3"></div>
+          <div class="album-orbit-ring solid ring-4"></div>
+          <div class="album-orbit-ring dashed ring-5"></div>
+          <div class="album-orbit-ring solid ring-6"></div>
+          <div class="album-orbit-scan"></div>
+        </div>
 
         <!-- Compass labels -->
         <!-- Top Label: W 20 ^ -->
@@ -878,17 +1337,48 @@
           <div class="bracket br"></div>
           <!-- album cover is fed by the host app via postMessage -->
           <img id="album-cover-img" src="" alt="Album cover">
+          <div class="album-cover-motion" aria-hidden="true"></div>
+          <div class="album-cover-badge" aria-hidden="true"></div>
         </div>
       </div>
 
       <!-- Controls Panel below radar-container -->
       <div class="controls-container">
         <!-- Concentric dashed backing circle -->
-        <div class="controls-ring"></div>
+          <div class="controls-ring"></div>
+        <div class="control-orbit-system" aria-hidden="true">
+          <div class="control-orbit-track outer"></div>
+          <div class="control-orbit-track inner"></div>
+          <div class="control-orbit-sweep"></div>
+          <span
+            class="control-orbit-node red"
+            style="--orbit-start: 0deg; --orbit-radius: 71px; --node-size: 6px;"
+          ></span>
+          <span
+            class="control-orbit-node gray"
+            style="--orbit-start: 60deg; --orbit-radius: 71px; --node-size: 4px;"
+          ></span>
+          <span
+            class="control-orbit-node red"
+            style="--orbit-start: 120deg; --orbit-radius: 71px; --node-size: 6px;"
+          ></span>
+          <span
+            class="control-orbit-node gray"
+            style="--orbit-start: 180deg; --orbit-radius: 71px; --node-size: 4px;"
+          ></span>
+          <span
+            class="control-orbit-node red"
+            style="--orbit-start: 240deg; --orbit-radius: 71px; --node-size: 6px;"
+          ></span>
+          <span
+            class="control-orbit-node gray"
+            style="--orbit-start: 300deg; --orbit-radius: 71px; --node-size: 4px;"
+          ></span>
+        </div>
 
         <button class="btn-circle" id="btn-prev" title="Previous Track">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-            <path d="M6 6h2v12H6zm3.5 6L18 18V6z" />
+            <path d="M11 5 3 12l8 7V5Zm10 0-8 7 8 7V5Z" />
           </svg>
         </button>
 
@@ -905,7 +1395,7 @@
 
         <button class="btn-circle" id="btn-next" title="Next Track / Audio Upload">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
-            <path d="M6 18l8.5-6L6 6zm9-12v12h2V6z" />
+            <path d="m3 5 8 7-8 7V5Zm10 0 8 7-8 7V5Z" />
           </svg>
         </button>
       </div>
@@ -1102,7 +1592,7 @@
     let previousPrecomputedBars = new Float32Array(SPECTRUM_BAR_COUNT);
     let displayPrecomputedBars = new Float32Array(SPECTRUM_BAR_COUNT);
     let precomputedBarsTransitionStartedAt = performance.now();
-    const PRECOMPUTED_BAR_TRANSITION_MS = 50;
+    const PRECOMPUTED_BAR_TRANSITION_MS = 24;
     let usingPrecomputedBars = false;
     let hostSampleRate = 44100;  // Updated by host 'spectrum' messages
     let hostMaxFrequency = 20000;
@@ -1160,6 +1650,7 @@
 
       drawWaveform();
       updateHzLabels();
+      syncTitleLineClass();
     }
 
     window.addEventListener('resize', resizeCanvases);
@@ -1228,15 +1719,16 @@
     let spectrumBinCenterKey = '';
     let spectrumAnimationFrame = 0;
     let playheadAnimationFrame = 0;
-    const SPECTRUM_ATTACK_SECONDS = 0.028;
-    const SPECTRUM_DECAY_SECONDS = 0.075;
+    const SPECTRUM_ATTACK_SECONDS = 0.018;
+    const SPECTRUM_DECAY_SECONDS = 0.042;
     const FREQUENCY_TICKS = [20, 200, 1000, 2000, 5000, 10000, 20000];
     const SPECTRUM_MIN_FREQUENCY = 20;
     const SPECTRUM_DISPLAY_GAIN = 1;
+    const SPECTRUM_DISPLAY_RANGE = 1.45;
     const SPECTRUM_DISPLAY_GAMMA = 0.78;
-    const SPECTRUM_DISPLAY_HEADROOM = 0.97;
+    const SPECTRUM_DISPLAY_HEADROOM = 1;
     const SPECTRUM_HEIGHT_SCALE = 1;
-    const SPECTRUM_TARGET_PEAK_LEVEL = 0.95;
+    const SPECTRUM_TARGET_PEAK_LEVEL = 1;
     const SPECTRUM_MAX_ADAPTIVE_GAIN = 2.35;
     const SPECTRUM_FRAME_CONTRAST_MIX = 0.46;
     const SPECTRUM_CONTRAST_FLOOR = 0.16;
@@ -1258,7 +1750,8 @@
     }
 
     function visualizerDisplayLevel(value) {
-      const normalized = Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
+      const ranged = Math.max(0, Math.min(SPECTRUM_DISPLAY_RANGE, Number.isFinite(value) ? value : 0));
+      const normalized = ranged / SPECTRUM_DISPLAY_RANGE;
       const contrasted = normalized <= SPECTRUM_CONTRAST_FLOOR
         ? normalized * 0.58
         : SPECTRUM_CONTRAST_FLOOR * 0.58 +
@@ -1447,6 +1940,21 @@
       }
     }
 
+    function syncTitleLineClass() {
+      const titleEl = document.getElementById('display-title');
+      if (!titleEl) return;
+      titleEl.classList.remove('single-line');
+      const range = document.createRange();
+      range.selectNodeContents(titleEl);
+      const lineTops = new Set();
+      for (const rect of range.getClientRects()) {
+        if (rect.width <= 1 || rect.height <= 1) continue;
+        lineTops.add(Math.round(rect.top));
+      }
+      range.detach();
+      titleEl.classList.toggle('single-line', lineTops.size <= 1);
+    }
+
     function retargetPrecomputedBars(incomingBars) {
       const now = performance.now();
       ensurePrecomputedBarBufferLength(incomingBars.length);
@@ -1560,7 +2068,7 @@
 
         sumSq += val * val;
 
-        const targetHeight = (val / 255) * (height - 15) * SPECTRUM_HEIGHT_SCALE;
+        const targetHeight = (val / 255) * height * SPECTRUM_HEIGHT_SCALE;
         lastSpectrumHeights[i] = smoothSpectrumHeight(
           lastSpectrumHeights[i],
           targetHeight,
@@ -1614,7 +2122,7 @@
         }
         const peak = typeof nativePeakDb === 'number'
           ? Math.pow(10, Math.max(-60, nativePeakDb) / 20)
-          : peakHeight / (height - 15);
+          : peakHeight / height;
         const dynRange = Math.max(1.0, (peak / (rms + 0.05)) * 1.5).toFixed(1);
         dynamicRangeEl.innerText = dynRange;
         dynamicRangeBar.style.width = Math.min(100, (dynRange / 15) * 100) + '%';
@@ -1672,6 +2180,7 @@
     }
 
     function syncPlayPauseVisual() {
+      document.body.classList.toggle('is-playing', isPlaying);
       if (isPlaying) {
         btnPlayPause.classList.remove('paused');
         svgPlay.style.display = 'none';
@@ -1788,6 +2297,10 @@
           }
           break;
         }
+        case 'bpm': {
+          updateBpmDisplay(msg.bpm, msg.source);
+          break;
+        }
         case 'cover': {
           const albumCoverImg = document.getElementById('album-cover-img');
           if (albumCoverImg) {
@@ -1834,9 +2347,10 @@
 
     function applyTrackToUI(track) {
       document.getElementById('display-title').innerText = track.title || '--';
+      syncTitleLineClass();
       document.getElementById('display-artist').innerText = track.artist || '--';
       document.getElementById('display-quality').innerText = track.quality || '--';
-      document.getElementById('display-bpm').innerText = track.bpm || '--';
+      updateBpmDisplay(track.bpm, track.bpm ? 'metadata' : 'analyzing');
       document.getElementById('display-genre').innerText = track.genre || '--';
       document.getElementById('display-duration').innerText = track.duration || '--';
       document.getElementById('val-dynamic-range').innerText = track.dynamicRange || '--';
@@ -1848,18 +2362,6 @@
       document.getElementById('meta-bitrate').innerText = track.bitrate || '--';
       document.getElementById('meta-filesize').innerText = track.filesize || '--';
       document.getElementById('meta-format').innerText = track.format || '--';
-
-      // BPM meter graphic (preserved)
-      const bpmValue = parseFloat(track.bpm);
-      const blocks = document.querySelectorAll('.bpm-meter-block');
-      if (isNaN(bpmValue)) {
-        blocks.forEach(b => b.classList.remove('filled'));
-      } else {
-        blocks.forEach((b, index) => {
-          if (index < 4) b.classList.add('filled');
-          else b.classList.remove('filled');
-        });
-      }
 
       // Timeline end markers (preserved)
       const timelineLabelsRow = document.getElementById('timeline-time-labels');
@@ -1874,39 +2376,33 @@
       `;
     }
 
-    // --- DECORATIVE RADAR TICK GENERATOR ---
-    function drawRadarTicks() {
-      const svg = document.getElementById('radar-svg');
-      const cx = 250;
-      const cy = 250;
-      const r = 210;
+    function updateBpmDisplay(value, source) {
+      source = source || 'analyzing';
+      const display = document.getElementById('display-bpm');
+      const bpmValue = typeof value === 'number' ? value : parseFloat(value);
+      if (!display) return;
+      if (isNaN(bpmValue)) {
+        display.innerText = source === 'analyzing' ? '--' : '--';
+        display.removeAttribute('title');
+      } else {
+        display.innerText = bpmValue.toFixed(1).replace(/\.0$/, '');
+        display.title = source === 'live' ? 'Live BPM' : 'Metadata BPM';
+      }
 
-      for (let angle = 0; angle < 360; angle += 5) {
-        if (angle % 90 === 0) continue;
-
-        const angleRad = (angle * Math.PI) / 180;
-        const tickLength = angle % 30 === 0 ? 8 : 4;
-        const strokeOpacity = angle % 30 === 0 ? 0.35 : 0.15;
-
-        const x1 = cx + (r - tickLength) * Math.cos(angleRad);
-        const y1 = cy + (r - tickLength) * Math.sin(angleRad);
-        const x2 = cx + r * Math.cos(angleRad);
-        const y2 = cy + r * Math.sin(angleRad);
-
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        line.setAttribute('x1', x1);
-        line.setAttribute('y1', y1);
-        line.setAttribute('x2', x2);
-        line.setAttribute('y2', y2);
-        line.setAttribute('stroke', `rgba(0, 0, 0, ${strokeOpacity})`);
-        line.setAttribute('stroke-width', '1px');
-        svg.appendChild(line);
+      // BPM meter graphic (preserved)
+      const blocks = document.querySelectorAll('.bpm-meter-block');
+      if (isNaN(bpmValue)) {
+        blocks.forEach(b => b.classList.remove('filled'));
+      } else {
+        blocks.forEach((b, index) => {
+          if (index < 4) b.classList.add('filled');
+          else b.classList.remove('filled');
+        });
       }
     }
 
     // --- INITIALIZATION ON LOAD ---
     resizeCanvases();
-    drawRadarTicks();
     renderSpectrumFrame(performance.now());
     syncPlayPauseVisual();
     window.addEventListener('pagehide', () => {

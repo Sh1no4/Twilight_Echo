@@ -22,3 +22,6 @@ Provider registrations may expose optional `health` metadata through
 `TwilightMediaProviderHealth`. The host also records aggregate and per-method
 health, including `methodStats.getPlaybackUrl`, so streaming UI can distinguish
 login, API, playback URL, network, disabled-provider, and plugin failure states.
+
+Provider `Track` objects may include optional `bpm?: number` metadata in beats
+per minute. Omit it when the source does not provide a trustworthy tempo value.

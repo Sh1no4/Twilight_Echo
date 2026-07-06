@@ -12,6 +12,7 @@ import type {
   VisualizationData,
   VolumeNormalizationMode
 } from './audioEngineManager'
+import type { BpmAnalysisResult } from './bpm/bpmCache'
 
 const require = createRequire(import.meta.url)
 
@@ -264,6 +265,12 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       this.lastVisualizationDataByKey.get(cacheKey) ??
       '{"spectrum":[],"waveform":[],"peakDb":-120,"rmsDb":-120,"lufsMomentary":null,"spectrogram":[],"sampleRate":0,"active":false}'
     )
+  }
+
+  AnalyzeBpm(source: string, optionsJson?: string): string | BpmAnalysisResult {
+    void source
+    void optionsJson
+    return '{"error":"bpm analysis requires async audio service RPC"}'
   }
 
   EnumerateDevices(): string | AudioDeviceOption[] {

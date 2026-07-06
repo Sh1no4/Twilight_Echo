@@ -79,6 +79,7 @@ const fallbackSettings: AppSettings = {
     metadata: true,
     streamingAudio: 'provider'
   },
+  autoAnalyzeBpm: true,
   closeToTray: false,
   startupHomePage: 'local',
   theme: 'system',
@@ -198,6 +199,8 @@ const loading = ref(false)
 const saving = ref(false)
 const clearingCache = ref(false)
 const cacheSize = ref<number | null>(null)
+const clearingBpmAnalysisCache = ref(false)
+const bpmAnalysisCacheSize = ref<number | null>(null)
 let listenerSetup = false
 let systemThemeListenerSetup = false
 let settingsUpdateQueue: Promise<void> = Promise.resolve()
@@ -599,6 +602,9 @@ export function useSettingsStore(): {
   clearingCache: Ref<boolean>
   cacheSize: Ref<number | null>
   formattedCacheSize: ComputedRef<string>
+  clearingBpmAnalysisCache: Ref<boolean>
+  bpmAnalysisCacheSize: Ref<number | null>
+  formattedBpmAnalysisCacheSize: ComputedRef<string>
   restartRequired: ComputedRef<boolean>
   restartReasons: Ref<string[]>
   loadSettings: () => Promise<AppSettings>
@@ -611,6 +617,8 @@ export function useSettingsStore(): {
   resetCacheFolder: () => Promise<void>
   refreshCacheSize: () => Promise<void>
   clearCache: () => Promise<void>
+  refreshBpmAnalysisCacheSize: () => Promise<void>
+  clearBpmAnalysisCache: () => Promise<void>
   openCacheFolder: () => Promise<void>
   relaunch: () => Promise<void>
   addLibraryFolder: () => Promise<void>
@@ -619,6 +627,7 @@ export function useSettingsStore(): {
   getShortcutStatuses: () => Promise<PlayerShortcutStatus[]>
 } {
   const formattedCacheSize = computed(() => formatBytes(cacheSize.value))
+  const formattedBpmAnalysisCacheSize = computed(() => formatBytes(bpmAnalysisCacheSize.value))
   const restartRequired = computed(() => restartReasons.value.length > 0)
 
   async function loadSettings(): Promise<AppSettings> {
@@ -720,6 +729,19 @@ export function useSettingsStore(): {
     }
   }
 
+  async function refreshBpmAnalysisCacheSize(): Promise<void> {
+    bpmAnalysisCacheSize.value = await window.api.bpmAnalysis.getCacheSize()
+  }
+
+  async function clearBpmAnalysisCache(): Promise<void> {
+    clearingBpmAnalysisCache.value = true
+    try {
+      bpmAnalysisCacheSize.value = await window.api.bpmAnalysis.clearCache()
+    } finally {
+      clearingBpmAnalysisCache.value = false
+    }
+  }
+
   async function openCacheFolder(): Promise<void> {
     const targetPath = settings.value.cachePath || paths.value?.activeCachePath
     if (targetPath) {
@@ -764,6 +786,9 @@ export function useSettingsStore(): {
     clearingCache,
     cacheSize,
     formattedCacheSize,
+    clearingBpmAnalysisCache,
+    bpmAnalysisCacheSize,
+    formattedBpmAnalysisCacheSize,
     restartRequired,
     restartReasons,
     loadSettings,
@@ -776,6 +801,8 @@ export function useSettingsStore(): {
     resetCacheFolder,
     refreshCacheSize,
     clearCache,
+    refreshBpmAnalysisCacheSize,
+    clearBpmAnalysisCache,
     openCacheFolder,
     relaunch,
     addLibraryFolder,

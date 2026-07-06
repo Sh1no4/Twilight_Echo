@@ -3,6 +3,7 @@ import { existsSync } from 'fs'
 import { createRequire } from 'module'
 import { join } from 'path'
 import { AudioEngineServiceBinding, canUseAudioEngineService } from './audioEngineServiceClient.ts'
+import { isBpmAnalysisResult, type BpmAnalysisResult } from './bpm/bpmCache.ts'
 
 const require = createRequire(import.meta.url)
 
@@ -368,6 +369,11 @@ export interface VisualizationData {
   reason: string
 }
 
+export interface NativeBpmAnalysisOptions {
+  maxAnalysisSeconds?: number
+  referenceBpm?: number
+}
+
 export type VisualizationTapStatus =
   | 'active'
   | 'stopped'
@@ -409,6 +415,7 @@ export interface NativeAudioBinding {
   GetUpcomingTrack?: () => string | AudioEngineQueueItem | null
   GetSpectrumData?: (points?: number) => number[]
   GetVisualizationData?: (optionsJson: string) => string | VisualizationData
+  AnalyzeBpm?: (source: string, optionsJson?: string) => string | BpmAnalysisResult
   EnumerateDevices?: () => string | AudioDeviceOption[]
   EnumerateBackends?: () => string
   GetEngineCapabilities?: () => string
@@ -1945,15 +1952,14 @@ export class AudioEngineManager extends EventEmitter {
       this.output = 'wasapi'
       this.device = 'auto'
       this.exclusiveMode = false
-      this.tryNative('ASIO 失败后切换到 WASAPI 兜底后端', (native) =>
-        native.SetOutputBackend(this.getNativeBackendId())
-      )
-      this.tryNative('ASIO 失败后切换到 WASAPI 默认设备', (native) =>
-        native.SetOutputDevice(this.device)
-      )
-      this.applyNativeOutputConfig('ASIO 失败后应用 WASAPI 兜底配置')
-      this.nativeOutputRouteSynced = true
-      nativeStarted = await this.tryNativePlay('WASAPI 兜底播放', source, startTime)
+      this.nativeOutputRouteSynced = false
+      const fallbackRoute = await this.restoreAudioServiceOutputRoute('ASIO 失败后应用 WASAPI 兜底')
+      this.nativeOutputRouteSynced = fallbackRoute.synced
+      if (fallbackRoute.synced) {
+        nativeStarted = await this.tryNativePlay('WASAPI 兜底播放', source, startTime)
+      } else {
+        this.lastNativeError = fallbackRoute.errors.join('\n') || this.lastNativeError
+      }
       if (!nativeStarted) {
         this.output = firstErrorContext.output
         this.device = firstErrorContext.device
@@ -2213,12 +2219,35 @@ export class AudioEngineManager extends EventEmitter {
     if (enabled && !supportsAudioExclusive(this.output)) {
       throw new Error(`${this.output} 不支持独占模式`)
     }
-    if (enabled === this.exclusiveMode) return await this.getAudioOutputState()
+    if (this.nativeOutputRouteSynced && enabled === this.exclusiveMode) {
+      return await this.getAudioOutputState()
+    }
 
+    const previousExclusiveMode = this.exclusiveMode
     this.exclusiveMode = enabled
     this.invalidateAudioDeviceOptionsCache('exclusive-mode-changed')
-    this.tryNative('切换独占模式', (native) => native.SetOutputBackend(this.getNativeBackendId()))
-    this.applyNativeOutputConfig('切换输出配置')
+    this.nativeOutputRouteSynced = false
+    const backendSynced = await this.callNativeMaybeAsync(
+      '切换独占模式',
+      'SetOutputBackend',
+      this.getNativeBackendId()
+    )
+    if (!backendSynced) {
+      this.exclusiveMode = previousExclusiveMode
+      this.invalidateAudioDeviceOptionsCache('exclusive-mode-restore-after-failure')
+      throw new Error(`原生音频独占模式切换失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+    }
+    const configSynced = await this.callNativeMaybeAsync(
+      '切换输出配置',
+      'SetOutputConfig',
+      JSON.stringify(this.outputConfig)
+    )
+    if (!configSynced) {
+      this.exclusiveMode = previousExclusiveMode
+      this.invalidateAudioDeviceOptionsCache('exclusive-mode-restore-after-failure')
+      throw new Error(`原生音频独占模式配置应用失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+    }
+    this.nativeOutputRouteSynced = true
     this.refreshOutputInfoFromNative(true)
     return await this.getAudioOutputState()
   }
@@ -2276,18 +2305,35 @@ export class AudioEngineManager extends EventEmitter {
 
   async setOutputConfig(config: Partial<OutputConfig>): Promise<void> {
     const prevBufferSize = this.outputConfig.preferredBufferSize
+    const previousConfig = this.outputConfig
     const nextConfig = normalizeOutputConfig(config)
     if (outputConfigsEqual(nextConfig, this.outputConfig)) return
 
     this.outputConfig = nextConfig
     const bufferSizeChanged = this.outputConfig.preferredBufferSize !== prevBufferSize
     const needsReopen = bufferSizeChanged && this.output === 'asio'
+    this.nativeOutputRouteSynced = false
     if (needsReopen) {
-      this.tryNative('重开 ASIO 后端以应用 buffer size', (native) =>
-        native.SetOutputBackend(this.getNativeBackendId())
+      const reopened = await this.callNativeMaybeAsync(
+        '重开 ASIO 后端以应用 buffer size',
+        'SetOutputBackend',
+        this.getNativeBackendId()
       )
+      if (!reopened) {
+        this.outputConfig = previousConfig
+        throw new Error(`原生音频输出配置重开失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+      }
     }
-    this.applyNativeOutputConfig('设置输出配置')
+    const configSynced = await this.callNativeMaybeAsync(
+      '设置输出配置',
+      'SetOutputConfig',
+      JSON.stringify(this.outputConfig)
+    )
+    if (!configSynced) {
+      this.outputConfig = previousConfig
+      throw new Error(`原生音频输出配置应用失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+    }
+    this.nativeOutputRouteSynced = true
     this.playbackInfo.outputInfo.channelRoutingMode = this.outputConfig.routingMode
     this.playbackInfo.channelRoutingMode = this.outputConfig.routingMode
     this.refreshOutputInfoFromNative(needsReopen)
@@ -2550,6 +2596,31 @@ export class AudioEngineManager extends EventEmitter {
     return metadata
   }
 
+  async analyzeBpm(
+    source: string,
+    options: NativeBpmAnalysisOptions = {}
+  ): Promise<BpmAnalysisResult | null> {
+    const optionsJson = JSON.stringify({
+      maxAnalysisSeconds: clampNumber(options.maxAnalysisSeconds, 1, 1800, 180),
+      referenceBpm:
+        typeof options.referenceBpm === 'number' && Number.isFinite(options.referenceBpm)
+          ? options.referenceBpm
+          : undefined
+    })
+    try {
+      const raw = this.audioServiceBinding
+        ? await this.audioServiceBinding.callAsync?.('AnalyzeBpm', [source, optionsJson])
+        : this.native?.AnalyzeBpm?.(source, optionsJson)
+      const analysis = parseNativeJson<BpmAnalysisResult | null>(
+        raw as string | BpmAnalysisResult | undefined,
+        null
+      )
+      return isBpmAnalysisResult(analysis) ? analysis : null
+    } catch {
+      return null
+    }
+  }
+
   async setPlayMode(mode: PlayMode): Promise<void> {
     if (mode === this.playbackInfo.playMode) return
     this.playbackInfo.playMode = mode
@@ -2726,10 +2797,11 @@ export class AudioEngineManager extends EventEmitter {
   private async readNativePlaybackInfoAsync(): Promise<PlaybackInfo | null> {
     if (!this.native || typeof this.native.callAsync !== 'function') return this.readNativePlaybackInfo()
     try {
-      const info = parseNativeJson(
-        await this.native.callAsync('GetPlaybackInfo', []),
-        null as PlaybackInfo | null
-      )
+      const raw = (await this.native.callAsync('GetPlaybackInfo', [])) as
+        | string
+        | PlaybackInfo
+        | undefined
+      const info = parseNativeJson<PlaybackInfo | null>(raw, null)
       if (!info) return null
       return this.normalizePlaybackInfo(info)
     } catch {
@@ -3104,12 +3176,6 @@ export class AudioEngineManager extends EventEmitter {
         native.UnloadImpulseResponse?.()
         this.nativeConvolverIrPath = ''
       }
-    })
-  }
-
-  private applyNativeOutputConfig(context: string): void {
-    this.tryNative(context, (native) => {
-      native.SetOutputConfig?.(JSON.stringify(this.outputConfig))
     })
   }
 

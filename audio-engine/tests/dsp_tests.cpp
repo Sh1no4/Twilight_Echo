@@ -114,6 +114,26 @@ void testFftAnalyzerCaptureDoesNotSlideFullWindows() {
   require(captureBody.find("oscilloscopeWriteIndex_") != std::string::npos);
 }
 
+void testFftAnalyzerReadRefreshReusesScratchBuffers() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "dsp" / "FftSpectrumAnalyzer.cpp";
+  const std::filesystem::path headerPath =
+      testFilePath.parent_path().parent_path() / "dsp" / "FftSpectrumAnalyzer.h";
+  const std::string source = readTextFile(sourcePath);
+  const std::string header = readTextFile(headerPath);
+  const std::string updateBody =
+      extractFunctionBody(source, "void FftSpectrumAnalyzer::updateSpectrumForRead(bool retainSpectrogram) const");
+
+  require(updateBody.find("std::vector<float> fftInputScratch") == std::string::npos);
+  require(updateBody.find("std::vector<std::complex<float>> spectrumScratch") == std::string::npos);
+  require(updateBody.find("fftInputScratch_") != std::string::npos);
+  require(updateBody.find("spectrumScratch_") != std::string::npos);
+  require(header.find("fftInputScratch_") != std::string::npos);
+  require(header.find("spectrumScratch_") != std::string::npos);
+  require(header.find("spectrumUpdateMutex_") != std::string::npos);
+}
+
 void testParametricEqPreampOnlyProcessesContiguousSamples() {
   std::vector<float> samples = {-0.5f, 0.25f, 3.0f, -3.0f};
 
@@ -461,6 +481,7 @@ std::vector<float> extractJsonArray(const std::string& json, const std::string& 
 int main() {
   testFftAnalyzerReadSideRefreshesSpectrumOutsideCaptureMutex();
   testFftAnalyzerCaptureDoesNotSlideFullWindows();
+  testFftAnalyzerReadRefreshReusesScratchBuffers();
   testParametricEqPreampOnlyProcessesContiguousSamples();
   testWindowedFftInputOverwritesScratchWithoutPreclear();
   testWindowResizeKeepsSameSizedBufferForOverwrite();

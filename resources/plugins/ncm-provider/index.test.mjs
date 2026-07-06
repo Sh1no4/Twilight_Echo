@@ -89,6 +89,31 @@ test('artist songs keep paging when a short page reports more items', async () =
   }
 })
 
+test('search song normalization preserves legal bpm metadata', async () => {
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/cloudsearch')
+    return {
+      result: {
+        songs: [
+          {
+            ...song(128),
+            bpm: '128.4'
+          }
+        ],
+        songCount: 1
+      }
+    }
+  })
+
+  try {
+    const result = await provider.searchSongs('tempo')
+    assert.equal(result.items[0].bpm, 128.4)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('artist albums keep paging when a short page reports more items', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {
