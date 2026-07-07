@@ -796,6 +796,20 @@ test('playback end auto-advance stops at queue end without changing manual next 
   assert.match(scheduleCrossfadeIfNeeded, /queueIndex\.value \+ 1 >= queue\.value\.length/)
 })
 
+test('current playlist selection preserves the existing shuffled queue order', () => {
+  const playerBarSource = readFileSync(
+    new URL('../components/PlayerBar.vue', import.meta.url),
+    'utf8'
+  )
+  const playTrackAt = extractInternalFunctionBody(playerBarSource, 'playTrackAt')
+
+  assert.doesNotMatch(
+    playTrackAt,
+    /playTrack\(track,\s*queue\.value\)/,
+    'selecting from the current queue must not pass that queue back through the shuffle initializer'
+  )
+})
+
 test('playback session carries play mode for quit-time restore', () => {
   const playerSource = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const musicTypes = readFileSync(new URL('../types/music.ts', import.meta.url), 'utf8')

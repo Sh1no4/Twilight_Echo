@@ -2097,6 +2097,7 @@ test('loadQueue skips native call and queue fanout when normalized queue is unch
 
   await manager.loadQueue(queue, 1)
   assert.equal(nativeBinding.loadQueueCalls, 1)
+  assert.equal(nativeBinding.playModeCalls, 1)
   assert.deepEqual(nativeBinding.lastLoadedQueue, queue)
   assert.equal(nativeBinding.lastLoadedQueueIndex, 1)
   assert.equal(queueChanges.length, 1)
@@ -2106,9 +2107,29 @@ test('loadQueue skips native call and queue fanout when normalized queue is unch
     99
   )
   assert.equal(nativeBinding.loadQueueCalls, 1)
+  assert.equal(nativeBinding.playModeCalls, 1)
   assert.deepEqual(nativeBinding.lastLoadedQueue, queue)
   assert.equal(nativeBinding.lastLoadedQueueIndex, 1)
   assert.equal(queueChanges.length, 1)
+})
+
+test('loadQueue reapplies play mode to clear stale native repeat mode', async () => {
+  const nativeBinding = new FakeNativeBinding({ playMode: 'repeat' })
+  const manager = makeManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const queue: AudioEngineQueueItem[] = [{ id: 'local:one', source: 'one.flac', title: 'One' }]
+
+  await manager.loadQueue(queue, 0)
+
+  assert.equal(nativeBinding.loadQueueCalls, 1)
+  assert.equal(nativeBinding.playModeCalls, 1)
+  assert.equal(nativeBinding.playbackInfo.playMode, 'sequential')
 })
 
 test('getPlaybackInfo reuses fresh native playback info from the manager tick', async () => {

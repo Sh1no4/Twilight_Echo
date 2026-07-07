@@ -628,7 +628,8 @@ watch(moreOpen, (open) => {
 function playTrackAt(index: number): void {
   const track = queue.value[index]
   if (track) {
-    playTrack(track, queue.value)
+    queueIndex.value = index
+    playTrack(track)
   }
 }
 

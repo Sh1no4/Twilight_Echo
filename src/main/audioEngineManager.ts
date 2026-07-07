@@ -2216,7 +2216,10 @@ export class AudioEngineManager extends EventEmitter {
     this.queueJson = nextQueueJson
     this.playbackInfo.queueIndex = nextQueueIndex
     this.invalidateUpcomingTrackCache()
-    this.tryNative('加载队列', (native) => native.LoadQueue?.(nextQueueJson, nextQueueIndex))
+    this.tryNative('加载队列', (native) => {
+      native.LoadQueue?.(nextQueueJson, nextQueueIndex)
+      native.SetPlayMode?.(this.playbackInfo.playMode)
+    })
     this.emit('queue-change', this.queue)
   }
 
