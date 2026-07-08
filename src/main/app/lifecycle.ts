@@ -56,6 +56,11 @@ export function startApp(): void {
   // Desktop playback must not be blocked by Chromium's web-page autoplay policy.
   app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
+  // Linux 上透明窗口需要显式启用透明视觉，否则整窗不渲染（纯透明）
+  if (process.platform === 'linux' && runtime.appSettings.windowTransparency === true) {
+    app.commandLine.appendSwitch('enable-transparent-visuals')
+  }
+
   const gotSingleInstanceLock = app.requestSingleInstanceLock()
   if (!gotSingleInstanceLock) {
     app.quit()
@@ -154,8 +159,16 @@ export function startApp(): void {
         showDesktopLyrics()
       }
 
-      createWindow()
-      applyRuntimeSettings()
+      // Linux 上透明窗口必须等合成器视觉就绪后再建窗，否则内容不渲染
+      if (process.platform === 'linux' && runtime.appSettings.windowTransparency === true) {
+        setTimeout(() => {
+          createWindow()
+          applyRuntimeSettings()
+        }, 360)
+      } else {
+        createWindow()
+        applyRuntimeSettings()
+      }
 
       setupAudioEngineIpc()
       setupBpmAnalysisIpc()
