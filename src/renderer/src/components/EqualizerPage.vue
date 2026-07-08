@@ -899,7 +899,9 @@ watch(opraQuery, () => {
       inset: 0;
       z-index: 1100;
       overflow: hidden;
-      background: #f4f4f7;
+      background: var(--te-glass-bg);
+      backdrop-filter: blur(24px) saturate(150%);
+      -webkit-backdrop-filter: blur(24px) saturate(150%);
     }
 
 

@@ -119,7 +119,7 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Se
     Object.prototype.hasOwnProperty.call(patch, 'theme') ||
     Object.prototype.hasOwnProperty.call(patch, 'appBackground')
   runtime.appSettings = normalizeAppSettings({ ...runtime.appSettings, ...patch })
-  if (shouldUpdateWindowBackground) {
+  if (shouldUpdateWindowBackground && !runtime.appSettings.windowTransparency) {
     runtime.mainWindow?.setBackgroundColor(getWindowBackgroundColor(runtime.appSettings))
   }
 

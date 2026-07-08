@@ -1,4 +1,5 @@
 import { app, BrowserWindow, shell } from 'electron'
+import { release } from 'os'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { is } from '@electron-toolkit/utils'
@@ -69,13 +70,27 @@ export function getAppIconPath(): string {
     : join(process.resourcesPath, 'icon.png')
 }
 
+// Win11 22H2 (build 22621) 及以上支持原生亚克力背板（DWM systembackdrop）
+export function supportsWindowsAcrylic(): boolean {
+  if (process.platform !== 'win32') return false
+  const build = Number(release().split('.')[2] ?? 0)
+  return Number.isFinite(build) && build >= 22621
+}
+
 export function createWindow(): void {
+  const transparent = runtime.appSettings.windowTransparency === true
+  // Windows 上用原生亚克力模糊：backgroundMaterial 与 transparent 互斥，
+  // 需保持 transparent: false 并用全透明 backgroundColor 露出背板
+  const acrylic = transparent && supportsWindowsAcrylic()
+
   runtime.mainWindow = new BrowserWindow({
     width: 1495,
     height: 883,
     show: false,
     frame: false,
-    backgroundColor: getWindowBackgroundColor(runtime.appSettings),
+    transparent: transparent && !acrylic,
+    backgroundColor: transparent ? '#00000000' : getWindowBackgroundColor(runtime.appSettings),
+    ...(acrylic ? { backgroundMaterial: 'acrylic' as const } : {}),
     icon: getAppIconPath(),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
