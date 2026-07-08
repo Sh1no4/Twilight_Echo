@@ -35,6 +35,13 @@ export interface LibraryChange {
   path?: string
 }
 
+export interface WindowTransparencyEffectSettings {
+  surfaceOpacity: number
+  surfaceBlur: number
+  cardOpacity: number
+  cardBlur: number
+}
+
 export interface DesktopLyricsSettings {
   enabled: boolean
   fontSize: number
@@ -484,6 +491,8 @@ export interface AppSettings {
   theme: AppTheme
   pluginThemeId: string | null
   blurEffect: boolean
+  windowTransparency: boolean
+  windowTransparencyEffect: WindowTransparencyEffectSettings
   useCoverTheme: boolean
   lyricFontSize: number
   libraryFolders: string[]

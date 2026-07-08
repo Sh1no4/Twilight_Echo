@@ -7,6 +7,14 @@
 }
 
 @font-face {
+  font-family: 'Noto Sans SC';
+  src: url('/font/NotoSansSC-VariableFont_wght.woff2') format('woff2');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
   font-family: 'Mochiy Pop One';
   src: url('/font/MochiyPopOne-Regular.woff2') format('woff2');
   font-weight: 400;
@@ -2085,4 +2093,209 @@ html[data-card-custom='on']
   ):hover {
   transform: var(--te-card-hover-transform, none) !important;
   box-shadow: var(--te-card-shadow, none), var(--te-card-hover-shadow, 0 0 0 0 transparent) !important;
+}
+
+/* ===== Window transparency: compositor blur passthrough ===== */
+/* When data-window-transparent='on', the window's bottom layer is made fully
+   transparent so the OS compositor's blur (niri xray / Hyprland / KWin / picom,
+   and later Windows acrylic) shows through. The blur itself is produced by the
+   compositor — not by in-app backdrop-filter — so this only needs to make
+   pixels translucent. Page-filling surfaces and cards get a semi-opaque tint so
+   text stays readable; the gaps and tinted surfaces let the blurred wallpaper
+   read through the whole window, matching a fully "see-through" window. */
+
+/* Translucent tint tokens, per resolved theme. These are NOT set as inline
+   styles on <html> (unlike --te-*-bg), so a stylesheet can define them. */
+html[data-window-transparent='on'] {
+  --te-tp-surface-rgb: 255, 255, 255;
+  --te-tp-card-rgb: 255, 255, 255;
+  --te-tp-surface-alpha: 0.7;
+  --te-tp-card-alpha: 0.8;
+  --te-tp-surface-blur: 0px;
+  --te-tp-card-blur: 20px;
+  --te-tp-surface: rgba(var(--te-tp-surface-rgb), var(--te-tp-surface-alpha));
+  --te-tp-chrome: rgba(255, 255, 255, 0.76);
+  --te-tp-card: rgba(var(--te-tp-card-rgb), var(--te-tp-card-alpha));
+}
+
+html[data-window-transparent='on'][data-theme='pureWhite'] {
+  --te-tp-chrome: rgba(255, 255, 255, 0.8);
+}
+
+html[data-window-transparent='on'][data-theme='dark'] {
+  --te-tp-surface-rgb: 18, 18, 20;
+  --te-tp-card-rgb: 24, 24, 28;
+  --te-tp-chrome: rgba(14, 14, 16, 0.6);
+}
+
+/* 1. Bottom layer fully transparent — let the compositor show through. */
+html[data-window-transparent='on'],
+html[data-window-transparent='on'] body,
+html[data-window-transparent='on'][data-theme='dark'],
+html[data-window-transparent='on'][data-theme='dark'] body,
+html[data-window-transparent='on'][data-theme='pureWhite'],
+html[data-window-transparent='on'][data-theme='pureWhite'] body,
+html[data-window-transparent='on'] body.te-settings-surface,
+html[data-window-transparent='on'] body.te-streaming-surface {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+/* Kill the fixed ambient gradient / blurred-wallpaper overlays that would
+   otherwise paint an opaque wash over the transparent backdrop. */
+html[data-window-transparent='on'] body::before,
+html[data-window-transparent='on'] body::after,
+html[data-window-transparent='on'][data-card-bg-effect='on'] body::before,
+html[data-window-transparent='on'][data-card-bg-effect='on'] body::after,
+html[data-window-transparent='on'] .main-content::before,
+html[data-window-transparent='on'] .main-content::after {
+  display: none !important;
+}
+
+/* 2. Page-filling surfaces → translucent so blur reads through them. */
+html[data-window-transparent='on']
+  :is(
+    .side-menu,
+    .dashboard-wrapper,
+    .streaming-sidebar,
+    .song-list,
+    .settings-page,
+    .settings-preview-layout,
+    .settings-preview-page,
+    .streaming-page,
+    .login-page,
+    .eq-page,
+    .plugin-page,
+    .plugin-page .main-content,
+    .plugin-page .topbar,
+    .title-bar,
+    .title-bar.title-bar-streaming,
+    .title-bar.title-bar-menu-open
+  ) {
+  background-color: var(--te-tp-surface) !important;
+  background-image: none !important;
+}
+
+/* The title bar paints its backdrop via an inner full-viewport layer; it must
+   also go transparent or it re-paints the opaque page background on top. */
+html[data-window-transparent='on'] .title-bar-background {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+/* 3. Floating chrome (player bar, panels, drawers, plugin sidebar). */
+html[data-window-transparent='on']
+  :is(
+    .player-bar,
+    .playlist-panel,
+    .volume-drawer,
+    .more-drawer,
+    .plugin-page .sidebar,
+    .context-menu,
+    .submenu
+  ) {
+  background-color: var(--te-tp-chrome) !important;
+  background-image: none !important;
+}
+
+/* 4. Cards → semi-transparent regardless of the user's card opacity setting. */
+html[data-window-transparent='on']
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .glass-card,
+    .feature-card,
+    .playlist-grid-card,
+    .favorites-card,
+    .streaming-placeholder,
+    .empty-recommend,
+    .detail-playlist-header,
+    .track-table-wrapper,
+    .profile-panel,
+    .liked-panel,
+    .playlist-list-item,
+    .profile-card,
+    .recent-card,
+    .ranking-card,
+    .create-playlist-card,
+    .folder-card,
+    .empty-list-card,
+    .filter-card,
+    .settings-group,
+    .device-card,
+    .card,
+    .account-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card,
+    .chart-card,
+    .parameter-card,
+    .square-card,
+    .opra-panel,
+    .device-panel,
+    .plugin-panel
+  ) {
+  background-color: var(--te-tp-card) !important;
+  background-image: none !important;
+}
+
+/* 5. Adjustable in-app blur on surfaces and cards (skipped when blur is
+   globally disabled via body.te-no-blur). Page containers that host
+   position: fixed descendants (settings nav, plugin sidebar, drawers) must
+   NOT get backdrop-filter — it turns them into containing blocks and breaks
+   fixed positioning — so only leaf surfaces are listed here. */
+html[data-window-transparent='on']
+  body:not(.te-no-blur)
+  :is(
+    .side-menu,
+    .dashboard-wrapper,
+    .streaming-sidebar,
+    .title-bar
+  ) {
+  backdrop-filter: blur(var(--te-tp-surface-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--te-tp-surface-blur)) !important;
+}
+
+html[data-window-transparent='on']
+  body:not(.te-no-blur)
+  :is(
+    .artist-card,
+    .album-card,
+    .playlist-card,
+    .glass-card,
+    .feature-card,
+    .playlist-grid-card,
+    .favorites-card,
+    .streaming-placeholder,
+    .empty-recommend,
+    .detail-playlist-header,
+    .track-table-wrapper,
+    .profile-panel,
+    .liked-panel,
+    .playlist-list-item,
+    .profile-card,
+    .recent-card,
+    .ranking-card,
+    .create-playlist-card,
+    .folder-card,
+    .empty-list-card,
+    .filter-card,
+    .settings-group,
+    .device-card,
+    .card,
+    .account-card,
+    .plugin-card,
+    .market-card,
+    .plugin-extension-card,
+    .chart-card,
+    .parameter-card,
+    .square-card,
+    .opra-panel,
+    .device-panel,
+    .plugin-panel
+  ) {
+  backdrop-filter: blur(var(--te-tp-card-blur)) !important;
+  -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) !important;
 }

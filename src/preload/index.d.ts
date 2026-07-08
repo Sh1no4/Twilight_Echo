@@ -267,6 +267,13 @@ interface AudioEqPreset {
   eqBands: EqualizerBand[]
 }
 
+interface WindowTransparencyEffectSettings {
+  surfaceOpacity: number
+  surfaceBlur: number
+  cardOpacity: number
+  cardBlur: number
+}
+
 interface DesktopLyricsSettings {
   enabled: boolean
   fontSize: number
@@ -369,6 +376,8 @@ interface AppSettings {
   theme: AppTheme
   pluginThemeId: string | null
   blurEffect: boolean
+  windowTransparency: boolean
+  windowTransparencyEffect: WindowTransparencyEffectSettings
   useCoverTheme: boolean
   lyricFontSize: number
   libraryFolders: string[]

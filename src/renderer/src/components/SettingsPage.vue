@@ -31,7 +31,8 @@ import type {
   SacdProgramMode,
   StreamingAudioCachePolicy,
   UiDensity,
-  VolumeNormalizationMode
+  VolumeNormalizationMode,
+  WindowTransparencyEffectSettings
 } from '../types/settings'
 
 type SectionKey =
@@ -49,6 +50,7 @@ type BooleanSettingKey =
   | 'autoCheckLogin'
   | 'launchAtLogin'
   | 'hardwareAcceleration'
+  | 'windowTransparency'
   | 'useCoverTheme'
   | 'globalShortcuts'
   | 'watchLibrary'
@@ -614,6 +616,15 @@ function resetSettingsGroup(group: 'appearance' | 'playback' | 'desktopLyrics'):
   }
   void updateSettings({ desktopLyrics: { ...RESET_DESKTOP_LYRICS } }).then(() => {
     settingsNotice.value = '桌面歌词设置已恢复默认'
+  })
+}
+
+function updateTp<K extends keyof WindowTransparencyEffectSettings>(
+  key: K,
+  value: WindowTransparencyEffectSettings[K]
+): void {
+  void updateSettings({
+    windowTransparencyEffect: { ...settings.value.windowTransparencyEffect, [key]: value }
   })
 }
 
@@ -2398,6 +2409,67 @@ onBeforeUnmount(() => {
                 @click="toggleSetting('hardwareAcceleration')"
               ></span>
             </div>
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>窗口透明</strong>
+                <span>让窗口底层透明，显示系统模糊效果（Windows 11 22H2+ 使用原生亚克力模糊；Linux 需合成器支持，如 niri / Hyprland / KWin）。更改后需重启。</span>
+              </div>
+              <span
+                class="toggle-switch"
+                :class="{ active: settings.windowTransparency, inactive: !settings.windowTransparency }"
+                role="switch"
+                :aria-checked="settings.windowTransparency"
+                @click="toggleSetting('windowTransparency')"
+              ></span>
+            </div>
+            <template v-if="settings.windowTransparency">
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>表面不透明度 (Surface Opacity)</strong>
+                  <span>页面背景表面的不透明程度，越低越通透。</span>
+                </div>
+                <div class="inline-controls">
+                  <input type="range" class="range-input" min="0" max="100" :value="settings.windowTransparencyEffect.surfaceOpacity"
+                    @input="updateTp('surfaceOpacity', Number(($event.target as HTMLInputElement).value))" />
+                  <span>{{ settings.windowTransparencyEffect.surfaceOpacity }}%</span>
+                </div>
+              </div>
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>表面模糊度 (Surface Blur)</strong>
+                  <span>页面背景表面的应用内模糊强度。</span>
+                </div>
+                <div class="inline-controls">
+                  <input type="range" class="range-input" min="0" max="60" :value="settings.windowTransparencyEffect.surfaceBlur"
+                    @input="updateTp('surfaceBlur', Number(($event.target as HTMLInputElement).value))" />
+                  <span>{{ settings.windowTransparencyEffect.surfaceBlur }}px</span>
+                </div>
+              </div>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>卡片不透明度 (Card Opacity)</strong>
+                  <span>卡片表面的不透明程度，越低越通透。</span>
+                </div>
+                <div class="inline-controls">
+                  <input type="range" class="range-input" min="0" max="100" :value="settings.windowTransparencyEffect.cardOpacity"
+                    @input="updateTp('cardOpacity', Number(($event.target as HTMLInputElement).value))" />
+                  <span>{{ settings.windowTransparencyEffect.cardOpacity }}%</span>
+                </div>
+              </div>
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>卡片模糊度 (Card Blur)</strong>
+                  <span>卡片表面的应用内模糊强度。</span>
+                </div>
+                <div class="inline-controls">
+                  <input type="range" class="range-input" min="0" max="60" :value="settings.windowTransparencyEffect.cardBlur"
+                    @input="updateTp('cardBlur', Number(($event.target as HTMLInputElement).value))" />
+                  <span>{{ settings.windowTransparencyEffect.cardBlur }}px</span>
+                </div>
+              </div>
+            </template>
           </div>
         </section>
 

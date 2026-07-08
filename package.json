@@ -55,6 +55,7 @@
     "@electron-toolkit/eslint-config-ts": "^3.1.0",
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@types/node": "^22.19.1",
+    "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "^6.0.2",
     "electron": "^39.2.6",
     "electron-builder": "^26.0.12",
@@ -68,7 +69,9 @@
     "vite": "^7.2.6",
     "vue": "^3.5.25",
     "vue-eslint-parser": "^10.2.0",
-    "vue-tsc": "^3.1.6",
-    "@types/qrcode": "^1.5.6"
+    "vue-tsc": "^3.1.6"
+  },
+  "allowScripts": {
+    "electron": true
   }
 }

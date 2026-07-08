@@ -28,6 +28,7 @@ import type {
   CardHoverEffect,
   CardShadowStrength,
   DesktopLyricsSettings,
+  WindowTransparencyEffectSettings,
   MusicCachePolicySettings,
   NowPlayingBackground,
   PlaybackResumeMode,
@@ -86,6 +87,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
   pluginThemeId: null,
   blurEffect: true,
+  windowTransparency: true,
+  windowTransparencyEffect: {
+    surfaceOpacity: 55,
+    surfaceBlur: 0,
+    cardOpacity: 60,
+    cardBlur: 24
+  },
   useCoverTheme: true,
   lyricFontSize: 18,
   libraryFolders: [],
@@ -385,6 +393,17 @@ export function normalizeCardAppearanceTheme(
   }
 }
 
+export function normalizeWindowTransparencyEffect(raw: unknown): WindowTransparencyEffectSettings {
+  const defaults = DEFAULT_SETTINGS.windowTransparencyEffect
+  const t = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  return {
+    surfaceOpacity: clampNumber(t.surfaceOpacity, 0, 100, defaults.surfaceOpacity),
+    surfaceBlur: clampNumber(t.surfaceBlur, 0, 60, defaults.surfaceBlur),
+    cardOpacity: clampNumber(t.cardOpacity, 0, 100, defaults.cardOpacity),
+    cardBlur: clampNumber(t.cardBlur, 0, 60, defaults.cardBlur)
+  }
+}
+
 export function normalizeBackgroundEffectTheme(
   raw: unknown,
   defaults: BackgroundEffectTheme
@@ -541,6 +560,8 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     theme: normalizeAppTheme(settings.theme),
     pluginThemeId: normalizePluginThemeId(settings.pluginThemeId),
     blurEffect: settings.blurEffect !== false,
+    windowTransparency: settings.windowTransparency !== false,
+    windowTransparencyEffect: normalizeWindowTransparencyEffect(settings.windowTransparencyEffect),
     useCoverTheme: settings.useCoverTheme !== false,
     lyricFontSize: clampNumber(settings.lyricFontSize, 14, 28, DEFAULT_SETTINGS.lyricFontSize),
     libraryFolders: normalizeStringArray(settings.libraryFolders),
@@ -601,6 +622,9 @@ export function getRestartReasons(settings: AppSettings, launch: AppSettings): s
   const reasons: string[] = []
   if (settings.hardwareAcceleration !== launch.hardwareAcceleration) {
     reasons.push('GPU 加速')
+  }
+  if (settings.windowTransparency !== launch.windowTransparency) {
+    reasons.push('窗口透明')
   }
   if (resolve(settings.musicCachePath) !== resolve(launch.musicCachePath)) {
     reasons.push('缓存位置')

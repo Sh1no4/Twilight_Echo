@@ -9,7 +9,8 @@ import type {
   CardAppearanceTheme,
   BackgroundEffectTheme,
   PlayerShortcutStatus,
-  SettingsSnapshot
+  SettingsSnapshot,
+  WindowTransparencyEffectSettings
 } from '../types/settings'
 
 function getFallbackAudioOutput(): AudioOutputId {
@@ -85,6 +86,13 @@ const fallbackSettings: AppSettings = {
   theme: 'system',
   pluginThemeId: null,
   blurEffect: true,
+  windowTransparency: true,
+  windowTransparencyEffect: {
+    surfaceOpacity: 55,
+    surfaceBlur: 0,
+    cardOpacity: 60,
+    cardBlur: 24
+  },
   useCoverTheme: true,
   lyricFontSize: 18,
   libraryFolders: [],
@@ -474,6 +482,10 @@ function applyDomSettings(): void {
   document.documentElement.dataset.themePreference = settings.value.theme
   document.documentElement.style.colorScheme = resolvedTheme === 'dark' ? 'dark' : 'light'
   document.body.classList.toggle('te-no-blur', !settings.value.blurEffect)
+  document.documentElement.dataset.windowTransparent = settings.value.windowTransparency
+    ? 'on'
+    : 'off'
+  applyWindowTransparencyEffect()
   document.documentElement.style.setProperty(
     '--te-lyric-font-size',
     `${settings.value.lyricFontSize}px`
@@ -522,6 +534,26 @@ function applyDomSettings(): void {
     `${settings.value.lyricDimOpacity / 100}`
   )
   applyCardAppearance(tone)
+}
+
+function applyWindowTransparencyEffect(): void {
+  const root = document.documentElement
+  const tpVars = [
+    '--te-tp-surface-alpha',
+    '--te-tp-surface-blur',
+    '--te-tp-card-alpha',
+    '--te-tp-card-blur'
+  ]
+  if (!settings.value.windowTransparency) {
+    for (const v of tpVars) root.style.removeProperty(v)
+    return
+  }
+  const effect: WindowTransparencyEffectSettings =
+    settings.value.windowTransparencyEffect ?? fallbackSettings.windowTransparencyEffect
+  root.style.setProperty('--te-tp-surface-alpha', `${(effect.surfaceOpacity / 100).toFixed(2)}`)
+  root.style.setProperty('--te-tp-surface-blur', `${effect.surfaceBlur}px`)
+  root.style.setProperty('--te-tp-card-alpha', `${(effect.cardOpacity / 100).toFixed(2)}`)
+  root.style.setProperty('--te-tp-card-blur', `${effect.cardBlur}px`)
 }
 
 function handleSystemThemeChange(): void {
@@ -663,6 +695,16 @@ export function useSettingsStore(): {
       settings.value = {
         ...settings.value,
         cardAppearance: patch.cardAppearance
+      }
+      applyDomSettings()
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(patch, 'windowTransparencyEffect') &&
+      patch.windowTransparencyEffect
+    ) {
+      settings.value = {
+        ...settings.value,
+        windowTransparencyEffect: patch.windowTransparencyEffect
       }
       applyDomSettings()
     }
