@@ -43,7 +43,6 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
-    "@fontsource-variable/noto-serif-sc": "^5.2.10",
     "@neteasecloudmusicapienhanced/api": "^4.35.1",
     "discord-rpc": "^4.0.1",
     "extract-zip": "^2.0.1",
@@ -71,5 +70,8 @@
     "vue": "^3.5.25",
     "vue-eslint-parser": "^10.2.0",
     "vue-tsc": "^3.1.6"
+  },
+  "allowScripts": {
+    "electron": true
   }
 }

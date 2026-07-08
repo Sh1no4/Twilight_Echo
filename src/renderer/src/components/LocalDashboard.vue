@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import '@fontsource-variable/noto-serif-sc'
 import { computed, ref } from 'vue'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useListeningStatsStore } from '../stores/useListeningStatsStore'
@@ -385,7 +384,7 @@ function statPercent(stat: RankedStat): number {
   --home-accent: var(--te-primary-500, #7c4dff);
   --home-accent-2: var(--te-primary-400, #9575ff);
   --home-accent-soft: rgba(var(--te-primary-rgb, 124, 77, 255), 0.12);
-  --home-display: 'Noto Serif SC Variable', 'Noto Serif SC', 'Outfit', serif;
+  --home-display: 'Outfit', 'Noto Sans SC', 'Source Han Sans SC', sans-serif;
 
   position: relative;
   width: 100%;
