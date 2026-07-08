@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import '@fontsource-variable/noto-serif-sc'
 import { computed, ref } from 'vue'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useListeningStatsStore } from '../stores/useListeningStatsStore'
@@ -384,6 +385,7 @@ function statPercent(stat: RankedStat): number {
   --home-accent: var(--te-primary-500, #7c4dff);
   --home-accent-2: var(--te-primary-400, #9575ff);
   --home-accent-soft: rgba(var(--te-primary-rgb, 124, 77, 255), 0.12);
+  --home-display: 'Noto Serif SC Variable', 'Noto Serif SC', 'Outfit', serif;
 
   position: relative;
   width: 100%;
@@ -512,7 +514,7 @@ html[data-window-transparent='on'] .home .blob {
 
 .greeting {
   margin: 0;
-  font-family: var(--te-font-display, 'Outfit', sans-serif);
+  font-family: var(--home-display);
   font-size: clamp(2.6rem, 5vw, 4rem);
   font-weight: 800;
   letter-spacing: -0.03em;
@@ -562,7 +564,7 @@ html[data-window-transparent='on'] .home .blob {
 }
 
 .pulse-num {
-  font-family: var(--te-font-display, 'Outfit', sans-serif);
+  font-family: var(--home-display);
   font-size: 1.18rem;
   font-weight: 800;
   line-height: 1.15;
@@ -751,7 +753,7 @@ html[data-window-transparent='on'] .home .blob {
 
 .hero-title {
   margin: 0.45rem 0 0;
-  font-family: var(--te-font-display, 'Outfit', sans-serif);
+  font-family: var(--home-display);
   font-size: clamp(1.9rem, 3.4vw, 2.9rem);
   font-weight: 800;
   letter-spacing: -0.02em;
@@ -838,7 +840,7 @@ html[data-window-transparent='on'] .home .blob {
 }
 
 .section-index {
-  font-family: var(--te-font-display, 'Outfit', sans-serif);
+  font-family: var(--home-display);
   font-size: 0.8rem;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -850,7 +852,7 @@ html[data-window-transparent='on'] .home .blob {
 
 .section-head h3 {
   margin: 0;
-  font-family: var(--te-font-display, 'Outfit', sans-serif);
+  font-family: var(--home-display);
   font-size: 1.4rem;
   font-weight: 800;
   letter-spacing: -0.01em;
@@ -1025,7 +1027,7 @@ html[data-window-transparent='on'] .home .blob {
 .top-rank {
   width: 2.2rem;
   flex-shrink: 0;
-  font-family: var(--te-font-display, 'Outfit', sans-serif);
+  font-family: var(--home-display);
   font-size: 1.7rem;
   font-weight: 800;
   font-style: italic;
@@ -1236,7 +1238,7 @@ html[data-window-transparent='on'] .home .blob {
 
 .empty-hero h2 {
   margin: 0;
-  font-family: var(--te-font-display, 'Outfit', sans-serif);
+  font-family: var(--home-display);
   font-size: 1.5rem;
   font-weight: 800;
 }
