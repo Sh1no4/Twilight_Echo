@@ -191,7 +191,7 @@ function statPercent(stat: RankedStat): number {
 </script>
 
 <template>
-  <div class="home">
+  <div class="home dashboard-wrapper">
     <div class="ambient" aria-hidden="true">
       <span class="blob blob-a"></span>
       <span class="blob blob-b"></span>
@@ -398,6 +398,11 @@ function statPercent(stat: RankedStat): number {
   background-size: cover;
   background-repeat: no-repeat;
   font-family: var(--te-font-sans, 'Inter', sans-serif);
+}
+
+/* 透明窗口模式：交给 base.css 的 .dashboard-wrapper 半透明表面，并隐藏会遮住合成器背景的极光光斑 */
+html[data-window-transparent='on'] .home .blob {
+  display: none;
 }
 
 /* ---------- Ambient aurora ---------- */
