@@ -47,38 +47,6 @@ const totalDurationText = computed(() => {
   return `${Math.round(seconds / 60)} 分钟`
 })
 
-const heroTrack = computed<Track | null>(() => {
-  if (currentTrack.value) return currentTrack.value
-  const ranked = rankedStats.value[0]
-  if (ranked?.track) return ranked.track
-  return tracks.value[0] ?? null
-})
-
-const heroIsCurrent = computed(
-  () => !!currentTrack.value && heroTrack.value?.id === currentTrack.value.id
-)
-
-const heroCover = useCover(computed(() => heroTrack.value?.cover ?? null))
-const heroCoverSrc = computed(() => heroCover.value || DEFAULT_COVER)
-
-const heroLabel = computed(() => {
-  if (!heroTrack.value) return ''
-  if (heroIsCurrent.value) return isPlaying.value ? '正在播放' : '继续播放'
-  return '为你推荐'
-})
-
-const heroMeta = computed(() => {
-  const track = heroTrack.value
-  if (!track) return ''
-  const parts: string[] = []
-  if (track.album) parts.push(track.album)
-  if (track.format) parts.push(track.format.toUpperCase())
-  if (track.sampleRate) parts.push(`${Math.round(track.sampleRate / 1000)}kHz`)
-  return parts.join(' · ')
-})
-
-const recentlyAdded = computed(() => tracks.value.slice(-SHELF_SIZE).reverse())
-
 interface RankedStat {
   id: string
   seconds: number
@@ -110,6 +78,38 @@ const rankedStats = computed<RankedStat[]>(() => {
     }
   })
 })
+
+const heroTrack = computed<Track | null>(() => {
+  if (currentTrack.value) return currentTrack.value
+  const ranked = rankedStats.value[0]
+  if (ranked?.track) return ranked.track
+  return tracks.value[0] ?? null
+})
+
+const heroIsCurrent = computed(
+  () => !!currentTrack.value && heroTrack.value?.id === currentTrack.value.id
+)
+
+const heroCover = useCover(computed(() => heroTrack.value?.cover ?? null))
+const heroCoverSrc = computed(() => heroCover.value || DEFAULT_COVER)
+
+const heroLabel = computed(() => {
+  if (!heroTrack.value) return ''
+  if (heroIsCurrent.value) return isPlaying.value ? '正在播放' : '继续播放'
+  return '为你推荐'
+})
+
+const heroMeta = computed(() => {
+  const track = heroTrack.value
+  if (!track) return ''
+  const parts: string[] = []
+  if (track.album) parts.push(track.album)
+  if (track.format) parts.push(track.format.toUpperCase())
+  if (track.sampleRate) parts.push(`${Math.round(track.sampleRate / 1000)}kHz`)
+  return parts.join(' · ')
+})
+
+const recentlyAdded = computed(() => tracks.value.slice(-SHELF_SIZE).reverse())
 
 const topTracks = computed<RankedStat[]>(() => {
   if (rankedStats.value.length > 0) return rankedStats.value
