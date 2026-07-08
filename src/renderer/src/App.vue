@@ -324,7 +324,7 @@ const titleSurface = computed<TitleSurface>(() => {
     <Transition :name="songlistTransitionName">
       <LocalDashboard
         v-if="localViewVisible && activeCategory === 'dashboard'"
-        @open-dsp="openDspSettings"
+        @select-view="onSelectView"
       />
       <SongList
         v-else-if="localViewVisible"
