@@ -8,7 +8,13 @@ const buildDirs = [
   join(root, 'audio-engine', 'build', 'windows-msvc'),
   join(root, 'audio-engine', 'build', 'default')
 ]
-const runtimeFiles = ['twilight-audio-engine.dll', 'twilight_audio_node.node']
+const nativeLibrary =
+  process.platform === 'win32'
+    ? 'twilight-audio-engine.dll'
+    : process.platform === 'darwin'
+      ? 'libtwilight-audio-engine.dylib'
+      : 'libtwilight-audio-engine.so'
+const runtimeFiles = [nativeLibrary, 'twilight_audio_node.node']
 
 function findBuildDir() {
   return buildDirs.find((dir) => runtimeFiles.every((file) => existsSync(join(dir, file))))
@@ -17,7 +23,9 @@ function findBuildDir() {
 const buildDir = findBuildDir()
 if (!buildDir) {
   console.error(
-    '未找到已构建的原生音频运行文件。请先运行 npm run build:audio-engine:mingw。'
+    process.platform === 'win32'
+      ? '未找到已构建的原生音频运行文件。请先运行 npm run build:audio-engine:mingw。'
+      : '未找到已构建的原生音频运行文件。请先使用 -DTAE_BUILD_NAPI=ON 配置并构建 audio-engine。'
   )
   process.exit(1)
 }

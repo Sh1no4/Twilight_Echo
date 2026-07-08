@@ -114,6 +114,7 @@ const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
   'checkQrLogin',
   'fetchUserLibrary',
   'fetchLikedTracks',
+  'fetchLikedTracksPage',
   'fetchRecommendSongs',
   'fetchRecommendPlaylists',
   'fetchPersonalFm',

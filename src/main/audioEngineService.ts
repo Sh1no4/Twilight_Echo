@@ -17,25 +17,51 @@ type AudioServiceResponse = {
 
 type ParentPort = {
   postMessage: (message: AudioServiceResponse | { kind: 'ready' } | { kind: 'fatal'; error: string }) => void
+  on: (event: 'message', listener: (message: AudioServiceRequest) => void) => void
+}
+
+type ElectronParentPort = {
+  postMessage: ParentPort['postMessage']
   on: (event: 'message', listener: (event: { data: AudioServiceRequest }) => void) => void
 }
 
-const maybeParentPort = (process as unknown as { parentPort?: ParentPort }).parentPort
-if (!maybeParentPort) {
-  throw new Error('Twilight audio engine service must run as an Electron utilityProcess')
+type NodeIpcProcess = {
+  send?: ParentPort['postMessage']
+  on?: (event: 'message', listener: (message: AudioServiceRequest) => void) => void
 }
 
-const parentPort = maybeParentPort
+const maybeElectronParentPort = (process as unknown as { parentPort?: ElectronParentPort })
+  .parentPort
+const maybeNodeIpc = process as unknown as NodeIpcProcess
+const parentPort: ParentPort | null = maybeElectronParentPort
+  ? {
+      postMessage: (message) => maybeElectronParentPort.postMessage(message),
+      on: (_event, listener) =>
+        maybeElectronParentPort.on('message', (event) => listener(event.data))
+    }
+  : typeof maybeNodeIpc.send === 'function' && typeof maybeNodeIpc.on === 'function'
+    ? {
+        postMessage: (message) => {
+          maybeNodeIpc.send?.(message)
+        },
+        on: (_event, listener) => maybeNodeIpc.on?.('message', listener)
+      }
+    : null
+
+if (!parentPort) {
+  throw new Error('Twilight audio engine service must run with Electron parentPort or Node IPC')
+}
+
+const servicePort = parentPort
 const native = loadNativeBinding()
 
 if (!native) {
-  parentPort.postMessage({ kind: 'fatal', error: '未加载 twilight_audio_node.node' })
+  servicePort.postMessage({ kind: 'fatal', error: '未加载 twilight_audio_node.node' })
 } else {
-  parentPort.postMessage({ kind: 'ready' })
+  servicePort.postMessage({ kind: 'ready' })
 }
 
-parentPort.on('message', (event) => {
-  const message = event.data
+servicePort.on('message', (message) => {
   if (message.kind !== 'request') return
   void handleRequest(message)
 })
@@ -68,5 +94,5 @@ async function handleRequest(message: AudioServiceRequest): Promise<void> {
 }
 
 function post(message: AudioServiceResponse): void {
-  parentPort.postMessage(message)
+  servicePort.postMessage(message)
 }

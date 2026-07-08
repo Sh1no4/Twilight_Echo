@@ -9,6 +9,7 @@ const TRANSIENT_LOGIN_ERROR_CODES = new Set([301, 502, 503, 460])
 const playlistTrackCache = new Map()
 const streamUrlCache = new Map()
 let likedTracksCache = null
+let likedSongIdListCache = null
 let likedSongIds = new Set()
 
 export async function activate(context) {
@@ -60,6 +61,7 @@ export async function activate(context) {
     checkQrLogin,
     fetchUserLibrary,
     fetchLikedTracks,
+    fetchLikedTracksPage,
     fetchRecommendSongs,
     fetchRecommendPlaylists,
     fetchPersonalFm,
@@ -156,6 +158,7 @@ function resetCaches() {
   playlistTrackCache.clear()
   streamUrlCache.clear()
   likedTracksCache = null
+  likedSongIdListCache = null
   likedSongIds = new Set()
 }
 
@@ -197,6 +200,36 @@ async function requestAuthed(path) {
   const cookie = await getCookie()
   if (!cookie) throw new Error('请先登录网易云音乐')
   return request(path, cookie)
+}
+
+function getErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function isReadApiTransientError(error) {
+  const message = getErrorMessage(error)
+  return /Unexpected|JSON|timeout|timed out|ECONN|ENOTFOUND|EAI_AGAIN|socket|network|fetch failed|502|503|504/i.test(
+    message
+  )
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function requestAuthedRead(path, { attempts = 2, label = path } = {}) {
+  let lastError = null
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await requestAuthed(path)
+    } catch (error) {
+      lastError = error
+      if (attempt >= attempts || !isReadApiTransientError(error)) break
+      await wait(250 * attempt)
+    }
+  }
+  getContext().logger.warn(`网易云读取接口失败：${label}：${getErrorMessage(lastError)}`)
+  throw lastError
 }
 
 async function ensureProfile() {
@@ -464,6 +497,12 @@ function getPlaylistTrackIds(data) {
     .filter((id) => Number.isFinite(id) && id > 0)
 }
 
+function normalizePageNumber(value, fallback, min, max) {
+  const number = Number(value)
+  if (!Number.isFinite(number)) return fallback
+  return Math.min(max, Math.max(min, Math.floor(number)))
+}
+
 function isLikedPlaylistItem(item) {
   return item.specialType === 5 || item.specialType === '5' || item.name === '喜欢的音乐'
 }
@@ -652,7 +691,10 @@ async function fetchUserLibrary(force = false) {
     likedTracksCache = null
   }
   const currentProfile = await ensureProfile()
-  const data = await requestAuthed(`/user/playlist?uid=${currentProfile.userId}&limit=1000`)
+  const data = await requestAuthedRead(`/user/playlist?uid=${currentProfile.userId}&limit=1000`, {
+    attempts: 3,
+    label: 'user playlists'
+  })
   const items = getPlaylistItems(data)
   const likedItem = items.find(isLikedPlaylistItem) ?? null
   return {
@@ -661,33 +703,69 @@ async function fetchUserLibrary(force = false) {
   }
 }
 
+async function fetchSongDetailsByIds(ids, label) {
+  const songs = []
+  const chunkSize = 100
+  for (let index = 0; index < ids.length; index += chunkSize) {
+    const chunk = ids.slice(index, index + chunkSize)
+    songs.push(...(await fetchSongDetailChunk(chunk, `${label} ${index}-${index + chunk.length - 1}`)))
+  }
+  return songs
+}
+
+async function fetchSongDetailChunk(ids, label) {
+  if (ids.length === 0) return []
+  try {
+    const detail = await requestAuthedRead(`/song/detail?ids=${ids.join(',')}`, {
+      attempts: 3,
+      label: `${label} song detail`
+    })
+    return getSongItems(detail)
+  } catch (error) {
+    if (ids.length > 25) {
+      const middle = Math.ceil(ids.length / 2)
+      const left = await fetchSongDetailChunk(ids.slice(0, middle), `${label}a`)
+      const right = await fetchSongDetailChunk(ids.slice(middle), `${label}b`)
+      return [...left, ...right]
+    }
+    getContext().logger.warn(`网易云歌曲详情分片跳过：${label}：${getErrorMessage(error)}`)
+    return []
+  }
+}
+
 async function fetchPlaylistTracks(playlistId, force = false) {
   const cacheKey = String(playlistId)
   if (!force && playlistTrackCache.has(cacheKey)) return playlistTrackCache.get(cacheKey) ?? []
 
   // 一次性获取全部歌曲（limit 设为足够大，API 内部会先取 trackIds 再按 limit 切片请求详情）
-  const trackAllData = await requestAuthed(
-    `/playlist/track/all?id=${encodeURIComponent(String(playlistId))}&limit=100000`
-  )
-  let songs = getSongItems(trackAllData)
+  let songs = []
+  try {
+    const trackAllData = await requestAuthedRead(
+      `/playlist/track/all?id=${encodeURIComponent(String(playlistId))}&limit=100000`,
+      { attempts: 3, label: `playlist ${playlistId} track/all` }
+    )
+    songs = getSongItems(trackAllData)
+  } catch {
+    songs = []
+  }
 
   // 回退：用 playlist/detail 拿 trackIds，再分批请求详情
   if (songs.length === 0) {
-    const detailData = await requestAuthed(`/playlist/detail?id=${encodeURIComponent(String(playlistId))}`)
-    songs = getSongItems(detailData)
+    try {
+      const detailData = await requestAuthedRead(
+        `/playlist/detail?id=${encodeURIComponent(String(playlistId))}`,
+        { attempts: 3, label: `playlist ${playlistId} detail` }
+      )
+      songs = getSongItems(detailData)
 
-    if (songs.length === 0) {
-      const ids = getPlaylistTrackIds(detailData)
-      if (ids.length > 0) {
-        const detailSongs = []
-        const chunkSize = 200
-        for (let index = 0; index < ids.length; index += chunkSize) {
-          const chunk = ids.slice(index, index + chunkSize)
-          const detail = await requestAuthed(`/song/detail?ids=${chunk.join(',')}`)
-          detailSongs.push(...getSongItems(detail))
+      if (songs.length === 0) {
+        const ids = getPlaylistTrackIds(detailData)
+        if (ids.length > 0) {
+          songs = await fetchSongDetailsByIds(ids, `playlist ${playlistId}`)
         }
-        songs = detailSongs
       }
+    } catch {
+      songs = []
     }
   }
 
@@ -699,7 +777,13 @@ async function fetchPlaylistTracks(playlistId, force = false) {
 async function fetchLikedTracks(force = false) {
   if (!force && likedTracksCache) return likedTracksCache
 
-  const library = await fetchUserLibrary(force)
+  let library = { likedPlaylist: null, playlists: [] }
+  try {
+    library = await fetchUserLibrary(force)
+  } catch (error) {
+    getContext().logger.warn(`网易云音乐库列表读取失败，将尝试 likelist 兜底：${getErrorMessage(error)}`)
+  }
+
   if (library.likedPlaylist) {
     const tracks = await fetchPlaylistTracks(library.likedPlaylist.id, force)
     if (tracks.length > 0) {
@@ -710,21 +794,29 @@ async function fetchLikedTracks(force = false) {
   }
 
   const currentProfile = await ensureProfile()
-  const data = await requestAuthed(`/likelist?uid=${currentProfile.userId}`)
+  let data = null
+  try {
+    data = await requestAuthedRead(`/likelist?uid=${currentProfile.userId}`, {
+      attempts: 3,
+      label: 'liked song ids'
+    })
+  } catch (error) {
+    getContext().logger.warn(`网易云喜欢歌曲 ID 读取失败：${getErrorMessage(error)}`)
+    likedTracksCache = likedTracksCache ?? []
+    return likedTracksCache
+  }
+
   const ids = getLikelistIds(data)
   if (ids.length === 0) {
     likedTracksCache = []
+    likedSongIdListCache = []
     likedSongIds = new Set()
     return []
   }
+  likedSongIdListCache = ids
+  likedSongIds = new Set(ids)
 
-  const songs = []
-  const chunkSize = 200
-  for (let index = 0; index < ids.length; index += chunkSize) {
-    const chunk = ids.slice(index, index + chunkSize)
-    const detail = await requestAuthed(`/song/detail?ids=${chunk.join(',')}`)
-    songs.push(...getSongItems(detail))
-  }
+  const songs = await fetchSongDetailsByIds(ids, 'liked songs')
 
   const normalized = songs.map(normalizeTrack)
   const trackBySongId = new Map()
@@ -736,6 +828,69 @@ async function fetchLikedTracks(force = false) {
   if (likedTracksCache.length === 0) likedTracksCache = normalized
   syncLikedIds(likedTracksCache)
   return likedTracksCache
+}
+
+async function fetchLikedTrackIds(force = false) {
+  if (!force && likedSongIdListCache) return likedSongIdListCache
+
+  try {
+    const library = await fetchUserLibrary(force)
+    if (library.likedPlaylist) {
+      const detailData = await requestAuthedRead(
+        `/playlist/detail?id=${encodeURIComponent(String(library.likedPlaylist.id))}`,
+        { attempts: 3, label: `liked playlist ${library.likedPlaylist.id} detail` }
+      )
+      const ids = getPlaylistTrackIds(detailData)
+      likedSongIdListCache = ids
+      likedSongIds = new Set(ids)
+      return ids
+    }
+  } catch (error) {
+    getContext().logger.warn(`网易云喜欢歌单详情读取失败，将尝试 likelist 兜底：${getErrorMessage(error)}`)
+  }
+
+  const currentProfile = await ensureProfile()
+  try {
+    const data = await requestAuthedRead(`/likelist?uid=${currentProfile.userId}`, {
+      attempts: 3,
+      label: 'liked song ids'
+    })
+    const ids = getLikelistIds(data)
+    if (ids.length > 0) {
+      likedSongIdListCache = ids
+      likedSongIds = new Set(ids)
+      return ids
+    }
+  } catch (error) {
+    getContext().logger.warn(`网易云喜欢歌曲 ID 读取失败：${getErrorMessage(error)}`)
+  }
+
+  likedSongIdListCache = []
+  likedSongIds = new Set()
+  return []
+}
+
+async function fetchLikedTracksPage(offset = 0, limit = 100, force = false) {
+  const normalizedOffset = normalizePageNumber(offset, 0, 0, Number.MAX_SAFE_INTEGER)
+  const normalizedLimit = normalizePageNumber(limit, 100, 1, 200)
+  const ids = await fetchLikedTrackIds(force && normalizedOffset === 0)
+  const pageIds = ids.slice(normalizedOffset, normalizedOffset + normalizedLimit)
+  const songs = await fetchSongDetailsByIds(pageIds, `liked songs ${normalizedOffset}`)
+  const normalized = songs.map(normalizeTrack)
+  const trackBySongId = new Map()
+  for (const track of normalized) {
+    if (track.ncmSongId) trackBySongId.set(track.ncmSongId, track)
+  }
+  const tracks = pageIds.map((id) => trackBySongId.get(id)).filter(Boolean)
+  const nextOffset = Math.min(ids.length, normalizedOffset + normalizedLimit)
+  return {
+    tracks,
+    total: ids.length,
+    offset: normalizedOffset,
+    limit: normalizedLimit,
+    nextOffset,
+    hasMore: nextOffset < ids.length
+  }
 }
 
 function getSongIdFromTrack(track) {

@@ -345,6 +345,39 @@
   -webkit-backdrop-filter: blur(22px) saturate(150%);
 }
 
+.liked-page-loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-top: 12px;
+  color: rgba(80, 88, 116, 0.72);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.liked-page-loader span,
+.liked-page-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.liked-page-retry {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid rgba(124, 77, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.54);
+  color: var(--te-primary-500);
+  cursor: pointer;
+  font: inherit;
+}
+
+.liked-page-retry:hover {
+  background: rgba(124, 77, 255, 0.08);
+}
+
 .track-table {
   width: 100%;
   border-collapse: separate;
@@ -1927,4 +1960,4 @@
     padding-left: 0;
     padding-right: 0;
   }
-}
+}

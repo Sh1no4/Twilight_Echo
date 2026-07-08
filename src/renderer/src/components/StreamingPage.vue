@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import type { Track } from '../types/music'
 import {
   useNcmStore,
@@ -71,12 +71,14 @@ type DetailView =
   | { type: 'recent' }
   | { type: 'ranking' }
 
-defineProps<{
+const props = defineProps<{
   menuOpen: boolean
   hasPlayer: boolean
+  initialTab?: StreamingTab
 }>()
 
-const activeTab = ref<StreamingTab>('home')
+const activeTab = ref<StreamingTab>(props.initialTab ?? 'home')
+const streamingContentRef = ref<HTMLElement | null>(null)
 const streamingTransitionName = ref('stream-page-down')
 const currentDetail = ref<DetailView | null>(null)
 const detailTracks = ref<Track[]>([])
@@ -97,6 +99,13 @@ const dailySongs = ref<Track[]>([])
 const personalFmSongs = ref<Track[]>([])
 const privateContentSongs = ref<Track[]>([])
 const recommendPlaylists = ref<NcmPlaylistSummary[]>([])
+const LIKED_TRACKS_PAGE_SIZE = 100
+const LIKED_TRACKS_LOAD_THRESHOLD = 0.75
+const likedTracksNextOffset = ref(0)
+const likedTracksTotal = ref<number | null>(null)
+const likedTracksHasMore = ref(false)
+const likedTracksLoadingMore = ref(false)
+const likedTracksLoadMoreError = ref('')
 const recsLoading = ref(false)
 const recsError = ref('')
 const avatarLoadFailed = ref(false)
@@ -276,7 +285,7 @@ const {
   fetchUserLibrary,
   fetchUserPlaylistsByUid,
   fetchPlaylistTracks,
-  fetchLikedTracks,
+  fetchLikedTracksPage,
   fetchRecommendSongs,
   fetchRecommendPlaylists,
   fetchPersonalFm,
@@ -298,7 +307,8 @@ const {
   followUser,
   likeTrack,
   isTrackLiked,
-  syncLikedIds
+  syncLikedIds,
+  checkLogin
 } = useNcmStore()
 
 const { currentTrack, playTrack, formatTime } = usePlayerStore()
@@ -636,6 +646,12 @@ const showDetailInitialLoading = computed(
 const showDetailOverlayLoading = computed(
   () => detailLoading.value && !showDetailInitialLoading.value
 )
+const detailTrackCountLabel = computed(() => {
+  if (currentDetail.value?.type === 'liked' && likedTracksTotal.value != null) {
+    return `${detailTracks.value.length} / ${likedTracksTotal.value} 首`
+  }
+  return `${detailTracks.value.length} 首`
+})
 
 const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
   if (!currentDetail.value) return null
@@ -834,8 +850,17 @@ function resetDetail(): void {
   activeArtistTab.value = 'songs'
   detailLoading.value = false
   detailError.value = ''
+  resetLikedTracksPaging()
   followActionLoading.value = false
   followActionError.value = ''
+}
+
+function resetLikedTracksPaging(): void {
+  likedTracksNextOffset.value = 0
+  likedTracksTotal.value = null
+  likedTracksHasMore.value = false
+  likedTracksLoadingMore.value = false
+  likedTracksLoadMoreError.value = ''
 }
 
 function getSidebarItemsSignature(): string {
@@ -873,6 +898,7 @@ function beginDetailLoad(): number {
   artistFollowed.value = null
   detailLoading.value = true
   detailError.value = ''
+  resetLikedTracksPaging()
   followActionError.value = ''
   return token
 }
@@ -1011,11 +1037,16 @@ async function openLikedTracks(force = false): Promise<void> {
   const token = beginDetailLoad()
 
   try {
-    const tracks = await fetchLikedTracks(force)
+    const page = await fetchLikedTracksPage(0, LIKED_TRACKS_PAGE_SIZE, force)
     if (!isActiveDetailLoad(token)) return
-    detailTracks.value = tracks
-    likedCount.value = tracks.length
-    syncLikedIds(tracks)
+    detailTracks.value = page.tracks
+    likedCount.value = page.total
+    likedTracksTotal.value = page.total
+    likedTracksNextOffset.value = page.nextOffset
+    likedTracksHasMore.value = page.hasMore
+    syncLikedIds(page.tracks)
+    await nextTick()
+    void ensureLikedTracksScrollable()
   } catch (error) {
     if (!isActiveDetailLoad(token)) return
     detailError.value = error instanceof Error ? error.message : '加载收藏歌曲失败'
@@ -1025,6 +1056,52 @@ async function openLikedTracks(force = false): Promise<void> {
       detailLoading.value = false
     }
   }
+}
+
+async function loadMoreLikedTracks(): Promise<void> {
+  if (currentDetail.value?.type !== 'liked') return
+  if (isExternalActive.value) return
+  if (likedTracksLoadingMore.value || !likedTracksHasMore.value) return
+
+  const token = detailLoadToken
+  likedTracksLoadingMore.value = true
+  likedTracksLoadMoreError.value = ''
+
+  try {
+    const page = await fetchLikedTracksPage(
+      likedTracksNextOffset.value,
+      LIKED_TRACKS_PAGE_SIZE,
+      false
+    )
+    if (!isActiveDetailLoad(token) || currentDetail.value?.type !== 'liked') return
+    const existing = new Set(detailTracks.value.map((track) => track.id))
+    const nextTracks = page.tracks.filter((track) => !existing.has(track.id))
+    detailTracks.value = [...detailTracks.value, ...nextTracks]
+    likedCount.value = page.total
+    likedTracksTotal.value = page.total
+    likedTracksNextOffset.value = page.nextOffset
+    likedTracksHasMore.value = page.hasMore
+    syncLikedIds(page.tracks)
+    await nextTick()
+    void ensureLikedTracksScrollable()
+  } catch (error) {
+    if (!isActiveDetailLoad(token)) return
+    likedTracksLoadMoreError.value = error instanceof Error ? error.message : '继续加载收藏歌曲失败'
+  } finally {
+    if (isActiveDetailLoad(token)) {
+      likedTracksLoadingMore.value = false
+    }
+  }
+}
+
+async function ensureLikedTracksScrollable(): Promise<void> {
+  await nextTick()
+  const element = streamingContentRef.value
+  if (!element) return
+  if (currentDetail.value?.type !== 'liked' || !likedTracksHasMore.value) return
+  if (likedTracksLoadingMore.value) return
+  if (element.scrollHeight > element.clientHeight + 48) return
+  await loadMoreLikedTracks()
 }
 
 async function openPlaylist(playlist: MediaProviderPlaylistSummary, force = false): Promise<void> {
@@ -1325,6 +1402,18 @@ function onTrackClick(track: Track): void {
   playTrack(track, detailTracks.value)
 }
 
+function onStreamingContentScroll(event: Event): void {
+  const element = event.currentTarget as HTMLElement | null
+  if (!element || currentDetail.value?.type !== 'liked') return
+  if (!likedTracksHasMore.value || likedTracksLoadingMore.value) return
+  const scrollable = element.scrollHeight - element.clientHeight
+  if (scrollable <= 0) return
+  const ratio = (element.scrollTop + element.clientHeight) / element.scrollHeight
+  if (ratio >= LIKED_TRACKS_LOAD_THRESHOLD) {
+    void loadMoreLikedTracks()
+  }
+}
+
 async function playLikedSongs(): Promise<void> {
   // For external providers the liked view is a playlist detail; detect it so we
   // don't re-open it on every play click.
@@ -1463,6 +1552,7 @@ onMounted(async () => {
   // case the activeProvider watcher above already handles the initial load.
   if (activeProvider.value === NCM_PROVIDER_ID) {
     if (!ncmNavigationAvailable.value) return
+    await checkLogin()
     if (activeTab.value === 'home' && isLoggedIn.value) {
       loadRecommendations()
     } else if (activeTab.value === 'library') {
@@ -1513,7 +1603,11 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div class="streaming-content">
+    <div
+      ref="streamingContentRef"
+      class="streaming-content"
+      @scroll="onStreamingContentScroll"
+    >
       <div class="streaming-content-header">
         <div class="streaming-header-left">
           <button
@@ -1964,7 +2058,7 @@ onMounted(async () => {
                 <table class="track-table">
                   <thead>
                     <tr>
-                      <th class="col-cover-header">{{ detailTracks.length }} 首</th>
+                      <th class="col-cover-header">{{ detailTrackCountLabel }}</th>
                       <th class="col-index">#</th>
                       <th class="col-info">标题</th>
                       <th class="col-like-header"></th>
@@ -2110,7 +2204,7 @@ onMounted(async () => {
                 <table class="track-table">
                   <thead>
                     <tr>
-                      <th class="col-cover-header">{{ detailTracks.length }} 首</th>
+                      <th class="col-cover-header">{{ detailTrackCountLabel }}</th>
                       <th class="col-index">#</th>
                       <th class="col-info">标题</th>
                       <th v-if="!isExternalActive" class="col-like-header"></th>
@@ -2172,9 +2266,29 @@ onMounted(async () => {
                       <td class="col-duration">{{ formatTime(track.duration) }}</td>
                     </tr>
                   </tbody>
-                </table>
+	                </table>
+	              </div>
+              <div
+                v-if="currentDetail?.type === 'liked' && !isExternalActive"
+                class="liked-page-loader"
+              >
+                <span v-if="likedTracksLoadingMore">
+                  <i class="pi pi-spin pi-spinner"></i>
+                  正在加载更多
+                </span>
+                <button
+                  v-else-if="likedTracksLoadMoreError"
+                  type="button"
+                  class="liked-page-retry"
+                  @click="loadMoreLikedTracks"
+                >
+                  <i class="pi pi-refresh"></i>
+                  <span>继续加载</span>
+                </button>
+                <span v-else-if="likedTracksHasMore">继续向下滚动加载更多</span>
+                <span v-else-if="likedTracksTotal != null && detailTracks.length > 0">已加载全部</span>
               </div>
-            </div>
+	            </div>
           </div>
 
           <StreamingLibrary

@@ -108,6 +108,7 @@ function getProviderCallTimeoutMs(method: TwilightMediaProviderMethod): number {
     [
       'fetchPlaylistTracks',
       'fetchLikedTracks',
+      'fetchLikedTracksPage',
       'fetchUserLibrary',
       'fetchRecommendSongs',
       'fetchRecommendPlaylists',
@@ -1584,6 +1585,7 @@ function isTwilightMediaProviderMethod(method: string): method is TwilightMediaP
     'checkQrLogin',
     'fetchUserLibrary',
     'fetchLikedTracks',
+    'fetchLikedTracksPage',
     'fetchRecommendSongs',
     'fetchRecommendPlaylists',
     'fetchPersonalFm',

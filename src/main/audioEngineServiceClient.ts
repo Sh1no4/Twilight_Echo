@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events'
 import { createRequire } from 'module'
 import { randomUUID } from 'crypto'
+import { fork as forkNodeChildProcess } from 'child_process'
 import type {
   AudioDeviceOption,
   AudioEngineQueueItem,
@@ -310,6 +311,10 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
 
   private start(): void {
     if (this.stopped) return
+    if (shouldUseNodeAudioService()) {
+      this.startNodeChildProcess()
+      return
+    }
     const electron = this.options.electron ?? resolveElectron()
     if (!electron?.utilityProcess) {
       this.recordFailure('当前运行时不支持 Electron utilityProcess')
@@ -337,6 +342,54 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       })
       child.stdout?.on('data', (chunk) => this.emit('log', chunk.toString()))
       child.stderr?.on('data', (chunk) => this.emit('error-log', chunk.toString()))
+    } catch (error) {
+      this.recordFailure(error instanceof Error ? error.message : String(error))
+    }
+  }
+
+  private startNodeChildProcess(): void {
+    try {
+      const env = { ...process.env }
+      delete env.ELECTRON_RUN_AS_NODE
+      const child = forkNodeChildProcess(this.options.serviceEntry, [], {
+        execPath: resolveNodeAudioServiceExecutable(),
+        env,
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc']
+      })
+      const wrappedChild: UtilityProcessLike = {
+        postMessage: (message) => {
+          if (!child.send(message)) throw new Error('音频服务 IPC 发送失败')
+        },
+        kill: () => {
+          child.kill()
+        },
+        on: (event, listener) => {
+          if (event === 'message') {
+            child.on('message', listener as (message: AudioServiceResponse | AudioServiceEvent) => void)
+          } else if (event === 'exit') {
+            child.on('exit', listener as (code: number | null) => void)
+          } else {
+            child.on('error', listener as (error: unknown) => void)
+          }
+        },
+        stdout: child.stdout ?? undefined,
+        stderr: child.stderr ?? undefined
+      }
+      this.child = wrappedChild
+      wrappedChild.on('message', (message) => {
+        if (this.child !== wrappedChild) return
+        this.handleMessage(message)
+      })
+      wrappedChild.on('exit', (code) => {
+        if (this.child !== wrappedChild) return
+        this.handleExit(`音频服务进程退出：${code ?? 'unknown'}`)
+      })
+      wrappedChild.on('error', (error) => {
+        if (this.child !== wrappedChild) return
+        this.handleExit(`音频服务进程错误：${error instanceof Error ? error.message : String(error)}`)
+      })
+      wrappedChild.stdout?.on('data', (chunk) => this.emit('log', chunk.toString()))
+      wrappedChild.stderr?.on('data', (chunk) => this.emit('error-log', chunk.toString()))
     } catch (error) {
       this.recordFailure(error instanceof Error ? error.message : String(error))
     }
@@ -550,7 +603,16 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
 
 export function canUseAudioEngineService(): boolean {
   if (process.env.TWILIGHT_AUDIO_SERVICE === '0') return false
+  if (shouldUseNodeAudioService()) return true
   return Boolean(resolveElectron()?.utilityProcess)
+}
+
+function shouldUseNodeAudioService(): boolean {
+  return process.env.TWILIGHT_AUDIO_SERVICE_NODE === '1'
+}
+
+function resolveNodeAudioServiceExecutable(): string {
+  return process.env.TWILIGHT_AUDIO_NODE_EXECUTABLE || process.env.NODE || 'node'
 }
 
 function resolveElectron(): ElectronModule | null {

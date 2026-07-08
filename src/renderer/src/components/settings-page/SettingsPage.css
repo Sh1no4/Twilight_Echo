@@ -52,27 +52,30 @@
 }
 
 .settings-preview-layout {
-  width: min(100%, 1280px);
+  width: min(100%, 1120px);
   margin: 0 auto;
 }
 
 .settings-preview-layout {
   position: relative;
-  display: block;
+  display: grid;
+  grid-template-columns: 192px minmax(0, 896px);
+  justify-content: center;
+  gap: 32px;
   padding-top: 32px;
 }
 
 .settings-preview-nav {
-  position: fixed;
-  left: max(24px, calc((100vw - 896px) / 4 - 96px));
-  top: max(32px, calc(44vh - 218px));
+  position: sticky;
+  top: 32px;
   z-index: 100;
   display: flex;
   width: 192px;
-  height: 436px;
+  height: auto;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  align-self: start;
   gap: 6px;
   max-height: calc(100vh - 96px);
 }
@@ -153,9 +156,9 @@
 .settings-preview-stack {
   display: flex;
   width: min(100%, 896px);
+  min-width: 0;
   flex-direction: column;
   gap: 32px;
-  margin: 0 auto;
   padding-bottom: 40px;
 }
 
@@ -265,6 +268,7 @@
 }
 
 .preview-section {
+  min-width: 0;
   scroll-margin-top: 24px;
   padding: 32px;
 }
@@ -727,6 +731,8 @@
 }
 
 .device-panel {
+  width: 100%;
+  min-width: 0;
   margin-bottom: 32px;
   overflow: hidden;
   border: 1px solid rgba(229, 231, 235, 0.75);
@@ -760,7 +766,7 @@
 
 .device-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
   gap: 12px;
   padding: 0 20px 20px;
 }
@@ -768,9 +774,15 @@
 .device-card {
   position: relative;
   display: grid;
-  min-height: 132px;
-  gap: 4px;
-  align-content: end;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-areas:
+    'icon name badge'
+    'icon spec spec'
+    'capabilities capabilities capabilities';
+  min-height: 136px;
+  gap: 7px 10px;
+  align-content: start;
+  align-items: start;
   padding: 16px;
   border: 1px solid #e5e7eb;
   border-radius: 14px;
@@ -789,43 +801,53 @@
   box-shadow: 0 14px 32px rgba(var(--te-primary-rgb), 0.12);
 }
 
-.device-card i {
-  position: absolute;
-  top: 16px;
-  left: 16px;
+.device-card > i {
+  grid-area: icon;
+  width: 34px;
+  padding-top: 2px;
   color: var(--brand-500);
-  font-size: 28px;
+  font-size: 24px;
+  line-height: 1;
+  text-align: center;
 }
 
-.device-card span {
+.device-card > span {
+  grid-area: name;
+  min-width: 0;
   overflow: hidden;
   color: #1f2937;
   font-size: 13px;
   font-weight: 900;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.device-card small {
+.device-card > small {
+  grid-area: spec;
+  min-width: 0;
   overflow: hidden;
   color: #6b7280;
   font-size: 11px;
   font-weight: 600;
+  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .device-capability-row {
+  grid-area: capabilities;
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 4px;
+  min-width: 0;
+  margin-top: 6px;
 }
 
 .device-capability-chip {
   max-width: 100%;
   overflow: hidden;
-  padding: 3px 6px;
+  padding: 4px 7px;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #f9fafb;
@@ -861,16 +883,17 @@
   color: #6b7280;
 }
 
-.device-card b {
-  position: absolute;
-  top: 12px;
-  right: 12px;
+.device-card > b {
+  grid-area: badge;
+  justify-self: end;
   padding: 3px 7px;
   border-radius: 999px;
   background: var(--brand-50);
   color: var(--brand-600);
   font-size: 10px;
   font-weight: 900;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 
 .segmented-control,
@@ -2110,6 +2133,8 @@
 
 /* ── 输出状态诊断面板 ── */
 .output-diagnostic-panel {
+  width: 100%;
+  min-width: 0;
   margin-bottom: 24px;
   padding: 16px 20px;
   border: 1px solid rgba(229, 231, 235, 0.6);
@@ -2119,8 +2144,10 @@
 
 .diagnostic-head {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
+  gap: 8px 14px;
   margin-bottom: 8px;
 }
 
@@ -2139,6 +2166,7 @@
 }
 
 .diagnostic-chain {
+  overflow-wrap: anywhere;
   color: #374151;
   font-size: 13px;
   font-weight: 600;
@@ -2147,6 +2175,7 @@
 
 .diagnostic-meta {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   color: #6b7280;
   font-size: 11px;

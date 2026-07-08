@@ -1,5 +1,5 @@
 import { EventEmitter } from 'events'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 import { createRequire } from 'module'
 import { join } from 'path'
 import { AudioEngineServiceBinding, canUseAudioEngineService } from './audioEngineServiceClient.ts'
@@ -835,6 +835,46 @@ function normalizeAudioDevice(device: unknown): string {
   const normalized = device.trim()
   if (!normalized || isDefaultAudioDeviceAlias(normalized)) return 'auto'
   return normalized
+}
+
+function getAlsaPlaybackDeviceCandidates(): string[] {
+  if (process.platform !== 'linux') return []
+  try {
+    const entries = readFileSync('/proc/asound/pcm', 'utf8')
+      .split(/\r?\n/)
+      .map((line) => {
+        const match = line.match(/^(\d+)-(\d+):\s*(.*):\s*playback\b/)
+        if (!match) return null
+        const description = match[3].toLowerCase()
+        const score = description.includes('usb')
+          ? 0
+          : description.includes('hdmi')
+            ? 2
+            : 1
+        return {
+          card: Number(match[1]),
+          device: Number(match[2]),
+          score
+        }
+      })
+      .filter((entry): entry is { card: number; device: number; score: number } => Boolean(entry))
+      .sort((left, right) => left.score - right.score || left.card - right.card || left.device - right.device)
+
+    const candidates: string[] = []
+    const seen = new Set<string>()
+    for (const entry of entries) {
+      for (const prefix of ['plughw', 'hw']) {
+        const id = `${prefix}:${entry.card},${entry.device}`
+        if (!seen.has(id)) {
+          seen.add(id)
+          candidates.push(id)
+        }
+      }
+    }
+    return candidates
+  } catch {
+    return []
+  }
 }
 
 function looksLikeWasapiEndpointId(device: string): boolean {
@@ -2047,6 +2087,31 @@ export class AudioEngineManager extends EventEmitter {
         this.device = firstErrorContext.device
         this.exclusiveMode = firstErrorContext.exclusiveMode
         this.outputConfig = firstErrorContext.outputConfig
+      }
+    }
+    if (
+      !nativeStarted &&
+      firstErrorContext.output === 'alsa' &&
+      firstErrorContext.device === 'auto'
+    ) {
+      nativeFallbackReason = this.lastNativeError || 'ALSA 默认输出不可用'
+      for (const candidate of getAlsaPlaybackDeviceCandidates()) {
+        const deviceSynced = await this.callNativeMaybeAsync(
+          `切换 ALSA 兜底输出设备 ${candidate}`,
+          'SetOutputDevice',
+          candidate
+        )
+        if (!deviceSynced) continue
+        nativeStarted = await this.tryNativePlay(`ALSA 兜底播放 ${candidate}`, source, startTime, false)
+        if (nativeStarted) {
+          this.device = candidate
+          this.nativeOutputRouteSynced = true
+          break
+        }
+      }
+      if (!nativeStarted) {
+        this.device = firstErrorContext.device
+        await this.callNativeMaybeAsync('恢复 ALSA 默认输出设备', 'SetOutputDevice', this.device)
       }
     }
     if (!nativeStarted && !rendererFallbackAllowed()) {

@@ -26,6 +26,7 @@ const PROVIDER_METHOD_CAPABILITIES: Partial<
   checkQrLogin: 'login',
   fetchUserLibrary: 'library',
   fetchLikedTracks: 'library',
+  fetchLikedTracksPage: 'library',
   fetchRecommendSongs: 'library',
   fetchRecommendPlaylists: 'library',
   fetchPersonalFm: 'library',

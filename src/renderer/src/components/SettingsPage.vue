@@ -3663,6 +3663,56 @@ html[data-theme='dark'] .settings-preview-page .device-card.active {
   box-shadow: 0 16px 34px rgba(0, 0, 0, 0.32);
 }
 
+html[data-theme='dark'] .settings-preview-page .device-card > i {
+  display: inline-flex;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: #07080a;
+  color: var(--te-primary-400);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 10px 24px rgba(0, 0, 0, 0.26);
+}
+
+html[data-theme='dark'] .settings-preview-page .device-capability-chip {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: #07080a;
+  color: rgba(203, 213, 225, 0.86);
+}
+
+html[data-theme='dark'] .settings-preview-page .device-capability-chip.verified {
+  border-color: rgba(34, 197, 94, 0.26);
+  background: rgba(20, 83, 45, 0.34);
+  color: #86efac;
+}
+
+html[data-theme='dark'] .settings-preview-page .device-capability-chip.runtime {
+  border-color: rgba(var(--te-primary-rgb), 0.28);
+  background: rgba(var(--te-primary-rgb), 0.16);
+  color: var(--te-primary-300);
+}
+
+html[data-theme='dark'] .settings-preview-page .device-capability-chip.unsupported {
+  border-color: rgba(248, 113, 113, 0.24);
+  background: rgba(127, 29, 29, 0.3);
+  color: #fca5a5;
+}
+
+html[data-theme='dark'] .settings-preview-page .device-capability-chip.unknown {
+  border-color: rgba(148, 163, 184, 0.16);
+  background: rgba(15, 23, 42, 0.82);
+  color: rgba(203, 213, 225, 0.78);
+}
+
+html[data-theme='dark'] .settings-preview-page .device-card > b {
+  border: 1px solid rgba(var(--te-primary-rgb), 0.32);
+  background: #07080a;
+  color: var(--te-primary-300);
+}
+
 html[data-theme='dark'] .settings-preview-page .section-title-row h2,
 html[data-theme='dark'] .settings-preview-page .setting-copy strong,
 html[data-theme='dark'] .settings-preview-page .accordion-head strong,

@@ -255,9 +255,6 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
           <p>回顾您最近的音乐足迹</p>
         </div>
         <div class="feature-preview">
-          <div class="preview-image placeholder-img">
-            <i class="pi pi-music"></i>
-          </div>
           <div class="enter-btn">
             <i class="pi pi-chevron-right"></i>
           </div>
@@ -274,9 +271,6 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
           <p>探索您的最常播放榜单</p>
         </div>
         <div class="feature-preview">
-          <div class="preview-image placeholder-img">
-            <i class="pi pi-chart-line"></i>
-          </div>
           <div class="enter-btn">
             <i class="pi pi-chevron-right"></i>
           </div>
@@ -768,10 +762,16 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
 }
 
 .feature-card {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
+  gap: 24px;
+  min-height: 120px;
   padding: 24px 32px;
+}
+
+.feature-info {
+  min-width: 0;
 }
 
 .recent-card {
@@ -803,12 +803,14 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
 }
 
 .feature-info h3 {
+  overflow-wrap: anywhere;
   font-size: 20px;
   font-weight: 800;
   color: var(--te-neutral-900, #1e293b);
   margin: 0 0 4px 0;
 }
 .feature-info p {
+  overflow-wrap: anywhere;
   font-size: 14px;
   color: var(--te-neutral-500, #64748b);
   font-weight: 500;
@@ -838,34 +840,6 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
 .feature-preview {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding-right: 20px;
-}
-
-.preview-image {
-  width: 64px;
-  height: 64px;
-  border-radius: 12px;
-  object-fit: cover;
-  box-shadow: 0 8px 16px rgba(15, 23, 42, 0.08);
-  transition: all 0.3s;
-}
-
-.feature-card:hover .preview-image {
-  transform: scale(1.05);
-}
-
-.placeholder-img {
-  background: #e0e7ff;
-  color: #818cf8;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-}
-.ranking-card .placeholder-img {
-  background: #ffe4e6;
-  color: #fb7185;
 }
 
 /* Common Section Header */
@@ -1128,10 +1102,25 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   background: radial-gradient(circle, rgba(var(--te-primary-rgb), 0.11) 0%, transparent 70%);
 }
 
-:global(html[data-theme='dark']) .favorites-info .tag,
-:global(html[data-theme='dark']) .recent-card .icon-wrap {
+:global(html[data-theme='dark']) .favorites-info .tag {
   background: rgba(var(--te-primary-rgb), 0.13);
   color: var(--te-primary-400);
+}
+
+:global(html[data-theme='dark'] .feature-card .feature-info .icon-wrap) {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: #07080a !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 10px 24px rgba(0, 0, 0, 0.26);
+}
+
+:global(html[data-theme='dark'] .recent-card .feature-info .icon-wrap) {
+  color: var(--te-primary-400) !important;
+}
+
+:global(html[data-theme='dark'] .ranking-card .feature-info .icon-wrap) {
+  color: #fb7185 !important;
 }
 
 :global(html[data-theme='dark']) .btn-play {
@@ -1160,16 +1149,6 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   color: var(--te-primary-400);
 }
 
-:global(html[data-theme='dark']) .placeholder-img {
-  background: #242016;
-  color: var(--te-primary-400);
-}
-
-:global(html[data-theme='dark']) .ranking-card .placeholder-img {
-  background: rgba(217, 79, 125, 0.14);
-  color: #f08aad;
-}
-
 @keyframes library-in {
   from {
     opacity: 0;
@@ -1192,9 +1171,17 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   .profile-card,
   .favorites-card,
   .feature-card {
-    flex-direction: column;
     align-items: flex-start;
     gap: 16px;
+  }
+
+  .feature-card {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-card,
+  .favorites-card {
+    flex-direction: column;
   }
 
   .favorites-cover {
@@ -1206,6 +1193,7 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   
   .feature-preview {
     align-self: flex-end;
+    min-width: 0;
   }
 }
 </style>

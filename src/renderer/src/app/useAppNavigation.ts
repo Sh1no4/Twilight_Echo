@@ -19,6 +19,7 @@ export function useAppNavigation() {
   const showStreamingPage = ref(false)
   const showLoginPage = ref(false)
   const loginPageMode = ref<'login' | 'profile'>('login')
+  const loginInitialProviderId = ref<string | null>(null)
   const showSettingsPage = ref(false)
   const showPluginPage = ref(false)
   const showEqualizerPage = ref(false)
@@ -116,7 +117,7 @@ export function useAppNavigation() {
     menuOpen.value = localMenuOpenBeforeStreaming.value
   }
 
-  function openLoginPage(): void {
+  function openLoginPage(initialProviderId: string | null = null): void {
     menuOpen.value = false
     showPlayingPage.value = false
     showStreamingPage.value = false
@@ -124,11 +125,13 @@ export function useAppNavigation() {
     showEqualizerPage.value = false
     activePluginPage.value = null
     loginPageMode.value = 'login'
+    loginInitialProviderId.value = initialProviderId
     showLoginPage.value = true
   }
 
   function closeLoginPage(): void {
     showLoginPage.value = false
+    loginInitialProviderId.value = null
     showStreamingPage.value = true
   }
 
@@ -229,6 +232,7 @@ export function useAppNavigation() {
     showStreamingPage,
     showLoginPage,
     loginPageMode,
+    loginInitialProviderId,
     showSettingsPage,
     showPluginPage,
     showEqualizerPage,

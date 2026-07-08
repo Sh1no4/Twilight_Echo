@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import QRCode from 'qrcode'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useNcmStore } from '../stores/useNcmStore'
 import { useProviderStore, type ProviderInfo } from '../stores/useProviderStore'
 import type { MediaProviderProfile } from '../providers/mediaProvider'
 
-defineProps<{
+const props = defineProps<{
   forceProfile?: boolean
+  initialProviderId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -14,6 +16,7 @@ const emit = defineEmits<{
 }>()
 
 const providerStore = useProviderStore()
+const ncmStore = useNcmStore()
 
 const POLL_INTERVAL = 5000
 const QR_KEY_COOLDOWN = 5000
@@ -200,6 +203,14 @@ async function refreshAccount(providerId: string): Promise<void> {
   }
 }
 
+async function syncSuccessfulLogin(providerId: string): Promise<void> {
+  await refreshAccounts()
+  if (providerId === 'ncm') {
+    await ncmStore.checkLogin()
+  }
+  emit('loginSuccess')
+}
+
 function openAccount(providerId: string): void {
   activeProviderId.value = providerId
   const state = accountStates.value[providerId]
@@ -319,8 +330,7 @@ function startPolling(providerId: string, key: string): void {
     if (isQrStatus(result.code, 'success')) {
       stopPolling()
       pageState.value = 'login_success'
-      await refreshAccounts()
-      emit('loginSuccess')
+      await syncSuccessfulLogin(providerId)
     }
   }, POLL_INTERVAL)
 }
@@ -388,10 +398,10 @@ async function handleExtraAction(method: string): Promise<void> {
   qrKey.value = ''
   errorMsg.value = ''
   try {
-    await providerStore.callProvider(activeProviderId.value, method)
+    const providerId = activeProviderId.value
+    await providerStore.callProvider(providerId, method)
     pageState.value = 'login_success'
-    await refreshAccounts()
-    emit('loginSuccess')
+    await syncSuccessfulLogin(providerId)
   } catch (error) {
     pageState.value = 'error'
     errorMsg.value = error instanceof Error ? error.message : String(error)
@@ -471,8 +481,7 @@ async function handleAccountLogin(): Promise<void> {
       ])
     }
     pageState.value = 'login_success'
-    await refreshAccounts()
-    emit('loginSuccess')
+    await syncSuccessfulLogin(providerId)
   } catch (error) {
     accountLoginMessage.value = normalizeLoginError(error)
     applyLoginCooldownFromMessage(accountLoginMessage.value)
@@ -508,8 +517,19 @@ function handleBack(): void {
   emit('back')
 }
 
+async function enterAfterLoggedIn(): Promise<void> {
+  if (activeProviderId.value) {
+    await syncSuccessfulLogin(activeProviderId.value)
+    return
+  }
+  emit('loginSuccess')
+}
+
 onMounted(async () => {
   await refreshAccounts()
+  if (props.initialProviderId && !activeProviderId.value) {
+    openAccount(props.initialProviderId)
+  }
 })
 
 onUnmounted(() => {
@@ -589,7 +609,7 @@ onUnmounted(() => {
             <span>退出登录</span>
           </button>
         </div>
-        <button class="login-action-btn" style="margin-top: 16px" @click="$emit('loginSuccess')">
+        <button class="login-action-btn" style="margin-top: 16px" @click="enterAfterLoggedIn">
           进入流媒体
         </button>
       </div>

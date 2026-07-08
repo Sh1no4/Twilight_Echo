@@ -240,6 +240,14 @@ export interface TwilightMediaProviderRegistration {
   checkQrLogin?(key: string): Promise<{ code: number }>
   fetchUserLibrary?(force?: boolean): Promise<{ likedPlaylist: PlaylistSummary | null; playlists: PlaylistSummary[] }>
   fetchLikedTracks?(force?: boolean): Promise<Track[]>
+  fetchLikedTracksPage?(offset?: number, limit?: number, force?: boolean): Promise<{
+    tracks: Track[]
+    total: number
+    offset: number
+    limit: number
+    nextOffset: number
+    hasMore: boolean
+  }>
   fetchRecommendSongs?(): Promise<Track[]>
   fetchRecommendPlaylists?(): Promise<PlaylistSummary[]>
   fetchPersonalFm?(): Promise<Track[]>

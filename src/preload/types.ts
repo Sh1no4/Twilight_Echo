@@ -162,6 +162,7 @@ export type TwilightMediaProviderMethod =
   | 'checkQrLogin'
   | 'fetchUserLibrary'
   | 'fetchLikedTracks'
+  | 'fetchLikedTracksPage'
   | 'fetchRecommendSongs'
   | 'fetchRecommendPlaylists'
   | 'fetchPersonalFm'

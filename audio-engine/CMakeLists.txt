@@ -44,7 +44,7 @@ if(UNIX AND NOT APPLE AND TAE_ENABLE_ALSA)
   endif()
 endif()
 
-add_library(twilight_audio_engine SHARED
+set(TAE_ENGINE_SOURCES
   core/AudioBuffer.cpp
   core/AudioPipeline.cpp
   core/AudioTypes.cpp
@@ -68,20 +68,12 @@ add_library(twilight_audio_engine SHARED
   dsp/ReplayGainProcessor.cpp
   metadata/AudioMetadataService.cpp
   output/OutputBackendFactory.cpp
-  output/wasapi/WasapiFormatNegotiator.cpp
-  output/wasapi/WasapiSharedBackend.cpp
-  output/wasapi/WasapiExclusiveBackend.cpp
-  output/asio/AsioBackend.cpp
-  output/asio/DeviceCapabilityCache.cpp
-  output/asio/RealAsioHost.cpp
-  output/coreaudio/CoreAudioBackend.cpp
-  output/coreaudio/CoreAudioExclusiveBackend.cpp
-  output/alsa/AlsaBackend.cpp
-  output/alsa/RealAlsaHost.cpp
   playlist/QueueManager.cpp
   plugins/PluginRegistry.cpp
   utils/StringUtils.cpp
 )
+
+add_library(twilight_audio_engine SHARED ${TAE_ENGINE_SOURCES})
 
 target_include_directories(twilight_audio_engine
   PUBLIC
@@ -124,20 +116,38 @@ if(NOT FFMPEG_FOUND)
     )
   endif()
 endif()
+
+set(TAE_FFMPEG_EXTRA_LIBS)
+if(WIN32)
+  list(APPEND TAE_FFMPEG_EXTRA_LIBS ws2_32 secur32 ncrypt crypt32 bcrypt user32 atomic)
+elseif(UNIX AND NOT APPLE)
+  list(APPEND TAE_FFMPEG_EXTRA_LIBS atomic)
+endif()
+
 if(FFMPEG_FOUND)
   target_compile_definitions(twilight_audio_engine PRIVATE TAE_HAS_FFMPEG=1)
   target_include_directories(twilight_audio_engine PRIVATE ${FFMPEG_INCLUDE_DIRS})
-  target_link_libraries(twilight_audio_engine PRIVATE ${FFMPEG_LIBRARIES} ws2_32 secur32 ncrypt crypt32 bcrypt user32 atomic)
+  target_link_libraries(twilight_audio_engine PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
 else()
   message(WARNING "FFmpeg development libraries were not found; native playback will report TAE_RESULT_BACKEND_UNAVAILABLE.")
 endif()
 
 if(TAE_WASAPI_AVAILABLE)
+  target_sources(twilight_audio_engine PRIVATE
+    output/wasapi/WasapiFormatNegotiator.cpp
+    output/wasapi/WasapiSharedBackend.cpp
+    output/wasapi/WasapiExclusiveBackend.cpp
+  )
   target_compile_definitions(twilight_audio_engine PRIVATE TAE_ENABLE_WASAPI=1)
   target_link_libraries(twilight_audio_engine PRIVATE ole32 uuid avrt)
 endif()
 
 if(TAE_ASIO_AVAILABLE)
+  target_sources(twilight_audio_engine PRIVATE
+    output/asio/AsioBackend.cpp
+    output/asio/DeviceCapabilityCache.cpp
+    output/asio/RealAsioHost.cpp
+  )
   set(TAE_ASIO_SDK_SOURCES
     "${TAE_ASIO_SDK_DIR}/common/asio.cpp"
     "${TAE_ASIO_SDK_DIR}/host/asiodrivers.cpp"
@@ -158,7 +168,11 @@ if(TAE_ASIO_AVAILABLE)
 endif()
 
 if(TAE_COREAUDIO_AVAILABLE)
-  target_sources(twilight_audio_engine PRIVATE output/coreaudio/RealCoreAudioHost.cpp)
+  target_sources(twilight_audio_engine PRIVATE
+    output/coreaudio/CoreAudioBackend.cpp
+    output/coreaudio/CoreAudioExclusiveBackend.cpp
+    output/coreaudio/RealCoreAudioHost.cpp
+  )
   target_compile_definitions(twilight_audio_engine PRIVATE TAE_ENABLE_COREAUDIO=1)
   target_link_libraries(twilight_audio_engine PRIVATE
     "-framework CoreAudio"
@@ -169,6 +183,10 @@ if(TAE_COREAUDIO_AVAILABLE)
 endif()
 
 if(TAE_ALSA_AVAILABLE)
+  target_sources(twilight_audio_engine PRIVATE
+    output/alsa/AlsaBackend.cpp
+    output/alsa/RealAlsaHost.cpp
+  )
   target_compile_definitions(twilight_audio_engine PRIVATE TAE_ENABLE_ALSA=1)
   target_include_directories(twilight_audio_engine PRIVATE ${ALSA_INCLUDE_DIRS})
   target_link_libraries(twilight_audio_engine PRIVATE ${ALSA_LIBRARIES})
@@ -185,6 +203,8 @@ if(TAE_BUILD_NAPI)
   set_target_properties(twilight_audio_node PROPERTIES
     PREFIX ""
     SUFFIX ".node"
+    BUILD_RPATH "$ORIGIN"
+    INSTALL_RPATH "$ORIGIN"
   )
 
   if(NOT TAE_NODE_INCLUDE_DIR)
@@ -309,7 +329,7 @@ if(TAE_BUILD_TESTS)
   if(FFMPEG_FOUND)
     target_compile_definitions(twilight_metadata_tests PRIVATE TAE_HAS_FFMPEG=1)
     target_include_directories(twilight_metadata_tests PRIVATE ${FFMPEG_INCLUDE_DIRS})
-    target_link_libraries(twilight_metadata_tests PRIVATE ${FFMPEG_LIBRARIES} ws2_32 secur32 ncrypt crypt32 bcrypt user32 atomic)
+    target_link_libraries(twilight_metadata_tests PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
   endif()
   add_test(NAME twilight_metadata_unit COMMAND twilight_metadata_tests)
 
@@ -330,7 +350,7 @@ if(TAE_BUILD_TESTS)
   if(FFMPEG_FOUND)
     target_compile_definitions(twilight_ffmpeg_decoder_tests PRIVATE TAE_HAS_FFMPEG=1)
     target_include_directories(twilight_ffmpeg_decoder_tests PRIVATE ${FFMPEG_INCLUDE_DIRS})
-    target_link_libraries(twilight_ffmpeg_decoder_tests PRIVATE ${FFMPEG_LIBRARIES} ws2_32 secur32 ncrypt crypt32 bcrypt user32 atomic)
+    target_link_libraries(twilight_ffmpeg_decoder_tests PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
   endif()
   add_test(NAME twilight_ffmpeg_decoder_unit COMMAND twilight_ffmpeg_decoder_tests)
 
@@ -362,6 +382,8 @@ if(TAE_BUILD_TESTS)
   add_executable(twilight_platform_backend_smoke
     tests/platform_backend_smoke.cpp
     core/AudioTypes.cpp
+    output/coreaudio/CoreAudioBackend.cpp
+    output/coreaudio/CoreAudioExclusiveBackend.cpp
   )
   target_include_directories(twilight_platform_backend_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(twilight_platform_backend_smoke PRIVATE twilight_audio_engine)
@@ -375,10 +397,7 @@ if(TAE_BUILD_TESTS)
     target_link_libraries(twilight_platform_backend_smoke PRIVATE ole32 uuid avrt)
   endif()
   if(TAE_COREAUDIO_AVAILABLE)
-    target_sources(twilight_platform_backend_smoke PRIVATE
-      output/coreaudio/CoreAudioBackend.cpp
-      output/coreaudio/CoreAudioExclusiveBackend.cpp
-    )
+    target_sources(twilight_platform_backend_smoke PRIVATE output/coreaudio/RealCoreAudioHost.cpp)
     target_compile_definitions(twilight_platform_backend_smoke PRIVATE TAE_ENABLE_COREAUDIO=1)
     target_link_libraries(twilight_platform_backend_smoke PRIVATE
       "-framework CoreAudio"

@@ -72,6 +72,10 @@
     "vue-tsc": "^3.1.6"
   },
   "allowScripts": {
-    "electron": true
+    "electron": true,
+    "esbuild": true,
+    "electron-winstaller": true,
+    "github:devsnek/node-register-scheme#e7cc9a63a1f512565da44cb57316d9fb10750e17": true,
+    "ttf2woff2@8.0.1": true
   }
 }

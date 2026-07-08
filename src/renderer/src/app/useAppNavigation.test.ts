@@ -69,3 +69,20 @@ test('active plugin extension page closes when its contribution disappears', () 
 
   assert.equal(navigation.activePluginPage.value, null)
 })
+
+test('login page can open with an initial streaming provider', () => {
+  const navigation = useAppNavigation()
+
+  navigation.enterStreamingMode()
+  navigation.openLoginPage('ncm')
+
+  assert.equal(navigation.showLoginPage.value, true)
+  assert.equal(navigation.showStreamingPage.value, false)
+  assert.equal(navigation.loginInitialProviderId.value, 'ncm')
+
+  navigation.closeLoginPage()
+
+  assert.equal(navigation.showLoginPage.value, false)
+  assert.equal(navigation.showStreamingPage.value, true)
+  assert.equal(navigation.loginInitialProviderId.value, null)
+})

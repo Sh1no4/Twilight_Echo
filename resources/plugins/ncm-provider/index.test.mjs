@@ -114,6 +114,230 @@ test('search song normalization preserves legal bpm metadata', async () => {
   }
 })
 
+test('liked tracks fall back to playlist detail when playlist track-all is malformed', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: {
+            userId: 42,
+            nickname: 'listener',
+            avatarUrl: 'avatar.jpg',
+            signature: ''
+          }
+        }
+      }
+    }
+    if (url.pathname === '/user/playlist') {
+      return {
+        playlist: [
+          {
+            id: 9001,
+            name: '喜欢的音乐',
+            specialType: 5,
+            trackCount: 2,
+            coverImgUrl: 'cover.jpg'
+          }
+        ]
+      }
+    }
+    if (url.pathname === '/playlist/track/all') {
+      throw new Error('Unexpected non-whitespace character after JSON at position 25')
+    }
+    if (url.pathname === '/playlist/detail') {
+      return { playlist: { trackIds: [{ id: 1 }, { id: 2 }] } }
+    }
+    if (url.pathname === '/song/detail') {
+      return { songs: [song(1), song(2)] }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const tracks = await provider.fetchLikedTracks(true)
+    assert.deepEqual(
+      tracks.map((track) => track.ncmSongId),
+      [1, 2]
+    )
+    assert.equal(
+      requests.filter((path) => parseRequest(path).pathname === '/playlist/track/all').length,
+      3
+    )
+    assert.ok(requests.some((path) => parseRequest(path).pathname === '/playlist/detail'))
+    assert.ok(requests.some((path) => parseRequest(path).pathname === '/song/detail'))
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('liked tracks fall back to likelist when playlist endpoints fail', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: {
+            userId: 42,
+            nickname: 'listener',
+            avatarUrl: 'avatar.jpg',
+            signature: ''
+          }
+        }
+      }
+    }
+    if (url.pathname === '/user/playlist') {
+      return {
+        playlist: [
+          {
+            id: 9001,
+            name: '喜欢的音乐',
+            specialType: 5,
+            trackCount: 2,
+            coverImgUrl: 'cover.jpg'
+          }
+        ]
+      }
+    }
+    if (url.pathname === '/playlist/track/all' || url.pathname === '/playlist/detail') {
+      throw new Error(`endpoint unavailable: ${url.pathname}`)
+    }
+    if (url.pathname === '/likelist') {
+      return { ids: [3, 4] }
+    }
+    if (url.pathname === '/song/detail') {
+      return { songs: [song(3), song(4)] }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const tracks = await provider.fetchLikedTracks(true)
+    assert.deepEqual(
+      tracks.map((track) => track.ncmSongId),
+      [3, 4]
+    )
+    assert.ok(requests.some((path) => parseRequest(path).pathname === '/likelist'))
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('liked song detail requests split into smaller chunks after transient failures', async () => {
+  const ids = Array.from({ length: 30 }, (_, index) => index + 1)
+  const detailBatchSizes = []
+  const provider = await activateProvider(async (path) => {
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: {
+            userId: 42,
+            nickname: 'listener',
+            avatarUrl: 'avatar.jpg',
+            signature: ''
+          }
+        }
+      }
+    }
+    if (url.pathname === '/user/playlist') return { playlist: [] }
+    if (url.pathname === '/likelist') return { ids }
+    if (url.pathname === '/song/detail') {
+      const batch = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean).map(Number)
+      detailBatchSizes.push(batch.length)
+      if (batch.length > 25) throw new Error('socket hang up')
+      return { songs: batch.map(song) }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const tracks = await provider.fetchLikedTracks(true)
+    assert.deepEqual(
+      tracks.map((track) => track.ncmSongId),
+      ids
+    )
+    assert.deepEqual(detailBatchSizes, [30, 30, 30, 15, 15])
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('liked tracks page loads only the requested window', async () => {
+  const playlistIds = Array.from({ length: 250 }, (_, index) => 1000 + index)
+  const likelistIds = Array.from({ length: 250 }, (_, index) => index + 1)
+  const detailIds = []
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: {
+            userId: 42,
+            nickname: 'listener',
+            avatarUrl: 'avatar.jpg',
+            signature: ''
+          }
+        }
+      }
+    }
+    if (url.pathname === '/user/playlist') {
+      return {
+        playlist: [
+          {
+            id: 9001,
+            name: '喜欢的音乐',
+            specialType: 5,
+            trackCount: playlistIds.length,
+            coverImgUrl: 'cover.jpg'
+          }
+        ]
+      }
+    }
+    if (url.pathname === '/playlist/detail') {
+      return { playlist: { trackIds: playlistIds.map((id) => ({ id })) } }
+    }
+    if (url.pathname === '/likelist') return { ids: likelistIds }
+    if (url.pathname === '/song/detail') {
+      const batch = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean).map(Number)
+      detailIds.push(...batch)
+      return { songs: batch.map(song) }
+    }
+    throw new Error(`unexpected endpoint: ${url.pathname}`)
+  })
+
+  try {
+    const page = await provider.fetchLikedTracksPage(100, 100, true)
+    assert.equal(page.total, 250)
+    assert.equal(page.offset, 100)
+    assert.equal(page.limit, 100)
+    assert.equal(page.nextOffset, 200)
+    assert.equal(page.hasMore, true)
+    assert.deepEqual(
+      page.tracks.map((track) => track.ncmSongId),
+      playlistIds.slice(100, 200)
+    )
+    assert.deepEqual(detailIds, playlistIds.slice(100, 200))
+    assert.equal(requests.some((path) => parseRequest(path).pathname === '/likelist'), false)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('artist albums keep paging when a short page reports more items', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {

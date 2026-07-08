@@ -48,6 +48,15 @@ export interface NcmLoginState {
   profile: NcmProfile | null
 }
 
+export interface NcmLikedTracksPage {
+  tracks: Track[]
+  total: number
+  offset: number
+  limit: number
+  nextOffset: number
+  hasMore: boolean
+}
+
 export interface NcmStore {
   providerAvailable: Ref<boolean>
   providerError: Ref<string>
@@ -80,6 +89,7 @@ export interface NcmStore {
   }>
   fetchPlaylistTracks: (playlistId: number | string, force?: boolean) => Promise<Track[]>
   fetchLikedTracks: (force?: boolean) => Promise<Track[]>
+  fetchLikedTracksPage: (offset?: number, limit?: number, force?: boolean) => Promise<NcmLikedTracksPage>
   getSongStreamUrl: (songId: number, force?: boolean) => Promise<string | null>
   fetchRecommendSongs: () => Promise<Track[]>
   fetchRecommendPlaylists: () => Promise<NcmPlaylistSummary[]>
@@ -284,6 +294,20 @@ export function useNcmStore(): NcmStore {
     return tracks
   }
 
+  async function fetchLikedTracksPage(
+    offset = 0,
+    limit = 100,
+    force = false
+  ): Promise<NcmLikedTracksPage> {
+    const page = await callNcmProvider<NcmLikedTracksPage>('fetchLikedTracksPage', [
+      offset,
+      limit,
+      force
+    ])
+    syncLikedIds(page.tracks)
+    return page
+  }
+
   async function getSongStreamUrl(songId: number, force = false): Promise<string | null> {
     return callNcmProvider<string | null>('getPlaybackUrl', [
       { id: `ncm:${songId}`, filePath: `ncm:${songId}`, source: 'ncm', ncmSongId: songId },
@@ -454,6 +478,7 @@ export function useNcmStore(): NcmStore {
     fetchUserLibrary,
     fetchPlaylistTracks,
     fetchLikedTracks,
+    fetchLikedTracksPage,
     getSongStreamUrl,
     fetchRecommendSongs,
     fetchRecommendPlaylists,

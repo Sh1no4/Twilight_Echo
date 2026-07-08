@@ -25,6 +25,7 @@ import { createPlaybackSessionPersistence } from './app/usePlaybackSessionPersis
 import { useSideMenuClearance } from './app/useSideMenuClearance'
 
 type TitleSurface = 'default' | 'settings' | 'streaming'
+type StreamingInitialTab = 'home' | 'library' | 'recent'
 
 const navigation = useAppNavigation()
 const {
@@ -33,6 +34,7 @@ const {
   showStreamingPage,
   showLoginPage,
   loginPageMode,
+  loginInitialProviderId,
   showSettingsPage,
   showPluginPage,
   showEqualizerPage,
@@ -68,6 +70,7 @@ const toggleSettingsPage = navigation.createToggleSettingsHandler()
 const togglePluginPage = navigation.createTogglePluginHandler()
 
 const coverOrigin = ref({ x: 48, y: window.innerHeight - 36, w: 48, h: 48 })
+const streamingInitialTab = ref<StreamingInitialTab | null>(null)
 const titleMenuOpen = computed(() =>
   showPluginPage.value ? false : showStreamingPage.value ? streamingMenuOpen.value : menuOpen.value
 )
@@ -93,8 +96,23 @@ function handleCoverClick(rect: { x: number; y: number; w: number; h: number }):
   }
 }
 
+function enterStreamingLogin(): void {
+  streamingInitialTab.value = 'library'
+  enterStreamingMode()
+  if (!ncmLoggedIn.value) {
+    openLoginPage('ncm')
+  }
+}
+
+function handleLoginSuccess(): void {
+  if (loginInitialProviderId.value === 'ncm') {
+    streamingInitialTab.value = 'library'
+  }
+  closeLoginPage()
+}
+
 const { loadLibrary, loadPlaylists, flushSaveLibrary, handleLibraryChange } = useMusicStore()
-const { checkLogin } = useNcmStore()
+const { checkLogin, isLoggedIn: ncmLoggedIn } = useNcmStore()
 const {
   currentTrack,
   currentTime,
@@ -310,7 +328,7 @@ const titleSurface = computed<TitleSurface>(() => {
     :local-items="localSidebarItems"
     @select-view="onSelectView"
     @select-plugin-page="onSelectPluginPage"
-    @enter-streaming="enterStreamingMode"
+    @enter-streaming="enterStreamingLogin"
   />
   <div
     class="main-content"
@@ -346,6 +364,7 @@ const titleSurface = computed<TitleSurface>(() => {
       v-if="showStreamingPage"
       :menu-open="streamingMenuOpen"
       :has-player="hasPlayerBar"
+      :initial-tab="streamingInitialTab ?? undefined"
       @toggle-menu="toggleStreamingMenu"
       @back-to-local="returnToLocalMode"
       @login="openLoginPage"
@@ -354,8 +373,9 @@ const titleSurface = computed<TitleSurface>(() => {
       <LoginPage
         v-if="showLoginPage"
         :force-profile="loginPageMode === 'profile'"
+        :initial-provider-id="loginInitialProviderId"
         @back="closeLoginPage"
-        @login-success="closeLoginPage"
+        @login-success="handleLoginSuccess"
       />
     </Transition>
     <Transition name="settings-page">
