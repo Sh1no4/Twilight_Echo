@@ -382,8 +382,6 @@ if(TAE_BUILD_TESTS)
   add_executable(twilight_platform_backend_smoke
     tests/platform_backend_smoke.cpp
     core/AudioTypes.cpp
-    output/coreaudio/CoreAudioBackend.cpp
-    output/coreaudio/CoreAudioExclusiveBackend.cpp
   )
   target_include_directories(twilight_platform_backend_smoke PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_link_libraries(twilight_platform_backend_smoke PRIVATE twilight_audio_engine)
@@ -397,7 +395,11 @@ if(TAE_BUILD_TESTS)
     target_link_libraries(twilight_platform_backend_smoke PRIVATE ole32 uuid avrt)
   endif()
   if(TAE_COREAUDIO_AVAILABLE)
-    target_sources(twilight_platform_backend_smoke PRIVATE output/coreaudio/RealCoreAudioHost.cpp)
+    target_sources(twilight_platform_backend_smoke PRIVATE
+      output/coreaudio/CoreAudioBackend.cpp
+      output/coreaudio/CoreAudioExclusiveBackend.cpp
+      output/coreaudio/RealCoreAudioHost.cpp
+    )
     target_compile_definitions(twilight_platform_backend_smoke PRIVATE TAE_ENABLE_COREAUDIO=1)
     target_link_libraries(twilight_platform_backend_smoke PRIVATE
       "-framework CoreAudio"
