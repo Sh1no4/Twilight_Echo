@@ -637,7 +637,7 @@ const dspOutputDetail = computed(() => {
 
   position: relative;
   width: 100%;
-  height: 100%;
+  height: calc(100vh - 32px);
   overflow-y: auto;
   overflow-x: hidden;
   box-sizing: border-box;
@@ -725,7 +725,7 @@ html[data-window-transparent='on'] .home .blob {
   z-index: 1;
   max-width: 1240px;
   margin: 0 auto;
-  padding: 2.6rem 2.6rem 4.5rem;
+  padding: 2.6rem 2.6rem calc(4.5rem + 96px);
   display: flex;
   flex-direction: column;
   gap: 2.8rem;
@@ -1840,7 +1840,7 @@ html[data-window-transparent='on'] .home .blob {
   }
 
   .home-inner {
-    padding: 1.8rem 1.4rem 3rem;
+    padding: 1.8rem 1.4rem calc(3rem + 96px);
   }
 
   .library-pulse {
