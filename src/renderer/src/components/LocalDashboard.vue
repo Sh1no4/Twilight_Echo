@@ -20,7 +20,15 @@ const ALBUM_SHELF_SIZE = 10
 
 const { tracks, albums, artists } = useMusicStore()
 const { listeningStats } = useListeningStatsStore()
-const { currentTrack, isPlaying, playTrack, togglePlay, setPlayMode } = usePlayerStore()
+const {
+  currentTrack,
+  isPlaying,
+  playTrack,
+  togglePlay,
+  setPlayMode,
+  audioProcessing,
+  playbackInfo
+} = usePlayerStore()
 
 const now = ref(new Date())
 
@@ -188,6 +196,164 @@ function statPercent(stat: RankedStat): number {
   if (topMaxSeconds.value <= 0) return 0
   return Math.max(6, Math.round((stat.seconds / topMaxSeconds.value) * 100))
 }
+
+// ---------- Listening calendar ----------
+const CAL_WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
+
+interface CalendarCell {
+  key: string
+  day: number
+  seconds: number
+  level: number
+  isToday: boolean
+  isFuture: boolean
+}
+
+const calCursor = ref(new Date(now.value.getFullYear(), now.value.getMonth(), 1))
+
+const calMonthLabel = computed(() =>
+  calCursor.value.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' })
+)
+
+const calAtCurrentMonth = computed(
+  () =>
+    calCursor.value.getFullYear() === now.value.getFullYear() &&
+    calCursor.value.getMonth() === now.value.getMonth()
+)
+
+function shiftCalMonth(delta: number): void {
+  const next = new Date(calCursor.value.getFullYear(), calCursor.value.getMonth() + delta, 1)
+  if (next > now.value) return
+  calCursor.value = next
+}
+
+function calDayKey(year: number, month: number, day: number): string {
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+const calendarCells = computed<(CalendarCell | null)[]>(() => {
+  const year = calCursor.value.getFullYear()
+  const month = calCursor.value.getMonth()
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  const leadingBlanks = (new Date(year, month, 1).getDay() + 6) % 7
+  const days = listeningStats.value.days
+  let monthMax = 0
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    monthMax = Math.max(monthMax, days[calDayKey(year, month, day)] ?? 0)
+  }
+  const today = now.value
+  const cells: (CalendarCell | null)[] = Array.from({ length: leadingBlanks }, () => null)
+  for (let day = 1; day <= daysInMonth; day += 1) {
+    const seconds = days[calDayKey(year, month, day)] ?? 0
+    const cellDate = new Date(year, month, day)
+    cells.push({
+      key: calDayKey(year, month, day),
+      day,
+      seconds,
+      level: seconds <= 0 || monthMax <= 0 ? 0 : Math.max(1, Math.ceil((seconds / monthMax) * 4)),
+      isToday:
+        year === today.getFullYear() && month === today.getMonth() && day === today.getDate(),
+      isFuture: cellDate > new Date(today.getFullYear(), today.getMonth(), today.getDate())
+    })
+  }
+  return cells
+})
+
+const calSummary = computed(() => {
+  const active = calendarCells.value.filter((cell) => cell && cell.seconds > 0)
+  if (active.length === 0) return '本月还没有听歌记录'
+  const totalSeconds = active.reduce((sum, cell) => sum + (cell?.seconds ?? 0), 0)
+  return `${active.length} 天在听 · 共 ${formatListenDuration(totalSeconds)}`
+})
+
+function formatListenDuration(seconds: number): string {
+  const hours = seconds / 3600
+  if (hours >= 1) return `${hours.toFixed(1)} 小时`
+  return `${Math.max(1, Math.round(seconds / 60))} 分钟`
+}
+
+function calCellTitle(cell: CalendarCell): string {
+  if (cell.seconds <= 0) return `${cell.key} · 无记录`
+  return `${cell.key} · ${formatListenDuration(cell.seconds)}`
+}
+
+// ---------- DSP chain ----------
+interface DspNode {
+  id: string
+  label: string
+  icon: string
+  active: boolean
+  detail: string
+}
+
+const VOLUME_NORM_LABELS: Record<string, string> = {
+  track: '单曲增益',
+  album: '专辑增益',
+  loudnorm: '响度标准化'
+}
+
+const dspNodes = computed<DspNode[]>(() => {
+  const ap = audioProcessing.value
+  const info = playbackInfo.value
+  const on = ap.dspEnabled
+  return [
+    {
+      id: 'eq',
+      label: '均衡器',
+      icon: 'ph ph-faders',
+      active: info ? info.eqActive : on && ap.eqEnabled,
+      detail: ap.eqMode === 'parametric' ? '参数 EQ' : '图示 EQ'
+    },
+    {
+      id: 'gain',
+      label: '音量均衡',
+      icon: 'ph ph-wave-sine',
+      active: info ? info.replayGainActive : on && ap.volumeNormalization !== 'off',
+      detail: VOLUME_NORM_LABELS[ap.volumeNormalization] ?? '回放增益'
+    },
+    {
+      id: 'crossfeed',
+      label: '交叉馈送',
+      icon: 'ph ph-headphones',
+      active: info ? info.crossfeedActive : on && ap.crossfeedEnabled,
+      detail: '耳机声场'
+    },
+    {
+      id: 'convolver',
+      label: '卷积混响',
+      icon: 'ph ph-waveform',
+      active: info ? info.convolverActive : on && ap.convolverEnabled,
+      detail: '脌冲响应'
+    }
+  ]
+})
+
+const dspEngineOn = computed(() => audioProcessing.value.dspEnabled)
+
+const dspStatusText = computed(() => {
+  if (!dspEngineOn.value) return '直通输出 · Bypass'
+  return playbackInfo.value?.dspActive ? '处理链运行中' : '处理链待命'
+})
+
+const dspSourceDetail = computed(() => {
+  const info = playbackInfo.value
+  if (info && info.sourceSampleRate > 0) {
+    const codec = info.codec ? info.codec.toUpperCase() : ''
+    return `${codec} ${Math.round(info.sourceSampleRate / 1000)}kHz`.trim()
+  }
+  const track = currentTrack.value
+  if (track?.format) return track.format.toUpperCase()
+  return '未在播放'
+})
+
+const dspOutputDetail = computed(() => {
+  const info = playbackInfo.value
+  if (info && info.actualSampleRate > 0) {
+    const depth = info.actualBitDepth > 0 ? `${info.actualBitDepth}bit / ` : ''
+    return `${depth}${Math.round(info.actualSampleRate / 1000)}kHz`
+  }
+  return '等待输出'
+})
 </script>
 
 <template>
@@ -302,48 +468,131 @@ function statPercent(stat: RankedStat): number {
           </div>
         </section>
 
-        <!-- Top tracks -->
-        <section class="top-section">
+        <!-- Top tracks + listening calendar -->
+        <section class="insight-section">
           <div class="section-head">
             <span class="section-index">02</span>
-            <h3>常听歌曲</h3>
+            <h3>聆听足迹</h3>
             <span class="section-rule" aria-hidden="true"></span>
             <button class="link-all" @click="emit('select-view', 'recent', null)">
               最近播放 <i class="ph ph-arrow-right"></i>
             </button>
           </div>
-          <div class="top-grid">
-            <button
-              v-for="(entry, index) in topTracks"
-              :key="entry.id"
-              class="top-row"
-              @click="playWithQueue(entry.track)"
-            >
-              <span class="top-rank" :class="{ podium: index < 3 }">{{ index + 1 }}</span>
-              <CoverImg
-                :cover="entry.track?.cover || entry.cover"
-                :fallback="DEFAULT_COVER"
-                :alt="entry.title"
-                class="top-cover"
-              />
-              <span class="top-text">
-                <span class="top-title">{{ entry.track?.title || entry.title }}</span>
-                <span class="top-artist">{{
-                  entry.track?.artist || entry.artist || '未知艺术家'
-                }}</span>
-                <span class="top-bar" aria-hidden="true">
-                  <span class="top-bar-fill" :style="{ width: statPercent(entry) + '%' }"></span>
+          <div class="insight-grid">
+            <div class="top-grid">
+              <button
+                v-for="(entry, index) in topTracks"
+                :key="entry.id"
+                class="top-row"
+                @click="playWithQueue(entry.track)"
+              >
+                <span class="top-rank" :class="{ podium: index < 3 }">{{ index + 1 }}</span>
+                <CoverImg
+                  :cover="entry.track?.cover || entry.cover"
+                  :fallback="DEFAULT_COVER"
+                  :alt="entry.title"
+                  class="top-cover"
+                />
+                <span class="top-text">
+                  <span class="top-title">{{ entry.track?.title || entry.title }}</span>
+                  <span class="top-artist">{{
+                    entry.track?.artist || entry.artist || '未知艺术家'
+                  }}</span>
+                  <span class="top-bar" aria-hidden="true">
+                    <span class="top-bar-fill" :style="{ width: statPercent(entry) + '%' }"></span>
+                  </span>
                 </span>
-              </span>
-              <span class="top-plays">{{ formatPlays(entry) }}</span>
-            </button>
+                <span class="top-plays">{{ formatPlays(entry) }}</span>
+              </button>
+            </div>
+            <aside class="cal-card">
+              <div class="cal-head">
+                <span class="cal-title">
+                  <i class="ph ph-calendar-heart"></i>
+                  听歌日历
+                </span>
+                <div class="cal-nav">
+                  <button class="cal-nav-btn" title="上个月" @click="shiftCalMonth(-1)">
+                    <i class="ph ph-caret-left"></i>
+                  </button>
+                  <span class="cal-month">{{ calMonthLabel }}</span>
+                  <button
+                    class="cal-nav-btn"
+                    title="下个月"
+                    :disabled="calAtCurrentMonth"
+                    @click="shiftCalMonth(1)"
+                  >
+                    <i class="ph ph-caret-right"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="cal-weekdays" aria-hidden="true">
+                <span v-for="weekday in CAL_WEEKDAYS" :key="weekday">{{ weekday }}</span>
+              </div>
+              <div class="cal-grid">
+                <span
+                  v-for="(cell, index) in calendarCells"
+                  :key="cell?.key ?? `blank-${index}`"
+                  class="cal-cell"
+                  :class="[
+                    cell ? `lv-${cell.level}` : 'is-blank',
+                    { 'is-today': cell?.isToday, 'is-future': cell?.isFuture }
+                  ]"
+                  :title="cell ? calCellTitle(cell) : undefined"
+                >
+                  {{ cell?.day ?? '' }}
+                </span>
+              </div>
+              <div class="cal-foot">
+                <span class="cal-summary">{{ calSummary }}</span>
+                <span class="cal-legend" aria-hidden="true">
+                  少
+                  <i v-for="level in 5" :key="level" :class="`lv-${level - 1}`"></i>
+                  多
+                </span>
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        <!-- DSP chain -->
+        <section class="dsp-section">
+          <div class="section-head">
+            <span class="section-index">03</span>
+            <h3>DSP 处理链</h3>
+            <span class="section-rule" aria-hidden="true"></span>
+            <span class="dsp-state" :class="{ on: dspEngineOn, live: playbackInfo?.dspActive }">
+              <span class="dsp-state-dot" aria-hidden="true"></span>
+              {{ dspStatusText }}
+            </span>
+          </div>
+          <div class="dsp-card">
+            <div class="dsp-node is-endpoint">
+              <span class="dsp-node-icon"><i class="ph ph-music-notes"></i></span>
+              <span class="dsp-node-label">音源</span>
+              <span class="dsp-node-detail">{{ dspSourceDetail }}</span>
+            </div>
+            <template v-for="node in dspNodes" :key="node.id">
+              <span class="dsp-link" :class="{ active: node.active }" aria-hidden="true"></span>
+              <div class="dsp-node" :class="{ active: node.active }">
+                <span class="dsp-node-icon"><i :class="node.icon"></i></span>
+                <span class="dsp-node-label">{{ node.label }}</span>
+                <span class="dsp-node-detail">{{ node.active ? node.detail : 'Bypass' }}</span>
+              </div>
+            </template>
+            <span class="dsp-link" :class="{ active: dspEngineOn }" aria-hidden="true"></span>
+            <div class="dsp-node is-endpoint">
+              <span class="dsp-node-icon"><i class="ph ph-speaker-hifi"></i></span>
+              <span class="dsp-node-label">输出</span>
+              <span class="dsp-node-detail">{{ dspOutputDetail }}</span>
+            </div>
           </div>
         </section>
 
         <!-- Album shelf -->
         <section v-if="albumShelf.length > 0" class="shelf-section">
           <div class="section-head">
-            <span class="section-index">03</span>
+            <span class="section-index">04</span>
             <h3>专辑精选</h3>
             <span class="section-rule" aria-hidden="true"></span>
             <button class="link-all" @click="emit('select-view', 'albums', null)">
@@ -991,11 +1240,18 @@ html[data-window-transparent='on'] .home .blob {
   text-overflow: ellipsis;
 }
 
-/* ---------- Top tracks ---------- */
+/* ---------- Insights: top tracks + listening calendar ---------- */
+.insight-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 1.6rem;
+  align-items: start;
+}
+
 .top-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.55rem 1.6rem;
+  grid-template-columns: 1fr;
+  gap: 0.55rem;
 }
 
 .top-row {
@@ -1097,6 +1353,325 @@ html[data-window-transparent='on'] .home .blob {
   font-size: 0.75rem;
   font-weight: 600;
   color: var(--home-muted);
+}
+
+/* ---------- Listening calendar ---------- */
+.cal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 1.1rem 1.2rem 1rem;
+  border-radius: 22px;
+  border: 1px solid var(--home-border);
+  background: var(--home-card);
+  backdrop-filter: blur(16px) saturate(130%);
+  -webkit-backdrop-filter: blur(16px) saturate(130%);
+  box-shadow: 0 10px 30px rgba(20, 16, 44, 0.08);
+}
+
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.cal-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--home-display);
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: var(--home-text);
+}
+
+.cal-title i {
+  color: var(--home-accent);
+  font-size: 1.1rem;
+}
+
+.cal-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.cal-month {
+  min-width: 6.2em;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--home-muted);
+}
+
+.cal-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--home-muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition:
+    background 0.2s ease,
+    color 0.2s ease;
+}
+
+.cal-nav-btn:hover:not(:disabled) {
+  background: var(--home-accent-soft);
+  color: var(--home-accent);
+}
+
+.cal-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.cal-weekdays span {
+  text-align: center;
+  font-size: 0.66rem;
+  font-weight: 600;
+  color: var(--home-muted);
+}
+
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+
+.cal-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 1;
+  border-radius: 9px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--home-muted);
+  background: var(--home-soft);
+}
+
+.cal-cell.is-blank {
+  background: none;
+}
+
+.cal-cell.is-future {
+  opacity: 0.35;
+}
+
+.cal-cell.lv-1 {
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.16);
+  color: var(--home-text);
+}
+
+.cal-cell.lv-2 {
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.34);
+  color: var(--home-text);
+}
+
+.cal-cell.lv-3 {
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.56);
+  color: #fff;
+}
+
+.cal-cell.lv-4 {
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.82);
+  color: #fff;
+}
+
+.cal-cell.is-today {
+  box-shadow:
+    inset 0 0 0 2px var(--home-accent),
+    0 0 0 2px var(--home-accent-soft);
+  font-weight: 800;
+}
+
+.cal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.cal-summary {
+  font-size: 0.74rem;
+  font-weight: 600;
+  color: var(--home-muted);
+}
+
+.cal-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.66rem;
+  color: var(--home-muted);
+}
+
+.cal-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--home-soft);
+}
+
+.cal-legend i.lv-1 {
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.16);
+}
+
+.cal-legend i.lv-2 {
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.34);
+}
+
+.cal-legend i.lv-3 {
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.56);
+}
+
+.cal-legend i.lv-4 {
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.82);
+}
+
+/* ---------- DSP chain ---------- */
+.dsp-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.32rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: var(--home-muted);
+  background: var(--home-soft);
+  white-space: nowrap;
+}
+
+.dsp-state.on {
+  color: var(--home-accent);
+  background: var(--home-accent-soft);
+}
+
+.dsp-state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.dsp-state.live .dsp-state-dot {
+  animation: dsp-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes dsp-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.75);
+  }
+}
+
+.dsp-card {
+  display: flex;
+  align-items: stretch;
+  gap: 0.5rem;
+  padding: 1.3rem 1.4rem;
+  border-radius: 22px;
+  border: 1px solid var(--home-border);
+  background: var(--home-card);
+  backdrop-filter: blur(16px) saturate(130%);
+  -webkit-backdrop-filter: blur(16px) saturate(130%);
+  box-shadow: 0 10px 30px rgba(20, 16, 44, 0.08);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.dsp-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 92px;
+  padding: 0.65rem 0.6rem;
+  border-radius: 16px;
+  text-align: center;
+}
+
+.dsp-node-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  font-size: 1.25rem;
+  color: var(--home-muted);
+  background: var(--home-soft);
+  transition:
+    background 0.25s ease,
+    color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.dsp-node.active .dsp-node-icon,
+.dsp-node.is-endpoint .dsp-node-icon {
+  color: #fff;
+  background: linear-gradient(150deg, var(--home-accent), var(--home-accent-2));
+  box-shadow: 0 6px 16px rgba(var(--te-primary-rgb, 124, 77, 255), 0.35);
+}
+
+.dsp-node.is-endpoint .dsp-node-icon {
+  background: linear-gradient(150deg, #33313f, #514d63);
+  box-shadow: 0 6px 16px rgba(20, 16, 44, 0.28);
+}
+
+.dsp-node-label {
+  font-family: var(--home-display);
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: var(--home-text);
+  white-space: nowrap;
+}
+
+.dsp-node:not(.active):not(.is-endpoint) .dsp-node-label {
+  color: var(--home-muted);
+}
+
+.dsp-node-detail {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--home-muted);
+  white-space: nowrap;
+}
+
+.dsp-node.active .dsp-node-detail {
+  color: var(--home-accent);
+}
+
+.dsp-link {
+  flex: 1;
+  min-width: 18px;
+  height: 2px;
+  margin-top: 41px;
+  border-radius: 2px;
+  background: var(--home-soft);
+}
+
+.dsp-link.active {
+  background: linear-gradient(90deg, var(--home-accent), var(--home-accent-2));
 }
 
 /* ---------- Album tiles ---------- */
@@ -1256,8 +1831,12 @@ html[data-window-transparent='on'] .home .blob {
     padding: 2rem;
   }
 
-  .top-grid {
+  .insight-grid {
     grid-template-columns: 1fr;
+  }
+
+  .cal-card {
+    max-width: 420px;
   }
 
   .home-inner {
