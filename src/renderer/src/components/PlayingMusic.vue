@@ -15,21 +15,14 @@ import {
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useCover } from '../utils/coverLoader'
-import { buildLyricLines } from '../utils/lyrics'
+import { buildLyricLines, findActiveLyricIndex } from '../utils/lyrics'
 import type { LyricLine } from '../utils/lyrics'
 import { getTrackSource, shouldReserveLyricsColumn } from '../utils/nowPlayingLayout'
 import type { LyricSource } from '../types/music'
 import AudioVisualizerPanel from './AudioVisualizerPanel.vue'
 
-const {
-  currentTrack,
-  dominantColor,
-  currentTime,
-  duration,
-  seek,
-  formatTime,
-  visualizerActive
-} = usePlayerStore()
+const { currentTrack, dominantColor, currentTime, duration, seek, formatTime, visualizerActive } =
+  usePlayerStore()
 const { settings } = useSettingsStore()
 
 const nowPlayingBackground = computed(() => settings.value.nowPlayingBackground)
@@ -198,21 +191,7 @@ const reserveLyricsColumn = computed(() =>
   })
 )
 
-const activeLyricIndex = computed(() => {
-  const t = currentTime.value
-  let idx = -1
-
-  for (let i = 0; i < lyricLines.value.length; i++) {
-    const lineTime = lyricLines.value[i].time
-    if (lineTime != null && lineTime <= t) {
-      idx = i
-    } else {
-      break
-    }
-  }
-
-  return idx
-})
+const activeLyricIndex = computed(() => findActiveLyricIndex(lyricLines.value, currentTime.value))
 
 const trackDurationLabel = computed(() => formatTime(duration.value))
 const lyricSourceLabel = computed(() =>
@@ -224,12 +203,7 @@ const translatedLyricSourceLabel = computed(() =>
 
 function getLyricSourceLabel(source: LyricSource | null | undefined, label: string): string {
   if (!source) return ''
-  const sourceLabel =
-    source === 'embedded'
-      ? '内嵌'
-      : source === 'local'
-        ? '本地 LRC'
-        : 'Provider'
+  const sourceLabel = source === 'embedded' ? '内嵌' : source === 'local' ? '本地 LRC' : 'Provider'
   return `${label}: ${sourceLabel}`
 }
 
@@ -283,8 +257,7 @@ function getLyricTargetTop(index: number): number | null {
   }
 
   const targetTop =
-    lineOffsetTop -
-    (container.clientHeight - line.offsetHeight) * LYRIC_ACTIVE_ANCHOR_RATIO
+    lineOffsetTop - (container.clientHeight - line.offsetHeight) * LYRIC_ACTIVE_ANCHOR_RATIO
   const maxTop = Math.max(0, container.scrollHeight - container.clientHeight)
 
   return Math.min(maxTop, Math.max(0, targetTop))
@@ -378,8 +351,6 @@ function scheduleActiveLyricCenter(duration = LYRIC_RESIZE_SCROLL_DURATION_MS, d
   }, delay)
 }
 
-
-
 function onLyricLayoutResize(): void {
   if (lyricManualScrollLocked) return
   scheduleActiveLyricCenter()
@@ -419,7 +390,11 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="playing-music" :class="`bg-${nowPlayingBackground}`" :style="{ '--accent-color': dominantColor, '--lyric-dim': lyricDimOpacity }">
+  <div
+    class="playing-music"
+    :class="`bg-${nowPlayingBackground}`"
+    :style="{ '--accent-color': dominantColor, '--lyric-dim': lyricDimOpacity }"
+  >
     <button
       type="button"
       class="visualizer-toggle-button"
@@ -432,7 +407,13 @@ onBeforeUnmount(() => {
 
     <div v-if="viewMode !== 'visualizer'" class="backdrop" aria-hidden="true">
       <Transition name="backdrop-cover-fade" appear>
-        <img v-if="bgSrc && isBlurBackground" :key="bgSrc" :src="bgSrc" class="backdrop-cover" alt="" />
+        <img
+          v-if="bgSrc && isBlurBackground"
+          :key="bgSrc"
+          :src="bgSrc"
+          class="backdrop-cover"
+          alt=""
+        />
       </Transition>
       <div v-if="isFluidBackground" class="backdrop-fluid" />
       <div v-if="isSolidBackground" class="backdrop-solid" />
@@ -440,10 +421,7 @@ onBeforeUnmount(() => {
       <div class="backdrop-accent" />
     </div>
 
-    <div
-      v-if="currentTrack"
-      :class="['stage', { 'stage--visualizer': viewMode === 'visualizer' }]"
-    >
+    <div v-if="currentTrack" :class="['stage', { 'stage--visualizer': viewMode === 'visualizer' }]">
       <AudioVisualizerPanel
         v-if="viewMode === 'visualizer'"
         class="visualizer-surface"
@@ -452,12 +430,7 @@ onBeforeUnmount(() => {
       <main v-else class="layout" :class="{ 'layout--single': !reserveLyricsColumn }">
         <section class="cover-column">
           <div class="cover-frame">
-            <img
-              v-if="resolvedCover"
-              :src="resolvedCover"
-              class="cover-image"
-              alt="cover"
-            />
+            <img v-if="resolvedCover" :src="resolvedCover" class="cover-image" alt="cover" />
             <div v-else class="cover-placeholder">
               <i class="pi pi-wave-pulse"></i>
             </div>
@@ -598,9 +571,9 @@ onBeforeUnmount(() => {
   background:
     linear-gradient(
       180deg,
-      rgba(5, 7, 11, 0.34) 0%,
-      rgba(5, 7, 11, 0.64) 42%,
-      rgba(5, 7, 11, 0.86) 100%
+      rgba(5, 7, 11, 0.72) 0%,
+      rgba(5, 7, 11, 0.74) 52%,
+      rgba(5, 7, 11, 0.78) 100%
     ),
     color-mix(in srgb, var(--accent-color) 8%, transparent);
   backdrop-filter: blur(10px);
@@ -639,10 +612,19 @@ onBeforeUnmount(() => {
 }
 
 @keyframes fluid-drift {
-  0%, 100% { background-position: 0% 50%; }
-  25% { background-position: 100% 50%; }
-  50% { background-position: 100% 100%; }
-  75% { background-position: 0% 100%; }
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  25% {
+    background-position: 100% 50%;
+  }
+  50% {
+    background-position: 100% 100%;
+  }
+  75% {
+    background-position: 0% 100%;
+  }
 }
 
 .stage {
@@ -1105,5 +1087,4 @@ onBeforeUnmount(() => {
   border-color: rgba(255, 255, 255, 0.16);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
 }
-
 </style>

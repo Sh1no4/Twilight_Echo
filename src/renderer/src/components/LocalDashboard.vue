@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useMusicStore } from '../stores/useMusicStore'
-import { useListeningStatsStore } from '../stores/useListeningStatsStore'
+import { getMostListenedTracks, useListeningStatsStore } from '../stores/useListeningStatsStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import type { Track } from '../types/music'
 import { useCover } from '../utils/coverLoader'
-import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
+import { createUnifiedRecentTrackResolver } from '../utils/unifiedRecentTracks'
 import CoverImg from './CoverImg.vue'
 
 const emit = defineEmits<{
@@ -75,15 +75,8 @@ interface RankedStat {
 }
 
 const rankedStats = computed<RankedStat[]>(() => {
-  const entries = Object.entries(listeningStats.value.tracks)
-    .sort(([, a], [, b]) => b.seconds - a.seconds)
-    .slice(0, TOP_TRACK_COUNT)
-    .map(([id, stat]) => ({ id, ...stat }))
-  return entries.map((stat) => {
-    const resolved = resolveUnifiedRecentTracks({
-      recentStats: [stat],
-      localTracks: tracks.value
-    })
+  const resolveRecentTrack = createUnifiedRecentTrackResolver(tracks.value)
+  return getMostListenedTracks(TOP_TRACK_COUNT).map((stat) => {
     return {
       id: stat.id,
       seconds: stat.seconds,
@@ -91,7 +84,7 @@ const rankedStats = computed<RankedStat[]>(() => {
       title: stat.title,
       artist: stat.artist,
       cover: stat.cover ?? null,
-      track: resolved[0] ?? stat.track ?? null
+      track: resolveRecentTrack(stat) ?? stat.track ?? null
     }
   })
 })

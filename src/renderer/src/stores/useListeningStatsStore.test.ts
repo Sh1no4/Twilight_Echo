@@ -1,6 +1,6 @@
+import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
-
 ;(globalThis as Record<string, unknown>).localStorage = {
   getItem: () => null,
   setItem: () => undefined
@@ -8,6 +8,7 @@ import test from 'node:test'
 
 const {
   getRecentTracks,
+  getMostListenedTracks,
   getTopArtists,
   getTopTracks,
   recordPlaybackOutcomeForTest,
@@ -17,6 +18,30 @@ const {
 } = (await import(
   new URL('./useListeningStatsStore.ts', import.meta.url).href
 )) as typeof import('./useListeningStatsStore')
+
+const source = readFileSync(new URL('./useListeningStatsStore.ts', import.meta.url), 'utf8')
+
+test('listening stats tracking receives player refs without dynamically importing player store', () => {
+  assert.match(
+    source,
+    /export function setupListeningStatsTracking\(player: ListeningPlayerState\)/
+  )
+  assert.match(source, /const listeningStats = shallowRef<ListeningStats>/)
+  assert.match(
+    source,
+    /function commitListeningStats\(mutator: \(stats: ListeningStats\) => void\)/
+  )
+  assert.match(source, /triggerRef\(listeningStats\)/)
+  assert.match(source, /const \{ currentTrack, isPlaying, currentTime, duration \} = player/)
+  assert.match(source, /function collectTopItems<T>\(/)
+  assert.match(source, /getRecentTracks[\s\S]*collectTopItems\(/)
+  assert.match(source, /getTopTracks[\s\S]*collectTopItems\(/)
+  assert.match(source, /getMostListenedTracks[\s\S]*collectTopItems\(/)
+  assert.doesNotMatch(source, /import\('\.\/usePlayerStore\.ts'\)/)
+  assert.doesNotMatch(source, /days: \{ \.\.\.listeningStats\.value\.days \}/)
+  assert.doesNotMatch(source, /tracks: \{ \.\.\.listeningStats\.value\.tracks \}/)
+  assert.doesNotMatch(source, /Object\.entries\(listeningStats\.value\.tracks\)[\s\S]*?\.sort/)
+})
 
 const localTrack = {
   id: 'local:abc',
@@ -59,10 +84,10 @@ test('listening stats aggregate same logical track across local and provider var
   assert.equal(recent[0].seconds, 10)
   assert.equal(recent[0].plays, 2)
   assert.equal(recent[0].lastPlayed, 2_000)
-  assert.deepEqual(
-    recent[0].sourceIds?.map((source) => source.trackId).sort(),
-    ['local:abc', 'ncm:123']
-  )
+  assert.deepEqual(recent[0].sourceIds?.map((source) => source.trackId).sort(), [
+    'local:abc',
+    'ncm:123'
+  ])
   assert.equal(recent[0].track?.id, 'ncm:123')
 })
 
@@ -112,9 +137,84 @@ test('listening stats rank logical tracks across sources by plays then listening
   )
   assert.equal(top[0].plays, 2)
   assert.equal(top[0].seconds, 20)
+  assert.deepEqual(top[0].sourceIds?.map((source) => source.trackId).sort(), [
+    'local:abc',
+    'ncm:123'
+  ])
+})
+
+test('listening stats selectors keep only the requested top results', () => {
+  resetListeningStatsForTest()
+
+  for (let index = 0; index < 250; index++) {
+    recordListeningForTest(
+      {
+        ...localTrack,
+        id: `local:${index}`,
+        title: `Song ${index}`,
+        filePath: `D:\\Music\\Song ${index}.flac`,
+        fileName: `Song ${index}.flac`
+      },
+      index + 1,
+      1_000 + index
+    )
+  }
+
   assert.deepEqual(
-    top[0].sourceIds?.map((source) => source.trackId).sort(),
-    ['local:abc', 'ncm:123']
+    getRecentTracks(3).map((entry) => entry.id),
+    ['logic:song 249::audrey', 'logic:song 248::audrey', 'logic:song 247::audrey']
+  )
+  assert.deepEqual(
+    getTopTracks(3).map((entry) => entry.id),
+    ['logic:song 249::audrey', 'logic:song 248::audrey', 'logic:song 247::audrey']
+  )
+  assert.deepEqual(
+    getMostListenedTracks(3).map((entry) => entry.id),
+    ['logic:song 249::audrey', 'logic:song 248::audrey', 'logic:song 247::audrey']
+  )
+  assert.deepEqual(getRecentTracks(0), [])
+  assert.deepEqual(getTopTracks(0), [])
+  assert.deepEqual(getMostListenedTracks(0), [])
+})
+
+test('listening stats most-listened selector ranks by seconds before plays', () => {
+  resetListeningStatsForTest()
+
+  recordListeningForTest(
+    {
+      ...localTrack,
+      id: 'local:many-plays',
+      title: 'Many Plays'
+    },
+    10,
+    1_000
+  )
+  recordListeningForTest(
+    {
+      ...localTrack,
+      id: 'local:many-plays-live',
+      title: 'Many Plays'
+    },
+    10,
+    2_000
+  )
+  recordListeningForTest(
+    {
+      ...localTrack,
+      id: 'local:long-listen',
+      title: 'Long Listen'
+    },
+    60,
+    3_000
+  )
+
+  assert.deepEqual(
+    getTopTracks(2).map((entry) => entry.id),
+    ['logic:many plays::audrey', 'logic:long listen::audrey']
+  )
+  assert.deepEqual(
+    getMostListenedTracks(2).map((entry) => entry.id),
+    ['logic:long listen::audrey', 'logic:many plays::audrey']
   )
 })
 
@@ -166,10 +266,10 @@ test('listening stats aggregate skip and completion outcomes across sources', ()
   assert.equal(recent[0].id, 'logic:moon river::audrey')
   assert.equal(recent[0].skips, 1)
   assert.equal(recent[0].completions, 1)
-  assert.deepEqual(
-    recent[0].sourceIds?.map((source) => source.trackId).sort(),
-    ['local:abc', 'ncm:123']
-  )
+  assert.deepEqual(recent[0].sourceIds?.map((source) => source.trackId).sort(), [
+    'local:abc',
+    'ncm:123'
+  ])
 })
 
 test('listening stats record previous track outcome when playback switches tracks', () => {

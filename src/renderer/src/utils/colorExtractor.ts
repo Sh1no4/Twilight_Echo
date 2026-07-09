@@ -1,4 +1,37 @@
+const DEFAULT_DOMINANT_COLOR = '#1a73e8'
+const MAX_DOMINANT_COLOR_CACHE_SIZE = 64
+const dominantColorCache = new Map<string, Promise<string>>()
+
 export function extractDominantColor(imageSrc: string): Promise<string> {
+  const cacheKey = imageSrc.trim()
+  if (!cacheKey) return Promise.resolve(DEFAULT_DOMINANT_COLOR)
+
+  const cached = dominantColorCache.get(cacheKey)
+  if (cached) {
+    dominantColorCache.delete(cacheKey)
+    dominantColorCache.set(cacheKey, cached)
+    return cached
+  }
+
+  const request = readDominantColor(cacheKey)
+  dominantColorCache.set(cacheKey, request)
+  trimDominantColorCache()
+  return request
+}
+
+export function clearDominantColorCache(): void {
+  dominantColorCache.clear()
+}
+
+function trimDominantColorCache(): void {
+  while (dominantColorCache.size > MAX_DOMINANT_COLOR_CACHE_SIZE) {
+    const oldest = dominantColorCache.keys().next().value
+    if (!oldest) return
+    dominantColorCache.delete(oldest)
+  }
+}
+
+function readDominantColor(imageSrc: string): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image()
     img.crossOrigin = 'anonymous'
@@ -9,7 +42,7 @@ export function extractDominantColor(imageSrc: string): Promise<string> {
       canvas.height = size
       const ctx = canvas.getContext('2d')
       if (!ctx) {
-        resolve('#1a73e8')
+        resolve(DEFAULT_DOMINANT_COLOR)
         return
       }
       ctx.drawImage(img, 0, 0, size, size)
@@ -38,7 +71,7 @@ export function extractDominantColor(imageSrc: string): Promise<string> {
       }
 
       if (hist.size === 0) {
-        resolve('#1a73e8')
+        resolve(DEFAULT_DOMINANT_COLOR)
         return
       }
 
@@ -58,7 +91,7 @@ export function extractDominantColor(imageSrc: string): Promise<string> {
       const hex = `#${r.toString(16).padStart(2, '0')}${g.toString(16).padStart(2, '0')}${b.toString(16).padStart(2, '0')}`
       resolve(hex)
     }
-    img.onerror = () => resolve('#1a73e8')
+    img.onerror = () => resolve(DEFAULT_DOMINANT_COLOR)
     img.src = imageSrc
   })
 }

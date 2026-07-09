@@ -76,8 +76,8 @@
   --te-ui-scale: 0.94;
   --te-menu-width: clamp(132px, 18vw, 216px);
   --te-font-display:
-    'Mochiy Pop One', 'Zen Maru Gothic', 'Source Han Sans SC', 'PingFang SC',
-    'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+    'Mochiy Pop One', 'Zen Maru Gothic', 'Source Han Sans SC', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
   --te-font-rounded:
     'Zen Maru Gothic', 'Source Han Sans SC', 'PingFang SC', 'Hiragino Sans GB',
     'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
@@ -434,11 +434,15 @@ html[data-theme='pureWhite'] .title-bar.title-bar-streaming {
   -webkit-backdrop-filter: none;
 }
 
-html[data-theme='pureWhite'] .title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
+html[data-theme='pureWhite']
+  .title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
   background: transparent;
 }
 
-html[data-theme='pureWhite'] .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
+html[data-theme='pureWhite']
+  .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(
+    .title-bar-settings
+  ) {
   background: transparent !important;
 }
 
@@ -805,7 +809,8 @@ html[data-theme='dark'] .title-bar.title-bar-streaming {
   box-shadow: none;
 }
 
-html[data-theme='dark'] .title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
+html[data-theme='dark']
+  .title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
   background-color: var(--te-local-bg);
   background-image: var(--te-local-bg-image);
   background-position: center top;
@@ -2092,7 +2097,8 @@ html[data-card-custom='on']
     .opra-result-item
   ):hover {
   transform: var(--te-card-hover-transform, none) !important;
-  box-shadow: var(--te-card-shadow, none), var(--te-card-hover-shadow, 0 0 0 0 transparent) !important;
+  box-shadow:
+    var(--te-card-shadow, none), var(--te-card-hover-shadow, 0 0 0 0 transparent) !important;
 }
 
 /* ===== Window transparency: compositor blur passthrough ===== */
@@ -2109,26 +2115,27 @@ html[data-card-custom='on']
 html[data-window-transparent='on'] {
   --te-tp-surface-rgb: 255, 255, 255;
   --te-tp-card-rgb: 255, 255, 255;
-  --te-tp-surface-alpha: 0.7;
-  --te-tp-card-alpha: 0.8;
+  --te-tp-surface-alpha: 0.72;
+  --te-tp-card-alpha: 0.72;
   --te-tp-surface-blur: 0px;
   --te-tp-card-blur: 20px;
   --te-tp-surface: rgba(var(--te-tp-surface-rgb), var(--te-tp-surface-alpha));
-  --te-tp-chrome: rgba(255, 255, 255, 0.76);
+  --te-tp-chrome: rgba(var(--te-tp-card-rgb), var(--te-tp-card-alpha));
   --te-tp-card: rgba(var(--te-tp-card-rgb), var(--te-tp-card-alpha));
 }
 
 html[data-window-transparent='on'][data-theme='pureWhite'] {
-  --te-tp-chrome: rgba(255, 255, 255, 0.8);
+  --te-tp-chrome: rgba(var(--te-tp-card-rgb), var(--te-tp-card-alpha));
 }
 
 html[data-window-transparent='on'][data-theme='dark'] {
   --te-tp-surface-rgb: 18, 18, 20;
-  --te-tp-card-rgb: 24, 24, 28;
-  --te-tp-chrome: rgba(14, 14, 16, 0.6);
+  --te-tp-card-rgb: 18, 18, 20;
+  --te-tp-chrome: rgba(var(--te-tp-card-rgb), var(--te-tp-card-alpha));
 }
 
-/* 1. Bottom layer fully transparent — let the compositor show through. */
+/* 1. Bottom layer keeps a stable translucent tint. A fully transparent root can
+   make the whole app disappear before page-level surfaces finish mounting. */
 html[data-window-transparent='on'],
 html[data-window-transparent='on'] body,
 html[data-window-transparent='on'][data-theme='dark'],
@@ -2137,8 +2144,7 @@ html[data-window-transparent='on'][data-theme='pureWhite'],
 html[data-window-transparent='on'][data-theme='pureWhite'] body,
 html[data-window-transparent='on'] body.te-settings-surface,
 html[data-window-transparent='on'] body.te-streaming-surface {
-  background: transparent !important;
-  background-color: transparent !important;
+  background-color: rgba(var(--te-tp-surface-rgb), 0.78) !important;
   background-image: none !important;
 }
 
@@ -2169,6 +2175,7 @@ html[data-window-transparent='on']
     .plugin-page,
     .plugin-page .main-content,
     .plugin-page .topbar,
+    .playing-music,
     .title-bar,
     .title-bar.title-bar-streaming,
     .title-bar.title-bar-menu-open
@@ -2235,7 +2242,11 @@ html[data-window-transparent='on']
     .square-card,
     .opra-panel,
     .device-panel,
-    .plugin-panel
+    .plugin-panel,
+    .track-table thead,
+    .recent-source-trigger,
+    .recent-source-menu,
+    .search-box
   ) {
   background-color: var(--te-tp-card) !important;
   background-image: none !important;
@@ -2248,12 +2259,7 @@ html[data-window-transparent='on']
    fixed positioning — so only leaf surfaces are listed here. */
 html[data-window-transparent='on']
   body:not(.te-no-blur)
-  :is(
-    .side-menu,
-    .dashboard-wrapper,
-    .streaming-sidebar,
-    .title-bar
-  ) {
+  :is(.side-menu, .dashboard-wrapper, .streaming-sidebar, .title-bar) {
   backdrop-filter: blur(var(--te-tp-surface-blur)) !important;
   -webkit-backdrop-filter: blur(var(--te-tp-surface-blur)) !important;
 }
@@ -2294,7 +2300,11 @@ html[data-window-transparent='on']
     .square-card,
     .opra-panel,
     .device-panel,
-    .plugin-panel
+    .plugin-panel,
+    .track-table thead,
+    .recent-source-trigger,
+    .recent-source-menu,
+    .search-box
   ) {
   backdrop-filter: blur(var(--te-tp-card-blur)) !important;
   -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) !important;

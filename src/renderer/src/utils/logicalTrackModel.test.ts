@@ -168,3 +168,24 @@ test('getTrackSource normalizes explicit source and provider-prefixed ids', () =
   assert.equal(getTrackSource({ id: ' BILI:BV1 ', source: undefined }), 'bili')
   assert.equal(getTrackSource({ id: 'D:\\Music\\Track.flac', source: undefined }), 'local')
 })
+
+test('buildLogicalTracks groups large unique result sets without quadratic scans', () => {
+  const inputs = Array.from({ length: 8000 }, (_, index) => ({
+    track: track({
+      id: `provider:${index}`,
+      title: `Track ${index}`,
+      artist: `Artist ${index}`,
+      source: 'provider'
+    }),
+    source: 'provider',
+    sourceName: 'Provider',
+    providerAvailable: true
+  }))
+
+  const start = performance.now()
+  const logicalTracks = buildLogicalTracks(inputs)
+  const elapsed = performance.now() - start
+
+  assert.equal(logicalTracks.length, inputs.length)
+  assert.ok(elapsed < 250, `buildLogicalTracks took ${elapsed.toFixed(2)}ms, expected < 250ms`)
+})

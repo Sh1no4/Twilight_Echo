@@ -162,7 +162,7 @@ test('streaming playback resume waits for plugin providers before restoring', ()
   )
   assert.match(
     pluginsSource,
-    /ipcMain\.handle\('providers:list', async \(\) => \{\s*await runtime\.pluginManagerReady\s*return runtime\.pluginManager!\.listProviders\(\)\s*\}\)/
+    /ipcMain\.handle\('providers:list', async \(event\) => \{\s*assertTrustedIpcSender\(event, 'provider IPC'\)\s*await runtime\.pluginManagerReady\s*return runtime\.pluginManager!\.listProviders\(\)\s*\}\)/
   )
   assert.match(
     pluginsSource,
@@ -303,20 +303,16 @@ test('player store does not pretend DSP bypass is strict bit-perfect mode', () =
 
 test('local dashboard playback keeps a multi-track queue for next and previous controls', () => {
   const source = readFileSync(new URL('../components/LocalDashboard.vue', import.meta.url), 'utf8')
-  const playDashboardTrack = source.match(/function playDashboardTrack[\s\S]*?\n}/)?.[0] ?? ''
+  const playWithQueue = source.match(/function playWithQueue[\s\S]*?\n}/)?.[0] ?? ''
 
-  assert.match(source, /const nowPlayingTitle = computed\(\(\) => currentTrack\.value\?\.title/)
+  assert.match(source, /const heroTrack = computed<Track \| null>/)
+  assert.match(source, /@click="handleHeroPlay"/)
+  assert.match(source, /@click="playWithQueue\(track\)"/)
+  assert.match(source, /@click="playWithQueue\(entry\.track\)"/)
+  assert.match(playWithQueue, /QUEUE_WINDOW/)
+  assert.match(playWithQueue, /tracks\.value\.slice\(queueStart, end\)/)
   assert.match(
-    source,
-    /const progressWidth = computed\(\(\) => `\$\{Math\.min\(100, Math\.max\(0, progress\.value\)\)\}%`\)/
-  )
-  assert.match(source, /@click="togglePlay"/)
-  assert.match(source, /@click="next"/)
-  assert.match(source, /@click="prev"/)
-  assert.match(playDashboardTrack, /DASHBOARD_QUEUE_WINDOW/)
-  assert.match(playDashboardTrack, /tracks\.value\.slice\(queueStart, end\)/)
-  assert.match(
-    playDashboardTrack,
+    playWithQueue,
     /if \(sourceIndex < 0\) \{\s*playTrack\(track, \[track\]\)\s*return\s*\}/,
     'dashboard playback should only fall back to a single-track queue when the track is not in the local library'
   )
@@ -466,8 +462,14 @@ test('audio visualizer iframe controls are wired to the player store', () => {
 
   assert.match(visualizerSource, /let dataArray = new Float32Array\(4096\)/)
   assert.match(visualizerSource, /let precomputedBars = new Float32Array\(SPECTRUM_BAR_COUNT\)/)
-  assert.match(visualizerSource, /let previousPrecomputedBars = new Float32Array\(SPECTRUM_BAR_COUNT\)/)
-  assert.match(visualizerSource, /let displayPrecomputedBars = new Float32Array\(SPECTRUM_BAR_COUNT\)/)
+  assert.match(
+    visualizerSource,
+    /let previousPrecomputedBars = new Float32Array\(SPECTRUM_BAR_COUNT\)/
+  )
+  assert.match(
+    visualizerSource,
+    /let displayPrecomputedBars = new Float32Array\(SPECTRUM_BAR_COUNT\)/
+  )
   assert.match(visualizerSource, /let precomputedBarsTransitionStartedAt = performance\.now\(\)/)
   assert.match(visualizerSource, /const PRECOMPUTED_BAR_TRANSITION_MS = 48/)
   assert.match(visualizerSource, /let usingPrecomputedBars = false/)
@@ -479,23 +481,41 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   assert.doesNotMatch(visualizerSource, /function amplitudeToVisualizerLevel\(amplitude\)/)
   assert.doesNotMatch(visualizerSource, /function applyVisualizerSpectralContrast\(bars\)/)
   assert.doesNotMatch(visualizerSource, /weightedSquares \+= amplitude \* amplitude \* overlap/)
-  assert.doesNotMatch(visualizerSource, /amplitudeToVisualizerLevel\(rms \* 0\.85 \+ peak \* 0\.15\)/)
-  assert.doesNotMatch(visualizerSource, /rawComputedBars = applyVisualizerSpectralContrast\(rawComputedBars\)/)
+  assert.doesNotMatch(
+    visualizerSource,
+    /amplitudeToVisualizerLevel\(rms \* 0\.85 \+ peak \* 0\.15\)/
+  )
+  assert.doesNotMatch(
+    visualizerSource,
+    /rawComputedBars = applyVisualizerSpectralContrast\(rawComputedBars\)/
+  )
   assert.doesNotMatch(visualizerSource, /subBinTexture/)
   assert.doesNotMatch(visualizerSource, /spectralTilt/)
   assert.match(visualizerSource, /const barSpacing = 1\.5/)
   assert.match(visualizerSource, /const totalSpacing = barSpacing \* \(barCount - 1\)/)
   assert.match(visualizerSource, /const barWidth = \(width - totalSpacing\) \/ barCount/)
-  assert.match(visualizerSource, /function buildLogFrequencyBinCenters\(barCount, sampleRate, fftSize\)/)
-  assert.match(visualizerSource, /const frequency = minF \* Math\.pow\(frequencyRatio, i \/ frequencyStepCount\)/)
+  assert.match(
+    visualizerSource,
+    /function buildLogFrequencyBinCenters\(barCount, sampleRate, fftSize\)/
+  )
+  assert.match(
+    visualizerSource,
+    /const frequency = minF \* Math\.pow\(frequencyRatio, i \/ frequencyStepCount\)/
+  )
   assert.match(visualizerSource, /spectrumBinCenters\[i\] = frequency \/ binWidth/)
   assert.match(visualizerSource, /const valLow = \(dataArray\[indexLow\] \|\| 0\) \* 255/)
   assert.match(visualizerSource, /const valHigh = \(dataArray\[indexHigh\] \|\| 0\) \* 255/)
   assert.match(visualizerSource, /const val = valLow \+ \(valHigh - valLow\) \* fract/)
   assert.match(visualizerSource, /let sourceLevels = new Float32Array\(SPECTRUM_BAR_COUNT\)/)
   assert.match(visualizerSource, /currentPrecomputedBarValue\(i, now\)/)
-  assert.match(visualizerSource, /sourceLevels = applyLowFrequencyShelfContour\(rawComputedBars, binCenters, contourPhase\)/)
-  assert.match(visualizerSource, /sourceLevels = applyLowFrequencyShelfContour\(rawPrecomputedBars, binCenters, contourPhase\)/)
+  assert.match(
+    visualizerSource,
+    /sourceLevels = applyLowFrequencyShelfContour\(rawComputedBars, binCenters, contourPhase\)/
+  )
+  assert.match(
+    visualizerSource,
+    /sourceLevels = applyLowFrequencyShelfContour\(rawPrecomputedBars, binCenters, contourPhase\)/
+  )
   assert.doesNotMatch(visualizerSource, /SPECTRUM_GAIN_TARGET_MIX/)
   assert.doesNotMatch(visualizerSource, /const sourceFloorLevel = frameContrastFloor/)
   assert.doesNotMatch(visualizerSource, /const sourceLevel = expandFrameContrast/)
@@ -507,7 +527,10 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   assert.match(visualizerSource, /new ResizeObserver\(resizeCanvases\)/)
   assert.match(visualizerSource, /function isNumericSequence\(value\)/)
   assert.match(visualizerSource, /ArrayBuffer\.isView\(value\)/)
-  assert.match(visualizerSource, /const incomingBars = isNumericSequence\(msg\.bars\) \? msg\.bars : null/)
+  assert.match(
+    visualizerSource,
+    /const incomingBars = isNumericSequence\(msg\.bars\) \? msg\.bars : null/
+  )
   assert.match(visualizerSource, /\? Math\.max\(0, Math\.min\(1, incomingBars\[i\]\)\)/)
   assert.match(visualizerSource, /retargetPrecomputedBars\(incomingBars\)/)
   assert.doesNotMatch(visualizerSource, /\? Math\.max\(0, incomingBars\[i\]\)/)
@@ -536,7 +559,10 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   assert.match(visualizerSource, /const LOW_FREQUENCY_CONTOUR_FLAT_RANGE = 0\.2/)
   assert.match(visualizerSource, /const LOW_FREQUENCY_CONTOUR_BASE_DEPTH = 0\.24/)
   assert.match(visualizerSource, /const LOW_FREQUENCY_CONTOUR_DEPTH = 0\.52/)
-  assert.match(visualizerSource, /const tertiary = Math\.sin\(\(barIndex \+ 1\) \* 2\.37 \+ phase \* 0\.9\)/)
+  assert.match(
+    visualizerSource,
+    /const tertiary = Math\.sin\(\(barIndex \+ 1\) \* 2\.37 \+ phase \* 0\.9\)/
+  )
   assert.match(visualizerSource, /function visualizerDisplayLevel\(value\)/)
   assert.doesNotMatch(visualizerSource, /function smoothPeakSourceLevel/)
   assert.doesNotMatch(visualizerSource, /function frameContrastFloor/)
@@ -545,14 +571,20 @@ test('audio visualizer iframe controls are wired to the player store', () => {
     visualizerSource,
     /return Math\.pow\(level, SPECTRUM_DISPLAY_GAMMA\) \* SPECTRUM_DISPLAY_HEADROOM/
   )
-  assert.match(visualizerSource, /function applyLowFrequencyShelfContour\(rawBars, binCenters, contourPhase\)/)
-  assert.match(visualizerSource, /sourceLevels = applyLowFrequencyShelfContour\(rawComputedBars, binCenters, contourPhase\)/)
-  assert.match(visualizerSource, /sourceLevels = applyLowFrequencyShelfContour\(rawPrecomputedBars, binCenters, contourPhase\)/)
-  assert.match(visualizerSource, /lowFrequencyContourPhase: contourPhase/)
   assert.match(
     visualizerSource,
-    /const val = visualizerDisplayLevel\(sourceLevels\[i\]\) \* 255/
+    /function applyLowFrequencyShelfContour\(rawBars, binCenters, contourPhase\)/
   )
+  assert.match(
+    visualizerSource,
+    /sourceLevels = applyLowFrequencyShelfContour\(rawComputedBars, binCenters, contourPhase\)/
+  )
+  assert.match(
+    visualizerSource,
+    /sourceLevels = applyLowFrequencyShelfContour\(rawPrecomputedBars, binCenters, contourPhase\)/
+  )
+  assert.match(visualizerSource, /lowFrequencyContourPhase: contourPhase/)
+  assert.match(visualizerSource, /const val = visualizerDisplayLevel\(sourceLevels\[i\]\) \* 255/)
   assert.match(
     visualizerSource,
     /const targetHeight = \(val \/ 255\) \* height \* SPECTRUM_HEIGHT_SCALE/
@@ -567,10 +599,7 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   assert.match(visualizerSource, /function startSpectrumLoop\(\)/)
   assert.match(visualizerSource, /function stopSpectrumLoop\(\)/)
   assert.match(visualizerSource, /cancelAnimationFrame\(spectrumAnimationFrame\)/)
-  assert.match(
-    visualizerSource,
-    /spectrumAnimationFrame = requestAnimationFrame\(drawSpectrum\)/
-  )
+  assert.match(visualizerSource, /spectrumAnimationFrame = requestAnimationFrame\(drawSpectrum\)/)
   assert.doesNotMatch(
     visualizerSource,
     /function drawSpectrum\(\) \{\s*requestAnimationFrame\(drawSpectrum\)/
@@ -662,12 +691,32 @@ test('renderer audio device normalization derives tri-state capability fallbacks
   assert.match(source, /function deriveNativeDsdSupportState/)
   assert.match(source, /fallbackBackend: AudioOutputId \| '' = ''/)
   assert.match(source, /id\.startsWith\('hw:'\)/)
-  assert.match(source, /normalizeAudioDeviceOptions\(state\.deviceOptions, state\.device, state\.output\)/)
+  assert.match(
+    source,
+    /normalizeAudioDeviceOptions\(\s*state\.deviceOptions,\s*state\.device,\s*state\.output\s*\)/
+  )
   assert.match(source, /dopSupportState: 'runtime-probed'/)
   assert.match(source, /nativeDsdSupportState: 'unsupported'/)
-  assert.match(helper, /withAudioCapabilitySupportStates\(\{\s*id,\s*label: formatAudioDeviceLabel\(id\),\s*isDefault: id === 'auto'\s*\}, selectedOutput\)/)
-  assert.match(helper, /withAudioCapabilitySupportStates\(\{\s*\.\.\.\(record as Partial<AudioDeviceOption>\),/)
-  assert.match(helper, /withAudioCapabilitySupportStates\(\{\s*id: selectedDevice,/)
+  assert.match(
+    helper,
+    /withAudioCapabilitySupportStates\(\s*\{\s*id,\s*label: formatAudioDeviceLabel\(id\),\s*isDefault: id === 'auto'\s*\},\s*selectedOutput\s*\)/
+  )
+  assert.match(
+    helper,
+    /withAudioCapabilitySupportStates\(\s*\{\s*\.\.\.\(record as Partial<AudioDeviceOption>\),/
+  )
+  assert.match(helper, /withAudioCapabilitySupportStates\(\s*\{\s*id: selectedDevice,/)
+})
+
+test('dominant cover color extraction ignores stale async results', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+
+  assert.match(source, /let dominantColorRequestId = 0/)
+  assert.match(source, /const requestId = \+\+dominantColorRequestId/)
+  assert.match(source, /const color = await extractDominantColor\(cover\)/)
+  assert.match(source, /requestId === dominantColorRequestId/)
+  assert.match(source, /currentTrack\.value\?\.cover === cover/)
+  assert.match(source, /appSettings\.value\?\.useCoverTheme/)
 })
 
 test('audio output refresh reruns when hotplug arrives during an in-flight request', () => {
@@ -675,10 +724,16 @@ test('audio output refresh reruns when hotplug arrives during an in-flight reque
   const helper = extractInternalFunctionBody(source, 'refreshAudioOutputState')
 
   assert.match(source, /let audioEngineStateRefreshQueued = false/)
-  assert.match(helper, /if \(audioEngineStateRequest\) \{\s*audioEngineStateRefreshQueued = true\s*return audioEngineStateRequest\s*\}/)
+  assert.match(
+    helper,
+    /if \(audioEngineStateRequest\) \{\s*audioEngineStateRefreshQueued = true\s*return audioEngineStateRequest\s*\}/
+  )
   assert.match(helper, /audioEngineStateRefreshQueued = false[\s\S]*api\.getAudioOutputState\(\)/)
   assert.match(helper, /audioEngineStateRequest = null/)
-  assert.match(helper, /if \(audioEngineStateRefreshQueued\) \{\s*await refreshAudioOutputState\(\)\s*\}/)
+  assert.match(
+    helper,
+    /if \(audioEngineStateRefreshQueued\) \{\s*await refreshAudioOutputState\(\)\s*\}/
+  )
 })
 
 test('playback fallback ranks provider variants by playback url health', () => {

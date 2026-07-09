@@ -1,88 +1,131 @@
-# Twilight Echo 开发者文档
+# Twilight Echo 技术文档
 
-本文档面向 Twilight Echo 的贡献者与二次开发者，汇总技术栈、项目结构、架构、构建与测试命令，帮助你快速进入开发状态。插件系统的完整说明见 [PLUGIN_README.md](./PLUGIN_README.md)，权威契约见 [twilight-echo-plugin-spec.md](./twilight-echo-plugin-spec.md)。
+本文档面向 Twilight Echo 维护者，说明仓库结构、运行架构、关键数据流、性能约束和验证命令。插件系统的权威契约以 [twilight-echo-plugin-spec.md](./twilight-echo-plugin-spec.md) 与 [twilight-echo-plugin-plan.md](./twilight-echo-plugin-plan.md) 为准；本文只描述 app 仓库如何接入和承载插件能力。
 
-## 1. 技术栈
+## 技术栈
 
-应用层依赖：
+Twilight Echo 是 Electron + Vue 3 + TypeScript 应用，使用 electron-vite 构建，electron-builder 打包。当前包信息为 `TwilightEcho@1.0.0`，许可证为 Apache-2.0。
+
+核心依赖：
 
 - Electron `^39.2.6`
 - Vue `^3.5.25`
 - TypeScript `^5.9.3`
 - electron-vite `^5.0.0`
-- PrimeIcons
-- music-metadata
+- `music-metadata`
 - `@neteasecloudmusicapienhanced/api`
+- PrimeIcons
 
-原生音频引擎依赖：
+原生音频引擎使用 C++20、CMake、FFmpeg、Node-API，并通过平台后端输出到 WASAPI、CoreAudio、ALSA 或 ASIO。Windows MinGW 是当前验证最完整的原生构建路径。
 
-- C++20
-- CMake
-- vcpkg
-- FFmpeg
-- Node-API
-- WASAPI
-
-前端与主进程由 electron-vite 驱动构建，跨平台打包交给 electron-builder。代码风格由 ESLint 与 Prettier 统一约束。`package.json` 中 `name` 为 `TwilightEcho`，`version` 为 `1.0.0`，许可证为 Apache-2.0。
-
-## 2. 项目结构
-
-仓库主要目录如下，按职责划分：
+## 仓库结构
 
 ```text
 .
 ├── src/
-│   ├── main/                 Electron 主进程：窗口、IPC、扫描、设置、缓存、NCM、音频引擎管理
-│   ├── preload/              暴露给 Renderer 的安全 API
-│   └── renderer/             Vue 3 前端界面
-├── audio-engine/             C++20 原生音频引擎
-│   ├── include/              稳定 C ABI 头文件
-│   ├── core/                 引擎生命周期、状态机、AudioPipeline、缓冲区
-│   ├── decoder/              FFmpeg 解码层
-│   ├── dsp/                  DSP 链、ReplayGain、EQ、卷积、Crossfeed、频谱
-│   ├── output/               WASAPI / CoreAudio / ALSA / ASIO 后端
-│   ├── devices/              设备枚举与能力模型
-│   ├── playlist/             Queue / Playlist、gapless preload
-│   ├── metadata/             音频信息、ReplayGain、DSD 状态读取
-│   ├── napi/                 Node-API 桥接层
-│   └── tests/                原生测试
-├── resources/                应用资源与打包资源（audio-engine / plugins / plugin-index）
-├── build/                    electron-builder 构建资源与图标
-├── patches/                  第三方依赖补丁
-├── scripts/                  辅助脚本（MinGW 配置、staging、smoke 等）
-├── packages/                 plugin-api typings + create-twilight-plugin 脚手架
-└── docs/                     项目文档
+│   ├── main/                 Electron 主进程：窗口、IPC、设置、本地库、插件管理、音频引擎
+│   ├── preload/              contextBridge 安全 API
+│   └── renderer/             Vue 3 renderer
+├── audio-engine/             C++20 原生音频引擎与 Node-API addon
+├── resources/
+│   ├── audio-engine/         打包时加载的原生二进制
+│   ├── plugins/ncm-provider/ 内置 NCM provider 插件
+│   └── plugin-index/         离线插件索引
+├── packages/
+│   ├── plugin-api/           `@twilight-echo/plugin-api` typings
+│   └── create-twilight-plugin/ 插件脚手架与 pack 工具
+├── scripts/                  构建、staging、smoke、发布辅助脚本
+└── docs/                     技术文档、插件规范、发布 gate
 ```
 
-`packages/` 下有两个可发布工件：`plugin-api`（插件 API v1 的 TypeScript typings）和 `create-twilight-plugin`（插件模板脚手架）。
+第三方插件源码不属于 app 仓库。第三方插件应放在外部仓库 `Twilight-Echo-plugins`，app 只消费 `TWILIGHT_PLUGIN_INDEX_URL` 或内置静态索引。`resources/plugins/ncm-provider` 是唯一内置 provider 例外。
 
-## 3. 架构
+## 运行架构
 
-Twilight Echo 是标准的三段式 Electron 应用，分为主进程、preload、renderer。
+Electron main 侧有三个构建入口，均在 `electron.vite.config.ts` 中声明：
 
-主进程位于 `src/main/`，负责窗口生命周期、IPC、本地库扫描、设置持久化、缓存、网易云音乐逻辑以及原生音频引擎管理。preload 位于 `src/preload/index.ts`，通过 `contextBridge` 把一组安全 API 暴露给 Renderer。主进程与 Renderer 之间通过 IPC 通信。
+- `index` -> `src/main/index.ts` -> `src/main/app/lifecycle.ts`
+- `pluginHost` -> `src/main/pluginHost.ts`
+- `audioEngineService` -> `src/main/audioEngineService.ts`
 
-插件宿主运行在 Electron `utilityProcess` 中，入口为 `src/main/pluginHost.ts`，与主进程隔离，避免插件崩溃影响核心播放。
+主进程负责窗口生命周期、单实例锁、IPC 注册、设置持久化、本地库扫描、桌面歌词、快捷键托盘、Discord RPC、NCM API 启动和音频引擎编排。
 
-原生音频引擎经 `src/main/audioEngineManager.ts` 加载。加载链路为 `twilight_audio_node.node` 调用 `twilight-audio-engine.dll` 的 C ABI，再驱动完整音频管线：
+preload 位于 `src/preload/index.ts`，通过 `contextBridge` 暴露受控 API。renderer 不直接访问 Electron、Node 或主进程内部模块。
+
+renderer 位于 `src/renderer/src/`，入口是 `main.ts` 与 `App.vue`。主要状态分布：
+
+- `stores/usePlayerStore.ts`：播放队列、当前曲目、播放状态、音频输出、可视化轮询、播放会话恢复。
+- `stores/useMusicStore.ts`：本地曲库、艺术家/专辑/文件夹派生集合、歌单、收藏、曲库修复与元数据补全。
+- `stores/useProviderStore.ts`：插件 provider 注册状态、能力与健康度。
+- `providers/mediaProvider.ts`：统一 provider 抽象。
+- `utils/logicalTrackModel.ts`：跨来源曲目的逻辑合并和优先级排序。
+
+## 音频链路
+
+常规播放链路：
 
 ```text
-FFmpeg -> DSP Chain -> WASAPI/CoreAudio/ALSA/ASIO
+Renderer -> preload API -> main IPC -> audioEngineManager
+  -> audioEngineService 或进程内 fallback
+  -> twilight_audio_node.node
+  -> twilight-audio-engine.dll
+  -> FFmpeg decode -> DSP chain -> platform output
 ```
 
-`electron.vite.config.ts` 为 main 进程配置了三个构建入口：
+`TWILIGHT_AUDIO_SERVICE=0` 仅用于开发调试，会让主进程直接加载引擎。生产路径应使用可重启的音频服务进程，避免 native 崩溃拖垮 app。
 
-- `index`，主进程入口 `src/main/index.ts`
-- `pluginHost`，插件宿主入口 `src/main/pluginHost.ts`
-- `audioEngineService`，音频引擎服务入口 `src/main/audioEngineService.ts`
+DSD / passthrough 路径会绕过不安全的 DSP。WASAPI 与 CoreAudio 没有平台级 native DSD 通道，DSD 通过 DoP 或 PCM fallback；ALSA `hw:` 可支持 native DSD。macOS 和 Linux 音频后端仍未完成发布级验证。
 
-三个入口在 dev 与 build 阶段都会被 electron-vite 编译。
+## 本地库与搜索数据流
 
-通过 `contextBridge` 暴露给 Renderer 的核心方法包括：`Play`、`Pause`、`Stop`、`Seek`、`SetVolume`、`SetOutputDevice`、`SetOutputBackend`、`GetPlaybackInfo`、`GetSpectrumData`。
+本地曲库加载时先把已保存曲目放入 renderer，使界面尽快可用；移动文件修复和 provider 元数据补全在后台进行。后台结果按 track id 合并，避免覆盖用户在加载期间新增或删除的曲目。
 
-平台与音频后端的对应关系：Windows 走 WASAPI，macOS 走 CoreAudio，Linux 走 ALSA。需要注意，macOS 与 Linux 的原生引擎验证仍在进行中，目前尚未完成，请勿假设这两条路径已可用。
+`useMusicStore` 维护两个非响应式索引：
 
-## 4. 环境准备与开发
+- `trackById`：按 track id 定位曲目。
+- `trackByPath`：按文件路径定位曲目，供文件 watcher 的增量 add/remove 使用。
+
+派生集合 `artists`、`albums`、`folders` 使用 `shallowRef`，并通过 coalesced rebuild 合并多次变更。不要在高频操作中逐次重建完整派生集合；批量导入、删除、修复后应调度一次 rebuild。跨来源歌单解析依赖按曲库 revision 缓存的 local logical map；收藏按钮状态依赖歌单 identity cache。修改曲库数组时必须走 store 内部的曲库替换路径，确保这些缓存能正确失效。
+
+统一搜索会把本地结果和插件 provider 结果合并为逻辑曲目。`buildLogicalTracks` 使用逻辑 key 索引候选组，避免大结果集下按组线性扫描。新增搜索、最近播放或收藏逻辑时，应复用 `logicalTrackModel`，不要重新实现跨来源合并规则。
+
+最近播放、排行和 Dashboard 推荐需要把历史统计解析回可播放的本地变体时，使用 `createUnifiedRecentTrackResolver(localTracks)` 在一次计算中复用本地 id/logical 索引。不要在每条统计上单独调用会重建整库索引的解析流程。
+
+Streaming 页的本地歌曲、歌单、歌手搜索逻辑放在 `components/streaming-page/localStreamingSearch.ts`。该工具扫描完整集合以保留分页总数，但只 materialize 当前页结果；不要在 SFC 内重新写 `filter().map().slice()` 的全量中间数组链。
+
+## Renderer 性能约束
+
+本项目的卡顿风险主要来自大曲库和高频播放状态更新。维护时遵守以下规则：
+
+- 大列表只渲染可见区域。`SongList` 表格走虚拟滚动，网格视图走 idle/timer 分批渲染。
+- 大型数组更新使用 `shallowRef` + 新数组替换，避免深层响应式追踪整首曲目对象。
+- 曲库艺术家、专辑、文件夹等派生集合在分组入库时同步维护封面等摘要元数据，不要生成每个分组后再扫描组内曲目。
+- 高频查找使用 `Map` / `Set` 索引，不在事件处理、watcher、播放 tick 中反复 `find`、`includes` 或全量 `map/filter`。
+- 单曲 metadata、BPM 等回写路径使用 `trackIndexById` 定位数组槽位，不要对整张曲库 `findIndex`。
+- 最近播放、排行榜和 Dashboard 榜单等只需要前 N 项的选择器使用 store 内的有界 top-N 收集，避免在 SFC 内为整张历史表创建 `entries/filter/sort/slice/map` 中间链。
+- 播放 tick 会写入的统计状态使用 `shallowRef` 加显式 `triggerRef` 提交，更新单条统计时不要复制整张历史表。
+- 搜索热路径避免为每首歌创建临时字段数组，优先短路判断，并尽量只保留当前页需要渲染的结果。
+- store composable 可以被多个组件调用；模块级初始化不能在每次调用时全量重建曲库索引。
+- 启动期跨 store 副作用优先由入口层注入所需 refs，不要在 store 内动态 import 已经被主界面静态引用的热 store；否则既形成隐式反向依赖，也无法带来实际 chunk 拆分。
+- 播放进度、频谱和桌面歌词同步要节流，避免把 native polling 变成 renderer 重渲染风暴。
+- 正在播放页按播放时间定位歌词时使用二分查找，不在每个播放 tick 从歌词首行线性扫描。
+- 封面主题色提取使用小型 LRU/promise 缓存；切歌时必须防止旧封面异步结果覆盖当前曲目颜色。
+- provider 或文件系统慢操作必须后台化，不能阻塞首屏曲库渲染。
+
+## 插件边界
+
+插件运行在 `utilityProcess`，入口为 `src/main/pluginHost.ts`。插件只能通过版本化 `twilight` API 访问宿主能力，不得直接 import Electron、Node 内置模块或 app 内部实现。
+
+app 仓库允许包含：
+
+- 插件 host/runtime 代码。
+- 插件 API typings 与脚手架。
+- 内置 NCM provider。
+- 宿主验证所需的内置示例或静态索引客户端。
+
+app 仓库不允许包含第三方插件源码、第三方插件测试、第三方 `.tep` 包或插件专属 README。需要新增第三方能力时，app 侧只实现通用 host/API/UI 能力，具体 provider 逻辑放到外部插件仓库。
+
+## 常用命令
 
 安装依赖：
 
@@ -90,30 +133,17 @@ FFmpeg -> DSP Chain -> WASAPI/CoreAudio/ALSA/ASIO
 npm install
 ```
 
-或使用 pnpm：
-
-```bash
-pnpm install
-```
-
-`package.json` 没有声明 `engines` 字段，运行时依赖 Electron 自带的 Node 版本，无需单独管理本机 Node。
-
-启动开发环境：
+开发运行：
 
 ```bash
 npm run dev
 ```
 
-该命令执行 `electron-vite dev`，会同时编译三个 main 入口、preload 与 renderer，并拉起 Electron 窗口。
-
-## 5. 构建 / 测试 / 检查命令
-
-下表按用途分组列出全部相关脚本，均来自 `package.json`。
-
-类型检查：
+类型检查与构建：
 
 ```bash
 npm run typecheck
+npm run build
 ```
 
 Lint 与格式化：
@@ -123,60 +153,23 @@ npm run lint
 npm run format
 ```
 
-Electron 构建：
-
-```bash
-npm run build
-```
-
-`build` 会先跑 `npm run typecheck`，再执行 `electron-vite build`。
-
-打包：
-
-```bash
-npm run build:unpack
-npm run build:win
-npm run build:mac
-npm run build:linux
-```
-
-插件工具链：
-
-```bash
-npm run build:plugin-api
-npm run test:plugin-tooling
-```
-
 应用测试：
 
 ```bash
 npm run test:plugins
 npm run test:audio-manager
 npm run test:playback-routing
+npm run test:local-perf
+npm run test:plugin-tooling
 ```
 
-代码风格配置如下。Prettier 位于 `.prettierrc.yaml`，关键项为 `singleQuote: true`、`semi: false`、`printWidth: 100`、`trailingComma: none`。ESLint 采用 flat config，定义在 `eslint.config.mjs`，忽略 `node_modules`、`dist`、`out` 三个目录。
+单个 TS 测试文件：
 
-## 6. 原生音频引擎构建（Windows MinGW）
-
-Windows 下原生引擎已验证的工具链矩阵：
-
-- CMake 4.3+
-- w64devkit / MinGW GCC
-- Ninja
-- vcpkg
-- FFmpeg `x64-mingw-static`
-- Node-API headers
-
-推荐设置以下环境变量：
-
-```powershell
-$env:W64DEVKIT_ROOT = "D:\tools\w64devkit"
-$env:VCPKG_ROOT = "D:\tools\vcpkg"
-$env:VCPKG_DEFAULT_TRIPLET = "x64-mingw-static"
+```bash
+node --experimental-strip-types --test src/renderer/src/utils/logicalTrackModel.test.ts
 ```
 
-MinGW 路径的配置、构建、测试命令：
+Windows MinGW 原生音频引擎：
 
 ```bash
 npm run configure:audio-engine:mingw
@@ -184,97 +177,29 @@ npm run build:audio-engine:mingw
 npm run test:audio-engine:mingw
 ```
 
-默认 CMake 入口（不指定 MinGW preset）：
+无真实设备发布前 gate：
 
 ```bash
-npm run configure:audio-engine
-npm run build:audio-engine
-npm run test:audio-engine
+npm run test:no-real-device
 ```
 
-构建产物路径：
+## 变更验证建议
 
-```text
-audio-engine/build/mingw-static/twilight-audio-engine.dll
-audio-engine/build/mingw-static/twilight_audio_node.node
-```
+按改动范围选择最小但足够的验证：
 
-再次说明，macOS 与 Linux 的原生引擎验证属于后续工作，目前尚未完成。在这两个平台上构建原生引擎属于实验性操作，结果不作保证。
+- renderer 搜索、最近播放、收藏、逻辑曲目：`npm run test:playback-routing`
+- 本地曲库性能、列表、收藏按钮：`npm run test:local-perf`
+- 插件 manifest、依赖、索引、provider routing：`npm run test:plugins`
+- 音频引擎 IPC、队列、service client：`npm run test:audio-manager`
+- 跨 main/preload/renderer 类型变更：`npm run typecheck`
+- 发布前：按 [windows-release-gate.md](./windows-release-gate.md) 执行完整 gate
 
-## 7. 测试
+真实设备 smoke 不属于默认 gate。ASIO、WASAPI Exclusive、native DSD、SACD ISO、CoreAudio、ALSA `hw:` 等验证需要明确设备与曲目样本。
 
-JavaScript 测试统一使用 `node --test` 运行，对应脚本包括 `test:plugins`、`test:audio-manager`、`test:playback-routing` 等。例如：
+## 代码风格
 
-```bash
-npm run test:plugins
-npm run test:audio-manager
-npm run test:playback-routing
-```
+Prettier 配置：单引号、无分号、`printWidth: 100`、无 trailing comma。ESLint 使用 flat config，Vue SFC 必须使用 `<script lang="ts">`。
 
-原生测试使用 CTest，针对 MinGW 构建目录执行：
+测试使用 Node 内置 `node --test`，TS 测试通过 `--experimental-strip-types` 运行。新增测试应与被测文件 co-locate，命名为 `*.test.ts`、`*.test.mjs` 或 `*.test.cjs`。
 
-```bash
-ctest --test-dir audio-engine/build/mingw-static
-```
-
-等价的 npm 脚本是 `npm run test:audio-engine:mingw`。
-
-开发阶段如果原生引擎不可用，可以开启 HTMLAudio 兜底。该回退默认关闭，需要显式启用：
-
-```powershell
-$env:TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK = "1"
-```
-
-启用后 Renderer 会用 HTMLAudio 作为播放兜底，仅建议在调试或应急场景使用。
-
-## 8. 打包发布
-
-打包配置在 `electron-builder.yml`。关键设置：
-
-- `asar: true`
-- Windows 使用 NSIS 安装器
-- macOS 输出 dmg
-- Linux 输出 AppImage、snap、deb
-- `extraResources` 把 `resources/audio-engine`、`resources/plugins`、`resources/plugin-index` 三个目录复制进应用资源目录
-
-发布前必须确保目标平台的 `twilight-audio-engine` 与 `twilight_audio_node.node` 已经构建完成，并放入对应资源目录，否则打包产物无法加载原生引擎。
-
-打包命令：
-
-```bash
-npm run build:unpack
-npm run build:win
-npm run build:mac
-npm run build:linux
-```
-
-`build:unpack` 生成未打包的目录形态，便于本地验证；`build:win` / `build:mac` / `build:linux` 分别产出对应平台的安装包。
-
-## 9. 贡献流程
-
-仓库当前没有 `CONTRIBUTING.md`，也没有 PR 模板。在此之前请按以下流程参与贡献：
-
-1. fork 仓库并基于 `main` 创建特性分支。
-2. 本地完成开发后依次执行检查：
-
-   ```bash
-   npm run typecheck
-   npm run lint
-   npm run format
-   ```
-
-3. 运行与改动相关的测试，至少包含：
-
-   ```bash
-   npm run test:plugins
-   npm run test:audio-manager
-   npm run test:playback-routing
-   ```
-
-   涉及原生引擎的改动还需执行 `npm run test:audio-engine:mingw`。
-
-4. 全部通过后提交并发起 PR，在描述中说明改动范围与验证结果。
-
-更多背景请参阅 [`../README.md`](../README.md)。插件相关开发指南见 [PLUGIN_README.md](./PLUGIN_README.md)，插件规范见 [`./twilight-echo-plugin-spec.md`](./twilight-echo-plugin-spec.md)。项目采用 Apache License 2.0 开源，详见 [`../LICENSE`](../LICENSE)。
-
-Windows 发布前的最小门禁见 [windows-release-gate.md](./windows-release-gate.md)。
+renderer import 使用 `@renderer/*` alias 或已有局部模式，避免跨层深度相对路径。主进程、preload、renderer 的类型边界要显式维护，不要让 renderer 直接依赖 main 内部实现。

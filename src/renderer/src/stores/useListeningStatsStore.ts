@@ -1,4 +1,4 @@
-import { ref, watch, type Ref } from 'vue'
+import { shallowRef, triggerRef, watch, type Ref } from 'vue'
 import type { Track } from '../types/music'
 import { getLogicalTrackKey, normalizeLogicalTrackText } from '../utils/logicalTrackIdentity.ts'
 
@@ -38,6 +38,8 @@ export interface ListeningStats {
   tracks: Record<string, ListeningTrackStat>
 }
 
+type ListeningTrackStatWithId = ListeningTrackStat & { id: string }
+
 interface ListeningPlayerState {
   currentTrack: Ref<Track | null>
   isPlaying: Ref<boolean>
@@ -52,7 +54,7 @@ const LISTENING_TICK_SECONDS = 5
 const COMPLETION_RATIO = 0.9
 const SKIP_RATIO = 0.5
 
-const listeningStats = ref<ListeningStats>(loadListeningStats())
+const listeningStats = shallowRef<ListeningStats>(loadListeningStats())
 
 let listeningTimer: number | null = null
 let lastCountedTrackId = ''
@@ -142,6 +144,12 @@ function saveListeningStats(): void {
   localStorage.setItem(DASHBOARD_STATS_KEY, JSON.stringify(listeningStats.value))
 }
 
+function commitListeningStats(mutator: (stats: ListeningStats) => void): void {
+  mutator(listeningStats.value)
+  triggerRef(listeningStats)
+  saveListeningStats()
+}
+
 function dayKey(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10)
 }
@@ -153,37 +161,23 @@ function addListeningSeconds(track: Track, seconds: number): void {
 function recordListening(track: Track, seconds: number, timestamp: number): void {
   const today = dayKey(timestamp)
   const statKey = getListeningStatKey(track)
-  const nextStats: ListeningStats = {
-    days: { ...listeningStats.value.days },
-    tracks: { ...listeningStats.value.tracks }
-  }
-  nextStats.days[today] = (nextStats.days[today] ?? 0) + seconds
-  const previous = nextStats.tracks[statKey] ?? {
-    seconds: 0,
-    plays: 0,
-    lastPlayed: 0,
-    skips: 0,
-    completions: 0,
-    title: track.title,
-    artist: track.artist,
-    cover: track.cover,
-    sourceIds: []
-  }
-  nextStats.tracks[statKey] = {
-    seconds: previous.seconds + seconds,
-    plays: previous.plays + (lastCountedTrackId === track.id ? 0 : 1),
-    lastPlayed: timestamp,
-    skips: previous.skips,
-    completions: previous.completions,
-    title: track.title || previous.title,
-    artist: track.artist || previous.artist,
-    cover: track.cover || previous.cover,
-    sourceIds: upsertSourceId(previous.sourceIds, track),
-    track: cloneTrack(track)
-  }
+  commitListeningStats((stats) => {
+    stats.days[today] = (stats.days[today] ?? 0) + seconds
+    const previous = stats.tracks[statKey] ?? createEmptyTrackStat(track)
+    stats.tracks[statKey] = {
+      seconds: previous.seconds + seconds,
+      plays: previous.plays + (lastCountedTrackId === track.id ? 0 : 1),
+      lastPlayed: timestamp,
+      skips: previous.skips,
+      completions: previous.completions,
+      title: track.title || previous.title,
+      artist: track.artist || previous.artist,
+      cover: track.cover || previous.cover,
+      sourceIds: upsertSourceId(previous.sourceIds, track),
+      track: cloneTrack(track)
+    }
+  })
   lastCountedTrackId = track.id
-  listeningStats.value = nextStats
-  saveListeningStats()
 }
 
 function recordPlaybackOutcome(
@@ -198,37 +192,34 @@ function recordPlaybackOutcome(
     timestamp: number
   }
 ): void {
-  const normalizedDuration =
-    Number.isFinite(duration) && duration > 0 ? duration : track.duration
-  if (!Number.isFinite(position) || !Number.isFinite(normalizedDuration) || normalizedDuration <= 0) {
+  const normalizedDuration = Number.isFinite(duration) && duration > 0 ? duration : track.duration
+  if (
+    !Number.isFinite(position) ||
+    !Number.isFinite(normalizedDuration) ||
+    normalizedDuration <= 0
+  ) {
     return
   }
 
   const ratio = Math.max(0, position) / normalizedDuration
-  const outcome =
-    ratio >= COMPLETION_RATIO ? 'completion' : ratio < SKIP_RATIO ? 'skip' : null
+  const outcome = ratio >= COMPLETION_RATIO ? 'completion' : ratio < SKIP_RATIO ? 'skip' : null
   if (!outcome) return
 
   const statKey = getListeningStatKey(track)
-  const previous = listeningStats.value.tracks[statKey] ?? createEmptyTrackStat(track)
-  const nextStats: ListeningStats = {
-    days: { ...listeningStats.value.days },
-    tracks: { ...listeningStats.value.tracks }
-  }
-
-  nextStats.tracks[statKey] = {
-    ...previous,
-    lastPlayed: Math.max(previous.lastPlayed, timestamp),
-    skips: previous.skips + (outcome === 'skip' ? 1 : 0),
-    completions: previous.completions + (outcome === 'completion' ? 1 : 0),
-    title: track.title || previous.title,
-    artist: track.artist || previous.artist,
-    cover: track.cover || previous.cover,
-    sourceIds: upsertSourceId(previous.sourceIds, track),
-    track: cloneTrack(track)
-  }
-  listeningStats.value = nextStats
-  saveListeningStats()
+  commitListeningStats((stats) => {
+    const previous = stats.tracks[statKey] ?? createEmptyTrackStat(track)
+    stats.tracks[statKey] = {
+      ...previous,
+      lastPlayed: Math.max(previous.lastPlayed, timestamp),
+      skips: previous.skips + (outcome === 'skip' ? 1 : 0),
+      completions: previous.completions + (outcome === 'completion' ? 1 : 0),
+      title: track.title || previous.title,
+      artist: track.artist || previous.artist,
+      cover: track.cover || previous.cover,
+      sourceIds: upsertSourceId(previous.sourceIds, track),
+      track: cloneTrack(track)
+    }
+  })
 }
 
 function recordPlaybackTransition({
@@ -310,6 +301,74 @@ function cloneTrack(track: Track): Track {
   }
 }
 
+function normalizeResultLimit(limit: number): number {
+  if (!Number.isFinite(limit)) return Number.POSITIVE_INFINITY
+  return Math.max(0, Math.floor(limit))
+}
+
+function collectTopItems<T>(
+  items: Iterable<T>,
+  limit: number,
+  include: (item: T) => boolean,
+  compare: (left: T, right: T) => number
+): T[] {
+  const max = normalizeResultLimit(limit)
+  if (max <= 0) return []
+
+  const selected: T[] = []
+  for (const item of items) {
+    if (!include(item)) continue
+    let insertAt = -1
+    for (let index = 0; index < selected.length; index++) {
+      if (compare(item, selected[index]) < 0) {
+        insertAt = index
+        break
+      }
+    }
+    if (insertAt === -1) {
+      if (selected.length < max) selected.push(item)
+      continue
+    }
+    selected.splice(insertAt, 0, item)
+    if (selected.length > max) selected.pop()
+  }
+  return selected
+}
+
+function* listeningTrackEntries(): Iterable<ListeningTrackStatWithId> {
+  for (const [id, stat] of Object.entries(listeningStats.value.tracks)) {
+    yield { id, ...stat }
+  }
+}
+
+function compareRecentTracks(
+  left: ListeningTrackStatWithId,
+  right: ListeningTrackStatWithId
+): number {
+  return right.lastPlayed - left.lastPlayed
+}
+
+function compareTopTracks(left: ListeningTrackStatWithId, right: ListeningTrackStatWithId): number {
+  if (right.plays !== left.plays) return right.plays - left.plays
+  if (right.seconds !== left.seconds) return right.seconds - left.seconds
+  return right.lastPlayed - left.lastPlayed
+}
+
+function compareMostListenedTracks(
+  left: ListeningTrackStatWithId,
+  right: ListeningTrackStatWithId
+): number {
+  if (right.seconds !== left.seconds) return right.seconds - left.seconds
+  if (right.plays !== left.plays) return right.plays - left.plays
+  return right.lastPlayed - left.lastPlayed
+}
+
+function compareTopArtists(left: ListeningArtistStat, right: ListeningArtistStat): number {
+  if (right.plays !== left.plays) return right.plays - left.plays
+  if (right.seconds !== left.seconds) return right.seconds - left.seconds
+  return right.lastPlayed - left.lastPlayed
+}
+
 function startListeningTimer(player: ListeningTimerState): void {
   stopListeningTimer()
   listeningTimer = window.setInterval(() => {
@@ -326,11 +385,10 @@ function stopListeningTimer(): void {
   }
 }
 
-export async function setupListeningStatsTracking(): Promise<void> {
+export function setupListeningStatsTracking(player: ListeningPlayerState): void {
   if (trackerStarted) return
   trackerStarted = true
-  const { usePlayerStore } = await import('./usePlayerStore.ts')
-  const { currentTrack, isPlaying, currentTime, duration } = usePlayerStore()
+  const { currentTrack, isPlaying, currentTime, duration } = player
   lastOutcomeTrack = currentTrack.value
   lastOutcomePosition = currentTime.value
   lastOutcomeDuration = duration.value
@@ -378,24 +436,31 @@ export function useListeningStatsStore(): {
   }
 }
 
-export function getRecentTracks(limit = 100): Array<ListeningTrackStat & { id: string }> {
-  return Object.entries(listeningStats.value.tracks)
-    .filter(([, stat]) => stat.lastPlayed > 0)
-    .sort(([, a], [, b]) => b.lastPlayed - a.lastPlayed)
-    .slice(0, limit)
-    .map(([id, stat]) => ({ id, ...stat }))
+export function getRecentTracks(limit = 100): ListeningTrackStatWithId[] {
+  return collectTopItems(
+    listeningTrackEntries(),
+    limit,
+    (stat) => stat.lastPlayed > 0,
+    compareRecentTracks
+  )
 }
 
-export function getTopTracks(limit = 100): Array<ListeningTrackStat & { id: string }> {
-  return Object.entries(listeningStats.value.tracks)
-    .filter(([, stat]) => stat.plays > 0 || stat.seconds > 0)
-    .sort(([, a], [, b]) => {
-      if (b.plays !== a.plays) return b.plays - a.plays
-      if (b.seconds !== a.seconds) return b.seconds - a.seconds
-      return b.lastPlayed - a.lastPlayed
-    })
-    .slice(0, limit)
-    .map(([id, stat]) => ({ id, ...stat }))
+export function getTopTracks(limit = 100): ListeningTrackStatWithId[] {
+  return collectTopItems(
+    listeningTrackEntries(),
+    limit,
+    (stat) => stat.plays > 0 || stat.seconds > 0,
+    compareTopTracks
+  )
+}
+
+export function getMostListenedTracks(limit = 100): ListeningTrackStatWithId[] {
+  return collectTopItems(
+    listeningTrackEntries(),
+    limit,
+    (stat) => stat.seconds > 0,
+    compareMostListenedTracks
+  )
 }
 
 export function getTopArtists(limit = 50): ListeningArtistStat[] {
@@ -435,13 +500,7 @@ export function getTopArtists(limit = 50): ListeningArtistStat[] {
     }
   }
 
-  return Array.from(artists.values())
-    .sort((a, b) => {
-      if (b.plays !== a.plays) return b.plays - a.plays
-      if (b.seconds !== a.seconds) return b.seconds - a.seconds
-      return b.lastPlayed - a.lastPlayed
-    })
-    .slice(0, limit)
+  return collectTopItems(artists.values(), limit, () => true, compareTopArtists)
 }
 
 export function resetListeningStatsForTest(): void {

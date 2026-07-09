@@ -1,5 +1,13 @@
 ﻿<script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch, defineAsyncComponent } from 'vue'
+import {
+  ref,
+  computed,
+  onMounted,
+  onBeforeUnmount,
+  nextTick,
+  watch,
+  defineAsyncComponent
+} from 'vue'
 import TitleBar from './components/TitleBar.vue'
 import SideMenu from './components/SideMenu.vue'
 import SongList from './components/SongList.vue'
@@ -11,7 +19,9 @@ const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
 const PluginPage = defineAsyncComponent(() => import('./components/PluginPage.vue'))
 const EqualizerPage = defineAsyncComponent(() => import('./components/EqualizerPage.vue'))
-const PluginExtensionPage = defineAsyncComponent(() => import('./components/PluginExtensionPage.vue'))
+const PluginExtensionPage = defineAsyncComponent(
+  () => import('./components/PluginExtensionPage.vue')
+)
 import { useMusicStore } from './stores/useMusicStore'
 import { useNcmStore } from './stores/useNcmStore'
 import { setupListeningStatsTracking } from './stores/useListeningStatsStore'
@@ -116,6 +126,7 @@ const { checkLogin, isLoggedIn: ncmLoggedIn } = useNcmStore()
 const {
   currentTrack,
   currentTime,
+  duration,
   isPlaying,
   restorePlaybackSession,
   createPlaybackSession,
@@ -160,11 +171,7 @@ const sideMenuActiveKey = computed(() =>
     : activeCategory.value
 )
 const mainContentMinHeight = computed(() =>
-  showPluginPage.value
-    ? '100vh'
-    : hasPlayerBar.value
-      ? 'calc(100vh - 32px)'
-      : 'calc(100vh - 32px)'
+  showPluginPage.value ? '100vh' : hasPlayerBar.value ? 'calc(100vh - 32px)' : 'calc(100vh - 32px)'
 )
 
 const playbackSessionPersistence = createPlaybackSessionPersistence({
@@ -177,12 +184,8 @@ const playbackSessionPersistence = createPlaybackSessionPersistence({
   syncPluginProviders,
   dataApi: window.api.data
 })
-const {
-  sideMenuBottomOffset,
-  startSideMenuMonitor,
-  stopSideMenuMonitor,
-  resetSideMenuClearance
-} = useSideMenuClearance({ showLocalSidebar, hasPlayerBar, menuOpen })
+const { sideMenuBottomOffset, startSideMenuMonitor, stopSideMenuMonitor, resetSideMenuClearance } =
+  useSideMenuClearance({ showLocalSidebar, hasPlayerBar, menuOpen })
 
 let removePlaybackSessionSaveListener: (() => void) | null = null
 let removeLibraryChangedListener: (() => void) | null = null
@@ -192,7 +195,7 @@ let pageHideFlushHandler: (() => void) | null = null
 
 onMounted(async () => {
   setupPluginThemeRuntime()
-  setupListeningStatsTracking()
+  setupListeningStatsTracking({ currentTrack, isPlaying, currentTime, duration })
   removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(
     playbackSessionPersistence.savePlaybackSessionForQuit
   )
