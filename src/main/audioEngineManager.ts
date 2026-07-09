@@ -445,6 +445,7 @@ export interface AudioEngineManagerDependencies {
 export interface ConvolverInfo {
   loaded: boolean
   active: boolean
+  bypassed: boolean
   irResampled: boolean
   path: string
   sampleRate: number
@@ -453,6 +454,9 @@ export interface ConvolverInfo {
   lengthMs: number
   partitionSize: number
   latencyFrames: number
+  overrunCount: number
+  lastProcessMs: number
+  maxProcessMs: number
   channelMappingMode: string
   warning: string
   lastError: string
@@ -2605,6 +2609,7 @@ export class AudioEngineManager extends EventEmitter {
     const info = parseNativeJson(this.native?.GetConvolverInfo?.(), {
       loaded: false,
       active: false,
+      bypassed: false,
       irResampled: false,
       path: '',
       sampleRate: 0,
@@ -2613,6 +2618,9 @@ export class AudioEngineManager extends EventEmitter {
       lengthMs: 0,
       partitionSize: 0,
       latencyFrames: 0,
+      overrunCount: 0,
+      lastProcessMs: 0,
+      maxProcessMs: 0,
       channelMappingMode: '',
       warning: '',
       lastError: ''

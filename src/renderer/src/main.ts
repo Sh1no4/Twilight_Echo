@@ -1,4 +1,5 @@
 import './assets/main.css'
+import '@phosphor-icons/web/regular'
 
 import { createApp } from 'vue'
 import App from './App.vue'

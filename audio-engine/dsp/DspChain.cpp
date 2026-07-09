@@ -1,9 +1,9 @@
 #include "DspChain.h"
 #include "DspChainActiveUtils.h"
+#include "../utils/JsonUtils.h"
 
 #include <algorithm>
 #include <cctype>
-#include <cstdlib>
 #include <optional>
 
 namespace twilight::audio {
@@ -17,131 +17,23 @@ std::string toLower(std::string value) {
 }
 
 std::optional<std::string> extractStringField(const std::string& json, const std::string& key) {
-  const std::string marker = "\"" + key + "\"";
-  size_t pos = json.find(marker);
-  if (pos == std::string::npos) return std::nullopt;
-  pos = json.find(':', pos + marker.size());
-  if (pos == std::string::npos) return std::nullopt;
-  pos = json.find('"', pos + 1);
-  if (pos == std::string::npos) return std::nullopt;
-
-  std::string value;
-  bool escaped = false;
-  for (size_t i = pos + 1; i < json.size(); ++i) {
-    const char ch = json[i];
-    if (escaped) {
-      value += ch;
-      escaped = false;
-      continue;
-    }
-    if (ch == '\\') {
-      escaped = true;
-      continue;
-    }
-    if (ch == '"') return value;
-    value += ch;
-  }
-  return std::nullopt;
+  return json_utils::fieldString(json, key);
 }
 
 std::optional<double> extractNumberField(const std::string& json, const std::string& key) {
-  const std::string marker = "\"" + key + "\"";
-  size_t pos = json.find(marker);
-  if (pos == std::string::npos) return std::nullopt;
-  pos = json.find(':', pos + marker.size());
-  if (pos == std::string::npos) return std::nullopt;
-  ++pos;
-  while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
-
-  const char* begin = json.c_str() + pos;
-  char* end = nullptr;
-  const double value = std::strtod(begin, &end);
-  if (end == begin) return std::nullopt;
-  return value;
+  return json_utils::fieldNumber(json, key);
 }
 
 std::optional<bool> extractBoolField(const std::string& json, const std::string& key) {
-  const std::string marker = "\"" + key + "\"";
-  size_t pos = json.find(marker);
-  if (pos == std::string::npos) return std::nullopt;
-  pos = json.find(':', pos + marker.size());
-  if (pos == std::string::npos) return std::nullopt;
-  ++pos;
-  while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) ++pos;
-  if (json.compare(pos, 4, "true") == 0) return true;
-  if (json.compare(pos, 5, "false") == 0) return false;
-  return std::nullopt;
+  return json_utils::fieldBool(json, key);
 }
 
 std::vector<std::string> splitTopLevelObjects(const std::string& json) {
-  std::vector<std::string> objects;
-  bool inString = false;
-  bool escaped = false;
-  int depth = 0;
-  size_t objectStart = std::string::npos;
-
-  for (size_t i = 0; i < json.size(); ++i) {
-    const char ch = json[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch == '\\') {
-        escaped = true;
-      } else if (ch == '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (ch == '"') {
-      inString = true;
-    } else if (ch == '{') {
-      if (depth == 0) objectStart = i;
-      ++depth;
-    } else if (ch == '}') {
-      --depth;
-      if (depth == 0 && objectStart != std::string::npos) {
-        objects.push_back(json.substr(objectStart, i - objectStart + 1));
-        objectStart = std::string::npos;
-      }
-    }
-  }
-
-  return objects;
+  return json_utils::splitTopLevelObjects(json);
 }
 
 std::string extractArrayField(const std::string& json, const std::string& key) {
-  const std::string marker = "\"" + key + "\"";
-  size_t pos = json.find(marker);
-  if (pos == std::string::npos) return {};
-  pos = json.find('[', pos + marker.size());
-  if (pos == std::string::npos) return {};
-
-  bool inString = false;
-  bool escaped = false;
-  int depth = 0;
-  for (size_t i = pos; i < json.size(); ++i) {
-    const char ch = json[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (ch == '\\') {
-        escaped = true;
-      } else if (ch == '"') {
-        inString = false;
-      }
-      continue;
-    }
-    if (ch == '"') {
-      inString = true;
-    } else if (ch == '[') {
-      ++depth;
-    } else if (ch == ']') {
-      --depth;
-      if (depth == 0) return json.substr(pos, i - pos + 1);
-    }
-  }
-  return {};
+  return json_utils::fieldArray(json, key);
 }
 
 ReplayGainMode parseReplayGainMode(const std::string& mode) {
@@ -452,15 +344,6 @@ void DspChain::clampOutput(float* samples, size_t frameCount) {
   for (size_t i = 0; i < sampleCount; ++i) {
     samples[i] = static_cast<float>(std::clamp(static_cast<double>(samples[i]), -1.0, 1.0));
   }
-}
-
-bool dspConfigRequiresProcessing(const std::string& json) {
-  const DspConfig config = DspChain::parseConfigJson(json);
-  const bool dspProcessing =
-      config.enabled &&
-      (config.replayGainMode != ReplayGainMode::Off || config.eqEnabled || config.convolverEnabled ||
-       config.crossfeedEnabled);
-  return dspProcessing || config.crossfadeSeconds > 0.0001;
 }
 
 }  // namespace twilight::audio

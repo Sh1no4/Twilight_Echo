@@ -306,6 +306,10 @@ bool RealCoreAudioHost::applyBufferSize(CoreAudioDeviceID deviceId, uint32_t pre
   return true;
 }
 
+uint32_t RealCoreAudioHost::currentBufferFrameSize(CoreAudioDeviceID deviceId) {
+  return coreaudio::currentBufferFrameSize(deviceId);
+}
+
 bool RealCoreAudioHost::setStreamFormat(
     CoreAudioAudioUnit unit,
     bool input,

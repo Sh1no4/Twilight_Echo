@@ -15,6 +15,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <cmath>
 
 using namespace twilight::audio;
 
@@ -340,6 +341,46 @@ void testCoreAudioExclusiveTypedZeroFallsBackToFloatCallback() {
   assert(rendered == 64);
 }
 
+void testCoreAudioSharedUsesDeviceBufferSizeForRenderAndLatency() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  rawHost->devices.front().bufferFrameSize = 1024;
+  CoreAudioBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("auto", sourceFormat(), &error));
+  const auto openedInfo = backend.outputInfo();
+  assert(openedInfo.bufferSizeFrames == 1024);
+  assert(openedInfo.latencyFrames == 1024);
+  assert(std::fabs(openedInfo.latencyInfo.bufferLatencyMs - (1024.0 * 1000.0 / 48000.0)) < 0.001);
+  assert(openedInfo.latencyMs == openedInfo.latencyInfo.totalLatencyMs);
+
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+  const size_t rendered = rawHost->triggerRender(1024);
+  assert(rendered == 1024);
+  assert(backend.outputInfo().diagnostics.sessionUnderrunCount == 0);
+  assert(rawHost->currentBufferFrameSizeCalls >= 1);
+}
+
+void testCoreAudioExclusiveUsesDeviceBufferSizeForRenderAndLatency() {
+  auto host = makeHost();
+  auto* rawHost = host.get();
+  rawHost->devices.front().bufferFrameSize = 1024;
+  CoreAudioExclusiveBackend backend(std::move(host));
+  std::string error;
+  assert(backend.open("auto", sourceFormat(), &error));
+  const auto openedInfo = backend.outputInfo();
+  assert(openedInfo.bufferSizeFrames == 1024);
+  assert(openedInfo.latencyFrames == 1024);
+  assert(std::fabs(openedInfo.latencyInfo.bufferLatencyMs - (1024.0 * 1000.0 / 48000.0)) < 0.001);
+  assert(openedInfo.latencyMs == openedInfo.latencyInfo.totalLatencyMs);
+
+  assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
+  const size_t rendered = rawHost->triggerRender(1024);
+  assert(rendered == 1024);
+  assert(backend.outputInfo().diagnostics.sessionUnderrunCount == 0);
+  assert(rawHost->currentBufferFrameSizeCalls >= 1);
+}
+
 void testCoreAudioDeviceLostFiresInvalidated() {
   auto host = makeHost();
   auto* rawHost = host.get();
@@ -539,6 +580,8 @@ int main() {
   testCoreAudioExclusiveDeviceLostCloseStopsBeforeDispose();
   testCoreAudioExclusiveRejectsRepeatedStart();
   testCoreAudioExclusiveTypedZeroFallsBackToFloatCallback();
+  testCoreAudioSharedUsesDeviceBufferSizeForRenderAndLatency();
+  testCoreAudioExclusiveUsesDeviceBufferSizeForRenderAndLatency();
   testCoreAudioDeviceLostFiresInvalidated();
   testCoreAudioUnderrunDiagnostics();
   testCoreAudioSampleRateMatch();

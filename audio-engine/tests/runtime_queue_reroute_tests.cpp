@@ -259,6 +259,58 @@ void testSetDspConfigPreparesActiveChainForPreRoutingDecodeFormat() {
   assert(body.find("spareDspChain.prepare(outputFormat_)") == std::string::npos);
 }
 
+void testDsdProcessingPcmDecisionUsesSharedHelper() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string helperBody = extractFunctionBody(source, "bool dspConfigProcessingRequiresPcm(");
+  const std::string dopBody = extractFunctionBody(source, "bool AudioPipeline::shouldAttemptDopForCurrentConfig(");
+  const std::string nativeBody = extractFunctionBody(source, "bool AudioPipeline::shouldAttemptNativeDsdForCurrentConfig(");
+  const std::string reasonBody = extractFunctionBody(source, "std::string AudioPipeline::determineDsdPcmFallbackReason(");
+
+  assert(helperBody.find("dspConfig.replayGainMode") != std::string::npos);
+  assert(helperBody.find("dspConfig.eqEnabled") != std::string::npos);
+  assert(helperBody.find("dspConfig.convolverEnabled") != std::string::npos);
+  assert(helperBody.find("dspConfig.crossfeedEnabled") != std::string::npos);
+  assert(helperBody.find("dspConfig.crossfadeSeconds") != std::string::npos);
+  assert(helperBody.find("outputConfig.routingMode") != std::string::npos);
+  assert(helperBody.find("std::abs(volume - 1.0)") != std::string::npos);
+
+  assert(dopBody.find("dspConfigProcessingRequiresPcm") != std::string::npos);
+  assert(nativeBody.find("dspConfigProcessingRequiresPcm") != std::string::npos);
+  assert(reasonBody.find("dspConfigProcessingRequiresPcm") != std::string::npos);
+  assert(dopBody.find("dspConfig.replayGainMode") == std::string::npos);
+  assert(nativeBody.find("dspConfig.replayGainMode") == std::string::npos);
+  assert(reasonBody.find("dspConfig.replayGainMode") == std::string::npos);
+}
+
+void testTwilightAudioEngineReusesParsedDspConfigSnapshot() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "core" / "TwilightAudioEngine.cpp";
+  const std::filesystem::path headerPath =
+      testFilePath.parent_path().parent_path() / "core" / "TwilightAudioEngine.h";
+  const std::string source = readTextFile(sourcePath);
+  const std::string header = readTextFile(headerPath);
+  const std::string playBody =
+      extractFunctionBody(source, "TAE_Result TwilightAudioEngine::play(const std::string& source, double startTimeSeconds)");
+  const std::string playQueueBody =
+      extractFunctionBody(source, "TAE_Result TwilightAudioEngine::playQueueItem(const QueueItem& item, double startTimeSeconds)");
+  const std::string perfectBody = extractFunctionBody(source, "void TwilightAudioEngine::updatePerfectLocked()");
+  const std::string rerouteBody = extractFunctionBody(source, "bool TwilightAudioEngine::shouldReroutePipelineLocked(");
+  const std::string setDspBody = extractFunctionBody(source, "TAE_Result TwilightAudioEngine::setDspConfig(");
+
+  assert(header.find("DspConfig dspConfig_") != std::string::npos);
+  assert(source.find("bool gaplessEnabledFromConfig(const DspConfig& config)") != std::string::npos);
+  assert(source.find("dspConfigRequiresProcessing") == std::string::npos);
+  assert(setDspBody.find("dspConfig_ = nextConfig") != std::string::npos);
+  assert(playBody.find("gaplessEnabledFromConfig(dspConfig_)") != std::string::npos);
+  assert(playQueueBody.find("gaplessEnabledFromConfig(dspConfig_)") != std::string::npos);
+  assert(perfectBody.find("DspChain::parseConfigJson(dspConfigJson_)") == std::string::npos);
+  assert(rerouteBody.find("DspChain::parseConfigJson(dspConfigJson_)") == std::string::npos);
+  assert(rerouteBody.find("const DspConfig& config = dspConfig_") != std::string::npos);
+}
+
 void writeLe16(std::ofstream& out, uint16_t value) {
   out.put(static_cast<char>(value & 0xff));
   out.put(static_cast<char>((value >> 8) & 0xff));
@@ -1356,6 +1408,8 @@ void testAsioNativeDsdMismatchFallsBackToDop() {
   const auto snapshots = g_backendRegistry.snapshots();
   assert(snapshots.size() == 2);
   assert(formatLooksDsdSourceRequest(snapshots.front().requestedFormat));
+  assert(!snapshots.front().started);
+  assert(!snapshots.front().typedStarted);
   assert(formatLooksDopCarrier(snapshots.back().requestedFormat));
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"dop\"");
 }
@@ -1373,8 +1427,13 @@ void testAsioNativeDsdAndDopFailureFallsBackToPcm() {
   const auto snapshots = g_backendRegistry.snapshots();
   assert(snapshots.size() == 3);
   assert(formatLooksDsdSourceRequest(snapshots[0].requestedFormat));
+  assert(!snapshots[0].started);
+  assert(!snapshots[0].typedStarted);
   assert(formatLooksDopCarrier(snapshots[1].requestedFormat));
+  assert(!snapshots[1].started);
+  assert(!snapshots[1].typedStarted);
   assertFormatLooksDsdPcmFallbackRequest(snapshots[2].requestedFormat);
+  assert(snapshots[2].started);
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
   assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dop_passthrough_unproven\"");
 }
@@ -1509,7 +1568,10 @@ void testDopMismatchFallsBackWithStableCode() {
   const auto snapshots = g_backendRegistry.snapshots();
   assert(snapshots.size() == 2);
   assert(formatLooksDopCarrier(snapshots.front().requestedFormat));
+  assert(!snapshots.front().started);
+  assert(!snapshots.front().typedStarted);
   assertFormatLooksDsdPcmFallbackRequest(snapshots.back().requestedFormat);
+  assert(snapshots.back().started);
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
   assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dop_carrier_mismatch\"");
 }
@@ -1525,7 +1587,10 @@ void testDopUnprovenFallsBackWithStableCode() {
   const auto snapshots = g_backendRegistry.snapshots();
   assert(snapshots.size() == 2);
   assert(formatLooksDopCarrier(snapshots.front().requestedFormat));
+  assert(!snapshots.front().started);
+  assert(!snapshots.front().typedStarted);
   assertFormatLooksDsdPcmFallbackRequest(snapshots.back().requestedFormat);
+  assert(snapshots.back().started);
   assertLatestPlaybackContains(engine, "\"dsdMode\":\"pcm\"");
   assertLatestPlaybackContains(engine, "\"perfectReasonCode\":\"dop_passthrough_unproven\"");
 }
@@ -1916,6 +1981,8 @@ int main() {
   testRenderSideDecodeStreamRetirementDoesNotGrowContainers();
   testSetOutputConfigReleasesEngineMutexBeforeRerouteRestart();
   testSetDspConfigPreparesActiveChainForPreRoutingDecodeFormat();
+  testDsdProcessingPcmDecisionUsesSharedHelper();
+  testTwilightAudioEngineReusesParsedDspConfigSnapshot();
   testDsd64StartsOnDop();
   testPcmTypedPassthroughKeepsTypedPathDuringTransientDecoderLag();
   testPcmTypedPassthroughIsOutputPerfect();

@@ -522,6 +522,56 @@ struct WasapiExclusiveBackend::Impl {
     renderThread = std::thread([this] { renderLoop(); });
   }
 
+  bool startWithCallbacks(
+      RenderCallback nextCallback,
+      TypedRenderCallback nextTypedCallback,
+      OutputEventCallback nextEventCallback,
+      std::string* error) {
+    if (!audioClient || !renderClient) {
+      recordFailure("backend_start_failure", "独占输出后端尚未打开", error);
+      return false;
+    }
+    if (running.load()) {
+      recordFailure("backend_start_failure", "独占输出后端已经在运行", error);
+      return false;
+    }
+
+    callback = std::move(nextCallback);
+    typedCallback = std::move(nextTypedCallback);
+    eventCallback = std::move(nextEventCallback);
+    stopRequested = false;
+
+    if (FAILED(renderPacket(wasapi::exclusiveInitialRenderFrames(
+            bufferFrameCount,
+            outputConfig.wasapiExclusivePushMode)))) {
+      if (error) *error = diagnostics.lastError.empty() ? "无法预填充独占输出缓冲区" : diagnostics.lastError;
+      return false;
+    }
+
+    if (!outputConfig.wasapiExclusivePushMode) {
+      running = true;
+      launchRenderThread();
+    }
+
+    HRESULT hr = audioClient->Start();
+    if (!wasapi::succeeded(hr, error, "无法启动独占输出音频流")) {
+      if (wasapi::isDeviceInvalidated(hr)) ++diagnostics.deviceLostCount;
+      recordFailure(
+          wasapi::isDeviceInvalidated(hr) ? "device_lost" : "backend_start_failure",
+          "无法启动独占输出音频流 (错误码 " + hresultSuffix(hr) + ")",
+          error);
+      stop();
+      return false;
+    }
+
+    if (outputConfig.wasapiExclusivePushMode) {
+      running = true;
+      launchRenderThread();
+    }
+
+    return true;
+  }
+
   void joinRenderThread() {
     std::thread threadToJoin;
     {
@@ -826,49 +876,7 @@ bool WasapiExclusiveBackend::setOutputConfig(const OutputConfig& config, std::st
 
 bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
-  if (!impl_->audioClient || !impl_->renderClient) {
-    impl_->recordFailure("backend_start_failure", "独占输出后端尚未打开", error);
-    return false;
-  }
-  if (impl_->running.load()) {
-    impl_->recordFailure("backend_start_failure", "独占输出后端已经在运行", error);
-    return false;
-  }
-
-  impl_->callback = std::move(callback);
-  impl_->typedCallback = nullptr;
-  impl_->eventCallback = std::move(eventCallback);
-  impl_->stopRequested = false;
-
-  if (FAILED(impl_->renderPacket(wasapi::exclusiveInitialRenderFrames(
-          impl_->bufferFrameCount,
-          impl_->outputConfig.wasapiExclusivePushMode)))) {
-    if (error) *error = impl_->diagnostics.lastError.empty() ? "无法预填充独占输出缓冲区" : impl_->diagnostics.lastError;
-    return false;
-  }
-
-  if (!impl_->outputConfig.wasapiExclusivePushMode) {
-    impl_->running = true;
-    impl_->launchRenderThread();
-  }
-
-  HRESULT hr = impl_->audioClient->Start();
-  if (!wasapi::succeeded(hr, error, "无法启动独占输出音频流")) {
-    if (wasapi::isDeviceInvalidated(hr)) ++impl_->diagnostics.deviceLostCount;
-    impl_->recordFailure(
-        wasapi::isDeviceInvalidated(hr) ? "device_lost" : "backend_start_failure",
-        "无法启动独占输出音频流 (错误码 " + hresultSuffix(hr) + ")",
-        error);
-    impl_->stop();
-    return false;
-  }
-
-  if (impl_->outputConfig.wasapiExclusivePushMode) {
-    impl_->running = true;
-    impl_->launchRenderThread();
-  }
-
-  return true;
+  return impl_->startWithCallbacks(std::move(callback), nullptr, std::move(eventCallback), error);
 #else
   (void)callback;
   (void)eventCallback;
@@ -883,49 +891,7 @@ bool WasapiExclusiveBackend::startTyped(
     OutputEventCallback eventCallback,
     std::string* error) {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
-  if (!impl_->audioClient || !impl_->renderClient) {
-    impl_->recordFailure("backend_start_failure", "独占输出后端尚未打开", error);
-    return false;
-  }
-  if (impl_->running.load()) {
-    impl_->recordFailure("backend_start_failure", "独占输出后端已经在运行", error);
-    return false;
-  }
-
-  impl_->typedCallback = std::move(callback);
-  impl_->callback = std::move(fallbackCallback);
-  impl_->eventCallback = std::move(eventCallback);
-  impl_->stopRequested = false;
-
-  if (FAILED(impl_->renderPacket(wasapi::exclusiveInitialRenderFrames(
-          impl_->bufferFrameCount,
-          impl_->outputConfig.wasapiExclusivePushMode)))) {
-    if (error) *error = impl_->diagnostics.lastError.empty() ? "无法预填充独占输出缓冲区" : impl_->diagnostics.lastError;
-    return false;
-  }
-
-  if (!impl_->outputConfig.wasapiExclusivePushMode) {
-    impl_->running = true;
-    impl_->launchRenderThread();
-  }
-
-  HRESULT hr = impl_->audioClient->Start();
-  if (!wasapi::succeeded(hr, error, "无法启动独占输出音频流")) {
-    if (wasapi::isDeviceInvalidated(hr)) ++impl_->diagnostics.deviceLostCount;
-    impl_->recordFailure(
-        wasapi::isDeviceInvalidated(hr) ? "device_lost" : "backend_start_failure",
-        "无法启动独占输出音频流 (错误码 " + hresultSuffix(hr) + ")",
-        error);
-    impl_->stop();
-    return false;
-  }
-
-  if (impl_->outputConfig.wasapiExclusivePushMode) {
-    impl_->running = true;
-    impl_->launchRenderThread();
-  }
-
-  return true;
+  return impl_->startWithCallbacks(std::move(fallbackCallback), std::move(callback), std::move(eventCallback), error);
 #else
   (void)callback;
   (void)fallbackCallback;

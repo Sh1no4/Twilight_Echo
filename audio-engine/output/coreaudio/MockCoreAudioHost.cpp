@@ -183,8 +183,18 @@ bool MockCoreAudioHost::bindDevice(CoreAudioAudioUnit unit, CoreAudioDeviceID de
 bool MockCoreAudioHost::applyBufferSize(CoreAudioDeviceID deviceId, uint32_t preferredBufferSize, std::string* error) {
   ++applyBufferSizeCalls;
   callLog.push_back("applyBufferSize:" + std::to_string(deviceId) + ":" + std::to_string(preferredBufferSize));
+  if (preferredBufferSize > 0) {
+    if (Device* device = findDevice(deviceId)) device->bufferFrameSize = preferredBufferSize;
+  }
   if (error) error->clear();
   return true;
+}
+
+uint32_t MockCoreAudioHost::currentBufferFrameSize(CoreAudioDeviceID deviceId) {
+  ++currentBufferFrameSizeCalls;
+  callLog.push_back("currentBufferFrameSize:" + std::to_string(deviceId));
+  const Device* device = findDevice(deviceId);
+  return device ? device->bufferFrameSize : 0;
 }
 
 bool MockCoreAudioHost::setStreamFormat(

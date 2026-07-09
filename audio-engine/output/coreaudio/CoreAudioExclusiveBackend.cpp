@@ -69,6 +69,19 @@ DopRuntimeFacts unprovenCoreAudioDopRuntimeFacts(
   return facts;
 }
 
+constexpr uint32_t kFallbackCoreAudioBufferFrames = 1024;
+
+uint32_t resolvedCoreAudioBufferFrames(ICoreAudioHost& host, CoreAudioDeviceID deviceId, uint32_t preferredBufferSize) {
+  const uint32_t currentFrames = host.currentBufferFrameSize(deviceId);
+  if (currentFrames > 0) return currentFrames;
+  if (preferredBufferSize > 0) return preferredBufferSize;
+  return kFallbackCoreAudioBufferFrames;
+}
+
+double bufferLatencyMs(uint32_t frames, int sampleRate) {
+  return sampleRate > 0 ? static_cast<double>(frames) * 1000.0 / static_cast<double>(sampleRate) : 0.0;
+}
+
 }  // namespace
 
 struct CoreAudioExclusiveBackend::Impl {
@@ -377,7 +390,8 @@ bool CoreAudioExclusiveBackend::open(const std::string& deviceId, const AudioFor
                              requestedFormat.sampleFormat == actualFormat.sampleFormat;
   const bool supportsPerfect = impl_->hogAcquired && sampleRateMatched;
 
-  const int bufferFrames = 256;
+  const uint32_t bufferFrames =
+      resolvedCoreAudioBufferFrames(*impl_->host, selectedDevice, impl_->outputConfig.preferredBufferSize);
   impl_->outputFormat = actualFormat;
   if (impl_->outputFormat.sampleRate <= 0) impl_->outputFormat.sampleRate = requestedFormat.sampleRate;
   impl_->outputFormat.channelCount = channels;
@@ -409,7 +423,10 @@ bool CoreAudioExclusiveBackend::open(const std::string& deviceId, const AudioFor
   impl_->outputInfo.actualChannels = impl_->outputFormat.channelCount;
   impl_->outputInfo.bufferSizeFrames = bufferFrames;
   impl_->outputInfo.latencyFrames = bufferFrames;
-  impl_->outputInfo.latencyMs = 0.0;
+  impl_->outputInfo.latencyInfo.bufferLatencyMs = bufferLatencyMs(bufferFrames, impl_->outputFormat.sampleRate);
+  impl_->outputInfo.latencyInfo.outputLatencyMs = 0.0;
+  impl_->outputInfo.latencyInfo.totalLatencyMs = impl_->outputInfo.latencyInfo.bufferLatencyMs;
+  impl_->outputInfo.latencyMs = impl_->outputInfo.latencyInfo.totalLatencyMs;
   impl_->outputInfo.channelRoutingMode = channelRoutingModeToString(impl_->outputConfig.routingMode);
   impl_->outputInfo.diagnostics = impl_->diagnostics;
 

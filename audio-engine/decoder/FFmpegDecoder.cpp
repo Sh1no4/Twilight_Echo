@@ -392,6 +392,16 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
     return false;
   }
 
+  static bool ffmpegNetworkInitialized = false;
+  if (!ffmpegNetworkInitialized) {
+    int initRet = avformat_network_init();
+    if (initRet < 0) {
+      if (error) *error = "FFmpeg 网络初始化失败，错误码：" + std::to_string(initRet);
+      return false;
+    }
+    ffmpegNetworkInitialized = true;
+  }
+
   int ret = avformat_open_input(&impl_->formatContext, source.c_str(), nullptr, nullptr);
   if (ret < 0) {
     if (error) *error = "打开音频失败，错误码：" + std::to_string(ret);

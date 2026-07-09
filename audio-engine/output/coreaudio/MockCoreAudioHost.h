@@ -17,6 +17,7 @@ class MockCoreAudioHost final : public ICoreAudioHost {
     double nominalSampleRate = 48000.0;
     std::vector<double> availableSampleRates = {44100.0, 48000.0, 96000.0};
     CoreAudioStreamBasicDescription streamFormat{};
+    uint32_t bufferFrameSize = 512;
   };
 
   std::vector<Device> devices;
@@ -51,6 +52,7 @@ class MockCoreAudioHost final : public ICoreAudioHost {
   int enableIOBusCalls = 0;
   int bindDeviceCalls = 0;
   int applyBufferSizeCalls = 0;
+  int currentBufferFrameSizeCalls = 0;
   int setStreamFormatCalls = 0;
   int setRenderCallbackCalls = 0;
   int audioUnitInitializeCalls = 0;
@@ -81,6 +83,7 @@ class MockCoreAudioHost final : public ICoreAudioHost {
   bool enableIOBus(CoreAudioAudioUnit unit, bool input, bool enable, std::string* error) override;
   bool bindDevice(CoreAudioAudioUnit unit, CoreAudioDeviceID deviceId, std::string* error) override;
   bool applyBufferSize(CoreAudioDeviceID deviceId, uint32_t preferredBufferSize, std::string* error) override;
+  uint32_t currentBufferFrameSize(CoreAudioDeviceID deviceId) override;
   bool setStreamFormat(
       CoreAudioAudioUnit unit,
       bool input,

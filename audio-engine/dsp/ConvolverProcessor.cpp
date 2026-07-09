@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -22,6 +23,8 @@ constexpr std::array<unsigned char, 16> kWaveSubFormatPcm = {
 constexpr std::array<unsigned char, 16> kWaveSubFormatFloat = {
     0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00,
     0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71};
+constexpr uint64_t kConvolverRealtimeBypassOverrunThreshold = 3;
+constexpr const char* kConvolverRealtimeBypassReason = "convolver process exceeded realtime budget";
 
 uint16_t readU16(const std::array<unsigned char, 2>& bytes) {
   return static_cast<uint16_t>(bytes[0] | (bytes[1] << 8));
@@ -171,6 +174,7 @@ void ConvolverProcessor::setTrackContext(const DspTrackContext&) {
 
 void ConvolverProcessor::process(float* samples, size_t frameCount) {
   if (!active_ || !samples || frameCount == 0) return;
+  const auto started = std::chrono::steady_clock::now();
   const int channels = std::max(1, format_.channelCount);
   for (size_t frame = 0; frame < frameCount; ++frame) {
     for (int channel = 0; channel < channels; ++channel) {
@@ -178,12 +182,29 @@ void ConvolverProcessor::process(float* samples, size_t frameCount) {
       samples[index] = channels_[static_cast<size_t>(channel)]->process(samples[index]);
     }
   }
+  const auto elapsed = std::chrono::steady_clock::now() - started;
+  const double elapsedMs = std::chrono::duration<double, std::milli>(elapsed).count();
+  const double blockMs =
+      format_.sampleRate > 0 ? static_cast<double>(frameCount) * 1000.0 / static_cast<double>(format_.sampleRate) : 0.0;
+  const double budgetMs = std::max(2.0, blockMs * 0.5);
+  info_.lastProcessMs = elapsedMs;
+  info_.maxProcessMs = std::max(info_.maxProcessMs, elapsedMs);
+  if (elapsedMs > budgetMs) {
+    info_.overrunCount += 1;
+    consecutiveOverruns_ += 1;
+    if (consecutiveOverruns_ >= kConvolverRealtimeBypassOverrunThreshold) {
+      bypassRealtime();
+    }
+    return;
+  }
+  consecutiveOverruns_ = 0;
 }
 
 void ConvolverProcessor::reset() {
   for (auto& channel : channels_) {
     if (channel) channel->reset();
   }
+  consecutiveOverruns_ = 0;
 }
 
 bool ConvolverProcessor::isActive() const {
@@ -200,6 +221,7 @@ bool ConvolverProcessor::loadImpulseResponse(const std::string& path, std::strin
   originalIr_ = std::move(ir);
   irCache_.clear();
   info_ = {};
+  consecutiveOverruns_ = 0;
   info_.loaded = true;
   info_.path = path;
   info_.sampleRate = originalIr_->sampleRate;
@@ -221,6 +243,7 @@ void ConvolverProcessor::unloadImpulseResponse() {
   channels_.clear();
   active_ = false;
   info_ = {};
+  consecutiveOverruns_ = 0;
   config_.convolverEnabled = false;
   config_.impulseResponsePath.clear();
 }
@@ -367,6 +390,13 @@ void ConvolverProcessor::rebuild() {
   info_.active = active_;
 }
 
+void ConvolverProcessor::bypassRealtime() {
+  active_ = false;
+  info_.active = false;
+  info_.bypassed = true;
+  info_.lastError = kConvolverRealtimeBypassReason;
+}
+
 bool ConvolverProcessor::prepareRuntimeIr(std::string* error) {
   if (!originalIr_) {
     if (error) *error = "尚未加载脉冲响应";
@@ -397,6 +427,9 @@ bool ConvolverProcessor::prepareRuntimeIr(std::string* error) {
   info_.partitionSize = partitionSize;
   info_.latencyFrames = partitionSize;
   active_ = true;
+  info_.active = true;
+  info_.bypassed = false;
+  consecutiveOverruns_ = 0;
   return true;
 }
 
@@ -424,6 +457,7 @@ void ConvolverProcessor::updateInfoFromRuntime(const IrData& ir, bool resampled)
   info_.channelMappingMode = mappingModeFor(ir.channels, format_.channelCount);
   info_.warning.clear();
   info_.lastError.clear();
+  info_.bypassed = false;
   if (ir.channels > 2) {
     info_.warning = "多声道脉冲响应已使用前左和前右声道";
   }

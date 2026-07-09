@@ -148,6 +148,9 @@ void applyNativeDsdFactsToOutputInfo(OutputInfo* info, const NativeDsdRuntimeFac
   info->nativeDsdRuntimeReason = facts.reason;
 }
 
+constexpr uint64_t kDefaultAlsaPeriodFrames = 512;
+constexpr uint64_t kTargetAlsaBufferPeriods = 8;
+
 }  // namespace
 
 struct AlsaBackend::Impl {
@@ -645,10 +648,11 @@ bool AlsaBackend::open(const std::string& deviceId, const AudioFormat& requested
     return false;
   }
 
-  uint64_t period = impl_->outputConfig.preferredBufferSize > 0 ? impl_->outputConfig.preferredBufferSize : 512;
+  uint64_t period =
+      impl_->outputConfig.preferredBufferSize > 0 ? impl_->outputConfig.preferredBufferSize : kDefaultAlsaPeriodFrames;
   dir = 0;
   impl_->host->hwParamsSetPeriodSizeNear(&period, &dir);
-  uint64_t buffer = std::max<uint64_t>(period * 4, period + 1);
+  uint64_t buffer = std::max<uint64_t>(period * kTargetAlsaBufferPeriods, period + 1);
   impl_->host->hwParamsSetBufferSizeNear(&buffer);
 
   code = impl_->host->hwParamsApply();

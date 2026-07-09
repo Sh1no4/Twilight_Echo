@@ -80,6 +80,19 @@ DopRuntimeFacts unprovenCoreAudioDopRuntimeFacts(
   return facts;
 }
 
+constexpr uint32_t kFallbackCoreAudioBufferFrames = 1024;
+
+uint32_t resolvedCoreAudioBufferFrames(ICoreAudioHost& host, CoreAudioDeviceID deviceId, uint32_t preferredBufferSize) {
+  const uint32_t currentFrames = host.currentBufferFrameSize(deviceId);
+  if (currentFrames > 0) return currentFrames;
+  if (preferredBufferSize > 0) return preferredBufferSize;
+  return kFallbackCoreAudioBufferFrames;
+}
+
+double bufferLatencyMs(uint32_t frames, int sampleRate) {
+  return sampleRate > 0 ? static_cast<double>(frames) * 1000.0 / static_cast<double>(sampleRate) : 0.0;
+}
+
 }  // namespace
 
 struct CoreAudioBackend::Impl {
@@ -302,7 +315,8 @@ bool CoreAudioBackend::open(const std::string& deviceId, const AudioFormat& requ
   }
   impl_->listenerToken = token;
 
-  const int bufferFrames = 256;
+  const uint32_t bufferFrames =
+      resolvedCoreAudioBufferFrames(*impl_->host, selectedDevice, impl_->outputConfig.preferredBufferSize);
   impl_->outputFormat = actualFormat;
   impl_->outputFormat.sampleRate = actualFormat.sampleRate;
   impl_->outputFormat.channelCount = channels;
@@ -332,10 +346,10 @@ bool CoreAudioBackend::open(const std::string& deviceId, const AudioFormat& requ
   impl_->outputInfo.actualChannels = impl_->outputFormat.channelCount;
   impl_->outputInfo.bufferSizeFrames = bufferFrames;
   impl_->outputInfo.latencyFrames = bufferFrames;
-  impl_->outputInfo.latencyInfo.bufferLatencyMs = 0.0;
+  impl_->outputInfo.latencyInfo.bufferLatencyMs = bufferLatencyMs(bufferFrames, impl_->outputFormat.sampleRate);
   impl_->outputInfo.latencyInfo.outputLatencyMs = 0.0;
-  impl_->outputInfo.latencyInfo.totalLatencyMs = 0.0;
-  impl_->outputInfo.latencyMs = 0.0;
+  impl_->outputInfo.latencyInfo.totalLatencyMs = impl_->outputInfo.latencyInfo.bufferLatencyMs;
+  impl_->outputInfo.latencyMs = impl_->outputInfo.latencyInfo.totalLatencyMs;
   impl_->outputInfo.channelRoutingMode = channelRoutingModeToString(impl_->outputConfig.routingMode);
   impl_->outputInfo.perfectReasonCode = "shared_mixer";
   impl_->outputInfo.perfectReason = coreAudioSharedReason(requestedFormat, impl_->outputFormat);

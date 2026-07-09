@@ -177,6 +177,26 @@ void testAlsaOpenNegotiatesPcm() {
   assert(info.actualSampleRate == 96000);
 }
 
+void testAlsaDefaultBufferUsesEightPeriods() {
+  auto host = std::make_unique<MockAlsaHost>();
+  auto* rawHost = host.get();
+  AlsaBackend backend(std::move(host));
+  std::string error;
+
+  assert(backend.open("default", sourceFormat(48000, 16, 2, AudioSampleFormat::Int16Interleaved), &error));
+
+  assert(rawHost->requestedPeriodSize == 512);
+  assert(rawHost->requestedBufferSize == 512 * 8);
+  assert(rawHost->negotiatedPeriodSize == 512);
+  assert(rawHost->negotiatedBufferSize == 512 * 8);
+  const OutputInfo info = backend.outputInfo();
+  assert(info.bufferSizeFrames == 512 * 8);
+  assert(info.latencyFrames == 512 * 8);
+  assert(info.latencyInfo.bufferLatencyMs > 10.0);
+  assert(info.latencyInfo.outputLatencyMs > info.latencyInfo.bufferLatencyMs);
+  assert(info.latencyInfo.totalLatencyMs == info.latencyMs);
+}
+
 void testAlsaFormatFallback() {
   auto host = std::make_unique<MockAlsaHost>();
   host->acceptedFormats = {AlsaPcmFormat::S16Le};
@@ -410,6 +430,7 @@ void testAlsaDsdBypassesFloat() {
   auto host = std::make_unique<MockAlsaHost>();
   host->acceptedFormats = {AlsaPcmFormat::DsdU8};
   host->negotiatedPeriodSize = 4;
+  host->negotiatedBufferSize = 32;
   host->negotiatedChannels = 2;
   // DsdU8 stereo: 1 byte/sample * 2 channels = 2 bytes/frame
   host->captureFrameBytes = 2;
@@ -442,6 +463,7 @@ void testAlsaDsdSilenceIs0x69() {
   auto host = std::make_unique<MockAlsaHost>();
   host->acceptedFormats = {AlsaPcmFormat::DsdU8};
   host->negotiatedPeriodSize = 4;
+  host->negotiatedBufferSize = 32;
   host->negotiatedChannels = 2;
   host->captureFrameBytes = 2;
   auto* rawHost = host.get();
@@ -676,6 +698,7 @@ int main() {
   testAlsaStartRejectsRepeatedStartBeforeLaunchingThread();
   testAlsaRepeatedStartReturnsFalseWithoutRelaunchingThread();
   testAlsaOpenNegotiatesPcm();
+  testAlsaDefaultBufferUsesEightPeriods();
   testAlsaFormatFallback();
   testAlsaXrunRecovery();
   testAlsaSuspendRecovery();

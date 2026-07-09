@@ -359,6 +359,32 @@ void testNativeDspPluginChainSetupDoesNotPreparePluginsTwice() {
   require(afterSetChain.find("nativePlugins_->setTrackContext") != std::string::npos);
 }
 
+void testDspConfigJsonParserReadsOnlyCurrentObjectFields() {
+  const char* json = R"({
+    "metadata": {
+      "dspEnabled": true,
+      "dsdOutputMode": "pcm",
+      "crossfeedStrength": 1,
+      "eqBands": [{"frequency": 20, "gain": 12}]
+    },
+    "dspEnabled": false,
+    "dsdOutputMode": "dop",
+    "crossfeedStrength": 0.25,
+    "eqBands": [
+      {"metadata": {"gain": 99, "q": 99}, "frequency": 1000, "gain": 1.5, "q": 0.7}
+    ]
+  })";
+
+  const DspConfig config = DspChain::parseConfigJson(json);
+  assert(!config.enabled);
+  assert(config.dsdOutputMode == DsdOutputMode::Dop);
+  assert(closeTo(config.crossfeedStrength, 0.25, 0.0001));
+  assert(config.eqBands.size() == 1);
+  assert(closeTo(config.eqBands[0].frequency, 1000.0, 0.0001));
+  assert(closeTo(config.eqBands[0].gainDb, 1.5, 0.0001));
+  assert(closeTo(config.eqBands[0].q, 0.7, 0.0001));
+}
+
 void testConvolverWaveExtensibleParsingUsesSubFormatGuid() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath =
@@ -367,6 +393,22 @@ void testConvolverWaveExtensibleParsingUsesSubFormatGuid() {
   require(source.find("formatTag = bitsPerSample == 32 ? kWaveFloat : kWavePcm") == std::string::npos);
   require(source.find("kWaveSubFormatPcm") != std::string::npos);
   require(source.find("kWaveSubFormatFloat") != std::string::npos);
+}
+
+void testConvolverBypassesAfterRepeatedBudgetMisses() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "dsp" / "ConvolverProcessor.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string body = extractFunctionBody(source, "void ConvolverProcessor::process(float* samples, size_t frameCount)");
+  const std::string bypassBody = extractFunctionBody(source, "void ConvolverProcessor::bypassRealtime(");
+
+  require(body.find("std::chrono::steady_clock::now()") != std::string::npos);
+  require(body.find("elapsedMs > budgetMs") != std::string::npos);
+  require(body.find("consecutiveOverruns_ +=") != std::string::npos);
+  require(body.find("kConvolverRealtimeBypassOverrunThreshold") != std::string::npos);
+  require(body.find("bypassRealtime(") != std::string::npos);
+  require(bypassBody.find("channels_.clear()") == std::string::npos);
 }
 
 void writeImpulseWav(const std::filesystem::path& path, int sampleRate, int channels) {
@@ -496,7 +538,9 @@ int main() {
   testReplayGainApplySplitsClippedAndUnclippedPaths();
   testDspProcessBypassesWhenConfigurationLockBusy();
   testNativeDspPluginChainSetupDoesNotPreparePluginsTwice();
+  testDspConfigJsonParserReadsOnlyCurrentObjectFields();
   testConvolverWaveExtensibleParsingUsesSubFormatGuid();
+  testConvolverBypassesAfterRepeatedBudgetMisses();
   {
     CountingProcessor inactive(false);
     CountingProcessor active(true);

@@ -158,6 +158,7 @@ class TwilightAudioEngine {
   PlaybackInfo info_;
   QueueManager queue_;
   std::string dspConfigJson_ = "{}";
+  DspConfig dspConfig_;
   std::string nativeDspPluginChainJson_ = "{\"plugins\":[]}";
   OutputConfig outputConfig_;
   std::unique_ptr<AudioPipeline> pipeline_;

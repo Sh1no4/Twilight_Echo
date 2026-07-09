@@ -160,17 +160,27 @@ void testWasapiStartEntrypointsRejectAlreadyRunningBackend() {
       exclusiveSource,
       "bool WasapiExclusiveBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error)");
   const std::string exclusiveStartTypedBody = extractFunctionBody(exclusiveSource, "bool WasapiExclusiveBackend::startTyped");
+  const std::string exclusiveStartHelperBody = extractFunctionBody(exclusiveSource, "bool startWithCallbacks(");
 
-  for (const std::string& body : {sharedStartBody, exclusiveStartBody, exclusiveStartTypedBody}) {
+  for (const std::string& body : {sharedStartBody, exclusiveStartHelperBody}) {
     const size_t runningCheck = body.find("impl_->running.load()");
+    const size_t directRunningCheck = body.find("running.load()");
     const size_t callbackInstall = body.find("impl_->callback");
+    const size_t directCallbackInstall = body.find("callback = std::move");
     const size_t launchThread = body.find("impl_->launchRenderThread()");
-    assert(runningCheck != std::string::npos);
-    assert(callbackInstall != std::string::npos);
-    assert(launchThread != std::string::npos);
-    assert(runningCheck < callbackInstall);
-    assert(runningCheck < launchThread);
+    const size_t directLaunchThread = body.find("launchRenderThread()");
+    const size_t check = runningCheck != std::string::npos ? runningCheck : directRunningCheck;
+    const size_t install = callbackInstall != std::string::npos ? callbackInstall : directCallbackInstall;
+    const size_t launch = launchThread != std::string::npos ? launchThread : directLaunchThread;
+    assert(check != std::string::npos);
+    assert(install != std::string::npos);
+    assert(launch != std::string::npos);
+    assert(check < install);
+    assert(check < launch);
   }
+  assert(exclusiveStartBody.find("impl_->startWithCallbacks(std::move(callback), nullptr") != std::string::npos);
+  assert(exclusiveStartTypedBody.find("impl_->startWithCallbacks(std::move(fallbackCallback), std::move(callback)") !=
+         std::string::npos);
 }
 
 void testWasapiOpenFailurePathsClosePartiallyOpenedResources() {

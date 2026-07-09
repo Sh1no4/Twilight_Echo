@@ -63,6 +63,4 @@ class DspChain {
   std::vector<IAudioProcessor*> activeProcessors_;
 };
 
-bool dspConfigRequiresProcessing(const std::string& json);
-
 }  // namespace twilight::audio

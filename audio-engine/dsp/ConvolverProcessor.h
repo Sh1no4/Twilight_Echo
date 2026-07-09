@@ -42,6 +42,7 @@ class ConvolverProcessor final : public IAudioProcessor {
 
   void rebuild();
   bool prepareRuntimeIr(std::string* error);
+  void bypassRealtime();
   uint32_t choosePartitionSize(const IrData& ir) const;
   std::vector<float> impulseForOutputChannel(const IrData& ir, int outputChannel) const;
   void updateInfoFromRuntime(const IrData& ir, bool resampled);
@@ -52,6 +53,7 @@ class ConvolverProcessor final : public IAudioProcessor {
   std::unordered_map<int, IrData> irCache_;
   std::vector<std::unique_ptr<FftChannel>> channels_;
   ConvolverInfo info_;
+  uint64_t consecutiveOverruns_ = 0;
   bool active_ = false;
 };
 

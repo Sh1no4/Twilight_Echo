@@ -26,8 +26,8 @@ class MockAlsaHost final : public IAlsaHost {
   uint64_t requestedBufferSize = 0;
   unsigned negotiatedRate = 0;
   unsigned negotiatedChannels = 0;
-  uint64_t negotiatedPeriodSize = 4;
-  uint64_t negotiatedBufferSize = 16;
+  uint64_t negotiatedPeriodSize = 0;
+  uint64_t negotiatedBufferSize = 0;
   // When captureFrameBytes > 0, writei captures frames * captureFrameBytes bytes from the
   // buffer into capturedWriteBytes, enabling byte-exact DSD bypass verification.
   size_t captureFrameBytes = 0;

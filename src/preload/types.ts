@@ -293,6 +293,7 @@ export interface AudioEqPreset {
 export interface ConvolverInfo {
   loaded: boolean
   active: boolean
+  bypassed: boolean
   irResampled: boolean
   path: string
   sampleRate: number
@@ -301,6 +302,9 @@ export interface ConvolverInfo {
   lengthMs: number
   partitionSize: number
   latencyFrames: number
+  overrunCount: number
+  lastProcessMs: number
+  maxProcessMs: number
   channelMappingMode: string
   warning: string
   lastError: string

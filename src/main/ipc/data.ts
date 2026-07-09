@@ -1,5 +1,5 @@
-import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
-import { join } from 'path'
+import { app, shell, BrowserWindow, ipcMain, dialog, safeStorage } from 'electron'
+import { basename, dirname, join } from 'path'
 import { statSync, readFileSync, existsSync, writeFileSync, renameSync, copyFileSync, unlinkSync } from 'fs'
 import { readFile, writeFile, rm } from 'fs/promises'
 import { parseFile } from 'music-metadata'
@@ -30,7 +30,6 @@ import {
 } from '../library/coverCache'
 import {
   encodeAudioFileUrlPath,
-  resolvePlayableAudioFile,
   findLyricsInDir,
   scanDirectory,
   getMimeType
@@ -45,6 +44,14 @@ import {
 } from '../audio/state'
 import { resolvePlaybackSessionSave } from '../app/window'
 import { getPlayerShortcutStatuses } from '../integrations/shortcutsTray'
+import {
+  resolveAuthorizedAudioFile,
+  resolveAuthorizedLibraryDirectory,
+  resolveAuthorizedOpenPath,
+  resolveAuthorizedShowItemPath,
+  trustLibraryRoots,
+  trustUserSelectedFolder
+} from '../security/localPaths'
 
 export function setupDataIpc(): void {
   ipcMain.on('window:minimize', (event) => {
@@ -72,6 +79,7 @@ export function setupDataIpc(): void {
       properties: ['openDirectory']
     })
     if (result.canceled || result.filePaths.length === 0) return null
+    trustUserSelectedFolder(result.filePaths[0])
     return result.filePaths[0]
   })
 
@@ -107,7 +115,8 @@ export function setupDataIpc(): void {
   })
 
   ipcMain.handle('shell:openPath', async (_event, targetPath: string) => {
-    return await shell.openPath(targetPath)
+    const resolvedPath = await resolveAuthorizedOpenPath(targetPath)
+    return await shell.openPath(resolvedPath)
   })
 
   ipcMain.handle('shell:openExternal', async (_event, url: string) => {
@@ -207,25 +216,28 @@ export function setupDataIpc(): void {
   })
 
   ipcMain.handle('shell:showItemInFolder', async (_event, filePath: string) => {
-    shell.showItemInFolder(filePath)
+    const resolvedPath = await resolveAuthorizedShowItemPath(filePath)
+    shell.showItemInFolder(resolvedPath)
   })
 
   ipcMain.handle('fs:scanMusicFiles', async (event, folderPath: string) => {
-    return await scanDirectory(folderPath, (current, total) => {
+    const resolvedPath = await resolveAuthorizedLibraryDirectory(folderPath)
+    return await scanDirectory(resolvedPath, (current, total) => {
       event.sender.send('fs:scanProgress', { current, total })
     })
   })
 
   ipcMain.handle('fs:readAudioFile', async (_event, filePath: string) => {
-    const buffer = await readFile(filePath)
+    const resolvedPath = await resolveAuthorizedAudioFile(filePath)
+    const buffer = await readFile(resolvedPath)
     return {
       buffer: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
-      mimeType: getMimeType(filePath)
+      mimeType: getMimeType(resolvedPath)
     }
   })
 
   ipcMain.handle('fs:getAudioFileUrl', async (_event, filePath: string) => {
-    const resolvedPath = await resolvePlayableAudioFile(filePath)
+    const resolvedPath = await resolveAuthorizedAudioFile(filePath)
     return `twilight-audio:///${encodeAudioFileUrlPath(resolvedPath)}`
   })
 
@@ -236,6 +248,8 @@ export function setupDataIpc(): void {
   const PLAYLISTS_FILE = join(userDataPath, 'playlists.json')
 
   ipcMain.handle('data:saveMusicLibrary', async (_event, library: { tracks: unknown[]; folders?: string[] } | unknown[]) => {
+    const folders = Array.isArray(library) ? [] : library.folders
+    trustLibraryRoots(folders)
     const tmpPath = MUSIC_LIBRARY_FILE + '.tmp'
     const bakPath = MUSIC_LIBRARY_FILE + '.bak'
     try {
@@ -308,6 +322,8 @@ export function setupDataIpc(): void {
 
     // Strip lyrics from saved library — lyrics are lazy-loaded on playback
     const tracks = Array.isArray(data) ? data : (data as { tracks?: unknown[] }).tracks
+    const folders = Array.isArray(data) ? [] : (data as { folders?: unknown[] }).folders
+    trustLibraryRoots(folders)
     if (Array.isArray(tracks)) {
       let changed = false
       for (const track of tracks) {
@@ -360,14 +376,31 @@ export function setupDataIpc(): void {
 
   // Lyrics lazy loader — reads .lrc file on demand, falls back to embedded lyrics
   ipcMain.handle('lyrics:get', async (_event, dir: string, fileName: string, filePath?: string): Promise<string | null> => {
+    if (typeof dir !== 'string' || typeof fileName !== 'string') return null
+    const safeFileName = basename(fileName)
+    if (!safeFileName) return null
+    let resolvedFilePath: string | null = null
+    try {
+      resolvedFilePath = filePath ? await resolveAuthorizedAudioFile(filePath) : null
+    } catch {
+      return null
+    }
+    let resolvedDir = resolvedFilePath ? dirname(resolvedFilePath) : null
+    if (!resolvedDir) {
+      try {
+        resolvedDir = await resolveAuthorizedLibraryDirectory(dir)
+      } catch {
+        return null
+      }
+    }
     // 1. Try external .lrc file
-    const lrc = findLyricsInDir(dir, fileName)
+    const lrc = findLyricsInDir(resolvedDir, safeFileName)
     if (lrc) return lrc
 
     // 2. Try embedded lyrics from audio file metadata
-    if (filePath) {
+    if (resolvedFilePath) {
       try {
-        const meta = await parseFile(filePath, { skipCovers: true })
+        const meta = await parseFile(resolvedFilePath, { skipCovers: true })
         const common = meta.common
         if (common.lyrics && common.lyrics.length > 0) {
           // music-metadata returns lyrics as { language, text } objects or strings
@@ -419,6 +452,12 @@ export function setupDataIpc(): void {
   })
 
   ipcMain.handle('data:saveCookie', async (_event, cookie: string) => {
+    if (typeof cookie !== 'string') return
+    if (safeStorage.isEncryptionAvailable()) {
+      const encrypted = safeStorage.encryptString(cookie).toString('base64')
+      await writeFile(NCM_COOKIE_FILE, JSON.stringify({ encrypted }), 'utf-8')
+      return
+    }
     await writeFile(NCM_COOKIE_FILE, JSON.stringify({ cookie }), 'utf-8')
   })
 
@@ -426,7 +465,11 @@ export function setupDataIpc(): void {
     if (!existsSync(NCM_COOKIE_FILE)) return ''
     try {
       const raw = readFileSync(NCM_COOKIE_FILE, 'utf-8')
-      return JSON.parse(raw).cookie || ''
+      const data = JSON.parse(raw)
+      if (typeof data.encrypted === 'string' && safeStorage.isEncryptionAvailable()) {
+        return safeStorage.decryptString(Buffer.from(data.encrypted, 'base64'))
+      }
+      return data.cookie || ''
     } catch {
       return ''
     }

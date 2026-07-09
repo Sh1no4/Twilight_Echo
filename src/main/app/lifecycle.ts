@@ -11,8 +11,8 @@ import {
 } from '../library/coverCache'
 import {
   decodeAudioFileUrlPath,
-  resolvePlayableAudioFile
 } from '../library/scan'
+import { resolveAuthorizedAudioFile } from '../security/localPaths'
 import {
   unregisterPlayerShortcuts,
   destroyTray,
@@ -137,7 +137,7 @@ export function startApp(): void {
           const url = new URL(request.url)
           const encodedPath = url.pathname.replace(/^\/+/, '')
           if (!encodedPath) return new Response('Bad Request', { status: 400 })
-          const filePath = await resolvePlayableAudioFile(decodeAudioFileUrlPath(encodedPath))
+          const filePath = await resolveAuthorizedAudioFile(decodeAudioFileUrlPath(encodedPath))
           return net.fetch(pathToFileURL(filePath).toString(), {
             headers: request.headers,
             bypassCustomProtocolHandlers: true

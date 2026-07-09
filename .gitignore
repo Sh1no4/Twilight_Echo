@@ -92,3 +92,4 @@ temp/
 
 # Original font files (backup, WOFF2 versions are used)
 resources/font/_originals/
+.vscode/settings.json

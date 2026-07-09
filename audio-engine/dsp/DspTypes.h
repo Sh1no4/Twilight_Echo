@@ -105,6 +105,7 @@ struct DspStatus {
 struct ConvolverInfo {
   bool loaded = false;
   bool active = false;
+  bool bypassed = false;
   bool irResampled = false;
   std::string path;
   int sampleRate = 0;
@@ -113,6 +114,9 @@ struct ConvolverInfo {
   double lengthMs = 0.0;
   uint32_t partitionSize = 0;
   uint32_t latencyFrames = 0;
+  uint64_t overrunCount = 0;
+  double lastProcessMs = 0.0;
+  double maxProcessMs = 0.0;
   std::string channelMappingMode;
   std::string warning;
   std::string lastError;

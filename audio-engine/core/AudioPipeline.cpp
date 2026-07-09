@@ -7,8 +7,10 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -127,6 +129,35 @@ bool nativeDsdOutputMatchesRequested(
   }
   if (outputFormat.sampleRate == requested.sampleRate) return true;
   return nativeDsdRuntimeFactsMatchRequested(facts, requested);
+}
+
+bool dspConfigProcessingRequiresPcm(
+    const DspConfig& dspConfig,
+    const OutputConfig& outputConfig,
+    double volume) {
+  return (dspConfig.enabled &&
+          (dspConfig.replayGainMode != ReplayGainMode::Off || dspConfig.eqEnabled || dspConfig.convolverEnabled ||
+           dspConfig.crossfeedEnabled)) ||
+         dspConfig.crossfadeSeconds > 0.0001 || outputConfig.routingMode != ChannelRoutingMode::Auto ||
+         std::abs(volume - 1.0) > kUnityVolumeEpsilon;
+}
+
+bool dopRuntimeFactsRequirePcmFallback(const DopRuntimeFacts& facts) {
+  return facts.state == DopRuntimeFactState::Candidate || facts.state == DopRuntimeFactState::Mismatch ||
+         facts.state == DopRuntimeFactState::Unproven || facts.state == DopRuntimeFactState::Unsupported;
+}
+
+std::string dopPcmFallbackReason(const DopRuntimeFacts& facts) {
+  return facts.state == DopRuntimeFactState::Mismatch ? "DoP carrier mismatch" : "DoP backend could not prove passthrough";
+}
+
+bool nativeDsdRuntimeFactsRequirePcmFallback(const NativeDsdRuntimeFacts& facts) {
+  return facts.state == NativeDsdRuntimeFactState::Mismatch || facts.state == NativeDsdRuntimeFactState::Unproven ||
+         facts.state == NativeDsdRuntimeFactState::Unsupported;
+}
+
+std::string nativeDsdPcmFallbackReason(const NativeDsdRuntimeFacts& facts) {
+  return facts.reason.empty() ? "ASIO Native DSD could not prove raw DSD output" : facts.reason;
 }
 
 int positionSampleRateForStream(const AudioStreamInfo& stream, const AudioFormat& outputFormat) {
@@ -650,10 +681,83 @@ struct AudioPipeline::DecodeStream {
   }
 };
 
+struct AudioPipeline::DecodeStreamReaper {
+  DecodeStreamReaper() : worker([this] { run(); }) {}
+
+  ~DecodeStreamReaper() {
+    {
+      std::lock_guard lock(mutex);
+      stopping = true;
+    }
+    cv.notify_one();
+    if (worker.joinable()) worker.join();
+    drain();
+  }
+
+  void retire(std::unique_ptr<DecodeStream> stream) {
+    if (!stream) return;
+    stream->requestStop();
+    {
+      std::lock_guard lock(mutex);
+      queue.push_back(std::move(stream));
+    }
+    cv.notify_one();
+  }
+
+ private:
+  void run() {
+    while (true) {
+      std::unique_ptr<DecodeStream> stream;
+      {
+        std::unique_lock lock(mutex);
+        cv.wait(lock, [this] { return stopping || !queue.empty(); });
+        if (queue.empty()) {
+          if (stopping) break;
+          continue;
+        }
+        stream = std::move(queue.front());
+        queue.pop_front();
+      }
+      stream->stop();
+      stream.reset();
+    }
+  }
+
+  void drain() {
+    std::deque<std::unique_ptr<DecodeStream>> remaining;
+    {
+      std::lock_guard lock(mutex);
+      remaining.swap(queue);
+    }
+    for (auto& stream : remaining) {
+      if (stream) stream->stop();
+    }
+  }
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::deque<std::unique_ptr<DecodeStream>> queue;
+  std::thread worker;
+  bool stopping = false;
+};
+
 AudioPipeline::AudioPipeline() = default;
 
 AudioPipeline::~AudioPipeline() {
   stop();
+}
+
+std::shared_ptr<AudioPipeline::DecodeStream> AudioPipeline::makeDecodeStream() {
+  return std::shared_ptr<DecodeStream>(
+      new DecodeStream(),
+      [](DecodeStream* stream) {
+        decodeStreamReaper().retire(std::unique_ptr<DecodeStream>(stream));
+      });
+}
+
+AudioPipeline::DecodeStreamReaper& AudioPipeline::decodeStreamReaper() {
+  static DecodeStreamReaper reaper;
+  return reaper;
 }
 
 bool AudioPipeline::retireDecodeStreamLocked(std::shared_ptr<DecodeStream> stream) {
@@ -669,6 +773,23 @@ void AudioPipeline::cleanupRetiredDecodeStreams() const {
   size_t retiredCount = 0;
   {
     std::lock_guard lock(mutex_);
+    retiredCount = retiredStreamCount_;
+    for (size_t i = 0; i < retiredCount; ++i) {
+      retired[i] = std::move(retiredStreams_[i]);
+    }
+    retiredStreamCount_ = 0;
+  }
+  for (size_t i = 0; i < retiredCount; ++i) {
+    if (retired[i]) retired[i]->stop();
+  }
+}
+
+void AudioPipeline::tryCleanupRetiredDecodeStreams() const {
+  std::array<std::shared_ptr<DecodeStream>, kRetiredStreamSlots> retired;
+  size_t retiredCount = 0;
+  {
+    std::unique_lock lock(mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) return;
     retiredCount = retiredStreamCount_;
     for (size_t i = 0; i < retiredCount; ++i) {
       retired[i] = std::move(retiredStreams_[i]);
@@ -755,9 +876,7 @@ TAE_Result AudioPipeline::playInternal(
   }
 
   const DspConfig requestedDspConfig = DspChain::parseConfigJson(dspConfigJson);
-  const bool processingRequiresPcm =
-      dspConfigRequiresProcessing(dspConfigJson) || std::abs(volume - 1.0) > kUnityVolumeEpsilon ||
-      outputConfig.routingMode != ChannelRoutingMode::Auto;
+  const bool processingRequiresPcm = dspConfigProcessingRequiresPcm(requestedDspConfig, outputConfig, volume);
 
   crossfadeMixActive_ = false;
   crossfadeFramesProcessed_ = 0;
@@ -796,7 +915,7 @@ TAE_Result AudioPipeline::playInternal(
   std::string dopAttemptError;
 
   if (canTryNativeDsd) {
-    auto nativeActive = std::make_shared<DecodeStream>();
+    auto nativeActive = makeDecodeStream();
     if (nativeActive->openNativeDsdSource(item, &nativeAttemptError)) {
       output = backendFactoryOverride() ? backendFactoryOverride()(backendId) : createOutputBackend(backendId);
       if (!output) {
@@ -824,7 +943,7 @@ TAE_Result AudioPipeline::playInternal(
   }
 
   if (canTryDop && !active) {
-    auto dopActive = std::make_shared<DecodeStream>();
+    auto dopActive = makeDecodeStream();
     if (dopActive->openDsdSource(item, &dopAttemptError)) {
       output = backendFactoryOverride() ? backendFactoryOverride()(backendId) : createOutputBackend(backendId);
       if (!output) {
@@ -853,7 +972,7 @@ TAE_Result AudioPipeline::playInternal(
   }
 
   if (!active) {
-    active = std::make_shared<DecodeStream>();
+    active = makeDecodeStream();
     if (!active->openSource(item, error)) {
       return TAE_RESULT_BACKEND_UNAVAILABLE;
     }
@@ -913,6 +1032,48 @@ TAE_Result AudioPipeline::playInternal(
               ? (!nativeAttemptError.empty() ? nativeAttemptError : dopAttemptError)
               : forcedDsdFallbackReason,
           dsdOutputModeRequestsDop(requestedDspConfig.dsdOutputMode));
+    }
+  }
+
+  if (dopPath) {
+    const DopRuntimeFacts dopFacts = output->dopRuntimeFacts();
+    if (dopRuntimeFactsRequirePcmFallback(dopFacts)) {
+      const std::string fallbackReason = dopPcmFallbackReason(dopFacts);
+      output->close();
+      return playInternal(
+          item,
+          upcomingItem,
+          startTimeSeconds,
+          backendId,
+          deviceId,
+          volume,
+          dspConfigJson,
+          gaplessEnabled,
+          false,
+          false,
+          fallbackReason,
+          error);
+    }
+  }
+
+  if (nativeDsdPath) {
+    const NativeDsdRuntimeFacts nativeFacts = output->nativeDsdRuntimeFacts();
+    if (nativeDsdRuntimeFactsRequirePcmFallback(nativeFacts)) {
+      const std::string fallbackReason = nativeDsdPcmFallbackReason(nativeFacts);
+      output->close();
+      return playInternal(
+          item,
+          upcomingItem,
+          startTimeSeconds,
+          backendId,
+          deviceId,
+          volume,
+          dspConfigJson,
+          gaplessEnabled,
+          false,
+          true,
+          fallbackReason,
+          error);
     }
   }
 
@@ -987,6 +1148,7 @@ TAE_Result AudioPipeline::playInternal(
     outputEventMessage_.clear();
     preloadDspStatus_ = preloadDspChain_.status();
     renderChannelCount_ = std::max(1, outputFormat_.channelCount);
+    publishStatusLocked();
   }
 
   const size_t prerollFrames = outputInfo_.bufferSizeFrames > 0
@@ -1021,11 +1183,8 @@ TAE_Result AudioPipeline::playInternal(
 
   if (dopPath) {
     const DopRuntimeFacts dopFacts = output_->dopRuntimeFacts();
-    if (dopFacts.state == DopRuntimeFactState::Candidate || dopFacts.state == DopRuntimeFactState::Mismatch ||
-        dopFacts.state == DopRuntimeFactState::Unproven || dopFacts.state == DopRuntimeFactState::Unsupported) {
-      const std::string fallbackReason =
-          dopFacts.state == DopRuntimeFactState::Mismatch ? "DoP carrier mismatch"
-                                                          : "DoP backend could not prove passthrough";
+    if (dopRuntimeFactsRequirePcmFallback(dopFacts)) {
+      const std::string fallbackReason = dopPcmFallbackReason(dopFacts);
       stop();
       return playInternal(
           item,
@@ -1045,9 +1204,8 @@ TAE_Result AudioPipeline::playInternal(
 
   if (nativeDsdPath) {
     const NativeDsdRuntimeFacts nativeFacts = output_->nativeDsdRuntimeFacts();
-    if (nativeFacts.state != NativeDsdRuntimeFactState::Proven) {
-      const std::string fallbackReason =
-          nativeFacts.reason.empty() ? "ASIO Native DSD could not prove raw DSD output" : nativeFacts.reason;
+    if (nativeDsdRuntimeFactsRequirePcmFallback(nativeFacts)) {
+      const std::string fallbackReason = nativeDsdPcmFallbackReason(nativeFacts);
       stop();
       return playInternal(
           item,
@@ -1085,16 +1243,7 @@ bool AudioPipeline::shouldAttemptDopForCurrentConfig(
     const std::string& backendId) const {
   if (!dsdProbe.has_value()) return false;
   if (!dsdOutputModeRequestsDop(dspConfig.dsdOutputMode)) return false;
-  if (dspConfigRequiresProcessing("{}")) {
-    // Never reached; kept to make the decision tree explicit near DSD policy.
-  }
-  const bool processingRequiresPcm =
-      (dspConfig.enabled &&
-       (dspConfig.replayGainMode != ReplayGainMode::Off || dspConfig.eqEnabled || dspConfig.convolverEnabled ||
-        dspConfig.crossfeedEnabled)) ||
-      dspConfig.crossfadeSeconds > 0.0001 || outputConfig.routingMode != ChannelRoutingMode::Auto ||
-      std::abs(volume - 1.0) > kUnityVolumeEpsilon;
-  if (processingRequiresPcm) return false;
+  if (dspConfigProcessingRequiresPcm(dspConfig, outputConfig, volume)) return false;
   if (!backendCanAttemptDop(backendId)) return false;
   return dopCarrierFormatForDsd(dsdProbe->dsdRate, dsdProbe->dsdSampleRate, dsdProbe->channelCount).has_value();
 }
@@ -1107,13 +1256,7 @@ bool AudioPipeline::shouldAttemptNativeDsdForCurrentConfig(
     const std::string& backendId) const {
   if (!dsdProbe.has_value()) return false;
   if (!dsdOutputModeRequestsNative(dspConfig.dsdOutputMode)) return false;
-  const bool processingRequiresPcm =
-      (dspConfig.enabled &&
-       (dspConfig.replayGainMode != ReplayGainMode::Off || dspConfig.eqEnabled || dspConfig.convolverEnabled ||
-        dspConfig.crossfeedEnabled)) ||
-      dspConfig.crossfadeSeconds > 0.0001 || outputConfig.routingMode != ChannelRoutingMode::Auto ||
-      std::abs(volume - 1.0) > kUnityVolumeEpsilon;
-  if (processingRequiresPcm) return false;
+  if (dspConfigProcessingRequiresPcm(dspConfig, outputConfig, volume)) return false;
   if (!backendCanAttemptNativeDsd(backendId)) return false;
   return dsdProbe->dsdRate == 64 || dsdProbe->dsdRate == 128 || dsdProbe->dsdRate == 256 ||
          dsdProbe->dsdRate == 512;
@@ -1126,14 +1269,9 @@ std::string AudioPipeline::determineDsdPcmFallbackReason(
     double volume,
     const std::string& attemptedDopReason,
     bool dopModeRequested) const {
-  const bool processingRequiresPcm =
-      (dspConfig.enabled &&
-       (dspConfig.replayGainMode != ReplayGainMode::Off || dspConfig.eqEnabled || dspConfig.convolverEnabled ||
-        dspConfig.crossfeedEnabled)) ||
-      dspConfig.crossfadeSeconds > 0.0001 || outputConfig.routingMode != ChannelRoutingMode::Auto ||
-      std::abs(volume - 1.0) > kUnityVolumeEpsilon;
-
-  if (processingRequiresPcm) return "DSD processing active; falling back to PCM";
+  if (dspConfigProcessingRequiresPcm(dspConfig, outputConfig, volume)) {
+    return "DSD processing active; falling back to PCM";
+  }
   if (dspConfig.dsdOutputMode == DsdOutputMode::Pcm) return "DSD output mode forced PCM";
   if (!attemptedDopReason.empty()) return attemptedDopReason;
   if (dspConfig.dsdOutputMode == DsdOutputMode::Native) return "ASIO Native DSD could not prove raw DSD output";
@@ -1152,6 +1290,7 @@ TAE_Result AudioPipeline::togglePause() {
   } else if (state_ == PipelineState::Paused) {
     state_ = PipelineState::Playing;
   }
+  publishStatusLocked();
   return TAE_RESULT_OK;
 }
 
@@ -1214,6 +1353,7 @@ TAE_Result AudioPipeline::stop() {
     crossfadeTotalFrames_ = 0;
     preloadDspStatus_ = {};
     spectrum_.resetCapture();
+    publishStatusLocked();
   }
   return TAE_RESULT_OK;
 }
@@ -1238,15 +1378,22 @@ TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
     dspStatus_ = activeDspChain.status();
     dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
     updatePerfectLocked();
+    publishStatusLocked();
   }
   return TAE_RESULT_OK;
 }
 
 void AudioPipeline::setVolume(double volume) {
   volume_ = std::clamp(volume, 0.0, 1.0);
-  std::lock_guard lock(mutex_);
+  std::unique_lock lock(mutex_, std::try_to_lock);
+  if (!lock.owns_lock()) {
+    volumeStateRefreshPending_ = true;
+    return;
+  }
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
+  volumeStateRefreshPending_ = false;
+  publishStatusLocked();
 }
 
 void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
@@ -1282,6 +1429,7 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
     preloadDspStatus_ = spareDspChain.status();
     dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
     updatePerfectLocked();
+    publishStatusLocked();
   }
   if (disabledPreload) disabledPreload->stop();
 }
@@ -1306,6 +1454,7 @@ bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* err
     outputInfo_ = output_->outputInfo();
     updatePerfectLocked();
   }
+  publishStatusLocked();
   return true;
 }
 
@@ -1322,6 +1471,7 @@ bool AudioPipeline::loadImpulseResponse(const std::string& path, std::string* er
   preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
+  publishStatusLocked();
   return ok;
 }
 
@@ -1335,6 +1485,7 @@ void AudioPipeline::unloadImpulseResponse() {
   preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
+  publishStatusLocked();
 }
 
 ConvolverInfo AudioPipeline::convolverInfo() const {
@@ -1352,6 +1503,7 @@ bool AudioPipeline::setEqBands(const std::string& json, std::string* error) {
   preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
+  publishStatusLocked();
   return ok;
 }
 
@@ -1365,6 +1517,7 @@ bool AudioPipeline::setEqPreset(const std::string& json, std::string* error) {
   preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
+  publishStatusLocked();
   return ok;
 }
 
@@ -1378,6 +1531,7 @@ void AudioPipeline::setCrossfeedStrength(double strength) {
   preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
+  publishStatusLocked();
 }
 
 void AudioPipeline::setReplayGainMode(ReplayGainMode mode, double preampDb, double fallbackDb, bool clip) {
@@ -1390,6 +1544,7 @@ void AudioPipeline::setReplayGainMode(ReplayGainMode mode, double preampDb, doub
   preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
+  publishStatusLocked();
 }
 
 void AudioPipeline::setNativeDspPluginChain(const std::string& json) {
@@ -1400,6 +1555,7 @@ void AudioPipeline::setNativeDspPluginChain(const std::string& json) {
   preloadDspStatus_ = spareDspChainLocked().status();
   dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
   updatePerfectLocked();
+  publishStatusLocked();
 }
 
 std::string AudioPipeline::nativeDspPluginStatusJson() const {
@@ -1416,6 +1572,7 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
       std::lock_guard lock(mutex_);
       previous = std::move(preloadStream_);
       preloadDspStatus_ = {};
+      publishStatusLocked();
     }
     if (previous) previous->stop();
     return true;
@@ -1433,7 +1590,7 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
   }
   if (!gapless || outputFormat.sampleRate <= 0 || outputFormat.channelCount <= 0) return false;
 
-  auto stream = std::make_shared<DecodeStream>();
+  auto stream = makeDecodeStream();
   if (!stream->openSource(*item, error)) return false;
   if (!stream->configure(outputFormat, 0.0, error)) return false;
   const size_t maxRenderFrames = bufferSizeFrames > 0
@@ -1452,6 +1609,7 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
     spareDspChain.prepare(outputFormat_);
     spareDspChain.setTrackContext(DspTrackContext{preloadStream_->stream, preloadStream_->item});
     preloadDspStatus_ = spareDspChain.status();
+    publishStatusLocked();
   }
   if (previous) previous->stop();
   return true;
@@ -1485,15 +1643,13 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
     crossfadeFramesProcessed_ = 0;
     crossfadeTotalFrames_ = 0;
     updatePerfectLocked();
+    publishStatusLocked();
   }
   if (oldActive) oldActive->stop();
   return true;
 }
 
-PipelineStatus AudioPipeline::status() const {
-  cleanupRetiredDecodeStreams();
-
-  std::lock_guard lock(mutex_);
+PipelineStatus AudioPipeline::buildStatusLocked() {
   PipelineStatus status;
   status.state = state_;
   const int positionSampleRate = positionSampleRateForStream(stream_, outputFormat_);
@@ -1541,6 +1697,49 @@ PipelineStatus AudioPipeline::status() const {
       gaplessEnabled_ && dspConfig_.crossfadeSeconds <= 0.0001 && preloadStream_ != nullptr && !crossfadeMixActive_;
   status.preloadReady = preloadStream_ && preloadStream_->readyForRender();
   status.perfectReason = perfectReason_;
+  return status;
+}
+
+PipelineStatus AudioPipeline::fallbackStatus() const {
+  std::lock_guard lock(statusMutex_);
+  PipelineStatus status = lastStatus_;
+  const int positionSampleRate = positionSampleRateForStream(status.stream, status.outputFormat);
+  status.positionSeconds =
+      positionSampleRate > 0
+          ? static_cast<double>(renderedFrames_.load()) / static_cast<double>(positionSampleRate)
+          : 0.0;
+  return status;
+}
+
+void AudioPipeline::publishStatusLocked() {
+  PipelineStatus status = buildStatusLocked();
+  std::lock_guard lock(statusMutex_);
+  lastStatus_ = std::move(status);
+}
+
+PipelineStatus AudioPipeline::status() {
+  const bool requiresFreshStatus =
+      ended_.load() || deviceInvalidated_.load() || renderError_.load() || trackStarted_.load();
+  if (requiresFreshStatus) {
+    cleanupRetiredDecodeStreams();
+  } else {
+    tryCleanupRetiredDecodeStreams();
+  }
+
+  std::unique_lock lock(mutex_, std::try_to_lock);
+  if (!lock.owns_lock()) {
+    if (!requiresFreshStatus) return fallbackStatus();
+    lock.lock();
+  }
+  (void)volumeStateRefreshPending_.exchange(false);
+  dspStatus_ = activeDspChainLocked().status();
+  dspActive_ = dspStatus_.dspActive || std::abs(volume_.load() - 1.0) > 0.0001;
+  updatePerfectLocked();
+  PipelineStatus status = buildStatusLocked();
+  {
+    std::lock_guard statusLock(statusMutex_);
+    lastStatus_ = status;
+  }
   return status;
 }
 
@@ -1639,11 +1838,13 @@ bool AudioPipeline::consumeTrackStarted(QueueItem* item) {
 }
 
 size_t AudioPipeline::getSpectrumData(float* buffer, size_t pointCount) const {
+  double sampleRate = 0.0;
+  {
+    std::lock_guard lock(mutex_);
+    sampleRate = positionSampleRateForStream(stream_, outputFormat_);
+  }
   const double phase =
-      positionSampleRateForStream(stream_, outputFormat_) > 0
-          ? static_cast<double>(renderedFrames_.load()) /
-                static_cast<double>(positionSampleRateForStream(stream_, outputFormat_))
-          : 0.0;
+      sampleRate > 0.0 ? static_cast<double>(renderedFrames_.load()) / sampleRate : 0.0;
   return spectrum_.read(buffer, pointCount, phase);
 }
 

@@ -172,6 +172,14 @@ inline void applyBufferSize(AudioDeviceID deviceId, uint32_t preferredBufferSize
   AudioObjectSetPropertyData(deviceId, &address, 0, nullptr, sizeof(frames), &frames);
 }
 
+inline uint32_t currentBufferFrameSize(AudioDeviceID deviceId) {
+  if (deviceId == kAudioObjectUnknown) return 0;
+  return deviceUInt32(
+      deviceId,
+      kAudioDevicePropertyBufferFrameSize,
+      kAudioDevicePropertyScopeOutput);
+}
+
 inline std::vector<double> availableNominalSampleRates(AudioDeviceID id) {
   std::vector<double> rates;
   AudioObjectPropertyAddress address{

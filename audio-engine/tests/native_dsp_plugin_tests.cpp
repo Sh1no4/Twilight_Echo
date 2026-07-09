@@ -120,6 +120,25 @@ void testNativeDspProcessFailurePathUsesFixedReasons() {
   assert(realtimeBypassBody.find("status_.lastError") == std::string::npos);
 }
 
+void testNativeDspHostDoesNotCatchAcrossAbiBoundary() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath =
+      testFilePath.parent_path().parent_path() / "plugins" / "PluginRegistry.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string loadBody = extractFunctionBody(source, "void load()");
+  const std::string prepareBody = extractFunctionBody(source, "void prepare(const AudioFormat& format)");
+  const std::string processBody = extractFunctionBody(source, "void process(float* samples, size_t frameCount)");
+  const std::string resetBody = extractFunctionBody(source, "void reset()");
+  const std::string destroyBody = extractFunctionBody(source, "void destroy()");
+
+  assert(source.find("ProcessThrew") == std::string::npos);
+  assert(loadBody.find("catch (...)") == std::string::npos);
+  assert(prepareBody.find("catch (...)") == std::string::npos);
+  assert(processBody.find("catch (...)") == std::string::npos);
+  assert(resetBody.find("catch (...)") == std::string::npos);
+  assert(destroyBody.find("catch (...)") == std::string::npos);
+}
+
 void testNativeDspOverrunBypassesAfterRepeatedBudgetMisses() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath =
@@ -307,6 +326,7 @@ int main(int argc, char** argv) {
 
   TAE_DestroyEngine(engine);
   testNativeDspProcessFailurePathUsesFixedReasons();
+  testNativeDspHostDoesNotCatchAcrossAbiBoundary();
   testNativeDspOverrunBypassesAfterRepeatedBudgetMisses();
   testDspChainProcessDoesNotRefreshNativeDspStatusOnRealtimeThread();
   testGainPluginProcessesAudio(pluginPath);

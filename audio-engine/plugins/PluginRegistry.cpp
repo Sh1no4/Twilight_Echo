@@ -279,7 +279,10 @@ class DynamicLibrary {
 #else
     handle_ = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle_) {
-      if (error) *error = dlerror() ? dlerror() : "dlopen failed";
+      if (error) {
+        const char* message = dlerror();
+        *error = message ? message : "dlopen failed";
+      }
       return false;
     }
 #endif
@@ -310,7 +313,6 @@ class DynamicLibrary {
 
 enum class NativeDspRealtimeBypassReason {
   None,
-  ProcessThrew,
   ProcessExceededBudget,
   ProcessRequestedBypass,
   ProcessReturnedError
@@ -320,8 +322,6 @@ constexpr uint64_t kNativeDspRealtimeBypassOverrunThreshold = 3;
 
 const char* realtimeBypassReasonText(NativeDspRealtimeBypassReason reason) {
   switch (reason) {
-    case NativeDspRealtimeBypassReason::ProcessThrew:
-      return "process threw across host boundary";
     case NativeDspRealtimeBypassReason::ProcessExceededBudget:
       return "process exceeded realtime budget";
     case NativeDspRealtimeBypassReason::ProcessRequestedBypass:
@@ -373,14 +373,9 @@ class PluginRegistry::NativePlugin {
         static_cast<uint32_t>(format.sampleRate),
         static_cast<uint32_t>(format.channelCount),
         TAE_DSP_SAMPLE_FLOAT32_INTERLEAVED};
-    try {
-      const tae_dsp_result result = info_->prepare(handle_, &nativeFormat);
-      if (result != TAE_DSP_RESULT_OK) {
-        bypass("prepare returned an error");
-        return;
-      }
-    } catch (...) {
-      bypass("prepare threw across host boundary");
+    const tae_dsp_result result = info_->prepare(handle_, &nativeFormat);
+    if (result != TAE_DSP_RESULT_OK) {
+      bypass("prepare returned an error");
       return;
     }
     prepared_ = true;
@@ -395,13 +390,8 @@ class PluginRegistry::NativePlugin {
     refreshActive();
     if (!status_.active || !samples || frameCount == 0) return;
     const auto start = std::chrono::steady_clock::now();
-    tae_dsp_result result = TAE_DSP_RESULT_ERROR;
-    try {
-      result = info_->process(handle_, samples, static_cast<uint32_t>(std::min<size_t>(frameCount, UINT32_MAX)));
-    } catch (...) {
-      bypassRealtime(NativeDspRealtimeBypassReason::ProcessThrew);
-      return;
-    }
+    const tae_dsp_result result =
+        info_->process(handle_, samples, static_cast<uint32_t>(std::min<size_t>(frameCount, UINT32_MAX)));
     const auto end = std::chrono::steady_clock::now();
     const double elapsedMs = std::chrono::duration<double, std::milli>(end - start).count();
     const double blockMs =
@@ -428,12 +418,8 @@ class PluginRegistry::NativePlugin {
 
   void reset() {
     if (!status_.loaded || !info_->reset) return;
-    try {
-      const tae_dsp_result result = info_->reset(handle_);
-      if (result != TAE_DSP_RESULT_OK) bypass("reset returned an error");
-    } catch (...) {
-      bypass("reset threw across host boundary");
-    }
+    const tae_dsp_result result = info_->reset(handle_);
+    if (result != TAE_DSP_RESULT_OK) bypass("reset returned an error");
   }
 
   bool isActive() const {
@@ -468,12 +454,7 @@ class PluginRegistry::NativePlugin {
       return;
     }
     auto getInfo = reinterpret_cast<tae_plugin_get_info_fn>(symbol);
-    try {
-      info_ = getInfo();
-    } catch (...) {
-      fail("tae_plugin_get_info threw across host boundary");
-      return;
-    }
+    info_ = getInfo();
     if (!info_) {
       fail("tae_plugin_get_info returned null");
       return;
@@ -555,10 +536,7 @@ class PluginRegistry::NativePlugin {
 
   void destroy() {
     if (handle_ && info_ && info_->destroy) {
-      try {
-        info_->destroy(handle_);
-      } catch (...) {
-      }
+      info_->destroy(handle_);
     }
     handle_ = nullptr;
     info_ = nullptr;

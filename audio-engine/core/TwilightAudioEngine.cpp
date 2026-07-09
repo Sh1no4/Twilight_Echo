@@ -485,6 +485,7 @@ std::string convolverInfoToJson(const ConvolverInfo& info) {
   json << "{"
        << "\"loaded\":" << (info.loaded ? "true" : "false") << ","
        << "\"active\":" << (info.active ? "true" : "false") << ","
+       << "\"bypassed\":" << (info.bypassed ? "true" : "false") << ","
        << "\"irResampled\":" << (info.irResampled ? "true" : "false") << ","
        << "\"path\":\"" << json_utils::escape(info.path) << "\","
        << "\"sampleRate\":" << info.sampleRate << ","
@@ -493,6 +494,9 @@ std::string convolverInfoToJson(const ConvolverInfo& info) {
        << "\"lengthMs\":" << info.lengthMs << ","
        << "\"partitionSize\":" << info.partitionSize << ","
        << "\"latencyFrames\":" << info.latencyFrames << ","
+       << "\"overrunCount\":" << info.overrunCount << ","
+       << "\"lastProcessMs\":" << info.lastProcessMs << ","
+       << "\"maxProcessMs\":" << info.maxProcessMs << ","
        << "\"channelMappingMode\":\"" << json_utils::escape(info.channelMappingMode) << "\","
        << "\"warning\":\"" << json_utils::escape(info.warning) << "\","
        << "\"lastError\":\"" << json_utils::escape(info.lastError) << "\""
@@ -500,82 +504,27 @@ std::string convolverInfoToJson(const ConvolverInfo& info) {
   return json.str();
 }
 
-DspStatus configuredDspStatus(const std::string& dspJson) {
-  const DspConfig config = DspChain::parseConfigJson(dspJson);
-  return configuredDspStatusFromConfig(config);
-}
-
-bool gaplessEnabledFromConfig(const std::string& dspJson) {
-  const DspConfig config = DspChain::parseConfigJson(dspJson);
+bool gaplessEnabledFromConfig(const DspConfig& config) {
   return config.gapless || config.crossfadeSeconds > 0.0001;
 }
 
 uint32_t parseUintField(const std::string& json, const std::string& key, uint32_t fallback) {
-  const std::string marker = "\"" + key + "\":";
-  const size_t pos = json.find(marker);
-  if (pos == std::string::npos) return fallback;
-  const size_t start = pos + marker.size();
-  size_t end = start;
-  while (end < json.size() && std::isdigit(static_cast<unsigned char>(json[end]))) ++end;
-  if (end == start) return fallback;
-  try {
-    return static_cast<uint32_t>(std::stoul(json.substr(start, end - start)));
-  } catch (...) {
-    return fallback;
-  }
+  const std::optional<double> value = json_utils::fieldNumber(json, key);
+  if (!value.has_value() || *value < 0.0) return fallback;
+  return static_cast<uint32_t>(*value);
 }
 
 std::string parseStringField(const std::string& json, const std::string& key, const std::string& fallback) {
-  const std::string marker = "\"" + key + "\":\"";
-  const size_t pos = json.find(marker);
-  if (pos == std::string::npos) return fallback;
-  const size_t start = pos + marker.size();
-  size_t end = start;
-  bool escaped = false;
-  for (; end < json.size(); ++end) {
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-    if (json[end] == '\\') {
-      escaped = true;
-      continue;
-    }
-    if (json[end] == '"') break;
-  }
-  return json_utils::escape(json.substr(start, end - start));
+  return json_utils::fieldString(json, key).value_or(fallback);
 }
 
 bool parseBoolField(const std::string& json, const std::string& key, bool fallback) {
-  const std::string marker = "\"" + key + "\":";
-  const size_t pos = json.find(marker);
-  if (pos == std::string::npos) return fallback;
-  const size_t start = pos + marker.size();
-  if (start + 4 <= json.size() && json.substr(start, 4) == "true") return true;
-  if (start + 5 <= json.size() && json.substr(start, 5) == "false") return false;
-  return fallback;
+  return json_utils::fieldBool(json, key).value_or(fallback);
 }
 
 float parseFloatField(const std::string& json, const std::string& key, float fallback) {
-  const std::string marker = "\"" + key + "\":";
-  const size_t pos = json.find(marker);
-  if (pos == std::string::npos) return fallback;
-  const size_t start = pos + marker.size();
-  size_t end = start;
-  // 允许负号、小数点、数字
-  if (end < json.size() && (json[end] == '-' || json[end] == '+')) ++end;
-  while (end < json.size() &&
-         (std::isdigit(static_cast<unsigned char>(json[end])) || json[end] == '.' ||
-          json[end] == 'e' || json[end] == 'E' ||
-          ((json[end] == '-' || json[end] == '+') && end > start))) {
-    ++end;
-  }
-  if (end == start) return fallback;
-  try {
-    return std::stof(json.substr(start, end - start));
-  } catch (...) {
-    return fallback;
-  }
+  const std::optional<double> value = json_utils::fieldNumber(json, key);
+  return value.has_value() ? static_cast<float>(*value) : fallback;
 }
 
 OutputConfig parseOutputConfigJson(const std::string& json) {
@@ -706,7 +655,7 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
     device = info_.outputDevice;
     volume = info_.volume;
     dspConfigJson = dspConfigJson_;
-    gaplessEnabled = gaplessEnabledFromConfig(dspConfigJson_);
+    gaplessEnabled = gaplessEnabledFromConfig(dspConfig_);
   }
 
   std::string error;
@@ -761,7 +710,7 @@ TAE_Result TwilightAudioEngine::playQueueItem(const QueueItem& item, double star
     device = info_.outputDevice;
     volume = info_.volume;
     dspConfigJson = dspConfigJson_;
-    gaplessEnabled = gaplessEnabledFromConfig(dspConfigJson_);
+    gaplessEnabled = gaplessEnabledFromConfig(dspConfig_);
   }
 
   std::string error;
@@ -1041,8 +990,9 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
   const DspConfig nextConfig = DspChain::parseConfigJson(dspJson.empty() ? "{}" : dspJson);
   {
     std::lock_guard lock(mutex_);
-    previousConfig = DspChain::parseConfigJson(dspConfigJson_);
+    previousConfig = dspConfig_;
     dspConfigJson_ = dspJson.empty() ? "{}" : dspJson;
+    dspConfig_ = nextConfig;
     if (pipeline_) pipeline_->setDspConfig(dspConfigJson_);
     if (pipeline_ && info_.state != PlaybackState::Stopped) {
       applyPipelineStatusLocked(pipeline_->status());
@@ -1778,7 +1728,7 @@ void TwilightAudioEngine::updatePerfectLocked() {
   evaluation.eqActive = info_.eqActive;
   evaluation.convolverActive = info_.convolverActive;
   evaluation.crossfeedActive = info_.crossfeedActive;
-  evaluation.crossfadeActive = info_.crossfadeActive || DspChain::parseConfigJson(dspConfigJson_).crossfadeSeconds > 0.0001;
+  evaluation.crossfadeActive = info_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001;
   evaluation.routingMode = outputConfig_.routingMode;
   evaluation.pcmPassthrough = pcmFormatsExactMatch(decodedFormat, outputFormat) && !backendResampled;
   const PerfectResult result = evaluatePerfect(evaluation);
@@ -1802,7 +1752,7 @@ bool TwilightAudioEngine::shouldReroutePipelineLocked(
     double* position,
     PlaybackState* state) const {
   if (!pipeline_ || info_.state == PlaybackState::Stopped) return false;
-  const DspConfig config = DspChain::parseConfigJson(dspConfigJson_);
+  const DspConfig& config = dspConfig_;
   if (info_.isDsd) {
     const bool wantsPcm = config.dsdOutputMode == DsdOutputMode::Pcm;
     const bool wantsNative = config.dsdOutputMode == DsdOutputMode::Auto || config.dsdOutputMode == DsdOutputMode::Native;

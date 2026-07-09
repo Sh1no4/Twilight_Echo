@@ -110,7 +110,7 @@ class AudioPipeline {
   bool preloadNext(const std::optional<QueueItem>& item, std::string* error);
   bool skipToPreloaded(const QueueItem& item, std::string* error);
 
-  PipelineStatus status() const;
+  PipelineStatus status();
   bool consumeEnded();
   bool consumeDeviceInvalidated(std::string* message);
   bool consumeRenderError(std::string* message);
@@ -130,7 +130,10 @@ class AudioPipeline {
 
  private:
   struct DecodeStream;
+  struct DecodeStreamReaper;
 
+  static std::shared_ptr<DecodeStream> makeDecodeStream();
+  static DecodeStreamReaper& decodeStreamReaper();
   bool configureActiveStreamLocked(
       const std::shared_ptr<DecodeStream>& stream,
       const QueueItem& item,
@@ -169,9 +172,13 @@ class AudioPipeline {
       const std::string& forcedDsdFallbackReason,
       std::string* error);
   bool updatePerfectLocked();
+  PipelineStatus buildStatusLocked();
+  PipelineStatus fallbackStatus() const;
+  void publishStatusLocked();
   void prepareRenderScratchLocked(size_t maxFrames);
   bool retireDecodeStreamLocked(std::shared_ptr<DecodeStream> stream);
   void cleanupRetiredDecodeStreams() const;
+  void tryCleanupRetiredDecodeStreams() const;
   DspChain& activeDspChainLocked();
   const DspChain& activeDspChainLocked() const;
   DspChain& spareDspChainLocked();
@@ -205,6 +212,7 @@ class AudioPipeline {
   std::atomic<bool> renderError_{false};
   std::atomic<bool> trackStarted_{false};
   std::atomic<double> volume_{1.0};
+  std::atomic<bool> volumeStateRefreshPending_{false};
   std::atomic<uint64_t> renderedFrames_{0};
   std::atomic<int> renderChannelCount_{2};
   PipelineState state_ = PipelineState::Stopped;
@@ -227,6 +235,8 @@ class AudioPipeline {
   std::vector<float> typedVisualizationScratch_;
   mutable std::mutex channelRouterMutex_;
   ChannelRouter channelRouter_;
+  mutable std::mutex statusMutex_;
+  PipelineStatus lastStatus_;
 };
 
 }  // namespace twilight::audio
