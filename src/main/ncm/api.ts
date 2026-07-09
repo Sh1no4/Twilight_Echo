@@ -4,10 +4,21 @@ import { existsSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { runtime } from '../core/runtime'
 import { getCachedNcmSong, cacheNcmSong } from '../cache/ncmCache'
+import { redactSensitiveText } from '../security/secureStorage.ts'
+import {
+  normalizeInteger,
+  normalizeIpcString,
+  normalizeOptionalIpcString
+} from '../security/ipcValidation.ts'
+import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 
 export const NCM_API_PORT = 3100
 export const NCM_OFFICIAL_LOGIN_TIMEOUT_MS = 180000
 export const NCM_API_REQUEST_TIMEOUT_MS = 25000
+const MAX_NCM_API_PATH_LENGTH = 4096
+const MAX_NCM_COOKIE_LENGTH = 16 * 1024
+const MAX_NCM_REMOTE_URL_LENGTH = 8192
+const MAX_NCM_CACHE_FILENAME_LENGTH = 255
 
 export function bundledPluginPath(name: string): string {
   return app.isPackaged
@@ -22,11 +33,16 @@ export function bundledPluginIndexPath(): string {
 }
 
 export async function requestNcmApi(path: string, cookie?: string): Promise<unknown> {
-  const sep = path.includes('?') ? '&' : '?'
-  let url = `http://localhost:${NCM_API_PORT}${path}${sep}timestamp=${Date.now()}`
+  const normalizedPath = normalizeNcmApiPath(path)
+  if (!normalizedPath) {
+    return { code: -1, message: 'Invalid NetEase API path' }
+  }
+  const sep = normalizedPath.includes('?') ? '&' : '?'
+  const url = `http://localhost:${NCM_API_PORT}${normalizedPath}${sep}timestamp=${Date.now()}`
   const headers: Record<string, string> = {}
-  if (cookie) {
-    headers.Cookie = cookie
+  const normalizedCookie = normalizeNcmCookie(cookie)
+  if (normalizedCookie) {
+    headers.Cookie = normalizedCookie
       .split(';')
       .map((item) => item.trim())
       .filter(Boolean)
@@ -39,7 +55,7 @@ export async function requestNcmApi(path: string, cookie?: string): Promise<unkn
     return await res.json()
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    console.error('网易云请求失败：', path, message)
+    console.error('网易云请求失败：', redactSensitiveText(normalizedPath), redactSensitiveText(message))
     return {
       code: -1,
       message
@@ -124,13 +140,13 @@ export async function openNcmOfficialLogin(): Promise<string> {
     })
     loginWindow.webContents.setWindowOpenHandler(({ url }) => {
       if (/^https?:\/\/([^/]+\.)?music\.163\.com\//i.test(url)) return { action: 'allow' }
-      void shell.openExternal(url)
+      if (isSafeExternalUrl(url)) void shell.openExternal(url)
       return { action: 'deny' }
     })
     loginWindow.webContents.on('will-navigate', (event, url) => {
       if (/^https?:\/\/([^/]+\.)?music\.163\.com\//i.test(url)) return
       event.preventDefault()
-      void shell.openExternal(url)
+      if (isSafeExternalUrl(url)) void shell.openExternal(url)
     })
     loginWindow.once('ready-to-show', () => loginWindow.show())
     loginWindow
@@ -141,22 +157,73 @@ export async function openNcmOfficialLogin(): Promise<string> {
 }
 
 export function setupNcmIpc(): void {
-  ipcMain.handle('ncm:getPort', () => NCM_API_PORT)
+  ipcMain.handle('ncm:getPort', (event) => {
+    assertTrustedIpcSender(event, 'NCM IPC')
+    return NCM_API_PORT
+  })
 
   ipcMain.handle('ncm:getCachedSong', async (_event, songId: number) => {
-    return getCachedNcmSong(Number(songId))
+    assertTrustedIpcSender(_event, 'NCM IPC')
+    return getCachedNcmSong(normalizeNcmSongId(songId))
   })
 
   ipcMain.handle(
     'ncm:cacheSong',
     async (_event, songId: number, url: string, fileName?: string) => {
-      return await cacheNcmSong(Number(songId), url, fileName)
+      assertTrustedIpcSender(_event, 'NCM IPC')
+      return await cacheNcmSong(
+        normalizeNcmSongId(songId),
+        normalizeIpcString(url, 'NCM cache url', MAX_NCM_REMOTE_URL_LENGTH),
+        normalizeOptionalIpcString(fileName, 'NCM cache file name', MAX_NCM_CACHE_FILENAME_LENGTH)
+      )
     }
   )
 
   ipcMain.handle('ncm:request', async (_event, path: string, cookie?: string) => {
+    assertTrustedIpcSender(_event, 'NCM IPC')
     return requestNcmApi(path, cookie)
   })
+}
+
+function normalizeNcmApiPath(path: unknown): string | null {
+  let normalized: string
+  try {
+    normalized = normalizeIpcString(path, 'NCM API path', MAX_NCM_API_PATH_LENGTH)
+  } catch {
+    return null
+  }
+  if (!normalized.startsWith('/') || normalized.startsWith('//') || normalized.includes('\\')) return null
+  try {
+    const parsed = new URL(`http://localhost:${NCM_API_PORT}${normalized}`)
+    if (parsed.origin !== `http://localhost:${NCM_API_PORT}`) return null
+    return normalized
+  } catch {
+    return null
+  }
+}
+
+function normalizeNcmCookie(cookie: unknown): string | undefined {
+  if (cookie == null || cookie === '') return undefined
+  try {
+    return normalizeIpcString(cookie, 'NCM cookie', MAX_NCM_COOKIE_LENGTH)
+  } catch {
+    return undefined
+  }
+}
+
+function normalizeNcmSongId(songId: unknown): number {
+  const normalized = normalizeInteger(songId, 'NCM song id', 0, 1, Number.MAX_SAFE_INTEGER)
+  if (normalized <= 0) throw new Error('NCM song id is invalid')
+  return normalized
+}
+
+function isSafeExternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+  } catch {
+    return false
+  }
 }
 
 export async function setupNcmApi(): Promise<void> {

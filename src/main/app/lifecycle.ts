@@ -31,6 +31,7 @@ import { setupBpmAnalysisIpc } from '../bpm/bpmIpc'
 import { setupOpraIpc } from '../ipc/opra'
 import { setupPluginIpc } from '../ipc/plugins'
 import { setupDataIpc } from '../ipc/data'
+import { installElectronSecurity } from '../security/electronSecurity.ts'
 import { createWindow } from './window'
 
 export function startApp(): void {
@@ -95,6 +96,7 @@ export function startApp(): void {
 
     app.whenReady().then(() => {
       electronApp.setAppUserModelId('com.TwilightEcho.music')
+      installElectronSecurity()
 
       // Register cover:// protocol — Chromium reads JPEGs directly from disk,
       // no IPC, no base64, browser manages decode cache natively.

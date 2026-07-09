@@ -1,4 +1,4 @@
-import { ElectronAPI } from '@electron-toolkit/preload'
+export {}
 
 interface TrackData {
   id: string
@@ -1133,7 +1133,6 @@ interface WindowAPI {
 
 declare global {
   interface Window {
-    electron: ElectronAPI
     api: WindowAPI
   }
 }

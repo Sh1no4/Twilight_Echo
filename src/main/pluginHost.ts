@@ -1,6 +1,7 @@
 import { pathToFileURL } from 'url'
 import { deletePluginSetting, getPluginSetting, setPluginSetting } from './plugins/settingsStore'
 import { initProxy } from './plugins/proxyBootstrap'
+import { redactSensitiveText } from './security/secureStorage.ts'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -417,12 +418,16 @@ async function callCommandHandler(message: Extract<PluginHostRequest, { kind: 'u
 }
 
 function log(level: 'debug' | 'info' | 'warn' | 'error', message: string): void {
-  post({ kind: 'log', level, message })
+  post({ kind: 'log', level, message: redactSensitiveText(message) })
 }
 
 function reportError(error: unknown): void {
   const err = error instanceof Error ? error : new Error(String(error))
-  post({ kind: 'host-error', message: err.message, stack: err.stack })
+  post({
+    kind: 'host-error',
+    message: redactSensitiveText(err.message),
+    stack: err.stack ? redactSensitiveText(err.stack) : undefined
+  })
 }
 
 function post(message: PluginHostResponse): void {

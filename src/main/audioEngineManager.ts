@@ -1498,7 +1498,6 @@ export function loadNativeBinding(
     if (!existsSync(candidate)) continue
     try {
       // Native addons must be loaded dynamically because the file is produced by CMake.
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
       return require(candidate) as NativeAudioBinding
     } catch (err) {
       console.warn('原生音频模块加载失败：', candidate, err)

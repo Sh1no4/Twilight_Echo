@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -10,6 +10,9 @@ const {
   pluginSettingsPath,
   setPluginSetting
 } = (await import(new URL('./settingsStore.ts', import.meta.url).href)) as typeof import('./settingsStore')
+const { redactSensitiveText } = (await import(
+  new URL('../security/secureStorage.ts', import.meta.url).href
+)) as typeof import('../security/secureStorage')
 
 test('stores plugin settings inside plugin private data directory', async () => {
   const storagePath = await mkdtemp(join(tmpdir(), 'twilight-plugin-settings-'))
@@ -33,4 +36,65 @@ test('stores plugin settings inside plugin private data directory', async () => 
 test('rejects blank plugin setting keys', async () => {
   const storagePath = await mkdtemp(join(tmpdir(), 'twilight-plugin-settings-'))
   await assert.rejects(() => setPluginSetting(storagePath, '  ', true), /settings key/)
+})
+
+test('limits plugin setting keys and values before writing to disk', async () => {
+  const storagePath = await mkdtemp(join(tmpdir(), 'twilight-plugin-settings-'))
+
+  await assert.rejects(() => setPluginSetting(storagePath, 'x'.repeat(129), true), /too long/)
+  await assert.rejects(() => setPluginSetting(storagePath, 'bad\nkey', true), /invalid characters/)
+  await assert.rejects(
+    () => setPluginSetting(storagePath, 'largeValue', 'x'.repeat(512 * 1024 + 1)),
+    /too large/
+  )
+})
+
+test('encrypts sensitive plugin settings on disk and decrypts for plugins', async () => {
+  const storagePath = await mkdtemp(join(tmpdir(), 'twilight-plugin-settings-'))
+
+  await setPluginSetting(storagePath, 'cookie', 'MUSIC_U=test-token;__csrf=csrf-token')
+  await setPluginSetting(storagePath, 'refreshToken', 'refresh-token')
+
+  assert.equal(await getPluginSetting(storagePath, 'cookie'), 'MUSIC_U=test-token;__csrf=csrf-token')
+  assert.equal(await getPluginSetting(storagePath, 'refreshToken'), 'refresh-token')
+
+  const raw = await readFile(pluginSettingsPath(storagePath), 'utf-8')
+  assert.equal(raw.includes('MUSIC_U=test-token'), false)
+  assert.equal(raw.includes('refresh-token'), false)
+
+  const parsed = JSON.parse(raw) as Record<string, Record<string, unknown>>
+  assert.equal(parsed.cookie.__twilightSecure, true)
+  assert.equal(parsed.refreshToken.__twilightSecure, true)
+})
+
+test('migrates legacy plaintext sensitive plugin settings after read', async () => {
+  const storagePath = await mkdtemp(join(tmpdir(), 'twilight-plugin-settings-'))
+  await writeFile(
+    pluginSettingsPath(storagePath),
+    JSON.stringify({ cookie: 'MUSIC_U=legacy-token', launchCount: 2 }),
+    'utf-8'
+  )
+
+  assert.equal(await getPluginSetting(storagePath, 'cookie'), 'MUSIC_U=legacy-token')
+  assert.deepEqual(await getPluginSetting(storagePath), {
+    cookie: 'MUSIC_U=legacy-token',
+    launchCount: 2
+  })
+
+  const raw = await readFile(pluginSettingsPath(storagePath), 'utf-8')
+  assert.equal(raw.includes('MUSIC_U=legacy-token'), false)
+  assert.equal(JSON.parse(raw).cookie.__twilightSecure, true)
+})
+
+test('redacts login secrets from plugin-visible logs', () => {
+  const redacted = redactSensitiveText(
+    '/login?phone=13800138000&password=p@ss#word&token=abc MUSIC_U=music-token;__csrf=csrf-token'
+  )
+
+  assert.equal(redacted.includes('p@ss#word'), false)
+  assert.equal(redacted.includes('token=abc'), false)
+  assert.equal(redacted.includes('MUSIC_U=music-token'), false)
+  assert.equal(redacted.includes('__csrf=csrf-token'), false)
+  assert.match(redacted, /password=\[REDACTED\]/)
+  assert.match(redacted, /MUSIC_U=\[REDACTED\]/)
 })

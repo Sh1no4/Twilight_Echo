@@ -14,12 +14,22 @@ test('audioEngine loadQueue IPC accepts renderer queue items with source field',
   const toQueueItem = source.slice(start, end)
 
   assert.match(toQueueItem, /typeof item\.source === 'string'/)
-  assert.match(toQueueItem, /source,\s*\n\s*title:/)
+  assert.match(toQueueItem, /source: normalizedSource,\s*\n\s*title:/)
+  assert.match(toQueueItem, /normalizeIpcString\(source, 'queue item source'/)
   assert.equal(
     /typeof item\.filePath === 'string'[\s\S]*typeof item\.source === 'string'/.test(toQueueItem),
     false,
     'source must be checked before filePath because renderer queue items no longer include filePath'
   )
+})
+
+test('audioEngine IPC normalizes untrusted renderer parameters', () => {
+  assert.match(source, /const MAX_AUDIO_QUEUE_ITEMS = 1000/)
+  assert.match(source, /normalizeIpcArray\(items, 'audio queue', MAX_AUDIO_QUEUE_ITEMS, toQueueItem\)/)
+  assert.match(source, /normalizeIpcString\(source, 'audio source'/)
+  assert.match(source, /normalizeFiniteNumber\(time, 'seek time', 0, 0, Number\.MAX_SAFE_INTEGER\)/)
+  assert.match(source, /normalizeFiniteNumber\(volume, 'volume', 1, 0, 1\)/)
+  assert.match(source, /normalizeInteger\(points, 'spectrum points', 128, 8, 4096\)/)
 })
 
 test('audio engine manager exposes optional native AnalyzeBpm method for host analysis', () => {

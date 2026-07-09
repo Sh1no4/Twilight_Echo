@@ -4,7 +4,8 @@ import { is } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import type { DesktopLyricsSettings } from '../core/types'
 import type { DesktopLyricsTrackPayload } from '../../preload/types'
-import { writeAppSettings } from '../core/settings'
+import { normalizeDesktopLyrics, writeAppSettings } from '../core/settings'
+import { assertTrustedIpcSender, shouldAcceptIpcEvent } from '../security/electronSecurity.ts'
 
 function sendDesktopLyricsSnapshot(): void {
   if (!runtime.desktopLyricsWindow || runtime.desktopLyricsWindow.isDestroyed()) return
@@ -40,7 +41,11 @@ function createDesktopLyricsWindow(): void {
     show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      sandbox: false
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false
     }
   })
 
@@ -56,6 +61,11 @@ function createDesktopLyricsWindow(): void {
 
   runtime.desktopLyricsWindow.on('closed', () => {
     runtime.desktopLyricsWindow = null
+  })
+
+  runtime.desktopLyricsWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+  runtime.desktopLyricsWindow.webContents.on('will-navigate', (event) => {
+    event.preventDefault()
   })
 
   // Save position on move
@@ -110,23 +120,25 @@ function toggleDesktopLyrics(): boolean {
 }
 
 export function applyDesktopLyricsSettings(settings: DesktopLyricsSettings): void {
-  runtime.appSettings.desktopLyrics = { ...settings }
+  const normalized = normalizeDesktopLyrics(settings)
+  runtime.appSettings.desktopLyrics = normalized
   writeAppSettings(runtime.appSettings)
   if (runtime.desktopLyricsWindow && !runtime.desktopLyricsWindow.isDestroyed()) {
     // Update window properties
-    runtime.desktopLyricsWindow.setAlwaysOnTop(settings.alwaysOnTop, 'screen-saver')
-    runtime.desktopLyricsWindow.setIgnoreMouseEvents(settings.clickThrough, { forward: true })
-    if (settings.windowWidth !== runtime.desktopLyricsWindow.getBounds().width ||
-        settings.windowHeight !== runtime.desktopLyricsWindow.getBounds().height) {
-      runtime.desktopLyricsWindow.setSize(settings.windowWidth, settings.windowHeight)
+    runtime.desktopLyricsWindow.setAlwaysOnTop(normalized.alwaysOnTop, 'screen-saver')
+    runtime.desktopLyricsWindow.setIgnoreMouseEvents(normalized.clickThrough, { forward: true })
+    if (normalized.windowWidth !== runtime.desktopLyricsWindow.getBounds().width ||
+        normalized.windowHeight !== runtime.desktopLyricsWindow.getBounds().height) {
+      runtime.desktopLyricsWindow.setSize(normalized.windowWidth, normalized.windowHeight)
     }
-    runtime.desktopLyricsWindow.webContents.send('desktopLyrics:initSettings', settings)
+    runtime.desktopLyricsWindow.webContents.send('desktopLyrics:initSettings', normalized)
   }
 }
 
 export function setupDesktopLyricsIpc(): void {
   // Forward track/time updates from renderer to lyrics window
   ipcMain.on('desktopLyrics:updateTrack', (_event, data: DesktopLyricsTrackPayload) => {
+    if (!shouldAcceptIpcEvent(_event, 'desktop lyrics IPC')) return
     runtime.latestDesktopLyricsTrack = data
     if (runtime.desktopLyricsWindow && !runtime.desktopLyricsWindow.isDestroyed()) {
       runtime.desktopLyricsWindow.webContents.send('desktopLyrics:updateTrack', data)
@@ -134,30 +146,37 @@ export function setupDesktopLyricsIpc(): void {
   })
 
   ipcMain.on('desktopLyrics:updateTime', (_event, time: number) => {
-    runtime.latestDesktopLyricsTime = time
+    if (!shouldAcceptIpcEvent(_event, 'desktop lyrics IPC')) return
+    if (!Number.isFinite(time)) return
+    runtime.latestDesktopLyricsTime = Math.max(0, time)
     if (runtime.desktopLyricsWindow && !runtime.desktopLyricsWindow.isDestroyed()) {
-      runtime.desktopLyricsWindow.webContents.send('desktopLyrics:updateTime', time)
+      runtime.desktopLyricsWindow.webContents.send('desktopLyrics:updateTime', runtime.latestDesktopLyricsTime)
     }
   })
 
   ipcMain.on('desktopLyrics:updateSettings', (_event, settings: DesktopLyricsSettings) => {
+    if (!shouldAcceptIpcEvent(_event, 'desktop lyrics IPC')) return
     applyDesktopLyricsSettings(settings)
   })
 
-  ipcMain.handle('desktopLyrics:toggle', async () => {
+  ipcMain.handle('desktopLyrics:toggle', async (event) => {
+    assertTrustedIpcSender(event, 'desktop lyrics IPC')
     return toggleDesktopLyrics()
   })
 
-  ipcMain.handle('desktopLyrics:show', async () => {
+  ipcMain.handle('desktopLyrics:show', async (event) => {
+    assertTrustedIpcSender(event, 'desktop lyrics IPC')
     showDesktopLyrics()
   })
 
-  ipcMain.handle('desktopLyrics:hide', async () => {
+  ipcMain.handle('desktopLyrics:hide', async (event) => {
+    assertTrustedIpcSender(event, 'desktop lyrics IPC')
     hideDesktopLyrics()
   })
 
   // Lyrics window → main: get current position (for drag start)
   ipcMain.on('desktopLyrics:getPosition', (event) => {
+    if (!shouldAcceptIpcEvent(event, 'desktop lyrics IPC')) return
     const win = BrowserWindow.fromWebContents(event.sender)
     if (win && !win.isDestroyed()) {
       const [x, y] = win.getPosition()
@@ -167,17 +186,28 @@ export function setupDesktopLyricsIpc(): void {
 
   // Lyrics window → main: move window
   ipcMain.on('desktopLyrics:move', (event, data: { x: number; y: number }) => {
+    if (!shouldAcceptIpcEvent(event, 'desktop lyrics IPC')) return
     const win = BrowserWindow.fromWebContents(event.sender)
-    if (win && !win.isDestroyed()) {
-      win.setPosition(data.x, data.y)
-    }
+    if (!win || win.isDestroyed()) return
+    if (!data || !Number.isFinite(data.x) || !Number.isFinite(data.y)) return
+    const display = screen.getDisplayMatching(win.getBounds())
+    const bounds = display.workArea
+    const size = win.getBounds()
+    const x = clampNumber(Math.round(data.x), bounds.x, bounds.x + bounds.width - size.width)
+    const y = clampNumber(Math.round(data.y), bounds.y, bounds.y + bounds.height - size.height)
+    win.setPosition(x, y)
   })
 
   // Lyrics window → main: request close (close button in toolbar)
-  ipcMain.on('desktopLyrics:requestClose', () => {
+  ipcMain.on('desktopLyrics:requestClose', (event) => {
+    if (!shouldAcceptIpcEvent(event, 'desktop lyrics IPC')) return
     runtime.appSettings.desktopLyrics.enabled = false
     writeAppSettings(runtime.appSettings)
     hideDesktopLyrics()
     runtime.mainWindow?.webContents.send('desktopLyrics:toggleChanged', false)
   })
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), Math.max(min, max))
 }

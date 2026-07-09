@@ -73,7 +73,7 @@ Twilight Echo 的设计理念是：**软件本体除架构外，一切皆可由�
   "main": "index.mjs",
   "engines": { "twilightEcho": ">=1.0.0" },
   "apiVersion": 1,
-  "permissions": ["network", "settings", "ui:inject"]
+  "permissions": ["network", "settings", "library:read", "ui:inject"]
 }
 ```
 
@@ -106,6 +106,13 @@ Twilight Echo 的设计理念是：**软件本体除架构外，一切皆可由�
 ## 3. 音源插件（Provider）
 
 音源插件通过 `context.twilight.providers.register()` 注册。注册时可以声明 **UI 元数据**，宿主会根据这些元数据自动渲染登录卡片、流媒体首页等界面，**无需修改主程序**。
+
+运行时网关会校验 Provider 权限和 ID：
+
+- `providers.register()` 要求插件声明 `network` 权限。
+- 声明 `library` capability 时还必须声明 `library:read`。
+- `ncm` 和 `local` 是宿主保留的 Provider ID；第三方插件不能注册这些前缀。
+- 同一个 Provider ID 同一时间只能由一个插件注册，避免音源前缀被抢占。
 
 ### 基本注册
 
@@ -485,18 +492,24 @@ interface TwilightPluginContext {
 插件可以监听宿主事件：
 
 ```javascript
-context.twilight.events.on('player:track-changed', (payload) => {
+context.twilight.events.on('player:track-change', (payload) => {
   context.logger.info(`Now playing: ${payload.title}`)
 })
 
-context.twilight.events.on('library:changed', () => {
-  context.logger.info('Library changed')
+context.twilight.events.on('app:ready', () => {
+  context.logger.info('App is ready')
 })
 ```
+
+`player:*` 和兼容的 `audioEngine:*` 事件需要 `player:observe` 权限。
+未来 `library:*` 事件需要 `library:read` 权限；未知事件名会被宿主拒绝。
 
 ### 设置持久化
 
 每个插件有独立的设置存储空间：
+
+宿主会在写盘时自动加密敏感 key（例如 `cookie`、`token`、`password`、`secret`、`session`），
+插件仍然通过同一套 settings API 读取明文值，不需要自行实现本地加密。
 
 ```javascript
 // 保存设置
@@ -769,7 +782,7 @@ export function deactivate() {}
 
 | 我想... | 使用什么 | 需要的配置 |
 |---------|----------|-----------|
-| 新增一个音源 | `providers.register()` + `ui` 元数据 | `type: ["provider"]`, `permissions: ["network", "settings"]` |
+| 新增一个音源 | `providers.register()` + `ui` 元数据 | `type: ["provider"]`, `permissions: ["network", "settings"]`；声明 `library` capability 时加 `library:read` |
 | 在侧栏添加自定义页面 | `ui.register({ kind: 'localSidebarItem' })` | `type: ["ui"]`, `permissions: ["ui:inject"]` |
 | 在设置页添加自定义面板 | `ui.register({ kind: 'settingsPanel' })` | `type: ["ui"]`, `permissions: ["ui:inject"]` |
 | 在播放器栏添加按钮 | `ui.register({ kind: 'playerBarButton' })` | `type: ["ui"]`, `permissions: ["ui:inject"]` |

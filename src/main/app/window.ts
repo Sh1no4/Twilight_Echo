@@ -2,6 +2,7 @@ import { app, BrowserWindow, shell } from 'electron'
 import { release } from 'os'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
+import { pathToFileURL } from 'url'
 import { is } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { getWindowBackgroundColor } from '../audio/state'
@@ -96,7 +97,9 @@ export function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: true,
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: true,
+      allowRunningInsecureContent: false
     }
   })
 
@@ -125,9 +128,19 @@ export function createWindow(): void {
 
   installAudioDeviceHotplugWatcher(runtime.mainWindow)
 
-  runtime.mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+  runtime.mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (isSafeExternalUrl(url)) {
+      void shell.openExternal(url)
+    }
     return { action: 'deny' }
+  })
+
+  runtime.mainWindow.webContents.on('will-navigate', (event, url) => {
+    if (isAllowedAppNavigation(url)) return
+    event.preventDefault()
+    if (isSafeExternalUrl(url)) {
+      void shell.openExternal(url)
+    }
   })
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
@@ -135,4 +148,28 @@ export function createWindow(): void {
   } else {
     runtime.mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+}
+
+function isSafeExternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
+function isAllowedAppNavigation(url: string): boolean {
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    try {
+      const target = new URL(url)
+      const devServer = new URL(process.env['ELECTRON_RENDERER_URL'])
+      return target.origin === devServer.origin
+    } catch {
+      return false
+    }
+  }
+
+  const rendererUrl = pathToFileURL(join(__dirname, '../renderer/index.html')).toString()
+  return url === rendererUrl || url.startsWith(`${rendererUrl}#`)
 }

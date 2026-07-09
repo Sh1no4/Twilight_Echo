@@ -106,6 +106,14 @@ The existing `audioEngine:*` events remain available as compatibility events for
 low-level diagnostics. Tool plugins should prefer the normalized `player:*` and
 `app:*` names.
 
+Runtime permission checks:
+
+- `player:*` and compatibility `audioEngine:*` subscriptions require
+  `player:observe`.
+- `app:ready` and `app:before-quit` are public lifecycle events.
+- Future `library:*` events require `library:read`; unknown event names are
+  rejected instead of being silently registered.
+
 ## Player
 
 ```ts
@@ -130,6 +138,9 @@ API gateway expansion.
 Phase 2 introduces the first provider extension point. A provider plugin declares
 `type: ["provider"]`, uses provider-prefixed track ids such as `bili:BV...`, and
 registers callable provider methods through the versioned API gateway.
+Provider registration requires `network`; declaring the `library` capability
+also requires `library:read`. Provider IDs are single-owner at runtime, and
+host-owned prefixes such as `ncm` and `local` are reserved.
 
 ```ts
 type MediaProviderCapability =

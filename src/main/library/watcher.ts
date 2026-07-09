@@ -1,4 +1,4 @@
-import { existsSync } from 'fs'
+import { existsSync, watch } from 'fs'
 import { join, extname } from 'path'
 import { runtime } from '../core/runtime'
 
@@ -19,7 +19,6 @@ function notifyLibraryChanged(change?: { kind: 'add' | 'remove' | 'unknown'; pat
 function createFolderWatcher(folder: string): void {
   if (libraryWatchers.has(folder)) return
   try {
-    const { watch } = require('fs') as typeof import('fs')
     const watcher = watch(folder, { recursive: true }, (_eventType, filename) => {
       if (!filename) return
       const ext = extname(filename).toLowerCase()

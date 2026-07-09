@@ -1,5 +1,5 @@
 import { app, nativeImage } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { join, extname, dirname, resolve } from 'path'
 import { createHash } from 'crypto'
 import { parseFile } from 'music-metadata'
@@ -43,6 +43,7 @@ export function ensureCoverCacheDir(): string {
 }
 
 export const BACKGROUND_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
+export const MAX_BACKGROUND_IMAGE_BYTES = 20 * 1024 * 1024
 
 export function getBackgroundImageDir(): string {
   return join(app.getPath('userData'), 'backgrounds')
@@ -67,6 +68,9 @@ export function importBackgroundImageBuffer(fileName: string, data: Buffer): str
   if (!BACKGROUND_IMAGE_EXTENSIONS.has(ext)) {
     throw new Error('不支持的背景图片格式')
   }
+  if (data.byteLength > MAX_BACKGROUND_IMAGE_BYTES) {
+    throw new Error('背景图片过大')
+  }
   const hash = createHash('sha256').update(data).digest('hex').slice(0, 24)
   const targetName = `${hash}${ext === '.jpeg' ? '.jpg' : ext}`
   const targetPath = join(ensureBackgroundImageDir(), targetName)
@@ -78,6 +82,10 @@ export function importBackgroundImageBuffer(fileName: string, data: Buffer): str
 
 export function importBackgroundImage(sourcePath: string): string {
   const resolvedPath = resolve(sourcePath)
+  const fileStat = statSync(resolvedPath)
+  if (!fileStat.isFile() || fileStat.size > MAX_BACKGROUND_IMAGE_BYTES) {
+    throw new Error('背景图片无效或过大')
+  }
   const data = readFileSync(resolvedPath)
   return importBackgroundImageBuffer(resolvedPath, data)
 }
@@ -100,7 +108,7 @@ export function resolveCoverCacheFile(fileName: string): string | null {
 
 /** Extract cover from image buffer, resize, save to disk cache. Returns cover:// handle.
  *  Also generates a tiny pre-blurred version for background use. */
-export function cacheCoverFromBuffer(data: Buffer, _mime?: string): string | null {
+export function cacheCoverFromBuffer(data: Buffer): string | null {
   try {
     const img = nativeImage.createFromBuffer(data)
     if (img.isEmpty()) return null
@@ -166,7 +174,7 @@ export function migrateBase64Cover(dataUrl: string): string | null {
   if (!match) return null
   try {
     const buf = Buffer.from(match[2], 'base64')
-    return cacheCoverFromBuffer(buf, match[1])
+    return cacheCoverFromBuffer(buf)
   } catch {
     return null
   }
@@ -210,7 +218,7 @@ export async function rebuildMissingTrackCover(track: Record<string, unknown>): 
       const meta = await parseFile(filePath, { skipCovers: false })
       const pic = meta.common.picture?.[0]
       if (pic) {
-        repairedCover = cacheCoverFromBuffer(Buffer.from(pic.data), pic.format)
+        repairedCover = cacheCoverFromBuffer(Buffer.from(pic.data))
       }
     } catch {
       /* keep folder-art fallback */

@@ -3,6 +3,55 @@ import type {
   TwilightMediaProviderRegistration
 } from './types'
 
+export const TWILIGHT_MEDIA_PROVIDER_METHODS = [
+  'getPlaybackUrl',
+  'getLyrics',
+  'searchSongs',
+  'searchPlaylists',
+  'searchArtists',
+  'fetchPlaylistTracks',
+  'checkLogin',
+  'getProfile',
+  'logout',
+  'openOfficialLogin',
+  'sendCaptcha',
+  'loginByPhonePassword',
+  'loginByPhoneCaptcha',
+  'loginByEmailPassword',
+  'getQrLogin',
+  'getQrKey',
+  'getQrImage',
+  'checkQrLogin',
+  'fetchUserLibrary',
+  'fetchLikedTracks',
+  'fetchLikedTracksPage',
+  'fetchRecommendSongs',
+  'fetchRecommendPlaylists',
+  'fetchPersonalFm',
+  'fetchPrivateContent',
+  'fetchArtistTopSongs',
+  'fetchArtistAlbums',
+  'fetchArtistIntro',
+  'fetchArtistFollowState',
+  'fetchAlbumTracks',
+  'fetchArtistPlaylists',
+  'fetchUserPlaylistsByUid',
+  'fetchUserFollows',
+  'fetchUserFolloweds',
+  'fetchPlayRecords',
+  'fetchRecentSongs',
+  'followArtist',
+  'followUser',
+  'likeTrack',
+  'isTrackLiked'
+] as const satisfies readonly TwilightMediaProviderMethod[]
+
+export function isTwilightMediaProviderMethod(
+  method: string
+): method is TwilightMediaProviderMethod {
+  return (TWILIGHT_MEDIA_PROVIDER_METHODS as readonly string[]).includes(method)
+}
+
 const PROVIDER_METHOD_CAPABILITIES: Partial<
   Record<TwilightMediaProviderMethod, TwilightMediaProviderRegistration['capabilities'][number]>
 > = {

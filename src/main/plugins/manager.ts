@@ -1,15 +1,24 @@
 import { app, dialog, shell, utilityProcess, type UtilityProcess } from 'electron'
-import extract from 'extract-zip'
 import { randomUUID } from 'crypto'
-import { existsSync, mkdirSync, readFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync } from 'fs'
 import { cp, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'fs/promises'
 import { basename, dirname, extname, join, relative, resolve } from 'path'
 import { tmpdir } from 'os'
 import { EventEmitter } from 'events'
 import { planPluginStartup } from './dependencies'
 import { isCompatibleTwilightRange, validatePluginManifest } from './manifest'
-import { dedupeProviderRegistrations, findProviderRoute } from './providerRouting'
+import {
+  dedupeProviderRegistrations,
+  findProviderRoute,
+  isTwilightMediaProviderMethod
+} from './providerRouting'
 import { isRecoverableBundledPluginFailure } from './stateRecovery'
+import {
+  assertPluginPackageFileSize,
+  assertPluginTreeSafe,
+  extractPluginPackage
+} from './packageSecurity.ts'
+import { redactSensitiveText } from '../security/secureStorage.ts'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -25,6 +34,7 @@ import type {
   TwilightPluginDescriptor,
   TwilightPluginInstallResult,
   TwilightPluginManifest,
+  TwilightPluginPaths,
   TwilightPluginPermission,
   TwilightPluginSource,
   TwilightPluginStateRecord,
@@ -102,6 +112,18 @@ const PLUGIN_PROVIDER_DEFAULT_TIMEOUT_MS = 15000
 const PLUGIN_PROVIDER_MEDIUM_TIMEOUT_MS = 30000
 const PLUGIN_PROVIDER_SLOW_TIMEOUT_MS = 120000
 const INTERNAL_NCM_PLUGIN_ID = 'com.twilightecho.provider.ncm'
+const RESERVED_PROVIDER_IDS = new Set(['local', 'ncm'])
+const PUBLIC_APP_EVENTS = new Set(['app:ready', 'app:before-quit'])
+const PLAYER_EVENTS = new Set([
+  'player:track-change',
+  'player:play',
+  'player:pause',
+  'player:stop',
+  'player:progress',
+  'player:queue-change',
+  'player:playback-info'
+])
+const PLUGIN_EVENT_NAME_PATTERN = /^[a-z][a-zA-Z0-9]*(?::[a-zA-Z0-9-]+)+$/
 
 function getProviderCallTimeoutMs(method: TwilightMediaProviderMethod): number {
   if (
@@ -232,6 +254,7 @@ export class TwilightPluginManager extends EventEmitter {
     if (!sourceStats.isDirectory() && !isTep) {
       throw new Error('插件来源必须是目录或 .tep 文件')
     }
+    if (isTep) await assertPluginPackageFileSize(source)
     const tempRoot = await mkdtemp(join(tmpdir(), 'twilight-plugin-'))
     try {
       const installSource =
@@ -242,6 +265,7 @@ export class TwilightPluginManager extends EventEmitter {
       if (this.isBundledPluginId(manifest.id)) {
         throw new Error('自带插件随 Twilight Echo 分发，不能用本地包覆盖安装')
       }
+      await assertPluginTreeSafe(installSource)
       await this.confirmTrustBasedInstall(manifest, options.sourceLabel ?? source)
       const previousState = this.state[manifest.id]
       const wasEnabled = previousState?.enabled === true
@@ -602,7 +626,8 @@ export class TwilightPluginManager extends EventEmitter {
       throw new Error(`插件要求 Twilight Echo ${descriptor.engines.twilightEcho}`)
     }
     const mainPath = resolve(descriptor.paths.versionRoot, descriptor.main)
-    if (!isInsidePath(mainPath, descriptor.paths.versionRoot) || !existsSync(mainPath)) {
+    const safeMainPath = resolvePluginFile(mainPath, descriptor.paths.versionRoot)
+    if (!safeMainPath) {
       throw new Error('插件 main 入口不存在或越界')
     }
     mkdirSync(descriptor.paths.dataDir, { recursive: true })
@@ -641,7 +666,7 @@ export class TwilightPluginManager extends EventEmitter {
       kind: 'activate',
       pluginId: descriptor.id,
       manifest: this.toManifest(descriptor),
-      mainPath,
+      mainPath: safeMainPath,
       dataDir: descriptor.paths.dataDir,
       apiVersion: descriptor.apiVersion
     } satisfies PluginHostRequest)
@@ -736,16 +761,14 @@ export class TwilightPluginManager extends EventEmitter {
     }
     if (message.kind === 'api-event-subscribe') {
       try {
-        if (message.eventName.startsWith('player:')) {
-          this.requirePermission(id, 'player:observe', `订阅 ${message.eventName}`)
-        }
+        const eventName = this.normalizeEventSubscription(id, message.eventName)
+        running.subscriptions.add(eventName)
       } catch (error) {
         const messageText = error instanceof Error ? error.message : String(error)
         this.markFailed(id, messageText, running?.descriptor)
         await this.stopPlugin(id)
         return
       }
-      running.subscriptions.add(message.eventName)
       return
     }
     if (message.kind === 'api-call') {
@@ -837,13 +860,60 @@ export class TwilightPluginManager extends EventEmitter {
     }
     if (!name) throw new Error('Provider name 必填')
     if (capabilities.length === 0) throw new Error('Provider capabilities 必须声明至少一项能力')
-    const ui = this.normalizeProviderUi(record.ui, capabilities)
+    this.requirePermission(pluginId, 'network', 'providers.register')
+    this.requireProviderCapabilityPermissions(pluginId, capabilities)
+    this.assertProviderIdAvailable(pluginId, providerId)
+    const ui = this.normalizeProviderUi(record.ui)
     const health = this.normalizeProviderHealth(record.health, providerId, pluginId)
     if (health) this.providerHealth.set(providerId, health)
     const provider: TwilightMediaProviderRegistration = { id: providerId, name, capabilities, ui }
-    running.providers.push(provider)
+    const existingIndex = running.providers.findIndex((candidate) => candidate.id === providerId)
+    if (existingIndex >= 0) running.providers[existingIndex] = provider
+    else running.providers.push(provider)
     this.emit('changed')
     return provider
+  }
+
+  private normalizeEventSubscription(pluginId: string, rawEventName: unknown): string {
+    const eventName = typeof rawEventName === 'string' ? rawEventName.trim() : ''
+    if (!eventName || eventName.length > 128 || !PLUGIN_EVENT_NAME_PATTERN.test(eventName)) {
+      throw new Error('插件事件名称无效')
+    }
+    if (PLAYER_EVENTS.has(eventName) || eventName.startsWith('audioEngine:')) {
+      this.requirePermission(pluginId, 'player:observe', `订阅 ${eventName}`)
+      return eventName
+    }
+    if (eventName.startsWith('library:')) {
+      this.requirePermission(pluginId, 'library:read', `订阅 ${eventName}`)
+      return eventName
+    }
+    if (PUBLIC_APP_EVENTS.has(eventName)) {
+      return eventName
+    }
+    throw new Error(`不支持的插件事件：${eventName}`)
+  }
+
+  private requireProviderCapabilityPermissions(
+    pluginId: string,
+    capabilities: TwilightMediaProviderRegistration['capabilities']
+  ): void {
+    if (capabilities.includes('library')) {
+      this.requirePermission(pluginId, 'library:read', '注册 library Provider 能力')
+    }
+  }
+
+  private assertProviderIdAvailable(pluginId: string, providerId: string): void {
+    if (RESERVED_PROVIDER_IDS.has(providerId)) {
+      if (providerId === 'ncm' && pluginId === INTERNAL_NCM_PLUGIN_ID) return
+      const owner = providerId === 'ncm' ? '内置网易云插件' : '本地音乐库'
+      throw new Error(`Provider id ${providerId} 已保留给${owner}`)
+    }
+    for (const running of this.running.values()) {
+      if (running.descriptor.id === pluginId) continue
+      if (running.providers.some((provider) => provider.id === providerId)) {
+        throw new Error(`Provider id 已被插件 ${running.descriptor.id} 注册：${providerId}`)
+      }
+    }
   }
 
   private normalizeProviderHealth(
@@ -886,10 +956,7 @@ export class TwilightPluginManager extends EventEmitter {
    * 解析插件声明的 UI 元数据。如果插件未声明 ui，则根据 capabilities 生成默认值。
    * 只要插件声明了 login 能力，就必须有 icon 和 qrStatusCodes（否则登录页无法渲染）。
    */
-  private normalizeProviderUi(
-    raw: unknown,
-    _capabilities: TwilightMediaProviderRegistration['capabilities']
-  ): TwilightMediaProviderRegistration['ui'] {
+  private normalizeProviderUi(raw: unknown): TwilightMediaProviderRegistration['ui'] {
     if (!raw || typeof raw !== 'object') return undefined
     const record = raw as Record<string, unknown>
     const icon = typeof record.icon === 'string' ? record.icon.trim() : ''
@@ -1095,10 +1162,11 @@ export class TwilightPluginManager extends EventEmitter {
 
   private resolveThemeStylesheet(descriptor: TwilightPluginDescriptor, stylesheet: string): string {
     const stylesheetPath = resolve(descriptor.paths.versionRoot, stylesheet)
-    if (!isInsidePath(stylesheetPath, descriptor.paths.versionRoot) || !existsSync(stylesheetPath)) {
+    const safeStylesheetPath = resolvePluginFile(stylesheetPath, descriptor.paths.versionRoot)
+    if (!safeStylesheetPath) {
       throw new Error('主题 stylesheet 不存在或越界')
     }
-    return stylesheetPath
+    return safeStylesheetPath
   }
 
   private handleProviderResult(message: Extract<PluginHostResponse, { kind: 'provider-result' }>): void {
@@ -1308,7 +1376,7 @@ export class TwilightPluginManager extends EventEmitter {
     }
     if (manifest.main) {
       const mainPath = resolve(versionRoot, manifest.main)
-      if (!isInsidePath(mainPath, versionRoot) || !existsSync(mainPath)) {
+      if (!resolvePluginFile(mainPath, versionRoot)) {
         return '插件 main 入口不存在或越界'
       }
     }
@@ -1335,7 +1403,7 @@ export class TwilightPluginManager extends EventEmitter {
   }
 
   private async extractTep(source: string, tempRoot: string): Promise<string> {
-    await extract(source, { dir: tempRoot })
+    await extractPluginPackage(source, tempRoot)
     if (existsSync(join(tempRoot, 'plugin.json'))) return tempRoot
     const entries = await safeReadDir(tempRoot)
     if (entries.length === 1 && existsSync(join(tempRoot, entries[0], 'plugin.json'))) {
@@ -1408,11 +1476,11 @@ export class TwilightPluginManager extends EventEmitter {
 
   private appendLog(descriptor: TwilightPluginDescriptor, level: string, message: string): void {
     ensureParent(descriptor.paths.logPath)
-    const line = `[${new Date().toISOString()}] [${level}] ${message.trim()}\n`
+    const line = `[${new Date().toISOString()}] [${level}] ${redactSensitiveText(message).trim()}\n`
     void writeFile(descriptor.paths.logPath, line, { flag: 'a', encoding: 'utf-8' })
   }
 
-  private pathsFor(id: string, version: string) {
+  private pathsFor(id: string, version: string): TwilightPluginPaths {
     const versionRoot = this.versionRoot(id, version)
     return {
       root: join(this.roots.plugins, id),
@@ -1490,7 +1558,7 @@ export class TwilightPluginManager extends EventEmitter {
       relPath
     )
     const root = 'paths' in descriptor ? descriptor.paths.versionRoot : this.versionRoot(descriptor.id, descriptor.version)
-    return isInsidePath(resolved, root) && existsSync(resolved) ? resolved : null
+    return resolvePluginFile(resolved, root)
   }
 
   private isBundledPluginId(id: string): boolean {
@@ -1512,6 +1580,17 @@ async function safeReadDir(path: string): Promise<string[]> {
 
 function ensureParent(path: string): void {
   mkdirSync(dirname(path), { recursive: true })
+}
+
+function resolvePluginFile(filePath: string, root: string): string | null {
+  if (!isInsidePath(filePath, root) || !existsSync(filePath)) return null
+  try {
+    const realRoot = realpathSync(root)
+    const realFile = realpathSync(filePath)
+    return isInsidePath(realFile, realRoot) ? realFile : null
+  } catch {
+    return null
+  }
 }
 
 function isInsidePath(child: string, parent: string): boolean {
@@ -1561,51 +1640,6 @@ function normalizeNullableString(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const normalized = value.trim()
   return normalized ? normalized.slice(0, 500) : null
-}
-
-function isTwilightMediaProviderMethod(method: string): method is TwilightMediaProviderMethod {
-  return [
-    'getPlaybackUrl',
-    'getLyrics',
-    'searchSongs',
-    'searchPlaylists',
-    'searchArtists',
-    'fetchPlaylistTracks',
-    'checkLogin',
-    'getProfile',
-    'logout',
-    'openOfficialLogin',
-    'sendCaptcha',
-    'loginByPhonePassword',
-    'loginByPhoneCaptcha',
-    'loginByEmailPassword',
-    'getQrLogin',
-    'getQrKey',
-    'getQrImage',
-    'checkQrLogin',
-    'fetchUserLibrary',
-    'fetchLikedTracks',
-    'fetchLikedTracksPage',
-    'fetchRecommendSongs',
-    'fetchRecommendPlaylists',
-    'fetchPersonalFm',
-    'fetchPrivateContent',
-    'fetchArtistTopSongs',
-    'fetchArtistAlbums',
-    'fetchArtistIntro',
-    'fetchArtistFollowState',
-    'fetchAlbumTracks',
-    'fetchArtistPlaylists',
-    'fetchUserPlaylistsByUid',
-    'fetchUserFollows',
-    'fetchUserFolloweds',
-    'fetchPlayRecords',
-    'fetchRecentSongs',
-    'followArtist',
-    'followUser',
-    'likeTrack',
-    'isTrackLiked'
-  ].includes(method)
 }
 
 function normalizeCssVariables(raw: Record<string, unknown>): Record<string, string> {
