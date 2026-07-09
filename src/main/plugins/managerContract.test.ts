@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const managerSource = readFileSync(new URL('./manager.ts', import.meta.url), 'utf8')
+const packageSecuritySource = readFileSync(new URL('./packageSecurity.ts', import.meta.url), 'utf8')
 const pluginHostSource = readFileSync(new URL('../pluginHost.ts', import.meta.url), 'utf8')
+const preloadSource = readFileSync(new URL('../../preload/index.ts', import.meta.url), 'utf8')
 
 test('plugin manager keeps UI command failures isolated to the owning plugin', () => {
   assert.match(managerSource, /const PLUGIN_UI_COMMAND_TIMEOUT_MS = 5000/)
@@ -18,17 +20,46 @@ test('plugin manager enforces controlled UI and theme extension contracts', () =
   assert.match(managerSource, /'streamingHome'/)
   assert.match(managerSource, /record\.renderMode === 'html' \? 'html' : 'command'/)
   assert.match(managerSource, /this\.resolveThemeStylesheet/)
-  assert.match(managerSource, /isInsidePath\(stylesheetPath, descriptor\.paths\.versionRoot\)/)
+  assert.match(managerSource, /resolvePluginFile\(stylesheetPath, descriptor\.paths\.versionRoot\)/)
   assert.match(managerSource, /\^--te-\[a-z0-9-_\]\+\$/)
+})
+
+test('plugin manager rejects symlink escapes in installed plugin resources', () => {
+  assert.match(managerSource, /assertPluginPackageFileSize\(source\)/)
+  assert.match(managerSource, /extractPluginPackage\(source, tempRoot\)/)
+  assert.match(managerSource, /assertPluginTreeSafe\(installSource\)/)
+  assert.match(packageSecuritySource, /MAX_PLUGIN_PACKAGE_BYTES = 50 \* 1024 \* 1024/)
+  assert.match(packageSecuritySource, /MAX_PLUGIN_EXTRACTED_BYTES = 100 \* 1024 \* 1024/)
+  assert.match(packageSecuritySource, /MAX_PLUGIN_PACKAGE_FILES = 2000/)
+  assert.match(packageSecuritySource, /inspectZipPackage\(source\)/)
+  assert.match(packageSecuritySource, /isZipSymlink\(entry\)/)
+  assert.match(packageSecuritySource, /info\.isSymbolicLink\(\)/)
+  assert.match(packageSecuritySource, /realpathSync\(root\)/)
+  assert.match(managerSource, /realpathSync\(filePath\)/)
+  assert.match(managerSource, /resolvePluginFile\(mainPath, descriptor\.paths\.versionRoot\)/)
+  assert.match(managerSource, /return resolvePluginFile\(resolved, root\)/)
 })
 
 test('plugin manager enforces plugin API namespace permissions at the gateway', () => {
   assert.match(managerSource, /private requirePermission\(/)
   assert.match(managerSource, /'player:observe'/)
   assert.match(managerSource, /'player:control'/)
+  assert.match(managerSource, /'library:read'/)
+  assert.match(managerSource, /this\.requirePermission\(pluginId,\s*'network',\s*'providers\.register'/)
+  assert.match(managerSource, /private requireProviderCapabilityPermissions\(/)
+  assert.match(managerSource, /capabilities\.includes\('library'\)/)
+  assert.match(managerSource, /private normalizeEventSubscription\(/)
   assert.match(managerSource, /this\.requirePermission\(id,\s*'player:observe'/)
   assert.match(managerSource, /this\.requirePermission\(id,\s*'player:control'/)
-  assert.match(managerSource, /message\.kind === 'api-event-subscribe'[\s\S]*this\.requirePermission\(id,\s*'player:observe'/)
+  assert.match(managerSource, /message\.kind === 'api-event-subscribe'[\s\S]*this\.normalizeEventSubscription\(id/)
+  assert.match(managerSource, /eventName\.startsWith\('library:'\)[\s\S]*this\.requirePermission\(pluginId,\s*'library:read'/)
+})
+
+test('plugin manager prevents provider id takeover', () => {
+  assert.match(managerSource, /const RESERVED_PROVIDER_IDS = new Set\(\['local', 'ncm'\]\)/)
+  assert.match(managerSource, /private assertProviderIdAvailable\(/)
+  assert.match(managerSource, /Provider id \$\{providerId\} 已保留给/)
+  assert.match(managerSource, /Provider id 已被插件 \$\{running\.descriptor\.id\} 注册/)
 })
 
 test('plugin host enforces declared settings permission before private settings access', () => {
@@ -91,4 +122,11 @@ test('plugin manager tracks provider health for calls and plugin failures', () =
 test('plugin host forwards provider health registration metadata', () => {
   assert.match(pluginHostSource, /health\?: Record<string, unknown>/)
   assert.match(pluginHostSource, /health: provider\.health/)
+})
+
+test('desktop lyrics preload exposes only the desktop lyrics API', () => {
+  assert.match(preloadSource, /exposedApiForDocument\(\)/)
+  assert.match(preloadSource, /isDesktopLyricsDocument\(\) \? \{ desktopLyrics: api\.desktopLyrics \} : api/)
+  assert.match(preloadSource, /window\.location\.pathname\.endsWith\('\/desktop-lyrics\.html'\)/)
+  assert.doesNotMatch(preloadSource, /exposeInMainWorld\('electron'/)
 })

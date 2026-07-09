@@ -19,6 +19,18 @@ import {
   getEffectiveAudioProcessing,
   persistAndApplyAudioProcessingState
 } from './state'
+import {
+  normalizeFiniteNumber,
+  normalizeInteger,
+  normalizeIpcArray,
+  normalizeIpcString,
+  normalizeOptionalIpcString
+} from '../security/ipcValidation.ts'
+import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
+
+const MAX_AUDIO_QUEUE_ITEMS = 1000
+const MAX_AUDIO_SOURCE_LENGTH = 8192
+const MAX_AUDIO_DEVICE_LENGTH = 512
 
 export function requireAudioEngine(): AudioEngineManager {
   if (!runtime.audioEngineManager) throw new Error('原生音频引擎尚未初始化')
@@ -41,20 +53,31 @@ export function toQueueItem(raw: unknown): AudioEngineQueueItem | null {
               ? item.streamUrl
               : ''
   if (!source) return null
+  let normalizedSource: string
+  try {
+    normalizedSource = normalizeIpcString(source, 'queue item source', MAX_AUDIO_SOURCE_LENGTH)
+  } catch {
+    return null
+  }
   return {
-    id: typeof item.id === 'string' ? item.id : source,
-    source,
-    title: typeof item.title === 'string' ? item.title : undefined,
-    artist: typeof item.artist === 'string' ? item.artist : undefined,
-    album: typeof item.album === 'string' ? item.album : undefined,
-    duration: typeof item.duration === 'number' ? item.duration : undefined,
+    id: normalizeQueueText(item.id, normalizedSource) ?? normalizedSource,
+    source: normalizedSource,
+    title: normalizeQueueText(item.title),
+    artist: normalizeQueueText(item.artist),
+    album: normalizeQueueText(item.album),
+    duration: Number.isFinite(item.duration) ? Number(item.duration) : undefined,
     codec: typeof item.format === 'string' ? item.format : undefined,
-    sampleRate: typeof item.sampleRate === 'number' ? item.sampleRate : undefined,
-    bitrate: typeof item.bitrate === 'number' ? item.bitrate : undefined,
-    bitDepth: typeof item.bitDepth === 'number' ? item.bitDepth : undefined
+    sampleRate: Number.isFinite(item.sampleRate) ? Number(item.sampleRate) : undefined,
+    bitrate: Number.isFinite(item.bitrate) ? Number(item.bitrate) : undefined,
+    bitDepth: Number.isFinite(item.bitDepth) ? Number(item.bitDepth) : undefined
   }
 }
 
+function normalizeQueueText(value: unknown, fallback?: string): string | undefined {
+  if (typeof value !== 'string') return fallback
+  const normalized = value.replace(/[\0\r\n]/g, ' ').trim().slice(0, 512)
+  return normalized || fallback
+}
 
 export function setupAudioEngineIpc(): void {
   runtime.audioEngineManager = new AudioEngineManager({
@@ -119,92 +142,126 @@ export function setupAudioEngineIpc(): void {
   })
 
   ipcMain.handle('audioEngine:loadQueue', async (_event, items: unknown[], startIndex?: number) => {
-    const queue = Array.isArray(items)
-      ? items.map(toQueueItem).filter((item): item is AudioEngineQueueItem => Boolean(item))
-      : []
-    await requireAudioEngine().loadQueue(queue, Number(startIndex) || 0)
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    const queue = normalizeIpcArray(items, 'audio queue', MAX_AUDIO_QUEUE_ITEMS, toQueueItem)
+    const normalizedStartIndex = normalizeInteger(
+      startIndex,
+      'queue start index',
+      0,
+      0,
+      Math.max(0, queue.length - 1)
+    )
+    await requireAudioEngine().loadQueue(queue, normalizedStartIndex)
   })
 
   ipcMain.handle('audioEngine:play', async (_event, source: string, startTime?: number) => {
-    return await requireAudioEngine().play(source, startTime)
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    return await requireAudioEngine().play(
+      normalizeIpcString(source, 'audio source', MAX_AUDIO_SOURCE_LENGTH),
+      normalizeFiniteNumber(startTime, 'start time', 0, 0, Number.MAX_SAFE_INTEGER)
+    )
   })
 
-  ipcMain.handle('audioEngine:togglePause', async () => {
+  ipcMain.handle('audioEngine:togglePause', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     await requireAudioEngine().togglePause()
   })
 
   ipcMain.handle('audioEngine:seek', async (_event, time: number) => {
-    await requireAudioEngine().seek(time)
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    await requireAudioEngine().seek(
+      normalizeFiniteNumber(time, 'seek time', 0, 0, Number.MAX_SAFE_INTEGER)
+    )
   })
 
   ipcMain.handle('audioEngine:setVolume', async (_event, volume: number) => {
-    await requireAudioEngine().setVolume(volume)
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    await requireAudioEngine().setVolume(normalizeFiniteNumber(volume, 'volume', 1, 0, 1))
   })
 
-  ipcMain.handle('audioEngine:stop', async () => {
+  ipcMain.handle('audioEngine:stop', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     await requireAudioEngine().stop()
   })
 
-  ipcMain.handle('audioEngine:next', async () => {
+  ipcMain.handle('audioEngine:next', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     await requireAudioEngine().next()
   })
 
-  ipcMain.handle('audioEngine:previous', async () => {
+  ipcMain.handle('audioEngine:previous', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     await requireAudioEngine().previous()
   })
 
   ipcMain.handle('audioEngine:setPlayMode', async (_event, mode: PlayMode) => {
-    await requireAudioEngine().setPlayMode(mode)
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    await requireAudioEngine().setPlayMode(mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential')
   })
 
-  ipcMain.handle('audioEngine:getUpcomingTrack', async () => {
+  ipcMain.handle('audioEngine:getUpcomingTrack', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     return requireAudioEngine().getUpcomingTrack()
   })
 
   ipcMain.handle('audioEngine:setExclusiveMode', async (_event, enabled: boolean) => {
-    const state = await requireAudioEngine().setExclusiveMode(enabled)
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    const state = await requireAudioEngine().setExclusiveMode(enabled === true)
     persistAudioOutputState(state)
     return state
   })
 
-  ipcMain.handle('audioEngine:getExclusiveMode', async () => {
+  ipcMain.handle('audioEngine:getExclusiveMode', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     return await requireAudioEngine().getExclusiveMode()
   })
 
   ipcMain.handle('audioEngine:setAudioOutput', async (_event, output: string, device?: string) => {
-    const state = await requireAudioEngine().setAudioOutput(output as AudioOutputId, device)
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    const state = await requireAudioEngine().setAudioOutput(
+      normalizeIpcString(output, 'audio output', 64) as AudioOutputId,
+      normalizeOptionalIpcString(device, 'audio device', MAX_AUDIO_DEVICE_LENGTH)
+    )
     persistAudioOutputState(state)
     return state
   })
 
   ipcMain.handle('audioEngine:setAudioDevice', async (_event, device: string) => {
-    const state = await requireAudioEngine().setAudioDevice(device)
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    const state = await requireAudioEngine().setAudioDevice(
+      normalizeIpcString(device, 'audio device', MAX_AUDIO_DEVICE_LENGTH)
+    )
     persistAudioOutputState(state)
     return state
   })
 
   ipcMain.handle('audioEngine:setOutputConfig', async (_event, config: unknown) => {
+    assertTrustedIpcSender(_event, 'audio engine IPC')
     const normalized = normalizeOutputConfig(config)
     await requireAudioEngine().setOutputConfig(normalized)
     persistAudioOutputConfig(normalized)
     return normalized
   })
 
-  ipcMain.handle('audioEngine:getAudioOutput', async () => {
+  ipcMain.handle('audioEngine:getAudioOutput', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     return await requireAudioEngine().getAudioOutput()
   })
 
-  ipcMain.handle('audioEngine:getAudioOutputOptions', async () => {
+  ipcMain.handle('audioEngine:getAudioOutputOptions', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     return requireAudioEngine().getAudioOutputOptions()
   })
 
-  ipcMain.handle('audioEngine:getAudioOutputState', async () => {
+  ipcMain.handle('audioEngine:getAudioOutputState', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     return await requireAudioEngine().getAudioOutputState()
   })
 
   ipcMain.handle(
     'audioEngine:setAudioProcessing',
     async (_event, settings: Partial<AudioProcessingSettings>) => {
+      assertTrustedIpcSender(_event, 'audio engine IPC')
       const normalized = normalizeAudioProcessingSettings({
         ...runtime.appSettings.audioProcessing,
         ...settings
@@ -214,11 +271,13 @@ export function setupAudioEngineIpc(): void {
     }
   )
 
-  ipcMain.handle('audioEngine:getAudioProcessing', async () => {
+  ipcMain.handle('audioEngine:getAudioProcessing', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     return runtime.appSettings.audioProcessing
   })
 
-  ipcMain.handle('audioEngine:selectImpulseResponse', async () => {
+  ipcMain.handle('audioEngine:selectImpulseResponse', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     const win = BrowserWindow.getFocusedWindow() ?? runtime.mainWindow
     const options: Electron.OpenDialogOptions = {
       title: '选择卷积脉冲响应',
@@ -236,17 +295,20 @@ export function setupAudioEngineIpc(): void {
   })
 
   ipcMain.handle('audioEngine:loadImpulseResponse', async (_event, path: string) => {
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    const convolverIrPath = normalizeIpcString(path, 'impulse response path', MAX_AUDIO_SOURCE_LENGTH)
     const normalized = normalizeAudioProcessingSettings({
       ...runtime.appSettings.audioProcessing,
       dspEnabled: true,
       convolverEnabled: true,
-      convolverIrPath: path
+      convolverIrPath
     })
     await persistAndApplyAudioProcessingState(normalized)
     return requireAudioEngine().getConvolverInfo()
   })
 
-  ipcMain.handle('audioEngine:unloadImpulseResponse', async () => {
+  ipcMain.handle('audioEngine:unloadImpulseResponse', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     const normalized = normalizeAudioProcessingSettings({
       ...runtime.appSettings.audioProcessing,
       convolverEnabled: false,
@@ -256,13 +318,15 @@ export function setupAudioEngineIpc(): void {
     return requireAudioEngine().getConvolverInfo()
   })
 
-  ipcMain.handle('audioEngine:getConvolverInfo', async () => {
+  ipcMain.handle('audioEngine:getConvolverInfo', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     return requireAudioEngine().getConvolverInfo()
   })
 
   ipcMain.handle(
     'audioEngine:setEqBands',
     async (_event, settings: Partial<AudioProcessingSettings>) => {
+      assertTrustedIpcSender(_event, 'audio engine IPC')
       const normalized = normalizeAudioProcessingSettings({
         ...runtime.appSettings.audioProcessing,
         ...settings,
@@ -284,6 +348,7 @@ export function setupAudioEngineIpc(): void {
         eqBands: EqualizerBand[]
       }
     ) => {
+      assertTrustedIpcSender(_event, 'audio engine IPC')
       const normalized = normalizeAudioProcessingSettings({
         ...runtime.appSettings.audioProcessing,
         ...preset,
@@ -296,7 +361,8 @@ export function setupAudioEngineIpc(): void {
   )
 
   ipcMain.handle('audioEngine:setCrossfeedStrength', async (_event, strength: number) => {
-    const normalizedStrength = Number(strength)
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    const normalizedStrength = normalizeFiniteNumber(strength, 'crossfeed strength', 0, 0, 1)
     const normalized = normalizeAudioProcessingSettings({
       ...runtime.appSettings.audioProcessing,
       dspEnabled: true,
@@ -316,6 +382,7 @@ export function setupAudioEngineIpc(): void {
       fallback?: number,
       clip?: boolean
     ) => {
+      assertTrustedIpcSender(_event, 'audio engine IPC')
       const normalized = normalizeAudioProcessingSettings({
         ...runtime.appSettings.audioProcessing,
         dspEnabled: true,
@@ -330,18 +397,24 @@ export function setupAudioEngineIpc(): void {
   )
 
   ipcMain.handle('audioEngine:getMetadata', async (_event, source: string) => {
-    return await requireAudioEngine().getMetadataAsync(source)
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    return await requireAudioEngine().getMetadataAsync(
+      normalizeIpcString(source, 'metadata source', MAX_AUDIO_SOURCE_LENGTH)
+    )
   })
 
-  ipcMain.handle('audioEngine:getPlaybackInfo', async () => {
+  ipcMain.handle('audioEngine:getPlaybackInfo', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
     return await requireAudioEngine().getPlaybackInfo()
   })
 
   ipcMain.handle('audioEngine:getSpectrumData', async (_event, points?: number) => {
-    return requireAudioEngine().getSpectrumData(points)
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    return requireAudioEngine().getSpectrumData(normalizeInteger(points, 'spectrum points', 128, 8, 4096))
   })
 
   ipcMain.handle('audioEngine:getVisualizationData', async (_event, options?: unknown) => {
+    assertTrustedIpcSender(_event, 'audio engine IPC')
     return requireAudioEngine().getVisualizationData(
       typeof options === 'object' && options !== null ? options : {}
     )

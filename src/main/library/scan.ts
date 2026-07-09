@@ -173,7 +173,7 @@ export async function parseTrack(file: FileEntry): Promise<unknown[]> {
 
     if (common.picture && common.picture.length > 0) {
       const pic = common.picture[0]
-      cover = cacheCoverFromBuffer(Buffer.from(pic.data), pic.format)
+      cover = cacheCoverFromBuffer(Buffer.from(pic.data))
     }
 
     if (!cover) {

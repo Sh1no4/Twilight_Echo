@@ -98,7 +98,9 @@ test('desktop lyrics window replays cached track and time on creation', () => {
     /runtime\.desktopLyricsWindow\.webContents\.send\('desktopLyrics:updateTime', runtime\.latestDesktopLyricsTime\)/
   )
   assert.match(desktopLyricsSource, /runtime\.latestDesktopLyricsTrack = data/)
-  assert.match(desktopLyricsSource, /runtime\.latestDesktopLyricsTime = time/)
+  assert.match(desktopLyricsSource, /Number\.isFinite\(time\)/)
+  assert.match(desktopLyricsSource, /runtime\.latestDesktopLyricsTime = Math\.max\(0, time\)/)
+  assert.match(desktopLyricsSource, /clampNumber\(Math\.round\(data\.x\)/)
 })
 
 test('desktop lyrics html falls back to untimed plain lyrics', () => {

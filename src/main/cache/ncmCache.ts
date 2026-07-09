@@ -3,6 +3,7 @@ import { mkdirSync, readdirSync, existsSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import { join, extname } from 'path'
 import { runtime } from '../core/runtime'
+import { redactSensitiveText } from '../security/secureStorage.ts'
 
 export function ensureMusicCacheDirectories(rootPath: string): void {
   if (!rootPath) return
@@ -65,7 +66,7 @@ export async function cacheNcmSong(
   url: string,
   fileName?: string
 ): Promise<string | null> {
-  if (!Number.isFinite(songId) || songId <= 0 || !/^https?:\/\//i.test(url)) return null
+  if (!Number.isFinite(songId) || songId <= 0 || !isSafeRemoteMediaUrl(url)) return null
 
   const cached = getCachedNcmSong(songId)
   if (cached) return cached
@@ -82,9 +83,46 @@ export async function cacheNcmSong(
     return target
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    console.warn('网易云歌曲缓存失败：', songId, message)
+    console.warn('网易云歌曲缓存失败：', songId, redactSensitiveText(message))
     return null
   } finally {
     clearTimeout(timer)
   }
+}
+
+function isSafeRemoteMediaUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false
+    if (parsed.username || parsed.password) return false
+    const hostname = parsed.hostname.toLowerCase()
+    if (
+      hostname === 'localhost' ||
+      hostname.endsWith('.localhost') ||
+      hostname === '0.0.0.0' ||
+      hostname === '::1' ||
+      hostname === '[::1]'
+    ) {
+      return false
+    }
+    if (isPrivateIpv4(hostname)) return false
+    return true
+  } catch {
+    return false
+  }
+}
+
+function isPrivateIpv4(hostname: string): boolean {
+  const parts = hostname.split('.').map((part) => Number.parseInt(part, 10))
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false
+  }
+  const [a, b] = parts
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  )
 }

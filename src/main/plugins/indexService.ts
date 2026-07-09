@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
-import extract from 'extract-zip'
 import { isCompatibleTwilightRange, validatePluginManifest } from './manifest.ts'
+import { extractPluginPackage } from './packageSecurity.ts'
 import type {
   TwilightPluginDescriptor,
   TwilightPluginIndexEntry,
@@ -332,7 +332,7 @@ export class PluginIndexService {
     tempRoot: string
   ): Promise<void> {
     const extractedRoot = join(tempRoot, 'manifest-check')
-    await extract(packagePath, { dir: extractedRoot })
+    await extractPluginPackage(packagePath, extractedRoot)
     const manifest = validatePluginManifest(
       JSON.parse(await readFile(join(extractedRoot, 'plugin.json'), 'utf-8'))
     )

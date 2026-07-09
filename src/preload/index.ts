@@ -1,5 +1,4 @@
 ﻿import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
 import type {
   AudioEngineEventCallback,
   AudioEngineEndFileCallback,
@@ -537,14 +536,23 @@ const api = {
 
 if (process.contextIsolated) {
   try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('api', api)
+    contextBridge.exposeInMainWorld('api', exposedApiForDocument())
   } catch (error) {
     console.error(error)
   }
 } else {
   // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore (define in dts)
-  window.api = api
+  window.api = exposedApiForDocument()
+}
+
+function exposedApiForDocument(): typeof api | { desktopLyrics: typeof api.desktopLyrics } {
+  return isDesktopLyricsDocument() ? { desktopLyrics: api.desktopLyrics } : api
+}
+
+function isDesktopLyricsDocument(): boolean {
+  try {
+    return window.location.pathname.endsWith('/desktop-lyrics.html')
+  } catch {
+    return false
+  }
 }

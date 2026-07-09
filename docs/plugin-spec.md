@@ -149,6 +149,12 @@ settings file, and maps favorite videos to audio-only tracks with stable ids
 owned by the plugin so the renderer audio element can play DASH audio without
 downloading or showing video.
 
+The API gateway enforces provider registration permissions. Provider plugins
+must declare `network`; providers that expose the `library` capability must also
+declare `library:read`. Provider IDs are single-owner at runtime. `ncm` and
+`local` remain reserved for the built-in NetEase provider and the local library
+track prefix.
+
 ## Phase 3 Event And UI Baseline
 
 Tool plugins can subscribe through `context.twilight.events.on`. The normalized
@@ -156,6 +162,11 @@ Phase 3 events are `app:ready`, `app:before-quit`, `player:track-change`,
 `player:play`, `player:pause`, `player:stop`, `player:progress`,
 `player:queue-change`, and `player:playback-info`. Existing `audioEngine:*`
 events remain available for low-level diagnostics.
+
+The host validates event subscriptions at the API gateway. `player:*` and
+compatibility `audioEngine:*` events require `player:observe`; public `app:*`
+lifecycle events carry no sensitive payload. Future `library:*` events require
+`library:read`, and unknown event names are rejected.
 
 UI commands are request/response calls with a short host timeout. Handler errors
 fail only the owning plugin and are written to that plugin's log.

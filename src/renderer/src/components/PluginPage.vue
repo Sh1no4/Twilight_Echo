@@ -2,10 +2,6 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import PuzzleIcon from './icons/PuzzleIcon.vue'
 
-const emit = defineEmits<{
-  back: []
-}>()
-
 type TwilightPluginDescriptor = Awaited<ReturnType<typeof window.api.plugins.list>>[number]
 type TwilightPluginIndexEntry = Awaited<ReturnType<typeof window.api.plugins.listIndex>>[number]
 type TwilightPluginIndexStatus = Awaited<ReturnType<typeof window.api.plugins.getIndexStatus>>
