@@ -293,9 +293,9 @@ struct AlsaBackend::Impl {
     const size_t bytesPerSampleValue = bytesPerSample(outputFormat.sampleFormat);
     bytesPerFrame = bytesPerSampleValue * static_cast<size_t>(channels);
 
-    // DSD raw-copy branch: no float→int conversion. DSD cannot be synthesized from float,
-    // so fill with DSD silence (0x69) when the float path is used as fallback. The typed
-    // path (startTyped) handles real DSD byte transfer without going through pack().
+    // Defensive only: DSD cannot be synthesized from float. start() refuses this path for dsdMode.
+    // Keep DSD silence fill so a miswired caller still outputs a valid DSD mute pattern instead of garbage.
+    // Real DSD audio is delivered exclusively through startTyped()/typed render loop.
     if (isDsdSampleFormat(outputFormat.sampleFormat)) {
       alsa::prepareDsdSilenceScratchNoResize(packedScratch, frames * bytesPerFrame, packedScratchDsdSilence);
       (void)input;
@@ -793,6 +793,10 @@ bool AlsaBackend::start(RenderCallback callback, OutputEventCallback eventCallba
   }
   if (impl_->running.load()) {
     if (error) *error = "ALSA 后端已在运行";
+    return false;
+  }
+  if (impl_->dsdMode) {
+    if (error) *error = "Native DSD ALSA output requires the typed render path; refusing float fallback silence";
     return false;
   }
   {

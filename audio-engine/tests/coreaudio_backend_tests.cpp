@@ -352,6 +352,9 @@ void testCoreAudioSharedUsesDeviceBufferSizeForRenderAndLatency() {
   assert(openedInfo.bufferSizeFrames == 1024);
   assert(openedInfo.latencyFrames == 1024);
   assert(std::fabs(openedInfo.latencyInfo.bufferLatencyMs - (1024.0 * 1000.0 / 48000.0)) < 0.001);
+  assert(std::fabs(openedInfo.latencyInfo.outputLatencyMs - (128.0 * 1000.0 / 48000.0)) < 0.001);
+  assert(std::fabs(openedInfo.latencyInfo.totalLatencyMs -
+                   (openedInfo.latencyInfo.bufferLatencyMs + openedInfo.latencyInfo.outputLatencyMs)) < 0.001);
   assert(openedInfo.latencyMs == openedInfo.latencyInfo.totalLatencyMs);
 
   assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));
@@ -372,6 +375,9 @@ void testCoreAudioExclusiveUsesDeviceBufferSizeForRenderAndLatency() {
   assert(openedInfo.bufferSizeFrames == 1024);
   assert(openedInfo.latencyFrames == 1024);
   assert(std::fabs(openedInfo.latencyInfo.bufferLatencyMs - (1024.0 * 1000.0 / 48000.0)) < 0.001);
+  assert(std::fabs(openedInfo.latencyInfo.outputLatencyMs - (128.0 * 1000.0 / 48000.0)) < 0.001);
+  assert(std::fabs(openedInfo.latencyInfo.totalLatencyMs -
+                   (openedInfo.latencyInfo.bufferLatencyMs + openedInfo.latencyInfo.outputLatencyMs)) < 0.001);
   assert(openedInfo.latencyMs == openedInfo.latencyInfo.totalLatencyMs);
 
   assert(backend.start([](float*, size_t frames) { return frames; }, nullptr, &error));

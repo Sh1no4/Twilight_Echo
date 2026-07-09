@@ -34,6 +34,7 @@ class RealCoreAudioHost final : public ICoreAudioHost {
   bool bindDevice(CoreAudioAudioUnit unit, CoreAudioDeviceID deviceId, std::string* error) override;
   bool applyBufferSize(CoreAudioDeviceID deviceId, uint32_t preferredBufferSize, std::string* error) override;
   uint32_t currentBufferFrameSize(CoreAudioDeviceID deviceId) override;
+  uint32_t estimatedOutputLatencyFrames(CoreAudioDeviceID deviceId) override;
   bool setStreamFormat(
       CoreAudioAudioUnit unit,
       bool input,

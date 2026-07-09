@@ -190,6 +190,39 @@ void testRenderCallbacksUseNonBlockingSpectrumReset() {
   assert(realtimeBodies.find("spectrum_.resetCapture()") == std::string::npos);
 }
 
+
+void testSetDspConfigParsesJsonOutsidePipelineMutex() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string body = extractFunctionBody(source, "void AudioPipeline::setDspConfig(const std::string& dspConfigJson)");
+  const size_t parsePos = body.find("const DspConfig nextConfig = DspChain::parseConfigJson(dspConfigJson);");
+  const size_t lockPos = body.find("std::lock_guard lock(mutex_);");
+  assert(parsePos != std::string::npos);
+  assert(lockPos != std::string::npos);
+  assert(parsePos < lockPos);
+}
+
+void testSetVolumeAvoidsBlockingOnPipelineMutex() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string body = extractFunctionBody(source, "void AudioPipeline::setVolume(double volume)");
+  assert(body.find("std::unique_lock lock(mutex_, std::try_to_lock)") != std::string::npos);
+  assert(body.find("std::lock_guard lock(mutex_)") == std::string::npos);
+}
+
+void testDecodeStreamReaperRetiresOutsideAudioCallback() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  assert(source.find("struct AudioPipeline::DecodeStreamReaper") != std::string::npos);
+  assert(source.find("decodeStreamReaper().retire") != std::string::npos);
+  const std::string renderBody = extractFunctionBody(source, "size_t AudioPipeline::render(float* output, size_t frameCount)");
+  assert(!std::regex_search(renderBody, std::regex(R"(->\s*stop\s*\()")));
+  assert(renderBody.find("decodeThread.join") == std::string::npos);
+}
+
 void testRenderCallbackDoesNotStopDecodeStreams() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
@@ -1977,6 +2010,9 @@ int main() {
   testChannelRouterStateIsSerializedWithoutBlockingRenderCallbacks();
   testRenderCallbacksUseNonBlockingSpectrumReset();
   testRenderCallbackDoesNotStopDecodeStreams();
+  testSetDspConfigParsesJsonOutsidePipelineMutex();
+  testSetVolumeAvoidsBlockingOnPipelineMutex();
+  testDecodeStreamReaperRetiresOutsideAudioCallback();
   testCrossfadePromotionClearsStaleLocalPreloadState();
   testRenderSideDecodeStreamRetirementDoesNotGrowContainers();
   testSetOutputConfigReleasesEngineMutexBeforeRerouteRestart();

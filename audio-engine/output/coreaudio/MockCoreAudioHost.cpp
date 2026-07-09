@@ -197,6 +197,13 @@ uint32_t MockCoreAudioHost::currentBufferFrameSize(CoreAudioDeviceID deviceId) {
   return device ? device->bufferFrameSize : 0;
 }
 
+uint32_t MockCoreAudioHost::estimatedOutputLatencyFrames(CoreAudioDeviceID deviceId) {
+  callLog.push_back("estimatedOutputLatencyFrames:" + std::to_string(deviceId));
+  if (const Device* device = findDevice(deviceId)) return device->outputLatencyFrames;
+  return 0;
+}
+
+
 bool MockCoreAudioHost::setStreamFormat(
     CoreAudioAudioUnit unit,
     bool input,

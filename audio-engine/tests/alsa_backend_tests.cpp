@@ -691,9 +691,20 @@ void testAlsaPcmPackHelperWritesTypedScratchWithoutPerSampleFormatBranch() {
 
 }  // namespace
 
+
+void testAlsaFloatStartRejectsNativeDsdMode() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "output" / "alsa" / "AlsaBackend.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string body = extractFunctionBody(source, "bool AlsaBackend::start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error)");
+  assert(body.find("impl_->dsdMode") != std::string::npos);
+  assert(body.find("typed render path") != std::string::npos);
+}
+
 int main() {
   testAlsaRenderLoopsUseNoResizeHelpers();
   testAlsaRenderLoopsDoNotBlockOnBackendMutex();
+  testAlsaFloatStartRejectsNativeDsdMode();
   testAlsaRenderLoopsQueueRecoveryOffRenderThread();
   testAlsaStartRejectsRepeatedStartBeforeLaunchingThread();
   testAlsaRepeatedStartReturnsFalseWithoutRelaunchingThread();

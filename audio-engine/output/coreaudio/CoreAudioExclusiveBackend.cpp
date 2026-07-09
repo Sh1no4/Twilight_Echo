@@ -424,8 +424,11 @@ bool CoreAudioExclusiveBackend::open(const std::string& deviceId, const AudioFor
   impl_->outputInfo.bufferSizeFrames = bufferFrames;
   impl_->outputInfo.latencyFrames = bufferFrames;
   impl_->outputInfo.latencyInfo.bufferLatencyMs = bufferLatencyMs(bufferFrames, impl_->outputFormat.sampleRate);
-  impl_->outputInfo.latencyInfo.outputLatencyMs = 0.0;
-  impl_->outputInfo.latencyInfo.totalLatencyMs = impl_->outputInfo.latencyInfo.bufferLatencyMs;
+  const uint32_t outputLatencyFrames = impl_->host->estimatedOutputLatencyFrames(selectedDevice);
+  const double outputLatencyMsValue = bufferLatencyMs(outputLatencyFrames, impl_->outputFormat.sampleRate);
+  impl_->outputInfo.latencyInfo.outputLatencyMs = outputLatencyMsValue;
+  impl_->outputInfo.latencyInfo.totalLatencyMs =
+      impl_->outputInfo.latencyInfo.bufferLatencyMs + impl_->outputInfo.latencyInfo.outputLatencyMs;
   impl_->outputInfo.latencyMs = impl_->outputInfo.latencyInfo.totalLatencyMs;
   impl_->outputInfo.channelRoutingMode = channelRoutingModeToString(impl_->outputConfig.routingMode);
   impl_->outputInfo.diagnostics = impl_->diagnostics;

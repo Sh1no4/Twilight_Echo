@@ -1398,9 +1398,10 @@ void AudioPipeline::setVolume(double volume) {
 
 void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
   std::shared_ptr<DecodeStream> disabledPreload;
+  const DspConfig nextConfig = DspChain::parseConfigJson(dspConfigJson);
   {
     std::lock_guard lock(mutex_);
-    dspConfig_ = DspChain::parseConfigJson(dspConfigJson);
+    dspConfig_ = nextConfig;
     gaplessEnabled_ = !dopPathActive_ && !nativeDsdPathActive_ && !typedPassthroughActive_ && dspConfig_.gapless;
     if (!gaplessEnabled_) {
       disabledPreload = std::move(preloadStream_);

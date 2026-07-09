@@ -40,10 +40,32 @@ export function installSessionSecurity(targetSession: Session): void {
 
 function shouldApplyDocumentSecurityHeaders(details: Electron.OnHeadersReceivedListenerDetails): boolean {
   if (details.resourceType !== 'mainFrame' && details.resourceType !== 'subFrame') return false
-  return isAppDocumentUrl(details.url) || isDesktopLyricsDocumentUrl(details.url)
+  return (
+    isAppDocumentUrl(details.url) ||
+    isDesktopLyricsDocumentUrl(details.url) ||
+    isAudioVisualizerDocumentUrl(details.url)
+  )
 }
 
 function contentSecurityPolicyForUrl(url: string): string {
+  if (isAudioVisualizerDocumentUrl(url)) {
+    return [
+      "default-src 'none'",
+      "base-uri 'none'",
+      "object-src 'none'",
+      "frame-src 'none'",
+      "frame-ancestors 'self'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: cover: background: http: https:",
+      "font-src 'self' data:",
+      "media-src 'none'",
+      "connect-src 'self'",
+      "worker-src 'none'",
+      "form-action 'none'"
+    ].join('; ')
+  }
+
   const scriptSrc = isDesktopLyricsDocumentUrl(url) ? "'self' 'unsafe-inline'" : "'self'"
   const connectSrc = ["'self'", ...NCM_API_ORIGINS]
   if (isDevRendererUrl(url)) {
@@ -54,7 +76,8 @@ function contentSecurityPolicyForUrl(url: string): string {
     "default-src 'none'",
     "base-uri 'none'",
     "object-src 'none'",
-    "frame-src 'none'",
+    // Allow the bundled audio visualizer surface and other same-origin app frames.
+    "frame-src 'self'",
     "frame-ancestors 'none'",
     `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
@@ -84,6 +107,10 @@ function isAppDocumentUrl(url: string): boolean {
 
 function isDesktopLyricsDocumentUrl(url: string): boolean {
   return /\/resources\/desktop-lyrics\.html(?:[#?].*)?$/i.test(url)
+}
+
+function isAudioVisualizerDocumentUrl(url: string): boolean {
+  return /\/audio-visualizer\/index\.html(?:[#?].*)?$/i.test(url)
 }
 
 function isDevRendererUrl(url: string): boolean {

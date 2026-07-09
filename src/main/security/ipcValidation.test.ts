@@ -116,8 +116,20 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
   assert.match(electronSecuritySource, /default-src 'none'/)
   assert.match(electronSecuritySource, /script-src \$\{scriptSrc\}/)
   assert.match(electronSecuritySource, /Permissions-Policy/)
+  assert.match(electronSecuritySource, /frame-src 'self'/)
+  assert.match(electronSecuritySource, /isAudioVisualizerDocumentUrl/)
+  assert.match(electronSecuritySource, /frame-ancestors 'self'/)
+  assert.match(
+    electronSecuritySource,
+    /isAudioVisualizerDocumentUrl\(url\)[\s\S]*script-src 'self' 'unsafe-inline'/
+  )
+  // Streaming covers (e.g. NetEase http://*.music.126.net) require remote http(s) image sources.
+  assert.match(electronSecuritySource, /img-src 'self' data: blob: cover: background: http: https:/)
+  assert.match(rendererHtml, /img-src 'self' data: blob: cover: background: http: https:/)
   assert.doesNotMatch(rendererHtml, /unpkg\.com|fonts\.googleapis\.com|unsafe-inline' https:/)
   assert.match(rendererHtml, /script-src 'self'/)
+  assert.match(rendererHtml, /frame-src 'self'/)
+  assert.doesNotMatch(rendererHtml, /frame-src 'none'/)
 
   assert.match(dataSource, /assertTrustedIpcSender|shouldAcceptIpcEvent/)
   assert.match(pluginsSource, /assertTrustedIpcSender/)

@@ -107,6 +107,7 @@ class ICoreAudioHost {
   virtual bool bindDevice(CoreAudioAudioUnit unit, CoreAudioDeviceID deviceId, std::string* error) = 0;
   virtual bool applyBufferSize(CoreAudioDeviceID deviceId, uint32_t preferredBufferSize, std::string* error) = 0;
   virtual uint32_t currentBufferFrameSize(CoreAudioDeviceID deviceId) = 0;
+  virtual uint32_t estimatedOutputLatencyFrames(CoreAudioDeviceID deviceId) = 0;
   virtual bool setStreamFormat(
       CoreAudioAudioUnit unit,
       bool input,

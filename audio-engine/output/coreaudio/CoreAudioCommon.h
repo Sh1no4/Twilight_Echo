@@ -180,6 +180,20 @@ inline uint32_t currentBufferFrameSize(AudioDeviceID deviceId) {
       kAudioDevicePropertyScopeOutput);
 }
 
+inline uint32_t deviceOutputLatencyFrames(AudioDeviceID deviceId) {
+  if (deviceId == kAudioObjectUnknown) return 0;
+  const uint32_t deviceLatency = deviceUInt32(
+      deviceId,
+      kAudioDevicePropertyLatency,
+      kAudioDevicePropertyScopeOutput);
+  const uint32_t safetyOffset = deviceUInt32(
+      deviceId,
+      kAudioDevicePropertySafetyOffset,
+      kAudioDevicePropertyScopeOutput);
+  return deviceLatency + safetyOffset;
+}
+
+
 inline std::vector<double> availableNominalSampleRates(AudioDeviceID id) {
   std::vector<double> rates;
   AudioObjectPropertyAddress address{

@@ -87,7 +87,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
   pluginThemeId: null,
   blurEffect: true,
-  windowTransparency: true,
+  windowTransparency: false,
   windowTransparencyEffect: {
     surfaceOpacity: 55,
     surfaceBlur: 0,
@@ -397,7 +397,7 @@ export function normalizeWindowTransparencyEffect(raw: unknown): WindowTranspare
   const defaults = DEFAULT_SETTINGS.windowTransparencyEffect
   const t = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
   return {
-    surfaceOpacity: clampNumber(t.surfaceOpacity, 0, 100, defaults.surfaceOpacity),
+    surfaceOpacity: clampNumber(t.surfaceOpacity, 20, 100, defaults.surfaceOpacity),
     surfaceBlur: clampNumber(t.surfaceBlur, 0, 60, defaults.surfaceBlur),
     cardOpacity: clampNumber(t.cardOpacity, 0, 100, defaults.cardOpacity),
     cardBlur: clampNumber(t.cardBlur, 0, 60, defaults.cardBlur)
@@ -560,7 +560,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     theme: normalizeAppTheme(settings.theme),
     pluginThemeId: normalizePluginThemeId(settings.pluginThemeId),
     blurEffect: settings.blurEffect !== false,
-    windowTransparency: settings.windowTransparency !== false,
+    windowTransparency: settings.windowTransparency === true,
     windowTransparencyEffect: normalizeWindowTransparencyEffect(settings.windowTransparencyEffect),
     useCoverTheme: settings.useCoverTheme !== false,
     lyricFontSize: clampNumber(settings.lyricFontSize, 14, 28, DEFAULT_SETTINGS.lyricFontSize),

@@ -13,6 +13,7 @@ import {
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 
 export const NCM_API_PORT = 3100
+export const NCM_API_HOST = '127.0.0.1'
 export const NCM_OFFICIAL_LOGIN_TIMEOUT_MS = 180000
 export const NCM_API_REQUEST_TIMEOUT_MS = 25000
 const MAX_NCM_API_PATH_LENGTH = 4096
@@ -38,7 +39,7 @@ export async function requestNcmApi(path: string, cookie?: string): Promise<unkn
     return { code: -1, message: 'Invalid NetEase API path' }
   }
   const sep = normalizedPath.includes('?') ? '&' : '?'
-  const url = `http://localhost:${NCM_API_PORT}${normalizedPath}${sep}timestamp=${Date.now()}`
+  const url = `http://${NCM_API_HOST}:${NCM_API_PORT}${normalizedPath}${sep}timestamp=${Date.now()}`
   const headers: Record<string, string> = {}
   const normalizedCookie = normalizeNcmCookie(cookie)
   if (normalizedCookie) {
@@ -194,8 +195,8 @@ function normalizeNcmApiPath(path: unknown): string | null {
   }
   if (!normalized.startsWith('/') || normalized.startsWith('//') || normalized.includes('\\')) return null
   try {
-    const parsed = new URL(`http://localhost:${NCM_API_PORT}${normalized}`)
-    if (parsed.origin !== `http://localhost:${NCM_API_PORT}`) return null
+    const parsed = new URL(`http://${NCM_API_HOST}:${NCM_API_PORT}${normalized}`)
+    if (parsed.origin !== `http://${NCM_API_HOST}:${NCM_API_PORT}`) return null
     return normalized
   } catch {
     return null
@@ -235,10 +236,11 @@ export async function setupNcmApi(): Promise<void> {
     const { serveNcmApi } = await import('@neteasecloudmusicapienhanced/api/server.js')
     const app = await serveNcmApi({
       port: NCM_API_PORT,
+      host: NCM_API_HOST,
       checkVersion: false
     })
     runtime.ncmServer = app.server
-    console.log(`网易云音乐服务已启动：http://localhost:${NCM_API_PORT}`)
+    console.log(`网易云音乐服务已启动：http://${NCM_API_HOST}:${NCM_API_PORT}`)
   } catch (err) {
     console.error('网易云音乐服务启动失败：', err)
   }

@@ -86,7 +86,7 @@ const fallbackSettings: AppSettings = {
   theme: 'system',
   pluginThemeId: null,
   blurEffect: true,
-  windowTransparency: true,
+  windowTransparency: false,
   windowTransparencyEffect: {
     surfaceOpacity: 55,
     surfaceBlur: 0,

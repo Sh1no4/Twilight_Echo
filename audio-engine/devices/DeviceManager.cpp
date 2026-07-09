@@ -150,7 +150,9 @@ std::string boolJson(bool value) {
 
 }  // namespace
 
+#if defined(_WIN32) && TAE_ENABLE_ASIO
 std::string enumerateAsioDevicesJson();
+#endif
 
 std::string enumeratePlatformDevicesJson() {
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
@@ -207,10 +209,12 @@ std::string enumeratePlatformDevicesJson() {
 
   if (shouldUninitialize) CoUninitialize();
 
+#if TAE_ENABLE_ASIO
   const std::string asioJson = enumerateAsioDevicesJson();
   if (asioJson.size() > 2) {
     json << "," << asioJson.substr(1, asioJson.size() - 2);
   }
+#endif
   json << "]";
   return json.str();
 #elif defined(__APPLE__) && defined(TAE_ENABLE_COREAUDIO)

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useListeningStatsStore } from '../stores/useListeningStatsStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
@@ -31,6 +31,37 @@ const {
 } = usePlayerStore()
 
 const now = ref(new Date())
+const homeScrollRef = ref<HTMLElement | null>(null)
+const homeScrollbarActive = ref(false)
+let homeScrollbarHideTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearHomeScrollbarHideTimer(): void {
+  if (homeScrollbarHideTimer == null) return
+  clearTimeout(homeScrollbarHideTimer)
+  homeScrollbarHideTimer = null
+}
+
+function revealHomeScrollbar(): void {
+  homeScrollbarActive.value = true
+  clearHomeScrollbarHideTimer()
+  homeScrollbarHideTimer = setTimeout(() => {
+    homeScrollbarActive.value = false
+    homeScrollbarHideTimer = null
+  }, 900)
+}
+
+function onHomeScroll(): void {
+  revealHomeScrollbar()
+}
+
+onMounted(() => {
+  homeScrollRef.value?.addEventListener('scroll', onHomeScroll, { passive: true })
+})
+
+onBeforeUnmount(() => {
+  homeScrollRef.value?.removeEventListener('scroll', onHomeScroll)
+  clearHomeScrollbarHideTimer()
+})
 
 const greeting = computed(() => {
   const hour = now.value.getHours()
@@ -357,7 +388,7 @@ const dspOutputDetail = computed(() => {
 </script>
 
 <template>
-  <div class="home dashboard-wrapper">
+  <div ref="homeScrollRef" class="home dashboard-wrapper te-auto-scrollbar" :class="{ 'is-scrollbar-active': homeScrollbarActive }">
     <div class="ambient" aria-hidden="true">
       <span class="blob blob-a"></span>
       <span class="blob blob-b"></span>
@@ -641,6 +672,10 @@ const dspOutputDetail = computed(() => {
   overflow-y: auto;
   overflow-x: hidden;
   box-sizing: border-box;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.2s ease;
   color: var(--home-text);
   background-color: var(--te-local-bg);
   background-image: var(--te-local-bg-image);
@@ -650,9 +685,108 @@ const dspOutputDetail = computed(() => {
   font-family: var(--te-font-sans, 'Inter', sans-serif);
 }
 
-/* 透明窗口模式：交给 base.css 的 .dashboard-wrapper 半透明表面，并隐藏会遮住合成器背景的极光光斑 */
-html[data-window-transparent='on'] .home .blob {
+/* Transparent window: fill under the floating title bar; hide aurora blobs so
+   only the shared body wash tints the window. */
+:global(html[data-window-transparent='on']) .home {
+  height: 100vh !important;
+  min-height: 100vh !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+:global(html[data-window-transparent='on']) .home .blob {
   display: none;
+}
+
+/* ---------- Auto-expand scrollbar ---------- */
+.home.te-auto-scrollbar::-webkit-scrollbar {
+  width: 10px;
+}
+
+.home.te-auto-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+  margin: 10px 0;
+}
+
+.home.te-auto-scrollbar::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.16);
+  background-clip: content-box;
+  transition:
+    border-width 0.18s ease,
+    background-color 0.18s ease;
+}
+
+.home.te-auto-scrollbar:hover,
+.home.te-auto-scrollbar.is-scrollbar-active {
+  scrollbar-color: rgba(var(--te-primary-rgb, 124, 77, 255), 0.42) transparent;
+}
+
+.home.te-auto-scrollbar:hover::-webkit-scrollbar-thumb,
+.home.te-auto-scrollbar.is-scrollbar-active::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.42);
+  background-clip: content-box;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18) inset;
+}
+
+.home.te-auto-scrollbar:hover::-webkit-scrollbar-thumb:hover,
+.home.te-auto-scrollbar.is-scrollbar-active::-webkit-scrollbar-thumb:hover {
+  border: 1px solid transparent;
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.62);
+  background-clip: content-box;
+}
+
+.home.te-auto-scrollbar:not(:hover):not(.is-scrollbar-active)::-webkit-scrollbar-thumb {
+  border: 4px solid transparent;
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.1);
+  background-clip: content-box;
+}
+
+/* Horizontal shelves / rails: compact by default, expand near hover */
+.shelf,
+.dsp-card {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.shelf:hover,
+.dsp-card:hover {
+  scrollbar-color: rgba(var(--te-primary-rgb, 124, 77, 255), 0.4) transparent;
+}
+
+.shelf::-webkit-scrollbar,
+.dsp-card::-webkit-scrollbar {
+  height: 10px;
+}
+
+.shelf::-webkit-scrollbar-track,
+.dsp-card::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.shelf::-webkit-scrollbar-thumb,
+.dsp-card::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.12);
+  background-clip: content-box;
+}
+
+.shelf:hover::-webkit-scrollbar-thumb,
+.dsp-card:hover::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.4);
+  background-clip: content-box;
+}
+
+.shelf:hover::-webkit-scrollbar-thumb:hover,
+.dsp-card:hover::-webkit-scrollbar-thumb:hover {
+  border: 1px solid transparent;
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.62);
+  background-clip: content-box;
 }
 
 /* ---------- Ambient aurora ---------- */
@@ -1147,7 +1281,6 @@ html[data-window-transparent='on'] .home .blob {
   gap: 1.15rem;
   overflow-x: auto;
   padding: 0.3rem 0.2rem 1rem;
-  scrollbar-width: thin;
 }
 
 .shelf-card {
@@ -1596,7 +1729,6 @@ html[data-window-transparent='on'] .home .blob {
   -webkit-backdrop-filter: blur(16px) saturate(130%);
   box-shadow: 0 10px 30px rgba(20, 16, 44, 0.08);
   overflow-x: auto;
-  scrollbar-width: thin;
 }
 
 .dsp-node {

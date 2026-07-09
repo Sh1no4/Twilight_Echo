@@ -1,4 +1,4 @@
-﻿
+
 .settings-preview-page {
   position: fixed;
   inset: 0;
@@ -52,22 +52,20 @@
 }
 
 .settings-preview-layout {
-  width: min(100%, 1120px);
+  width: min(100%, 1280px);
   margin: 0 auto;
-}
-
-.settings-preview-layout {
   position: relative;
-  display: grid;
-  grid-template-columns: 192px minmax(0, 896px);
-  justify-content: center;
-  gap: 32px;
+  display: block;
   padding-top: 32px;
 }
 
 .settings-preview-nav {
-  position: sticky;
-  top: 32px;
+  position: fixed;
+  /* Horizontally center the 192px nav within the left gutter beside the 896px stack. */
+  left: max(24px, calc((100vw - min(100vw, 896px)) / 4 - 96px));
+  /* Vertically center the nav in the viewport while keeping a small top/bottom margin. */
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 100;
   display: flex;
   width: 192px;
@@ -75,7 +73,6 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  align-self: start;
   gap: 6px;
   max-height: calc(100vh - 96px);
 }
@@ -157,6 +154,8 @@
   display: flex;
   width: min(100%, 896px);
   min-width: 0;
+  /* Keep the stack centered, then nudge it right to balance the fixed left nav gutter. */
+  margin: 0 auto 0 calc(50% - min(50%, 448px) + 56px);
   flex-direction: column;
   gap: 32px;
   padding-bottom: 40px;
@@ -1997,6 +1996,8 @@
 
   .settings-preview-stack {
     width: 100%;
+    margin-left: 0;
+    margin-right: 0;
   }
 }
 

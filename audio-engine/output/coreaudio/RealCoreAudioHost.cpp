@@ -310,6 +310,11 @@ uint32_t RealCoreAudioHost::currentBufferFrameSize(CoreAudioDeviceID deviceId) {
   return coreaudio::currentBufferFrameSize(deviceId);
 }
 
+uint32_t RealCoreAudioHost::estimatedOutputLatencyFrames(CoreAudioDeviceID deviceId) {
+  return coreaudio::deviceOutputLatencyFrames(static_cast<AudioDeviceID>(deviceId));
+}
+
+
 bool RealCoreAudioHost::setStreamFormat(
     CoreAudioAudioUnit unit,
     bool input,

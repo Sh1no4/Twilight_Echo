@@ -366,7 +366,8 @@ export function setupDataIpc(): void {
     let raw: string
     try {
       raw = readFileSync(MUSIC_LIBRARY_FILE, 'utf-8')
-    } catch {
+    } catch (error) {
+      console.warn('读取音乐库失败：', redactSensitiveText(error instanceof Error ? error.message : error))
       return []
     }
 
@@ -381,10 +382,12 @@ export function setupDataIpc(): void {
           copyFileSync(bakPath, MUSIC_LIBRARY_FILE)
           raw = readFileSync(MUSIC_LIBRARY_FILE, 'utf-8')
           data = JSON.parse(raw)
-        } catch {
+        } catch (error) {
+          console.warn('从备份恢复音乐库失败：', redactSensitiveText(error instanceof Error ? error.message : error))
           return []
         }
       } else {
+        console.warn('音乐库损坏且无可用备份，返回空库')
         return []
       }
     }
@@ -506,7 +509,8 @@ export function setupDataIpc(): void {
     try {
       const raw = readFileSync(PLAYBACK_SESSION_FILE, 'utf-8')
       return JSON.parse(raw) as PlaybackSession
-    } catch {
+    } catch (error) {
+      console.warn('读取播放会话失败：', redactSensitiveText(error instanceof Error ? error.message : error))
       return null
     }
   })
@@ -531,7 +535,8 @@ export function setupDataIpc(): void {
     try {
       const raw = readFileSync(PLAYLISTS_FILE, 'utf-8')
       return JSON.parse(raw)
-    } catch {
+    } catch (error) {
+      console.warn('读取歌单失败：', redactSensitiveText(error instanceof Error ? error.message : error))
       return null
     }
   })
