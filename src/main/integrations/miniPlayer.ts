@@ -7,11 +7,9 @@ import {
   type IpcMainInvokeEvent
 } from 'electron'
 import { existsSync } from 'fs'
-import { release } from 'os'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import {
-  DEFAULT_MINI_PLAYER_STYLE_ID,
   EMPTY_MINI_PLAYER_STATE,
   normalizeMiniPlayerCommand,
   normalizeMiniPlayerSettings,
@@ -24,17 +22,20 @@ import {
 import { runtime } from '../core/runtime'
 import { createSettingsSnapshot, writeAppSettings } from '../core/settings'
 import { assertTrustedIpcSender, shouldAcceptIpcEvent } from '../security/electronSecurity.ts'
+import {
+  MINI_PLAYER_MAX_HEIGHT,
+  MINI_PLAYER_MAX_WIDTH,
+  MINI_PLAYER_MIN_HEIGHT,
+  MINI_PLAYER_MIN_WIDTH,
+  clampMiniPlayerBoundsToWorkArea,
+  miniPlayerBoundsPatch
+} from './miniPlayerWindow'
 
 const MINI_PLAYER_EDGE_GAP = 22
-const MINI_PLAYER_POSITION_SAVE_DELAY_MS = 350
+const MINI_PLAYER_BOUNDS_SAVE_DELAY_MS = 350
 
-let moveSaveTimer: NodeJS.Timeout | null = null
-
-function supportsNativeRoundedMiniPlayerWindow(): boolean {
-  if (process.platform !== 'win32') return false
-  const build = Number(release().split('.')[2] ?? 0)
-  return Number.isFinite(build) && build >= 22000
-}
+let boundsSaveTimer: NodeJS.Timeout | null = null
+let programmedBounds: Electron.Rectangle | null = null
 
 function getMiniPlayerIconPath(): string | undefined {
   const candidates =
@@ -56,14 +57,6 @@ function currentMiniPlayerSettings(): MiniPlayerSettings {
   return normalizeMiniPlayerSettings(runtime.appSettings.miniPlayer)
 }
 
-function getMiniPlayerFallbackColor(settings: MiniPlayerSettings): string {
-  return (
-    settings.profiles[settings.activeStyleId]?.background.fallbackColor ??
-    settings.profiles[DEFAULT_MINI_PLAYER_STYLE_ID]?.background.fallbackColor ??
-    '#11121d'
-  )
-}
-
 function resolveInitialBounds(settings: MiniPlayerSettings): Electron.Rectangle {
   const hasSavedPosition = !(settings.windowX === -1 && settings.windowY === -1)
   const display = hasSavedPosition
@@ -79,23 +72,27 @@ function resolveInitialBounds(settings: MiniPlayerSettings): Electron.Rectangle 
     ? settings.windowY
     : workArea.y + workArea.height - settings.windowHeight - MINI_PLAYER_EDGE_GAP
 
-  return {
-    x: clampNumber(preferredX, workArea.x, workArea.x + workArea.width - settings.windowWidth),
-    y: clampNumber(preferredY, workArea.y, workArea.y + workArea.height - settings.windowHeight),
-    width: settings.windowWidth,
-    height: settings.windowHeight
-  }
+  return clampMiniPlayerBoundsToWorkArea(
+    {
+      x: clampNumber(preferredX, workArea.x, workArea.x + workArea.width - settings.windowWidth),
+      y: clampNumber(preferredY, workArea.y, workArea.y + workArea.height - settings.windowHeight),
+      width: settings.windowWidth,
+      height: settings.windowHeight
+    },
+    workArea
+  )
 }
 
 function fitMiniPlayerToWorkArea(win: BrowserWindow, settings: MiniPlayerSettings): void {
   const current = win.getBounds()
   const display = screen.getDisplayMatching(current)
-  const workArea = display.workArea
-  const width = Math.min(settings.windowWidth, workArea.width)
-  const height = Math.min(settings.windowHeight, workArea.height)
-  const x = clampNumber(current.x, workArea.x, workArea.x + workArea.width - width)
-  const y = clampNumber(current.y, workArea.y, workArea.y + workArea.height - height)
-  win.setBounds({ x, y, width, height }, false)
+  const next = clampMiniPlayerBoundsToWorkArea(
+    { ...current, width: settings.windowWidth, height: settings.windowHeight },
+    display.workArea
+  )
+  if (rectanglesEqual(current, next)) return
+  programmedBounds = next
+  win.setBounds(next, false)
 }
 
 function applyMiniPlayerWindowSettings(settings: MiniPlayerSettings): void {
@@ -107,33 +104,38 @@ function applyMiniPlayerWindowSettings(settings: MiniPlayerSettings): void {
   } else {
     win.setAlwaysOnTop(false)
   }
-  if (supportsNativeRoundedMiniPlayerWindow()) {
-    win.setBackgroundColor(getMiniPlayerFallbackColor(settings))
-  }
+  win.setBackgroundColor('#00000000')
   win.setMovable(!settings.positionLocked)
   fitMiniPlayerToWorkArea(win, settings)
 }
 
-function persistMiniPlayerPosition(win: BrowserWindow): void {
+function persistMiniPlayerBounds(win: BrowserWindow): void {
   if (win.isDestroyed() || runtime.miniPlayerWindow !== win) return
-  const { x, y } = win.getBounds()
+  const boundsPatch = miniPlayerBoundsPatch(win.getBounds())
   runtime.appSettings = {
     ...runtime.appSettings,
     miniPlayer: {
       ...currentMiniPlayerSettings(),
-      windowX: x,
-      windowY: y
+      ...boundsPatch
     }
   }
   writeAppSettings(runtime.appSettings)
+  sendMiniPlayerSettings(runtime.appSettings.miniPlayer)
+  runtime.mainWindow?.webContents.send(
+    'settings:changed',
+    createSettingsSnapshot(runtime.appSettings, runtime.launchSettings)
+  )
 }
 
-function scheduleMiniPlayerPositionSave(win: BrowserWindow): void {
-  if (moveSaveTimer) clearTimeout(moveSaveTimer)
-  moveSaveTimer = setTimeout(() => {
-    moveSaveTimer = null
-    persistMiniPlayerPosition(win)
-  }, MINI_PLAYER_POSITION_SAVE_DELAY_MS)
+function scheduleMiniPlayerBoundsSave(win: BrowserWindow): void {
+  const current = win.getBounds()
+  if (programmedBounds && rectanglesEqual(current, programmedBounds)) return
+  programmedBounds = null
+  if (boundsSaveTimer) clearTimeout(boundsSaveTimer)
+  boundsSaveTimer = setTimeout(() => {
+    boundsSaveTimer = null
+    persistMiniPlayerBounds(win)
+  }, MINI_PLAYER_BOUNDS_SAVE_DELAY_MS)
 }
 
 function sendMiniPlayerState(state: MiniPlayerStateSnapshot): void {
@@ -148,6 +150,11 @@ function sendMiniPlayerSettings(settings = currentMiniPlayerSettings()): void {
   win.webContents.send('miniPlayer:settings', settings)
 }
 
+export function applyMiniPlayerSettingsFromApp(settings: MiniPlayerSettings): void {
+  applyMiniPlayerWindowSettings(settings)
+  sendMiniPlayerSettings(settings)
+}
+
 function enterMiniPlayerMode(win: BrowserWindow): void {
   if (win.isMinimized()) win.restore()
   win.show()
@@ -160,13 +167,11 @@ function enterMiniPlayerMode(win: BrowserWindow): void {
 function createMiniPlayerWindow(): BrowserWindow {
   const settings = currentMiniPlayerSettings()
   const bounds = resolveInitialBounds(settings)
-  const nativeRoundedWindow = supportsNativeRoundedMiniPlayerWindow()
   runtime.appSettings = {
     ...runtime.appSettings,
     miniPlayer: {
       ...settings,
-      windowX: bounds.x,
-      windowY: bounds.y
+      ...miniPlayerBoundsPatch(bounds)
     }
   }
 
@@ -175,18 +180,22 @@ function createMiniPlayerWindow(): BrowserWindow {
     title: 'Twilight Echo Mini Player',
     show: false,
     frame: false,
-    transparent: !nativeRoundedWindow,
-    backgroundColor: nativeRoundedWindow ? getMiniPlayerFallbackColor(settings) : '#00000000',
+    transparent: true,
+    backgroundColor: '#00000000',
     alwaysOnTop: settings.alwaysOnTop,
     movable: !settings.positionLocked,
-    resizable: false,
+    resizable: true,
+    minWidth: MINI_PLAYER_MIN_WIDTH,
+    minHeight: MINI_PLAYER_MIN_HEIGHT,
+    maxWidth: MINI_PLAYER_MAX_WIDTH,
+    maxHeight: MINI_PLAYER_MAX_HEIGHT,
     minimizable: true,
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: false,
-    hasShadow: nativeRoundedWindow,
-    roundedCorners: true,
-    thickFrame: nativeRoundedWindow,
+    hasShadow: true,
+    roundedCorners: false,
+    thickFrame: process.platform === 'win32',
     autoHideMenuBar: true,
     icon: getMiniPlayerIconPath(),
     webPreferences: {
@@ -200,7 +209,7 @@ function createMiniPlayerWindow(): BrowserWindow {
   })
   runtime.miniPlayerWindow = win
 
-  win.setBackgroundColor(nativeRoundedWindow ? getMiniPlayerFallbackColor(settings) : '#00000000')
+  win.setBackgroundColor('#00000000')
 
   applyMiniPlayerWindowSettings(settings)
 
@@ -209,11 +218,12 @@ function createMiniPlayerWindow(): BrowserWindow {
     enterMiniPlayerMode(win)
   })
 
-  win.on('move', () => scheduleMiniPlayerPositionSave(win))
+  win.on('move', () => scheduleMiniPlayerBoundsSave(win))
+  win.on('resize', () => scheduleMiniPlayerBoundsSave(win))
 
   win.on('close', (event) => {
     if (runtime.forceQuit) {
-      persistMiniPlayerPosition(win)
+      persistMiniPlayerBounds(win)
       return
     }
     event.preventDefault()
@@ -221,10 +231,11 @@ function createMiniPlayerWindow(): BrowserWindow {
   })
 
   win.on('closed', () => {
-    if (moveSaveTimer) {
-      clearTimeout(moveSaveTimer)
-      moveSaveTimer = null
+    if (boundsSaveTimer) {
+      clearTimeout(boundsSaveTimer)
+      boundsSaveTimer = null
     }
+    programmedBounds = null
     if (runtime.miniPlayerWindow === win) runtime.miniPlayerWindow = null
   })
 
@@ -243,13 +254,10 @@ function createMiniPlayerWindow(): BrowserWindow {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const rendererUrl = new URL(process.env['ELECTRON_RENDERER_URL'])
     rendererUrl.searchParams.set('window', 'mini-player')
-    if (nativeRoundedWindow) rendererUrl.searchParams.set('nativeCorners', '1')
     void win.loadURL(rendererUrl.toString())
   } else {
     void win.loadFile(join(__dirname, '../renderer/index.html'), {
-      query: nativeRoundedWindow
-        ? { window: 'mini-player', nativeCorners: '1' }
-        : { window: 'mini-player' }
+      query: { window: 'mini-player' }
     })
   }
 
@@ -274,7 +282,7 @@ export function hideMiniPlayerWindow(): void {
 export function restoreMainWindowFromMiniPlayer(): void {
   const miniPlayerWindow = runtime.miniPlayerWindow
   if (miniPlayerWindow && !miniPlayerWindow.isDestroyed()) {
-    persistMiniPlayerPosition(miniPlayerWindow)
+    persistMiniPlayerBounds(miniPlayerWindow)
     miniPlayerWindow.destroy()
   }
   runtime.miniPlayerWindow = null
@@ -308,8 +316,7 @@ function updateMiniPlayerSettings(patch: unknown): MiniPlayerSettings {
   const settings = normalizeMiniPlayerSettings(candidate)
   runtime.appSettings = { ...runtime.appSettings, miniPlayer: settings }
   writeAppSettings(runtime.appSettings)
-  applyMiniPlayerWindowSettings(settings)
-  sendMiniPlayerSettings(settings)
+  applyMiniPlayerSettingsFromApp(settings)
   runtime.mainWindow?.webContents.send(
     'settings:changed',
     createSettingsSnapshot(runtime.appSettings, runtime.launchSettings)
@@ -403,4 +410,13 @@ export function setupMiniPlayerIpc(): void {
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.round(Math.min(Math.max(value, min), Math.max(min, max)))
+}
+
+function rectanglesEqual(first: Electron.Rectangle, second: Electron.Rectangle): boolean {
+  return (
+    first.x === second.x &&
+    first.y === second.y &&
+    first.width === second.width &&
+    first.height === second.height
+  )
 }

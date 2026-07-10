@@ -12,6 +12,7 @@ import { buildEffectiveAudioProcessingSettings } from '../audioProcessingEffecti
 import { derivePlaybackEvents } from '../plugins/events'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
 import { applyDiscordRpcSetting } from '../integrations/discord'
+import { applyMiniPlayerSettingsFromApp } from '../integrations/miniPlayer'
 import { applyRuntimeSettings } from '../integrations/shortcutsTray'
 import { applyLibraryWatchers } from '../library/watcher'
 
@@ -205,20 +206,8 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Se
     runtime.desktopLyricsWindow.webContents.send('desktopLyrics:initSettings', dl)
   }
 
-  if (
-    Object.prototype.hasOwnProperty.call(patch, 'miniPlayer') &&
-    runtime.miniPlayerWindow &&
-    !runtime.miniPlayerWindow.isDestroyed()
-  ) {
-    const miniPlayer = runtime.appSettings.miniPlayer
-    if (miniPlayer.alwaysOnTop) {
-      runtime.miniPlayerWindow.setAlwaysOnTop(true, 'screen-saver')
-    } else {
-      runtime.miniPlayerWindow.setAlwaysOnTop(false)
-    }
-    runtime.miniPlayerWindow.setMovable(!miniPlayer.positionLocked)
-    runtime.miniPlayerWindow.setSize(miniPlayer.windowWidth, miniPlayer.windowHeight)
-    runtime.miniPlayerWindow.webContents.send('miniPlayer:settings', miniPlayer)
+  if (Object.prototype.hasOwnProperty.call(patch, 'miniPlayer')) {
+    applyMiniPlayerSettingsFromApp(runtime.appSettings.miniPlayer)
   }
 
   applyRuntimeSettings()

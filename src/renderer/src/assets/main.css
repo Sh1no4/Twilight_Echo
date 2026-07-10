@@ -18,10 +18,3 @@ html.mini-player-document #app {
 html.mini-player-document body {
   padding: 0 !important;
 }
-
-/* Windows 11 DWM owns the outer clip; a second web radius would expose mismatched arcs. */
-html.mini-player-document.mini-player-native-corners,
-html.mini-player-document.mini-player-native-corners body,
-html.mini-player-document.mini-player-native-corners #app {
-  --mini-window-radius: 0px;
-}

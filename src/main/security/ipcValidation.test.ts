@@ -160,6 +160,8 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
     new URL('../integrations/miniPlayer.ts', import.meta.url),
     'utf8'
   )
+  const miniPlayerBoundsPersistence =
+    miniPlayerSource.match(/function persistMiniPlayerBounds[\s\S]*?\n\}/)?.[0] ?? ''
 
   assert.match(lifecycleSource, /installElectronSecurity\(\)/)
   assert.match(electronSecuritySource, /setPermissionRequestHandler/)
@@ -194,7 +196,13 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
   assert.match(miniPlayerSource, /assertTrustedIpcSender/)
   assert.match(miniPlayerSource, /shouldAcceptIpcEvent/)
   assert.match(miniPlayerSource, /rejected from unexpected window/)
-  assert.match(miniPlayerSource, /supportsNativeRoundedMiniPlayerWindow/)
-  assert.match(miniPlayerSource, /transparent: !nativeRoundedWindow/)
-  assert.match(miniPlayerSource, /thickFrame: nativeRoundedWindow/)
+  assert.match(miniPlayerSource, /transparent: true/)
+  assert.match(miniPlayerSource, /resizable: true/)
+  assert.match(miniPlayerSource, /minWidth: MINI_PLAYER_MIN_WIDTH/)
+  assert.match(miniPlayerSource, /maxHeight: MINI_PLAYER_MAX_HEIGHT/)
+  assert.match(miniPlayerSource, /roundedCorners: false/)
+  assert.match(miniPlayerSource, /thickFrame: process\.platform === 'win32'/)
+  assert.match(miniPlayerSource, /win\.on\('resize'/)
+  assert.match(miniPlayerSource, /persistMiniPlayerBounds/)
+  assert.match(miniPlayerBoundsPersistence, /settings:changed/)
 })

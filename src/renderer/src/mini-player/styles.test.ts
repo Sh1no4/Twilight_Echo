@@ -69,9 +69,6 @@ test('mini player surface fills the native window without a rectangular backdrop
   )
   const rootRule = styles.match(/\.mini-player-root\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
   const surfaceRule = styles.match(/\.mini-player-surface\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
-  const nativeCornerRule =
-    mainStyles.match(/html\.mini-player-document\.mini-player-native-corners,[\s\S]*?\n\}/)?.[0] ??
-    ''
 
   assert.doesNotMatch(rootRule, /padding:/)
   assert.match(rootRule, /clip-path: inset\(0 round var\(--mini-window-radius\)\)/)
@@ -79,10 +76,11 @@ test('mini player surface fills the native window without a rectangular backdrop
   assert.doesNotMatch(surfaceRule, /var\(--mini-surface-shadow\)/)
   assert.doesNotMatch(surfaceRule, /backdrop-filter/)
   assert.match(mainStyles, /html\.mini-player-document[\s\S]*background: transparent !important/)
-  assert.match(nativeCornerRule, /--mini-window-radius: 0px/)
-  assert.match(rendererEntry, /query\.get\('nativeCorners'\) === '1'/)
-  assert.match(rendererEntry, /classList\.add\('mini-player-native-corners'\)/)
-  assert.match(miniPlayerWindow, /searchParams\.set\('nativeCorners', '1'\)/)
+  assert.doesNotMatch(mainStyles, /mini-player-native-corners/)
+  assert.doesNotMatch(rendererEntry, /nativeCorners|mini-player-native-corners/)
+  assert.doesNotMatch(miniPlayerWindow, /nativeCorners/)
+  assert.match(miniPlayerWindow, /transparent: true/)
+  assert.match(miniPlayerWindow, /roundedCorners: false/)
   assert.match(
     component,
     /<section class="mini-player-surface">\s*<div v-if="hasCover" class="mini-player-backdrop"/

@@ -5,14 +5,9 @@ import { createApp } from 'vue'
 
 const query = new URLSearchParams(window.location.search)
 const isMiniPlayer = query.get('window') === 'mini-player'
-const usesNativeCorners = isMiniPlayer && query.get('nativeCorners') === '1'
 if (isMiniPlayer) {
   document.documentElement.classList.add('mini-player-document')
   document.body.classList.add('mini-player-document')
-  if (usesNativeCorners) {
-    document.documentElement.classList.add('mini-player-native-corners')
-    document.body.classList.add('mini-player-native-corners')
-  }
   document.documentElement.style.background = 'transparent'
   document.body.style.background = 'transparent'
   document.body.style.padding = '0'
