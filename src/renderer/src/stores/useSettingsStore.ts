@@ -726,6 +726,12 @@ export function useSettingsStore(): {
       }
       applyDomSettings()
     }
+    if (Object.prototype.hasOwnProperty.call(patch, 'miniPlayer') && patch.miniPlayer) {
+      settings.value = {
+        ...settings.value,
+        miniPlayer: cloneMiniPlayerSettings(patch.miniPlayer)
+      }
+    }
     if (
       Object.prototype.hasOwnProperty.call(patch, 'windowTransparencyEffect') &&
       patch.windowTransparencyEffect

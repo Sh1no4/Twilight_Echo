@@ -3,6 +3,18 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const source = readFileSync(new URL('./MiniPlayerCustomizer.vue', import.meta.url), 'utf8')
+const settingsSection = readFileSync(
+  new URL('../components/settings-page/MiniPlayerSettingsSection.vue', import.meta.url),
+  'utf8'
+)
+const settingsPage = readFileSync(
+  new URL('../components/SettingsPage.vue', import.meta.url),
+  'utf8'
+)
+const settingsStore = readFileSync(
+  new URL('../stores/useSettingsStore.ts', import.meta.url),
+  'utf8'
+)
 
 test('mini player customizer exposes four controlled tabs and no global api calls', () => {
   for (const tab of ['theme', 'background', 'appearance', 'layout']) {
@@ -52,4 +64,15 @@ test('mini player customizer uses semantic controls and automatic persistence ac
   assert.match(source, /@click="emit\('undo'\)"/)
   assert.match(source, /@click="emit\('reset'\)"/)
   assert.doesNotMatch(source, />\s*应用\s*</)
+})
+
+test('main settings reuses the controlled mini player customizer', () => {
+  assert.match(settingsSection, /MiniPlayerCustomizer/)
+  assert.match(settingsSection, /useMiniPlayerCustomizationDraft/)
+  assert.match(settingsSection, /chooseBackgroundImage/)
+  assert.match(settingsPage, /MiniPlayerSettingsSection/)
+  assert.match(
+    settingsStore,
+    /hasOwnProperty\.call\(patch, 'miniPlayer'\)[\s\S]*cloneMiniPlayerSettings\(patch\.miniPlayer\)/
+  )
 })

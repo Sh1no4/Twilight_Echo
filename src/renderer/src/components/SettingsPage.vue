@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import MiniPlayerSettingsSection from './settings-page/MiniPlayerSettingsSection.vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useExtensionRegistry, type UiContribution } from '../extensions/registry'
@@ -192,7 +193,7 @@ const SETTINGS_SEARCH_INDEX: Array<{
   { section: 'dsp', title: 'DSP 处理器', terms: 'DSP EQ ReplayGain Crossfeed Convolver FFT High-Res DSD SACD' },
   { section: 'cache', title: '缓存策略', terms: '缓存 目录 封面 歌词 元数据 流媒体 BPM 分析 清理' },
   { section: 'performance', title: '性能', terms: '性能 硬件加速 GPU 重启' },
-  { section: 'appearance', title: '外观与主题', terms: '外观 主题 插件主题 强调色 背景 字体 密度 歌词 卡片' },
+  { section: 'appearance', title: '外观与主题', terms: '外观 主题 插件主题 强调色 背景 字体 密度 歌词 卡片 迷你播放器 自定义 圆角 缩放 布局' },
   { section: 'desktopLyrics', title: '桌面歌词', terms: '桌面歌词 字体 颜色 阴影 对齐 窗口 置顶 鼠标穿透 翻译' },
   { section: 'shortcuts', title: '快捷键', terms: '快捷键 全局 播放 暂停 上一首 下一首 注册 冲突' },
   { section: 'about', title: '关于与更新', terms: '关于 版本 更新 GitHub Releases 开源 致谢' }
@@ -2844,6 +2845,7 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </div>
+            <MiniPlayerSettingsSection />
             <hr />
             <button
               type="button"
