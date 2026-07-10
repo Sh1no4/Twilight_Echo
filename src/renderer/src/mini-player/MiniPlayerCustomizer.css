@@ -15,6 +15,7 @@
 }
 
 .mini-customizer.is-overlay {
+  --customizer-panel: color-mix(in srgb, var(--mini-background-fallback) 96%, transparent);
   position: absolute;
   inset: 0 0 0 auto;
   z-index: 20;

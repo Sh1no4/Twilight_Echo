@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const source = readFileSync(new URL('./MiniPlayerCustomizer.vue', import.meta.url), 'utf8')
+const customizerStyles = readFileSync(
+  new URL('./MiniPlayerCustomizer.css', import.meta.url),
+  'utf8'
+)
 const settingsSection = readFileSync(
   new URL('../components/settings-page/MiniPlayerSettingsSection.vue', import.meta.url),
   'utf8'
@@ -66,6 +70,12 @@ test('mini player customizer uses semantic controls and automatic persistence ac
   assert.doesNotMatch(source, />\s*应用\s*</)
 })
 
+test('overlay customizer uses the active mini player surface family for readable contrast', () => {
+  const overlayRule =
+    customizerStyles.match(/\.mini-customizer\.is-overlay\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
+  assert.match(overlayRule, /--customizer-panel:[^;]*var\(--mini-background-fallback\)/)
+})
+
 test('main settings reuses the controlled mini player customizer', () => {
   assert.match(settingsSection, /MiniPlayerCustomizer/)
   assert.match(settingsSection, /useMiniPlayerCustomizationDraft/)
@@ -75,4 +85,5 @@ test('main settings reuses the controlled mini player customizer', () => {
     settingsStore,
     /hasOwnProperty\.call\(patch, 'miniPlayer'\)[\s\S]*cloneMiniPlayerSettings\(patch\.miniPlayer\)/
   )
+  assert.match(settingsStore, /from '\.\.\/\.\.\/\.\.\/shared\/miniPlayer\.ts'/)
 })

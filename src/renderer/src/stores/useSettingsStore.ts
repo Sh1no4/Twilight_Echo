@@ -1,5 +1,8 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
-import { DEFAULT_MINI_PLAYER_SETTINGS, cloneMiniPlayerSettings } from '../../../shared/miniPlayer'
+import {
+  DEFAULT_MINI_PLAYER_SETTINGS,
+  cloneMiniPlayerSettings
+} from '../../../shared/miniPlayer.ts'
 import type {
   AppSettings,
   AppTheme,
