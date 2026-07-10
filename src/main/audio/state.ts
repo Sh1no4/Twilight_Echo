@@ -1,11 +1,7 @@
 import { app, nativeTheme } from 'electron'
 import { runtime } from '../core/runtime'
 import type { AppSettings, SettingsSnapshot } from '../core/types'
-import {
-  createSettingsSnapshot,
-  normalizeAppSettings,
-  writeAppSettings
-} from '../core/settings'
+import { createSettingsSnapshot, normalizeAppSettings, writeAppSettings } from '../core/settings'
 import {
   type AudioProcessingSettings,
   type AudioOutputState,
@@ -47,10 +43,7 @@ export function broadcastPlayerLifecycleEvents(info: PlaybackInfo): void {
   const previous = runtime.lastPluginPlaybackInfo
   runtime.lastPluginPlaybackInfo = info
   for (const event of derivePlaybackEvents(previous, info)) {
-    const payload =
-      event.name === 'player:progress'
-        ? event.payload
-        : info
+    const payload = event.name === 'player:progress' ? event.payload : info
     void runtime.pluginManager?.broadcastEvent(event.name, payload)
   }
 }
@@ -66,7 +59,9 @@ export function persistAudioProcessingState(processing: AudioProcessingSettings)
   return snapshot
 }
 
-export function getEffectiveAudioProcessing(settings: AppSettings = runtime.appSettings): AudioProcessingSettings {
+export function getEffectiveAudioProcessing(
+  settings: AppSettings = runtime.appSettings
+): AudioProcessingSettings {
   return buildEffectiveAudioProcessingSettings(
     settings.audioProcessing,
     settings.headphoneCompensation
@@ -140,7 +135,9 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Se
     }
 
     if (shouldUpdateExclusiveMode && audioState.exclusiveAvailable) {
-      audioState = await runtime.audioEngineManager.setExclusiveMode(runtime.appSettings.audioExclusiveMode)
+      audioState = await runtime.audioEngineManager.setExclusiveMode(
+        runtime.appSettings.audioExclusiveMode
+      )
     }
 
     runtime.appSettings = normalizeAppSettings({
@@ -153,7 +150,10 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Se
 
   writeAppSettings(runtime.appSettings)
 
-  if (runtime.appSettings.musicCachePath && runtime.appSettings.musicCachePath !== previousCachePath) {
+  if (
+    runtime.appSettings.musicCachePath &&
+    runtime.appSettings.musicCachePath !== previousCachePath
+  ) {
     try {
       ensureMusicCacheDirectories(runtime.appSettings.musicCachePath)
     } catch (err) {
@@ -161,7 +161,10 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Se
     }
   }
 
-  if ((shouldUpdateAudioProcessing || shouldUpdateHeadphoneCompensation) && runtime.audioEngineManager) {
+  if (
+    (shouldUpdateAudioProcessing || shouldUpdateHeadphoneCompensation) &&
+    runtime.audioEngineManager
+  ) {
     try {
       await applyEffectiveAudioProcessingToEngine()
     } catch (err) {
@@ -200,6 +203,22 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Se
       runtime.desktopLyricsWindow.setSize(dl.windowWidth, dl.windowHeight)
     }
     runtime.desktopLyricsWindow.webContents.send('desktopLyrics:initSettings', dl)
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'miniPlayer') &&
+    runtime.miniPlayerWindow &&
+    !runtime.miniPlayerWindow.isDestroyed()
+  ) {
+    const miniPlayer = runtime.appSettings.miniPlayer
+    if (miniPlayer.alwaysOnTop) {
+      runtime.miniPlayerWindow.setAlwaysOnTop(true, 'screen-saver')
+    } else {
+      runtime.miniPlayerWindow.setAlwaysOnTop(false)
+    }
+    runtime.miniPlayerWindow.setMovable(!miniPlayer.positionLocked)
+    runtime.miniPlayerWindow.setSize(miniPlayer.windowWidth, miniPlayer.windowHeight)
+    runtime.miniPlayerWindow.webContents.send('miniPlayer:settings', miniPlayer)
   }
 
   applyRuntimeSettings()

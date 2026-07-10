@@ -58,14 +58,23 @@ test('plugin manager enforces plugin API namespace permissions at the gateway', 
   assert.match(managerSource, /'player:observe'/)
   assert.match(managerSource, /'player:control'/)
   assert.match(managerSource, /'library:read'/)
-  assert.match(managerSource, /this\.requirePermission\(pluginId,\s*'network',\s*'providers\.register'/)
+  assert.match(
+    managerSource,
+    /this\.requirePermission\(pluginId,\s*'network',\s*'providers\.register'/
+  )
   assert.match(managerSource, /private requireProviderCapabilityPermissions\(/)
   assert.match(managerSource, /capabilities\.includes\('library'\)/)
   assert.match(managerSource, /private normalizeEventSubscription\(/)
   assert.match(managerSource, /this\.requirePermission\(id,\s*'player:observe'/)
   assert.match(managerSource, /this\.requirePermission\(id,\s*'player:control'/)
-  assert.match(managerSource, /message\.kind === 'api-event-subscribe'[\s\S]*this\.normalizeEventSubscription\(id/)
-  assert.match(managerSource, /eventName\.startsWith\('library:'\)[\s\S]*this\.requirePermission\(pluginId,\s*'library:read'/)
+  assert.match(
+    managerSource,
+    /message\.kind === 'api-event-subscribe'[\s\S]*this\.normalizeEventSubscription\(id/
+  )
+  assert.match(
+    managerSource,
+    /eventName\.startsWith\('library:'\)[\s\S]*this\.requirePermission\(pluginId,\s*'library:read'/
+  )
 })
 
 test('plugin manager prevents provider id takeover', () => {
@@ -125,10 +134,19 @@ test('plugin manager tracks provider health for calls and plugin failures', () =
   assert.match(managerSource, /failedCalls:/)
   assert.match(managerSource, /lastError:/)
   assert.match(managerSource, /pluginStatus:/)
-  assert.match(managerSource, /const health = this\.normalizeProviderHealth\(record\.health,\s*providerId,\s*pluginId/)
+  assert.match(
+    managerSource,
+    /const health = this\.normalizeProviderHealth\(record\.health,\s*providerId,\s*pluginId/
+  )
   assert.match(managerSource, /if \(health\) this\.providerHealth\.set\(providerId,\s*health\)/)
-  assert.match(managerSource, /this\.recordProviderCallSuccess\(pending\.providerId,\s*pending\.pluginId,\s*pending\.method/)
-  assert.match(managerSource, /this\.recordProviderCallFailure\(\s*pending\.providerId,\s*pending\.pluginId,\s*pending\.method/)
+  assert.match(
+    managerSource,
+    /this\.recordProviderCallSuccess\(pending\.providerId,\s*pending\.pluginId,\s*pending\.method/
+  )
+  assert.match(
+    managerSource,
+    /this\.recordProviderCallFailure\(\s*pending\.providerId,\s*pending\.pluginId,\s*pending\.method/
+  )
   assert.match(managerSource, /health: this\.getProviderHealth/)
 })
 
@@ -137,9 +155,17 @@ test('plugin host forwards provider health registration metadata', () => {
   assert.match(pluginHostSource, /health: provider\.health/)
 })
 
-test('desktop lyrics preload exposes only the desktop lyrics API', () => {
+test('specialized windows receive only their scoped preload APIs', () => {
   assert.match(preloadSource, /exposedApiForDocument\(\)/)
-  assert.match(preloadSource, /isDesktopLyricsDocument\(\) \? \{ desktopLyrics: api\.desktopLyrics \} : api/)
+  assert.match(
+    preloadSource,
+    /if \(isDesktopLyricsDocument\(\)\) return \{ desktopLyrics: api\.desktopLyrics \}/
+  )
+  assert.match(
+    preloadSource,
+    /if \(isMiniPlayerDocument\(\)\) return \{ miniPlayer: miniPlayerWindowApi \}/
+  )
   assert.match(preloadSource, /window\.location\.pathname\.endsWith\('\/desktop-lyrics\.html'\)/)
+  assert.match(preloadSource, /get\('window'\) === 'mini-player'/)
   assert.doesNotMatch(preloadSource, /exposeInMainWorld\('electron'/)
 })

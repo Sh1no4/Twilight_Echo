@@ -57,6 +57,7 @@ test('data IPC applies path and storage limits before touching local files', () 
     source,
     /resolveAuthorizedAudioFile\(\s*normalizeLocalPath\(filePath, 'audio file path'\)\s*\)/
   )
+  assert.match(source, /ipcMain\.handle\('fs:isAudioFileAuthorized'/)
   assert.match(source, /clearManagedMusicCache\(cachePath\)/)
   assert.doesNotMatch(source, /rm\(cachePath, \{ recursive: true, force: true \}\)/)
   assert.match(source, /filterAuthorizedLibraryRoots\(library\.folders\)/)
@@ -155,6 +156,10 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
     new URL('../integrations/desktopLyrics.ts', import.meta.url),
     'utf8'
   )
+  const miniPlayerSource = readFileSync(
+    new URL('../integrations/miniPlayer.ts', import.meta.url),
+    'utf8'
+  )
 
   assert.match(lifecycleSource, /installElectronSecurity\(\)/)
   assert.match(electronSecuritySource, /setPermissionRequestHandler/)
@@ -186,4 +191,10 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
   assert.match(audioIpcSource, /resolveAuthorizedAudioSource/)
   assert.match(audioIpcSource, /resolveAuthorizedImpulseResponseFile/)
   assert.match(desktopLyricsSource, /shouldAcceptIpcEvent/)
+  assert.match(miniPlayerSource, /assertTrustedIpcSender/)
+  assert.match(miniPlayerSource, /shouldAcceptIpcEvent/)
+  assert.match(miniPlayerSource, /rejected from unexpected window/)
+  assert.match(miniPlayerSource, /supportsNativeRoundedMiniPlayerWindow/)
+  assert.match(miniPlayerSource, /transparent: !nativeRoundedWindow/)
+  assert.match(miniPlayerSource, /thickFrame: nativeRoundedWindow/)
 })

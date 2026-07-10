@@ -299,6 +299,63 @@ interface DesktopLyricsSettings {
   maxLines: number
 }
 
+interface MiniPlayerSettings {
+  windowX: number
+  windowY: number
+  windowWidth: number
+  windowHeight: number
+  alwaysOnTop: boolean
+  positionLocked: boolean
+  styleId: string
+  backgroundColor: string
+}
+
+interface MiniPlayerTrackSnapshot {
+  id: string
+  title: string
+  artist: string
+  album: string
+  cover: string | null
+}
+
+interface MiniPlayerStateSnapshot {
+  track: MiniPlayerTrackSnapshot | null
+  isPlaying: boolean
+  isLoading: boolean
+  currentTime: number
+  duration: number
+  volume: number
+  playMode: PlayMode
+  dominantColor: string
+  queueIndex: number
+  queueLength: number
+}
+
+type MiniPlayerCommand =
+  | { type: 'toggle-play' }
+  | { type: 'previous' }
+  | { type: 'next' }
+  | { type: 'cycle-play-mode' }
+  | { type: 'seek'; value: number }
+  | { type: 'set-volume'; value: number }
+
+type MiniPlayerSettingsPatch = Partial<
+  Pick<
+    MiniPlayerSettings,
+    | 'alwaysOnTop'
+    | 'positionLocked'
+    | 'styleId'
+    | 'backgroundColor'
+    | 'windowWidth'
+    | 'windowHeight'
+  >
+>
+
+interface MiniPlayerBootstrap {
+  state: MiniPlayerStateSnapshot
+  settings: MiniPlayerSettings
+}
+
 interface MusicCachePolicySettings {
   cover: boolean
   lyrics: boolean
@@ -405,6 +462,7 @@ interface AppSettings {
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
+  miniPlayer: MiniPlayerSettings
   proxyMode: ProxyMode
   proxyHost: string
   proxyPort: number
@@ -560,11 +618,7 @@ interface AudioDeviceOption {
   capabilityReason?: string
 }
 
-type AudioCapabilitySupportState =
-  | 'verified'
-  | 'runtime-probed'
-  | 'unsupported'
-  | 'unknown'
+type AudioCapabilitySupportState = 'verified' | 'runtime-probed' | 'unsupported' | 'unknown'
 
 interface TwilightPluginDescriptor {
   id: string
@@ -1020,6 +1074,7 @@ interface WindowAPI {
     scanMusicFiles: (folderPath: string) => Promise<TrackData[]>
     readAudioFile: (filePath: string) => Promise<{ buffer: ArrayBuffer; mimeType: string }>
     getAudioFileUrl: (filePath: string) => Promise<string>
+    isAudioFileAuthorized: (filePath: string) => Promise<boolean>
     onScanProgress: (cb: (progress: { current: number; total: number }) => void) => () => void
   }
   audioEngine: AudioEngineAPI
@@ -1088,12 +1143,19 @@ interface WindowAPI {
     refreshIndex: () => Promise<TwilightPluginIndexEntry[]>
     getIndexStatus: () => Promise<TwilightPluginIndexStatus>
     installFromIndex: (id: string) => Promise<TwilightPluginInstallResult>
-    setNativeDspParameters: (id: string, parameters: Record<string, number>) => Promise<TwilightPluginDescriptor>
+    setNativeDspParameters: (
+      id: string,
+      parameters: Record<string, number>
+    ) => Promise<TwilightPluginDescriptor>
     onChanged: (cb: () => void) => () => void
   }
   providers: {
     list: () => Promise<TwilightMediaProviderRegistration[]>
-    call: (providerId: string, method: TwilightMediaProviderMethod, args: unknown[]) => Promise<unknown>
+    call: (
+      providerId: string,
+      method: TwilightMediaProviderMethod,
+      args: unknown[]
+    ) => Promise<unknown>
   }
   extensions: {
     list: () => Promise<TwilightPluginExtensionContribution[]>
@@ -1116,19 +1178,33 @@ interface WindowAPI {
     updateSettings: (settings: DesktopLyricsSettings) => void
     onToggle: (cb: (enabled: boolean) => void) => () => void
     onInitSettings: (cb: (settings: DesktopLyricsSettings) => void) => () => void
-    onTrackUpdate: (cb: (data: {
-      lyrics: string | null
-      translatedLyrics?: string | null
-      lyricsSource?: 'embedded' | 'local' | 'provider' | null
-      translatedLyricsSource?: 'embedded' | 'local' | 'provider' | null
-      title?: string
-      artist?: string
-    }) => void) => () => void
+    onTrackUpdate: (
+      cb: (data: {
+        lyrics: string | null
+        translatedLyrics?: string | null
+        lyricsSource?: 'embedded' | 'local' | 'provider' | null
+        translatedLyricsSource?: 'embedded' | 'local' | 'provider' | null
+        title?: string
+        artist?: string
+      }) => void
+    ) => () => void
     onTimeUpdate: (cb: (time: number) => void) => () => void
     onSettingsUpdate: (cb: (settings: DesktopLyricsSettings) => void) => () => void
     getPosition: () => void
     move: (x: number, y: number) => void
     requestClose: () => void
+  }
+  miniPlayer: {
+    open: () => Promise<MiniPlayerSettings>
+    getBootstrap: () => Promise<MiniPlayerBootstrap>
+    command: (command: MiniPlayerCommand) => void
+    updateSettings: (patch: MiniPlayerSettingsPatch) => Promise<MiniPlayerSettings>
+    minimize: () => void
+    returnToMain: () => void
+    publishState: (state: MiniPlayerStateSnapshot) => void
+    onState: (cb: (state: MiniPlayerStateSnapshot) => void) => () => void
+    onSettings: (cb: (settings: MiniPlayerSettings) => void) => () => void
+    onCommand: (cb: (command: MiniPlayerCommand) => void) => () => void
   }
 }
 

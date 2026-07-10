@@ -73,10 +73,23 @@ const playerBarButtons = computed(() =>
 )
 const { settings } = useSettingsStore()
 const desktopLyricsOn = ref(settings.value.desktopLyrics.enabled)
+const miniPlayerOpening = ref(false)
 
 async function toggleDesktopLyrics(): Promise<void> {
   const enabled = await window.api.desktopLyrics.toggle()
   desktopLyricsOn.value = enabled
+}
+
+async function openMiniPlayer(): Promise<void> {
+  if (miniPlayerOpening.value) return
+  miniPlayerOpening.value = true
+  try {
+    await window.api.miniPlayer.open()
+  } catch (error) {
+    console.error('[mini-player] Failed to open mini player:', error)
+  } finally {
+    miniPlayerOpening.value = false
+  }
 }
 
 // Keep in sync when toggled from settings
@@ -250,7 +263,9 @@ function resolvePerfectReasonText(): string {
   if (code && reasonCodeLabels[code]) return reasonCodeLabels[code]
   const capabilityReason = outputInfo.value?.capabilityReason?.trim() || ''
   if (capabilityReason) return capabilityReason
-  return formatPerfectReason(outputInfo.value?.perfectReason || playbackInfo.value?.perfectReason || '')
+  return formatPerfectReason(
+    outputInfo.value?.perfectReason || playbackInfo.value?.perfectReason || ''
+  )
 }
 
 function nativeDsdRuntimeTone(state: string): 'success' | 'warning' | 'muted' {
@@ -271,7 +286,10 @@ const nativeDsdRuntimeText = computed(() => {
   if (!hasRuntimeInterest) return ''
   const label = nativeDsdStateLabels[state] ?? `Native DSD ${state}`
   const rate =
-    info.nativeDsdActualRate || info.nativeDsdRequestedRate || info.driverNativeDsdSampleRates?.[0] || 0
+    info.nativeDsdActualRate ||
+    info.nativeDsdRequestedRate ||
+    info.driverNativeDsdSampleRates?.[0] ||
+    0
   return rate > 0 ? `${label} ${compactRate(rate)}` : label
 })
 
@@ -388,15 +406,16 @@ function formatDecodedStage(info: NonNullable<typeof playbackInfo.value>): strin
 const outputChainText = computed(() => {
   const info = playbackInfo.value
   if (!info) return ''
-  const source = isDsdSource(info) || isSacdIsoSource(info)
-    ? formatDsdSource(info)
-    : [
-        info.codec || 'Source',
-        info.sourceBitDepth > 0 ? `${info.sourceBitDepth}bit` : '',
-        compactRate(info.sourceSampleRate)
-      ]
-        .filter(Boolean)
-        .join(' ')
+  const source =
+    isDsdSource(info) || isSacdIsoSource(info)
+      ? formatDsdSource(info)
+      : [
+          info.codec || 'Source',
+          info.sourceBitDepth > 0 ? `${info.sourceBitDepth}bit` : '',
+          compactRate(info.sourceSampleRate)
+        ]
+          .filter(Boolean)
+          .join(' ')
   const decoded = formatDecodedStage(info)
   const out = outputInfo.value
   const backend = out?.actualBackend || info.actualBackend || ''
@@ -453,7 +472,9 @@ const peakText = computed(() => formatDb(visualizationData.value.peakDb))
 const rmsText = computed(() => formatDb(visualizationData.value.rmsDb))
 const lufsText = computed(() => {
   const value = visualizationData.value.lufsMomentary
-  return typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(1)} LUFS` : 'Inactive'
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${value.toFixed(1)} LUFS`
+    : 'Inactive'
 })
 const visualizationStateText = computed(() => {
   const status = visualizationData.value.tapStatus
@@ -463,7 +484,9 @@ const visualizationStateText = computed(() => {
   if (status === 'no-samples') return 'No samples'
   if (status === 'stopped') return 'Stopped'
   if (!visualizationActive.value) return 'Inactive'
-  return visualizationData.value.sampleRate > 0 ? compactRate(visualizationData.value.sampleRate) : 'Active'
+  return visualizationData.value.sampleRate > 0
+    ? compactRate(visualizationData.value.sampleRate)
+    : 'Active'
 })
 const visualizationStateTitle = computed(() => {
   const reason = visualizationData.value.reason?.trim()
@@ -474,7 +497,8 @@ const waveformBars = computed(() => {
   const targetPoints = 48
   return Array.from({ length: targetPoints }, (_, index) => {
     const bucket = Math.min(source.length - 1, Math.floor((index * source.length) / targetPoints))
-    const amplitude = visualizationActive.value && bucket >= 0 ? Math.abs(finiteNumber(source[bucket])) : 0
+    const amplitude =
+      visualizationActive.value && bucket >= 0 ? Math.abs(finiteNumber(source[bucket])) : 0
     const normalized = clamp01(amplitude)
     return {
       height: Math.max(5, Math.round(normalized * 92)),
@@ -581,8 +605,14 @@ function drawSpectrogram(): void {
   const cssWidth = canvas.clientWidth
   const cssHeight = canvas.clientHeight
   const gap = 1
-  const cellWidth = Math.max(1, (cssWidth - gap * (spectrogramFrameCount - 1)) / spectrogramFrameCount)
-  const cellHeight = Math.max(1, (cssHeight - gap * (spectrogramBinCount - 1)) / spectrogramBinCount)
+  const cellWidth = Math.max(
+    1,
+    (cssWidth - gap * (spectrogramFrameCount - 1)) / spectrogramFrameCount
+  )
+  const cellHeight = Math.max(
+    1,
+    (cssHeight - gap * (spectrogramBinCount - 1)) / spectrogramBinCount
+  )
 
   if (!visualizationActive.value) {
     ctx.fillStyle = 'rgba(148, 163, 184, 0.12)'
@@ -599,7 +629,9 @@ function drawSpectrogram(): void {
     const y = (spectrogramBinCount - 1 - bin) * (cellHeight + gap)
     for (let frame = 0; frame < spectrogramFrameCount; frame += 1) {
       const row = frames[frames.length - spectrogramFrameCount + frame]
-      const valueIndex = row ? Math.min(row.length - 1, Math.floor((bin * row.length) / spectrogramBinCount)) : -1
+      const valueIndex = row
+        ? Math.min(row.length - 1, Math.floor((bin * row.length) / spectrogramBinCount))
+        : -1
       const energy = valueIndex >= 0 ? clamp01(finiteNumber(row?.[valueIndex])) : 0
       const alpha = 0.08 + energy * 0.82
       const red = Math.round(38 + energy * 186)
@@ -736,11 +768,7 @@ onMounted(() => {
         <div class="player-track-info">
           <div class="player-title">{{ currentTrack.title }}</div>
           <div class="player-artist">{{ currentTrack.artist }}</div>
-          <div
-            v-if="audioEngineError"
-            class="player-playback-diagnostic"
-            :title="audioEngineError"
-          >
+          <div v-if="audioEngineError" class="player-playback-diagnostic" :title="audioEngineError">
             {{ audioEngineError }}
           </div>
           <div
@@ -750,13 +778,20 @@ onMounted(() => {
           >
             <span>{{ audioEngineRecoveryNotice.message }}</span>
             <button
-              v-if="audioEngineRecoveryNotice.kind === 'service-ready' && audioEngineRecoveryNotice.canResume !== false"
+              v-if="
+                audioEngineRecoveryNotice.kind === 'service-ready' &&
+                audioEngineRecoveryNotice.canResume !== false
+              "
               type="button"
               @click.stop="togglePlay"
             >
               {{ audioEngineRecoveryNotice.actionLabel || '继续播放' }}
             </button>
-            <button type="button" aria-label="关闭恢复提示" @click.stop="dismissAudioEngineRecoveryNotice">
+            <button
+              type="button"
+              aria-label="关闭恢复提示"
+              @click.stop="dismissAudioEngineRecoveryNotice"
+            >
               ×
             </button>
           </div>
@@ -857,6 +892,16 @@ onMounted(() => {
           @click="togglePlaylist"
         >
           <i class="pi pi-list"></i>
+        </button>
+
+        <button
+          class="icon-btn mini-player-btn"
+          title="切换到迷你播放器"
+          aria-label="切换到迷你播放器"
+          :disabled="miniPlayerOpening"
+          @click="openMiniPlayer"
+        >
+          <i :class="miniPlayerOpening ? 'pi pi-spin pi-spinner' : 'ph ph-picture-in-picture'"></i>
         </button>
 
         <button

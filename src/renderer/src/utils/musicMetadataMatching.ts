@@ -32,7 +32,10 @@ interface IndexedMetadataMatch extends MetadataMatch {
 const EXACT_DURATION_TOLERANCE_SECONDS = 8
 const LOOSE_DURATION_TOLERANCE_SECONDS = 20
 
-export function findBestMetadataMatch(localTrack: Track, candidates: Track[]): MetadataMatch | null {
+export function findBestMetadataMatch(
+  localTrack: Track,
+  candidates: Track[]
+): MetadataMatch | null {
   const matches = candidates
     .map((candidate, index) => {
       const match = scoreMetadataMatch(localTrack, candidate)
@@ -62,7 +65,8 @@ export function buildMetadataMatchCandidates(
           cover: !metadataAvailable(localTrack.cover) && metadataAvailable(candidate.cover),
           lyrics: !metadataAvailable(localTrack.lyrics) && metadataAvailable(candidate.lyrics),
           translatedLyrics:
-            !metadataAvailable(localTrack.translatedLyrics) && metadataAvailable(candidate.translatedLyrics),
+            !metadataAvailable(localTrack.translatedLyrics) &&
+            metadataAvailable(candidate.translatedLyrics),
           metadata:
             (!metadataAvailable(localTrack.artist) && metadataAvailable(candidate.artist)) ||
             (!metadataAvailable(localTrack.album) && metadataAvailable(candidate.album))
@@ -82,15 +86,17 @@ export function enrichLocalTrackMetadata(
 ): Track {
   if (!match) return localTrack
   const metadata = match.track
-  const nextLyrics = policy.lyrics ? localTrack.lyrics ?? metadata.lyrics ?? null : localTrack.lyrics
+  const nextLyrics = policy.lyrics
+    ? (localTrack.lyrics ?? metadata.lyrics ?? null)
+    : localTrack.lyrics
   const nextTranslatedLyrics = policy.lyrics
-    ? localTrack.translatedLyrics ?? metadata.translatedLyrics ?? null
+    ? (localTrack.translatedLyrics ?? metadata.translatedLyrics ?? null)
     : localTrack.translatedLyrics
   const enriched: Track = {
     ...localTrack,
     artist: policy.metadata ? localTrack.artist || metadata.artist : localTrack.artist,
     album: policy.metadata ? localTrack.album || metadata.album : localTrack.album,
-    cover: policy.cover ? localTrack.cover ?? metadata.cover ?? null : localTrack.cover,
+    cover: policy.cover ? (localTrack.cover ?? metadata.cover ?? null) : localTrack.cover,
     lyrics: nextLyrics,
     translatedLyrics: nextTranslatedLyrics,
     lyricsSource: resolveEnrichedLyricSource(
@@ -133,14 +139,15 @@ function resolveEnrichedLyricSource(
 ): Track['lyricsSource'] {
   if (!enabled) return localSource
   if (localValue != null && localValue !== '') return localSource
-  if (providerValue != null && providerValue !== '' && nextValue === providerValue) return 'provider'
+  if (providerValue != null && providerValue !== '' && nextValue === providerValue)
+    return 'provider'
   return localSource ?? null
 }
 
 function getProviderId(track: Track): string {
   if (track.source && track.source !== 'local') return track.source
   const separatorIndex = track.id.indexOf(':')
-  return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : track.source ?? ''
+  return separatorIndex > 0 ? track.id.slice(0, separatorIndex) : (track.source ?? '')
 }
 
 function scoreMetadataMatch(localTrack: Track, candidate: Track): MetadataMatch | null {
@@ -153,7 +160,8 @@ function scoreMetadataMatch(localTrack: Track, candidate: Track): MetadataMatch 
 
   const durationDelta = durationDeltaSeconds(localTrack, candidate)
   if (durationDelta != null && durationDelta > LOOSE_DURATION_TOLERANCE_SECONDS) return null
-  if (!localArtist && durationDelta != null && durationDelta > EXACT_DURATION_TOLERANCE_SECONDS) return null
+  if (!localArtist && durationDelta != null && durationDelta > EXACT_DURATION_TOLERANCE_SECONDS)
+    return null
 
   let score = 70
   if (!localArtist && candidateArtist) score -= 12
@@ -189,5 +197,6 @@ function normalizeMetadataText(value: string | undefined): string {
     .normalize('NFKC')
     .trim()
     .toLowerCase()
+    .replace(/\s*([/,&、，;；])\s*/g, '$1')
     .replace(/\s+/g, ' ')
 }

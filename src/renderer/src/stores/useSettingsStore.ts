@@ -190,6 +190,16 @@ const fallbackSettings: AppSettings = {
     clickThrough: false,
     maxLines: 2
   },
+  miniPlayer: {
+    windowX: -1,
+    windowY: -1,
+    windowWidth: 500,
+    windowHeight: 190,
+    alwaysOnTop: false,
+    positionLocked: false,
+    styleId: 'aurora-glass',
+    backgroundColor: '#11121d'
+  },
   proxyMode: 'auto',
   proxyHost: '',
   proxyPort: 0,
@@ -502,7 +512,9 @@ function applyDomSettings(): void {
   document.documentElement.dataset.themePreference = settings.value.theme
   document.documentElement.style.colorScheme = resolvedTheme === 'dark' ? 'dark' : 'light'
   document.body.classList.toggle('te-no-blur', !settings.value.blurEffect)
-  document.documentElement.dataset.windowTransparent = settings.value.windowTransparency ? 'on' : 'off'
+  document.documentElement.dataset.windowTransparent = settings.value.windowTransparency
+    ? 'on'
+    : 'off'
   applyWindowTransparencyEffect()
   document.documentElement.style.setProperty(
     '--te-lyric-font-size',

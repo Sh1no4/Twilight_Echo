@@ -8,6 +8,7 @@ import type { TwilightPluginManager } from '../plugins/manager'
 import type { PluginIndexService } from '../plugins/indexService'
 import type { BpmAnalysisManager } from '../bpm/bpmAnalysisManager'
 import type DiscordRPC from 'discord-rpc'
+import type { MiniPlayerStateSnapshot } from '../../shared/miniPlayer'
 
 export interface DiscordActivityData {
   title: string
@@ -27,6 +28,8 @@ export const runtime = {
   audioEngineManager: null as AudioEngineManager | null,
   bpmAnalysisManager: null as BpmAnalysisManager | null,
   mainWindow: null as BrowserWindow | null,
+  miniPlayerWindow: null as BrowserWindow | null,
+  latestMiniPlayerState: null as MiniPlayerStateSnapshot | null,
   desktopLyricsWindow: null as BrowserWindow | null,
   latestDesktopLyricsTrack: null as DesktopLyricsTrackPayload | null,
   latestDesktopLyricsTime: 0,

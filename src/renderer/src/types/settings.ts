@@ -1,3 +1,7 @@
+import type { MiniPlayerSettings } from '../../../shared/miniPlayer'
+
+export type { MiniPlayerSettings } from '../../../shared/miniPlayer'
+
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 export type StartupHomePage = 'local' | 'streaming'
@@ -218,11 +222,7 @@ export interface AudioDeviceOption {
   capabilityReason?: string
 }
 
-export type AudioCapabilitySupportState =
-  | 'verified'
-  | 'runtime-probed'
-  | 'unsupported'
-  | 'unknown'
+export type AudioCapabilitySupportState = 'verified' | 'runtime-probed' | 'unsupported' | 'unknown'
 
 export interface OutputConfig {
   preferredBufferSize: number
@@ -280,6 +280,7 @@ export interface AppSettings {
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
+  miniPlayer: MiniPlayerSettings
   proxyMode: ProxyMode
   proxyHost: string
   proxyPort: number

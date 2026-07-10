@@ -1453,6 +1453,10 @@ async function ensureCurrentTrackLyricsLoaded(
 async function resolvePlayTarget(track: Track): Promise<string> {
   const source = getTrackSource(track)
   if (source === 'local') {
+    const authorized = await window.api.fs.isAudioFileAuthorized(track.filePath)
+    if (!authorized) {
+      throw new Error('Local audio file is outside the authorized library folders')
+    }
     return track.filePath
   }
 
@@ -1498,7 +1502,7 @@ async function handlePlaybackFallback(
   queueIndex.value = queue.value.findIndex((track) => track.id === fallback.id)
   if (queueIndex.value < 0) queueIndex.value = 0
   currentTrack.value = fallback
-  void loadAndPlay(fallback)
+  await loadAndPlay(fallback)
   return true
 }
 
@@ -1555,8 +1559,10 @@ async function handleProviderRematchFallback(
   currentTrack.value = rematched
   // Persist the rematch so playlists/library references to the expired
   // provider track are replaced — not just the transient playback queue.
-  useMusicStore().replaceTrackReference(failedTrack.id, rematched)
-  void loadAndPlay(rematched)
+  if (failedSource !== 'local') {
+    useMusicStore().replaceTrackReference(failedTrack.id, rematched)
+  }
+  await loadAndPlay(rematched)
   return true
 }
 

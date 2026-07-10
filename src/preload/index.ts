@@ -42,7 +42,12 @@ import type {
   TwilightMediaProviderRegistration,
   BpmAnalysisCompletedEvent,
   BpmAnalysisRequest,
-  BpmAnalysisRequestResult
+  BpmAnalysisRequestResult,
+  MiniPlayerBootstrap,
+  MiniPlayerCommand,
+  MiniPlayerSettings,
+  MiniPlayerSettingsPatch,
+  MiniPlayerStateSnapshot
 } from './types'
 
 const audioEngineEventCallbacks = new Set<AudioEngineEventCallback>()
@@ -52,8 +57,7 @@ const audioEngineReadyCallbacks = new Set<AudioEngineSimpleCallback>()
 const audioEngineErrorCallbacks = new Set<AudioEngineErrorCallback>()
 const audioEngineDisconnectedCallbacks = new Set<AudioEngineSimpleCallback>()
 const audioEnginePlaybackInfoCallbacks = new Set<AudioEnginePlaybackInfoCallback>()
-const audioEngineDeviceOptionsChangedCallbacks =
-  new Set<AudioEngineDeviceOptionsChangedCallback>()
+const audioEngineDeviceOptionsChangedCallbacks = new Set<AudioEngineDeviceOptionsChangedCallback>()
 const audioEngineServiceCrashCallbacks = new Set<AudioEngineServiceCrashCallback>()
 const audioEngineServiceReadyCallbacks = new Set<AudioEngineServiceReadyCallback>()
 const playerShortcutCallbacks = new Set<(action: PlayerShortcutAction) => void>()
@@ -63,6 +67,9 @@ const desktopLyricsInitSettingsCallbacks = new Set<(settings: DesktopLyricsSetti
 const desktopLyricsTrackCallbacks = new Set<(data: DesktopLyricsTrackPayload) => void>()
 const desktopLyricsTimeCallbacks = new Set<(time: number) => void>()
 const desktopLyricsSettingsUpdateCallbacks = new Set<(settings: DesktopLyricsSettings) => void>()
+const miniPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => void>()
+const miniPlayerSettingsCallbacks = new Set<(settings: MiniPlayerSettings) => void>()
+const miniPlayerCommandCallbacks = new Set<(command: MiniPlayerCommand) => void>()
 const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
 const pluginChangedCallbacks = new Set<() => void>()
 
@@ -185,6 +192,18 @@ ipcRenderer.on('desktopLyrics:position', (_event, pos: { x: number; y: number })
   ;(window as unknown as Record<string, unknown>).__dlPos = pos
 })
 
+ipcRenderer.on('miniPlayer:state', (_event, state: MiniPlayerStateSnapshot) => {
+  for (const cb of miniPlayerStateCallbacks) cb(state)
+})
+
+ipcRenderer.on('miniPlayer:settings', (_event, settings: MiniPlayerSettings) => {
+  for (const cb of miniPlayerSettingsCallbacks) cb(settings)
+})
+
+ipcRenderer.on('miniPlayer:command', (_event, command: MiniPlayerCommand) => {
+  for (const cb of miniPlayerCommandCallbacks) cb(command)
+})
+
 ipcRenderer.on('app:save-playback-session', async (_event, requestId: string) => {
   try {
     await Promise.allSettled(
@@ -194,6 +213,41 @@ ipcRenderer.on('app:save-playback-session', async (_event, requestId: string) =>
     await ipcRenderer.invoke('app:playback-session-saved', requestId)
   }
 })
+
+const miniPlayerWindowApi = {
+  getBootstrap: (): Promise<MiniPlayerBootstrap> => ipcRenderer.invoke('miniPlayer:getBootstrap'),
+  command: (command: MiniPlayerCommand): void => {
+    ipcRenderer.send('miniPlayer:command', command)
+  },
+  updateSettings: (patch: MiniPlayerSettingsPatch): Promise<MiniPlayerSettings> =>
+    ipcRenderer.invoke('miniPlayer:updateSettings', patch),
+  minimize: (): void => {
+    ipcRenderer.send('miniPlayer:minimize')
+  },
+  returnToMain: (): void => {
+    ipcRenderer.send('miniPlayer:returnToMain')
+  },
+  onState: (cb: (state: MiniPlayerStateSnapshot) => void): (() => void) => {
+    miniPlayerStateCallbacks.add(cb)
+    return () => miniPlayerStateCallbacks.delete(cb)
+  },
+  onSettings: (cb: (settings: MiniPlayerSettings) => void): (() => void) => {
+    miniPlayerSettingsCallbacks.add(cb)
+    return () => miniPlayerSettingsCallbacks.delete(cb)
+  }
+}
+
+const miniPlayerHostApi = {
+  ...miniPlayerWindowApi,
+  open: (): Promise<MiniPlayerSettings> => ipcRenderer.invoke('miniPlayer:open'),
+  publishState: (state: MiniPlayerStateSnapshot): void => {
+    ipcRenderer.send('miniPlayer:publishState', state)
+  },
+  onCommand: (cb: (command: MiniPlayerCommand) => void): (() => void) => {
+    miniPlayerCommandCallbacks.add(cb)
+    return () => miniPlayerCommandCallbacks.delete(cb)
+  }
+}
 
 const api = {
   window: {
@@ -239,6 +293,8 @@ const api = {
       ipcRenderer.invoke('fs:readAudioFile', filePath),
     getAudioFileUrl: (filePath: string): Promise<string> =>
       ipcRenderer.invoke('fs:getAudioFileUrl', filePath),
+    isAudioFileAuthorized: (filePath: string): Promise<boolean> =>
+      ipcRenderer.invoke('fs:isAudioFileAuthorized', filePath),
     onScanProgress: (cb: (progress: { current: number; total: number }) => void): (() => void) => {
       const handler = (_event, data: { current: number; total: number }): void => cb(data)
       ipcRenderer.on('fs:scanProgress', handler)
@@ -345,9 +401,7 @@ const api = {
       return () => audioEnginePlaybackInfoCallbacks.delete(cb)
     },
 
-    onDeviceOptionsChanged: (
-      cb: AudioEngineDeviceOptionsChangedCallback
-    ): (() => void) => {
+    onDeviceOptionsChanged: (cb: AudioEngineDeviceOptionsChangedCallback): (() => void) => {
       audioEngineDeviceOptionsChangedCallbacks.add(cb)
       return () => audioEngineDeviceOptionsChangedCallbacks.delete(cb)
     },
@@ -409,8 +463,7 @@ const api = {
       ipcRenderer.invoke('data:saveMusicLibrary', data),
     loadMusicLibrary: (): Promise<{ tracks: unknown[]; folders: string[] } | unknown[]> =>
       ipcRenderer.invoke('data:loadMusicLibrary'),
-    getCover: (handle: string): Promise<string | null> =>
-      ipcRenderer.invoke('cover:get', handle),
+    getCover: (handle: string): Promise<string | null> => ipcRenderer.invoke('cover:get', handle),
     getLyrics: (dir: string, fileName: string, filePath?: string): Promise<string | null> =>
       ipcRenderer.invoke('lyrics:get', dir, fileName, filePath),
     savePlaybackSession: (session: PlaybackSession | null): Promise<void> =>
@@ -418,7 +471,8 @@ const api = {
     loadPlaybackSession: (): Promise<PlaybackSession | null> =>
       ipcRenderer.invoke('data:loadPlaybackSession'),
     clearPlaybackSession: (): Promise<void> => ipcRenderer.invoke('data:clearPlaybackSession'),
-    savePlaylists: (playlists: unknown): Promise<void> => ipcRenderer.invoke('data:savePlaylists', playlists),
+    savePlaylists: (playlists: unknown): Promise<void> =>
+      ipcRenderer.invoke('data:savePlaylists', playlists),
     loadPlaylists: (): Promise<unknown> => ipcRenderer.invoke('data:loadPlaylists'),
     saveCookie: (cookie: string): Promise<void> => ipcRenderer.invoke('data:saveCookie', cookie),
     loadCookie: (): Promise<string> => ipcRenderer.invoke('data:loadCookie')
@@ -470,7 +524,10 @@ const api = {
       ipcRenderer.invoke('plugins:getIndexStatus'),
     installFromIndex: (id: string): Promise<TwilightPluginInstallResult> =>
       ipcRenderer.invoke('plugins:installFromIndex', id),
-    setNativeDspParameters: (id: string, parameters: Record<string, number>): Promise<TwilightPluginDescriptor> =>
+    setNativeDspParameters: (
+      id: string,
+      parameters: Record<string, number>
+    ): Promise<TwilightPluginDescriptor> =>
       ipcRenderer.invoke('plugins:setNativeDspParameters', id, parameters),
     onChanged: (cb: () => void): (() => void) => {
       pluginChangedCallbacks.add(cb)
@@ -479,11 +536,15 @@ const api = {
   },
   providers: {
     list: (): Promise<TwilightMediaProviderRegistration[]> => ipcRenderer.invoke('providers:list'),
-    call: (providerId: string, method: TwilightMediaProviderMethod, args: unknown[]): Promise<unknown> =>
-      ipcRenderer.invoke('providers:call', providerId, method, args)
+    call: (
+      providerId: string,
+      method: TwilightMediaProviderMethod,
+      args: unknown[]
+    ): Promise<unknown> => ipcRenderer.invoke('providers:call', providerId, method, args)
   },
   extensions: {
-    list: (): Promise<TwilightPluginExtensionContribution[]> => ipcRenderer.invoke('extensions:list'),
+    list: (): Promise<TwilightPluginExtensionContribution[]> =>
+      ipcRenderer.invoke('extensions:list'),
     executeCommand: (command: string, args?: unknown[]): Promise<unknown> =>
       ipcRenderer.invoke('extensions:executeCommand', command, args),
     readThemeStylesheet: (stylesheetPath: string): Promise<string> =>
@@ -531,7 +592,8 @@ const api = {
     requestClose: (): void => {
       ipcRenderer.send('desktopLyrics:requestClose')
     }
-  }
+  },
+  miniPlayer: miniPlayerHostApi
 }
 
 if (process.contextIsolated) {
@@ -545,13 +607,26 @@ if (process.contextIsolated) {
   window.api = exposedApiForDocument()
 }
 
-function exposedApiForDocument(): typeof api | { desktopLyrics: typeof api.desktopLyrics } {
-  return isDesktopLyricsDocument() ? { desktopLyrics: api.desktopLyrics } : api
+function exposedApiForDocument():
+  | typeof api
+  | { desktopLyrics: typeof api.desktopLyrics }
+  | { miniPlayer: typeof miniPlayerWindowApi } {
+  if (isDesktopLyricsDocument()) return { desktopLyrics: api.desktopLyrics }
+  if (isMiniPlayerDocument()) return { miniPlayer: miniPlayerWindowApi }
+  return api
 }
 
 function isDesktopLyricsDocument(): boolean {
   try {
     return window.location.pathname.endsWith('/desktop-lyrics.html')
+  } catch {
+    return false
+  }
+}
+
+function isMiniPlayerDocument(): boolean {
+  try {
+    return new URLSearchParams(window.location.search).get('window') === 'mini-player'
   } catch {
     return false
   }

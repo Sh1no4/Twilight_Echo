@@ -7,6 +7,9 @@ import type {
   EqualizerBand
 } from '../audioEngineManager'
 import type { HeadphoneCompensationSettings } from '../audioProcessingEffective'
+import type { MiniPlayerSettings } from '../../shared/miniPlayer'
+
+export type { MiniPlayerSettings } from '../../shared/miniPlayer'
 
 export type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
@@ -162,6 +165,7 @@ export interface AppSettings {
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
+  miniPlayer: MiniPlayerSettings
   proxyMode: ProxyMode
   proxyHost: string
   proxyPort: number
@@ -201,7 +205,11 @@ export interface PlayerShortcutStatus {
   error: string | null
 }
 
-export const PLAYER_SHORTCUTS: { accelerator: string; action: PlayerShortcutAction; label: string }[] = [
+export const PLAYER_SHORTCUTS: {
+  accelerator: string
+  action: PlayerShortcutAction
+  label: string
+}[] = [
   { accelerator: 'CommandOrControl+Alt+Left', action: 'previous', label: '上一首' },
   { accelerator: 'CommandOrControl+Alt+Right', action: 'next', label: '下一首' },
   { accelerator: 'CommandOrControl+Alt+Space', action: 'playPause', label: '播放 / 暂停' }

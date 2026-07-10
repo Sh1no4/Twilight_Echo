@@ -7,6 +7,7 @@ import type { PlayerShortcutAction, PlayerShortcutStatus } from '../core/types'
 import { buildPlayerShortcutStatuses } from '../core/shortcutStatus'
 import { applyDiscordRpcSetting } from './discord'
 import { applyLibraryWatchers } from '../library/watcher'
+import { hideMiniPlayerWindow, restoreMainWindowFromMiniPlayer } from './miniPlayer'
 
 let playerShortcutStatuses: PlayerShortcutStatus[] = buildPlayerShortcutStatuses(
   PLAYER_SHORTCUTS,
@@ -78,13 +79,15 @@ export function createTray(): void {
       {
         label: '显示 Twilight Echo',
         click: () => {
-          runtime.mainWindow?.show()
-          runtime.mainWindow?.focus()
+          restoreMainWindowFromMiniPlayer()
         }
       },
       {
         label: '隐藏窗口',
-        click: () => runtime.mainWindow?.hide()
+        click: () => {
+          runtime.mainWindow?.hide()
+          hideMiniPlayerWindow()
+        }
       },
       { type: 'separator' },
       {
@@ -97,8 +100,7 @@ export function createTray(): void {
     ])
   )
   runtime.tray.on('double-click', () => {
-    runtime.mainWindow?.show()
-    runtime.mainWindow?.focus()
+    restoreMainWindowFromMiniPlayer()
   })
 }
 

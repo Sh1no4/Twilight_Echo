@@ -2,8 +2,27 @@ import './assets/main.css'
 import '@phosphor-icons/web/regular'
 
 import { createApp } from 'vue'
-import App from './App.vue'
 
-const app = createApp(App)
+const query = new URLSearchParams(window.location.search)
+const isMiniPlayer = query.get('window') === 'mini-player'
+const usesNativeCorners = isMiniPlayer && query.get('nativeCorners') === '1'
+if (isMiniPlayer) {
+  document.documentElement.classList.add('mini-player-document')
+  document.body.classList.add('mini-player-document')
+  if (usesNativeCorners) {
+    document.documentElement.classList.add('mini-player-native-corners')
+    document.body.classList.add('mini-player-native-corners')
+  }
+  document.documentElement.style.background = 'transparent'
+  document.body.style.background = 'transparent'
+  document.body.style.padding = '0'
+}
 
-app.mount('#app')
+async function mountApp(): Promise<void> {
+  const rootComponent = isMiniPlayer
+    ? (await import('./mini-player/MiniPlayerApp.vue')).default
+    : (await import('./App.vue')).default
+  createApp(rootComponent).mount('#app')
+}
+
+void mountApp()

@@ -33,6 +33,7 @@ import { syncPluginProviders } from './providers'
 import { useAppNavigation } from './app/useAppNavigation'
 import { createPlaybackSessionPersistence } from './app/usePlaybackSessionPersistence'
 import { useSideMenuClearance } from './app/useSideMenuClearance'
+import { useMiniPlayerSync } from './app/useMiniPlayerSync'
 
 type TitleSurface = 'default' | 'settings' | 'streaming'
 type StreamingInitialTab = 'home' | 'library' | 'recent'
@@ -128,10 +129,41 @@ const {
   currentTime,
   duration,
   isPlaying,
+  isLoading,
+  volume,
+  playMode,
+  dominantColor,
+  queue,
+  queueIndex,
+  togglePlay,
+  next,
+  prev,
+  seek,
+  setVolume,
+  cyclePlayMode,
   restorePlaybackSession,
   createPlaybackSession,
   visualizerActive
 } = usePlayerStore()
+
+useMiniPlayerSync({
+  currentTrack,
+  isPlaying,
+  isLoading,
+  currentTime,
+  duration,
+  volume,
+  playMode,
+  dominantColor,
+  queue,
+  queueIndex,
+  togglePlay,
+  next,
+  prev,
+  seek,
+  setVolume,
+  cyclePlayMode
+})
 const { loadSettings, settings } = useSettingsStore()
 const { uiContributions, syncExtensions } = useExtensionRegistry()
 const STREAMING_ACCOUNT_PAGE_KEYS = new Set(['com.twilightecho.provider.ytmusic:ytmusic-account'])

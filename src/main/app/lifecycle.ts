@@ -14,6 +14,7 @@ import {
   applyRuntimeSettings
 } from '../integrations/shortcutsTray'
 import { showDesktopLyrics, setupDesktopLyricsIpc } from '../integrations/desktopLyrics'
+import { restoreMainWindowFromMiniPlayer, setupMiniPlayerIpc } from '../integrations/miniPlayer'
 import { setupNcmIpc, setupNcmApi } from '../ncm/api'
 import { setupAudioEngineIpc } from '../audio/engineIpc'
 import { setupBpmAnalysisIpc } from '../bpm/bpmIpc'
@@ -78,6 +79,10 @@ export function startApp(): void {
     ])
 
     app.on('second-instance', () => {
+      if (runtime.miniPlayerWindow && !runtime.miniPlayerWindow.isDestroyed()) {
+        restoreMainWindowFromMiniPlayer()
+        return
+      }
       const win = runtime.mainWindow
       if (!win || win.isDestroyed()) return
       if (win.isMinimized()) win.restore()
@@ -148,6 +153,7 @@ export function startApp(): void {
 
       setupDataIpc()
       setupDesktopLyricsIpc()
+      setupMiniPlayerIpc()
 
       if (runtime.appSettings.desktopLyrics.enabled) {
         showDesktopLyrics()
@@ -174,7 +180,11 @@ export function startApp(): void {
       }
 
       app.on('activate', function () {
-        if (BrowserWindow.getAllWindows().length === 0) createWindow()
+        if (runtime.miniPlayerWindow && !runtime.miniPlayerWindow.isDestroyed()) {
+          restoreMainWindowFromMiniPlayer()
+        } else if (BrowserWindow.getAllWindows().length === 0) {
+          createWindow()
+        }
       })
     })
 

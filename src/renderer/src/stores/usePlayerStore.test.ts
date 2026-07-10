@@ -233,6 +233,25 @@ test('resolved streaming targets are patched back into restored queues', () => {
   )
 })
 
+test('mini player switching recovers from stale unauthorized local tracks', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const preloadSource = readFileSync(new URL('../../../preload/index.ts', import.meta.url), 'utf8')
+  const windowSource = readFileSync(new URL('../../../main/app/window.ts', import.meta.url), 'utf8')
+  const resolvePlayTarget = extractInternalFunctionBody(source, 'resolvePlayTarget')
+  const handlePlaybackFallback = extractInternalFunctionBody(source, 'handlePlaybackFallback')
+  const handleProviderRematchFallback = extractInternalFunctionBody(
+    source,
+    'handleProviderRematchFallback'
+  )
+
+  assert.match(resolvePlayTarget, /window\.api\.fs\.isAudioFileAuthorized\(track\.filePath\)/)
+  assert.match(preloadSource, /ipcRenderer\.invoke\('fs:isAudioFileAuthorized', filePath\)/)
+  assert.match(handlePlaybackFallback, /await loadAndPlay\(fallback\)/)
+  assert.match(handleProviderRematchFallback, /if \(failedSource !== 'local'\)/)
+  assert.match(handleProviderRematchFallback, /await loadAndPlay\(rematched\)/)
+  assert.match(windowSource, /backgroundThrottling: false/)
+})
+
 test('provider queues use native for resolved current targets without native queue delegation', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const syncNativeQueueState = extractInternalFunctionBody(source, 'syncNativeQueueState')
@@ -303,16 +322,16 @@ test('player store does not pretend DSP bypass is strict bit-perfect mode', () =
 
 test('local dashboard playback keeps a multi-track queue for next and previous controls', () => {
   const source = readFileSync(new URL('../components/LocalDashboard.vue', import.meta.url), 'utf8')
-  const playWithQueue = source.match(/function playWithQueue[\s\S]*?\n}/)?.[0] ?? ''
+  const playDashboardTrack = source.match(/function playDashboardTrack[\s\S]*?\n}/)?.[0] ?? ''
 
   assert.match(source, /const heroTrack = computed<Track \| null>/)
   assert.match(source, /@click="handleHeroPlay"/)
-  assert.match(source, /@click="playWithQueue\(track\)"/)
-  assert.match(source, /@click="playWithQueue\(entry\.track\)"/)
-  assert.match(playWithQueue, /QUEUE_WINDOW/)
-  assert.match(playWithQueue, /tracks\.value\.slice\(queueStart, end\)/)
+  assert.match(source, /@click="playDashboardTrack\(track\)"/)
+  assert.match(source, /@click="playDashboardTrack\(entry\.track\)"/)
+  assert.match(playDashboardTrack, /DASHBOARD_QUEUE_WINDOW/)
+  assert.match(playDashboardTrack, /tracks\.value\.slice\(queueStart, end\)/)
   assert.match(
-    playWithQueue,
+    playDashboardTrack,
     /if \(sourceIndex < 0\) \{\s*playTrack\(track, \[track\]\)\s*return\s*\}/,
     'dashboard playback should only fall back to a single-track queue when the track is not in the local library'
   )
@@ -383,7 +402,7 @@ test('playback failure tries a same-song fallback variant from the queue', () =>
   assert.match(handlePlaybackFallback, /sourceReliability: getProviderSourceReliability\(\)/)
   assert.match(handlePlaybackFallback, /queue\.value = queue\.value\.map/)
   assert.match(handlePlaybackFallback, /currentTrack\.value = fallback/)
-  assert.match(handlePlaybackFallback, /void loadAndPlay\(fallback/)
+  assert.match(handlePlaybackFallback, /await loadAndPlay\(fallback\)/)
   assert.match(loadAndPlay, /if \(await handlePlaybackFallback\(track, err, loadToken\)\) return/)
 })
 
@@ -772,7 +791,7 @@ test('provider playback failure searches provider results to rematch expired ids
   )
   assert.match(handleProviderRematchFallback, /queue\.value = queue\.value\.map/)
   assert.match(handleProviderRematchFallback, /currentTrack\.value = rematched/)
-  assert.match(handleProviderRematchFallback, /void loadAndPlay\(rematched\)/)
+  assert.match(handleProviderRematchFallback, /await loadAndPlay\(rematched\)/)
 })
 
 test('missing local playback searches provider results instead of stopping at the local file error', () => {

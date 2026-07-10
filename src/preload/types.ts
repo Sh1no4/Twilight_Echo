@@ -1,5 +1,14 @@
 ﻿export type AudioEngineEventCallback = (event: { name: string; data: unknown }) => void
 export type AudioEngineEndFileCallback = (reason: string) => void
+
+export type {
+  MiniPlayerBootstrap,
+  MiniPlayerCommand,
+  MiniPlayerSettings,
+  MiniPlayerSettingsPatch,
+  MiniPlayerStateSnapshot
+} from '../shared/miniPlayer'
+
 export type AudioEngineSimpleCallback = () => void
 export type AudioEngineErrorCallback = (message: string) => void
 export type AudioEnginePlaybackInfoCallback = (info: PlaybackInfo) => void
@@ -524,6 +533,7 @@ export interface AppSettings {
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
+  miniPlayer: import('../shared/miniPlayer').MiniPlayerSettings
   proxyMode: ProxyMode
   proxyHost: string
   proxyPort: number
@@ -606,11 +616,7 @@ export interface AudioDeviceOption {
   capabilityReason?: string
 }
 
-export type AudioCapabilitySupportState =
-  | 'verified'
-  | 'runtime-probed'
-  | 'unsupported'
-  | 'unknown'
+export type AudioCapabilitySupportState = 'verified' | 'runtime-probed' | 'unsupported' | 'unknown'
 
 export interface TwilightPluginDescriptor {
   id: string

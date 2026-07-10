@@ -38,6 +38,7 @@ import type {
   UiDensity
 } from './types'
 import type { PlayMode } from '../audioEngineManager'
+import { DEFAULT_MINI_PLAYER_SETTINGS, normalizeMiniPlayerSettings } from '../../shared/miniPlayer'
 import {
   loadSettingsFile,
   writeSettingsFile,
@@ -177,6 +178,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   headphoneCompensation: DEFAULT_HEADPHONE_COMPENSATION,
   audioEqPresets: [],
   desktopLyrics: { ...DEFAULT_DESKTOP_LYRICS },
+  miniPlayer: { ...DEFAULT_MINI_PLAYER_SETTINGS },
   proxyMode: 'auto',
   proxyHost: '',
   proxyPort: 0,
@@ -609,6 +611,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     headphoneCompensation: normalizeHeadphoneCompensationSettings(settings.headphoneCompensation),
     audioEqPresets: normalizeAudioEqPresets(settings.audioEqPresets),
     desktopLyrics: normalizeDesktopLyrics(settings.desktopLyrics),
+    miniPlayer: normalizeMiniPlayerSettings(settings.miniPlayer),
     proxyMode: normalizeProxyMode(settings.proxyMode),
     proxyHost:
       typeof settings.proxyHost === 'string' ? settings.proxyHost.trim().slice(0, 255) : '',

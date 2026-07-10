@@ -406,6 +406,16 @@ export function setupDataIpc(): void {
     return `twilight-audio:///${encodeAudioFileUrlPath(resolvedPath)}`
   })
 
+  ipcMain.handle('fs:isAudioFileAuthorized', async (event, filePath: string) => {
+    assertTrustedIpcSender(event, 'filesystem IPC')
+    try {
+      await resolveAuthorizedAudioFile(normalizeLocalPath(filePath, 'audio file path'))
+      return true
+    } catch {
+      return false
+    }
+  })
+
   const userDataPath = app.getPath('userData')
   const MUSIC_LIBRARY_FILE = join(userDataPath, 'music-library.json')
   const NCM_COOKIE_FILE = join(userDataPath, 'ncm-cookie.json')

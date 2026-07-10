@@ -1,13 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-const {
-  buildMetadataMatchCandidates,
-  findBestMetadataMatch,
-  enrichLocalTrackMetadata
-} = (await import(
-  new URL('./musicMetadataMatching.ts', import.meta.url).href
-)) as typeof import('./musicMetadataMatching')
+const { buildMetadataMatchCandidates, findBestMetadataMatch, enrichLocalTrackMetadata } =
+  (await import(
+    new URL('./musicMetadataMatching.ts', import.meta.url).href
+  )) as typeof import('./musicMetadataMatching')
 
 const localTrack = {
   id: 'local:abc',
@@ -79,6 +76,31 @@ test('findBestMetadataMatch rejects far-duration candidates even when title and 
   assert.equal(match, null)
 })
 
+test('findBestMetadataMatch normalizes spacing around artist separators', () => {
+  const match = findBestMetadataMatch(
+    {
+      ...localTrack,
+      title: 'コンティニュー！',
+      artist: 'lapix/藍月なくる',
+      duration: 258
+    },
+    [
+      {
+        ...localTrack,
+        id: 'ncm:1939672461',
+        title: 'コンティニュー！',
+        artist: 'lapix / 藍月なくる',
+        filePath: 'ncm:1939672461',
+        source: 'ncm',
+        duration: 258
+      }
+    ]
+  )
+
+  assert.equal(match?.track.id, 'ncm:1939672461')
+  assert.equal(match?.confidence, 'high')
+})
+
 test('buildMetadataMatchCandidates ranks provider candidates and exposes enrichment hints', () => {
   const candidates = buildMetadataMatchCandidates(localTrack, [
     {
@@ -136,7 +158,10 @@ test('buildMetadataMatchCandidates ranks provider candidates and exposes enrichm
     }
   ])
 
-  assert.deepEqual(candidates.map((candidate) => candidate.track.id), ['bili:high', 'ncm:medium'])
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.track.id),
+    ['bili:high', 'ncm:medium']
+  )
   assert.equal(candidates[0].providerId, 'bili')
   assert.equal(candidates[0].sourceLabel, 'bili')
   assert.equal(candidates[0].confidence, 'high')
@@ -170,7 +195,10 @@ test('buildMetadataMatchCandidates keeps provider search ranking when scores tie
 
   const candidates = buildMetadataMatchCandidates(localTrack, [first, second])
 
-  assert.deepEqual(candidates.map((candidate) => candidate.track.id), ['ncm:first', 'bili:second'])
+  assert.deepEqual(
+    candidates.map((candidate) => candidate.track.id),
+    ['ncm:first', 'bili:second']
+  )
 })
 
 test('enrichLocalTrackMetadata fills missing cover and lyrics without replacing local playback identity', () => {
