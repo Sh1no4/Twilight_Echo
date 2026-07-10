@@ -11,6 +11,7 @@ import { release } from 'os'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import {
+  DEFAULT_MINI_PLAYER_STYLE_ID,
   EMPTY_MINI_PLAYER_STATE,
   normalizeMiniPlayerCommand,
   normalizeMiniPlayerSettings,
@@ -53,6 +54,14 @@ function getMiniPlayerIconPath(): string | undefined {
 
 function currentMiniPlayerSettings(): MiniPlayerSettings {
   return normalizeMiniPlayerSettings(runtime.appSettings.miniPlayer)
+}
+
+function getMiniPlayerFallbackColor(settings: MiniPlayerSettings): string {
+  return (
+    settings.profiles[settings.activeStyleId]?.background.fallbackColor ??
+    settings.profiles[DEFAULT_MINI_PLAYER_STYLE_ID]?.background.fallbackColor ??
+    '#11121d'
+  )
 }
 
 function resolveInitialBounds(settings: MiniPlayerSettings): Electron.Rectangle {
@@ -99,7 +108,7 @@ function applyMiniPlayerWindowSettings(settings: MiniPlayerSettings): void {
     win.setAlwaysOnTop(false)
   }
   if (supportsNativeRoundedMiniPlayerWindow()) {
-    win.setBackgroundColor(settings.backgroundColor)
+    win.setBackgroundColor(getMiniPlayerFallbackColor(settings))
   }
   win.setMovable(!settings.positionLocked)
   fitMiniPlayerToWorkArea(win, settings)
@@ -167,7 +176,7 @@ function createMiniPlayerWindow(): BrowserWindow {
     show: false,
     frame: false,
     transparent: !nativeRoundedWindow,
-    backgroundColor: nativeRoundedWindow ? settings.backgroundColor : '#00000000',
+    backgroundColor: nativeRoundedWindow ? getMiniPlayerFallbackColor(settings) : '#00000000',
     alwaysOnTop: settings.alwaysOnTop,
     movable: !settings.positionLocked,
     resizable: false,
@@ -191,7 +200,7 @@ function createMiniPlayerWindow(): BrowserWindow {
   })
   runtime.miniPlayerWindow = win
 
-  win.setBackgroundColor(nativeRoundedWindow ? settings.backgroundColor : '#00000000')
+  win.setBackgroundColor(nativeRoundedWindow ? getMiniPlayerFallbackColor(settings) : '#00000000')
 
   applyMiniPlayerWindowSettings(settings)
 
@@ -287,8 +296,8 @@ function updateMiniPlayerSettings(patch: unknown): MiniPlayerSettings {
   const allowedKeys: (keyof MiniPlayerSettingsPatch)[] = [
     'alwaysOnTop',
     'positionLocked',
-    'styleId',
-    'backgroundColor',
+    'activeStyleId',
+    'profiles',
     'windowWidth',
     'windowHeight'
   ]

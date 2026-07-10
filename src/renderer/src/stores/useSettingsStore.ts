@@ -1,4 +1,5 @@
 import { computed, ref, type ComputedRef, type Ref } from 'vue'
+import { DEFAULT_MINI_PLAYER_SETTINGS, cloneMiniPlayerSettings } from '../../../shared/miniPlayer'
 import type {
   AppSettings,
   AppTheme,
@@ -190,16 +191,7 @@ const fallbackSettings: AppSettings = {
     clickThrough: false,
     maxLines: 2
   },
-  miniPlayer: {
-    windowX: -1,
-    windowY: -1,
-    windowWidth: 500,
-    windowHeight: 190,
-    alwaysOnTop: false,
-    positionLocked: false,
-    styleId: 'aurora-glass',
-    backgroundColor: '#11121d'
-  },
+  miniPlayer: cloneMiniPlayerSettings(DEFAULT_MINI_PLAYER_SETTINGS),
   proxyMode: 'auto',
   proxyHost: '',
   proxyPort: 0,

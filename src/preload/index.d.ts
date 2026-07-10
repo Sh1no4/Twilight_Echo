@@ -299,6 +299,63 @@ interface DesktopLyricsSettings {
   maxLines: number
 }
 
+type MiniPlayerBackgroundKind = 'solid' | 'gradient' | 'cover' | 'image'
+type MiniPlayerImageFit = 'cover' | 'contain'
+type MiniPlayerLayoutPreference = 'auto' | 'compact' | 'standard' | 'wide'
+
+interface MiniPlayerBackgroundSettings {
+  kind: MiniPlayerBackgroundKind
+  solidColor: string
+  fallbackColor: string
+  gradientStart: string
+  gradientEnd: string
+  gradientAngle: number
+  imageUrl: string
+  imageFit: MiniPlayerImageFit
+  blur: number
+  brightness: number
+  saturation: number
+  opacity: number
+  overlayColor: string
+  overlayOpacity: number
+}
+
+interface MiniPlayerAppearanceSettings {
+  accentMode: 'track' | 'custom'
+  accentColor: string
+  textMode: 'auto' | 'custom'
+  primaryTextColor: string
+  mutedTextColor: string
+  surfaceOpacity: number
+  glassBlur: number
+  cornerRadius: number
+  borderWidth: number
+  borderColor: string
+  shadowStrength: number
+}
+
+interface MiniPlayerLayoutSettings {
+  preference: MiniPlayerLayoutPreference
+}
+
+interface MiniPlayerVisibilitySettings {
+  artwork: boolean
+  album: boolean
+  playbackState: boolean
+  equalizer: boolean
+  time: boolean
+  volume: boolean
+  playMode: boolean
+  queuePosition: boolean
+}
+
+interface MiniPlayerThemeProfile {
+  background: MiniPlayerBackgroundSettings
+  appearance: MiniPlayerAppearanceSettings
+  layout: MiniPlayerLayoutSettings
+  visibility: MiniPlayerVisibilitySettings
+}
+
 interface MiniPlayerSettings {
   windowX: number
   windowY: number
@@ -306,8 +363,8 @@ interface MiniPlayerSettings {
   windowHeight: number
   alwaysOnTop: boolean
   positionLocked: boolean
-  styleId: string
-  backgroundColor: string
+  activeStyleId: string
+  profiles: Record<string, MiniPlayerThemeProfile>
 }
 
 interface MiniPlayerTrackSnapshot {
@@ -342,12 +399,7 @@ type MiniPlayerCommand =
 type MiniPlayerSettingsPatch = Partial<
   Pick<
     MiniPlayerSettings,
-    | 'alwaysOnTop'
-    | 'positionLocked'
-    | 'styleId'
-    | 'backgroundColor'
-    | 'windowWidth'
-    | 'windowHeight'
+    'alwaysOnTop' | 'positionLocked' | 'activeStyleId' | 'profiles' | 'windowWidth' | 'windowHeight'
   >
 >
 

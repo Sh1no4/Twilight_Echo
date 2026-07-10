@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch, type CSSProperties } 
 import {
   DEFAULT_MINI_PLAYER_SETTINGS,
   EMPTY_MINI_PLAYER_STATE,
+  cloneMiniPlayerSettings,
   type MiniPlayerCommand,
   type MiniPlayerSettings,
   type MiniPlayerSettingsPatch,
@@ -11,11 +12,11 @@ import {
 import { getNextMiniPlayerStyle, resolveMiniPlayerStyle } from './styles'
 
 const state = ref<MiniPlayerStateSnapshot>({ ...EMPTY_MINI_PLAYER_STATE })
-const settings = ref<MiniPlayerSettings>({ ...DEFAULT_MINI_PLAYER_SETTINGS })
+const settings = ref<MiniPlayerSettings>(cloneMiniPlayerSettings(DEFAULT_MINI_PLAYER_SETTINGS))
 const ready = ref(false)
 const coverFailed = ref(false)
 
-const activeStyle = computed(() => resolveMiniPlayerStyle(settings.value.styleId))
+const activeStyle = computed(() => resolveMiniPlayerStyle(settings.value.activeStyleId))
 const activeAccent = computed(() =>
   activeStyle.value.accentMode === 'fixed'
     ? activeStyle.value.fixedAccent || '#5966d9'
@@ -110,10 +111,7 @@ function toggleAlwaysOnTop(): void {
 function switchStyle(): void {
   const nextStyle = getNextMiniPlayerStyle(activeStyle.value.id)
   void updateWindowSettings({
-    styleId: nextStyle.id,
-    backgroundColor: nextStyle.nativeBackgroundColor,
-    windowWidth: nextStyle.windowSize.width,
-    windowHeight: nextStyle.windowSize.height
+    activeStyleId: nextStyle.id
   })
 }
 

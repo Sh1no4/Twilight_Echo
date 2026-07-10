@@ -1,8 +1,66 @@
 export const DEFAULT_MINI_PLAYER_STYLE_ID = 'aurora-glass'
+export const PORCELAIN_MINI_PLAYER_STYLE_ID = 'porcelain'
 
 export interface MiniPlayerWindowSize {
   width: number
   height: number
+}
+
+export type MiniPlayerBackgroundKind = 'solid' | 'gradient' | 'cover' | 'image'
+export type MiniPlayerImageFit = 'cover' | 'contain'
+export type MiniPlayerLayoutPreference = 'auto' | 'compact' | 'standard' | 'wide'
+
+export interface MiniPlayerBackgroundSettings {
+  kind: MiniPlayerBackgroundKind
+  solidColor: string
+  fallbackColor: string
+  gradientStart: string
+  gradientEnd: string
+  gradientAngle: number
+  imageUrl: string
+  imageFit: MiniPlayerImageFit
+  blur: number
+  brightness: number
+  saturation: number
+  opacity: number
+  overlayColor: string
+  overlayOpacity: number
+}
+
+export interface MiniPlayerAppearanceSettings {
+  accentMode: 'track' | 'custom'
+  accentColor: string
+  textMode: 'auto' | 'custom'
+  primaryTextColor: string
+  mutedTextColor: string
+  surfaceOpacity: number
+  glassBlur: number
+  cornerRadius: number
+  borderWidth: number
+  borderColor: string
+  shadowStrength: number
+}
+
+export interface MiniPlayerLayoutSettings {
+  preference: MiniPlayerLayoutPreference
+}
+
+export interface MiniPlayerVisibilitySettings {
+  artwork: boolean
+  album: boolean
+  playbackState: boolean
+  equalizer: boolean
+  time: boolean
+  volume: boolean
+  playMode: boolean
+  queuePosition: boolean
+}
+
+export interface MiniPlayerThemeProfile {
+  background: MiniPlayerBackgroundSettings
+  appearance: MiniPlayerAppearanceSettings
+  layout: MiniPlayerLayoutSettings
+  visibility: MiniPlayerVisibilitySettings
 }
 
 export interface MiniPlayerSettings {
@@ -12,8 +70,8 @@ export interface MiniPlayerSettings {
   windowHeight: number
   alwaysOnTop: boolean
   positionLocked: boolean
-  styleId: string
-  backgroundColor: string
+  activeStyleId: string
+  profiles: Record<string, MiniPlayerThemeProfile>
 }
 
 export interface MiniPlayerTrackSnapshot {
@@ -48,18 +106,114 @@ export type MiniPlayerCommand =
 export type MiniPlayerSettingsPatch = Partial<
   Pick<
     MiniPlayerSettings,
-    | 'alwaysOnTop'
-    | 'positionLocked'
-    | 'styleId'
-    | 'backgroundColor'
-    | 'windowWidth'
-    | 'windowHeight'
+    'alwaysOnTop' | 'positionLocked' | 'activeStyleId' | 'profiles' | 'windowWidth' | 'windowHeight'
   >
 >
 
 export interface MiniPlayerBootstrap {
   state: MiniPlayerStateSnapshot
   settings: MiniPlayerSettings
+}
+
+const DEFAULT_MINI_PLAYER_VISIBILITY: MiniPlayerVisibilitySettings = {
+  artwork: true,
+  album: true,
+  playbackState: true,
+  equalizer: true,
+  time: true,
+  volume: true,
+  playMode: true,
+  queuePosition: false
+}
+
+export const DEFAULT_MINI_PLAYER_THEME_PROFILES: Readonly<Record<string, MiniPlayerThemeProfile>> =
+  Object.freeze({
+    [DEFAULT_MINI_PLAYER_STYLE_ID]: {
+      background: {
+        kind: 'cover',
+        solidColor: '#11121d',
+        fallbackColor: '#11121d',
+        gradientStart: '#20182f',
+        gradientEnd: '#0a0c18',
+        gradientAngle: 138,
+        imageUrl: '',
+        imageFit: 'cover',
+        blur: 32,
+        brightness: 100,
+        saturation: 145,
+        opacity: 36,
+        overlayColor: '#070812',
+        overlayOpacity: 42
+      },
+      appearance: {
+        accentMode: 'track',
+        accentColor: '#7c4dff',
+        textMode: 'auto',
+        primaryTextColor: '#ffffff',
+        mutedTextColor: '#b8b7c2',
+        surfaceOpacity: 94,
+        glassBlur: 18,
+        cornerRadius: 25,
+        borderWidth: 1,
+        borderColor: '#353542',
+        shadowStrength: 80
+      },
+      layout: { preference: 'auto' },
+      visibility: { ...DEFAULT_MINI_PLAYER_VISIBILITY }
+    },
+    [PORCELAIN_MINI_PLAYER_STYLE_ID]: {
+      background: {
+        kind: 'cover',
+        solidColor: '#f4f5fb',
+        fallbackColor: '#f4f5fb',
+        gradientStart: '#ffffff',
+        gradientEnd: '#f1f3fc',
+        gradientAngle: 145,
+        imageUrl: '',
+        imageFit: 'cover',
+        blur: 32,
+        brightness: 108,
+        saturation: 110,
+        opacity: 18,
+        overlayColor: '#f5f7ff',
+        overlayOpacity: 58
+      },
+      appearance: {
+        accentMode: 'custom',
+        accentColor: '#5966d9',
+        textMode: 'auto',
+        primaryTextColor: '#1b2034',
+        mutedTextColor: '#656a7b',
+        surfaceOpacity: 97,
+        glassBlur: 14,
+        cornerRadius: 25,
+        borderWidth: 1,
+        borderColor: '#d7d9e5',
+        shadowStrength: 35
+      },
+      layout: { preference: 'auto' },
+      visibility: { ...DEFAULT_MINI_PLAYER_VISIBILITY }
+    }
+  })
+
+const BUILT_IN_MINI_PLAYER_STYLE_IDS = new Set(Object.keys(DEFAULT_MINI_PLAYER_THEME_PROFILES))
+
+export function cloneMiniPlayerThemeProfile(
+  profile: MiniPlayerThemeProfile
+): MiniPlayerThemeProfile {
+  return {
+    background: { ...profile.background },
+    appearance: { ...profile.appearance },
+    layout: { ...profile.layout },
+    visibility: { ...profile.visibility }
+  }
+}
+
+export function createDefaultMiniPlayerThemeProfile(styleId: string): MiniPlayerThemeProfile {
+  const profile =
+    DEFAULT_MINI_PLAYER_THEME_PROFILES[styleId] ??
+    DEFAULT_MINI_PLAYER_THEME_PROFILES[DEFAULT_MINI_PLAYER_STYLE_ID]
+  return cloneMiniPlayerThemeProfile(profile)
 }
 
 export const DEFAULT_MINI_PLAYER_SETTINGS: Readonly<MiniPlayerSettings> = Object.freeze({
@@ -69,14 +223,28 @@ export const DEFAULT_MINI_PLAYER_SETTINGS: Readonly<MiniPlayerSettings> = Object
   windowHeight: 190,
   alwaysOnTop: false,
   positionLocked: false,
-  styleId: DEFAULT_MINI_PLAYER_STYLE_ID,
-  backgroundColor: '#11121d'
+  activeStyleId: DEFAULT_MINI_PLAYER_STYLE_ID,
+  profiles: {
+    [DEFAULT_MINI_PLAYER_STYLE_ID]: createDefaultMiniPlayerThemeProfile(
+      DEFAULT_MINI_PLAYER_STYLE_ID
+    ),
+    [PORCELAIN_MINI_PLAYER_STYLE_ID]: createDefaultMiniPlayerThemeProfile(
+      PORCELAIN_MINI_PLAYER_STYLE_ID
+    )
+  }
 })
 
-const BUILT_IN_MINI_PLAYER_BACKGROUND_COLORS: Readonly<Record<string, string>> = Object.freeze({
-  [DEFAULT_MINI_PLAYER_STYLE_ID]: '#11121d',
-  porcelain: '#f4f5fb'
-})
+export function cloneMiniPlayerSettings(settings: MiniPlayerSettings): MiniPlayerSettings {
+  return {
+    ...settings,
+    profiles: Object.fromEntries(
+      Object.entries(settings.profiles).map(([id, profile]) => [
+        id,
+        cloneMiniPlayerThemeProfile(profile)
+      ])
+    )
+  }
+}
 
 export const EMPTY_MINI_PLAYER_STATE: Readonly<MiniPlayerStateSnapshot> = Object.freeze({
   track: null,
@@ -94,13 +262,57 @@ export const EMPTY_MINI_PLAYER_STATE: Readonly<MiniPlayerStateSnapshot> = Object
 const MAX_TRACK_TEXT_LENGTH = 512
 const MAX_COVER_URL_LENGTH = 16_384
 const MAX_STYLE_ID_LENGTH = 64
+const MAX_BACKGROUND_IMAGE_URL_LENGTH = 512
+const MAX_THEME_PROFILE_COUNT = 32
 const MAX_PLAYBACK_SECONDS = 60 * 60 * 24 * 7
 const MAX_QUEUE_LENGTH = 100_000
 
 export function normalizeMiniPlayerSettings(raw: unknown): MiniPlayerSettings {
   const value = asRecord(raw)
-  const styleId = normalizeStyleId(value.styleId)
-  const builtInBackgroundColor = BUILT_IN_MINI_PLAYER_BACKGROUND_COLORS[styleId]
+  const rawProfiles = asRecord(value.profiles)
+  const profiles: Record<string, MiniPlayerThemeProfile> = {}
+
+  for (const styleId of BUILT_IN_MINI_PLAYER_STYLE_IDS) {
+    const fallback = createDefaultMiniPlayerThemeProfile(styleId)
+    profiles[styleId] = normalizeMiniPlayerThemeProfile(rawProfiles[styleId], fallback)
+  }
+
+  let customProfileCount = 0
+  for (const [rawStyleId, rawProfile] of Object.entries(rawProfiles)) {
+    const styleId = normalizeOptionalStyleId(rawStyleId)
+    if (!styleId || BUILT_IN_MINI_PLAYER_STYLE_IDS.has(styleId)) continue
+    if (customProfileCount >= MAX_THEME_PROFILE_COUNT) break
+    profiles[styleId] = normalizeMiniPlayerThemeProfile(
+      rawProfile,
+      createDefaultMiniPlayerThemeProfile(DEFAULT_MINI_PLAYER_STYLE_ID)
+    )
+    customProfileCount += 1
+  }
+
+  const hasProfiles = Object.prototype.hasOwnProperty.call(value, 'profiles')
+  const legacyStyleId = normalizeOptionalStyleId(value.styleId) ?? DEFAULT_MINI_PLAYER_STYLE_ID
+  const legacyBackgroundColor = normalizeOptionalHexColor(value.backgroundColor)
+  if (!hasProfiles && (value.styleId !== undefined || legacyBackgroundColor)) {
+    const existing =
+      profiles[legacyStyleId] ?? createDefaultMiniPlayerThemeProfile(DEFAULT_MINI_PLAYER_STYLE_ID)
+    profiles[legacyStyleId] = {
+      ...existing,
+      background: {
+        ...existing.background,
+        ...(legacyBackgroundColor
+          ? { solidColor: legacyBackgroundColor, fallbackColor: legacyBackgroundColor }
+          : {})
+      }
+    }
+  }
+
+  const requestedStyleId =
+    normalizeOptionalStyleId(value.activeStyleId) ??
+    normalizeOptionalStyleId(value.styleId) ??
+    DEFAULT_MINI_PLAYER_STYLE_ID
+  const activeStyleId = BUILT_IN_MINI_PLAYER_STYLE_IDS.has(requestedStyleId)
+    ? requestedStyleId
+    : DEFAULT_MINI_PLAYER_STYLE_ID
 
   return {
     windowX: normalizeCoordinate(value.windowX, DEFAULT_MINI_PLAYER_SETTINGS.windowX),
@@ -108,23 +320,174 @@ export function normalizeMiniPlayerSettings(raw: unknown): MiniPlayerSettings {
     windowWidth: clampFiniteNumber(
       value.windowWidth,
       360,
-      760,
+      900,
       DEFAULT_MINI_PLAYER_SETTINGS.windowWidth,
       true
     ),
     windowHeight: clampFiniteNumber(
       value.windowHeight,
       140,
-      420,
+      520,
       DEFAULT_MINI_PLAYER_SETTINGS.windowHeight,
       true
     ),
     alwaysOnTop: value.alwaysOnTop === true,
     positionLocked: value.positionLocked === true,
-    styleId,
-    backgroundColor:
-      builtInBackgroundColor ??
-      normalizeHexColor(value.backgroundColor, DEFAULT_MINI_PLAYER_SETTINGS.backgroundColor)
+    activeStyleId,
+    profiles
+  }
+}
+
+export function normalizeMiniPlayerThemeProfile(
+  raw: unknown,
+  fallback: MiniPlayerThemeProfile
+): MiniPlayerThemeProfile {
+  const value = asRecord(raw)
+  const backgroundValue = asRecord(value.background)
+  const appearanceValue = asRecord(value.appearance)
+  const layoutValue = asRecord(value.layout)
+  const visibilityValue = asRecord(value.visibility)
+  const imageUrl = normalizeBackgroundImageUrl(backgroundValue.imageUrl)
+  const requestedBackgroundKind = normalizeBackgroundKind(
+    backgroundValue.kind,
+    fallback.background.kind
+  )
+
+  return {
+    background: {
+      kind: requestedBackgroundKind === 'image' && !imageUrl ? 'solid' : requestedBackgroundKind,
+      solidColor: normalizeHexColor(backgroundValue.solidColor, fallback.background.solidColor),
+      fallbackColor: normalizeHexColor(
+        backgroundValue.fallbackColor,
+        fallback.background.fallbackColor
+      ),
+      gradientStart: normalizeHexColor(
+        backgroundValue.gradientStart,
+        fallback.background.gradientStart
+      ),
+      gradientEnd: normalizeHexColor(backgroundValue.gradientEnd, fallback.background.gradientEnd),
+      gradientAngle: clampFiniteNumber(
+        backgroundValue.gradientAngle,
+        0,
+        360,
+        fallback.background.gradientAngle,
+        true
+      ),
+      imageUrl,
+      imageFit:
+        backgroundValue.imageFit === 'contain'
+          ? 'contain'
+          : backgroundValue.imageFit === 'cover'
+            ? 'cover'
+            : fallback.background.imageFit,
+      blur: clampFiniteNumber(backgroundValue.blur, 0, 40, fallback.background.blur, true),
+      brightness: clampFiniteNumber(
+        backgroundValue.brightness,
+        50,
+        150,
+        fallback.background.brightness,
+        true
+      ),
+      saturation: clampFiniteNumber(
+        backgroundValue.saturation,
+        0,
+        200,
+        fallback.background.saturation,
+        true
+      ),
+      opacity: clampFiniteNumber(
+        backgroundValue.opacity,
+        0,
+        100,
+        fallback.background.opacity,
+        true
+      ),
+      overlayColor: normalizeHexColor(
+        backgroundValue.overlayColor,
+        fallback.background.overlayColor
+      ),
+      overlayOpacity: clampFiniteNumber(
+        backgroundValue.overlayOpacity,
+        0,
+        90,
+        fallback.background.overlayOpacity,
+        true
+      )
+    },
+    appearance: {
+      accentMode:
+        appearanceValue.accentMode === 'custom' || appearanceValue.accentMode === 'track'
+          ? appearanceValue.accentMode
+          : fallback.appearance.accentMode,
+      accentColor: normalizeHexColor(appearanceValue.accentColor, fallback.appearance.accentColor),
+      textMode:
+        appearanceValue.textMode === 'custom' || appearanceValue.textMode === 'auto'
+          ? appearanceValue.textMode
+          : fallback.appearance.textMode,
+      primaryTextColor: normalizeHexColor(
+        appearanceValue.primaryTextColor,
+        fallback.appearance.primaryTextColor
+      ),
+      mutedTextColor: normalizeHexColor(
+        appearanceValue.mutedTextColor,
+        fallback.appearance.mutedTextColor
+      ),
+      surfaceOpacity: clampFiniteNumber(
+        appearanceValue.surfaceOpacity,
+        40,
+        100,
+        fallback.appearance.surfaceOpacity,
+        true
+      ),
+      glassBlur: clampFiniteNumber(
+        appearanceValue.glassBlur,
+        0,
+        40,
+        fallback.appearance.glassBlur,
+        true
+      ),
+      cornerRadius: clampFiniteNumber(
+        appearanceValue.cornerRadius,
+        0,
+        36,
+        fallback.appearance.cornerRadius,
+        true
+      ),
+      borderWidth: clampFiniteNumber(
+        appearanceValue.borderWidth,
+        0,
+        3,
+        fallback.appearance.borderWidth,
+        true
+      ),
+      borderColor: normalizeHexColor(appearanceValue.borderColor, fallback.appearance.borderColor),
+      shadowStrength: clampFiniteNumber(
+        appearanceValue.shadowStrength,
+        0,
+        100,
+        fallback.appearance.shadowStrength,
+        true
+      )
+    },
+    layout: {
+      preference: normalizeLayoutPreference(layoutValue.preference, fallback.layout.preference)
+    },
+    visibility: {
+      artwork: normalizeBoolean(visibilityValue.artwork, fallback.visibility.artwork),
+      album: normalizeBoolean(visibilityValue.album, fallback.visibility.album),
+      playbackState: normalizeBoolean(
+        visibilityValue.playbackState,
+        fallback.visibility.playbackState
+      ),
+      equalizer: normalizeBoolean(visibilityValue.equalizer, fallback.visibility.equalizer),
+      time: normalizeBoolean(visibilityValue.time, fallback.visibility.time),
+      volume: normalizeBoolean(visibilityValue.volume, fallback.visibility.volume),
+      playMode: normalizeBoolean(visibilityValue.playMode, fallback.visibility.playMode),
+      queuePosition: normalizeBoolean(
+        visibilityValue.queuePosition,
+        fallback.visibility.queuePosition
+      )
+    }
   }
 }
 
@@ -193,9 +556,36 @@ function normalizeTrack(raw: unknown): MiniPlayerTrackSnapshot | null {
   }
 }
 
-function normalizeStyleId(value: unknown): string {
+function normalizeOptionalStyleId(value: unknown): string | null {
   const styleId = normalizeText(value, MAX_STYLE_ID_LENGTH)
-  return /^[a-z0-9][a-z0-9._-]*$/i.test(styleId) ? styleId : DEFAULT_MINI_PLAYER_STYLE_ID
+  return /^[a-z0-9][a-z0-9._-]*$/i.test(styleId) ? styleId : null
+}
+
+function normalizeBackgroundKind(
+  value: unknown,
+  fallback: MiniPlayerBackgroundKind
+): MiniPlayerBackgroundKind {
+  return value === 'solid' || value === 'gradient' || value === 'cover' || value === 'image'
+    ? value
+    : fallback
+}
+
+function normalizeBackgroundImageUrl(value: unknown): string {
+  const url = normalizeText(value, MAX_BACKGROUND_IMAGE_URL_LENGTH)
+  return /^background:\/\/[a-f0-9]{24}\.(?:jpg|png|webp)$/i.test(url) ? url : ''
+}
+
+function normalizeLayoutPreference(
+  value: unknown,
+  fallback: MiniPlayerLayoutPreference
+): MiniPlayerLayoutPreference {
+  return value === 'compact' || value === 'standard' || value === 'wide' || value === 'auto'
+    ? value
+    : fallback
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback
 }
 
 function normalizeDominantColor(value: unknown): string {
@@ -206,6 +596,10 @@ function normalizeDominantColor(value: unknown): string {
 
 function normalizeHexColor(value: unknown, fallback: string): string {
   return typeof value === 'string' && /^#[\da-f]{6}$/i.test(value.trim()) ? value.trim() : fallback
+}
+
+function normalizeOptionalHexColor(value: unknown): string | null {
+  return typeof value === 'string' && /^#[\da-f]{6}$/i.test(value.trim()) ? value.trim() : null
 }
 
 function normalizeCoordinate(value: unknown, fallback: number): number {
