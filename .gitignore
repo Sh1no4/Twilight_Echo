@@ -39,6 +39,7 @@ test-results/
 .eslintcache
 *.tsbuildinfo
 skills-lock.json
+.vscode/
 
 # Logs
 logs/
