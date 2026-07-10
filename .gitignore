@@ -68,6 +68,7 @@ Desktop.ini
 # AI agent session state
 .omo/
 .superpowers/
+.worktrees/
 
 # Prototype / preview files (not used in build)
 plugin-preview.html
