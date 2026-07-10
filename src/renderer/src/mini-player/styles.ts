@@ -1,6 +1,9 @@
 import {
   DEFAULT_MINI_PLAYER_SETTINGS,
   DEFAULT_MINI_PLAYER_STYLE_ID,
+  createDefaultMiniPlayerThemeProfile,
+  normalizeMiniPlayerThemeProfile,
+  type MiniPlayerThemeProfile,
   type MiniPlayerWindowSize
 } from '../../../shared/miniPlayer.ts'
 
@@ -16,6 +19,7 @@ export interface MiniPlayerStyleDefinition {
   accentMode: 'track' | 'fixed'
   fixedAccent?: string
   nativeBackgroundColor: string
+  defaultProfile: MiniPlayerThemeProfile
   tokens: MiniPlayerStyleTokens
 }
 
@@ -77,6 +81,10 @@ function normalizeStyleDefinition(
     nativeBackgroundColor: /^#[\da-f]{6}$/i.test(definition.nativeBackgroundColor)
       ? definition.nativeBackgroundColor
       : '#11121d',
+    defaultProfile: normalizeMiniPlayerThemeProfile(
+      definition.defaultProfile,
+      createDefaultMiniPlayerThemeProfile(id)
+    ),
     windowSize: {
       width: Math.min(760, Math.max(360, Math.round(definition.windowSize.width))),
       height: Math.min(420, Math.max(140, Math.round(definition.windowSize.height)))
@@ -97,6 +105,7 @@ registerMiniPlayerStyle({
   },
   accentMode: 'track',
   nativeBackgroundColor: '#11121d',
+  defaultProfile: createDefaultMiniPlayerThemeProfile(DEFAULT_MINI_PLAYER_STYLE_ID),
   tokens: {
     '--mini-surface': 'linear-gradient(138deg, rgba(20, 18, 34, 0.94), rgba(10, 12, 24, 0.9))',
     '--mini-surface-border': 'rgba(255, 255, 255, 0.14)',
@@ -127,6 +136,7 @@ registerMiniPlayerStyle({
   accentMode: 'fixed',
   fixedAccent: '#5966d9',
   nativeBackgroundColor: '#f4f5fb',
+  defaultProfile: createDefaultMiniPlayerThemeProfile('porcelain'),
   tokens: {
     '--mini-surface':
       'linear-gradient(145deg, rgba(255, 255, 255, 0.97), rgba(241, 243, 252, 0.94))',

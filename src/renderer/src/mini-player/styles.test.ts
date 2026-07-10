@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
+import { createDefaultMiniPlayerThemeProfile } from '../../../shared/miniPlayer.ts'
 import {
   getNextMiniPlayerStyle,
   listMiniPlayerStyles,
@@ -18,6 +19,16 @@ test('mini player ships switchable built-in styles with declared window sizes', 
   assert.ok(styles.every((style) => /^#[\da-f]{6}$/i.test(style.nativeBackgroundColor)))
 })
 
+test('registered mini player styles expose isolated complete default profiles', () => {
+  const aurora = resolveMiniPlayerStyle('aurora-glass')
+  const porcelain = resolveMiniPlayerStyle('porcelain')
+  assert.ok(aurora.defaultProfile)
+  assert.ok(porcelain.defaultProfile)
+  assert.equal(aurora.defaultProfile.appearance.accentMode, 'track')
+  assert.equal(porcelain.defaultProfile.appearance.accentMode, 'custom')
+  assert.notStrictEqual(aurora.defaultProfile, porcelain.defaultProfile)
+})
+
 test('mini player style registry supports future styles and reversible registration', () => {
   const unregister = registerMiniPlayerStyle({
     id: 'test-future-style',
@@ -29,6 +40,7 @@ test('mini player style registry supports future styles and reversible registrat
     accentMode: 'fixed',
     fixedAccent: '#123456',
     nativeBackgroundColor: '#101820',
+    defaultProfile: createDefaultMiniPlayerThemeProfile('aurora-glass'),
     tokens: { '--mini-surface': '#000' }
   })
 
