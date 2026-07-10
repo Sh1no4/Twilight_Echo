@@ -70,7 +70,7 @@ git status --short
 
 Expected: type checking passes, diff check has no output, and only the intended mini-player files plus the design and plan documents are modified.
 
-- [ ] **Step 6: Commit and push**
+- [x] **Step 6: Commit and push**
 
 Run:
 
