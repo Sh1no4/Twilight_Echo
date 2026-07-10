@@ -1251,6 +1251,7 @@ interface WindowAPI {
     getBootstrap: () => Promise<MiniPlayerBootstrap>
     command: (command: MiniPlayerCommand) => void
     updateSettings: (patch: MiniPlayerSettingsPatch) => Promise<MiniPlayerSettings>
+    chooseBackgroundImage: () => Promise<string | null>
     minimize: () => void
     returnToMain: () => void
     publishState: (state: MiniPlayerStateSnapshot) => void

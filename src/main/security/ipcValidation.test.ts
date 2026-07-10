@@ -205,4 +205,10 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
   assert.match(miniPlayerSource, /win\.on\('resize'/)
   assert.match(miniPlayerSource, /persistMiniPlayerBounds/)
   assert.match(miniPlayerBoundsPersistence, /settings:changed/)
+  assert.match(miniPlayerSource, /miniPlayer:chooseBackgroundImage/)
+  assert.match(
+    miniPlayerSource,
+    /assertSenderWindow\(\s*event,\s*runtime\.miniPlayerWindow,\s*'mini player background image IPC'\s*\)/
+  )
+  assert.match(miniPlayerSource, /importBackgroundImage/)
 })

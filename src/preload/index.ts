@@ -221,6 +221,8 @@ const miniPlayerWindowApi = {
   },
   updateSettings: (patch: MiniPlayerSettingsPatch): Promise<MiniPlayerSettings> =>
     ipcRenderer.invoke('miniPlayer:updateSettings', patch),
+  chooseBackgroundImage: (): Promise<string | null> =>
+    ipcRenderer.invoke('miniPlayer:chooseBackgroundImage'),
   minimize: (): void => {
     ipcRenderer.send('miniPlayer:minimize')
   },

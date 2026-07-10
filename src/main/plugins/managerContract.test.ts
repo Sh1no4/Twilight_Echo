@@ -156,6 +156,7 @@ test('plugin host forwards provider health registration metadata', () => {
 })
 
 test('specialized windows receive only their scoped preload APIs', () => {
+  const miniPlayerApi = preloadSource.match(/const miniPlayerWindowApi = \{[\s\S]*?\n\}/)?.[0] ?? ''
   assert.match(preloadSource, /exposedApiForDocument\(\)/)
   assert.match(
     preloadSource,
@@ -167,5 +168,7 @@ test('specialized windows receive only their scoped preload APIs', () => {
   )
   assert.match(preloadSource, /window\.location\.pathname\.endsWith\('\/desktop-lyrics\.html'\)/)
   assert.match(preloadSource, /get\('window'\) === 'mini-player'/)
+  assert.match(miniPlayerApi, /chooseBackgroundImage/)
+  assert.doesNotMatch(miniPlayerApi, /ipcRenderer\.(?:invoke|send)\('(?:settings|shell|dialog):/)
   assert.doesNotMatch(preloadSource, /exposeInMainWorld\('electron'/)
 })

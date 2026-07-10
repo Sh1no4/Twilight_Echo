@@ -1,6 +1,7 @@
 import {
   app,
   BrowserWindow,
+  dialog,
   ipcMain,
   screen,
   type IpcMainEvent,
@@ -21,6 +22,7 @@ import {
 } from '../../shared/miniPlayer'
 import { runtime } from '../core/runtime'
 import { createSettingsSnapshot, writeAppSettings } from '../core/settings'
+import { importBackgroundImage } from '../library/coverCache'
 import { assertTrustedIpcSender, shouldAcceptIpcEvent } from '../security/electronSecurity.ts'
 import {
   MINI_PLAYER_MAX_HEIGHT,
@@ -391,6 +393,18 @@ export function setupMiniPlayerIpc(): void {
   ipcMain.handle('miniPlayer:updateSettings', (event, patch: MiniPlayerSettingsPatch) => {
     assertSenderWindow(event, runtime.miniPlayerWindow, 'mini player settings IPC')
     return updateMiniPlayerSettings(patch)
+  })
+
+  ipcMain.handle('miniPlayer:chooseBackgroundImage', async (event) => {
+    assertSenderWindow(event, runtime.miniPlayerWindow, 'mini player background image IPC')
+    const win = runtime.miniPlayerWindow
+    if (!win || win.isDestroyed()) return null
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openFile'],
+      filters: [{ name: '背景图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return importBackgroundImage(result.filePaths[0])
   })
 
   ipcMain.on('miniPlayer:minimize', (event) => {
