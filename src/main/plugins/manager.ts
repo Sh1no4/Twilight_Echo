@@ -643,7 +643,7 @@ export class TwilightPluginManager extends EventEmitter {
       subscriptions: new Set(),
       providers: [],
       ui: [],
-      themes: []
+      themes: this.normalizeDeclarativeThemeContributions(descriptor)
     }
     this.running.set(descriptor.id, running)
     child.on('message', (message: PluginHostResponse) => {
@@ -1060,10 +1060,7 @@ export class TwilightPluginManager extends EventEmitter {
       return contribution
     }
     if (message.method === 'registerTheme') {
-      const contribution = this.normalizeThemeContribution(running, message.args[0])
-      running.themes.push(contribution)
-      this.emit('changed')
-      return contribution
+      throw new Error('主题必须通过 manifest contributes.themes 声明，运行时主题注册已禁用')
     }
     throw new Error('未知扩展 API')
   }
@@ -1087,8 +1084,10 @@ export class TwilightPluginManager extends EventEmitter {
     if ((kind === 'playerBarButton' || kind === 'sidebarPage' || kind === 'localSidebarItem') && !command) {
       throw new Error(`${kind} 扩展必须声明 command`)
     }
-    const renderMode = record.renderMode === 'html' ? 'html' : 'command'
-    const autoLoad = typeof record.autoLoad === 'boolean' ? record.autoLoad : renderMode === 'html'
+    // Legacy renderMode values are accepted as input for API v1 compatibility, but the
+    // normalized renderer contract is command-only. Plugin-provided HTML is never executed.
+    const renderMode = 'command'
+    const autoLoad = typeof record.autoLoad === 'boolean' ? record.autoLoad : false
     return {
       id,
       kind: kind as TwilightUiContribution['kind'],
@@ -1109,13 +1108,6 @@ export class TwilightPluginManager extends EventEmitter {
     return themes.map((theme) =>
       this.normalizeThemeContributionFromDescriptor(descriptor, theme, 'manifest theme')
     )
-  }
-
-  private normalizeThemeContribution(
-    running: RunningPlugin,
-    raw: unknown
-  ): TwilightThemeContribution {
-    return this.normalizeThemeContributionFromDescriptor(running.descriptor, raw, 'theme API')
   }
 
   private normalizeThemeContributionFromDescriptor(

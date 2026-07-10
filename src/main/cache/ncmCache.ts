@@ -4,14 +4,14 @@ import { writeFile } from 'fs/promises'
 import { join, extname } from 'path'
 import { runtime } from '../core/runtime'
 import { redactSensitiveText } from '../security/secureStorage.ts'
+import { getManagedMusicCacheDirectories } from './musicCacheLayout.ts'
 
 export function ensureMusicCacheDirectories(rootPath: string): void {
   if (!rootPath) return
   mkdirSync(rootPath, { recursive: true })
-  mkdirSync(join(rootPath, 'renderer-cache'), { recursive: true })
-  mkdirSync(join(rootPath, 'audio-engine-cache'), { recursive: true })
-  mkdirSync(join(rootPath, 'ncm-cache'), { recursive: true })
-  mkdirSync(join(rootPath, 'cover-cache'), { recursive: true })
+  for (const directory of getManagedMusicCacheDirectories(rootPath)) {
+    mkdirSync(directory, { recursive: true })
+  }
 }
 
 export function getMusicCacheRoot(): string {
@@ -114,7 +114,10 @@ function isSafeRemoteMediaUrl(url: string): boolean {
 
 function isPrivateIpv4(hostname: string): boolean {
   const parts = hostname.split('.').map((part) => Number.parseInt(part, 10))
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
     return false
   }
   const [a, b] = parts

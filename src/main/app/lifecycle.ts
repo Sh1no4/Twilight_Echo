@@ -1,31 +1,20 @@
-import { app, BrowserWindow, protocol, net } from 'electron'
+import { app, BrowserWindow, dialog, protocol, net } from 'electron'
 import { join, extname } from 'path'
 import { readFileSync } from 'fs'
 import { pathToFileURL } from 'url'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
-import {
-  resolveBackgroundImageFile,
-  resolveCoverCacheFile
-} from '../library/coverCache'
-import {
-  decodeAudioFileUrlPath,
-} from '../library/scan'
-import { resolveAuthorizedAudioFile } from '../security/localPaths'
+import { resolveBackgroundImageFile, resolveCoverCacheFile } from '../library/coverCache'
+import { decodeAudioFileUrlPath } from '../library/scan'
+import { initializeLocalPathGrants, resolveAuthorizedAudioFile } from '../security/localPaths'
 import {
   unregisterPlayerShortcuts,
   destroyTray,
   applyRuntimeSettings
 } from '../integrations/shortcutsTray'
-import {
-  showDesktopLyrics,
-  setupDesktopLyricsIpc
-} from '../integrations/desktopLyrics'
-import {
-  setupNcmIpc,
-  setupNcmApi
-} from '../ncm/api'
+import { showDesktopLyrics, setupDesktopLyricsIpc } from '../integrations/desktopLyrics'
+import { setupNcmIpc, setupNcmApi } from '../ncm/api'
 import { setupAudioEngineIpc } from '../audio/engineIpc'
 import { setupBpmAnalysisIpc } from '../bpm/bpmIpc'
 import { setupOpraIpc } from '../ipc/opra'
@@ -33,6 +22,8 @@ import { setupPluginIpc } from '../ipc/plugins'
 import { setupDataIpc } from '../ipc/data'
 import { installElectronSecurity } from '../security/electronSecurity.ts'
 import { createWindow } from './window'
+import { consumeAppSettingsLoadIssue } from '../core/settings'
+import type { SettingsFileLoadIssue } from '../persistence/settingsFile.ts'
 
 export function startApp(): void {
   runtime.launchSettings = { ...runtime.appSettings }
@@ -94,9 +85,10 @@ export function startApp(): void {
       win.focus()
     })
 
-    app.whenReady().then(() => {
+    app.whenReady().then(async () => {
       electronApp.setAppUserModelId('com.TwilightEcho.music')
       installElectronSecurity()
+      await initializeLocalPathGrants(runtime.launchSettings)
 
       // Register cover:// protocol — Chromium reads JPEGs directly from disk,
       // no IPC, no base64, browser manages decode cache natively.
@@ -161,23 +153,25 @@ export function startApp(): void {
         showDesktopLyrics()
       }
 
-      // Linux 上透明窗口必须等合成器视觉就绪后再建窗，否则内容不渲染
-      if (process.platform === 'linux' && runtime.appSettings.windowTransparency === true) {
-        setTimeout(() => {
-          createWindow()
-          applyRuntimeSettings()
-        }, 360)
-      } else {
-        createWindow()
-        applyRuntimeSettings()
-      }
-
-      setupAudioEngineIpc()
+      await setupAudioEngineIpc()
       setupBpmAnalysisIpc()
       setupNcmIpc()
       setupOpraIpc()
       setupPluginIpc()
       setupNcmApi()
+
+      // Linux 上透明窗口必须等合成器视觉就绪后再建窗，否则内容不渲染
+      if (process.platform === 'linux' && runtime.appSettings.windowTransparency === true) {
+        setTimeout(() => {
+          createWindow()
+          applyRuntimeSettings()
+          showAppSettingsLoadIssue(consumeAppSettingsLoadIssue())
+        }, 360)
+      } else {
+        createWindow()
+        applyRuntimeSettings()
+        showAppSettingsLoadIssue(consumeAppSettingsLoadIssue())
+      }
 
       app.on('activate', function () {
         if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -209,4 +203,48 @@ export function startApp(): void {
       }
     })
   }
+}
+
+function showAppSettingsLoadIssue(issue: SettingsFileLoadIssue | null): void {
+  if (!issue) return
+
+  const options: Electron.MessageBoxOptions =
+    issue.kind === 'recovered'
+      ? {
+          type: 'warning',
+          title: 'Twilight Echo 数据恢复',
+          message: '设置已从备份恢复',
+          detail: issue.restoreError
+            ? `已读取有效备份，但恢复主文件失败：${issue.restoreError}`
+            : issue.corruptCopyPath
+              ? `主文件已由最后一个有效备份恢复。损坏副本保留在：${issue.corruptCopyPath}`
+              : '主文件缺失，已由最后一个有效备份恢复。',
+          buttons: ['确定'],
+          defaultId: 0
+        }
+      : {
+          type: 'error',
+          title: 'Twilight Echo 数据恢复',
+          message: '设置主文件和备份均已损坏',
+          detail: buildCorruptSettingsDetail(issue),
+          buttons: ['使用默认设置继续'],
+          defaultId: 0
+        }
+  const win = runtime.mainWindow
+  const prompt =
+    win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options)
+  void prompt.catch((error) => {
+    console.error('[persistence] failed to show settings recovery notice:', error)
+  })
+}
+
+function buildCorruptSettingsDetail(
+  issue: Extract<SettingsFileLoadIssue, { kind: 'corrupt' }>
+): string {
+  const preservedPaths = [issue.corruptCopyPath, issue.corruptBackupCopyPath].filter(Boolean)
+  const preservedDetail =
+    preservedPaths.length > 0
+      ? `\n\n损坏副本已保留：\n${preservedPaths.join('\n')}`
+      : '\n\n无法创建额外副本；请先备份原设置文件。'
+  return `应用本次使用默认设置，未把损坏内容当作有效配置。\n主文件：${issue.primaryError}\n备份：${issue.backupError}${preservedDetail}`
 }

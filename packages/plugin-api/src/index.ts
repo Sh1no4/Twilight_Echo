@@ -313,6 +313,7 @@ export interface TwilightUiContribution {
   description?: string
   icon?: string
   command?: string
+  /** @deprecated The host renders command results as text/data and never executes HTML. */
   renderMode?: 'command' | 'html'
   autoLoad?: boolean
 }
@@ -337,6 +338,7 @@ export interface TwilightThemeContribution {
 }
 
 export interface TwilightThemesApi {
+  /** @deprecated Themes must be declared in plugin.json contributes.themes. This call rejects. */
   register(theme: TwilightThemeContribution): Promise<void>
 }
 

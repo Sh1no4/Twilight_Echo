@@ -253,21 +253,24 @@ Provider 返回的 Track 对象可以包含可选 `bpm` 字段，单位为 beats
 ### 注册示例
 
 ```javascript
-// 注册一个本地侧栏页面——自动渲染 HTML 内容
+// 注册一个本地侧栏受控页面
 await context.twilight.ui.register({
   id: 'music-stats',
   kind: 'localSidebarItem',
   title: '音乐统计',
   description: '查看你的听歌统计数据',
   icon: 'pi pi-chart-bar',
-  command: 'show-stats',
-  renderMode: 'html',
-  autoLoad: true
+  command: 'show-stats'
 })
 
 // 注册命令处理器
-context.twilight.ui.onCommand('show-stats', (args) => {
-  return generateStatsHtml()
+context.twilight.ui.onCommand('show-stats', async () => {
+  const info = await context.twilight.player.getPlaybackInfo()
+  return {
+    state: info.state,
+    position: info.position,
+    duration: info.duration
+  }
 })
 
 // 注册设置面板
@@ -277,16 +280,15 @@ await context.twilight.ui.register({
   title: '我的音源设置',
   description: '配置 My Music Source',
   icon: 'pi pi-cog',
-  command: 'show-settings',
-  renderMode: 'html',
-  autoLoad: true
+  command: 'show-settings'
 })
 
-context.twilight.ui.onCommand('show-settings', (args) => {
-  return generateSettingsHtml()
+context.twilight.ui.onCommand('show-settings', async () => {
+  const enabled = await context.settings.get('enabled')
+  return { enabled: enabled === true }
 })
 
-// 注册播放器栏按钮（command 模式，不渲染 HTML）
+// 注册播放器栏按钮
 await context.twilight.ui.register({
   id: 'quick-action',
   kind: 'playerBarButton',
@@ -302,81 +304,17 @@ context.twilight.ui.onCommand('quick-action', async (args) => {
 })
 ```
 
-### 渲染模式
+### 受控命令结果
 
-| 模式 | 说明 | autoLoad 默认值 |
-|------|------|-----------------|
-| `command`（默认） | 仅执行命令，不渲染内容 | `false` |
-| `html` | 命令返回 HTML 字符串，渲染为 iframe | `true` |
-
----
-
-## 5. HTML 渲染模式
-
-当 `renderMode: 'html'` 时，宿主会：
-1. 自动调用注册的 command
-2. 将返回的 HTML 字符串渲染到 iframe 中
-3. 提供"刷新"按钮重新加载内容
-
-### HTML 内容规范
-
-```javascript
-function generateStatsHtml() {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { font-family: -apple-system, sans-serif; padding: 20px; color: #333; }
-    .stat-card { background: #f8fafc; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
-    .stat-value { font-size: 32px; font-weight: 800; color: #6366f1; }
-    .stat-label { font-size: 13px; color: #666; }
-  </style>
-</head>
-<body>
-  <h2>🎵 听歌统计</h2>
-  <div class="stat-card">
-    <div class="stat-value">1,234</div>
-    <div class="stat-label">总播放次数</div>
-  </div>
-  <div class="stat-card">
-    <div class="stat-value">56</div>
-    <div class="stat-label">独立歌曲数</div>
-  </div>
-</body>
-</html>`
-}
-```
-
-### iframe 内与宿主通信
-
-iframe 使用 `sandbox="allow-scripts allow-same-origin allow-forms allow-popups"`，在 Electron 中 iframe 与父窗口同源，可以通过 `window.parent.api` 访问宿主 API：
-
-```html
-<script>
-// 在 iframe 内访问宿主 API
-async function getPlayerInfo() {
-  const api = window.parent?.api
-  if (!api) return
-  
-  // 获取播放信息
-  const info = await api.audioEngine.getPlaybackInfo()
-  console.log('Current state:', info.state)
-  
-  // 控制播放
-  // api.audioEngine.togglePause()
-}
-</script>
-```
-
-### 刷新机制
-
-- 用户点击"刷新"按钮会重新调用 command
-- `autoLoad: true` 时页面打开自动调用
-- 插件可以通过返回不同的 HTML 实现动态内容
+- command 可以返回字符串或 JSON 可序列化对象。
+- 宿主把结果作为纯文本/结构化数据展示，不解析或执行其中的 HTML。
+- 用户点击页面的执行/刷新按钮时，宿主通过短超时 request/response 调用插件命令。
+- 插件不得通过 `srcdoc`、`window.parent` 或其他路径访问 renderer DOM/API。
+- 旧版 `renderMode: 'html'` 仅作为 API v1 兼容输入保留，宿主会忽略并按 command 模式处理。
 
 ---
 
-## 6. 主题插件
+## 5. 主题插件
 
 纯主题插件是声明式包，不执行 `activate()` 脚本。主题资源写在 `plugin.json`
 的 `contributes.themes` 中：
@@ -415,7 +353,7 @@ async function getPlayerInfo() {
 
 ---
 
-## 7. DSP 插件
+## 6. DSP 插件
 
 DSP 插件使用 C++ 编译为原生库，通过 `binary` 字段声明。
 
@@ -438,7 +376,7 @@ DSP 插件不需要 `main` 入口和 `activate`/`deactivate`。宿主会加载 `
 
 ---
 
-## 8. 插件上下文 API
+## 7. 插件上下文 API
 
 `activate(context)` 接收的 `context` 对象：
 
@@ -480,12 +418,11 @@ interface TwilightPluginContext {
       register(contribution: UiContribution): Promise<void>
       onCommand(command: string, handler: (...args) => unknown): () => void
     }
-    themes: {
-      register(theme: ThemeRegistration): Promise<void>
-    }
   }
 }
 ```
+
+主题不通过运行时 API 注册。请在 `plugin.json` 的 `contributes.themes` 中声明 CSS 变量和包内 stylesheet；主题脚本不会执行。
 
 ### 事件系统
 
@@ -529,7 +466,7 @@ const all = await context.settings.get()
 
 ---
 
-## 9. 构建与打包
+## 8. 构建与打包
 
 ### 目录结构
 
@@ -597,7 +534,7 @@ print(f'Checksum: {checksum}')
 
 ---
 
-## 10. 完整示例
+## 9. 完整示例
 
 ### 最小音源插件
 
@@ -699,37 +636,18 @@ export async function activate(context) {
     title: '听歌统计',
     description: '查看你的听歌数据',
     icon: 'pi pi-chart-bar',
-    command: 'render-stats',
-    renderMode: 'html',
-    autoLoad: true
+    command: 'render-stats'
   })
 
   context.twilight.ui.onCommand('render-stats', async () => {
     const info = await context.twilight.player.getPlaybackInfo()
     
-    return `<!DOCTYPE html>
-<html>
-<head>
-<style>
-  body { font-family: -apple-system, sans-serif; padding: 24px; color: #1a1a1a; background: #f8fafc; }
-  h2 { margin: 0 0 20px; font-size: 24px; }
-  .card { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
-  .value { font-size: 36px; font-weight: 800; color: #6366f1; }
-  .label { font-size: 14px; color: #666; margin-top: 4px; }
-</style>
-</head>
-<body>
-  <h2>🎵 听歌统计</h2>
-  <div class="card">
-    <div class="value">${info.state}</div>
-    <div class="label">当前播放状态</div>
-  </div>
-  <div class="card">
-    <div class="value">${Math.round(info.position)}s / ${Math.round(info.duration)}s</div>
-    <div class="label">播放进度</div>
-  </div>
-</body>
-</html>`
+    return {
+      title: '听歌统计',
+      state: info.state,
+      positionSeconds: Math.round(info.position),
+      durationSeconds: Math.round(info.duration)
+    }
   })
 
   // 注册设置面板
@@ -739,37 +657,17 @@ export async function activate(context) {
     title: 'Example 设置',
     description: '配置 Example Music',
     icon: 'pi pi-cog',
-    command: 'render-settings',
-    renderMode: 'html',
-    autoLoad: true
+    command: 'render-settings'
   })
 
   context.twilight.ui.onCommand('render-settings', async () => {
     const cookie = await context.settings.get('cookie')
     const maskedCookie = cookie ? cookie.slice(0, 20) + '...' : '未设置'
     
-    return `<!DOCTYPE html>
-<html>
-<head>
-<style>
-  body { font-family: -apple-system, sans-serif; padding: 24px; color: #1a1a1a; background: #f8fafc; }
-  .setting-row { display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid #eee; }
-  .setting-label { font-weight: 600; }
-  .setting-value { color: #666; font-size: 13px; }
-</style>
-</head>
-<body>
-  <h2>⚙️ Example 设置</h2>
-  <div class="setting-row">
-    <span class="setting-label">Cookie 状态</span>
-    <span class="setting-value">${maskedCookie}</span>
-  </div>
-  <div class="setting-row">
-    <span class="setting-label">版本</span>
-    <span class="setting-value">1.0.0</span>
-  </div>
-</body>
-</html>`
+    return {
+      cookieStatus: maskedCookie,
+      version: '1.0.0'
+    }
   })
 }
 
@@ -786,8 +684,7 @@ export function deactivate() {}
 | 在侧栏添加自定义页面 | `ui.register({ kind: 'localSidebarItem' })` | `type: ["ui"]`, `permissions: ["ui:inject"]` |
 | 在设置页添加自定义面板 | `ui.register({ kind: 'settingsPanel' })` | `type: ["ui"]`, `permissions: ["ui:inject"]` |
 | 在播放器栏添加按钮 | `ui.register({ kind: 'playerBarButton' })` | `type: ["ui"]`, `permissions: ["ui:inject"]` |
-| 注册自定义主题 | `themes.register()` | `type: ["theme"]` |
+| 注册自定义主题 | `plugin.json` 的 `contributes.themes` | `type: ["theme"]`，仅声明 CSS 变量/包内 stylesheet |
 | 注册原生 DSP | `binary` 声明 | `type: ["dsp"]`, `permissions: ["dsp:native"]` |
-| 渲染 HTML 内容 | `renderMode: 'html'` + command 返回 HTML | command 处理器返回 HTML 字符串 |
 | 控制播放器 | `context.twilight.player.*` | `permissions: ["player:control"]` |
 | 持久化设置 | `context.settings.*` | `permissions: ["settings"]` |

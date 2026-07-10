@@ -190,13 +190,13 @@ let removeCoversMissingListener: (() => void) | null = null
 let quitFlushHandler: (() => void) | null = null
 let pageHideFlushHandler: (() => void) | null = null
 
+function reportStartupDataError(scope: string, error: unknown): void {
+  console.error(`[persistence] Failed to load ${scope}:`, error)
+}
+
 onMounted(async () => {
   setupPluginThemeRuntime()
   setupListeningStatsTracking()
-  removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(
-    playbackSessionPersistence.savePlaybackSessionForQuit
-  )
-  playbackSessionPersistence.startAutosaveWatchers()
   const loadedSettings = await loadSettings()
 
   // Enter streaming mode immediately if configured — must not block on
@@ -206,8 +206,12 @@ onMounted(async () => {
   }
 
   // Run independent startup operations in parallel so none blocks the others.
-  const libraryPromise = loadLibrary()
-  const playlistsPromise = loadPlaylists()
+  const libraryPromise = loadLibrary().catch((error) =>
+    reportStartupDataError('music library', error)
+  )
+  const playlistsPromise = loadPlaylists().catch((error) =>
+    reportStartupDataError('playlists', error)
+  )
   const extensionsPromise = syncExtensions()
   if (loadedSettings.autoCheckLogin) {
     void checkLogin()
@@ -216,7 +220,15 @@ onMounted(async () => {
   // Restore playback session once the library is available (may reference
   // local tracks). Enrichment itself runs in the background inside loadLibrary.
   await libraryPromise
-  await playbackSessionPersistence.restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
+  try {
+    await playbackSessionPersistence.restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
+    removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(
+      playbackSessionPersistence.savePlaybackSessionForQuit
+    )
+    playbackSessionPersistence.startAutosaveWatchers()
+  } catch (error) {
+    reportStartupDataError('playback session', error)
+  }
 
   // Ensure extensions are loaded before wiring listeners that depend on them.
   await extensionsPromise

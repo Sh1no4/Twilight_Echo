@@ -1,125 +1,333 @@
 import { app } from 'electron'
 import { stat } from 'fs/promises'
-import { dirname, extname, relative, resolve } from 'path'
+import { dirname, extname, resolve } from 'path'
+import type { AppSettings } from '../core/types'
 import { runtime } from '../core/runtime'
 import { getDefaultCachePath } from '../core/settings'
+import { getManagedMusicCacheDirectories } from '../cache/musicCacheLayout.ts'
+import { SUPPORTED_EXTENSIONS } from '../library/scan'
 import {
-  resolvePlayableAudioFile,
-  SUPPORTED_EXTENSIONS
-} from '../library/scan'
+  CanonicalPathGrantSet,
+  isCanonicalPathInside,
+  lexicalPathKey,
+  resolveCanonicalExistingPath
+} from './pathGrants.ts'
+import { classifyAudioSource } from './audioSourcePolicy.ts'
 
-const savedLibraryRoots = new Set<string>()
-const userSelectedRoots = new Set<string>()
+const IMPULSE_RESPONSE_EXTENSIONS = new Set(['.wav', '.flac', '.aiff', '.aif'])
 
-function isPathInside(basePath: string, targetPath: string): boolean {
-  const base = resolve(basePath)
-  const target = resolve(targetPath)
-  const rel = relative(base, target)
-  return rel === '' || (!!rel && !rel.startsWith('..') && !rel.startsWith('/') && !rel.startsWith('\\'))
+const libraryGrants = new CanonicalPathGrantSet()
+const cacheRootGrants = new CanonicalPathGrantSet()
+const audioCacheGrants = new CanonicalPathGrantSet()
+const appDataGrants = new CanonicalPathGrantSet()
+const impulseResponseGrants = new CanonicalPathGrantSet()
+
+const declaredLibraryRoots = new Map<string, string>()
+const declaredCacheRoots = new Map<string, string>()
+const declaredImpulseResponseFiles = new Map<string, string>()
+
+let initializationPromise: Promise<void> | null = null
+
+export function initializeLocalPathGrants(
+  settings: AppSettings = getLaunchSettings()
+): Promise<void> {
+  if (!initializationPromise) {
+    initializationPromise = initializeLocalPathGrantsOnce(settings)
+  }
+  return initializationPromise
 }
 
-function libraryRoots(): string[] {
-  return [
-    ...runtime.appSettings.libraryFolders,
-    ...savedLibraryRoots,
-    ...userSelectedRoots
-  ].filter((folder) => typeof folder === 'string' && folder)
+export async function grantUserSelectedLibraryRoot(folder: string): Promise<string> {
+  await ensureInitialized()
+  const canonicalPath = await libraryGrants.grantRoot(folder)
+  declaredLibraryRoots.set(lexicalPathKey(folder), resolve(folder))
+  return canonicalPath
 }
 
-function appManagedRoots(): string[] {
-  const cachePath = runtime.appSettings.musicCachePath || getDefaultCachePath()
-  return [
-    app.getPath('userData'),
-    cachePath
-  ].filter(Boolean)
+export async function grantUserSelectedCacheRoot(folder: string): Promise<string> {
+  await ensureInitialized()
+  const canonicalPath = await grantCacheRoot(folder)
+  declaredCacheRoots.set(lexicalPathKey(folder), resolve(folder))
+  return canonicalPath
 }
 
-export function isInLibraryRoot(targetPath: string): boolean {
-  if (typeof targetPath !== 'string' || !targetPath) return false
-  return libraryRoots().some((root) => isPathInside(root, targetPath))
+export async function grantUserSelectedImpulseResponse(filePath: string): Promise<string> {
+  await ensureInitialized()
+  const canonicalPath = await resolveCanonicalExistingPath(filePath, 'file')
+  assertImpulseResponseExtension(canonicalPath)
+  impulseResponseGrants.grantCanonicalFile(canonicalPath)
+  declaredImpulseResponseFiles.set(lexicalPathKey(filePath), resolve(filePath))
+  return canonicalPath
 }
 
-export function trustLibraryRoots(folders: unknown): void {
-  savedLibraryRoots.clear()
-  if (!Array.isArray(folders)) return
+export async function resolveAuthorizedLibraryRootSettings(folders: unknown): Promise<string[]> {
+  await ensureInitialized()
+  if (!Array.isArray(folders)) throw new Error('音乐库目录必须是数组')
+  await refreshDeclaredLibraryRoots()
+
+  const authorized: string[] = []
+  const seen = new Set<string>()
   for (const folder of folders) {
-    if (typeof folder === 'string' && folder) {
-      savedLibraryRoots.add(resolve(folder))
+    if (typeof folder !== 'string' || !folder.trim()) {
+      throw new Error('音乐库目录无效')
+    }
+    const canonicalPath = await tryResolveWithinRoots(libraryGrants, folder, 'directory')
+    const resolvedPath = canonicalPath ?? resolveDeclaredExactPath(declaredLibraryRoots, folder)
+    if (!resolvedPath) throw new Error('音乐库目录未经用户授权')
+    const key = lexicalPathKey(resolvedPath)
+    if (!seen.has(key)) {
+      seen.add(key)
+      authorized.push(resolvedPath)
     }
   }
+  return authorized
 }
 
-export function trustUserSelectedFolder(folder: string): void {
-  if (typeof folder === 'string' && folder) {
-    userSelectedRoots.add(resolve(folder))
+export async function filterAuthorizedLibraryRoots(folders: unknown): Promise<string[]> {
+  if (!Array.isArray(folders)) return []
+  const authorized: string[] = []
+  for (const folder of folders) {
+    try {
+      const [resolvedPath] = await resolveAuthorizedLibraryRootSettings([folder])
+      if (
+        resolvedPath &&
+        !authorized.some((item) => lexicalPathKey(item) === lexicalPathKey(resolvedPath))
+      ) {
+        authorized.push(resolvedPath)
+      }
+    } catch {
+      // Persisted renderer data is not an authority source. Ignore ungranted roots.
+    }
   }
+  return authorized
 }
 
-export function isInAppManagedRoot(targetPath: string): boolean {
-  if (typeof targetPath !== 'string' || !targetPath) return false
-  return appManagedRoots().some((root) => isPathInside(root, targetPath))
-}
-
-export function isAllowedLocalAudioPath(targetPath: string): boolean {
-  return isInLibraryRoot(targetPath) || isInAppManagedRoot(targetPath)
+export async function resolveAuthorizedCacheRoot(rootPath: string): Promise<string> {
+  await ensureInitialized()
+  const canonicalPath = await resolveCanonicalExistingPath(rootPath, 'directory')
+  if (!cacheRootGrants.hasCanonicalRoot(canonicalPath)) {
+    await refreshDeclaredCacheRoots()
+  }
+  if (!cacheRootGrants.hasCanonicalRoot(canonicalPath)) {
+    throw new Error('缓存目录未经用户授权')
+  }
+  return canonicalPath
 }
 
 export async function resolveAuthorizedAudioFile(filePath: string): Promise<string> {
-  if (typeof filePath !== 'string' || !filePath) {
-    throw new Error('音频路径无效')
+  await ensureInitialized()
+  const canonicalPath = await resolveCanonicalExistingPath(filePath, 'file')
+  assertSupportedAudioExtension(canonicalPath)
+  let inLibrary = libraryGrants.isCanonicalWithinRoots(canonicalPath)
+  let inManagedCache = audioCacheGrants.isCanonicalWithinRoots(canonicalPath)
+  if (!inLibrary && !inManagedCache) {
+    await Promise.all([refreshDeclaredLibraryRoots(), refreshDeclaredCacheRoots()])
+    inLibrary = libraryGrants.isCanonicalWithinRoots(canonicalPath)
+    inManagedCache = audioCacheGrants.isCanonicalWithinRoots(canonicalPath)
   }
-  const resolvedPath = await resolvePlayableAudioFile(filePath)
-  if (!isAllowedLocalAudioPath(resolvedPath)) {
+  if (!inLibrary && !inManagedCache) {
     throw new Error('音频路径不在已授权目录内')
   }
-  return resolvedPath
+  return canonicalPath
+}
+
+export async function resolveAuthorizedAudioSource(source: string): Promise<string> {
+  const candidate = classifyAudioSource(source)
+  return candidate.kind === 'local'
+    ? await resolveAuthorizedAudioFile(candidate.source)
+    : candidate.source
+}
+
+export async function resolveAuthorizedImpulseResponseFile(filePath: string): Promise<string> {
+  await ensureInitialized()
+  const canonicalPath = await resolveCanonicalExistingPath(filePath, 'file')
+  if (!impulseResponseGrants.hasCanonicalFile(canonicalPath)) {
+    await refreshDeclaredImpulseResponseFiles()
+  }
+  if (!impulseResponseGrants.hasCanonicalFile(canonicalPath)) {
+    throw new Error('卷积脉冲响应文件未经用户授权')
+  }
+  assertImpulseResponseExtension(canonicalPath)
+  return canonicalPath
 }
 
 export async function resolveAuthorizedLibraryDirectory(dirPath: string): Promise<string> {
-  if (typeof dirPath !== 'string' || !dirPath) {
-    throw new Error('目录路径无效')
+  await ensureInitialized()
+  const canonicalPath = await resolveCanonicalExistingPath(dirPath, 'directory')
+  if (!libraryGrants.isCanonicalWithinRoots(canonicalPath)) {
+    await refreshDeclaredLibraryRoots()
   }
-  const resolvedPath = resolve(dirPath)
-  const dirStat = await stat(resolvedPath)
-  if (!dirStat.isDirectory()) {
-    throw new Error('路径不是目录')
+  if (!libraryGrants.isCanonicalWithinRoots(canonicalPath)) {
+    throw new Error('目录不在已授权音乐库内')
   }
-  if (!isInLibraryRoot(resolvedPath)) {
-    throw new Error('目录不在音乐库内')
-  }
-  return resolvedPath
+  return canonicalPath
 }
 
 export async function resolveAuthorizedOpenPath(targetPath: string): Promise<string> {
-  if (typeof targetPath !== 'string' || !targetPath) {
-    throw new Error('路径无效')
-  }
-  const resolvedPath = resolve(targetPath)
-  const targetStat = await stat(resolvedPath)
+  await ensureInitialized()
+  const canonicalPath = await resolveCanonicalExistingPath(targetPath)
+  const targetStat = await stat(canonicalPath)
   if (targetStat.isDirectory()) {
-    if (isInLibraryRoot(resolvedPath) || isInAppManagedRoot(resolvedPath)) {
-      return resolvedPath
+    if (!isCanonicalDirectoryAllowed(canonicalPath)) {
+      await Promise.all([refreshDeclaredLibraryRoots(), refreshDeclaredCacheRoots()])
     }
-    throw new Error('目录不在已授权目录内')
+    if (isCanonicalDirectoryAllowed(canonicalPath)) return canonicalPath
+    throw new Error('目录不在已授权范围内')
   }
-  if (!isInLibraryRoot(resolvedPath)) {
+  if (!libraryGrants.isCanonicalWithinRoots(canonicalPath)) {
+    await refreshDeclaredLibraryRoots()
+  }
+  if (!libraryGrants.isCanonicalWithinRoots(canonicalPath)) {
     throw new Error('文件不在音乐库内')
   }
-  if (!SUPPORTED_EXTENSIONS.includes(extname(resolvedPath).toLowerCase())) {
-    throw new Error('只能打开音乐库内的音频文件')
-  }
-  return resolvedPath
+  assertSupportedAudioExtension(canonicalPath)
+  return canonicalPath
 }
 
 export async function resolveAuthorizedShowItemPath(filePath: string): Promise<string> {
-  if (typeof filePath !== 'string' || !filePath) {
-    throw new Error('路径无效')
+  await ensureInitialized()
+  const canonicalPath = await resolveCanonicalExistingPath(filePath)
+  const targetStat = await stat(canonicalPath)
+  const checkedPath = targetStat.isDirectory() ? canonicalPath : dirname(canonicalPath)
+  if (!isCanonicalDirectoryAllowed(checkedPath)) {
+    await Promise.all([refreshDeclaredLibraryRoots(), refreshDeclaredCacheRoots()])
   }
-  const resolvedPath = resolve(filePath)
-  const targetStat = await stat(resolvedPath)
-  const checkedPath = targetStat.isDirectory() ? resolvedPath : dirname(resolvedPath)
-  if (!isInLibraryRoot(checkedPath) && !isInAppManagedRoot(checkedPath)) {
-    throw new Error('路径不在已授权目录内')
+  if (!isCanonicalDirectoryAllowed(checkedPath)) {
+    throw new Error('路径不在已授权范围内')
   }
-  return resolvedPath
+  return canonicalPath
+}
+
+async function initializeLocalPathGrantsOnce(settings: AppSettings): Promise<void> {
+  await appDataGrants.grantRoot(app.getPath('userData'))
+
+  for (const folder of settings.libraryFolders ?? []) {
+    if (typeof folder === 'string' && folder.trim()) {
+      declaredLibraryRoots.set(lexicalPathKey(folder), resolve(folder))
+    }
+  }
+
+  const cachePath = settings.musicCachePath || settings.cachePath || getDefaultCachePath()
+  for (const folder of [cachePath, getDefaultCachePath()]) {
+    if (folder) declaredCacheRoots.set(lexicalPathKey(folder), resolve(folder))
+  }
+
+  const impulseResponsePath = settings.audioProcessing?.convolverIrPath
+  if (impulseResponsePath) {
+    declaredImpulseResponseFiles.set(
+      lexicalPathKey(impulseResponsePath),
+      resolve(impulseResponsePath)
+    )
+  }
+
+  await Promise.all([
+    refreshDeclaredLibraryRoots(),
+    refreshDeclaredCacheRoots(),
+    refreshDeclaredImpulseResponseFiles()
+  ])
+}
+
+async function ensureInitialized(): Promise<void> {
+  await initializeLocalPathGrants()
+}
+
+function getLaunchSettings(): AppSettings {
+  return Array.isArray(runtime.launchSettings?.libraryFolders)
+    ? runtime.launchSettings
+    : runtime.appSettings
+}
+
+async function refreshDeclaredLibraryRoots(): Promise<void> {
+  await Promise.all(
+    [...declaredLibraryRoots.values()].map(async (folder) => {
+      try {
+        await libraryGrants.grantRoot(folder)
+      } catch {
+        // Missing or offline startup roots remain declared but grant no filesystem access.
+      }
+    })
+  )
+}
+
+async function refreshDeclaredCacheRoots(): Promise<void> {
+  await Promise.all(
+    [...declaredCacheRoots.values()].map(async (folder) => {
+      try {
+        await grantCacheRoot(folder)
+      } catch {
+        // A missing or unsafe cache layout is not granted.
+      }
+    })
+  )
+}
+
+async function refreshDeclaredImpulseResponseFiles(): Promise<void> {
+  await Promise.all(
+    [...declaredImpulseResponseFiles.values()].map(async (filePath) => {
+      try {
+        const canonicalPath = await resolveCanonicalExistingPath(filePath, 'file')
+        assertImpulseResponseExtension(canonicalPath)
+        impulseResponseGrants.grantCanonicalFile(canonicalPath)
+      } catch {
+        // Missing startup IR files remain configured but cannot be loaded until available.
+      }
+    })
+  )
+}
+
+async function grantCacheRoot(rootPath: string): Promise<string> {
+  const canonicalRoot = await resolveCanonicalExistingPath(rootPath, 'directory')
+  const managedDirectories = await Promise.all(
+    getManagedMusicCacheDirectories(rootPath).map((directory) =>
+      resolveCanonicalExistingPath(directory, 'directory')
+    )
+  )
+  if (managedDirectories.some((directory) => !isCanonicalPathInside(canonicalRoot, directory))) {
+    throw new Error('缓存子目录越出已选择的缓存根目录')
+  }
+  cacheRootGrants.grantCanonicalRoot(canonicalRoot)
+  for (const directory of managedDirectories) {
+    audioCacheGrants.grantCanonicalRoot(directory)
+  }
+  return canonicalRoot
+}
+
+function resolveDeclaredExactPath(
+  declarations: Map<string, string>,
+  targetPath: string
+): string | null {
+  return declarations.get(lexicalPathKey(targetPath)) ?? null
+}
+
+async function tryResolveWithinRoots(
+  grants: CanonicalPathGrantSet,
+  targetPath: string,
+  kind: 'any' | 'directory' | 'file'
+): Promise<string | null> {
+  try {
+    return await grants.resolveWithinRoots(targetPath, kind)
+  } catch {
+    return null
+  }
+}
+
+function isCanonicalDirectoryAllowed(canonicalPath: string): boolean {
+  return (
+    libraryGrants.isCanonicalWithinRoots(canonicalPath) ||
+    cacheRootGrants.hasCanonicalRoot(canonicalPath) ||
+    audioCacheGrants.isCanonicalWithinRoots(canonicalPath) ||
+    appDataGrants.isCanonicalWithinRoots(canonicalPath)
+  )
+}
+
+function assertSupportedAudioExtension(filePath: string): void {
+  if (!SUPPORTED_EXTENSIONS.includes(extname(filePath).toLowerCase())) {
+    throw new Error('不支持的音频文件类型')
+  }
+}
+
+function assertImpulseResponseExtension(filePath: string): void {
+  if (!IMPULSE_RESPONSE_EXTENSIONS.has(extname(filePath).toLowerCase())) {
+    throw new Error('不支持的卷积脉冲响应文件类型')
+  }
 }

@@ -68,6 +68,7 @@ interface TwilightPluginContext {
         description?: string
         icon?: string
         command?: string
+        /** @deprecated The host never executes plugin-provided HTML. */
         renderMode?: 'command' | 'html'
         autoLoad?: boolean
       }) => Promise<void>
@@ -262,7 +263,9 @@ function createContext(
       }
     },
     themes: {
-      register: (theme) => callUiApi('registerTheme', theme).then(() => undefined)
+      register: async () => {
+        throw new Error('Themes must be declared in plugin.json contributes.themes')
+      }
     }
   }
 

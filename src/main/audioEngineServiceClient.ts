@@ -63,7 +63,9 @@ type AudioServiceEvent = {
 
 const MAX_VISUALIZATION_CACHE_KEYS = 8
 const DEFAULT_MAX_IN_FLIGHT_REQUESTS = 128
+const DEFAULT_ANALYSIS_REQUEST_TIMEOUT_MS = 195_000
 const AUDIO_SERVICE_BUSY_CODE = 'ERR_AUDIO_SERVICE_BUSY'
+const AUDIO_SERVICE_TIMEOUT_CODE = 'ERR_AUDIO_SERVICE_TIMEOUT'
 
 type PendingRequest = {
   resolve: (value: unknown) => void
@@ -84,6 +86,7 @@ type CoalescedControlRequest = {
 export interface AudioEngineServiceBindingOptions {
   serviceEntry: string
   requestTimeoutMs?: number
+  analysisRequestTimeoutMs?: number
   restartDelayMs?: number
   maxInFlightRequests?: number
   electron?: ElectronModule
@@ -94,6 +97,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private child: UtilityProcessLike | null = null
   private pending = new Map<string, PendingRequest>()
   private requestTimeoutMs: number
+  private analysisRequestTimeoutMs: number
   private restartDelayMs: number
   private maxInFlightRequests: number
   private stopped = false
@@ -116,6 +120,10 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     super()
     this.options = options
     this.requestTimeoutMs = options.requestTimeoutMs ?? 1500
+    this.analysisRequestTimeoutMs = Math.max(
+      this.requestTimeoutMs,
+      options.analysisRequestTimeoutMs ?? DEFAULT_ANALYSIS_REQUEST_TIMEOUT_MS
+    )
     this.restartDelayMs = options.restartDelayMs ?? 500
     this.maxInFlightRequests = Math.max(
       1,
@@ -365,7 +373,10 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         },
         on: (event, listener) => {
           if (event === 'message') {
-            child.on('message', listener as (message: AudioServiceResponse | AudioServiceEvent) => void)
+            child.on(
+              'message',
+              listener as (message: AudioServiceResponse | AudioServiceEvent) => void
+            )
           } else if (event === 'exit') {
             child.on('exit', listener as (code: number | null) => void)
           } else {
@@ -386,7 +397,9 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       })
       wrappedChild.on('error', (error) => {
         if (this.child !== wrappedChild) return
-        this.handleExit(`音频服务进程错误：${error instanceof Error ? error.message : String(error)}`)
+        this.handleExit(
+          `音频服务进程错误：${error instanceof Error ? error.message : String(error)}`
+        )
       })
       wrappedChild.stdout?.on('data', (chunk) => this.emit('log', chunk.toString()))
       wrappedChild.stderr?.on('data', (chunk) => this.emit('error-log', chunk.toString()))
@@ -555,17 +568,26 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   private call(method: keyof NativeAudioBinding, args: unknown[]): Promise<unknown> {
-    if (!this.child) return Promise.reject(new Error('音频服务不可用'))
+    const child = this.child
+    if (!child) return Promise.reject(new Error('音频服务不可用'))
     if (this.pending.size >= this.maxInFlightRequests) {
       return Promise.reject(createAudioServiceBusyError(method))
     }
     const requestId = randomUUID()
     const generation = this.generation
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(requestId)
-        reject(new Error(`音频服务调用超时：${String(method)}`))
-      }, this.requestTimeoutMs)
+      const timer = setTimeout(
+        () => {
+          const pending = this.pending.get(requestId)
+          if (!pending || generation !== this.generation || this.child !== child) return
+          const error = createAudioServiceTimeoutError(method)
+          clearTimeout(pending.timer)
+          this.pending.delete(requestId)
+          pending.reject(error)
+          this.restartUnresponsiveService(child, generation, error.message)
+        },
+        method === 'AnalyzeBpm' ? this.analysisRequestTimeoutMs : this.requestTimeoutMs
+      )
       this.pending.set(requestId, {
         resolve: (value) => {
           if (generation !== this.generation) return
@@ -575,7 +597,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         timer
       })
       try {
-        this.child?.postMessage({ kind: 'request', requestId, method, args })
+        child.postMessage({ kind: 'request', requestId, method, args })
       } catch (err) {
         clearTimeout(timer)
         this.pending.delete(requestId)
@@ -584,6 +606,21 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
         reject(err)
       }
     })
+  }
+
+  private restartUnresponsiveService(
+    child: UtilityProcessLike,
+    generation: number,
+    reason: string
+  ): void {
+    if (this.stopped || generation !== this.generation || this.child !== child) return
+    this.child = null
+    try {
+      child.kill()
+    } catch {
+      // The timeout recovery path still advances the generation and schedules a replacement.
+    }
+    this.handleExit(reason)
   }
 
   private recordFailure(message: string): void {
@@ -627,6 +664,12 @@ function resolveElectron(): ElectronModule | null {
 function createAudioServiceBusyError(method: keyof NativeAudioBinding): AudioServiceError {
   const error = new Error(`音频服务请求过多：${String(method)}`) as AudioServiceError
   error.code = AUDIO_SERVICE_BUSY_CODE
+  return error
+}
+
+function createAudioServiceTimeoutError(method: keyof NativeAudioBinding): AudioServiceError {
+  const error = new Error(`音频服务调用超时：${String(method)}`) as AudioServiceError
+  error.code = AUDIO_SERVICE_TIMEOUT_CODE
   return error
 }
 

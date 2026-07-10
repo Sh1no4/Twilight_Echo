@@ -6,6 +6,10 @@ const managerSource = readFileSync(new URL('./manager.ts', import.meta.url), 'ut
 const packageSecuritySource = readFileSync(new URL('./packageSecurity.ts', import.meta.url), 'utf8')
 const pluginHostSource = readFileSync(new URL('../pluginHost.ts', import.meta.url), 'utf8')
 const preloadSource = readFileSync(new URL('../../preload/index.ts', import.meta.url), 'utf8')
+const pluginExtensionPageSource = readFileSync(
+  new URL('../../renderer/src/components/PluginExtensionPage.vue', import.meta.url),
+  'utf8'
+)
 
 test('plugin manager keeps UI command failures isolated to the owning plugin', () => {
   assert.match(managerSource, /const PLUGIN_UI_COMMAND_TIMEOUT_MS = 5000/)
@@ -18,10 +22,19 @@ test('plugin manager enforces controlled UI and theme extension contracts', () =
   assert.match(managerSource, /permissions\.includes\('ui:inject'\)/)
   assert.match(managerSource, /'localSidebarItem'/)
   assert.match(managerSource, /'streamingHome'/)
-  assert.match(managerSource, /record\.renderMode === 'html' \? 'html' : 'command'/)
+  assert.match(managerSource, /const renderMode = 'command'/)
+  assert.doesNotMatch(managerSource, /record\.renderMode === 'html'/)
+  assert.doesNotMatch(pluginExtensionPageSource, /srcdoc|allow-same-origin|htmlContent/)
+  assert.match(pluginExtensionPageSource, /<pre>\{\{ textResult \}\}<\/pre>/)
   assert.match(managerSource, /this\.resolveThemeStylesheet/)
   assert.match(managerSource, /resolvePluginFile\(stylesheetPath, descriptor\.paths\.versionRoot\)/)
   assert.match(managerSource, /\^--te-\[a-z0-9-_\]\+\$/)
+  assert.match(
+    managerSource,
+    /主题必须通过 manifest contributes\.themes 声明，运行时主题注册已禁用/
+  )
+  assert.match(pluginHostSource, /Themes must be declared in plugin\.json contributes\.themes/)
+  assert.match(managerSource, /themes: this\.normalizeDeclarativeThemeContributions\(descriptor\)/)
 })
 
 test('plugin manager rejects symlink escapes in installed plugin resources', () => {

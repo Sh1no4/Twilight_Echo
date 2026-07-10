@@ -94,6 +94,22 @@ test('requires either executable entry or declarative theme contribution', () =>
   assert.deepEqual(manifest.type, ['theme'])
 })
 
+test('rejects executable entries for pure theme plugins', () => {
+  assert.throws(
+    () =>
+      validatePluginManifest({
+        ...validManifest,
+        id: 'com.example.scripted-theme',
+        type: ['theme'],
+        permissions: [],
+        contributes: {
+          themes: [{ id: 'scripted', name: 'Scripted', variables: { '--te-primary-500': '#fff' } }]
+        }
+      }),
+    /纯 theme 插件只能通过 contributes\.themes 声明/
+  )
+})
+
 test('rejects paths outside plugin root', () => {
   assert.throws(() => validatePluginManifest({ ...validManifest, main: '../escape.mjs' }), /目录外/)
   assert.throws(

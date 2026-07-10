@@ -320,10 +320,10 @@ short timeout and returns the plugin handler result to the renderer. Command
 failures mark only the owning plugin as failed and are written to that plugin's
 log.
 
-UI contributions may set `renderMode` to `command` or `html`. `command` is the
-default and only runs the command. `html` expects the command to return an HTML
-string for controlled iframe rendering. `autoLoad` controls whether the command
-runs when the page opens; `html` contributions default to auto-loading.
+UI commands may return a string or JSON-serializable object. The host renders
+that result as text/structured data in a controlled surface. Arbitrary
+plugin-provided HTML, `srcdoc` frames, and DOM injection are not supported.
+Legacy `renderMode: 'html'` input is normalized to command-only rendering.
 
 UI contributions require `type` containing `ui` or `tool` and permission
 `ui:inject`.

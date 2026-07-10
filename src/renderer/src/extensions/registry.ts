@@ -15,7 +15,8 @@ export interface UiContribution {
   description?: string
   icon?: string
   command?: string
-  renderMode?: 'command' | 'html'
+  /** Legacy transport field. The host always normalizes this to command-only rendering. */
+  renderMode?: 'command'
   autoLoad?: boolean
 }
 

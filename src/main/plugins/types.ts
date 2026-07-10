@@ -292,9 +292,9 @@ export interface TwilightUiContribution {
   description?: string
   icon?: string
   command?: string
-  /** 渲染模式：'command'（默认，仅执行命令）| 'html'（命令返回 HTML 字符串，渲染为 iframe） */
+  /** @deprecated 宿主始终按 command 渲染；'html' 仅作为 API v1 兼容输入保留。 */
   renderMode?: 'command' | 'html'
-  /** 是否在页面打开时自动执行命令（默认 true for 'html' 模式） */
+  /** 是否在页面打开时自动执行命令，默认 false。 */
   autoLoad?: boolean
 }
 

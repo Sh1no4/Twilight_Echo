@@ -7,8 +7,10 @@ import { AudioEngineServiceBinding } from './audioEngineServiceClient.ts'
 class SilentUtilityProcess extends EventEmitter {
   stdout = new EventEmitter()
   stderr = new EventEmitter()
+  killCount = 0
   postMessage(): void {}
   kill(): void {
+    this.killCount += 1
     this.emit('exit', 0)
   }
 }
@@ -58,9 +60,75 @@ test('cached audio service calls swallow timeout rejections', async () => {
     await new Promise((resolve) => setTimeout(resolve, 30))
     assert.equal(unhandled.length, 0)
     assert.match(binding.GetLastError(), /音频服务调用超时/)
+    assert.equal(child.killCount, 1)
     binding.destroy()
   } finally {
     process.off('unhandledRejection', onUnhandled)
+  }
+})
+
+test('timed out audio service RPC terminates and restarts the unresponsive generation once', async () => {
+  const children: ManualUtilityProcess[] = []
+  const electron = {
+    utilityProcess: {
+      fork: () => {
+        const child = new ManualUtilityProcess()
+        children.push(child)
+        return child
+      }
+    }
+  }
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 5,
+    restartDelayMs: 5,
+    electron
+  })
+  const crashes: string[] = []
+  binding.on('crash', (reason: string) => crashes.push(reason))
+
+  try {
+    await assert.rejects(() => binding.getMetadataAsync('hung-track.flac'), /音频服务调用超时/)
+    await new Promise((resolve) => setTimeout(resolve, 30))
+
+    assert.equal(children[0].killCount, 1)
+    assert.equal(children.length, 2)
+    assert.equal(crashes.length, 1)
+    assert.match(crashes[0], /GetMetadata/)
+  } finally {
+    binding.destroy()
+  }
+})
+
+test('BPM analysis uses its long-running RPC budget without masking ordinary service hangs', async () => {
+  const child = new ManualUtilityProcess()
+  const electron = {
+    utilityProcess: {
+      fork: () => child
+    }
+  }
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 5,
+    analysisRequestTimeoutMs: 50,
+    restartDelayMs: 5,
+    electron
+  })
+
+  try {
+    const analysis = binding.callAsync('AnalyzeBpm', ['track.flac', '{}'])
+    await new Promise((resolve) => setTimeout(resolve, 15))
+    assert.equal(child.killCount, 0)
+    const request = child.messages[0] as { requestId: string }
+    child.emit('message', {
+      kind: 'response',
+      requestId: request.requestId,
+      ok: true,
+      value: '{"bpm":120}'
+    })
+    assert.equal(await analysis, '{"bpm":120}')
+  } finally {
+    binding.destroy()
   }
 })
 
@@ -256,9 +324,10 @@ test('audio service crash clears service-derived caches', async () => {
   assert.equal(binding.GetUpcomingTrack(), null)
   assert.equal(binding.GetConvolverInfo(), '{"loaded":false,"active":false}')
 
-  const [visualizationRequest, devicesRequest, upcomingRequest, convolverRequest] = child.messages as Array<{
-    requestId: string
-  }>
+  const [visualizationRequest, devicesRequest, upcomingRequest, convolverRequest] =
+    child.messages as Array<{
+      requestId: string
+    }>
   child.emit('message', {
     kind: 'response',
     requestId: visualizationRequest.requestId,

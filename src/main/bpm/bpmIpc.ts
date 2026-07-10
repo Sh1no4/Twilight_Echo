@@ -8,7 +8,7 @@ import {
   type BpmAnalysisRequest,
   type BpmAnalysisRequestResult
 } from './bpmAnalysisManager.ts'
-import { resolvePlayableAudioFile } from '../library/scan.ts'
+import { resolveAuthorizedAudioFile } from '../security/localPaths.ts'
 import { normalizeFiniteNumber, normalizeIpcString } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 
@@ -30,12 +30,15 @@ export function setupBpmAnalysisIpc(): void {
     }
   })
 
-  ipcMain.handle('bpmAnalysis:request', async (_event, raw: unknown): Promise<BpmAnalysisRequestResult> => {
-    assertTrustedIpcSender(_event, 'BPM IPC')
-    const request = await normalizeBpmAnalysisRequest(raw)
-    if (!request) return { status: 'skipped', reason: 'invalid-request' }
-    return runtime.bpmAnalysisManager!.requestAnalysis(request)
-  })
+  ipcMain.handle(
+    'bpmAnalysis:request',
+    async (_event, raw: unknown): Promise<BpmAnalysisRequestResult> => {
+      assertTrustedIpcSender(_event, 'BPM IPC')
+      const request = await normalizeBpmAnalysisRequest(raw)
+      if (!request) return { status: 'skipped', reason: 'invalid-request' }
+      return runtime.bpmAnalysisManager!.requestAnalysis(request)
+    }
+  )
 
   ipcMain.handle('bpmAnalysis:getCacheSize', async (event) => {
     assertTrustedIpcSender(event, 'BPM IPC')
@@ -59,7 +62,7 @@ async function normalizeBpmAnalysisRequest(raw: unknown): Promise<BpmAnalysisReq
   let filePath: string
   try {
     trackId = normalizeIpcString(value.trackId, 'BPM track id', MAX_BPM_TRACK_ID_LENGTH)
-    filePath = await resolvePlayableAudioFile(
+    filePath = await resolveAuthorizedAudioFile(
       normalizeIpcString(value.filePath, 'BPM file path', MAX_BPM_FILE_PATH_LENGTH)
     )
   } catch {

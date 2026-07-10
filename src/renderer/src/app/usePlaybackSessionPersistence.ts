@@ -35,16 +35,24 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
     options.positionAutosaveMs ?? DEFAULT_PLAYBACK_SESSION_POSITION_AUTOSAVE_MS
   let playbackSessionAutosaveTimer: ReturnType<typeof setTimeout> | null = null
   let lastPlaybackSessionPositionSaveAt = 0
+  let playbackSessionWritesEnabled = false
   const stopHandles: Array<() => void> = []
 
   async function restoreSavedPlaybackSession(mode: PlaybackResumeMode): Promise<void> {
+    playbackSessionWritesEnabled = false
+    clearPlaybackSessionAutosave()
+
     if (mode === 'off') {
       await options.dataApi.clearPlaybackSession()
+      playbackSessionWritesEnabled = true
       return
     }
 
     const session = await options.dataApi.loadPlaybackSession()
-    if (!session?.track?.id) return
+    if (!session?.track?.id) {
+      playbackSessionWritesEnabled = true
+      return
+    }
 
     await options.syncPluginProviders()
 
@@ -54,14 +62,18 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
       position: mode === 'trackAndPosition' ? session.position : 0
     }
     options.restorePlaybackSession(restoredSession)
+    playbackSessionWritesEnabled = true
   }
 
   async function savePlaybackSessionForQuit(): Promise<void> {
     clearPlaybackSessionAutosave()
+    if (!playbackSessionWritesEnabled) return
     await savePlaybackSessionSnapshot()
   }
 
   async function savePlaybackSessionSnapshot(): Promise<void> {
+    if (!playbackSessionWritesEnabled) return
+
     const mode = getPlaybackResumeMode()
     if (mode === 'off') {
       await options.dataApi.clearPlaybackSession()
@@ -85,6 +97,8 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
   }
 
   function schedulePlaybackSessionAutosave(delay = autosaveDelayMs): void {
+    if (!playbackSessionWritesEnabled) return
+
     clearPlaybackSessionAutosave()
     playbackSessionAutosaveTimer = setTimeout(() => {
       playbackSessionAutosaveTimer = null
@@ -96,6 +110,8 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
   }
 
   function startAutosaveWatchers(): void {
+    if (!playbackSessionWritesEnabled || stopHandles.length > 0) return
+
     stopHandles.push(
       watch(
         [() => options.currentTrack.value?.id, () => getPlaybackResumeMode()],

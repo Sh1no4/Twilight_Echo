@@ -27,6 +27,11 @@ import {
   normalizeOptionalIpcString
 } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
+import {
+  grantUserSelectedImpulseResponse,
+  resolveAuthorizedAudioSource,
+  resolveAuthorizedImpulseResponseFile
+} from '../security/localPaths.ts'
 
 const MAX_AUDIO_QUEUE_ITEMS = 1000
 const MAX_AUDIO_SOURCE_LENGTH = 8192
@@ -73,22 +78,51 @@ export function toQueueItem(raw: unknown): AudioEngineQueueItem | null {
   }
 }
 
+async function authorizeAudioProcessingSettings(
+  settings: Partial<AudioProcessingSettings>
+): Promise<AudioProcessingSettings> {
+  const normalized = normalizeAudioProcessingSettings(settings)
+  if (normalized.convolverIrPath) {
+    normalized.convolverIrPath = await resolveAuthorizedImpulseResponseFile(
+      normalized.convolverIrPath
+    )
+  }
+  return normalized
+}
+
 function normalizeQueueText(value: unknown, fallback?: string): string | undefined {
   if (typeof value !== 'string') return fallback
-  const normalized = value.replace(/[\0\r\n]/g, ' ').trim().slice(0, 512)
+  const normalized = value
+    .replace(/[\0\r\n]/g, ' ')
+    .trim()
+    .slice(0, 512)
   return normalized || fallback
 }
 
-export function setupAudioEngineIpc(): void {
-  runtime.audioEngineManager = new AudioEngineManager({
-    exclusiveMode: runtime.appSettings.audioExclusiveMode,
-    audioOutput: runtime.appSettings.audioOutput,
-    audioDevice: runtime.appSettings.audioDevice,
-    audioOutputConfig: runtime.appSettings.audioOutputConfig,
-    audioProcessing: getEffectiveAudioProcessing()
-  }, {
-    audioServiceEntry: join(__dirname, 'audioEngineService.js')
-  })
+export async function setupAudioEngineIpc(): Promise<void> {
+  let initialAudioProcessing = getEffectiveAudioProcessing()
+  try {
+    initialAudioProcessing = await authorizeAudioProcessingSettings(initialAudioProcessing)
+  } catch (error) {
+    console.warn('Configured impulse response is unavailable or unauthorized:', error)
+    initialAudioProcessing = normalizeAudioProcessingSettings({
+      ...initialAudioProcessing,
+      convolverEnabled: false,
+      convolverIrPath: ''
+    })
+  }
+  runtime.audioEngineManager = new AudioEngineManager(
+    {
+      exclusiveMode: runtime.appSettings.audioExclusiveMode,
+      audioOutput: runtime.appSettings.audioOutput,
+      audioDevice: runtime.appSettings.audioDevice,
+      audioOutputConfig: runtime.appSettings.audioOutputConfig,
+      audioProcessing: initialAudioProcessing
+    },
+    {
+      audioServiceEntry: join(__dirname, 'audioEngineService.js')
+    }
+  )
 
   runtime.audioEngineManager.on('property-change', ({ name, data }) => {
     runtime.mainWindow?.webContents.send('audioEngine:property-change', { name, data })
@@ -141,23 +175,37 @@ export function setupAudioEngineIpc(): void {
     broadcastPlayerLifecycleEvents(info)
   })
 
-  ipcMain.handle('audioEngine:loadQueue', async (_event, items: unknown[], startIndex?: number) => {
+  ipcMain.handle('audioEngine:loadQueue', async (_event, items: unknown, startIndex?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
+    if (!Array.isArray(items) || items.length > MAX_AUDIO_QUEUE_ITEMS) {
+      throw new Error('Audio queue is invalid or too large')
+    }
     const queue = normalizeIpcArray(items, 'audio queue', MAX_AUDIO_QUEUE_ITEMS, toQueueItem)
+    if (queue.length !== items.length) {
+      throw new Error('Audio queue contains an invalid item')
+    }
+    const authorizedQueue = await Promise.all(
+      queue.map(async (item) => ({
+        ...item,
+        source: await resolveAuthorizedAudioSource(item.source)
+      }))
+    )
     const normalizedStartIndex = normalizeInteger(
       startIndex,
       'queue start index',
       0,
       0,
-      Math.max(0, queue.length - 1)
+      Math.max(0, authorizedQueue.length - 1)
     )
-    await requireAudioEngine().loadQueue(queue, normalizedStartIndex)
+    await requireAudioEngine().loadQueue(authorizedQueue, normalizedStartIndex)
   })
 
   ipcMain.handle('audioEngine:play', async (_event, source: string, startTime?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     return await requireAudioEngine().play(
-      normalizeIpcString(source, 'audio source', MAX_AUDIO_SOURCE_LENGTH),
+      await resolveAuthorizedAudioSource(
+        normalizeIpcString(source, 'audio source', MAX_AUDIO_SOURCE_LENGTH)
+      ),
       normalizeFiniteNumber(startTime, 'start time', 0, 0, Number.MAX_SAFE_INTEGER)
     )
   })
@@ -196,7 +244,9 @@ export function setupAudioEngineIpc(): void {
 
   ipcMain.handle('audioEngine:setPlayMode', async (_event, mode: PlayMode) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    await requireAudioEngine().setPlayMode(mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential')
+    await requireAudioEngine().setPlayMode(
+      mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential'
+    )
   })
 
   ipcMain.handle('audioEngine:getUpcomingTrack', async (event) => {
@@ -262,7 +312,7 @@ export function setupAudioEngineIpc(): void {
     'audioEngine:setAudioProcessing',
     async (_event, settings: Partial<AudioProcessingSettings>) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
-      const normalized = normalizeAudioProcessingSettings({
+      const normalized = await authorizeAudioProcessingSettings({
         ...runtime.appSettings.audioProcessing,
         ...settings
       })
@@ -291,13 +341,15 @@ export function setupAudioEngineIpc(): void {
       ? await dialog.showOpenDialog(win, options)
       : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
+    return await grantUserSelectedImpulseResponse(result.filePaths[0])
   })
 
   ipcMain.handle('audioEngine:loadImpulseResponse', async (_event, path: string) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    const convolverIrPath = normalizeIpcString(path, 'impulse response path', MAX_AUDIO_SOURCE_LENGTH)
-    const normalized = normalizeAudioProcessingSettings({
+    const convolverIrPath = await resolveAuthorizedImpulseResponseFile(
+      normalizeIpcString(path, 'impulse response path', MAX_AUDIO_SOURCE_LENGTH)
+    )
+    const normalized = await authorizeAudioProcessingSettings({
       ...runtime.appSettings.audioProcessing,
       dspEnabled: true,
       convolverEnabled: true,
@@ -327,7 +379,7 @@ export function setupAudioEngineIpc(): void {
     'audioEngine:setEqBands',
     async (_event, settings: Partial<AudioProcessingSettings>) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
-      const normalized = normalizeAudioProcessingSettings({
+      const normalized = await authorizeAudioProcessingSettings({
         ...runtime.appSettings.audioProcessing,
         ...settings,
         dspEnabled: true,
@@ -349,7 +401,7 @@ export function setupAudioEngineIpc(): void {
       }
     ) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
-      const normalized = normalizeAudioProcessingSettings({
+      const normalized = await authorizeAudioProcessingSettings({
         ...runtime.appSettings.audioProcessing,
         ...preset,
         dspEnabled: true,
@@ -363,7 +415,7 @@ export function setupAudioEngineIpc(): void {
   ipcMain.handle('audioEngine:setCrossfeedStrength', async (_event, strength: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const normalizedStrength = normalizeFiniteNumber(strength, 'crossfeed strength', 0, 0, 1)
-    const normalized = normalizeAudioProcessingSettings({
+    const normalized = await authorizeAudioProcessingSettings({
       ...runtime.appSettings.audioProcessing,
       dspEnabled: true,
       crossfeedEnabled: normalizedStrength > 0,
@@ -383,7 +435,7 @@ export function setupAudioEngineIpc(): void {
       clip?: boolean
     ) => {
       assertTrustedIpcSender(_event, 'audio engine IPC')
-      const normalized = normalizeAudioProcessingSettings({
+      const normalized = await authorizeAudioProcessingSettings({
         ...runtime.appSettings.audioProcessing,
         dspEnabled: true,
         volumeNormalization: mode,
@@ -399,7 +451,9 @@ export function setupAudioEngineIpc(): void {
   ipcMain.handle('audioEngine:getMetadata', async (_event, source: string) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     return await requireAudioEngine().getMetadataAsync(
-      normalizeIpcString(source, 'metadata source', MAX_AUDIO_SOURCE_LENGTH)
+      await resolveAuthorizedAudioSource(
+        normalizeIpcString(source, 'metadata source', MAX_AUDIO_SOURCE_LENGTH)
+      )
     )
   })
 
@@ -410,7 +464,9 @@ export function setupAudioEngineIpc(): void {
 
   ipcMain.handle('audioEngine:getSpectrumData', async (_event, points?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
-    return requireAudioEngine().getSpectrumData(normalizeInteger(points, 'spectrum points', 128, 8, 4096))
+    return requireAudioEngine().getSpectrumData(
+      normalizeInteger(points, 'spectrum points', 128, 8, 4096)
+    )
   })
 
   ipcMain.handle('audioEngine:getVisualizationData', async (_event, options?: unknown) => {

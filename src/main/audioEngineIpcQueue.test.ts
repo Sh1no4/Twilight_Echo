@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 const source = readFileSync(new URL('./audio/engineIpc.ts', import.meta.url), 'utf8')
-const deviceHotplugSource = readFileSync(new URL('./audio/deviceHotplug.ts', import.meta.url), 'utf8')
+const deviceHotplugSource = readFileSync(
+  new URL('./audio/deviceHotplug.ts', import.meta.url),
+  'utf8'
+)
 const windowSource = readFileSync(new URL('./app/window.ts', import.meta.url), 'utf8')
 
 test('audioEngine loadQueue IPC accepts renderer queue items with source field', () => {
@@ -25,8 +28,14 @@ test('audioEngine loadQueue IPC accepts renderer queue items with source field',
 
 test('audioEngine IPC normalizes untrusted renderer parameters', () => {
   assert.match(source, /const MAX_AUDIO_QUEUE_ITEMS = 1000/)
-  assert.match(source, /normalizeIpcArray\(items, 'audio queue', MAX_AUDIO_QUEUE_ITEMS, toQueueItem\)/)
+  assert.match(
+    source,
+    /normalizeIpcArray\(items, 'audio queue', MAX_AUDIO_QUEUE_ITEMS, toQueueItem\)/
+  )
+  assert.match(source, /queue\.length !== items\.length/)
+  assert.match(source, /source: await resolveAuthorizedAudioSource\(item\.source\)/)
   assert.match(source, /normalizeIpcString\(source, 'audio source'/)
+  assert.match(source, /await resolveAuthorizedAudioSource\(/)
   assert.match(source, /normalizeFiniteNumber\(time, 'seek time', 0, 0, Number\.MAX_SAFE_INTEGER\)/)
   assert.match(source, /normalizeFiniteNumber\(volume, 'volume', 1, 0, 1\)/)
   assert.match(source, /normalizeInteger\(points, 'spectrum points', 128, 8, 4096\)/)

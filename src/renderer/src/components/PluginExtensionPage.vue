@@ -13,18 +13,15 @@ const emit = defineEmits<{
 
 const loading = ref(false)
 const error = ref('')
-const htmlContent = ref('')
 const textResult = ref('')
 
 const subtitle = computed(() => props.page.description || props.page.pluginId)
-const isHtmlMode = computed(() => props.page.renderMode === 'html')
-const shouldAutoLoad = computed(() => props.page.autoLoad ?? isHtmlMode.value)
+const shouldAutoLoad = computed(() => props.page.autoLoad === true)
 
 async function loadContent(): Promise<void> {
   if (!props.page.command || loading.value) return
   loading.value = true
   error.value = ''
-  htmlContent.value = ''
   textResult.value = ''
   try {
     const result = await window.api.extensions.executeCommand(props.page.command, [
@@ -33,24 +30,21 @@ async function loadContent(): Promise<void> {
         pageId: props.page.id
       }
     ])
-    if (result == null) {
-      // Command returned null/undefined — nothing to render
-    } else if (typeof result === 'string') {
-      // Check if it looks like HTML
-      if (isHtmlMode.value || result.trim().startsWith('<')) {
-        htmlContent.value = result
-      } else {
-        textResult.value = result
-      }
-    } else if (typeof result === 'object') {
-      textResult.value = JSON.stringify(result, null, 2)
-    } else {
-      textResult.value = String(result)
-    }
+    textResult.value = formatCommandResult(result)
   } catch (err) {
     error.value = err instanceof Error ? err.message : String(err)
   } finally {
     loading.value = false
+  }
+}
+
+function formatCommandResult(result: unknown): string {
+  if (result == null) return ''
+  if (typeof result === 'string') return result
+  try {
+    return typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result)
+  } catch {
+    return String(result)
   }
 }
 
@@ -112,15 +106,6 @@ watch(() => props.page.id, () => {
         <p class="error-text">{{ error }}</p>
         <button class="plugin-extension-retry-btn" @click="runPageCommand">重试</button>
       </div>
-
-      <!-- HTML render mode: iframe with srcdoc -->
-      <iframe
-        v-else-if="htmlContent"
-        class="plugin-extension-iframe"
-        :srcdoc="htmlContent"
-        sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-        @load="($event.target as HTMLIFrameElement).style.height = ($event.target as HTMLIFrameElement).contentWindow?.document.body?.scrollHeight + 'px'"
-      ></iframe>
 
       <!-- Text/data result -->
       <div v-else-if="textResult" class="plugin-extension-text-result">
@@ -268,14 +253,6 @@ watch(() => props.page.id, () => {
 
 .plugin-extension-retry-btn:hover {
   background: #f5f5f5;
-}
-
-.plugin-extension-iframe {
-  width: 100%;
-  min-height: 400px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  border-radius: 8px;
-  background: var(--te-card-bg);
 }
 
 .plugin-extension-text-result {

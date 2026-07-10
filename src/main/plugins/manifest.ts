@@ -145,6 +145,9 @@ export function validatePluginManifest(raw: unknown): TwilightPluginManifest {
   const main = normalizeRelativePath(raw.main, 'main')
   const binary = normalizeBinary(raw.binary)
   const dependencies = normalizeDependencies(raw.dependencies)
+  if (type.length === 1 && type[0] === 'theme' && (main || binary)) {
+    throw new Error('纯 theme 插件只能通过 contributes.themes 声明，不能包含 main 或 binary')
+  }
   if (!main && !binary && !hasDeclarativeThemeContribution(raw, type)) {
     throw new Error('plugin.json 必须声明 main 或 binary，或为 theme 声明 contributes.themes')
   }

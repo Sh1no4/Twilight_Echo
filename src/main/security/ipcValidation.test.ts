@@ -9,7 +9,9 @@ const {
   normalizeIpcString,
   normalizeOptionalIpcString,
   stringifyJsonForIpcStorage
-} = (await import(new URL('./ipcValidation.ts', import.meta.url).href)) as typeof import('./ipcValidation')
+} = (await import(
+  new URL('./ipcValidation.ts', import.meta.url).href
+)) as typeof import('./ipcValidation')
 
 test('normalizes IPC strings and rejects control characters or oversized input', () => {
   assert.equal(normalizeIpcString('  ok  ', 'field'), 'ok')
@@ -41,13 +43,33 @@ test('data IPC applies path and storage limits before touching local files', () 
   const source = readFileSync(new URL('../ipc/data.ts', import.meta.url), 'utf8')
 
   assert.match(source, /const MAX_MUSIC_LIBRARY_BYTES = 100 \* 1024 \* 1024/)
-  assert.match(source, /stringifyJsonForIpcStorage\(library, 'music library', MAX_MUSIC_LIBRARY_BYTES\)/)
-  assert.match(source, /stringifyJsonForIpcStorage\(session, 'playback session', MAX_PLAYBACK_SESSION_BYTES\)/)
+  assert.match(
+    source,
+    /stringifyJsonForIpcStorage\(normalizedLibrary, 'music library', MAX_MUSIC_LIBRARY_BYTES\)/
+  )
+  assert.match(
+    source,
+    /stringifyJsonForIpcStorage\(session, 'playback session', MAX_PLAYBACK_SESSION_BYTES\)/
+  )
   assert.match(source, /stringifyJsonForIpcStorage\(playlists, 'playlists', MAX_PLAYLISTS_BYTES\)/)
   assert.match(source, /normalizeLocalPath\(folderPath, 'music folder path'\)/)
-  assert.match(source, /resolveAuthorizedAudioFile\(normalizeLocalPath\(filePath, 'audio file path'\)\)/)
+  assert.match(
+    source,
+    /resolveAuthorizedAudioFile\(\s*normalizeLocalPath\(filePath, 'audio file path'\)\s*\)/
+  )
+  assert.match(source, /clearManagedMusicCache\(cachePath\)/)
+  assert.doesNotMatch(source, /rm\(cachePath, \{ recursive: true, force: true \}\)/)
+  assert.match(source, /filterAuthorizedLibraryRoots\(library\.folders\)/)
+  assert.match(source, /loadJsonFileWithBackup\(MUSIC_LIBRARY_FILE/)
+  assert.match(source, /writeJsonFileAtomic\(/)
+  assert.match(source, /reportPersistentDataFailure\('音乐库'/)
+  assert.match(source, /reportPersistentDataFailure\('播放会话'/)
+  assert.match(source, /reportPersistentDataFailure\('歌单'/)
   assert.match(source, /normalizeCoverDataUrl\(handle\)/)
-  assert.match(source, /resolveAuthorizedAudioFile\(normalizeLocalPath\(filePath, 'lyrics audio file path'\)\)/)
+  assert.match(
+    source,
+    /resolveAuthorizedAudioFile\(\s*normalizeLocalPath\(filePath, 'lyrics audio file path'\)\s*\)/
+  )
 })
 
 test('plugin and NCM IPC validate renderer-controlled IDs, methods, paths, and payload sizes', () => {
@@ -62,8 +84,14 @@ test('plugin and NCM IPC validate renderer-controlled IDs, methods, paths, and p
   assert.match(pluginsSource, /normalizePluginId\(id\)/)
   assert.match(pluginsSource, /normalizeProviderId\(providerId\)/)
   assert.match(pluginsSource, /normalizeProviderMethod\(method\)/)
-  assert.match(pluginsSource, /normalizePluginIpcArgs\(args, 'provider call args', MAX_PROVIDER_ARGS\)/)
-  assert.match(pluginsSource, /stringifyJsonForIpcStorage\(args, field, MAX_PLUGIN_IPC_ARGS_BYTES\)/)
+  assert.match(
+    pluginsSource,
+    /normalizePluginIpcArgs\(args, 'provider call args', MAX_PROVIDER_ARGS\)/
+  )
+  assert.match(
+    pluginsSource,
+    /stringifyJsonForIpcStorage\(args, field, MAX_PLUGIN_IPC_ARGS_BYTES\)/
+  )
   assert.match(pluginsSource, /normalizeNativeDspParameters\(parameters\)/)
   assert.match(pluginsSource, /realpathSync\(/)
 
@@ -76,7 +104,10 @@ test('plugin and NCM IPC validate renderer-controlled IDs, methods, paths, and p
 
 test('settings, background image, OPRA, and BPM IPC apply input limits before expensive work', () => {
   const dataSource = readFileSync(new URL('../ipc/data.ts', import.meta.url), 'utf8')
-  const coverCacheSource = readFileSync(new URL('../library/coverCache.ts', import.meta.url), 'utf8')
+  const coverCacheSource = readFileSync(
+    new URL('../library/coverCache.ts', import.meta.url),
+    'utf8'
+  )
   const opraSource = readFileSync(new URL('../ipc/opra.ts', import.meta.url), 'utf8')
   const bpmSource = readFileSync(new URL('../bpm/bpmIpc.ts', import.meta.url), 'utf8')
 
@@ -84,19 +115,37 @@ test('settings, background image, OPRA, and BPM IPC apply input limits before ex
   assert.match(coverCacheSource, /fileStat\.size > MAX_BACKGROUND_IMAGE_BYTES/)
   assert.match(dataSource, /const MAX_SETTINGS_PATCH_BYTES = 512 \* 1024/)
   assert.match(dataSource, /const MAX_SETTINGS_BACKUP_BYTES = 2 \* 1024 \* 1024/)
-  assert.match(dataSource, /stringifyJsonForIpcStorage\(patch, 'settings patch', MAX_SETTINGS_PATCH_BYTES\)/)
+  assert.match(
+    dataSource,
+    /stringifyJsonForIpcStorage\(patch, 'settings patch', MAX_SETTINGS_PATCH_BYTES\)/
+  )
   assert.match(dataSource, /Buffer\.byteLength\(json, 'utf-8'\) > MAX_SETTINGS_BACKUP_BYTES/)
   assert.match(dataSource, /normalizeNcmCookieForSave\(cookie\)/)
-  assert.match(dataSource, /stringifyJsonForIpcStorage\(data, 'Discord activity', MAX_DISCORD_ACTIVITY_BYTES\)/)
+  assert.match(
+    dataSource,
+    /stringifyJsonForIpcStorage\(data, 'Discord activity', MAX_DISCORD_ACTIVITY_BYTES\)/
+  )
 
-  assert.match(opraSource, /normalizeOptionalIpcString\(query, 'OPRA query', MAX_OPRA_QUERY_LENGTH\)/)
-  assert.match(opraSource, /normalizeOptionalIpcString\(eqId, 'OPRA profile id', MAX_OPRA_PROFILE_ID_LENGTH\)/)
-  assert.match(bpmSource, /await resolvePlayableAudioFile/)
-  assert.match(bpmSource, /normalizeIpcString\(value\.filePath, 'BPM file path', MAX_BPM_FILE_PATH_LENGTH\)/)
+  assert.match(
+    opraSource,
+    /normalizeOptionalIpcString\(query, 'OPRA query', MAX_OPRA_QUERY_LENGTH\)/
+  )
+  assert.match(
+    opraSource,
+    /normalizeOptionalIpcString\(eqId, 'OPRA profile id', MAX_OPRA_PROFILE_ID_LENGTH\)/
+  )
+  assert.match(bpmSource, /await resolveAuthorizedAudioFile/)
+  assert.match(
+    bpmSource,
+    /normalizeIpcString\(value\.filePath, 'BPM file path', MAX_BPM_FILE_PATH_LENGTH\)/
+  )
 })
 
 test('Electron documents use local CSP, denied permissions, and trusted IPC sender checks', () => {
-  const electronSecuritySource = readFileSync(new URL('./electronSecurity.ts', import.meta.url), 'utf8')
+  const electronSecuritySource = readFileSync(
+    new URL('./electronSecurity.ts', import.meta.url),
+    'utf8'
+  )
   const lifecycleSource = readFileSync(new URL('../app/lifecycle.ts', import.meta.url), 'utf8')
   const rendererHtml = readFileSync(new URL('../../renderer/index.html', import.meta.url), 'utf8')
   const dataSource = readFileSync(new URL('../ipc/data.ts', import.meta.url), 'utf8')
@@ -134,5 +183,7 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
   assert.match(dataSource, /assertTrustedIpcSender|shouldAcceptIpcEvent/)
   assert.match(pluginsSource, /assertTrustedIpcSender/)
   assert.match(audioIpcSource, /assertTrustedIpcSender/)
+  assert.match(audioIpcSource, /resolveAuthorizedAudioSource/)
+  assert.match(audioIpcSource, /resolveAuthorizedImpulseResponseFile/)
   assert.match(desktopLyricsSource, /shouldAcceptIpcEvent/)
 })

@@ -1,7 +1,6 @@
 import { app } from 'electron'
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { stat, readdir } from 'fs/promises'
-import { join, resolve, dirname } from 'path'
+import { join, resolve } from 'path'
 import {
   DEFAULT_AUDIO_PROCESSING,
   normalizeAudioOutput,
@@ -39,6 +38,13 @@ import type {
   UiDensity
 } from './types'
 import type { PlayMode } from '../audioEngineManager'
+import {
+  loadSettingsFile,
+  writeSettingsFile,
+  type SettingsFileLoadIssue
+} from '../persistence/settingsFile.ts'
+
+let appSettingsLoadIssue: SettingsFileLoadIssue | null = null
 
 export const DEFAULT_DESKTOP_LYRICS: DesktopLyricsSettings = {
   enabled: false,
@@ -602,20 +608,24 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
 }
 
 export function readAppSettings(): AppSettings {
-  try {
-    const filePath = getSettingsFilePath()
-    if (!existsSync(filePath)) return { ...DEFAULT_SETTINGS }
-    const raw = readFileSync(filePath, 'utf-8')
-    return normalizeAppSettings(JSON.parse(raw))
-  } catch {
-    return { ...DEFAULT_SETTINGS }
+  const result = loadSettingsFile(getSettingsFilePath(), DEFAULT_SETTINGS, normalizeAppSettings)
+  appSettingsLoadIssue = result.issue
+  if (result.issue?.kind === 'recovered') {
+    console.warn('[persistence] application settings recovered from backup')
+  } else if (result.issue?.kind === 'corrupt') {
+    console.error('[persistence] application settings are corrupt; using defaults for this run')
   }
+  return result.settings
 }
 
 export function writeAppSettings(settings: AppSettings): void {
-  const filePath = getSettingsFilePath()
-  mkdirSync(dirname(filePath), { recursive: true })
-  writeFileSync(filePath, JSON.stringify(settings, null, 2), 'utf-8')
+  writeSettingsFile(getSettingsFilePath(), settings)
+}
+
+export function consumeAppSettingsLoadIssue(): SettingsFileLoadIssue | null {
+  const issue = appSettingsLoadIssue
+  appSettingsLoadIssue = null
+  return issue
 }
 
 export function getRestartReasons(settings: AppSettings, launch: AppSettings): string[] {

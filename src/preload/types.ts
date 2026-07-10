@@ -731,7 +731,8 @@ export interface TwilightUiContribution {
   description?: string
   icon?: string
   command?: string
-  renderMode?: 'command' | 'html'
+  /** Legacy field normalized by the host to command-only rendering. */
+  renderMode?: 'command'
   autoLoad?: boolean
 }
 

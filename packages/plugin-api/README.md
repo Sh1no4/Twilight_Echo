@@ -15,8 +15,14 @@ through `activate(context)`.
 
 The v1 UI typings include the controlled extension points currently exposed by
 the host: `playerBarButton`, `settingsPanel`, `sidebarPage`,
-`localSidebarItem`, and `streamingHome`. UI contributions may also declare
-`renderMode` and `autoLoad`.
+`localSidebarItem`, and `streamingHome`. Commands may return text or
+JSON-serializable data for host rendering. Arbitrary plugin-provided HTML is not
+a supported extension path; the legacy `renderMode` field is retained only for
+API v1 source compatibility and is ignored by the host.
+
+Themes are declared in `plugin.json` under `contributes.themes`. The legacy
+`twilight.themes.register()` signature is retained for API v1 source
+compatibility but rejects at runtime.
 
 Provider registrations may expose optional `health` metadata through
 `TwilightMediaProviderHealth`. The host also records aggregate and per-method

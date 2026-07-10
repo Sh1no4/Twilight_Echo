@@ -90,6 +90,8 @@ test('autosave clears, saves track-only, and saves track position according to r
     }
   })
 
+  await persistence.restoreSavedPlaybackSession('off')
+  saved.length = 0
   persistence.startAutosaveWatchers()
 
   mode.value = 'track'
@@ -108,6 +110,42 @@ test('autosave clears, saves track-only, and saves track position according to r
   assert.equal((saved[0] as { position: number }).position, 0)
   assert.equal((saved[1] as { mode: string; position: number }).mode, 'trackAndPosition')
   assert.equal((saved[1] as { position: number }).position, 42)
+})
+
+test('failed restore keeps autosave and quit-time writes disabled for the current run', async () => {
+  const mode = ref<'off' | 'track' | 'trackAndPosition'>('track')
+  const currentTrack = ref<typeof track | null>(null)
+  const writes: string[] = []
+  const persistence = createPlaybackSessionPersistence({
+    settings: ref({ playbackResumeMode: mode }),
+    currentTrack,
+    currentTime: ref(0),
+    isPlaying: ref(false),
+    restorePlaybackSession: () => undefined,
+    createPlaybackSession: () => null,
+    syncPluginProviders: async () => undefined,
+    autosaveDelayMs: 0,
+    dataApi: {
+      clearPlaybackSession: async () => writes.push('clear'),
+      loadPlaybackSession: async () => {
+        throw new Error('primary and backup are corrupt')
+      },
+      savePlaybackSession: async () => writes.push('save')
+    }
+  })
+
+  await assert.rejects(() => persistence.restoreSavedPlaybackSession('track'), /corrupt/)
+
+  persistence.startAutosaveWatchers()
+  currentTrack.value = track
+  await nextTick()
+  persistence.schedulePlaybackSessionAutosave(0)
+  await waitForTimers()
+  await persistence.savePlaybackSessionSnapshot()
+  await persistence.savePlaybackSessionForQuit()
+  persistence.stop()
+
+  assert.deepEqual(writes, [])
 })
 
 async function waitForTimers(): Promise<void> {

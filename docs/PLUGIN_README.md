@@ -175,7 +175,7 @@ JS 插件实现两个函数：
 
 这三类都通过 **command 回到插件宿主进程**执行业务逻辑。宿主只渲染它批准的 DTO，不向插件开放任意 DOM 权限。这是 Phase 3 受控 UI 注入的核心设计：渲染在 renderer，逻辑在 utilityProcess，中间是受限桥接。
 
-UI contribution 可声明 `renderMode`：默认 `command` 只执行命令；`html` 表示命令返回 HTML 字符串，由宿主放入受控 iframe 渲染。`autoLoad` 可控制页面打开时是否自动执行 command；`html` 模式默认自动加载。
+UI contribution 通过 command 返回字符串或可序列化对象，宿主只在受控页面中按纯文本/结构化数据展示。任意插件 HTML、`srcdoc` iframe 和 DOM 注入都不是受支持的扩展路径。旧版 `renderMode: 'html'` 输入只为 API v1 兼容而保留，宿主会忽略它并按 command 模式处理。
 
 不要试图在 UI 入口里直接操纵 DOM 或调 Electron renderer API。所有交互走 command 协议回宿主进程，再由宿主决定渲染什么。
 

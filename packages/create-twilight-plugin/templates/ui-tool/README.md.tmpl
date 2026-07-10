@@ -4,8 +4,8 @@ Twilight Echo controlled UI tool plugin scaffold.
 
 This template registers a `playerBarButton` command. The same API also supports
 controlled `settingsPanel`, `sidebarPage`, `localSidebarItem`, and
-`streamingHome` contributions. Use `renderMode: 'html'` only when the command
-returns HTML for host-controlled iframe rendering.
+`streamingHome` contributions. Return plain text or structured data from
+commands; arbitrary plugin-provided HTML is not a supported extension path.
 
 ```bash
 npm install

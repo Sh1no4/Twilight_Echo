@@ -1,6 +1,6 @@
 import { app, shell, BrowserWindow, ipcMain, dialog } from 'electron'
-import { basename, dirname, join } from 'path'
-import { statSync, readFileSync, existsSync, writeFileSync, renameSync, copyFileSync, unlinkSync } from 'fs'
+import { basename, dirname, join, resolve } from 'path'
+import { readFileSync, existsSync } from 'fs'
 import { readFile, writeFile, rm } from 'fs/promises'
 import { parseFile } from 'music-metadata'
 import { runtime, type DiscordActivityData } from '../core/runtime'
@@ -8,17 +8,12 @@ import type { AppSettings, PlaybackSession } from '../core/types'
 import {
   compareVersions,
   createSettingsSnapshot,
-  getDirectorySize,
   getDefaultCachePath,
   normalizeAppSettings
 } from '../core/settings'
-import {
-  exportAppSettingsForBackup,
-  importAppSettingsFromBackup
-} from '../core/settingsBackup'
-import {
-  ensureMusicCacheDirectories
-} from '../cache/ncmCache'
+import { exportAppSettingsForBackup, importAppSettingsFromBackup } from '../core/settingsBackup'
+import { ensureMusicCacheDirectories } from '../cache/ncmCache'
+import { clearManagedMusicCache, getManagedMusicCacheSize } from '../cache/musicCacheLayout.ts'
 import {
   getLegacyCoverCacheDir,
   importBackgroundImageBuffer,
@@ -40,29 +35,32 @@ import {
   redactSensitiveText,
   unprotectString
 } from '../security/secureStorage.ts'
-import {
-  normalizeIpcString,
-  stringifyJsonForIpcStorage
-} from '../security/ipcValidation.ts'
+import { normalizeIpcString, stringifyJsonForIpcStorage } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender, shouldAcceptIpcEvent } from '../security/electronSecurity.ts'
-import {
-  updateDiscordActivity,
-  clearDiscordActivity
-} from '../integrations/discord'
-import {
-  updateAppSettings,
-  relaunchApplication
-} from '../audio/state'
+import { updateDiscordActivity, clearDiscordActivity } from '../integrations/discord'
+import { updateAppSettings, relaunchApplication } from '../audio/state'
 import { resolvePlaybackSessionSave } from '../app/window'
 import { getPlayerShortcutStatuses } from '../integrations/shortcutsTray'
 import {
   resolveAuthorizedAudioFile,
+  resolveAuthorizedCacheRoot,
+  resolveAuthorizedImpulseResponseFile,
   resolveAuthorizedLibraryDirectory,
+  resolveAuthorizedLibraryRootSettings,
   resolveAuthorizedOpenPath,
   resolveAuthorizedShowItemPath,
-  trustLibraryRoots,
-  trustUserSelectedFolder
+  filterAuthorizedLibraryRoots,
+  grantUserSelectedCacheRoot,
+  grantUserSelectedLibraryRoot
 } from '../security/localPaths'
+import {
+  PersistentJsonFileError,
+  clearJsonFileArtifacts,
+  loadJsonFileWithBackup,
+  writeJsonFileAtomic,
+  type JsonFileLoadResult,
+  type JsonFileOptions
+} from '../persistence/jsonFile.ts'
 
 const MAX_MUSIC_LIBRARY_BYTES = 100 * 1024 * 1024
 const MAX_PLAYBACK_SESSION_BYTES = 2 * 1024 * 1024
@@ -77,6 +75,73 @@ const MAX_DISCORD_ACTIVITY_BYTES = 16 * 1024
 const MAX_EXTERNAL_URL_LENGTH = 8192
 const MAX_NCM_COOKIE_BYTES = 16 * 1024
 const MAX_PLAYBACK_SAVE_REQUEST_ID_LENGTH = 128
+
+type MusicLibraryFile =
+  | unknown[]
+  | {
+      tracks: unknown[]
+      folders?: unknown[]
+      [key: string]: unknown
+    }
+
+const MUSIC_LIBRARY_JSON_OPTIONS: JsonFileOptions<MusicLibraryFile> = {
+  label: 'music library',
+  maxBytes: MAX_MUSIC_LIBRARY_BYTES,
+  validate: isMusicLibraryFile
+}
+
+const PLAYBACK_SESSION_JSON_OPTIONS: JsonFileOptions<PlaybackSession> = {
+  label: 'playback session',
+  maxBytes: MAX_PLAYBACK_SESSION_BYTES,
+  validate: isPlaybackSessionFile
+}
+
+const PLAYLISTS_JSON_OPTIONS: JsonFileOptions<unknown[]> = {
+  label: 'playlists',
+  maxBytes: MAX_PLAYLISTS_BYTES,
+  validate: Array.isArray
+}
+
+const persistenceNotifications = new Set<string>()
+
+async function authorizeSettingsPathPatch(
+  patch: Partial<AppSettings>
+): Promise<Partial<AppSettings>> {
+  const authorizedPatch: Partial<AppSettings> = { ...patch }
+  const normalizedSettings = normalizeAppSettings({ ...runtime.appSettings, ...patch })
+
+  if (
+    Object.prototype.hasOwnProperty.call(patch, 'cachePath') ||
+    Object.prototype.hasOwnProperty.call(patch, 'musicCachePath')
+  ) {
+    const requestedCachePath = normalizedSettings.musicCachePath || getDefaultCachePath()
+    if (resolve(requestedCachePath) === resolve(getDefaultCachePath())) {
+      ensureMusicCacheDirectories(requestedCachePath)
+      await grantUserSelectedCacheRoot(requestedCachePath)
+    }
+    const cachePath = await resolveAuthorizedCacheRoot(requestedCachePath)
+    authorizedPatch.cachePath = cachePath
+    authorizedPatch.musicCachePath = cachePath
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, 'libraryFolders')) {
+    authorizedPatch.libraryFolders = await resolveAuthorizedLibraryRootSettings(
+      normalizedSettings.libraryFolders
+    )
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, 'audioProcessing')) {
+    const audioProcessing = { ...normalizedSettings.audioProcessing }
+    if (audioProcessing.convolverIrPath) {
+      audioProcessing.convolverIrPath = await resolveAuthorizedImpulseResponseFile(
+        audioProcessing.convolverIrPath
+      )
+    }
+    authorizedPatch.audioProcessing = audioProcessing
+  }
+
+  return authorizedPatch
+}
 
 export function setupDataIpc(): void {
   ipcMain.on('window:minimize', (event) => {
@@ -108,8 +173,13 @@ export function setupDataIpc(): void {
       properties: ['openDirectory']
     })
     if (result.canceled || result.filePaths.length === 0) return null
-    trustUserSelectedFolder(result.filePaths[0])
-    return result.filePaths[0]
+    const folder = await grantUserSelectedLibraryRoot(result.filePaths[0])
+    const libraryFolders = await resolveAuthorizedLibraryRootSettings([
+      ...runtime.appSettings.libraryFolders,
+      folder
+    ])
+    await updateAppSettings({ libraryFolders })
+    return folder
   })
 
   ipcMain.handle('settings:chooseBackgroundImage', async (event) => {
@@ -119,22 +189,30 @@ export function setupDataIpc(): void {
       properties: ['openFile'],
       filters: [{ name: '背景图片', extensions: ['jpg', 'jpeg', 'png', 'webp'] }]
     }
-    const result = win && !win.isDestroyed()
-      ? await dialog.showOpenDialog(win, options)
-      : await dialog.showOpenDialog(options)
+    const result =
+      win && !win.isDestroyed()
+        ? await dialog.showOpenDialog(win, options)
+        : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
     return importBackgroundImage(result.filePaths[0])
   })
 
-  ipcMain.handle('settings:importBackgroundImage', async (event, fileName: string, data: unknown) => {
-    assertTrustedIpcSender(event, 'settings IPC')
-    const buffer = normalizeBackgroundImageImportData(data)
-    if (typeof fileName !== 'string' || !buffer) return null
-    return importBackgroundImageBuffer(
-      normalizeIpcString(fileName, 'background image file name', MAX_BACKGROUND_IMAGE_FILE_NAME_LENGTH),
-      buffer
-    )
-  })
+  ipcMain.handle(
+    'settings:importBackgroundImage',
+    async (event, fileName: string, data: unknown) => {
+      assertTrustedIpcSender(event, 'settings IPC')
+      const buffer = normalizeBackgroundImageImportData(data)
+      if (typeof fileName !== 'string' || !buffer) return null
+      return importBackgroundImageBuffer(
+        normalizeIpcString(
+          fileName,
+          'background image file name',
+          MAX_BACKGROUND_IMAGE_FILE_NAME_LENGTH
+        ),
+        buffer
+      )
+    }
+  )
 
   ipcMain.handle('app:relaunch', (event) => {
     assertTrustedIpcSender(event, 'app IPC')
@@ -147,14 +225,20 @@ export function setupDataIpc(): void {
   ipcMain.handle('app:playback-session-saved', async (event, requestId: string) => {
     assertTrustedIpcSender(event, 'app IPC')
     resolvePlaybackSessionSave(
-      normalizeIpcString(requestId, 'playback session save request id', MAX_PLAYBACK_SAVE_REQUEST_ID_LENGTH)
+      normalizeIpcString(
+        requestId,
+        'playback session save request id',
+        MAX_PLAYBACK_SAVE_REQUEST_ID_LENGTH
+      )
     )
     return true
   })
 
   ipcMain.handle('shell:openPath', async (event, targetPath: string) => {
     assertTrustedIpcSender(event, 'shell IPC')
-    const resolvedPath = await resolveAuthorizedOpenPath(normalizeLocalPath(targetPath, 'open path'))
+    const resolvedPath = await resolveAuthorizedOpenPath(
+      normalizeLocalPath(targetPath, 'open path')
+    )
     return await shell.openPath(resolvedPath)
   })
 
@@ -186,7 +270,11 @@ export function setupDataIpc(): void {
         { headers: { 'User-Agent': 'TwilightEcho-Updater' } }
       )
       if (!response.ok) return { hasUpdate: false, currentVersion, error: 'network' }
-      const release = await response.json() as { tag_name?: string; html_url?: string; body?: string }
+      const release = (await response.json()) as {
+        tag_name?: string
+        html_url?: string
+        body?: string
+      }
       const latestTag = (release.tag_name || '').replace(/^v/, '')
       if (!latestTag) return { hasUpdate: false, currentVersion }
       const hasUpdate = compareVersions(latestTag, currentVersion) > 0
@@ -213,7 +301,7 @@ export function setupDataIpc(): void {
       throw new Error('Settings patch must be an object')
     }
     stringifyJsonForIpcStorage(patch, 'settings patch', MAX_SETTINGS_PATCH_BYTES)
-    return await updateAppSettings(patch)
+    return await updateAppSettings(await authorizeSettingsPathPatch(patch))
   })
 
   ipcMain.handle('settings:export', async (event) => {
@@ -234,7 +322,7 @@ export function setupDataIpc(): void {
       runtime.appSettings,
       normalizeAppSettings
     )
-    return await updateAppSettings(importedSettings)
+    return await updateAppSettings(await authorizeSettingsPathPatch(importedSettings))
   })
 
   ipcMain.handle('settings:getShortcutStatuses', async (event) => {
@@ -253,36 +341,46 @@ export function setupDataIpc(): void {
       ? await dialog.showOpenDialog(win, options)
       : await dialog.showOpenDialog(options)
     if (result.canceled || result.filePaths.length === 0) return null
-    return result.filePaths[0]
+    ensureMusicCacheDirectories(result.filePaths[0])
+    return await grantUserSelectedCacheRoot(result.filePaths[0])
   })
 
   ipcMain.handle('settings:getCacheSize', async (event) => {
     assertTrustedIpcSender(event, 'settings IPC')
-    return await getDirectorySize(runtime.appSettings.musicCachePath || getDefaultCachePath())
+    const cachePath = await resolveAuthorizedCacheRoot(
+      runtime.appSettings.musicCachePath || getDefaultCachePath()
+    )
+    return await getManagedMusicCacheSize(cachePath)
   })
 
   ipcMain.handle('settings:clearCache', async (event) => {
     assertTrustedIpcSender(event, 'settings IPC')
-    const cachePath = runtime.appSettings.musicCachePath || getDefaultCachePath()
+    const cachePath = await resolveAuthorizedCacheRoot(
+      runtime.appSettings.musicCachePath || getDefaultCachePath()
+    )
     try {
-      await rm(cachePath, { recursive: true, force: true })
+      await clearManagedMusicCache(cachePath)
       await rm(getLegacyCoverCacheDir(), { recursive: true, force: true })
     } catch (error) {
       console.warn('清理缓存失败：', error)
     }
     ensureMusicCacheDirectories(cachePath)
-    return await getDirectorySize(cachePath)
+    return await getManagedMusicCacheSize(cachePath)
   })
 
   ipcMain.handle('shell:showItemInFolder', async (event, filePath: string) => {
     assertTrustedIpcSender(event, 'shell IPC')
-    const resolvedPath = await resolveAuthorizedShowItemPath(normalizeLocalPath(filePath, 'show item path'))
+    const resolvedPath = await resolveAuthorizedShowItemPath(
+      normalizeLocalPath(filePath, 'show item path')
+    )
     shell.showItemInFolder(resolvedPath)
   })
 
   ipcMain.handle('fs:scanMusicFiles', async (event, folderPath: string) => {
     assertTrustedIpcSender(event, 'filesystem IPC')
-    const resolvedPath = await resolveAuthorizedLibraryDirectory(normalizeLocalPath(folderPath, 'music folder path'))
+    const resolvedPath = await resolveAuthorizedLibraryDirectory(
+      normalizeLocalPath(folderPath, 'music folder path')
+    )
     return await scanDirectory(resolvedPath, (current, total) => {
       event.sender.send('fs:scanProgress', { current, total })
     })
@@ -290,7 +388,9 @@ export function setupDataIpc(): void {
 
   ipcMain.handle('fs:readAudioFile', async (event, filePath: string) => {
     assertTrustedIpcSender(event, 'filesystem IPC')
-    const resolvedPath = await resolveAuthorizedAudioFile(normalizeLocalPath(filePath, 'audio file path'))
+    const resolvedPath = await resolveAuthorizedAudioFile(
+      normalizeLocalPath(filePath, 'audio file path')
+    )
     const buffer = await readFile(resolvedPath)
     return {
       buffer: buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength),
@@ -300,7 +400,9 @@ export function setupDataIpc(): void {
 
   ipcMain.handle('fs:getAudioFileUrl', async (event, filePath: string) => {
     assertTrustedIpcSender(event, 'filesystem IPC')
-    const resolvedPath = await resolveAuthorizedAudioFile(normalizeLocalPath(filePath, 'audio file path'))
+    const resolvedPath = await resolveAuthorizedAudioFile(
+      normalizeLocalPath(filePath, 'audio file path')
+    )
     return `twilight-audio:///${encodeAudioFileUrlPath(resolvedPath)}`
   })
 
@@ -310,92 +412,54 @@ export function setupDataIpc(): void {
   const PLAYBACK_SESSION_FILE = join(userDataPath, 'playback-session.json')
   const PLAYLISTS_FILE = join(userDataPath, 'playlists.json')
 
-  ipcMain.handle('data:saveMusicLibrary', async (event, library: { tracks: unknown[]; folders?: string[] } | unknown[]) => {
-    assertTrustedIpcSender(event, 'data IPC')
-    const folders = Array.isArray(library) ? [] : library.folders
-    trustLibraryRoots(folders)
-    const tmpPath = MUSIC_LIBRARY_FILE + '.tmp'
-    const bakPath = MUSIC_LIBRARY_FILE + '.bak'
-    try {
-      writeFileSync(
-        tmpPath,
-        stringifyJsonForIpcStorage(library, 'music library', MAX_MUSIC_LIBRARY_BYTES),
-        'utf-8'
+  ipcMain.handle(
+    'data:saveMusicLibrary',
+    async (event, library: { tracks: unknown[]; folders?: string[] } | unknown[]) => {
+      assertTrustedIpcSender(event, 'data IPC')
+      if (!Array.isArray(library) && (!library || typeof library !== 'object')) {
+        throw new Error('Music library must be an array or object')
+      }
+      const normalizedLibrary = Array.isArray(library)
+        ? library
+        : {
+            ...library,
+            folders: await filterAuthorizedLibraryRoots(library.folders)
+          }
+      writeJsonFileAtomic(
+        MUSIC_LIBRARY_FILE,
+        stringifyJsonForIpcStorage(normalizedLibrary, 'music library', MAX_MUSIC_LIBRARY_BYTES),
+        MUSIC_LIBRARY_JSON_OPTIONS,
+        normalizedLibrary
       )
-      // Copy current dest to .bak (keep dest intact — avoids rename-to-bak window)
-      if (existsSync(MUSIC_LIBRARY_FILE)) {
-        copyFileSync(MUSIC_LIBRARY_FILE, bakPath)
-      }
-      // Atomic rename (Windows: MoveFileEx + REPLACE_EXISTING)
-      try {
-        renameSync(tmpPath, MUSIC_LIBRARY_FILE)
-      } catch {
-        // EPERM/EBUSY fallback: unlink dest then rename tmp
-        if (existsSync(MUSIC_LIBRARY_FILE)) {
-          unlinkSync(MUSIC_LIBRARY_FILE)
-        }
-        renameSync(tmpPath, MUSIC_LIBRARY_FILE)
-      }
-      // Success: clean up .bak
-      try { unlinkSync(bakPath) } catch { /* bak may not exist on first save */ }
-    } catch (err) {
-      // Failure: restore .bak → dest if available
-      try {
-        if (existsSync(bakPath)) {
-          copyFileSync(bakPath, MUSIC_LIBRARY_FILE)
-        }
-      } catch { /* best-effort restore */ }
-      // Clean up orphaned tmp
-      try { unlinkSync(tmpPath) } catch { /* ignore */ }
-      throw err
     }
-  })
+  )
 
   ipcMain.handle('data:loadMusicLibrary', async (event) => {
     assertTrustedIpcSender(event, 'data IPC')
-    // Auto-recovery from .bak if dest is missing, empty, or corrupt
-    if (!existsSync(MUSIC_LIBRARY_FILE) || statSync(MUSIC_LIBRARY_FILE).size === 0) {
-      const bakPath = MUSIC_LIBRARY_FILE + '.bak'
-      if (existsSync(bakPath)) {
-        try { copyFileSync(bakPath, MUSIC_LIBRARY_FILE) } catch { /* best-effort */ }
-      }
-    }
-
-    if (!existsSync(MUSIC_LIBRARY_FILE)) return []
-
-    let raw: string
+    let loaded: JsonFileLoadResult<MusicLibraryFile>
     try {
-      raw = readFileSync(MUSIC_LIBRARY_FILE, 'utf-8')
+      loaded = loadJsonFileWithBackup(MUSIC_LIBRARY_FILE, MUSIC_LIBRARY_JSON_OPTIONS)
     } catch (error) {
-      console.warn('读取音乐库失败：', redactSensitiveText(error instanceof Error ? error.message : error))
-      return []
+      reportPersistentDataFailure('音乐库', MUSIC_LIBRARY_FILE, error)
     }
-
-    let data: unknown
-    try {
-      data = JSON.parse(raw)
-    } catch {
-      // JSON.parse failed — try .bak recovery
-      const bakPath = MUSIC_LIBRARY_FILE + '.bak'
-      if (existsSync(bakPath)) {
-        try {
-          copyFileSync(bakPath, MUSIC_LIBRARY_FILE)
-          raw = readFileSync(MUSIC_LIBRARY_FILE, 'utf-8')
-          data = JSON.parse(raw)
-        } catch (error) {
-          console.warn('从备份恢复音乐库失败：', redactSensitiveText(error instanceof Error ? error.message : error))
-          return []
-        }
-      } else {
-        console.warn('音乐库损坏且无可用备份，返回空库')
-        return []
-      }
+    if (loaded.status === 'missing') return []
+    if (loaded.status === 'recovered') {
+      reportPersistentDataRecovery('音乐库', MUSIC_LIBRARY_FILE, loaded)
     }
+    let data: unknown = loaded.value
 
     // Strip lyrics from saved library — lyrics are lazy-loaded on playback
-    const tracks = Array.isArray(data) ? data : (data as { tracks?: unknown[] }).tracks
-    const folders = Array.isArray(data) ? [] : (data as { folders?: unknown[] }).folders
-    trustLibraryRoots(folders)
+    const dataRecord =
+      !Array.isArray(data) && data && typeof data === 'object'
+        ? (data as { tracks?: unknown[]; folders?: unknown[] })
+        : null
+    const tracks = Array.isArray(data) ? data : dataRecord?.tracks
+    if (dataRecord) {
+      data = {
+        ...dataRecord,
+        folders: await filterAuthorizedLibraryRoots(dataRecord.folders)
+      }
+    }
     if (Array.isArray(tracks)) {
       let changed = false
       for (const track of tracks) {
@@ -432,7 +496,16 @@ export function setupDataIpc(): void {
       }
 
       if (changed) {
-        try { writeFileSync(MUSIC_LIBRARY_FILE, JSON.stringify(data), 'utf-8') } catch { /* best-effort */ }
+        try {
+          writeJsonFileAtomic(
+            MUSIC_LIBRARY_FILE,
+            JSON.stringify(data),
+            MUSIC_LIBRARY_JSON_OPTIONS,
+            data as MusicLibraryFile
+          )
+        } catch (error) {
+          console.warn('保存迁移后的音乐库失败：', redactSensitiveText(errorMessage(error)))
+        }
       }
     }
     return data
@@ -448,96 +521,109 @@ export function setupDataIpc(): void {
   })
 
   // Lyrics lazy loader — reads .lrc file on demand, falls back to embedded lyrics
-  ipcMain.handle('lyrics:get', async (event, dir: string, fileName: string, filePath?: string): Promise<string | null> => {
-    assertTrustedIpcSender(event, 'lyrics IPC')
-    const safeFileName = basename(normalizeIpcString(fileName, 'lyrics file name', MAX_LYRICS_FILE_NAME_LENGTH))
-    if (!safeFileName) return null
-    let resolvedFilePath: string | null = null
-    try {
-      resolvedFilePath = filePath
-        ? await resolveAuthorizedAudioFile(normalizeLocalPath(filePath, 'lyrics audio file path'))
-        : null
-    } catch {
-      return null
-    }
-    let resolvedDir = resolvedFilePath ? dirname(resolvedFilePath) : null
-    if (!resolvedDir) {
+  ipcMain.handle(
+    'lyrics:get',
+    async (event, dir: string, fileName: string, filePath?: string): Promise<string | null> => {
+      assertTrustedIpcSender(event, 'lyrics IPC')
+      const safeFileName = basename(
+        normalizeIpcString(fileName, 'lyrics file name', MAX_LYRICS_FILE_NAME_LENGTH)
+      )
+      if (!safeFileName) return null
+      let resolvedFilePath: string | null = null
       try {
-        resolvedDir = await resolveAuthorizedLibraryDirectory(normalizeLocalPath(dir, 'lyrics directory'))
+        resolvedFilePath = filePath
+          ? await resolveAuthorizedAudioFile(normalizeLocalPath(filePath, 'lyrics audio file path'))
+          : null
       } catch {
         return null
       }
-    }
-    // 1. Try external .lrc file
-    const lrc = findLyricsInDir(resolvedDir, safeFileName)
-    if (lrc) return lrc
-
-    // 2. Try embedded lyrics from audio file metadata
-    if (resolvedFilePath) {
-      try {
-        const meta = await parseFile(resolvedFilePath, { skipCovers: true })
-        const common = meta.common
-        if (common.lyrics && common.lyrics.length > 0) {
-          // music-metadata returns lyrics as { language, text } objects or strings
-          const first = common.lyrics[0]
-          const text = typeof first === 'string' ? first : first?.text
-          if (text) return text
+      let resolvedDir = resolvedFilePath ? dirname(resolvedFilePath) : null
+      if (!resolvedDir) {
+        try {
+          resolvedDir = await resolveAuthorizedLibraryDirectory(
+            normalizeLocalPath(dir, 'lyrics directory')
+          )
+        } catch {
+          return null
         }
-      } catch {
-        // ignore parse errors
       }
+      // 1. Try external .lrc file
+      const lrc = findLyricsInDir(resolvedDir, safeFileName)
+      if (lrc) return lrc
+
+      // 2. Try embedded lyrics from audio file metadata
+      if (resolvedFilePath) {
+        try {
+          const meta = await parseFile(resolvedFilePath, { skipCovers: true })
+          const common = meta.common
+          if (common.lyrics && common.lyrics.length > 0) {
+            // music-metadata returns lyrics as { language, text } objects or strings
+            const first = common.lyrics[0]
+            const text = typeof first === 'string' ? first : first?.text
+            if (text) return text
+          }
+        } catch {
+          // ignore parse errors
+        }
+      }
+      return null
     }
-    return null
-  })
+  )
 
   ipcMain.handle('data:savePlaybackSession', async (event, session: PlaybackSession | null) => {
     assertTrustedIpcSender(event, 'data IPC')
     if (!session) {
-      await rm(PLAYBACK_SESSION_FILE, { force: true })
+      clearJsonFileArtifacts(PLAYBACK_SESSION_FILE)
       return
     }
-    await writeFile(
+    writeJsonFileAtomic(
       PLAYBACK_SESSION_FILE,
       stringifyJsonForIpcStorage(session, 'playback session', MAX_PLAYBACK_SESSION_BYTES),
-      'utf-8'
+      PLAYBACK_SESSION_JSON_OPTIONS,
+      session
     )
   })
 
   ipcMain.handle('data:loadPlaybackSession', async (event) => {
     assertTrustedIpcSender(event, 'data IPC')
-    if (!existsSync(PLAYBACK_SESSION_FILE)) return null
     try {
-      const raw = readFileSync(PLAYBACK_SESSION_FILE, 'utf-8')
-      return JSON.parse(raw) as PlaybackSession
+      const loaded = loadJsonFileWithBackup(PLAYBACK_SESSION_FILE, PLAYBACK_SESSION_JSON_OPTIONS)
+      if (loaded.status === 'missing') return null
+      if (loaded.status === 'recovered') {
+        reportPersistentDataRecovery('播放会话', PLAYBACK_SESSION_FILE, loaded)
+      }
+      return loaded.value
     } catch (error) {
-      console.warn('读取播放会话失败：', redactSensitiveText(error instanceof Error ? error.message : error))
-      return null
+      reportPersistentDataFailure('播放会话', PLAYBACK_SESSION_FILE, error)
     }
   })
 
   ipcMain.handle('data:clearPlaybackSession', async (event) => {
     assertTrustedIpcSender(event, 'data IPC')
-    await rm(PLAYBACK_SESSION_FILE, { force: true })
+    clearJsonFileArtifacts(PLAYBACK_SESSION_FILE)
   })
 
   ipcMain.handle('data:savePlaylists', async (event, playlists: unknown) => {
     assertTrustedIpcSender(event, 'data IPC')
-    await writeFile(
+    writeJsonFileAtomic(
       PLAYLISTS_FILE,
       stringifyJsonForIpcStorage(playlists, 'playlists', MAX_PLAYLISTS_BYTES),
-      'utf-8'
+      PLAYLISTS_JSON_OPTIONS,
+      playlists as unknown[]
     )
   })
 
   ipcMain.handle('data:loadPlaylists', async (event) => {
     assertTrustedIpcSender(event, 'data IPC')
-    if (!existsSync(PLAYLISTS_FILE)) return null
     try {
-      const raw = readFileSync(PLAYLISTS_FILE, 'utf-8')
-      return JSON.parse(raw)
+      const loaded = loadJsonFileWithBackup(PLAYLISTS_FILE, PLAYLISTS_JSON_OPTIONS)
+      if (loaded.status === 'missing') return null
+      if (loaded.status === 'recovered') {
+        reportPersistentDataRecovery('歌单', PLAYLISTS_FILE, loaded)
+      }
+      return loaded.value
     } catch (error) {
-      console.warn('读取歌单失败：', redactSensitiveText(error instanceof Error ? error.message : error))
-      return null
+      reportPersistentDataFailure('歌单', PLAYLISTS_FILE, error)
     }
   })
 
@@ -550,6 +636,96 @@ export function setupDataIpc(): void {
     assertTrustedIpcSender(event, 'data IPC')
     return loadNcmCookie(NCM_COOKIE_FILE)
   })
+}
+
+function isMusicLibraryFile(value: unknown): value is MusicLibraryFile {
+  if (Array.isArray(value)) return true
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return (
+    Array.isArray(record.tracks) && (record.folders === undefined || Array.isArray(record.folders))
+  )
+}
+
+function isPlaybackSessionFile(value: unknown): value is PlaybackSession {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  const track = record.track
+  return (
+    record.version === 1 &&
+    typeof record.savedAt === 'string' &&
+    (record.mode === 'off' || record.mode === 'track' || record.mode === 'trackAndPosition') &&
+    !!track &&
+    typeof track === 'object' &&
+    !Array.isArray(track) &&
+    typeof (track as Record<string, unknown>).id === 'string' &&
+    typeof record.position === 'number' &&
+    Number.isFinite(record.position) &&
+    record.position >= 0 &&
+    (record.queue === undefined || Array.isArray(record.queue))
+  )
+}
+
+function reportPersistentDataRecovery<T>(
+  label: string,
+  filePath: string,
+  result: Extract<JsonFileLoadResult<T>, { status: 'recovered' }>
+): void {
+  const recoveryDetail = result.restoreError
+    ? `已读取备份，但恢复主文件失败：${redactSensitiveText(result.restoreError)}`
+    : '主文件已由最后一个有效备份恢复。'
+  const corruptDetail = result.corruptCopyPath ? `\n损坏副本保留在：${result.corruptCopyPath}` : ''
+  console.warn(`[persistence] ${label} recovered from backup`, filePath, result.restoreError ?? '')
+  showPersistenceMessage(
+    `recovered:${filePath}`,
+    'warning',
+    `${label}已从备份恢复`,
+    `${recoveryDetail}${corruptDetail}`
+  )
+}
+
+function reportPersistentDataFailure(label: string, filePath: string, error: unknown): never {
+  const message = errorMessage(error)
+  const detail =
+    error instanceof PersistentJsonFileError
+      ? `主文件错误：${redactSensitiveText(error.primaryError)}\n备份错误：${redactSensitiveText(error.backupError)}\n\n文件：${filePath}`
+      : `${redactSensitiveText(message)}\n\n文件：${filePath}`
+  console.error(`[persistence] failed to load ${label}:`, redactSensitiveText(message))
+  showPersistenceMessage(
+    `failed:${filePath}`,
+    'error',
+    `${label}文件已损坏`,
+    `${detail}\n\n应用没有把它当作空数据覆盖，请保留该文件以便恢复。`
+  )
+  throw error instanceof Error ? error : new Error(message)
+}
+
+function showPersistenceMessage(
+  key: string,
+  type: 'warning' | 'error',
+  message: string,
+  detail: string
+): void {
+  if (persistenceNotifications.has(key)) return
+  persistenceNotifications.add(key)
+  const options: Electron.MessageBoxOptions = {
+    type,
+    title: 'Twilight Echo 数据恢复',
+    message,
+    detail,
+    buttons: ['确定'],
+    noLink: true
+  }
+  const win = runtime.mainWindow
+  const prompt =
+    win && !win.isDestroyed() ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options)
+  void prompt.catch(() => {
+    persistenceNotifications.delete(key)
+  })
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function isSafeExternalUrl(url: unknown): url is string {
@@ -623,7 +799,10 @@ async function loadNcmCookie(filePath: string): Promise<string> {
     }
     return ''
   } catch (error) {
-    console.warn('读取网易云 Cookie 失败：', redactSensitiveText(error instanceof Error ? error.message : error))
+    console.warn(
+      '读取网易云 Cookie 失败：',
+      redactSensitiveText(error instanceof Error ? error.message : error)
+    )
     return ''
   }
 }
