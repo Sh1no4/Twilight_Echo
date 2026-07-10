@@ -269,7 +269,7 @@ Reduced-motion preference disables equalizer animation and shortens nonessential
 
 - Slider preview changes are local and do not require an IPC round trip for every animation frame.
 - Persistence uses a `120ms` trailing debounce and explicit final flush.
-- Window move and resize persistence remains independently debounced at approximately `350ms`.
+- Window move and resize persistence uses an independent `350ms` trailing debounce.
 - Background effects use compositor-friendly CSS layers.
 - Hidden optional elements are not rendered where doing so avoids image or animation work.
 - Existing image size limits prevent unbounded IPC payloads and storage use.
