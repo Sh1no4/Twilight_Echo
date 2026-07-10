@@ -28,6 +28,7 @@ export function useMiniPlayerCustomizationDraft(options: MiniPlayerCustomization
   const debounceMs = options.debounceMs ?? 120
   let saveTimer: ReturnType<typeof setTimeout> | null = null
   let persistenceQueue = Promise.resolve()
+  let latestFlushOperation: Promise<MiniPlayerSettings> | null = null
   let revision = 0
   let confirmedRevision = 0
   let dirty = false
@@ -94,7 +95,12 @@ export function useMiniPlayerCustomizationDraft(options: MiniPlayerCustomization
 
   async function flush(): Promise<MiniPlayerSettings> {
     clearSaveTimer()
-    if (!dirty) return cloneMiniPlayerSettings(confirmed.value)
+    if (!dirty) {
+      if (latestFlushOperation) {
+        return cloneMiniPlayerSettings(await latestFlushOperation)
+      }
+      return cloneMiniPlayerSettings(confirmed.value)
+    }
 
     const candidate = cloneMiniPlayerSettings(settings.value)
     const candidateRevision = revision
@@ -108,27 +114,36 @@ export function useMiniPlayerCustomizationDraft(options: MiniPlayerCustomization
       () => undefined
     )
 
+    const operation = (async (): Promise<MiniPlayerSettings> => {
+      try {
+        const persisted = cloneMiniPlayerSettings(await saveOperation)
+        if (candidateRevision >= confirmedRevision) {
+          confirmedRevision = candidateRevision
+          confirmed.value = persisted
+        }
+        if (revision === candidateRevision) {
+          settings.value = cloneMiniPlayerSettings(persisted)
+        }
+        error.value = ''
+        return cloneMiniPlayerSettings(persisted)
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : '迷你播放器设置保存失败'
+        error.value = message
+        if (revision === candidateRevision) {
+          settings.value = cloneMiniPlayerSettings(confirmed.value)
+        }
+        throw cause
+      } finally {
+        activeSaveCount -= 1
+        saving.value = activeSaveCount > 0
+      }
+    })()
+    latestFlushOperation = operation
+
     try {
-      const persisted = cloneMiniPlayerSettings(await saveOperation)
-      if (candidateRevision >= confirmedRevision) {
-        confirmedRevision = candidateRevision
-        confirmed.value = persisted
-      }
-      if (revision === candidateRevision) {
-        settings.value = cloneMiniPlayerSettings(persisted)
-      }
-      error.value = ''
-      return cloneMiniPlayerSettings(persisted)
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : '迷你播放器设置保存失败'
-      error.value = message
-      if (revision === candidateRevision) {
-        settings.value = cloneMiniPlayerSettings(confirmed.value)
-      }
-      throw cause
+      return cloneMiniPlayerSettings(await operation)
     } finally {
-      activeSaveCount -= 1
-      saving.value = activeSaveCount > 0
+      if (latestFlushOperation === operation) latestFlushOperation = null
     }
   }
 

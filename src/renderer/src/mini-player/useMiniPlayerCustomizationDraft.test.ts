@@ -99,3 +99,32 @@ test('replace settings clones the editor candidate before scheduling persistence
   assert.equal(draft.activeProfile.value.appearance.cornerRadius, 12)
   draft.dispose()
 })
+
+test('flush waits for persistence that is already in progress', async () => {
+  let releaseSave: ((settings: typeof DEFAULT_MINI_PLAYER_SETTINGS) => void) | null = null
+  const draft = useMiniPlayerCustomizationDraft({
+    initial: cloneMiniPlayerSettings(DEFAULT_MINI_PLAYER_SETTINGS),
+    persist: async (settings) =>
+      await new Promise((resolve) => {
+        releaseSave = () => resolve(cloneMiniPlayerSettings(settings))
+      }),
+    debounceMs: 60_000
+  })
+
+  const candidate = cloneMiniPlayerSettings(DEFAULT_MINI_PLAYER_SETTINGS)
+  candidate.profiles['aurora-glass'].appearance.cornerRadius = 12
+  draft.replaceSettings(candidate)
+  const firstFlush = draft.flush()
+  let secondFlushFinished = false
+  const secondFlush = draft.flush().then(() => {
+    secondFlushFinished = true
+  })
+
+  await Promise.resolve()
+  assert.equal(secondFlushFinished, false)
+  assert.ok(releaseSave)
+  releaseSave(candidate)
+  await Promise.all([firstFlush, secondFlush])
+  assert.equal(secondFlushFinished, true)
+  draft.dispose()
+})
