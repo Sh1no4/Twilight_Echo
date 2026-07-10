@@ -30,6 +30,7 @@ import {
   MINI_PLAYER_MIN_HEIGHT,
   MINI_PLAYER_MIN_WIDTH,
   clampMiniPlayerBoundsToWorkArea,
+  createMiniPlayerWindowShape,
   miniPlayerBoundsPatch
 } from './miniPlayerWindow'
 
@@ -108,7 +109,16 @@ function applyMiniPlayerWindowSettings(settings: MiniPlayerSettings): void {
   }
   win.setBackgroundColor('#00000000')
   win.setMovable(!settings.positionLocked)
+  applyMiniPlayerWindowShape(win, settings)
   fitMiniPlayerToWorkArea(win, settings)
+}
+
+function applyMiniPlayerWindowShape(win: BrowserWindow, settings: MiniPlayerSettings): void {
+  if (process.platform !== 'win32') return
+  const profile = settings.profiles[settings.activeStyleId]
+  const cornerRadius = profile?.appearance.cornerRadius ?? 0
+  const bounds = win.getBounds()
+  win.setShape(createMiniPlayerWindowShape(bounds.width, bounds.height, cornerRadius))
 }
 
 function persistMiniPlayerBounds(win: BrowserWindow): void {
@@ -196,7 +206,7 @@ function createMiniPlayerWindow(): BrowserWindow {
     fullscreenable: false,
     skipTaskbar: false,
     hasShadow: true,
-    roundedCorners: false,
+    roundedCorners: true,
     thickFrame: process.platform === 'win32',
     autoHideMenuBar: true,
     icon: getMiniPlayerIconPath(),
@@ -221,7 +231,10 @@ function createMiniPlayerWindow(): BrowserWindow {
   })
 
   win.on('move', () => scheduleMiniPlayerBoundsSave(win))
-  win.on('resize', () => scheduleMiniPlayerBoundsSave(win))
+  win.on('resize', () => {
+    applyMiniPlayerWindowShape(win, currentMiniPlayerSettings())
+    scheduleMiniPlayerBoundsSave(win)
+  })
 
   win.on('close', (event) => {
     if (runtime.forceQuit) {

@@ -96,7 +96,6 @@ const appearanceSliders: {
 const visibilityOptions: { key: keyof MiniPlayerVisibilitySettings; label: string }[] = [
   { key: 'artwork', label: '专辑封面' },
   { key: 'album', label: '专辑名称' },
-  { key: 'playbackState', label: '播放状态' },
   { key: 'equalizer', label: '均衡器动画' },
   { key: 'time', label: '时间信息' },
   { key: 'volume', label: '音量控制' },

@@ -7,7 +7,7 @@ import {
   type MiniPlayerCommand,
   type MiniPlayerSettingsPatch,
   type MiniPlayerStateSnapshot
-} from '../../../shared/miniPlayer'
+} from '../../../shared/miniPlayer.ts'
 import MiniPlayerCustomizer from './MiniPlayerCustomizer.vue'
 import {
   buildMiniPlayerCssVariables,
@@ -95,9 +95,6 @@ const backgroundSourceStyle = computed<CSSProperties>(() => {
 const trackTitle = computed(() => state.value.track?.title || '暂无播放')
 const trackArtist = computed(() => state.value.track?.artist || '从主窗口选择一首音乐')
 const trackAlbum = computed(() => state.value.track?.album || 'TWILIGHT ECHO')
-const playbackStateText = computed(() =>
-  state.value.isLoading ? '载入中' : state.value.isPlaying ? '播放中' : '已暂停'
-)
 const queuePositionText = computed(() =>
   state.value.queueLength > 0 && state.value.queueIndex >= 0
     ? `${state.value.queueIndex + 1} / ${state.value.queueLength}`
@@ -317,14 +314,6 @@ onBeforeUnmount(() => {
         />
         <div v-else class="mini-artwork mini-artwork-placeholder" aria-label="暂无封面">
           <i class="ph ph-music-notes"></i>
-        </div>
-        <div
-          v-if="resolvedVisibility.playbackState"
-          class="mini-play-state"
-          :class="{ active: state.isPlaying }"
-        >
-          <span class="mini-state-dot"></span>
-          {{ playbackStateText }}
         </div>
         <div
           v-if="resolvedVisibility.equalizer"

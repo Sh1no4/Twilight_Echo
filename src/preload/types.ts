@@ -7,7 +7,7 @@ export type {
   MiniPlayerSettings,
   MiniPlayerSettingsPatch,
   MiniPlayerStateSnapshot
-} from '../shared/miniPlayer'
+} from '../shared/miniPlayer.ts'
 
 export type AudioEngineSimpleCallback = () => void
 export type AudioEngineErrorCallback = (message: string) => void
@@ -533,7 +533,7 @@ export interface AppSettings {
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
-  miniPlayer: import('../shared/miniPlayer').MiniPlayerSettings
+  miniPlayer: import('../shared/miniPlayer.ts').MiniPlayerSettings
   proxyMode: ProxyMode
   proxyHost: string
   proxyPort: number

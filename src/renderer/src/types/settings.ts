@@ -1,6 +1,6 @@
-import type { MiniPlayerSettings } from '../../../shared/miniPlayer'
+import type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 
-export type { MiniPlayerSettings } from '../../../shared/miniPlayer'
+export type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'

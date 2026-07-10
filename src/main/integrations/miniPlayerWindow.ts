@@ -37,6 +37,41 @@ export function miniPlayerBoundsPatch(
   }
 }
 
+export function createMiniPlayerWindowShape(
+  width: number,
+  height: number,
+  cornerRadius: number
+): Rectangle[] {
+  const roundedWidth = Math.max(1, Math.round(width))
+  const roundedHeight = Math.max(1, Math.round(height))
+  const radius = Math.min(
+    Math.max(0, Math.round(cornerRadius)),
+    Math.floor(roundedWidth / 2),
+    Math.floor(roundedHeight / 2)
+  )
+  if (radius === 0) return [{ x: 0, y: 0, width: roundedWidth, height: roundedHeight }]
+
+  const shape: Rectangle[] = []
+  const middleHeight = roundedHeight - radius * 2
+  if (middleHeight > 0) {
+    shape.push({ x: 0, y: radius, width: roundedWidth, height: middleHeight })
+  }
+
+  for (let y = 0; y < radius; y += 1) {
+    const distanceFromCenter = radius - y - 0.5
+    const inset = Math.ceil(
+      radius - Math.sqrt(Math.max(0, radius * radius - distanceFromCenter * distanceFromCenter))
+    )
+    const rowWidth = roundedWidth - inset * 2
+    if (rowWidth <= 0) continue
+    shape.push({ x: inset, y, width: rowWidth, height: 1 })
+    const mirroredY = roundedHeight - y - 1
+    if (mirroredY !== y) shape.push({ x: inset, y: mirroredY, width: rowWidth, height: 1 })
+  }
+
+  return shape
+}
+
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), Math.max(min, max))
 }

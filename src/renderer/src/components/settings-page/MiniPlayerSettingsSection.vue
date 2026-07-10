@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref, watch } from 'vue'
-import { cloneMiniPlayerSettings, type MiniPlayerSettings } from '../../../../shared/miniPlayer'
+import { cloneMiniPlayerSettings, type MiniPlayerSettings } from '../../../../shared/miniPlayer.ts'
 import { useSettingsStore } from '../../stores/useSettingsStore'
 import MiniPlayerCustomizer from '../../mini-player/MiniPlayerCustomizer.vue'
 import { useMiniPlayerCustomizationDraft } from '../../mini-player/useMiniPlayerCustomizationDraft'

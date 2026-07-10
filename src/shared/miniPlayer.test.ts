@@ -89,7 +89,7 @@ test('mini player profiles clamp nested values and reject unsafe background urls
           shadowStrength: -5
         },
         layout: { preference: 'wide' },
-        visibility: { artwork: false, volume: false }
+        visibility: { artwork: false, playbackState: false, volume: false }
       }
     }
   })
@@ -111,6 +111,7 @@ test('mini player profiles clamp nested values and reject unsafe background urls
   assert.equal(profile.appearance.shadowStrength, 0)
   assert.equal(profile.visibility.artwork, false)
   assert.equal(profile.visibility.album, true)
+  assert.equal('playbackState' in profile.visibility, false)
 })
 
 test('mini player profile normalization is idempotent and clones defaults', () => {

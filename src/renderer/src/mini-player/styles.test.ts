@@ -69,6 +69,7 @@ test('mini player surface fills the native window without a rectangular backdrop
   )
   const rootRule = styles.match(/\.mini-player-root\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
   const surfaceRule = styles.match(/\.mini-player-surface\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
+  const artworkRule = styles.match(/\.mini-artwork-wrap\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
 
   assert.doesNotMatch(rootRule, /padding:/)
   assert.match(rootRule, /clip-path: inset\(0 round var\(--mini-window-radius\)\)/)
@@ -80,7 +81,7 @@ test('mini player surface fills the native window without a rectangular backdrop
   assert.doesNotMatch(rendererEntry, /nativeCorners|mini-player-native-corners/)
   assert.doesNotMatch(miniPlayerWindow, /nativeCorners/)
   assert.match(miniPlayerWindow, /transparent: true/)
-  assert.match(miniPlayerWindow, /roundedCorners: false/)
+  assert.match(miniPlayerWindow, /roundedCorners: true/)
   assert.match(component, /MiniPlayerCustomizer/)
   assert.match(component, /resolveMiniPlayerLayout/)
   assert.match(component, /data-layout/)
@@ -89,6 +90,10 @@ test('mini player surface fills the native window without a rectangular backdrop
   assert.match(styles, /\[data-layout='compact'\]/)
   assert.match(styles, /\[data-layout='wide'\]/)
   assert.match(styles, /var\(--mini-window-radius\)/)
+  assert.match(artworkRule, /aspect-ratio: 1/)
+  assert.doesNotMatch(artworkRule, /^\s*height: 100%;/m)
+  assert.doesNotMatch(component, /mini-play-state|mini-state-dot|playbackStateText/)
+  assert.doesNotMatch(styles, /mini-play-state|mini-state-dot/)
   assert.doesNotMatch(rendererEntry, /mini-player-native-corners/)
   assert.match(
     component,

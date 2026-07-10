@@ -34,6 +34,7 @@ test('standard visibility keeps optional controls except wide-only queue positio
   assert.equal(standard.volume, true)
   assert.equal(standard.time, true)
   assert.equal(standard.queuePosition, false)
+  assert.equal('playbackState' in standard, false)
 })
 
 test('presentation variables keep controls opaque while background opacity changes', () => {

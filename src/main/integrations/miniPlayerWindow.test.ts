@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import type { Rectangle } from 'electron'
 
 import {
   MINI_PLAYER_MAX_HEIGHT,
@@ -9,6 +10,21 @@ import {
   clampMiniPlayerBoundsToWorkArea,
   miniPlayerBoundsPatch
 } from './miniPlayerWindow.ts'
+
+test('mini player window shape removes the transparent corner regions', async () => {
+  const module = (await import('./miniPlayerWindow.ts')) as unknown as {
+    createMiniPlayerWindowShape?: (
+      width: number,
+      height: number,
+      cornerRadius: number
+    ) => Rectangle[]
+  }
+
+  assert.equal(typeof module.createMiniPlayerWindowShape, 'function')
+  const shape = module.createMiniPlayerWindowShape!(200, 100, 20)
+  assert.ok(shape.some((rectangle) => rectangle.x === 0 && rectangle.y === 20 && rectangle.height === 60))
+  assert.equal(shape.some((rectangle) => rectangle.x === 0 && rectangle.y === 0), false)
+})
 
 test('mini player bounds clamp size before position inside a display work area', () => {
   const bounds = clampMiniPlayerBoundsToWorkArea(

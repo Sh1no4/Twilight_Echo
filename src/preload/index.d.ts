@@ -341,7 +341,6 @@ interface MiniPlayerLayoutSettings {
 interface MiniPlayerVisibilitySettings {
   artwork: boolean
   album: boolean
-  playbackState: boolean
   equalizer: boolean
   time: boolean
   volume: boolean

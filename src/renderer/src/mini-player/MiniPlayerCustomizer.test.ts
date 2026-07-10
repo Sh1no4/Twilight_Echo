@@ -58,6 +58,7 @@ test('mini player customizer includes every approved control family', () => {
   ]) {
     assert.match(source, new RegExp(field))
   }
+  assert.doesNotMatch(source, /playbackState/)
 })
 
 test('mini player customizer uses semantic controls and automatic persistence actions', () => {

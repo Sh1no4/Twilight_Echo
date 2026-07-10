@@ -36,7 +36,6 @@ export function resolveMiniPlayerVisibility(
       ? {
           artwork: true,
           album: false,
-          playbackState: false,
           equalizer: false,
           time: false,
           volume: false,
@@ -47,7 +46,6 @@ export function resolveMiniPlayerVisibility(
         ? {
             artwork: true,
             album: true,
-            playbackState: true,
             equalizer: true,
             time: true,
             volume: true,
@@ -57,7 +55,6 @@ export function resolveMiniPlayerVisibility(
         : {
             artwork: true,
             album: true,
-            playbackState: true,
             equalizer: true,
             time: true,
             volume: true,
@@ -68,7 +65,6 @@ export function resolveMiniPlayerVisibility(
   return {
     artwork: visibility.artwork && responsiveMask.artwork,
     album: visibility.album && responsiveMask.album,
-    playbackState: visibility.playbackState && responsiveMask.playbackState,
     equalizer: visibility.equalizer && responsiveMask.equalizer,
     time: visibility.time && responsiveMask.time,
     volume: visibility.volume && responsiveMask.volume,

@@ -48,7 +48,6 @@ export interface MiniPlayerLayoutSettings {
 export interface MiniPlayerVisibilitySettings {
   artwork: boolean
   album: boolean
-  playbackState: boolean
   equalizer: boolean
   time: boolean
   volume: boolean
@@ -118,7 +117,6 @@ export interface MiniPlayerBootstrap {
 const DEFAULT_MINI_PLAYER_VISIBILITY: MiniPlayerVisibilitySettings = {
   artwork: true,
   album: true,
-  playbackState: true,
   equalizer: true,
   time: true,
   volume: true,
@@ -475,10 +473,6 @@ export function normalizeMiniPlayerThemeProfile(
     visibility: {
       artwork: normalizeBoolean(visibilityValue.artwork, fallback.visibility.artwork),
       album: normalizeBoolean(visibilityValue.album, fallback.visibility.album),
-      playbackState: normalizeBoolean(
-        visibilityValue.playbackState,
-        fallback.visibility.playbackState
-      ),
       equalizer: normalizeBoolean(visibilityValue.equalizer, fallback.visibility.equalizer),
       time: normalizeBoolean(visibilityValue.time, fallback.visibility.time),
       volume: normalizeBoolean(visibilityValue.volume, fallback.visibility.volume),
