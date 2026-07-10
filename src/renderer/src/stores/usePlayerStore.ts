@@ -15,6 +15,7 @@ import {
   shouldReuseResolvedStreamUrl,
   shouldUseNativePlaybackTarget
 } from '../utils/playbackRouting'
+import { prepareNativeQueue } from '../utils/nativeQueuePreparation.ts'
 import { findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
 import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
 import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
@@ -646,15 +647,8 @@ function shouldUseNativePlayback(track: Track, target: string): boolean {
   return shouldUseNativePlaybackTarget(getTrackSource(track), target)
 }
 
-function canUseNativeQueuePlayback(): boolean {
-  return (
-    queue.value.length > 0 &&
-    queue.value.every((track) => shouldUseNativePlayback(track, getTrackAudioSource(track)))
-  )
-}
-
 function isNativeQueueDelegated(): boolean {
-  return nativeQueueDelegated && canUseNativeQueuePlayback()
+  return nativeQueueDelegated
 }
 
 async function createPlayableUrl(
@@ -1000,21 +994,26 @@ function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
 }
 
 async function syncNativeQueueState(): Promise<void> {
-  if (!canUseNativeQueuePlayback()) {
+  const current = currentTrack.value
+  if (!current) {
     await stopNativeAudio()
     return
   }
 
-  const engineQueue = queue.value.map((item) => ({
-    id: item.id,
-    duration: item.duration,
-    source: getTrackAudioSource(item),
-    format: item.format,
-    sampleRate: item.sampleRate,
-    bitrate: item.bitrate,
-    bitDepth: item.bitDepth
-  }))
-  await window.api.audioEngine.loadQueue(engineQueue, Math.max(0, queueIndex.value))
+  const preparedQueue = await prepareNativeQueue({
+    queue: queue.value,
+    currentTrack: current,
+    currentTarget: getTrackAudioSource(current),
+    currentIndex: queueIndex.value,
+    isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized
+  })
+  if (!preparedQueue) {
+    await stopNativeAudio()
+    return
+  }
+
+  await window.api.audioEngine.loadQueue(preparedQueue.items, preparedQueue.startIndex)
+  nativeQueueDelegated = preparedQueue.delegated
   const nativePlayMode = playMode.value === 'repeat' ? 'repeat' : 'sequential'
   await window.api.audioEngine.setPlayMode(nativePlayMode)
 }
@@ -1834,25 +1833,21 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     let nativeFallbackReason = ''
 
     if (useNativePlayback) {
-      const canDelegateNativeQueue = canUseNativeQueuePlayback()
-      const engineQueueSource = canDelegateNativeQueue ? queue.value : [track]
-      const engineQueue = engineQueueSource.map((item) => ({
-        id: item.id,
-        duration: item.duration,
-        source: item.id === track.id ? playTarget : getTrackAudioSource(item),
-        format: item.format,
-        sampleRate: item.sampleRate,
-        bitrate: item.bitrate,
-        bitDepth: item.bitDepth
-      }))
-
       try {
-        await window.api.audioEngine.loadQueue(
-          engineQueue,
-          canDelegateNativeQueue ? Math.max(0, queueIndex.value) : 0
-        )
+        const preparedQueue = await prepareNativeQueue({
+          queue: queue.value,
+          currentTrack: track,
+          currentTarget: playTarget,
+          currentIndex: queueIndex.value,
+          isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized
+        })
+        if (!preparedQueue) {
+          throw new Error('Native playback target is unavailable')
+        }
+
+        await window.api.audioEngine.loadQueue(preparedQueue.items, preparedQueue.startIndex)
         if (!isActiveLoad(loadToken, track)) return
-        nativeQueueDelegated = canDelegateNativeQueue
+        nativeQueueDelegated = preparedQueue.delegated
 
         const nativePlayMode = playMode.value === 'repeat' ? 'repeat' : 'sequential'
         await window.api.audioEngine.setPlayMode(nativePlayMode)

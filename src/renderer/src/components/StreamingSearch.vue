@@ -589,26 +589,26 @@ function emitPage(first: number): void {
   }
 }
 
-:global(html[data-theme='dark']) .streaming-placeholder,
-:global(html[data-theme='dark']) .playlist-grid-card,
-:global(html[data-theme='dark']) .search-action-btn,
-:global(html[data-theme='dark']) .pager-btn {
+:global(html[data-theme='dark'] .search-view .streaming-placeholder),
+:global(html[data-theme='dark'] .search-view .playlist-grid-card),
+:global(html[data-theme='dark'] .search-view .search-action-btn),
+:global(html[data-theme='dark'] .search-view .pager-btn) {
   background: var(--te-card-bg);
   border-color: var(--te-card-border);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
 }
 
-:global(html[data-theme='dark']) .playlist-grid-card:hover {
+:global(html[data-theme='dark'] .search-view .playlist-grid-card:hover) {
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
 }
 
-:global(html[data-theme='dark']) .playlist-grid-cover-placeholder {
+:global(html[data-theme='dark'] .search-view .playlist-grid-cover-placeholder) {
   background: #242016;
   color: var(--te-primary-400);
 }
 
-:global(html[data-theme='dark']) .pager-btn:hover:not(:disabled),
-:global(html[data-theme='dark']) .search-action-btn:hover {
+:global(html[data-theme='dark'] .search-view .pager-btn:hover:not(:disabled)),
+:global(html[data-theme='dark'] .search-view .search-action-btn:hover) {
   background: rgba(245, 158, 11, 0.1);
   color: var(--te-primary-400);
 }

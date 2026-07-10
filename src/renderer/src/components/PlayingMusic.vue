@@ -1065,24 +1065,24 @@ onBeforeUnmount(() => {
   height: 100%;
 }
 
-:global(html[data-theme='dark']) .visualizer-toggle-button {
+:global(html[data-theme='dark'] .playing-music .visualizer-toggle-button) {
   background: rgba(30, 32, 40, 0.6);
   border-color: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.85);
 }
 
-:global(html[data-theme='dark']) .visualizer-toggle-button:hover {
+:global(html[data-theme='dark'] .playing-music .visualizer-toggle-button:hover) {
   background: rgba(40, 42, 52, 0.85);
   color: var(--te-primary-500, #8b9bff);
 }
 
-:global(html[data-theme='dark']) .visualizer-toggle-button--close {
+:global(html[data-theme='dark'] .playing-music .visualizer-toggle-button--close) {
   background: transparent;
   border-color: transparent;
   box-shadow: none;
 }
 
-:global(html[data-theme='dark']) .visualizer-toggle-button--close:hover {
+:global(html[data-theme='dark'] .playing-music .visualizer-toggle-button--close:hover) {
   background: rgba(255, 255, 255, 0.18);
   border-color: rgba(255, 255, 255, 0.16);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);

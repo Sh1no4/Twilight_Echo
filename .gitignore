@@ -95,3 +95,4 @@ temp/
 # Original font files (backup, WOFF2 versions are used)
 resources/font/_originals/
 .vscode/settings.json
+docs/superpowers/plans/2026-07-11-native-queue-memory-restore.md

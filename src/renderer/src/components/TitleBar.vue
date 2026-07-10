@@ -209,17 +209,17 @@ function close(): void {
   transform: translate3d(-100%, 0, 0);
 }
 
-:global(html[data-theme='dark']) .title-bar {
+:global(html[data-theme='dark'] .title-bar) {
   background: transparent !important;
 }
 
-:global(html[data-theme='dark']) .title-bar.title-bar-streaming,
-:global(html[data-theme='dark']) .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
+:global(html[data-theme='dark'] .title-bar.title-bar-streaming),
+:global(html[data-theme='dark'] .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings)) {
   background: transparent !important;
 }
 
-:global(html[data-theme='dark']) .title-bar.title-bar-settings,
-:global(html[data-theme='dark']) .title-bar.title-bar-glass {
+:global(html[data-theme='dark'] .title-bar.title-bar-settings),
+:global(html[data-theme='dark'] .title-bar.title-bar-glass) {
   background: transparent !important;
 }
 

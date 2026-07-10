@@ -1021,88 +1021,88 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   color: var(--te-neutral-500, #64748b);
 }
 
-:global(html[data-theme='dark']) .glass-card,
-:global(html[data-theme='dark']) .playlist-item,
-:global(html[data-theme='dark']) .empty-state {
+:global(html[data-theme='dark'] .library-view .glass-card),
+:global(html[data-theme='dark'] .library-view .playlist-item),
+:global(html[data-theme='dark'] .library-view .empty-state) {
   background: var(--te-glass-bg-strong);
   border-color: var(--te-glass-border);
   box-shadow: var(--te-glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.045);
 }
 
-:global(html[data-theme='dark']) .glass-card:hover,
-:global(html[data-theme='dark']) .playlist-item:hover {
+:global(html[data-theme='dark'] .library-view .glass-card:hover),
+:global(html[data-theme='dark'] .library-view .playlist-item:hover) {
   background: #202020;
   box-shadow: 0 22px 56px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.055);
 }
 
-:global(html[data-theme='dark']) .profile-card:hover {
+:global(html[data-theme='dark'] .library-view .profile-card:hover) {
   box-shadow: var(--te-glass-shadow), inset 0 1px 0 rgba(255, 255, 255, 0.045);
 }
 
-:global(html[data-theme='dark']) .profile-avatar {
+:global(html[data-theme='dark'] .library-view .profile-avatar) {
   border-color: #242424;
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.32);
 }
 
-:global(html[data-theme='dark']) .profile-avatar-placeholder,
-:global(html[data-theme='dark']) .playlist-cover-placeholder,
-:global(html[data-theme='dark']) .empty-icon {
+:global(html[data-theme='dark'] .library-view .profile-avatar-placeholder),
+:global(html[data-theme='dark'] .library-view .playlist-cover-placeholder),
+:global(html[data-theme='dark'] .library-view .empty-icon) {
   background: #242016;
   color: var(--te-primary-400);
 }
 
-:global(html[data-theme='dark']) .provider-switch-btn,
-:global(html[data-theme='dark']) .stat-badge,
-:global(html[data-theme='dark']) .playlist-pin-button {
+:global(html[data-theme='dark'] .library-view .provider-switch-btn),
+:global(html[data-theme='dark'] .library-view .stat-badge),
+:global(html[data-theme='dark'] .library-view .playlist-pin-button) {
   background: #141414;
   border-color: var(--te-card-border);
   color: var(--te-neutral-700);
 }
 
-:global(html[data-theme='dark']) .provider-switch-btn:hover,
-:global(html[data-theme='dark']) .provider-switch-btn.active,
-:global(html[data-theme='dark']) .provider-menu-item.active {
+:global(html[data-theme='dark'] .library-view .provider-switch-btn:hover),
+:global(html[data-theme='dark'] .library-view .provider-switch-btn.active),
+:global(html[data-theme='dark'] .library-view .provider-menu-item.active) {
   background: rgba(245, 158, 11, 0.11);
   border-color: rgba(var(--te-primary-rgb), 0.32);
   color: var(--te-primary-400);
 }
 
-:global(html[data-theme='dark']) .provider-health-strip {
+:global(html[data-theme='dark'] .library-view .provider-health-strip) {
   border-color: var(--te-card-border);
   background: rgba(255, 255, 255, 0.045);
 }
 
-:global(html[data-theme='dark']) .provider-health-strip.ok {
+:global(html[data-theme='dark'] .library-view .provider-health-strip.ok) {
   border-color: rgba(16, 185, 129, 0.22);
   background: rgba(16, 185, 129, 0.1);
 }
 
-:global(html[data-theme='dark']) .provider-health-strip.warning {
+:global(html[data-theme='dark'] .library-view .provider-health-strip.warning) {
   border-color: rgba(var(--te-primary-rgb), 0.26);
   background: rgba(var(--te-primary-rgb), 0.1);
 }
 
-:global(html[data-theme='dark']) .provider-health-strip.error {
+:global(html[data-theme='dark'] .library-view .provider-health-strip.error) {
   border-color: rgba(225, 29, 72, 0.28);
   background: rgba(225, 29, 72, 0.11);
 }
 
-:global(html[data-theme='dark']) .provider-menu {
+:global(html[data-theme='dark'] .library-view .provider-menu) {
   background: #181818;
   border-color: var(--te-card-border);
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.44);
 }
 
-:global(html[data-theme='dark']) .provider-menu-item:hover,
-:global(html[data-theme='dark']) .stat-badge:hover {
+:global(html[data-theme='dark'] .library-view .provider-menu-item:hover),
+:global(html[data-theme='dark'] .library-view .stat-badge:hover) {
   background: rgba(255, 255, 255, 0.065);
 }
 
-:global(html[data-theme='dark']) .favorites-card::before {
+:global(html[data-theme='dark'] .library-view .favorites-card::before) {
   background: radial-gradient(circle, rgba(var(--te-primary-rgb), 0.11) 0%, transparent 70%);
 }
 
-:global(html[data-theme='dark']) .favorites-info .tag {
+:global(html[data-theme='dark'] .library-view .favorites-info .tag) {
   background: rgba(var(--te-primary-rgb), 0.13);
   color: var(--te-primary-400);
 }
@@ -1123,40 +1123,40 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   color: #fb7185 !important;
 }
 
-:global(html[data-theme='dark']) .btn-play {
+:global(html[data-theme='dark'] .library-view .btn-play) {
   background: linear-gradient(135deg, var(--te-primary-500), var(--te-primary-400));
   color: #111111;
   box-shadow: 0 10px 24px rgba(var(--te-primary-rgb), 0.22);
 }
 
-:global(html[data-theme='dark']) .btn-play:hover {
+:global(html[data-theme='dark'] .library-view .btn-play:hover) {
   box-shadow: 0 14px 32px rgba(var(--te-primary-rgb), 0.3);
 }
 
-:global(html[data-theme='dark']) .recent-card,
-:global(html[data-theme='dark']) .ranking-card {
+:global(html[data-theme='dark'] .library-view .recent-card),
+:global(html[data-theme='dark'] .library-view .ranking-card) {
   background: linear-gradient(135deg, rgba(31, 31, 31, 0.96) 0%, rgba(24, 24, 24, 0.84) 100%);
 }
 
-:global(html[data-theme='dark']) .feature-card .enter-btn {
+:global(html[data-theme='dark'] .library-view .feature-card .enter-btn) {
   background: #141414;
   color: var(--te-neutral-500);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
 }
 
-:global(html[data-theme='dark']) .feature-card:hover .enter-btn,
-:global(html[data-theme='dark']) .playlist-item:hover .playlist-item-arrow {
+:global(html[data-theme='dark'] .library-view .feature-card:hover .enter-btn),
+:global(html[data-theme='dark'] .library-view .playlist-item:hover .playlist-item-arrow) {
   color: var(--te-primary-400);
 }
 
-:global(html[data-window-transparent='on']) .glass-card,
-:global(html[data-window-transparent='on']) .playlist-item,
-:global(html[data-window-transparent='on']) .empty-state,
-:global(html[data-window-transparent='on']) .provider-menu,
-:global(html[data-window-transparent='on']) .provider-switch-btn,
-:global(html[data-window-transparent='on']) .stat-badge,
-:global(html[data-window-transparent='on']) .playlist-pin-button,
-:global(html[data-window-transparent='on']) .feature-card .enter-btn {
+:global(html[data-window-transparent='on'] .library-view .glass-card),
+:global(html[data-window-transparent='on'] .library-view .playlist-item),
+:global(html[data-window-transparent='on'] .library-view .empty-state),
+:global(html[data-window-transparent='on'] .library-view .provider-menu),
+:global(html[data-window-transparent='on'] .library-view .provider-switch-btn),
+:global(html[data-window-transparent='on'] .library-view .stat-badge),
+:global(html[data-window-transparent='on'] .library-view .playlist-pin-button),
+:global(html[data-window-transparent='on'] .library-view .feature-card .enter-btn) {
   background: var(--te-tp-card) !important;
   background-image: none !important;
   border-color: rgba(255, 255, 255, 0.1) !important;
@@ -1167,20 +1167,20 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
 }
 
-:global(html[data-window-transparent='on']) .glass-card:hover,
-:global(html[data-window-transparent='on']) .playlist-item:hover {
+:global(html[data-window-transparent='on'] .library-view .glass-card:hover),
+:global(html[data-window-transparent='on'] .library-view .playlist-item:hover) {
   background: var(--te-tp-card) !important;
   box-shadow:
     0 22px 56px rgba(0, 0, 0, 0.2),
     inset 0 1px 0 rgba(255, 255, 255, 0.07) !important;
 }
 
-:global(html[data-window-transparent='on']) .recent-card,
-:global(html[data-window-transparent='on']) .ranking-card {
+:global(html[data-window-transparent='on'] .library-view .recent-card),
+:global(html[data-window-transparent='on'] .library-view .ranking-card) {
   background: var(--te-tp-card) !important;
 }
 
-:global(html[data-window-transparent='on']) .heart-icon {
+:global(html[data-window-transparent='on'] .library-view .heart-icon) {
   background: rgba(255, 255, 255, 0.1) !important;
 }
 

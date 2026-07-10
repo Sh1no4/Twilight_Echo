@@ -36,7 +36,7 @@
   transform: translate3d(0, 0, 0);
 }
 
-:global(html[data-theme='dark']) .streaming-sidebar {
+:global(html[data-theme='dark'] .streaming-page .streaming-sidebar) {
   border-right-color: transparent;
   background-color: var(--te-streaming-bg);
   background-image: var(--te-streaming-bg-image);
@@ -1864,7 +1864,7 @@
   box-shadow: 0 18px 38px rgba(34, 42, 68, 0.1);
 }
 
-:global(html[data-theme='dark']) .streaming-page {
+:global(html[data-theme='dark'] .streaming-page) {
   background-color: var(--te-streaming-bg);
   background-image: var(--te-streaming-bg-image);
   background-position: center;
@@ -1872,93 +1872,93 @@
   background-repeat: no-repeat;
 }
 
-:global(html[data-theme='dark']) .streaming-search-box,
-:global(html[data-theme='dark']) .btn-back,
-:global(html[data-theme='dark']) .streaming-round-btn,
-:global(html[data-theme='dark']) .streaming-avatar-btn,
-:global(html[data-theme='dark']) .search-tab-pill,
-:global(html[data-theme='dark']) .search-source-trigger,
-:global(html[data-theme='dark']) .search-source-menu,
-:global(html[data-theme='dark']) .recent-source-trigger,
-:global(html[data-theme='dark']) .recent-source-menu,
-:global(html[data-theme='dark']) .streaming-placeholder,
-:global(html[data-theme='dark']) .track-table-wrapper,
-:global(html[data-theme='dark']) .detail-playlist-header,
-:global(html[data-theme='dark']) .playlist-grid-card {
+:global(html[data-theme='dark'] .streaming-page .streaming-search-box),
+:global(html[data-theme='dark'] .streaming-page .btn-back),
+:global(html[data-theme='dark'] .streaming-page .streaming-round-btn),
+:global(html[data-theme='dark'] .streaming-page .streaming-avatar-btn),
+:global(html[data-theme='dark'] .streaming-page .search-tab-pill),
+:global(html[data-theme='dark'] .streaming-page .search-source-trigger),
+:global(html[data-theme='dark'] .streaming-page .search-source-menu),
+:global(html[data-theme='dark'] .streaming-page .recent-source-trigger),
+:global(html[data-theme='dark'] .streaming-page .recent-source-menu),
+:global(html[data-theme='dark'] .streaming-page .streaming-placeholder),
+:global(html[data-theme='dark'] .streaming-page .track-table-wrapper),
+:global(html[data-theme='dark'] .streaming-page .detail-playlist-header),
+:global(html[data-theme='dark'] .streaming-page .playlist-grid-card) {
   background: var(--te-card-bg);
   border-color: var(--te-card-border);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.24);
 }
 
-:global(html[data-theme='dark']) .streaming-search-box.focused {
+:global(html[data-theme='dark'] .streaming-page .streaming-search-box.focused) {
   background: #1d1d1d;
   border-color: rgba(var(--te-primary-rgb), 0.42);
   box-shadow: 0 0 0 4px rgba(var(--te-primary-rgb), 0.12);
 }
 
-:global(html[data-theme='dark']) .search-tab-pill.active,
-:global(html[data-theme='dark']) .stream-action-btn {
+:global(html[data-theme='dark'] .streaming-page .search-tab-pill.active),
+:global(html[data-theme='dark'] .streaming-page .stream-action-btn) {
   background: var(--te-primary-500);
   color: #111111;
   box-shadow: 0 12px 24px rgba(var(--te-primary-rgb), 0.18);
 }
 
-:global(html[data-theme='dark']) .search-source-trigger:hover,
-:global(html[data-theme='dark']) .search-source-option:hover:not(.disabled),
-:global(html[data-theme='dark']) .recent-source-trigger:hover,
-:global(html[data-theme='dark']) .recent-source-option:hover {
+:global(html[data-theme='dark'] .streaming-page .search-source-trigger:hover),
+:global(html[data-theme='dark'] .streaming-page .search-source-option:hover:not(.disabled)),
+:global(html[data-theme='dark'] .streaming-page .recent-source-trigger:hover),
+:global(html[data-theme='dark'] .streaming-page .recent-source-option:hover) {
   background: rgba(245, 158, 11, 0.1);
   color: var(--te-primary-400);
 }
 
-:global(html[data-theme='dark']) .search-source-option.active,
-:global(html[data-theme='dark']) .recent-source-option.active {
+:global(html[data-theme='dark'] .streaming-page .search-source-option.active),
+:global(html[data-theme='dark'] .streaming-page .recent-source-option.active) {
   background: rgba(245, 158, 11, 0.08);
   color: var(--te-primary-400);
 }
 
-:global(html[data-theme='dark']) .detail-playlist-header {
+:global(html[data-theme='dark'] .streaming-page .detail-playlist-header) {
   background: var(--te-card-bg);
   border-color: var(--te-card-border);
 }
 
-:global(html[data-theme='dark']) .track-table th {
+:global(html[data-theme='dark'] .streaming-page .track-table th) {
   background: #141414;
   border-bottom-color: var(--te-card-border);
 }
 
-:global(html[data-theme='dark']) .track-row td {
+:global(html[data-theme='dark'] .streaming-page .track-row td) {
   border-bottom-color: rgba(255, 255, 255, 0.075);
 }
 
-:global(html[data-theme='dark']) .track-row:hover {
+:global(html[data-theme='dark'] .streaming-page .track-row:hover) {
   background: rgba(245, 158, 11, 0.08);
   box-shadow: inset 3px 0 0 rgba(var(--te-primary-rgb), 0.42);
 }
 
-:global(html[data-theme='dark']) .track-playing {
+:global(html[data-theme='dark'] .streaming-page .track-playing) {
   background: rgba(245, 158, 11, 0.12) !important;
 }
 
-:global(html[data-theme='dark']) .cover-placeholder,
-:global(html[data-theme='dark']) .playlist-grid-cover-placeholder,
-:global(html[data-theme='dark']) .detail-playlist-cover-placeholder {
+:global(html[data-theme='dark'] .streaming-page .cover-placeholder),
+:global(html[data-theme='dark'] .streaming-page .playlist-grid-cover-placeholder),
+:global(html[data-theme='dark'] .streaming-page .detail-playlist-cover-placeholder) {
   background: #242016;
   color: var(--te-primary-400);
 }
 
-:global(html[data-theme='dark']) .playlist-grid-card:hover {
+:global(html[data-theme='dark'] .streaming-page .playlist-grid-card:hover) {
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
 }
 
-:global(html[data-window-transparent='on']) .streaming-page,
-:global(html[data-window-transparent='on']) .streaming-sidebar,
-:global(html[data-window-transparent='on']) .streaming-content {
+:global(html[data-window-transparent='on'] .streaming-page),
+:global(html[data-window-transparent='on'] .streaming-page .streaming-sidebar),
+:global(html[data-window-transparent='on'] .streaming-page .streaming-content) {
   background-color: var(--te-tp-surface) !important;
   background-image: none !important;
 }
 
-:global(html[data-window-transparent='on']) .streaming-content::before {
+:global(html[data-window-transparent='on'] .streaming-page .streaming-content::before) {
   background: var(--te-tp-card) !important;
   border-color: rgba(255, 255, 255, 0.1) !important;
   box-shadow:
@@ -1968,17 +1968,17 @@
   -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
 }
 
-:global(html[data-window-transparent='on']) .streaming-search-box,
-:global(html[data-window-transparent='on']) .btn-back,
-:global(html[data-window-transparent='on']) .streaming-round-btn,
-:global(html[data-window-transparent='on']) .streaming-avatar-btn,
-:global(html[data-window-transparent='on']) .search-tab-pill,
-:global(html[data-window-transparent='on']) .search-source-trigger,
-:global(html[data-window-transparent='on']) .search-source-menu,
-:global(html[data-window-transparent='on']) .streaming-placeholder,
-:global(html[data-window-transparent='on']) .track-table-wrapper,
-:global(html[data-window-transparent='on']) .detail-playlist-header,
-:global(html[data-window-transparent='on']) .playlist-grid-card {
+:global(html[data-window-transparent='on'] .streaming-page .streaming-search-box),
+:global(html[data-window-transparent='on'] .streaming-page .btn-back),
+:global(html[data-window-transparent='on'] .streaming-page .streaming-round-btn),
+:global(html[data-window-transparent='on'] .streaming-page .streaming-avatar-btn),
+:global(html[data-window-transparent='on'] .streaming-page .search-tab-pill),
+:global(html[data-window-transparent='on'] .streaming-page .search-source-trigger),
+:global(html[data-window-transparent='on'] .streaming-page .search-source-menu),
+:global(html[data-window-transparent='on'] .streaming-page .streaming-placeholder),
+:global(html[data-window-transparent='on'] .streaming-page .track-table-wrapper),
+:global(html[data-window-transparent='on'] .streaming-page .detail-playlist-header),
+:global(html[data-window-transparent='on'] .streaming-page .playlist-grid-card) {
   background: var(--te-tp-card) !important;
   background-image: none !important;
   border-color: rgba(255, 255, 255, 0.1) !important;
@@ -1989,28 +1989,28 @@
   -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
 }
 
-:global(html[data-window-transparent='on']) .streaming-search-box.focused {
+:global(html[data-window-transparent='on'] .streaming-page .streaming-search-box.focused) {
   background: var(--te-tp-card) !important;
 }
 
-:global(html[data-window-transparent='on']) .detail-playlist-header::before {
+:global(html[data-window-transparent='on'] .streaming-page .detail-playlist-header::before) {
   display: none !important;
 }
 
-:global(html[data-window-transparent='on']) .track-table th {
+:global(html[data-window-transparent='on'] .streaming-page .track-table th) {
   background: var(--te-tp-card) !important;
   border-bottom-color: rgba(255, 255, 255, 0.08) !important;
 }
 
-:global(html[data-window-transparent='on']) .track-row td {
+:global(html[data-window-transparent='on'] .streaming-page .track-row td) {
   border-bottom-color: rgba(255, 255, 255, 0.06) !important;
 }
 
-:global(html[data-window-transparent='on']) .track-row:hover {
+:global(html[data-window-transparent='on'] .streaming-page .track-row:hover) {
   background: rgba(255, 255, 255, 0.05) !important;
 }
 
-:global(html[data-window-transparent='on']) .track-playing {
+:global(html[data-window-transparent='on'] .streaming-page .track-playing) {
   background: rgba(var(--te-primary-rgb), 0.14) !important;
 }
 

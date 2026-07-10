@@ -257,14 +257,13 @@ test('provider queues use native for resolved current targets without native que
   const syncNativeQueueState = extractInternalFunctionBody(source, 'syncNativeQueueState')
   const loadAndPlay = source.match(/async function loadAndPlay[\s\S]*?function next\(\)/)?.[0] ?? ''
   const getTrackSource = extractInternalFunctionBody(source, 'getTrackSource')
-  const canUseNativeQueuePlayback = extractInternalFunctionBody(source, 'canUseNativeQueuePlayback')
+  const isNativeQueueDelegated = extractInternalFunctionBody(source, 'isNativeQueueDelegated')
   const restorePlaybackSession = extractInternalFunctionBody(source, 'restorePlaybackSession')
   const resetPlaybackRuntimeStateForRestore = extractInternalFunctionBody(
     source,
     'resetPlaybackRuntimeStateForRestore'
   )
 
-  assert.match(source, /function canUseNativeQueuePlayback\(\)/)
   assert.match(restorePlaybackSession, /resetPlaybackRuntimeStateForRestore\(\)/)
   assert.match(resetPlaybackRuntimeStateForRestore, /nativePlaybackActive = false/)
   assert.match(resetPlaybackRuntimeStateForRestore, /loadedTrackId = ''/)
@@ -275,21 +274,34 @@ test('provider queues use native for resolved current targets without native que
     /\^\[a-zA-Z\]:\[\\\\\/\]/,
     'legacy local tracks whose id is a Windows path must not be mistaken for a provider prefix'
   )
-  assert.match(
-    canUseNativeQueuePlayback,
-    /queue\.value\.every\(\(track\) =>\s*shouldUseNativePlayback\(track, getTrackAudioSource\(track\)\)\s*\)/,
-    'native queue controls require every queued target to already be native-capable'
-  )
+  assert.match(isNativeQueueDelegated, /return nativeQueueDelegated/)
+  assert.doesNotMatch(isNativeQueueDelegated, /canUseNativeQueuePlayback/)
   assert.match(
     syncNativeQueueState,
-    /if \(!canUseNativeQueuePlayback\(\)\) \{\s*await stopNativeAudio\(\)\s*return\s*\}/,
-    'unresolved provider queues must clear native queue state instead of syncing provider id placeholders'
+    /const preparedQueue = await prepareNativeQueue\(\{/,
+    'queue synchronization must authorize candidates before delegating them to native playback'
   )
   assert.match(
     loadAndPlay,
     /const useNativePlayback = shouldUseNativePlayback\(track, playTarget\)/
   )
   assert.match(loadAndPlay, /if \(useNativePlayback\) \{[\s\S]*window\.api\.audioEngine\.loadQueue/)
+})
+
+test('player store prepares native queues before loading or synchronizing them', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const syncNativeQueueState = extractInternalFunctionBody(source, 'syncNativeQueueState')
+  const loadAndPlay = source.match(/async function loadAndPlay[\s\S]*?function next\(\)/)?.[0] ?? ''
+
+  assert.match(
+    source,
+    /import \{ prepareNativeQueue \} from '\.\.\/utils\/nativeQueuePreparation\.ts'/
+  )
+  assert.match(loadAndPlay, /const preparedQueue = await prepareNativeQueue\(\{/)
+  assert.match(loadAndPlay, /preparedQueue\.items,\s*preparedQueue\.startIndex/)
+  assert.match(loadAndPlay, /nativeQueueDelegated = preparedQueue\.delegated/)
+  assert.match(syncNativeQueueState, /const preparedQueue = await prepareNativeQueue\(\{/)
+  assert.match(syncNativeQueueState, /preparedQueue\.items, preparedQueue\.startIndex/)
 })
 
 test('next and previous only use native controls when the native queue is delegated', () => {
