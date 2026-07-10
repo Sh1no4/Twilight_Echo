@@ -1149,6 +1149,41 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   color: var(--te-primary-400);
 }
 
+:global(html[data-window-transparent='on']) .glass-card,
+:global(html[data-window-transparent='on']) .playlist-item,
+:global(html[data-window-transparent='on']) .empty-state,
+:global(html[data-window-transparent='on']) .provider-menu,
+:global(html[data-window-transparent='on']) .provider-switch-btn,
+:global(html[data-window-transparent='on']) .stat-badge,
+:global(html[data-window-transparent='on']) .playlist-pin-button,
+:global(html[data-window-transparent='on']) .feature-card .enter-btn {
+  background: var(--te-tp-card) !important;
+  background-image: none !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
+}
+
+:global(html[data-window-transparent='on']) .glass-card:hover,
+:global(html[data-window-transparent='on']) .playlist-item:hover {
+  background: var(--te-tp-card) !important;
+  box-shadow:
+    0 22px 56px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07) !important;
+}
+
+:global(html[data-window-transparent='on']) .recent-card,
+:global(html[data-window-transparent='on']) .ranking-card {
+  background: var(--te-tp-card) !important;
+}
+
+:global(html[data-window-transparent='on']) .heart-icon {
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+
 @keyframes library-in {
   from {
     opacity: 0;

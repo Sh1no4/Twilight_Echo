@@ -29,19 +29,32 @@ export interface LogicalTrack {
   variants: SourceVariant[]
 }
 
-const LOSSLESS_FORMATS = new Set(['flac', 'alac', 'wav', 'wave', 'aiff', 'aif', 'ape', 'wv', 'dsf', 'dff', 'mqa'])
+const LOSSLESS_FORMATS = new Set([
+  'flac',
+  'alac',
+  'wav',
+  'wave',
+  'aiff',
+  'aif',
+  'ape',
+  'wv',
+  'dsf',
+  'dff',
+  'mqa'
+])
 const LOGICAL_DURATION_TOLERANCE_SECONDS = 8
 
-export function buildLogicalTracks(inputs: SourceVariantInput[]): LogicalTrack[] {
+export function buildLogicalTracks(inputs: Iterable<SourceVariantInput>): LogicalTrack[] {
   const groups: LogicalTrack[] = []
+  const groupsByKey = new Map<string, LogicalTrack[]>()
 
   for (const input of inputs) {
     const variant = toSourceVariant(input)
     const candidateKey = getLogicalTrackKey(variant.track)
-    const existing = groups.find((item) => {
-      if (item.id !== candidateKey) return false
-      return canShareLogicalTrack(item.preferredTrack, variant.track)
-    })
+    const candidates = groupsByKey.get(candidateKey)
+    const existing = candidates?.find((item) =>
+      canShareLogicalTrack(item.preferredTrack, variant.track)
+    )
 
     if (existing) {
       existing.variants = [...existing.variants, variant].sort(compareSourceVariants)
@@ -49,14 +62,20 @@ export function buildLogicalTracks(inputs: SourceVariantInput[]): LogicalTrack[]
       continue
     }
 
-    groups.push({
+    const nextGroup = {
       id: candidateKey,
       title: variant.track.title.trim() || '未知歌曲',
       artist: variant.track.artist.trim() || '未知艺术家',
       album: variant.track.album.trim() || '未知专辑',
       preferredTrack: variant.track,
       variants: [variant]
-    })
+    }
+    groups.push(nextGroup)
+    if (candidates) {
+      candidates.push(nextGroup)
+    } else {
+      groupsByKey.set(candidateKey, [nextGroup])
+    }
   }
 
   return groups
@@ -107,7 +126,10 @@ export function canShareLogicalTrack(left: Track, right: Track): boolean {
   return Math.abs(left.duration - right.duration) <= LOGICAL_DURATION_TOLERANCE_SECONDS
 }
 
-export function getTrackSource(track: Pick<Track, 'id' | 'source'>, fallback?: string): TrackSource {
+export function getTrackSource(
+  track: Pick<Track, 'id' | 'source'>,
+  fallback?: string
+): TrackSource {
   if (track.source) return normalizeTrackSource(track.source)
   if (fallback) return normalizeTrackSource(fallback)
   const id = track.id.trim()

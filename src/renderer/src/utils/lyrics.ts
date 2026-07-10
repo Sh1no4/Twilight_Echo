@@ -115,7 +115,34 @@ export function buildLyricLines(
   return sourceLines.map((line, index) => ({
     time: null,
     text: line,
-    translation: plainLines.length > 0 ? plainTranslatedLines[index] ?? null : null,
+    translation: plainLines.length > 0 ? (plainTranslatedLines[index] ?? null) : null,
     timed: false
   }))
+}
+
+export function findActiveLyricIndex(lines: readonly LyricLine[], currentTime: number): number {
+  if (lines.length === 0 || !Number.isFinite(currentTime)) return -1
+
+  let low = 0
+  let high = lines.length - 1
+  let activeIndex = -1
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2)
+    const lineTime = lines[mid].time
+
+    if (lineTime == null) {
+      high = mid - 1
+      continue
+    }
+
+    if (lineTime <= currentTime) {
+      activeIndex = mid
+      low = mid + 1
+    } else {
+      high = mid - 1
+    }
+  }
+
+  return activeIndex
 }

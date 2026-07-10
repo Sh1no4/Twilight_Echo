@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-const { buildLyricLines, parsePlainLyrics, parseTimedLrc } = (await import(
+const { buildLyricLines, findActiveLyricIndex, parsePlainLyrics, parseTimedLrc } = (await import(
   new URL('./lyrics.ts', import.meta.url).href
 )) as typeof import('./lyrics')
 
@@ -25,4 +25,37 @@ test('buildLyricLines falls back to plain lyrics when no timed lines exist', () 
     { time: null, text: 'First plain line', translation: null, timed: false },
     { time: null, text: 'Second plain line', translation: null, timed: false }
   ])
+})
+
+test('findActiveLyricIndex uses timed lyric boundaries', () => {
+  const lines = buildLyricLines('[00:01.00]First\n[00:03.00]Second\n[00:03.00]Echo', null)
+
+  assert.equal(findActiveLyricIndex(lines, 0.5), -1)
+  assert.equal(findActiveLyricIndex(lines, 1), 0)
+  assert.equal(findActiveLyricIndex(lines, 2.5), 0)
+  assert.equal(findActiveLyricIndex(lines, 3), 2)
+  assert.equal(findActiveLyricIndex(lines, 10), 2)
+})
+
+test('findActiveLyricIndex ignores untimed lyrics', () => {
+  const lines = buildLyricLines('First plain line\nSecond plain line', null)
+
+  assert.equal(findActiveLyricIndex(lines, 10), -1)
+})
+
+test('findActiveLyricIndex handles large lyric files quickly', () => {
+  const lines = Array.from({ length: 10000 }, (_, index) => ({
+    time: index * 0.75,
+    text: `Line ${index}`,
+    translation: null,
+    timed: true
+  }))
+
+  const start = performance.now()
+  for (let i = 0; i < 10000; i++) {
+    assert.equal(findActiveLyricIndex(lines, 5000), 6666)
+  }
+  const elapsed = performance.now() - start
+
+  assert.ok(elapsed < 80, `active lyric lookup took ${elapsed.toFixed(2)}ms, expected < 80ms`)
 })

@@ -1951,6 +1951,69 @@
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.34);
 }
 
+:global(html[data-window-transparent='on']) .streaming-page,
+:global(html[data-window-transparent='on']) .streaming-sidebar,
+:global(html[data-window-transparent='on']) .streaming-content {
+  background-color: var(--te-tp-surface) !important;
+  background-image: none !important;
+}
+
+:global(html[data-window-transparent='on']) .streaming-content::before {
+  background: var(--te-tp-card) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  box-shadow:
+    0 24px 70px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
+}
+
+:global(html[data-window-transparent='on']) .streaming-search-box,
+:global(html[data-window-transparent='on']) .btn-back,
+:global(html[data-window-transparent='on']) .streaming-round-btn,
+:global(html[data-window-transparent='on']) .streaming-avatar-btn,
+:global(html[data-window-transparent='on']) .search-tab-pill,
+:global(html[data-window-transparent='on']) .search-source-trigger,
+:global(html[data-window-transparent='on']) .search-source-menu,
+:global(html[data-window-transparent='on']) .streaming-placeholder,
+:global(html[data-window-transparent='on']) .track-table-wrapper,
+:global(html[data-window-transparent='on']) .detail-playlist-header,
+:global(html[data-window-transparent='on']) .playlist-grid-card {
+  background: var(--te-tp-card) !important;
+  background-image: none !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
+  -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) saturate(145%) !important;
+}
+
+:global(html[data-window-transparent='on']) .streaming-search-box.focused {
+  background: var(--te-tp-card) !important;
+}
+
+:global(html[data-window-transparent='on']) .detail-playlist-header::before {
+  display: none !important;
+}
+
+:global(html[data-window-transparent='on']) .track-table th {
+  background: var(--te-tp-card) !important;
+  border-bottom-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+:global(html[data-window-transparent='on']) .track-row td {
+  border-bottom-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+:global(html[data-window-transparent='on']) .track-row:hover {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+:global(html[data-window-transparent='on']) .track-playing {
+  background: rgba(var(--te-primary-rgb), 0.14) !important;
+}
+
 @media (max-width: 900px) {
   .streaming-content-header,
   .streaming-content-body,

@@ -3,22 +3,21 @@ import type { Track } from '../types/music'
 import { getLogicalTrackKey } from './logicalTrackIdentity.ts'
 import { buildLogicalTracks, type LogicalTrack } from './logicalTrackModel.ts'
 
-type RecentStat = ListeningTrackStat & { id: string }
+export type UnifiedRecentStat = ListeningTrackStat & { id: string }
 
 export function resolveUnifiedRecentTracks({
   recentStats,
   localTracks
 }: {
-  recentStats: RecentStat[]
+  recentStats: UnifiedRecentStat[]
   localTracks: Track[]
 }): Track[] {
-  const localById = new Map(localTracks.map((track) => [track.id, track]))
-  const localByLogicalKey = buildLocalLogicalTrackMap(localTracks)
+  const resolveTrack = createUnifiedRecentTrackResolver(localTracks)
   const tracks: Track[] = []
   const seen = new Set<string>()
 
   for (const stat of recentStats) {
-    const resolved = resolveRecentTrack(stat, localById, localByLogicalKey)
+    const resolved = resolveTrack(stat)
     const seenKey = getLogicalTrackKey(stat)
     if (!resolved || seen.has(seenKey)) continue
     seen.add(seenKey)
@@ -28,8 +27,17 @@ export function resolveUnifiedRecentTracks({
   return tracks
 }
 
+export function createUnifiedRecentTrackResolver(
+  localTracks: Track[]
+): (stat: UnifiedRecentStat) => Track | null {
+  const localById = buildLocalTrackIdMap(localTracks)
+  const localByLogicalKey = buildLocalLogicalTrackMap(localTracks)
+
+  return (stat) => resolveRecentTrack(stat, localById, localByLogicalKey)
+}
+
 function resolveRecentTrack(
-  stat: RecentStat,
+  stat: UnifiedRecentStat,
   localById: Map<string, Track>,
   localByLogicalKey: Map<string, LogicalTrack>
 ): Track | null {
@@ -48,16 +56,28 @@ function resolveRecentTrack(
   return stat.track ?? null
 }
 
-function buildLocalLogicalTrackMap(localTracks: Track[]): Map<string, LogicalTrack> {
-  const result = new Map<string, LogicalTrack>()
-  for (const logicalTrack of buildLogicalTracks(
-    localTracks.map((track) => ({
+function buildLocalTrackIdMap(localTracks: Track[]): Map<string, Track> {
+  const result = new Map<string, Track>()
+  for (const track of localTracks) {
+    result.set(track.id, track)
+  }
+  return result
+}
+
+function* localLogicalTrackInputs(localTracks: Track[]) {
+  for (const track of localTracks) {
+    yield {
       track,
-      source: 'local',
+      source: 'local' as const,
       sourceName: '本地音乐',
       providerAvailable: true
-    }))
-  )) {
+    }
+  }
+}
+
+function buildLocalLogicalTrackMap(localTracks: Track[]): Map<string, LogicalTrack> {
+  const result = new Map<string, LogicalTrack>()
+  for (const logicalTrack of buildLogicalTracks(localLogicalTrackInputs(localTracks))) {
     if (!result.has(logicalTrack.id)) result.set(logicalTrack.id, logicalTrack)
   }
   return result

@@ -327,12 +327,15 @@ export function normalizeBackgroundKind(value: unknown): AppBackgroundKind {
 }
 
 export function normalizeBackgroundImageHandle(value: unknown): string {
-  return typeof value === 'string' && /^background:\/\/[a-zA-Z0-9._-]+$/.test(value)
-    ? value
-    : ''
+  return typeof value === 'string' && /^background:\/\/[a-zA-Z0-9._-]+$/.test(value) ? value : ''
 }
 
-export const APP_BACKGROUND_PAGES: AppBackgroundPage[] = ['local', 'settings', 'streaming', 'player']
+export const APP_BACKGROUND_PAGES: AppBackgroundPage[] = [
+  'local',
+  'settings',
+  'streaming',
+  'player'
+]
 
 export function normalizeAppBackground(raw: unknown): AppBackgroundSettings {
   const value = (typeof raw === 'object' && raw !== null ? raw : {}) as {
@@ -423,12 +426,11 @@ export function normalizeBackgroundEffectTheme(
 }
 
 export function normalizeCardAppearance(raw: unknown): CardAppearanceSettings {
-  const value =
-    (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
   const defaults = DEFAULT_SETTINGS.cardAppearance
-  const bgRaw = (typeof value.background === 'object' && value.background !== null
-    ? value.background
-    : {}) as Record<string, unknown>
+  const bgRaw = (
+    typeof value.background === 'object' && value.background !== null ? value.background : {}
+  ) as Record<string, unknown>
   return {
     enabled: value.enabled === true,
     light: normalizeCardAppearanceTheme(value.light, defaults.light),
@@ -444,9 +446,7 @@ export function normalizeCardAppearance(raw: unknown): CardAppearanceSettings {
 export function normalizePluginThemeId(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const normalized = value.trim()
-  return normalized && /^[a-z][a-z0-9-_.]*:[a-z][a-z0-9-_.]*$/.test(normalized)
-    ? normalized
-    : null
+  return normalized && /^[a-z][a-z0-9-_.]*:[a-z][a-z0-9-_.]*$/.test(normalized) ? normalized : null
 }
 
 export function isDefaultAudioDeviceAlias(device: string): boolean {
@@ -502,12 +502,16 @@ export function normalizeDesktopLyrics(raw: unknown): DesktopLyricsSettings {
   return {
     enabled: d.enabled === true,
     fontSize: clampNumber(d.fontSize, 12, 80, DEFAULT_DESKTOP_LYRICS.fontSize),
-    fontFamily: typeof d.fontFamily === 'string' && d.fontFamily.trim()
-      ? d.fontFamily.trim().slice(0, 64)
-      : DEFAULT_DESKTOP_LYRICS.fontFamily,
+    fontFamily:
+      typeof d.fontFamily === 'string' && d.fontFamily.trim()
+        ? d.fontFamily.trim().slice(0, 64)
+        : DEFAULT_DESKTOP_LYRICS.fontFamily,
     fontWeight: clampNumber(d.fontWeight, 100, 900, DEFAULT_DESKTOP_LYRICS.fontWeight),
     color: typeof d.color === 'string' ? d.color : DEFAULT_DESKTOP_LYRICS.color,
-    highlightColor: typeof d.highlightColor === 'string' ? d.highlightColor : DEFAULT_DESKTOP_LYRICS.highlightColor,
+    highlightColor:
+      typeof d.highlightColor === 'string'
+        ? d.highlightColor
+        : DEFAULT_DESKTOP_LYRICS.highlightColor,
     bgColor: typeof d.bgColor === 'string' ? d.bgColor : DEFAULT_DESKTOP_LYRICS.bgColor,
     bgOpacity: clampNumber(d.bgOpacity, 0, 100, DEFAULT_DESKTOP_LYRICS.bgOpacity),
     align: d.align === 'left' ? 'left' : 'center',
@@ -515,7 +519,8 @@ export function normalizeDesktopLyrics(raw: unknown): DesktopLyricsSettings {
     lineSpacing: clampNumber(d.lineSpacing, 1.0, 3.0, DEFAULT_DESKTOP_LYRICS.lineSpacing),
     shadow: d.shadow !== false,
     shadowBlur: clampNumber(d.shadowBlur, 0, 30, DEFAULT_DESKTOP_LYRICS.shadowBlur),
-    shadowColor: typeof d.shadowColor === 'string' ? d.shadowColor : DEFAULT_DESKTOP_LYRICS.shadowColor,
+    shadowColor:
+      typeof d.shadowColor === 'string' ? d.shadowColor : DEFAULT_DESKTOP_LYRICS.shadowColor,
     windowWidth: clampNumber(d.windowWidth, 200, 3000, DEFAULT_DESKTOP_LYRICS.windowWidth),
     windowHeight: clampNumber(d.windowHeight, 60, 800, DEFAULT_DESKTOP_LYRICS.windowHeight),
     windowX: typeof d.windowX === 'number' ? d.windowX : -1,
@@ -574,18 +579,26 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     watchLibrary: settings.watchLibrary !== false,
     smtcEnabled: settings.smtcEnabled !== false,
     discordRpcEnabled: settings.discordRpcEnabled === true,
-    accentColor: normalizeAccentColor(settings.lightAccentColor ?? DEFAULT_SETTINGS.lightAccentColor),
+    accentColor: normalizeAccentColor(
+      settings.lightAccentColor ?? DEFAULT_SETTINGS.lightAccentColor
+    ),
     lightAccentColor: normalizeLightAccentColor(settings.lightAccentColor),
     darkAccentColor: normalizeDarkAccentColor(settings.darkAccentColor, settings.accentColor),
-    fontFamily: typeof settings.fontFamily === 'string' && settings.fontFamily.trim()
-      ? settings.fontFamily.trim().slice(0, 64)
-      : DEFAULT_SETTINGS.fontFamily,
+    fontFamily:
+      typeof settings.fontFamily === 'string' && settings.fontFamily.trim()
+        ? settings.fontFamily.trim().slice(0, 64)
+        : DEFAULT_SETTINGS.fontFamily,
     uiDensity: normalizeUiDensity(settings.uiDensity),
     appBackground: normalizeAppBackground(settings.appBackground),
     cardAppearance: normalizeCardAppearance(settings.cardAppearance),
     nowPlayingBackground: normalizeNowPlayingBackground(settings.nowPlayingBackground),
     lyricAlign: settings.lyricAlign === 'left' ? 'left' : 'center',
-    lyricDimOpacity: clampNumber(settings.lyricDimOpacity, 10, 100, DEFAULT_SETTINGS.lyricDimOpacity),
+    lyricDimOpacity: clampNumber(
+      settings.lyricDimOpacity,
+      10,
+      100,
+      DEFAULT_SETTINGS.lyricDimOpacity
+    ),
     playbackResumeMode: normalizePlaybackResumeMode(settings.playbackResumeMode),
     playMode: normalizePlayMode(settings.playMode),
     audioOutput: normalizeAudioOutput(settings.audioOutput),
@@ -597,7 +610,8 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     audioEqPresets: normalizeAudioEqPresets(settings.audioEqPresets),
     desktopLyrics: normalizeDesktopLyrics(settings.desktopLyrics),
     proxyMode: normalizeProxyMode(settings.proxyMode),
-    proxyHost: typeof settings.proxyHost === 'string' ? settings.proxyHost.trim().slice(0, 255) : '',
+    proxyHost:
+      typeof settings.proxyHost === 'string' ? settings.proxyHost.trim().slice(0, 255) : '',
     proxyPort: clampNumber(settings.proxyPort, 0, 65535, 0),
     streamingActiveProvider:
       typeof settings.streamingActiveProvider === 'string' &&
@@ -642,7 +656,10 @@ export function getRestartReasons(settings: AppSettings, launch: AppSettings): s
   return reasons
 }
 
-export function createSettingsSnapshot(settings: AppSettings, launch: AppSettings): SettingsSnapshot {
+export function createSettingsSnapshot(
+  settings: AppSettings,
+  launch: AppSettings
+): SettingsSnapshot {
   const restartReasons = getRestartReasons(settings, launch)
   return {
     ...settings,

@@ -404,11 +404,19 @@ const CARD_HOVER_MAP: Record<string, { transform: string; extraShadow: string }>
 
 function hexToRgba(hex: string, opacityPercent: number): string {
   const h = hex.replace('#', '')
-  const fullHex = h.length === 3
-    ? h.split('').map((c) => c + c).join('')
-    : h.length === 4
-      ? h.slice(0, 3).split('').map((c) => c + c).join('')
-      : h
+  const fullHex =
+    h.length === 3
+      ? h
+          .split('')
+          .map((c) => c + c)
+          .join('')
+      : h.length === 4
+        ? h
+            .slice(0, 3)
+            .split('')
+            .map((c) => c + c)
+            .join('')
+        : h
   const r = parseInt(fullHex.substring(0, 2), 16)
   const g = parseInt(fullHex.substring(2, 4), 16)
   const b = parseInt(fullHex.substring(4, 6), 16)
@@ -423,10 +431,20 @@ function applyCardAppearance(theme: 'light' | 'dark'): void {
   const root = document.documentElement
 
   const cardVars = [
-    '--te-card-blur', '--te-card-saturate', '--te-card-bg', '--te-card-bg-solid',
-    '--te-card-border', '--te-card-border-width', '--te-card-radius',
-    '--te-card-shadow', '--te-card-hover-transform', '--te-card-hover-shadow',
-    '--te-card-glass-highlight', '--te-bg-blur', '--te-bg-brightness', '--te-bg-dim'
+    '--te-card-blur',
+    '--te-card-saturate',
+    '--te-card-bg',
+    '--te-card-bg-solid',
+    '--te-card-border',
+    '--te-card-border-width',
+    '--te-card-radius',
+    '--te-card-shadow',
+    '--te-card-hover-transform',
+    '--te-card-hover-shadow',
+    '--te-card-glass-highlight',
+    '--te-bg-blur',
+    '--te-bg-brightness',
+    '--te-bg-dim'
   ]
 
   if (!cardAppearance.enabled) {
@@ -458,7 +476,9 @@ function applyCardAppearance(theme: 'light' | 'dark'): void {
   root.style.setProperty('--te-card-glass-highlight', card.glassHighlight ? '1' : '0')
 
   const bgEffect: BackgroundEffectTheme = cardAppearance.background.enabled
-    ? (isDark ? cardAppearance.background.dark : cardAppearance.background.light)
+    ? isDark
+      ? cardAppearance.background.dark
+      : cardAppearance.background.light
     : { blur: 0, brightness: 100, dim: 0 }
 
   root.dataset.cardBgEffect = cardAppearance.background.enabled ? 'on' : 'off'
@@ -482,9 +502,7 @@ function applyDomSettings(): void {
   document.documentElement.dataset.themePreference = settings.value.theme
   document.documentElement.style.colorScheme = resolvedTheme === 'dark' ? 'dark' : 'light'
   document.body.classList.toggle('te-no-blur', !settings.value.blurEffect)
-  document.documentElement.dataset.windowTransparent = settings.value.windowTransparency
-    ? 'on'
-    : 'off'
+  document.documentElement.dataset.windowTransparent = settings.value.windowTransparency ? 'on' : 'off'
   applyWindowTransparencyEffect()
   document.documentElement.style.setProperty(
     '--te-lyric-font-size',
@@ -512,7 +530,10 @@ function applyDomSettings(): void {
     FONT_FAMILY_MAP[settings.value.fontFamily] ?? FONT_FAMILY_MAP.system
   )
   document.documentElement.style.setProperty('--te-app-bg', globalBackground)
-  document.documentElement.style.setProperty('--te-app-bg-image', getBackgroundImageValue(globalSettings))
+  document.documentElement.style.setProperty(
+    '--te-app-bg-image',
+    getBackgroundImageValue(globalSettings)
+  )
   for (const page of BACKGROUND_PAGES) {
     const pageSettings = appBackground.pages?.[page] ?? fallbackSettings.appBackground.pages[page]
     const resolvedPageSettings = pageSettings.inherit ? globalSettings : pageSettings
@@ -580,13 +601,22 @@ function applySnapshot(snapshot: SettingsSnapshot): void {
     cardAppearance: {
       ...fallbackSettings.cardAppearance,
       ...(incoming.cardAppearance ?? {}),
-      light: { ...fallbackSettings.cardAppearance.light, ...(incoming.cardAppearance?.light ?? {}) },
+      light: {
+        ...fallbackSettings.cardAppearance.light,
+        ...(incoming.cardAppearance?.light ?? {})
+      },
       dark: { ...fallbackSettings.cardAppearance.dark, ...(incoming.cardAppearance?.dark ?? {}) },
       background: {
         ...fallbackSettings.cardAppearance.background,
         ...(incoming.cardAppearance?.background ?? {}),
-        light: { ...fallbackSettings.cardAppearance.background.light, ...(incoming.cardAppearance?.background?.light ?? {}) },
-        dark: { ...fallbackSettings.cardAppearance.background.dark, ...(incoming.cardAppearance?.background?.dark ?? {}) }
+        light: {
+          ...fallbackSettings.cardAppearance.background.light,
+          ...(incoming.cardAppearance?.background?.light ?? {})
+        },
+        dark: {
+          ...fallbackSettings.cardAppearance.background.dark,
+          ...(incoming.cardAppearance?.background?.dark ?? {})
+        }
       }
     }
   }
@@ -678,20 +708,14 @@ export function useSettingsStore(): {
     const sequence = ++settingsUpdateSequence
     pendingSettingsUpdates += 1
     saving.value = true
-    if (
-      Object.prototype.hasOwnProperty.call(patch, 'appBackground') &&
-      patch.appBackground
-    ) {
+    if (Object.prototype.hasOwnProperty.call(patch, 'appBackground') && patch.appBackground) {
       settings.value = {
         ...settings.value,
         appBackground: patch.appBackground
       }
       applyDomSettings()
     }
-    if (
-      Object.prototype.hasOwnProperty.call(patch, 'cardAppearance') &&
-      patch.cardAppearance
-    ) {
+    if (Object.prototype.hasOwnProperty.call(patch, 'cardAppearance') && patch.cardAppearance) {
       settings.value = {
         ...settings.value,
         cardAppearance: patch.cardAppearance

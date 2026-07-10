@@ -52,10 +52,11 @@ test('local dashboard top tracks resolve logical stats to playable local variant
 
   assert.match(
     dashboardSource,
-    /import \{ resolveUnifiedRecentTracks \} from '\.\.\/utils\/unifiedRecentTracks'/
+    /import \{ createUnifiedRecentTrackResolver \} from '\.\.\/utils\/unifiedRecentTracks'/
   )
-  assert.match(dashboardSource, /resolveUnifiedRecentTracks\(\{/)
-  assert.match(dashboardSource, /recentStats: \[stat\]/)
-  assert.match(dashboardSource, /localTracks: tracks\.value/)
-  assert.match(dashboardSource, /track: resolved\[0\] \?\? stat\.track \?\? null/)
+  assert.match(dashboardSource, /getMostListenedTracks\(TOP_TRACK_COUNT\)/)
+  assert.match(dashboardSource, /createUnifiedRecentTrackResolver\(tracks\.value\)/)
+  assert.doesNotMatch(dashboardSource, /recentStats: \[stat\]/)
+  assert.doesNotMatch(dashboardSource, /Object\.entries\(listeningStats\.value\.tracks\)/)
+  assert.doesNotMatch(dashboardSource, /track: byId\.get\(id\) \?\? stat\.track/)
 })

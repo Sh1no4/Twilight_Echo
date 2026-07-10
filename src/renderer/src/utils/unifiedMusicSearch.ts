@@ -76,7 +76,9 @@ export interface UnifiedSearchResult {
   total: number
 }
 
-export async function unifiedSearchSongs(options: UnifiedSearchOptions): Promise<UnifiedSearchResult> {
+export async function unifiedSearchSongs(
+  options: UnifiedSearchOptions
+): Promise<UnifiedSearchResult> {
   const query = options.query.trim()
   const limit = options.limit ?? 30
   const offset = options.offset ?? 0
@@ -92,7 +94,8 @@ export async function unifiedSearchSongs(options: UnifiedSearchOptions): Promise
   const providerItems = (
     await Promise.all(
       options.providers.map(async (provider) => {
-        const providerAvailable = provider.available !== false && provider.health?.available !== false
+        const providerAvailable =
+          provider.available !== false && provider.health?.available !== false
         const providerReliability = getProviderReliability(provider)
         const searchable = provider.capabilities.includes('search')
         const playbackUrlHealth = provider.health?.methodStats?.getPlaybackUrl
@@ -104,9 +107,12 @@ export async function unifiedSearchSongs(options: UnifiedSearchOptions): Promise
           resultCount: 0,
           lastError: provider.health?.lastError ?? null,
           pluginStatus: provider.health?.pluginStatus ?? null,
-          successRate: typeof provider.health?.successRate === 'number' ? provider.health.successRate : null,
+          successRate:
+            typeof provider.health?.successRate === 'number' ? provider.health.successRate : null,
           playbackUrlSuccessRate:
-            typeof playbackUrlHealth?.successRate === 'number' ? playbackUrlHealth.successRate : null,
+            typeof playbackUrlHealth?.successRate === 'number'
+              ? playbackUrlHealth.successRate
+              : null,
           playbackUrlLastError: playbackUrlHealth?.lastError ?? null,
           lastCheckedAt: provider.health?.lastCheckedAt ?? null
         }
@@ -154,17 +160,21 @@ export function buildLogicalMusicItems(tracks: Track[]): LogicalMusicItem[] {
   )
 }
 
-function buildLogicalMusicItemsFromSearchItems(searchItems: UnifiedSearchTrackItem[]): LogicalMusicItem[] {
+function buildLogicalMusicItemsFromSearchItems(
+  searchItems: UnifiedSearchTrackItem[]
+): LogicalMusicItem[] {
   return buildLogicalTracks(searchItems)
 }
 
 function searchLocalTracks(tracks: Track[], query: string): Track[] {
   if (!query) return []
   const normalizedQuery = normalizeSearchText(query)
-  return tracks.filter((track) =>
-    [track.title, track.artist, track.album, track.fileName]
-      .map(normalizeSearchText)
-      .some((value) => value.includes(normalizedQuery))
+  return tracks.filter(
+    (track) =>
+      normalizedTrackFieldIncludes(track.title, normalizedQuery) ||
+      normalizedTrackFieldIncludes(track.artist, normalizedQuery) ||
+      normalizedTrackFieldIncludes(track.album, normalizedQuery) ||
+      normalizedTrackFieldIncludes(track.fileName, normalizedQuery)
   )
 }
 
@@ -203,14 +213,15 @@ function compareSearchItems(left: UnifiedSearchTrackItem, right: UnifiedSearchTr
 function getProviderReliability(provider: UnifiedSearchProvider): number {
   const playbackUrlSuccessRate = provider.health?.methodStats?.getPlaybackUrl?.successRate
   if (typeof playbackUrlSuccessRate === 'number') return clampReliability(playbackUrlSuccessRate)
-  if (typeof provider.health?.successRate === 'number') return clampReliability(provider.health.successRate)
+  if (typeof provider.health?.successRate === 'number')
+    return clampReliability(provider.health.successRate)
   return provider.available === false || provider.health?.available === false ? 0 : 1
 }
 
 function normalizeSearchText(value: string | undefined): string {
-  return (value ?? '')
-    .normalize('NFKC')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ')
+  return (value ?? '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+function normalizedTrackFieldIncludes(value: string | undefined, normalizedQuery: string): boolean {
+  return normalizeSearchText(value).includes(normalizedQuery)
 }

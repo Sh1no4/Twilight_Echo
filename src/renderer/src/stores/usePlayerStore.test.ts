@@ -303,20 +303,16 @@ test('player store does not pretend DSP bypass is strict bit-perfect mode', () =
 
 test('local dashboard playback keeps a multi-track queue for next and previous controls', () => {
   const source = readFileSync(new URL('../components/LocalDashboard.vue', import.meta.url), 'utf8')
-  const playDashboardTrack = source.match(/function playDashboardTrack[\s\S]*?\n}/)?.[0] ?? ''
+  const playWithQueue = source.match(/function playWithQueue[\s\S]*?\n}/)?.[0] ?? ''
 
-  assert.match(source, /const nowPlayingTitle = computed\(\(\) => currentTrack\.value\?\.title/)
+  assert.match(source, /const heroTrack = computed<Track \| null>/)
+  assert.match(source, /@click="handleHeroPlay"/)
+  assert.match(source, /@click="playWithQueue\(track\)"/)
+  assert.match(source, /@click="playWithQueue\(entry\.track\)"/)
+  assert.match(playWithQueue, /QUEUE_WINDOW/)
+  assert.match(playWithQueue, /tracks\.value\.slice\(queueStart, end\)/)
   assert.match(
-    source,
-    /const progressWidth = computed\(\(\) => `\$\{Math\.min\(100, Math\.max\(0, progress\.value\)\)\}%`\)/
-  )
-  assert.match(source, /@click="togglePlay"/)
-  assert.match(source, /@click="next"/)
-  assert.match(source, /@click="prev"/)
-  assert.match(playDashboardTrack, /DASHBOARD_QUEUE_WINDOW/)
-  assert.match(playDashboardTrack, /tracks\.value\.slice\(queueStart, end\)/)
-  assert.match(
-    playDashboardTrack,
+    playWithQueue,
     /if \(sourceIndex < 0\) \{\s*playTrack\(track, \[track\]\)\s*return\s*\}/,
     'dashboard playback should only fall back to a single-track queue when the track is not in the local library'
   )
@@ -697,19 +693,30 @@ test('renderer audio device normalization derives tri-state capability fallbacks
   assert.match(source, /id\.startsWith\('hw:'\)/)
   assert.match(
     source,
-    /normalizeAudioDeviceOptions\(state\.deviceOptions, state\.device, state\.output\)/
+    /normalizeAudioDeviceOptions\(\s*state\.deviceOptions,\s*state\.device,\s*state\.output\s*\)/
   )
   assert.match(source, /dopSupportState: 'runtime-probed'/)
   assert.match(source, /nativeDsdSupportState: 'unsupported'/)
   assert.match(
     helper,
-    /withAudioCapabilitySupportStates\(\{\s*id,\s*label: formatAudioDeviceLabel\(id\),\s*isDefault: id === 'auto'\s*\}, selectedOutput\)/
+    /withAudioCapabilitySupportStates\(\s*\{\s*id,\s*label: formatAudioDeviceLabel\(id\),\s*isDefault: id === 'auto'\s*\},\s*selectedOutput\s*\)/
   )
   assert.match(
     helper,
-    /withAudioCapabilitySupportStates\(\{\s*\.\.\.\(record as Partial<AudioDeviceOption>\),/
+    /withAudioCapabilitySupportStates\(\s*\{\s*\.\.\.\(record as Partial<AudioDeviceOption>\),/
   )
-  assert.match(helper, /withAudioCapabilitySupportStates\(\{\s*id: selectedDevice,/)
+  assert.match(helper, /withAudioCapabilitySupportStates\(\s*\{\s*id: selectedDevice,/)
+})
+
+test('dominant cover color extraction ignores stale async results', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+
+  assert.match(source, /let dominantColorRequestId = 0/)
+  assert.match(source, /const requestId = \+\+dominantColorRequestId/)
+  assert.match(source, /const color = await extractDominantColor\(cover\)/)
+  assert.match(source, /requestId === dominantColorRequestId/)
+  assert.match(source, /currentTrack\.value\?\.cover === cover/)
+  assert.match(source, /appSettings\.value\?\.useCoverTheme/)
 })
 
 test('audio output refresh reruns when hotplug arrives during an in-flight request', () => {

@@ -3,9 +3,16 @@ import type { Track } from '../types/music'
 import { syncPluginProviders, useMediaProviders } from '../providers/index.ts'
 import { enrichLocalTracksFromProviders } from '../utils/libraryMetadataEnrichment.ts'
 import { getLogicalTrackKey } from '../utils/logicalTrackIdentity.ts'
-import { buildLogicalTracks, getTrackSource, type LogicalTrack } from '../utils/logicalTrackModel.ts'
+import {
+  buildLogicalTracks,
+  getTrackSource,
+  type LogicalTrack
+} from '../utils/logicalTrackModel.ts'
 import { repairMovedLocalTracks } from '../utils/libraryRepair.ts'
-import { enrichLocalTrackMetadata, type MetadataMatchConfidence } from '../utils/musicMetadataMatching.ts'
+import {
+  enrichLocalTrackMetadata,
+  type MetadataMatchConfidence
+} from '../utils/musicMetadataMatching.ts'
 import { useSettingsStore } from './useSettingsStore.ts'
 
 interface Playlist {
@@ -43,6 +50,11 @@ interface LibraryRepairReport {
   unresolvedTrackIds: string[]
 }
 
+interface DerivedTrackGroup {
+  tracks: Track[]
+  cover: string | null
+}
+
 const DEFAULT_FAVORITE_PLAYLIST_NAME = '我收藏的音乐'
 
 const tracks = shallowRef<Track[]>([])
@@ -54,7 +66,20 @@ const folders = shallowRef<LibraryItem[]>([])
 const playlists = ref<Playlist[]>([])
 const libraryRepairReport = ref<LibraryRepairReport | null>(null)
 const trackById = new Map<string, Track>()
-const trackPathSet = new Set<string>()
+const trackByPath = new Map<string, Track>()
+const trackIndexById = new Map<string, number>()
+let derivedCollectionsInitialized = false
+let tracksRevision = 0
+let localLogicalTrackMapRevision = -1
+let localLogicalTrackMapCache = new Map<string, LogicalTrack>()
+let playlistIdentityCache: {
+  playlist: Playlist
+  trackIds: string[]
+  snapshots: Record<string, Track> | undefined
+  tracksRevision: number
+  ids: Set<string>
+  logicalKeys: Set<string>
+} | null = null
 
 // Rebuild coalescing state — module-level so it persists across useMusicStore() calls.
 let rebuildScheduled = false
@@ -103,7 +128,9 @@ export function useMusicStore(): {
   flushSaveLibrary: () => void
   loadLibrary: () => Promise<void>
   whenLibrarySettled: () => Promise<void>
-  handleLibraryChange: (change: { kind: 'add' | 'remove' | 'unknown'; path?: string } | undefined) => Promise<void>
+  handleLibraryChange: (
+    change: { kind: 'add' | 'remove' | 'unknown'; path?: string } | undefined
+  ) => Promise<void>
   refreshLibraryIndex: () => void
   scannedFolders: Ref<string[]>
   isScanning: Ref<boolean>
@@ -113,23 +140,61 @@ export function useMusicStore(): {
   flushRebuild: () => void
   getRebuildCount: () => number
 } {
-  function rebuildDerivedCollections(): void {
+  function setTracks(nextTracks: Track[], options: { rebuildIndexes?: boolean } = {}): void {
+    tracks.value = nextTracks
+    tracksRevision++
+    if (options.rebuildIndexes !== false) {
+      rebuildTrackLookupIndexes(nextTracks)
+    }
+  }
+
+  function rebuildTrackLookupIndexes(nextTracks: Track[] = tracks.value): void {
     trackById.clear()
-    trackPathSet.clear()
-    const artistMap = new Map<string, Track[]>()
-    const albumMap = new Map<string, Track[]>()
-    const folderMap = new Map<string, Track[]>()
+    trackByPath.clear()
+    trackIndexById.clear()
+    nextTracks.forEach((track, index) => {
+      trackById.set(track.id, track)
+      trackByPath.set(track.filePath, track)
+      trackIndexById.set(track.id, index)
+    })
+  }
+
+  function replaceTrackAtIndex(index: number, nextTrack: Track): void {
+    const current = tracks.value[index]
+    if (!current) return
+    const nextTracks = tracks.value.slice()
+    nextTracks[index] = nextTrack
+    setTracks(nextTracks, { rebuildIndexes: false })
+    trackById.delete(current.id)
+    trackByPath.delete(current.filePath)
+    trackIndexById.delete(current.id)
+    trackById.set(nextTrack.id, nextTrack)
+    trackByPath.set(nextTrack.filePath, nextTrack)
+    trackIndexById.set(nextTrack.id, index)
+  }
+
+  function rebuildDerivedCollections(): void {
+    rebuildTrackLookupIndexes()
+    const artistMap = new Map<string, DerivedTrackGroup>()
+    const albumMap = new Map<string, DerivedTrackGroup>()
+    const folderMap = new Map<string, DerivedTrackGroup>()
+
+    function addToGroup(map: Map<string, DerivedTrackGroup>, key: string, track: Track): void {
+      let group = map.get(key)
+      if (!group) {
+        group = { tracks: [], cover: null }
+        map.set(key, group)
+      }
+      group.tracks.push(track)
+      if (!group.cover && track.cover) group.cover = track.cover
+    }
 
     for (const track of tracks.value) {
-      trackById.set(track.id, track)
-      trackPathSet.add(track.filePath)
       const artistName = track.artist || '未知艺术家'
-      if (!artistMap.has(artistName)) artistMap.set(artistName, [])
-      artistMap.get(artistName)!.push(track)
+      addToGroup(artistMap, artistName, track)
 
       const albumName = track.album || '未知专辑'
-      if (!albumMap.has(albumName)) albumMap.set(albumName, [])
-      albumMap.get(albumName)!.push(track)
+      addToGroup(albumMap, albumName, track)
 
       const dir =
         track.dir ||
@@ -138,41 +203,41 @@ export function useMusicStore(): {
           Math.max(track.filePath.lastIndexOf('\\'), track.filePath.lastIndexOf('/'))
         )
       if (dir) {
-        if (!folderMap.has(dir)) folderMap.set(dir, [])
-        folderMap.get(dir)!.push(track)
+        addToGroup(folderMap, dir, track)
       }
     }
 
     artists.value = Array.from(artistMap.entries())
-      .map(([name, items]) => ({
+      .map(([name, group]) => ({
         name,
-        trackCount: items.length,
-        tracks: items,
-        cover: items.find((t) => t.cover)?.cover ?? null
+        trackCount: group.tracks.length,
+        tracks: group.tracks,
+        cover: group.cover
       }))
       .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
 
     albums.value = Array.from(albumMap.entries())
-      .map(([name, items]) => ({
+      .map(([name, group]) => ({
         name,
-        trackCount: items.length,
-        tracks: items,
-        cover: items.find((t) => t.cover)?.cover ?? null,
-        artist: items[0].artist || '未知艺术家'
+        trackCount: group.tracks.length,
+        tracks: group.tracks,
+        cover: group.cover,
+        artist: group.tracks[0].artist || '未知艺术家'
       }))
       .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
 
     folders.value = scannedFolders.value
       .map((folderPath) => {
         const normalized = folderPath.replace(/[\\/]+$/, '')
-        const items = folderMap.get(folderPath) || folderMap.get(normalized) || []
+        const group = folderMap.get(folderPath) || folderMap.get(normalized)
+        const items = group?.tracks ?? []
         const name = normalized.split(/[\\/]/).pop() || folderPath
         return {
           name,
           path: folderPath,
           trackCount: items.length,
           tracks: items,
-          cover: items.find((t) => t.cover)?.cover ?? null
+          cover: group?.cover ?? null
         }
       })
       .filter((f) => f.trackCount > 0)
@@ -255,7 +320,7 @@ export function useMusicStore(): {
     // Set tracks immediately so the UI renders local music without waiting for
     // file-system repair scans (can take 30s+ for large libraries) or provider
     // metadata enrichment (can take 30s+ if the provider is unreachable).
-    tracks.value = loadedTracks
+    setTracks(loadedTracks)
     rebuildDerivedCollections()
     // Repair + enrichment run in the background. Results are merged back by
     // track id so concurrently-added/removed tracks are safe. A token guards
@@ -267,7 +332,7 @@ export function useMusicStore(): {
       if (token !== librarySettlementToken) return
       if (repairedTracks !== loadedTracks) {
         const repairedById = new Map(repairedTracks.map((t) => [t.id, t]))
-        tracks.value = tracks.value.map((t) => repairedById.get(t.id) ?? t)
+        setTracks(tracks.value.map((t) => repairedById.get(t.id) ?? t))
         rebuildDerivedCollections()
       }
       // Stage 2: enrich metadata from providers (network calls — slow)
@@ -275,13 +340,12 @@ export function useMusicStore(): {
       if (token !== librarySettlementToken) return
       if (enriched !== repairedTracks) {
         const enrichedById = new Map(enriched.map((t) => [t.id, t]))
-        tracks.value = tracks.value.map((t) => enrichedById.get(t.id) ?? t)
+        setTracks(tracks.value.map((t) => enrichedById.get(t.id) ?? t))
         rebuildDerivedCollections()
       }
-    })()
-      .finally(() => {
-        if (token === librarySettlementToken) librarySettlementInFlight = null
-      })
+    })().finally(() => {
+      if (token === librarySettlementToken) librarySettlementInFlight = null
+    })
   }
 
   function whenLibrarySettled(): Promise<void> {
@@ -295,7 +359,9 @@ export function useMusicStore(): {
     }
     try {
       const scanned = (
-        await Promise.all(scannedFolders.value.map((folder) => window.api.fs.scanMusicFiles(folder)))
+        await Promise.all(
+          scannedFolders.value.map((folder) => window.api.fs.scanMusicFiles(folder))
+        )
       ).flat() as Track[]
       const scannedPaths = new Set(scanned.map((track) => track.filePath))
       const repaired = repairMovedLocalTracks({
@@ -327,7 +393,7 @@ export function useMusicStore(): {
     try {
       // Single file removal
       if (change?.kind === 'remove' && change.path) {
-        const track = tracks.value.find((t) => t.filePath === change.path)
+        const track = trackByPath.get(change.path)
         if (track) {
           removeTrack(track.id)
           void scheduleSaveLibrary()
@@ -343,13 +409,11 @@ export function useMusicStore(): {
         const scanned = await window.api.fs.scanMusicFiles(dir)
         const newTracks = (scanned as Track[]).filter((t) => t.filePath === change.path)
         if (newTracks.length > 0) {
-          // If path already in trackPathSet (content change / tag edit):
+          // If path already exists (content change / tag edit):
           // remove old track first, then add new (remove-then-add)
-          if (trackPathSet.has(change.path)) {
-            const oldTrack = tracks.value.find((t) => t.filePath === change.path)
-            if (oldTrack) {
-              removeTrack(oldTrack.id)
-            }
+          const oldTrack = trackByPath.get(change.path)
+          if (oldTrack) {
+            removeTrack(oldTrack.id)
           }
           await addTracks(newTracks)
           return
@@ -368,15 +432,19 @@ export function useMusicStore(): {
   async function addTracks(newTracks: Track[], options: AddTracksOptions = {}): Promise<void> {
     const unique: Track[] = []
     for (const track of newTracks) {
-      if (trackPathSet.has(track.filePath)) continue
-      trackPathSet.add(track.filePath)
+      if (trackByPath.has(track.filePath)) continue
+      trackByPath.set(track.filePath, track)
       trackById.set(track.id, track)
       unique.push(track)
     }
     if (unique.length === 0) return
 
     const enriched = await enrichTracksFromProviders(unique)
-    tracks.value = [...tracks.value, ...enriched]
+    for (const track of enriched) {
+      trackById.set(track.id, track)
+      trackByPath.set(track.filePath, track)
+    }
+    setTracks([...tracks.value, ...enriched])
     if (!options.deferRebuild) {
       scheduleRebuild()
     }
@@ -387,26 +455,22 @@ export function useMusicStore(): {
 
   function removeTrack(id: string): void {
     const track = trackById.get(id)
-    if (track) {
-      trackPathSet.delete(track.filePath)
-      trackById.delete(id)
-    }
-    tracks.value = tracks.value.filter((t) => t.id !== id)
+    if (!track) return
+    trackByPath.delete(track.filePath)
+    trackById.delete(id)
+    setTracks(tracks.value.filter((t) => t.id !== id))
     scheduleRebuild()
   }
 
   function clearTrackMetadataMatch(trackId: string): boolean {
-    const index = tracks.value.findIndex((track) => track.id === trackId)
+    const index = trackIndexById.get(trackId) ?? -1
     if (index < 0 || !tracks.value[index].metadataMatch) return false
 
     const nextTrack = {
       ...tracks.value[index],
       metadataMatch: null
     }
-    const nextTracks = tracks.value.slice()
-    nextTracks[index] = nextTrack
-    tracks.value = nextTracks
-    trackById.set(trackId, nextTrack)
+    replaceTrackAtIndex(index, nextTrack)
     void scheduleSaveLibrary()
     return true
   }
@@ -416,7 +480,7 @@ export function useMusicStore(): {
     providerTrack: Track,
     options: ManualMetadataMatchOptions
   ): boolean {
-    const index = tracks.value.findIndex((track) => track.id === trackId)
+    const index = trackIndexById.get(trackId) ?? -1
     if (index < 0 || getTrackSource(tracks.value[index]) !== 'local') return false
 
     const { settings } = useSettingsStore()
@@ -429,17 +493,14 @@ export function useMusicStore(): {
       },
       settings.value.cachePolicy
     )
-    const nextTracks = tracks.value.slice()
-    nextTracks[index] = nextTrack
-    tracks.value = nextTracks
-    trackById.set(trackId, nextTrack)
+    replaceTrackAtIndex(index, nextTrack)
     void scheduleSaveLibrary()
     return true
   }
 
   function clearTracks(): void {
     rebuildScheduled = false
-    tracks.value = []
+    setTracks([])
     rebuildDerivedCollections()
   }
 
@@ -447,12 +508,15 @@ export function useMusicStore(): {
     const existing = playlists.value.find((p) => p.name === name)
     if (existing) return existing.id
     const id = `pl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-    playlists.value = [...playlists.value, {
-      id,
-      name,
-      trackIds: [],
-      createdAt: new Date().toISOString()
-    }]
+    playlists.value = [
+      ...playlists.value,
+      {
+        id,
+        name,
+        trackIds: [],
+        createdAt: new Date().toISOString()
+      }
+    ]
     void savePlaylists()
     return id
   }
@@ -491,20 +555,24 @@ export function useMusicStore(): {
       if (!cachePolicy.cover && !cachePolicy.lyrics && !cachePolicy.metadata) return inputTracks
       await syncPluginProviders()
       const providers = useMediaProviders()
-      const enriched = await enrichLocalTracksFromProviders(inputTracks, {
-        searchSongs: async (query, limit, offset) => {
-          const result = await providers.searchAllSongs({
-            query,
-            localTracks: [],
-            limit,
-            offset
-          })
-          const items = result.items.map((item) => item.track)
-          return { items, total: items.length }
+      const enriched = await enrichLocalTracksFromProviders(
+        inputTracks,
+        {
+          searchSongs: async (query, limit, offset) => {
+            const result = await providers.searchAllSongs({
+              query,
+              localTracks: [],
+              limit,
+              offset
+            })
+            const items = result.items.map((item) => item.track)
+            return { items, total: items.length }
+          }
+        },
+        {
+          cachePolicy
         }
-      }, {
-        cachePolicy
-      })
+      )
       if (enriched !== inputTracks) void scheduleSaveLibrary()
       return enriched
     } catch {
@@ -536,45 +604,79 @@ export function useMusicStore(): {
     return trackById.get(trackId) ?? playlist.trackSnapshots?.[trackId]
   }
 
+  function getPlaylistIdentity(playlist: Playlist): { ids: Set<string>; logicalKeys: Set<string> } {
+    if (
+      playlistIdentityCache &&
+      playlistIdentityCache.playlist === playlist &&
+      playlistIdentityCache.trackIds === playlist.trackIds &&
+      playlistIdentityCache.snapshots === playlist.trackSnapshots &&
+      playlistIdentityCache.tracksRevision === tracksRevision
+    ) {
+      return playlistIdentityCache
+    }
+
+    const ids = new Set<string>()
+    const logicalKeys = new Set<string>()
+    for (const trackId of playlist.trackIds) {
+      ids.add(trackId)
+      const snapshot = getPlaylistTrackSnapshot(playlist, trackId)
+      if (snapshot) logicalKeys.add(getLogicalTrackKey(snapshot))
+    }
+    playlistIdentityCache = {
+      playlist,
+      trackIds: playlist.trackIds,
+      snapshots: playlist.trackSnapshots,
+      tracksRevision,
+      ids,
+      logicalKeys
+    }
+    return playlistIdentityCache
+  }
+
   function resolvePlaylistTrack(
     playlist: Playlist,
     trackId: string,
-    localLogicalTracks: Map<string, LogicalTrack>
+    getLocalLogicalTracks: () => Map<string, LogicalTrack>
   ): Track | undefined {
     const exact = trackById.get(trackId)
     if (exact) return exact
     const snapshot = playlist.trackSnapshots?.[trackId]
     if (!snapshot) return undefined
     const key = getLogicalTrackKey(snapshot)
-    return localLogicalTracks.get(key)?.preferredTrack ?? snapshot
+    return getLocalLogicalTracks().get(key)?.preferredTrack ?? snapshot
   }
 
   function getLocalLogicalTrackMap(): Map<string, LogicalTrack> {
+    if (localLogicalTrackMapRevision === tracksRevision) {
+      return localLogicalTrackMapCache
+    }
+
     const result = new Map<string, LogicalTrack>()
-    for (const logicalTrack of buildLogicalTracks(
-      tracks.value
-        .filter((track) => getTrackSource(track) === 'local')
-        .map((track) => ({
+    const localInputs = (function* () {
+      for (const track of tracks.value) {
+        if (getTrackSource(track) !== 'local') continue
+        yield {
           track,
-          source: 'local',
+          source: 'local' as const,
           sourceName: '本地音乐',
           providerAvailable: true
-        }))
-    )) {
+        }
+      }
+    })()
+
+    for (const logicalTrack of buildLogicalTracks(localInputs)) {
       if (!result.has(logicalTrack.id)) result.set(logicalTrack.id, logicalTrack)
     }
+    localLogicalTrackMapCache = result
+    localLogicalTrackMapRevision = tracksRevision
     return result
   }
 
   function isFavoriteTrack(track: Track): boolean {
     const playlist = getDefaultFavoritePlaylist()
     if (!playlist) return false
-    const key = getLogicalTrackKey(track)
-    return playlist.trackIds.some((trackId) => {
-      if (trackId === track.id) return true
-      const snapshot = getPlaylistTrackSnapshot(playlist, trackId)
-      return !!snapshot && getLogicalTrackKey(snapshot) === key
-    })
+    const identity = getPlaylistIdentity(playlist)
+    return identity.ids.has(track.id) || identity.logicalKeys.has(getLogicalTrackKey(track))
   }
 
   function addFavoriteTrack(track: Track): void {
@@ -597,7 +699,8 @@ export function useMusicStore(): {
       return !snapshot || getLogicalTrackKey(snapshot) !== key
     })
     if (nextTrackIds.length === playlist.trackIds.length) return
-    const removed = new Set(playlist.trackIds.filter((trackId) => !nextTrackIds.includes(trackId)))
+    const keptTrackIds = new Set(nextTrackIds)
+    const removed = new Set(playlist.trackIds.filter((trackId) => !keptTrackIds.has(trackId)))
     playlist.trackIds = nextTrackIds
     if (playlist.trackSnapshots) {
       const snapshots = { ...playlist.trackSnapshots }
@@ -615,13 +718,11 @@ export function useMusicStore(): {
 
     if (trackById.has(oldTrackId)) {
       const oldTrack = trackById.get(oldTrackId)
-      if (oldTrack) trackPathSet.delete(oldTrack.filePath)
+      if (oldTrack) trackByPath.delete(oldTrack.filePath)
       trackById.delete(oldTrackId)
       trackById.set(replacementTrack.id, replacementTrack)
-      trackPathSet.add(replacementTrack.filePath)
-      tracks.value = tracks.value.map((track) =>
-        track.id === oldTrackId ? replacementTrack : track
-      )
+      trackByPath.set(replacementTrack.filePath, replacementTrack)
+      setTracks(tracks.value.map((track) => (track.id === oldTrackId ? replacementTrack : track)))
       libraryChanged = true
       replacementCount++
     }
@@ -629,9 +730,12 @@ export function useMusicStore(): {
     for (const playlist of playlists.value) {
       if (!playlist.trackIds.includes(oldTrackId)) continue
       const nextTrackIds: string[] = []
+      const seenTrackIds = new Set<string>()
       for (const trackId of playlist.trackIds) {
         const nextTrackId = trackId === oldTrackId ? replacementTrack.id : trackId
-        if (!nextTrackIds.includes(nextTrackId)) nextTrackIds.push(nextTrackId)
+        if (seenTrackIds.has(nextTrackId)) continue
+        seenTrackIds.add(nextTrackId)
+        nextTrackIds.push(nextTrackId)
       }
       playlist.trackIds = nextTrackIds
       const snapshots = { ...(playlist.trackSnapshots ?? {}) }
@@ -656,19 +760,17 @@ export function useMusicStore(): {
     analysis: Track['bpmAnalysis']
   ): boolean {
     if (!analysis) return false
-    const index = tracks.value.findIndex(
-      (track) => track.id === trackId || (!!filePath && track.filePath === filePath)
-    )
+    const fallbackTrackId = filePath ? trackByPath.get(filePath)?.id : undefined
+    const index =
+      trackIndexById.get(trackId) ??
+      (fallbackTrackId ? trackIndexById.get(fallbackTrackId) : undefined) ??
+      -1
     if (index < 0) return false
     const nextTrack = {
       ...tracks.value[index],
       bpmAnalysis: analysis
     }
-    const nextTracks = tracks.value.slice()
-    nextTracks[index] = nextTrack
-    tracks.value = nextTracks
-    trackById.delete(trackId)
-    trackById.set(nextTrack.id, nextTrack)
+    replaceTrackAtIndex(index, nextTrack)
 
     let playlistsChanged = false
     for (const playlist of playlists.value) {
@@ -698,9 +800,7 @@ export function useMusicStore(): {
       return nextTrack
     })
     if (libraryChanged) {
-      tracks.value = nextTracks
-      trackById.clear()
-      for (const track of nextTracks) trackById.set(track.id, track)
+      setTracks(nextTracks)
       scheduleRebuild()
       void scheduleSaveLibrary()
     }
@@ -731,9 +831,13 @@ export function useMusicStore(): {
   function getPlaylistTracks(playlistName: string): Track[] {
     const pl = playlists.value.find((p) => p.name === playlistName)
     if (!pl) return []
-    const localLogicalTracks = getLocalLogicalTrackMap()
+    let localLogicalTracks: Map<string, LogicalTrack> | null = null
+    const getLocalLogicalTracks = (): Map<string, LogicalTrack> => {
+      localLogicalTracks ??= getLocalLogicalTrackMap()
+      return localLogicalTracks
+    }
     return pl.trackIds
-      .map((trackId) => resolvePlaylistTrack(pl, trackId, localLogicalTracks))
+      .map((trackId) => resolvePlaylistTrack(pl, trackId, getLocalLogicalTracks))
       .filter((track): track is Track => !!track)
   }
 
@@ -767,7 +871,10 @@ export function useMusicStore(): {
     playlists.value = loaded
   }
 
-  rebuildDerivedCollections()
+  if (!derivedCollectionsInitialized) {
+    rebuildDerivedCollections()
+    derivedCollectionsInitialized = true
+  }
 
   return {
     tracks,
@@ -818,8 +925,12 @@ export function useMusicStore(): {
         const normalized = f.replace(/[\\/]+$/, '')
         return normalized + (normalized.includes('\\') ? '\\' : '/')
       })
-      tracks.value = tracks.value.filter((t) =>
-        folderPrefixes.some((prefix) => t.filePath.startsWith(prefix) || t.filePath === prefix.slice(0, -1))
+      setTracks(
+        tracks.value.filter((t) =>
+          folderPrefixes.some(
+            (prefix) => t.filePath.startsWith(prefix) || t.filePath === prefix.slice(0, -1)
+          )
+        )
       )
       rebuildDerivedCollections()
       saveLibrary()

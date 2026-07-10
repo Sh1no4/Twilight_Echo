@@ -40,7 +40,16 @@ import {
   resolveUnifiedFavoriteTracks,
   summarizeUnifiedFavorites
 } from '../utils/unifiedFavoriteTracks'
-import { useStreamingSearch, type SearchSource, type SearchSourceOption } from './streaming-page/useStreamingSearch'
+import {
+  searchLocalStreamingArtists,
+  searchLocalStreamingPlaylists,
+  searchLocalStreamingSongs
+} from './streaming-page/localStreamingSearch'
+import {
+  useStreamingSearch,
+  type SearchSource,
+  type SearchSourceOption
+} from './streaming-page/useStreamingSearch'
 
 interface RecSection {
   key: string
@@ -255,7 +264,8 @@ const sidebarItems = computed<SidebarItem[]>(() =>
 const hasOnlineNavigationEntries = computed(() => hasStreamingSidebarEntries(sidebarItems.value))
 const visibleTabs = computed(() =>
   sidebarItems.value.filter(
-    (item): item is SidebarItem & { tab: StreamingTab } => item.tab === 'home' || item.tab === 'library'
+    (item): item is SidebarItem & { tab: StreamingTab } =>
+      item.tab === 'home' || item.tab === 'library'
   )
 )
 const currentView = computed(() => visibleTabs.value.find((item) => item.tab === activeTab.value))
@@ -361,25 +371,12 @@ async function searchProviderArtists(
   return { artists: result.items, total: result.total }
 }
 
-function normalizeLocalQuery(q: string): string {
-  return q.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
-}
-
 async function searchLocalSongs(
   keywords: string,
   limit: number = 30,
   offset: number = 0
 ): Promise<{ tracks: Track[]; total: number }> {
-  const q = normalizeLocalQuery(keywords.trim())
-  if (!q) return { tracks: [], total: 0 }
-  const all = musicStore.tracks.value
-  const matched = all.filter(
-    (t) =>
-      normalizeLocalQuery(t.title).includes(q) ||
-      normalizeLocalQuery(t.artist).includes(q) ||
-      normalizeLocalQuery(t.album).includes(q)
-  )
-  return { tracks: matched.slice(offset, offset + limit), total: matched.length }
+  return searchLocalStreamingSongs(musicStore.tracks.value, keywords, limit, offset)
 }
 
 async function searchLocalPlaylists(
@@ -387,16 +384,7 @@ async function searchLocalPlaylists(
   limit: number = 30,
   offset: number = 0
 ): Promise<{ playlists: MediaProviderPlaylistSummary[]; total: number }> {
-  const q = normalizeLocalQuery(keywords.trim())
-  if (!q) return { playlists: [], total: 0 }
-  const matched = musicStore.playlists.value.filter((pl) => normalizeLocalQuery(pl.name).includes(q))
-  const summaries: MediaProviderPlaylistSummary[] = matched.map((pl) => ({
-    id: pl.id,
-    name: pl.name,
-    cover: null,
-    trackCount: pl.trackIds.length
-  }))
-  return { playlists: summaries.slice(offset, offset + limit), total: summaries.length }
+  return searchLocalStreamingPlaylists(musicStore.playlists.value, keywords, limit, offset)
 }
 
 async function searchLocalArtists(
@@ -404,16 +392,7 @@ async function searchLocalArtists(
   limit: number = 30,
   offset: number = 0
 ): Promise<{ artists: MediaProviderArtistSummary[]; total: number }> {
-  const q = normalizeLocalQuery(keywords.trim())
-  if (!q) return { artists: [], total: 0 }
-  const matched = musicStore.artists.value.filter((a) => normalizeLocalQuery(a.name).includes(q))
-  const summaries: MediaProviderArtistSummary[] = matched.map((a) => ({
-    id: a.name,
-    name: a.name,
-    picUrl: a.cover,
-    musicSize: a.trackCount
-  }))
-  return { artists: summaries.slice(offset, offset + limit), total: summaries.length }
+  return searchLocalStreamingArtists(musicStore.artists.value, keywords, limit, offset)
 }
 
 const searchSources = computed<SearchSourceOption[]>(() => {
@@ -485,8 +464,9 @@ const {
 })
 
 const sourceMenuOpen = ref(false)
-const activeSourceOption = computed(() =>
-  searchSources.value.find((s) => s.id === searchSource.value) ?? searchSources.value[0] ?? null
+const activeSourceOption = computed(
+  () =>
+    searchSources.value.find((s) => s.id === searchSource.value) ?? searchSources.value[0] ?? null
 )
 function selectSearchSource(sourceId: SearchSource): void {
   const source = searchSources.value.find((s) => s.id === sourceId)
@@ -496,7 +476,9 @@ function selectSearchSource(sourceId: SearchSource): void {
 }
 
 function closeSourceMenuDelayed(): void {
-  setTimeout(() => { sourceMenuOpen.value = false }, 150)
+  setTimeout(() => {
+    sourceMenuOpen.value = false
+  }, 150)
 }
 
 // Like button state
@@ -541,7 +523,9 @@ const activeProviderUnavailable = computed(() => {
   const error = activeProviderError.value
   return /Provider 未启用|provider is disabled|does not implement/i.test(error)
 })
-const showUnifiedSearch = computed(() => hasOnlineNavigationEntries.value && activeProviderAvailable.value && activeLoggedIn.value)
+const showUnifiedSearch = computed(
+  () => hasOnlineNavigationEntries.value && activeProviderAvailable.value && activeLoggedIn.value
+)
 const trackUnitLabel = computed(() => (isExternalActive.value ? '项' : '首歌曲'))
 const profileSignature = computed(() => activeProfile.value?.signature?.trim() || '暂无个人简介')
 const unifiedFavoriteTracks = computed(() => musicStore.getPlaylistTracks('我收藏的音乐'))
@@ -742,7 +726,8 @@ const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
 
 const detailFollowState = computed<boolean>(() => {
   if (currentDetail.value?.type === 'artist') return artistFollowed.value === true
-  if (currentDetail.value?.type === 'user_playlists') return currentDetail.value.user.followed === true
+  if (currentDetail.value?.type === 'user_playlists')
+    return currentDetail.value.user.followed === true
   return false
 })
 
@@ -750,9 +735,7 @@ const showDetailFollowButton = computed(
   () => currentDetail.value?.type === 'artist' || currentDetail.value?.type === 'user_playlists'
 )
 
-const detailFollowButtonLabel = computed(() =>
-  detailFollowState.value ? '取消关注' : '关注'
-)
+const detailFollowButtonLabel = computed(() => (detailFollowState.value ? '取消关注' : '关注'))
 
 const detailFollowButtonIcon = computed(() =>
   followActionLoading.value
@@ -1145,7 +1128,10 @@ async function openAlbum(album: NcmAlbumSummary): Promise<void> {
   }
 }
 
-async function openArtist(artist: MediaProviderArtistSummary, linkedUser?: NcmUserSummary): Promise<void> {
+async function openArtist(
+  artist: MediaProviderArtistSummary,
+  linkedUser?: NcmUserSummary
+): Promise<void> {
   const ncmArtist: NcmArtistSummary = {
     id: Number(artist.id),
     name: artist.name,
@@ -1164,40 +1150,29 @@ async function openArtist(artist: MediaProviderArtistSummary, linkedUser?: NcmUs
       linkedUser,
       findArtistByUserName
     )
-    let [
-      tracks,
-      albums,
-      artistOwnedPlaylists,
-      userOwnedPlaylists,
-      intro,
-      followed
-    ] = await Promise.all([
-      fetchArtistTopSongs(resolvedArtist.id).catch(() => [] as Track[]),
-      fetchArtistAlbums(resolvedArtist.id).catch(() => [] as NcmAlbumSummary[]),
-      fetchArtistPlaylists(resolvedArtist.id).catch(() => [] as NcmPlaylistSummary[]),
-      linkedUser
-        ? fetchUserPlaylistsByUid(linkedUser.id, true).catch(() => [] as NcmPlaylistSummary[])
-        : Promise.resolve([] as NcmPlaylistSummary[]),
-      fetchArtistIntro(resolvedArtist.id).catch(() => ''),
-      fetchArtistFollowState(resolvedArtist.id).catch(() => null)
-    ])
+    let [tracks, albums, artistOwnedPlaylists, userOwnedPlaylists, intro, followed] =
+      await Promise.all([
+        fetchArtistTopSongs(resolvedArtist.id).catch(() => [] as Track[]),
+        fetchArtistAlbums(resolvedArtist.id).catch(() => [] as NcmAlbumSummary[]),
+        fetchArtistPlaylists(resolvedArtist.id).catch(() => [] as NcmPlaylistSummary[]),
+        linkedUser
+          ? fetchUserPlaylistsByUid(linkedUser.id, true).catch(() => [] as NcmPlaylistSummary[])
+          : Promise.resolve([] as NcmPlaylistSummary[]),
+        fetchArtistIntro(resolvedArtist.id).catch(() => ''),
+        fetchArtistFollowState(resolvedArtist.id).catch(() => null)
+      ])
 
     if (linkedUser && resolvedArtist.id === artist.id && tracks.length === 0) {
       const matchedArtist = await findArtistByUserName(linkedUser).catch(() => null)
       if (matchedArtist && matchedArtist.id !== artist.id) {
-        const [
-          matchedTracks,
-          matchedAlbums,
-          matchedPlaylists,
-          matchedIntro,
-          matchedFollowed
-        ] = await Promise.all([
-          fetchArtistTopSongs(matchedArtist.id).catch(() => [] as Track[]),
-          fetchArtistAlbums(matchedArtist.id).catch(() => [] as NcmAlbumSummary[]),
-          fetchArtistPlaylists(matchedArtist.id).catch(() => [] as NcmPlaylistSummary[]),
-          fetchArtistIntro(matchedArtist.id).catch(() => ''),
-          fetchArtistFollowState(matchedArtist.id).catch(() => null)
-        ])
+        const [matchedTracks, matchedAlbums, matchedPlaylists, matchedIntro, matchedFollowed] =
+          await Promise.all([
+            fetchArtistTopSongs(matchedArtist.id).catch(() => [] as Track[]),
+            fetchArtistAlbums(matchedArtist.id).catch(() => [] as NcmAlbumSummary[]),
+            fetchArtistPlaylists(matchedArtist.id).catch(() => [] as NcmPlaylistSummary[]),
+            fetchArtistIntro(matchedArtist.id).catch(() => ''),
+            fetchArtistFollowState(matchedArtist.id).catch(() => null)
+          ])
         if (matchedTracks.length > 0 || matchedAlbums.length > 0 || matchedPlaylists.length > 0) {
           resolvedArtist = {
             ...matchedArtist,
@@ -1296,8 +1271,8 @@ async function openRecent(): Promise<void> {
   try {
     const recentStats = getRecentTracks()
     const providerId = activeProvider.value
-    const filteredStats = recentStats.filter(
-      (stat) => stat.sourceIds?.some((sid) => sid.source === providerId)
+    const filteredStats = recentStats.filter((stat) =>
+      stat.sourceIds?.some((sid) => sid.source === providerId)
     )
     let tracks = resolveUnifiedRecentTracks({
       recentStats: filteredStats,
@@ -1356,14 +1331,21 @@ async function openRanking(): Promise<void> {
 
 async function onUserClick(user: NcmUserSummary): Promise<void> {
   const artistId = Number(user.artistId ?? user.id)
-  if ((user.userType === 2 || user.userType === 4 || user.userType === 6) && Number.isFinite(artistId) && artistId > 0) {
-    await openArtist({
-      id: artistId,
-      name: user.name,
-      picUrl: user.picUrl,
-      albumSize: 0,
-      musicSize: user.musicSize
-    }, user)
+  if (
+    (user.userType === 2 || user.userType === 4 || user.userType === 6) &&
+    Number.isFinite(artistId) &&
+    artistId > 0
+  ) {
+    await openArtist(
+      {
+        id: artistId,
+        name: user.name,
+        picUrl: user.picUrl,
+        albumSize: 0,
+        musicSize: user.musicSize
+      },
+      user
+    )
   } else {
     await openUserPlaylists(user)
   }
@@ -1572,10 +1554,7 @@ onMounted(async () => {
 
 <template>
   <div class="streaming-page" :class="{ 'has-player': hasPlayer }">
-    <div
-      class="streaming-sidebar"
-      :class="{ open: menuOpen }"
-    >
+    <div class="streaming-sidebar" :class="{ open: menuOpen }">
       <div class="streaming-sidebar-inner">
         <div class="streaming-sidebar-header">
           <span class="streaming-sidebar-title">流媒体</span>
@@ -1602,11 +1581,7 @@ onMounted(async () => {
       </div>
     </div>
 
-    <div
-      ref="streamingContentRef"
-      class="streaming-content"
-      @scroll="onStreamingContentScroll"
-    >
+    <div ref="streamingContentRef" class="streaming-content" @scroll="onStreamingContentScroll">
       <div class="streaming-content-header">
         <div class="streaming-header-left">
           <button
@@ -1653,7 +1628,11 @@ onMounted(async () => {
               <i class="pi pi-times"></i>
             </button>
           </div>
-          <button v-if="!isExternalActive && showUnifiedSearch" class="streaming-round-btn" title="通知">
+          <button
+            v-if="!isExternalActive && showUnifiedSearch"
+            class="streaming-round-btn"
+            title="通知"
+          >
             <i class="pi pi-bell"></i>
             <span class="notify-dot"></span>
           </button>
@@ -1679,21 +1658,30 @@ onMounted(async () => {
         <div class="search-type-group">
           <div
             class="search-tab-pill"
-            :class="{ active: searchType === 'songs', disabled: !availableSearchTypes.includes('songs') }"
+            :class="{
+              active: searchType === 'songs',
+              disabled: !availableSearchTypes.includes('songs')
+            }"
             @click="availableSearchTypes.includes('songs') && (searchType = 'songs')"
           >
             单曲
           </div>
           <div
             class="search-tab-pill"
-            :class="{ active: searchType === 'playlists', disabled: !availableSearchTypes.includes('playlists') }"
+            :class="{
+              active: searchType === 'playlists',
+              disabled: !availableSearchTypes.includes('playlists')
+            }"
             @click="availableSearchTypes.includes('playlists') && (searchType = 'playlists')"
           >
             歌单
           </div>
           <div
             class="search-tab-pill"
-            :class="{ active: searchType === 'artists', disabled: !availableSearchTypes.includes('artists') }"
+            :class="{
+              active: searchType === 'artists',
+              disabled: !availableSearchTypes.includes('artists')
+            }"
             @click="availableSearchTypes.includes('artists') && (searchType = 'artists')"
           >
             歌手
@@ -1705,7 +1693,12 @@ onMounted(async () => {
             @click="sourceMenuOpen = !sourceMenuOpen"
             @blur="closeSourceMenuDelayed"
           >
-            <i v-if="activeSourceOption?.icon" class="pi" :class="activeSourceOption.icon" style="font-size: 13px"></i>
+            <i
+              v-if="activeSourceOption?.icon"
+              class="pi"
+              :class="activeSourceOption.icon"
+              style="font-size: 13px"
+            ></i>
             <span>{{ activeSourceOption?.label ?? '音源' }}</span>
             <i class="pi pi-chevron-down" style="font-size: 10px"></i>
           </button>
@@ -1719,7 +1712,11 @@ onMounted(async () => {
             >
               <i v-if="source.icon" class="pi" :class="source.icon" style="font-size: 13px"></i>
               <span>{{ source.label }}</span>
-              <i v-if="searchSource === source.id" class="pi pi-check" style="font-size: 12px; margin-left: auto"></i>
+              <i
+                v-if="searchSource === source.id"
+                class="pi pi-check"
+                style="font-size: 12px; margin-left: auto"
+              ></i>
             </div>
           </div>
         </div>
@@ -1772,7 +1769,10 @@ onMounted(async () => {
             @open-playlist="openPlaylist"
           />
 
-          <div v-else-if="(!activeProviderAvailable || activeProviderUnavailable) && !currentDetail" class="streaming-placeholder">
+          <div
+            v-else-if="(!activeProviderAvailable || activeProviderUnavailable) && !currentDetail"
+            class="streaming-placeholder"
+          >
             <i class="pi pi-ban" style="font-size: 48px; color: #ccc"></i>
             <p class="placeholder-title">
               {{ isExternalActive ? `${activeProviderLabel} 插件已停用` : '网易云音乐插件已停用' }}
@@ -1821,11 +1821,7 @@ onMounted(async () => {
           </div>
 
           <div v-else-if="currentDetail" class="detail-view">
-            <div
-              v-if="showDetailOverlayLoading"
-              class="detail-loading-overlay"
-              aria-live="polite"
-            >
+            <div v-if="showDetailOverlayLoading" class="detail-loading-overlay" aria-live="polite">
               <i class="pi pi-spin pi-spinner"></i>
               <span>正在加载</span>
             </div>
@@ -2022,12 +2018,7 @@ onMounted(async () => {
               </button>
             </div>
 
-            <div
-              v-else-if="
-                currentDetail?.type === 'artist'
-              "
-              class="artist-detail-panel"
-            >
+            <div v-else-if="currentDetail?.type === 'artist'" class="artist-detail-panel">
               <div class="artist-detail-tabs" role="tablist" aria-label="歌手内容">
                 <button
                   v-for="tab in artistDetailTabs"
@@ -2138,12 +2129,7 @@ onMounted(async () => {
                   class="playlist-grid-card"
                   @click="openAlbum(album)"
                 >
-                  <img
-                    v-if="album.cover"
-                    :src="album.cover"
-                    class="playlist-grid-cover"
-                    alt=""
-                  />
+                  <img v-if="album.cover" :src="album.cover" class="playlist-grid-cover" alt="" />
                   <div v-else class="playlist-grid-cover-placeholder">
                     <i class="pi pi-clone" style="font-size: 28px; color: #bbb"></i>
                   </div>
@@ -2189,12 +2175,19 @@ onMounted(async () => {
               v-else-if="detailTracks.length === 0 && !detailLoading"
               class="streaming-placeholder detail-placeholder"
             >
-              <i :class="currentDetail?.type === 'recent' ? 'pi pi-history' : 'pi pi-wave-pulse'" style="font-size: 40px; color: #ccc"></i>
+              <i
+                :class="currentDetail?.type === 'recent' ? 'pi pi-history' : 'pi pi-wave-pulse'"
+                style="font-size: 40px; color: #ccc"
+              ></i>
               <p class="placeholder-title">
                 {{ currentDetail?.type === 'recent' ? '还没有播放记录' : '暂无内容' }}
               </p>
               <p class="placeholder-hint">
-                {{ currentDetail?.type === 'recent' ? '在 Twilight Echo 中播放歌曲后，这里会显示您的最近播放记录' : '这个页面目前没有可展示的歌曲或歌单' }}
+                {{
+                  currentDetail?.type === 'recent'
+                    ? '在 Twilight Echo 中播放歌曲后，这里会显示您的最近播放记录'
+                    : '这个页面目前没有可展示的歌曲或歌单'
+                }}
               </p>
             </div>
 
@@ -2265,8 +2258,8 @@ onMounted(async () => {
                       <td class="col-duration">{{ formatTime(track.duration) }}</td>
                     </tr>
                   </tbody>
-	                </table>
-	              </div>
+                </table>
+              </div>
               <div
                 v-if="currentDetail?.type === 'liked' && !isExternalActive"
                 class="liked-page-loader"
@@ -2285,9 +2278,11 @@ onMounted(async () => {
                   <span>继续加载</span>
                 </button>
                 <span v-else-if="likedTracksHasMore">继续向下滚动加载更多</span>
-                <span v-else-if="likedTracksTotal != null && detailTracks.length > 0">已加载全部</span>
+                <span v-else-if="likedTracksTotal != null && detailTracks.length > 0"
+                  >已加载全部</span
+                >
               </div>
-	            </div>
+            </div>
           </div>
 
           <StreamingLibrary

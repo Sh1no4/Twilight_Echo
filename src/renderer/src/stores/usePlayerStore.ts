@@ -103,9 +103,7 @@ function formatAudioDeviceLabel(device: string): string {
   return device === 'auto' ? DEFAULT_AUDIO_DEVICE_OPTION.label : device
 }
 
-function normalizeAudioCapabilitySupportState(
-  value: unknown
-): AudioCapabilitySupportState | null {
+function normalizeAudioCapabilitySupportState(value: unknown): AudioCapabilitySupportState | null {
   return value === 'verified' ||
     value === 'runtime-probed' ||
     value === 'unsupported' ||
@@ -192,7 +190,12 @@ function deriveNativeDsdSupportState(
 
   const backend = getDeviceBackend(option)
   const pathKind = getDevicePathKind(option)
-  if (backend === 'wasapi' || backend === 'coreaudio' || pathKind === 'endpoint' || pathKind === 'hal') {
+  if (
+    backend === 'wasapi' ||
+    backend === 'coreaudio' ||
+    pathKind === 'endpoint' ||
+    pathKind === 'hal'
+  ) {
     return 'unsupported'
   }
   if (backend === 'alsa' && pathKind === 'hw') return 'runtime-probed'
@@ -250,11 +253,14 @@ function normalizeAudioDeviceOptions(
       if (!id || seen.has(id)) return
       seen.add(id)
       normalized.push(
-        withAudioCapabilitySupportStates({
-          id,
-          label: formatAudioDeviceLabel(id),
-          isDefault: id === 'auto'
-        }, selectedOutput)
+        withAudioCapabilitySupportStates(
+          {
+            id,
+            label: formatAudioDeviceLabel(id),
+            isDefault: id === 'auto'
+          },
+          selectedOutput
+        )
       )
       return
     }
@@ -266,12 +272,15 @@ function normalizeAudioDeviceOptions(
     const rawLabel = typeof record.label === 'string' ? record.label.trim() : ''
     seen.add(id)
     normalized.push(
-      withAudioCapabilitySupportStates({
-        ...(record as Partial<AudioDeviceOption>),
-        id,
-        label: id === 'auto' ? DEFAULT_AUDIO_DEVICE_OPTION.label : rawLabel || id,
-        isDefault: record.isDefault === true
-      }, selectedOutput)
+      withAudioCapabilitySupportStates(
+        {
+          ...(record as Partial<AudioDeviceOption>),
+          id,
+          label: id === 'auto' ? DEFAULT_AUDIO_DEVICE_OPTION.label : rawLabel || id,
+          isDefault: record.isDefault === true
+        },
+        selectedOutput
+      )
     )
   }
 
@@ -287,11 +296,14 @@ function normalizeAudioDeviceOptions(
 
   if (selectedDevice && !seen.has(selectedDevice)) {
     normalized.push(
-      withAudioCapabilitySupportStates({
-        id: selectedDevice,
-        label: formatAudioDeviceLabel(selectedDevice),
-        isDefault: selectedDevice === 'auto'
-      }, selectedOutput)
+      withAudioCapabilitySupportStates(
+        {
+          id: selectedDevice,
+          label: formatAudioDeviceLabel(selectedDevice),
+          isDefault: selectedDevice === 'auto'
+        },
+        selectedOutput
+      )
     )
   }
 
@@ -712,7 +724,11 @@ function applyAudioOutputState(state: AudioOutputState): void {
   audioOutput.value = state.output
   audioDevice.value = state.device
   audioOutputOptions.value = normalizeAudioOutputOptions(state.outputOptions, state.output)
-  audioDeviceOptions.value = normalizeAudioDeviceOptions(state.deviceOptions, state.device, state.output)
+  audioDeviceOptions.value = normalizeAudioDeviceOptions(
+    state.deviceOptions,
+    state.device,
+    state.output
+  )
 }
 
 let audioEngineStateRequest: Promise<void> | null = null
@@ -1062,6 +1078,7 @@ watch(volume, (val) => {
 watch(
   [() => currentTrack.value?.cover, () => appSettings.value?.useCoverTheme],
   async ([cover, useCoverTheme]) => {
+    const requestId = ++dominantColorRequestId
     if (!useCoverTheme) {
       dominantColor.value = '#7c4dff'
       return
@@ -1069,7 +1086,14 @@ watch(
 
     if (cover) {
       // cover:// and http(s): URLs can be loaded directly by Image
-      dominantColor.value = await extractDominantColor(cover)
+      const color = await extractDominantColor(cover)
+      if (
+        requestId === dominantColorRequestId &&
+        currentTrack.value?.cover === cover &&
+        appSettings.value?.useCoverTheme
+      ) {
+        dominantColor.value = color
+      }
     } else {
       dominantColor.value = '#1a73e8'
     }
@@ -1131,6 +1155,7 @@ let restoredPlaybackPending = false
 let restoredPlaybackPosition = 0
 let pendingLoadStartTime = 0
 let nativeQueueSyncRequest: Promise<void> | null = null
+let dominantColorRequestId = 0
 
 function getNowMs(): number {
   return performance.now()
@@ -1183,7 +1208,9 @@ function flushLatestCurrentTime(): void {
 
 function setAudioServiceCrashNotice(reason: string): void {
   const message = reason.trim()
-  const prefix = message.startsWith('音频服务已重启') ? message : `音频服务已重启：${message || '未知原因'}`
+  const prefix = message.startsWith('音频服务已重启')
+    ? message
+    : `音频服务已重启：${message || '未知原因'}`
   audioEngineRecoveryNotice.value = {
     kind: 'service-crash',
     message: `${prefix}。正在恢复音频服务，恢复后不会自动续播。`,
@@ -1322,10 +1349,14 @@ function applyBpmAnalysisToTrack(
     patchTrackInQueues(updatedTrack)
   } else {
     queue.value = queue.value.map((track) =>
-      track.id === trackId || track.filePath === filePath ? { ...track, bpmAnalysis: analysis } : track
+      track.id === trackId || track.filePath === filePath
+        ? { ...track, bpmAnalysis: analysis }
+        : track
     )
     originalQueue.value = originalQueue.value.map((track) =>
-      track.id === trackId || track.filePath === filePath ? { ...track, bpmAnalysis: analysis } : track
+      track.id === trackId || track.filePath === filePath
+        ? { ...track, bpmAnalysis: analysis }
+        : track
     )
   }
   useMusicStore().applyBpmAnalysis(trackId, filePath, analysis)
@@ -1350,7 +1381,12 @@ function clearBpmAnalysisFromPlaybackState(): void {
 }
 
 async function requestBpmAnalysisForTrack(track: Track): Promise<void> {
-  if (!isAutoBpmAnalysisEnabled() || hasAnalyzedBpm(track) || !isAnalyzableAudioPath(track.filePath)) return
+  if (
+    !isAutoBpmAnalysisEnabled() ||
+    hasAnalyzedBpm(track) ||
+    !isAnalyzableAudioPath(track.filePath)
+  )
+    return
   const key = `${track.id}\u0000${track.filePath}`
   if (bpmAnalysisRequests.has(key)) return
   bpmAnalysisRequests.add(key)
@@ -1622,8 +1658,7 @@ function setupAudioEngineListeners(): void {
 
   cleanupFns.push(
     api.onReady(async () => {
-      const recoveredFromServiceCrash =
-        audioEngineRecoveryNotice.value?.kind === 'service-crash'
+      const recoveredFromServiceCrash = audioEngineRecoveryNotice.value?.kind === 'service-crash'
       audioEngineReady.value = true
       audioEngineError.value = null
       if (recoveredFromServiceCrash) {

@@ -9,6 +9,7 @@
  * un-skipped once the corresponding feature lands.
  */
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 // Dynamic import of the pure-logic search module (no Vue/window dependencies).
@@ -163,6 +164,8 @@ const useSettingsStoreModule = (await import(
   new URL('./useSettingsStore.ts', import.meta.url).href
 )) as typeof import('./useSettingsStore')
 
+const musicStoreSource = readFileSync(new URL('./useMusicStore.ts', import.meta.url), 'utf8')
+
 // Mock window.api for store tests. saveMusicLibrary is counted for debounce tests.
 // loadMusicLibrary is counted to verify incremental vs full-reload paths.
 // scanMusicFiles returns mock tracks for the incremental 'add' path.
@@ -269,7 +272,59 @@ test('addTracks non-deferRebuild updates derived collections after flush', async
   store.clearTracks()
 })
 
-test('trackById and trackPathSet are cleaned on removeTrack', async () => {
+test('derived collections keep first cover without per-group rescans', async () => {
+  const store = setupStore()
+  await store.addTracks(
+    [
+      {
+        ...generateMockTracks(1)[0],
+        id: 'no-cover',
+        artist: 'Cover Artist',
+        album: 'Cover Album',
+        dir: 'C:\\music\\cover-folder',
+        filePath: 'C:\\music\\cover-folder\\a.flac',
+        cover: null
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'with-cover',
+        artist: 'Cover Artist',
+        album: 'Cover Album',
+        dir: 'C:\\music\\cover-folder',
+        filePath: 'C:\\music\\cover-folder\\b.flac',
+        cover: 'cover://first.jpg'
+      }
+    ],
+    { deferRebuild: false }
+  )
+  store.syncFolders(['C:\\music\\cover-folder'])
+  store.flushRebuild()
+
+  assert.equal(
+    store.artists.value.find((item) => item.name === 'Cover Artist')?.cover,
+    'cover://first.jpg'
+  )
+  assert.equal(
+    store.albums.value.find((item) => item.name === 'Cover Album')?.cover,
+    'cover://first.jpg'
+  )
+  assert.equal(
+    store.folders.value.find((item) => item.path === 'C:\\music\\cover-folder')?.cover,
+    'cover://first.jpg'
+  )
+  assert.match(musicStoreSource, /interface DerivedTrackGroup/)
+  assert.doesNotMatch(musicStoreSource, /items\.find\(\(t\) => t\.cover\)/)
+
+  store.clearTracks()
+})
+
+test('single-track update paths use track indexes instead of linear scans', () => {
+  assert.match(musicStoreSource, /const trackIndexById = new Map<string, number>\(\)/)
+  assert.match(musicStoreSource, /function replaceTrackAtIndex\(index: number, nextTrack: Track\)/)
+  assert.doesNotMatch(musicStoreSource, /tracks\.value\.findIndex\(/)
+})
+
+test('track indexes are cleaned on removeTrack', async () => {
   const store = setupStore()
   await store.addTracks(generateMockTracks(10), { deferRebuild: true })
   store.refreshLibraryIndex()
@@ -399,11 +454,13 @@ test('incremental add: single file add triggers addTracks not full loadLibrary',
       fs: {
         scanMusicFiles: async (): Promise<unknown[]> => {
           scanCallCount++
-          return [{
-            ...generateMockTracks(1)[0],
-            filePath: newFilePath,
-            id: 'new_track_1'
-          }]
+          return [
+            {
+              ...generateMockTracks(1)[0],
+              filePath: newFilePath,
+              id: 'new_track_1'
+            }
+          ]
         }
       }
     }
@@ -524,7 +581,6 @@ test('loadLibrary repairs moved local files from scanned folders while preservin
   assert.equal(store.tracks.value[0].cover, 'cover://new')
   await new Promise((resolve) => setTimeout(resolve, 600))
   assert.equal(saveCallCount, 1, 'repaired library should be saved')
-
   ;(globalThis as Record<string, unknown>).window = {
     api: {
       data: {
@@ -650,27 +706,31 @@ test('loadLibrary enriches missing local metadata from provider search without c
         }
       },
       providers: {
-        list: async (): Promise<unknown[]> => [{
-          id: 'ncm',
-          name: 'NetEase',
-          capabilities: ['search'],
-          health: { available: true }
-        }],
+        list: async (): Promise<unknown[]> => [
+          {
+            id: 'ncm',
+            name: 'NetEase',
+            capabilities: ['search'],
+            health: { available: true }
+          }
+        ],
         call: async (): Promise<unknown> => {
           providerSearchCalls++
           return {
-            items: [{
-              ...localTrack,
-              id: 'ncm:123',
-              filePath: 'ncm:123',
-              fileName: 'Moon River',
-              album: 'Online Album',
-              duration: 179,
-              cover: 'https://cover.example/album.jpg',
-              lyrics: '[00:00.00]Moon River',
-              translatedLyrics: '[00:00.00]月亮河',
-              source: 'ncm'
-            }],
+            items: [
+              {
+                ...localTrack,
+                id: 'ncm:123',
+                filePath: 'ncm:123',
+                fileName: 'Moon River',
+                album: 'Online Album',
+                duration: 179,
+                cover: 'https://cover.example/album.jpg',
+                lyrics: '[00:00.00]Moon River',
+                translatedLyrics: '[00:00.00]月亮河',
+                source: 'ncm'
+              }
+            ],
             total: 1
           }
         }
@@ -913,27 +973,31 @@ test('loadLibrary respects cache policy when provider metadata is available', as
         scanMusicFiles: async (): Promise<unknown[]> => []
       },
       providers: {
-        list: async (): Promise<unknown[]> => [{
-          id: 'ncm',
-          name: 'NetEase',
-          capabilities: ['search'],
-          health: { available: true }
-        }],
+        list: async (): Promise<unknown[]> => [
+          {
+            id: 'ncm',
+            name: 'NetEase',
+            capabilities: ['search'],
+            health: { available: true }
+          }
+        ],
         call: async (): Promise<unknown> => {
           providerSearchCalls++
           return {
-            items: [{
-              ...localTrack,
-              id: 'ncm:123',
-              filePath: 'ncm:123',
-              fileName: 'Moon River',
-              album: 'Online Album',
-              duration: 179,
-              cover: 'https://cover.example/album.jpg',
-              lyrics: '[00:00.00]Moon River',
-              translatedLyrics: '[00:00.00]月亮河',
-              source: 'ncm'
-            }],
+            items: [
+              {
+                ...localTrack,
+                id: 'ncm:123',
+                filePath: 'ncm:123',
+                fileName: 'Moon River',
+                album: 'Online Album',
+                duration: 179,
+                cover: 'https://cover.example/album.jpg',
+                lyrics: '[00:00.00]Moon River',
+                translatedLyrics: '[00:00.00]月亮河',
+                source: 'ncm'
+              }
+            ],
             total: 1
           }
         }
@@ -959,7 +1023,7 @@ test('loadLibrary respects cache policy when provider metadata is available', as
 })
 
 // Wave 4: dashboard memo — Vue computed caching is testable in bare Node
-const vue = (await import('vue'))
+const vue = await import('vue')
 
 test('dashboard memo: byIdMap not rebuilt when only listeningStats changes', () => {
   const tracks = vue.shallowRef(generateMockTracks(100))
@@ -982,7 +1046,11 @@ test('dashboard memo: byIdMap not rebuilt when only listeningStats changes', () 
   // Change only stats (not tracks) — byIdMap should NOT rebuild
   stats.value = { plays: 1, duration: 10 }
   void topTracks.value
-  assert.equal(mapBuildCount, initialBuildCount, 'byIdMap should not rebuild when only stats change')
+  assert.equal(
+    mapBuildCount,
+    initialBuildCount,
+    'byIdMap should not rebuild when only stats change'
+  )
 
   // Change tracks — byIdMap SHOULD rebuild
   tracks.value = generateMockTracks(200)
@@ -1170,7 +1238,10 @@ test('mixed-source playlists can replace expired provider ids with rematched pro
   assert.equal(replacedCount, 1)
   assert.deepEqual(store.playlists.value[0].trackIds, ['ncm:fresh'])
   assert.equal(store.playlists.value[0].trackSnapshots?.['ncm:expired'], undefined)
-  assert.equal(store.playlists.value[0].trackSnapshots?.['ncm:fresh']?.cover, 'https://cover.example/fresh.jpg')
+  assert.equal(
+    store.playlists.value[0].trackSnapshots?.['ncm:fresh']?.cover,
+    'https://cover.example/fresh.jpg'
+  )
   assert.deepEqual(store.getPlaylistTracks('mixed-source'), [rematchedTrack])
 
   store.clearTracks()
@@ -1242,6 +1313,68 @@ test('default favorites match logical tracks across local and provider variants'
 
   assert.equal(store.isFavoriteTrack(providerTrack), true)
   assert.equal(store.isFavoriteTrack(localTrack), true)
+
+  store.clearTracks()
+})
+
+test('playlist exact-id reads reuse indexes instead of rebuilding logical maps', async () => {
+  const store = setupStore()
+  const tracks = generateMockTracks(5000)
+  await store.addTracks(tracks, { deferRebuild: true })
+  store.refreshLibraryIndex()
+  store.playlists.value = [
+    {
+      id: 'pl_exact',
+      name: 'exact-local',
+      trackIds: tracks.slice(100, 300).map((track) => track.id),
+      createdAt: new Date().toISOString()
+    }
+  ]
+
+  assert.equal(store.getPlaylistTracks('exact-local').length, 200)
+
+  const start = performance.now()
+  for (let i = 0; i < 200; i++) {
+    assert.equal(store.getPlaylistTracks('exact-local').length, 200)
+  }
+  const elapsed = performance.now() - start
+
+  assert.ok(elapsed < 150, `exact playlist reads took ${elapsed.toFixed(2)}ms, expected < 150ms`)
+
+  store.clearTracks()
+})
+
+test('favorite logical state reuses playlist identity cache for repeated button reads', async () => {
+  const store = setupStore()
+  const tracks = generateMockTracks(5000)
+  await store.addTracks(tracks, { deferRebuild: true })
+  store.refreshLibraryIndex()
+  store.playlists.value = [
+    {
+      id: 'pl_favorites',
+      name: '我收藏的音乐',
+      trackIds: tracks.map((track) => track.id),
+      isDefault: true,
+      createdAt: new Date().toISOString()
+    }
+  ]
+  const localTrack = tracks[4200]
+  const providerVariant = {
+    ...localTrack,
+    id: 'ncm:logical-favorite',
+    filePath: 'ncm:logical-favorite',
+    source: 'ncm'
+  }
+
+  assert.equal(store.isFavoriteTrack(providerVariant), true)
+
+  const start = performance.now()
+  for (let i = 0; i < 10000; i++) {
+    assert.equal(store.isFavoriteTrack(providerVariant), true)
+  }
+  const elapsed = performance.now() - start
+
+  assert.ok(elapsed < 150, `favorite state reads took ${elapsed.toFixed(2)}ms, expected < 150ms`)
 
   store.clearTracks()
 })

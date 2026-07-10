@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { Track } from '../types/music'
 
-const { resolveUnifiedRecentTracks } = (await import(
+const { createUnifiedRecentTrackResolver, resolveUnifiedRecentTracks } = (await import(
   new URL('./unifiedRecentTracks.ts', import.meta.url).href
 )) as typeof import('./unifiedRecentTracks')
 
@@ -183,5 +183,77 @@ test('unified recent tracks de-duplicate legacy split local and provider stats b
   assert.deepEqual(
     tracks.map((track) => track.id),
     ['ncm:moon']
+  )
+})
+
+test('unified recent tracks resolves a source id from a large local library', () => {
+  const localTracks = Array.from({ length: 5000 }, (_, index) => ({
+    ...localTrack,
+    id: `local:${index}`,
+    title: `Local Song ${index}`,
+    filePath: `D:\\Music\\Local Song ${index}.flac`,
+    fileName: `Local Song ${index}.flac`
+  }))
+
+  const tracks = resolveUnifiedRecentTracks({
+    recentStats: [
+      {
+        id: 'logic:local song 4200::audrey',
+        seconds: 60,
+        plays: 1,
+        lastPlayed: 4_200,
+        title: 'Local Song 4200',
+        artist: 'Audrey',
+        cover: null,
+        sourceIds: [{ source: 'local', trackId: 'local:4200' }]
+      }
+    ],
+    localTracks
+  })
+
+  assert.deepEqual(
+    tracks.map((track) => track.id),
+    ['local:4200']
+  )
+})
+
+test('unified recent track resolver reuses one local library snapshot for multiple stats', () => {
+  const localTracks = [
+    localTrack,
+    {
+      ...localTrack,
+      id: 'local:sun',
+      title: 'Sun River',
+      filePath: 'D:\\Music\\Sun River.flac',
+      fileName: 'Sun River.flac'
+    }
+  ]
+  const resolveTrack = createUnifiedRecentTrackResolver(localTracks)
+
+  assert.equal(
+    resolveTrack({
+      id: 'logic:moon river::audrey',
+      seconds: 60,
+      plays: 1,
+      lastPlayed: 2_000,
+      title: 'Moon River',
+      artist: 'Audrey',
+      cover: null,
+      sourceIds: [{ source: 'local', trackId: 'local:moon' }]
+    })?.id,
+    'local:moon'
+  )
+  assert.equal(
+    resolveTrack({
+      id: 'logic:sun river::audrey',
+      seconds: 30,
+      plays: 1,
+      lastPlayed: 1_000,
+      title: 'Sun River',
+      artist: 'Audrey',
+      cover: null,
+      sourceIds: [{ source: 'local', trackId: 'local:sun' }]
+    })?.id,
+    'local:sun'
   )
 })
