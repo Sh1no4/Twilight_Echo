@@ -3,6 +3,9 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 const source = readFileSync(new URL('./audio/engineIpc.ts', import.meta.url), 'utf8')
+const preloadSource = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8')
+const preloadTypes = readFileSync(new URL('../preload/types.ts', import.meta.url), 'utf8')
+const preloadDeclaration = readFileSync(new URL('../preload/index.d.ts', import.meta.url), 'utf8')
 const deviceHotplugSource = readFileSync(
   new URL('./audio/deviceHotplug.ts', import.meta.url),
   'utf8'
@@ -39,6 +42,21 @@ test('audioEngine IPC normalizes untrusted renderer parameters', () => {
   assert.match(source, /normalizeFiniteNumber\(time, 'seek time', 0, 0, Number\.MAX_SAFE_INTEGER\)/)
   assert.match(source, /normalizeFiniteNumber\(volume, 'volume', 1, 0, 1\)/)
   assert.match(source, /normalizeInteger\(points, 'spectrum points', 128, 8, 4096\)/)
+})
+
+test('config-applied crosses the manager, IPC, and preload boundary', () => {
+  assert.match(source, /audioEngineManager\.on\('config-applied'/)
+  assert.match(source, /webContents\.send\('audioEngine:config-applied', event\)/)
+  assert.match(preloadSource, /ipcRenderer\.on\('audioEngine:config-applied'/)
+  assert.match(preloadSource, /audioEngineConfigAppliedCallbacks/)
+  assert.match(preloadSource, /onConfigApplied:/)
+
+  for (const declaration of [preloadTypes, preloadDeclaration]) {
+    assert.match(declaration, /AudioEngineConfigAppliedEvent/)
+    assert.match(declaration, /requestedConfigRevision: number/)
+    assert.match(declaration, /appliedConfigRevision: number/)
+  }
+  assert.match(preloadDeclaration, /onConfigApplied:/)
 })
 
 test('audio engine manager exposes optional native AnalyzeBpm method for host analysis', () => {

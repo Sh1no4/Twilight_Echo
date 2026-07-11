@@ -5,6 +5,7 @@
 #include "../decoder/SacdIsoProbe.h"
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -21,6 +22,27 @@ namespace {
 constexpr size_t kDecodeChunkFrames = 2048;
 constexpr size_t kVisualizationFftResolution = 8192;
 constexpr double kUnityVolumeEpsilon = 0.0001;
+
+uint64_t doubleBits(double value) noexcept {
+  return std::bit_cast<uint64_t>(value);
+}
+
+double doubleFromBits(uint64_t bits) noexcept {
+  return std::bit_cast<double>(bits);
+}
+
+double loadAtomicDouble(
+    const std::atomic<uint64_t>& bits,
+    std::memory_order order = std::memory_order_seq_cst) noexcept {
+  return doubleFromBits(bits.load(order));
+}
+
+void storeAtomicDouble(
+    std::atomic<uint64_t>& bits,
+    double value,
+    std::memory_order order = std::memory_order_seq_cst) noexcept {
+  bits.store(doubleBits(value), order);
+}
 AudioPipeline::BackendFactory& backendFactoryOverride() {
   static AudioPipeline::BackendFactory factory;
   return factory;
@@ -745,7 +767,7 @@ AudioPipeline::AudioPipeline() = default;
 
 void AudioPipeline::LatestControlCommandSlot::publish(const ControlCommand& command) noexcept {
   sequence.fetch_add(1, std::memory_order_acq_rel);
-  volume.store(command.volume, std::memory_order_relaxed);
+  volumeBits.store(doubleBits(command.volume), std::memory_order_relaxed);
   revision.store(command.revision, std::memory_order_relaxed);
   sequence.fetch_add(1, std::memory_order_release);
 }
@@ -756,7 +778,7 @@ bool AudioPipeline::LatestControlCommandSlot::read(ControlCommand* command) cons
   if ((before & 1U) != 0U) return false;
   ControlCommand snapshot;
   snapshot.type = ControlCommandType::Volume;
-  snapshot.volume = volume.load(std::memory_order_relaxed);
+  snapshot.volume = doubleFromBits(volumeBits.load(std::memory_order_relaxed));
   snapshot.revision = revision.load(std::memory_order_relaxed);
   const uint64_t after = sequence.load(std::memory_order_acquire);
   if (before != after || (after & 1U) != 0U) return false;
@@ -890,7 +912,8 @@ TAE_Result AudioPipeline::playInternal(
   stop();
   if (item.source.empty()) return TAE_RESULT_INVALID_ARGUMENT;
   const double requestedPlaybackVolume = std::clamp(volume, 0.0, 1.0);
-  if (std::abs(requestedVolume_.load(std::memory_order_acquire) - requestedPlaybackVolume) > kUnityVolumeEpsilon) {
+  if (std::abs(loadAtomicDouble(requestedVolumeBits_, std::memory_order_acquire) - requestedPlaybackVolume) >
+      kUnityVolumeEpsilon) {
     setVolume(requestedPlaybackVolume);
   }
 
@@ -1401,7 +1424,7 @@ TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
     DspChain& activeDspChain = activeDspChainLocked();
     activeDspChain.setTrackContext(DspTrackContext{stream_, currentItem_});
     dspStatus_ = activeDspChain.status();
-    dspActive_ = dspStatus_.dspActive || std::abs(requestedVolume_.load() - 1.0) > 0.0001;
+    dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
     updatePerfectLocked();
     publishStatusLocked();
   }
@@ -1410,7 +1433,7 @@ TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
 
 void AudioPipeline::setVolume(double volume) {
   const double requested = std::clamp(volume, 0.0, 1.0);
-  requestedVolume_.store(requested, std::memory_order_release);
+  storeAtomicDouble(requestedVolumeBits_, requested, std::memory_order_release);
   const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
   enqueueControlCommand(ControlCommand{ControlCommandType::Volume, requested, revision});
 }
@@ -1422,14 +1445,17 @@ void AudioPipeline::enqueueControlCommand(const ControlCommand& command) noexcep
 void AudioPipeline::applyControlCommand(const ControlCommand& command) noexcept {
   if (command.revision <= appliedConfigRevision_.load(std::memory_order_relaxed)) return;
   if (command.type == ControlCommandType::Volume) {
-    appliedVolume_.store(command.volume, std::memory_order_relaxed);
+    storeAtomicDouble(appliedVolumeBits_, command.volume, std::memory_order_relaxed);
   }
   appliedConfigRevision_.store(command.revision, std::memory_order_release);
 }
 
 void AudioPipeline::applyPendingControlCommands() noexcept {
   ControlCommand command;
-  while (controlCommands_.pop(command)) applyControlCommand(command);
+  for (size_t processed = 0; processed < kControlCommandCapacity; ++processed) {
+    if (!controlCommands_.pop(command)) break;
+    applyControlCommand(command);
+  }
   if (latestOverflowCommand_.read(&command)) applyControlCommand(command);
 }
 
@@ -1465,7 +1491,7 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
     spectrum_.setEnabled(dspConfig_.fftEnabled);
     dspStatus_ = activeDspChain.status();
     preloadDspStatus_ = spareDspChain.status();
-    dspActive_ = dspStatus_.dspActive || std::abs(requestedVolume_.load() - 1.0) > 0.0001;
+    dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
     updatePerfectLocked();
     publishStatusLocked();
   }
@@ -1507,7 +1533,7 @@ bool AudioPipeline::loadImpulseResponse(const std::string& path, std::string* er
   }
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(requestedVolume_.load() - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
   return ok;
@@ -1521,7 +1547,7 @@ void AudioPipeline::unloadImpulseResponse() {
   spareDspChain.unloadImpulseResponse();
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(requestedVolume_.load() - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
 }
@@ -1539,7 +1565,7 @@ bool AudioPipeline::setEqBands(const std::string& json, std::string* error) {
   if (ok) spareDspChain.setEqBandsFromJson(json, error);
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(requestedVolume_.load() - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
   return ok;
@@ -1553,7 +1579,7 @@ bool AudioPipeline::setEqPreset(const std::string& json, std::string* error) {
   if (ok) spareDspChain.setEqPresetFromJson(json, error);
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(requestedVolume_.load() - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
   return ok;
@@ -1567,7 +1593,7 @@ void AudioPipeline::setCrossfeedStrength(double strength) {
   spareDspChain.setCrossfeedStrength(strength);
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(requestedVolume_.load() - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
 }
@@ -1580,7 +1606,7 @@ void AudioPipeline::setReplayGainMode(ReplayGainMode mode, double preampDb, doub
   spareDspChain.setReplayGainMode(mode, preampDb, fallbackDb, clip);
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(requestedVolume_.load() - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
 }
@@ -1591,7 +1617,7 @@ void AudioPipeline::setNativeDspPluginChain(const std::string& json) {
   preloadDspChain_.setNativeDspPluginChain(json);
   dspStatus_ = activeDspChainLocked().status();
   preloadDspStatus_ = spareDspChainLocked().status();
-  dspActive_ = dspStatus_.dspActive || std::abs(requestedVolume_.load() - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
 }
@@ -1676,7 +1702,7 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
     activeUsesPreloadDspChain_ = !activeUsesPreloadDspChain_;
     dspStatus_ = preloadDspStatus_;
     preloadDspStatus_ = {};
-    dspActive_ = dspStatus_.dspActive || std::abs(requestedVolume_.load() - 1.0) > 0.0001;
+    dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
     crossfadeMixActive_ = false;
     crossfadeFramesProcessed_ = 0;
     crossfadeTotalFrames_ = 0;
@@ -1774,7 +1800,7 @@ PipelineStatus AudioPipeline::status() {
     lock.lock();
   }
   dspStatus_ = activeDspChainLocked().status();
-  dspActive_ = dspStatus_.dspActive || std::abs(requestedVolume_.load() - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   PipelineStatus status = buildStatusLocked();
   {
@@ -1799,7 +1825,7 @@ bool AudioPipeline::needsPcmFallback(std::string* reason) const {
   const bool processingActive =
       dspStatus_.replayGainActive || dspStatus_.eqActive || dspStatus_.convolverActive || dspStatus_.crossfeedActive ||
       dspStatus_.nativeDspActive || dspStatus_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001 ||
-      std::abs(requestedVolume_.load() - 1.0) > kUnityVolumeEpsilon ||
+      std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > kUnityVolumeEpsilon ||
       outputConfig_.routingMode != ChannelRoutingMode::Auto;
 
   if (nativeDsdPathActive_ && stream_.isDsd && stream_.dsdMode == DsdMode::Native) {
@@ -1950,7 +1976,7 @@ bool AudioPipeline::updatePerfectLocked() {
   evaluation.backendResampled = backendResampled;
   evaluation.backendPerfectReasonCode = backendInfo.perfectReasonCode;
   evaluation.backendPerfectReason = backendPerfectReason;
-  evaluation.volume = requestedVolume_.load();
+  evaluation.volume = loadAtomicDouble(requestedVolumeBits_);
   evaluation.replayGainActive = dspStatus_.replayGainActive;
   evaluation.eqActive = dspStatus_.eqActive;
   evaluation.convolverActive = dspStatus_.convolverActive;
@@ -2111,7 +2137,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     crossfadeSeconds = dspConfig_.crossfadeSeconds;
     dopPathActive = dopPathActive_;
     activeUsesPreloadDspChain = activeUsesPreloadDspChain_;
-    volume = appliedVolume_.load(std::memory_order_acquire);
+    volume = loadAtomicDouble(appliedVolumeBits_, std::memory_order_acquire);
     crossfadeMixActive = crossfadeMixActive_;
     crossfadeFramesProcessed = crossfadeFramesProcessed_;
     crossfadeTotalFrames = crossfadeTotalFrames_;
@@ -2258,7 +2284,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
       activeUsesPreloadDspChain = activeUsesPreloadDspChain_;
       dspStatus_ = preloadDspStatus_;
       preloadDspStatus_ = {};
-      dspActive_ = dspStatus_.dspActive || std::abs(requestedVolume_.load() - 1.0) > 0.0001;
+      dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
       crossfadeMixActive = false;
       crossfadeFramesProcessed = 0;
       crossfadeTotalFrames = 0;

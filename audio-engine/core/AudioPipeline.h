@@ -15,6 +15,7 @@
 
 #include <array>
 #include <atomic>
+#include <bit>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -24,6 +25,10 @@
 #include <vector>
 
 namespace twilight::audio {
+
+static_assert(
+    std::atomic<uint64_t>::is_always_lock_free,
+    "AudioPipeline realtime controls require lock-free 64-bit atomics");
 
 size_t visualizationFftResolutionForConfig(size_t configuredFftResolution);
 
@@ -148,7 +153,7 @@ class AudioPipeline {
 
     std::atomic<uint64_t> sequence{0};
     std::atomic<uint64_t> revision{0};
-    std::atomic<double> volume{1.0};
+    std::atomic<uint64_t> volumeBits{std::bit_cast<uint64_t>(1.0)};
   };
 
   struct DecodeStream;
@@ -239,8 +244,8 @@ class AudioPipeline {
   static constexpr size_t kControlCommandCapacity = 32;
   FixedSpscQueue<ControlCommand, kControlCommandCapacity> controlCommands_;
   LatestControlCommandSlot latestOverflowCommand_;
-  std::atomic<double> requestedVolume_{1.0};
-  std::atomic<double> appliedVolume_{1.0};
+  std::atomic<uint64_t> requestedVolumeBits_{std::bit_cast<uint64_t>(1.0)};
+  std::atomic<uint64_t> appliedVolumeBits_{std::bit_cast<uint64_t>(1.0)};
   std::atomic<uint64_t> requestedConfigRevision_{0};
   std::atomic<uint64_t> appliedConfigRevision_{0};
   std::atomic<uint64_t> renderedFrames_{0};

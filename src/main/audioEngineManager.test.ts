@@ -2264,6 +2264,217 @@ test('native tick publishes playback-info when non-position playback facts chang
   assert.equal(playbackUpdates[0].queueIndex, 1)
 })
 
+test('manager emits config-applied only after the applied revision advances', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const appliedEvents: Array<{
+    requestedConfigRevision: number
+    appliedConfigRevision: number
+  }> = []
+  manager.on('config-applied', (event) => appliedEvents.push(event))
+
+  await manager.play('track.flac', 0)
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    requestedConfigRevision: 1,
+    appliedConfigRevision: 0
+  }
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+  assert.deepEqual(appliedEvents, [])
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    appliedConfigRevision: 1
+  }
+  tickManager.tick()
+  tickManager.tick()
+  assert.deepEqual(appliedEvents, [
+    {
+      requestedConfigRevision: 1,
+      appliedConfigRevision: 1
+    }
+  ])
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    requestedConfigRevision: 2,
+    appliedConfigRevision: 1
+  }
+  tickManager.tick()
+  assert.equal(appliedEvents.length, 1)
+})
+
+test('manager publishes matching playback info before config-applied', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const events: Array<
+    | { kind: 'playback-info'; requestedConfigRevision: number; appliedConfigRevision: number }
+    | { kind: 'config-applied'; requestedConfigRevision: number; appliedConfigRevision: number }
+  > = []
+  manager.on('playback-info', (info) => {
+    events.push({
+      kind: 'playback-info',
+      requestedConfigRevision: info.requestedConfigRevision,
+      appliedConfigRevision: info.appliedConfigRevision
+    })
+  })
+  manager.on('config-applied', (event) => {
+    events.push({ kind: 'config-applied', ...event })
+  })
+
+  await manager.play('config-event-order.flac', 0)
+  events.length = 0
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    requestedConfigRevision: 1,
+    appliedConfigRevision: 1
+  }
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+
+  const configEventIndex = events.findIndex((event) => event.kind === 'config-applied')
+  const playbackEventIndex = events.findIndex(
+    (event) =>
+      event.kind === 'playback-info' &&
+      event.requestedConfigRevision === 1 &&
+      event.appliedConfigRevision === 1
+  )
+  assert.notEqual(configEventIndex, -1)
+  assert.notEqual(playbackEventIndex, -1)
+  assert(playbackEventIndex < configEventIndex)
+})
+
+test('manager keeps config revisions monotonic across a native service revision reset', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const appliedEvents: Array<{
+    requestedConfigRevision: number
+    appliedConfigRevision: number
+  }> = []
+  manager.on('config-applied', (event) => appliedEvents.push(event))
+  await manager.play('track.flac', 0)
+  const tickManager = manager as unknown as { tick: () => void }
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    requestedConfigRevision: 7,
+    appliedConfigRevision: 7
+  }
+  tickManager.tick()
+  assert.deepEqual(appliedEvents.at(-1), {
+    requestedConfigRevision: 7,
+    appliedConfigRevision: 7
+  })
+  appliedEvents.length = 0
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    requestedConfigRevision: 0,
+    appliedConfigRevision: 0
+  }
+  tickManager.tick()
+  const resetInfo = await manager.getPlaybackInfo()
+  assert.equal(resetInfo.requestedConfigRevision, 7)
+  assert.equal(resetInfo.appliedConfigRevision, 7)
+  assert.deepEqual(appliedEvents, [])
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    requestedConfigRevision: 1,
+    appliedConfigRevision: 1
+  }
+  tickManager.tick()
+  const nextInfo = await manager.getPlaybackInfo()
+  assert.equal(nextInfo.requestedConfigRevision, 8)
+  assert.equal(nextInfo.appliedConfigRevision, 8)
+  assert.deepEqual(appliedEvents, [
+    {
+      requestedConfigRevision: 8,
+      appliedConfigRevision: 8
+    }
+  ])
+})
+
+test('service replacement rebases raw zero without claiming an unapplied request', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const managerInternals = manager as unknown as {
+    tick: () => void
+    handleAudioServiceCrash: (reason: string) => void
+  }
+  const appliedEvents: Array<{
+    requestedConfigRevision: number
+    appliedConfigRevision: number
+  }> = []
+  manager.on('config-applied', (event) => appliedEvents.push(event))
+  await manager.play('before-restart.flac', 0)
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    requestedConfigRevision: 10,
+    appliedConfigRevision: 8
+  }
+  managerInternals.tick()
+  appliedEvents.length = 0
+
+  managerInternals.handleAudioServiceCrash('service replaced')
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    requestedConfigRevision: 0,
+    appliedConfigRevision: 0
+  }
+  await manager.play('after-restart.flac', 0)
+  const resetInfo = await manager.getPlaybackInfo()
+  assert.equal(resetInfo.requestedConfigRevision, 10)
+  assert.equal(resetInfo.appliedConfigRevision, 8)
+  assert.deepEqual(appliedEvents, [])
+
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    requestedConfigRevision: 1,
+    appliedConfigRevision: 1
+  }
+  managerInternals.tick()
+  const nextInfo = await manager.getPlaybackInfo()
+  assert.equal(nextInfo.requestedConfigRevision, 11)
+  assert.equal(nextInfo.appliedConfigRevision, 11)
+  assert.deepEqual(appliedEvents, [
+    {
+      requestedConfigRevision: 11,
+      appliedConfigRevision: 11
+    }
+  ])
+})
+
 test('native tick skips repeated duration property changes until duration changes', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(

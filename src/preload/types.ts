@@ -12,6 +12,11 @@ export type {
 export type AudioEngineSimpleCallback = () => void
 export type AudioEngineErrorCallback = (message: string) => void
 export type AudioEnginePlaybackInfoCallback = (info: PlaybackInfo) => void
+export interface AudioEngineConfigAppliedEvent {
+  requestedConfigRevision: number
+  appliedConfigRevision: number
+}
+export type AudioEngineConfigAppliedCallback = (event: AudioEngineConfigAppliedEvent) => void
 export type AudioEngineDeviceOptionsChangedCallback = (event: { reason: string }) => void
 export type AudioEngineServiceCrashCallback = (event: { reason: string }) => void
 export interface AudioEngineServiceReadyEvent {

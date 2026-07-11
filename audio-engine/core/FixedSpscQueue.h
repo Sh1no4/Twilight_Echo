@@ -12,6 +12,9 @@ template <typename T, size_t Capacity>
 class FixedSpscQueue {
   static_assert(Capacity > 0, "FixedSpscQueue capacity must be positive");
   static_assert(std::is_trivially_copyable_v<T>, "FixedSpscQueue requires trivially copyable values");
+  static_assert(
+      std::atomic<uint64_t>::is_always_lock_free,
+      "FixedSpscQueue requires lock-free 64-bit atomic indices");
 
  public:
   bool push(const T& value) noexcept {

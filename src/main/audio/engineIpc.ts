@@ -183,6 +183,10 @@ export async function setupAudioEngineIpc(): Promise<void> {
     broadcastPlayerLifecycleEvents(info)
   })
 
+  runtime.audioEngineManager.on('config-applied', (event) => {
+    runtime.mainWindow?.webContents.send('audioEngine:config-applied', event)
+  })
+
   ipcMain.handle('audioEngine:loadQueue', async (_event, items: unknown, startIndex?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     if (!Array.isArray(items) || items.length > MAX_AUDIO_QUEUE_ITEMS) {

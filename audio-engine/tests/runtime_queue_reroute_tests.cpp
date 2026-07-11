@@ -259,6 +259,24 @@ void testVolumeCommandApplicationIsRealtimeSafe() {
   assert(typedApply < typedPipelineLock);
 }
 
+void testVolumeCommandCallbackWorkIsBoundedAndUsesPortableAtomics() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path corePath = testFilePath.parent_path().parent_path() / "core";
+  const std::string source = readTextFile(corePath / "AudioPipeline.cpp");
+  const std::string header = readTextFile(corePath / "AudioPipeline.h");
+  const std::string queueHeader = readTextFile(corePath / "FixedSpscQueue.h");
+  const std::string applyBody = extractFunctionBody(source, "void AudioPipeline::applyPendingControlCommands()");
+
+  assert(applyBody.find("processed < kControlCommandCapacity") != std::string::npos);
+  assert(applyBody.find("while (controlCommands_.pop(command))") == std::string::npos);
+  assert(applyBody.find("latestOverflowCommand_.read(&command)") != std::string::npos);
+  assert(header.find("std::atomic<double>") == std::string::npos);
+  assert(header.find("std::atomic<uint64_t> requestedVolumeBits_") != std::string::npos);
+  assert(header.find("std::atomic<uint64_t> appliedVolumeBits_") != std::string::npos);
+  assert(header.find("std::atomic<uint64_t>::is_always_lock_free") != std::string::npos);
+  assert(queueHeader.find("std::atomic<uint64_t>::is_always_lock_free") != std::string::npos);
+}
+
 void testDecodeStreamReaperRetiresOutsideAudioCallback() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
@@ -1230,12 +1248,32 @@ void testVolumeCommandStormCoalescesToNewestValue() {
   const PipelineStatus accepted = pipeline.status();
   assert(accepted.requestedConfigRevision > accepted.appliedConfigRevision);
 
-  const std::vector<float> rendered = renderBackendFrames(backend, 128);
+  std::vector<float> rendered;
+  const bool renderedAudio = waitUntil([&] {
+    rendered = renderBackendFrames(backend, 128);
+    return bufferHasSampleAbove(rendered, 0.08f);
+  });
   const PipelineStatus applied = pipeline.status();
   assert(applied.appliedConfigRevision == accepted.requestedConfigRevision);
-  assert(bufferHasSampleAbove(rendered, 0.08f));
+  assert(renderedAudio);
   assert(!bufferHasSampleAbove(rendered, 0.10f));
   pipeline.stop();
+}
+
+void testStoppedVolumeAcceptanceIsVisibleBeforePlayback() {
+  TwilightAudioEngine engine;
+  const std::string beforeJson = engine.getPlaybackInfoJson();
+  const double requestedBefore = playbackJsonNumber(beforeJson, "requestedConfigRevision");
+  const double appliedBefore = playbackJsonNumber(beforeJson, "appliedConfigRevision");
+
+  assert(engine.setVolume(0.42) == TAE_RESULT_OK);
+  const std::string acceptedJson = engine.getPlaybackInfoJson();
+  const double requestedAfter = playbackJsonNumber(acceptedJson, "requestedConfigRevision");
+  const double appliedAfter = playbackJsonNumber(acceptedJson, "appliedConfigRevision");
+
+  assert(requestedAfter > requestedBefore);
+  assert(appliedAfter == appliedBefore);
+  assert(requestedAfter > appliedAfter);
 }
 
 struct ConfigEventCapture {
@@ -2176,6 +2214,7 @@ int main() {
   testSetDspConfigParsesJsonOutsidePipelineMutex();
   testSetVolumeAvoidsBlockingOnPipelineMutex();
   testVolumeCommandApplicationIsRealtimeSafe();
+  testVolumeCommandCallbackWorkIsBoundedAndUsesPortableAtomics();
   testDecodeStreamReaperRetiresOutsideAudioCallback();
   testCrossfadePromotionClearsStaleLocalPreloadState();
   testRenderSideDecodeStreamRetirementDoesNotGrowContainers();
@@ -2185,6 +2224,7 @@ int main() {
   testTwilightAudioEngineReusesParsedDspConfigSnapshot();
   testVolumeCommandAppliesAtRenderBoundary();
   testVolumeCommandStormCoalescesToNewestValue();
+  testStoppedVolumeAcceptanceIsVisibleBeforePlayback();
   testConfigAppliedEventFollowsRenderApplication();
   testDsd64StartsOnDop();
   testPcmTypedPassthroughKeepsTypedPathDuringTransientDecoderLag();

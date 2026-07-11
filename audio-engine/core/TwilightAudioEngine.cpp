@@ -799,9 +799,11 @@ TAE_Result TwilightAudioEngine::setVolume(double volume) {
   {
     std::lock_guard lock(mutex_);
     info_.volume = std::clamp(volume, 0.0, 1.0);
-    if (pipeline_) pipeline_->setVolume(info_.volume);
-    if (pipeline_ && info_.state != PlaybackState::Stopped) {
+    if (pipeline_) {
+      pipeline_->setVolume(info_.volume);
       applyPipelineStatusLocked(pipeline_->status());
+    }
+    if (pipeline_ && info_.state != PlaybackState::Stopped) {
       if (!shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
         publishStateLocked();
       }

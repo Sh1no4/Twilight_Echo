@@ -1742,6 +1742,18 @@ export class AudioEngineManager extends EventEmitter {
   private timer: NodeJS.Timeout | null = null
   private lastTick = 0
   private lastNativePlaybackInfoTickReadAt = Number.NEGATIVE_INFINITY
+  private nativeConfigRevisionObserved = false
+  private nativeConfigRevisionEpochPending = false
+  private lastRawRequestedConfigRevision = 0
+  private lastRawAppliedConfigRevision = 0
+  private configRevisionBase = 0
+  private publicRequestedConfigRevision = 0
+  private publicAppliedConfigRevision = 0
+  private lastEmittedAppliedConfigRevision = 0
+  private pendingConfigAppliedEvent: {
+    requestedConfigRevision: number
+    appliedConfigRevision: number
+  } | null = null
   private lastPlaybackInfoFanoutKey = ''
   private lastPublishedDuration: number | null = null
   private lastVisualizationCache: {
@@ -1853,6 +1865,7 @@ export class AudioEngineManager extends EventEmitter {
     this.lastNativeError = reason
     this.nativePlaybackActive = false
     this.nativeOutputRouteSynced = false
+    this.nativeConfigRevisionEpochPending = true
     this.audioServiceReadyRestoreSerial += 1
     this.nativeConvolverIrPath = null
     this.lastNativeDspPluginStatusCache = null
@@ -2197,7 +2210,9 @@ export class AudioEngineManager extends EventEmitter {
           null as PlaybackInfo | null
         )
         if (realInfo) {
-          this.playbackInfo = this.mergeNativePlaybackInfo(this.normalizePlaybackInfo(realInfo))
+          this.playbackInfo = this.mergeNativePlaybackInfo(
+            this.normalizePlaybackInfo(realInfo, true)
+          )
         }
         this.lastTick = this.scheduler.now()
         this.publishProperty('pause', this.playbackInfo.state !== 'playing')
@@ -2951,7 +2966,7 @@ export class AudioEngineManager extends EventEmitter {
     try {
       const info = parseNativeJson(this.native?.GetPlaybackInfo?.(), null as PlaybackInfo | null)
       if (!info) return null
-      return this.normalizePlaybackInfo(info)
+      return this.normalizePlaybackInfo(info, true)
     } catch {
       return null
     }
@@ -2966,7 +2981,7 @@ export class AudioEngineManager extends EventEmitter {
         | undefined
       const info = parseNativeJson<PlaybackInfo | null>(raw, null)
       if (!info) return null
-      return this.normalizePlaybackInfo(info)
+      return this.normalizePlaybackInfo(info, true)
     } catch {
       return null
     }
@@ -3005,7 +3020,59 @@ export class AudioEngineManager extends EventEmitter {
     }
   }
 
-  private normalizePlaybackInfo(info: PlaybackInfo): PlaybackInfo {
+  private mapNativeConfigRevisions(
+    requestedConfigRevision: number,
+    appliedConfigRevision: number
+  ): { requestedConfigRevision: number; appliedConfigRevision: number } {
+    const rawRequestedConfigRevision = Number.isFinite(requestedConfigRevision)
+      ? Math.max(0, Math.trunc(requestedConfigRevision))
+      : this.lastRawRequestedConfigRevision
+    const rawAppliedConfigRevision = Number.isFinite(appliedConfigRevision)
+      ? Math.max(0, Math.trunc(appliedConfigRevision))
+      : this.lastRawAppliedConfigRevision
+
+    if (
+      this.nativeConfigRevisionObserved &&
+      (this.nativeConfigRevisionEpochPending ||
+        rawRequestedConfigRevision < this.lastRawRequestedConfigRevision)
+    ) {
+      this.configRevisionBase =
+        this.publicRequestedConfigRevision - rawRequestedConfigRevision
+    }
+
+    this.nativeConfigRevisionObserved = true
+    this.nativeConfigRevisionEpochPending = false
+    this.lastRawRequestedConfigRevision = rawRequestedConfigRevision
+    this.lastRawAppliedConfigRevision = rawAppliedConfigRevision
+    this.publicRequestedConfigRevision = Math.max(
+      this.publicRequestedConfigRevision,
+      this.configRevisionBase + rawRequestedConfigRevision
+    )
+    if (rawAppliedConfigRevision > 0) {
+      this.publicAppliedConfigRevision = Math.max(
+        this.publicAppliedConfigRevision,
+        this.configRevisionBase + rawAppliedConfigRevision
+      )
+    }
+
+    const pendingAppliedRevision = this.pendingConfigAppliedEvent?.appliedConfigRevision ?? 0
+    if (
+      this.publicAppliedConfigRevision > this.lastEmittedAppliedConfigRevision &&
+      this.publicAppliedConfigRevision > pendingAppliedRevision
+    ) {
+      this.pendingConfigAppliedEvent = {
+        requestedConfigRevision: this.publicRequestedConfigRevision,
+        appliedConfigRevision: this.publicAppliedConfigRevision
+      }
+    }
+
+    return {
+      requestedConfigRevision: this.publicRequestedConfigRevision,
+      appliedConfigRevision: this.publicAppliedConfigRevision
+    }
+  }
+
+  private normalizePlaybackInfo(info: PlaybackInfo, nativeRevisions = false): PlaybackInfo {
     const preferNonEmpty = (...values: Array<string | undefined | null>): string => {
       for (const value of values) {
         if (typeof value === 'string' && value.trim().length > 0) return value
@@ -3041,12 +3108,20 @@ export class AudioEngineManager extends EventEmitter {
       canonicalOutput?.latencyInfo ?? info.latencyInfo ?? this.playbackInfo.latencyInfo
     const diagnostics =
       canonicalOutput?.diagnostics ?? info.diagnostics ?? this.playbackInfo.diagnostics
-    const requestedConfigRevision = Number.isFinite(info.requestedConfigRevision)
+    let requestedConfigRevision = Number.isFinite(info.requestedConfigRevision)
       ? Math.max(0, Math.trunc(info.requestedConfigRevision))
       : this.playbackInfo.requestedConfigRevision
-    const appliedConfigRevision = Number.isFinite(info.appliedConfigRevision)
+    let appliedConfigRevision = Number.isFinite(info.appliedConfigRevision)
       ? Math.max(0, Math.trunc(info.appliedConfigRevision))
       : this.playbackInfo.appliedConfigRevision
+    if (nativeRevisions) {
+      const mappedRevisions = this.mapNativeConfigRevisions(
+        requestedConfigRevision,
+        appliedConfigRevision
+      )
+      requestedConfigRevision = mappedRevisions.requestedConfigRevision
+      appliedConfigRevision = mappedRevisions.appliedConfigRevision
+    }
     outputInfo.sourceExact = sourceExact
     outputInfo.outputPerfect = outputPerfect
     outputInfo.supportsOutputPerfect = supportsOutputPerfect
@@ -3724,5 +3799,15 @@ export class AudioEngineManager extends EventEmitter {
       ...this.playbackInfo,
       nativePlaybackActive: this.nativePlaybackActive
     })
+    this.publishPendingConfigAppliedEvent()
+  }
+
+  private publishPendingConfigAppliedEvent(): void {
+    const event = this.pendingConfigAppliedEvent
+    if (!event || this.playbackInfo.appliedConfigRevision < event.appliedConfigRevision) return
+
+    this.pendingConfigAppliedEvent = null
+    this.lastEmittedAppliedConfigRevision = event.appliedConfigRevision
+    this.emit('config-applied', event)
   }
 }

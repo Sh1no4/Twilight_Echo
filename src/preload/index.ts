@@ -5,6 +5,8 @@ import type {
   AudioEngineSimpleCallback,
   AudioEngineErrorCallback,
   AudioEnginePlaybackInfoCallback,
+  AudioEngineConfigAppliedCallback,
+  AudioEngineConfigAppliedEvent,
   AudioEngineDeviceOptionsChangedCallback,
   AudioEngineServiceCrashCallback,
   AudioEngineServiceReadyCallback,
@@ -57,6 +59,7 @@ const audioEngineReadyCallbacks = new Set<AudioEngineSimpleCallback>()
 const audioEngineErrorCallbacks = new Set<AudioEngineErrorCallback>()
 const audioEngineDisconnectedCallbacks = new Set<AudioEngineSimpleCallback>()
 const audioEnginePlaybackInfoCallbacks = new Set<AudioEnginePlaybackInfoCallback>()
+const audioEngineConfigAppliedCallbacks = new Set<AudioEngineConfigAppliedCallback>()
 const audioEngineDeviceOptionsChangedCallbacks = new Set<AudioEngineDeviceOptionsChangedCallback>()
 const audioEngineServiceCrashCallbacks = new Set<AudioEngineServiceCrashCallback>()
 const audioEngineServiceReadyCallbacks = new Set<AudioEngineServiceReadyCallback>()
@@ -112,6 +115,12 @@ ipcRenderer.on('audioEngine:disconnected', () => {
 ipcRenderer.on('audioEngine:playback-info', (_event, info: PlaybackInfo) => {
   for (const cb of audioEnginePlaybackInfoCallbacks) {
     cb(info)
+  }
+})
+
+ipcRenderer.on('audioEngine:config-applied', (_event, event: AudioEngineConfigAppliedEvent) => {
+  for (const cb of audioEngineConfigAppliedCallbacks) {
+    cb(event)
   }
 })
 
@@ -401,6 +410,11 @@ const api = {
     onPlaybackInfo: (cb: AudioEnginePlaybackInfoCallback): (() => void) => {
       audioEnginePlaybackInfoCallbacks.add(cb)
       return () => audioEnginePlaybackInfoCallbacks.delete(cb)
+    },
+
+    onConfigApplied: (cb: AudioEngineConfigAppliedCallback): (() => void) => {
+      audioEngineConfigAppliedCallbacks.add(cb)
+      return () => audioEngineConfigAppliedCallbacks.delete(cb)
     },
 
     onDeviceOptionsChanged: (cb: AudioEngineDeviceOptionsChangedCallback): (() => void) => {

@@ -1029,6 +1029,11 @@ interface AudioEnginePlayResult {
   fallbackReason: string
 }
 
+interface AudioEngineConfigAppliedEvent {
+  requestedConfigRevision: number
+  appliedConfigRevision: number
+}
+
 interface AudioEngineAPI {
   loadQueue: (items: AudioEngineQueueItem[], startIndex?: number) => Promise<void>
   play: (filePath: string, startTime?: number) => Promise<AudioEnginePlayResult>
@@ -1077,6 +1082,7 @@ interface AudioEngineAPI {
   onError: (cb: (message: string) => void) => () => void
   onDisconnected: (cb: () => void) => () => void
   onPlaybackInfo: (cb: (info: PlaybackInfo) => void) => () => void
+  onConfigApplied: (cb: (event: AudioEngineConfigAppliedEvent) => void) => () => void
   onDeviceOptionsChanged: (cb: (event: { reason: string }) => void) => () => void
   onServiceCrash: (cb: (event: { reason: string }) => void) => () => void
   onServiceReady: (
