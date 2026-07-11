@@ -29,6 +29,9 @@ namespace twilight::audio {
 static_assert(
     std::atomic<uint64_t>::is_always_lock_free,
     "AudioPipeline realtime controls require lock-free 64-bit atomics");
+static_assert(
+    std::atomic<uint32_t>::is_always_lock_free,
+    "AudioPipeline realtime routing controls require lock-free 32-bit atomics");
 
 size_t visualizationFftResolutionForConfig(size_t configuredFftResolution);
 
@@ -138,13 +141,16 @@ class AudioPipeline {
 
  private:
   enum class ControlCommandType : uint8_t {
-    Volume
+    Volume,
+    Routing
   };
 
   struct ControlCommand {
     ControlCommandType type = ControlCommandType::Volume;
     double volume = 1.0;
     uint64_t revision = 0;
+    ChannelRoutingMode routingMode = ChannelRoutingMode::Auto;
+    UpmixConfig upmix;
   };
 
   struct LatestControlCommandSlot {
@@ -154,6 +160,20 @@ class AudioPipeline {
     std::atomic<uint64_t> sequence{0};
     std::atomic<uint64_t> revision{0};
     std::atomic<uint64_t> volumeBits{std::bit_cast<uint64_t>(1.0)};
+  };
+
+  struct LatestRoutingCommandSlot {
+    void publish(const ControlCommand& command) noexcept;
+    bool read(ControlCommand* command) const noexcept;
+
+    std::atomic<uint64_t> sequence{0};
+    std::atomic<uint32_t> routingMode{static_cast<uint32_t>(ChannelRoutingMode::Auto)};
+    std::atomic<uint32_t> centerGainBits{std::bit_cast<uint32_t>(0.7071f)};
+    std::atomic<uint32_t> lfeGainBits{std::bit_cast<uint32_t>(0.5f)};
+    std::atomic<uint32_t> lfeLowpassHzBits{std::bit_cast<uint32_t>(120.0f)};
+    std::atomic<uint32_t> surroundGainBits{std::bit_cast<uint32_t>(0.5f)};
+    std::atomic<uint32_t> sideGainBits{std::bit_cast<uint32_t>(0.3f)};
+    std::atomic<uint32_t> surroundDelayMsBits{std::bit_cast<uint32_t>(0.0f)};
   };
 
   struct DecodeStream;
@@ -214,6 +234,7 @@ class AudioPipeline {
   void enqueueControlCommand(const ControlCommand& command) noexcept;
   void applyPendingControlCommands() noexcept;
   void applyControlCommand(const ControlCommand& command) noexcept;
+  void synchronizeRenderPromotionLocked();
 
   mutable std::mutex mutex_;
   std::unique_ptr<IOutputBackend> output_;
@@ -222,6 +243,7 @@ class AudioPipeline {
   static constexpr size_t kRetiredStreamSlots = 16;
   mutable std::array<std::shared_ptr<DecodeStream>, kRetiredStreamSlots> retiredStreams_;
   mutable size_t retiredStreamCount_ = 0;
+  mutable std::vector<std::shared_ptr<DecodeStream>> deferredRetiredStreams_;
   FftSpectrumAnalyzer spectrum_;
   DspChain dspChain_;
   DspChain preloadDspChain_;
@@ -244,12 +266,33 @@ class AudioPipeline {
   static constexpr size_t kControlCommandCapacity = 32;
   FixedSpscQueue<ControlCommand, kControlCommandCapacity> controlCommands_;
   LatestControlCommandSlot latestOverflowCommand_;
+  LatestRoutingCommandSlot latestRoutingCommand_;
+  uint64_t appliedLatestRoutingSequence_ = 0;
   std::atomic<uint64_t> requestedVolumeBits_{std::bit_cast<uint64_t>(1.0)};
   std::atomic<uint64_t> appliedVolumeBits_{std::bit_cast<uint64_t>(1.0)};
   std::atomic<uint64_t> requestedConfigRevision_{0};
   std::atomic<uint64_t> appliedConfigRevision_{0};
   std::atomic<uint64_t> renderedFrames_{0};
   std::atomic<int> renderChannelCount_{2};
+  // The output callback owns these values. The control thread only publishes
+  // primitive hand-off values or retains the DecodeStream lifetime.
+  std::atomic<PipelineState> renderState_{PipelineState::Stopped};
+  std::atomic<DecodeStream*> renderActiveStream_{nullptr};
+  std::atomic<DecodeStream*> renderPreloadStream_{nullptr};
+  std::atomic<bool> renderGaplessEnabled_{true};
+  std::atomic<bool> renderDopPathActive_{false};
+  std::atomic<bool> renderNativeDsdPathActive_{false};
+  std::atomic<bool> renderTypedPassthroughActive_{false};
+  std::atomic<bool> renderActiveUsesPreloadDspChain_{false};
+  std::atomic<bool> renderPromotionPending_{false};
+  std::atomic<bool> renderCrossfadeResetRequested_{false};
+  std::atomic<uint32_t> renderRoutingMode_{static_cast<uint32_t>(ChannelRoutingMode::Auto)};
+  std::atomic<uint64_t> renderCrossfadeSecondsBits_{std::bit_cast<uint64_t>(0.0)};
+  AudioFormat renderOutputFormat_;
+  AudioFormat renderDecodeFormat_;
+  bool renderCrossfadeMixActive_ = false;
+  uint64_t renderCrossfadeFramesProcessed_ = 0;
+  uint64_t renderCrossfadeTotalFrames_ = 0;
   PipelineState state_ = PipelineState::Stopped;
   bool dspActive_ = false;
   bool outputPerfect_ = false;
@@ -268,7 +311,6 @@ class AudioPipeline {
   std::vector<float> preloadRoutingScratch_;
   std::vector<float> preloadMixScratch_;
   std::vector<float> typedVisualizationScratch_;
-  mutable std::mutex channelRouterMutex_;
   ChannelRouter channelRouter_;
   mutable std::mutex statusMutex_;
   PipelineStatus lastStatus_;

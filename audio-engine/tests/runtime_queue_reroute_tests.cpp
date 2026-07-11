@@ -153,6 +153,8 @@ void testRenderCallbacksDoNotBlockOnPipelineMutex() {
   const std::string realtimeBodies = renderBody + renderTypedBody;
 
   assert(!std::regex_search(realtimeBodies, std::regex(R"(std::lock_guard\s+lock\s*\(\s*mutex_\s*\))")));
+  assert(realtimeBodies.find("mutex_") == std::string::npos);
+  assert(realtimeBodies.find("std::try_to_lock") == std::string::npos);
 }
 
 void testRenderCallbacksDoNotWaitForDecoderBuffers() {
@@ -177,7 +179,7 @@ void testNativeDsdRenderPositionAccountsForBitsPerByte() {
   assert(renderTypedBody.find("dsdRenderedFrameUnits") != std::string::npos);
 }
 
-void testChannelRouterStateIsSerializedWithoutBlockingRenderCallbacks() {
+void testChannelRouterStateIsOwnedByRenderCallback() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
   const std::filesystem::path headerPath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.h";
@@ -187,12 +189,12 @@ void testChannelRouterStateIsSerializedWithoutBlockingRenderCallbacks() {
   const std::string setOutputConfigBody =
       extractFunctionBody(source, "bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* error)");
 
-  assert(header.find("channelRouterMutex_") != std::string::npos);
-  assert(setOutputConfigBody.find("channelRouterMutex_") != std::string::npos);
-  assert(setOutputConfigBody.find("channelRouter_.setUpmixConfig") != std::string::npos);
-  assert(renderBody.find("channelRouterMutex_") != std::string::npos);
-  assert(renderBody.find("std::try_to_lock") != std::string::npos);
-  assert(renderBody.find("std::lock_guard channelRouter") == std::string::npos);
+  assert(header.find("channelRouterMutex_") == std::string::npos);
+  assert(header.find("LatestRoutingCommandSlot") != std::string::npos);
+  assert(setOutputConfigBody.find("enqueueControlCommand(routingCommand)") != std::string::npos);
+  assert(source.find("channelRouter_.prepareForRealtime") != std::string::npos);
+  assert(renderBody.find("mutex_") == std::string::npos);
+  assert(renderBody.find("std::try_to_lock") == std::string::npos);
   assert(renderBody.find("channelRouter_.route") != std::string::npos);
 }
 
@@ -247,16 +249,14 @@ void testVolumeCommandApplicationIsRealtimeSafe() {
   assert(applyBody.find("make_unique") == std::string::npos);
 
   const size_t floatApply = renderBody.find("applyPendingControlCommands();");
-  const size_t floatPipelineLock = renderBody.find("std::unique_lock lock(mutex_");
   assert(floatApply != std::string::npos);
-  assert(floatPipelineLock != std::string::npos);
-  assert(floatApply < floatPipelineLock);
+  assert(renderBody.find("mutex_") == std::string::npos);
+  assert(renderBody.find("std::try_to_lock") == std::string::npos);
 
   const size_t typedApply = renderTypedBody.find("applyPendingControlCommands();");
-  const size_t typedPipelineLock = renderTypedBody.find("std::unique_lock lock(mutex_");
   assert(typedApply != std::string::npos);
-  assert(typedPipelineLock != std::string::npos);
-  assert(typedApply < typedPipelineLock);
+  assert(renderTypedBody.find("mutex_") == std::string::npos);
+  assert(renderTypedBody.find("std::try_to_lock") == std::string::npos);
 }
 
 void testVolumeCommandCallbackWorkIsBoundedAndUsesPortableAtomics() {
@@ -302,29 +302,24 @@ void testCrossfadePromotionClearsStaleLocalPreloadState() {
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
   const std::string source = readTextFile(sourcePath);
   const std::string renderBody = extractFunctionBody(source, "size_t AudioPipeline::render(float* output, size_t frameCount)");
-  const size_t promotion = renderBody.find("activeStream_ = preloadStream_");
+  const size_t promotion = renderBody.find("renderActiveStream_.store(active");
   assert(promotion != std::string::npos);
-  const size_t nextGuard = renderBody.find("if (!next) break;", promotion);
-  assert(nextGuard != std::string::npos);
-  const std::string promotionTail = renderBody.substr(promotion, nextGuard - promotion);
+  const std::string promotionTail = renderBody.substr(promotion);
 
-  assert(promotionTail.find("preload.reset()") != std::string::npos);
+  assert(promotionTail.find("renderPreloadStream_.store(nullptr") != std::string::npos);
+  assert(promotionTail.find("renderPromotionPending_.store(true") != std::string::npos);
   assert(promotionTail.find("crossfadeMixActive = false") != std::string::npos);
   assert(promotionTail.find("crossfadeFramesProcessed = 0") != std::string::npos);
   assert(promotionTail.find("crossfadeTotalFrames = 0") != std::string::npos);
 }
 
-void testRenderSideDecodeStreamRetirementDoesNotGrowContainers() {
+void testRenderSideDecodeStreamRetirementDoesNotAllocateOrDestroy() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
   const std::string source = readTextFile(sourcePath);
-  const std::string boolSignature = "bool AudioPipeline::retireDecodeStreamLocked(std::shared_ptr<DecodeStream> stream)";
-  const std::string voidSignature = "void AudioPipeline::retireDecodeStreamLocked(std::shared_ptr<DecodeStream> stream)";
-  const std::string retireBody = source.find(boolSignature) != std::string::npos
-                                     ? extractFunctionBody(source, boolSignature)
-                                     : extractFunctionBody(source, voidSignature);
-
-  assert(!std::regex_search(retireBody, std::regex(R"(\.(push_back|emplace_back)\s*\()")));
+  const std::string renderBody = extractFunctionBody(source, "size_t AudioPipeline::render(float* output, size_t frameCount)");
+  assert(renderBody.find("retireDecodeStreamLocked") == std::string::npos);
+  assert(!std::regex_search(renderBody, std::regex(R"(\.(push_back|emplace_back|resize|reserve)\s*\()")));
 }
 
 void testSetOutputConfigReleasesEngineMutexBeforeRerouteRestart() {
@@ -2208,7 +2203,7 @@ int main() {
   testRenderCallbacksDoNotBlockOnPipelineMutex();
   testRenderCallbacksDoNotWaitForDecoderBuffers();
   testNativeDsdRenderPositionAccountsForBitsPerByte();
-  testChannelRouterStateIsSerializedWithoutBlockingRenderCallbacks();
+  testChannelRouterStateIsOwnedByRenderCallback();
   testRenderCallbacksUseNonBlockingSpectrumReset();
   testRenderCallbackDoesNotStopDecodeStreams();
   testSetDspConfigParsesJsonOutsidePipelineMutex();
@@ -2217,7 +2212,7 @@ int main() {
   testVolumeCommandCallbackWorkIsBoundedAndUsesPortableAtomics();
   testDecodeStreamReaperRetiresOutsideAudioCallback();
   testCrossfadePromotionClearsStaleLocalPreloadState();
-  testRenderSideDecodeStreamRetirementDoesNotGrowContainers();
+  testRenderSideDecodeStreamRetirementDoesNotAllocateOrDestroy();
   testSetOutputConfigReleasesEngineMutexBeforeRerouteRestart();
   testSetDspConfigPreparesActiveChainForPreRoutingDecodeFormat();
   testDsdProcessingPcmDecisionUsesSharedHelper();

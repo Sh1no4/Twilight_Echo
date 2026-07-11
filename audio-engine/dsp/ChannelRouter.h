@@ -2,6 +2,7 @@
 
 #include "../core/AudioTypes.h"
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 namespace twilight::audio {
@@ -35,6 +36,11 @@ class ChannelRouter {
   /// 采样率变更时通知（重算滤波器系数和延迟线大小）
   void setSampleRate(int sampleRate);
 
+  // Allocate the delay-line storage before an output callback starts. Once
+  // prepared, runtime parameter changes only advance a generation counter and
+  // never resize or clear a buffer on the audio thread.
+  void prepareForRealtime(int sampleRate, float maximumDelayMs);
+
   /// 重置所有状态（切歌/切设备时调用）
   void reset();
 
@@ -55,11 +61,22 @@ class ChannelRouter {
   // 环绕延迟线
   std::vector<float> surroundLeftDelay_;
   std::vector<float> surroundRightDelay_;
+  std::vector<uint32_t> surroundLeftDelayGeneration_;
+  std::vector<uint32_t> surroundRightDelayGeneration_;
   size_t surroundDelaySamples_ = 0;
   size_t surroundLeftDelayCursor_ = 0;
   size_t surroundRightDelayCursor_ = 0;
+  size_t realtimeDelayCapacity_ = 0;
+  uint32_t delayGeneration_ = 1;
+  bool realtimePrepared_ = false;
 
   void recomputeCoefficients();
+  void resetRealtimeDelayState();
+  float pushRealtimeDelaySample(
+      std::vector<float>& delayLine,
+      std::vector<uint32_t>& generations,
+      size_t& cursor,
+      float sample);
   void processUpmix51(const float* src, float* dst, size_t frames);
   void processUpmix71(const float* src, float* dst, size_t frames);
   void processPassthrough(const float* src, float* dst, size_t frames,

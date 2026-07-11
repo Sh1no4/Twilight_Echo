@@ -19,8 +19,30 @@ void ChannelRouter::setSampleRate(int sampleRate) {
   recomputeCoefficients();
 }
 
+void ChannelRouter::prepareForRealtime(int sampleRate, float maximumDelayMs) {
+  if (sampleRate > 0) sampleRate_ = sampleRate;
+  const float boundedDelayMs = std::max(0.0f, maximumDelayMs);
+  realtimeDelayCapacity_ = static_cast<size_t>(
+      boundedDelayMs * 0.001f * static_cast<float>(sampleRate_));
+  surroundLeftDelay_.assign(realtimeDelayCapacity_, 0.0f);
+  surroundRightDelay_.assign(realtimeDelayCapacity_, 0.0f);
+  surroundLeftDelayGeneration_.assign(realtimeDelayCapacity_, 0);
+  surroundRightDelayGeneration_.assign(realtimeDelayCapacity_, 0);
+  realtimePrepared_ = true;
+  delayGeneration_ = 1;
+  surroundDelaySamples_ = 0;
+  surroundLeftDelayCursor_ = 0;
+  surroundRightDelayCursor_ = 0;
+  lfePrev_ = 0.0f;
+  recomputeCoefficients();
+}
+
 void ChannelRouter::reset() {
   lfePrev_ = 0.0f;
+  if (realtimePrepared_) {
+    resetRealtimeDelayState();
+    return;
+  }
   channel_router::prepareDelayLine(surroundLeftDelay_, surroundDelaySamples_, surroundLeftDelayCursor_);
   channel_router::prepareDelayLine(surroundRightDelay_, surroundDelaySamples_, surroundRightDelayCursor_);
 }
@@ -35,11 +57,41 @@ void ChannelRouter::recomputeCoefficients() {
   // 环绕延迟线大小
   const size_t newDelay = static_cast<size_t>(
       std::max(0.0f, config_.surroundDelayMs) * 0.001f * static_cast<float>(sampleRate_));
+  if (realtimePrepared_) {
+    const size_t boundedDelay = std::min(newDelay, realtimeDelayCapacity_);
+    if (surroundDelaySamples_ != boundedDelay) {
+      surroundDelaySamples_ = boundedDelay;
+      resetRealtimeDelayState();
+    }
+    return;
+  }
   if (surroundDelaySamples_ != newDelay) {
     surroundDelaySamples_ = newDelay;
     channel_router::prepareDelayLine(surroundLeftDelay_, surroundDelaySamples_, surroundLeftDelayCursor_);
     channel_router::prepareDelayLine(surroundRightDelay_, surroundDelaySamples_, surroundRightDelayCursor_);
   }
+}
+
+void ChannelRouter::resetRealtimeDelayState() {
+  surroundLeftDelayCursor_ = 0;
+  surroundRightDelayCursor_ = 0;
+  ++delayGeneration_;
+  if (delayGeneration_ == 0) delayGeneration_ = 1;
+}
+
+float ChannelRouter::pushRealtimeDelaySample(
+    std::vector<float>& delayLine,
+    std::vector<uint32_t>& generations,
+    size_t& cursor,
+    float sample) {
+  if (surroundDelaySamples_ == 0 || delayLine.empty() || generations.empty()) return sample;
+  if (cursor >= surroundDelaySamples_) cursor = 0;
+  const size_t index = cursor;
+  const float delayed = generations[index] == delayGeneration_ ? delayLine[index] : 0.0f;
+  delayLine[index] = sample;
+  generations[index] = delayGeneration_;
+  cursor = (index + 1) % surroundDelaySamples_;
+  return delayed;
 }
 
 void ChannelRouter::route(const float* source, float* destination,
@@ -106,8 +158,15 @@ void ChannelRouter::processUpmix51(const float* src, float* dst, size_t frames) 
     const float rl = l * sg;
     const float rr = r * sg;
     if (surroundDelaySamples_ > 0) {
-      out[4] = channel_router::pushDelaySample(surroundLeftDelay_, surroundLeftDelayCursor_, rl);
-      out[5] = channel_router::pushDelaySample(surroundRightDelay_, surroundRightDelayCursor_, rr);
+      if (realtimePrepared_) {
+        out[4] = pushRealtimeDelaySample(
+            surroundLeftDelay_, surroundLeftDelayGeneration_, surroundLeftDelayCursor_, rl);
+        out[5] = pushRealtimeDelaySample(
+            surroundRightDelay_, surroundRightDelayGeneration_, surroundRightDelayCursor_, rr);
+      } else {
+        out[4] = channel_router::pushDelaySample(surroundLeftDelay_, surroundLeftDelayCursor_, rl);
+        out[5] = channel_router::pushDelaySample(surroundRightDelay_, surroundRightDelayCursor_, rr);
+      }
     } else {
       out[4] = rl;                       // RL = L × surroundGain
       out[5] = rr;                       // RR = R × surroundGain
