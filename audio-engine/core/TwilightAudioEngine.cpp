@@ -315,6 +315,8 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"position\":" << info.positionSeconds << ","
        << "\"duration\":" << info.durationSeconds << ","
        << "\"volume\":" << info.volume << ","
+       << "\"requestedConfigRevision\":" << info.requestedConfigRevision << ","
+       << "\"appliedConfigRevision\":" << info.appliedConfigRevision << ","
        << "\"queueIndex\":" << info.queueIndex << ","
        << "\"playMode\":\"" << json_utils::escape(info.playMode) << "\","
        << "\"source\":\"" << json_utils::escape(info.source) << "\","
@@ -1464,6 +1466,14 @@ void TwilightAudioEngine::clockLoop() {
       renderError = pipeline_->consumeRenderError(&renderErrorMessage);
       trackStarted = pipeline_->consumeTrackStarted(&startedItem);
     }
+    if (hasPipelineStatus &&
+        pipelineStatus.appliedConfigRevision > lastEmittedAppliedConfigRevision_) {
+      lastEmittedAppliedConfigRevision_ = pipelineStatus.appliedConfigRevision;
+      std::ostringstream configPayload;
+      configPayload << "{\"requestedConfigRevision\":" << pipelineStatus.requestedConfigRevision
+                    << ",\"appliedConfigRevision\":" << pipelineStatus.appliedConfigRevision << "}";
+      emit("config-applied", configPayload.str());
+    }
     if (deviceInvalidated) {
       std::string source;
       double position = 0.0;
@@ -1619,6 +1629,8 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   }
 
   info_.positionSeconds = status.positionSeconds;
+  info_.requestedConfigRevision = status.requestedConfigRevision;
+  info_.appliedConfigRevision = status.appliedConfigRevision;
   info_.durationSeconds = status.stream.durationSeconds;
   info_.source = status.stream.source.empty() ? info_.source : status.stream.source;
   info_.codec = status.stream.codec.empty() ? info_.codec : status.stream.codec;

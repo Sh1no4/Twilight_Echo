@@ -172,3 +172,11 @@ test('specialized windows receive only their scoped preload APIs', () => {
   assert.doesNotMatch(miniPlayerApi, /ipcRenderer\.(?:invoke|send)\('(?:settings|shell|dialog):/)
   assert.doesNotMatch(preloadSource, /exposeInMainWorld\('electron'/)
 })
+
+test('provider results replace approved remote media URLs before returning to the renderer', () => {
+  assert.match(managerSource, /import \{ protectProviderMedia \} from '\.\.\/security\/remoteMediaGrants\.ts'/)
+  assert.match(
+    managerSource,
+    /pending\.resolve\(protectProviderMedia\(message\.value, pending\.method\)\)/
+  )
+})

@@ -33,9 +33,9 @@ test('audioEngine IPC normalizes untrusted renderer parameters', () => {
     /normalizeIpcArray\(items, 'audio queue', MAX_AUDIO_QUEUE_ITEMS, toQueueItem\)/
   )
   assert.match(source, /queue\.length !== items\.length/)
-  assert.match(source, /source: await resolveAuthorizedAudioSource\(item\.source\)/)
+  assert.match(source, /source: await resolveAuthorizedPlaybackSource\(item\.source\)/)
   assert.match(source, /normalizeIpcString\(source, 'audio source'/)
-  assert.match(source, /await resolveAuthorizedAudioSource\(/)
+  assert.match(source, /await resolveAuthorizedPlaybackSource\(/)
   assert.match(source, /normalizeFiniteNumber\(time, 'seek time', 0, 0, Number\.MAX_SAFE_INTEGER\)/)
   assert.match(source, /normalizeFiniteNumber\(volume, 'volume', 1, 0, 1\)/)
   assert.match(source, /normalizeInteger\(points, 'spectrum points', 128, 8, 4096\)/)

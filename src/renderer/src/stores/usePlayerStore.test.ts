@@ -349,6 +349,15 @@ test('local dashboard playback keeps a multi-track queue for next and previous c
   )
 })
 
+test('local dashboard uses a single-line masthead heading without English section kickers', () => {
+  const source = readFileSync(new URL('../components/LocalDashboard.vue', import.meta.url), 'utf8')
+
+  assert.doesNotMatch(source, /class="masthead-kicker"/)
+  assert.doesNotMatch(source, /class="masthead-subtitle"/)
+  assert.doesNotMatch(source, /<h1 class="greeting">[\s\S]*?<span>/)
+  assert.doesNotMatch(source, /class="section-kicker"/)
+})
+
 test('playback session strips transient provider stream URLs before restore', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const cloneTrackForPlaybackSession = extractInternalFunctionBody(

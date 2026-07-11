@@ -79,19 +79,6 @@ const greeting = computed(() => {
   return '晚上好'
 })
 
-const greetingEn = computed(() => {
-  const hour = now.value.getHours()
-  if (hour < 5) return 'AFTER MIDNIGHT'
-  if (hour < 11) return 'GOOD MORNING'
-  if (hour < 14) return 'GOOD NOON'
-  if (hour < 18) return 'GOOD AFTERNOON'
-  return 'GOOD EVENING'
-})
-
-const dateLine = computed(() =>
-  now.value.toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })
-)
-
 const hasLibrary = computed(() => tracks.value.length > 0)
 
 const totalDurationText = computed(() => {
@@ -413,17 +400,7 @@ const activeDspCount = computed(() => dspNodes.value.filter((node) => node.activ
     <main class="home-inner">
       <header class="masthead">
         <div class="masthead-copy">
-          <p class="masthead-kicker">
-            <span class="kicker-label"><i class="ph ph-waveform"></i> Local collection</span>
-            <span>{{ dateLine }} · {{ greetingEn }}</span>
-          </p>
           <h1 class="greeting">{{ greeting }}，<span>让熟悉的旋律陪你一会儿。</span></h1>
-          <p class="masthead-subtitle">
-            <template v-if="hasLibrary">
-              {{ tracks.length }} 首私人收藏，安静地等着被再次听见。
-            </template>
-            <template v-else>从一张唱片开始，慢慢建立只属于你的声音收藏。</template>
-          </p>
         </div>
         <button v-if="hasLibrary" class="shuffle-shortcut" @click="shuffleAll">
           <span class="shuffle-icon"><i class="ph ph-shuffle"></i></span>
@@ -443,7 +420,6 @@ const activeDspCount = computed(() => dspNodes.value.filter((node) => node.activ
           <i class="ph ph-sparkle empty-sparkle sparkle-b"></i>
         </div>
         <div class="empty-copy">
-          <span class="section-kicker">YOUR FIRST NOTE</span>
           <h2>这里还很安静</h2>
           <p>前往「设置 → 音乐库」添加本地文件夹，封面、专辑和听歌足迹都会自动在这里汇聚。</p>
           <div class="empty-features">
@@ -546,7 +522,6 @@ const activeDspCount = computed(() => dspNodes.value.filter((node) => node.activ
             <aside class="overview-card surface-card">
               <div class="compact-card-head">
                 <div>
-                  <span class="section-kicker">MY LIBRARY</span>
                   <h2>收藏概览</h2>
                 </div>
                 <button
@@ -586,7 +561,6 @@ const activeDspCount = computed(() => dspNodes.value.filter((node) => node.activ
             <aside class="signal-card surface-card">
               <div class="signal-head">
                 <div>
-                  <span class="section-kicker">SIGNAL PATH</span>
                   <h2>播放链路</h2>
                 </div>
                 <span class="dsp-state" :class="{ on: dspEngineOn, live: playbackInfo?.dspActive }">
@@ -633,7 +607,6 @@ const activeDspCount = computed(() => dspNodes.value.filter((node) => node.activ
         <section class="content-section recent-section">
           <div class="section-head modern-section-head">
             <div class="section-heading-copy">
-              <span class="section-kicker">FRESH IN</span>
               <h3>最近添加</h3>
               <p>刚刚加入收藏的声音，值得先听一遍。</p>
             </div>
@@ -667,7 +640,6 @@ const activeDspCount = computed(() => dspNodes.value.filter((node) => node.activ
         <section class="content-section footprint-section">
           <div class="section-head modern-section-head">
             <div class="section-heading-copy">
-              <span class="section-kicker">LISTENING STORY</span>
               <h3>聆听足迹</h3>
               <p>每一次重播，都在慢慢画出你的音乐偏好。</p>
             </div>
@@ -771,7 +743,6 @@ const activeDspCount = computed(() => dspNodes.value.filter((node) => node.activ
         <section v-if="albumShelf.length > 0" class="content-section album-section">
           <div class="section-head modern-section-head">
             <div class="section-heading-copy">
-              <span class="section-kicker">ALBUM SELECTS</span>
               <h3>专辑精选</h3>
               <p>从头到尾听完一张专辑，是留给音乐最温柔的时间。</p>
             </div>

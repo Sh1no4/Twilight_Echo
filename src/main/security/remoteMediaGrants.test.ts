@@ -1,0 +1,137 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+const { RemoteMediaGrantService, createRemoteMediaRequestHandler, protectProviderMedia } = (await import(
+  new URL('./remoteMediaGrants.ts', import.meta.url).href
+)) as typeof import('./remoteMediaGrants')
+
+test('remote media grants expose an opaque URL and expire after inactivity', () => {
+  let now = 1_000
+  const grants = new RemoteMediaGrantService({ now: () => now, createToken: () => 'opaque-token' })
+  const granted = grants.grant('https://media.example/track.flac?secret=abc', 'audio')
+
+  assert.equal(granted, 'twilight-media://audio/opaque-token')
+  assert.doesNotMatch(granted, /media\.example|secret/)
+  assert.deepEqual(grants.resolve(granted, 'audio'), {
+    source: 'https://media.example/track.flac?secret=abc',
+    kind: 'audio'
+  })
+
+  now += 30 * 60 * 1000 + 1
+  assert.throws(() => grants.resolve(granted, 'audio'), /expired/)
+})
+
+test('provider media results replace only approved remote media fields with grants', () => {
+  const grants = new RemoteMediaGrantService({
+    createToken: (() => {
+      let index = 0
+      return () => `token-${++index}`
+    })()
+  })
+
+  const protectedTracks = protectProviderMedia(
+    [
+      {
+        title: 'Song',
+        cover: 'http://cover.example/art.jpg',
+        streamUrl: 'https://media.example/song.flac',
+        homepage: 'https://provider.example/song'
+      }
+    ],
+    'searchSongs',
+    grants
+  ) as Array<Record<string, string>>
+
+  assert.equal(protectedTracks[0].cover, 'twilight-media://image/token-1')
+  assert.equal(protectedTracks[0].streamUrl, 'twilight-media://audio/token-2')
+  assert.equal(protectedTracks[0].homepage, 'https://provider.example/song')
+  assert.equal(
+    protectProviderMedia('https://media.example/stream.flac', 'getPlaybackUrl', grants),
+    'twilight-media://audio/token-3'
+  )
+})
+
+test('provider artist and playlist artwork fields use image grants', () => {
+  const grants = new RemoteMediaGrantService({
+    createToken: (() => {
+      let index = 0
+      return () => `artwork-${++index}`
+    })()
+  })
+
+  const protectedMedia = protectProviderMedia(
+    {
+      picUrl: 'https://cover.example/artist.jpg',
+      avatarUrl: 'https://cover.example/avatar.jpg',
+      coverImgUrl: 'https://cover.example/playlist.jpg',
+      blurPicUrl: 'https://cover.example/album.jpg'
+    },
+    'searchArtists',
+    grants
+  ) as Record<string, string>
+
+  assert.deepEqual(protectedMedia, {
+    picUrl: 'twilight-media://image/artwork-1',
+    avatarUrl: 'twilight-media://image/artwork-2',
+    coverImgUrl: 'twilight-media://image/artwork-3',
+    blurPicUrl: 'twilight-media://image/artwork-4'
+  })
+})
+
+test('remote media grants reject credentials, wrong kinds, and malformed tokens', () => {
+  const grants = new RemoteMediaGrantService({ createToken: () => 'cover-token' })
+  assert.throws(() => grants.grant('https://user:secret@media.example/file', 'audio'), /credentials/)
+
+  const granted = grants.grant('https://cover.example/art.jpg', 'image')
+  assert.throws(() => grants.resolve(granted, 'audio'), /kind/)
+  assert.throws(() => grants.resolve('twilight-media://image/not-issued', 'image'), /unknown/)
+})
+
+test('remote media proxy forwards only valid range requests without credentials', async () => {
+  const grants = new RemoteMediaGrantService({ createToken: () => 'audio-token' })
+  const granted = grants.grant('https://media.example/private.flac', 'audio')
+  const requests: Array<{ source: string; init: RequestInit }> = []
+  const handler = createRemoteMediaRequestHandler({
+    grants,
+    fetch: async (source, init) => {
+      requests.push({ source, init })
+      return new Response('audio', {
+        headers: { 'content-type': 'audio/flac', 'content-length': '5' }
+      })
+    }
+  })
+
+  const response = await handler(new Request(granted, { headers: { Range: 'bytes=0-4' } }))
+
+  assert.equal(response.status, 200)
+  assert.equal(await response.text(), 'audio')
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].source, 'https://media.example/private.flac')
+  assert.equal(new Headers(requests[0].init.headers).get('range'), 'bytes=0-4')
+  assert.equal(requests[0].init.credentials, 'omit')
+  assert.equal(requests[0].init.redirect, 'manual')
+  const invalidRange = await handler(new Request(granted, { headers: { Range: 'bytes=0-1,3-4' } }))
+  assert.equal(invalidRange.status, 416)
+})
+
+test('remote media proxy refuses redirects and oversized responses without exposing origins', async () => {
+  const grants = new RemoteMediaGrantService({ createToken: () => 'cover-token' })
+  const granted = grants.grant('https://cover.example/secret-art.jpg', 'image')
+  const redirectHandler = createRemoteMediaRequestHandler({
+    grants,
+    fetch: async () => new Response(null, { status: 302, headers: { location: 'https://evil.example' } })
+  })
+  const redirected = await redirectHandler(new Request(granted))
+  assert.equal(redirected.status, 502)
+  assert.doesNotMatch(await redirected.text(), /cover\.example|evil\.example/)
+
+  const oversizedHandler = createRemoteMediaRequestHandler({
+    grants,
+    fetch: async () =>
+      new Response('too large', {
+        headers: { 'content-type': 'image/jpeg', 'content-length': String(25 * 1024 * 1024 + 1) }
+      })
+  })
+  const oversized = await oversizedHandler(new Request(granted))
+  assert.equal(oversized.status, 413)
+})

@@ -2,6 +2,7 @@
 
 #include "AudioBuffer.h"
 #include "AudioTypes.h"
+#include "FixedSpscQueue.h"
 #include "../decoder/DopPacker.h"
 #include "../decoder/DsdReader.h"
 #include "../decoder/FFmpegDecoder.h"
@@ -62,6 +63,8 @@ struct PipelineStatus {
   bool gaplessActive = false;
   bool preloadReady = false;
   std::string perfectReason;
+  uint64_t requestedConfigRevision = 0;
+  uint64_t appliedConfigRevision = 0;
 };
 
 class AudioPipeline {
@@ -129,6 +132,25 @@ class AudioPipeline {
   static void setBackendFactoryForTests(BackendFactory factory);
 
  private:
+  enum class ControlCommandType : uint8_t {
+    Volume
+  };
+
+  struct ControlCommand {
+    ControlCommandType type = ControlCommandType::Volume;
+    double volume = 1.0;
+    uint64_t revision = 0;
+  };
+
+  struct LatestControlCommandSlot {
+    void publish(const ControlCommand& command) noexcept;
+    bool read(ControlCommand* command) const noexcept;
+
+    std::atomic<uint64_t> sequence{0};
+    std::atomic<uint64_t> revision{0};
+    std::atomic<double> volume{1.0};
+  };
+
   struct DecodeStream;
   struct DecodeStreamReaper;
 
@@ -184,6 +206,9 @@ class AudioPipeline {
   DspChain& spareDspChainLocked();
   size_t render(float* output, size_t frameCount);
   size_t renderTyped(PcmBlock& output);
+  void enqueueControlCommand(const ControlCommand& command) noexcept;
+  void applyPendingControlCommands() noexcept;
+  void applyControlCommand(const ControlCommand& command) noexcept;
 
   mutable std::mutex mutex_;
   std::unique_ptr<IOutputBackend> output_;
@@ -211,8 +236,13 @@ class AudioPipeline {
   std::atomic<bool> deviceInvalidated_{false};
   std::atomic<bool> renderError_{false};
   std::atomic<bool> trackStarted_{false};
-  std::atomic<double> volume_{1.0};
-  std::atomic<bool> volumeStateRefreshPending_{false};
+  static constexpr size_t kControlCommandCapacity = 32;
+  FixedSpscQueue<ControlCommand, kControlCommandCapacity> controlCommands_;
+  LatestControlCommandSlot latestOverflowCommand_;
+  std::atomic<double> requestedVolume_{1.0};
+  std::atomic<double> appliedVolume_{1.0};
+  std::atomic<uint64_t> requestedConfigRevision_{0};
+  std::atomic<uint64_t> appliedConfigRevision_{0};
   std::atomic<uint64_t> renderedFrames_{0};
   std::atomic<int> renderChannelCount_{2};
   PipelineState state_ = PipelineState::Stopped;

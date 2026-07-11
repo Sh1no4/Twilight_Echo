@@ -27,6 +27,8 @@ struct PlaybackInfo {
   double positionSeconds = 0.0;
   double durationSeconds = 0.0;
   double volume = 1.0;
+  uint64_t requestedConfigRevision = 0;
+  uint64_t appliedConfigRevision = 0;
   int queueIndex = -1;
   std::string playMode = "sequential";
   std::string source;
@@ -171,6 +173,7 @@ class TwilightAudioEngine {
   std::atomic<bool> running_{true};
   std::thread clockThread_;
   std::chrono::steady_clock::time_point lastTick_;
+  uint64_t lastEmittedAppliedConfigRevision_ = 0;
 };
 
 }  // namespace twilight::audio

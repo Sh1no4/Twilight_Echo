@@ -171,11 +171,20 @@ node --experimental-strip-types --test src/renderer/src/utils/logicalTrackModel.
 
 Windows MinGW 原生音频引擎：
 
-```bash
+```powershell
+$env:VCPKG_ROOT = 'C:\path\to\vcpkg'
+$env:W64DEVKIT_ROOT = 'C:\path\to\w64devkit'
+$env:TWILIGHT_GNU_PATCH = 'C:\Program Files\Git\usr\bin\patch.exe'
+# 仓库路径含空白时必须设置；该目录必须可写且完整路径不含空白。
+$env:TAE_MINGW_BUILD_DIR = 'C:\twilight-build\mingw-static'
+npm run test:audio-toolchain
 npm run configure:audio-engine:mingw
 npm run build:audio-engine:mingw
 npm run test:audio-engine:mingw
+ctest --test-dir $env:TAE_MINGW_BUILD_DIR -N
 ```
+
+配置脚本会在调用 CMake 前验证 vcpkg、MinGW 编译器、Ninja 和 GNU `patch`，并清理指向已移动构建目录的 CTest 注册。Git for Windows 的 `patch.exe` 必须优先于 w64devkit 的 BusyBox 版本；未安装 Git 时设置 `TWILIGHT_GNU_PATCH`。当仓库路径包含空白时，必须设置 `TAE_MINGW_BUILD_DIR` 到一个可写且完整路径不含空白的外部目录；配置、构建、CTest、暂存和临时目录 `$env:TAE_MINGW_BUILD_DIR\tmp` 都使用它。不要把本机工具链路径写入 CMake preset。
 
 无真实设备发布前 gate：
 

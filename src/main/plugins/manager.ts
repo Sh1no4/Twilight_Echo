@@ -19,6 +19,7 @@ import {
   extractPluginPackage
 } from './packageSecurity.ts'
 import { redactSensitiveText } from '../security/secureStorage.ts'
+import { protectProviderMedia } from '../security/remoteMediaGrants.ts'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -1168,7 +1169,7 @@ export class TwilightPluginManager extends EventEmitter {
     clearTimeout(pending.timer)
     if (message.ok) {
       this.recordProviderCallSuccess(pending.providerId, pending.pluginId, pending.method)
-      pending.resolve(message.value)
+      pending.resolve(protectProviderMedia(message.value, pending.method))
     } else {
       const staleBundledProvider =
         this.isBundledPluginId(pending.pluginId) &&

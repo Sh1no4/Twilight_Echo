@@ -179,9 +179,11 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
     electronSecuritySource,
     /isAudioVisualizerDocumentUrl\(url\)[\s\S]*script-src 'self' 'unsafe-inline'/
   )
-  // Streaming covers (e.g. NetEase http://*.music.126.net) require remote http(s) image sources.
-  assert.match(electronSecuritySource, /img-src 'self' data: blob: cover: background: http: https:/)
-  assert.match(rendererHtml, /img-src 'self' data: blob: cover: background: http: https:/)
+  assert.match(electronSecuritySource, /img-src 'self' data: blob: cover: background: twilight-media:/)
+  assert.match(electronSecuritySource, /media-src 'self' blob: twilight-audio: twilight-media:/)
+  assert.match(rendererHtml, /img-src 'self' data: blob: cover: background: twilight-media:/)
+  assert.match(rendererHtml, /media-src 'self' blob: twilight-audio: twilight-media:/)
+  assert.doesNotMatch(rendererHtml, /(?:img-src|media-src)[^;]*\bhttps?:/)
   assert.doesNotMatch(rendererHtml, /unpkg\.com|fonts\.googleapis\.com|unsafe-inline' https:/)
   assert.match(rendererHtml, /script-src 'self'/)
   assert.match(rendererHtml, /frame-src 'self'/)
@@ -191,6 +193,7 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
   assert.match(pluginsSource, /assertTrustedIpcSender/)
   assert.match(audioIpcSource, /assertTrustedIpcSender/)
   assert.match(audioIpcSource, /resolveAuthorizedAudioSource/)
+  assert.match(audioIpcSource, /resolveAuthorizedPlaybackSource/)
   assert.match(audioIpcSource, /resolveAuthorizedImpulseResponseFile/)
   assert.match(desktopLyricsSource, /shouldAcceptIpcEvent/)
   assert.match(miniPlayerSource, /assertTrustedIpcSender/)
@@ -200,7 +203,7 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
   assert.match(miniPlayerSource, /resizable: true/)
   assert.match(miniPlayerSource, /minWidth: MINI_PLAYER_MIN_WIDTH/)
   assert.match(miniPlayerSource, /maxHeight: MINI_PLAYER_MAX_HEIGHT/)
-  assert.match(miniPlayerSource, /roundedCorners: false/)
+  assert.match(miniPlayerSource, /roundedCorners: true/)
   assert.match(miniPlayerSource, /thickFrame: process\.platform === 'win32'/)
   assert.match(miniPlayerSource, /win\.on\('resize'/)
   assert.match(miniPlayerSource, /persistMiniPlayerBounds/)

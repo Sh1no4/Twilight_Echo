@@ -164,6 +164,8 @@ function makePlaybackInfo(overrides: Partial<PlaybackInfo> = {}): PlaybackInfo {
     position: 0,
     duration: 0,
     volume: 1,
+    requestedConfigRevision: 0,
+    appliedConfigRevision: 0,
     queueIndex: -1,
     playMode: 'sequential',
     source: '',
@@ -255,6 +257,26 @@ function assertPlaybackMirrorsOutputInfo(info: PlaybackInfo): void {
   assert.equal(info.dsdMode, info.outputInfo.dsdMode)
   assert.equal(info.dsdRate, info.outputInfo.dsdRate)
 }
+
+test('playback fanout signature changes when config revisions advance', () => {
+  const base = makePlaybackInfo() as PlaybackInfo & {
+    requestedConfigRevision: number
+    appliedConfigRevision: number
+  }
+  base.requestedConfigRevision = 0
+  base.appliedConfigRevision = 0
+  const requested = { ...base, requestedConfigRevision: 1 }
+  const applied = { ...requested, appliedConfigRevision: 1 }
+
+  assert.notEqual(
+    createPlaybackInfoFanoutSignature(base, true),
+    createPlaybackInfoFanoutSignature(requested, true)
+  )
+  assert.notEqual(
+    createPlaybackInfoFanoutSignature(requested, true),
+    createPlaybackInfoFanoutSignature(applied, true)
+  )
+})
 
 test('playback fanout signature ignores native tick position changes', () => {
   const info = makePlaybackInfo({

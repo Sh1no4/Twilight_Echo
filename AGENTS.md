@@ -76,13 +76,16 @@ Example: `node --experimental-strip-types --test src/main/audioEngineManager.tes
 
 ### Native audio engine (Windows MinGW, verified toolchain)
 
-```bash
-npm run configure:audio-engine:mingw   # node scripts/configure-audio-engine-mingw.cjs
-npm run build:audio-engine:mingw       # cmake --build + npm run stage:audio-engine
-npm run test:audio-engine:mingw        # ctest --test-dir audio-engine/build/mingw-static
+```powershell
+# 仓库路径含空白时必须设置；该目录必须可写且完整路径不含空白。
+$env:TAE_MINGW_BUILD_DIR = 'C:\twilight-build\mingw-static'
+npm run configure:audio-engine:mingw   # 使用 $env:TAE_MINGW_BUILD_DIR
+npm run build:audio-engine:mingw       # 构建并从所选目录暂存
+npm run test:audio-engine:mingw        # 从所选目录运行 CTest
+ctest --test-dir $env:TAE_MINGW_BUILD_DIR -N
 ```
 
-Default (non-MinGW) CMake entry exists but MinGW is the verified Windows path. `npm run test:no-real-device` runs the full no-real-device gate: MinGW configure/build/test + audio-manager + playback-routing + typecheck + build.
+When the repository path contains whitespace, `TAE_MINGW_BUILD_DIR` is required and must name a writable external directory without whitespace. Configure, build, CTest, staging, and the `$env:TAE_MINGW_BUILD_DIR\tmp` temporary directory use this one layout. Default (non-MinGW) CMake entry exists but MinGW is the verified Windows path. `npm run test:no-real-device` runs the full no-real-device gate: MinGW configure/build/test + audio-manager + playback-routing + typecheck + build.
 
 ### Release gate (Windows)
 

@@ -27,6 +27,7 @@ import {
   normalizeOptionalIpcString
 } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
+import { remoteMediaGrants } from '../security/remoteMediaGrants.ts'
 import {
   grantUserSelectedImpulseResponse,
   resolveAuthorizedAudioSource,
@@ -97,6 +98,13 @@ function normalizeQueueText(value: unknown, fallback?: string): string | undefin
     .trim()
     .slice(0, 512)
   return normalized || fallback
+}
+
+async function resolveAuthorizedPlaybackSource(source: string): Promise<string> {
+  if (source.startsWith('twilight-media:')) {
+    return remoteMediaGrants.resolve(source, 'audio').source
+  }
+  return await resolveAuthorizedAudioSource(source)
 }
 
 export async function setupAudioEngineIpc(): Promise<void> {
@@ -187,7 +195,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
     const authorizedQueue = await Promise.all(
       queue.map(async (item) => ({
         ...item,
-        source: await resolveAuthorizedAudioSource(item.source)
+        source: await resolveAuthorizedPlaybackSource(item.source)
       }))
     )
     const normalizedStartIndex = normalizeInteger(
@@ -203,7 +211,7 @@ export async function setupAudioEngineIpc(): Promise<void> {
   ipcMain.handle('audioEngine:play', async (_event, source: string, startTime?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     return await requireAudioEngine().play(
-      await resolveAuthorizedAudioSource(
+      await resolveAuthorizedPlaybackSource(
         normalizeIpcString(source, 'audio source', MAX_AUDIO_SOURCE_LENGTH)
       ),
       normalizeFiniteNumber(startTime, 'start time', 0, 0, Number.MAX_SAFE_INTEGER)

@@ -883,6 +883,8 @@ export interface PlaybackInfo extends PlaybackOutputInfoMirror {
   position: number
   duration: number
   volume: number
+  requestedConfigRevision: number
+  appliedConfigRevision: number
   queueIndex: number
   playMode: PlayMode
   source: string

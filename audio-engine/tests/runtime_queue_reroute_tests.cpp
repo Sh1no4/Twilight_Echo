@@ -1,6 +1,7 @@
 #include "../core/TwilightAudioEngine.h"
 #include "../core/AudioPipeline.h"
 #include "../core/AudioPipelineRenderUtils.h"
+#include "../core/FixedSpscQueue.h"
 #include "../decoder/DsdReader.h"
 #include "../decoder/FFmpegDecoder.h"
 #include "../output/IOutputBackend.h"
@@ -34,6 +35,22 @@ constexpr int kDsd64Rate = 2822400;
 constexpr int kDsd128Rate = 5644800;
 constexpr int kDsd256Rate = 11289600;
 constexpr int kDsd512Rate = 22579200;
+
+void testFixedSpscQueuePreservesFifoAndReportsFull() {
+  FixedSpscQueue<uint32_t, 3> queue;
+  uint32_t value = 0;
+
+  assert(queue.push(10));
+  assert(queue.push(20));
+  assert(queue.push(30));
+  assert(!queue.push(40));
+  assert(queue.pop(value) && value == 10);
+  assert(queue.pop(value) && value == 20);
+  assert(queue.push(40));
+  assert(queue.pop(value) && value == 30);
+  assert(queue.pop(value) && value == 40);
+  assert(!queue.pop(value));
+}
 
 void testFloatScratchResizeForOverwritePreservesSameSizedScratch() {
   std::vector<float> scratch = {0.25f, -0.5f, 0.75f};
@@ -208,8 +225,38 @@ void testSetVolumeAvoidsBlockingOnPipelineMutex() {
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
   const std::string source = readTextFile(sourcePath);
   const std::string body = extractFunctionBody(source, "void AudioPipeline::setVolume(double volume)");
-  assert(body.find("std::unique_lock lock(mutex_, std::try_to_lock)") != std::string::npos);
+  assert(body.find("enqueueControlCommand") != std::string::npos);
+  assert(body.find("mutex_") == std::string::npos);
+  assert(body.find("std::unique_lock") == std::string::npos);
   assert(body.find("std::lock_guard lock(mutex_)") == std::string::npos);
+}
+
+void testVolumeCommandApplicationIsRealtimeSafe() {
+  const std::filesystem::path testFilePath(__FILE__);
+  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string applyBody = extractFunctionBody(source, "void AudioPipeline::applyPendingControlCommands()");
+  const std::string renderBody = extractFunctionBody(source, "size_t AudioPipeline::render(float* output, size_t frameCount)");
+  const std::string renderTypedBody = extractFunctionBody(source, "size_t AudioPipeline::renderTyped(PcmBlock& output)");
+
+  assert(applyBody.find("mutex_") == std::string::npos);
+  assert(applyBody.find("std::lock") == std::string::npos);
+  assert(applyBody.find("wait") == std::string::npos);
+  assert(applyBody.find("new ") == std::string::npos);
+  assert(applyBody.find("make_shared") == std::string::npos);
+  assert(applyBody.find("make_unique") == std::string::npos);
+
+  const size_t floatApply = renderBody.find("applyPendingControlCommands();");
+  const size_t floatPipelineLock = renderBody.find("std::unique_lock lock(mutex_");
+  assert(floatApply != std::string::npos);
+  assert(floatPipelineLock != std::string::npos);
+  assert(floatApply < floatPipelineLock);
+
+  const size_t typedApply = renderTypedBody.find("applyPendingControlCommands();");
+  const size_t typedPipelineLock = renderTypedBody.find("std::unique_lock lock(mutex_");
+  assert(typedApply != std::string::npos);
+  assert(typedPipelineLock != std::string::npos);
+  assert(typedApply < typedPipelineLock);
 }
 
 void testDecodeStreamReaperRetiresOutsideAudioCallback() {
@@ -1129,6 +1176,121 @@ double playbackJsonNumber(const std::string& json, const std::string& key) {
   return std::stod(json.substr(valueStart, valueEnd - valueStart));
 }
 
+bool bufferHasSampleAbove(const std::vector<float>& samples, float threshold);
+
+void testVolumeCommandAppliesAtRenderBoundary() {
+  g_backendRegistry.reset();
+  AudioPipeline pipeline;
+  std::string error;
+  assert(
+      pipeline.play(
+          "volume-boundary.flac",
+          0.0,
+          "wasapi-exclusive",
+          "auto",
+          1.0,
+          "{\"dspEnabled\":true,\"eqEnabled\":true}",
+          &error) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+
+  const PipelineStatus before = pipeline.status();
+  pipeline.setVolume(0.4);
+  const PipelineStatus accepted = pipeline.status();
+  assert(accepted.requestedConfigRevision > before.requestedConfigRevision);
+  assert(accepted.appliedConfigRevision == before.appliedConfigRevision);
+  assert(accepted.requestedConfigRevision > accepted.appliedConfigRevision);
+
+  renderBackendFrames(backend, 128);
+  const PipelineStatus applied = pipeline.status();
+  assert(applied.appliedConfigRevision == accepted.requestedConfigRevision);
+  pipeline.stop();
+}
+
+void testVolumeCommandStormCoalescesToNewestValue() {
+  g_backendRegistry.reset();
+  AudioPipeline pipeline;
+  std::string error;
+  assert(
+      pipeline.play(
+          "volume-command-storm.flac",
+          0.0,
+          "wasapi-exclusive",
+          "auto",
+          1.0,
+          "{\"dspEnabled\":true,\"eqEnabled\":true}",
+          &error) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+
+  for (int i = 0; i < 128; ++i) {
+    pipeline.setVolume(static_cast<double>(i) / 200.0);
+  }
+  pipeline.setVolume(0.37);
+  const PipelineStatus accepted = pipeline.status();
+  assert(accepted.requestedConfigRevision > accepted.appliedConfigRevision);
+
+  const std::vector<float> rendered = renderBackendFrames(backend, 128);
+  const PipelineStatus applied = pipeline.status();
+  assert(applied.appliedConfigRevision == accepted.requestedConfigRevision);
+  assert(bufferHasSampleAbove(rendered, 0.08f));
+  assert(!bufferHasSampleAbove(rendered, 0.10f));
+  pipeline.stop();
+}
+
+struct ConfigEventCapture {
+  std::mutex mutex;
+  std::vector<std::pair<std::string, std::string>> events;
+};
+
+void captureConfigEvent(const char* eventType, const char* payloadJson, void* userData) {
+  auto* capture = static_cast<ConfigEventCapture*>(userData);
+  if (!capture || !eventType) return;
+  std::lock_guard lock(capture->mutex);
+  capture->events.emplace_back(eventType, payloadJson ? payloadJson : "{}");
+}
+
+size_t capturedEventCount(ConfigEventCapture& capture, const std::string& eventType) {
+  std::lock_guard lock(capture.mutex);
+  return static_cast<size_t>(std::count_if(
+      capture.events.begin(),
+      capture.events.end(),
+      [&eventType](const auto& event) { return event.first == eventType; }));
+}
+
+std::string capturedEventPayload(ConfigEventCapture& capture, const std::string& eventType) {
+  std::lock_guard lock(capture.mutex);
+  for (auto it = capture.events.rbegin(); it != capture.events.rend(); ++it) {
+    if (it->first == eventType) return it->second;
+  }
+  return {};
+}
+
+void testConfigAppliedEventFollowsRenderApplication() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  ConfigEventCapture capture;
+  engine.setEventCallback(captureConfigEvent, &capture);
+  assert(engine.setDspConfig("{\"dspEnabled\":true,\"eqEnabled\":true}") == TAE_RESULT_OK);
+  assert(engine.play("config-applied-event.flac", 0.0) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  const std::string acceptedJson = engine.getPlaybackInfoJson();
+  const double requested = playbackJsonNumber(acceptedJson, "requestedConfigRevision");
+  const double appliedBeforeRender = playbackJsonNumber(acceptedJson, "appliedConfigRevision");
+  assert(requested > appliedBeforeRender);
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  assert(capturedEventCount(capture, "config-applied") == 0);
+
+  renderBackendFrames(backend, 128);
+  assert(waitUntil([&capture] { return capturedEventCount(capture, "config-applied") == 1; }));
+  const std::string payload = capturedEventPayload(capture, "config-applied");
+  assert(playbackJsonNumber(payload, "requestedConfigRevision") >= requested);
+  assert(playbackJsonNumber(payload, "appliedConfigRevision") == requested);
+}
+
 bool bufferHasSampleAbove(const std::vector<float>& samples, float threshold) {
   return std::any_of(samples.begin(), samples.end(), [threshold](float sample) { return sample > threshold; });
 }
@@ -1998,6 +2160,7 @@ const AudioFormat& FFmpegDecoder::outputFormat() const {
 }  // namespace twilight::audio
 
 int main() {
+  testFixedSpscQueuePreservesFifoAndReportsFull();
   testFloatScratchResizeForOverwritePreservesSameSizedScratch();
   testVisualizationFftResolutionMatchesWebAudioReference();
   testRenderCallbacksDoNotResizePipelineScratchBuffers();
@@ -2012,6 +2175,7 @@ int main() {
   testRenderCallbackDoesNotStopDecodeStreams();
   testSetDspConfigParsesJsonOutsidePipelineMutex();
   testSetVolumeAvoidsBlockingOnPipelineMutex();
+  testVolumeCommandApplicationIsRealtimeSafe();
   testDecodeStreamReaperRetiresOutsideAudioCallback();
   testCrossfadePromotionClearsStaleLocalPreloadState();
   testRenderSideDecodeStreamRetirementDoesNotGrowContainers();
@@ -2019,6 +2183,9 @@ int main() {
   testSetDspConfigPreparesActiveChainForPreRoutingDecodeFormat();
   testDsdProcessingPcmDecisionUsesSharedHelper();
   testTwilightAudioEngineReusesParsedDspConfigSnapshot();
+  testVolumeCommandAppliesAtRenderBoundary();
+  testVolumeCommandStormCoalescesToNewestValue();
+  testConfigAppliedEventFollowsRenderApplication();
   testDsd64StartsOnDop();
   testPcmTypedPassthroughKeepsTypedPathDuringTransientDecoderLag();
   testPcmTypedPassthroughIsOutputPerfect();

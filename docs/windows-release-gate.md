@@ -19,6 +19,20 @@ npm run build
 Windows release builds must also verify the MinGW audio engine path:
 
 ```powershell
+$env:VCPKG_ROOT = 'C:\path\to\vcpkg'
+$env:W64DEVKIT_ROOT = 'C:\path\to\w64devkit'
+$env:TWILIGHT_GNU_PATCH = 'C:\Program Files\Git\usr\bin\patch.exe'
+```
+
+`TWILIGHT_GNU_PATCH` must identify as GNU patch; Git for Windows provides a compatible executable.
+When the repository path contains whitespace, set `TAE_MINGW_BUILD_DIR` to a writable path without
+whitespace before configuring, for example:
+
+```powershell
+$env:TAE_MINGW_BUILD_DIR = 'D:\twilight-build\mingw-static'
+```
+
+```powershell
 npm run configure:audio-engine:mingw
 npm run build:audio-engine:mingw
 npm run test:audio-engine:mingw

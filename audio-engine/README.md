@@ -15,12 +15,12 @@ Twilight Echo 的 C++20 原生音频引擎，通过稳定 C ABI 和 Node-API 桥
 - DSP：ReplayGain、Parametric EQ、FIR Convolver、Crossfeed、FFT Spectrum / Waveform / Peak / LUFS / Spectrogram / 示波器采样。
 - Metadata：container、channel layout、channel count、DSD64/128/256/512 识别字段、ReplayGain/R128 字段。
 
-Windows MinGW 当前验证结果：
+Windows MinGW 验证命令：
 
 - `npm run configure:audio-engine:mingw`
 - `npm run build:audio-engine:mingw`
-- `ctest --test-dir audio-engine/build/mingw-static -N` 注册 20 个测试
-- `npm run test:audio-engine:mingw` 20/20 通过
+- `ctest --test-dir $env:TAE_MINGW_BUILD_DIR -N`
+- `npm run test:audio-engine:mingw`
 - `npm run typecheck`
 - `npm run build`
 
@@ -42,22 +42,31 @@ npm run test:no-real-device
 
 推荐入口：
 
-```bash
+```powershell
+$env:VCPKG_ROOT = 'C:\path\to\vcpkg'
+$env:W64DEVKIT_ROOT = 'C:\path\to\w64devkit'
+$env:TWILIGHT_GNU_PATCH = 'C:\Program Files\Git\usr\bin\patch.exe'
+# 仓库路径含空白时必须设置；该目录必须可写且完整路径不含空白。
+$env:TAE_MINGW_BUILD_DIR = 'C:\twilight-build\mingw-static'
+npm run test:audio-toolchain
 npm run configure:audio-engine:mingw
 npm run build:audio-engine:mingw
 npm run test:audio-engine:mingw
+ctest --test-dir $env:TAE_MINGW_BUILD_DIR -N
 ```
 
 `configure:audio-engine:mingw` 由 `scripts/configure-audio-engine-mingw.cjs` 包装 CMake preset，处理两件事：
 
 - 如果 vcpkg/FFmpeg 解压或 rename 遇到 `Access is denied` / `拒绝访问`，清理 `buildtrees/ffmpeg/src/*.tmp` 后重试 configure。
-- configure 后强制检查 20 个 CTest 目标是否进入 `audio-engine/build/mingw-static`；如果目标缺失，会清理 CMake 配置缓存并重试。
+- configure 前验证 `VCPKG_ROOT`、`W64DEVKIT_ROOT`、x86_64 MinGW 编译器、Ninja 和 GNU `patch`；Git for Windows 的 `patch.exe` 会优先于 w64devkit 的 BusyBox 版本。未安装 Git 时设置 `TWILIGHT_GNU_PATCH`。
+- 当仓库路径包含空白时，必须设置 `TAE_MINGW_BUILD_DIR` 到一个可写且完整路径不含空白的外部目录。配置、构建、CTest 和暂存都使用该目录，临时目录为 `$env:TAE_MINGW_BUILD_DIR\tmp`。
+- 发现 CTest 注册仍指向移动前的构建目录，或 configure 后目标缺失时，会清理 CMake 配置缓存并重试。
 
 生成并暂存的运行文件：
 
 ```text
-audio-engine/build/mingw-static/twilight-audio-engine.dll
-audio-engine/build/mingw-static/twilight_audio_node.node
+$env:TAE_MINGW_BUILD_DIR/twilight-audio-engine.dll
+$env:TAE_MINGW_BUILD_DIR/twilight_audio_node.node
 resources/audio-engine/twilight-audio-engine.dll
 resources/audio-engine/twilight_audio_node.node
 ```

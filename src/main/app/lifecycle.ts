@@ -22,6 +22,7 @@ import { setupOpraIpc } from '../ipc/opra'
 import { setupPluginIpc } from '../ipc/plugins'
 import { setupDataIpc } from '../ipc/data'
 import { installElectronSecurity } from '../security/electronSecurity.ts'
+import { createRemoteMediaRequestHandler } from '../security/remoteMediaGrants.ts'
 import { createWindow } from './window'
 import { consumeAppSettingsLoadIssue } from '../core/settings'
 import type { SettingsFileLoadIssue } from '../persistence/settingsFile.ts'
@@ -61,6 +62,15 @@ export function startApp(): void {
     protocol.registerSchemesAsPrivileged([
       {
         scheme: 'twilight-audio',
+        privileges: {
+          standard: true,
+          secure: true,
+          supportFetchAPI: true,
+          stream: true
+        }
+      },
+      {
+        scheme: 'twilight-media',
         privileges: {
           standard: true,
           secure: true,
@@ -146,6 +156,17 @@ export function startApp(): void {
           return new Response(message, { status: 404 })
         }
       })
+
+      protocol.handle(
+        'twilight-media',
+        createRemoteMediaRequestHandler({
+          fetch: (source, init) =>
+            net.fetch(source, {
+              ...init,
+              bypassCustomProtocolHandlers: true
+            })
+        })
+      )
 
       app.on('browser-window-created', (_, window) => {
         optimizer.watchWindowShortcuts(window)

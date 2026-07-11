@@ -4,18 +4,19 @@
 
 当前仓库不再按旧阶段从零推进。代码已经包含 C ABI、Node-API、FFmpeg decode、AudioPipeline、DSP、Metadata、Queue、WASAPI Shared/Exclusive、ASIO 可选接入、CoreAudio/ALSA 源码后端和 Electron 集成。当前补完重点是事实层验证、公共契约稳定和 fallback 收口。
 
-已验证基线：
+当前 MinGW 验证流程：
 
-```bash
+```powershell
+$env:TAE_MINGW_BUILD_DIR = 'D:\\path-without-spaces\\mingw-static'
 npm run configure:audio-engine:mingw
 npm run build:audio-engine:mingw
-ctest --test-dir audio-engine/build/mingw-static -N
+ctest --test-dir $env:TAE_MINGW_BUILD_DIR -N
 npm run test:audio-engine:mingw
 npm run typecheck
 npm run build
 ```
 
-当前 `ctest -N` 注册 20 个 MinGW 测试目标，`npm run test:audio-engine:mingw` 是 native 闭环验证入口。`npm run test:no-real-device` 串联 MinGW configure/build、native CTest、Electron manager 测试、typecheck 和前端 build；真实设备 smoke 继续 opt-in，不进入默认门禁。
+`TAE_MINGW_BUILD_DIR` 必须指向当前有效、可写且不含空格的外部构建目录。CTest 注册数量和测试结果必须在该目录完成重新配置、重新构建后生成；不得复用已移动目录的注册表或引用固定的历史测试数量。`npm run test:audio-engine:mingw` 是 native 闭环验证入口。`npm run test:no-real-device` 串联 MinGW configure/build、native CTest、Electron manager 测试、typecheck 和前端 build；真实设备 smoke 继续 opt-in，不进入默认门禁。
 
 ## 边界
 

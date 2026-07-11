@@ -227,6 +227,8 @@ export interface PlaybackInfo extends PlaybackOutputInfoMirror {
   position: number
   duration: number
   volume: number
+  requestedConfigRevision: number
+  appliedConfigRevision: number
   queueIndex: number
   playMode: PlayMode
   source: string
@@ -689,6 +691,8 @@ export function createPlaybackInfoFanoutSignature(
     info.state,
     info.duration,
     info.volume,
+    info.requestedConfigRevision,
+    info.appliedConfigRevision,
     info.queueIndex,
     info.playMode,
     info.source,
@@ -1619,6 +1623,8 @@ function createDefaultPlaybackInfo(
     position: 0,
     duration: 0,
     volume: 1,
+    requestedConfigRevision: 0,
+    appliedConfigRevision: 0,
     queueIndex: -1,
     playMode: 'sequential',
     source: '',
@@ -2982,6 +2988,8 @@ export class AudioEngineManager extends EventEmitter {
       position: nativeInfo.position,
       duration: this.playbackInfo.duration || nativeInfo.duration,
       volume: nativeInfo.volume,
+      requestedConfigRevision: nativeInfo.requestedConfigRevision,
+      appliedConfigRevision: nativeInfo.appliedConfigRevision,
       outputInfo: nativeInfo.outputInfo,
       nativePlaybackActive: nativeInfo.nativePlaybackActive
     }
@@ -3033,6 +3041,12 @@ export class AudioEngineManager extends EventEmitter {
       canonicalOutput?.latencyInfo ?? info.latencyInfo ?? this.playbackInfo.latencyInfo
     const diagnostics =
       canonicalOutput?.diagnostics ?? info.diagnostics ?? this.playbackInfo.diagnostics
+    const requestedConfigRevision = Number.isFinite(info.requestedConfigRevision)
+      ? Math.max(0, Math.trunc(info.requestedConfigRevision))
+      : this.playbackInfo.requestedConfigRevision
+    const appliedConfigRevision = Number.isFinite(info.appliedConfigRevision)
+      ? Math.max(0, Math.trunc(info.appliedConfigRevision))
+      : this.playbackInfo.appliedConfigRevision
     outputInfo.sourceExact = sourceExact
     outputInfo.outputPerfect = outputPerfect
     outputInfo.supportsOutputPerfect = supportsOutputPerfect
@@ -3096,6 +3110,8 @@ export class AudioEngineManager extends EventEmitter {
     outputInfo.diagnostics = diagnostics
     return {
       ...info,
+      requestedConfigRevision,
+      appliedConfigRevision,
       outputInfo,
       outputBackend: outputInfo.backend,
       outputDevice: outputInfo.deviceName,
