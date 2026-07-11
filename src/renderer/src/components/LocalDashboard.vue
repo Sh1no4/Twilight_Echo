@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useMusicStore } from '../stores/useMusicStore'
 import { getMostListenedTracks, useListeningStatsStore } from '../stores/useListeningStatsStore'
-import { usePlayerStore } from '../stores/usePlayerStore'
+import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
+import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
 import type { Track } from '../types/music'
 import { useCover } from '../utils/coverLoader'
 import { createUnifiedRecentTrackResolver } from '../utils/unifiedRecentTracks'
@@ -20,22 +22,17 @@ const ALBUM_SHELF_SIZE = 5
 
 const { tracks, albums, artists } = useMusicStore()
 const { listeningStats } = useListeningStatsStore()
+const playbackStore = usePlaybackQueueStore()
+const audioOutputDspStore = useAudioOutputDspStore()
 const {
   currentTrack,
   isPlaying,
   currentTime,
   duration,
-  progress,
-  playTrack,
-  togglePlay,
-  next,
-  prev,
-  seek,
-  formatTime,
-  setPlayMode,
-  audioProcessing,
-  playbackInfo
-} = usePlayerStore()
+  progress
+} = storeToRefs(playbackStore)
+const { audioProcessing, playbackInfo } = storeToRefs(audioOutputDspStore)
+const { playTrack, togglePlay, next, prev, seek, formatTime, setPlayMode } = playbackStore
 
 const now = ref(new Date())
 const homeScrollRef = ref<HTMLElement | null>(null)

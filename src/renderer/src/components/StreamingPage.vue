@@ -1,5 +1,6 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import type { Track } from '../types/music'
 import {
   useNcmStore,
@@ -10,7 +11,7 @@ import {
 } from '../stores/useNcmStore'
 import { useProviderStore } from '../stores/useProviderStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
-import { usePlayerStore } from '../stores/usePlayerStore'
+import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useMediaProviders } from '../providers'
 import type {
@@ -320,7 +321,9 @@ const {
   checkLogin
 } = useNcmStore()
 
-const { currentTrack, playTrack, formatTime } = usePlayerStore()
+const playbackStore = usePlaybackQueueStore()
+const { currentTrack } = storeToRefs(playbackStore)
+const { playTrack, formatTime } = playbackStore
 
 async function searchUnifiedSongs(
   keywords: string,

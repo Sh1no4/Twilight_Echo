@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { usePlayerStore } from '../stores/usePlayerStore'
+import { storeToRefs } from 'pinia'
+import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
 import type {
   AppSettings,
   AudioEqPreset,
@@ -129,7 +130,9 @@ const tabs: { key: EqualizerTab; label: string; icon: string; desc: string }[] =
   { key: 'square', label: '配置广场', icon: 'pi pi-compass', desc: '预设分享入口' }
 ]
 
-const { audioProcessing, setAudioProcessing } = usePlayerStore()
+const audioOutputDspStore = useAudioOutputDspStore()
+const { audioProcessing } = storeToRefs(audioOutputDspStore)
+const { setAudioProcessing } = audioOutputDspStore
 
 const activeTab = ref<EqualizerTab>('graphic')
 const appSettings = ref<AppSettings | null>(null)

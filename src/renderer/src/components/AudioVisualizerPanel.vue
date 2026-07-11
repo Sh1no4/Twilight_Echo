@@ -1,24 +1,24 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { usePlayerStore } from '../stores/usePlayerStore'
+import { storeToRefs } from 'pinia'
+import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
+import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
 import { useCover } from '../utils/coverLoader'
 import { buildVisualizerQualityString, formatVisualizerBitrate } from './audioVisualizerFormatting'
 import { AudioTempoEstimator, normalizeBpm, type TempoEstimate } from './audioTempoEstimator'
 
 const props = defineProps<{ active: boolean }>()
 
+const playbackStore = usePlaybackQueueStore()
+const audioOutputDspStore = useAudioOutputDspStore()
 const {
   currentTrack,
   isPlaying,
-  audioEngineReady,
   currentTime,
-  duration,
-  formatTime,
-  togglePlay,
-  next,
-  prev,
-  seek
-} = usePlayerStore()
+  duration
+} = storeToRefs(playbackStore)
+const { audioEngineReady } = storeToRefs(audioOutputDspStore)
+const { formatTime, togglePlay, next, prev, seek } = playbackStore
 const resolvedCover = useCover(computed(() => currentTrack.value?.cover ?? null))
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)

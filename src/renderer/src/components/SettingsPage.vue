@@ -1,7 +1,9 @@
 ﻿<script setup lang="ts">
+import { storeToRefs } from 'pinia'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import MiniPlayerSettingsSection from './settings-page/MiniPlayerSettingsSection.vue'
-import { usePlayerStore } from '../stores/usePlayerStore'
+import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
+import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useExtensionRegistry, type UiContribution } from '../extensions/registry'
 import { getPluginThemeKey } from '../extensions/themeSelection'
@@ -271,6 +273,9 @@ const {
   openExternalUrl
 } = useSettingsStore()
 
+const audioOutputDspStore = useAudioOutputDspStore()
+const playbackQueueStore = usePlaybackQueueStore()
+
 const {
   exclusiveMode,
   audioOutput,
@@ -281,8 +286,12 @@ const {
   audioOutputConfig,
   playbackInfo,
   outputInfo,
-  audioEngineError,
-  volume,
+  audioEngineError
+} = storeToRefs(audioOutputDspStore)
+
+const { volume } = storeToRefs(playbackQueueStore)
+
+const {
   toggleExclusiveMode,
   setAudioOutput,
   setAudioDevice,
@@ -294,9 +303,10 @@ const {
   clearImpulseResponse,
   refreshAudioOutputState,
   clearBpmAnalysisFromPlaybackState,
-  setVolume,
   toggleGapless
-} = usePlayerStore()
+} = audioOutputDspStore
+
+const { setVolume } = playbackQueueStore
 
 const { syncExtensions, themeContributions, uiContributions } = useExtensionRegistry()
 

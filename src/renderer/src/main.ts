@@ -2,6 +2,7 @@ import './assets/main.css'
 import '@phosphor-icons/web/regular'
 
 import { createApp } from 'vue'
+import { createPinia } from 'pinia'
 
 const query = new URLSearchParams(window.location.search)
 const isMiniPlayer = query.get('window') === 'mini-player'
@@ -17,7 +18,7 @@ async function mountApp(): Promise<void> {
   const rootComponent = isMiniPlayer
     ? (await import('./mini-player/MiniPlayerApp.vue')).default
     : (await import('./App.vue')).default
-  createApp(rootComponent).mount('#app')
+  createApp(rootComponent).use(createPinia()).mount('#app')
 }
 
 void mountApp()

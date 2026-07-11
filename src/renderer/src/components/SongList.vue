@@ -1,9 +1,10 @@
 ﻿<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { storeToRefs } from 'pinia'
 import { useUnifiedMusicSearch } from '../app/useUnifiedMusicSearch'
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useMusicStore } from '../stores/useMusicStore'
-import { usePlayerStore } from '../stores/usePlayerStore'
+import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
 import { useProviderStore } from '../stores/useProviderStore'
 import { getRecentTracks } from '../stores/useListeningStatsStore'
 import type { Track } from '../types/music'
@@ -47,7 +48,9 @@ const {
   createPlaylist,
   deletePlaylist
 } = useMusicStore()
-const { currentTrack, playTrack } = usePlayerStore()
+const playbackStore = usePlaybackQueueStore()
+const { currentTrack } = storeToRefs(playbackStore)
+const { playTrack } = playbackStore
 const mediaProviders = useMediaProviders()
 const unifiedSearch = useUnifiedMusicSearch()
 const providerStore = useProviderStore()

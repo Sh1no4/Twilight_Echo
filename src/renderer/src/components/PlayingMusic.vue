@@ -12,7 +12,9 @@ import {
   watch,
   type ComponentPublicInstance
 } from 'vue'
-import { usePlayerStore } from '../stores/usePlayerStore'
+import { storeToRefs } from 'pinia'
+import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
+import { useVisualizationStore } from '../stores/useVisualizationStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useCover } from '../utils/coverLoader'
 import { buildLyricLines, findActiveLyricIndex } from '../utils/lyrics'
@@ -21,8 +23,11 @@ import { getTrackSource, shouldReserveLyricsColumn } from '../utils/nowPlayingLa
 import type { LyricSource } from '../types/music'
 import AudioVisualizerPanel from './AudioVisualizerPanel.vue'
 
-const { currentTrack, dominantColor, currentTime, duration, seek, formatTime, visualizerActive } =
-  usePlayerStore()
+const playbackStore = usePlaybackQueueStore()
+const visualizationStore = useVisualizationStore()
+const { currentTrack, dominantColor, currentTime, duration } = storeToRefs(playbackStore)
+const { visualizerActive } = storeToRefs(visualizationStore)
+const { seek, formatTime } = playbackStore
 const { settings } = useSettingsStore()
 
 const nowPlayingBackground = computed(() => settings.value.nowPlayingBackground)
