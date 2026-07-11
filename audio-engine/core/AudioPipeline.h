@@ -142,7 +142,8 @@ class AudioPipeline {
  private:
   enum class ControlCommandType : uint8_t {
     Volume,
-    Routing
+    Routing,
+    DspGraph
   };
 
   struct ControlCommand {
@@ -151,6 +152,10 @@ class AudioPipeline {
     uint64_t revision = 0;
     ChannelRoutingMode routingMode = ChannelRoutingMode::Auto;
     UpmixConfig upmix;
+    DspChain* activeDspGraph = nullptr;
+    DspChain* preloadDspGraph = nullptr;
+    bool gaplessEnabled = true;
+    double crossfadeSeconds = 0.0;
   };
 
   struct LatestControlCommandSlot {
@@ -174,6 +179,18 @@ class AudioPipeline {
     std::atomic<uint32_t> surroundGainBits{std::bit_cast<uint32_t>(0.5f)};
     std::atomic<uint32_t> sideGainBits{std::bit_cast<uint32_t>(0.3f)};
     std::atomic<uint32_t> surroundDelayMsBits{std::bit_cast<uint32_t>(0.0f)};
+  };
+
+  struct LatestDspGraphCommandSlot {
+    void publish(const ControlCommand& command) noexcept;
+    bool read(ControlCommand* command) const noexcept;
+
+    std::atomic<uint64_t> sequence{0};
+    std::atomic<uint64_t> revision{0};
+    std::atomic<uint64_t> activeGraphBits{0};
+    std::atomic<uint64_t> preloadGraphBits{0};
+    std::atomic<bool> gaplessEnabled{true};
+    std::atomic<uint64_t> crossfadeSecondsBits{std::bit_cast<uint64_t>(0.0)};
   };
 
   struct DecodeStream;
@@ -235,6 +252,8 @@ class AudioPipeline {
   void applyPendingControlCommands() noexcept;
   void applyControlCommand(const ControlCommand& command) noexcept;
   void synchronizeRenderPromotionLocked();
+  std::unique_ptr<DspChain> makeRenderDspGraphLocked(const DspTrackContext& context, std::string* error);
+  bool publishPreparedRenderDspGraphsLocked(uint64_t revision, std::string* error);
 
   mutable std::mutex mutex_;
   std::unique_ptr<IOutputBackend> output_;
@@ -247,6 +266,8 @@ class AudioPipeline {
   FftSpectrumAnalyzer spectrum_;
   DspChain dspChain_;
   DspChain preloadDspChain_;
+  std::vector<std::unique_ptr<DspChain>> renderDspGraphs_;
+  std::string nativeDspPluginChainJson_{"{\"plugins\":[]}"};
   DspConfig dspConfig_;
   OutputConfig outputConfig_;
   DspStatus dspStatus_;
@@ -267,6 +288,7 @@ class AudioPipeline {
   FixedSpscQueue<ControlCommand, kControlCommandCapacity> controlCommands_;
   LatestControlCommandSlot latestOverflowCommand_;
   LatestRoutingCommandSlot latestRoutingCommand_;
+  LatestDspGraphCommandSlot latestDspGraphCommand_;
   uint64_t appliedLatestRoutingSequence_ = 0;
   std::atomic<uint64_t> requestedVolumeBits_{std::bit_cast<uint64_t>(1.0)};
   std::atomic<uint64_t> appliedVolumeBits_{std::bit_cast<uint64_t>(1.0)};
@@ -286,6 +308,8 @@ class AudioPipeline {
   std::atomic<bool> renderActiveUsesPreloadDspChain_{false};
   std::atomic<bool> renderPromotionPending_{false};
   std::atomic<bool> renderCrossfadeResetRequested_{false};
+  std::atomic<DspChain*> renderActiveDspGraph_{nullptr};
+  std::atomic<DspChain*> renderPreloadDspGraph_{nullptr};
   std::atomic<uint32_t> renderRoutingMode_{static_cast<uint32_t>(ChannelRoutingMode::Auto)};
   std::atomic<uint64_t> renderCrossfadeSecondsBits_{std::bit_cast<uint64_t>(0.0)};
   AudioFormat renderOutputFormat_;

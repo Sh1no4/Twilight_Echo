@@ -162,8 +162,8 @@ void DspChain::setTrackContext(const DspTrackContext& context) {
 void DspChain::process(float* samples, size_t frameCount) {
   if (!processingRequired_.load(std::memory_order_relaxed)) return;
   if (!samples || frameCount == 0) return;
-  std::unique_lock lock(mutex_, std::try_to_lock);
-  if (!lock.owns_lock()) return;
+  // AudioPipeline publishes fully prepared graph instances to the callback;
+  // this instance is therefore mutated only by the render thread.
   for (IAudioProcessor* processor : activeProcessors_) {
     processor->process(samples, frameCount);
   }
@@ -183,6 +183,11 @@ DspStatus DspChain::status() {
   std::lock_guard lock(mutex_);
   refreshStatusLocked();
   return status_;
+}
+
+DspConfig DspChain::config() const {
+  std::lock_guard lock(mutex_);
+  return config_;
 }
 
 bool DspChain::loadImpulseResponse(const std::string& path, std::string* error) {

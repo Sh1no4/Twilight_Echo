@@ -1255,6 +1255,34 @@ void testVolumeCommandStormCoalescesToNewestValue() {
   pipeline.stop();
 }
 
+void testDspGraphCommandAppliesAtRenderBoundary() {
+  g_backendRegistry.reset();
+  AudioPipeline pipeline;
+  std::string error;
+  assert(
+      pipeline.play(
+          "dsp-graph-boundary.flac",
+          0.0,
+          "wasapi-exclusive",
+          "auto",
+          1.0,
+          "{\"dspEnabled\":true}",
+          &error) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+
+  const PipelineStatus before = pipeline.status();
+  pipeline.setDspConfig("{\"dspEnabled\":true,\"crossfeedEnabled\":true,\"crossfeedStrength\":0.6}");
+  const PipelineStatus accepted = pipeline.status();
+  assert(accepted.requestedConfigRevision > before.requestedConfigRevision);
+  assert(accepted.requestedConfigRevision > accepted.appliedConfigRevision);
+
+  renderBackendFrames(backend, 128);
+  const PipelineStatus applied = pipeline.status();
+  assert(applied.appliedConfigRevision == accepted.requestedConfigRevision);
+  pipeline.stop();
+}
+
 void testStoppedVolumeAcceptanceIsVisibleBeforePlayback() {
   TwilightAudioEngine engine;
   const std::string beforeJson = engine.getPlaybackInfoJson();
@@ -2219,6 +2247,7 @@ int main() {
   testTwilightAudioEngineReusesParsedDspConfigSnapshot();
   testVolumeCommandAppliesAtRenderBoundary();
   testVolumeCommandStormCoalescesToNewestValue();
+  testDspGraphCommandAppliesAtRenderBoundary();
   testStoppedVolumeAcceptanceIsVisibleBeforePlayback();
   testConfigAppliedEventFollowsRenderApplication();
   testDsd64StartsOnDop();

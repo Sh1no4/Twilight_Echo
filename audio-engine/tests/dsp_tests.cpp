@@ -309,40 +309,14 @@ AudioFormat testFormat() {
   return format;
 }
 
-void testDspProcessBypassesWhenConfigurationLockBusy() {
-  DspChain chain;
-  DspConfig config;
-  config.enabled = true;
-  config.replayGainMode = ReplayGainMode::Track;
-  config.replayGainClip = true;
-  chain.configure(config);
-  chain.prepare(testFormat());
+void testDspProcessDoesNotTakeConfigurationLock() {
+  const std::filesystem::path sourcePath =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "dsp" / "DspChain.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string processBody = extractFunctionBody(source, "void DspChain::process(float* samples, size_t frameCount)");
 
-  DspTrackContext context;
-  context.stream.replayGain.trackGainDb = -6.0;
-  chain.setTrackContext(context);
-
-  std::vector<float> samples = {1.0f, -1.0f, 0.5f, -0.5f};
-  const std::vector<float> original = samples;
-  auto hold = chain.holdProcessLockForTests();
-
-  std::atomic<bool> started{false};
-  std::atomic<bool> finished{false};
-  std::thread renderThread([&] {
-    started.store(true, std::memory_order_release);
-    chain.process(samples.data(), 2);
-    finished.store(true, std::memory_order_release);
-  });
-
-  while (!started.load(std::memory_order_acquire)) {
-    std::this_thread::yield();
-  }
-  std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-  require(finished.load(std::memory_order_acquire));
-  hold.unlock();
-  renderThread.join();
-  require(samples == original);
+  require(processBody.find("mutex_") == std::string::npos);
+  require(processBody.find("std::try_to_lock") == std::string::npos);
 }
 
 void testNativeDspPluginChainSetupDoesNotPreparePluginsTwice() {
@@ -536,7 +510,7 @@ int main() {
   testConvolverSpectrumAccumulationOverwritesScratchWithoutPreclear();
   testCrossfeedDelayIndexAdvancesAndWraps();
   testReplayGainApplySplitsClippedAndUnclippedPaths();
-  testDspProcessBypassesWhenConfigurationLockBusy();
+  testDspProcessDoesNotTakeConfigurationLock();
   testNativeDspPluginChainSetupDoesNotPreparePluginsTwice();
   testDspConfigJsonParserReadsOnlyCurrentObjectFields();
   testConvolverWaveExtensibleParsingUsesSubFormatGuid();

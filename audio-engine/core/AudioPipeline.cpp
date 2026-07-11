@@ -39,6 +39,15 @@ float floatFromBits(uint32_t bits) noexcept {
   return std::bit_cast<float>(bits);
 }
 
+uint64_t pointerBits(const void* value) noexcept {
+  return static_cast<uint64_t>(reinterpret_cast<uintptr_t>(value));
+}
+
+template <typename T>
+T* pointerFromBits(uint64_t bits) noexcept {
+  return reinterpret_cast<T*>(static_cast<uintptr_t>(bits));
+}
+
 double loadAtomicDouble(
     const std::atomic<uint64_t>& bits,
     std::memory_order order = std::memory_order_seq_cst) noexcept {
@@ -840,6 +849,35 @@ bool AudioPipeline::LatestRoutingCommandSlot::read(ControlCommand* command) cons
   return after != 0;
 }
 
+void AudioPipeline::LatestDspGraphCommandSlot::publish(const ControlCommand& command) noexcept {
+  sequence.fetch_add(1, std::memory_order_acq_rel);
+  revision.store(command.revision, std::memory_order_relaxed);
+  activeGraphBits.store(pointerBits(command.activeDspGraph), std::memory_order_relaxed);
+  preloadGraphBits.store(pointerBits(command.preloadDspGraph), std::memory_order_relaxed);
+  gaplessEnabled.store(command.gaplessEnabled, std::memory_order_relaxed);
+  crossfadeSecondsBits.store(doubleBits(command.crossfadeSeconds), std::memory_order_relaxed);
+  sequence.fetch_add(1, std::memory_order_release);
+}
+
+bool AudioPipeline::LatestDspGraphCommandSlot::read(ControlCommand* command) const noexcept {
+  if (!command) return false;
+  const uint64_t before = sequence.load(std::memory_order_acquire);
+  if ((before & 1U) != 0U) return false;
+
+  ControlCommand snapshot;
+  snapshot.type = ControlCommandType::DspGraph;
+  snapshot.revision = revision.load(std::memory_order_relaxed);
+  snapshot.activeDspGraph = pointerFromBits<DspChain>(activeGraphBits.load(std::memory_order_relaxed));
+  snapshot.preloadDspGraph = pointerFromBits<DspChain>(preloadGraphBits.load(std::memory_order_relaxed));
+  snapshot.gaplessEnabled = gaplessEnabled.load(std::memory_order_relaxed);
+  snapshot.crossfadeSeconds = doubleFromBits(crossfadeSecondsBits.load(std::memory_order_relaxed));
+
+  const uint64_t after = sequence.load(std::memory_order_acquire);
+  if (before != after || (after & 1U) != 0U || snapshot.revision == 0) return false;
+  *command = snapshot;
+  return true;
+}
+
 AudioPipeline::~AudioPipeline() {
   stop();
 }
@@ -1226,6 +1264,7 @@ TAE_Result AudioPipeline::playInternal(
     }
     dspConfig_ = requestedDspConfig;
     dspChain_.configure(dspConfig_);
+    dspConfig_ = dspChain_.config();
     dspChain_.prepare(decodeFormat_);
     dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
     preloadDspChain_.configure(dspConfig_);
@@ -1246,6 +1285,11 @@ TAE_Result AudioPipeline::playInternal(
     prepareRenderScratchLocked(maxRenderFrames);
     if (activeStream_) activeStream_->prepareFloatReadScratch(maxRenderFrames);
     if (preloadStream_) preloadStream_->prepareFloatReadScratch(maxRenderFrames);
+    renderDspGraphs_.clear();
+    std::string renderDspError;
+    if (!publishPreparedRenderDspGraphsLocked(0, &renderDspError) && error && error->empty()) {
+      *error = renderDspError.empty() ? "Failed to prepare realtime DSP graph" : renderDspError;
+    }
     updatePerfectLocked();
     state_ = PipelineState::Playing;
     renderedFrames_ = static_cast<uint64_t>(
@@ -1502,6 +1546,9 @@ TAE_Result AudioPipeline::stop() {
     crossfadeFramesProcessed_ = 0;
     crossfadeTotalFrames_ = 0;
     preloadDspStatus_ = {};
+    renderActiveDspGraph_.store(nullptr, std::memory_order_release);
+    renderPreloadDspGraph_.store(nullptr, std::memory_order_release);
+    renderDspGraphs_.clear();
     spectrum_.resetCapture();
     publishStatusLocked();
   }
@@ -1547,6 +1594,8 @@ void AudioPipeline::enqueueControlCommand(const ControlCommand& command) noexcep
     latestOverflowCommand_.publish(command);
   } else if (command.type == ControlCommandType::Routing) {
     latestRoutingCommand_.publish(command);
+  } else if (command.type == ControlCommandType::DspGraph) {
+    latestDspGraphCommand_.publish(command);
   }
 }
 
@@ -1560,6 +1609,16 @@ void AudioPipeline::applyControlCommand(const ControlCommand& command) noexcept 
   if (command.type == ControlCommandType::Routing) {
     renderRoutingMode_.store(static_cast<uint32_t>(command.routingMode), std::memory_order_release);
     channelRouter_.setUpmixConfig(command.upmix);
+    return;
+  }
+  if (command.type == ControlCommandType::DspGraph) {
+    if (command.revision <= appliedConfigRevision_.load(std::memory_order_relaxed)) return;
+    renderActiveDspGraph_.store(command.activeDspGraph, std::memory_order_release);
+    renderPreloadDspGraph_.store(command.preloadDspGraph, std::memory_order_release);
+    renderGaplessEnabled_.store(command.gaplessEnabled, std::memory_order_release);
+    storeAtomicDouble(renderCrossfadeSecondsBits_, command.crossfadeSeconds, std::memory_order_release);
+    renderCrossfadeResetRequested_.store(true, std::memory_order_release);
+    appliedConfigRevision_.store(command.revision, std::memory_order_release);
   }
 }
 
@@ -1574,18 +1633,18 @@ void AudioPipeline::applyPendingControlCommands() noexcept {
     applyControlCommand(command);
     appliedLatestRoutingSequence_ = command.revision;
   }
+  if (latestDspGraphCommand_.read(&command)) applyControlCommand(command);
 }
 
 void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
   std::shared_ptr<DecodeStream> disabledPreload;
   const DspConfig nextConfig = DspChain::parseConfigJson(dspConfigJson);
+  const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
   {
     std::lock_guard lock(mutex_);
     synchronizeRenderPromotionLocked();
     dspConfig_ = nextConfig;
     gaplessEnabled_ = !dopPathActive_ && !nativeDsdPathActive_ && !typedPassthroughActive_ && dspConfig_.gapless;
-    renderGaplessEnabled_.store(gaplessEnabled_, std::memory_order_release);
-    storeAtomicDouble(renderCrossfadeSecondsBits_, dspConfig_.crossfadeSeconds, std::memory_order_release);
     if (!gaplessEnabled_) {
       disabledPreload = std::move(preloadStream_);
       renderPreloadStream_.store(nullptr, std::memory_order_release);
@@ -1597,6 +1656,7 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
     DspChain& activeDspChain = activeDspChainLocked();
     DspChain& spareDspChain = spareDspChainLocked();
     activeDspChain.configure(dspConfig_);
+    dspConfig_ = activeDspChain.config();
     spareDspChain.configure(dspConfig_);
     if (decodeFormat_.sampleRate > 0 && decodeFormat_.channelCount > 0) {
       activeDspChain.prepare(decodeFormat_);
@@ -1614,6 +1674,8 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
     dspStatus_ = activeDspChain.status();
     preloadDspStatus_ = spareDspChain.status();
     dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+    std::string renderDspError;
+    publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
     updatePerfectLocked();
     publishStatusLocked();
   }
@@ -1650,12 +1712,19 @@ bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* err
 
 bool AudioPipeline::loadImpulseResponse(const std::string& path, std::string* error) {
   std::lock_guard lock(mutex_);
+  synchronizeRenderPromotionLocked();
   DspChain& activeDspChain = activeDspChainLocked();
   DspChain& spareDspChain = spareDspChainLocked();
   const bool ok = activeDspChain.loadImpulseResponse(path, error);
   if (ok) {
     std::string spareError;
     spareDspChain.loadImpulseResponse(path, &spareError);
+    dspConfig_ = activeDspChain.config();
+    const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    std::string renderDspError;
+    if (!publishPreparedRenderDspGraphsLocked(revision, &renderDspError) && error && error->empty()) {
+      *error = renderDspError;
+    }
   }
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
@@ -1667,10 +1736,15 @@ bool AudioPipeline::loadImpulseResponse(const std::string& path, std::string* er
 
 void AudioPipeline::unloadImpulseResponse() {
   std::lock_guard lock(mutex_);
+  synchronizeRenderPromotionLocked();
   DspChain& activeDspChain = activeDspChainLocked();
   DspChain& spareDspChain = spareDspChainLocked();
   activeDspChain.unloadImpulseResponse();
   spareDspChain.unloadImpulseResponse();
+  dspConfig_ = activeDspChain.config();
+  const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
+  std::string renderDspError;
+  publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
@@ -1685,10 +1759,19 @@ ConvolverInfo AudioPipeline::convolverInfo() const {
 
 bool AudioPipeline::setEqBands(const std::string& json, std::string* error) {
   std::lock_guard lock(mutex_);
+  synchronizeRenderPromotionLocked();
   DspChain& activeDspChain = activeDspChainLocked();
   DspChain& spareDspChain = spareDspChainLocked();
   const bool ok = activeDspChain.setEqBandsFromJson(json, error);
   if (ok) spareDspChain.setEqBandsFromJson(json, error);
+  if (ok) {
+    dspConfig_ = activeDspChain.config();
+    const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    std::string renderDspError;
+    if (!publishPreparedRenderDspGraphsLocked(revision, &renderDspError) && error && error->empty()) {
+      *error = renderDspError;
+    }
+  }
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
@@ -1699,10 +1782,19 @@ bool AudioPipeline::setEqBands(const std::string& json, std::string* error) {
 
 bool AudioPipeline::setEqPreset(const std::string& json, std::string* error) {
   std::lock_guard lock(mutex_);
+  synchronizeRenderPromotionLocked();
   DspChain& activeDspChain = activeDspChainLocked();
   DspChain& spareDspChain = spareDspChainLocked();
   const bool ok = activeDspChain.setEqPresetFromJson(json, error);
   if (ok) spareDspChain.setEqPresetFromJson(json, error);
+  if (ok) {
+    dspConfig_ = activeDspChain.config();
+    const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    std::string renderDspError;
+    if (!publishPreparedRenderDspGraphsLocked(revision, &renderDspError) && error && error->empty()) {
+      *error = renderDspError;
+    }
+  }
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
@@ -1713,10 +1805,15 @@ bool AudioPipeline::setEqPreset(const std::string& json, std::string* error) {
 
 void AudioPipeline::setCrossfeedStrength(double strength) {
   std::lock_guard lock(mutex_);
+  synchronizeRenderPromotionLocked();
   DspChain& activeDspChain = activeDspChainLocked();
   DspChain& spareDspChain = spareDspChainLocked();
   activeDspChain.setCrossfeedStrength(strength);
   spareDspChain.setCrossfeedStrength(strength);
+  dspConfig_ = activeDspChain.config();
+  const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
+  std::string renderDspError;
+  publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
@@ -1726,10 +1823,15 @@ void AudioPipeline::setCrossfeedStrength(double strength) {
 
 void AudioPipeline::setReplayGainMode(ReplayGainMode mode, double preampDb, double fallbackDb, bool clip) {
   std::lock_guard lock(mutex_);
+  synchronizeRenderPromotionLocked();
   DspChain& activeDspChain = activeDspChainLocked();
   DspChain& spareDspChain = spareDspChainLocked();
   activeDspChain.setReplayGainMode(mode, preampDb, fallbackDb, clip);
   spareDspChain.setReplayGainMode(mode, preampDb, fallbackDb, clip);
+  dspConfig_ = activeDspChain.config();
+  const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
+  std::string renderDspError;
+  publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
   dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
@@ -1739,8 +1841,13 @@ void AudioPipeline::setReplayGainMode(ReplayGainMode mode, double preampDb, doub
 
 void AudioPipeline::setNativeDspPluginChain(const std::string& json) {
   std::lock_guard lock(mutex_);
-  dspChain_.setNativeDspPluginChain(json);
-  preloadDspChain_.setNativeDspPluginChain(json);
+  synchronizeRenderPromotionLocked();
+  nativeDspPluginChainJson_ = json.empty() ? "{\"plugins\":[]}" : json;
+  dspChain_.setNativeDspPluginChain(nativeDspPluginChainJson_);
+  preloadDspChain_.setNativeDspPluginChain(nativeDspPluginChainJson_);
+  const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
+  std::string renderDspError;
+  publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
   dspStatus_ = activeDspChainLocked().status();
   preloadDspStatus_ = spareDspChainLocked().status();
   dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
@@ -1806,6 +1913,20 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
     spareDspChain.prepare(outputFormat_);
     spareDspChain.setTrackContext(DspTrackContext{preloadStream_->stream, preloadStream_->item});
     preloadDspStatus_ = spareDspChain.status();
+    std::string renderDspError;
+    auto renderPreloadGraph = makeRenderDspGraphLocked(
+        DspTrackContext{preloadStream_->stream, preloadStream_->item},
+        &renderDspError);
+    if (!renderPreloadGraph) {
+      if (error && error->empty()) {
+        *error = renderDspError.empty() ? "Failed to prepare preloaded DSP graph" : renderDspError;
+      }
+      renderPreloadDspGraph_.store(nullptr, std::memory_order_release);
+    } else {
+      DspChain* const renderPreloadGraphPtr = renderPreloadGraph.get();
+      renderDspGraphs_.push_back(std::move(renderPreloadGraph));
+      renderPreloadDspGraph_.store(renderPreloadGraphPtr, std::memory_order_release);
+    }
     renderPreloadStream_.store(preloadStream_.get(), std::memory_order_release);
     publishStatusLocked();
   }
@@ -1841,6 +1962,9 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
     trackStarted_ = true;
     activeUsesPreloadDspChain_ = !activeUsesPreloadDspChain_;
     renderActiveUsesPreloadDspChain_.store(activeUsesPreloadDspChain_, std::memory_order_release);
+    DspChain* const nextRenderDspGraph = renderPreloadDspGraph_.load(std::memory_order_acquire);
+    renderActiveDspGraph_.store(nextRenderDspGraph, std::memory_order_release);
+    renderPreloadDspGraph_.store(nullptr, std::memory_order_release);
     dspStatus_ = preloadDspStatus_;
     preloadDspStatus_ = {};
     dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
@@ -2166,6 +2290,57 @@ DspChain& AudioPipeline::spareDspChainLocked() {
   return activeUsesPreloadDspChain_ ? dspChain_ : preloadDspChain_;
 }
 
+std::unique_ptr<DspChain> AudioPipeline::makeRenderDspGraphLocked(
+    const DspTrackContext& context,
+    std::string* error) {
+  auto graph = std::make_unique<DspChain>();
+  graph->configure(dspConfig_);
+  graph->prepare(decodeFormat_);
+  graph->setTrackContext(context);
+  graph->setNativeDspPluginChain(nativeDspPluginChainJson_);
+  if (!dspConfig_.impulseResponsePath.empty()) {
+    if (!graph->loadImpulseResponse(dspConfig_.impulseResponsePath, error)) return nullptr;
+  }
+  return graph;
+}
+
+bool AudioPipeline::publishPreparedRenderDspGraphsLocked(uint64_t revision, std::string* error) {
+  if (!activeStream_ || decodeFormat_.sampleRate <= 0 || decodeFormat_.channelCount <= 0) return true;
+
+  auto activeGraph = makeRenderDspGraphLocked(DspTrackContext{stream_, currentItem_}, error);
+  if (!activeGraph) return false;
+  const DspTrackContext preloadContext =
+      preloadStream_ ? DspTrackContext{preloadStream_->stream, preloadStream_->item}
+                     : DspTrackContext{stream_, currentItem_};
+  auto preloadGraph = makeRenderDspGraphLocked(preloadContext, error);
+  if (!preloadGraph) return false;
+
+  DspChain* const activeGraphPtr = activeGraph.get();
+  DspChain* const preloadGraphPtr = preloadGraph.get();
+  renderDspGraphs_.push_back(std::move(activeGraph));
+  renderDspGraphs_.push_back(std::move(preloadGraph));
+
+  const ControlCommand command{
+      ControlCommandType::DspGraph,
+      1.0,
+      revision,
+      ChannelRoutingMode::Auto,
+      {},
+      activeGraphPtr,
+      preloadGraphPtr,
+      gaplessEnabled_,
+      dspConfig_.crossfadeSeconds};
+  if (renderState_.load(std::memory_order_acquire) == PipelineState::Stopped) {
+    renderActiveDspGraph_.store(activeGraphPtr, std::memory_order_release);
+    renderPreloadDspGraph_.store(preloadGraphPtr, std::memory_order_release);
+    renderGaplessEnabled_.store(gaplessEnabled_, std::memory_order_release);
+    storeAtomicDouble(renderCrossfadeSecondsBits_, dspConfig_.crossfadeSeconds, std::memory_order_release);
+  } else {
+    enqueueControlCommand(command);
+  }
+  return true;
+}
+
 void AudioPipeline::synchronizeRenderPromotionLocked() {
   if (!renderPromotionPending_.exchange(false, std::memory_order_acq_rel)) return;
 
@@ -2294,8 +2469,8 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   }
 
   const bool wantsCrossfade = crossfadeSeconds > 0.0001;
-  DspChain* activeDspChain = activeUsesPreloadDspChain ? &preloadDspChain_ : &dspChain_;
-  DspChain* preloadDspChain = activeUsesPreloadDspChain ? &dspChain_ : &preloadDspChain_;
+  DspChain* activeDspChain = renderActiveDspGraph_.load(std::memory_order_acquire);
+  DspChain* preloadDspChain = renderPreloadDspGraph_.load(std::memory_order_acquire);
   size_t totalRead = 0;
   size_t positionRead = 0;
   while (totalRead < frameCount) {
@@ -2315,7 +2490,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     const size_t read = active->readFloat(readBuffer, requestedFrames);
 
     if (read > 0 && !dopPathActive) {
-      activeDspChain->process(readBuffer, read);
+      if (activeDspChain) activeDspChain->process(readBuffer, read);
       if (routingRequired) {
         channelRouter_.route(readBuffer, segment, read, decodeChannels, channels, routingMode);
       }
@@ -2352,7 +2527,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
         float* preloadReadBuffer = routingRequired ? preloadRoutingScratch_.data() : preloadMixScratch_.data();
         const size_t mixedFrames = preload->readFloat(preloadReadBuffer, read);
         if (mixedFrames > 0 && !dopPathActive) {
-          preloadDspChain->process(preloadReadBuffer, mixedFrames);
+          if (preloadDspChain) preloadDspChain->process(preloadReadBuffer, mixedFrames);
           if (routingRequired) {
             channelRouter_.route(
                 preloadReadBuffer,
@@ -2393,14 +2568,16 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     activeUsesPreloadDspChain = !activeUsesPreloadDspChain;
     renderActiveUsesPreloadDspChain_.store(activeUsesPreloadDspChain, std::memory_order_release);
     renderPromotionPending_.store(true, std::memory_order_release);
+    activeDspChain = preloadDspChain;
+    preloadDspChain = nullptr;
+    renderActiveDspGraph_.store(activeDspChain, std::memory_order_release);
+    renderPreloadDspGraph_.store(nullptr, std::memory_order_release);
     crossfadeMixActive = false;
     crossfadeFramesProcessed = 0;
     crossfadeTotalFrames = 0;
     renderCrossfadeMixActive_ = false;
     renderCrossfadeFramesProcessed_ = 0;
     renderCrossfadeTotalFrames_ = 0;
-    activeDspChain = activeUsesPreloadDspChain ? &preloadDspChain_ : &dspChain_;
-    preloadDspChain = activeUsesPreloadDspChain ? &dspChain_ : &preloadDspChain_;
   }
 
   if (totalRead < frameCount) {
