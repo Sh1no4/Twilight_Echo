@@ -33,6 +33,25 @@
       }
     },
     {
+      "name": "linux-clang-tsan",
+      "displayName": "Linux Clang ThreadSanitizer",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_CXX_FLAGS": "-fsanitize=thread -fno-omit-frame-pointer -O1 -g",
+        "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fsanitize=thread",
+        "TAE_BUILD_NAPI": "OFF"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      }
+    },
+    {
         "name": "windows-mingw-static",
         "displayName": "Windows MinGW Static FFmpeg",
         "generator": "Ninja",
@@ -66,6 +85,10 @@
       "configurePreset": "windows-msvc"
     },
     {
+      "name": "linux-clang-tsan",
+      "configurePreset": "linux-clang-tsan"
+    },
+    {
       "name": "windows-mingw-static",
       "configurePreset": "windows-mingw-static"
     }
@@ -81,6 +104,13 @@
     {
       "name": "windows-mingw-static",
       "configurePreset": "windows-mingw-static",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "linux-clang-tsan",
+      "configurePreset": "linux-clang-tsan",
       "output": {
         "outputOnFailure": true
       }
