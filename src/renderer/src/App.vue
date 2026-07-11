@@ -453,6 +453,7 @@ const titleSurface = computed<TitleSurface>(() => {
     @click-cover="handleCoverClick"
     @open-settings="openPlaybackSettings"
     @open-dsp="openDspSettings"
+    @open-equalizer="openEqualizerPage"
   />
 </template>
 

@@ -668,22 +668,37 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   )
 })
 
-test('player bar exposes visualization tap diagnostics instead of generic inactive state', () => {
+test('player bar exposes a HiFi console drawer instead of visualization meters', () => {
   const playerBarSource = readFileSync(
     new URL('../components/PlayerBar.vue', import.meta.url),
     'utf8'
   )
+  const hifiSidebarSource = readFileSync(
+    new URL('../components/player-bar/HiFiSidebar.vue', import.meta.url),
+    'utf8'
+  )
 
-  assert.match(playerBarSource, /const visualizationStateText = computed/)
-  assert.match(playerBarSource, /status === 'synthetic-fallback'[\s\S]*return 'Fallback'/)
-  assert.match(playerBarSource, /status === 'native-unavailable'[\s\S]*return 'Native unavailable'/)
-  assert.match(playerBarSource, /status === 'disabled'[\s\S]*return 'Tap disabled'/)
-  assert.match(playerBarSource, /status === 'no-samples'[\s\S]*return 'No samples'/)
-  assert.match(playerBarSource, /status === 'stopped'[\s\S]*return 'Stopped'/)
-  assert.match(playerBarSource, /const visualizationStateTitle = computed/)
-  assert.match(playerBarSource, /visualizationData\.value\.reason\?\.trim\(\)/)
-  assert.match(playerBarSource, /:title="visualizationStateTitle"/)
+  assert.match(playerBarSource, /import HiFiSidebar from '\.\/player-bar\/HiFiSidebar\.vue'/)
+  assert.match(playerBarSource, /<HiFiSidebar/)
+  assert.match(playerBarSource, /class="hifi-overlay"/)
+  assert.match(playerBarSource, /title="HiFi 控制台"/)
+  assert.match(playerBarSource, /ph ph-faders/)
+  assert.match(playerBarSource, /openEqualizer/)
+  assert.match(playerBarSource, /onReloadLyrics/)
+  assert.match(playerBarSource, /setAudioDevice/)
+  assert.doesNotMatch(playerBarSource, /const visualizationStateText = computed/)
+  assert.doesNotMatch(playerBarSource, /class="visualization-panel"/)
+  assert.doesNotMatch(playerBarSource, /oscilloscopeCanvasRef/)
+  assert.doesNotMatch(playerBarSource, /spectrogramCanvasRef/)
+  assert.match(hifiSidebarSource, /HiFi Studio/)
+  assert.match(hifiSidebarSource, /Master DSP/)
+  assert.match(hifiSidebarSource, /Devices/)
+  assert.match(hifiSidebarSource, /Lyrics Source/)
+  assert.match(hifiSidebarSource, /Source Quality/)
+  assert.match(hifiSidebarSource, /toggleExpanded/)
+  assert.match(hifiSidebarSource, /openEqualizer/)
 })
+
 
 test('player bar visualization polling stays light and stops behind the full visualizer', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')

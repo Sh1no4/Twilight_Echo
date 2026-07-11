@@ -1,13 +1,16 @@
-﻿<script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useExtensionRegistry } from '../extensions/registry'
 import { useMediaProviders } from '../providers'
+import { syncPluginProviders } from '../providers'
 import { normalizeAccentColor } from '../utils/colorExtractor'
 import { useCover } from '../utils/coverLoader'
+import { resolveLyricsWithSources } from '../utils/lyricSourceResolution'
 import CoverImg from './CoverImg.vue'
+import HiFiSidebar from './player-bar/HiFiSidebar.vue'
 import nextTrackIcon from '../assets/icons/next-track.svg'
 import pauseIcon from '../assets/icons/pause.svg'
 import playIcon from '../assets/icons/play.svg'
@@ -17,6 +20,12 @@ import sequentialIcon from '../assets/icons/sequential-playback.svg'
 import shuffleIcon from '../assets/icons/shuffle.svg'
 import { useFavoriteButton } from './player-bar/useFavoriteButton'
 import { useFloatingPanels } from './player-bar/useFloatingPanels'
+import type {
+  AudioOutputId,
+  ChannelRoutingMode,
+  DsdOutputMode,
+  VolumeNormalizationMode
+} from '../types/settings'
 
 defineProps<{
   glass?: boolean
@@ -36,11 +45,14 @@ const {
   exclusiveMode,
   audioOutput,
   audioOutputOptions,
+  audioDevice,
+  audioDeviceOptions,
   audioEngineError,
   audioEngineRecoveryNotice,
+  audioProcessing,
+  audioOutputConfig,
   playbackInfo,
   outputInfo,
-  visualizationData,
   cyclePlayMode,
   togglePlay,
   next,
@@ -49,7 +61,20 @@ const {
   playTrack,
   toggleExclusiveMode,
   dismissAudioEngineRecoveryNotice,
-  formatTime
+  formatTime,
+  setAudioProcessing,
+  setAudioOutputConfig,
+  setAudioOutput,
+  setAudioDevice,
+  refreshAudioOutputState,
+  toggleDspEnabled,
+  toggleEqEnabled,
+  toggleCrossfeed,
+  toggleGapless,
+  setReplayGainMode,
+  setCrossfeedStrength,
+  selectImpulseResponse,
+  clearImpulseResponse
 } = usePlayerStore()
 
 const resolvedCurrentCover = useCover(computed(() => currentTrack.value?.cover ?? null))
@@ -74,6 +99,8 @@ const playerBarButtons = computed(() =>
 const { settings } = useSettingsStore()
 const desktopLyricsOn = ref(settings.value.desktopLyrics.enabled)
 const miniPlayerOpening = ref(false)
+const hifiExpanded = ref(false)
+const lyricsReloading = ref(false)
 
 async function toggleDesktopLyrics(): Promise<void> {
   const enabled = await window.api.desktopLyrics.toggle()
@@ -101,6 +128,7 @@ const emit = defineEmits<{
   clickCover: [rect: { x: number; y: number; w: number; h: number }]
   openSettings: []
   openDsp: []
+  openEqualizer: []
 }>()
 
 function onCoverClick(): void {
@@ -149,6 +177,11 @@ const {
   togglePlaylist,
   toggleMore
 } = useFloatingPanels(playerBarShellRef)
+
+function dismissAllFloatingPanels(): void {
+  hifiExpanded.value = false
+  dismissFloatingPanels()
+}
 
 const {
   favoriteButtonVisible,
@@ -453,210 +486,6 @@ const nativeDsdRuntimeReasonText = computed(() => {
   return reason ? `Native DSD: ${reason}` : ''
 })
 
-function finiteNumber(value: number | null | undefined, fallback = 0): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
-}
-
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value))
-}
-
-function formatDb(value: number | null | undefined): string {
-  const safe = finiteNumber(value, -120)
-  if (safe <= -119) return '-inf dB'
-  return `${safe.toFixed(safe > -10 ? 1 : 0)} dB`
-}
-
-const visualizationActive = computed(() => visualizationData.value.active === true)
-const peakText = computed(() => formatDb(visualizationData.value.peakDb))
-const rmsText = computed(() => formatDb(visualizationData.value.rmsDb))
-const lufsText = computed(() => {
-  const value = visualizationData.value.lufsMomentary
-  return typeof value === 'number' && Number.isFinite(value)
-    ? `${value.toFixed(1)} LUFS`
-    : 'Inactive'
-})
-const visualizationStateText = computed(() => {
-  const status = visualizationData.value.tapStatus
-  if (status === 'synthetic-fallback') return 'Fallback'
-  if (status === 'native-unavailable') return 'Native unavailable'
-  if (status === 'disabled') return 'Tap disabled'
-  if (status === 'no-samples') return 'No samples'
-  if (status === 'stopped') return 'Stopped'
-  if (!visualizationActive.value) return 'Inactive'
-  return visualizationData.value.sampleRate > 0
-    ? compactRate(visualizationData.value.sampleRate)
-    : 'Active'
-})
-const visualizationStateTitle = computed(() => {
-  const reason = visualizationData.value.reason?.trim()
-  return reason || `Visualization tap: ${visualizationData.value.tapStatus}`
-})
-const waveformBars = computed(() => {
-  const source = visualizationData.value.waveform
-  const targetPoints = 48
-  return Array.from({ length: targetPoints }, (_, index) => {
-    const bucket = Math.min(source.length - 1, Math.floor((index * source.length) / targetPoints))
-    const amplitude =
-      visualizationActive.value && bucket >= 0 ? Math.abs(finiteNumber(source[bucket])) : 0
-    const normalized = clamp01(amplitude)
-    return {
-      height: Math.max(5, Math.round(normalized * 92)),
-      opacity: visualizationActive.value ? 0.34 + normalized * 0.62 : 0.18
-    }
-  })
-})
-const spectrogramFrameCount = 32
-const spectrogramBinCount = 24
-
-const oscilloscopeCanvasRef = ref<HTMLCanvasElement | null>(null)
-const spectrogramCanvasRef = ref<HTMLCanvasElement | null>(null)
-
-function prepareVisualizationCanvas(canvas: HTMLCanvasElement): CanvasRenderingContext2D | null {
-  const ctx = canvas.getContext('2d')
-  if (!ctx) return null
-
-  const dpr = Math.min(window.devicePixelRatio || 1, 2)
-  const cssWidth = canvas.clientWidth
-  const cssHeight = canvas.clientHeight
-  if (cssWidth <= 0 || cssHeight <= 0) return null
-
-  const bufferWidth = Math.round(cssWidth * dpr)
-  const bufferHeight = Math.round(cssHeight * dpr)
-  if (canvas.width !== bufferWidth || canvas.height !== bufferHeight) {
-    canvas.width = bufferWidth
-    canvas.height = bufferHeight
-  }
-
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-  ctx.clearRect(0, 0, cssWidth, cssHeight)
-  return ctx
-}
-
-function drawOscilloscope(): void {
-  const canvas = oscilloscopeCanvasRef.value
-  if (!canvas) return
-  const ctx = prepareVisualizationCanvas(canvas)
-  if (!ctx) return
-
-  const cssWidth = canvas.clientWidth
-  const cssHeight = canvas.clientHeight
-  const midY = cssHeight / 2
-  const samples = visualizationData.value.oscilloscope
-  const active = visualizationActive.value
-
-  if (!active || !samples || samples.length === 0) {
-    // Idle: flat center line (matches how waveform-strip/spectrogram-grid
-    // show inactive state).
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.28)'
-    ctx.lineWidth = 1
-    ctx.beginPath()
-    ctx.moveTo(0, midY)
-    ctx.lineTo(cssWidth, midY)
-    ctx.stroke()
-    return
-  }
-
-  // Client-side zero-crossing trigger: find the first rising zero-crossing
-  // (sample[i-1] < 0 && sample[i] >= 0) and start the trace there. Without
-  // this, periodic waveforms wander because the 120ms poll is not
-  // phase-locked to the audio callback. If no crossing is found, render
-  // from index 0.
-  let triggerIndex = 0
-  for (let i = 1; i < samples.length; i++) {
-    if (samples[i - 1] < 0 && samples[i] >= 0) {
-      triggerIndex = i
-      break
-    }
-  }
-
-  // Map the triggered trace onto the canvas. sample +1 → top (y=0),
-  // -1 → bottom (y=height), center = height/2.
-  const traceLength = samples.length - triggerIndex
-  const stepX = cssWidth / Math.max(1, traceLength - 1)
-
-  const gradient = ctx.createLinearGradient(0, 0, cssWidth, 0)
-  gradient.addColorStop(0, '#2563eb')
-  gradient.addColorStop(1, '#14b8a6')
-
-  // transition: none — do NOT smear time-domain samples (contrast with
-  // LocalDashboard's 55ms spectrum transition which is wrong for a trace).
-  ctx.strokeStyle = gradient
-  ctx.lineWidth = 1.5
-  ctx.lineJoin = 'round'
-  ctx.lineCap = 'round'
-  ctx.beginPath()
-  for (let i = 0; i < traceLength; i++) {
-    const sample = samples[triggerIndex + i]
-    const x = i * stepX
-    const y = midY - sample * midY
-    if (i === 0) ctx.moveTo(x, y)
-    else ctx.lineTo(x, y)
-  }
-  ctx.stroke()
-}
-
-function drawSpectrogram(): void {
-  const canvas = spectrogramCanvasRef.value
-  if (!canvas) return
-  const ctx = prepareVisualizationCanvas(canvas)
-  if (!ctx) return
-
-  const cssWidth = canvas.clientWidth
-  const cssHeight = canvas.clientHeight
-  const gap = 1
-  const cellWidth = Math.max(
-    1,
-    (cssWidth - gap * (spectrogramFrameCount - 1)) / spectrogramFrameCount
-  )
-  const cellHeight = Math.max(
-    1,
-    (cssHeight - gap * (spectrogramBinCount - 1)) / spectrogramBinCount
-  )
-
-  if (!visualizationActive.value) {
-    ctx.fillStyle = 'rgba(148, 163, 184, 0.12)'
-    for (let bin = 0; bin < spectrogramBinCount; bin += 1) {
-      for (let frame = 0; frame < spectrogramFrameCount; frame += 1) {
-        ctx.fillRect(frame * (cellWidth + gap), bin * (cellHeight + gap), cellWidth, cellHeight)
-      }
-    }
-    return
-  }
-
-  const frames = visualizationData.value.spectrogram.slice(-spectrogramFrameCount)
-  for (let bin = spectrogramBinCount - 1; bin >= 0; bin -= 1) {
-    const y = (spectrogramBinCount - 1 - bin) * (cellHeight + gap)
-    for (let frame = 0; frame < spectrogramFrameCount; frame += 1) {
-      const row = frames[frames.length - spectrogramFrameCount + frame]
-      const valueIndex = row
-        ? Math.min(row.length - 1, Math.floor((bin * row.length) / spectrogramBinCount))
-        : -1
-      const energy = valueIndex >= 0 ? clamp01(finiteNumber(row?.[valueIndex])) : 0
-      const alpha = 0.08 + energy * 0.82
-      const red = Math.round(38 + energy * 186)
-      const green = Math.round(92 + energy * 116)
-      const blue = Math.round(132 - energy * 68)
-      ctx.fillStyle = `rgba(${red}, ${green}, ${blue}, ${alpha})`
-      ctx.fillRect(frame * (cellWidth + gap), y, cellWidth, cellHeight)
-    }
-  }
-}
-
-function drawVisualizationCanvases(): void {
-  drawOscilloscope()
-  drawSpectrogram()
-}
-
-// Redraw on every visualization data update (120ms poll). flush:'post'
-// ensures the DOM is patched before drawing (canvas may have just mounted).
-watch(visualizationData, drawVisualizationCanvases, { flush: 'post' })
-// Draw immediately when the drawer opens so the trace appears before the
-// next poll. requestAnimationFrame lets Vue mount the canvas first.
-watch(moreOpen, (open) => {
-  if (open) requestAnimationFrame(drawVisualizationCanvases)
-})
-
 function playTrackAt(index: number): void {
   const track = queue.value[index]
   if (track) {
@@ -667,23 +496,146 @@ function playTrackAt(index: number): void {
 
 function openPlaybackSettings(): void {
   moreOpen.value = false
+  hifiExpanded.value = false
   emit('openSettings')
 }
 
 function openDspSettings(): void {
   moreOpen.value = false
+  hifiExpanded.value = false
   emit('openDsp')
+}
+
+function openEqualizerPage(): void {
+  moreOpen.value = false
+  hifiExpanded.value = false
+  emit('openEqualizer')
+}
+
+function closeHiFiPanel(): void {
+  moreOpen.value = false
+  hifiExpanded.value = false
+}
+
+function toggleHiFiExpanded(): void {
+  hifiExpanded.value = !hifiExpanded.value
 }
 
 async function runPlayerBarExtension(command?: string): Promise<void> {
   if (!command) return
   moreOpen.value = false
+  hifiExpanded.value = false
   await window.api.extensions.executeCommand(command, [currentTrack.value])
+}
+
+function onToggleClipGuard(): void {
+  void setAudioProcessing({ clipGuard: !audioProcessing.value.clipGuard })
+}
+
+function onToggleConvolver(): void {
+  void setAudioProcessing({
+    dspEnabled: true,
+    convolverEnabled: !audioProcessing.value.convolverEnabled
+  })
+}
+
+function onSetReplayGainMode(mode: VolumeNormalizationMode): void {
+  void setReplayGainMode(mode)
+}
+
+function onSetCrossfeedStrength(strength: number): void {
+  void setCrossfeedStrength(strength)
+}
+
+function onSetCrossfadeSeconds(seconds: number): void {
+  void setAudioProcessing({ crossfadeSeconds: seconds })
+}
+
+function onSetReplayGainPreamp(db: number): void {
+  void setAudioProcessing({ dspEnabled: true, replayGainPreamp: db })
+}
+
+function onSetPreferredBufferSize(frames: number): void {
+  void setAudioOutputConfig({ preferredBufferSize: frames })
+}
+
+function onSetRoutingMode(mode: ChannelRoutingMode): void {
+  void setAudioOutputConfig({ routingMode: mode })
+}
+
+function onSetDsdOutputMode(mode: DsdOutputMode): void {
+  void setAudioProcessing({ dsdOutputMode: mode })
+}
+
+function onSetAudioOutput(output: AudioOutputId): void {
+  void setAudioOutput(output)
+}
+
+function onSetAudioDevice(device: string): void {
+  void setAudioDevice(device)
+}
+
+function onRefreshDevices(): void {
+  void refreshAudioOutputState()
+}
+
+async function onReloadLyrics(prefer: 'auto' | 'local' | 'provider'): Promise<void> {
+  const track = currentTrack.value
+  if (!track || lyricsReloading.value) return
+  lyricsReloading.value = true
+  try {
+    const source =
+      track.source ||
+      (/^[a-zA-Z]:[\\/]/.test(track.id) || /^[\\/]/.test(track.id)
+        ? 'local'
+        : track.id.includes(':')
+          ? track.id.slice(0, track.id.indexOf(':'))
+          : 'local')
+    const canLoadLocal =
+      (prefer === 'auto' || prefer === 'local') &&
+      source === 'local' &&
+      !!track.dir &&
+      !!track.fileName
+    const canLoadProvider = prefer === 'auto' || prefer === 'provider'
+
+    const resolved = await resolveLyricsWithSources({
+      track:
+        prefer === 'provider' || prefer === 'local'
+          ? { ...track, lyrics: null, translatedLyrics: null, lyricsSource: null, translatedLyricsSource: null }
+          : track,
+      loadLocalLyrics: canLoadLocal
+        ? () =>
+            window.api.data
+              .getLyrics(track.dir!, track.fileName, track.filePath)
+              .catch(() => null)
+        : undefined,
+      loadProviderLyrics: canLoadProvider
+        ? async () => {
+            await syncPluginProviders()
+            return mediaProviders.resolveLyrics(track)
+          }
+        : undefined
+    })
+
+    if (currentTrack.value?.id !== track.id) return
+    currentTrack.value = {
+      ...currentTrack.value,
+      lyrics: resolved.lyrics ?? '',
+      translatedLyrics: resolved.translatedLyrics ?? currentTrack.value.translatedLyrics ?? null,
+      lyricsSource: resolved.lyricsSource,
+      translatedLyricsSource: resolved.translatedLyricsSource
+    }
+  } catch (error) {
+    console.error('[hifi] Failed to reload lyrics:', error)
+  } finally {
+    lyricsReloading.value = false
+  }
 }
 
 onMounted(() => {
   void syncExtensions()
 })
+
 </script>
 
 <template>
@@ -699,7 +651,7 @@ onMounted(() => {
       class="player-panel-dismiss"
       type="button"
       aria-label="关闭浮层"
-      @pointerdown.prevent.stop="dismissFloatingPanels"
+      @pointerdown.prevent.stop="dismissAllFloatingPanels"
       @click.prevent.stop
     ></button>
 
@@ -915,119 +867,77 @@ onMounted(() => {
           <span class="desktop-lyrics-icon" aria-hidden="true">词</span>
         </button>
 
-        <!-- 更多按钮 + 向上弹出抽屉 -->
-        <div class="more-anchor">
-          <Transition name="volume-drawer">
-            <div v-if="moreOpen" class="more-drawer" :class="{ 'drawer-glass': glass }">
-              <div class="more-action-grid">
-                <button type="button" class="more-action" @click="openPlaybackSettings">
-                  <span>
-                    <span class="more-action-title">播放设置</span>
-                    <span class="more-action-desc">输出、缓存与无缝播放</span>
-                  </span>
-                </button>
-                <button type="button" class="more-action" @click="openDspSettings">
-                  <span>
-                    <span class="more-action-title">DSP 菜单</span>
-                    <span class="more-action-desc">EQ、校正与空间处理</span>
-                  </span>
-                </button>
-                <button
-                  v-for="button in playerBarButtons"
-                  :key="button.id"
-                  type="button"
-                  class="more-action"
-                  @click="runPlayerBarExtension(button.command)"
-                >
-                  <span>
-                    <span class="more-action-title">{{ button.title }}</span>
-                    <span class="more-action-desc">{{ button.description || '插件操作' }}</span>
-                  </span>
-                </button>
-              </div>
-              <div class="more-status">
-                <span
-                  v-for="chip in audioStatusChips"
-                  :key="chip.label"
-                  class="more-status-chip"
-                  :class="chip.tone"
-                >
-                  {{ chip.label }}
-                </span>
-              </div>
-              <p v-if="nonPerfectReason" class="more-item-desc compact-reason">
-                {{ nonPerfectReason }}
-              </p>
-              <p v-if="outputChainText" class="more-output-chain">
-                {{ outputChainText }}
-              </p>
-              <p class="more-item-desc compact-reason">
-                {{ outputLatencyText }}
-              </p>
-              <p class="more-item-desc compact-reason">
-                {{ outputDiagnosticsText }}
-              </p>
-              <p v-if="nativeDsdRuntimeReasonText" class="more-item-desc compact-reason">
-                {{ nativeDsdRuntimeReasonText }}
-              </p>
-              <div class="visualization-panel" :class="{ inactive: !visualizationActive }">
-                <div class="visualization-header">
-                  <span>Visualization</span>
-                  <span :title="visualizationStateTitle">{{ visualizationStateText }}</span>
-                </div>
-                <div class="waveform-strip" aria-hidden="true">
-                  <span
-                    v-for="(bar, index) in waveformBars"
-                    :key="index"
-                    class="waveform-bar"
-                    :style="{ height: `${bar.height}%`, opacity: bar.opacity }"
-                  ></span>
-                </div>
-                <div class="oscilloscope-panel" aria-hidden="true">
-                  <canvas ref="oscilloscopeCanvasRef" class="oscilloscope-canvas"></canvas>
-                </div>
-                <div class="meter-row">
-                  <span><strong>Peak</strong>{{ peakText }}</span>
-                  <span><strong>RMS</strong>{{ rmsText }}</span>
-                  <span><strong>LUFS</strong>{{ lufsText }}</span>
-                </div>
-                <div class="spectrogram-grid" :class="{ inactive: !visualizationActive }">
-                  <canvas
-                    ref="spectrogramCanvasRef"
-                    class="spectrogram-canvas"
-                    aria-hidden="true"
-                  ></canvas>
-                </div>
-              </div>
-              <div class="more-item">
-                <div class="more-item-header">
-                  <span class="more-item-label">独占模式</span>
-                  <button
-                    class="toggle-switch"
-                    :class="{ active: exclusiveMode }"
-                    role="switch"
-                    :aria-checked="exclusiveMode"
-                    :disabled="!exclusiveAvailable"
-                    @click="toggleExclusiveMode"
-                  >
-                    <span class="toggle-knob"></span>
-                  </button>
-                </div>
-                <p class="more-item-desc">当前输出支持时可绕过系统混音器</p>
-              </div>
-            </div>
-          </Transition>
-          <button
-            class="icon-btn"
-            :class="{ active: moreOpen }"
-            title="更多设置"
-            @click="toggleMore"
-          >
-            <i class="pi pi-ellipsis-h"></i>
-          </button>
-        </div>
+        <!-- HiFi 控制台入口 -->
+        <button
+          class="icon-btn"
+          :class="{ active: moreOpen }"
+          title="HiFi 控制台"
+          aria-label="HiFi 控制台"
+          @click="toggleMore"
+        >
+          <i class="ph ph-faders"></i>
+        </button>
       </div>
     </div>
+
+    <!-- HiFi 右侧覆盖面板 -->
+    <Transition name="hifi-overlay">
+      <div
+        v-if="moreOpen"
+        class="hifi-overlay"
+        :class="{ expanded: hifiExpanded, glass }"
+      >
+        <HiFiSidebar
+          :glass="glass"
+          :expanded="hifiExpanded"
+          :exclusive-mode="exclusiveMode"
+          :exclusive-available="exclusiveAvailable"
+          :audio-output="audioOutput"
+          :audio-output-options="audioOutputOptions"
+          :audio-device="audioDevice"
+          :audio-device-options="audioDeviceOptions"
+          :audio-processing="audioProcessing"
+          :audio-output-config="audioOutputConfig"
+          :status-chips="audioStatusChips"
+          :non-perfect-reason="nonPerfectReason"
+          :output-chain-text="outputChainText"
+          :output-latency-text="outputLatencyText"
+          :output-diagnostics-text="outputDiagnosticsText"
+          :native-dsd-runtime-reason-text="nativeDsdRuntimeReasonText"
+          :current-track="currentTrack"
+          :desktop-lyrics-on="desktopLyricsOn"
+          :lyrics-reloading="lyricsReloading"
+          :player-bar-buttons="playerBarButtons"
+          @close="closeHiFiPanel"
+          @toggle-expanded="toggleHiFiExpanded"
+          @open-settings="openPlaybackSettings"
+          @open-dsp="openDspSettings"
+          @open-equalizer="openEqualizerPage"
+          @toggle-exclusive="toggleExclusiveMode"
+          @toggle-dsp="toggleDspEnabled"
+          @toggle-eq="toggleEqEnabled"
+          @toggle-gapless="toggleGapless"
+          @toggle-crossfeed="toggleCrossfeed"
+          @toggle-clip-guard="onToggleClipGuard"
+          @toggle-convolver="onToggleConvolver"
+          @toggle-desktop-lyrics="toggleDesktopLyrics"
+          @set-replay-gain-mode="onSetReplayGainMode"
+          @set-crossfeed-strength="onSetCrossfeedStrength"
+          @set-crossfade-seconds="onSetCrossfadeSeconds"
+          @set-replay-gain-preamp="onSetReplayGainPreamp"
+          @set-preferred-buffer-size="onSetPreferredBufferSize"
+          @set-routing-mode="onSetRoutingMode"
+          @set-dsd-output-mode="onSetDsdOutputMode"
+          @set-audio-output="onSetAudioOutput"
+          @set-audio-device="onSetAudioDevice"
+          @refresh-devices="onRefreshDevices"
+          @select-impulse-response="selectImpulseResponse"
+          @clear-impulse-response="clearImpulseResponse"
+          @reload-lyrics="onReloadLyrics"
+          @run-extension="runPlayerBarExtension"
+        />
+      </div>
+    </Transition>
   </div>
 </template>
 
