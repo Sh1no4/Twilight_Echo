@@ -49,7 +49,16 @@ import type {
   MiniPlayerCommand,
   MiniPlayerSettings,
   MiniPlayerSettingsPatch,
-  MiniPlayerStateSnapshot
+  MiniPlayerStateSnapshot,
+  DspAsset,
+  DspAssetKind,
+  DspCorrectionImportResult,
+  DspCorrectionProfile,
+  DspGraphStatus,
+  DspProfile,
+  DspScene,
+  DspSceneState,
+  Vst3CatalogState
 } from './types'
 
 const audioEngineEventCallbacks = new Set<AudioEngineEventCallback>()
@@ -348,6 +357,45 @@ const api = {
       ipcRenderer.invoke('audioEngine:setAudioProcessing', settings),
     getAudioProcessing: (): Promise<AudioProcessingSettings> =>
       ipcRenderer.invoke('audioEngine:getAudioProcessing'),
+    getDspSceneState: (): Promise<DspSceneState> =>
+      ipcRenderer.invoke('audioEngine:getDspSceneState'),
+    setDspScenes: (scenes: DspScene[], pinnedSceneId?: string | null): Promise<DspSceneState> =>
+      ipcRenderer.invoke('audioEngine:setDspScenes', scenes, pinnedSceneId),
+    applyDspScene: (
+      sceneId: string | null,
+      confirmDsdPcmFallback = false
+    ): Promise<DspSceneState> =>
+      ipcRenderer.invoke('audioEngine:applyDspScene', sceneId, confirmDsdPcmFallback),
+    getDspGraphStatus: (): Promise<DspGraphStatus> =>
+      ipcRenderer.invoke('audioEngine:getDspGraphStatus'),
+    getDspAssets: (): Promise<DspAsset[]> => ipcRenderer.invoke('audioEngine:getDspAssets'),
+    importDspAsset: (kind: DspAssetKind): Promise<DspAsset | null> =>
+      ipcRenderer.invoke('audioEngine:importDspAsset', kind),
+    importDspCorrectionProfile: (): Promise<DspCorrectionImportResult | null> =>
+      ipcRenderer.invoke('audioEngine:importDspCorrectionProfile'),
+    getDspCorrectionProfile: (assetId: string): Promise<DspCorrectionProfile> =>
+      ipcRenderer.invoke('audioEngine:getDspCorrectionProfile', assetId),
+    deleteDspAsset: (assetId: string): Promise<DspAsset[]> =>
+      ipcRenderer.invoke('audioEngine:deleteDspAsset', assetId),
+    exportDspProfile: (name?: string): Promise<DspProfile | null> =>
+      ipcRenderer.invoke('audioEngine:exportDspProfile', name),
+    importDspProfile: (): Promise<{
+      state: DspSceneState
+      profile: DspProfile
+      importedAssets: DspAsset[]
+    } | null> => ipcRenderer.invoke('audioEngine:importDspProfile'),
+    getVst3Catalog: (): Promise<Vst3CatalogState> =>
+      ipcRenderer.invoke('audioEngine:getVst3Catalog'),
+    setVst3Enabled: (enabled: boolean): Promise<Vst3CatalogState> =>
+      ipcRenderer.invoke('audioEngine:setVst3Enabled', enabled),
+    selectVst3SearchPath: (): Promise<string | null> =>
+      ipcRenderer.invoke('audioEngine:selectVst3SearchPath'),
+    setVst3SearchPaths: (paths: string[]): Promise<Vst3CatalogState> =>
+      ipcRenderer.invoke('audioEngine:setVst3SearchPaths', paths),
+    scanVst3Plugins: (): Promise<Vst3CatalogState> =>
+      ipcRenderer.invoke('audioEngine:scanVst3Plugins'),
+    clearVst3Quarantine: (id: string): Promise<Vst3CatalogState> =>
+      ipcRenderer.invoke('audioEngine:clearVst3Quarantine', id),
     selectImpulseResponse: (): Promise<string | null> =>
       ipcRenderer.invoke('audioEngine:selectImpulseResponse'),
     loadImpulseResponse: (path: string): Promise<ConvolverInfo> =>

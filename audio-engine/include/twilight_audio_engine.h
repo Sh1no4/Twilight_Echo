@@ -51,8 +51,10 @@ TAE_API TAE_Result TAE_GetQueue(TAE_EngineHandle engine, char* buffer, size_t bu
 TAE_API TAE_Result TAE_GetUpcomingTrack(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size);
 
 TAE_API TAE_Result TAE_SetDspConfig(TAE_EngineHandle engine, const char* dsp_config_json);
+TAE_API TAE_Result TAE_SetDspGraph(TAE_EngineHandle engine, const char* dsp_graph_json);
 TAE_API TAE_Result TAE_SetOutputConfig(TAE_EngineHandle engine, const char* output_config_json);
 TAE_API TAE_Result TAE_GetDspConfig(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size);
+TAE_API TAE_Result TAE_GetDspGraphStatus(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size);
 TAE_API TAE_Result TAE_LoadImpulseResponse(TAE_EngineHandle engine, const char* path);
 TAE_API TAE_Result TAE_UnloadImpulseResponse(TAE_EngineHandle engine);
 TAE_API TAE_Result TAE_GetConvolverInfo(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size);

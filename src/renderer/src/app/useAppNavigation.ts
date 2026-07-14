@@ -23,6 +23,7 @@ export function useAppNavigation() {
   const showSettingsPage = ref(false)
   const showPluginPage = ref(false)
   const showEqualizerPage = ref(false)
+  const showDspRackPage = ref(false)
   const activePluginPage = ref<UiContribution | null>(null)
   const settingsInitialSection = ref<SettingsSection>('general')
   const activeCategory = ref('dashboard')
@@ -38,6 +39,7 @@ export function useAppNavigation() {
       !showLoginPage.value &&
       !showSettingsPage.value &&
       !showEqualizerPage.value &&
+      !showDspRackPage.value &&
       !showPluginPage.value &&
       !activePluginPage.value
   )
@@ -49,6 +51,7 @@ export function useAppNavigation() {
       !showLoginPage.value &&
       !showSettingsPage.value &&
       !showEqualizerPage.value &&
+      !showDspRackPage.value &&
       !showPluginPage.value &&
       !activePluginPage.value
   )
@@ -140,6 +143,7 @@ export function useAppNavigation() {
     showPlayingPage.value = false
     showPluginPage.value = false
     showEqualizerPage.value = false
+    showDspRackPage.value = false
     activePluginPage.value = null
     showSettingsPage.value = true
   }
@@ -160,6 +164,7 @@ export function useAppNavigation() {
     menuOpen.value = false
     showSettingsPage.value = false
     showEqualizerPage.value = false
+    showDspRackPage.value = false
     activePluginPage.value = null
     showPluginPage.value = true
   }
@@ -171,12 +176,25 @@ export function useAppNavigation() {
   function openEqualizerPage(): void {
     showSettingsPage.value = false
     showPluginPage.value = false
+    showDspRackPage.value = false
     activePluginPage.value = null
     showEqualizerPage.value = true
   }
 
   function closeEqualizerPage(): void {
     showEqualizerPage.value = false
+  }
+
+  function openDspRackPage(): void {
+    showSettingsPage.value = false
+    showPluginPage.value = false
+    showEqualizerPage.value = false
+    activePluginPage.value = null
+    showDspRackPage.value = true
+  }
+
+  function closeDspRackPage(): void {
+    showDspRackPage.value = false
   }
 
   function closeMissingPluginPage(pages: UiContribution[]): void {
@@ -236,6 +254,7 @@ export function useAppNavigation() {
     showSettingsPage,
     showPluginPage,
     showEqualizerPage,
+    showDspRackPage,
     activePluginPage: activePluginPage as Ref<UiContribution | null>,
     settingsInitialSection,
     activeCategory,
@@ -264,6 +283,8 @@ export function useAppNavigation() {
     hidePluginPage,
     openEqualizerPage,
     closeEqualizerPage,
+    openDspRackPage,
+    closeDspRackPage,
     closeMissingPluginPage,
     createToggleMenuHandler,
     createToggleSettingsHandler,

@@ -67,6 +67,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   back: []
   openEqualizer: []
+  openDspRack: []
 }>()
 
 const sections: { key: SectionKey; label: string; icon: string }[] = [
@@ -1189,6 +1190,10 @@ function openEqualizerFromDsp(): void {
   emit('openEqualizer')
 }
 
+function openDspRackFromDsp(): void {
+  emit('openDspRack')
+}
+
 function scrollToSection(section: SectionKey): void {
   activeSection.value = section
   document.getElementById(section)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -1992,6 +1997,10 @@ onBeforeUnmount(() => {
 
           <div :class="{ 'dsp-disabled-content': !audioProcessing.dspEnabled }">
             <div class="dsp-actions">
+              <button class="brand-soft-button" type="button" @click="openDspRackFromDsp">
+                <i class="pi pi-th-large"></i>
+                打开 DSP Rack
+              </button>
               <button class="brand-soft-button" type="button" @click="openEqualizerFromDsp">
                 <i class="pi pi-sliders-h"></i>
                 打开均衡器

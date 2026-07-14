@@ -1,5 +1,8 @@
 export const TWILIGHT_PLUGIN_API_VERSION = 1 as const
 export const TAE_DSP_PLUGIN_ABI_VERSION = 1 as const
+export const TAE_DSP_PLUGIN_ABI_VERSION_V2 = 2 as const
+
+export type NativeDspChannelLayout = 'mono' | 'stereo' | '5.1' | '7.1'
 
 export type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
 
@@ -359,6 +362,13 @@ export interface NativeDspPluginStatus {
   id: string
   name?: string
   version?: string
+  abiVersion?: 1 | 2
+  graphPosition?: 'fixed-post-graph' | 'v2-sortable' | string
+  supportedChannelLayouts?: number
+  minimumSampleRate?: number
+  maximumSampleRate?: number
+  latencyFrames?: number
+  tailFrames?: number
   enabled?: boolean
   loaded?: boolean
   active?: boolean

@@ -19,6 +19,7 @@ const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
 const PluginPage = defineAsyncComponent(() => import('./components/PluginPage.vue'))
 const EqualizerPage = defineAsyncComponent(() => import('./components/EqualizerPage.vue'))
+const DspRackPage = defineAsyncComponent(() => import('./components/DspRackPage.vue'))
 const PluginExtensionPage = defineAsyncComponent(
   () => import('./components/PluginExtensionPage.vue')
 )
@@ -49,6 +50,7 @@ const {
   showSettingsPage,
   showPluginPage,
   showEqualizerPage,
+  showDspRackPage,
   activePluginPage,
   settingsInitialSection,
   activeCategory,
@@ -74,6 +76,8 @@ const {
   hidePluginPage,
   openEqualizerPage,
   closeEqualizerPage,
+  openDspRackPage,
+  closeDspRackPage,
   closeMissingPluginPage
 } = navigation
 const toggleMenu = navigation.createToggleMenuHandler()
@@ -182,6 +186,7 @@ const hasPlayerBar = computed(
     !showLoginPage.value &&
     !showSettingsPage.value &&
     !showEqualizerPage.value &&
+    !showDspRackPage.value &&
     !showPluginPage.value &&
     !activePluginPage.value &&
     !visualizerActive.value &&
@@ -194,6 +199,7 @@ const showLocalSidebar = computed(
     !showLoginPage.value &&
     !showSettingsPage.value &&
     !showEqualizerPage.value &&
+    !showDspRackPage.value &&
     !showPluginPage.value
 )
 
@@ -382,7 +388,8 @@ const titleSurface = computed<TitleSurface>(() => {
     :class="{
       'menu-open': menuOpen && showLocalSidebar,
       'playing-open': showPlayingPage,
-      'plugin-open': showPluginPage
+      'plugin-open': showPluginPage,
+      'dsp-rack-open': showDspRackPage
     }"
     :style="{ minHeight: mainContentMinHeight }"
   >
@@ -434,7 +441,11 @@ const titleSurface = computed<TitleSurface>(() => {
         :initial-section="settingsInitialSection"
         @back="closeSettingsPage"
         @open-equalizer="openEqualizerPage"
+        @open-dsp-rack="openDspRackPage"
       />
+    </Transition>
+    <Transition name="settings-page">
+      <DspRackPage v-if="showDspRackPage" @back="closeDspRackPage" />
     </Transition>
     <Transition name="login-page">
       <EqualizerPage v-if="showEqualizerPage" @back="closeEqualizerPage" />
@@ -547,6 +558,16 @@ body.te-no-blur .login-page-leave-to {
 .main-content.plugin-open {
   min-height: 100vh !important;
   height: 100vh;
+}
+
+.main-content.dsp-rack-open {
+  height: calc(100vh - 32px);
+  min-height: 0 !important;
+}
+
+.main-content.dsp-rack-open > .dsp-rack-page {
+  height: 100%;
+  min-height: 0;
 }
 
 @keyframes light-orbit {

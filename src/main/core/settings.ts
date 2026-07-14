@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { stat, readdir } from 'fs/promises'
 import { join, resolve } from 'path'
+import { createLegacyDspGraph, normalizeDspScenes } from '../../shared/dspGraph'
 import {
   DEFAULT_AUDIO_PROCESSING,
   normalizeAudioOutput,
@@ -179,6 +180,17 @@ export const DEFAULT_SETTINGS: AppSettings = {
     wasapiExclusivePushMode: false
   },
   audioProcessing: DEFAULT_AUDIO_PROCESSING,
+  dspScenes: [
+    {
+      id: 'default',
+      name: 'Default',
+      enabled: true,
+      priority: 0,
+      rules: {},
+      graph: createLegacyDspGraph(DEFAULT_AUDIO_PROCESSING)
+    }
+  ],
+  dspPinnedSceneId: null,
   headphoneCompensation: DEFAULT_HEADPHONE_COMPENSATION,
   audioEqPresets: [],
   desktopLyrics: { ...DEFAULT_DESKTOP_LYRICS },
@@ -538,6 +550,8 @@ export function normalizeDesktopLyrics(raw: unknown): DesktopLyricsSettings {
 }
 
 export function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
+  const audioProcessing = normalizeAudioProcessingSettings(settings.audioProcessing)
+  const dspScenes = normalizeDspScenes(settings.dspScenes, audioProcessing)
   const rawCachePath =
     typeof settings.cachePath === 'string' && settings.cachePath.trim()
       ? settings.cachePath.trim()
@@ -611,7 +625,13 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     audioDevice: normalizeAudioDevice(settings.audioDevice),
     audioExclusiveMode: settings.audioExclusiveMode === true,
     audioOutputConfig: normalizeOutputConfig(settings.audioOutputConfig),
-    audioProcessing: normalizeAudioProcessingSettings(settings.audioProcessing),
+    audioProcessing,
+    dspScenes,
+    dspPinnedSceneId:
+      typeof settings.dspPinnedSceneId === 'string' &&
+      dspScenes.some((scene) => scene.id === settings.dspPinnedSceneId)
+        ? settings.dspPinnedSceneId
+        : null,
     headphoneCompensation: normalizeHeadphoneCompensationSettings(settings.headphoneCompensation),
     audioEqPresets: normalizeAudioEqPresets(settings.audioEqPresets),
     desktopLyrics: normalizeDesktopLyrics(settings.desktopLyrics),

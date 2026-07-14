@@ -66,6 +66,7 @@ struct PipelineStatus {
   uint32_t partitionSize = 0;
   std::string channelMappingMode;
   std::string nativeDspJson = "{\"plugins\":[]}";
+  std::string dspGraphJson = "{\"revision\":0,\"activeSceneId\":null,\"totalLatencyFrames\":0,\"totalTailFrames\":0,\"nodes\":[]}";
   bool sourceExact = false;
   bool outputPerfect = false;
   bool gaplessActive = false;
@@ -108,6 +109,8 @@ class AudioPipeline {
   TAE_Result seek(double seconds, std::string* error);
   void setVolume(double volume);
   void setDspConfig(const std::string& dspConfigJson);
+  bool setDspGraph(const std::string& graphJson, std::string* error);
+  std::string dspGraphStatusJson() const;
   bool setOutputConfig(const OutputConfig& config, std::string* error);
   bool loadImpulseResponse(const std::string& path, std::string* error);
   void unloadImpulseResponse();
@@ -268,6 +271,7 @@ class AudioPipeline {
   DspChain preloadDspChain_;
   std::vector<std::unique_ptr<DspChain>> renderDspGraphs_;
   std::string nativeDspPluginChainJson_{"{\"plugins\":[]}"};
+  std::string dspGraphJson_;
   DspConfig dspConfig_;
   OutputConfig outputConfig_;
   DspStatus dspStatus_;
@@ -308,6 +312,8 @@ class AudioPipeline {
   std::atomic<bool> renderActiveUsesPreloadDspChain_{false};
   std::atomic<bool> renderPromotionPending_{false};
   std::atomic<bool> renderCrossfadeResetRequested_{false};
+  std::atomic<uint32_t> renderDitherMode_{static_cast<uint32_t>(DspDitherMode::Off)};
+  std::atomic<bool> renderDitherResetRequested_{false};
   std::atomic<DspChain*> renderActiveDspGraph_{nullptr};
   std::atomic<DspChain*> renderPreloadDspGraph_{nullptr};
   std::atomic<uint32_t> renderRoutingMode_{static_cast<uint32_t>(ChannelRoutingMode::Auto)};
@@ -317,6 +323,10 @@ class AudioPipeline {
   bool renderCrossfadeMixActive_ = false;
   uint64_t renderCrossfadeFramesProcessed_ = 0;
   uint64_t renderCrossfadeTotalFrames_ = 0;
+  std::array<uint32_t, 8> renderDitherRandom_{{0x12345678U, 0x23456789U, 0x3456789aU, 0x456789abU,
+                                                0x56789abcU, 0x6789abcdU, 0x789abcdeU, 0x89abcdefU}};
+  std::array<float, 8> renderDitherPreviousNoise_{};
+  std::array<float, 8> renderDitherError_{};
   PipelineState state_ = PipelineState::Stopped;
   bool dspActive_ = false;
   bool outputPerfect_ = false;

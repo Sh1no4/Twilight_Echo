@@ -21,10 +21,12 @@ const cacheRootGrants = new CanonicalPathGrantSet()
 const audioCacheGrants = new CanonicalPathGrantSet()
 const appDataGrants = new CanonicalPathGrantSet()
 const impulseResponseGrants = new CanonicalPathGrantSet()
+const vst3SearchPathGrants = new CanonicalPathGrantSet()
 
 const declaredLibraryRoots = new Map<string, string>()
 const declaredCacheRoots = new Map<string, string>()
 const declaredImpulseResponseFiles = new Map<string, string>()
+const declaredVst3SearchPaths = new Map<string, string>()
 
 let initializationPromise: Promise<void> | null = null
 
@@ -58,6 +60,51 @@ export async function grantUserSelectedImpulseResponse(filePath: string): Promis
   impulseResponseGrants.grantCanonicalFile(canonicalPath)
   declaredImpulseResponseFiles.set(lexicalPathKey(filePath), resolve(filePath))
   return canonicalPath
+}
+
+export async function grantUserSelectedVst3SearchPath(folder: string): Promise<string> {
+  await ensureInitialized()
+  const canonicalPath = await vst3SearchPathGrants.grantRoot(folder)
+  declaredVst3SearchPaths.set(lexicalPathKey(folder), resolve(folder))
+  return canonicalPath
+}
+
+/**
+ * The VST3 catalog is main-process owned. Re-granting persisted roots here
+ * keeps renderer-provided paths from becoming an authority source.
+ */
+export async function registerManagedVst3SearchPaths(paths: string[]): Promise<string[]> {
+  await ensureInitialized()
+  const authorized: string[] = []
+  for (const folder of paths) {
+    if (typeof folder !== 'string' || !folder.trim()) continue
+    try {
+      const canonicalPath = await vst3SearchPathGrants.grantRoot(folder)
+      declaredVst3SearchPaths.set(lexicalPathKey(folder), resolve(folder))
+      authorized.push(canonicalPath)
+    } catch {
+      // Offline or removed VST3 paths stay visible in the catalog but are not scanned.
+    }
+  }
+  return authorized
+}
+
+export async function resolveAuthorizedVst3SearchPaths(paths: unknown): Promise<string[]> {
+  await ensureInitialized()
+  if (!Array.isArray(paths)) throw new Error('VST3 搜索目录必须是数组')
+  const authorized: string[] = []
+  const seen = new Set<string>()
+  for (const folder of paths) {
+    if (typeof folder !== 'string' || !folder.trim()) throw new Error('VST3 搜索目录无效')
+    const canonicalPath = await vst3SearchPathGrants.resolveExactRoot(folder)
+    if (!canonicalPath) throw new Error('VST3 搜索目录未经用户授权')
+    const key = lexicalPathKey(canonicalPath)
+    if (!seen.has(key)) {
+      seen.add(key)
+      authorized.push(canonicalPath)
+    }
+  }
+  return authorized
 }
 
 export async function resolveAuthorizedLibraryRootSettings(folders: unknown): Promise<string[]> {

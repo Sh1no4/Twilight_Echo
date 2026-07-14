@@ -2142,6 +2142,10 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
   return true;
 }
 
+void FFmpegDecoder::setResamplerQuality(ResamplerQuality quality) {
+  (void)quality;
+}
+
 size_t FFmpegDecoder::readFrames(float* output, size_t frameCount, std::string* error) {
   (void)error;
   if (impl_->outputFormat.sampleFormat != AudioSampleFormat::Float32Interleaved) return 0;

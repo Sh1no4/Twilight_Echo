@@ -7,6 +7,8 @@ import type { OpraCatalog } from '../opraCatalog'
 import type { TwilightPluginManager } from '../plugins/manager'
 import type { PluginIndexService } from '../plugins/indexService'
 import type { BpmAnalysisManager } from '../bpm/bpmAnalysisManager'
+import type { DspAssetLibrary } from '../dsp/dspAssetLibrary.ts'
+import type { Vst3CatalogService } from '../dsp/vst3Catalog.ts'
 import type DiscordRPC from 'discord-rpc'
 import type { MiniPlayerStateSnapshot } from '../../shared/miniPlayer'
 
@@ -26,6 +28,8 @@ export const runtime = {
   pluginIndexService: null as PluginIndexService | null,
   opraCatalog: null as OpraCatalog | null,
   audioEngineManager: null as AudioEngineManager | null,
+  dspAssetLibrary: null as DspAssetLibrary | null,
+  vst3Catalog: null as Vst3CatalogService | null,
   bpmAnalysisManager: null as BpmAnalysisManager | null,
   mainWindow: null as BrowserWindow | null,
   miniPlayerWindow: null as BrowserWindow | null,

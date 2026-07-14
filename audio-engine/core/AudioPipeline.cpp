@@ -3,6 +3,7 @@
 #include "AudioPipelineRenderUtils.h"
 #include "../dsp/ChannelRouter.h"
 #include "../decoder/SacdIsoProbe.h"
+#include "../utils/JsonUtils.h"
 
 #include <algorithm>
 #include <bit>
@@ -140,6 +141,97 @@ bool formatCanTypedPassthrough(const AudioFormat& format) {
   return format.sampleRate > 0 && format.channelCount > 0 && audioFormatBytesPerFrame(format) > 0;
 }
 
+struct DspOutputStageRequest {
+  int targetSampleRate = 0;
+  DspResamplerQuality resamplerQuality = DspResamplerQuality::Native;
+  bool dsdPcmFallbackApplied = false;
+};
+
+DspOutputStageRequest outputStageRequestFromGraphJson(const std::string& json) {
+  const std::string graph = json_utils::fieldObject(json, "graph");
+  const std::string root = graph.empty() ? json : graph;
+  const std::string outputStage = json_utils::fieldObject(root, "outputStage");
+  DspOutputStageRequest request;
+  if (!outputStage.empty()) {
+    request.targetSampleRate = static_cast<int>(std::clamp(
+        json_utils::fieldNumber(outputStage, "targetSampleRate").value_or(0.0), 0.0, 384000.0));
+    const std::string quality = json_utils::fieldString(outputStage, "resamplerQuality").value_or("native");
+    if (quality == "high") {
+      request.resamplerQuality = DspResamplerQuality::High;
+    } else if (quality == "ultra") {
+      request.resamplerQuality = DspResamplerQuality::Ultra;
+    }
+  }
+  request.dsdPcmFallbackApplied = json_utils::fieldBool(json, "dsdPcmFallbackApplied").value_or(false);
+  return request;
+}
+
+bool outputUsesIntegerPcm(const AudioFormat& format) {
+  return format.sampleFormat == AudioSampleFormat::Int16Interleaved ||
+         format.sampleFormat == AudioSampleFormat::Int24Interleaved ||
+         format.sampleFormat == AudioSampleFormat::Int24In32Interleaved ||
+         format.sampleFormat == AudioSampleFormat::Int32Interleaved;
+}
+
+uint32_t nextDitherRandom(uint32_t& state) {
+  state ^= state << 13U;
+  state ^= state >> 17U;
+  state ^= state << 5U;
+  return state;
+}
+
+double ditherUniform(uint32_t& state) {
+  return static_cast<double>(nextDitherRandom(state)) / static_cast<double>(UINT32_MAX);
+}
+
+void resetDitherState(
+    std::array<uint32_t, 8>& random,
+    std::array<float, 8>& previousNoise,
+    std::array<float, 8>& error) {
+  random = {{0x12345678U, 0x23456789U, 0x3456789aU, 0x456789abU,
+             0x56789abcU, 0x6789abcdU, 0x789abcdeU, 0x89abcdefU}};
+  previousNoise.fill(0.0f);
+  error.fill(0.0f);
+}
+
+void applyOutputDither(
+    float* samples,
+    size_t frameCount,
+    int channels,
+    const AudioFormat& outputFormat,
+    DspDitherMode mode,
+    std::array<uint32_t, 8>& random,
+    std::array<float, 8>& previousNoise,
+    std::array<float, 8>& error) {
+  if (!samples || frameCount == 0 || mode == DspDitherMode::Off || !outputUsesIntegerPcm(outputFormat)) return;
+  const int bitDepth = std::clamp(effectivePcmBitDepth(outputFormat), 2, 32);
+  const double scale = std::ldexp(1.0, bitDepth - 1);
+  const double lsb = 1.0 / scale;
+  const int sampleStride = std::max(1, outputFormat.channelCount);
+  const int activeChannels = std::clamp(channels, 1, 8);
+  for (size_t frame = 0; frame < frameCount; ++frame) {
+    for (int channel = 0; channel < activeChannels; ++channel) {
+      const size_t channelIndex = static_cast<size_t>(channel);
+      const size_t index = frame * static_cast<size_t>(sampleStride) + channelIndex;
+      const double tpdf = (ditherUniform(random[channelIndex]) - ditherUniform(random[channelIndex])) * lsb;
+      double noise = tpdf;
+      if (mode == DspDitherMode::HighpassTpdf) {
+        noise -= previousNoise[channelIndex];
+        previousNoise[channelIndex] = static_cast<float>(tpdf);
+      }
+      double value = std::isfinite(samples[index]) ? static_cast<double>(samples[index]) : 0.0;
+      if (mode == DspDitherMode::NoiseShaped) value += static_cast<double>(error[channelIndex]) * 0.85;
+      value += noise;
+      value = std::clamp(value, -1.0, 1.0 - lsb);
+      if (mode == DspDitherMode::NoiseShaped) {
+        const double quantized = std::round(value * scale) / scale;
+        error[channelIndex] = static_cast<float>(std::clamp(value - quantized, -2.0 * lsb, 2.0 * lsb));
+      }
+      samples[index] = static_cast<float>(value);
+    }
+  }
+}
+
 bool sampleFormatCanCarryDop(AudioSampleFormat format) {
   return format == AudioSampleFormat::Int24Interleaved || format == AudioSampleFormat::Int24In32Interleaved;
 }
@@ -186,9 +278,15 @@ bool dspConfigProcessingRequiresPcm(
     const DspConfig& dspConfig,
     const OutputConfig& outputConfig,
     double volume) {
-  return (dspConfig.enabled &&
-          (dspConfig.replayGainMode != ReplayGainMode::Off || dspConfig.eqEnabled || dspConfig.convolverEnabled ||
-           dspConfig.crossfeedEnabled)) ||
+  const bool graphOrLegacyProcessing =
+      dspConfig.replayGainMode != ReplayGainMode::Off || dspConfig.eqEnabled || dspConfig.convolverEnabled ||
+      dspConfig.crossfeedEnabled || dspConfig.channelMatrixEnabled || dspConfig.channelStripEnabled ||
+      dspConfig.bassManagementEnabled || dspConfig.gateEnabled || dspConfig.compressorEnabled ||
+      dspConfig.dynamicEqEnabled || dspConfig.multibandCompressorEnabled || dspConfig.stereoFieldEnabled ||
+      dspConfig.loudnessContourEnabled || dspConfig.truePeakLimiterEnabled ||
+      dspConfig.outputTargetSampleRate > 0 || dspConfig.resamplerQuality != DspResamplerQuality::Native ||
+      dspConfig.ditherMode != DspDitherMode::Off;
+  return (dspConfig.enabled && graphOrLegacyProcessing) ||
          dspConfig.crossfadeSeconds > 0.0001 || outputConfig.routingMode != ChannelRoutingMode::Auto ||
          std::abs(volume - 1.0) > kUnityVolumeEpsilon;
 }
@@ -405,6 +503,22 @@ struct AudioPipeline::DecodeStream {
     stream.source = item.source;
     if (item.durationSeconds > 0.0) stream.durationSeconds = item.durationSeconds;
     return true;
+  }
+
+  void setResamplerQuality(DspResamplerQuality quality) {
+    if (!decoder) return;
+    switch (quality) {
+      case DspResamplerQuality::Ultra:
+        decoder->setResamplerQuality(FFmpegDecoder::ResamplerQuality::Ultra);
+        break;
+      case DspResamplerQuality::High:
+        decoder->setResamplerQuality(FFmpegDecoder::ResamplerQuality::High);
+        break;
+      case DspResamplerQuality::Native:
+      default:
+        decoder->setResamplerQuality(FFmpegDecoder::ResamplerQuality::Native);
+        break;
+    }
   }
 
   bool openDsdSource(const QueueItem& queueItem, std::string* error) {
@@ -1025,12 +1139,15 @@ TAE_Result AudioPipeline::playInternal(
   }
 
   OutputConfig outputConfig;
+  std::string dspGraphJson;
   {
     std::lock_guard lock(mutex_);
     outputConfig = outputConfig_;
+    dspGraphJson = dspGraphJson_;
   }
 
   const DspConfig requestedDspConfig = DspChain::parseConfigJson(dspConfigJson);
+  const DspOutputStageRequest outputStageRequest = outputStageRequestFromGraphJson(dspGraphJson);
   const bool processingRequiresPcm =
       dspConfigProcessingRequiresPcm(requestedDspConfig, outputConfig, requestedPlaybackVolume);
 
@@ -1144,6 +1261,14 @@ TAE_Result AudioPipeline::playInternal(
     AudioFormat requestedPcmFormat =
         active->stream.isDsd ? pcmFallbackRequestFormat(active->stream, dsdProbe) : active->stream.sourceFormat;
 
+    // The graph's output stage is materialized by FFmpeg/libswresample before the
+    // output backend opens. Native DSD and DoP stay untouched unless the manager
+    // has already performed the explicit PCM-fallback transition.
+    if (outputStageRequest.targetSampleRate > 0 &&
+        (!active->stream.isDsd || outputStageRequest.dsdPcmFallbackApplied)) {
+      requestedPcmFormat.sampleRate = outputStageRequest.targetSampleRate;
+    }
+
     switch (outputConfig.routingMode) {
       case ChannelRoutingMode::MonoToStereo:
       case ChannelRoutingMode::Stereo:
@@ -1172,6 +1297,8 @@ TAE_Result AudioPipeline::playInternal(
       decodeFormat.channelCount = std::max(1, active->stream.sourceFormat.channelCount);
     }
 
+    active->setResamplerQuality(
+        outputStageRequest.targetSampleRate > 0 ? outputStageRequest.resamplerQuality : requestedDspConfig.resamplerQuality);
     if (!active->configure(decodeFormat, startTimeSeconds, error, canUseTypedPassthrough)) {
       output->close();
       return TAE_RESULT_INTERNAL_ERROR;
@@ -1270,6 +1397,17 @@ TAE_Result AudioPipeline::playInternal(
     preloadDspChain_.configure(dspConfig_);
     preloadDspChain_.prepare(decodeFormat_);
     preloadDspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
+    if (!dspGraphJson_.empty()) {
+      std::string graphError;
+      if (!dspChain_.configureGraphJson(dspGraphJson_, &graphError) && error && error->empty()) {
+        *error = graphError.empty() ? "Failed to compile DSP graph" : graphError;
+      }
+      std::string preloadGraphError;
+      if (!preloadDspChain_.configureGraphJson(dspGraphJson_, &preloadGraphError) && error && error->empty()) {
+        *error = preloadGraphError.empty() ? "Failed to compile preload DSP graph" : preloadGraphError;
+      }
+      dspConfig_ = dspChain_.config();
+    }
     dspStatus_ = dspChain_.status();
     dspActive_ = dspStatus_.dspActive || std::abs(requestedPlaybackVolume - 1.0) > 0.0001;
     spectrum_.prepare(outputFormat_, visualizationFftResolutionForConfig(dspConfig_.fftResolution));
@@ -1311,6 +1449,8 @@ TAE_Result AudioPipeline::playInternal(
     renderActiveUsesPreloadDspChain_.store(false, std::memory_order_release);
     renderPromotionPending_.store(false, std::memory_order_release);
     renderCrossfadeResetRequested_.store(false, std::memory_order_release);
+    renderDitherMode_.store(static_cast<uint32_t>(dspConfig_.ditherMode), std::memory_order_release);
+    renderDitherResetRequested_.store(true, std::memory_order_release);
     renderRoutingMode_.store(static_cast<uint32_t>(outputConfig_.routingMode), std::memory_order_release);
     storeAtomicDouble(renderCrossfadeSecondsBits_, dspConfig_.crossfadeSeconds, std::memory_order_release);
     renderCrossfadeMixActive_ = false;
@@ -1523,6 +1663,8 @@ TAE_Result AudioPipeline::stop() {
     renderActiveUsesPreloadDspChain_.store(false, std::memory_order_release);
     renderPromotionPending_.store(false, std::memory_order_release);
     renderCrossfadeResetRequested_.store(false, std::memory_order_release);
+    renderDitherMode_.store(static_cast<uint32_t>(DspDitherMode::Off), std::memory_order_release);
+    renderDitherResetRequested_.store(true, std::memory_order_release);
     renderRoutingMode_.store(static_cast<uint32_t>(ChannelRoutingMode::Auto), std::memory_order_release);
     storeAtomicDouble(renderCrossfadeSecondsBits_, 0.0, std::memory_order_release);
     renderCrossfadeMixActive_ = false;
@@ -1644,6 +1786,8 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
     std::lock_guard lock(mutex_);
     synchronizeRenderPromotionLocked();
     dspConfig_ = nextConfig;
+    renderDitherMode_.store(static_cast<uint32_t>(dspConfig_.ditherMode), std::memory_order_release);
+    renderDitherResetRequested_.store(true, std::memory_order_release);
     gaplessEnabled_ = !dopPathActive_ && !nativeDsdPathActive_ && !typedPassthroughActive_ && dspConfig_.gapless;
     if (!gaplessEnabled_) {
       disabledPreload = std::move(preloadStream_);
@@ -1683,6 +1827,42 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
     std::lock_guard lock(mutex_);
     retireDecodeStreamLocked(std::move(disabledPreload));
   }
+}
+
+bool AudioPipeline::setDspGraph(const std::string& graphJson, std::string* error) {
+  std::lock_guard lock(mutex_);
+  synchronizeRenderPromotionLocked();
+  dspGraphJson_ = graphJson.empty() ? "{\"graph\":{\"nodes\":[]}}" : graphJson;
+  DspChain& activeDspChain = activeDspChainLocked();
+  DspChain& spareDspChain = spareDspChainLocked();
+  std::string activeError;
+  const bool activeOk = activeDspChain.configureGraphJson(dspGraphJson_, &activeError);
+  std::string spareError;
+  const bool spareOk = spareDspChain.configureGraphJson(dspGraphJson_, &spareError);
+  if (!activeOk || !spareOk) {
+    if (error) *error = !activeError.empty() ? activeError : spareError;
+    return false;
+  }
+  dspConfig_ = activeDspChain.config();
+  renderDitherMode_.store(static_cast<uint32_t>(dspConfig_.ditherMode), std::memory_order_release);
+  renderDitherResetRequested_.store(true, std::memory_order_release);
+  const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
+  std::string renderDspError;
+  if (!publishPreparedRenderDspGraphsLocked(revision, &renderDspError)) {
+    if (error) *error = renderDspError;
+    return false;
+  }
+  dspStatus_ = activeDspChain.status();
+  preloadDspStatus_ = spareDspChain.status();
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  updatePerfectLocked();
+  publishStatusLocked();
+  return true;
+}
+
+std::string AudioPipeline::dspGraphStatusJson() const {
+  std::lock_guard lock(mutex_);
+  return activeDspChainLocked().graphStatusJson();
 }
 
 bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* error) {
@@ -1883,6 +2063,7 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
   AudioFormat outputFormat;
   bool gapless = false;
   uint32_t bufferSizeFrames = 0;
+  DspResamplerQuality resamplerQuality = DspResamplerQuality::Native;
   {
     std::lock_guard lock(mutex_);
     synchronizeRenderPromotionLocked();
@@ -1890,11 +2071,13 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
     outputFormat = outputFormat_;
     gapless = gaplessEnabled_;
     bufferSizeFrames = outputInfo_.bufferSizeFrames;
+    resamplerQuality = dspConfig_.resamplerQuality;
   }
   if (!gapless || outputFormat.sampleRate <= 0 || outputFormat.channelCount <= 0) return false;
 
   auto stream = makeDecodeStream();
   if (!stream->openSource(*item, error)) return false;
+  stream->setResamplerQuality(resamplerQuality);
   if (!stream->configure(outputFormat, 0.0, error)) return false;
   const size_t maxRenderFrames = bufferSizeFrames > 0
                                      ? static_cast<size_t>(bufferSizeFrames)
@@ -2024,6 +2207,7 @@ PipelineStatus AudioPipeline::buildStatusLocked() {
   status.partitionSize = dspStatus_.partitionSize;
   status.channelMappingMode = dspStatus_.channelMappingMode;
   status.nativeDspJson = dspStatus_.nativeDspJson;
+  status.dspGraphJson = activeDspChainLocked().graphStatusJson();
   status.sourceExact = outputInfo_.sourceExact;
   status.outputPerfect = outputPerfect_;
   status.gaplessActive =
@@ -2297,6 +2481,7 @@ std::unique_ptr<DspChain> AudioPipeline::makeRenderDspGraphLocked(
   graph->configure(dspConfig_);
   graph->prepare(decodeFormat_);
   graph->setTrackContext(context);
+  if (!dspGraphJson_.empty() && !graph->configureGraphJson(dspGraphJson_, error)) return nullptr;
   graph->setNativeDspPluginChain(nativeDspPluginChainJson_);
   if (!dspConfig_.impulseResponsePath.empty()) {
     if (!graph->loadImpulseResponse(dspConfig_.impulseResponsePath, error)) return nullptr;
@@ -2445,6 +2630,9 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     renderCrossfadeFramesProcessed_ = 0;
     renderCrossfadeTotalFrames_ = 0;
   }
+  if (renderDitherResetRequested_.exchange(false, std::memory_order_acq_rel)) {
+    resetDitherState(renderDitherRandom_, renderDitherPreviousNoise_, renderDitherError_);
+  }
 
   const PipelineState state = renderState_.load(std::memory_order_acquire);
   const AudioFormat outputFormat = renderOutputFormat_;
@@ -2454,6 +2642,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   DecodeStream* preload = renderPreloadStream_.load(std::memory_order_acquire);
   const double crossfadeSeconds = loadAtomicDouble(renderCrossfadeSecondsBits_, std::memory_order_acquire);
   const bool dopPathActive = renderDopPathActive_.load(std::memory_order_acquire);
+  const bool nativeDsdPathActive = renderNativeDsdPathActive_.load(std::memory_order_acquire);
   bool activeUsesPreloadDspChain = renderActiveUsesPreloadDspChain_.load(std::memory_order_acquire);
   const ChannelRoutingMode routingMode =
       static_cast<ChannelRoutingMode>(renderRoutingMode_.load(std::memory_order_acquire));
@@ -2476,7 +2665,8 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   while (totalRead < frameCount) {
     float* segment = output + totalRead * static_cast<size_t>(channels);
     const int decodeChannels = std::max(1, decodeFormat.channelCount);
-    const bool routingRequired = !dopPathActive && (decodeChannels != channels || routingMode != ChannelRoutingMode::Auto);
+    const bool routingRequired = !dopPathActive && !nativeDsdPathActive &&
+                                 (decodeChannels != channels || routingMode != ChannelRoutingMode::Auto);
 
     size_t requestedFrames = frameCount - totalRead;
     if (routingRequired) {
@@ -2489,7 +2679,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     float* readBuffer = routingRequired ? routingScratch_.data() : segment;
     const size_t read = active->readFloat(readBuffer, requestedFrames);
 
-    if (read > 0 && !dopPathActive) {
+    if (read > 0 && !dopPathActive && !nativeDsdPathActive) {
       if (activeDspChain) activeDspChain->process(readBuffer, read);
       if (routingRequired) {
         channelRouter_.route(readBuffer, segment, read, decodeChannels, channels, routingMode);
@@ -2589,6 +2779,18 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
 
   if (!dopPathActive && std::abs(volume - 1.0) > 0.0001) {
     render::applyVolumeToRenderedFrames(output, totalRead, frameCount, channels, volume);
+  }
+  if (!dopPathActive && !nativeDsdPathActive) {
+    const auto mode = static_cast<DspDitherMode>(renderDitherMode_.load(std::memory_order_acquire));
+    applyOutputDither(
+        output,
+        totalRead,
+        channels,
+        outputFormat,
+        mode,
+        renderDitherRandom_,
+        renderDitherPreviousNoise_,
+        renderDitherError_);
   }
 
   if (positionRead > 0) {

@@ -4,6 +4,18 @@ import { createRequire } from 'module'
 import { join } from 'path'
 import { AudioEngineServiceBinding, canUseAudioEngineService } from './audioEngineServiceClient.ts'
 import { isBpmAnalysisResult, type BpmAnalysisResult } from './bpm/bpmCache.ts'
+import {
+  createLegacyDspGraph,
+  graphHasEnabledProcessing,
+  normalizeDspScenes,
+  resolveDspScene,
+  type DspGraphConfig,
+  type DspGraphStatus,
+  type DspScene,
+  type DspSceneContext,
+  type DspSceneState,
+  type Vst3ScanDescriptor
+} from '../shared/dspGraph.ts'
 
 const require = createRequire(import.meta.url)
 
@@ -44,12 +56,15 @@ export type EqualizerFilterType =
   | 'lowPass'
   | 'highPass'
   | 'allPass'
+  | 'notch'
 
 export interface EqualizerBand {
   frequency: number
   gain: number
   q: number
   filterType: EqualizerFilterType
+  enabled?: boolean
+  channelMask?: number
 }
 
 export interface AudioProcessingSettings {
@@ -120,11 +135,7 @@ export interface AudioDeviceOption {
   capabilityReason?: string
 }
 
-export type AudioCapabilitySupportState =
-  | 'verified'
-  | 'runtime-probed'
-  | 'unsupported'
-  | 'unknown'
+export type AudioCapabilitySupportState = 'verified' | 'runtime-probed' | 'unsupported' | 'unknown'
 
 export interface OutputConfig {
   preferredBufferSize: number
@@ -171,7 +182,11 @@ export interface AudioEngineConfig {
   audioDevice?: string
   audioOutputConfig?: Partial<OutputConfig>
   audioProcessing?: Partial<AudioProcessingSettings>
+  dspScenes?: DspScene[]
+  dspPinnedSceneId?: string | null
 }
+
+export type { DspSceneState } from '../shared/dspGraph.ts'
 
 export interface AudioEngineScheduler {
   now: () => number
@@ -336,7 +351,7 @@ export interface OutputInfo {
   diagnostics: OutputDiagnostics
   deviceRecovered: boolean
   recoveryCount: number
-  nativeDsp?: { plugins: unknown[] }
+  nativeDsp?: { plugins: unknown[]; graph?: DspGraphStatus }
   isDsd: boolean
   dsdMode: string
   dsdRate: number
@@ -398,6 +413,8 @@ export interface NativeAudioBinding {
   Previous?: () => void
   SetPlayMode?: (mode: PlayMode) => void
   SetDspConfig?: (json: string) => void
+  SetDspGraph?: (json: string) => void
+  GetDspGraphStatus?: () => string | DspGraphStatus
   LoadImpulseResponse?: (path: string) => void
   UnloadImpulseResponse?: () => void
   GetConvolverInfo?: () => string | ConvolverInfo
@@ -412,6 +429,7 @@ export interface NativeAudioBinding {
   ) => void
   SetDspPluginChain?: (json: string) => void
   GetDspPluginStatus?: () => string | { plugins: unknown[] }
+  ScanVst3Module?: (modulePath: string) => string | Vst3ScanDescriptor
   GetMetadata?: (source: string) => string | NativeAudioMetadata
   GetPlaybackInfo?: () => string | PlaybackInfo
   GetUpcomingTrack?: () => string | AudioEngineQueueItem | null
@@ -442,6 +460,20 @@ export interface AudioEngineManagerDependencies {
   nativeAddonCandidates?: () => string[]
   audioServiceEntry?: string
   audioServiceFactory?: () => AudioEngineServiceNativeBinding
+  dspAssetPathResolver?: (assetId: string) => string | null
+  vst3ModuleResolver?: (
+    catalogId: string,
+    classId: string
+  ) => {
+    modulePath: string | null
+    classId: string
+    reason: string
+  }
+  vst3StateAssetResolver?: (assetId: string) => {
+    path: string | null
+    kind: 'vst3Preset' | 'vst3State' | null
+    reason: string
+  }
 }
 
 export interface ConvolverInfo {
@@ -854,11 +886,7 @@ function getAlsaPlaybackDeviceCandidates(): string[] {
         const match = line.match(/^(\d+)-(\d+):\s*(.*):\s*playback\b/)
         if (!match) return null
         const description = match[3].toLowerCase()
-        const score = description.includes('usb')
-          ? 0
-          : description.includes('hdmi')
-            ? 2
-            : 1
+        const score = description.includes('usb') ? 0 : description.includes('hdmi') ? 2 : 1
         return {
           card: Number(match[1]),
           device: Number(match[2]),
@@ -866,7 +894,10 @@ function getAlsaPlaybackDeviceCandidates(): string[] {
         }
       })
       .filter((entry): entry is { card: number; device: number; score: number } => Boolean(entry))
-      .sort((left, right) => left.score - right.score || left.card - right.card || left.device - right.device)
+      .sort(
+        (left, right) =>
+          left.score - right.score || left.card - right.card || left.device - right.device
+      )
 
     const candidates: string[] = []
     const seen = new Set<string>()
@@ -1038,9 +1069,7 @@ function formatAudioDeviceLabel(device: string): string {
   return device === DEFAULT_AUDIO_DEVICE_OPTION.id ? DEFAULT_AUDIO_DEVICE_OPTION.label : device
 }
 
-function normalizeAudioCapabilitySupportState(
-  value: unknown
-): AudioCapabilitySupportState | null {
+function normalizeAudioCapabilitySupportState(value: unknown): AudioCapabilitySupportState | null {
   return value === 'verified' ||
     value === 'runtime-probed' ||
     value === 'unsupported' ||
@@ -1107,7 +1136,12 @@ function deriveNativeDsdSupportState(
 
   const backend = getDeviceBackend(option)
   const pathKind = getDevicePathKind(option)
-  if (backend === 'wasapi' || backend === 'coreaudio' || pathKind === 'endpoint' || pathKind === 'hal') {
+  if (
+    backend === 'wasapi' ||
+    backend === 'coreaudio' ||
+    pathKind === 'endpoint' ||
+    pathKind === 'hal'
+  ) {
     return 'unsupported'
   }
   if (backend === 'alsa' && pathKind === 'hw') return 'runtime-probed'
@@ -1196,7 +1230,8 @@ function normalizeEqualizerFilterType(value: unknown): EqualizerFilterType {
     value === 'bandPass' ||
     value === 'lowPass' ||
     value === 'highPass' ||
-    value === 'allPass'
+    value === 'allPass' ||
+    value === 'notch'
   ) {
     return value
   }
@@ -1216,7 +1251,12 @@ export function normalizeAudioProcessingSettings(
             frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
             gain: clampNumber(band.gain, PARAMETRIC_EQ_GAIN_MIN_DB, PARAMETRIC_EQ_GAIN_MAX_DB, 0),
             q: clampNumber(band.q, PARAMETRIC_EQ_Q_MIN, PARAMETRIC_EQ_Q_MAX, 1),
-            filterType: normalizeEqualizerFilterType(band.filterType)
+            filterType: normalizeEqualizerFilterType(band.filterType),
+            enabled: band.enabled !== false,
+            channelMask: Math.max(
+              0,
+              Math.min(0xffffffff, Math.trunc(band.channelMask ?? 0xffffffff))
+            )
           }
         })
       : DEFAULT_EQ_BANDS.map((defaultBand, index) => {
@@ -1225,7 +1265,12 @@ export function normalizeAudioProcessingSettings(
             frequency: clampNumber(band.frequency, 20, 24000, defaultBand.frequency),
             gain: clampNumber(band.gain, GRAPHIC_EQ_GAIN_MIN_DB, GRAPHIC_EQ_GAIN_MAX_DB, 0),
             q: clampNumber(band.q, GRAPHIC_EQ_Q_MIN, GRAPHIC_EQ_Q_MAX, 1),
-            filterType: normalizeEqualizerFilterType(band.filterType)
+            filterType: normalizeEqualizerFilterType(band.filterType),
+            enabled: band.enabled !== false,
+            channelMask: Math.max(
+              0,
+              Math.min(0xffffffff, Math.trunc(band.channelMask ?? 0xffffffff))
+            )
           }
         })
 
@@ -1234,7 +1279,9 @@ export function normalizeAudioProcessingSettings(
       frequency: DEFAULT_EQ_BANDS[0].frequency,
       gain: 0,
       q: 1,
-      filterType: 'peak'
+      filterType: 'peak',
+      enabled: true,
+      channelMask: 0xffffffff
     })
   }
 
@@ -1293,6 +1340,17 @@ function parseNativeJson<T>(value: string | T | undefined, fallback: T): T {
   } catch {
     return fallback
   }
+}
+
+function isVst3ScanDescriptor(value: unknown): value is Vst3ScanDescriptor {
+  if (!value || typeof value !== 'object') return false
+  const descriptor = value as Partial<Vst3ScanDescriptor>
+  return (
+    typeof descriptor.classId === 'string' &&
+    typeof descriptor.name === 'string' &&
+    typeof descriptor.vendor === 'string' &&
+    typeof descriptor.version === 'string'
+  )
 }
 
 function normalizeNumberArray(value: unknown, length: number): number[] {
@@ -1423,10 +1481,7 @@ function createInactiveVisualizationData(
   }
 }
 
-function normalizeVisualizationTapStatus(
-  value: unknown,
-  active: boolean
-): VisualizationTapStatus {
+function normalizeVisualizationTapStatus(value: unknown, active: boolean): VisualizationTapStatus {
   if (
     value === 'active' ||
     value === 'stopped' ||
@@ -1734,6 +1789,11 @@ export class AudioEngineManager extends EventEmitter {
   private exclusiveMode: boolean
   private outputConfig: OutputConfig
   private processing: AudioProcessingSettings
+  private dspScenes: DspScene[]
+  private dspPinnedSceneId: string | null
+  private activeDspSceneId: string | null = null
+  private activeDspGraph: DspGraphConfig
+  private dspGraphRevision = 0
   private scheduler: AudioEngineScheduler
   private deviceOptionsProvider?: () => AudioDeviceOption[] | null
   private queue: AudioEngineQueueItem[] = []
@@ -1804,6 +1864,13 @@ export class AudioEngineManager extends EventEmitter {
   private pendingNativeSource: string | null = null
   private nativeConvolverIrPath: string | null = null
   private nativeDspPluginChainJson = ''
+  // A service restart must never re-launch every VST3 node that was active at
+  // the time of the crash. Keep this gate per catalog entry so recovery stays
+  // an explicit, one-plugin-at-a-time action.
+  private readonly vst3RecoveryBypassReasons = new Map<string, string>()
+  private readonly dspAssetPathResolver?: (assetId: string) => string | null
+  private readonly vst3ModuleResolver?: AudioEngineManagerDependencies['vst3ModuleResolver']
+  private readonly vst3StateAssetResolver?: AudioEngineManagerDependencies['vst3StateAssetResolver']
 
   constructor(
     config: AudioEngineConfig = { exclusiveMode: false },
@@ -1814,6 +1881,9 @@ export class AudioEngineManager extends EventEmitter {
       ...DEFAULT_AUDIO_ENGINE_SCHEDULER,
       ...(dependencies.scheduler ?? {})
     }
+    this.dspAssetPathResolver = dependencies.dspAssetPathResolver
+    this.vst3ModuleResolver = dependencies.vst3ModuleResolver
+    this.vst3StateAssetResolver = dependencies.vst3StateAssetResolver
     this.deviceOptionsProvider = dependencies.deviceOptionsProvider
     this.native =
       dependencies.nativeBinding !== undefined
@@ -1825,6 +1895,13 @@ export class AudioEngineManager extends EventEmitter {
     this.exclusiveMode = config.exclusiveMode && supportsAudioExclusive(this.output)
     this.outputConfig = normalizeOutputConfig(config.audioOutputConfig)
     this.processing = normalizeAudioProcessingSettings(config.audioProcessing)
+    this.dspScenes = normalizeDspScenes(config.dspScenes, this.processing)
+    this.dspPinnedSceneId =
+      typeof config.dspPinnedSceneId === 'string' &&
+      this.dspScenes.some((scene) => scene.id === config.dspPinnedSceneId)
+        ? config.dspPinnedSceneId
+        : null
+    this.activeDspGraph = createLegacyDspGraph(this.processing)
     this.lastTick = this.scheduler.now()
     this.playbackInfo = createDefaultPlaybackInfo(
       this.output,
@@ -1833,6 +1910,7 @@ export class AudioEngineManager extends EventEmitter {
       this.outputConfig
     )
     this.resetOutputInfoDefaults()
+    this.refreshResolvedDspScene()
     this.updateOutputPerfect()
   }
 
@@ -1868,6 +1946,9 @@ export class AudioEngineManager extends EventEmitter {
     this.nativeConfigRevisionEpochPending = true
     this.audioServiceReadyRestoreSerial += 1
     this.nativeConvolverIrPath = null
+    // The IPC layer persists catalog quarantines asynchronously. This gate is
+    // synchronous so service recovery cannot relaunch a crashing VST3 first.
+    this.markActiveVst3NodesForManualRecovery()
     this.lastNativeDspPluginStatusCache = null
     this.lastConvolverInfoCache = null
     this.invalidateAudioDeviceOptionsCache('audio-service-crash')
@@ -2124,7 +2205,12 @@ export class AudioEngineManager extends EventEmitter {
           candidate
         )
         if (!deviceSynced) continue
-        nativeStarted = await this.tryNativePlay(`ALSA 兜底播放 ${candidate}`, source, startTime, false)
+        nativeStarted = await this.tryNativePlay(
+          `ALSA 兜底播放 ${candidate}`,
+          source,
+          startTime,
+          false
+        )
         if (nativeStarted) {
           this.device = candidate
           this.nativeOutputRouteSynced = true
@@ -2180,6 +2266,7 @@ export class AudioEngineManager extends EventEmitter {
           }
         : this.playbackInfo.outputInfo
     }
+    this.applyNativeDspGraph('播放源格式变更后解析 DSP 场景')
     this.lastTick = this.scheduler.now()
     this.emit('start-file')
     this.publishDuration(this.playbackInfo.duration, { force: true })
@@ -2419,10 +2506,13 @@ export class AudioEngineManager extends EventEmitter {
     if (!configSynced) {
       this.exclusiveMode = previousExclusiveMode
       this.invalidateAudioDeviceOptionsCache('exclusive-mode-restore-after-failure')
-      throw new Error(`原生音频独占模式配置应用失败：${this.lastNativeError || '原生音频引擎不可用'}`)
+      throw new Error(
+        `原生音频独占模式配置应用失败：${this.lastNativeError || '原生音频引擎不可用'}`
+      )
     }
     this.nativeOutputRouteSynced = true
     this.refreshOutputInfoFromNative(true)
+    this.applyNativeDspGraph('独占模式切换后解析 DSP 场景')
     return await this.getAudioOutputState()
   }
 
@@ -2455,18 +2545,24 @@ export class AudioEngineManager extends EventEmitter {
     const routeRestore = await this.restoreAudioServiceOutputRoute('切换')
     this.nativeOutputRouteSynced = routeRestore.synced
     this.refreshOutputInfoFromNative(true)
+    this.applyNativeDspGraph('输出后端切换后解析 DSP 场景')
     return await this.getAudioOutputState()
   }
 
   async setAudioDevice(device: string): Promise<AudioOutputState> {
     const nextDevice = this.resolveCompatibleDevice(this.output, normalizeAudioDevice(device))
-    if (this.nativeOutputRouteSynced && nextDevice === this.device) return await this.getAudioOutputState()
+    if (this.nativeOutputRouteSynced && nextDevice === this.device)
+      return await this.getAudioOutputState()
 
     const previousDevice = this.device
     this.device = nextDevice
     this.invalidateAudioDeviceOptionsCache('audio-device-changed')
     this.nativeOutputRouteSynced = false
-    const deviceSynced = await this.callNativeMaybeAsync('切换输出设备', 'SetOutputDevice', this.device)
+    const deviceSynced = await this.callNativeMaybeAsync(
+      '切换输出设备',
+      'SetOutputDevice',
+      this.device
+    )
     if (!deviceSynced) {
       this.device = previousDevice
       this.invalidateAudioDeviceOptionsCache('audio-device-restore-after-failure')
@@ -2474,6 +2570,7 @@ export class AudioEngineManager extends EventEmitter {
     }
     this.nativeOutputRouteSynced = true
     this.refreshOutputInfoFromNative(true)
+    this.applyNativeDspGraph('输出设备切换后解析 DSP 场景')
     return await this.getAudioOutputState()
   }
 
@@ -2511,6 +2608,7 @@ export class AudioEngineManager extends EventEmitter {
     this.playbackInfo.outputInfo.channelRoutingMode = this.outputConfig.routingMode
     this.playbackInfo.channelRoutingMode = this.outputConfig.routingMode
     this.refreshOutputInfoFromNative(needsReopen)
+    this.applyNativeDspGraph('输出配置切换后解析 DSP 场景')
   }
 
   async getAudioOutput(): Promise<AudioOutputId> {
@@ -2538,6 +2636,300 @@ export class AudioEngineManager extends EventEmitter {
     this.invalidateAudioDeviceOptionsCache(reason)
   }
 
+  private dspSceneContext(): DspSceneContext {
+    const channels =
+      this.playbackInfo.outputInfo.actualChannels ||
+      this.playbackInfo.decodedChannels ||
+      this.playbackInfo.channelCount ||
+      2
+    const channelLayout =
+      channels <= 1 ? 'mono' : channels >= 8 ? '7.1' : channels >= 6 ? '5.1' : 'stereo'
+    const sourceKind =
+      sourceLooksDsd(this.playbackInfo.source) ||
+      this.playbackInfo.codec.trim().toLowerCase() === 'dsd' ||
+      this.playbackInfo.outputInfo.isDsd
+        ? 'dsd'
+        : 'pcm'
+    return {
+      deviceId: this.device,
+      backend: this.output,
+      channelLayout,
+      sourceKind,
+      sampleRate:
+        this.playbackInfo.sourceSampleRate ||
+        this.playbackInfo.decodedSampleRate ||
+        this.playbackInfo.outputInfo.actualSampleRate ||
+        48000
+    }
+  }
+
+  private refreshResolvedDspScene() {
+    const resolution = resolveDspScene(
+      this.dspScenes,
+      this.dspSceneContext(),
+      this.dspPinnedSceneId
+    )
+    this.activeDspSceneId = resolution.scene?.id ?? null
+    this.activeDspGraph = resolution.graph
+    return resolution
+  }
+
+  private graphPayload(revision = this.dspGraphRevision) {
+    const resolution = this.refreshResolvedDspScene()
+    const dsdPcmFallbackApplied =
+      resolution.requiresPcmFallback &&
+      resolution.scene?.allowDsdPcmFallback === true &&
+      this.processing.dsdOutputMode === 'pcm'
+    return {
+      revision,
+      sceneId: resolution.scene?.id ?? null,
+      graph:
+        resolution.requiresPcmFallback && !dsdPcmFallbackApplied
+          ? {
+              version: this.activeDspGraph.version,
+              nodes: [],
+              outputStage: this.activeDspGraph.outputStage
+            }
+          : this.materializeGraphAssets(this.activeDspGraph),
+      bypassReason:
+        resolution.requiresPcmFallback && !dsdPcmFallbackApplied
+          ? 'DSD Direct requires explicit PCM fallback before DSP can run'
+          : '',
+      requiresPcmFallback: resolution.requiresPcmFallback,
+      dsdPcmFallbackApplied
+    }
+  }
+
+  private materializeGraphAssets(graph: DspGraphConfig): DspGraphConfig {
+    if (
+      !this.dspAssetPathResolver &&
+      !this.vst3ModuleResolver &&
+      !graph.nodes.some((node) => node.type === 'vst3Plugin')
+    ) {
+      return graph
+    }
+    let changed = false
+    const nodes = graph.nodes.map((node) => {
+      let params = node.params
+      const assetId = node.params.impulseResponseAssetId
+      if (typeof assetId === 'string') {
+        const path = this.dspAssetPathResolver?.(assetId)
+        if (path && params.impulseResponsePath !== path) {
+          params = { ...params, impulseResponsePath: path }
+          changed = true
+        }
+      }
+      if (node.type !== 'vst3Plugin') {
+        return params === node.params ? node : { ...node, params }
+      }
+
+      // These values are materialized only in main memory immediately before
+      // native dispatch. Persisted renderer configuration can reference a
+      // catalog ID, never an arbitrary filesystem module path.
+      const {
+        vst3ModulePath: _ignoredModulePath,
+        vst3ClassId: _ignoredClassId,
+        vst3StatePath: _ignoredStatePath,
+        vst3StateFormat: _ignoredStateFormat,
+        vst3BypassReason: _ignoredBypassReason,
+        ...safeParams
+      } = params
+      const reference = node.vst3
+      const resolution = reference
+        ? this.vst3ModuleResolver?.(reference.catalogId, reference.classId)
+        : undefined
+      const stateResolution = reference?.stateAssetId
+        ? this.vst3StateAssetResolver?.(reference.stateAssetId)
+        : undefined
+      const bypassReason =
+        (reference ? this.vst3RecoveryBypassReasons.get(reference.catalogId) : '') ||
+        (!resolution?.modulePath
+          ? resolution?.reason ||
+            (reference
+              ? 'VST3 catalog resolution is unavailable'
+              : 'VST3 graph nodes require a managed catalog reference')
+          : reference?.stateAssetId && !stateResolution?.path
+            ? stateResolution?.reason || 'VST3 state asset resolution is unavailable'
+            : '')
+      const resolvedParams = bypassReason
+        ? { ...safeParams, vst3BypassReason: bypassReason }
+        : {
+            ...safeParams,
+            vst3ModulePath: resolution?.modulePath ?? '',
+            vst3ClassId: resolution?.classId ?? reference?.classId ?? '',
+            ...(stateResolution?.path
+              ? {
+                  vst3StatePath: stateResolution.path,
+                  vst3StateFormat:
+                    stateResolution.kind === 'vst3Preset' ? 'preset' : 'componentState'
+                }
+              : {})
+          }
+      changed = true
+      return { ...node, params: resolvedParams }
+    })
+    return changed ? { ...graph, nodes } : graph
+  }
+
+  refreshDspGraph(): void {
+    this.applyNativeDspGraph('刷新 DSP 场景资料解析')
+    this.updateOutputPerfect()
+    this.publishPlaybackInfo()
+  }
+
+  /** Called after a listener explicitly clears a VST3 quarantine. */
+  clearVst3RecoveryBypass(catalogId?: string): void {
+    const normalizedCatalogId = typeof catalogId === 'string' ? catalogId.trim() : ''
+    if (normalizedCatalogId) {
+      this.vst3RecoveryBypassReasons.delete(normalizedCatalogId)
+      return
+    }
+    this.vst3RecoveryBypassReasons.clear()
+  }
+
+  private markActiveVst3NodesForManualRecovery(): void {
+    const reason = 'VST3 node is bypassed after an audio service crash; re-enable it manually'
+    for (const node of this.activeDspGraph.nodes) {
+      const catalogId =
+        node.type === 'vst3Plugin' && node.enabled ? node.vst3?.catalogId.trim() : ''
+      if (catalogId) this.vst3RecoveryBypassReasons.set(catalogId, reason)
+    }
+  }
+
+  private applyNativeDspGraph(context: string): void {
+    const payload = this.graphPayload(++this.dspGraphRevision)
+    this.tryNative(context, (native) => native.SetDspGraph?.(JSON.stringify(payload)))
+  }
+
+  getDspSceneState(): DspSceneState {
+    const payload = this.graphPayload()
+    return {
+      scenes: this.dspScenes,
+      pinnedSceneId: this.dspPinnedSceneId,
+      activeSceneId: payload.sceneId,
+      graph: this.activeDspGraph,
+      requiresPcmFallback: payload.requiresPcmFallback,
+      dsdPcmFallbackApplied: payload.dsdPcmFallbackApplied
+    }
+  }
+
+  async setDspScenes(
+    scenes: DspScene[],
+    pinnedSceneId: string | null = this.dspPinnedSceneId
+  ): Promise<DspSceneState> {
+    const previousScenes = new Map(this.dspScenes.map((scene) => [scene.id, scene]))
+    this.dspScenes = normalizeDspScenes(scenes, this.processing)
+    for (const scene of this.dspScenes) {
+      const previous = previousScenes.get(scene.id)
+      // A confirmation applies to the exact graph the listener heard. Editing
+      // that graph, importing a new scene, or restoring an older draft always
+      // asks again before a DSD Direct/DoP path can become PCM processing.
+      if (
+        previous?.allowDsdPcmFallback !== true ||
+        JSON.stringify(previous.graph) !== JSON.stringify(scene.graph)
+      ) {
+        delete scene.allowDsdPcmFallback
+      }
+    }
+    this.dspPinnedSceneId =
+      typeof pinnedSceneId === 'string' &&
+      this.dspScenes.some((scene) => scene.id === pinnedSceneId)
+        ? pinnedSceneId
+        : null
+    this.applyNativeDspGraph('更新 DSP 场景')
+    this.updateOutputPerfect()
+    this.publishPlaybackInfo()
+    return this.getDspSceneState()
+  }
+
+  async applyDspScene(
+    sceneId: string | null,
+    confirmDsdPcmFallback = false
+  ): Promise<DspSceneState> {
+    this.dspPinnedSceneId =
+      typeof sceneId === 'string' && this.dspScenes.some((scene) => scene.id === sceneId)
+        ? sceneId
+        : null
+    const state = this.getDspSceneState()
+    if (state.requiresPcmFallback && !state.dsdPcmFallbackApplied) {
+      if (!confirmDsdPcmFallback) {
+        this.applyNativeDspGraph('保留 DSD Direct/DoP 并旁路 DSP 场景')
+        this.updateOutputPerfect()
+        this.publishPlaybackInfo()
+        return this.getDspSceneState()
+      }
+      const scene = this.dspScenes.find((candidate) => candidate.id === state.activeSceneId)
+      if (!scene) return state
+      scene.allowDsdPcmFallback = true
+      const previousProcessing = this.processing
+      this.processing = this.mergeAudioProcessingSettings({ dsdOutputMode: 'pcm', dsdToPcm: true })
+      this.applyNativeDspSettings('确认 DSD PCM DSP 回退', { previousProcessing })
+    } else {
+      this.applyNativeDspGraph('应用 DSP 场景')
+    }
+    this.updateOutputPerfect()
+    this.publishPlaybackInfo()
+    return this.getDspSceneState()
+  }
+
+  getDspGraphStatus(): DspGraphStatus {
+    const fallback: DspGraphStatus = {
+      revision: this.dspGraphRevision,
+      activeSceneId: this.activeDspSceneId,
+      totalLatencyFrames: 0,
+      totalTailFrames: 0,
+      nodes: this.activeDspGraph.nodes.map((node) => ({
+        id: node.id,
+        type: node.type,
+        enabled: node.enabled,
+        active: false,
+        bypassed: false,
+        bypassReason: '',
+        latencyFrames: 0,
+        tailFrames: 0,
+        processCalls: 0,
+        lastProcessMs: 0,
+        maxProcessMs: 0
+      }))
+    }
+    return parseNativeJson(this.native?.GetDspGraphStatus?.(), fallback)
+  }
+
+  async scanVst3Module(modulePath: string): Promise<Vst3ScanDescriptor> {
+    const native = this.native
+    if (!native) throw new Error('未加载 twilight_audio_node.node')
+    let raw: string | Vst3ScanDescriptor | undefined
+    try {
+      raw =
+        typeof native.callAsync === 'function'
+          ? ((await native.callAsync('ScanVst3Module', [modulePath])) as
+              | string
+              | Vst3ScanDescriptor)
+          : native.ScanVst3Module?.(modulePath)
+    } catch (error) {
+      this.lastNativeError = error instanceof Error ? error.message : String(error)
+      throw new Error(this.lastNativeError)
+    }
+    const descriptor = parseNativeJson<Vst3ScanDescriptor | null>(raw, null)
+    if (!isVst3ScanDescriptor(descriptor)) {
+      throw new Error('原生音频引擎未返回有效 VST3 描述')
+    }
+    this.lastNativeError = ''
+    return {
+      classId: descriptor.classId.trim(),
+      name: descriptor.name.trim(),
+      vendor: descriptor.vendor.trim(),
+      version: descriptor.version.trim(),
+      ...(descriptor.category ? { category: descriptor.category.trim() } : {}),
+      ...(Array.isArray(descriptor.supportedLayouts)
+        ? { supportedLayouts: [...descriptor.supportedLayouts] }
+        : {}),
+      ...(Array.isArray(descriptor.parameters)
+        ? { parameters: descriptor.parameters.map((parameter) => ({ ...parameter })) }
+        : {})
+    }
+  }
+
   async setAudioProcessing(
     settings: Partial<AudioProcessingSettings>
   ): Promise<AudioProcessingSettings> {
@@ -2546,6 +2938,8 @@ export class AudioEngineManager extends EventEmitter {
 
     const previousProcessing = this.processing
     this.processing = nextProcessing
+    const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
+    if (defaultScene) defaultScene.graph = createLegacyDspGraph(this.processing)
     const sourceIsDsd =
       sourceLooksDsd(this.playbackInfo.source) ||
       this.playbackInfo.codec.trim().toLowerCase() === 'dsd' ||
@@ -2936,7 +3330,9 @@ export class AudioEngineManager extends EventEmitter {
       createInactiveVisualizationData(
         normalizedOptions,
         this.playbackInfo.actualSampleRate,
-        fallbackReason === 'Native visualization tap unavailable' ? 'native-unavailable' : 'stopped',
+        fallbackReason === 'Native visualization tap unavailable'
+          ? 'native-unavailable'
+          : 'stopped',
         fallbackReason === 'Native visualization tap unavailable' ? fallbackReason : ''
       )
     )
@@ -2973,7 +3369,8 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   private async readNativePlaybackInfoAsync(): Promise<PlaybackInfo | null> {
-    if (!this.native || typeof this.native.callAsync !== 'function') return this.readNativePlaybackInfo()
+    if (!this.native || typeof this.native.callAsync !== 'function')
+      return this.readNativePlaybackInfo()
     try {
       const raw = (await this.native.callAsync('GetPlaybackInfo', [])) as
         | string
@@ -3036,8 +3433,7 @@ export class AudioEngineManager extends EventEmitter {
       (this.nativeConfigRevisionEpochPending ||
         rawRequestedConfigRevision < this.lastRawRequestedConfigRevision)
     ) {
-      this.configRevisionBase =
-        this.publicRequestedConfigRevision - rawRequestedConfigRevision
+      this.configRevisionBase = this.publicRequestedConfigRevision - rawRequestedConfigRevision
     }
 
     this.nativeConfigRevisionObserved = true
@@ -3397,8 +3793,11 @@ export class AudioEngineManager extends EventEmitter {
       previous.convolverEnabled !== this.processing.convolverEnabled ||
       previous.convolverIrPath !== this.processing.convolverIrPath
 
+    const graphPayload = this.graphPayload()
+
     this.tryNative(context, (native) => {
-      native.SetDspConfig?.(JSON.stringify(this.processing))
+      native.SetDspConfig?.(JSON.stringify({ ...this.processing, dspGraph: graphPayload }))
+      native.SetDspGraph?.(JSON.stringify(graphPayload))
       if (eqChanged) {
         native.SetEqBands?.(JSON.stringify(this.processing))
       }
@@ -3551,7 +3950,10 @@ export class AudioEngineManager extends EventEmitter {
 
     const options = this.readNativeAudioDeviceOptions()
     const signature = this.createAudioDeviceOptionsSignature(options)
-    if (this.lastAudioDeviceOptionsSignature && signature !== this.lastAudioDeviceOptionsSignature) {
+    if (
+      this.lastAudioDeviceOptionsSignature &&
+      signature !== this.lastAudioDeviceOptionsSignature
+    ) {
       this.lastAudioDeviceOptionsCache = {
         selectedDevice: this.device,
         readAt: now,
@@ -3690,14 +4092,12 @@ export class AudioEngineManager extends EventEmitter {
       return
     }
 
+    const sceneResolution = this.refreshResolvedDspScene()
+    const sceneDspActive =
+      graphHasEnabledProcessing(sceneResolution.graph) &&
+      !(sceneResolution.requiresPcmFallback && this.processing.dsdOutputMode !== 'pcm')
     const dspActive =
-      (this.processing.dspEnabled && this.processing.eqEnabled) ||
-      (this.processing.dspEnabled && this.processing.volumeNormalization !== 'off') ||
-      (this.processing.dspEnabled && this.playbackInfo.convolverActive) ||
-      (this.processing.dspEnabled &&
-        this.processing.crossfeedEnabled &&
-        this.processing.crossfeedStrength > 0) ||
-      (this.processing.dspEnabled && Math.abs(this.processing.eqPreamp) > 0.001) ||
+      sceneDspActive ||
       this.processing.crossfadeSeconds > 0 ||
       Math.abs(this.playbackInfo.volume - 1) > 0.001
     const replayGainActive =

@@ -11,6 +11,7 @@ import type {
   EqMode,
   HeadphoneCompensationSettings
 } from '../types/settings'
+import type { DspSceneState } from '../../../shared/dspGraph.ts'
 
 const emit = defineEmits<{
   back: []
@@ -36,7 +37,8 @@ const filterTypes: { value: EqualizerFilterType; label: string; usesGain: boolea
   { value: 'bandPass', label: '带通', usesGain: false },
   { value: 'lowPass', label: '低通', usesGain: false },
   { value: 'highPass', label: '高通', usesGain: false },
-  { value: 'allPass', label: '全通', usesGain: false }
+  { value: 'allPass', label: '全通', usesGain: false },
+  { value: 'notch', label: '陷波', usesGain: false }
 ]
 
 const defaultEqBands: EqualizerBand[] = defaultBandFrequencies.map((frequency) => ({
@@ -231,7 +233,8 @@ function normalizeFilterType(value: unknown): EqualizerFilterType {
     value === 'bandPass' ||
     value === 'lowPass' ||
     value === 'highPass' ||
-    value === 'allPass'
+    value === 'allPass' ||
+    value === 'notch'
   ) {
     return value
   }
@@ -307,12 +310,46 @@ async function loadAppSettings(): Promise<void> {
       bands: cloneBands(settings.headphoneCompensation?.bands ?? [])
     }
     audioProcessing.value = appSettings.value.audioProcessing
+    const dspState = await window.api.audioEngine.getDspSceneState()
+    applyActiveSceneEqToEditor(dspState)
     if (audioProcessing.value.eqMode === 'parametric') {
       activeTab.value = 'parametric'
     }
   } catch (err) {
     console.error('读取均衡器设置失败：', err)
   }
+}
+
+function applyActiveSceneEqToEditor(dspState: DspSceneState): void {
+  const scene = dspState.scenes.find((item) => item.id === dspState.activeSceneId)
+  const node = scene?.graph.nodes.find((item) => item.type === 'equalizer')
+  if (!node) return
+  const params = node.params
+  const settings = normalizeAudioProcessing({
+    ...audioProcessing.value,
+    dspEnabled: true,
+    eqEnabled: node.enabled,
+    eqMode: params.mode === 'parametric' ? 'parametric' : 'graphic',
+    eqPreamp: typeof params.preampDb === 'number' ? params.preampDb : 0,
+    eqBands: Array.isArray(params.bands) ? (params.bands as EqualizerBand[]) : []
+  })
+  audioProcessing.value = settings
+  if (appSettings.value) appSettings.value.audioProcessing = settings
+}
+
+async function syncActiveSceneEq(nextSettings: AudioProcessingSettings): Promise<void> {
+  const dspState = await window.api.audioEngine.getDspSceneState()
+  const scene = dspState.scenes.find((item) => item.id === dspState.activeSceneId)
+  const node = scene?.graph.nodes.find((item) => item.type === 'equalizer')
+  if (!node) return
+  node.enabled = nextSettings.eqEnabled
+  node.params = {
+    ...node.params,
+    mode: nextSettings.eqMode,
+    preampDb: nextSettings.eqPreamp,
+    bands: nextSettings.eqBands
+  }
+  await window.api.audioEngine.setDspScenes(dspState.scenes, dspState.pinnedSceneId)
 }
 
 async function updateAudioProcessing(patch: Partial<AudioProcessingSettings>): Promise<void> {
@@ -328,6 +365,7 @@ async function updateAudioProcessing(patch: Partial<AudioProcessingSettings>): P
     eqEnabled: patch.eqEnabled ?? true
   })
   await setAudioProcessing(nextSettings)
+  await syncActiveSceneEq(nextSettings)
   if (appSettings.value) {
     appSettings.value = {
       ...appSettings.value,

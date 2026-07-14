@@ -26,10 +26,12 @@ double clampQ(double q) {
 
 bool isSupportedFilter(DspFilterType type) {
   return type == DspFilterType::Peak || type == DspFilterType::LowShelf || type == DspFilterType::HighShelf ||
-         type == DspFilterType::LowPass || type == DspFilterType::HighPass;
+         type == DspFilterType::LowPass || type == DspFilterType::HighPass || type == DspFilterType::BandPass ||
+         type == DspFilterType::AllPass || type == DspFilterType::Notch;
 }
 
 bool filterNeedsProcessing(const DspEqBand& band, EqMode mode) {
+  if (!band.enabled) return false;
   const DspFilterType type = mode == EqMode::Graphic ? DspFilterType::Peak : band.type;
   if (!isSupportedFilter(type)) return false;
   if (type == DspFilterType::LowPass || type == DspFilterType::HighPass) return true;
@@ -94,8 +96,16 @@ ParametricEqProcessor::Biquad makeBiquad(const DspEqBand& sourceBand, EqMode mod
       return normalize((1.0 + cosW0) * 0.5, -(1.0 + cosW0), (1.0 + cosW0) * 0.5, 1.0 + alpha,
                        -2.0 * cosW0, 1.0 - alpha);
     }
-    case DspFilterType::BandPass:
-    case DspFilterType::AllPass:
+    case DspFilterType::BandPass: {
+      return normalize(alpha, 0.0, -alpha, 1.0 + alpha, -2.0 * cosW0, 1.0 - alpha);
+    }
+    case DspFilterType::AllPass: {
+      return normalize(1.0 - alpha, -2.0 * cosW0, 1.0 + alpha, 1.0 + alpha, -2.0 * cosW0,
+                       1.0 - alpha);
+    }
+    case DspFilterType::Notch: {
+      return normalize(1.0, -2.0 * cosW0, 1.0, 1.0 + alpha, -2.0 * cosW0, 1.0 - alpha);
+    }
     default:
       return {};
   }
@@ -146,6 +156,7 @@ void ParametricEqProcessor::process(float* samples, size_t frameCount) {
       const size_t index = frame * static_cast<size_t>(channels) + static_cast<size_t>(channel);
       float value = static_cast<float>(std::clamp(static_cast<double>(samples[index]) * preampLinear_, -4.0, 4.0));
       for (auto& filter : filters_) {
+        if ((filter.channelMask & (uint32_t{1} << std::min(channel, 31))) == 0) continue;
         value = filter.channelStates[static_cast<size_t>(channel)].process(value, filter.coeffs);
       }
       samples[index] = value;
@@ -178,6 +189,7 @@ void ParametricEqProcessor::rebuildFilters() {
     FilterBand filter;
     filter.coeffs = makeBiquad(band, config_.eqMode, format_.sampleRate);
     filter.channelStates.resize(static_cast<size_t>(std::max(1, format_.channelCount)));
+    filter.channelMask = band.channelMask;
     filters_.push_back(std::move(filter));
   }
 

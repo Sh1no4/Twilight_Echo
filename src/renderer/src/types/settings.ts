@@ -1,4 +1,5 @@
 import type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
+import type { DspScene } from '../../../shared/dspGraph.ts'
 
 export type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 
@@ -125,12 +126,15 @@ export type EqualizerFilterType =
   | 'lowPass'
   | 'highPass'
   | 'allPass'
+  | 'notch'
 
 export interface EqualizerBand {
   frequency: number
   gain: number
   q: number
   filterType: EqualizerFilterType
+  enabled?: boolean
+  channelMask?: number
 }
 
 export interface AudioProcessingSettings {
@@ -277,6 +281,8 @@ export interface AppSettings {
   audioExclusiveMode: boolean
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
+  dspScenes: DspScene[]
+  dspPinnedSceneId: string | null
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings

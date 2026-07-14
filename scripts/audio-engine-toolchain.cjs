@@ -7,6 +7,45 @@ const {
 const { delimiter, dirname, join, resolve } = require('node:path')
 const { spawnSync: childProcessSpawnSync } = require('node:child_process')
 
+const PERSISTED_MINGW_VARIABLES = [
+  'VCPKG_ROOT',
+  'W64DEVKIT_ROOT',
+  'TAE_MINGW_BUILD_DIR',
+  'TWILIGHT_GNU_PATCH'
+]
+
+function environmentValue(env, name) {
+  const direct = env[name]
+  if (typeof direct === 'string' && direct) return direct
+  const key = Object.keys(env).find((candidate) => candidate.toUpperCase() === name.toUpperCase())
+  const value = key ? env[key] : undefined
+  return typeof value === 'string' && value ? value : undefined
+}
+
+function setEnvironmentValue(env, name, value) {
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === name.toUpperCase()) delete env[key]
+  }
+  env[name] = value
+}
+
+function resolveMingwEnvironment({ env = process.env, spawnSync = childProcessSpawnSync } = {}) {
+  const resolved = { ...env }
+  if (process.platform !== 'win32') return resolved
+  for (const name of PERSISTED_MINGW_VARIABLES) {
+    if (environmentValue(resolved, name)) continue
+    const result = spawnSync('reg.exe', ['query', 'HKCU\\Environment', '/v', name], {
+      encoding: 'utf8',
+      windowsHide: true
+    })
+    if (result?.status !== 0 || result.error) continue
+    const expression = new RegExp(`^\\s*${name}\\s+REG_\\w+\\s+(.+?)\\s*$`, 'im')
+    const match = expression.exec(result.stdout ?? '')
+    if (match?.[1]) resolved[name] = match[1].trim()
+  }
+  return resolved
+}
+
 function normalizePath(value) {
   return String(value).replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase()
 }
@@ -107,7 +146,7 @@ function prepareMingwCmakeEnvironment({
 
   const devkitBin = join(resolve(env.W64DEVKIT_ROOT), 'bin')
   const patchBin = dirname(patch)
-  const pathEntries = [patchBin, devkitBin, ...(env.PATH ?? '').split(delimiter)]
+  const pathEntries = [patchBin, devkitBin, ...(environmentValue(env, 'PATH') ?? '').split(delimiter)]
   const uniquePathEntries = []
   const seen = new Set()
   for (const entry of pathEntries) {
@@ -118,11 +157,9 @@ function prepareMingwCmakeEnvironment({
     uniquePathEntries.push(entry)
   }
 
-  const environment = {
-    ...env,
-    PATH: uniquePathEntries.join(delimiter),
-    MSYS: withMsysLinkFallback(env.MSYS)
-  }
+  const environment = { ...env }
+  setEnvironmentValue(environment, 'PATH', uniquePathEntries.join(delimiter))
+  setEnvironmentValue(environment, 'MSYS', withMsysLinkFallback(environmentValue(env, 'MSYS')))
   if (buildDir) {
     const tempDir = join(resolve(buildDir), 'tmp')
     environment.TEMP = tempDir
@@ -222,6 +259,7 @@ module.exports = {
   findStaleCTestRegistrations,
   prepareMingwCmakeEnvironment,
   prepareMingwBuildLayout,
+  resolveMingwEnvironment,
   resolveMingwBuildLayout,
   validateMingwBuildCommands,
   validateMingwToolchain

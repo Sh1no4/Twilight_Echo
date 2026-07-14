@@ -5,24 +5,26 @@ const {
   findStaleCTestRegistrations,
   prepareMingwCmakeEnvironment,
   prepareMingwBuildLayout,
+  resolveMingwEnvironment,
   validateMingwBuildCommands
 } = require('./audio-engine-toolchain.cjs')
 
 const root = resolve(__dirname, '..')
-const buildLayout = prepareMingwBuildLayout({ root })
+const toolchainEnvironment = resolveMingwEnvironment()
+const buildLayout = prepareMingwBuildLayout({ root, env: toolchainEnvironment })
 if (!buildLayout.ok) {
   console.error(buildLayout.message)
   process.exit(1)
 }
 const { buildDir } = buildLayout
 
-const preflight = prepareMingwCmakeEnvironment({ buildDir })
+const preflight = prepareMingwCmakeEnvironment({ buildDir, env: toolchainEnvironment })
 if (!preflight.ok) {
   console.error(preflight.message)
   process.exit(1)
 }
 
-const vcpkgRoot = resolve(process.env.VCPKG_ROOT)
+const vcpkgRoot = resolve(toolchainEnvironment.VCPKG_ROOT)
 const cmakeEnvironment = preflight.environment
 const buildToolPreflight = validateMingwBuildCommands({ env: cmakeEnvironment })
 if (!buildToolPreflight.ok) {

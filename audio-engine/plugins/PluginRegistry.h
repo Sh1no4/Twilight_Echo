@@ -13,6 +13,13 @@ namespace twilight::audio {
 struct NativeDspPluginConfig {
   std::string id;
   std::string path;
+  uint32_t abiVersion = 1;
+  uint32_t supportedChannelLayouts = 0;
+  uint32_t minimumSampleRate = 0;
+  uint32_t maximumSampleRate = 0;
+  uint32_t latencyFrames = 0;
+  uint32_t tailFrames = 0;
+  std::string graphPosition = "fixed-post-graph";
   bool enabled = true;
   std::unordered_map<std::string, double> parameters;
 };
@@ -35,6 +42,13 @@ struct NativeDspPluginStatus {
   std::string name;
   std::string version;
   std::string path;
+  uint32_t abiVersion = TAE_DSP_PLUGIN_ABI_VERSION;
+  uint32_t supportedChannelLayouts = 0;
+  uint32_t minimumSampleRate = 0;
+  uint32_t maximumSampleRate = 0;
+  uint32_t latencyFrames = 0;
+  uint32_t tailFrames = 0;
+  std::string graphPosition = "fixed-post-graph";
   bool enabled = false;
   bool loaded = false;
   bool active = false;

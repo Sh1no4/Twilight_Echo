@@ -10,6 +10,12 @@ namespace twilight::audio {
 
 class FFmpegDecoder {
  public:
+  enum class ResamplerQuality {
+    Native,
+    High,
+    Ultra
+  };
+
   FFmpegDecoder();
   ~FFmpegDecoder();
 
@@ -20,6 +26,7 @@ class FFmpegDecoder {
   void close();
 
   bool setOutputFormat(const AudioFormat& format, std::string* error);
+  void setResamplerQuality(ResamplerQuality quality);
   size_t readFrames(float* output, size_t frameCount, std::string* error);
   size_t readFrames(PcmBlock& output, std::string* error);
   bool seek(double seconds, std::string* error);

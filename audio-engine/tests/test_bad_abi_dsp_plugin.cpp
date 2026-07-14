@@ -4,7 +4,7 @@ namespace {
 
 const tae_dsp_plugin_info kInfo = {
     sizeof(tae_dsp_plugin_info),
-    TAE_DSP_PLUGIN_ABI_VERSION + 1,
+    TAE_DSP_PLUGIN_ABI_VERSION_V2 + 1,
     "com.twilightecho.test.bad-abi",
     "Bad ABI",
     "1.0.0",

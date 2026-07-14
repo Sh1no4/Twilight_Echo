@@ -34,6 +34,7 @@ class ParametricEqProcessor final : public IAudioProcessor {
   struct FilterBand {
     Biquad coeffs;
     std::vector<BiquadState> channelStates;
+    uint32_t channelMask = 0xffffffffu;
   };
 
  private:

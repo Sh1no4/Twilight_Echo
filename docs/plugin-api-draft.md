@@ -375,11 +375,20 @@ ABI v1 is `TAE_DSP_PLUGIN_ABI_VERSION = 1` and supports float32 interleaved PCM.
 The info table provides `create`, `destroy`, `prepare`, `process`, `set_param`,
 `reset`, and parameter metadata. ABI structs may only append fields at the tail.
 
+ABI v2 is `TAE_DSP_PLUGIN_ABI_VERSION_V2 = 2`. It appends the supported channel
+layouts, sample-rate range, declared latency and tail, and an optional `flush`
+callback. Hosts read those fields only when `struct_size` covers the v2 tail.
+ABI v1 plugins stay fixed after built-in graph nodes and before terminal output
+protection. ABI v2 plugins can be compiled as ordered graph nodes after the
+host validates their format, layout, latency, and tail declarations.
+
 The host engine exposes:
 
 ```ts
 TAE_SetDspPluginChain(chainJson)
 TAE_GetDspPluginStatus()
+TAE_SetDspGraph(graphJson)
+TAE_GetDspGraphStatus()
 PlaybackInfo.outputInfo.nativeDsp
 ```
 
@@ -399,6 +408,24 @@ Service by default. A DSP plugin hard crash restarts that service, clears the
 native DSP chain, and marks enabled DSP plugins failed instead of exiting the
 Electron main process. `TWILIGHT_AUDIO_SERVICE=0` is reserved as a development
 fallback for direct native binding.
+
+### VST3 External Effects
+
+Windows x64 VST3 modules are a managed external-effects integration, not
+Twilight `.tep` plugins and not plugin-index or marketplace entries. The app
+scans only standard or explicitly user-authorized directories, stores module
+metadata and state in the managed DSP asset library, and never copies a
+third-party VST3 binary into this repository or a `.tedsp` configuration pack.
+Only single main input/output buses with exact Mono, Stereo, 5.1, or 7.1 layout
+matches are eligible. Vendor GUIs, VST2, AU, LV2, sidechains, and multi-bus
+modules are outside the host contract.
+
+Each VST3 module is probed in an isolated scanner process and executed through
+the restartable audio service. A timeout, crash, architecture/signature failure,
+or invalid metadata quarantines only that catalog entry. After an audio-service
+restart, affected VST3 graph nodes remain bypassed until the user explicitly
+reenables them. Like all sample-processing effects, VST3 nodes are bypassed on
+DSD Direct and DoP paths until the user confirms PCM fallback.
 
 ## Phase 5 Typings, CLI, And Index API
 

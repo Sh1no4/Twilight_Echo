@@ -1,6 +1,20 @@
 ﻿export type AudioEngineEventCallback = (event: { name: string; data: unknown }) => void
 export type AudioEngineEndFileCallback = (reason: string) => void
 
+import type { DspGraphStatus, DspScene } from '../shared/dspGraph.ts'
+
+export type {
+  DspAsset,
+  DspAssetKind,
+  DspCorrectionImportResult,
+  DspCorrectionProfile,
+  DspGraphStatus,
+  DspProfile,
+  DspScene,
+  DspSceneState,
+  Vst3CatalogState
+} from '../shared/dspGraph.ts'
+
 export type {
   MiniPlayerBootstrap,
   MiniPlayerCommand,
@@ -248,12 +262,15 @@ export type EqualizerFilterType =
   | 'lowPass'
   | 'highPass'
   | 'allPass'
+  | 'notch'
 
 export interface EqualizerBand {
   frequency: number
   gain: number
   q: number
   filterType: EqualizerFilterType
+  enabled?: boolean
+  channelMask?: number
 }
 
 export interface AudioProcessingSettings {
@@ -535,6 +552,8 @@ export interface AppSettings {
   audioExclusiveMode: boolean
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
+  dspScenes: DspScene[]
+  dspPinnedSceneId: string | null
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
@@ -848,7 +867,7 @@ export interface OutputInfo {
   diagnostics: OutputDiagnostics
   deviceRecovered: boolean
   recoveryCount: number
-  nativeDsp?: { plugins: unknown[] }
+  nativeDsp?: { plugins: unknown[]; graph?: DspGraphStatus }
   isDsd: boolean
   dsdMode: string
   dsdRate: number

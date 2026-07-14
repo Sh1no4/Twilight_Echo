@@ -3,6 +3,10 @@
 #include "ConvolverProcessorUtils.h"
 #include "KissFftAdapter.h"
 
+#if defined(TAE_HAS_FFMPEG)
+#include "../decoder/FFmpegDecoder.h"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -25,6 +29,8 @@ constexpr std::array<unsigned char, 16> kWaveSubFormatFloat = {
     0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71};
 constexpr uint64_t kConvolverRealtimeBypassOverrunThreshold = 3;
 constexpr const char* kConvolverRealtimeBypassReason = "convolver process exceeded realtime budget";
+constexpr uint64_t kMaxImpulseFrames = 16ULL * 1024ULL * 1024ULL;
+constexpr uint64_t kMaxImpulseSamples = kMaxImpulseFrames * 8ULL;
 
 uint16_t readU16(const std::array<unsigned char, 2>& bytes) {
   return static_cast<uint16_t>(bytes[0] | (bytes[1] << 8));
@@ -67,6 +73,14 @@ std::string mappingModeFor(int irChannels, int outputChannels) {
   if (irChannels == 2 && outputChannels == 2) return "stereo";
   if (irChannels == 2) return outputChannels == 1 ? "stereo-left" : "stereo-repeat";
   return "front-left-right";
+}
+
+bool hasRoutingMatrix(const DspConfig& config, int channels) {
+  return channels > 0 && config.convolverMatrix.size() == static_cast<size_t>(channels * channels);
+}
+
+bool hasMonoToManyMatrix(const DspConfig& config, int channels) {
+  return channels > 0 && config.convolverMatrix.size() == static_cast<size_t>(channels);
 }
 
 }  // namespace
@@ -116,6 +130,16 @@ struct ConvolverProcessor::FftChannel {
     std::fill(overlap.begin(), overlap.end(), 0.0f);
     inputPos = 0;
     currentIndex = 0;
+  }
+
+  uint64_t memoryBytes() const {
+    uint64_t total = sizeof(*this);
+    total += static_cast<uint64_t>(inputBlock.capacity() + outputBlock.capacity() + overlap.capacity() + paddedScratch.capacity()) *
+             sizeof(float);
+    total += static_cast<uint64_t>(spectrumScratch.capacity()) * sizeof(Complex);
+    for (const auto& partition : impulsePartitions) total += static_cast<uint64_t>(partition.capacity()) * sizeof(Complex);
+    for (const auto& history : inputHistory) total += static_cast<uint64_t>(history.capacity()) * sizeof(Complex);
+    return total;
   }
 
   float process(float input) {
@@ -175,12 +199,45 @@ void ConvolverProcessor::setTrackContext(const DspTrackContext&) {
 void ConvolverProcessor::process(float* samples, size_t frameCount) {
   if (!active_ || !samples || frameCount == 0) return;
   const auto started = std::chrono::steady_clock::now();
-  const int channels = std::max(1, format_.channelCount);
+  const int channels = std::clamp(format_.channelCount, 1, 8);
+  const bool routed = hasRoutingMatrix(config_, channels);
+  const bool monoToMany = hasMonoToManyMatrix(config_, channels);
   for (size_t frame = 0; frame < frameCount; ++frame) {
-    for (int channel = 0; channel < channels; ++channel) {
-      const size_t index = frame * static_cast<size_t>(channels) + static_cast<size_t>(channel);
-      samples[index] = channels_[static_cast<size_t>(channel)]->process(samples[index]);
+    float* current = samples + frame * static_cast<size_t>(channels);
+    for (int output = 0; output < channels; ++output) {
+      double input = 0.0;
+      if (routed) {
+        for (int inputChannel = 0; inputChannel < channels; ++inputChannel) {
+          input += config_.convolverMatrix[static_cast<size_t>(output * channels + inputChannel)] * current[inputChannel];
+        }
+      } else if (monoToMany) {
+        input = config_.convolverMatrix[static_cast<size_t>(output)] * current[0];
+      } else {
+        input = current[output];
+      }
+      routedInput_[static_cast<size_t>(output)] = static_cast<float>(std::clamp(input, -8.0, 8.0));
     }
+    for (int output = 0; output < channels; ++output) {
+      wetOutput_[static_cast<size_t>(output)] = channels_[static_cast<size_t>(output)]->process(
+          routedInput_[static_cast<size_t>(output)]);
+    }
+    const size_t delayRingFrames = wetDelayFrames_ + 1;
+    for (int channel = 0; channel < channels; ++channel) {
+      const size_t channelIndex = static_cast<size_t>(channel);
+      float wet = wetOutput_[channelIndex];
+      if (!wetDelayBuffer_.empty()) {
+        wetDelayBuffer_[wetDelayWriteFrame_ * static_cast<size_t>(channels) + channelIndex] = wet;
+        const size_t readFrame =
+            (wetDelayWriteFrame_ + delayRingFrames - wetDelayFrames_) % delayRingFrames;
+        wet = wetDelayBuffer_[readFrame * static_cast<size_t>(channels) + channelIndex];
+      }
+      current[channel] = static_cast<float>(std::clamp(
+          static_cast<double>(current[channel]) * config_.convolverDry +
+              static_cast<double>(wet) * config_.convolverWet * wetGain_,
+          -8.0,
+          8.0));
+    }
+    wetDelayWriteFrame_ = (wetDelayWriteFrame_ + 1) % delayRingFrames;
   }
   const auto elapsed = std::chrono::steady_clock::now() - started;
   const double elapsedMs = std::chrono::duration<double, std::milli>(elapsed).count();
@@ -204,6 +261,8 @@ void ConvolverProcessor::reset() {
   for (auto& channel : channels_) {
     if (channel) channel->reset();
   }
+  std::fill(wetDelayBuffer_.begin(), wetDelayBuffer_.end(), 0.0f);
+  wetDelayWriteFrame_ = 0;
   consecutiveOverruns_ = 0;
 }
 
@@ -213,7 +272,7 @@ bool ConvolverProcessor::isActive() const {
 
 bool ConvolverProcessor::loadImpulseResponse(const std::string& path, std::string* error) {
   IrData ir;
-  if (!readWaveImpulse(path, &ir, error)) {
+  if (!readImpulse(path, &ir, error)) {
     info_.lastError = error && !error->empty() ? *error : "无法读取脉冲响应文件";
     return false;
   }
@@ -241,6 +300,12 @@ void ConvolverProcessor::unloadImpulseResponse() {
   originalIr_.reset();
   irCache_.clear();
   channels_.clear();
+  routedInput_.fill(0.0f);
+  wetOutput_.fill(0.0f);
+  wetDelayBuffer_.clear();
+  wetDelayFrames_ = 0;
+  wetDelayWriteFrame_ = 0;
+  wetGain_ = 1.0;
   active_ = false;
   info_ = {};
   consecutiveOverruns_ = 0;
@@ -252,6 +317,87 @@ ConvolverInfo ConvolverProcessor::info() const {
   ConvolverInfo copy = info_;
   copy.active = active_;
   return copy;
+}
+
+bool ConvolverProcessor::readImpulse(const std::string& path, IrData* out, std::string* error) {
+  std::string waveError;
+  if (readWaveImpulse(path, out, &waveError)) return true;
+
+#if defined(TAE_HAS_FFMPEG)
+  std::string decoderError;
+  if (readFfmpegImpulse(path, out, &decoderError)) return true;
+  if (error) {
+    *error = decoderError.empty() ? waveError : decoderError;
+  }
+#else
+  if (error) {
+    *error = waveError.empty() ? "Only WAV impulse responses are available in this native build" : waveError;
+  }
+#endif
+  return false;
+}
+
+bool ConvolverProcessor::readFfmpegImpulse(const std::string& path, IrData* out, std::string* error) {
+#if defined(TAE_HAS_FFMPEG)
+  if (!out) return false;
+  FFmpegDecoder decoder;
+  if (!decoder.open(path, error)) return false;
+
+  AudioFormat format = decoder.streamInfo().decodedFormat;
+  if (format.sampleRate <= 0 || format.channelCount <= 0 || format.channelCount > 8) {
+    if (error) *error = "Impulse response must have between one and eight channels";
+    return false;
+  }
+  format.sampleFormat = AudioSampleFormat::Float32Interleaved;
+  format.bitDepth = 32;
+  if (!decoder.setOutputFormat(format, error)) return false;
+
+  constexpr size_t kDecodeBlockFrames = 4096;
+  const size_t channels = static_cast<size_t>(format.channelCount);
+  std::vector<float> scratch(kDecodeBlockFrames * channels, 0.0f);
+  std::vector<float> interleaved;
+  while (!decoder.eof()) {
+    std::string decodeError;
+    const size_t frames = decoder.readFrames(scratch.data(), kDecodeBlockFrames, &decodeError);
+    if (frames == 0) {
+      if (!decodeError.empty() && error) *error = decodeError;
+      break;
+    }
+    const uint64_t nextSamples = static_cast<uint64_t>(interleaved.size()) + frames * channels;
+    if (nextSamples > kMaxImpulseSamples) {
+      if (error) *error = "Impulse response exceeds the managed runtime size limit";
+      return false;
+    }
+    interleaved.insert(interleaved.end(), scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(frames * channels));
+  }
+  if (interleaved.empty() || interleaved.size() % channels != 0) {
+    if (error && error->empty()) *error = "Impulse response contains no decoded audio";
+    return false;
+  }
+
+  const uint64_t frames = static_cast<uint64_t>(interleaved.size() / channels);
+  if (frames > kMaxImpulseFrames) {
+    if (error) *error = "Impulse response exceeds the managed runtime frame limit";
+    return false;
+  }
+  IrData ir;
+  ir.sampleRate = format.sampleRate;
+  ir.channels = format.channelCount;
+  ir.frames = frames;
+  ir.samples.assign(channels, std::vector<float>(static_cast<size_t>(frames), 0.0f));
+  for (size_t frame = 0; frame < static_cast<size_t>(frames); ++frame) {
+    for (size_t channel = 0; channel < channels; ++channel) {
+      ir.samples[channel][frame] = std::clamp(interleaved[frame * channels + channel], -8.0f, 8.0f);
+    }
+  }
+  *out = std::move(ir);
+  return true;
+#else
+  (void)path;
+  (void)out;
+  if (error) *error = "FFmpeg impulse-response decoding is not enabled in this native build";
+  return false;
+#endif
 }
 
 bool ConvolverProcessor::readWaveImpulse(const std::string& path, IrData* out, std::string* error) {
@@ -310,6 +456,10 @@ bool ConvolverProcessor::readWaveImpulse(const std::string& path, IrData* out, s
         }
       }
     } else if (std::strncmp(id, "data", 4) == 0) {
+      if (size > kMaxImpulseSamples * sizeof(float)) {
+        if (error) *error = "Impulse response exceeds the managed runtime size limit";
+        return false;
+      }
       audioData.resize(size);
       file.read(reinterpret_cast<char*>(audioData.data()), static_cast<std::streamsize>(audioData.size()));
     } else {
@@ -318,7 +468,7 @@ bool ConvolverProcessor::readWaveImpulse(const std::string& path, IrData* out, s
     if ((size & 1U) != 0U) file.seekg(1, std::ios::cur);
   }
 
-  if (channels == 0 || sampleRate == 0 || blockAlign == 0 || audioData.empty()) {
+  if (channels == 0 || channels > 8 || sampleRate == 0 || blockAlign == 0 || audioData.empty()) {
     if (error) *error = "WAV 脉冲响应缺少音频数据";
     return false;
   }
@@ -328,6 +478,10 @@ bool ConvolverProcessor::readWaveImpulse(const std::string& path, IrData* out, s
   }
 
   const size_t frameCount = audioData.size() / blockAlign;
+  if (frameCount > kMaxImpulseFrames) {
+    if (error) *error = "Impulse response exceeds the managed runtime frame limit";
+    return false;
+  }
   const size_t bytesPerSample = std::max<size_t>(1, bitsPerSample / 8);
   IrData ir;
   ir.sampleRate = static_cast<int>(sampleRate);
@@ -375,8 +529,12 @@ ConvolverProcessor::IrData ConvolverProcessor::resampleIr(const IrData& source, 
 void ConvolverProcessor::rebuild() {
   active_ = false;
   channels_.clear();
+  wetDelayBuffer_.clear();
+  wetDelayFrames_ = 0;
+  wetDelayWriteFrame_ = 0;
+  wetGain_ = 1.0;
   if (!config_.enabled || !config_.convolverEnabled || !originalIr_ || format_.sampleRate <= 0 ||
-      format_.channelCount <= 0) {
+      format_.channelCount <= 0 || format_.channelCount > 8) {
     info_.active = false;
     return;
   }
@@ -416,6 +574,12 @@ bool ConvolverProcessor::prepareRuntimeIr(std::string* error) {
   }
 
   updateInfoFromRuntime(ir, needsResample);
+  const int outputChannels = format_.channelCount;
+  if (!config_.convolverMatrix.empty() && !hasRoutingMatrix(config_, outputChannels) &&
+      !hasMonoToManyMatrix(config_, outputChannels)) {
+    if (error) *error = "Convolution routing must be a 1xN or NxN matrix for the active channel layout";
+    return false;
+  }
   const uint32_t partitionSize = choosePartitionSize(ir);
   channels_.clear();
   channels_.reserve(static_cast<size_t>(format_.channelCount));
@@ -424,8 +588,26 @@ bool ConvolverProcessor::prepareRuntimeIr(std::string* error) {
     fftChannel->configure(impulseForOutputChannel(ir, channel), partitionSize);
     channels_.push_back(std::move(fftChannel));
   }
+  wetGain_ = std::pow(10.0, std::clamp(config_.convolverGainDb, -60.0, 24.0) / 20.0);
+  if (config_.convolverPolarityInverted) wetGain_ = -wetGain_;
+  wetDelayFrames_ = static_cast<size_t>(std::round(
+      std::clamp(config_.convolverDelayMs, 0.0, 250.0) * static_cast<double>(format_.sampleRate) / 1000.0));
+  const size_t delayRingFrames = wetDelayFrames_ + 1;
+  wetDelayBuffer_.assign(delayRingFrames * static_cast<size_t>(format_.channelCount), 0.0f);
+  wetDelayWriteFrame_ = 0;
   info_.partitionSize = partitionSize;
-  info_.latencyFrames = partitionSize;
+  info_.latencyFrames = partitionSize + static_cast<uint32_t>(wetDelayFrames_);
+  info_.tailFrames = ir.frames + partitionSize + wetDelayFrames_;
+  info_.memoryBytes = 0;
+  for (const auto& channel : channels_) {
+    if (channel) info_.memoryBytes += channel->memoryBytes();
+  }
+  info_.memoryBytes += static_cast<uint64_t>(wetDelayBuffer_.capacity()) * sizeof(float);
+  if (hasRoutingMatrix(config_, outputChannels)) {
+    info_.channelMappingMode = "matrix-nxn";
+  } else if (hasMonoToManyMatrix(config_, outputChannels)) {
+    info_.channelMappingMode = "matrix-1xn";
+  }
   active_ = true;
   info_.active = true;
   info_.bypassed = false;
@@ -434,6 +616,12 @@ bool ConvolverProcessor::prepareRuntimeIr(std::string* error) {
 }
 
 uint32_t ConvolverProcessor::choosePartitionSize(const IrData& ir) const {
+  if (config_.convolverPartitionSize > 0) {
+    uint32_t partitionSize = 64;
+    const uint32_t requested = std::clamp(config_.convolverPartitionSize, 64U, 8192U);
+    while (partitionSize < requested && partitionSize < 8192U) partitionSize *= 2;
+    return partitionSize;
+  }
   if (ir.sampleRate <= 48000 && ir.frames <= static_cast<uint64_t>(ir.sampleRate / 2)) return 1024;
   if (ir.sampleRate >= 176400 || ir.frames >= static_cast<uint64_t>(ir.sampleRate * 2)) return 4096;
   return 2048;
@@ -441,7 +629,7 @@ uint32_t ConvolverProcessor::choosePartitionSize(const IrData& ir) const {
 
 std::vector<float> ConvolverProcessor::impulseForOutputChannel(const IrData& ir, int outputChannel) const {
   if (ir.channels <= 1) return ir.samples.empty() ? std::vector<float>{1.0f} : ir.samples[0];
-  const size_t sourceChannel = outputChannel <= 0 ? 0U : 1U;
+  const size_t sourceChannel = static_cast<size_t>(std::clamp(outputChannel, 0, ir.channels - 1));
   return ir.samples[std::min(sourceChannel, ir.samples.size() - 1)];
 }
 

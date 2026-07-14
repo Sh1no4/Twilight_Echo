@@ -2,6 +2,7 @@
 
 #include "IAudioProcessor.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -37,7 +38,9 @@ class ConvolverProcessor final : public IAudioProcessor {
 
   struct FftChannel;
 
+  static bool readImpulse(const std::string& path, IrData* out, std::string* error);
   static bool readWaveImpulse(const std::string& path, IrData* out, std::string* error);
+  static bool readFfmpegImpulse(const std::string& path, IrData* out, std::string* error);
   static IrData resampleIr(const IrData& source, int targetSampleRate);
 
   void rebuild();
@@ -52,6 +55,12 @@ class ConvolverProcessor final : public IAudioProcessor {
   std::optional<IrData> originalIr_;
   std::unordered_map<int, IrData> irCache_;
   std::vector<std::unique_ptr<FftChannel>> channels_;
+  std::array<float, 8> routedInput_{};
+  std::array<float, 8> wetOutput_{};
+  std::vector<float> wetDelayBuffer_;
+  double wetGain_ = 1.0;
+  size_t wetDelayFrames_ = 0;
+  size_t wetDelayWriteFrame_ = 0;
   ConvolverInfo info_;
   uint64_t consecutiveOverruns_ = 0;
   bool active_ = false;

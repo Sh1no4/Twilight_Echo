@@ -264,6 +264,13 @@ bool validateParameterInfo(const tae_dsp_parameter_info& parameter, std::string*
   return true;
 }
 
+uint32_t layoutMaskForChannels(int channels) {
+  if (channels <= 1) return TAE_DSP_CHANNEL_LAYOUT_MONO;
+  if (channels == 2) return TAE_DSP_CHANNEL_LAYOUT_STEREO;
+  if (channels <= 6) return TAE_DSP_CHANNEL_LAYOUT_5_1;
+  return TAE_DSP_CHANNEL_LAYOUT_7_1;
+}
+
 class DynamicLibrary {
  public:
   ~DynamicLibrary() { close(); }
@@ -361,13 +368,25 @@ class PluginRegistry::NativePlugin {
       return;
     }
     if (format.sampleFormat != AudioSampleFormat::Float32Interleaved) {
-      bypass("Native DSP v1 only supports float32 interleaved PCM");
+      bypass("Native DSP only supports float32 interleaved PCM");
       return;
     }
     if (format.sampleRate <= 0 || format.channelCount <= 0) {
       prepared_ = false;
       refreshActive();
       return;
+    }
+    if (infoV2_) {
+      if (infoV2_->supported_channel_layouts != 0 &&
+          (infoV2_->supported_channel_layouts & layoutMaskForChannels(format.channelCount)) == 0) {
+        bypass("Channel layout is not supported by native DSP v2");
+        return;
+      }
+      if ((infoV2_->minimum_sample_rate != 0 && static_cast<uint32_t>(format.sampleRate) < infoV2_->minimum_sample_rate) ||
+          (infoV2_->maximum_sample_rate != 0 && static_cast<uint32_t>(format.sampleRate) > infoV2_->maximum_sample_rate)) {
+        bypass("Sample rate is not supported by native DSP v2");
+        return;
+      }
     }
     tae_dsp_audio_format nativeFormat{
         static_cast<uint32_t>(format.sampleRate),
@@ -459,9 +478,25 @@ class PluginRegistry::NativePlugin {
       fail("tae_plugin_get_info returned null");
       return;
     }
-    if (info_->struct_size < sizeof(tae_dsp_plugin_info) || info_->tae_plugin_abi_version != TAE_DSP_PLUGIN_ABI_VERSION) {
+    if (info_->struct_size < sizeof(tae_dsp_plugin_info) ||
+        (info_->tae_plugin_abi_version != TAE_DSP_PLUGIN_ABI_VERSION &&
+         info_->tae_plugin_abi_version != TAE_DSP_PLUGIN_ABI_VERSION_V2)) {
       fail("Unsupported native DSP ABI version");
       return;
+    }
+    status_.abiVersion = info_->tae_plugin_abi_version;
+    if (status_.abiVersion == TAE_DSP_PLUGIN_ABI_VERSION_V2) {
+      if (info_->struct_size < sizeof(tae_dsp_plugin_info_v2)) {
+        fail("Native DSP v2 plugin info is truncated");
+        return;
+      }
+      infoV2_ = reinterpret_cast<const tae_dsp_plugin_info_v2*>(info_);
+      status_.supportedChannelLayouts = infoV2_->supported_channel_layouts;
+      status_.minimumSampleRate = infoV2_->minimum_sample_rate;
+      status_.maximumSampleRate = infoV2_->maximum_sample_rate;
+      status_.latencyFrames = infoV2_->latency_frames;
+      status_.tailFrames = infoV2_->tail_frames;
+      status_.graphPosition = "v2-sortable";
     }
     if (!info_->create || !info_->destroy || !info_->prepare || !info_->process || !info_->set_param || !info_->reset) {
       fail("Native DSP plugin function table is incomplete");
@@ -540,6 +575,7 @@ class PluginRegistry::NativePlugin {
     }
     handle_ = nullptr;
     info_ = nullptr;
+    infoV2_ = nullptr;
     library_.close();
   }
 
@@ -579,6 +615,7 @@ class PluginRegistry::NativePlugin {
   NativeDspPluginStatus status_;
   DynamicLibrary library_;
   const tae_dsp_plugin_info* info_ = nullptr;
+  const tae_dsp_plugin_info_v2* infoV2_ = nullptr;
   tae_dsp_plugin_handle handle_ = nullptr;
   AudioFormat format_;
   std::unordered_map<std::string, double> parameterValues_;
@@ -620,6 +657,13 @@ std::string PluginRegistry::statusJson() const {
          << "\"name\":\"" << json_utils::escape(status.name) << "\","
          << "\"version\":\"" << json_utils::escape(status.version) << "\","
          << "\"path\":\"" << json_utils::escape(status.path) << "\","
+         << "\"abiVersion\":" << status.abiVersion << ","
+         << "\"graphPosition\":\"" << json_utils::escape(status.graphPosition) << "\","
+         << "\"supportedChannelLayouts\":" << status.supportedChannelLayouts << ","
+         << "\"minimumSampleRate\":" << status.minimumSampleRate << ","
+         << "\"maximumSampleRate\":" << status.maximumSampleRate << ","
+         << "\"latencyFrames\":" << status.latencyFrames << ","
+         << "\"tailFrames\":" << status.tailFrames << ","
          << "\"enabled\":" << (status.enabled ? "true" : "false") << ","
          << "\"loaded\":" << (status.loaded ? "true" : "false") << ","
          << "\"active\":" << (status.active ? "true" : "false") << ","
@@ -693,8 +737,14 @@ std::vector<NativeDspPluginConfig> PluginRegistry::parseChainJson(const std::str
 }
 
 std::string PluginRegistry::capabilitiesJson() {
-  return "{\"vst3Host\":false,\"roomCorrection\":false,\"audioPluginSystem\":true,"
-         "\"nativeDspAbiVersion\":1,\"nativeDspFormats\":[\"float32-interleaved\"]}";
+#ifdef _WIN32
+  constexpr const char* vst3Host = "true";
+#else
+  constexpr const char* vst3Host = "false";
+#endif
+  return std::string("{\"vst3Host\":") + vst3Host + ",\"roomCorrection\":true,\"audioPluginSystem\":true,"
+         "\"nativeDspAbiVersion\":2,\"nativeDspFormats\":[\"float32-interleaved\"],"
+         "\"nativeDspLayouts\":[\"mono\",\"stereo\",\"5.1\",\"7.1\"]}";
 }
 
 std::string pluginCapabilitiesJson() {

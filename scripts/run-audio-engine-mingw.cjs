@@ -3,17 +3,19 @@ const { resolve } = require('node:path')
 const {
   prepareMingwCmakeEnvironment,
   prepareMingwBuildLayout,
+  resolveMingwEnvironment,
   validateMingwBuildCommands
 } = require('./audio-engine-toolchain.cjs')
 
 const root = resolve(__dirname, '..')
-const layout = prepareMingwBuildLayout({ root })
+const toolchainEnvironment = resolveMingwEnvironment()
+const layout = prepareMingwBuildLayout({ root, env: toolchainEnvironment })
 if (!layout.ok) {
   console.error(layout.message)
   process.exit(1)
 }
 
-const preflight = prepareMingwCmakeEnvironment({ buildDir: layout.buildDir })
+const preflight = prepareMingwCmakeEnvironment({ buildDir: layout.buildDir, env: toolchainEnvironment })
 if (!preflight.ok) {
   console.error(preflight.message)
   process.exit(1)

@@ -8,6 +8,7 @@ import type {
 } from '../audioEngineManager'
 import type { HeadphoneCompensationSettings } from '../audioProcessingEffective'
 import type { MiniPlayerSettings } from '../../shared/miniPlayer'
+import type { DspScene } from '../../shared/dspGraph'
 
 export type { MiniPlayerSettings } from '../../shared/miniPlayer'
 
@@ -162,6 +163,8 @@ export interface AppSettings {
   audioExclusiveMode: boolean
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
+  dspScenes: DspScene[]
+  dspPinnedSceneId: string | null
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings

@@ -113,6 +113,7 @@ class TwilightAudioEngine {
   TAE_Result setPlayMode(const std::string& mode);
 
   TAE_Result setDspConfig(const std::string& dspJson);
+  TAE_Result setDspGraph(const std::string& graphJson);
   TAE_Result setOutputConfig(const std::string& outputConfigJson);
   TAE_Result loadImpulseResponse(const std::string& path);
   TAE_Result unloadImpulseResponse();
@@ -124,6 +125,7 @@ class TwilightAudioEngine {
   TAE_Result setNativeDspPluginChain(const std::string& chainJson);
   std::string getNativeDspPluginStatusJson() const;
   std::string getDspConfig() const;
+  std::string getDspGraphStatusJson() const;
   std::string getMetadataJson(const std::string& source) const;
   std::string getQueueJson() const;
   std::string getUpcomingTrackJson() const;
@@ -160,6 +162,7 @@ class TwilightAudioEngine {
   PlaybackInfo info_;
   QueueManager queue_;
   std::string dspConfigJson_ = "{}";
+  std::string dspGraphJson_;
   DspConfig dspConfig_;
   std::string nativeDspPluginChainJson_ = "{\"plugins\":[]}";
   OutputConfig outputConfig_;

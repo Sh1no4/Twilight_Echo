@@ -300,10 +300,10 @@ void testReplayGainApplySplitsClippedAndUnclippedPaths() {
   assert(closeTo(clipped[2], 1.0f, 0.0001));
 }
 
-AudioFormat testFormat() {
+AudioFormat testFormat(int channelCount = 2) {
   AudioFormat format;
   format.sampleRate = 48000;
-  format.channelCount = 2;
+  format.channelCount = channelCount;
   format.bitDepth = 32;
   format.sampleFormat = AudioSampleFormat::Float32Interleaved;
   return format;
@@ -317,6 +317,21 @@ void testDspProcessDoesNotTakeConfigurationLock() {
 
   require(processBody.find("mutex_") == std::string::npos);
   require(processBody.find("std::try_to_lock") == std::string::npos);
+}
+
+void testDsdPcmSafetyRecognizesSecondPhaseProcessors() {
+  const std::filesystem::path sourcePath =
+      std::filesystem::path(__FILE__).parent_path().parent_path() / "core" / "AudioPipeline.cpp";
+  const std::string source = readTextFile(sourcePath);
+  const std::string body = extractFunctionBody(
+      source,
+      "bool dspConfigProcessingRequiresPcm(");
+
+  require(body.find("channelMatrixEnabled") != std::string::npos);
+  require(body.find("dynamicEqEnabled") != std::string::npos);
+  require(body.find("multibandCompressorEnabled") != std::string::npos);
+  require(body.find("truePeakLimiterEnabled") != std::string::npos);
+  require(body.find("ditherMode") != std::string::npos);
 }
 
 void testNativeDspPluginChainSetupDoesNotPreparePluginsTwice() {
@@ -511,6 +526,7 @@ int main() {
   testCrossfeedDelayIndexAdvancesAndWraps();
   testReplayGainApplySplitsClippedAndUnclippedPaths();
   testDspProcessDoesNotTakeConfigurationLock();
+  testDsdPcmSafetyRecognizesSecondPhaseProcessors();
   testNativeDspPluginChainSetupDoesNotPreparePluginsTwice();
   testDspConfigJsonParserReadsOnlyCurrentObjectFields();
   testConvolverWaveExtensibleParsingUsesSubFormatGuid();
@@ -637,7 +653,132 @@ int main() {
     chain.prepare(testFormat());
     chain.setTrackContext({});
 
-    assert(!chain.status().eqActive);
+    assert(chain.status().eqActive);
+    std::vector<float> samples(256, 0.1f);
+    chain.process(samples.data(), 128);
+    for (float sample : samples) assert(std::isfinite(sample));
+  }
+
+  {
+    DspChain chain;
+    chain.configure(DspConfig{});
+    chain.prepare(testFormat());
+    std::string error;
+    const std::string graph = R"({"revision":7,"sceneId":"mastering","graph":{"nodes":[
+      {"id":"strip","type":"channelStrip","enabled":true,"params":{"channels":[{"gainDb":-6,"delayMs":0,"polarityInverted":false,"mute":false},{"gainDb":-6,"delayMs":0,"polarityInverted":true,"mute":false}]}},
+      {"id":"limiter","type":"truePeakLimiter","enabled":true,"params":{"ceilingDb":-1,"releaseMs":50}},
+      {"id":"meter","type":"meter","enabled":true,"params":{}}
+    ]}})";
+    assert(chain.configureGraphJson(graph, &error));
+    std::vector<float> samples = {2.0f, 2.0f, 2.0f, 2.0f};
+    chain.process(samples.data(), 2);
+    const DspStatus status = chain.status();
+    assert(status.channelStripActive);
+    assert(status.truePeakLimiterActive);
+    assert(status.meterActive);
+    assert(chain.graphStatusJson().find("\"revision\":7") != std::string::npos);
+    for (float sample : samples) assert(std::isfinite(sample));
+  }
+
+  {
+    DspChain chain;
+    chain.configure(DspConfig{});
+    chain.prepare(testFormat());
+    std::string error;
+    const std::string graph = R"({"revision":8,"sceneId":"matrix","graph":{"nodes":[
+      {"id":"matrix","type":"channelMatrix","enabled":true,"params":{"matrix":[0,1,1,0]}}
+    ]}})";
+    assert(chain.configureGraphJson(graph, &error));
+    std::vector<float> samples = {0.25f, -0.5f, 0.75f, -0.125f};
+    chain.process(samples.data(), 2);
+    assert(chain.status().channelMatrixActive);
+    assert(closeTo(samples[0], -0.5f, 0.0001));
+    assert(closeTo(samples[1], 0.25f, 0.0001));
+    assert(closeTo(samples[2], -0.125f, 0.0001));
+    assert(closeTo(samples[3], 0.75f, 0.0001));
+  }
+
+  {
+    DspChain chain;
+    chain.configure(DspConfig{});
+    chain.prepare(testFormat());
+    std::string error;
+    const std::string graph = R"({"revision":81,"sceneId":"singleton","graph":{"nodes":[
+      {"id":"eq-first","type":"equalizer","enabled":true,"params":{"mode":"parametric","bands":[]}},
+      {"id":"eq-second","type":"equalizer","enabled":true,"params":{"mode":"parametric","bands":[]}}
+    ]}})";
+    assert(chain.configureGraphJson(graph, &error));
+    const std::string status = chain.graphStatusJson();
+    assert(status.find("\"id\":\"eq-second\"") != std::string::npos);
+    assert(status.find("Only one equalizer node is supported") != std::string::npos);
+  }
+
+  {
+    DspChain chain;
+    chain.configure(DspConfig{});
+    chain.prepare(testFormat(8));
+    std::string error;
+    const std::string graph = R"({"revision":9,"sceneId":"calibration","graph":{"nodes":[
+      {"id":"strip","type":"channelStrip","enabled":true,"params":{"channels":[
+        {"gainDb":0,"delayMs":0,"polarityInverted":false,"mute":false},
+        {"gainDb":-6,"delayMs":0,"polarityInverted":true,"mute":false},
+        {"gainDb":0,"delayMs":0,"polarityInverted":false,"mute":false},
+        {"gainDb":0,"delayMs":0,"polarityInverted":false,"mute":false},
+        {"gainDb":0,"delayMs":0,"polarityInverted":false,"mute":false},
+        {"gainDb":0,"delayMs":0,"polarityInverted":false,"mute":false},
+        {"gainDb":0,"delayMs":0,"polarityInverted":false,"mute":false},
+        {"gainDb":0,"delayMs":0,"polarityInverted":false,"mute":true}
+      ]}}
+    ]}})";
+    assert(chain.configureGraphJson(graph, &error));
+    std::vector<float> samples(8, 0.5f);
+    chain.process(samples.data(), 1);
+    assert(chain.status().channelStripActive);
+    assert(closeTo(samples[0], 0.5f, 0.0001));
+    assert(closeTo(samples[1], -0.5f * std::pow(10.0, -6.0 / 20.0), 0.0001));
+    assert(closeTo(samples[7], 0.0f, 0.0001));
+  }
+
+  {
+    DspChain chain;
+    chain.configure(DspConfig{});
+    chain.prepare(testFormat(6));
+    std::string error;
+    const std::string graph = R"({"revision":10,"sceneId":"bass","graph":{"nodes":[
+      {"id":"bass","type":"bassManagement","enabled":true,"params":{"crossoverHz":80,"lfeGainDb":0,"redirectLfe":true}}
+    ]}})";
+    assert(chain.configureGraphJson(graph, &error));
+    std::vector<float> samples(512 * 6, 0.0f);
+    for (size_t frame = 0; frame < 512; ++frame) {
+      samples[frame * 6] = 0.5f * static_cast<float>(std::sin(2.0 * 3.141592653589793 * frame / 240.0));
+    }
+    chain.process(samples.data(), 512);
+    double lfeEnergy = 0.0;
+    for (size_t frame = 0; frame < 512; ++frame) {
+      lfeEnergy += std::abs(samples[frame * 6 + 3]);
+      for (int channel = 0; channel < 6; ++channel) assert(std::isfinite(samples[frame * 6 + channel]));
+    }
+    assert(chain.status().bassManagementActive);
+    assert(lfeEnergy > 0.01);
+  }
+
+  {
+    DspChain chain;
+    chain.configure(DspConfig{});
+    chain.prepare(testFormat());
+    std::string error;
+    const std::string graph = R"({"revision":11,"sceneId":"limiter","graph":{"nodes":[
+      {"id":"limiter","type":"truePeakLimiter","enabled":true,"params":{"ceilingDb":-1,"attackMs":0.1,"releaseMs":40,"lookaheadMs":0.1}}
+    ]}})";
+    assert(chain.configureGraphJson(graph, &error));
+    std::vector<float> samples(512 * 2, 1.5f);
+    chain.process(samples.data(), 512);
+    double peak = 0.0;
+    for (size_t frame = 12; frame < 512; ++frame) {
+      peak = std::max(peak, std::abs(static_cast<double>(samples[frame * 2])));
+    }
+    assert(chain.status().truePeakLimiterActive);
+    assert(peak <= std::pow(10.0, -1.0 / 20.0) + 0.02);
   }
 
   {
@@ -673,6 +814,50 @@ int main() {
     samples[0] = 1.0f;
     chain.process(samples.data(), 2048);
     assert(samples[1024 * 2] > 0.2f);
+    std::filesystem::remove(wavPath);
+  }
+
+  {
+    DspChain chain;
+    DspConfig config;
+    config.enabled = true;
+    config.convolverGainDb = -6.0;
+    config.convolverPolarityInverted = true;
+    config.convolverDelayMs = 1.0;
+    chain.configure(config);
+    chain.prepare(testFormat());
+
+    const auto wavPath = std::filesystem::temp_directory_path() / "twilight-ir-wet-delay.wav";
+    writeImpulseWav(wavPath, 48000, 1);
+    std::string error;
+    assert(chain.loadImpulseResponse(wavPath.string(), &error));
+    std::vector<float> samples(2048 * 2, 0.0f);
+    samples[0] = 1.0f;
+    chain.process(samples.data(), 2048);
+    const DspStatus status = chain.status();
+    assert(status.convolverLatencyFrames == 1024 + 48);
+    assert(closeTo(samples[(1024 + 48) * 2], -std::pow(10.0, -6.0 / 20.0), 0.03));
+    std::filesystem::remove(wavPath);
+  }
+
+  {
+    DspChain chain;
+    DspConfig config;
+    config.enabled = true;
+    config.convolverMatrix = {0.0, 1.0};
+    chain.configure(config);
+    chain.prepare(testFormat());
+
+    const auto wavPath = std::filesystem::temp_directory_path() / "twilight-ir-mono-to-stereo.wav";
+    writeImpulseWav(wavPath, 48000, 1);
+    std::string error;
+    assert(chain.loadImpulseResponse(wavPath.string(), &error));
+    std::vector<float> samples(2048 * 2, 0.0f);
+    samples[0] = 1.0f;
+    chain.process(samples.data(), 2048);
+    assert(chain.status().channelMappingMode == "matrix-1xn");
+    assert(std::abs(samples[1024 * 2]) < 0.01f);
+    assert(samples[1024 * 2 + 1] > 0.2f);
     std::filesystem::remove(wavPath);
   }
 
@@ -876,6 +1061,42 @@ int main() {
     // sourced from a 64-sample timeDomain_.
     const std::vector<float> waveform = extractJsonArray(json, "waveform");
     assert(waveform.size() == 32);
+  }
+
+  {
+    // The second-phase nodes must compile into the serial graph and operate on
+    // the preallocated render buffers without changing the block shape.
+    DspChain chain;
+    chain.configure(DspConfig{});
+    chain.prepare(testFormat());
+    std::string error;
+    const std::string graph = R"({"revision":21,"sceneId":"hifi-workstation","graph":{"outputStage":{"targetSampleRate":96000,"resamplerQuality":"ultra","dither":"noiseShaped","safetyClamp":true},"nodes":[
+      {"id":"dynamic","type":"dynamicEqualizer","enabled":true,"params":{"bands":[{"frequency":1000,"gainDb":0,"q":1,"thresholdDb":-30,"ratio":3,"rangeDb":-8,"attackMs":5,"releaseMs":90,"filterType":"peak","enabled":true}]}},
+      {"id":"multiband","type":"multibandCompressor","enabled":true,"params":{"crossoversHz":[240],"bands":[{"thresholdDb":-24,"ratio":2,"attackMs":5,"releaseMs":80,"makeupDb":0,"enabled":true},{"thresholdDb":-24,"ratio":2,"attackMs":5,"releaseMs":80,"makeupDb":0,"enabled":true}]}},
+      {"id":"field","type":"stereoField","enabled":true,"params":{"width":1.2,"balance":0,"midGainDb":0,"sideGainDb":0}},
+      {"id":"contour","type":"loudnessContour","enabled":true,"params":{"amount":1,"referenceVolume":0.5}},
+      {"id":"limiter","type":"truePeakLimiter","enabled":true,"params":{"ceilingDb":-1,"attackMs":0.2,"releaseMs":60,"lookaheadMs":1}},
+      {"id":"meter","type":"meter","enabled":true,"params":{}}
+    ]}})";
+    assert(chain.configureGraphJson(graph, &error));
+    std::vector<float> samples(2048 * 2, 0.0f);
+    for (size_t frame = 0; frame < 2048; ++frame) {
+      const float value = 1.4f * static_cast<float>(std::sin(2.0 * 3.141592653589793 * frame / 37.0));
+      samples[frame * 2] = value;
+      samples[frame * 2 + 1] = value * 0.8f;
+    }
+    chain.process(samples.data(), 2048);
+    const DspStatus status = chain.status();
+    assert(status.dynamicEqActive);
+    assert(status.multibandCompressorActive);
+    assert(status.stereoFieldActive);
+    assert(status.loudnessContourActive);
+    assert(status.truePeakLimiterActive);
+    assert(status.meterActive);
+    assert(std::isfinite(status.truePeakDb));
+    assert(chain.graphStatusJson().find("\"resamplerQuality\":\"ultra\"") != std::string::npos);
+    assert(chain.graphStatusJson().find("\"momentaryLufs\"") != std::string::npos);
+    for (float sample : samples) assert(std::isfinite(sample));
   }
 
   return 0;

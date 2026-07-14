@@ -3,6 +3,7 @@ import {
   DEFAULT_MINI_PLAYER_SETTINGS,
   cloneMiniPlayerSettings
 } from '../../../shared/miniPlayer.ts'
+import { createLegacyDspGraph } from '../../../shared/dspGraph.ts'
 import type {
   AppSettings,
   AppTheme,
@@ -169,6 +170,17 @@ const fallbackSettings: AppSettings = {
     routingMode: 'auto'
   },
   audioProcessing: fallbackAudioProcessing,
+  dspScenes: [
+    {
+      id: 'default',
+      name: 'Default',
+      enabled: true,
+      priority: 0,
+      rules: {},
+      graph: createLegacyDspGraph(fallbackAudioProcessing)
+    }
+  ],
+  dspPinnedSceneId: null,
   headphoneCompensation: fallbackHeadphoneCompensation,
   audioEqPresets: [],
   desktopLyrics: {

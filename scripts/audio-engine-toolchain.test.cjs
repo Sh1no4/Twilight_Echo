@@ -123,6 +123,35 @@ test('prepares a MinGW environment with GNU patch before the w64devkit tools', (
   )
 })
 
+test('preserves a Windows Path environment value when building the MinGW PATH', () => {
+  const vcpkgRoot = 'C:/tools/vcpkg'
+  const devkitRoot = 'C:/tools/w64devkit'
+  const programFiles = 'C:/Program Files'
+  const gnuPatch = `${programFiles}/Git/usr/bin/patch.exe`
+  const result = prepareMingwCmakeEnvironment({
+    env: {
+      VCPKG_ROOT: vcpkgRoot,
+      W64DEVKIT_ROOT: devkitRoot,
+      ProgramFiles: programFiles,
+      Path: 'C:/Windows/System32;C:/Windows'
+    },
+    existsSync: createExistsSync([
+      `${vcpkgRoot}/scripts/buildsystems/vcpkg.cmake`,
+      `${devkitRoot}/bin/gcc.exe`,
+      `${devkitRoot}/bin/g++.exe`,
+      `${devkitRoot}/bin/x86_64-w64-mingw32-gcc.exe`,
+      `${devkitRoot}/bin/x86_64-w64-mingw32-g++.exe`,
+      `${devkitRoot}/bin/ninja.exe`,
+      gnuPatch
+    ]),
+    spawnSync: createGnuPatchSpawnSync()
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.environment.Path, undefined)
+  assert.match(result.environment.PATH, /C:\/Windows\/System32;C:\/Windows$/)
+})
+
 test('rejects a TWILIGHT_GNU_PATCH override that is not GNU patch', () => {
   const vcpkgRoot = 'C:/tools/vcpkg'
   const devkitRoot = 'C:/tools/w64devkit'
@@ -440,7 +469,11 @@ test('MinGW configure script performs the preflight before invoking CMake', () =
   assert.match(script, /findStaleCTestRegistrations/)
   assert.match(script, /prepareMingwCmakeEnvironment/)
   assert.match(script, /prepareMingwBuildLayout/)
-  assert.match(script, /const buildLayout = prepareMingwBuildLayout\(\{ root \}\)/)
+  assert.match(script, /const toolchainEnvironment = resolveMingwEnvironment\(\)/)
+  assert.match(
+    script,
+    /const buildLayout = prepareMingwBuildLayout\(\{ root, env: toolchainEnvironment \}\)/
+  )
   assert.match(script, /const \{ buildDir \} = buildLayout/)
   assert.match(script, /'-B', buildDir/)
   assert.match(script, /const cmakeEnvironment = preflight\.environment/)
@@ -458,7 +491,11 @@ test('MinGW scripts preflight CMake and CTest with the prepared environment', ()
   )
   assert.match(runnerScript, /validateMingwBuildCommands/)
   assert.match(runnerScript, /prepareMingwBuildLayout/)
-  assert.match(runnerScript, /const layout = prepareMingwBuildLayout\(\{ root \}\)/)
+  assert.match(runnerScript, /const toolchainEnvironment = resolveMingwEnvironment\(\)/)
+  assert.match(
+    runnerScript,
+    /const layout = prepareMingwBuildLayout\(\{ root, env: toolchainEnvironment \}\)/
+  )
   assert.match(
     runnerScript,
     /validateMingwBuildCommands\(\{\s*env: preflight\.environment,\s*commands: \[command\[0\]\]\s*\}\)/
@@ -571,7 +608,7 @@ test('MinGW build runner reuses the preflight environment for builds and tests',
   assert.match(script, /prepareMingwCmakeEnvironment/)
   assert.match(
     script,
-    /const preflight = prepareMingwCmakeEnvironment\(\{ buildDir: layout\.buildDir \}\)/
+    /const preflight = prepareMingwCmakeEnvironment\(\{ buildDir: layout\.buildDir, env: toolchainEnvironment \}\)/
   )
   assert.match(script, /if \(!preflight\.ok\) \{[\s\S]*console\.error\(preflight\.message\)/)
   assert.match(script, /action === 'build'[\s\S]*\['cmake', \['--build', layout\.buildDir\]\]/)

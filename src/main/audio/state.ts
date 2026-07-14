@@ -6,9 +6,11 @@ import {
   type AudioProcessingSettings,
   type AudioOutputState,
   type OutputConfig,
-  type PlaybackInfo
+  type PlaybackInfo,
+  type DspSceneState
 } from '../audioEngineManager'
 import { buildEffectiveAudioProcessingSettings } from '../audioProcessingEffective'
+import { createLegacyDspGraph, normalizeDspScenes } from '../../shared/dspGraph.ts'
 import { derivePlaybackEvents } from '../plugins/events'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
 import { applyDiscordRpcSetting } from '../integrations/discord'
@@ -50,9 +52,27 @@ export function broadcastPlayerLifecycleEvents(info: PlaybackInfo): void {
 }
 
 export function persistAudioProcessingState(processing: AudioProcessingSettings): SettingsSnapshot {
+  const scenes = normalizeDspScenes(runtime.appSettings.dspScenes, processing).map((scene) =>
+    scene.id === 'default' ? { ...scene, graph: createLegacyDspGraph(processing) } : scene
+  )
   runtime.appSettings = normalizeAppSettings({
     ...runtime.appSettings,
-    audioProcessing: processing
+    audioProcessing: processing,
+    dspScenes: scenes
+  })
+  writeAppSettings(runtime.appSettings)
+  const snapshot = createSettingsSnapshot(runtime.appSettings, runtime.launchSettings)
+  runtime.mainWindow?.webContents.send('settings:changed', snapshot)
+  return snapshot
+}
+
+export function persistDspSceneState(
+  state: Pick<DspSceneState, 'scenes' | 'pinnedSceneId'>
+): SettingsSnapshot {
+  runtime.appSettings = normalizeAppSettings({
+    ...runtime.appSettings,
+    dspScenes: state.scenes,
+    dspPinnedSceneId: state.pinnedSceneId
   })
   writeAppSettings(runtime.appSettings)
   const snapshot = createSettingsSnapshot(runtime.appSettings, runtime.launchSettings)

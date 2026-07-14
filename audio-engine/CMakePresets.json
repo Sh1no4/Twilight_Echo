@@ -65,6 +65,7 @@
         "VCPKG_TARGET_TRIPLET": "x64-mingw-static",
         "VCPKG_HOST_TRIPLET": "x64-mingw-static",
         "VCPKG_BUILD_TYPE": "release",
+        "VCPKG_APPLOCAL_DEPS": "OFF",
         "TAE_BUILD_NAPI": "ON",
         "TAE_ENABLE_WASAPI": "ON"
       },

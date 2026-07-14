@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
+import type { DspScene } from '../shared/dspGraph.ts'
 
 import type {
   AudioEngineServiceNativeBinding,
@@ -409,6 +410,7 @@ class FakeNativeBinding implements NativeAudioBinding {
   devices: AudioDeviceOption[]
   lastOutputConfig: OutputConfig = { preferredBufferSize: 0, routingMode: 'auto' }
   lastDspConfig: Partial<AudioProcessingSettings> = {}
+  lastDspGraphPayload: Record<string, unknown> | null = null
   lastEqConfig: Partial<AudioProcessingSettings> = {}
   lastEqPresetConfig: Partial<AudioProcessingSettings> = {}
   lastReplayGainConfig: {
@@ -441,6 +443,7 @@ class FakeNativeBinding implements NativeAudioBinding {
   seekCalls = 0
   enumerateDeviceCalls = 0
   dspConfigCalls = 0
+  dspGraphCalls = 0
   eqBandsCalls = 0
   eqPresetCalls = 0
   replayGainCalls = 0
@@ -665,6 +668,10 @@ class FakeNativeBinding implements NativeAudioBinding {
     this.dspConfigCalls += 1
     this.lastDspConfig = JSON.parse(json) as Partial<AudioProcessingSettings>
   }
+  SetDspGraph = (json: string): void => {
+    this.dspGraphCalls += 1
+    this.lastDspGraphPayload = JSON.parse(json) as Record<string, unknown>
+  }
   LoadImpulseResponse = (path: string): void => {
     this.loadImpulseResponseCalls += 1
     this.loadedImpulseResponsePath = path
@@ -847,6 +854,7 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   device = 'auto'
   outputConfig: Partial<OutputConfig> = {}
   dspConfig: Partial<AudioProcessingSettings> = {}
+  lastDspGraphPayload: Record<string, unknown> | null = null
   dspPluginChain = ''
   eqBandsCalls = 0
   replayGainCalls = 0
@@ -901,6 +909,9 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   }
   SetDspConfig = (json: string): void => {
     this.dspConfig = JSON.parse(json) as Partial<AudioProcessingSettings>
+  }
+  SetDspGraph = (json: string): void => {
+    this.lastDspGraphPayload = JSON.parse(json) as Record<string, unknown>
   }
   SetEqBands = (): void => {
     this.eqBandsCalls += 1
@@ -1104,6 +1115,306 @@ test('legacy dsdToPcm still maps to PCM when dsdOutputMode is absent', () => {
 
   assert.equal(normalized.dsdOutputMode, 'pcm')
   assert.equal(normalized.dsdToPcm, true)
+})
+
+test('DSD DSP scenes remain bypassed until the active graph receives an explicit PCM confirmation', async () => {
+  const nativeBinding = new FakeNativeBinding({ source: 'album.dsf', codec: 'dsd' })
+  const manager = makeManager(
+    { exclusiveMode: false, audioOutput: 'asio', audioDevice: 'asio:studio' },
+    nativeBinding
+  )
+  ;(manager as unknown as { playbackInfo: PlaybackInfo }).playbackInfo = nativeBinding.playbackInfo
+  const scene: DspScene = {
+    id: 'headphone-correction',
+    name: 'Headphone correction',
+    enabled: true,
+    priority: 10,
+    rules: { sourceKinds: ['dsd'] },
+    graph: {
+      version: 2,
+      outputStage: {
+        targetSampleRate: 'device',
+        resamplerQuality: 'native',
+        dither: 'off',
+        safetyClamp: true
+      },
+      nodes: [
+        { id: 'eq', type: 'equalizer', enabled: true, params: { mode: 'parametric', bands: [] } }
+      ]
+    }
+  }
+
+  let state = await manager.setDspScenes([scene])
+  assert.equal(state.requiresPcmFallback, true)
+  assert.equal(state.dsdPcmFallbackApplied, false)
+  assert.deepEqual((nativeBinding.lastDspGraphPayload?.graph as { nodes?: unknown[] }).nodes, [])
+
+  state = await manager.applyDspScene(scene.id)
+  assert.equal(state.dsdPcmFallbackApplied, false)
+  assert.deepEqual((nativeBinding.lastDspGraphPayload?.graph as { nodes?: unknown[] }).nodes, [])
+
+  state = await manager.applyDspScene(scene.id, true)
+  assert.equal(state.dsdPcmFallbackApplied, true)
+  assert.equal(manager.getAudioProcessing().dsdOutputMode, 'pcm')
+  assert.equal(state.scenes[0]?.allowDsdPcmFallback, true)
+  assert.equal((nativeBinding.lastDspGraphPayload?.graph as { nodes?: unknown[] }).nodes?.length, 1)
+
+  state = await manager.setDspScenes([
+    {
+      ...scene,
+      graph: {
+        ...scene.graph,
+        nodes: [{ id: 'compressor', type: 'compressor', enabled: true, params: { ratio: 2 } }]
+      }
+    }
+  ])
+  assert.equal(state.dsdPcmFallbackApplied, false)
+  assert.equal(state.scenes[0]?.allowDsdPcmFallback, undefined)
+  assert.deepEqual((nativeBinding.lastDspGraphPayload?.graph as { nodes?: unknown[] }).nodes, [])
+
+  manager.destroy()
+})
+
+test('VST3 graph payloads materialize only a managed catalog resolution', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false, audioOutput: 'wasapi', audioDevice: 'auto' },
+    {
+      nativeBinding,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS,
+      vst3ModuleResolver: (catalogId, classId) =>
+        catalogId === 'vst3:fixture' && classId === '0123456789ABCDEF0123456789ABCDEF'
+          ? {
+              modulePath: 'C:\\managed-vst3\\fixture.vst3',
+              classId,
+              reason: ''
+            }
+          : { modulePath: null, classId, reason: 'not managed' },
+      vst3StateAssetResolver: (assetId) =>
+        assetId === 'vst3Preset:fixture-state'
+          ? {
+              path: 'C:\\managed-dsp-assets\\fixture.vstpreset',
+              kind: 'vst3Preset',
+              reason: ''
+            }
+          : { path: null, kind: null, reason: 'state asset is not managed' }
+    }
+  )
+  const scene: DspScene = {
+    id: 'vst3',
+    name: 'Managed VST3',
+    enabled: true,
+    priority: 1,
+    rules: {},
+    graph: {
+      version: 2,
+      outputStage: {
+        targetSampleRate: 'device',
+        resamplerQuality: 'native',
+        dither: 'off',
+        safetyClamp: true
+      },
+      nodes: [
+        {
+          id: 'fixture',
+          type: 'vst3Plugin',
+          enabled: true,
+          params: {
+            vst3ModulePath: 'C:\\untrusted\\plugin.vst3',
+            vst3ClassId: 'UNTRUSTED',
+            parameters: { '100': 0.5 }
+          },
+          vst3: {
+            catalogId: 'vst3:fixture',
+            classId: '0123456789ABCDEF0123456789ABCDEF',
+            stateAssetId: 'vst3Preset:fixture-state'
+          }
+        }
+      ]
+    }
+  }
+
+  await manager.setDspScenes([scene])
+  const payloadGraph = nativeBinding.lastDspGraphPayload?.graph as {
+    nodes?: Array<{ params?: Record<string, unknown> }>
+  }
+  const params = payloadGraph.nodes?.[0]?.params
+  assert.equal(params?.vst3ModulePath, 'C:\\managed-vst3\\fixture.vst3')
+  assert.equal(params?.vst3ClassId, '0123456789ABCDEF0123456789ABCDEF')
+  assert.equal(params?.vst3StatePath, 'C:\\managed-dsp-assets\\fixture.vstpreset')
+  assert.equal(params?.vst3StateFormat, 'preset')
+  assert.equal(params?.vst3BypassReason, undefined)
+  assert.deepEqual(params?.parameters, { '100': 0.5 })
+
+  await manager.setDspScenes([
+    {
+      ...scene,
+      graph: {
+        ...scene.graph,
+        nodes: [
+          {
+            ...scene.graph.nodes[0],
+            vst3: { catalogId: 'vst3:missing', classId: '0123456789ABCDEF0123456789ABCDEF' }
+          }
+        ]
+      }
+    }
+  ])
+  const bypassedGraph = nativeBinding.lastDspGraphPayload?.graph as {
+    nodes?: Array<{ params?: Record<string, unknown> }>
+  }
+  const bypassedParams = bypassedGraph.nodes?.[0]?.params
+  assert.equal(bypassedParams?.vst3ModulePath, undefined)
+  assert.equal(bypassedParams?.vst3ClassId, undefined)
+  assert.equal(bypassedParams?.vst3BypassReason, 'not managed')
+  manager.destroy()
+})
+
+test('a missing managed VST3 state asset bypasses the node instead of passing a path to the host', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false },
+    {
+      nativeBinding,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS,
+      vst3ModuleResolver: (_catalogId, classId) => ({
+        modulePath: 'C:\\managed-vst3\\fixture.vst3',
+        classId,
+        reason: ''
+      }),
+      vst3StateAssetResolver: () => ({
+        path: null,
+        kind: null,
+        reason: 'state asset is not managed'
+      })
+    }
+  )
+  await manager.setDspScenes([
+    {
+      id: 'vst3-state',
+      name: 'Missing VST3 state',
+      enabled: true,
+      priority: 1,
+      rules: {},
+      graph: {
+        version: 2,
+        outputStage: {
+          targetSampleRate: 'device',
+          resamplerQuality: 'native',
+          dither: 'off',
+          safetyClamp: true
+        },
+        nodes: [
+          {
+            id: 'fixture',
+            type: 'vst3Plugin',
+            enabled: true,
+            params: { vst3StatePath: 'C:\\untrusted\\state.vstpreset' },
+            vst3: {
+              catalogId: 'vst3:fixture',
+              classId: '0123456789ABCDEF0123456789ABCDEF',
+              stateAssetId: 'vst3Preset:missing'
+            }
+          }
+        ]
+      }
+    }
+  ])
+
+  const params = (
+    nativeBinding.lastDspGraphPayload?.graph as {
+      nodes?: Array<{ params?: Record<string, unknown> }>
+    }
+  ).nodes?.[0]?.params
+  assert.equal(params?.vst3StatePath, undefined)
+  assert.equal(params?.vst3BypassReason, 'state asset is not managed')
+  manager.destroy()
+})
+
+test('a service crash requires explicit recovery for each active VST3 node', async () => {
+  const service = new FakeAudioServiceBinding()
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS,
+      vst3ModuleResolver: (catalogId, classId) =>
+        catalogId === 'vst3:fixture-a' || catalogId === 'vst3:fixture-b'
+          ? {
+              modulePath: `C:\\managed-vst3\\${catalogId.slice('vst3:'.length)}.vst3`,
+              classId,
+              reason: ''
+            }
+          : { modulePath: null, classId, reason: 'not managed' }
+    }
+  )
+  await manager.setDspScenes([
+    {
+      id: 'vst3-crash-fixture',
+      name: 'VST3 crash fixture',
+      enabled: true,
+      priority: 1,
+      rules: {},
+      graph: {
+        version: 2,
+        outputStage: {
+          targetSampleRate: 'device',
+          resamplerQuality: 'native',
+          dither: 'off',
+          safetyClamp: true
+        },
+        nodes: [
+          {
+            id: 'fixture-a',
+            type: 'vst3Plugin',
+            enabled: true,
+            params: {},
+            vst3: { catalogId: 'vst3:fixture-a', classId: '0123456789ABCDEF0123456789ABCDEF' }
+          },
+          {
+            id: 'fixture-b',
+            type: 'vst3Plugin',
+            enabled: true,
+            params: {},
+            vst3: { catalogId: 'vst3:fixture-b', classId: 'FEDCBA9876543210FEDCBA9876543210' }
+          }
+        ]
+      }
+    }
+  ])
+
+  service.emit('crash', 'fixture host exited')
+  manager.refreshDspGraph()
+  const bypassed = (
+    service.lastDspGraphPayload?.graph as {
+      nodes?: Array<{ params?: Record<string, unknown> }>
+    }
+  ).nodes
+  assert.match(String(bypassed?.[0]?.params?.vst3BypassReason), /service crash/)
+  assert.match(String(bypassed?.[1]?.params?.vst3BypassReason), /service crash/)
+
+  manager.clearVst3RecoveryBypass('vst3:fixture-a')
+  manager.refreshDspGraph()
+  const partiallyRestored = (
+    service.lastDspGraphPayload?.graph as {
+      nodes?: Array<{ params?: Record<string, unknown> }>
+    }
+  ).nodes
+  assert.equal(partiallyRestored?.[0]?.params?.vst3ModulePath, 'C:\\managed-vst3\\fixture-a.vst3')
+  assert.match(String(partiallyRestored?.[1]?.params?.vst3BypassReason), /service crash/)
+
+  manager.clearVst3RecoveryBypass('vst3:fixture-b')
+  manager.refreshDspGraph()
+  const restored = (
+    service.lastDspGraphPayload?.graph as {
+      nodes?: Array<{ params?: Record<string, unknown> }>
+    }
+  ).nodes
+  assert.equal(restored?.[1]?.params?.vst3ModulePath, 'C:\\managed-vst3\\fixture-b.vst3')
+  manager.destroy()
 })
 
 test('audio processing normalization preserves advanced replaygain, fft, and crossfeed settings', () => {
@@ -2912,14 +3223,20 @@ test('native device recovery diagnostics invalidate device options cache', async
       pathKind: 'endpoint'
     }
   ]
-  assert.equal((await manager.getAudioOutputState()).deviceOptions.length, first.deviceOptions.length)
+  assert.equal(
+    (await manager.getAudioOutputState()).deviceOptions.length,
+    first.deviceOptions.length
+  )
 
   nativeBinding.setDiagnostics({ deviceLostCount: 1 }, { deviceRecovered: true, recoveryCount: 1 })
   ;(manager as unknown as { tick: () => void }).tick()
   const refreshed = await manager.getAudioOutputState()
 
   assert.ok(nativeBinding.enumerateDeviceCalls > enumerateCallsAfterFirstRead)
-  assert.equal(refreshed.deviceOptions.some((device) => device.id === 'dac-hotplug'), true)
+  assert.equal(
+    refreshed.deviceOptions.some((device) => device.id === 'dac-hotplug'),
+    true
+  )
   assert.equal(refreshReasons.includes('native-output-diagnostics-changed'), true)
 })
 
@@ -2961,7 +3278,10 @@ test('device hotplug polling refreshes device options while playback is stopped'
   const refreshed = await manager.getAudioOutputState()
 
   assert.equal(refreshed.deviceOptions.length, first.deviceOptions.length + 1)
-  assert.equal(refreshed.deviceOptions.some((device) => device.id === 'usb-dac-new'), true)
+  assert.equal(
+    refreshed.deviceOptions.some((device) => device.id === 'usb-dac-new'),
+    true
+  )
   assert.equal(refreshReasons.includes('audio-device-hotplug'), true)
 })
 
@@ -2995,14 +3315,20 @@ test('platform device change notifications refresh device options immediately', 
       pathKind: 'endpoint'
     }
   ]
-  assert.equal((await manager.getAudioOutputState()).deviceOptions.length, first.deviceOptions.length)
+  assert.equal(
+    (await manager.getAudioOutputState()).deviceOptions.length,
+    first.deviceOptions.length
+  )
 
   manager.notifyAudioDeviceOptionsChanged('platform-device-change:wm-devicechange')
   const refreshed = await manager.getAudioOutputState()
 
   assert.ok(nativeBinding.enumerateDeviceCalls > enumerateCallsAfterFirstRead)
   assert.equal(refreshed.deviceOptions.length, first.deviceOptions.length + 1)
-  assert.equal(refreshed.deviceOptions.some((device) => device.id === 'wm-devicechange-dac'), true)
+  assert.equal(
+    refreshed.deviceOptions.some((device) => device.id === 'wm-devicechange-dac'),
+    true
+  )
   assert.equal(refreshReasons.includes('platform-device-change:wm-devicechange'), true)
 })
 
@@ -3061,12 +3387,12 @@ test('getVisualizationData normalizes native visualization data', () => {
   assert.equal(data.spectrum.length, 12)
   assert.equal(data.waveform.length, 20)
   assert.equal(data.spectrogram.length, 1)
-    assert.equal(data.spectrogram[0].length, 12)
-    assert.equal(data.peakDb, -3)
-    assert.equal(data.rmsDb, -12)
-    assert.equal(data.lufsMomentary, -15)
-    assert.equal(data.tapStatus, 'active')
-    assert.equal(data.reason, '')
+  assert.equal(data.spectrogram[0].length, 12)
+  assert.equal(data.peakDb, -3)
+  assert.equal(data.rmsDb, -12)
+  assert.equal(data.lufsMomentary, -15)
+  assert.equal(data.tapStatus, 'active')
+  assert.equal(data.reason, '')
 })
 
 test('getVisualizationData preserves high-resolution spectrum requests for the visualizer', () => {
@@ -3150,7 +3476,11 @@ test('getVisualizationData can precompute visualizer bars without returning the 
 })
 
 test('mapSpectrumToVisualizerBars keeps flat spectrum visually flat', () => {
-  const bars = mapSpectrumToVisualizerBars(Array.from({ length: 4096 }, () => 0.5), 48000, 130)
+  const bars = mapSpectrumToVisualizerBars(
+    Array.from({ length: 4096 }, () => 0.5),
+    48000,
+    130
+  )
 
   assert.equal(bars.length, 130)
   const min = Math.min(...bars)
@@ -3184,7 +3514,11 @@ test('mapSpectrumToVisualizerBars maps a 1kHz peak near the 1kHz visual band', (
 })
 
 test('mapSpectrumToVisualizerBars caps visual frequency range at Nyquist', () => {
-  const bars = mapSpectrumToVisualizerBars(Array.from({ length: 4096 }, () => 1), 32000, 130)
+  const bars = mapSpectrumToVisualizerBars(
+    Array.from({ length: 4096 }, () => 1),
+    32000,
+    130
+  )
 
   assert.equal(bars.length, 130)
   assert.ok(bars.every((value) => value > 0 && value <= 1))
@@ -3279,12 +3613,12 @@ test('getVisualizationData returns inactive shape when native visualization is u
   assert.equal(data.sampleRate, 0)
   assert.equal(data.spectrum.length, 12)
   assert.equal(data.waveform.length, 20)
-    assert.equal(data.spectrogram.length, 0)
-    assert.equal(data.peakDb, -120)
-    assert.equal(data.rmsDb, -120)
-    assert.equal(data.lufsMomentary, null)
-    assert.equal(data.tapStatus, 'native-unavailable')
-    assert.equal(data.reason, 'Native visualization tap unavailable')
+  assert.equal(data.spectrogram.length, 0)
+  assert.equal(data.peakDb, -120)
+  assert.equal(data.rmsDb, -120)
+  assert.equal(data.lufsMomentary, null)
+  assert.equal(data.tapStatus, 'native-unavailable')
+  assert.equal(data.reason, 'Native visualization tap unavailable')
 })
 
 test('getVisualizationData returns animated fallback data when native visualization is unavailable while playing', async () => {
@@ -3325,11 +3659,11 @@ test('getVisualizationData returns animated fallback data when native visualizat
   assert.notDeepEqual(nextData.spectrum, data.spectrum)
   assert.ok(data.spectrum.some((value) => value > 0))
   assert.ok(data.waveform.some((value) => value !== 0))
-    assert.equal(data.peakDb, -18)
-    assert.equal(data.rmsDb, -28)
-    assert.equal(data.lufsMomentary, -24)
-    assert.equal(data.tapStatus, 'synthetic-fallback')
-    assert.equal(data.reason, 'Native visualization tap unavailable')
+  assert.equal(data.peakDb, -18)
+  assert.equal(data.rmsDb, -28)
+  assert.equal(data.lufsMomentary, -24)
+  assert.equal(data.tapStatus, 'synthetic-fallback')
+  assert.equal(data.reason, 'Native visualization tap unavailable')
 })
 
 test('getVisualizationData falls back while playback is active but native visualization is inactive', async () => {
@@ -3378,13 +3712,13 @@ test('getVisualizationData falls back while playback is active but native visual
     spectrogramFrames: 4
   })
 
-    assert.equal(data.active, true)
-    assert.ok(data.sampleRate > 0)
-    assert.notDeepEqual(nextData.spectrum, data.spectrum)
-    assert.ok(data.spectrum.some((value) => value > 0))
-    assert.ok(data.waveform.some((value) => value !== 0))
-    assert.equal(data.tapStatus, 'synthetic-fallback')
-    assert.equal(data.reason, 'Native visualization tap returned no samples')
+  assert.equal(data.active, true)
+  assert.ok(data.sampleRate > 0)
+  assert.notDeepEqual(nextData.spectrum, data.spectrum)
+  assert.ok(data.spectrum.some((value) => value > 0))
+  assert.ok(data.waveform.some((value) => value !== 0))
+  assert.equal(data.tapStatus, 'synthetic-fallback')
+  assert.equal(data.reason, 'Native visualization tap returned no samples')
 })
 
 test('DSP module updates enable the native DSP chain instead of only toggling UI state', async () => {

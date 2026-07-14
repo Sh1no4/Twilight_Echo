@@ -494,9 +494,12 @@ std::string convolverInfoToJson(const ConvolverInfo& info) {
        << "\"channels\":" << info.channels << ","
        << "\"lengthFrames\":" << info.lengthFrames << ","
        << "\"lengthMs\":" << info.lengthMs << ","
-       << "\"partitionSize\":" << info.partitionSize << ","
-       << "\"latencyFrames\":" << info.latencyFrames << ","
-       << "\"overrunCount\":" << info.overrunCount << ","
+        << "\"partitionSize\":" << info.partitionSize << ","
+        << "\"latencyFrames\":" << info.latencyFrames << ","
+        << "\"tailFrames\":" << info.tailFrames << ","
+        << "\"memoryBytes\":" << info.memoryBytes << ","
+        << "\"loading\":" << (info.loading ? "true" : "false") << ","
+        << "\"overrunCount\":" << info.overrunCount << ","
        << "\"lastProcessMs\":" << info.lastProcessMs << ","
        << "\"maxProcessMs\":" << info.maxProcessMs << ","
        << "\"channelMappingMode\":\"" << json_utils::escape(info.channelMappingMode) << "\","
@@ -1051,6 +1054,28 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
   return TAE_RESULT_OK;
 }
 
+TAE_Result TwilightAudioEngine::setDspGraph(const std::string& graphJson) {
+  const std::string next = graphJson.empty() ? "{\"graph\":{\"nodes\":[]}}" : graphJson;
+  std::string error;
+  AudioPipeline* pipeline = nullptr;
+  {
+    std::lock_guard lock(mutex_);
+    dspGraphJson_ = next;
+    pipeline = pipeline_.get();
+  }
+  if (pipeline && !pipeline->setDspGraph(next, &error)) {
+    emitError(error.empty() ? "DSP graph compilation failed" : error, TAE_RESULT_INVALID_ARGUMENT, "dsp-graph");
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
+  {
+    std::lock_guard lock(mutex_);
+    if (pipeline_) applyPipelineStatusLocked(pipeline_->status());
+    updatePerfectLocked();
+    publishStateLocked();
+  }
+  return TAE_RESULT_OK;
+}
+
 TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJson) {
   OutputConfig parsed = parseOutputConfigJson(outputConfigJson.empty() ? "{}" : outputConfigJson);
   std::string error;
@@ -1255,6 +1280,12 @@ std::string TwilightAudioEngine::getNativeDspPluginStatusJson() const {
 std::string TwilightAudioEngine::getDspConfig() const {
   std::lock_guard lock(mutex_);
   return dspConfigJson_;
+}
+
+std::string TwilightAudioEngine::getDspGraphStatusJson() const {
+  std::lock_guard lock(mutex_);
+  return pipeline_ ? pipeline_->dspGraphStatusJson()
+                   : "{\"revision\":0,\"activeSceneId\":null,\"totalLatencyFrames\":0,\"totalTailFrames\":0,\"nodes\":[]}";
 }
 
 std::string TwilightAudioEngine::getMetadataJson(const std::string& source) const {
@@ -1661,7 +1692,13 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.outputInfo.sourceExact = status.sourceExact;
   info_.outputInfo.outputPerfect = status.outputPerfect;
   info_.outputInfo.pcmPassthrough = status.outputInfo.pcmPassthrough;
-  info_.outputInfo.nativeDspJson = status.nativeDspJson.empty() ? "{\"plugins\":[]}" : status.nativeDspJson;
+  const std::string nativePlugins = json_utils::fieldArray(status.nativeDspJson, "plugins");
+  info_.outputInfo.nativeDspJson = "{\"plugins\":" +
+                                    (nativePlugins.empty() ? "[]" : nativePlugins) +
+                                    ",\"graph\":" +
+                                    (status.dspGraphJson.empty()
+                                         ? "{\"revision\":0,\"activeSceneId\":null,\"totalLatencyFrames\":0,\"totalTailFrames\":0,\"nodes\":[]}"
+                                         : status.dspGraphJson) + "}";
   info_.outputInfo.isDsd = status.stream.isDsd;
   info_.outputInfo.dsdMode = status.stream.isDsd ? dsdModeToString(status.stream.dsdMode) : dsdModeToString(DsdMode::Pcm);
   info_.outputInfo.dsdRate = status.stream.isDsd ? status.stream.dsdRate : 0;
@@ -1962,6 +1999,11 @@ TAE_Result TAE_SetDspConfig(TAE_EngineHandle engine, const char* dsp_config_json
   return fromHandle(engine)->setDspConfig(dsp_config_json ? dsp_config_json : "{}");
 }
 
+TAE_Result TAE_SetDspGraph(TAE_EngineHandle engine, const char* dsp_graph_json) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return fromHandle(engine)->setDspGraph(dsp_graph_json ? dsp_graph_json : "{\"graph\":{\"nodes\":[]}}");
+}
+
 TAE_Result TAE_SetOutputConfig(TAE_EngineHandle engine, const char* output_config_json) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   return fromHandle(engine)->setOutputConfig(output_config_json ? output_config_json : "{}");
@@ -1970,6 +2012,11 @@ TAE_Result TAE_SetOutputConfig(TAE_EngineHandle engine, const char* output_confi
 TAE_Result TAE_GetDspConfig(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   return copyStringResult(fromHandle(engine)->getDspConfig(), buffer, buffer_size, required_size);
+}
+
+TAE_Result TAE_GetDspGraphStatus(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return copyStringResult(fromHandle(engine)->getDspGraphStatusJson(), buffer, buffer_size, required_size);
 }
 
 TAE_Result TAE_LoadImpulseResponse(TAE_EngineHandle engine, const char* path) {

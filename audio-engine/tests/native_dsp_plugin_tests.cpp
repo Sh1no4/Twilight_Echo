@@ -245,7 +245,7 @@ void testNonFloatFormatBypasses(const std::string& path) {
   format.sampleFormat = AudioSampleFormat::Int24In32Interleaved;
   registry.prepare(format);
   assert(!registry.isActive());
-  assertStatusContains(registry, "Native DSP v1 only supports float32 interleaved PCM");
+  assertStatusContains(registry, "Native DSP only supports float32 interleaved PCM");
 }
 
 void testCrossfeedPluginProcessesAudio(const std::string& path) {
@@ -302,15 +302,22 @@ int main(int argc, char** argv) {
 
   const std::string capabilities = callString(engine, TAE_GetEngineCapabilities);
   assert(capabilities.find("\"audioPluginSystem\":true") != std::string::npos);
-  assert(capabilities.find("\"nativeDspAbiVersion\":1") != std::string::npos);
+  assert(capabilities.find("\"nativeDspAbiVersion\":2") != std::string::npos);
+  assert(capabilities.find("\"roomCorrection\":true") != std::string::npos);
+#ifdef _WIN32
+  assert(capabilities.find("\"vst3Host\":true") != std::string::npos);
+#else
+  assert(capabilities.find("\"vst3Host\":false") != std::string::npos);
+#endif
 
-  assert(argc >= 7);
+  assert(argc >= 8);
   const std::string pluginPath = argv[1];
   const std::string faultPath = argv[2];
   const std::string badAbiPath = argv[3];
   const std::string invalidParamPath = argv[4];
   const std::string crossfeedPath = argv[5];
   const std::string crashPath = argv[6];
+  const std::string v2Path = argv[7];
   const std::string chain =
       "{\"plugins\":[{\"id\":\"com.twilightecho.test.gain\",\"path\":\"" + escapeJson(pluginPath) +
       "\",\"enabled\":true,\"parameters\":{\"gain\":0.25}}]}";
@@ -337,6 +344,15 @@ int main(int argc, char** argv) {
   testProcessOverrunBypassesAfterRepeatedMisses(faultPath);
   testNonFloatFormatBypasses(pluginPath);
   testCrossfeedPluginProcessesAudio(crossfeedPath);
+  {
+    PluginRegistry registry;
+    prepareRegistry(registry, v2Path);
+    const std::string v2Status = registry.statusJson();
+    assert(v2Status.find("\"abiVersion\":2") != std::string::npos);
+    assert(v2Status.find("\"graphPosition\":\"v2-sortable\"") != std::string::npos);
+    assert(v2Status.find("\"latencyFrames\":32") != std::string::npos);
+    assert(registry.isActive());
+  }
   assert(!crashPath.empty());
   return 0;
 }

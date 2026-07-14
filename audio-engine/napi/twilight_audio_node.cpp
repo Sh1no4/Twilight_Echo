@@ -2,9 +2,18 @@
 
 #include <node_api.h>
 
+#include <algorithm>
+#include <array>
+#include <cctype>
+#include <functional>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace {
 
@@ -82,6 +91,241 @@ std::string consumeLastError() {
   g_lastError.clear();
   return out;
 }
+
+#ifdef _WIN32
+constexpr DWORD kVst3ScannerTimeoutMs = 8000;
+constexpr size_t kVst3ScannerOutputLimit = 512 * 1024;
+
+struct Vst3ScannerResult {
+  bool timedOut = false;
+  bool outputTruncated = false;
+  DWORD exitCode = static_cast<DWORD>(-1);
+  std::string standardOutput;
+  std::string standardError;
+  std::string launchError;
+};
+
+std::string wideToUtf8(const std::wstring& value) {
+  if (value.empty()) return {};
+  const int size = WideCharToMultiByte(
+      CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+  if (size <= 0) return {};
+  std::string output(static_cast<size_t>(size), '\0');
+  WideCharToMultiByte(
+      CP_UTF8, 0, value.data(), static_cast<int>(value.size()), output.data(), size, nullptr, nullptr);
+  return output;
+}
+
+std::wstring utf8ToWide(const std::string& value) {
+  if (value.empty()) return {};
+  const int size = MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), nullptr, 0);
+  if (size <= 0) return {};
+  std::wstring output(static_cast<size_t>(size), L'\0');
+  MultiByteToWideChar(
+      CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), output.data(), size);
+  return output;
+}
+
+std::string windowsErrorMessage(DWORD error) {
+  LPWSTR buffer = nullptr;
+  const DWORD size = FormatMessageW(
+      FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+      nullptr,
+      error,
+      0,
+      reinterpret_cast<LPWSTR>(&buffer),
+      0,
+      nullptr);
+  if (size == 0 || !buffer) return "Windows error " + std::to_string(error);
+  std::wstring message(buffer, size);
+  LocalFree(buffer);
+  return wideToUtf8(message);
+}
+
+std::string trimText(std::string value) {
+  const auto first = std::find_if_not(value.begin(), value.end(), [](unsigned char character) {
+    return std::isspace(character) != 0;
+  });
+  const auto last = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char character) {
+    return std::isspace(character) != 0;
+  }).base();
+  return first < last ? std::string(first, last) : std::string();
+}
+
+std::wstring quoteWindowsArgument(const std::wstring& value) {
+  std::wstring quoted;
+  quoted.reserve(value.size() + 2);
+  quoted.push_back(L'"');
+  size_t backslashes = 0;
+  for (const wchar_t character : value) {
+    if (character == L'\\') {
+      ++backslashes;
+      continue;
+    }
+    if (character == L'"') {
+      quoted.append(backslashes * 2 + 1, L'\\');
+      quoted.push_back(character);
+      backslashes = 0;
+      continue;
+    }
+    quoted.append(backslashes, L'\\');
+    backslashes = 0;
+    quoted.push_back(character);
+  }
+  quoted.append(backslashes * 2, L'\\');
+  quoted.push_back(L'"');
+  return quoted;
+}
+
+std::wstring scannerHelperPath(std::string& error) {
+  HMODULE addon = nullptr;
+  if (!GetModuleHandleExW(
+          GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+          reinterpret_cast<LPCWSTR>(scannerHelperPath),
+          &addon)) {
+    error = "Unable to resolve the native audio addon path: " + windowsErrorMessage(GetLastError());
+    return {};
+  }
+  std::vector<wchar_t> path(32768, L'\0');
+  const DWORD length = GetModuleFileNameW(addon, path.data(), static_cast<DWORD>(path.size()));
+  if (length == 0 || length >= path.size() - 1) {
+    error = "Unable to resolve the native audio addon filename: " + windowsErrorMessage(GetLastError());
+    return {};
+  }
+  std::wstring addonPath(path.data(), length);
+  const size_t separator = addonPath.find_last_of(L"\\/");
+  if (separator == std::wstring::npos) {
+    error = "Unable to resolve the isolated VST3 scanner directory";
+    return {};
+  }
+  return addonPath.substr(0, separator + 1) + L"twilight-vst3-scanner.exe";
+}
+
+void drainPipe(HANDLE handle, std::string& output, bool& truncated) {
+  std::array<char, 4096> buffer{};
+  DWORD read = 0;
+  while (ReadFile(handle, buffer.data(), static_cast<DWORD>(buffer.size()), &read, nullptr) && read > 0) {
+    const size_t remaining = output.size() < kVst3ScannerOutputLimit
+        ? kVst3ScannerOutputLimit - output.size()
+        : 0;
+    const size_t accepted = std::min(remaining, static_cast<size_t>(read));
+    output.append(buffer.data(), accepted);
+    if (accepted < read) truncated = true;
+  }
+  CloseHandle(handle);
+}
+
+Vst3ScannerResult runVst3Scanner(const std::string& modulePath) {
+  Vst3ScannerResult result;
+  const std::wstring modulePathWide = utf8ToWide(modulePath);
+  if (modulePathWide.empty()) {
+    result.launchError = "The VST3 module path is not valid UTF-8";
+    return result;
+  }
+
+  std::string helperError;
+  const std::wstring scannerPath = scannerHelperPath(helperError);
+  if (scannerPath.empty()) {
+    result.launchError = helperError;
+    return result;
+  }
+  if (GetFileAttributesW(scannerPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+    result.launchError = "The isolated VST3 scanner helper is missing beside twilight_audio_node.node";
+    return result;
+  }
+
+  SECURITY_ATTRIBUTES security{};
+  security.nLength = sizeof(security);
+  security.bInheritHandle = TRUE;
+  HANDLE outputRead = nullptr;
+  HANDLE outputWrite = nullptr;
+  HANDLE errorRead = nullptr;
+  HANDLE errorWrite = nullptr;
+  HANDLE nullInput = INVALID_HANDLE_VALUE;
+  if (!CreatePipe(&outputRead, &outputWrite, &security, 0) ||
+      !SetHandleInformation(outputRead, HANDLE_FLAG_INHERIT, 0) ||
+      !CreatePipe(&errorRead, &errorWrite, &security, 0) ||
+      !SetHandleInformation(errorRead, HANDLE_FLAG_INHERIT, 0)) {
+    result.launchError = "Unable to create VST3 scanner pipes: " + windowsErrorMessage(GetLastError());
+    if (outputRead) CloseHandle(outputRead);
+    if (outputWrite) CloseHandle(outputWrite);
+    if (errorRead) CloseHandle(errorRead);
+    if (errorWrite) CloseHandle(errorWrite);
+    return result;
+  }
+  nullInput = CreateFileW(
+      L"NUL",
+      GENERIC_READ,
+      FILE_SHARE_READ | FILE_SHARE_WRITE,
+      &security,
+      OPEN_EXISTING,
+      FILE_ATTRIBUTE_NORMAL,
+      nullptr);
+  if (nullInput == INVALID_HANDLE_VALUE) {
+    result.launchError = "Unable to prepare VST3 scanner input: " + windowsErrorMessage(GetLastError());
+    CloseHandle(outputRead);
+    CloseHandle(outputWrite);
+    CloseHandle(errorRead);
+    CloseHandle(errorWrite);
+    return result;
+  }
+
+  const std::wstring command =
+      quoteWindowsArgument(scannerPath) + L" --module " + quoteWindowsArgument(modulePathWide);
+  std::vector<wchar_t> mutableCommand(command.begin(), command.end());
+  mutableCommand.push_back(L'\0');
+  const size_t separator = scannerPath.find_last_of(L"\\/");
+  const std::wstring scannerDirectory = scannerPath.substr(0, separator);
+  STARTUPINFOW startup{};
+  startup.cb = sizeof(startup);
+  startup.dwFlags = STARTF_USESHOWWINDOW | STARTF_USESTDHANDLES;
+  startup.wShowWindow = SW_HIDE;
+  startup.hStdInput = nullInput;
+  startup.hStdOutput = outputWrite;
+  startup.hStdError = errorWrite;
+  PROCESS_INFORMATION process{};
+  if (!CreateProcessW(
+          scannerPath.c_str(),
+          mutableCommand.data(),
+          nullptr,
+          nullptr,
+          TRUE,
+          CREATE_NO_WINDOW,
+          nullptr,
+          scannerDirectory.c_str(),
+          &startup,
+          &process)) {
+    result.launchError = "Unable to launch the isolated VST3 scanner: " + windowsErrorMessage(GetLastError());
+    CloseHandle(nullInput);
+    CloseHandle(outputRead);
+    CloseHandle(outputWrite);
+    CloseHandle(errorRead);
+    CloseHandle(errorWrite);
+    return result;
+  }
+  CloseHandle(nullInput);
+  CloseHandle(outputWrite);
+  CloseHandle(errorWrite);
+
+  std::thread outputReader(drainPipe, outputRead, std::ref(result.standardOutput), std::ref(result.outputTruncated));
+  std::thread errorReader(drainPipe, errorRead, std::ref(result.standardError), std::ref(result.outputTruncated));
+  const DWORD waitResult = WaitForSingleObject(process.hProcess, kVst3ScannerTimeoutMs);
+  if (waitResult == WAIT_TIMEOUT) {
+    result.timedOut = true;
+    TerminateProcess(process.hProcess, 0xC000013A);
+    WaitForSingleObject(process.hProcess, 1000);
+  } else if (waitResult != WAIT_OBJECT_0) {
+    result.launchError = "Unable to wait for the isolated VST3 scanner: " + windowsErrorMessage(GetLastError());
+  }
+  GetExitCodeProcess(process.hProcess, &result.exitCode);
+  CloseHandle(process.hThread);
+  CloseHandle(process.hProcess);
+  outputReader.join();
+  errorReader.join();
+  return result;
+}
+#endif
 
 napi_value makeUndefined(napi_env env) {
   napi_value value;
@@ -246,6 +490,73 @@ napi_value SetDspConfig(napi_env env, napi_callback_info info) {
   napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
   const std::string json = argc > 0 ? getStringArg(env, argv[0]) : "{}";
   return throwOnError(env, TAE_SetDspConfig(g_engine, json.c_str()));
+}
+
+napi_value SetDspGraph(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const std::string json = argc > 0 ? getStringArg(env, argv[0]) : "{\"graph\":{\"nodes\":[]}}";
+  return throwOnError(env, TAE_SetDspGraph(g_engine, json.c_str()));
+}
+
+napi_value GetDspGraphStatus(napi_env env, napi_callback_info) {
+  return readJson(env, TAE_GetDspGraphStatus);
+}
+
+napi_value ScanVst3Module(napi_env env, napi_callback_info info) {
+#ifdef _WIN32
+  size_t argc = 1;
+  napi_value argv[1];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  if (argc < 1) {
+    napi_throw_type_error(env, "TAE_VST3_MODULE_REQUIRED", "VST3 scanning requires a module path");
+    return makeUndefined(env);
+  }
+  const std::string modulePath = getStringArg(env, argv[0]);
+  if (modulePath.empty()) {
+    napi_throw_type_error(env, "TAE_VST3_MODULE_REQUIRED", "VST3 module path must not be empty");
+    return makeUndefined(env);
+  }
+
+  const Vst3ScannerResult result = runVst3Scanner(modulePath);
+  if (!result.launchError.empty()) {
+    napi_throw_error(env, "TAE_VST3_SCANNER_UNAVAILABLE", result.launchError.c_str());
+    return makeUndefined(env);
+  }
+  if (result.timedOut) {
+    napi_throw_error(env, "TAE_VST3_SCAN_TIMEOUT", "The isolated VST3 scanner exceeded its 8 second limit");
+    return makeUndefined(env);
+  }
+  if (result.outputTruncated) {
+    napi_throw_error(env, "TAE_VST3_SCAN_OUTPUT_LIMIT", "The isolated VST3 scanner exceeded its output limit");
+    return makeUndefined(env);
+  }
+  if (result.exitCode != 0) {
+    const std::string detail = trimText(
+        result.standardError.empty() ? result.standardOutput : result.standardError);
+    const std::string message = "The isolated VST3 scanner exited with code " +
+        std::to_string(result.exitCode) + (detail.empty() ? std::string() : ": " + detail);
+    napi_throw_error(env, "TAE_VST3_SCAN_FAILED", message.c_str());
+    return makeUndefined(env);
+  }
+  const std::string output = trimText(result.standardOutput);
+  if (output.empty()) {
+    napi_throw_error(env, "TAE_VST3_SCAN_EMPTY", "The isolated VST3 scanner returned no descriptor");
+    return makeUndefined(env);
+  }
+  napi_value descriptor;
+  napi_create_string_utf8(env, output.c_str(), output.size(), &descriptor);
+  return descriptor;
+#else
+  napi_throw_error(
+      env,
+      "TAE_VST3_UNSUPPORTED",
+      "VST3 scanning is unavailable: this audio-engine build does not include the isolated VST3 scanner helper");
+  return makeUndefined(env);
+#endif
 }
 
 napi_value SetOutputConfig(napi_env env, napi_callback_info info) {
@@ -479,6 +790,9 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "Previous", Previous);
   define(env, exports, "SetPlayMode", SetPlayMode);
   define(env, exports, "SetDspConfig", SetDspConfig);
+  define(env, exports, "SetDspGraph", SetDspGraph);
+  define(env, exports, "GetDspGraphStatus", GetDspGraphStatus);
+  define(env, exports, "ScanVst3Module", ScanVst3Module);
   define(env, exports, "SetOutputConfig", SetOutputConfig);
   define(env, exports, "LoadImpulseResponse", LoadImpulseResponse);
   define(env, exports, "UnloadImpulseResponse", UnloadImpulseResponse);

@@ -62,10 +62,12 @@ set(TAE_ENGINE_SOURCES
   dsp/ConvolverProcessor.cpp
   dsp/CrossfeedProcessor.cpp
   dsp/DspChain.cpp
+  dsp/DspWorkspaceProcessors.cpp
   dsp/FftSpectrumAnalyzer.cpp
   dsp/KissFftAdapter.cpp
   dsp/ParametricEqProcessor.cpp
   dsp/ReplayGainProcessor.cpp
+  dsp/Vst3BridgeProcessor.cpp
   metadata/AudioMetadataService.cpp
   output/OutputBackendFactory.cpp
   playlist/QueueManager.cpp
@@ -84,6 +86,18 @@ target_include_directories(twilight_audio_engine
 
 target_compile_definitions(twilight_audio_engine PRIVATE TAE_BUILDING_LIBRARY=1)
 target_link_libraries(twilight_audio_engine PRIVATE ${CMAKE_DL_LIBS})
+
+find_path(EBUR128_INCLUDE_DIR ebur128.h)
+find_library(EBUR128_LIBRARY NAMES ebur128 libebur128)
+set(TAE_EBUR128_AVAILABLE OFF)
+if(EBUR128_INCLUDE_DIR AND EBUR128_LIBRARY)
+  set(TAE_EBUR128_AVAILABLE ON)
+  target_compile_definitions(twilight_audio_engine PRIVATE TAE_HAS_EBUR128=1)
+  target_include_directories(twilight_audio_engine PRIVATE ${EBUR128_INCLUDE_DIR})
+  target_link_libraries(twilight_audio_engine PRIVATE ${EBUR128_LIBRARY})
+else()
+  message(WARNING "libebur128 was not found; DSP loudness metering will use the built-in fallback.")
+endif()
 
 if(WIN32)
   target_compile_definitions(twilight_audio_engine PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -231,6 +245,7 @@ else()
   message(STATUS "  ALSA: ${TAE_ALSA_AVAILABLE}")
 endif()
 message(STATUS "  FFmpeg: ${FFMPEG_FOUND}")
+message(STATUS "  libebur128: ${TAE_EBUR128_AVAILABLE}")
 message(STATUS "  Node-API: ${TAE_BUILD_NAPI}")
 
 if(TAE_BUILD_TESTS)
@@ -245,10 +260,12 @@ if(TAE_BUILD_TESTS)
     dsp/ConvolverProcessor.cpp
     dsp/CrossfeedProcessor.cpp
     dsp/DspChain.cpp
+    dsp/DspWorkspaceProcessors.cpp
     dsp/FftSpectrumAnalyzer.cpp
     dsp/KissFftAdapter.cpp
     dsp/ParametricEqProcessor.cpp
     dsp/ReplayGainProcessor.cpp
+    dsp/Vst3BridgeProcessor.cpp
     plugins/PluginRegistry.cpp
   )
   target_include_directories(twilight_dsp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -284,6 +301,8 @@ if(TAE_BUILD_TESTS)
   target_include_directories(twilight_crossfeed_dsp_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   add_library(twilight_test_crash_dsp_plugin SHARED tests/test_crash_dsp_plugin.cpp)
   target_include_directories(twilight_test_crash_dsp_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  add_library(twilight_test_v2_gain_dsp_plugin SHARED tests/test_v2_gain_dsp_plugin.cpp)
+  target_include_directories(twilight_test_v2_gain_dsp_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
   if(WIN32)
     set_target_properties(twilight_test_gain_dsp_plugin PROPERTIES PREFIX "")
     set_target_properties(twilight_test_fault_dsp_plugin PROPERTIES PREFIX "")
@@ -291,6 +310,7 @@ if(TAE_BUILD_TESTS)
     set_target_properties(twilight_test_invalid_param_dsp_plugin PROPERTIES PREFIX "")
     set_target_properties(twilight_crossfeed_dsp_plugin PROPERTIES PREFIX "")
     set_target_properties(twilight_test_crash_dsp_plugin PROPERTIES PREFIX "")
+    set_target_properties(twilight_test_v2_gain_dsp_plugin PROPERTIES PREFIX "")
   endif()
 
   add_executable(twilight_native_dsp_plugin_tests
@@ -308,6 +328,7 @@ if(TAE_BUILD_TESTS)
       $<TARGET_FILE:twilight_test_invalid_param_dsp_plugin>
       $<TARGET_FILE:twilight_crossfeed_dsp_plugin>
       $<TARGET_FILE:twilight_test_crash_dsp_plugin>
+      $<TARGET_FILE:twilight_test_v2_gain_dsp_plugin>
   )
   add_test(
     NAME twilight_native_dsp_plugin_crash_fixture
@@ -487,10 +508,12 @@ if(TAE_BUILD_TESTS)
     dsp/ConvolverProcessor.cpp
     dsp/CrossfeedProcessor.cpp
     dsp/DspChain.cpp
+    dsp/DspWorkspaceProcessors.cpp
     dsp/FftSpectrumAnalyzer.cpp
     dsp/KissFftAdapter.cpp
     dsp/ParametricEqProcessor.cpp
     dsp/ReplayGainProcessor.cpp
+    dsp/Vst3BridgeProcessor.cpp
     plugins/PluginRegistry.cpp
     playlist/QueueManager.cpp
   )

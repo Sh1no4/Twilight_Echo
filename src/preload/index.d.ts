@@ -1,3 +1,15 @@
+import type {
+  DspAsset,
+  DspAssetKind,
+  DspCorrectionImportResult,
+  DspCorrectionProfile,
+  DspGraphStatus,
+  DspProfile,
+  DspScene,
+  DspSceneState,
+  Vst3CatalogState
+} from '../shared/dspGraph.ts'
+
 export {}
 
 interface TrackData {
@@ -167,6 +179,7 @@ type EqualizerFilterType =
   | 'lowPass'
   | 'highPass'
   | 'allPass'
+  | 'notch'
 
 interface AudioEngineQueueItem {
   id: string
@@ -186,6 +199,8 @@ interface EqualizerBand {
   gain: number
   q: number
   filterType: EqualizerFilterType
+  enabled?: boolean
+  channelMask?: number
 }
 
 interface AudioProcessingSettings {
@@ -510,6 +525,8 @@ interface AppSettings {
   audioExclusiveMode: boolean
   audioOutputConfig: OutputConfig
   audioProcessing: AudioProcessingSettings
+  dspScenes: DspScene[]
+  dspPinnedSceneId: string | null
   headphoneCompensation: HeadphoneCompensationSettings
   audioEqPresets: AudioEqPreset[]
   desktopLyrics: DesktopLyricsSettings
@@ -921,7 +938,7 @@ interface OutputInfo {
   diagnostics: OutputDiagnostics
   deviceRecovered: boolean
   recoveryCount: number
-  nativeDsp?: { plugins: unknown[] }
+  nativeDsp?: { plugins: unknown[]; graph?: DspGraphStatus }
   isDsd: boolean
   dsdMode: string
   dsdRate: number
@@ -1057,6 +1074,27 @@ interface AudioEngineAPI {
     settings: Partial<AudioProcessingSettings>
   ) => Promise<AudioProcessingSettings>
   getAudioProcessing: () => Promise<AudioProcessingSettings>
+  getDspSceneState: () => Promise<DspSceneState>
+  setDspScenes: (scenes: DspScene[], pinnedSceneId?: string | null) => Promise<DspSceneState>
+  applyDspScene: (sceneId: string | null, confirmDsdPcmFallback?: boolean) => Promise<DspSceneState>
+  getDspGraphStatus: () => Promise<DspGraphStatus>
+  getDspAssets: () => Promise<DspAsset[]>
+  importDspAsset: (kind: DspAssetKind) => Promise<DspAsset | null>
+  importDspCorrectionProfile: () => Promise<DspCorrectionImportResult | null>
+  getDspCorrectionProfile: (assetId: string) => Promise<DspCorrectionProfile>
+  deleteDspAsset: (assetId: string) => Promise<DspAsset[]>
+  exportDspProfile: (name?: string) => Promise<DspProfile | null>
+  importDspProfile: () => Promise<{
+    state: DspSceneState
+    profile: DspProfile
+    importedAssets: DspAsset[]
+  } | null>
+  getVst3Catalog: () => Promise<Vst3CatalogState>
+  setVst3Enabled: (enabled: boolean) => Promise<Vst3CatalogState>
+  selectVst3SearchPath: () => Promise<string | null>
+  setVst3SearchPaths: (paths: string[]) => Promise<Vst3CatalogState>
+  scanVst3Plugins: () => Promise<Vst3CatalogState>
+  clearVst3Quarantine: (id: string) => Promise<Vst3CatalogState>
   selectImpulseResponse: () => Promise<string | null>
   loadImpulseResponse: (path: string) => Promise<ConvolverInfo>
   unloadImpulseResponse: () => Promise<ConvolverInfo>

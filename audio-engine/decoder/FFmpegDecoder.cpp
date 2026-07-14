@@ -19,6 +19,7 @@ extern "C" {
 #include <libavutil/channel_layout.h>
 #include <libavutil/dict.h>
 #include <libavutil/error.h>
+#include <libavutil/opt.h>
 #include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
 }
@@ -203,6 +204,7 @@ struct FFmpegDecoder::Impl {
   AudioStreamInfo streamInfo;
   AudioFormat outputFormat;
   bool eof = false;
+  FFmpegDecoder::ResamplerQuality resamplerQuality = FFmpegDecoder::ResamplerQuality::Native;
 
 #if defined(TAE_HAS_FFMPEG)
   AVFormatContext* formatContext = nullptr;
@@ -550,6 +552,25 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
     return false;
   }
 
+  switch (impl_->resamplerQuality) {
+    case ResamplerQuality::Ultra:
+      av_opt_set_int(impl_->swr, "filter_size", 64, 0);
+      av_opt_set_int(impl_->swr, "phase_shift", 10, 0);
+      av_opt_set_double(impl_->swr, "cutoff", 0.99, 0);
+      break;
+    case ResamplerQuality::High:
+      av_opt_set_int(impl_->swr, "filter_size", 32, 0);
+      av_opt_set_int(impl_->swr, "phase_shift", 10, 0);
+      av_opt_set_double(impl_->swr, "cutoff", 0.97, 0);
+      break;
+    case ResamplerQuality::Native:
+    default:
+      av_opt_set_int(impl_->swr, "filter_size", 16, 0);
+      av_opt_set_int(impl_->swr, "phase_shift", 8, 0);
+      av_opt_set_double(impl_->swr, "cutoff", 0.90, 0);
+      break;
+  }
+
   ret = swr_init(impl_->swr);
   if (ret < 0) {
     if (error) *error = "无法初始化解码重采样器，错误码：" + std::to_string(ret);
@@ -568,6 +589,10 @@ bool FFmpegDecoder::setOutputFormat(const AudioFormat& format, std::string* erro
   if (error) *error = "当前构建未启用音频解码支持";
   return false;
 #endif
+}
+
+void FFmpegDecoder::setResamplerQuality(ResamplerQuality quality) {
+  impl_->resamplerQuality = quality;
 }
 
 size_t FFmpegDecoder::readFrames(float* output, size_t frameCount, std::string* error) {
