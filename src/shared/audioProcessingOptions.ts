@@ -1,0 +1,193 @@
+/**
+ * Shared HiFi / Settings option sources and Stage-1 status copy.
+ * Keep SettingsPage and HiFiSidebar in lockstep; never re-alias loudnorm to track.
+ */
+
+export type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
+export type DsdOutputMode = 'auto' | 'pcm' | 'dop' | 'native'
+export type LoudnormStatus = 'idle' | 'measuring' | 'cached' | 'fallback' | 'unavailable'
+
+export interface LabeledOption<T extends string> {
+  value: T
+  label: string
+  description?: string
+}
+
+/** Default EBU R128 loudnorm parameters (must match ReplayGainProcessor / createLegacyDspGraph). */
+export const LOUDNORM_TARGET_LUFS = -23
+export const LOUDNORM_TRUE_PEAK_CEILING_DB = -1
+export const LOUDNORM_ALGORITHM_VERSION = 1
+
+/** Default software volume: protect hearing; bit-perfect needs explicit Unity (1.0). */
+export const DEFAULT_SOFTWARE_VOLUME = 0.7
+export const UNITY_SOFTWARE_VOLUME = 1
+
+export const VOLUME_NORMALIZATION_OPTIONS: readonly LabeledOption<VolumeNormalizationMode>[] = [
+  {
+    value: 'off',
+    label: 'Off',
+    description: '不施加响度增益'
+  },
+  {
+    value: 'track',
+    label: 'Track / R128',
+    description: '仅使用源标签 ReplayGain Track / R128 track'
+  },
+  {
+    value: 'album',
+    label: 'Album / R128',
+    description: '仅使用源标签 ReplayGain Album / R128 album'
+  },
+  {
+    value: 'loudnorm',
+    label: 'Loudnorm (EBU R128)',
+    description:
+      '离线测量 integrated LUFS；缓存命中用测量增益，无缓存首播 fallback 并后台测量。禁止映射为 Track'
+  }
+] as const
+
+export const DSD_OUTPUT_MODE_OPTIONS: readonly LabeledOption<DsdOutputMode>[] = [
+  { value: 'auto', label: 'Auto', description: '按设备能力自动选择 Native / DoP / PCM' },
+  { value: 'pcm', label: 'PCM', description: '强制 DSD 解码为 PCM' },
+  { value: 'dop', label: 'DoP', description: 'DoP 载波传输' },
+  { value: 'native', label: 'Native', description: 'Native DSD（平台/设备支持时）' }
+] as const
+
+/** Canonical perfect-reason codes that Stage-1 UI must recognize. */
+export const STAGE1_PERFECT_REASON_CODES = [
+  'volume_not_unity',
+  'loudnorm_active',
+  'replaygain_active',
+  'processing_active',
+  'eq_active',
+  'convolver_active',
+  'crossfeed_active',
+  'crossfade_active',
+  'shared_mixer'
+] as const
+
+export type Stage1PerfectReasonCode = (typeof STAGE1_PERFECT_REASON_CODES)[number]
+
+/** Shared Chinese status copy for HiFi / PlayerBar / Settings. */
+export const HIFI_STATUS_COPY = {
+  volumeNotUnity: '软件音量不是 100%',
+  volumeNotUnityHint: '默认 70% 保护听感；bit-perfect 需 Unity（100%）',
+  unityButton: 'Unity 100%',
+  unityButtonShort: 'Unity',
+  loudnormActive: 'Loudnorm 正在改变样本（EBU R128）',
+  loudnormMeasuring: 'Loudnorm：后台测量中（首播使用 Fallback）',
+  loudnormCached: 'Loudnorm：已用缓存测量增益',
+  loudnormFallback: 'Loudnorm：无测量，使用 Fallback',
+  loudnormUnavailable: 'Loudnorm：分析不可用（无 ebur128 或失败）',
+  gaplessOn: 'Gapless 意图已开启',
+  gaplessOff: 'Gapless 已关闭',
+  gaplessNote: '同格式专辑连续播放时尝试无缝衔接；crossfade 会关闭 true gapless',
+  gaplessActive: 'Gapless Active：预加载路径已就绪',
+  gaplessPreload: 'Preload Ready：下一首已预解码',
+  gaplessBlocked: 'Gapless Blocked',
+  gaplessBlockedDisabled: 'Gapless 已关闭',
+  gaplessBlockedDsd: 'DSD / DoP 路径不支持 gapless preload',
+  gaplessBlockedPassthrough: 'Typed PCM passthrough 路径关闭 gapless',
+  gaplessBlockedCrossfade: 'Crossfade 关闭 true gapless',
+  gaplessBlockedFormat: '相邻曲目格式不匹配，无法 promote'
+} as const
+
+/** Runtime gapless blocked reasons from native PlaybackInfo.gaplessBlockedReason. */
+export const GAPLESS_BLOCKED_REASONS = [
+  'disabled',
+  'dsd_path',
+  'typed_passthrough',
+  'crossfade',
+  'format_mismatch'
+] as const
+
+export type GaplessBlockedReason = (typeof GAPLESS_BLOCKED_REASONS)[number]
+
+export function isVolumeNormalizationMode(value: unknown): value is VolumeNormalizationMode {
+  return (
+    value === 'off' || value === 'track' || value === 'album' || value === 'loudnorm'
+  )
+}
+
+export function isDsdOutputMode(value: unknown): value is DsdOutputMode {
+  return value === 'auto' || value === 'pcm' || value === 'dop' || value === 'native'
+}
+
+export function labelForVolumeNormalization(mode: VolumeNormalizationMode): string {
+  return VOLUME_NORMALIZATION_OPTIONS.find((option) => option.value === mode)?.label ?? mode
+}
+
+export function labelForDsdOutputMode(mode: DsdOutputMode): string {
+  return DSD_OUTPUT_MODE_OPTIONS.find((option) => option.value === mode)?.label ?? mode
+}
+
+export function loudnormStatusCopy(status: LoudnormStatus): string {
+  switch (status) {
+    case 'measuring':
+      return HIFI_STATUS_COPY.loudnormMeasuring
+    case 'cached':
+      return HIFI_STATUS_COPY.loudnormCached
+    case 'fallback':
+      return HIFI_STATUS_COPY.loudnormFallback
+    case 'unavailable':
+      return HIFI_STATUS_COPY.loudnormUnavailable
+    case 'idle':
+    default:
+      return ''
+  }
+}
+
+export function requiresMeasuredLoudnorm(mode: VolumeNormalizationMode): boolean {
+  return mode === 'loudnorm'
+}
+
+/** Both Settings and HiFi must expose the full mode set including loudnorm. */
+export function volumeNormalizationValues(): VolumeNormalizationMode[] {
+  return VOLUME_NORMALIZATION_OPTIONS.map((option) => option.value)
+}
+
+export function dsdOutputModeValues(): DsdOutputMode[] {
+  return DSD_OUTPUT_MODE_OPTIONS.map((option) => option.value)
+}
+
+export function isGaplessBlockedReason(value: unknown): value is GaplessBlockedReason {
+  return (
+    value === 'disabled' ||
+    value === 'dsd_path' ||
+    value === 'typed_passthrough' ||
+    value === 'crossfade' ||
+    value === 'format_mismatch'
+  )
+}
+
+export function gaplessBlockedReasonCopy(reason: string | null | undefined): string {
+  switch (reason) {
+    case 'disabled':
+      return HIFI_STATUS_COPY.gaplessBlockedDisabled
+    case 'dsd_path':
+      return HIFI_STATUS_COPY.gaplessBlockedDsd
+    case 'typed_passthrough':
+      return HIFI_STATUS_COPY.gaplessBlockedPassthrough
+    case 'crossfade':
+      return HIFI_STATUS_COPY.gaplessBlockedCrossfade
+    case 'format_mismatch':
+      return HIFI_STATUS_COPY.gaplessBlockedFormat
+    default:
+      return reason && reason.trim().length > 0 ? `${HIFI_STATUS_COPY.gaplessBlocked}：${reason}` : ''
+  }
+}
+
+/** HiFi status line for intent + runtime gapless state. */
+export function gaplessRuntimeStatusCopy(input: {
+  intentEnabled: boolean
+  gaplessActive?: boolean
+  preloadReady?: boolean
+  gaplessBlockedReason?: string | null
+}): string {
+  if (!input.intentEnabled) return HIFI_STATUS_COPY.gaplessOff
+  const blocked = gaplessBlockedReasonCopy(input.gaplessBlockedReason)
+  if (blocked) return blocked
+  if (input.gaplessActive && input.preloadReady) return HIFI_STATUS_COPY.gaplessPreload
+  if (input.gaplessActive) return HIFI_STATUS_COPY.gaplessActive
+  return HIFI_STATUS_COPY.gaplessOn
+}

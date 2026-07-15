@@ -64,6 +64,7 @@ struct PlaybackInfo {
   bool pcmPassthrough = false;
   bool dspActive = false;
   bool replayGainActive = false;
+  bool loudnormActive = false;
   bool eqActive = false;
   bool convolverActive = false;
   bool crossfeedActive = false;
@@ -83,6 +84,9 @@ struct PlaybackInfo {
   int dsdRate = 0;
   bool gaplessActive = false;
   bool preloadReady = false;
+  // Empty when gapless path is unblocked; otherwise one of:
+  // disabled | dsd_path | typed_passthrough | crossfade | format_mismatch
+  std::string gaplessBlockedReason;
   bool hasUpcomingTrack = false;
   QueueItem upcomingTrack;
 };

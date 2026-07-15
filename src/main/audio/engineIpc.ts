@@ -106,10 +106,30 @@ export function toQueueItem(raw: unknown): AudioEngineQueueItem | null {
     artist: normalizeQueueText(item.artist),
     album: normalizeQueueText(item.album),
     duration: Number.isFinite(item.duration) ? Number(item.duration) : undefined,
-    codec: typeof item.format === 'string' ? item.format : undefined,
+    codec: typeof item.format === 'string' ? item.format : typeof item.codec === 'string' ? item.codec : undefined,
     sampleRate: Number.isFinite(item.sampleRate) ? Number(item.sampleRate) : undefined,
     bitrate: Number.isFinite(item.bitrate) ? Number(item.bitrate) : undefined,
-    bitDepth: Number.isFinite(item.bitDepth) ? Number(item.bitDepth) : undefined
+    bitDepth: Number.isFinite(item.bitDepth) ? Number(item.bitDepth) : undefined,
+    measuredIntegratedLufs: Number.isFinite(item.measuredIntegratedLufs)
+      ? Number(item.measuredIntegratedLufs)
+      : undefined,
+    measuredTruePeakDb: Number.isFinite(item.measuredTruePeakDb)
+      ? Number(item.measuredTruePeakDb)
+      : undefined,
+    replayGainTrackGainDb: Number.isFinite(item.replayGainTrackGainDb)
+      ? Number(item.replayGainTrackGainDb)
+      : undefined,
+    replayGainAlbumGainDb: Number.isFinite(item.replayGainAlbumGainDb)
+      ? Number(item.replayGainAlbumGainDb)
+      : undefined,
+    replayGainTrackPeak: Number.isFinite(item.replayGainTrackPeak)
+      ? Number(item.replayGainTrackPeak)
+      : undefined,
+    replayGainAlbumPeak: Number.isFinite(item.replayGainAlbumPeak)
+      ? Number(item.replayGainAlbumPeak)
+      : undefined,
+    r128TrackGainDb: Number.isFinite(item.r128TrackGainDb) ? Number(item.r128TrackGainDb) : undefined,
+    r128AlbumGainDb: Number.isFinite(item.r128AlbumGainDb) ? Number(item.r128AlbumGainDb) : undefined
   }
 }
 
@@ -287,6 +307,10 @@ export async function setupAudioEngineIpc(): Promise<void> {
     runtime.mainWindow?.webContents.send('audioEngine:config-applied', event)
   })
 
+  runtime.audioEngineManager.on('loudnorm-status', (event) => {
+    runtime.mainWindow?.webContents.send('audioEngine:loudnorm-status', event)
+  })
+
   ipcMain.handle('audioEngine:loadQueue', async (_event, items: unknown, startIndex?: number) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     if (!Array.isArray(items) || items.length > MAX_AUDIO_QUEUE_ITEMS) {
@@ -459,6 +483,28 @@ export async function setupAudioEngineIpc(): Promise<void> {
       return state
     }
   )
+
+  ipcMain.handle('audioEngine:setOutputStage', async (event, partial: unknown) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
+    const raw =
+      partial && typeof partial === 'object' && !Array.isArray(partial)
+        ? (partial as Record<string, unknown>)
+        : {}
+    const state = await requireAudioEngine().setOutputStage(raw)
+    persistDspSceneState(state)
+    return state
+  })
+
+  ipcMain.handle('audioEngine:setStereoImage', async (event, partial: unknown) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
+    const raw =
+      partial && typeof partial === 'object' && !Array.isArray(partial)
+        ? (partial as Record<string, unknown>)
+        : {}
+    const state = await requireAudioEngine().setStereoImage(raw)
+    persistDspSceneState(state)
+    return state
+  })
 
   ipcMain.handle(
     'audioEngine:applyDspScene',

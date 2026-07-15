@@ -2,9 +2,21 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useMusicStore } from '../stores/useMusicStore'
-import { getMostListenedTracks, useListeningStatsStore } from '../stores/useListeningStatsStore'
+import {
+  getMostListenedTracks,
+  getRecentTracks,
+  useListeningStatsStore
+} from '../stores/useListeningStatsStore'
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
 import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
+import {
+  DEFAULT_DSP_OUTPUT_STAGE,
+  type DspGraphNode,
+  type DspGraphNodeStatus,
+  type DspGraphStatus,
+  type DspNodeType,
+  type DspSceneState
+} from '../../../shared/dspGraph.ts'
 import type { Track } from '../types/music'
 import { useCover } from '../utils/coverLoader'
 import { createUnifiedRecentTrackResolver } from '../utils/unifiedRecentTracks'
@@ -24,14 +36,8 @@ const { tracks, albums, artists } = useMusicStore()
 const { listeningStats } = useListeningStatsStore()
 const playbackStore = usePlaybackQueueStore()
 const audioOutputDspStore = useAudioOutputDspStore()
-const {
-  currentTrack,
-  isPlaying,
-  currentTime,
-  duration,
-  progress
-} = storeToRefs(playbackStore)
-const { audioProcessing, playbackInfo } = storeToRefs(audioOutputDspStore)
+const { currentTrack, isPlaying, currentTime, duration, progress } = storeToRefs(playbackStore)
+const { audioProcessing, playbackInfo, outputInfo } = storeToRefs(audioOutputDspStore)
 const { playTrack, togglePlay, next, prev, seek, formatTime, setPlayMode } = playbackStore
 
 const now = ref(new Date())
@@ -60,10 +66,21 @@ function onHomeScroll(): void {
 
 onMounted(() => {
   homeScrollRef.value?.addEventListener('scroll', onHomeScroll, { passive: true })
+  window.addEventListener('keydown', onDspRouteDialogKeydown)
+  void refreshDspRouteState(true)
+  dspRoutePoll = window.setInterval(() => {
+    if (document.visibilityState === 'hidden') return
+    dspRoutePollTick += 1
+    void refreshDspGraphStatus()
+    if (dspRoutePollTick % 5 === 0) void refreshDspSceneState()
+  }, 1000)
 })
 
 onBeforeUnmount(() => {
   homeScrollRef.value?.removeEventListener('scroll', onHomeScroll)
+  window.removeEventListener('keydown', onDspRouteDialogKeydown)
+  if (dspRoutePoll !== null) window.clearInterval(dspRoutePoll)
+  dspRoutePoll = null
   clearHomeScrollbarHideTimer()
 })
 
@@ -111,8 +128,17 @@ const rankedStats = computed<RankedStat[]>(() => {
   })
 })
 
+const lastPlayedTrack = computed<Track | null>(() => {
+  const latestStat = getRecentTracks(1)[0]
+  if (!latestStat) return null
+
+  const resolveRecentTrack = createUnifiedRecentTrackResolver(tracks.value)
+  return resolveRecentTrack(latestStat) ?? latestStat.track ?? null
+})
+
 const heroTrack = computed<Track | null>(() => {
   if (currentTrack.value) return currentTrack.value
+  if (lastPlayedTrack.value) return lastPlayedTrack.value
   const ranked = rankedStats.value[0]
   if (ranked?.track) return ranked.track
   return tracks.value[0] ?? null
@@ -129,8 +155,7 @@ const progressWidth = computed(() => `${Math.min(100, Math.max(0, progress.value
 
 const heroLabel = computed(() => {
   if (!heroTrack.value) return ''
-  if (heroIsCurrent.value) return isPlaying.value ? '正在播放' : '继续播放'
-  return '为你推荐'
+  return heroIsCurrent.value && isPlaying.value ? '正在播放' : '上次播放'
 })
 
 const heroMeta = computed(() => {
@@ -302,68 +327,332 @@ function calCellTitle(cell: CalendarCell): string {
 }
 
 // ---------- DSP chain ----------
-interface DspNode {
+type DspRouteStageState = 'active' | 'ready' | 'bypassed' | 'disabled' | 'error'
+type DspRouteStageType = DspNodeType | 'resampler' | 'dither' | 'safetyClamp'
+
+interface DspRouteStage {
   id: string
+  type: DspRouteStageType
   label: string
+  shortLabel: string
   icon: string
+  enabled: boolean
   active: boolean
+  state: DspRouteStageState
+  stateLabel: string
   detail: string
+  status?: DspGraphNodeStatus
 }
 
-const VOLUME_NORM_LABELS: Record<string, string> = {
-  track: '单曲增益',
-  album: '专辑增益',
-  loudnorm: '响度标准化'
+const DSP_NODE_PRESENTATION: Record<
+  DspNodeType,
+  { label: string; shortLabel: string; icon: string }
+> = {
+  replayGain: { label: 'ReplayGain', shortLabel: '增益', icon: 'ph ph-speaker-high' },
+  equalizer: { label: '参数均衡器', shortLabel: 'EQ', icon: 'ph ph-faders' },
+  dynamicEqualizer: { label: '动态均衡器', shortLabel: 'Dyn EQ', icon: 'ph ph-wave-sine' },
+  convolver: { label: '卷积校正', shortLabel: '卷积', icon: 'ph ph-waveform' },
+  crossfeed: { label: '交叉馈送', shortLabel: 'Crossfeed', icon: 'ph ph-headphones' },
+  channelMatrix: { label: '声道矩阵', shortLabel: '矩阵', icon: 'ph ph-share-network' },
+  channelStrip: { label: '声道校准', shortLabel: '声道', icon: 'ph ph-sliders-horizontal' },
+  bassManagement: { label: '低频管理', shortLabel: '分频', icon: 'ph ph-speaker-low' },
+  gate: { label: '噪声门', shortLabel: 'Gate', icon: 'ph ph-git-branch' },
+  compressor: { label: '压缩器', shortLabel: 'Comp', icon: 'ph ph-chart-line' },
+  multibandCompressor: { label: '多段压缩', shortLabel: 'Multi', icon: 'ph ph-stack' },
+  stereoField: {
+    label: '立体声场',
+    shortLabel: 'Stereo',
+    icon: 'ph ph-arrows-out-line-horizontal'
+  },
+  loudnessContour: { label: '响度轮廓', shortLabel: 'Loudness', icon: 'ph ph-speaker-simple-high' },
+  truePeakLimiter: { label: '真峰值限幅', shortLabel: 'Limiter', icon: 'ph ph-shield-check' },
+  nativePlugin: { label: '原生 DSP 插件', shortLabel: 'Native', icon: 'ph ph-plugs-connected' },
+  vst3Plugin: { label: 'VST3 效果器', shortLabel: 'VST3', icon: 'ph ph-puzzle-piece' },
+  meter: { label: 'R128 计量', shortLabel: 'Meter', icon: 'ph ph-activity' }
 }
 
-const dspNodes = computed<DspNode[]>(() => {
+const DITHER_LABELS: Record<string, string> = {
+  off: '关闭',
+  tpdf: 'TPDF',
+  highpassTpdf: '高通 TPDF',
+  noiseShaped: '二阶噪声整形'
+}
+
+const RESAMPLER_LABELS: Record<string, string> = {
+  native: 'Native',
+  high: 'High',
+  ultra: 'Ultra'
+}
+
+const dspSceneState = ref<DspSceneState | null>(null)
+const polledDspGraphStatus = ref<DspGraphStatus | null>(null)
+const dspRouteDialogOpen = ref(false)
+const dspRouteLoading = ref(false)
+const dspRouteError = ref('')
+let dspRoutePoll: number | null = null
+let dspRoutePollTick = 0
+let dspRouteRefreshInFlight = false
+
+const embeddedDspGraphStatus = computed(
+  () =>
+    outputInfo.value?.nativeDsp?.graph ?? playbackInfo.value?.outputInfo?.nativeDsp?.graph ?? null
+)
+const dspGraphStatus = computed(() => embeddedDspGraphStatus.value ?? polledDspGraphStatus.value)
+const activeDspScene = computed(() => {
+  const state = dspSceneState.value
+  if (!state) return null
+  return state.scenes.find((scene) => scene.id === state.activeSceneId) ?? null
+})
+const activeDspSceneName = computed(() => activeDspScene.value?.name ?? '默认 DSP 场景')
+
+const legacyDspGraphNodes = computed<DspGraphNode[]>(() => {
   const ap = audioProcessing.value
-  const info = playbackInfo.value
   const on = ap.dspEnabled
   return [
     {
-      id: 'eq',
-      label: '均衡器',
-      icon: 'ph ph-faders',
-      active: info ? info.eqActive : on && ap.eqEnabled,
-      detail: ap.eqMode === 'parametric' ? '参数 EQ' : '图示 EQ'
+      id: 'legacy-replay-gain',
+      type: 'replayGain',
+      enabled: on && ap.volumeNormalization !== 'off',
+      params: { mode: ap.volumeNormalization, preampDb: ap.replayGainPreamp }
     },
     {
-      id: 'gain',
-      label: '音量均衡',
-      icon: 'ph ph-wave-sine',
-      active: info ? info.replayGainActive : on && ap.volumeNormalization !== 'off',
-      detail: VOLUME_NORM_LABELS[ap.volumeNormalization] ?? '回放增益'
+      id: 'legacy-equalizer',
+      type: 'equalizer',
+      enabled: on && ap.eqEnabled,
+      params: { mode: ap.eqMode, preampDb: ap.eqPreamp, bands: ap.eqBands }
     },
     {
-      id: 'crossfeed',
-      label: '交叉馈送',
-      icon: 'ph ph-headphones',
-      active: info ? info.crossfeedActive : on && ap.crossfeedEnabled,
-      detail: '耳机声场'
+      id: 'legacy-crossfeed',
+      type: 'crossfeed',
+      enabled: on && ap.crossfeedEnabled,
+      params: { algorithm: 'custom', strength: ap.crossfeedStrength }
     },
     {
-      id: 'convolver',
-      label: '卷积混响',
-      icon: 'ph ph-waveform',
-      active: info ? info.convolverActive : on && ap.convolverEnabled,
-      detail: '脌冲响应'
+      id: 'legacy-convolver',
+      type: 'convolver',
+      enabled: on && ap.convolverEnabled,
+      params: { impulseResponsePath: ap.convolverIrPath }
     }
   ]
 })
 
-const dspEngineOn = computed(() => audioProcessing.value.dspEnabled)
+const configuredDspNodes = computed(() =>
+  dspSceneState.value ? dspSceneState.value.graph.nodes : legacyDspGraphNodes.value
+)
+const configuredOutputStage = computed(
+  () => dspSceneState.value?.graph.outputStage ?? DEFAULT_DSP_OUTPUT_STAGE
+)
+
+function stringParam(node: DspGraphNode, key: string, fallback = ''): string {
+  const value = node.params[key]
+  return typeof value === 'string' ? value : fallback
+}
+
+function numberParam(node: DspGraphNode, key: string, fallback = 0): number {
+  const value = node.params[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function arrayLengthParam(node: DspGraphNode, key: string): number {
+  return Array.isArray(node.params[key]) ? node.params[key].length : 0
+}
+
+function formatSampleRate(value: number | null | undefined): string {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) return '-'
+  const khz = value / 1000
+  return `${Number.isInteger(khz) ? khz.toFixed(0) : khz.toFixed(1)} kHz`
+}
+
+function formatChannels(value: number | null | undefined): string {
+  if (!value || value < 1) return '-'
+  if (value === 1) return 'Mono'
+  if (value === 2) return 'Stereo'
+  if (value === 6) return '5.1'
+  if (value === 8) return '7.1'
+  return `${value} ch`
+}
+
+function formatMetric(value: number | null | undefined, digits = 1, unit = ''): string {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? `${value.toFixed(digits)}${unit}`
+    : '-'
+}
+
+function dspNodeDetail(node: DspGraphNode): string {
+  switch (node.type) {
+    case 'replayGain':
+      return `${stringParam(node, 'mode', 'track')} · ${numberParam(node, 'preampDb').toFixed(1)} dB`
+    case 'equalizer':
+      return `${arrayLengthParam(node, 'bands')} 段 · ${stringParam(node, 'mode', 'parametric')}`
+    case 'dynamicEqualizer':
+      return `${arrayLengthParam(node, 'bands')} 个动态频段`
+    case 'convolver':
+      return node.params.impulseResponseAssetId || stringParam(node, 'impulseResponsePath')
+        ? `IR · Wet ${Math.round(numberParam(node, 'wet', 1) * 100)}%`
+        : '未选择 IR'
+    case 'crossfeed':
+      return `${stringParam(node, 'algorithm', 'custom')} · ${Math.round(numberParam(node, 'strength', 0.35) * 100)}%`
+    case 'channelMatrix':
+    case 'channelStrip':
+      return stringParam(node, 'layout', 'stereo').toUpperCase()
+    case 'bassManagement':
+      return `${numberParam(node, 'crossoverHz', 80).toFixed(0)} Hz · LR4`
+    case 'gate':
+      return `${numberParam(node, 'thresholdDb', -60).toFixed(1)} dB`
+    case 'compressor':
+      return `${numberParam(node, 'thresholdDb', -18).toFixed(1)} dB · ${numberParam(node, 'ratio', 2).toFixed(1)}:1`
+    case 'multibandCompressor':
+      return `${Math.max(2, arrayLengthParam(node, 'bands'))} 段`
+    case 'stereoField':
+      return `Width ${numberParam(node, 'width', 1).toFixed(2)}`
+    case 'loudnessContour':
+      return `Amount ${numberParam(node, 'amount').toFixed(1)}`
+    case 'truePeakLimiter':
+      return `${numberParam(node, 'ceilingDb', -0.1).toFixed(1)} dBTP`
+    case 'nativePlugin':
+      return node.pluginId || 'ABI v2'
+    case 'vst3Plugin':
+      return node.vst3?.catalogId || '未选择插件'
+    case 'meter':
+      return 'EBU R128 · True Peak'
+  }
+}
+
+function routeStageState(
+  node: DspGraphNode,
+  status: DspGraphNodeStatus | undefined
+): Pick<DspRouteStage, 'active' | 'state' | 'stateLabel'> {
+  if (!node.enabled) return { active: false, state: 'disabled', stateLabel: '已关闭' }
+  if (dspGraphStatus.value?.compileState === 'failed') {
+    return { active: false, state: 'error', stateLabel: '图编译失败' }
+  }
+  if (status?.bypassed) {
+    return { active: false, state: 'bypassed', stateLabel: status.bypassReason || '旁路' }
+  }
+  if (status?.active) return { active: true, state: 'active', stateLabel: '实时运行' }
+  return { active: false, state: 'ready', stateLabel: '已就绪' }
+}
+
+const dspNodeStages = computed<DspRouteStage[]>(() => {
+  const statuses = dspGraphStatus.value?.nodes ?? []
+  return configuredDspNodes.value.map((node) => {
+    const status =
+      statuses.find((candidate) => candidate.id === node.id) ??
+      statuses.find((candidate) => candidate.type === node.type)
+    const presentation = DSP_NODE_PRESENTATION[node.type]
+    return {
+      id: node.id,
+      type: node.type,
+      label: presentation.label,
+      shortLabel: presentation.shortLabel,
+      icon: presentation.icon,
+      enabled: node.enabled,
+      detail: status?.format || dspNodeDetail(node),
+      status,
+      ...routeStageState(node, status)
+    }
+  })
+})
+
+const sourceSampleRate = computed(
+  () => playbackInfo.value?.decodedSampleRate || playbackInfo.value?.sourceSampleRate || 0
+)
+const actualOutputSampleRate = computed(
+  () => outputInfo.value?.actualSampleRate || playbackInfo.value?.actualSampleRate || 0
+)
+const outputStageStatus = computed(() => dspGraphStatus.value?.outputStage)
+
+const dspOutputStages = computed<DspRouteStage[]>(() => {
+  const config = configuredOutputStage.value
+  const status = outputStageStatus.value
+  const sourceRate = sourceSampleRate.value
+  const actualRate = status?.actualSampleRate || actualOutputSampleRate.value
+  const srcActive =
+    status?.active === true ||
+    outputInfo.value?.resampled === true ||
+    (sourceRate > 0 && actualRate > 0 && sourceRate !== actualRate)
+  const targetLabel =
+    config.targetSampleRate === 'device'
+      ? actualRate > 0
+        ? formatSampleRate(actualRate)
+        : '跟随设备'
+      : formatSampleRate(config.targetSampleRate)
+  const srcDetail =
+    sourceRate > 0 && actualRate > 0
+      ? `${formatSampleRate(sourceRate)} → ${formatSampleRate(actualRate)}`
+      : targetLabel
+  const ditherEnabled = config.dither !== 'off'
+  const playbackLive = playbackInfo.value?.state === 'playing'
+
+  return [
+    {
+      id: 'output-resampler',
+      type: 'resampler',
+      label: '采样率转换',
+      shortLabel: 'SRC',
+      icon: 'ph ph-arrows-left-right',
+      enabled: true,
+      active: srcActive,
+      state: srcActive ? 'active' : 'bypassed',
+      stateLabel: srcActive ? '实时转换' : 'Native 直通',
+      detail: `${RESAMPLER_LABELS[config.resamplerQuality]} · ${srcDetail}`
+    },
+    {
+      id: 'output-dither',
+      type: 'dither',
+      label: '整数输出抖动',
+      shortLabel: 'Dither',
+      icon: 'ph ph-dots-nine',
+      enabled: ditherEnabled,
+      active: ditherEnabled && playbackLive,
+      state: ditherEnabled ? (playbackLive ? 'active' : 'ready') : 'disabled',
+      stateLabel: ditherEnabled ? (playbackLive ? '实时运行' : '已就绪') : '已关闭',
+      detail: DITHER_LABELS[config.dither] ?? config.dither
+    },
+    {
+      id: 'output-safety-clamp',
+      type: 'safetyClamp',
+      label: '终端输出保护',
+      shortLabel: '保护',
+      icon: 'ph ph-shield-check',
+      enabled: config.safetyClamp,
+      active: config.safetyClamp && playbackLive,
+      state: config.safetyClamp ? (playbackLive ? 'active' : 'ready') : 'disabled',
+      stateLabel: config.safetyClamp ? (playbackLive ? '实时运行' : '已就绪') : '已关闭',
+      detail: config.safetyClamp ? '数值安全钳制' : '关闭'
+    }
+  ]
+})
+
+const dspRouteStages = computed(() => [...dspNodeStages.value, ...dspOutputStages.value])
+const dspProcessingActive = computed(
+  () =>
+    playbackInfo.value?.dspActive === true ||
+    dspRouteStages.value.some((stage) => stage.active) ||
+    outputStageStatus.value?.active === true
+)
+const dspEngineOn = computed(
+  () =>
+    audioProcessing.value.dspEnabled ||
+    configuredDspNodes.value.some((node) => node.enabled) ||
+    configuredOutputStage.value.resamplerQuality !== 'native' ||
+    configuredOutputStage.value.targetSampleRate !== 'device' ||
+    configuredOutputStage.value.dither !== 'off'
+)
 
 const dspStatusText = computed(() => {
-  if (!dspEngineOn.value) return '直通输出 · Bypass'
-  return playbackInfo.value?.dspActive ? '处理链运行中' : '处理链待命'
+  if (dspGraphStatus.value?.compileState === 'failed') return 'DSP 图编译失败'
+  if (!currentTrack.value) return '等待播放源'
+  if (dspProcessingActive.value) return '实时线路运行中'
+  if (!dspEngineOn.value) return '透明直通'
+  return 'DSP 线路已就绪'
 })
 
 const dspSourceDetail = computed(() => {
   const info = playbackInfo.value
   if (info && info.sourceSampleRate > 0) {
     const codec = info.codec ? info.codec.toUpperCase() : ''
-    return `${codec} ${Math.round(info.sourceSampleRate / 1000)}kHz`.trim()
+    return `${codec} ${formatSampleRate(info.sourceSampleRate)}`.trim()
   }
   const track = currentTrack.value
   if (track?.format) return track.format.toUpperCase()
@@ -371,22 +660,144 @@ const dspSourceDetail = computed(() => {
 })
 
 const dspOutputDetail = computed(() => {
-  const info = playbackInfo.value
+  const info = outputInfo.value
   if (info && info.actualSampleRate > 0) {
-    const depth = info.actualBitDepth > 0 ? `${info.actualBitDepth}bit / ` : ''
-    return `${depth}${Math.round(info.actualSampleRate / 1000)}kHz`
+    const depth = info.actualBitDepth > 0 ? `${info.actualBitDepth} bit · ` : ''
+    return `${depth}${formatSampleRate(info.actualSampleRate)}`
   }
   return '等待输出'
 })
 
-const activeDspCount = computed(() => dspNodes.value.filter((node) => node.active).length)
+const dspSourceFullDetail = computed(() => {
+  const info = playbackInfo.value
+  if (!info || info.state === 'stopped') return '当前没有活动播放源'
+  return [
+    info.codec?.toUpperCase(),
+    formatSampleRate(info.sourceSampleRate),
+    info.sourceBitDepth > 0 ? `${info.sourceBitDepth} bit` : '',
+    formatChannels(info.channelCount || info.decodedChannels)
+  ]
+    .filter(Boolean)
+    .join(' · ')
+})
+
+const dspOutputFullDetail = computed(() => {
+  const info = outputInfo.value
+  if (!info || info.actualSampleRate <= 0) return '等待音频后端建立输出线路'
+  return [
+    info.actualOutputFormat || 'PCM',
+    formatSampleRate(info.actualSampleRate),
+    info.actualBitDepth > 0 ? `${info.actualBitDepth} bit` : '',
+    formatChannels(info.actualChannels)
+  ]
+    .filter(Boolean)
+    .join(' · ')
+})
+
+const dspOutputDeviceDetail = computed(() => {
+  const info = outputInfo.value
+  if (!info) return '音频后端待命'
+  const backend = (info.actualBackend || info.backend || '').toUpperCase()
+  const device = info.actualDeviceName || info.deviceName || '默认设备'
+  return [backend, info.accessMode, device].filter(Boolean).join(' · ')
+})
+
+const activeDspCount = computed(() => dspRouteStages.value.filter((stage) => stage.active).length)
+const enabledDspCount = computed(() => dspRouteStages.value.filter((stage) => stage.enabled).length)
+const dspGraphLatencyMs = computed(() => {
+  const frames = dspGraphStatus.value?.totalLatencyFrames ?? 0
+  const rate = actualOutputSampleRate.value || sourceSampleRate.value
+  return frames > 0 && rate > 0 ? (frames / rate) * 1000 : 0
+})
+const dspGraphTailMs = computed(() => {
+  const frames = dspGraphStatus.value?.totalTailFrames ?? 0
+  const rate = actualOutputSampleRate.value || sourceSampleRate.value
+  return frames > 0 && rate > 0 ? (frames / rate) * 1000 : 0
+})
+const dspAverageCpuMs = computed(() =>
+  (dspGraphStatus.value?.nodes ?? []).reduce(
+    (total, node) => total + (node.averageProcessMs ?? node.lastProcessMs ?? 0),
+    0
+  )
+)
+const dspPeakCpuMs = computed(() =>
+  (dspGraphStatus.value?.nodes ?? []).reduce(
+    (peak, node) => Math.max(peak, node.maxProcessMs ?? node.lastProcessMs ?? 0),
+    0
+  )
+)
+const dspOverrunCount = computed(() =>
+  (dspGraphStatus.value?.nodes ?? []).reduce((total, node) => total + (node.overrunCount ?? 0), 0)
+)
+const dspCompileLabel = computed(() => {
+  const state = dspGraphStatus.value?.compileState
+  if (state === 'ready') return '已编译'
+  if (state === 'compiling') return '编译中'
+  if (state === 'failed') return '编译失败'
+  if (state === 'bypassed') return '全局旁路'
+  return '等待状态'
+})
+
+async function refreshDspGraphStatus(): Promise<void> {
+  if (dspRouteRefreshInFlight) return
+  dspRouteRefreshInFlight = true
+  try {
+    polledDspGraphStatus.value = await window.api.audioEngine.getDspGraphStatus()
+    dspRouteError.value = ''
+  } catch (error) {
+    if (!polledDspGraphStatus.value && !embeddedDspGraphStatus.value) {
+      dspRouteError.value = error instanceof Error ? error.message : '无法读取 DSP 图状态'
+    }
+  } finally {
+    dspRouteRefreshInFlight = false
+  }
+}
+
+async function refreshDspSceneState(): Promise<void> {
+  try {
+    dspSceneState.value = await window.api.audioEngine.getDspSceneState()
+    dspRouteError.value = ''
+  } catch (error) {
+    if (!dspSceneState.value) {
+      dspRouteError.value = error instanceof Error ? error.message : '无法读取 DSP 场景'
+    }
+  }
+}
+
+async function refreshDspRouteState(includeScene = false): Promise<void> {
+  dspRouteLoading.value = true
+  try {
+    await Promise.all([
+      refreshDspGraphStatus(),
+      includeScene ? refreshDspSceneState() : Promise.resolve()
+    ])
+  } finally {
+    dspRouteLoading.value = false
+  }
+}
+
+function openDspRouteDialog(): void {
+  dspRouteDialogOpen.value = true
+  void refreshDspRouteState(true)
+}
+
+function closeDspRouteDialog(): void {
+  dspRouteDialogOpen.value = false
+}
+
+function onDspRouteDialogKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && dspRouteDialogOpen.value) closeDspRouteDialog()
+}
 </script>
 
 <template>
   <div
     ref="homeScrollRef"
     class="home dashboard-wrapper te-auto-scrollbar"
-    :class="{ 'is-scrollbar-active': homeScrollbarActive }"
+    :class="{
+      'is-scrollbar-active': homeScrollbarActive,
+      'has-route-dialog': dspRouteDialogOpen
+    }"
   >
     <div class="ambient" aria-hidden="true">
       <span class="blob blob-a"></span>
@@ -441,7 +852,7 @@ const activeDspCount = computed(() => dspNodes.value.filter((node) => node.activ
                   <span v-if="heroIsCurrent && isPlaying" class="eq" aria-hidden="true">
                     <i></i><i></i><i></i>
                   </span>
-                  <i v-else class="ph ph-sparkle"></i>
+                  <i v-else class="ph ph-clock-counter-clockwise"></i>
                   {{ heroLabel }}
                 </span>
 
@@ -555,47 +966,79 @@ const activeDspCount = computed(() => dspNodes.value.filter((node) => node.activ
               </div>
             </aside>
 
-            <aside class="signal-card surface-card">
+            <aside
+              class="signal-card surface-card"
+              role="button"
+              tabindex="0"
+              aria-label="打开实时 DSP 输出线路"
+              @click="openDspRouteDialog"
+              @keydown.enter.prevent="openDspRouteDialog"
+              @keydown.space.prevent="openDspRouteDialog"
+            >
               <div class="signal-head">
                 <div>
                   <h2>播放链路</h2>
+                  <small>{{ activeDspSceneName }}</small>
                 </div>
-                <span class="dsp-state" :class="{ on: dspEngineOn, live: playbackInfo?.dspActive }">
-                  <span class="dsp-state-dot" aria-hidden="true"></span>
-                  {{ dspStatusText }}
-                </span>
-              </div>
-
-              <div class="signal-route">
-                <div class="signal-endpoint">
-                  <span><i class="ph ph-music-notes"></i></span>
-                  <div>
-                    <small>INPUT</small><strong>{{ dspSourceDetail }}</strong>
-                  </div>
-                </div>
-                <div class="signal-line" :class="{ active: dspEngineOn }" aria-hidden="true">
-                  <i></i><i></i><i></i>
-                  <em>{{ activeDspCount }}/{{ dspNodes.length }}</em>
-                </div>
-                <div class="signal-endpoint is-output">
-                  <span><i class="ph ph-speaker-hifi"></i></span>
-                  <div>
-                    <small>OUTPUT</small><strong>{{ dspOutputDetail }}</strong>
-                  </div>
+                <div class="signal-head-state">
+                  <span class="dsp-state" :class="{ on: dspEngineOn, live: dspProcessingActive }">
+                    <span class="dsp-state-dot" aria-hidden="true"></span>
+                    {{ dspStatusText }}
+                  </span>
+                  <i class="ph ph-caret-right" aria-hidden="true"></i>
                 </div>
               </div>
 
-              <div class="dsp-mini-grid">
-                <div
-                  v-for="node in dspNodes"
-                  :key="node.id"
-                  class="dsp-mini-node"
-                  :class="{ active: node.active }"
-                  :title="`${node.label} · ${node.active ? node.detail : 'Bypass'}`"
-                >
-                  <i :class="node.icon"></i>
-                  <span>{{ node.label }}</span>
+              <div class="signal-summary">
+                <span><i class="ph ph-stack"></i>{{ enabledDspCount }} 个启用阶段</span>
+                <span><i class="ph ph-timer"></i>{{ dspGraphLatencyMs.toFixed(2) }} ms</span>
+              </div>
+
+              <div class="dsp-route-strip is-compact">
+                <div class="route-stage route-endpoint-stage" title="播放源">
+                  <span class="route-stage-icon"><i class="ph ph-music-notes"></i></span>
+                  <div class="route-stage-copy">
+                    <small>SOURCE</small>
+                    <strong>{{ dspSourceDetail }}</strong>
+                  </div>
                 </div>
+
+                <template v-for="stage in dspRouteStages" :key="stage.id">
+                  <span
+                    class="route-connector"
+                    :class="{ active: stage.active || dspProcessingActive }"
+                    aria-hidden="true"
+                  ></span>
+                  <div
+                    class="route-stage"
+                    :class="[`is-${stage.state}`, { 'is-active': stage.active }]"
+                    :title="`${stage.label} · ${stage.stateLabel} · ${stage.detail}`"
+                  >
+                    <span class="route-stage-icon"><i :class="stage.icon"></i></span>
+                    <div class="route-stage-copy">
+                      <small>{{ stage.shortLabel }}</small>
+                      <strong>{{ stage.detail }}</strong>
+                    </div>
+                  </div>
+                </template>
+
+                <span
+                  class="route-connector"
+                  :class="{ active: playbackInfo?.state === 'playing' }"
+                  aria-hidden="true"
+                ></span>
+                <div class="route-stage route-endpoint-stage is-output" title="实际输出">
+                  <span class="route-stage-icon"><i class="ph ph-speaker-hifi"></i></span>
+                  <div class="route-stage-copy">
+                    <small>OUTPUT</small>
+                    <strong>{{ dspOutputDetail }}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div class="signal-foot">
+                <span>{{ dspOutputDeviceDetail }}</span>
+                <strong>{{ activeDspCount }}/{{ dspRouteStages.length }} LIVE</strong>
               </div>
             </aside>
           </div>
@@ -770,6 +1213,223 @@ const activeDspCount = computed(() => dspNodes.value.filter((node) => node.activ
         </section>
       </template>
     </main>
+
+    <Transition name="dsp-route-dialog">
+      <div
+        v-if="dspRouteDialogOpen"
+        class="dsp-route-dialog-backdrop"
+        @click.self="closeDspRouteDialog"
+      >
+        <section
+          class="dsp-route-dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="dsp-route-dialog-title"
+        >
+          <header class="dsp-route-dialog-head">
+            <div>
+              <span class="dialog-eyebrow">LIVE SIGNAL PATH</span>
+              <h2 id="dsp-route-dialog-title">实时 DSP 输出线路</h2>
+              <p>{{ activeDspSceneName }} · {{ dspOutputDeviceDetail }}</p>
+            </div>
+            <div class="dialog-head-actions">
+              <span
+                class="dialog-live-state"
+                :class="{
+                  live: dspProcessingActive,
+                  error: dspGraphStatus?.compileState === 'failed'
+                }"
+              >
+                <i></i>{{ dspStatusText }}
+              </span>
+              <button
+                type="button"
+                class="dialog-icon-button"
+                title="刷新线路"
+                aria-label="刷新线路"
+                :disabled="dspRouteLoading"
+                @click="refreshDspRouteState(true)"
+              >
+                <i class="ph ph-arrow-clockwise" :class="{ spinning: dspRouteLoading }"></i>
+              </button>
+              <button
+                type="button"
+                class="dialog-icon-button"
+                title="关闭"
+                aria-label="关闭"
+                @click="closeDspRouteDialog"
+              >
+                <i class="ph ph-x"></i>
+              </button>
+            </div>
+          </header>
+
+          <div v-if="dspRouteError" class="dsp-route-error">
+            <i class="ph ph-warning-circle"></i>{{ dspRouteError }}
+          </div>
+
+          <div class="dialog-format-bar">
+            <div>
+              <span><i class="ph ph-file-audio"></i>播放源</span>
+              <strong>{{ dspSourceFullDetail }}</strong>
+            </div>
+            <i class="ph ph-arrow-right"></i>
+            <div class="is-output">
+              <span><i class="ph ph-speaker-hifi"></i>实际输出</span>
+              <strong>{{ dspOutputFullDetail }}</strong>
+            </div>
+          </div>
+
+          <div class="dialog-route-scroll te-auto-scrollbar">
+            <div class="dsp-route-strip is-dialog">
+              <div class="route-stage route-endpoint-stage">
+                <span class="route-stage-icon"><i class="ph ph-music-notes"></i></span>
+                <div class="route-stage-copy">
+                  <small>SOURCE</small><strong>{{ dspSourceDetail }}</strong>
+                </div>
+                <em>{{ dspSourceFullDetail }}</em>
+              </div>
+
+              <template v-for="stage in dspRouteStages" :key="`dialog-${stage.id}`">
+                <span
+                  class="route-connector"
+                  :class="{ active: stage.active || dspProcessingActive }"
+                  aria-hidden="true"
+                ></span>
+                <div
+                  class="route-stage"
+                  :class="[`is-${stage.state}`, { 'is-active': stage.active }]"
+                >
+                  <span class="route-stage-icon"><i :class="stage.icon"></i></span>
+                  <div class="route-stage-copy">
+                    <small>{{ stage.shortLabel }}</small
+                    ><strong>{{ stage.label }}</strong>
+                  </div>
+                  <em>{{ stage.detail }}</em>
+                  <span class="route-stage-state">{{ stage.stateLabel }}</span>
+                </div>
+              </template>
+
+              <span
+                class="route-connector"
+                :class="{ active: playbackInfo?.state === 'playing' }"
+                aria-hidden="true"
+              ></span>
+              <div class="route-stage route-endpoint-stage is-output">
+                <span class="route-stage-icon"><i class="ph ph-speaker-hifi"></i></span>
+                <div class="route-stage-copy">
+                  <small>OUTPUT</small><strong>{{ dspOutputDetail }}</strong>
+                </div>
+                <em>{{ dspOutputDeviceDetail }}</em>
+              </div>
+            </div>
+          </div>
+
+          <div class="dialog-diagnostics">
+            <section class="dialog-node-status">
+              <div class="dialog-section-head">
+                <div>
+                  <span>NODE STATUS</span>
+                  <h3>节点实时状态</h3>
+                </div>
+                <strong>{{ activeDspCount }} / {{ dspRouteStages.length }}</strong>
+              </div>
+
+              <div class="dialog-node-list te-auto-scrollbar">
+                <article
+                  v-for="stage in dspRouteStages"
+                  :key="`status-${stage.id}`"
+                  class="dialog-node-row"
+                  :class="[`is-${stage.state}`, { 'is-active': stage.active }]"
+                >
+                  <span class="dialog-node-icon"><i :class="stage.icon"></i></span>
+                  <div>
+                    <strong>{{ stage.label }}</strong>
+                    <small>{{ stage.detail }}</small>
+                  </div>
+                  <span class="dialog-node-state">{{ stage.stateLabel }}</span>
+                  <dl>
+                    <div>
+                      <dt>AVG</dt>
+                      <dd>{{ formatMetric(stage.status?.averageProcessMs, 3, ' ms') }}</dd>
+                    </div>
+                    <div>
+                      <dt>PEAK</dt>
+                      <dd>{{ formatMetric(stage.status?.maxProcessMs, 3, ' ms') }}</dd>
+                    </div>
+                  </dl>
+                </article>
+              </div>
+            </section>
+
+            <aside class="dialog-live-metrics">
+              <div class="dialog-section-head">
+                <div>
+                  <span>REALTIME TELEMETRY</span>
+                  <h3>输出诊断</h3>
+                </div>
+                <strong>{{ dspCompileLabel }}</strong>
+              </div>
+
+              <dl class="dialog-metric-grid">
+                <div>
+                  <dt>总延迟</dt>
+                  <dd>{{ dspGraphLatencyMs.toFixed(2) }} ms</dd>
+                </div>
+                <div>
+                  <dt>尾音</dt>
+                  <dd>{{ dspGraphTailMs.toFixed(1) }} ms</dd>
+                </div>
+                <div>
+                  <dt>CPU 平均</dt>
+                  <dd>{{ dspAverageCpuMs.toFixed(3) }} ms</dd>
+                </div>
+                <div>
+                  <dt>CPU 峰值</dt>
+                  <dd>{{ dspPeakCpuMs.toFixed(3) }} ms</dd>
+                </div>
+                <div>
+                  <dt>Overrun</dt>
+                  <dd>{{ dspOverrunCount }}</dd>
+                </div>
+                <div>
+                  <dt>削波</dt>
+                  <dd>{{ dspGraphStatus?.meter?.clipCount ?? 0 }}</dd>
+                </div>
+                <div>
+                  <dt>Momentary</dt>
+                  <dd>{{ formatMetric(dspGraphStatus?.meter?.momentaryLufs, 1, ' LUFS') }}</dd>
+                </div>
+                <div>
+                  <dt>Short-term</dt>
+                  <dd>{{ formatMetric(dspGraphStatus?.meter?.shortTermLufs, 1, ' LUFS') }}</dd>
+                </div>
+                <div>
+                  <dt>Integrated</dt>
+                  <dd>{{ formatMetric(dspGraphStatus?.meter?.integratedLufs, 1, ' LUFS') }}</dd>
+                </div>
+                <div>
+                  <dt>True Peak</dt>
+                  <dd>{{ formatMetric(dspGraphStatus?.meter?.truePeakDb, 2, ' dBTP') }}</dd>
+                </div>
+                <div>
+                  <dt>LRA</dt>
+                  <dd>{{ formatMetric(dspGraphStatus?.meter?.loudnessRangeLu, 1, ' LU') }}</dd>
+                </div>
+                <div>
+                  <dt>相关度</dt>
+                  <dd>{{ formatMetric(dspGraphStatus?.meter?.correlation, 3) }}</dd>
+                </div>
+              </dl>
+
+              <p v-if="dspGraphStatus?.compileError" class="dialog-compile-error">
+                <i class="ph ph-warning"></i>{{ dspGraphStatus.compileError }}
+              </p>
+            </aside>
+          </div>
+        </section>
+      </div>
+    </Transition>
   </div>
 </template>
 

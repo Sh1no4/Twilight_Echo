@@ -246,6 +246,20 @@ onMounted(async () => {
     enterStreamingMode()
   }
 
+  // Restore the session before loading the potentially large music library.
+  // The main-process data handlers use synchronous file reads, so issuing the
+  // library request first can delay the home page's current-track state.
+  const playbackSessionSetupPromise = playbackSessionPersistence
+    .restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
+    .catch((error) => {
+      reportStartupDataError('playback session', error)
+    })
+    .finally(() => {
+      removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(
+        playbackSessionPersistence.savePlaybackSessionForQuit
+      )
+      playbackSessionPersistence.startAutosaveWatchers()
+    })
   // Run independent startup operations in parallel so none blocks the others.
   const libraryPromise = loadLibrary().catch((error) =>
     reportStartupDataError('music library', error)
@@ -258,18 +272,10 @@ onMounted(async () => {
     void checkLogin()
   }
 
-  // Restore playback session once the library is available (may reference
-  // local tracks). Enrichment itself runs in the background inside loadLibrary.
+  // The session restore starts alongside the library load so the home surface
+  // can receive the actual current track without waiting for a full scan.
   await libraryPromise
-  try {
-    await playbackSessionPersistence.restoreSavedPlaybackSession(loadedSettings.playbackResumeMode)
-    removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(
-      playbackSessionPersistence.savePlaybackSessionForQuit
-    )
-    playbackSessionPersistence.startAutosaveWatchers()
-  } catch (error) {
-    reportStartupDataError('playback session', error)
-  }
+  await playbackSessionSetupPromise
 
   // Ensure extensions are loaded before wiring listeners that depend on them.
   await extensionsPromise

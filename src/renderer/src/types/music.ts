@@ -1,4 +1,5 @@
 import type { PlaybackResumeMode, PlayMode } from './settings'
+import type { NcmPlaybackQuality } from './settings'
 
 export type BuiltInTrackSource = 'local' | 'ncm'
 export type TrackSource = BuiltInTrackSource | (string & {})
@@ -50,12 +51,25 @@ export interface Track {
   source?: TrackSource
   ncmSongId?: number
   streamUrl?: string | null
+  streamQuality?: NcmPlaybackQuality
   format?: string
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
   bpm?: number
   bpmAnalysis?: BpmAnalysisResult
+  /** ReplayGain track gain in dB (from tags; cold-start track mode). */
+  replayGainTrackGainDb?: number
+  /** ReplayGain album gain in dB. */
+  replayGainAlbumGainDb?: number
+  /** ReplayGain track peak (linear ratio or dBTP-equivalent tag value). */
+  replayGainTrackPeak?: number
+  /** ReplayGain album peak. */
+  replayGainAlbumPeak?: number
+  /** R128 track gain in dB (EBU R128 / Opus style tags). */
+  r128TrackGainDb?: number
+  /** R128 album gain in dB. */
+  r128AlbumGainDb?: number
 }
 
 export interface PlaybackSession {

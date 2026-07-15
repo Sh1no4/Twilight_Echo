@@ -1,6 +1,7 @@
 #include "TwilightAudioEngine.h"
 
 #include "../analysis/BpmAnalyzer.h"
+#include "../analysis/LoudnessAnalyzer.h"
 #include "../decoder/SacdIsoProbe.h"
 #include "../metadata/AudioMetadataService.h"
 #include "../utils/JsonUtils.h"
@@ -431,6 +432,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"pcmPassthrough\":" << (out.pcmPassthrough ? "true" : "false") << ","
        << "\"dspActive\":" << (info.dspActive ? "true" : "false") << ","
        << "\"replayGainActive\":" << (info.replayGainActive ? "true" : "false") << ","
+       << "\"loudnormActive\":" << (info.loudnormActive ? "true" : "false") << ","
        << "\"eqActive\":" << (info.eqActive ? "true" : "false") << ","
        << "\"convolverActive\":" << (info.convolverActive ? "true" : "false") << ","
        << "\"crossfeedActive\":" << (info.crossfeedActive ? "true" : "false") << ","
@@ -450,6 +452,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"dsdRate\":" << info.dsdRate << ","
        << "\"gaplessActive\":" << (info.gaplessActive ? "true" : "false") << ","
        << "\"preloadReady\":" << (info.preloadReady ? "true" : "false") << ","
+       << "\"gaplessBlockedReason\":\"" << json_utils::escape(info.gaplessBlockedReason) << "\","
        << "\"upcomingTrack\":"
        << QueueManager::itemToJson(info.hasUpcomingTrack ? std::optional<QueueItem>(info.upcomingTrack) : std::nullopt)
        << "}";
@@ -462,6 +465,7 @@ DspStatus configuredDspStatusFromConfig(const DspConfig& config) {
   status.crossfadeSeconds = status.crossfadeActive ? config.crossfadeSeconds : 0.0;
   if (config.enabled) {
     status.replayGainActive = config.replayGainMode != ReplayGainMode::Off;
+    status.loudnormActive = config.replayGainMode == ReplayGainMode::Loudnorm;
     status.eqActive = config.eqEnabled;
     status.crossfeedActive = config.crossfeedEnabled && config.crossfeedStrength > 0.0001;
   }
@@ -477,8 +481,9 @@ ReplayGainMode parseReplayGainModeId(const std::string& mode) {
   std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char ch) {
     return static_cast<char>(std::tolower(ch));
   });
-  if (normalized == "track" || normalized == "loudnorm") return ReplayGainMode::Track;
+  if (normalized == "track") return ReplayGainMode::Track;
   if (normalized == "album") return ReplayGainMode::Album;
+  if (normalized == "loudnorm") return ReplayGainMode::Loudnorm;
   return ReplayGainMode::Off;
 }
 
@@ -638,7 +643,15 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
       info_.queueIndex = 0;
     } else {
       item = queue_.current().value_or(makeManualQueueItem(source));
-      if (item.source.empty() || item.source != source) item.source = source;
+      if (item.source.empty() || item.source != source) {
+        // Prefer the queued item matching this source so host-injected loudnorm
+        // measurements (measuredIntegratedLufs / measuredTruePeakDb) are kept.
+        if (auto matched = queue_.findBySource(source)) {
+          item = *matched;
+        } else {
+          item = makeManualQueueItem(source);
+        }
+      }
       info_.queueIndex = queue_.currentIndex();
     }
     upcoming = queue_.upcoming();
@@ -884,6 +897,16 @@ TAE_Result TwilightAudioEngine::loadQueue(const std::string& queueJson, int star
   const auto upcoming = queue_.upcoming();
   info_.hasUpcomingTrack = upcoming.has_value();
   info_.upcomingTrack = upcoming.value_or(QueueItem{});
+  // Mid-play loudnorm / library RG injection: overlay measurements onto the
+  // active (and matching preload) stream without reopening the device.
+  if (pipeline_) {
+    if (const auto current = queue_.current()) {
+      pipeline_->refreshQueueReplayGainTags(*current);
+    }
+    if (upcoming) {
+      pipeline_->refreshQueueReplayGainTags(*upcoming);
+    }
+  }
   emit("queue-change", queue_.queueJson());
   return TAE_RESULT_OK;
 }
@@ -1038,6 +1061,7 @@ TAE_Result TwilightAudioEngine::setDspConfig(const std::string& dspJson) {
     } else {
       const DspStatus configStatus = configuredDspStatusFromConfig(nextConfig);
       info_.replayGainActive = configStatus.replayGainActive;
+      info_.loudnormActive = configStatus.loudnormActive;
       info_.eqActive = configStatus.eqActive;
       info_.crossfeedActive = configStatus.crossfeedActive;
       info_.crossfeedStrength = configStatus.crossfeedStrength;
@@ -1415,7 +1439,18 @@ std::string TwilightAudioEngine::engineCapabilitiesJson() const {
        << ",\"nativeDsd\":" << (nativeDsdCapable ? "true" : "false") << ",\"dop\":" << (dopCapable ? "true" : "false")
         << ",\"sacdIso\":true,\"sacdIsoDst\":" << (sacdDstAvailable ? "true" : "false")
         << ",\"sacdIsoDstDsdProvider\":" << (sacdDstProviderRegistered ? "true" : "false") << ","
-       << "\"audioPluginSystem\":true,\"nativeDsp\":true"
+       << "\"audioPluginSystem\":true,\"nativeDsp\":true,\"ebur128\":"
+#if defined(TAE_HAS_EBUR128)
+       << "true"
+#else
+       << "false"
+#endif
+       << ",\"loudnessAnalysis\":"
+#if defined(TAE_HAS_EBUR128) && defined(TAE_HAS_FFMPEG)
+       << "true"
+#else
+       << "false"
+#endif
        << "},\"backends\":" << backends
        << ",\"backendCapabilities\":" << backendCapabilities
        << ",\"plugins\":" << pluginCapabilitiesJson()
@@ -1613,11 +1648,30 @@ void TwilightAudioEngine::clockLoop() {
       }
     }
     if (autoNextItem && !autoNextItem->source.empty()) {
-      const TAE_Result result = playQueueItem(*autoNextItem, 0.0);
-      if (result == TAE_RESULT_OK) {
+      // Prefer preloaded promote (no device stop/reopen), same as next().
+      std::string promoteError;
+      const bool usedPreload = pipeline_ && pipeline_->skipToPreloaded(*autoNextItem, &promoteError);
+      if (usedPreload) {
+        if (pipeline_) pipeline_->consumeTrackStarted(nullptr);
+        std::optional<QueueItem> upcomingAfterPromote;
+        {
+          std::lock_guard lock(mutex_);
+          upcomingAfterPromote = queue_.upcoming();
+          info_.hasUpcomingTrack = upcomingAfterPromote.has_value();
+          info_.upcomingTrack = upcomingAfterPromote.value_or(QueueItem{});
+          applyPipelineStatusLocked(pipeline_->status());
+          publishStateLocked();
+        }
+        std::string preloadError;
+        if (pipeline_) pipeline_->preloadNext(upcomingAfterPromote, &preloadError);
         emit("start-file", "{}");
       } else {
-        emit("end-file", "{\"reason\":\"error\"}");
+        const TAE_Result result = playQueueItem(*autoNextItem, 0.0);
+        if (result == TAE_RESULT_OK) {
+          emit("start-file", "{}");
+        } else {
+          emit("end-file", "{\"reason\":\"error\"}");
+        }
       }
       continue;
     }
@@ -1706,6 +1760,7 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.channelCount = status.outputFormat.channelCount;
   info_.dspActive = status.dspActive;
   info_.replayGainActive = status.replayGainActive;
+  info_.loudnormActive = status.loudnormActive;
   info_.eqActive = status.eqActive;
   info_.convolverActive = status.convolverActive;
   info_.crossfeedActive = status.crossfeedActive;
@@ -1720,6 +1775,7 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.channelMappingMode = status.channelMappingMode;
   info_.gaplessActive = status.gaplessActive;
   info_.preloadReady = status.preloadReady;
+  info_.gaplessBlockedReason = status.gaplessBlockedReason;
   const auto upcoming = queue_.upcoming();
   info_.hasUpcomingTrack = upcoming.has_value();
   info_.upcomingTrack = upcoming.value_or(QueueItem{});
@@ -1776,6 +1832,7 @@ void TwilightAudioEngine::updatePerfectLocked() {
   evaluation.backendPerfectReason = backendPerfectReason;
   evaluation.volume = info_.volume;
   evaluation.replayGainActive = info_.replayGainActive;
+  evaluation.loudnormActive = info_.loudnormActive;
   evaluation.eqActive = info_.eqActive;
   evaluation.convolverActive = info_.convolverActive;
   evaluation.crossfeedActive = info_.crossfeedActive;
@@ -2135,6 +2192,21 @@ TAE_Result TAE_AnalyzeBpm(
   if (!engine || !source) return TAE_RESULT_INVALID_ARGUMENT;
   return copyStringResult(
       twilight::audio::analyzeBpmJson(source, options_json ? options_json : "{}"),
+      buffer,
+      buffer_size,
+      required_size);
+}
+
+TAE_Result TAE_AnalyzeLoudness(
+    TAE_EngineHandle engine,
+    const char* source,
+    const char* options_json,
+    char* buffer,
+    size_t buffer_size,
+    size_t* required_size) {
+  if (!engine || !source) return TAE_RESULT_INVALID_ARGUMENT;
+  return copyStringResult(
+      twilight::audio::analyzeLoudnessJson(source, options_json ? options_json : "{}"),
       buffer,
       buffer_size,
       required_size);

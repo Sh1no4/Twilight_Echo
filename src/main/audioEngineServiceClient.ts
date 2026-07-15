@@ -282,6 +282,12 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     return '{"error":"bpm analysis requires async audio service RPC"}'
   }
 
+  AnalyzeLoudness(source: string, optionsJson?: string): string {
+    void source
+    void optionsJson
+    return '{"error":"loudness analysis requires async audio service RPC"}'
+  }
+
   EnumerateDevices(): string | AudioDeviceOption[] {
     this.refreshCache('EnumerateDevices', [], (value) => {
       this.lastDevices = value as string | AudioDeviceOption[]
@@ -586,7 +592,9 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
           pending.reject(error)
           this.restartUnresponsiveService(child, generation, error.message)
         },
-        method === 'AnalyzeBpm' ? this.analysisRequestTimeoutMs : this.requestTimeoutMs
+        method === 'AnalyzeBpm' || method === 'AnalyzeLoudness'
+          ? this.analysisRequestTimeoutMs
+          : this.requestTimeoutMs
       )
       this.pending.set(requestId, {
         resolve: (value) => {

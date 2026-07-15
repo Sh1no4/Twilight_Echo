@@ -1232,3 +1232,114 @@
   opacity: 0;
 }
 
+/* ── Multi-select ── */
+.track-row.track-selected {
+  background: rgba(124, 77, 255, 0.12);
+}
+
+.track-row.track-selected td {
+  color: var(--te-neutral-900, #1a1a1a);
+}
+
+.track-row.track-selected::before {
+  opacity: 1;
+  border-color: rgba(124, 77, 255, 0.35);
+  background:
+    linear-gradient(135deg, rgba(124, 77, 255, 0.14), rgba(255, 126, 182, 0.08)),
+    linear-gradient(90deg, rgba(124, 77, 255, 0.08), rgba(34, 211, 238, 0.05));
+}
+
+.track-row.track-selected.track-playing::after {
+  opacity: 0.55;
+}
+
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 12px 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(124, 77, 255, 0.08);
+  border: 1px solid rgba(124, 77, 255, 0.18);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.selection-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--te-neutral-800, #333);
+  white-space: nowrap;
+}
+
+.selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.selection-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--te-neutral-800, #333);
+  background: rgba(255, 255, 255, 0.55);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.selection-btn:hover {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.selection-btn.danger {
+  color: #b91c1c;
+}
+
+.selection-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.selection-btn.ghost {
+  background: transparent;
+  color: var(--te-neutral-600, #666);
+}
+
+.selection-btn.ghost:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+:global(html[data-theme='dark'] .selection-toolbar) {
+  background: rgba(124, 77, 255, 0.16);
+  border-color: rgba(167, 139, 250, 0.28);
+}
+
+:global(html[data-theme='dark'] .selection-count) {
+  color: #f3f4f6;
+}
+
+:global(html[data-theme='dark'] .selection-btn) {
+  color: #f3f4f6;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:global(html[data-theme='dark'] .selection-btn:hover) {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+:global(html[data-theme='dark'] .track-row.track-selected) {
+  background: rgba(124, 77, 255, 0.2);
+}
+

@@ -30,7 +30,7 @@ npm run smoke:audio-evidence -- --input-dir output/audio-smoke-evidence --requir
 
 ## Required Surfaces
 
-完整证据需要覆盖 5 个 surface：
+完整证据（`coverage.complete`）需要覆盖 **5 个硬件 surface**：
 
 | Surface | Suggested command | Required evidence |
 |---|---|---|
@@ -39,6 +39,21 @@ npm run smoke:audio-evidence -- --input-dir output/audio-smoke-evidence --requir
 | DoP DAC | `npm run smoke:audio-format-matrix -- --fixture-dir "<dsd-fixtures>" --playback --backend wasapi-exclusive --device "<dop-capable-dac>" --json > output/audio-smoke-evidence/dop-dac.json` | `dsdMode=dop`、carrier sample rate、实际输出格式；DAC 拒绝时必须有 fallback reason |
 | Native DSD | `npm run smoke:asio-native-dsd -- --device "<native-dsd-asio-driver>" --fixture-dir "<dsd-fixtures>" --json > output/audio-smoke-evidence/native-dsd.json` | 至少一个 DSD rate 达到 `nativeDsdRuntimeState=proven`，并记录驱动/设备和不支持 rate 的 fallback reason |
 | SACD ISO | `npm run smoke:audio-format-matrix -- --manifest "<sacd-iso-matrix.json>" --playback --backend wasapi-exclusive --device "<dac>" --json > output/audio-smoke-evidence/sacd-iso.json` | SACD ISO metadata、track/area、native/DoP/PCM runtime result；DST/provider 失败时必须有 reason |
+
+## Optional Product Honesty Surfaces
+
+以下 surface **始终出现在报告中**，无 artifact 时默认 `not-run`。它们**不参与** `coverage.complete`（仍只要求 5 个硬件 surface），用于 Stage 1–2 产品诚实路径的维护者证据。
+
+| Surface | Suggested checklist | Required evidence |
+|---|---|---|
+| Loudnorm | 无标签 FLAC → `volumeNormalization=loudnorm` → 首播 measuring/fallback + `perfectReasonCode=loudnorm_active`；再播 cached；记录 `output/audio-smoke-evidence/loudnorm.json` | `mode=loudnorm`（永不 Track 别名）、`loudnormActive`、状态 measuring\|cached\|fallback\|unavailable；无 ebur128 时不可假成功 |
+| Gapless Album | 同格式专辑队列、gapless ON、crossfade OFF → 观察 `gaplessActive`/`preloadReady` 与无设备 reopen 的 promote；记录 `output/audio-smoke-evidence/gapless-album.json` | 意图 ON；Active/Preload 可观测；Blocked 时 `gaplessBlockedReason` 为 `format_mismatch`/`crossfade`/`dsd_path` 等 |
+| Unity Volume | 默认音量 0.7 + exclusive bypass → `volume_not_unity` + Unity CTA；`setVolume(1)` 后在其它条件满足时恢复 perfect 路径；记录 `output/audio-smoke-evidence/unity-volume.json` | 默认仍为 0.7；Unity 是用户动作；`volume_not_unity` reason 可证伪 |
+
+### 明确非声明（平台限制）
+
+- **WASAPI / CoreAudio 无 native DSD**：Native DSD surface 仅适用于 ASIO（或其它显式 native 路径）；DoP 是 WASAPI exclusive 的合法 DSD 载体，不是 native DSD。
+- Shared WASAPI **不得**宣称 bit-perfect。
 
 ## Evidence Rules
 

@@ -220,7 +220,7 @@ export interface TwilightMediaProviderRegistration {
   name: string
   capabilities: TwilightMediaProviderCapability[]
   health?: TwilightMediaProviderHealth
-  getPlaybackUrl?(track: Track, options?: { force?: boolean }): Promise<string | null>
+  getPlaybackUrl?(track: Track, options?: PlaybackUrlOptions): Promise<string | null>
   getLyrics?(track: Track): Promise<{ lyrics: string | null; translatedLyrics: string | null }>
   searchSongs?(keywords: string, limit?: number, offset?: number): Promise<{ items: Track[]; total: number }>
   searchPlaylists?(
@@ -268,6 +268,14 @@ export interface TwilightMediaProviderRegistration {
   followUser?(userId: string | number, follow: boolean): Promise<void>
   likeTrack?(trackId: string | number, like: boolean): Promise<void>
   isTrackLiked?(trackId: string | number | undefined): Promise<boolean> | boolean
+}
+
+/**
+ * Optional playback URL resolution hints. Providers that do not support a hint must ignore it.
+ */
+export interface PlaybackUrlOptions {
+  force?: boolean
+  quality?: string
 }
 
 export type TwilightMediaProviderMethod = Exclude<

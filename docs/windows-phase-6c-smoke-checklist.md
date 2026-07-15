@@ -182,6 +182,27 @@ Run the automated mock backend gate before any real hardware smoke. This gate mu
    - `wasapi-exclusive` reports `supportsExclusive=true`, `supportsOutputPerfect=true`, `accessMode=exclusive`, `devicePathKind=default`
    - `asio` reports `supportsExclusive=true`, `accessMode=exclusive`, `devicePathKind=asio`, and an `unavailableReason` if no ASIO driver is present
 
+## Product Honesty Surfaces (opt-in evidence)
+
+These map to `npm run smoke:audio-evidence` optional surfaces and default to `not-run`.
+
+### Loudnorm
+1. Use an untagged FLAC (no ReplayGain tags).
+2. Set volume normalization to `loudnorm`.
+3. Confirm first play reports measuring/fallback (not Track alias), `perfectReasonCode=loudnorm_active`.
+4. Replay and confirm cache hit / cached status when analysis completes.
+5. Without libebur128 builds, confirm unavailable + fallback (no fake success).
+
+### Gapless Album
+1. Queue a same-format album; gapless ON; crossfade OFF.
+2. Confirm `gaplessActive` / `preloadReady` and seamless promote without full device reopen when formats match.
+3. Confirm blocked reasons (`format_mismatch`, `crossfade`, `dsd_path`, …) when applicable.
+
+### Unity Volume
+1. Default volume remains `0.7` after install / reset.
+2. Exclusive bypass / bit-perfect path with non-unity volume shows `volume_not_unity` + Unity CTA.
+3. Unity sets volume to `1.0` as an explicit user action (never silent default change).
+
 ## Pass Criteria
 - Settings changes update the UI without needing app restart or manual refresh.
 - UI and native playback info stay aligned after every scenario.
@@ -194,3 +215,4 @@ Run the automated mock backend gate before any real hardware smoke. This gate mu
 - Phase 6D mock DSD256/512 and processing fallback cases report PCM fallback honestly.
 - Native DSD ASIO mock, SACD ISO uncompressed fixture playback, and PCM fallback cases pass; real Native DSD DAC and real WASAPI/ASIO DoP smoke remain opt-in.
 - External release evidence can be produced with `npm run smoke:audio-format-matrix -- --manifest "<matrix.json>" --json`; add `--playback --backend wasapi-exclusive --device "<device>"` for WASAPI hardware PCM/DoP evidence or `--backend asio` for ASIO Native DSD evidence.
+- Product honesty surfaces (`Loudnorm` / `Gapless Album` / `Unity Volume`) appear in smoke evidence reports; without artifacts they stay `not-run` and do not gate hardware `coverage.complete`.

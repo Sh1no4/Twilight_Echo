@@ -11,6 +11,14 @@ export interface NativeQueueLoadItem {
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
+  measuredIntegratedLufs?: number
+  measuredTruePeakDb?: number
+  replayGainTrackGainDb?: number
+  replayGainAlbumGainDb?: number
+  replayGainTrackPeak?: number
+  replayGainAlbumPeak?: number
+  r128TrackGainDb?: number
+  r128AlbumGainDb?: number
 }
 
 export interface PreparedNativeQueue {
@@ -73,7 +81,7 @@ function getTrackSource(track: Track): TrackSource {
 }
 
 function toQueueItem(track: Track, source: string): NativeQueueLoadItem {
-  return {
+  const item: NativeQueueLoadItem = {
     id: track.id,
     duration: track.duration,
     source,
@@ -82,6 +90,25 @@ function toQueueItem(track: Track, source: string): NativeQueueLoadItem {
     bitrate: track.bitrate,
     bitDepth: track.bitDepth
   }
+  if (typeof track.replayGainTrackGainDb === 'number' && Number.isFinite(track.replayGainTrackGainDb)) {
+    item.replayGainTrackGainDb = track.replayGainTrackGainDb
+  }
+  if (typeof track.replayGainAlbumGainDb === 'number' && Number.isFinite(track.replayGainAlbumGainDb)) {
+    item.replayGainAlbumGainDb = track.replayGainAlbumGainDb
+  }
+  if (typeof track.replayGainTrackPeak === 'number' && Number.isFinite(track.replayGainTrackPeak)) {
+    item.replayGainTrackPeak = track.replayGainTrackPeak
+  }
+  if (typeof track.replayGainAlbumPeak === 'number' && Number.isFinite(track.replayGainAlbumPeak)) {
+    item.replayGainAlbumPeak = track.replayGainAlbumPeak
+  }
+  if (typeof track.r128TrackGainDb === 'number' && Number.isFinite(track.r128TrackGainDb)) {
+    item.r128TrackGainDb = track.r128TrackGainDb
+  }
+  if (typeof track.r128AlbumGainDb === 'number' && Number.isFinite(track.r128AlbumGainDb)) {
+    item.r128AlbumGainDb = track.r128AlbumGainDb
+  }
+  return item
 }
 
 async function isNativeTargetAvailable(

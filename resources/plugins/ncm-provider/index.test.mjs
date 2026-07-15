@@ -60,6 +60,86 @@ function parseRequest(path) {
   return new URL(path, 'http://twilight.local')
 }
 
+test('playback quality falls back only through official lower compatible levels', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    assert.equal(url.pathname, '/song/url/v1')
+    if (url.searchParams.get('level') === 'lossless') {
+      return {
+        code: 200,
+        data: [{ id: 77, url: null, code: 404, fee: 1, msg: 'VIP quality unavailable' }]
+      }
+    }
+    if (url.searchParams.get('level') === 'exhigh') {
+      return {
+        code: 200,
+        data: [{ id: 77, url: 'https://music.example/77.mp3', code: 200, level: 'exhigh' }]
+      }
+    }
+    throw new Error(`unexpected quality: ${url.searchParams.get('level')}`)
+  })
+
+  try {
+    assert.equal(
+      await provider.getPlaybackUrl({ id: 'ncm:77' }, { quality: 'lossless' }),
+      'https://music.example/77.mp3'
+    )
+    assert.deepEqual(
+      requests.map((path) => parseRequest(path).searchParams.get('level')),
+      ['lossless', 'exhigh']
+    )
+    assert.ok(requests.every((path) => !path.includes('br=') && !path.includes('unblock=')))
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('automatic quality does not select spatial mixes unless the user asks for one', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    const level = url.searchParams.get('level')
+    if (level === 'exhigh') {
+      return { code: 200, data: [{ id: 78, url: 'https://music.example/78.mp3', code: 200 }] }
+    }
+    return { code: 200, data: [{ id: 78, url: null, code: 404, msg: 'unavailable' }] }
+  })
+
+  try {
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:78' }), 'https://music.example/78.mp3')
+    assert.deepEqual(
+      requests.map((path) => parseRequest(path).searchParams.get('level')),
+      ['hires', 'lossless', 'exhigh']
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('premium-only tracks return no URL when no officially authorized fallback exists', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    return {
+      code: 200,
+      data: [{ id: 79, url: null, code: 404, fee: 1, msg: 'VIP only' }]
+    }
+  })
+
+  try {
+    assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }, { quality: 'hires' }), null)
+    assert.deepEqual(
+      requests.map((path) => parseRequest(path).searchParams.get('level')),
+      ['hires', 'lossless', 'exhigh', 'standard']
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('artist songs keep paging when a short page reports more items', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {

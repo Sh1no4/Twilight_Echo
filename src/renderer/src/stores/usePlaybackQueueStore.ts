@@ -26,6 +26,7 @@ export const usePlaybackQueueStore = defineStore('playback-queue', () => {
     prev: player.prev,
     seek: player.seek,
     setVolume: player.setVolume,
+    setUnityVolume: player.setUnityVolume,
     restorePlaybackSession: player.restorePlaybackSession,
     createPlaybackSession: player.createPlaybackSession,
     formatTime: player.formatTime

@@ -280,13 +280,54 @@ export interface LegacyDspSettings {
   replayGainPreamp?: number
   replayGainFallback?: number
   replayGainClip?: boolean
+  /** Loudnorm EBU R128 target (default −23 LUFS). */
+  loudnormTargetLufs?: number
+  /** Loudnorm true-peak ceiling (default −1 dBTP). */
+  loudnormTruePeakCeilingDb?: number
   convolverEnabled?: boolean
   convolverIrPath?: string
   crossfeedEnabled?: boolean
   crossfeedStrength?: number
   crossfeedDelayMs?: number
   crossfeedCutoffHz?: number
+  /** Preserved across createLegacyDspGraph rewrites (HiFi sample-rate lock). */
+  outputStage?: Partial<DspOutputStageConfig>
+  /** StereoField balance/width (+ optional mid/side) for HiFi console. */
+  stereoImage?: Partial<DspStereoImageConfig>
 }
+
+/** Common output-stage sample rate locks for HiFi / DspRack. */
+export const DSP_OUTPUT_SAMPLE_RATE_OPTIONS: readonly {
+  value: 'device' | number
+  label: string
+}[] = [
+  { value: 'device', label: 'Device' },
+  { value: 44100, label: '44.1 kHz' },
+  { value: 48000, label: '48 kHz' },
+  { value: 88200, label: '88.2 kHz' },
+  { value: 96000, label: '96 kHz' },
+  { value: 176400, label: '176.4 kHz' },
+  { value: 192000, label: '192 kHz' }
+] as const
+
+export const DSP_RESAMPLER_QUALITY_OPTIONS: readonly {
+  value: DspResamplerQuality
+  label: string
+}[] = [
+  { value: 'native', label: 'Native' },
+  { value: 'high', label: 'High' },
+  { value: 'ultra', label: 'Ultra' }
+] as const
+
+export const DSP_DITHER_MODE_OPTIONS: readonly {
+  value: DspDitherMode
+  label: string
+}[] = [
+  { value: 'off', label: 'Off' },
+  { value: 'tpdf', label: 'TPDF' },
+  { value: 'highpassTpdf', label: 'High-pass TPDF' },
+  { value: 'noiseShaped', label: 'Noise-shaped' }
+] as const
 
 const BUILT_IN_NODE_TYPES = new Set<DspNodeType>([
   'replayGain',
@@ -404,9 +445,13 @@ export function normalizeDspGraph(value: unknown): DspGraphConfig {
 
 export function createLegacyDspGraph(settings: LegacyDspSettings = {}): DspGraphConfig {
   const dspEnabled = settings.dspEnabled === true
+  const stereoImage = normalizeDspStereoImage(settings.stereoImage ?? DEFAULT_DSP_STEREO_IMAGE)
   return {
     version: DSP_GRAPH_VERSION,
-    outputStage: { ...DEFAULT_DSP_OUTPUT_STAGE },
+    outputStage: normalizeDspOutputStage({
+      ...DEFAULT_DSP_OUTPUT_STAGE,
+      ...(settings.outputStage ?? {})
+    }),
     nodes: [
       {
         id: 'replay-gain',
@@ -419,7 +464,9 @@ export function createLegacyDspGraph(settings: LegacyDspSettings = {}): DspGraph
           mode: settings.volumeNormalization ?? 'off',
           preampDb: settings.replayGainPreamp ?? 0,
           fallbackDb: settings.replayGainFallback ?? 0,
-          clip: settings.replayGainClip !== false
+          clip: settings.replayGainClip !== false,
+          targetLufs: settings.loudnormTargetLufs ?? -23,
+          truePeakCeilingDb: settings.loudnormTruePeakCeilingDb ?? -1
         }
       },
       {
@@ -450,7 +497,7 @@ export function createLegacyDspGraph(settings: LegacyDspSettings = {}): DspGraph
           cutoffHz: settings.crossfeedCutoffHz ?? 700
         }
       },
-      { id: 'channel-strip', type: 'channelStrip', enabled: false, params: { channels: [] } },
+      buildChannelStripNode(stereoImage, dspEnabled),
       { id: 'bass-management', type: 'bassManagement', enabled: false, params: {} },
       { id: 'gate', type: 'gate', enabled: false, params: {} },
       { id: 'compressor', type: 'compressor', enabled: false, params: {} },
@@ -461,7 +508,7 @@ export function createLegacyDspGraph(settings: LegacyDspSettings = {}): DspGraph
         enabled: false,
         params: { bands: [] }
       },
-      { id: 'stereo-field', type: 'stereoField', enabled: false, params: {} },
+      buildStereoFieldNode(stereoImage, dspEnabled),
       { id: 'loudness-contour', type: 'loudnessContour', enabled: false, params: {} },
       {
         id: 'true-peak-limiter',
@@ -603,10 +650,195 @@ export function graphHasEnabledProcessing(graph: DspGraphConfig): boolean {
   const outputStage = normalizeDspOutputStage(graph.outputStage)
   return (
     graph.nodes.some((node) => node.enabled && node.type !== 'meter') ||
+    outputStageIsActive(outputStage)
+  )
+}
+
+/** True when sample-rate lock / SRC / dither will force non-passthrough processing. */
+export function outputStageIsActive(stage: DspOutputStageConfig): boolean {
+  const outputStage = normalizeDspOutputStage(stage)
+  return (
     outputStage.targetSampleRate !== 'device' ||
     outputStage.resamplerQuality !== 'native' ||
     outputStage.dither !== 'off'
   )
+}
+
+export function mergeDspOutputStage(
+  current: DspOutputStageConfig | undefined,
+  partial: Partial<DspOutputStageConfig>
+): DspOutputStageConfig {
+  return normalizeDspOutputStage({
+    ...(current ?? DEFAULT_DSP_OUTPUT_STAGE),
+    ...partial
+  })
+}
+
+/** HiFi balance / width / per-channel polarity (default-scene stereoField + channelStrip). */
+export interface DspStereoImageConfig {
+  balance: number
+  width: number
+  midGainDb: number
+  sideGainDb: number
+  invertLeft: boolean
+  invertRight: boolean
+  swap: boolean
+  mono: boolean
+}
+
+export const DEFAULT_DSP_STEREO_IMAGE: DspStereoImageConfig = {
+  balance: 0,
+  width: 1,
+  midGainDb: 0,
+  sideGainDb: 0,
+  invertLeft: false,
+  invertRight: false,
+  swap: false,
+  mono: false
+}
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
+  return Math.min(max, Math.max(min, value))
+}
+
+export function normalizeDspStereoImage(value: unknown): DspStereoImageConfig {
+  const raw = asRecord(value)
+  return {
+    balance: clampNumber(raw.balance, -1, 1, DEFAULT_DSP_STEREO_IMAGE.balance),
+    width: clampNumber(raw.width, 0, 2, DEFAULT_DSP_STEREO_IMAGE.width),
+    midGainDb: clampNumber(raw.midGainDb, -24, 24, DEFAULT_DSP_STEREO_IMAGE.midGainDb),
+    sideGainDb: clampNumber(raw.sideGainDb, -24, 24, DEFAULT_DSP_STEREO_IMAGE.sideGainDb),
+    invertLeft: raw.invertLeft === true,
+    invertRight: raw.invertRight === true,
+    swap: raw.swap === true,
+    mono: raw.mono === true
+  }
+}
+
+export function mergeDspStereoImage(
+  current: DspStereoImageConfig | undefined,
+  partial: Partial<DspStereoImageConfig>
+): DspStereoImageConfig {
+  return normalizeDspStereoImage({
+    ...(current ?? DEFAULT_DSP_STEREO_IMAGE),
+    ...partial
+  })
+}
+
+/** True when balance/width/polarity will force non-passthrough processing. */
+export function stereoImageIsActive(image: DspStereoImageConfig): boolean {
+  const stereo = normalizeDspStereoImage(image)
+  return (
+    Math.abs(stereo.balance) > 1e-6 ||
+    Math.abs(stereo.width - 1) > 1e-6 ||
+    Math.abs(stereo.midGainDb) > 1e-6 ||
+    Math.abs(stereo.sideGainDb) > 1e-6 ||
+    stereo.invertLeft ||
+    stereo.invertRight ||
+    stereo.swap ||
+    stereo.mono
+  )
+}
+
+export function extractStereoImageFromGraph(
+  graph: DspGraphConfig | undefined | null
+): DspStereoImageConfig {
+  if (!graph) return { ...DEFAULT_DSP_STEREO_IMAGE }
+  const stereoNode = graph.nodes.find((node) => node.type === 'stereoField')
+  const stripNode = graph.nodes.find((node) => node.type === 'channelStrip')
+  const stereoParams = asRecord(stereoNode?.params)
+  const channels = Array.isArray(stripNode?.params?.channels)
+    ? (stripNode?.params?.channels as unknown[])
+    : []
+  const left = asRecord(channels[0])
+  const right = asRecord(channels[1])
+  return normalizeDspStereoImage({
+    balance: stereoParams.balance,
+    width: stereoParams.width,
+    midGainDb: stereoParams.midGainDb,
+    sideGainDb: stereoParams.sideGainDb,
+    invertLeft:
+      stereoParams.invertLeft === true ||
+      left.polarityInverted === true ||
+      left.polarity === true,
+    invertRight:
+      stereoParams.invertRight === true ||
+      right.polarityInverted === true ||
+      right.polarity === true,
+    swap: stereoParams.swap,
+    mono: stereoParams.mono
+  })
+}
+
+function buildStereoFieldNode(
+  image: DspStereoImageConfig,
+  _dspEnabled: boolean
+): DspGraphNode {
+  // Stereo image is independent of classic master-DSP flag; active params enable the node.
+  void _dspEnabled
+  return {
+    id: 'stereo-field',
+    type: 'stereoField',
+    enabled: stereoImageIsActive(image),
+    params: {
+      width: image.width,
+      balance: image.balance,
+      midGainDb: image.midGainDb,
+      sideGainDb: image.sideGainDb,
+      swap: image.swap,
+      mono: image.mono,
+      invertLeft: image.invertLeft,
+      invertRight: image.invertRight
+    }
+  }
+}
+
+function buildChannelStripNode(
+  image: DspStereoImageConfig,
+  _dspEnabled: boolean
+): DspGraphNode {
+  void _dspEnabled
+  const polarityActive = image.invertLeft || image.invertRight
+  return {
+    id: 'channel-strip',
+    type: 'channelStrip',
+    enabled: polarityActive,
+    params: {
+      channels: [
+        {
+          gainDb: 0,
+          delayMs: 0,
+          polarityInverted: image.invertLeft,
+          muted: false
+        },
+        {
+          gainDb: 0,
+          delayMs: 0,
+          polarityInverted: image.invertRight,
+          muted: false
+        }
+      ]
+    }
+  }
+}
+
+/** Apply stereo image params onto an existing graph (shallow-copies nodes). */
+export function applyStereoImageToGraph(
+  graph: DspGraphConfig,
+  partial: Partial<DspStereoImageConfig>
+): DspGraphConfig {
+  const next = mergeDspStereoImage(extractStereoImageFromGraph(graph), partial)
+  const stereoNode = buildStereoFieldNode(next, true)
+  const stripNode = buildChannelStripNode(next, true)
+  const nodes = [...graph.nodes]
+  const stereoIndex = nodes.findIndex((node) => node.type === 'stereoField')
+  const stripIndex = nodes.findIndex((node) => node.type === 'channelStrip')
+  if (stereoIndex >= 0) nodes[stereoIndex] = stereoNode
+  else nodes.push(stereoNode)
+  if (stripIndex >= 0) nodes[stripIndex] = stripNode
+  else nodes.push(stripNode)
+  return { ...graph, nodes }
 }
 
 export function normalizeDspSceneRule(value: unknown): DspSceneRule {

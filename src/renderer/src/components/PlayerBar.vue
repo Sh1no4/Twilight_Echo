@@ -9,6 +9,7 @@ import { syncPluginProviders } from '../providers'
 import { normalizeAccentColor } from '../utils/colorExtractor'
 import { useCover } from '../utils/coverLoader'
 import { resolveLyricsWithSources } from '../utils/lyricSourceResolution'
+import { HIFI_STATUS_COPY } from '../../../shared/audioProcessingOptions.ts'
 import CoverImg from './CoverImg.vue'
 import HiFiSidebar from './player-bar/HiFiSidebar.vue'
 import nextTrackIcon from '../assets/icons/next-track.svg'
@@ -51,7 +52,10 @@ const {
   audioEngineRecoveryNotice,
   audioProcessing,
   audioOutputConfig,
+  dspOutputStage,
+  dspStereoImage,
   playbackInfo,
+  loudnormStatus,
   outputInfo,
   cyclePlayMode,
   togglePlay,
@@ -62,10 +66,13 @@ const {
   toggleExclusiveMode,
   dismissAudioEngineRecoveryNotice,
   formatTime,
+  setUnityVolume,
   setAudioProcessing,
   setAudioOutputConfig,
   setAudioOutput,
   setAudioDevice,
+  setOutputStage,
+  setStereoImage,
   refreshAudioOutputState,
   toggleDspEnabled,
   toggleEqEnabled,
@@ -99,7 +106,6 @@ const playerBarButtons = computed(() =>
 const { settings } = useSettingsStore()
 const desktopLyricsOn = ref(settings.value.desktopLyrics.enabled)
 const miniPlayerOpening = ref(false)
-const hifiExpanded = ref(false)
 const lyricsReloading = ref(false)
 
 async function toggleDesktopLyrics(): Promise<void> {
@@ -179,7 +185,6 @@ const {
 } = useFloatingPanels(playerBarShellRef)
 
 function dismissAllFloatingPanels(): void {
-  hifiExpanded.value = false
   dismissFloatingPanels()
 }
 
@@ -224,11 +229,12 @@ const reasonCodeLabels: Record<string, string> = {
   shared_mixer: '共享输出经过系统混音器',
   processing_active: '当前处理链正在改变样本',
   replaygain_active: 'ReplayGain 正在改变样本',
+  loudnorm_active: HIFI_STATUS_COPY.loudnormActive,
   eq_active: 'EQ 正在改变样本',
   convolver_active: 'Convolver 正在改变样本',
   crossfeed_active: 'Crossfeed 正在改变声道内容',
   crossfade_active: 'Crossfade 正在改变播放连续性',
-  volume_not_unity: '软件音量不是 100%',
+  volume_not_unity: HIFI_STATUS_COPY.volumeNotUnity,
   routing_changes_semantics: '声道路由或通道语义发生变化',
   hog_mode_failed: '无法获取 CoreAudio Hog Mode 独占访问',
   sample_rate_unsupported: '设备不支持请求的采样率',
@@ -359,6 +365,10 @@ const nonPerfectReason = computed(() => {
   const reason = resolvePerfectReasonText()
   return reason ? `未达成：${reason}` : ''
 })
+const perfectReasonCode = computed(
+  () => outputInfo.value?.perfectReasonCode || playbackInfo.value?.perfectReasonCode || ''
+)
+const showVolumeNotUnityCta = computed(() => perfectReasonCode.value === 'volume_not_unity')
 function compactRate(rate: number): string {
   return rate > 0 ? `${Math.round(rate / 100) / 10}kHz` : ''
 }
@@ -496,35 +506,22 @@ function playTrackAt(index: number): void {
 
 function openPlaybackSettings(): void {
   moreOpen.value = false
-  hifiExpanded.value = false
   emit('openSettings')
 }
 
 function openDspSettings(): void {
   moreOpen.value = false
-  hifiExpanded.value = false
   emit('openDsp')
 }
 
 function openEqualizerPage(): void {
   moreOpen.value = false
-  hifiExpanded.value = false
   emit('openEqualizer')
-}
-
-function closeHiFiPanel(): void {
-  moreOpen.value = false
-  hifiExpanded.value = false
-}
-
-function toggleHiFiExpanded(): void {
-  hifiExpanded.value = !hifiExpanded.value
 }
 
 async function runPlayerBarExtension(command?: string): Promise<void> {
   if (!command) return
   moreOpen.value = false
-  hifiExpanded.value = false
   await window.api.extensions.executeCommand(command, [currentTrack.value])
 }
 
@@ -825,6 +822,17 @@ onMounted(() => {
                 />
               </div>
               <span class="volume-drawer-val">{{ Math.round(volume * 100) }}</span>
+              <button
+                v-if="volume < 0.999 || showVolumeNotUnityCta"
+                type="button"
+                class="volume-unity-btn"
+                :class="{ accent: showVolumeNotUnityCta }"
+                :disabled="volume >= 0.999"
+                title="Unity：固定软件音量 100%（bit-perfect 需要）"
+                @click="setUnityVolume"
+              >
+                {{ HIFI_STATUS_COPY.unityButtonShort }}
+              </button>
             </div>
           </Transition>
           <button
@@ -882,14 +890,9 @@ onMounted(() => {
 
     <!-- HiFi 右侧覆盖面板 -->
     <Transition name="hifi-overlay">
-      <div
-        v-if="moreOpen"
-        class="hifi-overlay"
-        :class="{ expanded: hifiExpanded, glass }"
-      >
+      <div v-if="moreOpen" class="hifi-overlay" :class="{ glass }">
         <HiFiSidebar
           :glass="glass"
-          :expanded="hifiExpanded"
           :exclusive-mode="exclusiveMode"
           :exclusive-available="exclusiveAvailable"
           :audio-output="audioOutput"
@@ -898,8 +901,19 @@ onMounted(() => {
           :audio-device-options="audioDeviceOptions"
           :audio-processing="audioProcessing"
           :audio-output-config="audioOutputConfig"
+          :dsp-output-stage="dspOutputStage"
+          :dsp-stereo-image="dspStereoImage"
+          :actual-sample-rate="
+            outputInfo?.actualSampleRate || playbackInfo?.actualSampleRate || 0
+          "
           :status-chips="audioStatusChips"
           :non-perfect-reason="nonPerfectReason"
+          :perfect-reason-code="perfectReasonCode"
+          :volume="volume"
+          :gapless-active="playbackInfo?.gaplessActive === true"
+          :preload-ready="playbackInfo?.preloadReady === true"
+          :gapless-blocked-reason="playbackInfo?.gaplessBlockedReason || ''"
+          :loudnorm-status="loudnormStatus"
           :output-chain-text="outputChainText"
           :output-latency-text="outputLatencyText"
           :output-diagnostics-text="outputDiagnosticsText"
@@ -908,11 +922,10 @@ onMounted(() => {
           :desktop-lyrics-on="desktopLyricsOn"
           :lyrics-reloading="lyricsReloading"
           :player-bar-buttons="playerBarButtons"
-          @close="closeHiFiPanel"
-          @toggle-expanded="toggleHiFiExpanded"
           @open-settings="openPlaybackSettings"
           @open-dsp="openDspSettings"
           @open-equalizer="openEqualizerPage"
+          @set-unity-volume="setUnityVolume"
           @toggle-exclusive="toggleExclusiveMode"
           @toggle-dsp="toggleDspEnabled"
           @toggle-eq="toggleEqEnabled"
@@ -928,6 +941,8 @@ onMounted(() => {
           @set-preferred-buffer-size="onSetPreferredBufferSize"
           @set-routing-mode="onSetRoutingMode"
           @set-dsd-output-mode="onSetDsdOutputMode"
+          @set-output-stage="setOutputStage"
+          @set-stereo-image="setStereoImage"
           @set-audio-output="onSetAudioOutput"
           @set-audio-device="onSetAudioDevice"
           @refresh-devices="onRefreshDevices"

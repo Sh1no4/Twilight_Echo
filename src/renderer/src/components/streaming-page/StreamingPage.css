@@ -2024,3 +2024,96 @@
     padding-right: 0;
   }
 }
+
+/* ── Multi-select ── */
+.track-row.track-selected {
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.12) !important;
+}
+
+.track-row.track-selected td {
+  color: var(--te-neutral-900, #1a1a1a);
+}
+
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.08);
+  border: 1px solid rgba(var(--te-primary-rgb, 124, 77, 255), 0.18);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.selection-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--te-neutral-800, #333);
+  white-space: nowrap;
+}
+
+.selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.selection-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--te-neutral-800, #333);
+  background: rgba(255, 255, 255, 0.55);
+  transition: background 0.15s ease;
+}
+
+.selection-btn:hover {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.selection-btn.danger {
+  color: #b91c1c;
+}
+
+.selection-btn.danger:hover {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.selection-btn.ghost {
+  background: transparent;
+  color: var(--te-neutral-600, #666);
+}
+
+.selection-btn.ghost:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+:global(html[data-theme='dark'] .streaming-page .selection-toolbar) {
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.16);
+  border-color: rgba(167, 139, 250, 0.28);
+}
+
+:global(html[data-theme='dark'] .streaming-page .selection-count),
+:global(html[data-theme='dark'] .streaming-page .selection-btn) {
+  color: #f3f4f6;
+}
+
+:global(html[data-theme='dark'] .streaming-page .selection-btn) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+:global(html[data-theme='dark'] .streaming-page .track-row.track-selected) {
+  background: rgba(var(--te-primary-rgb, 124, 77, 255), 0.2) !important;
+}

@@ -124,3 +124,31 @@ test('uses the current-only queue when companion authorization throws', async ()
     ['https://media.example/current.flac']
   )
 })
+
+
+test('forwards library ReplayGain and R128 tags into native queue items', async () => {
+  const track = createTrack({
+    replayGainTrackGainDb: -6.5,
+    replayGainAlbumGainDb: -7.1,
+    replayGainTrackPeak: 0.98,
+    replayGainAlbumPeak: 0.99,
+    r128TrackGainDb: -5.2,
+    r128AlbumGainDb: -5.8
+  })
+
+  const prepared = await prepareNativeQueue({
+    queue: [track],
+    currentTrack: track,
+    currentTarget: track.filePath,
+    currentIndex: 0,
+    isAudioFileAuthorized: async () => true
+  })
+
+  assert.equal(prepared?.items.length, 1)
+  assert.equal(prepared?.items[0].replayGainTrackGainDb, -6.5)
+  assert.equal(prepared?.items[0].replayGainAlbumGainDb, -7.1)
+  assert.equal(prepared?.items[0].replayGainTrackPeak, 0.98)
+  assert.equal(prepared?.items[0].replayGainAlbumPeak, 0.99)
+  assert.equal(prepared?.items[0].r128TrackGainDb, -5.2)
+  assert.equal(prepared?.items[0].r128AlbumGainDb, -5.8)
+})

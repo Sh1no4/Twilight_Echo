@@ -622,6 +622,71 @@ int main() {
   }
 
   {
+    // loudnorm must not alias to Track tags; without measured LUFS use fallback only.
+    DspChain chain;
+    DspConfig config;
+    config.enabled = true;
+    config.replayGainMode = ReplayGainMode::Loudnorm;
+    config.replayGainFallbackDb = -4.0;
+    config.replayGainPreampDb = 0.0;
+    chain.configure(config);
+    chain.prepare(testFormat());
+
+    DspTrackContext context;
+    context.stream.replayGain.trackGainDb = -12.0;
+    context.stream.replayGain.albumGainDb = -9.0;
+    chain.setTrackContext(context);
+
+    std::vector<float> samples = {1.0f, 1.0f};
+    chain.process(samples.data(), 1);
+
+    const DspStatus status = chain.status();
+    assert(status.replayGainActive);
+    assert(status.loudnormActive);
+    assert(closeTo(samples[0], std::pow(10.0, -4.0 / 20.0)));
+
+    const DspConfig parsed = DspChain::parseConfigJson(
+        "{\"enabled\":true,\"volumeNormalization\":\"loudnorm\",\"replayGainFallback\":-1.5}");
+    assert(parsed.replayGainMode == ReplayGainMode::Loudnorm);
+  }
+
+  {
+    // loudnorm measured path: gain = target - measured + preamp, with true-peak ceiling.
+    DspChain chain;
+    DspConfig config;
+    config.enabled = true;
+    config.replayGainMode = ReplayGainMode::Loudnorm;
+    config.loudnormTargetLufs = -23.0;
+    config.loudnormTruePeakCeilingDb = -1.0;
+    config.replayGainPreampDb = 0.0;
+    config.replayGainFallbackDb = -99.0;
+    config.replayGainClip = false;
+    chain.configure(config);
+    chain.prepare(testFormat());
+
+    DspTrackContext context;
+    context.stream.replayGain.trackGainDb = -12.0;
+    context.stream.replayGain.measuredIntegratedLufs = -18.0;
+    context.stream.replayGain.measuredTruePeakDb = -6.0;
+    chain.setTrackContext(context);
+
+    // gainDb = (-23 - (-18)) + 0 = -5 dB; projected TP = -6 + (-5) = -11 <= -1 → no extra cut.
+    std::vector<float> samples = {1.0f, 1.0f};
+    chain.process(samples.data(), 1);
+    assert(chain.status().loudnormActive);
+    assert(closeTo(samples[0], std::pow(10.0, -5.0 / 20.0)));
+
+    // True-peak ceiling: measured TP -2 dB + gain would exceed -1 → extra attenuation.
+    context.stream.replayGain.measuredIntegratedLufs = -30.0;
+    context.stream.replayGain.measuredTruePeakDb = -0.5;
+    chain.setTrackContext(context);
+    // rawGain = (-23 - (-30)) = +7; projected TP = -0.5 + 7 = 6.5 → cut by 7.5 → gain = -0.5
+    samples = {1.0f, 1.0f};
+    chain.process(samples.data(), 1);
+    assert(closeTo(samples[0], std::pow(10.0, -0.5 / 20.0)));
+  }
+
+  {
     DspChain chain;
     DspConfig config;
     config.enabled = true;

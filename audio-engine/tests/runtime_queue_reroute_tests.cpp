@@ -1129,10 +1129,12 @@ TrackProfile buildTrackProfile(const std::string& source) {
   if (source.find("empty-track") != std::string::npos) {
     profile.totalFrames = 0;
     profile.stream.durationSeconds = 0.0;
-  } else if (source.find("crossfade-current") != std::string::npos) {
+  } else if (source.find("crossfade-current") != std::string::npos ||
+             source.find("auto-promote-current") != std::string::npos) {
     profile.totalFrames = 4096;
     profile.sampleValue = 0.25f;
-  } else if (source.find("crossfade-next") != std::string::npos) {
+  } else if (source.find("crossfade-next") != std::string::npos ||
+             source.find("auto-promote-next") != std::string::npos) {
     profile.totalFrames = 8192;
     profile.sampleValue = 0.75f;
   }
@@ -2091,6 +2093,70 @@ void testPreloadedPromotionKeepsRuntimeReplayGainSettings() {
   assertLatestPlaybackContains(engine, "\"replayGainDb\":-6");
 }
 
+void testGaplessBlockedReasonReportsCrossfadeAndDisabled() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.setDspConfig("{\"gapless\":false,\"crossfadeSeconds\":0}") == TAE_RESULT_OK);
+  const std::string queueJson =
+      "[{\"id\":\"current\",\"source\":\"gapless-status-a.flac\",\"duration\":30},"
+      "{\"id\":\"next\",\"source\":\"gapless-status-b.flac\",\"duration\":30}]";
+  assert(engine.loadQueue(queueJson, 0) == TAE_RESULT_OK);
+  assert(engine.play("gapless-status-a.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+  assertLatestPlaybackContains(engine, "\"gaplessBlockedReason\":\"disabled\"");
+  assertLatestPlaybackContains(engine, "\"gaplessActive\":false");
+  assertLatestPlaybackContains(engine, "\"preloadReady\":false");
+
+  // Crossfade always wins over other path gates for blocked reason.
+  assert(engine.setDspConfig("{\"gapless\":true,\"crossfadeSeconds\":0.05}") == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"gaplessBlockedReason\":\"crossfade\"");
+  assertLatestPlaybackContains(engine, "\"crossfadeActive\":true");
+
+  // Non-unity volume leaves typed passthrough so gapless preload can arm.
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  assert(engine.setDspConfig("{\"enabled\":true,\"gapless\":true,\"crossfadeSeconds\":0}") == TAE_RESULT_OK);
+  assert(waitUntil([&engine] {
+    return jsonContains(engine.getPlaybackInfoJson(), "\"preloadReady\":true");
+  }));
+  assertLatestPlaybackContains(engine, "\"gaplessActive\":true");
+  assertLatestPlaybackContains(engine, "\"gaplessBlockedReason\":\"\"");
+}
+
+void testAutoNextPrefersPreloadedPromoteWithoutReopen() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  // Non-unity / DSP path keeps preload eligible (typed passthrough disables gapless).
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  assert(engine.setDspConfig("{\"enabled\":true,\"gapless\":true,\"crossfadeSeconds\":0}") == TAE_RESULT_OK);
+  const std::string queueJson =
+      "[{\"id\":\"current\",\"source\":\"auto-promote-current.flac\",\"duration\":0.08},"
+      "{\"id\":\"next\",\"source\":\"auto-promote-next.flac\",\"duration\":0.20}]";
+  assert(engine.loadQueue(queueJson, 0) == TAE_RESULT_OK);
+  assert(engine.play("auto-promote-current.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  assert(waitUntil([&engine] {
+    return jsonContains(engine.getPlaybackInfoJson(), "\"preloadReady\":true");
+  }));
+  assertLatestPlaybackContains(engine, "\"gaplessActive\":true");
+  assertLatestPlaybackContains(engine, "\"gaplessBlockedReason\":\"\"");
+
+  const size_t backendCountBefore = g_backendRegistry.snapshots().size();
+  pumpBackend(backend, 96);
+  assert(waitUntil([&engine] {
+    return jsonContains(engine.getPlaybackInfoJson(), "\"source\":\"auto-promote-next.flac\"");
+  }));
+
+  // Promote must not reopen the output device (no second backend start).
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == backendCountBefore);
+  assertLatestPlaybackContains(engine, "\"source\":\"auto-promote-next.flac\"");
+  assertLatestPlaybackContains(engine, "\"queueIndex\":1");
+}
+
 }  // namespace
 
 namespace twilight::audio {
@@ -2290,5 +2356,7 @@ int main() {
   testAutoNextDoesNotInheritDsdPath();
   testNativeCrossfadeOverlapMixesPreloadAndPromotes();
   testPreloadedPromotionKeepsRuntimeReplayGainSettings();
+  testGaplessBlockedReasonReportsCrossfadeAndDisabled();
+  testAutoNextPrefersPreloadedPromoteWithoutReopen();
   return 0;
 }

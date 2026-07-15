@@ -30,6 +30,7 @@ import type {
   DesktopLyricsSettings,
   WindowTransparencyEffectSettings,
   MusicCachePolicySettings,
+  NcmPlaybackQuality,
   NowPlayingBackground,
   PlaybackResumeMode,
   ProxyMode,
@@ -169,6 +170,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lyricAlign: 'center',
   lyricDimOpacity: 40,
   playbackResumeMode: 'off',
+  ncmPlaybackQuality: 'auto',
   playMode: 'sequential',
   audioOutput:
     process.platform === 'darwin' ? 'coreaudio' : process.platform === 'linux' ? 'alsa' : 'wasapi',
@@ -271,6 +273,18 @@ export function normalizePlaybackResumeMode(mode: unknown): PlaybackResumeMode {
   return mode === 'track' || mode === 'trackAndPosition' || mode === 'off'
     ? mode
     : DEFAULT_SETTINGS.playbackResumeMode
+}
+
+export function normalizeNcmPlaybackQuality(value: unknown): NcmPlaybackQuality {
+  return value === 'standard' ||
+    value === 'exhigh' ||
+    value === 'lossless' ||
+    value === 'hires' ||
+    value === 'jyeffect' ||
+    value === 'sky' ||
+    value === 'auto'
+    ? value
+    : DEFAULT_SETTINGS.ncmPlaybackQuality
 }
 
 export function normalizeStartupHomePage(value: unknown): StartupHomePage {
@@ -620,6 +634,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
       DEFAULT_SETTINGS.lyricDimOpacity
     ),
     playbackResumeMode: normalizePlaybackResumeMode(settings.playbackResumeMode),
+    ncmPlaybackQuality: normalizeNcmPlaybackQuality(settings.ncmPlaybackQuality),
     playMode: normalizePlayMode(settings.playMode),
     audioOutput: normalizeAudioOutput(settings.audioOutput),
     audioDevice: normalizeAudioDevice(settings.audioDevice),

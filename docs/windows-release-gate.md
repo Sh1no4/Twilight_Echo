@@ -60,3 +60,8 @@ Before release, start the packaged app and verify:
 
 Real-device smoke checks for WASAPI Exclusive, ASIO, native DSD, SACD ISO, CoreAudio, and ALSA
 remain opt-in and are not part of the default gate.
+
+Product honesty surfaces (`Loudnorm`, `Gapless Album`, `Unity Volume`) are always listed by
+`npm run smoke:audio-evidence` and default to `not-run` until a maintainer records evidence.
+They do **not** gate `coverage.complete` (still 5/5 hardware surfaces). See
+`docs/audio-smoke-evidence.md`.

@@ -27,6 +27,9 @@
 - `outputInfo.perfectReason`：`sourceExact` 或 `outputPerfect` 未达成时的 canonical 原因。
 - `outputInfo.isDsd` / `dsdMode` / `dsdRate`：DSD 状态 canonical 字段。顶层 `PlaybackInfo.isDsd`、`dsdMode`、`dsdRate` 只做镜像；Renderer 应优先读取 `outputInfo` 表示当前 runtime 传输状态。若 DoP 在运行时回退到 PCM，canonical 状态必须同步为 `isDsd=false`、`dsdMode='pcm'`、`dsdRate=0`，UI 可另外基于源文件元数据保留 `DSF/DFF DSD64 -> PCM fallback ...` 的源侧说明。
 - `crossfadeActive` / `crossfadeSeconds`：播放连续性处理状态。当前 native 会对预加载下一首做 overlap mixing，并参与 bit-perfect 判定；启用 crossfade 时必须报告 `outputPerfect=false`。
+- `gaplessActive`：gapless 意图开启、无 crossfade、且当前存在预加载流时为 `true`（表示 gapless 路径在跑，不等于已 promote）。
+- `preloadReady`：下一首预解码流已 `readyForRender`，可被 `skipToPreloaded` 或 render-path promote 消耗。
+- `gaplessBlockedReason`：gapless 路径阻塞原因；空串表示未阻塞。取值：`disabled`（意图关或内部门控）、`dsd_path`（DoP/Native DSD）、`typed_passthrough`（typed PCM passthrough 关闭 preload）、`crossfade`（交叉淡入关闭 true gapless）、`format_mismatch`（相邻曲目无法在当前输出格式下 promote）。EOF auto-next 与手动 `next()` 均优先 `skipToPreloaded`，失败才走完整 `playQueueItem`/`stop()`。
 
 ## Visualization API
 
@@ -82,8 +85,27 @@
 - 当前 PCM 路径已验证样本级 passthrough，即 `outputInfo.pcmPassthrough=true`；Float32 -> Int24、Int24 -> Float32、Int24 -> Int24-in32 等 sample format 或容器变化都不算 passthrough。
 - 后端没有报告 `resampled=true`。
 - 音量为 1.0。
-- ReplayGain、EQ、Convolver、Crossfeed、Crossfade 均未启用。
+- ReplayGain、Loudnorm、EQ、Convolver、Crossfeed、Crossfade 均未启用。
 - 声道 routing 不改变声道语义。
+
+`volumeNormalization` / ReplayGain 模式：
+
+| 模式 | 含义 | perfect reason |
+|------|------|----------------|
+| `off` | 不归一 | — |
+| `track` | ReplayGain Track 或 R128 track 标签 | `replaygain_active` |
+| `album` | ReplayGain Album 或 R128 album 标签 | `replaygain_active` |
+| `loudnorm` | EBU R128 Loudnorm（独立模式，**不得**映射为 Track） | `loudnorm_active` |
+
+`loudnorm` 使用离线 EBU R128 测量（`TAE_AnalyzeLoudness` / libebur128 integrated + true peak），缓存键对齐 BPM（path|size|mtime|algo|target|ceiling）。默认目标 **−23.0 LUFS**、True Peak 上限 **−1.0 dBTP**，再叠加 `replayGainPreamp`。缓存命中时增益为 `(targetLufs - measuredIntegratedLufs) + preamp`，超 ceiling 再衰减；无缓存时首播使用 `replayGainFallback` + preamp 并后台测量，状态为 measuring/cached/fallback/unavailable。无 libebur128 时报告 unavailable 并用 fallback，禁止假成功。始终报告 `loudnormActive` / `loudnorm_active`。
+
+**Stage-1 UI 契约：** Renderer Settings 与 HiFi 控制台必须从 `src/shared/audioProcessingOptions.ts` 暴露完整 `volumeNormalization` / `dsdOutputMode` 选项集（含 `loudnorm`）。软件音量默认 **0.7**；bit-perfect 需用户显式 Unity（1.0），`perfectReasonCode=volume_not_unity` 时提供 CTA。禁止静默把默认音量改成 1.0，禁止在任一 UI 路径「forbid loudnorm」。
+
+**Stage-2 输出采样率锁：** 采样率锁 / resampler / dither 仅通过 DSP graph `outputStage` 配置（`AudioEngineManager.setOutputStage` / HiFi 输出页 / DspRack）。非 `device` 目标采样率或启用 SRC/dither 会使 `outputPerfect=false`。`setAudioProcessing` 重写 legacy graph 时保留既有 `outputStage`。
+
+**Stage-2 平衡/相位与库标签：** HiFi 通过 `AudioEngineManager.setStereoImage` 写入 default graph 的 stereoField + channelStrip polarity（`DspStereoImageConfig`：balance/width/mid-side/invert/swap/mono）。`createLegacyDspGraph` / `setAudioProcessing` 必须保留既有 `stereoImage`。任一非默认立体声图像 ⇒ `outputPerfect=false`。本地库扫描持久化 ReplayGain/R128 标签，经 `NativeQueueLoadItem` / `AudioEngineQueueItem` / 原生 `QueueItem` 注入 `ReplayGainInfo`（覆盖 decode 缺标签）；session restore 保留字段；`loudnorm` 仍只消费离线测量缓存。
+
+**Loudnorm 状态与硬化：** `prepareLoudnormForPlay` 推送 `loudnorm-status`（measuring|cached|fallback|unavailable|idle）到 renderer HiFi 与 Settings；`setAudioProcessing` / `setReplayGainMode` 离开 loudnorm 时立刻 `cancel` 并发 `idle`，播放中切入 loudnorm 时对当前 `source` 重新 prepare。`setReplayGainMode` 必须走 `setAudioProcessing`，保证 default-scene graph 与 `SetReplayGainMode` 双路径一致。测量完成后 `LoadQueue` 注入 `measuredIntegratedLufs` / `measuredTruePeakDb`，`AudioPipeline::refreshQueueReplayGainTags` 把测量叠到当前/预加载流的 `ReplayGainInfo`（不 reopen 设备），本曲即可从 Fallback 切到测量增益。异步测量回调在 destroy / 离模式 / 换曲后丢弃。分析队列串行、identity 命中跳过重测、切曲/关模式 `cancel` 后不写缓存、缓存上限 512、Settings 清空缓存会 `notifyLoudnessCacheCleared` 重准备当前曲。
 
 `sourceExact=true` 额外要求源格式无损，并且源格式与实际输出格式完全一致。有损格式可以达成 `outputPerfect=true`，但 `sourceExact=false`，原因会显示为 `Source is lossy; decoded PCM path is output perfect`。
 

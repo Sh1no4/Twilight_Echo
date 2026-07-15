@@ -137,7 +137,7 @@ test('player lyric loading records local and provider lyric sources', () => {
   )
 })
 
-test('streaming playback resume waits for plugin providers before restoring', () => {
+test('plugin playback resume waits for plugin providers while local sessions restore immediately', () => {
   const sessionPersistenceSource = readFileSync(
     new URL('../app/usePlaybackSessionPersistence.ts', import.meta.url),
     'utf8'
@@ -153,7 +153,11 @@ test('streaming playback resume waits for plugin providers before restoring', ()
 
   assert.match(
     sessionPersistenceSource,
-    /await options\.syncPluginProviders\(\)[\s\S]*const restoredSession: PlaybackSession/
+    /function requiresPluginProviderSync\(track: Track\): boolean/
+  )
+  assert.match(
+    sessionPersistenceSource,
+    /if \(requiresPluginProviderSync\(session\.track\)\) \{\s*await options\.syncPluginProviders\(\)\s*\}[\s\S]*const restoredSession: PlaybackSession/
   )
   assert.match(runtimeSource, /pluginManagerReady: null as Promise<void> \| null,/)
   assert.match(
@@ -167,6 +171,24 @@ test('streaming playback resume waits for plugin providers before restoring', ()
   assert.match(
     pluginsSource,
     /'providers:call',[\s\S]*await runtime\.pluginManagerReady[\s\S]*runtime\.pluginManager!\.callProvider/
+  )
+})
+
+test('startup restores the playback session without waiting for the library scan', () => {
+  const appSource = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
+  const restoreStart = appSource.indexOf('const playbackSessionSetupPromise')
+  const libraryStart = appSource.indexOf('const libraryPromise')
+  const libraryWait = appSource.indexOf('await libraryPromise')
+
+  assert.notEqual(restoreStart, -1)
+  assert.notEqual(libraryStart, -1)
+  assert.notEqual(libraryWait, -1)
+  assert.ok(restoreStart < libraryStart)
+  assert.ok(restoreStart < libraryWait)
+  assert.match(appSource, /await libraryPromise\s*await playbackSessionSetupPromise/)
+  assert.match(
+    appSource,
+    /\.finally\(\(\) => \{[\s\S]*onSavePlaybackSession\([\s\S]*startAutosaveWatchers\(\)/
   )
 })
 
@@ -187,6 +209,23 @@ test('playback session autosaves while playback changes instead of only on windo
   )
   assert.match(sessionPersistenceSource, /DEFAULT_PLAYBACK_SESSION_POSITION_AUTOSAVE_MS/)
   assert.match(sessionPersistenceSource, /options\.dataApi\.savePlaybackSession\(session\)/)
+})
+
+test('player state persists a selected track before shell-level autosave is available', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const setupSideEffects = extractInternalFunctionBody(source, 'setupPlayerIntegrationSideEffects')
+  const persistSelectedTrackSession = extractInternalFunctionBody(
+    source,
+    'persistSelectedTrackSession'
+  )
+
+  assert.match(persistSelectedTrackSession, /const mode = appSettings\.value\.playbackResumeMode/)
+  assert.match(persistSelectedTrackSession, /dataApi\.savePlaybackSession\(session\)/)
+  assert.match(persistSelectedTrackSession, /selectedTrackSessionWriteChain/)
+  assert.match(
+    setupSideEffects,
+    /currentTrack\.value\?\.id[\s\S]*persistSelectedTrackSession\(\)[\s\S]*flush: 'sync'/
+  )
 })
 
 test('renderer streaming resume seeks only after media metadata is available', () => {
@@ -231,6 +270,17 @@ test('resolved streaming targets are patched back into restored queues', () => {
       loadAndPlay.indexOf('resolvePlayTarget(track)'),
     'queue should be patched after stream URL resolution mutates the track'
   )
+})
+
+test('NetEase streams re-resolve after a quality preference change', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const resolvePlayTarget = extractInternalFunctionBody(source, 'resolvePlayTarget')
+
+  assert.match(resolvePlayTarget, /const ncmPlaybackQuality = appSettings\.value\.ncmPlaybackQuality/)
+  assert.match(resolvePlayTarget, /track\.streamQuality === ncmPlaybackQuality/)
+  assert.match(resolvePlayTarget, /source === 'ncm' \? \{ quality: ncmPlaybackQuality \} : undefined/)
+  assert.match(resolvePlayTarget, /track\.streamQuality = ncmPlaybackQuality/)
+  assert.match(resolvePlayTarget, /当前网易云账号没有可播放的音质/)
 })
 
 test('mini player switching recovers from stale unauthorized local tracks', () => {
@@ -319,6 +369,28 @@ test('next and previous only use native controls when the native queue is delega
   assert.match(previousBody, /currentTrack\.value = track[\s\S]*void loadAndPlay\(track\)/)
 })
 
+test('native queue switching guards the target track before applying playback-info events', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const advanceNativePlayback = extractInternalFunctionBody(source, 'advanceNativePlayback')
+  const applyNativePlaybackInfo = extractInternalFunctionBody(source, 'applyNativePlaybackInfo')
+  const setupAudioEngineListeners = extractInternalFunctionBody(source, 'setupAudioEngineListeners')
+
+  assert.match(source, /evaluateNativePlaybackInfoIntent/)
+  assert.match(advanceNativePlayback, /const target = getNativeQueueAdvanceTarget\(direction\)/)
+  assert.match(
+    advanceNativePlayback,
+    /setNativePlaybackInfoIntent\(\s*activeLoadToken,\s*target\.track,\s*getTrackAudioSource\(target\.track\),\s*target\.queueIndex\s*\)/
+  )
+  assert.match(
+    applyNativePlaybackInfo,
+    /const infoIndex = findTrackIndexFromPlaybackInfo\(info\)\s*if \(shouldIgnoreNativePlaybackInfo\(info, infoIndex\)\) return false\s*const normalizedInfo/
+  )
+  assert.match(
+    setupAudioEngineListeners,
+    /api\.onPlaybackInfo\(\(info\) => \{\s*applyNativePlaybackInfo\(info\)\s*\}\)/
+  )
+})
+
 test('player store does not pretend DSP bypass is strict bit-perfect mode', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const loadAndPlay = source.match(/async function loadAndPlay[\s\S]*?function next\(\)/)?.[0] ?? ''
@@ -330,6 +402,29 @@ test('player store does not pretend DSP bypass is strict bit-perfect mode', () =
   assert.match(loadAndPlay, /原生音频引擎不可用，已启用临时播放通道/)
   assert.match(loadAndPlay, /playWithRendererAudio\(/)
   assert.match(setVolume, /volume\.value = vol/)
+})
+
+test('player store keeps default volume at 0.7 and exposes setUnityVolume for bit-perfect CTA', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const setUnityVolume = extractInternalFunctionBody(source, 'setUnityVolume')
+
+  assert.match(source, /const volume = ref\(0\.7\)/)
+  assert.match(source, /function setUnityVolume\(\): void/)
+  assert.match(setUnityVolume, /setVolume\(1\)/)
+  assert.doesNotMatch(source, /const volume = ref\(1\)/)
+  assert.doesNotMatch(setUnityVolume, /ref\(1\)/)
+})
+
+test('player store exposes setOutputStage for HiFi sample-rate lock (graph.outputStage)', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const setOutputStage = extractInternalFunctionBody(source, 'setOutputStage')
+  const refresh = extractInternalFunctionBody(source, 'refreshAudioOutputState')
+
+  assert.match(source, /dspOutputStage/)
+  assert.match(source, /DEFAULT_DSP_OUTPUT_STAGE/)
+  assert.match(source, /async function setOutputStage\(/)
+  assert.match(setOutputStage, /audioEngine\.setOutputStage/)
+  assert.match(refresh, /getDspSceneState/)
 })
 
 test('local dashboard playback keeps a multi-track queue for next and previous controls', () => {
@@ -354,8 +449,9 @@ test('local dashboard uses a single-line masthead heading without English sectio
 
   assert.doesNotMatch(source, /class="masthead-kicker"/)
   assert.doesNotMatch(source, /class="masthead-subtitle"/)
-  assert.doesNotMatch(source, /<h1 class="greeting">[\s\S]*?<span>/)
   assert.doesNotMatch(source, /class="section-kicker"/)
+  assert.match(source, /class="greeting"/)
+  assert.doesNotMatch(source, /Good (morning|afternoon|evening)/i)
 })
 
 test('playback session strips transient provider stream URLs before restore', () => {
@@ -686,19 +782,28 @@ test('player bar exposes a HiFi console drawer instead of visualization meters',
   assert.match(playerBarSource, /openEqualizer/)
   assert.match(playerBarSource, /onReloadLyrics/)
   assert.match(playerBarSource, /setAudioDevice/)
+  assert.match(playerBarSource, /setUnityVolume/)
+  assert.match(playerBarSource, /volume-unity-btn/)
+  assert.match(playerBarSource, /@set-unity-volume="setUnityVolume"/)
   assert.doesNotMatch(playerBarSource, /const visualizationStateText = computed/)
   assert.doesNotMatch(playerBarSource, /class="visualization-panel"/)
   assert.doesNotMatch(playerBarSource, /oscilloscopeCanvasRef/)
   assert.doesNotMatch(playerBarSource, /spectrogramCanvasRef/)
-  assert.match(hifiSidebarSource, /HiFi Studio/)
+  assert.match(hifiSidebarSource, /Signal Path/)
   assert.match(hifiSidebarSource, /Master DSP/)
   assert.match(hifiSidebarSource, /Devices/)
   assert.match(hifiSidebarSource, /Lyrics Source/)
   assert.match(hifiSidebarSource, /Source Quality/)
-  assert.match(hifiSidebarSource, /toggleExpanded/)
+  assert.match(hifiSidebarSource, /setUnityVolume/)
+  assert.match(hifiSidebarSource, /HIFI_STATUS_COPY\.unityButton/)
+  assert.match(hifiSidebarSource, /volume_not_unity/)
+  assert.match(hifiSidebarSource, /VOLUME_NORMALIZATION_OPTIONS/)
   assert.match(hifiSidebarSource, /openEqualizer/)
+  assert.match(hifiSidebarSource, /DSP_OUTPUT_SAMPLE_RATE_OPTIONS/)
+  assert.match(hifiSidebarSource, /Output Stage/)
+  assert.match(playerBarSource, /dsp-output-stage/)
+  assert.match(playerBarSource, /@set-output-stage="setOutputStage"/)
 })
-
 
 test('player bar visualization polling stays light and stops behind the full visualizer', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')

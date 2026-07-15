@@ -18,6 +18,7 @@ import { restoreMainWindowFromMiniPlayer, setupMiniPlayerIpc } from '../integrat
 import { setupNcmIpc, setupNcmApi } from '../ncm/api'
 import { setupAudioEngineIpc } from '../audio/engineIpc'
 import { setupBpmAnalysisIpc } from '../bpm/bpmIpc'
+import { setupLoudnessAnalysisIpc } from '../audio/loudnessIpc'
 import { setupOpraIpc } from '../ipc/opra'
 import { setupPluginIpc } from '../ipc/plugins'
 import { setupDataIpc } from '../ipc/data'
@@ -182,6 +183,7 @@ export function startApp(): void {
 
       await setupAudioEngineIpc()
       setupBpmAnalysisIpc()
+      setupLoudnessAnalysisIpc()
       setupNcmIpc()
       setupOpraIpc()
       setupPluginIpc()

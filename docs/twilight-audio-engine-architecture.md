@@ -50,14 +50,46 @@ Phase 6B 的后端判定边界：
 
 ## DSP 策略
 
-DSP 默认 bypass。ReplayGain、EQ、FIR Convolver、Crossfeed、Crossfade 和软件音量只有在显式配置或用户操作后才影响状态；任一会改变样本或播放连续性的处理启用时，最终 `outputPerfect=false`。
+DSP 默认 bypass。ReplayGain、Loudnorm、EQ、FIR Convolver、Crossfeed、Crossfade 和软件音量只有在显式配置或用户操作后才影响状态；任一会改变样本或播放连续性的处理启用时，最终 `outputPerfect=false`。
+
+### 音量标准化模式
+
+- `track` / `album`：仅消费源标签（ReplayGain 或 R128）。
+- `loudnorm`：独立 EBU R128 模式，**禁止**静默映射为 Track。离线测量 integrated LUFS + true peak（`TAE_AnalyzeLoudness` / libebur128），Electron 缓存对齐 BPM；默认目标 −23 LUFS、ceiling −1 dBTP。缓存命中施加测量增益，无缓存首播 fallback 并后台测量，状态 measuring/cached/fallback/unavailable；无 ebur128 时 unavailable+fallback。始终上报 `loudnorm_active`。
+
+### Stage-1 HiFi 契约（已落地）
+
+Stage 1 要求 UI 与引擎对声明可证伪、可操作：
+
+1. **共享选项源**：Settings 与 HiFi 控制台必须从 `src/shared/audioProcessingOptions.ts` 读取 `VOLUME_NORMALIZATION_OPTIONS` / `DSD_OUTPUT_MODE_OPTIONS`，两边都暴露完整 `off|track|album|loudnorm` 与 `auto|pcm|dop|native`。**禁止**再写「forbid loudnorm」或在一侧静默去掉 loudnorm。
+2. **双 DSP 路径**：经典 `audioProcessing` / `createLegacyDspGraph` 与 DspScene graph 共用同一 `ReplayGainProcessor`；loudnorm 参数 `targetLufs` / `truePeakCeilingDb` 必须在两条入口一致。
+3. **软件音量**：默认 **0.7**（保护听感）；bit-perfect 需要用户显式 **Unity = 1.0**。`volume_not_unity` 时 UI 提供 Unity CTA，禁止静默把默认改成 1.0。
+4. **独立 perfect reason**：`loudnorm_active` 与 `replaygain_active` / `volume_not_unity` 不得互相冒充。
+5. **Gapless 运行态诚实**：意图开关（`audioProcessing.gapless`）与运行态分离。`PlaybackInfo` 上报 `gaplessActive` / `preloadReady` / `gaplessBlockedReason`（`disabled` | `dsd_path` | `typed_passthrough` | `crossfade` | `format_mismatch`，空串表示路径未阻塞）。EOF auto-next 与手动 `next()` 均优先 `skipToPreloaded`（不 reopen 设备）；失败再 `playQueueItem`。crossfade 关闭 true gapless。HiFi 展示 Active / Preload / Blocked 芯片。
+
+共享文案常量：`HIFI_STATUS_COPY` / `gaplessRuntimeStatusCopy`（Unity / loudnorm / gapless 运行态）。
+
+### Stage-2 输出采样率锁（HiFi outputStage）
+
+- 采样率锁 / resampler / dither 只存在于 **DSP graph `outputStage`**（`targetSampleRate: 'device' | number`、`resamplerQuality`、`dither`、`safetyClamp`），**不**平行发明 `OutputConfig` 字段。
+- HiFi 控制台「输出」页通过薄封装 `AudioEngineManager.setOutputStage(partial)` 改 default scene 的 `graph.outputStage` 并 `SetDspGraph`；DspRack 可继续编辑任意 scene 的同结构字段。
+- `setAudioProcessing` / `persistAudioProcessingState` 重写 legacy graph 时必须 **保留** default scene 的既有 `outputStage`，避免经典处理设置抹掉采样率锁。
+- 非 `device` 锁或非 native SRC / 非 off dither ⇒ 强制处理 ⇒ `outputPerfect=false`；UI 展示 target vs actual（`outputInfo.actualSampleRate`）。
+
+### Stage-2 平衡/相位与库标签
+
+- HiFi DSP 页暴露 `DspStereoImageConfig`：`balance` / `width` / mid-side / invert L|R / swap / mono；写入 default graph 的 stereoField + channelStrip polarity（`setStereoImage`），**不**平行发明第二套 OutputConfig。
+- `createLegacyDspGraph` / `setAudioProcessing` 必须保留已有 `stereoImage`（与 `outputStage` 同级），避免经典处理重写抹掉 Rack/HiFi 立体声图像。
+- 任一非默认立体声图像（balance≠0、width≠1、极性/互换/单声道）⇒ 处理启用 ⇒ `outputPerfect=false`；DSD 路径下与 EQ/RG 一样触发 PCM fallback。
+- 本地库扫描（`scan.extractReplayGainTags`）持久化 ReplayGain track/album gain+peak 与 R128 track/album gain（Q7.8 启发式）；经 `prepareNativeQueue` / `AudioEngineQueueItem` / 原生 `QueueItem` 注入播放链路，覆盖 decode 缺标签场景；`track`/`album` 冷启动与 session restore 保留字段；`loudnorm` **永不**用库标签冒充测量。
+- Loudnorm UI 状态：`prepareLoudnormForPlay` 发 `loudnorm-status`（measuring|cached|fallback|unavailable|idle），经 engineIpc → preload `onLoudnormStatus` → player store → HiFi 与 Settings 展示 `loudnormStatusCopy`。`setAudioProcessing` / `setReplayGainMode` 离开 loudnorm 立刻 cancel+idle；播放中切入 loudnorm 对当前 source 重新 prepare。`setReplayGainMode` 委托 `setAudioProcessing` 防双路径漂移。测量注入经 `LoadQueue` + `refreshQueueReplayGainTags` 叠到活跃/预加载流。destroy / 清缓存会 cancel 并重准备；异步回调在 stale 时丢弃。
 
 ## DSD 策略
 
 Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer 展示优先消费 `outputInfo.isDsd` / `dsdMode` / `dsdRate` 表示当前 runtime 传输状态，顶层字段只做兼容镜像；当 DoP 运行时回退到 PCM 时，canonical mirror 必须清成 `isDsd=false`、`dsdMode='pcm'`、`dsdRate=0`，而源侧 DSD 标签可继续由文件元数据提供。
 
 - DoP carrier：允许 DSF/DFF DSD64/128/256/512 在后端、设备、声道数和实际 PCM carrier 格式满足条件时进入 `dsdMode=dop`，遵循 dCS DoP open standard v1.1（24-bit、`0x05`/`0xFA` marker 交替）；carrier 速率 DSD64=176.4k、DSD128=352.8k、DSD256=705.6k（44.1k）/768k（48k）、DSD512=1411.2k（44.1k）/1536k（48k），上限从 DSD128 提升到 DSD512，运行时由设备 carrier-rate 能力门控（ASIO `dopCarrierSampleRates` 或 WASAPI/CoreAudio Exclusive `IsFormatSupported` 探测）。UI 展示 `DoP carrier`，不把它写成 PCM fallback。
-- PCM fallback：DoP 条件不满足（含设备不支持 DSD256/512 carrier 速率），或软件音量、ReplayGain、EQ、Convolver、Crossfeed、Crossfade 等处理启用时，实际链路回到 DSD 源 -> decoded PCM -> 后端 PCM 输出；UI 需要明确展示 fallback。
+- PCM fallback：DoP 条件不满足（含设备不支持 DSD256/512 carrier 速率），或软件音量、ReplayGain、Loudnorm、EQ、Convolver、Crossfeed、Crossfade 等处理启用时，实际链路回到 DSD 源 -> decoded PCM -> 后端 PCM 输出；UI 需要明确展示 fallback。
 - Native DSD：支持 ASIO 与 ALSA `hw:`（`SND_PCM_FORMAT_DSD_U8` / `DSD_U16_LE` / `DSD_U32_LE` 直送，rate = DSD bit-clock / phys_width，静音字节 `0x69`，格式顺序 U8→U32_LE→U16_LE，`backendCanAttemptNativeDsd("alsa")==true`，nativeDsdRuntimeFacts 开打开时 Candidate、首次成功 `writei` 后 Proven）。运行态证明为 `proven` 时可直接输出 DSD bitstream，否则回退 DoP 或 PCM。WASAPI 与 CoreAudio 没有 native DSD 通道（平台限制），走 DoP 或 PCM。
 - SACD ISO：支持未压缩 DSD area 的曲目切片播放；DST 压缩曲目通过 DSD-preserving provider（vendored FFmpeg dstdec 算术核心，LGPL-2.1+，输出原始 DSD 字节）解出 DSD 后进入与未压缩 DSD 相同的 Native DSD / DoP / PCM 决策链。provider 默认可用；不可用时报告 `dst_dsd_provider_unavailable`，失败时报 `dst_dsd_provider_failed`，禁止把 FFmpeg PCM DST decode 包装成 Native DSD/DoP 成功。
 
@@ -67,6 +99,12 @@ Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer
 - DoP DSD256/512：carrier 上限从 DSD128 提升到 DSD512，遵循 dCS DoP open standard v1.1，运行时由设备 carrier-rate 能力门控。
 - ALSA native DSD：`hw:` 设备通过 `DSD_U8` / `DSD_U16_LE` / `DSD_U32_LE` 直送 DSD，`backendCanAttemptNativeDsd("alsa")==true`，nativeDsdRuntimeFacts 开打开时 Candidate、首次成功 `writei` 后 Proven。
 - 示波器视图：`GetVisualizationData` 新增 decoupled `oscilloscope` 时域采样（`oscilloscopePoints` 0-4096，默认 1024；0 表示关闭该 payload），独立于 `fftResolution`；PlayerBar 提供独立示波器子面板（canvas polyline、零交叉触发、`transition:none`）。`tapStatus/reason` 区分 stopped、disabled、no samples、native unavailable 与 synthetic fallback。
+- Gapless 专业化：EOF auto-next 与手动 `next()` 均优先 `skipToPreloaded`（不 reopen 设备）；`PlaybackInfo` 上报 `gaplessActive` / `preloadReady` / `gaplessBlockedReason`（含 preload 失败 sticky `format_mismatch`）；HiFi 区分意图 ON 与 Active/Preload/Blocked。
+- HiFi 输出采样率锁：控制台暴露 graph `outputStage`（target rate / SRC / dither）；`setOutputStage` 薄封装 + classic processing 保留锁。
+- HiFi 平衡/相位：`DspStereoImageConfig`（balance/width/mid/side/invert L/R/swap/mono）写入 default graph 的 stereoField + channelStrip polarity；`setStereoImage` 薄封装；`setAudioProcessing` / `createLegacyDspGraph` 保留 `stereoImage`，避免经典设置抹掉 Rack 参数；任一非默认立体声图像 ⇒ `outputPerfect=false`。
+- 库扫描 RG/R128：`scan.extractReplayGainTags` 持久化 `replayGainTrack/AlbumGainDb`、peaks 与 `r128Track/AlbumGainDb`（Q7.8 启发式 `|x|>64 → /256`）；track/album 冷启动可读标签；loudnorm 仍走离线测量缓存，不读库标签冒充测量。
+- Loudnorm 硬化：分析队列串行、identity 命中跳过重测、`cancel` 后不写缓存、缓存上限 512（按 `analyzedAt` 淘汰）、Settings 可清空 Loudnorm 分析缓存。
+- 产品诚实 smoke surfaces：`Loudnorm` / `Gapless Album` / `Unity Volume` 始终出现在 evidence 报告（默认 `not-run`），**不**计入 5 项硬件 `coverage.complete` 门禁。
 - CoreAudio Hog Mode 加固：预检现有 hog owner、安装 device-lost listener、跟踪 IOProc underrun 诊断；ICoreAudioHost / MockCoreAudioHost seam 使 CoreAudio 后端逻辑可在 Windows 单元测试。
 - ALSA 后端 seam：IAlsaHost / MockAlsaHost 使 ALSA 后端逻辑可在 Windows 单元测试（此前只能靠真实 Linux 硬件验证）。
 
@@ -74,7 +112,7 @@ Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer
 
 - WASAPI native DSD：Windows WASAPI 没有 UAC2 native DSD 通道；DoP 可在 WASAPI Exclusive 工作，native DSD 不行。
 - CoreAudio native DSD：macOS CoreAudio 没有 DSD 通道；DoP 可在 CoreAudio Exclusive（Hog）工作，native DSD 不行。
-- 真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；`npm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 将多台机器/多设备结果沉淀为可读 Markdown/JSON，并把缺失 surfaces 显示为 `not-run`。报告 JSON 带 `coverage.complete` 和未闭环 surface 的 `actionPlan`；CLI 会校验本地 artifact 文件存在，输入 JSON 本身可作为缺省 artifact，只有有可追溯 artifact 的 `pass` 行才计入 complete；发布前可手动加 `--require-complete` 做 opt-in 证据完整性检查。
+- 真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；`npm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 将多台机器/多设备结果沉淀为可读 Markdown/JSON，并把缺失 surfaces 显示为 `not-run`。报告 JSON 带 `coverage.complete` 和未闭环 surface 的 `actionPlan`；CLI 会校验本地 artifact 文件存在，输入 JSON 本身可作为缺省 artifact，只有有可追溯 artifact 的 `pass` 行才计入 complete；产品诚实 surfaces（Loudnorm / Gapless Album / Unity Volume）始终列出且不阻塞硬件 complete；发布前可手动加 `--require-complete` 做 opt-in 证据完整性检查。
 
 ## 后续顺序
 

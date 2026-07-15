@@ -161,6 +161,7 @@ const fallbackSettings: AppSettings = {
   lyricAlign: 'center',
   lyricDimOpacity: 40,
   playbackResumeMode: 'off',
+  ncmPlaybackQuality: 'auto',
   playMode: 'sequential',
   audioOutput: getFallbackAudioOutput(),
   audioDevice: 'auto',
@@ -226,6 +227,8 @@ const clearingCache = ref(false)
 const cacheSize = ref<number | null>(null)
 const clearingBpmAnalysisCache = ref(false)
 const bpmAnalysisCacheSize = ref<number | null>(null)
+const clearingLoudnessAnalysisCache = ref(false)
+const loudnessAnalysisCacheSize = ref<number | null>(null)
 let listenerSetup = false
 let systemThemeListenerSetup = false
 let settingsUpdateQueue: Promise<void> = Promise.resolve()
@@ -686,6 +689,9 @@ export function useSettingsStore(): {
   clearingBpmAnalysisCache: Ref<boolean>
   bpmAnalysisCacheSize: Ref<number | null>
   formattedBpmAnalysisCacheSize: ComputedRef<string>
+  clearingLoudnessAnalysisCache: Ref<boolean>
+  loudnessAnalysisCacheSize: Ref<number | null>
+  formattedLoudnessAnalysisCacheSize: ComputedRef<string>
   restartRequired: ComputedRef<boolean>
   restartReasons: Ref<string[]>
   loadSettings: () => Promise<AppSettings>
@@ -700,6 +706,8 @@ export function useSettingsStore(): {
   clearCache: () => Promise<void>
   refreshBpmAnalysisCacheSize: () => Promise<void>
   clearBpmAnalysisCache: () => Promise<void>
+  refreshLoudnessAnalysisCacheSize: () => Promise<void>
+  clearLoudnessAnalysisCache: () => Promise<void>
   openCacheFolder: () => Promise<void>
   relaunch: () => Promise<void>
   addLibraryFolder: () => Promise<void>
@@ -709,6 +717,9 @@ export function useSettingsStore(): {
 } {
   const formattedCacheSize = computed(() => formatBytes(cacheSize.value))
   const formattedBpmAnalysisCacheSize = computed(() => formatBytes(bpmAnalysisCacheSize.value))
+  const formattedLoudnessAnalysisCacheSize = computed(() =>
+    formatBytes(loudnessAnalysisCacheSize.value)
+  )
   const restartRequired = computed(() => restartReasons.value.length > 0)
 
   async function loadSettings(): Promise<AppSettings> {
@@ -833,6 +844,19 @@ export function useSettingsStore(): {
     }
   }
 
+  async function refreshLoudnessAnalysisCacheSize(): Promise<void> {
+    loudnessAnalysisCacheSize.value = await window.api.loudnessAnalysis.getCacheSize()
+  }
+
+  async function clearLoudnessAnalysisCache(): Promise<void> {
+    clearingLoudnessAnalysisCache.value = true
+    try {
+      loudnessAnalysisCacheSize.value = await window.api.loudnessAnalysis.clearCache()
+    } finally {
+      clearingLoudnessAnalysisCache.value = false
+    }
+  }
+
   async function openCacheFolder(): Promise<void> {
     const targetPath = settings.value.cachePath || paths.value?.activeCachePath
     if (targetPath) {
@@ -880,6 +904,9 @@ export function useSettingsStore(): {
     clearingBpmAnalysisCache,
     bpmAnalysisCacheSize,
     formattedBpmAnalysisCacheSize,
+    clearingLoudnessAnalysisCache,
+    loudnessAnalysisCacheSize,
+    formattedLoudnessAnalysisCacheSize,
     restartRequired,
     restartReasons,
     loadSettings,
@@ -894,6 +921,8 @@ export function useSettingsStore(): {
     clearCache,
     refreshBpmAnalysisCacheSize,
     clearBpmAnalysisCache,
+    refreshLoudnessAnalysisCacheSize,
+    clearLoudnessAnalysisCache,
     openCacheFolder,
     relaunch,
     addLibraryFolder,

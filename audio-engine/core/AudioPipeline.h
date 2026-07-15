@@ -52,6 +52,7 @@ struct PipelineStatus {
   QueueItem currentItem;
   bool dspActive = false;
   bool replayGainActive = false;
+  bool loudnormActive = false;
   bool eqActive = false;
   bool convolverActive = false;
   bool crossfeedActive = false;
@@ -71,6 +72,9 @@ struct PipelineStatus {
   bool outputPerfect = false;
   bool gaplessActive = false;
   bool preloadReady = false;
+  // Empty when gapless path is unblocked; otherwise one of:
+  // disabled | dsd_path | typed_passthrough | crossfade | format_mismatch
+  std::string gaplessBlockedReason;
   std::string perfectReason;
   uint64_t requestedConfigRevision = 0;
   uint64_t appliedConfigRevision = 0;
@@ -119,6 +123,8 @@ class AudioPipeline {
   bool setEqPreset(const std::string& json, std::string* error);
   void setCrossfeedStrength(double strength);
   void setReplayGainMode(ReplayGainMode mode, double preampDb, double fallbackDb, bool clip);
+  /** Overlay host-injected RG / loudnorm measurements onto the active (and matching preload) stream without reopen. */
+  void refreshQueueReplayGainTags(const QueueItem& item);
   void setNativeDspPluginChain(const std::string& json);
   std::string nativeDspPluginStatusJson() const;
   bool preloadNext(const std::optional<QueueItem>& item, std::string* error);
@@ -334,6 +340,8 @@ class AudioPipeline {
   bool dopPathActive_ = false;
   bool nativeDsdPathActive_ = false;
   bool typedPassthroughActive_ = false;
+  // Sticky reason when the most recent preload attempt failed due to format/config mismatch.
+  bool lastPreloadFormatMismatch_ = false;
   bool activeUsesPreloadDspChain_ = false;
   bool crossfadeMixActive_ = false;
   uint64_t crossfadeFramesProcessed_ = 0;

@@ -191,6 +191,30 @@ QueueItem parseQueueItem(const std::string& object) {
   item.sampleRate = static_cast<int>(extractNumberField(object, "sampleRate").value_or(0.0));
   item.bitrate = static_cast<int64_t>(extractNumberField(object, "bitrate").value_or(0.0));
   item.bitDepth = static_cast<int>(extractNumberField(object, "bitDepth").value_or(0.0));
+  if (auto measured = extractNumberField(object, "measuredIntegratedLufs")) {
+    item.measuredIntegratedLufs = *measured;
+  }
+  if (auto measured = extractNumberField(object, "measuredTruePeakDb")) {
+    item.measuredTruePeakDb = *measured;
+  }
+  if (auto value = extractNumberField(object, "replayGainTrackGainDb")) {
+    item.replayGainTrackGainDb = *value;
+  }
+  if (auto value = extractNumberField(object, "replayGainAlbumGainDb")) {
+    item.replayGainAlbumGainDb = *value;
+  }
+  if (auto value = extractNumberField(object, "replayGainTrackPeak")) {
+    item.replayGainTrackPeak = *value;
+  }
+  if (auto value = extractNumberField(object, "replayGainAlbumPeak")) {
+    item.replayGainAlbumPeak = *value;
+  }
+  if (auto value = extractNumberField(object, "r128TrackGainDb")) {
+    item.r128TrackGainDb = *value;
+  }
+  if (auto value = extractNumberField(object, "r128AlbumGainDb")) {
+    item.r128AlbumGainDb = *value;
+  }
   if (item.id.empty()) item.id = item.source;
   if (item.title.empty()) item.title = item.id;
   return item;
@@ -312,6 +336,14 @@ std::optional<QueueItem> QueueManager::upcoming() const {
   return items_[static_cast<size_t>(index)];
 }
 
+std::optional<QueueItem> QueueManager::findBySource(const std::string& source) const {
+  if (source.empty()) return std::nullopt;
+  for (const auto& item : items_) {
+    if (item.source == source) return item;
+  }
+  return std::nullopt;
+}
+
 std::optional<QueueItem> QueueManager::next() {
   const int index = queueIndexAtOrderOffset(1, false, true);
   if (index < 0) return std::nullopt;
@@ -372,8 +404,32 @@ std::string QueueManager::itemToJson(const std::optional<QueueItem>& item) {
        << "\"codec\":\"" << escapeJson(item->codec) << "\","
        << "\"sampleRate\":" << item->sampleRate << ","
        << "\"bitrate\":" << item->bitrate << ","
-       << "\"bitDepth\":" << item->bitDepth
-       << "}";
+       << "\"bitDepth\":" << item->bitDepth;
+  if (item->measuredIntegratedLufs) {
+    json << ",\"measuredIntegratedLufs\":" << *item->measuredIntegratedLufs;
+  }
+  if (item->measuredTruePeakDb) {
+    json << ",\"measuredTruePeakDb\":" << *item->measuredTruePeakDb;
+  }
+  if (item->replayGainTrackGainDb) {
+    json << ",\"replayGainTrackGainDb\":" << *item->replayGainTrackGainDb;
+  }
+  if (item->replayGainAlbumGainDb) {
+    json << ",\"replayGainAlbumGainDb\":" << *item->replayGainAlbumGainDb;
+  }
+  if (item->replayGainTrackPeak) {
+    json << ",\"replayGainTrackPeak\":" << *item->replayGainTrackPeak;
+  }
+  if (item->replayGainAlbumPeak) {
+    json << ",\"replayGainAlbumPeak\":" << *item->replayGainAlbumPeak;
+  }
+  if (item->r128TrackGainDb) {
+    json << ",\"r128TrackGainDb\":" << *item->r128TrackGainDb;
+  }
+  if (item->r128AlbumGainDb) {
+    json << ",\"r128AlbumGainDb\":" << *item->r128AlbumGainDb;
+  }
+  json << "}";
   return json.str();
 }
 

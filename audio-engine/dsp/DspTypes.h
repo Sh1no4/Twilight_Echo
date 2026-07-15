@@ -11,7 +11,8 @@ namespace twilight::audio {
 enum class ReplayGainMode {
   Off,
   Track,
-  Album
+  Album,
+  Loudnorm
 };
 
 enum class EqMode {
@@ -108,6 +109,9 @@ struct DspConfig {
   double replayGainPreampDb = 0.0;
   double replayGainFallbackDb = 0.0;
   bool replayGainClip = true;
+  // Loudnorm targets (EBU R128). Used only when replayGainMode == Loudnorm.
+  double loudnormTargetLufs = -23.0;
+  double loudnormTruePeakCeilingDb = -1.0;
 
   bool eqEnabled = false;
   EqMode eqMode = EqMode::Graphic;
@@ -204,6 +208,7 @@ struct DspTrackContext {
 struct DspStatus {
   bool dspActive = false;
   bool replayGainActive = false;
+  bool loudnormActive = false;
   bool eqActive = false;
   bool convolverActive = false;
   bool crossfeedActive = false;

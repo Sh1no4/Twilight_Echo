@@ -15,6 +15,14 @@ export type { MiniPlayerSettings } from '../../shared/miniPlayer'
 export type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+export type NcmPlaybackQuality =
+  | 'auto'
+  | 'standard'
+  | 'exhigh'
+  | 'lossless'
+  | 'hires'
+  | 'jyeffect'
+  | 'sky'
 export type StartupHomePage = 'local' | 'streaming'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type ProxyMode = 'auto' | 'custom' | 'off'
@@ -157,6 +165,7 @@ export interface AppSettings {
   lyricAlign: LyricAlign
   lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
+  ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
   audioOutput: AudioOutputId
   audioDevice: string

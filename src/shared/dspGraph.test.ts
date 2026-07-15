@@ -1,11 +1,19 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  applyStereoImageToGraph,
   createDspFactoryScene,
   createLegacyDspGraph,
+  DEFAULT_DSP_OUTPUT_STAGE,
+  DEFAULT_DSP_STEREO_IMAGE,
   DSP_FACTORY_SCENE_TEMPLATES,
+  extractStereoImageFromGraph,
+  mergeDspOutputStage,
+  mergeDspStereoImage,
   normalizeDspScenes,
+  outputStageIsActive,
   resolveDspScene,
+  stereoImageIsActive,
   type DspScene
 } from './dspGraph.ts'
 
@@ -24,6 +32,53 @@ test('legacy DSP settings migrate into the fixed legacy graph order', () => {
   )
   assert.equal(graph.nodes[1]?.enabled, true)
   assert.equal(graph.nodes[2]?.enabled, true)
+})
+
+test('legacy loudnorm mode enables replayGain node without aliasing to track', () => {
+  const graph = createLegacyDspGraph({
+    dspEnabled: true,
+    volumeNormalization: 'loudnorm',
+    replayGainPreamp: 1.5,
+    replayGainFallback: -3,
+    replayGainClip: true
+  })
+  const replayGain = graph.nodes.find((node) => node.type === 'replayGain')
+  assert.equal(replayGain?.enabled, true)
+  assert.equal(replayGain?.params.mode, 'loudnorm')
+  assert.equal(replayGain?.params.preampDb, 1.5)
+  assert.equal(replayGain?.params.fallbackDb, -3)
+  assert.equal(replayGain?.params.targetLufs, -23)
+  assert.equal(replayGain?.params.truePeakCeilingDb, -1)
+})
+
+test('createLegacyDspGraph preserves HiFi outputStage sample-rate lock', () => {
+  const graph = createLegacyDspGraph({
+    dspEnabled: true,
+    eqEnabled: true,
+    outputStage: {
+      targetSampleRate: 96000,
+      resamplerQuality: 'high',
+      dither: 'tpdf',
+      safetyClamp: true
+    }
+  })
+  assert.equal(graph.outputStage.targetSampleRate, 96000)
+  assert.equal(graph.outputStage.resamplerQuality, 'high')
+  assert.equal(graph.outputStage.dither, 'tpdf')
+  assert.equal(graph.outputStage.safetyClamp, true)
+})
+
+test('outputStageIsActive and mergeDspOutputStage treat device+native+off as inactive', () => {
+  assert.equal(outputStageIsActive(DEFAULT_DSP_OUTPUT_STAGE), false)
+  assert.equal(
+    outputStageIsActive(mergeDspOutputStage(DEFAULT_DSP_OUTPUT_STAGE, { targetSampleRate: 48000 })),
+    true
+  )
+  assert.equal(
+    mergeDspOutputStage({ ...DEFAULT_DSP_OUTPUT_STAGE, targetSampleRate: 44100 }, { dither: 'tpdf' })
+      .targetSampleRate,
+    44100
+  )
 })
 
 test('scene resolver prefers a manual pin and otherwise uses priority then specificity', () => {
@@ -107,4 +162,50 @@ test('factory DSP templates provide editable professional starting points', () =
   const freshSurround = createDspFactoryScene('speakerCalibration71', 'fresh-surround')
   const freshStrip = freshSurround.graph.nodes.find((node) => node.type === 'channelStrip')
   assert.equal((freshStrip?.params.channels as Array<Record<string, unknown>>)[0].gainDb, 0)
+})
+
+test('createLegacyDspGraph preserves HiFi stereoImage balance/phase across rewrite', () => {
+  const graph = createLegacyDspGraph({
+    dspEnabled: true,
+    stereoImage: {
+      balance: 0.35,
+      width: 1.2,
+      invertLeft: true,
+      invertRight: false
+    }
+  })
+  const stereo = graph.nodes.find((node) => node.type === 'stereoField')
+  const strip = graph.nodes.find((node) => node.type === 'channelStrip')
+  assert.equal(stereo?.enabled, true)
+  assert.equal(stereo?.params.balance, 0.35)
+  assert.equal(stereo?.params.width, 1.2)
+  assert.equal(stereo?.params.invertLeft, true)
+  assert.equal(strip?.enabled, true)
+  const channels = strip?.params.channels as Array<Record<string, unknown>>
+  assert.equal(channels[0]?.polarityInverted, true)
+  assert.equal(channels[1]?.polarityInverted, false)
+
+  const rewritten = createLegacyDspGraph({
+    dspEnabled: true,
+    eqEnabled: true,
+    stereoImage: extractStereoImageFromGraph(graph)
+  })
+  assert.deepEqual(extractStereoImageFromGraph(rewritten), extractStereoImageFromGraph(graph))
+})
+
+test('stereoImage helpers treat neutral balance/width/phase as inactive', () => {
+  assert.equal(stereoImageIsActive(DEFAULT_DSP_STEREO_IMAGE), false)
+  assert.equal(
+    stereoImageIsActive(mergeDspStereoImage(DEFAULT_DSP_STEREO_IMAGE, { balance: 0.1 })),
+    true
+  )
+  assert.equal(
+    stereoImageIsActive(mergeDspStereoImage(DEFAULT_DSP_STEREO_IMAGE, { invertRight: true })),
+    true
+  )
+  const patched = applyStereoImageToGraph(createLegacyDspGraph({}), { width: 0.5, mono: true })
+  const image = extractStereoImageFromGraph(patched)
+  assert.equal(image.width, 0.5)
+  assert.equal(image.mono, true)
+  assert.equal(stereoImageIsActive(image), true)
 })

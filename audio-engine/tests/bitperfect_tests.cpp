@@ -388,6 +388,14 @@ void testProcessingFlags() {
   replayGain.replayGainActive = true;
   assertNotOutputPerfect(replayGain);
 
+  auto loudnorm = baseEvaluation();
+  loudnorm.loudnormActive = true;
+  assertNotOutputPerfect(loudnorm);
+  {
+    PerfectResult result = evaluatePerfect(loudnorm);
+    assert(result.perfectReasonCode == "loudnorm_active");
+  }
+
   auto eq = baseEvaluation();
   eq.eqActive = true;
   assertNotOutputPerfect(eq);

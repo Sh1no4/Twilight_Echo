@@ -5,15 +5,25 @@ import { join } from 'path'
 import { AudioEngineServiceBinding, canUseAudioEngineService } from './audioEngineServiceClient.ts'
 import { isBpmAnalysisResult, type BpmAnalysisResult } from './bpm/bpmCache.ts'
 import {
+  isLoudnessAnalysisResult,
+  type LoudnessAnalysisResult
+} from './audio/loudnessCache.ts'
+import type { LoudnessAnalysisManager } from './audio/loudnessAnalysisManager.ts'
+import {
+  applyStereoImageToGraph,
   createLegacyDspGraph,
+  extractStereoImageFromGraph,
   graphHasEnabledProcessing,
+  mergeDspOutputStage,
   normalizeDspScenes,
   resolveDspScene,
   type DspGraphConfig,
   type DspGraphStatus,
+  type DspOutputStageConfig,
   type DspScene,
   type DspSceneContext,
   type DspSceneState,
+  type DspStereoImageConfig,
   type Vst3ScanDescriptor
 } from '../shared/dspGraph.ts'
 
@@ -206,6 +216,16 @@ export interface AudioEngineQueueItem {
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
+  /** Offline EBU R128 measurement for loudnorm (host-injected). */
+  measuredIntegratedLufs?: number
+  measuredTruePeakDb?: number
+  /** Library / host-injected ReplayGain + R128 tags for track/album cold start. */
+  replayGainTrackGainDb?: number
+  replayGainAlbumGainDb?: number
+  replayGainTrackPeak?: number
+  replayGainAlbumPeak?: number
+  r128TrackGainDb?: number
+  r128AlbumGainDb?: number
 }
 
 export type PlaybackOutputInfoMirror = Pick<
@@ -302,6 +322,8 @@ export interface PlaybackInfo extends PlaybackOutputInfoMirror {
   dsdRate: number
   gaplessActive: boolean
   preloadReady: boolean
+  /** Empty when unblocked; else disabled | dsd_path | typed_passthrough | crossfade | format_mismatch */
+  gaplessBlockedReason: string
   upcomingTrack: AudioEngineQueueItem | null
 }
 
@@ -391,6 +413,12 @@ export interface NativeBpmAnalysisOptions {
   referenceBpm?: number
 }
 
+export interface NativeLoudnessAnalysisOptions {
+  maxAnalysisSeconds?: number
+}
+
+export type LoudnormStatus = 'idle' | 'measuring' | 'cached' | 'fallback' | 'unavailable'
+
 export type VisualizationTapStatus =
   | 'active'
   | 'stopped'
@@ -436,6 +464,7 @@ export interface NativeAudioBinding {
   GetSpectrumData?: (points?: number) => number[]
   GetVisualizationData?: (optionsJson: string) => string | VisualizationData
   AnalyzeBpm?: (source: string, optionsJson?: string) => string | BpmAnalysisResult
+  AnalyzeLoudness?: (source: string, optionsJson?: string) => string | LoudnessAnalysisResult
   EnumerateDevices?: () => string | AudioDeviceOption[]
   EnumerateBackends?: () => string
   GetEngineCapabilities?: () => string
@@ -783,6 +812,7 @@ export function createPlaybackInfoFanoutSignature(
     info.dsdRate,
     info.gaplessActive,
     info.preloadReady,
+    info.gaplessBlockedReason,
     upcomingTrack?.id,
     upcomingTrack?.source,
     upcomingTrack?.title,
@@ -1740,6 +1770,7 @@ function createDefaultPlaybackInfo(
     dsdRate: 0,
     gaplessActive: false,
     preloadReady: false,
+    gaplessBlockedReason: '',
     upcomingTrack: null,
     nativePlaybackActive: false
   }
@@ -1798,6 +1829,9 @@ export class AudioEngineManager extends EventEmitter {
   private deviceOptionsProvider?: () => AudioDeviceOption[] | null
   private queue: AudioEngineQueueItem[] = []
   private queueJson = '[]'
+  private loudnessAnalysisManager: LoudnessAnalysisManager | null = null
+  private loudnormStatus: LoudnormStatus = 'idle'
+  private loudnormStatusSource: string | null = null
   private playbackInfo: PlaybackInfo
   private timer: NodeJS.Timeout | null = null
   private lastTick = 0
@@ -2154,9 +2188,18 @@ export class AudioEngineManager extends EventEmitter {
     this.scheduler.setImmediate(() => this.emit('ready'))
   }
 
+  setLoudnessAnalysisManager(manager: LoudnessAnalysisManager | null): void {
+    this.loudnessAnalysisManager = manager
+  }
+
+  getLoudnormStatus(): { status: LoudnormStatus; source: string | null } {
+    return { status: this.loudnormStatus, source: this.loudnormStatusSource }
+  }
+
   async play(source: string, startTime = 0): Promise<AudioEnginePlayResult> {
     if (!source) throw new Error('音频地址为空')
     this.invalidateUpcomingTrackCache()
+    await this.prepareLoudnormForPlay(source)
     const current = this.queue[this.playbackInfo.queueIndex]
     const duration = current?.source === source ? (current.duration ?? 0) : 0
     const firstErrorContext = {
@@ -2842,6 +2885,62 @@ export class AudioEngineManager extends EventEmitter {
     return this.getDspSceneState()
   }
 
+  /**
+   * Thin HiFi / console wrapper: patch default scene graph.outputStage and fan out SetDspGraph.
+   * Does not invent OutputConfig fields; rate lock lives only on the DSP graph output stage.
+   */
+  async setOutputStage(partial: Partial<DspOutputStageConfig>): Promise<DspSceneState> {
+    const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
+    if (!defaultScene) {
+      this.dspScenes = normalizeDspScenes(this.dspScenes, {
+        ...this.processing,
+        outputStage: mergeDspOutputStage(undefined, partial)
+      })
+    } else {
+      defaultScene.graph = {
+        ...defaultScene.graph,
+        outputStage: mergeDspOutputStage(defaultScene.graph.outputStage, partial)
+      }
+      // Editing output stage invalidates any prior DSD PCM-fallback confirmation.
+      delete defaultScene.allowDsdPcmFallback
+    }
+    this.applyNativeDspGraph('更新输出采样率锁')
+    this.updateOutputPerfect()
+    this.publishPlaybackInfo()
+    return this.getDspSceneState()
+  }
+
+  getOutputStage(): DspOutputStageConfig {
+    const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
+    return mergeDspOutputStage(defaultScene?.graph.outputStage, {})
+  }
+
+  /**
+   * Thin HiFi wrapper: patch default-scene stereoField + channelStrip polarity.
+   * Does not invent classic audioProcessing fields — balance/phase live on the graph.
+   */
+  async setStereoImage(partial: Partial<DspStereoImageConfig>): Promise<DspSceneState> {
+    const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
+    if (!defaultScene) {
+      this.dspScenes = normalizeDspScenes(this.dspScenes, {
+        ...this.processing,
+        stereoImage: partial
+      })
+    } else {
+      defaultScene.graph = applyStereoImageToGraph(defaultScene.graph, partial)
+      delete defaultScene.allowDsdPcmFallback
+    }
+    this.applyNativeDspGraph('更新立体声平衡/相位')
+    this.updateOutputPerfect()
+    this.publishPlaybackInfo()
+    return this.getDspSceneState()
+  }
+
+  getStereoImage(): DspStereoImageConfig {
+    const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
+    return extractStereoImageFromGraph(defaultScene?.graph)
+  }
+
   async applyDspScene(
     sceneId: string | null,
     confirmDsdPcmFallback = false
@@ -2933,13 +3032,21 @@ export class AudioEngineManager extends EventEmitter {
   async setAudioProcessing(
     settings: Partial<AudioProcessingSettings>
   ): Promise<AudioProcessingSettings> {
+    const previousMode = this.processing.volumeNormalization
     const nextProcessing = this.mergeAudioProcessingSettings(settings)
     if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.processing
 
     const previousProcessing = this.processing
     this.processing = nextProcessing
     const defaultScene = this.dspScenes.find((scene) => scene.id === 'default')
-    if (defaultScene) defaultScene.graph = createLegacyDspGraph(this.processing)
+    if (defaultScene) {
+      // Preserve HiFi sample-rate lock and balance/phase when rewriting the legacy graph.
+      defaultScene.graph = createLegacyDspGraph({
+        ...this.processing,
+        outputStage: defaultScene.graph.outputStage,
+        stereoImage: extractStereoImageFromGraph(defaultScene.graph)
+      })
+    }
     const sourceIsDsd =
       sourceLooksDsd(this.playbackInfo.source) ||
       this.playbackInfo.codec.trim().toLowerCase() === 'dsd' ||
@@ -2976,6 +3083,7 @@ export class AudioEngineManager extends EventEmitter {
     this.applyNativeDspSettings('更新 DSP 配置', { previousProcessing })
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
+    await this.syncLoudnormModeTransition(previousMode, this.processing.volumeNormalization)
     return this.processing
   }
 
@@ -3095,24 +3203,13 @@ export class AudioEngineManager extends EventEmitter {
     fallback = this.processing.replayGainFallback,
     clip = this.processing.replayGainClip
   ): Promise<AudioProcessingSettings> {
-    const nextProcessing = this.mergeAudioProcessingSettings({
+    // Route through setAudioProcessing so default-scene graph + dual DSP path stay aligned.
+    return this.setAudioProcessing({
       volumeNormalization: mode,
       replayGainPreamp: preamp,
       replayGainFallback: fallback,
       replayGainClip: clip
     })
-    if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.processing
-
-    this.processing = nextProcessing
-    this.tryNative('设置 ReplayGain', (native) =>
-      native.SetReplayGainMode?.(
-        this.processing.volumeNormalization,
-        this.processing.replayGainPreamp,
-        this.processing.replayGainFallback,
-        this.processing.replayGainClip
-      )
-    )
-    return this.processing
   }
 
   setNativeDspPluginChain(chainJson: string): void {
@@ -3191,6 +3288,175 @@ export class AudioEngineManager extends EventEmitter {
     } catch {
       return null
     }
+  }
+
+  async analyzeLoudness(
+    source: string,
+    options: NativeLoudnessAnalysisOptions = {}
+  ): Promise<LoudnessAnalysisResult | null> {
+    const optionsJson = JSON.stringify({
+      maxAnalysisSeconds:
+        typeof options.maxAnalysisSeconds === 'number' && Number.isFinite(options.maxAnalysisSeconds)
+          ? clampNumber(options.maxAnalysisSeconds, 0, 14_400, 0)
+          : 0
+    })
+    try {
+      const raw = this.audioServiceBinding
+        ? await this.audioServiceBinding.callAsync?.('AnalyzeLoudness', [source, optionsJson])
+        : this.native?.AnalyzeLoudness?.(source, optionsJson)
+      const analysis = parseNativeJson<
+        | LoudnessAnalysisResult
+        | { error?: string; available?: boolean }
+        | null
+      >(raw as string | LoudnessAnalysisResult | undefined, null)
+      if (!analysis || typeof analysis !== 'object') return null
+      if ('error' in analysis) {
+        if (analysis.available === false) {
+          return {
+            integratedLufs: 0,
+            truePeakDb: 0,
+            source: 'analyzed',
+            analyzedAt: new Date().toISOString(),
+            algorithmVersion: 1,
+            available: false
+          }
+        }
+        return null
+      }
+      return isLoudnessAnalysisResult(analysis) ? analysis : null
+    } catch {
+      return null
+    }
+  }
+
+  private async prepareLoudnormForPlay(source: string): Promise<void> {
+    if (this.processing.volumeNormalization !== 'loudnorm') {
+      if (this.loudnormStatusSource && this.loudnessAnalysisManager) {
+        this.loudnessAnalysisManager.cancel(this.loudnormStatusSource)
+      }
+      this.loudnormStatus = 'idle'
+      this.loudnormStatusSource = null
+      this.emit('loudnorm-status', { status: 'idle' as LoudnormStatus, source: null })
+      return
+    }
+
+    if (
+      this.loudnormStatusSource &&
+      this.loudnormStatusSource !== source &&
+      this.loudnessAnalysisManager
+    ) {
+      this.loudnessAnalysisManager.cancel(this.loudnormStatusSource)
+    }
+
+    this.loudnormStatusSource = source
+    const manager = this.loudnessAnalysisManager
+    if (!manager) {
+      this.loudnormStatus = 'fallback'
+      this.emit('loudnorm-status', { status: 'fallback' as LoudnormStatus, source })
+      return
+    }
+
+    const trackId =
+      this.queue.find((item) => item.source === source)?.id ?? source
+    const cached = await manager.peekCached({ trackId, filePath: source })
+    if (cached && Number.isFinite(cached.integratedLufs)) {
+      this.loudnormStatus = 'cached'
+      this.applyLoudnormMeasurementToQueue(source, cached)
+      this.emit('loudnorm-status', {
+        status: 'cached' as LoudnormStatus,
+        source,
+        analysis: cached
+      })
+      return
+    }
+
+    this.loudnormStatus = 'measuring'
+    this.emit('loudnorm-status', { status: 'measuring' as LoudnormStatus, source })
+    // Fire-and-forget analysis; first play uses fallback gain until cache is ready.
+    void manager.requestAnalysis({ trackId, filePath: source }).then((result) => {
+      // Drop stale results after mode leave / track change / destroy.
+      if (
+        this.destroyed ||
+        this.processing.volumeNormalization !== 'loudnorm' ||
+        this.loudnormStatusSource !== source
+      ) {
+        return
+      }
+      if (result.status === 'completed' || result.status === 'cached') {
+        this.loudnormStatus = 'cached'
+        this.applyLoudnormMeasurementToQueue(source, result.analysis)
+        this.emit('loudnorm-status', {
+          status: 'cached' as LoudnormStatus,
+          source,
+          analysis: result.analysis
+        })
+      } else if (result.status === 'unavailable') {
+        this.loudnormStatus = 'unavailable'
+        this.emit('loudnorm-status', { status: 'unavailable' as LoudnormStatus, source })
+      } else if (result.status === 'failed' || result.status === 'skipped') {
+        this.loudnormStatus =
+          result.status === 'skipped' && result.reason === 'cancelled' ? 'idle' : 'fallback'
+        this.emit('loudnorm-status', {
+          status: this.loudnormStatus as LoudnormStatus,
+          source,
+          reason: result.reason
+        })
+      }
+    })
+  }
+
+  /**
+   * Mode transitions outside play(): leaving loudnorm cancels in-flight analysis
+   * and emits idle; entering while a source is loaded re-runs prepare for that source.
+   */
+  private async syncLoudnormModeTransition(
+    previousMode: VolumeNormalizationMode,
+    nextMode: VolumeNormalizationMode
+  ): Promise<void> {
+    if (previousMode === nextMode) return
+
+    if (previousMode === 'loudnorm' && nextMode !== 'loudnorm') {
+      if (this.loudnormStatusSource && this.loudnessAnalysisManager) {
+        this.loudnessAnalysisManager.cancel(this.loudnormStatusSource)
+      }
+      this.loudnormStatus = 'idle'
+      this.loudnormStatusSource = null
+      this.emit('loudnorm-status', { status: 'idle' as LoudnormStatus, source: null })
+      return
+    }
+
+    if (nextMode === 'loudnorm') {
+      const source = this.playbackInfo.source?.trim()
+      if (source) {
+        await this.prepareLoudnormForPlay(source)
+      } else {
+        this.loudnormStatus = 'idle'
+        this.loudnormStatusSource = null
+        this.emit('loudnorm-status', { status: 'idle' as LoudnormStatus, source: null })
+      }
+    }
+  }
+
+  private applyLoudnormMeasurementToQueue(
+    source: string,
+    analysis: LoudnessAnalysisResult
+  ): void {
+    if (!Number.isFinite(analysis.integratedLufs)) return
+    let changed = false
+    this.queue = this.queue.map((item) => {
+      if (item.source !== source) return item
+      changed = true
+      return {
+        ...item,
+        measuredIntegratedLufs: analysis.integratedLufs,
+        measuredTruePeakDb: analysis.truePeakDb
+      }
+    })
+    if (!changed) return
+    this.queueJson = JSON.stringify(this.queue)
+    this.tryNative('注入 loudnorm 测量结果', (native) =>
+      native.LoadQueue?.(this.queueJson, this.playbackInfo.queueIndex)
+    )
   }
 
   async setPlayMode(mode: PlayMode): Promise<void> {
@@ -3347,9 +3613,40 @@ export class AudioEngineManager extends EventEmitter {
       this.scheduler.clearInterval(this.timer)
       this.timer = null
     }
+    if (this.loudnessAnalysisManager) {
+      this.loudnessAnalysisManager.cancel()
+    }
+    this.loudnormStatus = 'idle'
+    this.loudnormStatusSource = null
     this.tryNative('销毁停止', (native) => native.Stop())
     this.audioServiceBinding?.destroy()
     this.audioServiceBinding = null
+  }
+
+  /**
+   * After Settings clears the on-disk loudness cache: drop stale cached UI status
+   * and re-prepare the current source so the next gain path is honest.
+   */
+  async notifyLoudnessCacheCleared(): Promise<void> {
+    if (this.destroyed) return
+    if (this.loudnessAnalysisManager) {
+      this.loudnessAnalysisManager.cancel()
+      this.loudnessAnalysisManager.clearFailures()
+    }
+    if (this.processing.volumeNormalization !== 'loudnorm') {
+      this.loudnormStatus = 'idle'
+      this.loudnormStatusSource = null
+      this.emit('loudnorm-status', { status: 'idle' as LoudnormStatus, source: null })
+      return
+    }
+    const source = this.playbackInfo.source?.trim()
+    if (source) {
+      await this.prepareLoudnormForPlay(source)
+    } else {
+      this.loudnormStatus = 'idle'
+      this.loudnormStatusSource = null
+      this.emit('loudnorm-status', { status: 'idle' as LoudnormStatus, source: null })
+    }
   }
 
   private startClock(): void {
@@ -3626,6 +3923,10 @@ export class AudioEngineManager extends EventEmitter {
       capabilityReason: outputInfo.capabilityReason,
       crossfadeActive: info.crossfadeActive === true || this.processing.crossfadeSeconds > 0,
       crossfadeSeconds: info.crossfadeSeconds || this.processing.crossfadeSeconds || 0,
+      gaplessActive: info.gaplessActive === true,
+      preloadReady: info.preloadReady === true,
+      gaplessBlockedReason:
+        typeof info.gaplessBlockedReason === 'string' ? info.gaplessBlockedReason : '',
       perfectReason: outputInfo.perfectReason,
       nativePlaybackActive: this.nativePlaybackActive
     }

@@ -10,6 +10,8 @@ import type {
   AudioEngineDeviceOptionsChangedCallback,
   AudioEngineServiceCrashCallback,
   AudioEngineServiceReadyCallback,
+  AudioEngineLoudnormStatusCallback,
+  LoudnormStatusEvent,
   PlayerShortcutAction,
   PlayerShortcutStatus,
   PlaybackInfo,
@@ -45,6 +47,9 @@ import type {
   BpmAnalysisCompletedEvent,
   BpmAnalysisRequest,
   BpmAnalysisRequestResult,
+  LoudnessAnalysisCompletedEvent,
+  LoudnessAnalysisRequest,
+  LoudnessAnalysisRequestResult,
   MiniPlayerBootstrap,
   MiniPlayerCommand,
   MiniPlayerSettings,
@@ -55,9 +60,11 @@ import type {
   DspCorrectionImportResult,
   DspCorrectionProfile,
   DspGraphStatus,
+  DspOutputStageConfig,
   DspProfile,
   DspScene,
   DspSceneState,
+  DspStereoImageConfig,
   Vst3CatalogState
 } from './types'
 
@@ -68,6 +75,7 @@ const audioEngineReadyCallbacks = new Set<AudioEngineSimpleCallback>()
 const audioEngineErrorCallbacks = new Set<AudioEngineErrorCallback>()
 const audioEngineDisconnectedCallbacks = new Set<AudioEngineSimpleCallback>()
 const audioEnginePlaybackInfoCallbacks = new Set<AudioEnginePlaybackInfoCallback>()
+const audioEngineLoudnormStatusCallbacks = new Set<AudioEngineLoudnormStatusCallback>()
 const audioEngineConfigAppliedCallbacks = new Set<AudioEngineConfigAppliedCallback>()
 const audioEngineDeviceOptionsChangedCallbacks = new Set<AudioEngineDeviceOptionsChangedCallback>()
 const audioEngineServiceCrashCallbacks = new Set<AudioEngineServiceCrashCallback>()
@@ -124,6 +132,12 @@ ipcRenderer.on('audioEngine:disconnected', () => {
 ipcRenderer.on('audioEngine:playback-info', (_event, info: PlaybackInfo) => {
   for (const cb of audioEnginePlaybackInfoCallbacks) {
     cb(info)
+  }
+})
+
+ipcRenderer.on('audioEngine:loudnorm-status', (_event, event: LoudnormStatusEvent) => {
+  for (const cb of audioEngineLoudnormStatusCallbacks) {
+    cb(event)
   }
 })
 
@@ -361,6 +375,10 @@ const api = {
       ipcRenderer.invoke('audioEngine:getDspSceneState'),
     setDspScenes: (scenes: DspScene[], pinnedSceneId?: string | null): Promise<DspSceneState> =>
       ipcRenderer.invoke('audioEngine:setDspScenes', scenes, pinnedSceneId),
+    setOutputStage: (partial: Partial<DspOutputStageConfig>): Promise<DspSceneState> =>
+      ipcRenderer.invoke('audioEngine:setOutputStage', partial),
+    setStereoImage: (partial: Partial<DspStereoImageConfig>): Promise<DspSceneState> =>
+      ipcRenderer.invoke('audioEngine:setStereoImage', partial),
     applyDspScene: (
       sceneId: string | null,
       confirmDsdPcmFallback = false
@@ -460,6 +478,11 @@ const api = {
       return () => audioEnginePlaybackInfoCallbacks.delete(cb)
     },
 
+    onLoudnormStatus: (cb: AudioEngineLoudnormStatusCallback): (() => void) => {
+      audioEngineLoudnormStatusCallbacks.add(cb)
+      return () => audioEngineLoudnormStatusCallbacks.delete(cb)
+    },
+
     onConfigApplied: (cb: AudioEngineConfigAppliedCallback): (() => void) => {
       audioEngineConfigAppliedCallbacks.add(cb)
       return () => audioEngineConfigAppliedCallbacks.delete(cb)
@@ -489,6 +512,21 @@ const api = {
       const handler = (_event, data: BpmAnalysisCompletedEvent): void => cb(data)
       ipcRenderer.on('bpmAnalysis:completed', handler)
       return () => ipcRenderer.removeListener('bpmAnalysis:completed', handler)
+    }
+  },
+  loudnessAnalysis: {
+    request: (request: LoudnessAnalysisRequest): Promise<LoudnessAnalysisRequestResult> =>
+      ipcRenderer.invoke('loudnessAnalysis:request', request),
+    getCacheSize: (): Promise<number> => ipcRenderer.invoke('loudnessAnalysis:getCacheSize'),
+    clearCache: (): Promise<number> => ipcRenderer.invoke('loudnessAnalysis:clearCache'),
+    getStatus: (): Promise<{ status: string; source: string | null }> =>
+      ipcRenderer.invoke('loudnessAnalysis:getStatus'),
+    cancel: (filePath?: string): Promise<void> =>
+      ipcRenderer.invoke('loudnessAnalysis:cancel', filePath),
+    onCompleted: (cb: (event: LoudnessAnalysisCompletedEvent) => void): (() => void) => {
+      const handler = (_event, data: LoudnessAnalysisCompletedEvent): void => cb(data)
+      ipcRenderer.on('loudnessAnalysis:completed', handler)
+      return () => ipcRenderer.removeListener('loudnessAnalysis:completed', handler)
     }
   },
   opra: {

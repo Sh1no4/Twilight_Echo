@@ -10,7 +10,11 @@ import {
   type DspSceneState
 } from '../audioEngineManager'
 import { buildEffectiveAudioProcessingSettings } from '../audioProcessingEffective'
-import { createLegacyDspGraph, normalizeDspScenes } from '../../shared/dspGraph.ts'
+import {
+  createLegacyDspGraph,
+  extractStereoImageFromGraph,
+  normalizeDspScenes
+} from '../../shared/dspGraph.ts'
 import { derivePlaybackEvents } from '../plugins/events'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
 import { applyDiscordRpcSetting } from '../integrations/discord'
@@ -53,7 +57,17 @@ export function broadcastPlayerLifecycleEvents(info: PlaybackInfo): void {
 
 export function persistAudioProcessingState(processing: AudioProcessingSettings): SettingsSnapshot {
   const scenes = normalizeDspScenes(runtime.appSettings.dspScenes, processing).map((scene) =>
-    scene.id === 'default' ? { ...scene, graph: createLegacyDspGraph(processing) } : scene
+    scene.id === 'default'
+      ? {
+          ...scene,
+          graph: createLegacyDspGraph({
+            ...processing,
+            // Keep HiFi sample-rate lock and balance/phase when classic processing changes.
+            outputStage: scene.graph.outputStage,
+            stereoImage: extractStereoImageFromGraph(scene.graph)
+          })
+        }
+      : scene
   )
   runtime.appSettings = normalizeAppSettings({
     ...runtime.appSettings,

@@ -47,6 +47,19 @@ test('liked detail uses unified default favorites before provider liked APIs', (
   assert.match(source, /if \(unifiedTracks\.length > 0\)/)
 })
 
+test('streaming page supports multi-select batch favorite and delete on track lists', () => {
+  const searchSource = readFileSync(new URL('../StreamingSearch.vue', import.meta.url), 'utf8')
+
+  assert.match(source, /useTrackMultiSelect/)
+  assert.match(source, /handleStreamingBatchFavorite/)
+  assert.match(source, /handleStreamingBatchDelete/)
+  assert.match(source, /track-selected/)
+  assert.match(source, /selection-toolbar/)
+  assert.match(source, /onSearchTrackClickWithSelect/)
+  assert.match(searchSource, /batchFavorite/)
+  assert.match(searchSource, /track-selected/)
+})
+
 test('local dashboard top tracks resolve logical stats to playable local variants', () => {
   const dashboardSource = readFileSync(new URL('../LocalDashboard.vue', import.meta.url), 'utf8')
 

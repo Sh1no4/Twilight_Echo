@@ -67,6 +67,9 @@ struct ReplayGainInfo {
   std::optional<double> albumGainDb;
   std::optional<double> r128TrackGainDb;
   std::optional<double> r128AlbumGainDb;
+  // Offline EBU R128 measurement injected for loudnorm (never from Track/Album tags).
+  std::optional<double> measuredIntegratedLufs;
+  std::optional<double> measuredTruePeakDb;
 };
 
 struct AudioStreamInfo {
@@ -94,6 +97,17 @@ struct QueueItem {
   int sampleRate = 0;
   int64_t bitrate = 0;
   int bitDepth = 0;
+  // Optional loudnorm measurement injected by the host (cache hit / prior analysis).
+  std::optional<double> measuredIntegratedLufs;
+  std::optional<double> measuredTruePeakDb;
+  // Optional library / host-injected ReplayGain + R128 tags for cold start
+  // when decode-time tags are missing. Loudnorm never uses these as measurements.
+  std::optional<double> replayGainTrackGainDb;
+  std::optional<double> replayGainAlbumGainDb;
+  std::optional<double> replayGainTrackPeak;
+  std::optional<double> replayGainAlbumPeak;
+  std::optional<double> r128TrackGainDb;
+  std::optional<double> r128AlbumGainDb;
 };
 
 struct OutputInfo {
@@ -186,6 +200,7 @@ struct PerfectEvaluation {
   std::string backendPerfectReason;
   double volume = 1.0;
   bool replayGainActive = false;
+  bool loudnormActive = false;
   bool eqActive = false;
   bool convolverActive = false;
   bool crossfeedActive = false;

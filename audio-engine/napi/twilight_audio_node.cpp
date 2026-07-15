@@ -763,6 +763,29 @@ napi_value AnalyzeBpm(napi_env env, napi_callback_info info) {
   return json;
 }
 
+napi_value AnalyzeLoudness(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 2;
+  napi_value argv[2];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  if (argc < 1) {
+    napi_throw_type_error(env, nullptr, "响度分析需要音频文件路径");
+    return makeUndefined(env);
+  }
+  const std::string source = getStringArg(env, argv[0]);
+  const std::string options = argc > 1 ? getStringArg(env, argv[1]) : "{}";
+  size_t required = 0;
+  TAE_AnalyzeLoudness(g_engine, source.c_str(), options.c_str(), nullptr, 0, &required);
+  std::vector<char> buffer(required == 0 ? 1 : required);
+  const TAE_Result result =
+      TAE_AnalyzeLoudness(g_engine, source.c_str(), options.c_str(), buffer.data(), buffer.size(), &required);
+  if (result != TAE_RESULT_OK) return throwOnError(env, result);
+  napi_value json;
+  napi_create_string_utf8(env, buffer.data(), NAPI_AUTO_LENGTH, &json);
+  return json;
+}
+
 void cleanup(void*) {
   if (g_engine) {
     TAE_DestroyEngine(g_engine);
@@ -815,6 +838,7 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "GetSpectrumData", GetSpectrumData);
   define(env, exports, "GetVisualizationData", GetVisualizationData);
   define(env, exports, "AnalyzeBpm", AnalyzeBpm);
+  define(env, exports, "AnalyzeLoudness", AnalyzeLoudness);
   return exports;
 }
 

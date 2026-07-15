@@ -29,40 +29,43 @@ const DEFAULT_PLAYBACK_SESSION_AUTOSAVE_DEBOUNCE_MS = 1200
 const DEFAULT_PLAYBACK_SESSION_POSITION_AUTOSAVE_MS = 15000
 
 export function createPlaybackSessionPersistence(options: PlaybackSessionPersistenceOptions) {
-  const autosaveDelayMs =
-    options.autosaveDelayMs ?? DEFAULT_PLAYBACK_SESSION_AUTOSAVE_DEBOUNCE_MS
+  const autosaveDelayMs = options.autosaveDelayMs ?? DEFAULT_PLAYBACK_SESSION_AUTOSAVE_DEBOUNCE_MS
   const positionAutosaveMs =
     options.positionAutosaveMs ?? DEFAULT_PLAYBACK_SESSION_POSITION_AUTOSAVE_MS
   let playbackSessionAutosaveTimer: ReturnType<typeof setTimeout> | null = null
   let lastPlaybackSessionPositionSaveAt = 0
   let playbackSessionWritesEnabled = false
+  let playbackSessionWriteChain: Promise<void> = Promise.resolve()
   const stopHandles: Array<() => void> = []
 
   async function restoreSavedPlaybackSession(mode: PlaybackResumeMode): Promise<void> {
     playbackSessionWritesEnabled = false
     clearPlaybackSessionAutosave()
 
-    if (mode === 'off') {
-      await options.dataApi.clearPlaybackSession()
+    try {
+      if (mode === 'off') {
+        await options.dataApi.clearPlaybackSession()
+        return
+      }
+
+      const session = await options.dataApi.loadPlaybackSession()
+      if (!session?.track?.id) return
+
+      if (requiresPluginProviderSync(session.track)) {
+        await options.syncPluginProviders()
+      }
+
+      const restoredSession: PlaybackSession = {
+        ...session,
+        mode,
+        position: mode === 'trackAndPosition' ? session.position : 0
+      }
+      options.restorePlaybackSession(restoredSession)
+    } finally {
+      // A damaged old session must not prevent the next valid playback action
+      // from replacing it with a fresh snapshot.
       playbackSessionWritesEnabled = true
-      return
     }
-
-    const session = await options.dataApi.loadPlaybackSession()
-    if (!session?.track?.id) {
-      playbackSessionWritesEnabled = true
-      return
-    }
-
-    await options.syncPluginProviders()
-
-    const restoredSession: PlaybackSession = {
-      ...session,
-      mode,
-      position: mode === 'trackAndPosition' ? session.position : 0
-    }
-    options.restorePlaybackSession(restoredSession)
-    playbackSessionWritesEnabled = true
   }
 
   async function savePlaybackSessionForQuit(): Promise<void> {
@@ -76,17 +79,23 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
 
     const mode = getPlaybackResumeMode()
     if (mode === 'off') {
-      await options.dataApi.clearPlaybackSession()
+      await enqueuePlaybackSessionWrite(() => options.dataApi.clearPlaybackSession())
       return
     }
 
     const session = options.createPlaybackSession(mode)
     if (!session) {
-      await options.dataApi.clearPlaybackSession()
+      await enqueuePlaybackSessionWrite(() => options.dataApi.clearPlaybackSession())
       return
     }
 
-    await options.dataApi.savePlaybackSession(session)
+    await enqueuePlaybackSessionWrite(() => options.dataApi.savePlaybackSession(session))
+  }
+
+  function enqueuePlaybackSessionWrite(operation: () => Promise<void>): Promise<void> {
+    const nextWrite = playbackSessionWriteChain.catch(() => {}).then(operation)
+    playbackSessionWriteChain = nextWrite
+    return nextWrite
   }
 
   function clearPlaybackSessionAutosave(): void {
@@ -112,6 +121,16 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
   function startAutosaveWatchers(): void {
     if (!playbackSessionWritesEnabled || stopHandles.length > 0) return
 
+    // The first track can be selected while the application is still waiting
+    // for startup work. Vue watchers do not replay that change by default.
+    // Capture the current state before installing the reactive listeners.
+    if (options.currentTrack.value && getPlaybackResumeMode() !== 'off') {
+      lastPlaybackSessionPositionSaveAt = Date.now()
+      void savePlaybackSessionSnapshot().catch((err) => {
+        console.warn('自动保存播放会话失败:', err)
+      })
+    }
+
     stopHandles.push(
       watch(
         [() => options.currentTrack.value?.id, () => getPlaybackResumeMode()],
@@ -122,7 +141,10 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
           }
 
           lastPlaybackSessionPositionSaveAt = Date.now()
-          schedulePlaybackSessionAutosave()
+          clearPlaybackSessionAutosave()
+          void savePlaybackSessionSnapshot().catch((err) => {
+            console.warn('自动保存播放会话失败：', err)
+          })
         },
         { flush: 'post' }
       )
@@ -132,7 +154,11 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
       watch(
         [options.currentTime, options.isPlaying],
         ([, playing]) => {
-          if (!playing || !options.currentTrack.value || getPlaybackResumeMode() !== 'trackAndPosition') {
+          if (
+            !playing ||
+            !options.currentTrack.value ||
+            getPlaybackResumeMode() !== 'trackAndPosition'
+          ) {
             return
           }
 
@@ -167,4 +193,12 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
     startAutosaveWatchers,
     stop
   }
+}
+
+function requiresPluginProviderSync(track: Track): boolean {
+  if (track.source) return track.source !== 'local' && track.source !== 'ncm'
+  if (/^[a-zA-Z]:[\\/]/.test(track.id) || /^[\\/]/.test(track.id)) return false
+  const separatorIndex = track.id.indexOf(':')
+  const source = separatorIndex > 0 ? track.id.slice(0, separatorIndex) : 'local'
+  return source !== 'local' && source !== 'ncm'
 }

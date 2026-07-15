@@ -51,6 +51,7 @@ std::string formatSummary(const AudioFormat& format) {
 
 std::string processingReason(const PerfectEvaluation& evaluation) {
   if (std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon) return "Volume active";
+  if (evaluation.loudnormActive) return "Loudnorm active";
   if (evaluation.replayGainActive) return "ReplayGain active";
   if (evaluation.eqActive) return "EQ active";
   if (evaluation.convolverActive) return "Convolver active";
@@ -62,6 +63,7 @@ std::string processingReason(const PerfectEvaluation& evaluation) {
 
 std::string processingReasonCode(const PerfectEvaluation& evaluation) {
   if (std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon) return "volume_not_unity";
+  if (evaluation.loudnormActive) return "loudnorm_active";
   if (evaluation.replayGainActive) return "replaygain_active";
   if (evaluation.eqActive) return "eq_active";
   if (evaluation.convolverActive) return "convolver_active";
@@ -327,8 +329,9 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
   result.sourceFormatMatched = pcmFormatsExactMatch(evaluation.sourceFormat, evaluation.outputFormat);
   result.resampled = evaluation.backendResampled || !result.formatMatched;
   result.processingActive =
-      evaluation.replayGainActive || evaluation.eqActive || evaluation.convolverActive || evaluation.crossfeedActive ||
-      evaluation.nativeDspActive || evaluation.crossfadeActive || std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon;
+      evaluation.loudnormActive || evaluation.replayGainActive || evaluation.eqActive || evaluation.convolverActive ||
+      evaluation.crossfeedActive || evaluation.nativeDspActive || evaluation.crossfadeActive ||
+      std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon;
   result.routingPreservesSemantics = routingPreservesSemantics(
       evaluation.routingMode,
       decodedFormat.channelCount,

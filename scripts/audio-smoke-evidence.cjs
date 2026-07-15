@@ -1,6 +1,7 @@
 const fs = require('node:fs')
 const path = require('node:path')
 
+// Hardware surfaces must pass with artifacts for coverage.complete.
 const REQUIRED_SURFACES = [
   'WASAPI Exclusive',
   'ASIO',
@@ -8,6 +9,12 @@ const REQUIRED_SURFACES = [
   'Native DSD',
   'SACD ISO'
 ]
+
+// Product honesty surfaces: always listed; default not-run until maintainer records evidence.
+// They do NOT gate coverage.complete (still 5/5 hardware surfaces).
+const OPTIONAL_PRODUCT_SURFACES = ['Loudnorm', 'Gapless Album', 'Unity Volume']
+
+const ALL_REPORTED_SURFACES = [...REQUIRED_SURFACES, ...OPTIONAL_PRODUCT_SURFACES]
 
 const SURFACE_COLLECTION_GUIDES = {
   'WASAPI Exclusive': {
@@ -44,17 +51,43 @@ const SURFACE_COLLECTION_GUIDES = {
     artifact: 'output/audio-smoke-evidence/sacd-iso.json',
     evidence:
       'SACD ISO source metadata, selected track/area, dsdMode/native-or-dop-or-pcm result, and explicit DST/provider reason when applicable'
+  },
+  Loudnorm: {
+    command:
+      'Manual HiFi checklist: untagged FLAC → volumeNormalization=loudnorm → first play status measuring/fallback, perfectReasonCode=loudnorm_active; second play cache hit; record notes in output/audio-smoke-evidence/loudnorm.json',
+    artifact: 'output/audio-smoke-evidence/loudnorm.json',
+    evidence:
+      'mode=loudnorm (never track alias), loudnormActive=true, perfectReasonCode=loudnorm_active, status measuring|cached|fallback|unavailable; no fake success without ebur128'
+  },
+  'Gapless Album': {
+    command:
+      'Manual HiFi checklist: same-format album queue, gapless ON, crossfade OFF → observe gaplessActive/preloadReady and seamless promote without device stop; record output/audio-smoke-evidence/gapless-album.json',
+    artifact: 'output/audio-smoke-evidence/gapless-album.json',
+    evidence:
+      'gapless intent ON, gaplessActive/preloadReady observed on same-format neighbors; gaplessBlockedReason empty or documented; format_mismatch/crossfade/dsd_path when blocked'
+  },
+  'Unity Volume': {
+    command:
+      'Manual HiFi checklist: default volume 0.7 exclusive bypass → perfectReasonCode=volume_not_unity + Unity CTA; setVolume(1) restores path when other conditions allow; record output/audio-smoke-evidence/unity-volume.json',
+    artifact: 'output/audio-smoke-evidence/unity-volume.json',
+    evidence:
+      'default volume remains 0.7; volume_not_unity reason + Unity CTA; Unity sets volume=1.0 without silent default change'
   }
 }
 
 function inferSurface(entry) {
   const explicit = entry && entry.surface ? String(entry.surface) : ''
-  if (REQUIRED_SURFACES.includes(explicit)) return explicit
+  if (ALL_REPORTED_SURFACES.includes(explicit)) return explicit
 
   const text = [entry && entry.id, entry && entry.label, entry && entry.command, entry && entry.notes]
     .filter(Boolean)
     .join(' ')
     .toLowerCase()
+  if (text.includes('loudnorm') || text.includes('r128') || text.includes('lufs')) return 'Loudnorm'
+  if (text.includes('gapless')) return 'Gapless Album'
+  if (text.includes('unity') || text.includes('volume_not_unity') || text.includes('volume-not-unity')) {
+    return 'Unity Volume'
+  }
   if (text.includes('sacd') || text.includes('iso')) return 'SACD ISO'
   if (text.includes('native dsd') || text.includes('native-dsd')) return 'Native DSD'
   if (text.includes('dop')) return 'DoP DAC'
@@ -122,16 +155,19 @@ function materializeRequiredSurfaceRows(entries) {
     grouped.set(surface, list)
   }
 
-  for (const surface of REQUIRED_SURFACES) {
+  for (const surface of ALL_REPORTED_SURFACES) {
     const surfaceEntries = grouped.get(surface) || []
     if (surfaceEntries.length === 0) {
+      const isProduct = OPTIONAL_PRODUCT_SURFACES.includes(surface)
       rows.push(
         normalizeEntry({
           surface,
           id: surface.toLowerCase().replaceAll(' ', '-'),
           label: surface,
           status: 'not-run',
-          notes: 'No opt-in real-device smoke evidence recorded yet.'
+          notes: isProduct
+            ? 'No product honesty smoke evidence recorded yet (defaults to not-run).'
+            : 'No opt-in real-device smoke evidence recorded yet.'
         })
       )
       continue
@@ -140,7 +176,7 @@ function materializeRequiredSurfaceRows(entries) {
   }
 
   for (const [surface, surfaceEntries] of grouped.entries()) {
-    if (!REQUIRED_SURFACES.includes(surface)) rows.push(...surfaceEntries)
+    if (!ALL_REPORTED_SURFACES.includes(surface)) rows.push(...surfaceEntries)
   }
   return rows
 }
@@ -267,6 +303,7 @@ function buildAudioSmokeEvidenceReport(options = {}) {
     generatedAt,
     platform,
     requiredSurfaces: [...REQUIRED_SURFACES],
+    optionalProductSurfaces: [...OPTIONAL_PRODUCT_SURFACES],
     artifactVerification: {
       enabled: verifyArtifacts,
       baseDir: artifactBaseDir
@@ -285,8 +322,11 @@ function buildAudioSmokeEvidenceReport(options = {}) {
     `Coverage: ${coverage.passCount}/${coverage.requiredCount} required surfaces passed`,
     `Complete: ${coverage.complete ? 'yes' : 'no'}`,
     '',
-    'Required opt-in surfaces:',
+    'Required opt-in surfaces (gate `coverage.complete`):',
     ...REQUIRED_SURFACES.map((surface) => `- ${surface}`),
+    '',
+    'Optional product honesty surfaces (default `not-run`; do not gate complete):',
+    ...OPTIONAL_PRODUCT_SURFACES.map((surface) => `- ${surface}`),
     '',
     '| Surface | Status | Command | Artifact | Notes |',
     '|---|---|---|---|---|'
@@ -426,6 +466,8 @@ if (require.main === module) {
 
 module.exports = {
   REQUIRED_SURFACES,
+  OPTIONAL_PRODUCT_SURFACES,
+  ALL_REPORTED_SURFACES,
   buildAudioSmokeEvidenceReport,
   buildCollectionActionPlan,
   buildEntriesFromSmokeSummary,

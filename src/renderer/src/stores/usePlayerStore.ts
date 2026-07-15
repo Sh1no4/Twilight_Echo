@@ -10,6 +10,15 @@ import type {
   PlaybackResumeMode,
   PlayMode
 } from '../types/settings'
+import {
+  DEFAULT_DSP_OUTPUT_STAGE,
+  DEFAULT_DSP_STEREO_IMAGE,
+  extractStereoImageFromGraph,
+  mergeDspOutputStage,
+  mergeDspStereoImage,
+  type DspOutputStageConfig,
+  type DspStereoImageConfig
+} from '../../../shared/dspGraph.ts'
 import { extractDominantColor } from '../utils/colorExtractor'
 import {
   shouldReuseResolvedStreamUrl,
@@ -19,6 +28,10 @@ import { prepareNativeQueue } from '../utils/nativeQueuePreparation.ts'
 import { findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
 import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
 import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
+import {
+  evaluateNativePlaybackInfoIntent,
+  type NativePlaybackInfoIntent
+} from '../utils/nativePlaybackInfoIntent.ts'
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useSettingsStore } from './useSettingsStore'
 import { useMusicStore } from './useMusicStore'
@@ -371,7 +384,13 @@ const defaultAudioOutputConfig: OutputConfig = {
   wasapiExclusivePushMode: false
 }
 const audioOutputConfig = ref<OutputConfig>({ ...defaultAudioOutputConfig })
+/** Default-scene graph.outputStage (sample-rate lock / SRC / dither). Not OutputConfig. */
+const dspOutputStage = ref<DspOutputStageConfig>({ ...DEFAULT_DSP_OUTPUT_STAGE })
+/** Default-scene stereoField + channelStrip polarity (HiFi balance/phase). */
+const dspStereoImage = ref<DspStereoImageConfig>({ ...DEFAULT_DSP_STEREO_IMAGE })
 const playbackInfo = ref<NativePlaybackInfo | null>(null)
+const loudnormStatus = ref<'idle' | 'measuring' | 'cached' | 'fallback' | 'unavailable'>('idle')
+const loudnormStatusSource = ref<string | null>(null)
 const outputInfo = computed<NativeOutputInfo | null>(() => playbackInfo.value?.outputInfo ?? null)
 const visualizationOptions = {
   spectrumPoints: 64,
@@ -405,14 +424,10 @@ let rendererPlaybackWatchdogTimer: number | null = null
 const RENDERER_PLAYBACK_WATCHDOG_MS = 220
 const PLAYBACK_TOGGLE_INTENT_GRACE_MS = 300
 const NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS = 2500
+const NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS = 500
+const NATIVE_PLAYBACK_INFO_REFRESH_DELAY_MS = 80
 let playbackToggleIntent: { playing: boolean; expiresAt: number } | null = null
-let nativePlaybackInfoIntent: {
-  loadToken: number
-  trackId: string
-  queueIndex: number
-  source: string
-  expiresAt: number
-} | null = null
+let nativePlaybackInfoIntent: NativePlaybackInfoIntent | null = null
 const bpmAnalysisRequests = new Set<string>()
 
 function isActiveLoad(loadToken: number, track: Track): boolean {
@@ -426,13 +441,19 @@ function clearRendererPlaybackWatchdog(): void {
   }
 }
 
-function setNativePlaybackInfoIntent(loadToken: number, track: Track, source = ''): void {
+function setNativePlaybackInfoIntent(
+  loadToken: number,
+  track: Track,
+  source = '',
+  targetQueueIndex = queueIndex.value
+): void {
   nativePlaybackInfoIntent = {
     loadToken,
     trackId: track.id,
-    queueIndex: queueIndex.value,
+    queueIndex: targetQueueIndex,
     source,
-    expiresAt: getNowMs() + NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS
+    expiresAt: getNowMs() + NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS,
+    confirmedAt: null
   }
 }
 
@@ -446,23 +467,27 @@ function clearNativePlaybackInfoIntentForLoad(loadToken: number): void {
   }
 }
 
-function nativePlaybackInfoMatchesIntent(info: NativePlaybackInfo, infoIndex: number): boolean {
-  const intent = nativePlaybackInfoIntent
-  if (!intent) return true
-  const indexedTrack = infoIndex >= 0 ? queue.value[infoIndex] : null
-  if (indexedTrack?.id === intent.trackId) return true
-
-  const source = typeof info.source === 'string' ? info.source.trim() : ''
-  return source.length > 0 && (source === intent.source || source === intent.trackId)
-}
-
 function shouldIgnoreNativePlaybackInfo(info: NativePlaybackInfo, infoIndex: number): boolean {
-  if (!nativePlaybackInfoIntent) return false
-  if (getNowMs() > nativePlaybackInfoIntent.expiresAt) {
+  const intent = nativePlaybackInfoIntent
+  if (!intent) return false
+  const indexedTrack = infoIndex >= 0 ? queue.value[infoIndex] : null
+  const now = getNowMs()
+  const source = typeof info.source === 'string' ? info.source.trim() : ''
+  const decision = evaluateNativePlaybackInfoIntent(
+    intent,
+    { trackId: indexedTrack?.id ?? '', source },
+    now,
+    NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS
+  )
+  if (decision === 'expired') {
     clearNativePlaybackInfoIntent()
     return false
   }
-  return !nativePlaybackInfoMatchesIntent(info, infoIndex)
+  if (decision === 'match') {
+    if (intent.confirmedAt === null) intent.confirmedAt = now
+    return false
+  }
+  return true
 }
 
 function setPlaybackToggleIntent(playing: boolean): void {
@@ -739,12 +764,23 @@ async function refreshAudioOutputState(): Promise<void> {
   audioEngineStateRequest = (async () => {
     audioEngineStateRefreshQueued = false
     try {
-      const [outputState, processingSettings] = await Promise.all([
+      const [outputState, processingSettings, sceneState] = await Promise.all([
         api.getAudioOutputState(),
-        api.getAudioProcessing()
+        api.getAudioProcessing(),
+        api.getDspSceneState?.() ?? Promise.resolve(null)
       ])
       applyAudioOutputState(outputState)
       audioProcessing.value = processingSettings
+      if (sceneState) {
+        const defaultScene = sceneState.scenes?.find((scene) => scene.id === 'default')
+        const graph = defaultScene?.graph ?? sceneState.graph
+        if (graph?.outputStage) {
+          dspOutputStage.value = mergeDspOutputStage(graph.outputStage, {})
+        }
+        if (graph) {
+          dspStereoImage.value = extractStereoImageFromGraph(graph)
+        }
+      }
       audioEngineReady.value = true
       audioEngineError.value = null
     } catch (err) {
@@ -939,14 +975,20 @@ function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
   )
 }
 
-function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
+function applyNativePlaybackInfo(
+  info: NativePlaybackInfo,
+  options: { applyTrackWhenInactive?: boolean } = {}
+): boolean {
+  const infoIndex = findTrackIndexFromPlaybackInfo(info)
+  if (shouldIgnoreNativePlaybackInfo(info, infoIndex)) return false
+
   const normalizedInfo = normalizeNativePlaybackInfo(info)
   playbackInfo.value = normalizedInfo
-  const infoIndex = findTrackIndexFromPlaybackInfo(info)
-  if (shouldIgnoreNativePlaybackInfo(info, infoIndex)) return
-  if (nativePlaybackInfoIntent && nativePlaybackInfoMatchesIntent(info, infoIndex)) {
-    clearNativePlaybackInfoIntent()
+  if (info.nativePlaybackActive !== undefined) {
+    nativePlaybackActive = info.nativePlaybackActive === true
   }
+  if (!nativePlaybackActive && !options.applyTrackWhenInactive) return true
+
   let switchedTrack = false
 
   if (infoIndex >= 0) {
@@ -980,17 +1022,13 @@ function applyNativePlaybackInfo(info: NativePlaybackInfo): void {
 
   applyNativePlayingState(normalizedInfo.state === 'playing')
   isLoading.value = false
-  if (normalizedInfo.state === 'stopped') {
-    if (info.nativePlaybackActive === false) {
-      nativePlaybackActive = false
-    }
-  }
   autoAdvanceInFlight = false
   advancingFromEndedTrackId = ''
   restoredPlaybackPending = false
   restoredPlaybackPosition = 0
   pendingLoadStartTime = 0
   scheduleCrossfadeIfNeeded()
+  return true
 }
 
 async function syncNativeQueueState(): Promise<void> {
@@ -1041,8 +1079,38 @@ async function waitForNativeQueueStateSync(): Promise<void> {
   }
 }
 
+function getNativeQueueAdvanceTarget(
+  direction: 'next' | 'previous'
+): { track: Track; queueIndex: number } | null {
+  if (queue.value.length === 0) return null
+
+  const currentQueueIndex =
+    queueIndex.value >= 0 && queueIndex.value < queue.value.length
+      ? queueIndex.value
+      : Math.max(
+          0,
+          queue.value.findIndex((track) => track.id === currentTrack.value?.id)
+        )
+  const targetQueueIndex =
+    direction === 'next'
+      ? (currentQueueIndex + 1) % queue.value.length
+      : (currentQueueIndex - 1 + queue.value.length) % queue.value.length
+  const track = queue.value[targetQueueIndex]
+  return track ? { track, queueIndex: targetQueueIndex } : null
+}
+
 async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<void> {
-  clearNativePlaybackInfoIntent()
+  const target = getNativeQueueAdvanceTarget(direction)
+  if (target) {
+    setNativePlaybackInfoIntent(
+      activeLoadToken,
+      target.track,
+      getTrackAudioSource(target.track),
+      target.queueIndex
+    )
+  } else {
+    clearNativePlaybackInfoIntent()
+  }
   stopVisualizationPolling(false)
   try {
     isLoading.value = true
@@ -1052,15 +1120,27 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
     } else {
       await window.api.audioEngine.previous()
     }
-    await new Promise((resolve) => window.setTimeout(resolve, 80))
-    const info = await window.api.audioEngine.getPlaybackInfo()
-    applyNativePlaybackInfo(info)
+    await new Promise((resolve) =>
+      window.setTimeout(resolve, NATIVE_PLAYBACK_INFO_REFRESH_DELAY_MS)
+    )
+    let info = await window.api.audioEngine.getPlaybackInfo()
+    let applied = applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })
+    if (!applied) {
+      await new Promise((resolve) =>
+        window.setTimeout(resolve, NATIVE_PLAYBACK_INFO_REFRESH_DELAY_MS)
+      )
+      info = await window.api.audioEngine.getPlaybackInfo()
+      applied = applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })
+    }
+    if (!applied) return
+
     const track = currentTrack.value
     if (track && info.state !== 'playing') {
       nativePlaybackActive = false
       await loadAndPlay(track)
     }
   } catch (err) {
+    clearNativePlaybackInfoIntent()
     audioEngineError.value = err instanceof Error ? err.message : String(err)
     console.error('[音频引擎] 切换歌曲失败:', err)
     isLoading.value = false
@@ -1459,17 +1539,26 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     return track.filePath
   }
 
-  if (track.streamUrl && shouldReuseResolvedStreamUrl(source)) {
+  const ncmPlaybackQuality = appSettings.value.ncmPlaybackQuality
+  const canReuseNcmStream = source !== 'ncm' || track.streamQuality === ncmPlaybackQuality
+  if (track.streamUrl && shouldReuseResolvedStreamUrl(source) && canReuseNcmStream) {
     return track.streamUrl
   }
 
   await syncPluginProviders()
-  const streamUrl = await useMediaProviders().resolvePlaybackUrl(track)
+  const streamUrl = await useMediaProviders().resolvePlaybackUrl(
+    track,
+    source === 'ncm' ? { quality: ncmPlaybackQuality } : undefined
+  )
   if (!streamUrl) {
+    if (source === 'ncm') {
+      throw new Error('当前网易云账号没有可播放的音质，请检查登录状态、歌曲版权和会员权益')
+    }
     throw new Error(`Unable to resolve ${source} stream URL`)
   }
 
   track.streamUrl = streamUrl
+  if (source === 'ncm') track.streamQuality = ncmPlaybackQuality
   return streamUrl
 }
 
@@ -1623,14 +1712,18 @@ function setupAudioEngineListeners(): void {
 
   cleanupFns.push(
     api.onPlaybackInfo((info) => {
-      playbackInfo.value = normalizeNativePlaybackInfo(info)
-      if (info.nativePlaybackActive !== undefined) {
-        nativePlaybackActive = info.nativePlaybackActive === true
-      }
-      if (!nativePlaybackActive) return
       applyNativePlaybackInfo(info)
     })
   )
+
+  if (typeof api.onLoudnormStatus === 'function') {
+    cleanupFns.push(
+      api.onLoudnormStatus((event) => {
+        loudnormStatus.value = event.status
+        loudnormStatusSource.value = event.source
+      })
+    )
+  }
 
   if (api.onDeviceOptionsChanged) {
     cleanupFns.push(
@@ -1734,6 +1827,13 @@ function setupAudioEngineListeners(): void {
           ...defaultAudioProcessing,
           ...snapshot.settings.audioProcessing,
           eqBands: snapshot.settings.audioProcessing.eqBands.map((band) => ({ ...band }))
+        }
+        const defaultScene = snapshot.settings.dspScenes?.find((scene) => scene.id === 'default')
+        if (defaultScene?.graph?.outputStage) {
+          dspOutputStage.value = mergeDspOutputStage(defaultScene.graph.outputStage, {})
+        }
+        if (defaultScene?.graph) {
+          dspStereoImage.value = extractStereoImageFromGraph(defaultScene.graph)
         }
       })
     )
@@ -2028,6 +2128,26 @@ let mediaSessionHandlersBound = false
 let mediaSessionMetadataKey = ''
 let discordPlayStartTimestamp: number | null = null
 let desktopLyricsTimeThrottle = 0
+let selectedTrackSessionWriteChain: Promise<void> = Promise.resolve()
+
+function persistSelectedTrackSession(): void {
+  const mode = appSettings.value.playbackResumeMode
+  if (mode === 'off') return
+
+  const session = createPlaybackSession(mode)
+  if (!session) return
+
+  const dataApi = window.api?.data
+  if (!dataApi) return
+
+  const nextWrite = selectedTrackSessionWriteChain
+    .catch(() => {})
+    .then(() => dataApi.savePlaybackSession(session))
+  selectedTrackSessionWriteChain = nextWrite
+  void nextWrite.catch((err) => {
+    console.warn('保存已选曲目播放会话失败:', err)
+  })
+}
 
 function syncDesktopLyricsSnapshot(): void {
   const desktopLyricsApi = window.api?.desktopLyrics
@@ -2191,6 +2311,18 @@ function setupPlayerIntegrationSideEffects(): void {
   if (playerIntegrationSideEffectsSetup) return
   playerIntegrationSideEffectsSetup = true
 
+  // This is deliberately owned by the player state machine rather than the
+  // application shell. A user can select a track before asynchronous startup
+  // work completes, and that selection must still survive a later restart.
+  watch(
+    () => currentTrack.value?.id,
+    (trackId, previousTrackId) => {
+      if (!trackId || trackId === previousTrackId) return
+      persistSelectedTrackSession()
+    },
+    { flush: 'sync' }
+  )
+
   watch(
     () => appSettings.value?.smtcEnabled,
     () => {
@@ -2352,7 +2484,13 @@ function cloneTrackForPlaybackSession(track: Track): Track {
     bitrate: track.bitrate,
     bitDepth: track.bitDepth,
     bpm: track.bpm,
-    bpmAnalysis: track.bpmAnalysis
+    bpmAnalysis: track.bpmAnalysis,
+    replayGainTrackGainDb: track.replayGainTrackGainDb,
+    replayGainAlbumGainDb: track.replayGainAlbumGainDb,
+    replayGainTrackPeak: track.replayGainTrackPeak,
+    replayGainAlbumPeak: track.replayGainAlbumPeak,
+    r128TrackGainDb: track.r128TrackGainDb,
+    r128AlbumGainDb: track.r128AlbumGainDb
   }
   return cloned
 }
@@ -2447,7 +2585,11 @@ export function usePlayerStore(): {
   audioDeviceOptions: Ref<AudioDeviceOption[]>
   audioProcessing: Ref<AudioProcessingSettings>
   audioOutputConfig: Ref<OutputConfig>
+  dspOutputStage: Ref<DspOutputStageConfig>
+  dspStereoImage: Ref<DspStereoImageConfig>
   playbackInfo: Ref<NativePlaybackInfo | null>
+  loudnormStatus: Ref<'idle' | 'measuring' | 'cached' | 'fallback' | 'unavailable'>
+  loudnormStatusSource: Ref<string | null>
   outputInfo: ComputedRef<NativeOutputInfo | null>
   visualizationData: Ref<NativeVisualizationData>
   cyclePlayMode: () => void
@@ -2458,6 +2600,7 @@ export function usePlayerStore(): {
   prev: () => void
   seek: (time: number) => void
   setVolume: (vol: number) => void
+  setUnityVolume: () => void
   toggleExclusiveMode: () => Promise<void>
   setAudioOutput: (output: AudioOutputId, device?: string) => Promise<void>
   setAudioDevice: (device: string) => Promise<void>
@@ -2465,6 +2608,8 @@ export function usePlayerStore(): {
   refreshAudioOutputState: () => Promise<void>
   dismissAudioEngineRecoveryNotice: () => void
   setAudioProcessing: (settings: Partial<AudioProcessingSettings>) => Promise<void>
+  setOutputStage: (partial: Partial<DspOutputStageConfig>) => Promise<void>
+  setStereoImage: (partial: Partial<DspStereoImageConfig>) => Promise<void>
   toggleDspEnabled: () => Promise<void>
   toggleEqEnabled: () => Promise<void>
   toggleCrossfeed: () => Promise<void>
@@ -2514,6 +2659,11 @@ export function usePlayerStore(): {
 
   function setVolume(vol: number): void {
     volume.value = vol
+  }
+
+  /** Explicit user action for bit-perfect: software gain must be unity (1.0). Does not change default 0.7. */
+  function setUnityVolume(): void {
+    setVolume(1)
   }
 
   async function toggleExclusiveMode(): Promise<void> {
@@ -2566,6 +2716,21 @@ export function usePlayerStore(): {
       audioProcessing.value = cloneAudioProcessingSettings(
         await window.api.audioEngine.setAudioProcessing(nextSettings)
       )
+      // Classic processing rewrites the default graph but must keep sample-rate lock;
+      // re-sync output stage from scene state after apply.
+      try {
+        const sceneState = await window.api.audioEngine.getDspSceneState()
+        const defaultScene = sceneState?.scenes?.find((scene) => scene.id === 'default')
+        const graph = defaultScene?.graph ?? sceneState?.graph
+        if (graph?.outputStage) {
+          dspOutputStage.value = mergeDspOutputStage(graph.outputStage, {})
+        }
+        if (graph) {
+          dspStereoImage.value = extractStereoImageFromGraph(graph)
+        }
+      } catch {
+        // Scene state is optional for older bridges; processing still applied.
+      }
       playbackInfo.value = normalizeNativePlaybackInfo(
         await window.api.audioEngine.getPlaybackInfo()
       )
@@ -2573,6 +2738,75 @@ export function usePlayerStore(): {
     } catch (err) {
       console.error('[audio-engine] Failed to update audio processing settings:', err)
       await persistAudioProcessingFallback(nextSettings, err)
+    }
+  }
+
+  /**
+   * Patch default-scene graph.outputStage (sample-rate lock / resampler / dither).
+   * Does not invent OutputConfig fields — rate lock lives only on the DSP graph.
+   */
+  async function setOutputStage(partial: Partial<DspOutputStageConfig>): Promise<void> {
+    const next = mergeDspOutputStage(dspOutputStage.value, partial)
+    dspOutputStage.value = next
+    try {
+      const state = await window.api.audioEngine.setOutputStage(partial)
+      const defaultScene = state?.scenes?.find((scene) => scene.id === 'default')
+      if (defaultScene?.graph?.outputStage) {
+        dspOutputStage.value = mergeDspOutputStage(defaultScene.graph.outputStage, {})
+      } else if (state?.graph?.outputStage) {
+        dspOutputStage.value = mergeDspOutputStage(state.graph.outputStage, {})
+      }
+      playbackInfo.value = normalizeNativePlaybackInfo(
+        await window.api.audioEngine.getPlaybackInfo()
+      )
+    } catch (err) {
+      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      console.error('[音频引擎] 更新输出采样率锁失败:', err)
+      try {
+        const sceneState = await window.api.audioEngine.getDspSceneState()
+        const defaultScene = sceneState?.scenes?.find((scene) => scene.id === 'default')
+        const graph = defaultScene?.graph ?? sceneState?.graph
+        if (graph?.outputStage) {
+          dspOutputStage.value = mergeDspOutputStage(graph.outputStage, {})
+        }
+        if (graph) {
+          dspStereoImage.value = extractStereoImageFromGraph(graph)
+        }
+      } catch {
+        // keep optimistic value if scene state is unavailable
+      }
+    }
+  }
+
+  /**
+   * Patch default-scene stereoField balance/width + channelStrip polarity.
+   * Graph-only; not classic audioProcessing fields.
+   */
+  async function setStereoImage(partial: Partial<DspStereoImageConfig>): Promise<void> {
+    dspStereoImage.value = mergeDspStereoImage(dspStereoImage.value, partial)
+    try {
+      const state = await window.api.audioEngine.setStereoImage(partial)
+      const defaultScene = state?.scenes?.find((scene) => scene.id === 'default')
+      const graph = defaultScene?.graph ?? state?.graph
+      if (graph) {
+        dspStereoImage.value = extractStereoImageFromGraph(graph)
+      }
+      playbackInfo.value = normalizeNativePlaybackInfo(
+        await window.api.audioEngine.getPlaybackInfo()
+      )
+    } catch (err) {
+      audioEngineError.value = err instanceof Error ? err.message : String(err)
+      console.error('[音频引擎] 更新平衡/相位失败:', err)
+      try {
+        const sceneState = await window.api.audioEngine.getDspSceneState()
+        const defaultScene = sceneState?.scenes?.find((scene) => scene.id === 'default')
+        const graph = defaultScene?.graph ?? sceneState?.graph
+        if (graph) {
+          dspStereoImage.value = extractStereoImageFromGraph(graph)
+        }
+      } catch {
+        // keep optimistic value
+      }
     }
   }
 
@@ -2683,7 +2917,11 @@ export function usePlayerStore(): {
     audioDeviceOptions,
     audioProcessing,
     audioOutputConfig,
+    dspOutputStage,
+    dspStereoImage,
     playbackInfo,
+    loudnormStatus,
+    loudnormStatusSource,
     outputInfo,
     visualizationData,
     cyclePlayMode,
@@ -2694,6 +2932,7 @@ export function usePlayerStore(): {
     prev,
     seek,
     setVolume,
+    setUnityVolume,
     toggleExclusiveMode,
     setAudioOutput,
     setAudioDevice,
@@ -2701,6 +2940,8 @@ export function usePlayerStore(): {
     refreshAudioOutputState,
     dismissAudioEngineRecoveryNotice,
     setAudioProcessing,
+    setOutputStage,
+    setStereoImage,
     toggleDspEnabled,
     toggleEqEnabled,
     toggleCrossfeed,

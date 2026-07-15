@@ -7,6 +7,8 @@ namespace twilight::audio {
 namespace {
 
 constexpr double kGainEpsilonDb = 0.0001;
+constexpr double kDefaultLoudnormTargetLufs = -23.0;
+constexpr double kDefaultLoudnormTruePeakCeilingDb = -1.0;
 
 double dbToLinear(double db) {
   return std::pow(10.0, db / 20.0);
@@ -53,10 +55,35 @@ void ReplayGainProcessor::updateGain(const ReplayGainInfo& info) {
     return;
   }
 
+  if (config_.replayGainMode == ReplayGainMode::Loudnorm) {
+    const double targetLufs =
+        std::isfinite(config_.loudnormTargetLufs) ? config_.loudnormTargetLufs : kDefaultLoudnormTargetLufs;
+    const double truePeakCeilingDb = std::isfinite(config_.loudnormTruePeakCeilingDb)
+                                         ? config_.loudnormTruePeakCeilingDb
+                                         : kDefaultLoudnormTruePeakCeilingDb;
+
+    double gainDb = config_.replayGainFallbackDb + config_.replayGainPreampDb;
+    if (info.measuredIntegratedLufs && std::isfinite(*info.measuredIntegratedLufs)) {
+      gainDb = (targetLufs - *info.measuredIntegratedLufs) + config_.replayGainPreampDb;
+      if (info.measuredTruePeakDb && std::isfinite(*info.measuredTruePeakDb)) {
+        const double projectedTruePeak = *info.measuredTruePeakDb + gainDb;
+        if (projectedTruePeak > truePeakCeilingDb) {
+          gainDb -= (projectedTruePeak - truePeakCeilingDb);
+        }
+      }
+    }
+
+    gainDb_ = gainDb;
+    gainLinear_ = dbToLinear(gainDb_);
+    // Loudnorm stays active while enabled so perfect reporting stays honest even at ~0 dB.
+    active_ = true;
+    return;
+  }
+
   std::optional<double> selected;
   if (config_.replayGainMode == ReplayGainMode::Track) {
     selected = info.trackGainDb ? info.trackGainDb : info.r128TrackGainDb;
-  } else {
+  } else if (config_.replayGainMode == ReplayGainMode::Album) {
     selected = info.albumGainDb ? info.albumGainDb : info.r128AlbumGainDb;
   }
 

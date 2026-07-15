@@ -16,6 +16,11 @@ export interface MediaProviderLyrics {
   translatedLyrics: string | null
 }
 
+export interface PlaybackUrlOptions {
+  force?: boolean
+  quality?: string
+}
+
 export interface MediaProviderSearchResult<T> {
   items: T[]
   total: number
@@ -100,7 +105,7 @@ export interface MediaProvider {
   capabilities: MediaProviderCapability[]
   health?: MediaProviderHealth
   isEnabled?: () => boolean | Promise<boolean>
-  getPlaybackUrl?: (track: Track, options?: { force?: boolean }) => Promise<string | null>
+  getPlaybackUrl?: (track: Track, options?: PlaybackUrlOptions) => Promise<string | null>
   getLyrics?: (track: Track) => Promise<MediaProviderLyrics>
   searchSongs?: (
     keywords: string,
@@ -209,7 +214,7 @@ export class MediaProviderRegistry {
     return providerId ? this.get(providerId) : null
   }
 
-  async resolvePlaybackUrl(track: Track, options?: { force?: boolean }): Promise<string | null> {
+  async resolvePlaybackUrl(track: Track, options?: PlaybackUrlOptions): Promise<string | null> {
     const provider = this.getForTrack(track)
     if (!provider?.getPlaybackUrl) return null
     await assertProviderEnabled(provider)

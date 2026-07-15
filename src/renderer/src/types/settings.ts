@@ -5,6 +5,14 @@ export type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+export type NcmPlaybackQuality =
+  | 'auto'
+  | 'standard'
+  | 'exhigh'
+  | 'lossless'
+  | 'hires'
+  | 'jyeffect'
+  | 'sky'
 export type StartupHomePage = 'local' | 'streaming'
 export type PlayMode = 'sequential' | 'repeat' | 'shuffle'
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
@@ -275,6 +283,7 @@ export interface AppSettings {
   lyricAlign: LyricAlign
   lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
+  ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
   audioOutput: AudioOutputId
   audioDevice: string

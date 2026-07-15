@@ -43,8 +43,9 @@ std::string extractArrayField(const std::string& json, const std::string& key) {
 
 ReplayGainMode parseReplayGainMode(const std::string& mode) {
   const std::string normalized = toLower(mode);
-  if (normalized == "track" || normalized == "loudnorm") return ReplayGainMode::Track;
+  if (normalized == "track") return ReplayGainMode::Track;
   if (normalized == "album") return ReplayGainMode::Album;
+  if (normalized == "loudnorm") return ReplayGainMode::Loudnorm;
   return ReplayGainMode::Off;
 }
 
@@ -439,6 +440,10 @@ bool DspChain::configureGraphJson(const std::string& json, std::string* error) {
       next.replayGainPreampDb = std::clamp(extractNumberField(params, "preampDb").value_or(0.0), -24.0, 24.0);
       next.replayGainFallbackDb = std::clamp(extractNumberField(params, "fallbackDb").value_or(0.0), -24.0, 24.0);
       next.replayGainClip = extractBoolField(params, "clip").value_or(true);
+      next.loudnormTargetLufs =
+          std::clamp(extractNumberField(params, "targetLufs").value_or(-23.0), -70.0, 0.0);
+      next.loudnormTruePeakCeilingDb =
+          std::clamp(extractNumberField(params, "truePeakCeilingDb").value_or(-1.0), -12.0, 0.0);
       if (!runtime.enabled) next.replayGainMode = ReplayGainMode::Off;
     } else if (runtime.type == "equalizer") {
       runtime.processor = eq_;
@@ -900,6 +905,10 @@ DspConfig DspChain::parseConfigJson(const std::string& json) {
   config.replayGainPreampDb = std::clamp(extractNumberField(json, "replayGainPreamp").value_or(0.0), -24.0, 24.0);
   config.replayGainFallbackDb = std::clamp(extractNumberField(json, "replayGainFallback").value_or(0.0), -24.0, 24.0);
   config.replayGainClip = extractBoolField(json, "replayGainClip").value_or(true);
+  config.loudnormTargetLufs =
+      std::clamp(extractNumberField(json, "loudnormTargetLufs").value_or(-23.0), -70.0, 0.0);
+  config.loudnormTruePeakCeilingDb =
+      std::clamp(extractNumberField(json, "loudnormTruePeakCeilingDb").value_or(-1.0), -12.0, 0.0);
   config.eqEnabled = extractBoolField(json, "eqEnabled").value_or(false);
   config.eqMode = parseEqMode(extractStringField(json, "eqMode").value_or("graphic"));
   config.eqPreampDb = std::clamp(extractNumberField(json, "eqPreamp").value_or(0.0), -24.0, 24.0);
@@ -937,6 +946,7 @@ std::vector<DspEqBand> DspChain::parseEqBandsJson(const std::string& json, EqMod
 
 void DspChain::refreshStatusLocked() {
   status_.replayGainActive = replayGain_ && replayGain_->isActive();
+  status_.loudnormActive = status_.replayGainActive && config_.replayGainMode == ReplayGainMode::Loudnorm;
   status_.eqActive = eq_ && eq_->isActive();
   status_.convolverActive = convolver_ && convolver_->isActive();
   status_.crossfeedActive = crossfeed_ && crossfeed_->isActive();

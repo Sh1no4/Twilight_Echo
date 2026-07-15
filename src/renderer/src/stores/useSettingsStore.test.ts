@@ -85,16 +85,21 @@ test('startup home page setting is persisted and selectable from general setting
   assert.match(settingsPageSource, /流媒体主页/)
 })
 
-test('audio settings expose advanced replaygain, fft, and crossfeed controls without fake loudnorm', () => {
+test('audio settings expose advanced replaygain, fft, crossfeed, and real loudnorm option', () => {
   const settingsTypes = readFileSync(new URL('../types/settings.ts', import.meta.url), 'utf8')
   const storeSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
   const settingsPageSource = readFileSync(
     new URL('../components/SettingsPage.vue', import.meta.url),
     'utf8'
   )
+  const hifiSidebarSource = readFileSync(
+    new URL('../components/player-bar/HiFiSidebar.vue', import.meta.url),
+    'utf8'
+  )
 
   assert.match(settingsTypes, /crossfeedDelayMs: number/)
   assert.match(settingsTypes, /crossfeedCutoffHz: number/)
+  assert.match(settingsTypes, /'loudnorm'/)
   assert.match(storeSource, /crossfeedDelayMs: 0\.35/)
   assert.match(storeSource, /crossfeedCutoffHz: 700/)
   assert.match(settingsPageSource, /function setReplayGainFallback\(event: Event\): void/)
@@ -107,7 +112,9 @@ test('audio settings expose advanced replaygain, fft, and crossfeed controls wit
   assert.match(settingsPageSource, /FFT Capture/)
   assert.match(settingsPageSource, /Crossfeed Delay/)
   assert.match(settingsPageSource, /Crossfeed Cutoff/)
-  assert.doesNotMatch(settingsPageSource, /value: 'loudnorm'/)
+  assert.match(settingsPageSource, /VOLUME_NORMALIZATION_OPTIONS/)
+  assert.match(settingsPageSource, /replayGainOptions/)
+  assert.match(hifiSidebarSource, /VOLUME_NORMALIZATION_OPTIONS|value: 'loudnorm'/)
   assert.match(settingsPageSource, /High-Res 当前为自动链路能力/)
   assert.match(settingsPageSource, /function capabilityStateLabel/)
   assert.match(settingsPageSource, /DoP \{\{ capabilityStateLabel\(device\.dopSupportState\) \}\}/)
@@ -188,6 +195,9 @@ test('cache strategy settings expose separate artifact and provider-controlled a
   assert.match(storeSource, /formattedBpmAnalysisCacheSize/)
   assert.match(storeSource, /window\.api\.bpmAnalysis\.getCacheSize\(\)/)
   assert.match(storeSource, /window\.api\.bpmAnalysis\.clearCache\(\)/)
+  assert.match(storeSource, /window\.api\.loudnessAnalysis\.getCacheSize\(\)/)
+  assert.match(storeSource, /window\.api\.loudnessAnalysis\.clearCache\(\)/)
+  assert.match(storeSource, /formattedLoudnessAnalysisCacheSize/)
   assert.match(
     readFileSync(new URL('./useMusicStore.ts', import.meta.url), 'utf8'),
     /function clearBpmAnalysis\(\): boolean/
@@ -196,6 +206,7 @@ test('cache strategy settings expose separate artifact and provider-controlled a
   assert.match(settingsPageSource, /function setStreamingAudioCachePolicy\(event: Event\): void/)
   assert.match(settingsPageSource, /function toggleAutoAnalyzeBpm\(\): void/)
   assert.match(settingsPageSource, /function confirmClearBpmAnalysisCache\(\): Promise<void>/)
+  assert.match(settingsPageSource, /function confirmClearLoudnessAnalysisCache\(\): Promise<void>/)
   assert.match(settingsPageSource, /clearBpmAnalysisFromPlaybackState\(\)/)
   assert.match(settingsPageSource, /封面缓存/)
   assert.match(settingsPageSource, /歌词缓存/)
@@ -203,6 +214,7 @@ test('cache strategy settings expose separate artifact and provider-controlled a
   assert.match(settingsPageSource, /流媒体音频缓存/)
   assert.match(settingsPageSource, /BPM 自动分析/)
   assert.match(settingsPageSource, /BPM 分析缓存/)
+  assert.match(settingsPageSource, /Loudnorm \/ 响度分析缓存/)
   assert.match(settingsPageSource, /由 Provider 规则控制/)
   assert.match(pluginIpcSource, /runtime\.appSettings\.cachePolicy\.streamingAudio !== 'provider'/)
   assert.match(pluginIpcSource, /return null/)

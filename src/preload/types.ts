@@ -9,9 +9,11 @@ export type {
   DspCorrectionImportResult,
   DspCorrectionProfile,
   DspGraphStatus,
+  DspOutputStageConfig,
   DspProfile,
   DspScene,
   DspSceneState,
+  DspStereoImageConfig,
   Vst3CatalogState
 } from '../shared/dspGraph.ts'
 
@@ -26,6 +28,14 @@ export type {
 export type AudioEngineSimpleCallback = () => void
 export type AudioEngineErrorCallback = (message: string) => void
 export type AudioEnginePlaybackInfoCallback = (info: PlaybackInfo) => void
+export type LoudnormStatus = 'idle' | 'measuring' | 'cached' | 'fallback' | 'unavailable'
+export interface LoudnormStatusEvent {
+  status: LoudnormStatus
+  source: string | null
+  reason?: string
+  analysis?: LoudnessAnalysisResult
+}
+export type AudioEngineLoudnormStatusCallback = (event: LoudnormStatusEvent) => void
 export interface AudioEngineConfigAppliedEvent {
   requestedConfigRevision: number
   appliedConfigRevision: number
@@ -51,6 +61,14 @@ export interface PlayerShortcutStatus {
 }
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+export type NcmPlaybackQuality =
+  | 'auto'
+  | 'standard'
+  | 'exhigh'
+  | 'lossless'
+  | 'hires'
+  | 'jyeffect'
+  | 'sky'
 export type StartupHomePage = 'local' | 'streaming'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
@@ -150,6 +168,34 @@ export interface BpmAnalysisCompletedEvent {
   trackId: string
   filePath: string
   analysis: BpmAnalysisResult
+}
+export interface LoudnessAnalysisResult {
+  integratedLufs: number
+  truePeakDb: number
+  source: 'analyzed'
+  analyzedAt: string
+  algorithmVersion: number
+  sampleRate?: number
+  channels?: number
+  analyzedFrames?: number
+  available?: boolean
+}
+export interface LoudnessAnalysisRequest {
+  trackId: string
+  filePath: string
+  targetLufs?: number
+  truePeakCeilingDb?: number
+}
+export type LoudnessAnalysisRequestResult =
+  | { status: 'completed'; analysis: LoudnessAnalysisResult }
+  | { status: 'cached'; analysis: LoudnessAnalysisResult }
+  | { status: 'skipped'; reason: string }
+  | { status: 'failed'; reason: string }
+  | { status: 'unavailable'; reason: string }
+export interface LoudnessAnalysisCompletedEvent {
+  trackId: string
+  filePath: string
+  analysis: LoudnessAnalysisResult
 }
 export type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
 export type TwilightPluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
@@ -426,12 +472,19 @@ export interface TrackData {
   source?: TrackSource
   ncmSongId?: number
   streamUrl?: string | null
+  streamQuality?: NcmPlaybackQuality
   format?: string
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
   bpm?: number
   bpmAnalysis?: BpmAnalysisResult
+  replayGainTrackGainDb?: number
+  replayGainAlbumGainDb?: number
+  replayGainTrackPeak?: number
+  replayGainAlbumPeak?: number
+  r128TrackGainDb?: number
+  r128AlbumGainDb?: number
 }
 
 export interface AudioEngineQueueItem {
@@ -445,6 +498,14 @@ export interface AudioEngineQueueItem {
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
+  measuredIntegratedLufs?: number
+  measuredTruePeakDb?: number
+  replayGainTrackGainDb?: number
+  replayGainAlbumGainDb?: number
+  replayGainTrackPeak?: number
+  replayGainAlbumPeak?: number
+  r128TrackGainDb?: number
+  r128AlbumGainDb?: number
 }
 
 export interface PlaybackSession {
@@ -546,6 +607,7 @@ export interface AppSettings {
   lyricAlign: LyricAlign
   lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
+  ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
   audioOutput: AudioOutputId
   audioDevice: string
@@ -966,6 +1028,8 @@ export interface PlaybackInfo extends PlaybackOutputInfoMirror {
   dsdRate: number
   gaplessActive: boolean
   preloadReady: boolean
+  /** Empty when unblocked; else disabled | dsd_path | typed_passthrough | crossfade | format_mismatch */
+  gaplessBlockedReason: string
   upcomingTrack: AudioEngineQueueItem | null
 }
 

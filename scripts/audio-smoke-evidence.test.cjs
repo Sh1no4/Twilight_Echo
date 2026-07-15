@@ -61,16 +61,44 @@ test('audio smoke evidence report records opt-in real-device surfaces', () => {
     'Native DSD',
     'SACD ISO'
   ])
-  assert.equal(report.json.surfaceRows.length, 5)
+  // 5 required hardware + 3 product honesty surfaces
+  assert.equal(report.json.surfaceRows.length, 8)
+  assert.deepEqual(report.json.optionalProductSurfaces, [
+    'Loudnorm',
+    'Gapless Album',
+    'Unity Volume'
+  ])
   assert.equal(
     report.json.surfaceRows.some(
       (entry) => entry.surface === 'SACD ISO' && entry.status === 'not-run'
     ),
     true
   )
+  assert.equal(
+    report.json.surfaceRows.some(
+      (entry) => entry.surface === 'Loudnorm' && entry.status === 'not-run'
+    ),
+    true
+  )
+  assert.equal(
+    report.json.surfaceRows.some(
+      (entry) => entry.surface === 'Gapless Album' && entry.status === 'not-run'
+    ),
+    true
+  )
+  assert.equal(
+    report.json.surfaceRows.some(
+      (entry) => entry.surface === 'Unity Volume' && entry.status === 'not-run'
+    ),
+    true
+  )
   assert.match(report.markdown, /\| SACD ISO \| not-run \|/)
+  assert.match(report.markdown, /\| Loudnorm \| not-run \|/)
+  assert.match(report.markdown, /\| Gapless Album \| not-run \|/)
+  assert.match(report.markdown, /\| Unity Volume \| not-run \|/)
   assert.match(report.markdown, /Coverage: 1\/5 required surfaces passed/)
   assert.match(report.markdown, /Complete: no/)
+  assert.match(report.markdown, /Optional product honesty surfaces/)
   assert.match(report.markdown, /## Collection Action Plan/)
   assert.match(report.markdown, /npm run smoke:asio-native-dsd/)
   assert.match(report.markdown, /output\/audio-smoke-evidence\/sacd-iso\.json/)
@@ -124,7 +152,16 @@ test('audio smoke evidence report expands missing required surfaces as not-run',
 
   assert.deepEqual(
     report.json.surfaceRows.map((entry) => entry.surface),
-    ['WASAPI Exclusive', 'ASIO', 'DoP DAC', 'Native DSD', 'SACD ISO']
+    [
+      'WASAPI Exclusive',
+      'ASIO',
+      'DoP DAC',
+      'Native DSD',
+      'SACD ISO',
+      'Loudnorm',
+      'Gapless Album',
+      'Unity Volume'
+    ]
   )
   assert.equal(report.json.surfaceRows[0].status, 'pass')
   assert.equal(report.json.surfaceRows[1].status, 'not-run')
@@ -148,6 +185,58 @@ test('audio smoke evidence coverage is complete only when every required surface
   assert.deepEqual(coverage.unbackedPassSurfaces, [])
   assert.deepEqual(coverage.missingArtifactSurfaces, [])
   assert.deepEqual(buildCollectionActionPlan(coverage), [])
+})
+
+test('product honesty surfaces default not-run and do not gate coverage.complete', () => {
+  const report = buildAudioSmokeEvidenceReport({
+    generatedAt: '2026-07-15T00:00:00.000Z',
+    platform: 'win32',
+    entries: ['WASAPI Exclusive', 'ASIO', 'DoP DAC', 'Native DSD', 'SACD ISO'].map((surface) => ({
+      surface,
+      id: surface.toLowerCase().replaceAll(' ', '-'),
+      label: surface,
+      status: 'pass',
+      artifact: `output/audio-smoke-evidence/${surface.toLowerCase().replaceAll(' ', '-')}.json`
+    }))
+  })
+
+  assert.equal(report.json.coverage.complete, true)
+  assert.equal(report.json.coverage.passCount, 5)
+  assert.equal(report.json.surfaceRows.length, 8)
+  for (const surface of ['Loudnorm', 'Gapless Album', 'Unity Volume']) {
+    const row = report.json.surfaceRows.find((entry) => entry.surface === surface)
+    assert.equal(row?.status, 'not-run')
+  }
+  // Product surfaces never appear in actionPlan (only required hardware gaps).
+  assert.equal(
+    report.json.actionPlan.some((item) =>
+      ['Loudnorm', 'Gapless Album', 'Unity Volume'].includes(item.surface)
+    ),
+    false
+  )
+
+  const withLoudnorm = buildAudioSmokeEvidenceReport({
+    generatedAt: '2026-07-15T00:00:00.000Z',
+    platform: 'win32',
+    entries: [
+      {
+        surface: 'Loudnorm',
+        id: 'loudnorm-manual',
+        label: 'Loudnorm EBU R128 path',
+        status: 'pass',
+        artifact: 'output/audio-smoke-evidence/loudnorm.json',
+        notes: 'measuring then cached; perfectReasonCode=loudnorm_active'
+      }
+    ]
+  })
+  assert.equal(
+    withLoudnorm.json.surfaceRows.some(
+      (entry) => entry.surface === 'Loudnorm' && entry.status === 'pass'
+    ),
+    true
+  )
+  assert.equal(withLoudnorm.json.coverage.complete, false)
+  assert.match(withLoudnorm.markdown, /loudnorm_active/)
 })
 
 test('audio smoke evidence does not count pass rows without artifacts as complete evidence', () => {

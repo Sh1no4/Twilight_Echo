@@ -26,18 +26,29 @@ const props = defineProps<{
   likingTracks: Set<number>
   isTrackLiked: (id: number | undefined) => boolean
   formatTime: (time: number) => string
+  selectedIds?: Set<string>
+  hasSelection?: boolean
+  selectedCount?: number
+  selectionAllFavorited?: boolean
 }>()
 
 const emit = defineEmits<{
-  searchTrackClick: [track: Track]
+  searchTrackClick: [track: Track, event: MouseEvent]
   likeTrack: [track: Track, event: MouseEvent]
   openPlaylist: [playlist: MediaProviderPlaylistSummary]
   openArtist: [artist: MediaProviderArtistSummary]
   pageChange: [event: PageState]
   retry: []
+  batchFavorite: []
+  batchDelete: []
+  clearSelection: []
 }>()
 
 const pageSize = 30
+
+function isSelected(trackId: string): boolean {
+  return props.selectedIds?.has(trackId) ?? false
+}
 
 function emitPage(first: number): void {
   const normalizedFirst = Math.max(0, Math.min(first, Math.max(0, props.searchTotal - pageSize)))
@@ -70,6 +81,23 @@ function emitPage(first: number): void {
       <div v-else class="search-results-content">
         <div v-if="searchType === 'songs'" class="detail-content">
           <div class="track-table-wrapper">
+            <div v-if="hasSelection" class="selection-toolbar">
+              <span class="selection-count">已选择 {{ selectedCount }} 首</span>
+              <div class="selection-actions">
+                <button type="button" class="selection-btn" @click="emit('batchFavorite')">
+                  <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+                  <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
+                </button>
+                <button type="button" class="selection-btn danger" @click="emit('batchDelete')">
+                  <i class="pi pi-trash"></i>
+                  <span>删除</span>
+                </button>
+                <button type="button" class="selection-btn ghost" @click="emit('clearSelection')">
+                  <i class="pi pi-times"></i>
+                  <span>取消</span>
+                </button>
+              </div>
+            </div>
             <table class="track-table">
               <thead>
                 <tr>
@@ -86,8 +114,11 @@ function emitPage(first: number): void {
                   v-for="(track, index) in searchResults"
                   :key="track.id"
                   class="track-row"
-                  :class="{ 'track-playing': currentTrack?.id === track.id }"
-                  @click="emit('searchTrackClick', track)"
+                  :class="{
+                    'track-playing': currentTrack?.id === track.id,
+                    'track-selected': isSelected(track.id)
+                  }"
+                  @click="emit('searchTrackClick', track, $event)"
                 >
                   <td class="col-cover">
                     <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
@@ -312,6 +343,64 @@ function emitPage(first: number): void {
   letter-spacing: 0;
   background: #fbfcff;
   border-bottom: 1px solid #eef1f6;
+}
+
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 10px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: rgba(124, 77, 255, 0.08);
+  border: 1px solid rgba(124, 77, 255, 0.18);
+}
+
+.selection-count {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--te-neutral-800, #333);
+  white-space: nowrap;
+}
+
+.selection-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.selection-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--te-neutral-800, #333);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.selection-btn:hover {
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.selection-btn.danger {
+  color: #b91c1c;
+}
+
+.selection-btn.ghost {
+  background: transparent;
+  color: var(--te-neutral-600, #666);
+}
+
+.track-row.track-selected {
+  background: rgba(124, 77, 255, 0.12) !important;
 }
 
 .track-row {

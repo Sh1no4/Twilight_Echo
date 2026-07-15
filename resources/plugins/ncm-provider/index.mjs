@@ -6,6 +6,16 @@ const COOKIE_KEY = 'cookie'
 const PC_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0'
 const TRANSIENT_LOGIN_ERROR_CODES = new Set([301, 502, 503, 460])
+const NCM_PLAYBACK_QUALITY_FALLBACKS = {
+  // Automatic playback stays on the conventional stereo Hi-Res path; spatial mixes are opt-in.
+  auto: ['hires', 'lossless', 'exhigh', 'standard'],
+  sky: ['sky', 'jyeffect', 'hires', 'lossless', 'exhigh', 'standard'],
+  jyeffect: ['jyeffect', 'hires', 'lossless', 'exhigh', 'standard'],
+  hires: ['hires', 'lossless', 'exhigh', 'standard'],
+  lossless: ['lossless', 'exhigh', 'standard'],
+  exhigh: ['exhigh', 'standard'],
+  standard: ['standard']
+}
 const playlistTrackCache = new Map()
 const streamUrlCache = new Map()
 let likedTracksCache = null
@@ -900,16 +910,19 @@ function getSongIdFromTrack(track) {
   return Number.isFinite(songId) && songId > 0 ? songId : null
 }
 
-function getPlaybackUrlRequestPaths(songId) {
+function normalizePlaybackQuality(value) {
+  return typeof value === 'string' && value in NCM_PLAYBACK_QUALITY_FALLBACKS ? value : 'auto'
+}
+
+function getPlaybackQualityFallbacks(quality) {
+  return NCM_PLAYBACK_QUALITY_FALLBACKS[normalizePlaybackQuality(quality)]
+}
+
+function getPlaybackUrlRequestPaths(songId, quality) {
   const encodedId = encodeURIComponent(String(songId))
-  return [
-    `/song/url?id=${encodedId}&br=999000`,
-    `/song/url?id=${encodedId}&br=320000`,
-    `/song/url?id=${encodedId}&br=128000`,
-    `/song/url/v1?id=${encodedId}&level=exhigh`,
-    `/song/url/v1?id=${encodedId}&level=higher`,
-    `/song/url/v1?id=${encodedId}&level=standard`
-  ]
+  return getPlaybackQualityFallbacks(quality).map(
+    (level) => `/song/url/v1?id=${encodedId}&level=${encodeURIComponent(level)}`
+  )
 }
 
 function getPlaybackStreamItems(data) {
@@ -924,23 +937,33 @@ function getPlaybackFailureMessage(data, streamItem) {
   return typeof message === 'string' && message.trim() ? message.trim() : ''
 }
 
+function getOfficialPlaybackUrl(data, streamItem) {
+  const code = Number(streamItem?.code ?? data?.code)
+  if (Number.isFinite(code) && code !== 200) return null
+  const url = streamItem?.url
+  return typeof url === 'string' && url.trim() ? url.trim() : null
+}
+
 async function getPlaybackUrl(track, options = {}) {
   const songId = getSongIdFromTrack(track)
   if (songId == null) throw new Error('Missing NetEase song ID, cannot play')
   const force = options?.force === true
+  const quality = normalizePlaybackQuality(options?.quality)
+  const cacheKey = `${songId}:${quality}`
 
-  if (!force && streamUrlCache.has(songId)) return streamUrlCache.get(songId)
+  if (!force && streamUrlCache.has(cacheKey)) return streamUrlCache.get(cacheKey)
 
   let lastFailureMessage = ''
-  for (const path of getPlaybackUrlRequestPaths(songId)) {
+  for (const path of getPlaybackUrlRequestPaths(songId, quality)) {
     try {
       const data = await requestAuthed(path)
       const streamItems = getPlaybackStreamItems(data)
       const streamItem = streamItems[0] ?? {}
-      const url = typeof streamItem.url === 'string' && streamItem.url ? streamItem.url : null
+      // Only use a URL explicitly authorized by the signed-in account's official endpoint.
+      const url = getOfficialPlaybackUrl(data, streamItem)
       if (url) {
         rememberStreamAudioMeta(songId, streamItem)
-        streamUrlCache.set(songId, url)
+        streamUrlCache.set(cacheKey, url)
         void ncmApi
           .cacheSong(songId, url, track?.fileName)
           .catch(() => {})

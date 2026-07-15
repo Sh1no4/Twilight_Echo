@@ -4,9 +4,11 @@ import type {
   DspCorrectionImportResult,
   DspCorrectionProfile,
   DspGraphStatus,
+  DspOutputStageConfig,
   DspProfile,
   DspScene,
   DspSceneState,
+  DspStereoImageConfig,
   Vst3CatalogState
 } from '../shared/dspGraph.ts'
 
@@ -29,12 +31,20 @@ interface TrackData {
   source?: TrackSource
   ncmSongId?: number
   streamUrl?: string | null
+  streamQuality?: NcmPlaybackQuality
   format?: string
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
   bpm?: number
   bpmAnalysis?: BpmAnalysisResult
+  /** Library-scanned ReplayGain / R128 tags (dB). Loudnorm never uses these as measurements. */
+  replayGainTrackGainDb?: number
+  replayGainAlbumGainDb?: number
+  replayGainTrackPeak?: number
+  replayGainAlbumPeak?: number
+  r128TrackGainDb?: number
+  r128AlbumGainDb?: number
 }
 
 interface AudioEngineEvent {
@@ -54,6 +64,14 @@ interface PlayerShortcutStatus {
 }
 type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
+type NcmPlaybackQuality =
+  | 'auto'
+  | 'standard'
+  | 'exhigh'
+  | 'lossless'
+  | 'hires'
+  | 'jyeffect'
+  | 'sky'
 type StartupHomePage = 'local' | 'streaming'
 type UiDensity = 'compact' | 'standard' | 'comfortable'
 type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
@@ -100,6 +118,41 @@ interface BpmAnalysisCompletedEvent {
   trackId: string
   filePath: string
   analysis: BpmAnalysisResult
+}
+interface LoudnessAnalysisResult {
+  integratedLufs: number
+  truePeakDb: number
+  source: 'analyzed'
+  analyzedAt: string
+  algorithmVersion: number
+  sampleRate?: number
+  channels?: number
+  analyzedFrames?: number
+  available?: boolean
+}
+interface LoudnessAnalysisRequest {
+  trackId: string
+  filePath: string
+  targetLufs?: number
+  truePeakCeilingDb?: number
+}
+type LoudnessAnalysisRequestResult =
+  | { status: 'completed'; analysis: LoudnessAnalysisResult }
+  | { status: 'cached'; analysis: LoudnessAnalysisResult }
+  | { status: 'skipped'; reason: string }
+  | { status: 'failed'; reason: string }
+  | { status: 'unavailable'; reason: string }
+interface LoudnessAnalysisCompletedEvent {
+  trackId: string
+  filePath: string
+  analysis: LoudnessAnalysisResult
+}
+type LoudnormStatus = 'idle' | 'measuring' | 'cached' | 'fallback' | 'unavailable'
+interface LoudnormStatusEvent {
+  status: LoudnormStatus
+  source: string | null
+  reason?: string
+  analysis?: LoudnessAnalysisResult
 }
 type TwilightPluginType = 'provider' | 'tool' | 'ui' | 'theme' | 'dsp'
 type TwilightPluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
@@ -192,6 +245,14 @@ interface AudioEngineQueueItem {
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
+  measuredIntegratedLufs?: number
+  measuredTruePeakDb?: number
+  replayGainTrackGainDb?: number
+  replayGainAlbumGainDb?: number
+  replayGainTrackPeak?: number
+  replayGainAlbumPeak?: number
+  r128TrackGainDb?: number
+  r128AlbumGainDb?: number
 }
 
 interface EqualizerBand {
@@ -519,6 +580,7 @@ interface AppSettings {
   lyricAlign: LyricAlign
   lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
+  ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
   audioOutput: AudioOutputId
   audioDevice: string
@@ -1038,6 +1100,8 @@ interface PlaybackInfo extends PlaybackOutputInfoMirror {
   dsdRate: number
   gaplessActive: boolean
   preloadReady: boolean
+  /** Empty when unblocked; else disabled | dsd_path | typed_passthrough | crossfade | format_mismatch */
+  gaplessBlockedReason: string
   upcomingTrack: AudioEngineQueueItem | null
 }
 
@@ -1076,6 +1140,8 @@ interface AudioEngineAPI {
   getAudioProcessing: () => Promise<AudioProcessingSettings>
   getDspSceneState: () => Promise<DspSceneState>
   setDspScenes: (scenes: DspScene[], pinnedSceneId?: string | null) => Promise<DspSceneState>
+  setOutputStage: (partial: Partial<DspOutputStageConfig>) => Promise<DspSceneState>
+  setStereoImage: (partial: Partial<DspStereoImageConfig>) => Promise<DspSceneState>
   applyDspScene: (sceneId: string | null, confirmDsdPcmFallback?: boolean) => Promise<DspSceneState>
   getDspGraphStatus: () => Promise<DspGraphStatus>
   getDspAssets: () => Promise<DspAsset[]>
@@ -1120,6 +1186,7 @@ interface AudioEngineAPI {
   onError: (cb: (message: string) => void) => () => void
   onDisconnected: (cb: () => void) => () => void
   onPlaybackInfo: (cb: (info: PlaybackInfo) => void) => () => void
+  onLoudnormStatus: (cb: (event: LoudnormStatusEvent) => void) => () => void
   onConfigApplied: (cb: (event: AudioEngineConfigAppliedEvent) => void) => () => void
   onDeviceOptionsChanged: (cb: (event: { reason: string }) => void) => () => void
   onServiceCrash: (cb: (event: { reason: string }) => void) => () => void
@@ -1180,6 +1247,14 @@ interface WindowAPI {
     getCacheSize: () => Promise<number>
     clearCache: () => Promise<number>
     onCompleted: (cb: (event: BpmAnalysisCompletedEvent) => void) => () => void
+  }
+  loudnessAnalysis: {
+    request: (request: LoudnessAnalysisRequest) => Promise<LoudnessAnalysisRequestResult>
+    getCacheSize: () => Promise<number>
+    clearCache: () => Promise<number>
+    getStatus: () => Promise<{ status: string; source: string | null }>
+    cancel: (filePath?: string) => Promise<void>
+    onCompleted: (cb: (event: LoudnessAnalysisCompletedEvent) => void) => () => void
   }
   opra: OpraAPI
   app: {

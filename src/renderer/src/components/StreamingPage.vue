@@ -51,6 +51,7 @@ import {
   type SearchSource,
   type SearchSourceOption
 } from './streaming-page/useStreamingSearch'
+import { useTrackMultiSelect } from './song-list/useTrackMultiSelect'
 
 interface RecSection {
   key: string
@@ -1379,11 +1380,113 @@ async function toggleCurrentDetailFollow(): Promise<void> {
 }
 
 function goBack(): void {
+  clearSelection()
   resetDetail()
 }
 
-function onTrackClick(track: Track): void {
+const streamingListTracks = computed(() => {
+  if (isSearching.value && !currentDetail.value) return searchResults.value
+  return detailTracks.value
+})
+
+const multiSelectEnabled = computed(
+  () =>
+    !!currentDetail.value ||
+    (isSearching.value && !currentDetail.value && searchType.value === 'songs')
+)
+
+const multiSelect = useTrackMultiSelect({
+  tracks: streamingListTracks,
+  resetSources: [
+    currentDetail,
+    activeTab,
+    searchQuery,
+    searchType,
+    isSearching,
+    () => detailTracks.value.length
+  ],
+  enabled: multiSelectEnabled
+})
+
+const {
+  selectedIds,
+  selectedCount,
+  hasSelection,
+  isSelected,
+  clearSelection,
+  getSelectedTracks
+} = multiSelect
+
+const selectionAllFavorited = computed(() => {
+  const selected = getSelectedTracks()
+  if (selected.length === 0) return false
+  return selected.every((track) => {
+    if (track.ncmSongId != null) return isTrackLiked(track.ncmSongId)
+    return musicStore.isFavoriteTrack(track)
+  })
+})
+
+function onTrackClick(track: Track, index: number, event?: MouseEvent): void {
+  if (event && (event.shiftKey || event.ctrlKey || event.metaKey)) {
+    multiSelect.onRowClick(track, index, event)
+    return
+  }
+  if (event) {
+    multiSelect.onRowClick(track, index, event)
+  }
   playTrack(track, detailTracks.value)
+}
+
+function onSearchTrackClickWithSelect(track: Track, event: MouseEvent): void {
+  const index = searchResults.value.findIndex((item) => item.id === track.id)
+  const result = multiSelect.onRowClick(track, Math.max(0, index), event)
+  if (result === 'play') {
+    onSearchTrackClick(track)
+  }
+}
+
+async function handleStreamingBatchFavorite(): Promise<void> {
+  const selected = getSelectedTracks()
+  if (selected.length === 0) return
+  const allLiked = selectionAllFavorited.value
+  for (const track of selected) {
+    if (track.ncmSongId != null) {
+      if (likingTracks.value.has(track.ncmSongId)) continue
+      likingTracks.value = new Set([...likingTracks.value, track.ncmSongId])
+      try {
+        await likeTrack(track.ncmSongId, !allLiked)
+      } finally {
+        const next = new Set(likingTracks.value)
+        next.delete(track.ncmSongId)
+        likingTracks.value = next
+      }
+    } else if (allLiked) {
+      musicStore.removeFavoriteTrack(track)
+    } else {
+      musicStore.addFavoriteTrack(track)
+    }
+  }
+}
+
+function handleStreamingBatchDelete(): void {
+  const selected = getSelectedTracks()
+  if (selected.length === 0) return
+  for (const track of selected) {
+    const source = track.source ?? (track.id.includes(':') ? track.id.split(':')[0] : 'local')
+    if (!source || source === 'local') {
+      musicStore.removeTrack(track.id)
+    } else if (track.ncmSongId != null && isTrackLiked(track.ncmSongId)) {
+      void likeTrack(track.ncmSongId, false)
+    } else {
+      musicStore.removeFavoriteTrack(track)
+    }
+  }
+  const removed = new Set(selected.map((track) => track.id))
+  detailTracks.value = detailTracks.value.filter((track) => !removed.has(track.id))
+  if (isSearching.value) {
+    searchResults.value = searchResults.value.filter((track) => !removed.has(track.id))
+  }
+  clearSelection()
 }
 
 function onStreamingContentScroll(event: Event): void {
@@ -1745,12 +1848,19 @@ onMounted(async () => {
             :liking-tracks="likingTracks"
             :is-track-liked="isTrackLiked"
             :format-time="formatTime"
-            @search-track-click="onSearchTrackClick"
+            :selected-ids="selectedIds"
+            :has-selection="hasSelection"
+            :selected-count="selectedCount"
+            :selection-all-favorited="selectionAllFavorited"
+            @search-track-click="onSearchTrackClickWithSelect"
             @like-track="onLikeTrack"
             @open-playlist="openPlaylist"
             @open-artist="openArtist"
             @page-change="onPageChange"
             @retry="performSearch(searchQuery)"
+            @batch-favorite="handleStreamingBatchFavorite"
+            @batch-delete="handleStreamingBatchDelete"
+            @clear-selection="clearSelection"
           />
         </div>
         <div v-else :key="activeTab" class="streaming-content-body">
@@ -2048,6 +2158,27 @@ onMounted(async () => {
               </div>
 
               <div v-else-if="activeArtistTab === 'songs'" class="track-table-wrapper">
+                <div v-if="hasSelection" class="selection-toolbar">
+                  <span class="selection-count">已选择 {{ selectedCount }} 首</span>
+                  <div class="selection-actions">
+                    <button type="button" class="selection-btn" @click="handleStreamingBatchFavorite">
+                      <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+                      <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="selection-btn danger"
+                      @click="handleStreamingBatchDelete"
+                    >
+                      <i class="pi pi-trash"></i>
+                      <span>删除</span>
+                    </button>
+                    <button type="button" class="selection-btn ghost" @click="clearSelection">
+                      <i class="pi pi-times"></i>
+                      <span>取消</span>
+                    </button>
+                  </div>
+                </div>
                 <table class="track-table">
                   <thead>
                     <tr>
@@ -2064,9 +2195,12 @@ onMounted(async () => {
                       v-for="(track, index) in detailTracks"
                       :key="track.id"
                       class="track-row"
-                      :class="{ 'track-playing': currentTrack?.id === track.id }"
-                      @click="onTrackClick(track)"
-                      @dblclick="onTrackClick(track)"
+                      :class="{
+                        'track-playing': currentTrack?.id === track.id,
+                        'track-selected': isSelected(track.id)
+                      }"
+                      @click="onTrackClick(track, index, $event)"
+                      @dblclick="onTrackClick(track, index, $event)"
                     >
                       <td class="col-cover">
                         <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
@@ -2196,6 +2330,27 @@ onMounted(async () => {
 
             <div v-else class="detail-content">
               <div class="track-table-wrapper">
+                <div v-if="hasSelection" class="selection-toolbar">
+                  <span class="selection-count">已选择 {{ selectedCount }} 首</span>
+                  <div class="selection-actions">
+                    <button type="button" class="selection-btn" @click="handleStreamingBatchFavorite">
+                      <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+                      <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
+                    </button>
+                    <button
+                      type="button"
+                      class="selection-btn danger"
+                      @click="handleStreamingBatchDelete"
+                    >
+                      <i class="pi pi-trash"></i>
+                      <span>删除</span>
+                    </button>
+                    <button type="button" class="selection-btn ghost" @click="clearSelection">
+                      <i class="pi pi-times"></i>
+                      <span>取消</span>
+                    </button>
+                  </div>
+                </div>
                 <table class="track-table">
                   <thead>
                     <tr>
@@ -2212,9 +2367,12 @@ onMounted(async () => {
                       v-for="(track, index) in detailTracks"
                       :key="track.id"
                       class="track-row"
-                      :class="{ 'track-playing': currentTrack?.id === track.id }"
-                      @click="onTrackClick(track)"
-                      @dblclick="onTrackClick(track)"
+                      :class="{
+                        'track-playing': currentTrack?.id === track.id,
+                        'track-selected': isSelected(track.id)
+                      }"
+                      @click="onTrackClick(track, index, $event)"
+                      @dblclick="onTrackClick(track, index, $event)"
                     >
                       <td class="col-cover">
                         <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />

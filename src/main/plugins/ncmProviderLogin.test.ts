@@ -33,7 +33,7 @@ interface TestNcmProvider {
     password: string
   ): Promise<{ loggedIn: boolean; profile: unknown }>
   searchSongs(keywords: string): Promise<unknown>
-  getPlaybackUrl(track: unknown): Promise<string | null>
+  getPlaybackUrl(track: unknown, options?: { force?: boolean; quality?: string }): Promise<string | null>
 }
 
 test('bundled NCM provider follows documented QR login request params', async () => {
@@ -147,10 +147,10 @@ test('bundled NCM provider falls back when the preferred playback endpoint fails
         ncm: {
           async request(path: string, cookie?: string): Promise<unknown> {
             requests.push({ path, cookie })
-            if (path.startsWith('/song/url') && path.includes('br=999000')) {
+            if (path.startsWith('/song/url/v1') && path.includes('level=hires')) {
               throw new Error('preferred level unavailable')
             }
-            if (path.startsWith('/song/url') && path.includes('br=320000')) {
+            if (path.startsWith('/song/url/v1') && path.includes('level=lossless')) {
               return {
                 code: 200,
                 data: [{ id: 2609824992, url: 'https://music.example/song.mp3', br: 320000 }]
@@ -196,8 +196,8 @@ test('bundled NCM provider falls back when the preferred playback endpoint fails
     'https://music.example/song.mp3'
   )
   assert.equal(requests.length, 2)
-  assert.equal(requests[0].path.includes('br=999000'), true, requests[0].path)
-  assert.equal(requests[1].path.includes('br=320000'), true, requests[1].path)
+  assert.equal(requests[0].path.includes('level=hires'), true, requests[0].path)
+  assert.equal(requests[1].path.includes('level=lossless'), true, requests[1].path)
 
   await registeredProvider.current?.getPlaybackUrl({ id: 'ncm:2609824992' })
   assert.equal(requests.length, 2)
@@ -743,10 +743,10 @@ test('bundled NCM provider does not cache empty playback lookups', async () => {
   })
 
   assert.equal(await registeredProvider.current?.getPlaybackUrl({ id: 'ncm:404' }), null)
-  assert.equal(requests.length, 6)
+  assert.equal(requests.length, 4)
 
   assert.equal(await registeredProvider.current?.getPlaybackUrl({ id: 'ncm:404' }), null)
-  assert.equal(requests.length, 12)
+  assert.equal(requests.length, 8)
 
   providerModule.deactivate()
 })

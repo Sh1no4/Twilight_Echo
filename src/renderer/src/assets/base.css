@@ -1056,6 +1056,69 @@ html[data-theme='dark'] .more-drawer:not(.drawer-glass) {
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
+/* HiFi sidebar — dark theme (non-glass). Mirrors the glass console palette. */
+html[data-theme='dark'] .hifi-overlay:not(.glass) {
+  background:
+    radial-gradient(ellipse 80% 45% at 100% -5%, rgba(56, 189, 248, 0.12), transparent 52%),
+    radial-gradient(ellipse 55% 35% at 0% 100%, rgba(99, 102, 241, 0.08), transparent 48%),
+    linear-gradient(180deg, rgba(16, 16, 16, 0.97) 0%, rgba(10, 10, 14, 0.98) 100%);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow:
+    -24px 0 70px rgba(0, 0, 0, 0.45),
+    inset 1px 0 0 rgba(255, 255, 255, 0.05);
+}
+
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) {
+  --hifi-ink: #f1f5f9;
+  --hifi-muted: #94a3b8;
+  --hifi-line: rgba(226, 232, 240, 0.1);
+  --hifi-soft: rgba(255, 255, 255, 0.045);
+  --hifi-card: rgba(255, 255, 255, 0.05);
+  --hifi-accent: #38bdf8;
+  --hifi-accent-soft: rgba(56, 189, 248, 0.14);
+  --hifi-accent-strong: #7dd3fc;
+  --hifi-violet: #a5b4fc;
+  --hifi-blue: #60a5fa;
+  --hifi-amber: #fbbf24;
+  --hifi-success: #34d399;
+  --hifi-glow: rgba(56, 189, 248, 0.18);
+  color: var(--hifi-ink);
+}
+
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-tab.active {
+  box-shadow:
+    0 8px 18px rgba(0, 0, 0, 0.22),
+    0 1px 0 rgba(255, 255, 255, 0.05) inset;
+}
+
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-meta,
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-quality-card,
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-toggle-card,
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-section,
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-device-card,
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-action,
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-extension {
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+}
+
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-range::-webkit-slider-thumb,
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-range::-moz-range-thumb {
+  border-color: #0f172a;
+}
+
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-switch {
+  border-color: rgba(148, 163, 184, 0.24);
+  background: #334155;
+}
+
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-select,
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-chip.muted,
+html[data-theme='dark'] .hifi-panel:not(.hifi-panel-glass) .hifi-chain {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(226, 232, 240, 0.1);
+  color: var(--hifi-ink, #f1f5f9);
+}
+
 html[data-theme='dark'] .playlist-panel::before,
 html[data-theme='dark'] .playlist-panel::after {
   opacity: 0.42;

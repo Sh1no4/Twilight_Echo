@@ -19,6 +19,7 @@ import { useSongListContextMenu } from './song-list/useSongListContextMenu'
 import { useSongListGridRendering } from './song-list/useSongListGridRendering'
 import { useSongListSearch } from './song-list/useSongListSearch'
 import { useSongListVirtualScroll } from './song-list/useSongListVirtualScroll'
+import { useTrackMultiSelect } from './song-list/useTrackMultiSelect'
 
 const props = defineProps<{
   category: string
@@ -46,7 +47,10 @@ const {
   removeFromPlaylist,
   replaceTrackReference,
   createPlaylist,
-  deletePlaylist
+  deletePlaylist,
+  isFavoriteTrack,
+  addFavoriteTrack,
+  removeFavoriteTrack
 } = useMusicStore()
 const playbackStore = usePlaybackQueueStore()
 const { currentTrack } = storeToRefs(playbackStore)
@@ -246,12 +250,6 @@ const currentGridItems = computed<GridItem[]>(() => {
   return []
 })
 
-function onRowClick(track: Track, event: MouseEvent): void {
-  const target = event.target as HTMLElement
-  if (target.closest('.btn-remove')) return
-  playTrack(track, displayTracks.value)
-}
-
 function onRowDblClick(track: Track): void {
   playTrack(track, displayTracks.value)
 }
@@ -440,7 +438,8 @@ const {
   openCreatePlaylistDialog,
   handleCreatePlaylist,
   handleCreatePlaylistFromMenu,
-  handleDeletePlaylist
+  handleDeletePlaylist,
+  closeContextMenu
 } = useSongListContextMenu({
   currentPlaylistName,
   removeTrack,
@@ -474,6 +473,151 @@ const {
 })
 void containerRef.value
 void tbodyRef.value
+
+const multiSelect = useTrackMultiSelect({
+  tracks: displayTracks,
+  resetSources: [() => props.category, () => props.filter, debouncedSearchQuery, recentSource],
+  enabled: showTable
+})
+
+const {
+  selectedCount,
+  hasSelection,
+  isSelected,
+  clearSelection,
+  getSelectedTracks,
+  ensureContextSelection
+} = multiSelect
+
+const pendingBatchCreateTracks = ref<Track[]>([])
+
+function absoluteIndex(indexInVisible: number): number {
+  return visibleRange.value.start + indexInVisible
+}
+
+function onRowClick(track: Track, indexInVisible: number, event: MouseEvent): void {
+  const target = event.target as HTMLElement
+  if (target.closest('.btn-remove')) return
+  const result = multiSelect.onRowClick(track, absoluteIndex(indexInVisible), event)
+  if (result === 'play') {
+    playTrack(track, displayTracks.value)
+  }
+}
+
+function onTrackContextMenu(event: MouseEvent, track: Track, indexInVisible: number): void {
+  ensureContextSelection(track, absoluteIndex(indexInVisible))
+  onContextMenu(event, track)
+}
+
+const selectionActionLabel = computed(() =>
+  selectedCount.value > 1 ? ` (${selectedCount.value})` : ''
+)
+
+const selectionAllFavorited = computed(() => {
+  const selected = getSelectedTracks()
+  return selected.length > 0 && selected.every((track) => isFavoriteTrack(track))
+})
+
+function handleBatchDelete(): void {
+  for (const track of getSelectedTracks()) {
+    removeTrack(track.id)
+  }
+  clearSelection()
+  closeContextMenu()
+}
+
+function handleBatchRemoveFromPlaylist(): void {
+  const playlistName = currentPlaylistName.value
+  if (!playlistName) return
+  for (const track of getSelectedTracks()) {
+    removeFromPlaylist(playlistName, track.id)
+  }
+  clearSelection()
+  closeContextMenu()
+}
+
+function handleBatchFavorite(): void {
+  const selected = getSelectedTracks()
+  if (selected.length === 0) return
+  if (selected.every((track) => isFavoriteTrack(track))) {
+    for (const track of selected) removeFavoriteTrack(track)
+  } else {
+    for (const track of selected) addFavoriteTrack(track)
+  }
+  closeContextMenu()
+}
+
+function handleBatchAddToPlaylist(playlistName: string): void {
+  for (const track of getSelectedTracks()) {
+    addToPlaylist(playlistName, track.id, track)
+  }
+  closeContextMenu()
+}
+
+function handleBatchCreatePlaylistFromMenu(): void {
+  const selected = getSelectedTracks()
+  pendingBatchCreateTracks.value = selected
+  openCreatePlaylistDialog(selected[0])
+}
+
+function handleCreatePlaylistWithBatch(): void {
+  const name = newPlaylistName.value.trim()
+  const batch = pendingBatchCreateTracks.value
+  handleCreatePlaylist()
+  if (name && batch.length > 1) {
+    for (const track of batch.slice(1)) {
+      addToPlaylist(name, track.id, track)
+    }
+  }
+  pendingBatchCreateTracks.value = []
+  if (batch.length > 0) clearSelection()
+}
+
+function handleContextDelete(): void {
+  if (selectedCount.value > 1) {
+    handleBatchDelete()
+    return
+  }
+  handleDelete()
+  clearSelection()
+}
+
+function handleContextRemoveFromPlaylist(): void {
+  if (selectedCount.value > 1) {
+    handleBatchRemoveFromPlaylist()
+    return
+  }
+  handleRemoveFromCurrentPlaylist()
+  clearSelection()
+}
+
+function handleContextFavorite(): void {
+  handleBatchFavorite()
+}
+
+function handleContextAddToPlaylist(playlistName: string): void {
+  if (selectedCount.value > 1) {
+    handleBatchAddToPlaylist(playlistName)
+    return
+  }
+  handleAddToPlaylist(playlistName)
+}
+
+function handleContextCreatePlaylist(): void {
+  if (selectedCount.value > 1) {
+    handleBatchCreatePlaylistFromMenu()
+    return
+  }
+  handleCreatePlaylistFromMenu()
+}
+
+function handleToolbarDelete(): void {
+  handleBatchDelete()
+}
+
+function handleToolbarFavorite(): void {
+  handleBatchFavorite()
+}
 
 const {
   renderedGridCount,
@@ -738,6 +882,32 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
             <p class="empty-hint">通过左侧菜单「歌单 → 添加文件夹」导入音乐</p>
           </div>
           <div v-else class="track-table-wrapper">
+            <div v-if="hasSelection" class="selection-toolbar">
+              <span class="selection-count">已选择 {{ selectedCount }} 首</span>
+              <div class="selection-actions">
+                <button type="button" class="selection-btn" @click="handleToolbarFavorite">
+                  <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+                  <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
+                </button>
+                <button
+                  v-if="isPlaylistDetail"
+                  type="button"
+                  class="selection-btn"
+                  @click="handleBatchRemoveFromPlaylist"
+                >
+                  <i class="pi pi-minus-circle"></i>
+                  <span>从歌单移除</span>
+                </button>
+                <button type="button" class="selection-btn danger" @click="handleToolbarDelete">
+                  <i class="pi pi-trash"></i>
+                  <span>删除</span>
+                </button>
+                <button type="button" class="selection-btn ghost" @click="clearSelection">
+                  <i class="pi pi-times"></i>
+                  <span>取消</span>
+                </button>
+              </div>
+            </div>
             <table class="track-table">
               <thead>
                 <tr>
@@ -763,12 +933,15 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   v-for="(track, index) in visibleTracks"
                   :key="track.id"
                   class="track-row"
-                  :class="{ 'track-playing': currentTrack?.id === track.id }"
+                  :class="{
+                    'track-playing': currentTrack?.id === track.id,
+                    'track-selected': isSelected(track.id)
+                  }"
                   :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
-                  @click="onRowClick(track, $event)"
+                  @click="onRowClick(track, Number(index), $event)"
                   @dblclick="onRowDblClick(track)"
                   @pointermove="onRowPointerMove"
-                  @contextmenu="onContextMenu($event, track)"
+                  @contextmenu="onTrackContextMenu($event, track, Number(index))"
                 >
                   <td class="col-cover">
                     <CoverImg v-if="track.cover" :cover="track.cover" class="cover-img" alt="cover" />
@@ -827,20 +1000,30 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               :style="{ top: menuY + 'px', left: menuX + 'px' }"
               @click.stop
             >
-              <div class="menu-item" @click="handleDelete">
+              <div class="menu-item" @click="handleContextDelete">
                 <i class="pi pi-trash"></i>
-                <span>{{ isPlaylistDetail ? '从本地库删除' : '删除' }}</span>
+                <span
+                  >{{ isPlaylistDetail ? '从本地库删除' : '删除'
+                  }}{{ selectionActionLabel }}</span
+                >
               </div>
               <div
                 v-if="isPlaylistDetail"
                 class="menu-item"
-                @click="handleRemoveFromCurrentPlaylist"
+                @click="handleContextRemoveFromPlaylist"
               >
                 <i class="pi pi-minus-circle"></i>
-                <span>从歌单移除</span>
+                <span>从歌单移除{{ selectionActionLabel }}</span>
+              </div>
+              <div class="menu-item" @click="handleContextFavorite">
+                <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+                <span
+                  >{{ selectionAllFavorited ? '取消收藏' : '加入收藏'
+                  }}{{ selectionActionLabel }}</span
+                >
               </div>
               <div
-                v-if="canRematchSelectedTrack"
+                v-if="canRematchSelectedTrack && selectedCount <= 1"
                 class="menu-item"
                 @click="handleRematchTrack"
               >
@@ -848,7 +1031,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <span>重新匹配音源</span>
               </div>
               <div
-                v-if="canRematchMetadataSelectedTrack"
+                v-if="canRematchMetadataSelectedTrack && selectedCount <= 1"
                 class="menu-item"
                 @click="handleRematchMetadata"
               >
@@ -856,14 +1039,18 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <span>重新匹配流媒体元数据</span>
               </div>
               <div
-                v-if="canClearMetadataMatchSelectedTrack"
+                v-if="canClearMetadataMatchSelectedTrack && selectedCount <= 1"
                 class="menu-item"
                 @click="handleClearMetadataMatch"
               >
                 <i class="pi pi-times-circle"></i>
                 <span>取消流媒体匹配</span>
               </div>
-              <div class="menu-item" @click="handleOpenFolder">
+              <div
+                v-if="selectedCount <= 1"
+                class="menu-item"
+                @click="handleOpenFolder"
+              >
                 <i class="pi pi-folder-open"></i>
                 <span>打开文件所在位置</span>
               </div>
@@ -873,13 +1060,13 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 @mouseleave="showPlaylistSubmenu = false"
               >
                 <i class="pi pi-plus"></i>
-                <span>加入到歌单</span>
+                <span>加入到歌单{{ selectionActionLabel }}</span>
                 <i class="pi pi-chevron-right submenu-icon"></i>
 
                 <div v-if="showPlaylistSubmenu" class="submenu">
                   <div
                     class="menu-item create-playlist-menu-item"
-                    @click="handleCreatePlaylistFromMenu"
+                    @click="handleContextCreatePlaylist"
                   >
                     <i class="pi pi-plus" style="font-size: 14px; margin-right: 6px"></i>
                     <span>创建新歌单</span>
@@ -889,7 +1076,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                     v-for="pl in playlists"
                     :key="pl.id"
                     class="menu-item"
-                    @click="handleAddToPlaylist(pl.name)"
+                    @click="handleContextAddToPlaylist(pl.name)"
                   >
                     {{ pl.name }}
                   </div>
@@ -915,14 +1102,14 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
             placeholder="请输入歌单名称"
             maxlength="50"
             autofocus
-            @keyup.enter="handleCreatePlaylist"
+            @keyup.enter="handleCreatePlaylistWithBatch"
           />
           <div class="dialog-actions">
             <button class="dialog-btn cancel" @click="showCreatePlaylistDialog = false">取消</button>
             <button
               class="dialog-btn confirm"
               :disabled="!newPlaylistName.trim()"
-              @click="handleCreatePlaylist"
+              @click="handleCreatePlaylistWithBatch"
             >创建</button>
           </div>
         </div>

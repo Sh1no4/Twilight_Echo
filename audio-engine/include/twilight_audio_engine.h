@@ -95,6 +95,13 @@ TAE_API TAE_Result TAE_AnalyzeBpm(
     char* buffer,
     size_t buffer_size,
     size_t* required_size);
+TAE_API TAE_Result TAE_AnalyzeLoudness(
+    TAE_EngineHandle engine,
+    const char* source,
+    const char* options_json,
+    char* buffer,
+    size_t buffer_size,
+    size_t* required_size);
 TAE_API const char* TAE_GetVersion(void);
 
 #ifdef __cplusplus

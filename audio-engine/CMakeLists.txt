@@ -50,6 +50,7 @@ set(TAE_ENGINE_SOURCES
   core/AudioTypes.cpp
   core/TwilightAudioEngine.cpp
   analysis/BpmAnalyzer.cpp
+  analysis/LoudnessAnalyzer.cpp
   decoder/DopPacker.cpp
   decoder/DsdReader.cpp
   decoder/DstDecoder.cpp
@@ -271,6 +272,11 @@ if(TAE_BUILD_TESTS)
   target_include_directories(twilight_dsp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_definitions(twilight_dsp_tests PRIVATE TAE_DSP_CHAIN_TESTS=1)
   target_link_libraries(twilight_dsp_tests PRIVATE ${CMAKE_DL_LIBS})
+  if(TAE_EBUR128_AVAILABLE)
+    target_compile_definitions(twilight_dsp_tests PRIVATE TAE_HAS_EBUR128=1)
+    target_include_directories(twilight_dsp_tests PRIVATE ${EBUR128_INCLUDE_DIR})
+    target_link_libraries(twilight_dsp_tests PRIVATE ${EBUR128_LIBRARY})
+  endif()
   add_test(NAME twilight_dsp_unit COMMAND twilight_dsp_tests)
 
   add_executable(twilight_channel_router_tests
@@ -498,6 +504,7 @@ if(TAE_BUILD_TESTS)
     core/AudioTypes.cpp
     core/TwilightAudioEngine.cpp
     analysis/BpmAnalyzer.cpp
+    analysis/LoudnessAnalyzer.cpp
     decoder/DopPacker.cpp
     decoder/DsdReader.cpp
     decoder/SacdIsoDemuxer.cpp
@@ -522,6 +529,11 @@ if(TAE_BUILD_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
   target_link_libraries(twilight_runtime_queue_reroute_tests PRIVATE ${CMAKE_DL_LIBS})
+  if(TAE_EBUR128_AVAILABLE)
+    target_compile_definitions(twilight_runtime_queue_reroute_tests PRIVATE TAE_HAS_EBUR128=1)
+    target_include_directories(twilight_runtime_queue_reroute_tests PRIVATE ${EBUR128_INCLUDE_DIR})
+    target_link_libraries(twilight_runtime_queue_reroute_tests PRIVATE ${EBUR128_LIBRARY})
+  endif()
   add_test(NAME twilight_runtime_queue_reroute_unit COMMAND twilight_runtime_queue_reroute_tests)
 
   add_executable(twilight_dst_decoder_tests

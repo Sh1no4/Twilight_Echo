@@ -223,6 +223,7 @@ function makePlaybackInfo(overrides: Partial<PlaybackInfo> = {}): PlaybackInfo {
     dsdRate: outputInfo.dsdRate,
     gaplessActive: false,
     preloadReady: false,
+    gaplessBlockedReason: '',
     upcomingTrack: null,
     nativePlaybackActive: false,
     ...overrides,
@@ -1115,6 +1116,195 @@ test('legacy dsdToPcm still maps to PCM when dsdOutputMode is absent', () => {
 
   assert.equal(normalized.dsdOutputMode, 'pcm')
   assert.equal(normalized.dsdToPcm, true)
+})
+
+test('loudnorm is preserved as a distinct volumeNormalization mode', () => {
+  const normalized = normalizeAudioProcessingSettings({
+    ...DEFAULT_AUDIO_PROCESSING,
+    volumeNormalization: 'loudnorm'
+  })
+
+  assert.equal(normalized.volumeNormalization, 'loudnorm')
+  assert.notEqual(normalized.volumeNormalization, 'track')
+})
+
+test('Settings and HiFi shared options both require loudnorm (no forbid-loudnorm regression)', async () => {
+  const { volumeNormalizationValues, VOLUME_NORMALIZATION_OPTIONS } = await import(
+    '../shared/audioProcessingOptions.ts'
+  )
+  const settingsSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('../renderer/src/components/SettingsPage.vue', import.meta.url), 'utf8')
+  )
+  const hifiSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(
+      new URL('../renderer/src/components/player-bar/HiFiSidebar.vue', import.meta.url),
+      'utf8'
+    )
+  )
+
+  assert.deepEqual(volumeNormalizationValues(), ['off', 'track', 'album', 'loudnorm'])
+  assert.ok(VOLUME_NORMALIZATION_OPTIONS.some((option) => option.value === 'loudnorm'))
+  assert.match(settingsSource, /VOLUME_NORMALIZATION_OPTIONS/)
+  assert.match(hifiSource, /VOLUME_NORMALIZATION_OPTIONS/)
+  assert.doesNotMatch(settingsSource, /forbid.*loudnorm/i)
+  assert.doesNotMatch(hifiSource, /forbid.*loudnorm/i)
+  // Local option arrays must not reappear once shared source is required
+  assert.doesNotMatch(
+    settingsSource,
+    /const replayGainOptions:\s*\{\s*value:\s*VolumeNormalizationMode/
+  )
+  assert.doesNotMatch(
+    hifiSource,
+    /const replayGainOptions:\s*\{\s*value:\s*VolumeNormalizationMode/
+  )
+})
+
+test('gapless runtime fields and HiFi Active/Preload/Blocked wiring stay present', async () => {
+  const { GAPLESS_BLOCKED_REASONS, gaplessRuntimeStatusCopy, HIFI_STATUS_COPY } = await import(
+    '../shared/audioProcessingOptions.ts'
+  )
+  const hifiSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(
+      new URL('../renderer/src/components/player-bar/HiFiSidebar.vue', import.meta.url),
+      'utf8'
+    )
+  )
+  const managerSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
+  )
+  const playerBarSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('../renderer/src/components/PlayerBar.vue', import.meta.url), 'utf8')
+  )
+
+  assert.ok(GAPLESS_BLOCKED_REASONS.includes('crossfade'))
+  assert.equal(
+    gaplessRuntimeStatusCopy({
+      intentEnabled: true,
+      gaplessActive: true,
+      preloadReady: true
+    }),
+    HIFI_STATUS_COPY.gaplessPreload
+  )
+  assert.match(managerSource, /gaplessBlockedReason/)
+  assert.match(managerSource, /gaplessActive:\s*info\.gaplessActive === true/)
+  assert.match(hifiSource, /gaplessRuntimeStatusCopy/)
+  assert.match(hifiSource, /Active/)
+  assert.match(hifiSource, /Preload/)
+  assert.match(hifiSource, /Blocked/)
+  assert.match(playerBarSource, /gapless-active/)
+  assert.match(playerBarSource, /gapless-blocked-reason/)
+})
+
+test('setStereoImage patches default scene balance/phase and preserves it across setAudioProcessing', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    { exclusiveMode: false, audioOutput: 'wasapi', audioDevice: 'auto' },
+    nativeBinding
+  )
+
+  let state = await manager.setStereoImage({
+    balance: -0.4,
+    width: 1.15,
+    invertLeft: false,
+    invertRight: true
+  })
+  const image = () => manager.getStereoImage()
+  assert.equal(image().balance, -0.4)
+  assert.equal(image().width, 1.15)
+  assert.equal(image().invertRight, true)
+  assert.ok(state.scenes.some((scene) => scene.id === 'default'))
+
+  const payloadGraph = nativeBinding.lastDspGraphPayload?.graph as {
+    nodes?: Array<{ type?: string; enabled?: boolean; params?: Record<string, unknown> }>
+  }
+  const stereoNode = payloadGraph?.nodes?.find((node) => node.type === 'stereoField')
+  const stripNode = payloadGraph?.nodes?.find((node) => node.type === 'channelStrip')
+  assert.equal(stereoNode?.enabled, true)
+  assert.equal(stereoNode?.params?.balance, -0.4)
+  assert.equal(stripNode?.enabled, true)
+
+  await manager.setAudioProcessing({ eqEnabled: true, dspEnabled: true })
+  assert.equal(image().balance, -0.4)
+  assert.equal(image().width, 1.15)
+  assert.equal(image().invertRight, true)
+
+  const hifiSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(
+      new URL('../renderer/src/components/player-bar/HiFiSidebar.vue', import.meta.url),
+      'utf8'
+    )
+  )
+  const playerBarSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('../renderer/src/components/PlayerBar.vue', import.meta.url), 'utf8')
+  )
+  const managerSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
+  )
+  assert.match(managerSource, /async setStereoImage\(/)
+  assert.match(managerSource, /stereoImage: extractStereoImageFromGraph/)
+  assert.match(hifiSource, /Balance \/ Phase/)
+  assert.match(hifiSource, /setStereoImage/)
+  assert.match(playerBarSource, /dsp-stereo-image/)
+  assert.match(playerBarSource, /@set-stereo-image="setStereoImage"/)
+
+  manager.destroy()
+})
+
+test('setOutputStage patches default scene graph.outputStage and preserves it across setAudioProcessing', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    { exclusiveMode: false, audioOutput: 'wasapi', audioDevice: 'auto' },
+    nativeBinding
+  )
+
+  let state = await manager.setOutputStage({
+    targetSampleRate: 96000,
+    resamplerQuality: 'ultra',
+    dither: 'highpassTpdf'
+  })
+  const defaultStage = () => {
+    const scene = manager.getDspSceneState().scenes.find((item) => item.id === 'default')
+    return scene?.graph.outputStage ?? manager.getOutputStage()
+  }
+  assert.equal(defaultStage().targetSampleRate, 96000)
+  assert.equal(defaultStage().resamplerQuality, 'ultra')
+  assert.equal(defaultStage().dither, 'highpassTpdf')
+  assert.equal(manager.getOutputStage().targetSampleRate, 96000)
+
+  const payloadGraph = nativeBinding.lastDspGraphPayload?.graph as {
+    outputStage?: { targetSampleRate?: unknown; resamplerQuality?: string; dither?: string }
+  }
+  assert.equal(payloadGraph?.outputStage?.targetSampleRate, 96000)
+  assert.equal(payloadGraph?.outputStage?.resamplerQuality, 'ultra')
+
+  await manager.setAudioProcessing({ eqEnabled: true, dspEnabled: true })
+  assert.equal(defaultStage().targetSampleRate, 96000)
+  assert.equal(defaultStage().resamplerQuality, 'ultra')
+  assert.equal(defaultStage().dither, 'highpassTpdf')
+  // Silence unused after asserts above when active graph is default.
+  assert.ok(state.scenes.some((scene) => scene.id === 'default'))
+
+  const hifiSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(
+      new URL('../renderer/src/components/player-bar/HiFiSidebar.vue', import.meta.url),
+      'utf8'
+    )
+  )
+  const playerBarSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('../renderer/src/components/PlayerBar.vue', import.meta.url), 'utf8')
+  )
+  const managerSource = await import('node:fs').then((fs) =>
+    fs.readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
+  )
+  assert.match(managerSource, /async setOutputStage\(/)
+  assert.match(managerSource, /outputStage: defaultScene\.graph\.outputStage/)
+  assert.match(hifiSource, /DSP_OUTPUT_SAMPLE_RATE_OPTIONS/)
+  assert.match(hifiSource, /Output Stage/)
+  assert.match(hifiSource, /setOutputStage/)
+  assert.match(playerBarSource, /dsp-output-stage/)
+  assert.match(playerBarSource, /@set-output-stage="setOutputStage"/)
+
+  manager.destroy()
 })
 
 test('DSD DSP scenes remain bypassed until the active graph receives an explicit PCM confirmation', async () => {
@@ -3910,15 +4100,16 @@ test('specialized DSP setters skip native calls when normalized settings are unc
   assert.equal(nativeBinding.playbackInfoReads, 0)
   assert.equal(playbackUpdates.length, 0)
 
+  // setReplayGainMode routes through setAudioProcessing (graph + dual DSP path).
   await manager.setReplayGainMode('track', 1.5, -3, true)
   assert.equal(nativeBinding.replayGainCalls, 1)
-  assert.equal(nativeBinding.playbackInfoReads, 0)
-  assert.equal(playbackUpdates.length, 0)
+  assert.equal(nativeBinding.dspConfigCalls, 1)
+  assert.equal(playbackUpdates.length, 1)
 
   await manager.setReplayGainMode('track', 1.5, -3, true)
   assert.equal(nativeBinding.replayGainCalls, 1)
-  assert.equal(nativeBinding.playbackInfoReads, 0)
-  assert.equal(playbackUpdates.length, 0)
+  assert.equal(nativeBinding.dspConfigCalls, 1)
+  assert.equal(playbackUpdates.length, 1)
 })
 
 test('setEqPreset skips native calls when normalized preset is unchanged', async () => {
@@ -4609,3 +4800,86 @@ test('audio service ready reports output route restore failures without enabling
 
   manager.destroy()
 })
+
+
+test('loudnorm status event, library RG queue fields, and cancel IPC are wired end-to-end', () => {
+  const managerSource = readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
+  const engineIpcSource = readFileSync(new URL('./audio/engineIpc.ts', import.meta.url), 'utf8')
+  const loudnessIpcSource = readFileSync(new URL('./audio/loudnessIpc.ts', import.meta.url), 'utf8')
+  const queuePrepSource = readFileSync(
+    new URL('../renderer/src/utils/nativeQueuePreparation.ts', import.meta.url),
+    'utf8'
+  )
+  const hifiSource = readFileSync(
+    new URL('../renderer/src/components/player-bar/HiFiSidebar.vue', import.meta.url),
+    'utf8'
+  )
+  const settingsSource = readFileSync(
+    new URL('../renderer/src/components/SettingsPage.vue', import.meta.url),
+    'utf8'
+  )
+  const playerStoreSource = readFileSync(
+    new URL('../renderer/src/stores/usePlayerStore.ts', import.meta.url),
+    'utf8'
+  )
+  const dspStoreSource = readFileSync(
+    new URL('../renderer/src/stores/useAudioOutputDspStore.ts', import.meta.url),
+    'utf8'
+  )
+  const preloadSource = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8')
+  const preloadDtsSource = readFileSync(new URL('../preload/index.d.ts', import.meta.url), 'utf8')
+  const pipelineSource = readFileSync(
+    new URL('../../audio-engine/core/AudioPipeline.cpp', import.meta.url),
+    'utf8'
+  )
+  const engineCppSource = readFileSync(
+    new URL('../../audio-engine/core/TwilightAudioEngine.cpp', import.meta.url),
+    'utf8'
+  )
+
+  assert.ok(managerSource.includes("emit('loudnorm-status'"))
+  assert.ok(managerSource.includes('syncLoudnormModeTransition'))
+  assert.ok(managerSource.includes('notifyLoudnessCacheCleared'))
+  // setReplayGainMode must rewrite legacy graph via setAudioProcessing (no dual-path drift).
+  assert.match(
+    managerSource,
+    /async setReplayGainMode[\s\S]*?return this\.setAudioProcessing\(/
+  )
+  assert.ok(
+    managerSource.includes('loudnessAnalysisManager.cancel') ||
+      managerSource.includes('this.loudnessAnalysisManager.cancel') ||
+      managerSource.includes('.cancel(')
+  )
+  assert.ok(managerSource.includes('this.destroyed'))
+  assert.ok(engineIpcSource.includes("on('loudnorm-status'"))
+  assert.ok(engineIpcSource.includes('audioEngine:loudnorm-status'))
+  assert.ok(engineIpcSource.includes('replayGainTrackGainDb'))
+  assert.ok(engineIpcSource.includes('r128TrackGainDb'))
+  assert.ok(loudnessIpcSource.includes('loudnessAnalysis:cancel'))
+  assert.ok(queuePrepSource.includes('replayGainTrackGainDb'))
+  assert.ok(queuePrepSource.includes('r128AlbumGainDb'))
+  assert.ok(preloadSource.includes('onLoudnormStatus'))
+  assert.ok(preloadSource.includes('audioEngine:loudnorm-status'))
+  assert.ok(preloadSource.includes('loudnessAnalysis:cancel'))
+  assert.ok(playerStoreSource.includes('loudnormStatus'))
+  assert.ok(playerStoreSource.includes('onLoudnormStatus'))
+  assert.ok(playerStoreSource.includes('replayGainTrackGainDb'))
+  assert.ok(dspStoreSource.includes('loudnormStatus: player.loudnormStatus'))
+  assert.ok(hifiSource.includes('loudnormStatusCopy'))
+  assert.ok(hifiSource.includes('loudnormStatusText'))
+  assert.ok(settingsSource.includes('loudnormStatusCopy'))
+  assert.ok(settingsSource.includes('settings-loudnorm-status'))
+  assert.ok(settingsSource.includes('确认清理 Loudnorm'))
+  assert.ok(preloadDtsSource.includes('replayGainTrackGainDb'))
+  assert.ok(preloadDtsSource.includes('r128AlbumGainDb'))
+  assert.ok(pipelineSource.includes('refreshQueueReplayGainTags'))
+  assert.ok(engineCppSource.includes('refreshQueueReplayGainTags'))
+  assert.ok(pipelineSource.includes('lastPreloadFormatMismatch_'))
+  assert.ok(pipelineSource.includes('"format_mismatch"') || pipelineSource.includes('format_mismatch'))
+  assert.ok(
+    readFileSync(new URL('./audio/loudnessIpc.ts', import.meta.url), 'utf8').includes(
+      'notifyLoudnessCacheCleared'
+    )
+  )
+})
+

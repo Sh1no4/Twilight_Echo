@@ -112,3 +112,20 @@ test('song list surfaces library repair status for moved or unresolved local fil
   assert.match(source, /class="library-repair-status"/)
   assert.match(styles, /\.library-repair-status/)
 })
+
+test('song list supports system multi-select and batch favorite/delete actions', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
+
+  assert.match(source, /useTrackMultiSelect/)
+  assert.match(source, /track-selected/)
+  assert.match(source, /selection-toolbar/)
+  assert.match(source, /handleToolbarFavorite/)
+  assert.match(source, /handleToolbarDelete/)
+  assert.match(source, /handleBatchFavorite/)
+  assert.match(source, /handleBatchDelete/)
+  assert.match(source, /handleContextFavorite/)
+  assert.match(source, /加入收藏/)
+  assert.match(styles, /\.track-selected/)
+  assert.match(styles, /\.selection-toolbar/)
+})

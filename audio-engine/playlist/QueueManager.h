@@ -31,6 +31,8 @@ class QueueManager {
 
   std::optional<QueueItem> current() const;
   std::optional<QueueItem> upcoming() const;
+  /** Linear search by source path; used so host-injected loudnorm fields survive Play(source). */
+  std::optional<QueueItem> findBySource(const std::string& source) const;
   std::optional<QueueItem> next();
   std::optional<QueueItem> previous();
   std::optional<QueueItem> advanceAfterEnd();

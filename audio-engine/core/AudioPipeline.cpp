@@ -401,6 +401,21 @@ DsdPacking dsdPackingFromInfo(const DsdStreamInfo& info) {
   return info.packing;
 }
 
+void applyQueueReplayGainTags(const QueueItem& item, ReplayGainInfo& replayGain) {
+  // Host-injected tags overlay decode-time metadata (library cold start).
+  // Loudnorm still only uses measuredIntegratedLufs / measuredTruePeakDb.
+  if (item.replayGainTrackGainDb) replayGain.trackGainDb = item.replayGainTrackGainDb;
+  if (item.replayGainAlbumGainDb) replayGain.albumGainDb = item.replayGainAlbumGainDb;
+  if (item.r128TrackGainDb) replayGain.r128TrackGainDb = item.r128TrackGainDb;
+  if (item.r128AlbumGainDb) replayGain.r128AlbumGainDb = item.r128AlbumGainDb;
+  if (item.measuredIntegratedLufs) {
+    replayGain.measuredIntegratedLufs = item.measuredIntegratedLufs;
+  }
+  if (item.measuredTruePeakDb) {
+    replayGain.measuredTruePeakDb = item.measuredTruePeakDb;
+  }
+}
+
 AudioStreamInfo streamInfoFromDsd(const QueueItem& item, const DsdStreamInfo& dsd, DsdMode mode) {
   AudioStreamInfo stream;
   stream.source = item.source;
@@ -415,6 +430,7 @@ AudioStreamInfo streamInfoFromDsd(const QueueItem& item, const DsdStreamInfo& ds
   stream.isDsd = true;
   stream.dsdMode = mode;
   stream.dsdRate = dsd.dsdRate;
+  applyQueueReplayGainTags(item, stream.replayGain);
   return stream;
 }
 
@@ -502,6 +518,8 @@ struct AudioPipeline::DecodeStream {
     stream = decoder->streamInfo();
     stream.source = item.source;
     if (item.durationSeconds > 0.0) stream.durationSeconds = item.durationSeconds;
+    // Host-injected library RG/R128 and loudnorm measurement overlay decode-time tags.
+    applyQueueReplayGainTags(item, stream.replayGain);
     return true;
   }
 
@@ -2019,6 +2037,59 @@ void AudioPipeline::setReplayGainMode(ReplayGainMode mode, double preampDb, doub
   publishStatusLocked();
 }
 
+void AudioPipeline::refreshQueueReplayGainTags(const QueueItem& item) {
+  if (item.source.empty()) return;
+  std::lock_guard lock(mutex_);
+  synchronizeRenderPromotionLocked();
+  bool changed = false;
+
+  auto overlayItemFields = [](QueueItem& target, const QueueItem& source) {
+    if (source.replayGainTrackGainDb) target.replayGainTrackGainDb = source.replayGainTrackGainDb;
+    if (source.replayGainAlbumGainDb) target.replayGainAlbumGainDb = source.replayGainAlbumGainDb;
+    if (source.replayGainTrackPeak) target.replayGainTrackPeak = source.replayGainTrackPeak;
+    if (source.replayGainAlbumPeak) target.replayGainAlbumPeak = source.replayGainAlbumPeak;
+    if (source.r128TrackGainDb) target.r128TrackGainDb = source.r128TrackGainDb;
+    if (source.r128AlbumGainDb) target.r128AlbumGainDb = source.r128AlbumGainDb;
+    if (source.measuredIntegratedLufs) target.measuredIntegratedLufs = source.measuredIntegratedLufs;
+    if (source.measuredTruePeakDb) target.measuredTruePeakDb = source.measuredTruePeakDb;
+  };
+
+  if (currentItem_.source == item.source) {
+    overlayItemFields(currentItem_, item);
+    applyQueueReplayGainTags(currentItem_, stream_.replayGain);
+    if (activeStream_) {
+      activeStream_->item = currentItem_;
+      activeStream_->stream.replayGain = stream_.replayGain;
+    }
+    changed = true;
+  }
+
+  if (preloadStream_ && preloadStream_->item.source == item.source) {
+    overlayItemFields(preloadStream_->item, item);
+    applyQueueReplayGainTags(preloadStream_->item, preloadStream_->stream.replayGain);
+    changed = true;
+  }
+
+  if (!changed) return;
+
+  DspChain& activeDspChain = activeDspChainLocked();
+  DspChain& spareDspChain = spareDspChainLocked();
+  activeDspChain.setTrackContext(DspTrackContext{stream_, currentItem_});
+  if (preloadStream_) {
+    spareDspChain.setTrackContext(DspTrackContext{preloadStream_->stream, preloadStream_->item});
+  } else {
+    spareDspChain.setTrackContext(DspTrackContext{stream_, currentItem_});
+  }
+  const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
+  std::string renderDspError;
+  publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
+  dspStatus_ = activeDspChain.status();
+  preloadDspStatus_ = spareDspChain.status();
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  updatePerfectLocked();
+  publishStatusLocked();
+}
+
 void AudioPipeline::setNativeDspPluginChain(const std::string& json) {
   std::lock_guard lock(mutex_);
   synchronizeRenderPromotionLocked();
@@ -2051,6 +2122,7 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
       previous = std::move(preloadStream_);
       renderPreloadStream_.store(nullptr, std::memory_order_release);
       preloadDspStatus_ = {};
+      lastPreloadFormatMismatch_ = false;
       publishStatusLocked();
     }
     if (previous) {
@@ -2076,9 +2148,19 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
   if (!gapless || outputFormat.sampleRate <= 0 || outputFormat.channelCount <= 0) return false;
 
   auto stream = makeDecodeStream();
-  if (!stream->openSource(*item, error)) return false;
+  if (!stream->openSource(*item, error)) {
+    std::lock_guard lock(mutex_);
+    lastPreloadFormatMismatch_ = true;
+    publishStatusLocked();
+    return false;
+  }
   stream->setResamplerQuality(resamplerQuality);
-  if (!stream->configure(outputFormat, 0.0, error)) return false;
+  if (!stream->configure(outputFormat, 0.0, error)) {
+    std::lock_guard lock(mutex_);
+    lastPreloadFormatMismatch_ = true;
+    publishStatusLocked();
+    return false;
+  }
   const size_t maxRenderFrames = bufferSizeFrames > 0
                                      ? static_cast<size_t>(bufferSizeFrames)
                                      : static_cast<size_t>(std::max(1, outputFormat.sampleRate / 100));
@@ -2091,6 +2173,7 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
     synchronizeRenderPromotionLocked();
     previous = std::move(preloadStream_);
     preloadStream_ = std::move(stream);
+    lastPreloadFormatMismatch_ = false;
     DspChain& spareDspChain = spareDspChainLocked();
     spareDspChain.configure(dspConfig_);
     spareDspChain.prepare(outputFormat_);
@@ -2105,6 +2188,7 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
         *error = renderDspError.empty() ? "Failed to prepare preloaded DSP graph" : renderDspError;
       }
       renderPreloadDspGraph_.store(nullptr, std::memory_order_release);
+      lastPreloadFormatMismatch_ = true;
     } else {
       DspChain* const renderPreloadGraphPtr = renderPreloadGraph.get();
       renderDspGraphs_.push_back(std::move(renderPreloadGraph));
@@ -2193,6 +2277,7 @@ PipelineStatus AudioPipeline::buildStatusLocked() {
   status.currentItem = currentItem_;
   status.dspActive = dspActive_;
   status.replayGainActive = dspStatus_.replayGainActive;
+  status.loudnormActive = dspStatus_.loudnormActive;
   status.eqActive = dspStatus_.eqActive;
   status.convolverActive = dspStatus_.convolverActive;
   status.crossfeedActive = dspStatus_.crossfeedActive;
@@ -2213,6 +2298,23 @@ PipelineStatus AudioPipeline::buildStatusLocked() {
   status.gaplessActive =
       gaplessEnabled_ && dspConfig_.crossfadeSeconds <= 0.0001 && preloadStream_ != nullptr && !crossfadeMixActive_;
   status.preloadReady = preloadStream_ && preloadStream_->readyForRender();
+  // Canonical blocked-reason priority: user intent first, then path gates, then format.
+  if (!dspConfig_.gapless) {
+    status.gaplessBlockedReason = "disabled";
+  } else if (dspConfig_.crossfadeSeconds > 0.0001 || crossfadeMixActive_) {
+    status.gaplessBlockedReason = "crossfade";
+  } else if (dopPathActive_ || nativeDsdPathActive_) {
+    status.gaplessBlockedReason = "dsd_path";
+  } else if (typedPassthroughActive_) {
+    status.gaplessBlockedReason = "typed_passthrough";
+  } else if (lastPreloadFormatMismatch_ && !preloadStream_) {
+    status.gaplessBlockedReason = "format_mismatch";
+  } else if (!gaplessEnabled_) {
+    // Intent on but internal path still cannot preload.
+    status.gaplessBlockedReason = "disabled";
+  } else {
+    status.gaplessBlockedReason.clear();
+  }
   status.perfectReason = perfectReason_;
   status.requestedConfigRevision = requestedConfigRevision_.load(std::memory_order_acquire);
   status.appliedConfigRevision = appliedConfigRevision_.load(std::memory_order_acquire);
@@ -2437,6 +2539,7 @@ bool AudioPipeline::updatePerfectLocked() {
   evaluation.backendPerfectReason = backendPerfectReason;
   evaluation.volume = loadAtomicDouble(requestedVolumeBits_);
   evaluation.replayGainActive = dspStatus_.replayGainActive;
+  evaluation.loudnormActive = dspStatus_.loudnormActive;
   evaluation.eqActive = dspStatus_.eqActive;
   evaluation.convolverActive = dspStatus_.convolverActive;
   evaluation.crossfeedActive = dspStatus_.crossfeedActive;

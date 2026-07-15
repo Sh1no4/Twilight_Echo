@@ -7,6 +7,14 @@ import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useExtensionRegistry, type UiContribution } from '../extensions/registry'
 import { getPluginThemeKey } from '../extensions/themeSelection'
+import {
+  DSD_OUTPUT_MODE_OPTIONS,
+  HIFI_STATUS_COPY,
+  LOUDNORM_TARGET_LUFS,
+  LOUDNORM_TRUE_PEAK_CEILING_DB,
+  VOLUME_NORMALIZATION_OPTIONS,
+  loudnormStatusCopy
+} from '../../../shared/audioProcessingOptions.ts'
 import type {
   AppSettings,
   AppTheme,
@@ -26,6 +34,7 @@ import type {
   DsdOutputMode,
   LyricAlign,
   MusicCachePolicySettings,
+  NcmPlaybackQuality,
   OutputConfig,
   PlayerShortcutStatus,
   PlaybackResumeMode,
@@ -94,6 +103,16 @@ const playbackResumeOptions: { value: PlaybackResumeMode; label: string }[] = [
   { value: 'trackAndPosition', label: '曲目和位置' }
 ]
 
+const ncmPlaybackQualityOptions: { value: NcmPlaybackQuality; label: string }[] = [
+  { value: 'auto', label: '自动（最高可用）' },
+  { value: 'standard', label: '标准' },
+  { value: 'exhigh', label: '极高' },
+  { value: 'lossless', label: '无损' },
+  { value: 'hires', label: 'Hi-Res' },
+  { value: 'jyeffect', label: '高清环绕' },
+  { value: 'sky', label: '沉浸环绕' }
+]
+
 const startupHomePageOptions: { value: StartupHomePage; label: string; icon: string }[] = [
   { value: 'local', label: '本地音乐主页', icon: 'pi pi-home' },
   { value: 'streaming', label: '流媒体主页', icon: 'pi pi-compass' }
@@ -118,18 +137,8 @@ const routingModeOptions: { value: ChannelRoutingMode; label: string }[] = [
   { value: 'mono-to-multichannel', label: 'Mono → Multichannel' }
 ]
 
-const replayGainOptions: { value: VolumeNormalizationMode; label: string }[] = [
-  { value: 'off', label: 'Off' },
-  { value: 'track', label: 'Track / R128' },
-  { value: 'album', label: 'Album / R128' }
-]
-
-const dsdOutputModeOptions: { value: DsdOutputMode; label: string }[] = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'pcm', label: 'PCM' },
-  { value: 'dop', label: 'DoP' },
-  { value: 'native', label: 'Native' }
-]
+const replayGainOptions = VOLUME_NORMALIZATION_OPTIONS
+const dsdOutputModeOptions = DSD_OUTPUT_MODE_OPTIONS
 
 const sacdProgramModeOptions: { value: SacdProgramMode; label: string }[] = [
   { value: 'auto', label: 'Auto' },
@@ -192,7 +201,7 @@ const SETTINGS_SEARCH_INDEX: Array<{
   terms: string
 }> = [
   { section: 'general', title: '媒体库与启动', terms: '常规 扫描 文件夹 监控 网易云 SMTC Discord 启动 托盘 代理 插件设置 备份 恢复' },
-  { section: 'playback', title: '播放与输出', terms: '播放 输出 设备 独占 音量 削波 无缝 DSD SACD buffer routing' },
+  { section: 'playback', title: '播放与输出', terms: '播放 输出 设备 独占 音量 削波 无缝 网易云 音质 无损 Hi-Res DSD SACD buffer routing' },
   { section: 'dsp', title: 'DSP 处理器', terms: 'DSP EQ ReplayGain Crossfeed Convolver FFT High-Res DSD SACD' },
   { section: 'cache', title: '缓存策略', terms: '缓存 目录 封面 歌词 元数据 流媒体 BPM 分析 清理' },
   { section: 'performance', title: '性能', terms: '性能 硬件加速 GPU 重启' },
@@ -254,6 +263,8 @@ const {
   formattedCacheSize,
   clearingBpmAnalysisCache,
   formattedBpmAnalysisCacheSize,
+  clearingLoudnessAnalysisCache,
+  formattedLoudnessAnalysisCacheSize,
   restartRequired,
   restartReasons,
   loadSettings,
@@ -267,6 +278,8 @@ const {
   clearCache,
   refreshBpmAnalysisCacheSize,
   clearBpmAnalysisCache,
+  refreshLoudnessAnalysisCacheSize,
+  clearLoudnessAnalysisCache,
   getShortcutStatuses,
   relaunch,
   addLibraryFolder,
@@ -287,7 +300,8 @@ const {
   audioOutputConfig,
   playbackInfo,
   outputInfo,
-  audioEngineError
+  audioEngineError,
+  loudnormStatus
 } = storeToRefs(audioOutputDspStore)
 
 const { volume } = storeToRefs(playbackQueueStore)
@@ -307,10 +321,15 @@ const {
   toggleGapless
 } = audioOutputDspStore
 
-const { setVolume } = playbackQueueStore
+const { setVolume, setUnityVolume } = playbackQueueStore
 
 const { syncExtensions, themeContributions, uiContributions } = useExtensionRegistry()
 
+
+const loudnormStatusText = computed(() => {
+  if (audioProcessing.value.volumeNormalization !== 'loudnorm') return ''
+  return loudnormStatusCopy(loudnormStatus.value ?? 'idle')
+})
 
 const volumePercent = computed({
   get: () => Math.round(volume.value * 100),
@@ -592,6 +611,7 @@ function resetSettingsGroup(group: 'appearance' | 'playback' | 'desktopLyrics'):
   if (group === 'playback') {
     void updateSettings({
       playbackResumeMode: 'off',
+      ncmPlaybackQuality: 'auto',
       audioExclusiveMode: false,
       audioOutputConfig: {
         preferredBufferSize: 0,
@@ -665,6 +685,12 @@ function setStartupHomePage(startupHomePage: StartupHomePage): void {
 
 function setPlaybackResumeModeFromSelect(event: Event): void {
   setPlaybackResumeMode((event.target as HTMLSelectElement).value as PlaybackResumeMode)
+}
+
+function setNcmPlaybackQuality(event: Event): void {
+  void updateSettings({
+    ncmPlaybackQuality: (event.target as HTMLSelectElement).value as NcmPlaybackQuality
+  })
 }
 
 function selectAudioOutput(output: AudioOutputId): void {
@@ -1106,6 +1132,17 @@ async function confirmClearBpmAnalysisCache(): Promise<void> {
   clearBpmAnalysisFromPlaybackState()
 }
 
+async function confirmClearLoudnessAnalysisCache(): Promise<void> {
+  if (
+    !window.confirm(
+      `确认清理 Loudnorm / 响度分析缓存？\n\n当前估算：${formattedLoudnessAnalysisCacheSize.value}\n已测量的响度下次播放时会重新后台分析。此操作不可恢复。`
+    )
+  ) {
+    return
+  }
+  await clearLoudnessAnalysisCache()
+}
+
 async function checkForUpdates(): Promise<void> {
   updateCheckState.value = 'checking'
   try {
@@ -1233,7 +1270,7 @@ function updateActiveSection(): void {
 
 onMounted(async () => {
   await Promise.all([loadSettings(), refreshAudioOutputState()])
-  await Promise.all([refreshCacheSize(), refreshBpmAnalysisCacheSize()])
+  await Promise.all([refreshCacheSize(), refreshBpmAnalysisCacheSize(), refreshLoudnessAnalysisCacheSize()])
   await refreshShortcutStatuses()
   await syncExtensions()
   await nextTick()
@@ -1703,7 +1740,9 @@ onBeforeUnmount(() => {
               <div class="setting-item compact-row">
                 <div class="setting-copy">
                   <strong>音量与削波保护</strong>
-                  <span>应用音量低于 100% 会改变样本值。</span>
+                  <span>
+                    {{ HIFI_STATUS_COPY.volumeNotUnityHint }}。低于 100% 会改变样本值。
+                  </span>
                 </div>
                 <div class="inline-controls">
                   <input
@@ -1714,11 +1753,21 @@ onBeforeUnmount(() => {
                     :value="volumePercent"
                     @input="setVolumeFromInput"
                   />
+                  <button
+                    type="button"
+                    class="soft-button"
+                    :disabled="volumePercent >= 100"
+                    title="将软件音量固定为 100%（Unity）"
+                    @click="setUnityVolume"
+                  >
+                    {{ HIFI_STATUS_COPY.unityButton }}
+                  </button>
                   <span
                     class="toggle-switch"
                     :class="{ active: audioProcessing.clipGuard, inactive: !audioProcessing.clipGuard }"
                     role="switch"
                     :aria-checked="audioProcessing.clipGuard"
+                    title="削波保护"
                     @click="toggleClipGuard"
                   ></span>
                 </div>
@@ -1727,7 +1776,7 @@ onBeforeUnmount(() => {
               <div class="setting-item">
                 <div class="setting-copy">
                   <strong>无缝播放 (Gapless Playback)</strong>
-                  <span>消除连续曲目之间的静态间隙或进行交叉淡入淡出。</span>
+                  <span>{{ HIFI_STATUS_COPY.gaplessNote }}</span>
                 </div>
                 <div class="inline-controls">
                   <div class="crossfade-group">
@@ -1764,6 +1813,26 @@ onBeforeUnmount(() => {
                 >
                   <option
                     v-for="option in playbackResumeOptions"
+                    :key="option.value"
+                    :value="option.value"
+                  >
+                    {{ option.label }}
+                  </option>
+                </select>
+              </div>
+              <hr />
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>网易云播放音质</strong>
+                  <span>自动按 Hi-Res、无损、极高和标准回退；环绕音质需手动选择。</span>
+                </div>
+                <select
+                  class="preview-select"
+                  :value="settings.ncmPlaybackQuality"
+                  @change="setNcmPlaybackQuality"
+                >
+                  <option
+                    v-for="option in ncmPlaybackQualityOptions"
                     :key="option.value"
                     :value="option.value"
                   >
@@ -2045,8 +2114,14 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="mini-setting">
                   <div>
-                    <strong>音量标准化 (ReplayGain)</strong>
-                    <span>响度归一化 · {{ replayGainModeLabel }}</span>
+                    <strong>音量标准化 (ReplayGain / Loudnorm)</strong>
+                    <span>
+                      {{
+                        audioProcessing.volumeNormalization === 'loudnorm'
+                          ? `EBU R128 Loudnorm · 缓存命中用测量增益（${LOUDNORM_TARGET_LUFS} LUFS / ${LOUDNORM_TRUE_PEAK_CEILING_DB} dBTP）；首次播放无缓存时用 Fallback 并后台测量`
+                          : `响度归一化 · ${replayGainModeLabel}`
+                      }}
+                    </span>
                   </div>
                   <select
                     class="preview-select"
@@ -2062,6 +2137,13 @@ onBeforeUnmount(() => {
                     </option>
                   </select>
                 </div>
+                <p
+                  v-if="loudnormStatusText"
+                  class="setting-hint"
+                  data-testid="settings-loudnorm-status"
+                >
+                  {{ loudnormStatusText }}
+                </p>
                 <div class="mini-setting">
                   <div>
                     <strong>Preamp</strong>
@@ -2377,6 +2459,21 @@ onBeforeUnmount(() => {
               >
                 <i class="pi pi-trash"></i>
                 {{ clearingBpmAnalysisCache ? '清理中…' : '清理 BPM 缓存' }}
+              </button>
+            </div>
+            <div class="setting-item">
+              <div class="setting-copy">
+                <strong>Loudnorm / 响度分析缓存</strong>
+                <span>当前估算：<b>{{ formattedLoudnessAnalysisCacheSize }}</b> · 上限 512 条，命中 identity 跳过重测</span>
+              </div>
+              <button
+                class="danger-soft-button solid-hover"
+                type="button"
+                :disabled="clearingLoudnessAnalysisCache"
+                @click="confirmClearLoudnessAnalysisCache"
+              >
+                <i class="pi pi-trash"></i>
+                {{ clearingLoudnessAnalysisCache ? '清理中…' : '清理响度缓存' }}
               </button>
             </div>
             <hr />
@@ -3758,6 +3855,7 @@ html[data-theme='dark'] .settings-preview-page .advanced-grid label span,
 html[data-theme='dark'] .settings-preview-page .decode-grid label span,
 html[data-theme='dark'] .settings-preview-page .dsp-meter small,
 html[data-theme='dark'] .settings-preview-page .mini-setting span,
+html[data-theme='dark'] .settings-preview-page .setting-hint,
 html[data-theme='dark'] .settings-preview-page .folder-chip,
 html[data-theme='dark'] .settings-preview-page .folder-empty-hint,
 html[data-theme='dark'] .settings-preview-page .device-card small,

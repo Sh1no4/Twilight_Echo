@@ -86,6 +86,139 @@ function normalizeBpm(value: unknown): number | undefined {
   return Math.round(numeric * 10) / 10
 }
 
+function normalizeGainDb(value: unknown): number | undefined {
+  if (value == null) return undefined
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.round(value * 100) / 100
+  }
+  if (typeof value === 'object' && value !== null && 'dB' in value) {
+    const db = Number((value as { dB?: unknown }).dB)
+    if (Number.isFinite(db)) return Math.round(db * 100) / 100
+  }
+  if (typeof value === 'string') {
+    const match = value.trim().match(/(-?\d+(?:\.\d+)?)/)
+    if (!match) return undefined
+    const db = Number(match[1])
+    if (!Number.isFinite(db)) return undefined
+    return Math.round(db * 100) / 100
+  }
+  return undefined
+}
+
+function normalizePeak(value: unknown): number | undefined {
+  if (value == null) return undefined
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.round(value * 1_000_000) / 1_000_000
+  }
+  if (typeof value === 'object' && value !== null && 'ratio' in value) {
+    const ratio = Number((value as { ratio?: unknown }).ratio)
+    if (Number.isFinite(ratio)) return Math.round(ratio * 1_000_000) / 1_000_000
+  }
+  if (typeof value === 'string') {
+    const match = value.trim().match(/(-?\d+(?:\.\d+)?)/)
+    if (!match) return undefined
+    const peak = Number(match[1])
+    if (!Number.isFinite(peak)) return undefined
+    return Math.round(peak * 1_000_000) / 1_000_000
+  }
+  return undefined
+}
+
+/** R128_*_GAIN is often stored as Q7.8 integer (1/256 dB). Detect and convert. */
+function normalizeR128GainDb(value: unknown): number | undefined {
+  if (value == null) return undefined
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    // Heuristic: |value| > 64 likely Q7.8 integer
+    const db = Math.abs(value) > 64 ? value / 256 : value
+    return Math.round(db * 100) / 100
+  }
+  if (typeof value === 'string') {
+    const match = value.trim().match(/(-?\d+(?:\.\d+)?)/)
+    if (!match) return undefined
+    const raw = Number(match[1])
+    if (!Number.isFinite(raw)) return undefined
+    const db = Math.abs(raw) > 64 ? raw / 256 : raw
+    return Math.round(db * 100) / 100
+  }
+  return undefined
+}
+
+function extractNativeTagValue(
+  native: Record<string, Array<{ id?: string; value?: unknown }> | undefined> | undefined,
+  ids: string[]
+): unknown {
+  if (!native) return undefined
+  const wanted = new Set(ids.map((id) => id.toUpperCase()))
+  for (const tags of Object.values(native)) {
+    if (!Array.isArray(tags)) continue
+    for (const tag of tags) {
+      const id = typeof tag?.id === 'string' ? tag.id.toUpperCase() : ''
+      if (wanted.has(id)) return tag.value
+    }
+  }
+  return undefined
+}
+
+export function extractReplayGainTags(meta: {
+  common?: Record<string, unknown>
+  format?: Record<string, unknown>
+  native?: Record<string, Array<{ id?: string; value?: unknown }> | undefined>
+}): {
+  replayGainTrackGainDb?: number
+  replayGainAlbumGainDb?: number
+  replayGainTrackPeak?: number
+  replayGainAlbumPeak?: number
+  r128TrackGainDb?: number
+  r128AlbumGainDb?: number
+} {
+  const common = meta.common ?? {}
+  const format = meta.format ?? {}
+  const result: {
+    replayGainTrackGainDb?: number
+    replayGainAlbumGainDb?: number
+    replayGainTrackPeak?: number
+    replayGainAlbumPeak?: number
+    r128TrackGainDb?: number
+    r128AlbumGainDb?: number
+  } = {}
+
+  const trackGain =
+    normalizeGainDb(common.replaygain_track_gain) ??
+    normalizeGainDb(format.trackGain) ??
+    normalizeGainDb(
+      extractNativeTagValue(meta.native, ['REPLAYGAIN_TRACK_GAIN', 'replaygain_track_gain'])
+    )
+  const albumGain =
+    normalizeGainDb(common.replaygain_album_gain) ??
+    normalizeGainDb(format.albumGain) ??
+    normalizeGainDb(
+      extractNativeTagValue(meta.native, ['REPLAYGAIN_ALBUM_GAIN', 'replaygain_album_gain'])
+    )
+  const trackPeak =
+    normalizePeak(common.replaygain_track_peak) ??
+    normalizePeak(format.trackPeakLevel) ??
+    normalizePeak(
+      extractNativeTagValue(meta.native, ['REPLAYGAIN_TRACK_PEAK', 'replaygain_track_peak'])
+    )
+  const albumPeak =
+    normalizePeak(common.replaygain_album_peak) ??
+    normalizePeak(
+      extractNativeTagValue(meta.native, ['REPLAYGAIN_ALBUM_PEAK', 'replaygain_album_peak'])
+    )
+  const r128Track =
+    normalizeR128GainDb(extractNativeTagValue(meta.native, ['R128_TRACK_GAIN', 'r128_track_gain']))
+  const r128Album =
+    normalizeR128GainDb(extractNativeTagValue(meta.native, ['R128_ALBUM_GAIN', 'r128_album_gain']))
+
+  if (trackGain !== undefined) result.replayGainTrackGainDb = trackGain
+  if (albumGain !== undefined) result.replayGainAlbumGainDb = albumGain
+  if (trackPeak !== undefined) result.replayGainTrackPeak = trackPeak
+  if (albumPeak !== undefined) result.replayGainAlbumPeak = albumPeak
+  if (r128Track !== undefined) result.r128TrackGainDb = r128Track
+  if (r128Album !== undefined) result.r128AlbumGainDb = r128Album
+  return result
+}
+
 export interface FileEntry {
   fullPath: string
   fileName: string
@@ -184,6 +317,13 @@ export async function parseTrack(file: FileEntry): Promise<unknown[]> {
     const title = common.title
     const album = common.album
     const bpm = normalizeBpm(common.bpm)
+    const replayGainTags = extractReplayGainTags({
+      common: common as Record<string, unknown>,
+      format: meta.format as Record<string, unknown>,
+      native: meta.native as
+        | Record<string, Array<{ id?: string; value?: unknown }> | undefined>
+        | undefined
+    })
 
     const fileName = getNameFromFile(file.fullPath)
 
@@ -205,7 +345,8 @@ export async function parseTrack(file: FileEntry): Promise<unknown[]> {
       format: meta.format.container,
       sampleRate: meta.format.sampleRate,
       bitrate: meta.format.bitrate,
-      bitDepth: meta.format.bitsPerSample
+      bitDepth: meta.format.bitsPerSample,
+      ...replayGainTags
     }
     if (bpm !== undefined) track.bpm = bpm
     return [track]

@@ -1,5 +1,24 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import {
+  DSD_OUTPUT_MODE_OPTIONS,
+  gaplessRuntimeStatusCopy,
+  HIFI_STATUS_COPY,
+  loudnormStatusCopy,
+  VOLUME_NORMALIZATION_OPTIONS,
+  type LoudnormStatus
+} from '../../../../shared/audioProcessingOptions.ts'
+import {
+  DSP_DITHER_MODE_OPTIONS,
+  DSP_OUTPUT_SAMPLE_RATE_OPTIONS,
+  DSP_RESAMPLER_QUALITY_OPTIONS,
+  outputStageIsActive,
+  stereoImageIsActive,
+  type DspDitherMode,
+  type DspOutputStageConfig,
+  type DspResamplerQuality,
+  type DspStereoImageConfig
+} from '../../../../shared/dspGraph.ts'
 import type {
   AudioDeviceOption,
   AudioOutputId,
@@ -21,7 +40,6 @@ export interface HiFiStatusChip {
 
 const props = defineProps<{
   glass?: boolean
-  expanded?: boolean
   exclusiveMode: boolean
   exclusiveAvailable: boolean
   audioOutput: AudioOutputId
@@ -30,8 +48,17 @@ const props = defineProps<{
   audioDeviceOptions: AudioDeviceOption[]
   audioProcessing: AudioProcessingSettings
   audioOutputConfig: OutputConfig
+  dspOutputStage: DspOutputStageConfig
+  dspStereoImage: DspStereoImageConfig
+  actualSampleRate?: number
   statusChips: HiFiStatusChip[]
   nonPerfectReason: string
+  perfectReasonCode?: string
+  volume: number
+  gaplessActive?: boolean
+  preloadReady?: boolean
+  gaplessBlockedReason?: string
+  loudnormStatus?: LoudnormStatus
   outputChainText: string
   outputLatencyText: string
   outputDiagnosticsText: string
@@ -48,8 +75,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  close: []
-  toggleExpanded: []
   openSettings: []
   openDsp: []
   openEqualizer: []
@@ -61,6 +86,7 @@ const emit = defineEmits<{
   toggleClipGuard: []
   toggleConvolver: []
   toggleDesktopLyrics: []
+  setUnityVolume: []
   setReplayGainMode: [mode: VolumeNormalizationMode]
   setCrossfeedStrength: [strength: number]
   setCrossfadeSeconds: [seconds: number]
@@ -68,6 +94,8 @@ const emit = defineEmits<{
   setPreferredBufferSize: [frames: number]
   setRoutingMode: [mode: ChannelRoutingMode]
   setDsdOutputMode: [mode: DsdOutputMode]
+  setOutputStage: [partial: Partial<DspOutputStageConfig>]
+  setStereoImage: [partial: Partial<DspStereoImageConfig>]
   setAudioOutput: [output: AudioOutputId]
   setAudioDevice: [device: string]
   refreshDevices: []
@@ -76,6 +104,47 @@ const emit = defineEmits<{
   reloadLyrics: [prefer: 'auto' | 'local' | 'provider']
   runExtension: [command?: string]
 }>()
+
+const isVolumeUnity = computed(() => props.volume >= 0.999)
+const showUnityVolumeCta = computed(
+  () => props.perfectReasonCode === 'volume_not_unity' || !isVolumeUnity.value
+)
+
+const gaplessStatusText = computed(() =>
+  gaplessRuntimeStatusCopy({
+    intentEnabled: props.audioProcessing.gapless,
+    gaplessActive: props.gaplessActive === true,
+    preloadReady: props.preloadReady === true,
+    gaplessBlockedReason: props.gaplessBlockedReason
+  })
+)
+
+const gaplessStatusTone = computed(() => {
+  if (!props.audioProcessing.gapless) return 'muted'
+  if (props.gaplessBlockedReason) return 'warning'
+  if (props.gaplessActive || props.preloadReady) return 'success'
+  return 'muted'
+})
+
+const loudnormStatusText = computed(() => {
+  if (props.audioProcessing.volumeNormalization !== 'loudnorm') return ''
+  return loudnormStatusCopy(props.loudnormStatus ?? 'idle')
+})
+
+const loudnormStatusTone = computed(() => {
+  if (props.audioProcessing.volumeNormalization !== 'loudnorm') return 'muted'
+  switch (props.loudnormStatus) {
+    case 'cached':
+      return 'success'
+    case 'measuring':
+      return 'warning'
+    case 'fallback':
+    case 'unavailable':
+      return 'warning'
+    default:
+      return 'muted'
+  }
+})
 
 const activeSection = ref<'console' | 'output' | 'dsp' | 'lyrics'>('console')
 
@@ -99,19 +168,11 @@ const routingModeOptions: { value: ChannelRoutingMode; label: string }[] = [
   { value: 'mono-to-multichannel', label: 'Mono → Multi' }
 ]
 
-const dsdOutputModeOptions: { value: DsdOutputMode; label: string }[] = [
-  { value: 'auto', label: 'Auto' },
-  { value: 'pcm', label: 'PCM' },
-  { value: 'dop', label: 'DoP' },
-  { value: 'native', label: 'Native' }
-]
-
-const replayGainOptions: { value: VolumeNormalizationMode; label: string }[] = [
-  { value: 'off', label: 'Off' },
-  { value: 'track', label: 'Track' },
-  { value: 'album', label: 'Album' },
-  { value: 'loudnorm', label: 'Loudnorm' }
-]
+const dsdOutputModeOptions = DSD_OUTPUT_MODE_OPTIONS
+const replayGainOptions = VOLUME_NORMALIZATION_OPTIONS
+const sampleRateOptions = DSP_OUTPUT_SAMPLE_RATE_OPTIONS
+const resamplerOptions = DSP_RESAMPLER_QUALITY_OPTIONS
+const ditherOptions = DSP_DITHER_MODE_OPTIONS
 
 const sectionTabs = [
   { id: 'console' as const, label: '总览', icon: 'ph-gauge' },
@@ -120,34 +181,11 @@ const sectionTabs = [
   { id: 'lyrics' as const, label: '歌词', icon: 'ph-text-aa' }
 ]
 
-const backendLabel = computed(() => {
-  const option = props.audioOutputOptions.find((item) => item.id === props.audioOutput)
-  return option?.label ?? props.audioOutput.toUpperCase()
-})
-
 const selectedDevice = computed(
   () =>
     props.audioDeviceOptions.find((device) => device.id === props.audioDevice) ??
     props.audioDeviceOptions[0]
 )
-
-const bitPerfect = computed(
-  () =>
-    props.statusChips.some((chip) => chip.label === 'Source Exact' && chip.tone === 'success') &&
-    props.statusChips.some((chip) => chip.label === 'Output Perfect' && chip.tone === 'success')
-)
-
-const integrityLabel = computed(() => {
-  if (bitPerfect.value) return 'Bit Perfect'
-  if (props.nonPerfectReason) return 'Processed'
-  return 'Monitoring'
-})
-
-const integrityTone = computed<StatusTone>(() => {
-  if (bitPerfect.value) return 'success'
-  if (props.nonPerfectReason) return 'warning'
-  return 'muted'
-})
 
 const crossfeedPercent = computed(() => Math.round(props.audioProcessing.crossfeedStrength * 100))
 const crossfadeSeconds = computed(() => props.audioProcessing.crossfadeSeconds)
@@ -166,6 +204,44 @@ const convolverPathLabel = computed(() => {
   if (!path) return '未载入 IR'
   const parts = path.split(/[/\\]/)
   return parts[parts.length - 1] || path
+})
+
+const outputStageActive = computed(() => outputStageIsActive(props.dspOutputStage))
+
+const targetSampleRateLabel = computed(() => {
+  const target = props.dspOutputStage.targetSampleRate
+  if (target === 'device') return 'Device'
+  const option = sampleRateOptions.find((item) => item.value === target)
+  return option?.label ?? `${Math.round(target / 100) / 10} kHz`
+})
+
+const actualSampleRateLabel = computed(() => {
+  const rate = props.actualSampleRate
+  if (typeof rate !== 'number' || !Number.isFinite(rate) || rate <= 0) return '—'
+  return `${Math.round(rate / 100) / 10} kHz`
+})
+
+const outputStageHint = computed(() => {
+  if (!outputStageActive.value) {
+    return `目标 Device · 实际 ${actualSampleRateLabel.value} · 无强制重采样`
+  }
+  return `目标 ${targetSampleRateLabel.value} · 实际 ${actualSampleRateLabel.value} · SRC ${props.dspOutputStage.resamplerQuality} · dither ${props.dspOutputStage.dither}（采样率锁会关闭 bit-perfect）`
+})
+
+const stereoImageActive = computed(() => stereoImageIsActive(props.dspStereoImage))
+const balancePercent = computed(() => Math.round(props.dspStereoImage.balance * 100))
+const widthPercent = computed(() => Math.round(props.dspStereoImage.width * 100))
+const stereoImageHint = computed(() => {
+  if (!stereoImageActive.value) return '平衡 0 · 宽度 100% · 相位正常'
+  const parts = [
+    `平衡 ${balancePercent.value > 0 ? `R${balancePercent.value}` : balancePercent.value < 0 ? `L${Math.abs(balancePercent.value)}` : '0'}`,
+    `宽度 ${widthPercent.value}%`
+  ]
+  if (props.dspStereoImage.invertLeft) parts.push('L 反相')
+  if (props.dspStereoImage.invertRight) parts.push('R 反相')
+  if (props.dspStereoImage.swap) parts.push('L/R 交换')
+  if (props.dspStereoImage.mono) parts.push('单声道')
+  return `${parts.join(' · ')}（会关闭 bit-perfect）`
 })
 
 const eqSummary = computed(() => {
@@ -280,44 +356,59 @@ function onDsdModeChange(event: Event): void {
 function onReplayGainChange(event: Event): void {
   emit('setReplayGainMode', (event.target as HTMLSelectElement).value as VolumeNormalizationMode)
 }
+
+function onTargetSampleRateChange(event: Event): void {
+  const raw = (event.target as HTMLSelectElement).value
+  const targetSampleRate = raw === 'device' ? 'device' : Number(raw)
+  emit('setOutputStage', { targetSampleRate })
+}
+
+function onResamplerChange(event: Event): void {
+  emit('setOutputStage', {
+    resamplerQuality: (event.target as HTMLSelectElement).value as DspResamplerQuality
+  })
+}
+
+function onDitherChange(event: Event): void {
+  emit('setOutputStage', {
+    dither: (event.target as HTMLSelectElement).value as DspDitherMode
+  })
+}
+
+function onBalanceInput(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  emit('setStereoImage', { balance: Math.min(1, Math.max(-1, value / 100)) })
+}
+
+function onWidthInput(event: Event): void {
+  const value = Number((event.target as HTMLInputElement).value)
+  emit('setStereoImage', { width: Math.min(2, Math.max(0, value / 100)) })
+}
+
+function toggleInvertLeft(): void {
+  emit('setStereoImage', { invertLeft: !props.dspStereoImage.invertLeft })
+}
+
+function toggleInvertRight(): void {
+  emit('setStereoImage', { invertRight: !props.dspStereoImage.invertRight })
+}
+
+function resetStereoImage(): void {
+  emit('setStereoImage', {
+    balance: 0,
+    width: 1,
+    midGainDb: 0,
+    sideGainDb: 0,
+    invertLeft: false,
+    invertRight: false,
+    swap: false,
+    mono: false
+  })
+}
 </script>
 
 <template>
-  <div
-    class="hifi-panel"
-    :class="{
-      'hifi-panel-glass': glass,
-      'hifi-panel-expanded': expanded
-    }"
-  >
-    <header class="hifi-header">
-      <div class="hifi-brand">
-        <span class="hifi-brand-mark" aria-hidden="true">
-          <i class="ph ph-waveform"></i>
-        </span>
-        <div class="hifi-brand-copy">
-          <span class="hifi-kicker">Live Monitor</span>
-          <strong>HiFi Studio</strong>
-          <span>{{ backendLabel }} · {{ exclusiveMode ? 'Exclusive' : 'Shared' }}</span>
-        </div>
-      </div>
-      <div class="hifi-header-actions">
-        <span class="hifi-integrity" :class="integrityTone">{{ integrityLabel }}</span>
-        <button
-          type="button"
-          class="hifi-icon-btn"
-          :title="expanded ? '收起面板' : '展开面板'"
-          :aria-pressed="expanded"
-          @click="emit('toggleExpanded')"
-        >
-          <i :class="expanded ? 'ph ph-arrows-in-simple' : 'ph ph-arrows-out-simple'"></i>
-        </button>
-        <button type="button" class="hifi-icon-btn" title="关闭" @click="emit('close')">
-          <i class="ph ph-x"></i>
-        </button>
-      </div>
-    </header>
-
+  <div class="hifi-panel" :class="{ 'hifi-panel-glass': glass }">
     <nav class="hifi-tabs" aria-label="HiFi 分区">
       <button
         v-for="tab in sectionTabs"
@@ -354,6 +445,27 @@ function onReplayGainChange(event: Event): void {
             {{ outputChainText }}
           </p>
           <p v-if="nonPerfectReason" class="hifi-reason">{{ nonPerfectReason }}</p>
+          <div v-if="showUnityVolumeCta" class="hifi-unity-cta">
+            <div class="hifi-unity-copy">
+              <strong>Unity 音量</strong>
+              <em>
+                {{
+                  perfectReasonCode === 'volume_not_unity'
+                    ? `${HIFI_STATUS_COPY.volumeNotUnity}，bit-perfect 需要 Unity`
+                    : `当前 ${Math.round(volume * 100)}%；${HIFI_STATUS_COPY.volumeNotUnityHint}`
+                }}
+              </em>
+            </div>
+            <button
+              type="button"
+              class="hifi-mini-btn"
+              :class="{ accent: perfectReasonCode === 'volume_not_unity' }"
+              :disabled="isVolumeUnity"
+              @click="emit('setUnityVolume')"
+            >
+              {{ HIFI_STATUS_COPY.unityButton }}
+            </button>
+          </div>
           <div class="hifi-meta-grid dual">
             <div class="hifi-meta">
               <span>Latency</span>
@@ -443,6 +555,16 @@ function onReplayGainChange(event: Event): void {
               <em>{{ dspMasterOn ? 'ON' : 'OFF' }}</em>
             </button>
           </div>
+          <div class="hifi-gapless-status" :data-tone="gaplessStatusTone">
+            <span v-if="audioProcessing.gapless && gaplessActive" class="hifi-chip success">Active</span>
+            <span v-if="audioProcessing.gapless && preloadReady" class="hifi-chip success">Preload</span>
+            <span
+              v-if="audioProcessing.gapless && gaplessBlockedReason"
+              class="hifi-chip warning"
+            >Blocked</span>
+            <p class="hifi-reason subtle">{{ gaplessStatusText }}</p>
+          </div>
+          <p class="hifi-reason subtle">{{ HIFI_STATUS_COPY.gaplessNote }}</p>
         </section>
 
         <section class="hifi-section hifi-footer-section">
@@ -616,6 +738,63 @@ function onReplayGainChange(event: Event): void {
             </select>
           </label>
         </section>
+
+        <section class="hifi-section">
+          <div class="hifi-section-label">
+            <span><em>04</em>Output Stage</span>
+            <span class="hifi-section-hint">采样率锁 · SRC · dither</span>
+          </div>
+          <p class="hifi-reason subtle" :title="outputStageHint">{{ outputStageHint }}</p>
+          <div class="hifi-field-row">
+            <label class="hifi-field">
+              <span>Target Rate</span>
+              <select
+                class="hifi-select"
+                :value="String(dspOutputStage.targetSampleRate)"
+                @change="onTargetSampleRateChange"
+              >
+                <option
+                  v-for="option in sampleRateOptions"
+                  :key="String(option.value)"
+                  :value="String(option.value)"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+            <label class="hifi-field">
+              <span>Resampler</span>
+              <select
+                class="hifi-select"
+                :value="dspOutputStage.resamplerQuality"
+                @change="onResamplerChange"
+              >
+                <option
+                  v-for="option in resamplerOptions"
+                  :key="option.value"
+                  :value="option.value"
+                >
+                  {{ option.label }}
+                </option>
+              </select>
+            </label>
+          </div>
+          <label class="hifi-field">
+            <span>Dither</span>
+            <select
+              class="hifi-select"
+              :value="dspOutputStage.dither"
+              @change="onDitherChange"
+            >
+              <option v-for="option in ditherOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
+          <p v-if="outputStageActive" class="hifi-reason">
+            采样率锁 / SRC / dither 启用时 outputPerfect=false（graph.outputStage，非 OutputConfig）。
+          </p>
+        </section>
       </section>
 
       <!-- DSP -->
@@ -750,6 +929,14 @@ function onReplayGainChange(event: Event): void {
               </label>
             </div>
 
+            <p
+              v-if="loudnormStatusText"
+              class="hifi-reason"
+              :class="loudnormStatusTone"
+            >
+              {{ loudnormStatusText }}
+            </p>
+
             <div class="hifi-control">
               <div class="hifi-control-head">
                 <span>RG Preamp</span>
@@ -766,6 +953,84 @@ function onReplayGainChange(event: Event): void {
                 @input="onPreampInput"
               />
             </div>
+
+            <div class="hifi-module-row">
+              <div class="hifi-module-copy">
+                <strong>Balance / Phase</strong>
+                <span>{{ stereoImageHint }}</span>
+              </div>
+              <button
+                v-if="stereoImageActive"
+                type="button"
+                class="hifi-mini-btn ghost"
+                @click="resetStereoImage"
+              >
+                复位
+              </button>
+            </div>
+            <div class="hifi-control compact">
+              <div class="hifi-control-head">
+                <span>Balance</span>
+                <strong>{{
+                  balancePercent === 0
+                    ? 'C'
+                    : balancePercent > 0
+                      ? `R${balancePercent}`
+                      : `L${Math.abs(balancePercent)}`
+                }}</strong>
+              </div>
+              <input
+                class="hifi-range"
+                type="range"
+                min="-100"
+                max="100"
+                step="1"
+                :value="balancePercent"
+                :style="{ '--range-value': `${((balancePercent + 100) / 200) * 100}%` }"
+                @input="onBalanceInput"
+              />
+            </div>
+            <div class="hifi-control compact">
+              <div class="hifi-control-head">
+                <span>Width</span>
+                <strong>{{ widthPercent }}%</strong>
+              </div>
+              <input
+                class="hifi-range"
+                type="range"
+                min="0"
+                max="200"
+                step="1"
+                :value="widthPercent"
+                :style="{ '--range-value': `${(widthPercent / 200) * 100}%` }"
+                @input="onWidthInput"
+              />
+            </div>
+            <div class="hifi-toggle-grid compact">
+              <button
+                type="button"
+                class="hifi-toggle-card"
+                :class="{ on: dspStereoImage.invertLeft }"
+                @click="toggleInvertLeft"
+              >
+                <i class="ph ph-arrows-left-right"></i>
+                <span>L Phase</span>
+                <em>{{ dspStereoImage.invertLeft ? 'INV' : 'OK' }}</em>
+              </button>
+              <button
+                type="button"
+                class="hifi-toggle-card"
+                :class="{ on: dspStereoImage.invertRight }"
+                @click="toggleInvertRight"
+              >
+                <i class="ph ph-arrows-left-right"></i>
+                <span>R Phase</span>
+                <em>{{ dspStereoImage.invertRight ? 'INV' : 'OK' }}</em>
+              </button>
+            </div>
+            <p v-if="stereoImageActive" class="hifi-reason">
+              平衡 / 宽度 / 相位写入 graph stereoField + channelStrip，会关闭 outputPerfect。
+            </p>
           </div>
         </section>
 
