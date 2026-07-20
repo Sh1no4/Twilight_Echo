@@ -89,29 +89,11 @@ export function useOfflineDownloads() {
   }
 
   async function pinTracks(tracks: Track[]): Promise<void> {
-    const provider = useMediaProviders()
-    const requests = await Promise.all(
-      tracks.map(async (track) => {
-        const providerId = getTrackProviderId(track)
-        if (!providerId)
-          throw new Error('Only online provider tracks can be made available offline')
-        const url = await provider.resolvePlaybackUrl(track, {
-          quality: track.streamQuality ?? 'auto',
-          force: true
-        })
-        if (!url)
-          throw new Error(`The provider did not return a downloadable stream for ${track.title}`)
-        return {
-          providerId,
-          trackId: track.id,
-          title: track.title || track.id,
-          quality: track.streamQuality ?? 'auto',
-          url
-        }
-      })
-    )
-    const queued = await window.api.offline.queueMany(requests)
-    for (const record of queued) applyRecord(record)
+    // Keep bulk pin aligned with pinTrack: podcast grant path, radio rejected,
+    // and no bare HTTP queue (provider URLs must still be twilight-media grants).
+    for (const track of tracks) {
+      await pinTrack(track)
+    }
   }
 
   async function retry(record: OfflineDownloadRecord, track: Track): Promise<void> {

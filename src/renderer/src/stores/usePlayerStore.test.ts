@@ -396,10 +396,33 @@ test('next and previous only use native controls when the native queue is delega
 
   assert.match(nextBody, /if \(nativePlaybackActive && isNativeQueueDelegated\(\)\)/)
   assert.match(previousBody, /if \(nativePlaybackActive && isNativeQueueDelegated\(\)\)/)
+  assert.match(togglePlayState, /if \(casting\)/)
   assert.match(togglePlayState, /if \(nativePlaybackActive\)/)
   assert.match(seekPlayback, /if \(nativePlaybackActive\)/)
   assert.match(nextBody, /currentTrack\.value = track[\s\S]*void loadAndPlay\(track\)/)
   assert.match(previousBody, /currentTrack\.value = track[\s\S]*void loadAndPlay\(track\)/)
+})
+
+test('togglePlayState and seek/volume fan out to cast when castTargetName is active', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const togglePlayState = extractInternalFunctionBody(source, 'togglePlayState')
+  const seekPlayback = extractInternalFunctionBody(source, 'seekPlayback')
+
+  assert.match(togglePlayState, /const casting = Boolean\(castTargetName\.value\)/)
+  assert.match(
+    togglePlayState,
+    /controlCast\?\.\(\s*nextPlaying \? \{ play: true \} : \{ pause: true \}\s*\)/
+  )
+  // Cast path must return before local engine toggle; avoid [\s\S]* spanning both branches.
+  const castingBranch = togglePlayState.match(
+    /if \(casting\) \{[\s\S]*?\n    \}\n    if \(nativePlaybackActive\)/
+  )?.[0]
+  assert.ok(castingBranch, 'casting branch should return before nativePlaybackActive')
+  assert.match(castingBranch, /return/)
+  assert.doesNotMatch(castingBranch, /audioEngine\.togglePause/)
+  assert.doesNotMatch(castingBranch, /getPlaybackAudio/)
+  assert.match(seekPlayback, /if \(castTargetName\.value\)[\s\S]*controlCast\?\.\(\{ seek: position \}\)/)
+  assert.match(source, /if \(castTargetName\.value\)[\s\S]*controlCast\?\.\(\{ volume: val \}\)/)
 })
 
 test('native queue switching guards the target track before applying playback-info events', () => {

@@ -2618,7 +2618,21 @@ async function togglePlayState(): Promise<void> {
     await loadAndPlay(track, restoredPlaybackPending ? restoredPlaybackPosition : 0)
     return
   }
+  const casting = Boolean(castTargetName.value)
   try {
+    if (casting) {
+      // Local engine stays paused while casting; only mirror transport to the device.
+      const nextPlaying = !isPlaying.value
+      if (isPlaying.value && !nextPlaying) {
+        maybeRecordResumeBookmark(track, latestPlaybackTime)
+        flushPodcastEpisodeProgress(true)
+      }
+      isPlaying.value = nextPlaying
+      void window.api.remote?.controlCast?.(
+        nextPlaying ? { play: true } : { pause: true }
+      ).catch(() => {})
+      return
+    }
     if (nativePlaybackActive) {
       const nextPlaying = !isPlaying.value
       if (isPlaying.value && !nextPlaying) {
