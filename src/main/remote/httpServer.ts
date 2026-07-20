@@ -15,6 +15,8 @@ import {
 } from '../../shared/remoteControl.ts'
 import { REMOTE_SSE_HEARTBEAT_MS } from '../../shared/remoteControl.ts'
 
+export type RemoteServerMode = 'full' | 'mediaOnly'
+
 export type RemoteCommandHandler = (command: PlayerRemoteCommand) => Promise<void> | void
 
 export interface RemoteHttpServerOptions {
@@ -28,7 +30,9 @@ export interface RemoteHttpServerOptions {
 export class RemoteHttpServer {
   private server: Server | null = null
   private port: number | null = null
+  /** Full remote-control surface (pair/UI/commands). False in mediaOnly cast mode. */
   private enabled = false
+  private mode: RemoteServerMode = 'full'
   private lastError: string | null = null
   private readonly auth: RemoteAuthSession
   private readonly mediaGrants: MediaStreamGrantStore
@@ -58,16 +62,23 @@ export class RemoteHttpServer {
     return this.mediaGrants
   }
 
+  isMediaOnly(): boolean {
+    return this.mode === 'mediaOnly' && this.server != null
+  }
+
   getStatus(): RemoteControlStatus {
+    const mediaOnly = this.mode === 'mediaOnly' && this.server != null
     return {
-      enabled: this.enabled,
+      // "enabled" means full remote control is on — never true for media-only cast.
+      enabled: this.enabled && !mediaOnly,
       running: this.server != null && this.port != null,
       port: this.port,
-      pin: this.enabled ? this.auth.getPin() : null,
-      urls: this.enabled && this.port != null ? this.listLanUrls(this.port) : [],
-      paired: this.auth.isPaired(),
+      pin: this.enabled && !mediaOnly ? this.auth.getPin() : null,
+      urls: this.enabled && !mediaOnly && this.port != null ? this.listLanUrls(this.port) : [],
+      paired: this.enabled && !mediaOnly ? this.auth.isPaired() : false,
       clientCount: this.sseClients.size,
-      lastError: this.lastError
+      lastError: this.lastError,
+      mediaOnly
     }
   }
 
@@ -80,11 +91,25 @@ export class RemoteHttpServer {
     return this.snapshot
   }
 
-  async start(preferredPort = 0): Promise<RemoteControlStatus> {
-    if (this.server) return this.getStatus()
-    this.enabled = true
+  /**
+   * Bind the LAN HTTP server.
+   * - full: remote UI, PIN pair, command API, media tokens
+   * - mediaOnly: media tokens only (cast), no pair/UI/commands; remote stays "off"
+   */
+  async start(
+    preferredPort = 0,
+    options: { mode?: RemoteServerMode } = {}
+  ): Promise<RemoteControlStatus> {
+    const desiredMode: RemoteServerMode = options.mode ?? 'full'
+    if (this.server) {
+      if (this.mode === desiredMode) return this.getStatus()
+      // Upgrade mediaOnly → full or demote full → mediaOnly requires rebind.
+      await this.stop()
+    }
+    this.mode = desiredMode
+    this.enabled = desiredMode === 'full'
     this.lastError = null
-    if (!this.auth.getPin()) this.auth.rotatePin()
+    if (desiredMode === 'full' && !this.auth.getPin()) this.auth.rotatePin()
 
     await new Promise<void>((resolve, reject) => {
       const server = createServer((req, res) => {
@@ -99,7 +124,7 @@ export class RemoteHttpServer {
         this.port =
           address && typeof address === 'object' ? address.port : preferredPort || null
         this.server = server
-        this.startHeartbeat()
+        if (desiredMode === 'full') this.startHeartbeat()
         resolve()
       })
     })
@@ -109,6 +134,7 @@ export class RemoteHttpServer {
 
   async stop(): Promise<void> {
     this.enabled = false
+    this.mode = 'full'
     this.stopHeartbeat()
     for (const client of this.sseClients) {
       try {
@@ -209,6 +235,17 @@ export class RemoteHttpServer {
       if (req.method === 'OPTIONS') {
         res.writeHead(204, corsHeaders())
         res.end()
+        return
+      }
+
+      // Media-only cast bind: only capability-token media streaming is exposed.
+      if (this.mode === 'mediaOnly') {
+        if (req.method === 'GET' && url.pathname.startsWith('/media/')) {
+          const token = url.pathname.slice('/media/'.length)
+          await this.serveMedia(req, res, token)
+          return
+        }
+        this.sendJson(res, 404, { error: 'media_only' })
         return
       }
 

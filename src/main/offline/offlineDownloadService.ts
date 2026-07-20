@@ -17,7 +17,9 @@ const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
 const MAX_CONCURRENT_DOWNLOADS = 2
 const DOWNLOAD_TIMEOUT_MS = 10 * 60_000
 const SAFE_ID = /^[a-z0-9][a-z0-9._:-]{0,127}$/i
-const SAFE_TRACK_ID = /^[^\0]{1,512}$/
+/** Covers podcast:{subscriptionId}:{guid} with MAX_PODCAST_GUID_LENGTH (512) + prefix headroom. */
+const MAX_OFFLINE_TRACK_ID_LENGTH = 768
+const SAFE_TRACK_ID = new RegExp(`^[^\\0]{1,${MAX_OFFLINE_TRACK_ID_LENGTH}}$`)
 const DOWNLOAD_ID = /^[a-f0-9]{64}$/
 const SHA256 = /^[a-f0-9]{64}$/
 const PUBLISH_JOURNAL_NAME = /^\.([a-f0-9]{64})\.publish\.json$/
@@ -931,6 +933,9 @@ async function syncDirectory(directoryPath: string): Promise<void> {
 
 function validateRequest(request: OfflineDownloadRequest): void {
   if (!SAFE_ID.test(request.providerId.trim())) throw new Error('Offline provider id is invalid')
+  if (request.providerId.trim().toLowerCase() === 'radio') {
+    throw new Error('Live radio streams cannot be pinned offline')
+  }
   if (!SAFE_TRACK_ID.test(request.trackId.trim())) throw new Error('Offline track id is invalid')
   if (!request.title.trim() || request.title.length > 256)
     throw new Error('Offline title is invalid')

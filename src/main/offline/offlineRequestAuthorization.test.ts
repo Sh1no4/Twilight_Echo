@@ -30,3 +30,21 @@ test('offline download authorization only accepts a live audio grant and never r
     /authorized/i
   )
 })
+
+test('offline download authorization rejects radio provider before grant resolution', () => {
+  const grants = new RemoteMediaGrantService({ createToken: () => 'download-token' })
+  assert.throws(
+    () =>
+      authorizeOfflineDownloadRequest(
+        {
+          providerId: 'radio',
+          trackId: 'radio:1',
+          title: 'Live',
+          quality: 'live',
+          url: grants.grant('https://cdn.example/stream.mp3', 'audio')
+        },
+        grants
+      ),
+    /radio|cannot be pinned/i
+  )
+})

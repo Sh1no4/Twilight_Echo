@@ -8,6 +8,11 @@ const props = defineProps<{ track: Track }>()
 const offline = useOfflineDownloads()
 const busy = ref(false)
 const error = ref('')
+const pinUnsupported = computed(() => {
+  if (!props.track.source || props.track.source === 'local') return true
+  if (props.track.source === 'radio') return true
+  return getTrackProviderId(props.track) === 'radio'
+})
 const downloadFailure = computed(() => {
   const providerId = getTrackProviderId(props.track)
   if (!providerId) return ''
@@ -18,6 +23,12 @@ const downloadFailure = computed(() => {
   )
 })
 const visibleError = computed(() => error.value || downloadFailure.value)
+const pinTitle = computed(() => {
+  if (props.track.source === 'radio' || getTrackProviderId(props.track) === 'radio') {
+    return '直播电台无法离线固定'
+  }
+  return visibleError.value || '固定供离线使用'
+})
 
 async function pin(): Promise<void> {
   busy.value = true
@@ -37,8 +48,8 @@ async function pin(): Promise<void> {
     <button
       type="button"
       class="btn-like offline-pin-btn"
-      :disabled="busy || !track.source || track.source === 'local'"
-      :title="visibleError || '固定供离线使用'"
+      :disabled="busy || pinUnsupported"
+      :title="pinTitle"
       :aria-label="`固定 ${track.title} 供离线使用`"
       @click.stop="pin"
     >

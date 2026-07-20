@@ -184,22 +184,40 @@ async function tryDlnaVolume(volume: number): Promise<void> {
 export async function syncRemoteControlWithSettings(): Promise<void> {
   const enabled = runtime.appSettings.remoteControlEnabled === true
   const preferredPort = runtime.appSettings.remoteControlPort ?? 0
-  if (syncDesiredEnabled === enabled && server && enabled) {
-    // already in desired state
+  if (syncDesiredEnabled === enabled && server && enabled && !server.isMediaOnly()) {
+    // already in desired full-remote state
     return
   }
   syncDesiredEnabled = enabled
   if (!enabled) {
-    if (server) {
+    if (!server) return
+    // Keep media token host if a cast session is active; otherwise tear down.
+    if (activeCastUsn || server.isMediaOnly()) {
+      await server.start(preferredPort, { mode: 'mediaOnly' })
+    } else {
       await server.stop()
     }
-    activeCastUsn = null
     return
   }
   const instance = ensureServer()
-  if (!instance.getStatus().running) {
-    await instance.start(preferredPort)
+  // Upgrade media-only cast bind (or start fresh) into full remote control.
+  await instance.start(preferredPort, { mode: 'full' })
+}
+
+/**
+ * Ensure a LAN HTTP bind suitable for issuing cast media tokens.
+ * When remote control is off, only the media token surface is exposed.
+ */
+async function ensureCastMediaServer(): Promise<RemoteHttpServer> {
+  const remoteEnabled = runtime.appSettings.remoteControlEnabled === true
+  const preferredPort = runtime.appSettings.remoteControlPort ?? 0
+  const instance = ensureServer()
+  if (remoteEnabled) {
+    await instance.start(preferredPort, { mode: 'full' })
+  } else {
+    await instance.start(preferredPort, { mode: 'mediaOnly' })
   }
+  return instance
 }
 
 export function getRemoteControlStatus(): RemoteControlStatus {
@@ -212,7 +230,8 @@ export function getRemoteControlStatus(): RemoteControlStatus {
       urls: [],
       paired: false,
       clientCount: 0,
-      lastError: null
+      lastError: null,
+      mediaOnly: false
     }
   }
   return server.getStatus()
@@ -342,11 +361,9 @@ export function setupRemoteIpc(): void {
         throw new Error('Cast requires exactly one of filePath or mediaUrl')
       }
 
-      await syncRemoteControlWithSettings()
-      const instance = ensureServer()
-      if (!instance.getStatus().running) {
-        await instance.start(runtime.appSettings.remoteControlPort ?? 0)
-      }
+      // Cast needs a media token host. When remote control is off, bind media-only
+      // so pair/UI/command surfaces stay closed (remote remains default-off).
+      const instance = await ensureCastMediaServer()
 
       let castUrl: string | null = null
       let didlContentType: string | undefined = contentTypeHint
@@ -439,6 +456,14 @@ export function setupRemoteIpc(): void {
       await tryDlnaTransport('stop')
     }
     activeCastUsn = null
+    // Tear down media-only cast bind when full remote control remains off.
+    if (server?.isMediaOnly() && runtime.appSettings.remoteControlEnabled !== true) {
+      try {
+        await server.stop()
+      } catch {
+        // ignore
+      }
+    }
     return { ok: true as const }
   })
 

@@ -59,6 +59,11 @@ export interface RemoteControlStatus {
   paired: boolean
   clientCount: number
   lastError: string | null
+  /**
+   * True when the LAN HTTP server is bound only to serve cast media tokens
+   * (no remote-control UI, pairing, or command API). Remote remains "off".
+   */
+  mediaOnly?: boolean
 }
 
 export type CastProtocol = 'dlna' | 'chromecast'

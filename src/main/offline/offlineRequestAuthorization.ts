@@ -10,6 +10,9 @@ export function authorizeOfflineDownloadRequest(
   request: OfflineDownloadRequest,
   grants: RemoteMediaGrantService = remoteMediaGrants
 ): OfflineDownloadRequest {
+  if (request.providerId.trim().toLowerCase() === 'radio') {
+    throw new Error('Live radio streams cannot be pinned offline')
+  }
   const source = grants.resolve(request.url, 'audio').source
   return { ...request, url: source }
 }

@@ -559,6 +559,49 @@ test('batch playable-path lookup verifies every pin and rejects tampered or expi
   assert.equal((await waitForStatus(service, queued[1].id, ['failed'])).status, 'failed')
 })
 
+test('offline queue accepts max-length podcast track ids and rejects radio pins', async (t) => {
+  const root = await workspace()
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const bytes = new TextEncoder().encode('podcast pin payload')
+  const service = new OfflineDownloadService({
+    rootPath: root,
+    fetch: async () =>
+      new Response(bytes, {
+        headers: { 'content-length': String(bytes.byteLength), 'content-type': 'audio/mpeg' }
+      })
+  })
+  await service.initialize()
+
+  const longGuid = 'g'.repeat(512)
+  // podcast_${uuid} ≈ 44 chars + prefixes — must stay under the raised 768 track-id ceiling.
+  const podcastTrackId = `podcast:podcast_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee:${longGuid}`
+  assert.ok(podcastTrackId.length > 512, 'fixture must exceed the old 512-char offline track id limit')
+  assert.ok(podcastTrackId.length <= 768)
+
+  const queued = await service.queue({
+    providerId: 'podcast',
+    trackId: podcastTrackId,
+    title: 'Long guid episode',
+    quality: 'podcast',
+    url: 'https://media.example/episode.mp3'
+  })
+  const completed = await waitForStatus(service, queued.id, ['completed'])
+  assert.equal(completed.trackId, podcastTrackId)
+  assert.ok(await service.getPlayablePath('podcast', podcastTrackId))
+
+  await assert.rejects(
+    () =>
+      service.queue({
+        providerId: 'radio',
+        trackId: 'radio:live-1',
+        title: 'Live',
+        quality: 'live',
+        url: 'https://media.example/stream.mp3'
+      }),
+    /radio|cannot be pinned/i
+  )
+})
+
 test('1000 queued pins stay responsive and leave no refed timeout handle', async (t) => {
   const root = await workspace()
   t.after(() => rm(root, { recursive: true, force: true }))
