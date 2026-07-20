@@ -184,7 +184,16 @@ interface MediaProviderRegistration {
   capabilities: MediaProviderCapability[]
   health?: TwilightMediaProviderHealth
   getPlaybackUrl?(track: Track, options?: { force?: boolean }): Promise<string | null>
-  getLyrics?(track: Track): Promise<{ lyrics: string | null; translatedLyrics: string | null }>
+  /**
+   * Optional lyrics payload. `wordLyrics` is preferred for timed/word-level
+   * display when present (e.g. NetEase YRC). Host may also fan out title+artist
+   * search across lyric-capable providers for local library tracks.
+   */
+  getLyrics?(track: Track): Promise<{
+    lyrics: string | null
+    translatedLyrics: string | null
+    wordLyrics?: string | null
+  }>
   searchSongs?(keywords: string, limit?: number, offset?: number): Promise<{ items: Track[]; total: number }>
   searchPlaylists?(keywords: string, limit?: number, offset?: number): Promise<{ items: PlaylistSummary[]; total: number }>
   searchArtists?(keywords: string, limit?: number, offset?: number): Promise<{ items: ArtistSummary[]; total: number }>

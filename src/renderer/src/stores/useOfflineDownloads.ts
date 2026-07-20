@@ -59,8 +59,18 @@ export function useOfflineDownloads() {
   )
 
   async function pinTrack(track: Track): Promise<void> {
+    // Podcast pins go through main-side ownership check + grant (no bare HTTP).
+    if (track.source === 'podcast' || track.id.startsWith('podcast:')) {
+      const record = await window.api.podcast.pinEpisode(track.id)
+      applyRecord(record)
+      error.value = ''
+      return
+    }
     const providerId = getTrackProviderId(track)
     if (!providerId) throw new Error('Only online provider tracks can be made available offline')
+    if (providerId === 'radio') {
+      throw new Error('Live radio streams cannot be pinned offline')
+    }
     const provider = useMediaProviders()
     const url = await provider.resolvePlaybackUrl(track, {
       quality: track.streamQuality ?? 'auto',

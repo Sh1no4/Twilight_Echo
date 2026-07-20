@@ -5,14 +5,19 @@ import {
 } from '../../shared/radioStations.ts'
 import {
   isPodcastSubscriptionsDocument,
+  parsePodcastTrackId,
   type PodcastSubscriptionsDocument
 } from '../../shared/podcastSubscriptions.ts'
+import type { OfflineDownloadRecord } from '../../shared/offlineDownloads.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
 import { normalizeIpcString, stringifyJsonForIpcStorage } from '../security/ipcValidation.ts'
 import {
   PersistentDataRevisionConflictError,
   createPersistentDataRevisionConflictResponse
 } from '../../shared/versionedPersistence.ts'
+import { getOfflineDownloadService } from '../offline/offlineDownloadIpc.ts'
+import { authorizeOfflineDownloadRequest } from '../offline/offlineRequestAuthorization.ts'
+import { remoteMediaGrants } from '../security/remoteMediaGrants.ts'
 import { RadioMediaService } from './radioMediaService.ts'
 
 const MAX_RADIO_STATIONS_BYTES = 4 * 1024 * 1024
@@ -96,6 +101,37 @@ export function setupRadioMediaIpc(options?: ConstructorParameters<typeof RadioM
     assertTrustedIpcSender(event, 'radio media IPC')
     return await service!.refreshAllSubscriptions()
   })
+
+  /**
+   * Pin a subscribed podcast episode for offline use. Ownership is asserted against
+   * podcast-subscriptions.json; the media URL is granted then authorized through the
+   * same offline queue path as provider tracks (no bare HTTP from renderer).
+   */
+  ipcMain.handle(
+    'podcast:pinEpisode',
+    async (event, trackId: unknown): Promise<OfflineDownloadRecord> => {
+      assertTrustedIpcSender(event, 'radio media IPC')
+      const rawId = normalizeIpcString(trackId, 'podcast track id', 600)
+      const parsed = parsePodcastTrackId(rawId)
+      if (!parsed) throw new Error('Podcast track id is invalid')
+      const { episode, trackId: canonicalTrackId } = await service!.resolveSubscribedEpisode(
+        parsed.subscriptionId,
+        parsed.episodeGuid
+      )
+      const offline = getOfflineDownloadService()
+      if (!offline) throw new Error('Offline download service is not ready')
+      const grantUrl = remoteMediaGrants.grant(episode.mediaUrl, 'audio')
+      return offline.queue(
+        authorizeOfflineDownloadRequest({
+          providerId: 'podcast',
+          trackId: canonicalTrackId,
+          title: episode.title || canonicalTrackId,
+          quality: 'podcast',
+          url: grantUrl
+        })
+      )
+    }
+  )
 
   return service
 }

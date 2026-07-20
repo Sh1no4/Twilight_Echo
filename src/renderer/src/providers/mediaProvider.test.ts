@@ -20,6 +20,68 @@ test('extracts provider prefixes from source or track id', () => {
   assert.equal(getProviderLocalId('ncm:12345', 'bili'), null)
 })
 
+test('resolveLyricsAcrossProviders fans out to NCM for local tracks', async () => {
+  const registry = new MediaProviderRegistry()
+  let ncmSearchCalls = 0
+  let ncmLyricCalls = 0
+  registry.register({
+    id: 'ncm',
+    name: 'NetEase',
+    source: 'plugin',
+    capabilities: ['search', 'lyrics'],
+    searchSongs: async (keywords) => {
+      ncmSearchCalls += 1
+      assert.match(keywords, /Moon River/i)
+      return {
+        total: 1,
+        items: [
+          {
+            id: 'ncm:99',
+            title: 'Moon River',
+            artist: 'Audrey',
+            album: 'Online',
+            filePath: 'ncm:99',
+            fileName: 'Moon River',
+            duration: 180,
+            size: 0,
+            cover: null,
+            lyrics: null,
+            source: 'ncm'
+          }
+        ]
+      }
+    },
+    getLyrics: async (track) => {
+      ncmLyricCalls += 1
+      assert.equal(track.id, 'ncm:99')
+      return {
+        lyrics: '[00:01.00]Provider lyric',
+        translatedLyrics: '[00:01.00]翻译',
+        wordLyrics: null
+      }
+    }
+  })
+
+  const result = await registry.resolveLyricsAcrossProviders({
+    id: 'local:abc',
+    title: 'Moon River',
+    artist: 'Audrey',
+    album: 'Local',
+    filePath: 'D:\\Music\\Moon River.flac',
+    fileName: 'Moon River.flac',
+    duration: 181,
+    size: 1,
+    cover: null,
+    lyrics: null,
+    source: 'local'
+  })
+
+  assert.equal(ncmSearchCalls, 1)
+  assert.equal(ncmLyricCalls, 1)
+  assert.equal(result.lyrics, '[00:01.00]Provider lyric')
+  assert.equal(result.translatedLyrics, '[00:01.00]翻译')
+})
+
 test('resolves playback through the matching provider', async () => {
   const registry = new MediaProviderRegistry()
   registry.register({

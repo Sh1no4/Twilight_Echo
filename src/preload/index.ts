@@ -766,7 +766,9 @@ const api = {
       revision: number
     }> => ipcRenderer.invoke('podcast:refresh', subscriptionId),
     refreshAll: (): Promise<PodcastSubscriptionsDocument> =>
-      ipcRenderer.invoke('podcast:refreshAll')
+      ipcRenderer.invoke('podcast:refreshAll'),
+    pinEpisode: (trackId: string): Promise<OfflineDownloadRecord> =>
+      ipcRenderer.invoke('podcast:pinEpisode', trackId)
   },
   remote: {
     getStatus: (): Promise<import('../shared/remoteControl.ts').RemoteControlStatus> =>
@@ -801,7 +803,14 @@ const api = {
     }> => ipcRenderer.invoke('remote:castToDevice', payload),
     stopCast: (): Promise<{ ok: true }> => ipcRenderer.invoke('remote:stopCast'),
     getCastTarget: (): Promise<{ usn: string; friendlyName: string } | null> =>
-      ipcRenderer.invoke('remote:getCastTarget')
+      ipcRenderer.invoke('remote:getCastTarget'),
+    controlCast: (payload: {
+      seek?: number
+      volume?: number
+      pause?: boolean
+      play?: boolean
+    }): Promise<{ ok: boolean; reason?: string }> =>
+      ipcRenderer.invoke('remote:controlCast', payload)
   },
   data: {
     saveMusicLibrary: (data: LocalLibrarySnapshotInput): Promise<LocalMusicLibraryDocument> =>

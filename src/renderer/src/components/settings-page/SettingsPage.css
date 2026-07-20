@@ -2520,7 +2520,16 @@
   color: #4b5563;
 }
 
+.watcher-status-times {
+  justify-self: end;
+  color: var(--text-secondary, #64748b);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
 .watcher-status-error {
+  grid-column: 1 / -1;
   color: #b91c1c;
   font-size: 12px;
   line-height: 1.4;

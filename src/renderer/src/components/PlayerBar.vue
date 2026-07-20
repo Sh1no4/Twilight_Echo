@@ -41,6 +41,7 @@ const {
   currentTrack,
   dominantColor,
   isPlaying,
+  isStreamBuffering,
   currentTime,
   duration,
   volume,
@@ -203,6 +204,7 @@ const isLiveStream = computed(() => {
 
 const liveBadgeLabel = computed(() => {
   if (!isLiveStream.value) return ''
+  if (isStreamBuffering.value) return '缓冲中'
   if (currentTrack.value?.source === 'radio') return '电台 LIVE'
   return 'LIVE'
 })
@@ -1077,7 +1079,13 @@ onMounted(() => {
         <div class="player-track-info">
           <div class="player-title-row">
             <div class="player-title">{{ currentTrack.title }}</div>
-            <span v-if="isLiveStream" class="live-badge" title="实时流媒体">{{ liveBadgeLabel }}</span>
+            <span
+              v-if="isLiveStream || isStreamBuffering"
+              class="live-badge"
+              :class="{ buffering: isStreamBuffering }"
+              title="实时流媒体"
+              >{{ isStreamBuffering && !isLiveStream ? '缓冲中' : liveBadgeLabel }}</span
+            >
           </div>
           <div class="player-artist">{{ currentTrack.artist }}</div>
           <div v-if="audioEngineError" class="player-playback-diagnostic" :title="audioEngineError">

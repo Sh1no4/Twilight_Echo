@@ -272,6 +272,54 @@ test('enrichLocalTrackMetadata can fill missing artist and album from a close pr
   assert.equal(enriched.source, 'local')
 })
 
+test('enrichLocalTrackMetadata fills missing genre without overwriting an existing one', () => {
+  const enriched = enrichLocalTrackMetadata(
+    { ...localTrack, genre: null },
+    {
+      track: {
+        id: 'ncm:123',
+        title: 'Moon River',
+        artist: 'Audrey',
+        album: 'Online Album',
+        genre: 'Jazz',
+        filePath: 'ncm:123',
+        fileName: 'Moon River',
+        duration: 180,
+        size: 0,
+        cover: null,
+        lyrics: null,
+        source: 'ncm'
+      },
+      confidence: 'high',
+      score: 95
+    }
+  )
+  assert.equal(enriched.genre, 'Jazz')
+
+  const preserved = enrichLocalTrackMetadata(
+    { ...localTrack, genre: 'Soundtrack' },
+    {
+      track: {
+        id: 'ncm:123',
+        title: 'Moon River',
+        artist: 'Audrey',
+        album: 'Online Album',
+        genre: 'Jazz',
+        filePath: 'ncm:123',
+        fileName: 'Moon River',
+        duration: 180,
+        size: 0,
+        cover: null,
+        lyrics: null,
+        source: 'ncm'
+      },
+      confidence: 'high',
+      score: 95
+    }
+  )
+  assert.equal(preserved.genre, 'Soundtrack')
+})
+
 test('enrichLocalTrackMetadata preserves existing lyric source labels', () => {
   const enriched = enrichLocalTrackMetadata(
     {

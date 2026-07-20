@@ -854,6 +854,16 @@
   animation: live-pulse 1.4s ease-out infinite;
 }
 
+.live-badge.buffering {
+  background: color-mix(in srgb, #f59e0b 88%, #78350f);
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.25);
+  letter-spacing: 0.04em;
+}
+
+.live-badge.buffering::before {
+  animation: live-pulse 0.9s ease-out infinite;
+}
+
 @keyframes live-pulse {
   0% {
     box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.55);
@@ -869,6 +879,10 @@
 .player-bar-glass .live-badge {
   background: color-mix(in srgb, #ef4444 75%, transparent);
   box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.player-bar-glass .live-badge.buffering {
+  background: color-mix(in srgb, #f59e0b 72%, transparent);
 }
 
 .ab-loop-btn:disabled,

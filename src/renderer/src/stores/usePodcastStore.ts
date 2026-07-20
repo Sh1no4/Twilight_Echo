@@ -187,6 +187,12 @@ export function usePodcastStore() {
     }
   }
 
+  async function pinEpisode(subscriptionId: string, episodeGuid: string) {
+    await ensureLoaded()
+    const trackId = `podcast:${subscriptionId}:${episodeGuid}`
+    return window.api.podcast.pinEpisode(trackId)
+  }
+
   return {
     subscriptions,
     revision: readonly(revision),
@@ -198,6 +204,7 @@ export function usePodcastStore() {
     refresh,
     refreshAll,
     updateEpisodeProgress,
+    pinEpisode,
     podcastEpisodeToTrack,
     podcastEpisodeProgressRatio,
     parsePodcastTrackId,

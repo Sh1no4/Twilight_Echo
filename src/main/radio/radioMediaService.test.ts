@@ -89,6 +89,21 @@ test('radio media service imports playlist and subscribes podcast feeds', async 
       () => service.subscribePodcast('https://example.com/feed.xml'),
       /already subscribed/
     )
+
+    const resolved = await service.resolveSubscribedEpisode(
+      result.subscription.id,
+      result.subscription.episodes[0].guid
+    )
+    assert.equal(resolved.episode.mediaUrl, 'https://cdn.example.com/e.mp3')
+    assert.equal(resolved.trackId, `podcast:${result.subscription.id}:g1`)
+    await assert.rejects(
+      () => service.resolveSubscribedEpisode(result.subscription.id, 'missing-guid'),
+      /not found/
+    )
+    await assert.rejects(
+      () => service.resolveSubscribedEpisode('missing-sub', 'g1'),
+      /not found/
+    )
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

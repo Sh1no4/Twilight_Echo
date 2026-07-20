@@ -399,7 +399,7 @@ function isLocalTrack(track: Track): boolean {
 
 function needsMetadataEnrichment(track: Track, policy: MetadataEnrichmentPolicy): boolean {
   return (
-    (policy.metadata && !track.album) ||
+    (policy.metadata && (!track.album || !track.genre)) ||
     (policy.cover && !track.cover) ||
     (policy.lyrics && (!track.lyrics || !track.translatedLyrics))
   )

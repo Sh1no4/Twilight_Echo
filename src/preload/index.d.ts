@@ -1471,6 +1471,7 @@ interface WindowAPI {
     refreshAll: () => Promise<
       import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument
     >
+    pinEpisode: (trackId: string) => Promise<OfflineDownloadRecord>
   }
   data: {
     saveMusicLibrary: (data: LocalLibrarySnapshotInput) => Promise<LocalMusicLibraryDocument>
@@ -1563,6 +1564,12 @@ interface WindowAPI {
     }) => Promise<{ ok: true; usn: string; friendlyName: string; mediaUrl: string }>
     stopCast: () => Promise<{ ok: true }>
     getCastTarget: () => Promise<{ usn: string; friendlyName: string } | null>
+    controlCast: (payload: {
+      seek?: number
+      volume?: number
+      pause?: boolean
+      play?: boolean
+    }) => Promise<{ ok: boolean; reason?: string }>
   }
   settings: {
     get: () => Promise<SettingsSnapshot>

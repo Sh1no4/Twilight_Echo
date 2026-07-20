@@ -260,10 +260,62 @@ export class MediaProviderRegistry {
   }
 
   async resolveLyrics(track: Track): Promise<MediaProviderLyrics> {
-    const provider = this.getForTrack(track)
-    if (!provider?.getLyrics) return { lyrics: null, translatedLyrics: null }
-    await assertProviderEnabled(provider)
-    return provider.getLyrics(track)
+    return this.resolveLyricsAcrossProviders(track)
+  }
+
+  /**
+   * Prefer the track's own provider, then fan out to other enabled lyric
+   * providers (NCM first) using title+artist search for local/library tracks.
+   * Never throws: each provider failure is swallowed so online fallback can run.
+   */
+  async resolveLyricsAcrossProviders(
+    track: Track,
+    options?: { timeoutMs?: number; signal?: AbortSignal }
+  ): Promise<MediaProviderLyrics> {
+    const timeoutMs = options?.timeoutMs ?? 8_000
+    const empty: MediaProviderLyrics = { lyrics: null, translatedLyrics: null, wordLyrics: null }
+
+    const direct = this.getForTrack(track)
+    if (direct?.getLyrics) {
+      try {
+        await assertProviderEnabled(direct)
+        const lyrics = await withTimeout(direct.getLyrics(track), timeoutMs, options?.signal)
+        if (hasAnyLyrics(lyrics)) return lyrics
+      } catch {
+        // continue fan-out
+      }
+    }
+
+    // Local / unmatched tracks: try lyric-capable providers by title search.
+    const query = [track.title, track.artist]
+      .map((part) => (typeof part === 'string' ? part.trim() : ''))
+      .filter(Boolean)
+      .join(' ')
+    if (!query) return empty
+
+    const candidates = this.list()
+      .filter((provider) => provider.getLyrics && provider.searchSongs)
+      .filter((provider) => provider.id !== direct?.id)
+      .sort((a, b) => providerLyricPriority(a.id) - providerLyricPriority(b.id))
+
+    for (const provider of candidates.slice(0, 3)) {
+      if (options?.signal?.aborted) break
+      try {
+        if (!(await isProviderAvailable(provider))) continue
+        const search = await withTimeout(
+          provider.searchSongs!(query, 5, 0),
+          timeoutMs,
+          options?.signal
+        )
+        const match = pickBestLyricSearchMatch(track, search.items)
+        if (!match || !provider.getLyrics) continue
+        const lyrics = await withTimeout(provider.getLyrics(match), timeoutMs, options?.signal)
+        if (hasAnyLyrics(lyrics)) return lyrics
+      } catch {
+        // try next provider
+      }
+    }
+    return empty
   }
 
   async searchAllSongs(options: {
@@ -343,5 +395,82 @@ async function isProviderAvailable(provider: MediaProvider): Promise<boolean> {
     return await provider.isEnabled()
   } catch {
     return false
+  }
+}
+
+function providerLyricPriority(id: string): number {
+  const normalized = normalizeProviderId(id)
+  if (normalized === 'ncm') return 0
+  if (normalized === 'bili') return 2
+  return 1
+}
+
+function hasAnyLyrics(lyrics: MediaProviderLyrics | null | undefined): boolean {
+  if (!lyrics) return false
+  return Boolean(lyrics.lyrics || lyrics.translatedLyrics || lyrics.wordLyrics)
+}
+
+function normalizeMatchText(value: string | null | undefined): string {
+  return (value ?? '')
+    .normalize('NFKC')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+}
+
+function pickBestLyricSearchMatch(local: Track, candidates: Track[]): Track | null {
+  const localTitle = normalizeMatchText(local.title)
+  const localArtist = normalizeMatchText(local.artist)
+  if (!localTitle) return null
+  let best: Track | null = null
+  let bestScore = -1
+  for (const candidate of candidates) {
+    const title = normalizeMatchText(candidate.title)
+    if (!title || title !== localTitle) continue
+    const artist = normalizeMatchText(candidate.artist)
+    let score = 10
+    if (localArtist && artist) {
+      if (artist === localArtist) score += 10
+      else if (artist.includes(localArtist) || localArtist.includes(artist)) score += 4
+      else continue
+    }
+    if (
+      typeof local.duration === 'number' &&
+      local.duration > 0 &&
+      typeof candidate.duration === 'number' &&
+      candidate.duration > 0
+    ) {
+      const delta = Math.abs(local.duration - candidate.duration)
+      if (delta <= 3) score += 5
+      else if (delta <= 8) score += 2
+      else if (delta > 30) continue
+    }
+    if (score > bestScore) {
+      bestScore = score
+      best = candidate
+    }
+  }
+  return bestScore >= 10 ? best : null
+}
+
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<T> {
+  if (signal?.aborted) throw new Error('Aborted')
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error('Lyrics provider timed out')), timeoutMs)
+  })
+  const onAbort = (): void => {
+    if (timer) clearTimeout(timer)
+  }
+  signal?.addEventListener('abort', onAbort, { once: true })
+  try {
+    return await Promise.race([promise, timeout])
+  } finally {
+    if (timer) clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
   }
 }

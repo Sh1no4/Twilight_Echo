@@ -54,6 +54,10 @@ export async function setupOfflineDownloadIpc(): Promise<OfflineDownloadService>
   return service
 }
 
+export function getOfflineDownloadService(): OfflineDownloadService | null {
+  return service
+}
+
 export function destroyOfflineDownloadIpc(): void {
   service?.shutdown()
   service = null

@@ -362,6 +362,7 @@ const currentTrack = ref<Track | null>(null)
 const dominantColor = ref('#1a73e8')
 const isPlaying = ref(false)
 const isLoading = ref(false)
+const isStreamBuffering = ref(false)
 const currentTime = ref(0)
 const duration = ref(0)
 const volume = ref(0.7)
@@ -641,6 +642,7 @@ function getPlaybackAudio(): HTMLAudioElement {
   })
 
   audio.addEventListener('error', () => {
+    isStreamBuffering.value = false
     const code = audio.error?.code ?? 0
     const message = `Audio playback failed (code ${code})`
     console.error('[audio-engine] Renderer audio error:', {
@@ -669,6 +671,23 @@ function getPlaybackAudio(): HTMLAudioElement {
     isPlaying.value = false
     isLoading.value = false
   })
+
+  const markBuffering = (): void => {
+    if (nativePlaybackActive) return
+    const track = currentTrack.value
+    if (!track) return
+    if (track.source === 'radio' || track.source === 'podcast' || /^https?:\/\//i.test(track.filePath || '')) {
+      isStreamBuffering.value = true
+    }
+  }
+  const clearBuffering = (): void => {
+    isStreamBuffering.value = false
+  }
+  audio.addEventListener('waiting', markBuffering)
+  audio.addEventListener('stalled', markBuffering)
+  audio.addEventListener('canplay', clearBuffering)
+  audio.addEventListener('playing', clearBuffering)
+  audio.addEventListener('emptied', clearBuffering)
 
   playbackAudio = audio
   return audio
@@ -1339,6 +1358,9 @@ watch(volume, (val) => {
   }
   if (playbackAudio) playbackAudio.volume = val
   window.api.audioEngine.setVolume(val).catch(() => {})
+  if (castTargetName.value) {
+    void window.api.remote?.controlCast?.({ volume: val }).catch(() => {})
+  }
 })
 
 function applyPlaybackRateToHtmlAudio(audio: HTMLAudioElement, rate = playbackRate.value): void {
@@ -1864,11 +1886,23 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     return track.filePath
   }
 
-  // Radio / podcast media is already a direct remote URL on the track.
-  if (source === 'radio' || source === 'podcast') {
+  // Live radio has no finite pin; always stream.
+  if (source === 'radio') {
     const direct = track.streamUrl || track.filePath
     if (direct && /^https?:\/\//i.test(direct)) return direct
-    throw new Error(`Unable to resolve ${source} stream URL`)
+    throw new Error('Unable to resolve radio stream URL')
+  }
+
+  // Podcast: completed offline pin wins; otherwise use the episode media URL.
+  if (source === 'podcast') {
+    const offlinePath = await window.api.offline.getPlayablePath('podcast', track.id)
+    if (offlinePath) {
+      track.offlinePath = offlinePath
+      return offlinePath
+    }
+    const direct = track.streamUrl || track.filePath
+    if (direct && /^https?:\/\//i.test(direct)) return direct
+    throw new Error('Unable to resolve podcast stream URL')
   }
 
   // A completed user pin is integrity-checked by the main process on every
@@ -2657,6 +2691,11 @@ function seekPlayback(time: number): void {
     return
   }
   setCurrentTimeImmediate(position)
+  if (castTargetName.value) {
+    // While casting, keep UI position in sync and fan-out seek to the renderer device.
+    void window.api.remote?.controlCast?.({ seek: position }).catch(() => {})
+    return
+  }
   if (nativePlaybackActive) {
     window.api.audioEngine.seek(position).catch(() => {})
   } else if (playbackAudio && track) {
@@ -3775,6 +3814,7 @@ export function usePlayerStore(): {
     dominantColor,
     isPlaying,
     isLoading,
+    isStreamBuffering,
     currentTime,
     duration,
     volume,

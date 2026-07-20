@@ -275,6 +275,36 @@ export class RadioMediaService {
     return document
   }
 
+  /**
+   * Resolve an episode that belongs to a saved subscription. Used by offline pin
+   * so the downloader only ever sees media URLs already present in the feed cache.
+   */
+  async resolveSubscribedEpisode(
+    subscriptionId: string,
+    episodeGuid: string
+  ): Promise<{
+    subscription: PodcastSubscription
+    episode: PodcastEpisode
+    trackId: string
+  }> {
+    const id = subscriptionId.trim()
+    const guid = episodeGuid.trim()
+    if (!id || !guid) throw new Error('Podcast episode identity is invalid')
+    const loaded = await this.loadPodcastSubscriptions()
+    const subscription = loaded.data.subscriptions.find((sub) => sub.id === id)
+    if (!subscription) throw new Error('Podcast subscription was not found')
+    const episode = subscription.episodes.find((item) => item.guid === guid)
+    if (!episode) throw new Error('Podcast episode was not found')
+    if (!episode.mediaUrl || !/^https?:\/\//i.test(episode.mediaUrl)) {
+      throw new Error('Podcast episode media URL is invalid')
+    }
+    return {
+      subscription,
+      episode,
+      trackId: `podcast:${id}:${guid}`
+    }
+  }
+
   private async buildSubscriptionFromFeed(
     feedUrl: string,
     previous?: PodcastSubscription

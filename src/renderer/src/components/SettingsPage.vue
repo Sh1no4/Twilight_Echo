@@ -377,6 +377,21 @@ function watcherModeLabel(mode: string): string {
   }
 }
 
+function formatWatcherTime(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const ms = Date.parse(iso)
+  if (!Number.isFinite(ms)) return '—'
+  const delta = Date.now() - ms
+  if (delta < 0) return '刚刚'
+  const seconds = Math.floor(delta / 1000)
+  if (seconds < 60) return `${seconds}s 前`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 48) return `${hours} 小时前`
+  return new Date(ms).toLocaleString()
+}
+
 async function refreshLibraryWatcherStatus(): Promise<void> {
   try {
     libraryWatcherStatus.value = await window.api.library.getWatcherStatus()
@@ -1699,7 +1714,9 @@ onBeforeUnmount(() => {
                       folder,
                       state: settings.watchLibrary ? 'failed' : 'disabled',
                       mode: 'none',
-                      lastError: null
+                      lastError: null,
+                      lastEventAt: null,
+                      lastReconcileAt: null
                     }))"
                     :key="item.folder"
                     class="watcher-status-row"
@@ -1708,6 +1725,10 @@ onBeforeUnmount(() => {
                     <span class="watcher-status-badge" :data-state="item.state">
                       {{ watcherStateLabel(item.state) }}
                       · {{ watcherModeLabel(item.mode) }}
+                    </span>
+                    <span class="watcher-status-times">
+                      事件 {{ formatWatcherTime(item.lastEventAt) }} · 对账
+                      {{ formatWatcherTime(item.lastReconcileAt) }}
                     </span>
                     <span v-if="item.lastError" class="watcher-status-error">{{ item.lastError }}</span>
                   </div>

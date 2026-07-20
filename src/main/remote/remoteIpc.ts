@@ -309,6 +309,45 @@ export function setupRemoteIpc(): void {
       : { usn: activeCastUsn, friendlyName: activeCastUsn }
   })
 
+  /**
+   * Fan-out in-app transport/volume to the active DLNA renderer while casting.
+   * Local engine stays paused; renderer still tracks UI position/volume state.
+   */
+  ipcMain.handle(
+    'remote:controlCast',
+    async (
+      event,
+      payload: {
+        seek?: unknown
+        volume?: unknown
+        pause?: unknown
+        play?: unknown
+      }
+    ) => {
+      assertTrustedIpcSender(event, 'remote control IPC')
+      if (!activeCastUsn) return { ok: false as const, reason: 'no-active-cast' as const }
+      if (payload?.seek !== undefined) {
+        const seek =
+          typeof payload.seek === 'number' && Number.isFinite(payload.seek)
+            ? Math.max(0, payload.seek)
+            : null
+        if (seek === null) throw new Error('Cast seek position is invalid')
+        await tryDlnaSeek(seek)
+      }
+      if (payload?.volume !== undefined) {
+        const volume =
+          typeof payload.volume === 'number' && Number.isFinite(payload.volume)
+            ? Math.min(1, Math.max(0, payload.volume))
+            : null
+        if (volume === null) throw new Error('Cast volume is invalid')
+        await tryDlnaVolume(volume)
+      }
+      if (payload?.pause === true) await tryDlnaTransport('pause')
+      if (payload?.play === true) await tryDlnaTransport('play')
+      return { ok: true as const }
+    }
+  )
+
   void syncRemoteControlWithSettings().catch((error) => {
     console.warn('[remote] initial sync failed:', error)
   })
