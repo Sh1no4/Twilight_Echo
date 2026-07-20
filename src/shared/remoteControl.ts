@@ -61,6 +61,8 @@ export interface RemoteControlStatus {
   lastError: string | null
 }
 
+export type CastProtocol = 'dlna' | 'chromecast'
+
 export interface DlnaDeviceInfo {
   usn: string
   friendlyName: string
@@ -70,6 +72,11 @@ export interface DlnaDeviceInfo {
   avTransportUrl: string | null
   renderingControlUrl: string | null
   lastSeenAt: number
+  /** Cast backend protocol; defaults to 'dlna' when omitted (legacy). */
+  protocol?: CastProtocol
+  /** Chromecast host (IPv4). */
+  host?: string
+  port?: number
 }
 
 export function isFiniteNumber(value: unknown): value is number {

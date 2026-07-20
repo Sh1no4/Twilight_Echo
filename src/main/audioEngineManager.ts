@@ -446,6 +446,8 @@ export interface NativeAudioBinding {
   Seek: (time: number) => void
   SetVolume: (volume: number) => void
   SetPlaybackRate: (rate: number) => void
+  /** A-B loop; end <= start clears. Optional on older native bindings. */
+  SetLoopRange?: (startSeconds: number, endSeconds: number) => void
   SetOutputDevice: (device: string) => void
   SetOutputBackend: (backend: string) => void
   SetOutputConfig?: (json: string) => void
@@ -2504,6 +2506,26 @@ export class AudioEngineManager extends EventEmitter {
     // Non-unity rate requires resampling and breaks bit-perfect, same as non-unity volume.
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
+  }
+
+  /**
+   * Native A-B loop. Pass end <= start (or negative) to clear.
+   * Returns whether the native binding accepted the call (soft A-B remains the fallback).
+   */
+  async setLoopRange(startSeconds: number, endSeconds: number): Promise<boolean> {
+    const start =
+      typeof startSeconds === 'number' && Number.isFinite(startSeconds) ? Math.max(0, startSeconds) : -1
+    const end =
+      typeof endSeconds === 'number' && Number.isFinite(endSeconds) ? Math.max(0, endSeconds) : -1
+    if (!this.native || typeof this.native.SetLoopRange !== 'function') return false
+    try {
+      this.tryNative('设置 A-B 循环', (native) => {
+        native.SetLoopRange?.(start, end)
+      })
+      return true
+    } catch {
+      return false
+    }
   }
 
   async stop(): Promise<void> {

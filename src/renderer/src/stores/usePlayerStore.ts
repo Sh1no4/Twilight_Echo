@@ -2713,6 +2713,30 @@ function seekPlayback(time: number): void {
 function clearAbLoop(): void {
   abLoopA.value = null
   abLoopB.value = null
+  abLoopNativeActive = false
+  // Prefer native clear; soft path is a no-op when range is null.
+  void window.api?.audioEngine?.setLoopRange?.(-1, -1).catch(() => {})
+}
+
+/** Push current A-B range to native engine when both points are set; otherwise clear. */
+function syncNativeAbLoop(): void {
+  const a = abLoopA.value
+  const b = abLoopB.value
+  const api = window.api?.audioEngine?.setLoopRange
+  if (!api) return
+  if (a == null || b == null || b <= a || isCurrentTrackLiveStream()) {
+    void api(-1, -1).catch(() => {})
+    return
+  }
+  void api(a, b)
+    .then((ok) => {
+      // When native accepts, soft enforce becomes a safety net only.
+      if (ok) abLoopNativeActive = true
+      else abLoopNativeActive = false
+    })
+    .catch(() => {
+      abLoopNativeActive = false
+    })
 }
 
 function isCurrentTrackLiveStream(): boolean {
@@ -2731,11 +2755,13 @@ function setAbLoopPoint(point: 'a' | 'b', time = latestPlaybackTime): void {
   if (point === 'a') {
     abLoopA.value = position
     if (abLoopB.value != null && abLoopB.value <= position) abLoopB.value = null
+    syncNativeAbLoop()
     return
   }
   if (abLoopA.value == null) abLoopA.value = 0
   if (position <= (abLoopA.value ?? 0)) return
   abLoopB.value = position
+  syncNativeAbLoop()
 }
 
 function toggleAbLoopAtCurrentTime(): void {
@@ -2754,13 +2780,18 @@ function toggleAbLoopAtCurrentTime(): void {
   clearAbLoop()
 }
 
+/** True when native SetLoopRange last accepted an active range (soft seek is backup). */
+let abLoopNativeActive = false
 let abLoopEnforcing = false
 function enforceAbLoop(time: number): void {
   if (abLoopEnforcing) return
   if (isCurrentTrackLiveStream()) return
+  // When native SetLoopRange is active, clock-thread seek owns enforcement.
+  if (abLoopNativeActive) return
   const a = abLoopA.value
   const b = abLoopB.value
   if (a == null || b == null || b <= a) return
+  // Soft A-B fallback when native binding is missing or rejected the range.
   if (time + 0.02 >= b) {
     abLoopEnforcing = true
     try {
@@ -3777,16 +3808,51 @@ export function usePlayerStore(): {
 
   async function castToDevice(usn: string): Promise<void> {
     const track = currentTrack.value
-    if (!track?.filePath) throw new Error('当前曲目不支持投送（需要本地文件）')
+    if (!track) throw new Error('当前没有可投送的曲目')
     const remoteApi = window.api?.remote
     if (!remoteApi?.castToDevice) throw new Error('远程控制 API 不可用')
+
+    // Prefer a resolved offline pin / local path when available; otherwise
+    // resolve the live stream URL (podcast / radio / provider) and cast via
+    // the remote media token proxy. Provider streams may be twilight-media://
+    // grants — main resolves those to the real upstream.
+    let filePath: string | undefined
+    let mediaUrl: string | undefined
+    const classifyCastTarget = (target: string): void => {
+      if (!target) return
+      if (target.startsWith('twilight-media:')) {
+        mediaUrl = target
+        return
+      }
+      if (/^https?:\/\//i.test(target)) {
+        mediaUrl = target
+        return
+      }
+      // Local path (no scheme or file-like absolute path).
+      if (!/^[a-z][a-z\d+.-]*:\/\//i.test(target)) {
+        filePath = target
+      }
+    }
+    try {
+      classifyCastTarget(await resolvePlayTarget(track))
+    } catch {
+      // Fall through to direct fields when resolvePlayTarget fails.
+    }
+    if (!filePath && !mediaUrl) {
+      classifyCastTarget(track.offlinePath || track.streamUrl || track.filePath || '')
+    }
+    if (!filePath && !mediaUrl) {
+      throw new Error('当前曲目不支持投送（缺少本地路径或流地址）')
+    }
+
     const result = await remoteApi.castToDevice({
       usn,
-      filePath: track.filePath,
+      ...(filePath ? { filePath } : { mediaUrl }),
       title: track.title,
       artist: track.artist,
       album: track.album,
-      positionSeconds: currentTime.value
+      // Live radio: do not seek after load.
+      positionSeconds: isCurrentTrackLiveStream() ? 0 : currentTime.value
     })
     castTargetName.value = result.friendlyName
     // Main process already dispatches a 'pause' shortcut for local engine.

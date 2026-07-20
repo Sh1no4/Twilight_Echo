@@ -1,11 +1,23 @@
 import { randomBytes } from 'node:crypto'
 import { REMOTE_MEDIA_TOKEN_TTL_MS } from '../../shared/remoteControl.ts'
 
+export type MediaStreamGrantKind = 'file' | 'remote'
+
 export interface MediaStreamGrant {
-  filePath: string
+  kind: MediaStreamGrantKind
+  /** Local filesystem path when kind === 'file'. */
+  filePath?: string
+  /** Upstream http(s) URL when kind === 'remote'. */
+  remoteUrl?: string
   contentType: string
   title?: string
   expiresAt: number
+}
+
+export interface IssueMediaGrantOptions {
+  contentType?: string
+  title?: string
+  ttlMs?: number
 }
 
 export class MediaStreamGrantStore {
@@ -18,14 +30,30 @@ export class MediaStreamGrantStore {
     this.ttlMs = options.ttlMs ?? REMOTE_MEDIA_TOKEN_TTL_MS
   }
 
-  issue(
-    filePath: string,
-    options: { contentType?: string; title?: string; ttlMs?: number } = {}
-  ): string {
+  /** Issue a token for a local file path (library / offline pin). */
+  issue(filePath: string, options: IssueMediaGrantOptions = {}): string {
+    return this.issueFile(filePath, options)
+  }
+
+  issueFile(filePath: string, options: IssueMediaGrantOptions = {}): string {
     const token = randomBytes(18).toString('base64url')
     this.grants.set(token, {
+      kind: 'file',
       filePath,
       contentType: options.contentType ?? 'application/octet-stream',
+      title: options.title,
+      expiresAt: this.now() + (options.ttlMs ?? this.ttlMs)
+    })
+    return token
+  }
+
+  /** Issue a token that proxies an upstream http(s) media URL for DLNA cast. */
+  issueRemote(remoteUrl: string, options: IssueMediaGrantOptions = {}): string {
+    const token = randomBytes(18).toString('base64url')
+    this.grants.set(token, {
+      kind: 'remote',
+      remoteUrl,
+      contentType: options.contentType ?? 'audio/*',
       title: options.title,
       expiresAt: this.now() + (options.ttlMs ?? this.ttlMs)
     })
@@ -52,8 +80,8 @@ export class MediaStreamGrantStore {
   }
 }
 
-export function guessAudioContentType(filePath: string): string {
-  const lower = filePath.toLowerCase()
+export function guessAudioContentType(filePathOrUrl: string): string {
+  const lower = filePathOrUrl.toLowerCase().split('?')[0] ?? filePathOrUrl.toLowerCase()
   if (lower.endsWith('.flac')) return 'audio/flac'
   if (lower.endsWith('.mp3')) return 'audio/mpeg'
   if (lower.endsWith('.wav') || lower.endsWith('.wave')) return 'audio/wav'

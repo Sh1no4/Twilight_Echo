@@ -2028,6 +2028,56 @@ void AudioPipeline::setPlaybackRate(double rate) {
   enqueueControlCommand(command);
 }
 
+void AudioPipeline::setLoopRange(double startSeconds, double endSeconds) {
+  if (!std::isfinite(startSeconds) || !std::isfinite(endSeconds) || endSeconds <= startSeconds ||
+      startSeconds < 0.0) {
+    clearLoopRange();
+    return;
+  }
+  storeAtomicDouble(loopStartBits_, startSeconds, std::memory_order_release);
+  storeAtomicDouble(loopEndBits_, endSeconds, std::memory_order_release);
+  loopEnabled_.store(true, std::memory_order_release);
+}
+
+void AudioPipeline::clearLoopRange() {
+  loopEnabled_.store(false, std::memory_order_release);
+  storeAtomicDouble(loopStartBits_, 0.0, std::memory_order_release);
+  storeAtomicDouble(loopEndBits_, 0.0, std::memory_order_release);
+}
+
+bool AudioPipeline::enforceLoopRange(std::string* error) {
+  if (!loopEnabled_.load(std::memory_order_acquire)) return false;
+  // Re-entrancy guard: seek itself must not re-enter enforcement.
+  bool expected = false;
+  if (!loopEnforceBusy_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+    return false;
+  }
+  struct BusyGuard {
+    std::atomic<bool>& flag;
+    ~BusyGuard() { flag.store(false, std::memory_order_release); }
+  } guard{loopEnforceBusy_};
+
+  const double start = loadAtomicDouble(loopStartBits_, std::memory_order_acquire);
+  const double end = loadAtomicDouble(loopEndBits_, std::memory_order_acquire);
+  if (!(end > start) || start < 0.0) {
+    clearLoopRange();
+    return false;
+  }
+
+  // Read position without holding mutex across seek() (seek also takes mutex_).
+  const auto state = renderState_.load(std::memory_order_acquire);
+  if (state != PipelineState::Playing && state != PipelineState::Paused) return false;
+  const int positionSampleRate = positionSampleRateForStream(stream_, outputFormat_);
+  if (positionSampleRate <= 0) return false;
+  const double position =
+      static_cast<double>(renderedFrames_.load(std::memory_order_relaxed)) /
+      static_cast<double>(positionSampleRate);
+
+  // Small epsilon so we jump just as the playhead reaches end.
+  if (position + 0.005 < end) return false;
+  return seek(start, error) == TAE_RESULT_OK;
+}
+
 void AudioPipeline::resetRateResampler() noexcept {
   rateRingRead_ = 0;
   rateRingWrite_ = 0;

@@ -898,6 +898,13 @@ TAE_Result TwilightAudioEngine::setPlaybackRate(double rate) {
   return TAE_RESULT_OK;
 }
 
+TAE_Result TwilightAudioEngine::setLoopRange(double startSeconds, double endSeconds) {
+  if (pipeline_) {
+    pipeline_->setLoopRange(startSeconds, endSeconds);
+  }
+  return TAE_RESULT_OK;
+}
+
 TAE_Result TwilightAudioEngine::setOutputDevice(const std::string& deviceId) {
   std::string source;
   double position = 0.0;
@@ -1692,7 +1699,14 @@ void TwilightAudioEngine::clockLoop() {
     std::string deviceInvalidatedMessage;
     std::string renderErrorMessage;
     if (hasPipelineStatus) {
-      pipelineStatus = pipeline_->status();
+      // A-B loop enforcement (seek is not RT-safe — runs on clock thread).
+      std::string loopError;
+      if (pipeline_->enforceLoopRange(&loopError)) {
+        // Refresh status after an in-loop seek so UI sees the jump promptly.
+        pipelineStatus = pipeline_->status();
+      } else {
+        pipelineStatus = pipeline_->status();
+      }
       emitEnded = pipeline_->consumeEnded();
       deviceInvalidated = pipeline_->consumeDeviceInvalidated(&deviceInvalidatedMessage);
       renderError = pipeline_->consumeRenderError(&renderErrorMessage);
@@ -2224,6 +2238,11 @@ TAE_Result TAE_SetVolume(TAE_EngineHandle engine, double volume) {
 TAE_Result TAE_SetPlaybackRate(TAE_EngineHandle engine, double rate) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   return fromHandle(engine)->setPlaybackRate(rate);
+}
+
+TAE_Result TAE_SetLoopRange(TAE_EngineHandle engine, double start_seconds, double end_seconds) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return fromHandle(engine)->setLoopRange(start_seconds, end_seconds);
 }
 
 TAE_Result TAE_SetOutputDevice(TAE_EngineHandle engine, const char* device_id) {

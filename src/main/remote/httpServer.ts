@@ -138,10 +138,28 @@ export class RemoteHttpServer {
 
   issueMediaUrl(filePath: string, title?: string): string | null {
     if (!this.port) return null
-    const token = this.mediaGrants.issue(filePath, {
+    const token = this.mediaGrants.issueFile(filePath, {
       contentType: guessAudioContentType(filePath),
       title
     })
+    return this.mediaUrlForToken(token)
+  }
+
+  /** Proxy an upstream http(s) audio URL through the LAN media token endpoint. */
+  issueRemoteMediaUrl(
+    remoteUrl: string,
+    options: { title?: string; contentType?: string } = {}
+  ): string | null {
+    if (!this.port) return null
+    const token = this.mediaGrants.issueRemote(remoteUrl, {
+      contentType: options.contentType ?? guessAudioContentType(remoteUrl),
+      title: options.title
+    })
+    return this.mediaUrlForToken(token)
+  }
+
+  private mediaUrlForToken(token: string): string | null {
+    if (!this.port) return null
     const host = this.listLanUrls(this.port)[0]
     if (!host) return null
     return `${host}/media/${token}`
@@ -343,9 +361,21 @@ export class RemoteHttpServer {
       this.sendJson(res, 404, { error: 'media_token_invalid' })
       return
     }
+
+    if (grant.kind === 'remote' && grant.remoteUrl) {
+      await this.proxyRemoteMedia(req, res, grant.remoteUrl, grant.contentType)
+      return
+    }
+
+    const filePath = grant.filePath
+    if (!filePath) {
+      this.sendJson(res, 404, { error: 'media_missing' })
+      return
+    }
+
     let stat
     try {
-      stat = statSync(grant.filePath)
+      stat = statSync(filePath)
     } catch {
       this.sendJson(res, 404, { error: 'media_missing' })
       return
@@ -357,7 +387,7 @@ export class RemoteHttpServer {
 
     const total = stat.size
     const range = req.headers.range
-    const type = grant.contentType || guessAudioContentType(grant.filePath)
+    const type = grant.contentType || guessAudioContentType(filePath)
 
     if (range) {
       const match = /^bytes=(\d*)-(\d*)$/i.exec(range)
@@ -386,7 +416,7 @@ export class RemoteHttpServer {
         'accept-ranges': 'bytes',
         'cache-control': 'no-store'
       })
-      createReadStream(grant.filePath, { start, end }).pipe(res)
+      createReadStream(filePath, { start, end }).pipe(res)
       return
     }
 
@@ -396,7 +426,90 @@ export class RemoteHttpServer {
       'accept-ranges': 'bytes',
       'cache-control': 'no-store'
     })
-    createReadStream(grant.filePath).pipe(res)
+    createReadStream(filePath).pipe(res)
+  }
+
+  /**
+   * Proxy upstream http(s) media to the DLNA renderer. Never expose the
+   * original URL (may contain CDN tokens). Rejects redirects and non-audio types.
+   */
+  private async proxyRemoteMedia(
+    req: IncomingMessage,
+    res: ServerResponse,
+    remoteUrl: string,
+    fallbackContentType: string
+  ): Promise<void> {
+    const headers: Record<string, string> = {
+      'user-agent': 'TwilightEcho-CastProxy/1.0',
+      accept: 'audio/*,application/ogg,application/octet-stream,*/*'
+    }
+    const range = req.headers.range
+    if (typeof range === 'string' && range) headers.range = range
+
+    let upstream: Response
+    try {
+      upstream = await fetch(remoteUrl, {
+        method: 'GET',
+        headers,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(120_000)
+      })
+    } catch {
+      this.sendJson(res, 502, { error: 'upstream_fetch_failed' })
+      return
+    }
+
+    if (upstream.status >= 300 && upstream.status < 400) {
+      this.sendJson(res, 502, { error: 'upstream_redirect_rejected' })
+      return
+    }
+    if (!upstream.ok && upstream.status !== 206) {
+      this.sendJson(res, 502, { error: 'upstream_http_error', status: upstream.status })
+      return
+    }
+
+    const contentType =
+      upstream.headers.get('content-type') || fallbackContentType || 'application/octet-stream'
+    const outHeaders: Record<string, string | number> = {
+      'content-type': contentType,
+      'cache-control': 'no-store',
+      'accept-ranges': upstream.headers.get('accept-ranges') || 'bytes'
+    }
+    for (const name of ['content-length', 'content-range'] as const) {
+      const value = upstream.headers.get(name)
+      if (value) outHeaders[name] = value
+    }
+
+    res.writeHead(upstream.status, outHeaders)
+
+    if (!upstream.body) {
+      res.end()
+      return
+    }
+
+    const reader = upstream.body.getReader()
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (!value) continue
+        if (!res.write(Buffer.from(value))) {
+          await new Promise<void>((resolve) => res.once('drain', resolve))
+        }
+        if (res.destroyed || res.writableEnded) {
+          await reader.cancel()
+          return
+        }
+      }
+      res.end()
+    } catch {
+      try {
+        await reader.cancel()
+      } catch {
+        // ignore
+      }
+      if (!res.writableEnded) res.end()
+    }
   }
 
   private sendJson(res: ServerResponse, status: number, body: unknown): void {

@@ -439,6 +439,17 @@ napi_value SetPlaybackRate(napi_env env, napi_callback_info info) {
   return throwOnError(env, TAE_SetPlaybackRate(g_engine, argc > 0 ? getNumberArg(env, argv[0], 1.0) : 1.0));
 }
 
+napi_value SetLoopRange(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 2;
+  napi_value argv[2];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const double start = argc > 0 ? getNumberArg(env, argv[0], -1.0) : -1.0;
+  const double end = argc > 1 ? getNumberArg(env, argv[1], -1.0) : -1.0;
+  return throwOnError(env, TAE_SetLoopRange(g_engine, start, end));
+}
+
 napi_value SetOutputDevice(napi_env env, napi_callback_info info) {
   ensureEngine();
   clearLastError();
@@ -835,6 +846,7 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "Seek", Seek);
   define(env, exports, "SetVolume", SetVolume);
   define(env, exports, "SetPlaybackRate", SetPlaybackRate);
+  define(env, exports, "SetLoopRange", SetLoopRange);
   define(env, exports, "SetOutputDevice", SetOutputDevice);
   define(env, exports, "SetOutputBackend", SetOutputBackend);
   define(env, exports, "LoadQueue", LoadQueue);

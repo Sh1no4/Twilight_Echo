@@ -483,6 +483,8 @@ const api = {
       ipcRenderer.invoke('audioEngine:setVolume', volume),
     setPlaybackRate: (rate: number): Promise<void> =>
       ipcRenderer.invoke('audioEngine:setPlaybackRate', rate),
+    setLoopRange: (startSeconds: number, endSeconds: number): Promise<boolean> =>
+      ipcRenderer.invoke('audioEngine:setLoopRange', startSeconds, endSeconds),
     stop: (): Promise<void> => ipcRenderer.invoke('audioEngine:stop'),
     next: (): Promise<void> => ipcRenderer.invoke('audioEngine:next'),
     previous: (): Promise<void> => ipcRenderer.invoke('audioEngine:previous'),
@@ -809,7 +811,11 @@ const api = {
       ipcRenderer.invoke('remote:getDlnaDevices'),
     castToDevice: (payload: {
       usn: string
-      filePath: string
+      /** Authorized local library / offline pin path. Mutually exclusive with mediaUrl. */
+      filePath?: string
+      /** Direct http(s) stream URL (podcast / radio / provider). Mutually exclusive with filePath. */
+      mediaUrl?: string
+      contentType?: string
       title?: string
       artist?: string
       album?: string

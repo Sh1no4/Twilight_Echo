@@ -291,7 +291,19 @@ const castPanelOpen = ref(false)
 const castDevices = ref<import('../../../shared/remoteControl.ts').DlnaDeviceInfo[]>([])
 const castBusy = ref(false)
 const castError = ref('')
-const canCastCurrentTrack = computed(() => Boolean(currentTrack.value?.filePath))
+const canCastCurrentTrack = computed(() => {
+  const track = currentTrack.value
+  if (!track) return false
+  // Local path, offline pin, or any stream URL (podcast / radio / provider) can cast
+  // once the remote media token proxy is available in main.
+  return Boolean(
+    track.offlinePath ||
+      track.streamUrl ||
+      track.filePath ||
+      track.source === 'radio' ||
+      track.source === 'podcast'
+  )
+})
 
 watch(
   () => currentTrack.value?.id,
@@ -1413,19 +1425,27 @@ onMounted(() => {
             </p>
             <p v-if="castBusy" class="cast-panel__hint">正在搜索设备…</p>
             <p v-else-if="castDevices.length === 0" class="cast-panel__hint">
-              未发现 DLNA 设备。请确认设备在线且本机已开启远程控制服务。
+              未发现投送设备（DLNA / Chromecast）。请确认设备在线且本机已开启远程控制服务。
             </p>
             <ul v-else class="cast-panel__list">
               <li v-for="device in castDevices" :key="device.usn">
                 <button
                   type="button"
                   class="cast-panel__item"
-                  :disabled="castBusy || !device.avTransportUrl || !canCastCurrentTrack"
+                  :disabled="
+                    castBusy ||
+                    !canCastCurrentTrack ||
+                    (device.protocol !== 'chromecast' && !device.avTransportUrl)
+                  "
                   @click="onCastToDevice(device.usn)"
                 >
                   <span class="cast-panel__name">{{ device.friendlyName }}</span>
                   <span class="cast-panel__meta">
-                    {{ device.manufacturer || device.modelName || 'DLNA' }}
+                    {{
+                      device.protocol === 'chromecast'
+                        ? 'Chromecast'
+                        : device.manufacturer || device.modelName || 'DLNA'
+                    }}
                   </span>
                 </button>
               </li>

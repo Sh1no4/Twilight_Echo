@@ -114,6 +114,11 @@ class AudioPipeline {
   TAE_Result seek(double seconds, std::string* error);
   void setVolume(double volume);
   void setPlaybackRate(double rate);
+  /** A-B loop; end <= start or non-finite clears. Enforced on control/status path. */
+  void setLoopRange(double startSeconds, double endSeconds);
+  void clearLoopRange();
+  /** If loop is active and position crossed end, seek to start. Returns true if seek ran. */
+  bool enforceLoopRange(std::string* error);
   void setDspConfig(const std::string& dspConfigJson);
   bool setDspGraph(const std::string& graphJson, std::string* error);
   bool applyDspState(uint64_t revision, const std::string& stateJson, std::string* error);
@@ -358,6 +363,11 @@ class AudioPipeline {
   std::atomic<uint64_t> requestedRenderDspEpoch_{0};
   std::atomic<uint64_t> appliedRenderDspEpoch_{0};
   std::atomic<uint64_t> renderedFrames_{0};
+  // A-B loop (seconds). Enabled only when end > start and both finite/non-negative.
+  std::atomic<bool> loopEnabled_{false};
+  std::atomic<uint64_t> loopStartBits_{std::bit_cast<uint64_t>(0.0)};
+  std::atomic<uint64_t> loopEndBits_{std::bit_cast<uint64_t>(0.0)};
+  std::atomic<bool> loopEnforceBusy_{false};
   std::atomic<int> renderChannelCount_{2};
   std::atomic<uint64_t> renderCallbackCount_{0};
   std::atomic<uint64_t> renderTotalCallbackNanoseconds_{0};

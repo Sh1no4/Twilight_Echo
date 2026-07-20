@@ -1235,6 +1235,8 @@ interface AudioEngineAPI {
   seek: (time: number) => Promise<void>
   setVolume: (volume: number) => Promise<void>
   setPlaybackRate: (rate: number) => Promise<void>
+  /** Native A-B loop; end <= start clears. Returns false when native unavailable. */
+  setLoopRange: (startSeconds: number, endSeconds: number) => Promise<boolean>
   stop: () => Promise<void>
   next: () => Promise<void>
   previous: () => Promise<void>
@@ -1575,7 +1577,11 @@ interface WindowAPI {
     getDlnaDevices: () => Promise<import('../shared/remoteControl.ts').DlnaDeviceInfo[]>
     castToDevice: (payload: {
       usn: string
-      filePath: string
+      /** Authorized local library / offline pin path. Mutually exclusive with mediaUrl. */
+      filePath?: string
+      /** Direct http(s) stream URL (podcast / radio / provider). Mutually exclusive with filePath. */
+      mediaUrl?: string
+      contentType?: string
       title?: string
       artist?: string
       album?: string

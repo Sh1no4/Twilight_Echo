@@ -387,6 +387,20 @@ export async function setupAudioEngineIpc(): Promise<void> {
     )
   })
 
+  ipcMain.handle(
+    'audioEngine:setLoopRange',
+    async (_event, startSeconds: unknown, endSeconds: unknown) => {
+      assertTrustedIpcSender(_event, 'audio engine IPC')
+      const start =
+        typeof startSeconds === 'number' && Number.isFinite(startSeconds)
+          ? startSeconds
+          : -1
+      const end =
+        typeof endSeconds === 'number' && Number.isFinite(endSeconds) ? endSeconds : -1
+      return await requireAudioEngine().setLoopRange(start, end)
+    }
+  )
+
   ipcMain.handle('audioEngine:stop', async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     await requireAudioEngine().stop()

@@ -110,6 +110,7 @@ class TwilightAudioEngine {
   TAE_Result seek(double positionSeconds);
   TAE_Result setVolume(double volume);
   TAE_Result setPlaybackRate(double rate);
+  TAE_Result setLoopRange(double startSeconds, double endSeconds);
   TAE_Result setOutputDevice(const std::string& deviceId);
   TAE_Result setOutputBackend(const std::string& backendId);
 
