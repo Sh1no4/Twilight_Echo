@@ -95,6 +95,9 @@ export class RemoteHttpServer {
    * Bind the LAN HTTP server.
    * - full: remote UI, PIN pair, command API, media tokens
    * - mediaOnly: media tokens only (cast), no pair/UI/commands; remote stays "off"
+   *
+   * Mode switches on an already-bound server are in-place: media grants are kept
+   * so active cast `/media/{token}` URLs survive remote on/off toggles.
    */
   async start(
     preferredPort = 0,
@@ -103,13 +106,11 @@ export class RemoteHttpServer {
     const desiredMode: RemoteServerMode = options.mode ?? 'full'
     if (this.server) {
       if (this.mode === desiredMode) return this.getStatus()
-      // Upgrade mediaOnly → full or demote full → mediaOnly requires rebind.
-      await this.stop()
+      this.applyMode(desiredMode)
+      return this.getStatus()
     }
-    this.mode = desiredMode
-    this.enabled = desiredMode === 'full'
+    this.applyMode(desiredMode)
     this.lastError = null
-    if (desiredMode === 'full' && !this.auth.getPin()) this.auth.rotatePin()
 
     await new Promise<void>((resolve, reject) => {
       const server = createServer((req, res) => {
@@ -130,6 +131,34 @@ export class RemoteHttpServer {
     })
 
     return this.getStatus()
+  }
+
+  /**
+   * Switch surface mode without closing the socket or clearing media grants.
+   * Demoting full → mediaOnly revokes remote pair sessions and drops SSE clients.
+   */
+  applyMode(desiredMode: RemoteServerMode): void {
+    const previous = this.mode
+    this.mode = desiredMode
+    this.enabled = desiredMode === 'full'
+    this.lastError = null
+    if (desiredMode === 'full') {
+      if (!this.auth.getPin()) this.auth.rotatePin()
+      if (this.server) this.startHeartbeat()
+      return
+    }
+    // mediaOnly: close remote-control surface only.
+    this.stopHeartbeat()
+    for (const client of this.sseClients) {
+      try {
+        client.end()
+      } catch {
+        // ignore
+      }
+    }
+    this.sseClients.clear()
+    // Revoke pair tokens when leaving full mode; keep cast media grants.
+    if (previous === 'full') this.auth.revokeToken()
   }
 
   async stop(): Promise<void> {

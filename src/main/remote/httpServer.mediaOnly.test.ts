@@ -4,6 +4,10 @@ import test from 'node:test'
 
 const httpServerSource = readFileSync(new URL('./httpServer.ts', import.meta.url), 'utf8')
 const remoteIpcSource = readFileSync(new URL('./remoteIpc.ts', import.meta.url), 'utf8')
+const playerStoreSource = readFileSync(
+  new URL('../../renderer/src/stores/usePlayerStore.ts', import.meta.url),
+  'utf8'
+)
 
 test('remote HTTP server supports mediaOnly bind without full remote surface', () => {
   assert.match(httpServerSource, /mode\?: RemoteServerMode/)
@@ -17,8 +21,10 @@ test('remote HTTP server supports mediaOnly bind without full remote surface', (
     httpServerSource,
     /if \(this\.mode === 'mediaOnly'\) \{[\s\S]*\/media\/[\s\S]*media_only/
   )
-  // Full remote pair/UI routes must not run under mediaOnly (early return).
-  assert.match(httpServerSource, /desiredMode === 'full'/)
+  // Mode switches keep media grants (no stop/clear on applyMode).
+  assert.match(httpServerSource, /applyMode\(desiredMode\)/)
+  assert.match(httpServerSource, /applyMode\(desiredMode: RemoteServerMode\)/)
+  assert.match(httpServerSource, /keep cast media grants|Keep cast media grants/i)
 })
 
 test('cast binds media-only when remote control is off and tears it down on stopCast', () => {
@@ -32,10 +38,29 @@ test('cast binds media-only when remote control is off and tears it down on stop
     remoteIpcSource,
     /remote:stopCast[\s\S]*isMediaOnly\(\)[\s\S]*remoteControlEnabled !== true[\s\S]*server\.stop\(\)/
   )
-  // Disabling remote demotes to mediaOnly while a cast session is active.
+  // Disabling remote keeps mediaOnly only while a cast session is active.
   assert.match(
     remoteIpcSource,
-    /if \(activeCastUsn \|\| server\.isMediaOnly\(\)\) \{\s*await server\.start\(preferredPort, \{ mode: 'mediaOnly' \}\)/
+    /if \(activeCastUsn\) \{\s*await server\.start\(preferredPort, \{ mode: 'mediaOnly' \}\)/
   )
-  assert.match(remoteIpcSource, /await server\.stop\(\)/)
+  // Failed cast releases orphan mediaOnly binds.
+  assert.match(remoteIpcSource, /releaseOrphanMediaOnlyServer/)
+  assert.match(remoteIpcSource, /if \(!castSucceeded\)[\s\S]*releaseOrphanMediaOnlyServer/)
+  // Bare cast upstreams cannot target private/loopback hosts.
+  assert.match(remoteIpcSource, /isPrivateOrLoopbackHost/)
+  assert.match(remoteIpcSource, /Cast media URL host is not authorized/)
+})
+
+test('player queue skip re-casts while a cast session is active', () => {
+  assert.match(playerStoreSource, /castTargetUsn/)
+  assert.match(playerStoreSource, /function playQueueTrack/)
+  assert.match(
+    playerStoreSource,
+    /if \(castTargetUsn\.value\) \{[\s\S]*castCurrentTrackToDevice/
+  )
+  assert.match(
+    playerStoreSource,
+    /else if \(castTargetName\.value\) \{[\s\S]*controlCast\?\.\(\{ seek: 0 \}\)/
+  )
+  assert.match(playerStoreSource, /!castTargetUsn\.value && nativePlaybackActive/)
 })

@@ -393,14 +393,24 @@ test('next and previous only use native controls when the native queue is delega
   const previousBody = extractInternalFunctionBody(source, 'previous')
   const togglePlayState = extractInternalFunctionBody(source, 'togglePlayState')
   const seekPlayback = extractInternalFunctionBody(source, 'seekPlayback')
+  const playQueueTrack = extractInternalFunctionBody(source, 'playQueueTrack')
 
-  assert.match(nextBody, /if \(nativePlaybackActive && isNativeQueueDelegated\(\)\)/)
-  assert.match(previousBody, /if \(nativePlaybackActive && isNativeQueueDelegated\(\)\)/)
+  assert.match(
+    nextBody,
+    /if \(!castTargetUsn\.value && nativePlaybackActive && isNativeQueueDelegated\(\)\)/
+  )
+  assert.match(
+    previousBody,
+    /if \(!castTargetUsn\.value && nativePlaybackActive && isNativeQueueDelegated\(\)\)/
+  )
   assert.match(togglePlayState, /if \(casting\)/)
   assert.match(togglePlayState, /if \(nativePlaybackActive\)/)
   assert.match(seekPlayback, /if \(nativePlaybackActive\)/)
-  assert.match(nextBody, /currentTrack\.value = track[\s\S]*void loadAndPlay\(track\)/)
-  assert.match(previousBody, /currentTrack\.value = track[\s\S]*void loadAndPlay\(track\)/)
+  assert.match(playQueueTrack, /if \(castTargetUsn\.value\)[\s\S]*castCurrentTrackToDevice/)
+  assert.match(playQueueTrack, /void loadAndPlay\(track\)/)
+  assert.match(nextBody, /playQueueTrack\(track\)/)
+  assert.match(previousBody, /playQueueTrack\(/)
+  assert.match(previousBody, /controlCast\?\.\(\{ seek: 0 \}\)/)
 })
 
 test('togglePlayState and seek/volume fan out to cast when castTargetName is active', () => {

@@ -191,8 +191,9 @@ export async function syncRemoteControlWithSettings(): Promise<void> {
   syncDesiredEnabled = enabled
   if (!enabled) {
     if (!server) return
-    // Keep media token host if a cast session is active; otherwise tear down.
-    if (activeCastUsn || server.isMediaOnly()) {
+    // Keep media token host only while a cast session is active.
+    // Orphan mediaOnly binds (failed cast) must not stick around.
+    if (activeCastUsn) {
       await server.start(preferredPort, { mode: 'mediaOnly' })
     } else {
       await server.stop()
@@ -218,6 +219,36 @@ async function ensureCastMediaServer(): Promise<RemoteHttpServer> {
     await instance.start(preferredPort, { mode: 'mediaOnly' })
   }
   return instance
+}
+
+/** Drop mediaOnly bind when no cast session and full remote stays off. */
+async function releaseOrphanMediaOnlyServer(): Promise<void> {
+  if (activeCastUsn) return
+  if (!server?.isMediaOnly()) return
+  if (runtime.appSettings.remoteControlEnabled === true) return
+  try {
+    await server.stop()
+  } catch {
+    // ignore
+  }
+}
+
+/** Align with offline download private-host policy for cast upstream proxy. */
+function isPrivateOrLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (host === 'localhost' || host.endsWith('.localhost') || host === '::1') return true
+  const parts = host.split('.').map(Number)
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return false
+  }
+  const [a, b] = parts
+  return (
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168)
+  )
 }
 
 export function getRemoteControlStatus(): RemoteControlStatus {
@@ -363,89 +394,102 @@ export function setupRemoteIpc(): void {
 
       // Cast needs a media token host. When remote control is off, bind media-only
       // so pair/UI/command surfaces stay closed (remote remains default-off).
-      const instance = await ensureCastMediaServer()
+      // On failure before activeCastUsn is set, release orphan mediaOnly binds.
+      let castSucceeded = false
+      try {
+        const instance = await ensureCastMediaServer()
 
-      let castUrl: string | null = null
-      let didlContentType: string | undefined = contentTypeHint
+        let castUrl: string | null = null
+        let didlContentType: string | undefined = contentTypeHint
 
-      if (hasFile) {
-        const filePath = normalizeIpcString(payload?.filePath, 'media file path', 4096)
-        // Only stream authorized library/cache/offline files.
-        const authorizedPath = await resolveAuthorizedAudioFile(filePath)
-        castUrl = instance.issueMediaUrl(authorizedPath, title)
-        didlContentType = contentTypeHint
-      } else {
-        const rawUrl = normalizeIpcString(payload?.mediaUrl, 'media stream URL', 8192)
-        let upstream = rawUrl
-        // Provider streams are exposed to the renderer as twilight-media grants.
-        // Resolve them in main so cast never accepts bare untrusted schemes.
-        if (rawUrl.startsWith('twilight-media:')) {
+        if (hasFile) {
+          const filePath = normalizeIpcString(payload?.filePath, 'media file path', 4096)
+          // Only stream authorized library/cache/offline files.
+          const authorizedPath = await resolveAuthorizedAudioFile(filePath)
+          castUrl = instance.issueMediaUrl(authorizedPath, title)
+          didlContentType = contentTypeHint
+        } else {
+          const rawUrl = normalizeIpcString(payload?.mediaUrl, 'media stream URL', 8192)
+          let upstream = rawUrl
+          // Provider streams are exposed to the renderer as twilight-media grants.
+          // Resolve them in main so cast never accepts bare untrusted schemes.
+          if (rawUrl.startsWith('twilight-media:')) {
+            try {
+              upstream = remoteMediaGrants.resolve(rawUrl, 'audio').source
+            } catch {
+              throw new Error('Cast media grant is unknown or expired')
+            }
+          }
+          let parsed: URL
           try {
-            upstream = remoteMediaGrants.resolve(rawUrl, 'audio').source
+            parsed = new URL(upstream)
           } catch {
-            throw new Error('Cast media grant is unknown or expired')
+            throw new Error('Cast media URL is invalid')
+          }
+          if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+            throw new Error('Cast media URL protocol is not authorized')
+          }
+          if (parsed.username || parsed.password) {
+            throw new Error('Cast media URL must not include credentials')
+          }
+          // Align with offline download: never open-proxy private/loopback hosts.
+          if (isPrivateOrLoopbackHost(parsed.hostname)) {
+            throw new Error('Cast media URL host is not authorized')
+          }
+          // Always proxy through our LAN token so the cast device never sees CDN secrets
+          // and so private LAN devices can reach sources that need app-side fetch.
+          castUrl = instance.issueRemoteMediaUrl(parsed.toString(), {
+            title,
+            contentType: contentTypeHint
+          })
+          didlContentType = contentTypeHint
+        }
+
+        if (!castUrl) throw new Error('Unable to issue media stream URL')
+
+        if (protocol === 'chromecast') {
+          await chromecastLoad(toCastDevice(device), {
+            deviceId: device.usn,
+            mediaUrl: castUrl,
+            title,
+            artist,
+            album,
+            contentType: didlContentType,
+            positionSeconds
+          })
+        } else {
+          const metadata = buildDidlLiteMetadata({
+            title: title ?? 'Twilight Echo',
+            artist,
+            album,
+            resUrl: castUrl,
+            contentType: didlContentType
+          })
+          await dlnaSetAvTransportUri(device.avTransportUrl!, castUrl, metadata)
+          await dlnaPlay(device.avTransportUrl!)
+          if (positionSeconds > 1) {
+            try {
+              await dlnaSeek(device.avTransportUrl!, positionSeconds)
+            } catch {
+              // Some renderers reject seek before buffering completes.
+            }
           }
         }
-        let parsed: URL
-        try {
-          parsed = new URL(upstream)
-        } catch {
-          throw new Error('Cast media URL is invalid')
-        }
-        if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-          throw new Error('Cast media URL protocol is not authorized')
-        }
-        if (parsed.username || parsed.password) {
-          throw new Error('Cast media URL must not include credentials')
-        }
-        // Always proxy through our LAN token so the cast device never sees CDN secrets
-        // and so private LAN devices can reach sources that need app-side fetch.
-        castUrl = instance.issueRemoteMediaUrl(parsed.toString(), {
-          title,
-          contentType: contentTypeHint
-        })
-        didlContentType = contentTypeHint
-      }
 
-      if (!castUrl) throw new Error('Unable to issue media stream URL')
-
-      if (protocol === 'chromecast') {
-        await chromecastLoad(toCastDevice(device), {
-          deviceId: device.usn,
-          mediaUrl: castUrl,
-          title,
-          artist,
-          album,
-          contentType: didlContentType,
-          positionSeconds
-        })
-      } else {
-        const metadata = buildDidlLiteMetadata({
-          title: title ?? 'Twilight Echo',
-          artist,
-          album,
-          resUrl: castUrl,
-          contentType: didlContentType
-        })
-        await dlnaSetAvTransportUri(device.avTransportUrl!, castUrl, metadata)
-        await dlnaPlay(device.avTransportUrl!)
-        if (positionSeconds > 1) {
-          try {
-            await dlnaSeek(device.avTransportUrl!, positionSeconds)
-          } catch {
-            // Some renderers reject seek before buffering completes.
-          }
+        activeCastUsn = usn
+        castSucceeded = true
+        // Pause local engine via renderer.
+        sendPlayerCommand('pause')
+        return {
+          ok: true as const,
+          usn,
+          friendlyName: device.friendlyName,
+          mediaUrl: castUrl
         }
-      }
-
-      activeCastUsn = usn
-      // Pause local engine via renderer.
-      sendPlayerCommand('pause')
-      return {
-        ok: true as const,
-        usn,
-        friendlyName: device.friendlyName,
-        mediaUrl: castUrl
+      } finally {
+        if (!castSucceeded) {
+          await releaseOrphanMediaOnlyServer()
+        }
       }
     }
   )

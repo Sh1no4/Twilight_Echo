@@ -377,8 +377,10 @@ const abLoopB = ref<number | null>(null)
 /** Offer to resume a long track from a saved resume bookmark. */
 const resumeOffer = ref<{ trackId: string; positionSeconds: number; label: string } | null>(null)
 const lastAudibleVolume = ref(0.7)
-/** Active DLNA cast target display name (null when not casting). */
+/** Active cast target display name (null when not casting). */
 const castTargetName = ref<string | null>(null)
+/** Active cast device id (usn); required to re-cast on queue skip. */
+const castTargetUsn = ref<string | null>(null)
 const sleepTimerState = ref<SleepTimerState | null>(null)
 const sleepTimerNotice = ref<string | null>(null)
 let sleepTimerFadeController: ReturnType<typeof createSleepTimerFadeController> | null = null
@@ -2541,11 +2543,25 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   }
 }
 
+function playQueueTrack(track: Track): void {
+  currentTrack.value = track
+  // While casting, re-cast the new track to the same device instead of
+  // starting local engine playback underneath the cast session.
+  if (castTargetUsn.value) {
+    void castCurrentTrackToDevice(castTargetUsn.value).catch((error) => {
+      console.error('[cast] queue skip re-cast failed:', error)
+      void loadAndPlay(track)
+    })
+    return
+  }
+  void loadAndPlay(track)
+}
+
 function next(): void {
   if (queue.value.length === 0) return
   clearCrossfadeTimer()
 
-  if (nativePlaybackActive && isNativeQueueDelegated()) {
+  if (!castTargetUsn.value && nativePlaybackActive && isNativeQueueDelegated()) {
     void advanceNativePlayback('next')
     return
   }
@@ -2554,13 +2570,11 @@ function next(): void {
   if (nextIndex < queue.value.length) {
     queueIndex.value = nextIndex
     const track = queue.value[nextIndex]
-    currentTrack.value = track
-    void loadAndPlay(track)
+    playQueueTrack(track)
   } else {
     queueIndex.value = 0
     const track = queue.value[0]
-    currentTrack.value = track
-    void loadAndPlay(track)
+    playQueueTrack(track)
   }
 }
 
@@ -2570,8 +2584,7 @@ function jumpQueue(index: number): void {
   queueIndex.value = index
   const track = queue.value[index]
   if (!track) return
-  currentTrack.value = track
-  void loadAndPlay(track)
+  playQueueTrack(track)
 }
 
 async function handlePlayerShortcutAction(
@@ -2673,32 +2686,28 @@ function previous(): void {
     if (track && loadedTrackId !== track.id) {
       restoredPlaybackPending = true
       restoredPlaybackPosition = 0
-    } else {
-      if (nativePlaybackActive) {
-        window.api.audioEngine.seek(0).catch(() => {})
-      } else if (playbackAudio && track) {
-        playbackAudio.currentTime = rendererAudioAbsolutePositionForTrack(0, track)
-      }
+    } else if (castTargetName.value) {
+      void window.api.remote?.controlCast?.({ seek: 0 }).catch(() => {})
+    } else if (nativePlaybackActive) {
+      window.api.audioEngine.seek(0).catch(() => {})
+    } else if (playbackAudio && track) {
+      playbackAudio.currentTime = rendererAudioAbsolutePositionForTrack(0, track)
     }
     return
   }
   const prevIndex = queueIndex.value - 1
-  if (nativePlaybackActive && isNativeQueueDelegated()) {
+  if (!castTargetUsn.value && nativePlaybackActive && isNativeQueueDelegated()) {
     void advanceNativePlayback('previous')
     return
   }
 
   if (prevIndex >= 0) {
     queueIndex.value = prevIndex
-    const track = queue.value[prevIndex]
-    currentTrack.value = track
-    void loadAndPlay(track)
+    playQueueTrack(queue.value[prevIndex])
   } else {
     const lastIndex = queue.value.length - 1
     queueIndex.value = lastIndex
-    const track = queue.value[lastIndex]
-    currentTrack.value = track
-    void loadAndPlay(track)
+    playQueueTrack(queue.value[lastIndex])
   }
 }
 
@@ -2739,6 +2748,7 @@ function syncNativeAbLoop(): void {
   const api = window.api?.audioEngine?.setLoopRange
   if (!api) return
   if (a == null || b == null || b <= a || isCurrentTrackLiveStream()) {
+    abLoopNativeActive = false
     void api(-1, -1).catch(() => {})
     return
   }
@@ -3410,6 +3420,86 @@ function removeUnavailableTracks(trackIds: string[], filePaths: string[]): void 
 
 onLocalTracksUnavailable(removeUnavailableTracks)
 
+async function castCurrentTrackToDevice(usn: string): Promise<void> {
+  const track = currentTrack.value
+  if (!track) throw new Error('当前没有可投送的曲目')
+  const remoteApi = window.api?.remote
+  if (!remoteApi?.castToDevice) throw new Error('远程控制 API 不可用')
+
+  // Prefer a resolved offline pin / local path when available; otherwise
+  // resolve the live stream URL (podcast / radio / provider) and cast via
+  // the remote media token proxy. Provider streams may be twilight-media://
+  // grants — main resolves those to the real upstream.
+  let filePath: string | undefined
+  let mediaUrl: string | undefined
+  const classifyCastTarget = (target: string): void => {
+    if (!target) return
+    if (target.startsWith('twilight-media:')) {
+      mediaUrl = target
+      return
+    }
+    if (/^https?:\/\//i.test(target)) {
+      mediaUrl = target
+      return
+    }
+    // Local path (no scheme or file-like absolute path).
+    if (!/^[a-z][a-z\d+.-]*:\/\//i.test(target)) {
+      filePath = target
+    }
+  }
+  try {
+    classifyCastTarget(await resolvePlayTarget(track))
+  } catch {
+    // Fall through to direct fields when resolvePlayTarget fails.
+  }
+  if (!filePath && !mediaUrl) {
+    classifyCastTarget(track.offlinePath || track.streamUrl || track.filePath || '')
+  }
+  if (!filePath && !mediaUrl) {
+    throw new Error('当前曲目不支持投送（缺少本地路径或流地址）')
+  }
+
+  const result = await remoteApi.castToDevice({
+    usn,
+    ...(filePath ? { filePath } : { mediaUrl }),
+    title: track.title,
+    artist: track.artist,
+    album: track.album,
+    // Live radio: do not seek after load.
+    positionSeconds: isCurrentTrackLiveStream() ? 0 : currentTime.value
+  })
+  castTargetUsn.value = result.usn
+  castTargetName.value = result.friendlyName
+  // Main process already dispatches a 'pause' shortcut for local engine.
+}
+
+async function stopCastSession(): Promise<void> {
+  const remoteApi = window.api?.remote
+  if (remoteApi?.stopCast) await remoteApi.stopCast()
+  castTargetUsn.value = null
+  castTargetName.value = null
+}
+
+async function discoverCastDevices(): Promise<
+  import('../../../shared/remoteControl.ts').DlnaDeviceInfo[]
+> {
+  const remoteApi = window.api?.remote
+  if (!remoteApi?.discoverDlna) return []
+  return await remoteApi.discoverDlna()
+}
+
+async function refreshCastTarget(): Promise<void> {
+  const remoteApi = window.api?.remote
+  if (!remoteApi?.getCastTarget) {
+    castTargetUsn.value = null
+    castTargetName.value = null
+    return
+  }
+  const target = await remoteApi.getCastTarget()
+  castTargetUsn.value = target?.usn ?? null
+  castTargetName.value = target?.friendlyName ?? null
+}
+
 export function usePlayerStore(): {
   currentTrack: Ref<Track | null>
   dominantColor: Ref<string>
@@ -3820,82 +3910,6 @@ export function usePlayerStore(): {
     await ensureCurrentTrackLyricsLoaded(currentTrack.value)
   }
 
-  async function castToDevice(usn: string): Promise<void> {
-    const track = currentTrack.value
-    if (!track) throw new Error('当前没有可投送的曲目')
-    const remoteApi = window.api?.remote
-    if (!remoteApi?.castToDevice) throw new Error('远程控制 API 不可用')
-
-    // Prefer a resolved offline pin / local path when available; otherwise
-    // resolve the live stream URL (podcast / radio / provider) and cast via
-    // the remote media token proxy. Provider streams may be twilight-media://
-    // grants — main resolves those to the real upstream.
-    let filePath: string | undefined
-    let mediaUrl: string | undefined
-    const classifyCastTarget = (target: string): void => {
-      if (!target) return
-      if (target.startsWith('twilight-media:')) {
-        mediaUrl = target
-        return
-      }
-      if (/^https?:\/\//i.test(target)) {
-        mediaUrl = target
-        return
-      }
-      // Local path (no scheme or file-like absolute path).
-      if (!/^[a-z][a-z\d+.-]*:\/\//i.test(target)) {
-        filePath = target
-      }
-    }
-    try {
-      classifyCastTarget(await resolvePlayTarget(track))
-    } catch {
-      // Fall through to direct fields when resolvePlayTarget fails.
-    }
-    if (!filePath && !mediaUrl) {
-      classifyCastTarget(track.offlinePath || track.streamUrl || track.filePath || '')
-    }
-    if (!filePath && !mediaUrl) {
-      throw new Error('当前曲目不支持投送（缺少本地路径或流地址）')
-    }
-
-    const result = await remoteApi.castToDevice({
-      usn,
-      ...(filePath ? { filePath } : { mediaUrl }),
-      title: track.title,
-      artist: track.artist,
-      album: track.album,
-      // Live radio: do not seek after load.
-      positionSeconds: isCurrentTrackLiveStream() ? 0 : currentTime.value
-    })
-    castTargetName.value = result.friendlyName
-    // Main process already dispatches a 'pause' shortcut for local engine.
-  }
-
-  async function stopCast(): Promise<void> {
-    const remoteApi = window.api?.remote
-    if (remoteApi?.stopCast) await remoteApi.stopCast()
-    castTargetName.value = null
-  }
-
-  async function discoverCastDevices(): Promise<
-    import('../../../shared/remoteControl.ts').DlnaDeviceInfo[]
-  > {
-    const remoteApi = window.api?.remote
-    if (!remoteApi?.discoverDlna) return []
-    return await remoteApi.discoverDlna()
-  }
-
-  async function refreshCastTarget(): Promise<void> {
-    const remoteApi = window.api?.remote
-    if (!remoteApi?.getCastTarget) {
-      castTargetName.value = null
-      return
-    }
-    const target = await remoteApi.getCastTarget()
-    castTargetName.value = target?.friendlyName ?? null
-  }
-
   return {
     currentTrack,
     dominantColor,
@@ -3985,8 +3999,8 @@ export function usePlayerStore(): {
     removeUnavailableTracks,
     clearBpmAnalysisFromPlaybackState,
     refreshCurrentLyrics,
-    castToDevice,
-    stopCast,
+    castToDevice: castCurrentTrackToDevice,
+    stopCast: stopCastSession,
     discoverCastDevices,
     refreshCastTarget,
     formatTime
