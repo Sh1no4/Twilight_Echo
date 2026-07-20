@@ -529,6 +529,7 @@ if(TAE_BUILD_TESTS)
     dsp/KissFftAdapter.cpp
     dsp/ParametricEqProcessor.cpp
     dsp/ReplayGainProcessor.cpp
+    dsp/WsolaResampler.cpp
     dsp/Vst3BridgeProcessor.cpp
     plugins/PluginRegistry.cpp
     playlist/QueueManager.cpp
@@ -594,6 +595,7 @@ if(TAE_BUILD_TESTS)
     dsp/KissFftAdapter.cpp
     dsp/ParametricEqProcessor.cpp
     dsp/ReplayGainProcessor.cpp
+    dsp/WsolaResampler.cpp
     dsp/Vst3BridgeProcessor.cpp
     plugins/PluginRegistry.cpp
     playlist/QueueManager.cpp

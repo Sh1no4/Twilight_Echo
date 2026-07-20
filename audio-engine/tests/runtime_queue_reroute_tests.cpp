@@ -2983,6 +2983,12 @@ const AudioFormat& FFmpegDecoder::outputFormat() const {
   return impl_->outputFormat;
 }
 
+std::string FFmpegDecoder::streamTitle() const {
+  return {};
+}
+
+void FFmpegDecoder::pollStreamMetadata() {}
+
 }  // namespace twilight::audio
 
 int main() {

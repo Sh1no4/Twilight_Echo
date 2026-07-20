@@ -3821,16 +3821,10 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     return filled;
   };
 
-  if (rateActive) {
+  if (rateActive && rateWsolaReady_) {
     // Rate path: WSOLA pitch-preserving time stretch. Pull post-DSP frames on demand.
+    // prepare()/resize must only run on the control path (prepareRenderScratchLocked).
     const size_t ch = static_cast<size_t>(channels);
-    if (!rateWsolaReady_) {
-      rateWsola_.prepare(
-          static_cast<int>(ch),
-          std::max(1, outputFormat.sampleRate),
-          frameCount);
-      rateWsolaReady_ = true;
-    }
     rateWsola_.setRate(playbackRate);
     totalRead = rateWsola_.process(output, frameCount, [&](float* dst, size_t maxFrames) -> size_t {
       return pullProcessedFrames(dst, maxFrames);
