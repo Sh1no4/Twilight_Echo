@@ -3,6 +3,7 @@ import {
   DEFAULT_PODCAST_SUBSCRIPTIONS,
   clonePodcastSubscriptionsDocument,
   podcastEpisodeProgressRatio,
+  parsePodcastTrackId,
   type PodcastEpisode,
   type PodcastSubscription,
   type PodcastSubscriptionsDocument
@@ -42,6 +43,8 @@ function applyDocument(next: PodcastSubscriptionsDocument, nextRevision: number)
   revision.value = nextRevision
 }
 
+export { parsePodcastTrackId }
+
 export function podcastEpisodeToTrack(
   subscription: PodcastSubscription,
   episode: PodcastEpisode
@@ -59,6 +62,29 @@ export function podcastEpisodeToTrack(
     lyrics: null,
     source: 'podcast',
     streamUrl: episode.mediaUrl
+  }
+}
+
+const PODCAST_DEFAULT_RATE_KEY = 'twilight.podcast.defaultPlaybackRate'
+
+export function getPodcastDefaultPlaybackRate(): number {
+  try {
+    const raw = localStorage.getItem(PODCAST_DEFAULT_RATE_KEY)
+    if (!raw) return 1
+    const n = Number(raw)
+    if (!Number.isFinite(n)) return 1
+    return Math.min(2, Math.max(0.5, Math.round(n * 100) / 100))
+  } catch {
+    return 1
+  }
+}
+
+export function setPodcastDefaultPlaybackRate(rate: number): void {
+  const rounded = Math.min(2, Math.max(0.5, Math.round(rate * 100) / 100))
+  try {
+    localStorage.setItem(PODCAST_DEFAULT_RATE_KEY, String(rounded))
+  } catch {
+    // ignore quota / private mode
   }
 }
 
@@ -173,6 +199,9 @@ export function usePodcastStore() {
     refreshAll,
     updateEpisodeProgress,
     podcastEpisodeToTrack,
-    podcastEpisodeProgressRatio
+    podcastEpisodeProgressRatio,
+    parsePodcastTrackId,
+    getPodcastDefaultPlaybackRate,
+    setPodcastDefaultPlaybackRate
   }
 }

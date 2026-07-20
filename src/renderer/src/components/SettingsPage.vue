@@ -1,6 +1,7 @@
 ﻿<script setup lang="ts">
 import { storeToRefs } from 'pinia'
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import QRCode from 'qrcode'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MiniPlayerSettingsSection from './settings-page/MiniPlayerSettingsSection.vue'
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
 import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
@@ -256,6 +257,8 @@ const remoteStatus = ref<import('../../../shared/remoteControl.ts').RemoteContro
 )
 const remoteStatusError = ref('')
 const remoteBusy = ref(false)
+const remoteQrDataUrl = ref('')
+const remoteQrUrl = ref('')
 
 const activeSection = ref<SectionKey>(props.initialSection ?? 'general')
 const pageRef = ref<HTMLElement | null>(null)
@@ -709,6 +712,45 @@ async function refreshRemoteStatus(): Promise<void> {
     remoteStatusError.value = err instanceof Error ? err.message : String(err)
   }
 }
+
+async function refreshRemoteQr(urls: string[] | undefined | null): Promise<void> {
+  const primary = urls?.find((u) => typeof u === 'string' && u.trim()) ?? ''
+  if (!primary) {
+    remoteQrDataUrl.value = ''
+    remoteQrUrl.value = ''
+    return
+  }
+  if (primary === remoteQrUrl.value && remoteQrDataUrl.value) return
+  try {
+    remoteQrDataUrl.value = await QRCode.toDataURL(primary, {
+      margin: 1,
+      width: 160,
+      errorCorrectionLevel: 'M'
+    })
+    remoteQrUrl.value = primary
+  } catch {
+    remoteQrDataUrl.value = ''
+    remoteQrUrl.value = ''
+  }
+}
+
+watch(
+  () => remoteStatus.value?.urls,
+  (urls) => {
+    void refreshRemoteQr(urls)
+  },
+  { deep: true }
+)
+
+watch(
+  () => settings.value.remoteControlEnabled,
+  (enabled) => {
+    if (!enabled) {
+      remoteQrDataUrl.value = ''
+      remoteQrUrl.value = ''
+    }
+  }
+)
 
 async function toggleRemoteControl(): Promise<void> {
   remoteBusy.value = true
@@ -1834,13 +1876,28 @@ onBeforeUnmount(() => {
                       刷新
                     </button>
                   </div>
-                  <ul v-if="(remoteStatus?.urls?.length ?? 0) > 0" class="remote-url-list">
-                    <li v-for="url in remoteStatus?.urls ?? []" :key="url">
-                      <button type="button" class="linkish" @click="copyRemoteUrl(url)">
-                        {{ url }}
-                      </button>
-                    </li>
-                  </ul>
+                  <div
+                    v-if="remoteQrDataUrl || (remoteStatus?.urls?.length ?? 0) > 0"
+                    class="remote-access-row"
+                  >
+                    <div v-if="remoteQrDataUrl" class="remote-qr-block">
+                      <img
+                        class="remote-qr"
+                        :src="remoteQrDataUrl"
+                        :alt="`远程控制二维码：${remoteQrUrl}`"
+                        width="160"
+                        height="160"
+                      />
+                      <span class="remote-qr-hint">手机扫码打开遥控页</span>
+                    </div>
+                    <ul v-if="(remoteStatus?.urls?.length ?? 0) > 0" class="remote-url-list">
+                      <li v-for="url in remoteStatus?.urls ?? []" :key="url">
+                        <button type="button" class="linkish" @click="copyRemoteUrl(url)">
+                          {{ url }}
+                        </button>
+                      </li>
+                    </ul>
+                  </div>
                   <span v-if="remoteStatus?.lastError" class="remote-error">
                     {{ remoteStatus.lastError }}
                   </span>

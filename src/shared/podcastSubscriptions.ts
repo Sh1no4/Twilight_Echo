@@ -155,3 +155,20 @@ export function podcastEpisodeProgressRatio(episode: PodcastEpisode): number | n
   if (progress <= 0) return 0
   return Math.min(1, progress / episode.durationSeconds)
 }
+
+/**
+ * Parse player track ids of the form `podcast:{subscriptionId}:{episodeGuid}`.
+ * Episode guids may themselves contain `:`.
+ */
+export function parsePodcastTrackId(
+  trackId: string | null | undefined
+): { subscriptionId: string; episodeGuid: string } | null {
+  if (!trackId || !trackId.startsWith('podcast:')) return null
+  const rest = trackId.slice('podcast:'.length)
+  const sep = rest.indexOf(':')
+  if (sep <= 0 || sep >= rest.length - 1) return null
+  return {
+    subscriptionId: rest.slice(0, sep),
+    episodeGuid: rest.slice(sep + 1)
+  }
+}

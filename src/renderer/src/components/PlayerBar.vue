@@ -186,6 +186,7 @@ function onProgressInput(event: Event): void {
 }
 
 const abLoopTitle = computed(() => {
+  if (isLiveStream.value) return '直播流不支持 A-B 循环'
   if (abLoopA.value == null) return '设置 A-B 循环起点'
   if (abLoopB.value == null) return '设置 A-B 循环终点（右键清除）'
   return '清除 A-B 循环（右键也可清除）'
@@ -198,6 +199,12 @@ const isLiveStream = computed(() => {
   if (!track) return false
   if (track.source === 'radio') return true
   return track.duration === 0 && Boolean(track.streamUrl || /^https?:\/\//i.test(track.filePath || ''))
+})
+
+const liveBadgeLabel = computed(() => {
+  if (!isLiveStream.value) return ''
+  if (currentTrack.value?.source === 'radio') return '电台 LIVE'
+  return 'LIVE'
 })
 
 const playbackRateLabel = computed(() => {
@@ -1068,7 +1075,10 @@ onMounted(() => {
           <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
         </div>
         <div class="player-track-info">
-          <div class="player-title">{{ currentTrack.title }}</div>
+          <div class="player-title-row">
+            <div class="player-title">{{ currentTrack.title }}</div>
+            <span v-if="isLiveStream" class="live-badge" title="实时流媒体">{{ liveBadgeLabel }}</span>
+          </div>
           <div class="player-artist">{{ currentTrack.artist }}</div>
           <div v-if="audioEngineError" class="player-playback-diagnostic" :title="audioEngineError">
             {{ audioEngineError }}
@@ -1115,12 +1125,13 @@ onMounted(() => {
           <button
             class="ctrl-btn ab-loop-btn"
             :class="{
-              'ab-loop-btn--partial': abLoopA != null && abLoopB == null,
-              'ab-loop-btn--active': abLoopA != null && abLoopB != null
+              'ab-loop-btn--partial': !isLiveStream && abLoopA != null && abLoopB == null,
+              'ab-loop-btn--active': !isLiveStream && abLoopA != null && abLoopB != null
             }"
             type="button"
             :title="abLoopTitle"
             :aria-label="abLoopTitle"
+            :disabled="isLiveStream"
             @click="toggleAbLoopAtCurrentTime"
             @contextmenu.prevent="clearAbLoop"
           >
@@ -1141,6 +1152,7 @@ onMounted(() => {
             type="button"
             title="添加书签（右键打开列表）"
             aria-label="添加书签"
+            :disabled="isLiveStream"
             @click="onAddBookmark"
             @contextmenu.prevent="toggleBookmarkPanel"
           >

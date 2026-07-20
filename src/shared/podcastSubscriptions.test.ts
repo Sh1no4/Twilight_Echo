@@ -5,7 +5,8 @@ const {
   DEFAULT_PODCAST_SUBSCRIPTIONS,
   clonePodcastSubscriptionsDocument,
   isPodcastSubscriptionsDocument,
-  podcastEpisodeProgressRatio
+  podcastEpisodeProgressRatio,
+  parsePodcastTrackId
 } = (await import(
   new URL('./podcastSubscriptions.ts', import.meta.url).href
 )) as typeof import('./podcastSubscriptions')
@@ -36,6 +37,20 @@ test('podcast subscriptions document validates and clones', () => {
   assert.equal(podcastEpisodeProgressRatio(document.subscriptions[0].episodes[0]), 0.25)
   document.subscriptions[0].episodes[0].title = 'mutated'
   assert.equal(DEFAULT_PODCAST_SUBSCRIPTIONS.subscriptions.length, 0)
+})
+
+test('parsePodcastTrackId splits subscription id and guid with colons', () => {
+  assert.deepEqual(parsePodcastTrackId('podcast:sub1:ep-1'), {
+    subscriptionId: 'sub1',
+    episodeGuid: 'ep-1'
+  })
+  assert.deepEqual(parsePodcastTrackId('podcast:sub1:guid:with:colons'), {
+    subscriptionId: 'sub1',
+    episodeGuid: 'guid:with:colons'
+  })
+  assert.equal(parsePodcastTrackId('podcast:only'), null)
+  assert.equal(parsePodcastTrackId('local:1'), null)
+  assert.equal(parsePodcastTrackId(null), null)
 })
 
 test('podcast document rejects oversized episode lists and bad urls', () => {

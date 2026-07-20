@@ -12,7 +12,7 @@ const emit = defineEmits<{
 
 const radio = useRadioStore()
 const podcast = usePodcastStore()
-const { playTrack } = usePlayerStore()
+const { playTrack, playTrackFromPosition } = usePlayerStore()
 
 const tab = ref<'radio' | 'podcast'>('radio')
 const stationName = ref('')
@@ -114,6 +114,14 @@ function playEpisode(subscription: PodcastSubscription, guid: string): void {
   if (!episode) return
   const track = podcastEpisodeToTrack(subscription, episode)
   const list = subscription.episodes.map((item) => podcastEpisodeToTrack(subscription, item))
+  const progress = episode.progressSeconds ?? 0
+  const duration = episode.durationSeconds || 0
+  // Resume when progress is meaningful and not essentially finished.
+  const nearEnd = duration > 0 && progress >= duration * 0.95
+  if (progress >= 5 && !nearEnd) {
+    playTrackFromPosition(track, progress, list)
+    return
+  }
   playTrack(track, list)
 }
 

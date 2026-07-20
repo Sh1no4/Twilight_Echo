@@ -39,6 +39,12 @@ import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
 import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
 import { resolverLyricsInput } from '../utils/managedLyricsSource.ts'
 import { useLyricsManagement } from './lyricsManagement.ts'
+import {
+  getPodcastDefaultPlaybackRate,
+  parsePodcastTrackId,
+  setPodcastDefaultPlaybackRate,
+  usePodcastStore
+} from './usePodcastStore.ts'
 import { toggleVolumeMute } from '../utils/volumeMute.ts'
 import {
   clampCuePlaybackPosition,
@@ -1356,7 +1362,44 @@ async function setPlaybackRate(rate: number): Promise<void> {
   playbackRate.value = rounded
   if (playbackAudio) applyPlaybackRateToHtmlAudio(playbackAudio, rounded)
   window.api.audioEngine.setPlaybackRate(rounded).catch(() => {})
+  // Remember podcast speed preference when the user changes rate while on a podcast.
+  if (currentTrack.value?.source === 'podcast') {
+    setPodcastDefaultPlaybackRate(rounded)
+  }
   updateMediaSessionPositionState()
+}
+
+/** Persist podcast episode progress (throttled disk writes via store CAS). */
+let lastPodcastProgressWriteAt = 0
+let lastPodcastProgressTrackId = ''
+let lastPodcastProgressSeconds = -1
+
+function flushPodcastEpisodeProgress(force = false): void {
+  const track = currentTrack.value
+  if (!track || track.source !== 'podcast') return
+  const parsed = parsePodcastTrackId(track.id)
+  if (!parsed) return
+  const seconds = Math.max(0, Math.floor(latestPlaybackTime || currentTime.value || 0))
+  if (seconds < 1 && !force) return
+  const now = Date.now()
+  const sameTrack = lastPodcastProgressTrackId === track.id
+  if (
+    !force &&
+    sameTrack &&
+    Math.abs(seconds - lastPodcastProgressSeconds) < 2 &&
+    now - lastPodcastProgressWriteAt < 8_000
+  ) {
+    return
+  }
+  if (!force && sameTrack && now - lastPodcastProgressWriteAt < 4_000) return
+  lastPodcastProgressWriteAt = now
+  lastPodcastProgressTrackId = track.id
+  lastPodcastProgressSeconds = seconds
+  void usePodcastStore().updateEpisodeProgress(
+    parsed.subscriptionId,
+    parsed.episodeGuid,
+    seconds
+  )
 }
 
 watch(
@@ -2308,6 +2351,20 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
         : null
   if (previousTrack && previousTrack.id !== track.id) {
     maybeRecordResumeBookmark(previousTrack, latestPlaybackTime)
+    // Force-write podcast progress for the track we are leaving.
+    if (previousTrack.source === 'podcast') {
+      const prevParsed = parsePodcastTrackId(previousTrack.id)
+      if (prevParsed) {
+        const seconds = Math.max(0, Math.floor(latestPlaybackTime || 0))
+        if (seconds >= 1) {
+          void usePodcastStore().updateEpisodeProgress(
+            prevParsed.subscriptionId,
+            prevParsed.episodeGuid,
+            seconds
+          )
+        }
+      }
+    }
   }
   if (resumeOffer.value && resumeOffer.value.trackId !== track.id) {
     resumeOffer.value = null
@@ -2328,6 +2385,17 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   setCurrentTimeImmediate(normalizedStartTime)
   clearAbLoop()
   clearCrossfadeTimer()
+
+  // Apply remembered podcast playback rate (or reset to 1 when leaving podcasts).
+  if (track.source === 'podcast') {
+    const preferred = getPodcastDefaultPlaybackRate()
+    if (Math.abs(playbackRate.value - preferred) > 0.001) {
+      void setPlaybackRate(preferred)
+    }
+  } else if (previousTrack?.source === 'podcast' && Math.abs(playbackRate.value - 1) > 0.001) {
+    // Leaving a podcast: restore unity rate so music stays bit-perfect by default.
+    void setPlaybackRate(1)
+  }
 
   try {
     await stopNativeAudio()
@@ -2514,6 +2582,7 @@ async function togglePlayState(): Promise<void> {
       const nextPlaying = !isPlaying.value
       if (isPlaying.value && !nextPlaying) {
         maybeRecordResumeBookmark(track, latestPlaybackTime)
+        flushPodcastEpisodeProgress(true)
       }
       isPlaying.value = nextPlaying
       setPlaybackToggleIntent(nextPlaying)
@@ -2527,6 +2596,7 @@ async function togglePlayState(): Promise<void> {
         await audio.play()
       } else {
         maybeRecordResumeBookmark(track, latestPlaybackTime)
+        flushPodcastEpisodeProgress(true)
         audio.pause()
       }
     }
@@ -2599,7 +2669,18 @@ function clearAbLoop(): void {
   abLoopB.value = null
 }
 
+function isCurrentTrackLiveStream(): boolean {
+  const track = currentTrack.value
+  if (!track) return false
+  if (track.source === 'radio') return true
+  return (
+    (typeof track.duration === 'number' && track.duration <= 0) &&
+    Boolean(track.streamUrl || /^https?:\/\//i.test(track.filePath || ''))
+  )
+}
+
 function setAbLoopPoint(point: 'a' | 'b', time = latestPlaybackTime): void {
+  if (isCurrentTrackLiveStream()) return
   const position = Math.max(0, Number.isFinite(time) ? time : 0)
   if (point === 'a') {
     abLoopA.value = position
@@ -2612,6 +2693,10 @@ function setAbLoopPoint(point: 'a' | 'b', time = latestPlaybackTime): void {
 }
 
 function toggleAbLoopAtCurrentTime(): void {
+  if (isCurrentTrackLiveStream()) {
+    clearAbLoop()
+    return
+  }
   if (abLoopA.value == null) {
     setAbLoopPoint('a')
     return
@@ -2626,6 +2711,7 @@ function toggleAbLoopAtCurrentTime(): void {
 let abLoopEnforcing = false
 function enforceAbLoop(time: number): void {
   if (abLoopEnforcing) return
+  if (isCurrentTrackLiveStream()) return
   const a = abLoopA.value
   const b = abLoopB.value
   if (a == null || b == null || b <= a) return
@@ -2887,11 +2973,22 @@ function setupPlayerIntegrationSideEffects(): void {
     isPlaying,
     () => {
       updateMediaSessionPlaybackState()
-      if (!isPlaying.value) discordPlayStartTimestamp = null
+      if (!isPlaying.value) {
+        discordPlayStartTimestamp = null
+        // Pause/stop is a good moment to flush podcast progress.
+        flushPodcastEpisodeProgress(true)
+      }
       updateDiscordActivity()
     },
     { immediate: true }
   )
+
+  // Throttled podcast progress writeback while playing.
+  watch(currentTime, () => {
+    if (!isPlaying.value) return
+    if (currentTrack.value?.source !== 'podcast') return
+    flushPodcastEpisodeProgress(false)
+  })
 
   watch([currentTime, duration], () => {
     if (appSettings.value?.smtcEnabled && isPlaying.value) updateMediaSessionPositionState()
