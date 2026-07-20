@@ -1386,11 +1386,13 @@ test('high-frequency seek and volume service controls coalesce to the latest val
   binding.Seek(3)
   binding.SetVolume(0.1)
   binding.SetVolume(0.8)
+  binding.SetPlaybackRate(1.25)
+  binding.SetPlaybackRate(1.5)
 
   assert.equal(child.messages.length, 0)
   await new Promise((resolve) => setTimeout(resolve, 0))
 
-  assert.equal(child.messages.length, 2)
+  assert.equal(child.messages.length, 3)
   assert.deepEqual(
     child.messages.map((message) => ({
       method: (message as { method: string }).method,
@@ -1398,7 +1400,8 @@ test('high-frequency seek and volume service controls coalesce to the latest val
     })),
     [
       { method: 'Seek', args: [3] },
-      { method: 'SetVolume', args: [0.8] }
+      { method: 'SetVolume', args: [0.8] },
+      { method: 'SetPlaybackRate', args: [1.5] }
     ]
   )
 
@@ -1406,7 +1409,8 @@ test('high-frequency seek and volume service controls coalesce to the latest val
   binding.Seek(5)
   await new Promise((resolve) => setTimeout(resolve, 0))
 
-  assert.equal(child.messages.length, 2)
+  // Seek is still in-flight, so the latest seek stays coalesced until the first completes.
+  assert.equal(child.messages.length, 3)
 
   const firstSeek = child.messages.find(
     (message) => (message as { method: string }).method === 'Seek'
@@ -1419,9 +1423,9 @@ test('high-frequency seek and volume service controls coalesce to the latest val
   })
   await new Promise((resolve) => setTimeout(resolve, 0))
 
-  assert.equal(child.messages.length, 3)
-  assert.deepEqual(child.messages[2], {
-    ...(child.messages[2] as { requestId: string }),
+  assert.equal(child.messages.length, 4)
+  assert.deepEqual(child.messages[3], {
+    ...(child.messages[3] as { requestId: string }),
     kind: 'request',
     method: 'Seek',
     args: [5]

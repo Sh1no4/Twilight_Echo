@@ -1,0 +1,69 @@
+import { randomBytes } from 'node:crypto'
+import { REMOTE_MEDIA_TOKEN_TTL_MS } from '../../shared/remoteControl.ts'
+
+export interface MediaStreamGrant {
+  filePath: string
+  contentType: string
+  title?: string
+  expiresAt: number
+}
+
+export class MediaStreamGrantStore {
+  private readonly grants = new Map<string, MediaStreamGrant>()
+  private readonly now: () => number
+  private readonly ttlMs: number
+
+  constructor(options: { now?: () => number; ttlMs?: number } = {}) {
+    this.now = options.now ?? Date.now
+    this.ttlMs = options.ttlMs ?? REMOTE_MEDIA_TOKEN_TTL_MS
+  }
+
+  issue(
+    filePath: string,
+    options: { contentType?: string; title?: string; ttlMs?: number } = {}
+  ): string {
+    const token = randomBytes(18).toString('base64url')
+    this.grants.set(token, {
+      filePath,
+      contentType: options.contentType ?? 'application/octet-stream',
+      title: options.title,
+      expiresAt: this.now() + (options.ttlMs ?? this.ttlMs)
+    })
+    return token
+  }
+
+  resolve(token: string): MediaStreamGrant | null {
+    if (typeof token !== 'string' || !token) return null
+    const grant = this.grants.get(token)
+    if (!grant) return null
+    if (this.now() >= grant.expiresAt) {
+      this.grants.delete(token)
+      return null
+    }
+    return grant
+  }
+
+  revoke(token: string): void {
+    this.grants.delete(token)
+  }
+
+  clear(): void {
+    this.grants.clear()
+  }
+}
+
+export function guessAudioContentType(filePath: string): string {
+  const lower = filePath.toLowerCase()
+  if (lower.endsWith('.flac')) return 'audio/flac'
+  if (lower.endsWith('.mp3')) return 'audio/mpeg'
+  if (lower.endsWith('.wav') || lower.endsWith('.wave')) return 'audio/wav'
+  if (lower.endsWith('.ogg') || lower.endsWith('.oga')) return 'audio/ogg'
+  if (lower.endsWith('.m4a') || lower.endsWith('.mp4') || lower.endsWith('.alac')) {
+    return 'audio/mp4'
+  }
+  if (lower.endsWith('.aac')) return 'audio/aac'
+  if (lower.endsWith('.aiff') || lower.endsWith('.aif')) return 'audio/aiff'
+  if (lower.endsWith('.opus')) return 'audio/opus'
+  if (lower.endsWith('.dsf') || lower.endsWith('.dff')) return 'application/octet-stream'
+  return 'application/octet-stream'
+}

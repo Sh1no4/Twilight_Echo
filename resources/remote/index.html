@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Twilight Echo · 远程控制</title>
+    <link rel="stylesheet" href="/remote.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <div class="brand">Twilight Echo</div>
+        <div id="status-chip" class="chip">未连接</div>
+      </header>
+
+      <section id="pair-panel" class="card">
+        <h1>配对</h1>
+        <p class="muted">在应用设置中开启远程控制，输入 PIN 完成配对。</p>
+        <form id="pair-form" class="row">
+          <input
+            id="pin-input"
+            type="password"
+            inputmode="numeric"
+            autocomplete="one-time-code"
+            maxlength="8"
+            placeholder="6 位 PIN"
+            required
+          />
+          <button type="submit" class="primary">连接</button>
+        </form>
+        <p id="pair-error" class="error" hidden></p>
+      </section>
+
+      <section id="player-panel" class="card" hidden>
+        <div class="meta">
+          <div id="title" class="title">—</div>
+          <div id="artist" class="artist muted">—</div>
+          <div id="album" class="album muted"></div>
+        </div>
+
+        <div class="progress-block">
+          <input id="seek" type="range" min="0" max="1000" value="0" step="1" />
+          <div class="time-row">
+            <span id="pos">0:00</span>
+            <span id="live-badge" class="badge" hidden>LIVE</span>
+            <span id="dur">0:00</span>
+          </div>
+        </div>
+
+        <div class="controls">
+          <button type="button" id="btn-prev" class="icon" title="上一首" aria-label="上一首">
+            ⏮
+          </button>
+          <button type="button" id="btn-play" class="icon primary-icon" title="播放/暂停" aria-label="播放/暂停">
+            ▶
+          </button>
+          <button type="button" id="btn-next" class="icon" title="下一首" aria-label="下一首">
+            ⏭
+          </button>
+        </div>
+
+        <div class="volume-block">
+          <label for="volume">音量</label>
+          <input id="volume" type="range" min="0" max="100" value="70" step="1" />
+        </div>
+
+        <p id="cast-line" class="muted small" hidden></p>
+        <p id="cmd-error" class="error" hidden></p>
+      </section>
+    </main>
+    <script src="/remote.js"></script>
+  </body>
+</html>

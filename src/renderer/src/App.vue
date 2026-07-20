@@ -15,6 +15,7 @@ const LocalDashboard = defineAsyncComponent(() => import('./components/LocalDash
 const SongList = defineAsyncComponent(() => import('./components/SongList.vue'))
 const PlayingMusic = defineAsyncComponent(() => import('./components/PlayingMusic.vue'))
 const StreamingPage = defineAsyncComponent(() => import('./components/StreamingPage.vue'))
+const RadioPodcastPage = defineAsyncComponent(() => import('./components/RadioPodcastPage.vue'))
 const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
 const PluginPage = defineAsyncComponent(() => import('./components/PluginPage.vue'))
@@ -44,6 +45,7 @@ const {
   menuOpen,
   showPlayingPage,
   showStreamingPage,
+  showRadioPodcastPage,
   showLoginPage,
   loginPageMode,
   loginInitialProviderId,
@@ -67,6 +69,8 @@ const {
   openPlayingPage: showPlaying,
   closePlayingPage,
   enterStreamingMode,
+  enterRadioPodcastMode,
+  closeRadioPodcastPage,
   returnToLocalMode,
   openLoginPage,
   closeLoginPage,
@@ -205,6 +209,7 @@ const showLocalSidebar = computed(
   () =>
     !showPlayingPage.value &&
     !showStreamingPage.value &&
+    !showRadioPodcastPage.value &&
     !showLoginPage.value &&
     !showSettingsPage.value &&
     !showEqualizerPage.value &&
@@ -460,6 +465,7 @@ const titleSurface = computed<TitleSurface>(() => {
     @select-view="onSelectView"
     @select-plugin-page="onSelectPluginPage"
     @enter-streaming="enterStreamingLogin"
+    @enter-radio-podcast="enterRadioPodcastMode"
   />
   <div
     class="main-content"
@@ -501,6 +507,7 @@ const titleSurface = computed<TitleSurface>(() => {
       @back-to-local="returnToLocalMode"
       @login="openLoginPage"
     />
+    <RadioPodcastPage v-if="showRadioPodcastPage" @back="closeRadioPodcastPage" />
     <Transition name="login-page">
       <LoginPage
         v-if="showLoginPage"

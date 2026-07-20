@@ -169,6 +169,7 @@ function makePlaybackInfo(overrides: Partial<PlaybackInfo> = {}): PlaybackInfo {
     position: 0,
     duration: 0,
     volume: 1,
+    playbackRate: 1,
     requestedConfigRevision: 0,
     appliedConfigRevision: 0,
     queueIndex: -1,
@@ -580,6 +581,13 @@ class FakeNativeBinding implements NativeAudioBinding {
     }
   }
 
+  SetPlaybackRate = (rate: number): void => {
+    this.playbackInfo = {
+      ...this.playbackInfo,
+      playbackRate: rate
+    }
+  }
+
   SetOutputDevice = (device: string): void => {
     this.outputDeviceCalls += 1
     const currentBackend = this.playbackInfo.outputInfo.actualBackend
@@ -964,6 +972,12 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   Seek = (): void => {}
   SetVolume = (volume: number): void => {
     this.volume = volume
+  }
+  SetPlaybackRate = (rate: number): void => {
+    this.playbackInfo = {
+      ...this.playbackInfo,
+      playbackRate: rate
+    }
   }
   SetOutputDevice = (device: string): void => {
     this.device = device
@@ -5388,6 +5402,77 @@ test('audio service ready reports output route restore failures without enabling
 
   manager.destroy()
 })
+
+test('setPlaybackRate clamps, fans out to native, and marks non-unity rate imperfect', async () => {
+  const nativeBinding = new FakeNativeBinding({
+    state: 'playing',
+    volume: 1,
+    playbackRate: 1,
+    outputPerfect: true,
+    perfectReasonCode: '',
+    outputInfo: makeOutputInfo({
+      outputPerfect: true,
+      supportsOutputPerfect: true,
+      perfectReasonCode: '',
+      perfectReason: ''
+    })
+  })
+  const manager = new AudioEngineManager({}, { nativeBinding })
+
+  await manager.setPlaybackRate(1.25)
+  assert.equal((await manager.getPlaybackInfo()).playbackRate, 1.25)
+  assert.equal(nativeBinding.playbackInfo.playbackRate, 1.25)
+  // Non-unity rate forces processingActive / non-perfect on the JS-side evaluation path
+  // when native is not driving playback ticks.
+  assert.equal((await manager.getPlaybackInfo()).dspActive, true)
+
+  await manager.setPlaybackRate(3)
+  assert.equal((await manager.getPlaybackInfo()).playbackRate, 2)
+
+  await manager.setPlaybackRate(0.1)
+  assert.equal((await manager.getPlaybackInfo()).playbackRate, 0.5)
+
+  await manager.setPlaybackRate(1)
+  assert.equal((await manager.getPlaybackInfo()).playbackRate, 1)
+
+  manager.destroy()
+})
+
+test('play preserves non-unity playbackRate and reasserts SetPlaybackRate on native', async () => {
+  const nativeBinding = new FakeNativeBinding({
+    state: 'stopped',
+    volume: 1,
+    playbackRate: 1,
+    outputPerfect: true,
+    perfectReasonCode: '',
+    outputInfo: makeOutputInfo({
+      outputPerfect: true,
+      supportsOutputPerfect: true,
+      perfectReasonCode: '',
+      perfectReason: ''
+    })
+  })
+  const manager = new AudioEngineManager({}, { nativeBinding })
+  await manager.setPlaybackRate(1.5)
+  assert.equal((await manager.getPlaybackInfo()).playbackRate, 1.5)
+
+  // Simulate native GetPlaybackInfo defaulting rate to 1 after Play.
+  const originalPlay = nativeBinding.Play
+  nativeBinding.Play = (source: string, startTime = 0): void => {
+    originalPlay(source, startTime)
+    nativeBinding.playbackInfo = {
+      ...nativeBinding.playbackInfo,
+      playbackRate: 1
+    }
+  }
+
+  await manager.play('C:\\music\\track.flac', 0)
+  assert.equal((await manager.getPlaybackInfo()).playbackRate, 1.5)
+  assert.equal(nativeBinding.playbackInfo.playbackRate, 1.5)
+
+  manager.destroy()
+})
+
 
 test('loudnorm status event, library RG queue fields, and cancel IPC are wired end-to-end', () => {
   const managerSource = readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')

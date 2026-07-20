@@ -51,6 +51,7 @@ std::string formatSummary(const AudioFormat& format) {
 
 std::string processingReason(const PerfectEvaluation& evaluation) {
   if (std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon) return "Volume active";
+  if (std::abs(evaluation.playbackRate - 1.0) > kUnityVolumeEpsilon) return "Playback rate active";
   if (evaluation.loudnormActive) return "Loudnorm active";
   if (evaluation.replayGainActive) return "ReplayGain active";
   if (evaluation.eqActive) return "EQ active";
@@ -63,6 +64,7 @@ std::string processingReason(const PerfectEvaluation& evaluation) {
 
 std::string processingReasonCode(const PerfectEvaluation& evaluation) {
   if (std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon) return "volume_not_unity";
+  if (std::abs(evaluation.playbackRate - 1.0) > kUnityVolumeEpsilon) return "playback_rate_not_unity";
   if (evaluation.loudnormActive) return "loudnorm_active";
   if (evaluation.replayGainActive) return "replaygain_active";
   if (evaluation.eqActive) return "eq_active";
@@ -331,7 +333,8 @@ PerfectResult evaluatePerfect(const PerfectEvaluation& evaluation) {
   result.processingActive =
       evaluation.loudnormActive || evaluation.replayGainActive || evaluation.eqActive || evaluation.convolverActive ||
       evaluation.crossfeedActive || evaluation.nativeDspActive || evaluation.crossfadeActive ||
-      std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon;
+      std::abs(evaluation.volume - 1.0) > kUnityVolumeEpsilon ||
+      std::abs(evaluation.playbackRate - 1.0) > kUnityVolumeEpsilon;
   result.routingPreservesSemantics = routingPreservesSemantics(
       evaluation.routingMode,
       decodedFormat.channelCount,

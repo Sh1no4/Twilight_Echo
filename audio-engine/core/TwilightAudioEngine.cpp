@@ -339,6 +339,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"position\":" << info.positionSeconds << ","
        << "\"duration\":" << info.durationSeconds << ","
        << "\"volume\":" << info.volume << ","
+       << "\"playbackRate\":" << info.playbackRate << ","
        << "\"requestedConfigRevision\":" << info.requestedConfigRevision << ","
        << "\"appliedConfigRevision\":" << info.appliedConfigRevision << ","
        << "\"queueIndex\":" << info.queueIndex << ","
@@ -718,6 +719,10 @@ TAE_Result TwilightAudioEngine::play(const std::string& source, double startTime
   }
 
   std::lock_guard lock(mutex_);
+  // play()/playQueueItem pass volume into the pipeline; reassert rate so non-unity rates survive.
+  if (pipeline_ && std::abs(info_.playbackRate - 1.0) > 0.0001) {
+    pipeline_->setPlaybackRate(info_.playbackRate);
+  }
   applyPipelineStatusLocked(pipeline_->status());
   lastTick_ = std::chrono::steady_clock::now();
   publishStateLocked();
@@ -773,6 +778,10 @@ TAE_Result TwilightAudioEngine::playQueueItem(const QueueItem& item, double star
   }
 
   std::lock_guard lock(mutex_);
+  // play()/playQueueItem pass volume into the pipeline; reassert rate so non-unity rates survive.
+  if (pipeline_ && std::abs(info_.playbackRate - 1.0) > 0.0001) {
+    pipeline_->setPlaybackRate(info_.playbackRate);
+  }
   applyPipelineStatusLocked(pipeline_->status());
   lastTick_ = std::chrono::steady_clock::now();
   publishStateLocked();
@@ -857,6 +866,33 @@ TAE_Result TwilightAudioEngine::setVolume(double volume) {
   }
   if (!rerouteReason.empty()) {
     return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "volume");
+  }
+  return TAE_RESULT_OK;
+}
+
+TAE_Result TwilightAudioEngine::setPlaybackRate(double rate) {
+  if (!std::isfinite(rate)) return TAE_RESULT_INVALID_ARGUMENT;
+  std::string rerouteReason;
+  double reroutePosition = 0.0;
+  PlaybackState rerouteState = PlaybackState::Stopped;
+  {
+    std::lock_guard lock(mutex_);
+    info_.playbackRate = std::clamp(rate, 0.5, 2.0);
+    if (pipeline_) {
+      pipeline_->setPlaybackRate(info_.playbackRate);
+      applyPipelineStatusLocked(pipeline_->status());
+    }
+    if (pipeline_ && info_.state != PlaybackState::Stopped) {
+      if (!shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+        publishStateLocked();
+      }
+    } else {
+      updatePerfectLocked();
+      publishStateLocked();
+    }
+  }
+  if (!rerouteReason.empty()) {
+    return restartCurrentPlaybackForReroute(reroutePosition, rerouteState, rerouteReason, "playbackRate");
   }
   return TAE_RESULT_OK;
 }
@@ -1962,6 +1998,7 @@ void TwilightAudioEngine::updatePerfectLocked() {
   evaluation.backendPerfectReasonCode = info_.outputInfo.perfectReasonCode;
   evaluation.backendPerfectReason = backendPerfectReason;
   evaluation.volume = info_.volume;
+  evaluation.playbackRate = info_.playbackRate;
   evaluation.replayGainActive = info_.replayGainActive;
   evaluation.loudnormActive = info_.loudnormActive;
   evaluation.eqActive = info_.eqActive;
@@ -2180,6 +2217,11 @@ TAE_Result TAE_Seek(TAE_EngineHandle engine, double position_seconds) {
 TAE_Result TAE_SetVolume(TAE_EngineHandle engine, double volume) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   return fromHandle(engine)->setVolume(volume);
+}
+
+TAE_Result TAE_SetPlaybackRate(TAE_EngineHandle engine, double rate) {
+  if (!engine) return TAE_RESULT_NOT_INITIALIZED;
+  return fromHandle(engine)->setPlaybackRate(rate);
 }
 
 TAE_Result TAE_SetOutputDevice(TAE_EngineHandle engine, const char* device_id) {

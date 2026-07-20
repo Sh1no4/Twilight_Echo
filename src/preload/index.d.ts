@@ -87,7 +87,15 @@ interface AudioEngineEvent {
 
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
-type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
+type PlayerShortcutAction =
+  | 'previous'
+  | 'next'
+  | 'playPause'
+  | 'play'
+  | 'pause'
+  | { action: 'seek'; positionSeconds: number }
+  | { action: 'setVolume'; volume: number }
+  | { action: 'jumpQueue'; index: number }
 interface PlayerShortcutStatus {
   accelerator: string
   action: PlayerShortcutAction
@@ -648,6 +656,8 @@ interface AppSettings {
   proxyPort: number
   proxyAllowDirectFallback: boolean
   streamingActiveProvider: string
+  remoteControlEnabled: boolean
+  remoteControlPort: number
 }
 
 interface OpraCatalogStatus {
@@ -1141,6 +1151,8 @@ interface PlaybackInfo extends PlaybackOutputInfoMirror {
   position: number
   duration: number
   volume: number
+  /** Application-layer playback rate; 1 = realtime. */
+  playbackRate?: number
   requestedConfigRevision: number
   appliedConfigRevision: number
   queueIndex: number
@@ -1222,6 +1234,7 @@ interface AudioEngineAPI {
   togglePause: () => Promise<void>
   seek: (time: number) => Promise<void>
   setVolume: (volume: number) => Promise<void>
+  setPlaybackRate: (rate: number) => Promise<void>
   stop: () => Promise<void>
   next: () => Promise<void>
   previous: () => Promise<void>
@@ -1421,6 +1434,44 @@ interface WindowAPI {
     getPlayablePaths: (requests: OfflinePlayablePathRequest[]) => Promise<(string | null)[]>
     onChanged: (callback: (record: OfflineDownloadRecord) => void) => () => void
   }
+  radio: {
+    loadStations: () => Promise<
+      VersionedDataEnvelope<import('../shared/radioStations.ts').RadioStationsDocument>
+    >
+    saveStations: (
+      document: import('../shared/radioStations.ts').RadioStationsDocument,
+      expectedRevision: number
+    ) => Promise<VersionedDataEnvelope<import('../shared/radioStations.ts').RadioStationsDocument>>
+    importPlaylist: (payload: {
+      text: string
+      fileNameHint?: string
+      allowInsecureHttp?: boolean
+    }) => Promise<import('../shared/radioStations.ts').RadioStation[]>
+  }
+  podcast: {
+    loadSubscriptions: () => Promise<
+      VersionedDataEnvelope<import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument>
+    >
+    saveSubscriptions: (
+      document: import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument,
+      expectedRevision: number
+    ) => Promise<
+      VersionedDataEnvelope<import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument>
+    >
+    subscribe: (feedUrl: string) => Promise<{
+      subscription: import('../shared/podcastSubscriptions.ts').PodcastSubscription
+      document: import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument
+      revision: number
+    }>
+    refresh: (subscriptionId: string) => Promise<{
+      subscription: import('../shared/podcastSubscriptions.ts').PodcastSubscription
+      document: import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument
+      revision: number
+    }>
+    refreshAll: () => Promise<
+      import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument
+    >
+  }
   data: {
     saveMusicLibrary: (data: LocalLibrarySnapshotInput) => Promise<LocalMusicLibraryDocument>
     loadMusicLibrary: () => Promise<LocalMusicLibraryDocument | unknown[]>
@@ -1487,6 +1538,31 @@ interface WindowAPI {
     loadPlaylists: () => Promise<VersionedDataEnvelope<unknown[]> | null>
     saveCookie: (cookie: string) => Promise<void>
     loadCookie: () => Promise<string>
+  }
+  remote: {
+    getStatus: () => Promise<import('../shared/remoteControl.ts').RemoteControlStatus>
+    setEnabled: (
+      enabled: boolean
+    ) => Promise<import('../shared/remoteControl.ts').RemoteControlStatus>
+    rotatePin: () => Promise<{
+      pin: string
+      status: import('../shared/remoteControl.ts').RemoteControlStatus
+    }>
+    publishState: (
+      snapshot: Partial<import('../shared/remoteControl.ts').RemotePlaybackSnapshot>
+    ) => Promise<boolean>
+    discoverDlna: () => Promise<import('../shared/remoteControl.ts').DlnaDeviceInfo[]>
+    getDlnaDevices: () => Promise<import('../shared/remoteControl.ts').DlnaDeviceInfo[]>
+    castToDevice: (payload: {
+      usn: string
+      filePath: string
+      title?: string
+      artist?: string
+      album?: string
+      positionSeconds?: number
+    }) => Promise<{ ok: true; usn: string; friendlyName: string; mediaUrl: string }>
+    stopCast: () => Promise<{ ok: true }>
+    getCastTarget: () => Promise<{ usn: string; friendlyName: string } | null>
   }
   settings: {
     get: () => Promise<SettingsSnapshot>

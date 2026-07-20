@@ -56,6 +56,7 @@ export const DSD_OUTPUT_MODE_OPTIONS: readonly LabeledOption<DsdOutputMode>[] = 
 /** Canonical perfect-reason codes that Stage-1 UI must recognize. */
 export const STAGE1_PERFECT_REASON_CODES = [
   'volume_not_unity',
+  'playback_rate_not_unity',
   'loudnorm_active',
   'replaygain_active',
   'processing_active',
@@ -74,6 +75,8 @@ export const HIFI_STATUS_COPY = {
   volumeNotUnityHint: '默认 70% 保护听感；bit-perfect 需 Unity（100%）',
   unityButton: 'Unity 100%',
   unityButtonShort: 'Unity',
+  playbackRateNotUnity: '播放倍速不是 1.0x',
+  playbackRateNotUnityHint: '非 1.0x 倍速会重采样并破坏 bit-perfect',
   loudnormActive: 'Loudnorm 正在改变样本（EBU R128）',
   loudnormMeasuring: 'Loudnorm：后台测量中（首播使用 Fallback）',
   loudnormCached: 'Loudnorm：已用缓存测量增益',

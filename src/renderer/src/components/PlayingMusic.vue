@@ -328,6 +328,43 @@ async function saveDraftAsLrc(): Promise<void> {
 }
 
 const lyricSearching = ref(false)
+type OnlineLyricsCandidateUi = {
+  id: number | string
+  title: string
+  artist: string
+  album: string
+  durationSeconds: number | null
+  score: number
+  syncedLyrics: string | null
+  plainLyrics: string | null
+  source: string
+}
+const onlineLyricCandidates = ref<OnlineLyricsCandidateUi[]>([])
+
+function formatDurationDelta(candidateDuration: number | null): string {
+  const trackDuration = currentTrack.value?.duration
+  if (
+    candidateDuration == null ||
+    typeof trackDuration !== 'number' ||
+    !Number.isFinite(trackDuration)
+  ) {
+    return '—'
+  }
+  const delta = Math.round(candidateDuration - trackDuration)
+  if (delta === 0) return '±0s'
+  return delta > 0 ? `+${delta}s` : `${delta}s`
+}
+
+function applyOnlineCandidate(candidate: OnlineLyricsCandidateUi): void {
+  const text = candidate.syncedLyrics ?? candidate.plainLyrics ?? null
+  if (!text) {
+    lyricManagerNotice.value = '该候选没有可用歌词正文'
+    return
+  }
+  draftOriginal.value = text
+  draftSource.value = 'manual'
+  lyricManagerNotice.value = `已填入在线歌词：${candidate.title} - ${candidate.artist}`
+}
 
 async function searchOnlineIntoDraft(): Promise<void> {
   const track = currentTrack.value
@@ -335,6 +372,7 @@ async function searchOnlineIntoDraft(): Promise<void> {
   lyricSearching.value = true
   lyricManagerError.value = ''
   lyricManagerNotice.value = ''
+  onlineLyricCandidates.value = []
   try {
     const result = await window.api.data.searchOnlineLyrics({
       title: track.title,
@@ -345,14 +383,13 @@ async function searchOnlineIntoDraft(): Promise<void> {
           ? track.duration
           : undefined
     })
-    const text = result.best?.syncedLyrics ?? result.best?.plainLyrics ?? null
-    if (!text) {
+    const candidates = Array.isArray(result.candidates) ? result.candidates : []
+    onlineLyricCandidates.value = candidates.slice(0, 12)
+    if (candidates.length === 0) {
       lyricManagerNotice.value = '未找到匹配的在线歌词'
       return
     }
-    draftOriginal.value = text
-    draftSource.value = 'manual'
-    lyricManagerNotice.value = `已填入在线歌词：${result.best?.title ?? ''} - ${result.best?.artist ?? ''}`
+    lyricManagerNotice.value = `找到 ${candidates.length} 条候选，点击选用`
   } catch (error) {
     lyricManagerError.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -785,6 +822,37 @@ onBeforeUnmount(() => {
             </button>
             <button type="button" :disabled="lyricSearching" @click="searchOnlineIntoDraft">
               {{ lyricSearching ? 'Searching...' : 'Search online' }}
+            </button>
+          </div>
+          <div v-if="onlineLyricCandidates.length" class="online-lyric-candidates">
+            <div class="online-lyric-candidates__title">在线候选</div>
+            <button
+              v-for="candidate in onlineLyricCandidates"
+              :key="`${candidate.source}-${candidate.id}`"
+              type="button"
+              class="online-lyric-candidate"
+              @click="applyOnlineCandidate(candidate)"
+            >
+              <div class="online-lyric-candidate__meta">
+                <strong>{{ candidate.title }}</strong>
+                <span>{{ candidate.artist }}</span>
+                <span v-if="candidate.album">{{ candidate.album }}</span>
+              </div>
+              <div class="online-lyric-candidate__stats">
+                <span>{{ candidate.source }}</span>
+                <span>score {{ candidate.score.toFixed(2) }}</span>
+                <span>时长差 {{ formatDurationDelta(candidate.durationSeconds) }}</span>
+                <span>{{ candidate.syncedLyrics ? 'LRC' : '纯文本' }}</span>
+              </div>
+              <p class="online-lyric-candidate__preview">
+                {{
+                  (candidate.syncedLyrics || candidate.plainLyrics || '')
+                    .split('\n')
+                    .slice(0, 2)
+                    .join(' / ')
+                    .slice(0, 120)
+                }}
+              </p>
             </button>
           </div>
           <label class="lyric-editor-label"
@@ -1239,6 +1307,64 @@ onBeforeUnmount(() => {
   margin: 0;
   color: #ffb4ab;
   font-size: 12px;
+}
+
+.online-lyric-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 180px;
+  overflow: auto;
+  margin: 4px 0 8px;
+  padding: 8px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.04);
+}
+
+.online-lyric-candidates__title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.online-lyric-candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: left;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.online-lyric-candidate:hover {
+  border-color: color-mix(in srgb, var(--te-primary-500, #6366f1) 45%, transparent);
+}
+
+.online-lyric-candidate__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  font-size: 12px;
+}
+
+.online-lyric-candidate__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: #64748b;
+}
+
+.online-lyric-candidate__preview {
+  margin: 0;
+  font-size: 11px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lyric-manager-notice {

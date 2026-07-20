@@ -112,7 +112,15 @@ export interface AudioEngineServiceReadyEvent {
 export type AudioEngineServiceReadyCallback = (event: AudioEngineServiceReadyEvent) => void
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
-export type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
+export type PlayerShortcutAction =
+  | 'previous'
+  | 'next'
+  | 'playPause'
+  | 'play'
+  | 'pause'
+  | { action: 'seek'; positionSeconds: number }
+  | { action: 'setVolume'; volume: number }
+  | { action: 'jumpQueue'; index: number }
 export interface PlayerShortcutStatus {
   accelerator: string
   action: PlayerShortcutAction
@@ -717,6 +725,8 @@ export interface AppSettings {
   proxyPort: number
   proxyAllowDirectFallback: boolean
   streamingActiveProvider: string
+  remoteControlEnabled: boolean
+  remoteControlPort: number
 }
 
 export interface OpraCatalogStatus {
@@ -1102,6 +1112,8 @@ export interface PlaybackInfo extends PlaybackOutputInfoMirror {
   position: number
   duration: number
   volume: number
+  /** Application-layer playback rate; 1 = realtime. */
+  playbackRate?: number
   requestedConfigRevision: number
   appliedConfigRevision: number
   queueIndex: number

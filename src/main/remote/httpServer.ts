@@ -1,0 +1,461 @@
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
+import { join, extname } from 'node:path'
+import { networkInterfaces } from 'node:os'
+import { app } from 'electron'
+import { RemoteAuthSession } from './auth.ts'
+import { MediaStreamGrantStore, guessAudioContentType } from './mediaTokens.ts'
+import {
+  createEmptyRemotePlaybackSnapshot,
+  isPrivateOrLocalIp,
+  parseRemotePlayerCommand,
+  type PlayerRemoteCommand,
+  type RemoteControlStatus,
+  type RemotePlaybackSnapshot
+} from '../../shared/remoteControl.ts'
+import { REMOTE_SSE_HEARTBEAT_MS } from '../../shared/remoteControl.ts'
+
+export type RemoteCommandHandler = (command: PlayerRemoteCommand) => Promise<void> | void
+
+export interface RemoteHttpServerOptions {
+  staticRoot?: string
+  onCommand?: RemoteCommandHandler
+  auth?: RemoteAuthSession
+  mediaGrants?: MediaStreamGrantStore
+  preferredPort?: number
+}
+
+export class RemoteHttpServer {
+  private server: Server | null = null
+  private port: number | null = null
+  private enabled = false
+  private lastError: string | null = null
+  private readonly auth: RemoteAuthSession
+  private readonly mediaGrants: MediaStreamGrantStore
+  private readonly staticRoot: string
+  private onCommand: RemoteCommandHandler | null
+  private snapshot: RemotePlaybackSnapshot = createEmptyRemotePlaybackSnapshot()
+  private readonly sseClients = new Set<ServerResponse>()
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null
+
+  constructor(options: RemoteHttpServerOptions = {}) {
+    this.auth = options.auth ?? new RemoteAuthSession()
+    this.mediaGrants = options.mediaGrants ?? new MediaStreamGrantStore()
+    this.staticRoot =
+      options.staticRoot ?? join(app.getAppPath(), 'resources', 'remote')
+    this.onCommand = options.onCommand ?? null
+  }
+
+  setCommandHandler(handler: RemoteCommandHandler | null): void {
+    this.onCommand = handler
+  }
+
+  getAuth(): RemoteAuthSession {
+    return this.auth
+  }
+
+  getMediaGrants(): MediaStreamGrantStore {
+    return this.mediaGrants
+  }
+
+  getStatus(): RemoteControlStatus {
+    return {
+      enabled: this.enabled,
+      running: this.server != null && this.port != null,
+      port: this.port,
+      pin: this.enabled ? this.auth.getPin() : null,
+      urls: this.enabled && this.port != null ? this.listLanUrls(this.port) : [],
+      paired: this.auth.isPaired(),
+      clientCount: this.sseClients.size,
+      lastError: this.lastError
+    }
+  }
+
+  updatePlaybackSnapshot(snapshot: RemotePlaybackSnapshot): void {
+    this.snapshot = { ...snapshot, updatedAt: Date.now() }
+    this.broadcastSse('state', this.snapshot)
+  }
+
+  getPlaybackSnapshot(): RemotePlaybackSnapshot {
+    return this.snapshot
+  }
+
+  async start(preferredPort = 0): Promise<RemoteControlStatus> {
+    if (this.server) return this.getStatus()
+    this.enabled = true
+    this.lastError = null
+    if (!this.auth.getPin()) this.auth.rotatePin()
+
+    await new Promise<void>((resolve, reject) => {
+      const server = createServer((req, res) => {
+        void this.handleRequest(req, res)
+      })
+      server.on('error', (error) => {
+        this.lastError = error instanceof Error ? error.message : String(error)
+        reject(error)
+      })
+      server.listen(preferredPort, '0.0.0.0', () => {
+        const address = server.address()
+        this.port =
+          address && typeof address === 'object' ? address.port : preferredPort || null
+        this.server = server
+        this.startHeartbeat()
+        resolve()
+      })
+    })
+
+    return this.getStatus()
+  }
+
+  async stop(): Promise<void> {
+    this.enabled = false
+    this.stopHeartbeat()
+    for (const client of this.sseClients) {
+      try {
+        client.end()
+      } catch {
+        // ignore
+      }
+    }
+    this.sseClients.clear()
+    this.mediaGrants.clear()
+    this.auth.revokeToken()
+
+    const server = this.server
+    this.server = null
+    this.port = null
+    if (!server) return
+    await new Promise<void>((resolve) => {
+      server.close(() => resolve())
+    })
+  }
+
+  rotatePin(): string {
+    const pin = this.auth.rotatePin()
+    this.broadcastSse('auth', { paired: false })
+    return pin
+  }
+
+  issueMediaUrl(filePath: string, title?: string): string | null {
+    if (!this.port) return null
+    const token = this.mediaGrants.issue(filePath, {
+      contentType: guessAudioContentType(filePath),
+      title
+    })
+    const host = this.listLanUrls(this.port)[0]
+    if (!host) return null
+    return `${host}/media/${token}`
+  }
+
+  private startHeartbeat(): void {
+    this.stopHeartbeat()
+    this.heartbeatTimer = setInterval(() => {
+      this.broadcastSse('ping', { t: Date.now() })
+    }, REMOTE_SSE_HEARTBEAT_MS)
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
+    }
+  }
+
+  private listLanUrls(port: number): string[] {
+    const urls = new Set<string>()
+    const nets = networkInterfaces()
+    for (const entries of Object.values(nets)) {
+      if (!entries) continue
+      for (const entry of entries) {
+        if (entry.internal) continue
+        const family = String(entry.family)
+        if (family !== 'IPv4' && family !== '4') continue
+        if (!isPrivateOrLocalIp(entry.address)) continue
+        urls.add(`http://${entry.address}:${port}`)
+      }
+    }
+    if (urls.size === 0) urls.add(`http://127.0.0.1:${port}`)
+    return Array.from(urls)
+  }
+
+  private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    try {
+      const host = req.headers.host ?? `127.0.0.1:${this.port ?? 0}`
+      const url = new URL(req.url ?? '/', `http://${host}`)
+      const remoteIp = (req.socket.remoteAddress ?? '').replace(/^::ffff:/i, '')
+      if (remoteIp && !isPrivateOrLocalIp(remoteIp) && remoteIp !== '::1') {
+        this.sendJson(res, 403, { error: 'lan_only' })
+        return
+      }
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, corsHeaders())
+        res.end()
+        return
+      }
+
+      if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
+        this.serveStatic(res, 'index.html')
+        return
+      }
+      if (req.method === 'GET' && url.pathname === '/remote.js') {
+        this.serveStatic(res, 'remote.js', 'application/javascript; charset=utf-8')
+        return
+      }
+      if (req.method === 'GET' && url.pathname === '/remote.css') {
+        this.serveStatic(res, 'remote.css', 'text/css; charset=utf-8')
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/status') {
+        this.sendJson(res, 200, {
+          requiresPairing: true,
+          paired: this.auth.isPaired(),
+          app: 'Twilight Echo'
+        })
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/pair') {
+        const body = await readJsonBody(req)
+        const pin = typeof body?.pin === 'string' ? body.pin : ''
+        const result = this.auth.pair(pin)
+        if (!result.ok) {
+          this.sendJson(res, 401, { error: result.reason })
+          return
+        }
+        this.sendJson(res, 200, { token: result.token })
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/state') {
+        if (!this.authorize(req, url)) {
+          this.sendJson(res, 401, { error: 'unauthorized' })
+          return
+        }
+        this.sendJson(res, 200, this.snapshot)
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/events') {
+        if (!this.authorize(req, url)) {
+          this.sendJson(res, 401, { error: 'unauthorized' })
+          return
+        }
+        this.attachSse(res)
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/command') {
+        if (!this.authorize(req, url)) {
+          this.sendJson(res, 401, { error: 'unauthorized' })
+          return
+        }
+        if (!this.auth.tryConsumeCommand()) {
+          this.sendJson(res, 429, { error: 'rate_limited' })
+          return
+        }
+        const body = await readJsonBody(req)
+        const command = parseRemotePlayerCommand(body)
+        if (!command) {
+          this.sendJson(res, 400, { error: 'invalid_command' })
+          return
+        }
+        if (!this.onCommand) {
+          this.sendJson(res, 503, { error: 'command_handler_missing' })
+          return
+        }
+        await this.onCommand(command)
+        this.sendJson(res, 200, { ok: true })
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname.startsWith('/media/')) {
+        const token = url.pathname.slice('/media/'.length)
+        await this.serveMedia(req, res, token)
+        return
+      }
+
+      this.sendJson(res, 404, { error: 'not_found' })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.sendJson(res, 500, { error: message })
+    }
+  }
+
+  private authorize(req: IncomingMessage, url: URL): boolean {
+    if (this.auth.authorizeBearer(req.headers.authorization)) return true
+    return this.auth.authorizeTokenQuery(url.searchParams.get('token'))
+  }
+
+  private attachSse(res: ServerResponse): void {
+    res.writeHead(200, {
+      ...corsHeaders(),
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive'
+    })
+    res.write(`event: state\ndata: ${JSON.stringify(this.snapshot)}\n\n`)
+    this.sseClients.add(res)
+    reqOnClose(res, () => {
+      this.sseClients.delete(res)
+    })
+  }
+
+  private broadcastSse(event: string, data: unknown): void {
+    const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+    for (const client of this.sseClients) {
+      try {
+        client.write(payload)
+      } catch {
+        this.sseClients.delete(client)
+      }
+    }
+  }
+
+  private serveStatic(
+    res: ServerResponse,
+    fileName: string,
+    contentType = 'text/html; charset=utf-8'
+  ): void {
+    const path = join(this.staticRoot, fileName)
+    if (!existsSync(path)) {
+      this.sendJson(res, 404, { error: 'static_missing', fileName })
+      return
+    }
+    const body = readFileSync(path)
+    res.writeHead(200, {
+      ...corsHeaders(),
+      'content-type': contentType,
+      'content-length': body.length,
+      'cache-control': 'no-cache'
+    })
+    res.end(body)
+  }
+
+  private async serveMedia(
+    req: IncomingMessage,
+    res: ServerResponse,
+    token: string
+  ): Promise<void> {
+    const grant = this.mediaGrants.resolve(token)
+    if (!grant) {
+      this.sendJson(res, 404, { error: 'media_token_invalid' })
+      return
+    }
+    let stat
+    try {
+      stat = statSync(grant.filePath)
+    } catch {
+      this.sendJson(res, 404, { error: 'media_missing' })
+      return
+    }
+    if (!stat.isFile()) {
+      this.sendJson(res, 404, { error: 'media_missing' })
+      return
+    }
+
+    const total = stat.size
+    const range = req.headers.range
+    const type = grant.contentType || guessAudioContentType(grant.filePath)
+
+    if (range) {
+      const match = /^bytes=(\d*)-(\d*)$/i.exec(range)
+      if (!match) {
+        res.writeHead(416, { 'content-range': `bytes */${total}` })
+        res.end()
+        return
+      }
+      const start = match[1] ? Number(match[1]) : 0
+      const end = match[2] ? Number(match[2]) : total - 1
+      if (
+        !Number.isFinite(start) ||
+        !Number.isFinite(end) ||
+        start < 0 ||
+        end >= total ||
+        start > end
+      ) {
+        res.writeHead(416, { 'content-range': `bytes */${total}` })
+        res.end()
+        return
+      }
+      res.writeHead(206, {
+        'content-type': type,
+        'content-length': end - start + 1,
+        'content-range': `bytes ${start}-${end}/${total}`,
+        'accept-ranges': 'bytes',
+        'cache-control': 'no-store'
+      })
+      createReadStream(grant.filePath, { start, end }).pipe(res)
+      return
+    }
+
+    res.writeHead(200, {
+      'content-type': type,
+      'content-length': total,
+      'accept-ranges': 'bytes',
+      'cache-control': 'no-store'
+    })
+    createReadStream(grant.filePath).pipe(res)
+  }
+
+  private sendJson(res: ServerResponse, status: number, body: unknown): void {
+    const payload = Buffer.from(JSON.stringify(body), 'utf8')
+    res.writeHead(status, {
+      ...corsHeaders(),
+      'content-type': 'application/json; charset=utf-8',
+      'content-length': payload.length
+    })
+    res.end(payload)
+  }
+}
+
+function corsHeaders(): Record<string, string> {
+  return {
+    'access-control-allow-origin': '*',
+    'access-control-allow-headers': 'authorization, content-type',
+    'access-control-allow-methods': 'GET, POST, OPTIONS'
+  }
+}
+
+function readJsonBody(req: IncomingMessage): Promise<Record<string, unknown> | null> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > 64 * 1024) {
+        reject(new Error('body_too_large'))
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      if (chunks.length === 0) {
+        resolve(null)
+        return
+      }
+      try {
+        const text = Buffer.concat(chunks).toString('utf8')
+        const parsed = JSON.parse(text) as unknown
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          resolve(null)
+          return
+        }
+        resolve(parsed as Record<string, unknown>)
+      } catch {
+        resolve(null)
+      }
+    })
+    req.on('error', reject)
+  })
+}
+
+function reqOnClose(res: ServerResponse, cb: () => void): void {
+  res.on('close', cb)
+  res.on('error', cb)
+}
+
+// Silence unused import warning for extname in case static root uses it later.
+void extname

@@ -13,7 +13,19 @@ import type { SleepTimerSettings } from '../../shared/sleepTimer.ts'
 
 export type { MiniPlayerSettings } from '../../shared/miniPlayer'
 
-export type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
+/** Global shortcuts are string-only; remote control may send structured seek/volume/queue commands. */
+export type PlayerShortcutAction =
+  | 'previous'
+  | 'next'
+  | 'playPause'
+  | 'play'
+  | 'pause'
+  | { action: 'seek'; positionSeconds: number }
+  | { action: 'setVolume'; volume: number }
+  | { action: 'jumpQueue'; index: number }
+
+/** Accelerator-bound actions only (excludes structured remote payloads). */
+export type PlayerShortcutKeyAction = Extract<PlayerShortcutAction, string>
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
 export type NcmPlaybackQuality =
@@ -187,6 +199,10 @@ export interface AppSettings {
   proxyPort: number
   proxyAllowDirectFallback: boolean
   streamingActiveProvider: string
+  /** LAN web remote + media token server. Default OFF. */
+  remoteControlEnabled: boolean
+  /** Preferred remote HTTP port; 0 = ephemeral. */
+  remoteControlPort: number
 }
 
 export interface PlaybackSession {
@@ -219,7 +235,7 @@ export interface SettingsSnapshot extends AppSettings {
 
 export interface PlayerShortcutStatus {
   accelerator: string
-  action: PlayerShortcutAction
+  action: PlayerShortcutKeyAction
   label: string
   registered: boolean
   error: string | null
@@ -227,7 +243,7 @@ export interface PlayerShortcutStatus {
 
 export const PLAYER_SHORTCUTS: {
   accelerator: string
-  action: PlayerShortcutAction
+  action: PlayerShortcutKeyAction
   label: string
 }[] = [
   { accelerator: 'CommandOrControl+Alt+Left', action: 'previous', label: '上一首' },

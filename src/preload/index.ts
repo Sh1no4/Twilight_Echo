@@ -92,6 +92,16 @@ import type {
   OfflinePlayablePathRequest,
   OfflineStorageSummary
 } from '../shared/offlineDownloads.ts'
+import {
+  isRadioStationsDocument,
+  type RadioStation,
+  type RadioStationsDocument
+} from '../shared/radioStations.ts'
+import {
+  isPodcastSubscriptionsDocument,
+  type PodcastSubscription,
+  type PodcastSubscriptionsDocument
+} from '../shared/podcastSubscriptions.ts'
 import { ProviderWriteIdempotencyCoordinator } from '../shared/providerWriteIdempotency.ts'
 import { createSleepTimerEventBridge } from './sleepTimerEvents.ts'
 import { collectClosePersistenceOutcome } from './closePersistence.ts'
@@ -471,6 +481,8 @@ const api = {
     seek: (time: number): Promise<void> => ipcRenderer.invoke('audioEngine:seek', time),
     setVolume: (volume: number): Promise<void> =>
       ipcRenderer.invoke('audioEngine:setVolume', volume),
+    setPlaybackRate: (rate: number): Promise<void> =>
+      ipcRenderer.invoke('audioEngine:setPlaybackRate', rate),
     stop: (): Promise<void> => ipcRenderer.invoke('audioEngine:stop'),
     next: (): Promise<void> => ipcRenderer.invoke('audioEngine:next'),
     previous: (): Promise<void> => ipcRenderer.invoke('audioEngine:previous'),
@@ -708,6 +720,88 @@ const api = {
       offlineDownloadCallbacks.add(callback)
       return () => offlineDownloadCallbacks.delete(callback)
     }
+  },
+  radio: {
+    loadStations: (): Promise<VersionedDataEnvelope<RadioStationsDocument>> =>
+      ipcRenderer.invoke('radio:loadStations'),
+    saveStations: (
+      document: RadioStationsDocument,
+      expectedRevision: number
+    ): Promise<VersionedDataEnvelope<RadioStationsDocument>> =>
+      invokeVersionedDataWrite(
+        'radio:saveStations',
+        [document, expectedRevision],
+        isRadioStationsDocument
+      ),
+    importPlaylist: (payload: {
+      text: string
+      fileNameHint?: string
+      allowInsecureHttp?: boolean
+    }): Promise<RadioStation[]> => ipcRenderer.invoke('radio:importPlaylist', payload)
+  },
+  podcast: {
+    loadSubscriptions: (): Promise<VersionedDataEnvelope<PodcastSubscriptionsDocument>> =>
+      ipcRenderer.invoke('podcast:loadSubscriptions'),
+    saveSubscriptions: (
+      document: PodcastSubscriptionsDocument,
+      expectedRevision: number
+    ): Promise<VersionedDataEnvelope<PodcastSubscriptionsDocument>> =>
+      invokeVersionedDataWrite(
+        'podcast:saveSubscriptions',
+        [document, expectedRevision],
+        isPodcastSubscriptionsDocument
+      ),
+    subscribe: (
+      feedUrl: string
+    ): Promise<{
+      subscription: PodcastSubscription
+      document: PodcastSubscriptionsDocument
+      revision: number
+    }> => ipcRenderer.invoke('podcast:subscribe', feedUrl),
+    refresh: (
+      subscriptionId: string
+    ): Promise<{
+      subscription: PodcastSubscription
+      document: PodcastSubscriptionsDocument
+      revision: number
+    }> => ipcRenderer.invoke('podcast:refresh', subscriptionId),
+    refreshAll: (): Promise<PodcastSubscriptionsDocument> =>
+      ipcRenderer.invoke('podcast:refreshAll')
+  },
+  remote: {
+    getStatus: (): Promise<import('../shared/remoteControl.ts').RemoteControlStatus> =>
+      ipcRenderer.invoke('remote:getStatus'),
+    setEnabled: (
+      enabled: boolean
+    ): Promise<import('../shared/remoteControl.ts').RemoteControlStatus> =>
+      ipcRenderer.invoke('remote:setEnabled', enabled),
+    rotatePin: (): Promise<{
+      pin: string
+      status: import('../shared/remoteControl.ts').RemoteControlStatus
+    }> => ipcRenderer.invoke('remote:rotatePin'),
+    publishState: (
+      snapshot: Partial<import('../shared/remoteControl.ts').RemotePlaybackSnapshot>
+    ): Promise<boolean> => ipcRenderer.invoke('remote:publishState', snapshot),
+    discoverDlna: (): Promise<import('../shared/remoteControl.ts').DlnaDeviceInfo[]> =>
+      ipcRenderer.invoke('remote:discoverDlna'),
+    getDlnaDevices: (): Promise<import('../shared/remoteControl.ts').DlnaDeviceInfo[]> =>
+      ipcRenderer.invoke('remote:getDlnaDevices'),
+    castToDevice: (payload: {
+      usn: string
+      filePath: string
+      title?: string
+      artist?: string
+      album?: string
+      positionSeconds?: number
+    }): Promise<{
+      ok: true
+      usn: string
+      friendlyName: string
+      mediaUrl: string
+    }> => ipcRenderer.invoke('remote:castToDevice', payload),
+    stopCast: (): Promise<{ ok: true }> => ipcRenderer.invoke('remote:stopCast'),
+    getCastTarget: (): Promise<{ usn: string; friendlyName: string } | null> =>
+      ipcRenderer.invoke('remote:getCastTarget')
   },
   data: {
     saveMusicLibrary: (data: LocalLibrarySnapshotInput): Promise<LocalMusicLibraryDocument> =>

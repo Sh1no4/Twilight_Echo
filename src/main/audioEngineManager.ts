@@ -270,6 +270,8 @@ export interface PlaybackInfo extends PlaybackOutputInfoMirror {
   position: number
   duration: number
   volume: number
+  /** Application-layer playback rate; 1 = realtime. */
+  playbackRate?: number
   requestedConfigRevision: number
   appliedConfigRevision: number
   queueIndex: number
@@ -441,6 +443,7 @@ export interface NativeAudioBinding {
   Stop: () => void
   Seek: (time: number) => void
   SetVolume: (volume: number) => void
+  SetPlaybackRate: (rate: number) => void
   SetOutputDevice: (device: string) => void
   SetOutputBackend: (backend: string) => void
   SetOutputConfig?: (json: string) => void
@@ -764,6 +767,7 @@ export function createPlaybackInfoFanoutSignature(
     info.state,
     info.duration,
     info.volume,
+    info.playbackRate ?? 1,
     info.requestedConfigRevision,
     info.appliedConfigRevision,
     info.queueIndex,
@@ -1754,6 +1758,7 @@ function createDefaultPlaybackInfo(
     position: 0,
     duration: 0,
     volume: 1,
+    playbackRate: 1,
     requestedConfigRevision: 0,
     appliedConfigRevision: 0,
     queueIndex: -1,
@@ -2232,6 +2237,22 @@ export class AudioEngineManager extends EventEmitter {
         )
       )
     }
+    results.push(
+      await this.restoreAudioServiceOutputRouteStep(
+        'volume',
+        '音频服务恢复后应用音量',
+        'SetVolume',
+        this.playbackInfo.volume
+      )
+    )
+    results.push(
+      await this.restoreAudioServiceOutputRouteStep(
+        'playback-rate',
+        '音频服务恢复后应用倍速',
+        'SetPlaybackRate',
+        this.playbackInfo.playbackRate ?? 1
+      )
+    )
     return {
       synced: results.every((result) => result.ok),
       errors: results.filter((result) => !result.ok).map((result) => result.error)
@@ -2355,6 +2376,7 @@ export class AudioEngineManager extends EventEmitter {
       indexedQueueItem?.source === source
         ? this.playbackInfo.queueIndex
         : this.queue.findIndex((item) => item.source === source)
+    const preservedPlaybackRate = this.playbackInfo.playbackRate ?? 1
     this.playbackInfo = {
       ...this.playbackInfo,
       ...nativeInfo,
@@ -2367,6 +2389,9 @@ export class AudioEngineManager extends EventEmitter {
       isDsd: playbackIsDsd,
       dsdMode: playbackDsdMode,
       dsdRate: playbackDsdRate,
+      // Native play() does not receive rate as an argument; reassert the app-layer rate
+      // so a default 1.0 from GetPlaybackInfo cannot clobber a non-unity rate.
+      playbackRate: preservedPlaybackRate,
       outputInfo: nativeInfo?.outputInfo
         ? {
             ...nativeInfo.outputInfo,
@@ -2375,6 +2400,9 @@ export class AudioEngineManager extends EventEmitter {
             dsdRate: playbackDsdRate
           }
         : this.playbackInfo.outputInfo
+    }
+    if (nativeStarted && Math.abs(preservedPlaybackRate - 1) > 0.001) {
+      this.tryNative('播放后同步倍速', (native) => native.SetPlaybackRate(preservedPlaybackRate))
     }
     await this.applyNativeDspGraph('播放源格式变更后解析 DSP 场景')
     this.lastTick = this.scheduler.now()
@@ -2459,6 +2487,18 @@ export class AudioEngineManager extends EventEmitter {
     if (Object.is(normalized, this.playbackInfo.volume)) return
     this.tryNative('设置音量', (native) => native.SetVolume(normalized))
     this.playbackInfo.volume = normalized
+    this.updateOutputPerfect()
+    this.publishPlaybackInfo()
+  }
+
+  async setPlaybackRate(rate: number): Promise<void> {
+    const normalized = clampNumber(rate, 0.5, 2, 1)
+    // Round to 3 decimals to avoid float chatter.
+    const rounded = Math.round(normalized * 1000) / 1000
+    if (Object.is(rounded, this.playbackInfo.playbackRate ?? 1)) return
+    this.tryNative('设置倍速', (native) => native.SetPlaybackRate(rounded))
+    this.playbackInfo.playbackRate = rounded
+    // Non-unity rate requires resampling and breaks bit-perfect, same as non-unity volume.
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
   }
@@ -3905,13 +3945,26 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   private mergeNativePlaybackInfo(nativeInfo: PlaybackInfo): PlaybackInfo {
+    const playbackRate =
+      typeof nativeInfo.playbackRate === 'number' && Number.isFinite(nativeInfo.playbackRate)
+        ? clampNumber(nativeInfo.playbackRate, 0.5, 2, this.playbackInfo.playbackRate ?? 1)
+        : (this.playbackInfo.playbackRate ?? 1)
+
     if (!this.pendingNativeSource) {
-      return this.withQueueIndexForSource({ ...this.playbackInfo, ...nativeInfo })
+      return this.withQueueIndexForSource({
+        ...this.playbackInfo,
+        ...nativeInfo,
+        playbackRate
+      })
     }
 
     if (nativeInfo.source === this.pendingNativeSource) {
       this.pendingNativeSource = null
-      return this.withQueueIndexForSource({ ...this.playbackInfo, ...nativeInfo })
+      return this.withQueueIndexForSource({
+        ...this.playbackInfo,
+        ...nativeInfo,
+        playbackRate
+      })
     }
 
     return {
@@ -3920,6 +3973,7 @@ export class AudioEngineManager extends EventEmitter {
       position: nativeInfo.position,
       duration: this.playbackInfo.duration || nativeInfo.duration,
       volume: nativeInfo.volume,
+      playbackRate,
       requestedConfigRevision: nativeInfo.requestedConfigRevision,
       appliedConfigRevision: nativeInfo.appliedConfigRevision,
       outputInfo: nativeInfo.outputInfo,
@@ -4101,8 +4155,14 @@ export class AudioEngineManager extends EventEmitter {
     outputInfo.recoveryCount = canonicalOutput?.recoveryCount ?? info.recoveryCount ?? 0
     outputInfo.latencyInfo = latencyInfo
     outputInfo.diagnostics = diagnostics
+    const playbackRate =
+      typeof info.playbackRate === 'number' && Number.isFinite(info.playbackRate)
+        ? clampNumber(info.playbackRate, 0.5, 2, this.playbackInfo.playbackRate ?? 1)
+        : (this.playbackInfo.playbackRate ?? 1)
+
     return {
       ...info,
+      playbackRate,
       requestedConfigRevision,
       appliedConfigRevision,
       outputInfo,
@@ -4252,7 +4312,7 @@ export class AudioEngineManager extends EventEmitter {
     const now = this.scheduler.now()
     const elapsed = (now - this.lastTick) / 1000
     this.lastTick = now
-    this.playbackInfo.position += elapsed
+    this.playbackInfo.position += elapsed * (this.playbackInfo.playbackRate ?? 1)
     if (
       this.playbackInfo.duration > 0 &&
       this.playbackInfo.position >= this.playbackInfo.duration
@@ -4590,7 +4650,8 @@ export class AudioEngineManager extends EventEmitter {
     const dspActive =
       sceneDspActive ||
       this.processing.crossfadeSeconds > 0 ||
-      Math.abs(this.playbackInfo.volume - 1) > 0.001
+      Math.abs(this.playbackInfo.volume - 1) > 0.001 ||
+      Math.abs((this.playbackInfo.playbackRate ?? 1) - 1) > 0.001
     const replayGainActive =
       this.processing.dspEnabled && this.processing.volumeNormalization !== 'off'
     const eqActive = this.processing.dspEnabled && this.processing.eqEnabled

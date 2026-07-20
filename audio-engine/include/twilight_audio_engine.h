@@ -38,6 +38,7 @@ TAE_API TAE_Result TAE_Pause(TAE_EngineHandle engine);
 TAE_API TAE_Result TAE_Stop(TAE_EngineHandle engine);
 TAE_API TAE_Result TAE_Seek(TAE_EngineHandle engine, double position_seconds);
 TAE_API TAE_Result TAE_SetVolume(TAE_EngineHandle engine, double volume);
+TAE_API TAE_Result TAE_SetPlaybackRate(TAE_EngineHandle engine, double rate);
 TAE_API TAE_Result TAE_SetOutputDevice(TAE_EngineHandle engine, const char* device_id);
 TAE_API TAE_Result TAE_SetOutputBackend(TAE_EngineHandle engine, const char* backend_id);
 

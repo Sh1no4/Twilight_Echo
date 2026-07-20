@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, type ComponentPublicInstance } from 'vue'
+import { ref, computed, onMounted, watch, type ComponentPublicInstance } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useMusicStore } from '../stores/useMusicStore'
+import { usePlaybackBookmarks } from '../stores/playbackBookmarks'
+import type { PlaybackBookmark } from '../../../shared/playbackBookmarks.ts'
 import { useExtensionRegistry } from '../extensions/registry'
 import { useMediaProviders } from '../providers'
 import { syncPluginProviders } from '../providers'
@@ -43,6 +45,8 @@ const {
   duration,
   volume,
   muted,
+  playbackRate,
+  setPlaybackRate,
   sleepTimerState,
   sleepTimerNotice,
   queue,
@@ -103,7 +107,12 @@ const {
   setReplayGainMode,
   setCrossfeedStrength,
   selectImpulseResponse,
-  clearImpulseResponse
+  clearImpulseResponse,
+  castTargetName,
+  castToDevice,
+  stopCast,
+  discoverCastDevices,
+  refreshCastTarget
 } = usePlayerStore()
 
 const resolvedCurrentCover = useCover(computed(() => currentTrack.value?.cover ?? null))
@@ -171,6 +180,7 @@ function onCoverClick(): void {
 }
 
 function onProgressInput(event: Event): void {
+  if (isLiveStream.value) return
   const target = event.target as HTMLInputElement
   seek(Number(target.value))
 }
@@ -180,6 +190,69 @@ const abLoopTitle = computed(() => {
   if (abLoopB.value == null) return '设置 A-B 循环终点（右键清除）'
   return '清除 A-B 循环（右键也可清除）'
 })
+
+const RATE_PRESETS = [0.75, 1, 1.25, 1.5, 2] as const
+
+const isLiveStream = computed(() => {
+  const track = currentTrack.value
+  if (!track) return false
+  if (track.source === 'radio') return true
+  return track.duration === 0 && Boolean(track.streamUrl || /^https?:\/\//i.test(track.filePath || ''))
+})
+
+const playbackRateLabel = computed(() => {
+  const rate = playbackRate.value
+  return Number.isInteger(rate) ? `${rate.toFixed(1)}x` : `${rate}x`
+})
+
+const playbackRateTitle = computed(() => `播放倍速 ${playbackRate.value}x`)
+
+function cyclePlaybackRate(): void {
+  const current = playbackRate.value
+  const idx = RATE_PRESETS.findIndex((r) => Math.abs(r - current) < 0.001)
+  const next = RATE_PRESETS[(idx + 1) % RATE_PRESETS.length] ?? 1
+  void setPlaybackRate(next)
+}
+
+async function toggleCastPanel(): Promise<void> {
+  castPanelOpen.value = !castPanelOpen.value
+  castError.value = ''
+  if (!castPanelOpen.value) return
+  castBusy.value = true
+  try {
+    await refreshCastTarget()
+    castDevices.value = await discoverCastDevices()
+  } catch (err) {
+    castError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    castBusy.value = false
+  }
+}
+
+async function onCastToDevice(usn: string): Promise<void> {
+  castBusy.value = true
+  castError.value = ''
+  try {
+    await castToDevice(usn)
+    castPanelOpen.value = false
+  } catch (err) {
+    castError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    castBusy.value = false
+  }
+}
+
+async function onStopCast(): Promise<void> {
+  castBusy.value = true
+  castError.value = ''
+  try {
+    await stopCast()
+  } catch (err) {
+    castError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    castBusy.value = false
+  }
+}
 
 const abLoopRangeStyle = computed(() => {
   const total = duration.value || 1
@@ -198,8 +271,66 @@ const activeResumeOffer = computed(() => {
   return offer
 })
 
+const playbackBookmarks = usePlaybackBookmarks()
+const bookmarkPanelOpen = ref(false)
+const renamingBookmarkId = ref<string | null>(null)
+const renameDraft = ref('')
+const currentTrackBookmarks = computed(() => playbackBookmarks.bookmarksFor(currentTrack.value))
+
+const castPanelOpen = ref(false)
+const castDevices = ref<import('../../../shared/remoteControl.ts').DlnaDeviceInfo[]>([])
+const castBusy = ref(false)
+const castError = ref('')
+const canCastCurrentTrack = computed(() => Boolean(currentTrack.value?.filePath))
+
+watch(
+  () => currentTrack.value?.id,
+  () => {
+    bookmarkPanelOpen.value = false
+    renamingBookmarkId.value = null
+    renameDraft.value = ''
+  }
+)
+
 function onAddBookmark(): void {
   addManualBookmarkAtCurrentTime()
+  void playbackBookmarks.ensureLoaded()
+}
+
+function toggleBookmarkPanel(): void {
+  bookmarkPanelOpen.value = !bookmarkPanelOpen.value
+  if (bookmarkPanelOpen.value) void playbackBookmarks.ensureLoaded()
+}
+
+function jumpToBookmark(bookmark: PlaybackBookmark): void {
+  seek(bookmark.positionSeconds)
+  bookmarkPanelOpen.value = false
+}
+
+function startRenameBookmark(bookmark: PlaybackBookmark): void {
+  renamingBookmarkId.value = bookmark.id
+  renameDraft.value = bookmark.label
+}
+
+async function commitRenameBookmark(): Promise<void> {
+  const id = renamingBookmarkId.value
+  if (!id) return
+  const label = renameDraft.value
+  renamingBookmarkId.value = null
+  renameDraft.value = ''
+  try {
+    await playbackBookmarks.renameBookmark(id, label)
+  } catch {
+    // CAS conflict: list will refresh on next open
+  }
+}
+
+async function deleteBookmark(id: string): Promise<void> {
+  try {
+    await playbackBookmarks.removeBookmark(id)
+  } catch {
+    // ignore CAS conflict
+  }
 }
 
 function onAcceptResume(): void {
@@ -371,6 +502,7 @@ const reasonCodeLabels: Record<string, string> = {
   crossfeed_active: 'Crossfeed 正在改变声道内容',
   crossfade_active: 'Crossfade 正在改变播放连续性',
   volume_not_unity: HIFI_STATUS_COPY.volumeNotUnity,
+  playback_rate_not_unity: HIFI_STATUS_COPY.playbackRateNotUnity,
   routing_changes_semantics: '声道路由或通道语义发生变化',
   hog_mode_failed: '无法获取 CoreAudio Hog Mode 独占访问',
   sample_rate_unsupported: '设备不支持请求的采样率',
@@ -995,14 +1127,65 @@ onMounted(() => {
             A-B
           </button>
           <button
+            class="ctrl-btn rate-btn"
+            :class="{ 'rate-btn--active': Math.abs(playbackRate - 1) > 0.001 }"
+            type="button"
+            :title="playbackRateTitle"
+            :aria-label="playbackRateTitle"
+            @click="cyclePlaybackRate"
+          >
+            {{ playbackRateLabel }}
+          </button>
+          <button
             class="ctrl-btn bookmark-btn"
             type="button"
-            title="添加书签"
+            title="添加书签（右键打开列表）"
             aria-label="添加书签"
             @click="onAddBookmark"
+            @contextmenu.prevent="toggleBookmarkPanel"
           >
             书签
           </button>
+        </div>
+        <div v-if="bookmarkPanelOpen" class="bookmark-panel" role="dialog" aria-label="书签列表">
+          <div class="bookmark-panel__header">
+            <span>当前曲目书签</span>
+            <button type="button" class="bookmark-panel__close" @click="bookmarkPanelOpen = false">
+              关闭
+            </button>
+          </div>
+          <p v-if="currentTrackBookmarks.length === 0" class="bookmark-panel__empty">暂无书签</p>
+          <ul v-else class="bookmark-panel__list">
+            <li v-for="bm in currentTrackBookmarks" :key="bm.id" class="bookmark-panel__item">
+              <button type="button" class="bookmark-panel__jump" @click="jumpToBookmark(bm)">
+                <span class="bookmark-panel__time">{{ formatTime(bm.positionSeconds) }}</span>
+                <template v-if="renamingBookmarkId === bm.id">
+                  <input
+                    v-model="renameDraft"
+                    class="bookmark-panel__rename"
+                    type="text"
+                    maxlength="120"
+                    @click.stop
+                    @keydown.enter.prevent="commitRenameBookmark"
+                    @keydown.esc.prevent="renamingBookmarkId = null"
+                  />
+                </template>
+                <span v-else class="bookmark-panel__label">{{ bm.label }}</span>
+                <span v-if="bm.kind === 'resume'" class="bookmark-panel__kind">续播</span>
+              </button>
+              <div class="bookmark-panel__actions">
+                <button
+                  v-if="renamingBookmarkId === bm.id"
+                  type="button"
+                  @click="commitRenameBookmark"
+                >
+                  保存
+                </button>
+                <button v-else type="button" @click="startRenameBookmark(bm)">重命名</button>
+                <button type="button" @click="deleteBookmark(bm.id)">删除</button>
+              </div>
+            </li>
+          </ul>
         </div>
         <div v-if="activeResumeOffer" class="resume-offer" role="status">
           <span class="resume-offer__text"
@@ -1012,26 +1195,30 @@ onMounted(() => {
           <button type="button" class="resume-offer__dismiss" @click="onDismissResume">忽略</button>
         </div>
         <div class="progress-area">
-          <span class="time-label">{{ formatTime(currentTime) }}</span>
+          <span class="time-label">{{ isLiveStream ? 'LIVE' : formatTime(currentTime) }}</span>
           <div class="progress-slider-wrap">
             <div
-              v-if="abLoopA != null && abLoopB != null && duration > 0"
+              v-if="abLoopA != null && abLoopB != null && duration > 0 && !isLiveStream"
               class="ab-loop-range"
               :style="abLoopRangeStyle"
               aria-hidden="true"
             ></div>
             <input
               type="range"
-              :value="currentTime"
+              :value="isLiveStream ? 0 : currentTime"
               min="0"
               :max="duration || 1"
               step="0.1"
               class="progress-slider"
-              :style="{ '--range-value': `${duration ? (currentTime / duration) * 100 : 0}%` }"
+              :class="{ live: isLiveStream }"
+              :disabled="isLiveStream"
+              :style="{
+                '--range-value': `${isLiveStream ? 100 : duration ? (currentTime / duration) * 100 : 0}%`
+              }"
               @input="onProgressInput"
             />
           </div>
-          <span class="time-label">{{ formatTime(duration) }}</span>
+          <span class="time-label">{{ isLiveStream ? 'LIVE' : formatTime(duration) }}</span>
         </div>
       </div>
 
@@ -1170,6 +1357,54 @@ onMounted(() => {
         >
           <span class="desktop-lyrics-icon" aria-hidden="true">词</span>
         </button>
+
+        <div class="cast-anchor">
+          <button
+            class="icon-btn"
+            :class="{ active: castPanelOpen || Boolean(castTargetName) }"
+            title="投送到…"
+            aria-label="投送到"
+            :aria-pressed="castPanelOpen"
+            :disabled="!canCastCurrentTrack && !castTargetName"
+            @click="toggleCastPanel"
+          >
+            <i class="pi pi-wifi"></i>
+          </button>
+          <div v-if="castPanelOpen" class="cast-panel" role="dialog" aria-label="投送目标">
+            <div class="cast-panel__header">
+              <strong>投送到…</strong>
+              <button type="button" class="cast-panel__close" @click="castPanelOpen = false">
+                ×
+              </button>
+            </div>
+            <p v-if="castTargetName" class="cast-panel__active">
+              当前：{{ castTargetName }}
+              <button type="button" class="soft-mini" :disabled="castBusy" @click="onStopCast">
+                停止投送
+              </button>
+            </p>
+            <p v-if="castBusy" class="cast-panel__hint">正在搜索设备…</p>
+            <p v-else-if="castDevices.length === 0" class="cast-panel__hint">
+              未发现 DLNA 设备。请确认设备在线且本机已开启远程控制服务。
+            </p>
+            <ul v-else class="cast-panel__list">
+              <li v-for="device in castDevices" :key="device.usn">
+                <button
+                  type="button"
+                  class="cast-panel__item"
+                  :disabled="castBusy || !device.avTransportUrl || !canCastCurrentTrack"
+                  @click="onCastToDevice(device.usn)"
+                >
+                  <span class="cast-panel__name">{{ device.friendlyName }}</span>
+                  <span class="cast-panel__meta">
+                    {{ device.manufacturer || device.modelName || 'DLNA' }}
+                  </span>
+                </button>
+              </li>
+            </ul>
+            <p v-if="castError" class="cast-panel__error">{{ castError }}</p>
+          </div>
+        </div>
 
         <!-- HiFi 控制台入口 -->
         <button

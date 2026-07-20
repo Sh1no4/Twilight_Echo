@@ -191,6 +191,10 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     this.coalescedFireAndForget('SetVolume', [volume])
   }
 
+  SetPlaybackRate(rate: number): void {
+    this.coalescedFireAndForget('SetPlaybackRate', [rate])
+  }
+
   SetOutputDevice(device: string): void {
     this.fireAndForget('SetOutputDevice', [device])
   }

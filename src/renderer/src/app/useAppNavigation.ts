@@ -17,6 +17,7 @@ export function useAppNavigation() {
   const menuOpen = ref(false)
   const showPlayingPage = ref(false)
   const showStreamingPage = ref(false)
+  const showRadioPodcastPage = ref(false)
   const showLoginPage = ref(false)
   const loginPageMode = ref<'login' | 'profile'>('login')
   const loginInitialProviderId = ref<string | null>(null)
@@ -41,13 +42,15 @@ export function useAppNavigation() {
       !showEqualizerPage.value &&
       !showDspRackPage.value &&
       !showPluginPage.value &&
-      !activePluginPage.value
+      !activePluginPage.value &&
+      !showRadioPodcastPage.value
   )
 
   const localViewVisible = computed(
     () =>
       !showPlayingPage.value &&
       !showStreamingPage.value &&
+      !showRadioPodcastPage.value &&
       !showLoginPage.value &&
       !showSettingsPage.value &&
       !showEqualizerPage.value &&
@@ -78,6 +81,7 @@ export function useAppNavigation() {
     activeFilter.value = filter
     showPluginPage.value = false
     activePluginPage.value = null
+    showRadioPodcastPage.value = false
   }
 
   function closePluginPage(): void {
@@ -88,6 +92,7 @@ export function useAppNavigation() {
     menuOpen.value = false
     showPlayingPage.value = false
     showStreamingPage.value = false
+    showRadioPodcastPage.value = false
     showLoginPage.value = false
     showSettingsPage.value = false
     showEqualizerPage.value = false
@@ -111,19 +116,39 @@ export function useAppNavigation() {
     showEqualizerPage.value = false
     showPluginPage.value = false
     activePluginPage.value = null
+    showRadioPodcastPage.value = false
     showStreamingPage.value = true
   }
 
   function returnToLocalMode(): void {
     showStreamingPage.value = false
+    showRadioPodcastPage.value = false
     streamingMenuOpen.value = false
     menuOpen.value = localMenuOpenBeforeStreaming.value
+  }
+
+  function enterRadioPodcastMode(): void {
+    menuOpen.value = false
+    showPlayingPage.value = false
+    showStreamingPage.value = false
+    showSettingsPage.value = false
+    showEqualizerPage.value = false
+    showDspRackPage.value = false
+    showPluginPage.value = false
+    activePluginPage.value = null
+    showLoginPage.value = false
+    showRadioPodcastPage.value = true
+  }
+
+  function closeRadioPodcastPage(): void {
+    showRadioPodcastPage.value = false
   }
 
   function openLoginPage(initialProviderId: string | null = null): void {
     menuOpen.value = false
     showPlayingPage.value = false
     showStreamingPage.value = false
+    showRadioPodcastPage.value = false
     showSettingsPage.value = false
     showEqualizerPage.value = false
     activePluginPage.value = null
@@ -248,6 +273,7 @@ export function useAppNavigation() {
     menuOpen,
     showPlayingPage,
     showStreamingPage,
+    showRadioPodcastPage,
     showLoginPage,
     loginPageMode,
     loginInitialProviderId,
@@ -272,6 +298,8 @@ export function useAppNavigation() {
     openPlayingPage,
     closePlayingPage,
     enterStreamingMode,
+    enterRadioPodcastMode,
+    closeRadioPodcastPage,
     returnToLocalMode,
     openLoginPage,
     closeLoginPage,

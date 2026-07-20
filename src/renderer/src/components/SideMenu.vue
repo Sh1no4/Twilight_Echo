@@ -15,6 +15,7 @@ const emit = defineEmits<{
   selectView: [category: string, filter: string | null]
   selectPluginPage: [page: UiContribution]
   enterStreaming: []
+  enterRadioPodcast: []
 }>()
 
 
@@ -97,6 +98,10 @@ function handleImportClick(): void {
         <div class="menu-item menu-item-streaming" @click="emit('enterStreaming')">
           <i class="item-icon pi pi-globe"></i>
           <span class="item-label">流媒体</span>
+        </div>
+        <div class="menu-item menu-item-radio" @click="emit('enterRadioPodcast')">
+          <i class="item-icon pi pi-wifi"></i>
+          <span class="item-label">电台 / 播客</span>
         </div>
         <div class="menu-item menu-item-import" @click="handleImportClick()">
           <i class="item-icon pi pi-plus"></i>

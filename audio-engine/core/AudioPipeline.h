@@ -112,6 +112,7 @@ class AudioPipeline {
   TAE_Result stop();
   TAE_Result seek(double seconds, std::string* error);
   void setVolume(double volume);
+  void setPlaybackRate(double rate);
   void setDspConfig(const std::string& dspConfigJson);
   bool setDspGraph(const std::string& graphJson, std::string* error);
   bool applyDspState(uint64_t revision, const std::string& stateJson, std::string* error);
@@ -158,6 +159,7 @@ class AudioPipeline {
  private:
   enum class ControlCommandType : uint8_t {
     Volume,
+    PlaybackRate,
     Routing,
     DspGraph
   };
@@ -165,6 +167,7 @@ class AudioPipeline {
   struct ControlCommand {
     ControlCommandType type = ControlCommandType::Volume;
     double volume = 1.0;
+    double playbackRate = 1.0;
     uint64_t revision = 0;
     uint64_t dspEpoch = 0;
     ChannelRoutingMode routingMode = ChannelRoutingMode::Auto;
@@ -182,6 +185,8 @@ class AudioPipeline {
     std::atomic<uint64_t> sequence{0};
     std::atomic<uint64_t> revision{0};
     std::atomic<uint64_t> volumeBits{std::bit_cast<uint64_t>(1.0)};
+    std::atomic<uint64_t> playbackRateBits{std::bit_cast<uint64_t>(1.0)};
+    std::atomic<uint8_t> type{static_cast<uint8_t>(ControlCommandType::Volume)};
   };
 
   struct LatestRoutingCommandSlot {
@@ -279,6 +284,7 @@ class AudioPipeline {
   void enqueueControlCommand(const ControlCommand& command) noexcept;
   void applyPendingControlCommands() noexcept;
   void applyControlCommand(const ControlCommand& command) noexcept;
+  void resetRateResampler() noexcept;
   void synchronizeRenderPromotionLocked();
   void reclaimRetiredRenderDspGraphsLocked() const;
   std::string appliedDspGraphStatusJsonLocked() const;
@@ -344,6 +350,8 @@ class AudioPipeline {
   uint64_t appliedLatestRoutingSequence_ = 0;
   std::atomic<uint64_t> requestedVolumeBits_{std::bit_cast<uint64_t>(1.0)};
   std::atomic<uint64_t> appliedVolumeBits_{std::bit_cast<uint64_t>(1.0)};
+  std::atomic<uint64_t> requestedPlaybackRateBits_{std::bit_cast<uint64_t>(1.0)};
+  std::atomic<uint64_t> appliedPlaybackRateBits_{std::bit_cast<uint64_t>(1.0)};
   std::atomic<uint64_t> requestedConfigRevision_{0};
   std::atomic<uint64_t> appliedConfigRevision_{0};
   std::atomic<uint64_t> requestedRenderDspEpoch_{0};
@@ -402,6 +410,14 @@ class AudioPipeline {
   std::vector<float> preloadRoutingScratch_;
   std::vector<float> preloadMixScratch_;
   std::vector<float> typedVisualizationScratch_;
+  // Rate-resampler ring: interleaved PCM frames post-DSP/routing. Render-thread only.
+  std::vector<float> rateRing_;
+  size_t rateRingSize_ = 0;       // capacity in frames
+  size_t rateRingRead_ = 0;       // frame index of oldest sample
+  size_t rateRingWrite_ = 0;      // frame index for next push
+  size_t rateRingCount_ = 0;      // frames currently stored
+  double rateReadPhase_ = 0.0;    // fractional read position relative to rateRingRead_
+  std::vector<float> ratePullScratch_;
   ChannelRouter channelRouter_;
   mutable std::mutex statusMutex_;
   PipelineStatus lastStatus_;

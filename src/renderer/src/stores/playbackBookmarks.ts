@@ -125,6 +125,19 @@ async function removeBookmark(id: string): Promise<void> {
   await persist(next)
 }
 
+async function renameBookmark(id: string, label: string): Promise<void> {
+  if (!id) return
+  await ensureLoaded()
+  const next = nextDocument()
+  const target = next.bookmarks.find((bookmark) => bookmark.id === id)
+  if (!target) return
+  const trimmed = label.trim().slice(0, MAX_BOOKMARK_LABEL_LENGTH)
+  if (!trimmed || trimmed === target.label) return
+  target.label = trimmed
+  target.updatedAt = new Date().toISOString()
+  await persist(next)
+}
+
 async function setLongTrackResumeSeconds(seconds: number): Promise<void> {
   await ensureLoaded()
   const next = nextDocument()
@@ -162,6 +175,7 @@ export function usePlaybackBookmarks() {
     shouldOfferLongTrackResume,
     addBookmark,
     removeBookmark,
+    renameBookmark,
     setLongTrackResumeSeconds
   }
 }

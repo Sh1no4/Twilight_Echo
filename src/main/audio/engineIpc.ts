@@ -380,6 +380,13 @@ export async function setupAudioEngineIpc(): Promise<void> {
     await requireAudioEngine().setVolume(normalizeFiniteNumber(volume, 'volume', 1, 0, 1))
   })
 
+  ipcMain.handle('audioEngine:setPlaybackRate', async (_event, rate: number) => {
+    assertTrustedIpcSender(_event, 'audio engine IPC')
+    await requireAudioEngine().setPlaybackRate(
+      normalizeFiniteNumber(rate, 'playback rate', 1, 0.5, 2)
+    )
+  })
+
   ipcMain.handle('audioEngine:stop', async (event) => {
     assertTrustedIpcSender(event, 'audio engine IPC')
     await requireAudioEngine().stop()

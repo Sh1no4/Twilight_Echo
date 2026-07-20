@@ -220,6 +220,7 @@ struct PerfectEvaluation {
   std::string backendPerfectReasonCode;
   std::string backendPerfectReason;
   double volume = 1.0;
+  double playbackRate = 1.0;
   bool replayGainActive = false;
   bool loudnormActive = false;
   bool eqActive = false;

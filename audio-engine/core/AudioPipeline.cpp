@@ -286,7 +286,8 @@ bool nativeDsdOutputMatchesRequested(
 bool dspConfigProcessingRequiresPcm(
     const DspConfig& dspConfig,
     const OutputConfig& outputConfig,
-    double volume) {
+    double volume,
+    double playbackRate = 1.0) {
   const bool graphOrLegacyProcessing =
       dspConfig.replayGainMode != ReplayGainMode::Off || dspConfig.eqEnabled || dspConfig.convolverEnabled ||
       dspConfig.crossfeedEnabled || dspConfig.channelMatrixEnabled || dspConfig.channelStripEnabled ||
@@ -297,7 +298,8 @@ bool dspConfigProcessingRequiresPcm(
       dspConfig.ditherMode != DspDitherMode::Off;
   return (dspConfig.enabled && graphOrLegacyProcessing) ||
          dspConfig.crossfadeSeconds > 0.0001 || outputConfig.routingMode != ChannelRoutingMode::Auto ||
-         std::abs(volume - 1.0) > kUnityVolumeEpsilon;
+         std::abs(volume - 1.0) > kUnityVolumeEpsilon ||
+         std::abs(playbackRate - 1.0) > kUnityVolumeEpsilon;
 }
 
 bool dopRuntimeFactsRequirePcmFallback(const DopRuntimeFacts& facts) {
@@ -1158,8 +1160,12 @@ AudioPipeline::AudioPipeline()
 }
 
 void AudioPipeline::LatestControlCommandSlot::publish(const ControlCommand& command) noexcept {
+  // Volume and PlaybackRate share this coalescing slot. Callers must snapshot both
+  // fields on the command so a later Volume publish cannot reset rate to 1.0.
   sequence.fetch_add(1, std::memory_order_acq_rel);
   volumeBits.store(doubleBits(command.volume), std::memory_order_relaxed);
+  playbackRateBits.store(doubleBits(command.playbackRate), std::memory_order_relaxed);
+  type.store(static_cast<uint8_t>(command.type), std::memory_order_relaxed);
   revision.store(command.revision, std::memory_order_relaxed);
   sequence.fetch_add(1, std::memory_order_release);
 }
@@ -1169,8 +1175,9 @@ bool AudioPipeline::LatestControlCommandSlot::read(ControlCommand* command) cons
   const uint64_t before = sequence.load(std::memory_order_acquire);
   if ((before & 1U) != 0U) return false;
   ControlCommand snapshot;
-  snapshot.type = ControlCommandType::Volume;
+  snapshot.type = static_cast<ControlCommandType>(type.load(std::memory_order_relaxed));
   snapshot.volume = doubleFromBits(volumeBits.load(std::memory_order_relaxed));
+  snapshot.playbackRate = doubleFromBits(playbackRateBits.load(std::memory_order_relaxed));
   snapshot.revision = revision.load(std::memory_order_relaxed);
   const uint64_t after = sequence.load(std::memory_order_acquire);
   if (before != after || (after & 1U) != 0U) return false;
@@ -1388,6 +1395,8 @@ TAE_Result AudioPipeline::playInternal(
       kUnityVolumeEpsilon) {
     setVolume(requestedPlaybackVolume);
   }
+  const double requestedPlaybackRate =
+      loadAtomicDouble(requestedPlaybackRateBits_, std::memory_order_acquire);
 
   OutputConfig outputConfig;
   std::string dspGraphJson;
@@ -1400,7 +1409,8 @@ TAE_Result AudioPipeline::playInternal(
   const DspConfig requestedDspConfig = DspChain::parseConfigJson(dspConfigJson);
   const DspOutputStageRequest outputStageRequest = outputStageRequestFromGraphJson(dspGraphJson);
   const bool processingRequiresPcm =
-      dspConfigProcessingRequiresPcm(requestedDspConfig, outputConfig, requestedPlaybackVolume);
+      dspConfigProcessingRequiresPcm(
+          requestedDspConfig, outputConfig, requestedPlaybackVolume, requestedPlaybackRate);
 
   crossfadeMixActive_ = false;
   crossfadeFramesProcessed_ = 0;
@@ -1661,7 +1671,8 @@ TAE_Result AudioPipeline::playInternal(
       dspConfig_ = dspChain_->config();
     }
     dspStatus_ = dspChain_->status();
-    dspActive_ = dspStatus_.dspActive || std::abs(requestedPlaybackVolume - 1.0) > 0.0001;
+    dspActive_ = dspStatus_.dspActive || std::abs(requestedPlaybackVolume - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
     spectrum_.prepare(outputFormat_, visualizationFftResolutionForConfig(dspConfig_.fftResolution));
     spectrum_.setEnabled(dspConfig_.fftEnabled);
     gaplessEnabled_ = gaplessEnabled && !dopPath && !nativeDsdPath && !activeStream_->typedPassthrough;
@@ -1687,6 +1698,7 @@ TAE_Result AudioPipeline::playInternal(
     const double boundedStartTime = activeStream_->clampRelativePosition(startTimeSeconds);
     renderedFrames_ = static_cast<uint64_t>(
         boundedStartTime * static_cast<double>(positionSampleRateForStream(stream_, outputFormat_)));
+    resetRateResampler();
     ended_ = false;
     deviceInvalidated_ = false;
     trackStarted_ = false;
@@ -1808,7 +1820,8 @@ bool AudioPipeline::shouldAttemptDopForCurrentConfig(
     const std::string& backendId) const {
   if (!dsdProbe.has_value()) return false;
   if (!dsdOutputModeRequestsDop(dspConfig.dsdOutputMode)) return false;
-  if (dspConfigProcessingRequiresPcm(dspConfig, outputConfig, volume)) return false;
+  const double playbackRate = loadAtomicDouble(requestedPlaybackRateBits_);
+  if (dspConfigProcessingRequiresPcm(dspConfig, outputConfig, volume, playbackRate)) return false;
   if (!backendCanAttemptDop(backendId)) return false;
   return dopCarrierFormatForDsd(dsdProbe->dsdRate, dsdProbe->dsdSampleRate, dsdProbe->channelCount).has_value();
 }
@@ -1821,7 +1834,8 @@ bool AudioPipeline::shouldAttemptNativeDsdForCurrentConfig(
     const std::string& backendId) const {
   if (!dsdProbe.has_value()) return false;
   if (!dsdOutputModeRequestsNative(dspConfig.dsdOutputMode)) return false;
-  if (dspConfigProcessingRequiresPcm(dspConfig, outputConfig, volume)) return false;
+  const double playbackRate = loadAtomicDouble(requestedPlaybackRateBits_);
+  if (dspConfigProcessingRequiresPcm(dspConfig, outputConfig, volume, playbackRate)) return false;
   if (!backendCanAttemptNativeDsd(backendId)) return false;
   return dsdProbe->dsdRate == 64 || dsdProbe->dsdRate == 128 || dsdProbe->dsdRate == 256 ||
          dsdProbe->dsdRate == 512;
@@ -1834,7 +1848,8 @@ std::string AudioPipeline::determineDsdPcmFallbackReason(
     double volume,
     const std::string& attemptedDopReason,
     bool dopModeRequested) const {
-  if (dspConfigProcessingRequiresPcm(dspConfig, outputConfig, volume)) {
+  const double playbackRate = loadAtomicDouble(requestedPlaybackRateBits_);
+  if (dspConfigProcessingRequiresPcm(dspConfig, outputConfig, volume, playbackRate)) {
     return "DSD processing active; falling back to PCM";
   }
   if (dspConfig.dsdOutputMode == DsdOutputMode::Pcm) return "DSD output mode forced PCM";
@@ -1927,6 +1942,7 @@ TAE_Result AudioPipeline::stop() {
     renderCrossfadeFramesProcessed_ = 0;
     renderCrossfadeTotalFrames_ = 0;
     renderedFrames_ = 0;
+    resetRateResampler();
     ended_ = false;
     deviceInvalidated_ = false;
     trackStarted_ = false;
@@ -1971,11 +1987,13 @@ TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
     std::lock_guard lock(mutex_);
     renderedFrames_ = static_cast<uint64_t>(
         boundedSeconds * static_cast<double>(positionSampleRateForStream(stream_, outputFormat_)));
+    resetRateResampler();
     ended_ = false;
     DspChain& activeDspChain = activeDspChainLocked();
     activeDspChain.setTrackContext(DspTrackContext{stream_, currentItem_});
     dspStatus_ = activeDspChain.status();
-    dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+    dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
     updatePerfectLocked();
     publishStatusLocked();
   }
@@ -1986,12 +2004,38 @@ void AudioPipeline::setVolume(double volume) {
   const double requested = std::clamp(volume, 0.0, 1.0);
   storeAtomicDouble(requestedVolumeBits_, requested, std::memory_order_release);
   const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
-  enqueueControlCommand(ControlCommand{ControlCommandType::Volume, requested, revision});
+  ControlCommand command;
+  command.type = ControlCommandType::Volume;
+  command.volume = requested;
+  // Snapshot companion field so shared overflow slot never reverts the other control.
+  command.playbackRate = loadAtomicDouble(requestedPlaybackRateBits_, std::memory_order_acquire);
+  command.revision = revision;
+  enqueueControlCommand(command);
+}
+
+void AudioPipeline::setPlaybackRate(double rate) {
+  const double requested = std::clamp(rate, 0.5, 2.0);
+  storeAtomicDouble(requestedPlaybackRateBits_, requested, std::memory_order_release);
+  const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
+  ControlCommand command;
+  command.type = ControlCommandType::PlaybackRate;
+  command.playbackRate = requested;
+  // Snapshot companion field so shared overflow slot never reverts the other control.
+  command.volume = loadAtomicDouble(requestedVolumeBits_, std::memory_order_acquire);
+  command.revision = revision;
+  enqueueControlCommand(command);
+}
+
+void AudioPipeline::resetRateResampler() noexcept {
+  rateRingRead_ = 0;
+  rateRingWrite_ = 0;
+  rateRingCount_ = 0;
+  rateReadPhase_ = 0.0;
 }
 
 void AudioPipeline::enqueueControlCommand(const ControlCommand& command) noexcept {
   if (controlCommands_.push(command)) return;
-  if (command.type == ControlCommandType::Volume) {
+  if (command.type == ControlCommandType::Volume || command.type == ControlCommandType::PlaybackRate) {
     latestOverflowCommand_.publish(command);
   } else if (command.type == ControlCommandType::Routing) {
     latestRoutingCommand_.publish(command);
@@ -2003,6 +2047,15 @@ void AudioPipeline::enqueueControlCommand(const ControlCommand& command) noexcep
 void AudioPipeline::applyControlCommand(const ControlCommand& command) noexcept {
   if (command.type == ControlCommandType::Volume) {
     if (command.revision <= appliedConfigRevision_.load(std::memory_order_relaxed)) return;
+    storeAtomicDouble(appliedVolumeBits_, command.volume, std::memory_order_relaxed);
+    // Companion snapshot keeps overflow/coalesced rate coherent with volume updates.
+    storeAtomicDouble(appliedPlaybackRateBits_, command.playbackRate, std::memory_order_relaxed);
+    appliedConfigRevision_.store(command.revision, std::memory_order_release);
+    return;
+  }
+  if (command.type == ControlCommandType::PlaybackRate) {
+    if (command.revision <= appliedConfigRevision_.load(std::memory_order_relaxed)) return;
+    storeAtomicDouble(appliedPlaybackRateBits_, command.playbackRate, std::memory_order_relaxed);
     storeAtomicDouble(appliedVolumeBits_, command.volume, std::memory_order_relaxed);
     appliedConfigRevision_.store(command.revision, std::memory_order_release);
     return;
@@ -2037,7 +2090,16 @@ void AudioPipeline::applyPendingControlCommands() noexcept {
     if (!controlCommands_.pop(command)) break;
     applyControlCommand(command);
   }
-  if (latestOverflowCommand_.read(&command)) applyControlCommand(command);
+  // Overflow slot coalesces Volume + PlaybackRate field-wise. Apply both so a
+  // later Volume publish does not drop a previously coalesced rate (and vice versa).
+  if (latestOverflowCommand_.read(&command)) {
+    const uint64_t applied = appliedConfigRevision_.load(std::memory_order_relaxed);
+    if (command.revision > applied) {
+      storeAtomicDouble(appliedVolumeBits_, command.volume, std::memory_order_relaxed);
+      storeAtomicDouble(appliedPlaybackRateBits_, command.playbackRate, std::memory_order_relaxed);
+      appliedConfigRevision_.store(command.revision, std::memory_order_release);
+    }
+  }
   if (latestRoutingCommand_.read(&command) && command.revision != appliedLatestRoutingSequence_) {
     applyControlCommand(command);
     appliedLatestRoutingSequence_ = command.revision;
@@ -2084,7 +2146,8 @@ void AudioPipeline::setDspConfig(const std::string& dspConfigJson) {
     spectrum_.setEnabled(dspConfig_.fftEnabled);
     dspStatus_ = activeDspChain.status();
     preloadDspStatus_ = spareDspChain.status();
-    dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+    dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
     std::string renderDspError;
     publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
     updatePerfectLocked();
@@ -2121,7 +2184,8 @@ bool AudioPipeline::setDspGraph(const std::string& graphJson, std::string* error
   }
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
   return true;
@@ -2220,7 +2284,8 @@ bool AudioPipeline::applyDspState(
     dspStatus_ = std::move(committedActiveStatus);
     preloadDspStatus_ = std::move(committedPreloadStatus);
     dspActive_ = dspStatus_.dspActive ||
-                 std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+                 std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
     renderDitherMode_.store(
         static_cast<uint32_t>(dspConfig_.ditherMode),
         std::memory_order_release);
@@ -2318,13 +2383,10 @@ bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* err
   synchronizeRenderPromotionLocked();
   const OutputConfig previousConfig = outputConfig_;
   const auto applyRoutingLocked = [this](const OutputConfig& nextConfig) {
-    const ControlCommand routingCommand{
-        ControlCommandType::Routing,
-        1.0,
-        0,
-        0,
-        nextConfig.routingMode,
-        upmixConfigFromOutputConfig(nextConfig)};
+    ControlCommand routingCommand;
+    routingCommand.type = ControlCommandType::Routing;
+    routingCommand.routingMode = nextConfig.routingMode;
+    routingCommand.upmix = upmixConfigFromOutputConfig(nextConfig);
     if (renderState_.load(std::memory_order_acquire) == PipelineState::Stopped) {
       renderRoutingMode_.store(static_cast<uint32_t>(routingCommand.routingMode), std::memory_order_release);
       channelRouter_.setUpmixConfig(routingCommand.upmix);
@@ -2472,7 +2534,8 @@ bool AudioPipeline::loadImpulseResponse(const std::string& path, std::string* er
   }
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
   return ok;
@@ -2491,7 +2554,8 @@ void AudioPipeline::unloadImpulseResponse() {
   publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
 }
@@ -2518,7 +2582,8 @@ bool AudioPipeline::setEqBands(const std::string& json, std::string* error) {
   }
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
   return ok;
@@ -2541,7 +2606,8 @@ bool AudioPipeline::setEqPreset(const std::string& json, std::string* error) {
   }
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
   return ok;
@@ -2560,7 +2626,8 @@ void AudioPipeline::setCrossfeedStrength(double strength) {
   publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
 }
@@ -2578,7 +2645,8 @@ void AudioPipeline::setReplayGainMode(ReplayGainMode mode, double preampDb, doub
   publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
 }
@@ -2631,7 +2699,8 @@ void AudioPipeline::refreshQueueReplayGainTags(const QueueItem& item) {
   publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
   dspStatus_ = activeDspChain.status();
   preloadDspStatus_ = spareDspChain.status();
-  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
 }
@@ -2647,7 +2716,8 @@ void AudioPipeline::setNativeDspPluginChain(const std::string& json) {
   publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
   dspStatus_ = activeDspChainLocked().status();
   preloadDspStatus_ = spareDspChainLocked().status();
-  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   publishStatusLocked();
 }
@@ -2769,6 +2839,7 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
     stream_ = activeStream_->stream;
     currentItem_ = activeStream_->item;
     renderedFrames_ = 0;
+    resetRateResampler();
     ended_ = false;
     trackStarted_ = true;
     activeUsesPreloadDspChain_ = !activeUsesPreloadDspChain_;
@@ -2777,7 +2848,8 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
     publishRenderDspPointerTransitionLocked(nextRenderDspGraph, nullptr);
     dspStatus_ = preloadDspStatus_;
     preloadDspStatus_ = {};
-    dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+    dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
     crossfadeMixActive_ = false;
     crossfadeFramesProcessed_ = 0;
     crossfadeTotalFrames_ = 0;
@@ -2905,7 +2977,8 @@ PipelineStatus AudioPipeline::status() {
     state_ = PipelineState::Stopped;
   }
   dspStatus_ = activeDspChainLocked().status();
-  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
   updatePerfectLocked();
   PipelineStatus status = buildStatusLocked();
   {
@@ -2931,6 +3004,7 @@ bool AudioPipeline::needsPcmFallback(std::string* reason) const {
       dspStatus_.replayGainActive || dspStatus_.eqActive || dspStatus_.convolverActive || dspStatus_.crossfeedActive ||
       dspStatus_.nativeDspActive || dspStatus_.crossfadeActive || dspConfig_.crossfadeSeconds > 0.0001 ||
       std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > kUnityVolumeEpsilon ||
+      std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > kUnityVolumeEpsilon ||
       outputConfig_.routingMode != ChannelRoutingMode::Auto;
 
   if (nativeDsdPathActive_ && stream_.isDsd && stream_.dsdMode == DsdMode::Native) {
@@ -3083,6 +3157,7 @@ bool AudioPipeline::updatePerfectLocked() {
   evaluation.backendPerfectReasonCode = backendInfo.perfectReasonCode;
   evaluation.backendPerfectReason = backendPerfectReason;
   evaluation.volume = loadAtomicDouble(requestedVolumeBits_);
+  evaluation.playbackRate = loadAtomicDouble(requestedPlaybackRateBits_);
   evaluation.replayGainActive = dspStatus_.replayGainActive;
   evaluation.loudnormActive = dspStatus_.loudnormActive;
   evaluation.eqActive = dspStatus_.eqActive;
@@ -3213,17 +3288,14 @@ void AudioPipeline::commitPreparedRenderDspGraphsLocked(
       std::move(preloadGraph),
       std::move(graphStatusJson)});
 
-  const ControlCommand command{
-      ControlCommandType::DspGraph,
-      1.0,
-      revision,
-      dspEpoch,
-      ChannelRoutingMode::Auto,
-      {},
-      activeGraphPtr,
-      preloadGraphPtr,
-      gaplessEnabled_,
-      dspConfig_.crossfadeSeconds};
+  ControlCommand command;
+  command.type = ControlCommandType::DspGraph;
+  command.revision = revision;
+  command.dspEpoch = dspEpoch;
+  command.activeDspGraph = activeGraphPtr;
+  command.preloadDspGraph = preloadGraphPtr;
+  command.gaplessEnabled = gaplessEnabled_;
+  command.crossfadeSeconds = dspConfig_.crossfadeSeconds;
   publishedActiveDspGraph_ = activeGraphPtr;
   publishedPreloadDspGraph_ = preloadGraphPtr;
   if (renderState_.load(std::memory_order_acquire) == PipelineState::Stopped) {
@@ -3308,17 +3380,13 @@ bool AudioPipeline::publishPreparedRenderPreloadDspGraphLocked(std::string* erro
       appliedDspGraphStatusJson_});
   publishedPreloadDspGraph_ = preloadGraphPtr;
 
-  const ControlCommand command{
-      ControlCommandType::DspGraph,
-      1.0,
-      0,
-      dspEpoch,
-      ChannelRoutingMode::Auto,
-      {},
-      activeGraphPtr,
-      preloadGraphPtr,
-      gaplessEnabled_,
-      dspConfig_.crossfadeSeconds};
+  ControlCommand command;
+  command.type = ControlCommandType::DspGraph;
+  command.dspEpoch = dspEpoch;
+  command.activeDspGraph = activeGraphPtr;
+  command.preloadDspGraph = preloadGraphPtr;
+  command.gaplessEnabled = gaplessEnabled_;
+  command.crossfadeSeconds = dspConfig_.crossfadeSeconds;
   if (renderState_.load(std::memory_order_acquire) == PipelineState::Stopped) {
     renderPreloadDspGraph_.store(preloadGraphPtr, std::memory_order_release);
     appliedRenderDspEpoch_.store(dspEpoch, std::memory_order_release);
@@ -3333,17 +3401,13 @@ void AudioPipeline::publishRenderDspPointerTransitionLocked(
     DspChain* active,
     DspChain* preload) {
   const uint64_t dspEpoch = requestedRenderDspEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
-  const ControlCommand command{
-      ControlCommandType::DspGraph,
-      1.0,
-      0,
-      dspEpoch,
-      ChannelRoutingMode::Auto,
-      {},
-      active,
-      preload,
-      gaplessEnabled_,
-      dspConfig_.crossfadeSeconds};
+  ControlCommand command;
+  command.type = ControlCommandType::DspGraph;
+  command.dspEpoch = dspEpoch;
+  command.activeDspGraph = active;
+  command.preloadDspGraph = preload;
+  command.gaplessEnabled = gaplessEnabled_;
+  command.crossfadeSeconds = dspConfig_.crossfadeSeconds;
   publishedActiveDspGraph_ = active;
   publishedPreloadDspGraph_ = preload;
   if (renderState_.load(std::memory_order_acquire) == PipelineState::Stopped) {
@@ -3371,7 +3435,8 @@ void AudioPipeline::synchronizeRenderPromotionLocked() {
   publishedPreloadDspGraph_ = renderPreloadDspGraph_.load(std::memory_order_acquire);
   dspStatus_ = activeDspChainLocked().status();
   preloadDspStatus_ = {};
-  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+  dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001 ||
+                 std::abs(loadAtomicDouble(requestedPlaybackRateBits_) - 1.0) > 0.0001;
   crossfadeMixActive_ = false;
   crossfadeFramesProcessed_ = 0;
   crossfadeTotalFrames_ = 0;
@@ -3393,6 +3458,14 @@ void AudioPipeline::prepareRenderScratchLocked(size_t maxFrames) {
   preloadRoutingScratch_.resize(decodeSamples);
   preloadMixScratch_.resize(outputSamples);
   typedVisualizationScratch_.resize(outputSamples);
+
+  // Rate ring needs headroom for interpolation (one look-ahead frame) and pull chunks.
+  constexpr size_t kRatePullChunkFrames = 512;
+  const size_t rateCapacityFrames = std::max(frames * 4, kRatePullChunkFrames * 4) + 2;
+  rateRingSize_ = rateCapacityFrames;
+  rateRing_.assign(rateCapacityFrames * outputChannels, 0.0f);
+  ratePullScratch_.assign(std::max(kRatePullChunkFrames, frames) * outputChannels, 0.0f);
+  resetRateResampler();
 }
 
 size_t AudioPipeline::renderTyped(PcmBlock& output) {
@@ -3500,6 +3573,9 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   const ChannelRoutingMode routingMode =
       static_cast<ChannelRoutingMode>(renderRoutingMode_.load(std::memory_order_acquire));
   const double volume = loadAtomicDouble(appliedVolumeBits_, std::memory_order_acquire);
+  const double playbackRate = loadAtomicDouble(appliedPlaybackRateBits_, std::memory_order_acquire);
+  const bool rateActive =
+      !dopPathActive && !nativeDsdPathActive && std::abs(playbackRate - 1.0) > kUnityVolumeEpsilon;
   bool crossfadeMixActive = renderCrossfadeMixActive_;
   uint64_t crossfadeFramesProcessed = renderCrossfadeFramesProcessed_;
   uint64_t crossfadeTotalFrames = renderCrossfadeTotalFrames_;
@@ -3509,6 +3585,11 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     spectrum_.tryResetCapture();
     recordPerformance();
     return frameCount;
+  }
+
+  // Flush residual rate-ring samples when returning to unity rate so timeline stays coherent.
+  if (!rateActive && (rateRingCount_ > 0 || rateReadPhase_ > 0.0)) {
+    resetRateResampler();
   }
 
   // A declared CUE PREGAP is an exact-duration silence prefix. Consuming it as a crossfade
@@ -3522,163 +3603,266 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   std::array<size_t, 2> virtualSilenceSpanOffsets{};
   std::array<size_t, 2> virtualSilenceSpanFrames{};
   size_t virtualSilenceSpanCount = 0;
-  while (totalRead < frameCount) {
-    float* segment = output + totalRead * static_cast<size_t>(channels);
-    const int decodeChannels = std::max(1, decodeFormat.channelCount);
-    const bool routingRequired = !dopPathActive && !nativeDsdPathActive &&
-                                 (decodeChannels != channels || routingMode != ChannelRoutingMode::Auto);
 
-    size_t requestedFrames = frameCount - totalRead;
-    if (routingRequired) {
-      requestedFrames = std::min(requestedFrames, routingScratch_.size() / static_cast<size_t>(decodeChannels));
-    }
-    if (requestedFrames == 0) {
-      break;
-    }
+  // Shared pull of decoded/DSP/routed PCM frames into dest (output-channel interleaved).
+  // Advances positionRead by source frames consumed. Handles gapless preload promote.
+  const auto pullProcessedFrames = [&](float* dest, size_t requestedFrames) -> size_t {
+    if (!active || !dest || requestedFrames == 0) return 0;
+    size_t filled = 0;
+    while (filled < requestedFrames) {
+      const int decodeChannels = std::max(1, decodeFormat.channelCount);
+      const bool routingRequired = !dopPathActive && !nativeDsdPathActive &&
+                                   (decodeChannels != channels || routingMode != ChannelRoutingMode::Auto);
 
-    float* readBuffer = routingRequired ? routingScratch_.data() : segment;
-    const size_t logicalFramePosition = renderedFrames_.load() + positionRead;
-    const size_t read = active->readFloat(readBuffer, requestedFrames);
-    const size_t virtualSilenceFrames = active->virtualPregapFramesFromLogicalFrame(
-        logicalFramePosition,
-        outputFormat.sampleRate,
-        read);
-
-    if (virtualSilenceFrames > 0 && !dopPathActive && !nativeDsdPathActive) {
-      std::fill(
-          readBuffer,
-          readBuffer + virtualSilenceFrames * static_cast<size_t>(decodeChannels),
-          0.0f);
-      if (virtualSilenceSpanCount < virtualSilenceSpanOffsets.size()) {
-        virtualSilenceSpanOffsets[virtualSilenceSpanCount] = totalRead;
-        virtualSilenceSpanFrames[virtualSilenceSpanCount] = virtualSilenceFrames;
-        ++virtualSilenceSpanCount;
-      }
-    }
-
-    if (read > 0 && !dopPathActive && !nativeDsdPathActive) {
-      const size_t audioFrames = read - virtualSilenceFrames;
-      float* audioReadBuffer =
-          readBuffer + virtualSilenceFrames * static_cast<size_t>(decodeChannels);
-      if (activeDspChain && audioFrames > 0) activeDspChain->process(audioReadBuffer, audioFrames);
+      size_t want = requestedFrames - filled;
       if (routingRequired) {
-        if (virtualSilenceFrames > 0) {
-          std::fill(
-              segment,
-              segment + virtualSilenceFrames * static_cast<size_t>(channels),
-              0.0f);
-        }
-        if (audioFrames > 0) {
-          channelRouter_.route(
-              audioReadBuffer,
-              segment + virtualSilenceFrames * static_cast<size_t>(channels),
-              audioFrames,
-              decodeChannels,
-              channels,
-              routingMode);
-        }
+        want = std::min(want, routingScratch_.size() / static_cast<size_t>(decodeChannels));
       }
-    }
-    totalRead += read;
-    positionRead += read;
+      if (want == 0) break;
 
-    if (wantsCrossfade && preload && preload->readyForRender() && outputFormat.sampleRate > 0) {
-      const uint64_t requestedFrames =
-          static_cast<uint64_t>(std::max(1.0, crossfadeSeconds * static_cast<double>(outputFormat.sampleRate)));
-      if (!crossfadeMixActive) {
-        const double secondsRemaining =
-            active->stream.durationSeconds > 0.0
-                ? std::max(0.0, active->stream.durationSeconds -
-                                     (static_cast<double>(renderedFrames_.load() + positionRead) /
-                                      static_cast<double>(outputFormat.sampleRate)))
-                : 0.0;
-        if (secondsRemaining <= crossfadeSeconds + 0.02) {
-          crossfadeMixActive = true;
-          crossfadeFramesProcessed = 0;
-          crossfadeTotalFrames = requestedFrames;
-          renderCrossfadeMixActive_ = true;
-          renderCrossfadeFramesProcessed_ = 0;
-          renderCrossfadeTotalFrames_ = requestedFrames;
+      float* segment = dest + filled * static_cast<size_t>(channels);
+      float* readBuffer = routingRequired ? routingScratch_.data() : segment;
+      const size_t logicalFramePosition = renderedFrames_.load() + positionRead;
+      const size_t read = active->readFloat(readBuffer, want);
+      const size_t virtualSilenceFrames = active->virtualPregapFramesFromLogicalFrame(
+          logicalFramePosition,
+          outputFormat.sampleRate,
+          read);
+
+      if (virtualSilenceFrames > 0 && !dopPathActive && !nativeDsdPathActive) {
+        std::fill(
+            readBuffer,
+            readBuffer + virtualSilenceFrames * static_cast<size_t>(decodeChannels),
+            0.0f);
+        // Virtual silence spans only map 1:1 onto output when rate is unity.
+        if (!rateActive && virtualSilenceSpanCount < virtualSilenceSpanOffsets.size()) {
+          virtualSilenceSpanOffsets[virtualSilenceSpanCount] = totalRead + filled;
+          virtualSilenceSpanFrames[virtualSilenceSpanCount] = virtualSilenceFrames;
+          ++virtualSilenceSpanCount;
         }
       }
 
-      if (crossfadeMixActive) {
-        const size_t preloadSampleCount = read * static_cast<size_t>(channels);
-        const bool crossfadeScratchReady =
-            preloadMixScratch_.size() >= preloadSampleCount &&
-            (!routingRequired || preloadRoutingScratch_.size() >= read * static_cast<size_t>(decodeChannels));
-        if (!crossfadeScratchReady) break;
-        float* preloadReadBuffer = routingRequired ? preloadRoutingScratch_.data() : preloadMixScratch_.data();
-        const size_t mixedFrames = preload->readFloat(preloadReadBuffer, read);
-        if (mixedFrames > 0 && !dopPathActive) {
-          if (preloadDspChain) preloadDspChain->process(preloadReadBuffer, mixedFrames);
-          if (routingRequired) {
+      if (read > 0 && !dopPathActive && !nativeDsdPathActive) {
+        const size_t audioFrames = read - virtualSilenceFrames;
+        float* audioReadBuffer =
+            readBuffer + virtualSilenceFrames * static_cast<size_t>(decodeChannels);
+        if (activeDspChain && audioFrames > 0) activeDspChain->process(audioReadBuffer, audioFrames);
+        if (routingRequired) {
+          if (virtualSilenceFrames > 0) {
+            std::fill(
+                segment,
+                segment + virtualSilenceFrames * static_cast<size_t>(channels),
+                0.0f);
+          }
+          if (audioFrames > 0) {
             channelRouter_.route(
-                preloadReadBuffer,
-                preloadMixScratch_.data(),
-                mixedFrames,
+                audioReadBuffer,
+                segment + virtualSilenceFrames * static_cast<size_t>(channels),
+                audioFrames,
                 decodeChannels,
                 channels,
                 routingMode);
           }
-          render::mixCrossfadeSegment(
-              output + (totalRead - read) * static_cast<size_t>(channels),
-              preloadMixScratch_.data(),
-              mixedFrames,
-              channels,
-              crossfadeFramesProcessed,
-              crossfadeTotalFrames);
-          crossfadeFramesProcessed += mixedFrames;
-          renderCrossfadeFramesProcessed_ = crossfadeFramesProcessed;
+        } else if (readBuffer != segment) {
+          std::memcpy(segment, readBuffer, read * static_cast<size_t>(channels) * sizeof(float));
+        }
+      } else if (read > 0 && readBuffer != segment) {
+        std::memcpy(segment, readBuffer, read * static_cast<size_t>(channels) * sizeof(float));
+      }
+
+      // Crossfade only for the unity-rate path; rate-path timeline math would be incorrect.
+      if (!rateActive && wantsCrossfade && preload && preload->readyForRender() && outputFormat.sampleRate > 0) {
+        const uint64_t crossfadeRequestedFrames =
+            static_cast<uint64_t>(std::max(1.0, crossfadeSeconds * static_cast<double>(outputFormat.sampleRate)));
+        if (!crossfadeMixActive) {
+          const double secondsRemaining =
+              active->stream.durationSeconds > 0.0
+                  ? std::max(0.0, active->stream.durationSeconds -
+                                       (static_cast<double>(renderedFrames_.load() + positionRead + read) /
+                                        static_cast<double>(outputFormat.sampleRate)))
+                  : 0.0;
+          if (secondsRemaining <= crossfadeSeconds + 0.02) {
+            crossfadeMixActive = true;
+            crossfadeFramesProcessed = 0;
+            crossfadeTotalFrames = crossfadeRequestedFrames;
+            renderCrossfadeMixActive_ = true;
+            renderCrossfadeFramesProcessed_ = 0;
+            renderCrossfadeTotalFrames_ = crossfadeRequestedFrames;
+          }
+        }
+
+        if (crossfadeMixActive) {
+          const size_t preloadSampleCount = read * static_cast<size_t>(channels);
+          const bool crossfadeScratchReady =
+              preloadMixScratch_.size() >= preloadSampleCount &&
+              (!routingRequired || preloadRoutingScratch_.size() >= read * static_cast<size_t>(decodeChannels));
+          if (crossfadeScratchReady) {
+            float* preloadReadBuffer = routingRequired ? preloadRoutingScratch_.data() : preloadMixScratch_.data();
+            const size_t mixedFrames = preload->readFloat(preloadReadBuffer, read);
+            if (mixedFrames > 0 && !dopPathActive) {
+              if (preloadDspChain) preloadDspChain->process(preloadReadBuffer, mixedFrames);
+              if (routingRequired) {
+                channelRouter_.route(
+                    preloadReadBuffer,
+                    preloadMixScratch_.data(),
+                    mixedFrames,
+                    decodeChannels,
+                    channels,
+                    routingMode);
+              }
+              render::mixCrossfadeSegment(
+                  segment,
+                  preloadMixScratch_.data(),
+                  mixedFrames,
+                  channels,
+                  crossfadeFramesProcessed,
+                  crossfadeTotalFrames);
+              crossfadeFramesProcessed += mixedFrames;
+              renderCrossfadeFramesProcessed_ = crossfadeFramesProcessed;
+            }
+          }
         }
       }
+
+      filled += read;
+      positionRead += read;
+
+      if (filled >= requestedFrames || !active->drained()) break;
+
+      const bool canPromotePreload = preload && preload->readyForRender();
+      if ((!renderGaplessEnabled_.load(std::memory_order_acquire) && !renderCrossfadeMixActive_) ||
+          !canPromotePreload) {
+        break;
+      }
+      active = preload;
+      preload = nullptr;
+      renderActiveStream_.store(active, std::memory_order_release);
+      renderPreloadStream_.store(nullptr, std::memory_order_release);
+      renderedFrames_ = 0;
+      positionRead = 0;
+      resetRateResampler();
+      ended_ = false;
+      trackStarted_ = true;
+      activeUsesPreloadDspChain = !activeUsesPreloadDspChain;
+      renderActiveUsesPreloadDspChain_.store(activeUsesPreloadDspChain, std::memory_order_release);
+      renderPromotionPending_.store(true, std::memory_order_release);
+      activeDspChain = preloadDspChain;
+      preloadDspChain = nullptr;
+      renderActiveDspGraph_.store(activeDspChain, std::memory_order_release);
+      renderPreloadDspGraph_.store(nullptr, std::memory_order_release);
+      crossfadeMixActive = false;
+      crossfadeFramesProcessed = 0;
+      crossfadeTotalFrames = 0;
+      renderCrossfadeMixActive_ = false;
+      renderCrossfadeFramesProcessed_ = 0;
+      renderCrossfadeTotalFrames_ = 0;
     }
+    return filled;
+  };
 
-    if (totalRead >= frameCount || !active->drained()) break;
+  if (rateActive) {
+    // Rate resampler path: pull post-DSP frames into a ring, emit frameCount via linear
+    // interpolation. positionRead / renderedFrames_ track source frames consumed.
+    const size_t ch = static_cast<size_t>(channels);
+    constexpr size_t kRatePullChunkFrames = 512;
+    const size_t pullScratchFrames =
+        ratePullScratch_.empty() || ch == 0 ? 0 : ratePullScratch_.size() / ch;
 
-    const bool canPromotePreload = preload && preload->readyForRender();
-    if ((!renderGaplessEnabled_.load(std::memory_order_acquire) && !renderCrossfadeMixActive_) ||
-        !canPromotePreload) {
-      break;
+    auto pushRingFrames = [&](const float* src, size_t frames) {
+      if (frames == 0 || rateRingSize_ == 0 || rateRing_.empty()) return;
+      for (size_t i = 0; i < frames; ++i) {
+        if (rateRingCount_ >= rateRingSize_) {
+          // Drop oldest frame to make room (should be rare with generous capacity).
+          rateRingRead_ = (rateRingRead_ + 1) % rateRingSize_;
+          --rateRingCount_;
+          if (rateReadPhase_ >= 1.0) rateReadPhase_ -= 1.0;
+          else rateReadPhase_ = 0.0;
+        }
+        const size_t writeIndex = rateRingWrite_ % rateRingSize_;
+        std::memcpy(
+            rateRing_.data() + writeIndex * ch,
+            src + i * ch,
+            ch * sizeof(float));
+        rateRingWrite_ = (rateRingWrite_ + 1) % rateRingSize_;
+        ++rateRingCount_;
+      }
+    };
+
+    auto ensureRingFrames = [&](size_t needed) -> bool {
+      // Need enough frames so floor(phase) + 1 is valid.
+      while (rateRingCount_ < needed) {
+        const size_t freeFrames = rateRingSize_ > rateRingCount_ ? rateRingSize_ - rateRingCount_ : 0;
+        if (freeFrames == 0 || pullScratchFrames == 0) return rateRingCount_ >= needed;
+        const size_t pullWant = std::min({freeFrames, pullScratchFrames, kRatePullChunkFrames});
+        const size_t pulled = pullProcessedFrames(ratePullScratch_.data(), pullWant);
+        if (pulled == 0) return rateRingCount_ >= needed;
+        pushRingFrames(ratePullScratch_.data(), pulled);
+      }
+      return true;
+    };
+
+    auto popConsumedRingFrames = [&]() {
+      const size_t whole = static_cast<size_t>(rateReadPhase_);
+      if (whole == 0) return;
+      const size_t consume = std::min(whole, rateRingCount_);
+      rateRingRead_ = (rateRingRead_ + consume) % rateRingSize_;
+      rateRingCount_ -= consume;
+      rateReadPhase_ -= static_cast<double>(consume);
+    };
+
+    for (size_t outFrame = 0; outFrame < frameCount; ++outFrame) {
+      // Linear interpolation requires sample at floor(phase) and floor(phase)+1.
+      const size_t need = static_cast<size_t>(rateReadPhase_) + 2;
+      if (!ensureRingFrames(need)) {
+        // Underrun / EOS: zero-fill remainder.
+        std::fill(
+            output + outFrame * ch,
+            output + frameCount * ch,
+            0.0f);
+        break;
+      }
+      popConsumedRingFrames();
+      if (rateRingCount_ == 0) {
+        std::fill(
+            output + outFrame * ch,
+            output + frameCount * ch,
+            0.0f);
+        break;
+      }
+
+      const size_t idx0 = rateRingRead_ % rateRingSize_;
+      const size_t idx1 = rateRingCount_ > 1 ? (rateRingRead_ + 1) % rateRingSize_ : idx0;
+      const float frac = static_cast<float>(rateReadPhase_ - std::floor(rateReadPhase_));
+      const float* a = rateRing_.data() + idx0 * ch;
+      const float* b = rateRing_.data() + idx1 * ch;
+      float* dst = output + outFrame * ch;
+      for (size_t c = 0; c < ch; ++c) {
+        dst[c] = a[c] * (1.0f - frac) + b[c] * frac;
+      }
+      rateReadPhase_ += playbackRate;
+      ++totalRead;
+      popConsumedRingFrames();
     }
-    active = preload;
-    preload = nullptr;
-    renderActiveStream_.store(active, std::memory_order_release);
-    renderPreloadStream_.store(nullptr, std::memory_order_release);
-    renderedFrames_ = 0;
-    positionRead = 0;
-    ended_ = false;
-    trackStarted_ = true;
-    activeUsesPreloadDspChain = !activeUsesPreloadDspChain;
-    renderActiveUsesPreloadDspChain_.store(activeUsesPreloadDspChain, std::memory_order_release);
-    renderPromotionPending_.store(true, std::memory_order_release);
-    activeDspChain = preloadDspChain;
-    preloadDspChain = nullptr;
-    renderActiveDspGraph_.store(activeDspChain, std::memory_order_release);
-    renderPreloadDspGraph_.store(nullptr, std::memory_order_release);
-    crossfadeMixActive = false;
-    crossfadeFramesProcessed = 0;
-    crossfadeTotalFrames = 0;
-    renderCrossfadeMixActive_ = false;
-    renderCrossfadeFramesProcessed_ = 0;
-    renderCrossfadeTotalFrames_ = 0;
-  }
-
-  if (totalRead < frameCount) {
-    std::fill(
-        output + totalRead * static_cast<size_t>(channels),
-        output + frameCount * static_cast<size_t>(channels),
-        0.0f);
+  } else {
+    // Unity-rate path: pull exact frameCount frames straight into the output buffer.
+    totalRead = pullProcessedFrames(output, frameCount);
+    if (totalRead < frameCount) {
+      std::fill(
+          output + totalRead * static_cast<size_t>(channels),
+          output + frameCount * static_cast<size_t>(channels),
+          0.0f);
+    }
   }
 
   if (!dopPathActive && std::abs(volume - 1.0) > 0.0001) {
+    // On the rate path totalRead is filled output frames (may be < frameCount on underrun).
     render::applyVolumeToRenderedFrames(output, totalRead, frameCount, channels, volume);
   }
   if (!dopPathActive && !nativeDsdPathActive) {
     const auto mode = static_cast<DspDitherMode>(renderDitherMode_.load(std::memory_order_acquire));
     applyOutputDither(
         output,
-        totalRead,
+        totalRead > 0 ? totalRead : frameCount,
         channels,
         outputFormat,
         mode,
@@ -3694,9 +3878,12 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   }
 
   if (positionRead > 0) {
+    // renderedFrames_ counts source frames consumed — correct position when rate != 1.
     renderedFrames_ += positionRead;
+  }
+  if (totalRead > 0) {
     spectrum_.capture(output, totalRead, channels);
-  } else if (active->drained()) {
+  } else if (active->drained() && (!rateActive || rateRingCount_ == 0)) {
     ended_ = true;
     renderState_.store(PipelineState::Stopped, std::memory_order_release);
     spectrum_.tryResetCapture();

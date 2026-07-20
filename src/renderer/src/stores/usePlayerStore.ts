@@ -360,12 +360,16 @@ const currentTime = ref(0)
 const duration = ref(0)
 const volume = ref(0.7)
 const muted = ref(false)
+/** Application-layer playback rate (0.5–2). 1 = realtime. */
+const playbackRate = ref(1)
 /** A-B loop points in seconds relative to the logical track start. Null = unset. */
 const abLoopA = ref<number | null>(null)
 const abLoopB = ref<number | null>(null)
 /** Offer to resume a long track from a saved resume bookmark. */
 const resumeOffer = ref<{ trackId: string; positionSeconds: number; label: string } | null>(null)
 const lastAudibleVolume = ref(0.7)
+/** Active DLNA cast target display name (null when not casting). */
+const castTargetName = ref<string | null>(null)
 const sleepTimerState = ref<SleepTimerState | null>(null)
 const sleepTimerNotice = ref<string | null>(null)
 let sleepTimerFadeController: ReturnType<typeof createSleepTimerFadeController> | null = null
@@ -587,6 +591,7 @@ function getPlaybackAudio(): HTMLAudioElement {
   const audio = new Audio()
   audio.preload = 'auto'
   audio.volume = volume.value
+  applyPlaybackRateToHtmlAudio(audio)
 
   audio.addEventListener('loadedmetadata', () => {
     if (currentTrack.value?.cueRange) {
@@ -842,6 +847,7 @@ async function playWithRendererAudio(
 
   audio.src = playableUrl
   audio.volume = volume.value
+  applyPlaybackRateToHtmlAudio(audio)
   if (!isActiveLoad(loadToken, track)) return false
 
   seekRendererAudioWhenReady(audio, startTime, track, loadToken)
@@ -1329,6 +1335,30 @@ watch(volume, (val) => {
   window.api.audioEngine.setVolume(val).catch(() => {})
 })
 
+function applyPlaybackRateToHtmlAudio(audio: HTMLAudioElement, rate = playbackRate.value): void {
+  audio.playbackRate = rate
+  try {
+    audio.preservesPitch = true
+  } catch {
+    // preservesPitch is not available on every runtime.
+  }
+  try {
+    ;(audio as HTMLAudioElement & { webkitPreservesPitch?: boolean }).webkitPreservesPitch = true
+  } catch {
+    // Safari-style property; ignore when unsupported.
+  }
+}
+
+async function setPlaybackRate(rate: number): Promise<void> {
+  const clamped = Math.min(2, Math.max(0.5, Number.isFinite(rate) ? rate : 1))
+  const rounded = Math.round(clamped * 1000) / 1000
+  if (Object.is(rounded, playbackRate.value)) return
+  playbackRate.value = rounded
+  if (playbackAudio) applyPlaybackRateToHtmlAudio(playbackAudio, rounded)
+  window.api.audioEngine.setPlaybackRate(rounded).catch(() => {})
+  updateMediaSessionPositionState()
+}
+
 watch(
   [() => currentTrack.value?.cover, () => appSettings.value?.useCoverTheme],
   async ([cover, useCoverTheme]) => {
@@ -1791,6 +1821,13 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     return track.filePath
   }
 
+  // Radio / podcast media is already a direct remote URL on the track.
+  if (source === 'radio' || source === 'podcast') {
+    const direct = track.streamUrl || track.filePath
+    if (direct && /^https?:\/\//i.test(direct)) return direct
+    throw new Error(`Unable to resolve ${source} stream URL`)
+  }
+
   // A completed user pin is integrity-checked by the main process on every
   // lookup.  It wins over a transient remote URL, then normal provider
   // resolution remains the explicit online fallback.
@@ -2030,6 +2067,7 @@ function setupAudioEngineListeners(): void {
         setAudioServiceReadyNotice()
       }
       api.setVolume(volume.value).catch(() => {})
+      api.setPlaybackRate(playbackRate.value).catch(() => {})
       await refreshAudioOutputState()
       try {
         const nativeInfo = await api.getPlaybackInfo()
@@ -2070,18 +2108,47 @@ function setupAudioEngineListeners(): void {
   if (settingsApi?.onPlayerShortcut) {
     cleanupFns.push(
       settingsApi.onPlayerShortcut((action) => {
-        if (action === 'previous') {
-          previous()
-          return
-        }
-        if (action === 'next') {
-          next()
-          return
-        }
-        void togglePlayState()
+        void handlePlayerShortcutAction(action)
       })
     )
   }
+
+  // Publish playback snapshot for LAN web remote / SSE.
+  let lastRemotePublishAt = 0
+  const publishRemoteSnapshot = (): void => {
+    const remoteApi = window.api?.remote
+    if (!remoteApi?.publishState) return
+    const now = Date.now()
+    if (now - lastRemotePublishAt < 400) return
+    lastRemotePublishAt = now
+    const track = currentTrack.value
+    const isLive =
+      track?.source === 'radio' ||
+      (typeof track?.duration === 'number' && track.duration <= 0 && duration.value <= 0)
+    void remoteApi.publishState({
+      state: isPlaying.value ? 'playing' : track ? 'paused' : 'stopped',
+      title: track?.title ?? '',
+      artist: track?.artist ?? '',
+      album: track?.album ?? '',
+      position: currentTime.value,
+      duration: duration.value,
+      volume: volume.value,
+      muted: muted.value,
+      queueIndex: queueIndex.value,
+      queueLength: queue.value.length,
+      coverUrl: null,
+      isLive: Boolean(isLive),
+      castTarget: castTargetName.value,
+      updatedAt: now
+    })
+  }
+  cleanupFns.push(
+    watch(
+      [isPlaying, currentTime, duration, volume, muted, queueIndex, () => currentTrack.value?.id],
+      () => publishRemoteSnapshot()
+    )
+  )
+  publishRemoteSnapshot()
 
   if (settingsApi?.onChanged) {
     cleanupFns.push(
@@ -2388,6 +2455,53 @@ function next(): void {
   }
 }
 
+function jumpQueue(index: number): void {
+  if (!Number.isInteger(index) || index < 0 || index >= queue.value.length) return
+  clearCrossfadeTimer()
+  queueIndex.value = index
+  const track = queue.value[index]
+  if (!track) return
+  currentTrack.value = track
+  void loadAndPlay(track)
+}
+
+async function handlePlayerShortcutAction(
+  action: import('../types/settings').PlayerShortcutAction
+): Promise<void> {
+  if (typeof action === 'string') {
+    if (action === 'previous') {
+      previous()
+      return
+    }
+    if (action === 'next') {
+      next()
+      return
+    }
+    if (action === 'play') {
+      if (!isPlaying.value) await togglePlayState()
+      return
+    }
+    if (action === 'pause') {
+      if (isPlaying.value) await togglePlayState()
+      return
+    }
+    // playPause
+    await togglePlayState()
+    return
+  }
+  if (action.action === 'seek') {
+    seekPlayback(action.positionSeconds)
+    return
+  }
+  if (action.action === 'setVolume') {
+    volume.value = Math.min(1, Math.max(0, action.volume))
+    return
+  }
+  if (action.action === 'jumpQueue') {
+    jumpQueue(action.index)
+  }
+}
+
 async function togglePlayState(): Promise<void> {
   const track = currentTrack.value
   if (!track) return
@@ -2616,7 +2730,7 @@ function updateMediaSessionPositionState(): void {
     navigator.mediaSession.setPositionState({
       duration: duration.value,
       position: Math.min(currentTime.value, duration.value),
-      playbackRate: 1
+      playbackRate: playbackRate.value
     })
   } catch {
     // setPositionState can throw if values are invalid; ignore
@@ -3117,6 +3231,7 @@ export function usePlayerStore(): {
   duration: Ref<number>
   volume: Ref<number>
   muted: Ref<boolean>
+  playbackRate: Ref<number>
   abLoopA: Ref<number | null>
   abLoopB: Ref<number | null>
   sleepTimerState: Ref<SleepTimerState | null>
@@ -3169,6 +3284,7 @@ export function usePlayerStore(): {
   dismissResumeOffer: () => void
   addManualBookmarkAtCurrentTime: () => void
   setVolume: (vol: number) => void
+  setPlaybackRate: (rate: number) => Promise<void>
   toggleMute: () => void
   configureSleepTimer: (mode: SleepTimerMode, minutes?: number) => void
   cancelSleepTimer: () => void
@@ -3195,6 +3311,13 @@ export function usePlayerStore(): {
   removeUnavailableTracks: (trackIds: string[], filePaths: string[]) => void
   clearBpmAnalysisFromPlaybackState: () => void
   refreshCurrentLyrics: () => Promise<void>
+  castTargetName: Ref<string | null>
+  castToDevice: (usn: string) => Promise<void>
+  stopCast: () => Promise<void>
+  discoverCastDevices: () => Promise<
+    import('../../../shared/remoteControl.ts').DlnaDeviceInfo[]
+  >
+  refreshCastTarget: () => Promise<void>
   formatTime: (seconds: number) => string
 } {
   setupPlayerIntegrationSideEffects()
@@ -3509,6 +3632,47 @@ export function usePlayerStore(): {
     await ensureCurrentTrackLyricsLoaded(currentTrack.value)
   }
 
+  async function castToDevice(usn: string): Promise<void> {
+    const track = currentTrack.value
+    if (!track?.filePath) throw new Error('当前曲目不支持投送（需要本地文件）')
+    const remoteApi = window.api?.remote
+    if (!remoteApi?.castToDevice) throw new Error('远程控制 API 不可用')
+    const result = await remoteApi.castToDevice({
+      usn,
+      filePath: track.filePath,
+      title: track.title,
+      artist: track.artist,
+      album: track.album,
+      positionSeconds: currentTime.value
+    })
+    castTargetName.value = result.friendlyName
+    // Main process already dispatches a 'pause' shortcut for local engine.
+  }
+
+  async function stopCast(): Promise<void> {
+    const remoteApi = window.api?.remote
+    if (remoteApi?.stopCast) await remoteApi.stopCast()
+    castTargetName.value = null
+  }
+
+  async function discoverCastDevices(): Promise<
+    import('../../../shared/remoteControl.ts').DlnaDeviceInfo[]
+  > {
+    const remoteApi = window.api?.remote
+    if (!remoteApi?.discoverDlna) return []
+    return await remoteApi.discoverDlna()
+  }
+
+  async function refreshCastTarget(): Promise<void> {
+    const remoteApi = window.api?.remote
+    if (!remoteApi?.getCastTarget) {
+      castTargetName.value = null
+      return
+    }
+    const target = await remoteApi.getCastTarget()
+    castTargetName.value = target?.friendlyName ?? null
+  }
+
   return {
     currentTrack,
     dominantColor,
@@ -3518,6 +3682,7 @@ export function usePlayerStore(): {
     duration,
     volume,
     muted,
+    playbackRate,
     abLoopA,
     abLoopB,
     sleepTimerState,
@@ -3545,6 +3710,7 @@ export function usePlayerStore(): {
     loudnormStatusSource,
     outputInfo,
     visualizationData,
+    castTargetName,
     cyclePlayMode,
     setPlayMode,
     enqueueTrack,
@@ -3567,6 +3733,7 @@ export function usePlayerStore(): {
     dismissResumeOffer,
     addManualBookmarkAtCurrentTime,
     setVolume,
+    setPlaybackRate,
     toggleMute,
     configureSleepTimer,
     cancelSleepTimer,
@@ -3593,6 +3760,10 @@ export function usePlayerStore(): {
     removeUnavailableTracks,
     clearBpmAnalysisFromPlaybackState,
     refreshCurrentLyrics,
+    castToDevice,
+    stopCast,
+    discoverCastDevices,
+    refreshCastTarget,
     formatTime
   }
 }

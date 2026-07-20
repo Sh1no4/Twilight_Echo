@@ -207,7 +207,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   proxyHost: '',
   proxyPort: 0,
   proxyAllowDirectFallback: false,
-  streamingActiveProvider: 'ncm'
+  streamingActiveProvider: 'ncm',
+  remoteControlEnabled: false,
+  remoteControlPort: 0
 }
 
 export function getSettingsFilePath(): string {
@@ -682,7 +684,9 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
       typeof settings.streamingActiveProvider === 'string' &&
       settings.streamingActiveProvider.trim()
         ? settings.streamingActiveProvider.trim()
-        : DEFAULT_SETTINGS.streamingActiveProvider
+        : DEFAULT_SETTINGS.streamingActiveProvider,
+    remoteControlEnabled: settings.remoteControlEnabled === true,
+    remoteControlPort: clampNumber(settings.remoteControlPort, 0, 65535, 0)
   }
 }
 

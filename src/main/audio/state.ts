@@ -217,6 +217,18 @@ export async function updateAppSettings(patch: Partial<AppSettings>): Promise<Se
   }
 
   if (
+    Object.prototype.hasOwnProperty.call(patch, 'remoteControlEnabled') ||
+    Object.prototype.hasOwnProperty.call(patch, 'remoteControlPort')
+  ) {
+    try {
+      const { syncRemoteControlWithSettings } = await import('../remote/remoteIpc.ts')
+      await syncRemoteControlWithSettings()
+    } catch (err) {
+      console.warn('[remote] failed to sync remote control with settings:', err)
+    }
+  }
+
+  if (
     Object.prototype.hasOwnProperty.call(patch, 'libraryFolders') ||
     Object.prototype.hasOwnProperty.call(patch, 'watchLibrary')
   ) {

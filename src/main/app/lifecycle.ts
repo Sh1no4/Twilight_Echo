@@ -30,6 +30,8 @@ import { setupOpraIpc } from '../ipc/opra'
 import { setupPluginIpc } from '../ipc/plugins'
 import { setupDataIpc } from '../ipc/data'
 import { setupOfflineDownloadIpc, destroyOfflineDownloadIpc } from '../offline/offlineDownloadIpc.ts'
+import { setupRadioMediaIpc, destroyRadioMediaIpc } from '../radio/radioMediaIpc.ts'
+import { setupRemoteIpc, destroyRemoteIpc } from '../remote/remoteIpc.ts'
 import { installElectronSecurity } from '../security/electronSecurity.ts'
 import { createRemoteMediaRequestHandler } from '../security/remoteMediaGrants.ts'
 import { createWindow } from './window'
@@ -203,6 +205,8 @@ export function startApp(): void {
       setupLoudnessAnalysisIpc()
       setupNcmIpc()
       await setupOfflineDownloadIpc()
+      setupRadioMediaIpc()
+      setupRemoteIpc()
       setupOpraIpc()
       setupPluginIpc()
       setupNcmApi()
@@ -258,6 +262,8 @@ export function startApp(): void {
       runtime.loudnessAnalysisManager = null
       runtime.pluginManager = null
       destroyOfflineDownloadIpc()
+      destroyRadioMediaIpc()
+      void destroyRemoteIpc()
       if (runtime.ncmServer) {
         runtime.ncmServer.close()
         runtime.ncmServer = null

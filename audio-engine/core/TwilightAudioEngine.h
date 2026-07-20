@@ -27,6 +27,7 @@ struct PlaybackInfo {
   double positionSeconds = 0.0;
   double durationSeconds = 0.0;
   double volume = 1.0;
+  double playbackRate = 1.0;
   uint64_t requestedConfigRevision = 0;
   uint64_t appliedConfigRevision = 0;
   int queueIndex = -1;
@@ -106,6 +107,7 @@ class TwilightAudioEngine {
   TAE_Result stop();
   TAE_Result seek(double positionSeconds);
   TAE_Result setVolume(double volume);
+  TAE_Result setPlaybackRate(double rate);
   TAE_Result setOutputDevice(const std::string& deviceId);
   TAE_Result setOutputBackend(const std::string& backendId);
 

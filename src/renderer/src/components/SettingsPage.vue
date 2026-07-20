@@ -72,6 +72,7 @@ type BooleanSettingKey =
   | 'onlineLyricsFallback'
   | 'smtcEnabled'
   | 'discordRpcEnabled'
+  | 'remoteControlEnabled'
 
 const props = defineProps<{
   initialSection?: SectionKey
@@ -204,7 +205,7 @@ const SETTINGS_SEARCH_INDEX: Array<{
   title: string
   terms: string
 }> = [
-  { section: 'general', title: '媒体库与启动', terms: '常规 扫描 文件夹 监控 网易云 SMTC Discord 启动 托盘 代理 插件设置 备份 恢复' },
+  { section: 'general', title: '媒体库与启动', terms: '常规 扫描 文件夹 监控 网易云 SMTC Discord 启动 托盘 代理 插件设置 备份 恢复 远程 遥控 PIN DLNA 投送 局域网' },
   { section: 'playback', title: '播放与输出', terms: '播放 输出 设备 独占 音量 削波 无缝 网易云 音质 无损 Hi-Res DSD SACD buffer routing' },
   { section: 'dsp', title: 'DSP 处理器', terms: 'DSP EQ ReplayGain Crossfeed Convolver FFT High-Res DSD SACD' },
   { section: 'cache', title: '缓存策略', terms: '缓存 目录 封面 歌词 元数据 流媒体 BPM 分析 清理' },
@@ -250,6 +251,11 @@ const settingsNotice = ref('')
 const settingsError = ref('')
 const importSettingsInputRef = ref<HTMLInputElement | null>(null)
 const shortcutStatuses = ref<PlayerShortcutStatus[]>([])
+const remoteStatus = ref<import('../../../shared/remoteControl.ts').RemoteControlStatus | null>(
+  null
+)
+const remoteStatusError = ref('')
+const remoteBusy = ref(false)
 
 const activeSection = ref<SectionKey>(props.initialSection ?? 'general')
 const pageRef = ref<HTMLElement | null>(null)
@@ -686,6 +692,63 @@ function setProxyPort(event: Event): void {
 
 function toggleSetting(key: BooleanSettingKey): void {
   void updateSettings({ [key]: !settings.value[key] } as Partial<AppSettings>)
+  if (key === 'remoteControlEnabled') {
+    void refreshRemoteStatus()
+  }
+}
+
+async function refreshRemoteStatus(): Promise<void> {
+  remoteStatusError.value = ''
+  try {
+    if (!window.api?.remote?.getStatus) {
+      remoteStatus.value = null
+      return
+    }
+    remoteStatus.value = await window.api.remote.getStatus()
+  } catch (err) {
+    remoteStatusError.value = err instanceof Error ? err.message : String(err)
+  }
+}
+
+async function toggleRemoteControl(): Promise<void> {
+  remoteBusy.value = true
+  remoteStatusError.value = ''
+  try {
+    const next = !settings.value.remoteControlEnabled
+    await updateSettings({ remoteControlEnabled: next })
+    if (window.api?.remote?.setEnabled) {
+      remoteStatus.value = await window.api.remote.setEnabled(next)
+    } else {
+      await refreshRemoteStatus()
+    }
+  } catch (err) {
+    remoteStatusError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    remoteBusy.value = false
+  }
+}
+
+async function rotateRemotePin(): Promise<void> {
+  remoteBusy.value = true
+  remoteStatusError.value = ''
+  try {
+    if (!window.api?.remote?.rotatePin) return
+    const result = await window.api.remote.rotatePin()
+    remoteStatus.value = result.status
+  } catch (err) {
+    remoteStatusError.value = err instanceof Error ? err.message : String(err)
+  } finally {
+    remoteBusy.value = false
+  }
+}
+
+async function copyRemoteUrl(url: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(url)
+    settingsNotice.value = '已复制远程地址'
+  } catch {
+    settingsNotice.value = url
+  }
 }
 
 async function toggleGlobalShortcuts(): Promise<void> {
@@ -1425,6 +1488,7 @@ onMounted(async () => {
   await Promise.all([loadSettings(), refreshAudioOutputState()])
   await Promise.all([refreshCacheSize(), refreshBpmAnalysisCacheSize(), refreshLoudnessAnalysisCacheSize()])
   await refreshShortcutStatuses()
+  await refreshRemoteStatus()
   await syncExtensions()
   await refreshLibraryWatcherStatus()
   libraryWatcherStatusTimer = window.setInterval(() => {
@@ -1715,6 +1779,73 @@ onBeforeUnmount(() => {
                   :aria-checked="settings.discordRpcEnabled"
                   @click="toggleSetting('discordRpcEnabled')"
                 ></span>
+              </div>
+              <hr />
+              <div class="setting-item top-align">
+                <div class="setting-copy">
+                  <strong>局域网远程控制</strong>
+                  <span>
+                    默认关闭。开启后在局域网提供 Web 遥控页（PIN 配对 + Token），并支持 DLNA 投送。
+                  </span>
+                </div>
+                <span
+                  class="toggle-switch"
+                  :class="{
+                    active: settings.remoteControlEnabled,
+                    inactive: !settings.remoteControlEnabled
+                  }"
+                  role="switch"
+                  :aria-checked="settings.remoteControlEnabled"
+                  :aria-busy="remoteBusy"
+                  @click="toggleRemoteControl"
+                ></span>
+              </div>
+              <div v-if="settings.remoteControlEnabled" class="setting-item top-align remote-control-panel">
+                <div class="setting-copy">
+                  <strong>配对 PIN / 访问地址</strong>
+                  <span>
+                    状态：
+                    {{
+                      remoteStatus?.running
+                        ? `运行中 · 端口 ${remoteStatus.port ?? '—'}`
+                        : '未运行'
+                    }}
+                    <template v-if="remoteStatus?.paired"> · 已配对</template>
+                    <template v-if="(remoteStatus?.clientCount ?? 0) > 0">
+                      · {{ remoteStatus?.clientCount }} 客户端
+                    </template>
+                  </span>
+                  <div v-if="remoteStatus?.pin" class="remote-pin-row">
+                    <code class="remote-pin">{{ remoteStatus.pin }}</code>
+                    <button
+                      type="button"
+                      class="soft-button"
+                      :disabled="remoteBusy"
+                      @click="rotateRemotePin"
+                    >
+                      更换 PIN
+                    </button>
+                    <button
+                      type="button"
+                      class="soft-button"
+                      :disabled="remoteBusy"
+                      @click="refreshRemoteStatus"
+                    >
+                      刷新
+                    </button>
+                  </div>
+                  <ul v-if="(remoteStatus?.urls?.length ?? 0) > 0" class="remote-url-list">
+                    <li v-for="url in remoteStatus?.urls ?? []" :key="url">
+                      <button type="button" class="linkish" @click="copyRemoteUrl(url)">
+                        {{ url }}
+                      </button>
+                    </li>
+                  </ul>
+                  <span v-if="remoteStatus?.lastError" class="remote-error">
+                    {{ remoteStatus.lastError }}
+                  </span>
+                  <span v-if="remoteStatusError" class="remote-error">{{ remoteStatusError }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -4265,5 +4396,49 @@ html[data-theme='dark'] .settings-preview-page .engine-error {
   border-color: rgba(248, 113, 113, 0.34);
   background: rgba(127, 29, 29, 0.26);
   color: #fca5a5;
+}
+
+.settings-preview-page .remote-control-panel .remote-pin-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.settings-preview-page .remote-pin {
+  font-size: 1.35rem;
+  letter-spacing: 0.28em;
+  font-weight: 700;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: rgba(var(--te-primary-rgb), 0.12);
+}
+
+.settings-preview-page .remote-url-list {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.settings-preview-page .remote-url-list .linkish {
+  border: 0;
+  background: transparent;
+  color: var(--te-primary-600, #2563eb);
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.settings-preview-page .remote-error {
+  display: block;
+  margin-top: 8px;
+  color: #f87171;
+  font-size: 0.9rem;
 }
 </style>

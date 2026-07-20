@@ -18,7 +18,15 @@ export type StartupHomePage = 'local' | 'streaming'
 /** sequential stops at the tail; listLoop wraps; repeat loops one track; shuffle uses a shuffled cycle. */
 export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
-export type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
+export type PlayerShortcutAction =
+  | 'previous'
+  | 'next'
+  | 'playPause'
+  | 'play'
+  | 'pause'
+  | { action: 'seek'; positionSeconds: number }
+  | { action: 'setVolume'; volume: number }
+  | { action: 'jumpQueue'; index: number }
 export type EqMode = 'graphic' | 'parametric'
 export type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 export type ChannelRoutingMode =
@@ -315,6 +323,8 @@ export interface AppSettings {
   proxyPort: number
   proxyAllowDirectFallback: boolean
   streamingActiveProvider: string
+  remoteControlEnabled: boolean
+  remoteControlPort: number
 }
 
 export interface SettingsSnapshot {

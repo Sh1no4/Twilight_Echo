@@ -383,6 +383,21 @@ void testProcessingFlags() {
   auto volume = baseEvaluation();
   volume.volume = 0.99;
   assertNotOutputPerfect(volume);
+  {
+    PerfectResult result = evaluatePerfect(volume);
+    assert(result.perfectReasonCode == "volume_not_unity");
+  }
+
+  auto playbackRate = baseEvaluation();
+  playbackRate.playbackRate = 1.25;
+  assertNotOutputPerfect(playbackRate);
+  {
+    PerfectResult result = evaluatePerfect(playbackRate);
+    assert(result.perfectReasonCode == "playback_rate_not_unity");
+    assert(result.perfectReason.find("Playback rate") != std::string::npos ||
+           result.perfectReason.find("rate") != std::string::npos ||
+           !result.perfectReason.empty());
+  }
 
   auto replayGain = baseEvaluation();
   replayGain.replayGainActive = true;
