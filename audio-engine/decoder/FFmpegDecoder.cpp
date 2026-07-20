@@ -7,6 +7,7 @@
 #include <cctype>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -205,6 +206,9 @@ struct FFmpegDecoder::Impl {
   AudioFormat outputFormat;
   bool eof = false;
   FFmpegDecoder::ResamplerQuality resamplerQuality = FFmpegDecoder::ResamplerQuality::Native;
+  // ICY StreamTitle snapshot (decode-thread writes; control/status may read).
+  mutable std::mutex streamTitleMutex;
+  std::string streamTitle;
 
 #if defined(TAE_HAS_FFMPEG)
   AVFormatContext* formatContext = nullptr;
@@ -214,6 +218,7 @@ struct FFmpegDecoder::Impl {
   SwrContext* swr = nullptr;
   int audioStreamIndex = -1;
   bool inputEof = false;
+  bool icyEnabled = false;
   std::vector<uint8_t> pending;
   std::vector<uint8_t> convertedScratch;
   size_t pendingFrameOffset = 0;
@@ -228,6 +233,47 @@ struct FFmpegDecoder::Impl {
   void resetPending() {
     pending.clear();
     pendingFrameOffset = 0;
+  }
+
+  static std::string dictValue(AVDictionary* metadata, const char* key) {
+    if (!metadata || !key) return {};
+    const AVDictionaryEntry* entry = av_dict_get(metadata, key, nullptr, 0);
+    if (!entry || !entry->value) return {};
+    return entry->value;
+  }
+
+  static std::string extractStreamTitle(AVDictionary* metadata) {
+    if (!metadata) return {};
+    // ICY StreamTitle is the primary radio metadata field; fall back to common tags.
+    const char* keys[] = {"StreamTitle", "icy-title", "title", "TITLE", "streamtitle"};
+    for (const char* key : keys) {
+      std::string value = dictValue(metadata, key);
+      if (!value.empty()) return value;
+    }
+    return {};
+  }
+
+  void refreshStreamTitleFromContext() {
+    if (!formatContext) return;
+    std::string title = extractStreamTitle(formatContext->metadata);
+    if (title.empty() && audioStreamIndex >= 0 &&
+        audioStreamIndex < static_cast<int>(formatContext->nb_streams) &&
+        formatContext->streams[audioStreamIndex]) {
+      title = extractStreamTitle(formatContext->streams[audioStreamIndex]->metadata);
+    }
+    if (title.empty()) return;
+    // Trim whitespace / control characters common in ICY payloads.
+    while (!title.empty() &&
+           (static_cast<unsigned char>(title.front()) <= 0x20 || title.front() == '\'')) {
+      title.erase(title.begin());
+    }
+    while (!title.empty() &&
+           (static_cast<unsigned char>(title.back()) <= 0x20 || title.back() == '\'')) {
+      title.pop_back();
+    }
+    if (title.empty()) return;
+    std::lock_guard lock(streamTitleMutex);
+    if (streamTitle != title) streamTitle = std::move(title);
   }
 
   void close() {
@@ -249,10 +295,15 @@ struct FFmpegDecoder::Impl {
     }
     audioStreamIndex = -1;
     inputEof = false;
+    icyEnabled = false;
     eof = false;
     resetPending();
     streamInfo = {};
     outputFormat = {};
+    {
+      std::lock_guard lock(streamTitleMutex);
+      streamTitle.clear();
+    }
   }
 
   bool convertFrame(std::string* error) {
@@ -350,6 +401,9 @@ struct FFmpegDecoder::Impl {
         continue;
       }
 
+      // ICY metadata can land in format-context tags between packets on live streams.
+      if (icyEnabled) refreshStreamTitleFromContext();
+
       if (packet->stream_index == audioStreamIndex) {
         ret = avcodec_send_packet(codecContext, packet);
         av_packet_unref(packet);
@@ -368,7 +422,13 @@ struct FFmpegDecoder::Impl {
     streamInfo = {};
     outputFormat = {};
     eof = false;
+    {
+      std::lock_guard lock(streamTitleMutex);
+      streamTitle.clear();
+    }
   }
+
+  void refreshStreamTitleFromContext() {}
 #endif
 };
 
@@ -404,7 +464,22 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
     ffmpegNetworkInitialized = true;
   }
 
-  int ret = avformat_open_input(&impl_->formatContext, source.c_str(), nullptr, nullptr);
+  // Enable ICY metadata for live HTTP(S) radio streams so StreamTitle updates appear.
+  const bool looksHttp =
+      source.rfind("http://", 0) == 0 || source.rfind("https://", 0) == 0 ||
+      source.rfind("HTTP://", 0) == 0 || source.rfind("HTTPS://", 0) == 0;
+  AVDictionary* openOptions = nullptr;
+  if (looksHttp) {
+    av_dict_set(&openOptions, "icy", "1", 0);
+    // Prefer reconnect behavior for flaky radio CDNs without blocking open forever.
+    av_dict_set(&openOptions, "reconnect", "1", 0);
+    av_dict_set(&openOptions, "reconnect_streamed", "1", 0);
+    av_dict_set(&openOptions, "reconnect_delay_max", "5", 0);
+    impl_->icyEnabled = true;
+  }
+
+  int ret = avformat_open_input(&impl_->formatContext, source.c_str(), nullptr, &openOptions);
+  av_dict_free(&openOptions);
   if (ret < 0) {
     if (error) *error = "打开音频失败，错误码：" + std::to_string(ret);
     return false;
@@ -496,6 +571,12 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
   } else if (impl_->formatContext->duration != AV_NOPTS_VALUE) {
     impl_->streamInfo.durationSeconds =
         static_cast<double>(impl_->formatContext->duration) / static_cast<double>(AV_TIME_BASE);
+  }
+
+  impl_->refreshStreamTitleFromContext();
+  {
+    std::lock_guard lock(impl_->streamTitleMutex);
+    impl_->streamInfo.streamTitle = impl_->streamTitle;
   }
 
   AudioFormat defaultOutput = impl_->streamInfo.sourceFormat;
@@ -694,6 +775,23 @@ const AudioStreamInfo& FFmpegDecoder::streamInfo() const {
 
 const AudioFormat& FFmpegDecoder::outputFormat() const {
   return impl_->outputFormat;
+}
+
+std::string FFmpegDecoder::streamTitle() const {
+  std::lock_guard lock(impl_->streamTitleMutex);
+  return impl_->streamTitle;
+}
+
+void FFmpegDecoder::pollStreamMetadata() {
+#if defined(TAE_HAS_FFMPEG)
+  impl_->refreshStreamTitleFromContext();
+  {
+    std::lock_guard lock(impl_->streamTitleMutex);
+    impl_->streamInfo.streamTitle = impl_->streamTitle;
+  }
+#else
+  // No-op without FFmpeg.
+#endif
 }
 
 }  // namespace twilight::audio

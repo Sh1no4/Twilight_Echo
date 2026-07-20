@@ -363,6 +363,8 @@ const dominantColor = ref('#1a73e8')
 const isPlaying = ref(false)
 const isLoading = ref(false)
 const isStreamBuffering = ref(false)
+/** Live ICY StreamTitle from native radio playback (empty when unavailable). */
+const streamNowPlaying = ref('')
 const currentTime = ref(0)
 const duration = ref(0)
 const volume = ref(0.7)
@@ -1149,6 +1151,9 @@ function applyNativePlaybackInfo(
 
   const normalizedInfo = normalizeNativePlaybackInfo(info)
   playbackInfo.value = normalizedInfo
+  if (typeof (info as { streamTitle?: string }).streamTitle === 'string') {
+    streamNowPlaying.value = (info as { streamTitle?: string }).streamTitle?.trim() ?? ''
+  }
   if (info.nativePlaybackActive !== undefined) {
     nativePlaybackActive = info.nativePlaybackActive === true
   }
@@ -2410,6 +2415,8 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   setNativePlaybackInfoIntent(loadToken, track)
   stopVisualizationPolling(false)
   isLoading.value = true
+  isStreamBuffering.value = false
+  streamNowPlaying.value = ''
   nativePlaybackActive = false
   nativeQueueDelegated = false
   stopRendererAudio(true)
@@ -3815,6 +3822,7 @@ export function usePlayerStore(): {
     isPlaying,
     isLoading,
     isStreamBuffering,
+    streamNowPlaying,
     currentTime,
     duration,
     volume,

@@ -23,6 +23,22 @@ const allowHttp = ref(false)
 const formError = ref('')
 const formBusy = ref(false)
 const playlistText = ref('')
+const directoryQuery = ref('')
+const directoryResults = ref<
+  Array<{
+    stationuuid: string
+    name: string
+    url: string
+    urlResolved: string
+    homepage?: string
+    favicon?: string
+    tags: string[]
+    countryCode?: string
+    bitrate?: number
+    codec?: string
+  }>
+>([])
+const directoryBusy = ref(false)
 const feedUrl = ref('')
 const selectedPodcastId = ref<string | null>(null)
 const pinBusyGuid = ref<string | null>(null)
@@ -71,6 +87,50 @@ async function importPlaylist(): Promise<void> {
     })
     playlistText.value = ''
     if (count === 0) formError.value = '未导入任何有效电台（HTTP 条目需勾选允许）'
+  } catch (error) {
+    formError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    formBusy.value = false
+  }
+}
+
+async function searchDirectory(): Promise<void> {
+  formError.value = ''
+  directoryBusy.value = true
+  try {
+    directoryResults.value = await radio.searchDirectory(directoryQuery.value, { limit: 20 })
+    if (directoryResults.value.length === 0) {
+      formError.value = '未找到匹配电台'
+    }
+  } catch (error) {
+    directoryResults.value = []
+    formError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    directoryBusy.value = false
+  }
+}
+
+async function addDirectoryStation(row: {
+  name: string
+  urlResolved: string
+  homepage?: string
+  tags: string[]
+}): Promise<void> {
+  formError.value = ''
+  formBusy.value = true
+  try {
+    const streamUrl = row.urlResolved
+    if (isInsecureHttpUrl(streamUrl) && !allowHttp.value) {
+      formError.value = '该目录电台使用 HTTP 明文流，请勾选“允许 HTTP”后再添加'
+      return
+    }
+    await radio.addStation({
+      name: row.name,
+      streamUrl,
+      homepage: row.homepage,
+      tags: row.tags,
+      allowInsecureHttp: allowHttp.value
+    })
   } catch (error) {
     formError.value = error instanceof Error ? error.message : String(error)
   } finally {
@@ -241,6 +301,41 @@ function formatDuration(seconds: number): string {
         <button type="button" :disabled="formBusy || !playlistText.trim()" @click="importPlaylist">
           导入列表
         </button>
+        <h2>目录搜索（radio-browser.info）</h2>
+        <label>
+          关键词
+          <input
+            v-model="directoryQuery"
+            type="search"
+            placeholder="例如：jazz / 古典 / BBC"
+            maxlength="120"
+            @keydown.enter.prevent="searchDirectory"
+          />
+        </label>
+        <div class="form-actions">
+          <button
+            type="button"
+            class="primary"
+            :disabled="directoryBusy || !directoryQuery.trim()"
+            @click="searchDirectory"
+          >
+            {{ directoryBusy ? '搜索中…' : '搜索目录' }}
+          </button>
+        </div>
+        <ul v-if="directoryResults.length > 0" class="directory-results">
+          <li v-for="row in directoryResults" :key="row.stationuuid">
+            <div>
+              <strong>{{ row.name }}</strong>
+              <small>
+                <span v-if="row.countryCode">{{ row.countryCode }}</span>
+                <span v-if="row.bitrate">{{ row.bitrate }} kbps</span>
+                <span v-if="row.codec">{{ row.codec }}</span>
+                <span v-if="row.tags?.length">{{ row.tags.slice(0, 3).join(', ') }}</span>
+              </small>
+            </div>
+            <button type="button" :disabled="formBusy" @click="addDirectoryStation(row)">添加</button>
+          </li>
+        </ul>
       </div>
 
       <div class="station-grid">
@@ -403,6 +498,32 @@ function formatDuration(seconds: number): string {
   margin-left: 6px;
   text-transform: lowercase;
   opacity: 0.85;
+}
+.directory-results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+}
+.directory-results li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.45);
+}
+.directory-results small {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  opacity: 0.75;
+  margin-top: 4px;
 }
 .tabs {
   display: flex;

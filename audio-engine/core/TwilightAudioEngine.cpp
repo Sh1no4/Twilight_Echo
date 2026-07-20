@@ -481,6 +481,7 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"gaplessActive\":" << (info.gaplessActive ? "true" : "false") << ","
        << "\"preloadReady\":" << (info.preloadReady ? "true" : "false") << ","
        << "\"gaplessBlockedReason\":\"" << json_utils::escape(info.gaplessBlockedReason) << "\","
+       << "\"streamTitle\":\"" << json_utils::escape(info.streamTitle) << "\","
        << "\"upcomingTrack\":"
        << QueueManager::itemToJson(info.hasUpcomingTrack ? std::optional<QueueItem>(info.upcomingTrack) : std::nullopt)
        << "}";
@@ -1947,6 +1948,7 @@ void TwilightAudioEngine::applyPipelineStatusLocked(const PipelineStatus& status
   info_.hasUpcomingTrack = upcoming.has_value();
   info_.upcomingTrack = upcoming.value_or(QueueItem{});
   info_.perfectReason = status.perfectReason;
+  info_.streamTitle = status.stream.streamTitle;
   info_.isDsd = status.stream.isDsd;
   info_.dsdMode = status.stream.isDsd ? dsdModeToString(status.stream.dsdMode) : dsdModeToString(DsdMode::Pcm);
   info_.dsdRate = status.stream.isDsd ? status.stream.dsdRate : 0;

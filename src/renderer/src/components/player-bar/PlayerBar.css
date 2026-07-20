@@ -902,6 +902,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+.player-stream-now-playing {
+  font-family: var(--te-font-rounded);
+  font-size: 11px;
+  font-weight: 700;
+  color: #7c8aa5;
+  margin-top: 1px;
+  max-width: 260px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .player-playback-diagnostic {
   max-width: 260px;
   margin-top: 2px;

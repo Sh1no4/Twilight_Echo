@@ -90,6 +90,8 @@ struct PlaybackInfo {
   std::string gaplessBlockedReason;
   bool hasUpcomingTrack = false;
   QueueItem upcomingTrack;
+  /** Live ICY / stream metadata title (radio). Empty when unavailable. */
+  std::string streamTitle;
 };
 
 class TwilightAudioEngine {

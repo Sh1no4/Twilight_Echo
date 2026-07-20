@@ -1447,6 +1447,25 @@ interface WindowAPI {
       fileNameHint?: string
       allowInsecureHttp?: boolean
     }) => Promise<import('../shared/radioStations.ts').RadioStation[]>
+    searchDirectory: (payload: {
+      query: string
+      limit?: number
+      offset?: number
+    }) => Promise<
+      Array<{
+        stationuuid: string
+        name: string
+        url: string
+        urlResolved: string
+        homepage?: string
+        favicon?: string
+        tags: string[]
+        countryCode?: string
+        bitrate?: number
+        codec?: string
+        votes?: number
+      }>
+    >
   }
   podcast: {
     loadSubscriptions: () => Promise<

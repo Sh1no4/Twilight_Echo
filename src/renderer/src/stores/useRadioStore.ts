@@ -111,6 +111,31 @@ export function useRadioStore() {
     await persist(next)
   }
 
+  async function searchDirectory(
+    query: string,
+    options: { limit?: number; offset?: number } = {}
+  ): Promise<
+    Array<{
+      stationuuid: string
+      name: string
+      url: string
+      urlResolved: string
+      homepage?: string
+      favicon?: string
+      tags: string[]
+      countryCode?: string
+      bitrate?: number
+      codec?: string
+      votes?: number
+    }>
+  > {
+    return window.api.radio.searchDirectory({
+      query,
+      limit: options.limit,
+      offset: options.offset
+    })
+  }
+
   async function importPlaylistText(
     text: string,
     options: { fileNameHint?: string; allowInsecureHttp?: boolean } = {}
@@ -141,6 +166,7 @@ export function useRadioStore() {
     ensureLoaded,
     addStation,
     removeStation,
+    searchDirectory,
     importPlaylistText,
     radioStationToTrack
   }

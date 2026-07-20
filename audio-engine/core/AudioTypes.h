@@ -84,6 +84,8 @@ struct AudioStreamInfo {
   bool isDsd = false;
   DsdMode dsdMode = DsdMode::Pcm;
   int dsdRate = 0;
+  /** Live ICY StreamTitle / container title for radio-style streams. */
+  std::string streamTitle;
 };
 
 struct QueueItem {

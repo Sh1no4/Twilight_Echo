@@ -335,6 +335,8 @@ export interface PlaybackInfo extends PlaybackOutputInfoMirror {
   /** Empty when unblocked; else disabled | dsd_path | typed_passthrough | crossfade | format_mismatch */
   gaplessBlockedReason: string
   upcomingTrack: AudioEngineQueueItem | null
+  /** Live ICY StreamTitle (radio). Empty when unavailable. */
+  streamTitle?: string
 }
 
 export interface OutputInfo {
@@ -774,6 +776,7 @@ export function createPlaybackInfoFanoutSignature(
     info.playMode,
     info.source,
     info.codec,
+    info.streamTitle ?? '',
     nativePlaybackActive,
     info.bitrate,
     info.sourceSampleRate,
@@ -4212,6 +4215,7 @@ export class AudioEngineManager extends EventEmitter {
       preloadReady: info.preloadReady === true,
       gaplessBlockedReason:
         typeof info.gaplessBlockedReason === 'string' ? info.gaplessBlockedReason : '',
+      streamTitle: typeof info.streamTitle === 'string' ? info.streamTitle : '',
       perfectReason: outputInfo.perfectReason,
       nativePlaybackActive: this.nativePlaybackActive
     }

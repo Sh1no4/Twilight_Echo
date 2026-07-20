@@ -18,6 +18,7 @@ import {
 import { getOfflineDownloadService } from '../offline/offlineDownloadIpc.ts'
 import { authorizeOfflineDownloadRequest } from '../offline/offlineRequestAuthorization.ts'
 import { remoteMediaGrants } from '../security/remoteMediaGrants.ts'
+import { searchRadioBrowserStations } from './radioBrowserClient.ts'
 import { RadioMediaService } from './radioMediaService.ts'
 
 const MAX_RADIO_STATIONS_BYTES = 4 * 1024 * 1024
@@ -65,6 +66,26 @@ export function setupRadioMediaIpc(options?: ConstructorParameters<typeof RadioM
         typeof payload?.fileNameHint === 'string' ? payload.fileNameHint.slice(0, 255) : ''
       const allowInsecureHttp = payload?.allowInsecureHttp === true
       return service!.importPlaylistEntries(payload.text, { fileNameHint, allowInsecureHttp })
+    }
+  )
+
+  ipcMain.handle(
+    'radio:searchDirectory',
+    async (event, payload: { query?: unknown; limit?: unknown; offset?: unknown }) => {
+      assertTrustedIpcSender(event, 'radio media IPC')
+      const query =
+        typeof payload?.query === 'string'
+          ? payload.query
+          : normalizeIpcString(payload?.query, 'radio directory query', 120)
+      const limit =
+        typeof payload?.limit === 'number' && Number.isFinite(payload.limit)
+          ? Math.floor(payload.limit)
+          : undefined
+      const offset =
+        typeof payload?.offset === 'number' && Number.isFinite(payload.offset)
+          ? Math.floor(payload.offset)
+          : undefined
+      return await searchRadioBrowserStations({ query, limit, offset })
     }
   )
 

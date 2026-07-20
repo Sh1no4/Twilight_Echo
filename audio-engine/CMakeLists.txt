@@ -69,6 +69,7 @@ set(TAE_ENGINE_SOURCES
   dsp/ParametricEqProcessor.cpp
   dsp/ReplayGainProcessor.cpp
   dsp/Vst3BridgeProcessor.cpp
+  dsp/WsolaResampler.cpp
   metadata/AudioMetadataService.cpp
   output/OutputBackendFactory.cpp
   playlist/QueueManager.cpp
@@ -267,6 +268,7 @@ if(TAE_BUILD_TESTS)
     dsp/ParametricEqProcessor.cpp
     dsp/ReplayGainProcessor.cpp
     dsp/Vst3BridgeProcessor.cpp
+    dsp/WsolaResampler.cpp
     plugins/PluginRegistry.cpp
   )
   target_include_directories(twilight_dsp_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
@@ -286,6 +288,13 @@ if(TAE_BUILD_TESTS)
   )
   target_include_directories(twilight_channel_router_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
   add_test(NAME twilight_channel_router_unit COMMAND twilight_channel_router_tests)
+
+  add_executable(twilight_wsola_tests
+    tests/wsola_tests.cpp
+    dsp/WsolaResampler.cpp
+  )
+  target_include_directories(twilight_wsola_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  add_test(NAME twilight_wsola_unit COMMAND twilight_wsola_tests)
 
   add_executable(twilight_audio_buffer_tests
     tests/audio_buffer_tests.cpp

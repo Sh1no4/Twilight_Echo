@@ -9,6 +9,7 @@
 #include "../dsp/DspChain.h"
 #include "../dsp/FftSpectrumAnalyzer.h"
 #include "../dsp/ChannelRouter.h"
+#include "../dsp/WsolaResampler.h"
 #include "../output/IOutputBackend.h"
 
 #include "twilight_audio_engine.h"
@@ -410,14 +411,16 @@ class AudioPipeline {
   std::vector<float> preloadRoutingScratch_;
   std::vector<float> preloadMixScratch_;
   std::vector<float> typedVisualizationScratch_;
-  // Rate-resampler ring: interleaved PCM frames post-DSP/routing. Render-thread only.
+  // Rate path: WSOLA preserves pitch; ring retained as pull staging for the puller.
   std::vector<float> rateRing_;
   size_t rateRingSize_ = 0;       // capacity in frames
   size_t rateRingRead_ = 0;       // frame index of oldest sample
   size_t rateRingWrite_ = 0;      // frame index for next push
   size_t rateRingCount_ = 0;      // frames currently stored
-  double rateReadPhase_ = 0.0;    // fractional read position relative to rateRingRead_
+  double rateReadPhase_ = 0.0;    // retained for compatibility with reset helpers
   std::vector<float> ratePullScratch_;
+  WsolaResampler rateWsola_;
+  bool rateWsolaReady_ = false;
   ChannelRouter channelRouter_;
   mutable std::mutex statusMutex_;
   PipelineStatus lastStatus_;

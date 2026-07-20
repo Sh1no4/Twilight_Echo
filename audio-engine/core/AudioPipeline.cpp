@@ -942,6 +942,8 @@ struct AudioPipeline::DecodeStream {
         block.byteSize = typedFrames.size();
         decoded = decoder->readFrames(block, &error);
       }
+      // Keep decoder StreamTitle snapshot fresh for status() readers.
+      decoder->pollStreamMetadata();
       if (remainingSegmentFrames) {
         decoded = std::min(decoded, static_cast<size_t>(*remainingSegmentFrames));
       }
@@ -2031,6 +2033,7 @@ void AudioPipeline::resetRateResampler() noexcept {
   rateRingWrite_ = 0;
   rateRingCount_ = 0;
   rateReadPhase_ = 0.0;
+  rateWsola_.reset();
 }
 
 void AudioPipeline::enqueueControlCommand(const ControlCommand& command) noexcept {
@@ -2873,6 +2876,11 @@ PipelineStatus AudioPipeline::buildStatusLocked() {
           ? static_cast<double>(renderedFrames_.load()) / static_cast<double>(positionSampleRate)
           : 0.0;
   status.stream = stream_;
+  // Live ICY title: read from decoder under its internal mutex (decode-thread safe).
+  if (activeStream_ && activeStream_->decoder) {
+    const std::string title = activeStream_->decoder->streamTitle();
+    if (!title.empty()) status.stream.streamTitle = title;
+  }
   status.outputFormat = outputFormat_;
   OutputInfo backendInfo = output_ ? output_->outputInfo() : outputInfo_;
   backendInfo.sourceExact = outputInfo_.sourceExact;
@@ -3459,12 +3467,15 @@ void AudioPipeline::prepareRenderScratchLocked(size_t maxFrames) {
   preloadMixScratch_.resize(outputSamples);
   typedVisualizationScratch_.resize(outputSamples);
 
-  // Rate ring needs headroom for interpolation (one look-ahead frame) and pull chunks.
+  // Rate path staging + WSOLA grain buffers (prepared for current output format).
   constexpr size_t kRatePullChunkFrames = 512;
   const size_t rateCapacityFrames = std::max(frames * 4, kRatePullChunkFrames * 4) + 2;
   rateRingSize_ = rateCapacityFrames;
   rateRing_.assign(rateCapacityFrames * outputChannels, 0.0f);
   ratePullScratch_.assign(std::max(kRatePullChunkFrames, frames) * outputChannels, 0.0f);
+  const int sampleRate = std::max(1, outputFormat_.sampleRate);
+  rateWsola_.prepare(static_cast<int>(outputChannels), sampleRate, frames);
+  rateWsolaReady_ = true;
   resetRateResampler();
 }
 
@@ -3761,87 +3772,24 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   };
 
   if (rateActive) {
-    // Rate resampler path: pull post-DSP frames into a ring, emit frameCount via linear
-    // interpolation. positionRead / renderedFrames_ track source frames consumed.
+    // Rate path: WSOLA pitch-preserving time stretch. Pull post-DSP frames on demand.
     const size_t ch = static_cast<size_t>(channels);
-    constexpr size_t kRatePullChunkFrames = 512;
-    const size_t pullScratchFrames =
-        ratePullScratch_.empty() || ch == 0 ? 0 : ratePullScratch_.size() / ch;
-
-    auto pushRingFrames = [&](const float* src, size_t frames) {
-      if (frames == 0 || rateRingSize_ == 0 || rateRing_.empty()) return;
-      for (size_t i = 0; i < frames; ++i) {
-        if (rateRingCount_ >= rateRingSize_) {
-          // Drop oldest frame to make room (should be rare with generous capacity).
-          rateRingRead_ = (rateRingRead_ + 1) % rateRingSize_;
-          --rateRingCount_;
-          if (rateReadPhase_ >= 1.0) rateReadPhase_ -= 1.0;
-          else rateReadPhase_ = 0.0;
-        }
-        const size_t writeIndex = rateRingWrite_ % rateRingSize_;
-        std::memcpy(
-            rateRing_.data() + writeIndex * ch,
-            src + i * ch,
-            ch * sizeof(float));
-        rateRingWrite_ = (rateRingWrite_ + 1) % rateRingSize_;
-        ++rateRingCount_;
-      }
-    };
-
-    auto ensureRingFrames = [&](size_t needed) -> bool {
-      // Need enough frames so floor(phase) + 1 is valid.
-      while (rateRingCount_ < needed) {
-        const size_t freeFrames = rateRingSize_ > rateRingCount_ ? rateRingSize_ - rateRingCount_ : 0;
-        if (freeFrames == 0 || pullScratchFrames == 0) return rateRingCount_ >= needed;
-        const size_t pullWant = std::min({freeFrames, pullScratchFrames, kRatePullChunkFrames});
-        const size_t pulled = pullProcessedFrames(ratePullScratch_.data(), pullWant);
-        if (pulled == 0) return rateRingCount_ >= needed;
-        pushRingFrames(ratePullScratch_.data(), pulled);
-      }
-      return true;
-    };
-
-    auto popConsumedRingFrames = [&]() {
-      const size_t whole = static_cast<size_t>(rateReadPhase_);
-      if (whole == 0) return;
-      const size_t consume = std::min(whole, rateRingCount_);
-      rateRingRead_ = (rateRingRead_ + consume) % rateRingSize_;
-      rateRingCount_ -= consume;
-      rateReadPhase_ -= static_cast<double>(consume);
-    };
-
-    for (size_t outFrame = 0; outFrame < frameCount; ++outFrame) {
-      // Linear interpolation requires sample at floor(phase) and floor(phase)+1.
-      const size_t need = static_cast<size_t>(rateReadPhase_) + 2;
-      if (!ensureRingFrames(need)) {
-        // Underrun / EOS: zero-fill remainder.
-        std::fill(
-            output + outFrame * ch,
-            output + frameCount * ch,
-            0.0f);
-        break;
-      }
-      popConsumedRingFrames();
-      if (rateRingCount_ == 0) {
-        std::fill(
-            output + outFrame * ch,
-            output + frameCount * ch,
-            0.0f);
-        break;
-      }
-
-      const size_t idx0 = rateRingRead_ % rateRingSize_;
-      const size_t idx1 = rateRingCount_ > 1 ? (rateRingRead_ + 1) % rateRingSize_ : idx0;
-      const float frac = static_cast<float>(rateReadPhase_ - std::floor(rateReadPhase_));
-      const float* a = rateRing_.data() + idx0 * ch;
-      const float* b = rateRing_.data() + idx1 * ch;
-      float* dst = output + outFrame * ch;
-      for (size_t c = 0; c < ch; ++c) {
-        dst[c] = a[c] * (1.0f - frac) + b[c] * frac;
-      }
-      rateReadPhase_ += playbackRate;
-      ++totalRead;
-      popConsumedRingFrames();
+    if (!rateWsolaReady_) {
+      rateWsola_.prepare(
+          static_cast<int>(ch),
+          std::max(1, outputFormat.sampleRate),
+          frameCount);
+      rateWsolaReady_ = true;
+    }
+    rateWsola_.setRate(playbackRate);
+    totalRead = rateWsola_.process(output, frameCount, [&](float* dst, size_t maxFrames) -> size_t {
+      return pullProcessedFrames(dst, maxFrames);
+    });
+    if (totalRead < frameCount) {
+      std::fill(
+          output + totalRead * ch,
+          output + frameCount * ch,
+          0.0f);
     }
   } else {
     // Unity-rate path: pull exact frameCount frames straight into the output buffer.
@@ -3883,7 +3831,9 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   }
   if (totalRead > 0) {
     spectrum_.capture(output, totalRead, channels);
-  } else if (active->drained() && (!rateActive || rateRingCount_ == 0)) {
+  } else if (active->drained() && (!rateActive || totalRead == 0)) {
+    // Rate path ends when the source is drained and WSOLA could not emit more frames
+    // (OLA tail already flushed / no full grain left).
     ended_ = true;
     renderState_.store(PipelineState::Stopped, std::memory_order_release);
     spectrum_.tryResetCapture();

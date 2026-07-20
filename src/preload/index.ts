@@ -737,7 +737,26 @@ const api = {
       text: string
       fileNameHint?: string
       allowInsecureHttp?: boolean
-    }): Promise<RadioStation[]> => ipcRenderer.invoke('radio:importPlaylist', payload)
+    }): Promise<RadioStation[]> => ipcRenderer.invoke('radio:importPlaylist', payload),
+    searchDirectory: (payload: {
+      query: string
+      limit?: number
+      offset?: number
+    }): Promise<
+      Array<{
+        stationuuid: string
+        name: string
+        url: string
+        urlResolved: string
+        homepage?: string
+        favicon?: string
+        tags: string[]
+        countryCode?: string
+        bitrate?: number
+        codec?: string
+        votes?: number
+      }>
+    > => ipcRenderer.invoke('radio:searchDirectory', payload)
   },
   podcast: {
     loadSubscriptions: (): Promise<VersionedDataEnvelope<PodcastSubscriptionsDocument>> =>

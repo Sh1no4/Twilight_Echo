@@ -42,6 +42,7 @@ const {
   dominantColor,
   isPlaying,
   isStreamBuffering,
+  streamNowPlaying,
   currentTime,
   duration,
   volume,
@@ -1088,6 +1089,13 @@ onMounted(() => {
             >
           </div>
           <div class="player-artist">{{ currentTrack.artist }}</div>
+          <div
+            v-if="streamNowPlaying && isLiveStream"
+            class="player-stream-now-playing"
+            :title="streamNowPlaying"
+          >
+            {{ streamNowPlaying }}
+          </div>
           <div v-if="audioEngineError" class="player-playback-diagnostic" :title="audioEngineError">
             {{ audioEngineError }}
           </div>

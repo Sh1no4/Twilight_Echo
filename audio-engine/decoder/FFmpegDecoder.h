@@ -35,6 +35,14 @@ class FFmpegDecoder {
   const AudioStreamInfo& streamInfo() const;
   const AudioFormat& outputFormat() const;
 
+  /**
+   * Latest ICY / container StreamTitle (empty when none).
+   * Thread-safe; may update during decode of live HTTP(S) streams.
+   */
+  std::string streamTitle() const;
+  /** Refresh StreamTitle from demuxer metadata (call from decode thread). */
+  void pollStreamMetadata();
+
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
