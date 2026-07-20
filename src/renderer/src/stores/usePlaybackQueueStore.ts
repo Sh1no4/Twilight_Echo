@@ -27,6 +27,7 @@ export const usePlaybackQueueStore = defineStore('playback-queue', () => {
     reorderQueue: player.reorderQueue,
     saveQueueAsPlaylist: player.saveQueueAsPlaylist,
     playTrack: player.playTrack,
+    playTrackFromPosition: player.playTrackFromPosition,
     togglePlay: player.togglePlay,
     next: player.next,
     prev: player.prev,

@@ -120,6 +120,7 @@ const scannedFolders = ref<string[]>([])
 const isScanning = ref(false)
 const artists = shallowRef<LibraryItem[]>([])
 const albums = shallowRef<LibraryItem[]>([])
+const genres = shallowRef<LibraryItem[]>([])
 const folders = shallowRef<LibraryItem[]>([])
 const playlists = ref<Playlist[]>([])
 const playlistPersistenceStatus = ref<PlaylistPersistenceStatus>({
@@ -196,6 +197,7 @@ export function useMusicStore(): {
   tracks: Ref<Track[]>
   artists: Ref<LibraryItem[]>
   albums: Ref<LibraryItem[]>
+  genres: Ref<LibraryItem[]>
   folders: Ref<LibraryItem[]>
   playlists: Ref<Playlist[]>
   playlistPersistenceStatus: Ref<PlaylistPersistenceStatus>
@@ -323,6 +325,7 @@ export function useMusicStore(): {
     rebuildTrackLookupIndexes()
     const artistMap = new Map<string, DerivedTrackGroup>()
     const albumMap = new Map<string, DerivedTrackGroup>()
+    const genreMap = new Map<string, DerivedTrackGroup>()
 
     function addToGroup(
       map: Map<string, DerivedTrackGroup>,
@@ -344,6 +347,9 @@ export function useMusicStore(): {
       addToGroup(artistMap, artistName, track)
 
       addToGroup(albumMap, getAlbumIdentity(track), track, track.albumArtist || track.artist)
+
+      const genreName = track.genre?.trim() || '未知流派'
+      addToGroup(genreMap, genreName, track)
     }
 
     artists.value = Array.from(artistMap.entries())
@@ -365,6 +371,15 @@ export function useMusicStore(): {
         artist: group.artist || group.tracks[0]?.artist || '未知艺术家'
       }))
       .sort((a, b) => a.name.localeCompare(b.name, 'zh') || (a.id ?? '').localeCompare(b.id ?? ''))
+
+    genres.value = Array.from(genreMap.entries())
+      .map(([name, group]) => ({
+        name,
+        trackCount: group.tracks.length,
+        tracks: group.tracks,
+        cover: group.cover
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
 
     const folderGroups = scannedFolders.value.map((folderPath) => {
       const normalized = normalizeLibraryPath(folderPath)
@@ -824,7 +839,8 @@ export function useMusicStore(): {
         ...(patch.title !== undefined ? { title: patch.title } : {}),
         ...(patch.artist !== undefined ? { artist: patch.artist } : {}),
         ...(patch.album !== undefined ? { album: patch.album } : {}),
-        ...(patch.albumArtist !== undefined ? { albumArtist: patch.albumArtist } : {})
+        ...(patch.albumArtist !== undefined ? { albumArtist: patch.albumArtist } : {}),
+        ...(patch.genre !== undefined ? { genre: patch.genre } : {})
       }
     })
     if (changed === 0) return 0
@@ -1851,6 +1867,7 @@ export function useMusicStore(): {
     tracks,
     artists,
     albums,
+    genres,
     folders,
     playlists,
     playlistPersistenceStatus,

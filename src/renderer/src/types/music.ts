@@ -5,7 +5,7 @@ import type { CueRange, ParsedCueSheet } from '../../../shared/cue.ts'
 
 export type BuiltInTrackSource = 'local' | 'ncm'
 export type TrackSource = BuiltInTrackSource | (string & {})
-export type LyricSource = 'embedded' | 'local' | 'provider' | 'manual'
+export type LyricSource = 'embedded' | 'local' | 'provider' | 'manual' | 'online'
 export type MetadataMatchConfidence = 'high' | 'medium'
 
 export interface TrackMetadataMatch {
@@ -43,6 +43,8 @@ export interface Track {
   title: string
   artist: string
   album: string
+  /** Primary genre tag; multi-value tags keep the first non-empty entry. */
+  genre?: string | null
   /** Stable album owner for grouping compilation and guest-artist tracks. */
   albumArtist?: string
   /** Provider or scanner album identifier when one is available. */

@@ -1,6 +1,13 @@
+export interface LyricWord {
+  time: number
+  endTime: number | null
+  text: string
+}
+
 export interface ParsedTimedLyricLine {
   time: number
   text: string
+  words?: LyricWord[]
 }
 
 export interface LyricLine {
@@ -9,13 +16,108 @@ export interface LyricLine {
   translation: string | null
   romanization: string | null
   timed: boolean
+  words?: LyricWord[]
+}
+
+const LINE_TIMESTAMP_RE = /\[(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?\]/g
+const WORD_TIMESTAMP_RE = /<(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?>/g
+const YRC_LINE_RE =
+  /^\[(\d+),(\d+)\](.*)$/
+const YRC_WORD_RE = /\((\d+),(\d+),\d+\)([^()\[\]]*)/g
+
+function parseTimestampParts(min: string, sec: string, frac?: string): number {
+  let ms = 0
+  if (frac) {
+    ms = Number.parseInt(frac, 10)
+    if (frac.length === 2) ms *= 10
+  }
+  return Number.parseInt(min, 10) * 60 + Number.parseInt(sec, 10) + ms / 1000
+}
+
+function parseEnhancedWords(rawLine: string): { text: string; words: LyricWord[] } | null {
+  WORD_TIMESTAMP_RE.lastIndex = 0
+  if (!WORD_TIMESTAMP_RE.test(rawLine)) return null
+
+  const timestamps: Array<{ time: number; index: number; end: number }> = []
+  let match: RegExpExecArray | null
+  WORD_TIMESTAMP_RE.lastIndex = 0
+  while ((match = WORD_TIMESTAMP_RE.exec(rawLine)) !== null) {
+    timestamps.push({
+      time: parseTimestampParts(match[1], match[2], match[3]),
+      index: match.index,
+      end: match.index + match[0].length
+    })
+  }
+  if (timestamps.length === 0) return null
+
+  const words: LyricWord[] = []
+  let plain = ''
+  for (let i = 0; i < timestamps.length; i++) {
+    const current = timestamps[i]
+    const next = timestamps[i + 1]
+    const text = rawLine.slice(current.end, next?.index ?? rawLine.length)
+    if (!text) continue
+    words.push({
+      time: current.time,
+      endTime: next?.time ?? null,
+      text
+    })
+    plain += text
+  }
+  const cleaned = plain.replace(LINE_TIMESTAMP_RE, '').trim()
+  if (!cleaned || words.length === 0) return null
+  return { text: cleaned, words }
+}
+
+/** NetEase YRC: [startMs,durationMs](wordStart,wordDur,0)word... */
+export function parseYrc(yrc: string | null | undefined): ParsedTimedLyricLine[] {
+  if (!yrc) return []
+  const lines: ParsedTimedLyricLine[] = []
+  for (const raw of yrc.split('\n')) {
+    const trimmed = raw.trim()
+    if (!trimmed) continue
+    const lineMatch = YRC_LINE_RE.exec(trimmed)
+    if (!lineMatch) continue
+    const lineStartMs = Number.parseInt(lineMatch[1], 10)
+    const body = lineMatch[3] ?? ''
+    const words: LyricWord[] = []
+    let plain = ''
+    let wordMatch: RegExpExecArray | null
+    YRC_WORD_RE.lastIndex = 0
+    while ((wordMatch = YRC_WORD_RE.exec(body)) !== null) {
+      const startMs = Number.parseInt(wordMatch[1], 10)
+      const durMs = Number.parseInt(wordMatch[2], 10)
+      const text = wordMatch[3] ?? ''
+      if (!text) continue
+      words.push({
+        time: startMs / 1000,
+        endTime: (startMs + durMs) / 1000,
+        text
+      })
+      plain += text
+    }
+    if (!plain.trim()) continue
+    lines.push({
+      time: lineStartMs / 1000,
+      text: plain,
+      words: words.length > 0 ? words : undefined
+    })
+  }
+  lines.sort((a, b) => a.time - b.time)
+  return lines
 }
 
 export function parseTimedLrc(lrc: string | null | undefined): ParsedTimedLyricLine[] {
   if (!lrc) return []
 
+  // Prefer YRC when the payload looks like NetEase word lyrics.
+  if (/^\[\d+,\d+\]/m.test(lrc) && /\(\d+,\d+,\d+\)/.test(lrc)) {
+    const yrc = parseYrc(lrc)
+    if (yrc.length > 0) return yrc
+  }
+
   const lines: ParsedTimedLyricLine[] = []
-  const lineRe = /\[(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?\]/g
+  const lineRe = LINE_TIMESTAMP_RE
 
   for (const raw of lrc.split('\n')) {
     const trimmed = raw.trim()
@@ -26,22 +128,18 @@ export function parseTimedLrc(lrc: string | null | undefined): ParsedTimedLyricL
     lineRe.lastIndex = 0
 
     while ((match = lineRe.exec(trimmed)) !== null) {
-      const min = Number.parseInt(match[1], 10)
-      const sec = Number.parseInt(match[2], 10)
-      let ms = 0
-
-      if (match[3]) {
-        ms = Number.parseInt(match[3], 10)
-        if (match[3].length === 2) {
-          ms *= 10
-        }
-      }
-
       timestamps.push({
-        time: min * 60 + sec + ms / 1000,
+        time: parseTimestampParts(match[1], match[2], match[3]),
         index: match.index,
         end: match.index + match[0].length
       })
+    }
+
+    const enhanced = parseEnhancedWords(trimmed)
+    if (enhanced) {
+      const lineTime = timestamps[0]?.time ?? enhanced.words[0]?.time ?? 0
+      lines.push({ time: lineTime, text: enhanced.text, words: enhanced.words })
+      continue
     }
 
     const text = trimmed.replace(lineRe, '').trim()
@@ -54,6 +152,7 @@ export function parseTimedLrc(lrc: string | null | undefined): ParsedTimedLyricL
     })
 
     if (hasInlineTimestamps) {
+      // Legacy multi-tag-with-text mid-line without Enhanced markers: keep line-level only.
       lines.push({ time: timestamps[0].time, text })
       continue
     }
@@ -71,11 +170,12 @@ export function parsePlainLyrics(lyrics: string | null | undefined): string[] {
   if (!lyrics) return []
 
   const timeTagRe = /\[\d{1,3}:\d{2}(?:[.:]\d{2,3})?\]/g
+  const wordTagRe = /<\d{1,3}:\d{2}(?:[.:]\d{2,3})?>/g
   const metadataTagRe = /^\[[a-zA-Z]+:.*\]$/
 
   return lyrics
     .split('\n')
-    .map((line) => line.replace(timeTagRe, '').trim())
+    .map((line) => line.replace(timeTagRe, '').replace(wordTagRe, '').trim())
     .filter((line) => line.length > 0 && !metadataTagRe.test(line))
 }
 
@@ -103,7 +203,8 @@ export function buildLyricLines(
       text: line.text,
       translation: translatedMap.get(Math.round(line.time * 1000)) ?? null,
       romanization: romanizedMap.get(Math.round(line.time * 1000)) ?? null,
-      timed: true
+      timed: true,
+      words: line.words
     }))
   }
 
@@ -113,7 +214,8 @@ export function buildLyricLines(
       text: line.text,
       translation: null,
       romanization: null,
-      timed: true
+      timed: true,
+      words: line.words
     }))
   }
 
@@ -155,5 +257,16 @@ export function findActiveLyricIndex(lines: readonly LyricLine[], currentTime: n
     }
   }
 
+  return activeIndex
+}
+
+export function findActiveWordIndex(words: readonly LyricWord[], currentTime: number): number {
+  if (!words.length || !Number.isFinite(currentTime)) return -1
+  let activeIndex = -1
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]
+    if (word.time <= currentTime) activeIndex = i
+    else break
+  }
   return activeIndex
 }

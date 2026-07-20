@@ -29,6 +29,7 @@ const menuItems: MenuItem[] = [
   { key: 'allSongs', label: '所有歌曲', icon: 'pi pi-headphones' },
   { key: 'artists', label: '艺术家', icon: 'pi pi-microphone' },
   { key: 'albums', label: '专辑', icon: 'pi pi-clone' },
+  { key: 'genres', label: '流派', icon: 'pi pi-tags' },
   { key: 'playlists', label: '歌单', icon: 'pi pi-list-check' },
   { key: 'folders', label: '文件夹', icon: 'pi pi-folder-open' },
   { key: 'recent', label: '最近播放', icon: 'pi pi-history' }

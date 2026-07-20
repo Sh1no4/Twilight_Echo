@@ -97,6 +97,7 @@ export async function syncPluginProviders(): Promise<void> {
                 callProvider<{
                   lyrics: string | null
                   translatedLyrics: string | null
+                  wordLyrics?: string | null
                 }>('getLyrics', [track])
             : undefined,
           searchSongs: provider.capabilities.includes('search')

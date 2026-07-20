@@ -47,6 +47,7 @@ export function useSongListGridRendering({
   gridTotalCount: ComputedRef<number>
   visibleArtists: ComputedRef<GridItem[]>
   visibleAlbums: ComputedRef<GridItem[]>
+  visibleGenres: ComputedRef<GridItem[]>
   visiblePlaylists: ComputedRef<GridItem[]>
   visibleFolders: ComputedRef<GridItem[]>
   localTransitionName: ComputedRef<LocalTransitionName>
@@ -68,6 +69,7 @@ export function useSongListGridRendering({
   const gridTotalCount = computed(() => filteredGridItems.value.length)
   const visibleArtists = computed(() => (category() === 'artists' ? visibleGridItems.value : []))
   const visibleAlbums = computed(() => (category() === 'albums' ? visibleGridItems.value : []))
+  const visibleGenres = computed(() => (category() === 'genres' ? visibleGridItems.value : []))
   const visiblePlaylists = computed(() =>
     category() === 'playlists' ? visibleGridItems.value : []
   )
@@ -169,6 +171,7 @@ export function useSongListGridRendering({
     gridTotalCount,
     visibleArtists,
     visibleAlbums,
+    visibleGenres,
     visiblePlaylists,
     visibleFolders,
     localTransitionName,

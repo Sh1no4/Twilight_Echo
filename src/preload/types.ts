@@ -57,7 +57,11 @@ export type {
 export type {
   LocalLibraryScanProgress,
   LocalLibraryScanStatus,
-  LocalLibraryScanUpdate
+  LocalLibraryScanUpdate,
+  LibraryWatcherFolderStatus,
+  LibraryWatcherMode,
+  LibraryWatcherState,
+  LibraryWatcherStatusSnapshot
 } from '../shared/localLibraryScan.ts'
 
 export type {
@@ -187,7 +191,7 @@ export interface MusicCachePolicySettings {
 
 export type BuiltInTrackSource = 'local' | 'ncm'
 export type TrackSource = BuiltInTrackSource | (string & {})
-export type LyricSource = 'embedded' | 'local' | 'provider' | 'manual'
+export type LyricSource = 'embedded' | 'local' | 'provider' | 'manual' | 'online'
 export type MetadataMatchConfidence = 'high' | 'medium'
 export interface TrackMetadataMatch {
   providerId: string
@@ -679,6 +683,8 @@ export interface AppSettings {
   lyricFontSize: number
   libraryFolders: string[]
   watchLibrary: boolean
+  /** When true, empty local/provider lyrics may fall back to LRCLIB online search. */
+  onlineLyricsFallback: boolean
   smtcEnabled: boolean
   discordRpcEnabled: boolean
   accentColor: string

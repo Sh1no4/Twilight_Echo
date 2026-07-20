@@ -33,6 +33,7 @@ import type {
   LocalLibraryScanProgress,
   LocalLibraryScanStatus,
   LocalLibraryScanUpdate,
+  LibraryWatcherStatusSnapshot,
   DuplicateDetectionReadApi,
   PlayMode,
   AudioEngineQueueItem,
@@ -420,6 +421,8 @@ const api = {
     scanFull: (): Promise<LocalLibraryScanUpdate> => ipcRenderer.invoke('library:scanFull'),
     getScanStatus: (): Promise<LocalLibraryScanStatus> =>
       ipcRenderer.invoke('library:getScanStatus'),
+    getWatcherStatus: (): Promise<LibraryWatcherStatusSnapshot> =>
+      ipcRenderer.invoke('library:getWatcherStatus'),
     pauseScan: (): Promise<boolean> => ipcRenderer.invoke('library:pauseScan'),
     resumeScan: (): Promise<boolean> => ipcRenderer.invoke('library:resumeScan'),
     cancelScan: (): Promise<boolean> => ipcRenderer.invoke('library:cancelScan'),
@@ -717,6 +720,13 @@ const api = {
     importLyrics: (): Promise<string | null> => ipcRenderer.invoke('lyrics:import'),
     saveLyrics: (contents: string): Promise<string | null> =>
       ipcRenderer.invoke('lyrics:save', contents),
+    searchOnlineLyrics: (query: {
+      title: string
+      artist: string
+      album?: string
+      durationSeconds?: number
+    }): Promise<import('../main/lyrics/onlineLyricsSearch.ts').OnlineLyricsSearchResult> =>
+      ipcRenderer.invoke('lyrics:searchOnline', query),
     saveLyricsManagement: (
       document: LyricsManagementDocument,
       expectedRevision: number
@@ -728,6 +738,21 @@ const api = {
       ),
     loadLyricsManagement: (): Promise<VersionedDataEnvelope<LyricsManagementDocument> | null> =>
       ipcRenderer.invoke('data:loadLyricsManagement'),
+    loadPlaybackBookmarks: (): Promise<
+      VersionedDataEnvelope<import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument> | null
+    > => ipcRenderer.invoke('data:loadPlaybackBookmarks'),
+    savePlaybackBookmarks: (
+      document: import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument,
+      expectedRevision: number
+    ): Promise<
+      VersionedDataEnvelope<import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument>
+    > =>
+      invokeVersionedDataWrite(
+        'data:savePlaybackBookmarks',
+        [document, expectedRevision],
+        (value): value is import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument =>
+          Boolean(value) && typeof value === 'object'
+      ),
     savePlaybackSession: (
       session: PlaybackSession,
       expectedRevision: number

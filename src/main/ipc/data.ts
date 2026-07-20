@@ -6,6 +6,16 @@ import { readFile, writeFile, rm, stat } from 'fs/promises'
 import { parseFile } from 'music-metadata'
 import { importLyricsFromDialog } from '../lyrics/importLyrics.ts'
 import { saveLyricsFromDialog } from '../lyrics/saveLyrics.ts'
+import {
+  assertOnlineLyricsRateLimit,
+  searchOnlineLyrics,
+  type OnlineLyricsSearchResult
+} from '../lyrics/onlineLyricsSearch.ts'
+import {
+  DEFAULT_PLAYBACK_BOOKMARKS,
+  isPlaybackBookmarksDocument,
+  type PlaybackBookmarksDocument
+} from '../../shared/playbackBookmarks.ts'
 import { createDuplicateDetectionIpcHandlers } from '../library/duplicateDetectionIpc.ts'
 import { runtime, type DiscordActivityData } from '../core/runtime'
 import type { AppSettings, PlaybackSession } from '../core/types'
@@ -31,6 +41,7 @@ import {
   LocalLibraryIndexCoordinator,
   toLocalLibraryScanUpdate
 } from '../library/libraryIndexCoordinator.ts'
+import { getLibraryWatcherStatusSnapshot } from '../library/watcher.ts'
 import { createTagWriteIpcHandlers } from '../library/tagWriteIpc.ts'
 import { sleepTimerService } from '../sleepTimer.ts'
 import { registerSleepTimerIpc } from './sleepTimerIpc.ts'
@@ -109,6 +120,7 @@ import { playbackSessionCueRangesAreValid } from '../../shared/cue.ts'
 const MAX_PLAYBACK_SESSION_BYTES = 2 * 1024 * 1024
 const MAX_PLAYLISTS_BYTES = 20 * 1024 * 1024
 const MAX_LYRICS_MANAGEMENT_BYTES = 8 * 1024 * 1024
+const MAX_PLAYBACK_BOOKMARKS_BYTES = 4 * 1024 * 1024
 const MAX_DATA_URL_BYTES = 8 * 1024 * 1024
 const MAX_LOCAL_PATH_LENGTH = 4096
 const MAX_LYRICS_FILE_NAME_LENGTH = 512
@@ -468,6 +480,7 @@ export function setupDataIpc(): void {
   const PLAYBACK_SESSION_FILE = join(userDataPath, 'playback-session.json')
   const PLAYLISTS_FILE = join(userDataPath, 'playlists.json')
   const LYRICS_MANAGEMENT_FILE = join(userDataPath, 'lyrics-management.json')
+  const PLAYBACK_BOOKMARKS_FILE = join(userDataPath, 'playback-bookmarks.json')
   const tagWriteIpc = createTagWriteIpcHandlers({
     backupRoot: join(userDataPath, 'tag-backups'),
     assertTrustedSender: (event) =>
@@ -512,6 +525,15 @@ export function setupDataIpc(): void {
     isLegacy: isLyricsManagementDocument,
     onRecovery: (result) =>
       reportPersistentDataRecovery('Lyrics management', LYRICS_MANAGEMENT_FILE, result)
+  })
+  const playbackBookmarksStore = new VersionedDataStore<PlaybackBookmarksDocument>({
+    filePath: PLAYBACK_BOOKMARKS_FILE,
+    label: 'playback bookmarks',
+    maxBytes: MAX_PLAYBACK_BOOKMARKS_BYTES,
+    isData: isPlaybackBookmarksDocument,
+    isLegacy: isPlaybackBookmarksDocument,
+    onRecovery: (result) =>
+      reportPersistentDataRecovery('Playback bookmarks', PLAYBACK_BOOKMARKS_FILE, result)
   })
 
   try {
@@ -601,6 +623,14 @@ export function setupDataIpc(): void {
     assertTrustedIpcSender(event, 'library scan IPC')
     const status = localLibraryIndexCoordinator.getStatus()
     return { ...status, error: redactSensitiveText(status.error) }
+  })
+
+  ipcMain.handle('library:getWatcherStatus', async (event) => {
+    assertTrustedIpcSender(event, 'library scan IPC')
+    return getLibraryWatcherStatusSnapshot(
+      runtime.appSettings.libraryFolders,
+      runtime.appSettings.watchLibrary
+    )
   })
 
   ipcMain.handle('library:pauseScan', async (event) => {
@@ -875,6 +905,15 @@ export function setupDataIpc(): void {
     return saved?.filePath ?? null
   })
 
+  ipcMain.handle(
+    'lyrics:searchOnline',
+    async (event, query: unknown): Promise<OnlineLyricsSearchResult> => {
+      assertTrustedIpcSender(event, 'lyrics search IPC')
+      assertOnlineLyricsRateLimit()
+      return await searchOnlineLyrics(query)
+    }
+  )
+
   ipcMain.handle('data:loadLyricsManagement', async (event) => {
     assertTrustedIpcSender(event, 'lyrics management IPC')
     try {
@@ -894,6 +933,31 @@ export function setupDataIpc(): void {
         throw new Error('Lyrics management has an invalid structure')
       }
       return await saveVersionedData(lyricsManagementStore, document, expectedRevision)
+    }
+  )
+
+  ipcMain.handle('data:loadPlaybackBookmarks', async (event) => {
+    assertTrustedIpcSender(event, 'playback bookmarks IPC')
+    try {
+      return await playbackBookmarksStore.load()
+    } catch (error) {
+      reportPersistentDataFailure('Playback bookmarks', PLAYBACK_BOOKMARKS_FILE, error)
+      return {
+        revision: 0,
+        data: DEFAULT_PLAYBACK_BOOKMARKS
+      }
+    }
+  })
+
+  ipcMain.handle(
+    'data:savePlaybackBookmarks',
+    async (event, document: PlaybackBookmarksDocument, expectedRevision: number) => {
+      assertTrustedIpcSender(event, 'playback bookmarks IPC')
+      stringifyJsonForIpcStorage(document, 'playback bookmarks', MAX_PLAYBACK_BOOKMARKS_BYTES)
+      if (!isPlaybackBookmarksDocument(document)) {
+        throw new Error('Playback bookmarks have an invalid structure')
+      }
+      return await saveVersionedData(playbackBookmarksStore, document, expectedRevision)
     }
   )
 

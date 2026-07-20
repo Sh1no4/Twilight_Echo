@@ -174,7 +174,9 @@ async function collectIdentities(
 }> {
   const byPath = new Map<string, LocalLibraryFileIdentity>()
   const cueSignatureCache = new Map<string, Promise<string | undefined>>()
-  const completeIdentitySnapshot = request.mode !== 'watch' || !request.changes?.length
+  const hasReconcileChange = (request.changes ?? []).some((change) => change.kind === 'reconcile')
+  const completeIdentitySnapshot =
+    request.mode !== 'watch' || !request.changes?.length || hasReconcileChange
   let unreadableCount = 0
   const report = (current: number): void => {
     servicePort.postMessage({
@@ -398,6 +400,7 @@ async function parseTrack(
       artist: metadata.common.artist || metadata.common.albumartist || fallback.artist,
       album: metadata.common.album || 'Unknown Album',
       albumArtist: metadata.common.albumartist || metadata.common.artist || fallback.artist,
+      genre: extractGenre(metadata.common.genre),
       duration: Math.round(metadata.format.duration || 0),
       cover: embeddedCover ?? baseTrack.cover,
       format: metadata.format.container,
@@ -526,6 +529,22 @@ function normalizeBpm(value: unknown): number | undefined {
   const numeric = typeof value === 'string' ? Number(value.trim()) : Number(value)
   if (!Number.isFinite(numeric) || numeric < 30 || numeric > 300) return undefined
   return Math.round(numeric * 10) / 10
+}
+
+/** music-metadata exposes genre as string | string[]; keep the first non-empty value. */
+function extractGenre(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed || null
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (typeof entry !== 'string') continue
+      const trimmed = entry.trim()
+      if (trimmed) return trimmed
+    }
+  }
+  return null
 }
 
 function extractReplayGainTags(meta: {

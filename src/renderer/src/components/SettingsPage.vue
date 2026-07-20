@@ -47,6 +47,7 @@ import type {
   VolumeNormalizationMode,
   WindowTransparencyEffectSettings
 } from '../types/settings'
+import type { LibraryWatcherStatusSnapshot } from '../../../shared/localLibraryScan.ts'
 
 type SectionKey =
   | 'general'
@@ -68,6 +69,7 @@ type BooleanSettingKey =
   | 'useCoverTheme'
   | 'globalShortcuts'
   | 'watchLibrary'
+  | 'onlineLyricsFallback'
   | 'smtcEnabled'
   | 'discordRpcEnabled'
 
@@ -302,6 +304,8 @@ const {
   cancelLibraryMetadataEnrichment
 } = useMusicStore()
 const libraryScanCommandError = ref('')
+const libraryWatcherStatus = ref<LibraryWatcherStatusSnapshot | null>(null)
+let libraryWatcherStatusTimer: number | null = null
 
 const libraryScanIsActive = computed(
   () => libraryScanStatus.value.state === 'running' || libraryScanStatus.value.state === 'paused'
@@ -335,6 +339,42 @@ const libraryMetadataEnrichmentText = computed(() => {
   if (status.state === 'cancelled') return '后台元数据富化已取消，迟到结果不会写回媒体库'
   return '新曲目会先显示，再在后台补齐封面、歌词和在线 metadata。'
 })
+
+function watcherStateLabel(state: string): string {
+  switch (state) {
+    case 'active':
+      return '活跃'
+    case 'degraded':
+      return '降级轮询'
+    case 'failed':
+      return '失败'
+    case 'disabled':
+      return '已关闭'
+    default:
+      return state
+  }
+}
+
+function watcherModeLabel(mode: string): string {
+  switch (mode) {
+    case 'recursive':
+      return '递归监听'
+    case 'polling':
+      return '定时对账'
+    case 'none':
+      return '未监听'
+    default:
+      return mode
+  }
+}
+
+async function refreshLibraryWatcherStatus(): Promise<void> {
+  try {
+    libraryWatcherStatus.value = await window.api.library.getWatcherStatus()
+  } catch {
+    libraryWatcherStatus.value = null
+  }
+}
 
 async function runFullLibraryScan(): Promise<void> {
   libraryScanCommandError.value = ''
@@ -1386,6 +1426,10 @@ onMounted(async () => {
   await Promise.all([refreshCacheSize(), refreshBpmAnalysisCacheSize(), refreshLoudnessAnalysisCacheSize()])
   await refreshShortcutStatuses()
   await syncExtensions()
+  await refreshLibraryWatcherStatus()
+  libraryWatcherStatusTimer = window.setInterval(() => {
+    void refreshLibraryWatcherStatus()
+  }, 5_000)
   await nextTick()
   pageRef.value?.addEventListener('scroll', updateActiveSection, { passive: true })
   if (props.initialSection && props.initialSection !== 'general') {
@@ -1395,6 +1439,10 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   pageRef.value?.removeEventListener('scroll', updateActiveSection)
+  if (libraryWatcherStatusTimer !== null) {
+    window.clearInterval(libraryWatcherStatusTimer)
+    libraryWatcherStatusTimer = null
+  }
 })
 </script>
 
@@ -1513,6 +1561,51 @@ onBeforeUnmount(() => {
                   :aria-checked="settings.watchLibrary"
                   @click="toggleSetting('watchLibrary')"
                 ></span>
+              </div>
+              <div class="setting-item">
+                <div class="setting-copy">
+                  <strong>在线歌词回退 (LRCLIB)</strong>
+                  <span>本地与 Provider 均无歌词时，按标题/艺人/时长搜索 LRCLIB 作为最后回退。默认关闭。</span>
+                </div>
+                <span
+                  class="toggle-switch"
+                  :class="{
+                    active: settings.onlineLyricsFallback,
+                    inactive: !settings.onlineLyricsFallback
+                  }"
+                  role="switch"
+                  :aria-checked="settings.onlineLyricsFallback"
+                  @click="toggleSetting('onlineLyricsFallback')"
+                ></span>
+              </div>
+              <div
+                v-if="settings.libraryFolders.length > 0"
+                class="setting-item top-align watcher-status-panel"
+              >
+                <div class="setting-copy">
+                  <strong>媒体库监控状态</strong>
+                  <span>各根目录的监听状态；Linux 或失败时会自动降级为定时对账扫描。</span>
+                </div>
+                <div class="watcher-status-list" aria-live="polite">
+                  <div
+                    v-for="item in libraryWatcherStatus?.folders ??
+                    settings.libraryFolders.map((folder) => ({
+                      folder,
+                      state: settings.watchLibrary ? 'failed' : 'disabled',
+                      mode: 'none',
+                      lastError: null
+                    }))"
+                    :key="item.folder"
+                    class="watcher-status-row"
+                  >
+                    <span class="watcher-status-path" :title="item.folder">{{ item.folder }}</span>
+                    <span class="watcher-status-badge" :data-state="item.state">
+                      {{ watcherStateLabel(item.state) }}
+                      · {{ watcherModeLabel(item.mode) }}
+                    </span>
+                    <span v-if="item.lastError" class="watcher-status-error">{{ item.lastError }}</span>
+                  </div>
+                </div>
               </div>
               <hr />
               <div class="setting-item top-align">

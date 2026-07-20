@@ -6,6 +6,7 @@ import { useUnifiedMusicSearch } from '../app/useUnifiedMusicSearch'
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
+import { usePlaybackBookmarks } from '../stores/playbackBookmarks'
 import { useProviderStore } from '../stores/useProviderStore'
 import { getRecentTracks, useListeningStatsStore } from '../stores/useListeningStatsStore'
 import type { Track } from '../types/music'
@@ -57,6 +58,7 @@ const {
   tracks,
   artists,
   albums,
+  genres,
   playlists,
   folders,
   libraryRepairReport,
@@ -81,7 +83,9 @@ const {
 } = useMusicStore()
 const playbackStore = usePlaybackQueueStore()
 const { currentTrack } = storeToRefs(playbackStore)
-const { playTrack } = playbackStore
+const { playTrack, playTrackFromPosition } = playbackStore
+const playbackBookmarks = usePlaybackBookmarks()
+void playbackBookmarks.ensureLoaded()
 const mediaProviders = useMediaProviders()
 const unifiedSearch = useUnifiedMusicSearch()
 const providerStore = useProviderStore()
@@ -148,6 +152,10 @@ const baseDisplayTracks = computed(() => {
       const id = props.filter.slice(6)
       return albums.value.find((album) => album.id === id)?.tracks ?? []
     }
+    if (props.filter.startsWith('genre:')) {
+      const name = props.filter.slice(6)
+      return genres.value.find((genre) => genre.name === name)?.tracks ?? []
+    }
     if (props.filter.startsWith('playlist:')) {
       const name = props.filter.slice(9)
       return getPlaylistTracks(name)
@@ -200,20 +208,27 @@ function setLibraryFilter<K extends keyof LibraryViewFilters>(
 
 const libraryFilterOptions = computed(() => {
   const values = baseDisplayTracks.value
-  return {
-    sampleRates: Array.from(
-      new Set(values.map((track) => track.sampleRate).filter((value): value is number => !!value))
-    ).sort((left, right) => left - right),
-    bitDepths: Array.from(
-      new Set(values.map((track) => track.bitDepth).filter((value): value is number => !!value))
-    ).sort((left, right) => left - right),
-    folders: Array.from(new Set(values.map(trackFolder).filter(Boolean))).sort((left, right) =>
-      left.localeCompare(right, 'zh')
-    ),
-    providers: Array.from(new Set(values.map((track) => getLogicalTrackSource(track)))).sort(
-      (left, right) => left.localeCompare(right, 'zh')
+  const sampleRates = [
+    ...new Set(
+      values
+        .map((track) => track.sampleRate)
+        .filter((value): value is number => typeof value === 'number' && value > 0)
     )
-  }
+  ].sort((left, right) => left - right)
+  const bitDepths = [
+    ...new Set(
+      values
+        .map((track) => track.bitDepth)
+        .filter((value): value is number => typeof value === 'number' && value > 0)
+    )
+  ].sort((left, right) => left - right)
+  const folders = [
+    ...new Set(values.map(trackFolder).filter((value): value is string => !!value))
+  ].sort((left, right) => left.localeCompare(right, 'zh'))
+  const providers = [...new Set(values.map((track) => getLogicalTrackSource(track)))].sort(
+    (left, right) => left.localeCompare(right, 'zh')
+  )
+  return { sampleRates, bitDepths, folders, providers }
 })
 
 const lastPlayedByTrackId = computed(() => {
@@ -244,6 +259,10 @@ const viewTitle = computed(() => {
       return albums.value.find((album) => album.id === id)?.name ?? '专辑'
     }
     return '专辑'
+  }
+  if (props.category === 'genres') {
+    if (props.filter && props.filter.startsWith('genre:')) return props.filter.slice(6)
+    return '流派'
   }
   if (props.category === 'playlists') {
     if (props.filter && props.filter.startsWith('playlist:')) return props.filter.slice(9)
@@ -360,6 +379,7 @@ const showTable = computed(() => {
 const currentGridItems = computed<GridItem[]>(() => {
   if (props.category === 'artists') return artists.value
   if (props.category === 'albums') return albums.value
+  if (props.category === 'genres') return genres.value
   if (props.category === 'playlists') return playlists.value
   if (props.category === 'folders') return folders.value
   return []
@@ -538,6 +558,7 @@ const {
   showContextMenu,
   menuX,
   menuY,
+  selectedTrack,
   showPlaylistSubmenu,
   showCreatePlaylistDialog,
   newPlaylistName,
@@ -814,6 +835,24 @@ function handleContextCreatePlaylist(): void {
   handleCreatePlaylistFromMenu()
 }
 
+const canContinueFromBookmark = computed(() => {
+  const track = selectedTrack.value
+  if (!track || selectedCount.value > 1) return false
+  return (
+    !!playbackBookmarks.resumeBookmarkFor(track) || playbackBookmarks.bookmarksFor(track).length > 0
+  )
+})
+
+function handleContinueFromBookmark(): void {
+  const track = selectedTrack.value
+  if (!track) return
+  const resume =
+    playbackBookmarks.resumeBookmarkFor(track) ?? playbackBookmarks.bookmarksFor(track)[0]
+  if (!resume) return
+  closeContextMenu()
+  playTrackFromPosition(track, resume.positionSeconds, displayTracks.value)
+}
+
 function handleToolbarRemoveFromLibrary(): void {
   void runLocalLibraryRemoval('library')
 }
@@ -856,6 +895,7 @@ const {
   gridTotalCount,
   visibleArtists,
   visibleAlbums,
+  visibleGenres,
   visiblePlaylists,
   visibleFolders,
   localTransitionName,
@@ -926,6 +966,10 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
             <p class="empty-text">暂无专辑</p>
             <p class="empty-hint">通过歌单「添加文件夹」导入音乐</p>
           </div>
+          <div v-else-if="category === 'genres' && genres.length === 0" class="empty-state">
+            <p class="empty-text">暂无流派</p>
+            <p class="empty-hint">导入带流派标签的音乐，或完整重扫媒体库以回填</p>
+          </div>
           <div v-else-if="category === 'playlists' && playlists.length === 0" class="empty-state">
             <p class="empty-text">暂无歌单</p>
             <p class="empty-hint">点击下方卡片创建你的第一个歌单</p>
@@ -969,6 +1013,30 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 </div>
                 <div class="album-name">{{ album.name }}</div>
                 <div class="album-count">{{ album.trackCount }} 首</div>
+              </div>
+            </template>
+            <!-- Genre Cards -->
+            <template v-if="category === 'genres'">
+              <div
+                v-for="genre in visibleGenres"
+                :key="genre.name"
+                class="artist-card"
+                @click="emit('selectView', 'genres', `genre:${genre.name}`)"
+              >
+                <CoverImg
+                  v-if="genre.cover"
+                  :cover="genre.cover"
+                  class="artist-cover"
+                  alt="cover"
+                />
+                <div v-else class="artist-cover-placeholder">
+                  <i class="pi pi-tags" style="font-size: 28px; color: #bbb"></i>
+                </div>
+                <div class="artist-name">{{ genre.name }}</div>
+                <div class="artist-count">{{ genre.trackCount }} 首</div>
+              </div>
+              <div v-if="renderedGridCount < gridTotalCount" class="grid-loading-more">
+                正在加载更多流派...
               </div>
             </template>
             <!-- Playlist Cards -->
@@ -1574,6 +1642,14 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 <div v-if="selectedCount <= 1" class="menu-item" @click="handleOpenFolder">
                   <i class="pi pi-folder-open"></i>
                   <span>打开文件所在位置</span>
+                </div>
+                <div
+                  v-if="canContinueFromBookmark"
+                  class="menu-item"
+                  @click="handleContinueFromBookmark"
+                >
+                  <i class="pi pi-bookmark"></i>
+                  <span>从书签继续</span>
                 </div>
                 <div
                   class="menu-item"

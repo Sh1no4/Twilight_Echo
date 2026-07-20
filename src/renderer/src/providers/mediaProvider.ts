@@ -14,6 +14,8 @@ export type MediaProviderCapability =
 export interface MediaProviderLyrics {
   lyrics: string | null
   translatedLyrics: string | null
+  /** Optional word-level payload (e.g. NetEase YRC). Prefer for timed display when present. */
+  wordLyrics?: string | null
 }
 
 export interface PlaybackUrlOptions {

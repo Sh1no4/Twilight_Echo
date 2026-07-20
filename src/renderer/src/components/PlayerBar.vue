@@ -67,6 +67,14 @@ const {
   next,
   prev,
   seek,
+  abLoopA,
+  abLoopB,
+  toggleAbLoopAtCurrentTime,
+  clearAbLoop,
+  resumeOffer,
+  acceptResumeOffer,
+  dismissResumeOffer,
+  addManualBookmarkAtCurrentTime,
   playTrack,
   enqueueTrack,
   playNextTrack,
@@ -165,6 +173,41 @@ function onCoverClick(): void {
 function onProgressInput(event: Event): void {
   const target = event.target as HTMLInputElement
   seek(Number(target.value))
+}
+
+const abLoopTitle = computed(() => {
+  if (abLoopA.value == null) return '设置 A-B 循环起点'
+  if (abLoopB.value == null) return '设置 A-B 循环终点（右键清除）'
+  return '清除 A-B 循环（右键也可清除）'
+})
+
+const abLoopRangeStyle = computed(() => {
+  const total = duration.value || 1
+  const a = Math.max(0, Math.min(abLoopA.value ?? 0, total))
+  const b = Math.max(a, Math.min(abLoopB.value ?? a, total))
+  return {
+    left: `${(a / total) * 100}%`,
+    width: `${((b - a) / total) * 100}%`
+  }
+})
+
+const activeResumeOffer = computed(() => {
+  const offer = resumeOffer.value
+  const track = currentTrack.value
+  if (!offer || !track || offer.trackId !== track.id) return null
+  return offer
+})
+
+function onAddBookmark(): void {
+  addManualBookmarkAtCurrentTime()
+}
+
+function onAcceptResume(): void {
+  acceptResumeOffer()
+}
+
+function onDismissResume(): void {
+  dismissResumeOffer()
 }
 
 function onVolumeInput(event: Event): void {
@@ -937,19 +980,57 @@ onMounted(() => {
           <button class="ctrl-btn" aria-label="下一首" @click="next">
             <img :src="nextTrackIcon" alt="下一首" />
           </button>
+          <button
+            class="ctrl-btn ab-loop-btn"
+            :class="{
+              'ab-loop-btn--partial': abLoopA != null && abLoopB == null,
+              'ab-loop-btn--active': abLoopA != null && abLoopB != null
+            }"
+            type="button"
+            :title="abLoopTitle"
+            :aria-label="abLoopTitle"
+            @click="toggleAbLoopAtCurrentTime"
+            @contextmenu.prevent="clearAbLoop"
+          >
+            A-B
+          </button>
+          <button
+            class="ctrl-btn bookmark-btn"
+            type="button"
+            title="添加书签"
+            aria-label="添加书签"
+            @click="onAddBookmark"
+          >
+            书签
+          </button>
+        </div>
+        <div v-if="activeResumeOffer" class="resume-offer" role="status">
+          <span class="resume-offer__text"
+            >从 {{ formatTime(activeResumeOffer.positionSeconds) }} 继续</span
+          >
+          <button type="button" class="resume-offer__action" @click="onAcceptResume">继续</button>
+          <button type="button" class="resume-offer__dismiss" @click="onDismissResume">忽略</button>
         </div>
         <div class="progress-area">
           <span class="time-label">{{ formatTime(currentTime) }}</span>
-          <input
-            type="range"
-            :value="currentTime"
-            min="0"
-            :max="duration || 1"
-            step="0.1"
-            class="progress-slider"
-            :style="{ '--range-value': `${duration ? (currentTime / duration) * 100 : 0}%` }"
-            @input="onProgressInput"
-          />
+          <div class="progress-slider-wrap">
+            <div
+              v-if="abLoopA != null && abLoopB != null && duration > 0"
+              class="ab-loop-range"
+              :style="abLoopRangeStyle"
+              aria-hidden="true"
+            ></div>
+            <input
+              type="range"
+              :value="currentTime"
+              min="0"
+              :max="duration || 1"
+              step="0.1"
+              class="progress-slider"
+              :style="{ '--range-value': `${duration ? (currentTime / duration) * 100 : 0}%` }"
+              @input="onProgressInput"
+            />
+          </div>
           <span class="time-label">{{ formatTime(duration) }}</span>
         </div>
       </div>

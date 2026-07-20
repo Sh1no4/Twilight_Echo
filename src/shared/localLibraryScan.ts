@@ -27,7 +27,8 @@ export interface LocalLibraryFileIndexDocument {
 }
 
 export interface LocalLibraryWatchChange {
-  kind: 'add' | 'remove'
+  /** File add/remove, or a directory/root reconcile that needs a complete identity snapshot. */
+  kind: 'add' | 'remove' | 'reconcile'
   path: string
 }
 
@@ -117,3 +118,20 @@ export type LocalLibraryScanWorkerMessage =
   | { kind: 'progress'; requestId: string; progress: Omit<LocalLibraryScanProgress, 'jobId' | 'mode'> }
   | { kind: 'response'; requestId: string; ok: true; value: LocalLibraryWorkerScanResult }
   | { kind: 'response'; requestId: string; ok: false; error: string }
+
+export type LibraryWatcherState = 'active' | 'degraded' | 'failed' | 'disabled'
+export type LibraryWatcherMode = 'recursive' | 'polling' | 'none'
+
+export interface LibraryWatcherFolderStatus {
+  folder: string
+  state: LibraryWatcherState
+  mode: LibraryWatcherMode
+  lastError: string | null
+  lastEventAt: string | null
+  lastReconcileAt: string | null
+}
+
+export interface LibraryWatcherStatusSnapshot {
+  enabled: boolean
+  folders: LibraryWatcherFolderStatus[]
+}

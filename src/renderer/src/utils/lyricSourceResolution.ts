@@ -12,6 +12,8 @@ export interface ResolveLyricsWithSourcesOptions {
   track: Track
   loadLocalLyrics?: () => Promise<string | null>
   loadProviderLyrics?: () => Promise<MediaProviderLyrics>
+  /** Final fallback when embedded/local/provider all miss. */
+  loadOnlineLyrics?: () => Promise<string | null>
 }
 
 export async function resolveLyricsWithSources(
@@ -40,12 +42,29 @@ export async function resolveLyricsWithSources(
         lyricsSource = 'provider'
       }
     }
+    // Prefer word-level timings when they come from the provider path only —
+    // never overwrite local/embedded lyrics with provider word lyrics.
+    const word = normalizeLyricValue(providerLyrics.wordLyrics)
+    if (!lyrics && word) {
+      lyrics = word
+      lyricsSource = 'provider'
+    } else if (lyricsSource === 'provider' && word) {
+      lyrics = word
+    }
     if (!translatedLyrics) {
       const providerTranslation = normalizeLyricValue(providerLyrics.translatedLyrics)
       if (providerTranslation) {
         translatedLyrics = providerTranslation
         translatedLyricsSource = 'provider'
       }
+    }
+  }
+
+  if (!lyrics && options.loadOnlineLyrics) {
+    const onlineLyrics = normalizeLyricValue(await loadOptionalLyrics(options.loadOnlineLyrics))
+    if (onlineLyrics) {
+      lyrics = onlineLyrics
+      lyricsSource = 'online'
     }
   }
 
@@ -76,6 +95,6 @@ async function loadOptionalProviderLyrics(
   try {
     return await loader()
   } catch {
-    return { lyrics: null, translatedLyrics: null }
+    return { lyrics: null, translatedLyrics: null, wordLyrics: null }
   }
 }

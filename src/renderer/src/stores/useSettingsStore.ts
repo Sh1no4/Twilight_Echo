@@ -103,6 +103,7 @@ const fallbackSettings: AppSettings = {
   lyricFontSize: 18,
   libraryFolders: [],
   watchLibrary: true,
+  onlineLyricsFallback: false,
   smtcEnabled: true,
   discordRpcEnabled: false,
   accentColor: 'blue',

@@ -294,7 +294,7 @@ export interface TwilightMediaProviderRegistration {
   getLyrics?(
     track: Track,
     context?: TwilightProviderRequestContext
-  ): Promise<{ lyrics: string | null; translatedLyrics: string | null }>
+  ): Promise<{ lyrics: string | null; translatedLyrics: string | null; wordLyrics?: string | null }>
   searchSongs?(
     keywords: string,
     limit?: number,

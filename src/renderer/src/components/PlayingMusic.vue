@@ -18,7 +18,7 @@ import { useVisualizationStore } from '../stores/useVisualizationStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useLyricsManagement } from '../stores/lyricsManagement'
 import { useCover } from '../utils/coverLoader'
-import { buildLyricLines, findActiveLyricIndex } from '../utils/lyrics'
+import { buildLyricLines, findActiveLyricIndex, findActiveWordIndex } from '../utils/lyrics'
 import type { LyricLine } from '../utils/lyrics'
 import { getTrackSource, shouldReserveLyricsColumn } from '../utils/nowPlayingLayout'
 import type { LyricSource } from '../types/music'
@@ -327,6 +327,39 @@ async function saveDraftAsLrc(): Promise<void> {
   }
 }
 
+const lyricSearching = ref(false)
+
+async function searchOnlineIntoDraft(): Promise<void> {
+  const track = currentTrack.value
+  if (!track || lyricSearching.value) return
+  lyricSearching.value = true
+  lyricManagerError.value = ''
+  lyricManagerNotice.value = ''
+  try {
+    const result = await window.api.data.searchOnlineLyrics({
+      title: track.title,
+      artist: track.artist,
+      album: track.album || undefined,
+      durationSeconds:
+        typeof track.duration === 'number' && Number.isFinite(track.duration)
+          ? track.duration
+          : undefined
+    })
+    const text = result.best?.syncedLyrics ?? result.best?.plainLyrics ?? null
+    if (!text) {
+      lyricManagerNotice.value = '未找到匹配的在线歌词'
+      return
+    }
+    draftOriginal.value = text
+    draftSource.value = 'manual'
+    lyricManagerNotice.value = `已填入在线歌词：${result.best?.title ?? ''} - ${result.best?.artist ?? ''}`
+  } catch (error) {
+    lyricManagerError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    lyricSearching.value = false
+  }
+}
+
 async function updateGlobalLyricOffset(event: Event): Promise<void> {
   const value = Number((event.target as HTMLInputElement).value)
   lyricManagerError.value = ''
@@ -357,8 +390,21 @@ function getLyricSourceLabel(source: LyricSource | null | undefined, label: stri
         ? '本地 LRC'
         : source === 'manual'
           ? 'Manual'
-          : 'Provider'
+          : source === 'online'
+            ? '在线'
+            : 'Provider'
   return `${label}: ${sourceLabel}`
+}
+
+function activeWordIndexForLine(line: LyricLine, lineIndex: number): number {
+  if (lineIndex !== activeLyricIndex.value || !line.words?.length) return -1
+  return findActiveWordIndex(line.words, currentTime.value + currentLyricOffsetSeconds.value)
+}
+
+function wordClass(line: LyricLine, lineIndex: number, wordIndex: number): string {
+  if (lineIndex !== activeLyricIndex.value) return 'lyric-word'
+  const active = activeWordIndexForLine(line, lineIndex)
+  return active === wordIndex ? 'lyric-word lyric-word--active' : 'lyric-word'
 }
 
 function setLyricLineRef(index: number, el: Element | ComponentPublicInstance | null): void {
@@ -643,7 +689,15 @@ onBeforeUnmount(() => {
                 :disabled="!line.timed"
                 @click="jumpToLyric(line.time)"
               >
-                <span v-if="line.text" class="lyric-text">{{ line.text }}</span>
+                <span v-if="line.words?.length" class="lyric-text lyric-text--words">
+                  <span
+                    v-for="(word, wi) in line.words"
+                    :key="`${i}-${wi}-${word.time}`"
+                    :class="wordClass(line, i, wi)"
+                    >{{ word.text }}</span
+                  >
+                </span>
+                <span v-else-if="line.text" class="lyric-text">{{ line.text }}</span>
                 <span v-if="line.translation" class="lyric-translation">{{
                   line.translation
                 }}</span>
@@ -728,6 +782,9 @@ onBeforeUnmount(() => {
             </button>
             <button type="button" :disabled="lyricImporting" @click="importLyricsIntoDraft">
               {{ lyricImporting ? 'Importing...' : 'Import LRC' }}
+            </button>
+            <button type="button" :disabled="lyricSearching" @click="searchOnlineIntoDraft">
+              {{ lyricSearching ? 'Searching...' : 'Search online' }}
             </button>
           </div>
           <label class="lyric-editor-label"
@@ -1304,6 +1361,25 @@ onBeforeUnmount(() => {
 .lyric-row.active .lyric-text {
   font-size: calc(var(--te-lyric-font-size, 18px) + 4px);
   font-weight: 600;
+}
+
+.lyric-text--words {
+  display: inline;
+}
+
+.lyric-word {
+  transition: color 0.12s ease, opacity 0.12s ease;
+}
+
+.lyric-row.active .lyric-word {
+  opacity: 0.55;
+}
+
+.lyric-word--active {
+  opacity: 1 !important;
+  color: color-mix(in srgb, var(--accent-color, #ffd700) 85%, #fff);
+  font-weight: 700;
+  text-shadow: 0 0 12px color-mix(in srgb, var(--accent-color, #ffd700) 45%, transparent);
 }
 
 .lyric-translation {

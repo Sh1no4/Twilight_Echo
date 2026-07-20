@@ -119,6 +119,24 @@ test('complete snapshots infer removals while partial watcher batches remove onl
   assert.deepEqual(cueDependencyRemoval.removedFilePaths, [])
 })
 
+test('directory-level reconcile still uses complete snapshot removals when planner receives a full identity set', () => {
+  const present = identity('C:\\music\\keep.flac', 1, 1)
+  const missing = identity('C:\\music\\gone.flac', 2, 2)
+  const plan = createLocalLibraryScanPlan({
+    mode: 'watch',
+    identities: [present],
+    knownIdentities: [present, missing],
+    knownTrackPaths: [present.filePath, missing.filePath],
+    excludedPaths: [],
+    changes: [{ kind: 'reconcile', path: 'C:\\music' }],
+    completeIdentitySnapshot: true
+  })
+
+  assert.deepEqual(plan.removedFilePaths, [missing.filePath])
+  assert.deepEqual(plan.parseFilePaths, [])
+  assert.equal(plan.skippedUnchanged, 1)
+})
+
 test('startup planning remains linear for 25000 indexed files', () => {
   const entries = Array.from({ length: 25_000 }, (_, index) =>
     identity(`C:\\music\\track-${index}.flac`, index + 1, index + 0.5)

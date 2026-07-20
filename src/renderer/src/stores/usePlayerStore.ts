@@ -61,6 +61,7 @@ import {
 import { type SleepTimerMode, type SleepTimerState } from '../../../shared/sleepTimer.ts'
 import { createSleepTimerController, getRestorableSleepTimerState } from './sleepTimerController.ts'
 import { createSleepTimerFadeController } from './sleepTimerFade.ts'
+import { usePlaybackBookmarks } from './playbackBookmarks'
 
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
@@ -359,6 +360,11 @@ const currentTime = ref(0)
 const duration = ref(0)
 const volume = ref(0.7)
 const muted = ref(false)
+/** A-B loop points in seconds relative to the logical track start. Null = unset. */
+const abLoopA = ref<number | null>(null)
+const abLoopB = ref<number | null>(null)
+/** Offer to resume a long track from a saved resume bookmark. */
+const resumeOffer = ref<{ trackId: string; positionSeconds: number; label: string } | null>(null)
 const lastAudibleVolume = ref(0.7)
 const sleepTimerState = ref<SleepTimerState | null>(null)
 const sleepTimerNotice = ref<string | null>(null)
@@ -1399,6 +1405,8 @@ let pendingTimePublishTimer: number | null = null
 let advancingFromEndedTrackId = ''
 let autoAdvanceInFlight = false
 let loadedTrackId = ''
+/** Last track that successfully entered the playing pipeline (identity for resume bookmarks). */
+let lastActiveTrack: Track | null = null
 let restoredPlaybackPending = false
 let restoredPlaybackPosition = 0
 let pendingLoadStartTime = 0
@@ -1420,6 +1428,7 @@ function publishCurrentTime(time: number): void {
   latestPlaybackTime = time
   currentTime.value = time
   lastTimePublishAt = getNowMs()
+  enforceAbLoop(time)
 }
 
 function publishLatestCurrentTime(): void {
@@ -1434,6 +1443,7 @@ function setCurrentTimeImmediate(time: number): void {
 
 function setCurrentTimeThrottled(time: number): void {
   latestPlaybackTime = time
+  enforceAbLoop(time)
   const now = getNowMs()
   const remainingMs = TIME_UPDATE_INTERVAL_MS - (now - lastTimePublishAt)
 
@@ -1709,7 +1719,12 @@ async function ensureCurrentTrackLyricsLoaded(
     (requestedSource === 'provider' ||
       resolverTrack.lyrics == null ||
       resolverTrack.translatedLyrics == null)
-  if (!canLoadLocalLyrics && !canLoadProviderLyrics) {
+  const canLoadOnlineLyrics =
+    requestedSource === 'auto' &&
+    appSettings.value?.onlineLyricsFallback === true &&
+    !!resolverTrack.title?.trim() &&
+    !!resolverTrack.artist?.trim()
+  if (!canLoadLocalLyrics && !canLoadProviderLyrics && !canLoadOnlineLyrics) {
     if (currentTrack.value?.id === triggerTrack.id && resolverTrack !== triggerTrack) {
       const updatedTrack = { ...resolverTrack }
       currentTrack.value = updatedTrack
@@ -1730,6 +1745,20 @@ async function ensureCurrentTrackLyricsLoaded(
       ? async () => {
           await syncPluginProviders()
           return useMediaProviders().resolveLyrics(resolverTrack)
+        }
+      : undefined,
+    loadOnlineLyrics: canLoadOnlineLyrics
+      ? async () => {
+          const result = await window.api.data.searchOnlineLyrics({
+            title: resolverTrack.title,
+            artist: resolverTrack.artist,
+            album: resolverTrack.album || undefined,
+            durationSeconds:
+              typeof resolverTrack.duration === 'number' && Number.isFinite(resolverTrack.duration)
+                ? resolverTrack.duration
+                : undefined
+          })
+          return result.best?.syncedLyrics ?? result.best?.plainLyrics ?? null
         }
       : undefined
   })
@@ -2141,7 +2170,82 @@ function scheduleCrossfadeIfNeeded(): void {
   )
 }
 
+function maybeRecordResumeBookmark(track: Track | null | undefined, position: number): void {
+  if (!track) return
+  const bookmarks = usePlaybackBookmarks()
+  void bookmarks.ensureLoaded().then(() => {
+    if (!bookmarks.shouldOfferLongTrackResume(track)) return
+    if (!Number.isFinite(position) || position < 15) return
+    const dur = track.duration
+    if (typeof dur === 'number' && Number.isFinite(dur) && position > dur - 10) return
+    void bookmarks.addBookmark(track, position, { kind: 'resume' }).catch(() => {})
+  })
+}
+
+function dismissResumeOffer(): void {
+  resumeOffer.value = null
+}
+
+function acceptResumeOffer(): void {
+  const offer = resumeOffer.value
+  if (!offer) return
+  const track = currentTrack.value
+  if (!track || track.id !== offer.trackId) {
+    resumeOffer.value = null
+    return
+  }
+  resumeOffer.value = null
+  seekPlayback(offer.positionSeconds)
+}
+
+function addManualBookmarkAtCurrentTime(): void {
+  const track = currentTrack.value
+  if (!track) return
+  const position = latestPlaybackTime > 0 ? latestPlaybackTime : currentTime.value
+  void usePlaybackBookmarks()
+    .addBookmark(track, position, { kind: 'manual' })
+    .catch(() => {})
+}
+
+function maybeOfferResumeForTrack(track: Track, normalizedStartTime: number): void {
+  if (normalizedStartTime > 5) {
+    if (resumeOffer.value?.trackId === track.id) resumeOffer.value = null
+    return
+  }
+  void usePlaybackBookmarks()
+    .ensureLoaded()
+    .then(() => {
+      if (currentTrack.value?.id !== track.id) return
+      const bm = usePlaybackBookmarks()
+      if (!bm.shouldOfferLongTrackResume(track)) return
+      const resume = bm.resumeBookmarkFor(track)
+      if (!resume || resume.positionSeconds < 15) return
+      resumeOffer.value = {
+        trackId: track.id,
+        positionSeconds: resume.positionSeconds,
+        label: resume.label
+      }
+    })
+    .catch(() => {})
+}
+
 async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
+  // Capture previous playback identity before this load mutates state.
+  // Callers (playTrack / next / previous) often set currentTrack and even replace
+  // the queue before invoking loadAndPlay, so prefer lastActiveTrack.
+  const previousTrack =
+    lastActiveTrack && lastActiveTrack.id !== track.id
+      ? lastActiveTrack
+      : currentTrack.value && currentTrack.value.id !== track.id
+        ? currentTrack.value
+        : null
+  if (previousTrack && previousTrack.id !== track.id) {
+    maybeRecordResumeBookmark(previousTrack, latestPlaybackTime)
+  }
+  if (resumeOffer.value && resumeOffer.value.trackId !== track.id) {
+    resumeOffer.value = null
+  }
+
   const normalizedStartTime = clampCuePlaybackPosition(track, startTime)
   const loadToken = ++activeLoadToken
   clearPlaybackToggleIntent()
@@ -2155,6 +2259,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   pendingLoadStartTime = normalizedStartTime
   duration.value = cueDuration(track)
   setCurrentTimeImmediate(normalizedStartTime)
+  clearAbLoop()
   clearCrossfadeTimer()
 
   try {
@@ -2237,12 +2342,14 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
     advancingFromEndedTrackId = ''
     autoAdvanceInFlight = false
     loadedTrackId = track.id
+    lastActiveTrack = track
     restoredPlaybackPending = false
     restoredPlaybackPosition = 0
     setCurrentTimeImmediate(normalizedStartTime)
     isLoading.value = false
     isPlaying.value = true
     startVisualizationPolling()
+    maybeOfferResumeForTrack(track, normalizedStartTime)
   } catch (err) {
     if (!isActiveLoad(loadToken, track)) return
     clearNativePlaybackInfoIntentForLoad(loadToken)
@@ -2291,6 +2398,9 @@ async function togglePlayState(): Promise<void> {
   try {
     if (nativePlaybackActive) {
       const nextPlaying = !isPlaying.value
+      if (isPlaying.value && !nextPlaying) {
+        maybeRecordResumeBookmark(track, latestPlaybackTime)
+      }
       isPlaying.value = nextPlaying
       setPlaybackToggleIntent(nextPlaying)
       await window.api.audioEngine.togglePause()
@@ -2302,6 +2412,7 @@ async function togglePlayState(): Promise<void> {
       if (audio.paused) {
         await audio.play()
       } else {
+        maybeRecordResumeBookmark(track, latestPlaybackTime)
         audio.pause()
       }
     }
@@ -2366,6 +2477,51 @@ function seekPlayback(time: number): void {
     window.api.audioEngine.seek(position).catch(() => {})
   } else if (playbackAudio && track) {
     playbackAudio.currentTime = rendererAudioAbsolutePositionForTrack(position, track)
+  }
+}
+
+function clearAbLoop(): void {
+  abLoopA.value = null
+  abLoopB.value = null
+}
+
+function setAbLoopPoint(point: 'a' | 'b', time = latestPlaybackTime): void {
+  const position = Math.max(0, Number.isFinite(time) ? time : 0)
+  if (point === 'a') {
+    abLoopA.value = position
+    if (abLoopB.value != null && abLoopB.value <= position) abLoopB.value = null
+    return
+  }
+  if (abLoopA.value == null) abLoopA.value = 0
+  if (position <= (abLoopA.value ?? 0)) return
+  abLoopB.value = position
+}
+
+function toggleAbLoopAtCurrentTime(): void {
+  if (abLoopA.value == null) {
+    setAbLoopPoint('a')
+    return
+  }
+  if (abLoopB.value == null) {
+    setAbLoopPoint('b')
+    return
+  }
+  clearAbLoop()
+}
+
+let abLoopEnforcing = false
+function enforceAbLoop(time: number): void {
+  if (abLoopEnforcing) return
+  const a = abLoopA.value
+  const b = abLoopB.value
+  if (a == null || b == null || b <= a) return
+  if (time + 0.02 >= b) {
+    abLoopEnforcing = true
+    try {
+      seekPlayback(a)
+    } finally {
+      abLoopEnforcing = false
+    }
   }
 }
 
@@ -2961,6 +3117,8 @@ export function usePlayerStore(): {
   duration: Ref<number>
   volume: Ref<number>
   muted: Ref<boolean>
+  abLoopA: Ref<number | null>
+  abLoopB: Ref<number | null>
   sleepTimerState: Ref<SleepTimerState | null>
   sleepTimerNotice: Ref<string | null>
   progress: ComputedRef<number>
@@ -2998,10 +3156,18 @@ export function usePlayerStore(): {
     createPlaylistWithTracks: (name: string, tracks: Track[]) => string
   ) => string
   playTrack: (track: Track, trackList?: Track[]) => void
+  playTrackFromPosition: (track: Track, positionSeconds: number, trackList?: Track[]) => void
   togglePlay: () => Promise<void>
   next: () => void
   prev: () => void
   seek: (time: number) => void
+  setAbLoopPoint: (point: 'a' | 'b', time?: number) => void
+  toggleAbLoopAtCurrentTime: () => void
+  clearAbLoop: () => void
+  resumeOffer: Ref<{ trackId: string; positionSeconds: number; label: string } | null>
+  acceptResumeOffer: () => void
+  dismissResumeOffer: () => void
+  addManualBookmarkAtCurrentTime: () => void
   setVolume: (vol: number) => void
   toggleMute: () => void
   configureSleepTimer: (mode: SleepTimerMode, minutes?: number) => void
@@ -3048,6 +3214,28 @@ export function usePlayerStore(): {
     if (queueIndex.value === -1) queueIndex.value = 0
     currentTrack.value = track
     void loadAndPlay(track)
+  }
+
+  function playTrackFromPosition(
+    track: Track,
+    positionSeconds: number,
+    trackList?: Track[]
+  ): void {
+    if (trackList) {
+      const snapshots = toPlaybackQueueSnapshots(trackList)
+      originalQueue.value = snapshots
+      if (playMode.value === 'shuffle') {
+        queue.value = shuffleArray(snapshots)
+        queueIndex.value = queue.value.findIndex((t) => t.id === track.id)
+      } else {
+        queue.value = [...snapshots]
+        queueIndex.value = snapshots.findIndex((t) => t.id === track.id)
+      }
+    }
+    if (queueIndex.value === -1) queueIndex.value = 0
+    currentTrack.value = track
+    const start = Number.isFinite(positionSeconds) ? Math.max(0, positionSeconds) : 0
+    void loadAndPlay(track, start)
   }
 
   function setPlayMode(mode: PlayMode): void {
@@ -3330,6 +3518,8 @@ export function usePlayerStore(): {
     duration,
     volume,
     muted,
+    abLoopA,
+    abLoopB,
     sleepTimerState,
     sleepTimerNotice,
     progress,
@@ -3364,10 +3554,18 @@ export function usePlayerStore(): {
     reorderQueue,
     saveQueueAsPlaylist,
     playTrack,
+    playTrackFromPosition,
     togglePlay,
     next,
     prev,
     seek,
+    setAbLoopPoint,
+    toggleAbLoopAtCurrentTime,
+    clearAbLoop,
+    resumeOffer,
+    acceptResumeOffer,
+    dismissResumeOffer,
+    addManualBookmarkAtCurrentTime,
     setVolume,
     toggleMute,
     configureSleepTimer,

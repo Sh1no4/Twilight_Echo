@@ -614,6 +614,8 @@ interface AppSettings {
   lyricFontSize: number
   libraryFolders: string[]
   watchLibrary: boolean
+  /** When true, empty local/provider lyrics may fall back to LRCLIB online search. */
+  onlineLyricsFallback: boolean
   smtcEnabled: boolean
   discordRpcEnabled: boolean
   accentColor: string
@@ -1354,6 +1356,7 @@ interface WindowAPI {
     scanStartup: () => Promise<LocalLibraryScanUpdate>
     scanFull: () => Promise<LocalLibraryScanUpdate>
     getScanStatus: () => Promise<LocalLibraryScanStatus>
+    getWatcherStatus: () => Promise<import('../shared/localLibraryScan.ts').LibraryWatcherStatusSnapshot>
     pauseScan: () => Promise<boolean>
     resumeScan: () => Promise<boolean>
     cancelScan: () => Promise<boolean>
@@ -1425,11 +1428,50 @@ interface WindowAPI {
     getLyrics: (dir: string, fileName: string, filePath?: string) => Promise<string | null>
     importLyrics: () => Promise<string | null>
     saveLyrics: (contents: string) => Promise<string | null>
+    searchOnlineLyrics: (query: {
+      title: string
+      artist: string
+      album?: string
+      durationSeconds?: number
+    }) => Promise<{
+      query: { title: string; artist: string; album?: string; durationSeconds?: number }
+      candidates: Array<{
+        id: number | string
+        title: string
+        artist: string
+        album: string
+        durationSeconds: number | null
+        score: number
+        syncedLyrics: string | null
+        plainLyrics: string | null
+        source: 'lrclib'
+      }>
+      best: {
+        id: number | string
+        title: string
+        artist: string
+        album: string
+        durationSeconds: number | null
+        score: number
+        syncedLyrics: string | null
+        plainLyrics: string | null
+        source: 'lrclib'
+      } | null
+    }>
     saveLyricsManagement: (
       document: LyricsManagementDocument,
       expectedRevision: number
     ) => Promise<VersionedDataEnvelope<LyricsManagementDocument>>
     loadLyricsManagement: () => Promise<VersionedDataEnvelope<LyricsManagementDocument> | null>
+    loadPlaybackBookmarks: () => Promise<
+      VersionedDataEnvelope<import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument> | null
+    >
+    savePlaybackBookmarks: (
+      document: import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument,
+      expectedRevision: number
+    ) => Promise<
+      VersionedDataEnvelope<import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument>
+    >
     savePlaybackSession: (
       session: PlaybackSession,
       expectedRevision: number
@@ -1500,8 +1542,8 @@ interface WindowAPI {
     updateTrack: (data: {
       lyrics: string | null
       translatedLyrics?: string | null
-      lyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | null
-      translatedLyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | null
+      lyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | 'online' | null
+      translatedLyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | 'online' | null
       title?: string
       artist?: string
     }) => void

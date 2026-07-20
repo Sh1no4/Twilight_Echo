@@ -115,6 +115,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lyricFontSize: 18,
   libraryFolders: [],
   watchLibrary: true,
+  onlineLyricsFallback: false,
   smtcEnabled: true,
   discordRpcEnabled: false,
   accentColor: 'blue',
@@ -630,6 +631,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     lyricFontSize: clampNumber(settings.lyricFontSize, 14, 28, DEFAULT_SETTINGS.lyricFontSize),
     libraryFolders: normalizeStringArray(settings.libraryFolders),
     watchLibrary: settings.watchLibrary !== false,
+    onlineLyricsFallback: settings.onlineLyricsFallback === true,
     smtcEnabled: settings.smtcEnabled !== false,
     discordRpcEnabled: settings.discordRpcEnabled === true,
     accentColor: normalizeAccentColor(

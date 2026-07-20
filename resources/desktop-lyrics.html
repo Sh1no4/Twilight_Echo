@@ -53,6 +53,16 @@
   .lyric-line.empty {
     opacity: 0.2;
   }
+  .lyric-word {
+    opacity: 0.55;
+    transition: opacity 0.15s ease;
+  }
+  .lyric-line.active .lyric-word {
+    opacity: 0.45;
+  }
+  .lyric-line.active .lyric-word.active {
+    opacity: 1;
+  }
 
   #toolbar {
     position: absolute;
@@ -110,6 +120,7 @@
   var mergedLines = [];
   var currentTime = 0;
   var activeIndex = -1;
+  var activeWordIndex = -1;
   var settings = null;
   var displayLines = [];
 
@@ -119,7 +130,45 @@
   var songInfoEl = document.getElementById('song-info');
   var btnClose = document.getElementById('btn-close');
 
-  // ── LRC Parser ──
+  // ── LRC / YRC Parser ──
+  function looksLikeYrc(lyrics) {
+    return typeof lyrics === 'string' && /^\[\d+,\d+\]/m.test(lyrics) && /\(\d+,\d+,\d+\)/.test(lyrics);
+  }
+
+  function parseYrc(yrc) {
+    if (!yrc) return [];
+    var lines = [];
+    var rawLines = yrc.split('\n');
+    var lineRe = /^\[(\d+),(\d+)\](.*)$/;
+    var wordRe = /\((\d+),(\d+),\d+\)([^(]*)/g;
+    for (var ri = 0; ri < rawLines.length; ri++) {
+      var trimmed = rawLines[ri].trim();
+      if (!trimmed) continue;
+      var m = lineRe.exec(trimmed);
+      if (!m) continue;
+      var startMs = parseInt(m[1], 10);
+      var rest = m[3] || '';
+      var words = [];
+      var text = '';
+      wordRe.lastIndex = 0;
+      var wm;
+      while ((wm = wordRe.exec(rest)) !== null) {
+        var wordStart = parseInt(wm[1], 10) / 1000;
+        var wordText = wm[3] || '';
+        words.push({ time: wordStart, text: wordText });
+        text += wordText;
+      }
+      if (!text) continue;
+      lines.push({
+        time: startMs / 1000,
+        text: text,
+        words: words.length ? words : null
+      });
+    }
+    lines.sort(function (a, b) { return a.time - b.time; });
+    return lines;
+  }
+
   function parseLrc(lrc) {
     if (!lrc) return [];
     var lines = [];
@@ -138,7 +187,8 @@
         if (match[3]) { ms = parseInt(match[3], 10); if (match[3].length === 2) ms *= 10; }
         timestamps.push(min * 60 + sec + ms / 1000);
       }
-      var text = trimmed.replace(lineRe, '').trim();
+      // Strip line timestamps and Enhanced LRC word tags like <mm:ss.xx>.
+      var text = trimmed.replace(lineRe, '').replace(/<[^>]+>/g, '').trim();
       if (!text || timestamps.length === 0) continue;
       for (var ti = 0; ti < timestamps.length; ti++) lines.push({ time: timestamps[ti], text: text });
     }
@@ -152,15 +202,21 @@
     var metadataTagRe = /^\[[a-zA-Z]+:.*\]$/;
     return lyrics
       .split('\n')
-      .map(function (line) { return line.replace(timeTagRe, '').trim(); })
+      .map(function (line) {
+        return line.replace(timeTagRe, '').replace(/<[^>]+>/g, '').trim();
+      })
       .filter(function (line) { return line.length > 0 && !metadataTagRe.test(line); });
   }
 
   function mergeLyrics(original, translated) {
     if (original.length === 0) {
-      return translated.map(function (l) { return { time: l.time, text: l.text, translation: null }; });
+      return translated.map(function (l) {
+        return { time: l.time, text: l.text, translation: null, words: l.words || null };
+      });
     }
-    var result = original.map(function (l) { return { time: l.time, text: l.text, translation: null }; });
+    var result = original.map(function (l) {
+      return { time: l.time, text: l.text, translation: null, words: l.words || null };
+    });
     if (translated.length > 0) {
       for (var i = 0; i < translated.length; i++) {
         var t = translated[i];
@@ -175,7 +231,7 @@
   }
 
   function buildMergedLyrics(lyrics, translatedLyrics) {
-    var original = parseLrc(lyrics);
+    var original = looksLikeYrc(lyrics) ? parseYrc(lyrics) : parseLrc(lyrics);
     var translated = parseLrc(translatedLyrics);
     if (original.length > 0 || translated.length > 0) return mergeLyrics(original, translated);
 
@@ -186,7 +242,8 @@
       return {
         time: null,
         text: line,
-        translation: plain.length > 0 ? plainTranslated[index] || null : null
+        translation: plain.length > 0 ? plainTranslated[index] || null : null,
+        words: null
       };
     });
   }
@@ -195,6 +252,7 @@
     if (source === 'embedded') return '内嵌';
     if (source === 'local') return '本地 LRC';
     if (source === 'provider') return 'Provider';
+    if (source === 'online') return '在线';
     return '';
   }
 
@@ -269,7 +327,14 @@
       div.style.color = isActive ? settings.highlightColor : settings.color;
       div.style.textShadow = shadow;
 
-      if (line.text) {
+      if (isActive && line.words && line.words.length) {
+        for (var wi = 0; wi < line.words.length; wi++) {
+          var span = document.createElement('span');
+          span.className = 'lyric-word' + (wi === activeWordIndex ? ' active' : '');
+          span.textContent = line.words[wi].text;
+          div.appendChild(span);
+        }
+      } else if (line.text) {
         div.textContent = line.text;
       } else {
         div.innerHTML = '&nbsp;';
@@ -304,8 +369,17 @@
         break;
       }
     }
-    if (newActive !== activeIndex) {
+    var newWord = -1;
+    if (newActive >= 0 && mergedLines[newActive].words && mergedLines[newActive].words.length) {
+      var words = mergedLines[newActive].words;
+      for (var wi = 0; wi < words.length; wi++) {
+        if (words[wi].time <= currentTime) newWord = wi;
+        else break;
+      }
+    }
+    if (newActive !== activeIndex || newWord !== activeWordIndex) {
       activeIndex = newActive;
+      activeWordIndex = newWord;
       renderLines();
     }
   }
@@ -313,10 +387,11 @@
   // ── IPC via window.api ──
   api.onInitSettings(function (s) { applySettings(s); });
   api.onTrackUpdate(function (data) {
-    parsedLines = parseLrc(data.lyrics);
+    parsedLines = looksLikeYrc(data.lyrics) ? parseYrc(data.lyrics) : parseLrc(data.lyrics);
     translatedLines = parseLrc(data.translatedLyrics);
     mergedLines = buildMergedLyrics(data.lyrics, data.translatedLyrics);
     activeIndex = -1;
+    activeWordIndex = -1;
     var sourceLabel = buildSourceLabel(data);
     if (data.title) {
       songInfoEl.textContent =

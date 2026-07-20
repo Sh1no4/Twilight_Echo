@@ -153,6 +153,8 @@ export interface AppSettings {
   lyricFontSize: number
   libraryFolders: string[]
   watchLibrary: boolean
+  /** When true, empty local/provider lyrics may fall back to LRCLIB online search. */
+  onlineLyricsFallback: boolean
   smtcEnabled: boolean
   discordRpcEnabled: boolean
   accentColor: string

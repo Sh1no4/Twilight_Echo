@@ -111,3 +111,82 @@ test('lyric resolution can still use provider lyrics when local lookup fails', a
   assert.equal(result.translatedLyrics, '[00:01.00]Provider translation')
   assert.equal(result.translatedLyricsSource, 'provider')
 })
+
+test('lyric resolution falls back to online when local and provider miss', async () => {
+  let onlineCalls = 0
+  const result = await resolveLyricsWithSources({
+    track: localTrack,
+    loadLocalLyrics: async () => null,
+    loadProviderLyrics: async () => ({ lyrics: null, translatedLyrics: null }),
+    loadOnlineLyrics: async () => {
+      onlineCalls++
+      return '[00:01.00]Online lyric'
+    }
+  })
+
+  assert.equal(onlineCalls, 1)
+  assert.equal(result.lyrics, '[00:01.00]Online lyric')
+  assert.equal(result.lyricsSource, 'online')
+})
+
+test('lyric resolution does not call online when lyrics already present', async () => {
+  let onlineCalls = 0
+  const result = await resolveLyricsWithSources({
+    track: localTrack,
+    loadLocalLyrics: async () => '[00:01.00]Local lyric',
+    loadProviderLyrics: async () => ({ lyrics: null, translatedLyrics: null }),
+    loadOnlineLyrics: async () => {
+      onlineCalls++
+      return '[00:01.00]Online lyric'
+    }
+  })
+
+  assert.equal(onlineCalls, 0)
+  assert.equal(result.lyrics, '[00:01.00]Local lyric')
+  assert.equal(result.lyricsSource, 'local')
+})
+
+test('lyric resolution prefers provider wordLyrics when original provider lyrics empty', async () => {
+  const result = await resolveLyricsWithSources({
+    track: localTrack,
+    loadLocalLyrics: async () => null,
+    loadProviderLyrics: async () => ({
+      lyrics: null,
+      translatedLyrics: null,
+      wordLyrics: '[0,1000](0,500,0)Hello'
+    })
+  })
+
+  assert.equal(result.lyrics, '[0,1000](0,500,0)Hello')
+  assert.equal(result.lyricsSource, 'provider')
+})
+
+test('lyric resolution prefers provider wordLyrics over provider line lyrics', async () => {
+  const result = await resolveLyricsWithSources({
+    track: localTrack,
+    loadLocalLyrics: async () => null,
+    loadProviderLyrics: async () => ({
+      lyrics: '[00:01.00]Provider lyric',
+      translatedLyrics: null,
+      wordLyrics: '[0,1000](0,500,0)Word'
+    })
+  })
+
+  assert.equal(result.lyrics, '[0,1000](0,500,0)Word')
+  assert.equal(result.lyricsSource, 'provider')
+})
+
+test('lyric resolution does not overwrite local lyrics with provider wordLyrics', async () => {
+  const result = await resolveLyricsWithSources({
+    track: localTrack,
+    loadLocalLyrics: async () => '[00:01.00]Local lyric',
+    loadProviderLyrics: async () => ({
+      lyrics: '[00:01.00]Provider lyric',
+      translatedLyrics: null,
+      wordLyrics: '[0,1000](0,500,0)Word'
+    })
+  })
+
+  assert.equal(result.lyrics, '[00:01.00]Local lyric')
+  assert.equal(result.lyricsSource, 'local')
+})

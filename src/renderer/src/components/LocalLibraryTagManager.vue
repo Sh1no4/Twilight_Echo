@@ -78,6 +78,7 @@ watch(
     form.value.artist = track.artist
     form.value.album = track.album
     form.value.albumArtist = track.albumArtist ?? ''
+    form.value.genre = track.genre ?? ''
   },
   { immediate: true }
 )

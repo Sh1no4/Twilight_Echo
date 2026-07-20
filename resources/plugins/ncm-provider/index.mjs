@@ -1173,19 +1173,28 @@ function extractLyricText(data, key) {
 
 async function getLyrics(track) {
   const songId = getSongIdFromTrack(track)
-  if (songId == null) return { lyrics: null, translatedLyrics: null }
+  if (songId == null) return { lyrics: null, translatedLyrics: null, wordLyrics: null }
   try {
     const data = await requestAuthed(`/lyric/new?id=${songId}`)
-    const lyrics = extractLyricText(data, 'lrc')
+    const yrc = extractLyricText(data, 'yrc')
+    const lrc = extractLyricText(data, 'lrc')
     const translatedLyrics = extractLyricText(data, 'tlyric')
-    if (lyrics || translatedLyrics) return { lyrics, translatedLyrics }
+    // Prefer YRC as the timed display payload when available (word-level timings).
+    if (yrc || lrc || translatedLyrics) {
+      return {
+        lyrics: yrc || lrc,
+        translatedLyrics,
+        wordLyrics: yrc || null
+      }
+    }
     const data2 = await requestAuthed(`/lyric?id=${songId}`)
     return {
       lyrics: extractLyricText(data2, 'lrc'),
-      translatedLyrics: extractLyricText(data2, 'tlyric')
+      translatedLyrics: extractLyricText(data2, 'tlyric'),
+      wordLyrics: null
     }
   } catch {
-    return { lyrics: null, translatedLyrics: null }
+    return { lyrics: null, translatedLyrics: null, wordLyrics: null }
   }
 }
 

@@ -485,6 +485,57 @@ test('addTracks non-deferRebuild updates derived collections after flush', async
 
   assert.ok(store.artists.value.length > 0, 'artists should be populated')
   assert.ok(store.albums.value.length > 0, 'albums should be populated')
+  assert.ok(store.genres.value.length > 0, 'genres should be populated')
+  assert.ok(
+    store.genres.value.some((item) => item.name === '未知流派'),
+    'tracks without genre should fall back to 未知流派'
+  )
+
+  store.clearTracks()
+})
+
+test('genre derived collection and tag write updates groups', async () => {
+  const store = setupStore()
+  await store.addTracks(
+    [
+      {
+        ...generateMockTracks(1)[0],
+        id: 'genre-a',
+        artist: 'Genre Artist',
+        album: 'Genre Album',
+        genre: 'Jazz',
+        filePath: 'C:\\music\\genre\\a.flac'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'genre-b',
+        artist: 'Genre Artist',
+        album: 'Genre Album',
+        genre: 'Rock',
+        filePath: 'C:\\music\\genre\\b.flac'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'genre-c',
+        artist: 'Genre Artist',
+        album: 'Genre Album',
+        genre: null,
+        filePath: 'C:\\music\\genre\\c.flac'
+      }
+    ],
+    { deferRebuild: false }
+  )
+  store.flushRebuild()
+
+  assert.equal(store.genres.value.find((item) => item.name === 'Jazz')?.trackCount, 1)
+  assert.equal(store.genres.value.find((item) => item.name === 'Rock')?.trackCount, 1)
+  assert.equal(store.genres.value.find((item) => item.name === '未知流派')?.trackCount, 1)
+
+  const changed = store.applyLocalTagWrite(['C:\\music\\genre\\c.flac'], { genre: 'Jazz' })
+  assert.equal(changed, 1)
+  store.flushRebuild()
+  assert.equal(store.genres.value.find((item) => item.name === 'Jazz')?.trackCount, 2)
+  assert.equal(store.genres.value.find((item) => item.name === '未知流派'), undefined)
 
   store.clearTracks()
 })

@@ -73,6 +73,22 @@ function normalizeBpm(value: unknown): number | undefined {
   return Math.round(numeric * 10) / 10
 }
 
+/** music-metadata exposes genre as string | string[]; keep the first non-empty value. */
+function extractGenre(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
+    return trimmed || null
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (typeof entry !== 'string') continue
+      const trimmed = entry.trim()
+      if (trimmed) return trimmed
+    }
+  }
+  return null
+}
+
 function normalizeGainDb(value: unknown): number | undefined {
   if (value == null) return undefined
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -303,6 +319,7 @@ export async function parseTrack(file: FileEntry): Promise<unknown[]> {
       artist: artist || fileName.artist,
       album: album || '未知专辑',
       albumArtist: common.albumartist || artist || fileName.artist,
+      genre: extractGenre(common.genre),
       filePath: file.fullPath,
       fileName: file.fileName,
       dir: file.dir,

@@ -60,3 +60,30 @@ test('findActiveLyricIndex handles large lyric files quickly', () => {
 
   assert.ok(elapsed < 80, `active lyric lookup took ${elapsed.toFixed(2)}ms, expected < 80ms`)
 })
+
+test('parseTimedLrc keeps Enhanced LRC word timings', async () => {
+  const { findActiveWordIndex } = (await import(
+    new URL('./lyrics.ts', import.meta.url).href
+  )) as typeof import('./lyrics')
+  const lines = parseTimedLrc('[00:10.00]<00:10.00>Hel<00:10.40>lo <00:10.80>world')
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0]?.text, 'Hello world')
+  assert.deepEqual(
+    lines[0]?.words?.map((word) => ({ time: word.time, text: word.text })),
+    [
+      { time: 10, text: 'Hel' },
+      { time: 10.4, text: 'lo ' },
+      { time: 10.8, text: 'world' }
+    ]
+  )
+  assert.equal(findActiveWordIndex(lines[0]?.words ?? [], 10.5), 1)
+})
+
+test('parseTimedLrc parses NetEase YRC word lyrics', () => {
+  const lines = parseTimedLrc('[10000,2000](10000,400,0)Hel(10400,400,0)lo (10800,400,0)world')
+  assert.equal(lines.length, 1)
+  assert.equal(lines[0]?.time, 10)
+  assert.equal(lines[0]?.text, 'Hello world')
+  assert.equal(lines[0]?.words?.length, 3)
+  assert.equal(lines[0]?.words?.[1]?.endTime, 10.8)
+})
