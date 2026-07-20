@@ -1,6 +1,7 @@
 import { existsSync } from 'fs'
 import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
 import { dirname } from 'path'
+import { isDeepStrictEqual } from 'util'
 
 export const BPM_ANALYSIS_ALGORITHM_VERSION = 1
 
@@ -46,22 +47,39 @@ export function buildBpmAnalysisCacheKey(identity: BpmAnalysisCacheIdentity): st
 
 export class BpmAnalysisCache {
   private readonly cachePath: string
+  private mutationTail: Promise<void> = Promise.resolve()
 
   constructor(cachePath: string) {
     this.cachePath = cachePath
   }
 
   async get(identity: BpmAnalysisCacheIdentity): Promise<BpmAnalysisResult | null> {
+    await this.mutationTail
     const file = await this.read()
     const result = file.entries[buildBpmAnalysisCacheKey(identity)]
     return isBpmAnalysisResult(result) ? result : null
   }
 
   async set(identity: BpmAnalysisCacheIdentity, analysis: BpmAnalysisResult): Promise<void> {
-    const file = await this.read()
-    file.entries[buildBpmAnalysisCacheKey(identity)] = analysis
-    await mkdir(dirname(this.cachePath), { recursive: true })
-    await writeFile(this.cachePath, JSON.stringify(file), 'utf-8')
+    await this.enqueueMutation(async () => {
+      const file = await this.read()
+      file.entries[buildBpmAnalysisCacheKey(identity)] = analysis
+      await this.write(file)
+    })
+  }
+
+  async deleteIfMatches(
+    identity: BpmAnalysisCacheIdentity,
+    analysis: BpmAnalysisResult
+  ): Promise<boolean> {
+    return await this.enqueueMutation(async () => {
+      const file = await this.read()
+      const key = buildBpmAnalysisCacheKey(identity)
+      if (!isDeepStrictEqual(file.entries[key], analysis)) return false
+      delete file.entries[key]
+      await this.write(file)
+      return true
+    })
   }
 
   async getSize(): Promise<number> {
@@ -88,6 +106,20 @@ export class BpmAnalysisCache {
     } catch {
       return { version: 1, entries: {} }
     }
+  }
+
+  private async write(file: BpmAnalysisCacheFile): Promise<void> {
+    await mkdir(dirname(this.cachePath), { recursive: true })
+    await writeFile(this.cachePath, JSON.stringify(file), 'utf-8')
+  }
+
+  private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(operation, operation)
+    this.mutationTail = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
   }
 }
 

@@ -14,12 +14,14 @@ const { spawnSync } = require('node:child_process')
 const test = require('node:test')
 
 const {
+  MINGW_EXPECTED_CTESTS,
+  findStaleCTestRegistrations,
   prepareMingwCmakeEnvironment,
   prepareMingwBuildLayout,
   resolveMingwBuildLayout,
   validateMingwBuildCommands,
-  validateMingwToolchain,
-  findStaleCTestRegistrations
+  validateMingwCTestRegistration,
+  validateMingwToolchain
 } = require('./audio-engine-toolchain.cjs')
 
 function createExistsSync(paths) {
@@ -84,6 +86,70 @@ test('accepts an installed toolchain and rejects CTest entries from a moved buil
     ),
     ['T:/audio-engine/build/mingw-static/twilight_audio_tests.exe']
   )
+})
+
+function registeredCTestOutput(names = MINGW_EXPECTED_CTESTS) {
+  return `${names.map((name, index) => `  Test #${index + 1}: ${name}`).join('\n')}\n\nTotal Tests: ${names.length}`
+}
+
+test('fails closed when a MinGW build has no CMake cache or CTest file', () => {
+  const buildDir = 'C:/twilight-build/mingw-static'
+  const missingCache = validateMingwCTestRegistration({
+    buildDir,
+    existsSync: createExistsSync([]),
+    spawnSync: () => {
+      throw new Error('ctest must not run without a cache')
+    }
+  })
+  assert.equal(missingCache.ok, false)
+  assert.match(missingCache.message, /CMakeCache\.txt/)
+
+  const missingCTestFile = validateMingwCTestRegistration({
+    buildDir,
+    existsSync: createExistsSync([`${buildDir}/CMakeCache.txt`]),
+    spawnSync: () => {
+      throw new Error('ctest must not run without CTestTestfile.cmake')
+    }
+  })
+  assert.equal(missingCTestFile.ok, false)
+  assert.match(missingCTestFile.message, /CTestTestfile\.cmake/)
+})
+
+test('rejects zero or incomplete MinGW CTest discovery even when ctest exits zero', () => {
+  const buildDir = 'C:/twilight-build/mingw-static'
+  const base = {
+    buildDir,
+    existsSync: createExistsSync([`${buildDir}/CMakeCache.txt`, `${buildDir}/CTestTestfile.cmake`]),
+    readFileSync: () => 'add_test(NAME local COMMAND "C:/twilight-build/mingw-static/local.exe")'
+  }
+
+  const zeroTests = validateMingwCTestRegistration({
+    ...base,
+    spawnSync: () => ({ status: 0, stdout: 'No tests were found!!!\nTotal Tests: 0', stderr: '' })
+  })
+  assert.equal(zeroTests.ok, false)
+  assert.match(zeroTests.message, /zero tests/)
+
+  const incomplete = validateMingwCTestRegistration({
+    ...base,
+    spawnSync: () => ({ status: 0, stdout: registeredCTestOutput(MINGW_EXPECTED_CTESTS.slice(1)), stderr: '' })
+  })
+  assert.equal(incomplete.ok, false)
+  assert.deepEqual(incomplete.missing, [MINGW_EXPECTED_CTESTS[0]])
+})
+
+test('accepts a configured MinGW build only when every native CTest is registered', () => {
+  const buildDir = 'C:/twilight-build/mingw-static'
+  const result = validateMingwCTestRegistration({
+    buildDir,
+    existsSync: createExistsSync([`${buildDir}/CMakeCache.txt`, `${buildDir}/CTestTestfile.cmake`]),
+    readFileSync: () =>
+      'add_test(NAME local COMMAND "C:/twilight-build/mingw-static/twilight_audio_tests.exe")',
+    spawnSync: () => ({ status: 0, stdout: registeredCTestOutput(), stderr: '' })
+  })
+  assert.equal(result.ok, true)
+  assert.equal(result.status, 0)
+  assert.deepEqual(result.missing, [])
 })
 
 test('prepares a MinGW environment with GNU patch before the w64devkit tools', () => {
@@ -479,16 +545,23 @@ test('MinGW configure script performs the preflight before invoking CMake', () =
   assert.match(script, /const cmakeEnvironment = preflight\.environment/)
 })
 
+test('MinGW configure validates once and never retries a possibly active vcpkg configure', () => {
+  const script = readFileSync(join(__dirname, 'configure-audio-engine-mingw.cjs'), 'utf8')
+
+  assert.match(script, /const status = runCmake\(\)/)
+  assert.match(script, /if \(status !== 0\) process\.exit\(status\)/)
+  assert.equal(script.match(/runCmake\(\)/g)?.length, 2)
+  assert.doesNotMatch(script, /cleanFfmpegExtractTemps|vcpkgLogText/)
+})
+
 test('MinGW scripts preflight CMake and CTest with the prepared environment', () => {
   const configureScript = readFileSync(join(__dirname, 'configure-audio-engine-mingw.cjs'), 'utf8')
   const runnerScript = readFileSync(join(__dirname, 'run-audio-engine-mingw.cjs'), 'utf8')
 
   assert.match(configureScript, /validateMingwBuildCommands/)
   assert.match(configureScript, /validateMingwBuildCommands\(\{ env: cmakeEnvironment \}\)/)
-  assert.match(
-    configureScript,
-    /spawnSync\('ctest', \['--test-dir', buildDir, '-N'\], \{[\s\S]*env: cmakeEnvironment/
-  )
+  assert.match(configureScript, /validateMingwCTestRegistration/)
+  assert.match(configureScript, /expectedTests: MINGW_EXPECTED_CTESTS/)
   assert.match(runnerScript, /validateMingwBuildCommands/)
   assert.match(runnerScript, /prepareMingwBuildLayout/)
   assert.match(runnerScript, /const toolchainEnvironment = resolveMingwEnvironment\(\)/)
@@ -498,7 +571,12 @@ test('MinGW scripts preflight CMake and CTest with the prepared environment', ()
   )
   assert.match(
     runnerScript,
-    /validateMingwBuildCommands\(\{\s*env: preflight\.environment,\s*commands: \[command\[0\]\]\s*\}\)/
+    /validateMingwBuildCommands\(\{\s*env: preflight\.environment,\s*commands: \['cmake', 'ctest'\]\s*\}\)/
+  )
+  assert.match(runnerScript, /validateMingwCTestRegistration/)
+  assert.match(
+    runnerScript,
+    /if \(!ctestRegistration\.ok\)[\s\S]*process\.exit\(ctestRegistration\.status \|\| 1\)/
   )
 })
 
@@ -634,21 +712,16 @@ test('MinGW configure clears CTestTestfile.cmake with other stale configure stat
   assert.match(cleanState, /rmSync\(ctestFile, \{ force: true \}\)/)
 })
 
-test('MinGW CTest validation requires all 20 native test registrations', () => {
-  const configureScript = readFileSync(join(__dirname, 'configure-audio-engine-mingw.cjs'), 'utf8')
+test('MinGW CTest validation requires every native test registration, including the performance gate', () => {
   const cmakeLists = readFileSync(join(__dirname, '..', 'audio-engine', 'CMakeLists.txt'), 'utf8')
-  const expectedBlock = configureScript.match(/const expectedTests = \[([\s\S]*?)\n\]/)
-  assert.ok(expectedBlock)
-
-  const expectedTests = [...expectedBlock[1].matchAll(/'(twilight_[^']+)'/g)].map(
-    (match) => match[1]
-  )
   const registeredTests = [
     ...cmakeLists.matchAll(/add_test\(\s*NAME\s+(twilight_[a-z0-9_]+)/g)
   ].map((match) => match[1])
 
-  assert.equal(expectedTests.length, 20)
-  assert.deepEqual(expectedTests.sort(), registeredTests.sort())
+  assert.equal(MINGW_EXPECTED_CTESTS.length, 21)
+  assert.ok(MINGW_EXPECTED_CTESTS.includes('twilight_audio_performance_gate'))
+  assert.deepEqual([...MINGW_EXPECTED_CTESTS].sort(), registeredTests.sort())
+  assert.match(cmakeLists, /target_compile_options\(twilight_audio_performance_gate PRIVATE -UNDEBUG\)/)
 })
 
 test('Windows release gate documents MinGW toolchain and no-whitespace build layout requirements', () => {
@@ -663,11 +736,11 @@ test('Windows release gate documents MinGW toolchain and no-whitespace build lay
     assert.match(guide, new RegExp(requirement))
   }
   assert.ok(
-    guide.indexOf('npm run configure:audio-engine:mingw') <
-      guide.indexOf('npm run build:audio-engine:mingw')
+    guide.indexOf('pnpm run configure:audio-engine:mingw') <
+      guide.indexOf('pnpm run build:audio-engine:mingw')
   )
   assert.ok(
-    guide.indexOf('npm run build:audio-engine:mingw') <
-      guide.indexOf('npm run test:audio-engine:mingw')
+    guide.indexOf('pnpm run build:audio-engine:mingw') <
+      guide.indexOf('pnpm run test:audio-engine:mingw')
   )
 })

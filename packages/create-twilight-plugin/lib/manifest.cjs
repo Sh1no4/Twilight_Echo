@@ -35,9 +35,23 @@ function normalizeRelativePath(value, key) {
   if (typeof value !== 'string' || !value.trim()) {
     throw new Error(`plugin.json field ${key} must be a relative path string`)
   }
-  const normalized = path.normalize(value.trim())
-  if (path.isAbsolute(normalized) || normalized === '..' || normalized.startsWith(`..${path.sep}`)) {
+  const source = value.trim()
+  if (source.includes('\0')) throw new Error(`plugin.json field ${key} contains a null byte`)
+  const slashPath = source.replace(/\\/g, '/')
+  if (
+    path.posix.isAbsolute(slashPath) ||
+    path.win32.isAbsolute(source) ||
+    path.win32.isAbsolute(slashPath) ||
+    /^[A-Za-z]:/.test(source)
+  ) {
     throw new Error(`plugin.json field ${key} cannot point outside the plugin root`)
+  }
+  const normalized = path.posix.normalize(slashPath)
+  if (normalized === '..' || normalized.startsWith('../')) {
+    throw new Error(`plugin.json field ${key} cannot point outside the plugin root`)
+  }
+  if (normalized === '.' || normalized.endsWith('/')) {
+    throw new Error(`plugin.json field ${key} must point to a file inside the plugin root`)
   }
   return normalized
 }
@@ -82,12 +96,16 @@ function validatePluginManifest(raw) {
   }
 
   const main = normalizeRelativePath(raw.main, 'main')
-  const binary = raw.binary
-  if (binary != null && !isRecord(binary)) throw new Error('plugin.json binary must be an object')
-  if (binary) {
-    for (const [platform, binaryPath] of Object.entries(binary)) {
-      normalizeRelativePath(binaryPath, `binary.${platform}`)
+  const rawBinary = raw.binary
+  if (rawBinary != null && !isRecord(rawBinary)) throw new Error('plugin.json binary must be an object')
+  let binary
+  if (rawBinary) {
+    const normalizedBinary = {}
+    for (const [platform, binaryPath] of Object.entries(rawBinary)) {
+      const normalized = normalizeRelativePath(binaryPath, `binary.${platform}`)
+      if (normalized) normalizedBinary[platform] = normalized
     }
+    binary = Object.keys(normalizedBinary).length > 0 ? normalizedBinary : undefined
   }
   if (!main && !binary && !hasDeclarativeThemeContribution(raw, type)) {
     throw new Error('plugin.json must declare main or binary, or contributes.themes for theme plugins')
@@ -128,7 +146,8 @@ function validatePluginManifest(raw) {
     engines: { twilightEcho: raw.engines.twilightEcho.trim() },
     apiVersion: raw.apiVersion,
     permissions: [...new Set(raw.permissions)],
-    contributes: raw.contributes
+    contributes: raw.contributes,
+    icon: normalizeRelativePath(raw.icon, 'icon')
   }
 }
 

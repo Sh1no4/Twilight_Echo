@@ -169,6 +169,15 @@ interface Track {
   bpm?: number
 }
 
+interface TwilightProviderRequestContext {
+  signal: AbortSignal
+  idempotencyKey?: string
+}
+
+interface TwilightUiCommandContext {
+  signal: AbortSignal
+}
+
 interface MediaProviderRegistration {
   id: string
   name: string
@@ -198,10 +207,25 @@ interface MediaProviderRegistration {
   fetchUserPlaylistsByUid?(uid: string | number): Promise<PlaylistSummary[]>
   fetchUserFollows?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
   fetchUserFolloweds?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
-  likeTrack?(trackId: string | number, like: boolean): Promise<void>
-  isTrackLiked?(trackId: string | number | undefined): Promise<boolean> | boolean
+  followArtist?(artistId: string | number, follow: boolean, context?: TwilightProviderRequestContext): Promise<void>
+  followUser?(userId: string | number, follow: boolean, context?: TwilightProviderRequestContext): Promise<void>
+  likeTrack?(trackId: string | number, like: boolean, context?: TwilightProviderRequestContext): Promise<void>
+  isTrackLiked?(trackId: string | number | undefined, context?: TwilightProviderRequestContext): Promise<boolean> | boolean
 }
+```
 
+Every callable provider method accepts an optional `TwilightProviderRequestContext` as its final
+argument; only the write signatures are expanded above to keep the sketch compact. The host appends
+that context without breaking v1 handlers that ignore extra arguments. Timeout, disable, uninstall,
+utility-process error/exit, and shutdown send protocol-level cancel and abort `signal`. Late results
+are quarantined. The default per-plugin limit is 4 active + 32 queued RPCs; 3 consecutive failures
+open an exponential-backoff circuit (1s to 30s, single half-open probe).
+
+Writes (`likeTrack`, `followArtist`, `followUser`) receive an idempotency key that remains stable for
+an unknown-outcome retry of the same logical payload and changes after success or a payload change.
+Providers must forward it to an upstream idempotency facility or persistently deduplicate it.
+
+```ts
 interface TwilightMediaProviderHealth {
   providerId: string
   pluginId: string
@@ -251,7 +275,9 @@ instead of `window.api.ncm` or host cookie IPC.
 
 The bundled NetEase plugin receives a private internal gateway for the local NCM
 API and song cache. This gateway is not part of the public third-party plugin
-API and is rejected for all other plugin ids.
+API and is rejected for all other plugin ids. Its write path forwards cancellation
+and the host-managed idempotency key to the local NCM gateway when supported;
+successful deduplication records are bounded and persist for five minutes.
 
 Provider login UIs should prefer `getQrLogin()` when present. It lets a plugin
 return a provider-native QR payload such as a URL, while the renderer owns QR
@@ -300,11 +326,15 @@ await context.twilight.ui.register({
   command: 'myPlugin.scrobble'
 })
 
-context.twilight.ui.onCommand('myPlugin.scrobble', async (track) => {
+context.twilight.ui.onCommand('myPlugin.scrobble', async (track, request) => {
+  request.signal.throwIfAborted()
   context.logger.info(`Scrobble requested for ${track?.title ?? 'unknown track'}`)
   return { ok: true }
 })
 ```
+
+UI command handlers likewise receive `TwilightUiCommandContext` as the final argument. The signal is
+aborted on timeout or plugin lifecycle shutdown, and any result produced after cancellation is ignored.
 
 Initial controlled UI contribution kinds:
 
@@ -450,17 +480,38 @@ interface TwilightPluginIndexEntry extends TwilightPluginManifest {
   sourceUrl: string
   checksumSha256: string
   tags?: string[]
+  publisherSignature?: { schemaVersion: 1; algorithm: 'ed25519'; keyId: string; value: string }
+  /** Index publisher claim only; never an official-trust decision by itself. */
   verified?: boolean
+  verification: {
+    level: 'official' | 'publisher-signed' | 'index-declared' | 'unverified'
+    official: boolean
+    officialSource: boolean
+    indexClaimed: boolean
+    signatureStatus: string
+    keyId: string | null
+    publisher: string | null
+    keyFingerprintSha256: string | null
+    reason: string
+  }
   installState?: 'not-installed' | 'installed' | 'update-available' | 'incompatible' | 'built-in-blocked'
   installedVersion?: string
 }
 
 interface TwilightPluginIndexStatus {
   sourceUrl: string
+  configuredSourceUrl: string
   sourceKind: 'github' | 'custom' | 'bundled'
   loadedFrom: 'remote' | 'cache' | 'bundled'
   lastFetchedAt: string | null
+  expiresAt: string | null
+  loadedAt: string
   stale: boolean
+  expired: boolean
+  originVerified: boolean
+  officialSource: boolean
+  cacheFormat: 'envelope-v1' | 'legacy' | null
+  trustStoreError: string | null
   error: string | null
 }
 
@@ -470,9 +521,12 @@ window.api.plugins.getIndexStatus(): Promise<TwilightPluginIndexStatus>
 window.api.plugins.installFromIndex(id: string): Promise<TwilightPluginInstallResult>
 ```
 
-The index schema is static JSON with `schemaVersion: 1`. Installation validates
-the package checksum and then uses the same trust-based manifest validation path
-as local `.tep` installation.
+The index schema is static JSON with `schemaVersion: 1`. `verified` remains for
+API v1 compatibility but means only an index claim. Official trust is the
+derived result of an exact fixed origin, fresh direct load, non-expired cache
+evidence, and a valid active trusted-publisher Ed25519 signature. Installation
+validates the package checksum and then uses the same trust-based manifest
+validation path as local `.tep` installation.
 
 ## Host Capability Audit
 

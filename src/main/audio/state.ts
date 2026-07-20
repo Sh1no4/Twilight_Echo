@@ -116,6 +116,7 @@ export async function persistAndApplyAudioProcessingState(
     await applyEffectiveAudioProcessingToEngine()
   } catch (err) {
     console.warn('应用合成 DSP 设置到音频引擎失败，已保留用户设置：', err)
+    throw err
   }
   return snapshot
 }

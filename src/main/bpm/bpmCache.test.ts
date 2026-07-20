@@ -7,7 +7,8 @@ import test from 'node:test'
 import {
   BPM_ANALYSIS_ALGORITHM_VERSION,
   BpmAnalysisCache,
-  buildBpmAnalysisCacheKey
+  buildBpmAnalysisCacheKey,
+  type BpmAnalysisResult
 } from './bpmCache.ts'
 
 test('BPM cache key changes when file identity or algorithm changes', () => {
@@ -81,6 +82,33 @@ test('BPM cache reports size and can be cleared', async () => {
   assert.ok((await cache.getSize()) > 0)
   assert.equal(await cache.clear(), 0)
   assert.equal(await cache.getSize(), 0)
+
+  await rm(dir, { recursive: true, force: true })
+})
+
+test('BPM cache conditional rollback deletes only the exact committed analysis', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'twilight-bpm-cache-rollback-'))
+  const cache = new BpmAnalysisCache(join(dir, 'bpm-analysis-cache.json'))
+  const identity = {
+    filePath: 'D:\\Music\\song.flac',
+    size: 123,
+    mtimeMs: 456,
+    algorithmVersion: BPM_ANALYSIS_ALGORITHM_VERSION
+  }
+  const original: BpmAnalysisResult = {
+    bpm: 120,
+    confidence: 0.9,
+    source: 'analyzed',
+    analyzedAt: '2026-01-01T00:00:00.000Z',
+    algorithmVersion: BPM_ANALYSIS_ALGORITHM_VERSION
+  }
+  const newer = { ...original, bpm: 128, analyzedAt: '2026-01-02T00:00:00.000Z' }
+
+  await cache.set(identity, newer)
+  assert.equal(await cache.deleteIfMatches(identity, original), false)
+  assert.deepEqual(await cache.get(identity), newer)
+  assert.equal(await cache.deleteIfMatches(identity, newer), true)
+  assert.equal(await cache.get(identity), null)
 
   await rm(dir, { recursive: true, force: true })
 })

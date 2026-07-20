@@ -27,6 +27,7 @@ export const COVER_NAMES = [
 export const COVER_THUMBNAIL_WIDTH = 500
 export const COVER_JPEG_QUALITY = 85
 export const COVER_BLUR_WIDTH = 32
+export const COVER_CACHE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
 
 export function getCoverCacheDir(): string {
   return join(getMusicCacheRoot(), 'cover-cache')
@@ -106,6 +107,21 @@ export function resolveCoverCacheFile(fileName: string): string | null {
   return existsSync(legacyPath) ? legacyPath : null
 }
 
+export function isCoverCacheFileName(fileName: string): boolean {
+  return COVER_CACHE_EXTENSIONS.has(extname(fileName).toLowerCase())
+}
+
+export function getCoverCacheContentType(fileName: string): string {
+  switch (extname(fileName).toLowerCase()) {
+    case '.png':
+      return 'image/png'
+    case '.webp':
+      return 'image/webp'
+    default:
+      return 'image/jpeg'
+  }
+}
+
 /** Extract cover from image buffer, resize, save to disk cache. Returns cover:// handle.
  *  Also generates a tiny pre-blurred version for background use. */
 export function cacheCoverFromBuffer(data: Buffer): string | null {
@@ -156,7 +172,7 @@ export function readCachedCover(handle: string): string | null {
   if (!fullPath) return null
   try {
     const data = readFileSync(fullPath)
-    return `data:image/jpeg;base64,${data.toString('base64')}`
+    return `data:${getCoverCacheContentType(fileName)};base64,${data.toString('base64')}`
   } catch {
     return null
   }

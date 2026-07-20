@@ -2,6 +2,63 @@
 export type AudioEngineEndFileCallback = (reason: string) => void
 
 import type { DspGraphStatus, DspScene } from '../shared/dspGraph.ts'
+import type { SleepTimerSettings } from '../shared/sleepTimer.ts'
+
+export type { VersionedDataEnvelope } from '../shared/versionedPersistence.ts'
+export type {
+  OfflineDownloadDocument,
+  OfflineDownloadRecord,
+  OfflineDownloadRequest,
+  OfflinePlayablePathRequest,
+  OfflineDownloadStatus,
+  OfflineStorageSummary
+} from '../shared/offlineDownloads.ts'
+export type {
+  LyricsManagementDocument,
+  LyricTrackOverride,
+  LyricSourcePreference
+} from '../shared/lyricsManagement.ts'
+
+export type {
+  AcousticFingerprint,
+  AcousticFingerprintEvidence,
+  DuplicateActionPlan,
+  DuplicateCandidate,
+  DuplicateConfidence,
+  DuplicateDetectionResult,
+  DuplicateEvidenceKind,
+  DuplicateGroup,
+  DuplicateDetectionReadApi
+} from '../shared/duplicateDetection.ts'
+
+export type {
+  LocalLibraryExclusion,
+  LocalLibraryMutationFailure,
+  LocalLibraryRemoveRequest,
+  LocalLibraryRemoveResult,
+  LocalLibraryRemovalMode,
+  LocalLibraryRestoreRequest,
+  LocalLibraryRestoreResult,
+  LocalLibrarySnapshotInput,
+  LocalLibraryTrackSelection,
+  LocalMusicLibraryDocument
+} from '../shared/localLibrary.ts'
+
+export type {
+  LocalLibraryTagFailure,
+  LocalLibraryTagPatch,
+  LocalLibraryTagRestoreRequest,
+  LocalLibraryTagRestoreResult,
+  LocalLibraryTagWriteItem,
+  LocalLibraryTagWriteRequest,
+  LocalLibraryTagWriteResult
+} from '../shared/localLibraryTags.ts'
+
+export type {
+  LocalLibraryScanProgress,
+  LocalLibraryScanStatus,
+  LocalLibraryScanUpdate
+} from '../shared/localLibraryScan.ts'
 
 export type {
   DspAsset,
@@ -50,7 +107,7 @@ export interface AudioEngineServiceReadyEvent {
 }
 export type AudioEngineServiceReadyCallback = (event: AudioEngineServiceReadyEvent) => void
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
-export type PlayMode = 'sequential' | 'repeat' | 'shuffle'
+export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
 export type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 export interface PlayerShortcutStatus {
   accelerator: string
@@ -76,10 +133,9 @@ export type LyricAlign = 'center' | 'left'
 export type ProxyMode = 'auto' | 'custom' | 'off'
 export type StreamingAudioCachePolicy = 'off' | 'provider'
 
-export interface LibraryChange {
-  kind: 'add' | 'remove' | 'unknown'
-  path?: string
-}
+export type LibraryChange =
+  | { kind: 'add' | 'remove' | 'unknown'; path?: string }
+  | { kind: 'scan'; update: import('../shared/localLibraryScan.ts').LocalLibraryScanUpdate }
 
 export interface WindowTransparencyEffectSettings {
   surfaceOpacity: number
@@ -115,6 +171,7 @@ export interface DesktopLyricsSettings {
 export interface DesktopLyricsTrackPayload {
   lyrics: string | null
   translatedLyrics?: string | null
+  romanizedLyrics?: string | null
   lyricsSource?: LyricSource | null
   translatedLyricsSource?: LyricSource | null
   title?: string
@@ -130,7 +187,7 @@ export interface MusicCachePolicySettings {
 
 export type BuiltInTrackSource = 'local' | 'ncm'
 export type TrackSource = BuiltInTrackSource | (string & {})
-export type LyricSource = 'embedded' | 'local' | 'provider'
+export type LyricSource = 'embedded' | 'local' | 'provider' | 'manual'
 export type MetadataMatchConfidence = 'high' | 'medium'
 export interface TrackMetadataMatch {
   providerId: string
@@ -207,6 +264,24 @@ export type TwilightPluginIndexInstallState =
   | 'built-in-blocked'
 export type TwilightPluginIndexSourceKind = 'github' | 'custom' | 'bundled'
 export type TwilightPluginIndexLoadedFrom = 'remote' | 'cache' | 'bundled'
+export type TwilightPluginIndexCacheFormat = 'envelope-v1' | 'legacy'
+export type TwilightPluginSignatureStatus =
+  | 'missing'
+  | 'malformed'
+  | 'unsupported'
+  | 'unknown-key'
+  | 'revoked-key'
+  | 'key-not-yet-valid'
+  | 'key-expired'
+  | 'invalid-key'
+  | 'invalid'
+  | 'valid'
+  | 'trust-store-error'
+export type TwilightPluginVerificationLevel =
+  | 'official'
+  | 'publisher-signed'
+  | 'index-declared'
+  | 'unverified'
 export type TwilightMediaProviderCapability =
   | 'search'
   | 'playbackUrl'
@@ -463,6 +538,11 @@ export interface TrackData {
   filePath: string
   fileName: string
   dir?: string
+  subTrack?: string
+  /** Logical source segment for a single-file CUE track. */
+  cueRange?: import('../shared/cue.ts').CueRange
+  cueSheetPath?: string
+  cueEncoding?: import('../shared/cue.ts').ParsedCueSheet['encoding']
   duration: number
   size: number
   cover: string | null
@@ -506,6 +586,8 @@ export interface AudioEngineQueueItem {
   replayGainAlbumPeak?: number
   r128TrackGainDb?: number
   r128AlbumGainDb?: number
+  /** Explicit range in source seconds for one logical CUE track. */
+  cueRange?: import('../shared/cue.ts').CueRange
 }
 
 export interface PlaybackSession {
@@ -515,6 +597,9 @@ export interface PlaybackSession {
   playMode?: PlayMode
   track: TrackData
   position: number
+  queue?: TrackData[]
+  queueIndex?: number
+  sleepTimer?: import('../shared/sleepTimer.ts').SleepTimerState
 }
 
 export type AppBackgroundPage = 'local' | 'settings' | 'streaming' | 'player'
@@ -607,6 +692,7 @@ export interface AppSettings {
   lyricAlign: LyricAlign
   lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
+  sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
   audioOutput: AudioOutputId
@@ -623,6 +709,7 @@ export interface AppSettings {
   proxyMode: ProxyMode
   proxyHost: string
   proxyPort: number
+  proxyAllowDirectFallback: boolean
   streamingActiveProvider: string
 }
 
@@ -742,6 +829,26 @@ export interface TwilightPluginInstallResult {
   warning: string
 }
 
+export interface TwilightPluginPublisherSignature {
+  schemaVersion: 1
+  algorithm: 'ed25519'
+  keyId: string
+  value: string
+}
+
+export interface TwilightPluginVerification {
+  level: TwilightPluginVerificationLevel
+  official: boolean
+  officialSource: boolean
+  indexClaimed: boolean
+  signatureStatus: TwilightPluginSignatureStatus
+  keyId: string | null
+  publisher: string | null
+  keyFingerprintSha256: string | null
+  revalidateAt: string | null
+  reason: string
+}
+
 export interface TwilightPluginIndexEntry {
   id: string
   name: string
@@ -764,17 +871,28 @@ export interface TwilightPluginIndexEntry {
   sourceUrl: string
   checksumSha256: string
   tags?: string[]
+  publisherSignature?: TwilightPluginPublisherSignature
+  /** Publisher/index metadata only. Never use this field as an official trust decision. */
   verified?: boolean
+  verification: TwilightPluginVerification
   installState?: TwilightPluginIndexInstallState
   installedVersion?: string
 }
 
 export interface TwilightPluginIndexStatus {
   sourceUrl: string
+  configuredSourceUrl: string
   sourceKind: TwilightPluginIndexSourceKind
   loadedFrom: TwilightPluginIndexLoadedFrom
   lastFetchedAt: string | null
+  expiresAt: string | null
+  loadedAt: string
   stale: boolean
+  expired: boolean
+  originVerified: boolean
+  officialSource: boolean
+  cacheFormat: TwilightPluginIndexCacheFormat | null
+  trustStoreError: string | null
   error: string | null
 }
 
@@ -846,6 +964,15 @@ export interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
   wasapiExclusivePushMode?: boolean
+}
+
+export interface OutputConfigApplyStatus {
+  requestedRevision: number
+  appliedRevision: number
+  failedRevision: number
+  state: 'idle' | 'pending' | 'applied' | 'failed'
+  error: string
+  generation: number
 }
 
 export interface LatencyInfo {

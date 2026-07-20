@@ -15,6 +15,7 @@ Twilight Echo 是一款基于 Electron + Vue 3 + TypeScript 的桌面音乐播�
 - 按歌曲、艺术家、专辑、文件夹多种方式整理浏览。
 - 自动读取封面、歌词和音频基础信息。
 - 音乐库、扫描目录与播放会话会持久保存，下次打开继续上次的进度。
+- 启动时按文件路径、大小和修改时间增量核对；需要重建 metadata/封面时，可在设置页显式完整重扫并随时暂停或取消。
 
 ### 网易云音乐
 
@@ -64,20 +65,19 @@ macOS 与 Linux 用户暂时可能遇到部分输出能力受限，后续会随�
 ### 从源码运行（开发者）
 
 ```bash
-# 安装依赖（任选其一）
-npm install
-# 或
-pnpm install
+# 使用 package.json 固定的 pnpm 版本安装依赖和 NCM patch
+corepack enable
+pnpm install --frozen-lockfile
 
 # 启动开发环境
-npm run dev
+pnpm run dev
 ```
 
 完整开发环境说明见 [开发者文档](docs/DEVELOPER_README.md)。
 
 ## 已知限制
 
-- macOS 与 Linux 的原生音频引擎仍在验证阶段（代码已 release-ready，真实设备 smoke 保持 opt-in）。
+- macOS 与 Linux 的原生音频引擎仍在验证阶段；即使能打包，也不能宣称为 release-ready。真实设备 smoke 保持 opt-in。
 - 网易云音乐相关功能依赖本地启动的 `@neteasecloudmusicapienhanced/api` 服务。
 - 共享模式（Shared Mode）会经过系统混音，属正常现象。
 - WASAPI 与 CoreAudio 没有 native DSD 通道（平台限制）；DSD 在这两个后端走 DoP 或 PCM fallback。

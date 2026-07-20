@@ -20,6 +20,13 @@ const MAX_NCM_API_PATH_LENGTH = 4096
 const MAX_NCM_COOKIE_LENGTH = 16 * 1024
 const MAX_NCM_REMOTE_URL_LENGTH = 8192
 const MAX_NCM_CACHE_FILENAME_LENGTH = 255
+const NCM_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
+
+export interface NcmApiRequestOptions {
+  signal?: AbortSignal
+  /** Forwarded to the local API gateway when it supports idempotent writes. */
+  idempotencyKey?: string
+}
 
 export function bundledPluginPath(name: string): string {
   return app.isPackaged
@@ -33,7 +40,11 @@ export function bundledPluginIndexPath(): string {
     : join(process.cwd(), 'resources', 'plugin-index', 'plugins.json')
 }
 
-export async function requestNcmApi(path: string, cookie?: string): Promise<unknown> {
+export async function requestNcmApi(
+  path: string,
+  cookie?: string,
+  options: NcmApiRequestOptions = {}
+): Promise<unknown> {
   const normalizedPath = normalizeNcmApiPath(path)
   if (!normalizedPath) {
     return { code: -1, message: 'Invalid NetEase API path' }
@@ -49,7 +60,14 @@ export async function requestNcmApi(path: string, cookie?: string): Promise<unkn
       .filter(Boolean)
       .join('; ')
   }
+  const idempotencyKey = options.idempotencyKey?.trim()
+  if (idempotencyKey && NCM_IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+    headers['X-Twilight-Idempotency-Key'] = idempotencyKey
+  }
   const controller = new AbortController()
+  const abortFromCaller = (): void => controller.abort(options.signal?.reason)
+  if (options.signal?.aborted) abortFromCaller()
+  else options.signal?.addEventListener('abort', abortFromCaller, { once: true })
   const timer = setTimeout(() => controller.abort(), NCM_API_REQUEST_TIMEOUT_MS)
   try {
     const res = await fetch(url, { signal: controller.signal, headers })
@@ -63,6 +81,7 @@ export async function requestNcmApi(path: string, cookie?: string): Promise<unkn
     }
   } finally {
     clearTimeout(timer)
+    options.signal?.removeEventListener('abort', abortFromCaller)
   }
 }
 

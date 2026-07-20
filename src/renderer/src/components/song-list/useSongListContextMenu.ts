@@ -47,6 +47,7 @@ export function useSongListContextMenu({
   handleClearMetadataMatch: () => Promise<void>
   openCreatePlaylistDialog: (track?: Track) => void
   handleCreatePlaylist: () => void
+  completeCreatePlaylistDialog: () => void
   handleCreatePlaylistFromMenu: () => void
   handleDeletePlaylist: (playlistId: string, event: MouseEvent) => void
 } {
@@ -142,7 +143,8 @@ export function useSongListContextMenu({
   }
 
   async function handleClearMetadataMatch(): Promise<void> {
-    if (!selectedTrack.value || !canClearMetadataMatchSelectedTrack.value || !clearMetadataMatch) return
+    if (!selectedTrack.value || !canClearMetadataMatchSelectedTrack.value || !clearMetadataMatch)
+      return
     await clearMetadataMatch(selectedTrack.value)
     closeContextMenu()
   }
@@ -161,6 +163,10 @@ export function useSongListContextMenu({
     if (createPlaylistForTrack.value) {
       addToPlaylist(name, createPlaylistForTrack.value.id, createPlaylistForTrack.value)
     }
+    completeCreatePlaylistDialog()
+  }
+
+  function completeCreatePlaylistDialog(): void {
     showCreatePlaylistDialog.value = false
     createPlaylistForTrack.value = null
     newPlaylistName.value = ''
@@ -207,6 +213,7 @@ export function useSongListContextMenu({
     handleClearMetadataMatch,
     openCreatePlaylistDialog,
     handleCreatePlaylist,
+    completeCreatePlaylistDialog,
     handleCreatePlaylistFromMenu,
     handleDeletePlaylist
   }

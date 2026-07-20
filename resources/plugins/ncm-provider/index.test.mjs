@@ -22,7 +22,10 @@ function album(id) {
   }
 }
 
-async function activateProvider(request) {
+async function activateProvider(
+  request,
+  settings = new Map([['cookie', 'MUSIC_U=test;']])
+) {
   let registeredProvider = null
   await ncmProvider.activate({
     twilight: {
@@ -41,9 +44,13 @@ async function activateProvider(request) {
       }
     },
     settings: {
-      get: async () => 'MUSIC_U=test;',
-      set: async () => undefined,
-      delete: async () => undefined
+      get: async (key) => (key == null ? Object.fromEntries(settings) : settings.get(key)),
+      set: async (key, value) => {
+        settings.set(key, value)
+      },
+      delete: async (key) => {
+        settings.delete(key)
+      }
     },
     logger: {
       debug: () => undefined,
@@ -516,6 +523,115 @@ test('artist and user follow actions call NetEase follow endpoints', async () =>
         '/follow?id=32953014&t=0'
       ]
     )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('like and follow retries with one idempotency key execute the upstream write once', async () => {
+  const requests = []
+  let releaseRequest
+  const requestGate = new Promise((resolve) => {
+    releaseRequest = resolve
+  })
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    await requestGate
+    return { code: 200 }
+  })
+  const firstContext = {
+    signal: new AbortController().signal,
+    idempotencyKey: 'like-track-42'
+  }
+
+  try {
+    const first = provider.likeTrack(42, true, firstContext)
+    const concurrentRetry = provider.likeTrack(42, true, {
+      signal: new AbortController().signal,
+      idempotencyKey: 'like-track-42'
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(requests.length, 1)
+
+    releaseRequest()
+    await Promise.all([first, concurrentRetry])
+    await provider.likeTrack(42, true, firstContext)
+    assert.equal(requests.length, 1)
+
+    await assert.rejects(
+      () => provider.likeTrack(42, false, firstContext),
+      /reused for a different write payload/
+    )
+    await provider.likeTrack(42, false, {
+      signal: new AbortController().signal,
+      idempotencyKey: 'unlike-track-42'
+    })
+    assert.equal(requests.length, 2)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('completed provider writes survive a built-in provider restart without replaying upstream', async () => {
+  const settings = new Map([['cookie', 'MUSIC_U=test;']])
+  const requests = []
+  const context = {
+    signal: new AbortController().signal,
+    idempotencyKey: 'restart-like-track-42'
+  }
+  let provider = await activateProvider(async (path, _cookie, options) => {
+    requests.push({ path, options })
+    return { code: 200 }
+  }, settings)
+
+  try {
+    await provider.likeTrack(42, true, context)
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].options.idempotencyKey, context.idempotencyKey)
+    assert.strictEqual(requests[0].options.signal, context.signal)
+    const persisted = settings.get('providerWriteIdempotency')
+    assert.equal(Array.isArray(persisted.records), true)
+    assert.equal(persisted.records.length, 1)
+
+    ncmProvider.deactivate()
+    provider = await activateProvider(async (path, _cookie, options) => {
+      requests.push({ path, options })
+      return { code: 200 }
+    }, settings)
+    await provider.likeTrack(42, true, context)
+    assert.equal(requests.length, 1)
+    assert.equal(provider.isTrackLiked(42), true)
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('aborted writes forward the signal and never mutate the local liked state', async () => {
+  let releaseRequest
+  let seenOptions = null
+  const requestGate = new Promise((resolve) => {
+    releaseRequest = resolve
+  })
+  const provider = await activateProvider(async (_path, _cookie, options) => {
+    seenOptions = options
+    await requestGate
+    return { code: 200 }
+  })
+  const controller = new AbortController()
+
+  try {
+    const pending = provider.likeTrack(42, true, {
+      signal: controller.signal,
+      idempotencyKey: 'abort-like-track-42'
+    })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.strictEqual(seenOptions.signal, controller.signal)
+    assert.equal(seenOptions.idempotencyKey, 'abort-like-track-42')
+
+    controller.abort(new Error('caller cancelled the write'))
+    releaseRequest()
+    await assert.rejects(pending, /caller cancelled the write/)
+    assert.equal(provider.isTrackLiked(42), false)
   } finally {
     ncmProvider.deactivate()
   }

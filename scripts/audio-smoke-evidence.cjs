@@ -19,35 +19,35 @@ const ALL_REPORTED_SURFACES = [...REQUIRED_SURFACES, ...OPTIONAL_PRODUCT_SURFACE
 const SURFACE_COLLECTION_GUIDES = {
   'WASAPI Exclusive': {
     command:
-      'npm run smoke:wasapi -- --device "<wasapi-endpoint>" --buffer 256 --format-matrix --json > output/audio-smoke-evidence/wasapi-exclusive.json',
+      'pnpm run smoke:wasapi -- --device "<wasapi-endpoint>" --buffer 256 --format-matrix --json > output/audio-smoke-evidence/wasapi-exclusive.json',
     artifact: 'output/audio-smoke-evidence/wasapi-exclusive.json',
     evidence:
       'actualBackend=wasapi-exclusive, exclusive=true, actual output format facts, and outputPerfect/perfectReason for every probed PCM format'
   },
   ASIO: {
     command:
-      'npm run smoke:audio-format-matrix -- --fixture-dir "<pcm-fixtures>" --playback --backend asio --device "<asio-driver>" --json > output/audio-smoke-evidence/asio-pcm.json',
+      'pnpm run smoke:audio-format-matrix -- --fixture-dir "<pcm-fixtures>" --playback --backend asio --device "<asio-driver>" --json > output/audio-smoke-evidence/asio-pcm.json',
     artifact: 'output/audio-smoke-evidence/asio-pcm.json',
     evidence:
       'actualBackend=asio, selected driver/device, actual output format facts, and explicit pass/fail reason'
   },
   'DoP DAC': {
     command:
-      'npm run smoke:audio-format-matrix -- --fixture-dir "<dsd-fixtures>" --playback --backend wasapi-exclusive --device "<dop-capable-dac>" --json > output/audio-smoke-evidence/dop-dac.json',
+      'pnpm run smoke:audio-format-matrix -- --fixture-dir "<dsd-fixtures>" --playback --backend wasapi-exclusive --device "<dop-capable-dac>" --json > output/audio-smoke-evidence/dop-dac.json',
     artifact: 'output/audio-smoke-evidence/dop-dac.json',
     evidence:
       'dsdMode=dop, carrier sample rate, actual output format facts, and fallback reason when the DAC rejects DoP'
   },
   'Native DSD': {
     command:
-      'npm run smoke:asio-native-dsd -- --device "<native-dsd-asio-driver>" --fixture-dir "<dsd-fixtures>" --json > output/audio-smoke-evidence/native-dsd.json',
+      'pnpm run smoke:asio-native-dsd -- --device "<native-dsd-asio-driver>" --fixture-dir "<dsd-fixtures>" --json > output/audio-smoke-evidence/native-dsd.json',
     artifact: 'output/audio-smoke-evidence/native-dsd.json',
     evidence:
       'nativeDsdRuntimeState=proven for at least one DSD rate, plus explicit driver/device and fallback reason for unsupported rates'
   },
   'SACD ISO': {
     command:
-      'npm run smoke:audio-format-matrix -- --manifest "<sacd-iso-matrix.json>" --playback --backend wasapi-exclusive --device "<dac>" --json > output/audio-smoke-evidence/sacd-iso.json',
+      'pnpm run smoke:audio-format-matrix -- --manifest "<sacd-iso-matrix.json>" --playback --backend wasapi-exclusive --device "<dac>" --json > output/audio-smoke-evidence/sacd-iso.json',
     artifact: 'output/audio-smoke-evidence/sacd-iso.json',
     evidence:
       'SACD ISO source metadata, selected track/area, dsdMode/native-or-dop-or-pcm result, and explicit DST/provider reason when applicable'

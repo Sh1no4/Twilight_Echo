@@ -3,8 +3,22 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 const managerSource = readFileSync(new URL('./manager.ts', import.meta.url), 'utf8')
+const statePersistenceSource = readFileSync(
+  new URL('./statePersistence.ts', import.meta.url),
+  'utf8'
+)
+const operationQueueSource = readFileSync(new URL('./operationQueue.ts', import.meta.url), 'utf8')
+const updateTransactionSource = readFileSync(
+  new URL('./updateTransaction.ts', import.meta.url),
+  'utf8'
+)
 const packageSecuritySource = readFileSync(new URL('./packageSecurity.ts', import.meta.url), 'utf8')
+const pluginTypesSource = readFileSync(new URL('./types.ts', import.meta.url), 'utf8')
 const pluginHostSource = readFileSync(new URL('../pluginHost.ts', import.meta.url), 'utf8')
+const pluginApiSource = readFileSync(
+  new URL('../../../packages/plugin-api/src/index.ts', import.meta.url),
+  'utf8'
+)
 const preloadSource = readFileSync(new URL('../../preload/index.ts', import.meta.url), 'utf8')
 const pluginExtensionPageSource = readFileSync(
   new URL('../../renderer/src/components/PluginExtensionPage.vue', import.meta.url),
@@ -50,7 +64,59 @@ test('plugin manager rejects symlink escapes in installed plugin resources', () 
   assert.match(packageSecuritySource, /realpathSync\(root\)/)
   assert.match(managerSource, /realpathSync\(filePath\)/)
   assert.match(managerSource, /resolvePluginFile\(mainPath, descriptor\.paths\.versionRoot\)/)
-  assert.match(managerSource, /return resolvePluginFile\(resolved, root\)/)
+  assert.match(
+    managerSource,
+    /return resolvePluginFile\(resolve\(versionRoot, relPath\), versionRoot\)/
+  )
+})
+
+test('plugin manager routes tep installs through the final hash and confirmation boundary', () => {
+  assert.match(managerSource, /await runFinalPluginPackageTrustBoundary\(\{/)
+  assert.match(managerSource, /inspectStagedPackage: async \(packagePath\)/)
+  assert.match(
+    managerSource,
+    /requestConfirmation: \(\{ manifest: candidateManifest \}, evidence\)/
+  )
+  assert.doesNotMatch(managerSource, /if \(isTep\)[\s\S]{0,300}this\.confirmTrustBasedInstall/)
+})
+
+test('plugin updates stage, trial activate, and roll back without deleting the prior version', () => {
+  assert.match(managerSource, /staging: join\(userData, 'plugin-staging'\)/)
+  assert.match(managerSource, /await commitStagedPluginUpdate\(/)
+  assert.match(managerSource, /await this\.trialActivatePlugin\(candidate\)/)
+  assert.match(managerSource, /activeVersion: manifest\.version/)
+  assert.match(managerSource, /restorePreviousVersion: async \(\) =>/)
+  assert.doesNotMatch(managerSource, /removeOtherPluginVersions/)
+  assert.doesNotMatch(managerSource, /mkdtemp\(join\(tmpdir\(\), 'twilight-plugin-'/)
+})
+
+test('plugin updates serialize same-id installs and surface rollback failures', () => {
+  assert.match(managerSource, /private readonly pluginOperationQueue = new PluginOperationQueue\(\)/)
+  assert.match(managerSource, /return await this\.pluginOperationQueue\.run\(manifest\.id/)
+  assert.match(managerSource, /PluginUpdateRollbackError/)
+  assert.match(managerSource, /update-rollback-error/)
+  assert.match(operationQueueSource, /private readonly tails = new Map<string, Promise<void>>\(\)/)
+  assert.match(updateTransactionSource, /class PluginUpdateRollbackError/)
+  assert.doesNotMatch(
+    updateTransactionSource,
+    /rollbackActiveVersion\(\)\.catch\(\(\) => undefined\)/
+  )
+  assert.doesNotMatch(
+    updateTransactionSource,
+    /restorePreviousVersion\(\)\.catch\(\(\) => undefined\)/
+  )
+})
+
+test('plugin state persistence serializes fsynced atomic writes and surfaces recovery', () => {
+  assert.match(statePersistenceSource, /private writeTail: Promise<void> = Promise\.resolve\(\)/)
+  assert.match(statePersistenceSource, /await handle\.sync\(\)/)
+  assert.match(statePersistenceSource, /await writeRawFileAtomically\(backupPath, backupRaw\)/)
+  assert.match(statePersistenceSource, /await writeRawFileAtomically\(filePath, json\)/)
+  assert.match(managerSource, /state-recovery-warning/)
+  assert.match(managerSource, /state-write-error/)
+  assert.match(managerSource, /await this\.statePersistenceFor\(\)\.flush\(\)/)
+  assert.match(managerSource, /private notifyStateIssueUser\(/)
+  assert.match(managerSource, /dialog[\s\S]*\.showMessageBox\(/)
 })
 
 test('plugin manager enforces plugin API namespace permissions at the gateway', () => {
@@ -108,8 +174,41 @@ test('plugin manager isolates startup failures and keeps other enabled plugins l
   assert.match(managerSource, /for \(const descriptor of startupPlan\.ordered\)/)
   assert.match(
     managerSource,
-    /await this\.startPlugin\(descriptor\)\.catch\(\(error\) => \{\s*this\.markFailed\(descriptor\.id/
+    /await this\.startPlugin\(descriptor\)\.catch\(\(error\) => \{[\s\S]*this\.markFailed\(\s*descriptor\.id/
   )
+})
+
+test('plugin lifecycle stop is single-flight and stale process events cannot discard a replacement', () => {
+  assert.match(managerSource, /private readonly stopOperations = new Map<string, Promise<void>>\(\)/)
+  assert.match(managerSource, /const existingStop = this\.stopOperations\.get\(id\)/)
+  assert.match(managerSource, /if \(existingStop\) return existingStop/)
+  assert.match(managerSource, /await this\.stopOperations\.get\(descriptor\.id\)/)
+  assert.match(
+    managerSource,
+    /child\.on\('exit',[\s\S]*if \(this\.running\.get\(descriptor\.id\) !== running\) return/
+  )
+  assert.match(
+    managerSource,
+    /if \(this\.running\.get\(id\) === running\) this\.running\.delete\(id\)/
+  )
+})
+
+test('provider and UI RPC cancellation is wired through protocol, host AbortSignal, and public typings', () => {
+  assert.match(pluginTypesSource, /kind: 'cancel'[\s\S]*requestId: string[\s\S]*reason: string/)
+  assert.match(pluginHostSource, /const pendingPluginCalls = new Map<string, AbortController>\(\)/)
+  assert.match(pluginHostSource, /cancelPluginCall\(message\.requestId, message\.reason\)/)
+  assert.match(pluginHostSource, /signal: controller\.signal/)
+  assert.match(pluginHostSource, /abortPendingPluginCalls\('Plugin is being deactivated\.'\)/)
+  assert.match(pluginApiSource, /interface TwilightProviderRequestContext[\s\S]*signal: AbortSignal/)
+  assert.match(pluginApiSource, /interface TwilightUiCommandContext[\s\S]*signal: AbortSignal/)
+})
+
+test('provider write idempotency is connected from renderer bridge through host request context', () => {
+  assert.match(preloadSource, /providerWriteIdempotency\.begin\(/)
+  assert.match(managerSource, /const IDEMPOTENT_PROVIDER_WRITE_METHODS/)
+  assert.match(managerSource, /kind: 'provider-call'[\s\S]*idempotencyKey/)
+  assert.match(pluginHostSource, /idempotencyKey: message\.idempotencyKey/)
+  assert.match(pluginApiSource, /idempotencyKey\?: string/)
 })
 
 test('plugin manager exposes per-plugin logs for troubleshooting', () => {
@@ -141,11 +240,11 @@ test('plugin manager tracks provider health for calls and plugin failures', () =
   assert.match(managerSource, /if \(health\) this\.providerHealth\.set\(providerId,\s*health\)/)
   assert.match(
     managerSource,
-    /this\.recordProviderCallSuccess\(pending\.providerId,\s*pending\.pluginId,\s*pending\.method/
+    /this\.recordProviderCallSuccess\(\s*completion\.metadata\.providerId,\s*completion\.metadata\.pluginId,\s*completion\.metadata\.method/
   )
   assert.match(
     managerSource,
-    /this\.recordProviderCallFailure\(\s*pending\.providerId,\s*pending\.pluginId,\s*pending\.method/
+    /this\.recordProviderCallFailure\(\s*completion\.metadata\.providerId,\s*completion\.metadata\.pluginId,\s*completion\.metadata\.method/
   )
   assert.match(managerSource, /health: this\.getProviderHealth/)
 })
@@ -174,9 +273,12 @@ test('specialized windows receive only their scoped preload APIs', () => {
 })
 
 test('provider results replace approved remote media URLs before returning to the renderer', () => {
-  assert.match(managerSource, /import \{ protectProviderMedia \} from '\.\.\/security\/remoteMediaGrants\.ts'/)
   assert.match(
     managerSource,
-    /pending\.resolve\(protectProviderMedia\(message\.value, pending\.method\)\)/
+    /import \{ protectProviderMedia \} from '\.\.\/security\/remoteMediaGrants\.ts'/
+  )
+  assert.match(
+    managerSource,
+    /value: protectProviderMedia\(message\.value, metadata\.method\)/
   )
 })

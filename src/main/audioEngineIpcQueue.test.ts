@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { normalizeCueRange } from '../shared/cue.ts'
 
 const source = readFileSync(new URL('./audio/engineIpc.ts', import.meta.url), 'utf8')
 const preloadSource = readFileSync(new URL('../preload/index.ts', import.meta.url), 'utf8')
@@ -42,6 +43,20 @@ test('audioEngine IPC normalizes untrusted renderer parameters', () => {
   assert.match(source, /normalizeFiniteNumber\(time, 'seek time', 0, 0, Number\.MAX_SAFE_INTEGER\)/)
   assert.match(source, /normalizeFiniteNumber\(volume, 'volume', 1, 0, 1\)/)
   assert.match(source, /normalizeInteger\(points, 'spectrum points', 128, 8, 4096\)/)
+  assert.match(
+    source,
+    /const cueRange = item\.cueRange === undefined \? undefined : normalizeCueRange\(item\.cueRange\)/
+  )
+  assert.match(source, /if \(cueRange === null\) return null/)
+  assert.deepEqual(normalizeCueRange({ startSeconds: 10, endSeconds: 20 }), {
+    startSeconds: 10,
+    endSeconds: 20,
+    pregapSeconds: 0,
+    virtualPregapSeconds: 0,
+    sourcePregapSeconds: 0
+  })
+  assert.equal(normalizeCueRange({ startSeconds: 20, endSeconds: 10 }), null)
+  assert.equal(normalizeCueRange({ startSeconds: 0, endSeconds: 10, pregapSeconds: -1 }), null)
 })
 
 test('config-applied crosses the manager, IPC, and preload boundary', () => {
@@ -59,10 +74,14 @@ test('config-applied crosses the manager, IPC, and preload boundary', () => {
   assert.match(preloadDeclaration, /onConfigApplied:/)
 })
 
-test('audio engine manager exposes optional native AnalyzeBpm method for host analysis', () => {
+test('offline analysis is routed away from the playback audio service', () => {
   const managerSource = readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
   const serviceClientSource = readFileSync(
     new URL('./audioEngineServiceClient.ts', import.meta.url),
+    'utf8'
+  )
+  const analysisClientSource = readFileSync(
+    new URL('./audioAnalysisServiceClient.ts', import.meta.url),
     'utf8'
   )
   const nativeHeaderSource = readFileSync(
@@ -76,8 +95,11 @@ test('audio engine manager exposes optional native AnalyzeBpm method for host an
 
   assert.match(managerSource, /AnalyzeBpm\?: \(source: string, optionsJson\?: string\)/)
   assert.match(managerSource, /async analyzeBpm\(/)
-  assert.match(managerSource, /callAsync\?\.\('AnalyzeBpm'/)
-  assert.match(serviceClientSource, /AnalyzeBpm\(source: string, optionsJson\?: string\)/)
+  assert.doesNotMatch(managerSource, /audioServiceBinding\.callAsync\?\.\('AnalyzeBpm'/)
+  assert.match(serviceClientSource, /must use the isolated audio analysis service/)
+  assert.match(analysisClientSource, /class AudioAnalysisServiceClient/)
+  assert.match(analysisClientSource, /maxConcurrency/)
+  assert.match(analysisClientSource, /maxQueueSize/)
   assert.match(nativeHeaderSource, /TAE_AnalyzeBpm/)
   assert.match(nativeBridgeSource, /define\(env, exports, "AnalyzeBpm", AnalyzeBpm\)/)
 })

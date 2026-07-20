@@ -154,8 +154,12 @@ JS 插件 API 与 DSP C ABI 各自有独立版本号、独立的稳定性承诺�
 
 - Phase 5 采用“本地可发布”范围：仓库内提供 `packages/plugin-api`、`packages/create-twilight-plugin`、官方模板、本地静态索引和应用内市场，不实际发布 npm 包或创建远程 GitHub 仓库。
 - `create-twilight-plugin init` 生成 `tool`、`provider`、`ui-tool`、`theme` 插件项目；`create-twilight-plugin pack` 生成 `.tep` 并排除 `node_modules`、缓存和构建噪声。
-- `resources/plugin-index/plugins.json` 是 schemaVersion 1 的官方示例索引；索引包安装前校验 URL 协议、大小、sha256 和包内 manifest，并禁止覆盖内置网易云插件。
-- 插件管理页增加“插件市场”，展示 verified、权限、兼容/已安装/可更新状态；安装仍走信任式权限警告。
+- `resources/plugin-index/plugins.json` 是 schemaVersion 1 的随包离线发现快照，不承担官方审核或信任根语义；索引包安装前校验 URL 协议、大小、sha256 和包内 manifest，并禁止覆盖内置网易云插件。
+- 插件管理页展示派生的 `official` / `publisher-signed` / `index-declared` / `unverified` 信任级别、权限、兼容/已安装/可更新状态。`verified` 仅为索引声明；官方徽章还要求固定官方 URL、fresh 远程直连、origin/有效期证据和 active trusted Ed25519 signature。
+- manifest 的 `main` / `icon` / `binary.*` 路径使用 POSIX `/` 做跨平台 canonical normalization，拒绝 Windows/POSIX absolute、UNC/rooted 与越界 traversal；Windows host 和 Linux signer 因此签署同一 payload。
+- 远程索引 cache 使用 envelope 持久化 `origin` / `fetchedAt` / `expiresAt`；cache/legacy/bundled fallback 均不能升级信任。`list`、status 与 download 每次按当前时间重验 TTL 和 publisher key validity，resident entry 不保留过期 official。安装确认页展示实际/配置索引来源、缓存与过期状态、索引期望及最终 staged 包实际 SHA-256、签名 key/fingerprint/status、权限和任意代码执行风险；两次 hash 不同则在确认前拒绝。
+- 重叠 refresh 由单调 generation 保证 latest-request-wins，旧响应不能覆盖内存状态或磁盘 cache；下载阶段绑定 origin + 完整 entry canonical 指纹，索引在下载期间修改 manifest、source URL、审核声明、签名或 checksum 均会中止安装。
+- 可信发布者注册表支持多 active key、有效期和吊销以完成轮换；生产私钥仅存在于外部插件仓库的受保护发布流程，不进入应用仓库。正式公钥配置前注册表为空，未签名条目不会获得官方徽章。
 - Bilibili 收藏夹音频 Provider 示例作为独立插件仓库发布：它是第三方
   `provider + ui` 插件，需要用户通过远程插件索引安装并启用；登录后通过 Provider
   API 暴露收藏夹和 `bili:<bvid>:<cid>` 音频 track，播放 URL 由插件维护的

@@ -4,6 +4,7 @@ const {
   prepareMingwCmakeEnvironment,
   prepareMingwBuildLayout,
   resolveMingwEnvironment,
+  validateMingwCTestRegistration,
   validateMingwBuildCommands
 } = require('./audio-engine-toolchain.cjs')
 
@@ -35,11 +36,22 @@ if (!command) {
 
 const buildToolPreflight = validateMingwBuildCommands({
   env: preflight.environment,
-  commands: [command[0]]
+  commands: ['cmake', 'ctest']
 })
 if (!buildToolPreflight.ok) {
   console.error(buildToolPreflight.message)
   process.exit(1)
+}
+
+const ctestRegistration = validateMingwCTestRegistration({
+  buildDir: layout.buildDir,
+  env: preflight.environment,
+  cwd: root
+})
+if (!ctestRegistration.ok) {
+  console.error(ctestRegistration.message)
+  if (ctestRegistration.output) console.error(ctestRegistration.output)
+  process.exit(ctestRegistration.status || 1)
 }
 
 const result = spawnSync(command[0], command[1], {

@@ -1,22 +1,43 @@
 ﻿<script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
+import type { LocalLibraryTagPatch } from '../../../shared/localLibraryTags.ts'
 import { useUnifiedMusicSearch } from '../app/useUnifiedMusicSearch'
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useMusicStore } from '../stores/useMusicStore'
 import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
 import { useProviderStore } from '../stores/useProviderStore'
-import { getRecentTracks } from '../stores/useListeningStatsStore'
+import { getRecentTracks, useListeningStatsStore } from '../stores/useListeningStatsStore'
 import type { Track } from '../types/music'
 import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
-import { getTrackSource as getLogicalTrackSource, isLosslessTrack } from '../utils/logicalTrackModel'
+import {
+  getTrackSource as getLogicalTrackSource,
+  isLosslessTrack
+} from '../utils/logicalTrackModel'
 import { buildMetadataMatchCandidates } from '../utils/musicMetadataMatching'
-import { formatPlaylistSourceSummary, summarizePlaylistSources } from '../utils/playlistSourceSummary'
+import {
+  formatPlaylistSourceSummary,
+  summarizePlaylistSources
+} from '../utils/playlistSourceSummary'
+import { PLAYLIST_EXPORT_FORMATS } from '../utils/playlistExport.ts'
+import { selectLocalLibraryActionTracks } from '../utils/localTrackRemovalPolicy'
+import {
+  applyLibraryView,
+  libraryViewKey,
+  LibraryViewPreferences,
+  trackFolder,
+  type LibrarySortDirection,
+  type LibrarySortKey,
+  type LibraryViewFilters,
+  type LibraryViewState
+} from '../utils/libraryViewPreferences.ts'
 import CoverImg from './CoverImg.vue'
+import LocalLibraryTagManager from './LocalLibraryTagManager.vue'
 import { formatDuration } from './song-list/formatDuration'
 import type { GridItem } from './song-list/types'
 import { useSongListContextMenu } from './song-list/useSongListContextMenu'
 import { useSongListGridRendering } from './song-list/useSongListGridRendering'
+import { usePlaylistLifecycleActions } from './song-list/usePlaylistLifecycleActions.ts'
 import { useSongListSearch } from './song-list/useSongListSearch'
 import { useSongListVirtualScroll } from './song-list/useSongListVirtualScroll'
 import { useTrackMultiSelect } from './song-list/useTrackMultiSelect'
@@ -39,18 +60,24 @@ const {
   playlists,
   folders,
   libraryRepairReport,
+  excludedTracks,
   getPlaylistTracks,
   removeTrack,
+  removeLocalTracks,
+  restoreExcludedTracks,
+  applyLocalTagWrite,
   clearTrackMetadataMatch,
   applyTrackMetadataMatch,
   addToPlaylist,
   removeFromPlaylist,
+  addTracksToPlaylist,
+  removeTracksFromPlaylist,
   replaceTrackReference,
   createPlaylist,
+  createPlaylistWithTracks,
   deletePlaylist,
   isFavoriteTrack,
-  addFavoriteTrack,
-  removeFavoriteTrack
+  setFavoriteTracks
 } = useMusicStore()
 const playbackStore = usePlaybackQueueStore()
 const { currentTrack } = storeToRefs(playbackStore)
@@ -58,6 +85,7 @@ const { playTrack } = playbackStore
 const mediaProviders = useMediaProviders()
 const unifiedSearch = useUnifiedMusicSearch()
 const providerStore = useProviderStore()
+const { listeningStats } = useListeningStatsStore()
 
 const { searchQuery, debouncedSearchQuery, searchInputFocused } = useSongListSearch()
 
@@ -92,7 +120,9 @@ function selectRecentSource(sourceId: string): void {
 }
 
 function closeRecentSourceMenuDelayed(): void {
-  setTimeout(() => { recentSourceMenuOpen.value = false }, 150)
+  setTimeout(() => {
+    recentSourceMenuOpen.value = false
+  }, 150)
 }
 
 const baseDisplayTracks = computed(() => {
@@ -103,9 +133,10 @@ const baseDisplayTracks = computed(() => {
     if (source === 'all') {
       return resolveUnifiedRecentTracks({ recentStats, localTracks: tracks.value })
     }
-    const filteredStats = source === 'local'
-      ? recentStats.filter((stat) => stat.sourceIds?.some((sid) => sid.source === 'local'))
-      : recentStats.filter((stat) => stat.sourceIds?.some((sid) => sid.source === source))
+    const filteredStats =
+      source === 'local'
+        ? recentStats.filter((stat) => stat.sourceIds?.some((sid) => sid.source === 'local'))
+        : recentStats.filter((stat) => stat.sourceIds?.some((sid) => sid.source === source))
     return resolveUnifiedRecentTracks({ recentStats: filteredStats, localTracks: tracks.value })
   }
   if (props.filter) {
@@ -114,8 +145,8 @@ const baseDisplayTracks = computed(() => {
       return artists.value.find((artist) => artist.name === name)?.tracks ?? []
     }
     if (props.filter.startsWith('album:')) {
-      const name = props.filter.slice(6)
-      return albums.value.find((album) => album.name === name)?.tracks ?? []
+      const id = props.filter.slice(6)
+      return albums.value.find((album) => album.id === id)?.tracks ?? []
     }
     if (props.filter.startsWith('playlist:')) {
       const name = props.filter.slice(9)
@@ -128,6 +159,70 @@ const baseDisplayTracks = computed(() => {
     }
   }
   return []
+})
+
+const libraryViewPreferences = new LibraryViewPreferences()
+const currentLibraryViewKey = computed(() => libraryViewKey(props.category, props.filter))
+const libraryViewState = ref<LibraryViewState>(
+  libraryViewPreferences.read(currentLibraryViewKey.value, props.category)
+)
+
+watch(
+  [currentLibraryViewKey, () => props.category],
+  ([viewKey, category]) => {
+    libraryViewState.value = libraryViewPreferences.read(viewKey, category)
+  },
+  { immediate: true }
+)
+
+function updateLibraryView(next: LibraryViewState): void {
+  libraryViewState.value = next
+  libraryViewPreferences.write(currentLibraryViewKey.value, next)
+}
+
+function setSortKey(value: string): void {
+  updateLibraryView({ ...libraryViewState.value, sortKey: value as LibrarySortKey })
+}
+
+function setSortDirection(value: string): void {
+  updateLibraryView({ ...libraryViewState.value, sortDirection: value as LibrarySortDirection })
+}
+
+function setLibraryFilter<K extends keyof LibraryViewFilters>(
+  key: K,
+  value: LibraryViewFilters[K]
+): void {
+  updateLibraryView({
+    ...libraryViewState.value,
+    filters: { ...libraryViewState.value.filters, [key]: value }
+  })
+}
+
+const libraryFilterOptions = computed(() => {
+  const values = baseDisplayTracks.value
+  return {
+    sampleRates: Array.from(
+      new Set(values.map((track) => track.sampleRate).filter((value): value is number => !!value))
+    ).sort((left, right) => left - right),
+    bitDepths: Array.from(
+      new Set(values.map((track) => track.bitDepth).filter((value): value is number => !!value))
+    ).sort((left, right) => left - right),
+    folders: Array.from(new Set(values.map(trackFolder).filter(Boolean))).sort((left, right) =>
+      left.localeCompare(right, 'zh')
+    ),
+    providers: Array.from(new Set(values.map((track) => getLogicalTrackSource(track)))).sort(
+      (left, right) => left.localeCompare(right, 'zh')
+    )
+  }
+})
+
+const lastPlayedByTrackId = computed(() => {
+  const result = new Map<string, number>()
+  for (const stat of Object.values(listeningStats.value.tracks)) {
+    if (stat.track?.id) result.set(stat.track.id, stat.lastPlayed)
+    for (const sourceId of stat.sourceIds ?? []) result.set(sourceId.trackId, stat.lastPlayed)
+  }
+  return result
 })
 
 const viewTitle = computed(() => {
@@ -144,7 +239,10 @@ const viewTitle = computed(() => {
     return '艺术家'
   }
   if (props.category === 'albums') {
-    if (props.filter && props.filter.startsWith('album:')) return props.filter.slice(6)
+    if (props.filter && props.filter.startsWith('album:')) {
+      const id = props.filter.slice(6)
+      return albums.value.find((album) => album.id === id)?.name ?? '专辑'
+    }
     return '专辑'
   }
   if (props.category === 'playlists') {
@@ -160,7 +258,19 @@ const currentPlaylistName = computed(() => {
 })
 
 const isPlaylistDetail = computed(() => currentPlaylistName.value !== null)
+const currentPlaylist = computed(() =>
+  currentPlaylistName.value
+    ? (playlists.value.find((playlist) => playlist.name === currentPlaylistName.value) ?? null)
+    : null
+)
 const repairMessage = ref('')
+const showExcludedTracksDialog = ref(false)
+const showTagManager = ref(false)
+const tagManagerInitialView = ref<'edit' | 'duplicates'>('edit')
+const tagManagerTracks = ref<Track[]>([])
+const tagManagerFocusRestoreTarget = ref<HTMLElement | null>(null)
+const libraryMutationPending = ref(false)
+const exclusionRestorePending = ref(false)
 
 const shouldUseUnifiedSearch = computed(() => props.category === 'allSongs' && !props.filter)
 
@@ -189,7 +299,7 @@ watch(
   { immediate: true }
 )
 
-const displayTracks = computed(() => {
+const searchedTracks = computed(() => {
   const q = debouncedSearchQuery.value.trim()
   if (!q) return baseDisplayTracks.value
   if (shouldUseUnifiedSearch.value) {
@@ -203,6 +313,10 @@ const displayTracks = computed(() => {
       t.album.toLowerCase().includes(normalizedQuery)
   )
 })
+
+const displayTracks = computed(() =>
+  applyLibraryView(searchedTracks.value, libraryViewState.value, lastPlayedByTrackId.value)
+)
 
 const unifiedSearchSourceNames = computed(
   () => new Map(unifiedSearch.items.value.map((item) => [item.track.id, item.sourceName]))
@@ -228,7 +342,8 @@ const unifiedSearchStatusText = computed(() => {
   const providerCount = unifiedSearchHealthItems.value.length
   const failedCount = unifiedSearchHealthItems.value.filter((item) => item.state === 'error').length
   const resultCount = displayTracks.value.length
-  if (failedCount > 0) return `找到 ${resultCount} 首，${failedCount}/${providerCount} 个在线音源不可用`
+  if (failedCount > 0)
+    return `找到 ${resultCount} 首，${failedCount}/${providerCount} 个在线音源不可用`
   return `找到 ${resultCount} 首，已合并本地库和 ${providerCount} 个在线音源`
 })
 
@@ -268,16 +383,14 @@ function metadataMatchTitle(track: Track): string {
   return `流媒体元数据匹配：${match.providerId} / ${match.trackId} · ${confidence} · ${match.score} 分`
 }
 
-function unifiedSearchHealthLabel(
-  health: {
-    searchable: boolean
-    available: boolean
-    resultCount: number
-    lastError: string | null
-    pluginStatus: string | null
-    playbackUrlSuccessRate: number | null
-  }
-): string {
+function unifiedSearchHealthLabel(health: {
+  searchable: boolean
+  available: boolean
+  resultCount: number
+  lastError: string | null
+  pluginStatus: string | null
+  playbackUrlSuccessRate: number | null
+}): string {
   if (health.pluginStatus && health.pluginStatus !== 'enabled') return `插件 ${health.pluginStatus}`
   if (!health.searchable) return '不支持搜索'
   if (health.lastError) return health.lastError
@@ -330,7 +443,9 @@ function unifiedSearchHealthDetail(health: {
     health.lastError ? `最近错误 ${health.lastError}` : '',
     health.playbackUrlLastError ? `播放 URL 最近错误 ${health.playbackUrlLastError}` : '',
     health.lastCheckedAt ? `最后检查 ${health.lastCheckedAt}` : ''
-  ].filter(Boolean).join(' · ')
+  ]
+    .filter(Boolean)
+    .join(' · ')
 }
 
 function formatPercent(value: number): string {
@@ -340,7 +455,9 @@ function formatPercent(value: number): string {
 function trackSourceLabel(track: Track): string {
   const searchSourceName = unifiedSearchSourceNames.value.get(track.id)
   if (searchSourceName) {
-    return getLogicalTrackSource(track) === 'local' && isLosslessTrack(track) ? '本地无损' : searchSourceName
+    return getLogicalTrackSource(track) === 'local' && isLosslessTrack(track)
+      ? '本地无损'
+      : searchSourceName
   }
   const source = getLogicalTrackSource(track)
   if (source === 'local') return isLosslessTrack(track) ? '本地无损' : '本地'
@@ -425,7 +542,6 @@ const {
   showCreatePlaylistDialog,
   newPlaylistName,
   onContextMenu,
-  handleDelete,
   handleOpenFolder,
   handleAddToPlaylist,
   handleRemoveFromCurrentPlaylist,
@@ -436,7 +552,7 @@ const {
   canClearMetadataMatchSelectedTrack,
   handleClearMetadataMatch,
   openCreatePlaylistDialog,
-  handleCreatePlaylist,
+  completeCreatePlaylistDialog,
   handleCreatePlaylistFromMenu,
   handleDeletePlaylist,
   closeContextMenu
@@ -467,7 +583,13 @@ const {
   updateViewportHeight
 } = useSongListVirtualScroll({
   displayTracks,
-  resetSources: [() => props.category, () => props.filter, debouncedSearchQuery],
+  resetSources: [
+    () => props.category,
+    () => props.filter,
+    debouncedSearchQuery,
+    currentLibraryViewKey,
+    libraryViewState
+  ],
   shouldResetOnSearch: showTable,
   debouncedSearchQuery
 })
@@ -488,6 +610,35 @@ const {
   getSelectedTracks,
   ensureContextSelection
 } = multiSelect
+
+const {
+  playlistImportInput,
+  playlistCoverInput,
+  playlistExportFormat,
+  playlistRepairPending,
+  triggerPlaylistImport,
+  handlePlaylistImport,
+  downloadPlaylistDocument,
+  triggerPlaylistCoverPicker,
+  handlePlaylistCover,
+  handleRenamePlaylist,
+  handleCopyPlaylist,
+  handleMoveSelectedWithinPlaylist,
+  handlePlaylistDragStart,
+  handlePlaylistDrop,
+  handleMoveSelectedToPlaylist,
+  handlePlaylistRepair
+} = usePlaylistLifecycleActions({
+  currentPlaylist,
+  isPlaylistDetail,
+  repairMessage,
+  getSelectedTracks,
+  isSelected,
+  clearSelection,
+  selectPlaylist: (name) => emit('selectView', 'playlists', `playlist:${name}`)
+})
+void playlistImportInput.value
+void playlistCoverInput.value
 
 const pendingBatchCreateTracks = ref<Track[]>([])
 
@@ -518,20 +669,79 @@ const selectionAllFavorited = computed(() => {
   return selected.length > 0 && selected.every((track) => isFavoriteTrack(track))
 })
 
-function handleBatchDelete(): void {
-  for (const track of getSelectedTracks()) {
-    removeTrack(track.id)
+const selectedLocalTrackCount = computed(
+  () => selectLocalLibraryActionTracks(getSelectedTracks()).length
+)
+const localSelectionActionLabel = computed(() =>
+  selectedLocalTrackCount.value > 1 ? ` (${selectedLocalTrackCount.value})` : ''
+)
+
+async function runLocalLibraryRemoval(mode: 'library' | 'trash'): Promise<void> {
+  if (libraryMutationPending.value) return
+  const selected = selectLocalLibraryActionTracks(getSelectedTracks())
+  if (selected.length === 0) return
+  if (
+    mode === 'trash' &&
+    !window.confirm(
+      `确定将选中的 ${selected.length} 个本地文件移到系统回收站吗？失败的文件会继续保留在音乐库中。`
+    )
+  ) {
+    return
   }
-  clearSelection()
-  closeContextMenu()
+
+  libraryMutationPending.value = true
+  try {
+    const result = await removeLocalTracks(selected, mode)
+    const action = mode === 'trash' ? '移到回收站' : '从音乐库移除'
+    repairMessage.value = `${action} ${result.removedTrackIds.length} 首${
+      result.failures.length > 0 ? `，${result.failures.length} 项失败` : ''
+    }`
+    if (result.failures.length > 0) {
+      const details = result.failures
+        .slice(0, 8)
+        .map((failure) => `${failure.filePath}\n${failure.message}`)
+        .join('\n\n')
+      window.alert(`${action}未全部完成：\n\n${details}`)
+    }
+    clearSelection()
+    closeContextMenu()
+  } catch (error) {
+    repairMessage.value = error instanceof Error ? error.message : '本地音乐库操作失败'
+  } finally {
+    libraryMutationPending.value = false
+  }
+}
+
+async function handleRestoreExclusions(filePaths: string[]): Promise<void> {
+  if (exclusionRestorePending.value || filePaths.length === 0) return
+  exclusionRestorePending.value = true
+  try {
+    const restoredCount = await restoreExcludedTracks(filePaths)
+    repairMessage.value = `已恢复 ${restoredCount} 个排除项`
+    if (excludedTracks.value.length === 0) showExcludedTracksDialog.value = false
+  } catch (error) {
+    repairMessage.value = error instanceof Error ? error.message : '恢复排除项失败'
+  } finally {
+    exclusionRestorePending.value = false
+  }
+}
+
+function excludedTrackLabel(filePath: string, title: string): string {
+  return title || filePath.split(/[\\/]/).pop() || filePath
+}
+
+function formatExcludedAt(value: string): string {
+  const timestamp = Date.parse(value)
+  return Number.isFinite(timestamp) && timestamp > 0 ? new Date(timestamp).toLocaleString() : ''
 }
 
 function handleBatchRemoveFromPlaylist(): void {
   const playlistName = currentPlaylistName.value
   if (!playlistName) return
-  for (const track of getSelectedTracks()) {
-    removeFromPlaylist(playlistName, track.id)
-  }
+  removeTracksFromPlaylist(
+    playlistName,
+    getSelectedTracks().map((track) => track.id)
+  )
   clearSelection()
   closeContextMenu()
 }
@@ -540,17 +750,15 @@ function handleBatchFavorite(): void {
   const selected = getSelectedTracks()
   if (selected.length === 0) return
   if (selected.every((track) => isFavoriteTrack(track))) {
-    for (const track of selected) removeFavoriteTrack(track)
+    setFavoriteTracks(selected, false)
   } else {
-    for (const track of selected) addFavoriteTrack(track)
+    setFavoriteTracks(selected, true)
   }
   closeContextMenu()
 }
 
 function handleBatchAddToPlaylist(playlistName: string): void {
-  for (const track of getSelectedTracks()) {
-    addToPlaylist(playlistName, track.id, track)
-  }
+  addTracksToPlaylist(playlistName, getSelectedTracks())
   closeContextMenu()
 }
 
@@ -563,23 +771,18 @@ function handleBatchCreatePlaylistFromMenu(): void {
 function handleCreatePlaylistWithBatch(): void {
   const name = newPlaylistName.value.trim()
   const batch = pendingBatchCreateTracks.value
-  handleCreatePlaylist()
-  if (name && batch.length > 1) {
-    for (const track of batch.slice(1)) {
-      addToPlaylist(name, track.id, track)
-    }
-  }
+  if (name && batch.length > 0) createPlaylistWithTracks(name, batch)
   pendingBatchCreateTracks.value = []
+  completeCreatePlaylistDialog()
   if (batch.length > 0) clearSelection()
 }
 
-function handleContextDelete(): void {
-  if (selectedCount.value > 1) {
-    handleBatchDelete()
-    return
-  }
-  handleDelete()
-  clearSelection()
+function handleContextRemoveFromLibrary(): void {
+  void runLocalLibraryRemoval('library')
+}
+
+function handleContextMoveToTrash(): void {
+  void runLocalLibraryRemoval('trash')
 }
 
 function handleContextRemoveFromPlaylist(): void {
@@ -611,12 +814,41 @@ function handleContextCreatePlaylist(): void {
   handleCreatePlaylistFromMenu()
 }
 
-function handleToolbarDelete(): void {
-  handleBatchDelete()
+function handleToolbarRemoveFromLibrary(): void {
+  void runLocalLibraryRemoval('library')
+}
+
+function handleToolbarMoveToTrash(): void {
+  void runLocalLibraryRemoval('trash')
 }
 
 function handleToolbarFavorite(): void {
   handleBatchFavorite()
+}
+
+function openTagManager(initialView: 'edit' | 'duplicates' = 'edit'): void {
+  const selected = selectLocalLibraryActionTracks(getSelectedTracks())
+  tagManagerFocusRestoreTarget.value =
+    document.activeElement instanceof HTMLElement ? document.activeElement : null
+  tagManagerTracks.value = selected
+  tagManagerInitialView.value = initialView
+  showTagManager.value = true
+  closeContextMenu()
+}
+
+function closeTagManager(): void {
+  showTagManager.value = false
+  const target = tagManagerFocusRestoreTarget.value
+  tagManagerFocusRestoreTarget.value = null
+  void nextTick(() => {
+    if (target?.isConnected) target.focus()
+  })
+}
+
+function applyTagManagerWrite(filePaths: string[], patch: LocalLibraryTagPatch): void {
+  const changed = applyLocalTagWrite(filePaths, patch)
+  repairMessage.value =
+    changed > 0 ? `已更新 ${changed} 首本地歌曲的本地视图` : '标签已写入，等待下次扫描刷新本地视图'
 }
 
 const {
@@ -707,7 +939,12 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 class="artist-card"
                 @click="emit('selectView', 'artists', `artist:${artist.name}`)"
               >
-                <CoverImg v-if="artist.cover" :cover="artist.cover" class="artist-cover" alt="cover" />
+                <CoverImg
+                  v-if="artist.cover"
+                  :cover="artist.cover"
+                  class="artist-cover"
+                  alt="cover"
+                />
                 <div v-else class="artist-cover-placeholder">
                   <i class="pi pi-user" style="font-size: 28px; color: #bbb"></i>
                 </div>
@@ -722,9 +959,9 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
             <template v-if="category === 'albums'">
               <div
                 v-for="album in visibleAlbums"
-                :key="album.name"
+                :key="album.id"
                 class="album-card"
-                @click="emit('selectView', 'albums', `album:${album.name}`)"
+                @click="emit('selectView', 'albums', `album:${album.id}`)"
               >
                 <CoverImg v-if="album.cover" :cover="album.cover" class="album-cover" alt="cover" />
                 <div v-else class="album-cover-placeholder">
@@ -750,8 +987,21 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 class="playlist-card"
                 @click="emit('selectView', 'playlists', `playlist:${playlist.name}`)"
               >
-                <div class="playlist-cover-placeholder" :class="{ 'default-playlist-cover': playlist.isDefault }">
-                  <i :class="playlist.isDefault ? 'pi pi-heart' : 'pi pi-list'" style="font-size: 32px; color: #ccc"></i>
+                <CoverImg
+                  v-if="playlist.cover"
+                  :cover="playlist.cover"
+                  class="album-cover"
+                  alt="playlist cover"
+                />
+                <div
+                  v-else
+                  class="playlist-cover-placeholder"
+                  :class="{ 'default-playlist-cover': playlist.isDefault }"
+                >
+                  <i
+                    :class="playlist.isDefault ? 'pi pi-heart' : 'pi pi-list'"
+                    style="font-size: 32px; color: #ccc"
+                  ></i>
                 </div>
                 <div class="playlist-name">{{ playlist.name }}</div>
                 <div class="playlist-count">{{ playlist.trackIds?.length ?? 0 }} 首</div>
@@ -775,7 +1025,12 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 class="playlist-card folder-card"
                 @click="emit('selectView', 'folders', `folder:${folder.path}`)"
               >
-                <CoverImg v-if="folder.cover" :cover="folder.cover" class="album-cover" alt="cover" />
+                <CoverImg
+                  v-if="folder.cover"
+                  :cover="folder.cover"
+                  class="album-cover"
+                  alt="cover"
+                />
                 <div v-else class="playlist-cover-placeholder">
                   <i class="pi pi-folder" style="font-size: 32px; color: #fff"></i>
                 </div>
@@ -805,7 +1060,64 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               </div>
             </div>
             <div class="header-right">
-              <div v-if="category === 'recent'" class="recent-source-dropdown" :class="{ open: recentSourceMenuOpen }">
+              <div v-if="isPlaylistDetail" class="playlist-lifecycle-actions" aria-label="歌单操作">
+                <button type="button" title="重命名歌单" @click="handleRenamePlaylist">
+                  <i class="pi pi-pencil"></i>
+                </button>
+                <button type="button" title="复制歌单" @click="handleCopyPlaylist">
+                  <i class="pi pi-copy"></i>
+                </button>
+                <button type="button" title="设置歌单封面" @click="triggerPlaylistCoverPicker">
+                  <i class="pi pi-image"></i>
+                </button>
+                <button type="button" title="导入 M3U、M3U8 或 PLS" @click="triggerPlaylistImport">
+                  <i class="pi pi-file-import"></i>
+                </button>
+                <label class="playlist-export-format" title="选择导出歌单格式">
+                  <span class="sr-only">导出歌单格式</span>
+                  <select v-model="playlistExportFormat" aria-label="导出歌单格式">
+                    <option
+                      v-for="option in PLAYLIST_EXPORT_FORMATS"
+                      :key="option.value"
+                      :value="option.value"
+                    >
+                      {{ option.label }}
+                    </option>
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  :title="`导出 ${playlistExportFormat.toUpperCase()}`"
+                  @click="downloadPlaylistDocument(playlistExportFormat)"
+                >
+                  <i class="pi pi-download"></i>
+                </button>
+                <button
+                  type="button"
+                  title="扫描文件夹并批量重新定位缺失文件"
+                  :disabled="playlistRepairPending"
+                  @click="handlePlaylistRepair"
+                >
+                  <i
+                    :class="playlistRepairPending ? 'pi pi-spin pi-spinner' : 'pi pi-map-marker'"
+                  ></i>
+                </button>
+              </div>
+              <button
+                v-if="category === 'allSongs'"
+                type="button"
+                class="excluded-tracks-trigger"
+                title="管理从音乐库移除的文件"
+                @click="showExcludedTracksDialog = true"
+              >
+                <i class="pi pi-ban"></i>
+                <span>已移除 {{ excludedTracks.length }}</span>
+              </button>
+              <div
+                v-if="category === 'recent'"
+                class="recent-source-dropdown"
+                :class="{ open: recentSourceMenuOpen }"
+              >
                 <button
                   class="recent-source-trigger"
                   @click="recentSourceMenuOpen = !recentSourceMenuOpen"
@@ -825,7 +1137,11 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   >
                     <i class="pi" :class="opt.icon" style="font-size: 13px"></i>
                     <span>{{ opt.label }}</span>
-                    <i v-if="recentSource === opt.id" class="pi pi-check" style="font-size: 12px; margin-left: auto"></i>
+                    <i
+                      v-if="recentSource === opt.id"
+                      class="pi pi-check"
+                      style="font-size: 12px; margin-left: auto"
+                    ></i>
                   </div>
                 </div>
               </div>
@@ -843,6 +1159,143 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <i class="pi pi-times"></i>
                 </button>
               </div>
+              <div class="library-view-controls" aria-label="媒体库排序和过滤">
+                <label>
+                  <span>排序</span>
+                  <select
+                    :value="libraryViewState.sortKey"
+                    @change="setSortKey(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="title">标题</option>
+                    <option value="artist">歌手</option>
+                    <option value="album">专辑</option>
+                    <option value="duration">时长</option>
+                    <option value="format">格式</option>
+                    <option value="sampleRate">采样率</option>
+                    <option value="addedAt">加入时间</option>
+                    <option value="lastPlayed">最近播放</option>
+                  </select>
+                </label>
+                <label>
+                  <span>顺序</span>
+                  <select
+                    :value="libraryViewState.sortDirection"
+                    @change="setSortDirection(($event.target as HTMLSelectElement).value)"
+                  >
+                    <option value="asc">升序</option>
+                    <option value="desc">降序</option>
+                  </select>
+                </label>
+                <label class="library-filter-toggle">
+                  <input
+                    type="checkbox"
+                    :checked="libraryViewState.filters.lossless"
+                    @change="
+                      setLibraryFilter('lossless', ($event.target as HTMLInputElement).checked)
+                    "
+                  />
+                  <span>无损</span>
+                </label>
+                <label class="library-filter-toggle">
+                  <input
+                    type="checkbox"
+                    :checked="libraryViewState.filters.dsd"
+                    @change="setLibraryFilter('dsd', ($event.target as HTMLInputElement).checked)"
+                  />
+                  <span>DSD</span>
+                </label>
+                <label>
+                  <span>采样率</span>
+                  <select
+                    :value="libraryViewState.filters.sampleRate ?? ''"
+                    @change="
+                      setLibraryFilter(
+                        'sampleRate',
+                        Number(($event.target as HTMLSelectElement).value) || null
+                      )
+                    "
+                  >
+                    <option value="">全部</option>
+                    <option
+                      v-for="value in libraryFilterOptions.sampleRates"
+                      :key="value"
+                      :value="value"
+                    >
+                      {{ value / 1000 }} kHz
+                    </option>
+                  </select>
+                </label>
+                <label>
+                  <span>位深</span>
+                  <select
+                    :value="libraryViewState.filters.bitDepth ?? ''"
+                    @change="
+                      setLibraryFilter(
+                        'bitDepth',
+                        Number(($event.target as HTMLSelectElement).value) || null
+                      )
+                    "
+                  >
+                    <option value="">全部</option>
+                    <option
+                      v-for="value in libraryFilterOptions.bitDepths"
+                      :key="value"
+                      :value="value"
+                    >
+                      {{ value }} bit
+                    </option>
+                  </select>
+                </label>
+                <label>
+                  <span>文件夹</span>
+                  <select
+                    :value="libraryViewState.filters.folder ?? ''"
+                    @change="
+                      setLibraryFilter('folder', ($event.target as HTMLSelectElement).value || null)
+                    "
+                  >
+                    <option value="">全部</option>
+                    <option
+                      v-for="folder in libraryFilterOptions.folders"
+                      :key="folder"
+                      :value="folder"
+                    >
+                      {{ folder }}
+                    </option>
+                  </select>
+                </label>
+                <label>
+                  <span>来源</span>
+                  <select
+                    :value="libraryViewState.filters.provider ?? ''"
+                    @change="
+                      setLibraryFilter(
+                        'provider',
+                        ($event.target as HTMLSelectElement).value || null
+                      )
+                    "
+                  >
+                    <option value="">全部</option>
+                    <option
+                      v-for="provider in libraryFilterOptions.providers"
+                      :key="provider"
+                      :value="provider"
+                    >
+                      {{ provider }}
+                    </option>
+                  </select>
+                </label>
+              </div>
+              <button
+                v-if="props.category === 'allSongs'"
+                type="button"
+                class="excluded-tracks-trigger"
+                title="检查重复歌曲"
+                @click="openTagManager('duplicates')"
+              >
+                <i class="pi pi-copy"></i>
+                <span>重复检查</span>
+              </button>
             </div>
           </div>
           <div
@@ -890,6 +1343,16 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
                 </button>
                 <button
+                  v-if="selectedLocalTrackCount > 0"
+                  type="button"
+                  class="selection-btn"
+                  :disabled="libraryMutationPending"
+                  @click="openTagManager('edit')"
+                >
+                  <i class="pi pi-tag"></i>
+                  <span>编辑标签{{ localSelectionActionLabel }}</span>
+                </button>
+                <button
                   v-if="isPlaylistDetail"
                   type="button"
                   class="selection-btn"
@@ -898,9 +1361,52 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <i class="pi pi-minus-circle"></i>
                   <span>从歌单移除</span>
                 </button>
-                <button type="button" class="selection-btn danger" @click="handleToolbarDelete">
+                <button
+                  v-if="isPlaylistDetail"
+                  type="button"
+                  class="selection-btn"
+                  @click="handleMoveSelectedWithinPlaylist(false)"
+                >
+                  <i class="pi pi-angle-double-up"></i>
+                  <span>移到开头</span>
+                </button>
+                <button
+                  v-if="isPlaylistDetail"
+                  type="button"
+                  class="selection-btn"
+                  @click="handleMoveSelectedWithinPlaylist(true)"
+                >
+                  <i class="pi pi-angle-double-down"></i>
+                  <span>移到末尾</span>
+                </button>
+                <button
+                  v-if="isPlaylistDetail"
+                  type="button"
+                  class="selection-btn"
+                  @click="handleMoveSelectedToPlaylist"
+                >
+                  <i class="pi pi-arrow-right-arrow-left"></i>
+                  <span>移动到歌单</span>
+                </button>
+                <button
+                  v-if="selectedLocalTrackCount > 0"
+                  type="button"
+                  class="selection-btn"
+                  :disabled="libraryMutationPending"
+                  @click="handleToolbarRemoveFromLibrary"
+                >
+                  <i class="pi pi-minus-circle"></i>
+                  <span>从音乐库移除</span>
+                </button>
+                <button
+                  v-if="selectedLocalTrackCount > 0"
+                  type="button"
+                  class="selection-btn danger"
+                  :disabled="libraryMutationPending"
+                  @click="handleToolbarMoveToTrash"
+                >
                   <i class="pi pi-trash"></i>
-                  <span>删除</span>
+                  <span>移到回收站</span>
                 </button>
                 <button type="button" class="selection-btn ghost" @click="clearSelection">
                   <i class="pi pi-times"></i>
@@ -935,16 +1441,26 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   class="track-row"
                   :class="{
                     'track-playing': currentTrack?.id === track.id,
-                    'track-selected': isSelected(track.id)
+                    'track-selected': isSelected(track.id),
+                    'playlist-draggable': isPlaylistDetail
                   }"
                   :style="{ height: rowHeight - 4 + 'px', display: 'flex' }"
+                  :draggable="isPlaylistDetail"
                   @click="onRowClick(track, Number(index), $event)"
                   @dblclick="onRowDblClick(track)"
+                  @dragstart="handlePlaylistDragStart($event, track)"
+                  @dragover.prevent
+                  @drop="handlePlaylistDrop($event, track)"
                   @pointermove="onRowPointerMove"
                   @contextmenu="onTrackContextMenu($event, track, Number(index))"
                 >
                   <td class="col-cover">
-                    <CoverImg v-if="track.cover" :cover="track.cover" class="cover-img" alt="cover" />
+                    <CoverImg
+                      v-if="track.cover"
+                      :cover="track.cover"
+                      class="cover-img"
+                      alt="cover"
+                    />
                     <div v-else class="cover-placeholder">
                       <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
                     </div>
@@ -994,127 +1510,233 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
 
             <!-- Context Menu -->
             <Teleport to="body">
-            <div
-              v-if="showContextMenu"
-              class="context-menu"
-              :style="{ top: menuY + 'px', left: menuX + 'px' }"
-              @click.stop
-            >
-              <div class="menu-item" @click="handleContextDelete">
-                <i class="pi pi-trash"></i>
-                <span
-                  >{{ isPlaylistDetail ? '从本地库删除' : '删除'
-                  }}{{ selectionActionLabel }}</span
+              <div
+                v-if="showContextMenu"
+                class="context-menu"
+                :style="{ top: menuY + 'px', left: menuX + 'px' }"
+                @click.stop
+              >
+                <div
+                  v-if="selectedLocalTrackCount > 0"
+                  class="menu-item"
+                  @click="handleContextRemoveFromLibrary"
                 >
-              </div>
-              <div
-                v-if="isPlaylistDetail"
-                class="menu-item"
-                @click="handleContextRemoveFromPlaylist"
-              >
-                <i class="pi pi-minus-circle"></i>
-                <span>从歌单移除{{ selectionActionLabel }}</span>
-              </div>
-              <div class="menu-item" @click="handleContextFavorite">
-                <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
-                <span
-                  >{{ selectionAllFavorited ? '取消收藏' : '加入收藏'
-                  }}{{ selectionActionLabel }}</span
+                  <i class="pi pi-minus-circle"></i>
+                  <span>从音乐库移除{{ localSelectionActionLabel }}</span>
+                </div>
+                <div
+                  v-if="selectedLocalTrackCount > 0"
+                  class="menu-item danger"
+                  @click="handleContextMoveToTrash"
                 >
-              </div>
-              <div
-                v-if="canRematchSelectedTrack && selectedCount <= 1"
-                class="menu-item"
-                @click="handleRematchTrack"
-              >
-                <i class="pi pi-refresh"></i>
-                <span>重新匹配音源</span>
-              </div>
-              <div
-                v-if="canRematchMetadataSelectedTrack && selectedCount <= 1"
-                class="menu-item"
-                @click="handleRematchMetadata"
-              >
-                <i class="pi pi-sync"></i>
-                <span>重新匹配流媒体元数据</span>
-              </div>
-              <div
-                v-if="canClearMetadataMatchSelectedTrack && selectedCount <= 1"
-                class="menu-item"
-                @click="handleClearMetadataMatch"
-              >
-                <i class="pi pi-times-circle"></i>
-                <span>取消流媒体匹配</span>
-              </div>
-              <div
-                v-if="selectedCount <= 1"
-                class="menu-item"
-                @click="handleOpenFolder"
-              >
-                <i class="pi pi-folder-open"></i>
-                <span>打开文件所在位置</span>
-              </div>
-              <div
-                class="menu-item"
-                @mouseenter="showPlaylistSubmenu = true"
-                @mouseleave="showPlaylistSubmenu = false"
-              >
-                <i class="pi pi-plus"></i>
-                <span>加入到歌单{{ selectionActionLabel }}</span>
-                <i class="pi pi-chevron-right submenu-icon"></i>
+                  <i class="pi pi-trash"></i>
+                  <span>移到回收站{{ localSelectionActionLabel }}</span>
+                </div>
+                <div
+                  v-if="isPlaylistDetail"
+                  class="menu-item"
+                  @click="handleContextRemoveFromPlaylist"
+                >
+                  <i class="pi pi-minus-circle"></i>
+                  <span>从歌单移除{{ selectionActionLabel }}</span>
+                </div>
+                <div class="menu-item" @click="handleContextFavorite">
+                  <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+                  <span
+                    >{{ selectionAllFavorited ? '取消收藏' : '加入收藏'
+                    }}{{ selectionActionLabel }}</span
+                  >
+                </div>
+                <div
+                  v-if="canRematchSelectedTrack && selectedCount <= 1"
+                  class="menu-item"
+                  @click="handleRematchTrack"
+                >
+                  <i class="pi pi-refresh"></i>
+                  <span>重新匹配音源</span>
+                </div>
+                <div
+                  v-if="canRematchMetadataSelectedTrack && selectedCount <= 1"
+                  class="menu-item"
+                  @click="handleRematchMetadata"
+                >
+                  <i class="pi pi-sync"></i>
+                  <span>重新匹配流媒体元数据</span>
+                </div>
+                <div
+                  v-if="canClearMetadataMatchSelectedTrack && selectedCount <= 1"
+                  class="menu-item"
+                  @click="handleClearMetadataMatch"
+                >
+                  <i class="pi pi-times-circle"></i>
+                  <span>取消流媒体匹配</span>
+                </div>
+                <div v-if="selectedCount <= 1" class="menu-item" @click="handleOpenFolder">
+                  <i class="pi pi-folder-open"></i>
+                  <span>打开文件所在位置</span>
+                </div>
+                <div
+                  class="menu-item"
+                  @mouseenter="showPlaylistSubmenu = true"
+                  @mouseleave="showPlaylistSubmenu = false"
+                >
+                  <i class="pi pi-plus"></i>
+                  <span>加入到歌单{{ selectionActionLabel }}</span>
+                  <i class="pi pi-chevron-right submenu-icon"></i>
 
-                <div v-if="showPlaylistSubmenu" class="submenu">
-                  <div
-                    class="menu-item create-playlist-menu-item"
-                    @click="handleContextCreatePlaylist"
-                  >
-                    <i class="pi pi-plus" style="font-size: 14px; margin-right: 6px"></i>
-                    <span>创建新歌单</span>
-                  </div>
-                  <div v-if="playlists.length === 0" class="menu-item disabled">暂无歌单</div>
-                  <div
-                    v-for="pl in playlists"
-                    :key="pl.id"
-                    class="menu-item"
-                    @click="handleContextAddToPlaylist(pl.name)"
-                  >
-                    {{ pl.name }}
+                  <div v-if="showPlaylistSubmenu" class="submenu">
+                    <div
+                      class="menu-item create-playlist-menu-item"
+                      @click="handleContextCreatePlaylist"
+                    >
+                      <i class="pi pi-plus" style="font-size: 14px; margin-right: 6px"></i>
+                      <span>创建新歌单</span>
+                    </div>
+                    <div v-if="playlists.length === 0" class="menu-item disabled">暂无歌单</div>
+                    <div
+                      v-for="pl in playlists"
+                      :key="pl.id"
+                      class="menu-item"
+                      @click="handleContextAddToPlaylist(pl.name)"
+                    >
+                      {{ pl.name }}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
             </Teleport>
           </div>
         </template>
       </div>
     </Transition>
 
+    <input
+      ref="playlistImportInput"
+      type="file"
+      accept=".m3u,.m3u8,.pls,audio/x-mpegurl,audio/x-scpls"
+      hidden
+      @change="handlePlaylistImport"
+    />
+    <input
+      ref="playlistCoverInput"
+      type="file"
+      accept="image/png,image/jpeg,image/webp"
+      hidden
+      @change="handlePlaylistCover"
+    />
+
     <!-- Create Playlist Dialog -->
     <Teleport to="body">
-    <Transition name="dialog-fade">
-      <div v-if="showCreatePlaylistDialog" class="dialog-overlay" @click.self="showCreatePlaylistDialog = false">
-        <div class="create-playlist-dialog" @click.stop>
-          <h3 class="dialog-title">创建歌单</h3>
-          <input
-            v-model="newPlaylistName"
-            class="dialog-input"
-            type="text"
-            placeholder="请输入歌单名称"
-            maxlength="50"
-            autofocus
-            @keyup.enter="handleCreatePlaylistWithBatch"
-          />
-          <div class="dialog-actions">
-            <button class="dialog-btn cancel" @click="showCreatePlaylistDialog = false">取消</button>
-            <button
-              class="dialog-btn confirm"
-              :disabled="!newPlaylistName.trim()"
-              @click="handleCreatePlaylistWithBatch"
-            >创建</button>
+      <Transition name="dialog-fade">
+        <div
+          v-if="showCreatePlaylistDialog"
+          class="dialog-overlay"
+          @click.self="showCreatePlaylistDialog = false"
+        >
+          <div class="create-playlist-dialog" @click.stop>
+            <h3 class="dialog-title">创建歌单</h3>
+            <input
+              v-model="newPlaylistName"
+              class="dialog-input"
+              type="text"
+              placeholder="请输入歌单名称"
+              maxlength="50"
+              autofocus
+              @keyup.enter="handleCreatePlaylistWithBatch"
+            />
+            <div class="dialog-actions">
+              <button class="dialog-btn cancel" @click="showCreatePlaylistDialog = false">
+                取消
+              </button>
+              <button
+                class="dialog-btn confirm"
+                :disabled="!newPlaylistName.trim()"
+                @click="handleCreatePlaylistWithBatch"
+              >
+                创建
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-    </Transition>
+      </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <Transition name="dialog-fade">
+        <div v-if="showTagManager" class="dialog-overlay" @click.self="closeTagManager">
+          <LocalLibraryTagManager
+            :key="`${tagManagerInitialView}:${tagManagerTracks.map((track) => track.id).join(',')}`"
+            :initial-view="tagManagerInitialView"
+            :tracks="tagManagerTracks"
+            @close="closeTagManager"
+            @applied="applyTagManagerWrite"
+          />
+        </div>
+      </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <Transition name="dialog-fade">
+        <div
+          v-if="showExcludedTracksDialog"
+          class="dialog-overlay"
+          @click.self="showExcludedTracksDialog = false"
+        >
+          <div class="excluded-tracks-dialog" @click.stop>
+            <div class="excluded-dialog-header">
+              <div>
+                <h3 class="dialog-title">已从音乐库移除</h3>
+                <p class="excluded-dialog-count">{{ excludedTracks.length }} 个排除项</p>
+              </div>
+              <button
+                type="button"
+                class="excluded-dialog-close"
+                title="关闭"
+                @click="showExcludedTracksDialog = false"
+              >
+                <i class="pi pi-times"></i>
+              </button>
+            </div>
+            <div v-if="excludedTracks.length === 0" class="excluded-empty">暂无排除项</div>
+            <div v-else class="excluded-track-list">
+              <div v-for="item in excludedTracks" :key="item.filePath" class="excluded-track-row">
+                <div class="excluded-track-copy">
+                  <strong>{{ excludedTrackLabel(item.filePath, item.title) }}</strong>
+                  <span v-if="item.artist">{{ item.artist }}</span>
+                  <span class="excluded-track-path" :title="item.filePath">{{
+                    item.filePath
+                  }}</span>
+                  <time v-if="formatExcludedAt(item.excludedAt)">{{
+                    formatExcludedAt(item.excludedAt)
+                  }}</time>
+                </div>
+                <button
+                  type="button"
+                  class="excluded-restore-button"
+                  :disabled="exclusionRestorePending"
+                  title="恢复到音乐库"
+                  @click="handleRestoreExclusions([item.filePath])"
+                >
+                  <i class="pi pi-refresh"></i>
+                  <span>恢复</span>
+                </button>
+              </div>
+            </div>
+            <div class="dialog-actions excluded-dialog-actions">
+              <button class="dialog-btn cancel" @click="showExcludedTracksDialog = false">
+                关闭
+              </button>
+              <button
+                class="dialog-btn confirm"
+                :disabled="excludedTracks.length === 0 || exclusionRestorePending"
+                @click="handleRestoreExclusions(excludedTracks.map((item) => item.filePath))"
+              >
+                全部恢复
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
     </Teleport>
   </div>
 </template>

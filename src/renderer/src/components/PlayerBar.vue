@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, type ComponentPublicInstance } from 'vue'
 import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useMusicStore } from '../stores/useMusicStore'
@@ -21,6 +21,8 @@ import sequentialIcon from '../assets/icons/sequential-playback.svg'
 import shuffleIcon from '../assets/icons/shuffle.svg'
 import { useFavoriteButton } from './player-bar/useFavoriteButton'
 import { useFloatingPanels } from './player-bar/useFloatingPanels'
+import { usePlaybackQueueVirtualScroll } from './player-bar/usePlaybackQueueVirtualScroll'
+import { usePlaybackQueueDrawerActions } from './player-bar/usePlaybackQueueDrawerActions'
 import type {
   AudioOutputId,
   ChannelRoutingMode,
@@ -40,6 +42,9 @@ const {
   currentTime,
   duration,
   volume,
+  muted,
+  sleepTimerState,
+  sleepTimerNotice,
   queue,
   queueIndex,
   playMode,
@@ -63,10 +68,19 @@ const {
   prev,
   seek,
   playTrack,
+  enqueueTrack,
+  playNextTrack,
+  removeQueueItem,
+  clearQueue,
+  reorderQueue,
+  saveQueueAsPlaylist,
   toggleExclusiveMode,
   dismissAudioEngineRecoveryNotice,
   formatTime,
   setUnityVolume,
+  toggleMute,
+  configureSleepTimer,
+  cancelSleepTimer,
   setAudioProcessing,
   setAudioOutputConfig,
   setAudioOutput,
@@ -90,6 +104,7 @@ const {
   addToPlaylist,
   removeFromPlaylist,
   createPlaylist,
+  createPlaylistWithTracks,
   isFavoriteTrack,
   addFavoriteTrack,
   removeFavoriteTrack
@@ -173,6 +188,29 @@ function onVolumeWheel(event: WheelEvent): void {
   volume.value = clampVolume(volume.value + (event.deltaY < 0 ? step : -step))
 }
 
+function onSleepTimerSelect(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value
+  if (value === 'off') {
+    cancelSleepTimer()
+    return
+  }
+  if (value === 'trackEnd' || value === 'queueEnd') {
+    configureSleepTimer(value)
+    return
+  }
+  configureSleepTimer('minutes', Number(value))
+}
+
+const sleepTimerStatus = computed(() => {
+  if (sleepTimerNotice.value) return sleepTimerNotice.value
+  const state = sleepTimerState.value
+  if (!state?.active) return ''
+  if (state.mode === 'trackEnd') return '当前曲结束后停止'
+  if (state.mode === 'queueEnd') return '队列结束后停止'
+  if (!state.endsAt) return ''
+  return `${Math.max(1, Math.ceil((state.endsAt - Date.now()) / 60_000))} 分钟后停止`
+})
+
 const {
   volumeOpen,
   playlistOpen,
@@ -183,6 +221,60 @@ const {
   togglePlaylist,
   toggleMore
 } = useFloatingPanels(playerBarShellRef)
+
+const {
+  containerRef: playlistListRef,
+  visibleItems: visibleQueueItems,
+  totalHeight: queueVirtualHeight,
+  translateY: queueVirtualTranslateY,
+  onScroll: onQueueScroll
+} = usePlaybackQueueVirtualScroll(queue, queueIndex, playlistOpen)
+
+const queuePlaylistName = ref('Current Queue')
+const queueDrawerNotice = ref('')
+const {
+  draggedEntryId,
+  getEntryIndex,
+  playNext: playQueueEntryNext,
+  addToTail: addQueueEntryToTail,
+  remove: removeQueueEntry,
+  clear: clearPlaybackQueue,
+  saveAsPlaylist,
+  onDragStart: onQueueDragStart,
+  onDragOver: onQueueDragOver,
+  onDrop: onQueueDrop,
+  onDragEnd: onQueueDragEnd
+} = usePlaybackQueueDrawerActions({
+  queue,
+  commands: {
+    enqueueTrack,
+    playNextTrack,
+    removeQueueItem,
+    clearQueue,
+    reorderQueue,
+    saveQueueAsPlaylist
+  },
+  createPlaylistWithTracks
+})
+
+function setPlaylistListRef(element: Element | ComponentPublicInstance | null): void {
+  playlistListRef.value = element instanceof HTMLElement ? element : null
+}
+
+function playQueueEntry(queueEntryId: string): void {
+  const index = getEntryIndex(queueEntryId)
+  if (index !== -1) playTrackAt(index)
+}
+
+function savePlaybackQueue(): void {
+  const playlistId = saveAsPlaylist(queuePlaylistName.value)
+  queueDrawerNotice.value = playlistId ? 'Queue saved' : 'Enter a playlist name'
+}
+
+function clearPlaybackQueueFromDrawer(): void {
+  clearPlaybackQueue()
+  queueDrawerNotice.value = 'Queue cleared'
+}
 
 function dismissAllFloatingPanels(): void {
   dismissFloatingPanels()
@@ -208,6 +300,7 @@ const {
 
 const modeLabels: Record<string, string> = {
   sequential: '顺序播放',
+  listLoop: '列表循环',
   repeat: '单曲循环',
   shuffle: '随机播放'
 }
@@ -598,13 +691,17 @@ async function onReloadLyrics(prefer: 'auto' | 'local' | 'provider'): Promise<vo
     const resolved = await resolveLyricsWithSources({
       track:
         prefer === 'provider' || prefer === 'local'
-          ? { ...track, lyrics: null, translatedLyrics: null, lyricsSource: null, translatedLyricsSource: null }
+          ? {
+              ...track,
+              lyrics: null,
+              translatedLyrics: null,
+              lyricsSource: null,
+              translatedLyricsSource: null
+            }
           : track,
       loadLocalLyrics: canLoadLocal
         ? () =>
-            window.api.data
-              .getLyrics(track.dir!, track.fileName, track.filePath)
-              .catch(() => null)
+            window.api.data.getLyrics(track.dir!, track.fileName, track.filePath).catch(() => null)
         : undefined,
       loadProviderLyrics: canLoadProvider
         ? async () => {
@@ -632,7 +729,6 @@ async function onReloadLyrics(prefer: 'auto' | 'local' | 'provider'): Promise<vo
 onMounted(() => {
   void syncExtensions()
 })
-
 </script>
 
 <template>
@@ -664,27 +760,109 @@ onMounted(() => {
               <span class="playlist-heading-subtitle">当前队列</span>
             </div>
           </div>
-          <span class="playlist-count">{{ queue.length }} 首</span>
+          <span class="playlist-count">{{ queue.length }} tracks</span>
         </div>
-        <div class="playlist-list">
-          <div
-            v-for="(track, i) in queue"
-            :key="track.id"
-            class="playlist-item"
-            :class="{ active: i === queueIndex }"
-            @click="playTrackAt(i)"
+        <div class="playlist-actions" aria-label="Queue actions">
+          <label class="playlist-save-label">
+            <span class="sr-only">Playlist name</span>
+            <input
+              v-model="queuePlaylistName"
+              type="text"
+              maxlength="120"
+              placeholder="Playlist name"
+            />
+          </label>
+          <button class="playlist-action-btn" type="button" @click="savePlaybackQueue">
+            <i class="pi pi-save" aria-hidden="true"></i>
+            <span>Save queue</span>
+          </button>
+          <button
+            class="playlist-action-btn playlist-clear-btn"
+            type="button"
+            :disabled="queue.length === 0"
+            @click="clearPlaybackQueueFromDrawer"
           >
-            <span class="playlist-index">
-              <i v-if="i === queueIndex" class="pi pi-volume-up playing-dot"></i>
-              <span v-else>{{ i + 1 }}</span>
-            </span>
-            <CoverImg v-if="track.cover" :cover="track.cover" class="playlist-cover" alt="" />
-            <div v-else class="playlist-cover-placeholder">
-              <i class="pi pi-wave-pulse" style="font-size: 12px; color: #bbb"></i>
-            </div>
-            <div class="playlist-info">
-              <div class="playlist-title">{{ track.title }}</div>
-              <div class="playlist-artist">{{ track.artist }}</div>
+            <i class="pi pi-trash" aria-hidden="true"></i>
+            <span>Clear</span>
+          </button>
+          <span class="playlist-action-notice" role="status">{{ queueDrawerNotice }}</span>
+        </div>
+        <div :ref="setPlaylistListRef" class="playlist-list" @scroll.passive="onQueueScroll">
+          <div class="playlist-virtual-spacer" :style="{ height: `${queueVirtualHeight}px` }">
+            <div
+              class="playlist-virtual-window"
+              :style="{ transform: `translateY(${queueVirtualTranslateY}px)` }"
+            >
+              <div
+                v-for="item in visibleQueueItems"
+                :key="item.queueEntryId"
+                class="playlist-item"
+                :class="{
+                  active: item.index === queueIndex,
+                  dragging: draggedEntryId === item.queueEntryId
+                }"
+                role="button"
+                tabindex="0"
+                draggable="true"
+                :aria-current="item.index === queueIndex ? 'true' : undefined"
+                :aria-label="`${item.title} by ${item.artist}`"
+                @click="playQueueEntry(item.queueEntryId)"
+                @keydown.enter.prevent="playQueueEntry(item.queueEntryId)"
+                @keydown.space.prevent="playQueueEntry(item.queueEntryId)"
+                @dragstart="onQueueDragStart($event, item.queueEntryId)"
+                @dragover="onQueueDragOver($event, item.queueEntryId)"
+                @drop="onQueueDrop($event, item.queueEntryId)"
+                @dragend="onQueueDragEnd"
+              >
+                <button
+                  class="playlist-drag-handle"
+                  type="button"
+                  tabindex="-1"
+                  aria-label="Drag to reorder"
+                  title="Drag to reorder"
+                  @click.stop
+                >
+                  <i class="pi pi-bars" aria-hidden="true"></i>
+                </button>
+                <span class="playlist-index">
+                  <i v-if="item.index === queueIndex" class="pi pi-volume-up playing-dot"></i>
+                  <span v-else>{{ item.index + 1 }}</span>
+                </span>
+                <CoverImg v-if="item.cover" :cover="item.cover" class="playlist-cover" alt="" />
+                <div v-else class="playlist-cover-placeholder">
+                  <i class="pi pi-wave-pulse" style="font-size: 12px; color: #bbb"></i>
+                </div>
+                <div class="playlist-info">
+                  <div class="playlist-title">{{ item.title }}</div>
+                  <div class="playlist-artist">{{ item.artist }}</div>
+                </div>
+                <div class="playlist-row-actions" @click.stop>
+                  <button
+                    type="button"
+                    title="Play next"
+                    :aria-label="`Play ${item.title} next`"
+                    @click="playQueueEntryNext(item.queueEntryId)"
+                  >
+                    <i class="pi pi-step-forward" aria-hidden="true"></i>
+                  </button>
+                  <button
+                    type="button"
+                    title="Add to queue tail"
+                    :aria-label="`Add ${item.title} to queue tail`"
+                    @click="addQueueEntryToTail(item.queueEntryId)"
+                  >
+                    <i class="pi pi-plus" aria-hidden="true"></i>
+                  </button>
+                  <button
+                    type="button"
+                    title="Remove from queue"
+                    :aria-label="`Remove ${item.title} from queue`"
+                    @click="removeQueueEntry(item.queueEntryId)"
+                  >
+                    <i class="pi pi-times" aria-hidden="true"></i>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -801,6 +979,7 @@ onMounted(() => {
 
         <button class="ctrl-btn mode-btn-right" :title="modeTitle" @click="cyclePlayMode">
           <img v-if="playMode === 'sequential'" :src="sequentialIcon" alt="顺序" />
+          <img v-else-if="playMode === 'listLoop'" :src="repeatIcon" alt="列表循环" />
           <img v-else-if="playMode === 'repeat'" :src="repeatIcon" alt="单曲循环" />
           <img v-else :src="shuffleIcon" alt="随机" />
         </button>
@@ -837,6 +1016,14 @@ onMounted(() => {
           </Transition>
           <button
             class="icon-btn"
+            :class="{ active: muted }"
+            :title="muted ? '恢复音量' : '静音'"
+            @click="toggleMute"
+          >
+            <i :class="muted ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
+          </button>
+          <button
+            class="icon-btn"
             :class="{ active: volumeOpen }"
             title="音量"
             @click="toggleVolume"
@@ -844,6 +1031,34 @@ onMounted(() => {
             <i class="pi pi-volume-up"></i>
           </button>
         </div>
+        <select
+          class="sleep-timer-select"
+          :value="
+            sleepTimerState?.active
+              ? sleepTimerState.mode === 'minutes'
+                ? String(settings.sleepTimer.defaultMinutes)
+                : sleepTimerState.mode
+              : 'off'
+          "
+          title="睡眠定时器"
+          @change="onSleepTimerSelect"
+        >
+          <option value="off">睡眠关闭</option>
+          <option
+            v-if="![15, 30, 60].includes(settings.sleepTimer.defaultMinutes)"
+            :value="String(settings.sleepTimer.defaultMinutes)"
+          >
+            {{ settings.sleepTimer.defaultMinutes }} 分钟后停止
+          </option>
+          <option value="15">15 分钟后停止</option>
+          <option value="30">30 分钟后停止</option>
+          <option value="60">60 分钟后停止</option>
+          <option value="trackEnd">当前曲结束</option>
+          <option value="queueEnd">队列结束</option>
+        </select>
+        <span v-if="sleepTimerStatus" class="sleep-timer-status" :title="sleepTimerStatus">
+          {{ sleepTimerStatus }}
+        </span>
 
         <button
           class="icon-btn"
@@ -903,9 +1118,7 @@ onMounted(() => {
           :audio-output-config="audioOutputConfig"
           :dsp-output-stage="dspOutputStage"
           :dsp-stereo-image="dspStereoImage"
-          :actual-sample-rate="
-            outputInfo?.actualSampleRate || playbackInfo?.actualSampleRate || 0
-          "
+          :actual-sample-rate="outputInfo?.actualSampleRate || playbackInfo?.actualSampleRate || 0"
           :status-chips="audioStatusChips"
           :non-perfect-reason="nonPerfectReason"
           :perfect-reason-code="perfectReasonCode"

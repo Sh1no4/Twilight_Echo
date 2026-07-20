@@ -1,4 +1,4 @@
-const { existsSync, mkdirSync, readdirSync } = require('node:fs')
+const { mkdirSync } = require('node:fs')
 const { spawnSync } = require('node:child_process')
 const { join, resolve } = require('node:path')
 const {

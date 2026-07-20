@@ -24,6 +24,13 @@ type PluginModule = {
 type ProviderHandler = Partial<Record<TwilightMediaProviderMethod, (...args: unknown[]) => Promise<unknown> | unknown>>
 type CommandHandler = (...args: unknown[]) => Promise<unknown> | unknown
 
+interface PluginInvocationContext {
+  /** Aborted when the caller times out or the plugin is stopped. */
+  signal: AbortSignal
+  /** Stable across an explicit retry of a host-managed provider write. */
+  idempotencyKey?: string
+}
+
 interface TwilightPluginContext {
   apiVersion: number
   storagePath: string
@@ -85,7 +92,11 @@ interface TwilightPluginContext {
     }
     internal?: {
       ncm?: {
-        request: (path: string, cookie?: string) => Promise<unknown>
+        request: (
+          path: string,
+          cookie?: string,
+          options?: { signal?: AbortSignal; idempotencyKey?: string }
+        ) => Promise<unknown>
         officialLogin: () => Promise<string>
         getCachedSong: (songId: number) => Promise<string | null>
         cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
@@ -155,6 +166,7 @@ const pendingApiCalls = new Map<
     reject: (error: Error) => void
   }
 >()
+const pendingPluginCalls = new Map<string, AbortController>()
 
 parentPort.on('message', (event) => {
   const message = event.data
@@ -168,6 +180,8 @@ parentPort.on('message', (event) => {
     void callProviderHandler(message)
   } else if (message.kind === 'ui-command') {
     void callCommandHandler(message)
+  } else if (message.kind === 'cancel') {
+    cancelPluginCall(message.requestId, message.reason)
   } else if (message.kind === 'api-result') {
     resolveApiResult(message)
   }
@@ -196,6 +210,8 @@ async function activatePlugin(message: Extract<PluginHostRequest, { kind: 'activ
 
 async function deactivatePlugin(requestId: string): Promise<void> {
   try {
+    abortPendingPluginCalls('Plugin is being deactivated.')
+    rejectPendingApiCalls('Plugin is being deactivated.')
     if (activePlugin && typeof activePlugin.deactivate === 'function') {
       await activePlugin.deactivate()
     }
@@ -272,7 +288,12 @@ function createContext(
   if (pluginId === INTERNAL_NCM_PLUGIN_ID) {
     twilight.internal = {
       ncm: {
-        request: (path, cookie) => callInternalNcmApi('ncmRequest', [path, cookie]),
+        request: (path, cookie, options) =>
+          callInternalNcmApi(
+            'ncmRequest',
+            [path, cookie, options?.idempotencyKey ? { idempotencyKey: options.idempotencyKey } : undefined],
+            options?.signal
+          ),
         officialLogin: () => callInternalNcmApi('ncmOfficialLogin', []) as Promise<string>,
         getCachedSong: (songId) => callInternalNcmApi('ncmGetCachedSong', [songId]) as Promise<string | null>,
         cacheSong: (songId, url, fileName) =>
@@ -344,17 +365,22 @@ function callUiApi(
 
 function callInternalNcmApi(
   method: Extract<PluginHostResponse, { kind: 'api-call' }>['method'],
-  args: unknown[]
+  args: unknown[],
+  signal?: AbortSignal
 ): Promise<unknown> {
-  return callApi('internal', method, args)
+  return callApi('internal', method, args, signal)
 }
 
 function callApi(
   namespace: Extract<PluginHostResponse, { kind: 'api-call' }>['namespace'],
   method: Extract<PluginHostResponse, { kind: 'api-call' }>['method'],
-  args: unknown[]
+  args: unknown[],
+  signal?: AbortSignal
 ): Promise<unknown> {
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  if (signal?.aborted) {
+    return Promise.reject(abortReason(signal, 'Plugin host API call was cancelled.'))
+  }
   post({
     kind: 'api-call',
     requestId,
@@ -363,8 +389,31 @@ function callApi(
     args
   })
   return new Promise((resolve, reject) => {
-    pendingApiCalls.set(requestId, { resolve, reject })
+    const cleanup = (): void => signal?.removeEventListener('abort', onAbort)
+    const onAbort = (): void => {
+      if (!pendingApiCalls.delete(requestId)) return
+      cleanup()
+      const error = abortReason(signal, 'Plugin host API call was cancelled.')
+      post({ kind: 'api-cancel', requestId, reason: error.message })
+      reject(error)
+    }
+    pendingApiCalls.set(requestId, {
+      resolve: (value) => {
+        cleanup()
+        resolve(value)
+      },
+      reject: (error) => {
+        cleanup()
+        reject(error)
+      }
+    })
+    signal?.addEventListener('abort', onAbort, { once: true })
   })
+}
+
+function abortReason(signal: AbortSignal | undefined, fallback: string): Error {
+  const reason = signal?.reason
+  return reason instanceof Error ? reason : new Error(fallback)
 }
 
 function resolveApiResult(message: PluginHostApiResult): void {
@@ -393,31 +442,74 @@ function emitPluginEvent(name: string, payload: unknown): void {
 async function callProviderHandler(
   message: Extract<PluginHostRequest, { kind: 'provider-call' }>
 ): Promise<void> {
+  const controller = beginPluginCall(message.requestId)
   try {
     const provider = providerHandlers.get(message.providerId)
     const handler = provider?.[message.method]
     if (typeof handler !== 'function') {
       throw new Error(`Provider ${message.providerId} does not implement ${message.method}`)
     }
-    const value = await handler(...message.args)
+    const value = await handler(...message.args, {
+      signal: controller.signal,
+      idempotencyKey: message.idempotencyKey
+    } satisfies PluginInvocationContext)
+    if (controller.signal.aborted) return
     post({ kind: 'provider-result', requestId: message.requestId, ok: true, value })
   } catch (error) {
+    if (controller.signal.aborted) return
     const err = error instanceof Error ? error : new Error(String(error))
     post({ kind: 'provider-result', requestId: message.requestId, ok: false, error: err.message })
+  } finally {
+    clearPluginCall(message.requestId, controller)
   }
 }
 
 async function callCommandHandler(message: Extract<PluginHostRequest, { kind: 'ui-command' }>): Promise<void> {
+  const controller = beginPluginCall(message.requestId)
   try {
     const handler = commandHandlers.get(message.command)
     if (!handler) throw new Error(`UI command is not registered: ${message.command}`)
-    const value = await handler(...message.args)
+    const value = await handler(...message.args, { signal: controller.signal } satisfies PluginInvocationContext)
+    if (controller.signal.aborted) return
     post({ kind: 'ui-command-result', requestId: message.requestId, ok: true, value })
   } catch (error) {
+    if (controller.signal.aborted) return
     const err = error instanceof Error ? error : new Error(String(error))
     post({ kind: 'ui-command-result', requestId: message.requestId, ok: false, error: err.message })
     reportError(error)
+  } finally {
+    clearPluginCall(message.requestId, controller)
   }
+}
+
+function beginPluginCall(requestId: string): AbortController {
+  const previous = pendingPluginCalls.get(requestId)
+  if (previous) previous.abort(new Error('Plugin RPC request id was reused.'))
+  const controller = new AbortController()
+  pendingPluginCalls.set(requestId, controller)
+  return controller
+}
+
+function clearPluginCall(requestId: string, controller: AbortController): void {
+  if (pendingPluginCalls.get(requestId) === controller) pendingPluginCalls.delete(requestId)
+}
+
+function cancelPluginCall(requestId: string, reason: string): void {
+  pendingPluginCalls.get(requestId)?.abort(new Error(reason || 'Plugin RPC was cancelled.'))
+}
+
+function abortPendingPluginCalls(reason: string): void {
+  for (const controller of pendingPluginCalls.values()) {
+    controller.abort(new Error(reason))
+  }
+  pendingPluginCalls.clear()
+}
+
+function rejectPendingApiCalls(reason: string): void {
+  for (const pending of pendingApiCalls.values()) {
+    pending.reject(new Error(reason))
+  }
+  pendingApiCalls.clear()
 }
 
 function log(level: 'debug' | 'info' | 'warn' | 'error', message: string): void {

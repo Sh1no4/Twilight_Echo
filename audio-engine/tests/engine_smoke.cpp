@@ -108,6 +108,35 @@ int main() {
   assert(TAE_GetMetadata(engine, "test.flac", nullptr, 0, &required) == TAE_RESULT_OK);
   assert(required > 1);
 
+  const uint64_t bpmExecutionsBefore = TAE_GetAnalysisExecutionCount("bpm");
+  required = 0;
+  assert(TAE_AnalyzeBpm(engine, "analysis-probe.wav", "{}", nullptr, 0, &required) == TAE_RESULT_OK);
+  assert(required > 1);
+  std::vector<char> bpmAnalysis(required);
+  assert(TAE_AnalyzeBpm(
+             engine,
+             "analysis-probe.wav",
+             "{}",
+             bpmAnalysis.data(),
+             bpmAnalysis.size(),
+             &required) == TAE_RESULT_OK);
+  assert(TAE_GetAnalysisExecutionCount("bpm") == bpmExecutionsBefore + 1);
+
+  const uint64_t loudnessExecutionsBefore = TAE_GetAnalysisExecutionCount("loudness");
+  required = 0;
+  assert(TAE_AnalyzeLoudness(
+             engine, "analysis-probe.wav", "{}", nullptr, 0, &required) == TAE_RESULT_OK);
+  assert(required > 1);
+  std::vector<char> loudnessAnalysis(required);
+  assert(TAE_AnalyzeLoudness(
+             engine,
+             "analysis-probe.wav",
+             "{}",
+             loudnessAnalysis.data(),
+             loudnessAnalysis.size(),
+             &required) == TAE_RESULT_OK);
+  assert(TAE_GetAnalysisExecutionCount("loudness") == loudnessExecutionsBefore + 1);
+
   float spectrum[16] = {};
   size_t written = 0;
   assert(TAE_GetSpectrumData(engine, spectrum, 16, &written) == TAE_RESULT_OK);

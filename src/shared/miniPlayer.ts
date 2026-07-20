@@ -88,7 +88,7 @@ export interface MiniPlayerStateSnapshot {
   currentTime: number
   duration: number
   volume: number
-  playMode: 'sequential' | 'repeat' | 'shuffle'
+  playMode: 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
   dominantColor: string
   queueIndex: number
   queueLength: number

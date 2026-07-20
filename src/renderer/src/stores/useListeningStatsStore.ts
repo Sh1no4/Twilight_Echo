@@ -1,6 +1,11 @@
 import { shallowRef, triggerRef, watch, type Ref } from 'vue'
 import type { Track } from '../types/music'
 import { getLogicalTrackKey, normalizeLogicalTrackText } from '../utils/logicalTrackIdentity.ts'
+import {
+  ListeningStatsPersistence,
+  type ListeningStatsPersistenceStatus,
+  type ListeningStatsStorage
+} from './listeningStatsPersistence.ts'
 
 export interface ListeningTrackStat {
   seconds: number
@@ -53,8 +58,39 @@ const DASHBOARD_STATS_KEY = 'twilight-echo:listening-stats:v1'
 const LISTENING_TICK_SECONDS = 5
 const COMPLETION_RATIO = 0.9
 const SKIP_RATIO = 0.5
+export const LISTENING_STATS_RETENTION_DAYS = 730
+export const LISTENING_STATS_MAX_TRACKS = 10_000
+export const LISTENING_STATS_FLUSH_DELAY_MS = 30_000
+export const LISTENING_STATS_RETRY_DELAY_MS = 60_000
 
 const listeningStats = shallowRef<ListeningStats>(loadListeningStats())
+const listeningStatsPersistenceStatus = shallowRef<ListeningStatsPersistenceStatus>({
+  state: 'idle',
+  dirty: false,
+  failureCount: 0,
+  lastError: null
+})
+const listeningStatsPersistence = new ListeningStatsPersistence<ListeningStats>({
+  key: DASHBOARD_STATS_KEY,
+  storage: getListeningStatsStorage(),
+  getSnapshot: () => listeningStats.value,
+  beforePersist: () => {
+    if (compactListeningStatsForPersistence(listeningStats.value)) triggerRef(listeningStats)
+  },
+  onStatus: (status) => {
+    listeningStatsPersistenceStatus.value = status
+    if (status.state === 'error') {
+      console.warn('[listening-stats] deferred local persistence failed', {
+        failureCount: status.failureCount,
+        reason: status.lastError
+      })
+    }
+  },
+  flushDelayMs: LISTENING_STATS_FLUSH_DELAY_MS,
+  retryDelayMs: LISTENING_STATS_RETRY_DELAY_MS,
+  document: typeof document === 'undefined' ? undefined : document,
+  window: typeof window === 'undefined' ? undefined : window
+})
 
 let listeningTimer: number | null = null
 let lastCountedTrackId = ''
@@ -129,10 +165,12 @@ function loadListeningStats(): ListeningStats {
   try {
     const parsed = JSON.parse(localStorage.getItem(DASHBOARD_STATS_KEY) || '')
     if (parsed && typeof parsed === 'object') {
-      return {
+      const stats = {
         days: isRecord(parsed.days) ? normalizeNumberRecord(parsed.days) : {},
         tracks: isRecord(parsed.tracks) ? normalizeTrackStats(parsed.tracks) : {}
       }
+      compactListeningStatsForPersistence(stats)
+      return stats
     }
   } catch {
     // Ignore corrupt local dashboard stats and start fresh.
@@ -140,14 +178,48 @@ function loadListeningStats(): ListeningStats {
   return { days: {}, tracks: {} }
 }
 
-function saveListeningStats(): void {
-  localStorage.setItem(DASHBOARD_STATS_KEY, JSON.stringify(listeningStats.value))
+function getListeningStatsStorage(): ListeningStatsStorage {
+  return {
+    getItem: (key) => globalThis.localStorage?.getItem(key) ?? null,
+    setItem: (key, value) => {
+      if (!globalThis.localStorage) throw new Error('localStorage is unavailable')
+      globalThis.localStorage.setItem(key, value)
+    }
+  }
+}
+
+export function compactListeningStatsForPersistence(
+  stats: ListeningStats,
+  now = Date.now()
+): boolean {
+  let changed = false
+  const oldestDay = dayKey(now - LISTENING_STATS_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+  for (const key of Object.keys(stats.days)) {
+    if (key < oldestDay) {
+      delete stats.days[key]
+      changed = true
+    }
+  }
+
+  const trackIds = Object.keys(stats.tracks)
+  if (trackIds.length <= LISTENING_STATS_MAX_TRACKS) return changed
+  trackIds
+    .sort((left, right) => {
+      const byLastPlayed = stats.tracks[left].lastPlayed - stats.tracks[right].lastPlayed
+      return byLastPlayed || left.localeCompare(right)
+    })
+    .slice(0, trackIds.length - LISTENING_STATS_MAX_TRACKS)
+    .forEach((id) => {
+      delete stats.tracks[id]
+      changed = true
+    })
+  return changed
 }
 
 function commitListeningStats(mutator: (stats: ListeningStats) => void): void {
   mutator(listeningStats.value)
   triggerRef(listeningStats)
-  saveListeningStats()
+  listeningStatsPersistence.markDirty()
 }
 
 function dayKey(timestamp: number): string {
@@ -397,6 +469,7 @@ export function setupListeningStatsTracking(player: ListeningPlayerState): void 
     ([playing, trackId]) => {
       if (!playing || !trackId) {
         stopListeningTimer()
+        if (!playing) listeningStatsPersistence.flush()
         return
       }
       startListeningTimer({ currentTrack, isPlaying })
@@ -430,9 +503,11 @@ export function setupListeningStatsTracking(player: ListeningPlayerState): void 
 
 export function useListeningStatsStore(): {
   listeningStats: Ref<ListeningStats>
+  persistenceStatus: Ref<ListeningStatsPersistenceStatus>
 } {
   return {
-    listeningStats
+    listeningStats,
+    persistenceStatus: listeningStatsPersistenceStatus
   }
 }
 
@@ -504,11 +579,20 @@ export function getTopArtists(limit = 50): ListeningArtistStat[] {
 }
 
 export function resetListeningStatsForTest(): void {
+  listeningStatsPersistence.resetForTest()
   listeningStats.value = { days: {}, tracks: {} }
   lastCountedTrackId = ''
   lastOutcomeTrack = null
   lastOutcomePosition = 0
   lastOutcomeDuration = 0
+}
+
+export function flushListeningStatsForTest(): boolean {
+  return listeningStatsPersistence.flush()
+}
+
+export function getListeningStatsPersistenceStatusForTest(): ListeningStatsPersistenceStatus {
+  return listeningStatsPersistenceStatus.value
 }
 
 export function recordListeningForTest(track: Track, seconds: number, timestamp: number): void {

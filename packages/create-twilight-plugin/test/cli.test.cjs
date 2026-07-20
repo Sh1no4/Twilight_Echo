@@ -94,6 +94,76 @@ test('pack accepts flags before the plugin directory', async () => {
   assert.equal(await exists(result.outputFile), true)
 })
 
+test('tooling canonicalizes nested manifest paths to POSIX on every host', () => {
+  const base = {
+    id: 'com.example.path-vector',
+    name: 'Path Vector',
+    version: '1.0.0',
+    description: 'Cross-platform path vector',
+    author: 'Example',
+    license: 'Apache-2.0',
+    type: ['tool', 'dsp'],
+    engines: { twilightEcho: '>=0.20.0' },
+    apiVersion: 1,
+    permissions: ['dsp:native']
+  }
+  const windowsStyle = validatePluginManifest({
+    ...base,
+    main: 'dist\\generated\\..\\index.mjs',
+    icon: 'assets\\icons\\plugin.png',
+    binary: { 'win32-x64': 'native\\win32\\plugin.dll' }
+  })
+  const posixStyle = validatePluginManifest({
+    ...base,
+    main: 'dist/index.mjs',
+    icon: 'assets/icons/plugin.png',
+    binary: { 'win32-x64': 'native/win32/plugin.dll' }
+  })
+
+  assert.deepEqual(windowsStyle, posixStyle)
+  assert.equal(windowsStyle.main, 'dist/index.mjs')
+  assert.equal(windowsStyle.icon, 'assets/icons/plugin.png')
+  assert.deepEqual(windowsStyle.binary, { 'win32-x64': 'native/win32/plugin.dll' })
+  const rejectedPaths = [
+    '../escape.mjs',
+    'dist/../../escape.mjs',
+    '..\\escape.mjs',
+    '/rooted.mjs',
+    '\\rooted.mjs',
+    'C:\\rooted.mjs',
+    'C:/rooted.mjs',
+    'C:drive-relative.mjs',
+    '\\\\server\\share\\plugin.mjs',
+    'dist/illegal\0entry.mjs'
+  ]
+  const validDspBinary = { 'win32-x64': 'native/win32/plugin.dll' }
+  for (const candidate of rejectedPaths) {
+    assert.throws(
+      () => validatePluginManifest({ ...base, main: candidate, binary: validDspBinary }),
+      /outside|null byte/
+    )
+    assert.throws(
+      () =>
+        validatePluginManifest({
+          ...base,
+          main: 'index.mjs',
+          icon: candidate,
+          binary: validDspBinary
+        }),
+      /outside|null byte/
+    )
+    assert.throws(
+      () =>
+        validatePluginManifest({
+          ...base,
+          main: 'index.mjs',
+          binary: { 'win32-x64': candidate }
+        }),
+      /outside|null byte/
+    )
+  }
+})
+
 async function exists(filePath) {
   try {
     await fs.access(filePath)

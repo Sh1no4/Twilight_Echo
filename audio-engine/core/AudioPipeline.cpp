@@ -73,6 +73,15 @@ UpmixConfig upmixConfigFromOutputConfig(const OutputConfig& config) noexcept {
   return upmix;
 }
 
+bool wasapiExclusiveTopologyChanged(
+    const std::string& backendId,
+    const OutputConfig& previous,
+    const OutputConfig& next) noexcept {
+  return backendId == "wasapi-exclusive" &&
+         (previous.preferredBufferSize != next.preferredBufferSize ||
+          previous.wasapiExclusivePushMode != next.wasapiExclusivePushMode);
+}
+
 AudioPipeline::BackendFactory& backendFactoryOverride() {
   static AudioPipeline::BackendFactory factory;
   return factory;
@@ -500,6 +509,9 @@ struct AudioPipeline::DecodeStream {
   std::thread decodeThread;
   Mode mode = Mode::Pcm;
   bool typedPassthrough = false;
+  // Only touched by the control thread before start and by the decode thread while running.
+  std::optional<uint64_t> remainingSegmentFrames;
+  uint64_t remainingVirtualPregapFrames = 0;
 
   ~DecodeStream() {
     stop();
@@ -517,7 +529,11 @@ struct AudioPipeline::DecodeStream {
     }
     stream = decoder->streamInfo();
     stream.source = item.source;
-    if (item.durationSeconds > 0.0) stream.durationSeconds = item.durationSeconds;
+    if (hasCueRange()) {
+      stream.durationSeconds = cueLogicalDurationSeconds();
+    } else if (item.durationSeconds > 0.0) {
+      stream.durationSeconds = item.durationSeconds;
+    }
     // Host-injected library RG/R128 and loudnorm measurement overlay decode-time tags.
     applyQueueReplayGainTags(item, stream.replayGain);
     return true;
@@ -551,6 +567,7 @@ struct AudioPipeline::DecodeStream {
       return false;
     }
     stream = streamInfoFromDsd(item, dsdReader->streamInfo(), DsdMode::Dop);
+    if (hasCueRange()) stream.durationSeconds = cueLogicalDurationSeconds();
     return true;
   }
 
@@ -566,6 +583,7 @@ struct AudioPipeline::DecodeStream {
       return false;
     }
     stream = streamInfoFromDsd(item, dsdReader->streamInfo(), DsdMode::Native);
+    if (hasCueRange()) stream.durationSeconds = cueLogicalDurationSeconds();
     return true;
   }
 
@@ -598,9 +616,19 @@ struct AudioPipeline::DecodeStream {
     if (!decoder->setOutputFormat(decodeFormat, error)) return false;
     decodeFormat = decoder->outputFormat();
     stream.decodedFormat = decodeFormat;
-    if (startTimeSeconds > 0.0 && !decoder->seek(startTimeSeconds, error)) return false;
+    const double logicalStart = clampLogicalSegmentPosition(startTimeSeconds);
+    const double sourceStart = sourcePositionForLogicalPosition(logicalStart);
+    if (sourceStart > 0.0 && !decoder->seek(sourceStart, error)) return false;
 
-    eof = false;
+    if (hasCueRange()) {
+      remainingSegmentFrames = remainingFramesForSourcePosition(sourceStart);
+      remainingVirtualPregapFrames = virtualPregapFramesForLogicalPosition(logicalStart);
+    } else {
+      remainingSegmentFrames.reset();
+      remainingVirtualPregapFrames = 0;
+    }
+
+    eof = remainingVirtualPregapFrames == 0 && remainingSegmentFrames && *remainingSegmentFrames == 0;
     buffer.reset(decodeFormat, static_cast<size_t>(std::max(decodeFormat.sampleRate * 2, 8192)));
     return true;
   }
@@ -624,13 +652,22 @@ struct AudioPipeline::DecodeStream {
     config.packing = dsdPackingFromInfo(dsd);
     config.outputFormat = outputFormat.sampleFormat;
     if (!dopPacker.configure(config, error)) return false;
-    if (startTimeSeconds > 0.0 && !dsdReader->seek(startTimeSeconds, error)) return false;
+    const double logicalStart = clampLogicalSegmentPosition(startTimeSeconds);
+    const double sourceStart = sourcePositionForLogicalPosition(logicalStart);
+    if (sourceStart > 0.0 && !dsdReader->seek(sourceStart, error)) return false;
 
     decodeFormat = dopPacker.carrierFormat();
     stream.decodedFormat = decodeFormat;
     stream.dsdMode = DsdMode::Dop;
     typedPassthrough = false;
-    eof = false;
+    if (hasCueRange()) {
+      remainingSegmentFrames = remainingFramesForSourcePosition(sourceStart);
+      remainingVirtualPregapFrames = virtualPregapFramesForLogicalPosition(logicalStart);
+    } else {
+      remainingSegmentFrames.reset();
+      remainingVirtualPregapFrames = 0;
+    }
+    eof = remainingVirtualPregapFrames == 0 && remainingSegmentFrames && *remainingSegmentFrames == 0;
     // DoP keeps the existing float carrier ring buffer; typed PCM passthrough is only for ordinary PCM.
     buffer.reset(decodeFormat.channelCount, static_cast<size_t>(std::max(decodeFormat.sampleRate * 2, 8192)));
     return true;
@@ -646,18 +683,27 @@ struct AudioPipeline::DecodeStream {
       if (error) *error = "Native DSD output format mismatch";
       return false;
     }
-    if (startTimeSeconds > 0.0 && !dsdReader->seek(startTimeSeconds, error)) return false;
+    const double logicalStart = clampLogicalSegmentPosition(startTimeSeconds);
+    const double sourceStart = sourcePositionForLogicalPosition(logicalStart);
+    if (sourceStart > 0.0 && !dsdReader->seek(sourceStart, error)) return false;
     decodeFormat = outputFormat;
     stream.decodedFormat = nativeDsdFormatForStream(dsd);
     stream.dsdMode = DsdMode::Native;
     typedPassthrough = true;
-    eof = false;
+    if (hasCueRange()) {
+      remainingSegmentFrames = remainingFramesForSourcePosition(sourceStart);
+      remainingVirtualPregapFrames = virtualPregapFramesForLogicalPosition(logicalStart);
+    } else {
+      remainingSegmentFrames.reset();
+      remainingVirtualPregapFrames = 0;
+    }
+    eof = remainingVirtualPregapFrames == 0 && remainingSegmentFrames && *remainingSegmentFrames == 0;
     buffer.reset(decodeFormat, static_cast<size_t>(std::max(dsd.dsdSampleRate / 8, 8192)));
     return true;
   }
 
   void start() {
-    if ((!decoder && !dsdReader) || running.load()) return;
+    if ((!decoder && !dsdReader) || running.load() || eof.load()) return;
     running = true;
     decodeThread = std::thread([this] { decodeLoop(); });
   }
@@ -675,17 +721,33 @@ struct AudioPipeline::DecodeStream {
   bool seek(double seconds, std::string* error) {
     if (!decoder && !dsdReader) return false;
     stop();
+    const double logicalSeconds = clampLogicalSegmentPosition(seconds);
+    const double sourceSeconds = sourcePositionForLogicalPosition(logicalSeconds);
     const bool ok = (mode == Mode::Dop || mode == Mode::NativeDsd)
-                        ? dsdReader->seek(std::max(0.0, seconds), error)
-                        : decoder->seek(std::max(0.0, seconds), error);
+                        ? dsdReader->seek(sourceSeconds, error)
+                        : decoder->seek(sourceSeconds, error);
     if (!ok) {
       start();
       return false;
     }
+    // A DoP stream has an alternating 0x05/0xfa marker phase.  The decoder may
+    // have filled far ahead of the render cursor before a seek, so retaining
+    // that internal phase would make the first carrier frame after the seek
+    // depend on how much happened to be prefetched.  Restart every seek at the
+    // canonical marker boundary, just as a freshly configured stream does.
+    if (mode == Mode::Dop) dopPacker.reset();
     buffer.clear();
-    eof = false;
+    if (hasCueRange()) {
+      remainingSegmentFrames = remainingFramesForSourcePosition(sourceSeconds);
+      remainingVirtualPregapFrames = virtualPregapFramesForLogicalPosition(logicalSeconds);
+    }
+    eof = remainingVirtualPregapFrames == 0 && remainingSegmentFrames && *remainingSegmentFrames == 0;
     start();
     return true;
+  }
+
+  double clampRelativePosition(double seconds) const {
+    return clampLogicalSegmentPosition(seconds);
   }
 
   size_t read(float* output, size_t frameCount) {
@@ -755,7 +817,72 @@ struct AudioPipeline::DecodeStream {
     return buffer.waitForAvailableFrames(targetFrames, timeout, running, eof) > 0 || eof.load();
   }
 
+  bool hasVirtualPregap() const {
+    return cueVirtualPregapSeconds() > 0.0;
+  }
+
+  size_t virtualPregapFramesFromLogicalFrame(
+      uint64_t logicalFrame,
+      int frameRate,
+      size_t maximumFrames) const {
+    if (!hasVirtualPregap() || frameRate <= 0 || maximumFrames == 0) return 0;
+    const uint64_t total = static_cast<uint64_t>(
+        std::ceil(cueVirtualPregapSeconds() * static_cast<double>(frameRate)));
+    if (logicalFrame >= total) return 0;
+    return static_cast<size_t>(
+        std::min<uint64_t>(total - logicalFrame, static_cast<uint64_t>(maximumFrames)));
+  }
+
  private:
+  bool hasCueRange() const {
+    return item.cueStartSeconds && item.cueEndSeconds &&
+           *item.cueStartSeconds >= 0.0 && *item.cueEndSeconds > *item.cueStartSeconds;
+  }
+
+  double cueSourceStartSeconds() const {
+    return hasCueRange() ? *item.cueStartSeconds : 0.0;
+  }
+
+  double cueVirtualPregapSeconds() const {
+    return hasCueRange() ? std::max(0.0, item.cueVirtualPregapSeconds) : 0.0;
+  }
+
+  double cueLogicalDurationSeconds() const {
+    if (!hasCueRange()) return std::max(0.0, item.durationSeconds);
+    return cueVirtualPregapSeconds() + *item.cueEndSeconds - *item.cueStartSeconds;
+  }
+
+  double clampLogicalSegmentPosition(double seconds) const {
+    const double requested = std::max(0.0, seconds);
+    if (!hasCueRange()) return requested;
+    return std::min(requested, cueLogicalDurationSeconds());
+  }
+
+  double sourcePositionForLogicalPosition(double logicalSeconds) const {
+    if (!hasCueRange()) return logicalSeconds;
+    const double sourceRelative = std::max(0.0, logicalSeconds - cueVirtualPregapSeconds());
+    return cueSourceStartSeconds() + sourceRelative;
+  }
+
+  double segmentFrameRate() const {
+    if (mode == Mode::NativeDsd && isDsdSampleFormat(decodeFormat.sampleFormat)) {
+      return static_cast<double>(decodeFormat.sampleRate) / 8.0;
+    }
+    return static_cast<double>(decodeFormat.sampleRate);
+  }
+
+  uint64_t remainingFramesForSourcePosition(double sourceSeconds) const {
+    if (!hasCueRange()) return 0;
+    const double remainingSeconds = std::max(0.0, *item.cueEndSeconds - sourceSeconds);
+    return static_cast<uint64_t>(std::ceil(remainingSeconds * segmentFrameRate()));
+  }
+
+  uint64_t virtualPregapFramesForLogicalPosition(double logicalSeconds) const {
+    const double remainingSeconds =
+        std::max(0.0, cueVirtualPregapSeconds() - std::max(0.0, logicalSeconds));
+    return static_cast<uint64_t>(std::ceil(remainingSeconds * segmentFrameRate()));
+  }
+
   void markEof() {
     eof = true;
     buffer.notifyAll();
@@ -782,6 +909,24 @@ struct AudioPipeline::DecodeStream {
     }
 
     while (running.load()) {
+      if (remainingVirtualPregapFrames > 0) {
+        const size_t silenceFrames = static_cast<size_t>(std::min<uint64_t>(
+            remainingVirtualPregapFrames, static_cast<uint64_t>(kDecodeChunkFrames)));
+        if (decodeFormat.sampleFormat == AudioSampleFormat::Float32Interleaved) {
+          std::fill(frames.begin(), frames.end(), 0.0f);
+          buffer.writeBlocking(frames.data(), silenceFrames, running);
+        } else {
+          std::fill(typedFrames.begin(), typedFrames.end(), 0);
+          PcmBlock silence;
+          silence.format = decodeFormat;
+          silence.data = typedFrames.data();
+          silence.frames = silenceFrames;
+          silence.byteSize = silenceFrames * bytesPerFrame;
+          buffer.writeBlocking(silence, running);
+        }
+        remainingVirtualPregapFrames -= silenceFrames;
+        continue;
+      }
       if (!decoder) break;
       std::string error;
       size_t decoded = 0;
@@ -794,6 +939,9 @@ struct AudioPipeline::DecodeStream {
         block.frames = kDecodeChunkFrames;
         block.byteSize = typedFrames.size();
         decoded = decoder->readFrames(block, &error);
+      }
+      if (remainingSegmentFrames) {
+        decoded = std::min(decoded, static_cast<size_t>(*remainingSegmentFrames));
       }
       if (decoded == 0) {
         markEof();
@@ -809,6 +957,13 @@ struct AudioPipeline::DecodeStream {
         block.byteSize = decoded * bytesPerFrame;
         buffer.writeBlocking(block, running);
       }
+      if (remainingSegmentFrames) {
+        *remainingSegmentFrames -= decoded;
+        if (*remainingSegmentFrames == 0) {
+          markEof();
+          break;
+        }
+      }
     }
   }
 
@@ -820,6 +975,23 @@ struct AudioPipeline::DecodeStream {
     std::vector<float> frames(kDecodeChunkFrames * static_cast<size_t>(channels));
 
     while (running.load()) {
+      if (remainingVirtualPregapFrames > 0) {
+        const size_t silenceFrames = static_cast<size_t>(std::min<uint64_t>(
+            remainingVirtualPregapFrames, static_cast<uint64_t>(kDecodeChunkFrames)));
+        const size_t silenceBytes = silenceFrames * static_cast<size_t>(channels) * 2;
+        std::fill(dsdBytes.begin(), dsdBytes.begin() + silenceBytes, 0x69);
+        const size_t packedFrames = dopPacker.pack(dsdBytes.data(), silenceBytes, &pcmBytes);
+        if (packedFrames == 0) {
+          markEof();
+          break;
+        }
+        const size_t sampleCount = packedFrames * static_cast<size_t>(channels);
+        frames.resize(sampleCount);
+        dopBytesToFloatCarrier(pcmBytes, decodeFormat.sampleFormat, frames.data(), sampleCount);
+        buffer.writeBlocking(frames.data(), packedFrames, running);
+        remainingVirtualPregapFrames -= packedFrames;
+        continue;
+      }
       if (!dsdReader) break;
       const size_t read = dsdReader->readBytes(dsdBytes.data(), dsdBytes.size());
       if (read == 0) {
@@ -828,10 +1000,24 @@ struct AudioPipeline::DecodeStream {
       }
       const size_t packedFrames = dopPacker.pack(dsdBytes.data(), read, &pcmBytes);
       if (packedFrames == 0) continue;
-      const size_t sampleCount = packedFrames * static_cast<size_t>(channels);
+      const size_t boundedFrames = remainingSegmentFrames
+                                       ? std::min(packedFrames, static_cast<size_t>(*remainingSegmentFrames))
+                                       : packedFrames;
+      if (boundedFrames == 0) {
+        markEof();
+        break;
+      }
+      const size_t sampleCount = boundedFrames * static_cast<size_t>(channels);
       frames.resize(sampleCount);
       dopBytesToFloatCarrier(pcmBytes, decodeFormat.sampleFormat, frames.data(), sampleCount);
-      buffer.writeBlocking(frames.data(), packedFrames, running);
+      buffer.writeBlocking(frames.data(), boundedFrames, running);
+      if (remainingSegmentFrames) {
+        *remainingSegmentFrames -= boundedFrames;
+        if (*remainingSegmentFrames == 0) {
+          markEof();
+          break;
+        }
+      }
     }
   }
 
@@ -846,23 +1032,61 @@ struct AudioPipeline::DecodeStream {
     std::vector<uint8_t> interleaved;
 
     while (running.load()) {
+      if (remainingVirtualPregapFrames > 0) {
+        const size_t silenceFrames = static_cast<size_t>(std::min<uint64_t>(
+            remainingVirtualPregapFrames, static_cast<uint64_t>(kDecodeChunkFrames)));
+        const uint8_t silenceByte =
+            render::convertDsdByte(0x69, DsdBitOrder::LsbFirst, decodeFormat.sampleFormat);
+        interleaved.assign(silenceFrames * static_cast<size_t>(channels), silenceByte);
+        PcmBlock silence;
+        silence.format = decodeFormat;
+        silence.data = interleaved.data();
+        silence.frames = silenceFrames;
+        silence.byteSize = silenceFrames * audioFormatBytesPerFrame(decodeFormat);
+        buffer.writeBlocking(silence, running);
+        remainingVirtualPregapFrames -= silenceFrames;
+        continue;
+      }
       if (!dsdReader) break;
       const size_t read = dsdReader->readBytes(dsdBytes.data(), dsdBytes.size());
       if (read == 0) {
         markEof();
         break;
       }
-      const size_t frames = dsdBytesToInterleaved(dsdBytes.data(), read, info, decodeFormat.sampleFormat, &interleaved);
-      if (frames == 0) continue;
+      const size_t decodedFrames = dsdBytesToInterleaved(dsdBytes.data(), read, info, decodeFormat.sampleFormat, &interleaved);
+      const size_t frames = remainingSegmentFrames
+                                ? std::min(decodedFrames, static_cast<size_t>(*remainingSegmentFrames))
+                                : decodedFrames;
+      if (frames == 0) {
+        if (remainingSegmentFrames && *remainingSegmentFrames == 0) markEof();
+        if (eof.load()) break;
+        continue;
+      }
       PcmBlock block;
       block.format = decodeFormat;
       block.data = interleaved.data();
       block.frames = frames;
       block.byteSize = frames * audioFormatBytesPerFrame(decodeFormat);
       buffer.writeBlocking(block, running);
+      if (remainingSegmentFrames) {
+        *remainingSegmentFrames -= frames;
+        if (*remainingSegmentFrames == 0) {
+          markEof();
+          break;
+        }
+      }
     }
   }
 };
+
+namespace {
+bool sameQueueSegment(const QueueItem& left, const QueueItem& right) {
+  if (left.source != right.source) return false;
+  return left.cueStartSeconds == right.cueStartSeconds &&
+         left.cueEndSeconds == right.cueEndSeconds &&
+         left.cueVirtualPregapSeconds == right.cueVirtualPregapSeconds;
+}
+}  // namespace
 
 struct AudioPipeline::DecodeStreamReaper {
   DecodeStreamReaper() : worker([this] { run(); }) {}
@@ -924,7 +1148,14 @@ struct AudioPipeline::DecodeStreamReaper {
   bool stopping = false;
 };
 
-AudioPipeline::AudioPipeline() = default;
+AudioPipeline::AudioPipeline()
+    : dspChain_(std::make_unique<DspChain>()),
+      preloadDspChain_(std::make_unique<DspChain>()) {
+  // The transaction commit below must not allocate after graph preparation
+  // succeeds. Keeping this fixed-capacity retirement window reserved makes
+  // the ownership hand-off deterministic.
+  renderDspGraphs_.reserve(kMaxRenderDspGraphGenerations);
+}
 
 void AudioPipeline::LatestControlCommandSlot::publish(const ControlCommand& command) noexcept {
   sequence.fetch_add(1, std::memory_order_acq_rel);
@@ -984,6 +1215,7 @@ bool AudioPipeline::LatestRoutingCommandSlot::read(ControlCommand* command) cons
 void AudioPipeline::LatestDspGraphCommandSlot::publish(const ControlCommand& command) noexcept {
   sequence.fetch_add(1, std::memory_order_acq_rel);
   revision.store(command.revision, std::memory_order_relaxed);
+  dspEpoch.store(command.dspEpoch, std::memory_order_relaxed);
   activeGraphBits.store(pointerBits(command.activeDspGraph), std::memory_order_relaxed);
   preloadGraphBits.store(pointerBits(command.preloadDspGraph), std::memory_order_relaxed);
   gaplessEnabled.store(command.gaplessEnabled, std::memory_order_relaxed);
@@ -999,13 +1231,14 @@ bool AudioPipeline::LatestDspGraphCommandSlot::read(ControlCommand* command) con
   ControlCommand snapshot;
   snapshot.type = ControlCommandType::DspGraph;
   snapshot.revision = revision.load(std::memory_order_relaxed);
+  snapshot.dspEpoch = dspEpoch.load(std::memory_order_relaxed);
   snapshot.activeDspGraph = pointerFromBits<DspChain>(activeGraphBits.load(std::memory_order_relaxed));
   snapshot.preloadDspGraph = pointerFromBits<DspChain>(preloadGraphBits.load(std::memory_order_relaxed));
   snapshot.gaplessEnabled = gaplessEnabled.load(std::memory_order_relaxed);
   snapshot.crossfadeSeconds = doubleFromBits(crossfadeSecondsBits.load(std::memory_order_relaxed));
 
   const uint64_t after = sequence.load(std::memory_order_acquire);
-  if (before != after || (after & 1U) != 0U || snapshot.revision == 0) return false;
+  if (before != after || (after & 1U) != 0U || snapshot.dspEpoch == 0) return false;
   *command = snapshot;
   return true;
 }
@@ -1396,6 +1629,7 @@ TAE_Result AudioPipeline::playInternal(
     channelRouter_.reset();
     currentItem_ = item;
     backendId_ = backendId == "wasapi-shared" ? "wasapi" : backendId;
+    deviceId_ = deviceId;
     deviceName_ = output_->deviceName();
     outputInfo_ = output_->outputInfo();
     outputInfo_.backend = backendId_;
@@ -1408,25 +1642,25 @@ TAE_Result AudioPipeline::playInternal(
       outputInfo_.perfectReason = dopAttemptError;
     }
     dspConfig_ = requestedDspConfig;
-    dspChain_.configure(dspConfig_);
-    dspConfig_ = dspChain_.config();
-    dspChain_.prepare(decodeFormat_);
-    dspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
-    preloadDspChain_.configure(dspConfig_);
-    preloadDspChain_.prepare(decodeFormat_);
-    preloadDspChain_.setTrackContext(DspTrackContext{stream_, currentItem_});
+    dspChain_->configure(dspConfig_);
+    dspConfig_ = dspChain_->config();
+    dspChain_->prepare(decodeFormat_);
+    dspChain_->setTrackContext(DspTrackContext{stream_, currentItem_});
+    preloadDspChain_->configure(dspConfig_);
+    preloadDspChain_->prepare(decodeFormat_);
+    preloadDspChain_->setTrackContext(DspTrackContext{stream_, currentItem_});
     if (!dspGraphJson_.empty()) {
       std::string graphError;
-      if (!dspChain_.configureGraphJson(dspGraphJson_, &graphError) && error && error->empty()) {
+      if (!dspChain_->configureGraphJson(dspGraphJson_, &graphError) && error && error->empty()) {
         *error = graphError.empty() ? "Failed to compile DSP graph" : graphError;
       }
       std::string preloadGraphError;
-      if (!preloadDspChain_.configureGraphJson(dspGraphJson_, &preloadGraphError) && error && error->empty()) {
+      if (!preloadDspChain_->configureGraphJson(dspGraphJson_, &preloadGraphError) && error && error->empty()) {
         *error = preloadGraphError.empty() ? "Failed to compile preload DSP graph" : preloadGraphError;
       }
-      dspConfig_ = dspChain_.config();
+      dspConfig_ = dspChain_->config();
     }
-    dspStatus_ = dspChain_.status();
+    dspStatus_ = dspChain_->status();
     dspActive_ = dspStatus_.dspActive || std::abs(requestedPlaybackVolume - 1.0) > 0.0001;
     spectrum_.prepare(outputFormat_, visualizationFftResolutionForConfig(dspConfig_.fftResolution));
     spectrum_.setEnabled(dspConfig_.fftEnabled);
@@ -1441,6 +1675,8 @@ TAE_Result AudioPipeline::playInternal(
     prepareRenderScratchLocked(maxRenderFrames);
     if (activeStream_) activeStream_->prepareFloatReadScratch(maxRenderFrames);
     if (preloadStream_) preloadStream_->prepareFloatReadScratch(maxRenderFrames);
+    publishedActiveDspGraph_ = nullptr;
+    publishedPreloadDspGraph_ = nullptr;
     renderDspGraphs_.clear();
     std::string renderDspError;
     if (!publishPreparedRenderDspGraphsLocked(0, &renderDspError) && error && error->empty()) {
@@ -1448,13 +1684,14 @@ TAE_Result AudioPipeline::playInternal(
     }
     updatePerfectLocked();
     state_ = PipelineState::Playing;
+    const double boundedStartTime = activeStream_->clampRelativePosition(startTimeSeconds);
     renderedFrames_ = static_cast<uint64_t>(
-        std::max(0.0, startTimeSeconds) * static_cast<double>(positionSampleRateForStream(stream_, outputFormat_)));
+        boundedStartTime * static_cast<double>(positionSampleRateForStream(stream_, outputFormat_)));
     ended_ = false;
     deviceInvalidated_ = false;
     trackStarted_ = false;
     outputEventMessage_.clear();
-    preloadDspStatus_ = preloadDspChain_.status();
+    preloadDspStatus_ = preloadDspChain_->status();
     renderChannelCount_ = std::max(1, outputFormat_.channelCount);
     renderOutputFormat_ = outputFormat_;
     renderDecodeFormat_ = decodeFormat_;
@@ -1665,6 +1902,7 @@ TAE_Result AudioPipeline::stop() {
     outputFormat_ = {};
     currentItem_ = {};
     backendId_.clear();
+    deviceId_.clear();
     deviceName_.clear();
     perfectReason_.clear();
     dsdFallbackReason_.clear();
@@ -1708,6 +1946,8 @@ TAE_Result AudioPipeline::stop() {
     preloadDspStatus_ = {};
     renderActiveDspGraph_.store(nullptr, std::memory_order_release);
     renderPreloadDspGraph_.store(nullptr, std::memory_order_release);
+    publishedActiveDspGraph_ = nullptr;
+    publishedPreloadDspGraph_ = nullptr;
     renderDspGraphs_.clear();
     spectrum_.resetCapture();
     publishStatusLocked();
@@ -1724,12 +1964,13 @@ TAE_Result AudioPipeline::seek(double seconds, std::string* error) {
     active = activeStream_;
   }
 
-  if (!active->seek(seconds, error)) return TAE_RESULT_INTERNAL_ERROR;
+  const double boundedSeconds = active->clampRelativePosition(seconds);
+  if (!active->seek(boundedSeconds, error)) return TAE_RESULT_INTERNAL_ERROR;
 
   {
     std::lock_guard lock(mutex_);
     renderedFrames_ = static_cast<uint64_t>(
-        std::max(0.0, seconds) * static_cast<double>(positionSampleRateForStream(stream_, outputFormat_)));
+        boundedSeconds * static_cast<double>(positionSampleRateForStream(stream_, outputFormat_)));
     ended_ = false;
     DspChain& activeDspChain = activeDspChainLocked();
     activeDspChain.setTrackContext(DspTrackContext{stream_, currentItem_});
@@ -1772,13 +2013,21 @@ void AudioPipeline::applyControlCommand(const ControlCommand& command) noexcept 
     return;
   }
   if (command.type == ControlCommandType::DspGraph) {
-    if (command.revision <= appliedConfigRevision_.load(std::memory_order_relaxed)) return;
+    if (command.dspEpoch <= appliedRenderDspEpoch_.load(std::memory_order_relaxed)) return;
     renderActiveDspGraph_.store(command.activeDspGraph, std::memory_order_release);
     renderPreloadDspGraph_.store(command.preloadDspGraph, std::memory_order_release);
     renderGaplessEnabled_.store(command.gaplessEnabled, std::memory_order_release);
     storeAtomicDouble(renderCrossfadeSecondsBits_, command.crossfadeSeconds, std::memory_order_release);
     renderCrossfadeResetRequested_.store(true, std::memory_order_release);
-    appliedConfigRevision_.store(command.revision, std::memory_order_release);
+    appliedRenderDspEpoch_.store(command.dspEpoch, std::memory_order_release);
+    uint64_t appliedRevision = appliedConfigRevision_.load(std::memory_order_relaxed);
+    while (command.revision > appliedRevision &&
+           !appliedConfigRevision_.compare_exchange_weak(
+               appliedRevision,
+               command.revision,
+               std::memory_order_release,
+               std::memory_order_relaxed)) {
+    }
   }
 }
 
@@ -1878,32 +2127,329 @@ bool AudioPipeline::setDspGraph(const std::string& graphJson, std::string* error
   return true;
 }
 
+bool AudioPipeline::applyDspState(
+    uint64_t revision,
+    const std::string& stateJson,
+    std::string* error) {
+  if (error) error->clear();
+  if (revision == 0) {
+    if (error) *error = "DSP state revision must be positive";
+    return false;
+  }
+  const auto payloadRevision = json_utils::fieldNumber(stateJson, "revision");
+  if (!payloadRevision.has_value() || !std::isfinite(*payloadRevision) ||
+      *payloadRevision != std::floor(*payloadRevision) ||
+      *payloadRevision != static_cast<double>(revision)) {
+    if (error) *error = "DSP state payload revision does not match the requested revision";
+    return false;
+  }
+  const std::string processingJson = json_utils::fieldObject(stateJson, "processing");
+  if (processingJson.empty() || json_utils::fieldObject(stateJson, "graph").empty()) {
+    if (error) *error = "DSP state payload requires processing and graph objects";
+    return false;
+  }
+
+  std::shared_ptr<DecodeStream> disabledPreload;
+  const DspConfig nextConfig = DspChain::parseConfigJson(processingJson);
+  std::string committedGraphJson = stateJson;
+  {
+    std::lock_guard lock(mutex_);
+    synchronizeRenderPromotionLocked();
+    reclaimRetiredRenderDspGraphsLocked();
+    if (activeStream_ && renderDspGraphs_.size() >= kMaxRenderDspGraphGenerations) {
+      if (error) *error = "Realtime DSP graph generations are waiting for render-thread ACK";
+      return false;
+    }
+
+    const bool nextGaplessEnabled =
+        !dopPathActive_ && !nativeDsdPathActive_ && !typedPassthroughActive_ && nextConfig.gapless;
+    const DspTrackContext activeContext{stream_, currentItem_};
+    const DspTrackContext preloadContext =
+        nextGaplessEnabled && preloadStream_
+            ? DspTrackContext{preloadStream_->stream, preloadStream_->item}
+            : activeContext;
+
+    // Compile isolated control and render candidates first. DspChain graph
+    // compilation mutates its receiver even when IR preparation fails, so no
+    // live chain may be reused as a validation scratch object.
+    auto activeControlCandidate =
+        makeDspGraphCandidateLocked(nextConfig, stateJson, activeContext, error);
+    if (!activeControlCandidate) return false;
+    auto spareControlCandidate =
+        makeDspGraphCandidateLocked(nextConfig, stateJson, preloadContext, error);
+    if (!spareControlCandidate) return false;
+
+    std::unique_ptr<DspChain> activeRenderCandidate;
+    std::unique_ptr<DspChain> preloadRenderCandidate;
+    std::string graphStatusJson = activeControlCandidate->graphStatusJson();
+    if (activeStream_ && decodeFormat_.sampleRate > 0 && decodeFormat_.channelCount > 0) {
+      activeRenderCandidate =
+          makeDspGraphCandidateLocked(nextConfig, stateJson, activeContext, error);
+      if (!activeRenderCandidate) return false;
+      preloadRenderCandidate =
+          makeDspGraphCandidateLocked(nextConfig, stateJson, preloadContext, error);
+      if (!preloadRenderCandidate) return false;
+      graphStatusJson = activeRenderCandidate->graphStatusJson();
+    }
+
+    // Materialize every allocating snapshot before replacing live state. From
+    // here through the render ownership hand-off, all operations are moves,
+    // atomic stores, or writes into the vector capacity reserved at startup.
+    DspConfig committedConfig = activeControlCandidate->config();
+    DspStatus committedActiveStatus = activeControlCandidate->status();
+    DspStatus committedPreloadStatus = spareControlCandidate->status();
+
+    if (!nextGaplessEnabled) {
+      disabledPreload = std::move(preloadStream_);
+      renderPreloadStream_.store(nullptr, std::memory_order_release);
+      crossfadeMixActive_ = false;
+      crossfadeFramesProcessed_ = 0;
+      crossfadeTotalFrames_ = 0;
+      renderCrossfadeResetRequested_.store(true, std::memory_order_release);
+    }
+    if (activeUsesPreloadDspChain_) {
+      preloadDspChain_ = std::move(activeControlCandidate);
+      dspChain_ = std::move(spareControlCandidate);
+    } else {
+      dspChain_ = std::move(activeControlCandidate);
+      preloadDspChain_ = std::move(spareControlCandidate);
+    }
+    dspConfig_ = std::move(committedConfig);
+    dspGraphJson_ = std::move(committedGraphJson);
+    gaplessEnabled_ = nextGaplessEnabled;
+    dspStatus_ = std::move(committedActiveStatus);
+    preloadDspStatus_ = std::move(committedPreloadStatus);
+    dspActive_ = dspStatus_.dspActive ||
+                 std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
+    renderDitherMode_.store(
+        static_cast<uint32_t>(dspConfig_.ditherMode),
+        std::memory_order_release);
+    renderDitherResetRequested_.store(true, std::memory_order_release);
+    if (outputFormat_.sampleRate > 0 && outputFormat_.channelCount > 0) {
+      spectrum_.prepare(
+          outputFormat_,
+          visualizationFftResolutionForConfig(dspConfig_.fftResolution));
+    }
+    spectrum_.setEnabled(dspConfig_.fftEnabled);
+
+    // GetDspGraphStatus is the authoritative external DSP ACK channel. Its
+    // revision comes directly from this request; the generic playback config
+    // counter remains monotonic when other controls have advanced it first.
+    uint64_t requestedRevision = requestedConfigRevision_.load(std::memory_order_relaxed);
+    while (revision > requestedRevision &&
+           !requestedConfigRevision_.compare_exchange_weak(
+               requestedRevision,
+               revision,
+               std::memory_order_release,
+               std::memory_order_relaxed)) {
+    }
+    commitPreparedRenderDspGraphsLocked(
+        revision,
+        std::move(activeRenderCandidate),
+        std::move(preloadRenderCandidate),
+        std::move(graphStatusJson));
+    updatePerfectLocked();
+    publishStatusLocked();
+  }
+  if (disabledPreload) {
+    std::lock_guard lock(mutex_);
+    retireDecodeStreamLocked(std::move(disabledPreload));
+  }
+  return true;
+}
+
 std::string AudioPipeline::dspGraphStatusJson() const {
   std::lock_guard lock(mutex_);
-  return activeDspChainLocked().graphStatusJson();
+  return appliedDspGraphStatusJsonLocked();
+}
+
+size_t AudioPipeline::renderDspGraphGenerationCountForTests() const {
+  std::lock_guard lock(mutex_);
+  reclaimRetiredRenderDspGraphsLocked();
+  return renderDspGraphs_.size();
+}
+
+size_t AudioPipeline::maxRenderDspGraphGenerationCountForTests() const {
+  return kMaxRenderDspGraphGenerations;
+}
+
+uint64_t AudioPipeline::appliedRenderDspEpochForTests() const noexcept {
+  return appliedRenderDspEpoch_.load(std::memory_order_acquire);
+}
+
+OutputInfo::RenderPerformanceSnapshot AudioPipeline::renderPerformanceSnapshot() const noexcept {
+  OutputInfo::RenderPerformanceSnapshot snapshot;
+  snapshot.callbackCount = renderCallbackCount_.load(std::memory_order_relaxed);
+  snapshot.totalCallbackNanoseconds = renderTotalCallbackNanoseconds_.load(std::memory_order_relaxed);
+  snapshot.peakCallbackNanoseconds = renderPeakCallbackNanoseconds_.load(std::memory_order_relaxed);
+  snapshot.totalDeadlineNanoseconds = renderTotalDeadlineNanoseconds_.load(std::memory_order_relaxed);
+  snapshot.deadlineMissCount = renderDeadlineMissCount_.load(std::memory_order_relaxed);
+  return snapshot;
+}
+
+void AudioPipeline::recordRenderPerformance(
+    size_t frameCount,
+    int sampleRate,
+    uint64_t elapsedNanoseconds) noexcept {
+  renderCallbackCount_.fetch_add(1, std::memory_order_relaxed);
+  renderTotalCallbackNanoseconds_.fetch_add(elapsedNanoseconds, std::memory_order_relaxed);
+
+  uint64_t observedPeak = renderPeakCallbackNanoseconds_.load(std::memory_order_relaxed);
+  while (observedPeak < elapsedNanoseconds &&
+         !renderPeakCallbackNanoseconds_.compare_exchange_weak(
+             observedPeak,
+             elapsedNanoseconds,
+             std::memory_order_relaxed,
+             std::memory_order_relaxed)) {
+  }
+
+  if (frameCount == 0 || sampleRate <= 0) return;
+  const uint64_t deadlineNanoseconds =
+      (static_cast<uint64_t>(frameCount) * 1000000000ULL) / static_cast<uint64_t>(sampleRate);
+  if (deadlineNanoseconds == 0) return;
+  renderTotalDeadlineNanoseconds_.fetch_add(deadlineNanoseconds, std::memory_order_relaxed);
+  if (elapsedNanoseconds > deadlineNanoseconds) {
+    renderDeadlineMissCount_.fetch_add(1, std::memory_order_relaxed);
+  }
 }
 
 bool AudioPipeline::setOutputConfig(const OutputConfig& config, std::string* error) {
-  std::lock_guard lock(mutex_);
+  std::unique_lock lock(mutex_);
   synchronizeRenderPromotionLocked();
-  outputConfig_ = config;
-  const ControlCommand routingCommand{
-      ControlCommandType::Routing,
-      1.0,
-      0,
-      outputConfig_.routingMode,
-      upmixConfigFromOutputConfig(outputConfig_)};
-  if (renderState_.load(std::memory_order_acquire) == PipelineState::Stopped) {
-    renderRoutingMode_.store(static_cast<uint32_t>(routingCommand.routingMode), std::memory_order_release);
-    channelRouter_.setUpmixConfig(routingCommand.upmix);
-  } else {
-    enqueueControlCommand(routingCommand);
-  }
-  if (output_ && !output_->setOutputConfig(outputConfig_, error)) return false;
-  if (output_) {
-    outputInfo_ = output_->outputInfo();
+  const OutputConfig previousConfig = outputConfig_;
+  const auto applyRoutingLocked = [this](const OutputConfig& nextConfig) {
+    const ControlCommand routingCommand{
+        ControlCommandType::Routing,
+        1.0,
+        0,
+        0,
+        nextConfig.routingMode,
+        upmixConfigFromOutputConfig(nextConfig)};
+    if (renderState_.load(std::memory_order_acquire) == PipelineState::Stopped) {
+      renderRoutingMode_.store(static_cast<uint32_t>(routingCommand.routingMode), std::memory_order_release);
+      channelRouter_.setUpmixConfig(routingCommand.upmix);
+    } else {
+      enqueueControlCommand(routingCommand);
+    }
+  };
+  const auto refreshOpenedOutputLocked = [this](IOutputBackend* output) {
+    outputFormat_ = output->outputFormat();
+    outputInfo_ = output->outputInfo();
+    deviceName_ = output->deviceName();
+    outputInfo_.backend = backendId_;
+    outputInfo_.deviceName = deviceName_;
+    const size_t maxRenderFrames = outputInfo_.bufferSizeFrames > 0
+                                       ? static_cast<size_t>(outputInfo_.bufferSizeFrames)
+                                       : static_cast<size_t>(std::max(1, outputFormat_.sampleRate / 100));
+    prepareRenderScratchLocked(maxRenderFrames);
+    if (activeStream_) activeStream_->prepareFloatReadScratch(maxRenderFrames);
+    renderChannelCount_.store(std::max(1, outputFormat_.channelCount), std::memory_order_release);
+    renderOutputFormat_ = outputFormat_;
+  };
+
+  if (!output_ || !wasapiExclusiveTopologyChanged(backendId_, previousConfig, config)) {
+    outputConfig_ = config;
+    applyRoutingLocked(config);
+    if (output_ && !output_->setOutputConfig(config, error)) {
+      outputConfig_ = previousConfig;
+      applyRoutingLocked(previousConfig);
+      return false;
+    }
+    if (output_) refreshOpenedOutputLocked(output_.get());
     updatePerfectLocked();
+    publishStatusLocked();
+    return true;
   }
+
+  // WASAPI Exclusive fixes its event/push mode and buffer duration during
+  // IAudioClient::Initialize. A live assignment cannot change that topology.
+  // Keep render callbacks silent while the current backend is fully stopped,
+  // then only publish the requested config after the candidate has reopened
+  // and started. The previous topology is reopened on every candidate failure.
+  IOutputBackend* const output = output_.get();
+  const AudioFormat requestedFormat = outputFormat_;
+  const std::string deviceId = deviceId_;
+  const PipelineState previousState = state_;
+  renderState_.store(PipelineState::Paused, std::memory_order_release);
+  lock.unlock();
+
+  const auto startOutput = [this, output](std::string* startError) {
+    return output->startTyped(
+        [this](PcmBlock& block) { return renderTyped(block); },
+        [this](float* data, size_t frames) { return render(data, frames); },
+        [this](OutputBackendEvent event, const std::string& message) {
+          std::lock_guard eventLock(mutex_);
+          outputEventMessage_ = message;
+          if (event == OutputBackendEvent::DeviceInvalidated) {
+            deviceInvalidated_ = true;
+          } else if (event == OutputBackendEvent::RenderError) {
+            renderError_ = true;
+          }
+          state_ = PipelineState::Stopped;
+          renderState_.store(PipelineState::Stopped, std::memory_order_release);
+        },
+        startError);
+  };
+  const auto reopen = [&](const OutputConfig& nextConfig, std::string* reopenError) {
+    output->stop();
+    output->close();
+    if (!output->setOutputConfig(nextConfig, reopenError)) return false;
+    if (!output->open(deviceId, requestedFormat, reopenError)) return false;
+    lock.lock();
+    refreshOpenedOutputLocked(output);
+    lock.unlock();
+    return startOutput(reopenError);
+  };
+
+  std::string candidateError;
+  bool candidateStarted = reopen(config, &candidateError);
+  if (candidateStarted) {
+    lock.lock();
+    const bool candidateRaisedOutputFailure =
+        deviceInvalidated_.load(std::memory_order_acquire) || renderError_.load(std::memory_order_acquire);
+    if (candidateRaisedOutputFailure) {
+      candidateError = outputEventMessage_.empty() ? "WASAPI Exclusive candidate reported an output failure" :
+                                                     outputEventMessage_;
+      candidateStarted = false;
+    }
+    lock.unlock();
+  }
+  if (!candidateStarted) {
+    std::string rollbackError;
+    const bool rollbackStarted = reopen(previousConfig, &rollbackError);
+    lock.lock();
+    outputConfig_ = previousConfig;
+    if (rollbackStarted) {
+      deviceInvalidated_ = false;
+      renderError_ = false;
+      state_ = previousState;
+      renderState_.store(previousState, std::memory_order_release);
+      updatePerfectLocked();
+      publishStatusLocked();
+      if (error) {
+        *error = "WASAPI Exclusive topology update failed and the previous topology was restored: " +
+                 candidateError;
+      }
+    } else {
+      state_ = PipelineState::Stopped;
+      renderState_.store(PipelineState::Stopped, std::memory_order_release);
+      outputInfo_.perfectReasonCode = "topology_rollback_failed";
+      outputInfo_.perfectReason = rollbackError.empty() ? "WASAPI Exclusive rollback failed" : rollbackError;
+      publishStatusLocked();
+      if (error) {
+        *error = "WASAPI Exclusive topology update failed: " + candidateError +
+                 "; rollback failed: " + rollbackError;
+      }
+    }
+    return false;
+  }
+
+  lock.lock();
+  outputConfig_ = config;
+  applyRoutingLocked(config);
+  state_ = previousState;
+  renderState_.store(previousState, std::memory_order_release);
+  updatePerfectLocked();
   publishStatusLocked();
   return true;
 }
@@ -2054,7 +2600,7 @@ void AudioPipeline::refreshQueueReplayGainTags(const QueueItem& item) {
     if (source.measuredTruePeakDb) target.measuredTruePeakDb = source.measuredTruePeakDb;
   };
 
-  if (currentItem_.source == item.source) {
+  if (sameQueueSegment(currentItem_, item)) {
     overlayItemFields(currentItem_, item);
     applyQueueReplayGainTags(currentItem_, stream_.replayGain);
     if (activeStream_) {
@@ -2064,7 +2610,7 @@ void AudioPipeline::refreshQueueReplayGainTags(const QueueItem& item) {
     changed = true;
   }
 
-  if (preloadStream_ && preloadStream_->item.source == item.source) {
+  if (preloadStream_ && sameQueueSegment(preloadStream_->item, item)) {
     overlayItemFields(preloadStream_->item, item);
     applyQueueReplayGainTags(preloadStream_->item, preloadStream_->stream.replayGain);
     changed = true;
@@ -2094,8 +2640,8 @@ void AudioPipeline::setNativeDspPluginChain(const std::string& json) {
   std::lock_guard lock(mutex_);
   synchronizeRenderPromotionLocked();
   nativeDspPluginChainJson_ = json.empty() ? "{\"plugins\":[]}" : json;
-  dspChain_.setNativeDspPluginChain(nativeDspPluginChainJson_);
-  preloadDspChain_.setNativeDspPluginChain(nativeDspPluginChainJson_);
+  dspChain_->setNativeDspPluginChain(nativeDspPluginChainJson_);
+  preloadDspChain_->setNativeDspPluginChain(nativeDspPluginChainJson_);
   const uint64_t revision = requestedConfigRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
   std::string renderDspError;
   publishPreparedRenderDspGraphsLocked(revision, &renderDspError);
@@ -2121,6 +2667,9 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
       synchronizeRenderPromotionLocked();
       previous = std::move(preloadStream_);
       renderPreloadStream_.store(nullptr, std::memory_order_release);
+      publishRenderDspPointerTransitionLocked(
+          publishedActiveDspGraph_,
+          nullptr);
       preloadDspStatus_ = {};
       lastPreloadFormatMismatch_ = false;
       publishStatusLocked();
@@ -2139,7 +2688,7 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
   {
     std::lock_guard lock(mutex_);
     synchronizeRenderPromotionLocked();
-    if (preloadStream_ && preloadStream_->item.source == item->source) return true;
+    if (preloadStream_ && sameQueueSegment(preloadStream_->item, *item)) return true;
     outputFormat = outputFormat_;
     gapless = gaplessEnabled_;
     bufferSizeFrames = outputInfo_.bufferSizeFrames;
@@ -2180,21 +2729,16 @@ bool AudioPipeline::preloadNext(const std::optional<QueueItem>& item, std::strin
     spareDspChain.setTrackContext(DspTrackContext{preloadStream_->stream, preloadStream_->item});
     preloadDspStatus_ = spareDspChain.status();
     std::string renderDspError;
-    auto renderPreloadGraph = makeRenderDspGraphLocked(
-        DspTrackContext{preloadStream_->stream, preloadStream_->item},
-        &renderDspError);
-    if (!renderPreloadGraph) {
+    if (!publishPreparedRenderPreloadDspGraphLocked(&renderDspError)) {
       if (error && error->empty()) {
         *error = renderDspError.empty() ? "Failed to prepare preloaded DSP graph" : renderDspError;
       }
-      renderPreloadDspGraph_.store(nullptr, std::memory_order_release);
+      renderPreloadStream_.store(nullptr, std::memory_order_release);
+      preloadStream_.reset();
       lastPreloadFormatMismatch_ = true;
     } else {
-      DspChain* const renderPreloadGraphPtr = renderPreloadGraph.get();
-      renderDspGraphs_.push_back(std::move(renderPreloadGraph));
-      renderPreloadDspGraph_.store(renderPreloadGraphPtr, std::memory_order_release);
+      renderPreloadStream_.store(preloadStream_.get(), std::memory_order_release);
     }
-    renderPreloadStream_.store(preloadStream_.get(), std::memory_order_release);
     publishStatusLocked();
   }
   if (previous) {
@@ -2213,7 +2757,7 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
       if (error) *error = "crossfade overlap 已经消耗了预加载流起始数据";
       return false;
     }
-    if (!preloadStream_ || preloadStream_->item.source != item.source) {
+    if (!preloadStream_ || !sameQueueSegment(preloadStream_->item, item)) {
       if (error) *error = "下一首尚未完成预加载";
       return false;
     }
@@ -2229,9 +2773,8 @@ bool AudioPipeline::skipToPreloaded(const QueueItem& item, std::string* error) {
     trackStarted_ = true;
     activeUsesPreloadDspChain_ = !activeUsesPreloadDspChain_;
     renderActiveUsesPreloadDspChain_.store(activeUsesPreloadDspChain_, std::memory_order_release);
-    DspChain* const nextRenderDspGraph = renderPreloadDspGraph_.load(std::memory_order_acquire);
-    renderActiveDspGraph_.store(nextRenderDspGraph, std::memory_order_release);
-    renderPreloadDspGraph_.store(nullptr, std::memory_order_release);
+    DspChain* const nextRenderDspGraph = publishedPreloadDspGraph_;
+    publishRenderDspPointerTransitionLocked(nextRenderDspGraph, nullptr);
     dspStatus_ = preloadDspStatus_;
     preloadDspStatus_ = {};
     dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
@@ -2271,6 +2814,7 @@ PipelineStatus AudioPipeline::buildStatusLocked() {
   backendInfo.channelRoutingMode = outputInfo_.channelRoutingMode;
   backendInfo.perfectReasonCode = outputInfo_.perfectReasonCode;
   backendInfo.perfectReason = outputInfo_.perfectReason;
+  backendInfo.renderPerformance = renderPerformanceSnapshot();
   status.outputInfo = backendInfo;
   status.backendId = backendId_;
   status.deviceName = deviceName_;
@@ -2292,7 +2836,7 @@ PipelineStatus AudioPipeline::buildStatusLocked() {
   status.partitionSize = dspStatus_.partitionSize;
   status.channelMappingMode = dspStatus_.channelMappingMode;
   status.nativeDspJson = dspStatus_.nativeDspJson;
-  status.dspGraphJson = activeDspChainLocked().graphStatusJson();
+  status.dspGraphJson = appliedDspGraphStatusJsonLocked();
   status.sourceExact = outputInfo_.sourceExact;
   status.outputPerfect = outputPerfect_;
   status.gaplessActive =
@@ -2329,6 +2873,7 @@ PipelineStatus AudioPipeline::fallbackStatus() const {
       positionSampleRate > 0
           ? static_cast<double>(renderedFrames_.load()) / static_cast<double>(positionSampleRate)
           : 0.0;
+  status.outputInfo.renderPerformance = renderPerformanceSnapshot();
   status.requestedConfigRevision = requestedConfigRevision_.load(std::memory_order_acquire);
   status.appliedConfigRevision = appliedConfigRevision_.load(std::memory_order_acquire);
   return status;
@@ -2566,34 +3111,158 @@ bool AudioPipeline::updatePerfectLocked() {
 }
 
 DspChain& AudioPipeline::activeDspChainLocked() {
-  return activeUsesPreloadDspChain_ ? preloadDspChain_ : dspChain_;
+  return activeUsesPreloadDspChain_ ? *preloadDspChain_ : *dspChain_;
 }
 
 const DspChain& AudioPipeline::activeDspChainLocked() const {
-  return activeUsesPreloadDspChain_ ? preloadDspChain_ : dspChain_;
+  return activeUsesPreloadDspChain_ ? *preloadDspChain_ : *dspChain_;
 }
 
 DspChain& AudioPipeline::spareDspChainLocked() {
-  return activeUsesPreloadDspChain_ ? dspChain_ : preloadDspChain_;
+  return activeUsesPreloadDspChain_ ? *dspChain_ : *preloadDspChain_;
+}
+
+void AudioPipeline::reclaimRetiredRenderDspGraphsLocked() const {
+  const uint64_t appliedEpoch = appliedRenderDspEpoch_.load(std::memory_order_acquire);
+  DspChain* const active = renderActiveDspGraph_.load(std::memory_order_acquire);
+  DspChain* const preload = renderPreloadDspGraph_.load(std::memory_order_acquire);
+
+  for (const RenderDspGraphGeneration& generation : renderDspGraphs_) {
+    if (generation.epoch > appliedEpoch || !generation.updatesGraphStatus ||
+        generation.epoch < appliedDspGraphStatusEpoch_) {
+      continue;
+    }
+    appliedDspGraphStatusEpoch_ = generation.epoch;
+    appliedDspGraphStatusJson_ = generation.graphStatusJson;
+  }
+
+  renderDspGraphs_.erase(
+      std::remove_if(
+          renderDspGraphs_.begin(),
+          renderDspGraphs_.end(),
+          [appliedEpoch, active, preload](const RenderDspGraphGeneration& generation) {
+            if (generation.epoch > appliedEpoch) return false;
+            return generation.active.get() != active && generation.active.get() != preload &&
+                   generation.preload.get() != active && generation.preload.get() != preload;
+          }),
+      renderDspGraphs_.end());
+}
+
+std::string AudioPipeline::appliedDspGraphStatusJsonLocked() const {
+  reclaimRetiredRenderDspGraphsLocked();
+  return appliedDspGraphStatusJson_;
+}
+
+std::unique_ptr<DspChain> AudioPipeline::makeDspGraphCandidateLocked(
+    const DspConfig& config,
+    const std::string& graphJson,
+    const DspTrackContext& context,
+    std::string* error) {
+  auto graph = std::make_unique<DspChain>();
+  graph->configure(config);
+  if (decodeFormat_.sampleRate > 0 && decodeFormat_.channelCount > 0) {
+    graph->prepare(decodeFormat_);
+  }
+  graph->setTrackContext(context);
+  if (!graphJson.empty() && !graph->configureGraphJson(graphJson, error)) return nullptr;
+  graph->setNativeDspPluginChain(nativeDspPluginChainJson_);
+  const DspConfig preparedConfig = graph->config();
+  // Graph compilation already loads its convolver node. The explicit load is
+  // needed only for legacy config-only callers.
+  if (graphJson.empty() && !preparedConfig.impulseResponsePath.empty()) {
+    if (!graph->loadImpulseResponse(preparedConfig.impulseResponsePath, error)) return nullptr;
+  }
+  return graph;
 }
 
 std::unique_ptr<DspChain> AudioPipeline::makeRenderDspGraphLocked(
     const DspTrackContext& context,
     std::string* error) {
-  auto graph = std::make_unique<DspChain>();
-  graph->configure(dspConfig_);
-  graph->prepare(decodeFormat_);
-  graph->setTrackContext(context);
-  if (!dspGraphJson_.empty() && !graph->configureGraphJson(dspGraphJson_, error)) return nullptr;
-  graph->setNativeDspPluginChain(nativeDspPluginChainJson_);
-  if (!dspConfig_.impulseResponsePath.empty()) {
-    if (!graph->loadImpulseResponse(dspConfig_.impulseResponsePath, error)) return nullptr;
+  return makeDspGraphCandidateLocked(dspConfig_, dspGraphJson_, context, error);
+}
+
+void AudioPipeline::commitPreparedRenderDspGraphsLocked(
+    uint64_t revision,
+    std::unique_ptr<DspChain> activeGraph,
+    std::unique_ptr<DspChain> preloadGraph,
+    std::string graphStatusJson) noexcept {
+  if (!activeGraph || !preloadGraph) {
+    appliedDspGraphStatusJson_ = std::move(graphStatusJson);
+    appliedDspGraphStatusEpoch_ = appliedRenderDspEpoch_.load(std::memory_order_acquire);
+    if (revision > 0) {
+      uint64_t appliedRevision = appliedConfigRevision_.load(std::memory_order_relaxed);
+      while (revision > appliedRevision &&
+             !appliedConfigRevision_.compare_exchange_weak(
+                 appliedRevision,
+                 revision,
+                 std::memory_order_release,
+                 std::memory_order_relaxed)) {
+      }
+    }
+    return;
   }
-  return graph;
+
+  DspChain* const activeGraphPtr = activeGraph.get();
+  DspChain* const preloadGraphPtr = preloadGraph.get();
+  const uint64_t dspEpoch = requestedRenderDspEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
+  renderDspGraphs_.push_back(RenderDspGraphGeneration{
+      dspEpoch,
+      revision,
+      true,
+      std::move(activeGraph),
+      std::move(preloadGraph),
+      std::move(graphStatusJson)});
+
+  const ControlCommand command{
+      ControlCommandType::DspGraph,
+      1.0,
+      revision,
+      dspEpoch,
+      ChannelRoutingMode::Auto,
+      {},
+      activeGraphPtr,
+      preloadGraphPtr,
+      gaplessEnabled_,
+      dspConfig_.crossfadeSeconds};
+  publishedActiveDspGraph_ = activeGraphPtr;
+  publishedPreloadDspGraph_ = preloadGraphPtr;
+  if (renderState_.load(std::memory_order_acquire) == PipelineState::Stopped) {
+    renderActiveDspGraph_.store(activeGraphPtr, std::memory_order_release);
+    renderPreloadDspGraph_.store(preloadGraphPtr, std::memory_order_release);
+    renderGaplessEnabled_.store(gaplessEnabled_, std::memory_order_release);
+    storeAtomicDouble(renderCrossfadeSecondsBits_, dspConfig_.crossfadeSeconds, std::memory_order_release);
+    appliedRenderDspEpoch_.store(dspEpoch, std::memory_order_release);
+    if (revision > 0) {
+      uint64_t appliedRevision = appliedConfigRevision_.load(std::memory_order_relaxed);
+      while (revision > appliedRevision &&
+             !appliedConfigRevision_.compare_exchange_weak(
+                 appliedRevision,
+                 revision,
+                 std::memory_order_release,
+                 std::memory_order_relaxed)) {
+      }
+    }
+    reclaimRetiredRenderDspGraphsLocked();
+  } else {
+    enqueueControlCommand(command);
+  }
 }
 
 bool AudioPipeline::publishPreparedRenderDspGraphsLocked(uint64_t revision, std::string* error) {
-  if (!activeStream_ || decodeFormat_.sampleRate <= 0 || decodeFormat_.channelCount <= 0) return true;
+  if (!activeStream_ || decodeFormat_.sampleRate <= 0 || decodeFormat_.channelCount <= 0) {
+    commitPreparedRenderDspGraphsLocked(
+        revision,
+        nullptr,
+        nullptr,
+        activeDspChainLocked().graphStatusJson());
+    return true;
+  }
+
+  reclaimRetiredRenderDspGraphsLocked();
+  if (renderDspGraphs_.size() >= kMaxRenderDspGraphGenerations) {
+    if (error) *error = "Realtime DSP graph generations are waiting for render-thread ACK";
+    return false;
+  }
 
   auto activeGraph = makeRenderDspGraphLocked(DspTrackContext{stream_, currentItem_}, error);
   if (!activeGraph) return false;
@@ -2602,16 +3271,48 @@ bool AudioPipeline::publishPreparedRenderDspGraphsLocked(uint64_t revision, std:
                      : DspTrackContext{stream_, currentItem_};
   auto preloadGraph = makeRenderDspGraphLocked(preloadContext, error);
   if (!preloadGraph) return false;
+  std::string graphStatusJson = activeGraph->graphStatusJson();
+  commitPreparedRenderDspGraphsLocked(
+      revision,
+      std::move(activeGraph),
+      std::move(preloadGraph),
+      std::move(graphStatusJson));
+  return true;
+}
 
-  DspChain* const activeGraphPtr = activeGraph.get();
+bool AudioPipeline::publishPreparedRenderPreloadDspGraphLocked(std::string* error) {
+  if (!activeStream_ || !preloadStream_ || decodeFormat_.sampleRate <= 0 ||
+      decodeFormat_.channelCount <= 0) {
+    return true;
+  }
+  reclaimRetiredRenderDspGraphsLocked();
+  if (renderDspGraphs_.size() >= kMaxRenderDspGraphGenerations) {
+    if (error) *error = "Realtime DSP graph generations are waiting for render-thread ACK";
+    return false;
+  }
+
+  auto preloadGraph = makeRenderDspGraphLocked(
+      DspTrackContext{preloadStream_->stream, preloadStream_->item},
+      error);
+  if (!preloadGraph) return false;
+
+  DspChain* const activeGraphPtr = publishedActiveDspGraph_;
   DspChain* const preloadGraphPtr = preloadGraph.get();
-  renderDspGraphs_.push_back(std::move(activeGraph));
-  renderDspGraphs_.push_back(std::move(preloadGraph));
+  const uint64_t dspEpoch = requestedRenderDspEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
+  renderDspGraphs_.push_back(RenderDspGraphGeneration{
+      dspEpoch,
+      0,
+      false,
+      nullptr,
+      std::move(preloadGraph),
+      appliedDspGraphStatusJson_});
+  publishedPreloadDspGraph_ = preloadGraphPtr;
 
   const ControlCommand command{
       ControlCommandType::DspGraph,
       1.0,
-      revision,
+      0,
+      dspEpoch,
       ChannelRoutingMode::Auto,
       {},
       activeGraphPtr,
@@ -2619,14 +3320,40 @@ bool AudioPipeline::publishPreparedRenderDspGraphsLocked(uint64_t revision, std:
       gaplessEnabled_,
       dspConfig_.crossfadeSeconds};
   if (renderState_.load(std::memory_order_acquire) == PipelineState::Stopped) {
-    renderActiveDspGraph_.store(activeGraphPtr, std::memory_order_release);
     renderPreloadDspGraph_.store(preloadGraphPtr, std::memory_order_release);
-    renderGaplessEnabled_.store(gaplessEnabled_, std::memory_order_release);
-    storeAtomicDouble(renderCrossfadeSecondsBits_, dspConfig_.crossfadeSeconds, std::memory_order_release);
+    appliedRenderDspEpoch_.store(dspEpoch, std::memory_order_release);
+    reclaimRetiredRenderDspGraphsLocked();
   } else {
     enqueueControlCommand(command);
   }
   return true;
+}
+
+void AudioPipeline::publishRenderDspPointerTransitionLocked(
+    DspChain* active,
+    DspChain* preload) {
+  const uint64_t dspEpoch = requestedRenderDspEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
+  const ControlCommand command{
+      ControlCommandType::DspGraph,
+      1.0,
+      0,
+      dspEpoch,
+      ChannelRoutingMode::Auto,
+      {},
+      active,
+      preload,
+      gaplessEnabled_,
+      dspConfig_.crossfadeSeconds};
+  publishedActiveDspGraph_ = active;
+  publishedPreloadDspGraph_ = preload;
+  if (renderState_.load(std::memory_order_acquire) == PipelineState::Stopped) {
+    renderActiveDspGraph_.store(active, std::memory_order_release);
+    renderPreloadDspGraph_.store(preload, std::memory_order_release);
+    appliedRenderDspEpoch_.store(dspEpoch, std::memory_order_release);
+    reclaimRetiredRenderDspGraphsLocked();
+  } else {
+    enqueueControlCommand(command);
+  }
 }
 
 void AudioPipeline::synchronizeRenderPromotionLocked() {
@@ -2640,6 +3367,8 @@ void AudioPipeline::synchronizeRenderPromotionLocked() {
   stream_ = activeStream_->stream;
   currentItem_ = activeStream_->item;
   activeUsesPreloadDspChain_ = renderActiveUsesPreloadDspChain_.load(std::memory_order_acquire);
+  publishedActiveDspGraph_ = renderActiveDspGraph_.load(std::memory_order_acquire);
+  publishedPreloadDspGraph_ = renderPreloadDspGraph_.load(std::memory_order_acquire);
   dspStatus_ = activeDspChainLocked().status();
   preloadDspStatus_ = {};
   dspActive_ = dspStatus_.dspActive || std::abs(loadAtomicDouble(requestedVolumeBits_) - 1.0) > 0.0001;
@@ -2668,6 +3397,14 @@ void AudioPipeline::prepareRenderScratchLocked(size_t maxFrames) {
 
 size_t AudioPipeline::renderTyped(PcmBlock& output) {
   if (!output.data || output.frames == 0) return 0;
+  const auto renderStarted = std::chrono::steady_clock::now();
+  const auto recordPerformance = [this, &output, renderStarted]() noexcept {
+    const auto elapsed = std::chrono::steady_clock::now() - renderStarted;
+    recordRenderPerformance(
+        output.frames,
+        output.format.sampleRate,
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count()));
+  };
   applyPendingControlCommands();
 
   const PipelineState state = renderState_.load(std::memory_order_acquire);
@@ -2679,6 +3416,7 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
   if (state != PipelineState::Playing || !active) {
     if (typedPassthroughActive && output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
     spectrum_.tryResetCapture();
+    recordPerformance();
     return typedPassthroughActive ? output.frames : 0;
   }
 
@@ -2692,6 +3430,7 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
           : pcmFormatsExactMatch(active->bufferFormat(), output.format);
   if (!typedPassthroughActive || !outputMatches || !bufferMatches) {
     if (output.byteSize > 0) std::memset(output.data, 0, output.byteSize);
+    recordPerformance();
     return 0;
   }
 
@@ -2721,12 +3460,23 @@ size_t AudioPipeline::renderTyped(PcmBlock& output) {
     spectrum_.tryResetCapture();
   }
 
-  if (read > 0 || active->drained()) return output.frames;
-  return nativeDsdPathActive || isDsdSampleFormat(output.format.sampleFormat) ? 0 : output.frames;
+  const size_t result = (read > 0 || active->drained())
+                            ? output.frames
+                            : (nativeDsdPathActive || isDsdSampleFormat(output.format.sampleFormat) ? 0 : output.frames);
+  recordPerformance();
+  return result;
 }
 
 size_t AudioPipeline::render(float* output, size_t frameCount) {
   if (!output || frameCount == 0) return 0;
+  const auto renderStarted = std::chrono::steady_clock::now();
+  const auto recordPerformance = [this, frameCount, renderStarted]() noexcept {
+    const auto elapsed = std::chrono::steady_clock::now() - renderStarted;
+    recordRenderPerformance(
+        frameCount,
+        renderOutputFormat_.sampleRate,
+        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count()));
+  };
   applyPendingControlCommands();
   if (renderCrossfadeResetRequested_.exchange(false, std::memory_order_acq_rel)) {
     renderCrossfadeMixActive_ = false;
@@ -2757,14 +3507,21 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
   if (state != PipelineState::Playing || !active) {
     std::fill(output, output + frameCount * static_cast<size_t>(channels), 0.0f);
     spectrum_.tryResetCapture();
+    recordPerformance();
     return frameCount;
   }
 
-  const bool wantsCrossfade = crossfadeSeconds > 0.0001;
+  // A declared CUE PREGAP is an exact-duration silence prefix. Consuming it as a crossfade
+  // preload would hide part of that prefix underneath the previous track.
+  const bool wantsCrossfade =
+      crossfadeSeconds > 0.0001 && (!preload || !preload->hasVirtualPregap());
   DspChain* activeDspChain = renderActiveDspGraph_.load(std::memory_order_acquire);
   DspChain* preloadDspChain = renderPreloadDspGraph_.load(std::memory_order_acquire);
   size_t totalRead = 0;
   size_t positionRead = 0;
+  std::array<size_t, 2> virtualSilenceSpanOffsets{};
+  std::array<size_t, 2> virtualSilenceSpanFrames{};
+  size_t virtualSilenceSpanCount = 0;
   while (totalRead < frameCount) {
     float* segment = output + totalRead * static_cast<size_t>(channels);
     const int decodeChannels = std::max(1, decodeFormat.channelCount);
@@ -2780,12 +3537,46 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     }
 
     float* readBuffer = routingRequired ? routingScratch_.data() : segment;
+    const size_t logicalFramePosition = renderedFrames_.load() + positionRead;
     const size_t read = active->readFloat(readBuffer, requestedFrames);
+    const size_t virtualSilenceFrames = active->virtualPregapFramesFromLogicalFrame(
+        logicalFramePosition,
+        outputFormat.sampleRate,
+        read);
+
+    if (virtualSilenceFrames > 0 && !dopPathActive && !nativeDsdPathActive) {
+      std::fill(
+          readBuffer,
+          readBuffer + virtualSilenceFrames * static_cast<size_t>(decodeChannels),
+          0.0f);
+      if (virtualSilenceSpanCount < virtualSilenceSpanOffsets.size()) {
+        virtualSilenceSpanOffsets[virtualSilenceSpanCount] = totalRead;
+        virtualSilenceSpanFrames[virtualSilenceSpanCount] = virtualSilenceFrames;
+        ++virtualSilenceSpanCount;
+      }
+    }
 
     if (read > 0 && !dopPathActive && !nativeDsdPathActive) {
-      if (activeDspChain) activeDspChain->process(readBuffer, read);
+      const size_t audioFrames = read - virtualSilenceFrames;
+      float* audioReadBuffer =
+          readBuffer + virtualSilenceFrames * static_cast<size_t>(decodeChannels);
+      if (activeDspChain && audioFrames > 0) activeDspChain->process(audioReadBuffer, audioFrames);
       if (routingRequired) {
-        channelRouter_.route(readBuffer, segment, read, decodeChannels, channels, routingMode);
+        if (virtualSilenceFrames > 0) {
+          std::fill(
+              segment,
+              segment + virtualSilenceFrames * static_cast<size_t>(channels),
+              0.0f);
+        }
+        if (audioFrames > 0) {
+          channelRouter_.route(
+              audioReadBuffer,
+              segment + virtualSilenceFrames * static_cast<size_t>(channels),
+              audioFrames,
+              decodeChannels,
+              channels,
+              routingMode);
+        }
       }
     }
     totalRead += read;
@@ -2895,6 +3686,12 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
         renderDitherPreviousNoise_,
         renderDitherError_);
   }
+  // ReplayGain, routing, and integer-output dither must never turn a virtual pregap into noise.
+  for (size_t span = 0; span < virtualSilenceSpanCount; ++span) {
+    const size_t offset = virtualSilenceSpanOffsets[span] * static_cast<size_t>(channels);
+    const size_t samples = virtualSilenceSpanFrames[span] * static_cast<size_t>(channels);
+    std::fill(output + offset, output + offset + samples, 0.0f);
+  }
 
   if (positionRead > 0) {
     renderedFrames_ += positionRead;
@@ -2907,6 +3704,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     spectrum_.tryResetCapture();
   }
 
+  recordPerformance();
   return frameCount;
 }
 

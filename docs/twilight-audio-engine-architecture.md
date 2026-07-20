@@ -8,15 +8,15 @@
 
 ```powershell
 $env:TAE_MINGW_BUILD_DIR = 'D:\\path-without-spaces\\mingw-static'
-npm run configure:audio-engine:mingw
-npm run build:audio-engine:mingw
+pnpm run configure:audio-engine:mingw
+pnpm run build:audio-engine:mingw
 ctest --test-dir $env:TAE_MINGW_BUILD_DIR -N
-npm run test:audio-engine:mingw
-npm run typecheck
-npm run build
+pnpm run test:audio-engine:mingw
+pnpm run typecheck
+pnpm run build
 ```
 
-`TAE_MINGW_BUILD_DIR` 必须指向当前有效、可写且不含空格的外部构建目录。CTest 注册数量和测试结果必须在该目录完成重新配置、重新构建后生成；不得复用已移动目录的注册表或引用固定的历史测试数量。`npm run test:audio-engine:mingw` 是 native 闭环验证入口。`npm run test:no-real-device` 串联 MinGW configure/build、native CTest、Electron manager 测试、typecheck 和前端 build；真实设备 smoke 继续 opt-in，不进入默认门禁。
+`TAE_MINGW_BUILD_DIR` 必须指向当前有效、可写且不含空格的外部构建目录。CTest 注册数量和测试结果必须在该目录完成重新配置、重新构建后生成；不得复用已移动目录的注册表或引用固定的历史测试数量。`pnpm run test:audio-engine:mingw` 是 native 闭环验证入口。`pnpm run test:no-real-device` 串联 MinGW configure/build、native CTest、Electron manager 测试、typecheck 和前端 build；真实设备 smoke 继续 opt-in，不进入默认门禁。
 
 ## 边界
 
@@ -25,7 +25,9 @@ npm run build
 - `outputInfo` 是 canonical playback 状态；顶层 `PlaybackInfo` 字段只做兼容镜像，包括 `isDsd`、`dsdMode`、`dsdRate`。
 - Native queue 负责 EOF auto-next、gapless preload 和 crossfade overlap mixing；Electron 只同步 `PlaybackInfo` 并发送用户操作。`crossfadeSeconds` 由 native 状态上报并使 `outputPerfect=false`，Renderer 不再在 native 播放时用自己的 crossfade 定时器驱动下一首。
 - Electron 默认走 native engine；HTMLAudio 只允许通过 `TWILIGHT_ENABLE_HTMLAUDIO_FALLBACK=1` 显式开启。
-- Electron audio service crash 后先把 native playback 标记为 stopped；service ready 后只恢复后端、设备、输出配置、DSP 设置、原生 DSP 插件链和队列，不自动续播，避免在崩溃恢复时产生非用户触发的播放。
+- Electron audio service crash 后先把 native playback 标记为 stopped；service ready 后只恢复后端、设备、输出配置、原生 DSP 插件链、统一 DSP state 和队列，不自动续播，避免在崩溃恢复时产生非用户触发的播放。恢复顺序固定为 `SetDspPluginChain -> ApplyDspState(revision, payload) -> LoadQueue`；EQ/ReplayGain/crossfeed/convolver/balance/output stage 不再并行调用 legacy setter 覆盖统一事务。
+- `ApplyDspState` 先在 control thread 上编译隔离的 active/preload 候选，全部成功且 retired-generation 容量可用后才提交配置、graph JSON、gapless/preload 状态和 RT graph 所有权。render callback 通过 epoch ACK 切换 graph，control thread 只回收已 ACK 且不再被 current/preload 引用的代际，最多保留 8 代。`GetDspGraphStatus.revision` 是 UI pending/applied/failed 的外部 revision ACK；generic playback config revision 只作为其它控制共享的单调计数。
+- BPM/loudness 完整文件解码运行在独立 `audioAnalysisService` utility-process pool，绝不进入播放 `audioEngineService` 的 RPC 队列。主进程 analysis client 负责有界优先级队列、aging、等待 deadline、高优先级 admission、并发上限、独立 watchdog 与取消；取消或超时只替换对应 analysis worker，不重启或阻塞播放 service。cache commit 与取消并发时使用 generation 屏障和精确值条件删除，避免取消结果落缓存或删除后继写入。
 - ASIO SDK 不入仓库；缺失时构建通过，并通过 capabilities/后端列表报告不可用。
 - 真实设备 smoke 是 opt-in：没有 ASIO SDK、目标平台工具链或真实设备时跳过，不阻塞默认 CI。
 
@@ -103,7 +105,7 @@ Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer
 - HiFi 输出采样率锁：控制台暴露 graph `outputStage`（target rate / SRC / dither）；`setOutputStage` 薄封装 + classic processing 保留锁。
 - HiFi 平衡/相位：`DspStereoImageConfig`（balance/width/mid/side/invert L/R/swap/mono）写入 default graph 的 stereoField + channelStrip polarity；`setStereoImage` 薄封装；`setAudioProcessing` / `createLegacyDspGraph` 保留 `stereoImage`，避免经典设置抹掉 Rack 参数；任一非默认立体声图像 ⇒ `outputPerfect=false`。
 - 库扫描 RG/R128：`scan.extractReplayGainTags` 持久化 `replayGainTrack/AlbumGainDb`、peaks 与 `r128Track/AlbumGainDb`（Q7.8 启发式 `|x|>64 → /256`）；track/album 冷启动可读标签；loudnorm 仍走离线测量缓存，不读库标签冒充测量。
-- Loudnorm 硬化：分析队列串行、identity 命中跳过重测、`cancel` 后不写缓存、缓存上限 512（按 `analyzedAt` 淘汰）、Settings 可清空 Loudnorm 分析缓存。
+- Loudnorm 硬化：隔离 analysis pool 默认并发 1、队列有界且 loudnorm 请求使用高优先级；identity 命中跳过重测、`cancel` 会终止对应 worker 且不写缓存、缓存上限 512（按 `analyzedAt` 淘汰）、Settings 可清空 Loudnorm 分析缓存。
 - 产品诚实 smoke surfaces：`Loudnorm` / `Gapless Album` / `Unity Volume` 始终出现在 evidence 报告（默认 `not-run`），**不**计入 5 项硬件 `coverage.complete` 门禁。
 - CoreAudio Hog Mode 加固：预检现有 hog owner、安装 device-lost listener、跟踪 IOProc underrun 诊断；ICoreAudioHost / MockCoreAudioHost seam 使 CoreAudio 后端逻辑可在 Windows 单元测试。
 - ALSA 后端 seam：IAlsaHost / MockAlsaHost 使 ALSA 后端逻辑可在 Windows 单元测试（此前只能靠真实 Linux 硬件验证）。
@@ -112,7 +114,7 @@ Metadata 会识别 DSD 相关字段并报告 DSD64/128/256/512 级别。Renderer
 
 - WASAPI native DSD：Windows WASAPI 没有 UAC2 native DSD 通道；DoP 可在 WASAPI Exclusive 工作，native DSD 不行。
 - CoreAudio native DSD：macOS CoreAudio 没有 DSD 通道；DoP 可在 CoreAudio Exclusive（Hog）工作，native DSD 不行。
-- 真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；`npm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 将多台机器/多设备结果沉淀为可读 Markdown/JSON，并把缺失 surfaces 显示为 `not-run`。报告 JSON 带 `coverage.complete` 和未闭环 surface 的 `actionPlan`；CLI 会校验本地 artifact 文件存在，输入 JSON 本身可作为缺省 artifact，只有有可追溯 artifact 的 `pass` 行才计入 complete；产品诚实 surfaces（Loudnorm / Gapless Album / Unity Volume）始终列出且不阻塞硬件 complete；发布前可手动加 `--require-complete` 做 opt-in 证据完整性检查。
+- 真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；`pnpm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 将多台机器/多设备结果沉淀为可读 Markdown/JSON，并把缺失 surfaces 显示为 `not-run`。报告 JSON 带 `coverage.complete` 和未闭环 surface 的 `actionPlan`；CLI 会校验本地 artifact 文件存在，输入 JSON 本身可作为缺省 artifact，只有有可追溯 artifact 的 `pass` 行才计入 complete；产品诚实 surfaces（Loudnorm / Gapless Album / Unity Volume）始终列出且不阻塞硬件 complete；发布前可手动加 `--require-complete` 做 opt-in 证据完整性检查。
 
 ## 后续顺序
 

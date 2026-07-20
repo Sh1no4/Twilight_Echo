@@ -51,7 +51,13 @@ struct WasapiExclusiveBackend::Impl {
   OutputInfo::Diagnostics diagnostics;
   DopRuntimeFacts dopRuntimeFacts;
   std::string deviceName = "系统默认";
-  OutputConfig outputConfig;
+  // Buffer duration and event/push mode are consumed by the render thread and
+  // by IAudioClient::Initialize. Keep the two fields the backend actually
+  // owns atomic so control-plane updates cannot race the realtime callback.
+  // AudioPipeline serializes topology changes by stopping/joining the backend
+  // before either value is changed and reopened.
+  std::atomic<uint32_t> preferredBufferSize{0};
+  std::atomic<bool> wasapiExclusivePushMode{false};
   mutable std::mutex infoMutex;
 
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
@@ -158,7 +164,7 @@ struct WasapiExclusiveBackend::Impl {
 
   bool initializeAudioClient(const WAVEFORMATEX* format, REFERENCE_TIME requestedDuration, std::string* error) {
     DWORD streamFlags = AUDCLNT_STREAMFLAGS_NOPERSIST;
-    if (!outputConfig.wasapiExclusivePushMode) {
+    if (!wasapiExclusivePushMode.load(std::memory_order_acquire)) {
       streamFlags |= AUDCLNT_STREAMFLAGS_EVENTCALLBACK;
     }
     HRESULT hr = audioClient->Initialize(
@@ -252,7 +258,7 @@ struct WasapiExclusiveBackend::Impl {
     }
 
     REFERENCE_TIME requestedDuration = wasapi::chooseExclusiveBufferDuration(
-        outputConfig.preferredBufferSize,
+        preferredBufferSize.load(std::memory_order_acquire),
         outputFormat.sampleRate,
         defaultPeriod,
         minimumPeriod);
@@ -272,7 +278,7 @@ struct WasapiExclusiveBackend::Impl {
 
   bool attachEventAndRenderClient(std::string* error) {
     HRESULT hr = S_OK;
-    if (!outputConfig.wasapiExclusivePushMode) {
+    if (!wasapiExclusivePushMode.load(std::memory_order_acquire)) {
       samplesReadyEvent.reset(CreateEventW(nullptr, FALSE, FALSE, nullptr));
       if (!samplesReadyEvent) {
         return fail(error, "WASAPI 独占 init failure：无法创建事件回调句柄");
@@ -446,7 +452,7 @@ struct WasapiExclusiveBackend::Impl {
     const DWORD sleepMs = std::max<DWORD>(1, static_cast<DWORD>(sleepMsDouble));
 
     while (running.load()) {
-      if (outputConfig.wasapiExclusivePushMode) {
+      if (wasapiExclusivePushMode.load(std::memory_order_acquire)) {
         std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs));
         if (!running.load()) break;
       } else {
@@ -467,7 +473,8 @@ struct WasapiExclusiveBackend::Impl {
       // In exclusive mode, the expected wakeup interval is roughly bufferLatencyMs.
       // If we wake up much later than expected, we missed a deadline.
       const double bufferLatencyMs = renderBufferLatencyMs.load();
-      if (!outputConfig.wasapiExclusivePushMode && bufferLatencyMs > 0 && elapsedMs > bufferLatencyMs * 1.5) {
+      if (!wasapiExclusivePushMode.load(std::memory_order_acquire) && bufferLatencyMs > 0 &&
+          elapsedMs > bufferLatencyMs * 1.5) {
         recordRenderUnderrun();
       }
 
@@ -484,7 +491,8 @@ struct WasapiExclusiveBackend::Impl {
       }
 
       const UINT32 framesAvailable =
-          wasapi::exclusiveRenderFrames(bufferFrameCount, padding, outputConfig.wasapiExclusivePushMode);
+          wasapi::exclusiveRenderFrames(
+              bufferFrameCount, padding, wasapiExclusivePushMode.load(std::memory_order_acquire));
       if (framesAvailable == 0) continue;
       const HRESULT renderHr = renderPacket(framesAvailable);
       if (FAILED(renderHr)) {
@@ -543,12 +551,12 @@ struct WasapiExclusiveBackend::Impl {
 
     if (FAILED(renderPacket(wasapi::exclusiveInitialRenderFrames(
             bufferFrameCount,
-            outputConfig.wasapiExclusivePushMode)))) {
+            wasapiExclusivePushMode.load(std::memory_order_acquire))))) {
       if (error) *error = diagnostics.lastError.empty() ? "无法预填充独占输出缓冲区" : diagnostics.lastError;
       return false;
     }
 
-    if (!outputConfig.wasapiExclusivePushMode) {
+    if (!wasapiExclusivePushMode.load(std::memory_order_acquire)) {
       running = true;
       launchRenderThread();
     }
@@ -564,7 +572,7 @@ struct WasapiExclusiveBackend::Impl {
       return false;
     }
 
-    if (outputConfig.wasapiExclusivePushMode) {
+    if (wasapiExclusivePushMode.load(std::memory_order_acquire)) {
       running = true;
       launchRenderThread();
     }
@@ -714,7 +722,7 @@ struct WasapiExclusiveBackend::Impl {
 
       // 恢复成功：预填充缓冲并启动
       const UINT32 initialFrames = wasapi::exclusiveInitialRenderFrames(
-          bufferFrameCount, outputConfig.wasapiExclusivePushMode);
+          bufferFrameCount, wasapiExclusivePushMode.load(std::memory_order_acquire));
       if (FAILED(renderPacket(initialFrames))) continue;
 
       HRESULT startHr = audioClient->Start();
@@ -869,7 +877,8 @@ bool WasapiExclusiveBackend::open(const std::string& deviceId, const AudioFormat
 }
 
 bool WasapiExclusiveBackend::setOutputConfig(const OutputConfig& config, std::string* error) {
-  impl_->outputConfig = config;
+  impl_->preferredBufferSize.store(config.preferredBufferSize, std::memory_order_release);
+  impl_->wasapiExclusivePushMode.store(config.wasapiExclusivePushMode, std::memory_order_release);
   (void)error;
   return true;
 }

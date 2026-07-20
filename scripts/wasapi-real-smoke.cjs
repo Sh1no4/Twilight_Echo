@@ -7,7 +7,7 @@ const root = path.resolve(__dirname, '..')
 function usage() {
   return [
     'Usage:',
-    '  npm run smoke:wasapi -- --device "FiiO JM21"',
+    '  pnpm run smoke:wasapi -- --device "FiiO JM21"',
     '  node scripts/wasapi-real-smoke.cjs --device "{endpoint-id}" --buffer 256',
     '',
     'Options:',
@@ -86,8 +86,8 @@ function loadNative(modulePath) {
       [
         'Cannot find twilight_audio_node.node.',
         'Build and stage the native engine first:',
-        '  npm run configure:audio-engine:mingw',
-        '  npm run build:audio-engine:mingw'
+        '  pnpm run configure:audio-engine:mingw',
+        '  pnpm run build:audio-engine:mingw'
       ].join('\n')
     )
   }
@@ -491,7 +491,7 @@ async function main() {
   const device = resolveDevice(devices, options.device)
   const tonePath = path.join(root, 'audio-engine', 'build', 'mingw-static', 'test-tone.wav')
   if (!fs.existsSync(tonePath)) {
-    throw new Error(`Missing smoke source: ${tonePath}. Run npm run build:audio-engine:mingw first.`)
+    throw new Error(`Missing smoke source: ${tonePath}. Run pnpm run build:audio-engine:mingw first.`)
   }
 
   const results = []

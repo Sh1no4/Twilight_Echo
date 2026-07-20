@@ -1,4 +1,5 @@
 ﻿import { contextBridge, ipcRenderer } from 'electron'
+import { playbackSessionCueRangesAreValid } from '../shared/cue.ts'
 import type {
   AudioEngineEventCallback,
   AudioEngineEndFileCallback,
@@ -19,9 +20,25 @@ import type {
   DesktopLyricsSettings,
   DesktopLyricsTrackPayload,
   LibraryChange,
+  LocalLibraryRemoveRequest,
+  LocalLibraryRemoveResult,
+  LocalLibraryRestoreRequest,
+  LocalLibraryRestoreResult,
+  LocalLibraryTagRestoreRequest,
+  LocalLibraryTagRestoreResult,
+  LocalLibraryTagWriteRequest,
+  LocalLibraryTagWriteResult,
+  LocalLibrarySnapshotInput,
+  LocalMusicLibraryDocument,
+  LocalLibraryScanProgress,
+  LocalLibraryScanStatus,
+  LocalLibraryScanUpdate,
+  DuplicateDetectionReadApi,
   PlayMode,
   AudioEngineQueueItem,
   PlaybackSession,
+  VersionedDataEnvelope,
+  LyricsManagementDocument,
   VisualizationOptions,
   VisualizationData,
   AudioOutputId,
@@ -29,6 +46,7 @@ import type {
   AudioOutputState,
   AudioProcessingSettings,
   OutputConfig,
+  OutputConfigApplyStatus,
   NativeAudioMetadata,
   AudioEnginePlayResult,
   AppSettings,
@@ -67,6 +85,21 @@ import type {
   DspStereoImageConfig,
   Vst3CatalogState
 } from './types'
+import type {
+  OfflineDownloadRecord,
+  OfflineDownloadRequest,
+  OfflinePlayablePathRequest,
+  OfflineStorageSummary
+} from '../shared/offlineDownloads.ts'
+import { ProviderWriteIdempotencyCoordinator } from '../shared/providerWriteIdempotency.ts'
+import { createSleepTimerEventBridge } from './sleepTimerEvents.ts'
+import { collectClosePersistenceOutcome } from './closePersistence.ts'
+import {
+  isPersistentDataRevisionConflictResponse,
+  isVersionedDataEnvelope,
+  persistentDataRevisionConflictFromResponse
+} from '../shared/versionedPersistence.ts'
+import { isLyricsManagementDocument } from '../shared/lyricsManagement.ts'
 
 const audioEngineEventCallbacks = new Set<AudioEngineEventCallback>()
 const audioEngineEndFileCallbacks = new Set<AudioEngineEndFileCallback>()
@@ -80,6 +113,7 @@ const audioEngineConfigAppliedCallbacks = new Set<AudioEngineConfigAppliedCallba
 const audioEngineDeviceOptionsChangedCallbacks = new Set<AudioEngineDeviceOptionsChangedCallback>()
 const audioEngineServiceCrashCallbacks = new Set<AudioEngineServiceCrashCallback>()
 const audioEngineServiceReadyCallbacks = new Set<AudioEngineServiceReadyCallback>()
+const providerWriteIdempotency = new ProviderWriteIdempotencyCoordinator()
 const playerShortcutCallbacks = new Set<(action: PlayerShortcutAction) => void>()
 const settingsChangedCallbacks = new Set<(snapshot: SettingsSnapshot) => void>()
 const desktopLyricsToggleCallbacks = new Set<(enabled: boolean) => void>()
@@ -91,7 +125,13 @@ const miniPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => voi
 const miniPlayerSettingsCallbacks = new Set<(settings: MiniPlayerSettings) => void>()
 const miniPlayerCommandCallbacks = new Set<(command: MiniPlayerCommand) => void>()
 const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
+const offlineDownloadCallbacks = new Set<(record: OfflineDownloadRecord) => void>()
+
+ipcRenderer.on('offline:changed', (_event, record: OfflineDownloadRecord) => {
+  for (const callback of offlineDownloadCallbacks) callback(record)
+})
 const pluginChangedCallbacks = new Set<() => void>()
+const sleepTimerEvents = createSleepTimerEventBridge()
 
 ipcRenderer.on('audioEngine:property-change', (_event, data: { name: string; data: unknown }) => {
   for (const cb of audioEngineEventCallbacks) {
@@ -104,6 +144,8 @@ ipcRenderer.on('audioEngine:end-file', (_event, data: { reason: string }) => {
     cb(data.reason)
   }
 })
+
+sleepTimerEvents.bind(ipcRenderer)
 
 ipcRenderer.on('audioEngine:start-file', () => {
   for (const cb of audioEngineStartFileCallbacks) {
@@ -237,12 +279,13 @@ ipcRenderer.on('miniPlayer:command', (_event, command: MiniPlayerCommand) => {
 })
 
 ipcRenderer.on('app:save-playback-session', async (_event, requestId: string) => {
+  const outcome = await collectClosePersistenceOutcome(savePlaybackSessionCallbacks)
   try {
-    await Promise.allSettled(
-      [...savePlaybackSessionCallbacks].map((cb) => Promise.resolve().then(cb))
-    )
-  } finally {
-    await ipcRenderer.invoke('app:playback-session-saved', requestId)
+    await ipcRenderer.invoke('app:playback-session-saved', requestId, outcome)
+  } catch (error) {
+    // The main process treats a missing result as a timeout and keeps the
+    // window open. Do not convert this IPC failure into a successful ACK.
+    console.error('[persistence] Failed to report close persistence outcome:', error)
   }
 })
 
@@ -283,7 +326,62 @@ const miniPlayerHostApi = {
   }
 }
 
+const duplicateDetectionApi: DuplicateDetectionReadApi = {
+  detectDuplicates: (): Promise<
+    import('../shared/duplicateDetection.ts').DuplicateDetectionResult
+  > => ipcRenderer.invoke('library:detectDuplicates')
+}
+
+async function invokeVersionedDataWrite<T>(
+  channel: string,
+  args: unknown[],
+  isData: (value: unknown) => value is T
+): Promise<VersionedDataEnvelope<T>> {
+  const response: unknown = await ipcRenderer.invoke(channel, ...args)
+  if (isPersistentDataRevisionConflictResponse(response, isData)) {
+    throw persistentDataRevisionConflictFromResponse(response)
+  }
+  if (!isVersionedDataEnvelope(response, isData)) {
+    throw new Error(`${channel} returned an invalid persistence response`)
+  }
+  return response
+}
+
+function isPlaybackSessionData(value: unknown): value is PlaybackSession | null {
+  return value === null || isPlaybackSession(value)
+}
+
+function isPlaybackSession(value: unknown): value is PlaybackSession {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const record = value as Record<string, unknown>
+  const track = record.track
+  return (
+    record.version === 1 &&
+    typeof record.savedAt === 'string' &&
+    (record.mode === 'off' || record.mode === 'track' || record.mode === 'trackAndPosition') &&
+    !!track &&
+    typeof track === 'object' &&
+    !Array.isArray(track) &&
+    typeof (track as Record<string, unknown>).id === 'string' &&
+    typeof record.position === 'number' &&
+    Number.isFinite(record.position) &&
+    record.position >= 0 &&
+    (record.queue === undefined || Array.isArray(record.queue)) &&
+    playbackSessionCueRangesAreValid(value)
+  )
+}
+
 const api = {
+  sleepTimer: {
+    configure: (state: import('../shared/sleepTimer.ts').SleepTimerState) =>
+      ipcRenderer.invoke('sleepTimer:configure', state),
+    cancel: () => ipcRenderer.invoke('sleepTimer:cancel'),
+    getState: () => ipcRenderer.invoke('sleepTimer:getState'),
+    boundary: (boundary: 'trackEnd' | 'queueEnd') =>
+      ipcRenderer.invoke('sleepTimer:boundary', boundary),
+    onState: sleepTimerEvents.onState,
+    onTrigger: sleepTimerEvents.onTrigger
+  },
   window: {
     minimize: (): void => ipcRenderer.send('window:minimize'),
     toggleMaximize: (): void => ipcRenderer.send('window:toggleMaximize'),
@@ -309,6 +407,22 @@ const api = {
     clearActivity: (): Promise<void> => ipcRenderer.invoke('discord:clearActivity')
   },
   library: {
+    removeTracks: (request: LocalLibraryRemoveRequest): Promise<LocalLibraryRemoveResult> =>
+      ipcRenderer.invoke('library:removeTracks', request),
+    restoreExclusions: (request: LocalLibraryRestoreRequest): Promise<LocalLibraryRestoreResult> =>
+      ipcRenderer.invoke('library:restoreExclusions', request),
+    ...duplicateDetectionApi,
+    writeTags: (request: LocalLibraryTagWriteRequest): Promise<LocalLibraryTagWriteResult> =>
+      ipcRenderer.invoke('library:writeTags', request),
+    restoreTags: (request: LocalLibraryTagRestoreRequest): Promise<LocalLibraryTagRestoreResult> =>
+      ipcRenderer.invoke('library:restoreTags', request),
+    scanStartup: (): Promise<LocalLibraryScanUpdate> => ipcRenderer.invoke('library:scanStartup'),
+    scanFull: (): Promise<LocalLibraryScanUpdate> => ipcRenderer.invoke('library:scanFull'),
+    getScanStatus: (): Promise<LocalLibraryScanStatus> =>
+      ipcRenderer.invoke('library:getScanStatus'),
+    pauseScan: (): Promise<boolean> => ipcRenderer.invoke('library:pauseScan'),
+    resumeScan: (): Promise<boolean> => ipcRenderer.invoke('library:resumeScan'),
+    cancelScan: (): Promise<boolean> => ipcRenderer.invoke('library:cancelScan'),
     onChanged: (cb: (change: LibraryChange | undefined) => void): (() => void) => {
       const handler = (_event, change: LibraryChange | undefined): void => cb(change)
       ipcRenderer.on('library:changed', handler)
@@ -318,6 +432,16 @@ const api = {
       const handler = (_event, info: { dirtyCount: number }): void => cb(info)
       ipcRenderer.on('library:covers-missing', handler)
       return () => ipcRenderer.removeListener('library:covers-missing', handler)
+    },
+    onScanProgress: (cb: (progress: LocalLibraryScanProgress) => void): (() => void) => {
+      const handler = (_event, progress: LocalLibraryScanProgress): void => cb(progress)
+      ipcRenderer.on('library:scan-progress', handler)
+      return () => ipcRenderer.removeListener('library:scan-progress', handler)
+    },
+    onScanStatus: (cb: (status: LocalLibraryScanStatus) => void): (() => void) => {
+      const handler = (_event, status: LocalLibraryScanStatus): void => cb(status)
+      ipcRenderer.on('library:scan-status', handler)
+      return () => ipcRenderer.removeListener('library:scan-status', handler)
     }
   },
   fs: {
@@ -360,6 +484,8 @@ const api = {
       ipcRenderer.invoke('audioEngine:setAudioDevice', device),
     setOutputConfig: (config: OutputConfig): Promise<OutputConfig> =>
       ipcRenderer.invoke('audioEngine:setOutputConfig', config),
+    getOutputConfigApplyStatus: (): Promise<OutputConfigApplyStatus> =>
+      ipcRenderer.invoke('audioEngine:getOutputConfigApplyStatus'),
     getAudioOutput: (): Promise<AudioOutputId> => ipcRenderer.invoke('audioEngine:getAudioOutput'),
     getAudioOutputOptions: (): Promise<AudioOutputOption[]> =>
       ipcRenderer.invoke('audioEngine:getAudioOutputOptions'),
@@ -508,6 +634,8 @@ const api = {
       ipcRenderer.invoke('bpmAnalysis:request', request),
     getCacheSize: (): Promise<number> => ipcRenderer.invoke('bpmAnalysis:getCacheSize'),
     clearCache: (): Promise<number> => ipcRenderer.invoke('bpmAnalysis:clearCache'),
+    cancel: (filePath?: string): Promise<void> =>
+      ipcRenderer.invoke('bpmAnalysis:cancel', filePath),
     onCompleted: (cb: (event: BpmAnalysisCompletedEvent) => void): (() => void) => {
       const handler = (_event, data: BpmAnalysisCompletedEvent): void => cb(data)
       ipcRenderer.on('bpmAnalysis:completed', handler)
@@ -560,22 +688,72 @@ const api = {
     cacheSong: (songId: number, url: string, fileName?: string): Promise<string | null> =>
       ipcRenderer.invoke('ncm:cacheSong', songId, url, fileName)
   },
+  offline: {
+    list: (): Promise<OfflineStorageSummary> => ipcRenderer.invoke('offline:list'),
+    queue: (request: OfflineDownloadRequest): Promise<OfflineDownloadRecord> =>
+      ipcRenderer.invoke('offline:queue', request),
+    queueMany: (requests: OfflineDownloadRequest[]): Promise<OfflineDownloadRecord[]> =>
+      ipcRenderer.invoke('offline:queueMany', requests),
+    cancel: (id: string): Promise<OfflineDownloadRecord | null> =>
+      ipcRenderer.invoke('offline:cancel', id),
+    unpin: (id: string): Promise<boolean> => ipcRenderer.invoke('offline:unpin', id),
+    getPlayablePath: (providerId: string, trackId: string): Promise<string | null> =>
+      ipcRenderer.invoke('offline:getPlayablePath', providerId, trackId),
+    getPlayablePaths: (requests: OfflinePlayablePathRequest[]): Promise<(string | null)[]> =>
+      ipcRenderer.invoke('offline:getPlayablePaths', requests),
+    onChanged: (callback: (record: OfflineDownloadRecord) => void): (() => void) => {
+      offlineDownloadCallbacks.add(callback)
+      return () => offlineDownloadCallbacks.delete(callback)
+    }
+  },
   data: {
-    saveMusicLibrary: (data: { tracks: unknown[]; folders: string[] }): Promise<void> =>
+    saveMusicLibrary: (data: LocalLibrarySnapshotInput): Promise<LocalMusicLibraryDocument> =>
       ipcRenderer.invoke('data:saveMusicLibrary', data),
-    loadMusicLibrary: (): Promise<{ tracks: unknown[]; folders: string[] } | unknown[]> =>
+    loadMusicLibrary: (): Promise<LocalMusicLibraryDocument | unknown[]> =>
       ipcRenderer.invoke('data:loadMusicLibrary'),
     getCover: (handle: string): Promise<string | null> => ipcRenderer.invoke('cover:get', handle),
     getLyrics: (dir: string, fileName: string, filePath?: string): Promise<string | null> =>
       ipcRenderer.invoke('lyrics:get', dir, fileName, filePath),
-    savePlaybackSession: (session: PlaybackSession | null): Promise<void> =>
-      ipcRenderer.invoke('data:savePlaybackSession', session),
-    loadPlaybackSession: (): Promise<PlaybackSession | null> =>
+    importLyrics: (): Promise<string | null> => ipcRenderer.invoke('lyrics:import'),
+    saveLyrics: (contents: string): Promise<string | null> =>
+      ipcRenderer.invoke('lyrics:save', contents),
+    saveLyricsManagement: (
+      document: LyricsManagementDocument,
+      expectedRevision: number
+    ): Promise<VersionedDataEnvelope<LyricsManagementDocument>> =>
+      invokeVersionedDataWrite(
+        'data:saveLyricsManagement',
+        [document, expectedRevision],
+        isLyricsManagementDocument
+      ),
+    loadLyricsManagement: (): Promise<VersionedDataEnvelope<LyricsManagementDocument> | null> =>
+      ipcRenderer.invoke('data:loadLyricsManagement'),
+    savePlaybackSession: (
+      session: PlaybackSession,
+      expectedRevision: number
+    ): Promise<VersionedDataEnvelope<PlaybackSession>> =>
+      invokeVersionedDataWrite(
+        'data:savePlaybackSession',
+        [session, expectedRevision],
+        isPlaybackSession
+      ),
+    loadPlaybackSession: (): Promise<VersionedDataEnvelope<PlaybackSession | null> | null> =>
       ipcRenderer.invoke('data:loadPlaybackSession'),
-    clearPlaybackSession: (): Promise<void> => ipcRenderer.invoke('data:clearPlaybackSession'),
-    savePlaylists: (playlists: unknown): Promise<void> =>
-      ipcRenderer.invoke('data:savePlaylists', playlists),
-    loadPlaylists: (): Promise<unknown> => ipcRenderer.invoke('data:loadPlaylists'),
+    clearPlaybackSession: (
+      expectedRevision: number
+    ): Promise<VersionedDataEnvelope<PlaybackSession | null>> =>
+      invokeVersionedDataWrite(
+        'data:clearPlaybackSession',
+        [expectedRevision],
+        isPlaybackSessionData
+      ),
+    savePlaylists: (
+      playlists: unknown[],
+      expectedRevision: number
+    ): Promise<VersionedDataEnvelope<unknown[]>> =>
+      invokeVersionedDataWrite('data:savePlaylists', [playlists, expectedRevision], Array.isArray),
+    loadPlaylists: (): Promise<VersionedDataEnvelope<unknown[]> | null> =>
+      ipcRenderer.invoke('data:loadPlaylists'),
     saveCookie: (cookie: string): Promise<void> => ipcRenderer.invoke('data:saveCookie', cookie),
     loadCookie: (): Promise<string> => ipcRenderer.invoke('data:loadCookie')
   },
@@ -638,11 +816,30 @@ const api = {
   },
   providers: {
     list: (): Promise<TwilightMediaProviderRegistration[]> => ipcRenderer.invoke('providers:list'),
-    call: (
+    call: async (
       providerId: string,
       method: TwilightMediaProviderMethod,
-      args: unknown[]
-    ): Promise<unknown> => ipcRenderer.invoke('providers:call', providerId, method, args)
+      args: unknown[],
+      options?: { idempotencyKey?: string }
+    ): Promise<unknown> => {
+      const lease = providerWriteIdempotency.begin(
+        providerId,
+        method,
+        args,
+        options?.idempotencyKey
+      )
+      try {
+        const value = await ipcRenderer.invoke('providers:call', providerId, method, args, {
+          ...options,
+          ...(lease.idempotencyKey ? { idempotencyKey: lease.idempotencyKey } : {})
+        })
+        lease.settle(true)
+        return value
+      } catch (error) {
+        lease.settle(false)
+        throw error
+      }
+    }
   },
   extensions: {
     list: (): Promise<TwilightPluginExtensionContribution[]> =>

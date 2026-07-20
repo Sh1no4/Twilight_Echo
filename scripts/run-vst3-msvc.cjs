@@ -10,7 +10,7 @@ const action = process.argv[2]
 
 if (!existsSync(join(buildDir, 'CMakeCache.txt'))) {
   console.error(`VST3 MSVC build directory is not configured: ${buildDir}`)
-  console.error('Run npm run configure:vst3-msvc first.')
+  console.error('Run pnpm run configure:vst3-msvc first.')
   process.exit(1)
 }
 

@@ -184,7 +184,7 @@ Run the automated mock backend gate before any real hardware smoke. This gate mu
 
 ## Product Honesty Surfaces (opt-in evidence)
 
-These map to `npm run smoke:audio-evidence` optional surfaces and default to `not-run`.
+These map to `pnpm run smoke:audio-evidence` optional surfaces and default to `not-run`.
 
 ### Loudnorm
 1. Use an untagged FLAC (no ReplayGain tags).
@@ -214,5 +214,5 @@ These map to `npm run smoke:audio-evidence` optional surfaces and default to `no
 - Phase 6D mock DSF/DFF DSD64/128 DoP carrier cases pass without real hardware.
 - Phase 6D mock DSD256/512 and processing fallback cases report PCM fallback honestly.
 - Native DSD ASIO mock, SACD ISO uncompressed fixture playback, and PCM fallback cases pass; real Native DSD DAC and real WASAPI/ASIO DoP smoke remain opt-in.
-- External release evidence can be produced with `npm run smoke:audio-format-matrix -- --manifest "<matrix.json>" --json`; add `--playback --backend wasapi-exclusive --device "<device>"` for WASAPI hardware PCM/DoP evidence or `--backend asio` for ASIO Native DSD evidence.
+- External release evidence can be produced with `pnpm run smoke:audio-format-matrix -- --manifest "<matrix.json>" --json`; add `--playback --backend wasapi-exclusive --device "<device>"` for WASAPI hardware PCM/DoP evidence or `--backend asio` for ASIO Native DSD evidence.
 - Product honesty surfaces (`Loudnorm` / `Gapless Album` / `Unity Volume`) appear in smoke evidence reports; without artifacts they stay `not-run` and do not gate hardware `coverage.complete`.

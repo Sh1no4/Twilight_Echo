@@ -1,4 +1,12 @@
-import { computed, getCurrentInstance, onBeforeUnmount, ref, watch, type ComputedRef, type Ref } from 'vue'
+import {
+  computed,
+  getCurrentInstance,
+  onBeforeUnmount,
+  ref,
+  watch,
+  type ComputedRef,
+  type Ref
+} from 'vue'
 import type { Track } from '../../types/music'
 import type {
   MediaProviderArtistSummary,
@@ -75,6 +83,14 @@ type UseStreamingSearchOptions = {
   playTrack: (track: Track, queue?: Track[]) => void
 }
 
+interface SearchRequestSnapshot {
+  requestId: number
+  query: string
+  type: SearchType
+  source: SearchSource
+  offset: number
+}
+
 export function useStreamingSearch({
   searchSongs,
   searchUnifiedSongs,
@@ -120,6 +136,8 @@ export function useStreamingSearch({
   const searchInputFocused = ref(false)
   const isSearching = computed(() => searchQuery.value.trim().length > 0)
   let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+  let latestRequestId = 0
+  let lastRequestFingerprint = ''
 
   const availableSearchTypes = computed<SearchType[]>(() => {
     const source = searchSources.value.find((s) => s.id === searchSource.value)
@@ -127,6 +145,11 @@ export function useStreamingSearch({
   })
 
   function clearSearch(): void {
+    latestRequestId += 1
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer)
+      searchDebounceTimer = null
+    }
     searchQuery.value = ''
     searchResults.value = []
     searchPlaylistsResults.value = []
@@ -135,14 +158,15 @@ export function useStreamingSearch({
     searchOffset.value = 0
     searchLoading.value = false
     searchError.value = ''
+    lastRequestFingerprint = ''
   }
 
   async function resolveSongsSearch(
+    source: SearchSource,
     keywords: string,
     limit: number,
     offset: number
   ): Promise<{ tracks: Track[]; total: number }> {
-    const source = searchSource.value
     if (source === 'all') {
       return (searchUnifiedSongs ?? searchSongs)(keywords, limit, offset)
     }
@@ -155,11 +179,11 @@ export function useStreamingSearch({
   }
 
   async function resolvePlaylistsSearch(
+    source: SearchSource,
     keywords: string,
     limit: number,
     offset: number
   ): Promise<{ playlists: MediaProviderPlaylistSummary[]; total: number }> {
-    const source = searchSource.value
     if (source === 'all') {
       return searchPlaylists(keywords, limit, offset)
     }
@@ -172,11 +196,11 @@ export function useStreamingSearch({
   }
 
   async function resolveArtistsSearch(
+    source: SearchSource,
     keywords: string,
     limit: number,
     offset: number
   ): Promise<{ artists: MediaProviderArtistSummary[]; total: number }> {
-    const source = searchSource.value
     if (source === 'all') {
       return searchArtists(keywords, limit, offset)
     }
@@ -189,49 +213,66 @@ export function useStreamingSearch({
   }
 
   async function performSearch(keywords: string): Promise<void> {
-    if (!keywords.trim()) {
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer)
+      searchDebounceTimer = null
+    }
+    const query = keywords.trim()
+    if (!query) {
+      latestRequestId += 1
       searchResults.value = []
       searchPlaylistsResults.value = []
       searchArtistsResults.value = []
       searchTotal.value = 0
       return
     }
+    const snapshot: SearchRequestSnapshot = {
+      requestId: ++latestRequestId,
+      query,
+      type: searchType.value,
+      source: searchSource.value,
+      offset: searchOffset.value
+    }
+    lastRequestFingerprint = searchRequestFingerprint(snapshot)
     searchLoading.value = true
     searchError.value = ''
     try {
-      if (searchType.value === 'songs') {
+      if (snapshot.type === 'songs') {
         const { tracks, total } = await resolveSongsSearch(
-          keywords.trim(),
+          snapshot.source,
+          snapshot.query,
           30,
-          searchOffset.value
+          snapshot.offset
         )
-        if (searchQuery.value.trim() === keywords.trim() && searchType.value === 'songs') {
+        if (snapshot.requestId === latestRequestId) {
           searchResults.value = tracks
           searchTotal.value = total
         }
-      } else if (searchType.value === 'playlists') {
+      } else if (snapshot.type === 'playlists') {
         const { playlists, total } = await resolvePlaylistsSearch(
-          keywords.trim(),
+          snapshot.source,
+          snapshot.query,
           30,
-          searchOffset.value
+          snapshot.offset
         )
-        if (searchQuery.value.trim() === keywords.trim() && searchType.value === 'playlists') {
+        if (snapshot.requestId === latestRequestId) {
           searchPlaylistsResults.value = playlists
           searchTotal.value = total
         }
-      } else if (searchType.value === 'artists') {
+      } else if (snapshot.type === 'artists') {
         const { artists, total } = await resolveArtistsSearch(
-          keywords.trim(),
+          snapshot.source,
+          snapshot.query,
           30,
-          searchOffset.value
+          snapshot.offset
         )
-        if (searchQuery.value.trim() === keywords.trim() && searchType.value === 'artists') {
+        if (snapshot.requestId === latestRequestId) {
           searchArtistsResults.value = artists
           searchTotal.value = total
         }
       }
     } catch (e) {
-      if (searchQuery.value.trim() === keywords.trim()) {
+      if (snapshot.requestId === latestRequestId) {
         searchError.value = e instanceof Error ? e.message : '搜索失败'
         searchResults.value = []
         searchPlaylistsResults.value = []
@@ -239,7 +280,7 @@ export function useStreamingSearch({
         searchTotal.value = 0
       }
     } finally {
-      if (searchQuery.value.trim() === keywords.trim()) {
+      if (snapshot.requestId === latestRequestId) {
         searchLoading.value = false
       }
     }
@@ -251,6 +292,7 @@ export function useStreamingSearch({
       if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
       const q = newQuery.trim()
       if (!q) {
+        latestRequestId += 1
         searchResults.value = []
         searchPlaylistsResults.value = []
         searchArtistsResults.value = []
@@ -258,13 +300,23 @@ export function useStreamingSearch({
         searchOffset.value = 0
         searchLoading.value = false
         searchError.value = ''
+        lastRequestFingerprint = ''
         return
       }
 
       if (oldQuery !== newQuery || oldType !== newType || oldSource !== newSource) {
         searchOffset.value = 0
+        const nextFingerprint = searchRequestFingerprint({
+          query: q,
+          type: newType,
+          source: newSource,
+          offset: 0
+        })
+        if (nextFingerprint === lastRequestFingerprint) return
+        latestRequestId += 1
         searchLoading.value = true
         searchDebounceTimer = setTimeout(() => {
+          searchDebounceTimer = null
           void performSearch(q)
         }, 300)
       }
@@ -290,6 +342,7 @@ export function useStreamingSearch({
   if (getCurrentInstance()) {
     onBeforeUnmount(() => {
       if (searchDebounceTimer) clearTimeout(searchDebounceTimer)
+      latestRequestId += 1
     })
   }
 
@@ -312,4 +365,8 @@ export function useStreamingSearch({
     onPageChange,
     onSearchTrackClick
   }
+}
+
+function searchRequestFingerprint(snapshot: Omit<SearchRequestSnapshot, 'requestId'>): string {
+  return `${snapshot.query}\u001f${snapshot.type}\u001f${snapshot.source}\u001f${snapshot.offset}`
 }

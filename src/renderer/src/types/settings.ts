@@ -1,5 +1,6 @@
 import type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 import type { DspScene } from '../../../shared/dspGraph.ts'
+import type { SleepTimerSettings } from '../../../shared/sleepTimer.ts'
 
 export type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 
@@ -14,7 +15,8 @@ export type NcmPlaybackQuality =
   | 'jyeffect'
   | 'sky'
 export type StartupHomePage = 'local' | 'streaming'
-export type PlayMode = 'sequential' | 'repeat' | 'shuffle'
+/** sequential stops at the tail; listLoop wraps; repeat loops one track; shuffle uses a shuffled cycle. */
+export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
 export type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 export type EqMode = 'graphic' | 'parametric'
@@ -248,6 +250,15 @@ export interface OutputConfig {
   upmixSurroundDelayMs?: number
 }
 
+export interface OutputConfigApplyStatus {
+  requestedRevision: number
+  appliedRevision: number
+  failedRevision: number
+  state: 'idle' | 'pending' | 'applied' | 'failed'
+  error: string
+  generation: number
+}
+
 export interface AppSettings {
   autoCheckLogin: boolean
   autoLaunch: boolean
@@ -283,6 +294,7 @@ export interface AppSettings {
   lyricAlign: LyricAlign
   lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
+  sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
   audioOutput: AudioOutputId
@@ -299,6 +311,7 @@ export interface AppSettings {
   proxyMode: ProxyMode
   proxyHost: string
   proxyPort: number
+  proxyAllowDirectFallback: boolean
   streamingActiveProvider: string
 }
 

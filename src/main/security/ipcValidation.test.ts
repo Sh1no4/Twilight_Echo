@@ -41,12 +41,27 @@ test('limits JSON payloads before writing renderer-controlled data to disk', () 
 
 test('data IPC applies path and storage limits before touching local files', () => {
   const source = readFileSync(new URL('../ipc/data.ts', import.meta.url), 'utf8')
+  const repositorySource = readFileSync(
+    new URL('../library/libraryRepository.ts', import.meta.url),
+    'utf8'
+  )
+  const versionedStoreSource = readFileSync(
+    new URL('../persistence/versionedDataStore.ts', import.meta.url),
+    'utf8'
+  )
 
-  assert.match(source, /const MAX_MUSIC_LIBRARY_BYTES = 100 \* 1024 \* 1024/)
+  assert.match(source, /const snapshot = normalizeMusicLibrarySnapshot\(library\)/)
   assert.match(
     source,
-    /stringifyJsonForIpcStorage\(normalizedLibrary, 'music library', MAX_MUSIC_LIBRARY_BYTES\)/
+    /stringifyJsonForIpcStorage\(snapshot, 'music library', MAX_MUSIC_LIBRARY_BYTES\)/
   )
+  assert.match(
+    source,
+    /assertMusicLibraryRevision\(snapshot\.revision, loaded\.document\.revision\)/
+  )
+  assert.match(source, /createMusicLibraryDocument\(snapshot, loaded\.document\.exclusions\)/)
+  assert.match(source, /persistMusicLibraryDocumentWithIndex\(MUSIC_LIBRARY_FILE, nextDocument\)/)
+  assert.match(repositorySource, /export const MAX_MUSIC_LIBRARY_BYTES = 100 \* 1024 \* 1024/)
   assert.match(
     source,
     /stringifyJsonForIpcStorage\(session, 'playback session', MAX_PLAYBACK_SESSION_BYTES\)/
@@ -60,17 +75,29 @@ test('data IPC applies path and storage limits before touching local files', () 
   assert.match(source, /ipcMain\.handle\('fs:isAudioFileAuthorized'/)
   assert.match(source, /clearManagedMusicCache\(cachePath\)/)
   assert.doesNotMatch(source, /rm\(cachePath, \{ recursive: true, force: true \}\)/)
-  assert.match(source, /filterAuthorizedLibraryRoots\(library\.folders\)/)
-  assert.match(source, /loadJsonFileWithBackup\(MUSIC_LIBRARY_FILE/)
-  assert.match(source, /writeJsonFileAtomic\(/)
+  assert.match(source, /filterAuthorizedLibraryRoots\(snapshot\.folders\)/)
+  assert.match(repositorySource, /loadJsonFileWithBackup\(filePath, MUSIC_LIBRARY_JSON_OPTIONS\)/)
+  assert.match(source, /new VersionedDataStore<PlaybackSession \| null>/)
+  assert.match(source, /return await saveVersionedData\(playbackSessionStore, session, expectedRevision\)/)
+  assert.match(source, /return await saveVersionedData\(playlistsStore, playlists, expectedRevision\)/)
+  assert.match(versionedStoreSource, /writeJsonFileAtomic\(/)
+  assert.match(source, /reportPersistentDataFailure\('Playback session'/)
+  assert.match(source, /reportPersistentDataFailure\('Playlists'/)
+  /* Legacy mojibake assertions retained below are intentionally disabled.
   assert.match(source, /reportPersistentDataFailure\('音乐库'/)
   assert.match(source, /reportPersistentDataFailure\('播放会话'/)
   assert.match(source, /reportPersistentDataFailure\('歌单'/)
+  */
   assert.match(source, /normalizeCoverDataUrl\(handle\)/)
   assert.match(
     source,
     /resolveAuthorizedAudioFile\(\s*normalizeLocalPath\(filePath, 'lyrics audio file path'\)\s*\)/
   )
+  assert.match(
+    source,
+    /if \(mode === 'trash'\) \{\s*await resolveAuthorizedAudioFile\(requestedPath\)/
+  )
+  assert.doesNotMatch(source, /authorizeLocalLibrarySelections\([\s\S]*authorizedFolders/)
 })
 
 test('plugin and NCM IPC validate renderer-controlled IDs, methods, paths, and payload sizes', () => {

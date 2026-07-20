@@ -1,20 +1,51 @@
 import { createHash } from 'crypto'
 import { existsSync } from 'fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'fs/promises'
+import { mkdir, mkdtemp, open, readFile, rm, stat, writeFile, type FileHandle } from 'fs/promises'
 import { tmpdir } from 'os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
+import {
+  OFFICIAL_PLUGIN_INDEX_URL,
+  createPluginIndexEntryFingerprint,
+  loadTrustedPluginPublisherRegistry,
+  verifyPluginIndexEntry,
+  type PluginIndexTrustContext,
+  type TrustedPluginPublisherRegistry
+} from './indexTrust.ts'
 import { isCompatibleTwilightRange, validatePluginManifest } from './manifest.ts'
 import { extractPluginPackage } from './packageSecurity.ts'
 import type {
   TwilightPluginDescriptor,
+  TwilightPluginIndexCacheFormat,
   TwilightPluginIndexEntry,
+  TwilightPluginIndexLoadedFrom,
+  TwilightPluginIndexSourceKind,
+  TwilightPluginIndexStatus,
+  TwilightPluginInstallEvidence,
   TwilightPluginManifest
 } from './types'
 
 interface PluginIndexRaw {
   schemaVersion: number
   plugins: unknown[]
+}
+
+interface PluginIndexCacheEnvelope {
+  cacheSchemaVersion: 1
+  origin: string
+  fetchedAt: string
+  expiresAt: string
+  index: unknown
+}
+
+interface ActivePluginIndex {
+  index: unknown
+  indexOrigin: string
+  loadedFrom: TwilightPluginIndexLoadedFrom
+  stale: boolean
+  originVerified: boolean
+  expiresAt: string | null
+  expiredWithoutTimestamp: boolean
 }
 
 export interface PluginIndexServiceOptions {
@@ -27,34 +58,53 @@ export interface PluginIndexServiceOptions {
   indexSizeLimitBytes?: number
   packageSizeLimitBytes?: number
   timeoutMs?: number
+  cacheTtlMs?: number
+  now?: () => Date
+  trustedPublisherRegistry?: TrustedPluginPublisherRegistry
+  trustedPublisherRegistryPath?: string
+  /**
+   * Parent directory for downloaded .tep staging directories. Production passes a
+   * path below Electron userData so downloads and the plugin install target stay
+   * on the same volume.
+   */
+  packageStagingDir?: string
 }
 
-export type PluginIndexSourceKind = 'github' | 'custom' | 'bundled'
-export type PluginIndexLoadedFrom = 'remote' | 'cache' | 'bundled'
-
-export interface PluginIndexStatus {
-  sourceUrl: string
-  sourceKind: PluginIndexSourceKind
-  loadedFrom: PluginIndexLoadedFrom
-  lastFetchedAt: string | null
-  stale: boolean
-  error: string | null
-}
+export type PluginIndexSourceKind = TwilightPluginIndexSourceKind
+export type PluginIndexLoadedFrom = TwilightPluginIndexLoadedFrom
+export type PluginIndexStatus = TwilightPluginIndexStatus
 
 export interface DownloadedPluginPackage {
   entry: TwilightPluginIndexEntry
   packagePath: string
+  evidence: TwilightPluginInstallEvidence
   cleanup: () => Promise<void>
 }
 
-export const DEFAULT_PLUGIN_INDEX_URL =
-  'https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json'
+export const DEFAULT_PLUGIN_INDEX_URL = OFFICIAL_PLUGIN_INDEX_URL
 
 const INDEX_SCHEMA_VERSION = 1
 const DEFAULT_INDEX_SIZE_LIMIT_BYTES = 1024 * 1024
 const DEFAULT_PACKAGE_SIZE_LIMIT_BYTES = 50 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 10000
+const DEFAULT_CACHE_TTL_MS = 24 * 60 * 60 * 1000
+const DEFAULT_MAX_REDIRECTS = 5
+const PACKAGE_STREAM_CHUNK_BYTES = 64 * 1024
 const SHA256_PATTERN = /^[a-f0-9]{64}$/i
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+
+interface RemoteResponseMetadata {
+  response: Response
+  responseUrl: string
+  redirected: boolean
+}
+
+interface PackageSourceMetadata {
+  checksum: string
+  responseUrl: string
+}
+
+class PluginIndexPolicyError extends Error {}
 
 export class PluginIndexService {
   private readonly appVersion: string
@@ -66,9 +116,17 @@ export class PluginIndexService {
   private readonly indexSizeLimitBytes: number
   private readonly packageSizeLimitBytes: number
   private readonly timeoutMs: number
+  private readonly cacheTtlMs: number
+  private readonly now: () => Date
+  private readonly trustedPublisherRegistry: TrustedPluginPublisherRegistry
+  private readonly packageStagingDir: string
   private cachedEntries: TwilightPluginIndexEntry[] | null = null
+  private activeIndex: ActivePluginIndex | null = null
   private currentBaseUrl: string
-  private status: PluginIndexStatus
+  private status: TwilightPluginIndexStatus
+  private loadGeneration = 0
+  private latestLoadPromise: Promise<TwilightPluginIndexEntry[]> | null = null
+  private cacheWriteQueue: Promise<void> = Promise.resolve()
 
   constructor(options: PluginIndexServiceOptions) {
     this.appVersion = options.appVersion
@@ -80,81 +138,158 @@ export class PluginIndexService {
     this.indexSizeLimitBytes = options.indexSizeLimitBytes ?? DEFAULT_INDEX_SIZE_LIMIT_BYTES
     this.packageSizeLimitBytes = options.packageSizeLimitBytes ?? DEFAULT_PACKAGE_SIZE_LIMIT_BYTES
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_CACHE_TTL_MS
+    if (!Number.isFinite(this.cacheTtlMs) || this.cacheTtlMs <= 0) {
+      throw new Error('插件索引 cacheTtlMs 必须是正数')
+    }
+    this.now = options.now ?? (() => new Date())
+    this.trustedPublisherRegistry =
+      options.trustedPublisherRegistry ??
+      loadTrustedPluginPublisherRegistry(
+        options.trustedPublisherRegistryPath ??
+           join(dirname(this.localIndexPath), 'trusted-publishers.json')
+       )
+    this.packageStagingDir = options.packageStagingDir?.trim() || tmpdir()
     this.currentBaseUrl = this.remoteIndexUrl || pathToFileURL(this.localIndexPath).toString()
-    this.status = {
-      sourceUrl: this.currentBaseUrl,
-      sourceKind: this.remoteIndexUrl ? sourceKindForUrl(this.remoteIndexUrl) : 'bundled',
+    const configuredSourceUrl = this.currentBaseUrl
+    this.status = this.createStatus({
+      sourceUrl: configuredSourceUrl,
+      configuredSourceUrl,
       loadedFrom: this.remoteIndexUrl ? 'remote' : 'bundled',
       lastFetchedAt: null,
+      expiresAt: null,
       stale: false,
+      expired: false,
+      originVerified: false,
+      cacheFormat: null,
       error: null
-    }
+    })
   }
 
   async list(forceRefresh = false): Promise<TwilightPluginIndexEntry[]> {
-    if (!forceRefresh && this.cachedEntries) return this.cachedEntries
-    const remoteUrl = this.remoteIndexUrl
-    const localUrl = pathToFileURL(this.localIndexPath).toString()
-    if (!remoteUrl) {
-      const raw = await this.readIndexSource(this.localIndexPath)
-      this.currentBaseUrl = localUrl
-      this.cachedEntries = this.validateIndex(JSON.parse(raw), localUrl)
-      this.status = {
-        sourceUrl: localUrl,
-        sourceKind: 'bundled',
-        loadedFrom: 'bundled',
-        lastFetchedAt: new Date().toISOString(),
-        stale: false,
-        error: null
-      }
+    if (!forceRefresh && this.cachedEntries) {
+      this.refreshDerivedTrust()
       return this.cachedEntries
+    }
+    const generation = ++this.loadGeneration
+    const loadPromise = this.loadIndex(generation)
+    this.latestLoadPromise = loadPromise
+    try {
+      return await loadPromise
+    } finally {
+      if (this.latestLoadPromise === loadPromise) this.latestLoadPromise = null
+    }
+  }
+
+  private async loadIndex(generation: number): Promise<TwilightPluginIndexEntry[]> {
+    const remoteUrl = this.remoteIndexUrl
+    if (!remoteUrl) {
+      return this.loadBundledIndex(null, generation)
     }
 
     try {
-      const raw = await this.readIndexSource(remoteUrl)
-      this.currentBaseUrl = remoteUrl
-      this.cachedEntries = this.validateIndex(JSON.parse(raw), remoteUrl)
-      await this.writeCache(raw)
-      this.status = {
-        sourceUrl: remoteUrl,
-        sourceKind: sourceKindForUrl(remoteUrl),
+      const {
+        raw,
+        responseUrl: indexOrigin,
+        redirected
+      } = await this.readRemoteIndex(remoteUrl)
+      if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
+      const parsed = JSON.parse(raw) as unknown
+      const fetchedAtDate = this.currentTime()
+      const fetchedAt = fetchedAtDate.toISOString()
+      const expiresAt = new Date(fetchedAtDate.getTime() + this.cacheTtlMs).toISOString()
+      const exactConfiguredOrigin = indexOrigin === remoteUrl && !redirected
+      const unpersistedContext = this.trustContext({
+        indexOrigin,
         loadedFrom: 'remote',
-        lastFetchedAt: new Date().toISOString(),
         stale: false,
-        error: null
+        expired: false,
+        originVerified: exactConfiguredOrigin && !this.cacheIndexPath
+      })
+      let entries = this.validateIndex(parsed, indexOrigin, unpersistedContext, fetchedAtDate)
+      let originVerified = exactConfiguredOrigin && !this.cacheIndexPath
+      let cacheError: string | null = null
+      try {
+        const cacheWritten = await this.writeCache(
+          {
+            cacheSchemaVersion: 1,
+            origin: indexOrigin,
+            fetchedAt,
+            expiresAt,
+            index: parsed
+          },
+          generation
+        )
+        if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
+        if (this.cacheIndexPath && !cacheWritten) return this.latestSnapshot(generation)
+        originVerified = exactConfiguredOrigin
+      } catch (error) {
+        if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
+        cacheError = `插件索引缓存写入失败：${errorMessage(error)}`
+      }
+      if (originVerified !== unpersistedContext.originVerified) {
+        entries = this.validateIndex(
+          parsed,
+          indexOrigin,
+          this.trustContext({
+            indexOrigin,
+            loadedFrom: 'remote',
+            stale: false,
+            expired: false,
+            originVerified
+          }),
+          fetchedAtDate
+        )
+      }
+      if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
+      this.currentBaseUrl = indexOrigin
+      this.cachedEntries = entries
+      this.status = this.createStatus({
+        sourceUrl: indexOrigin,
+        configuredSourceUrl: remoteUrl,
+        loadedFrom: 'remote',
+        lastFetchedAt: fetchedAt,
+        expiresAt,
+        loadedAt: fetchedAt,
+        stale: false,
+        expired: false,
+        originVerified,
+        cacheFormat: null,
+        error: cacheError
+      })
+      this.activeIndex = {
+        index: parsed,
+        indexOrigin,
+        loadedFrom: 'remote',
+        stale: false,
+        originVerified,
+        expiresAt,
+        expiredWithoutTimestamp: false
       }
       return this.cachedEntries
     } catch (remoteError) {
+      if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
       const message = errorMessage(remoteError)
-      if (!isRecoverableIndexError(message)) throw remoteError
-      const cached = await this.tryReadCache(remoteUrl, message)
+      if (!isRecoverableIndexError(remoteError)) throw remoteError
+      const cached = await this.tryReadCache(remoteUrl, message, generation)
       if (cached) return cached
-      const raw = await this.readIndexSource(this.localIndexPath)
-      this.currentBaseUrl = localUrl
-      this.cachedEntries = this.validateIndex(JSON.parse(raw), localUrl)
-      this.status = {
-        sourceUrl: remoteUrl,
-        sourceKind: sourceKindForUrl(remoteUrl),
-        loadedFrom: 'bundled',
-        lastFetchedAt: null,
-        stale: true,
-        error: message
-      }
+      return this.loadBundledIndex(message, generation)
     }
-    return this.cachedEntries
   }
 
   async refresh(): Promise<TwilightPluginIndexEntry[]> {
     return this.list(true)
   }
 
-  getStatus(): PluginIndexStatus {
+  getStatus(): TwilightPluginIndexStatus {
+    this.refreshDerivedTrust()
     return { ...this.status }
   }
 
   async downloadPackage(id: string): Promise<DownloadedPluginPackage> {
-    const entries = await this.list()
-    const entry = entries.find((candidate) => candidate.id === id)
+    await this.list()
+    this.refreshDerivedTrust()
+    const entry = this.cachedEntries?.find((candidate) => candidate.id === id)
     if (!entry) throw new Error('插件索引中未找到该插件')
     if (this.bundledPluginIds.has(entry.id)) {
       throw new Error('索引不能安装或覆盖 Twilight Echo 自带插件')
@@ -162,20 +297,55 @@ export class PluginIndexService {
     if (!isCompatibleTwilightRange(entry.engines.twilightEcho, this.appVersion)) {
       throw new Error(`插件 ${entry.name} 不兼容当前 Twilight Echo ${this.appVersion}`)
     }
-    const packageUrl = this.resolveSourceUrl(entry.sourceUrl, this.indexBaseUrl())
-    const buffer = await this.readPackageSource(packageUrl)
-    const checksum = createHash('sha256').update(buffer).digest('hex')
-    if (checksum.toLowerCase() !== entry.checksumSha256.toLowerCase()) {
-      throw new Error(`插件包 checksum 不匹配：${entry.id}`)
-    }
-    const tempRoot = await mkdtemp(join(tmpdir(), 'twilight-plugin-index-'))
-    const packagePath = join(tempRoot, `${entry.id}-${entry.version}.tep`)
+    const entryOrigin = this.activeIndex?.indexOrigin ?? this.indexBaseUrl()
+    const entryFingerprint = createPluginIndexEntryFingerprint(
+      entry as unknown as Record<string, unknown>,
+      entryOrigin
+    )
+    const packageUrl = this.resolveSourceUrl(entry.sourceUrl, entryOrigin)
+    const tempRoot = await this.createPackageStagingRoot()
+    const packagePath = join(tempRoot, 'package.tep')
     try {
-      await writeFile(packagePath, buffer)
+      const { checksum, responseUrl: packageSourceUrl } = await this.streamPackageSource(
+        packageUrl,
+        packagePath
+      )
+      if (checksum.toLowerCase() !== entry.checksumSha256.toLowerCase()) {
+        throw new Error(`插件包 checksum 不匹配：${entry.id}`)
+      }
       await this.validateDownloadedPackageManifest(entry, packagePath, tempRoot)
+      this.refreshDerivedTrust()
+      const currentEntry = this.cachedEntries?.find((candidate) => candidate.id === id)
+      if (!currentEntry) throw new Error('插件索引状态已失效，请刷新后重试')
+      const currentOrigin = this.activeIndex?.indexOrigin ?? this.indexBaseUrl()
+      const currentFingerprint = createPluginIndexEntryFingerprint(
+        currentEntry as unknown as Record<string, unknown>,
+        currentOrigin
+      )
+      if (currentFingerprint !== entryFingerprint) {
+        throw new Error(`插件索引在下载期间发生变化，请刷新后重试：${entry.id}`)
+      }
+      const indexStatus = { ...this.status }
       return {
-        entry,
+        entry: currentEntry,
         packagePath,
+        evidence: {
+          sourceLabel: packageSourceUrl,
+          indexSourceUrl: indexStatus.sourceUrl,
+          configuredIndexUrl: indexStatus.configuredSourceUrl,
+          loadedFrom: indexStatus.loadedFrom,
+          fetchedAt: indexStatus.lastFetchedAt,
+          expiresAt: indexStatus.expiresAt,
+          stale: indexStatus.stale,
+          expired: indexStatus.expired,
+          originVerified: indexStatus.originVerified,
+          cacheFormat: indexStatus.cacheFormat,
+          packageSha256: checksum,
+          checksumVerified: true,
+          manifestVerified: true,
+          expectedPackageSha256: currentEntry.checksumSha256,
+          verification: currentEntry.verification
+        },
         cleanup: async () => {
           await rm(tempRoot, { recursive: true, force: true })
         }
@@ -202,44 +372,193 @@ export class PluginIndexService {
     return this.currentBaseUrl
   }
 
-  private async writeCache(raw: string): Promise<void> {
-    if (!this.cacheIndexPath) return
-    await mkdir(dirname(this.cacheIndexPath), { recursive: true })
-    await writeFile(this.cacheIndexPath, raw, 'utf-8')
+  private async writeCache(
+    envelope: PluginIndexCacheEnvelope,
+    generation: number
+  ): Promise<boolean> {
+    if (!this.cacheIndexPath) return false
+    const operation = this.cacheWriteQueue.then(async () => {
+      if (!this.isCurrentLoad(generation)) return false
+      await mkdir(dirname(this.cacheIndexPath!), { recursive: true })
+      if (!this.isCurrentLoad(generation)) return false
+      await writeFile(this.cacheIndexPath!, JSON.stringify(envelope, null, 2), 'utf-8')
+      return true
+    })
+    this.cacheWriteQueue = operation.then(
+      () => undefined,
+      () => undefined
+    )
+    return operation
   }
 
   private async tryReadCache(
     remoteUrl: string,
-    remoteError: string
+    remoteError: string,
+    generation: number
   ): Promise<TwilightPluginIndexEntry[] | null> {
     if (!this.cacheIndexPath) return null
     try {
       const raw = await this.readIndexSource(this.cacheIndexPath)
-      this.currentBaseUrl = remoteUrl
-      this.cachedEntries = this.validateIndex(JSON.parse(raw), remoteUrl)
-      this.status = {
-        sourceUrl: remoteUrl,
-        sourceKind: sourceKindForUrl(remoteUrl),
+      if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
+      const parsed = JSON.parse(raw) as unknown
+      const envelope = parseCacheEnvelope(parsed)
+      const loadedAtDate = this.currentTime()
+      const loadedAt = loadedAtDate.toISOString()
+      let indexOrigin: string
+      let index: unknown
+      let fetchedAt: string | null
+      let expiresAt: string | null
+      let expired: boolean
+      let originVerified: boolean
+      let cacheFormat: TwilightPluginIndexCacheFormat
+
+      if (envelope) {
+        indexOrigin = envelope.origin
+        index = envelope.index
+        fetchedAt = envelope.fetchedAt
+        expiresAt = envelope.expiresAt
+        expired = loadedAtDate.getTime() >= Date.parse(envelope.expiresAt)
+        originVerified = envelope.origin === remoteUrl
+        cacheFormat = 'envelope-v1'
+      } else {
+        indexOrigin = remoteUrl
+        index = parsed
+        fetchedAt = null
+        expiresAt = null
+        expired = true
+        originVerified = false
+        cacheFormat = 'legacy'
+      }
+
+      this.currentBaseUrl = indexOrigin
+      this.cachedEntries = this.validateIndex(
+        index,
+        indexOrigin,
+        this.trustContext({
+          indexOrigin,
+          loadedFrom: 'cache',
+          stale: true,
+          expired,
+          originVerified
+        }),
+        loadedAtDate
+      )
+      this.status = this.createStatus({
+        sourceUrl: indexOrigin,
+        configuredSourceUrl: remoteUrl,
         loadedFrom: 'cache',
-        lastFetchedAt: null,
+        lastFetchedAt: fetchedAt,
+        expiresAt,
+        loadedAt,
         stale: true,
+        expired,
+        originVerified,
+        cacheFormat,
         error: remoteError
+      })
+      this.activeIndex = {
+        index,
+        indexOrigin,
+        loadedFrom: 'cache',
+        stale: true,
+        originVerified,
+        expiresAt,
+        expiredWithoutTimestamp: cacheFormat === 'legacy'
       }
       return this.cachedEntries
     } catch {
+      if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
       return null
     }
   }
 
-  private validateIndex(raw: unknown, baseUrl: string): TwilightPluginIndexEntry[] {
+  private async loadBundledIndex(
+    remoteError: string | null,
+    generation: number
+  ): Promise<TwilightPluginIndexEntry[]> {
+    const localUrl = pathToFileURL(this.localIndexPath).toString()
+    const raw = await this.readIndexSource(this.localIndexPath)
+    if (!this.isCurrentLoad(generation)) return this.latestSnapshot(generation)
+    const parsed = JSON.parse(raw) as unknown
+    const loadedAtDate = this.currentTime()
+    const stale = remoteError !== null
+    this.currentBaseUrl = localUrl
+    this.cachedEntries = this.validateIndex(
+      parsed,
+      localUrl,
+      this.trustContext({
+        indexOrigin: localUrl,
+        loadedFrom: 'bundled',
+        stale,
+        expired: false,
+        originVerified: true
+      }),
+      loadedAtDate
+    )
+    this.status = this.createStatus({
+      sourceUrl: localUrl,
+      configuredSourceUrl: this.remoteIndexUrl ?? localUrl,
+      loadedFrom: 'bundled',
+      lastFetchedAt: null,
+      expiresAt: null,
+      stale,
+      expired: false,
+      originVerified: true,
+      cacheFormat: null,
+      loadedAt: loadedAtDate.toISOString(),
+      error: remoteError
+    })
+    this.activeIndex = {
+      index: parsed,
+      indexOrigin: localUrl,
+      loadedFrom: 'bundled',
+      stale,
+      originVerified: true,
+      expiresAt: null,
+      expiredWithoutTimestamp: false
+    }
+    return this.cachedEntries
+  }
+
+  private isCurrentLoad(generation: number): boolean {
+    return generation === this.loadGeneration
+  }
+
+  private async latestSnapshot(generation: number): Promise<TwilightPluginIndexEntry[]> {
+    if (this.isCurrentLoad(generation)) {
+      throw new Error('插件索引加载状态异常')
+    }
+    const latest = this.latestLoadPromise
+    if (latest) return latest
+    if (this.cachedEntries) {
+      this.refreshDerivedTrust()
+      return this.cachedEntries
+    }
+    throw new Error('插件索引加载已被更新请求取代')
+  }
+
+  private validateIndex(
+    raw: unknown,
+    baseUrl: string,
+    trustContext: PluginIndexTrustContext,
+    verificationTime: Date = this.currentTime()
+  ): TwilightPluginIndexEntry[] {
     if (!isPluginIndexRaw(raw)) throw new Error('插件索引必须是包含 schemaVersion 和 plugins 的对象')
     if (raw.schemaVersion !== INDEX_SCHEMA_VERSION) {
       throw new Error(`不支持的插件索引 schemaVersion：${raw.schemaVersion}`)
     }
-    return raw.plugins.map((candidate, index) => this.validateEntry(candidate, index, baseUrl))
+    return raw.plugins.map((candidate, index) =>
+      this.validateEntry(candidate, index, baseUrl, trustContext, verificationTime)
+    )
   }
 
-  private validateEntry(raw: unknown, index: number, baseUrl: string): TwilightPluginIndexEntry {
+  private validateEntry(
+    raw: unknown,
+    index: number,
+    baseUrl: string,
+    trustContext: PluginIndexTrustContext,
+    verificationTime: Date
+  ): TwilightPluginIndexEntry {
     const manifest = validatePluginManifest(raw) as TwilightPluginManifest
     if (!isRecord(raw)) throw new Error(`插件索引第 ${index + 1} 项必须是对象`)
     const sourceUrl = requireString(raw, 'sourceUrl')
@@ -251,22 +570,104 @@ export class PluginIndexService {
     if (this.bundledPluginIds.has(manifest.id)) {
       throw new Error(`插件索引不能包含自带插件：${manifest.id}`)
     }
-    return {
+    if (raw.verified !== undefined && typeof raw.verified !== 'boolean') {
+      throw new Error(`插件索引 ${manifest.id} verified 必须是 boolean`)
+    }
+    const entry = {
       ...manifest,
       sourceUrl,
       checksumSha256,
       repository: typeof raw.repository === 'string' ? raw.repository.trim() : manifest.repository,
       homepage: typeof raw.homepage === 'string' ? raw.homepage.trim() : manifest.homepage,
       tags: Array.isArray(raw.tags)
-        ? raw.tags.filter((tag): tag is string => typeof tag === 'string' && Boolean(tag.trim()))
+        ? raw.tags
+            .filter((tag): tag is string => typeof tag === 'string' && Boolean(tag.trim()))
+            .map((tag) => tag.trim())
         : undefined,
-      verified: raw.verified === true
+      ...(typeof raw.verified === 'boolean' ? { verified: raw.verified } : {}),
+      publisherSignature: raw.publisherSignature
+    } as Record<string, unknown>
+    const trust = verifyPluginIndexEntry(
+      entry,
+      trustContext,
+      this.trustedPublisherRegistry,
+      verificationTime
+    )
+    return {
+      ...(entry as unknown as TwilightPluginIndexEntry),
+      publisherSignature: trust.signature,
+      verification: trust.verification
+    }
+  }
+
+  private trustContext(context: PluginIndexTrustContext): PluginIndexTrustContext {
+    return context
+  }
+
+  private refreshDerivedTrust(): void {
+    const activeIndex = this.activeIndex
+    if (!activeIndex) return
+    const verificationTime = this.currentTime()
+    const expired = activeIndex.expiresAt
+      ? verificationTime.getTime() >= Date.parse(activeIndex.expiresAt)
+      : activeIndex.expiredWithoutTimestamp
+    this.cachedEntries = this.validateIndex(
+      activeIndex.index,
+      activeIndex.indexOrigin,
+      this.trustContext({
+        indexOrigin: activeIndex.indexOrigin,
+        loadedFrom: activeIndex.loadedFrom,
+        stale: activeIndex.stale,
+        expired,
+        originVerified: activeIndex.originVerified
+      }),
+      verificationTime
+    )
+    if (this.status.expired !== expired) {
+      this.status = { ...this.status, expired }
+    }
+  }
+
+  private currentTime(): Date {
+    const value = this.now()
+    if (!Number.isFinite(value.getTime())) throw new Error('插件索引时钟无效')
+    return value
+  }
+
+  private createStatus(input: {
+    sourceUrl: string
+    configuredSourceUrl: string
+    loadedFrom: TwilightPluginIndexLoadedFrom
+    lastFetchedAt: string | null
+    expiresAt: string | null
+    loadedAt?: string
+    stale: boolean
+    expired: boolean
+    originVerified: boolean
+    cacheFormat: TwilightPluginIndexCacheFormat | null
+    error: string | null
+  }): TwilightPluginIndexStatus {
+    return {
+      sourceUrl: input.sourceUrl,
+      configuredSourceUrl: input.configuredSourceUrl,
+      sourceKind: input.loadedFrom === 'bundled' ? 'bundled' : sourceKindForUrl(input.sourceUrl),
+      loadedFrom: input.loadedFrom,
+      lastFetchedAt: input.lastFetchedAt,
+      expiresAt: input.expiresAt,
+      loadedAt: input.loadedAt ?? this.currentTime().toISOString(),
+      stale: input.stale,
+      expired: input.expired,
+      originVerified: input.originVerified,
+      officialSource: input.sourceUrl === OFFICIAL_PLUGIN_INDEX_URL,
+      cacheFormat: input.cacheFormat,
+      trustStoreError: this.trustedPublisherRegistry.error,
+      error: input.error
     }
   }
 
   private async readIndexSource(source: string): Promise<string> {
     if (isHttpUrl(source)) {
-      const buffer = await this.fetchBuffer(source, this.indexSizeLimitBytes)
+      const { buffer } = await this.fetchBufferWithMetadata(source, this.indexSizeLimitBytes)
       return buffer.toString('utf-8')
     }
     const filePath = source.startsWith('file://') ? fileUrlToPath(source) : resolve(source)
@@ -275,30 +676,206 @@ export class PluginIndexService {
     return data.toString('utf-8')
   }
 
-  private async readPackageSource(source: string): Promise<Buffer> {
-    if (isHttpUrl(source)) return this.fetchBuffer(source, this.packageSizeLimitBytes)
+  private async readRemoteIndex(
+    source: string
+  ): Promise<{ raw: string; responseUrl: string; redirected: boolean }> {
+    const { buffer, responseUrl, redirected } = await this.fetchBufferWithMetadata(
+      source,
+      this.indexSizeLimitBytes
+    )
+    return { raw: buffer.toString('utf-8'), responseUrl, redirected }
+  }
+
+  private async fetchBufferWithMetadata(
+    url: string,
+    limitBytes: number
+  ): Promise<{ buffer: Buffer; responseUrl: string; redirected: boolean }> {
+    const result = await this.withRemoteResponse(url, async (response, controller) =>
+      this.readResponseBuffer(response, limitBytes, controller)
+    )
+    return {
+      buffer: result.value,
+      responseUrl: result.responseUrl,
+      redirected: result.redirected
+    }
+  }
+
+  private async createPackageStagingRoot(): Promise<string> {
+    const parent = resolve(this.packageStagingDir)
+    await mkdir(parent, { recursive: true })
+    return await mkdtemp(join(parent, 'twilight-plugin-download-'))
+  }
+
+  private async streamPackageSource(
+    source: string,
+    packagePath: string
+  ): Promise<PackageSourceMetadata> {
+    if (isHttpUrl(source)) {
+      const result = await this.withRemoteResponse(source, async (response, controller) =>
+        this.writeResponsePackage(response, packagePath, controller)
+      )
+      return { checksum: result.value, responseUrl: result.responseUrl }
+    }
     if (!source.startsWith('file://')) throw new Error('插件包 sourceUrl 协议不受支持')
     const filePath = fileUrlToPath(source)
     if (!existsSync(filePath)) throw new Error('插件包文件不存在')
-    const data = await readFile(filePath)
-    if (data.byteLength > this.packageSizeLimitBytes) throw new Error('插件包文件过大')
-    return data
+    const sourceStats = await stat(filePath)
+    if (!sourceStats.isFile()) throw new Error('插件包来源必须是文件')
+    if (sourceStats.size > this.packageSizeLimitBytes) throw new Error('插件包文件过大')
+    return {
+      checksum: await this.writeLocalPackage(filePath, packagePath),
+      responseUrl: source
+    }
   }
 
-  private async fetchBuffer(url: string, limitBytes: number): Promise<Buffer> {
-    const parsed = new URL(url)
-    if (!isAllowedHttpUrl(parsed)) throw new Error('插件索引只允许 https 或本机 http URL')
+  private async withRemoteResponse<T>(
+    source: string,
+    consume: (response: Response, controller: AbortController) => Promise<T>
+  ): Promise<{ value: T; responseUrl: string; redirected: boolean }> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
+    let activeResponse: Response | null = null
     try {
-      const response = await this.fetchImpl(url, { signal: controller.signal })
-      if (!response.ok) throw new Error(`插件索引请求失败：HTTP ${response.status}`)
-      const arrayBuffer = await response.arrayBuffer()
-      const buffer = Buffer.from(arrayBuffer)
-      if (buffer.byteLength > limitBytes) throw new Error('插件索引响应过大')
-      return buffer
+      const response = await this.fetchRemoteResponse(source, controller)
+      activeResponse = response.response
+      return {
+        value: await consume(activeResponse, controller),
+        responseUrl: response.responseUrl,
+        redirected: response.redirected
+      }
+    } catch (error) {
+      controller.abort()
+      await discardResponseBody(activeResponse)
+      throw error
     } finally {
       clearTimeout(timer)
+    }
+  }
+
+  private async fetchRemoteResponse(
+    source: string,
+    controller: AbortController
+  ): Promise<RemoteResponseMetadata> {
+    const initialUrl = new URL(source)
+    assertAllowedPluginRemoteUrl(initialUrl, 'Plugin index')
+    let currentUrl = initialUrl
+    let redirects = 0
+    let redirected = false
+    const visited = new Set([currentUrl.toString()])
+
+    while (true) {
+      const response = await this.fetchImpl(currentUrl.toString(), {
+        redirect: 'manual',
+        signal: controller.signal
+      })
+      const location = REDIRECT_STATUSES.has(response.status)
+        ? response.headers.get('location')
+        : null
+      if (REDIRECT_STATUSES.has(response.status)) {
+        if (!location) {
+          await discardResponseBody(response)
+          throw new PluginIndexPolicyError('Plugin download redirect is missing a Location header')
+        }
+        if (redirects >= DEFAULT_MAX_REDIRECTS) {
+          await discardResponseBody(response)
+          throw new PluginIndexPolicyError(
+            `Plugin download exceeded the ${DEFAULT_MAX_REDIRECTS}-redirect limit`
+          )
+        }
+        const targetUrl = resolvePluginRedirectTarget(currentUrl, location)
+        if (visited.has(targetUrl.toString())) {
+          await discardResponseBody(response)
+          throw new PluginIndexPolicyError('Plugin download redirect loop detected')
+        }
+        await discardResponseBody(response)
+        currentUrl = targetUrl
+        visited.add(currentUrl.toString())
+        redirects += 1
+        redirected = true
+        continue
+      }
+      if (!response.ok) {
+        await discardResponseBody(response)
+        throw new Error(`插件索引请求失败：HTTP ${response.status}`)
+      }
+
+      const responseUrl = response.url?.trim() || currentUrl.toString()
+      const reportedUrl = new URL(responseUrl)
+      assertAllowedPluginRemoteUrl(reportedUrl, 'Plugin index response')
+      if (reportedUrl.protocol !== currentUrl.protocol && currentUrl.protocol === 'https:') {
+        await discardResponseBody(response)
+        throw new PluginIndexPolicyError('Plugin download redirect downgrade is not allowed')
+      }
+      return {
+        response,
+        responseUrl: reportedUrl.toString(),
+        redirected: redirected || response.redirected === true || reportedUrl.toString() !== currentUrl.toString()
+      }
+    }
+  }
+
+  private async readResponseBuffer(
+    response: Response,
+    limitBytes: number,
+    controller: AbortController
+  ): Promise<Buffer> {
+    const chunks: Buffer[] = []
+    const totalBytes = await consumeResponseBody(response, limitBytes, controller, async (chunk) => {
+      chunks.push(Buffer.from(chunk))
+    })
+    return Buffer.concat(chunks, totalBytes)
+  }
+
+  private async writeResponsePackage(
+    response: Response,
+    packagePath: string,
+    controller: AbortController
+  ): Promise<string> {
+    return await this.writePackage(packagePath, async (writeChunk) => {
+      await consumeResponseBody(response, this.packageSizeLimitBytes, controller, writeChunk)
+    })
+  }
+
+  private async writeLocalPackage(sourcePath: string, packagePath: string): Promise<string> {
+    return await this.writePackage(packagePath, async (writeChunk) => {
+      const source = await open(sourcePath, 'r')
+      let receivedBytes = 0
+      try {
+        while (true) {
+          const chunk = Buffer.allocUnsafe(PACKAGE_STREAM_CHUNK_BYTES)
+          const { bytesRead } = await source.read(chunk, 0, chunk.byteLength, null)
+          if (bytesRead === 0) return
+          const data = chunk.subarray(0, bytesRead)
+          receivedBytes = addBoundedBytes(receivedBytes, data.byteLength, this.packageSizeLimitBytes)
+          await writeChunk(data)
+        }
+      } finally {
+        await source.close()
+      }
+    })
+  }
+
+  private async writePackage(
+    packagePath: string,
+    copy: (writeChunk: (chunk: Uint8Array) => Promise<void>) => Promise<void>
+  ): Promise<string> {
+    let handle: FileHandle | null = null
+    let position = 0
+    const hash = createHash('sha256')
+    try {
+      handle = await open(packagePath, 'wx')
+      await copy(async (chunk) => {
+        hash.update(chunk)
+        position = await writeAll(handle!, chunk, position)
+      })
+      await handle.sync()
+      await handle.close()
+      handle = null
+      return hash.digest('hex')
+    } catch (error) {
+      if (handle) await handle.close().catch(() => undefined)
+      await rm(packagePath, { force: true }).catch(() => undefined)
+      throw error
     }
   }
 
@@ -349,6 +926,114 @@ export function resolvePluginIndexUrl(value?: string): string {
   return value?.trim() || DEFAULT_PLUGIN_INDEX_URL
 }
 
+async function consumeResponseBody(
+  response: Response,
+  limitBytes: number,
+  controller: AbortController,
+  onChunk: (chunk: Uint8Array) => Promise<void>
+): Promise<number> {
+  const contentLength = parseContentLength(response.headers.get('content-length'))
+  if (contentLength !== null && contentLength > limitBytes) {
+    controller.abort()
+    await discardResponseBody(response)
+    throw new Error('Plugin response Content-Length exceeds the configured size limit')
+  }
+
+  const body = response.body
+  if (!body) {
+    if (contentLength !== null && contentLength > 0) {
+      controller.abort()
+      throw new Error('Plugin response ended before the declared Content-Length')
+    }
+    return 0
+  }
+
+  const reader = body.getReader()
+  const cancelReader = (): void => {
+    void reader.cancel().catch(() => undefined)
+  }
+  if (controller.signal.aborted) cancelReader()
+  else controller.signal.addEventListener('abort', cancelReader, { once: true })
+
+  let receivedBytes = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) return receivedBytes
+      if (!value || value.byteLength === 0) continue
+      receivedBytes = addBoundedBytes(receivedBytes, value.byteLength, limitBytes)
+      await onChunk(value)
+    }
+  } catch (error) {
+    controller.abort()
+    await reader.cancel().catch(() => undefined)
+    throw error
+  } finally {
+    controller.signal.removeEventListener('abort', cancelReader)
+    reader.releaseLock()
+  }
+}
+
+async function discardResponseBody(response: Response | null): Promise<void> {
+  if (!response?.body) return
+  await response.body.cancel().catch(() => undefined)
+}
+
+function parseContentLength(value: string | null): number | null {
+  if (value === null) return null
+  const trimmed = value.trim()
+  if (!/^\d+$/.test(trimmed)) return null
+  const parsed = Number(trimmed)
+  return Number.isSafeInteger(parsed) ? parsed : Number.POSITIVE_INFINITY
+}
+
+function addBoundedBytes(receivedBytes: number, chunkBytes: number, limitBytes: number): number {
+  if (chunkBytes > limitBytes - receivedBytes) {
+    throw new Error('Plugin response exceeds the configured size limit')
+  }
+  return receivedBytes + chunkBytes
+}
+
+async function writeAll(handle: FileHandle, chunk: Uint8Array, position: number): Promise<number> {
+  let sourceOffset = 0
+  let targetPosition = position
+  while (sourceOffset < chunk.byteLength) {
+    const { bytesWritten } = await handle.write(
+      chunk,
+      sourceOffset,
+      chunk.byteLength - sourceOffset,
+      targetPosition
+    )
+    if (bytesWritten <= 0) throw new Error('Could not write plugin package staging file')
+    sourceOffset += bytesWritten
+    targetPosition += bytesWritten
+  }
+  return targetPosition
+}
+
+function assertAllowedPluginRemoteUrl(url: URL, label: string): void {
+  if (url.username || url.password) {
+    throw new PluginIndexPolicyError(`${label} URLs containing credentials are not allowed`)
+  }
+  if (!isAllowedHttpUrl(url)) {
+    throw new PluginIndexPolicyError(`${label} only permits https or localhost http URLs`)
+  }
+}
+
+function resolvePluginRedirectTarget(currentUrl: URL, location: string): URL {
+  let targetUrl: URL
+  try {
+    targetUrl = new URL(location, currentUrl)
+  } catch {
+    throw new PluginIndexPolicyError('Plugin download redirect has an invalid target URL')
+  }
+  if (currentUrl.protocol === 'https:' && targetUrl.protocol !== 'https:') {
+    throw new PluginIndexPolicyError('Plugin download redirect downgrade is not allowed')
+  }
+  assertAllowedPluginRemoteUrl(targetUrl, 'Plugin download redirect')
+  return targetUrl
+}
+
 const manifestComparisonKeys: Array<keyof TwilightPluginManifest> = [
   'id',
   'name',
@@ -364,9 +1049,53 @@ const manifestComparisonKeys: Array<keyof TwilightPluginManifest> = [
   'apiVersion',
   'permissions',
   'contributes',
+  'homepage',
+  'repository',
   'icon',
   'signature'
 ]
+
+function parseCacheEnvelope(value: unknown): PluginIndexCacheEnvelope | null {
+  if (!isRecord(value) || !Object.prototype.hasOwnProperty.call(value, 'cacheSchemaVersion')) {
+    return null
+  }
+  if (value.cacheSchemaVersion !== 1) {
+    throw new Error('不支持的插件索引缓存 schemaVersion')
+  }
+  const origin = requireCacheString(value.origin, 'origin')
+  if (!isHttpUrl(origin) || !isAllowedHttpUrl(new URL(origin))) {
+    throw new Error('插件索引缓存 origin 必须是允许的远程 URL')
+  }
+  const fetchedAt = normalizeCacheTimestamp(value.fetchedAt, 'fetchedAt')
+  const expiresAt = normalizeCacheTimestamp(value.expiresAt, 'expiresAt')
+  if (Date.parse(expiresAt) <= Date.parse(fetchedAt)) {
+    throw new Error('插件索引缓存 expiresAt 必须晚于 fetchedAt')
+  }
+  if (!Object.prototype.hasOwnProperty.call(value, 'index')) {
+    throw new Error('插件索引缓存缺少 index')
+  }
+  return {
+    cacheSchemaVersion: 1,
+    origin,
+    fetchedAt,
+    expiresAt,
+    index: value.index
+  }
+}
+
+function requireCacheString(value: unknown, field: string): string {
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`插件索引缓存 ${field} 必须是非空字符串`)
+  }
+  return value.trim()
+}
+
+function normalizeCacheTimestamp(value: unknown, field: string): string {
+  const timestamp = requireCacheString(value, field)
+  const parsed = Date.parse(timestamp)
+  if (!Number.isFinite(parsed)) throw new Error(`插件索引缓存 ${field} 必须是有效时间`)
+  return new Date(parsed).toISOString()
+}
 
 function isPluginIndexRaw(value: unknown): value is PluginIndexRaw {
   return (
@@ -406,7 +1135,9 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function isRecoverableIndexError(message: string): boolean {
+function isRecoverableIndexError(error: unknown): boolean {
+  if (error instanceof PluginIndexPolicyError) return false
+  const message = errorMessage(error)
   return !(
     message.includes('只允许 https 或本机 http URL') ||
     message.includes('协议不受支持') ||

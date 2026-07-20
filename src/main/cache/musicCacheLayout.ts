@@ -8,9 +8,20 @@ export const MANAGED_MUSIC_CACHE_DIRECTORY_NAMES = [
   'cover-cache'
 ] as const
 
+/** User-pinned downloads are deliberately outside the disposable cache set. */
+export const PERSISTENT_MUSIC_STORAGE_DIRECTORY_NAMES = ['offline-pinned'] as const
+
 export function getManagedMusicCacheDirectories(rootPath: string): string[] {
   const root = resolve(rootPath)
   return MANAGED_MUSIC_CACHE_DIRECTORY_NAMES.map((name) => join(root, name))
+}
+
+export function getMusicCacheStorageDirectories(rootPath: string): string[] {
+  const root = resolve(rootPath)
+  return [
+    ...getManagedMusicCacheDirectories(root),
+    ...PERSISTENT_MUSIC_STORAGE_DIRECTORY_NAMES.map((name) => join(root, name))
+  ]
 }
 
 export async function getManagedMusicCacheSize(rootPath: string): Promise<number> {

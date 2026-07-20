@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import QRCode from 'qrcode'
+import { createVisibilityPollingController } from '../utils/visibilityPolling.ts'
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useNcmStore } from '../stores/useNcmStore'
 import { useProviderStore, type ProviderInfo } from '../stores/useProviderStore'
@@ -76,9 +77,7 @@ let cooldownTimer: ReturnType<typeof setInterval> | null = null
 
 /** 所有声明了 login 能力的 provider（无论是否声明 ui 元数据，都显示在登录页） */
 const loginProviders = computed<ProviderInfo[]>(() =>
-  providerStore.providers.value.filter(
-    (p) => p.capabilities.includes('login')
-  )
+  providerStore.providers.value.filter((p) => p.capabilities.includes('login'))
 )
 
 /** 默认 QR 状态码（兼容大多数 QR 登录流程） */
@@ -114,22 +113,24 @@ const providerCards = computed<ProviderCard[]>(() =>
 
 const activeProvider = computed<ProviderInfo | null>(() =>
   activeProviderId.value
-    ? loginProviders.value.find((p) => p.id === activeProviderId.value) ?? null
+    ? (loginProviders.value.find((p) => p.id === activeProviderId.value) ?? null)
     : null
 )
 
 const activeCard = computed(() =>
   activeProviderId.value
-    ? providerCards.value.find((card) => card.id === activeProviderId.value) ?? null
+    ? (providerCards.value.find((card) => card.id === activeProviderId.value) ?? null)
     : null
 )
 
 const activeProfile = computed(() =>
-  activeProviderId.value ? accountStates.value[activeProviderId.value]?.profile ?? null : null
+  activeProviderId.value ? (accountStates.value[activeProviderId.value]?.profile ?? null) : null
 )
 
 const activeUi = computed(() => activeProvider.value?.ui)
-const showNcmAccountLogin = computed(() => activeProviderId.value === 'ncm' && pageState.value !== 'login_success')
+const showNcmAccountLogin = computed(
+  () => activeProviderId.value === 'ncm' && pageState.value !== 'login_success'
+)
 const loginCooldownRemaining = ref(0)
 const isLoginCoolingDown = computed(() => loginCooldownRemaining.value > 0)
 const loginCooldownText = computed(() => {
@@ -216,7 +217,9 @@ function openAccount(providerId: string): void {
   const state = accountStates.value[providerId]
   if (!state?.available) {
     pageState.value = 'error'
-    errorMsg.value = state?.error || `${providerCards.value.find(c => c.id === providerId)?.name ?? 'Provider'} 未启用`
+    errorMsg.value =
+      state?.error ||
+      `${providerCards.value.find((c) => c.id === providerId)?.name ?? 'Provider'} 未启用`
     return
   }
   if (state.loggedIn) {
@@ -231,7 +234,10 @@ function clearAccountLoginFeedback(): void {
 }
 
 function refreshCooldownRemaining(): void {
-  loginCooldownRemaining.value = Math.max(0, Math.ceil((loginBlockedUntil.value - Date.now()) / 1000))
+  loginCooldownRemaining.value = Math.max(
+    0,
+    Math.ceil((loginBlockedUntil.value - Date.now()) / 1000)
+  )
   if (loginCooldownRemaining.value === 0) {
     loginBlockedReason.value = ''
     if (cooldownTimer) {
@@ -306,13 +312,20 @@ function isQrStatus(code: number, type: 'waiting' | 'scanned' | 'expired' | 'suc
 function startPolling(providerId: string, key: string): void {
   stopPolling()
   pollTimer = setInterval(async () => {
+    if (document.hidden) return
     const result = await checkQrScan(providerId, key)
     if (isQrStatus(result.code, 'expired')) {
       pageState.value = 'qr_expired'
       stopPolling()
       return
     }
-    if (result.code === -1 || result.code === 301 || result.code === 502 || result.code === 503 || result.code === 460) {
+    if (
+      result.code === -1 ||
+      result.code === 301 ||
+      result.code === 502 ||
+      result.code === 503 ||
+      result.code === 460
+    ) {
       errorMsg.value = getQrErrorMessage(result)
       applyLoginCooldownFromMessage(errorMsg.value)
       pageState.value = 'error'
@@ -334,6 +347,19 @@ function startPolling(providerId: string, key: string): void {
     }
   }, POLL_INTERVAL)
 }
+
+function onDocumentVisibilityChange(): void {
+  qrVisibilityPolling.onVisibilityChange()
+}
+
+const qrVisibilityPolling = createVisibilityPollingController({
+  isHidden: () => document.hidden,
+  stop: stopPolling,
+  resume: () => {
+    if (qrKey.value && activeProviderId.value && pollTimer === null)
+      startPolling(activeProviderId.value, qrKey.value)
+  }
+})
 
 function stopPolling(): void {
   if (pollTimer) {
@@ -360,7 +386,7 @@ async function startQrLogin(): Promise<void> {
     const qr = await providerStore.getQrLogin(providerId)
     if (!qr?.key) throw new Error(`获取 ${providerName} 登录信息失败`)
     qrKey.value = qr.key
-    authUrl.value = activeUi.value?.showBrowserButton ? (qr.qrContent || '') : ''
+    authUrl.value = activeUi.value?.showBrowserButton ? qr.qrContent || '' : ''
     qrImage.value =
       qr.imageDataUrl ||
       (await QRCode.toDataURL(qr.qrContent || qr.key, {
@@ -410,7 +436,8 @@ async function handleExtraAction(method: string): Promise<void> {
 
 function normalizeLoginError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error)
-  if (/301/.test(message)) return '登录态无效或接口缓存了未登录结果，请等待 2 分钟或重新生成登录请求'
+  if (/301/.test(message))
+    return '登录态无效或接口缓存了未登录结果，请等待 2 分钟或重新生成登录请求'
   if (/安全风险|设备环境异常|操作已拦截/i.test(message)) {
     return '网易云拦截了当前网络或设备环境。请停止频繁重试，切换网络/设备或按官方提示 24 小时后再试。'
   }
@@ -526,6 +553,7 @@ async function enterAfterLoggedIn(): Promise<void> {
 }
 
 onMounted(async () => {
+  document.addEventListener('visibilitychange', onDocumentVisibilityChange)
   await refreshAccounts()
   if (props.initialProviderId && !activeProviderId.value) {
     openAccount(props.initialProviderId)
@@ -533,6 +561,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
   stopPolling()
   if (cooldownTimer) clearInterval(cooldownTimer)
 })
@@ -616,7 +645,11 @@ onUnmounted(() => {
 
       <div v-else class="login-qr-section">
         <!-- QR code only for non-OAuth providers -->
-        <div v-if="qrImage && !activeUi?.showBrowserButton" class="qr-wrapper" :class="{ expired: pageState === 'qr_expired' }">
+        <div
+          v-if="qrImage && !activeUi?.showBrowserButton"
+          class="qr-wrapper"
+          :class="{ expired: pageState === 'qr_expired' }"
+        >
           <img v-if="pageState !== 'qr_expired'" :src="qrImage" alt="登录二维码" class="qr-image" />
           <div v-else class="qr-expired-overlay" @click="handleRefresh">
             <i class="pi pi-refresh" style="font-size: 28px"></i>
@@ -625,7 +658,14 @@ onUnmounted(() => {
         </div>
 
         <!-- OAuth providers: show browser icon instead of QR -->
-        <div v-else-if="activeUi?.showBrowserButton && pageState !== 'login_success' && pageState !== 'qr_expired'" class="qr-placeholder">
+        <div
+          v-else-if="
+            activeUi?.showBrowserButton &&
+            pageState !== 'login_success' &&
+            pageState !== 'qr_expired'
+          "
+          class="qr-placeholder"
+        >
           <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #ccc"></i>
         </div>
 
@@ -634,8 +674,16 @@ onUnmounted(() => {
         </div>
 
         <p class="qr-status" :class="{ success: pageState === 'login_success' }">
-          <i v-if="pageState === 'qr_ready' && !activeUi?.showBrowserButton" class="pi pi-mobile" style="margin-right: 6px"></i>
-          <i v-if="pageState === 'qr_ready' && activeUi?.showBrowserButton" class="pi pi-external-link" style="margin-right: 6px"></i>
+          <i
+            v-if="pageState === 'qr_ready' && !activeUi?.showBrowserButton"
+            class="pi pi-mobile"
+            style="margin-right: 6px"
+          ></i>
+          <i
+            v-if="pageState === 'qr_ready' && activeUi?.showBrowserButton"
+            class="pi pi-external-link"
+            style="margin-right: 6px"
+          ></i>
           <i
             v-if="pageState === 'qr_scanned'"
             class="pi pi-check-circle"
@@ -649,17 +697,27 @@ onUnmounted(() => {
           {{ statusText }}
         </p>
 
-        <p v-if="activeUi?.loginExtraActions?.length && pageState !== 'login_success'" class="qr-login-hint">
+        <p
+          v-if="activeUi?.loginExtraActions?.length && pageState !== 'login_success'"
+          class="qr-login-hint"
+        >
           如果登录失败，请尝试其他方式
         </p>
 
-        <form v-if="showNcmAccountLogin" class="account-login-form" @submit.prevent="handleAccountLogin">
+        <form
+          v-if="showNcmAccountLogin"
+          class="account-login-form"
+          @submit.prevent="handleAccountLogin"
+        >
           <div class="account-login-tabs" role="tablist" aria-label="网易云账号登录方式">
             <button
               type="button"
               class="account-login-tab"
               :class="{ active: accountLoginMode === 'phoneCaptcha' }"
-              @click="accountLoginMode = 'phoneCaptcha'; clearAccountLoginFeedback()"
+              @click="
+                accountLoginMode = 'phoneCaptcha';
+                clearAccountLoginFeedback()
+              "
             >
               验证码
             </button>
@@ -667,7 +725,10 @@ onUnmounted(() => {
               type="button"
               class="account-login-tab"
               :class="{ active: accountLoginMode === 'phonePassword' }"
-              @click="accountLoginMode = 'phonePassword'; clearAccountLoginFeedback()"
+              @click="
+                accountLoginMode = 'phonePassword';
+                clearAccountLoginFeedback()
+              "
             >
               手机密码
             </button>
@@ -675,7 +736,10 @@ onUnmounted(() => {
               type="button"
               class="account-login-tab"
               :class="{ active: accountLoginMode === 'emailPassword' }"
-              @click="accountLoginMode = 'emailPassword'; clearAccountLoginFeedback()"
+              @click="
+                accountLoginMode = 'emailPassword';
+                clearAccountLoginFeedback()
+              "
             >
               邮箱密码
             </button>
@@ -743,7 +807,13 @@ onUnmounted(() => {
               :class="accountLoginBusy ? 'pi pi-spin pi-spinner' : 'pi pi-sign-in'"
               style="margin-right: 6px"
             ></i>
-            {{ accountLoginBusy ? '登录中' : isLoginCoolingDown ? `等待 ${loginCooldownText}` : '账号登录' }}
+            {{
+              accountLoginBusy
+                ? '登录中'
+                : isLoginCoolingDown
+                  ? `等待 ${loginCooldownText}`
+                  : '账号登录'
+            }}
           </button>
           <p v-if="isLoginCoolingDown" class="account-login-message">
             {{ loginBlockedReason || '登录请求正在冷却' }}，请 {{ loginCooldownText }} 后再试
@@ -757,7 +827,12 @@ onUnmounted(() => {
         </button>
 
         <button
-          v-if="activeUi?.showBrowserButton && authUrl && pageState !== 'login_success' && pageState !== 'qr_expired'"
+          v-if="
+            activeUi?.showBrowserButton &&
+            authUrl &&
+            pageState !== 'login_success' &&
+            pageState !== 'qr_expired'
+          "
           class="login-action-btn"
           @click="openAuthUrl"
         >
@@ -844,8 +919,7 @@ onUnmounted(() => {
   padding: 34px;
   background:
     radial-gradient(circle at 18% 20%, rgba(124, 77, 255, 0.08), transparent 34%),
-    radial-gradient(circle at 82% 78%, rgba(34, 211, 238, 0.08), transparent 36%),
-    #ffffff;
+    radial-gradient(circle at 82% 78%, rgba(34, 211, 238, 0.08), transparent 36%), #ffffff;
 }
 
 .account-list {

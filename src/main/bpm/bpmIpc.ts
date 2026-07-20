@@ -20,11 +20,22 @@ const MAX_BPM_FILE_PATH_LENGTH = 4096
 export function setupBpmAnalysisIpc(): void {
   runtime.bpmAnalysisManager = new BpmAnalysisManager({
     cache: new BpmAnalysisCache(getBpmAnalysisCachePath()),
-    analyzeFile: async (request) =>
-      runtime.audioEngineManager?.analyzeBpm(request.filePath, {
-        maxAnalysisSeconds: BPM_ANALYSIS_MAX_SECONDS,
-        referenceBpm: request.referenceBpm
-      }) ?? null,
+    analyzeFile: async (request) => {
+      const service = runtime.audioAnalysisService
+      if (!service) throw new Error('audio analysis service is unavailable')
+      return await service.analyzeBpm(
+        request.filePath,
+        JSON.stringify({
+          maxAnalysisSeconds: BPM_ANALYSIS_MAX_SECONDS,
+          referenceBpm: request.referenceBpm
+        }),
+        { priority: request.priority ?? 10 }
+      )
+    },
+    cancelFile: (filePath) => {
+      if (filePath) runtime.audioAnalysisService?.cancelBySource(filePath, 'bpm')
+      else runtime.audioAnalysisService?.cancelAll('bpm')
+    },
     onComplete: (event) => {
       runtime.mainWindow?.webContents.send('bpmAnalysis:completed', event)
     }
@@ -48,6 +59,25 @@ export function setupBpmAnalysisIpc(): void {
   ipcMain.handle('bpmAnalysis:clearCache', async (event) => {
     assertTrustedIpcSender(event, 'BPM IPC')
     return await new BpmAnalysisCache(getBpmAnalysisCachePath()).clear()
+  })
+
+  ipcMain.handle('bpmAnalysis:cancel', async (event, filePath?: unknown) => {
+    assertTrustedIpcSender(event, 'BPM IPC')
+    const manager = runtime.bpmAnalysisManager
+    if (!manager) return
+    if (typeof filePath === 'string' && filePath.trim()) {
+      try {
+        manager.cancel(
+          await resolveAuthorizedAudioFile(
+            normalizeIpcString(filePath, 'BPM file path', MAX_BPM_FILE_PATH_LENGTH)
+          )
+        )
+      } catch {
+        manager.cancel(filePath.trim())
+      }
+      return
+    }
+    manager.cancel()
   })
 }
 
@@ -73,5 +103,5 @@ async function normalizeBpmAnalysisRequest(raw: unknown): Promise<BpmAnalysisReq
     value.referenceBpm != null && Number.isFinite(rawReferenceBpm)
       ? normalizeFiniteNumber(rawReferenceBpm, 'reference BPM', 120, 30, 300)
       : undefined
-  return { trackId, filePath, referenceBpm }
+  return { trackId, filePath, referenceBpm, priority: 10 }
 }

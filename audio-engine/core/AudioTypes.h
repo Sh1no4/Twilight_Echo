@@ -108,9 +108,29 @@ struct QueueItem {
   std::optional<double> replayGainAlbumPeak;
   std::optional<double> r128TrackGainDb;
   std::optional<double> r128AlbumGainDb;
+  // Explicit logical range for a single-file CUE track. Queue positions and seek are relative
+  // to this segment; the decoder receives the absolute source offset internally.
+  std::optional<double> cueStartSeconds;
+  std::optional<double> cueEndSeconds;
+  // Legacy/presentation pregap value. Only cueVirtualPregapSeconds creates samples.
+  double cuePregapSeconds = 0.0;
+  // Explicit CUE PREGAP: synthetic silence at the start of the logical track.
+  double cueVirtualPregapSeconds = 0.0;
+  // INDEX 00..INDEX 01 duration. These bytes remain in the preceding source segment.
+  double cueSourcePregapSeconds = 0.0;
 };
 
 struct OutputInfo {
+  // Render-thread timing, sampled with lock-free counters. This describes the
+  // callback's deadline load, not process or system CPU utilization.
+  struct RenderPerformanceSnapshot {
+    uint64_t callbackCount = 0;
+    uint64_t totalCallbackNanoseconds = 0;
+    uint64_t peakCallbackNanoseconds = 0;
+    uint64_t totalDeadlineNanoseconds = 0;
+    uint64_t deadlineMissCount = 0;
+  };
+
   struct LatencyInfo {
     double bufferLatencyMs = 0.0;
     double outputLatencyMs = 0.0;
@@ -175,6 +195,7 @@ struct OutputInfo {
   std::string channelRoutingMode = "auto";
   std::string perfectReason;
   Diagnostics diagnostics;
+  RenderPerformanceSnapshot renderPerformance;
   bool deviceRecovered = false;
   int recoveryCount = 0;
   std::string nativeDspJson = "{\"plugins\":[]}";

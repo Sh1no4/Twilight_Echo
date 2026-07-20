@@ -1,33 +1,20 @@
-import { readdirSync, statSync, readFileSync, existsSync } from 'fs'
+import { readFileSync, existsSync } from 'fs'
 import { stat } from 'fs/promises'
-import { join, extname, basename, dirname, resolve } from 'path'
+import { join, extname, basename, resolve } from 'path'
 import { randomUUID } from 'crypto'
 import { parseFile } from 'music-metadata'
 import { runtime } from '../core/runtime'
 import { cacheCoverFromBuffer, findCoverInDir } from './coverCache'
+import { isActiveLibraryPathExcluded } from './libraryRepository.ts'
+import { deriveCueTracks } from './cueLibrary.ts'
+import {
+  collectFilesAsync,
+  filterParsedTracksAgainstExclusions,
+  SUPPORTED_EXTENSIONS,
+  type FileEntry
+} from './libraryFiles.ts'
 
-export const SUPPORTED_EXTENSIONS = [
-  '.mp3',
-  '.flac',
-  '.wav',
-  '.wave',
-  '.aac',
-  '.ogg',
-  '.wma',
-  '.m4a',
-  '.mp4',
-  '.aiff',
-  '.aif',
-  '.opus',
-  '.webm',
-  '.alac',
-  '.ape',
-  '.wv',
-  '.dsf',
-  '.dff',
-  '.mqa',
-  '.iso'
-]
+export { collectFilesAsync, SUPPORTED_EXTENSIONS, type FileEntry } from './libraryFiles.ts'
 
 export function encodeAudioFileUrlPath(filePath: string): string {
   return Buffer.from(filePath, 'utf-8')
@@ -159,6 +146,20 @@ function extractNativeTagValue(
   return undefined
 }
 
+/**
+ * Reads an existing Chromaprint/AcoustID tag. The scanner does not decode samples to validate the
+ * tag, so persisted tag data remains a review-only candidate rather than trusted acoustic proof.
+ */
+function extractAcousticFingerprint(
+  native: Record<string, Array<{ id?: string; value?: unknown }> | undefined> | undefined
+): { algorithm: 'chromaprint-v1'; value: string; evidence: 'metadataCandidate' } | undefined {
+  const value = extractNativeTagValue(native, ['ACOUSTID_FINGERPRINT', 'CHROMAPRINT_FINGERPRINT'])
+  if (typeof value !== 'string') return undefined
+  const fingerprint = value.trim()
+  if (!fingerprint || fingerprint.length > 16_384) return undefined
+  return { algorithm: 'chromaprint-v1', value: fingerprint, evidence: 'metadataCandidate' }
+}
+
 export function extractReplayGainTags(meta: {
   common?: Record<string, unknown>
   format?: Record<string, unknown>
@@ -205,10 +206,12 @@ export function extractReplayGainTags(meta: {
     normalizePeak(
       extractNativeTagValue(meta.native, ['REPLAYGAIN_ALBUM_PEAK', 'replaygain_album_peak'])
     )
-  const r128Track =
-    normalizeR128GainDb(extractNativeTagValue(meta.native, ['R128_TRACK_GAIN', 'r128_track_gain']))
-  const r128Album =
-    normalizeR128GainDb(extractNativeTagValue(meta.native, ['R128_ALBUM_GAIN', 'r128_album_gain']))
+  const r128Track = normalizeR128GainDb(
+    extractNativeTagValue(meta.native, ['R128_TRACK_GAIN', 'r128_track_gain'])
+  )
+  const r128Album = normalizeR128GainDb(
+    extractNativeTagValue(meta.native, ['R128_ALBUM_GAIN', 'r128_album_gain'])
+  )
 
   if (trackGain !== undefined) result.replayGainTrackGainDb = trackGain
   if (albumGain !== undefined) result.replayGainAlbumGainDb = albumGain
@@ -219,78 +222,34 @@ export function extractReplayGainTags(meta: {
   return result
 }
 
-export interface FileEntry {
-  fullPath: string
-  fileName: string
-  dir: string
-  size: number
-}
-
-export async function collectFilesAsync(dirPath: string): Promise<FileEntry[]> {
-  const results: FileEntry[] = []
-  const queue: string[] = [dirPath]
-
-  while (queue.length > 0) {
-    const currentDir = queue.shift()!
-    try {
-      const entries = readdirSync(currentDir)
-      for (const entry of entries) {
-        const fullPath = join(currentDir, entry)
-        try {
-          const st = statSync(fullPath)
-          if (st.isDirectory()) {
-            queue.push(fullPath)
-          } else if (st.isFile()) {
-            const ext = extname(entry).toLowerCase()
-            if (SUPPORTED_EXTENSIONS.includes(ext)) {
-              results.push({
-                fullPath,
-                fileName: entry,
-                dir: dirname(fullPath),
-                size: st.size
-              })
-            }
-          }
-        } catch {
-          /* skip */
-        }
-        // Yield to event loop every few files
-        if (results.length % 100 === 0) {
-          await new Promise((resolve) => setImmediate(resolve))
-        }
-      }
-    } catch {
-      /* skip */
-    }
-  }
-  return results
-}
-
 export async function parseTrack(file: FileEntry): Promise<unknown[]> {
   const ext = file.fileName.toLowerCase()
   if (ext.endsWith('.iso')) {
     try {
       const meta = await runtime.audioEngineManager?.getMetadataAsync(file.fullPath)
       if (meta && meta.isoTracks && meta.isoTracks.length > 0) {
-        return meta.isoTracks.filter(isoTrack => isoTrack.playable !== false).map(isoTrack => {
-          return {
-            id: randomUUID(),
-            title: isoTrack.title || 'Unknown Track',
-            artist: isoTrack.artist || 'Unknown Artist',
-            album: isoTrack.album || 'Unknown Album',
-            filePath: file.fullPath,
-            fileName: file.fileName,
-            dir: file.dir,
-            duration: Math.round(isoTrack.duration || 0),
-            size: file.size,
-            cover: findCoverInDir(file.dir),
-            lyrics: findLyricsInDir(file.dir, file.fileName),
-            format: isoTrack.container || 'SACD ISO',
-            sampleRate: isoTrack.sampleRate,
-            bitDepth: isoTrack.bitDepth || 1,
-            subTrack: isoTrack.source
-          }
-        })
+        return meta.isoTracks
+          .filter((isoTrack) => isoTrack.playable !== false)
+          .map((isoTrack) => {
+            return {
+              id: randomUUID(),
+              title: isoTrack.title || 'Unknown Track',
+              artist: isoTrack.artist || 'Unknown Artist',
+              album: isoTrack.album || 'Unknown Album',
+              filePath: file.fullPath,
+              fileName: file.fileName,
+              dir: file.dir,
+              duration: Math.round(isoTrack.duration || 0),
+              size: file.size,
+              addedAt: Date.now(),
+              cover: findCoverInDir(file.dir),
+              lyrics: findLyricsInDir(file.dir, file.fileName),
+              format: isoTrack.container || 'SACD ISO',
+              sampleRate: isoTrack.sampleRate,
+              bitDepth: isoTrack.bitDepth || 1,
+              subTrack: isoTrack.source
+            }
+          })
       }
     } catch {
       /* fallback below */
@@ -318,12 +277,20 @@ export async function parseTrack(file: FileEntry): Promise<unknown[]> {
     const album = common.album
     const bpm = normalizeBpm(common.bpm)
     const replayGainTags = extractReplayGainTags({
-      common: common as Record<string, unknown>,
-      format: meta.format as Record<string, unknown>,
-      native: meta.native as
-        | Record<string, Array<{ id?: string; value?: unknown }> | undefined>
-        | undefined
+      common: {
+        replaygain_track_gain: common.replaygain_track_gain,
+        replaygain_album_gain: common.replaygain_album_gain,
+        replaygain_track_peak: common.replaygain_track_peak,
+        replaygain_album_peak: common.replaygain_album_peak
+      },
+      format: {
+        trackGain: meta.format.trackGain,
+        albumGain: meta.format.albumGain,
+        trackPeakLevel: meta.format.trackPeakLevel
+      },
+      native: meta.native
     })
+    const audioFingerprint = extractAcousticFingerprint(meta.native)
 
     const fileName = getNameFromFile(file.fullPath)
 
@@ -335,11 +302,13 @@ export async function parseTrack(file: FileEntry): Promise<unknown[]> {
       title: title || fileName.title,
       artist: artist || fileName.artist,
       album: album || '未知专辑',
+      albumArtist: common.albumartist || artist || fileName.artist,
       filePath: file.fullPath,
       fileName: file.fileName,
       dir: file.dir,
       duration: Math.round(meta.format.duration || 0),
       size: file.size,
+      addedAt: Date.now(),
       cover,
       lyrics: null,
       format: meta.format.container,
@@ -349,38 +318,52 @@ export async function parseTrack(file: FileEntry): Promise<unknown[]> {
       ...replayGainTags
     }
     if (bpm !== undefined) track.bpm = bpm
+    if (audioFingerprint) track.audioFingerprint = audioFingerprint
+    const cueTracks = deriveCueTracks(
+      file.fullPath,
+      Number(meta.format.duration ?? 0),
+      track,
+      SUPPORTED_EXTENSIONS
+    )
+    if (cueTracks) return cueTracks
     return [track]
   } catch {
     const fileName = getNameFromFile(file.fullPath)
-    return [{
-      id,
-      title: fileName.title,
-      artist: fileName.artist,
-      album: '未知专辑',
-      filePath: file.fullPath,
-      fileName: file.fileName,
-      dir: file.dir,
-      duration: 0,
-      size: file.size,
-      cover: findCoverInDir(file.dir),
-      lyrics: null
-    }]
+    return [
+      {
+        id,
+        title: fileName.title,
+        artist: fileName.artist,
+        album: '未知专辑',
+        filePath: file.fullPath,
+        fileName: file.fileName,
+        dir: file.dir,
+        duration: 0,
+        size: file.size,
+        addedAt: Date.now(),
+        cover: findCoverInDir(file.dir),
+        lyrics: null
+      }
+    ]
   }
 }
 
 export async function scanDirectory(
   dirPath: string,
-  onProgress?: (current: number, total: number) => void
+  onProgress?: (current: number, total: number) => void,
+  isExcluded: (filePath: string) => boolean = () => false
 ): Promise<unknown[]> {
-  const files = await collectFilesAsync(dirPath)
+  const shouldExclude = (filePath: string): boolean =>
+    isExcluded(filePath) || isActiveLibraryPathExcluded(filePath)
+  const files = await collectFilesAsync(dirPath, shouldExclude)
   const total = files.length
   const results: unknown[] = []
   const batchSize = 10
 
   for (let i = 0; i < files.length; i += batchSize) {
-    const batch = files.slice(i, i + batchSize)
+    const batch = files.slice(i, i + batchSize).filter((file) => !shouldExclude(file.fullPath))
     const batchResults = await Promise.all(batch.map(parseTrack))
-    results.push(...batchResults.flat())
+    results.push(...filterParsedTracksAgainstExclusions(batchResults.flat(), shouldExclude))
 
     if (onProgress) {
       onProgress(results.length, total)

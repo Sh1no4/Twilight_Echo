@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, dialog, shell } from 'electron'
 import { release } from 'os'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
@@ -7,15 +7,24 @@ import { is } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { getWindowBackgroundColor } from '../audio/state'
 import { installAudioDeviceHotplugWatcher } from '../audio/deviceHotplug'
+import { ClosePersistenceAttemptGate } from './closePersistence.ts'
+import type { RendererClosePersistenceOutcome } from '../../shared/closePersistence.ts'
 
 const PLAYBACK_SESSION_SAVE_TIMEOUT_MS = 1800
-const pendingPlaybackSessionSaves = new Map<string, () => void>()
+const closePersistenceAttemptGate = new ClosePersistenceAttemptGate()
+const pendingPlaybackSessionSaves = new Map<
+  string,
+  (outcome: RendererClosePersistenceOutcome) => void
+>()
 
-export function resolvePlaybackSessionSave(requestId: string): void {
+export function resolvePlaybackSessionSave(
+  requestId: string,
+  outcome: RendererClosePersistenceOutcome
+): void {
   const resolvePending = pendingPlaybackSessionSaves.get(requestId)
   if (!resolvePending) return
   pendingPlaybackSessionSaves.delete(requestId)
-  resolvePending()
+  resolvePending(outcome)
 }
 
 async function requestRendererPlaybackSessionSave(): Promise<void> {
@@ -23,15 +32,19 @@ async function requestRendererPlaybackSessionSave(): Promise<void> {
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return
 
   const requestId = randomUUID()
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
       pendingPlaybackSessionSaves.delete(requestId)
-      resolve()
+      reject(new Error('Timed out waiting for renderer persistence'))
     }, PLAYBACK_SESSION_SAVE_TIMEOUT_MS)
 
-    pendingPlaybackSessionSaves.set(requestId, () => {
+    pendingPlaybackSessionSaves.set(requestId, (outcome) => {
       clearTimeout(timer)
-      resolve()
+      if (outcome.status === 'saved') {
+        resolve()
+        return
+      }
+      reject(new Error(outcome.error || 'Renderer persistence failed'))
     })
 
     win.webContents.send('app:save-playback-session', requestId)
@@ -41,22 +54,49 @@ async function requestRendererPlaybackSessionSave(): Promise<void> {
 async function closeMainWindowAfterPlaybackSessionSave(win: BrowserWindow): Promise<void> {
   runtime.savingPlaybackSessionBeforeClose = true
   try {
-    await requestRendererPlaybackSessionSave()
-  } catch (err) {
-    console.warn('关闭前保存播放会话失败：', err)
+    await closePersistenceAttemptGate.run({
+      requestPersistence: requestRendererPlaybackSessionSave,
+      close: () => closeMainWindowAfterSuccessfulPersistence(win),
+      showFailure: async (error) => await showClosePersistenceFailure(win, error)
+    })
   } finally {
     runtime.savingPlaybackSessionBeforeClose = false
-    if (!win.isDestroyed()) {
-      const shouldQuitAfterClose = runtime.forceQuit
-      if (shouldQuitAfterClose) {
-        win.once('closed', () => {
-          setTimeout(() => app.quit(), 0)
-        })
-      }
-      runtime.closingAfterPlaybackSessionSave = true
-      win.close()
-      runtime.closingAfterPlaybackSessionSave = false
-    }
+  }
+}
+
+function closeMainWindowAfterSuccessfulPersistence(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  const shouldQuitAfterClose = runtime.forceQuit
+  if (shouldQuitAfterClose) {
+    win.once('closed', () => {
+      setTimeout(() => app.quit(), 0)
+    })
+  }
+  runtime.closingAfterPlaybackSessionSave = true
+  win.close()
+  runtime.closingAfterPlaybackSessionSave = false
+}
+
+async function showClosePersistenceFailure(
+  win: BrowserWindow,
+  error: Error
+): Promise<'retry' | 'cancel'> {
+  console.error('[persistence] Window close cancelled because renderer persistence failed:', error)
+  try {
+    const response = await dialog.showMessageBox(win, {
+      type: 'error',
+      title: 'Twilight Echo could not save your changes',
+      message: 'The window remains open so your playlist changes are not silently lost.',
+      detail: error.message,
+      buttons: ['Retry close', 'Keep window open'],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true
+    })
+    return response.response === 0 ? 'retry' : 'cancel'
+  } catch (dialogError) {
+    console.error('[persistence] Failed to present the cancelled-close dialog:', dialogError)
+    return 'cancel'
   }
 }
 
@@ -99,8 +139,7 @@ export function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: true,
-      allowRunningInsecureContent: false,
-      backgroundThrottling: false
+      allowRunningInsecureContent: false
     }
   })
 

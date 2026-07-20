@@ -54,7 +54,18 @@ the plugin manifest fields and adds:
 - `checksumSha256`: sha256 of the `.tep` package.
 - `repository` / `homepage`: source and documentation links.
 - `tags`: search and category labels.
-- `verified`: true only after manual review.
+- `verified`: an index-publisher claim set by the index release process after review. It does not grant the official badge by itself and plugin authors must not self-assert it.
+- `publisherSignature`: an index-only Ed25519 signature added by the external index release process. It is not part of package `plugin.json`.
 
 Index inclusion requires an open-source repository, README, truthful
 permissions, a smoke test pass, and no runtime remote code loading.
+
+The official badge additionally requires a fresh direct load from the exact
+fixed official index URL plus a valid signature from an active, non-revoked
+publisher key. Signing covers the exact index origin and the complete normalized
+entry, including package checksum. Manifest `main`, `icon`, and `binary.*` paths
+are canonical POSIX `/` relative paths even when packaging on Windows; do not
+sign platform-native backslash output. Production private keys stay in protected
+external release automation or an offline signer; only public keys are shipped
+with Twilight Echo. Cached and bundled indexes are discovery fallbacks and can
+never grant official trust.

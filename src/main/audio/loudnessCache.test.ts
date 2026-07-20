@@ -10,7 +10,8 @@ import {
   LOUDNORM_DEFAULT_TRUE_PEAK_CEILING_DB,
   LoudnessAnalysisCache,
   buildLoudnessAnalysisCacheKey,
-  pruneLoudnessCacheEntries
+  pruneLoudnessCacheEntries,
+  type LoudnessAnalysisResult
 } from './loudnessCache.ts'
 
 test('loudness cache key changes when file identity, algorithm, or targets change', () => {
@@ -93,9 +94,40 @@ test('loudness cache reports size and can be cleared', async () => {
   await rm(dir, { recursive: true, force: true })
 })
 
+test('loudness cache conditional rollback deletes only the exact committed analysis', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'twilight-loudness-cache-rollback-'))
+  const cache = new LoudnessAnalysisCache(join(dir, 'loudness-analysis-cache.json'))
+  const identity = {
+    filePath: 'D:\\Music\\song.flac',
+    size: 123,
+    mtimeMs: 456,
+    algorithmVersion: LOUDNESS_ANALYSIS_ALGORITHM_VERSION
+  }
+  const original: LoudnessAnalysisResult = {
+    integratedLufs: -18,
+    truePeakDb: -2,
+    source: 'analyzed',
+    analyzedAt: '2026-01-01T00:00:00.000Z',
+    algorithmVersion: LOUDNESS_ANALYSIS_ALGORITHM_VERSION
+  }
+  const newer = {
+    ...original,
+    integratedLufs: -14,
+    analyzedAt: '2026-01-02T00:00:00.000Z'
+  }
+
+  await cache.set(identity, newer)
+  assert.equal(await cache.deleteIfMatches(identity, original), false)
+  assert.deepEqual(await cache.get(identity), newer)
+  assert.equal(await cache.deleteIfMatches(identity, newer), true)
+  assert.equal(await cache.get(identity), null)
+
+  await rm(dir, { recursive: true, force: true })
+})
+
 
 test('loudness cache prunes oldest entries when over maxEntries', async () => {
-  const entries = {
+  const entries: Record<string, LoudnessAnalysisResult> = {
     old: {
       integratedLufs: -10,
       truePeakDb: -1,
@@ -128,7 +160,7 @@ test('loudness cache prunes oldest entries when over maxEntries', async () => {
   for (let i = 0; i < 3; i += 1) {
     await cache.set(
       {
-        filePath: 'D:\Music\song-' + i + '.flac',
+        filePath: 'D:\\Music\\song-' + i + '.flac',
         size: 100 + i,
         mtimeMs: 1000 + i,
         algorithmVersion: LOUDNESS_ANALYSIS_ALGORITHM_VERSION

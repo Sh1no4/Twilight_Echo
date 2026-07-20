@@ -56,6 +56,7 @@ export function useSideMenuClearance(options: SideMenuClearanceOptions) {
   }
 
   function startSideMenuMonitor(): void {
+    if (document.hidden) return
     if (sideMenuMonitorFrame !== null) return
 
     const tick = (): void => {
@@ -79,11 +80,22 @@ export function useSideMenuClearance(options: SideMenuClearanceOptions) {
     setSideMenuBottomOffset(0)
   }
 
+  function onDocumentVisibilityChange(): void {
+    if (document.hidden) {
+      stopSideMenuMonitor()
+      return
+    }
+    startSideMenuMonitor()
+  }
+
+  document.addEventListener('visibilitychange', onDocumentVisibilityChange)
+
   return {
     sideMenuBottomOffset,
     startSideMenuMonitor,
     stopSideMenuMonitor,
     resetSideMenuClearance,
-    measureSideMenuClearance
+    measureSideMenuClearance,
+    dispose: () => document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
   }
 }

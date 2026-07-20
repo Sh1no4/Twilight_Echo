@@ -4,6 +4,7 @@
 #include "../core/FixedSpscQueue.h"
 #include "../decoder/DsdReader.h"
 #include "../decoder/FFmpegDecoder.h"
+#include "../dsp/Vst3BridgeProcessor.h"
 #include "../output/IOutputBackend.h"
 
 #include <algorithm>
@@ -19,6 +20,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -26,6 +28,15 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef PSAPI_VERSION
+#define PSAPI_VERSION 1
+#endif
+#include <windows.h>
+#include <psapi.h>
+#include <tlhelp32.h>
+#endif
 
 using namespace twilight::audio;
 
@@ -35,6 +46,44 @@ constexpr int kDsd64Rate = 2822400;
 constexpr int kDsd128Rate = 5644800;
 constexpr int kDsd256Rate = 11289600;
 constexpr int kDsd512Rate = 22579200;
+
+#ifdef _WIN32
+constexpr size_t kMaxDspGraphStressWorkingSetGrowthBytes = 96u * 1024u * 1024u;
+
+size_t currentProcessWorkingSetBytes() {
+  PROCESS_MEMORY_COUNTERS_EX counters{};
+  counters.cb = sizeof(counters);
+  assert(GetProcessMemoryInfo(
+      GetCurrentProcess(),
+      reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&counters),
+      sizeof(counters)) != 0);
+  return counters.WorkingSetSize;
+}
+
+size_t countProcessesNamed(const wchar_t* executableName) {
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  assert(snapshot != INVALID_HANDLE_VALUE);
+  PROCESSENTRY32W entry{};
+  entry.dwSize = sizeof(entry);
+  size_t count = 0;
+  if (Process32FirstW(snapshot, &entry)) {
+    do {
+      if (lstrcmpiW(entry.szExeFile, executableName) == 0) ++count;
+    } while (Process32NextW(snapshot, &entry));
+  }
+  CloseHandle(snapshot);
+  return count;
+}
+
+bool waitForProcessCountAtMost(const wchar_t* executableName, size_t maximum) {
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+  do {
+    if (countProcessesNamed(executableName) <= maximum) return true;
+    Sleep(10);
+  } while (std::chrono::steady_clock::now() < deadline);
+  return countProcessesNamed(executableName) <= maximum;
+}
+#endif
 
 void testFixedSpscQueuePreservesFifoAndReportsFull() {
   FixedSpscQueue<uint32_t, 3> queue;
@@ -322,24 +371,6 @@ void testRenderSideDecodeStreamRetirementDoesNotAllocateOrDestroy() {
   assert(!std::regex_search(renderBody, std::regex(R"(\.(push_back|emplace_back|resize|reserve)\s*\()")));
 }
 
-void testSetOutputConfigReleasesEngineMutexBeforeRerouteRestart() {
-  const std::filesystem::path testFilePath(__FILE__);
-  const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "TwilightAudioEngine.cpp";
-  const std::string source = readTextFile(sourcePath);
-  const std::string body = extractFunctionBody(
-      source,
-      "TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJson)");
-  const size_t rerouteCheck = body.find("if (!rerouteReason.empty())");
-  assert(rerouteCheck != std::string::npos);
-
-  const std::string beforeReroute = body.substr(0, rerouteCheck);
-  const size_t lockScope = beforeReroute.find("{\n    std::lock_guard lock(mutex_);\n    info_.outputInfo.channelRoutingMode");
-  assert(lockScope != std::string::npos);
-  const size_t lockScopeEnd = beforeReroute.find("\n  }\n", lockScope);
-  assert(lockScopeEnd != std::string::npos);
-  assert(lockScopeEnd < rerouteCheck);
-}
-
 void testSetDspConfigPreparesActiveChainForPreRoutingDecodeFormat() {
   const std::filesystem::path testFilePath(__FILE__);
   const std::filesystem::path sourcePath = testFilePath.parent_path().parent_path() / "core" / "AudioPipeline.cpp";
@@ -595,6 +626,12 @@ struct BackendSnapshot {
   bool typedStarted = false;
   bool stopped = false;
   bool closed = false;
+  int openCalls = 0;
+  int setOutputConfigCalls = 0;
+  int startCalls = 0;
+  int stopCalls = 0;
+  int closeCalls = 0;
+  OutputConfig outputConfig;
   int typedRenderCalls = 0;
   int floatRenderCalls = 0;
 };
@@ -612,6 +649,12 @@ struct BackendState {
   bool typedStarted = false;
   bool stopped = false;
   bool closed = false;
+  int openCalls = 0;
+  int setOutputConfigCalls = 0;
+  int startCalls = 0;
+  int stopCalls = 0;
+  int closeCalls = 0;
+  OutputConfig outputConfig;
   int typedRenderCalls = 0;
   int floatRenderCalls = 0;
 };
@@ -649,6 +692,12 @@ struct BackendRegistry {
       snapshot.typedStarted = state->typedStarted;
       snapshot.stopped = state->stopped;
       snapshot.closed = state->closed;
+      snapshot.openCalls = state->openCalls;
+      snapshot.setOutputConfigCalls = state->setOutputConfigCalls;
+      snapshot.startCalls = state->startCalls;
+      snapshot.stopCalls = state->stopCalls;
+      snapshot.closeCalls = state->closeCalls;
+      snapshot.outputConfig = state->outputConfig;
       snapshot.typedRenderCalls = state->typedRenderCalls;
       snapshot.floatRenderCalls = state->floatRenderCalls;
       result.push_back(snapshot);
@@ -682,8 +731,25 @@ enum class FakeNativeDsdBehavior {
 
 FakeDopBehavior g_fakeDopBehavior = FakeDopBehavior::Proven;
 FakeNativeDsdBehavior g_fakeNativeDsdBehavior = FakeNativeDsdBehavior::Proven;
+std::atomic<int> g_fakeTopologyOpenFailures{0};
+std::atomic<int> g_fakeTopologyStartFailures{0};
+std::atomic<bool> g_fakeTopologyDeviceInvalidated{false};
 std::atomic<int> g_decodeFirstReadDelayMs{0};
 std::atomic<int> g_decodeEveryReadDelayMs{0};
+std::mutex g_decoderSeekMutex;
+std::vector<double> g_decoderSeekSeconds;
+
+void resetDecoderSeekProbe() {
+  std::lock_guard lock(g_decoderSeekMutex);
+  g_decoderSeekSeconds.clear();
+}
+
+bool decoderSeekObserved(double expected, double tolerance = 0.000001) {
+  std::lock_guard lock(g_decoderSeekMutex);
+  return std::any_of(g_decoderSeekSeconds.begin(), g_decoderSeekSeconds.end(), [&](double value) {
+    return std::abs(value - expected) <= tolerance;
+  });
+}
 
 bool formatLooksDopCarrier(const AudioFormat& format) {
   return (format.sampleRate == 176400 || format.sampleRate == 192000 ||
@@ -881,6 +947,28 @@ std::vector<float> renderBackendFrames(const std::shared_ptr<BackendState>& stat
   return buffer;
 }
 
+std::vector<uint8_t> renderBackendTypedBytes(
+    const std::shared_ptr<BackendState>& state,
+    size_t frames) {
+  assert(state);
+  const size_t bytesPerFrame = audioFormatBytesPerFrame(state->openedFormat);
+  assert(bytesPerFrame > 0);
+  std::vector<uint8_t> bytes(frames * bytesPerFrame, 0);
+  TypedRenderCallback typedRender;
+  {
+    std::lock_guard lock(g_backendRegistry.mutex);
+    typedRender = state->typedRender;
+  }
+  assert(typedRender);
+  PcmBlock block;
+  block.format = state->openedFormat;
+  block.data = bytes.data();
+  block.frames = frames;
+  block.byteSize = bytes.size();
+  assert(typedRender(block) > 0);
+  return bytes;
+}
+
 void pumpBackend(const std::shared_ptr<BackendState>& state, size_t iterations, size_t frames = 256) {
   assert(state);
   for (size_t i = 0; i < iterations; ++i) {
@@ -902,8 +990,16 @@ class FakeOutputBackend final : public IOutputBackend {
   }
 
   bool open(const std::string& deviceId, const AudioFormat& requestedFormat, std::string* error) override {
-    (void)error;
     std::lock_guard lock(g_backendRegistry.mutex);
+    ++state_->openCalls;
+    state_->started = false;
+    state_->stopped = false;
+    state_->closed = false;
+    if (state_->backendId == "wasapi-exclusive" && g_fakeTopologyOpenFailures.load() > 0) {
+      g_fakeTopologyOpenFailures.fetch_sub(1);
+      if (error) *error = "fake WASAPI topology open failure";
+      return false;
+    }
     state_->requestedFormat = requestedFormat;
 
     AudioFormat opened = requestedFormat;
@@ -946,6 +1042,10 @@ class FakeOutputBackend final : public IOutputBackend {
     info.actualBitDepth = opened.bitDepth;
     info.actualChannels = opened.channelCount;
     info.actualOutputFormat = sampleFormatToString(opened.sampleFormat);
+    info.bufferSizeFrames = state_->outputConfig.preferredBufferSize == 0
+                                ? 256
+                                : static_cast<int>(state_->outputConfig.preferredBufferSize);
+    info.latencyFrames = info.bufferSizeFrames;
     info.driverDopCapable = formatLooksDopCarrier(requestedFormat);
     info.driverDopCarrierSampleRates = {176400, 192000, 352800, 384000, 705600, 768000, 1411200, 1536000};
     info.driverDopCarrierFormats = {"int24", "int24-in32"};
@@ -959,18 +1059,30 @@ class FakeOutputBackend final : public IOutputBackend {
   bool setOutputConfig(const OutputConfig& config, std::string* error) override {
     (void)error;
     std::lock_guard lock(g_backendRegistry.mutex);
+    ++state_->setOutputConfigCalls;
+    state_->outputConfig = config;
     state_->info.channelRoutingMode = channelRoutingModeToString(config.routingMode);
     return true;
   }
 
   bool start(RenderCallback callback, OutputEventCallback eventCallback, std::string* error) override {
-    (void)error;
     std::lock_guard lock(g_backendRegistry.mutex);
+    ++state_->startCalls;
+    if (state_->backendId == "wasapi-exclusive" && g_fakeTopologyStartFailures.load() > 0) {
+      g_fakeTopologyStartFailures.fetch_sub(1);
+      if (error) *error = "fake WASAPI topology start failure";
+      return false;
+    }
     state_->render = std::move(callback);
     state_->typedRender = nullptr;
     state_->event = std::move(eventCallback);
     state_->started = true;
     state_->typedStarted = false;
+    if (state_->backendId == "wasapi-exclusive" && g_fakeTopologyDeviceInvalidated.exchange(false)) {
+      state_->event(OutputBackendEvent::DeviceInvalidated, "fake WASAPI device invalidated");
+      if (error) *error = "fake WASAPI device invalidated";
+      return false;
+    }
     return true;
   }
 
@@ -979,23 +1091,35 @@ class FakeOutputBackend final : public IOutputBackend {
       RenderCallback fallbackCallback,
       OutputEventCallback eventCallback,
       std::string* error) override {
-    (void)error;
     std::lock_guard lock(g_backendRegistry.mutex);
+    ++state_->startCalls;
+    if (state_->backendId == "wasapi-exclusive" && g_fakeTopologyStartFailures.load() > 0) {
+      g_fakeTopologyStartFailures.fetch_sub(1);
+      if (error) *error = "fake WASAPI topology start failure";
+      return false;
+    }
     state_->typedRender = std::move(callback);
     state_->render = std::move(fallbackCallback);
     state_->event = std::move(eventCallback);
     state_->started = true;
     state_->typedStarted = true;
+    if (state_->backendId == "wasapi-exclusive" && g_fakeTopologyDeviceInvalidated.exchange(false)) {
+      state_->event(OutputBackendEvent::DeviceInvalidated, "fake WASAPI device invalidated");
+      if (error) *error = "fake WASAPI device invalidated";
+      return false;
+    }
     return true;
   }
 
   void stop() override {
     std::lock_guard lock(g_backendRegistry.mutex);
+    ++state_->stopCalls;
     state_->stopped = true;
   }
 
   void close() override {
     std::lock_guard lock(g_backendRegistry.mutex);
+    ++state_->closeCalls;
     state_->closed = true;
   }
 
@@ -1151,6 +1275,9 @@ class EngineHarness {
     g_backendRegistry.reset();
     g_fakeDopBehavior = FakeDopBehavior::Proven;
     g_fakeNativeDsdBehavior = FakeNativeDsdBehavior::Proven;
+    g_fakeTopologyOpenFailures = 0;
+    g_fakeTopologyStartFailures = 0;
+    g_fakeTopologyDeviceInvalidated = false;
     engine_.setOutputBackend("wasapi-exclusive");
   }
 
@@ -1158,6 +1285,9 @@ class EngineHarness {
     engine_.stop();
     g_fakeDopBehavior = FakeDopBehavior::Proven;
     g_fakeNativeDsdBehavior = FakeNativeDsdBehavior::Proven;
+    g_fakeTopologyOpenFailures = 0;
+    g_fakeTopologyStartFailures = 0;
+    g_fakeTopologyDeviceInvalidated = false;
     g_decodeFirstReadDelayMs = 0;
     g_decodeEveryReadDelayMs = 0;
     std::error_code ignored;
@@ -1189,6 +1319,14 @@ double playbackJsonNumber(const std::string& json, const std::string& key) {
   const size_t valueEnd = json.find_first_of(",}", valueStart);
   assert(valueEnd != std::string::npos);
   return std::stod(json.substr(valueStart, valueEnd - valueStart));
+}
+
+float dopCarrierFloat(uint8_t first, uint8_t second, uint8_t marker) {
+  int32_t value = static_cast<int32_t>(first) |
+                  (static_cast<int32_t>(second) << 8) |
+                  (static_cast<int32_t>(marker) << 16);
+  if ((value & 0x800000) != 0) value |= ~0x00ffffff;
+  return static_cast<float>(static_cast<double>(value) / 8388608.0);
 }
 
 bool bufferHasSampleAbove(const std::vector<float>& samples, float threshold);
@@ -1285,6 +1423,190 @@ void testDspGraphCommandAppliesAtRenderBoundary() {
   pipeline.stop();
 }
 
+void testDspGraphEpochRetirementStaysBoundedAcrossOneThousandUpdates() {
+  g_backendRegistry.reset();
+  AudioPipeline pipeline;
+  std::string error;
+  assert(
+      pipeline.play(
+          "dsp-graph-retirement.flac",
+          0.0,
+          "wasapi-exclusive",
+          "auto",
+          1.0,
+          "{\"dspEnabled\":true,\"fftEnabled\":false}",
+          &error) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+
+  const size_t vst3Before = Vst3BridgeProcessor::liveInstanceCountForTests();
+#ifdef _WIN32
+  // `twilight-vst3-host.exe` is a test-only controlled helper copied next to
+  // this binary by CMake. It runs the production bridge protocol but does not
+  // load a third-party module; real module coverage remains `smoke:vst3-msvc`.
+  constexpr const wchar_t* kVst3HostExecutableName = L"twilight-vst3-host.exe";
+  const size_t hostProcessBefore = countProcessesNamed(kVst3HostExecutableName);
+  const size_t workingSetBefore = currentProcessWorkingSetBytes();
+  size_t maxWorkingSet = workingSetBefore;
+  size_t maxHostProcessCount = hostProcessBefore;
+  bool observedFixtureHost = false;
+#endif
+  uint64_t previousEpoch = pipeline.appliedRenderDspEpochForTests();
+  for (uint64_t revision = 1; revision <= 1000; ++revision) {
+    const bool includeVst3 = revision % 100 == 0;
+    const std::string nodes = includeVst3
+                                  ? "[{\"id\":\"stress-vst3\",\"type\":\"vst3Plugin\",\"enabled\":true,"
+                                    "\"params\":{\"vst3ModulePath\":\"Z:/missing/stress.vst3\","
+                                    "\"vst3ClassId\":\"0123456789ABCDEF0123456789ABCDEF\"}}]"
+                                  : "[{\"id\":\"balance\",\"type\":\"stereoField\",\"enabled\":true,"
+                                    "\"params\":{\"balance\":0.25,\"width\":1.1}}]";
+    const std::string state =
+        "{\"revision\":" + std::to_string(revision) +
+        ",\"processing\":{\"dspEnabled\":true,\"fftEnabled\":false,\"gapless\":true},"
+        "\"sceneId\":\"retirement-stress\",\"graph\":{\"version\":2,\"nodes\":" + nodes + "}}";
+
+    error.clear();
+    assert(pipeline.applyDspState(revision, state, &error));
+    assert(playbackJsonNumber(pipeline.dspGraphStatusJson(), "revision") <
+           static_cast<double>(revision));
+
+    renderBackendFrames(backend, 64);
+    assert(playbackJsonNumber(pipeline.dspGraphStatusJson(), "revision") ==
+           static_cast<double>(revision));
+    assert(pipeline.appliedRenderDspEpochForTests() > previousEpoch);
+    previousEpoch = pipeline.appliedRenderDspEpochForTests();
+    assert(
+        pipeline.renderDspGraphGenerationCountForTests() <=
+        pipeline.maxRenderDspGraphGenerationCountForTests());
+    assert(
+        Vst3BridgeProcessor::liveInstanceCountForTests() <=
+        vst3Before + pipeline.maxRenderDspGraphGenerationCountForTests() * 2 + 2);
+#ifdef _WIN32
+    const size_t hostProcessCount = countProcessesNamed(kVst3HostExecutableName);
+    if (includeVst3) observedFixtureHost = observedFixtureHost || hostProcessCount > hostProcessBefore;
+    assert(hostProcessCount <=
+           hostProcessBefore + pipeline.maxRenderDspGraphGenerationCountForTests() + 1);
+    maxHostProcessCount = std::max(maxHostProcessCount, hostProcessCount);
+    maxWorkingSet = std::max(maxWorkingSet, currentProcessWorkingSetBytes());
+#endif
+  }
+
+  error.clear();
+  assert(pipeline.applyDspState(
+      1001,
+      "{\"revision\":1001,\"processing\":{\"dspEnabled\":true,\"fftEnabled\":false},"
+      "\"sceneId\":\"retirement-stress\",\"graph\":{\"version\":2,\"nodes\":[]}}",
+      &error));
+  renderBackendFrames(backend, 64);
+  (void)pipeline.dspGraphStatusJson();
+  assert(Vst3BridgeProcessor::liveInstanceCountForTests() == vst3Before);
+  pipeline.stop();
+  assert(pipeline.renderDspGraphGenerationCountForTests() == 0);
+#ifdef _WIN32
+  assert(observedFixtureHost);
+  assert(waitForProcessCountAtMost(kVst3HostExecutableName, hostProcessBefore));
+  assert(maxWorkingSet <= workingSetBefore + kMaxDspGraphStressWorkingSetGrowthBytes);
+  std::cout << "dsp-graph-stress workingSetBaselineBytes=" << workingSetBefore
+            << " maxWorkingSetBytes=" << maxWorkingSet << " hostProcessesBaseline="
+            << hostProcessBefore << " maxHostProcesses=" << maxHostProcessCount << '\n';
+#endif
+}
+
+void testApplyDspStateGraphPreparationFailureIsTransactional() {
+  TwilightAudioEngine engine;
+  const std::string acceptedState =
+      "{\"revision\":41,\"processing\":{\"dspEnabled\":true,\"fftEnabled\":false,"
+      "\"crossfeedEnabled\":true,\"crossfeedStrength\":0.25},"
+      "\"sceneId\":\"transaction-baseline\",\"graph\":{\"version\":2,\"nodes\":["
+      "{\"id\":\"crossfeed\",\"type\":\"crossfeed\",\"enabled\":true,"
+      "\"params\":{\"strength\":0.25}}]}}";
+  assert(engine.applyDspState(41, acceptedState) == TAE_RESULT_OK);
+
+  const std::string configBefore = engine.getDspConfig();
+  const std::string graphBefore = engine.getDspGraphStatusJson();
+  const std::string playbackBefore = engine.getPlaybackInfoJson();
+  assert(playbackJsonNumber(graphBefore, "revision") == 41.0);
+  assert(playbackJsonNumber(playbackBefore, "appliedConfigRevision") == 41.0);
+
+  const std::string rejectedState =
+      "{\"revision\":42,\"processing\":{\"dspEnabled\":true,\"fftEnabled\":false,"
+      "\"crossfeedEnabled\":true,\"crossfeedStrength\":0.9},"
+      "\"sceneId\":\"transaction-rejected\",\"graph\":{\"version\":2,\"nodes\":["
+      "{\"id\":\"missing-ir\",\"type\":\"convolver\",\"enabled\":true,"
+      "\"params\":{\"impulseResponsePath\":"
+      "\"Z:/twilight-definitely-missing/transaction-failure.wav\"}}]}}";
+  assert(engine.applyDspState(42, rejectedState) == TAE_RESULT_INVALID_ARGUMENT);
+  assert(engine.getDspConfig() == configBefore);
+  assert(engine.getDspGraphStatusJson() == graphBefore);
+  const std::string playbackAfter = engine.getPlaybackInfoJson();
+  assert(
+      playbackJsonNumber(playbackAfter, "requestedConfigRevision") ==
+      playbackJsonNumber(playbackBefore, "requestedConfigRevision"));
+  assert(
+      playbackJsonNumber(playbackAfter, "appliedConfigRevision") ==
+      playbackJsonNumber(playbackBefore, "appliedConfigRevision"));
+}
+
+void testApplyDspStateCapacityFailureKeepsLastAcceptedState() {
+  g_backendRegistry.reset();
+  AudioPipeline pipeline;
+  std::string error;
+  assert(
+      pipeline.play(
+          "dsp-transaction-capacity.flac",
+          0.0,
+          "wasapi-exclusive",
+          "auto",
+          1.0,
+          "{\"dspEnabled\":true,\"fftEnabled\":false}",
+          &error) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+
+  uint64_t lastAcceptedRevision = 0;
+  double lastAcceptedStrength = 0.0;
+  while (
+      pipeline.renderDspGraphGenerationCountForTests() <
+      pipeline.maxRenderDspGraphGenerationCountForTests()) {
+    ++lastAcceptedRevision;
+    lastAcceptedStrength = static_cast<double>(lastAcceptedRevision) / 20.0;
+    const std::string state =
+        "{\"revision\":" + std::to_string(lastAcceptedRevision) +
+        ",\"processing\":{\"dspEnabled\":true,\"fftEnabled\":false},"
+        "\"sceneId\":\"capacity-baseline\",\"graph\":{\"version\":2,\"nodes\":["
+        "{\"id\":\"crossfeed\",\"type\":\"crossfeed\",\"enabled\":true,"
+        "\"params\":{\"strength\":" + std::to_string(lastAcceptedStrength) + "}}]}}";
+    error.clear();
+    assert(pipeline.applyDspState(lastAcceptedRevision, state, &error));
+  }
+
+  const PipelineStatus beforeFailure = pipeline.status();
+  const std::string graphBeforeFailure = pipeline.dspGraphStatusJson();
+  const uint64_t rejectedRevision = lastAcceptedRevision + 1;
+  const std::string rejectedState =
+      "{\"revision\":" + std::to_string(rejectedRevision) +
+      ",\"processing\":{\"dspEnabled\":true,\"fftEnabled\":false},"
+      "\"sceneId\":\"capacity-rejected\",\"graph\":{\"version\":2,\"nodes\":["
+      "{\"id\":\"crossfeed\",\"type\":\"crossfeed\",\"enabled\":true,"
+      "\"params\":{\"strength\":0.99}}]}}";
+  error.clear();
+  assert(!pipeline.applyDspState(rejectedRevision, rejectedState, &error));
+  assert(error.find("waiting for render-thread ACK") != std::string::npos);
+
+  const PipelineStatus afterFailure = pipeline.status();
+  assert(afterFailure.requestedConfigRevision == beforeFailure.requestedConfigRevision);
+  assert(afterFailure.appliedConfigRevision == beforeFailure.appliedConfigRevision);
+  assert(std::abs(afterFailure.crossfeedStrength - lastAcceptedStrength) < 0.0001);
+  assert(pipeline.dspGraphStatusJson() == graphBeforeFailure);
+
+  renderBackendFrames(backend, 64);
+  assert(
+      playbackJsonNumber(pipeline.dspGraphStatusJson(), "revision") ==
+      static_cast<double>(lastAcceptedRevision));
+  assert(pipeline.status().appliedConfigRevision == lastAcceptedRevision);
+  pipeline.stop();
+}
+
 void testStoppedVolumeAcceptanceIsVisibleBeforePlayback() {
   TwilightAudioEngine engine;
   const std::string beforeJson = engine.getPlaybackInfoJson();
@@ -1338,6 +1660,11 @@ void testConfigAppliedEventFollowsRenderApplication() {
   assert(engine.play("config-applied-event.flac", 0.0) == TAE_RESULT_OK);
   const auto backend = waitForLatestStartedBackendState();
   assert(backend);
+  // The stopped setDspConfig above is already applied when playback starts,
+  // so let the clock publish that independent baseline ACK before measuring
+  // the render-boundary volume revision below.
+  assert(waitUntil([&capture] { return capturedEventCount(capture, "config-applied") >= 1; }));
+  const size_t baselineAppliedEvents = capturedEventCount(capture, "config-applied");
 
   assert(engine.setVolume(0.5) == TAE_RESULT_OK);
   const std::string acceptedJson = engine.getPlaybackInfoJson();
@@ -1345,13 +1672,18 @@ void testConfigAppliedEventFollowsRenderApplication() {
   const double appliedBeforeRender = playbackJsonNumber(acceptedJson, "appliedConfigRevision");
   assert(requested > appliedBeforeRender);
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
-  assert(capturedEventCount(capture, "config-applied") == 0);
+  assert(capturedEventCount(capture, "config-applied") == baselineAppliedEvents);
 
   renderBackendFrames(backend, 128);
-  assert(waitUntil([&capture] { return capturedEventCount(capture, "config-applied") == 1; }));
+  assert(waitUntil([&capture, baselineAppliedEvents] {
+    return capturedEventCount(capture, "config-applied") == baselineAppliedEvents + 1;
+  }));
   const std::string payload = capturedEventPayload(capture, "config-applied");
   assert(playbackJsonNumber(payload, "requestedConfigRevision") >= requested);
   assert(playbackJsonNumber(payload, "appliedConfigRevision") == requested);
+  // capture is declared after the harness and is therefore destroyed first;
+  // detach it before the engine's clock thread is stopped by harness teardown.
+  engine.setEventCallback(nullptr, nullptr);
 }
 
 bool bufferHasSampleAbove(const std::vector<float>& samples, float threshold) {
@@ -1978,6 +2310,73 @@ void testPausedSettingsFallbackBeforeResume() {
   assert(g_backendRegistry.snapshots().size() == 2);
 }
 
+void testWasapiExclusiveTopologyUpdateReopensAndResumesPlaying() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.play("wasapi-topology-playing.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+
+  assert(engine.setOutputConfig("{\"preferredBufferSize\":512,\"wasapiExclusivePushMode\":true}") == TAE_RESULT_OK);
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  const auto& backend = snapshots.front();
+  assert(backend.openCalls == 2);
+  assert(backend.setOutputConfigCalls == 2);
+  assert(backend.startCalls == 2);
+  assert(backend.stopCalls >= 1);
+  assert(backend.closeCalls >= 1);
+  assert(backend.outputConfig.preferredBufferSize == 512);
+  assert(backend.outputConfig.wasapiExclusivePushMode);
+  assert(backend.info.bufferSizeFrames == 512);
+  assertLatestPlaybackContains(engine, "\"state\":\"playing\"");
+  assertLatestPlaybackContains(engine, "\"bufferSizeFrames\":512");
+}
+
+void testWasapiExclusiveTopologyStartFailureRollsBackAndPreservesPausedState() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.play("wasapi-topology-paused.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+  assert(engine.pause() == TAE_RESULT_OK);
+  g_fakeTopologyStartFailures = 1;
+
+  assert(engine.setOutputConfig("{\"preferredBufferSize\":1024,\"wasapiExclusivePushMode\":true}") ==
+         TAE_RESULT_INVALID_ARGUMENT);
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  const auto& backend = snapshots.front();
+  assert(backend.openCalls == 3);
+  assert(backend.startCalls == 3);
+  assert(backend.outputConfig.preferredBufferSize == 0);
+  assert(!backend.outputConfig.wasapiExclusivePushMode);
+  assert(backend.info.bufferSizeFrames == 256);
+  assertLatestPlaybackContains(engine, "\"state\":\"paused\"");
+}
+
+void testWasapiExclusiveTopologyDeviceInvalidationRollsBack() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+
+  assert(engine.play("wasapi-topology-device-invalidated.flac", 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+  g_fakeTopologyDeviceInvalidated = true;
+
+  assert(engine.setOutputConfig("{\"preferredBufferSize\":128,\"wasapiExclusivePushMode\":true}") ==
+         TAE_RESULT_INVALID_ARGUMENT);
+
+  const auto snapshots = g_backendRegistry.snapshots();
+  assert(snapshots.size() == 1);
+  const auto& backend = snapshots.front();
+  assert(backend.openCalls == 3);
+  assert(backend.outputConfig.preferredBufferSize == 0);
+  assert(!backend.outputConfig.wasapiExclusivePushMode);
+  assertLatestPlaybackContains(engine, "\"state\":\"playing\"");
+}
+
 void testManualNextDoesNotInheritDsdPath() {
   EngineHarness harness;
   auto& engine = harness.engine();
@@ -2157,6 +2556,298 @@ void testAutoNextPrefersPreloadedPromoteWithoutReopen() {
   assertLatestPlaybackContains(engine, "\"queueIndex\":1");
 }
 
+void testSingleFileCueSegmentsSeekPromoteGaplesslyAndRetainReplayGain() {
+  EngineHarness harness;
+  auto& engine = harness.engine();
+  resetDecoderSeekProbe();
+
+  // Non-unity volume selects the float DSP path, where gapless preload is available.
+  assert(engine.setVolume(0.5) == TAE_RESULT_OK);
+  assert(engine.setDspConfig(
+      "{\"enabled\":true,\"gapless\":true,\"crossfadeSeconds\":0,"
+      "\"volumeNormalization\":\"track\"}") == TAE_RESULT_OK);
+  const std::string source = "single-file-cue.flac";
+  const std::string queueJson =
+      "[{\"id\":\"cue-1\",\"source\":\"" + source +
+      "\",\"duration\":0.04,\"replayGainTrackGainDb\":-3,"
+      "\"cueRange\":{\"startSeconds\":0,\"endSeconds\":0.04,\"pregapSeconds\":0}},"
+      "{\"id\":\"cue-2\",\"source\":\"" + source +
+      "\",\"duration\":0.08,\"replayGainTrackGainDb\":-9,"
+      "\"cueRange\":{\"startSeconds\":0.04,\"endSeconds\":0.11,\"pregapSeconds\":0.01,"
+      "\"virtualPregapSeconds\":0.01,\"sourcePregapSeconds\":0}}]";
+  assert(engine.loadQueue(queueJson, 0) == TAE_RESULT_OK);
+  assert(engine.play(source, 0.0) == TAE_RESULT_OK);
+  assert(waitForStartedBackendCount(1));
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  assert(waitUntil([&engine] {
+    return jsonContains(engine.getPlaybackInfoJson(), "\"preloadReady\":true");
+  }));
+  assertLatestPlaybackContains(engine, "\"gaplessActive\":true");
+  assertLatestPlaybackContains(engine, "\"replayGainDb\":-3");
+  assert(decoderSeekObserved(0.04));
+
+  const size_t backendCountBefore = g_backendRegistry.snapshots().size();
+  bool promoted = false;
+  for (int i = 0; i < 80; ++i) {
+    renderBackendFrames(backend, 256);
+    if (jsonContains(engine.getPlaybackInfoJson(), "\"queueIndex\":1")) {
+      promoted = true;
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  assert(promoted);
+  assert(g_backendRegistry.snapshots().size() == backendCountBefore);
+  assertLatestPlaybackContains(engine, "\"source\":\"single-file-cue.flac\"");
+  assertLatestPlaybackContains(engine, "\"queueIndex\":1");
+  assertLatestPlaybackContains(engine, "\"duration\":0.08");
+  assertLatestPlaybackContains(engine, "\"replayGainDb\":-9");
+
+  // Public positions are segment-relative. The decoder probe proves that a relative seek is
+  // translated to the second segment's absolute source offset before decoding.
+  assert(engine.seek(0.02) == TAE_RESULT_OK);
+  assertLatestPlaybackContains(engine, "\"position\":0.02");
+  assert(decoderSeekObserved(0.05));
+  assert(engine.seek(99.0) == TAE_RESULT_OK);
+  const double clampedPosition = playbackJsonNumber(engine.getPlaybackInfoJson(), "position");
+  // Playback JSON is rounded after the seconds-to-frame quantization, so allow
+  // one frame plus its serialized decimal rounding error.
+  assert(std::abs(clampedPosition - 0.08) <= (1.1 / 44100.0));
+  assert(decoderSeekObserved(0.11));
+}
+
+void testCueVirtualPregapRendersExactPcmSilenceAndMapsSeek() {
+  EngineHarness harness;
+  AudioPipeline pipeline;
+  resetDecoderSeekProbe();
+
+  QueueItem segment;
+  segment.id = "cue-pcm-pregap";
+  segment.source = "cue-pregap-pcm.flac";
+  segment.title = "CUE virtual pregap";
+  segment.cueStartSeconds = 0.02;
+  segment.cueEndSeconds = 0.05;
+  segment.cuePregapSeconds = 0.01;
+  segment.cueVirtualPregapSeconds = 0.01;
+  segment.durationSeconds = 0.04;
+  segment.replayGainTrackGainDb = -9.0;
+
+  std::string error;
+  assert(
+      pipeline.play(
+          segment,
+          std::nullopt,
+          0.0,
+          "wasapi-exclusive",
+          "auto",
+          1.0,
+          "{\"enabled\":true,\"volumeNormalization\":\"track\",\"dither\":\"tpdf\"}",
+          true,
+          &error) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  assert(std::abs(pipeline.status().stream.durationSeconds - 0.04) < 0.000000001);
+
+  const auto beforeBoundary = renderBackendFrames(backend, 440);
+  assert(std::all_of(beforeBoundary.begin(), beforeBoundary.end(), [](float sample) {
+    return sample == 0.0f;
+  }));
+  const auto boundary = renderBackendFrames(backend, 4);
+  assert(boundary[0] == 0.0f && boundary[1] == 0.0f);
+  assert(std::abs(boundary[2]) > 0.01f && std::abs(boundary[3]) > 0.01f);
+
+  resetDecoderSeekProbe();
+  assert(pipeline.seek(0.005, &error) == TAE_RESULT_OK);
+  assert(decoderSeekObserved(0.02));
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  const auto seekPregap = renderBackendFrames(backend, 221);
+  assert(std::all_of(seekPregap.begin(), seekPregap.end(), [](float sample) {
+    return sample == 0.0f;
+  }));
+  const auto seekBoundary = renderBackendFrames(backend, 2);
+  assert(std::abs(seekBoundary[2]) > 0.01f && std::abs(seekBoundary[3]) > 0.01f);
+
+  resetDecoderSeekProbe();
+  assert(pipeline.seek(0.02, &error) == TAE_RESULT_OK);
+  assert(decoderSeekObserved(0.03));
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  const auto sourceSeek = renderBackendFrames(backend, 2);
+  assert(bufferHasSampleAbove(sourceSeek, 0.01f));
+  pipeline.stop();
+}
+
+void testCueSameSourcePreloadPreservesFullVirtualPregapWithCrossfadeEnabled() {
+  EngineHarness harness;
+  AudioPipeline pipeline;
+  QueueItem first;
+  first.id = "cue-gapless-first";
+  first.source = "cue-gapless-pregap.flac";
+  first.cueStartSeconds = 0.0;
+  first.cueEndSeconds = 0.005;
+  first.durationSeconds = 0.005;
+
+  QueueItem second;
+  second.id = "cue-gapless-second";
+  second.source = first.source;
+  second.cueStartSeconds = 0.005;
+  second.cueEndSeconds = 0.015;
+  second.cuePregapSeconds = 0.005;
+  second.cueVirtualPregapSeconds = 0.005;
+  second.durationSeconds = 0.015;
+
+  std::string error;
+  assert(
+      pipeline.play(
+          first,
+          second,
+          0.0,
+          "wasapi-exclusive",
+          "auto",
+          0.5,
+          "{\"enabled\":true,\"gapless\":true,\"crossfadeSeconds\":0.004}",
+          true,
+          &error) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  assert(waitUntil([&] { return pipeline.status().preloadReady; }));
+  const size_t backendCountBefore = g_backendRegistry.snapshots().size();
+
+  const auto promotedBlock = renderBackendFrames(backend, 256);
+  assert(bufferHasSampleAbove(
+      std::vector<float>(promotedBlock.begin(), promotedBlock.begin() + 440),
+      0.01f));
+  assert(std::all_of(promotedBlock.begin() + 442, promotedBlock.end(), [](float sample) {
+    return sample == 0.0f;
+  }));
+  assert(waitUntil([&] { return pipeline.status().currentItem.id == second.id; }));
+  assert(g_backendRegistry.snapshots().size() == backendCountBefore);
+  assert(std::abs(pipeline.status().stream.durationSeconds - 0.015) < 0.000000001);
+
+  const auto remainingPregap = renderBackendFrames(backend, 186);
+  assert(std::all_of(remainingPregap.begin(), remainingPregap.end(), [](float sample) {
+    return sample == 0.0f;
+  }));
+  const auto nextBoundary = renderBackendFrames(backend, 2);
+  assert(std::abs(nextBoundary[2]) > 0.01f && std::abs(nextBoundary[3]) > 0.01f);
+  pipeline.stop();
+}
+
+void testCueNativeDsdSegmentUsesBitSampleFrameRate() {
+  EngineHarness harness("twilight-cue-native-dsd-frame-rate.dsf", kDsd64Rate);
+  AudioPipeline pipeline;
+  QueueItem segment;
+  segment.id = "cue-dsd-1";
+  segment.source = harness.dsdPath();
+  segment.title = "Native DSD CUE segment";
+  segment.cueStartSeconds = 0.0;
+  segment.cueEndSeconds = 16.0 / static_cast<double>(kDsd64Rate);
+  segment.cuePregapSeconds = 8.0 / static_cast<double>(kDsd64Rate);
+  segment.cueVirtualPregapSeconds = 8.0 / static_cast<double>(kDsd64Rate);
+  segment.durationSeconds = 24.0 / static_cast<double>(kDsd64Rate);
+
+  std::string error;
+  assert(
+      pipeline.play(
+          segment,
+          std::nullopt,
+          0.0,
+          "asio",
+          "auto",
+          1.0,
+          "{\"dsdOutputMode\":\"native\"}",
+          true,
+          &error) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  assert(backend->typedStarted);
+  assert(isDsdSampleFormat(backend->openedFormat.sampleFormat));
+
+  const double expectedDuration = 24.0 / static_cast<double>(kDsd64Rate);
+  const double expectedSourceEnd = 16.0 / static_cast<double>(kDsd64Rate);
+  const PipelineStatus opened = pipeline.status();
+  assert(std::abs(opened.stream.durationSeconds - expectedDuration) < 0.000000001);
+  assert(opened.currentItem.cueStartSeconds && *opened.currentItem.cueStartSeconds == 0.0);
+  assert(opened.currentItem.cueEndSeconds &&
+         std::abs(*opened.currentItem.cueEndSeconds - expectedSourceEnd) < 0.000000001);
+
+  const auto silence = renderBackendTypedBytes(backend, 1);
+  assert(silence.size() == 2);
+  assert(silence[0] == 0x69 && silence[1] == 0x69);
+  assert(waitUntil([&] { return pipeline.status().positionSeconds > 0.0; }));
+  const double expectedOneByteFrame = 8.0 / static_cast<double>(kDsd64Rate);
+  const double position = pipeline.status().positionSeconds;
+  if (std::abs(position - expectedOneByteFrame) > 0.000000001) {
+    std::fprintf(
+        stderr,
+        "Native DSD CUE position mismatch: expected %.12f got %.12f\n",
+        expectedOneByteFrame,
+        position);
+    std::abort();
+  }
+  pipeline.stop();
+}
+
+void testCueDopPregapOutputsCanonicalCarrierAndResetsMarkerAfterSeek() {
+  EngineHarness harness("twilight-cue-dop-pregap.dsf", kDsd64Rate);
+  AudioPipeline pipeline;
+  constexpr int kCarrierRate = kDsd64Rate / 16;
+  constexpr double kVirtualPregap = 2.0 / static_cast<double>(kCarrierRate);
+
+  QueueItem segment;
+  segment.id = "cue-dop-pregap";
+  segment.source = harness.dsdPath();
+  segment.title = "DoP CUE pregap";
+  segment.cueStartSeconds = 0.0;
+  segment.cueEndSeconds = 2.0 / static_cast<double>(kCarrierRate);
+  segment.cuePregapSeconds = kVirtualPregap;
+  segment.cueVirtualPregapSeconds = kVirtualPregap;
+  segment.durationSeconds = 4.0 / static_cast<double>(kCarrierRate);
+
+  std::string error;
+  assert(
+      pipeline.play(
+          segment,
+          std::nullopt,
+          0.0,
+          "wasapi-exclusive",
+          "auto",
+          1.0,
+          "{\"dsdOutputMode\":\"dop\"}",
+          true,
+          &error) == TAE_RESULT_OK);
+  const auto backend = waitForLatestStartedBackendState();
+  assert(backend);
+  assert(backend->typedStarted);
+  assert(formatLooksDopCarrier(backend->openedFormat));
+
+  const auto pregap = renderBackendFrames(backend, 2);
+  assert(pregap.size() == 4);
+  const float marker05Silence = dopCarrierFloat(0x69, 0x69, 0x05);
+  const float markerFaSilence = dopCarrierFloat(0x69, 0x69, 0xfa);
+  assert(std::abs(pregap[0] - marker05Silence) < 0.0000001f);
+  assert(std::abs(pregap[1] - marker05Silence) < 0.0000001f);
+  assert(std::abs(pregap[2] - markerFaSilence) < 0.0000001f);
+  assert(std::abs(pregap[3] - markerFaSilence) < 0.0000001f);
+  const auto renderedPath = g_backendRegistry.snapshots();
+  assert(!renderedPath.empty());
+  assert(renderedPath.back().typedRenderCalls == 0);
+  assert(renderedPath.back().floatRenderCalls == 1);
+
+  const auto source = renderBackendFrames(backend, 1);
+  assert(std::abs(source[0] - marker05Silence) > 0.0001f);
+  assert(std::abs(source[1] - marker05Silence) > 0.0001f);
+
+  // Seeking back into the virtual prefix must neither advance source time nor
+  // inherit an arbitrary marker phase from decoder prefetch.
+  assert(pipeline.seek(0.0, &error) == TAE_RESULT_OK);
+  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  const auto afterSeek = renderBackendFrames(backend, 1);
+  assert(std::abs(afterSeek[0] - marker05Silence) < 0.0000001f);
+  assert(std::abs(afterSeek[1] - marker05Silence) < 0.0000001f);
+  pipeline.stop();
+}
+
 }  // namespace
 
 namespace twilight::audio {
@@ -2270,6 +2961,10 @@ size_t FFmpegDecoder::readFrames(PcmBlock& output, std::string* error) {
 bool FFmpegDecoder::seek(double seconds, std::string* error) {
   (void)error;
   const double clamped = std::max(0.0, seconds);
+  {
+    std::lock_guard lock(g_decoderSeekMutex);
+    g_decoderSeekSeconds.push_back(clamped);
+  }
   const double sampleRate = static_cast<double>(std::max(1, impl_->outputFormat.sampleRate));
   const size_t nextFrame = static_cast<size_t>(clamped * sampleRate);
   impl_->positionFrames = std::min(nextFrame, impl_->profile.totalFrames);
@@ -2311,13 +3006,15 @@ int main() {
   testDecodeStreamReaperRetiresOutsideAudioCallback();
   testCrossfadePromotionClearsStaleLocalPreloadState();
   testRenderSideDecodeStreamRetirementDoesNotAllocateOrDestroy();
-  testSetOutputConfigReleasesEngineMutexBeforeRerouteRestart();
   testSetDspConfigPreparesActiveChainForPreRoutingDecodeFormat();
   testDsdProcessingPcmDecisionUsesSharedHelper();
   testTwilightAudioEngineReusesParsedDspConfigSnapshot();
   testVolumeCommandAppliesAtRenderBoundary();
   testVolumeCommandStormCoalescesToNewestValue();
   testDspGraphCommandAppliesAtRenderBoundary();
+  testDspGraphEpochRetirementStaysBoundedAcrossOneThousandUpdates();
+  testApplyDspStateGraphPreparationFailureIsTransactional();
+  testApplyDspStateCapacityFailureKeepsLastAcceptedState();
   testStoppedVolumeAcceptanceIsVisibleBeforePlayback();
   testConfigAppliedEventFollowsRenderApplication();
   testDsd64StartsOnDop();
@@ -2352,11 +3049,19 @@ int main() {
   testDsdOutputModeDopReentersDopPath();
   testSeekReevaluatesDsdPath();
   testPausedSettingsFallbackBeforeResume();
+  testWasapiExclusiveTopologyUpdateReopensAndResumesPlaying();
+  testWasapiExclusiveTopologyStartFailureRollsBackAndPreservesPausedState();
+  testWasapiExclusiveTopologyDeviceInvalidationRollsBack();
   testManualNextDoesNotInheritDsdPath();
   testAutoNextDoesNotInheritDsdPath();
   testNativeCrossfadeOverlapMixesPreloadAndPromotes();
   testPreloadedPromotionKeepsRuntimeReplayGainSettings();
   testGaplessBlockedReasonReportsCrossfadeAndDisabled();
   testAutoNextPrefersPreloadedPromoteWithoutReopen();
+  testSingleFileCueSegmentsSeekPromoteGaplesslyAndRetainReplayGain();
+  testCueVirtualPregapRendersExactPcmSilenceAndMapsSeek();
+  testCueSameSourcePreloadPreservesFullVirtualPregapWithCrossfadeEnabled();
+  testCueNativeDsdSegmentUsesBitSampleFrameRate();
+  testCueDopPregapOutputsCanonicalCarrierAndResetsMarkerAfterSeek();
   return 0;
 }

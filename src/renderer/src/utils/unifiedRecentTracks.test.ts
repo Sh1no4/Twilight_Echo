@@ -5,6 +5,14 @@ import type { Track } from '../types/music'
 const { createUnifiedRecentTrackResolver, resolveUnifiedRecentTracks } = (await import(
   new URL('./unifiedRecentTracks.ts', import.meta.url).href
 )) as typeof import('./unifiedRecentTracks')
+const {
+  notifyLocalTracksUnavailable,
+  onLocalTracksUnavailable,
+  pruneUnavailableLocalTracks,
+  selectLocalLibraryActionTracks
+} = (await import(
+  new URL('./localTrackRemovalPolicy.ts', import.meta.url).href
+)) as typeof import('./localTrackRemovalPolicy.ts')
 
 const localTrack: Track = {
   id: 'local:moon',
@@ -84,6 +92,27 @@ test('unified recent tracks keep provider snapshots when no local source exists'
     tracks.map((track) => track.id),
     ['ncm:moon']
   )
+})
+
+test('unified recent tracks keep local history but do not expose a removed local snapshot as playable', () => {
+  const tracks = resolveUnifiedRecentTracks({
+    recentStats: [
+      {
+        id: 'logic:moon river::audrey',
+        seconds: 60,
+        plays: 2,
+        lastPlayed: 2_000,
+        title: 'Moon River',
+        artist: 'Audrey',
+        cover: null,
+        sourceIds: [{ source: 'local', trackId: localTrack.id }],
+        track: localTrack
+      }
+    ],
+    localTracks: []
+  })
+
+  assert.deepEqual(tracks, [])
 })
 
 test('unified recent tracks prefer newly available local variants even when history only has a provider source id', () => {
@@ -256,4 +285,83 @@ test('unified recent track resolver reuses one local library snapshot for multip
     })?.id,
     'local:sun'
   )
+})
+
+test('local removal policy clears an unavailable active track and every queue reference', () => {
+  const otherTrack: Track = {
+    ...localTrack,
+    id: 'local:other',
+    title: 'Other',
+    filePath: 'D:\\Music\\Other.flac',
+    fileName: 'Other.flac'
+  }
+  const result = pruneUnavailableLocalTracks(
+    {
+      currentTrack: localTrack,
+      queue: [localTrack, otherTrack, { ...localTrack, id: 'local:duplicate' }],
+      originalQueue: [otherTrack, localTrack],
+      queueIndex: 0
+    },
+    ['local:moon'],
+    [localTrack.filePath]
+  )
+
+  assert.equal(result.activeTrackRemoved, true)
+  assert.equal(result.currentTrack, null)
+  assert.equal(result.queueIndex, -1)
+  assert.deepEqual(result.queue.map((track) => track.id), ['local:other'])
+  assert.deepEqual(result.originalQueue.map((track) => track.id), ['local:other'])
+})
+
+test('a pruned non-current queue remains pruned after session serialization and restart', () => {
+  const removedTrack: Track = {
+    ...localTrack,
+    id: 'local:removed-from-queue',
+    title: 'Removed From Queue',
+    filePath: 'D:\\Music\\Removed From Queue.flac',
+    fileName: 'Removed From Queue.flac'
+  }
+  const result = pruneUnavailableLocalTracks(
+    {
+      currentTrack: localTrack,
+      queue: [localTrack, removedTrack],
+      originalQueue: [removedTrack, localTrack],
+      queueIndex: 0
+    },
+    [removedTrack.id],
+    [removedTrack.filePath]
+  )
+  const restartedSession = JSON.parse(
+    JSON.stringify({
+      track: result.currentTrack,
+      queue: result.queue,
+      queueIndex: result.queueIndex
+    })
+  ) as { track: Track; queue: Track[]; queueIndex: number }
+
+  assert.equal(restartedSession.track.id, localTrack.id)
+  assert.deepEqual(restartedSession.queue.map((track) => track.id), [localTrack.id])
+  assert.equal(restartedSession.queueIndex, 0)
+})
+
+test('mixed provider and local selections only feed local files to library actions', () => {
+  const selected = selectLocalLibraryActionTracks([localTrack, providerTrack])
+
+  assert.deepEqual(selected.map((track) => track.id), ['local:moon'])
+})
+
+test('successful store removals can publish one queue-cleanup event for every entry point', () => {
+  const events: Array<{ trackIds: string[]; filePaths: string[] }> = []
+  const stop = onLocalTracksUnavailable((trackIds, filePaths) => {
+    events.push({ trackIds, filePaths })
+  })
+  try {
+    notifyLocalTracksUnavailable([localTrack.id], [localTrack.filePath])
+  } finally {
+    stop()
+  }
+
+  assert.deepEqual(events, [
+    { trackIds: ['local:moon'], filePaths: ['D:\\Music\\Moon River.flac'] }
+  ])
 })

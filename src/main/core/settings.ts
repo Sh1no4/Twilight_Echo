@@ -46,6 +46,10 @@ import {
   normalizeMiniPlayerSettings
 } from '../../shared/miniPlayer'
 import {
+  DEFAULT_SLEEP_TIMER_SETTINGS,
+  type SleepTimerSettings
+} from '../../shared/sleepTimer.ts'
+import {
   loadSettingsFile,
   writeSettingsFile,
   type SettingsFileLoadIssue
@@ -170,6 +174,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lyricAlign: 'center',
   lyricDimOpacity: 40,
   playbackResumeMode: 'off',
+  sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
   ncmPlaybackQuality: 'auto',
   playMode: 'sequential',
   audioOutput:
@@ -200,6 +205,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   proxyMode: 'auto',
   proxyHost: '',
   proxyPort: 0,
+  proxyAllowDirectFallback: false,
   streamingActiveProvider: 'ncm'
 }
 
@@ -306,7 +312,7 @@ export function normalizeMusicCachePolicy(raw: unknown): MusicCachePolicySetting
 }
 
 export function normalizePlayMode(mode: unknown): PlayMode {
-  return mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential'
+  return mode === 'listLoop' || mode === 'repeat' || mode === 'shuffle' ? mode : 'sequential'
 }
 
 export const ACCENT_COLORS = ['violet', 'blue', 'emerald', 'rose', 'amber', 'slate']
@@ -563,6 +569,19 @@ export function normalizeDesktopLyrics(raw: unknown): DesktopLyricsSettings {
   }
 }
 
+export function normalizeSleepTimerSettings(raw: unknown): SleepTimerSettings {
+  const value = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>
+  return {
+    defaultMinutes: clampNumber(
+      value.defaultMinutes,
+      1,
+      720,
+      DEFAULT_SLEEP_TIMER_SETTINGS.defaultMinutes
+    ),
+    fadeSeconds: clampNumber(value.fadeSeconds, 0, 120, DEFAULT_SLEEP_TIMER_SETTINGS.fadeSeconds)
+  }
+}
+
 export function normalizeAppSettings(settings: Partial<AppSettings>): AppSettings {
   const audioProcessing = normalizeAudioProcessingSettings(settings.audioProcessing)
   const dspScenes = normalizeDspScenes(settings.dspScenes, audioProcessing)
@@ -634,6 +653,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
       DEFAULT_SETTINGS.lyricDimOpacity
     ),
     playbackResumeMode: normalizePlaybackResumeMode(settings.playbackResumeMode),
+    sleepTimer: normalizeSleepTimerSettings(settings.sleepTimer),
     ncmPlaybackQuality: normalizeNcmPlaybackQuality(settings.ncmPlaybackQuality),
     playMode: normalizePlayMode(settings.playMode),
     audioOutput: normalizeAudioOutput(settings.audioOutput),
@@ -655,6 +675,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     proxyHost:
       typeof settings.proxyHost === 'string' ? settings.proxyHost.trim().slice(0, 255) : '',
     proxyPort: clampNumber(settings.proxyPort, 0, 65535, 0),
+    proxyAllowDirectFallback: settings.proxyAllowDirectFallback === true,
     streamingActiveProvider:
       typeof settings.streamingActiveProvider === 'string' &&
       settings.streamingActiveProvider.trim()
@@ -694,6 +715,14 @@ export function getRestartReasons(settings: AppSettings, launch: AppSettings): s
   }
   if (resolve(settings.musicCachePath) !== resolve(launch.musicCachePath)) {
     reasons.push('缓存位置')
+  }
+  if (
+    settings.proxyMode !== launch.proxyMode ||
+    settings.proxyHost !== launch.proxyHost ||
+    settings.proxyPort !== launch.proxyPort ||
+    settings.proxyAllowDirectFallback !== launch.proxyAllowDirectFallback
+  ) {
+    reasons.push('插件代理')
   }
   return reasons
 }

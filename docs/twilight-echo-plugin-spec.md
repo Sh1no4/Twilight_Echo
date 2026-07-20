@@ -27,6 +27,9 @@
 
 > JS 插件声明 `main`；DSP 插件声明 `binary`；纯 theme 插件可用 `contributes.themes`
 > 声明 CSS 变量/样式表并省略 `main` 与 `binary`。`type` 含 `dsp` 时 `binary` 必填。
+> `main`、`icon` 与 `binary.*` 统一规范化为 POSIX `/` 分隔的插件内相对路径；Windows
+> drive/UNC/rooted path、POSIX absolute path 与任何逃逸根目录的 `..` 均拒绝。该结果同时
+> 是索引签名 payload 的跨平台 canonical path，不能使用宿主平台的 `path.normalize`。
 
 ### 1.2 可选字段
 
@@ -37,6 +40,9 @@
 | `homepage` / `repository` | 主页与源码仓库 |
 | `icon` | 图标路径 |
 | `signature` | 预留签名字段（未来收紧安全策略时启用，不破坏格式） |
+
+`signature` 属于包内 manifest 的预留字段。索引发布者签名使用索引 entry 专有的
+`publisherSignature`，不得把两者混用；后者不写入 `.tep` 内的 `plugin.json`。
 
 ### 1.3 权限声明枚举（首批）
 
@@ -49,6 +55,19 @@
 - 插件私有数据：`plugin-data/<id>/`，卸载时可选清除。
 - 插件日志：`logs/plugins/<id>.log`，每插件独立通道。
 - **禁止**插件写入自身目录与私有数据目录以外的应用文件。
+
+插件更新必须先进入与 `plugins/` 同卷的私有 transaction staging 目录。宿主在 staging
+中完成 manifest、包树、兼容性与试激活校验，成功后才以 rename 原子切换目标版本和
+`plugin-state.json` 的 `activeVersion`。上一版本在新版本正式激活前不得删除；正式激活
+失败时必须恢复目录、active version 和上一运行实例。`plugin-state.json` 由单写队列持久化，
+每个 snapshot 使用同目录 temp + file fsync + atomic rename，并在替换 primary 前写好 `.bak`。
+primary 损坏时从 backup 恢复并向用户显示告警；两份都损坏时保留 `.corrupt` 证据并显示错误，
+不得静默当作全新状态。
+
+同一 `plugin id` 的 install/update、enable、disable、uninstall 与 DSP 参数状态变更必须进入同一条
+有界生命周期队列；卸载不得通过再次入队的 disable 造成自等待。JS 或 DSP 候选无论旧版本当前是否
+启用，均须在 staging 中完成 activate/deactivate（DSP 须实际装入并移出 trial chain）后才能提交。
+纯 theme 候选只允许 manifest 与包内 stylesheet 的静态校验，绝不执行脚本。
 
 ### 2.1 插件源码仓库边界
 
@@ -90,6 +109,17 @@
 
 - 插件**不得**直接 import 宿主内部模块、Electron API 或 Node 内置模块之外的宿主实现细节。
 - 宿主能力一律经由 `twilight` API 对象访问；网关层是未来收紧权限的执法点。
+
+Provider 方法和 UI command handler 的最后一个参数是宿主追加的 request context；这是 API v1
+的向后兼容追加，旧 handler 可以忽略。context 的 `signal: AbortSignal` 会在超时、停用、卸载、
+宿主 error/exit 或应用退出时 abort。Provider 的 `likeTrack`、`followArtist`、`followUser` 还会收到
+`idempotencyKey`；插件必须把它传给上游幂等接口，或在本地按 key 去重，不能把它当作展示数据。
+
+主进程与 plugin host 的 request/response 协议包含显式 `cancel`。取消或超时后，request id 进入
+有界 quarantine，迟到结果不得再改变 caller 状态或健康统计。默认每个插件最多并发 4 个 RPC、
+排队 32 个；连续 3 次远端失败/active timeout 后打开 circuit，退避从 1 秒指数增长到最多 30 秒，
+半开时只允许一个 recovery probe。写操作的同一逻辑重试必须复用同一 idempotency key；renderer
+bridge 会在失败后保留该 key，payload 改变或上一次调用成功后才生成新 key。
 
 ### 4.4 扩展点清单（首批）
 
@@ -165,11 +195,12 @@ Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playe
 
 ## 6. 安全底线（信任式安装下的最低要求）
 
-> 当前策略为信任式安装：插件即任意代码执行。以下为不可省略的底线。
+> 当前策略为信任式安装：插件即任意代码执行。签名和哈希只能证明来源与完整性，
+> 不能证明代码安全。以下为不可省略的底线。
 
-1. 安装时强制确认页：展示权限声明、作者、来源，并明确警示"插件拥有与应用相同的权限"。
+1. 安装时强制确认页：展示作者、权限、索引期望 SHA-256、最终 staged 包实际 SHA-256、索引实际来源与配置来源、远程/缓存/离线状态、获取与过期时间、签名状态、key ID、公钥 SHA-256 指纹，并明确警示插件可执行任意代码且拥有与应用相同的权限。宿主在确认页前必须重算最终 staged bytes；实际值与索引期望不一致时直接拒绝，不能沿用下载阶段的 `checksumVerified`。
 2. **禁止插件运行时从远程加载并执行代码**——全部可执行代码必须随包分发。此条写入生态规范，并作为官方索引收录条件。
-3. 官方索引收录需人工审核 + 开源仓库可溯源；非索引来源安装时给出额外警告。
+3. 官方索引收录需人工审核 + 开源仓库可溯源；`verified: true` 只是索引发布者声明，不能单独触发官方徽章。非索引来源安装时给出额外警告。
 4. manifest 预留 `signature` 字段，未来可平滑切换到签名校验而不破坏包格式。
 5. 架构预留收紧路径：utilityProcess 宿主 + API 网关 + 强制权限声明已就位，未来启用强制权限只需在网关层加闸。
 
@@ -198,11 +229,18 @@ Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playe
 4. 通过基本冒烟测试
 5. 不含运行时远程代码加载
 6. 音源类插件自行承担合规责任；明显侵权源不予收录
+7. entry 由当前有效、未吊销的可信发布者 Ed25519 key 签名
 
 ### 7.5 Phase 5 本地可发布生态形态
 
 - `@twilight-echo/plugin-api` 是开发者侧权威 typings 包，API v1 类型从这里导出；宿主内部实现可复用自身类型，但不得改变 v1 语义。
 - `create-twilight-plugin` 提供 `init` 与 `pack`：模板覆盖 `tool`、`provider`、`ui-tool`、`theme`；`pack` 产物为 `.tep` zip，根目录必须包含 `plugin.json`。
-- 官方索引为远程 `plugins.json`，当前 schemaVersion 固定为 `1`。索引 entry 复用 manifest 字段，并增加 `sourceUrl`、`checksumSha256`、`tags`、`verified`。
-- 应用内市场默认读取 `https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json`；`TWILIGHT_PLUGIN_INDEX_URL` 可覆盖为自托管 HTTPS `plugins.json` 或本机 HTTP 测试索引。远程成功后缓存到用户数据目录，远程失败时回退到缓存，再失败才使用随应用分发的本地离线索引。安装前必须校验 sourceUrl、包大小、sha256 与包内 manifest。
+- 官方索引为远程 `plugins.json`，当前 schemaVersion 固定为 `1`。索引 entry 复用 manifest 字段，并增加 `sourceUrl`、`checksumSha256`、`tags`、`verified` 与 `publisherSignature`。为兼容 API v1 保留 `verified`，但它严格表示“索引发布者声明已审核”，自定义索引、缓存索引和离线索引中的 `verified: true` 最多显示为“索引声明”。
+- `publisherSignature` 格式固定为 `{ schemaVersion: 1, algorithm: "ed25519", keyId, value }`，其中 `value` 是 canonical base64 编码的 64-byte Ed25519 签名。签名 payload 是 canonical JSON：`{ schemaVersion: 1, indexOrigin, entry }`；`entry` 包含规范化后的完整 manifest、`sourceUrl`、`checksumSha256`、`tags` 和 `verified`，只排除 `publisherSignature` 及宿主派生的 `verification` / `installState` / `installedVersion`。manifest 的 nested `main` / `icon` / `binary.*` 路径必须先按 POSIX `/` canonicalize，因此 Windows host 与 Linux signer 产生完全相同的 bytes。修改来源 URL、checksum、审核声明、路径或任一 manifest 字段都会使签名失效。
+- “官方验证”徽章必须同时满足：索引来源精确等于固定 URL `https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json`；本次为 fresh、未发生 redirect 的远程直连加载；实际 origin 已绑定且与配置一致；记录未 stale、未过期；`verified: true`；签名由当前有效且未吊销的可信发布者 key 验证通过。`list`、`getIndexStatus` 与下载边界每次都按当前时间重新计算 `expiresAt` 与 key `notBefore` / `notAfter`，加载时的 official 结果不得永久缓存。任一条件缺失都降级为“发布者签名有效”“索引声明”或“未验证”。URL 前后缀、相似域名和任何 redirected response 均不等价。
+- 可信发布者公钥注册表位于 `resources/plugin-index/trusted-publishers.json`，允许多个 active key、`notBefore` / `notAfter` 有效期、key 状态和集中 `revokedKeyIds`，用于无中断轮换与紧急吊销。未知状态、重复 key ID、无效 key 或损坏注册表必须 fail closed。生产私钥禁止进入应用仓库；签名在外部插件发布仓库的受保护 CI 或离线签名环境完成，应用仓库只发布公钥。当前注册表在正式 release key 配置前保持空，现有未签名条目不会获得官方徽章。
+- 应用内市场默认读取上述固定 URL；`TWILIGHT_PLUGIN_INDEX_URL` 可覆盖为自托管 HTTPS `plugins.json` 或本机 HTTP 测试索引。远程成功后以 `cacheSchemaVersion: 1` envelope 缓存，强制持久化 `origin`、`fetchedAt`、`expiresAt` 与原始 `index`。远程失败时可回退缓存，但缓存一律标记 stale；过期状态按持久化时间计算，envelope 自带的任何“可信”布尔值均被忽略，`originVerified` 只由持久化 origin 与当前配置精确相等推导。旧版裸 `plugins.json` cache 作为 `legacy` 读取时同时标记 stale、expired、origin unverified，永不升级信任。
+- `resources/plugin-index/plugins.json` 是随应用分发的离线发现快照，不是官方审核或签名信任根；远程与缓存都不可用时才用于发现，任何字段都不能触发官方徽章。安装前仍必须校验 sourceUrl、包大小、sha256 与包内 manifest；manager 对最终私有 staging 包再次计算 SHA-256 并与索引期望比较，防止下载校验后包被替换。
+- 并发索引刷新使用单调 generation：只有最新请求可以写入 cache envelope 或提交内存中的 entry、origin、status 与 base URL，晚到的旧响应必须返回最新快照且不得回写磁盘。插件包下载开始时绑定索引 origin 与完整 entry（含 manifest、source URL、审核声明和发布者签名）的 canonical SHA-256 指纹；下载期间任一字段变化都必须拒绝，不能只比较包 checksum。
+- 远程索引和 `.tep` 获取必须使用 `redirect: 'manual'`，最多跟随 5 跳；每一跳都重新校验 URL、协议、凭据和 HTTPS 不得降级为 HTTP。`Content-Length` 在读取 body 前预检，未知长度响应按 chunk 累计上限并在超限时 abort。`.tep` 必须逐块写入与插件安装目标同卷的 user-data staging 目录，同时增量计算 SHA-256；任何下载、写入、校验或重定向失败都清理部分临时文件。
 - Phase 5 仍是信任式安装：索引只提高可发现性和完整性校验，不代表运行时权限 enforcement 或恶意代码沙箱。

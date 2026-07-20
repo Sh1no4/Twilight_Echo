@@ -5,6 +5,15 @@ import { nextTick, ref } from 'vue'
 const { createPlaybackSessionPersistence } = (await import(
   new URL('./usePlaybackSessionPersistence.ts', import.meta.url).href
 )) as typeof import('./usePlaybackSessionPersistence')
+const { PlaybackSessionWriter, playbackSessionWriter } = (await import(
+  new URL('./playbackSessionWriter.ts', import.meta.url).href
+)) as typeof import('./playbackSessionWriter.ts')
+const { pruneUnavailableLocalTracks } = (await import(
+  new URL('../utils/localTrackRemovalPolicy.ts', import.meta.url).href
+)) as typeof import('../utils/localTrackRemovalPolicy.ts')
+const { PersistentDataRevisionConflictError } = (await import(
+  new URL('../../../shared/versionedPersistence.ts', import.meta.url).href
+)) as typeof import('../../../shared/versionedPersistence.ts')
 
 const track = {
   id: 'local:track',
@@ -74,6 +83,75 @@ test('local playback resume restores without waiting for plugin providers', asyn
   await persistence.restoreSavedPlaybackSession('track')
 
   assert.deepEqual(calls, ['restore:0'])
+})
+
+test('CUE queue/session restore preserves ranges, queue index, and ReplayGain metadata', async () => {
+  const first = {
+    ...track,
+    id: 'local:cue:first',
+    duration: 60,
+    cueRange: { startSeconds: 0, endSeconds: 60, pregapSeconds: 0 },
+    cueSheetPath: 'D:/Music/disc.cue',
+    cueEncoding: 'gb18030' as const,
+    replayGainTrackGainDb: -3
+  }
+  const second = {
+    ...track,
+    id: 'local:cue:second',
+    duration: 58,
+    cueRange: {
+      startSeconds: 60,
+      endSeconds: 118,
+      pregapSeconds: 2,
+      virtualPregapSeconds: 2,
+      sourcePregapSeconds: 0
+    },
+    cueSheetPath: 'D:/Music/disc.cue',
+    cueEncoding: 'gb18030' as const,
+    replayGainTrackGainDb: -9
+  }
+  let restored: {
+    track: typeof second
+    queue?: Array<typeof first | typeof second>
+    queueIndex?: number
+    position: number
+  } | null = null
+  const persistence = createPlaybackSessionPersistence({
+    settings: ref({ playbackResumeMode: 'trackAndPosition' as const }),
+    currentTrack: ref(null),
+    currentTime: ref(0),
+    isPlaying: ref(false),
+    restorePlaybackSession: (session) => {
+      restored = structuredClone(session) as typeof restored
+    },
+    createPlaybackSession: () => null,
+    syncPluginProviders: async () => assert.fail('local CUE restore must not wait for plugins'),
+    dataApi: {
+      clearPlaybackSession: async () => undefined,
+      loadPlaybackSession: async () => ({
+        version: 1 as const,
+        savedAt: '2026-07-18T00:00:00.000Z',
+        mode: 'trackAndPosition' as const,
+        track: second,
+        position: 17,
+        queue: [first, second],
+        queueIndex: 1
+      }),
+      savePlaybackSession: async () => undefined
+    }
+  })
+
+  await persistence.restoreSavedPlaybackSession('trackAndPosition')
+
+  assert.ok(restored)
+  assert.equal(restored.position, 17)
+  assert.equal(restored.queueIndex, 1)
+  assert.deepEqual(restored.track.cueRange, second.cueRange)
+  assert.equal(restored.track.replayGainTrackGainDb, -9)
+  assert.deepEqual(
+    restored.queue?.map((item) => item.cueRange),
+    [first.cueRange, second.cueRange]
+  )
 })
 
 test('plugin playback resume waits for plugin providers before restoring a saved session', async () => {
@@ -279,6 +357,261 @@ test('overlapping playback-session saves commit snapshots in creation order', as
   await Promise.all([firstSave, secondSave])
 
   assert.deepEqual(savedTrackIds, [track.id, nextTrack.id])
+})
+
+test('a deferred old autosave cannot overwrite a later pruned queue session', async () => {
+  const removedTrack = {
+    ...track,
+    id: 'local:removed',
+    title: 'Removed',
+    filePath: 'D:/Music/removed.flac',
+    fileName: 'removed.flac'
+  }
+  let queue = [track, removedTrack]
+  let persisted: { queue?: Array<{ id: string }> } | null = null
+  let releaseOldWrite!: () => void
+  let signalOldWriteStarted!: () => void
+  const oldWriteReleased = new Promise<void>((resolve) => {
+    releaseOldWrite = resolve
+  })
+  const oldWriteStarted = new Promise<void>((resolve) => {
+    signalOldWriteStarted = resolve
+  })
+  let saveCalls = 0
+  const writer = new PlaybackSessionWriter()
+  const dataApi = {
+    clearPlaybackSession: async () => {
+      persisted = null
+    },
+    loadPlaybackSession: async () => null,
+    savePlaybackSession: async (
+      session: {
+        queue?: Array<{ id: string }>
+      } | null
+    ) => {
+      saveCalls++
+      if (saveCalls === 1) {
+        signalOldWriteStarted()
+        await oldWriteReleased
+      }
+      persisted = session ? structuredClone(session) : null
+    }
+  }
+  const persistence = createPlaybackSessionPersistence({
+    settings: ref({ playbackResumeMode: 'track' as const }),
+    currentTrack: ref(track),
+    currentTime: ref(0),
+    isPlaying: ref(true),
+    restorePlaybackSession: () => undefined,
+    createPlaybackSession: (mode) => ({
+      version: 1,
+      savedAt: '',
+      mode,
+      track,
+      position: 0,
+      queue: [...queue],
+      queueIndex: 0
+    }),
+    syncPluginProviders: async () => undefined,
+    dataApi,
+    sessionWriter: writer
+  })
+
+  await persistence.restoreSavedPlaybackSession('track')
+  const oldSave = persistence.savePlaybackSessionSnapshot()
+  await oldWriteStarted
+  const pruned = pruneUnavailableLocalTracks(
+    { currentTrack: track, queue, originalQueue: queue, queueIndex: 0 },
+    [removedTrack.id],
+    [removedTrack.filePath]
+  )
+  queue = pruned.queue
+  const prunedWrite = writer.save(dataApi, {
+    version: 1,
+    savedAt: '',
+    mode: 'track',
+    track,
+    position: 0,
+    queue: pruned.queue,
+    queueIndex: pruned.queueIndex
+  })
+  await Promise.resolve()
+  assert.equal(persisted, null)
+
+  releaseOldWrite()
+  await Promise.all([oldSave, prunedWrite.completion])
+
+  assert.deepEqual(
+    persisted?.queue?.map((item) => item.id),
+    [track.id]
+  )
+  assert.equal(writer.getCommittedSequence(), prunedWrite.sequence)
+})
+
+test('default persistence producers share one playback-session writer', async () => {
+  await playbackSessionWriter.whenIdle()
+  const removedTrack = {
+    ...track,
+    id: 'local:shared-writer-removed',
+    title: 'Shared Writer Removed',
+    filePath: 'D:/Music/shared-writer-removed.flac',
+    fileName: 'shared-writer-removed.flac'
+  }
+  let persistedQueue: string[] | null = null
+  let releaseOldWrite!: () => void
+  let signalOldWriteStarted!: () => void
+  const oldWriteReleased = new Promise<void>((resolve) => {
+    releaseOldWrite = resolve
+  })
+  const oldWriteStarted = new Promise<void>((resolve) => {
+    signalOldWriteStarted = resolve
+  })
+  let saveCalls = 0
+  const dataApi = {
+    clearPlaybackSession: async () => {
+      persistedQueue = null
+    },
+    loadPlaybackSession: async () => null,
+    savePlaybackSession: async (
+      session: {
+        queue?: Array<{ id: string }>
+      } | null
+    ) => {
+      saveCalls++
+      if (saveCalls === 1) {
+        signalOldWriteStarted()
+        await oldWriteReleased
+      }
+      persistedQueue = session?.queue?.map((item) => item.id) ?? []
+    }
+  }
+  const createPersistence = (queue: (typeof track)[]) =>
+    createPlaybackSessionPersistence({
+      settings: ref({ playbackResumeMode: 'track' as const }),
+      currentTrack: ref(track),
+      currentTime: ref(0),
+      isPlaying: ref(true),
+      restorePlaybackSession: () => undefined,
+      createPlaybackSession: (mode) => ({
+        version: 1,
+        savedAt: '',
+        mode,
+        track,
+        position: 0,
+        queue,
+        queueIndex: 0
+      }),
+      syncPluginProviders: async () => undefined,
+      dataApi
+    })
+  const oldProducer = createPersistence([track, removedTrack])
+  const prunedProducer = createPersistence([track])
+
+  await oldProducer.restoreSavedPlaybackSession('track')
+  await prunedProducer.restoreSavedPlaybackSession('track')
+  const oldSave = oldProducer.savePlaybackSessionSnapshot()
+  await oldWriteStarted
+  const prunedSave = prunedProducer.savePlaybackSessionSnapshot()
+  await Promise.resolve()
+  assert.equal(persistedQueue, null)
+
+  releaseOldWrite()
+  await Promise.all([oldSave, prunedSave])
+
+  assert.deepEqual(persistedQueue, [track.id])
+})
+
+test('playback session writer continues after a failed write', async () => {
+  const writer = new PlaybackSessionWriter()
+  const calls: string[] = []
+  const api = {
+    savePlaybackSession: async () => {
+      calls.push('failed-save')
+      throw new Error('write failed')
+    },
+    clearPlaybackSession: async () => {
+      calls.push('clear')
+    }
+  }
+  const failed = writer.save(api, {
+    version: 1,
+    savedAt: '',
+    mode: 'track',
+    track,
+    position: 0
+  })
+  const cleared = writer.clear(api)
+
+  await assert.rejects(failed.completion, /write failed/)
+  await cleared.completion
+
+  assert.deepEqual(calls, ['failed-save', 'clear'])
+  assert.equal(writer.getCommittedSequence(), cleared.sequence)
+})
+
+test('CAS conflict reloads the authoritative session revision before replaying the current snapshot', async () => {
+  const writer = new PlaybackSessionWriter()
+  const expectedRevisions: number[] = []
+  const current = {
+    version: 2 as const,
+    revision: 1,
+    savedAt: '2026-07-17T00:00:00.000Z',
+    data: {
+      version: 1 as const,
+      savedAt: '',
+      mode: 'track' as const,
+      track,
+      position: 0
+    }
+  }
+  const authorityAfterConflict = {
+    ...current,
+    revision: 2,
+    data: { ...current.data, track: { ...track, id: 'local:other-window' } }
+  }
+  let loads = 0
+  const persistence = createPlaybackSessionPersistence({
+    settings: ref({ playbackResumeMode: 'track' as const }),
+    currentTrack: ref(track),
+    currentTime: ref(0),
+    isPlaying: ref(true),
+    restorePlaybackSession: () => undefined,
+    createPlaybackSession: (mode) => ({
+      version: 1,
+      savedAt: '',
+      mode,
+      track,
+      position: 0
+    }),
+    syncPluginProviders: async () => undefined,
+    sessionWriter: writer,
+    dataApi: {
+      clearPlaybackSession: async () => authorityAfterConflict,
+      loadPlaybackSession: async () => {
+        loads++
+        return loads === 1 ? current : authorityAfterConflict
+      },
+      savePlaybackSession: async (_session, expectedRevision) => {
+        expectedRevisions.push(expectedRevision)
+        if (expectedRevision === 1) {
+          throw new PersistentDataRevisionConflictError(authorityAfterConflict, expectedRevision)
+        }
+        return {
+          version: 2 as const,
+          revision: 3,
+          savedAt: '2026-07-17T00:00:03.000Z',
+          data: _session
+        }
+      }
+    }
+  })
+
+  await persistence.restoreSavedPlaybackSession('track')
+  await persistence.savePlaybackSessionSnapshot()
+
+  assert.deepEqual(expectedRevisions, [1, 2])
+  assert.equal(loads, 2)
+  assert.equal(writer.getRevision(), 3)
 })
 
 test('failed restore leaves autosave available to replace the unusable old session', async () => {

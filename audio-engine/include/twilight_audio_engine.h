@@ -52,6 +52,10 @@ TAE_API TAE_Result TAE_GetUpcomingTrack(TAE_EngineHandle engine, char* buffer, s
 
 TAE_API TAE_Result TAE_SetDspConfig(TAE_EngineHandle engine, const char* dsp_config_json);
 TAE_API TAE_Result TAE_SetDspGraph(TAE_EngineHandle engine, const char* dsp_graph_json);
+TAE_API TAE_Result TAE_ApplyDspState(
+    TAE_EngineHandle engine,
+    uint64_t revision,
+    const char* dsp_state_json);
 TAE_API TAE_Result TAE_SetOutputConfig(TAE_EngineHandle engine, const char* output_config_json);
 TAE_API TAE_Result TAE_GetDspConfig(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size);
 TAE_API TAE_Result TAE_GetDspGraphStatus(TAE_EngineHandle engine, char* buffer, size_t buffer_size, size_t* required_size);
@@ -102,6 +106,8 @@ TAE_API TAE_Result TAE_AnalyzeLoudness(
     char* buffer,
     size_t buffer_size,
     size_t* required_size);
+/* Diagnostic counter: number of actual analyzer executions, excluding cached size-probe reads. */
+TAE_API uint64_t TAE_GetAnalysisExecutionCount(const char* analysis_kind);
 TAE_API const char* TAE_GetVersion(void);
 
 #ifdef __cplusplus

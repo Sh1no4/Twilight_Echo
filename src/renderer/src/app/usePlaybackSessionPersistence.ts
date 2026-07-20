@@ -1,15 +1,27 @@
 import { watch, type Ref } from 'vue'
 import type { PlaybackSession, Track } from '../types/music'
 import type { PlaybackResumeMode } from '../types/settings'
+import {
+  isPersistentDataRevisionConflict,
+  type VersionedDataEnvelope
+} from '../../../shared/versionedPersistence.ts'
+import { playbackSessionWriter, type PlaybackSessionWriter } from './playbackSessionWriter.ts'
 
 interface PlaybackSessionSettings {
   playbackResumeMode: PlaybackResumeMode | Ref<PlaybackResumeMode>
 }
 
 interface PlaybackSessionDataApi {
-  clearPlaybackSession: () => Promise<void>
-  loadPlaybackSession: () => Promise<PlaybackSession | null>
-  savePlaybackSession: (session: PlaybackSession | null) => Promise<void>
+  clearPlaybackSession: (
+    expectedRevision: number
+  ) => Promise<VersionedDataEnvelope<PlaybackSession | null> | void>
+  loadPlaybackSession: () => Promise<
+    VersionedDataEnvelope<PlaybackSession | null> | PlaybackSession | null
+  >
+  savePlaybackSession: (
+    session: PlaybackSession,
+    expectedRevision: number
+  ) => Promise<VersionedDataEnvelope<PlaybackSession> | void>
 }
 
 export interface PlaybackSessionPersistenceOptions {
@@ -23,6 +35,7 @@ export interface PlaybackSessionPersistenceOptions {
   dataApi: PlaybackSessionDataApi
   autosaveDelayMs?: number
   positionAutosaveMs?: number
+  sessionWriter?: PlaybackSessionWriter
 }
 
 const DEFAULT_PLAYBACK_SESSION_AUTOSAVE_DEBOUNCE_MS = 1200
@@ -35,7 +48,7 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
   let playbackSessionAutosaveTimer: ReturnType<typeof setTimeout> | null = null
   let lastPlaybackSessionPositionSaveAt = 0
   let playbackSessionWritesEnabled = false
-  let playbackSessionWriteChain: Promise<void> = Promise.resolve()
+  const sessionWriter = options.sessionWriter ?? playbackSessionWriter
   const stopHandles: Array<() => void> = []
 
   async function restoreSavedPlaybackSession(mode: PlaybackResumeMode): Promise<void> {
@@ -44,11 +57,11 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
 
     try {
       if (mode === 'off') {
-        await options.dataApi.clearPlaybackSession()
+        await persistSession(null)
         return
       }
 
-      const session = await options.dataApi.loadPlaybackSession()
+      const session = await refreshAuthoritativeSession()
       if (!session?.track?.id) return
 
       if (requiresPluginProviderSync(session.track)) {
@@ -79,23 +92,44 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
 
     const mode = getPlaybackResumeMode()
     if (mode === 'off') {
-      await enqueuePlaybackSessionWrite(() => options.dataApi.clearPlaybackSession())
+      await persistSession(null)
       return
     }
 
     const session = options.createPlaybackSession(mode)
     if (!session) {
-      await enqueuePlaybackSessionWrite(() => options.dataApi.clearPlaybackSession())
+      await persistSession(null)
       return
     }
 
-    await enqueuePlaybackSessionWrite(() => options.dataApi.savePlaybackSession(session))
+    await persistSession(session)
   }
 
-  function enqueuePlaybackSessionWrite(operation: () => Promise<void>): Promise<void> {
-    const nextWrite = playbackSessionWriteChain.catch(() => {}).then(operation)
-    playbackSessionWriteChain = nextWrite
-    return nextWrite
+  async function persistSession(session: PlaybackSession | null): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const write = session
+          ? sessionWriter.save(options.dataApi, session)
+          : sessionWriter.clear(options.dataApi)
+        await write.completion
+        return
+      } catch (error) {
+        if (!isPersistentDataRevisionConflict(error) || attempt === 1) throw error
+        // A second renderer may have committed while this snapshot was queued.
+        // Reload the main-process snapshot before replaying the current UI state.
+        await refreshAuthoritativeSession()
+      }
+    }
+  }
+
+  async function refreshAuthoritativeSession(): Promise<PlaybackSession | null> {
+    const loaded = await options.dataApi.loadPlaybackSession()
+    if (isVersionedPlaybackSession(loaded)) {
+      sessionWriter.setRevision(loaded.revision)
+      return loaded.data
+    }
+    sessionWriter.setRevision(0)
+    return loaded
   }
 
   function clearPlaybackSessionAutosave(): void {
@@ -193,6 +227,18 @@ export function createPlaybackSessionPersistence(options: PlaybackSessionPersist
     startAutosaveWatchers,
     stop
   }
+}
+
+function isVersionedPlaybackSession(
+  value: VersionedDataEnvelope<PlaybackSession | null> | PlaybackSession | null
+): value is VersionedDataEnvelope<PlaybackSession | null> {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    'version' in value &&
+    value.version === 2 &&
+    'data' in value
+  )
 }
 
 function requiresPluginProviderSync(track: Track): boolean {

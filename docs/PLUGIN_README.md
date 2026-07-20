@@ -234,6 +234,18 @@ npm run pack
 
 包格式与路径规则见 [spec §2](./twilight-echo-plugin-spec.md#2-插件包格式)。
 
+### 12.1 插件网络代理
+
+设置页的插件代理只代理外部 HTTPS 请求；loopback 请求保持直连。代理 CONNECT 和目标
+TLS 由 `undici.ProxyAgent` 处理，使用系统 CA 校验证书。重定向由宿主逐跳处理，最多
+5 跳，禁止 HTTPS 降级到远程 HTTP，并在跨源跳转时删除 `Authorization`、`Cookie`
+和 `Proxy-Authorization`。
+
+代理请求默认 fail closed：代理不可用时返回错误，不会静默直连。只有用户显式开启
+“代理失败时允许直连”才会回退，而且 abort 后永不回退。`关闭` 模式会同时清空插件
+进程继承的标准代理环境变量，避免第三方 HTTP client 绕过设置；代理设置变更需重启
+应用后影响已运行的插件宿主。
+
 ## 13. 动态索引与分发
 
 官方插件市场消费一个远程 `plugins.json` 文件，当前 `schemaVersion` 固定为 `1`。每个 entry 复用 manifest 字段，并额外增加：
@@ -244,13 +256,18 @@ npm run pack
 | `checksumSha256` | `.tep` 文件的 sha256 校验和 |
 | `repository` / `homepage` | 源码仓库与主页 |
 | `tags` | 标签，用于搜索和分类 |
-| `verified` | 是否经过人工审核，只有审核通过才为 `true` |
+| `verified` | 索引发布者声明“已审核”的元数据；单独出现时只显示“索引声明” |
+| `publisherSignature` | 索引专用 Ed25519 发布者签名；不写入包内 `plugin.json`，也不等同于 manifest 的预留 `signature` |
 
 默认远程索引是 `https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json`。第三方插件源码和发布 `.tep` 包不放在主仓库；开发和发布时应写入外部插件仓库，由外部仓库生成 `plugins.json`。
 
-`TWILIGHT_PLUGIN_INDEX_URL` 环境变量优先级最高，可指向自托管 HTTPS `plugins.json` 或本机 HTTP 测试索引。远程读取成功后宿主会缓存索引；远程失败时先使用缓存并标记 stale，缓存也不可用时才回退到随应用分发的离线索引 [`../resources/plugin-index/plugins.json`](../resources/plugin-index/plugins.json)。
+`TWILIGHT_PLUGIN_INDEX_URL` 环境变量优先级最高，可指向自托管 HTTPS `plugins.json` 或本机 HTTP 测试索引。自定义索引的 `verified: true` 只表示该索引自己的声明。官方徽章要求本次从上面的固定官方 URL 直接、fresh 加载，实际 origin 与配置精确一致，记录未 stale/过期，并由 `resources/plugin-index/trusted-publishers.json` 中当前有效且未吊销的 Ed25519 key 验签通过。宿主在每次 list/status/download 时按当前时间重验索引 TTL 与 key 有效期，不把加载时结果永久缓存。
 
-安装前宿主必须校验：`sourceUrl` 可达、包大小合理、sha256 匹配、包内 `plugin.json` 与索引 entry 字段一致。校验不过就拒绝安装。
+远程读取成功后宿主以 cache envelope 保存 `origin`、`fetchedAt`、`expiresAt` 和原始索引。远程失败时先使用缓存并标记 stale；过期状态按 envelope 计算，旧版裸 cache 同时视为 stale/expired/origin-unverified。缓存也不可用时才回退到随应用分发的 [`../resources/plugin-index/plugins.json`](../resources/plugin-index/plugins.json)。该文件只是离线发现快照，不是官方审核或签名信任根，fallback 永远不能升级信任。
+
+`publisherSignature` 绑定精确 `indexOrigin` 和规范化后的完整 entry（包括 manifest、`sourceUrl`、`checksumSha256`、`tags`、`verified`）。`main`、`icon`、`binary.*` 路径先统一为 POSIX `/` canonical form，Windows host 与 Linux signer 必须生成相同 payload。可信公钥注册表支持多个 active key、有效期与吊销列表以完成轮换。生产私钥只允许位于外部插件仓库的受保护 CI 或离线签名环境，绝不能提交到应用仓库；正式 release public key 配置前，空注册表会让未签名条目保持“索引声明/未验证”。
+
+安装前宿主必须校验：`sourceUrl` 可达、包大小合理、sha256 匹配、包内 `plugin.json` 与索引 entry 字段一致。manager 会把实际安装字节写入私有 staging，再计算一次 SHA-256，与索引的 immutable expected SHA-256 比较；下载后发生 A/B 替换时在确认页前拒绝。校验不过就拒绝安装。
 
 索引规则见 [spec §7.5](./twilight-echo-plugin-spec.md#75-phase-5-本地可发布生态形态)。注意 Phase 5 仍是信任式安装，索引只提高可发现性和完整性校验，不代表运行时权限 enforcement 或恶意代码沙箱。
 
@@ -291,10 +308,10 @@ plugins.json              # 索引文件
 
 当前是信任式安装，插件即任意代码执行。最低安全要求：
 
-1. **安装确认页强制展示**：权限声明、作者、来源，并明确警示"插件拥有与应用相同的权限"。
+1. **安装确认页强制展示**：作者、权限、实际/配置索引来源、远程/缓存/离线状态、获取/过期时间、索引期望与最终 staged 包实际 SHA-256、签名状态/key ID/公钥 SHA-256 指纹，并明确警示插件可执行任意代码且拥有与应用相同的权限。签名与哈希不能证明代码安全。
 2. **禁止运行时远程代码加载**：全部可执行代码必须随包分发。这条写入生态规范，也是官方索引收录的硬性条件。
-3. **官方索引收录需人工审核**：开源仓库可溯源、有 README、权限声明与实际行为一致、通过冒烟测试、不含运行时远程代码加载。音源类插件自行承担合规责任，明显侵权源不予收录。
-4. **`signature` 字段预留**：未来可平滑切换到签名校验，不破坏包格式。
+3. **官方索引收录需人工审核与签名链**：开源仓库可溯源、有 README、权限声明与实际行为一致、通过冒烟测试、不含运行时远程代码加载，并由 active trusted publisher key 签名。音源类插件自行承担合规责任，明显侵权源不予收录。
+4. **区分两类签名字段**：manifest 的 `signature` 仍为预留字段；当前索引验证使用不会进入包体的 `publisherSignature`，避免让包内签名循环依赖包 checksum。
 5. **架构预留收紧路径**：utilityProcess 宿主加 API 网关加强制权限声明已就位，未来启用强制权限只需在网关层加闸。
 
 非官方索引来源安装时会给出额外警告。完整安全底线见 [spec §6](./twilight-echo-plugin-spec.md#6-安全底线信任式安装下的最低要求) 和收录标准 [spec §7.4](./twilight-echo-plugin-spec.md#74-官方索引收录标准)。

@@ -22,8 +22,8 @@ test('parsePlainLyrics keeps untimed embedded lyrics visible', () => {
 
 test('buildLyricLines falls back to plain lyrics when no timed lines exist', () => {
   assert.deepEqual(buildLyricLines('First plain line\nSecond plain line', null), [
-    { time: null, text: 'First plain line', translation: null, timed: false },
-    { time: null, text: 'Second plain line', translation: null, timed: false }
+    { time: null, text: 'First plain line', translation: null, romanization: null, timed: false },
+    { time: null, text: 'Second plain line', translation: null, romanization: null, timed: false }
   ])
 })
 
@@ -48,6 +48,7 @@ test('findActiveLyricIndex handles large lyric files quickly', () => {
     time: index * 0.75,
     text: `Line ${index}`,
     translation: null,
+    romanization: null,
     timed: true
   }))
 

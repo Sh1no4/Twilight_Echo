@@ -19,8 +19,8 @@ const AUDIO_EXTENSIONS = new Set([
 function usage() {
   return [
     'Usage:',
-    '  npm run smoke:audio-format-matrix -- --manifest D:\\fixtures\\matrix.json --json',
-    '  npm run smoke:audio-format-matrix -- --fixture-dir D:\\fixtures --playback --backend wasapi-exclusive --device "My DAC"',
+    '  pnpm run smoke:audio-format-matrix -- --manifest D:\\fixtures\\matrix.json --json',
+    '  pnpm run smoke:audio-format-matrix -- --fixture-dir D:\\fixtures --playback --backend wasapi-exclusive --device "My DAC"',
     '',
     'Options:',
     '  --manifest <path>           Fixture manifest JSON. Defaults to TAE_AUDIO_FIXTURE_MANIFEST.',
@@ -89,8 +89,8 @@ function loadNative(modulePath) {
       [
         'Cannot find twilight_audio_node.node.',
         'Build and stage the native engine first:',
-        '  npm run configure:audio-engine:mingw',
-        '  npm run build:audio-engine:mingw'
+        '  pnpm run configure:audio-engine:mingw',
+        '  pnpm run build:audio-engine:mingw'
       ].join('\n')
     )
   }

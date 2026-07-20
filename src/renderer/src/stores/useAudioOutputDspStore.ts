@@ -1,4 +1,6 @@
 import { defineStore } from 'pinia'
+import type { ComputedRef, Ref } from 'vue'
+import type { OutputInfo, PlaybackInfo } from '../../../preload/types'
 import { usePlayerStore } from './usePlayerStore'
 
 // Output routing and DSP controls are exposed independently from queue state.
@@ -16,10 +18,11 @@ export const useAudioOutputDspStore = defineStore('audio-output-dsp', () => {
     audioDeviceOptions: player.audioDeviceOptions,
     audioProcessing: player.audioProcessing,
     audioOutputConfig: player.audioOutputConfig,
+    audioOutputConfigApplyStatus: player.audioOutputConfigApplyStatus,
     dspOutputStage: player.dspOutputStage,
     dspStereoImage: player.dspStereoImage,
-    playbackInfo: player.playbackInfo,
-    outputInfo: player.outputInfo,
+    playbackInfo: player.playbackInfo as Ref<PlaybackInfo | null>,
+    outputInfo: player.outputInfo as ComputedRef<OutputInfo | null>,
     loudnormStatus: player.loudnormStatus,
     loudnormStatusSource: player.loudnormStatusSource,
     toggleExclusiveMode: player.toggleExclusiveMode,

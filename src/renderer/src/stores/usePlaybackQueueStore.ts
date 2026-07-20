@@ -20,6 +20,12 @@ export const usePlaybackQueueStore = defineStore('playback-queue', () => {
     playMode: player.playMode,
     cyclePlayMode: player.cyclePlayMode,
     setPlayMode: player.setPlayMode,
+    enqueueTrack: player.enqueueTrack,
+    playNextTrack: player.playNextTrack,
+    removeQueueItem: player.removeQueueItem,
+    clearQueue: player.clearQueue,
+    reorderQueue: player.reorderQueue,
+    saveQueueAsPlaylist: player.saveQueueAsPlaylist,
     playTrack: player.playTrack,
     togglePlay: player.togglePlay,
     next: player.next,
@@ -29,6 +35,8 @@ export const usePlaybackQueueStore = defineStore('playback-queue', () => {
     setUnityVolume: player.setUnityVolume,
     restorePlaybackSession: player.restorePlaybackSession,
     createPlaybackSession: player.createPlaybackSession,
+    removeUnavailableTracks: player.removeUnavailableTracks,
+    refreshCurrentLyrics: player.refreshCurrentLyrics,
     formatTime: player.formatTime
   }
 })

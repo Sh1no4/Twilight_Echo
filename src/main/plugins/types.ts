@@ -50,6 +50,8 @@ export interface TwilightPluginStateRecord {
   installedAt: string
   updatedAt: string
   source: TwilightPluginSource
+  /** Logical active version. Older state files fall back to the highest valid installed version. */
+  activeVersion?: string
   lastError?: string
   nativeDspParameters?: Record<string, number>
 }
@@ -99,13 +101,97 @@ export interface TwilightPluginInstallResult {
   warning: string
 }
 
+export interface TwilightPluginPublisherSignature {
+  schemaVersion: 1
+  algorithm: 'ed25519'
+  keyId: string
+  value: string
+}
+
+export type TwilightPluginSignatureStatus =
+  | 'missing'
+  | 'malformed'
+  | 'unsupported'
+  | 'unknown-key'
+  | 'revoked-key'
+  | 'key-not-yet-valid'
+  | 'key-expired'
+  | 'invalid-key'
+  | 'invalid'
+  | 'valid'
+  | 'trust-store-error'
+
+export type TwilightPluginVerificationLevel =
+  | 'official'
+  | 'publisher-signed'
+  | 'index-declared'
+  | 'unverified'
+
+export interface TwilightPluginVerification {
+  level: TwilightPluginVerificationLevel
+  official: boolean
+  officialSource: boolean
+  indexClaimed: boolean
+  signatureStatus: TwilightPluginSignatureStatus
+  keyId: string | null
+  publisher: string | null
+  keyFingerprintSha256: string | null
+  /** Next publisher-key validity boundary that requires this result to be recomputed. */
+  revalidateAt: string | null
+  reason: string
+}
+
 export interface TwilightPluginIndexEntry extends TwilightPluginManifest {
   sourceUrl: string
   checksumSha256: string
   tags?: string[]
+  publisherSignature?: TwilightPluginPublisherSignature
+  /** Publisher/index metadata only. Never use this field as an official trust decision. */
   verified?: boolean
+  verification: TwilightPluginVerification
   installState?: TwilightPluginIndexInstallState
   installedVersion?: string
+}
+
+export type TwilightPluginIndexSourceKind = 'github' | 'custom' | 'bundled'
+export type TwilightPluginIndexLoadedFrom = 'remote' | 'cache' | 'bundled'
+export type TwilightPluginIndexCacheFormat = 'envelope-v1' | 'legacy'
+
+export interface TwilightPluginIndexStatus {
+  sourceUrl: string
+  configuredSourceUrl: string
+  sourceKind: TwilightPluginIndexSourceKind
+  loadedFrom: TwilightPluginIndexLoadedFrom
+  lastFetchedAt: string | null
+  expiresAt: string | null
+  loadedAt: string
+  stale: boolean
+  expired: boolean
+  originVerified: boolean
+  officialSource: boolean
+  cacheFormat: TwilightPluginIndexCacheFormat | null
+  trustStoreError: string | null
+  error: string | null
+}
+
+export interface TwilightPluginInstallEvidence {
+  sourceLabel: string
+  indexSourceUrl: string | null
+  configuredIndexUrl: string | null
+  loadedFrom: TwilightPluginIndexLoadedFrom | 'local'
+  fetchedAt: string | null
+  expiresAt: string | null
+  stale: boolean
+  expired: boolean
+  originVerified: boolean
+  cacheFormat: TwilightPluginIndexCacheFormat | null
+  /** Immutable checksum expectation supplied by the index trust boundary. */
+  expectedPackageSha256: string | null
+  /** SHA-256 of the exact staged package bytes used for installation. */
+  packageSha256: string | null
+  checksumVerified: boolean
+  manifestVerified: boolean
+  verification: TwilightPluginVerification | null
 }
 
 export type TwilightPluginIndexInstallState =
@@ -336,12 +422,20 @@ export type PluginHostRequest =
       providerId: string
       method: TwilightMediaProviderMethod
       args: unknown[]
+      /** Present for host-managed write operations such as like/follow. */
+      idempotencyKey?: string
     }
   | {
       kind: 'ui-command'
       requestId: string
       command: string
       args: unknown[]
+    }
+  | {
+      /** Abort a provider/UI invocation that is still running in the plugin host. */
+      kind: 'cancel'
+      requestId: string
+      reason: string
     }
 
 export type PluginHostResponse =
@@ -387,6 +481,12 @@ export type PluginHostResponse =
         | 'ncmGetCachedSong'
         | 'ncmCacheSong'
       args: unknown[]
+    }
+  | {
+      /** Cancels an in-flight host API call, currently used by built-in NCM requests. */
+      kind: 'api-cancel'
+      requestId: string
+      reason: string
     }
   | {
       kind: 'provider-result'

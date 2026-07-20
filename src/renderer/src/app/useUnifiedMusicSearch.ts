@@ -48,8 +48,10 @@ export function createUnifiedMusicSearch(
   const providerHealth = ref<Record<string, UnifiedSearchProviderHealth>>({})
   const loading = ref(false)
   const error = ref('')
+  let latestRequestId = 0
 
   function clear(): void {
+    latestRequestId += 1
     query.value = ''
     items.value = []
     logicalItems.value = []
@@ -58,7 +60,10 @@ export function createUnifiedMusicSearch(
     error.value = ''
   }
 
-  async function search(nextQuery: string, options: { limit?: number; offset?: number } = {}): Promise<void> {
+  async function search(
+    nextQuery: string,
+    options: { limit?: number; offset?: number } = {}
+  ): Promise<void> {
     const normalizedQuery = nextQuery.trim()
     query.value = nextQuery
     if (!normalizedQuery) {
@@ -66,27 +71,33 @@ export function createUnifiedMusicSearch(
       return
     }
 
+    const requestId = ++latestRequestId
+    const snapshot = {
+      query: normalizedQuery,
+      limit: options.limit,
+      offset: options.offset
+    }
     loading.value = true
     error.value = ''
     try {
       const result = await dependencies.searchAllSongs({
-        query: normalizedQuery,
+        query: snapshot.query,
         localTracks: dependencies.getLocalTracks(),
-        limit: options.limit,
-        offset: options.offset
+        limit: snapshot.limit,
+        offset: snapshot.offset
       })
-      if (query.value.trim() !== normalizedQuery) return
+      if (requestId !== latestRequestId) return
       items.value = result.items
       logicalItems.value = result.logicalItems
       providerHealth.value = result.health
     } catch (caught) {
-      if (query.value.trim() !== normalizedQuery) return
+      if (requestId !== latestRequestId) return
       error.value = caught instanceof Error ? caught.message : '统一搜索失败'
       items.value = []
       logicalItems.value = []
       providerHealth.value = {}
     } finally {
-      if (query.value.trim() === normalizedQuery) {
+      if (requestId === latestRequestId) {
         loading.value = false
       }
     }

@@ -42,6 +42,7 @@ class Vst3BridgeProcessor final : public IAudioProcessor {
   uint64_t overrunCount() const noexcept { return overrunCount_.load(std::memory_order_relaxed); }
   double lastProcessMs() const noexcept { return 0.0; }
   double maxProcessMs() const noexcept { return 0.0; }
+  static size_t liveInstanceCountForTests() noexcept;
 
  private:
   bool launchHost();
@@ -61,6 +62,7 @@ class Vst3BridgeProcessor final : public IAudioProcessor {
   std::atomic<bool> active_{false};
   std::atomic<uint64_t> processCalls_{0};
   std::atomic<uint64_t> overrunCount_{0};
+  static std::atomic<size_t> liveInstanceCount_;
   uint32_t nextSequence_ = 0;
   uint64_t submittedBlockCount_ = 0;
   uint32_t lastSubmittedFrames_ = 0;

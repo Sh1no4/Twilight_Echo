@@ -22,6 +22,8 @@ import type {
 import StreamingHome from './StreamingHome.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
 import StreamingSearch from './StreamingSearch.vue'
+import OfflineDownloadsPanel from './OfflineDownloadsPanel.vue'
+import OfflinePinButton from './OfflinePinButton.vue'
 import {
   buildStreamingSidebarItems,
   getFirstVisibleStreamingTab,
@@ -52,6 +54,10 @@ import {
   type SearchSourceOption
 } from './streaming-page/useStreamingSearch'
 import { useTrackMultiSelect } from './song-list/useTrackMultiSelect'
+import {
+  executeStreamingBatchRemoval,
+  removeStreamingProviderFavorite
+} from './streaming-page/streamingBatchRemoval.ts'
 
 interface RecSection {
   key: string
@@ -1468,25 +1474,34 @@ async function handleStreamingBatchFavorite(): Promise<void> {
   }
 }
 
-function handleStreamingBatchDelete(): void {
+async function handleStreamingBatchDelete(): Promise<void> {
   const selected = getSelectedTracks()
   if (selected.length === 0) return
-  for (const track of selected) {
-    const source = track.source ?? (track.id.includes(':') ? track.id.split(':')[0] : 'local')
-    if (!source || source === 'local') {
-      musicStore.removeTrack(track.id)
-    } else if (track.ncmSongId != null && isTrackLiked(track.ncmSongId)) {
-      void likeTrack(track.ncmSongId, false)
-    } else {
-      musicStore.removeFavoriteTrack(track)
+  try {
+    const result = await executeStreamingBatchRemoval(selected, {
+      removeLocalTracks: musicStore.removeLocalTracks,
+      removeProviderTrack: (track) =>
+        removeStreamingProviderFavorite(track, {
+          providers: mediaProviders,
+          removeNcmFavorite: (songId) => likeTrack(songId, false),
+          removeSnapshotFavorite: musicStore.removeFavoriteTrack
+        })
+    })
+    const removed = new Set(result.removedTrackIds)
+    detailTracks.value = detailTracks.value.filter((track) => !removed.has(track.id))
+    if (isSearching.value) {
+      searchResults.value = searchResults.value.filter((track) => !removed.has(track.id))
     }
+    setStreamingBatchRemovalError(result.failures.map((failure) => failure.message).join('；'))
+    clearSelection()
+  } catch (error) {
+    setStreamingBatchRemovalError(error instanceof Error ? error.message : '移除曲目失败')
   }
-  const removed = new Set(selected.map((track) => track.id))
-  detailTracks.value = detailTracks.value.filter((track) => !removed.has(track.id))
-  if (isSearching.value) {
-    searchResults.value = searchResults.value.filter((track) => !removed.has(track.id))
-  }
-  clearSelection()
+}
+
+function setStreamingBatchRemovalError(message: string): void {
+  if (isSearching.value && !currentDetail.value) searchError.value = message
+  else detailError.value = message
 }
 
 function onStreamingContentScroll(event: Event): void {
@@ -1978,6 +1993,10 @@ onMounted(async () => {
                   <i class="pi pi-play"></i>
                   <span>播放全部</span>
                 </button>
+                <OfflineDownloadsPanel
+                  v-if="currentDetail?.type !== 'user_list' && currentDetail?.type !== 'user_playlists'"
+                  :tracks="detailTracks"
+                />
                 <p v-if="followActionError" class="detail-follow-error">
                   {{ followActionError }}
                 </p>
@@ -2170,8 +2189,8 @@ onMounted(async () => {
                       class="selection-btn danger"
                       @click="handleStreamingBatchDelete"
                     >
-                      <i class="pi pi-trash"></i>
-                      <span>删除</span>
+                      <i class="pi pi-minus-circle"></i>
+                      <span>移除</span>
                     </button>
                     <button type="button" class="selection-btn ghost" @click="clearSelection">
                       <i class="pi pi-times"></i>
@@ -2185,6 +2204,7 @@ onMounted(async () => {
                       <th class="col-cover-header">{{ detailTrackCountLabel }}</th>
                       <th class="col-index">#</th>
                       <th class="col-info">标题</th>
+                      <th class="col-like-header"></th>
                       <th class="col-like-header"></th>
                       <th class="col-album">专辑</th>
                       <th class="col-duration">时长</th>
@@ -2243,6 +2263,7 @@ onMounted(async () => {
                           ></i>
                         </button>
                       </td>
+                      <td class="col-like"><OfflinePinButton :track="track" /></td>
                       <td class="col-album">{{ track.album }}</td>
                       <td class="col-duration">{{ formatTime(track.duration) }}</td>
                     </tr>
@@ -2342,8 +2363,8 @@ onMounted(async () => {
                       class="selection-btn danger"
                       @click="handleStreamingBatchDelete"
                     >
-                      <i class="pi pi-trash"></i>
-                      <span>删除</span>
+                      <i class="pi pi-minus-circle"></i>
+                      <span>移除</span>
                     </button>
                     <button type="button" class="selection-btn ghost" @click="clearSelection">
                       <i class="pi pi-times"></i>
@@ -2358,6 +2379,7 @@ onMounted(async () => {
                       <th class="col-index">#</th>
                       <th class="col-info">标题</th>
                       <th v-if="!isExternalActive" class="col-like-header"></th>
+                      <th class="col-like-header"></th>
                       <th class="col-album">专辑</th>
                       <th class="col-duration">时长</th>
                     </tr>
@@ -2415,6 +2437,7 @@ onMounted(async () => {
                           ></i>
                         </button>
                       </td>
+                      <td class="col-like"><OfflinePinButton :track="track" /></td>
                       <td class="col-album">{{ track.album }}</td>
                       <td class="col-duration">{{ formatTime(track.duration) }}</td>
                     </tr>

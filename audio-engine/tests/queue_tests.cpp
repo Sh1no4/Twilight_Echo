@@ -83,6 +83,80 @@ void testAddRemoveAndInvalidInput() {
   assert(!queue.removeAt(4));
 }
 
+void testSingleFileCueRangesKeepDistinctQueueIdentity() {
+  QueueManager queue;
+  std::string error;
+  const char* cueQueue =
+      "[{\"id\":\"cue-1\",\"source\":\"disc.flac\",\"duration\":60,"
+      "\"cueRange\":{\"startSeconds\":0,\"endSeconds\":60,\"pregapSeconds\":0},"
+      "\"replayGainTrackGainDb\":-3},"
+      "{\"id\":\"cue-2\",\"source\":\"disc.flac\",\"duration\":58,"
+      "\"cueRange\":{\"startSeconds\":60,\"endSeconds\":118,\"pregapSeconds\":2,"
+      "\"virtualPregapSeconds\":2,\"sourcePregapSeconds\":1.5},"
+      "\"replayGainTrackGainDb\":-9}]";
+  assert(queue.loadFromJson(cueQueue, 1, &error));
+  assert(queue.currentIndex() == 1);
+  const auto current = queue.current();
+  assert(current);
+  assert(current->source == "disc.flac");
+  assert(current->cueStartSeconds && *current->cueStartSeconds == 60.0);
+  assert(current->cueEndSeconds && *current->cueEndSeconds == 118.0);
+  assert(current->cuePregapSeconds == 2.0);
+  assert(current->cueVirtualPregapSeconds == 2.0);
+  assert(current->cueSourcePregapSeconds == 1.5);
+  assert(current->replayGainTrackGainDb && *current->replayGainTrackGainDb == -9.0);
+  const std::string serialized = QueueManager::itemToJson(current);
+  assert(serialized.find("\"cueStartSeconds\":60") != std::string::npos);
+  assert(serialized.find("\"cueEndSeconds\":118") != std::string::npos);
+  assert(serialized.find("\"cuePregapSeconds\":2") != std::string::npos);
+  assert(serialized.find("\"cueVirtualPregapSeconds\":2") != std::string::npos);
+  assert(serialized.find("\"cueSourcePregapSeconds\":1.5") != std::string::npos);
+  QueueManager reloaded;
+  assert(reloaded.loadFromJson("[" + serialized + "]", 0, &error));
+  assert(reloaded.current()->cueStartSeconds && *reloaded.current()->cueStartSeconds == 60.0);
+}
+
+void testMalformedCueRangesFailClosedInsteadOfBecomingWholeFilePlayback() {
+  QueueManager queue;
+  std::string error;
+  assert(!queue.loadFromJson(
+      "[{\"source\":\"disc.flac\",\"cueRange\":{\"startSeconds\":60,\"endSeconds\":20,"
+      "\"pregapSeconds\":-1}}]",
+      0,
+      &error));
+  assert(queue.empty());
+  assert(error.find("CUE range") != std::string::npos);
+  assert(!queue.addFromJson("{\"source\":\"disc.flac\",\"cueRange\":null}", &error));
+  assert(!queue.loadFromJson(
+      "[{\"source\":\"disc.flac\",\"cueRange\":{\"startSeconds\":0,\"endSeconds\":60,"
+      "\"pregapSeconds\":\"2\"}}]",
+      0,
+      &error));
+  assert(!queue.loadFromJson(
+      "[{\"source\":\"disc.flac\",\"cueRange\":{\"note\":\"\\\"startSeconds\\\":0,"
+      "\\\"endSeconds\\\":60\"}}]",
+      0,
+      &error));
+  assert(!queue.loadFromJson(
+      "[{\"source\":\"disc.flac\",\"cueRange\":{\"startSeconds\":0oops,\"endSeconds\":60}}]",
+      0,
+      &error));
+}
+
+void testCueFieldsInsideUserStringsCannotForgeNativeRanges() {
+  QueueManager queue;
+  std::string error;
+  assert(queue.loadFromJson(
+      "[{\"source\":\"disc.flac\",\"title\":\"quoted \\\"startSeconds\\\":60,"
+      "\\\"endSeconds\\\":120\"}]",
+      0,
+      &error));
+  const auto current = queue.current();
+  assert(current);
+  assert(!current->cueStartSeconds);
+  assert(!current->cueEndSeconds);
+}
+
 }  // namespace
 
 int main() {
@@ -92,5 +166,8 @@ int main() {
   testRepeatAdvanceKeepsCurrentTrack();
   testRepeatManualNextUsesPlaylistOrder();
   testAddRemoveAndInvalidInput();
+  testSingleFileCueRangesKeepDistinctQueueIdentity();
+  testMalformedCueRangesFailClosedInsteadOfBecomingWholeFilePlayback();
+  testCueFieldsInsideUserStringsCannotForgeNativeRanges();
   return 0;
 }

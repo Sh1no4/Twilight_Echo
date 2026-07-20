@@ -4,6 +4,7 @@ import {
   cloneMiniPlayerSettings
 } from '../../../shared/miniPlayer.ts'
 import { createLegacyDspGraph } from '../../../shared/dspGraph.ts'
+import { DEFAULT_SLEEP_TIMER_SETTINGS } from '../../../shared/sleepTimer.ts'
 import type {
   AppSettings,
   AppTheme,
@@ -161,6 +162,7 @@ const fallbackSettings: AppSettings = {
   lyricAlign: 'center',
   lyricDimOpacity: 40,
   playbackResumeMode: 'off',
+  sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
   ncmPlaybackQuality: 'auto',
   playMode: 'sequential',
   audioOutput: getFallbackAudioOutput(),
@@ -211,6 +213,7 @@ const fallbackSettings: AppSettings = {
   proxyMode: 'auto',
   proxyHost: '',
   proxyPort: 0,
+  proxyAllowDirectFallback: false,
   streamingActiveProvider: 'ncm'
 }
 

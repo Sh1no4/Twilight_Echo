@@ -19,8 +19,19 @@ const MAX_LOUDNESS_FILE_PATH_LENGTH = 4096
 export function setupLoudnessAnalysisIpc(): void {
   runtime.loudnessAnalysisManager = new LoudnessAnalysisManager({
     cache: new LoudnessAnalysisCache(getLoudnessAnalysisCachePath()),
-    analyzeFile: async (request) =>
-      runtime.audioEngineManager?.analyzeLoudness(request.filePath) ?? null,
+    analyzeFile: async (request) => {
+      const service = runtime.audioAnalysisService
+      if (!service) throw new Error('audio analysis service is unavailable')
+      return await service.analyzeLoudness(
+        request.filePath,
+        JSON.stringify({ maxAnalysisSeconds: 0 }),
+        { priority: request.priority ?? 50 }
+      )
+    },
+    cancelFile: (filePath) => {
+      if (filePath) runtime.audioAnalysisService?.cancelBySource(filePath, 'loudness')
+      else runtime.audioAnalysisService?.cancelAll('loudness')
+    },
     onComplete: (event) => {
       runtime.mainWindow?.webContents.send('loudnessAnalysis:completed', event)
     }

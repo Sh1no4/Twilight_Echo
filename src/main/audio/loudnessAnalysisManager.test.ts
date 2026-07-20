@@ -1,11 +1,46 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, writeFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
-import { LOUDNESS_ANALYSIS_ALGORITHM_VERSION, LoudnessAnalysisCache } from './loudnessCache.ts'
+import {
+  LOUDNESS_ANALYSIS_ALGORITHM_VERSION,
+  LoudnessAnalysisCache,
+  type LoudnessAnalysisCacheIdentity,
+  type LoudnessAnalysisResult
+} from './loudnessCache.ts'
 import { LoudnessAnalysisManager } from './loudnessAnalysisManager.ts'
+
+class DeferredLoudnessCache extends LoudnessAnalysisCache {
+  readonly committed: Promise<void>
+  private resolveCommitted: () => void = () => undefined
+  private readonly releaseGate: Promise<void>
+  private releaseGateResolve: () => void = () => undefined
+
+  constructor(cachePath: string) {
+    super(cachePath)
+    this.committed = new Promise((resolve) => {
+      this.resolveCommitted = resolve
+    })
+    this.releaseGate = new Promise((resolve) => {
+      this.releaseGateResolve = resolve
+    })
+  }
+
+  override async set(
+    identity: LoudnessAnalysisCacheIdentity,
+    analysis: LoudnessAnalysisResult
+  ): Promise<void> {
+    await super.set(identity, analysis)
+    this.resolveCommitted()
+    await this.releaseGate
+  }
+
+  release(): void {
+    this.releaseGateResolve()
+  }
+}
 
 test('LoudnessAnalysisManager skips remote URLs', async () => {
   const manager = new LoudnessAnalysisManager({
@@ -109,12 +144,14 @@ test('LoudnessAnalysisManager.cancel skips pending analysis without writing cach
   const filePath = join(dir, 'song.wav')
   await writeFile(filePath, 'fake', 'utf-8')
   let analyzeStarted = 0
-  let releaseAnalyze = null
-  const gate = new Promise((resolve) => {
+  let releaseAnalyze: () => void = () => undefined
+  const gate = new Promise<void>((resolve) => {
     releaseAnalyze = resolve
   })
+  const cancelled: Array<string | undefined> = []
   const manager = new LoudnessAnalysisManager({
     cache: new LoudnessAnalysisCache(join(dir, 'loudness-analysis-cache.json')),
+    cancelFile: (source) => cancelled.push(source),
     analyzeFile: async () => {
       analyzeStarted += 1
       await gate
@@ -135,7 +172,81 @@ test('LoudnessAnalysisManager.cancel skips pending analysis without writing cach
   const result = await pending
   assert.equal(result.status, 'skipped')
   if (result.status === 'skipped') assert.equal(result.reason, 'cancelled')
+  assert.deepEqual(cancelled, [filePath])
   assert.equal(analyzeStarted, 1)
   assert.equal(await manager.peekCached({ trackId: 'local:1', filePath }), null)
+  await rm(dir, { recursive: true, force: true })
+})
+
+test('LoudnessAnalysisManager cancellation during deferred cache commit rolls back without event', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'twilight-loudness-commit-cancel-'))
+  const filePath = join(dir, 'song.wav')
+  const cache = new DeferredLoudnessCache(join(dir, 'loudness-analysis-cache.json'))
+  await writeFile(filePath, 'fake', 'utf-8')
+  const completed: LoudnessAnalysisResult[] = []
+  const manager = new LoudnessAnalysisManager({
+    cache,
+    analyzeFile: async () => ({
+      integratedLufs: -18,
+      truePeakDb: -2,
+      source: 'analyzed',
+      analyzedAt: '2026-01-01T00:00:00.000Z',
+      algorithmVersion: LOUDNESS_ANALYSIS_ALGORITHM_VERSION
+    }),
+    onComplete: ({ analysis }) => completed.push(analysis)
+  })
+
+  const pending = manager.requestAnalysis({ trackId: 'local:commit-cancel', filePath })
+  await cache.committed
+  manager.cancel(filePath)
+  cache.release()
+
+  assert.deepEqual(await pending, { status: 'skipped', reason: 'cancelled' })
+  assert.equal(await manager.peekCached({ trackId: 'local:commit-cancel', filePath }), null)
+  assert.deepEqual(completed, [])
+  await rm(dir, { recursive: true, force: true })
+})
+
+test('LoudnessAnalysisManager cancellation rollback preserves a newer exact value', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'twilight-loudness-commit-preserve-'))
+  const filePath = join(dir, 'song.wav')
+  const cachePath = join(dir, 'loudness-analysis-cache.json')
+  await writeFile(filePath, 'fake', 'utf-8')
+  const fileStat = await stat(filePath)
+  const identity = {
+    filePath,
+    size: fileStat.size,
+    mtimeMs: fileStat.mtimeMs,
+    algorithmVersion: LOUDNESS_ANALYSIS_ALGORITHM_VERSION
+  }
+  const cancelledValue: LoudnessAnalysisResult = {
+    integratedLufs: -18,
+    truePeakDb: -2,
+    source: 'analyzed',
+    analyzedAt: '2026-01-01T00:00:00.000Z',
+    algorithmVersion: LOUDNESS_ANALYSIS_ALGORITHM_VERSION
+  }
+  const newerValue: LoudnessAnalysisResult = {
+    ...cancelledValue,
+    integratedLufs: -14,
+    analyzedAt: '2026-01-02T00:00:00.000Z'
+  }
+  const cache = new DeferredLoudnessCache(cachePath)
+  const completed: LoudnessAnalysisResult[] = []
+  const manager = new LoudnessAnalysisManager({
+    cache,
+    analyzeFile: async () => cancelledValue,
+    onComplete: ({ analysis }) => completed.push(analysis)
+  })
+
+  const pending = manager.requestAnalysis({ trackId: 'local:commit-cancel', filePath })
+  await cache.committed
+  manager.cancel(filePath)
+  await new LoudnessAnalysisCache(cachePath).set(identity, newerValue)
+  cache.release()
+
+  assert.deepEqual(await pending, { status: 'skipped', reason: 'cancelled' })
+  assert.deepEqual(await cache.get(identity), newerValue)
+  assert.deepEqual(completed, [])
   await rm(dir, { recursive: true, force: true })
 })

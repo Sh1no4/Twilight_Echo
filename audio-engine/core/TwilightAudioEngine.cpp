@@ -7,6 +7,7 @@
 #include "../utils/JsonUtils.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -69,6 +70,28 @@ void writeDiagnosticsJson(std::ostringstream& json, const OutputInfo::Diagnostic
        << "\"driverRestartCount\":" << diagnostics.driverRestartCount << ","
        << "\"deviceLostCount\":" << diagnostics.deviceLostCount << ","
        << "\"lastError\":\"" << json_utils::escape(diagnostics.lastError) << "\""
+       << "}";
+}
+
+void writeRenderPerformanceJson(
+    std::ostringstream& json,
+    const OutputInfo::RenderPerformanceSnapshot& performance) {
+  const double meanCallbackNanoseconds = performance.callbackCount == 0
+                                            ? 0.0
+                                            : static_cast<double>(performance.totalCallbackNanoseconds) /
+                                                  static_cast<double>(performance.callbackCount);
+  const double callbackDeadlineLoadPercent = performance.totalDeadlineNanoseconds == 0
+                                                 ? 0.0
+                                                 : (static_cast<double>(performance.totalCallbackNanoseconds) * 100.0) /
+                                                       static_cast<double>(performance.totalDeadlineNanoseconds);
+  json << "{"
+       << "\"callbackCount\":" << performance.callbackCount << ","
+       << "\"totalCallbackNanoseconds\":" << performance.totalCallbackNanoseconds << ","
+       << "\"meanCallbackNanoseconds\":" << meanCallbackNanoseconds << ","
+       << "\"peakCallbackNanoseconds\":" << performance.peakCallbackNanoseconds << ","
+       << "\"totalDeadlineNanoseconds\":" << performance.totalDeadlineNanoseconds << ","
+       << "\"deadlineMissCount\":" << performance.deadlineMissCount << ","
+       << "\"callbackDeadlineLoadPercent\":" << callbackDeadlineLoadPercent
        << "}";
 }
 
@@ -399,6 +422,8 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"perfectReason\":\"" << json_utils::escape(out.perfectReason) << "\","
        << "\"diagnostics\":";
   writeDiagnosticsJson(json, out.diagnostics);
+  json << ",\"renderPerformance\":";
+  writeRenderPerformanceJson(json, out.renderPerformance);
   json << ","
        << "\"deviceRecovered\":" << (out.deviceRecovered ? "true" : "false") << ","
        << "\"recoveryCount\":" << out.recoveryCount << ","
@@ -420,6 +445,8 @@ std::string playbackInfoToJson(const PlaybackInfo& info) {
        << "\"channelRoutingMode\":\"" << json_utils::escape(out.channelRoutingMode) << "\","
        << "\"diagnostics\":";
   writeDiagnosticsJson(json, out.diagnostics);
+  json << ",\"renderPerformance\":";
+  writeRenderPerformanceJson(json, out.renderPerformance);
   json << ","
        << "\"deviceRecovered\":" << (out.deviceRecovered ? "true" : "false") << ","
        << "\"recoveryCount\":" << out.recoveryCount << ","
@@ -1100,22 +1127,122 @@ TAE_Result TwilightAudioEngine::setDspGraph(const std::string& graphJson) {
   return TAE_RESULT_OK;
 }
 
+TAE_Result TwilightAudioEngine::applyDspState(
+    uint64_t revision,
+    const std::string& stateJson) {
+  const auto payloadRevision = json_utils::fieldNumber(stateJson, "revision");
+  const std::string processingJson = json_utils::fieldObject(stateJson, "processing");
+  if (revision == 0 || !payloadRevision.has_value() || !std::isfinite(*payloadRevision) ||
+      *payloadRevision != std::floor(*payloadRevision) ||
+      *payloadRevision != static_cast<double>(revision) || processingJson.empty() ||
+      json_utils::fieldObject(stateJson, "graph").empty()) {
+    emitError("DSP state payload is invalid", TAE_RESULT_INVALID_ARGUMENT, "dsp-state");
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
+
+  const DspConfig nextConfig = DspChain::parseConfigJson(processingJson);
+  DspConfig previousConfig;
+  {
+    std::lock_guard lock(mutex_);
+    previousConfig = dspConfig_;
+  }
+
+  std::string error;
+  if (!pipeline_ || !pipeline_->applyDspState(revision, stateJson, &error)) {
+    emitError(
+        error.empty() ? "DSP state application failed" : error,
+        TAE_RESULT_INVALID_ARGUMENT,
+        "dsp-state");
+    return TAE_RESULT_INVALID_ARGUMENT;
+  }
+
+  std::string rerouteReason;
+  double reroutePosition = 0.0;
+  PlaybackState rerouteState = PlaybackState::Stopped;
+  {
+    std::lock_guard lock(mutex_);
+    // The pipeline transaction has compiled and published the request. Only
+    // now expose it as the engine's desired state; failed preparation or a
+    // saturated RT retirement window leaves all three fields untouched.
+    dspConfig_ = nextConfig;
+    dspConfigJson_ = processingJson;
+    dspGraphJson_ = stateJson;
+    applyPipelineStatusLocked(pipeline_->status());
+    if (pipeline_ && info_.state != PlaybackState::Stopped) {
+      if (info_.isDsd) {
+        const bool wantsPcm = nextConfig.dsdOutputMode == DsdOutputMode::Pcm;
+        const bool wantsNative =
+            nextConfig.dsdOutputMode == DsdOutputMode::Auto ||
+            nextConfig.dsdOutputMode == DsdOutputMode::Native;
+        const bool wantsDop =
+            nextConfig.dsdOutputMode == DsdOutputMode::Auto ||
+            nextConfig.dsdOutputMode == DsdOutputMode::Dop ||
+            nextConfig.dsdOutputMode == DsdOutputMode::Native;
+        const bool modeChanged = previousConfig.dsdOutputMode != nextConfig.dsdOutputMode;
+        const bool dopActive = pipeline_->isDopPathActive();
+        const bool nativeActive = pipeline_->isNativeDsdPathActive();
+        if ((dopActive || nativeActive) && wantsPcm) {
+          rerouteReason = "DSD output mode forced PCM";
+          reroutePosition = info_.positionSeconds;
+          rerouteState = info_.state;
+        } else if (nativeActive && nextConfig.dsdOutputMode == DsdOutputMode::Dop) {
+          rerouteReason = "Re-enter DoP output mode";
+          reroutePosition = info_.positionSeconds;
+          rerouteState = info_.state;
+        } else if (modeChanged && wantsNative && !nativeActive) {
+          rerouteReason = "Re-enter Native DSD output mode";
+          reroutePosition = info_.positionSeconds;
+          rerouteState = info_.state;
+        } else if (modeChanged && wantsDop && !dopActive && !nativeActive) {
+          rerouteReason = wantsNative ? "Re-enter Native DSD output mode" :
+                                        "Re-enter DoP output mode";
+          reroutePosition = info_.positionSeconds;
+          rerouteState = info_.state;
+        }
+      }
+      if (rerouteReason.empty() &&
+          !shouldReroutePipelineLocked(&rerouteReason, &reroutePosition, &rerouteState)) {
+        publishStateLocked();
+      }
+    } else {
+      const DspStatus configStatus = configuredDspStatusFromConfig(nextConfig);
+      info_.replayGainActive = configStatus.replayGainActive;
+      info_.loudnormActive = configStatus.loudnormActive;
+      info_.eqActive = configStatus.eqActive;
+      info_.crossfeedActive = configStatus.crossfeedActive;
+      info_.crossfeedStrength = configStatus.crossfeedStrength;
+      info_.crossfadeActive = configStatus.crossfadeActive;
+      info_.crossfadeSeconds = configStatus.crossfadeSeconds;
+      if (!nextConfig.enabled) info_.convolverActive = false;
+      updatePerfectLocked();
+      publishStateLocked();
+    }
+  }
+  if (!rerouteReason.empty()) {
+    return restartCurrentPlaybackForReroute(
+        reroutePosition,
+        rerouteState,
+        rerouteReason,
+        "dsp-state");
+  }
+  return TAE_RESULT_OK;
+}
+
 TAE_Result TwilightAudioEngine::setOutputConfig(const std::string& outputConfigJson) {
   OutputConfig parsed = parseOutputConfigJson(outputConfigJson.empty() ? "{}" : outputConfigJson);
   std::string error;
   std::string rerouteReason;
   double reroutePosition = 0.0;
   PlaybackState rerouteState = PlaybackState::Stopped;
-  {
-    std::lock_guard lock(mutex_);
-    outputConfig_ = parsed;
-  }
   if (pipeline_ && !pipeline_->setOutputConfig(parsed, &error)) {
     emitError(error.empty() ? "输出配置设置失败" : error, TAE_RESULT_INVALID_ARGUMENT, "output-config");
     return TAE_RESULT_INVALID_ARGUMENT;
   }
   {
     std::lock_guard lock(mutex_);
+    // Persist only after AudioPipeline has completed its native topology
+    // transaction and acknowledged the candidate output.
+    outputConfig_ = parsed;
     info_.outputInfo.channelRoutingMode = channelRoutingModeToString(outputConfig_.routingMode);
     if (pipeline_ && info_.state != PlaybackState::Stopped) {
       applyPipelineStatusLocked(pipeline_->status());
@@ -1533,6 +1660,10 @@ void TwilightAudioEngine::clockLoop() {
       deviceInvalidated = pipeline_->consumeDeviceInvalidated(&deviceInvalidatedMessage);
       renderError = pipeline_->consumeRenderError(&renderErrorMessage);
       trackStarted = pipeline_->consumeTrackStarted(&startedItem);
+      // A render callback can promote the preload between the first status snapshot and the
+      // track-start flag read. Refresh after observing that flag so the queue-index transition is
+      // never published with the previous CUE segment's duration or ReplayGain state.
+      if (trackStarted) pipelineStatus = pipeline_->status();
     }
     if (hasPipelineStatus &&
         pipelineStatus.appliedConfigRevision > lastEmittedAppliedConfigRevision_) {
@@ -1951,6 +2082,54 @@ TAE_Result copyStringResult(const std::string& value, char* buffer, size_t buffe
   return TAE_RESULT_OK;
 }
 
+struct AnalysisProbeResult {
+  TAE_EngineHandle engine = nullptr;
+  std::string source;
+  std::string options;
+  std::string value;
+};
+
+using AnalysisFunction = std::string (*)(const std::string&, const std::string&);
+
+thread_local AnalysisProbeResult bpmProbeResult;
+thread_local AnalysisProbeResult loudnessProbeResult;
+std::atomic<uint64_t> bpmAnalysisExecutionCount{0};
+std::atomic<uint64_t> loudnessAnalysisExecutionCount{0};
+
+TAE_Result analyzeWithProbeResult(
+    TAE_EngineHandle engine,
+    const char* source,
+    const char* optionsJson,
+    char* buffer,
+    size_t bufferSize,
+    size_t* requiredSize,
+    AnalysisProbeResult* probe,
+    std::atomic<uint64_t>* executionCount,
+    AnalysisFunction analyze) {
+  if (!engine || !source || !probe || !executionCount || !analyze) return TAE_RESULT_INVALID_ARGUMENT;
+  const std::string normalizedSource(source);
+  const std::string normalizedOptions = optionsJson ? optionsJson : "{}";
+  const bool sizeProbe = !buffer || bufferSize == 0;
+  if (sizeProbe) {
+    executionCount->fetch_add(1, std::memory_order_relaxed);
+    probe->engine = engine;
+    probe->source = normalizedSource;
+    probe->options = normalizedOptions;
+    probe->value = analyze(normalizedSource, normalizedOptions);
+    return copyStringResult(probe->value, buffer, bufferSize, requiredSize);
+  }
+
+  if (probe->engine == engine && probe->source == normalizedSource && probe->options == normalizedOptions) {
+    const TAE_Result result = copyStringResult(probe->value, buffer, bufferSize, requiredSize);
+    if (result == TAE_RESULT_OK) *probe = AnalysisProbeResult{};
+    return result;
+  }
+
+  executionCount->fetch_add(1, std::memory_order_relaxed);
+  return copyStringResult(
+      analyze(normalizedSource, normalizedOptions), buffer, bufferSize, requiredSize);
+}
+
 }  // namespace
 
 extern "C" {
@@ -1967,6 +2146,8 @@ TAE_Result TAE_CreateEngine(TAE_EngineHandle* out_engine) {
 }
 
 void TAE_DestroyEngine(TAE_EngineHandle engine) {
+  if (bpmProbeResult.engine == engine) bpmProbeResult = AnalysisProbeResult{};
+  if (loudnessProbeResult.engine == engine) loudnessProbeResult = AnalysisProbeResult{};
   delete fromHandle(engine);
 }
 
@@ -2059,6 +2240,14 @@ TAE_Result TAE_SetDspConfig(TAE_EngineHandle engine, const char* dsp_config_json
 TAE_Result TAE_SetDspGraph(TAE_EngineHandle engine, const char* dsp_graph_json) {
   if (!engine) return TAE_RESULT_NOT_INITIALIZED;
   return fromHandle(engine)->setDspGraph(dsp_graph_json ? dsp_graph_json : "{\"graph\":{\"nodes\":[]}}");
+}
+
+TAE_Result TAE_ApplyDspState(
+    TAE_EngineHandle engine,
+    uint64_t revision,
+    const char* dsp_state_json) {
+  if (!engine || !dsp_state_json || revision == 0) return TAE_RESULT_INVALID_ARGUMENT;
+  return fromHandle(engine)->applyDspState(revision, dsp_state_json);
 }
 
 TAE_Result TAE_SetOutputConfig(TAE_EngineHandle engine, const char* output_config_json) {
@@ -2189,12 +2378,16 @@ TAE_Result TAE_AnalyzeBpm(
     char* buffer,
     size_t buffer_size,
     size_t* required_size) {
-  if (!engine || !source) return TAE_RESULT_INVALID_ARGUMENT;
-  return copyStringResult(
-      twilight::audio::analyzeBpmJson(source, options_json ? options_json : "{}"),
+  return analyzeWithProbeResult(
+      engine,
+      source,
+      options_json,
       buffer,
       buffer_size,
-      required_size);
+      required_size,
+      &bpmProbeResult,
+      &bpmAnalysisExecutionCount,
+      twilight::audio::analyzeBpmJson);
 }
 
 TAE_Result TAE_AnalyzeLoudness(
@@ -2204,12 +2397,24 @@ TAE_Result TAE_AnalyzeLoudness(
     char* buffer,
     size_t buffer_size,
     size_t* required_size) {
-  if (!engine || !source) return TAE_RESULT_INVALID_ARGUMENT;
-  return copyStringResult(
-      twilight::audio::analyzeLoudnessJson(source, options_json ? options_json : "{}"),
+  return analyzeWithProbeResult(
+      engine,
+      source,
+      options_json,
       buffer,
       buffer_size,
-      required_size);
+      required_size,
+      &loudnessProbeResult,
+      &loudnessAnalysisExecutionCount,
+      twilight::audio::analyzeLoudnessJson);
+}
+
+uint64_t TAE_GetAnalysisExecutionCount(const char* analysis_kind) {
+  if (!analysis_kind) return 0;
+  const std::string kind(analysis_kind);
+  if (kind == "bpm") return bpmAnalysisExecutionCount.load(std::memory_order_relaxed);
+  if (kind == "loudness") return loudnessAnalysisExecutionCount.load(std::memory_order_relaxed);
+  return 0;
 }
 
 const char* TAE_GetVersion(void) {

@@ -15,6 +15,8 @@
 #endif
 
 namespace twilight::audio {
+
+std::atomic<size_t> Vst3BridgeProcessor::liveInstanceCount_{0};
 namespace {
 
 #ifdef _WIN32
@@ -133,11 +135,17 @@ bool isSupportedChannelCount(int channelCount) {
 }  // namespace
 
 Vst3BridgeProcessor::Vst3BridgeProcessor(Vst3BridgeConfig config) : bridgeConfig_(std::move(config)) {
+  liveInstanceCount_.fetch_add(1, std::memory_order_relaxed);
   drySequences_.fill(UINT32_MAX);
 }
 
 Vst3BridgeProcessor::~Vst3BridgeProcessor() {
   destroyHost();
+  liveInstanceCount_.fetch_sub(1, std::memory_order_relaxed);
+}
+
+size_t Vst3BridgeProcessor::liveInstanceCountForTests() noexcept {
+  return liveInstanceCount_.load(std::memory_order_relaxed);
 }
 
 void Vst3BridgeProcessor::configure(const DspConfig& config) {

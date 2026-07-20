@@ -1,4 +1,6 @@
 import { defineStore } from 'pinia'
+import type { Ref } from 'vue'
+import type { VisualizationData } from '../../../preload/types'
 import { usePlayerStore } from './usePlayerStore'
 
 export const useVisualizationStore = defineStore('visualization', () => {
@@ -6,6 +8,6 @@ export const useVisualizationStore = defineStore('visualization', () => {
 
   return {
     visualizerActive: player.visualizerActive,
-    visualizationData: player.visualizationData
+    visualizationData: player.visualizationData as Ref<VisualizationData>
   }
 })

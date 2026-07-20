@@ -21,7 +21,7 @@ const dsdRateByName = new Map([
 function usage() {
   return [
     'Usage:',
-    '  npm run smoke:asio-native-dsd -- --device "My ASIO DAC" --fixture-dir D:\\DSDFixtures',
+    '  pnpm run smoke:asio-native-dsd -- --device "My ASIO DAC" --fixture-dir D:\\DSDFixtures',
     '  node scripts/asio-native-dsd-smoke.cjs --device "asio:Driver Name" --fixture D:\\test-dsd64.dsf',
     '',
     'Options:',

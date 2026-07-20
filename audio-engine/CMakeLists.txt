@@ -529,12 +529,101 @@ if(TAE_BUILD_TESTS)
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
   target_link_libraries(twilight_runtime_queue_reroute_tests PRIVATE ${CMAKE_DL_LIBS})
+  if(WIN32)
+    # The fixture is a controlled process-level stand-in for the external VST3
+    # host. It exercises the same shared-memory lifecycle without pretending
+    # to validate a third-party VST3 module.
+    add_executable(twilight_vst3_host_pressure_fixture tests/vst3_host_pressure_fixture.cpp)
+    target_include_directories(twilight_vst3_host_pressure_fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    # MinGW needs this switch to select wmain; MSVC recognizes wmain directly.
+    if(MINGW)
+      target_link_options(twilight_vst3_host_pressure_fixture PRIVATE -municode)
+    endif()
+    set_target_properties(twilight_vst3_host_pressure_fixture PROPERTIES
+      OUTPUT_NAME "twilight-vst3-host-pressure-fixture"
+    )
+    add_dependencies(twilight_runtime_queue_reroute_tests twilight_vst3_host_pressure_fixture)
+    add_custom_command(
+      TARGET twilight_runtime_queue_reroute_tests
+      POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:twilight_vst3_host_pressure_fixture>
+        $<TARGET_FILE_DIR:twilight_runtime_queue_reroute_tests>/twilight-vst3-host.exe
+    )
+    target_link_libraries(twilight_runtime_queue_reroute_tests PRIVATE psapi)
+  endif()
   if(TAE_EBUR128_AVAILABLE)
     target_compile_definitions(twilight_runtime_queue_reroute_tests PRIVATE TAE_HAS_EBUR128=1)
     target_include_directories(twilight_runtime_queue_reroute_tests PRIVATE ${EBUR128_INCLUDE_DIR})
     target_link_libraries(twilight_runtime_queue_reroute_tests PRIVATE ${EBUR128_LIBRARY})
   endif()
   add_test(NAME twilight_runtime_queue_reroute_unit COMMAND twilight_runtime_queue_reroute_tests)
+
+  # This is deliberately a native behavior gate, not an array-fill benchmark.
+  # It drives the production AudioPipeline and FFmpeg decoder through a
+  # controlled callback pump. Real-device scheduling remains an opt-in smoke.
+  add_executable(twilight_audio_performance_gate
+    tests/audio_performance_gate.cpp
+    core/AudioBuffer.cpp
+    core/AudioPipeline.cpp
+    core/AudioTypes.cpp
+    analysis/BpmAnalyzer.cpp
+    analysis/LoudnessAnalyzer.cpp
+    decoder/DopPacker.cpp
+    decoder/DsdReader.cpp
+    decoder/SacdIsoDemuxer.cpp
+    decoder/DstDecoder.cpp
+    decoder/SacdDstDecoderProvider.cpp
+    decoder/vendor/dstdec/dstdec.cpp
+    decoder/FFmpegDecoder.cpp
+    dsp/ChannelRouter.cpp
+    dsp/ConvolverProcessor.cpp
+    dsp/CrossfeedProcessor.cpp
+    dsp/DspChain.cpp
+    dsp/DspWorkspaceProcessors.cpp
+    dsp/FftSpectrumAnalyzer.cpp
+    dsp/KissFftAdapter.cpp
+    dsp/ParametricEqProcessor.cpp
+    dsp/ReplayGainProcessor.cpp
+    dsp/Vst3BridgeProcessor.cpp
+    plugins/PluginRegistry.cpp
+    playlist/QueueManager.cpp
+  )
+  target_include_directories(twilight_audio_performance_gate PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  # The MinGW release preset defines NDEBUG. This target's assertions are the
+  # gate itself, so keep them active in every configuration.
+  if(MSVC)
+    target_compile_options(twilight_audio_performance_gate PRIVATE /UNDEBUG)
+  else()
+    target_compile_options(twilight_audio_performance_gate PRIVATE -UNDEBUG)
+  endif()
+  target_link_libraries(twilight_audio_performance_gate PRIVATE ${CMAKE_DL_LIBS})
+  if(FFMPEG_FOUND)
+    target_compile_definitions(twilight_audio_performance_gate PRIVATE TAE_HAS_FFMPEG=1)
+    target_include_directories(twilight_audio_performance_gate PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    target_link_libraries(twilight_audio_performance_gate PRIVATE ${FFMPEG_LIBRARIES} ${TAE_FFMPEG_EXTRA_LIBS})
+  endif()
+  if(TAE_EBUR128_AVAILABLE)
+    target_compile_definitions(twilight_audio_performance_gate PRIVATE TAE_HAS_EBUR128=1)
+    target_include_directories(twilight_audio_performance_gate PRIVATE ${EBUR128_INCLUDE_DIR})
+    target_link_libraries(twilight_audio_performance_gate PRIVATE ${EBUR128_LIBRARY})
+  endif()
+  if(WIN32)
+    add_dependencies(twilight_audio_performance_gate twilight_vst3_host_pressure_fixture)
+    add_custom_command(
+      TARGET twilight_audio_performance_gate
+      POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:twilight_vst3_host_pressure_fixture>
+        $<TARGET_FILE_DIR:twilight_audio_performance_gate>/twilight-vst3-host.exe
+    )
+    target_link_libraries(twilight_audio_performance_gate PRIVATE psapi)
+  endif()
+  add_test(NAME twilight_audio_performance_gate COMMAND twilight_audio_performance_gate)
+  set_tests_properties(twilight_audio_performance_gate PROPERTIES TIMEOUT 180 SKIP_RETURN_CODE 77)
 
   add_executable(twilight_dst_decoder_tests
     tests/dst_decoder_tests.cpp
@@ -579,8 +668,4 @@ if(TAE_BUILD_TESTS)
   endif()
   add_test(NAME twilight_alsa_backend_unit COMMAND twilight_alsa_backend_tests)
 
-  add_executable(audio_output_benchmark
-    tests/output_backend_benchmark.cpp
-  )
-  target_include_directories(audio_output_benchmark PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 endif()

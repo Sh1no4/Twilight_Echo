@@ -1,6 +1,19 @@
 packages:
   - packages/*
 
+nodeLinker: hoisted
+
+overrides:
+  form-data: 4.0.6
+  qs: 6.15.2
+  uuid: 11.1.1
+
+# discord-rpc uses Electron's app.setAsDefaultProtocolClient in this application. Its optional
+# register-scheme fallback is an exotic native dependency for non-Electron runtimes, so omit it.
+blockExoticSubdeps: true
+ignoredOptionalDependencies:
+  - register-scheme
+
 patchedDependencies:
   '@neteasecloudmusicapienhanced/api@4.35.1': patches/@neteasecloudmusicapienhanced__api@4.35.1.patch
 
@@ -8,4 +21,3 @@ allowBuilds:
   electron: true
   electron-winstaller: true
   esbuild: true
-  ttf2woff2: true

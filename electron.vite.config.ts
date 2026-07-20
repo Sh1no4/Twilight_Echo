@@ -9,7 +9,9 @@ export default defineConfig({
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
           pluginHost: resolve(__dirname, 'src/main/pluginHost.ts'),
-          audioEngineService: resolve(__dirname, 'src/main/audioEngineService.ts')
+          audioEngineService: resolve(__dirname, 'src/main/audioEngineService.ts'),
+          audioAnalysisService: resolve(__dirname, 'src/main/audioAnalysisService.ts'),
+          libraryScanService: resolve(__dirname, 'src/main/library/libraryScanService.ts')
         }
       }
     }
@@ -24,6 +26,7 @@ export default defineConfig({
     publicDir: resolve('resources'),
     plugins: [vue()],
     build: {
+      manifest: true,
       chunkSizeWarningLimit: 600,
       rollupOptions: {
         output: {

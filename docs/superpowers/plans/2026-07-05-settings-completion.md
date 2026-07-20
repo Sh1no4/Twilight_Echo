@@ -545,7 +545,7 @@ Inside each index plugin card, add:
   <span v-if="entry.permissions.length === 0">无</span>
 </div>
 <div class="plugin-index-source" :title="entry.sourceUrl">
-  {{ entry.verified ? '已审核索引' : '非审核索引' }} · {{ entry.checksumSha256.slice(0, 12) }}
+  {{ entry.verification.level === 'official' ? '官方验证' : entry.verification.level === 'publisher-signed' ? '发布者签名有效' : entry.verification.indexClaimed ? '索引声明' : '未验证' }} · {{ entry.checksumSha256.slice(0, 12) }}
 </div>
 ```
 

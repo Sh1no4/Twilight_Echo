@@ -1,7 +1,7 @@
 import type { ListeningTrackStat } from '../stores/useListeningStatsStore'
 import type { Track } from '../types/music'
 import { getLogicalTrackKey } from './logicalTrackIdentity.ts'
-import { buildLogicalTracks, type LogicalTrack } from './logicalTrackModel.ts'
+import { buildLogicalTracks, getTrackSource, type LogicalTrack } from './logicalTrackModel.ts'
 
 export type UnifiedRecentStat = ListeningTrackStat & { id: string }
 
@@ -53,7 +53,8 @@ function resolveRecentTrack(
   const localVariant = localByLogicalKey.get(getLogicalTrackKey(stat))
   if (localVariant) return localVariant.preferredTrack
 
-  return stat.track ?? null
+  if (!stat.track) return null
+  return getTrackSource(stat.track) === 'local' ? null : stat.track
 }
 
 function buildLocalTrackIdMap(localTracks: Track[]): Map<string, Track> {

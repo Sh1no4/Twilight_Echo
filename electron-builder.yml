@@ -13,8 +13,7 @@ files:
   - '!out/renderer/plugins/**'
   - '!out/renderer/plugin-index/**'
   - '!out/renderer/font/Alibaba-PuHuiTi-Medium.ttf'
-  - '!out/renderer/font/**/*.ttf'
-  - '!out/renderer/font/**/*.otf'
+  - '!out/renderer/font/**'
   - '!node_modules/**/{test,tests,__tests__,docs,doc,example,examples,benchmark,benchmarks}/**'
   - '!node_modules/**/*.map'
   - '!node_modules/**/*.ts'
@@ -40,7 +39,13 @@ extraResources:
 win:
   executableName: TwilightEcho
   icon: build/icon.ico
-  signAndEditExecutable: false
+  # Development packages remain unsigned. The protected release config extends this file and
+  # enables forceCodeSigning; see electron-builder.release-win.yml.
+  signAndEditExecutable: true
+  signExts:
+    - .exe
+    - .dll
+    - .node
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -76,8 +81,5 @@ linux:
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
-publish:
-  provider: generic
-  url: https://example.com/auto-updates
 electronDownload:
   mirror: https://npmmirror.com/mirrors/electron/

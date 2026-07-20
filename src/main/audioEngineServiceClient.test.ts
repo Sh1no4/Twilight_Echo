@@ -3,6 +3,9 @@ import { EventEmitter } from 'node:events'
 import test from 'node:test'
 
 import { AudioEngineServiceBinding } from './audioEngineServiceClient.ts'
+import { AudioAnalysisServiceClient } from './audioAnalysisServiceClient.ts'
+import { createAudioServiceCapabilities } from '../shared/audioServiceContract.ts'
+import type { DspGraphStatus } from '../shared/dspGraph.ts'
 
 class SilentUtilityProcess extends EventEmitter {
   stdout = new EventEmitter()
@@ -34,6 +37,401 @@ class ThrowingUtilityProcess extends ManualUtilityProcess {
     throw new Error('utility pipe closed')
   }
 }
+
+test('real AudioEngineServiceBinding applies one DSP state transaction and confirms the native revision ACK', async () => {
+  const child = new ManualUtilityProcess()
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 100,
+    restartDelayMs: 1000,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  child.emit('message', {
+    kind: 'ready',
+    capabilities: createAudioServiceCapabilities(['ApplyDspState', 'GetDspGraphStatus'])
+  })
+
+  try {
+    assert.equal(typeof binding.ApplyDspState, 'function')
+    assert.equal(typeof binding.GetDspGraphStatus, 'function')
+    const payload = {
+      revision: 7,
+      processing: { eqEnabled: true, eqPreamp: 1.5 },
+      sceneId: 'studio',
+      graph: {
+        version: 2,
+        nodes: [{ id: 'width', type: 'stereoField', enabled: true, params: { width: 1.2 } }],
+        outputStage: { targetSampleRate: 96000, resamplerQuality: 'ultra', dither: 'tpdf' }
+      }
+    }
+    const applied = binding.applyDspState(7, payload)
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal((child.messages[0] as { method: string }).method, 'ApplyDspState')
+    const setRequest = child.messages[0] as { requestId: string; args: [number, string] }
+    assert.equal(setRequest.args[0], 7)
+    assert.equal(JSON.parse(setRequest.args[1]).processing.eqPreamp, 1.5)
+    child.emit('message', {
+      kind: 'response',
+      requestId: setRequest.requestId,
+      ok: true,
+      value: undefined
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    assert.equal((child.messages[1] as { method: string }).method, 'GetDspGraphStatus')
+    child.emit('message', {
+      kind: 'response',
+      requestId: (child.messages[1] as { requestId: string }).requestId,
+      ok: true,
+      value: JSON.stringify({
+        revision: 7,
+        activeSceneId: 'studio',
+        totalLatencyFrames: 32,
+        totalTailFrames: 0,
+        compileState: 'ready',
+        nodes: [{ id: 'width', type: 'stereoField', enabled: true, active: true }]
+      })
+    })
+
+    const status = await applied
+    assert.equal(status.revision, 7)
+    assert.equal(status.requestedRevision, 7)
+    assert.equal(status.appliedRevision, 7)
+    assert.equal(status.applyState, 'applied')
+
+    binding.ApplyDspState(
+      8,
+      JSON.stringify({
+        revision: 8,
+        processing: { eqEnabled: false },
+        sceneId: 'studio',
+        graph: { nodes: [] }
+      })
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const directSetRequest = child.messages[2] as { requestId: string; method: string }
+    assert.equal(directSetRequest.method, 'ApplyDspState')
+    child.emit('message', {
+      kind: 'response',
+      requestId: directSetRequest.requestId,
+      ok: true,
+      value: undefined
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const directStatusRequest = child.messages[3] as { requestId: string; method: string }
+    assert.equal(directStatusRequest.method, 'GetDspGraphStatus')
+    child.emit('message', {
+      kind: 'response',
+      requestId: directStatusRequest.requestId,
+      ok: true,
+      value: JSON.stringify({
+        revision: 8,
+        activeSceneId: 'studio',
+        totalLatencyFrames: 0,
+        totalTailFrames: 0,
+        nodes: []
+      })
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal((binding.GetDspGraphStatus() as { revision: number }).revision, 8)
+  } finally {
+    binding.destroy()
+  }
+})
+
+test('1000 DSP slider updates merge by field into one latest-revision transaction', async () => {
+  const child = new ManualUtilityProcess()
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 100,
+    restartDelayMs: 1000,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  child.emit('message', {
+    kind: 'ready',
+    capabilities: createAudioServiceCapabilities(['ApplyDspState', 'GetDspGraphStatus'])
+  })
+
+  try {
+    const updates: Array<Promise<unknown>> = []
+    for (let revision = 1; revision <= 1000; revision += 1) {
+      updates.push(
+        binding.applyDspState(revision, {
+          revision,
+          processing:
+            revision % 2 === 0
+              ? { eqPreamp: revision / 100 }
+              : { crossfeedStrength: revision / 1000 },
+          sceneId: 'slider-stress',
+          graph: {
+            version: 2,
+            nodes: [
+              {
+                id: 'balance',
+                type: 'stereoField',
+                enabled: true,
+                params: { balance: revision / 1000 }
+              }
+            ]
+          }
+        })
+      )
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(child.messages.length, 1)
+    const applyRequest = child.messages[0] as {
+      requestId: string
+      method: string
+      args: [number, string]
+    }
+    assert.equal(applyRequest.method, 'ApplyDspState')
+    assert.equal(applyRequest.args[0], 1000)
+    const merged = JSON.parse(applyRequest.args[1]) as {
+      revision: number
+      processing: { eqPreamp?: number; crossfeedStrength?: number }
+      graph: { nodes: Array<{ params: { balance: number } }> }
+    }
+    assert.equal(merged.revision, 1000)
+    assert.equal(merged.processing.eqPreamp, 10)
+    assert.equal(merged.processing.crossfeedStrength, 0.999)
+    assert.equal(merged.graph.nodes[0].params.balance, 1)
+
+    child.emit('message', {
+      kind: 'response',
+      requestId: applyRequest.requestId,
+      ok: true,
+      value: undefined
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    assert.equal(child.messages.length, 2)
+    const statusRequest = child.messages[1] as { requestId: string; method: string }
+    assert.equal(statusRequest.method, 'GetDspGraphStatus')
+    child.emit('message', {
+      kind: 'response',
+      requestId: statusRequest.requestId,
+      ok: true,
+      value: JSON.stringify({
+        revision: 1000,
+        activeSceneId: 'slider-stress',
+        totalLatencyFrames: 0,
+        totalTailFrames: 0,
+        nodes: []
+      })
+    })
+
+    const statuses = await Promise.all(updates)
+    assert.equal(statuses.length, 1000)
+    assert.equal(child.messages.length, 2)
+    assert.equal((binding.GetDspGraphStatus() as DspGraphStatus).revision, 1000)
+  } finally {
+    binding.destroy()
+  }
+})
+
+test('queued DSP graph patches retain other nodes and merge each node params by id', async () => {
+  const child = new ManualUtilityProcess()
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 100,
+    restartDelayMs: 1000,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  child.emit('message', {
+    kind: 'ready',
+    capabilities: createAudioServiceCapabilities(['ApplyDspState', 'GetDspGraphStatus'])
+  })
+
+  try {
+    const baseline = binding.applyDspState(1, {
+      revision: 1,
+      graphUpdateMode: 'replace',
+      processing: { eqEnabled: true, crossfeedEnabled: true },
+      sceneId: 'multi-node-slider-stress',
+      graph: {
+        version: 2,
+        nodes: [
+          {
+            id: 'eq',
+            type: 'equalizer',
+            enabled: true,
+            params: { preamp: 1, bandGain: 2 }
+          },
+          {
+            id: 'stereo',
+            type: 'stereoField',
+            enabled: true,
+            params: { balance: 0, width: 1 }
+          }
+        ],
+        outputStage: { targetSampleRate: 96000, dither: 'tpdf' }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const baselineRequest = child.messages[0] as { requestId: string }
+    child.emit('message', { kind: 'response', requestId: baselineRequest.requestId, ok: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const baselineStatus = child.messages[1] as { requestId: string }
+    child.emit('message', {
+      kind: 'response',
+      requestId: baselineStatus.requestId,
+      ok: true,
+      value: JSON.stringify({
+        revision: 1,
+        activeSceneId: 'multi-node-slider-stress',
+        totalLatencyFrames: 0,
+        totalTailFrames: 0,
+        nodes: []
+      })
+    })
+    await baseline
+
+    const balanceUpdate = binding.applyDspState(2, {
+      revision: 2,
+      processing: { crossfeedStrength: 0.35 },
+      sceneId: 'multi-node-slider-stress',
+      graph: { nodes: [{ id: 'stereo', params: { balance: 0.35 } }] }
+    })
+    const eqUpdate = binding.applyDspState(3, {
+      revision: 3,
+      processing: { eqPreamp: 4 },
+      sceneId: 'multi-node-slider-stress',
+      graph: {
+        nodes: [
+          { id: 'eq', params: { bandGain: 5 } },
+          { id: 'stereo', params: { width: 1.35 } }
+        ],
+        outputStage: { dither: 'noiseShaped' }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const patchRequest = child.messages[2] as {
+      requestId: string
+      method: string
+      args: [number, string]
+    }
+    assert.equal(patchRequest.method, 'ApplyDspState')
+    assert.equal(patchRequest.args[0], 3)
+    const merged = JSON.parse(patchRequest.args[1]) as {
+      processing: Record<string, unknown>
+      graph: {
+        nodes: Array<{ id: string; enabled?: boolean; params: Record<string, unknown> }>
+        outputStage: Record<string, unknown>
+      }
+    }
+    assert.deepEqual(merged.processing, {
+      eqEnabled: true,
+      crossfeedEnabled: true,
+      crossfeedStrength: 0.35,
+      eqPreamp: 4
+    })
+    assert.deepEqual(merged.graph.nodes, [
+      {
+        id: 'eq',
+        type: 'equalizer',
+        enabled: true,
+        params: { preamp: 1, bandGain: 5 }
+      },
+      {
+        id: 'stereo',
+        type: 'stereoField',
+        enabled: true,
+        params: { balance: 0.35, width: 1.35 }
+      }
+    ])
+    assert.deepEqual(merged.graph.outputStage, { targetSampleRate: 96000, dither: 'noiseShaped' })
+
+    child.emit('message', { kind: 'response', requestId: patchRequest.requestId, ok: true })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const patchStatus = child.messages[3] as { requestId: string }
+    child.emit('message', {
+      kind: 'response',
+      requestId: patchStatus.requestId,
+      ok: true,
+      value: JSON.stringify({
+        revision: 3,
+        activeSceneId: 'multi-node-slider-stress',
+        totalLatencyFrames: 0,
+        totalTailFrames: 0,
+        nodes: []
+      })
+    })
+    await Promise.all([balanceUpdate, eqUpdate])
+
+    const clearGraph = binding.applyDspState(4, {
+      revision: 4,
+      graphUpdateMode: 'replace',
+      processing: { eqEnabled: false, crossfeedEnabled: false },
+      sceneId: 'multi-node-slider-stress',
+      graph: {
+        version: 2,
+        nodes: [],
+        outputStage: { targetSampleRate: 48000 }
+      }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const clearRequest = child.messages[4] as {
+      requestId: string
+      args: [number, string]
+    }
+    const cleared = JSON.parse(clearRequest.args[1]) as {
+      graphUpdateMode?: string
+      graph: { nodes: unknown[] }
+    }
+    assert.equal(cleared.graphUpdateMode, 'replace')
+    assert.deepEqual(cleared.graph.nodes, [])
+    child.emit('message', {
+      kind: 'response',
+      requestId: clearRequest.requestId,
+      ok: true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const clearStatus = child.messages[5] as { requestId: string }
+    child.emit('message', {
+      kind: 'response',
+      requestId: clearStatus.requestId,
+      ok: true,
+      value: JSON.stringify({
+        revision: 4,
+        activeSceneId: 'multi-node-slider-stress',
+        totalLatencyFrames: 0,
+        totalTailFrames: 0,
+        nodes: []
+      })
+    })
+    await clearGraph
+  } finally {
+    binding.destroy()
+  }
+})
+
+test('audio service capability negotiation fails closed when revision ACK is unavailable', () => {
+  const child = new ManualUtilityProcess()
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 100,
+    restartDelayMs: 1000,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  let reason = ''
+  binding.on('crash', (value: string) => {
+    reason = value
+  })
+
+  child.emit('message', {
+    kind: 'ready',
+    capabilities: {
+      protocolVersion: 2,
+      methods: ['ApplyDspState'],
+      dspGraphRevisionAck: false
+    }
+  })
+
+  assert.equal(child.killCount, 1)
+  assert.match(reason, /GetDspGraphStatus|revision ACK/)
+  binding.destroy()
+})
 
 test('cached audio service calls swallow timeout rejections', async () => {
   const child = new SilentUtilityProcess()
@@ -100,37 +498,434 @@ test('timed out audio service RPC terminates and restarts the unresponsive gener
   }
 })
 
-test('BPM analysis uses its long-running RPC budget without masking ordinary service hangs', async () => {
+test('topology RPC outlives the normal control deadline and resolves in the same generation', async () => {
   const child = new ManualUtilityProcess()
-  const electron = {
-    utilityProcess: {
-      fork: () => child
-    }
-  }
   const binding = new AudioEngineServiceBinding({
     serviceEntry: 'audioEngineService.js',
     requestTimeoutMs: 5,
-    analysisRequestTimeoutMs: 50,
-    restartDelayMs: 5,
-    electron
+    topologyRequestTimeoutMs: 100,
+    restartDelayMs: 1000,
+    electron: { utilityProcess: { fork: () => child } }
   })
 
   try {
-    const analysis = binding.callAsync('AnalyzeBpm', ['track.flac', '{}'])
-    await new Promise((resolve) => setTimeout(resolve, 15))
+    const pending = binding.callAsync('SetOutputConfig', ['{"preferredBufferSize":512}'])
+    await new Promise((resolve) => setTimeout(resolve, 20))
     assert.equal(child.killCount, 0)
-    const request = child.messages[0] as { requestId: string }
-    child.emit('message', {
-      kind: 'response',
-      requestId: request.requestId,
-      ok: true,
-      value: '{"bpm":120}'
-    })
-    assert.equal(await analysis, '{"bpm":120}')
+    const request = child.messages[0] as { requestId: string; method: string }
+    assert.equal(request.method, 'SetOutputConfig')
+    child.emit('message', { kind: 'response', requestId: request.requestId, ok: true, value: undefined })
+    await pending
+    assert.equal(child.killCount, 0)
   } finally {
     binding.destroy()
   }
 })
+
+test('playback controls remain responsive while isolated full-file analysis is hung', async () => {
+  const analysisChild = new ManualUtilityProcess()
+  const playbackChild = new ManualUtilityProcess()
+  const analysis = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    taskTimeoutMs: 1000,
+    restartDelayMs: 1000,
+    electron: { utilityProcess: { fork: () => analysisChild } }
+  })
+  const playback = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 1500,
+    restartDelayMs: 1000,
+    electron: { utilityProcess: { fork: () => playbackChild } }
+  })
+  analysisChild.emit('message', {
+    kind: 'ready',
+    protocolVersion: 1,
+    analyses: ['bpm', 'loudness']
+  })
+  playbackChild.emit('message', {
+    kind: 'ready',
+    capabilities: createAudioServiceCapabilities(['ApplyDspState', 'GetDspGraphStatus'])
+  })
+
+  const hungAnalysis = analysis.analyzeBpm('long-album.flac', '{}')
+  assert.equal(analysisChild.messages.length, 1)
+
+  const controls = [
+    playback.callAsync('Pause', []),
+    playback.callAsync('Next', []),
+    playback.callAsync('GetPlaybackInfo', []),
+    playback.callAsync('GetVisualizationData', ['{}'])
+  ]
+  for (const message of playbackChild.messages as Array<{
+    requestId: string
+    method: string
+  }>) {
+    playbackChild.emit('message', {
+      kind: 'response',
+      requestId: message.requestId,
+      ok: true,
+      value:
+        message.method === 'GetPlaybackInfo'
+          ? '{"state":"playing"}'
+          : message.method === 'GetVisualizationData'
+            ? '{"active":true,"spectrum":[]}'
+            : undefined
+    })
+  }
+
+  await Promise.all(controls)
+  assert.equal(playbackChild.killCount, 0)
+  assert.equal(analysis.getStatus().active, 1)
+  const cancelled = assert.rejects(hungAnalysis, /analysis cancelled/)
+  analysis.cancelBySource('long-album.flac', 'bpm')
+  await cancelled
+  assert.equal(analysisChild.killCount, 1)
+  assert.equal(playbackChild.killCount, 0)
+
+  analysis.destroy()
+  playback.destroy()
+})
+
+test('playback service rejects offline analysis before it enters the RPC queue', async () => {
+  const child = new ManualUtilityProcess()
+  const binding = new AudioEngineServiceBinding({
+    serviceEntry: 'audioEngineService.js',
+    requestTimeoutMs: 50,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+
+  await assert.rejects(
+    () => binding.callAsync('AnalyzeLoudness', ['track.flac', '{}']),
+    /isolated audio analysis service/
+  )
+  assert.equal(child.messages.length, 0)
+  assert.equal(child.killCount, 0)
+  binding.destroy()
+})
+
+test('audio analysis waiting queue honors priority and caps queued tasks', async () => {
+  const child = new ManualUtilityProcess()
+  const analysis = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    maxConcurrency: 1,
+    maxQueueSize: 2,
+    taskTimeoutMs: 1000,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  child.emit('message', {
+    kind: 'ready',
+    protocolVersion: 1,
+    analyses: ['bpm', 'loudness']
+  })
+  const first = analysis.analyzeBpm('first.flac', '{}', { priority: 0 })
+  const last = analysis.analyzeBpm('last.flac', '{}', { priority: -10 })
+  const urgent = analysis.analyzeBpm('urgent.flac', '{}', { priority: 100 })
+  assert.equal(analysis.getStatus().active, 1)
+  assert.equal(analysis.getStatus().queued, 2)
+  await assert.rejects(
+    () => analysis.analyzeBpm('overflow.flac', '{}', { priority: -100 }),
+    /queue is full/
+  )
+
+  respondWithBpm(child, 0, 120)
+  assert.equal((child.messages[1] as { source: string }).source, 'urgent.flac')
+  respondWithBpm(child, 1, 121)
+  assert.equal((child.messages[2] as { source: string }).source, 'last.flac')
+  respondWithBpm(child, 2, 122)
+  const results = await Promise.all([first, urgent, last])
+  assert.deepEqual(results.map((result) => result.bpm), [120, 121, 122])
+  analysis.destroy()
+})
+
+test('urgent loudness analysis evicts the worst waiting task from a full queue', async () => {
+  const child = new ManualUtilityProcess()
+  const analysis = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    maxConcurrency: 1,
+    maxQueueSize: 2,
+    taskTimeoutMs: 1000,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  child.emit('message', {
+    kind: 'ready',
+    protocolVersion: 1,
+    analyses: ['bpm', 'loudness']
+  })
+
+  const active = analysis.analyzeBpm('active.flac', '{}', { priority: 0 })
+  const retained = analysis.analyzeBpm('retained.flac', '{}', { priority: -10 })
+  const victim = analysis.analyzeBpm('victim.flac', '{}', { priority: -20 })
+  const victimOutcome = victim.then(
+    () => null,
+    (error: unknown) => error as Error & { code?: string }
+  )
+  const urgent = analysis.analyzeLoudness('urgent-loudnorm.flac', '{}', { priority: 100 })
+
+  const eviction = await victimOutcome
+  assert.equal(eviction?.code, 'ERR_AUDIO_ANALYSIS_EVICTED')
+  assert.match(eviction?.message ?? '', /higher-priority request/)
+  assert.equal(analysis.getStatus().queued, 2)
+
+  respondWithBpm(child, 0, 120)
+  assert.equal((child.messages[1] as { source: string }).source, 'urgent-loudnorm.flac')
+  respondWithLoudness(child, 1, -14)
+  assert.equal((child.messages[2] as { source: string }).source, 'retained.flac')
+  respondWithBpm(child, 2, 121)
+
+  assert.equal((await active).bpm, 120)
+  assert.equal((await urgent).integratedLufs, -14)
+  assert.equal((await retained).bpm, 121)
+  analysis.destroy()
+})
+
+test('audio analysis aging lets an old low-priority task outrank fresh work', async () => {
+  const child = new ManualUtilityProcess()
+  let now = 0
+  const analysis = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    maxConcurrency: 1,
+    maxQueueSize: 3,
+    taskTimeoutMs: 1000,
+    queueTimeoutMs: 300_000,
+    agingIntervalMs: 1000,
+    now: () => now,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  child.emit('message', {
+    kind: 'ready',
+    protocolVersion: 1,
+    analyses: ['bpm', 'loudness']
+  })
+
+  const active = analysis.analyzeBpm('active.flac', '{}')
+  const aged = analysis.analyzeBpm('aged-low.flac', '{}', { priority: -50 })
+  now = 60_000
+  const fresh = analysis.analyzeBpm('fresh.flac', '{}', { priority: 0 })
+
+  respondWithBpm(child, 0, 120)
+  assert.equal((child.messages[1] as { source: string }).source, 'aged-low.flac')
+  respondWithBpm(child, 1, 121)
+  assert.equal((child.messages[2] as { source: string }).source, 'fresh.flac')
+  respondWithBpm(child, 2, 122)
+
+  assert.deepEqual(
+    (await Promise.all([active, aged, fresh])).map((result) => result.bpm),
+    [120, 121, 122]
+  )
+  analysis.destroy()
+})
+
+test('queued analysis deadline rejects waiting work and clears maintenance timer', async () => {
+  const child = new ManualUtilityProcess()
+  let now = 0
+  const analysis = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    maxConcurrency: 1,
+    maxQueueSize: 2,
+    taskTimeoutMs: 1000,
+    queueTimeoutMs: 100,
+    agingIntervalMs: 100,
+    now: () => now,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  const internals = analysis as unknown as {
+    queueMaintenanceTimer: NodeJS.Timeout | null
+  }
+  child.emit('message', {
+    kind: 'ready',
+    protocolVersion: 1,
+    analyses: ['bpm', 'loudness']
+  })
+
+  const active = analysis.analyzeBpm('active.flac', '{}')
+  const expired = analysis.analyzeBpm('expired.flac', '{}')
+  const expiredOutcome = expired.then(
+    () => null,
+    (error: unknown) => error as Error & { code?: string }
+  )
+  const firstMaintenanceTimer = internals.queueMaintenanceTimer
+  assert.notEqual(firstMaintenanceTimer, null)
+  const alsoExpired = analysis.analyzeLoudness('also-expired.flac', '{}')
+  const alsoExpiredOutcome = alsoExpired.then(
+    () => null,
+    (error: unknown) => error as Error & { code?: string }
+  )
+  assert.equal(internals.queueMaintenanceTimer, firstMaintenanceTimer)
+
+  now = 101
+  assert.equal(analysis.getStatus().queued, 0)
+  const [deadline, alsoDeadline] = await Promise.all([expiredOutcome, alsoExpiredOutcome])
+  assert.equal(deadline?.code, 'ERR_AUDIO_ANALYSIS_QUEUE_TIMEOUT')
+  assert.equal(alsoDeadline?.code, 'ERR_AUDIO_ANALYSIS_QUEUE_TIMEOUT')
+  assert.equal(internals.queueMaintenanceTimer, null)
+  assert.equal(analysis.getStatus().active, 1)
+
+  respondWithBpm(child, 0, 120)
+  assert.equal((await active).bpm, 120)
+  analysis.destroy()
+  assert.equal(internals.queueMaintenanceTimer, null)
+})
+
+test('queued analysis deadline fires without status polling', async (context) => {
+  context.mock.timers.enable({ apis: ['setTimeout'] })
+  const child = new ManualUtilityProcess()
+  let now = 0
+  const analysis = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    maxConcurrency: 1,
+    maxQueueSize: 2,
+    taskTimeoutMs: 1000,
+    queueTimeoutMs: 100,
+    agingIntervalMs: 100,
+    now: () => now,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  child.emit('message', {
+    kind: 'ready',
+    protocolVersion: 1,
+    analyses: ['bpm', 'loudness']
+  })
+
+  const active = analysis.analyzeBpm('active.flac', '{}')
+  const expired = analysis.analyzeLoudness('deadline.flac', '{}')
+  const expiredOutcome = expired.then(
+    () => null,
+    (error: unknown) => error as Error & { code?: string }
+  )
+
+  now = 101
+  context.mock.timers.tick(100)
+  assert.equal((await expiredOutcome)?.code, 'ERR_AUDIO_ANALYSIS_QUEUE_TIMEOUT')
+  assert.equal(analysis.getStatus().queued, 0)
+  assert.equal(analysis.getStatus().active, 1)
+
+  respondWithBpm(child, 0, 120)
+  assert.equal((await active).bpm, 120)
+  analysis.destroy()
+})
+
+test('audio analysis worker exit rejects its pending request and ignores late results', async () => {
+  const child = new ManualUtilityProcess()
+  const analysis = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    taskTimeoutMs: 1000,
+    restartDelayMs: 1000,
+    electron: { utilityProcess: { fork: () => child } }
+  })
+  child.emit('message', {
+    kind: 'ready',
+    protocolVersion: 1,
+    analyses: ['bpm', 'loudness']
+  })
+  const pending = analysis.analyzeBpm('exit.flac', '{}')
+  const request = child.messages[0] as { requestId: string }
+  const rejected = assert.rejects(pending, /worker 1 exited/)
+  child.emit('exit', 23)
+  await rejected
+  child.emit('message', {
+    kind: 'response',
+    requestId: request.requestId,
+    ok: true,
+    value: bpmResultJson(999)
+  })
+  assert.equal(analysis.getStatus().active, 0)
+  analysis.destroy()
+})
+
+test('audio analysis watchdog replaces only the timed-out analysis worker', async () => {
+  const children: ManualUtilityProcess[] = []
+  const analysis = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    taskTimeoutMs: 100,
+    restartDelayMs: 1,
+    electron: {
+      utilityProcess: {
+        fork: () => {
+          const child = new ManualUtilityProcess()
+          children.push(child)
+          return child
+        }
+      }
+    }
+  })
+  children[0].emit('message', {
+    kind: 'ready',
+    protocolVersion: 1,
+    analyses: ['bpm', 'loudness']
+  })
+
+  await assert.rejects(() => analysis.analyzeBpm('timeout.flac', '{}'), /analysis timed out/)
+  assert.equal(children[0].killCount, 1)
+  await new Promise((resolve) => setTimeout(resolve, 10))
+  assert.equal(children.length, 2)
+  assert.equal(analysis.getStatus().active, 0)
+  analysis.destroy()
+})
+
+test('audio analysis rejects queued work after repeated worker startup failures', async () => {
+  let starts = 0
+  const analysis = new AudioAnalysisServiceClient({
+    serviceEntry: 'audioAnalysisService.js',
+    maxStartupFailures: 2,
+    restartDelayMs: 1,
+    electron: {
+      utilityProcess: {
+        fork: () => {
+          starts += 1
+          throw new Error('analysis worker bootstrap failed')
+        }
+      }
+    }
+  })
+
+  await assert.rejects(
+    () => analysis.analyzeBpm('startup-failure.flac', '{}'),
+    /workers failed to start after 2 attempts/
+  )
+  assert.equal(starts, 2)
+  assert.equal(analysis.getStatus().queued, 0)
+  analysis.destroy()
+})
+
+function bpmResultJson(bpm: number): string {
+  return JSON.stringify({
+    bpm,
+    confidence: 0.9,
+    source: 'analyzed',
+    analyzedAt: '2026-01-01T00:00:00.000Z',
+    algorithmVersion: 1
+  })
+}
+
+function respondWithBpm(child: ManualUtilityProcess, index: number, bpm: number): void {
+  const request = child.messages[index] as { requestId: string }
+  child.emit('message', {
+    kind: 'response',
+    requestId: request.requestId,
+    ok: true,
+    value: bpmResultJson(bpm)
+  })
+}
+
+function respondWithLoudness(
+  child: ManualUtilityProcess,
+  index: number,
+  integratedLufs: number
+): void {
+  const request = child.messages[index] as { requestId: string }
+  child.emit('message', {
+    kind: 'response',
+    requestId: request.requestId,
+    ok: true,
+    value: JSON.stringify({
+      integratedLufs,
+      truePeakDb: -1,
+      source: 'analyzed',
+      analyzedAt: '2026-01-01T00:00:00.000Z',
+      algorithmVersion: 1
+    })
+  })
+}
 
 test('audio service postMessage failures clear pending RPCs immediately', async () => {
   const child = new ThrowingUtilityProcess()

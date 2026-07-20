@@ -35,6 +35,19 @@ export interface MockTrack {
   format: string
   sampleRate: number
   bitrate: number
+  bpmAnalysis?: {
+    bpm: number
+    confidence: number
+    source: 'analyzed'
+    analyzedAt: string
+    algorithmVersion: number
+  }
+}
+
+interface MockRemovalRequest {
+  mode: 'library' | 'trash'
+  library: { revision: number; tracks: MockTrack[]; folders: string[] }
+  items: Array<{ id: string; filePath: string; title: string; artist: string }>
 }
 
 /**
@@ -172,34 +185,238 @@ const musicStoreSource = readFileSync(new URL('./useMusicStore.ts', import.meta.
 let saveCallCount = 0
 let loadCallCount = 0
 let scanCallCount = 0
-;(globalThis as Record<string, unknown>).window = {
-  api: {
-    data: {
-      saveMusicLibrary: async (): Promise<void> => {
-        saveCallCount++
-      },
-      loadMusicLibrary: async (): Promise<unknown[]> => {
-        loadCallCount++
-        return []
-      },
-      savePlaylists: async (): Promise<void> => {},
-      loadPlaylists: async (): Promise<unknown[]> => []
+let libraryScanCallCount = 0
+
+function createSavedMusicLibraryDocument(snapshot: unknown) {
+  const record =
+    snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+      ? (snapshot as Record<string, unknown>)
+      : {}
+  const revision =
+    typeof record.revision === 'number' && Number.isSafeInteger(record.revision)
+      ? record.revision
+      : 0
+  return {
+    version: 2 as const,
+    revision: revision + 1,
+    tracks: Array.isArray(record.tracks) ? record.tracks : [],
+    folders: Array.isArray(record.folders)
+      ? record.folders.filter((folder): folder is string => typeof folder === 'string')
+      : [],
+    exclusions: []
+  }
+}
+
+function createExclusion(track: MockTrack) {
+  return {
+    filePath: track.filePath,
+    title: track.title,
+    artist: track.artist,
+    excludedAt: '2026-01-01T00:00:00.000Z'
+  }
+}
+
+function createRemovalResult(request: MockRemovalRequest, removedTracks: MockTrack[]) {
+  const removedIds = new Set(removedTracks.map((track) => track.id))
+  const removedPaths = new Set(removedTracks.map((track) => track.filePath))
+  return {
+    mode: request.mode,
+    library: {
+      version: 2 as const,
+      revision: request.library.revision + 1,
+      tracks: request.library.tracks.filter(
+        (track) => !removedIds.has(track.id) && !removedPaths.has(track.filePath)
+      ),
+      folders: request.library.folders,
+      exclusions: removedTracks.map(createExclusion)
     },
-    fs: {
-      scanMusicFiles: async (): Promise<unknown[]> => {
-        scanCallCount++
-        return generateMockTracks(1)
+    removedTrackIds: removedTracks.map((track) => track.id),
+    removedFilePaths: removedTracks.map((track) => track.filePath),
+    failures: []
+  }
+}
+
+function installDefaultWindowApi(): void {
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (snapshot: unknown) => {
+          saveCallCount++
+          return createSavedMusicLibraryDocument(snapshot)
+        },
+        loadMusicLibrary: async (): Promise<unknown[]> => {
+          loadCallCount++
+          return []
+        },
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: {
+        scanMusicFiles: async (): Promise<unknown[]> => {
+          scanCallCount++
+          return generateMockTracks(1)
+        }
+      },
+      library: {
+        removeTracks: async (): Promise<never> => {
+          throw new Error('unexpected local library removal')
+        },
+        restoreExclusions: async (): Promise<never> => {
+          throw new Error('unexpected exclusion restore')
+        },
+        scanStartup: async () => {
+          libraryScanCallCount++
+          return createEmptyScanUpdate('startup')
+        },
+        scanFull: async () => createEmptyScanUpdate('full'),
+        getScanStatus: async () => createIdleScanStatus(),
+        pauseScan: async () => false,
+        resumeScan: async () => false,
+        cancelScan: async () => false,
+        onChanged: () => () => {},
+        onCoversMissing: () => () => {},
+        onScanProgress: () => () => {},
+        onScanStatus: () => () => {}
       }
     }
   }
 }
 
+function createEmptyScanUpdate(mode: 'startup' | 'full' | 'watch') {
+  return {
+    jobId: `mock-${mode}`,
+    mode,
+    state: 'completed' as const,
+    libraryRevision: 0,
+    exclusions: [],
+    addedTracks: [],
+    updatedTracks: [],
+    removedFilePaths: [],
+    parsedFileCount: 0,
+    skippedUnchanged: 0
+  }
+}
+
+function createIdleScanStatus() {
+  return {
+    jobId: null,
+    mode: null,
+    state: 'idle' as const,
+    current: 0,
+    total: 0,
+    parsedFileCount: 0,
+    skippedUnchanged: 0,
+    error: ''
+  }
+}
+
+installDefaultWindowApi()
+
 function setupStore(): ReturnType<typeof useMusicStoreModule.useMusicStore> {
+  installDefaultWindowApi()
+  saveCallCount = 0
+  loadCallCount = 0
+  scanCallCount = 0
+  libraryScanCallCount = 0
   const store = useMusicStoreModule.useMusicStore()
   store.isScanning.value = true
+  store.scannedFolders.value = []
+  store.playlists.value = []
+  store.libraryRepairReport.value = null
   store.clearTracks()
+  store.excludedTracks.value = []
   return store
 }
+
+test('confirmed tag writes refresh only matching local track metadata in one library update', async () => {
+  const store = setupStore()
+  const [first, second] = generateMockTracks(2)
+  await store.addTracks([first, second], { deferRebuild: true })
+
+  const changed = store.applyLocalTagWrite([first.filePath], {
+    title: 'Updated title',
+    artist: 'Updated artist',
+    albumArtist: 'Album owner'
+  })
+
+  assert.equal(changed, 1)
+  assert.deepEqual(
+    store.tracks.value.map((track) => [track.title, track.artist, track.albumArtist]),
+    [
+      ['Updated title', 'Updated artist', 'Album owner'],
+      [second.title, second.artist, undefined]
+    ]
+  )
+})
+
+test('scan progress and worker failure status remain observable in the renderer store', () => {
+  const store = setupStore()
+  store.applyLibraryScanProgress({
+    jobId: 'scan-1',
+    mode: 'full',
+    phase: 'parsing',
+    current: 4,
+    total: 10,
+    parsedFileCount: 3,
+    skippedUnchanged: 1
+  })
+
+  assert.equal(store.libraryScanProgress.value?.current, 4)
+  assert.equal(store.libraryScanStatus.value.parsedFileCount, 3)
+
+  store.applyLibraryScanStatus({
+    jobId: 'scan-1',
+    mode: 'full',
+    state: 'failed',
+    current: 4,
+    total: 10,
+    parsedFileCount: 3,
+    skippedUnchanged: 1,
+    error: 'background worker exited'
+  })
+
+  assert.equal(store.libraryScanStatus.value.state, 'failed')
+  assert.equal(store.libraryScanStatus.value.error, 'background worker exited')
+  assert.equal(store.libraryScanProgress.value, null)
+})
+
+test('full scan applies added, changed, and removed path deltas without a full reload', async () => {
+  const store = setupStore()
+  const [removed, changed] = generateMockTracks(2)
+  await store.addTracks([removed, changed], { deferRebuild: true })
+  store.refreshLibraryIndex()
+  const replacement = { ...changed, title: 'Updated metadata' }
+  const added = { ...generateMockTracks(1)[0], id: 'scan-added', filePath: 'C:\\music\\added.flac' }
+
+  const windowRecord = (globalThis as Record<string, unknown>).window as {
+    api: { library: { scanFull: () => Promise<unknown> } }
+  }
+  windowRecord.api.library.scanFull = async () => ({
+    jobId: 'full-1',
+    mode: 'full',
+    state: 'completed',
+    libraryRevision: 7,
+    exclusions: [],
+    addedTracks: [added],
+    updatedTracks: [replacement],
+    removedFilePaths: [removed.filePath],
+    parsedFileCount: 2,
+    skippedUnchanged: 0
+  })
+
+  await store.startFullLibraryScan()
+
+  assert.deepEqual(
+    store.tracks.value.map((track) => track.id).sort(),
+    [added.id, changed.id].sort()
+  )
+  assert.equal(
+    store.tracks.value.find((track) => track.id === changed.id)?.title,
+    'Updated metadata'
+  )
+  assert.equal(loadCallCount, 0)
+  store.clearTracks()
+})
 
 test('removeTrack debounce: 10 removeTrack calls coalesce into 1 rebuild', async () => {
   const store = setupStore()
@@ -318,6 +535,94 @@ test('derived collections keep first cover without per-group rescans', async () 
   store.clearTracks()
 })
 
+test('same-named albums remain separate by stable album artist identity', async () => {
+  const store = setupStore()
+  await store.addTracks(
+    [
+      {
+        ...generateMockTracks(1)[0],
+        id: 'album-a',
+        artist: 'Guest One',
+        albumArtist: 'Primary One',
+        album: 'Greatest Hits',
+        filePath: 'C:\\music\\one\\a.flac'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'album-b',
+        artist: 'Guest Two',
+        albumArtist: 'Primary Two',
+        album: 'Greatest Hits',
+        filePath: 'C:\\music\\two\\b.flac'
+      }
+    ],
+    { deferRebuild: false }
+  )
+  store.flushRebuild()
+
+  const sameNamedAlbums = store.albums.value.filter((album) => album.name === 'Greatest Hits')
+  assert.equal(sameNamedAlbums.length, 2)
+  assert.notEqual(sameNamedAlbums[0]?.id, sameNamedAlbums[1]?.id)
+  assert.deepEqual(sameNamedAlbums.map((album) => album.artist).sort(), [
+    'Primary One',
+    'Primary Two'
+  ])
+  assert.deepEqual(sameNamedAlbums.map((album) => album.tracks[0]?.id).sort(), [
+    'album-a',
+    'album-b'
+  ])
+
+  store.clearTracks()
+})
+
+test('scan root folders aggregate tracks from nested directories at path boundaries', async () => {
+  const store = setupStore()
+  await store.addTracks(
+    [
+      {
+        ...generateMockTracks(1)[0],
+        id: 'root-track',
+        filePath: 'C:\\music\\root.flac',
+        dir: 'C:\\music'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'nested-track',
+        filePath: 'C:\\music\\nested\\child.flac',
+        dir: 'C:\\music\\nested'
+      },
+      {
+        ...generateMockTracks(1)[0],
+        id: 'outside-track',
+        filePath: 'C:\\music-other\\outside.flac',
+        dir: 'C:\\music-other'
+      }
+    ],
+    { deferRebuild: false }
+  )
+  store.syncFolders(['C:\\music', 'C:\\music\\nested'])
+  store.flushRebuild()
+
+  assert.deepEqual(
+    store.folders.value
+      .find((folder) => folder.path === 'C:\\music')
+      ?.tracks.map((track) => track.id),
+    ['root-track', 'nested-track']
+  )
+  assert.deepEqual(
+    store.folders.value
+      .find((folder) => folder.path === 'C:\\music\\nested')
+      ?.tracks.map((track) => track.id),
+    ['nested-track']
+  )
+  assert.equal(
+    store.folders.value.some((folder) => folder.path === 'C:\\music-other'),
+    false
+  )
+
+  store.clearTracks()
+})
+
 test('single-track update paths use track indexes instead of linear scans', () => {
   assert.match(musicStoreSource, /const trackIndexById = new Map<string, number>\(\)/)
   assert.match(musicStoreSource, /function replaceTrackAtIndex\(index: number, nextTrack: Track\)/)
@@ -341,6 +646,705 @@ test('track indexes are cleaned on removeTrack', async () => {
   const playlists = store.getPlaylistTracks('test')
   assert.equal(playlists.length, 0, 'removed track should not appear in playlists')
 
+  store.clearTracks()
+})
+
+test('5000-track library removal applies one IPC transaction and one derived rebuild', async () => {
+  const store = setupStore()
+  const inputTracks = generateMockTracks(5000)
+  await store.addTracks(inputTracks, { deferRebuild: true })
+  store.refreshLibraryIndex()
+  const rebuildBefore = store.getRebuildCount()
+  let mutationCalls = 0
+  let directSaveCalls = 0
+
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (snapshot: unknown) => {
+          directSaveCalls++
+          return createSavedMusicLibraryDocument(snapshot)
+        },
+        loadMusicLibrary: async (): Promise<unknown[]> => [],
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: {
+        scanMusicFiles: async (): Promise<unknown[]> => []
+      },
+      library: {
+        removeTracks: async (request: {
+          mode: 'library' | 'trash'
+          items: Array<{ id: string; filePath: string; title: string; artist: string }>
+        }) => {
+          mutationCalls++
+          return {
+            mode: request.mode,
+            library: {
+              version: 2 as const,
+              revision: 1,
+              tracks: [],
+              folders: [],
+              exclusions: request.items.map((item) => ({
+                filePath: item.filePath,
+                title: item.title,
+                artist: item.artist,
+                excludedAt: '2026-01-01T00:00:00.000Z'
+              }))
+            },
+            removedTrackIds: request.items.map((item) => item.id),
+            removedFilePaths: request.items.map((item) => item.filePath),
+            failures: []
+          }
+        },
+        restoreExclusions: async (): Promise<never> => {
+          throw new Error('unexpected exclusion restore')
+        }
+      }
+    }
+  }
+
+  store.isScanning.value = false
+  const pendingSave = store.scheduleSaveLibrary()
+  const result = await store.removeLocalTracks(inputTracks, 'library')
+  await pendingSave
+
+  assert.equal(mutationCalls, 1)
+  assert.equal(directSaveCalls, 0, 'the removal transaction must absorb the pending snapshot')
+  assert.equal(result.removedTrackIds.length, 5000)
+  assert.equal(store.tracks.value.length, 0)
+  assert.equal(store.excludedTracks.value.length, 5000)
+  assert.equal(store.getRebuildCount() - rebuildBefore, 1)
+  store.clearTracks()
+})
+
+test('all-trash-failed preserves tracks and only flushes a pre-existing pending save', async () => {
+  const store = setupStore()
+  const track = generateMockTracks(1)[0]
+  await store.addTracks([track], { deferRebuild: true })
+  store.refreshLibraryIndex()
+  store.isScanning.value = false
+  let saveCalls = 0
+  let mutationCalls = 0
+
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (snapshot: {
+          revision: number
+          tracks: unknown[]
+          folders: string[]
+        }) => {
+          saveCalls++
+          return {
+            version: 2 as const,
+            revision: snapshot.revision + 1,
+            tracks: snapshot.tracks,
+            folders: snapshot.folders,
+            exclusions: []
+          }
+        },
+        loadMusicLibrary: async (): Promise<unknown[]> => [],
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: {
+        scanMusicFiles: async (): Promise<unknown[]> => []
+      },
+      library: {
+        removeTracks: async (request: {
+          mode: 'library' | 'trash'
+          library: { revision: number; tracks: unknown[]; folders: string[] }
+          items: Array<{ filePath: string }>
+        }) => {
+          mutationCalls++
+          return {
+            mode: request.mode,
+            library: {
+              version: 2 as const,
+              revision: request.library.revision,
+              tracks: request.library.tracks,
+              folders: request.library.folders,
+              exclusions: []
+            },
+            removedTrackIds: [],
+            removedFilePaths: [],
+            failures: request.items.map((item) => ({
+              filePath: item.filePath,
+              message: 'file is locked'
+            }))
+          }
+        },
+        restoreExclusions: async (): Promise<never> => {
+          throw new Error('unexpected exclusion restore')
+        }
+      }
+    }
+  }
+
+  const pendingSave = store.scheduleSaveLibrary()
+  const failed = await store.removeLocalTracks([track], 'trash')
+  await pendingSave
+
+  assert.equal(mutationCalls, 1)
+  assert.equal(saveCalls, 1, 'the canceled pre-existing save must be flushed exactly once')
+  assert.equal(failed.removedTrackIds.length, 0)
+  assert.equal(store.tracks.value.length, 1)
+
+  saveCalls = 0
+  await store.removeLocalTracks([track], 'trash')
+  assert.equal(
+    saveCalls,
+    0,
+    'a failed trash action without pending work must not write the library'
+  )
+  assert.equal(store.tracks.value.length, 1)
+  store.clearTracks()
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (snapshot: unknown) => {
+          saveCallCount++
+          return createSavedMusicLibraryDocument(snapshot)
+        },
+        loadMusicLibrary: async (): Promise<unknown[]> => {
+          loadCallCount++
+          return []
+        },
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: {
+        scanMusicFiles: async (): Promise<unknown[]> => {
+          scanCallCount++
+          return generateMockTracks(1)
+        }
+      },
+      library: {
+        removeTracks: async (): Promise<never> => {
+          throw new Error('unexpected local library removal')
+        },
+        restoreExclusions: async (): Promise<never> => {
+          throw new Error('unexpected exclusion restore')
+        }
+      }
+    }
+  }
+})
+
+test('deferred removal rebases a concurrently added track instead of replacing current state', async () => {
+  const store = setupStore()
+  const removedTrack = generateMockTracks(1)[0]
+  const concurrentTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'track_concurrent',
+    title: 'Concurrent Track',
+    filePath: 'C:\\music\\concurrent\\track.flac',
+    fileName: 'track.flac',
+    dir: 'C:\\music\\concurrent'
+  }
+  await store.addTracks([removedTrack], { deferRebuild: true })
+  store.refreshLibraryIndex()
+
+  let resolveRemoval!: (value: ReturnType<typeof createRemovalResult>) => void
+  let signalRemovalStarted!: () => void
+  const removalStarted = new Promise<void>((resolve) => {
+    signalRemovalStarted = resolve
+  })
+  const removalResponse = new Promise<ReturnType<typeof createRemovalResult>>((resolve) => {
+    resolveRemoval = resolve
+  })
+  const savedSnapshots: Array<{ revision: number; tracks: MockTrack[]; folders: string[] }> = []
+  let removalRequest: MockRemovalRequest | null = null
+
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (snapshot: {
+          revision: number
+          tracks: MockTrack[]
+          folders: string[]
+        }) => {
+          savedSnapshots.push(snapshot)
+          return {
+            version: 2 as const,
+            revision: snapshot.revision + 1,
+            tracks: snapshot.tracks,
+            folders: snapshot.folders,
+            exclusions: [createExclusion(removedTrack)]
+          }
+        },
+        loadMusicLibrary: async (): Promise<unknown[]> => [],
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: { scanMusicFiles: async (): Promise<unknown[]> => [] },
+      library: {
+        removeTracks: async (request: MockRemovalRequest) => {
+          removalRequest = request
+          signalRemovalStarted()
+          return removalResponse
+        },
+        restoreExclusions: async (): Promise<never> => {
+          throw new Error('unexpected exclusion restore')
+        }
+      }
+    }
+  }
+
+  const removal = store.removeLocalTracks([removedTrack], 'library')
+  await removalStarted
+  await store.addTracks([concurrentTrack], { deferRebuild: true })
+  assert.ok(removalRequest)
+  resolveRemoval(createRemovalResult(removalRequest!, [removedTrack]))
+  await removal
+
+  assert.deepEqual(
+    store.tracks.value.map((track) => track.id),
+    ['track_concurrent']
+  )
+  assert.equal(savedSnapshots.length, 1)
+  assert.deepEqual(
+    savedSnapshots[0].tracks.map((track) => track.id),
+    ['track_concurrent']
+  )
+  store.clearTracks()
+})
+
+test('a save scheduled during deferred removal persists metadata against the returned revision', async () => {
+  const store = setupStore()
+  const [removedTrack, keptTrack] = generateMockTracks(2)
+  await store.addTracks([removedTrack, keptTrack], { deferRebuild: true })
+  store.refreshLibraryIndex()
+
+  let resolveRemoval!: (value: ReturnType<typeof createRemovalResult>) => void
+  let signalRemovalStarted!: () => void
+  const removalStarted = new Promise<void>((resolve) => {
+    signalRemovalStarted = resolve
+  })
+  const removalResponse = new Promise<ReturnType<typeof createRemovalResult>>((resolve) => {
+    resolveRemoval = resolve
+  })
+  const savedSnapshots: Array<{ revision: number; tracks: MockTrack[]; folders: string[] }> = []
+  let capturedRequest: Parameters<typeof createRemovalResult>[0] | null = null
+
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (snapshot: {
+          revision: number
+          tracks: MockTrack[]
+          folders: string[]
+        }) => {
+          savedSnapshots.push(snapshot)
+          return {
+            version: 2 as const,
+            revision: snapshot.revision + 1,
+            tracks: snapshot.tracks,
+            folders: snapshot.folders,
+            exclusions: [createExclusion(removedTrack)]
+          }
+        },
+        loadMusicLibrary: async (): Promise<unknown[]> => [],
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: { scanMusicFiles: async (): Promise<unknown[]> => [] },
+      library: {
+        removeTracks: async (request: Parameters<typeof createRemovalResult>[0]) => {
+          capturedRequest = request
+          signalRemovalStarted()
+          return removalResponse
+        },
+        restoreExclusions: async (): Promise<never> => {
+          throw new Error('unexpected exclusion restore')
+        }
+      }
+    }
+  }
+
+  const removal = store.removeLocalTracks([removedTrack], 'library')
+  await removalStarted
+  const analysis = {
+    bpm: 123,
+    confidence: 0.9,
+    source: 'analyzed' as const,
+    analyzedAt: '2026-01-01T00:00:00.000Z',
+    algorithmVersion: 1
+  }
+  assert.equal(store.applyBpmAnalysis(keptTrack.id, keptTrack.filePath, analysis), true)
+  const scheduledSave = store.scheduleSaveLibrary()
+  assert.ok(capturedRequest)
+  resolveRemoval(createRemovalResult(capturedRequest!, [removedTrack]))
+  await removal
+  await scheduledSave
+
+  assert.equal(savedSnapshots.length, 1)
+  const persistedKept = savedSnapshots[0].tracks.find((track) => track.id === keptTrack.id)
+  assert.deepEqual(persistedKept?.bpmAnalysis, analysis)
+  assert.equal(savedSnapshots[0].revision, capturedRequest!.library.revision + 1)
+  store.clearTracks()
+})
+
+test('rejected removal restores the canceled save without resolving it early', async () => {
+  const store = setupStore()
+  const track = generateMockTracks(1)[0]
+  await store.addTracks([track], { deferRebuild: true })
+  store.refreshLibraryIndex()
+  let rejectRemoval!: (error: Error) => void
+  let signalRemovalStarted!: () => void
+  const removalStarted = new Promise<void>((resolve) => {
+    signalRemovalStarted = resolve
+  })
+  const removalResponse = new Promise<never>((_resolve, reject) => {
+    rejectRemoval = reject
+  })
+  let saveCalls = 0
+  let capturedRemovalRequest: MockRemovalRequest | null = null
+
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (snapshot: unknown) => {
+          saveCalls++
+          return createSavedMusicLibraryDocument(snapshot)
+        },
+        loadMusicLibrary: async () => ({
+          version: 2 as const,
+          revision: capturedRemovalRequest?.library.revision ?? 0,
+          tracks: [track],
+          folders: [],
+          exclusions: []
+        }),
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: { scanMusicFiles: async (): Promise<unknown[]> => [] },
+      library: {
+        removeTracks: async (request: MockRemovalRequest) => {
+          capturedRemovalRequest = request
+          signalRemovalStarted()
+          return removalResponse
+        },
+        restoreExclusions: async (): Promise<never> => {
+          throw new Error('unexpected exclusion restore')
+        }
+      }
+    }
+  }
+
+  let pendingResolved = false
+  const pendingSave = store.scheduleSaveLibrary().then(() => {
+    pendingResolved = true
+  })
+  const removal = store.removeLocalTracks([track], 'trash')
+  await removalStarted
+  rejectRemoval(new Error('trash IPC rejected'))
+  await assert.rejects(removal, /trash IPC rejected/)
+  await Promise.resolve()
+  assert.equal(pendingResolved, false)
+  assert.equal(saveCalls, 0)
+
+  let settlementTimeout: ReturnType<typeof setTimeout> | null = null
+  await Promise.race([
+    pendingSave,
+    new Promise<never>((_resolve, reject) => {
+      settlementTimeout = setTimeout(() => reject(new Error('pending save did not retry')), 2_000)
+    })
+  ])
+  if (settlementTimeout) clearTimeout(settlementTimeout)
+  assert.equal(pendingResolved, true)
+  assert.equal(saveCalls, 1)
+  assert.deepEqual(
+    store.tracks.value.map((item) => item.id),
+    [track.id]
+  )
+  store.clearTracks()
+})
+
+test('trash recovery revision conflict rebases ghost removal and settles pending save', async () => {
+  const store = setupStore()
+  const track = generateMockTracks(1)[0]
+  await store.addTracks([track], { deferRebuild: true })
+  store.refreshLibraryIndex()
+  let serverRevision = 0
+  let loadCalls = 0
+  const saveSnapshots: Array<{ revision: number; tracks: MockTrack[]; folders: string[] }> = []
+
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (snapshot: {
+          revision: number
+          tracks: MockTrack[]
+          folders: string[]
+        }) => {
+          saveSnapshots.push(snapshot)
+          if (snapshot.revision !== serverRevision) {
+            const error = new Error(
+              `Music library changed concurrently (expected revision ${snapshot.revision}, current ${serverRevision})`
+            )
+            error.name = 'MusicLibraryRevisionConflictError'
+            throw error
+          }
+          serverRevision++
+          return {
+            version: 2 as const,
+            revision: serverRevision,
+            tracks: snapshot.tracks,
+            folders: snapshot.folders,
+            exclusions: []
+          }
+        },
+        loadMusicLibrary: async () => {
+          loadCalls++
+          if (loadCalls === 1) throw new Error('journal recovery retry failed')
+          return {
+            version: 2 as const,
+            revision: serverRevision,
+            tracks: [],
+            folders: [],
+            exclusions: []
+          }
+        },
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: { scanMusicFiles: async (): Promise<unknown[]> => [] },
+      library: {
+        removeTracks: async (request: MockRemovalRequest) => {
+          serverRevision = request.library.revision + 1
+          throw new Error('initial library persist failed')
+        },
+        restoreExclusions: async (): Promise<never> => {
+          throw new Error('unexpected exclusion restore')
+        }
+      }
+    }
+  }
+
+  let pendingResolved = false
+  const pendingSave = store.scheduleSaveLibrary().then(() => {
+    pendingResolved = true
+  })
+  await assert.rejects(store.removeLocalTracks([track], 'trash'), /journal recovery retry failed/)
+  assert.equal(pendingResolved, false)
+  assert.deepEqual(
+    store.tracks.value.map((item) => item.id),
+    [track.id]
+  )
+
+  let retryTimeout: ReturnType<typeof setTimeout> | null = null
+  await Promise.race([
+    pendingSave,
+    new Promise<never>((_resolve, reject) => {
+      retryTimeout = setTimeout(() => reject(new Error('revision retry did not settle')), 2_000)
+    })
+  ])
+  if (retryTimeout) clearTimeout(retryTimeout)
+  assert.equal(pendingResolved, true)
+  assert.deepEqual(store.tracks.value, [])
+  assert.equal(loadCalls, 2)
+  assert.equal(saveSnapshots.length, 2)
+  assert.deepEqual(
+    saveSnapshots[0].tracks.map((item) => item.id),
+    [track.id]
+  )
+  assert.deepEqual(saveSnapshots[1].tracks, [])
+  assert.equal(saveSnapshots[1].revision, saveSnapshots[0].revision + 1)
+  const callsAfterSettlement = saveSnapshots.length
+  await new Promise((resolve) => setTimeout(resolve, 600))
+  assert.equal(saveSnapshots.length, callsAfterSettlement)
+  store.clearTracks()
+})
+
+test('deferred exclusion restore rebases concurrent metadata and add even when scan is empty', async () => {
+  const store = setupStore()
+  const baseTrack = generateMockTracks(1)[0]
+  const concurrentTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'restore-concurrent',
+    filePath: 'C:\\music\\restore-concurrent.flac',
+    fileName: 'restore-concurrent.flac'
+  }
+  const missingPath = 'C:\\music\\missing-restored.flac'
+  let resolveRestore!: (value: {
+    library: {
+      version: 2
+      revision: number
+      tracks: MockTrack[]
+      folders: string[]
+      exclusions: never[]
+    }
+    restoredFilePaths: string[]
+  }) => void
+  let signalRestoreStarted!: () => void
+  const restoreStarted = new Promise<void>((resolve) => {
+    signalRestoreStarted = resolve
+  })
+  const restoreResponse = new Promise<{
+    library: {
+      version: 2
+      revision: number
+      tracks: MockTrack[]
+      folders: string[]
+      exclusions: never[]
+    }
+    restoredFilePaths: string[]
+  }>((resolve) => {
+    resolveRestore = resolve
+  })
+  let capturedRestoreRequest: {
+    library: { revision: number; tracks: MockTrack[]; folders: string[] }
+  } | null = null
+  const saveSnapshots: Array<{ revision: number; tracks: MockTrack[] }> = []
+
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        loadMusicLibrary: async () => ({
+          version: 2 as const,
+          revision: 7,
+          tracks: [baseTrack],
+          folders: [],
+          exclusions: [
+            {
+              filePath: missingPath,
+              title: 'Missing',
+              artist: '',
+              excludedAt: '2026-01-01T00:00:00.000Z'
+            }
+          ]
+        }),
+        saveMusicLibrary: async (snapshot: {
+          revision: number
+          tracks: MockTrack[]
+          folders: string[]
+        }) => {
+          saveSnapshots.push({ revision: snapshot.revision, tracks: snapshot.tracks })
+          return {
+            version: 2 as const,
+            revision: snapshot.revision + 1,
+            tracks: snapshot.tracks,
+            folders: snapshot.folders,
+            exclusions: []
+          }
+        },
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: { scanMusicFiles: async (): Promise<unknown[]> => [] },
+      library: {
+        removeTracks: async (): Promise<never> => {
+          throw new Error('unexpected local removal')
+        },
+        restoreExclusions: async (request: {
+          library: { revision: number; tracks: MockTrack[]; folders: string[] }
+        }) => {
+          capturedRestoreRequest = request
+          signalRestoreStarted()
+          return restoreResponse
+        },
+        scanStartup: async () => ({
+          ...createEmptyScanUpdate('startup'),
+          libraryRevision: capturedRestoreRequest!.library.revision + 1
+        })
+      }
+    }
+  }
+
+  await store.loadLibrary()
+  await store.whenLibrarySettled()
+  const restore = store.restoreExcludedTracks([missingPath])
+  await restoreStarted
+  await store.addTracks([concurrentTrack], { deferRebuild: true })
+  const analysis = {
+    bpm: 127,
+    confidence: 0.95,
+    source: 'analyzed' as const,
+    analyzedAt: '2026-01-01T00:00:00.000Z',
+    algorithmVersion: 1
+  }
+  assert.equal(store.applyBpmAnalysis(baseTrack.id, baseTrack.filePath, analysis), true)
+  let pendingResolved = false
+  const pendingSave = store.scheduleSaveLibrary().then(() => {
+    pendingResolved = true
+  })
+  assert.equal(pendingResolved, false)
+  assert.ok(capturedRestoreRequest)
+  resolveRestore({
+    library: {
+      version: 2,
+      revision: capturedRestoreRequest!.library.revision + 1,
+      tracks: capturedRestoreRequest!.library.tracks,
+      folders: capturedRestoreRequest!.library.folders,
+      exclusions: []
+    },
+    restoredFilePaths: [missingPath]
+  })
+
+  assert.equal(await restore, 1)
+  await pendingSave
+  assert.equal(pendingResolved, true)
+  assert.equal(saveSnapshots.length, 1)
+  assert.equal(saveSnapshots[0].revision, capturedRestoreRequest!.library.revision + 1)
+  assert.deepEqual(
+    saveSnapshots[0].tracks.map((item) => item.id),
+    [baseTrack.id, concurrentTrack.id]
+  )
+  assert.deepEqual(saveSnapshots[0].tracks[0].bpmAnalysis, analysis)
+  assert.equal(
+    store.tracks.value.some((item) => item.filePath === missingPath),
+    false
+  )
+  store.clearTracks()
+})
+
+test('a scan result collected before exclusion commit cannot re-add the removed track', async () => {
+  const store = setupStore()
+  const track = generateMockTracks(1)[0]
+  await store.addTracks([track], { deferRebuild: true })
+  store.refreshLibraryIndex()
+  const staleScanResult = Promise.resolve([{ ...track, id: 'stale-scan-track' }])
+  const savedSnapshots: MockTrack[][] = []
+
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (snapshot: {
+          revision: number
+          tracks: MockTrack[]
+          folders: string[]
+        }) => {
+          savedSnapshots.push(snapshot.tracks)
+          return {
+            version: 2 as const,
+            revision: snapshot.revision + 1,
+            tracks: snapshot.tracks,
+            folders: snapshot.folders,
+            exclusions: [createExclusion(track)]
+          }
+        },
+        loadMusicLibrary: async (): Promise<unknown[]> => [],
+        savePlaylists: async (): Promise<void> => {},
+        loadPlaylists: async (): Promise<unknown[]> => []
+      },
+      fs: { scanMusicFiles: async () => staleScanResult },
+      library: {
+        removeTracks: async (request: MockRemovalRequest) => createRemovalResult(request, [track]),
+        restoreExclusions: async (): Promise<never> => {
+          throw new Error('unexpected exclusion restore')
+        }
+      }
+    }
+  }
+
+  await store.removeLocalTracks([track], 'library')
+  await store.addTracks(await staleScanResult, { deferRebuild: true })
+  await store.saveLibrary()
+
+  assert.deepEqual(store.tracks.value, [])
+  assert.deepEqual(savedSnapshots.at(-1), [])
   store.clearTracks()
 })
 
@@ -441,8 +1445,9 @@ test('incremental add: single file add triggers addTracks not full loadLibrary',
   ;(globalThis as Record<string, unknown>).window = {
     api: {
       data: {
-        saveMusicLibrary: async (): Promise<void> => {
+        saveMusicLibrary: async (snapshot: unknown) => {
           saveCallCount++
+          return createSavedMusicLibraryDocument(snapshot)
         },
         loadMusicLibrary: async (): Promise<unknown[]> => {
           loadCallCount++
@@ -476,8 +1481,9 @@ test('incremental add: single file add triggers addTracks not full loadLibrary',
   ;(globalThis as Record<string, unknown>).window = {
     api: {
       data: {
-        saveMusicLibrary: async (): Promise<void> => {
+        saveMusicLibrary: async (snapshot: unknown) => {
           saveCallCount++
+          return createSavedMusicLibraryDocument(snapshot)
         },
         loadMusicLibrary: async (): Promise<unknown[]> => {
           loadCallCount++
@@ -498,74 +1504,58 @@ test('incremental add: single file add triggers addTracks not full loadLibrary',
   store.clearTracks()
 })
 
-test('incremental fallback: unknown kind triggers full loadLibrary', async () => {
+test('unknown watcher payload triggers indexed startup reconciliation without reloading storage', async () => {
   const store = setupStore()
   await store.addTracks(generateMockTracks(5), { deferRebuild: true })
   store.refreshLibraryIndex()
   store.isScanning.value = false
 
   loadCallCount = 0
+  libraryScanCallCount = 0
   await store.handleLibraryChange({ kind: 'unknown' })
 
-  assert.ok(loadCallCount >= 1, 'loadLibrary should be called for unknown kind')
+  assert.equal(loadCallCount, 0)
+  assert.equal(libraryScanCallCount, 1)
 
   store.clearTracks()
 })
 
-test('incremental fallback: no payload triggers full loadLibrary', async () => {
+test('missing watcher payload triggers indexed startup reconciliation without reloading storage', async () => {
   const store = setupStore()
   store.isScanning.value = false
 
   loadCallCount = 0
+  libraryScanCallCount = 0
   await store.handleLibraryChange(undefined)
 
-  assert.ok(loadCallCount >= 1, 'loadLibrary should be called for undefined change')
+  assert.equal(loadCallCount, 0)
+  assert.equal(libraryScanCallCount, 1)
 
   store.clearTracks()
 })
 
-test('loadLibrary repairs moved local files from scanned folders while preserving track ids', async () => {
+test('loadLibrary renders persisted tracks without running metadata or cover scans in renderer', async () => {
   const store = setupStore()
-  const oldTrack = {
-    ...generateMockTracks(1)[0],
-    id: 'local:stable-id',
-    title: 'Moon River',
-    artist: 'Audrey',
-    album: 'Old Album',
-    filePath: 'D:\\Old\\Moon River.flac',
-    fileName: 'Moon River.flac',
-    dir: 'D:\\Old',
-    duration: 181
-  }
-  const movedTrack = {
-    ...oldTrack,
-    id: 'local:new-scan-id',
-    filePath: 'E:\\Music\\Audrey\\Moon River.flac',
-    fileName: 'Moon River.flac',
-    dir: 'E:\\Music\\Audrey',
-    duration: 179,
-    cover: 'cover://new'
-  }
-
-  saveCallCount = 0
+  const persisted = generateMockTracks(2)
   scanCallCount = 0
   ;(globalThis as Record<string, unknown>).window = {
     api: {
       data: {
-        saveMusicLibrary: async (): Promise<void> => {
-          saveCallCount++
-        },
-        loadMusicLibrary: async (): Promise<unknown> => {
-          loadCallCount++
-          return { tracks: [oldTrack], folders: ['E:\\Music'] }
-        },
+        saveMusicLibrary: async (snapshot: unknown) => createSavedMusicLibraryDocument(snapshot),
+        loadMusicLibrary: async () => ({
+          version: 2 as const,
+          revision: 4,
+          tracks: persisted,
+          folders: ['C:\\music'],
+          exclusions: []
+        }),
         savePlaylists: async (): Promise<void> => {},
         loadPlaylists: async (): Promise<unknown[]> => []
       },
       fs: {
-        scanMusicFiles: async (): Promise<unknown[]> => {
+        scanMusicFiles: async (): Promise<never> => {
           scanCallCount++
-          return [movedTrack]
+          throw new Error('renderer must not scan on load')
         }
       }
     }
@@ -574,95 +1564,43 @@ test('loadLibrary repairs moved local files from scanned folders while preservin
   await store.loadLibrary()
   await store.whenLibrarySettled()
 
-  assert.equal(scanCallCount, 1)
-  assert.equal(store.tracks.value.length, 1)
-  assert.equal(store.tracks.value[0].id, 'local:stable-id')
-  assert.equal(store.tracks.value[0].filePath, 'E:\\Music\\Audrey\\Moon River.flac')
-  assert.equal(store.tracks.value[0].cover, 'cover://new')
-  await new Promise((resolve) => setTimeout(resolve, 600))
-  assert.equal(saveCallCount, 1, 'repaired library should be saved')
-  ;(globalThis as Record<string, unknown>).window = {
-    api: {
-      data: {
-        saveMusicLibrary: async (): Promise<void> => {
-          saveCallCount++
-        },
-        loadMusicLibrary: async (): Promise<unknown[]> => {
-          loadCallCount++
-          return []
-        },
-        savePlaylists: async (): Promise<void> => {},
-        loadPlaylists: async (): Promise<unknown[]> => []
-      },
-      fs: {
-        scanMusicFiles: async (): Promise<unknown[]> => {
-          scanCallCount++
-          return generateMockTracks(1)
-        }
-      }
-    }
-  }
-
+  assert.equal(scanCallCount, 0)
+  assert.deepEqual(
+    store.tracks.value.map((track) => track.id),
+    persisted.map((track) => track.id)
+  )
   store.clearTracks()
 })
 
-test('loadLibrary exposes a repair report for repaired and unresolved local files', async () => {
+test('startup index update replaces changed metadata and removes missing paths atomically', async () => {
   const store = setupStore()
-  const repairedOldTrack = {
-    ...generateMockTracks(1)[0],
-    id: 'local:stable-id',
-    title: 'Moon River',
-    artist: 'Audrey',
-    album: 'Old Album',
-    filePath: 'D:\\Old\\Moon River.flac',
-    fileName: 'Moon River.flac',
-    dir: 'D:\\Old',
-    duration: 181
+  const [missing, changed] = generateMockTracks(2)
+  await store.addTracks([missing, changed], { deferRebuild: true })
+  store.refreshLibraryIndex()
+  const replacement = { ...changed, title: 'Worker metadata' }
+  let startupCalls = 0
+  const windowRecord = (globalThis as Record<string, unknown>).window as {
+    api: { library: { scanStartup: () => Promise<unknown> } }
   }
-  const unresolvedTrack = {
-    ...generateMockTracks(1)[0],
-    id: 'local:missing-id',
-    title: 'Lost Song',
-    artist: 'Unknown Artist',
-    album: 'Old Album',
-    filePath: 'D:\\Old\\Lost Song.flac',
-    fileName: 'Lost Song.flac',
-    dir: 'D:\\Old',
-    duration: 200
-  }
-  const movedTrack = {
-    ...repairedOldTrack,
-    id: 'local:new-scan-id',
-    filePath: 'E:\\Music\\Audrey\\Moon River.flac',
-    fileName: 'Moon River.flac',
-    dir: 'E:\\Music\\Audrey',
-    duration: 179
-  }
-
-  ;(globalThis as Record<string, unknown>).window = {
-    api: {
-      data: {
-        saveMusicLibrary: async (): Promise<void> => {},
-        loadMusicLibrary: async (): Promise<unknown> => {
-          return { tracks: [repairedOldTrack, unresolvedTrack], folders: ['E:\\Music'] }
-        },
-        savePlaylists: async (): Promise<void> => {},
-        loadPlaylists: async (): Promise<unknown[]> => []
-      },
-      fs: {
-        scanMusicFiles: async (): Promise<unknown[]> => [movedTrack]
-      }
+  windowRecord.api.library.scanStartup = async () => {
+    startupCalls++
+    return {
+      ...createEmptyScanUpdate('startup'),
+      libraryRevision: 8,
+      updatedTracks: [replacement],
+      removedFilePaths: [missing.filePath],
+      parsedFileCount: 1
     }
   }
 
-  await store.loadLibrary()
-  await store.whenLibrarySettled()
+  await store.startStartupLibraryScan()
 
-  assert.equal(store.libraryRepairReport.value?.repairedCount, 1)
-  assert.equal(store.libraryRepairReport.value?.unresolvedCount, 1)
-  assert.deepEqual(store.libraryRepairReport.value?.repairedTrackIds, ['local:stable-id'])
-  assert.deepEqual(store.libraryRepairReport.value?.unresolvedTrackIds, ['local:missing-id'])
-
+  assert.equal(startupCalls, 1)
+  assert.deepEqual(
+    store.tracks.value.map((track) => track.id),
+    [changed.id]
+  )
+  assert.equal(store.tracks.value[0].title, 'Worker metadata')
   store.clearTracks()
 })
 
@@ -686,11 +1624,20 @@ test('loadLibrary enriches missing local metadata from provider search without c
   saveCallCount = 0
   scanCallCount = 0
   let providerSearchCalls = 0
+  let releaseProviderSearch: ((value: unknown) => void) | null = null
+  let markProviderSearchStarted: (() => void) | null = null
+  const providerSearchStarted = new Promise<void>((resolve) => {
+    markProviderSearchStarted = resolve
+  })
+  const pendingProviderSearch = new Promise<unknown>((resolve) => {
+    releaseProviderSearch = resolve
+  })
   ;(globalThis as Record<string, unknown>).window = {
     api: {
       data: {
-        saveMusicLibrary: async (): Promise<void> => {
+        saveMusicLibrary: async (snapshot: unknown) => {
           saveCallCount++
+          return createSavedMusicLibraryDocument(snapshot)
         },
         loadMusicLibrary: async (): Promise<unknown> => {
           loadCallCount++
@@ -716,29 +1663,35 @@ test('loadLibrary enriches missing local metadata from provider search without c
         ],
         call: async (): Promise<unknown> => {
           providerSearchCalls++
-          return {
-            items: [
-              {
-                ...localTrack,
-                id: 'ncm:123',
-                filePath: 'ncm:123',
-                fileName: 'Moon River',
-                album: 'Online Album',
-                duration: 179,
-                cover: 'https://cover.example/album.jpg',
-                lyrics: '[00:00.00]Moon River',
-                translatedLyrics: '[00:00.00]月亮河',
-                source: 'ncm'
-              }
-            ],
-            total: 1
-          }
+          markProviderSearchStarted?.()
+          return await pendingProviderSearch
         }
       }
     }
   }
 
   await store.loadLibrary()
+  assert.equal(store.tracks.value[0].id, 'local:moon', 'local track must render before provider IO')
+  assert.equal(store.tracks.value[0].cover, null)
+  await providerSearchStarted
+  assert.equal(store.libraryMetadataEnrichmentStatus.value.state, 'enriching')
+  releaseProviderSearch?.({
+    items: [
+      {
+        ...localTrack,
+        id: 'ncm:123',
+        filePath: 'ncm:123',
+        fileName: 'Moon River',
+        album: 'Online Album',
+        duration: 179,
+        cover: 'https://cover.example/album.jpg',
+        lyrics: '[00:00.00]Moon River',
+        translatedLyrics: '[00:00.00]月亮河',
+        source: 'ncm'
+      }
+    ],
+    total: 1
+  })
   await store.whenLibrarySettled()
 
   assert.equal(providerSearchCalls, 1)
@@ -962,8 +1915,9 @@ test('loadLibrary respects cache policy when provider metadata is available', as
   ;(globalThis as Record<string, unknown>).window = {
     api: {
       data: {
-        saveMusicLibrary: async (): Promise<void> => {
+        saveMusicLibrary: async (snapshot: unknown) => {
           saveCallCount++
+          return createSavedMusicLibraryDocument(snapshot)
         },
         loadMusicLibrary: async (): Promise<unknown> => ({ tracks: [localTrack], folders: [] }),
         savePlaylists: async (): Promise<void> => {},
@@ -1113,6 +2067,29 @@ test('mixed-source playlists keep provider track snapshots when the track is not
 
   assert.deepEqual(store.getPlaylistTracks('mixed-source'), [providerTrack])
 
+  store.clearTracks()
+})
+
+test('playlists preserve removed local snapshots without exposing them as playable tracks', () => {
+  const store = setupStore()
+  store.playlists.value = []
+  const removedLocalTrack = {
+    ...generateMockTracks(1)[0],
+    id: 'local:removed',
+    filePath: 'D:\\Music\\Removed.flac',
+    fileName: 'Removed.flac',
+    source: 'local'
+  }
+
+  store.createPlaylist('preserved-local-history')
+  store.addToPlaylist('preserved-local-history', removedLocalTrack.id, removedLocalTrack)
+
+  assert.deepEqual(store.playlists.value[0].trackIds, ['local:removed'])
+  assert.equal(
+    store.playlists.value[0].trackSnapshots?.['local:removed']?.filePath,
+    removedLocalTrack.filePath
+  )
+  assert.deepEqual(store.getPlaylistTracks('preserved-local-history'), [])
   store.clearTracks()
 })
 
@@ -1415,5 +2392,231 @@ test('removing a logical favorite removes all source variants from default favor
   assert.equal(store.isFavoriteTrack(localTrack), false)
   assert.equal(store.isFavoriteTrack(providerTrack), false)
 
+  store.clearTracks()
+})
+
+test('5000-track batch playlist mutations perform one persistence commit', async () => {
+  const store = setupStore()
+  const batch = generateMockTracks(5000)
+  const initial = [
+    {
+      id: 'pl_favorites',
+      name: '我收藏的音乐',
+      trackIds: [],
+      isDefault: true,
+      createdAt: '2026-07-17T00:00:00.000Z'
+    },
+    {
+      id: 'pl_batch',
+      name: 'batch',
+      trackIds: [],
+      createdAt: '2026-07-17T00:00:00.000Z'
+    }
+  ]
+  let saveCalls = 0
+  let revision = 17
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (snapshot: unknown) => createSavedMusicLibraryDocument(snapshot),
+        loadMusicLibrary: async (): Promise<unknown[]> => [],
+        loadPlaylists: async () => ({ version: 2 as const, revision, savedAt: '', data: initial }),
+        savePlaylists: async (data: unknown[], expectedRevision: number) => {
+          saveCalls++
+          assert.equal(expectedRevision, revision)
+          revision++
+          return { version: 2 as const, revision, savedAt: '', data }
+        }
+      },
+      fs: { scanMusicFiles: async (): Promise<unknown[]> => [] },
+      library: {
+        removeTracks: async (): Promise<never> => {
+          throw new Error('unexpected local library removal')
+        },
+        restoreExclusions: async (): Promise<never> => {
+          throw new Error('unexpected exclusion restore')
+        }
+      }
+    }
+  }
+
+  await store.loadPlaylists()
+  const startedAt = performance.now()
+  assert.equal(store.addTracksToPlaylist('batch', batch), 5000)
+  const mutationElapsed = performance.now() - startedAt
+  assert.equal(await store.flushPlaylists(), true)
+
+  assert.equal(saveCalls, 1)
+  assert.equal(
+    store.playlists.value.find((playlist) => playlist.name === 'batch')?.trackIds.length,
+    5000
+  )
+  assert.ok(
+    mutationElapsed < 1_000,
+    `5000-track batch mutation took ${mutationElapsed.toFixed(1)}ms`
+  )
+  store.clearTracks()
+})
+
+test('playlist CAS conflict replays the local transaction onto the authoritative snapshot', async () => {
+  const store = setupStore()
+  const localTracks = generateMockTracks(2)
+  const base = [
+    {
+      id: 'pl_favorites',
+      name: '我收藏的音乐',
+      trackIds: [],
+      isDefault: true,
+      createdAt: '2026-07-17T00:00:00.000Z'
+    },
+    {
+      id: 'pl_shared',
+      name: 'shared',
+      trackIds: ['remote:base'],
+      createdAt: '2026-07-17T00:00:00.000Z'
+    }
+  ]
+  const authoritative = [
+    ...base.slice(0, 1),
+    {
+      ...base[1],
+      trackIds: ['remote:base', 'remote:concurrent']
+    },
+    {
+      id: 'pl_remote',
+      name: 'remote-only',
+      trackIds: ['remote:other'],
+      createdAt: '2026-07-17T00:00:00.000Z'
+    }
+  ]
+  const saveCalls: Array<{ expectedRevision: number; data: unknown[] }> = []
+  let serverRevision = 4
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (snapshot: unknown) => createSavedMusicLibraryDocument(snapshot),
+        loadMusicLibrary: async (): Promise<unknown[]> => [],
+        loadPlaylists: async () => ({ version: 2 as const, revision: 4, savedAt: '', data: base }),
+        savePlaylists: async (data: unknown[], expectedRevision: number) => {
+          saveCalls.push({ expectedRevision, data })
+          if (saveCalls.length === 1) {
+            const error = Object.assign(new Error('playlist revision changed'), {
+              code: 'ERR_PERSISTENCE_REVISION_CONFLICT',
+              current: { version: 2 as const, revision: 5, savedAt: '', data: authoritative }
+            })
+            throw error
+          }
+          assert.equal(expectedRevision, 5)
+          serverRevision = 6
+          return { version: 2 as const, revision: serverRevision, savedAt: '', data }
+        }
+      },
+      fs: { scanMusicFiles: async (): Promise<unknown[]> => [] },
+      library: {
+        removeTracks: async (): Promise<never> => {
+          throw new Error('unexpected local library removal')
+        },
+        restoreExclusions: async (): Promise<never> => {
+          throw new Error('unexpected exclusion restore')
+        }
+      }
+    }
+  }
+
+  await store.loadPlaylists()
+  assert.equal(store.addTracksToPlaylist('shared', localTracks), 2)
+  assert.equal(await store.flushPlaylists(), true)
+
+  assert.equal(saveCalls.length, 2, 'one CAS retry is expected after the injected conflict')
+  const persisted = saveCalls[1].data as Array<{ name: string; trackIds: string[] }>
+  assert.deepEqual(persisted.find((playlist) => playlist.name === 'shared')?.trackIds, [
+    'remote:base',
+    'remote:concurrent',
+    ...localTracks.map((track) => track.id)
+  ])
+  assert.ok(persisted.some((playlist) => playlist.name === 'remote-only'))
+  assert.deepEqual(store.playlists.value.find((playlist) => playlist.name === 'shared')?.trackIds, [
+    'remote:base',
+    'remote:concurrent',
+    ...localTracks.map((track) => track.id)
+  ])
+  store.clearTracks()
+})
+
+test('playlist lifecycle batches move, stable reorder, cover, import, and unique relocation into persistence', async () => {
+  const store = setupStore()
+  const tracks = generateMockTracks(4)
+  await store.addTracks(tracks, { deferRebuild: true })
+  store.refreshLibraryIndex()
+  let writes = 0
+  let revision = 8
+  ;(globalThis as Record<string, unknown>).window = {
+    api: {
+      data: {
+        saveMusicLibrary: async (snapshot: unknown) => createSavedMusicLibraryDocument(snapshot),
+        loadMusicLibrary: async (): Promise<unknown[]> => [],
+        loadPlaylists: async () => ({ version: 2 as const, revision, savedAt: '', data: [] }),
+        savePlaylists: async (data: unknown[], expectedRevision: number) => {
+          assert.equal(expectedRevision, revision)
+          writes++
+          revision++
+          return { version: 2 as const, revision, savedAt: '', data }
+        }
+      },
+      fs: { scanMusicFiles: async (): Promise<unknown[]> => [] },
+      library: {
+        removeTracks: async (): Promise<never> => {
+          throw new Error('unexpected local library removal')
+        },
+        restoreExclusions: async (): Promise<never> => {
+          throw new Error('unexpected exclusion restore')
+        }
+      }
+    }
+  }
+
+  await store.loadPlaylists()
+  store.createPlaylistWithTracks('source', tracks)
+  store.createPlaylist('target')
+  const source = store.playlists.value.find((playlist) => playlist.name === 'source')!
+  assert.equal(store.renamePlaylist(source.id, 'renamed'), true)
+  assert.equal(store.setPlaylistCover(source.id, 'cover://managed'), true)
+  assert.equal(store.copyPlaylist(source.id, 'renamed copy') !== null, true)
+  assert.equal(store.reorderPlaylistTracks('renamed', [tracks[1].id, tracks[3].id], 4), true)
+  assert.deepEqual(
+    store.playlists.value.find((playlist) => playlist.name === 'renamed')?.trackIds,
+    [tracks[0].id, tracks[2].id, tracks[1].id, tracks[3].id]
+  )
+  assert.deepEqual(store.movePlaylistTracks('renamed', 'target', [tracks[2].id, tracks[1].id]), {
+    moved: 2,
+    sourceRemoved: 2
+  })
+
+  const relativePath = tracks[3].filePath.replace(/^C:\\music\\/i, '')
+  const imported = store.importPlaylistDocument(
+    'target',
+    'paths.m3u',
+    `#EXTM3U\n${tracks[0].filePath}\n${relativePath}\nC:\\missing\\none.flac\n`
+  )
+  assert.equal(imported.importedCount, 2)
+  assert.equal(imported.unresolvedEntries, 1)
+
+  const missing = { ...tracks[3], id: 'missing-id', filePath: 'C:\\old\\song3.m4a' }
+  store.playlists.value.push({
+    id: 'pl_missing',
+    name: 'missing',
+    trackIds: [missing.id],
+    trackSnapshots: { [missing.id]: missing },
+    createdAt: '2026-07-18T00:00:00.000Z'
+  })
+  const moved = { ...tracks[3], id: 'relocated-id', filePath: 'E:\\new\\song3.m4a' }
+  const repaired = store.repairPlaylistMissingTracks('missing', [moved])
+  assert.equal(repaired.relocations.length, 1)
+  assert.deepEqual(
+    store.playlists.value.find((playlist) => playlist.name === 'missing')?.trackIds,
+    [moved.id]
+  )
+  assert.equal(await store.flushPlaylists(), true)
+  assert.equal(writes, 1, 'all lifecycle mutations coalesce into one persistence write')
   store.clearTracks()
 })

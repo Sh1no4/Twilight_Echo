@@ -1,9 +1,14 @@
 import { readFileSync } from 'node:fs'
 import assert from 'node:assert/strict'
 import test from 'node:test'
+const persistedValues = new Map<string, string>()
+let localStorageWriteCount = 0
 ;(globalThis as Record<string, unknown>).localStorage = {
-  getItem: () => null,
-  setItem: () => undefined
+  getItem: (key: string) => persistedValues.get(key) ?? null,
+  setItem: (key: string, value: string) => {
+    localStorageWriteCount += 1
+    persistedValues.set(key, value)
+  }
 }
 
 const {
@@ -11,6 +16,9 @@ const {
   getMostListenedTracks,
   getTopArtists,
   getTopTracks,
+  compactListeningStatsForPersistence,
+  flushListeningStatsForTest,
+  LISTENING_STATS_MAX_TRACKS,
   recordPlaybackOutcomeForTest,
   recordListeningForTest,
   recordPlaybackTransitionForTest,
@@ -41,6 +49,68 @@ test('listening stats tracking receives player refs without dynamically importin
   assert.doesNotMatch(source, /days: \{ \.\.\.listeningStats\.value\.days \}/)
   assert.doesNotMatch(source, /tracks: \{ \.\.\.listeningStats\.value\.tracks \}/)
   assert.doesNotMatch(source, /Object\.entries\(listeningStats\.value\.tracks\)[\s\S]*?\.sort/)
+})
+
+test('5-second listening ticks mutate memory first and batch one persisted snapshot', () => {
+  resetListeningStatsForTest()
+  persistedValues.clear()
+  localStorageWriteCount = 0
+
+  for (let index = 0; index < 12; index++) {
+    recordListeningForTest(localTrack, 5, 1_000 + index)
+  }
+
+  assert.equal(localStorageWriteCount, 0)
+  assert.equal(flushListeningStatsForTest(), true)
+  assert.equal(localStorageWriteCount, 1)
+  const persisted = JSON.parse(persistedValues.get('twilight-echo:listening-stats:v1') ?? '{}')
+  assert.equal(persisted.tracks['logic:moon river::audrey'].seconds, 60)
+  assert.equal(persisted.tracks['logic:moon river::audrey'].plays, 1)
+})
+
+test('listening stats compaction retains the bounded recent history deterministically', () => {
+  const stats = {
+    days: {
+      '2020-01-01': 5,
+      '2026-07-16': 10
+    },
+    tracks: {} as Record<
+      string,
+      {
+        seconds: number
+        plays: number
+        lastPlayed: number
+        skips: number
+        completions: number
+        title: string
+        artist: string
+        cover: string | null
+      }
+    >
+  }
+  for (let index = 0; index <= LISTENING_STATS_MAX_TRACKS; index++) {
+    stats.tracks[`track:${index}`] = {
+      seconds: 0,
+      plays: 0,
+      lastPlayed: index,
+      skips: 0,
+      completions: 0,
+      title: `Track ${index}`,
+      artist: 'Artist',
+      cover: null
+    }
+  }
+
+  const changed = compactListeningStatsForPersistence(stats, Date.UTC(2026, 6, 17))
+
+  assert.equal(changed, true)
+  assert.deepEqual(stats.days, { '2026-07-16': 10 })
+  assert.equal(Object.keys(stats.tracks).length, LISTENING_STATS_MAX_TRACKS)
+  assert.equal(stats.tracks['track:0'], undefined)
+  assert.equal(
+    stats.tracks[`track:${LISTENING_STATS_MAX_TRACKS}`]?.lastPlayed,
+    LISTENING_STATS_MAX_TRACKS
+  )
 })
 
 const localTrack = {

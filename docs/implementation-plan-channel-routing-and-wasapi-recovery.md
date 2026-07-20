@@ -751,4 +751,4 @@ WASAPI 独占后端当前**没有 mock seam**（不像 ASIO 有 `IAsioHost` + `M
 
 补全测试需要先引入 `IWasapiHost` 抽象接口 + `MockWasapiHost` 实现（类似 ASIO 的 seam 模式），将 `WasapiExclusiveBackend::Impl` 中的 COM 调用改为通过接口调用。这是一项独立的架构改造（影响 `WasapiExclusiveBackend.cpp` 全部 ~780 行 + 新增 mock 文件），超出本次"补全缺失测试"的范围，建议作为独立任务后续推进。
 
-真实设备 smoke（`npm run smoke:wasapi`）可通过 `--device` + `--buffer` 参数在真机上验证恢复行为，但不在默认 CI 门禁内（opt-in via `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1`）。
+真实设备 smoke（`pnpm run smoke:wasapi`）可通过 `--device` + `--buffer` 参数在真机上验证恢复行为，但不在默认 CI 门禁内（opt-in via `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1`）。

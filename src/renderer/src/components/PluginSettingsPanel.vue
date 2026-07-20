@@ -1,5 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import {
+  pluginIndexLoadedFromLabel,
+  pluginIndexSourceLabel,
+  presentPluginTrust
+} from '@renderer/utils/pluginTrustPresentation'
+import {
+  createPluginTrustRefreshController,
+  type PluginTrustRefreshController
+} from '@renderer/utils/pluginTrustRefresh'
 
 type PluginStatus = 'installed' | 'enabled' | 'disabled' | 'invalid' | 'failed'
 
@@ -36,40 +45,8 @@ type PluginIndexInstallState =
   | 'incompatible'
   | 'built-in-blocked'
 
-interface PluginIndexEntry {
-  id: string
-  name: string
-  version: string
-  description: string
-  author: string
-  license: string
-  type: string[]
-  permissions: string[]
-  engines: {
-    twilightEcho: string
-  }
-  apiVersion: number
-  sourceUrl: string
-  checksumSha256: string
-  homepage?: string
-  repository?: string
-  tags?: string[]
-  verified?: boolean
-  installState?: PluginIndexInstallState
-  installedVersion?: string
-}
-
-type PluginIndexSourceKind = 'github' | 'custom' | 'bundled'
-type PluginIndexLoadedFrom = 'remote' | 'cache' | 'bundled'
-
-interface PluginIndexStatus {
-  sourceUrl: string
-  sourceKind: PluginIndexSourceKind
-  loadedFrom: PluginIndexLoadedFrom
-  lastFetchedAt: string | null
-  stale: boolean
-  error: string | null
-}
+type PluginIndexEntry = Awaited<ReturnType<typeof window.api.plugins.listIndex>>[number]
+type PluginIndexStatus = Awaited<ReturnType<typeof window.api.plugins.getIndexStatus>>
 
 interface NativeDspParameter {
   id: string
@@ -105,25 +82,24 @@ const error = ref('')
 const marketError = ref('')
 const selectedLog = ref('')
 const selectedLogPlugin = ref('')
+const trustEvaluationTimeMs = ref(Date.now())
 let removePluginListener: (() => void) | null = null
+let trustRefreshController: PluginTrustRefreshController | null = null
+let indexRequestGeneration = 0
 
 const enabledCount = computed(() => plugins.value.filter((plugin) => plugin.enabled).length)
 const marketCount = computed(() => indexEntries.value.length)
 const indexSourceLabel = computed(() => {
-  const status = indexStatus.value
-  if (!status) return '索引未加载'
-  if (status.loadedFrom === 'bundled') return '内置离线索引'
-  if (status.sourceKind === 'github') return 'GitHub 动态索引'
-  return '自定义远程索引'
+  return pluginIndexSourceLabel(indexStatus.value)
 })
 
 const indexLoadedFromLabel = computed(() => {
-  const loadedFrom = indexStatus.value?.loadedFrom
-  if (loadedFrom === 'remote') return '远程'
-  if (loadedFrom === 'cache') return '缓存'
-  if (loadedFrom === 'bundled') return '内置'
-  return '未知'
+  return pluginIndexLoadedFromLabel(indexStatus.value?.loadedFrom)
 })
+
+function pluginTrust(entry: PluginIndexEntry) {
+  return presentPluginTrust(entry, indexStatus.value, trustEvaluationTimeMs.value)
+}
 const pluginGroups = computed(() => [
   {
     id: 'regular',
@@ -161,19 +137,29 @@ async function refreshPlugins(): Promise<void> {
 }
 
 async function refreshIndex(force = false): Promise<void> {
+  const generation = ++indexRequestGeneration
+  trustEvaluationTimeMs.value = Date.now()
   marketLoading.value = true
   marketError.value = ''
   try {
-    indexEntries.value = force
+    const entries = force
       ? await window.api.plugins.refreshIndex()
       : await window.api.plugins.listIndex()
-    indexStatus.value = await window.api.plugins.getIndexStatus()
+    const status = await window.api.plugins.getIndexStatus()
+    if (generation !== indexRequestGeneration) return
+    indexEntries.value = entries
+    indexStatus.value = status
   } catch (err) {
+    if (generation !== indexRequestGeneration) return
     marketError.value = err instanceof Error ? err.message : String(err)
     indexStatus.value = await window.api.plugins.getIndexStatus().catch(() => null)
     indexEntries.value = []
   } finally {
-    marketLoading.value = false
+    if (generation === indexRequestGeneration) {
+      trustEvaluationTimeMs.value = Date.now()
+      marketLoading.value = false
+      trustRefreshController?.schedule()
+    }
   }
 }
 
@@ -349,17 +335,36 @@ function formatIndexTime(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
 }
 
+function refreshTrustOnResume(): void {
+  trustEvaluationTimeMs.value = Date.now()
+  void trustRefreshController?.refreshNow().catch(() => undefined)
+}
+
+function handleTrustVisibilityChange(): void {
+  if (document.visibilityState === 'visible') refreshTrustOnResume()
+}
+
 onMounted(() => {
+  trustRefreshController = createPluginTrustRefreshController({
+    getSnapshot: () => ({ entries: indexEntries.value, status: indexStatus.value }),
+    refresh: () => refreshIndex(false)
+  })
+  window.addEventListener('focus', refreshTrustOnResume)
+  document.addEventListener('visibilitychange', handleTrustVisibilityChange)
   void refreshPlugins()
   void refreshIndex()
   removePluginListener = window.api.plugins.onChanged(() => {
     void refreshPlugins()
-    void refreshIndex()
+    refreshTrustOnResume()
   })
 })
 
 onUnmounted(() => {
   removePluginListener?.()
+  window.removeEventListener('focus', refreshTrustOnResume)
+  document.removeEventListener('visibilitychange', handleTrustVisibilityChange)
+  trustRefreshController?.stop()
+  trustRefreshController = null
 })
 </script>
 
@@ -399,7 +404,7 @@ onUnmounted(() => {
     <section class="plugin-market">
       <div class="plugin-group-head">
         <strong>插件市场</strong>
-        <span>通过远程 plugins.json 发现插件包；安装前仍会展示权限与信任式安装警告。</span>
+        <span>当前索引用于发现插件；安装前展示来源、有效期、SHA-256、签名、权限与代码执行风险。</span>
       </div>
       <div class="plugin-market-actions">
         <button class="text-button" :disabled="marketLoading" @click="refreshIndex(true)">
@@ -410,10 +415,21 @@ onUnmounted(() => {
       <div v-if="indexStatus" class="plugin-index-status">
         <span>{{ indexSourceLabel }}</span>
         <span>{{ indexLoadedFromLabel }}</span>
-        <span>刷新 {{ formatIndexTime(indexStatus.lastFetchedAt) }}</span>
+        <span>获取 {{ formatIndexTime(indexStatus.lastFetchedAt) }}</span>
+        <span>过期 {{ formatIndexTime(indexStatus.expiresAt) }}</span>
         <span v-if="indexStatus.stale" class="warn">使用回退索引</span>
+        <span v-if="indexStatus.expired" class="warn">索引已过期</span>
+        <span v-if="!indexStatus.originVerified" class="warn">来源未验证</span>
+        <span v-if="indexStatus.trustStoreError" class="warn">签名信任库不可用</span>
         <span v-if="indexStatus.error" class="warn">最近错误：{{ indexStatus.error }}</span>
         <span class="source-url" :title="indexStatus.sourceUrl">{{ indexStatus.sourceUrl }}</span>
+        <span
+          v-if="indexStatus.configuredSourceUrl !== indexStatus.sourceUrl"
+          class="source-url warn"
+          :title="indexStatus.configuredSourceUrl"
+        >
+          配置：{{ indexStatus.configuredSourceUrl }}
+        </span>
       </div>
       <div v-if="marketError" class="plugin-error">{{ marketError }}</div>
       <div v-if="indexEntries.length === 0 && !marketLoading && !marketError" class="plugin-empty">
@@ -426,7 +442,14 @@ onUnmounted(() => {
             <span class="plugin-pill" :class="entry.installState || 'not-installed'">
               {{ installStateLabel(entry) }}
             </span>
-            <span v-if="entry.verified" class="plugin-pill builtin">已审核</span>
+            <span
+              class="plugin-pill"
+              :class="`trust-${pluginTrust(entry).tone}`"
+              :title="pluginTrust(entry).detail"
+            >
+              <i :class="pluginTrust(entry).icon"></i>
+              {{ pluginTrust(entry).label }}
+            </span>
           </div>
           <p>{{ entry.description || '没有描述' }}</p>
           <div class="plugin-meta">
@@ -434,6 +457,12 @@ onUnmounted(() => {
             <span>v{{ entry.version }}</span>
             <span>{{ entry.author }}</span>
             <span>{{ entry.engines.twilightEcho }}</span>
+            <span>签名 {{ entry.verification.signatureStatus }}</span>
+            <span
+              :title="entry.verification.keyFingerprintSha256 || entry.verification.reason"
+            >
+              指纹 {{ entry.verification.keyFingerprintSha256?.slice(0, 12) || '无' }}
+            </span>
           </div>
           <div class="plugin-tags">
             <span v-for="type in entry.type" :key="type">{{ typeLabel(type) }}</span>
@@ -777,6 +806,26 @@ onUnmounted(() => {
 .plugin-pill.builtin {
   background: var(--te-info-soft-bg);
   color: #1d4ed8;
+}
+
+.plugin-pill.trust-official {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.plugin-pill.trust-signed {
+  background: #ecfdf5;
+  color: #047857;
+}
+
+.plugin-pill.trust-declared {
+  background: #fefce8;
+  color: #a16207;
+}
+
+.plugin-pill.trust-unverified {
+  background: var(--te-subtle-bg);
+  color: var(--te-neutral-500);
 }
 
 .plugin-pill.not-installed,

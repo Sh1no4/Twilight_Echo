@@ -1,4 +1,9 @@
 import { loadNativeBinding, type NativeAudioBinding } from './audioEngineManager'
+import {
+  createAudioServiceCapabilities,
+  REQUIRED_AUDIO_SERVICE_DSP_METHODS,
+  type AudioServiceCapabilities
+} from '../shared/audioServiceContract.ts'
 
 type AudioServiceRequest = {
   kind: 'request'
@@ -16,7 +21,12 @@ type AudioServiceResponse = {
 }
 
 type ParentPort = {
-  postMessage: (message: AudioServiceResponse | { kind: 'ready' } | { kind: 'fatal'; error: string }) => void
+  postMessage: (
+    message:
+      | AudioServiceResponse
+      | { kind: 'ready'; capabilities: AudioServiceCapabilities }
+      | { kind: 'fatal'; error: string }
+  ) => void
   on: (event: 'message', listener: (message: AudioServiceRequest) => void) => void
 }
 
@@ -54,11 +64,27 @@ if (!parentPort) {
 
 const servicePort = parentPort
 const native = loadNativeBinding()
+const nativeMethods = native
+  ? Object.getOwnPropertyNames(native).filter(
+      (method) => typeof native[method as keyof NativeAudioBinding] === 'function'
+    )
+  : []
+const missingDspMethods = REQUIRED_AUDIO_SERVICE_DSP_METHODS.filter(
+  (method) => typeof native?.[method] !== 'function'
+)
+const nativeContractError = !native
+  ? '未加载 twilight_audio_node.node'
+  : missingDspMethods.length > 0
+    ? `native audio binding is missing required DSP methods: ${missingDspMethods.join(', ')}`
+    : ''
 
-if (!native) {
-  servicePort.postMessage({ kind: 'fatal', error: '未加载 twilight_audio_node.node' })
+if (nativeContractError) {
+  servicePort.postMessage({ kind: 'fatal', error: nativeContractError })
 } else {
-  servicePort.postMessage({ kind: 'ready' })
+  servicePort.postMessage({
+    kind: 'ready',
+    capabilities: createAudioServiceCapabilities(nativeMethods)
+  })
 }
 
 servicePort.on('message', (message) => {
@@ -67,16 +93,19 @@ servicePort.on('message', (message) => {
 })
 
 async function handleRequest(message: AudioServiceRequest): Promise<void> {
-  if (!native) {
+  if (!native || nativeContractError) {
     post({
       kind: 'response',
       requestId: message.requestId,
       ok: false,
-      error: '未加载 twilight_audio_node.node'
+      error: nativeContractError || '未加载 twilight_audio_node.node'
     })
     return
   }
   try {
+    if (message.method === 'AnalyzeBpm' || message.method === 'AnalyzeLoudness') {
+      throw new Error(`${String(message.method)} must use the isolated audio analysis service`)
+    }
     const method = native[message.method]
     if (typeof method !== 'function') {
       throw new Error(`原生音频服务不支持方法：${String(message.method)}`)

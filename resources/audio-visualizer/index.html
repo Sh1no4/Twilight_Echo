@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Audio Visualization Interface Preview - 1:1 Replica</title>
+  <script src="./visibility-animation-controller.js"></script>
   <style>
     :root {
       --bg-color: #e4e6eb;
@@ -2124,6 +2125,13 @@
       if (playheadAnimationFrame !== 0) return;
       playheadAnimationFrame = requestAnimationFrame(updatePlayhead);
     }
+
+    const visibilityAnimationController = window.createVisibilityAnimationController(
+      () => document.hidden,
+      () => { stopSpectrumLoop(); stopPlayheadLoop(); },
+      () => { if (isPlaying) { startSpectrumLoop(); startPlayheadLoop(); } }
+    );
+    document.addEventListener('visibilitychange', () => visibilityAnimationController.onVisibilityChange());
 
     function stopPlayheadLoop() {
       if (playheadAnimationFrame === 0) return;

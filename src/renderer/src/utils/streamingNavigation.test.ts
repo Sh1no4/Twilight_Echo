@@ -60,6 +60,13 @@ test('keeps shared music library visible when a unified provider is enabled with
       label: '音乐库',
       icon: 'pi pi-heart',
       tab: 'library'
+    },
+    {
+      key: 'recent',
+      provider: 'ncm',
+      label: '最近播放',
+      icon: 'pi pi-history',
+      tab: 'recent'
     }
   ])
   assert.equal(getFirstVisibleStreamingTab(items), 'library')

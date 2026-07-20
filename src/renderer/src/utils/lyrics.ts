@@ -7,6 +7,7 @@ export interface LyricLine {
   time: number | null
   text: string
   translation: string | null
+  romanization: string | null
   timed: boolean
 }
 
@@ -80,21 +81,28 @@ export function parsePlainLyrics(lyrics: string | null | undefined): string[] {
 
 export function buildLyricLines(
   lyrics: string | null | undefined,
-  translatedLyrics: string | null | undefined
+  translatedLyrics: string | null | undefined,
+  romanizedLyrics?: string | null | undefined
 ): LyricLine[] {
   const originalLines = parseTimedLrc(lyrics)
   const translatedLines = parseTimedLrc(translatedLyrics)
+  const romanizedLines = parseTimedLrc(romanizedLyrics)
 
   if (originalLines.length > 0) {
     const translatedMap = new Map<number, string>()
     for (const line of translatedLines) {
       translatedMap.set(Math.round(line.time * 1000), line.text)
     }
+    const romanizedMap = new Map<number, string>()
+    for (const line of romanizedLines) {
+      romanizedMap.set(Math.round(line.time * 1000), line.text)
+    }
 
     return originalLines.map((line) => ({
       time: line.time,
       text: line.text,
       translation: translatedMap.get(Math.round(line.time * 1000)) ?? null,
+      romanization: romanizedMap.get(Math.round(line.time * 1000)) ?? null,
       timed: true
     }))
   }
@@ -104,18 +112,21 @@ export function buildLyricLines(
       time: line.time,
       text: line.text,
       translation: null,
+      romanization: null,
       timed: true
     }))
   }
 
   const plainLines = parsePlainLyrics(lyrics)
   const plainTranslatedLines = parsePlainLyrics(translatedLyrics)
+  const plainRomanizedLines = parsePlainLyrics(romanizedLyrics)
   const sourceLines = plainLines.length > 0 ? plainLines : plainTranslatedLines
 
   return sourceLines.map((line, index) => ({
     time: null,
     text: line,
     translation: plainLines.length > 0 ? (plainTranslatedLines[index] ?? null) : null,
+    romanization: plainRomanizedLines[index] ?? null,
     timed: false
   }))
 }

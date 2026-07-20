@@ -5,6 +5,7 @@ import MiniPlayerSettingsSection from './settings-page/MiniPlayerSettingsSection
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
 import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
+import { useMusicStore } from '../stores/useMusicStore'
 import { useExtensionRegistry, type UiContribution } from '../extensions/registry'
 import { getPluginThemeKey } from '../extensions/themeSelection'
 import {
@@ -62,6 +63,7 @@ type BooleanSettingKey =
   | 'autoCheckLogin'
   | 'launchAtLogin'
   | 'hardwareAcceleration'
+  | 'proxyAllowDirectFallback'
   | 'windowTransparency'
   | 'useCoverTheme'
   | 'globalShortcuts'
@@ -289,6 +291,97 @@ const {
 
 const audioOutputDspStore = useAudioOutputDspStore()
 const playbackQueueStore = usePlaybackQueueStore()
+const {
+  libraryScanStatus,
+  libraryScanProgress,
+  libraryMetadataEnrichmentStatus,
+  startFullLibraryScan,
+  pauseLibraryScan,
+  resumeLibraryScan,
+  cancelLibraryScan,
+  cancelLibraryMetadataEnrichment
+} = useMusicStore()
+const libraryScanCommandError = ref('')
+
+const libraryScanIsActive = computed(
+  () => libraryScanStatus.value.state === 'running' || libraryScanStatus.value.state === 'paused'
+)
+const libraryMetadataEnrichmentIsActive = computed(
+  () => libraryMetadataEnrichmentStatus.value.state === 'enriching'
+)
+const libraryScanProgressText = computed(() => {
+  const status = libraryScanStatus.value
+  if (status.state === 'failed') return status.error || '后台扫描失败'
+  if (status.state === 'paused') return `已暂停：${status.current} / ${status.total || '?'} 项`
+  if (status.state === 'running') {
+    const phase = libraryScanProgress.value?.phase === 'parsing' ? '解析元数据' : '检查文件'
+    return `${phase}：${status.current} / ${status.total || '?'} 项`
+  }
+  if (status.state === 'completed') {
+    return `已完成：解析 ${status.parsedFileCount} 个文件，跳过 ${status.skippedUnchanged} 个未变化文件`
+  }
+  if (status.state === 'cancelled') return '扫描已取消，未提交未完成的结果'
+  return '启动时仅核对 path、size 与 mtime；完整元数据重扫只由此处触发。'
+})
+const libraryMetadataEnrichmentText = computed(() => {
+  const status = libraryMetadataEnrichmentStatus.value
+  if (status.state === 'enriching') {
+    return `后台富化中：已处理 ${status.completed + status.failed} / ${status.total} 首，${status.active} 项并发`
+  }
+  if (status.state === 'failed') return status.error || '后台元数据富化失败'
+  if (status.state === 'completed') {
+    return `后台富化完成：成功 ${status.completed} 首，跳过 ${status.skipped} 首`
+  }
+  if (status.state === 'cancelled') return '后台元数据富化已取消，迟到结果不会写回媒体库'
+  return '新曲目会先显示，再在后台补齐封面、歌词和在线 metadata。'
+})
+
+async function runFullLibraryScan(): Promise<void> {
+  libraryScanCommandError.value = ''
+  try {
+    await startFullLibraryScan()
+  } catch (error) {
+    libraryScanCommandError.value = scanCommandErrorMessage(error)
+  }
+}
+
+async function pauseActiveLibraryScan(): Promise<void> {
+  libraryScanCommandError.value = ''
+  try {
+    if (!(await pauseLibraryScan())) libraryScanCommandError.value = '当前没有可暂停的扫描'
+  } catch (error) {
+    libraryScanCommandError.value = scanCommandErrorMessage(error)
+  }
+}
+
+async function resumeActiveLibraryScan(): Promise<void> {
+  libraryScanCommandError.value = ''
+  try {
+    if (!(await resumeLibraryScan())) libraryScanCommandError.value = '当前没有可继续的扫描'
+  } catch (error) {
+    libraryScanCommandError.value = scanCommandErrorMessage(error)
+  }
+}
+
+async function cancelActiveLibraryScan(): Promise<void> {
+  libraryScanCommandError.value = ''
+  try {
+    if (!(await cancelLibraryScan())) libraryScanCommandError.value = '当前没有可取消的扫描'
+  } catch (error) {
+    libraryScanCommandError.value = scanCommandErrorMessage(error)
+  }
+}
+
+function cancelActiveLibraryMetadataEnrichment(): void {
+  libraryScanCommandError.value = ''
+  if (!cancelLibraryMetadataEnrichment()) {
+    libraryScanCommandError.value = '当前没有可取消的后台富化任务'
+  }
+}
+
+function scanCommandErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : '后台扫描操作失败'
+}
 
 const {
   exclusiveMode,
@@ -298,6 +391,7 @@ const {
   audioDeviceOptions,
   audioProcessing,
   audioOutputConfig,
+  audioOutputConfigApplyStatus,
   playbackInfo,
   outputInfo,
   audioEngineError,
@@ -611,6 +705,7 @@ function resetSettingsGroup(group: 'appearance' | 'playback' | 'desktopLyrics'):
   if (group === 'playback') {
     void updateSettings({
       playbackResumeMode: 'off',
+      sleepTimer: { defaultMinutes: 30, fadeSeconds: 10 },
       ncmPlaybackQuality: 'auto',
       audioExclusiveMode: false,
       audioOutputConfig: {
@@ -687,6 +782,22 @@ function setPlaybackResumeModeFromSelect(event: Event): void {
   setPlaybackResumeMode((event.target as HTMLSelectElement).value as PlaybackResumeMode)
 }
 
+function setSleepTimerDefaultMinutes(event: Event): void {
+  const value = Math.trunc(Number((event.target as HTMLInputElement).value))
+  if (!Number.isFinite(value)) return
+  void updateSettings({
+    sleepTimer: { ...settings.value.sleepTimer, defaultMinutes: Math.max(1, Math.min(720, value)) }
+  })
+}
+
+function setSleepTimerFadeSeconds(event: Event): void {
+  const value = Math.trunc(Number((event.target as HTMLInputElement).value))
+  if (!Number.isFinite(value)) return
+  void updateSettings({
+    sleepTimer: { ...settings.value.sleepTimer, fadeSeconds: Math.max(0, Math.min(120, value)) }
+  })
+}
+
 function setNcmPlaybackQuality(event: Event): void {
   void updateSettings({
     ncmPlaybackQuality: (event.target as HTMLSelectElement).value as NcmPlaybackQuality
@@ -704,6 +815,7 @@ function selectAudioDevice(deviceId: string): void {
 }
 
 function setPreferredBufferSize(event: Event): void {
+  if (audioOutputConfigApplyStatus.value.state === 'pending') return
   const value = Number((event.target as HTMLSelectElement).value)
   if (audioOutputConfig.value.preferredBufferSize === value) return
   void setAudioOutputConfig({ preferredBufferSize: value })
@@ -720,6 +832,7 @@ function setUpmixParam(field: keyof OutputConfig, event: Event): void {
 }
 
 function toggleWasapiExclusivePushMode(): void {
+  if (audioOutputConfigApplyStatus.value.state === 'pending') return
   void setAudioOutputConfig({
     wasapiExclusivePushMode: !audioOutputConfig.value.wasapiExclusivePushMode
   })
@@ -1112,7 +1225,7 @@ async function handleSettingsBackupSelected(event: Event): Promise<void> {
 async function confirmClearCache(): Promise<void> {
   if (
     !window.confirm(
-      `确认清理缓存？\n\n当前估算：${formattedCacheSize.value}\n将删除封面、歌词、元数据和可复用流媒体缓存。此操作不可恢复。`
+      `确认清理缓存？\n\n当前估算：${formattedCacheSize.value}\n将删除封面、歌词、元数据和可复用流媒体缓存。用户固定的离线下载不会被删除。此操作不可恢复。`
     )
   ) {
     return
@@ -1401,6 +1514,68 @@ onBeforeUnmount(() => {
                   @click="toggleSetting('watchLibrary')"
                 ></span>
               </div>
+              <hr />
+              <div class="setting-item top-align">
+                <div class="setting-copy">
+                  <strong>完整重扫</strong>
+                  <span>显式重新解析全部本地文件的 metadata 与封面；可暂停或取消。</span>
+                </div>
+                <div class="library-scan-panel" aria-live="polite">
+                  <progress
+                    v-if="libraryScanIsActive"
+                    class="library-scan-progress"
+                    :value="libraryScanStatus.total > 0 ? libraryScanStatus.current : undefined"
+                    :max="libraryScanStatus.total > 0 ? libraryScanStatus.total : 1"
+                  ></progress>
+                  <span class="library-scan-copy">{{ libraryScanProgressText }}</span>
+                  <span class="library-scan-copy">{{ libraryMetadataEnrichmentText }}</span>
+                  <span v-if="libraryScanCommandError" class="library-scan-error">
+                    {{ libraryScanCommandError }}
+                  </span>
+                  <div class="library-scan-actions">
+                    <button
+                      type="button"
+                      class="brand-soft-button"
+                      :disabled="libraryScanIsActive"
+                      @click="runFullLibraryScan"
+                    >
+                      完整重扫
+                    </button>
+                    <button
+                      v-if="libraryScanStatus.state === 'running'"
+                      type="button"
+                      class="soft-button"
+                      @click="pauseActiveLibraryScan"
+                    >
+                      暂停
+                    </button>
+                    <button
+                      v-if="libraryScanStatus.state === 'paused'"
+                      type="button"
+                      class="soft-button"
+                      @click="resumeActiveLibraryScan"
+                    >
+                      继续
+                    </button>
+                    <button
+                      v-if="libraryScanIsActive"
+                      type="button"
+                      class="danger-soft-button"
+                      @click="cancelActiveLibraryScan"
+                    >
+                      取消
+                    </button>
+                    <button
+                      v-if="libraryMetadataEnrichmentIsActive"
+                      type="button"
+                      class="soft-button"
+                      @click="cancelActiveLibraryMetadataEnrichment"
+                    >
+                      取消富化
+                    </button>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -1629,6 +1804,25 @@ onBeforeUnmount(() => {
                   />
                 </div>
               </template>
+              <template v-if="settings.proxyMode !== 'off'">
+                <hr />
+                <div class="setting-item">
+                  <div class="setting-copy">
+                    <strong>代理失败时允许直连</strong>
+                    <span>默认关闭。开启后代理连接失败才会尝试直连；已取消的请求永不回退。</span>
+                  </div>
+                  <span
+                    class="toggle-switch"
+                    :class="{
+                      active: settings.proxyAllowDirectFallback,
+                      inactive: !settings.proxyAllowDirectFallback
+                    }"
+                    role="switch"
+                    :aria-checked="settings.proxyAllowDirectFallback"
+                    @click="toggleSetting('proxyAllowDirectFallback')"
+                  ></span>
+                </div>
+              </template>
             </div>
           </div>
         </section>
@@ -1821,6 +2015,37 @@ onBeforeUnmount(() => {
                 </select>
               </div>
               <hr />
+              <div class="setting-item compact-row">
+                <div class="setting-copy">
+                  <strong>睡眠定时器</strong>
+                  <span>播放器可按默认时长停止，或等待当前曲目、队列结束。</span>
+                </div>
+                <div class="inline-controls">
+                  <label class="crossfade-group">
+                    <span>默认分钟</span>
+                    <input
+                      class="number-input"
+                      type="number"
+                      min="1"
+                      max="720"
+                      :value="settings.sleepTimer.defaultMinutes"
+                      @input="setSleepTimerDefaultMinutes"
+                    />
+                  </label>
+                  <label class="crossfade-group">
+                    <span>淡出秒数</span>
+                    <input
+                      class="number-input"
+                      type="number"
+                      min="0"
+                      max="120"
+                      :value="settings.sleepTimer.fadeSeconds"
+                      @input="setSleepTimerFadeSeconds"
+                    />
+                  </label>
+                </div>
+              </div>
+              <hr />
               <div class="setting-item">
                 <div class="setting-copy">
                   <strong>网易云播放音质</strong>
@@ -1862,6 +2087,7 @@ onBeforeUnmount(() => {
                 <select
                   class="preview-select"
                   :value="audioOutputConfig.preferredBufferSize"
+                  :disabled="audioOutputConfigApplyStatus.state === 'pending'"
                   @change="setPreferredBufferSize"
                 >
                   <option
@@ -1978,6 +2204,7 @@ onBeforeUnmount(() => {
                 :class="{ active: !!audioOutputConfig.wasapiExclusivePushMode, inactive: !audioOutputConfig.wasapiExclusivePushMode }"
                 role="switch"
                 :aria-checked="!!audioOutputConfig.wasapiExclusivePushMode"
+                :aria-disabled="audioOutputConfigApplyStatus.state === 'pending'"
                 @click="toggleWasapiExclusivePushMode"
               ></span>
             </div>
@@ -2365,7 +2592,7 @@ onBeforeUnmount(() => {
             <div class="setting-item top-align">
               <div class="setting-copy">
                 <strong>缓存目录</strong>
-                <span>保存图片、歌词、在线资源和可复用的流媒体缓存。</span>
+                <span>保存图片、歌词、在线资源和可复用的流媒体缓存；用户固定的离线下载独立保留。</span>
               </div>
               <div class="path-control">
                 <input readonly :value="activeCachePath || '未设置'" />
@@ -3638,21 +3865,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style>
-@font-face {
-  font-family: 'Outfit';
-  src: url('/font/Outfit-VariableFont_wght.woff2') format('woff2');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: 'Noto Sans SC';
-  src: url('/font/NotoSansSC-VariableFont_wght.woff2') format('woff2');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
-}
 </style>
 
 <style scoped src="./settings-page/SettingsPage.css"></style>

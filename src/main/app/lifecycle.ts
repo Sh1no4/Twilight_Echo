@@ -5,7 +5,12 @@ import { pathToFileURL } from 'url'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
-import { resolveBackgroundImageFile, resolveCoverCacheFile } from '../library/coverCache'
+import {
+  getCoverCacheContentType,
+  isCoverCacheFileName,
+  resolveBackgroundImageFile,
+  resolveCoverCacheFile
+} from '../library/coverCache'
 import { decodeAudioFileUrlPath } from '../library/scan'
 import { initializeLocalPathGrants, resolveAuthorizedAudioFile } from '../security/localPaths'
 import {
@@ -17,11 +22,14 @@ import { showDesktopLyrics, setupDesktopLyricsIpc } from '../integrations/deskto
 import { restoreMainWindowFromMiniPlayer, setupMiniPlayerIpc } from '../integrations/miniPlayer'
 import { setupNcmIpc, setupNcmApi } from '../ncm/api'
 import { setupAudioEngineIpc } from '../audio/engineIpc'
+import { AudioAnalysisServiceClient } from '../audioAnalysisServiceClient.ts'
+import { LocalLibraryScanServiceClient } from '../library/libraryScanServiceClient.ts'
 import { setupBpmAnalysisIpc } from '../bpm/bpmIpc'
 import { setupLoudnessAnalysisIpc } from '../audio/loudnessIpc'
 import { setupOpraIpc } from '../ipc/opra'
 import { setupPluginIpc } from '../ipc/plugins'
 import { setupDataIpc } from '../ipc/data'
+import { setupOfflineDownloadIpc, destroyOfflineDownloadIpc } from '../offline/offlineDownloadIpc.ts'
 import { installElectronSecurity } from '../security/electronSecurity.ts'
 import { createRemoteMediaRequestHandler } from '../security/remoteMediaGrants.ts'
 import { createWindow } from './window'
@@ -106,14 +114,14 @@ export function startApp(): void {
       installElectronSecurity()
       await initializeLocalPathGrants(runtime.launchSettings)
 
-      // Register cover:// protocol — Chromium reads JPEGs directly from disk,
+      // Register cover:// protocol — Chromium reads cached image assets directly from disk,
       // no IPC, no base64, browser manages decode cache natively.
       protocol.handle('cover', (request) => {
         const url = new URL(request.url)
         const fileName = url.hostname + url.pathname
         // Sanitize: only allow alphanumeric/hash filenames
         const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '')
-        if (!safeName.endsWith('.jpg')) {
+        if (!isCoverCacheFileName(safeName)) {
           return new Response('Forbidden', { status: 403 })
         }
         const filePath = resolveCoverCacheFile(safeName)
@@ -122,7 +130,10 @@ export function startApp(): void {
         }
         const data = readFileSync(filePath)
         return new Response(data, {
-          headers: { 'Content-Type': 'image/jpeg', 'Cache-Control': 'max-age=86400' }
+          headers: {
+            'Content-Type': getCoverCacheContentType(safeName),
+            'Cache-Control': 'max-age=86400'
+          }
         })
       })
 
@@ -173,6 +184,9 @@ export function startApp(): void {
         optimizer.watchWindowShortcuts(window)
       })
 
+      runtime.localLibraryScanService = new LocalLibraryScanServiceClient({
+        serviceEntry: join(__dirname, 'libraryScanService.js')
+      })
       setupDataIpc()
       setupDesktopLyricsIpc()
       setupMiniPlayerIpc()
@@ -182,9 +196,13 @@ export function startApp(): void {
       }
 
       await setupAudioEngineIpc()
+      runtime.audioAnalysisService = new AudioAnalysisServiceClient({
+        serviceEntry: join(__dirname, 'audioAnalysisService.js')
+      })
       setupBpmAnalysisIpc()
       setupLoudnessAnalysisIpc()
       setupNcmIpc()
+      await setupOfflineDownloadIpc()
       setupOpraIpc()
       setupPluginIpc()
       setupNcmApi()
@@ -226,10 +244,20 @@ export function startApp(): void {
       unregisterPlayerShortcuts()
       destroyTray()
       void runtime.pluginManager?.destroy()
+      runtime.bpmAnalysisManager?.cancel()
+      runtime.loudnessAnalysisManager?.cancel()
+      runtime.audioAnalysisService?.destroy()
+      runtime.audioAnalysisService = null
+      runtime.localLibraryIndexCoordinator?.destroy()
+      runtime.localLibraryIndexCoordinator = null
+      runtime.localLibraryScanService?.destroy()
+      runtime.localLibraryScanService = null
       runtime.audioEngineManager?.destroy()
       runtime.audioEngineManager = null
       runtime.bpmAnalysisManager = null
+      runtime.loudnessAnalysisManager = null
       runtime.pluginManager = null
+      destroyOfflineDownloadIpc()
       if (runtime.ncmServer) {
         runtime.ncmServer.close()
         runtime.ncmServer = null

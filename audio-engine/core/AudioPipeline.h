@@ -114,6 +114,7 @@ class AudioPipeline {
   void setVolume(double volume);
   void setDspConfig(const std::string& dspConfigJson);
   bool setDspGraph(const std::string& graphJson, std::string* error);
+  bool applyDspState(uint64_t revision, const std::string& stateJson, std::string* error);
   std::string dspGraphStatusJson() const;
   bool setOutputConfig(const OutputConfig& config, std::string* error);
   bool loadImpulseResponse(const std::string& path, std::string* error);
@@ -146,6 +147,12 @@ class AudioPipeline {
   bool needsPcmFallback(std::string* reason) const;
   void setRerouteInProgress(bool active, const std::string& reason = {});
 
+  // Deterministic diagnostics used by the native lifecycle stress gate.
+  size_t renderDspGraphGenerationCountForTests() const;
+  size_t maxRenderDspGraphGenerationCountForTests() const;
+  uint64_t appliedRenderDspEpochForTests() const noexcept;
+  OutputInfo::RenderPerformanceSnapshot renderPerformanceSnapshot() const noexcept;
+
   static void setBackendFactoryForTests(BackendFactory factory);
 
  private:
@@ -159,6 +166,7 @@ class AudioPipeline {
     ControlCommandType type = ControlCommandType::Volume;
     double volume = 1.0;
     uint64_t revision = 0;
+    uint64_t dspEpoch = 0;
     ChannelRoutingMode routingMode = ChannelRoutingMode::Auto;
     UpmixConfig upmix;
     DspChain* activeDspGraph = nullptr;
@@ -196,6 +204,7 @@ class AudioPipeline {
 
     std::atomic<uint64_t> sequence{0};
     std::atomic<uint64_t> revision{0};
+    std::atomic<uint64_t> dspEpoch{0};
     std::atomic<uint64_t> activeGraphBits{0};
     std::atomic<uint64_t> preloadGraphBits{0};
     std::atomic<bool> gaplessEnabled{true};
@@ -204,6 +213,15 @@ class AudioPipeline {
 
   struct DecodeStream;
   struct DecodeStreamReaper;
+
+  struct RenderDspGraphGeneration {
+    uint64_t epoch = 0;
+    uint64_t configRevision = 0;
+    bool updatesGraphStatus = false;
+    std::unique_ptr<DspChain> active;
+    std::unique_ptr<DspChain> preload;
+    std::string graphStatusJson;
+  };
 
   static std::shared_ptr<DecodeStream> makeDecodeStream();
   static DecodeStreamReaper& decodeStreamReaper();
@@ -257,12 +275,29 @@ class AudioPipeline {
   DspChain& spareDspChainLocked();
   size_t render(float* output, size_t frameCount);
   size_t renderTyped(PcmBlock& output);
+  void recordRenderPerformance(size_t frameCount, int sampleRate, uint64_t elapsedNanoseconds) noexcept;
   void enqueueControlCommand(const ControlCommand& command) noexcept;
   void applyPendingControlCommands() noexcept;
   void applyControlCommand(const ControlCommand& command) noexcept;
   void synchronizeRenderPromotionLocked();
-  std::unique_ptr<DspChain> makeRenderDspGraphLocked(const DspTrackContext& context, std::string* error);
+  void reclaimRetiredRenderDspGraphsLocked() const;
+  std::string appliedDspGraphStatusJsonLocked() const;
+  std::unique_ptr<DspChain> makeDspGraphCandidateLocked(
+      const DspConfig& config,
+      const std::string& graphJson,
+      const DspTrackContext& context,
+      std::string* error);
+  std::unique_ptr<DspChain> makeRenderDspGraphLocked(
+      const DspTrackContext& context,
+      std::string* error);
+  void commitPreparedRenderDspGraphsLocked(
+      uint64_t revision,
+      std::unique_ptr<DspChain> activeGraph,
+      std::unique_ptr<DspChain> preloadGraph,
+      std::string graphStatusJson) noexcept;
   bool publishPreparedRenderDspGraphsLocked(uint64_t revision, std::string* error);
+  bool publishPreparedRenderPreloadDspGraphLocked(std::string* error);
+  void publishRenderDspPointerTransitionLocked(DspChain* active, DspChain* preload);
 
   mutable std::mutex mutex_;
   std::unique_ptr<IOutputBackend> output_;
@@ -273,9 +308,15 @@ class AudioPipeline {
   mutable size_t retiredStreamCount_ = 0;
   mutable std::vector<std::shared_ptr<DecodeStream>> deferredRetiredStreams_;
   FftSpectrumAnalyzer spectrum_;
-  DspChain dspChain_;
-  DspChain preloadDspChain_;
-  std::vector<std::unique_ptr<DspChain>> renderDspGraphs_;
+  std::unique_ptr<DspChain> dspChain_;
+  std::unique_ptr<DspChain> preloadDspChain_;
+  static constexpr size_t kMaxRenderDspGraphGenerations = 8;
+  mutable std::vector<RenderDspGraphGeneration> renderDspGraphs_;
+  mutable uint64_t appliedDspGraphStatusEpoch_ = 0;
+  mutable std::string appliedDspGraphStatusJson_{
+      "{\"revision\":0,\"activeSceneId\":null,\"totalLatencyFrames\":0,\"totalTailFrames\":0,\"nodes\":[]}"};
+  DspChain* publishedActiveDspGraph_ = nullptr;
+  DspChain* publishedPreloadDspGraph_ = nullptr;
   std::string nativeDspPluginChainJson_{"{\"plugins\":[]}"};
   std::string dspGraphJson_;
   DspConfig dspConfig_;
@@ -287,6 +328,7 @@ class AudioPipeline {
   AudioFormat decodeFormat_;
   QueueItem currentItem_;
   std::string backendId_;
+  std::string deviceId_;
   std::string deviceName_;
   std::string perfectReason_;
   OutputInfo outputInfo_;
@@ -304,8 +346,15 @@ class AudioPipeline {
   std::atomic<uint64_t> appliedVolumeBits_{std::bit_cast<uint64_t>(1.0)};
   std::atomic<uint64_t> requestedConfigRevision_{0};
   std::atomic<uint64_t> appliedConfigRevision_{0};
+  std::atomic<uint64_t> requestedRenderDspEpoch_{0};
+  std::atomic<uint64_t> appliedRenderDspEpoch_{0};
   std::atomic<uint64_t> renderedFrames_{0};
   std::atomic<int> renderChannelCount_{2};
+  std::atomic<uint64_t> renderCallbackCount_{0};
+  std::atomic<uint64_t> renderTotalCallbackNanoseconds_{0};
+  std::atomic<uint64_t> renderPeakCallbackNanoseconds_{0};
+  std::atomic<uint64_t> renderTotalDeadlineNanoseconds_{0};
+  std::atomic<uint64_t> renderDeadlineMissCount_{0};
   // The output callback owns these values. The control thread only publishes
   // primitive hand-off values or retains the DecodeStream lifetime.
   std::atomic<PipelineState> renderState_{PipelineState::Stopped};

@@ -2,6 +2,7 @@ const {
   accessSync: fileAccessSync,
   constants: fileSystemConstants,
   existsSync: fileExistsSync,
+  readFileSync: fileReadFileSync,
   mkdirSync: makeDirectorySync
 } = require('node:fs')
 const { delimiter, dirname, join, resolve } = require('node:path')
@@ -13,6 +14,30 @@ const PERSISTED_MINGW_VARIABLES = [
   'TAE_MINGW_BUILD_DIR',
   'TWILIGHT_GNU_PATCH'
 ]
+
+const MINGW_EXPECTED_CTESTS = Object.freeze([
+  'twilight_audio_engine_smoke',
+  'twilight_dsp_unit',
+  'twilight_channel_router_unit',
+  'twilight_audio_buffer_unit',
+  'twilight_native_dsp_plugin_unit',
+  'twilight_native_dsp_plugin_crash_fixture',
+  'twilight_metadata_unit',
+  'twilight_bitperfect_unit',
+  'twilight_ffmpeg_decoder_unit',
+  'twilight_dsd_dop_unit',
+  'twilight_queue_unit',
+  'twilight_backend_factory_unit',
+  'twilight_wasapi_format_negotiator_unit',
+  'twilight_asio_backend_unit',
+  'twilight_output_backend_unit',
+  'twilight_runtime_queue_reroute_unit',
+  'twilight_audio_performance_gate',
+  'twilight_dst_decoder_unit',
+  'twilight_coreaudio_backend_unit',
+  'twilight_alsa_backend_unit',
+  'twilight_platform_backend_smoke'
+])
 
 function environmentValue(env, name) {
   const direct = env[name]
@@ -195,7 +220,7 @@ function validateMingwBuildCommands({
 
     const name = command === 'ctest' ? 'CTest' : 'CMake'
     unavailable.push(
-      `${name} executable \"${command}\" is unavailable. Install CMake with CTest and add it to PATH`
+      `${name} executable "${command}" is unavailable. Install CMake with CTest and add it to PATH`
     )
   }
   return unavailable.length === 0
@@ -255,12 +280,104 @@ function findStaleCTestRegistrations(ctestText, buildDir) {
     .filter((entry) => !normalizePath(entry).startsWith(`${normalizedBuildDir}/`))
 }
 
+function validateMingwCTestRegistration({
+  buildDir,
+  expectedTests = MINGW_EXPECTED_CTESTS,
+  env = process.env,
+  existsSync = fileExistsSync,
+  readFileSync = fileReadFileSync,
+  spawnSync = childProcessSpawnSync,
+  cwd = process.cwd()
+} = {}) {
+  if (!buildDir) {
+    return {
+      ok: false,
+      status: 1,
+      message: 'MinGW CTest registration validation requires a build directory',
+      output: '',
+      missing: [...expectedTests]
+    }
+  }
+
+  const cache = join(buildDir, 'CMakeCache.txt')
+  const ctestFile = join(buildDir, 'CTestTestfile.cmake')
+  if (!existsSync(cache)) {
+    return {
+      ok: false,
+      status: 1,
+      message: `MinGW build is not configured: missing ${cache}. Run configure:audio-engine:mingw and wait for it to finish.`,
+      output: '',
+      missing: [...expectedTests]
+    }
+  }
+  if (!existsSync(ctestFile)) {
+    return {
+      ok: false,
+      status: 1,
+      message: `MinGW build has no CTest registration: missing ${ctestFile}. Run configure:audio-engine:mingw and wait for it to finish.`,
+      output: '',
+      missing: [...expectedTests]
+    }
+  }
+
+  const stale = findStaleCTestRegistrations(readFileSync(ctestFile, 'utf8'), buildDir)
+  if (stale.length > 0) {
+    return {
+      ok: false,
+      status: 1,
+      message: `CTest registration points outside ${buildDir}:\n${stale.join('\n')}`,
+      output: '',
+      missing: [...expectedTests]
+    }
+  }
+
+  let result
+  try {
+    result = spawnSync('ctest', ['--test-dir', buildDir, '-N'], {
+      cwd,
+      encoding: 'utf8',
+      env,
+      windowsHide: true
+    })
+  } catch (error) {
+    return {
+      ok: false,
+      status: 1,
+      message: `Unable to discover MinGW CTest registrations: ${error instanceof Error ? error.message : String(error)}`,
+      output: '',
+      missing: [...expectedTests]
+    }
+  }
+
+  const output = `${result?.stdout ?? ''}\n${result?.stderr ?? ''}`
+  const missing = expectedTests.filter((name) => !output.includes(name))
+  const noTests = /No tests were found|Total Tests:\s*0\b/i.test(output)
+  if (result?.error || result?.status !== 0 || noTests || missing.length > 0) {
+    const reasons = []
+    if (result?.error) reasons.push(result.error.message)
+    if (result?.status !== 0) reasons.push(`ctest -N exited with status ${result?.status ?? 'unknown'}`)
+    if (noTests) reasons.push('ctest discovered zero tests')
+    if (missing.length > 0) reasons.push(`missing expected tests: ${missing.join(', ')}`)
+    return {
+      ok: false,
+      status: result?.status && result.status !== 0 ? result.status : 1,
+      message: `MinGW CTest registration validation failed: ${reasons.join('; ')}`,
+      output,
+      missing
+    }
+  }
+
+  return { ok: true, status: 0, message: '', output, missing: [] }
+}
+
 module.exports = {
+  MINGW_EXPECTED_CTESTS,
   findStaleCTestRegistrations,
   prepareMingwCmakeEnvironment,
   prepareMingwBuildLayout,
   resolveMingwEnvironment,
   resolveMingwBuildLayout,
+  validateMingwCTestRegistration,
   validateMingwBuildCommands,
   validateMingwToolchain
 }

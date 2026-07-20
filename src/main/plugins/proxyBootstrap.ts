@@ -1,251 +1,445 @@
-// src/main/plugins/proxyBootstrap.ts
-// Auto-detects local HTTP proxy and patches globalThis.fetch for the plugin utility process.
-//
-// Node.js fetch() does not respect system proxy settings (no HTTP_PROXY support).
-// In regions where YouTube is blocked (DNS pollution), plugins can't reach
-// external APIs without a proxy tunnel. This module:
-//   1. Checks HTTPS_PROXY / HTTP_PROXY env vars
-//   2. Probes common local proxy ports (Clash, V2Ray, etc.)
-//   3. If a proxy is found, monkey-patches globalThis.fetch to route external
-//      HTTPS through HTTP CONNECT tunneling
-//   4. Localhost / 127.0.0.1 requests always use direct fetch
-//
-// This runs BEFORE any plugin code loads, so all plugins benefit automatically.
+// The plugin utility process uses this module before loading plugin code.
+// ProxyAgent owns CONNECT/TLS transport; this module owns fetch redirect and
+// fallback policy so those security decisions stay explicit and testable.
 
 import { connect as netConnect } from 'net'
-import { connect as tlsConnect } from 'tls'
-import { Agent, request as httpsRequest, type RequestOptions } from 'https'
-import type { Duplex } from 'stream'
-import { Readable } from 'stream'
-import { Buffer } from 'buffer'
-import type { IncomingMessage } from 'http'
+import { ProxyAgent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from 'undici'
 
 const COMMON_PROXY_PORTS = [7897, 7890, 7891, 1080, 10809, 8080, 2080, 7898]
+const DEFAULT_MAX_REDIRECTS = 5
+const PROXY_CONNECT_TIMEOUT_MS = 10_000
+const PROXY_HEADERS_TIMEOUT_MS = 15_000
+const MAX_PROXY_RESPONSE_HEADER_BYTES = 16 * 1024
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
+const CROSS_ORIGIN_SENSITIVE_HEADERS = [
+  'authorization',
+  'cookie',
+  'cookie2',
+  'proxy-authorization',
+  'referer'
+]
+const REQUEST_BODY_HEADERS = [
+  'content-encoding',
+  'content-language',
+  'content-length',
+  'content-location',
+  'content-type'
+]
 
-interface ProxyEndpoint {
-  host: string
-  port: number
+type PluginProxyMode = 'auto' | 'custom' | 'off'
+
+interface DetectedProxy {
+  url: string
+  source: 'environment' | 'local-probe'
 }
 
-// ─── Proxy Detection ──────────────────────────────────────────────────
+interface TransportRequestInit {
+  method: string
+  headers: Headers
+  body?: Uint8Array<ArrayBuffer>
+  redirect: 'manual'
+  signal: AbortSignal
+}
 
-function isPortOpen(host: string, port: number, timeoutMs = 2000): Promise<boolean> {
+export type ProxyFetchTransport = (
+  url: string,
+  init: TransportRequestInit
+) => Promise<Response>
+
+export interface SecureProxyFetchOptions {
+  proxyRequest: ProxyFetchTransport
+  directRequest: ProxyFetchTransport
+  passthroughFetch: typeof fetch
+  allowDirectFallback?: boolean
+  maxRedirects?: number
+}
+
+export interface InstalledProxyFetch {
+  fetch: typeof fetch
+  close: () => Promise<void>
+}
+
+export interface PluginProxySettings {
+  proxyMode: PluginProxyMode
+  proxyHost: string
+  proxyPort: number
+  proxyAllowDirectFallback: boolean
+}
+
+const STANDARD_PROXY_ENV_KEYS = [
+  'HTTPS_PROXY',
+  'https_proxy',
+  'HTTP_PROXY',
+  'http_proxy',
+  'ALL_PROXY',
+  'all_proxy'
+] as const
+
+export function buildPluginProxyEnv(settings: PluginProxySettings): Record<string, string> {
+  const result: Record<string, string> = {
+    TWILIGHT_PLUGIN_PROXY_MODE: settings.proxyMode,
+    TWILIGHT_PLUGIN_PROXY_ALLOW_DIRECT_FALLBACK: settings.proxyAllowDirectFallback ? '1' : '0'
+  }
+
+  if (settings.proxyMode === 'off') {
+    result.TWILIGHT_PLUGIN_PROXY_URL = ''
+    for (const key of STANDARD_PROXY_ENV_KEYS) result[key] = ''
+    return result
+  }
+
+  if (settings.proxyMode === 'custom') {
+    const proxyUrl =
+      settings.proxyHost && settings.proxyPort > 0
+        ? normalizeProxyUrl(`http://${settings.proxyHost}:${settings.proxyPort}`)
+        : ''
+    result.TWILIGHT_PLUGIN_PROXY_URL = proxyUrl
+    for (const key of STANDARD_PROXY_ENV_KEYS) result[key] = proxyUrl
+    result.NO_PROXY = 'localhost,127.0.0.1,::1'
+    result.no_proxy = result.NO_PROXY
+  }
+
+  return result
+}
+
+function parseProxyMode(value: string | undefined): PluginProxyMode {
+  return value === 'off' || value === 'custom' ? value : 'auto'
+}
+
+function parseExplicitBoolean(value: string | undefined): boolean {
+  return value === '1' || value?.toLowerCase() === 'true'
+}
+
+function normalizeProxyUrl(value: string): string {
+  const raw = value.trim()
+  if (!raw) throw new Error('Plugin proxy URL is empty')
+
+  const parsed = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`)
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Unsupported plugin proxy protocol: ${parsed.protocol}`)
+  }
+  if (!parsed.hostname) throw new Error('Plugin proxy URL must include a hostname')
+  if ((parsed.pathname && parsed.pathname !== '/') || parsed.search || parsed.hash) {
+    throw new Error('Plugin proxy URL must not include a path, query, or fragment')
+  }
+  return parsed.href
+}
+
+function proxyLabel(proxyUrl: string): string {
+  const parsed = new URL(proxyUrl)
+  const defaultPort = parsed.protocol === 'https:' ? '443' : '80'
+  return `${parsed.protocol}//${parsed.hostname}:${parsed.port || defaultPort}`
+}
+
+function isPortOpen(host: string, port: number, timeoutMs = 1000): Promise<boolean> {
   return new Promise((resolve) => {
-    const sock = netConnect(port, host)
-    const timer = setTimeout(() => { sock.destroy(); resolve(false) }, timeoutMs)
-    sock.on('connect', () => { clearTimeout(timer); sock.destroy(); resolve(true) })
-    sock.on('error', () => { clearTimeout(timer); resolve(false) })
+    const socket = netConnect(port, host)
+    let settled = false
+    const finish = (open: boolean): void => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      resolve(open)
+    }
+    socket.setTimeout(timeoutMs)
+    socket.once('connect', () => finish(true))
+    socket.once('timeout', () => finish(false))
+    socket.once('error', () => finish(false))
   })
 }
 
-function testProxyTunnel(host: string, port: number, target: string, timeoutMs = 8000): Promise<boolean> {
+function testProxyTunnel(
+  host: string,
+  port: number,
+  target: string,
+  timeoutMs = 5000
+): Promise<boolean> {
   return new Promise((resolve) => {
-    const sock = netConnect(port, host)
-    const timer = setTimeout(() => { sock.destroy(); resolve(false) }, timeoutMs)
-    sock.on('connect', () => {
-      sock.write(`CONNECT ${target}:443 HTTP/1.1\r\nHost: ${target}:443\r\n\r\n`)
+    const socket = netConnect(port, host)
+    let settled = false
+    let response = Buffer.alloc(0)
+    const finish = (accepted: boolean): void => {
+      if (settled) return
+      settled = true
+      socket.destroy()
+      resolve(accepted)
+    }
+
+    socket.setTimeout(timeoutMs)
+    socket.once('connect', () => {
+      socket.write(`CONNECT ${target}:443 HTTP/1.1\r\nHost: ${target}:443\r\n\r\n`)
     })
-    let buf = ''
-    const onData = (chunk: Buffer): void => {
-      buf += chunk.toString()
-      const idx = buf.indexOf('\r\n\r\n')
-      if (idx === -1) return
-      clearTimeout(timer)
-      sock.destroy()
-      resolve(buf.split('\r\n')[0].includes('200'))
-    }
-    sock.on('data', onData)
-    sock.on('error', () => { clearTimeout(timer); resolve(false) })
+    socket.on('data', (chunk: Buffer) => {
+      response = Buffer.concat([response, chunk])
+      if (response.length > MAX_PROXY_RESPONSE_HEADER_BYTES) {
+        finish(false)
+        return
+      }
+      const headerEnd = response.indexOf('\r\n\r\n')
+      if (headerEnd < 0) return
+      const statusLine = response.subarray(0, headerEnd).toString('latin1').split('\r\n', 1)[0]
+      finish(/^HTTP\/1\.[01] 2\d\d(?:\s|$)/.test(statusLine))
+    })
+    socket.once('timeout', () => finish(false))
+    socket.once('error', () => finish(false))
+    socket.once('end', () => finish(false))
   })
 }
 
-async function detectProxy(): Promise<ProxyEndpoint | null> {
-  // 1. Check environment variables
-  const envProxy = process.env.HTTPS_PROXY || process.env.https_proxy ||
-                   process.env.HTTP_PROXY || process.env.http_proxy ||
-                   process.env.ALL_PROXY || process.env.all_proxy
-  if (envProxy) {
-    const cleaned = envProxy.replace(/^https?:\/\//, '')
-    const colonIdx = cleaned.lastIndexOf(':')
-    if (colonIdx > 0) {
-      const h = cleaned.slice(0, colonIdx)
-      const p = parseInt(cleaned.slice(colonIdx + 1), 10)
-      if (h && p > 0) {
-        console.log(`[proxy] Using proxy from env: ${h}:${p}`)
-        return { host: h, port: p }
-      }
-    }
+function environmentProxyUrl(env: NodeJS.ProcessEnv): string | null {
+  const value =
+    env.TWILIGHT_PLUGIN_PROXY_URL ||
+    env.HTTPS_PROXY ||
+    env.https_proxy ||
+    env.HTTP_PROXY ||
+    env.http_proxy ||
+    env.ALL_PROXY ||
+    env.all_proxy
+  return value ? normalizeProxyUrl(value) : null
+}
+
+async function detectProxy(
+  mode: PluginProxyMode,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<DetectedProxy | null> {
+  if (mode === 'off') return null
+
+  const configuredProxy =
+    mode === 'custom'
+      ? env.TWILIGHT_PLUGIN_PROXY_URL
+        ? normalizeProxyUrl(env.TWILIGHT_PLUGIN_PROXY_URL)
+        : null
+      : environmentProxyUrl(env)
+  if (configuredProxy) {
+    console.log(`[proxy] Using configured proxy ${proxyLabel(configuredProxy)}`)
+    return { url: configuredProxy, source: 'environment' }
+  }
+  if (mode === 'custom') {
+    throw new Error('Custom plugin proxy mode requires a valid proxy host and port')
   }
 
-  // 2. Probe common local proxy ports
   for (const port of COMMON_PROXY_PORTS) {
-    if (await isPortOpen('127.0.0.1', port)) {
-      if (await testProxyTunnel('127.0.0.1', port, 'www.youtube.com')) {
-        console.log(`[proxy] Detected local proxy: 127.0.0.1:${port}`)
-        return { host: '127.0.0.1', port }
-      }
+    if (!(await isPortOpen('127.0.0.1', port))) continue
+    if (await testProxyTunnel('127.0.0.1', port, 'www.youtube.com')) {
+      const url = `http://127.0.0.1:${port}`
+      console.log(`[proxy] Detected local proxy ${proxyLabel(url)}`)
+      return { url, source: 'local-probe' }
     }
   }
 
-  console.log('[proxy] No proxy detected; using direct connections')
+  console.log('[proxy] No proxy detected; plugin requests will use direct connections')
   return null
 }
 
-// ─── Proxy HTTPS Agent (CONNECT tunnel) ───────────────────────────────
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  if (normalized === 'localhost' || normalized.endsWith('.localhost') || normalized === '::1') {
+    return true
+  }
+  const octets = normalized.split('.')
+  return (
+    octets.length === 4 &&
+    octets.every((octet) => /^\d{1,3}$/.test(octet) && Number(octet) <= 255) &&
+    Number(octets[0]) === 127
+  )
+}
 
-class ProxyAgent extends Agent {
-  private readonly proxyHost: string
-  private readonly proxyPort: number
+function shouldProxyUrl(url: URL): boolean {
+  return url.protocol === 'https:' && !isLoopbackHostname(url.hostname)
+}
 
-  constructor(proxyHost: string, proxyPort: number) {
-    super({ rejectUnauthorized: false })
-    this.proxyHost = proxyHost
-    this.proxyPort = proxyPort
+function assertSafeRedirectTarget(currentUrl: URL, location: string): URL {
+  let target: URL
+  try {
+    target = new URL(location, currentUrl)
+  } catch {
+    throw new TypeError('Proxy response contains an invalid redirect URL')
   }
 
-  createConnection(options: RequestOptions, callback?: (err: Error | null, stream: Duplex) => void): Duplex | undefined {
-    const targetHost = options.host || options.hostname || ''
-    const targetPort = options.port || 443
-    const servername = options.servername || targetHost
-    const sock = netConnect(this.proxyPort, this.proxyHost)
-    sock.setTimeout(10000)
-    sock.on('timeout', () => { sock.destroy(); callback?.(new Error('Proxy connect timeout'), sock as unknown as Duplex) })
-    sock.on('connect', () => {
-      sock.write(`CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n\r\n`)
-    })
-    let buf = ''
-    const onData = (chunk: Buffer): void => {
-      buf += chunk.toString('binary')
-      const idx = buf.indexOf('\r\n\r\n')
-      if (idx === -1) return
-      sock.removeListener('data', onData)
-      const statusLine = buf.slice(0, buf.indexOf('\r\n'))
-      if (!statusLine.includes('200')) {
-        sock.destroy()
-        callback?.(new Error(`Proxy CONNECT failed: ${statusLine}`), sock as unknown as Duplex)
-        return
-      }
-      const tlsSock = tlsConnect({
-        socket: sock,
-        servername,
-        rejectUnauthorized: false
-      }) as unknown as Duplex
-      tlsSock.on('secureConnect', () => callback?.(null, tlsSock))
-      tlsSock.on('error', (err: Error) => callback?.(err, sock as unknown as Duplex))
-    }
-    sock.on('data', onData)
-    sock.on('error', (err: Error) => callback?.(err, sock as unknown as Duplex))
-    return undefined
+  if (target.username || target.password) {
+    throw new TypeError('Redirect URLs containing credentials are not allowed')
+  }
+  if (currentUrl.protocol === 'https:' && target.protocol !== 'https:') {
+    throw new TypeError('Plugin proxy blocked an HTTPS redirect downgrade')
+  }
+  if (target.protocol !== 'https:') {
+    throw new TypeError(`Plugin proxy blocked redirect protocol ${target.protocol}`)
+  }
+  return target
+}
+
+function stripCrossOriginCredentials(headers: Headers): void {
+  for (const name of CROSS_ORIGIN_SENSITIVE_HEADERS) headers.delete(name)
+}
+
+function redirectMethod(status: number, method: string): string {
+  if (status === 303 && method !== 'HEAD') return 'GET'
+  if ((status === 301 || status === 302) && method === 'POST') return 'GET'
+  return method
+}
+
+async function discardRedirectResponse(response: Response): Promise<void> {
+  try {
+    await response.body?.cancel()
+  } catch {
+    // The security decision is already made; body cleanup errors are non-fatal.
   }
 }
 
-// ─── Fetch Wrapper ────────────────────────────────────────────────────
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new DOMException('This operation was aborted', 'AbortError')
+}
 
-function proxiedFetch(
-  urlStr: string,
-  init: RequestInit,
-  agent: ProxyAgent,
-  originalFetch: typeof fetch,
-  redirectCount = 0
-): Promise<Response> {
-  return new Promise((resolve) => {
-    let urlObj: URL
-    try {
-      urlObj = new URL(urlStr)
-    } catch {
-      resolve(originalFetch(urlStr as RequestInfo | URL, init))
-      return
-    }
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw abortReason(signal)
+}
 
-    const method = init.method || 'GET'
-    const headers: Record<string, string> = {}
-
-    // Normalize headers from init
-    const initHeaders = init.headers
-    if (initHeaders) {
-      if (typeof (initHeaders as Headers).forEach === 'function') {
-        ;(initHeaders as Headers).forEach((v: string, k: string) => { headers[k] = v })
-      } else if (Array.isArray(initHeaders)) {
-        for (const [k, v] of initHeaders as [string, string][]) headers[k] = v
-      } else {
-        Object.assign(headers, initHeaders as Record<string, string>)
-      }
-    }
-    headers['Host'] = urlObj.hostname
-
-    // Prepare body
-    let body: string | Buffer | undefined
-    const rawBody = init.body as unknown
-    if (rawBody && typeof rawBody === 'string') {
-      body = rawBody
-    } else if (rawBody && typeof rawBody === 'object' && !(rawBody instanceof Buffer)) {
-      body = JSON.stringify(rawBody)
-      if (!headers['Content-Type'] && !headers['content-type']) {
-        headers['Content-Type'] = 'application/json'
-      }
-    } else if (rawBody instanceof Buffer) {
-      body = rawBody
-    }
-    if (body && !headers['Content-Length'] && !headers['content-length']) {
-      headers['Content-Length'] = String(Buffer.byteLength(body))
-    }
-
-    const req = httpsRequest({
-      hostname: urlObj.hostname,
-      port: urlObj.port ? parseInt(urlObj.port, 10) : 443,
-      path: urlObj.pathname + urlObj.search,
-      method,
-      headers,
-      agent
-    }, (res: IncomingMessage) => {
-      // Follow redirects (up to 5)
-      if (redirectCount < 5 && res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        const redirectUrl = new URL(res.headers.location, urlStr).href
-        res.resume()
-        resolve(proxiedFetch(redirectUrl, init, agent, originalFetch, redirectCount + 1))
-        return
-      }
-
-      const status = res.statusCode || 0
-      // Build response headers
-      const responseHeaders = new Headers()
-      for (const [k, v] of Object.entries(res.headers)) {
-        if (v != null) responseHeaders.set(k, Array.isArray(v) ? v.join(', ') : String(v))
-      }
-
-      // Convert Node.js stream to Web ReadableStream for streaming Response
-      // (avoids buffering entire response body in memory — critical for audio)
-      const webStream = Readable.toWeb(res) as unknown as BodyInit
-      resolve(new Response(webStream, {
-        status,
-        statusText: res.statusMessage || '',
-        headers: responseHeaders
-      }))
-    })
-
-    // Handle abort signal
-    if (init.signal) {
-      const signal = init.signal as AbortSignal
-      if (signal.aborted) {
-        req.destroy()
-        resolve(originalFetch(urlStr as RequestInfo | URL, init))
-        return
-      }
-      signal.addEventListener('abort', () => req.destroy())
-    }
-
-    req.on('error', (err: Error) => {
-      console.log(`[proxy] Fetch failed (${err.message}), falling back to direct`)
-      resolve(originalFetch(urlStr as RequestInfo | URL, init))
-    })
-    req.setTimeout(15000, () => { req.destroy(new Error('Proxy request timeout')) })
-
-    if (body) req.write(body)
-    req.end()
+function transportError(error: unknown): TypeError {
+  const code =
+    error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+      ? ` (${error.code})`
+      : ''
+  return new TypeError(`Plugin proxy request failed${code}; direct fallback is disabled`, {
+    cause: error
   })
 }
 
-// ─── Initialization ───────────────────────────────────────────────────
+async function sendWithProxyPolicy(
+  url: string,
+  init: TransportRequestInit,
+  options: SecureProxyFetchOptions
+): Promise<Response> {
+  throwIfAborted(init.signal)
+  try {
+    return await options.proxyRequest(url, init)
+  } catch (error) {
+    if (init.signal.aborted) throw abortReason(init.signal)
+    if (!options.allowDirectFallback) throw transportError(error)
+
+    console.warn('[proxy] Proxy request failed; using explicitly enabled direct fallback')
+    throwIfAborted(init.signal)
+    return await options.directRequest(url, init)
+  }
+}
+
+async function bufferRequestBody(
+  request: Request
+): Promise<Uint8Array<ArrayBuffer> | undefined> {
+  if (!request.body || request.method === 'GET' || request.method === 'HEAD') return undefined
+  return new Uint8Array(await request.arrayBuffer())
+}
+
+export function createSecureProxyFetch(options: SecureProxyFetchOptions): typeof fetch {
+  const maxRedirects = options.maxRedirects ?? DEFAULT_MAX_REDIRECTS
+  if (!Number.isInteger(maxRedirects) || maxRedirects < 0 || maxRedirects > 20) {
+    throw new RangeError('maxRedirects must be an integer between 0 and 20')
+  }
+
+  return (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const inputUrl =
+      typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url
+    let parsedInput: URL
+    try {
+      parsedInput = new URL(inputUrl)
+    } catch {
+      return await options.passthroughFetch(input, init)
+    }
+    if (parsedInput.protocol !== 'https:') return await options.passthroughFetch(input, init)
+
+    const request = new Request(input, init)
+    const signal = request.signal
+    throwIfAborted(signal)
+
+    let currentUrl = parsedInput
+    let method = request.method
+    let headers = new Headers(request.headers)
+    headers.delete('host')
+    let body = await bufferRequestBody(request)
+    let redirects = 0
+
+    while (true) {
+      throwIfAborted(signal)
+      const transportInit = { method, headers, body, redirect: 'manual' as const, signal }
+      const response = shouldProxyUrl(currentUrl)
+        ? await sendWithProxyPolicy(currentUrl.href, transportInit, options)
+        : await options.directRequest(currentUrl.href, transportInit)
+      const location = response.headers.get('location')
+      if (!REDIRECT_STATUSES.has(response.status) || !location) return response
+
+      if (request.redirect === 'manual') return response
+      await discardRedirectResponse(response)
+      if (request.redirect === 'error') {
+        throw new TypeError('Redirect encountered while redirect mode is set to error')
+      }
+      if (redirects >= maxRedirects) {
+        throw new TypeError(`Plugin proxy exceeded the ${maxRedirects}-redirect limit`)
+      }
+
+      const targetUrl = assertSafeRedirectTarget(currentUrl, location)
+      const nextHeaders = new Headers(headers)
+      if (targetUrl.origin !== currentUrl.origin) stripCrossOriginCredentials(nextHeaders)
+
+      const nextMethod = redirectMethod(response.status, method)
+      if (nextMethod !== method) {
+        body = undefined
+        for (const name of REQUEST_BODY_HEADERS) nextHeaders.delete(name)
+      }
+
+      redirects += 1
+      currentUrl = targetUrl
+      method = nextMethod
+      headers = nextHeaders
+    }
+  }) as typeof fetch
+}
+
+function headersToRecord(headers: Headers): Record<string, string> {
+  const result: Record<string, string> = {}
+  headers.forEach((value, name) => {
+    result[name] = value
+  })
+  return result
+}
+
+export function installProxyFetch(
+  proxyUrl: string,
+  originalFetch: typeof fetch,
+  allowDirectFallback = false
+): InstalledProxyFetch {
+  const dispatcher = new ProxyAgent({
+    uri: normalizeProxyUrl(proxyUrl),
+    connectTimeout: PROXY_CONNECT_TIMEOUT_MS,
+    headersTimeout: PROXY_HEADERS_TIMEOUT_MS
+  })
+  const directRequest: ProxyFetchTransport = (url, init) =>
+    originalFetch(url, {
+      method: init.method,
+      headers: init.headers,
+      body: init.body,
+      redirect: 'manual',
+      signal: init.signal
+    })
+  const proxyRequest: ProxyFetchTransport = async (url, init) => {
+    const undiciInit: UndiciRequestInit = {
+      method: init.method,
+      headers: headersToRecord(init.headers),
+      body: init.body,
+      redirect: 'manual',
+      signal: init.signal,
+      dispatcher
+    }
+    return (await undiciFetch(url, undiciInit)) as unknown as Response
+  }
+
+  return {
+    fetch: createSecureProxyFetch({
+      proxyRequest,
+      directRequest,
+      passthroughFetch: originalFetch,
+      allowDirectFallback
+    }),
+    close: () => dispatcher.close()
+  }
+}
 
 let initialized = false
 
@@ -253,27 +447,25 @@ export async function initProxy(): Promise<void> {
   if (initialized) return
   initialized = true
 
-  const proxy = await detectProxy()
+  const mode = parseProxyMode(process.env.TWILIGHT_PLUGIN_PROXY_MODE)
+  if (mode === 'off') {
+    console.log('[proxy] Plugin proxy is disabled by application settings')
+    return
+  }
+
+  const proxy = await detectProxy(mode)
   if (!proxy) return
 
-  const agent = new ProxyAgent(proxy.host, proxy.port)
-  const originalFetch = globalThis.fetch
+  const allowDirectFallback = parseExplicitBoolean(
+    process.env.TWILIGHT_PLUGIN_PROXY_ALLOW_DIRECT_FALLBACK
+  )
+  const originalFetch = globalThis.fetch.bind(globalThis)
+  const installed = installProxyFetch(proxy.url, originalFetch, allowDirectFallback)
+  globalThis.fetch = installed.fetch
 
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
-    const urlStr = typeof input === 'string'
-      ? input
-      : input instanceof URL
-        ? input.href
-        : (input as Request).url
-
-    // Only proxy external HTTPS requests
-    if (!urlStr.startsWith('https://') ||
-        urlStr.includes('127.0.0.1') || urlStr.includes('localhost')) {
-      return originalFetch(input, init)
-    }
-
-    return proxiedFetch(urlStr, init || {}, agent, originalFetch)
-  }) as typeof fetch
-
-  console.log(`[proxy] Global fetch patched: external HTTPS → ${proxy.host}:${proxy.port}`)
+  console.log(
+    `[proxy] External HTTPS fetch uses ${proxyLabel(proxy.url)}; direct fallback ${
+      allowDirectFallback ? 'enabled' : 'disabled'
+    }`
+  )
 }

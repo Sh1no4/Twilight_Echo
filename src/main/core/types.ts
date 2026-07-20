@@ -9,6 +9,7 @@ import type {
 import type { HeadphoneCompensationSettings } from '../audioProcessingEffective'
 import type { MiniPlayerSettings } from '../../shared/miniPlayer'
 import type { DspScene } from '../../shared/dspGraph'
+import type { SleepTimerSettings } from '../../shared/sleepTimer.ts'
 
 export type { MiniPlayerSettings } from '../../shared/miniPlayer'
 
@@ -165,6 +166,7 @@ export interface AppSettings {
   lyricAlign: LyricAlign
   lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
+  sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
   audioOutput: AudioOutputId
@@ -181,6 +183,7 @@ export interface AppSettings {
   proxyMode: ProxyMode
   proxyHost: string
   proxyPort: number
+  proxyAllowDirectFallback: boolean
   streamingActiveProvider: string
 }
 
@@ -191,6 +194,9 @@ export interface PlaybackSession {
   playMode?: PlayMode
   track: unknown
   position: number
+  queue?: unknown[]
+  queueIndex?: number
+  sleepTimer?: unknown
 }
 
 export interface SettingsSnapshot extends AppSettings {

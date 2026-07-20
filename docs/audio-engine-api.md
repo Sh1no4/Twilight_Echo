@@ -97,7 +97,7 @@
 | `album` | ReplayGain Album 或 R128 album 标签 | `replaygain_active` |
 | `loudnorm` | EBU R128 Loudnorm（独立模式，**不得**映射为 Track） | `loudnorm_active` |
 
-`loudnorm` 使用离线 EBU R128 测量（`TAE_AnalyzeLoudness` / libebur128 integrated + true peak），缓存键对齐 BPM（path|size|mtime|algo|target|ceiling）。默认目标 **−23.0 LUFS**、True Peak 上限 **−1.0 dBTP**，再叠加 `replayGainPreamp`。缓存命中时增益为 `(targetLufs - measuredIntegratedLufs) + preamp`，超 ceiling 再衰减；无缓存时首播使用 `replayGainFallback` + preamp 并后台测量，状态为 measuring/cached/fallback/unavailable。无 libebur128 时报告 unavailable 并用 fallback，禁止假成功。始终报告 `loudnormActive` / `loudnorm_active`。
+`loudnorm` 使用离线 EBU R128 测量（`TAE_AnalyzeLoudness` / libebur128 integrated + true peak），缓存键对齐 BPM（path|size|mtime|algo|target|ceiling）。完整解码只在独立 `audioAnalysisService` utility process 中执行，不得通过播放 `audioEngineService` RPC。analysis pool 有独立 watchdog、优先级、并发/队列上限和取消；worker 超时/退出不会重启播放 service。C ABI 的 size probe 会在线程局部保存一次分析结果，紧随其后的 buffer read 只复制 JSON；`TAE_GetAnalysisExecutionCount("bpm"|"loudness")` 可验证 probe/read 没有重复解码。默认目标 **−23.0 LUFS**、True Peak 上限 **−1.0 dBTP**，再叠加 `replayGainPreamp`。缓存命中时增益为 `(targetLufs - measuredIntegratedLufs) + preamp`，超 ceiling 再衰减；无缓存时首播使用 `replayGainFallback` + preamp 并后台测量，状态为 measuring/cached/fallback/unavailable。无 libebur128 时报告 unavailable 并用 fallback，禁止假成功。始终报告 `loudnormActive` / `loudnorm_active`。
 
 **Stage-1 UI 契约：** Renderer Settings 与 HiFi 控制台必须从 `src/shared/audioProcessingOptions.ts` 暴露完整 `volumeNormalization` / `dsdOutputMode` 选项集（含 `loudnorm`）。软件音量默认 **0.7**；bit-perfect 需用户显式 Unity（1.0），`perfectReasonCode=volume_not_unity` 时提供 CTA。禁止静默把默认音量改成 1.0，禁止在任一 UI 路径「forbid loudnorm」。
 
@@ -105,7 +105,7 @@
 
 **Stage-2 平衡/相位与库标签：** HiFi 通过 `AudioEngineManager.setStereoImage` 写入 default graph 的 stereoField + channelStrip polarity（`DspStereoImageConfig`：balance/width/mid-side/invert/swap/mono）。`createLegacyDspGraph` / `setAudioProcessing` 必须保留既有 `stereoImage`。任一非默认立体声图像 ⇒ `outputPerfect=false`。本地库扫描持久化 ReplayGain/R128 标签，经 `NativeQueueLoadItem` / `AudioEngineQueueItem` / 原生 `QueueItem` 注入 `ReplayGainInfo`（覆盖 decode 缺标签）；session restore 保留字段；`loudnorm` 仍只消费离线测量缓存。
 
-**Loudnorm 状态与硬化：** `prepareLoudnormForPlay` 推送 `loudnorm-status`（measuring|cached|fallback|unavailable|idle）到 renderer HiFi 与 Settings；`setAudioProcessing` / `setReplayGainMode` 离开 loudnorm 时立刻 `cancel` 并发 `idle`，播放中切入 loudnorm 时对当前 `source` 重新 prepare。`setReplayGainMode` 必须走 `setAudioProcessing`，保证 default-scene graph 与 `SetReplayGainMode` 双路径一致。测量完成后 `LoadQueue` 注入 `measuredIntegratedLufs` / `measuredTruePeakDb`，`AudioPipeline::refreshQueueReplayGainTags` 把测量叠到当前/预加载流的 `ReplayGainInfo`（不 reopen 设备），本曲即可从 Fallback 切到测量增益。异步测量回调在 destroy / 离模式 / 换曲后丢弃。分析队列串行、identity 命中跳过重测、切曲/关模式 `cancel` 后不写缓存、缓存上限 512、Settings 清空缓存会 `notifyLoudnessCacheCleared` 重准备当前曲。
+**Loudnorm 状态与硬化：** `prepareLoudnormForPlay` 推送 `loudnorm-status`（measuring|cached|fallback|unavailable|idle）到 renderer HiFi 与 Settings；`setAudioProcessing` / `setReplayGainMode` 离开 loudnorm 时立刻 `cancel` 并发 `idle`，播放中切入 loudnorm 时对当前 `source` 重新 prepare。`setReplayGainMode` 必须走 `setAudioProcessing`，保证 default-scene graph 与 `SetReplayGainMode` 双路径一致。测量完成后 `LoadQueue` 注入 `measuredIntegratedLufs` / `measuredTruePeakDb`，`AudioPipeline::refreshQueueReplayGainTags` 把测量叠到当前/预加载流的 `ReplayGainInfo`（不 reopen 设备），本曲即可从 Fallback 切到测量增益。异步测量回调在 destroy / 离模式 / 换曲后丢弃。隔离 analysis pool 默认并发 1、队列有界，loudnorm 高优先级；identity 命中跳过重测、切曲/关模式 `cancel` 后不写缓存、缓存上限 512、Settings 清空缓存会 `notifyLoudnessCacheCleared` 重准备当前曲。
 
 `sourceExact=true` 额外要求源格式无损，并且源格式与实际输出格式完全一致。有损格式可以达成 `outputPerfect=true`，但 `sourceExact=false`，原因会显示为 `Source is lossy; decoded PCM path is output perfect`。
 
@@ -128,6 +128,23 @@ Phase 6B 的后端规则：
 - CoreAudio shared 路径继续 `outputPerfect=false`；`coreaudio-exclusive` 后端在 Hog Mode 获取成功、采样率匹配且整数 PCM 直通时进入 evaluator 判定。
 - ALSA `default` / `plughw:` 默认可能经过插件转换，继续 `outputPerfect=false`；只有显式 `hw:` 且实际格式完全匹配时才允许进入 evaluator 判定。
 
+## Render Performance Metrics
+
+`outputInfo.renderPerformance` is a lock-free snapshot maintained by the native render path:
+
+- `callbackCount`: number of PCM or typed render callbacks observed since the pipeline opened.
+- `totalCallbackNanoseconds` / `meanCallbackNanoseconds` / `peakCallbackNanoseconds`: callback execution time totals and latency summary.
+- `totalDeadlineNanoseconds`: sum of audio-buffer deadlines derived from callback frame count and sample rate.
+- `deadlineMissCount`: callbacks whose measured execution time exceeded that deadline.
+- `callbackDeadlineLoadPercent`: `totalCallbackNanoseconds / totalDeadlineNanoseconds * 100`.
+
+These fields measure native callback deadline load. They are not a claim about process CPU, system CPU,
+or real-device scheduling. The deterministic `twilight_audio_performance_gate` CTest emits the same
+metrics with decoded WAV, gapless/crossfade, convolution, controlled VST3-host pressure on Windows,
+diagnostic deltas, and working-set snapshots. A physical WASAPI Exclusive soak is opt-in through
+`pnpm run smoke:audio-performance -- --device "<endpoint>" --duration-seconds 300 --json`; keep that
+JSON separately as real-device evidence and do not substitute the controlled-pump result.
+
 ## Recovery Diagnostics
 
 `outputInfo.diagnostics` 记录当前 session 与 lifetime 的恢复信息：
@@ -141,7 +158,7 @@ Phase 6B 的后端规则：
 
 ASIO 保留冷却与恢复诊断策略。ALSA 提供基础 xrun 恢复：`snd_pcm_prepare()` / `snd_pcm_resume()` 成功后更新 underrun 与 recovery 计数。
 
-Electron IPC 会在 audio service crash 时同时发送结构化 `audioEngine:service-crash { reason }` 与兼容错误文案。Renderer 恢复提示应优先订阅结构化事件；service ready 后只恢复配置、队列和状态，不自动续播，由用户通过提示按钮手动继续。输出路由恢复必须按 `output-backend -> output-device -> output-config` 顺序等待 RPC ACK，避免设备或 buffer 配置套到旧后端。`audioEngine:service-ready` 会携带 `{ manualResumeRequired, outputRouteSynced, restoreErrors }`，只有输出后端、设备和输出配置恢复成功时 UI 才应展示“继续播放”动作；失败时提示用户重新选择输出设备。
+Electron IPC 会在 audio service crash 时同时发送结构化 `audioEngine:service-crash { reason }` 与兼容错误文案。Renderer 恢复提示应优先订阅结构化事件；service ready 后只恢复配置、队列和状态，不自动续播，由用户通过提示按钮手动继续。输出路由恢复必须按 `output-backend -> output-device -> output-config` 顺序等待 RPC ACK，避免设备或 buffer 配置套到旧后端。DSP 恢复顺序固定为 `SetDspPluginChain -> ApplyDspState(revision, payload) -> LoadQueue`；统一 payload 同时携带 processing、scene 和完整 graph，service 对 processing 字段合并、对 graph 采用最新完整 snapshot，并把同一批次等待者统一解析到最终 ACK。native 只有在 isolated active/preload 候选全部成功且 RT retirement window 未满时才提交；失败保持旧配置和旧 applied revision。`GetDspGraphStatus.revision` 是 Renderer pending/applied/failed 的权威 ACK。`audioEngine:service-ready` 会携带 `{ manualResumeRequired, outputRouteSynced, restoreErrors }`，只有输出后端、设备和输出配置恢复成功时 UI 才应展示“继续播放”动作；失败时提示用户重新选择输出设备。
 
 ## 设备能力与刷新事件
 
@@ -167,4 +184,4 @@ main 进程会在输出后端、设备、独占模式、audio service recovery�
 
 ## 当前非闭环范围
 
-当前不包含高级多设备同步；Windows 已接入 `WM_DEVICECHANGE` 事件刷新，Linux 已接入 ALSA `/dev/snd` 节点 watcher，CoreAudio 播放后端已接入设备失效监听，但 macOS 枚举级复杂热插拔同步仍待真实设备验证和补充。所有平台仍保留轻量设备选项轮询和 recovery-triggered 能力刷新。SACD DST 已通过 DSD-preserving provider 闭环（provider 默认可用）。Native DSD 支持 ASIO 与 ALSA `hw:`；WASAPI 与 CoreAudio 没有 native DSD 通道，属平台限制而非代码缺口，这两个后端走 DoP 或 PCM fallback。真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；没有 ASIO SDK、macOS/Linux 工具链或对应设备时必须跳过并保持默认验证通过。`npm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 可把多台机器/多设备的 opt-in 结果沉淀为 Markdown/JSON 报告，并显式列出未覆盖的 required surfaces。报告 JSON 包含 `coverage.complete`、缺失/失败 surface 列表和未闭环 surface 的 `actionPlan` 采集命令/目标 artifact；CLI 生成报告时会校验本地 artifact 文件存在，输入 JSON 本身可作为缺省 artifact，`coverage.complete` 只把有可追溯 artifact 的 `pass` 行计为已验证；发布前可手动加 `--require-complete` 让证据不完整时退出非 0。证据库采集与判定细节见 [Audio Smoke Evidence](./audio-smoke-evidence.md)。
+当前不包含高级多设备同步；Windows 已接入 `WM_DEVICECHANGE` 事件刷新，Linux 已接入 ALSA `/dev/snd` 节点 watcher，CoreAudio 播放后端已接入设备失效监听，但 macOS 枚举级复杂热插拔同步仍待真实设备验证和补充。所有平台仍保留轻量设备选项轮询和 recovery-triggered 能力刷新。SACD DST 已通过 DSD-preserving provider 闭环（provider 默认可用）。Native DSD 支持 ASIO 与 ALSA `hw:`；WASAPI 与 CoreAudio 没有 native DSD 通道，属平台限制而非代码缺口，这两个后端走 DoP 或 PCM fallback。真实设备 smoke（ASIO / WASAPI Exclusive / CoreAudio Hog / ALSA `hw:` / Native DSD / SACD ISO）通过 `TAE_RUN_REAL_AUDIO_BACKEND_TESTS=1` 开启，opt-in，不进入默认 CI 门禁，不伪造结果；没有 ASIO SDK、macOS/Linux 工具链或对应设备时必须跳过并保持默认验证通过。`pnpm run smoke:audio-evidence -- --input <summary-a.json> --input <summary-b.json>` 或 `--input-dir <dir>` 可把多台机器/多设备的 opt-in 结果沉淀为 Markdown/JSON 报告，并显式列出未覆盖的 required surfaces。报告 JSON 包含 `coverage.complete`、缺失/失败 surface 列表和未闭环 surface 的 `actionPlan` 采集命令/目标 artifact；CLI 生成报告时会校验本地 artifact 文件存在，输入 JSON 本身可作为缺省 artifact，`coverage.complete` 只把有可追溯 artifact 的 `pass` 行计为已验证；发布前可手动加 `--require-complete` 让证据不完整时退出非 0。证据库采集与判定细节见 [Audio Smoke Evidence](./audio-smoke-evidence.md)。

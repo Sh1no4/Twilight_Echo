@@ -39,35 +39,35 @@
     {
       "surface": "WASAPI Exclusive",
       "status": "not-run",
-      "command": "npm run smoke:wasapi -- --device \"<wasapi-endpoint>\" --buffer 256 --format-matrix --json > output/audio-smoke-evidence/wasapi-exclusive.json",
+      "command": "pnpm run smoke:wasapi -- --device \"<wasapi-endpoint>\" --buffer 256 --format-matrix --json > output/audio-smoke-evidence/wasapi-exclusive.json",
       "artifact": "output/audio-smoke-evidence/wasapi-exclusive.json",
       "requiredEvidence": "actualBackend=wasapi-exclusive, exclusive=true, actual output format facts, and outputPerfect/perfectReason for every probed PCM format"
     },
     {
       "surface": "ASIO",
       "status": "not-run",
-      "command": "npm run smoke:audio-format-matrix -- --fixture-dir \"<pcm-fixtures>\" --playback --backend asio --device \"<asio-driver>\" --json > output/audio-smoke-evidence/asio-pcm.json",
+      "command": "pnpm run smoke:audio-format-matrix -- --fixture-dir \"<pcm-fixtures>\" --playback --backend asio --device \"<asio-driver>\" --json > output/audio-smoke-evidence/asio-pcm.json",
       "artifact": "output/audio-smoke-evidence/asio-pcm.json",
       "requiredEvidence": "actualBackend=asio, selected driver/device, actual output format facts, and explicit pass/fail reason"
     },
     {
       "surface": "DoP DAC",
       "status": "not-run",
-      "command": "npm run smoke:audio-format-matrix -- --fixture-dir \"<dsd-fixtures>\" --playback --backend wasapi-exclusive --device \"<dop-capable-dac>\" --json > output/audio-smoke-evidence/dop-dac.json",
+      "command": "pnpm run smoke:audio-format-matrix -- --fixture-dir \"<dsd-fixtures>\" --playback --backend wasapi-exclusive --device \"<dop-capable-dac>\" --json > output/audio-smoke-evidence/dop-dac.json",
       "artifact": "output/audio-smoke-evidence/dop-dac.json",
       "requiredEvidence": "dsdMode=dop, carrier sample rate, actual output format facts, and fallback reason when the DAC rejects DoP"
     },
     {
       "surface": "Native DSD",
       "status": "not-run",
-      "command": "npm run smoke:asio-native-dsd -- --device \"<native-dsd-asio-driver>\" --fixture-dir \"<dsd-fixtures>\" --json > output/audio-smoke-evidence/native-dsd.json",
+      "command": "pnpm run smoke:asio-native-dsd -- --device \"<native-dsd-asio-driver>\" --fixture-dir \"<dsd-fixtures>\" --json > output/audio-smoke-evidence/native-dsd.json",
       "artifact": "output/audio-smoke-evidence/native-dsd.json",
       "requiredEvidence": "nativeDsdRuntimeState=proven for at least one DSD rate, plus explicit driver/device and fallback reason for unsupported rates"
     },
     {
       "surface": "SACD ISO",
       "status": "not-run",
-      "command": "npm run smoke:audio-format-matrix -- --manifest \"<sacd-iso-matrix.json>\" --playback --backend wasapi-exclusive --device \"<dac>\" --json > output/audio-smoke-evidence/sacd-iso.json",
+      "command": "pnpm run smoke:audio-format-matrix -- --manifest \"<sacd-iso-matrix.json>\" --playback --backend wasapi-exclusive --device \"<dac>\" --json > output/audio-smoke-evidence/sacd-iso.json",
       "artifact": "output/audio-smoke-evidence/sacd-iso.json",
       "requiredEvidence": "SACD ISO source metadata, selected track/area, dsdMode/native-or-dop-or-pcm result, and explicit DST/provider reason when applicable"
     }

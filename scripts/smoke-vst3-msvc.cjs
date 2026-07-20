@@ -127,7 +127,7 @@ async function main() {
   const buildDir = resolveVst3MsvcBuildDirectory(environment, root)
   const host = findHost(buildDir)
   if (!host)
-    fail(`VST3 host helper is not built under ${buildDir}. Run npm run build:vst3-msvc first.`)
+    fail(`VST3 host helper is not built under ${buildDir}. Run pnpm run build:vst3-msvc first.`)
   const fixture = findAdelayFixture(environment, buildDir, toolchain.sdkRoot)
   if (!fixture) {
     fail(

@@ -68,13 +68,55 @@ export interface TwilightPluginInstallResult {
   warning: string
 }
 
+export interface TwilightPluginPublisherSignature {
+  schemaVersion: 1
+  algorithm: 'ed25519'
+  keyId: string
+  value: string
+}
+
+export type TwilightPluginSignatureStatus =
+  | 'missing'
+  | 'malformed'
+  | 'unsupported'
+  | 'unknown-key'
+  | 'revoked-key'
+  | 'key-not-yet-valid'
+  | 'key-expired'
+  | 'invalid-key'
+  | 'invalid'
+  | 'valid'
+  | 'trust-store-error'
+
+export type TwilightPluginVerificationLevel =
+  | 'official'
+  | 'publisher-signed'
+  | 'index-declared'
+  | 'unverified'
+
+export interface TwilightPluginVerification {
+  level: TwilightPluginVerificationLevel
+  official: boolean
+  officialSource: boolean
+  indexClaimed: boolean
+  signatureStatus: TwilightPluginSignatureStatus
+  keyId: string | null
+  publisher: string | null
+  keyFingerprintSha256: string | null
+  revalidateAt: string | null
+  reason: string
+}
+
 export interface TwilightPluginIndexEntry extends TwilightPluginManifest {
   sourceUrl: string
   checksumSha256: string
   repository?: string
   homepage?: string
   tags?: string[]
+  publisherSignature?: TwilightPluginPublisherSignature
+  /** Publisher/index metadata only. Never use this field as an official trust decision. */
   verified?: boolean
+  verification: TwilightPluginVerification
   installState?: TwilightPluginIndexInstallState
   installedVersion?: string
 }
@@ -88,13 +130,22 @@ export type TwilightPluginIndexInstallState =
 
 export type TwilightPluginIndexSourceKind = 'github' | 'custom' | 'bundled'
 export type TwilightPluginIndexLoadedFrom = 'remote' | 'cache' | 'bundled'
+export type TwilightPluginIndexCacheFormat = 'envelope-v1' | 'legacy'
 
 export interface TwilightPluginIndexStatus {
   sourceUrl: string
+  configuredSourceUrl: string
   sourceKind: TwilightPluginIndexSourceKind
   loadedFrom: TwilightPluginIndexLoadedFrom
   lastFetchedAt: string | null
+  expiresAt: string | null
+  loadedAt: string
   stale: boolean
+  expired: boolean
+  originVerified: boolean
+  officialSource: boolean
+  cacheFormat: TwilightPluginIndexCacheFormat | null
+  trustStoreError: string | null
   error: string | null
 }
 
@@ -215,35 +266,71 @@ export interface QrLoginRequest {
   expiresInSeconds?: number
 }
 
+/**
+ * Appended to provider handler arguments by the host. Existing v1 handlers
+ * can ignore it; new handlers should stop in-flight work when signal aborts.
+ */
+export interface TwilightProviderRequestContext {
+  signal: AbortSignal
+  /** Present for like/follow writes when a caller supplies or reuses a key. */
+  idempotencyKey?: string
+}
+
+/** Context appended to a registered UI command handler. */
+export interface TwilightUiCommandContext {
+  signal: AbortSignal
+}
+
 export interface TwilightMediaProviderRegistration {
   id: string
   name: string
   capabilities: TwilightMediaProviderCapability[]
   health?: TwilightMediaProviderHealth
-  getPlaybackUrl?(track: Track, options?: PlaybackUrlOptions): Promise<string | null>
-  getLyrics?(track: Track): Promise<{ lyrics: string | null; translatedLyrics: string | null }>
-  searchSongs?(keywords: string, limit?: number, offset?: number): Promise<{ items: Track[]; total: number }>
+  getPlaybackUrl?(
+    track: Track,
+    options?: PlaybackUrlOptions,
+    context?: TwilightProviderRequestContext
+  ): Promise<string | null>
+  getLyrics?(
+    track: Track,
+    context?: TwilightProviderRequestContext
+  ): Promise<{ lyrics: string | null; translatedLyrics: string | null }>
+  searchSongs?(
+    keywords: string,
+    limit?: number,
+    offset?: number,
+    context?: TwilightProviderRequestContext
+  ): Promise<{ items: Track[]; total: number }>
   searchPlaylists?(
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    context?: TwilightProviderRequestContext
   ): Promise<{ items: PlaylistSummary[]; total: number }>
   searchArtists?(
     keywords: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    context?: TwilightProviderRequestContext
   ): Promise<{ items: ArtistSummary[]; total: number }>
-  fetchPlaylistTracks?(playlistId: string | number, force?: boolean): Promise<Track[]>
-  checkLogin?(): Promise<{ loggedIn: boolean; profile: ProviderProfile | null }>
-  getProfile?(): Promise<ProviderProfile | null>
-  logout?(): Promise<void>
-  getQrLogin?(): Promise<QrLoginRequest | null>
-  getQrKey?(): Promise<string | null>
-  getQrImage?(key: string): Promise<string | null>
-  checkQrLogin?(key: string): Promise<{ code: number }>
-  fetchUserLibrary?(force?: boolean): Promise<{ likedPlaylist: PlaylistSummary | null; playlists: PlaylistSummary[] }>
-  fetchLikedTracks?(force?: boolean): Promise<Track[]>
-  fetchLikedTracksPage?(offset?: number, limit?: number, force?: boolean): Promise<{
+  fetchPlaylistTracks?(
+    playlistId: string | number,
+    force?: boolean,
+    context?: TwilightProviderRequestContext
+  ): Promise<Track[]>
+  checkLogin?(context?: TwilightProviderRequestContext): Promise<{ loggedIn: boolean; profile: ProviderProfile | null }>
+  getProfile?(context?: TwilightProviderRequestContext): Promise<ProviderProfile | null>
+  logout?(context?: TwilightProviderRequestContext): Promise<void>
+  getQrLogin?(context?: TwilightProviderRequestContext): Promise<QrLoginRequest | null>
+  getQrKey?(context?: TwilightProviderRequestContext): Promise<string | null>
+  getQrImage?(key: string, context?: TwilightProviderRequestContext): Promise<string | null>
+  checkQrLogin?(key: string, context?: TwilightProviderRequestContext): Promise<{ code: number }>
+  fetchUserLibrary?(force?: boolean, context?: TwilightProviderRequestContext): Promise<{
+    likedPlaylist: PlaylistSummary | null
+    playlists: PlaylistSummary[]
+  }>
+  fetchLikedTracks?(force?: boolean, context?: TwilightProviderRequestContext): Promise<Track[]>
+  fetchLikedTracksPage?(offset?: number, limit?: number, force?: boolean, context?: TwilightProviderRequestContext): Promise<{
     tracks: Track[]
     total: number
     offset: number
@@ -251,23 +338,58 @@ export interface TwilightMediaProviderRegistration {
     nextOffset: number
     hasMore: boolean
   }>
-  fetchRecommendSongs?(): Promise<Track[]>
-  fetchRecommendPlaylists?(): Promise<PlaylistSummary[]>
-  fetchPersonalFm?(): Promise<Track[]>
-  fetchPrivateContent?(): Promise<Track[]>
-  fetchArtistTopSongs?(artistId: string | number): Promise<Track[]>
-  fetchArtistAlbums?(artistId: string | number): Promise<AlbumSummary[]>
-  fetchArtistIntro?(artistId: string | number): Promise<string>
-  fetchArtistFollowState?(artistId: string | number): Promise<boolean | null>
-  fetchAlbumTracks?(albumId: string | number): Promise<Track[]>
-  fetchArtistPlaylists?(artistId: string | number): Promise<PlaylistSummary[]>
-  fetchUserPlaylistsByUid?(uid: string | number, createdOnly?: boolean): Promise<PlaylistSummary[]>
-  fetchUserFollows?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
-  fetchUserFolloweds?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
-  followArtist?(artistId: string | number, follow: boolean): Promise<void>
-  followUser?(userId: string | number, follow: boolean): Promise<void>
-  likeTrack?(trackId: string | number, like: boolean): Promise<void>
-  isTrackLiked?(trackId: string | number | undefined): Promise<boolean> | boolean
+  fetchRecommendSongs?(context?: TwilightProviderRequestContext): Promise<Track[]>
+  fetchRecommendPlaylists?(context?: TwilightProviderRequestContext): Promise<PlaylistSummary[]>
+  fetchPersonalFm?(context?: TwilightProviderRequestContext): Promise<Track[]>
+  fetchPrivateContent?(context?: TwilightProviderRequestContext): Promise<Track[]>
+  fetchArtistTopSongs?(artistId: string | number, context?: TwilightProviderRequestContext): Promise<Track[]>
+  fetchArtistAlbums?(artistId: string | number, context?: TwilightProviderRequestContext): Promise<AlbumSummary[]>
+  fetchArtistIntro?(artistId: string | number, context?: TwilightProviderRequestContext): Promise<string>
+  fetchArtistFollowState?(
+    artistId: string | number,
+    context?: TwilightProviderRequestContext
+  ): Promise<boolean | null>
+  fetchAlbumTracks?(albumId: string | number, context?: TwilightProviderRequestContext): Promise<Track[]>
+  fetchArtistPlaylists?(
+    artistId: string | number,
+    context?: TwilightProviderRequestContext
+  ): Promise<PlaylistSummary[]>
+  fetchUserPlaylistsByUid?(
+    uid: string | number,
+    createdOnly?: boolean,
+    context?: TwilightProviderRequestContext
+  ): Promise<PlaylistSummary[]>
+  fetchUserFollows?(
+    uid: string | number,
+    limit?: number,
+    offset?: number,
+    context?: TwilightProviderRequestContext
+  ): Promise<UserSummary[]>
+  fetchUserFolloweds?(
+    uid: string | number,
+    limit?: number,
+    offset?: number,
+    context?: TwilightProviderRequestContext
+  ): Promise<UserSummary[]>
+  followArtist?(
+    artistId: string | number,
+    follow: boolean,
+    context?: TwilightProviderRequestContext
+  ): Promise<void>
+  followUser?(
+    userId: string | number,
+    follow: boolean,
+    context?: TwilightProviderRequestContext
+  ): Promise<void>
+  likeTrack?(
+    trackId: string | number,
+    like: boolean,
+    context?: TwilightProviderRequestContext
+  ): Promise<void>
+  isTrackLiked?(
+    trackId: string | number | undefined,
+    context?: TwilightProviderRequestContext
+  ): Promise<boolean> | boolean
 }
 
 /**
@@ -337,7 +459,10 @@ export interface TwilightPluginExtensionContribution {
 
 export interface TwilightUiApi {
   register(contribution: TwilightUiContribution): Promise<void>
-  onCommand(command: string, handler: (...args: unknown[]) => unknown | Promise<unknown>): void
+  onCommand(
+    command: string,
+    handler: (...args: [...unknown[], TwilightUiCommandContext]) => unknown | Promise<unknown>
+  ): void
 }
 
 export interface TwilightThemeContribution {

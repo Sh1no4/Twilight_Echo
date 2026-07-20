@@ -182,6 +182,13 @@ const activeSceneId = computed(() => state.value?.activeSceneId ?? null)
 const isPinned = computed(() => state.value?.pinnedSceneId === selectedScene.value?.id)
 const activeGraphLatency = computed(() => status.value?.totalLatencyFrames ?? 0)
 const activeGraphTail = computed(() => status.value?.totalTailFrames ?? 0)
+const graphApplyState = computed(() => status.value?.applyState ?? 'idle')
+const graphApplyLabel = computed(() => {
+  if (graphApplyState.value === 'pending') return 'Pending'
+  if (graphApplyState.value === 'applied') return 'Applied'
+  if (graphApplyState.value === 'failed') return 'Failed'
+  return 'Idle'
+})
 const graphOverrunCount = computed(
   () => status.value?.nodes.reduce((total, node) => total + (node.overrunCount ?? 0), 0) ?? 0
 )
@@ -674,7 +681,9 @@ async function saveScenes(): Promise<void> {
     message.value = 'DSP 场景已保存并提交给音频引擎。'
     await refreshDiagnostics()
   } catch (error) {
-    message.value = error instanceof Error ? error.message : '无法保存 DSP 场景'
+    await refreshDiagnostics().catch(() => undefined)
+    message.value =
+      status.value?.applyError || (error instanceof Error ? error.message : '无法保存 DSP 场景')
   } finally {
     busy.value = false
   }
@@ -698,7 +707,9 @@ async function applySelectedScene(): Promise<void> {
         : '活动场景已应用。'
     await refreshDiagnostics()
   } catch (error) {
-    message.value = error instanceof Error ? error.message : '无法应用 DSP 场景'
+    await refreshDiagnostics().catch(() => undefined)
+    message.value =
+      status.value?.applyError || (error instanceof Error ? error.message : '无法应用 DSP 场景')
   } finally {
     busy.value = false
   }
@@ -974,7 +985,14 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <p v-if="message" class="rack-message" role="status">{{ message }}</p>
+    <p
+      v-if="message"
+      class="rack-message"
+      :class="{ error: graphApplyState === 'failed' }"
+      :role="graphApplyState === 'failed' ? 'alert' : 'status'"
+    >
+      {{ message }}
+    </p>
 
     <div class="rack-layout">
       <aside class="scene-pane">
@@ -2553,6 +2571,18 @@ onBeforeUnmount(() => {
                 <dt>Compile</dt>
                 <dd>{{ status?.compileState ?? '-' }}</dd>
               </div>
+              <div>
+                <dt>Apply</dt>
+                <dd :class="['apply-state', graphApplyState]">{{ graphApplyLabel }}</dd>
+              </div>
+              <div>
+                <dt>Requested / applied</dt>
+                <dd>{{ status?.requestedRevision ?? 0 }} / {{ status?.appliedRevision ?? 0 }}</dd>
+              </div>
+              <div v-if="status?.applyError">
+                <dt>Apply error</dt>
+                <dd class="apply-error">{{ status.applyError }}</dd>
+              </div>
               <div v-if="status?.compileError">
                 <dt>Compile error</dt>
                 <dd>{{ status.compileError }}</dd>
@@ -2610,7 +2640,12 @@ onBeforeUnmount(() => {
     <footer class="rack-footer">
       <span>图延迟 {{ activeGraphLatency }} frames</span
       ><span>尾音 {{ activeGraphTail }} frames</span
-      ><span>图 revision {{ status?.revision ?? 0 }}</span>
+      ><span>图 revision {{ status?.revision ?? 0 }}</span
+      ><span :class="['apply-state', graphApplyState]">
+        {{ graphApplyLabel }} {{ status?.appliedRevision ?? 0 }}/{{
+          status?.requestedRevision ?? 0
+        }}
+      </span>
     </footer>
   </main>
 </template>
@@ -2668,6 +2703,11 @@ onBeforeUnmount(() => {
   border-radius: 6px;
   color: #125f5a;
   font-size: 13px;
+}
+.rack-message.error {
+  background: #fff1f0;
+  border-color: #f1aaa5;
+  color: #9f1c15;
 }
 .rack-layout {
   max-width: 1540px;
@@ -3188,6 +3228,16 @@ button:disabled {
   text-align: right;
   color: #263646;
   overflow-wrap: anywhere;
+}
+.apply-state.pending {
+  color: #9a6700;
+}
+.apply-state.applied {
+  color: #137a55;
+}
+.apply-state.failed,
+.apply-error {
+  color: #b42318;
 }
 .empty-detail {
   padding-top: 36px;

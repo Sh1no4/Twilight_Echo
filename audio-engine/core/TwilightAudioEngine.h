@@ -118,6 +118,7 @@ class TwilightAudioEngine {
 
   TAE_Result setDspConfig(const std::string& dspJson);
   TAE_Result setDspGraph(const std::string& graphJson);
+  TAE_Result applyDspState(uint64_t revision, const std::string& stateJson);
   TAE_Result setOutputConfig(const std::string& outputConfigJson);
   TAE_Result loadImpulseResponse(const std::string& path);
   TAE_Result unloadImpulseResponse();

@@ -16,19 +16,26 @@ import { storeToRefs } from 'pinia'
 import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
 import { useVisualizationStore } from '../stores/useVisualizationStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
+import { useLyricsManagement } from '../stores/lyricsManagement'
 import { useCover } from '../utils/coverLoader'
 import { buildLyricLines, findActiveLyricIndex } from '../utils/lyrics'
 import type { LyricLine } from '../utils/lyrics'
 import { getTrackSource, shouldReserveLyricsColumn } from '../utils/nowPlayingLayout'
 import type { LyricSource } from '../types/music'
+import {
+  projectLyricDisplay,
+  projectManagedLyrics,
+  type LyricSourcePreference
+} from '../../../shared/lyricsManagement.ts'
 import AudioVisualizerPanel from './AudioVisualizerPanel.vue'
 
 const playbackStore = usePlaybackQueueStore()
 const visualizationStore = useVisualizationStore()
 const { currentTrack, dominantColor, currentTime, duration } = storeToRefs(playbackStore)
 const { visualizerActive } = storeToRefs(visualizationStore)
-const { seek, formatTime } = playbackStore
+const { seek, formatTime, refreshCurrentLyrics } = playbackStore
 const { settings } = useSettingsStore()
+const lyricsManagement = useLyricsManagement()
 
 const nowPlayingBackground = computed(() => settings.value.nowPlayingBackground)
 const lyricAlign = computed(() => settings.value.lyricAlign)
@@ -182,33 +189,175 @@ onBeforeUnmount(() => {
   lyricResizeObserver = null
 })
 
+const lyricVisibility = computed(() => lyricsManagement.document.value)
+const managedLyricOverride = computed(() => lyricsManagement.entryFor(currentTrack.value?.id ?? ''))
+const managedLyrics = computed(() =>
+  projectManagedLyrics(
+    {
+      original: currentTrack.value?.lyrics,
+      translation: currentTrack.value?.translatedLyrics,
+      romanization: currentTrack.value?.romanizedLyrics,
+      originalSource: currentTrack.value?.lyricsSource,
+      translationSource: currentTrack.value?.translatedLyricsSource,
+      romanizationSource: currentTrack.value?.romanizedLyricsSource
+    },
+    managedLyricOverride.value
+  )
+)
 const lyricLines = computed<LyricLine[]>(() => {
-  return buildLyricLines(currentTrack.value?.lyrics, currentTrack.value?.translatedLyrics ?? null)
+  return buildLyricLines(
+    managedLyrics.value.original,
+    managedLyrics.value.translation,
+    managedLyrics.value.romanization
+  )
 })
+const displayLyricLines = computed<LyricLine[]>(() =>
+  lyricLines.value.map((line) => ({ ...line, ...projectLyricDisplay(line, lyricVisibility.value) }))
+)
+const currentLyricOffsetSeconds = computed(() =>
+  lyricsManagement.effectiveOffsetSeconds(currentTrack.value?.id ?? '')
+)
 
 const hasLyrics = computed(() => lyricLines.value.length > 0)
 const reserveLyricsColumn = computed(() =>
   shouldReserveLyricsColumn({
     source: getTrackSource(currentTrack.value),
     hasLyrics: hasLyrics.value,
-    lyrics: currentTrack.value?.lyrics,
-    translatedLyrics: currentTrack.value?.translatedLyrics
+    lyrics: managedLyrics.value.original,
+    translatedLyrics: managedLyrics.value.translation
   })
 )
 
-const activeLyricIndex = computed(() => findActiveLyricIndex(lyricLines.value, currentTime.value))
+const activeLyricIndex = computed(() =>
+  findActiveLyricIndex(lyricLines.value, currentTime.value + currentLyricOffsetSeconds.value)
+)
 
 const trackDurationLabel = computed(() => formatTime(duration.value))
 const lyricSourceLabel = computed(() =>
-  getLyricSourceLabel(currentTrack.value?.lyricsSource, '原文')
+  getLyricSourceLabel(managedLyrics.value.originalSource as LyricSource | null | undefined, '原文')
 )
 const translatedLyricSourceLabel = computed(() =>
-  getLyricSourceLabel(currentTrack.value?.translatedLyricsSource, '翻译')
+  getLyricSourceLabel(
+    managedLyrics.value.translationSource as LyricSource | null | undefined,
+    '翻译'
+  )
 )
+
+const lyricManagerOpen = ref(false)
+const lyricSaving = ref(false)
+const lyricImporting = ref(false)
+const lyricWriting = ref(false)
+const lyricManagerError = ref('')
+const lyricManagerNotice = ref('')
+const draftTrackOffsetMs = ref(0)
+const draftSource = ref<LyricSourcePreference>('auto')
+const draftOriginal = ref('')
+const draftTranslation = ref('')
+const draftRomanization = ref('')
+
+function openLyricManager(): void {
+  const trackId = currentTrack.value?.id
+  if (!trackId) return
+  const override = lyricsManagement.entryFor(trackId)
+  draftTrackOffsetMs.value = override?.offsetMs ?? 0
+  draftSource.value = override?.source ?? 'auto'
+  draftOriginal.value = override?.original ?? currentTrack.value?.lyrics ?? ''
+  draftTranslation.value = override?.translation ?? currentTrack.value?.translatedLyrics ?? ''
+  draftRomanization.value = override?.romanization ?? currentTrack.value?.romanizedLyrics ?? ''
+  lyricManagerError.value = ''
+  lyricManagerNotice.value = ''
+  lyricManagerOpen.value = true
+}
+
+async function saveLyricManager(): Promise<void> {
+  const track = currentTrack.value
+  if (!track || lyricSaving.value) return
+  lyricSaving.value = true
+  lyricManagerError.value = ''
+  lyricManagerNotice.value = ''
+  try {
+    await lyricsManagement.updateTrack(track.id, {
+      offsetMs: Number(draftTrackOffsetMs.value),
+      source: draftSource.value,
+      original: draftOriginal.value.trim() || null,
+      translation: draftTranslation.value.trim() || null,
+      romanization: draftRomanization.value.trim() || null
+    })
+    if (draftSource.value !== 'manual') {
+      await refreshCurrentLyrics()
+    }
+    lyricManagerOpen.value = false
+  } catch (error) {
+    lyricManagerError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    lyricSaving.value = false
+  }
+}
+
+async function importLyricsIntoDraft(): Promise<void> {
+  if (lyricImporting.value) return
+  lyricImporting.value = true
+  lyricManagerError.value = ''
+  lyricManagerNotice.value = ''
+  try {
+    const contents = await window.api.data.importLyrics()
+    if (contents != null) {
+      draftOriginal.value = contents
+      draftSource.value = 'manual'
+    }
+  } catch (error) {
+    lyricManagerError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    lyricImporting.value = false
+  }
+}
+
+async function saveDraftAsLrc(): Promise<void> {
+  if (lyricWriting.value) return
+  lyricWriting.value = true
+  lyricManagerError.value = ''
+  lyricManagerNotice.value = ''
+  try {
+    const path = await window.api.data.saveLyrics(draftOriginal.value)
+    if (path) lyricManagerNotice.value = `Saved LRC: ${path}`
+  } catch (error) {
+    lyricManagerError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    lyricWriting.value = false
+  }
+}
+
+async function updateGlobalLyricOffset(event: Event): Promise<void> {
+  const value = Number((event.target as HTMLInputElement).value)
+  lyricManagerError.value = ''
+  try {
+    await lyricsManagement.updateGlobalOffset(value)
+  } catch (error) {
+    lyricManagerError.value = error instanceof Error ? error.message : String(error)
+  }
+}
+
+async function toggleLyricVisibility(
+  key: 'showOriginal' | 'showTranslation' | 'showRomanization'
+): Promise<void> {
+  lyricManagerError.value = ''
+  try {
+    await lyricsManagement.updateVisibility({ [key]: !lyricVisibility.value[key] })
+  } catch (error) {
+    lyricManagerError.value = error instanceof Error ? error.message : String(error)
+  }
+}
 
 function getLyricSourceLabel(source: LyricSource | null | undefined, label: string): string {
   if (!source) return ''
-  const sourceLabel = source === 'embedded' ? '内嵌' : source === 'local' ? '本地 LRC' : 'Provider'
+  const sourceLabel =
+    source === 'embedded'
+      ? '内嵌'
+      : source === 'local'
+        ? '本地 LRC'
+        : source === 'manual'
+          ? 'Manual'
+          : 'Provider'
   return `${label}: ${sourceLabel}`
 }
 
@@ -229,7 +378,7 @@ function lyricTone(index: number): 'idle' | 'far' | 'mid' | 'near' | 'active' {
 
 function jumpToLyric(time: number | null): void {
   if (time == null) return
-  seek(time)
+  seek(Math.max(0, time - currentLyricOffsetSeconds.value))
 }
 
 function easeOutCubic(t: number): number {
@@ -379,6 +528,7 @@ watch(lyricsEl, (el, previousEl) => {
 })
 
 onMounted(() => {
+  void lyricsManagement.ensureLoaded()
   lyricResizeObserver = new ResizeObserver(() => {
     onLyricLayoutResize()
   })
@@ -445,6 +595,13 @@ onBeforeUnmount(() => {
             <h1 class="track-title">{{ currentTrack.title }}</h1>
             <p class="track-artist">{{ currentTrack.artist }}</p>
             <p v-if="currentTrack.album" class="track-album">{{ currentTrack.album }}</p>
+            <button
+              type="button"
+              class="lyric-manage-button lyric-manage-button--cover"
+              @click="openLyricManager"
+            >
+              Lyrics
+            </button>
           </div>
         </section>
 
@@ -461,6 +618,9 @@ onBeforeUnmount(() => {
                 translatedLyricSourceLabel
               }}</span>
             </div>
+            <button type="button" class="lyric-manage-button" @click="openLyricManager">
+              Lyrics
+            </button>
           </div>
 
           <div
@@ -474,7 +634,7 @@ onBeforeUnmount(() => {
           >
             <div class="lyrics-list">
               <button
-                v-for="(line, i) in lyricLines"
+                v-for="(line, i) in displayLyricLines"
                 :key="`${line.time}-${i}`"
                 :ref="(el) => setLyricLineRef(i, el)"
                 type="button"
@@ -483,15 +643,118 @@ onBeforeUnmount(() => {
                 :disabled="!line.timed"
                 @click="jumpToLyric(line.time)"
               >
-                <span class="lyric-text">{{ line.text }}</span>
+                <span v-if="line.text" class="lyric-text">{{ line.text }}</span>
                 <span v-if="line.translation" class="lyric-translation">{{
                   line.translation
+                }}</span>
+                <span v-if="line.romanization" class="lyric-romanization">{{
+                  line.romanization
                 }}</span>
               </button>
             </div>
           </div>
         </section>
       </main>
+
+      <div
+        v-if="lyricManagerOpen"
+        class="lyric-manager-backdrop"
+        @click.self="lyricManagerOpen = false"
+      >
+        <section
+          class="lyric-manager lyric-manager--dialog"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Lyrics management"
+        >
+          <div class="lyric-manager-heading">
+            <h2>Lyrics management</h2>
+            <button
+              type="button"
+              aria-label="Close lyrics management"
+              @click="lyricManagerOpen = false"
+            >
+              Close
+            </button>
+          </div>
+          <div class="lyric-manager-row">
+            <label
+              >Global offset (ms)<input
+                type="number"
+                min="-120000"
+                max="120000"
+                step="50"
+                :value="lyricVisibility.globalOffsetMs"
+                @change="updateGlobalLyricOffset"
+            /></label>
+            <label
+              >Track offset (ms)<input
+                v-model.number="draftTrackOffsetMs"
+                type="number"
+                min="-120000"
+                max="120000"
+                step="50"
+            /></label>
+            <label
+              >Source<select v-model="draftSource">
+                <option value="auto">Auto</option>
+                <option value="local">Local LRC</option>
+                <option value="provider">Provider</option>
+                <option value="manual">Manual</option>
+              </select></label
+            >
+          </div>
+          <div class="lyric-manager-row lyric-manager-toggles">
+            <button
+              type="button"
+              :aria-pressed="lyricVisibility.showOriginal"
+              @click="toggleLyricVisibility('showOriginal')"
+            >
+              Original
+            </button>
+            <button
+              type="button"
+              :aria-pressed="lyricVisibility.showTranslation"
+              @click="toggleLyricVisibility('showTranslation')"
+            >
+              Translation
+            </button>
+            <button
+              type="button"
+              :aria-pressed="lyricVisibility.showRomanization"
+              @click="toggleLyricVisibility('showRomanization')"
+            >
+              Romanization
+            </button>
+            <button type="button" :disabled="lyricImporting" @click="importLyricsIntoDraft">
+              {{ lyricImporting ? 'Importing...' : 'Import LRC' }}
+            </button>
+          </div>
+          <label class="lyric-editor-label"
+            >Original<textarea v-model="draftOriginal" rows="4" spellcheck="false"></textarea>
+          </label>
+          <label class="lyric-editor-label"
+            >Translation<textarea v-model="draftTranslation" rows="3" spellcheck="false"></textarea>
+          </label>
+          <label class="lyric-editor-label"
+            >Romanization<textarea
+              v-model="draftRomanization"
+              rows="3"
+              spellcheck="false"
+            ></textarea>
+          </label>
+          <p v-if="lyricManagerError" class="lyric-manager-error">{{ lyricManagerError }}</p>
+          <p v-if="lyricManagerNotice" class="lyric-manager-notice">{{ lyricManagerNotice }}</p>
+          <div class="lyric-manager-actions">
+            <button type="button" @click="lyricManagerOpen = false">Cancel</button
+            ><button type="button" :disabled="lyricWriting" @click="saveDraftAsLrc">
+              {{ lyricWriting ? 'Writing LRC...' : 'Save LRC' }}</button
+            ><button type="button" :disabled="lyricSaving" @click="saveLyricManager">
+              {{ lyricSaving ? 'Saving...' : 'Save lyrics' }}
+            </button>
+          </div>
+        </section>
+      </div>
     </div>
 
     <div v-else class="empty-shell">
@@ -805,6 +1068,128 @@ onBeforeUnmount(() => {
   font-variant-numeric: tabular-nums;
 }
 
+.lyric-manage-button,
+.lyric-manager button {
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.18);
+  color: rgba(255, 255, 255, 0.82);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lyric-manage-button {
+  flex: 0 0 auto;
+  padding: 7px 10px;
+}
+
+.lyric-manage-button--cover {
+  margin-top: 10px;
+}
+
+.lyric-manager-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.lyric-manager {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 14px;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(5, 9, 16, 0.55);
+}
+
+.lyric-manager--dialog {
+  box-sizing: border-box;
+  width: min(680px, 100%);
+  max-height: min(820px, calc(100vh - 48px));
+  overflow-y: auto;
+  margin: 0;
+  background: rgba(12, 17, 28, 0.96);
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.45);
+}
+
+.lyric-manager-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.lyric-manager-heading h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.lyric-manager-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lyric-manager label {
+  display: grid;
+  gap: 4px;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+}
+
+.lyric-manager input,
+.lyric-manager select,
+.lyric-manager textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 100px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.24);
+  color: #fff;
+  font: inherit;
+}
+
+.lyric-manager textarea {
+  min-height: 58px;
+  padding: 6px;
+  resize: vertical;
+}
+
+.lyric-manager-toggles button,
+.lyric-manager-actions button {
+  padding: 6px 9px;
+}
+
+.lyric-manager-toggles button[aria-pressed='true'] {
+  border-color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 32%, transparent);
+}
+
+.lyric-manager-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.lyric-manager-error {
+  margin: 0;
+  color: #ffb4ab;
+  font-size: 12px;
+}
+
+.lyric-manager-notice {
+  margin: 0;
+  color: #b9e9c2;
+  font-size: 12px;
+}
+
 .lyrics-scroll {
   flex: 1;
   min-height: 0;
@@ -911,7 +1296,8 @@ onBeforeUnmount(() => {
 }
 
 .lyrics-scroll.lyric-align-left .lyric-text,
-.lyrics-scroll.lyric-align-left .lyric-translation {
+.lyrics-scroll.lyric-align-left .lyric-translation,
+.lyrics-scroll.lyric-align-left .lyric-romanization {
   text-align: left;
 }
 
@@ -932,6 +1318,20 @@ onBeforeUnmount(() => {
 
 .lyric-row.active .lyric-translation {
   color: rgba(255, 255, 255, 0.82);
+}
+
+.lyric-romanization {
+  min-width: 0;
+  width: 100%;
+  font-size: calc(var(--te-lyric-font-size, 18px) - 3px);
+  line-height: 1.35;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.46);
+  word-break: break-word;
+}
+
+.lyric-row.active .lyric-romanization {
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .empty-shell {

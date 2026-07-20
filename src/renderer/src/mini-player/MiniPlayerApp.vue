@@ -101,11 +101,13 @@ const queuePositionText = computed(() =>
     : `0 / ${state.value.queueLength}`
 )
 const playModeTitle = computed(() => {
+  if (state.value.playMode === 'listLoop') return '列表循环'
   if (state.value.playMode === 'repeat') return '单曲循环'
   if (state.value.playMode === 'shuffle') return '随机播放'
   return '顺序播放'
 })
 const playModeIcon = computed(() => {
+  if (state.value.playMode === 'listLoop') return 'ph ph-repeat'
   if (state.value.playMode === 'repeat') return 'ph ph-repeat-once'
   if (state.value.playMode === 'shuffle') return 'ph ph-shuffle'
   return 'ph ph-arrow-right'

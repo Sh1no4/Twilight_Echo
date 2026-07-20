@@ -42,11 +42,17 @@ Twilight Echo 是 Electron + Vue 3 + TypeScript 应用，使用 electron-vite �
 
 ## 运行架构
 
-Electron main 侧有三个构建入口，均在 `electron.vite.config.ts` 中声明：
+Electron main 侧有五个构建入口，均在 `electron.vite.config.ts` 中声明：
 
 - `index` -> `src/main/index.ts` -> `src/main/app/lifecycle.ts`
 - `pluginHost` -> `src/main/pluginHost.ts`
 - `audioEngineService` -> `src/main/audioEngineService.ts`
+- `audioAnalysisService` -> `src/main/audioAnalysisService.ts`
+- `libraryScanService` -> `src/main/library/libraryScanService.ts`
+
+`audioAnalysisService` 使用独立 `utilityProcess` worker pool 执行 BPM/loudness 完整文件解码。其有界优先级队列使用 aging 防止低优先级任务饥饿，并为等待任务设置 deadline；队列满时更高有效优先级可驱逐最差等待项。并发上限、取消、watchdog 和 worker 重启均与实时 `audioEngineService` 隔离，离线分析不得进入播放 RPC 队列。BPM/loudness manager 在 cache commit 期间收到取消时会按精确值条件回滚，且不得广播 completed 事件。
+
+`libraryScanService` 在独立 `utilityProcess` 中执行目录枚举、`music-metadata` 解析和封面落盘。主进程的 `libraryIndexCoordinator` 持久化 `path + size + mtime` 快速索引：启动只解析新增、变化或索引缺失的文件；文件 watcher 事件按 canonical path 合并后进入串行队列；完整 metadata/封面重扫只能由用户在设置页显式启动，并支持进度、暂停、继续和取消。扫描提交前必须重查曲库 revision、授权 roots 与 exclusions；发生 drift 时丢弃旧结果并重规划，禁止把已移除目录或 TE-0.4 排除项重新写回。
 
 主进程负责窗口生命周期、单实例锁、IPC 注册、设置持久化、本地库扫描、桌面歌词、快捷键托盘、Discord RPC、NCM API 启动和音频引擎编排。
 
@@ -78,7 +84,7 @@ DSD / passthrough 路径会绕过不安全的 DSP。WASAPI 与 CoreAudio 没有�
 
 ## 本地库与搜索数据流
 
-本地曲库加载时先把已保存曲目放入 renderer，使界面尽快可用；移动文件修复和 provider 元数据补全在后台进行。后台结果按 track id 合并，避免覆盖用户在加载期间新增或删除的曲目。
+本地曲库加载时先把已保存曲目放入 renderer，使界面尽快可用；`libraryScanService` 随后用快速索引做启动增量核对，provider 元数据补全也在后台进行。后台结果按 track id/path 合并，避免覆盖用户在加载期间新增、删除或排除的曲目。主进程加载路径不得遍历解析全库 metadata、转换 base64 封面或逐项修复封面；这些工作只允许在显式后台重扫中执行。
 
 `useMusicStore` 维护两个非响应式索引：
 
@@ -130,37 +136,53 @@ app 仓库不允许包含第三方插件源码、第三方插件测试、第三�
 安装依赖：
 
 ```bash
-npm install
+corepack enable
+pnpm install --frozen-lockfile
 ```
+
+主仓库只使用 `pnpm@11.7.0` 和 `pnpm-lock.yaml`。不要运行 `npm install`，也不要提交
+`package-lock.json`；内置 NCM API 的修补由 `pnpm-workspace.yaml` 的
+`patchedDependencies` 在安装时应用。
+
+`discord-rpc` 的 `register-scheme` 仅是 Electron 不可用时的 optional fallback，且上游把它
+指向 exotic Git dependency。主应用始终在 Electron 内使用
+`app.setAsDefaultProtocolClient`，因此 workspace 通过 `ignoredOptionalDependencies` 只排除
+这个 fallback，并保持 `blockExoticSubdeps: true`。`pnpm run verify:install-policy` 会确认
+该包未安装且 `discord-rpc` 在普通 Node.js 环境安全降级。
+
+仓库内字体均为已转换并提交的 `.woff2` 资源，构建和打包不执行字体转换。不要为了安装时
+生成字体重新引入 native converter；若未来需要重建字体资产，必须提供独立、可验证的
+转换脚本和跨平台 fallback。
 
 开发运行：
 
 ```bash
-npm run dev
+pnpm run dev
 ```
 
 类型检查与构建：
 
 ```bash
-npm run typecheck
-npm run build
+pnpm run typecheck
+pnpm run build
 ```
 
 Lint 与格式化：
 
 ```bash
-npm run lint
-npm run format
+pnpm run lint
+pnpm run format
 ```
 
 应用测试：
 
 ```bash
-npm run test:plugins
-npm run test:audio-manager
-npm run test:playback-routing
-npm run test:local-perf
-npm run test:plugin-tooling
+pnpm run test:plugins
+pnpm run test:audio-manager
+pnpm run test:playback-routing
+pnpm run test:local-perf
+pnpm run test:plugin-tooling
+pnpm run test:app
 ```
 
 单个 TS 测试文件：
@@ -177,10 +199,10 @@ $env:W64DEVKIT_ROOT = 'C:\path\to\w64devkit'
 $env:TWILIGHT_GNU_PATCH = 'C:\Program Files\Git\usr\bin\patch.exe'
 # 仓库路径含空白时必须设置；该目录必须可写且完整路径不含空白。
 $env:TAE_MINGW_BUILD_DIR = 'C:\twilight-build\mingw-static'
-npm run test:audio-toolchain
-npm run configure:audio-engine:mingw
-npm run build:audio-engine:mingw
-npm run test:audio-engine:mingw
+pnpm run test:audio-toolchain
+pnpm run configure:audio-engine:mingw
+pnpm run build:audio-engine:mingw
+pnpm run test:audio-engine:mingw
 ctest --test-dir $env:TAE_MINGW_BUILD_DIR -N
 ```
 
@@ -189,18 +211,19 @@ ctest --test-dir $env:TAE_MINGW_BUILD_DIR -N
 无真实设备发布前 gate：
 
 ```bash
-npm run test:no-real-device
+pnpm run test:no-real-device
 ```
 
 ## 变更验证建议
 
 按改动范围选择最小但足够的验证：
 
-- renderer 搜索、最近播放、收藏、逻辑曲目：`npm run test:playback-routing`
-- 本地曲库性能、列表、收藏按钮：`npm run test:local-perf`
-- 插件 manifest、依赖、索引、provider routing：`npm run test:plugins`
-- 音频引擎 IPC、队列、service client：`npm run test:audio-manager`
-- 跨 main/preload/renderer 类型变更：`npm run typecheck`
+- renderer 搜索、最近播放、收藏、逻辑曲目：`pnpm run test:playback-routing`
+- 本地曲库性能、列表、收藏按钮：`pnpm run test:local-perf`
+- 插件 manifest、依赖、索引、provider routing：`pnpm run test:plugins`
+- 音频引擎 IPC、播放/分析 service client、BPM/loudness manager：`pnpm run test:audio-manager`
+- 其余可执行应用契约（设置、导航、OPRA、逻辑曲目和音频证据 CLI）：`pnpm run test:app`
+- 跨 main/preload/renderer 类型变更：`pnpm run typecheck`
 - 发布前：按 [windows-release-gate.md](./windows-release-gate.md) 执行完整 gate
 
 真实设备 smoke 不属于默认 gate。ASIO、WASAPI Exclusive、native DSD、SACD ISO、CoreAudio、ALSA `hw:` 等验证需要明确设备与曲目样本。

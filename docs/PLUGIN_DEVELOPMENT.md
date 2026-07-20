@@ -416,13 +416,55 @@ interface TwilightPluginContext {
     }
     ui: {
       register(contribution: UiContribution): Promise<void>
-      onCommand(command: string, handler: (...args) => unknown): () => void
+      onCommand(
+        command: string,
+        handler: (...args: [...unknown[], TwilightUiCommandContext]) => unknown
+      ): () => void
     }
   }
+}
+
+interface TwilightProviderRequestContext {
+  signal: AbortSignal
+  idempotencyKey?: string
+}
+
+interface TwilightUiCommandContext {
+  signal: AbortSignal
 }
 ```
 
 主题不通过运行时 API 注册。请在 `plugin.json` 的 `contributes.themes` 中声明 CSS 变量和包内 stylesheet；主题脚本不会执行。
+
+### RPC 取消、背压与写操作幂等
+
+宿主会在每次 Provider method 和 UI command 的**最后一个参数**追加 request context。旧版
+handler 不声明该参数仍可继续运行；新代码应把 `signal` 传给 `fetch` 或其他支持
+`AbortSignal` 的异步 API，并在长循环中主动检查 `signal.aborted`。
+
+```javascript
+async function likeTrack(trackId, like, request) {
+  request?.signal.throwIfAborted()
+  await upstreamLike(trackId, like, {
+    signal: request?.signal,
+    idempotencyKey: request?.idempotencyKey
+  })
+}
+
+context.twilight.ui.onCommand('refresh-library', async (request) => {
+  return refreshLibrary({ signal: request.signal })
+})
+```
+
+超时、插件停用/卸载、plugin host error/exit 都会触发 cancel；被取消的 handler 即使稍后返回，
+结果也会被宿主隔离。默认每插件最多 4 个并发 RPC 和 32 个排队 RPC；连续 3 次失败后 circuit
+进入指数退避（1 秒起步，最多 30 秒），因此插件不应在 handler 内自行制造无界重试风暴。
+
+`likeTrack`、`followArtist`、`followUser` 属于写操作。一次逻辑写入失败或 outcome unknown 后，
+renderer 会在 5 分钟有界窗口内为相同 target + payload 的显式重试复用 `idempotencyKey`；payload
+改变或前一次成功后会生成新 key。插件必须把 key 传到支持幂等的上游，或在自己的持久化层去重。
+内置 NCM provider 会在其私有 settings 中保留有界的成功写入记录五分钟，因此 plugin host 重启后
+相同 key 不会重放上游写入；取消后的 handler 不得再更新本地 liked/follow 状态。
 
 ### 事件系统
 
@@ -488,6 +530,8 @@ my-plugin/
 
 `.tep` 文件是 ZIP 压缩包：
 
+`plugin.json` 中的 `main`、`icon`、`binary.*` 一律写成 POSIX `/` 相对路径（例如 `dist/index.mjs`）；宿主和 tooling 会把反斜杠输入 canonicalize 为 `/`，并拒绝 drive、UNC、rooted 或越界路径。索引签名使用 canonical 结果，禁止直接签署平台相关的 `path.normalize()` 输出。
+
 ```python
 import zipfile, os, hashlib
 
@@ -510,7 +554,7 @@ print(f'Checksum: {checksum}')
 
 ### 更新市场索引
 
-在 `resources/plugin-index/plugins.json` 中添加条目：
+第三方插件条目提交到外部插件仓库 `D:\Twilight-Echo-plugins\plugins.json`；不要把第三方源码、`.tep` 或条目写进应用仓库的 `resources/plugin-index`。作者提交的条目不设置 `verified` 或 `publisherSignature`：
 
 ```json
 {
@@ -527,10 +571,11 @@ print(f'Checksum: {checksum}')
   "permissions": ["network", "settings", "ui:inject"],
   "sourceUrl": "packages/com.example.myplugin-1.0.0.tep",
   "checksumSha256": "<上面计算的 SHA256>",
-  "verified": true,
   "tags": ["provider", "ui"]
 }
 ```
+
+人工审核完成后，外部索引发布流程才可设置 `verified: true`，并用受保护的 Ed25519 私钥生成 `publisherSignature`。`verified` 单独只表示“索引声明”；官方徽章还要求固定官方 URL 的 fresh 直连、未过期来源证据和 active trusted key 的有效签名。生产私钥不得进入应用仓库或插件源码仓库。
 
 ---
 

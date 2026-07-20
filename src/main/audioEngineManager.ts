@@ -4,10 +4,7 @@ import { createRequire } from 'module'
 import { join } from 'path'
 import { AudioEngineServiceBinding, canUseAudioEngineService } from './audioEngineServiceClient.ts'
 import { isBpmAnalysisResult, type BpmAnalysisResult } from './bpm/bpmCache.ts'
-import {
-  isLoudnessAnalysisResult,
-  type LoudnessAnalysisResult
-} from './audio/loudnessCache.ts'
+import { isLoudnessAnalysisResult, type LoudnessAnalysisResult } from './audio/loudnessCache.ts'
 import type { LoudnessAnalysisManager } from './audio/loudnessAnalysisManager.ts'
 import {
   applyStereoImageToGraph,
@@ -26,6 +23,7 @@ import {
   type DspStereoImageConfig,
   type Vst3ScanDescriptor
 } from '../shared/dspGraph.ts'
+import type { DspStatePayload } from '../shared/audioServiceContract.ts'
 
 const require = createRequire(import.meta.url)
 
@@ -46,7 +44,7 @@ function resolveElectronApp(): ElectronModule['app'] | null {
 const electronApp = resolveElectronApp()
 
 export type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
-export type PlayMode = 'sequential' | 'repeat' | 'shuffle'
+export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
 export type EqMode = 'graphic' | 'parametric'
 export type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 export type ChannelRoutingMode =
@@ -159,6 +157,15 @@ export interface OutputConfig {
   upmixSurroundDelayMs?: number
 }
 
+export interface OutputConfigApplyStatus {
+  requestedRevision: number
+  appliedRevision: number
+  failedRevision: number
+  state: 'idle' | 'pending' | 'applied' | 'failed'
+  error: string
+  generation: number
+}
+
 export interface LatencyInfo {
   bufferLatencyMs: number
   outputLatencyMs: number
@@ -226,6 +233,7 @@ export interface AudioEngineQueueItem {
   replayGainAlbumPeak?: number
   r128TrackGainDb?: number
   r128AlbumGainDb?: number
+  cueRange?: import('../shared/cue.ts').CueRange
 }
 
 export type PlaybackOutputInfoMirror = Pick<
@@ -439,10 +447,11 @@ export interface NativeAudioBinding {
   LoadQueue?: (queueJson: string, startIndex: number) => void
   Next?: () => void
   Previous?: () => void
-  SetPlayMode?: (mode: PlayMode) => void
+  SetPlayMode?: (mode: 'sequential' | 'repeat') => void
   SetDspConfig?: (json: string) => void
   SetDspGraph?: (json: string) => void
-  GetDspGraphStatus?: () => string | DspGraphStatus
+  ApplyDspState: (revision: number, json: string) => void
+  GetDspGraphStatus: () => string | DspGraphStatus
   LoadImpulseResponse?: (path: string) => void
   UnloadImpulseResponse?: () => void
   GetConvolverInfo?: () => string | ConvolverInfo
@@ -475,6 +484,9 @@ export interface NativeAudioBinding {
 
 export interface AudioEngineServiceNativeBinding extends NativeAudioBinding {
   getMetadataAsync: (source: string) => Promise<string | NativeAudioMetadata>
+  applyDspState: (revision: number, payload: DspStatePayload) => Promise<DspGraphStatus>
+  applyDspGraph: (json: string) => Promise<DspGraphStatus>
+  getDspGraphStatusAsync: () => Promise<DspGraphStatus>
   destroy: () => void
   on: (
     event: 'crash' | 'error-log' | 'log' | 'ready',
@@ -1253,6 +1265,18 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
   return Math.min(max, Math.max(min, value))
 }
 
+function clampQueueItemPosition(item: AudioEngineQueueItem | undefined, value: number): number {
+  const position = Math.max(0, Number.isFinite(value) ? value : 0)
+  const range = item?.cueRange
+  if (!range) return position
+  const duration =
+    (Number.isFinite(range.virtualPregapSeconds) ? Math.max(0, range.virtualPregapSeconds ?? 0) : 0) +
+    range.endSeconds -
+    range.startSeconds
+  if (!Number.isFinite(duration) || duration <= 0) return position
+  return Math.min(position, duration)
+}
+
 function normalizeEqualizerFilterType(value: unknown): EqualizerFilterType {
   if (
     value === 'lowShelf' ||
@@ -1370,6 +1394,28 @@ function parseNativeJson<T>(value: string | T | undefined, fallback: T): T {
   } catch {
     return fallback
   }
+}
+
+function parseDspGraphStatusOrThrow(value: string | DspGraphStatus): DspGraphStatus {
+  let parsed: unknown = value
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch {
+      throw new Error('native audio engine returned invalid DSP graph status JSON')
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('native audio engine returned an invalid DSP graph status')
+  }
+  const status = parsed as Partial<DspGraphStatus>
+  if (!Number.isSafeInteger(status.revision) || (status.revision as number) < 0) {
+    throw new Error('native audio engine returned an invalid DSP graph revision')
+  }
+  if (!Array.isArray(status.nodes)) {
+    throw new Error('native audio engine returned DSP graph status without nodes')
+  }
+  return status as DspGraphStatus
 }
 
 function isVst3ScanDescriptor(value: unknown): value is Vst3ScanDescriptor {
@@ -1819,12 +1865,28 @@ export class AudioEngineManager extends EventEmitter {
   private device: string
   private exclusiveMode: boolean
   private outputConfig: OutputConfig
+  private outputConfigRevision = 0
+  private outputConfigApplyGeneration = 0
+  private outputConfigServiceGeneration = 0
+  private outputConfigApplyQueue: Promise<void> = Promise.resolve()
+  private outputConfigApplyStatus: OutputConfigApplyStatus = {
+    requestedRevision: 0,
+    appliedRevision: 0,
+    failedRevision: 0,
+    state: 'idle',
+    error: '',
+    generation: 0
+  }
   private processing: AudioProcessingSettings
   private dspScenes: DspScene[]
   private dspPinnedSceneId: string | null
   private activeDspSceneId: string | null = null
   private activeDspGraph: DspGraphConfig
   private dspGraphRevision = 0
+  private dspGraphAppliedRevision = 0
+  private dspGraphApplyState: NonNullable<DspGraphStatus['applyState']> = 'idle'
+  private dspGraphApplyError = ''
+  private lastNativeDspGraphStatus: DspGraphStatus | null = null
   private scheduler: AudioEngineScheduler
   private deviceOptionsProvider?: () => AudioDeviceOption[] | null
   private queue: AudioEngineQueueItem[] = []
@@ -1951,11 +2013,10 @@ export class AudioEngineManager extends EventEmitter {
   private createNativeBinding(
     dependencies: AudioEngineManagerDependencies
   ): NativeAudioBinding | null {
-    const nativeAddonCandidates = dependencies.nativeAddonCandidates ?? getNativeAddonCandidates
-    if (!nativeAddonCandidates().some((candidate) => existsSync(candidate))) {
-      this.lastNativeError = '未加载 twilight_audio_node.node'
-      return null
-    }
+    // The isolated service owns its own native addon load. Do not make the main
+    // process probe a .node candidate before honoring an injected/default
+    // service binding, or service mode becomes incorrectly dependent on a
+    // main-process addon copy.
     if (dependencies.audioServiceFactory || canUseAudioEngineService()) {
       const service =
         dependencies.audioServiceFactory?.() ??
@@ -1970,14 +2031,44 @@ export class AudioEngineManager extends EventEmitter {
       this.audioServiceBinding = service
       return service
     }
-    return loadNativeBinding(nativeAddonCandidates)
+
+    const nativeAddonCandidates = dependencies.nativeAddonCandidates ?? getNativeAddonCandidates
+    if (!nativeAddonCandidates().some((candidate) => existsSync(candidate))) {
+      this.lastNativeError = '未加载 twilight_audio_node.node'
+      return null
+    }
+    const native = loadNativeBinding(nativeAddonCandidates)
+    if (
+      native &&
+      (typeof native.ApplyDspState !== 'function' || typeof native.GetDspGraphStatus !== 'function')
+    ) {
+      this.lastNativeError =
+        'native audio binding is missing required DSP methods: ApplyDspState, GetDspGraphStatus'
+      console.warn(this.lastNativeError)
+      return null
+    }
+    return native
   }
 
   private handleAudioServiceCrash(reason: string): void {
+    this.outputConfigServiceGeneration += 1
+    if (this.outputConfigApplyStatus.state === 'pending') {
+      this.outputConfigApplyStatus = {
+        ...this.outputConfigApplyStatus,
+        failedRevision: this.outputConfigApplyStatus.requestedRevision,
+        state: 'failed',
+        error: reason,
+        generation: this.outputConfigApplyGeneration
+      }
+    }
     this.lastNativeError = reason
     this.nativePlaybackActive = false
     this.nativeOutputRouteSynced = false
     this.nativeConfigRevisionEpochPending = true
+    this.dspGraphAppliedRevision = 0
+    this.dspGraphApplyState = 'failed'
+    this.dspGraphApplyError = reason
+    this.lastNativeDspGraphStatus = null
     this.audioServiceReadyRestoreSerial += 1
     this.nativeConvolverIrPath = null
     // The IPC layer persists catalog quarantines asynchronously. This gate is
@@ -2107,51 +2198,6 @@ export class AudioEngineManager extends EventEmitter {
 
   private async restoreAudioServicePlaybackState(): Promise<{ synced: boolean; errors: string[] }> {
     const results: Array<{ ok: boolean; error: string }> = []
-    results.push(
-      await this.restoreAudioServiceOutputRouteStep(
-        'dsp-config',
-        '音频服务恢复后应用 DSP 配置',
-        'SetDspConfig',
-        JSON.stringify(this.processing)
-      )
-    )
-    results.push(
-      await this.restoreAudioServiceOutputRouteStep(
-        'eq-bands',
-        '音频服务恢复后应用 EQ 配置',
-        'SetEqBands',
-        JSON.stringify(this.processing)
-      )
-    )
-    results.push(
-      await this.restoreAudioServiceOutputRouteStep(
-        'replay-gain',
-        '音频服务恢复后应用 ReplayGain 配置',
-        'SetReplayGainMode',
-        this.processing.volumeNormalization,
-        this.processing.replayGainPreamp,
-        this.processing.replayGainFallback,
-        this.processing.replayGainClip
-      )
-    )
-    results.push(
-      await this.restoreAudioServiceOutputRouteStep(
-        'crossfeed',
-        '音频服务恢复后应用 Crossfeed 配置',
-        'SetCrossfeedStrength',
-        this.processing.crossfeedEnabled ? this.processing.crossfeedStrength : 0
-      )
-    )
-    if (this.processing.convolverIrPath) {
-      const convolverLoaded = await this.restoreAudioServiceOutputRouteStep(
-        'convolver-ir',
-        '音频服务恢复后加载卷积脉冲响应',
-        'LoadImpulseResponse',
-        this.processing.convolverIrPath
-      )
-      if (convolverLoaded.ok) this.nativeConvolverIrPath = this.processing.convolverIrPath
-      results.push(convolverLoaded)
-    }
     if (this.nativeDspPluginChainJson) {
       results.push(
         await this.restoreAudioServiceOutputRouteStep(
@@ -2161,6 +2207,19 @@ export class AudioEngineManager extends EventEmitter {
           this.nativeDspPluginChainJson
         )
       )
+    }
+    const graphStatus = await this.applyNativeDspGraph('音频服务恢复后应用 DSP graph')
+    results.push({
+      ok:
+        graphStatus.applyState === 'applied' &&
+        (graphStatus.appliedRevision ?? 0) >= (graphStatus.requestedRevision ?? 0),
+      error:
+        graphStatus.applyState === 'applied'
+          ? ''
+          : `dsp-graph: ${graphStatus.applyError || 'native revision ACK was not observed'}`
+    })
+    if (graphStatus.applyState === 'applied') {
+      this.nativeConvolverIrPath = this.processing.convolverIrPath
     }
     if (this.queue.length > 0) {
       results.push(
@@ -2183,7 +2242,7 @@ export class AudioEngineManager extends EventEmitter {
     this.nativeOutputRouteSynced = false
     const routeRestore = await this.restoreAudioServiceOutputRoute('初始化')
     this.nativeOutputRouteSynced = routeRestore.synced
-    this.applyNativeDspSettings('初始化 DSP 配置')
+    await this.applyNativeDspSettings('初始化 DSP 配置', {}, false)
     this.startClock()
     this.scheduler.setImmediate(() => this.emit('ready'))
   }
@@ -2202,6 +2261,7 @@ export class AudioEngineManager extends EventEmitter {
     await this.prepareLoudnormForPlay(source)
     const current = this.queue[this.playbackInfo.queueIndex]
     const duration = current?.source === source ? (current.duration ?? 0) : 0
+    const boundedStartTime = clampQueueItemPosition(current, startTime)
     const firstErrorContext = {
       output: this.output,
       device: this.device,
@@ -2211,7 +2271,7 @@ export class AudioEngineManager extends EventEmitter {
     let nativeStarted = await this.tryNativePlay(
       '播放',
       source,
-      startTime,
+      boundedStartTime,
       firstErrorContext.output !== 'asio'
     )
     let nativeFallbackReason = ''
@@ -2224,7 +2284,7 @@ export class AudioEngineManager extends EventEmitter {
       const fallbackRoute = await this.restoreAudioServiceOutputRoute('ASIO 失败后应用 WASAPI 兜底')
       this.nativeOutputRouteSynced = fallbackRoute.synced
       if (fallbackRoute.synced) {
-        nativeStarted = await this.tryNativePlay('WASAPI 兜底播放', source, startTime)
+        nativeStarted = await this.tryNativePlay('WASAPI 兜底播放', source, boundedStartTime)
       } else {
         this.lastNativeError = fallbackRoute.errors.join('\n') || this.lastNativeError
       }
@@ -2251,7 +2311,7 @@ export class AudioEngineManager extends EventEmitter {
         nativeStarted = await this.tryNativePlay(
           `ALSA 兜底播放 ${candidate}`,
           source,
-          startTime,
+          boundedStartTime,
           false
         )
         if (nativeStarted) {
@@ -2287,12 +2347,19 @@ export class AudioEngineManager extends EventEmitter {
         ? 'unsupported'
         : 'pcm'
     const playbackDsdRate = nativeDsd?.isDsd ? nativeDsd.dsdRate : 0
-    const sourceQueueIndex = this.queue.findIndex((item) => item.source === source)
+    // A single-file CUE queue deliberately contains adjacent logical tracks with the same
+    // source. Preserve the selected queue index when it already points at this source; a plain
+    // findIndex(source) would incorrectly snap every later CUE track back to the first one.
+    const indexedQueueItem = this.queue[this.playbackInfo.queueIndex]
+    const sourceQueueIndex =
+      indexedQueueItem?.source === source
+        ? this.playbackInfo.queueIndex
+        : this.queue.findIndex((item) => item.source === source)
     this.playbackInfo = {
       ...this.playbackInfo,
       ...nativeInfo,
       state: 'playing',
-      position: Math.max(0, Number.isFinite(startTime) ? startTime : 0),
+      position: boundedStartTime,
       duration,
       source,
       queueIndex: sourceQueueIndex >= 0 ? sourceQueueIndex : this.playbackInfo.queueIndex,
@@ -2309,7 +2376,7 @@ export class AudioEngineManager extends EventEmitter {
           }
         : this.playbackInfo.outputInfo
     }
-    this.applyNativeDspGraph('播放源格式变更后解析 DSP 场景')
+    await this.applyNativeDspGraph('播放源格式变更后解析 DSP 场景')
     this.lastTick = this.scheduler.now()
     this.emit('start-file')
     this.publishDuration(this.playbackInfo.duration, { force: true })
@@ -2376,7 +2443,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async seek(time: number): Promise<void> {
-    const position = Math.max(0, Number.isFinite(time) ? time : 0)
+    const position = clampQueueItemPosition(this.queue[this.playbackInfo.queueIndex], time)
     if (this.playbackInfo.state !== 'playing' && Object.is(position, this.playbackInfo.position)) {
       return
     }
@@ -2437,7 +2504,7 @@ export class AudioEngineManager extends EventEmitter {
     this.invalidateUpcomingTrackCache()
     this.tryNative('加载队列', (native) => {
       native.LoadQueue?.(nextQueueJson, nextQueueIndex)
-      native.SetPlayMode?.(this.playbackInfo.playMode)
+      native.SetPlayMode?.(this.playbackInfo.playMode === 'repeat' ? 'repeat' : 'sequential')
     })
     this.emit('queue-change', this.queue)
   }
@@ -2555,7 +2622,7 @@ export class AudioEngineManager extends EventEmitter {
     }
     this.nativeOutputRouteSynced = true
     this.refreshOutputInfoFromNative(true)
-    this.applyNativeDspGraph('独占模式切换后解析 DSP 场景')
+    await this.applyNativeDspGraphOrThrow('独占模式切换后解析 DSP 场景')
     return await this.getAudioOutputState()
   }
 
@@ -2588,7 +2655,7 @@ export class AudioEngineManager extends EventEmitter {
     const routeRestore = await this.restoreAudioServiceOutputRoute('切换')
     this.nativeOutputRouteSynced = routeRestore.synced
     this.refreshOutputInfoFromNative(true)
-    this.applyNativeDspGraph('输出后端切换后解析 DSP 场景')
+    await this.applyNativeDspGraphOrThrow('输出后端切换后解析 DSP 场景')
     return await this.getAudioOutputState()
   }
 
@@ -2613,18 +2680,79 @@ export class AudioEngineManager extends EventEmitter {
     }
     this.nativeOutputRouteSynced = true
     this.refreshOutputInfoFromNative(true)
-    this.applyNativeDspGraph('输出设备切换后解析 DSP 场景')
+    await this.applyNativeDspGraphOrThrow('输出设备切换后解析 DSP 场景')
     return await this.getAudioOutputState()
   }
 
   async setOutputConfig(config: Partial<OutputConfig>): Promise<void> {
-    const prevBufferSize = this.outputConfig.preferredBufferSize
-    const previousConfig = this.outputConfig
-    const nextConfig = normalizeOutputConfig(config)
-    if (outputConfigsEqual(nextConfig, this.outputConfig)) return
+    const revision = ++this.outputConfigRevision
+    const generation = ++this.outputConfigApplyGeneration
+    this.outputConfigApplyStatus = {
+      ...this.outputConfigApplyStatus,
+      requestedRevision: revision,
+      state: 'pending',
+      error: '',
+      generation
+    }
 
-    this.outputConfig = nextConfig
-    const bufferSizeChanged = this.outputConfig.preferredBufferSize !== prevBufferSize
+    const queued = this.outputConfigApplyQueue.then(async () => {
+      const serviceGeneration = this.outputConfigServiceGeneration
+      const changed = await this.applyOutputConfigDirect(config)
+      if (serviceGeneration !== this.outputConfigServiceGeneration) {
+        throw new Error('音频服务在输出拓扑更新期间重启')
+      }
+      if (changed) {
+        const nativeInfo = await this.readNativePlaybackInfoAsync()
+        if (serviceGeneration !== this.outputConfigServiceGeneration) {
+          throw new Error('音频服务在读取输出拓扑 ACK 时重启')
+        }
+        if (nativeInfo) {
+          this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
+          this.publishPlaybackInfo()
+        }
+      }
+      if (generation === this.outputConfigApplyGeneration) {
+        this.outputConfigApplyStatus = {
+          ...this.outputConfigApplyStatus,
+          appliedRevision: revision,
+          state: 'applied',
+          error: '',
+          generation
+        }
+      }
+    })
+    this.outputConfigApplyQueue = queued.catch(() => undefined)
+    try {
+      await queued
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (generation === this.outputConfigApplyGeneration) {
+        this.outputConfigApplyStatus = {
+          ...this.outputConfigApplyStatus,
+          failedRevision: revision,
+          state: 'failed',
+          error: message,
+          generation
+        }
+      }
+      throw error
+    }
+  }
+
+  getOutputConfig(): OutputConfig {
+    return { ...this.outputConfig }
+  }
+
+  getOutputConfigApplyStatus(): OutputConfigApplyStatus {
+    return { ...this.outputConfigApplyStatus }
+  }
+
+  private async applyOutputConfigDirect(config: Partial<OutputConfig>): Promise<boolean> {
+    const previousConfig = this.outputConfig
+    const nextConfig = normalizeOutputConfig({ ...previousConfig, ...config })
+    if (outputConfigsEqual(nextConfig, this.outputConfig)) return false
+
+    const bufferSizeChanged = nextConfig.preferredBufferSize !== previousConfig.preferredBufferSize
     const needsReopen = bufferSizeChanged && this.output === 'asio'
     this.nativeOutputRouteSynced = false
     if (needsReopen) {
@@ -2641,17 +2769,19 @@ export class AudioEngineManager extends EventEmitter {
     const configSynced = await this.callNativeMaybeAsync(
       '设置输出配置',
       'SetOutputConfig',
-      JSON.stringify(this.outputConfig)
+      JSON.stringify(nextConfig)
     )
     if (!configSynced) {
       this.outputConfig = previousConfig
       throw new Error(`原生音频输出配置应用失败：${this.lastNativeError || '原生音频引擎不可用'}`)
     }
+    this.outputConfig = nextConfig
     this.nativeOutputRouteSynced = true
     this.playbackInfo.outputInfo.channelRoutingMode = this.outputConfig.routingMode
     this.playbackInfo.channelRoutingMode = this.outputConfig.routingMode
     this.refreshOutputInfoFromNative(needsReopen)
-    this.applyNativeDspGraph('输出配置切换后解析 DSP 场景')
+    await this.applyNativeDspGraphOrThrow('输出配置切换后解析 DSP 场景')
+    return true
   }
 
   async getAudioOutput(): Promise<AudioOutputId> {
@@ -2743,6 +2873,15 @@ export class AudioEngineManager extends EventEmitter {
     }
   }
 
+  private dspStatePayload(revision: number): DspStatePayload {
+    return {
+      ...this.graphPayload(revision),
+      revision,
+      graphUpdateMode: 'replace',
+      processing: { ...this.processing }
+    }
+  }
+
   private materializeGraphAssets(graph: DspGraphConfig): DspGraphConfig {
     if (
       !this.dspAssetPathResolver &&
@@ -2815,7 +2954,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   refreshDspGraph(): void {
-    this.applyNativeDspGraph('刷新 DSP 场景资料解析')
+    void this.applyNativeDspGraph('刷新 DSP 场景资料解析')
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
   }
@@ -2839,9 +2978,118 @@ export class AudioEngineManager extends EventEmitter {
     }
   }
 
-  private applyNativeDspGraph(context: string): void {
-    const payload = this.graphPayload(++this.dspGraphRevision)
-    this.tryNative(context, (native) => native.SetDspGraph?.(JSON.stringify(payload)))
+  private createDspGraphStatusFallback(): DspGraphStatus {
+    return {
+      revision: this.dspGraphAppliedRevision,
+      activeSceneId: this.activeDspSceneId,
+      totalLatencyFrames: 0,
+      totalTailFrames: 0,
+      nodes: this.activeDspGraph.nodes.map((node) => ({
+        id: node.id,
+        type: node.type,
+        enabled: node.enabled,
+        active: false,
+        bypassed: false,
+        bypassReason: '',
+        latencyFrames: 0,
+        tailFrames: 0,
+        processCalls: 0,
+        lastProcessMs: 0,
+        maxProcessMs: 0
+      }))
+    }
+  }
+
+  private decorateDspGraphStatus(status: DspGraphStatus): DspGraphStatus {
+    return {
+      ...status,
+      requestedRevision: this.dspGraphRevision,
+      appliedRevision: this.dspGraphAppliedRevision,
+      applyState: this.dspGraphApplyState,
+      applyError: this.dspGraphApplyError
+    }
+  }
+
+  private observeNativeDspGraphStatus(status: DspGraphStatus): void {
+    if (
+      !this.lastNativeDspGraphStatus ||
+      status.revision >= this.lastNativeDspGraphStatus.revision
+    ) {
+      this.lastNativeDspGraphStatus = status
+    }
+    this.dspGraphAppliedRevision = Math.max(this.dspGraphAppliedRevision, status.revision)
+    if (status.revision >= this.dspGraphRevision && this.dspGraphRevision > 0) {
+      this.dspGraphApplyState = 'applied'
+      this.dspGraphApplyError = ''
+    }
+  }
+
+  private async applyNativeDspGraph(context: string): Promise<DspGraphStatus> {
+    const revision = ++this.dspGraphRevision
+    const payload = this.dspStatePayload(revision)
+    this.dspGraphApplyState = 'pending'
+    this.dspGraphApplyError = ''
+    try {
+      const native = this.native
+      if (!native) throw new Error('未加载 twilight_audio_node.node')
+      let status: DspGraphStatus
+      if (this.audioServiceBinding) {
+        status = await this.audioServiceBinding.applyDspState(revision, payload)
+      } else {
+        if (
+          typeof native.ApplyDspState !== 'function' ||
+          typeof native.GetDspGraphStatus !== 'function'
+        ) {
+          throw new Error(
+            'native audio binding is missing required DSP methods: ApplyDspState, GetDspGraphStatus'
+          )
+        }
+        native.ApplyDspState(revision, JSON.stringify(payload))
+        status = await this.waitForDirectNativeDspRevision(revision, native)
+      }
+      if (status.revision < revision) {
+        throw new Error(
+          `DSP graph ACK revision mismatch: requested ${revision}, applied ${status.revision}`
+        )
+      }
+      if (status.compileState === 'failed') {
+        throw new Error(status.compileError || `DSP graph revision ${revision} failed to compile`)
+      }
+      this.observeNativeDspGraphStatus(status)
+      this.lastNativeError = ''
+      return this.decorateDspGraphStatus(status)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (revision === this.dspGraphRevision) {
+        this.dspGraphApplyState = 'failed'
+        this.dspGraphApplyError = message
+      }
+      this.lastNativeError = message
+      console.warn(`原生音频引擎${context}失败：`, message)
+      return this.decorateDspGraphStatus(
+        this.lastNativeDspGraphStatus ?? this.createDspGraphStatusFallback()
+      )
+    }
+  }
+
+  private async waitForDirectNativeDspRevision(
+    revision: number,
+    native: NativeAudioBinding
+  ): Promise<DspGraphStatus> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const status = parseDspGraphStatusOrThrow(native.GetDspGraphStatus())
+      if (status.revision >= revision) return status
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    throw new Error(`DSP graph ACK revision mismatch: requested ${revision}`)
+  }
+
+  private async applyNativeDspGraphOrThrow(context: string): Promise<DspGraphStatus> {
+    const status = await this.applyNativeDspGraph(context)
+    if (status.applyState === 'failed') {
+      throw new Error(status.applyError || `${context}失败`)
+    }
+    return status
   }
 
   getDspSceneState(): DspSceneState {
@@ -2879,7 +3127,7 @@ export class AudioEngineManager extends EventEmitter {
       this.dspScenes.some((scene) => scene.id === pinnedSceneId)
         ? pinnedSceneId
         : null
-    this.applyNativeDspGraph('更新 DSP 场景')
+    await this.applyNativeDspGraphOrThrow('更新 DSP 场景')
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
     return this.getDspSceneState()
@@ -2904,7 +3152,7 @@ export class AudioEngineManager extends EventEmitter {
       // Editing output stage invalidates any prior DSD PCM-fallback confirmation.
       delete defaultScene.allowDsdPcmFallback
     }
-    this.applyNativeDspGraph('更新输出采样率锁')
+    await this.applyNativeDspGraphOrThrow('更新输出采样率锁')
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
     return this.getDspSceneState()
@@ -2930,7 +3178,7 @@ export class AudioEngineManager extends EventEmitter {
       defaultScene.graph = applyStereoImageToGraph(defaultScene.graph, partial)
       delete defaultScene.allowDsdPcmFallback
     }
-    this.applyNativeDspGraph('更新立体声平衡/相位')
+    await this.applyNativeDspGraphOrThrow('更新立体声平衡/相位')
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
     return this.getDspSceneState()
@@ -2952,7 +3200,7 @@ export class AudioEngineManager extends EventEmitter {
     const state = this.getDspSceneState()
     if (state.requiresPcmFallback && !state.dsdPcmFallbackApplied) {
       if (!confirmDsdPcmFallback) {
-        this.applyNativeDspGraph('保留 DSD Direct/DoP 并旁路 DSP 场景')
+        await this.applyNativeDspGraphOrThrow('保留 DSD Direct/DoP 并旁路 DSP 场景')
         this.updateOutputPerfect()
         this.publishPlaybackInfo()
         return this.getDspSceneState()
@@ -2962,36 +3210,35 @@ export class AudioEngineManager extends EventEmitter {
       scene.allowDsdPcmFallback = true
       const previousProcessing = this.processing
       this.processing = this.mergeAudioProcessingSettings({ dsdOutputMode: 'pcm', dsdToPcm: true })
-      this.applyNativeDspSettings('确认 DSD PCM DSP 回退', { previousProcessing })
+      await this.applyNativeDspSettings('确认 DSD PCM DSP 回退', { previousProcessing })
     } else {
-      this.applyNativeDspGraph('应用 DSP 场景')
+      await this.applyNativeDspGraphOrThrow('应用 DSP 场景')
     }
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
     return this.getDspSceneState()
   }
 
-  getDspGraphStatus(): DspGraphStatus {
-    const fallback: DspGraphStatus = {
-      revision: this.dspGraphRevision,
-      activeSceneId: this.activeDspSceneId,
-      totalLatencyFrames: 0,
-      totalTailFrames: 0,
-      nodes: this.activeDspGraph.nodes.map((node) => ({
-        id: node.id,
-        type: node.type,
-        enabled: node.enabled,
-        active: false,
-        bypassed: false,
-        bypassReason: '',
-        latencyFrames: 0,
-        tailFrames: 0,
-        processCalls: 0,
-        lastProcessMs: 0,
-        maxProcessMs: 0
-      }))
+  async getDspGraphStatus(): Promise<DspGraphStatus> {
+    try {
+      let status: DspGraphStatus
+      if (this.audioServiceBinding) {
+        status = await this.audioServiceBinding.getDspGraphStatusAsync()
+      } else if (this.native && typeof this.native.GetDspGraphStatus === 'function') {
+        status = parseDspGraphStatusOrThrow(this.native.GetDspGraphStatus())
+      } else {
+        throw new Error('native audio binding does not support GetDspGraphStatus')
+      }
+      this.observeNativeDspGraphStatus(status)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.dspGraphApplyState = 'failed'
+      this.dspGraphApplyError = message
+      this.lastNativeError = message
     }
-    return parseNativeJson(this.native?.GetDspGraphStatus?.(), fallback)
+    return this.decorateDspGraphStatus(
+      this.lastNativeDspGraphStatus ?? this.createDspGraphStatusFallback()
+    )
   }
 
   async scanVst3Module(modulePath: string): Promise<Vst3ScanDescriptor> {
@@ -3080,7 +3327,7 @@ export class AudioEngineManager extends EventEmitter {
       }
       this.syncPlaybackOutputMirrorsFromOutputInfo()
     }
-    this.applyNativeDspSettings('更新 DSP 配置', { previousProcessing })
+    await this.applyNativeDspSettings('更新 DSP 配置', { previousProcessing })
     this.updateOutputPerfect()
     this.publishPlaybackInfo()
     await this.syncLoudnormModeTransition(previousMode, this.processing.volumeNormalization)
@@ -3092,14 +3339,11 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async loadImpulseResponse(path: string): Promise<ConvolverInfo> {
-    this.processing = this.mergeAudioProcessingSettings({
+    await this.setAudioProcessing({
       convolverEnabled: true,
       convolverIrPath: path
     })
     this.lastConvolverInfoCache = null
-    if (this.tryNative('加载脉冲响应', (native) => native.LoadImpulseResponse?.(path))) {
-      this.nativeConvolverIrPath = path
-    }
     this.updateNativeInfoSnapshot()
     return this.getConvolverInfo()
   }
@@ -3112,11 +3356,8 @@ export class AudioEngineManager extends EventEmitter {
     if (audioProcessingSettingsEqual(nextProcessing, this.processing))
       return this.getConvolverInfo()
 
-    this.processing = nextProcessing
+    await this.setAudioProcessing(nextProcessing)
     this.lastConvolverInfoCache = null
-    if (this.tryNative('卸载脉冲响应', (native) => native.UnloadImpulseResponse?.())) {
-      this.nativeConvolverIrPath = ''
-    }
     this.updateNativeInfoSnapshot()
     return this.getConvolverInfo()
   }
@@ -3157,12 +3398,7 @@ export class AudioEngineManager extends EventEmitter {
   }
 
   async setEqBands(settings: Partial<AudioProcessingSettings>): Promise<AudioProcessingSettings> {
-    const nextProcessing = this.mergeAudioProcessingSettings(settings)
-    if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.processing
-
-    this.processing = nextProcessing
-    this.tryNative('更新均衡器', (native) => native.SetEqBands?.(JSON.stringify(this.processing)))
-    return this.processing
+    return this.setAudioProcessing(settings)
   }
 
   async setEqPreset(preset: {
@@ -3170,31 +3406,17 @@ export class AudioEngineManager extends EventEmitter {
     eqPreamp: number
     eqBands: EqualizerBand[]
   }): Promise<AudioProcessingSettings> {
-    const nextProcessing = this.mergeAudioProcessingSettings({
+    return this.setAudioProcessing({
       ...preset,
       eqEnabled: true
     })
-    if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.processing
-
-    this.processing = nextProcessing
-    this.tryNative('应用均衡器预设', (native) =>
-      native.SetEqPreset?.(JSON.stringify(this.processing))
-    )
-    return this.processing
   }
 
   async setCrossfeedStrength(strength: number): Promise<AudioProcessingSettings> {
-    const nextProcessing = this.mergeAudioProcessingSettings({
+    return this.setAudioProcessing({
       crossfeedEnabled: strength > 0,
       crossfeedStrength: strength
     })
-    if (audioProcessingSettingsEqual(nextProcessing, this.processing)) return this.processing
-
-    this.processing = nextProcessing
-    this.tryNative('设置串音强度', (native) =>
-      native.SetCrossfeedStrength?.(this.processing.crossfeedStrength)
-    )
-    return this.processing
   }
 
   async setReplayGainMode(
@@ -3277,9 +3499,10 @@ export class AudioEngineManager extends EventEmitter {
           : undefined
     })
     try {
-      const raw = this.audioServiceBinding
-        ? await this.audioServiceBinding.callAsync?.('AnalyzeBpm', [source, optionsJson])
-        : this.native?.AnalyzeBpm?.(source, optionsJson)
+      if (this.audioServiceBinding) {
+        throw new Error('offline BPM analysis requires the isolated audio analysis service')
+      }
+      const raw = this.native?.AnalyzeBpm?.(source, optionsJson)
       const analysis = parseNativeJson<BpmAnalysisResult | null>(
         raw as string | BpmAnalysisResult | undefined,
         null
@@ -3296,18 +3519,18 @@ export class AudioEngineManager extends EventEmitter {
   ): Promise<LoudnessAnalysisResult | null> {
     const optionsJson = JSON.stringify({
       maxAnalysisSeconds:
-        typeof options.maxAnalysisSeconds === 'number' && Number.isFinite(options.maxAnalysisSeconds)
+        typeof options.maxAnalysisSeconds === 'number' &&
+        Number.isFinite(options.maxAnalysisSeconds)
           ? clampNumber(options.maxAnalysisSeconds, 0, 14_400, 0)
           : 0
     })
     try {
-      const raw = this.audioServiceBinding
-        ? await this.audioServiceBinding.callAsync?.('AnalyzeLoudness', [source, optionsJson])
-        : this.native?.AnalyzeLoudness?.(source, optionsJson)
+      if (this.audioServiceBinding) {
+        throw new Error('offline loudness analysis requires the isolated audio analysis service')
+      }
+      const raw = this.native?.AnalyzeLoudness?.(source, optionsJson)
       const analysis = parseNativeJson<
-        | LoudnessAnalysisResult
-        | { error?: string; available?: boolean }
-        | null
+        LoudnessAnalysisResult | { error?: string; available?: boolean } | null
       >(raw as string | LoudnessAnalysisResult | undefined, null)
       if (!analysis || typeof analysis !== 'object') return null
       if ('error' in analysis) {
@@ -3356,8 +3579,7 @@ export class AudioEngineManager extends EventEmitter {
       return
     }
 
-    const trackId =
-      this.queue.find((item) => item.source === source)?.id ?? source
+    const trackId = this.queue.find((item) => item.source === source)?.id ?? source
     const cached = await manager.peekCached({ trackId, filePath: source })
     if (cached && Number.isFinite(cached.integratedLufs)) {
       this.loudnormStatus = 'cached'
@@ -3373,7 +3595,7 @@ export class AudioEngineManager extends EventEmitter {
     this.loudnormStatus = 'measuring'
     this.emit('loudnorm-status', { status: 'measuring' as LoudnormStatus, source })
     // Fire-and-forget analysis; first play uses fallback gain until cache is ready.
-    void manager.requestAnalysis({ trackId, filePath: source }).then((result) => {
+    void manager.requestAnalysis({ trackId, filePath: source, priority: 100 }).then((result) => {
       // Drop stale results after mode leave / track change / destroy.
       if (
         this.destroyed ||
@@ -3437,10 +3659,7 @@ export class AudioEngineManager extends EventEmitter {
     }
   }
 
-  private applyLoudnormMeasurementToQueue(
-    source: string,
-    analysis: LoudnessAnalysisResult
-  ): void {
+  private applyLoudnormMeasurementToQueue(source: string, analysis: LoudnessAnalysisResult): void {
     if (!Number.isFinite(analysis.integratedLufs)) return
     let changed = false
     this.queue = this.queue.map((item) => {
@@ -3463,7 +3682,11 @@ export class AudioEngineManager extends EventEmitter {
     if (mode === this.playbackInfo.playMode) return
     this.playbackInfo.playMode = mode
     this.invalidateUpcomingTrackCache()
-    this.tryNative('切换播放模式', (native) => native.SetPlayMode?.(mode))
+    // The native ABI only exposes sequential/repeat. Renderer orchestrates
+    // list-loop and shuffle at queue boundaries while native remains sequential.
+    this.tryNative('切换播放模式', (native) =>
+      native.SetPlayMode?.(mode === 'repeat' ? 'repeat' : 'sequential')
+    )
     this.publishPlaybackInfo()
   }
 
@@ -3706,6 +3929,8 @@ export class AudioEngineManager extends EventEmitter {
 
   private withQueueIndexForSource(info: PlaybackInfo): PlaybackInfo {
     if (!info.source) return info
+    const indexed = this.queue[info.queueIndex]
+    if (indexed?.source === info.source) return info
     const sourceQueueIndex = this.queue.findIndex((item) => item.source === info.source)
     if (sourceQueueIndex < 0 || sourceQueueIndex === info.queueIndex) return info
     return {
@@ -3998,6 +4223,10 @@ export class AudioEngineManager extends EventEmitter {
           ((nativeInfo.source && nativeInfo.source !== previousSource) ||
             (nativeInfo.queueIndex >= 0 && nativeInfo.queueIndex !== previousQueueIndex))
         if (switchedTrack) {
+          // A fully delegated native queue advances without a renderer EOF
+          // callback. Report its boundary in the main process so sleep timers
+          // retain the same semantics as renderer-managed playback.
+          if (this.queue.length > 1) this.emit('sleep-timer-boundary', { boundary: 'trackEnd' })
           this.emit('start-file')
         }
         if (wasPlaying && nativeInfo.state === 'stopped') {
@@ -4006,6 +4235,13 @@ export class AudioEngineManager extends EventEmitter {
             // 播放结束：保持 nativePlaybackActive=true 以便持续轮询原生真实状态，
             // 避免状态发散后无法自我纠正。下次 play() 会重新设置状态。
             this.publishProperty('eof-reached', true)
+            // A native single-track queue and the final item in a delegated
+            // queue do not produce a renderer EOF callback. They are still a
+            // track boundary before they are a queue boundary, so emit both in
+            // that order. The following tick sees `wasPlaying === false`,
+            // which prevents a duplicate terminal boundary.
+            this.emit('sleep-timer-boundary', { boundary: 'trackEnd' })
+            this.emit('sleep-timer-boundary', { boundary: 'queueEnd' })
           }
         }
       }
@@ -4067,63 +4303,17 @@ export class AudioEngineManager extends EventEmitter {
 
   private applyNativeDspSettings(
     context: string,
-    options: { previousProcessing?: AudioProcessingSettings } = {}
-  ): void {
-    const previous = options.previousProcessing
-    const force = !previous
-    const eqChanged =
-      force ||
-      previous.eqEnabled !== this.processing.eqEnabled ||
-      previous.eqMode !== this.processing.eqMode ||
-      previous.eqPreamp !== this.processing.eqPreamp ||
-      !eqBandsEqual(previous.eqBands, this.processing.eqBands)
-    const replayGainChanged =
-      force ||
-      previous.volumeNormalization !== this.processing.volumeNormalization ||
-      previous.replayGainPreamp !== this.processing.replayGainPreamp ||
-      previous.replayGainFallback !== this.processing.replayGainFallback ||
-      previous.replayGainClip !== this.processing.replayGainClip
-    const crossfeedChanged =
-      force ||
-      previous.crossfeedEnabled !== this.processing.crossfeedEnabled ||
-      previous.crossfeedStrength !== this.processing.crossfeedStrength ||
-      previous.crossfeedDelayMs !== this.processing.crossfeedDelayMs ||
-      previous.crossfeedCutoffHz !== this.processing.crossfeedCutoffHz
-    const convolverChanged =
-      force ||
-      previous.convolverEnabled !== this.processing.convolverEnabled ||
-      previous.convolverIrPath !== this.processing.convolverIrPath
-
-    const graphPayload = this.graphPayload()
-
-    this.tryNative(context, (native) => {
-      native.SetDspConfig?.(JSON.stringify({ ...this.processing, dspGraph: graphPayload }))
-      native.SetDspGraph?.(JSON.stringify(graphPayload))
-      if (eqChanged) {
-        native.SetEqBands?.(JSON.stringify(this.processing))
+    _options: { previousProcessing?: AudioProcessingSettings } = {},
+    throwOnGraphFailure = true
+  ): Promise<DspGraphStatus> {
+    const application = throwOnGraphFailure
+      ? this.applyNativeDspGraphOrThrow(context)
+      : this.applyNativeDspGraph(context)
+    return application.then((status) => {
+      if (status.applyState === 'applied') {
+        this.nativeConvolverIrPath = this.processing.convolverIrPath
       }
-      if (replayGainChanged) {
-        native.SetReplayGainMode?.(
-          this.processing.volumeNormalization,
-          this.processing.replayGainPreamp,
-          this.processing.replayGainFallback,
-          this.processing.replayGainClip
-        )
-      }
-      if (crossfeedChanged) {
-        native.SetCrossfeedStrength?.(
-          this.processing.crossfeedEnabled ? this.processing.crossfeedStrength : 0
-        )
-      }
-      if (convolverChanged && this.processing.convolverIrPath) {
-        if (this.processing.convolverIrPath !== this.nativeConvolverIrPath) {
-          native.LoadImpulseResponse?.(this.processing.convolverIrPath)
-          this.nativeConvolverIrPath = this.processing.convolverIrPath
-        }
-      } else if (convolverChanged && this.nativeConvolverIrPath) {
-        native.UnloadImpulseResponse?.()
-        this.nativeConvolverIrPath = ''
-      }
+      return status
     })
   }
 

@@ -1,6 +1,7 @@
 import { existsSync } from 'fs'
 import { mkdir, readFile, rm, stat, writeFile } from 'fs/promises'
 import { dirname } from 'path'
+import { isDeepStrictEqual } from 'util'
 
 export const LOUDNESS_ANALYSIS_ALGORITHM_VERSION = 1
 export const LOUDNORM_DEFAULT_TARGET_LUFS = -23.0
@@ -51,6 +52,7 @@ export function buildLoudnessAnalysisCacheKey(identity: LoudnessAnalysisCacheIde
 export class LoudnessAnalysisCache {
   private readonly cachePath: string
   private readonly maxEntries: number
+  private mutationTail: Promise<void> = Promise.resolve()
 
   constructor(cachePath: string, maxEntries = LOUDNESS_ANALYSIS_CACHE_MAX_ENTRIES) {
     this.cachePath = cachePath
@@ -58,17 +60,33 @@ export class LoudnessAnalysisCache {
   }
 
   async get(identity: LoudnessAnalysisCacheIdentity): Promise<LoudnessAnalysisResult | null> {
+    await this.mutationTail
     const file = await this.read()
     const result = file.entries[buildLoudnessAnalysisCacheKey(identity)]
     return isLoudnessAnalysisResult(result) ? result : null
   }
 
   async set(identity: LoudnessAnalysisCacheIdentity, analysis: LoudnessAnalysisResult): Promise<void> {
-    const file = await this.read()
-    file.entries[buildLoudnessAnalysisCacheKey(identity)] = analysis
-    pruneLoudnessCacheEntries(file.entries, this.maxEntries)
-    await mkdir(dirname(this.cachePath), { recursive: true })
-    await writeFile(this.cachePath, JSON.stringify(file), 'utf-8')
+    await this.enqueueMutation(async () => {
+      const file = await this.read()
+      file.entries[buildLoudnessAnalysisCacheKey(identity)] = analysis
+      pruneLoudnessCacheEntries(file.entries, this.maxEntries)
+      await this.write(file)
+    })
+  }
+
+  async deleteIfMatches(
+    identity: LoudnessAnalysisCacheIdentity,
+    analysis: LoudnessAnalysisResult
+  ): Promise<boolean> {
+    return await this.enqueueMutation(async () => {
+      const file = await this.read()
+      const key = buildLoudnessAnalysisCacheKey(identity)
+      if (!isDeepStrictEqual(file.entries[key], analysis)) return false
+      delete file.entries[key]
+      await this.write(file)
+      return true
+    })
   }
 
   async getSize(): Promise<number> {
@@ -100,6 +118,20 @@ export class LoudnessAnalysisCache {
     } catch {
       return { version: 1, entries: {} }
     }
+  }
+
+  private async write(file: LoudnessAnalysisCacheFile): Promise<void> {
+    await mkdir(dirname(this.cachePath), { recursive: true })
+    await writeFile(this.cachePath, JSON.stringify(file), 'utf-8')
+  }
+
+  private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutationTail.then(operation, operation)
+    this.mutationTail = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
   }
 }
 

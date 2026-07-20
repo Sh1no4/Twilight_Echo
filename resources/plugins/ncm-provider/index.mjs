@@ -18,9 +18,16 @@ const NCM_PLAYBACK_QUALITY_FALLBACKS = {
 }
 const playlistTrackCache = new Map()
 const streamUrlCache = new Map()
+const providerWriteResults = new Map()
+const PROVIDER_WRITE_IDEMPOTENCY_TTL_MS = 5 * 60_000
+const MAX_PROVIDER_WRITE_IDEMPOTENCY_RECORDS = 256
+const MAX_PERSISTED_PROVIDER_WRITE_IDEMPOTENCY_RECORDS = 128
+const PROVIDER_WRITE_IDEMPOTENCY_SETTINGS_KEY = 'providerWriteIdempotency'
 let likedTracksCache = null
 let likedSongIdListCache = null
 let likedSongIds = new Set()
+let providerWriteRecordsLoaded = false
+let providerWritePersistenceTail = Promise.resolve()
 
 export async function activate(context) {
   contextRef = context
@@ -28,6 +35,7 @@ export async function activate(context) {
   if (!ncmApi) {
     throw new Error('Built-in NetEase provider requires the internal NCM gateway')
   }
+  await loadProviderWriteResults()
 
   await context.twilight.providers.register({
     id: PROVIDER_ID,
@@ -167,9 +175,138 @@ function normalizeCountryCode(countrycode) {
 function resetCaches() {
   playlistTrackCache.clear()
   streamUrlCache.clear()
+  providerWriteResults.clear()
   likedTracksCache = null
   likedSongIdListCache = null
   likedSongIds = new Set()
+  providerWriteRecordsLoaded = false
+  providerWritePersistenceTail = Promise.resolve()
+}
+
+function runIdempotentProviderWrite(scope, args, requestContext, operation, replaySuccess) {
+  throwIfRequestAborted(requestContext)
+  const idempotencyKey = requestContext?.idempotencyKey
+  if (typeof idempotencyKey !== 'string' || !idempotencyKey) return operation()
+
+  pruneProviderWriteResults()
+  const cacheKey = `${scope}\u0000${idempotencyKey}`
+  const fingerprint = JSON.stringify(args)
+  const existing = providerWriteResults.get(cacheKey)
+  if (existing) {
+    if (existing.fingerprint !== fingerprint) {
+      throw new Error('Provider idempotency key was reused for a different write payload')
+    }
+    if (existing.settled) replaySuccess?.()
+    return existing.promise
+  }
+
+  makeProviderWriteResultRoom()
+  const record = {
+    fingerprint,
+    promise: null,
+    expiresAt: Number.POSITIVE_INFINITY,
+    settled: false
+  }
+  record.promise = Promise.resolve()
+    .then(operation)
+    .then(
+      async (value) => {
+        if (providerWriteResults.get(cacheKey) !== record) return value
+        record.settled = true
+        record.expiresAt = Date.now() + PROVIDER_WRITE_IDEMPOTENCY_TTL_MS
+        await persistProviderWriteResults()
+        return value
+      },
+      async (error) => {
+        if (providerWriteResults.get(cacheKey) === record) {
+          providerWriteResults.delete(cacheKey)
+          await persistProviderWriteResults()
+        }
+        throw error
+      }
+    )
+  providerWriteResults.set(cacheKey, record)
+  return record.promise
+}
+
+function pruneProviderWriteResults() {
+  const now = Date.now()
+  let changed = false
+  for (const [cacheKey, record] of providerWriteResults) {
+    if (record.settled && record.expiresAt <= now) {
+      providerWriteResults.delete(cacheKey)
+      changed = true
+    }
+  }
+  if (changed) void persistProviderWriteResults()
+}
+
+function makeProviderWriteResultRoom() {
+  if (providerWriteResults.size < MAX_PROVIDER_WRITE_IDEMPOTENCY_RECORDS) return
+  for (const [cacheKey, record] of providerWriteResults) {
+    if (!record.settled) continue
+    providerWriteResults.delete(cacheKey)
+    if (providerWriteResults.size < MAX_PROVIDER_WRITE_IDEMPOTENCY_RECORDS) return
+  }
+  throw new Error('Provider idempotency registry is full of in-flight writes')
+}
+
+async function loadProviderWriteResults() {
+  if (providerWriteRecordsLoaded) return
+  providerWriteRecordsLoaded = true
+  const persisted = await getContext().settings.get(PROVIDER_WRITE_IDEMPOTENCY_SETTINGS_KEY)
+  if (!persisted || typeof persisted !== 'object' || !Array.isArray(persisted.records)) return
+
+  const now = Date.now()
+  for (const entry of persisted.records.slice(-MAX_PERSISTED_PROVIDER_WRITE_IDEMPOTENCY_RECORDS)) {
+    if (!entry || typeof entry !== 'object') continue
+    const { scope, key, fingerprint, expiresAt } = entry
+    if (
+      typeof scope !== 'string' ||
+      !scope ||
+      typeof key !== 'string' ||
+      !key ||
+      typeof fingerprint !== 'string' ||
+      !fingerprint ||
+      !Number.isFinite(expiresAt) ||
+      expiresAt <= now ||
+      expiresAt > now + PROVIDER_WRITE_IDEMPOTENCY_TTL_MS
+    ) {
+      continue
+    }
+    providerWriteResults.set(`${scope}\u0000${key}`, {
+      fingerprint,
+      promise: Promise.resolve(),
+      expiresAt,
+      settled: true
+    })
+  }
+  pruneProviderWriteResults()
+}
+
+async function persistProviderWriteResults() {
+  const records = [...providerWriteResults.entries()]
+    .filter(([, record]) => record.settled && Number.isFinite(record.expiresAt))
+    .slice(-MAX_PERSISTED_PROVIDER_WRITE_IDEMPOTENCY_RECORDS)
+    .flatMap(([cacheKey, record]) => {
+      const separator = cacheKey.indexOf('\u0000')
+      if (separator <= 0 || separator === cacheKey.length - 1) return []
+      return [
+        {
+          scope: cacheKey.slice(0, separator),
+          key: cacheKey.slice(separator + 1),
+          fingerprint: record.fingerprint,
+          expiresAt: record.expiresAt
+        }
+      ]
+    })
+  providerWritePersistenceTail = providerWritePersistenceTail
+    .catch(() => undefined)
+    .then(() => getContext().settings.set(PROVIDER_WRITE_IDEMPOTENCY_SETTINGS_KEY, { records }))
+    .catch((error) => {
+      getContext().logger.warn(`Unable to persist provider idempotency records: ${getErrorMessage(error)}`)
+    })
+  await providerWritePersistenceTail
 }
 
 function getContext() {
@@ -190,8 +327,19 @@ async function saveCookie(cookie) {
   }
 }
 
-async function request(path, cookie) {
-  const data = await ncmApi.request(shouldUsePcUa(path) ? withPcUa(path) : path, cookie)
+function throwIfRequestAborted(requestContext) {
+  if (!requestContext?.signal?.aborted) return
+  const reason = requestContext.signal.reason
+  throw reason instanceof Error ? reason : new Error('Provider request was cancelled')
+}
+
+async function request(path, cookie, requestContext) {
+  throwIfRequestAborted(requestContext)
+  const data = await ncmApi.request(shouldUsePcUa(path) ? withPcUa(path) : path, cookie, {
+    signal: requestContext?.signal,
+    idempotencyKey: requestContext?.idempotencyKey
+  })
+  throwIfRequestAborted(requestContext)
   if (data && typeof data === 'object' && data.code === -1) {
     throw new Error(data.message || 'NetEase API request failed')
   }
@@ -206,10 +354,10 @@ function assertSuccessfulLoginResponse(data) {
   return data.cookie
 }
 
-async function requestAuthed(path) {
+async function requestAuthed(path, requestContext) {
   const cookie = await getCookie()
   if (!cookie) throw new Error('请先登录网易云音乐')
-  return request(path, cookie)
+  return request(path, cookie, requestContext)
 }
 
 function getErrorMessage(error) {
@@ -1220,35 +1368,55 @@ async function fetchUserFolloweds(uid, limit = 30, offset = 0) {
   }))
 }
 
-async function followArtist(artistId, follow) {
-  const data = await requestAuthed(
-    `/artist/sub?id=${encodeURIComponent(String(artistId))}&t=${follow ? '1' : '0'}`
-  )
-  const code = Number(data.code)
-  if (Number.isFinite(code) && code !== 200) {
-    throw new Error(normalizeApiMessage(data, follow ? '关注歌手失败' : '取消关注歌手失败'))
-  }
+async function followArtist(artistId, follow, requestContext) {
+  return runIdempotentProviderWrite('followArtist', [artistId, follow], requestContext, async () => {
+    const data = await requestAuthed(
+      `/artist/sub?id=${encodeURIComponent(String(artistId))}&t=${follow ? '1' : '0'}`,
+      requestContext
+    )
+    throwIfRequestAborted(requestContext)
+    const code = Number(data.code)
+    if (Number.isFinite(code) && code !== 200) {
+      throw new Error(normalizeApiMessage(data, follow ? '关注歌手失败' : '取消关注歌手失败'))
+    }
+  })
 }
 
-async function followUser(userId, follow) {
-  const data = await requestAuthed(
-    `/follow?id=${encodeURIComponent(String(userId))}&t=${follow ? '1' : '0'}`
-  )
-  const code = Number(data.code)
-  if (Number.isFinite(code) && code !== 200) {
-    throw new Error(normalizeApiMessage(data, follow ? '关注用户失败' : '取消关注用户失败'))
-  }
+async function followUser(userId, follow, requestContext) {
+  return runIdempotentProviderWrite('followUser', [userId, follow], requestContext, async () => {
+    const data = await requestAuthed(
+      `/follow?id=${encodeURIComponent(String(userId))}&t=${follow ? '1' : '0'}`,
+      requestContext
+    )
+    throwIfRequestAborted(requestContext)
+    const code = Number(data.code)
+    if (Number.isFinite(code) && code !== 200) {
+      throw new Error(normalizeApiMessage(data, follow ? '关注用户失败' : '取消关注用户失败'))
+    }
+  })
 }
 
-async function likeTrack(songId, like) {
-  await requestAuthed(`/like?id=${songId}&like=${String(like)}`)
-  if (like) {
-    likedSongIds = new Set([...likedSongIds, Number(songId)])
-  } else {
-    const next = new Set(likedSongIds)
-    next.delete(Number(songId))
-    likedSongIds = next
+async function likeTrack(songId, like, requestContext) {
+  const updateLikedState = () => {
+    if (like) {
+      likedSongIds = new Set([...likedSongIds, Number(songId)])
+    } else {
+      const next = new Set(likedSongIds)
+      next.delete(Number(songId))
+      likedSongIds = next
+    }
   }
+  return runIdempotentProviderWrite(
+    'likeTrack',
+    [songId, like],
+    requestContext,
+    async () => {
+      await requestAuthed(`/like?id=${songId}&like=${String(like)}`, requestContext)
+      throwIfRequestAborted(requestContext)
+      updateLikedState()
+    },
+    updateLikedState
+  )
 }
 
 function isTrackLiked(ncmSongId) {

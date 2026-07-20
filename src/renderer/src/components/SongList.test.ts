@@ -113,7 +113,7 @@ test('song list surfaces library repair status for moved or unresolved local fil
   assert.match(styles, /\.library-repair-status/)
 })
 
-test('song list supports system multi-select and batch favorite/delete actions', () => {
+test('song list supports batch favorite plus explicit local remove and recycle-bin actions', () => {
   const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
   const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
 
@@ -121,11 +121,29 @@ test('song list supports system multi-select and batch favorite/delete actions',
   assert.match(source, /track-selected/)
   assert.match(source, /selection-toolbar/)
   assert.match(source, /handleToolbarFavorite/)
-  assert.match(source, /handleToolbarDelete/)
+  assert.match(source, /handleToolbarRemoveFromLibrary/)
+  assert.match(source, /handleToolbarMoveToTrash/)
   assert.match(source, /handleBatchFavorite/)
-  assert.match(source, /handleBatchDelete/)
+  assert.match(source, /runLocalLibraryRemoval/)
+  assert.match(source, /window\.confirm/)
+  assert.match(source, /从音乐库移除/)
+  assert.match(source, /移到回收站/)
   assert.match(source, /handleContextFavorite/)
   assert.match(source, /加入收藏/)
   assert.match(styles, /\.track-selected/)
   assert.match(styles, /\.selection-toolbar/)
+})
+
+test('song list exposes exclusion management and restore controls', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
+
+  assert.match(source, /excludedTracks/)
+  assert.match(source, /showExcludedTracksDialog/)
+  assert.match(source, /restoreExcludedTracks/)
+  assert.match(source, /handleRestoreExclusions/)
+  assert.match(source, /已从音乐库移除/)
+  assert.match(source, /全部恢复/)
+  assert.match(styles, /\.excluded-tracks-dialog/)
+  assert.match(styles, /\.excluded-track-row/)
 })

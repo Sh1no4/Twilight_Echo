@@ -1,23 +1,154 @@
-name: Audio Engine
+name: CI
 
 on:
   push:
-    paths:
-      - "audio-engine/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/audio-engine.yml"
   pull_request:
-    paths:
-      - "audio-engine/**"
-      - "package.json"
-      - "package-lock.json"
-      - ".github/workflows/audio-engine.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
-    name: ${{ matrix.os }}
+  repository:
+    name: Repository Quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install frozen dependency tree
+        run: pnpm install --frozen-lockfile
+
+      - name: Install virtual display support
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends xvfb xauth
+          command -v xvfb-run
+
+      - name: Verify dependency install policy
+        run: pnpm run verify:install-policy
+
+      - name: Verify NCM dependency patch
+        run: pnpm run verify:ncm-patch
+
+      - name: Test release delivery policy
+        run: pnpm run test:release-artifacts
+
+      - name: Test production dependency audit gate
+        run: pnpm run test:production-audit
+
+      - name: Audit production dependency tree
+        run: pnpm run audit:production -- --output "$RUNNER_TEMP/production-dependency-audit.json"
+
+      - name: Upload production dependency audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-dependency-audit
+          path: ${{ runner.temp }}/production-dependency-audit.json
+          if-no-files-found: warn
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test plugins
+        run: pnpm run test:plugins
+
+      - name: Test realtime and offline audio services
+        run: pnpm run test:audio-manager
+
+      - name: Test tag and duplicate management
+        run: xvfb-run -a pnpm run test:tag-duplicate-management
+
+      - name: Verify duplicate detection benchmark contract
+        run: pnpm run test:duplicate-detection-benchmark
+
+      - name: Run isolated duplicate detection 10k benchmark
+        run: >-
+          pnpm run benchmark:duplicate-detection:ci --
+          --output "$RUNNER_TEMP/duplicate-detection-benchmark.json"
+          --manifest "$RUNNER_TEMP/duplicate-detection-benchmark.manifest.json"
+
+      - name: Upload duplicate detection benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: duplicate-detection-benchmark
+          path: |
+            ${{ runner.temp }}/duplicate-detection-benchmark.json
+            ${{ runner.temp }}/duplicate-detection-benchmark.manifest.json
+          if-no-files-found: warn
+
+      - name: Test playback routing
+        run: pnpm run test:playback-routing
+
+      - name: Test playlist lifecycle
+        run: xvfb-run -a pnpm run test:playlist-lifecycle
+
+      - name: Test lyrics management
+        run: xvfb-run -a pnpm run test:lyrics-management
+
+      - name: Test offline downloads
+        run: xvfb-run -a pnpm run test:offline-downloads
+
+      - name: Test CUE support
+        run: pnpm run test:cue
+
+      - name: Test local performance
+        run: pnpm run test:local-perf
+
+      - name: Test DSP graph
+        run: pnpm run test:dsp-graph
+
+      - name: Test DSP assets
+        run: pnpm run test:dsp-assets
+
+      - name: Test plugin tooling
+        run: pnpm run test:plugin-tooling
+
+      - name: Test audio toolchain scripts
+        run: pnpm run test:audio-toolchain
+
+      - name: Test application contracts
+        run: pnpm run test:app
+
+      - name: Test renderer data tooling
+        run: pnpm run test:renderer-data-tooling
+
+      - name: Test sleep timer
+        run: pnpm run test:sleep-timer
+
+      - name: Test cross-cutting regressions
+        run: pnpm run test:cross-cutting-regressions
+
+      - name: Production build
+        run: pnpm run build
+
+  native-audio:
+    name: Native Audio (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -27,21 +158,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: "npm"
-
       - name: Install Linux audio dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
-
-      - name: Install npm dependencies
-        run: npm ci --ignore-scripts
-
-      - name: Typecheck
-        run: npm run typecheck
 
       - name: Configure audio engine
         run: cmake -S audio-engine -B audio-engine/build/default -DTAE_BUILD_NAPI=OFF
@@ -51,3 +170,17 @@ jobs:
 
       - name: Test audio engine
         run: ctest --test-dir audio-engine/build/default --output-on-failure -C Debug
+
+  required:
+    name: Required Quality Gate
+    if: always()
+    needs: [repository, native-audio]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every quality job
+        env:
+          REPOSITORY_RESULT: ${{ needs.repository.result }}
+          NATIVE_AUDIO_RESULT: ${{ needs.native-audio.result }}
+        run: |
+          test "$REPOSITORY_RESULT" = "success"
+          test "$NATIVE_AUDIO_RESULT" = "success"

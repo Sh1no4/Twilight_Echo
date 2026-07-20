@@ -5,7 +5,7 @@
 生成汇总报告：
 
 ```bash
-npm run smoke:audio-evidence
+pnpm run smoke:audio-evidence
 ```
 
 默认输出：
@@ -16,14 +16,14 @@ npm run smoke:audio-evidence
 把多台机器或多个设备的 smoke JSON 合并进报告：
 
 ```bash
-npm run smoke:audio-evidence -- --input output/audio-smoke-evidence/wasapi-exclusive.json --input output/audio-smoke-evidence/asio-pcm.json
-npm run smoke:audio-evidence -- --input-dir output/audio-smoke-evidence
+pnpm run smoke:audio-evidence -- --input output/audio-smoke-evidence/wasapi-exclusive.json --input output/audio-smoke-evidence/asio-pcm.json
+pnpm run smoke:audio-evidence -- --input-dir output/audio-smoke-evidence
 ```
 
 发布前需要强制检查证据完整性时使用：
 
 ```bash
-npm run smoke:audio-evidence -- --input-dir output/audio-smoke-evidence --require-complete
+pnpm run smoke:audio-evidence -- --input-dir output/audio-smoke-evidence --require-complete
 ```
 
 `--require-complete` 只作为 opt-in gate。没有对应硬件时不要把它加入默认 CI。
@@ -34,11 +34,11 @@ npm run smoke:audio-evidence -- --input-dir output/audio-smoke-evidence --requir
 
 | Surface | Suggested command | Required evidence |
 |---|---|---|
-| WASAPI Exclusive | `npm run smoke:wasapi -- --device "<wasapi-endpoint>" --buffer 256 --format-matrix --json > output/audio-smoke-evidence/wasapi-exclusive.json` | `actualBackend=wasapi-exclusive`、exclusive=true、实际输出格式、每个 PCM probe 的 `outputPerfect` / `perfectReason` |
-| ASIO | `npm run smoke:audio-format-matrix -- --fixture-dir "<pcm-fixtures>" --playback --backend asio --device "<asio-driver>" --json > output/audio-smoke-evidence/asio-pcm.json` | `actualBackend=asio`、驱动/设备名、实际输出格式、明确 pass/fail reason |
-| DoP DAC | `npm run smoke:audio-format-matrix -- --fixture-dir "<dsd-fixtures>" --playback --backend wasapi-exclusive --device "<dop-capable-dac>" --json > output/audio-smoke-evidence/dop-dac.json` | `dsdMode=dop`、carrier sample rate、实际输出格式；DAC 拒绝时必须有 fallback reason |
-| Native DSD | `npm run smoke:asio-native-dsd -- --device "<native-dsd-asio-driver>" --fixture-dir "<dsd-fixtures>" --json > output/audio-smoke-evidence/native-dsd.json` | 至少一个 DSD rate 达到 `nativeDsdRuntimeState=proven`，并记录驱动/设备和不支持 rate 的 fallback reason |
-| SACD ISO | `npm run smoke:audio-format-matrix -- --manifest "<sacd-iso-matrix.json>" --playback --backend wasapi-exclusive --device "<dac>" --json > output/audio-smoke-evidence/sacd-iso.json` | SACD ISO metadata、track/area、native/DoP/PCM runtime result；DST/provider 失败时必须有 reason |
+| WASAPI Exclusive | `pnpm run smoke:wasapi -- --device "<wasapi-endpoint>" --buffer 256 --format-matrix --json > output/audio-smoke-evidence/wasapi-exclusive.json` | `actualBackend=wasapi-exclusive`、exclusive=true、实际输出格式、每个 PCM probe 的 `outputPerfect` / `perfectReason` |
+| ASIO | `pnpm run smoke:audio-format-matrix -- --fixture-dir "<pcm-fixtures>" --playback --backend asio --device "<asio-driver>" --json > output/audio-smoke-evidence/asio-pcm.json` | `actualBackend=asio`、驱动/设备名、实际输出格式、明确 pass/fail reason |
+| DoP DAC | `pnpm run smoke:audio-format-matrix -- --fixture-dir "<dsd-fixtures>" --playback --backend wasapi-exclusive --device "<dop-capable-dac>" --json > output/audio-smoke-evidence/dop-dac.json` | `dsdMode=dop`、carrier sample rate、实际输出格式；DAC 拒绝时必须有 fallback reason |
+| Native DSD | `pnpm run smoke:asio-native-dsd -- --device "<native-dsd-asio-driver>" --fixture-dir "<dsd-fixtures>" --json > output/audio-smoke-evidence/native-dsd.json` | 至少一个 DSD rate 达到 `nativeDsdRuntimeState=proven`，并记录驱动/设备和不支持 rate 的 fallback reason |
+| SACD ISO | `pnpm run smoke:audio-format-matrix -- --manifest "<sacd-iso-matrix.json>" --playback --backend wasapi-exclusive --device "<dac>" --json > output/audio-smoke-evidence/sacd-iso.json` | SACD ISO metadata、track/area、native/DoP/PCM runtime result；DST/provider 失败时必须有 reason |
 
 ## Optional Product Honesty Surfaces
 

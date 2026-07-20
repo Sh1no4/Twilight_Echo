@@ -1,4 +1,4 @@
-import { isAbsolute, normalize, sep } from 'path'
+import { posix, win32 } from 'path'
 import type {
   TwilightPluginManifest,
   TwilightPluginPermission,
@@ -41,9 +41,25 @@ function normalizeRelativePath(value: unknown, key: string): string | undefined 
   if (typeof value !== 'string' || !value.trim()) {
     throw new Error(`plugin.json 字段 ${key} 必须是相对路径字符串`)
   }
-  const normalized = normalize(value.trim())
-  if (isAbsolute(normalized) || normalized === '..' || normalized.startsWith(`..${sep}`)) {
+  const source = value.trim()
+  if (source.includes('\0')) {
+    throw new Error(`plugin.json 字段 ${key} 包含非法空字符`)
+  }
+  const slashPath = source.replace(/\\/g, '/')
+  if (
+    posix.isAbsolute(slashPath) ||
+    win32.isAbsolute(source) ||
+    win32.isAbsolute(slashPath) ||
+    /^[A-Za-z]:/.test(source)
+  ) {
     throw new Error(`plugin.json 字段 ${key} 不能指向插件目录外`)
+  }
+  const normalized = posix.normalize(slashPath)
+  if (normalized === '..' || normalized.startsWith('../')) {
+    throw new Error(`plugin.json 字段 ${key} 不能指向插件目录外`)
+  }
+  if (normalized === '.' || normalized.endsWith('/')) {
+    throw new Error(`plugin.json 字段 ${key} 必须指向插件内文件`)
   }
   return normalized
 }
@@ -86,6 +102,27 @@ function normalizeBinary(value: unknown): Record<string, string> | undefined {
     if (normalized) binary[platform] = normalized
   }
   return Object.keys(binary).length > 0 ? binary : undefined
+}
+
+export function canonicalizePluginManifestPaths(
+  raw: Record<string, unknown>
+): Record<string, unknown> {
+  const canonical = { ...raw }
+  setCanonicalPath(canonical, 'main', normalizeRelativePath(raw.main, 'main'))
+  setCanonicalPath(canonical, 'icon', normalizeRelativePath(raw.icon, 'icon'))
+  const binary = normalizeBinary(raw.binary)
+  if (binary) canonical.binary = binary
+  else delete canonical.binary
+  return canonical
+}
+
+function setCanonicalPath(
+  target: Record<string, unknown>,
+  key: 'main' | 'icon',
+  value: string | undefined
+): void {
+  if (value) target[key] = value
+  else delete target[key]
 }
 
 function hasDeclarativeThemeContribution(raw: Record<string, unknown>, type: TwilightPluginType[]): boolean {
@@ -142,8 +179,9 @@ export function validatePluginManifest(raw: unknown): TwilightPluginManifest {
   }
 
   const type = normalizeTypes(raw.type)
-  const main = normalizeRelativePath(raw.main, 'main')
-  const binary = normalizeBinary(raw.binary)
+  const canonicalPaths = canonicalizePluginManifestPaths(raw)
+  const main = canonicalPaths.main as string | undefined
+  const binary = canonicalPaths.binary as Record<string, string> | undefined
   const dependencies = normalizeDependencies(raw.dependencies)
   if (type.length === 1 && type[0] === 'theme' && (main || binary)) {
     throw new Error('纯 theme 插件只能通过 contributes.themes 声明，不能包含 main 或 binary')
@@ -176,7 +214,7 @@ export function validatePluginManifest(raw: unknown): TwilightPluginManifest {
     contributes: raw.contributes,
     homepage: typeof raw.homepage === 'string' ? raw.homepage.trim() : undefined,
     repository: typeof raw.repository === 'string' ? raw.repository.trim() : undefined,
-    icon: normalizeRelativePath(raw.icon, 'icon'),
+    icon: canonicalPaths.icon as string | undefined,
     signature: raw.signature
   }
 }

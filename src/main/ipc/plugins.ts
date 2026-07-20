@@ -4,6 +4,7 @@ import { readFileSync, realpathSync } from 'fs'
 import { runtime } from '../core/runtime'
 import { TwilightPluginManager } from '../plugins/manager'
 import { PluginIndexService, resolvePluginIndexUrl } from '../plugins/indexService'
+import { buildPluginProxyEnv } from '../plugins/proxyBootstrap'
 import { isTwilightMediaProviderMethod } from '../plugins/providerRouting'
 import type { TwilightMediaProviderMethod, TwilightPluginUninstallOptions } from '../plugins/types'
 import {
@@ -28,9 +29,11 @@ const MAX_PROVIDER_ARGS = 16
 const MAX_EXTENSION_COMMAND_ARGS = 16
 const MAX_PLUGIN_IPC_ARGS_BYTES = 512 * 1024
 const MAX_NATIVE_DSP_PARAMETERS = 128
+const MAX_PROVIDER_IDEMPOTENCY_KEY_LENGTH = 128
 const PLUGIN_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/
 const PROVIDER_ID_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,127}$/
 const DSP_PARAMETER_ID_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/
+const PROVIDER_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 
 export function setupPluginIpc(): void {
   if (runtime.pluginManager) return
@@ -78,19 +81,14 @@ export function setupPluginIpc(): void {
         await runtime.audioEngineManager?.previous()
       }
     },
-    getProxyEnv: (): Record<string, string> => {
-      if (runtime.appSettings.proxyMode === 'off') return {}
-      if (runtime.appSettings.proxyMode === 'custom' && runtime.appSettings.proxyHost && runtime.appSettings.proxyPort > 0) {
-        return { HTTPS_PROXY: `http://${runtime.appSettings.proxyHost}:${runtime.appSettings.proxyPort}` }
-      }
-      return {}
-    }
+    getProxyEnv: () => buildPluginProxyEnv(runtime.appSettings)
   })
   runtime.pluginIndexService = new PluginIndexService({
     appVersion: app.getVersion(),
     localIndexPath: bundledPluginIndexPath(),
     remoteIndexUrl: resolvePluginIndexUrl(process.env.TWILIGHT_PLUGIN_INDEX_URL),
     cacheIndexPath: join(app.getPath('userData'), 'plugin-index', 'cache', 'plugins.json'),
+    packageStagingDir: join(app.getPath('userData'), 'plugin-index', 'staging'),
     bundledPluginIds
   })
 
@@ -191,7 +189,8 @@ export function setupPluginIpc(): void {
     try {
       return await runtime.pluginManager!.installFromPath(downloaded.packagePath, {
         source: 'index',
-        sourceLabel: downloaded.entry.sourceUrl
+        sourceLabel: downloaded.entry.sourceUrl,
+        evidence: downloaded.evidence
       })
     } finally {
       await downloaded.cleanup()
@@ -212,13 +211,20 @@ export function setupPluginIpc(): void {
   })
   ipcMain.handle(
     'providers:call',
-    async (_event, providerId: string, method: Parameters<TwilightPluginManager['callProvider']>[1], args: unknown[]) => {
+    async (
+      _event,
+      providerId: string,
+      method: Parameters<TwilightPluginManager['callProvider']>[1],
+      args: unknown[],
+      options?: unknown
+    ) => {
       assertTrustedIpcSender(_event, 'provider IPC')
       await runtime.pluginManagerReady
       return await runtime.pluginManager!.callProvider(
         normalizeProviderId(providerId),
         normalizeProviderMethod(method),
-        normalizePluginIpcArgs(args, 'provider call args', MAX_PROVIDER_ARGS)
+        normalizePluginIpcArgs(args, 'provider call args', MAX_PROVIDER_ARGS),
+        normalizeProviderCallOptions(options)
       )
     }
   )
@@ -272,6 +278,24 @@ function normalizePluginIpcArgs(value: unknown, field: string, maxItems: number)
   const args = Array.isArray(value) ? value.slice(0, maxItems) : []
   stringifyJsonForIpcStorage(args, field, MAX_PLUGIN_IPC_ARGS_BYTES)
   return args
+}
+
+function normalizeProviderCallOptions(value: unknown): { idempotencyKey?: string } {
+  if (value == null) return {}
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('provider call options must be an object')
+  }
+  const rawKey = (value as Record<string, unknown>).idempotencyKey
+  if (rawKey === undefined) return {}
+  const idempotencyKey = normalizeIpcString(
+    rawKey,
+    'provider idempotency key',
+    MAX_PROVIDER_IDEMPOTENCY_KEY_LENGTH
+  )
+  if (!PROVIDER_IDEMPOTENCY_KEY_PATTERN.test(idempotencyKey)) {
+    throw new Error('provider idempotency key is invalid')
+  }
+  return { idempotencyKey }
 }
 
 function normalizeUninstallOptions(value: unknown): TwilightPluginUninstallOptions | undefined {

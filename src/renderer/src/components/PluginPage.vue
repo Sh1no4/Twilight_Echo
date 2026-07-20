@@ -1,6 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import PuzzleIcon from './icons/PuzzleIcon.vue'
+import {
+  pluginIndexLoadedFromLabel,
+  pluginIndexSourceLabel,
+  presentPluginTrust
+} from '@renderer/utils/pluginTrustPresentation'
+import {
+  createPluginTrustRefreshController,
+  type PluginTrustRefreshController
+} from '@renderer/utils/pluginTrustRefresh'
 
 type TwilightPluginDescriptor = Awaited<ReturnType<typeof window.api.plugins.list>>[number]
 type TwilightPluginIndexEntry = Awaited<ReturnType<typeof window.api.plugins.listIndex>>[number]
@@ -16,6 +25,9 @@ const indexStatus = ref<TwilightPluginIndexStatus | null>(null)
 const loading = ref(false)
 const errorMsg = ref('')
 const busyIds = ref(new Set<string>())
+const trustEvaluationTimeMs = ref(Date.now())
+let trustRefreshController: PluginTrustRefreshController | null = null
+let indexRequestGeneration = 0
 
 function switchTab(tabId: string) {
   activeTab.value = tabId
@@ -76,20 +88,16 @@ const marketRepoUrl = computed(() => {
 })
 
 const indexSourceLabel = computed(() => {
-  const status = indexStatus.value
-  if (!status) return '索引未加载'
-  if (status.loadedFrom === 'bundled') return '内置离线索引'
-  if (status.sourceKind === 'github') return 'GitHub 动态索引'
-  return '自定义远程索引'
+  return pluginIndexSourceLabel(indexStatus.value)
 })
 
 const indexLoadedFromLabel = computed(() => {
-  const loadedFrom = indexStatus.value?.loadedFrom
-  if (loadedFrom === 'remote') return '远程'
-  if (loadedFrom === 'cache') return '缓存'
-  if (loadedFrom === 'bundled') return '内置'
-  return '未知'
+  return pluginIndexLoadedFromLabel(indexStatus.value?.loadedFrom)
 })
+
+function pluginTrust(entry: TwilightPluginIndexEntry) {
+  return presentPluginTrust(entry, indexStatus.value, trustEvaluationTimeMs.value)
+}
 
 /* ---------- API ---------- */
 
@@ -101,13 +109,26 @@ async function refreshInstalled() {
   }
 }
 
-async function refreshIndex() {
+async function refreshIndex(force = false) {
+  const generation = ++indexRequestGeneration
+  trustEvaluationTimeMs.value = Date.now()
   try {
-    indexEntries.value = await window.api.plugins.listIndex()
-    indexStatus.value = await window.api.plugins.getIndexStatus()
+    const entries = force
+      ? await window.api.plugins.refreshIndex()
+      : await window.api.plugins.listIndex()
+    const status = await window.api.plugins.getIndexStatus()
+    if (generation !== indexRequestGeneration) return
+    indexEntries.value = entries
+    indexStatus.value = status
   } catch (e) {
+    if (generation !== indexRequestGeneration) return
     errorMsg.value = `加载插件市场失败：${e instanceof Error ? e.message : String(e)}`
     indexStatus.value = await window.api.plugins.getIndexStatus().catch(() => null)
+  } finally {
+    if (generation === indexRequestGeneration) {
+      trustEvaluationTimeMs.value = Date.now()
+      trustRefreshController?.schedule()
+    }
   }
 }
 
@@ -188,11 +209,9 @@ async function refreshMarket() {
   loading.value = true
   errorMsg.value = ''
   try {
-    indexEntries.value = await window.api.plugins.refreshIndex()
-    indexStatus.value = await window.api.plugins.getIndexStatus()
+    await refreshIndex(true)
   } catch (e) {
     errorMsg.value = `刷新市场失败：${e instanceof Error ? e.message : String(e)}`
-    indexStatus.value = await window.api.plugins.getIndexStatus().catch(() => null)
   } finally {
     loading.value = false
   }
@@ -210,16 +229,35 @@ function openExternal(url: string) {
 
 let unsubChanged: (() => void) | null = null
 
+function refreshTrustOnResume(): void {
+  trustEvaluationTimeMs.value = Date.now()
+  void trustRefreshController?.refreshNow().catch(() => undefined)
+}
+
+function handleTrustVisibilityChange(): void {
+  if (document.visibilityState === 'visible') refreshTrustOnResume()
+}
+
 onMounted(() => {
-  loadAll()
+  trustRefreshController = createPluginTrustRefreshController({
+    getSnapshot: () => ({ entries: indexEntries.value, status: indexStatus.value }),
+    refresh: () => refreshIndex(false)
+  })
+  window.addEventListener('focus', refreshTrustOnResume)
+  document.addEventListener('visibilitychange', handleTrustVisibilityChange)
+  void loadAll()
   unsubChanged = window.api.plugins.onChanged(() => {
-    refreshInstalled()
-    refreshIndex()
+    void refreshInstalled()
+    refreshTrustOnResume()
   })
 })
 
 onUnmounted(() => {
   unsubChanged?.()
+  window.removeEventListener('focus', refreshTrustOnResume)
+  document.removeEventListener('visibilitychange', handleTrustVisibilityChange)
+  trustRefreshController?.stop()
+  trustRefreshController = null
 })
 </script>
 
@@ -265,7 +303,7 @@ onUnmounted(() => {
             <input 
               type="text" 
               v-model="searchText"
-              :placeholder="activeTab === 'installed' ? '搜索已安装插件名称或作者...' : activeTab === 'discover' ? '搜索官方插件市场...' : '在可用更新中搜索...'"
+              :placeholder="activeTab === 'installed' ? '搜索已安装插件名称或作者...' : activeTab === 'discover' ? '搜索当前插件索引...' : '在可用更新中搜索...'"
             >
           </div>
           <div class="top-actions">
@@ -315,7 +353,7 @@ onUnmounted(() => {
                     <div class="plugin-version">v{{ plugin.version }}</div>
                   </div>
                   <div class="plugin-author">
-                    <i class="pi pi-verified" style="color:#6366f1"></i>
+                    <i class="pi pi-user"></i>
                     {{ plugin.author }}
                   </div>
                   <div class="plugin-tags">
@@ -360,7 +398,7 @@ onUnmounted(() => {
           <div class="discover-banner">
             <div class="banner-text">
               <h2>{{ indexSourceLabel }}</h2>
-              <p>通过远程 plugins.json 发现插件包，安装前校验 manifest、checksum 和权限声明。</p>
+              <p>当前索引用于发现插件；安装前展示来源、有效期、SHA-256、签名、权限与代码执行风险。</p>
             </div>
             <div class="banner-art">
               <i class="pi pi-server"></i>
@@ -370,15 +408,26 @@ onUnmounted(() => {
               class="btn btn-outline" 
               style="position: absolute; right: 32px; bottom: 32px; background: rgba(255,255,255,0.1); border-color: rgba(255,255,255,0.2); color: #fff;"
               @click="openExternal(marketRepoUrl)"
-            >浏览 GitHub 仓库 <i class="pi pi-external-link"></i></button>
+            >浏览插件仓库 <i class="pi pi-external-link"></i></button>
           </div>
 
           <div v-if="indexStatus" class="market-status">
             <span><i class="pi pi-database"></i> {{ indexLoadedFromLabel }}</span>
-            <span>刷新：{{ formatIndexTime(indexStatus.lastFetchedAt) }}</span>
+            <span>获取：{{ formatIndexTime(indexStatus.lastFetchedAt) }}</span>
+            <span>过期：{{ formatIndexTime(indexStatus.expiresAt) }}</span>
             <span v-if="indexStatus.stale" class="warn">使用回退索引</span>
+            <span v-if="indexStatus.expired" class="warn">索引已过期</span>
+            <span v-if="!indexStatus.originVerified" class="warn">来源未验证</span>
+            <span v-if="indexStatus.trustStoreError" class="warn">签名信任库不可用</span>
             <span v-if="indexStatus.error" class="warn">最近错误：{{ indexStatus.error }}</span>
             <span class="source-url" :title="indexStatus.sourceUrl">{{ indexStatus.sourceUrl }}</span>
+            <span
+              v-if="indexStatus.configuredSourceUrl !== indexStatus.sourceUrl"
+              class="source-url warn"
+              :title="indexStatus.configuredSourceUrl"
+            >
+              配置：{{ indexStatus.configuredSourceUrl }}
+            </span>
           </div>
 
           <div class="page-title" style="font-size: 18px; margin-bottom: 16px;">
@@ -408,9 +457,8 @@ onUnmounted(() => {
                     <div class="plugin-name">{{ entry.name }}</div>
                     <div class="plugin-version">v{{ entry.version }}</div>
                   </div>
-                  <div class="plugin-author">
-                    <i v-if="entry.verified" class="pi pi-verified" style="color:#6366f1"></i>
-                    <i v-else class="pi pi-user"></i>
+                  <div class="plugin-author" :title="pluginTrust(entry).detail">
+                    <i :class="pluginTrust(entry).icon"></i>
                     {{ entry.author }}
                   </div>
                   <div class="plugin-tags">
@@ -428,11 +476,17 @@ onUnmounted(() => {
                 {{ entry.description }}
               </div>
               <div class="plugin-footer">
-                <div v-if="entry.tags" style="font-size: 12px; color: var(--te-neutral-400); display: flex; gap: 6px; align-items: center;">
-                  <i class="pi pi-tag"></i> {{ entry.tags.join(', ') }}
-                </div>
-                <div v-else style="font-size: 12px; color: var(--te-neutral-400);">
-                  <i class="pi pi-download"></i> {{ entry.verified ? '已验证' : '社区' }}
+                <div class="plugin-trust-stack">
+                  <div class="plugin-trust" :class="`trust-${pluginTrust(entry).tone}`" :title="pluginTrust(entry).detail">
+                    <i :class="pluginTrust(entry).icon"></i> {{ pluginTrust(entry).label }}
+                  </div>
+                  <span
+                    class="signature-evidence"
+                    :title="entry.verification.keyFingerprintSha256 || entry.verification.reason"
+                  >
+                    签名 {{ entry.verification.signatureStatus }} · 指纹
+                    {{ entry.verification.keyFingerprintSha256?.slice(0, 12) || '无' }}
+                  </span>
                 </div>
                 
                 <!-- Install states -->
@@ -919,6 +973,41 @@ onUnmounted(() => {
   align-items: center;
   gap: 4px;
   margin-bottom: 8px;
+}
+
+.plugin-trust {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.plugin-trust-stack {
+  display: grid;
+  gap: 3px;
+}
+
+.signature-evidence {
+  color: var(--te-neutral-400, #9ca3af);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.plugin-trust.trust-official {
+  color: #4f46e5;
+}
+
+.plugin-trust.trust-signed {
+  color: #047857;
+}
+
+.plugin-trust.trust-declared {
+  color: #a16207;
+}
+
+.plugin-trust.trust-unverified {
+  color: var(--te-neutral-400, #9ca3af);
 }
 
 .plugin-tags {

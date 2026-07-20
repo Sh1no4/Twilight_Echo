@@ -1,4 +1,4 @@
-import { ref, computed, watch, type Ref, type ComputedRef } from 'vue'
+import { shallowRef, ref, computed, watch, type Ref, type ComputedRef } from 'vue'
 import type { PlaybackSession, Track } from '../types/music'
 import type {
   AudioCapabilitySupportState,
@@ -7,6 +7,7 @@ import type {
   AudioOutputOption,
   AudioProcessingSettings,
   OutputConfig,
+  OutputConfigApplyStatus,
   PlaybackResumeMode,
   PlayMode
 } from '../types/settings'
@@ -24,10 +25,27 @@ import {
   shouldReuseResolvedStreamUrl,
   shouldUseNativePlaybackTarget
 } from '../utils/playbackRouting'
-import { prepareNativeQueue } from '../utils/nativeQueuePreparation.ts'
+import { preparePlayerNativeQueue } from '../utils/nativeQueuePreparation.ts'
+import {
+  NativeQueueRevisionFence,
+  synchronizeLatestNativeQueue
+} from '../utils/nativeQueueRevision.ts'
+import {
+  toPlaybackQueueSnapshot,
+  toPlaybackQueueSnapshots
+} from '../utils/playbackQueueVirtualization.ts'
 import { findPlaybackFallbackTrack } from '../utils/playbackFallback.ts'
 import { findProviderRematchCandidate } from '../utils/libraryRepair.ts'
 import { resolveLyricsWithSources } from '../utils/lyricSourceResolution.ts'
+import { resolverLyricsInput } from '../utils/managedLyricsSource.ts'
+import { useLyricsManagement } from './lyricsManagement.ts'
+import { toggleVolumeMute } from '../utils/volumeMute.ts'
+import {
+  clampCuePlaybackPosition,
+  cueDuration,
+  rendererAudioAbsolutePositionForTrack,
+  rendererAudioPositionForTrack
+} from '../utils/cuePlayback.ts'
 import {
   evaluateNativePlaybackInfoIntent,
   type NativePlaybackInfoIntent
@@ -35,6 +53,14 @@ import {
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useSettingsStore } from './useSettingsStore'
 import { useMusicStore } from './useMusicStore'
+import { playbackSessionWriter } from '../app/playbackSessionWriter.ts'
+import {
+  onLocalTracksUnavailable,
+  pruneUnavailableLocalTracks
+} from '../utils/localTrackRemovalPolicy.ts'
+import { type SleepTimerMode, type SleepTimerState } from '../../../shared/sleepTimer.ts'
+import { createSleepTimerController, getRestorableSleepTimerState } from './sleepTimerController.ts'
+import { createSleepTimerFadeController } from './sleepTimerFade.ts'
 
 type NativePlaybackInfo = Awaited<ReturnType<typeof window.api.audioEngine.getPlaybackInfo>>
 type NativeOutputInfo = NativePlaybackInfo['outputInfo']
@@ -42,6 +68,7 @@ type NativeVisualizationData = Awaited<
   ReturnType<typeof window.api.audioEngine.getVisualizationData>
 >
 type ProviderSourceReliability = Record<string, number>
+const automaticLyricsBaselines = new Map<string, Track>()
 
 interface AudioOutputState {
   output: AudioOutputId
@@ -331,10 +358,18 @@ const isLoading = ref(false)
 const currentTime = ref(0)
 const duration = ref(0)
 const volume = ref(0.7)
-const queue = ref<Track[]>([])
+const muted = ref(false)
+const lastAudibleVolume = ref(0.7)
+const sleepTimerState = ref<SleepTimerState | null>(null)
+const sleepTimerNotice = ref<string | null>(null)
+let sleepTimerFadeController: ReturnType<typeof createSleepTimerFadeController> | null = null
+let sleepTimerController: ReturnType<typeof createSleepTimerController> | null = null
+// Queue entries are immutable playback snapshots. Keeping this as a shallow
+// array avoids proxying every nested field for a 5k/20k queue.
+const queue = shallowRef<Track[]>([])
 const queueIndex = ref(-1)
 const playMode = ref<PlayMode>('sequential')
-const originalQueue = ref<Track[]>([])
+const originalQueue = shallowRef<Track[]>([])
 const audioEngineReady = ref(false)
 const audioEngineError = ref<string | null>(null)
 const audioEngineRecoveryNotice = ref<AudioEngineRecoveryNotice | null>(null)
@@ -384,6 +419,14 @@ const defaultAudioOutputConfig: OutputConfig = {
   wasapiExclusivePushMode: false
 }
 const audioOutputConfig = ref<OutputConfig>({ ...defaultAudioOutputConfig })
+const audioOutputConfigApplyStatus = ref<OutputConfigApplyStatus>({
+  requestedRevision: 0,
+  appliedRevision: 0,
+  failedRevision: 0,
+  state: 'idle',
+  error: '',
+  generation: 0
+})
 /** Default-scene graph.outputStage (sample-rate lock / SRC / dither). Not OutputConfig. */
 const dspOutputStage = ref<DspOutputStageConfig>({ ...DEFAULT_DSP_OUTPUT_STAGE })
 /** Default-scene stereoField + channelStrip polarity (HiFi balance/phase). */
@@ -418,6 +461,7 @@ let playbackAudio: HTMLAudioElement | null = null
 let playbackObjectUrl: string | null = null
 let nativePlaybackActive = false
 let nativeQueueDelegated = false
+const nativeQueueRevisionFence = new NativeQueueRevisionFence()
 let activeLoadToken = 0
 let rendererFallbackInProgress = false
 let rendererPlaybackWatchdogTimer: number | null = null
@@ -539,14 +583,25 @@ function getPlaybackAudio(): HTMLAudioElement {
   audio.volume = volume.value
 
   audio.addEventListener('loadedmetadata', () => {
-    if (Number.isFinite(audio.duration) && audio.duration > 0) {
+    if (currentTrack.value?.cueRange) {
+      duration.value = cueDuration(currentTrack.value)
+    } else if (Number.isFinite(audio.duration) && audio.duration > 0) {
       duration.value = audio.duration
     }
   })
 
   audio.addEventListener('timeupdate', () => {
     if (Number.isFinite(audio.currentTime)) {
-      setCurrentTimeThrottled(audio.currentTime)
+      const track = currentTrack.value
+      const position = rendererAudioPositionForTrack(audio.currentTime, track)
+      setCurrentTimeThrottled(position)
+      if (track?.cueRange && audio.currentTime >= track.cueRange.endSeconds) {
+        audio.pause()
+        audio.currentTime = track.cueRange.endSeconds
+        setCurrentTimeImmediate(cueDuration(track))
+        void handlePlaybackEnded()
+        return
+      }
       scheduleCrossfadeIfNeeded()
     }
   })
@@ -565,7 +620,7 @@ function getPlaybackAudio(): HTMLAudioElement {
 
   audio.addEventListener('ended', () => {
     isPlaying.value = false
-    handlePlaybackEnded()
+    void handlePlaybackEnded()
   })
 
   audio.addEventListener('error', () => {
@@ -639,13 +694,12 @@ function seekRendererAudioWhenReady(
   track: Track,
   loadToken: number
 ): void {
-  const targetTime = Math.max(0, Number.isFinite(startTime) ? startTime : 0)
-  if (targetTime <= 0) return
+  const targetTime = clampCuePlaybackPosition(track, startTime)
 
   const applySeek = (): void => {
     if (!isActiveLoad(loadToken, track)) return
     try {
-      audio.currentTime = targetTime
+      audio.currentTime = rendererAudioAbsolutePositionForTrack(targetTime, track)
     } catch (err) {
       console.warn('[audio-engine] Failed to restore renderer playback position:', err)
     }
@@ -666,6 +720,77 @@ async function stopNativeAudio(): Promise<void> {
   } catch {
     // The renderer audio fallback can still continue if the native bridge is unavailable.
   }
+}
+
+function clearSleepTimerIntervals(): void {
+  sleepTimerFadeController?.clear()
+}
+
+function stopForSleepTimer(): void {
+  clearCrossfadeTimer()
+  stopVisualizationPolling(true)
+  stopRendererAudio(false)
+  void stopNativeAudio()
+  isPlaying.value = false
+  isLoading.value = false
+  sleepTimerNotice.value = '睡眠定时器已停止播放'
+}
+
+function beginSleepShutdown(state: SleepTimerState): void {
+  getSleepTimerFadeController().begin(state)
+}
+
+function getSleepTimerFadeController(): ReturnType<typeof createSleepTimerFadeController> {
+  if (!sleepTimerFadeController) {
+    sleepTimerFadeController = createSleepTimerFadeController({
+      getVolume: () => volume.value,
+      setVolume: (nextVolume) => {
+        volume.value = nextVolume
+      },
+      stop: stopForSleepTimer
+    })
+  }
+  return sleepTimerFadeController
+}
+
+function getSleepTimerController(): ReturnType<typeof createSleepTimerController> {
+  if (!sleepTimerController) {
+    sleepTimerController = createSleepTimerController({
+      bridge: window.api.sleepTimer,
+      getSettings: () => useSettingsStore().settings.value.sleepTimer,
+      getState: () => sleepTimerState.value,
+      setState: (state) => {
+        sleepTimerState.value = state
+      },
+      persistSession: persistSelectedTrackSession,
+      setNotice: (notice) => {
+        sleepTimerNotice.value = notice
+      },
+      onTriggered: beginSleepShutdown
+    })
+  }
+  return sleepTimerController
+}
+
+function configureSleepTimer(mode: SleepTimerMode, minutes?: number): void {
+  clearSleepTimerIntervals()
+  getSleepTimerController().configure(mode, minutes)
+}
+
+function cancelSleepTimer(): void {
+  clearSleepTimerIntervals()
+  getSleepTimerController().cancel()
+}
+
+function toggleMute(): void {
+  const next = toggleVolumeMute({
+    volume: volume.value,
+    muted: muted.value,
+    lastAudibleVolume: lastAudibleVolume.value
+  })
+  volume.value = next.volume
+  muted.value = next.muted
+  lastAudibleVolume.value = next.lastAudibleVolume
 }
 
 function shouldUseNativePlayback(track: Track, target: string): boolean {
@@ -925,7 +1050,7 @@ function normalizeNativePlaybackInfo(info: NativePlaybackInfo): NativePlaybackIn
 }
 
 function getTrackAudioSource(track: Track): string {
-  return track.subTrack || track.streamUrl || track.filePath
+  return track.cueRange ? track.filePath : track.subTrack || track.streamUrl || track.filePath
 }
 
 function mergeTrackTransientData(nextTrack: Track, previousTrack: Track | null): Track {
@@ -942,9 +1067,12 @@ function mergeTrackTransientData(nextTrack: Track, previousTrack: Track | null):
 }
 
 function patchTrackInQueues(updatedTrack: Track): void {
-  queue.value = queue.value.map((track) => (track.id === updatedTrack.id ? updatedTrack : track))
+  const snapshot = toPlaybackQueueSnapshot(updatedTrack)
+  queue.value = queue.value.map((track) =>
+    track.id === updatedTrack.id ? { ...snapshot, queueEntryId: track.queueEntryId } : track
+  )
   originalQueue.value = originalQueue.value.map((track) =>
-    track.id === updatedTrack.id ? updatedTrack : track
+    track.id === updatedTrack.id ? { ...snapshot, queueEntryId: track.queueEntryId } : track
   )
 }
 
@@ -997,7 +1125,8 @@ function applyNativePlaybackInfo(
     const mergedTrack = mergeTrackTransientData(track, currentTrack.value)
     queueIndex.value = infoIndex
     if (mergedTrack !== track) {
-      queue.value = queue.value.map((item, index) => (index === infoIndex ? mergedTrack : item))
+      const snapshot = { ...toPlaybackQueueSnapshot(mergedTrack), queueEntryId: track.queueEntryId }
+      queue.value = queue.value.map((item, index) => (index === infoIndex ? snapshot : item))
     }
     currentTrack.value = mergedTrack
     loadedTrackId = mergedTrack.id
@@ -1031,36 +1160,72 @@ function applyNativePlaybackInfo(
   return true
 }
 
-async function syncNativeQueueState(): Promise<void> {
-  const current = currentTrack.value
-  if (!current) {
-    await stopNativeAudio()
-    return
-  }
+interface NativeQueueStateSnapshot {
+  revision: number
+  queue: Track[]
+  current: Track | null
+  currentIndex: number
+  playMode: PlayMode
+}
 
-  const preparedQueue = await prepareNativeQueue({
+function captureNativeQueueState(revision: number): NativeQueueStateSnapshot {
+  return {
+    revision,
     queue: queue.value,
-    currentTrack: current,
-    currentTarget: getTrackAudioSource(current),
+    current: currentTrack.value ? toPlaybackQueueSnapshot(currentTrack.value) : null,
     currentIndex: queueIndex.value,
-    isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized
-  })
-  if (!preparedQueue) {
+    playMode: playMode.value
+  }
+}
+
+async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise<void> {
+  if (!nativeQueueRevisionFence.isCurrent(snapshot.revision)) return
+  const current = snapshot.current
+  if (!current) {
+    if (!nativeQueueRevisionFence.isCurrent(snapshot.revision)) return
     await stopNativeAudio()
     return
   }
 
-  await window.api.audioEngine.loadQueue(preparedQueue.items, preparedQueue.startIndex)
+  const nativePlayMode = snapshot.playMode === 'repeat' ? 'repeat' : 'sequential'
+  const synchronized = await synchronizeLatestNativeQueue(
+    nativeQueueRevisionFence,
+    snapshot.revision,
+    {
+      prepare: () =>
+        preparePlayerNativeQueue(
+          {
+            queue: snapshot.queue,
+            currentTrack: current,
+            currentTarget: getTrackAudioSource(current),
+            currentIndex: snapshot.currentIndex
+          },
+          {
+            isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized,
+            getOfflinePlayablePaths: window.api.offline.getPlayablePaths
+          }
+        ),
+      loadQueue: (preparedQueue) =>
+        window.api.audioEngine.loadQueue(preparedQueue.items, preparedQueue.startIndex),
+      setPlayMode: () => window.api.audioEngine.setPlayMode(nativePlayMode)
+    }
+  )
+  if (!synchronized.applied) return
+  const preparedQueue = synchronized.prepared
+  if (!preparedQueue) {
+    await nativeQueueRevisionFence.runLatest(snapshot.revision, () => stopNativeAudio())
+    return
+  }
   nativeQueueDelegated = preparedQueue.delegated
-  const nativePlayMode = playMode.value === 'repeat' ? 'repeat' : 'sequential'
-  await window.api.audioEngine.setPlayMode(nativePlayMode)
 }
 
 function queueNativeQueueStateSync(): Promise<void> {
+  const revision = nativeQueueRevisionFence.next()
+  const snapshot = captureNativeQueueState(revision)
   const previousRequest = nativeQueueSyncRequest
   const request = (previousRequest ?? Promise.resolve())
     .catch(() => {})
-    .then(() => syncNativeQueueState())
+    .then(() => syncNativeQueueState(snapshot))
 
   nativeQueueSyncRequest = request
   void request.finally(() => {
@@ -1150,6 +1315,10 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
 }
 
 watch(volume, (val) => {
+  if (val > 0) {
+    lastAudibleVolume.value = val
+    muted.value = false
+  }
   if (playbackAudio) playbackAudio.volume = val
   window.api.audioEngine.setVolume(val).catch(() => {})
 })
@@ -1354,7 +1523,8 @@ function startVisualizationPolling(): void {
   )
 }
 
-function handlePlaybackEnded(): void {
+async function handlePlaybackEnded(): Promise<void> {
+  if (await getSleepTimerController().reportBoundary('trackEnd')) return
   const trackId = currentTrack.value?.id ?? ''
   if (!trackId || autoAdvanceInFlight || advancingFromEndedTrackId === trackId) return
   advancingFromEndedTrackId = trackId
@@ -1365,10 +1535,10 @@ function handlePlaybackEnded(): void {
     if (track) void loadAndPlay(track)
     return
   }
-  advanceAfterPlaybackEnded()
+  await advanceAfterPlaybackEnded()
 }
 
-function advanceAfterPlaybackEnded(): void {
+async function advanceAfterPlaybackEnded(): Promise<void> {
   clearCrossfadeTimer()
   const nextIndex = queueIndex.value + 1
   if (nextIndex >= 0 && nextIndex < queue.value.length) {
@@ -1377,6 +1547,18 @@ function advanceAfterPlaybackEnded(): void {
     currentTrack.value = track
     void loadAndPlay(track)
     return
+  }
+
+  if (await getSleepTimerController().reportBoundary('queueEnd')) return
+
+  if ((playMode.value === 'listLoop' || playMode.value === 'shuffle') && queue.value.length > 0) {
+    queueIndex.value = 0
+    const track = queue.value[0]
+    if (track) {
+      currentTrack.value = track
+      void loadAndPlay(track)
+      return
+    }
   }
 
   isPlaying.value = false
@@ -1388,7 +1570,7 @@ function advanceAfterPlaybackEnded(): void {
 function handleNativePlaybackEnded(): void {
   if (!nativePlaybackActive) return
   if (isNativeQueueDelegated()) return
-  handlePlaybackEnded()
+  void handlePlaybackEnded()
 }
 
 function getTrackSource(track: Track): string {
@@ -1491,39 +1673,80 @@ async function ensureCurrentTrackLyricsLoaded(
 ): Promise<void> {
   if (!triggerTrack) return
 
-  const source = getTrackSource(triggerTrack)
+  const lyricsManagement = useLyricsManagement()
+  try {
+    await lyricsManagement.ensureLoaded()
+  } catch {
+    // Automatic resolution remains available when the optional management
+    // document cannot be read. The persistent store preserves the bad file.
+  }
+  const override = lyricsManagement.entryFor(triggerTrack.id)
+  const requestedSource = override?.source ?? 'auto'
+  // Manual content is applied by the presentation layer. Keeping it out of
+  // the queue record means choosing Auto later can always recover
+  // the resolver result instead of treating a previous edit as embedded data.
+  if (requestedSource === 'manual') return
+
+  if (requestedSource !== 'auto' && !automaticLyricsBaselines.has(triggerTrack.id)) {
+    automaticLyricsBaselines.set(triggerTrack.id, { ...triggerTrack })
+  }
+  const resolverTrack = resolverLyricsInput(
+    triggerTrack,
+    automaticLyricsBaselines.get(triggerTrack.id),
+    requestedSource
+  )
+
+  const source = getTrackSource(resolverTrack)
   const canLoadLocalLyrics =
+    requestedSource !== 'provider' &&
     source === 'local' &&
-    triggerTrack.lyrics == null &&
-    !!triggerTrack.dir &&
-    !!triggerTrack.fileName
+    (requestedSource === 'local' || resolverTrack.lyrics == null) &&
+    !!resolverTrack.dir &&
+    !!resolverTrack.fileName
   const canLoadProviderLyrics =
-    allowProviderLookup && (triggerTrack.lyrics == null || triggerTrack.translatedLyrics == null)
-  if (!canLoadLocalLyrics && !canLoadProviderLyrics) return
+    requestedSource !== 'local' &&
+    allowProviderLookup &&
+    (requestedSource === 'provider' ||
+      resolverTrack.lyrics == null ||
+      resolverTrack.translatedLyrics == null)
+  if (!canLoadLocalLyrics && !canLoadProviderLyrics) {
+    if (currentTrack.value?.id === triggerTrack.id && resolverTrack !== triggerTrack) {
+      const updatedTrack = { ...resolverTrack }
+      currentTrack.value = updatedTrack
+      patchTrackInQueues(updatedTrack)
+    }
+    return
+  }
 
   const resolved = await resolveLyricsWithSources({
-    track: triggerTrack,
+    track: resolverTrack,
     loadLocalLyrics: canLoadLocalLyrics
       ? () =>
           window.api.data
-            .getLyrics(triggerTrack.dir!, triggerTrack.fileName, triggerTrack.filePath)
+            .getLyrics(resolverTrack.dir!, resolverTrack.fileName, resolverTrack.filePath)
             .catch(() => null)
       : undefined,
     loadProviderLyrics: canLoadProviderLyrics
       ? async () => {
           await syncPluginProviders()
-          return useMediaProviders().resolveLyrics(triggerTrack)
+          return useMediaProviders().resolveLyrics(resolverTrack)
         }
       : undefined
   })
 
   if (currentTrack.value?.id !== triggerTrack.id) return
+  // Source selection can change while an async local/provider resolver is
+  // pending. Do not let a stale forced lookup overwrite the newer Auto (or
+  // manual) choice when it finally completes.
+  if ((lyricsManagement.entryFor(triggerTrack.id)?.source ?? 'auto') !== requestedSource) return
   const updatedTrack = {
-    ...currentTrack.value,
+    ...resolverTrack,
     lyrics: resolved.lyrics ?? '',
-    translatedLyrics: resolved.translatedLyrics ?? currentTrack.value.translatedLyrics ?? null,
+    translatedLyrics: resolved.translatedLyrics ?? resolverTrack.translatedLyrics ?? null,
     lyricsSource: resolved.lyricsSource,
-    translatedLyricsSource: resolved.translatedLyricsSource
+    translatedLyricsSource: resolved.translatedLyricsSource,
+    romanizedLyrics: resolverTrack.romanizedLyrics ?? null,
+    romanizedLyricsSource: resolverTrack.romanizedLyricsSource ?? null
   }
   currentTrack.value = updatedTrack
   patchTrackInQueues(updatedTrack)
@@ -1537,6 +1760,15 @@ async function resolvePlayTarget(track: Track): Promise<string> {
       throw new Error('Local audio file is outside the authorized library folders')
     }
     return track.filePath
+  }
+
+  // A completed user pin is integrity-checked by the main process on every
+  // lookup.  It wins over a transient remote URL, then normal provider
+  // resolution remains the explicit online fallback.
+  const offlinePath = await window.api.offline.getPlayablePath(source, track.id)
+  if (offlinePath) {
+    track.offlinePath = offlinePath
+    return offlinePath
   }
 
   const ncmPlaybackQuality = appSettings.value.ncmPlaybackQuality
@@ -1583,9 +1815,12 @@ async function handlePlaybackFallback(
   stopVisualizationPolling(true)
   stopRendererAudio(true)
 
-  queue.value = queue.value.map((track) => (track.id === failedTrack.id ? fallback : track))
+  const fallbackSnapshot = toPlaybackQueueSnapshot(fallback)
+  queue.value = queue.value.map((track) =>
+    track.id === failedTrack.id ? { ...fallbackSnapshot, queueEntryId: track.queueEntryId } : track
+  )
   originalQueue.value = originalQueue.value.map((track) =>
-    track.id === failedTrack.id ? fallback : track
+    track.id === failedTrack.id ? { ...fallbackSnapshot, queueEntryId: track.queueEntryId } : track
   )
   queueIndex.value = queue.value.findIndex((track) => track.id === fallback.id)
   if (queueIndex.value < 0) queueIndex.value = 0
@@ -1638,9 +1873,12 @@ async function handleProviderRematchFallback(
   stopVisualizationPolling(true)
   stopRendererAudio(true)
 
-  queue.value = queue.value.map((track) => (track.id === failedTrack.id ? rematched : track))
+  const rematchedSnapshot = toPlaybackQueueSnapshot(rematched)
+  queue.value = queue.value.map((track) =>
+    track.id === failedTrack.id ? { ...rematchedSnapshot, queueEntryId: track.queueEntryId } : track
+  )
   originalQueue.value = originalQueue.value.map((track) =>
-    track.id === failedTrack.id ? rematched : track
+    track.id === failedTrack.id ? { ...rematchedSnapshot, queueEntryId: track.queueEntryId } : track
   )
   queueIndex.value = queue.value.findIndex((track) => track.id === rematched.id)
   if (queueIndex.value < 0) queueIndex.value = 0
@@ -1904,7 +2142,7 @@ function scheduleCrossfadeIfNeeded(): void {
 }
 
 async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
-  const normalizedStartTime = Math.max(0, Number.isFinite(startTime) ? startTime : 0)
+  const normalizedStartTime = clampCuePlaybackPosition(track, startTime)
   const loadToken = ++activeLoadToken
   clearPlaybackToggleIntent()
   setNativePlaybackInfoIntent(loadToken, track)
@@ -1915,7 +2153,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   stopRendererAudio(true)
   if (playbackAudio) playbackAudio.muted = false
   pendingLoadStartTime = normalizedStartTime
-  duration.value = Math.max(0, track.duration || 0)
+  duration.value = cueDuration(track)
   setCurrentTimeImmediate(normalizedStartTime)
   clearCrossfadeTimer()
 
@@ -1934,13 +2172,18 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
 
     if (useNativePlayback) {
       try {
-        const preparedQueue = await prepareNativeQueue({
-          queue: queue.value,
-          currentTrack: track,
-          currentTarget: playTarget,
-          currentIndex: queueIndex.value,
-          isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized
-        })
+        const preparedQueue = await preparePlayerNativeQueue(
+          {
+            queue: queue.value,
+            currentTrack: track,
+            currentTarget: playTarget,
+            currentIndex: queueIndex.value
+          },
+          {
+            isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized,
+            getOfflinePlayablePaths: window.api.offline.getPlayablePaths
+          }
+        )
         if (!preparedQueue) {
           throw new Error('Native playback target is unavailable')
         }
@@ -2075,15 +2318,16 @@ function previous(): void {
   if (queue.value.length === 0) return
   clearCrossfadeTimer()
   if (latestPlaybackTime > 3) {
+    const track = currentTrack.value
     setCurrentTimeImmediate(0)
-    if (currentTrack.value && loadedTrackId !== currentTrack.value.id) {
+    if (track && loadedTrackId !== track.id) {
       restoredPlaybackPending = true
       restoredPlaybackPosition = 0
     } else {
       if (nativePlaybackActive) {
         window.api.audioEngine.seek(0).catch(() => {})
-      } else if (playbackAudio) {
-        playbackAudio.currentTime = 0
+      } else if (playbackAudio && track) {
+        playbackAudio.currentTime = rendererAudioAbsolutePositionForTrack(0, track)
       }
     }
     return
@@ -2109,17 +2353,19 @@ function previous(): void {
 }
 
 function seekPlayback(time: number): void {
+  const track = currentTrack.value
+  const position = track ? clampCuePlaybackPosition(track, time) : Math.max(0, time)
   if (currentTrack.value && loadedTrackId !== currentTrack.value.id) {
     restoredPlaybackPending = true
-    restoredPlaybackPosition = Math.max(0, Number.isFinite(time) ? time : 0)
+    restoredPlaybackPosition = position
     setCurrentTimeImmediate(restoredPlaybackPosition)
     return
   }
-  setCurrentTimeImmediate(time)
+  setCurrentTimeImmediate(position)
   if (nativePlaybackActive) {
-    window.api.audioEngine.seek(time).catch(() => {})
-  } else if (playbackAudio) {
-    playbackAudio.currentTime = Math.max(0, time)
+    window.api.audioEngine.seek(position).catch(() => {})
+  } else if (playbackAudio && track) {
+    playbackAudio.currentTime = rendererAudioAbsolutePositionForTrack(position, track)
   }
 }
 
@@ -2128,8 +2374,6 @@ let mediaSessionHandlersBound = false
 let mediaSessionMetadataKey = ''
 let discordPlayStartTimestamp: number | null = null
 let desktopLyricsTimeThrottle = 0
-let selectedTrackSessionWriteChain: Promise<void> = Promise.resolve()
-
 function persistSelectedTrackSession(): void {
   const mode = appSettings.value.playbackResumeMode
   if (mode === 'off') return
@@ -2140,13 +2384,27 @@ function persistSelectedTrackSession(): void {
   const dataApi = window.api?.data
   if (!dataApi) return
 
-  const nextWrite = selectedTrackSessionWriteChain
-    .catch(() => {})
-    .then(() => dataApi.savePlaybackSession(session))
-  selectedTrackSessionWriteChain = nextWrite
-  void nextWrite.catch((err) => {
+  const write = playbackSessionWriter.save(dataApi, session)
+  void write.completion.catch((err) => {
     console.warn('保存已选曲目播放会话失败:', err)
   })
+}
+
+function clearPersistedSelectedTrackSession(): void {
+  const dataApi = window.api?.data
+  if (!dataApi) return
+  const write = playbackSessionWriter.clear(dataApi)
+  void write.completion.catch((error) => {
+    console.warn('清理不可用队列的播放会话失败:', error)
+  })
+}
+
+function persistPlaybackSessionAfterQueueMutation(): void {
+  if (!currentTrack.value || appSettings.value.playbackResumeMode === 'off') {
+    clearPersistedSelectedTrackSession()
+    return
+  }
+  persistSelectedTrackSession()
 }
 
 function syncDesktopLyricsSnapshot(): void {
@@ -2310,6 +2568,17 @@ function updateDiscordActivity(): void {
 function setupPlayerIntegrationSideEffects(): void {
   if (playerIntegrationSideEffectsSetup) return
   playerIntegrationSideEffectsSetup = true
+  if (window.api.sleepTimer) {
+    void window.api.sleepTimer.getState().then((state) => {
+      if (state?.active) getSleepTimerController().applyAuthoritativeState(state)
+    })
+    window.api.sleepTimer.onState((state) => {
+      getSleepTimerController().applyAuthoritativeState(state)
+    })
+    window.api.sleepTimer.onTrigger((state) => {
+      getSleepTimerController().applyTrigger(state)
+    })
+  }
 
   // This is deliberately owned by the player state machine rather than the
   // application shell. A user can select a track before asynchronous startup
@@ -2435,8 +2704,75 @@ function applyPlayMode(): void {
   }
 }
 
+function commitQueueEdit(nextQueue: readonly Track[], nextIndex: number): void {
+  const snapshots = toPlaybackQueueSnapshots(nextQueue)
+  queue.value = snapshots
+  originalQueue.value = [...snapshots]
+  queueIndex.value =
+    snapshots.length === 0 ? -1 : Math.max(0, Math.min(nextIndex, snapshots.length - 1))
+  persistPlaybackSessionAfterQueueMutation()
+  void queueNativeQueueStateSync().catch((error) => {
+    audioEngineError.value = error instanceof Error ? error.message : String(error)
+  })
+}
+
+function enqueueTrack(track: Track): void {
+  const next = [...queue.value, track]
+  commitQueueEdit(next, queueIndex.value)
+}
+
+function playNextTrack(track: Track): void {
+  const insertAt = queueIndex.value >= 0 ? queueIndex.value + 1 : 0
+  const next = [...queue.value]
+  next.splice(insertAt, 0, track)
+  commitQueueEdit(next, queueIndex.value)
+}
+
+function removeQueueItem(index: number): void {
+  if (!Number.isInteger(index) || index < 0 || index >= queue.value.length) return
+  const next = [...queue.value]
+  next.splice(index, 1)
+  const nextIndex = index < queueIndex.value ? queueIndex.value - 1 : queueIndex.value
+  commitQueueEdit(next, nextIndex)
+}
+
+function clearQueue(): void {
+  commitQueueEdit([], -1)
+  currentTrack.value = null
+  isPlaying.value = false
+  automaticLyricsBaselines.clear()
+}
+
+function reorderQueue(fromIndex: number, toIndex: number): void {
+  if (
+    !Number.isInteger(fromIndex) ||
+    !Number.isInteger(toIndex) ||
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= queue.value.length ||
+    toIndex >= queue.value.length ||
+    fromIndex === toIndex
+  )
+    return
+  const next = [...queue.value]
+  const [moved] = next.splice(fromIndex, 1)
+  next.splice(toIndex, 0, moved)
+  let nextIndex = queueIndex.value
+  if (queueIndex.value === fromIndex) nextIndex = toIndex
+  else if (fromIndex < queueIndex.value && toIndex >= queueIndex.value) nextIndex--
+  else if (fromIndex > queueIndex.value && toIndex <= queueIndex.value) nextIndex++
+  commitQueueEdit(next, nextIndex)
+}
+
+function saveQueueAsPlaylist(
+  name: string,
+  createPlaylistWithTracks: (name: string, tracks: Track[]) => string
+): string {
+  return createPlaylistWithTracks(name, [...queue.value])
+}
+
 function cyclePlayMode(): void {
-  const modes: PlayMode[] = ['sequential', 'repeat', 'shuffle']
+  const modes: PlayMode[] = ['sequential', 'listLoop', 'repeat', 'shuffle']
   const idx = modes.indexOf(playMode.value)
   setPlayModeInternal(modes[(idx + 1) % modes.length])
 }
@@ -2466,12 +2802,17 @@ function cloneTrackForPlaybackSession(track: Track): Track {
   const source = getTrackSource(track)
   const cloned: Track = {
     id: track.id,
+    queueEntryId: track.queueEntryId,
     title: track.title,
     artist: track.artist,
     album: track.album,
     filePath: track.filePath,
     fileName: track.fileName,
     dir: track.dir,
+    subTrack: track.subTrack,
+    cueRange: track.cueRange ? { ...track.cueRange } : undefined,
+    cueSheetPath: track.cueSheetPath,
+    cueEncoding: track.cueEncoding,
     duration: track.duration,
     size: track.size,
     cover: track.cover,
@@ -2479,6 +2820,7 @@ function cloneTrackForPlaybackSession(track: Track): Track {
     source: track.source,
     ncmSongId: track.ncmSongId,
     streamUrl: source === 'local' ? track.streamUrl : null,
+    offlinePath: track.offlinePath ?? null,
     format: track.format,
     sampleRate: track.sampleRate,
     bitrate: track.bitrate,
@@ -2498,9 +2840,7 @@ function cloneTrackForPlaybackSession(track: Track): Track {
 function restorePlaybackSession(session: PlaybackSession): void {
   const track = cloneTrackForPlaybackSession(session.track)
   const position =
-    session.mode === 'trackAndPosition'
-      ? Math.max(0, Number.isFinite(session.position) ? session.position : 0)
-      : 0
+    session.mode === 'trackAndPosition' ? clampCuePlaybackPosition(track, session.position) : 0
 
   resetPlaybackRuntimeStateForRestore()
   clearCrossfadeTimer()
@@ -2522,11 +2862,11 @@ function restorePlaybackSession(session: PlaybackSession): void {
     rawIndex < savedQueue.length
       ? rawIndex
       : 0
-  queue.value = savedQueue
-  originalQueue.value = [...savedQueue]
+  queue.value = toPlaybackQueueSnapshots(savedQueue)
+  originalQueue.value = [...queue.value]
   queueIndex.value = savedIndex
 
-  duration.value = Math.max(0, track.duration || 0)
+  duration.value = cueDuration(track)
   isPlaying.value = false
   isLoading.value = false
   restoredPlaybackPending = true
@@ -2535,6 +2875,12 @@ function restorePlaybackSession(session: PlaybackSession): void {
   autoAdvanceInFlight = false
   advancingFromEndedTrackId = ''
   setCurrentTimeImmediate(position)
+  clearSleepTimerIntervals()
+  const sleepTimer = getRestorableSleepTimerState(session.sleepTimer)
+  if (sleepTimer) {
+    getSleepTimerController().applyAuthoritativeState(sleepTimer)
+    void window.api.sleepTimer?.configure(sleepTimer).catch(() => {})
+  }
   void ensureCurrentTrackLyricsLoaded(track)
 }
 
@@ -2558,9 +2904,53 @@ function createPlaybackSession(mode: PlaybackResumeMode): PlaybackSession | null
     track: cloneTrackForPlaybackSession(track),
     position,
     queue: queue.value.map(cloneTrackForPlaybackSession),
-    queueIndex: queueIndex.value
+    queueIndex: queueIndex.value,
+    ...(sleepTimerState.value?.active ? { sleepTimer: sleepTimerState.value } : {})
   }
 }
+
+function removeUnavailableTracks(trackIds: string[], filePaths: string[]): void {
+  for (const trackId of trackIds) automaticLyricsBaselines.delete(trackId)
+  const nextState = pruneUnavailableLocalTracks(
+    {
+      currentTrack: currentTrack.value,
+      queue: queue.value,
+      originalQueue: originalQueue.value,
+      queueIndex: queueIndex.value
+    },
+    trackIds,
+    filePaths
+  )
+  const queueChanged =
+    nextState.queue.length !== queue.value.length ||
+    nextState.originalQueue.length !== originalQueue.value.length ||
+    nextState.queueIndex !== queueIndex.value
+
+  queue.value = nextState.queue
+  originalQueue.value = nextState.originalQueue
+  queueIndex.value = nextState.queueIndex
+  if (nextState.activeTrackRemoved) {
+    clearCrossfadeTimer()
+    resetPlaybackRuntimeStateForRestore()
+    currentTrack.value = null
+    isPlaying.value = false
+    isLoading.value = false
+    duration.value = 0
+    setCurrentTimeImmediate(0)
+    clearPersistedSelectedTrackSession()
+    return
+  }
+
+  currentTrack.value = nextState.currentTrack
+  if (queueChanged) persistPlaybackSessionAfterQueueMutation()
+  if (nativePlaybackActive) {
+    void queueNativeQueueStateSync().catch((error) => {
+      console.warn('[audio-engine] Failed to synchronize queue after library removal:', error)
+    })
+  }
+}
+
+onLocalTracksUnavailable(removeUnavailableTracks)
 
 export function usePlayerStore(): {
   currentTrack: Ref<Track | null>
@@ -2570,6 +2960,9 @@ export function usePlayerStore(): {
   currentTime: Ref<number>
   duration: Ref<number>
   volume: Ref<number>
+  muted: Ref<boolean>
+  sleepTimerState: Ref<SleepTimerState | null>
+  sleepTimerNotice: Ref<string | null>
   progress: ComputedRef<number>
   queue: Ref<Track[]>
   queueIndex: Ref<number>
@@ -2585,6 +2978,7 @@ export function usePlayerStore(): {
   audioDeviceOptions: Ref<AudioDeviceOption[]>
   audioProcessing: Ref<AudioProcessingSettings>
   audioOutputConfig: Ref<OutputConfig>
+  audioOutputConfigApplyStatus: Ref<OutputConfigApplyStatus>
   dspOutputStage: Ref<DspOutputStageConfig>
   dspStereoImage: Ref<DspStereoImageConfig>
   playbackInfo: Ref<NativePlaybackInfo | null>
@@ -2594,12 +2988,24 @@ export function usePlayerStore(): {
   visualizationData: Ref<NativeVisualizationData>
   cyclePlayMode: () => void
   setPlayMode: (mode: PlayMode) => void
+  enqueueTrack: (track: Track) => void
+  playNextTrack: (track: Track) => void
+  removeQueueItem: (index: number) => void
+  clearQueue: () => void
+  reorderQueue: (fromIndex: number, toIndex: number) => void
+  saveQueueAsPlaylist: (
+    name: string,
+    createPlaylistWithTracks: (name: string, tracks: Track[]) => string
+  ) => string
   playTrack: (track: Track, trackList?: Track[]) => void
   togglePlay: () => Promise<void>
   next: () => void
   prev: () => void
   seek: (time: number) => void
   setVolume: (vol: number) => void
+  toggleMute: () => void
+  configureSleepTimer: (mode: SleepTimerMode, minutes?: number) => void
+  cancelSleepTimer: () => void
   setUnityVolume: () => void
   toggleExclusiveMode: () => Promise<void>
   setAudioOutput: (output: AudioOutputId, device?: string) => Promise<void>
@@ -2620,20 +3026,23 @@ export function usePlayerStore(): {
   clearImpulseResponse: () => Promise<void>
   restorePlaybackSession: (session: PlaybackSession) => void
   createPlaybackSession: (mode: PlaybackResumeMode) => PlaybackSession | null
+  removeUnavailableTracks: (trackIds: string[], filePaths: string[]) => void
   clearBpmAnalysisFromPlaybackState: () => void
+  refreshCurrentLyrics: () => Promise<void>
   formatTime: (seconds: number) => string
 } {
   setupPlayerIntegrationSideEffects()
 
   function playTrack(track: Track, trackList?: Track[]): void {
     if (trackList) {
-      originalQueue.value = [...trackList]
+      const snapshots = toPlaybackQueueSnapshots(trackList)
+      originalQueue.value = snapshots
       if (playMode.value === 'shuffle') {
-        queue.value = shuffleArray(trackList)
+        queue.value = shuffleArray(snapshots)
         queueIndex.value = queue.value.findIndex((t) => t.id === track.id)
       } else {
-        queue.value = [...trackList]
-        queueIndex.value = trackList.findIndex((t) => t.id === track.id)
+        queue.value = [...snapshots]
+        queueIndex.value = snapshots.findIndex((t) => t.id === track.id)
       }
     }
     if (queueIndex.value === -1) queueIndex.value = 0
@@ -2695,16 +3104,30 @@ export function usePlayerStore(): {
   }
 
   async function setAudioOutputConfig(config: Partial<OutputConfig>): Promise<void> {
+    if (audioOutputConfigApplyStatus.value.state === 'pending') return
+    audioOutputConfigApplyStatus.value = {
+      ...audioOutputConfigApplyStatus.value,
+      requestedRevision: audioOutputConfigApplyStatus.value.requestedRevision + 1,
+      state: 'pending',
+      error: ''
+    }
     try {
       audioOutputConfig.value = await window.api.audioEngine.setOutputConfig({
         ...audioOutputConfig.value,
         ...config
       })
+      audioOutputConfigApplyStatus.value = await window.api.audioEngine.getOutputConfigApplyStatus()
       playbackInfo.value = normalizeNativePlaybackInfo(
         await window.api.audioEngine.getPlaybackInfo()
       )
     } catch (err) {
       audioEngineError.value = err instanceof Error ? err.message : String(err)
+      audioOutputConfigApplyStatus.value = {
+        ...audioOutputConfigApplyStatus.value,
+        failedRevision: audioOutputConfigApplyStatus.value.requestedRevision,
+        state: 'failed',
+        error: audioEngineError.value
+      }
       console.error('[音频引擎] 更新输出配置失败:', err)
     }
   }
@@ -2894,6 +3317,10 @@ export function usePlayerStore(): {
     return `${mins}:${secs.toString().padStart(2, '0')}`
   }
 
+  async function refreshCurrentLyrics(): Promise<void> {
+    await ensureCurrentTrackLyricsLoaded(currentTrack.value)
+  }
+
   return {
     currentTrack,
     dominantColor,
@@ -2902,6 +3329,9 @@ export function usePlayerStore(): {
     currentTime,
     duration,
     volume,
+    muted,
+    sleepTimerState,
+    sleepTimerNotice,
     progress,
     queue,
     queueIndex,
@@ -2917,6 +3347,7 @@ export function usePlayerStore(): {
     audioDeviceOptions,
     audioProcessing,
     audioOutputConfig,
+    audioOutputConfigApplyStatus,
     dspOutputStage,
     dspStereoImage,
     playbackInfo,
@@ -2926,12 +3357,21 @@ export function usePlayerStore(): {
     visualizationData,
     cyclePlayMode,
     setPlayMode,
+    enqueueTrack,
+    playNextTrack,
+    removeQueueItem,
+    clearQueue,
+    reorderQueue,
+    saveQueueAsPlaylist,
     playTrack,
     togglePlay,
     next,
     prev,
     seek,
     setVolume,
+    toggleMute,
+    configureSleepTimer,
+    cancelSleepTimer,
     setUnityVolume,
     toggleExclusiveMode,
     setAudioOutput,
@@ -2952,7 +3392,9 @@ export function usePlayerStore(): {
     clearImpulseResponse,
     restorePlaybackSession,
     createPlaybackSession,
+    removeUnavailableTracks,
     clearBpmAnalysisFromPlaybackState,
+    refreshCurrentLyrics,
     formatTime
   }
 }

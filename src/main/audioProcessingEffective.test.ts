@@ -53,8 +53,22 @@ test('effective processing forces parametric EQ and stacks OPRA with graphic EQ'
   assert.equal(effective.eqPreamp, -7.5)
   assert.equal(effective.eqBands.length, 12)
   assert.deepEqual(effective.eqBands.slice(0, 2), [
-    { frequency: 105, gain: -13, q: 0.19, filterType: 'lowShelf' },
-    { frequency: 10000, gain: 7.5, q: 20, filterType: 'highShelf' }
+    {
+      frequency: 105,
+      gain: -13,
+      q: 0.19,
+      filterType: 'lowShelf',
+      enabled: true,
+      channelMask: 0xffffffff
+    },
+    {
+      frequency: 10000,
+      gain: 7.5,
+      q: 20,
+      filterType: 'highShelf',
+      enabled: true,
+      channelMask: 0xffffffff
+    }
   ])
   assert.equal(effective.eqBands[2].frequency, 1000)
 })
@@ -77,7 +91,21 @@ test('effective processing stacks OPRA with parametric EQ without truncating OPR
 
   assert.equal(effective.eqPreamp, -2)
   assert.deepEqual(effective.eqBands, [
-    { frequency: 50, gain: -24, q: 0.1, filterType: 'peak' },
-    { frequency: 250, gain: 22, q: 18, filterType: 'peak' }
+    {
+      frequency: 50,
+      gain: -24,
+      q: 0.1,
+      filterType: 'peak',
+      enabled: true,
+      channelMask: 0xffffffff
+    },
+    {
+      frequency: 250,
+      gain: 22,
+      q: 18,
+      filterType: 'peak',
+      enabled: true,
+      channelMask: 0xffffffff
+    }
   ])
 })

@@ -10,11 +10,11 @@ import {
 } from 'vue'
 import TitleBar from './components/TitleBar.vue'
 import SideMenu from './components/SideMenu.vue'
-import SongList from './components/SongList.vue'
-import LocalDashboard from './components/LocalDashboard.vue'
 import PlayerBar from './components/PlayerBar.vue'
-import PlayingMusic from './components/PlayingMusic.vue'
-import StreamingPage from './components/StreamingPage.vue'
+const LocalDashboard = defineAsyncComponent(() => import('./components/LocalDashboard.vue'))
+const SongList = defineAsyncComponent(() => import('./components/SongList.vue'))
+const PlayingMusic = defineAsyncComponent(() => import('./components/PlayingMusic.vue'))
+const StreamingPage = defineAsyncComponent(() => import('./components/StreamingPage.vue'))
 const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
 const PluginPage = defineAsyncComponent(() => import('./components/PluginPage.vue'))
@@ -126,7 +126,16 @@ function handleLoginSuccess(): void {
   closeLoginPage()
 }
 
-const { loadLibrary, loadPlaylists, flushSaveLibrary, handleLibraryChange } = useMusicStore()
+const {
+  loadLibrary,
+  loadPlaylists,
+  flushSaveLibrary,
+  flushPlaylists,
+  handleLibraryChange,
+  startStartupLibraryScan,
+  applyLibraryScanProgress,
+  applyLibraryScanStatus
+} = useMusicStore()
 const { checkLogin, isLoggedIn: ncmLoggedIn } = useNcmStore()
 const {
   currentTrack,
@@ -222,20 +231,58 @@ const playbackSessionPersistence = createPlaybackSessionPersistence({
   syncPluginProviders,
   dataApi: window.api.data
 })
-const { sideMenuBottomOffset, startSideMenuMonitor, stopSideMenuMonitor, resetSideMenuClearance } =
-  useSideMenuClearance({ showLocalSidebar, hasPlayerBar, menuOpen })
+const {
+  sideMenuBottomOffset,
+  startSideMenuMonitor,
+  stopSideMenuMonitor,
+  resetSideMenuClearance,
+  dispose: disposeSideMenuClearance
+} = useSideMenuClearance({ showLocalSidebar, hasPlayerBar, menuOpen })
 
 let removePlaybackSessionSaveListener: (() => void) | null = null
 let removeLibraryChangedListener: (() => void) | null = null
 let removeCoversMissingListener: (() => void) | null = null
+let removeLibraryScanProgressListener: (() => void) | null = null
+let removeLibraryScanStatusListener: (() => void) | null = null
 let quitFlushHandler: (() => void) | null = null
 let pageHideFlushHandler: (() => void) | null = null
+let removeVisibilityListener: (() => void) | null = null
+
+function syncDocumentVisibility(): void {
+  document.body.classList.toggle('te-background-animations-paused', document.hidden)
+}
 
 function reportStartupDataError(scope: string, error: unknown): void {
   console.error(`[persistence] Failed to load ${scope}:`, error)
 }
 
+async function flushPlaylistsForExit(): Promise<void> {
+  try {
+    const persisted = await flushPlaylists()
+    if (!persisted) {
+      throw new Error('Playlist persistence did not finish before exit')
+    }
+  } catch (error) {
+    console.error('[persistence] Failed to flush playlists before exit:', error)
+    throw error
+  }
+}
+
+function flushPendingPersistenceForExit(): void {
+  flushSaveLibrary()
+  // Browser lifecycle events cannot wait for a Promise. The app-close IPC
+  // callback below awaits this same flush before the main process closes.
+  void flushPlaylistsForExit().catch(() => {
+    // The failure was logged by flushPlaylistsForExit. pagehide is only a
+    // best-effort path; it cannot certify a successful application close.
+  })
+}
+
 onMounted(async () => {
+  syncDocumentVisibility()
+  document.addEventListener('visibilitychange', syncDocumentVisibility)
+  removeVisibilityListener = () =>
+    document.removeEventListener('visibilitychange', syncDocumentVisibility)
   setupPluginThemeRuntime()
   setupListeningStatsTracking({ currentTrack, isPlaying, currentTime, duration })
   const loadedSettings = await loadSettings()
@@ -255,9 +302,12 @@ onMounted(async () => {
       reportStartupDataError('playback session', error)
     })
     .finally(() => {
-      removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(
-        playbackSessionPersistence.savePlaybackSessionForQuit
-      )
+      removePlaybackSessionSaveListener = window.api.app.onSavePlaybackSession(async () => {
+        // This callback is awaited by the main-process close coordinator. It
+        // closes the 250ms playlist debounce window before renderer teardown.
+        await flushPlaylistsForExit()
+        await playbackSessionPersistence.savePlaybackSessionForQuit()
+      })
       playbackSessionPersistence.startAutosaveWatchers()
     })
   // Run independent startup operations in parallel so none blocks the others.
@@ -276,21 +326,35 @@ onMounted(async () => {
   // can receive the actual current track without waiting for a full scan.
   await libraryPromise
   await playbackSessionSetupPromise
+  removeLibraryChangedListener = window.api.library.onChanged((change) => {
+    handleLibraryChange(change).catch((error) => {
+      console.error('[library] Failed to apply an incremental scan update:', error)
+    })
+  })
+  removeLibraryScanProgressListener = window.api.library.onScanProgress(applyLibraryScanProgress)
+  removeLibraryScanStatusListener = window.api.library.onScanStatus(applyLibraryScanStatus)
+  void window.api.library
+    .getScanStatus()
+    .then(applyLibraryScanStatus)
+    .catch((error) => {
+      console.error('[library] Failed to read background scan status:', error)
+    })
+  void startStartupLibraryScan().catch((error) => {
+    console.error('[library] Startup reconciliation failed:', error)
+  })
 
   // Ensure extensions are loaded before wiring listeners that depend on them.
   await extensionsPromise
   await playlistsPromise
 
-  removeLibraryChangedListener = window.api.library.onChanged((change) => {
-    handleLibraryChange(change).catch(() => {})
-  })
   // Notify user when covers are missing (independent of library:changed to avoid reload loop)
   removeCoversMissingListener = window.api.library.onCoversMissing((info) => {
     console.warn(`??? ${info.dirtyCount} ?????,???????????`)
   })
-  // Quit-flush: save pending debounced library writes before window closes
-  quitFlushHandler = (): void => flushSaveLibrary()
-  pageHideFlushHandler = (): void => flushSaveLibrary()
+  // Lifecycle events are best-effort; the close IPC callback above provides
+  // the awaitable completion barrier for application shutdown.
+  quitFlushHandler = flushPendingPersistenceForExit
+  pageHideFlushHandler = flushPendingPersistenceForExit
   window.addEventListener('beforeunload', quitFlushHandler)
   window.addEventListener('pagehide', pageHideFlushHandler)
 })
@@ -344,6 +408,10 @@ onBeforeUnmount(() => {
   removePlaybackSessionSaveListener = null
   removeLibraryChangedListener?.()
   removeLibraryChangedListener = null
+  removeLibraryScanProgressListener?.()
+  removeLibraryScanProgressListener = null
+  removeLibraryScanStatusListener?.()
+  removeLibraryScanStatusListener = null
   removeCoversMissingListener?.()
   removeCoversMissingListener = null
   if (quitFlushHandler) window.removeEventListener('beforeunload', quitFlushHandler)
@@ -351,6 +419,10 @@ onBeforeUnmount(() => {
   quitFlushHandler = null
   pageHideFlushHandler = null
   stopSideMenuMonitor()
+  disposeSideMenuClearance()
+  removeVisibilityListener?.()
+  removeVisibilityListener = null
+  document.body.classList.remove('te-background-animations-paused')
   document.body.classList.remove('te-settings-surface')
   document.body.classList.remove('te-streaming-surface')
 })
@@ -502,6 +574,11 @@ body {
   z-index: -1;
   border-radius: 999px;
   filter: blur(2px);
+}
+
+body.te-background-animations-paused .main-content::before,
+body.te-background-animations-paused .main-content::after {
+  animation-play-state: paused;
 }
 
 .main-content::before {

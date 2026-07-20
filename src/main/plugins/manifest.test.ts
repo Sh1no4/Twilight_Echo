@@ -111,18 +111,84 @@ test('rejects executable entries for pure theme plugins', () => {
 })
 
 test('rejects paths outside plugin root', () => {
-  assert.throws(() => validatePluginManifest({ ...validManifest, main: '../escape.mjs' }), /目录外/)
-  assert.throws(
-    () =>
-      validatePluginManifest({
-        ...validManifest,
-        main: undefined,
-        binary: {
-          'win32-x64': '../escape.dll'
-        }
-      }),
-    /目录外/
+  const rejectedPaths = [
+    '../escape.mjs',
+    'dist/../../escape.mjs',
+    '..\\escape.mjs',
+    'dist\\..\\..\\escape.mjs',
+    '/absolute.mjs',
+    '\\rooted.mjs',
+    'C:\\absolute.mjs',
+    'C:/absolute.mjs',
+    'C:drive-relative.mjs',
+    '\\\\server\\share\\plugin.mjs',
+    '//server/share/plugin.mjs',
+    '\\\\?\\C:\\device-path.mjs',
+    '\\\\.\\pipe\\plugin.mjs',
+    'assets/illegal\0file'
+  ]
+  for (const path of rejectedPaths) {
+    assert.throws(
+      () => validatePluginManifest({ ...validManifest, main: path }),
+      /目录外|空字符/
+    )
+    assert.throws(
+      () => validatePluginManifest({ ...validManifest, icon: path }),
+      /目录外|空字符/
+    )
+    assert.throws(
+      () =>
+        validatePluginManifest({
+          ...validManifest,
+          binary: { 'win32-x64': path }
+        }),
+      /目录外|空字符/
+    )
+  }
+})
+
+test('normalizes nested main, icon, and binary paths to a platform-independent POSIX vector', () => {
+  const common = {
+    ...validManifest,
+    id: 'com.example.cross-platform',
+    type: ['tool', 'dsp'],
+    permissions: ['dsp:native']
+  }
+  const windowsStyle = validatePluginManifest({
+    ...common,
+    main: 'dist\\generated\\..\\index.mjs',
+    icon: 'assets\\icons\\plugin.png',
+    binary: {
+      'win32-x64': 'native\\win32\\plugin.dll',
+      'linux-x64': 'native\\linux\\libplugin.so'
+    }
+  })
+  const posixStyle = validatePluginManifest({
+    ...common,
+    main: 'dist/index.mjs',
+    icon: 'assets/icons/plugin.png',
+    binary: {
+      'win32-x64': 'native/win32/plugin.dll',
+      'linux-x64': 'native/linux/libplugin.so'
+    }
+  })
+
+  assert.deepEqual(
+    {
+      main: windowsStyle.main,
+      icon: windowsStyle.icon,
+      binary: windowsStyle.binary
+    },
+    {
+      main: 'dist/index.mjs',
+      icon: 'assets/icons/plugin.png',
+      binary: {
+        'win32-x64': 'native/win32/plugin.dll',
+        'linux-x64': 'native/linux/libplugin.so'
+      }
+    }
   )
+  assert.deepEqual(windowsStyle, posixStyle)
 })
 
 test('rejects future plugin API versions', () => {

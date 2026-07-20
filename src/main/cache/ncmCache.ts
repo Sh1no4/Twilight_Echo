@@ -4,12 +4,12 @@ import { writeFile } from 'fs/promises'
 import { join, extname } from 'path'
 import { runtime } from '../core/runtime'
 import { redactSensitiveText } from '../security/secureStorage.ts'
-import { getManagedMusicCacheDirectories } from './musicCacheLayout.ts'
+import { getMusicCacheStorageDirectories } from './musicCacheLayout.ts'
 
 export function ensureMusicCacheDirectories(rootPath: string): void {
   if (!rootPath) return
   mkdirSync(rootPath, { recursive: true })
-  for (const directory of getManagedMusicCacheDirectories(rootPath)) {
+  for (const directory of getMusicCacheStorageDirectories(rootPath)) {
     mkdirSync(directory, { recursive: true })
   }
 }

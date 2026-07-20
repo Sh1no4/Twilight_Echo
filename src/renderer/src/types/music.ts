@@ -1,9 +1,11 @@
 import type { PlaybackResumeMode, PlayMode } from './settings'
 import type { NcmPlaybackQuality } from './settings'
+import type { SleepTimerState } from '../../../shared/sleepTimer.ts'
+import type { CueRange, ParsedCueSheet } from '../../../shared/cue.ts'
 
 export type BuiltInTrackSource = 'local' | 'ncm'
 export type TrackSource = BuiltInTrackSource | (string & {})
-export type LyricSource = 'embedded' | 'local' | 'provider'
+export type LyricSource = 'embedded' | 'local' | 'provider' | 'manual'
 export type MetadataMatchConfidence = 'high' | 'medium'
 
 export interface TrackMetadataMatch {
@@ -33,31 +35,52 @@ export interface BpmAnalysisResult {
 
 export interface Track {
   id: string
+  /**
+   * Stable playback-queue entry identity. A track may occur more than once in
+   * a queue, so UI commands must not use the provider track id as a row key.
+   */
+  queueEntryId?: string
   title: string
   artist: string
   album: string
+  /** Stable album owner for grouping compilation and guest-artist tracks. */
+  albumArtist?: string
+  /** Provider or scanner album identifier when one is available. */
+  albumId?: string
   filePath: string
   fileName: string
   dir?: string
   subTrack?: string
+  /** Explicit file segment for a single-file CUE sheet. Positions are relative to filePath. */
+  cueRange?: CueRange
+  cueSheetPath?: string
+  cueEncoding?: ParsedCueSheet['encoding']
   duration: number
   size: number
   cover: string | null
   lyrics: string | null
   translatedLyrics?: string | null
+  romanizedLyrics?: string | null
   lyricsSource?: LyricSource | null
   translatedLyricsSource?: LyricSource | null
+  romanizedLyricsSource?: LyricSource | null
   metadataMatch?: TrackMetadataMatch | null
   source?: TrackSource
   ncmSongId?: number
   streamUrl?: string | null
   streamQuality?: NcmPlaybackQuality
+  /** Main-process verified path for an explicitly user-pinned provider track. */
+  offlinePath?: string | null
   format?: string
   sampleRate?: number
   bitrate?: number
   bitDepth?: number
+  /** Versioned acoustic fingerprint extracted from a trusted media tag, when available. */
+  audioFingerprint?: { algorithm: string; value: string }
   bpm?: number
   bpmAnalysis?: BpmAnalysisResult
+  /** Unix time in milliseconds when this file first entered the local library. */
+  addedAt?: number
   /** ReplayGain track gain in dB (from tags; cold-start track mode). */
   replayGainTrackGainDb?: number
   /** ReplayGain album gain in dB. */
@@ -81,6 +104,7 @@ export interface PlaybackSession {
   position: number
   queue?: Track[]
   queueIndex?: number
+  sleepTimer?: SleepTimerState
 }
 
 export const SUPPORTED_EXTENSIONS = [

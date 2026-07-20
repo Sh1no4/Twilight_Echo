@@ -21,6 +21,33 @@ const localTrack: Track = {
   format: 'flac'
 }
 
+function unifiedResult(track: Track) {
+  return {
+    items: [
+      {
+        kind: 'track' as const,
+        track,
+        source: 'local',
+        sourceName: 'local',
+        local: true,
+        lossless: true,
+        providerAvailable: true
+      }
+    ],
+    logicalItems: [
+      {
+        id: track.id,
+        title: track.title,
+        artist: track.artist,
+        album: track.album,
+        preferredTrack: track,
+        variants: [{ track, source: 'local', local: true, lossless: true }]
+      }
+    ],
+    health: {}
+  }
+}
+
 test('unified music search composable exposes unified items and provider health', async () => {
   const search = createUnifiedMusicSearch({
     getLocalTracks: () => [localTrack],
@@ -61,7 +88,10 @@ test('unified music search composable exposes unified items and provider health'
 
   assert.equal(search.loading.value, false)
   assert.equal(search.error.value, '')
-  assert.deepEqual(search.items.value.map((item) => item.track.id), ['local:1'])
+  assert.deepEqual(
+    search.items.value.map((item) => item.track.id),
+    ['local:1']
+  )
   assert.equal(search.logicalItems.value[0].preferredTrack.id, 'local:1')
   assert.equal(search.providerHealth.value.ncm.available, false)
   assert.equal(search.providerHealth.value.ncm.lastError, 'login expired')
@@ -84,4 +114,41 @@ test('unified music search clears state for blank queries', async () => {
   assert.equal(search.items.value.length, 0)
   assert.equal(search.logicalItems.value.length, 0)
   assert.deepEqual(search.providerHealth.value, {})
+})
+
+test('a late unified search page cannot overwrite a newer request with the same query', async () => {
+  let resolveFirst!: () => void
+  let resolveSecond!: () => void
+  const first = new Promise<void>((resolve) => {
+    resolveFirst = resolve
+  })
+  const second = new Promise<void>((resolve) => {
+    resolveSecond = resolve
+  })
+  const pageZero = { ...localTrack, id: 'local:page-0', title: 'Page zero' }
+  const pageThirty = { ...localTrack, id: 'local:page-30', title: 'Page thirty' }
+  const search = createUnifiedMusicSearch({
+    getLocalTracks: () => [localTrack],
+    searchAllSongs: async ({ offset }) => {
+      if (offset === 0) {
+        await first
+        return unifiedResult(pageZero)
+      }
+      await second
+      return unifiedResult(pageThirty)
+    }
+  })
+
+  const oldRequest = search.search('moon', { offset: 0 })
+  const newestRequest = search.search('moon', { offset: 30 })
+  resolveSecond()
+  await newestRequest
+  resolveFirst()
+  await oldRequest
+
+  assert.deepEqual(
+    search.items.value.map((item) => item.track.id),
+    ['local:page-30']
+  )
+  assert.equal(search.loading.value, false)
 })

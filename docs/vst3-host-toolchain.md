@@ -16,11 +16,11 @@ The supported SDK is Steinberg VST3 SDK `v3.8.0_build_66` at commit
 Build Tools with the C++ x64 workload. Do not add the SDK to the MinGW vcpkg manifest.
 
 ```powershell
-npm run configure:vst3-msvc
-npm run build:vst3-msvc
-npm run test:vst3-msvc
-npm run smoke:vst3-msvc
-npm run stage:vst3-msvc
+pnpm run configure:vst3-msvc
+pnpm run build:vst3-msvc
+pnpm run test:vst3-msvc
+pnpm run smoke:vst3-msvc
+pnpm run stage:vst3-msvc
 ```
 
 `stage:vst3-msvc` copies `twilight-vst3-scanner.exe`, `twilight-vst3-host.exe`, and the
@@ -45,3 +45,11 @@ other VST3 nodes from that crash.
 the fixed-SDK ADelay fixture. It never stores that fixture in this repository. The normal fixture
 location is a sibling `sdk-fixture` build next to `TAE_VST3_MSVC_BUILD_DIR`; set
 `TAE_VST3_FIXTURE_PATH` when it lives elsewhere.
+
+The MinGW native runtime suite also builds a test-only `twilight-vst3-host.exe` alongside
+`twilight_runtime_queue_reroute_tests`. It implements the production shared-memory bridge protocol,
+echoes audio blocks, and is used by the 1000 graph-update stress test to assert bounded Windows
+working set and bounded helper-process count. It deliberately does not load a VST3 module, so it
+proves bridge process lifecycle and cleanup only. Real module loading, component state, and preset
+compatibility remain covered exclusively by the opt-in MSVC SDK ADelay fixture through
+`pnpm run smoke:vst3-msvc`.

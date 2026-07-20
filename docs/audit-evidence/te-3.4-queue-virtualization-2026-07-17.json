@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 2,
+  "title": "Twilight Echo TE-3.4 production queue virtualization benchmark",
+  "generatedAt": "2026-07-17T10:36:59.481Z",
+  "runner": {
+    "implementation": "src/renderer/src/utils/playbackQueueVirtualization.ts",
+    "command": [
+      "C:\\Program Files\\nodejs\\node.exe",
+      "D:\\Linux Workspace\\Project\\Twilight_Echo\\scripts\\playback-queue-virtualization-benchmark.ts",
+      "--output",
+      "docs/audit-evidence/te-3.4-queue-virtualization-2026-07-17.json"
+    ],
+    "rowHeight": 54,
+    "viewportHeight": 324,
+    "overscan": 6,
+    "gcExposed": true
+  },
+  "scenarios": [
+    {
+      "queueLength": 5000,
+      "sourceHeavyBytes": 27137954,
+      "snapshotHeavyBytes": 0,
+      "limits": {
+        "mountedRows": 18,
+        "snapshotP95Ms": 2500,
+        "windowP95Ms": 250,
+        "windowHeapDeltaBytes": 8388608,
+        "snapshotHeavyBytes": 0
+      },
+      "snapshotMetrics": {
+        "samplesMs": [
+          7.635499999999979,
+          6.237799999999993,
+          3.1773000000000593
+        ],
+        "p95Ms": 7.635499999999979,
+        "maxHeapDeltaBytes": 1338744
+      },
+      "windowMetrics": {
+        "samplesMs": [
+          2.389099999999985,
+          0.23169999999993252,
+          0.3913000000000011
+        ],
+        "p95Ms": 2.389099999999985,
+        "maxHeapDeltaBytes": 18080
+      },
+      "windows": [
+        {
+          "position": "first",
+          "range": {
+            "start": 0,
+            "end": 18
+          },
+          "rows": 18
+        },
+        {
+          "position": "middle",
+          "range": {
+            "start": 2491,
+            "end": 2509
+          },
+          "rows": 18
+        },
+        {
+          "position": "last",
+          "range": {
+            "start": 4988,
+            "end": 5000
+          },
+          "rows": 12
+        }
+      ]
+    },
+    {
+      "queueLength": 20000,
+      "sourceHeavyBytes": 112617954,
+      "snapshotHeavyBytes": 0,
+      "limits": {
+        "mountedRows": 18,
+        "snapshotP95Ms": 2500,
+        "windowP95Ms": 250,
+        "windowHeapDeltaBytes": 8388608,
+        "snapshotHeavyBytes": 0
+      },
+      "snapshotMetrics": {
+        "samplesMs": [
+          15.536499999999933,
+          22.179000000000087,
+          26.71219999999994
+        ],
+        "p95Ms": 26.71219999999994,
+        "maxHeapDeltaBytes": 4961616
+      },
+      "windowMetrics": {
+        "samplesMs": [
+          0.470299999999952,
+          0.16449999999986176,
+          0.16620000000011714
+        ],
+        "p95Ms": 0.470299999999952,
+        "maxHeapDeltaBytes": 8944
+      },
+      "windows": [
+        {
+          "position": "first",
+          "range": {
+            "start": 0,
+            "end": 18
+          },
+          "rows": 18
+        },
+        {
+          "position": "middle",
+          "range": {
+            "start": 9991,
+            "end": 10009
+          },
+          "rows": 18
+        },
+        {
+          "position": "last",
+          "range": {
+            "start": 19988,
+            "end": 20000
+          },
+          "rows": 12
+        }
+      ]
+    }
+  ]
+}

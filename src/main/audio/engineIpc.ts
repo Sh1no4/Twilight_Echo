@@ -1,6 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron'
 import { join } from 'path'
 import { runtime } from '../core/runtime'
+import { sleepTimerService } from '../sleepTimer.ts'
+import { registerNativeSleepTimerBoundaries } from './sleepTimerNativeBoundary.ts'
 import { normalizeOutputConfig } from '../core/settings'
 import {
   AudioEngineManager,
@@ -13,6 +15,7 @@ import {
   type EqualizerBand
 } from '../audioEngineManager'
 import { normalizeDspScenes, type DspAssetKind } from '../../shared/dspGraph.ts'
+import { normalizeCueRange } from '../../shared/cue.ts'
 import { DspAssetLibrary } from '../dsp/dspAssetLibrary.ts'
 import {
   importCorrectionProfileFile,
@@ -99,6 +102,8 @@ export function toQueueItem(raw: unknown): AudioEngineQueueItem | null {
   } catch {
     return null
   }
+  const cueRange = item.cueRange === undefined ? undefined : normalizeCueRange(item.cueRange)
+  if (cueRange === null) return null
   return {
     id: normalizeQueueText(item.id, normalizedSource) ?? normalizedSource,
     source: normalizedSource,
@@ -106,7 +111,12 @@ export function toQueueItem(raw: unknown): AudioEngineQueueItem | null {
     artist: normalizeQueueText(item.artist),
     album: normalizeQueueText(item.album),
     duration: Number.isFinite(item.duration) ? Number(item.duration) : undefined,
-    codec: typeof item.format === 'string' ? item.format : typeof item.codec === 'string' ? item.codec : undefined,
+    codec:
+      typeof item.format === 'string'
+        ? item.format
+        : typeof item.codec === 'string'
+          ? item.codec
+          : undefined,
     sampleRate: Number.isFinite(item.sampleRate) ? Number(item.sampleRate) : undefined,
     bitrate: Number.isFinite(item.bitrate) ? Number(item.bitrate) : undefined,
     bitDepth: Number.isFinite(item.bitDepth) ? Number(item.bitDepth) : undefined,
@@ -128,8 +138,13 @@ export function toQueueItem(raw: unknown): AudioEngineQueueItem | null {
     replayGainAlbumPeak: Number.isFinite(item.replayGainAlbumPeak)
       ? Number(item.replayGainAlbumPeak)
       : undefined,
-    r128TrackGainDb: Number.isFinite(item.r128TrackGainDb) ? Number(item.r128TrackGainDb) : undefined,
-    r128AlbumGainDb: Number.isFinite(item.r128AlbumGainDb) ? Number(item.r128AlbumGainDb) : undefined
+    r128TrackGainDb: Number.isFinite(item.r128TrackGainDb)
+      ? Number(item.r128TrackGainDb)
+      : undefined,
+    r128AlbumGainDb: Number.isFinite(item.r128AlbumGainDb)
+      ? Number(item.r128AlbumGainDb)
+      : undefined,
+    cueRange
   }
 }
 
@@ -260,6 +275,8 @@ export async function setupAudioEngineIpc(): Promise<void> {
     runtime.mainWindow?.webContents.send('audioEngine:end-file', { reason })
     void runtime.pluginManager?.broadcastEvent('audioEngine:end-file', { reason })
   })
+
+  registerNativeSleepTimerBoundaries(runtime.audioEngineManager, sleepTimerService)
 
   runtime.audioEngineManager.on('start-file', () => {
     runtime.mainWindow?.webContents.send('audioEngine:start-file')
@@ -424,9 +441,16 @@ export async function setupAudioEngineIpc(): Promise<void> {
   ipcMain.handle('audioEngine:setOutputConfig', async (_event, config: unknown) => {
     assertTrustedIpcSender(_event, 'audio engine IPC')
     const normalized = normalizeOutputConfig(config)
-    await requireAudioEngine().setOutputConfig(normalized)
-    persistAudioOutputConfig(normalized)
-    return normalized
+    const engine = requireAudioEngine()
+    await engine.setOutputConfig(normalized)
+    const applied = engine.getOutputConfig()
+    persistAudioOutputConfig(applied)
+    return applied
+  })
+
+  ipcMain.handle('audioEngine:getOutputConfigApplyStatus', async (event) => {
+    assertTrustedIpcSender(event, 'audio engine IPC')
+    return requireAudioEngine().getOutputConfigApplyStatus()
   })
 
   ipcMain.handle('audioEngine:getAudioOutput', async (event) => {

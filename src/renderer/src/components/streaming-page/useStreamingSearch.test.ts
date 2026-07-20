@@ -36,9 +36,19 @@ const providerTrack = {
 }
 
 const defaultSources = ref([
-  { id: 'all' as const, label: '全部', available: true, supportedTypes: ['songs', 'playlists', 'artists'] as const },
+  {
+    id: 'all' as const,
+    label: '全部',
+    available: true,
+    supportedTypes: ['songs', 'playlists', 'artists'] as const
+  },
   { id: 'local' as const, label: '本地音乐', available: true, supportedTypes: ['songs'] as const },
-  { id: 'ncm', label: '网易云', available: true, supportedTypes: ['songs', 'playlists', 'artists'] as const }
+  {
+    id: 'ncm',
+    label: '网易云',
+    available: true,
+    supportedTypes: ['songs', 'playlists', 'artists'] as const
+  }
 ])
 
 test('song search uses unified local and provider results when available', async () => {
@@ -141,4 +151,59 @@ test('availableSearchTypes reflects the selected source capabilities', async () 
 
   assert.deepEqual(search.availableSearchTypes.value, ['songs'])
   assert.equal(search.searchType.value, 'songs', 'searchType should auto-switch to songs for local')
+})
+
+test('a late search response cannot overwrite a newer source and page snapshot', async () => {
+  let resolveProvider!: () => void
+  let resolveUnified!: () => void
+  const providerPending = new Promise<void>((resolve) => {
+    resolveProvider = resolve
+  })
+  const unifiedPending = new Promise<void>((resolve) => {
+    resolveUnified = resolve
+  })
+  const calls: Array<{ source: string; offset: number }> = []
+  const search = useStreamingSearch({
+    searchSongs: async () => ({ tracks: [], total: 0 }),
+    searchUnifiedSongs: async (_query, _limit, offset = 0) => {
+      calls.push({ source: 'all', offset })
+      await unifiedPending
+      return { tracks: [{ ...localTrack, id: 'all:page-30' }], total: 31 }
+    },
+    searchPlaylists: async () => ({ playlists: [], total: 0 }),
+    searchArtists: async () => ({ artists: [], total: 0 }),
+    searchProviderSongs: async (providerId, _query, _limit, offset = 0) => {
+      calls.push({ source: providerId, offset })
+      await providerPending
+      return { tracks: [{ ...providerTrack, id: 'ncm:page-0' }], total: 31 }
+    },
+    searchSources: defaultSources,
+    playTrack: () => {}
+  })
+
+  search.searchSource.value = 'ncm'
+  search.searchQuery.value = 'moon'
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  search.searchOffset.value = 0
+  const oldRequest = search.performSearch('moon')
+
+  search.searchSource.value = 'all'
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  search.searchOffset.value = 30
+  const newestRequest = search.performSearch('moon')
+  resolveUnified()
+  await newestRequest
+  resolveProvider()
+  await oldRequest
+
+  assert.deepEqual(calls, [
+    { source: 'ncm', offset: 0 },
+    { source: 'all', offset: 30 }
+  ])
+  assert.deepEqual(
+    search.searchResults.value.map((track) => track.id),
+    ['all:page-30']
+  )
+  assert.equal(search.searchOffset.value, 30)
+  assert.equal(search.searchLoading.value, false)
 })

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cmath>
 #include <functional>
 #include <mutex>
 #include <string>
@@ -502,6 +503,24 @@ napi_value SetDspGraph(napi_env env, napi_callback_info info) {
   return throwOnError(env, TAE_SetDspGraph(g_engine, json.c_str()));
 }
 
+napi_value ApplyDspState(napi_env env, napi_callback_info info) {
+  ensureEngine();
+  clearLastError();
+  size_t argc = 2;
+  napi_value argv[2];
+  napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr);
+  const double revisionValue = argc > 0 ? getNumberArg(env, argv[0], 0.0) : 0.0;
+  if (!std::isfinite(revisionValue) || revisionValue <= 0.0 ||
+      std::floor(revisionValue) != revisionValue) {
+    napi_throw_type_error(env, "TAE_DSP_REVISION_REQUIRED", "ApplyDspState requires a positive integer revision");
+    return makeUndefined(env);
+  }
+  const std::string json = argc > 1 ? getStringArg(env, argv[1]) : "{}";
+  return throwOnError(
+      env,
+      TAE_ApplyDspState(g_engine, static_cast<uint64_t>(revisionValue), json.c_str()));
+}
+
 napi_value GetDspGraphStatus(napi_env env, napi_callback_info) {
   return readJson(env, TAE_GetDspGraphStatus);
 }
@@ -814,6 +833,7 @@ napi_value Init(napi_env env, napi_value exports) {
   define(env, exports, "SetPlayMode", SetPlayMode);
   define(env, exports, "SetDspConfig", SetDspConfig);
   define(env, exports, "SetDspGraph", SetDspGraph);
+  define(env, exports, "ApplyDspState", ApplyDspState);
   define(env, exports, "GetDspGraphStatus", GetDspGraphStatus);
   define(env, exports, "ScanVst3Module", ScanVst3Module);
   define(env, exports, "SetOutputConfig", SetOutputConfig);

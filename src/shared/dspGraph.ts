@@ -146,7 +146,16 @@ export interface DspOutputStageStatus {
 }
 
 export interface DspGraphStatus {
+  /** Revision most recently reported by the native graph runtime. */
   revision: number
+  /** Latest graph revision requested by the host. Absent on an unwrapped native response. */
+  requestedRevision?: number
+  /** Latest host revision confirmed by a native status ACK. */
+  appliedRevision?: number
+  /** Host-side application state; native ABI responses do not need to provide it. */
+  applyState?: 'idle' | 'pending' | 'applied' | 'failed'
+  /** Service/RPC/compile/revision error associated with the latest request. */
+  applyError?: string
   activeSceneId: string | null
   totalLatencyFrames: number
   totalTailFrames: number

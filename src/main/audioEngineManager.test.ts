@@ -2,7 +2,11 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
-import type { DspScene } from '../shared/dspGraph.ts'
+import type { DspGraphStatus, DspScene } from '../shared/dspGraph.ts'
+import type { DspStatePayload } from '../shared/audioServiceContract.ts'
+import { createSleepTimerState } from '../shared/sleepTimer.ts'
+import { registerNativeSleepTimerBoundaries } from './audio/sleepTimerNativeBoundary.ts'
+import { SleepTimerService } from './sleepTimerCore.ts'
 
 import type {
   AudioEngineServiceNativeBinding,
@@ -406,6 +410,66 @@ test('playback fanout signature changes for non-position playback facts', () => 
   }
 })
 
+function makeDspGraphStatus(payload: Record<string, unknown> | null): DspGraphStatus {
+  const graph =
+    payload?.graph && typeof payload.graph === 'object' && !Array.isArray(payload.graph)
+      ? (payload.graph as Record<string, unknown>)
+      : {}
+  const nodes: DspGraphStatus['nodes'] = Array.isArray(graph.nodes)
+    ? (graph.nodes as Array<Record<string, unknown>>).map((node) => ({
+        id: String(node.id ?? ''),
+        type: String(node.type ?? '') as DspGraphStatus['nodes'][number]['type'],
+        enabled: node.enabled !== false,
+        active: node.enabled !== false,
+        bypassed: node.enabled === false,
+        bypassReason: node.enabled === false ? 'disabled' : '',
+        latencyFrames: 0,
+        tailFrames: 0,
+        processCalls: 0,
+        lastProcessMs: 0,
+        maxProcessMs: 0
+      }))
+    : []
+  const outputStage =
+    graph.outputStage && typeof graph.outputStage === 'object' && !Array.isArray(graph.outputStage)
+      ? (graph.outputStage as Record<string, unknown>)
+      : {}
+  const requestedRate = outputStage.targetSampleRate
+  const targetSampleRate = typeof requestedRate === 'number' ? requestedRate : null
+  return {
+    revision: Number(payload?.revision ?? 0),
+    activeSceneId: typeof payload?.sceneId === 'string' ? payload.sceneId : null,
+    totalLatencyFrames: 0,
+    totalTailFrames: 0,
+    nodes,
+    compileState: 'ready',
+    outputStage: {
+      targetSampleRate,
+      actualSampleRate: targetSampleRate ?? 48000,
+      resamplerQuality:
+        outputStage.resamplerQuality === 'high' || outputStage.resamplerQuality === 'ultra'
+          ? outputStage.resamplerQuality
+          : 'native',
+      dither:
+        outputStage.dither === 'tpdf' ||
+        outputStage.dither === 'highpassTpdf' ||
+        outputStage.dither === 'noiseShaped'
+          ? outputStage.dither
+          : 'off',
+      active: targetSampleRate !== null,
+      reason: ''
+    }
+  }
+}
+
+function getDspGraphPayloadGraph(
+  payload: Record<string, unknown> | null
+): { nodes?: Array<{ type?: string; params?: Record<string, unknown> }> } | null {
+  const graph = payload?.graph
+  if (!graph || typeof graph !== 'object' || Array.isArray(graph)) return null
+  return graph as { nodes?: Array<{ type?: string; params?: Record<string, unknown> }> }
+}
+
 class FakeNativeBinding implements NativeAudioBinding {
   playbackInfo: PlaybackInfo
   devices: AudioDeviceOption[]
@@ -470,11 +534,16 @@ class FakeNativeBinding implements NativeAudioBinding {
       throw new Error(this.failAsioPlayWith)
     }
     this.lastErrorMessage = ''
+    const queued = this.lastLoadedQueue[this.playbackInfo.queueIndex]
     this.playbackInfo = {
       ...this.playbackInfo,
       state: 'playing',
       source,
       position: startTime,
+      duration:
+        queued?.source === source && Number.isFinite(queued.duration)
+          ? Number(queued.duration)
+          : this.playbackInfo.duration,
       nativePlaybackActive: true
     }
   }
@@ -673,6 +742,18 @@ class FakeNativeBinding implements NativeAudioBinding {
     this.dspGraphCalls += 1
     this.lastDspGraphPayload = JSON.parse(json) as Record<string, unknown>
   }
+  ApplyDspState = (_revision: number, json: string): void => {
+    const payload = JSON.parse(json) as DspStatePayload
+    this.dspConfigCalls += 1
+    this.dspGraphCalls += 1
+    this.lastDspConfig = payload.processing as Partial<AudioProcessingSettings>
+    this.lastDspGraphPayload = payload as unknown as Record<string, unknown>
+    this.loadedImpulseResponsePath =
+      typeof payload.processing.convolverIrPath === 'string'
+        ? payload.processing.convolverIrPath
+        : ''
+  }
+  GetDspGraphStatus = (): string => JSON.stringify(makeDspGraphStatus(this.lastDspGraphPayload))
   LoadImpulseResponse = (path: string): void => {
     this.loadImpulseResponseCalls += 1
     this.loadedImpulseResponsePath = path
@@ -865,6 +946,7 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   queueIndex = -1
   playCalls = 0
   playAsyncError: Error | null = null
+  callOrder: string[] = []
   playbackInfo = makePlaybackInfo({ state: 'playing', nativePlaybackActive: true })
 
   Play = (): void => {
@@ -914,6 +996,23 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   SetDspGraph = (json: string): void => {
     this.lastDspGraphPayload = JSON.parse(json) as Record<string, unknown>
   }
+  ApplyDspState = (_revision: number, json: string): void => {
+    const payload = JSON.parse(json) as DspStatePayload
+    this.dspConfig = payload.processing as Partial<AudioProcessingSettings>
+    this.lastDspGraphPayload = payload as unknown as Record<string, unknown>
+  }
+  GetDspGraphStatus = (): string => JSON.stringify(makeDspGraphStatus(this.lastDspGraphPayload))
+  async applyDspState(revision: number, payload: DspStatePayload): Promise<DspGraphStatus> {
+    await this.callAsync('ApplyDspState', [revision, JSON.stringify(payload)])
+    return JSON.parse(this.GetDspGraphStatus()) as DspGraphStatus
+  }
+  async applyDspGraph(json: string): Promise<DspGraphStatus> {
+    const payload = JSON.parse(json) as DspStatePayload
+    return this.applyDspState(payload.revision, payload)
+  }
+  async getDspGraphStatusAsync(): Promise<DspGraphStatus> {
+    return JSON.parse(this.GetDspGraphStatus()) as DspGraphStatus
+  }
   SetEqBands = (): void => {
     this.eqBandsCalls += 1
   }
@@ -931,6 +1030,7 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   GetDspPluginStatus = (): string => JSON.stringify({ plugins: [] })
   GetLastError = (): string => JSON.stringify({ message: '' })
   async callAsync(method: string, args: unknown[]): Promise<unknown> {
+    this.callOrder.push(method)
     if (method === 'Play' && this.playAsyncError) {
       throw this.playAsyncError
     }
@@ -947,6 +1047,15 @@ class FakeAudioServiceBinding extends EventEmitter implements AudioEngineService
   destroy(): void {
     this.destroyCalls += 1
     this.stopped = true
+  }
+}
+
+class RejectingDspAudioServiceBinding extends FakeAudioServiceBinding {
+  override async applyDspState(
+    _revision: number,
+    _payload: DspStatePayload
+  ): Promise<DspGraphStatus> {
+    throw new Error('native DSP graph rejected by service')
   }
 }
 
@@ -1129,9 +1238,8 @@ test('loudnorm is preserved as a distinct volumeNormalization mode', () => {
 })
 
 test('Settings and HiFi shared options both require loudnorm (no forbid-loudnorm regression)', async () => {
-  const { volumeNormalizationValues, VOLUME_NORMALIZATION_OPTIONS } = await import(
-    '../shared/audioProcessingOptions.ts'
-  )
+  const { volumeNormalizationValues, VOLUME_NORMALIZATION_OPTIONS } =
+    await import('../shared/audioProcessingOptions.ts')
   const settingsSource = await import('node:fs').then((fs) =>
     fs.readFileSync(new URL('../renderer/src/components/SettingsPage.vue', import.meta.url), 'utf8')
   )
@@ -1160,9 +1268,8 @@ test('Settings and HiFi shared options both require loudnorm (no forbid-loudnorm
 })
 
 test('gapless runtime fields and HiFi Active/Preload/Blocked wiring stay present', async () => {
-  const { GAPLESS_BLOCKED_REASONS, gaplessRuntimeStatusCopy, HIFI_STATUS_COPY } = await import(
-    '../shared/audioProcessingOptions.ts'
-  )
+  const { GAPLESS_BLOCKED_REASONS, gaplessRuntimeStatusCopy, HIFI_STATUS_COPY } =
+    await import('../shared/audioProcessingOptions.ts')
   const hifiSource = await import('node:fs').then((fs) =>
     fs.readFileSync(
       new URL('../renderer/src/components/player-bar/HiFiSidebar.vue', import.meta.url),
@@ -1202,7 +1309,7 @@ test('setStereoImage patches default scene balance/phase and preserves it across
     nativeBinding
   )
 
-  let state = await manager.setStereoImage({
+  const state = await manager.setStereoImage({
     balance: -0.4,
     width: 1.15,
     invertLeft: false,
@@ -1257,7 +1364,7 @@ test('setOutputStage patches default scene graph.outputStage and preserves it ac
     nativeBinding
   )
 
-  let state = await manager.setOutputStage({
+  const state = await manager.setOutputStage({
     targetSampleRate: 96000,
     resamplerQuality: 'ultra',
     dither: 'highpassTpdf'
@@ -1304,6 +1411,270 @@ test('setOutputStage patches default scene graph.outputStage and preserves it ac
   assert.match(playerBarSource, /dsp-output-stage/)
   assert.match(playerBarSource, /@set-output-stage="setOutputStage"/)
 
+  manager.destroy()
+})
+
+test('default audio service mode applies DSP graph revisions and exposes native node/output evidence', async () => {
+  const service = new FakeAudioServiceBinding()
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false, audioOutput: 'wasapi', audioDevice: 'auto' },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS,
+      vst3ModuleResolver: (_catalogId, classId) => ({
+        modulePath: 'C:\\managed-vst3\\contract.vst3',
+        classId,
+        reason: ''
+      })
+    }
+  )
+  const scene: DspScene = {
+    id: 'service-contract',
+    name: 'Service contract',
+    enabled: true,
+    priority: 10,
+    rules: {},
+    graph: {
+      version: 2,
+      outputStage: {
+        targetSampleRate: 96000,
+        resamplerQuality: 'ultra',
+        dither: 'highpassTpdf',
+        safetyClamp: true
+      },
+      nodes: [
+        { id: 'width', type: 'stereoField', enabled: true, params: { width: 1.25 } },
+        {
+          id: 'contract-vst3',
+          type: 'vst3Plugin',
+          enabled: true,
+          params: {},
+          vst3: {
+            catalogId: 'vst3:contract',
+            classId: '0123456789ABCDEF0123456789ABCDEF'
+          }
+        }
+      ]
+    }
+  }
+
+  await manager.setDspScenes([scene], scene.id)
+  const status = await manager.getDspGraphStatus()
+
+  assert.equal(status.applyState, 'applied')
+  assert.equal(status.requestedRevision, 1)
+  assert.equal(status.appliedRevision, 1)
+  assert.equal(status.revision, 1)
+  assert.equal(status.nodes.find((node) => node.id === 'width')?.active, true)
+  assert.equal(status.nodes.find((node) => node.id === 'contract-vst3')?.active, true)
+  assert.equal(status.outputStage?.targetSampleRate, 96000)
+  assert.equal(status.outputStage?.resamplerQuality, 'ultra')
+  const materializedVst3 = (
+    service.lastDspGraphPayload?.graph as {
+      nodes?: Array<{ id?: string; params?: Record<string, unknown> }>
+    }
+  ).nodes?.find((node) => node.id === 'contract-vst3')
+  assert.equal(materializedVst3?.params?.vst3ModulePath, 'C:\\managed-vst3\\contract.vst3')
+  manager.destroy()
+})
+
+test('direct native mode remains fail-closed when no addon candidate exists', () => {
+  const previousServiceMode = process.env.TWILIGHT_AUDIO_SERVICE
+  process.env.TWILIGHT_AUDIO_SERVICE = '0'
+  try {
+    const manager = new AudioEngineManager(
+      { exclusiveMode: false },
+      {
+        nativeAddonCandidates: () => [],
+        scheduler: TEST_SCHEDULER,
+        deviceOptionsProvider: () => DEVICE_OPTIONS
+      }
+    )
+    const internals = manager as unknown as {
+      native: NativeAudioBinding | null
+      lastNativeError: string
+    }
+
+    assert.equal(internals.native, null)
+    assert.match(internals.lastNativeError, /twilight_audio_node\.node/)
+    manager.destroy()
+  } finally {
+    if (previousServiceMode === undefined) delete process.env.TWILIGHT_AUDIO_SERVICE
+    else process.env.TWILIGHT_AUDIO_SERVICE = previousServiceMode
+  }
+})
+
+test('DSP graph ACK failures remain observable and reject renderer-facing mutations', async () => {
+  const service = new RejectingDspAudioServiceBinding()
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+
+  await assert.rejects(
+    () => manager.setOutputStage({ targetSampleRate: 96000 }),
+    /native DSP graph rejected by service/
+  )
+  const status = await manager.getDspGraphStatus()
+  assert.equal(status.applyState, 'failed')
+  assert.equal(status.requestedRevision, 1)
+  assert.equal(status.appliedRevision, 0)
+  assert.match(status.applyError ?? '', /native DSP graph rejected by service/)
+  manager.destroy()
+})
+
+test('audio service restart replays the DSP graph and verifies the new applied revision', async () => {
+  const service = new FakeAudioServiceBinding()
+  const manager = new AudioEngineManager(
+    { exclusiveMode: false },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+  await manager.start()
+  await manager.setStereoImage({ balance: -0.2, width: 1.1 })
+  const before = await manager.getDspGraphStatus()
+  service.emit('crash', 'service restart fixture')
+  service.lastDspGraphPayload = null
+
+  const ready = new Promise<{ restoreErrors: string[] }>((resolve) => {
+    manager.once('audio-service-ready', resolve)
+  })
+  service.emit('ready')
+  const readyEvent = await ready
+  const recovered = await manager.getDspGraphStatus()
+
+  assert.deepEqual(readyEvent.restoreErrors, [])
+  assert.equal(recovered.applyState, 'applied')
+  assert.ok((recovered.appliedRevision ?? 0) > (before.appliedRevision ?? 0))
+  assert.equal(recovered.appliedRevision, recovered.requestedRevision)
+  const recoveredGraph = getDspGraphPayloadGraph(service.lastDspGraphPayload)
+  assert.ok(
+    recoveredGraph?.nodes?.some((node) => node.type === 'stereoField'),
+    'recovered service graph must include the stereo field node'
+  )
+  manager.destroy()
+})
+
+test('audio service restart restores graph-owned processors through one DSP state transaction', async () => {
+  const service = new FakeAudioServiceBinding()
+  const scene: DspScene = {
+    id: 'graph-authority',
+    name: 'Graph authority',
+    enabled: true,
+    priority: 10,
+    rules: {},
+    graph: {
+      version: 2,
+      outputStage: {
+        targetSampleRate: 'device',
+        resamplerQuality: 'native',
+        dither: 'off',
+        safetyClamp: true
+      },
+      nodes: [
+        {
+          id: 'graph-replay-gain',
+          type: 'replayGain',
+          enabled: true,
+          params: { mode: 'album', preampDb: 5, fallbackDb: -2, clip: false }
+        },
+        {
+          id: 'graph-equalizer',
+          type: 'equalizer',
+          enabled: true,
+          params: { mode: 'parametric', preampDb: 7, bands: [] }
+        },
+        {
+          id: 'graph-convolver',
+          type: 'convolver',
+          enabled: true,
+          params: { impulseResponsePath: 'graph-ir.wav', wet: 0.75, dry: 0.25 }
+        },
+        {
+          id: 'graph-crossfeed',
+          type: 'crossfeed',
+          enabled: true,
+          params: { algorithm: 'custom', strength: 0.8, delayMs: 0.4, cutoffHz: 750 }
+        }
+      ]
+    }
+  }
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: false,
+      audioProcessing: {
+        dspEnabled: true,
+        eqEnabled: true,
+        eqPreamp: -6,
+        volumeNormalization: 'track',
+        replayGainPreamp: 1,
+        replayGainFallback: -9,
+        replayGainClip: true,
+        crossfeedEnabled: true,
+        crossfeedStrength: 0.2,
+        convolverEnabled: true,
+        convolverIrPath: 'legacy-ir.wav'
+      },
+      dspScenes: [scene],
+      dspPinnedSceneId: scene.id
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+
+  await manager.start()
+  manager.setNativeDspPluginChain('{"plugins":[{"id":"legacy-plugin"}]}')
+  service.emit('crash', 'service restart ordering fixture')
+  service.lastDspGraphPayload = null
+  service.callOrder = []
+  const ready = new Promise<{ restoreErrors: string[] }>((resolve) => {
+    manager.once('audio-service-ready', resolve)
+  })
+
+  service.emit('ready')
+  const readyEvent = await ready
+  const status = await manager.getDspGraphStatus()
+  const graphIndex = service.callOrder.indexOf('ApplyDspState')
+  const graphOwnedLegacyMethods = [
+    'SetDspConfig',
+    'SetEqBands',
+    'SetReplayGainMode',
+    'SetCrossfeedStrength',
+    'LoadImpulseResponse'
+  ]
+  const restoredGraph = getDspGraphPayloadGraph(service.lastDspGraphPayload)
+
+  assert.deepEqual(readyEvent.restoreErrors, [])
+  assert.ok(graphIndex >= 0)
+  assert.ok(restoredGraph, 'service restart must restore a DSP graph payload')
+  for (const method of graphOwnedLegacyMethods) {
+    const index = service.callOrder.indexOf(method)
+    assert.equal(index, -1, `${method} must not fan out beside ApplyDspState`)
+  }
+  assert.ok(service.callOrder.indexOf('SetDspPluginChain') < graphIndex)
+  assert.equal(restoredGraph.nodes?.find((node) => node.type === 'equalizer')?.params?.preampDb, 7)
+  assert.equal(restoredGraph.nodes?.find((node) => node.type === 'replayGain')?.params?.preampDb, 5)
+  assert.equal(
+    restoredGraph.nodes?.find((node) => node.type === 'crossfeed')?.params?.strength,
+    0.8
+  )
+  assert.equal(
+    restoredGraph.nodes?.find((node) => node.type === 'convolver')?.params?.impulseResponsePath,
+    'graph-ir.wav'
+  )
+  assert.equal(status.applyState, 'applied')
+  assert.equal(status.appliedRevision, status.requestedRevision)
   manager.destroy()
 })
 
@@ -2293,6 +2664,52 @@ test('audio service output config changes wait for config RPC before marking syn
   manager.destroy()
 })
 
+test('failed topology config RPC leaves the last applied config and reports a failed revision', async () => {
+  const service = new DeferredAudioServiceBinding(['SetOutputConfig'])
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto',
+      audioOutputConfig: { preferredBufferSize: 256, routingMode: 'auto' }
+    },
+    {
+      audioServiceFactory: () => service,
+      scheduler: TEST_SCHEDULER,
+      deviceOptionsProvider: () => DEVICE_OPTIONS
+    }
+  )
+
+  const startup = manager.start()
+  await resolveDeferredRouteCalls(service)
+  await startup
+
+  const update = manager.setOutputConfig({
+    preferredBufferSize: 512,
+    wasapiExclusivePushMode: true
+  })
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  assert.deepEqual(
+    service.deferredCalls.map((call) => call.method),
+    ['SetOutputConfig']
+  )
+  service.rejectDeferredCalls(
+    new Error('candidate topology failed; rollback restored previous output')
+  )
+  await assert.rejects(update, /candidate topology failed/)
+
+  assert.equal(manager.getOutputConfig().preferredBufferSize, 256)
+  assert.equal(manager.getOutputConfig().wasapiExclusivePushMode, false)
+  const status = manager.getOutputConfigApplyStatus()
+  assert.equal(status.state, 'failed')
+  assert.equal(status.requestedRevision, 1)
+  assert.equal(status.appliedRevision, 0)
+  assert.equal(status.failedRevision, 1)
+  assert.match(status.error, /candidate topology failed/)
+
+  manager.destroy()
+})
+
 test('backend and device switches do not leave stale output facts', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
@@ -2636,6 +3053,98 @@ test('loadQueue skips native call and queue fanout when normalized queue is unch
   assert.equal(queueChanges.length, 1)
 })
 
+test('same-source CUE queue preserves its logical index and clamps relative seek/play positions', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const source = 'D:/Music/single-file.flac'
+  const queue: AudioEngineQueueItem[] = [
+    {
+      id: 'local:cue:first',
+      source,
+      duration: 60,
+      cueRange: { startSeconds: 0, endSeconds: 60, pregapSeconds: 0 },
+      replayGainTrackGainDb: -3
+    },
+    {
+      id: 'local:cue:second',
+      source,
+      duration: 60,
+      cueRange: { startSeconds: 60, endSeconds: 120, pregapSeconds: 2 },
+      replayGainTrackGainDb: -9
+    }
+  ]
+
+  await manager.loadQueue(queue, 1)
+  await manager.play(source, 999)
+  let info = await manager.getPlaybackInfo()
+
+  assert.deepEqual(nativeBinding.lastLoadedQueue, queue)
+  assert.equal(info.queueIndex, 1)
+  assert.equal(info.duration, 60)
+  assert.equal(info.position, 60)
+  assert.equal(nativeBinding.playCalls.at(-1)?.startTime, 60)
+
+  await manager.seek(-50)
+  info = await manager.getPlaybackInfo()
+  assert.equal(info.position, 0)
+  await manager.seek(999)
+  info = await manager.getPlaybackInfo()
+  assert.equal(info.position, 60)
+})
+
+test('native tick recognizes a same-source CUE boundary by queue index', async () => {
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding
+  )
+  const source = 'D:/Music/same-source.flac'
+  const queue: AudioEngineQueueItem[] = [
+    {
+      id: 'local:cue:first',
+      source,
+      duration: 30,
+      cueRange: { startSeconds: 0, endSeconds: 30, pregapSeconds: 0 }
+    },
+    {
+      id: 'local:cue:second',
+      source,
+      duration: 45,
+      cueRange: { startSeconds: 30, endSeconds: 75, pregapSeconds: 0 }
+    }
+  ]
+  let startFileEvents = 0
+  manager.on('start-file', () => startFileEvents++)
+
+  await manager.loadQueue(queue, 0)
+  await manager.play(source, 0)
+  startFileEvents = 0
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    queueIndex: 1,
+    duration: 45,
+    position: 0.25
+  }
+  ;(manager as unknown as { tick: () => void }).tick()
+
+  const info = await manager.getPlaybackInfo()
+  assert.equal(info.source, source)
+  assert.equal(info.queueIndex, 1)
+  assert.equal(info.duration, 45)
+  assert.equal(startFileEvents, 1)
+})
+
 test('loadQueue reapplies play mode to clear stale native repeat mode', async () => {
   const nativeBinding = new FakeNativeBinding({ playMode: 'repeat' })
   const manager = makeManager(
@@ -2764,6 +3273,63 @@ test('native tick publishes playback-info when non-position playback facts chang
   assert.equal(playbackUpdates[0].source, queue[1].source)
   assert.equal(playbackUpdates[0].queueIndex, 1)
 })
+
+for (const scenario of [
+  {
+    label: 'a delegated native single-track queue',
+    queue: [{ id: 'single', source: 'single.flac', title: 'Single' }],
+    startIndex: 0
+  },
+  {
+    label: 'the final item in a delegated native queue',
+    queue: [
+      { id: 'first', source: 'first.flac', title: 'First' },
+      { id: 'last', source: 'last.flac', title: 'Last' }
+    ],
+    startIndex: 1
+  }
+]) {
+  test(`native tick emits one trackEnd before queueEnd for ${scenario.label}`, async () => {
+    const nativeBinding = new FakeNativeBinding()
+    const manager = makeManager(
+      {
+        exclusiveMode: true,
+        audioOutput: 'wasapi',
+        audioDevice: 'auto'
+      },
+      nativeBinding
+    )
+    const boundaries: Array<'trackEnd' | 'queueEnd'> = []
+    let triggerEvents = 0
+    const sleepTimer = new SleepTimerService({
+      now: () => 1_000,
+      publish: (kind) => {
+        if (kind === 'trigger') triggerEvents++
+      }
+    })
+    registerNativeSleepTimerBoundaries(manager, sleepTimer)
+    manager.on('sleep-timer-boundary', ({ boundary }) => boundaries.push(boundary))
+
+    await manager.loadQueue(scenario.queue, scenario.startIndex)
+    await manager.play(scenario.queue[scenario.startIndex].source, 0)
+    sleepTimer.configure(
+      createSleepTimerState('trackEnd', 1_000, { defaultMinutes: 1, fadeSeconds: 0 })
+    )
+    nativeBinding.playbackInfo = {
+      ...nativeBinding.playbackInfo,
+      state: 'stopped',
+      queueIndex: scenario.startIndex
+    }
+
+    const tickManager = manager as unknown as { tick: () => void }
+    tickManager.tick()
+    tickManager.tick()
+
+    assert.deepEqual(boundaries, ['trackEnd', 'queueEnd'])
+    assert.equal(triggerEvents, 1)
+    assert.equal(sleepTimer.snapshot()?.triggered, true)
+  })
+}
 
 test('manager emits config-applied only after the applied revision advances', async () => {
   const nativeBinding = new FakeNativeBinding()
@@ -3939,18 +4505,16 @@ test('DSP module updates enable the native DSP chain instead of only toggling UI
   const replayGain = await manager.setReplayGainMode('track', 1.5, -3, true)
   assert.equal(replayGain.dspEnabled, true)
   assert.equal(replayGain.volumeNormalization, 'track')
-  assert.deepEqual(nativeBinding.lastReplayGainConfig, {
-    mode: 'track',
-    preamp: 1.5,
-    fallback: -3,
-    clip: true
-  })
+  assert.equal(nativeBinding.lastDspConfig.volumeNormalization, 'track')
+  assert.equal(nativeBinding.lastDspConfig.replayGainPreamp, 1.5)
+  assert.equal(nativeBinding.lastDspConfig.replayGainFallback, -3)
+  assert.equal(nativeBinding.lastDspConfig.replayGainClip, true)
 
   const crossfeed = await manager.setCrossfeedStrength(0.35)
   assert.equal(crossfeed.dspEnabled, true)
   assert.equal(crossfeed.crossfeedEnabled, true)
   assert.equal(crossfeed.crossfeedStrength, 0.35)
-  assert.equal(nativeBinding.lastCrossfeedStrength, 0.35)
+  assert.equal(nativeBinding.lastDspConfig.crossfeedStrength, 0.35)
 
   const convolver = await manager.loadImpulseResponse('C:\\ir\\headphones.wav')
   assert.equal(manager.getAudioProcessing().dspEnabled, true)
@@ -3963,6 +4527,10 @@ test('DSP module updates enable the native DSP chain instead of only toggling UI
   assert.equal(manager.getAudioProcessing().convolverEnabled, false)
   assert.equal(manager.getAudioProcessing().convolverIrPath, '')
   assert.equal(nativeBinding.loadedImpulseResponsePath, '')
+  assert.equal(nativeBinding.eqBandsCalls, 0)
+  assert.equal(nativeBinding.replayGainCalls, 0)
+  assert.equal(nativeBinding.crossfeedCalls, 0)
+  manager.destroy()
 })
 
 test('setAudioProcessing skips native DSP fanout when normalized settings are unchanged', async () => {
@@ -3988,7 +4556,8 @@ test('setAudioProcessing skips native DSP fanout when normalized settings are un
 
   await manager.setAudioProcessing({ eqEnabled: true })
   assert.equal(nativeBinding.dspConfigCalls, 1)
-  assert.equal(nativeBinding.eqBandsCalls, 1)
+  assert.equal(nativeBinding.dspGraphCalls, 1)
+  assert.equal(nativeBinding.eqBandsCalls, 0)
   assert.equal(nativeBinding.replayGainCalls, 0)
   assert.equal(nativeBinding.crossfeedCalls, 0)
   assert.equal(nativeBinding.unloadImpulseResponseCalls, 0)
@@ -3999,11 +4568,13 @@ test('setAudioProcessing skips native DSP fanout when normalized settings are un
   assert.equal(unchanged.dspEnabled, true)
   assert.equal(unchanged.eqEnabled, true)
   assert.equal(nativeBinding.dspConfigCalls, 1)
-  assert.equal(nativeBinding.eqBandsCalls, 1)
+  assert.equal(nativeBinding.dspGraphCalls, 1)
+  assert.equal(nativeBinding.eqBandsCalls, 0)
   assert.equal(nativeBinding.replayGainCalls, 0)
   assert.equal(nativeBinding.crossfeedCalls, 0)
   assert.equal(nativeBinding.unloadImpulseResponseCalls, 0)
   assert.equal(playbackUpdates.length, 1)
+  manager.destroy()
 })
 
 test('unloadImpulseResponse skips native fanout when no impulse response is loaded', async () => {
@@ -4081,35 +4652,40 @@ test('specialized DSP setters skip native calls when normalized settings are unc
   manager.on('playback-info', (info: PlaybackInfo) => playbackUpdates.push(info))
 
   await manager.setEqBands({ eqEnabled: true, eqPreamp: 1 })
-  assert.equal(nativeBinding.eqBandsCalls, 1)
+  assert.equal(nativeBinding.dspConfigCalls, 1)
+  assert.equal(nativeBinding.eqBandsCalls, 0)
   assert.equal(nativeBinding.playbackInfoReads, 0)
-  assert.equal(playbackUpdates.length, 0)
+  assert.equal(playbackUpdates.length, 1)
 
   await manager.setEqBands({ eqEnabled: true, eqPreamp: 1 })
-  assert.equal(nativeBinding.eqBandsCalls, 1)
+  assert.equal(nativeBinding.dspConfigCalls, 1)
+  assert.equal(nativeBinding.eqBandsCalls, 0)
   assert.equal(nativeBinding.playbackInfoReads, 0)
-  assert.equal(playbackUpdates.length, 0)
+  assert.equal(playbackUpdates.length, 1)
 
   await manager.setCrossfeedStrength(0.35)
-  assert.equal(nativeBinding.crossfeedCalls, 1)
+  assert.equal(nativeBinding.dspConfigCalls, 2)
+  assert.equal(nativeBinding.crossfeedCalls, 0)
   assert.equal(nativeBinding.playbackInfoReads, 0)
-  assert.equal(playbackUpdates.length, 0)
+  assert.equal(playbackUpdates.length, 2)
 
   await manager.setCrossfeedStrength(0.35)
-  assert.equal(nativeBinding.crossfeedCalls, 1)
+  assert.equal(nativeBinding.dspConfigCalls, 2)
+  assert.equal(nativeBinding.crossfeedCalls, 0)
   assert.equal(nativeBinding.playbackInfoReads, 0)
-  assert.equal(playbackUpdates.length, 0)
+  assert.equal(playbackUpdates.length, 2)
 
   // setReplayGainMode routes through setAudioProcessing (graph + dual DSP path).
   await manager.setReplayGainMode('track', 1.5, -3, true)
-  assert.equal(nativeBinding.replayGainCalls, 1)
-  assert.equal(nativeBinding.dspConfigCalls, 1)
-  assert.equal(playbackUpdates.length, 1)
+  assert.equal(nativeBinding.replayGainCalls, 0)
+  assert.equal(nativeBinding.dspConfigCalls, 3)
+  assert.equal(playbackUpdates.length, 3)
 
   await manager.setReplayGainMode('track', 1.5, -3, true)
-  assert.equal(nativeBinding.replayGainCalls, 1)
-  assert.equal(nativeBinding.dspConfigCalls, 1)
-  assert.equal(playbackUpdates.length, 1)
+  assert.equal(nativeBinding.replayGainCalls, 0)
+  assert.equal(nativeBinding.dspConfigCalls, 3)
+  assert.equal(playbackUpdates.length, 3)
+  manager.destroy()
 })
 
 test('setEqPreset skips native calls when normalized preset is unchanged', async () => {
@@ -4136,17 +4712,20 @@ test('setEqPreset skips native calls when normalized preset is unchanged', async
   const first = await manager.setEqPreset(preset)
   assert.equal(first.eqEnabled, true)
   assert.equal(first.eqPreamp, 2)
-  assert.equal(nativeBinding.eqPresetCalls, 1)
-  assert.equal(nativeBinding.lastEqPresetConfig.eqEnabled, true)
+  assert.equal(nativeBinding.eqPresetCalls, 0)
+  assert.equal(nativeBinding.dspConfigCalls, 1)
+  assert.equal(nativeBinding.lastDspConfig.eqEnabled, true)
   assert.equal(nativeBinding.playbackInfoReads, 0)
-  assert.equal(playbackUpdates.length, 0)
+  assert.equal(playbackUpdates.length, 1)
 
   const second = await manager.setEqPreset(preset)
   assert.equal(second.eqEnabled, true)
   assert.equal(second.eqPreamp, 2)
-  assert.equal(nativeBinding.eqPresetCalls, 1)
+  assert.equal(nativeBinding.eqPresetCalls, 0)
+  assert.equal(nativeBinding.dspConfigCalls, 1)
   assert.equal(nativeBinding.playbackInfoReads, 0)
-  assert.equal(playbackUpdates.length, 0)
+  assert.equal(playbackUpdates.length, 1)
+  manager.destroy()
 })
 
 test('turning the DSP master switch off still bypasses processing modules', async () => {
@@ -4488,14 +5067,18 @@ test('audio service ready after restart restores configuration and queue without
   })
 
   await manager.start()
-  assert.equal(service.eqBandsCalls, 1)
-  assert.equal(service.replayGainCalls, 1)
-  assert.equal(service.crossfeedCalls, 1)
+  assert.equal(service.callOrder.filter((method) => method === 'ApplyDspState').length, 1)
+  assert.equal(service.eqBandsCalls, 0)
+  assert.equal(service.replayGainCalls, 0)
+  assert.equal(service.crossfeedCalls, 0)
 
   await manager.setAudioOutput('asio', 'asio:studio')
   await manager.loadQueue(queue, 1)
   manager.setNativeDspPluginChain('{"plugins":[{"id":"com.example.eq"}]}')
   await manager.play('two.flac', 12)
+  const appliesBeforeRestart = service.callOrder.filter(
+    (method) => method === 'ApplyDspState'
+  ).length
   service.emit('crash', 'service crashed')
 
   service.backend = 'wasapi'
@@ -4517,13 +5100,18 @@ test('audio service ready after restart restores configuration and queue without
   assert.equal(service.outputConfig.routingMode, 'stereo-to-5.1')
   assert.equal(service.dspConfig.eqEnabled, true)
   assert.equal(service.dspConfig.crossfeedStrength, 0.35)
-  assert.equal(service.eqBandsCalls, 2)
-  assert.equal(service.replayGainCalls, 2)
-  assert.equal(service.crossfeedCalls, 2)
+  assert.equal(
+    service.callOrder.filter((method) => method === 'ApplyDspState').length,
+    appliesBeforeRestart + 1
+  )
+  assert.equal(service.eqBandsCalls, 0)
+  assert.equal(service.replayGainCalls, 0)
+  assert.equal(service.crossfeedCalls, 0)
   assert.equal(service.dspPluginChain, '{"plugins":[{"id":"com.example.eq"}]}')
   assert.deepEqual(service.queue, queue)
   assert.equal(service.queueIndex, 1)
   assert.equal(service.playCalls, 0)
+  manager.destroy()
 
   const info = await manager.getPlaybackInfo()
   assert.equal(info.state, 'stopped')
@@ -4635,10 +5223,7 @@ test('audio service ready waits for DSP and queue restore RPCs before enabling m
   const service = new DeferredAudioServiceBinding([
     'SetOutputBackend',
     'SetOutputDevice',
-    'SetOutputConfig',
-    'SetDspConfig',
-    'SetDspPluginChain',
-    'LoadQueue'
+    'SetOutputConfig'
   ])
   const manager = new AudioEngineManager(
     {
@@ -4675,6 +5260,9 @@ test('audio service ready waits for DSP and queue restore RPCs before enabling m
   ]
   await manager.loadQueue(queue, 1)
   manager.setNativeDspPluginChain('{"plugins":[{"id":"com.example.eq"}]}')
+  service.deferredMethods.add('ApplyDspState')
+  service.deferredMethods.add('SetDspPluginChain')
+  service.deferredMethods.add('LoadQueue')
   service.emit('crash', 'service crashed before full restore')
   service.backend = 'wasapi'
   service.device = 'auto'
@@ -4714,7 +5302,7 @@ test('audio service ready waits for DSP and queue restore RPCs before enabling m
   assert.equal(serviceReadyEvents.length, 0)
   assert.deepEqual(
     service.deferredCalls.map((call) => call.method),
-    ['SetDspConfig']
+    ['SetDspPluginChain']
   )
 
   service.resolveNextDeferredCall()
@@ -4722,7 +5310,7 @@ test('audio service ready waits for DSP and queue restore RPCs before enabling m
   assert.equal(serviceReadyEvents.length, 0)
   assert.deepEqual(
     service.deferredCalls.map((call) => call.method),
-    ['SetDspPluginChain']
+    ['ApplyDspState']
   )
 
   service.resolveNextDeferredCall()
@@ -4801,7 +5389,6 @@ test('audio service ready reports output route restore failures without enabling
   manager.destroy()
 })
 
-
 test('loudnorm status event, library RG queue fields, and cancel IPC are wired end-to-end', () => {
   const managerSource = readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')
   const engineIpcSource = readFileSync(new URL('./audio/engineIpc.ts', import.meta.url), 'utf8')
@@ -4841,10 +5428,7 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
   assert.ok(managerSource.includes('syncLoudnormModeTransition'))
   assert.ok(managerSource.includes('notifyLoudnessCacheCleared'))
   // setReplayGainMode must rewrite legacy graph via setAudioProcessing (no dual-path drift).
-  assert.match(
-    managerSource,
-    /async setReplayGainMode[\s\S]*?return this\.setAudioProcessing\(/
-  )
+  assert.match(managerSource, /async setReplayGainMode[\s\S]*?return this\.setAudioProcessing\(/)
   assert.ok(
     managerSource.includes('loudnessAnalysisManager.cancel') ||
       managerSource.includes('this.loudnessAnalysisManager.cancel') ||
@@ -4856,6 +5440,9 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
   assert.ok(engineIpcSource.includes('replayGainTrackGainDb'))
   assert.ok(engineIpcSource.includes('r128TrackGainDb'))
   assert.ok(loudnessIpcSource.includes('loudnessAnalysis:cancel'))
+  assert.ok(loudnessIpcSource.includes('runtime.audioAnalysisService'))
+  assert.ok(loudnessIpcSource.includes('service.analyzeLoudness'))
+  assert.ok(loudnessIpcSource.includes("cancelBySource(filePath, 'loudness')"))
   assert.ok(queuePrepSource.includes('replayGainTrackGainDb'))
   assert.ok(queuePrepSource.includes('r128AlbumGainDb'))
   assert.ok(preloadSource.includes('onLoudnormStatus'))
@@ -4875,11 +5462,12 @@ test('loudnorm status event, library RG queue fields, and cancel IPC are wired e
   assert.ok(pipelineSource.includes('refreshQueueReplayGainTags'))
   assert.ok(engineCppSource.includes('refreshQueueReplayGainTags'))
   assert.ok(pipelineSource.includes('lastPreloadFormatMismatch_'))
-  assert.ok(pipelineSource.includes('"format_mismatch"') || pipelineSource.includes('format_mismatch'))
+  assert.ok(
+    pipelineSource.includes('"format_mismatch"') || pipelineSource.includes('format_mismatch')
+  )
   assert.ok(
     readFileSync(new URL('./audio/loudnessIpc.ts', import.meta.url), 'utf8').includes(
       'notifyLoudnessCacheCleared'
     )
   )
 })
-

@@ -22,7 +22,7 @@ test('audio smoke evidence report records opt-in real-device surfaces', () => {
         id: 'wasapi-exclusive-pcm',
         label: 'WASAPI Exclusive PCM',
         status: 'pass',
-        command: 'npm run smoke:wasapi -- --device "Desk DAC" --format-matrix',
+        command: 'pnpm run smoke:wasapi -- --device "Desk DAC" --format-matrix',
         artifact: 'output/audio-smoke-evidence/wasapi-exclusive-pcm.json',
         notes: '24-bit PCM path matched actual output format'
       },
@@ -30,7 +30,7 @@ test('audio smoke evidence report records opt-in real-device surfaces', () => {
         id: 'asio-native-dsd',
         label: 'ASIO Native DSD',
         status: 'not-run',
-        command: 'npm run smoke:asio-native-dsd -- --driver "Studio ASIO"',
+        command: 'pnpm run smoke:asio-native-dsd -- --driver "Studio ASIO"',
         artifact: '',
         notes: 'No ASIO driver attached on this machine'
       }
@@ -40,7 +40,7 @@ test('audio smoke evidence report records opt-in real-device surfaces', () => {
   assert.match(report.markdown, /# Twilight Audio Real-Device Smoke Evidence/)
   assert.match(report.markdown, /WASAPI Exclusive PCM/)
   assert.match(report.markdown, /ASIO Native DSD/)
-  assert.match(report.markdown, /npm run smoke:wasapi/)
+  assert.match(report.markdown, /pnpm run smoke:wasapi/)
   assert.match(report.markdown, /output\/audio-smoke-evidence\/wasapi-exclusive-pcm\.json/)
   assert.equal(report.json.schemaVersion, 1)
   assert.equal(report.json.requiredSurfaces.includes('DoP DAC'), true)
@@ -100,7 +100,7 @@ test('audio smoke evidence report records opt-in real-device surfaces', () => {
   assert.match(report.markdown, /Complete: no/)
   assert.match(report.markdown, /Optional product honesty surfaces/)
   assert.match(report.markdown, /## Collection Action Plan/)
-  assert.match(report.markdown, /npm run smoke:asio-native-dsd/)
+  assert.match(report.markdown, /pnpm run smoke:asio-native-dsd/)
   assert.match(report.markdown, /output\/audio-smoke-evidence\/sacd-iso\.json/)
 })
 
@@ -125,7 +125,7 @@ test('audio smoke evidence report can derive entries from smoke JSON summaries',
       ]
     },
     'output/audio-smoke-evidence/desk-dac.json',
-    'npm run smoke:wasapi -- --device "Desk DAC" --json'
+    'pnpm run smoke:wasapi -- --device "Desk DAC" --json'
   )
 
   assert.equal(entries.length, 2)

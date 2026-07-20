@@ -14,6 +14,13 @@ import type {
   VolumeNormalizationMode
 } from './audioEngineManager'
 import type { BpmAnalysisResult } from './bpm/bpmCache'
+import type { DspGraphStatus } from '../shared/dspGraph.ts'
+import {
+  mergeDspStatePayload,
+  validateAudioServiceCapabilities,
+  type AudioServiceCapabilities,
+  type DspStatePayload
+} from '../shared/audioServiceContract.ts'
 
 const require = createRequire(import.meta.url)
 
@@ -59,11 +66,12 @@ type AudioServiceResponse = {
 type AudioServiceEvent = {
   kind: 'ready' | 'fatal'
   error?: string
+  capabilities?: AudioServiceCapabilities
 }
 
 const MAX_VISUALIZATION_CACHE_KEYS = 8
 const DEFAULT_MAX_IN_FLIGHT_REQUESTS = 128
-const DEFAULT_ANALYSIS_REQUEST_TIMEOUT_MS = 195_000
+const DEFAULT_TOPOLOGY_REQUEST_TIMEOUT_MS = 20_000
 const AUDIO_SERVICE_BUSY_CODE = 'ERR_AUDIO_SERVICE_BUSY'
 const AUDIO_SERVICE_TIMEOUT_CODE = 'ERR_AUDIO_SERVICE_TIMEOUT'
 
@@ -83,10 +91,22 @@ type CoalescedControlRequest = {
   scheduled: boolean
 }
 
+type DspStateWaiter = {
+  revision: number
+  resolve: (status: DspGraphStatus) => void
+  reject: (error: Error) => void
+}
+
+type QueuedDspState = {
+  revision: number
+  payload: DspStatePayload
+  waiters: DspStateWaiter[]
+}
+
 export interface AudioEngineServiceBindingOptions {
   serviceEntry: string
   requestTimeoutMs?: number
-  analysisRequestTimeoutMs?: number
+  topologyRequestTimeoutMs?: number
   restartDelayMs?: number
   maxInFlightRequests?: number
   electron?: ElectronModule
@@ -97,7 +117,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private child: UtilityProcessLike | null = null
   private pending = new Map<string, PendingRequest>()
   private requestTimeoutMs: number
-  private analysisRequestTimeoutMs: number
+  private topologyRequestTimeoutMs: number
   private restartDelayMs: number
   private maxInFlightRequests: number
   private stopped = false
@@ -107,6 +127,8 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private cacheRequestsInFlight = new Set<string>()
   private lastPlaybackInfo: string | PlaybackInfo | null = null
   private lastDspStatus: string | { plugins: unknown[] } = { plugins: [] }
+  private lastDspGraphStatus: DspGraphStatus = createEmptyDspGraphStatus()
+  private serviceCapabilities: AudioServiceCapabilities | null = null
   private lastConvolverInfo: string | ConvolverInfo | null = null
   private lastVisualizationDataByKey = new Map<string, string | VisualizationData>()
   private visualizationCacheKeys = new Set<string>()
@@ -115,14 +137,18 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private lastUpcomingTrack: string | AudioEngineQueueItem | null = null
   private lastErrorJson = '{"message":""}'
   private coalescedControls = new Map<keyof NativeAudioBinding, CoalescedControlRequest>()
+  private desiredDspState: DspStatePayload | null = null
+  private queuedDspState: QueuedDspState | null = null
+  private dspStateInFlight = false
+  private dspStateFlushScheduled = false
 
   constructor(options: AudioEngineServiceBindingOptions) {
     super()
     this.options = options
     this.requestTimeoutMs = options.requestTimeoutMs ?? 1500
-    this.analysisRequestTimeoutMs = Math.max(
+    this.topologyRequestTimeoutMs = Math.max(
       this.requestTimeoutMs,
-      options.analysisRequestTimeoutMs ?? DEFAULT_ANALYSIS_REQUEST_TIMEOUT_MS
+      options.topologyRequestTimeoutMs ?? DEFAULT_TOPOLOGY_REQUEST_TIMEOUT_MS
     )
     this.restartDelayMs = options.restartDelayMs ?? 500
     this.maxInFlightRequests = Math.max(
@@ -137,6 +163,11 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
    * 用于 play/pause 等需要确认真实状态的控制命令。
    */
   callAsync(method: string, args: unknown[]): Promise<unknown> {
+    if (method === 'AnalyzeBpm' || method === 'AnalyzeLoudness') {
+      return Promise.reject(
+        new Error(`${method} must use the isolated audio analysis service`)
+      )
+    }
     return this.call(method as keyof NativeAudioBinding, args)
   }
 
@@ -190,6 +221,83 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
 
   SetDspConfig(json: string): void {
     this.fireAndForget('SetDspConfig', [json])
+  }
+
+  ApplyDspState(revision: number, json: string): void {
+    let payload: DspStatePayload
+    try {
+      payload = parseDspStatePayload(json, revision)
+    } catch (error) {
+      this.recordTransientFailure(error instanceof Error ? error.message : String(error))
+      return
+    }
+    // NativeAudioBinding's fire-and-forget entry point receives complete
+    // graph snapshots. Preserve its historical replacement semantics; callers
+    // using the queued async API can intentionally submit field-level patches.
+    payload = { ...payload, graphUpdateMode: 'replace' }
+    void this.applyDspState(revision, payload).catch((error) => {
+      this.recordTransientFailure(error instanceof Error ? error.message : String(error))
+    })
+  }
+
+  SetDspGraph(json: string): void {
+    void this.applyDspGraph(json).catch((error) => {
+      this.recordTransientFailure(error instanceof Error ? error.message : String(error))
+    })
+  }
+
+  GetDspGraphStatus(): string | DspGraphStatus {
+    this.refreshCache('GetDspGraphStatus', [], (value) => {
+      this.cacheDspGraphStatus(value)
+    })
+    return this.lastDspGraphStatus
+  }
+
+  async applyDspGraph(json: string): Promise<DspGraphStatus> {
+    const requestedRevision = parseRequestedDspGraphRevision(json)
+    const parsed = parseJsonObject(json, 'DSP graph payload')
+    const payload = parseDspStatePayload(
+      JSON.stringify({
+        ...parsed,
+        graphUpdateMode: 'replace',
+        processing: this.desiredDspState?.processing ?? {}
+      }),
+      requestedRevision
+    )
+    return this.applyDspState(requestedRevision, payload)
+  }
+
+  applyDspState(revision: number, payload: DspStatePayload): Promise<DspGraphStatus> {
+    assertPositiveDspRevision(revision)
+    const normalized = normalizeDspStatePayload(payload, revision)
+    this.desiredDspState = mergeDspStatePayload(this.desiredDspState, normalized)
+    this.lastDspGraphStatus = {
+      ...this.lastDspGraphStatus,
+      requestedRevision: revision,
+      applyState: 'pending',
+      applyError: ''
+    }
+    return new Promise<DspGraphStatus>((resolve, reject) => {
+      const waiter: DspStateWaiter = { revision, resolve, reject }
+      if (this.queuedDspState) {
+        this.queuedDspState.revision = revision
+        this.queuedDspState.payload = { ...this.desiredDspState! }
+        this.queuedDspState.waiters.push(waiter)
+      } else {
+        this.queuedDspState = {
+          revision,
+          payload: { ...this.desiredDspState! },
+          waiters: [waiter]
+        }
+      }
+      this.scheduleDspStateFlush()
+    })
+  }
+
+  async getDspGraphStatusAsync(): Promise<DspGraphStatus> {
+    const status = parseDspGraphStatus(await this.call('GetDspGraphStatus', []))
+    this.cacheDspGraphStatus(status)
+    return this.lastDspGraphStatus
   }
 
   LoadImpulseResponse(path: string): void {
@@ -279,13 +387,13 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   AnalyzeBpm(source: string, optionsJson?: string): string | BpmAnalysisResult {
     void source
     void optionsJson
-    return '{"error":"bpm analysis requires async audio service RPC"}'
+    return '{"error":"BPM analysis requires the isolated audio analysis service"}'
   }
 
   AnalyzeLoudness(source: string, optionsJson?: string): string {
     void source
     void optionsJson
-    return '{"error":"loudness analysis requires async audio service RPC"}'
+    return '{"error":"loudness analysis requires the isolated audio analysis service"}'
   }
 
   EnumerateDevices(): string | AudioDeviceOption[] {
@@ -300,7 +408,13 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   }
 
   GetEngineCapabilities(): string {
-    return '{"audioPluginSystem":true,"nativeDsp":true,"audioService":true}'
+    return JSON.stringify({
+      audioPluginSystem: true,
+      nativeDsp: true,
+      audioService: true,
+      audioServiceProtocolVersion: this.serviceCapabilities?.protocolVersion ?? null,
+      dspGraphRevisionAck: this.serviceCapabilities?.dspGraphRevisionAck === true
+    })
   }
 
   GetLastError(): string {
@@ -313,6 +427,7 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
 
   destroy(): void {
     this.stopped = true
+    this.rejectQueuedDspState(new Error('音频服务已停止'))
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer)
       pending.reject(new Error('音频服务已停止'))
@@ -416,7 +531,13 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
 
   private handleMessage(message: AudioServiceResponse | AudioServiceEvent): void {
     if (message.kind === 'ready') {
-      this.emit('ready')
+      const capabilityError = validateAudioServiceCapabilities(message.capabilities)
+      if (capabilityError) {
+        this.handleFatal(capabilityError)
+        return
+      }
+      this.serviceCapabilities = message.capabilities ?? null
+      this.emit('ready', this.serviceCapabilities)
       return
     }
     if (message.kind === 'fatal') {
@@ -511,6 +632,79 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
       })
   }
 
+  private scheduleDspStateFlush(): void {
+    if (this.dspStateInFlight || this.dspStateFlushScheduled || this.stopped) return
+    this.dspStateFlushScheduled = true
+    queueMicrotask(() => {
+      this.dspStateFlushScheduled = false
+      void this.flushDspState()
+    })
+  }
+
+  private async flushDspState(): Promise<void> {
+    if (this.dspStateInFlight || this.stopped) return
+    const batch = this.queuedDspState
+    if (!batch) return
+    this.queuedDspState = null
+    this.dspStateInFlight = true
+    try {
+      await this.call('ApplyDspState', [batch.revision, JSON.stringify(batch.payload)])
+      const status = await this.waitForDspStateRevision(batch.revision)
+      const latestRequested = this.lastDspGraphStatus.requestedRevision ?? batch.revision
+      if (status.revision >= latestRequested) {
+        this.lastDspGraphStatus = {
+          ...status,
+          requestedRevision: latestRequested,
+          appliedRevision: status.revision,
+          applyState: 'applied',
+          applyError: ''
+        }
+      }
+      for (const waiter of batch.waiters) {
+        waiter.resolve({
+          ...status,
+          requestedRevision: waiter.revision,
+          appliedRevision: status.revision,
+          applyState: 'applied',
+          applyError: ''
+        })
+      }
+    } catch (error) {
+      const failure = error instanceof Error ? error : new Error(String(error))
+      if (batch.revision >= (this.lastDspGraphStatus.requestedRevision ?? 0)) {
+        this.lastDspGraphStatus = {
+          ...this.lastDspGraphStatus,
+          requestedRevision: batch.revision,
+          applyState: 'failed',
+          applyError: failure.message
+        }
+      }
+      this.recordTransientFailure(failure.message)
+      for (const waiter of batch.waiters) waiter.reject(failure)
+    } finally {
+      this.dspStateInFlight = false
+      this.scheduleDspStateFlush()
+    }
+  }
+
+  private async waitForDspStateRevision(revision: number): Promise<DspGraphStatus> {
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const status = parseDspGraphStatus(await this.call('GetDspGraphStatus', []))
+      this.cacheDspGraphStatus(status)
+      if (status.revision >= revision) return status
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    throw new Error(`DSP graph ACK revision mismatch: requested ${revision}`)
+  }
+
+  private rejectQueuedDspState(error: Error): void {
+    const queued = this.queuedDspState
+    this.queuedDspState = null
+    this.dspStateFlushScheduled = false
+    if (!queued) return
+    for (const waiter of queued.waiters) waiter.reject(error)
+  }
+
   private refreshCache(
     method: keyof NativeAudioBinding,
     args: unknown[],
@@ -562,6 +756,8 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
 
   private clearServiceDerivedCaches(): void {
     this.lastDspStatus = { plugins: [] }
+    this.lastDspGraphStatus = createEmptyDspGraphStatus()
+    this.serviceCapabilities = null
     this.lastPlaybackInfo = '{"state":"stopped"}'
     this.lastConvolverInfo = null
     this.lastVisualizationDataByKey.clear()
@@ -571,6 +767,27 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     this.lastUpcomingTrack = null
     this.cacheRequestSerial.clear()
     this.cacheRequestsInFlight.clear()
+    this.desiredDspState = null
+  }
+
+  private cacheDspGraphStatus(value: unknown): void {
+    const status = parseDspGraphStatus(value)
+    if (status.revision < this.lastDspGraphStatus.revision) return
+    const requestedRevision = this.lastDspGraphStatus.requestedRevision ?? status.revision
+    const applied = status.revision >= requestedRevision
+    const applyState =
+      requestedRevision === 0
+        ? 'idle'
+        : applied
+          ? 'applied'
+          : this.lastDspGraphStatus.applyState
+    this.lastDspGraphStatus = {
+      ...status,
+      requestedRevision,
+      appliedRevision: status.revision,
+      applyState,
+      applyError: applied ? '' : this.lastDspGraphStatus.applyError
+    }
   }
 
   private call(method: keyof NativeAudioBinding, args: unknown[]): Promise<unknown> {
@@ -582,20 +799,15 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
     const requestId = randomUUID()
     const generation = this.generation
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => {
-          const pending = this.pending.get(requestId)
-          if (!pending || generation !== this.generation || this.child !== child) return
-          const error = createAudioServiceTimeoutError(method)
-          clearTimeout(pending.timer)
-          this.pending.delete(requestId)
-          pending.reject(error)
-          this.restartUnresponsiveService(child, generation, error.message)
-        },
-        method === 'AnalyzeBpm' || method === 'AnalyzeLoudness'
-          ? this.analysisRequestTimeoutMs
-          : this.requestTimeoutMs
-      )
+      const timer = setTimeout(() => {
+        const pending = this.pending.get(requestId)
+        if (!pending || generation !== this.generation || this.child !== child) return
+        const error = createAudioServiceTimeoutError(method)
+        clearTimeout(pending.timer)
+        this.pending.delete(requestId)
+        pending.reject(error)
+        this.restartUnresponsiveService(child, generation, error.message)
+      }, this.requestTimeoutForMethod(method))
       this.pending.set(requestId, {
         resolve: (value) => {
           if (generation !== this.generation) return
@@ -634,11 +846,19 @@ export class AudioEngineServiceBinding extends EventEmitter implements NativeAud
   private recordFailure(message: string): void {
     this.lastErrorJson = JSON.stringify({ message })
     this.coalescedControls.clear()
+    this.rejectQueuedDspState(new Error(message))
     for (const [requestId, pending] of this.pending.entries()) {
       clearTimeout(pending.timer)
       pending.reject(new Error(message))
       this.pending.delete(requestId)
     }
+  }
+
+  private requestTimeoutForMethod(method: keyof NativeAudioBinding): number {
+    // Topology updates deliberately stop/join and reopen an exclusive device.
+    // They are still generation-fenced by call(), but must not be killed by a
+    // normal control-RPC deadline while a driver negotiates the new stream.
+    return method === 'SetOutputConfig' ? this.topologyRequestTimeoutMs : this.requestTimeoutMs
   }
 
   private recordTransientFailure(message: string): void {
@@ -683,4 +903,103 @@ function createAudioServiceTimeoutError(method: keyof NativeAudioBinding): Audio
 
 function isAudioServiceBusyError(error: unknown): error is AudioServiceError {
   return error instanceof Error && (error as AudioServiceError).code === AUDIO_SERVICE_BUSY_CODE
+}
+
+function createEmptyDspGraphStatus(): DspGraphStatus {
+  return {
+    revision: 0,
+    requestedRevision: 0,
+    appliedRevision: 0,
+    applyState: 'idle',
+    applyError: '',
+    activeSceneId: null,
+    totalLatencyFrames: 0,
+    totalTailFrames: 0,
+    nodes: []
+  }
+}
+
+function parseRequestedDspGraphRevision(json: string): number {
+  const value = parseJsonObject(json, 'DSP graph payload')
+  const revision =
+    (value as { revision?: unknown }).revision
+  if (!Number.isSafeInteger(revision) || (revision as number) <= 0) {
+    throw new Error('DSP graph payload requires a positive integer revision')
+  }
+  return revision as number
+}
+
+function parseJsonObject(json: string, label: string): Record<string, unknown> {
+  let value: unknown
+  try {
+    value = JSON.parse(json)
+  } catch {
+    throw new Error(`${label} must be valid JSON`)
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} must be an object`)
+  }
+  return value as Record<string, unknown>
+}
+
+function assertPositiveDspRevision(revision: number): void {
+  if (!Number.isSafeInteger(revision) || revision <= 0) {
+    throw new Error('DSP state requires a positive integer revision')
+  }
+}
+
+function parseDspStatePayload(json: string, revision: number): DspStatePayload {
+  return normalizeDspStatePayload(
+    parseJsonObject(json, 'DSP state payload') as unknown as DspStatePayload,
+    revision
+  )
+}
+
+function normalizeDspStatePayload(
+  payload: DspStatePayload,
+  revision: number
+): DspStatePayload {
+  assertPositiveDspRevision(revision)
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('DSP state payload must be an object')
+  }
+  const processing = payload.processing
+  const graph = payload.graph
+  if (!processing || typeof processing !== 'object' || Array.isArray(processing)) {
+    throw new Error('DSP state payload requires a processing object')
+  }
+  if (!graph || typeof graph !== 'object' || Array.isArray(graph)) {
+    throw new Error('DSP state payload requires a graph object')
+  }
+  if (payload.graphUpdateMode !== undefined && payload.graphUpdateMode !== 'replace') {
+    throw new Error('DSP graph update mode must be replace when specified')
+  }
+  return {
+    ...payload,
+    revision,
+    processing: { ...processing },
+    graph: { ...graph }
+  }
+}
+
+function parseDspGraphStatus(value: unknown): DspGraphStatus {
+  let parsed = value
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed)
+    } catch {
+      throw new Error('audio service returned invalid DSP graph status JSON')
+    }
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('audio service returned an invalid DSP graph status')
+  }
+  const status = parsed as Partial<DspGraphStatus>
+  if (!Number.isSafeInteger(status.revision) || (status.revision as number) < 0) {
+    throw new Error('audio service returned an invalid DSP graph revision')
+  }
+  if (!Array.isArray(status.nodes)) {
+    throw new Error('audio service returned DSP graph status without nodes')
+  }
+  return status as DspGraphStatus
 }

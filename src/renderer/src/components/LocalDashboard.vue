@@ -227,8 +227,8 @@ function handleHeroSeek(event: MouseEvent): void {
   seek(duration.value * ratio)
 }
 
-function playAlbum(albumName: string): void {
-  const albumTracks = tracks.value.filter((track) => (track.album || '未知专辑') === albumName)
+function playAlbum(album: { tracks: Track[] }): void {
+  const albumTracks = album.tracks
   if (albumTracks.length === 0) return
   playTrack(albumTracks[0], albumTracks)
 }
@@ -397,7 +397,20 @@ const embeddedDspGraphStatus = computed(
   () =>
     outputInfo.value?.nativeDsp?.graph ?? playbackInfo.value?.outputInfo?.nativeDsp?.graph ?? null
 )
-const dspGraphStatus = computed(() => embeddedDspGraphStatus.value ?? polledDspGraphStatus.value)
+const dspGraphStatus = computed<DspGraphStatus | null>(() => {
+  const embedded = embeddedDspGraphStatus.value
+  const polled = polledDspGraphStatus.value
+  if (!embedded) return polled
+  if (!polled) return embedded
+  const runtimeStatus = polled.revision >= embedded.revision ? polled : embedded
+  return {
+    ...runtimeStatus,
+    requestedRevision: polled.requestedRevision,
+    appliedRevision: polled.appliedRevision,
+    applyState: polled.applyState,
+    applyError: polled.applyError
+  }
+})
 const activeDspScene = computed(() => {
   const state = dspSceneState.value
   if (!state) return null
@@ -523,8 +536,14 @@ function routeStageState(
   status: DspGraphNodeStatus | undefined
 ): Pick<DspRouteStage, 'active' | 'state' | 'stateLabel'> {
   if (!node.enabled) return { active: false, state: 'disabled', stateLabel: '已关闭' }
-  if (dspGraphStatus.value?.compileState === 'failed') {
+  if (
+    dspGraphStatus.value?.compileState === 'failed' ||
+    dspGraphStatus.value?.applyState === 'failed'
+  ) {
     return { active: false, state: 'error', stateLabel: '图编译失败' }
+  }
+  if (dspGraphStatus.value?.applyState === 'pending') {
+    return { active: false, state: 'ready', stateLabel: '等待应用' }
   }
   if (status?.bypassed) {
     return { active: false, state: 'bypassed', stateLabel: status.bypassReason || '旁路' }
@@ -641,6 +660,8 @@ const dspEngineOn = computed(
 )
 
 const dspStatusText = computed(() => {
+  if (dspGraphStatus.value?.applyState === 'failed') return 'DSP 图应用失败'
+  if (dspGraphStatus.value?.applyState === 'pending') return 'DSP 图等待应用'
   if (dspGraphStatus.value?.compileState === 'failed') return 'DSP 图编译失败'
   if (!currentTrack.value) return '等待播放源'
   if (dspProcessingActive.value) return '实时线路运行中'
@@ -1194,9 +1215,9 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
           <div class="album-grid">
             <button
               v-for="album in albumShelf"
-              :key="album.name"
+              :key="album.id"
               class="album-tile"
-              @click="playAlbum(album.name)"
+              @click="playAlbum(album)"
             >
               <CoverImg :cover="album.cover" :fallback="DEFAULT_COVER" :alt="album.name" />
               <span class="album-veil" aria-hidden="true"></span>
@@ -1237,7 +1258,9 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
                 class="dialog-live-state"
                 :class="{
                   live: dspProcessingActive,
-                  error: dspGraphStatus?.compileState === 'failed'
+                  error:
+                    dspGraphStatus?.compileState === 'failed' ||
+                    dspGraphStatus?.applyState === 'failed'
                 }"
               >
                 <i></i>{{ dspStatusText }}

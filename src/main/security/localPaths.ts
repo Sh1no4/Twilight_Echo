@@ -4,8 +4,8 @@ import { dirname, extname, resolve } from 'path'
 import type { AppSettings } from '../core/types'
 import { runtime } from '../core/runtime'
 import { getDefaultCachePath } from '../core/settings'
-import { getManagedMusicCacheDirectories } from '../cache/musicCacheLayout.ts'
-import { SUPPORTED_EXTENSIONS } from '../library/scan'
+import { getMusicCacheStorageDirectories } from '../cache/musicCacheLayout.ts'
+import { SUPPORTED_EXTENSIONS } from '../library/libraryFiles.ts'
 import {
   CanonicalPathGrantSet,
   isCanonicalPathInside,
@@ -325,7 +325,7 @@ async function refreshDeclaredImpulseResponseFiles(): Promise<void> {
 async function grantCacheRoot(rootPath: string): Promise<string> {
   const canonicalRoot = await resolveCanonicalExistingPath(rootPath, 'directory')
   const managedDirectories = await Promise.all(
-    getManagedMusicCacheDirectories(rootPath).map((directory) =>
+    getMusicCacheStorageDirectories(rootPath).map((directory) =>
       resolveCanonicalExistingPath(directory, 'directory')
     )
   )

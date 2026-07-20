@@ -11,6 +11,34 @@ import type {
   DspStereoImageConfig,
   Vst3CatalogState
 } from '../shared/dspGraph.ts'
+import type { SleepTimerSettings } from '../shared/sleepTimer.ts'
+import type {
+  LocalLibraryRemoveRequest,
+  LocalLibraryRemoveResult,
+  LocalLibraryRestoreRequest,
+  LocalLibraryRestoreResult,
+  LocalLibrarySnapshotInput,
+  LocalMusicLibraryDocument
+} from '../shared/localLibrary.ts'
+import type {
+  LocalLibraryTagRestoreRequest,
+  LocalLibraryTagRestoreResult,
+  LocalLibraryTagWriteRequest,
+  LocalLibraryTagWriteResult
+} from '../shared/localLibraryTags.ts'
+import type {
+  LocalLibraryScanProgress,
+  LocalLibraryScanStatus,
+  LocalLibraryScanUpdate
+} from '../shared/localLibraryScan.ts'
+import type { DuplicateDetectionReadApi } from '../shared/duplicateDetection.ts'
+import type { LyricsManagementDocument } from '../shared/lyricsManagement.ts'
+import type {
+  OfflineDownloadRecord,
+  OfflineDownloadRequest,
+  OfflinePlayablePathRequest,
+  OfflineStorageSummary
+} from '../shared/offlineDownloads.ts'
 
 export {}
 
@@ -22,11 +50,16 @@ interface TrackData {
   filePath: string
   fileName: string
   dir?: string
+  subTrack?: string
+  cueRange?: import('../shared/cue.ts').CueRange
+  cueSheetPath?: string
+  cueEncoding?: import('../shared/cue.ts').ParsedCueSheet['encoding']
   duration: number
   size: number
   cover: string | null
   lyrics: string | null
   translatedLyrics?: string | null
+  romanizedLyrics?: string | null
   metadataMatch?: TrackMetadataMatch | null
   source?: TrackSource
   ncmSongId?: number
@@ -53,7 +86,7 @@ interface AudioEngineEvent {
 }
 
 type AudioOutputId = 'wasapi' | 'asio' | 'coreaudio' | 'alsa'
-type PlayMode = 'sequential' | 'repeat' | 'shuffle'
+type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
 type PlayerShortcutAction = 'previous' | 'next' | 'playPause'
 interface PlayerShortcutStatus {
   accelerator: string
@@ -64,19 +97,14 @@ interface PlayerShortcutStatus {
 }
 type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
-type NcmPlaybackQuality =
-  | 'auto'
-  | 'standard'
-  | 'exhigh'
-  | 'lossless'
-  | 'hires'
-  | 'jyeffect'
-  | 'sky'
+type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires' | 'jyeffect' | 'sky'
 type StartupHomePage = 'local' | 'streaming'
 type UiDensity = 'compact' | 'standard' | 'comfortable'
 type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
 type LyricAlign = 'center' | 'left'
-type LibraryChange = { kind: 'add' | 'remove' | 'unknown'; path?: string }
+type LibraryChange =
+  | { kind: 'add' | 'remove' | 'unknown'; path?: string }
+  | { kind: 'scan'; update: LocalLibraryScanUpdate }
 type ProxyMode = 'auto' | 'custom' | 'off'
 type StreamingAudioCachePolicy = 'off' | 'provider'
 type BuiltInTrackSource = 'local' | 'ncm'
@@ -164,6 +192,24 @@ type TwilightPluginIndexInstallState =
   | 'built-in-blocked'
 type TwilightPluginIndexSourceKind = 'github' | 'custom' | 'bundled'
 type TwilightPluginIndexLoadedFrom = 'remote' | 'cache' | 'bundled'
+type TwilightPluginIndexCacheFormat = 'envelope-v1' | 'legacy'
+type TwilightPluginSignatureStatus =
+  | 'missing'
+  | 'malformed'
+  | 'unsupported'
+  | 'unknown-key'
+  | 'revoked-key'
+  | 'key-not-yet-valid'
+  | 'key-expired'
+  | 'invalid-key'
+  | 'invalid'
+  | 'valid'
+  | 'trust-store-error'
+type TwilightPluginVerificationLevel =
+  | 'official'
+  | 'publisher-signed'
+  | 'index-declared'
+  | 'unverified'
 type TwilightMediaProviderCapability =
   | 'search'
   | 'playbackUrl'
@@ -253,6 +299,7 @@ interface AudioEngineQueueItem {
   replayGainAlbumPeak?: number
   r128TrackGainDb?: number
   r128AlbumGainDb?: number
+  cueRange?: import('../shared/cue.ts').CueRange
 }
 
 interface EqualizerBand {
@@ -580,6 +627,7 @@ interface AppSettings {
   lyricAlign: LyricAlign
   lyricDimOpacity: number
   playbackResumeMode: PlaybackResumeMode
+  sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
   audioOutput: AudioOutputId
@@ -596,6 +644,7 @@ interface AppSettings {
   proxyMode: ProxyMode
   proxyHost: string
   proxyPort: number
+  proxyAllowDirectFallback: boolean
   streamingActiveProvider: string
 }
 
@@ -689,6 +738,16 @@ interface PlaybackSession {
   playMode?: PlayMode
   track: TrackData
   position: number
+  queue?: TrackData[]
+  queueIndex?: number
+  sleepTimer?: import('../shared/sleepTimer.ts').SleepTimerState
+}
+
+interface VersionedDataEnvelope<T> {
+  version: 2
+  revision: number
+  savedAt: string
+  data: T
 }
 
 interface SettingsSnapshot extends AppSettings {
@@ -788,6 +847,26 @@ interface TwilightPluginInstallResult {
   warning: string
 }
 
+interface TwilightPluginPublisherSignature {
+  schemaVersion: 1
+  algorithm: 'ed25519'
+  keyId: string
+  value: string
+}
+
+interface TwilightPluginVerification {
+  level: TwilightPluginVerificationLevel
+  official: boolean
+  officialSource: boolean
+  indexClaimed: boolean
+  signatureStatus: TwilightPluginSignatureStatus
+  keyId: string | null
+  publisher: string | null
+  keyFingerprintSha256: string | null
+  revalidateAt: string | null
+  reason: string
+}
+
 interface TwilightPluginIndexEntry {
   id: string
   name: string
@@ -810,17 +889,28 @@ interface TwilightPluginIndexEntry {
   sourceUrl: string
   checksumSha256: string
   tags?: string[]
+  publisherSignature?: TwilightPluginPublisherSignature
+  /** Publisher/index metadata only. Never use this field as an official trust decision. */
   verified?: boolean
+  verification: TwilightPluginVerification
   installState?: TwilightPluginIndexInstallState
   installedVersion?: string
 }
 
 interface TwilightPluginIndexStatus {
   sourceUrl: string
+  configuredSourceUrl: string
   sourceKind: TwilightPluginIndexSourceKind
   loadedFrom: TwilightPluginIndexLoadedFrom
   lastFetchedAt: string | null
+  expiresAt: string | null
+  loadedAt: string
   stale: boolean
+  expired: boolean
+  originVerified: boolean
+  officialSource: boolean
+  cacheFormat: TwilightPluginIndexCacheFormat | null
+  trustStoreError: string | null
   error: string | null
 }
 
@@ -925,6 +1015,15 @@ interface OutputConfig {
   preferredBufferSize: number
   routingMode: ChannelRoutingMode
   wasapiExclusivePushMode?: boolean
+}
+
+interface OutputConfigApplyStatus {
+  requestedRevision: number
+  appliedRevision: number
+  failedRevision: number
+  state: 'idle' | 'pending' | 'applied' | 'failed'
+  error: string
+  generation: number
 }
 
 interface LatencyInfo {
@@ -1131,6 +1230,7 @@ interface AudioEngineAPI {
   setAudioOutput: (output: AudioOutputId, device?: string) => Promise<AudioOutputState>
   setAudioDevice: (device: string) => Promise<AudioOutputState>
   setOutputConfig: (config: OutputConfig) => Promise<OutputConfig>
+  getOutputConfigApplyStatus: () => Promise<OutputConfigApplyStatus>
   getAudioOutput: () => Promise<AudioOutputId>
   getAudioOutputOptions: () => Promise<AudioOutputOption[]>
   getAudioOutputState: () => Promise<AudioOutputState>
@@ -1207,6 +1307,22 @@ interface OpraAPI {
 }
 
 interface WindowAPI {
+  sleepTimer: {
+    configure: (
+      state: import('../shared/sleepTimer.ts').SleepTimerState
+    ) => Promise<import('../shared/sleepTimer.ts').SleepTimerState | null>
+    cancel: () => Promise<null>
+    getState: () => Promise<import('../shared/sleepTimer.ts').SleepTimerState | null>
+    boundary: (
+      boundary: 'trackEnd' | 'queueEnd'
+    ) => Promise<import('../shared/sleepTimer.ts').SleepTimerState | null>
+    onState: (
+      callback: (state: import('../shared/sleepTimer.ts').SleepTimerState | null) => void
+    ) => () => void
+    onTrigger: (
+      callback: (state: import('../shared/sleepTimer.ts').SleepTimerState) => void
+    ) => () => void
+  }
   window: {
     minimize: () => void
     toggleMaximize: () => void
@@ -1230,9 +1346,21 @@ interface WindowAPI {
     }) => Promise<void>
     clearActivity: () => Promise<void>
   }
-  library: {
+  library: DuplicateDetectionReadApi & {
+    removeTracks: (request: LocalLibraryRemoveRequest) => Promise<LocalLibraryRemoveResult>
+    restoreExclusions: (request: LocalLibraryRestoreRequest) => Promise<LocalLibraryRestoreResult>
+    writeTags: (request: LocalLibraryTagWriteRequest) => Promise<LocalLibraryTagWriteResult>
+    restoreTags: (request: LocalLibraryTagRestoreRequest) => Promise<LocalLibraryTagRestoreResult>
+    scanStartup: () => Promise<LocalLibraryScanUpdate>
+    scanFull: () => Promise<LocalLibraryScanUpdate>
+    getScanStatus: () => Promise<LocalLibraryScanStatus>
+    pauseScan: () => Promise<boolean>
+    resumeScan: () => Promise<boolean>
+    cancelScan: () => Promise<boolean>
     onChanged: (cb: (change: LibraryChange | undefined) => void) => () => void
     onCoversMissing: (cb: (info: { dirtyCount: number }) => void) => () => void
+    onScanProgress: (cb: (progress: LocalLibraryScanProgress) => void) => () => void
+    onScanStatus: (cb: (status: LocalLibraryScanStatus) => void) => () => void
   }
   fs: {
     scanMusicFiles: (folderPath: string) => Promise<TrackData[]>
@@ -1246,6 +1374,7 @@ interface WindowAPI {
     request: (request: BpmAnalysisRequest) => Promise<BpmAnalysisRequestResult>
     getCacheSize: () => Promise<number>
     clearCache: () => Promise<number>
+    cancel: (filePath?: string) => Promise<void>
     onCompleted: (cb: (event: BpmAnalysisCompletedEvent) => void) => () => void
   }
   loudnessAnalysis: {
@@ -1267,6 +1396,10 @@ interface WindowAPI {
       releaseNotes?: string
       error?: string
     }>
+    /**
+     * Reject to report a failed close-time persistence transaction. The main
+     * process keeps the window open and offers the user a retry path.
+     */
     onSavePlaybackSession: (cb: () => Promise<void> | void) => () => void
   }
   ncm: {
@@ -1275,16 +1408,41 @@ interface WindowAPI {
     getCachedSong: (songId: number) => Promise<string | null>
     cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
   }
+  offline: {
+    list: () => Promise<OfflineStorageSummary>
+    queue: (request: OfflineDownloadRequest) => Promise<OfflineDownloadRecord>
+    queueMany: (requests: OfflineDownloadRequest[]) => Promise<OfflineDownloadRecord[]>
+    cancel: (id: string) => Promise<OfflineDownloadRecord | null>
+    unpin: (id: string) => Promise<boolean>
+    getPlayablePath: (providerId: string, trackId: string) => Promise<string | null>
+    getPlayablePaths: (requests: OfflinePlayablePathRequest[]) => Promise<(string | null)[]>
+    onChanged: (callback: (record: OfflineDownloadRecord) => void) => () => void
+  }
   data: {
-    saveMusicLibrary: (data: { tracks: unknown[]; folders: string[] }) => Promise<void>
-    loadMusicLibrary: () => Promise<{ tracks: unknown[]; folders: string[] } | unknown[]>
+    saveMusicLibrary: (data: LocalLibrarySnapshotInput) => Promise<LocalMusicLibraryDocument>
+    loadMusicLibrary: () => Promise<LocalMusicLibraryDocument | unknown[]>
     getCover: (handle: string) => Promise<string | null>
     getLyrics: (dir: string, fileName: string, filePath?: string) => Promise<string | null>
-    savePlaybackSession: (session: PlaybackSession | null) => Promise<void>
-    loadPlaybackSession: () => Promise<PlaybackSession | null>
-    clearPlaybackSession: () => Promise<void>
-    savePlaylists: (playlists: unknown) => Promise<void>
-    loadPlaylists: () => Promise<unknown>
+    importLyrics: () => Promise<string | null>
+    saveLyrics: (contents: string) => Promise<string | null>
+    saveLyricsManagement: (
+      document: LyricsManagementDocument,
+      expectedRevision: number
+    ) => Promise<VersionedDataEnvelope<LyricsManagementDocument>>
+    loadLyricsManagement: () => Promise<VersionedDataEnvelope<LyricsManagementDocument> | null>
+    savePlaybackSession: (
+      session: PlaybackSession,
+      expectedRevision: number
+    ) => Promise<VersionedDataEnvelope<PlaybackSession>>
+    loadPlaybackSession: () => Promise<VersionedDataEnvelope<PlaybackSession | null> | null>
+    clearPlaybackSession: (
+      expectedRevision: number
+    ) => Promise<VersionedDataEnvelope<PlaybackSession | null>>
+    savePlaylists: (
+      playlists: unknown[],
+      expectedRevision: number
+    ) => Promise<VersionedDataEnvelope<unknown[]>>
+    loadPlaylists: () => Promise<VersionedDataEnvelope<unknown[]> | null>
     saveCookie: (cookie: string) => Promise<void>
     loadCookie: () => Promise<string>
   }
@@ -1326,7 +1484,8 @@ interface WindowAPI {
     call: (
       providerId: string,
       method: TwilightMediaProviderMethod,
-      args: unknown[]
+      args: unknown[],
+      options?: { idempotencyKey?: string }
     ) => Promise<unknown>
   }
   extensions: {
@@ -1341,8 +1500,8 @@ interface WindowAPI {
     updateTrack: (data: {
       lyrics: string | null
       translatedLyrics?: string | null
-      lyricsSource?: 'embedded' | 'local' | 'provider' | null
-      translatedLyricsSource?: 'embedded' | 'local' | 'provider' | null
+      lyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | null
+      translatedLyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | null
       title?: string
       artist?: string
     }) => void
@@ -1354,8 +1513,8 @@ interface WindowAPI {
       cb: (data: {
         lyrics: string | null
         translatedLyrics?: string | null
-        lyricsSource?: 'embedded' | 'local' | 'provider' | null
-        translatedLyricsSource?: 'embedded' | 'local' | 'provider' | null
+        lyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | null
+        translatedLyricsSource?: 'embedded' | 'local' | 'provider' | 'manual' | null
         title?: string
         artist?: string
       }) => void

@@ -208,7 +208,7 @@ test('playback session autosaves while playback changes instead of only on windo
     /watch\(\s*\[\(\) => options\.currentTrack\.value\?\.id, \(\) => getPlaybackResumeMode\(\)\]/
   )
   assert.match(sessionPersistenceSource, /DEFAULT_PLAYBACK_SESSION_POSITION_AUTOSAVE_MS/)
-  assert.match(sessionPersistenceSource, /options\.dataApi\.savePlaybackSession\(session\)/)
+  assert.match(sessionPersistenceSource, /sessionWriter\.save\(options\.dataApi, session\)/)
 })
 
 test('player state persists a selected track before shell-level autosave is available', () => {
@@ -220,12 +220,33 @@ test('player state persists a selected track before shell-level autosave is avai
   )
 
   assert.match(persistSelectedTrackSession, /const mode = appSettings\.value\.playbackResumeMode/)
-  assert.match(persistSelectedTrackSession, /dataApi\.savePlaybackSession\(session\)/)
-  assert.match(persistSelectedTrackSession, /selectedTrackSessionWriteChain/)
+  assert.match(persistSelectedTrackSession, /playbackSessionWriter\.save\(dataApi, session\)/)
   assert.match(
     setupSideEffects,
     /currentTrack\.value\?\.id[\s\S]*persistSelectedTrackSession\(\)[\s\S]*flush: 'sync'/
   )
+})
+
+test('removing a non-current local queue item persists the pruned restart session', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const removeUnavailableTracks = extractInternalFunctionBody(source, 'removeUnavailableTracks')
+  const persistAfterMutation = extractInternalFunctionBody(
+    source,
+    'persistPlaybackSessionAfterQueueMutation'
+  )
+  const clearPersistedSession = extractInternalFunctionBody(
+    source,
+    'clearPersistedSelectedTrackSession'
+  )
+
+  assert.match(removeUnavailableTracks, /const queueChanged =/)
+  assert.match(
+    removeUnavailableTracks,
+    /if \(queueChanged\) persistPlaybackSessionAfterQueueMutation\(\)/
+  )
+  assert.match(persistAfterMutation, /persistSelectedTrackSession\(\)/)
+  assert.match(persistAfterMutation, /clearPersistedSelectedTrackSession\(\)/)
+  assert.match(clearPersistedSession, /playbackSessionWriter\.clear\(dataApi\)/)
 })
 
 test('renderer streaming resume seeks only after media metadata is available', () => {
@@ -276,9 +297,15 @@ test('NetEase streams re-resolve after a quality preference change', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const resolvePlayTarget = extractInternalFunctionBody(source, 'resolvePlayTarget')
 
-  assert.match(resolvePlayTarget, /const ncmPlaybackQuality = appSettings\.value\.ncmPlaybackQuality/)
+  assert.match(
+    resolvePlayTarget,
+    /const ncmPlaybackQuality = appSettings\.value\.ncmPlaybackQuality/
+  )
   assert.match(resolvePlayTarget, /track\.streamQuality === ncmPlaybackQuality/)
-  assert.match(resolvePlayTarget, /source === 'ncm' \? \{ quality: ncmPlaybackQuality \} : undefined/)
+  assert.match(
+    resolvePlayTarget,
+    /source === 'ncm' \? \{ quality: ncmPlaybackQuality \} : undefined/
+  )
   assert.match(resolvePlayTarget, /track\.streamQuality = ncmPlaybackQuality/)
   assert.match(resolvePlayTarget, /当前网易云账号没有可播放的音质/)
 })
@@ -299,7 +326,7 @@ test('mini player switching recovers from stale unauthorized local tracks', () =
   assert.match(handlePlaybackFallback, /await loadAndPlay\(fallback\)/)
   assert.match(handleProviderRematchFallback, /if \(failedSource !== 'local'\)/)
   assert.match(handleProviderRematchFallback, /await loadAndPlay\(rematched\)/)
-  assert.match(windowSource, /backgroundThrottling: false/)
+  assert.doesNotMatch(windowSource, /backgroundThrottling: false/)
 })
 
 test('provider queues use native for resolved current targets without native queue delegation', () => {
@@ -328,9 +355,10 @@ test('provider queues use native for resolved current targets without native que
   assert.doesNotMatch(isNativeQueueDelegated, /canUseNativeQueuePlayback/)
   assert.match(
     syncNativeQueueState,
-    /const preparedQueue = await prepareNativeQueue\(\{/,
-    'queue synchronization must authorize candidates before delegating them to native playback'
+    /synchronizeLatestNativeQueue\(\s*nativeQueueRevisionFence,\s*snapshot\.revision,\s*\{[\s\S]*prepare: \(\) =>\s*preparePlayerNativeQueue\([\s\S]*isAudioFileAuthorized: window\.api\.fs\.isAudioFileAuthorized,[\s\S]*getOfflinePlayablePaths: window\.api\.offline\.getPlayablePaths/,
+    'queue synchronization must authorize candidates through the latest-revision fence before delegating them to native playback'
   )
+  assert.match(syncNativeQueueState, /if \(!synchronized\.applied\) return/)
   assert.match(
     loadAndPlay,
     /const useNativePlayback = shouldUseNativePlayback\(track, playTarget\)/
@@ -345,12 +373,17 @@ test('player store prepares native queues before loading or synchronizing them',
 
   assert.match(
     source,
-    /import \{ prepareNativeQueue \} from '\.\.\/utils\/nativeQueuePreparation\.ts'/
+    /import \{ preparePlayerNativeQueue \} from '\.\.\/utils\/nativeQueuePreparation\.ts'/
   )
-  assert.match(loadAndPlay, /const preparedQueue = await prepareNativeQueue\(\{/)
+  assert.match(loadAndPlay, /const preparedQueue = await preparePlayerNativeQueue\(/)
+  assert.match(loadAndPlay, /getOfflinePlayablePaths: window\.api\.offline\.getPlayablePaths/)
   assert.match(loadAndPlay, /preparedQueue\.items,\s*preparedQueue\.startIndex/)
   assert.match(loadAndPlay, /nativeQueueDelegated = preparedQueue\.delegated/)
-  assert.match(syncNativeQueueState, /const preparedQueue = await prepareNativeQueue\(\{/)
+  assert.match(
+    syncNativeQueueState,
+    /synchronizeLatestNativeQueue\(\s*nativeQueueRevisionFence,\s*snapshot\.revision,\s*\{[\s\S]*prepare: \(\) =>\s*preparePlayerNativeQueue\(/
+  )
+  assert.match(syncNativeQueueState, /if \(!synchronized\.applied\) return/)
   assert.match(syncNativeQueueState, /preparedQueue\.items, preparedQueue\.startIndex/)
 })
 
@@ -572,7 +605,7 @@ test('audio visualizer iframe controls are wired to the player store', () => {
   assert.match(panelSource, /const shouldPollVisualization = computed/)
   assert.match(
     panelSource,
-    /props\.active &&\s*iframeReady\.value &&\s*isPlaying\.value &&\s*audioEngineReady\.value &&\s*currentTrack\.value/
+    /props\.active &&\s*iframeReady\.value &&\s*documentVisible\.value &&\s*isPlaying\.value &&\s*audioEngineReady\.value &&\s*currentTrack\.value/
   )
   assert.match(panelSource, /if \(!shouldPollVisualization\.value\) return/)
   assert.match(panelSource, /function syncVisualizationPolling\(\)/)
@@ -962,8 +995,15 @@ test('play mode is persisted in settings and restored on launch', () => {
     'utf8'
   )
   const setPlayModeInternal = extractInternalFunctionBody(playerSource, 'setPlayModeInternal')
+  const advanceAfterPlaybackEnded = extractInternalFunctionBody(
+    playerSource,
+    'advanceAfterPlaybackEnded'
+  )
 
-  assert.match(settingsTypes, /export type PlayMode = 'sequential' \| 'repeat' \| 'shuffle'/)
+  assert.match(
+    settingsTypes,
+    /export type PlayMode = 'sequential' \| 'listLoop' \| 'repeat' \| 'shuffle'/
+  )
   assert.match(settingsTypes, /playMode: PlayMode/)
   assert.match(settingsStoreSource, /playMode: 'sequential'/)
   assert.match(mainSource, /import type \{ PlayMode \} from '\.\.\/audioEngineManager'/)
@@ -972,6 +1012,14 @@ test('play mode is persisted in settings and restored on launch', () => {
   assert.match(playerSource, /import type \{[\s\S]*PlayMode[\s\S]*\} from '\.\.\/types\/settings'/)
   assert.match(playerSource, /watch\(\s*\(\) => appSettings\.value\.playMode,/)
   assert.match(setPlayModeInternal, /void updateSettings\(\{ playMode: mode \}\)/)
+  assert.match(
+    playerSource,
+    /const modes: PlayMode\[\] = \['sequential', 'listLoop', 'repeat', 'shuffle'\]/
+  )
+  assert.match(
+    advanceAfterPlaybackEnded,
+    /playMode\.value === 'listLoop' \|\| playMode\.value === 'shuffle'/
+  )
 })
 
 test('playback end auto-advance stops at queue end without changing manual next wrap', () => {
@@ -1040,5 +1088,31 @@ test('playback session carries play mode for quit-time restore', () => {
   assert.match(
     restorePlaybackSession,
     /setPlayModeInternal\(session\.playMode, \{ persist: false \}\)/
+  )
+})
+
+test('queue editing commands commit snapshots, persistence, and revision-fenced native synchronization', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const commit = extractInternalFunctionBody(source, 'commitQueueEdit')
+  const enqueue = extractInternalFunctionBody(source, 'enqueueTrack')
+  const playNext = extractInternalFunctionBody(source, 'playNextTrack')
+  const remove = extractInternalFunctionBody(source, 'removeQueueItem')
+  const clear = extractInternalFunctionBody(source, 'clearQueue')
+  const reorder = extractInternalFunctionBody(source, 'reorderQueue')
+
+  assert.match(commit, /toPlaybackQueueSnapshots\(nextQueue\)/)
+  assert.match(commit, /originalQueue\.value = \[\.\.\.snapshots\]/)
+  assert.match(commit, /persistPlaybackSessionAfterQueueMutation\(\)/)
+  assert.match(commit, /queueNativeQueueStateSync\(\)/)
+  assert.match(enqueue, /\[\.\.\.queue\.value, track\]/)
+  assert.match(playNext, /next\.splice\(insertAt, 0, track\)/)
+  assert.match(remove, /next\.splice\(index, 1\)/)
+  assert.match(clear, /commitQueueEdit\(\[\], -1\)/)
+  assert.match(reorder, /next\.splice\(fromIndex, 1\)/)
+  assert.match(reorder, /next\.splice\(toIndex, 0, moved\)/)
+  assert.match(reorder, /queueIndex\.value === fromIndex/)
+  assert.match(
+    source,
+    /function saveQueueAsPlaylist[\s\S]*createPlaylistWithTracks\(name, \[\.\.\.queue\.value\]\)/
   )
 })

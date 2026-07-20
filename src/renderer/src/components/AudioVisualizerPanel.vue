@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
 import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
@@ -11,12 +11,7 @@ const props = defineProps<{ active: boolean }>()
 
 const playbackStore = usePlaybackQueueStore()
 const audioOutputDspStore = useAudioOutputDspStore()
-const {
-  currentTrack,
-  isPlaying,
-  currentTime,
-  duration
-} = storeToRefs(playbackStore)
+const { currentTrack, isPlaying, currentTime, duration } = storeToRefs(playbackStore)
 const { audioEngineReady } = storeToRefs(audioOutputDspStore)
 const { formatTime, togglePlay, next, prev, seek } = playbackStore
 const resolvedCover = useCover(computed(() => currentTrack.value?.cover ?? null))
@@ -24,6 +19,7 @@ const resolvedCover = useCover(computed(() => currentTrack.value?.cover ?? null)
 const iframeRef = ref<HTMLIFrameElement | null>(null)
 const iframeReady = ref(false)
 const visualizerSrc = ref(buildVisualizerSrc())
+const documentVisible = ref(!document.hidden)
 const VISUALIZER_BAR_COUNT = 140
 const VISUALIZER_ANALYSIS_POINTS = 4096
 const visualizationOptions = {
@@ -47,6 +43,7 @@ const shouldPollVisualization = computed(
   () =>
     props.active &&
     iframeReady.value &&
+    documentVisible.value &&
     isPlaying.value &&
     audioEngineReady.value &&
     currentTrack.value
@@ -72,7 +69,9 @@ function formatVisualizerBpm(value: unknown): string {
   return bpm === undefined ? '' : bpm.toFixed(1).replace(/\.0$/, '')
 }
 
-function getPrimaryTrackBpm(track: { bpmAnalysis?: { bpm?: number }; bpm?: number } | null): number | undefined {
+function getPrimaryTrackBpm(
+  track: { bpmAnalysis?: { bpm?: number }; bpm?: number } | null
+): number | undefined {
   return normalizeBpm(track?.bpmAnalysis?.bpm) ?? normalizeBpm(track?.bpm)
 }
 
@@ -124,17 +123,20 @@ async function pollVisualizationFrame(): Promise<void> {
       referenceBpm: currentMetadataBpm
     })
     postTempo(tempo)
-    post({
-      kind: 'spectrum',
-      bars,
-      waveform,
-      sampleRate: v.sampleRate,
-      maxFrequency: v.maxFrequency,
-      peakDb: v.peakDb,
-      rmsDb: v.rmsDb,
-      lufsMomentary: v.lufsMomentary,
-      active: v.active
-    }, [bars.buffer, waveform.buffer])
+    post(
+      {
+        kind: 'spectrum',
+        bars,
+        waveform,
+        sampleRate: v.sampleRate,
+        maxFrequency: v.maxFrequency,
+        peakDb: v.peakDb,
+        rmsDb: v.rmsDb,
+        lufsMomentary: v.lufsMomentary,
+        active: v.active
+      },
+      [bars.buffer, waveform.buffer]
+    )
   } catch {
     // The playback controls remain usable if visualization sampling is unavailable.
   } finally {
@@ -147,17 +149,20 @@ function postInactiveVisualizationFrame(): void {
   resetTempoEstimator()
   const bars = new Float32Array(VISUALIZER_BAR_COUNT)
   const waveform = new Float32Array(visualizationOptions.waveformPoints)
-  post({
-    kind: 'spectrum',
-    bars,
-    waveform,
-    sampleRate: 0,
-    maxFrequency: 20000,
-    peakDb: -120,
-    rmsDb: -120,
-    lufsMomentary: null,
-    active: false
-  }, [bars.buffer, waveform.buffer])
+  post(
+    {
+      kind: 'spectrum',
+      bars,
+      waveform,
+      sampleRate: 0,
+      maxFrequency: 20000,
+      peakDb: -120,
+      rmsDb: -120,
+      lufsMomentary: null,
+      active: false
+    },
+    [bars.buffer, waveform.buffer]
+  )
 }
 
 function startVisualizationPolling(): void {
@@ -248,14 +253,26 @@ function onMessage(event: MessageEvent): void {
 }
 
 window.addEventListener('message', onMessage)
+function onDocumentVisibilityChange(): void {
+  documentVisible.value = !document.hidden
+}
+onMounted(() => document.addEventListener('visibilitychange', onDocumentVisibilityChange))
 onBeforeUnmount(() => {
   visualizerUnmounted = true
   stopVisualizationPolling()
   window.removeEventListener('message', onMessage)
+  document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
 })
 
 watch(
-  [() => props.active, iframeReady, isPlaying, audioEngineReady, () => currentTrack.value?.id],
+  [
+    () => props.active,
+    iframeReady,
+    documentVisible,
+    isPlaying,
+    audioEngineReady,
+    () => currentTrack.value?.id
+  ],
   () => syncVisualizationPolling(),
   { immediate: true }
 )
@@ -347,7 +364,6 @@ watch(
 onBeforeUnmount(() => {
   post({ kind: 'playback', isPlaying: false, position: 0, duration: 0 })
 })
-
 </script>
 
 <template>

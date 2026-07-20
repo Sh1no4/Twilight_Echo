@@ -31,35 +31,37 @@ This file also guides CodeBuddy Code / AI agents. The plugin-system rules below 
 
 All commands run from the repo root. JS/TS tests use Node's built-in `node --test` runner (no Jest/Vitest); test files are co-located as `*.test.ts` next to the source they cover.
 
+The repository uses the `pnpm@11.7.0` version pinned in `package.json`. Install with `pnpm install --frozen-lockfile`; `pnpm-lock.yaml` is the only lockfile and carries the built-in NCM dependency patch.
+
 ### Development & build
 
 ```bash
-npm run dev                 # electron-vite dev (compiles all 3 main entries + preload + renderer, launches Electron)
-npm run build               # typecheck + electron-vite build
-npm run build:unpack        # build + electron-builder --dir (unpacked, for local verification)
-npm run build:win           # build + electron-builder --win (NSIS)
-npm run build:mac           # build + electron-builder --mac (dmg)
-npm run build:linux         # build + electron-builder --linux (AppImage/snap/deb)
+pnpm run dev                 # electron-vite dev (compiles all 5 main entries + preload + renderer, launches Electron)
+pnpm run build               # typecheck + electron-vite build
+pnpm run build:unpack        # build + electron-builder --dir (unpacked, for local verification)
+pnpm run build:win           # build + electron-builder --win (NSIS)
+pnpm run build:mac           # build + electron-builder --mac (dmg)
+pnpm run build:linux         # build + electron-builder --linux (AppImage/snap/deb)
 ```
 
 ### Lint / format / typecheck
 
 ```bash
-npm run lint                # eslint --cache .
-npm run format              # prettier --write .
-npm run typecheck           # typecheck:node + typecheck:web
-npm run typecheck:node      # tsc --noEmit -p tsconfig.node.json
-npm run typecheck:web       # vue-tsc --noEmit -p tsconfig.web.json
+pnpm run lint                # eslint --cache .
+pnpm run format              # prettier --write .
+pnpm run typecheck           # typecheck:node + typecheck:web
+pnpm run typecheck:node      # tsc --noEmit -p tsconfig.node.json
+pnpm run typecheck:web       # vue-tsc --noEmit -p tsconfig.web.json
 ```
 
 ### App tests (Node `--test`)
 
 ```bash
-npm run test:plugins          # plugin host/manager/manifest/dependencies/routing + renderer provider store
-npm run test:audio-manager    # src/main/audioEngineManager + service client + IPC queue
-npm run test:playback-routing # renderer playback routing/fallback + library/lyrics/metadata utils + stores
-npm run test:local-perf       # local music perf + song-list context menu + favorite button
-npm run test:plugin-tooling   # packages/create-twilight-plugin CLI tests (.cjs)
+pnpm run test:plugins          # plugin host/manager/manifest/dependencies/routing + renderer provider store
+pnpm run test:audio-manager    # playback/analysis services, IPC queues, BPM/loudness managers
+pnpm run test:playback-routing # renderer playback routing/fallback + library/lyrics/metadata utils + stores
+pnpm run test:local-perf       # local music perf + song-list context menu + favorite button
+pnpm run test:plugin-tooling   # packages/create-twilight-plugin CLI tests (.cjs)
 ```
 
 ### Running a single test file
@@ -79,13 +81,13 @@ Example: `node --experimental-strip-types --test src/main/audioEngineManager.tes
 ```powershell
 # 仓库路径含空白时必须设置；该目录必须可写且完整路径不含空白。
 $env:TAE_MINGW_BUILD_DIR = 'C:\twilight-build\mingw-static'
-npm run configure:audio-engine:mingw   # 使用 $env:TAE_MINGW_BUILD_DIR
-npm run build:audio-engine:mingw       # 构建并从所选目录暂存
-npm run test:audio-engine:mingw        # 从所选目录运行 CTest
+pnpm run configure:audio-engine:mingw   # 使用 $env:TAE_MINGW_BUILD_DIR
+pnpm run build:audio-engine:mingw       # 构建并从所选目录暂存
+pnpm run test:audio-engine:mingw        # 从所选目录运行 CTest
 ctest --test-dir $env:TAE_MINGW_BUILD_DIR -N
 ```
 
-When the repository path contains whitespace, `TAE_MINGW_BUILD_DIR` is required and must name a writable external directory without whitespace. Configure, build, CTest, staging, and the `$env:TAE_MINGW_BUILD_DIR\tmp` temporary directory use this one layout. Default (non-MinGW) CMake entry exists but MinGW is the verified Windows path. `npm run test:no-real-device` runs the full no-real-device gate: MinGW configure/build/test + audio-manager + playback-routing + typecheck + build.
+When the repository path contains whitespace, `TAE_MINGW_BUILD_DIR` is required and must name a writable external directory without whitespace. Configure, build, CTest, staging, and the `$env:TAE_MINGW_BUILD_DIR\tmp` temporary directory use this one layout. Default (non-MinGW) CMake entry exists but MinGW is the verified Windows path. `pnpm run test:no-real-device` runs the full no-real-device gate: MinGW configure/build/test + audio-manager + playback-routing + typecheck + build.
 
 ### Release gate (Windows)
 
@@ -93,13 +95,15 @@ Per `docs/windows-release-gate.md`: `typecheck`, `test:plugins`, `test:audio-man
 
 ## High-Level Architecture
 
-Standard three-part Electron app (main / preload / renderer), plus an isolated plugin host process and an out-of-process optional audio engine service.
+Standard three-part Electron app (main / preload / renderer), plus an isolated plugin host process, an out-of-process optional realtime audio engine service, a separate offline audio-analysis worker pool, and an isolated local-library scan worker.
 
-### Main process entries (`electron.vite.config.ts` declares 3)
+### Main process entries (`electron.vite.config.ts` declares 5)
 
 - `index` → `src/main/index.ts` → `src/main/app/lifecycle.ts` `startApp()`: window lifecycle, single-instance lock, IPC registration, settings, library scan, integrations (tray/shortcuts, desktop lyrics, Discord RPC), NCM API bootstrap.
 - `pluginHost` → `src/main/pluginHost.ts`: runs inside an Electron `utilityProcess` for crash isolation. Loads JS plugins, brokers the versioned `twilight` API gateway, provider registration, event bus, and per-plugin settings/storage. Plugins must never import host internals / Electron / Node directly — all access goes through the `twilight` API object.
 - `audioEngineService` → `src/main/audioEngineService.ts`: optionally hosts the native engine in a restartable child process so a native DSP/engine crash does not kill the main process. `TWILIGHT_AUDIO_SERVICE=0` is a dev-only fallback to run the engine in-process.
+- `audioAnalysisService` → `src/main/audioAnalysisService.ts`: runs full-file BPM and loudness decoding in an independent `utilityProcess` pool. Its queue, priority, cancellation, concurrency cap, watchdog, and worker restarts are isolated from realtime playback RPCs.
+- `libraryScanService` → `src/main/library/libraryScanService.ts`: enumerates local-library files and parses metadata/covers in a dedicated `utilityProcess`. Startup reconciliation compares the persistent `path + size + mtime` index and parses only new/changed files; a user-triggered full scan exposes progress, pause, resume, and cancellation.
 
 ### Native audio load chain
 
@@ -170,6 +174,7 @@ Main-process IPC handlers live in `src/main/ipc/` (`data.ts`, `plugins.ts`, `opr
 | Preload bridge | `src/preload/index.ts` |
 | Renderer root | `src/renderer/src/App.vue`, `main.ts` |
 | Player state | `src/renderer/src/stores/usePlayerStore.ts` |
+| Local library index and scan worker | `src/main/library/libraryIndexCoordinator.ts`, `libraryScanService.ts`, `fileIndex.ts`, `scanPlanner.ts` |
 | Provider abstraction | `src/renderer/src/providers/mediaProvider.ts` |
 | Vite/electron-vite config | `electron.vite.config.ts` |
 | Package scripts | `package.json` |

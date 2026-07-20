@@ -94,9 +94,9 @@ project grows.
 
 ## Tooling Gate
 
-- `npm run lint` now ignores generated/build artifacts and CJS helper outputs
+- `pnpm run lint` now ignores generated/build artifacts and CJS helper outputs
   that are not authored TypeScript/Vue app code.
-- Formatting remains owned by `npm run format`; ESLint is kept focused on
+- Formatting remains owned by `pnpm run format`; ESLint is kept focused on
   correctness/security checks and Vue SFC TypeScript enforcement.
 
 ## Remaining Work

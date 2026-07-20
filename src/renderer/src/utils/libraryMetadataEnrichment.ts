@@ -10,12 +10,291 @@ export interface LibraryMetadataEnrichmentProvider {
   searchSongs: (
     query: string,
     limit?: number,
-    offset?: number
+    offset?: number,
+    signal?: AbortSignal
   ) => Promise<MediaProviderSearchResult<Track>>
 }
 
 export interface LibraryMetadataEnrichmentOptions {
   cachePolicy?: Partial<MetadataEnrichmentPolicy>
+}
+
+export type LibraryMetadataEnrichmentState =
+  | 'idle'
+  | 'enriching'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export interface LibraryMetadataEnrichmentStatus {
+  state: LibraryMetadataEnrichmentState
+  total: number
+  queued: number
+  active: number
+  completed: number
+  failed: number
+  skipped: number
+  error: string
+}
+
+/**
+ * Both values are retained until the renderer accepts the update. `source`
+ * prevents an older scan snapshot from replacing a newer local-library record.
+ */
+export interface LibraryMetadataEnrichmentTrackUpdate {
+  source: Track
+  track: Track
+}
+
+export interface LibraryMetadataEnrichmentQueueOptions {
+  provider: LibraryMetadataEnrichmentProvider
+  concurrency?: number
+  retryBaseMs?: number
+  retryMaxMs?: number
+  now?: () => number
+  onStatus?: (status: LibraryMetadataEnrichmentStatus) => void
+  onTrackEnriched?: (update: LibraryMetadataEnrichmentTrackUpdate) => void
+}
+
+export interface LibraryMetadataEnrichmentBenchmarkResult {
+  trackCount: number
+  uniqueQueryCount: number
+  queryCalls: number
+  maxConcurrentQueries: number
+  durationMs: number
+}
+
+type QueueEntry = {
+  key: string
+  queryKey: string
+  query: string
+  tracks: Map<string, { track: Track; policy: MetadataEnrichmentPolicy }>
+}
+
+type FailureBackoff = {
+  attempts: number
+  retryAt: number
+}
+
+const DEFAULT_CONCURRENCY = 6
+const MIN_CONCURRENCY = 4
+const MAX_CONCURRENCY = 8
+const DEFAULT_RETRY_BASE_MS = 15_000
+const DEFAULT_RETRY_MAX_MS = 5 * 60_000
+
+export class LibraryMetadataEnrichmentQueue {
+  private readonly provider: LibraryMetadataEnrichmentProvider
+  private readonly concurrency: number
+  private readonly retryBaseMs: number
+  private readonly retryMaxMs: number
+  private readonly now: () => number
+  private readonly onStatus?: (status: LibraryMetadataEnrichmentStatus) => void
+  private readonly onTrackEnriched?: (update: LibraryMetadataEnrichmentTrackUpdate) => void
+  private readonly entries = new Map<string, QueueEntry>()
+  private readonly activeEntries = new Map<string, QueueEntry>()
+  private readonly failures = new Map<string, FailureBackoff>()
+  private readonly waiters = new Map<number, Array<() => void>>()
+  private readonly activeAbortControllers = new Map<number, Set<AbortController>>()
+  private generation = 0
+  private activeWorkers = 0
+  private status: LibraryMetadataEnrichmentStatus = createIdleStatus()
+
+  constructor(options: LibraryMetadataEnrichmentQueueOptions) {
+    this.provider = options.provider
+    this.concurrency = clampConcurrency(options.concurrency ?? DEFAULT_CONCURRENCY)
+    this.retryBaseMs = Math.max(1, options.retryBaseMs ?? DEFAULT_RETRY_BASE_MS)
+    this.retryMaxMs = Math.max(this.retryBaseMs, options.retryMaxMs ?? DEFAULT_RETRY_MAX_MS)
+    this.now = options.now ?? Date.now
+    this.onStatus = options.onStatus
+    this.onTrackEnriched = options.onTrackEnriched
+  }
+
+  getStatus(): LibraryMetadataEnrichmentStatus {
+    return { ...this.status }
+  }
+
+  enqueue(
+    tracks: Track[],
+    cachePolicy: Partial<MetadataEnrichmentPolicy> | undefined = undefined
+  ): Promise<void> {
+    const policy = normalizeMetadataEnrichmentPolicy(cachePolicy)
+    if (!policy.cover && !policy.lyrics && !policy.metadata) return Promise.resolve()
+
+    const shouldStartNewRun =
+      this.entries.size === 0 && this.status.active === 0 && this.status.state !== 'enriching'
+    if (shouldStartNewRun) this.startNewRun()
+
+    let added = false
+    for (const track of tracks) {
+      if (!isLocalTrack(track) || !needsMetadataEnrichment(track, policy)) continue
+      const query = buildMetadataSearchQuery(track)
+      const queryKey = normalizeMetadataQuery(query)
+      if (!queryKey) continue
+
+      const failure = this.failures.get(queryKey)
+      if (failure && failure.retryAt > this.now()) {
+        this.status.skipped += 1
+        continue
+      }
+
+      const entry = this.entries.get(queryKey) ??
+        this.activeEntries.get(queryKey) ?? {
+          key: queryKey,
+          queryKey,
+          query,
+          tracks: new Map<string, { track: Track; policy: MetadataEnrichmentPolicy }>()
+        }
+      if (!entry.tracks.has(track.id)) {
+        entry.tracks.set(track.id, { track, policy })
+        this.status.total += 1
+        if (!this.activeEntries.has(queryKey)) this.status.queued += 1
+        added = true
+      }
+      if (!this.activeEntries.has(queryKey)) this.entries.set(queryKey, entry)
+    }
+
+    if (!added) {
+      if (
+        this.entries.size === 0 &&
+        this.status.active === 0 &&
+        this.status.state === 'enriching'
+      ) {
+        this.finishRun(this.generation)
+      } else if (
+        this.entries.size === 0 &&
+        this.status.active === 0 &&
+        this.status.state === 'idle'
+      ) {
+        this.status.state = 'completed'
+        this.emitStatus()
+      } else {
+        this.emitStatus()
+      }
+      return this.waitForRun(this.generation)
+    }
+
+    this.status.state = 'enriching'
+    this.status.error = ''
+    this.emitStatus()
+    this.pump(this.generation)
+    return this.waitForRun(this.generation)
+  }
+
+  cancel(): boolean {
+    if (this.status.state !== 'enriching') return false
+    const cancelledGeneration = this.generation
+    this.generation += 1
+    for (const controller of this.activeAbortControllers.get(cancelledGeneration) ?? []) {
+      controller.abort()
+    }
+    this.activeAbortControllers.delete(cancelledGeneration)
+    this.entries.clear()
+    this.status = {
+      ...this.status,
+      state: 'cancelled',
+      queued: 0,
+      active: 0,
+      error: ''
+    }
+    this.emitStatus()
+    this.resolveWaiters(cancelledGeneration)
+    return true
+  }
+
+  private startNewRun(): void {
+    this.generation += 1
+    this.status = createIdleStatus()
+  }
+
+  private pump(generation: number): void {
+    if (generation !== this.generation || this.status.state !== 'enriching') return
+    while (this.activeWorkers < this.concurrency && this.entries.size > 0) {
+      const entry = this.entries.values().next().value as QueueEntry | undefined
+      if (!entry) break
+      this.entries.delete(entry.key)
+      this.activeEntries.set(entry.key, entry)
+      this.activeWorkers += 1
+      this.status.active += 1
+      this.status.queued -= entry.tracks.size
+      void this.processEntry(entry, generation)
+    }
+    this.emitStatus()
+  }
+
+  private async processEntry(entry: QueueEntry, generation: number): Promise<void> {
+    const controller = new AbortController()
+    const controllers = this.activeAbortControllers.get(generation) ?? new Set<AbortController>()
+    controllers.add(controller)
+    this.activeAbortControllers.set(generation, controllers)
+    try {
+      const result = await this.provider.searchSongs(entry.query, 8, 0, controller.signal)
+      if (generation !== this.generation) return
+      this.failures.delete(entry.queryKey)
+      for (const { track, policy } of entry.tracks.values()) {
+        const match = findBestMetadataMatch(track, result.items)
+        const enriched = enrichLocalTrackMetadata(track, match, policy)
+        if (enriched !== track) this.onTrackEnriched?.({ source: track, track: enriched })
+      }
+      this.status.completed += entry.tracks.size
+    } catch {
+      if (generation !== this.generation) return
+      const previous = this.failures.get(entry.queryKey)
+      const attempts = (previous?.attempts ?? 0) + 1
+      const retryMs = Math.min(this.retryMaxMs, this.retryBaseMs * 2 ** (attempts - 1))
+      this.failures.set(entry.queryKey, { attempts, retryAt: this.now() + retryMs })
+      this.status.failed += entry.tracks.size
+      this.status.error = '在线元数据服务暂不可用，将在稍后自动重试'
+    } finally {
+      const activeControllers = this.activeAbortControllers.get(generation)
+      activeControllers?.delete(controller)
+      if (activeControllers?.size === 0) this.activeAbortControllers.delete(generation)
+      if (this.activeEntries.get(entry.key) === entry) this.activeEntries.delete(entry.key)
+      this.activeWorkers = Math.max(0, this.activeWorkers - 1)
+      if (generation !== this.generation) {
+        this.pump(this.generation)
+      } else {
+        this.status.active = Math.max(0, this.status.active - 1)
+        if (this.entries.size > 0) {
+          this.pump(generation)
+        } else if (this.status.active === 0) {
+          this.finishRun(generation)
+        } else {
+          this.emitStatus()
+        }
+      }
+    }
+  }
+
+  private finishRun(generation: number): void {
+    if (generation !== this.generation || this.status.state !== 'enriching') return
+    this.status.state =
+      this.status.completed === 0 && this.status.failed > 0 ? 'failed' : 'completed'
+    this.emitStatus()
+    this.resolveWaiters(generation)
+  }
+
+  private waitForRun(generation: number): Promise<void> {
+    if (
+      generation !== this.generation ||
+      (this.status.state !== 'enriching' && this.entries.size === 0 && this.status.active === 0)
+    ) {
+      return Promise.resolve()
+    }
+    return new Promise((resolve) => {
+      const waiters = this.waiters.get(generation) ?? []
+      waiters.push(resolve)
+      this.waiters.set(generation, waiters)
+    })
+  }
+
+  private resolveWaiters(generation: number): void {
+    for (const resolve of this.waiters.get(generation) ?? []) resolve()
+    this.waiters.delete(generation)
+  }
+
+  private emitStatus(): void {
+    this.onStatus?.(this.getStatus())
+  }
 }
 
 export async function enrichLocalTracksFromProviders(
@@ -35,6 +314,67 @@ export async function enrichLocalTracksFromProviders(
   }
 
   return changed ? enrichedTracks : tracks
+}
+
+export async function runLibraryMetadataEnrichmentBenchmark(
+  options: {
+    trackCount?: number
+    uniqueQueryCount?: number
+    concurrency?: number
+  } = {}
+): Promise<LibraryMetadataEnrichmentBenchmarkResult> {
+  const trackCount = Math.max(1, options.trackCount ?? 2_000)
+  const uniqueQueryCount = Math.max(1, Math.min(trackCount, options.uniqueQueryCount ?? 200))
+  const tracks = Array.from({ length: trackCount }, (_, index) =>
+    createBenchmarkTrack(index, uniqueQueryCount)
+  )
+  const candidates = new Map<string, Track>()
+  for (const track of tracks)
+    candidates.set(buildMetadataSearchQuery(track), createBenchmarkCandidate(track))
+
+  let queryCalls = 0
+  let activeQueries = 0
+  let maxConcurrentQueries = 0
+  const startedAt = performance.now()
+  const queue = new LibraryMetadataEnrichmentQueue({
+    concurrency: options.concurrency,
+    provider: {
+      searchSongs: async (query) => {
+        queryCalls += 1
+        activeQueries += 1
+        maxConcurrentQueries = Math.max(maxConcurrentQueries, activeQueries)
+        await Promise.resolve()
+        activeQueries -= 1
+        const candidate = candidates.get(query)
+        return { items: candidate ? [candidate] : [], total: candidate ? 1 : 0 }
+      }
+    }
+  })
+  await queue.enqueue(tracks)
+  return {
+    trackCount,
+    uniqueQueryCount,
+    queryCalls,
+    maxConcurrentQueries,
+    durationMs: performance.now() - startedAt
+  }
+}
+
+function createIdleStatus(): LibraryMetadataEnrichmentStatus {
+  return {
+    state: 'idle',
+    total: 0,
+    queued: 0,
+    active: 0,
+    completed: 0,
+    failed: 0,
+    skipped: 0,
+    error: ''
+  }
+}
+
+function clampConcurrency(value: number): number {
+  return Math.max(MIN_CONCURRENCY, Math.min(MAX_CONCURRENCY, Math.round(value)))
 }
 
 async function enrichOneLocalTrack(
@@ -66,7 +406,14 @@ function needsMetadataEnrichment(track: Track, policy: MetadataEnrichmentPolicy)
 }
 
 function buildMetadataSearchQuery(track: Track): string {
-  return [track.title, track.artist].map((part) => part.trim()).filter(Boolean).join(' ')
+  return [track.title, track.artist]
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(' ')
+}
+
+function normalizeMetadataQuery(value: string): string {
+  return value.normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
 function normalizeMetadataEnrichmentPolicy(
@@ -76,5 +423,36 @@ function normalizeMetadataEnrichmentPolicy(
     cover: value?.cover !== false,
     lyrics: value?.lyrics !== false,
     metadata: value?.metadata !== false
+  }
+}
+
+function createBenchmarkTrack(index: number, uniqueQueryCount: number): Track {
+  const queryIndex = index % uniqueQueryCount
+  return {
+    id: `local:benchmark-${index}`,
+    title: `Benchmark Track ${queryIndex}`,
+    artist: 'Benchmark Artist',
+    album: '',
+    filePath: `C:\\Benchmark\\${index}.flac`,
+    fileName: `${index}.flac`,
+    duration: 180,
+    size: 1,
+    cover: null,
+    lyrics: null,
+    source: 'local',
+    format: 'flac'
+  }
+}
+
+function createBenchmarkCandidate(track: Track): Track {
+  return {
+    ...track,
+    id: `provider:${track.id}`,
+    filePath: `provider:${track.id}`,
+    fileName: track.title,
+    album: 'Benchmark Album',
+    cover: 'https://cover.invalid/benchmark.jpg',
+    lyrics: '[00:00.00]Benchmark',
+    source: 'provider'
   }
 }

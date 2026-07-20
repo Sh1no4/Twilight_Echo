@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <charconv>
+#include <cmath>
 #include <numeric>
 #include <sstream>
 
@@ -176,8 +177,101 @@ std::optional<double> extractNumberField(const std::string& object, const std::s
   return value;
 }
 
-QueueItem parseQueueItem(const std::string& object) {
+std::optional<size_t> findTopLevelFieldValue(const std::string& object, const std::string& key) {
+  bool inString = false;
+  bool escaped = false;
+  int depth = 0;
+  for (size_t i = 0; i < object.size(); ++i) {
+    const char ch = object[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch == '\\') escaped = true;
+      else if (ch == '"') inString = false;
+      continue;
+    }
+    if (ch == '{') {
+      ++depth;
+      continue;
+    }
+    if (ch == '}') {
+      --depth;
+      continue;
+    }
+    if (ch != '"') continue;
+
+    const size_t tokenStart = i + 1;
+    size_t tokenEnd = tokenStart;
+    bool tokenEscaped = false;
+    for (; tokenEnd < object.size(); ++tokenEnd) {
+      const char tokenCh = object[tokenEnd];
+      if (tokenEscaped) tokenEscaped = false;
+      else if (tokenCh == '\\') tokenEscaped = true;
+      else if (tokenCh == '"') break;
+    }
+    if (tokenEnd >= object.size()) return std::nullopt;
+    if (depth == 1 && object.compare(tokenStart, tokenEnd - tokenStart, key) == 0) {
+      size_t cursor = tokenEnd + 1;
+      while (cursor < object.size() && std::isspace(static_cast<unsigned char>(object[cursor]))) ++cursor;
+      if (cursor < object.size() && object[cursor] == ':') {
+        ++cursor;
+        while (cursor < object.size() && std::isspace(static_cast<unsigned char>(object[cursor]))) ++cursor;
+        return cursor < object.size() ? std::optional<size_t>(cursor) : std::nullopt;
+      }
+    }
+    i = tokenEnd;
+  }
+  return std::nullopt;
+}
+
+std::optional<double> extractTopLevelNumberField(const std::string& object, const std::string& key) {
+  const auto valueStart = findTopLevelFieldValue(object, key);
+  if (!valueStart) return std::nullopt;
+  size_t end = *valueStart;
+  while (end < object.size()) {
+    const char ch = object[end];
+    if (!std::isdigit(static_cast<unsigned char>(ch)) && ch != '.' && ch != '-' && ch != '+' && ch != 'e' &&
+        ch != 'E') break;
+    ++end;
+  }
+  if (end == *valueStart) return std::nullopt;
+  double value = 0.0;
+  const auto result = std::from_chars(object.data() + *valueStart, object.data() + end, value);
+  if (result.ec != std::errc() || result.ptr != object.data() + end) return std::nullopt;
+  size_t delimiter = end;
+  while (delimiter < object.size() && std::isspace(static_cast<unsigned char>(object[delimiter]))) ++delimiter;
+  if (delimiter >= object.size() || (object[delimiter] != ',' && object[delimiter] != '}')) return std::nullopt;
+  return value;
+}
+
+std::optional<std::string> extractTopLevelObjectField(const std::string& object, const std::string& key) {
+  const auto valueStart = findTopLevelFieldValue(object, key);
+  if (!valueStart || object[*valueStart] != '{') return std::nullopt;
+  bool inString = false;
+  bool escaped = false;
+  int depth = 0;
+  for (size_t i = *valueStart; i < object.size(); ++i) {
+    const char ch = object[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch == '\\') escaped = true;
+      else if (ch == '"') inString = false;
+      continue;
+    }
+    if (ch == '"') inString = true;
+    else if (ch == '{') ++depth;
+    else if (ch == '}' && --depth == 0) return object.substr(*valueStart, i - *valueStart + 1);
+  }
+  return std::nullopt;
+}
+
+struct ParsedQueueItem {
   QueueItem item;
+  bool valid = true;
+};
+
+ParsedQueueItem parseQueueItem(const std::string& object) {
+  ParsedQueueItem parsed;
+  QueueItem& item = parsed.item;
   item.id = extractStringField(object, "id").value_or("");
   item.title = extractStringField(object, "title").value_or(extractStringField(object, "name").value_or(""));
   item.artist = extractStringField(object, "artist").value_or("");
@@ -215,9 +309,57 @@ QueueItem parseQueueItem(const std::string& object) {
   if (auto value = extractNumberField(object, "r128AlbumGainDb")) {
     item.r128AlbumGainDb = *value;
   }
+  const auto nestedCueRangeStart = findTopLevelFieldValue(object, "cueRange");
+  const auto nestedCueRange = extractTopLevelObjectField(object, "cueRange");
+  const bool hasFlatCueField =
+      findTopLevelFieldValue(object, "cueStartSeconds").has_value() ||
+      findTopLevelFieldValue(object, "cueEndSeconds").has_value() ||
+      findTopLevelFieldValue(object, "cuePregapSeconds").has_value() ||
+      findTopLevelFieldValue(object, "cueVirtualPregapSeconds").has_value() ||
+      findTopLevelFieldValue(object, "cueSourcePregapSeconds").has_value();
+  bool cueFieldsWellTyped = true;
+  if (nestedCueRange) {
+    item.cueStartSeconds = extractTopLevelNumberField(*nestedCueRange, "startSeconds");
+    item.cueEndSeconds = extractTopLevelNumberField(*nestedCueRange, "endSeconds");
+    const auto pregap = extractTopLevelNumberField(*nestedCueRange, "pregapSeconds");
+    const auto virtualPregap = extractTopLevelNumberField(*nestedCueRange, "virtualPregapSeconds");
+    const auto sourcePregap = extractTopLevelNumberField(*nestedCueRange, "sourcePregapSeconds");
+    cueFieldsWellTyped =
+        (!findTopLevelFieldValue(*nestedCueRange, "pregapSeconds") || pregap) &&
+        (!findTopLevelFieldValue(*nestedCueRange, "virtualPregapSeconds") || virtualPregap) &&
+        (!findTopLevelFieldValue(*nestedCueRange, "sourcePregapSeconds") || sourcePregap);
+    item.cuePregapSeconds = pregap.value_or(0.0);
+    item.cueVirtualPregapSeconds = virtualPregap.value_or(0.0);
+    item.cueSourcePregapSeconds = sourcePregap.value_or(0.0);
+  } else if (hasFlatCueField) {
+    item.cueStartSeconds = extractTopLevelNumberField(object, "cueStartSeconds");
+    item.cueEndSeconds = extractTopLevelNumberField(object, "cueEndSeconds");
+    const auto pregap = extractTopLevelNumberField(object, "cuePregapSeconds");
+    const auto virtualPregap = extractTopLevelNumberField(object, "cueVirtualPregapSeconds");
+    const auto sourcePregap = extractTopLevelNumberField(object, "cueSourcePregapSeconds");
+    cueFieldsWellTyped =
+        (!findTopLevelFieldValue(object, "cuePregapSeconds") || pregap) &&
+        (!findTopLevelFieldValue(object, "cueVirtualPregapSeconds") || virtualPregap) &&
+        (!findTopLevelFieldValue(object, "cueSourcePregapSeconds") || sourcePregap);
+    item.cuePregapSeconds = pregap.value_or(0.0);
+    item.cueVirtualPregapSeconds = virtualPregap.value_or(0.0);
+    item.cueSourcePregapSeconds = sourcePregap.value_or(0.0);
+  }
+  if (nestedCueRangeStart || hasFlatCueField) {
+    constexpr double kMaxSafeInteger = 9007199254740991.0;
+    parsed.valid = cueFieldsWellTyped && (nestedCueRange.has_value() || !nestedCueRangeStart) &&
+                   item.cueStartSeconds && item.cueEndSeconds &&
+                   std::isfinite(*item.cueStartSeconds) && std::isfinite(*item.cueEndSeconds) &&
+                   *item.cueStartSeconds >= 0.0 && *item.cueEndSeconds > *item.cueStartSeconds &&
+                   *item.cueEndSeconds <= kMaxSafeInteger &&
+                   std::isfinite(item.cuePregapSeconds) && item.cuePregapSeconds >= 0.0 &&
+                   std::isfinite(item.cueVirtualPregapSeconds) && item.cueVirtualPregapSeconds >= 0.0 &&
+                   std::isfinite(item.cueSourcePregapSeconds) && item.cueSourcePregapSeconds >= 0.0 &&
+                   item.cueSourcePregapSeconds <= *item.cueStartSeconds;
+  }
   if (item.id.empty()) item.id = item.source;
   if (item.title.empty()) item.title = item.id;
-  return item;
+  return parsed;
 }
 
 std::string itemsToJson(const std::vector<QueueItem>& items) {
@@ -245,8 +387,15 @@ bool QueueManager::loadFromJson(const std::string& queueJson, int startIndex, st
   }
 
   for (const std::string& object : splitTopLevelObjects(rawQueueJson_)) {
-    QueueItem item = parseQueueItem(object);
-    if (!item.source.empty()) items_.push_back(std::move(item));
+    ParsedQueueItem parsed = parseQueueItem(object);
+    if (!parsed.valid) {
+      if (error) *error = "Invalid CUE range in playback queue";
+      items_.clear();
+      orderPosition_ = -1;
+      rebuildPlayOrder();
+      return false;
+    }
+    if (!parsed.item.source.empty()) items_.push_back(std::move(parsed.item));
   }
 
   if (items_.empty()) {
@@ -263,12 +412,16 @@ bool QueueManager::loadFromJson(const std::string& queueJson, int startIndex, st
 }
 
 bool QueueManager::addFromJson(const std::string& itemJson, std::string* error) {
-  QueueItem item = parseQueueItem(itemJson);
-  if (item.source.empty()) {
+  ParsedQueueItem parsed = parseQueueItem(itemJson);
+  if (!parsed.valid) {
+    if (error) *error = "Invalid CUE range in playback queue item";
+    return false;
+  }
+  if (parsed.item.source.empty()) {
     if (error) *error = "队列项目缺少音频地址";
     return false;
   }
-  items_.push_back(std::move(item));
+  items_.push_back(std::move(parsed.item));
   rawQueueJson_ = itemsToJson(items_);
   rebuildPlayOrder();
   if (orderPosition_ < 0) orderPosition_ = 0;
@@ -428,6 +581,13 @@ std::string QueueManager::itemToJson(const std::optional<QueueItem>& item) {
   }
   if (item->r128AlbumGainDb) {
     json << ",\"r128AlbumGainDb\":" << *item->r128AlbumGainDb;
+  }
+  if (item->cueStartSeconds && item->cueEndSeconds) {
+    json << ",\"cueStartSeconds\":" << *item->cueStartSeconds
+         << ",\"cueEndSeconds\":" << *item->cueEndSeconds
+         << ",\"cuePregapSeconds\":" << item->cuePregapSeconds
+         << ",\"cueVirtualPregapSeconds\":" << item->cueVirtualPregapSeconds
+         << ",\"cueSourcePregapSeconds\":" << item->cueSourcePregapSeconds;
   }
   json << "}";
   return json.str();

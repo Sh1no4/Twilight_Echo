@@ -1,0 +1,90 @@
+export type SleepTimerMode = 'minutes' | 'trackEnd' | 'queueEnd'
+
+export interface SleepTimerSettings {
+  defaultMinutes: number
+  fadeSeconds: number
+}
+
+export interface SleepTimerState {
+  mode: SleepTimerMode
+  endsAt: number | null
+  fadeSeconds: number
+  active: boolean
+  triggered: boolean
+}
+
+/** Runtime guard for IPC and persisted playback sessions. */
+export function isSleepTimerState(value: unknown): value is SleepTimerState {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const state = value as Record<string, unknown>
+  if (
+    (state.mode !== 'minutes' && state.mode !== 'trackEnd' && state.mode !== 'queueEnd') ||
+    typeof state.active !== 'boolean' ||
+    typeof state.triggered !== 'boolean' ||
+    typeof state.fadeSeconds !== 'number' ||
+    !Number.isInteger(state.fadeSeconds) ||
+    state.fadeSeconds < 0 ||
+    state.fadeSeconds > 120
+  ) {
+    return false
+  }
+  if (state.mode === 'minutes') {
+    if (
+      !(typeof state.endsAt === 'number' && Number.isSafeInteger(state.endsAt) && state.endsAt > 0)
+    ) {
+      return false
+    }
+  } else if (state.endsAt !== null) {
+    return false
+  }
+
+  // A timer is either armed or has fired. A cancelled timer is represented by
+  // null, never by an inert state object. Keeping this invariant at the wire
+  // boundary prevents a persisted terminal state from being re-armed.
+  return state.active !== state.triggered
+}
+
+/** Validates an armed state at a clock boundary such as IPC or session restore. */
+export function isActiveSleepTimerState(
+  value: unknown,
+  now = Date.now()
+): value is SleepTimerState {
+  if (!isSleepTimerState(value) || !value.active || value.triggered) return false
+  return value.mode !== 'minutes' || (value.endsAt !== null && value.endsAt > now)
+}
+
+export const DEFAULT_SLEEP_TIMER_SETTINGS: SleepTimerSettings = {
+  defaultMinutes: 30,
+  fadeSeconds: 10
+}
+
+export function createSleepTimerState(
+  mode: SleepTimerMode,
+  now: number,
+  settings: SleepTimerSettings,
+  minutes = settings.defaultMinutes
+): SleepTimerState {
+  const normalizedMinutes = Math.max(1, Math.min(720, Math.trunc(minutes)))
+  return {
+    mode,
+    endsAt: mode === 'minutes' ? now + normalizedMinutes * 60_000 : null,
+    fadeSeconds: Math.max(0, Math.min(120, Math.trunc(settings.fadeSeconds))),
+    active: true,
+    triggered: false
+  }
+}
+
+export function shouldTriggerSleepTimer(
+  state: SleepTimerState,
+  now: number,
+  event: 'tick' | 'trackEnd' | 'queueEnd'
+): boolean {
+  if (!state.active || state.triggered) return false
+  if (state.mode === 'minutes') return event === 'tick' && (state.endsAt ?? Infinity) <= now
+  return state.mode === 'trackEnd' ? event === 'trackEnd' : event === 'queueEnd'
+}
+
+export function remainingSleepTimerSeconds(state: SleepTimerState, now: number): number | null {
+  if (!state.active || state.endsAt === null) return null
+  return Math.max(0, Math.ceil((state.endsAt - now) / 1000))
+}
