@@ -365,6 +365,9 @@ const isLoading = ref(false)
 const isStreamBuffering = ref(false)
 /** Live ICY StreamTitle from native radio playback (empty when unavailable). */
 const streamNowPlaying = ref('')
+/** Last observed native sessionUnderrunCount; rise while playing stream → buffering UX. */
+let lastNativeSessionUnderrunCount = 0
+let nativeStreamBufferingClearTimer: ReturnType<typeof setTimeout> | null = null
 const currentTime = ref(0)
 const duration = ref(0)
 const volume = ref(0.7)
@@ -646,7 +649,7 @@ function getPlaybackAudio(): HTMLAudioElement {
   })
 
   audio.addEventListener('error', () => {
-    isStreamBuffering.value = false
+    resetNativeStreamBufferingState()
     const code = audio.error?.code ?? 0
     const message = `Audio playback failed (code ${code})`
     console.error('[audio-engine] Renderer audio error:', {
@@ -723,6 +726,7 @@ function resetPlaybackRuntimeStateForRestore(): void {
   playbackInfo.value = null
   clearNativePlaybackInfoIntent()
   clearPlaybackToggleIntent()
+  resetNativeStreamBufferingState()
   stopVisualizationPolling(true)
   stopRendererAudio(true)
   void stopNativeAudio()
@@ -1144,6 +1148,64 @@ function findTrackIndexFromPlaybackInfo(info: NativePlaybackInfo): number {
   )
 }
 
+function clearNativeStreamBufferingTimer(): void {
+  if (nativeStreamBufferingClearTimer) {
+    clearTimeout(nativeStreamBufferingClearTimer)
+    nativeStreamBufferingClearTimer = null
+  }
+}
+
+function isStreamLikeTrack(track: Track | null | undefined): boolean {
+  if (!track) return false
+  return (
+    track.source === 'radio' ||
+    track.source === 'podcast' ||
+    /^https?:\/\//i.test(track.filePath || '') ||
+    /^https?:\/\//i.test(track.streamUrl || '')
+  )
+}
+
+/** Reset native underrun-derived LIVE buffering UX (load/stop/error). */
+function resetNativeStreamBufferingState(): void {
+  clearNativeStreamBufferingTimer()
+  lastNativeSessionUnderrunCount = 0
+  isStreamBuffering.value = false
+}
+
+/**
+ * Map native output underrun counters onto isStreamBuffering for LIVE/stream tracks.
+ * Sticky for 1.5s so single xruns don't flicker the badge; no engine ABI change.
+ */
+function applyNativeStreamBufferingFromInfo(info: NativePlaybackInfo): void {
+  if (!nativePlaybackActive) return
+  const track = currentTrack.value
+  if (!isStreamLikeTrack(track)) {
+    lastNativeSessionUnderrunCount = 0
+    clearNativeStreamBufferingTimer()
+    return
+  }
+  const underruns = Number(
+    info.diagnostics?.sessionUnderrunCount ??
+      info.outputInfo?.diagnostics?.sessionUnderrunCount ??
+      0
+  )
+  if (!Number.isFinite(underruns) || underruns < 0) return
+  if (underruns > lastNativeSessionUnderrunCount) {
+    isStreamBuffering.value = true
+    clearNativeStreamBufferingTimer()
+    // Sticky briefly so the LIVE badge doesn't flicker on single xruns.
+    nativeStreamBufferingClearTimer = setTimeout(() => {
+      isStreamBuffering.value = false
+      nativeStreamBufferingClearTimer = null
+    }, 1500)
+  }
+  lastNativeSessionUnderrunCount = underruns
+  if (info.state === 'stopped' || info.state === 'paused') {
+    clearNativeStreamBufferingTimer()
+    isStreamBuffering.value = false
+  }
+}
+
 function applyNativePlaybackInfo(
   info: NativePlaybackInfo,
   options: { applyTrackWhenInactive?: boolean } = {}
@@ -1194,6 +1256,7 @@ function applyNativePlaybackInfo(
   }
 
   applyNativePlayingState(normalizedInfo.state === 'playing')
+  applyNativeStreamBufferingFromInfo(normalizedInfo)
   isLoading.value = false
   autoAdvanceInFlight = false
   advancingFromEndedTrackId = ''
@@ -2417,7 +2480,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
   setNativePlaybackInfoIntent(loadToken, track)
   stopVisualizationPolling(false)
   isLoading.value = true
-  isStreamBuffering.value = false
+  resetNativeStreamBufferingState()
   streamNowPlaying.value = ''
   nativePlaybackActive = false
   nativeQueueDelegated = false

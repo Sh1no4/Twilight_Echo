@@ -132,7 +132,8 @@ export function setupRadioMediaIpc(options?: ConstructorParameters<typeof RadioM
     'podcast:pinEpisode',
     async (event, trackId: unknown): Promise<OfflineDownloadRecord> => {
       assertTrustedIpcSender(event, 'radio media IPC')
-      const rawId = normalizeIpcString(trackId, 'podcast track id', 600)
+      // Align with offline SAFE_TRACK_ID / MAX_OFFLINE_TRACK_ID_LENGTH (768).
+      const rawId = normalizeIpcString(trackId, 'podcast track id', 768)
       const parsed = parsePodcastTrackId(rawId)
       if (!parsed) throw new Error('Podcast track id is invalid')
       const { episode, trackId: canonicalTrackId } = await service!.resolveSubscribedEpisode(

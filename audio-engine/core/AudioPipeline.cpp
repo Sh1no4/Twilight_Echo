@@ -2079,11 +2079,8 @@ bool AudioPipeline::enforceLoopRange(std::string* error) {
 }
 
 void AudioPipeline::resetRateResampler() noexcept {
-  rateRingRead_ = 0;
-  rateRingWrite_ = 0;
-  rateRingCount_ = 0;
-  rateReadPhase_ = 0.0;
   rateWsola_.reset();
+  rateWsolaDirty_ = false;
 }
 
 void AudioPipeline::enqueueControlCommand(const ControlCommand& command) noexcept {
@@ -3517,12 +3514,7 @@ void AudioPipeline::prepareRenderScratchLocked(size_t maxFrames) {
   preloadMixScratch_.resize(outputSamples);
   typedVisualizationScratch_.resize(outputSamples);
 
-  // Rate path staging + WSOLA grain buffers (prepared for current output format).
-  constexpr size_t kRatePullChunkFrames = 512;
-  const size_t rateCapacityFrames = std::max(frames * 4, kRatePullChunkFrames * 4) + 2;
-  rateRingSize_ = rateCapacityFrames;
-  rateRing_.assign(rateCapacityFrames * outputChannels, 0.0f);
-  ratePullScratch_.assign(std::max(kRatePullChunkFrames, frames) * outputChannels, 0.0f);
+  // WSOLA grain buffers (prepared for current output format on the control path).
   const int sampleRate = std::max(1, outputFormat_.sampleRate);
   rateWsola_.prepare(static_cast<int>(outputChannels), sampleRate, frames);
   rateWsolaReady_ = true;
@@ -3648,8 +3640,8 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     return frameCount;
   }
 
-  // Flush residual rate-ring samples when returning to unity rate so timeline stays coherent.
-  if (!rateActive && (rateRingCount_ > 0 || rateReadPhase_ > 0.0)) {
+  // Reset residual WSOLA state once when returning to unity rate.
+  if (!rateActive && rateWsolaDirty_) {
     resetRateResampler();
   }
 
@@ -3826,6 +3818,7 @@ size_t AudioPipeline::render(float* output, size_t frameCount) {
     // prepare()/resize must only run on the control path (prepareRenderScratchLocked).
     const size_t ch = static_cast<size_t>(channels);
     rateWsola_.setRate(playbackRate);
+    rateWsolaDirty_ = true;
     totalRead = rateWsola_.process(output, frameCount, [&](float* dst, size_t maxFrames) -> size_t {
       return pullProcessedFrames(dst, maxFrames);
     });

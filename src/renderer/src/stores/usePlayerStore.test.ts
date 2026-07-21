@@ -451,10 +451,43 @@ test('native queue switching guards the target track before applying playback-in
     applyNativePlaybackInfo,
     /const infoIndex = findTrackIndexFromPlaybackInfo\(info\)\s*if \(shouldIgnoreNativePlaybackInfo\(info, infoIndex\)\) return false\s*const normalizedInfo/
   )
+  assert.match(applyNativePlaybackInfo, /applyNativeStreamBufferingFromInfo\(normalizedInfo\)/)
   assert.match(
     setupAudioEngineListeners,
     /api\.onPlaybackInfo\(\(info\) => \{\s*applyNativePlaybackInfo\(info\)\s*\}\)/
   )
+})
+
+test('native LIVE buffering maps sessionUnderrunCount rises onto isStreamBuffering', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const applyNativeStreamBufferingFromInfo = extractInternalFunctionBody(
+    source,
+    'applyNativeStreamBufferingFromInfo'
+  )
+  const resetNativeStreamBufferingState = extractInternalFunctionBody(
+    source,
+    'resetNativeStreamBufferingState'
+  )
+  const isStreamLikeTrack = extractInternalFunctionBody(source, 'isStreamLikeTrack')
+
+  assert.match(source, /let lastNativeSessionUnderrunCount = 0/)
+  assert.match(source, /let nativeStreamBufferingClearTimer/)
+  assert.match(isStreamLikeTrack, /track\.source === 'radio'/)
+  assert.match(isStreamLikeTrack, /track\.source === 'podcast'/)
+  assert.match(
+    applyNativeStreamBufferingFromInfo,
+    /sessionUnderrunCount/
+  )
+  assert.match(
+    applyNativeStreamBufferingFromInfo,
+    /underruns > lastNativeSessionUnderrunCount/
+  )
+  assert.match(applyNativeStreamBufferingFromInfo, /isStreamBuffering\.value = true/)
+  assert.match(applyNativeStreamBufferingFromInfo, /1500/)
+  assert.match(resetNativeStreamBufferingState, /lastNativeSessionUnderrunCount = 0/)
+  assert.match(resetNativeStreamBufferingState, /isStreamBuffering\.value = false/)
+  // Load path and restore path clear sticky buffering state.
+  assert.match(source, /resetNativeStreamBufferingState\(\)/)
 })
 
 test('player store does not pretend DSP bypass is strict bit-perfect mode', () => {

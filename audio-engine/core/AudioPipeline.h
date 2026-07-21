@@ -421,16 +421,11 @@ class AudioPipeline {
   std::vector<float> preloadRoutingScratch_;
   std::vector<float> preloadMixScratch_;
   std::vector<float> typedVisualizationScratch_;
-  // Rate path: WSOLA preserves pitch; ring retained as pull staging for the puller.
-  std::vector<float> rateRing_;
-  size_t rateRingSize_ = 0;       // capacity in frames
-  size_t rateRingRead_ = 0;       // frame index of oldest sample
-  size_t rateRingWrite_ = 0;      // frame index for next push
-  size_t rateRingCount_ = 0;      // frames currently stored
-  double rateReadPhase_ = 0.0;    // retained for compatibility with reset helpers
-  std::vector<float> ratePullScratch_;
+  // Rate path: WSOLA preserves pitch (prepared on control path only).
   WsolaResampler rateWsola_;
   bool rateWsolaReady_ = false;
+  /** True after a non-unity rate callback used WSOLA; cleared when unity flush resets it. */
+  bool rateWsolaDirty_ = false;
   ChannelRouter channelRouter_;
   mutable std::mutex statusMutex_;
   PipelineStatus lastStatus_;
