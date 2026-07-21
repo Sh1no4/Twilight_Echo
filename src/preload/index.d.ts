@@ -105,7 +105,7 @@ interface PlayerShortcutStatus {
 }
 type AppTheme = 'system' | 'pureWhite' | 'dark'
 type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
-type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires' | 'jyeffect' | 'sky'
+type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires'
 type StartupHomePage = 'local' | 'streaming'
 type UiDensity = 'compact' | 'standard' | 'comfortable'
 type NowPlayingBackground = 'blur' | 'fluid' | 'solid'

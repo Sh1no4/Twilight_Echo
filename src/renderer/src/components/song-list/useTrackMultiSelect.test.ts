@@ -41,26 +41,45 @@ function withScope<T>(run: () => T): T {
   return result
 }
 
-test('plain click selects only one track and signals play', () => {
+test('plain click plays without selecting and clears any prior selection', () => {
   const tracks = ref(makeTracks(5))
   const multi = withScope(() => useTrackMultiSelect({ tracks }))
-  const result = multi.onRowClick(tracks.value[2], 2, { shiftKey: false, ctrlKey: false, metaKey: false } as MouseEvent)
-  assert.equal(result, 'play')
+  multi.toggle(tracks.value[0].id, 0)
   assert.equal(multi.selectedCount.value, 1)
-  assert.equal(multi.isSelected('t2'), true)
-  assert.deepEqual(multi.getSelectedTrackIds(), ['t2'])
+
+  const result = multi.onRowClick(tracks.value[2], 2, {
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: false
+  } as MouseEvent)
+  assert.equal(result, 'play')
+  assert.equal(multi.selectedCount.value, 0)
+  assert.equal(multi.isSelected('t2'), false)
+  assert.deepEqual(multi.getSelectedTrackIds(), [])
 })
 
 test('ctrl click toggles selection without play', () => {
   const tracks = ref(makeTracks(5))
   const multi = withScope(() => useTrackMultiSelect({ tracks }))
-  multi.onRowClick(tracks.value[0], 0, { shiftKey: false, ctrlKey: true, metaKey: false } as MouseEvent)
-  multi.onRowClick(tracks.value[2], 2, { shiftKey: false, ctrlKey: true, metaKey: false } as MouseEvent)
+  multi.onRowClick(tracks.value[0], 0, {
+    shiftKey: false,
+    ctrlKey: true,
+    metaKey: false
+  } as MouseEvent)
+  multi.onRowClick(tracks.value[2], 2, {
+    shiftKey: false,
+    ctrlKey: true,
+    metaKey: false
+  } as MouseEvent)
   assert.equal(multi.selectedCount.value, 2)
   assert.equal(multi.isSelected('t0'), true)
   assert.equal(multi.isSelected('t2'), true)
 
-  multi.onRowClick(tracks.value[0], 0, { shiftKey: false, ctrlKey: true, metaKey: false } as MouseEvent)
+  multi.onRowClick(tracks.value[0], 0, {
+    shiftKey: false,
+    ctrlKey: true,
+    metaKey: false
+  } as MouseEvent)
   assert.equal(multi.isSelected('t0'), false)
   assert.equal(multi.selectedCount.value, 1)
 })
@@ -68,7 +87,11 @@ test('ctrl click toggles selection without play', () => {
 test('meta click behaves like ctrl click', () => {
   const tracks = ref(makeTracks(3))
   const multi = withScope(() => useTrackMultiSelect({ tracks }))
-  const result = multi.onRowClick(tracks.value[1], 1, { shiftKey: false, ctrlKey: false, metaKey: true } as MouseEvent)
+  const result = multi.onRowClick(tracks.value[1], 1, {
+    shiftKey: false,
+    ctrlKey: false,
+    metaKey: true
+  } as MouseEvent)
   assert.equal(result, 'select')
   assert.equal(multi.isSelected('t1'), true)
 })
@@ -76,10 +99,31 @@ test('meta click behaves like ctrl click', () => {
 test('shift click selects inclusive range from anchor', () => {
   const tracks = ref(makeTracks(6))
   const multi = withScope(() => useTrackMultiSelect({ tracks }))
-  multi.onRowClick(tracks.value[1], 1, { shiftKey: false, ctrlKey: false, metaKey: false } as MouseEvent)
-  const result = multi.onRowClick(tracks.value[4], 4, { shiftKey: true, ctrlKey: false, metaKey: false } as MouseEvent)
+  // Enter selection with ctrl first (plain click no longer selects).
+  multi.onRowClick(tracks.value[1], 1, {
+    shiftKey: false,
+    ctrlKey: true,
+    metaKey: false
+  } as MouseEvent)
+  const result = multi.onRowClick(tracks.value[4], 4, {
+    shiftKey: true,
+    ctrlKey: false,
+    metaKey: false
+  } as MouseEvent)
   assert.equal(result, 'select')
   assert.deepEqual(multi.getSelectedTrackIds().sort(), ['t1', 't2', 't3', 't4'])
+})
+
+test('shift click without prior selection selects only the target row', () => {
+  const tracks = ref(makeTracks(4))
+  const multi = withScope(() => useTrackMultiSelect({ tracks }))
+  const result = multi.onRowClick(tracks.value[2], 2, {
+    shiftKey: true,
+    ctrlKey: false,
+    metaKey: false
+  } as MouseEvent)
+  assert.equal(result, 'select')
+  assert.deepEqual(multi.getSelectedTrackIds(), ['t2'])
 })
 
 test('selectAll and clearSelection', () => {
@@ -95,8 +139,16 @@ test('selectAll and clearSelection', () => {
 test('ensureContextSelection keeps multi-selection when target already selected', () => {
   const tracks = ref(makeTracks(4))
   const multi = withScope(() => useTrackMultiSelect({ tracks }))
-  multi.onRowClick(tracks.value[0], 0, { shiftKey: false, ctrlKey: true, metaKey: false } as MouseEvent)
-  multi.onRowClick(tracks.value[2], 2, { shiftKey: false, ctrlKey: true, metaKey: false } as MouseEvent)
+  multi.onRowClick(tracks.value[0], 0, {
+    shiftKey: false,
+    ctrlKey: true,
+    metaKey: false
+  } as MouseEvent)
+  multi.onRowClick(tracks.value[2], 2, {
+    shiftKey: false,
+    ctrlKey: true,
+    metaKey: false
+  } as MouseEvent)
   multi.ensureContextSelection(tracks.value[0], 0)
   assert.equal(multi.selectedCount.value, 2)
   multi.ensureContextSelection(tracks.value[3], 3)
@@ -107,10 +159,28 @@ test('ensureContextSelection keeps multi-selection when target already selected'
 test('getSelectedTracks preserves list order', () => {
   const tracks = ref(makeTracks(5))
   const multi = withScope(() => useTrackMultiSelect({ tracks }))
-  multi.onRowClick(tracks.value[3], 3, { shiftKey: false, ctrlKey: true, metaKey: false } as MouseEvent)
-  multi.onRowClick(tracks.value[1], 1, { shiftKey: false, ctrlKey: true, metaKey: false } as MouseEvent)
+  multi.onRowClick(tracks.value[3], 3, {
+    shiftKey: false,
+    ctrlKey: true,
+    metaKey: false
+  } as MouseEvent)
+  multi.onRowClick(tracks.value[1], 1, {
+    shiftKey: false,
+    ctrlKey: true,
+    metaKey: false
+  } as MouseEvent)
   assert.deepEqual(
     multi.getSelectedTracks().map((t) => t.id),
     ['t1', 't3']
   )
+})
+
+test('checkbox-style toggle enters multi-select without playing', () => {
+  const tracks = ref(makeTracks(3))
+  const multi = withScope(() => useTrackMultiSelect({ tracks }))
+  multi.toggle(tracks.value[1].id, 1)
+  assert.equal(multi.hasSelection.value, true)
+  assert.equal(multi.isSelected('t1'), true)
+  multi.toggle(tracks.value[1].id, 1)
+  assert.equal(multi.hasSelection.value, false)
 })

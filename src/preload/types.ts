@@ -136,8 +136,6 @@ export type NcmPlaybackQuality =
   | 'exhigh'
   | 'lossless'
   | 'hires'
-  | 'jyeffect'
-  | 'sky'
 export type StartupHomePage = 'local' | 'streaming'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'

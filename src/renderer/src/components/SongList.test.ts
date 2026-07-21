@@ -113,6 +113,33 @@ test('song list surfaces library repair status for moved or unresolved local fil
   assert.match(styles, /\.library-repair-status/)
 })
 
+test('song list consolidates sort and filter controls into a 筛选器 button panel', () => {
+  const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
+
+  assert.match(source, /libraryFilterPanelOpen/)
+  assert.match(source, /toggleLibraryFilterPanel/)
+  assert.match(source, /resetLibraryFilters/)
+  assert.match(source, /activeLibraryFilterCount/)
+  assert.match(source, /onDocumentPointerDown/)
+  assert.match(source, /class="library-filter-trigger"/)
+  assert.match(source, />筛选器</)
+  assert.match(source, /class="library-filter-panel"/)
+  assert.match(source, /class="library-view-controls"/)
+  assert.match(source, /setLibraryFilter\('lossless'/)
+  assert.match(source, /setLibraryFilter\('dsd'/)
+  assert.match(source, /setLibraryFilter\(\s*'sampleRate'/)
+  assert.match(source, /setLibraryFilter\(\s*'bitDepth'/)
+  assert.match(source, /setLibraryFilter\(\s*'folder'/)
+  assert.match(source, /setLibraryFilter\(\s*'provider'/)
+  assert.match(source, /setSortKey/)
+  assert.match(source, /setSortDirection/)
+  assert.match(styles, /\.library-filter-trigger/)
+  assert.match(styles, /\.library-filter-panel/)
+  // Controls should live inside the panel, not as a permanent header strip.
+  assert.match(source, /library-filter-panel[\s\S]*library-view-controls/)
+})
+
 test('song list supports batch favorite plus explicit local remove and recycle-bin actions', () => {
   const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
   const styles = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
@@ -130,8 +157,15 @@ test('song list supports batch favorite plus explicit local remove and recycle-b
   assert.match(source, /移到回收站/)
   assert.match(source, /handleContextFavorite/)
   assert.match(source, /加入收藏/)
+  // Multi-select is opt-in via modifier keys / checkbox / context menu — not plain play.
+  assert.match(source, /onTrackSelectToggle/)
+  assert.match(source, /track-select-checkbox/)
+  assert.match(source, /track-cover-cell/)
+  assert.match(source, /closest\('\.track-select-checkbox'\)/)
   assert.match(styles, /\.track-selected/)
   assert.match(styles, /\.selection-toolbar/)
+  assert.match(styles, /\.track-select-checkbox/)
+  assert.match(styles, /\.track-cover-cell/)
 })
 
 test('song list exposes exclusion management and restore controls', () => {

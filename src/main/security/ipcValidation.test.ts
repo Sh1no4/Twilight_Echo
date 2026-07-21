@@ -210,6 +210,8 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
   assert.match(electronSecuritySource, /media-src 'self' blob: twilight-audio: twilight-media:/)
   assert.match(rendererHtml, /img-src 'self' data: blob: cover: background: twilight-media:/)
   assert.match(rendererHtml, /media-src 'self' blob: twilight-audio: twilight-media:/)
+  // Playbar cover-theme sampling uses crossOrigin=anonymous on twilight-media grants.
+  assert.match(lifecycleSource, /scheme: 'twilight-media'[\s\S]*corsEnabled:\s*true/)
   assert.doesNotMatch(rendererHtml, /(?:img-src|media-src)[^;]*\bhttps?:/)
   assert.doesNotMatch(rendererHtml, /unpkg\.com|fonts\.googleapis\.com|unsafe-inline' https:/)
   assert.match(rendererHtml, /script-src 'self'/)

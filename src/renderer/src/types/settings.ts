@@ -12,8 +12,6 @@ export type NcmPlaybackQuality =
   | 'exhigh'
   | 'lossless'
   | 'hires'
-  | 'jyeffect'
-  | 'sky'
 export type StartupHomePage = 'local' | 'streaming'
 /** sequential stops at the tail; listLoop wraps; repeat loops one track; shuffle uses a shuffled cycle. */
 export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'

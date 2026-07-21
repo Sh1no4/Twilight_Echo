@@ -48,9 +48,11 @@ function isEditableTarget(target: EventTarget | null): boolean {
 
 /**
  * System-style multi-select for track tables:
- * - Ctrl/Cmd+Click: toggle
- * - Shift+Click: range from anchor
- * - plain click: single-select (caller may also play)
+ * - Ctrl/Cmd+Click: toggle selection (does not play)
+ * - Shift+Click: range from anchor (does not play)
+ * - plain click: play only — never enters selection mode
+ * - checkbox / explicit selectOnly: manual multi-select
+ * - right-click (ensureContextSelection): select target for context actions
  * - Ctrl/Cmd+A: select all current list
  * - Escape: clear
  */
@@ -126,14 +128,20 @@ export function useTrackMultiSelect({
 
   function onRowClick(track: Track, index: number, event: MouseEvent): MultiSelectClickResult {
     if (event.shiftKey) {
-      selectRange(index)
+      // Shift without an anchor starts a new range at this row.
+      if (anchorIndex.value == null && selectedIds.value.size === 0) {
+        selectOnly(track.id, index)
+      } else {
+        selectRange(index)
+      }
       return 'select'
     }
     if (event.ctrlKey || event.metaKey) {
       toggle(track.id, index)
       return 'select'
     }
-    selectOnly(track.id, index)
+    // Plain click plays the track and exits multi-select mode.
+    clearSelection()
     return 'play'
   }
 

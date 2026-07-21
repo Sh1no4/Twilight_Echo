@@ -86,7 +86,11 @@ export function startApp(): void {
           standard: true,
           secure: true,
           supportFetchAPI: true,
-          stream: true
+          stream: true,
+          // Playbar dominant-color sampling loads covers with crossOrigin=anonymous.
+          // Without corsEnabled, Chromium taints/fails those requests and can leave
+          // the same twilight-media:// URL blank in the player-bar <img> as well.
+          corsEnabled: true
         }
       },
       {

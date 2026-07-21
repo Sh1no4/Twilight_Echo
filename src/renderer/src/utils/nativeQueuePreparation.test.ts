@@ -207,6 +207,37 @@ test('rejects an unsafe current target instead of issuing a native queue request
   assert.equal(prepared, null)
 })
 
+test('accepts twilight-media grant URLs as native playback targets', async () => {
+  const grant = 'twilight-media://audio/opaque-token'
+  const current = createTrack({
+    id: 'ncm:current',
+    filePath: 'ncm:current',
+    source: 'ncm',
+    streamUrl: grant
+  })
+  const companion = createTrack({
+    id: 'ncm:next',
+    filePath: 'ncm:next',
+    source: 'ncm',
+    streamUrl: 'twilight-media://audio/next-token'
+  })
+
+  const prepared = await prepareNativeQueue({
+    queue: [current, companion],
+    currentTrack: current,
+    currentTarget: grant,
+    currentIndex: 0,
+    isAudioFileAuthorized: async () => true,
+    getOfflinePlayablePaths: async (requests) => requests.map(() => null)
+  })
+
+  assert.equal(prepared?.delegated, true)
+  assert.deepEqual(
+    prepared?.items.map((item) => item.source),
+    [grant, companion.streamUrl]
+  )
+})
+
 test('uses the current-only queue when companion authorization throws', async () => {
   const current = createTrack({ id: 'ncm:current', filePath: 'ncm:current', source: 'ncm' })
   const companion = createTrack({ id: 'local:companion', filePath: 'D:\\Music\\companion.flac' })

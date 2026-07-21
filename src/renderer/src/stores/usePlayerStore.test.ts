@@ -280,6 +280,19 @@ test('streaming renderer playback is allowed after asynchronous provider URL res
   )
 })
 
+test('renderer createPlayableUrl accepts twilight-media grant URLs without local file lookup', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const createPlayableUrl = extractInternalFunctionBody(source, 'createPlayableUrl')
+
+  assert.match(createPlayableUrl, /\^twilight-media:/i)
+  assert.match(createPlayableUrl, /releasePlaybackObjectUrl\(\)/)
+  // Grant URLs must not be forced through the local audio file URL path.
+  assert.ok(
+    createPlayableUrl.indexOf('twilight-media:') < createPlayableUrl.indexOf('getAudioFileUrl'),
+    'twilight-media grants should short-circuit before getAudioFileUrl'
+  )
+})
+
 test('resolved streaming targets are patched back into restored queues', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const loadAndPlay = source.match(/async function loadAndPlay[\s\S]*?\n}/)?.[0] ?? ''

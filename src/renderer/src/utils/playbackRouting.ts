@@ -3,10 +3,17 @@ import type { TrackSource } from '../types/music'
 const RENDERER_DIRECT_TARGET_PATTERN = /^(?:blob:|data:)/i
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-zA-Z]:[\\/]/
 const URI_SCHEME_PATTERN = /^[a-zA-Z][a-zA-Z0-9+.-]*:/
-const NATIVE_SUPPORTED_URI_SCHEMES = new Set(['file', 'http', 'https'])
+// Provider getPlaybackUrl results are rewritten to twilight-media:// grants in
+// main; the native engine resolves those tokens back to upstream http(s).
+const NATIVE_SUPPORTED_URI_SCHEMES = new Set(['file', 'http', 'https', 'twilight-media'])
 
 export function isRendererDirectAudioTarget(target: string): boolean {
   return RENDERER_DIRECT_TARGET_PATTERN.test(target.trim())
+}
+
+/** True for opaque remote-media grant URLs issued by the main process. */
+export function isTwilightMediaGrantTarget(target: string): boolean {
+  return /^twilight-media:/i.test(target.trim())
 }
 
 export function shouldUseNativePlaybackTarget(source: TrackSource, target: string): boolean {

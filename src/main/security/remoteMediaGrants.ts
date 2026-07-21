@@ -25,6 +25,9 @@ const AUDIO_IDLE_TTL_MS = 30 * 60 * 1000
 const IMAGE_IDLE_TTL_MS = 24 * 60 * 60 * 1000
 const MAX_IMAGE_RESPONSE_BYTES = 25 * 1024 * 1024
 const MAX_AUDIO_RESPONSE_BYTES = 1024 * 1024 * 1024
+// Provider CDNs (especially NetEase album art) routinely 302 to edge hosts.
+// Follow a short, credential-free hop chain instead of failing every cover load.
+const MAX_REMOTE_MEDIA_REDIRECTS = 5
 
 export class RemoteMediaGrantService {
   private readonly grants = new Map<string, StoredGrant>()
@@ -90,19 +93,14 @@ export function createRemoteMediaRequestHandler(
 
     let upstream: Response
     try {
-      upstream = await options.fetch(grant.source, {
+      upstream = await fetchRemoteMediaWithRedirects(options.fetch, grant.source, {
         method: request.method,
-        headers: range ? { Range: range } : undefined,
-        credentials: 'omit',
-        redirect: 'manual'
+        headers: range ? { Range: range } : undefined
       })
     } catch {
       return failedRemoteMediaResponse(502, 'Remote media request failed')
     }
 
-    if (upstream.status >= 300 && upstream.status < 400) {
-      return failedRemoteMediaResponse(502, 'Remote media redirect was rejected')
-    }
     if (!upstream.ok && upstream.status !== 206) {
       return failedRemoteMediaResponse(502, 'Remote media request failed')
     }
@@ -170,7 +168,61 @@ function isAudioField(key: string): boolean {
 }
 
 function grantIfRemote(source: string, kind: RemoteMediaKind, grants: RemoteMediaGrantService): string {
-  return /^https?:\/\//i.test(source.trim()) ? grants.grant(source, kind) : source
+  const normalized = normalizeProviderRemoteUrl(source)
+  return normalized ? grants.grant(normalized, kind) : source
+}
+
+/**
+ * Accepts absolute http(s) URLs and protocol-relative `//host/path` values that
+ * NetEase (and some other providers) return for cover/stream assets.
+ */
+function normalizeProviderRemoteUrl(source: string): string | null {
+  if (typeof source !== 'string') return null
+  const trimmed = source.trim()
+  if (!trimmed) return null
+  const candidate = trimmed.startsWith('//') ? `https:${trimmed}` : trimmed
+  if (!/^https?:\/\//i.test(candidate)) return null
+  try {
+    return normalizeRemoteMediaSource(candidate)
+  } catch {
+    return null
+  }
+}
+
+async function fetchRemoteMediaWithRedirects(
+  fetchImpl: RemoteMediaRequestHandlerOptions['fetch'],
+  source: string,
+  init: { method: string; headers?: HeadersInit }
+): Promise<Response> {
+  let current = source
+  for (let hop = 0; hop <= MAX_REMOTE_MEDIA_REDIRECTS; hop += 1) {
+    const response = await fetchImpl(current, {
+      method: init.method,
+      headers: init.headers,
+      credentials: 'omit',
+      redirect: 'manual'
+    })
+    if (response.status < 300 || response.status >= 400) return response
+    if (hop === MAX_REMOTE_MEDIA_REDIRECTS) {
+      throw new Error('Remote media redirect limit exceeded')
+    }
+    const location = response.headers.get('location')
+    if (!location) throw new Error('Remote media redirect is missing a location')
+    let next: string
+    try {
+      next = normalizeRemoteMediaSource(new URL(location, current).toString())
+    } catch {
+      throw new Error('Remote media redirect target is not authorized')
+    }
+    // Drop the body so sockets are not held while hopping CDN edge hosts.
+    try {
+      await response.body?.cancel()
+    } catch {
+      // ignore cancel failures
+    }
+    current = next
+  }
+  throw new Error('Remote media redirect limit exceeded')
 }
 
 function normalizeRemoteMediaSource(source: string): string {
@@ -221,7 +273,15 @@ function isSingleByteRange(value: string): boolean {
 
 function isExpectedMediaType(contentType: string | null, kind: RemoteMediaKind): boolean {
   const normalized = contentType?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
-  if (kind === 'image') return normalized.startsWith('image/')
+  if (kind === 'image') {
+    // Some CDNs omit content-type or serve covers as generic binary.
+    return (
+      !normalized ||
+      normalized.startsWith('image/') ||
+      normalized === 'application/octet-stream' ||
+      normalized === 'binary/octet-stream'
+    )
+  }
   return (
     normalized.startsWith('audio/') ||
     normalized === 'application/ogg' ||
@@ -245,6 +305,10 @@ function filteredResponseHeaders(headers: Headers): Headers {
     const value = headers.get(name)
     if (value) filtered.set(name, value)
   }
+  // Allow renderer canvas sampling (cover theme) and CORS-mode <img> loads.
+  // Origins stay opaque tokens; no credentials are ever forwarded upstream.
+  filtered.set('Access-Control-Allow-Origin', '*')
+  filtered.set('Access-Control-Allow-Methods', 'GET, HEAD')
   return filtered
 }
 
@@ -279,6 +343,11 @@ function limitResponseBody(
 function failedRemoteMediaResponse(status: number, message: string): Response {
   return new Response(message, {
     status,
-    headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' }
+    headers: {
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Cache-Control': 'no-store',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, HEAD'
+    }
   })
 }

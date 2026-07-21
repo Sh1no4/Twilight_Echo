@@ -289,8 +289,6 @@ export function normalizeNcmPlaybackQuality(value: unknown): NcmPlaybackQuality 
     value === 'exhigh' ||
     value === 'lossless' ||
     value === 'hires' ||
-    value === 'jyeffect' ||
-    value === 'sky' ||
     value === 'auto'
     ? value
     : DEFAULT_SETTINGS.ncmPlaybackQuality

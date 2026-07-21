@@ -743,10 +743,11 @@ test('bundled NCM provider does not cache empty playback lookups', async () => {
   })
 
   assert.equal(await registeredProvider.current?.getPlaybackUrl({ id: 'ncm:404' }), null)
-  assert.equal(requests.length, 4)
+  // auto quality: hires/lossless/exhigh/standard + classic br fallbacks (999/320/128)
+  assert.equal(requests.length, 7)
 
   assert.equal(await registeredProvider.current?.getPlaybackUrl({ id: 'ncm:404' }), null)
-  assert.equal(requests.length, 8)
+  assert.equal(requests.length, 14)
 
   providerModule.deactivate()
 })

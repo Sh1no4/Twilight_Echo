@@ -229,39 +229,131 @@
   clip: rect(0, 0, 0, 0);
 }
 
-.library-view-controls {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
+.library-filter-dropdown {
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.library-filter-trigger {
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
+  padding: 6px 12px;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--te-neutral-700, #343d57);
+  background: var(--te-card-bg, #fff);
+  border: 1px solid var(--te-card-border, #eef1f6);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.library-filter-trigger:hover,
+.library-filter-trigger.active {
+  background: rgba(124, 77, 255, 0.08);
+  color: var(--te-primary-500, #7c4dff);
+  border-color: rgba(124, 77, 255, 0.28);
+}
+
+.library-filter-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  color: #fff;
+  background: var(--te-primary-500, #7c4dff);
+}
+
+.library-filter-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  width: min(360px, calc(100vw - 48px));
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--te-card-border, #eef1f6);
+  background: var(--te-card-bg, #fff);
+  box-shadow: 0 12px 32px rgba(24, 30, 52, 0.14);
+}
+
+.library-filter-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.library-filter-panel-header strong {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--te-neutral-900, #1f2937);
+}
+
+.library-filter-reset {
+  border: none;
+  background: transparent;
+  color: var(--te-primary-500, #7c4dff);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.library-filter-reset:disabled {
+  color: var(--text-secondary, #9ca3af);
+  cursor: default;
+}
+
+.library-view-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .library-view-controls label {
   align-items: center;
   color: var(--text-secondary, #6b7280);
-  display: inline-flex;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   font-size: 12px;
   gap: 4px;
-  white-space: nowrap;
+  min-width: 0;
 }
 
 .library-view-controls select {
   background: var(--bg-secondary, #f7f8fa);
   border: 1px solid var(--border-color, #dfe3e8);
-  border-radius: 4px;
+  border-radius: 8px;
   color: var(--text-primary, #1f2937);
   font: inherit;
-  max-width: 150px;
-  min-height: 28px;
-  padding: 2px 6px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
 }
 
 .library-filter-toggle {
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: flex-start;
   background: var(--bg-secondary, #f7f8fa);
   border: 1px solid var(--border-color, #dfe3e8);
-  border-radius: 4px;
-  min-height: 28px;
-  padding: 2px 6px;
+  border-radius: 8px;
+  min-height: 32px;
+  padding: 4px 8px;
+  gap: 6px !important;
 }
 
 .library-filter-toggle input {
@@ -832,6 +924,70 @@
   ); /* keep-white: decorative overlay */
 }
 
+.track-cover-cell {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+}
+
+.track-cover-cell.has-selection {
+  width: 58px;
+  justify-content: flex-start;
+  gap: 6px;
+}
+
+.track-select-checkbox {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.track-select-checkbox input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.track-select-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(124, 77, 255, 0.45);
+  background: rgba(255, 255, 255, 0.92);
+  color: #fff;
+  font-size: 9px;
+  line-height: 1;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.track-select-checkbox input:checked + .track-select-box {
+  background: var(--te-primary-500, #7c4dff);
+  border-color: var(--te-primary-500, #7c4dff);
+  box-shadow: 0 2px 8px rgba(124, 77, 255, 0.28);
+}
+
+.track-select-checkbox:hover .track-select-box {
+  border-color: var(--te-primary-500, #7c4dff);
+}
+
 .cover-img {
   width: 34px;
   height: 34px;
@@ -860,6 +1016,10 @@
 .col-cover-header {
   width: 56px;
   flex-shrink: 0;
+}
+.track-table:has(.track-cover-cell.has-selection) .col-cover,
+.track-table:has(.track-cover-cell.has-selection) .col-cover-header {
+  width: 80px;
 }
 .col-cover-header {
   color: #888;
@@ -1355,25 +1515,97 @@
   opacity: 0;
 }
 
-/* ── Multi-select ── */
+/* ── Multi-select ──
+   Neutral left-rail + soft fill. No purple wash.
+   Selected rows keep hover quiet so glass/scale animations don't fight selection. */
 .track-row.track-selected {
-  background: rgba(124, 77, 255, 0.12);
+  background: rgba(15, 23, 42, 0.045);
+  box-shadow: none;
+  transform: none;
+  filter: none;
+  z-index: 1;
 }
 
 .track-row.track-selected td {
   color: var(--te-neutral-900, #1a1a1a);
 }
 
+/* Solid left accent instead of full-row glass overlay */
 .track-row.track-selected::before {
   opacity: 1;
-  border-color: rgba(124, 77, 255, 0.35);
-  background:
-    linear-gradient(135deg, rgba(124, 77, 255, 0.14), rgba(255, 126, 182, 0.08)),
-    linear-gradient(90deg, rgba(124, 77, 255, 0.08), rgba(34, 211, 238, 0.05));
+  inset: 3px 0 3px 0;
+  border: 0;
+  border-radius: 0;
+  border-left: 3px solid rgba(15, 23, 42, 0.55);
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  animation: none !important;
+}
+
+/* Kill pointer/border glow on selected rows (hover + resting) */
+.track-row.track-selected::after,
+.track-row.track-selected:hover::after {
+  opacity: 0 !important;
+  animation: none !important;
+}
+
+.track-row.track-selected:hover {
+  background: rgba(15, 23, 42, 0.07);
+  transform: none;
+  box-shadow: none;
+  filter: none;
+  z-index: 1;
+}
+
+.track-row.track-selected:hover::before {
+  opacity: 1;
+  animation: none !important;
+  background: transparent;
+  border-left-color: rgba(15, 23, 42, 0.72);
+}
+
+/* Playing + selected: keep playing border, drop selected glass conflict */
+.track-row.track-selected.track-playing {
+  background: transparent;
+  transform: translateX(2px) scale(1.026);
+  box-shadow: 0 20px 48px rgba(124, 77, 255, 0.12);
+  z-index: 4;
+}
+
+.track-row.track-selected.track-playing::before {
+  opacity: 1;
+  inset: 0;
+  border-radius: inherit;
+  border: 1px solid rgba(124, 77, 255, 0.18);
+  border-left: 3px solid rgba(15, 23, 42, 0.65);
+  background: linear-gradient(
+    rgba(255, 255, 255, 0.38),
+    rgba(255, 255, 255, 0.2)
+  );
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
 }
 
 .track-row.track-selected.track-playing::after {
-  opacity: 0.55;
+  opacity: 1 !important;
+}
+
+.track-row.track-selected.track-playing:hover {
+  transform: translateX(2px) scale(1.026);
+  box-shadow: 0 20px 48px rgba(124, 77, 255, 0.12);
+  filter: none;
+  z-index: 4;
+}
+
+:global(html[data-theme='dark'] .track-select-box) {
+  background: rgba(28, 32, 48, 0.92);
+  border-color: rgba(167, 139, 250, 0.55);
+}
+
+:global(html[data-theme='dark'] .track-select-checkbox input:checked + .track-select-box) {
+  background: var(--te-primary-500, #7c4dff);
+  border-color: var(--te-primary-500, #7c4dff);
 }
 
 .selection-toolbar {
@@ -1636,5 +1868,25 @@
 }
 
 :global(html[data-theme='dark'] .track-row.track-selected) {
-  background: rgba(124, 77, 255, 0.2);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+:global(html[data-theme='dark'] .track-row.track-selected:hover) {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+:global(html[data-theme='dark'] .track-row.track-selected::before) {
+  border-left-color: rgba(255, 255, 255, 0.72);
+}
+
+:global(html[data-theme='dark'] .track-row.track-selected:hover::before) {
+  border-left-color: rgba(255, 255, 255, 0.9);
+}
+
+:global(html[data-theme='dark'] .track-row.track-selected.track-playing::before) {
+  border-left-color: rgba(255, 255, 255, 0.85);
+  background: linear-gradient(
+    rgba(255, 255, 255, 0.12),
+    rgba(255, 255, 255, 0.05)
+  );
 }

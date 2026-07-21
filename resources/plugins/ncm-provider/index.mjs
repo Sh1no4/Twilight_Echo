@@ -7,10 +7,7 @@ const PC_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36 Edg/123.0.0.0'
 const TRANSIENT_LOGIN_ERROR_CODES = new Set([301, 502, 503, 460])
 const NCM_PLAYBACK_QUALITY_FALLBACKS = {
-  // Automatic playback stays on the conventional stereo Hi-Res path; spatial mixes are opt-in.
   auto: ['hires', 'lossless', 'exhigh', 'standard'],
-  sky: ['sky', 'jyeffect', 'hires', 'lossless', 'exhigh', 'standard'],
-  jyeffect: ['jyeffect', 'hires', 'lossless', 'exhigh', 'standard'],
   hires: ['hires', 'lossless', 'exhigh', 'standard'],
   lossless: ['lossless', 'exhigh', 'standard'],
   exhigh: ['exhigh', 'standard'],
@@ -413,6 +410,14 @@ function normalizeBpm(value) {
   return Math.round(numeric * 10) / 10
 }
 
+function normalizeRemoteAssetUrl(value) {
+  if (typeof value !== 'string') return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  if (trimmed.startsWith('//')) return `https:${trimmed}`
+  return trimmed
+}
+
 function getSongAudioMeta(song) {
   const candidates = [
     song.sq,
@@ -452,7 +457,9 @@ function normalizeTrack(song) {
     '未知艺术家'
   const title = song.name || song.title || '未知歌曲'
   const album = song.al?.name || song.album?.name || '未知专辑'
-  const cover = song.al?.picUrl || song.album?.picUrl || song.picUrl || song.coverImgUrl || null
+  const cover = normalizeRemoteAssetUrl(
+    song.al?.picUrl || song.album?.picUrl || song.picUrl || song.coverImgUrl || null
+  )
   const audioMeta = getSongAudioMeta(song)
   const bpm = normalizeBpm(song.bpm ?? song.tempo ?? song.mainSong?.bpm)
 
@@ -506,7 +513,7 @@ function normalizePlaylist(playlist) {
   return {
     id: Number(playlist.id),
     name: playlist.name || '未命名歌单',
-    cover: playlist.coverImgUrl || playlist.picUrl || null,
+    cover: normalizeRemoteAssetUrl(playlist.coverImgUrl || playlist.picUrl || null),
     trackCount: typeof playlist.trackCount === 'number' ? playlist.trackCount : 0
   }
 }
@@ -515,7 +522,7 @@ function normalizeAlbum(album) {
   return {
     id: Number(album.id),
     name: album.name || '未命名专辑',
-    cover: album.picUrl || album.blurPicUrl || null,
+    cover: normalizeRemoteAssetUrl(album.picUrl || album.blurPicUrl || null),
     trackCount: typeof album.size === 'number' ? album.size : (album.songCount ?? 0),
     publishTime:
       typeof album.publishTime === 'number'
@@ -530,7 +537,7 @@ function normalizeArtist(item) {
   return {
     id: Number(item.id),
     name: item.name || item.artistName || '未知歌手',
-    picUrl: item.picUrl || item.img1v1Url || item.avatarUrl || null,
+    picUrl: normalizeRemoteAssetUrl(item.picUrl || item.img1v1Url || item.avatarUrl || null),
     albumSize: item.albumSize || 0,
     musicSize: item.musicSize || 0
   }
@@ -686,7 +693,7 @@ async function buildProfile(prof) {
   return {
     userId: prof.userId,
     nickname: prof.nickname,
-    avatarUrl: prof.avatarUrl,
+    avatarUrl: normalizeRemoteAssetUrl(prof.avatarUrl),
     signature: prof.signature ?? detail?.signature ?? '',
     follows: prof.follows ?? detail?.follows ?? 0,
     followeds: prof.followeds ?? detail?.followeds ?? 0
@@ -1068,9 +1075,18 @@ function getPlaybackQualityFallbacks(quality) {
 
 function getPlaybackUrlRequestPaths(songId, quality) {
   const encodedId = encodeURIComponent(String(songId))
-  return getPlaybackQualityFallbacks(quality).map(
-    (level) => `/song/url/v1?id=${encodedId}&level=${encodeURIComponent(level)}`
+  const levelPaths = getPlaybackQualityFallbacks(quality).map(
+    (level) =>
+      `/song/url/v1?id=${encodedId}&level=${encodeURIComponent(level)}&encodeType=flac`
   )
+  // Classic bitrate endpoints remain as a compatibility fallback when the
+  // level-based player API returns no official URL for the signed-in account.
+  const bitratePaths = [
+    `/song/url?id=${encodedId}&br=999000`,
+    `/song/url?id=${encodedId}&br=320000`,
+    `/song/url?id=${encodedId}&br=128000`
+  ]
+  return [...levelPaths, ...bitratePaths]
 }
 
 function getPlaybackStreamItems(data) {
@@ -1085,11 +1101,24 @@ function getPlaybackFailureMessage(data, streamItem) {
   return typeof message === 'string' && message.trim() ? message.trim() : ''
 }
 
+function normalizePlaybackStreamUrl(url) {
+  if (typeof url !== 'string') return null
+  const trimmed = url.trim()
+  if (!trimmed) return null
+  // NetEase occasionally returns protocol-relative stream hosts.
+  if (trimmed.startsWith('//')) return `https:${trimmed}`
+  if (/^https?:\/\//i.test(trimmed)) return trimmed
+  return null
+}
+
 function getOfficialPlaybackUrl(data, streamItem) {
-  const code = Number(streamItem?.code ?? data?.code)
-  if (Number.isFinite(code) && code !== 200) return null
-  const url = streamItem?.url
-  return typeof url === 'string' && url.trim() ? url.trim() : null
+  // Prefer per-item status, but only reject concrete non-200 values. Some
+  // successful payloads omit item.code and only provide a stream url.
+  const itemCode = Number(streamItem?.code)
+  if (Number.isFinite(itemCode) && itemCode !== 200) return null
+  const topCode = Number(data?.code)
+  if (Number.isFinite(topCode) && topCode !== 200 && !Number.isFinite(itemCode)) return null
+  return normalizePlaybackStreamUrl(streamItem?.url)
 }
 
 async function getPlaybackUrl(track, options = {}) {
@@ -1159,7 +1188,7 @@ async function fetchRecommendPlaylists() {
     return recommend.map((item) => ({
       id: Number(item.id),
       name: item.name || '未命名歌单',
-      cover: item.picUrl || item.coverImgUrl || null,
+      cover: normalizeRemoteAssetUrl(item.picUrl || item.coverImgUrl || null),
       trackCount: item.trackCount || 0
     }))
   } catch {
@@ -1370,7 +1399,7 @@ async function fetchUserFolloweds(uid, limit = 30, offset = 0) {
   return followeds.map((item) => ({
     id: Number(item.userId),
     name: item.nickname || '未知用户',
-    picUrl: item.avatarUrl || null,
+    picUrl: normalizeRemoteAssetUrl(item.avatarUrl || null),
     musicSize: item.playlistCount || 0,
     userType: item.userType || 0,
     followed: normalizeFollowed(item.followed ?? item.followMe ?? item.mutual)

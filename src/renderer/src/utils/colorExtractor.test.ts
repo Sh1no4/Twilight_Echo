@@ -99,3 +99,47 @@ test('extractDominantColor returns the fallback color for blank covers without d
     dom.restore()
   }
 })
+
+test('extractDominantColor uses anonymous CORS only for remote-ish cover schemes', async () => {
+  let lastCrossOrigin = ''
+  class TrackingImage {
+    crossOrigin = ''
+    onload: (() => void) | null = null
+    onerror: (() => void) | null = null
+    set src(_value: string) {
+      lastCrossOrigin = this.crossOrigin
+      queueMicrotask(() => this.onload?.())
+    }
+  }
+  const previousImage = globalRecord.Image
+  const previousDocument = globalRecord.document
+  globalRecord.Image = TrackingImage
+  globalRecord.document = {
+    createElement() {
+      return {
+        width: 0,
+        height: 0,
+        getContext() {
+          return {
+            drawImage(): void {},
+            getImageData(): { data: Uint8ClampedArray } {
+              return { data: makeImageData(10, 120, 200) }
+            }
+          }
+        }
+      }
+    }
+  }
+  try {
+    clearDominantColorCache()
+    await extractDominantColor('twilight-media://image/token-1')
+    assert.equal(lastCrossOrigin, 'anonymous')
+    clearDominantColorCache()
+    await extractDominantColor('data:image/png;base64,abc')
+    assert.equal(lastCrossOrigin, '')
+  } finally {
+    globalRecord.Image = previousImage
+    globalRecord.document = previousDocument
+    clearDominantColorCache()
+  }
+})

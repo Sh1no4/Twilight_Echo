@@ -850,7 +850,14 @@ async function createPlayableUrl(
   track: Track,
   loadToken: number
 ): Promise<string | null> {
-  if (/^https?:\/\//i.test(target) || /^blob:/i.test(target) || /^data:/i.test(target)) {
+  // http(s)/blob/data stream directly. twilight-media:// is the granted proxy
+  // scheme registered in main (protocol.handle) and allowed by media-src CSP.
+  if (
+    /^https?:\/\//i.test(target) ||
+    /^blob:/i.test(target) ||
+    /^data:/i.test(target) ||
+    /^twilight-media:/i.test(target)
+  ) {
     if (!isActiveLoad(loadToken, track)) return null
     releasePlaybackObjectUrl()
     return target

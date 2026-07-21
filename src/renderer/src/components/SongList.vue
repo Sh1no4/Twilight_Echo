@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { LocalLibraryTagPatch } from '../../../shared/localLibraryTags.ts'
 import { useUnifiedMusicSearch } from '../app/useUnifiedMusicSearch'
@@ -24,6 +24,7 @@ import { PLAYLIST_EXPORT_FORMATS } from '../utils/playlistExport.ts'
 import { selectLocalLibraryActionTracks } from '../utils/localTrackRemovalPolicy'
 import {
   applyLibraryView,
+  createDefaultLibraryViewState,
   libraryViewKey,
   LibraryViewPreferences,
   trackFolder,
@@ -205,6 +206,59 @@ function setLibraryFilter<K extends keyof LibraryViewFilters>(
     filters: { ...libraryViewState.value.filters, [key]: value }
   })
 }
+
+const libraryFilterPanelOpen = ref(false)
+const libraryFilterDropdownRef = ref<HTMLElement | null>(null)
+
+function toggleLibraryFilterPanel(): void {
+  libraryFilterPanelOpen.value = !libraryFilterPanelOpen.value
+}
+
+function closeLibraryFilterPanel(): void {
+  libraryFilterPanelOpen.value = false
+}
+
+function onDocumentPointerDown(event: PointerEvent): void {
+  if (!libraryFilterPanelOpen.value) return
+  const root = libraryFilterDropdownRef.value
+  const target = event.target
+  if (!(target instanceof Node) || !root || root.contains(target)) return
+  closeLibraryFilterPanel()
+}
+
+function resetLibraryFilters(): void {
+  const defaults = createDefaultLibraryViewState(props.category)
+  updateLibraryView({
+    ...libraryViewState.value,
+    sortKey: defaults.sortKey,
+    sortDirection: defaults.sortDirection,
+    filters: { ...defaults.filters }
+  })
+}
+
+const activeLibraryFilterCount = computed(() => {
+  const filters = libraryViewState.value.filters
+  let count = 0
+  if (filters.lossless) count += 1
+  if (filters.dsd) count += 1
+  if (filters.sampleRate !== null) count += 1
+  if (filters.bitDepth !== null) count += 1
+  if (filters.folder) count += 1
+  if (filters.provider) count += 1
+  return count
+})
+
+watch([() => props.category, () => props.filter], () => {
+  closeLibraryFilterPanel()
+})
+
+onMounted(() => {
+  document.addEventListener('pointerdown', onDocumentPointerDown, true)
+})
+
+onBeforeUnmount(() => {
+  document.removeEventListener('pointerdown', onDocumentPointerDown, true)
+})
 
 const libraryFilterOptions = computed(() => {
   const values = baseDisplayTracks.value
@@ -628,6 +682,7 @@ const {
   hasSelection,
   isSelected,
   clearSelection,
+  toggle,
   getSelectedTracks,
   ensureContextSelection
 } = multiSelect
@@ -670,10 +725,16 @@ function absoluteIndex(indexInVisible: number): number {
 function onRowClick(track: Track, indexInVisible: number, event: MouseEvent): void {
   const target = event.target as HTMLElement
   if (target.closest('.btn-remove')) return
+  if (target.closest('.track-select-checkbox')) return
   const result = multiSelect.onRowClick(track, absoluteIndex(indexInVisible), event)
   if (result === 'play') {
     playTrack(track, displayTracks.value)
   }
+}
+
+function onTrackSelectToggle(track: Track, indexInVisible: number, event: Event): void {
+  event.stopPropagation()
+  toggle(track.id, absoluteIndex(indexInVisible))
 }
 
 function onTrackContextMenu(event: MouseEvent, track: Track, indexInVisible: number): void {
@@ -1227,132 +1288,182 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   <i class="pi pi-times"></i>
                 </button>
               </div>
-              <div class="library-view-controls" aria-label="媒体库排序和过滤">
-                <label>
-                  <span>排序</span>
-                  <select
-                    :value="libraryViewState.sortKey"
-                    @change="setSortKey(($event.target as HTMLSelectElement).value)"
+              <div
+                ref="libraryFilterDropdownRef"
+                class="library-filter-dropdown"
+                :class="{ open: libraryFilterPanelOpen }"
+                aria-label="媒体库排序和过滤"
+              >
+                <button
+                  type="button"
+                  class="library-filter-trigger"
+                  :class="{ active: libraryFilterPanelOpen || activeLibraryFilterCount > 0 }"
+                  :aria-expanded="libraryFilterPanelOpen"
+                  aria-haspopup="dialog"
+                  title="筛选器"
+                  @click="toggleLibraryFilterPanel"
+                >
+                  <i class="pi pi-filter" style="font-size: 13px"></i>
+                  <span>筛选器</span>
+                  <span
+                    v-if="activeLibraryFilterCount > 0"
+                    class="library-filter-badge"
+                    aria-label="已启用筛选条件数量"
                   >
-                    <option value="title">标题</option>
-                    <option value="artist">歌手</option>
-                    <option value="album">专辑</option>
-                    <option value="duration">时长</option>
-                    <option value="format">格式</option>
-                    <option value="sampleRate">采样率</option>
-                    <option value="addedAt">加入时间</option>
-                    <option value="lastPlayed">最近播放</option>
-                  </select>
-                </label>
-                <label>
-                  <span>顺序</span>
-                  <select
-                    :value="libraryViewState.sortDirection"
-                    @change="setSortDirection(($event.target as HTMLSelectElement).value)"
-                  >
-                    <option value="asc">升序</option>
-                    <option value="desc">降序</option>
-                  </select>
-                </label>
-                <label class="library-filter-toggle">
-                  <input
-                    type="checkbox"
-                    :checked="libraryViewState.filters.lossless"
-                    @change="
-                      setLibraryFilter('lossless', ($event.target as HTMLInputElement).checked)
-                    "
-                  />
-                  <span>无损</span>
-                </label>
-                <label class="library-filter-toggle">
-                  <input
-                    type="checkbox"
-                    :checked="libraryViewState.filters.dsd"
-                    @change="setLibraryFilter('dsd', ($event.target as HTMLInputElement).checked)"
-                  />
-                  <span>DSD</span>
-                </label>
-                <label>
-                  <span>采样率</span>
-                  <select
-                    :value="libraryViewState.filters.sampleRate ?? ''"
-                    @change="
-                      setLibraryFilter(
-                        'sampleRate',
-                        Number(($event.target as HTMLSelectElement).value) || null
-                      )
-                    "
-                  >
-                    <option value="">全部</option>
-                    <option
-                      v-for="value in libraryFilterOptions.sampleRates"
-                      :key="value"
-                      :value="value"
+                    {{ activeLibraryFilterCount }}
+                  </span>
+                  <i class="pi pi-chevron-down" style="font-size: 10px"></i>
+                </button>
+                <div
+                  v-if="libraryFilterPanelOpen"
+                  class="library-filter-panel"
+                  role="dialog"
+                  aria-label="筛选器"
+                >
+                  <div class="library-filter-panel-header">
+                    <strong>筛选器</strong>
+                    <button
+                      type="button"
+                      class="library-filter-reset"
+                      :disabled="activeLibraryFilterCount === 0"
+                      @click="resetLibraryFilters"
                     >
-                      {{ value / 1000 }} kHz
-                    </option>
-                  </select>
-                </label>
-                <label>
-                  <span>位深</span>
-                  <select
-                    :value="libraryViewState.filters.bitDepth ?? ''"
-                    @change="
-                      setLibraryFilter(
-                        'bitDepth',
-                        Number(($event.target as HTMLSelectElement).value) || null
-                      )
-                    "
-                  >
-                    <option value="">全部</option>
-                    <option
-                      v-for="value in libraryFilterOptions.bitDepths"
-                      :key="value"
-                      :value="value"
-                    >
-                      {{ value }} bit
-                    </option>
-                  </select>
-                </label>
-                <label>
-                  <span>文件夹</span>
-                  <select
-                    :value="libraryViewState.filters.folder ?? ''"
-                    @change="
-                      setLibraryFilter('folder', ($event.target as HTMLSelectElement).value || null)
-                    "
-                  >
-                    <option value="">全部</option>
-                    <option
-                      v-for="folder in libraryFilterOptions.folders"
-                      :key="folder"
-                      :value="folder"
-                    >
-                      {{ folder }}
-                    </option>
-                  </select>
-                </label>
-                <label>
-                  <span>来源</span>
-                  <select
-                    :value="libraryViewState.filters.provider ?? ''"
-                    @change="
-                      setLibraryFilter(
-                        'provider',
-                        ($event.target as HTMLSelectElement).value || null
-                      )
-                    "
-                  >
-                    <option value="">全部</option>
-                    <option
-                      v-for="provider in libraryFilterOptions.providers"
-                      :key="provider"
-                      :value="provider"
-                    >
-                      {{ provider }}
-                    </option>
-                  </select>
-                </label>
+                      重置
+                    </button>
+                  </div>
+                  <div class="library-view-controls">
+                    <label>
+                      <span>排序</span>
+                      <select
+                        :value="libraryViewState.sortKey"
+                        @change="setSortKey(($event.target as HTMLSelectElement).value)"
+                      >
+                        <option value="title">标题</option>
+                        <option value="artist">歌手</option>
+                        <option value="album">专辑</option>
+                        <option value="duration">时长</option>
+                        <option value="format">格式</option>
+                        <option value="sampleRate">采样率</option>
+                        <option value="addedAt">加入时间</option>
+                        <option value="lastPlayed">最近播放</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>顺序</span>
+                      <select
+                        :value="libraryViewState.sortDirection"
+                        @change="setSortDirection(($event.target as HTMLSelectElement).value)"
+                      >
+                        <option value="asc">升序</option>
+                        <option value="desc">降序</option>
+                      </select>
+                    </label>
+                    <label class="library-filter-toggle">
+                      <input
+                        type="checkbox"
+                        :checked="libraryViewState.filters.lossless"
+                        @change="
+                          setLibraryFilter('lossless', ($event.target as HTMLInputElement).checked)
+                        "
+                      />
+                      <span>无损</span>
+                    </label>
+                    <label class="library-filter-toggle">
+                      <input
+                        type="checkbox"
+                        :checked="libraryViewState.filters.dsd"
+                        @change="
+                          setLibraryFilter('dsd', ($event.target as HTMLInputElement).checked)
+                        "
+                      />
+                      <span>DSD</span>
+                    </label>
+                    <label>
+                      <span>采样率</span>
+                      <select
+                        :value="libraryViewState.filters.sampleRate ?? ''"
+                        @change="
+                          setLibraryFilter(
+                            'sampleRate',
+                            Number(($event.target as HTMLSelectElement).value) || null
+                          )
+                        "
+                      >
+                        <option value="">全部</option>
+                        <option
+                          v-for="value in libraryFilterOptions.sampleRates"
+                          :key="value"
+                          :value="value"
+                        >
+                          {{ value / 1000 }} kHz
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>位深</span>
+                      <select
+                        :value="libraryViewState.filters.bitDepth ?? ''"
+                        @change="
+                          setLibraryFilter(
+                            'bitDepth',
+                            Number(($event.target as HTMLSelectElement).value) || null
+                          )
+                        "
+                      >
+                        <option value="">全部</option>
+                        <option
+                          v-for="value in libraryFilterOptions.bitDepths"
+                          :key="value"
+                          :value="value"
+                        >
+                          {{ value }} bit
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>文件夹</span>
+                      <select
+                        :value="libraryViewState.filters.folder ?? ''"
+                        @change="
+                          setLibraryFilter(
+                            'folder',
+                            ($event.target as HTMLSelectElement).value || null
+                          )
+                        "
+                      >
+                        <option value="">全部</option>
+                        <option
+                          v-for="folder in libraryFilterOptions.folders"
+                          :key="folder"
+                          :value="folder"
+                        >
+                          {{ folder }}
+                        </option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>来源</span>
+                      <select
+                        :value="libraryViewState.filters.provider ?? ''"
+                        @change="
+                          setLibraryFilter(
+                            'provider',
+                            ($event.target as HTMLSelectElement).value || null
+                          )
+                        "
+                      >
+                        <option value="">全部</option>
+                        <option
+                          v-for="provider in libraryFilterOptions.providers"
+                          :key="provider"
+                          :value="provider"
+                        >
+                          {{ provider }}
+                        </option>
+                      </select>
+                    </label>
+                  </div>
+                </div>
               </div>
               <button
                 v-if="props.category === 'allSongs'"
@@ -1523,14 +1634,32 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   @contextmenu="onTrackContextMenu($event, track, Number(index))"
                 >
                   <td class="col-cover">
-                    <CoverImg
-                      v-if="track.cover"
-                      :cover="track.cover"
-                      class="cover-img"
-                      alt="cover"
-                    />
-                    <div v-else class="cover-placeholder">
-                      <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+                    <div class="track-cover-cell" :class="{ 'has-selection': hasSelection }">
+                      <label
+                        v-if="hasSelection"
+                        class="track-select-checkbox"
+                        :title="isSelected(track.id) ? '取消选中' : '选中'"
+                        @click.stop
+                      >
+                        <input
+                          type="checkbox"
+                          :checked="isSelected(track.id)"
+                          :aria-label="`选中 ${track.title}`"
+                          @change="onTrackSelectToggle(track, Number(index), $event)"
+                        />
+                        <span class="track-select-box" aria-hidden="true">
+                          <i v-if="isSelected(track.id)" class="pi pi-check"></i>
+                        </span>
+                      </label>
+                      <CoverImg
+                        v-if="track.cover"
+                        :cover="track.cover"
+                        class="cover-img"
+                        alt="cover"
+                      />
+                      <div v-else class="cover-placeholder">
+                        <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+                      </div>
                     </div>
                   </td>
                   <td class="col-index">

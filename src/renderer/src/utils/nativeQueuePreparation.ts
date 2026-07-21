@@ -1,6 +1,6 @@
 import type { Track, TrackSource } from '../types/music'
 import type { OfflinePlayablePathRequest } from '../../../shared/offlineDownloads.ts'
-import { shouldUseNativePlaybackTarget } from './playbackRouting.ts'
+import { isTwilightMediaGrantTarget, shouldUseNativePlaybackTarget } from './playbackRouting.ts'
 
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-zA-Z]:[\\/]/
 
@@ -224,6 +224,8 @@ async function isAuthorizedLocalFile(
 }
 
 function isAuthorizedRemoteUrl(target: string): boolean {
+  // Opaque grants are already vetted when issued by main (protectProviderMedia).
+  if (isTwilightMediaGrantTarget(target)) return true
   try {
     const parsed = new URL(target.trim())
     return (

@@ -110,20 +110,72 @@ test('remote media proxy forwards only valid range requests without credentials'
   assert.equal(new Headers(requests[0].init.headers).get('range'), 'bytes=0-4')
   assert.equal(requests[0].init.credentials, 'omit')
   assert.equal(requests[0].init.redirect, 'manual')
+  // Canvas cover-theme sampling loads grants with crossOrigin=anonymous.
+  assert.equal(response.headers.get('access-control-allow-origin'), '*')
+  assert.equal(response.headers.get('access-control-allow-methods'), 'GET, HEAD')
   const invalidRange = await handler(new Request(granted, { headers: { Range: 'bytes=0-1,3-4' } }))
   assert.equal(invalidRange.status, 416)
+  assert.equal(invalidRange.headers.get('access-control-allow-origin'), '*')
 })
 
-test('remote media proxy refuses redirects and oversized responses without exposing origins', async () => {
+test('remote media proxy follows same-policy CDN redirects for cover images', async () => {
+  const grants = new RemoteMediaGrantService({ createToken: () => 'cover-token' })
+  const granted = grants.grant('https://p1.music.126.net/album.jpg', 'image')
+  const requests: string[] = []
+  const handler = createRemoteMediaRequestHandler({
+    grants,
+    fetch: async (source) => {
+      requests.push(source)
+      if (source === 'https://p1.music.126.net/album.jpg') {
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'https://p2.music.126.net/edge/album.jpg' }
+        })
+      }
+      return new Response('jpeg-bytes', {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg', 'content-length': '10' }
+      })
+    }
+  })
+
+  const response = await handler(new Request(granted))
+  assert.equal(response.status, 200)
+  assert.equal(await response.text(), 'jpeg-bytes')
+  assert.deepEqual(requests, [
+    'https://p1.music.126.net/album.jpg',
+    'https://p2.music.126.net/edge/album.jpg'
+  ])
+})
+
+test('provider media grants accept protocol-relative image URLs', () => {
+  const grants = new RemoteMediaGrantService({ createToken: () => 'proto-token' })
+  const protectedTrack = protectProviderMedia(
+    { cover: '//p3.music.126.net/cover.jpg' },
+    'searchSongs',
+    grants
+  ) as Record<string, string>
+  assert.equal(protectedTrack.cover, 'twilight-media://image/proto-token')
+  assert.deepEqual(grants.resolve(protectedTrack.cover, 'image'), {
+    source: 'https://p3.music.126.net/cover.jpg',
+    kind: 'image'
+  })
+})
+
+test('remote media proxy refuses credentialed redirect targets and oversized responses without exposing origins', async () => {
   const grants = new RemoteMediaGrantService({ createToken: () => 'cover-token' })
   const granted = grants.grant('https://cover.example/secret-art.jpg', 'image')
   const redirectHandler = createRemoteMediaRequestHandler({
     grants,
-    fetch: async () => new Response(null, { status: 302, headers: { location: 'https://evil.example' } })
+    fetch: async () =>
+      new Response(null, {
+        status: 302,
+        headers: { location: 'https://user:secret@evil.example/steal' }
+      })
   })
   const redirected = await redirectHandler(new Request(granted))
   assert.equal(redirected.status, 502)
-  assert.doesNotMatch(await redirected.text(), /cover\.example|evil\.example/)
+  assert.doesNotMatch(await redirected.text(), /cover\.example|evil\.example|secret/)
 
   const oversizedHandler = createRemoteMediaRequestHandler({
     grants,

@@ -73,6 +73,7 @@ test('playback quality falls back only through official lower compatible levels'
     requests.push(path)
     const url = parseRequest(path)
     assert.equal(url.pathname, '/song/url/v1')
+    assert.equal(url.searchParams.get('encodeType'), 'flac')
     if (url.searchParams.get('level') === 'lossless') {
       return {
         code: 200,
@@ -97,17 +98,20 @@ test('playback quality falls back only through official lower compatible levels'
       requests.map((path) => parseRequest(path).searchParams.get('level')),
       ['lossless', 'exhigh']
     )
-    assert.ok(requests.every((path) => !path.includes('br=') && !path.includes('unblock=')))
+    assert.ok(requests.every((path) => !path.includes('unblock=')))
   } finally {
     ncmProvider.deactivate()
   }
 })
 
-test('automatic quality does not select spatial mixes unless the user asks for one', async () => {
+test('automatic quality falls back through Hi-Res, lossless, extreme, and standard only', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {
     requests.push(path)
     const url = parseRequest(path)
+    if (url.pathname !== '/song/url/v1') {
+      throw new Error(`unexpected path: ${url.pathname}`)
+    }
     const level = url.searchParams.get('level')
     if (level === 'exhigh') {
       return { code: 200, data: [{ id: 78, url: 'https://music.example/78.mp3', code: 200 }] }
@@ -139,8 +143,57 @@ test('premium-only tracks return no URL when no officially authorized fallback e
   try {
     assert.equal(await provider.getPlaybackUrl({ id: 'ncm:79' }, { quality: 'hires' }), null)
     assert.deepEqual(
-      requests.map((path) => parseRequest(path).searchParams.get('level')),
-      ['hires', 'lossless', 'exhigh', 'standard']
+      requests.map((path) => {
+        const url = parseRequest(path)
+        if (url.pathname === '/song/url/v1') return `v1:${url.searchParams.get('level')}`
+        return `br:${url.searchParams.get('br')}`
+      }),
+      ['v1:hires', 'v1:lossless', 'v1:exhigh', 'v1:standard', 'br:999000', 'br:320000', 'br:128000']
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('classic bitrate endpoint is used when level-based player API has no URL', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/song/url/v1') {
+      return { code: 200, data: [{ id: 80, url: null, code: 404, msg: 'level unavailable' }] }
+    }
+    if (url.pathname === '/song/url' && url.searchParams.get('br') === '320000') {
+      return {
+        code: 200,
+        data: [{ id: 80, url: '//m701.music.126.net/song.mp3', br: 320000 }]
+      }
+    }
+    return { code: 200, data: [{ id: 80, url: null, code: 404 }] }
+  })
+
+  try {
+    assert.equal(
+      await provider.getPlaybackUrl({ id: 'ncm:80' }, { quality: 'standard' }),
+      'https://m701.music.126.net/song.mp3'
+    )
+    assert.ok(requests.some((path) => path.startsWith('/song/url?')))
+    assert.ok(requests.some((path) => path.includes('br=320000')))
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
+test('protocol-relative stream URLs are normalized to https', async () => {
+  const provider = await activateProvider(async () => ({
+    code: 200,
+    data: [{ id: 81, url: '//m801.music.126.net/track.flac', code: 200, level: 'hires' }]
+  }))
+
+  try {
+    assert.equal(
+      await provider.getPlaybackUrl({ id: 'ncm:81' }, { quality: 'hires' }),
+      'https://m801.music.126.net/track.flac'
     )
   } finally {
     ncmProvider.deactivate()

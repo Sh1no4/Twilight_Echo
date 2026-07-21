@@ -114,9 +114,7 @@ const ncmPlaybackQualityOptions: { value: NcmPlaybackQuality; label: string }[] 
   { value: 'standard', label: '标准' },
   { value: 'exhigh', label: '极高' },
   { value: 'lossless', label: '无损' },
-  { value: 'hires', label: 'Hi-Res' },
-  { value: 'jyeffect', label: '高清环绕' },
-  { value: 'sky', label: '沉浸环绕' }
+  { value: 'hires', label: 'Hi-Res' }
 ]
 
 const startupHomePageOptions: { value: StartupHomePage; label: string; icon: string }[] = [
@@ -2351,7 +2349,7 @@ onBeforeUnmount(() => {
               <div class="setting-item">
                 <div class="setting-copy">
                   <strong>网易云播放音质</strong>
-                  <span>自动按 Hi-Res、无损、极高和标准回退；环绕音质需手动选择。</span>
+                  <span>自动按 Hi-Res、无损、极高和标准依次回退；也可固定为其中一档。</span>
                 </div>
                 <select
                   class="preview-select"
