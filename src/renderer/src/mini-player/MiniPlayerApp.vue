@@ -300,6 +300,11 @@ onBeforeUnmount(() => {
     :data-layout="resolvedLayout"
     :data-theme-profile="settings.activeStyleId"
   >
+    <div
+      class="mini-window-fill"
+      :style="{ backgroundColor: activeProfile.background.fallbackColor }"
+      aria-hidden="true"
+    ></div>
     <section class="mini-player-surface">
       <div class="mini-background-source" :style="backgroundSourceStyle" aria-hidden="true"></div>
       <div class="mini-background-overlay" aria-hidden="true"></div>

@@ -59,9 +59,9 @@ export function createMiniPlayerWindowShape(
 
   for (let y = 0; y < radius; y += 1) {
     const distanceFromCenter = radius - y - 0.5
-    const inset = Math.ceil(
+    const geometricInset =
       radius - Math.sqrt(Math.max(0, radius * radius - distanceFromCenter * distanceFromCenter))
-    )
+    const inset = Math.min(radius, Math.ceil(geometricInset) + 1)
     const rowWidth = roundedWidth - inset * 2
     if (rowWidth <= 0) continue
     shape.push({ x: inset, y, width: rowWidth, height: 1 })

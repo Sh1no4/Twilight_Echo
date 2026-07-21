@@ -45,6 +45,7 @@ import {
   cloneMiniPlayerSettings,
   normalizeMiniPlayerSettings
 } from '../../shared/miniPlayer'
+import { DEFAULT_SOFTWARE_VOLUME } from '../../shared/audioProcessingOptions'
 import {
   DEFAULT_SLEEP_TIMER_SETTINGS,
   type SleepTimerSettings
@@ -68,6 +69,7 @@ export const DEFAULT_DESKTOP_LYRICS: DesktopLyricsSettings = {
   bgOpacity: 30,
   align: 'center',
   showTranslation: true,
+  layout: 'multi',
   lineSpacing: 1.6,
   shadow: true,
   shadowBlur: 8,
@@ -78,7 +80,8 @@ export const DEFAULT_DESKTOP_LYRICS: DesktopLyricsSettings = {
   windowY: -1,
   alwaysOnTop: true,
   clickThrough: false,
-  maxLines: 2
+  maxLines: 2,
+  lineOffset: 48
 }
 
 export const DEFAULT_MUSIC_CACHE_POLICY: MusicCachePolicySettings = {
@@ -178,6 +181,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
   ncmPlaybackQuality: 'auto',
   playMode: 'sequential',
+  softwareVolume: DEFAULT_SOFTWARE_VOLUME,
   audioOutput:
     process.platform === 'darwin' ? 'coreaudio' : process.platform === 'linux' ? 'alsa' : 'wasapi',
   audioDevice: 'auto',
@@ -555,6 +559,7 @@ export function normalizeDesktopLyrics(raw: unknown): DesktopLyricsSettings {
     bgOpacity: clampNumber(d.bgOpacity, 0, 100, DEFAULT_DESKTOP_LYRICS.bgOpacity),
     align: d.align === 'left' ? 'left' : 'center',
     showTranslation: d.showTranslation !== false,
+    layout: d.layout === 'bilingual' ? 'bilingual' : 'multi',
     lineSpacing: clampNumber(d.lineSpacing, 1.0, 3.0, DEFAULT_DESKTOP_LYRICS.lineSpacing),
     shadow: d.shadow !== false,
     shadowBlur: clampNumber(d.shadowBlur, 0, 30, DEFAULT_DESKTOP_LYRICS.shadowBlur),
@@ -566,7 +571,8 @@ export function normalizeDesktopLyrics(raw: unknown): DesktopLyricsSettings {
     windowY: typeof d.windowY === 'number' ? d.windowY : -1,
     alwaysOnTop: d.alwaysOnTop !== false,
     clickThrough: d.clickThrough === true,
-    maxLines: clampNumber(d.maxLines, 1, 5, DEFAULT_DESKTOP_LYRICS.maxLines)
+    maxLines: clampNumber(d.maxLines, 1, 5, DEFAULT_DESKTOP_LYRICS.maxLines),
+    lineOffset: clampNumber(d.lineOffset, -200, 200, DEFAULT_DESKTOP_LYRICS.lineOffset)
   }
 }
 
@@ -658,6 +664,7 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     sleepTimer: normalizeSleepTimerSettings(settings.sleepTimer),
     ncmPlaybackQuality: normalizeNcmPlaybackQuality(settings.ncmPlaybackQuality),
     playMode: normalizePlayMode(settings.playMode),
+    softwareVolume: clampNumber(settings.softwareVolume, 0, 1, DEFAULT_SOFTWARE_VOLUME),
     audioOutput: normalizeAudioOutput(settings.audioOutput),
     audioDevice: normalizeAudioDevice(settings.audioDevice),
     audioExclusiveMode: settings.audioExclusiveMode === true,

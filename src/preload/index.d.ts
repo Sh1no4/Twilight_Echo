@@ -406,6 +406,8 @@ interface WindowTransparencyEffectSettings {
   cardBlur: number
 }
 
+type DesktopLyricsLayout = 'multi' | 'bilingual'
+
 interface DesktopLyricsSettings {
   enabled: boolean
   fontSize: number
@@ -417,6 +419,8 @@ interface DesktopLyricsSettings {
   bgOpacity: number
   align: LyricAlign
   showTranslation: boolean
+  /** multi = consecutive lines; bilingual = original + translation for the active line. */
+  layout: DesktopLyricsLayout
   lineSpacing: number
   shadow: boolean
   shadowBlur: number
@@ -428,6 +432,8 @@ interface DesktopLyricsSettings {
   alwaysOnTop: boolean
   clickThrough: boolean
   maxLines: number
+  /** Horizontal stagger in px: even rows left (-), odd rows right (+). */
+  lineOffset: number
 }
 
 type MiniPlayerBackgroundKind = 'solid' | 'gradient' | 'cover' | 'image'
@@ -640,6 +646,7 @@ interface AppSettings {
   sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
+  softwareVolume: number
   audioOutput: AudioOutputId
   audioDevice: string
   audioExclusiveMode: boolean

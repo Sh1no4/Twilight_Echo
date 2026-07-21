@@ -132,8 +132,8 @@ function handleImportClick(): void {
   transform-origin: left center;
   will-change: transform;
   transition:
-    transform 0.32s cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 0.32s;
+    transform 0.32s var(--te-ease-soft),
+    box-shadow 0.32s var(--te-ease-soft);
   font-family: var(--te-font-sans);
 }
 
@@ -158,7 +158,7 @@ function handleImportClick(): void {
   opacity: 0;
   transform-origin: left center;
   transition:
-    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.28s var(--te-ease-soft),
     opacity 0.2s ease;
 }
 

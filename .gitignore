@@ -10,6 +10,11 @@ dist/
 build/
 release/
 release-builds/
+*.AppImage
+*.dmg
+*.exe
+*.blockmap
+*.yml.sig
 
 # Native audio engine / CMake output
 audio-engine/build/
@@ -21,10 +26,10 @@ audio-engine/cmake_install.cmake
 audio-engine/compile_commands.json
 audio-engine/Testing/
 audio-engine/vcpkg_installed/
-resources/audio-engine/*.dll
-resources/audio-engine/*.node
 audio-engine/third_party/ASIOSDK/
-resources/audio-engine/
+# Staged native binaries are local/release artifacts, not source
+resources/audio-engine/**
+!resources/audio-engine/.gitkeep
 
 # Test and coverage output
 coverage/
@@ -34,13 +39,16 @@ test-results/
 Testing/
 output/
 
-# Caches
+# Caches / typecheck incremental
 .cache/
 .vite/
+.turbo/
 .eslintcache
 *.tsbuildinfo
+.parcel-cache/
+.webpack/
+.rollup.cache/
 skills-lock.json
-.vscode/
 
 # Logs
 logs/
@@ -53,32 +61,35 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Environment files
+# Environment / secrets
 .env
 .env.*
 !.env.example
 !.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+.secrets/
 
 # OS files
 .DS_Store
 Thumbs.db
 Desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
 
 # AI editor rules (personal development configs)
 .clinerules
 .cursorrules
 CLAUDE.md
 
-# AI agent session state
+# AI agent session state / local tool state
 .omo/
 .superpowers/
 .worktrees/
 agent-tools/
-
-# Prototype / preview files (not used in build)
-plugin-preview.html
-
-# Editor and local tool state
 .idea/
 .vscode/*
 !.vscode/extensions.json
@@ -89,6 +100,8 @@ plugin-preview.html
 .claude/
 .agents/
 .gemini/
+.opencode/
+.local/
 
 # Temporary files / local scratch
 tmp/
@@ -99,8 +112,21 @@ tmp_*.py
 tmp_*.out
 tmp_*.log
 electron.vite.config.[0-9]*.mjs
+*.orig
+*.bak
+*~
 
 # Original font files (backup, WOFF2 versions are used)
 resources/font/_originals/
-.vscode/settings.json
+
+# Local packaging / signing artifacts
+*.cer
+*.crt
+*.p7b
+*.spc
+*.pvk
+*.pfx
+*.snk
+
+# Optional personal notes that should not ship
 docs/superpowers/plans/2026-07-11-native-queue-memory-restore.md

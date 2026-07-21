@@ -66,6 +66,7 @@ import {
   pruneUnavailableLocalTracks
 } from '../utils/localTrackRemovalPolicy.ts'
 import { type SleepTimerMode, type SleepTimerState } from '../../../shared/sleepTimer.ts'
+import { DEFAULT_SOFTWARE_VOLUME } from '../../../shared/audioProcessingOptions.ts'
 import { createSleepTimerController, getRestorableSleepTimerState } from './sleepTimerController.ts'
 import { createSleepTimerFadeController } from './sleepTimerFade.ts'
 import { usePlaybackBookmarks } from './playbackBookmarks'
@@ -371,7 +372,7 @@ let lastNativeSessionUnderrunCount = 0
 let nativeStreamBufferingClearTimer: ReturnType<typeof setTimeout> | null = null
 const currentTime = ref(0)
 const duration = ref(0)
-const volume = ref(0.7)
+const volume = ref(DEFAULT_SOFTWARE_VOLUME)
 const muted = ref(false)
 /** Application-layer playback rate (0.5–2). 1 = realtime. */
 const playbackRate = ref(1)
@@ -380,7 +381,9 @@ const abLoopA = ref<number | null>(null)
 const abLoopB = ref<number | null>(null)
 /** Offer to resume a long track from a saved resume bookmark. */
 const resumeOffer = ref<{ trackId: string; positionSeconds: number; label: string } | null>(null)
-const lastAudibleVolume = ref(0.7)
+const lastAudibleVolume = ref(DEFAULT_SOFTWARE_VOLUME)
+let volumePersistTimer: ReturnType<typeof setTimeout> | null = null
+let suppressVolumePersist = false
 /** Active cast target display name (null when not casting). */
 const castTargetName = ref<string | null>(null)
 /** Active cast device id (usn); required to re-cast on queue skip. */
@@ -1688,6 +1691,29 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
   }
 }
 
+function clampSoftwareVolume(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_SOFTWARE_VOLUME
+  return Math.min(1, Math.max(0, Math.round(value * 1000) / 1000))
+}
+
+function scheduleSoftwareVolumePersist(val: number): void {
+  if (suppressVolumePersist) return
+  if (volumePersistTimer != null) clearTimeout(volumePersistTimer)
+  volumePersistTimer = setTimeout(() => {
+    volumePersistTimer = null
+    const next = clampSoftwareVolume(val)
+    const saved = clampSoftwareVolume(
+      typeof appSettings.value?.softwareVolume === 'number'
+        ? appSettings.value.softwareVolume
+        : DEFAULT_SOFTWARE_VOLUME
+    )
+    if (Math.abs(saved - next) < 0.0005) return
+    void updateSettings({ softwareVolume: next }).catch((err) => {
+      console.error('[音频引擎] 保存软件音量失败:', err)
+    })
+  }, 280)
+}
+
 watch(volume, (val) => {
   if (val > 0) {
     lastAudibleVolume.value = val
@@ -1698,6 +1724,7 @@ watch(volume, (val) => {
   if (castTargetName.value) {
     void window.api.remote?.controlCast?.({ volume: val }).catch(() => {})
   }
+  scheduleSoftwareVolumePersist(val)
 })
 
 function applyPlaybackRateToHtmlAudio(audio: HTMLAudioElement, rate = playbackRate.value): void {
@@ -3506,6 +3533,22 @@ function setupPlayerIntegrationSideEffects(): void {
       if (savedPlayMode && savedPlayMode !== playMode.value) {
         setPlayModeInternal(savedPlayMode, { persist: false })
       }
+    },
+    { immediate: true }
+  )
+
+  watch(
+    () => appSettings.value.softwareVolume,
+    (savedVolume) => {
+      if (typeof savedVolume !== 'number' || !Number.isFinite(savedVolume)) return
+      const next = clampSoftwareVolume(savedVolume)
+      if (Math.abs(next - volume.value) < 0.0005) return
+      suppressVolumePersist = true
+      volume.value = next
+      if (next > 0) lastAudibleVolume.value = next
+      queueMicrotask(() => {
+        suppressVolumePersist = false
+      })
     },
     { immediate: true }
   )

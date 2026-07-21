@@ -86,3 +86,20 @@ test('login page can open with an initial streaming provider', () => {
   assert.equal(navigation.showStreamingPage.value, true)
   assert.equal(navigation.loginInitialProviderId.value, null)
 })
+
+test('returning from local list pages to dashboard uses page-up transition', () => {
+  const navigation = useAppNavigation()
+
+  navigation.onSelectView('allSongs', null)
+  assert.equal(navigation.activeCategory.value, 'allSongs')
+  assert.equal(navigation.songlistTransitionName.value, 'page-down')
+
+  navigation.onSelectView('dashboard', null)
+  assert.equal(navigation.activeCategory.value, 'dashboard')
+  assert.equal(navigation.songlistTransitionName.value, 'page-up')
+
+  navigation.onSelectView('playlists', null)
+  assert.equal(navigation.songlistTransitionName.value, 'page-down')
+  navigation.onSelectView('dashboard', null)
+  assert.equal(navigation.songlistTransitionName.value, 'page-up')
+})

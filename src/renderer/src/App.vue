@@ -479,13 +479,15 @@ const titleSurface = computed<TitleSurface>(() => {
     }"
     :style="{ minHeight: mainContentMinHeight }"
   >
-    <Transition :name="songlistTransitionName">
+    <Transition :name="songlistTransitionName" mode="out-in">
       <LocalDashboard
         v-if="localViewVisible && activeCategory === 'dashboard'"
+        key="local-dashboard"
         @select-view="onSelectView"
       />
       <SongList
         v-else-if="localViewVisible"
+        key="local-songlist"
         :category="activeCategory"
         :filter="activeFilter"
         :has-player="hasPlayerBar"
@@ -563,14 +565,13 @@ body {
 
 .main-content {
   display: grid;
+  box-sizing: border-box;
   margin-left: 0;
   width: 100%;
   min-height: 100vh;
-  transform: translate3d(0, 0, 0);
-  transition:
-    transform 0.32s var(--te-ease-soft),
-    width 0.32s var(--te-ease-soft);
-  will-change: transform, width;
+  padding-left: 0;
+  transform: translateZ(0);
+  transition: padding-left 0.32s var(--te-ease-soft);
   overflow: hidden;
   position: relative;
   z-index: 1;
@@ -640,8 +641,7 @@ body.te-no-blur .login-page-leave-to {
 }
 
 .main-content.menu-open {
-  width: calc(100% - var(--te-menu-width));
-  transform: translate3d(var(--te-menu-width), 0, 0);
+  padding-left: var(--te-menu-width);
 }
 
 .main-content.playing-open {
@@ -681,7 +681,11 @@ body.te-no-blur .login-page-leave-to {
   }
 }
 
-/* SongList internal view transitions (grid ↔ table) */
+/* Local home ↔ list page transitions (must beat scoped component roots). */
+.main-content > .page-down-enter-active,
+.main-content > .page-down-leave-active,
+.main-content > .page-up-enter-active,
+.main-content > .page-up-leave-active,
 .page-down-enter-active,
 .page-down-leave-active,
 .page-up-enter-active,
@@ -689,24 +693,30 @@ body.te-no-blur .login-page-leave-to {
   transition:
     transform 0.42s var(--te-ease-soft),
     opacity 0.26s ease,
-    filter 0.32s ease;
+    filter 0.32s ease !important;
   will-change: transform, opacity, filter;
 }
+.main-content > .page-down-enter-active,
+.main-content > .page-up-enter-active,
 .page-down-enter-active,
 .page-up-enter-active {
   z-index: 1;
 }
+.main-content > .page-down-leave-active,
+.main-content > .page-up-leave-active,
 .page-down-leave-active,
 .page-up-leave-active {
   z-index: 0;
 }
 
 /* page-down: selected page is lower in the sidebar, new view rises from below */
+.main-content > .page-down-leave-to,
 .page-down-leave-to {
   transform: translateY(-34px) scale(0.992);
   opacity: 0;
   filter: blur(8px);
 }
+.main-content > .page-down-enter-from,
 .page-down-enter-from {
   transform: translateY(46px) scale(0.992);
   opacity: 0;
@@ -714,11 +724,13 @@ body.te-no-blur .login-page-leave-to {
 }
 
 /* page-up: selected page is higher in the sidebar, new view drops from above */
+.main-content > .page-up-leave-to,
 .page-up-leave-to {
   transform: translateY(34px) scale(0.992);
   opacity: 0;
   filter: blur(8px);
 }
+.main-content > .page-up-enter-from,
 .page-up-enter-from {
   transform: translateY(-46px) scale(0.992);
   opacity: 0;

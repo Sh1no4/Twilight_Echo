@@ -41,7 +41,6 @@
   background-repeat: no-repeat;
   background-size: cover;
   font-family: var(--te-font-sans, sans-serif);
-  transition: scrollbar-color 0.2s ease;
 }
 
 .home.has-route-dialog {
@@ -99,23 +98,26 @@
 .home.te-auto-scrollbar::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 999px;
-  background: rgba(var(--te-primary-rgb, 37, 99, 235), 0.14);
+  background: transparent;
   background-clip: content-box;
+  transition:
+    background 0.2s ease,
+    border-width 0.2s ease;
 }
 
-.home.te-auto-scrollbar:hover,
+.home.te-auto-scrollbar.is-scrollbar-near,
 .home.te-auto-scrollbar.is-scrollbar-active {
   scrollbar-color: rgba(var(--te-primary-rgb, 37, 99, 235), 0.4) transparent;
 }
 
-.home.te-auto-scrollbar:hover::-webkit-scrollbar-thumb,
+.home.te-auto-scrollbar.is-scrollbar-near::-webkit-scrollbar-thumb,
 .home.te-auto-scrollbar.is-scrollbar-active::-webkit-scrollbar-thumb {
   border-width: 2px;
   background: rgba(var(--te-primary-rgb, 37, 99, 235), 0.42);
   background-clip: content-box;
 }
 
-.home.te-auto-scrollbar:hover::-webkit-scrollbar-thumb:hover,
+.home.te-auto-scrollbar.is-scrollbar-near::-webkit-scrollbar-thumb:hover,
 .home.te-auto-scrollbar.is-scrollbar-active::-webkit-scrollbar-thumb:hover {
   border-width: 1px;
   background: rgba(var(--te-primary-rgb, 37, 99, 235), 0.62);
@@ -215,8 +217,8 @@
   color: var(--home-text);
   font-family: var(--home-display);
   font-size: clamp(1.65rem, 3.2vw, 2.75rem);
-  font-weight: 900;
-  letter-spacing: -0.04em;
+  font-weight: 750;
+  letter-spacing: -0.02em;
   line-height: 1.2;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -227,7 +229,7 @@
 
 .greeting span {
   color: var(--home-muted);
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .shuffle-shortcut {
@@ -405,8 +407,8 @@
   color: var(--home-text);
   font-family: var(--home-display);
   font-size: clamp(2rem, 4vw, 3.3rem);
-  font-weight: 900;
-  letter-spacing: -0.04em;
+  font-weight: 750;
+  letter-spacing: -0.02em;
 }
 
 .empty-copy > p {
@@ -590,9 +592,9 @@
   color: var(--home-text);
   font-family: var(--home-display);
   font-size: clamp(2rem, 4.1vw, 3.55rem);
-  font-weight: 900;
-  letter-spacing: -0.05em;
-  line-height: 1.08;
+  font-weight: 750;
+  letter-spacing: -0.025em;
+  line-height: 1.1;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
@@ -602,7 +604,7 @@
   overflow: hidden;
   color: var(--home-muted);
   font-size: 1.02rem;
-  font-weight: 700;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -936,8 +938,8 @@
   color: var(--home-text);
   font-family: var(--home-display);
   font-size: 1.08rem;
-  font-weight: 900;
-  letter-spacing: -0.02em;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .round-link {
@@ -1017,8 +1019,10 @@
   color: var(--home-text);
   font-family: var(--home-display);
   font-size: 1.05rem;
-  font-weight: 900;
-  line-height: 1.1;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1026,7 +1030,9 @@
 .overview-stat small {
   color: var(--home-muted);
   font-size: 0.66rem;
-  line-height: 1.2;
+  font-weight: 500;
+  line-height: 1.25;
+  letter-spacing: 0.01em;
 }
 
 .signal-card {

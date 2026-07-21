@@ -32,6 +32,7 @@ import type {
   CardShadowStrength,
   CardHoverEffect,
   ChannelRoutingMode,
+  DesktopLyricsLayout,
   DesktopLyricsSettings,
   DsdOutputMode,
   LyricAlign,
@@ -210,7 +211,7 @@ const SETTINGS_SEARCH_INDEX: Array<{
   { section: 'cache', title: '缓存策略', terms: '缓存 目录 封面 歌词 元数据 流媒体 BPM 分析 清理' },
   { section: 'performance', title: '性能', terms: '性能 硬件加速 GPU 重启' },
   { section: 'appearance', title: '外观与主题', terms: '外观 主题 插件主题 强调色 背景 字体 密度 歌词 卡片 迷你播放器 自定义 圆角 缩放 布局' },
-  { section: 'desktopLyrics', title: '桌面歌词', terms: '桌面歌词 字体 颜色 阴影 对齐 窗口 置顶 鼠标穿透 翻译' },
+  { section: 'desktopLyrics', title: '桌面歌词', terms: '桌面歌词 字体 颜色 阴影 对齐 窗口 置顶 鼠标穿透 翻译 行偏移 错落 双语 原文' },
   { section: 'shortcuts', title: '快捷键', terms: '快捷键 全局 播放 暂停 上一首 下一首 注册 冲突' },
   { section: 'about', title: '关于与更新', terms: '关于 版本 更新 GitHub Releases 开源 致谢' }
 ]
@@ -226,6 +227,7 @@ const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
   bgOpacity: 30,
   align: 'center',
   showTranslation: true,
+  layout: 'multi',
   lineSpacing: 1.6,
   shadow: true,
   shadowBlur: 8,
@@ -236,7 +238,8 @@ const RESET_DESKTOP_LYRICS: DesktopLyricsSettings = {
   windowY: -1,
   alwaysOnTop: true,
   clickThrough: false,
-  maxLines: 2
+  maxLines: 2,
+  lineOffset: 48
 }
 
 const updateCheckState = ref<'idle' | 'checking' | 'up-to-date' | 'available' | 'error'>('idle')
@@ -3872,6 +3875,19 @@ onBeforeUnmount(() => {
             <hr />
             <div class="setting-item">
               <div class="setting-copy">
+                <strong>行水平偏移 (Line Offset)</strong>
+                <span>多行时交错左右位置：正值=第1行偏左、第2行偏右；0 为对齐。</span>
+              </div>
+              <div class="inline-controls">
+                <input type="range" class="range-input" min="-200" max="200" step="1"
+                  :value="settings.desktopLyrics.lineOffset ?? 48"
+                  @input="updateDl('lineOffset', Number(($event.target as HTMLInputElement).value))" />
+                <span>{{ settings.desktopLyrics.lineOffset ?? 48 }}px</span>
+              </div>
+            </div>
+            <hr />
+            <div class="setting-item">
+              <div class="setting-copy">
                 <strong>默认文字颜色 (Text Color)</strong>
                 <span>未播放到该句时的歌词颜色。</span>
               </div>
@@ -4006,8 +4022,23 @@ onBeforeUnmount(() => {
             <hr />
             <div class="setting-item">
               <div class="setting-copy">
+                <strong>布局模式 (Layout)</strong>
+                <span>多行：连续多句歌词；双语：第一行原文、第二行翻译（当前句）。</span>
+              </div>
+              <select
+                class="preview-select wide"
+                :value="settings.desktopLyrics.layout ?? 'multi'"
+                @change="updateDl('layout', ($event.target as HTMLSelectElement).value as DesktopLyricsLayout)"
+              >
+                <option value="multi">多行歌词 (Multi)</option>
+                <option value="bilingual">双语分行 (Original + Translation)</option>
+              </select>
+            </div>
+            <hr />
+            <div class="setting-item">
+              <div class="setting-copy">
                 <strong>显示翻译 (Show Translation)</strong>
-                <span>在原文歌词下方显示对应的翻译（如果存在）。</span>
+                <span>多行模式下在原文下附带翻译；双语模式下控制是否显示第二行翻译。</span>
               </div>
               <span
                 class="toggle-switch"

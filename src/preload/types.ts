@@ -146,6 +146,8 @@ export interface WindowTransparencyEffectSettings {
   cardBlur: number
 }
 
+export type DesktopLyricsLayout = 'multi' | 'bilingual'
+
 export interface DesktopLyricsSettings {
   enabled: boolean
   fontSize: number
@@ -157,6 +159,8 @@ export interface DesktopLyricsSettings {
   bgOpacity: number
   align: LyricAlign
   showTranslation: boolean
+  /** multi = consecutive lines; bilingual = original + translation for the active line. */
+  layout: DesktopLyricsLayout
   lineSpacing: number
   shadow: boolean
   shadowBlur: number
@@ -168,6 +172,8 @@ export interface DesktopLyricsSettings {
   alwaysOnTop: boolean
   clickThrough: boolean
   maxLines: number
+  /** Horizontal stagger in px: even rows left (-), odd rows right (+). */
+  lineOffset: number
 }
 
 export interface DesktopLyricsTrackPayload {
@@ -703,6 +709,7 @@ export interface AppSettings {
   sleepTimer: SleepTimerSettings
   ncmPlaybackQuality: NcmPlaybackQuality
   playMode: PlayMode
+  softwareVolume: number
   audioOutput: AudioOutputId
   audioDevice: string
   audioExclusiveMode: boolean

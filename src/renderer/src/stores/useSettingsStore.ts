@@ -166,6 +166,7 @@ const fallbackSettings: AppSettings = {
   sleepTimer: DEFAULT_SLEEP_TIMER_SETTINGS,
   ncmPlaybackQuality: 'auto',
   playMode: 'sequential',
+  softwareVolume: 0.7,
   audioOutput: getFallbackAudioOutput(),
   audioDevice: 'auto',
   audioExclusiveMode: false,
@@ -198,6 +199,7 @@ const fallbackSettings: AppSettings = {
     bgOpacity: 30,
     align: 'center',
     showTranslation: true,
+    layout: 'multi',
     lineSpacing: 1.6,
     shadow: true,
     shadowBlur: 8,
@@ -208,7 +210,8 @@ const fallbackSettings: AppSettings = {
     windowY: -1,
     alwaysOnTop: true,
     clickThrough: false,
-    maxLines: 2
+    maxLines: 2,
+    lineOffset: 48
   },
   miniPlayer: cloneMiniPlayerSettings(DEFAULT_MINI_PLAYER_SETTINGS),
   proxyMode: 'auto',

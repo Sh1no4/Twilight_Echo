@@ -127,6 +127,66 @@ test('desktop lyrics html falls back to untimed plain lyrics', () => {
   assert.match(source, /mergedLines = buildMergedLyrics\(data\.lyrics, data\.translatedLyrics\)/)
 })
 
+test('desktop lyrics html flattens NetEase JSON credit lines (作词/作曲)', () => {
+  const source = readFileSync(
+    new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(source, /function parseNeteaseJsonLyricLine\(raw\)/)
+  assert.match(source, /NETEASE_JSON_LINE_RE/)
+  assert.match(source, /t < 0 is NetEase credit/)
+  assert.match(source, /credits\.push\(\{ time: 0, text: jsonLine\.text/)
+  assert.match(source, /parseNeteaseJsonLyricLine\(line\)/)
+})
+
+test('desktop lyrics html rotates single lyrics (row0 becomes 3rd while row1 highlights)', () => {
+  const source = readFileSync(
+    new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(source, /Single-lyric rotation/)
+  assert.match(source, /active=1 → \[2,1\] hl row1/)
+  assert.match(source, /base \+ pageSize \+ ri/)
+  assert.doesNotMatch(
+    source,
+    /activeIndex - Math\.floor\(\(count - 1\) \/ 2\)/
+  )
+})
+
+test('desktop lyrics html applies configurable lineOffset stagger', () => {
+  const source = readFileSync(
+    new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
+    'utf8'
+  )
+  const settingsSource = readFileSync(
+    new URL('../../../main/core/settings.ts', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(source, /settings\.lineOffset/)
+  assert.match(source, /translateX\(' \+ rowOffsetX/)
+  assert.match(settingsSource, /lineOffset: 48/)
+  assert.match(settingsSource, /lineOffset: clampNumber\(d\.lineOffset, -200, 200/)
+})
+
+test('desktop lyrics html supports bilingual original+translation layout', () => {
+  const source = readFileSync(
+    new URL('../../../../resources/desktop-lyrics.html', import.meta.url),
+    'utf8'
+  )
+  const settingsSource = readFileSync(
+    new URL('../../../main/core/settings.ts', import.meta.url),
+    'utf8'
+  )
+
+  assert.match(source, /layout === 'bilingual'/)
+  assert.match(source, /Bilingual: row0 = original/)
+  assert.match(settingsSource, /layout: 'multi'/)
+  assert.match(settingsSource, /d\.layout === 'bilingual' \? 'bilingual' : 'multi'/)
+})
+
 test('player lyric loading records local and provider lyric sources', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
   const ensureCurrentTrackLyricsLoaded = extractInternalFunctionBody(
@@ -611,11 +671,23 @@ test('player store does not pretend DSP bypass is strict bit-perfect mode', () =
   assert.match(setVolume, /volume\.value = vol/)
 })
 
-test('player store keeps default volume at 0.7 and exposes setUnityVolume for bit-perfect CTA', () => {
+test('player store keeps default volume at 0.7, persists softwareVolume, and exposes setUnityVolume', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const settingsSource = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+  const mainSettings = readFileSync(
+    new URL('../../../main/core/settings.ts', import.meta.url),
+    'utf8'
+  )
   const setUnityVolume = extractInternalFunctionBody(source, 'setUnityVolume')
 
-  assert.match(source, /const volume = ref\(0\.7\)/)
+  assert.match(source, /const volume = ref\(DEFAULT_SOFTWARE_VOLUME\)/)
+  assert.match(source, /DEFAULT_SOFTWARE_VOLUME/)
+  assert.match(source, /scheduleSoftwareVolumePersist/)
+  assert.match(source, /updateSettings\(\{ softwareVolume: next \}\)/)
+  assert.match(source, /watch\(\s*\(\) => appSettings\.value\.softwareVolume,/)
+  assert.match(settingsSource, /softwareVolume: 0\.7/)
+  assert.match(mainSettings, /softwareVolume: DEFAULT_SOFTWARE_VOLUME/)
+  assert.match(mainSettings, /softwareVolume: clampNumber\(settings\.softwareVolume/)
   assert.match(source, /function setUnityVolume\(\): void/)
   assert.match(setUnityVolume, /setVolume\(1\)/)
   assert.doesNotMatch(source, /const volume = ref\(1\)/)

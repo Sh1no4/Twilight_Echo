@@ -3,6 +3,10 @@
 @import './base.css';
 
 /* Loaded synchronously so a transparent mini window never paints base.css's square page background. */
+html.mini-player-document {
+  color-scheme: only dark;
+}
+
 html.mini-player-document,
 html.mini-player-document body,
 html.mini-player-document #app {

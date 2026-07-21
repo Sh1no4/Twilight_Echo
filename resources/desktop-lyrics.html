@@ -38,10 +38,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     padding: 0 20px;
+    will-change: transform;
   }
   .lyric-line.active {
     opacity: 1;
-    transform: scale(1.05);
   }
   .lyric-line.translation {
     opacity: 0.4;
@@ -131,19 +131,64 @@
   var btnClose = document.getElementById('btn-close');
 
   // ── LRC / YRC Parser ──
+  // NetEase lyric/new metadata & prose: {"t":-1,"c":[{"tx":"作词: "},{"tx":"ACO"}]}
+  var NETEASE_JSON_LINE_RE = /^\s*\{[\s\S]*"c"\s*:\s*\[[\s\S]*\]\s*\}\s*$/;
+
   function looksLikeYrc(lyrics) {
     return typeof lyrics === 'string' && /^\[\d+,\d+\]/m.test(lyrics) && /\(\d+,\d+,\d+\)/.test(lyrics);
+  }
+
+  function parseNeteaseJsonLyricLine(raw) {
+    var trimmed = String(raw || '').trim();
+    if (!trimmed || trimmed[0] !== '{' || !NETEASE_JSON_LINE_RE.test(trimmed)) return null;
+    try {
+      var parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed.c)) return null;
+      var text = parsed.c
+        .map(function (part) {
+          return part && typeof part.tx === 'string' ? part.tx : '';
+        })
+        .join('')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!text) return null;
+      var timeMs = typeof parsed.t === 'number' && isFinite(parsed.t) ? parsed.t : null;
+      // t < 0 is NetEase credit / static metadata (作词 / 作曲 / 制作), not a playhead time.
+      var time = timeMs != null && timeMs >= 0 ? timeMs / 1000 : null;
+      return { time: time, text: text };
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function isRawNeteaseJsonLyricLine(raw) {
+    var trimmed = String(raw || '').trim();
+    return trimmed.charAt(0) === '{' && NETEASE_JSON_LINE_RE.test(trimmed);
   }
 
   function parseYrc(yrc) {
     if (!yrc) return [];
     var lines = [];
+    var credits = [];
     var rawLines = yrc.split('\n');
     var lineRe = /^\[(\d+),(\d+)\](.*)$/;
     var wordRe = /\((\d+),(\d+),\d+\)([^(]*)/g;
     for (var ri = 0; ri < rawLines.length; ri++) {
       var trimmed = rawLines[ri].trim();
       if (!trimmed) continue;
+
+      var jsonLine = parseNeteaseJsonLyricLine(trimmed);
+      if (jsonLine) {
+        if (jsonLine.time != null) {
+          lines.push({ time: jsonLine.time, text: jsonLine.text, words: null });
+        } else {
+          // Credits (t:-1) at top with t=0 so they don't scroll as timed lines.
+          credits.push({ time: 0, text: jsonLine.text, words: null });
+        }
+        continue;
+      }
+      if (isRawNeteaseJsonLyricLine(trimmed)) continue;
+
       var m = lineRe.exec(trimmed);
       if (!m) continue;
       var startMs = parseInt(m[1], 10);
@@ -166,7 +211,7 @@
       });
     }
     lines.sort(function (a, b) { return a.time - b.time; });
-    return lines;
+    return credits.length > 0 ? credits.concat(lines) : lines;
   }
 
   function parseTimestampParts(min, sec, frac) {
@@ -211,11 +256,24 @@
   function parseLrc(lrc) {
     if (!lrc) return [];
     var lines = [];
+    var credits = [];
     var lineRe = /\[(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?\]/g;
     var rawLines = lrc.split('\n');
     for (var ri = 0; ri < rawLines.length; ri++) {
       var trimmed = rawLines[ri].trim();
       if (!trimmed) continue;
+
+      var jsonLine = parseNeteaseJsonLyricLine(trimmed);
+      if (jsonLine) {
+        if (jsonLine.time != null) {
+          lines.push({ time: jsonLine.time, text: jsonLine.text, words: null });
+        } else {
+          credits.push({ time: 0, text: jsonLine.text, words: null });
+        }
+        continue;
+      }
+      if (isRawNeteaseJsonLyricLine(trimmed)) continue;
+
       var timestamps = [];
       var match;
       lineRe.lastIndex = 0;
@@ -233,7 +291,7 @@
       }
     }
     lines.sort(function (a, b) { return a.time - b.time; });
-    return lines;
+    return credits.length > 0 ? credits.concat(lines) : lines;
   }
 
   function parsePlainLyrics(lyrics) {
@@ -243,6 +301,9 @@
     return lyrics
       .split('\n')
       .map(function (line) {
+        var jsonLine = parseNeteaseJsonLyricLine(line);
+        if (jsonLine) return jsonLine.text;
+        if (isRawNeteaseJsonLyricLine(line)) return '';
         return line.replace(timeTagRe, '').replace(/<[^>]+>/g, '').trim();
       })
       .filter(function (line) { return line.length > 0 && !metadataTagRe.test(line); });
@@ -262,6 +323,7 @@
         var t = translated[i];
         var idx = -1;
         for (var j = 0; j < result.length; j++) {
+          if (result[j].time == null || t.time == null) continue;
           if (Math.abs(result[j].time - t.time) < 0.5) { idx = j; break; }
         }
         if (idx >= 0) result[idx].translation = t.text;
@@ -272,7 +334,7 @@
 
   function buildMergedLyrics(lyrics, translatedLyrics) {
     var original = looksLikeYrc(lyrics) ? parseYrc(lyrics) : parseLrc(lyrics);
-    var translated = parseLrc(translatedLyrics);
+    var translated = looksLikeYrc(translatedLyrics) ? parseYrc(translatedLyrics) : parseLrc(translatedLyrics);
     if (original.length > 0 || translated.length > 0) return mergeLyrics(original, translated);
 
     var plain = parsePlainLyrics(lyrics);
@@ -333,6 +395,49 @@
     renderLines();
   }
 
+  function appendLyricRow(opts) {
+    var text = opts.text;
+    var isActive = opts.isActive;
+    var isTranslation = opts.isTranslation;
+    var rowIndex = opts.rowIndex;
+    var lineIdx = opts.lineIdx;
+    var words = opts.words;
+    var shadow = opts.shadow;
+    var lineOffset = opts.lineOffset;
+
+    var rowOffsetX = (rowIndex % 2 === 0 ? -1 : 1) * lineOffset;
+    var parts = [];
+    if (rowOffsetX !== 0) parts.push('translateX(' + rowOffsetX + 'px)');
+    if (isActive && !isTranslation) parts.push('scale(1.05)');
+    var rowTransform = parts.length ? parts.join(' ') : '';
+
+    var div = document.createElement('div');
+    div.className = 'lyric-line' + (isTranslation ? ' translation' : '');
+    if (lineIdx != null) div.dataset.index = String(lineIdx);
+    if (isActive) div.classList.add('active');
+    if (!text) div.classList.add('empty');
+
+    div.style.color = isActive ? settings.highlightColor : settings.color;
+    div.style.textShadow = shadow;
+    if (rowTransform) div.style.transform = rowTransform;
+
+    if (!isTranslation && isActive && words && words.length) {
+      for (var wi = 0; wi < words.length; wi++) {
+        var span = document.createElement('span');
+        span.className = 'lyric-word' + (wi === activeWordIndex ? ' active' : '');
+        span.textContent = words[wi].text;
+        div.appendChild(span);
+      }
+    } else if (text) {
+      div.textContent = text;
+    } else {
+      div.innerHTML = '&nbsp;';
+    }
+
+    contentEl.appendChild(div);
+    displayLines.push({ el: div, index: lineIdx });
+  }
+
   function renderLines() {
     contentEl.innerHTML = '';
     displayLines = [];
@@ -340,63 +445,112 @@
 
     var maxLines = settings.maxLines || 2;
     var showTranslation = settings.showTranslation !== false;
+    var layout = settings.layout === 'bilingual' ? 'bilingual' : 'multi';
     var shadow = settings.shadow ? '0 0 ' + settings.shadowBlur + 'px ' + settings.shadowColor : 'none';
+    var lineOffset = typeof settings.lineOffset === 'number' && isFinite(settings.lineOffset)
+      ? settings.lineOffset
+      : 48;
 
-    var startIdx = 0;
-    var count = Math.min(maxLines, mergedLines.length);
-    if (activeIndex >= 0) {
-      startIdx = Math.max(0, activeIndex - Math.floor((count - 1) / 2));
-      if (startIdx + count > mergedLines.length) {
-        startIdx = Math.max(0, mergedLines.length - count);
+    // Bilingual: row0 = original of current line, row1 = translation of current line.
+    if (layout === 'bilingual') {
+      var bIdx = activeIndex >= 0 ? activeIndex : (mergedLines.length > 0 ? 0 : -1);
+      var bLine = bIdx >= 0 ? mergedLines[bIdx] : null;
+      if (bLine) {
+        var bActive = activeIndex >= 0 && bIdx === activeIndex;
+        appendLyricRow({
+          text: bLine.text,
+          isActive: bActive,
+          isTranslation: false,
+          rowIndex: 0,
+          lineIdx: bIdx,
+          words: bLine.words,
+          shadow: shadow,
+          lineOffset: lineOffset
+        });
+        if (showTranslation) {
+          appendLyricRow({
+            text: bLine.translation || '',
+            isActive: bActive,
+            isTranslation: true,
+            rowIndex: 1,
+            lineIdx: bIdx,
+            words: null,
+            shadow: shadow,
+            lineOffset: lineOffset
+          });
+        }
+      }
+      contentEl.style.lineHeight = String(settings.lineSpacing);
+      return;
+    }
+
+    // Single-lyric rotation (not whole-page flip):
+    // maxLines=2:
+    //   active=0 → [0,1] hl row0
+    //   active=1 → [2,1] hl row1  (row0 already switches to the 3rd lyric)
+    //   active=2 → [2,3] hl row0
+    //   active=3 → [4,3] hl row1
+    // Rows already past the highlight are prefilled with the next cycle's lyrics.
+    var lineIndices = [];
+    if (mergedLines.length === 0 || maxLines <= 0) {
+      lineIndices = [];
+    } else if (activeIndex < 0) {
+      for (var pi = 0; pi < Math.min(maxLines, mergedLines.length); pi++) {
+        lineIndices.push(pi);
+      }
+    } else {
+      var pageSize = maxLines;
+      var base = Math.floor(activeIndex / pageSize) * pageSize;
+      var pos = activeIndex - base;
+      for (var ri = 0; ri < pageSize; ri++) {
+        var idx;
+        if (ri < pos) {
+          idx = base + pageSize + ri;
+        } else {
+          idx = base + ri;
+        }
+        if (idx >= 0 && idx < mergedLines.length) {
+          lineIndices.push(idx);
+        }
+      }
+      if (lineIndices.length === 0 && activeIndex < mergedLines.length) {
+        lineIndices.push(activeIndex);
       }
     }
 
-    for (var i = 0; i < count; i++) {
-      var lineIdx = startIdx + i;
+    // Even visual rows shift left, odd rows right (lineOffset px). Translation follows its line.
+    for (var i = 0; i < lineIndices.length; i++) {
+      var lineIdx = lineIndices[i];
       var line = mergedLines[lineIdx];
       if (!line) continue;
-
-      var div = document.createElement('div');
-      div.className = 'lyric-line';
-      div.dataset.index = String(lineIdx);
-
       var isActive = lineIdx === activeIndex;
-      if (isActive) div.classList.add('active');
-      if (!line.text) div.classList.add('empty');
 
-      div.style.color = isActive ? settings.highlightColor : settings.color;
-      div.style.textShadow = shadow;
-
-      if (isActive && line.words && line.words.length) {
-        for (var wi = 0; wi < line.words.length; wi++) {
-          var span = document.createElement('span');
-          span.className = 'lyric-word' + (wi === activeWordIndex ? ' active' : '');
-          span.textContent = line.words[wi].text;
-          div.appendChild(span);
-        }
-      } else if (line.text) {
-        div.textContent = line.text;
-      } else {
-        div.innerHTML = '&nbsp;';
-      }
-
-      contentEl.appendChild(div);
-      displayLines.push({ el: div, index: lineIdx });
+      appendLyricRow({
+        text: line.text,
+        isActive: isActive,
+        isTranslation: false,
+        rowIndex: i,
+        lineIdx: lineIdx,
+        words: line.words,
+        shadow: shadow,
+        lineOffset: lineOffset
+      });
 
       if (showTranslation && line.translation) {
-        var transDiv = document.createElement('div');
-        transDiv.className = 'lyric-line translation';
-        if (isActive) transDiv.classList.add('active');
-        transDiv.style.color = isActive ? settings.highlightColor : settings.color;
-        transDiv.style.textShadow = shadow;
-        transDiv.textContent = line.translation;
-        contentEl.appendChild(transDiv);
+        appendLyricRow({
+          text: line.translation,
+          isActive: isActive,
+          isTranslation: true,
+          rowIndex: i,
+          lineIdx: lineIdx,
+          words: null,
+          shadow: shadow,
+          lineOffset: lineOffset
+        });
       }
     }
 
-    if (settings) {
-      contentEl.style.lineHeight = String(settings.lineSpacing);
-    }
+    contentEl.style.lineHeight = String(settings.lineSpacing);
   }
 
   function updateActiveIndex() {

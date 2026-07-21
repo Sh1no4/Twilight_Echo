@@ -118,7 +118,7 @@ function applyMiniPlayerWindowShape(win: BrowserWindow, settings: MiniPlayerSett
   const profile = settings.profiles[settings.activeStyleId]
   const cornerRadius = profile?.appearance.cornerRadius ?? 0
   const bounds = win.getBounds()
-  win.setShape(createMiniPlayerWindowShape(bounds.width, bounds.height, cornerRadius))
+  win.setShape(createMiniPlayerWindowShape(bounds.width, bounds.height, cornerRadius + 2))
 }
 
 function persistMiniPlayerBounds(win: BrowserWindow): void {
@@ -205,8 +205,8 @@ function createMiniPlayerWindow(): BrowserWindow {
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: false,
-    hasShadow: true,
-    roundedCorners: true,
+    hasShadow: false,
+    roundedCorners: false,
     thickFrame: process.platform === 'win32',
     autoHideMenuBar: true,
     icon: getMiniPlayerIconPath(),

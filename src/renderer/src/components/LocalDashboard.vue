@@ -42,6 +42,8 @@ const { playTrack, togglePlay, next, prev, seek, formatTime, setPlayMode } = pla
 const now = ref(new Date())
 const homeScrollRef = ref<HTMLElement | null>(null)
 const homeScrollbarActive = ref(false)
+const homeScrollbarNear = ref(false)
+const HOME_SCROLLBAR_PROXIMITY_PX = 28
 let homeScrollbarHideTimer: ReturnType<typeof setTimeout> | null = null
 
 function clearHomeScrollbarHideTimer(): void {
@@ -63,8 +65,29 @@ function onHomeScroll(): void {
   revealHomeScrollbar()
 }
 
+function onHomePointerMove(event: PointerEvent): void {
+  const el = homeScrollRef.value
+  if (!el) return
+  if (el.scrollHeight <= el.clientHeight + 1) {
+    homeScrollbarNear.value = false
+    return
+  }
+  const rect = el.getBoundingClientRect()
+  const distFromRight = rect.right - event.clientX
+  const withinY = event.clientY >= rect.top && event.clientY <= rect.bottom
+  homeScrollbarNear.value =
+    withinY && distFromRight >= 0 && distFromRight <= HOME_SCROLLBAR_PROXIMITY_PX
+}
+
+function onHomePointerLeave(): void {
+  homeScrollbarNear.value = false
+}
+
 onMounted(() => {
-  homeScrollRef.value?.addEventListener('scroll', onHomeScroll, { passive: true })
+  const el = homeScrollRef.value
+  el?.addEventListener('scroll', onHomeScroll, { passive: true })
+  el?.addEventListener('pointermove', onHomePointerMove, { passive: true })
+  el?.addEventListener('pointerleave', onHomePointerLeave, { passive: true })
   window.addEventListener('keydown', onDspRouteDialogKeydown)
   void refreshDspRouteState(true)
   dspRoutePoll = window.setInterval(() => {
@@ -76,7 +99,10 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  homeScrollRef.value?.removeEventListener('scroll', onHomeScroll)
+  const el = homeScrollRef.value
+  el?.removeEventListener('scroll', onHomeScroll)
+  el?.removeEventListener('pointermove', onHomePointerMove)
+  el?.removeEventListener('pointerleave', onHomePointerLeave)
   window.removeEventListener('keydown', onDspRouteDialogKeydown)
   if (dspRoutePoll !== null) window.clearInterval(dspRoutePoll)
   dspRoutePoll = null
@@ -822,6 +848,7 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
     class="home dashboard-wrapper te-auto-scrollbar"
     :class="{
       'is-scrollbar-active': homeScrollbarActive,
+      'is-scrollbar-near': homeScrollbarNear,
       'has-route-dialog': dspRouteDialogOpen
     }"
   >
