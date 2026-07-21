@@ -160,6 +160,7 @@ const {
   cyclePlayMode,
   restorePlaybackSession,
   createPlaybackSession,
+  rehydrateCurrentTrackFromLibrary,
   visualizerActive
 } = usePlayerStore()
 
@@ -331,6 +332,9 @@ onMounted(async () => {
   // can receive the actual current track without waiting for a full scan.
   await libraryPromise
   await playbackSessionSetupPromise
+  // Session restore often finishes before library rows are available; re-apply
+  // embedded covers/lyrics so playbar/home art and now-playing lyrics hydrate.
+  rehydrateCurrentTrackFromLibrary()
   removeLibraryChangedListener = window.api.library.onChanged((change) => {
     handleLibraryChange(change).catch((error) => {
       console.error('[library] Failed to apply an incremental scan update:', error)
@@ -494,6 +498,7 @@ const titleSurface = computed<TitleSurface>(() => {
     <Transition name="playing-page">
       <PlayingMusic
         v-if="showPlayingPage"
+        :key="`playing:${currentTrack?.id ?? 'none'}`"
         :style="{ transformOrigin: coverTransformOrigin }"
         @back="closePlayingPage"
       />

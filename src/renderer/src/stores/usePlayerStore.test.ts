@@ -61,6 +61,17 @@ test('playback info keeps loaded lyrics when reusing the current queue track', (
   assert.match(source, /patchTrackInQueues\(updatedTrack\)/)
 })
 
+test('track activation hydrates cover and lyrics stripped by queue snapshots', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+
+  assert.match(source, /function hydratePlaybackTrack/)
+  assert.match(source, /Queue rows intentionally strip lyrics/)
+  assert.match(source, /hydratePlaybackTrack\(/)
+  // Native gapless switch must not inherit previous track lyrics.
+  assert.match(source, /lyrics: null,\s*translatedLyrics: null,\s*romanizedLyrics: null/)
+  assert.match(source, /function activateCurrentTrack/)
+})
+
 test('desktop lyrics receives the current playback snapshot when enabled', () => {
   const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
 
@@ -418,12 +429,33 @@ test('next and previous only use native controls when the native queue is delega
   )
   assert.match(togglePlayState, /if \(casting\)/)
   assert.match(togglePlayState, /if \(nativePlaybackActive\)/)
+  // Optimistic toggle must keep the intent after togglePause returns so a
+  // stale pre-toggle pause/playback-info tick cannot flip the button back.
+  assert.match(togglePlayState, /setPlaybackToggleIntent\(nextPlaying\)/)
+  assert.match(togglePlayState, /await window\.api\.audioEngine\.togglePause\(\)/)
+  assert.doesNotMatch(
+    togglePlayState.match(
+      /if \(nativePlaybackActive\) \{[\s\S]*?await window\.api\.audioEngine\.togglePause\(\)[\s\S]*?\n    \} else \{/
+    )?.[0] ?? '',
+    /clearPlaybackToggleIntent\(\)/
+  )
+  assert.match(togglePlayState, /setPlaybackToggleIntent\(isPlaying\.value\)/)
   assert.match(seekPlayback, /if \(nativePlaybackActive\)/)
   assert.match(playQueueTrack, /if \(castTargetUsn\.value\)[\s\S]*castCurrentTrackToDevice/)
   assert.match(playQueueTrack, /void loadAndPlay\(track\)/)
   assert.match(nextBody, /playQueueTrack\(track\)/)
   assert.match(previousBody, /playQueueTrack\(/)
   assert.match(previousBody, /controlCast\?\.\(\{ seek: 0 \}\)/)
+})
+
+test('applyNativePlayingState ignores stale pause events during toggle intent grace', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+  const applyNativePlayingState = extractInternalFunctionBody(source, 'applyNativePlayingState')
+  assert.match(applyNativePlayingState, /playing !== playbackToggleIntent\.playing/)
+  assert.match(applyNativePlayingState, /return/)
+  // Matching confirmations must apply UI state without immediately clearing the intent.
+  assert.doesNotMatch(applyNativePlayingState, /clearPlaybackToggleIntent\(\)\s*\n\s*isPlaying/)
+  assert.match(source, /PLAYBACK_TOGGLE_INTENT_GRACE_MS = 1200/)
 })
 
 test('togglePlayState and seek/volume fan out to cast when castTargetName is active', () => {
@@ -462,8 +494,9 @@ test('native queue switching guards the target track before applying playback-in
 
   assert.match(source, /evaluateNativePlaybackInfoIntent/)
   assert.match(advanceNativePlayback, /const target = getNativeQueueAdvanceTarget\(direction\)/)
-  assert.match(advanceNativePlayback, /currentTrack\.value = \{ \.\.\.target\.track \}/)
-  assert.match(advanceNativePlayback, /resetPlaybackUiForTrackSwitch\(target\.track, 0\)/)
+  assert.match(advanceNativePlayback, /activateCurrentTrack\(target\.track/)
+  assert.match(source, /function activateCurrentTrack/)
+  assert.match(source, /function hydratePlaybackTrack/)
   assert.match(
     advanceNativePlayback,
     /setNativePlaybackInfoIntent\(\s*activeLoadToken,\s*target\.track,\s*getTrackAudioSource\(target\.track\),\s*target\.queueIndex\s*\)/
@@ -480,7 +513,15 @@ test('native queue switching guards the target track before applying playback-in
   assert.match(applyNativePlaybackInfo, /applyNativeStreamBufferingFromInfo\(normalizedInfo\)/)
   assert.match(applyNativePlaybackInfo, /if \(switchedTrack\)[\s\S]*clearAbLoop\(\)/)
   assert.match(applyNativePlaybackInfo, /previousQueueIndex !== infoIndex/)
-  assert.match(applyNativePlaybackInfo, /clearNativePlaybackInfoIntent\(\)/)
+  // After a confirmed switch keep the intent/guard — do not clear it (delayed
+  // previous-track ticks would flash the old song).
+  assert.match(applyNativePlaybackInfo, /markNativePlaybackInfoIntentConfirmed\(/)
+  assert.match(advanceNativePlayback, /clearPlaybackToggleIntent\(/)
+  assert.match(advanceNativePlayback, /wasPlaying/)
+  // Hydrate cover/lyrics from queue + library on switch so previous art/lyrics cannot stick.
+  assert.match(applyNativePlaybackInfo, /hydratePlaybackTrack\(/)
+  assert.match(applyNativePlaybackInfo, /nonEmptyString\(track\.cover\)/)
+  assert.match(applyNativePlaybackInfo, /lyrics: null/)
   // Never demote nativePlaybackActive from a transient false snapshot while playing.
   assert.match(
     applyNativePlaybackInfo,
@@ -492,8 +533,8 @@ test('native queue switching guards the target track before applying playback-in
   )
   assert.match(resetPlaybackUiForTrackSwitch, /clearAbLoop\(\)/)
   assert.match(resetPlaybackUiForTrackSwitch, /setCurrentTimeImmediate/)
-  assert.match(advanceAfterPlaybackEnded, /resetPlaybackUiForTrackSwitch/)
-  assert.match(playQueueTrack, /resetPlaybackUiForTrackSwitch\(track, 0\)/)
+  assert.match(advanceAfterPlaybackEnded, /activateCurrentTrack\(track/)
+  assert.match(playQueueTrack, /activateCurrentTrack\(track, \{ resetUi: true, position: 0 \}\)/)
   assert.match(
     setupAudioEngineListeners,
     /api\.onPlaybackInfo\(\(info\) => \{\s*applyNativePlaybackInfo\(info\)\s*\}\)/
@@ -509,20 +550,20 @@ test('native queue switching guards the target track before applying playback-in
   )
   assert.match(setupAudioEngineListeners, /getPlaybackInfo\(\)/)
   assert.match(setupAudioEngineListeners, /applyNativePlaybackInfo\(info, \{ applyTrackWhenInactive: true \}\)/)
-  // Accept time-pos while UI is still playing/loading even if flags briefly demote.
+  // Accept time-pos whenever a track/session is active — do not freeze solely on
+  // nativePlaybackActive demotions during track hand-off.
   assert.match(
     setupAudioEngineListeners,
-    /!nativePlaybackActive && !nativeQueueDelegated && !isPlaying\.value && !isLoading\.value/
+    /!currentTrack\.value &&\s*!nativePlaybackActive &&\s*!nativeQueueDelegated &&\s*!isPlaying\.value &&\s*!isLoading\.value/
   )
-  // Clear intent only after applying the first post-switch playback-info snapshot.
+  // onStartFile must apply playback-info but must not clear the switch intent —
+  // clearing after an ignored previous-track snapshot re-opened the flash race.
   const onStartFile =
     setupAudioEngineListeners.match(/api\.onStartFile\(\(\) => \{[\s\S]*?\n    \}\)/)?.[0] ?? ''
   assert.match(onStartFile, /applyNativePlaybackInfo\(info, \{ applyTrackWhenInactive: true \}\)/)
-  assert.match(onStartFile, /clearNativePlaybackInfoIntent\(\)/)
-  const applyBeforeClear =
-    onStartFile.indexOf('applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })') <
-    onStartFile.indexOf('clearNativePlaybackInfoIntent()')
-  assert.equal(applyBeforeClear, true)
+  assert.doesNotMatch(onStartFile, /clearNativePlaybackInfoIntent\(\)/)
+  assert.match(source, /intentionalTrackGuard/)
+  assert.match(source, /function markNativePlaybackInfoIntentConfirmed/)
 })
 
 test('native LIVE buffering maps sessionUnderrunCount rises onto isStreamBuffering', () => {
@@ -971,8 +1012,11 @@ test('player bar exposes a HiFi console drawer instead of visualization meters',
   assert.match(playerBarSource, /@sleep-timer-select="onSleepTimerSelectValue"/)
   assert.match(playerBarSource, /@refresh-cast-devices="refreshCastDevices"/)
   assert.match(playerBarSource, /@add-bookmark="onAddBookmark"/)
-  assert.match(playerBarSource, /currentTrackUiKey/)
-  assert.match(playerBarSource, /:key="currentTrackUiKey"/)
+  // Playbar destroys the left rail on track identity change so cover art remounts.
+  assert.match(playerBarSource, /playerLeftKey/)
+  assert.match(playerBarSource, /:key="playerLeftKey"/)
+  assert.match(playerBarSource, /CoverImg/)
+  assert.doesNotMatch(playerBarSource, /coverLoadFailed/)
   assert.match(playerBarSource, /progress:\$\{currentTrack\.id\}/)
   assert.doesNotMatch(playerBarSource, /class="sleep-timer-select"/)
   assert.doesNotMatch(playerBarSource, /class="cast-anchor"/)

@@ -2,7 +2,7 @@
  * Cover image loader.
  *
  * Track.cover stores a lightweight handle:
- * - `cover://<hash>.jpg` — Chromium loads cached local art via custom protocol
+ * - `cover://<hash>.jpg` — local disk cache (must be materialized for display)
  * - `data:` — legacy embedded library covers
  * - `twilight-media://image/<token>` — in-memory remote-media grant (session-scoped)
  * - `http(s):` — rare pass-through when protection did not rewrite the field
@@ -10,12 +10,20 @@
  * Remote provider covers are protected in main with a grant *and* a durable
  * `coverSource` (http/https). After process restart the grant map is empty, so
  * display paths re-issue a grant from `coverSource` before setting <img src>.
+ *
+ * IMPORTANT: never put raw `cover://` / `background://` into <img src> long-term.
+ * Chromium's custom-protocol image cache can keep painting the first decoded
+ * bitmap across track switches after a cold start (remount / navigation fixes
+ * it). Materialize local handles to `data:` via IPC so each distinct cover is a
+ * unique, cache-safe src.
  */
 
 import { ref, type Ref, watch, type ComputedRef } from 'vue'
 
 const remoteCoverGrantCache = new Map<string, string>()
 const remoteCoverGrantInflight = new Map<string, Promise<string | null>>()
+const localCoverDataCache = new Map<string, string>()
+const localCoverDataInflight = new Map<string, Promise<string | null>>()
 
 function isTwilightMediaImageHandle(handle: string): boolean {
   return /^twilight-media:\/\/image\//i.test(handle.trim())
@@ -25,12 +33,40 @@ function isDurableRemoteCoverSource(source: string): boolean {
   return /^https?:\/\//i.test(source.trim())
 }
 
+function isProtocolLocalCoverHandle(handle: string): boolean {
+  return /^cover:/i.test(handle) || /^background:/i.test(handle)
+}
+
+function isLocalCoverHandle(handle: string): boolean {
+  return (
+    isProtocolLocalCoverHandle(handle) ||
+    /^data:/i.test(handle) ||
+    /^blob:/i.test(handle)
+  )
+}
+
+function isDisplayableCoverHandle(handle: string): boolean {
+  // Protocol-local handles are NOT immediately safe for <img> after cold start —
+  // they must be materialized first. data/blob/twilight-media can paint now.
+  return (
+    /^data:/i.test(handle) ||
+    /^blob:/i.test(handle) ||
+    isTwilightMediaImageHandle(handle)
+  )
+}
+
+function bareLocalCoverHandle(handle: string): string {
+  // Drop fragment/query cache-bust suffixes before IPC / disk lookup.
+  return handle.trim().split(/[?#]/, 1)[0]
+}
+
 /**
  * Resolve a cover handle to a displayable image src.
  * - `null` / empty → returns null (or re-grants from durableSource when present)
- * - `cover://...` / `data:` / `blob:` → returned as-is
- * - durable `coverSource` (http/https) → re-granted twilight-media URL (survives restart)
- * - bare http(s) `cover` (legacy stats) → re-granted for CSP (img-src has no https)
+ * - `cover://` / `background://` → materialized `data:` (avoids protocol cache stickiness)
+ * - `data:` / `blob:` → returned as-is
+ * - durable `coverSource` (http/https) when no local handle → re-granted twilight-media
+ * - bare http(s) `cover` (legacy stats) → re-granted for CSP
  * - live `twilight-media:` without durable origin → returned as-is
  */
 export async function resolveCover(
@@ -45,14 +81,25 @@ export async function resolveCover(
   const trimmedHandle =
     typeof handle === 'string' && handle.trim() ? handle.trim() : null
 
-  // Prefer the durable origin whenever it exists. Session restore / listening
-  // stats keep coverSource across restarts while twilight-media tokens do not.
-  // If re-grant fails (preload race, IPC error), fall back to a still-live handle
-  // so covers do not blank out entirely.
+  // Local disk art always wins over durable remote origin. Provider enrichment
+  // may attach coverSource while the track still has a correct cover:// handle;
+  // preferring remote after restart made playbar/home art sticky or wrong.
+  if (trimmedHandle && isProtocolLocalCoverHandle(trimmedHandle)) {
+    const materialized = await materializeLocalCoverForDisplay(trimmedHandle)
+    if (materialized) return materialized
+    // Last resort: raw protocol URL (may stick in Chromium — prefer materialize).
+    return bareLocalCoverHandle(trimmedHandle)
+  }
+
+  if (trimmedHandle && (/^data:/i.test(trimmedHandle) || /^blob:/i.test(trimmedHandle))) {
+    return trimmedHandle
+  }
+
+  // Prefer durable origin for remote-only rows (session restore / listening stats).
   if (source) {
     const granted = await grantRemoteCoverForDisplay(source)
     if (granted) return granted
-    if (trimmedHandle && isDisplayableCoverHandle(trimmedHandle)) {
+    if (trimmedHandle && isTwilightMediaImageHandle(trimmedHandle)) {
       return trimmedHandle
     }
     return null
@@ -60,20 +107,12 @@ export async function resolveCover(
 
   if (!trimmedHandle) return null
 
-  // Local / data URLs never need a grant.
-  if (isLocalCoverHandle(trimmedHandle)) {
-    return trimmedHandle
-  }
-
-  // Bare http(s) cover (legacy listening stats / older sessions): CSP blocks
-  // direct https images, so re-grant into twilight-media.
   if (isDurableRemoteCoverSource(trimmedHandle)) {
     const granted = await grantRemoteCoverForDisplay(trimmedHandle)
     if (granted) return granted
     return null
   }
 
-  // Live grant from the current process (no durable origin recorded yet).
   if (isTwilightMediaImageHandle(trimmedHandle)) {
     return trimmedHandle
   }
@@ -81,17 +120,67 @@ export async function resolveCover(
   return trimmedHandle
 }
 
-function isLocalCoverHandle(handle: string): boolean {
-  return (
-    /^cover:/i.test(handle) ||
-    /^data:/i.test(handle) ||
-    /^background:/i.test(handle) ||
-    /^blob:/i.test(handle)
-  )
+async function materializeLocalCoverForDisplay(handle: string): Promise<string | null> {
+  const bare = bareLocalCoverHandle(handle)
+  if (!bare) return null
+
+  const cached = localCoverDataCache.get(bare)
+  if (cached) return cached
+
+  const inflight = localCoverDataInflight.get(bare)
+  if (inflight) return inflight
+
+  const request = (async () => {
+    try {
+      const api = (
+        globalThis as {
+          window?: { api?: { data?: { getCover?: (src: string) => Promise<string | null> } } }
+        }
+      ).window?.api?.data
+      if (api?.getCover) {
+        const dataUrl = await api.getCover(bare)
+        if (typeof dataUrl === 'string' && dataUrl.startsWith('data:')) {
+          localCoverDataCache.set(bare, dataUrl)
+          if (localCoverDataCache.size > 128) {
+            const first = localCoverDataCache.keys().next().value
+            if (first) localCoverDataCache.delete(first)
+          }
+          return dataUrl
+        }
+      }
+
+      // Fallback when IPC is unavailable (tests / early boot): fetch protocol.
+      if (typeof fetch === 'function') {
+        const response = await fetch(bare)
+        if (!response.ok) return null
+        const blob = await response.blob()
+        const dataUrl = await blobToDataUrl(blob)
+        if (dataUrl) {
+          localCoverDataCache.set(bare, dataUrl)
+          return dataUrl
+        }
+      }
+      return null
+    } catch {
+      return null
+    } finally {
+      localCoverDataInflight.delete(bare)
+    }
+  })()
+
+  localCoverDataInflight.set(bare, request)
+  return request
 }
 
-function isDisplayableCoverHandle(handle: string): boolean {
-  return isLocalCoverHandle(handle) || isTwilightMediaImageHandle(handle)
+function blobToDataUrl(blob: Blob): Promise<string | null> {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      resolve(typeof reader.result === 'string' ? reader.result : null)
+    }
+    reader.onerror = () => resolve(null)
+    reader.readAsDataURL(blob)
+  })
 }
 
 async function grantRemoteCoverForDisplay(source: string): Promise<string | null> {
@@ -129,7 +218,6 @@ async function ensureCachedRemoteGrant(source: string): Promise<string | null> {
       if (typeof granted === 'string' && granted.trim()) {
         const token = granted.trim()
         remoteCoverGrantCache.set(normalized, token)
-        // Bound memory — drop oldest entries when the cache grows large.
         if (remoteCoverGrantCache.size > 256) {
           const first = remoteCoverGrantCache.keys().next().value
           if (first) remoteCoverGrantCache.delete(first)
@@ -154,9 +242,15 @@ export function clearRemoteCoverGrantCache(): void {
   remoteCoverGrantInflight.clear()
 }
 
+export function clearLocalCoverDataCache(): void {
+  localCoverDataCache.clear()
+  localCoverDataInflight.clear()
+}
+
 /**
  * Vue composable: reactively resolve a cover handle (and optional durable origin).
  * Returns a ref that updates when either input changes.
+ * Never leaves a previous track's art painted while the next cover resolves.
  */
 export function useCover(
   handleRef: ComputedRef<string | null | undefined> | Ref<string | null | undefined>,
@@ -167,21 +261,22 @@ export function useCover(
 
   watch(
     () => [handleRef.value, sourceRef?.value] as const,
-    ([handle, source]) => {
+    ([handle, source], previous) => {
       const id = ++requestId
-      // Always paint a displayable handle immediately so track switches do not
-      // keep the previous cover while an async re-grant is in flight.
-      if (
-        handle &&
-        (/^cover:/i.test(handle) ||
-          /^data:/i.test(handle) ||
-          /^twilight-media:/i.test(handle) ||
-          /^blob:/i.test(handle) ||
-          /^background:/i.test(handle))
-      ) {
-        resolved.value = handle
-      } else if (!handle && !source) {
+      const trimmed =
+        typeof handle === 'string' && handle.trim() ? handle.trim() : null
+      const inputsChanged =
+        !previous || previous[0] !== handle || previous[1] !== source
+
+      // Always clear on input change so Chromium cannot keep the previous bitmap
+      // while async materialize / re-grant runs (protocol-local handles included).
+      if (inputsChanged) {
         resolved.value = null
+      }
+
+      // Only paint handles that are safe without async work.
+      if (trimmed && isDisplayableCoverHandle(trimmed) && !isProtocolLocalCoverHandle(trimmed)) {
+        resolved.value = trimmed
       }
 
       void resolveCover(handle, source).then((next) => {
@@ -195,7 +290,8 @@ export function useCover(
   return resolved
 }
 
-/** Clear the cover cache (no-op for cover:// — browser manages caching now). */
+/** Clear local + remote cover display caches. */
 export function clearCoverCache(): void {
   clearRemoteCoverGrantCache()
+  clearLocalCoverDataCache()
 }

@@ -150,7 +150,9 @@ export function startApp(): void {
         return new Response(data, {
           headers: {
             'Content-Type': getCoverCacheContentType(safeName),
-            'Cache-Control': 'max-age=86400',
+            // no-store: Chromium can otherwise keep painting the first cover://
+            // decode across track switches after cold start (sticky playbar art).
+            'Cache-Control': 'no-store',
             // Permit crossOrigin=anonymous canvas sampling without tainting
             // concurrent plain <img> loads of the same cover:// URL.
             'Access-Control-Allow-Origin': '*',
@@ -173,7 +175,7 @@ export function startApp(): void {
         return new Response(data, {
           headers: {
             'Content-Type': contentType,
-            'Cache-Control': 'max-age=86400',
+            'Cache-Control': 'no-store',
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET, HEAD'
           }

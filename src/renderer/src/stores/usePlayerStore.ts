@@ -491,7 +491,9 @@ let activeLoadToken = 0
 let rendererFallbackInProgress = false
 let rendererPlaybackWatchdogTimer: number | null = null
 const RENDERER_PLAYBACK_WATCHDOG_MS = 220
-const PLAYBACK_TOGGLE_INTENT_GRACE_MS = 300
+// Keep long enough to outlive a full audio-service Pause + GetPlaybackInfo
+// round-trip and any already-queued tick that still reports the pre-toggle state.
+const PLAYBACK_TOGGLE_INTENT_GRACE_MS = 1200
 const NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS = 2500
 const NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS = 500
 const NATIVE_PLAYBACK_INFO_REFRESH_DELAY_MS = 80
@@ -510,19 +512,35 @@ function clearRendererPlaybackWatchdog(): void {
   }
 }
 
+/** After an intentional next/prev/load, reject delayed previous-track snapshots. */
+let intentionalTrackGuard: {
+  trackId: string
+  source: string
+  until: number
+} | null = null
+
 function setNativePlaybackInfoIntent(
   loadToken: number,
   track: Track,
   source = '',
   targetQueueIndex = queueIndex.value
 ): void {
+  const normalizedSource = typeof source === 'string' ? source.trim() : ''
+  const now = getNowMs()
   nativePlaybackInfoIntent = {
     loadToken,
     trackId: track.id,
     queueIndex: targetQueueIndex,
-    source,
-    expiresAt: getNowMs() + NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS,
+    source: normalizedSource,
+    expiresAt: now + NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS,
     confirmedAt: null
+  }
+  // Sticky guard outlives the intent so a late previous-track tick cannot flash
+  // the UI after confirmation clears/expires the primary intent.
+  intentionalTrackGuard = {
+    trackId: track.id,
+    source: normalizedSource || getTrackAudioSource(track),
+    until: now + NATIVE_PLAYBACK_INFO_INTENT_GRACE_MS + NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS
   }
 }
 
@@ -536,27 +554,61 @@ function clearNativePlaybackInfoIntentForLoad(loadToken: number): void {
   }
 }
 
-function shouldIgnoreNativePlaybackInfo(info: NativePlaybackInfo, infoIndex: number): boolean {
+function markNativePlaybackInfoIntentConfirmed(now = getNowMs()): void {
   const intent = nativePlaybackInfoIntent
-  if (!intent) return false
+  if (!intent) return
+  if (intent.confirmedAt === null) intent.confirmedAt = now
+  // Keep filtering non-matching snapshots through the post-confirmation window.
+  intent.expiresAt = Math.max(
+    intent.expiresAt,
+    now + NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS
+  )
+  if (intentionalTrackGuard && intentionalTrackGuard.trackId === intent.trackId) {
+    intentionalTrackGuard.until = Math.max(
+      intentionalTrackGuard.until,
+      now + NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS
+    )
+  }
+}
+
+function shouldIgnoreNativePlaybackInfo(info: NativePlaybackInfo, infoIndex: number): boolean {
   const indexedTrack = infoIndex >= 0 ? queue.value[infoIndex] : null
   const now = getNowMs()
   const source = typeof info.source === 'string' ? info.source.trim() : ''
-  const decision = evaluateNativePlaybackInfoIntent(
-    intent,
-    { trackId: indexedTrack?.id ?? '', source },
-    now,
-    NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS
-  )
-  if (decision === 'expired') {
-    clearNativePlaybackInfoIntent()
-    return false
+  const candidateTrackId = indexedTrack?.id ?? ''
+
+  const intent = nativePlaybackInfoIntent
+  if (intent) {
+    const decision = evaluateNativePlaybackInfoIntent(
+      intent,
+      { trackId: candidateTrackId, source },
+      now,
+      NATIVE_PLAYBACK_INFO_POST_CONFIRMATION_GRACE_MS
+    )
+    if (decision === 'expired') {
+      clearNativePlaybackInfoIntent()
+      // Fall through to sticky guard — do not immediately apply a non-matching row.
+    } else if (decision === 'match') {
+      markNativePlaybackInfoIntentConfirmed(now)
+      return false
+    } else {
+      return true
+    }
   }
-  if (decision === 'match') {
-    if (intent.confirmedAt === null) intent.confirmedAt = now
-    return false
+
+  const guard = intentionalTrackGuard
+  if (guard && now <= guard.until) {
+    const matchesGuardTrack = candidateTrackId.length > 0 && candidateTrackId === guard.trackId
+    const matchesGuardSource =
+      source.length > 0 && (source === guard.source || source === guard.trackId)
+    if (matchesGuardTrack || matchesGuardSource) return false
+    // Conflicting identity while a recent intentional switch is still settling.
+    if (candidateTrackId.length > 0 || source.length > 0) return true
+  } else if (guard && now > guard.until) {
+    intentionalTrackGuard = null
   }
-  return true
+
+  return false
 }
 
 function setPlaybackToggleIntent(playing: boolean): void {
@@ -575,8 +627,13 @@ function applyNativePlayingState(playing: boolean): void {
     if (getNowMs() > playbackToggleIntent.expiresAt) {
       clearPlaybackToggleIntent()
     } else if (playing !== playbackToggleIntent.playing) {
+      // Drop stale pause/playback-info that still reflects the pre-toggle state.
+      // Clearing the intent immediately after togglePause re-opened this race and
+      // made the play/pause button briefly flip back before settling.
       return
     }
+    // Matching confirmation: apply UI state but keep the intent until grace
+    // expires so later out-of-order ticks cannot reverse the button again.
   }
 
   isPlaying.value = playing
@@ -1119,6 +1176,113 @@ function mergeTrackTransientData(nextTrack: Track, previousTrack: Track | null):
   }
 }
 
+function findLibraryTrackHint(track: Track, _libraryHint?: Track | null): Track | null {
+  // Always resolve from the real library. Callers used to pass the queue row as
+  // libraryHint, which short-circuited lookup and left lyrics:null / stale cover
+  // forever (queue snapshots intentionally strip lyrics).
+  return useMusicStore().tracks.value.find((item) => item.id === track.id) ?? null
+}
+
+function nonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+/**
+ * Hydrate a queue/session snapshot for the active currentTrack.
+ * Queue rows intentionally strip lyrics (memory) and may lose cover after
+ * restore; never inherit cover/lyrics from a *different* previous track id.
+ */
+function hydratePlaybackTrack(track: Track, libraryHint?: Track | null): Track {
+  const hint = findLibraryTrackHint(track, libraryHint)
+  const cover = nonEmptyString(track.cover) || nonEmptyString(hint?.cover)
+  const coverSource = nonEmptyString(track.coverSource) || nonEmptyString(hint?.coverSource)
+  // Queue snapshots force lyrics: null — restore embedded library lyrics so
+  // PlayingMusic does not blank until (or unless) async re-resolution finishes.
+  const lyrics = nonEmptyString(track.lyrics) || nonEmptyString(hint?.lyrics)
+  const translatedLyrics =
+    nonEmptyString(track.translatedLyrics) || nonEmptyString(hint?.translatedLyrics)
+  const romanizedLyrics =
+    nonEmptyString(track.romanizedLyrics) || nonEmptyString(hint?.romanizedLyrics)
+  const lyricsSource = track.lyricsSource ?? hint?.lyricsSource ?? (lyrics ? 'embedded' : null)
+  const translatedLyricsSource =
+    track.translatedLyricsSource ??
+    hint?.translatedLyricsSource ??
+    (translatedLyrics ? 'embedded' : null)
+  const romanizedLyricsSource =
+    track.romanizedLyricsSource ??
+    hint?.romanizedLyricsSource ??
+    (romanizedLyrics ? 'embedded' : null)
+
+  if (
+    cover === (track.cover ?? null) &&
+    coverSource === (track.coverSource ?? null) &&
+    lyrics === (track.lyrics ?? null) &&
+    translatedLyrics === (track.translatedLyrics ?? null) &&
+    romanizedLyrics === (track.romanizedLyrics ?? null) &&
+    lyricsSource === (track.lyricsSource ?? null) &&
+    translatedLyricsSource === (track.translatedLyricsSource ?? null) &&
+    romanizedLyricsSource === (track.romanizedLyricsSource ?? null)
+  ) {
+    return track
+  }
+
+  return {
+    ...track,
+    cover,
+    coverSource,
+    lyrics,
+    translatedLyrics,
+    romanizedLyrics,
+    lyricsSource,
+    translatedLyricsSource,
+    romanizedLyricsSource
+  }
+}
+
+function activateCurrentTrack(track: Track, options: { resetUi?: boolean; position?: number } = {}): void {
+  const next = hydratePlaybackTrack(track)
+  // Fresh object every activation so cover/lyrics watchers always rebind.
+  currentTrack.value = { ...next }
+  loadedTrackId = next.id
+  lastActiveTrack = currentTrack.value
+  if (options.resetUi !== false) {
+    resetPlaybackUiForTrackSwitch(next, options.position ?? 0)
+  }
+  // Queue snapshots strip lyrics — always re-resolve for the active track.
+  void ensureCurrentTrackLyricsLoaded(currentTrack.value, true)
+}
+
+/**
+ * Re-apply library cover/lyrics onto the active track + queue after the library
+ * finishes loading (session restore often runs before loadLibrary completes).
+ */
+function rehydrateCurrentTrackFromLibrary(): void {
+  const active = currentTrack.value
+  if (active) {
+    const next = hydratePlaybackTrack(active)
+    if (
+      next.cover !== active.cover ||
+      next.coverSource !== active.coverSource ||
+      next.lyrics !== active.lyrics ||
+      next.translatedLyrics !== active.translatedLyrics
+    ) {
+      currentTrack.value = { ...next }
+      lastActiveTrack = currentTrack.value
+    }
+  }
+
+  const patchRow = (row: Track): Track => {
+    const library = useMusicStore().tracks.value.find((item) => item.id === row.id)
+    if (!library) return row
+    const cover = nonEmptyString(row.cover) || nonEmptyString(library.cover)
+    const coverSource = nonEmptyString(row.coverSource) || nonEmptyString(library.coverSource)
+    if (cover === (row.cover ?? null) && coverSource === (row.coverSource ?? null)) return row
+    return { ...row, cover, coverSource }
+  }
+  queue.value = queue.value.map(patchRow)
+  originalQueue.value = originalQueue.value.map(patchRow)
+}
+
 function patchTrackInQueues(updatedTrack: Track): void {
   const snapshot = toPlaybackQueueSnapshot(updatedTrack)
   queue.value = queue.value.map((track) =>
@@ -1269,14 +1433,29 @@ function applyNativePlaybackInfo(
       const snapshot = { ...toPlaybackQueueSnapshot(mergedTrack), queueEntryId: track.queueEntryId }
       queue.value = queue.value.map((item, index) => (index === infoIndex ? snapshot : item))
     }
-    // Always assign a new object on switch so Vue cover watchers fire even when
-    // the queue snapshot was referentially stable (same album cover handle).
-    currentTrack.value =
-      switchedTrack && mergedTrack === currentTrack.value
-        ? { ...mergedTrack }
-        : mergedTrack
+    // Always assign a fresh object on switch so cover/title/lyrics watchers and
+    // PlayerBar remount keys fire even when the queue snapshot is referentially
+    // stable (same album handle, gapless hand-off, delegated next).
+    if (switchedTrack) {
+      // Hydrate from library (not the queue row) so embedded cover/lyrics return
+      // after queue snapshots stripped them. Never inherit previous track fields.
+      const hydrated = hydratePlaybackTrack({
+        ...mergedTrack,
+        cover: nonEmptyString(track.cover) || nonEmptyString(mergedTrack.cover),
+        coverSource: nonEmptyString(track.coverSource) || nonEmptyString(mergedTrack.coverSource),
+        lyrics: null,
+        translatedLyrics: null,
+        romanizedLyrics: null
+      })
+      currentTrack.value = { ...hydrated }
+      lastActiveTrack = currentTrack.value
+      // Native gapless / delegated next skips activateCurrentTrack — still load lyrics.
+      void ensureCurrentTrackLyricsLoaded(currentTrack.value, true)
+    } else {
+      currentTrack.value = mergedTrack
+      lastActiveTrack = mergedTrack
+    }
     loadedTrackId = mergedTrack.id
-    lastActiveTrack = mergedTrack
   }
 
   const nextDuration =
@@ -1299,8 +1478,8 @@ function applyNativePlaybackInfo(
     pendingLoadStartTime = 0
     duration.value = nextDuration > 0 ? nextDuration : currentTrack.value ? cueDuration(currentTrack.value) : 0
     setCurrentTimeImmediate(nextPosition)
-    // Intent was for the previous identity; drop it once the engine confirms the switch.
-    clearNativePlaybackInfoIntent()
+    // Keep the intent/guard confirmed so delayed previous-track ticks still drop.
+    markNativePlaybackInfoIntentConfirmed()
   } else {
     if (nextDuration > 0) {
       duration.value = nextDuration
@@ -1428,17 +1607,18 @@ function getNativeQueueAdvanceTarget(
 }
 
 async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<void> {
+  // Drop any pending pause/play grace — a track switch is a new transport action
+  // and must not be blocked by a prior pause intent (UI stuck paused while audio
+  // already advanced).
+  const wasPlaying = isPlaying.value
+  clearPlaybackToggleIntent()
+
   const target = getNativeQueueAdvanceTarget(direction)
   if (target) {
     // Optimistic UI update so cover/title/progress reset immediately instead of
     // waiting for (or missing) the first native playback-info event.
     queueIndex.value = target.queueIndex
-    // Clone so cover watchers see a new identity even when the queue entry is
-    // the same referential snapshot reused across consecutive plays.
-    currentTrack.value = { ...target.track }
-    loadedTrackId = target.track.id
-    lastActiveTrack = target.track
-    resetPlaybackUiForTrackSwitch(target.track, 0)
+    activateCurrentTrack(target.track, { resetUi: true, position: 0 })
     setNativePlaybackInfoIntent(
       activeLoadToken,
       target.track,
@@ -1482,7 +1662,21 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
 
     const track = currentTrack.value
     if (track && info.state !== 'playing') {
+      // Paused engine after next/previous: start the new track. loadAndPlay also
+      // clears any residual pause intent and sets isPlaying.
       await loadAndPlay(track)
+      return
+    }
+
+    // Engine already playing the new track — mirror that into UI even when the
+    // user was paused (native next often auto-starts) or a stale pause intent
+    // would have blocked applyNativePlayingState.
+    if (info.state === 'playing' || wasPlaying) {
+      clearPlaybackToggleIntent()
+      isPlaying.value = true
+      if (info.nativePlaybackActive === true || nativeQueueDelegated) {
+        nativePlaybackActive = true
+      }
     }
   } catch (err) {
     clearNativePlaybackInfoIntent()
@@ -1801,9 +1995,13 @@ async function advanceAfterPlaybackEnded(): Promise<void> {
   if (nextIndex >= 0 && nextIndex < queue.value.length) {
     queueIndex.value = nextIndex
     const track = queue.value[nextIndex]
-    currentTrack.value = track ? { ...track } : null
-    resetPlaybackUiForTrackSwitch(track ?? null, 0)
-    if (track) void loadAndPlay(track)
+    if (track) {
+      activateCurrentTrack(track, { resetUi: true, position: 0 })
+      void loadAndPlay(track)
+    } else {
+      currentTrack.value = null
+      resetPlaybackUiForTrackSwitch(null, 0)
+    }
     return
   }
 
@@ -1813,8 +2011,7 @@ async function advanceAfterPlaybackEnded(): Promise<void> {
     queueIndex.value = 0
     const track = queue.value[0]
     if (track) {
-      currentTrack.value = { ...track }
-      resetPlaybackUiForTrackSwitch(track, 0)
+      activateCurrentTrack(track, { resetUi: true, position: 0 })
       void loadAndPlay(track)
       return
     }
@@ -2211,11 +2408,17 @@ function setupAudioEngineListeners(): void {
     api.onPropertyChange(({ name, data }) => {
       switch (name) {
         case 'time-pos':
-          // Accept time updates whenever native playback is active, the queue is
-          // delegated, or the UI still believes we are playing/loading. The last
-          // clause covers brief nativePlaybackActive demotions during track
-          // hand-off so the playbar progress never freezes until pause.
-          if (!nativePlaybackActive && !nativeQueueDelegated && !isPlaying.value && !isLoading.value) {
+          // Prefer continuous progress paint over strict native flags. Drop only
+          // when there is no active session identity at all — brief demotions of
+          // nativePlaybackActive during track hand-off must not freeze the bar
+          // until the user pauses or expands the now-playing page.
+          if (
+            !currentTrack.value &&
+            !nativePlaybackActive &&
+            !nativeQueueDelegated &&
+            !isPlaying.value &&
+            !isLoading.value
+          ) {
             break
           }
           if (typeof data === 'number' && isFinite(data)) {
@@ -2278,13 +2481,14 @@ function setupAudioEngineListeners(): void {
       void api
         .getPlaybackInfo()
         .then((info) => {
-          // Apply first (intent still guards against a delayed previous track),
-          // then drop the intent once the engine snapshot has been observed.
+          // Apply first. Do NOT clear the intent here — a delayed previous-track
+          // snapshot after an ignored apply used to re-enter and flash the old
+          // title/cover. applyNativePlaybackInfo marks confirmation on match;
+          // expiry / sticky guard handle the rest.
           applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })
-          clearNativePlaybackInfoIntent()
         })
         .catch(() => {
-          clearNativePlaybackInfoIntent()
+          // Leave intent in place so subsequent ticks stay filtered.
         })
     })
   )
@@ -2604,6 +2808,8 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
 
   const normalizedStartTime = clampCuePlaybackPosition(track, startTime)
   const loadToken = ++activeLoadToken
+  // New load is always an intentional play — drop pause-toggle grace so a
+  // prior pause cannot keep the UI stuck while this track starts.
   clearPlaybackToggleIntent()
   setNativePlaybackInfoIntent(loadToken, track)
   stopVisualizationPolling(false)
@@ -2734,8 +2940,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
 }
 
 function playQueueTrack(track: Track): void {
-  currentTrack.value = { ...track }
-  resetPlaybackUiForTrackSwitch(track, 0)
+  activateCurrentTrack(track, { resetUi: true, position: 0 })
   // While casting, re-cast the new track to the same device instead of
   // starting local engine playback underneath the cast session.
   if (castTargetUsn.value) {
@@ -2846,9 +3051,12 @@ async function togglePlayState(): Promise<void> {
       isPlaying.value = nextPlaying
       setPlaybackToggleIntent(nextPlaying)
       await window.api.audioEngine.togglePause()
-      // togglePause 已等待原生引擎确认真实状态并发布。
-      // 清除意图，让后续原生状态回传（tick 轮询/property-change）能立即生效。
-      clearPlaybackToggleIntent()
+      // Do not clear the intent here. togglePause publishes the confirmed state,
+      // but a tick that was already in flight can still report the previous
+      // pause/play value. Re-arm from the current UI state (not the closed-over
+      // nextPlaying) so a second click during the await cannot be undone by
+      // re-applying the first click's intent.
+      setPlaybackToggleIntent(isPlaying.value)
     } else {
       const audio = getPlaybackAudio()
       if (audio.paused) {
@@ -3497,7 +3705,7 @@ function cloneTrackForPlaybackSession(track: Track): Track {
 }
 
 function restorePlaybackSession(session: PlaybackSession): void {
-  const track = cloneTrackForPlaybackSession(session.track)
+  const track = hydratePlaybackTrack(cloneTrackForPlaybackSession(session.track))
   const position =
     session.mode === 'trackAndPosition' ? clampCuePlaybackPosition(track, session.position) : 0
 
@@ -3506,7 +3714,7 @@ function restorePlaybackSession(session: PlaybackSession): void {
   if (session.playMode) {
     setPlayModeInternal(session.playMode, { persist: false })
   }
-  currentTrack.value = track
+  currentTrack.value = { ...track }
 
   // 恢复完整播放队列，而非只恢复当前一首歌
   const savedQueue =
@@ -3692,6 +3900,7 @@ async function refreshCastTarget(): Promise<void> {
 }
 
 export function usePlayerStore(): {
+  rehydrateCurrentTrackFromLibrary: () => void
   currentTrack: Ref<Track | null>
   dominantColor: Ref<string>
   isPlaying: Ref<boolean>
@@ -3806,8 +4015,7 @@ export function usePlayerStore(): {
     if (queueIndex.value === -1) queueIndex.value = 0
     // Clone + reset so cover/progress rebind even when the queue entry object
     // is referentially stable across consecutive plays.
-    currentTrack.value = { ...track }
-    resetPlaybackUiForTrackSwitch(track, 0)
+    activateCurrentTrack(track, { resetUi: true, position: 0 })
     void loadAndPlay(track)
   }
 
@@ -3829,8 +4037,7 @@ export function usePlayerStore(): {
     }
     if (queueIndex.value === -1) queueIndex.value = 0
     const start = Number.isFinite(positionSeconds) ? Math.max(0, positionSeconds) : 0
-    currentTrack.value = { ...track }
-    resetPlaybackUiForTrackSwitch(track, start)
+    activateCurrentTrack(track, { resetUi: true, position: start })
     void loadAndPlay(track, start)
   }
 
@@ -4106,6 +4313,7 @@ export function usePlayerStore(): {
   }
 
   return {
+    rehydrateCurrentTrackFromLibrary,
     currentTrack,
     dominantColor,
     isPlaying,

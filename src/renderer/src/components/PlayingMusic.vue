@@ -17,7 +17,7 @@ import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
 import { useVisualizationStore } from '../stores/useVisualizationStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useLyricsManagement } from '../stores/lyricsManagement'
-import { useCover } from '../utils/coverLoader'
+import CoverImg from './CoverImg.vue'
 import { buildLyricLines, findActiveLyricIndex, findActiveWordIndex } from '../utils/lyrics'
 import type { LyricLine } from '../utils/lyrics'
 import { getTrackSource, shouldReserveLyricsColumn } from '../utils/nowPlayingLayout'
@@ -61,15 +61,10 @@ onBeforeUnmount(() => {
   visualizerActive.value = false
 })
 
-const resolvedCover = useCover(
-  computed(() => currentTrack.value?.cover ?? null),
-  computed(() => currentTrack.value?.coverSource ?? null)
-)
-const coverKey = computed(
+const coverIdentity = computed(
   () =>
-    `${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.queueEntryId ?? ''}:${resolvedCover.value ?? ''}`
+    `${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.cover ?? ''}:${currentTrack.value?.coverSource ?? ''}`
 )
-const bgSrc = computed(() => resolvedCover.value ?? '')
 const lyricsEl = ref<HTMLElement | null>(null)
 const lyricLineEls = ref<Array<HTMLElement | null>>([])
 let lyricScrollRaf = 0
@@ -448,13 +443,15 @@ onBeforeUnmount(() => {
 
     <div v-if="viewMode !== 'visualizer'" class="backdrop" aria-hidden="true">
       <Transition name="backdrop-cover-fade" appear>
-        <img
-          v-if="bgSrc && isBlurBackground"
-          :key="coverKey"
-          :src="bgSrc"
-          class="backdrop-cover"
-          alt=""
-        />
+        <div v-if="isBlurBackground && currentTrack" :key="`bg:${coverIdentity}`" class="backdrop-cover-wrap">
+          <CoverImg
+            :cover="currentTrack.cover"
+            :cover-source="currentTrack.coverSource"
+            :identity="currentTrack.id"
+            class="backdrop-cover"
+            alt=""
+          />
+        </div>
       </Transition>
       <div v-if="isFluidBackground" class="backdrop-fluid" />
       <div v-if="isSolidBackground" class="backdrop-solid" />
@@ -462,7 +459,11 @@ onBeforeUnmount(() => {
       <div class="backdrop-accent" />
     </div>
 
-    <div v-if="currentTrack" :class="['stage', { 'stage--visualizer': viewMode === 'visualizer' }]">
+    <div
+      v-if="currentTrack"
+      :key="`stage:${coverIdentity}`"
+      :class="['stage', { 'stage--visualizer': viewMode === 'visualizer' }]"
+    >
       <AudioVisualizerPanel
         v-if="viewMode === 'visualizer'"
         class="visualizer-surface"
@@ -471,10 +472,11 @@ onBeforeUnmount(() => {
       <main v-else class="layout" :class="{ 'layout--single': !reserveLyricsColumn }">
         <section class="cover-column">
           <div class="cover-frame">
-            <img
-              v-if="resolvedCover"
-              :key="coverKey"
-              :src="resolvedCover"
+            <CoverImg
+              v-if="currentTrack.cover || currentTrack.coverSource"
+              :cover="currentTrack.cover"
+              :cover-source="currentTrack.coverSource"
+              :identity="currentTrack.id"
               class="cover-image"
               alt="cover"
             />
@@ -577,6 +579,11 @@ onBeforeUnmount(() => {
   background-repeat: no-repeat;
 }
 
+.backdrop-cover-wrap {
+  position: absolute;
+  inset: 0;
+}
+.backdrop-cover-wrap :deep(img),
 .backdrop-cover {
   position: absolute;
   inset: 0;
@@ -739,6 +746,7 @@ onBeforeUnmount(() => {
   box-shadow: 0 26px 70px rgba(0, 0, 0, 0.38);
 }
 
+.cover-frame :deep(img.cover-image),
 .cover-image {
   width: 100%;
   height: 100%;

@@ -1,13 +1,84 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-const { clearRemoteCoverGrantCache, resolveCover } = (await import(
+const {
+  clearCoverCache,
+  clearRemoteCoverGrantCache,
+  resolveCover
+} = (await import(
   new URL('./coverLoader.ts', import.meta.url).href
 )) as typeof import('./coverLoader')
 
-test('resolveCover passes cover:// handles through without IPC', async () => {
-  clearRemoteCoverGrantCache()
-  assert.equal(await resolveCover('cover://abc.jpg'), 'cover://abc.jpg')
+test('resolveCover materializes cover:// handles via getCover IPC', async () => {
+  clearCoverCache()
+  const globalRecord = globalThis as typeof globalThis & {
+    window?: {
+      api?: {
+        data?: {
+          getCover?: (handle: string) => Promise<string | null>
+          grantRemoteCover?: (source: string) => Promise<string>
+        }
+      }
+    }
+  }
+  const previous = globalRecord.window
+  globalRecord.window = {
+    api: {
+      data: {
+        getCover: async (handle: string) => {
+          assert.equal(handle, 'cover://abc.jpg')
+          return 'data:image/jpeg;base64,abc'
+        }
+      }
+    }
+  }
+
+  try {
+    assert.equal(await resolveCover('cover://abc.jpg'), 'data:image/jpeg;base64,abc')
+    // Cached — second call reuses without requiring IPC again.
+    assert.equal(await resolveCover('cover://abc.jpg#t=track'), 'data:image/jpeg;base64,abc')
+  } finally {
+    globalRecord.window = previous
+    clearCoverCache()
+  }
+})
+
+test('resolveCover prefers local cover:// over durable coverSource', async () => {
+  clearCoverCache()
+  const grants: string[] = []
+  const globalRecord = globalThis as typeof globalThis & {
+    window?: {
+      api?: {
+        data?: {
+          getCover?: (handle: string) => Promise<string | null>
+          grantRemoteCover?: (source: string) => Promise<string>
+        }
+      }
+    }
+  }
+  const previous = globalRecord.window
+  globalRecord.window = {
+    api: {
+      data: {
+        getCover: async () => 'data:image/jpeg;base64,local',
+        grantRemoteCover: async (source: string) => {
+          grants.push(source)
+          return 'twilight-media://image/remote'
+        }
+      }
+    }
+  }
+
+  try {
+    assert.equal(
+      await resolveCover('cover://local.jpg', 'https://p1.music.126.net/cover.jpg'),
+      'data:image/jpeg;base64,local'
+    )
+    assert.equal(grants.length, 0)
+  } finally {
+    globalRecord.window = previous
+    clearCoverCache()
+  }
 })
 
 test('resolveCover prefers durable coverSource and re-grants remote origins', async () => {
@@ -99,12 +170,75 @@ test('resolveCover falls back to a live handle when re-grant fails', async () =>
       ),
       'twilight-media://image/still-live'
     )
-    assert.equal(
-      await resolveCover('cover://local.jpg', 'https://p1.music.126.net/ignored.jpg'),
-      'cover://local.jpg'
-    )
   } finally {
     globalRecord.window = previous
     clearRemoteCoverGrantCache()
+  }
+})
+
+test('useCover clears previous art when handle is not immediately displayable', async () => {
+  clearCoverCache()
+  const { useCover } = (await import(
+    new URL('./coverLoader.ts', import.meta.url).href
+  )) as typeof import('./coverLoader')
+  const { ref, nextTick } = await import('vue')
+
+  const grants: string[] = []
+  const globalRecord = globalThis as typeof globalThis & {
+    window?: {
+      api?: {
+        data?: {
+          getCover?: (handle: string) => Promise<string | null>
+          grantRemoteCover?: (source: string) => Promise<string>
+        }
+      }
+    }
+  }
+  const previous = globalRecord.window
+  globalRecord.window = {
+    api: {
+      data: {
+        getCover: async (handle: string) => {
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          return `data:image/jpeg;base64,${handle.includes('track-a') ? 'a' : 'c'}`
+        },
+        grantRemoteCover: async (source: string) => {
+          grants.push(source)
+          await new Promise((resolve) => setTimeout(resolve, 5))
+          return `twilight-media://image/new-${grants.length}`
+        }
+      }
+    }
+  }
+
+  try {
+    const handle = ref<string | null>('cover://track-a.jpg')
+    const source = ref<string | null>(null)
+    const resolved = useCover(handle, source)
+    await nextTick()
+    // Local protocol covers clear first, then materialize — never stay on cover://.
+    assert.equal(resolved.value, null)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(resolved.value, 'data:image/jpeg;base64,a')
+
+    // Switch to a durable-only remote cover (no live handle yet). Must not keep track A.
+    handle.value = null
+    source.value = 'https://p1.music.126.net/track-b.jpg'
+    await nextTick()
+    assert.equal(resolved.value, null)
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(resolved.value, 'twilight-media://image/new-1')
+
+    // Switch to another local handle — previous remote art must not stick.
+    handle.value = 'cover://track-c.jpg'
+    source.value = null
+    await nextTick()
+    assert.equal(resolved.value, null)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(resolved.value, 'data:image/jpeg;base64,c')
+  } finally {
+    globalRecord.window = previous
+    clearCoverCache()
   }
 })

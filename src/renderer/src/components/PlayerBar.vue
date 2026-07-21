@@ -9,7 +9,6 @@ import { useExtensionRegistry } from '../extensions/registry'
 import { useMediaProviders } from '../providers'
 import { syncPluginProviders } from '../providers'
 import { normalizeAccentColor } from '../utils/colorExtractor'
-import { useCover } from '../utils/coverLoader'
 import { resolveLyricsWithSources } from '../utils/lyricSourceResolution'
 import { HIFI_STATUS_COPY } from '../../../shared/audioProcessingOptions.ts'
 import CoverImg from './CoverImg.vue'
@@ -116,27 +115,13 @@ const {
   refreshCastTarget
 } = usePlayerStore()
 
-const resolvedCurrentCover = useCover(
-  computed(() => currentTrack.value?.cover ?? null),
-  computed(() => currentTrack.value?.coverSource ?? null)
-)
-/** After a load error, force a re-granted URL without waiting for the track to change. */
-const coverDisplayOverride = ref<string | null>(null)
-const displayCurrentCover = computed(
-  () => coverDisplayOverride.value ?? resolvedCurrentCover.value
-)
-watch(
-  () => currentTrack.value?.id,
-  () => {
-    coverDisplayOverride.value = null
-  }
-)
-/** Force cover remount + range rebind whenever track identity changes. */
-const currentTrackUiKey = computed(
+/** Destroy/recreate the whole left rail on track change (navigation remount is what fixed covers). */
+const playerLeftKey = computed(
   () =>
-    `${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.queueEntryId ?? ''}:${displayCurrentCover.value ?? ''}`
+    `pl:${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.queueEntryId ?? ''}:${currentTrack.value?.cover ?? ''}`
 )
 const {
+
   playlists,
   addToPlaylist,
   removeFromPlaylist,
@@ -199,39 +184,28 @@ function onCoverClick(): void {
   }
 }
 
-/** Drop a failed grant and re-resolve from the durable origin when available. */
-async function onCurrentCoverError(): Promise<void> {
-  const track = currentTrack.value
-  if (!track) return
-  const source =
-    (typeof track.coverSource === 'string' && track.coverSource.trim()) ||
-    (typeof track.cover === 'string' && /^https?:\/\//i.test(track.cover.trim())
-      ? track.cover.trim()
-      : '')
-  if (!source) {
-    // Dead twilight-media token with no origin — hide the broken image chrome.
-    coverDisplayOverride.value = ''
-    return
-  }
-  const { clearRemoteCoverGrantCache, invalidateRemoteCoverGrant, resolveCover } = await import(
-    '../utils/coverLoader'
-  )
-  invalidateRemoteCoverGrant(source)
-  clearRemoteCoverGrantCache()
-  const next = await resolveCover(null, source)
-  if (currentTrack.value?.id !== track.id) return
-  if (next && next !== displayCurrentCover.value) {
-    coverDisplayOverride.value = next
-    return
-  }
-  coverDisplayOverride.value = ''
-}
-
 function onProgressInput(event: Event): void {
   if (isLiveStream.value) return
   const target = event.target as HTMLInputElement
   seek(Number(target.value))
 }
+
+/** Real DOM width (not CSS custom-prop on ::-webkit-slider-runnable-track).
+ *  Chromium often skips repainting track pseudo-elements when only a custom
+ *  property changes, which freezes the playbar fill until a full re-style
+ *  (pause / open or close now-playing). */
+const progressPercent = computed(() => {
+  if (isLiveStream.value) return 100
+  const total = duration.value
+  if (!Number.isFinite(total) || total <= 0) return 0
+  const ratio = currentTime.value / total
+  if (!Number.isFinite(ratio)) return 0
+  return Math.min(100, Math.max(0, ratio * 100))
+})
+
+const progressFillStyle = computed(() => ({
+  width: `${progressPercent.value}%`
+}))
 
 const abLoopTitle = computed(() => {
   if (isLiveStream.value) return '直播流不支持 A-B 循环'
@@ -1074,7 +1048,13 @@ onMounted(() => {
                   <i v-if="item.index === queueIndex" class="pi pi-volume-up playing-dot"></i>
                   <span v-else>{{ item.index + 1 }}</span>
                 </span>
-                <CoverImg v-if="item.cover" :cover="item.cover" class="playlist-cover" alt="" />
+                <CoverImg
+                  v-if="item.cover"
+                  :cover="item.cover"
+                  :identity="item.id"
+                  class="playlist-cover"
+                  alt=""
+                />
                 <div v-else class="playlist-cover-placeholder">
                   <i class="pi pi-wave-pulse" style="font-size: 12px; color: #bbb"></i>
                 </div>
@@ -1124,27 +1104,20 @@ onMounted(() => {
         '--play-button-color': playButtonColor
       }"
     >
-      <!-- 左侧 -->
-      <div class="player-left">
-        <img
-          v-if="displayCurrentCover"
-          :key="currentTrackUiKey"
-          ref="coverRef"
-          :src="displayCurrentCover"
-          class="player-cover"
-          alt=""
-          title="打开播放页面"
-          @click="onCoverClick"
-          @error="onCurrentCoverError"
-        />
-        <div
-          v-else
-          :key="`ph:${currentTrackUiKey}`"
-          ref="coverRef"
-          class="player-cover-placeholder"
-          @click="onCoverClick"
-        >
-          <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+      <!-- 左侧：整块按曲目 identity remount，避免 cover:// 解码粘住上一首 -->
+      <div :key="playerLeftKey" class="player-left">
+        <div ref="coverRef" class="player-cover-slot" title="打开播放页面" @click="onCoverClick">
+          <CoverImg
+            v-if="currentTrack.cover || currentTrack.coverSource"
+            :cover="currentTrack.cover"
+            :cover-source="currentTrack.coverSource"
+            :identity="currentTrack.id"
+            class="player-cover"
+            alt=""
+          />
+          <div v-else class="player-cover-placeholder">
+            <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+          </div>
         </div>
         <div class="player-track-info">
           <div class="player-title-row">
@@ -1218,6 +1191,9 @@ onMounted(() => {
         <div class="progress-area" :key="`progress:${currentTrack.id}:${currentTrack.queueEntryId || ''}`">
           <span class="time-label">{{ isLiveStream ? 'LIVE' : formatTime(currentTime) }}</span>
           <div class="progress-slider-wrap">
+            <div class="progress-track" aria-hidden="true">
+              <div class="progress-fill" :class="{ live: isLiveStream }" :style="progressFillStyle"></div>
+            </div>
             <div
               v-if="abLoopA != null && abLoopB != null && duration > 0 && !isLiveStream"
               class="ab-loop-range"
@@ -1233,9 +1209,8 @@ onMounted(() => {
               class="progress-slider"
               :class="{ live: isLiveStream }"
               :disabled="isLiveStream"
-              :style="{
-                '--range-value': `${isLiveStream ? 100 : duration ? (currentTime / duration) * 100 : 0}%`
-              }"
+              :aria-valuenow="isLiveStream ? 0 : currentTime"
+              :aria-valuetext="isLiveStream ? 'LIVE' : formatTime(currentTime)"
               @input="onProgressInput"
             />
           </div>

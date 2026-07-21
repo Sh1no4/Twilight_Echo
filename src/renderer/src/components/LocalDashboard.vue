@@ -18,7 +18,6 @@ import {
   type DspSceneState
 } from '../../../shared/dspGraph.ts'
 import type { Track } from '../types/music'
-import { useCover } from '../utils/coverLoader'
 import { createUnifiedRecentTrackResolver } from '../utils/unifiedRecentTracks'
 import CoverImg from './CoverImg.vue'
 
@@ -151,11 +150,10 @@ const heroIsCurrent = computed(
   () => !!currentTrack.value && heroTrack.value?.id === currentTrack.value.id
 )
 
-const heroCover = useCover(
-  computed(() => heroTrack.value?.cover ?? null),
-  computed(() => heroTrack.value?.coverSource ?? null)
+const heroCoverKey = computed(
+  () =>
+    `hero:${heroTrack.value?.id ?? 'none'}:${heroTrack.value?.cover ?? ''}:${heroTrack.value?.coverSource ?? ''}`
 )
-const heroCoverSrc = computed(() => heroCover.value || DEFAULT_COVER)
 const nowPlayingTitle = computed(() => currentTrack.value?.title || heroTrack.value?.title)
 const progressWidth = computed(() => `${Math.min(100, Math.max(0, progress.value))}%`)
 
@@ -869,8 +867,16 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
       <template v-else>
         <section class="hero-grid" aria-label="音乐库概览">
           <article class="feature-card">
-            <div class="feature-backdrop" aria-hidden="true">
-              <img :src="heroCoverSrc" alt="" />
+            <div :key="`bg:${heroCoverKey}`" class="feature-backdrop" aria-hidden="true">
+              <CoverImg
+                v-if="heroTrack?.cover || heroTrack?.coverSource"
+                :cover="heroTrack?.cover"
+                :cover-source="heroTrack?.coverSource"
+                :identity="heroTrack?.id"
+                :fallback="DEFAULT_COVER"
+                alt=""
+              />
+              <img v-else :src="DEFAULT_COVER" alt="" />
             </div>
             <div class="feature-glow" aria-hidden="true"></div>
 
@@ -941,13 +947,29 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
                 </div>
               </div>
 
-              <div class="hero-art" aria-hidden="true">
+              <div :key="`art:${heroCoverKey}`" class="hero-art" aria-hidden="true">
                 <div class="hero-vinyl" :class="{ spinning: heroIsCurrent && isPlaying }">
-                  <img :src="heroCoverSrc" alt="" />
+                  <CoverImg
+                    v-if="heroTrack?.cover || heroTrack?.coverSource"
+                    :cover="heroTrack?.cover"
+                    :cover-source="heroTrack?.coverSource"
+                    :identity="heroTrack?.id"
+                    :fallback="DEFAULT_COVER"
+                    alt=""
+                  />
+                  <img v-else :src="DEFAULT_COVER" alt="" />
                   <span></span>
                 </div>
                 <div class="hero-sleeve">
-                  <img :src="heroCoverSrc" alt="" />
+                  <CoverImg
+                    v-if="heroTrack?.cover || heroTrack?.coverSource"
+                    :cover="heroTrack?.cover"
+                    :cover-source="heroTrack?.coverSource"
+                    :identity="heroTrack?.id"
+                    :fallback="DEFAULT_COVER"
+                    alt=""
+                  />
+                  <img v-else :src="DEFAULT_COVER" alt="" />
                   <span class="sleeve-shine"></span>
                 </div>
               </div>
@@ -1094,6 +1116,7 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
                 <CoverImg
                   :cover="track.cover"
                   :cover-source="track.coverSource"
+                  :identity="track.id"
                   :fallback="DEFAULT_COVER"
                   :alt="track.title"
                 />
@@ -1143,6 +1166,7 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
                   <CoverImg
                     :cover="entry.track?.cover || entry.cover"
                     :cover-source="entry.track?.coverSource || entry.coverSource"
+                    :identity="entry.track?.id || entry.id"
                     :fallback="DEFAULT_COVER"
                     :alt="entry.title"
                     class="top-cover"
