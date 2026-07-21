@@ -93,11 +93,23 @@ export function startApp(): void {
         }
       },
       {
+        // Local library art (`cover://<hash>.jpg`). Theme sampling also hits these
+        // URLs with crossOrigin=anonymous — same corsEnabled requirement as above.
+        scheme: 'cover',
+        privileges: {
+          standard: true,
+          secure: true,
+          supportFetchAPI: true,
+          corsEnabled: true
+        }
+      },
+      {
         scheme: 'background',
         privileges: {
           standard: true,
           secure: true,
-          supportFetchAPI: true
+          supportFetchAPI: true,
+          corsEnabled: true
         }
       }
     ])
@@ -137,7 +149,11 @@ export function startApp(): void {
         return new Response(data, {
           headers: {
             'Content-Type': getCoverCacheContentType(safeName),
-            'Cache-Control': 'max-age=86400'
+            'Cache-Control': 'max-age=86400',
+            // Permit crossOrigin=anonymous canvas sampling without tainting
+            // concurrent plain <img> loads of the same cover:// URL.
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, HEAD'
           }
         })
       })
@@ -154,7 +170,12 @@ export function startApp(): void {
           ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg'
         const data = readFileSync(filePath)
         return new Response(data, {
-          headers: { 'Content-Type': contentType, 'Cache-Control': 'max-age=86400' }
+          headers: {
+            'Content-Type': contentType,
+            'Cache-Control': 'max-age=86400',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, HEAD'
+          }
         })
       })
 

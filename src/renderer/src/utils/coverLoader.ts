@@ -42,38 +42,56 @@ export async function resolveCover(
       ? durableSource.trim()
       : null
 
+  const trimmedHandle =
+    typeof handle === 'string' && handle.trim() ? handle.trim() : null
+
   // Prefer the durable origin whenever it exists. Session restore / listening
   // stats keep coverSource across restarts while twilight-media tokens do not.
+  // If re-grant fails (preload race, IPC error), fall back to a still-live handle
+  // so covers do not blank out entirely.
   if (source) {
-    return grantRemoteCoverForDisplay(source)
+    const granted = await grantRemoteCoverForDisplay(source)
+    if (granted) return granted
+    if (trimmedHandle && isDisplayableCoverHandle(trimmedHandle)) {
+      return trimmedHandle
+    }
+    return null
   }
 
-  if (!handle) return null
-  const trimmed = handle.trim()
-  if (!trimmed) return null
+  if (!trimmedHandle) return null
 
   // Local / data URLs never need a grant.
-  if (
-    /^cover:/i.test(trimmed) ||
-    /^data:/i.test(trimmed) ||
-    /^background:/i.test(trimmed) ||
-    /^blob:/i.test(trimmed)
-  ) {
-    return trimmed
+  if (isLocalCoverHandle(trimmedHandle)) {
+    return trimmedHandle
   }
 
   // Bare http(s) cover (legacy listening stats / older sessions): CSP blocks
   // direct https images, so re-grant into twilight-media.
-  if (isDurableRemoteCoverSource(trimmed)) {
-    return grantRemoteCoverForDisplay(trimmed)
+  if (isDurableRemoteCoverSource(trimmedHandle)) {
+    const granted = await grantRemoteCoverForDisplay(trimmedHandle)
+    if (granted) return granted
+    return null
   }
 
   // Live grant from the current process (no durable origin recorded yet).
-  if (isTwilightMediaImageHandle(trimmed)) {
-    return trimmed
+  if (isTwilightMediaImageHandle(trimmedHandle)) {
+    return trimmedHandle
   }
 
-  return trimmed
+  return trimmedHandle
+}
+
+function isLocalCoverHandle(handle: string): boolean {
+  return (
+    /^cover:/i.test(handle) ||
+    /^data:/i.test(handle) ||
+    /^background:/i.test(handle) ||
+    /^blob:/i.test(handle)
+  )
+}
+
+function isDisplayableCoverHandle(handle: string): boolean {
+  return isLocalCoverHandle(handle) || isTwilightMediaImageHandle(handle)
 }
 
 async function grantRemoteCoverForDisplay(source: string): Promise<string | null> {
@@ -151,23 +169,19 @@ export function useCover(
     () => [handleRef.value, sourceRef?.value] as const,
     ([handle, source]) => {
       const id = ++requestId
-      const hasDurable =
-        typeof source === 'string' && isDurableRemoteCoverSource(source)
-      // Optimistic: show a local/data/live grant immediately when no durable
-      // re-grant is required. Durable sources always go through async grant.
-      if (!hasDurable) {
-        if (
-          handle &&
-          (/^cover:/i.test(handle) ||
-            /^data:/i.test(handle) ||
-            /^twilight-media:/i.test(handle) ||
-            /^blob:/i.test(handle) ||
-            /^background:/i.test(handle))
-        ) {
-          resolved.value = handle
-        } else if (!handle && !source) {
-          resolved.value = null
-        }
+      // Always paint a displayable handle immediately so track switches do not
+      // keep the previous cover while an async re-grant is in flight.
+      if (
+        handle &&
+        (/^cover:/i.test(handle) ||
+          /^data:/i.test(handle) ||
+          /^twilight-media:/i.test(handle) ||
+          /^blob:/i.test(handle) ||
+          /^background:/i.test(handle))
+      ) {
+        resolved.value = handle
+      } else if (!handle && !source) {
+        resolved.value = null
       }
 
       void resolveCover(handle, source).then((next) => {

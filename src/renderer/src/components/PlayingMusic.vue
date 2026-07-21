@@ -61,7 +61,10 @@ onBeforeUnmount(() => {
   visualizerActive.value = false
 })
 
-const resolvedCover = useCover(computed(() => currentTrack.value?.cover ?? null))
+const resolvedCover = useCover(
+  computed(() => currentTrack.value?.cover ?? null),
+  computed(() => currentTrack.value?.coverSource ?? null)
+)
 const coverKey = computed(
   () =>
     `${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.queueEntryId ?? ''}:${resolvedCover.value ?? ''}`

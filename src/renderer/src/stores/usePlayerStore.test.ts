@@ -468,6 +468,11 @@ test('native queue switching guards the target track before applying playback-in
     advanceNativePlayback,
     /setNativePlaybackInfoIntent\(\s*activeLoadToken,\s*target\.track,\s*getTrackAudioSource\(target\.track\),\s*target\.queueIndex\s*\)/
   )
+  // Fallback load must not demote nativePlaybackActive before loadAndPlay runs.
+  assert.doesNotMatch(
+    advanceNativePlayback,
+    /nativePlaybackActive = false\s*\n\s*await loadAndPlay/
+  )
   assert.match(
     applyNativePlaybackInfo,
     /const infoIndex = findTrackIndexFromPlaybackInfo\(info\)\s*if \(shouldIgnoreNativePlaybackInfo\(info, infoIndex\)\) return false\s*const normalizedInfo/
@@ -476,6 +481,15 @@ test('native queue switching guards the target track before applying playback-in
   assert.match(applyNativePlaybackInfo, /if \(switchedTrack\)[\s\S]*clearAbLoop\(\)/)
   assert.match(applyNativePlaybackInfo, /previousQueueIndex !== infoIndex/)
   assert.match(applyNativePlaybackInfo, /clearNativePlaybackInfoIntent\(\)/)
+  // Never demote nativePlaybackActive from a transient false snapshot while playing.
+  assert.match(
+    applyNativePlaybackInfo,
+    /if \(info\.nativePlaybackActive === true\)[\s\S]*nativePlaybackActive = true/
+  )
+  assert.doesNotMatch(
+    applyNativePlaybackInfo,
+    /nativePlaybackActive = info\.nativePlaybackActive === true/
+  )
   assert.match(resetPlaybackUiForTrackSwitch, /clearAbLoop\(\)/)
   assert.match(resetPlaybackUiForTrackSwitch, /setCurrentTimeImmediate/)
   assert.match(advanceAfterPlaybackEnded, /resetPlaybackUiForTrackSwitch/)
@@ -495,7 +509,20 @@ test('native queue switching guards the target track before applying playback-in
   )
   assert.match(setupAudioEngineListeners, /getPlaybackInfo\(\)/)
   assert.match(setupAudioEngineListeners, /applyNativePlaybackInfo\(info, \{ applyTrackWhenInactive: true \}\)/)
-  assert.match(setupAudioEngineListeners, /!nativePlaybackActive && !nativeQueueDelegated/)
+  // Accept time-pos while UI is still playing/loading even if flags briefly demote.
+  assert.match(
+    setupAudioEngineListeners,
+    /!nativePlaybackActive && !nativeQueueDelegated && !isPlaying\.value && !isLoading\.value/
+  )
+  // Clear intent only after applying the first post-switch playback-info snapshot.
+  const onStartFile =
+    setupAudioEngineListeners.match(/api\.onStartFile\(\(\) => \{[\s\S]*?\n    \}\)/)?.[0] ?? ''
+  assert.match(onStartFile, /applyNativePlaybackInfo\(info, \{ applyTrackWhenInactive: true \}\)/)
+  assert.match(onStartFile, /clearNativePlaybackInfoIntent\(\)/)
+  const applyBeforeClear =
+    onStartFile.indexOf('applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })') <
+    onStartFile.indexOf('clearNativePlaybackInfoIntent()')
+  assert.equal(applyBeforeClear, true)
 })
 
 test('native LIVE buffering maps sessionUnderrunCount rises onto isStreamBuffering', () => {

@@ -1237,8 +1237,17 @@ function applyNativePlaybackInfo(
   if (typeof (info as { streamTitle?: string }).streamTitle === 'string') {
     streamNowPlaying.value = (info as { streamTitle?: string }).streamTitle?.trim() ?? ''
   }
-  if (info.nativePlaybackActive !== undefined) {
-    nativePlaybackActive = info.nativePlaybackActive === true
+  // Promote nativePlaybackActive when the engine confirms it, but never demote
+  // it from a transient/stale snapshot while we still believe native is active.
+  // Demoting here drops time-pos updates and freezes the playbar until pause
+  // forces a full playback-info sync.
+  if (info.nativePlaybackActive === true) {
+    nativePlaybackActive = true
+  } else if (
+    info.nativePlaybackActive === false &&
+    (info.state === 'stopped' || (!isPlaying.value && !isLoading.value))
+  ) {
+    nativePlaybackActive = false
   }
   if (!nativePlaybackActive && !options.applyTrackWhenInactive) return true
 
@@ -1462,9 +1471,10 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
     }
     if (!applied) {
       // Keep optimistic track metadata; force a full load if native did not confirm.
+      // loadAndPlay manages nativePlaybackActive — do not demote it here or the
+      // playbar will ignore time-pos until the next pause/play handshake.
       const track = currentTrack.value
       if (track) {
-        nativePlaybackActive = false
         await loadAndPlay(track)
       }
       return
@@ -1472,7 +1482,6 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
 
     const track = currentTrack.value
     if (track && info.state !== 'playing') {
-      nativePlaybackActive = false
       await loadAndPlay(track)
     }
   } catch (err) {
@@ -2196,10 +2205,13 @@ function setupAudioEngineListeners(): void {
     api.onPropertyChange(({ name, data }) => {
       switch (name) {
         case 'time-pos':
-          // Accept time updates whenever native playback is active, or when the
-          // engine is mid hand-off (delegated queue) so the playbar never freezes
-          // while nativePlaybackActive briefly flips.
-          if (!nativePlaybackActive && !nativeQueueDelegated) break
+          // Accept time updates whenever native playback is active, the queue is
+          // delegated, or the UI still believes we are playing/loading. The last
+          // clause covers brief nativePlaybackActive demotions during track
+          // hand-off so the playbar progress never freezes until pause.
+          if (!nativePlaybackActive && !nativeQueueDelegated && !isPlaying.value && !isLoading.value) {
+            break
+          }
           if (typeof data === 'number' && isFinite(data)) {
             const next = Math.max(0, data)
             if (next + 0.5 < latestPlaybackTime) {
@@ -2215,7 +2227,9 @@ function setupAudioEngineListeners(): void {
           }
           break
         case 'pause':
-          if (!nativePlaybackActive && !nativeQueueDelegated) break
+          if (!nativePlaybackActive && !nativeQueueDelegated && !isPlaying.value && !isLoading.value) {
+            break
+          }
           applyNativePlayingState(!data)
           flushLatestCurrentTime()
           break
@@ -2250,15 +2264,22 @@ function setupAudioEngineListeners(): void {
       pendingLoadStartTime = 0
       setCurrentTimeImmediate(startAt)
       isLoading.value = false
-      // Drop a stale intent from the previous track so the first playback-info
-      // after gapless handoff is not ignored for the full grace window.
-      clearNativePlaybackInfoIntent()
+      // Keep accepting time-pos during the hand-off even if a stale snapshot
+      // temporarily reported nativePlaybackActive=false.
+      if (nativeQueueDelegated || isPlaying.value) {
+        nativePlaybackActive = true
+      }
       void api
         .getPlaybackInfo()
         .then((info) => {
+          // Apply first (intent still guards against a delayed previous track),
+          // then drop the intent once the engine snapshot has been observed.
           applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })
+          clearNativePlaybackInfoIntent()
         })
-        .catch(() => {})
+        .catch(() => {
+          clearNativePlaybackInfoIntent()
+        })
     })
   )
 
@@ -3777,7 +3798,10 @@ export function usePlayerStore(): {
       }
     }
     if (queueIndex.value === -1) queueIndex.value = 0
-    currentTrack.value = track
+    // Clone + reset so cover/progress rebind even when the queue entry object
+    // is referentially stable across consecutive plays.
+    currentTrack.value = { ...track }
+    resetPlaybackUiForTrackSwitch(track, 0)
     void loadAndPlay(track)
   }
 
@@ -3798,8 +3822,9 @@ export function usePlayerStore(): {
       }
     }
     if (queueIndex.value === -1) queueIndex.value = 0
-    currentTrack.value = track
     const start = Number.isFinite(positionSeconds) ? Math.max(0, positionSeconds) : 0
+    currentTrack.value = { ...track }
+    resetPlaybackUiForTrackSwitch(track, start)
     void loadAndPlay(track, start)
   }
 

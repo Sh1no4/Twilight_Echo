@@ -1654,6 +1654,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                       <CoverImg
                         v-if="track.cover"
                         :cover="track.cover"
+                        :cover-source="track.coverSource"
                         class="cover-img"
                         alt="cover"
                       />

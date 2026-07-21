@@ -68,3 +68,43 @@ test('resolveCover prefers durable coverSource and re-grants remote origins', as
     clearRemoteCoverGrantCache()
   }
 })
+
+test('resolveCover falls back to a live handle when re-grant fails', async () => {
+  clearRemoteCoverGrantCache()
+  const globalRecord = globalThis as typeof globalThis & {
+    window?: {
+      api?: {
+        data?: {
+          grantRemoteCover?: (source: string) => Promise<string>
+        }
+      }
+    }
+  }
+  const previous = globalRecord.window
+  globalRecord.window = {
+    api: {
+      data: {
+        grantRemoteCover: async () => {
+          throw new Error('ipc unavailable')
+        }
+      }
+    }
+  }
+
+  try {
+    assert.equal(
+      await resolveCover(
+        'twilight-media://image/still-live',
+        'https://p1.music.126.net/cover.jpg'
+      ),
+      'twilight-media://image/still-live'
+    )
+    assert.equal(
+      await resolveCover('cover://local.jpg', 'https://p1.music.126.net/ignored.jpg'),
+      'cover://local.jpg'
+    )
+  } finally {
+    globalRecord.window = previous
+    clearRemoteCoverGrantCache()
+  }
+})

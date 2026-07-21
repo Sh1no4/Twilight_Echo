@@ -210,8 +210,14 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
   assert.match(electronSecuritySource, /media-src 'self' blob: twilight-audio: twilight-media:/)
   assert.match(rendererHtml, /img-src 'self' data: blob: cover: background: twilight-media:/)
   assert.match(rendererHtml, /media-src 'self' blob: twilight-audio: twilight-media:/)
-  // Playbar cover-theme sampling uses crossOrigin=anonymous on twilight-media grants.
+  // Playbar cover-theme sampling uses crossOrigin=anonymous on local + remote covers.
   assert.match(lifecycleSource, /scheme: 'twilight-media'[\s\S]*corsEnabled:\s*true/)
+  assert.match(lifecycleSource, /scheme: 'cover'[\s\S]*corsEnabled:\s*true/)
+  assert.match(lifecycleSource, /scheme: 'background'[\s\S]*corsEnabled:\s*true/)
+  assert.match(
+    lifecycleSource,
+    /protocol\.handle\('cover'[\s\S]*Access-Control-Allow-Origin['"]:\s*['"]\*['"]/
+  )
   assert.doesNotMatch(rendererHtml, /(?:img-src|media-src)[^;]*\bhttps?:/)
   assert.doesNotMatch(rendererHtml, /unpkg\.com|fonts\.googleapis\.com|unsafe-inline' https:/)
   assert.match(rendererHtml, /script-src 'self'/)
