@@ -356,6 +356,25 @@ struct WasapiSharedBackend::Impl {
     running = false;
     if (samplesReadyEvent) SetEvent(samplesReadyEvent);
     joinRenderThread();
+    // Soft mute residual free space after the render thread stops so Stop() does not
+    // leave non-zero samples at the device boundary (device-switch click/pop).
+    if (audioClient && renderClient && bufferFrameCount > 0 && outputFormat.channelCount > 0) {
+      UINT32 padding = 0;
+      if (SUCCEEDED(audioClient->GetCurrentPadding(&padding))) {
+        const UINT32 framesAvailable = bufferFrameCount > padding ? bufferFrameCount - padding : 0;
+        if (framesAvailable > 0) {
+          BYTE* data = nullptr;
+          if (SUCCEEDED(renderClient->GetBuffer(framesAvailable, &data)) && data) {
+            std::memset(
+                data,
+                0,
+                static_cast<size_t>(framesAvailable) * static_cast<size_t>(outputFormat.channelCount) *
+                    sizeof(float));
+            (void)renderClient->ReleaseBuffer(framesAvailable, AUDCLNT_BUFFERFLAGS_SILENT);
+          }
+        }
+      }
+    }
     if (audioClient) audioClient->Stop();
   }
 
@@ -565,12 +584,17 @@ bool WasapiSharedBackend::start(RenderCallback callback, OutputEventCallback eve
   BYTE* data = nullptr;
   HRESULT hr = impl_->renderClient->GetBuffer(impl_->bufferFrameCount, &data);
   if (!impl_->renderSucceeded(hr, error, "无法预填充输出缓冲区")) return false;
-  wasapi::renderFloatCallbackWithTailSilence(
-      reinterpret_cast<float*>(data),
-      impl_->bufferFrameCount,
-      impl_->outputFormat.channelCount,
-      impl_->callback);
-  hr = impl_->renderClient->ReleaseBuffer(impl_->bufferFrameCount, 0);
+  // Prefill with silence so Start() does not attack at full level after a device rebind.
+  // Still pull one buffer of samples from the decoder so the stream position stays aligned.
+  if (data) {
+    wasapi::renderFloatCallbackWithLeadingSilence(
+        reinterpret_cast<float*>(data),
+        impl_->bufferFrameCount,
+        impl_->outputFormat.channelCount,
+        impl_->callback,
+        impl_->bufferFrameCount);
+  }
+  hr = impl_->renderClient->ReleaseBuffer(impl_->bufferFrameCount, AUDCLNT_BUFFERFLAGS_SILENT);
   if (!impl_->renderSucceeded(hr, error, "无法提交预填充输出缓冲区")) return false;
 
   impl_->running = true;

@@ -674,6 +674,8 @@ const PLAYBACK_INFO_CACHE_TTL_MS = 200
 const VISUALIZATION_CACHE_TTL_MS = 24
 const AUDIO_DEVICE_OPTIONS_CACHE_TTL_MS = 1000
 const AUDIO_DEVICE_OPTIONS_HOTPLUG_POLL_MS = 5000
+/** Faster poll while following the OS default so default-speaker switches are noticed promptly. */
+const AUDIO_DEVICE_OPTIONS_DEFAULT_FOLLOW_POLL_MS = 1000
 const NATIVE_DSP_PLUGIN_STATUS_CACHE_TTL_MS = 200
 const CONVOLVER_INFO_CACHE_TTL_MS = 200
 const UPCOMING_TRACK_CACHE_TTL_MS = 200
@@ -1943,6 +1945,9 @@ export class AudioEngineManager extends EventEmitter {
   } | null = null
   private lastAudioDeviceOptionsSignature = ''
   private lastAudioDeviceOptionsProbeAt = Number.NEGATIVE_INFINITY
+  /** Physical endpoint id last bound while selection is `auto` (empty until first observation). */
+  private lastFollowedDefaultDeviceId = ''
+  private autoDeviceRebindInFlight: Promise<void> | null = null
   private lastNativeDspPluginStatusCache: {
     readAt: number
     status: unknown
@@ -2187,8 +2192,10 @@ export class AudioEngineManager extends EventEmitter {
         JSON.stringify(this.outputConfig)
       )
     )
+    const synced = results.every((result) => result.ok)
+    if (synced) this.rememberFollowedDefaultDeviceFromOptions()
     return {
-      synced: results.every((result) => result.ok),
+      synced,
       errors: results.filter((result) => !result.ok).map((result) => result.error)
     }
   }
@@ -2745,6 +2752,7 @@ export class AudioEngineManager extends EventEmitter {
     }
     this.nativeOutputRouteSynced = true
     this.refreshOutputInfoFromNative(true)
+    this.rememberFollowedDefaultDeviceFromOptions()
     await this.applyNativeDspGraphOrThrow('输出设备切换后解析 DSP 场景')
     return await this.getAudioOutputState()
   }
@@ -2872,6 +2880,7 @@ export class AudioEngineManager extends EventEmitter {
     if (this.destroyed) return
     this.lastAudioDeviceOptionsProbeAt = Number.NEGATIVE_INFINITY
     this.invalidateAudioDeviceOptionsCache(reason)
+    void this.maybeRebindAutoOutputDevice(reason)
   }
 
   private dspSceneContext(): DspSceneContext {
@@ -4522,7 +4531,11 @@ export class AudioEngineManager extends EventEmitter {
   private pollAudioDeviceOptionsForChanges(): void {
     if (!this.native || this.deviceOptionsProvider) return
     const now = this.scheduler.now()
-    if (now - this.lastAudioDeviceOptionsProbeAt < AUDIO_DEVICE_OPTIONS_HOTPLUG_POLL_MS) return
+    const pollMs =
+      this.device === 'auto'
+        ? AUDIO_DEVICE_OPTIONS_DEFAULT_FOLLOW_POLL_MS
+        : AUDIO_DEVICE_OPTIONS_HOTPLUG_POLL_MS
+    if (now - this.lastAudioDeviceOptionsProbeAt < pollMs) return
     this.lastAudioDeviceOptionsProbeAt = now
 
     const options = this.readNativeAudioDeviceOptions()
@@ -4538,9 +4551,95 @@ export class AudioEngineManager extends EventEmitter {
       }
       this.lastAudioDeviceOptionsSignature = signature
       this.emit('audio-device-options-changed', { reason: 'audio-device-hotplug' })
+      void this.maybeRebindAutoOutputDevice('audio-device-hotplug')
       return
     }
     this.lastAudioDeviceOptionsSignature = signature
+    // Signature can be stable on some hosts while the default endpoint still flips; always check.
+    void this.maybeRebindAutoOutputDevice('audio-device-default-follow-poll')
+  }
+
+  private resolvePhysicalDefaultDeviceId(options: AudioDeviceOption[]): string {
+    const physical = options.find(
+      (option) =>
+        option.isDefault === true &&
+        option.id &&
+        option.id !== DEFAULT_AUDIO_DEVICE_OPTION.id &&
+        !isDefaultAudioDeviceAlias(option.id)
+    )
+    return physical?.id || ''
+  }
+
+  private rememberFollowedDefaultDeviceFromOptions(
+    options: AudioDeviceOption[] = this.readNativeAudioDeviceOptions()
+  ): void {
+    if (this.device !== 'auto') {
+      this.lastFollowedDefaultDeviceId = ''
+      return
+    }
+    const defaultId = this.resolvePhysicalDefaultDeviceId(options)
+    if (defaultId) this.lastFollowedDefaultDeviceId = defaultId
+  }
+
+  private maybeRebindAutoOutputDevice(reason: string): void {
+    if (this.destroyed) return
+    if (this.device !== 'auto') return
+    if (!this.native || !this.nativeOutputRouteSynced) return
+    if (this.autoDeviceRebindInFlight) return
+
+    // Always follow OS default while selection is `auto`. When idle, SetOutputDevice only
+    // updates the preferred endpoint; when playing/paused the native path rebinds in place.
+    this.autoDeviceRebindInFlight = this.rebindAutoOutputDevice(reason).finally(() => {
+      this.autoDeviceRebindInFlight = null
+    })
+  }
+
+  private async rebindAutoOutputDevice(reason: string): Promise<void> {
+    if (this.destroyed || this.device !== 'auto' || !this.native) return
+
+    try {
+      const options = this.readNativeAudioDeviceOptions()
+      const now = this.scheduler.now()
+      this.lastAudioDeviceOptionsCache = {
+        selectedDevice: this.device,
+        readAt: now,
+        options
+      }
+      this.lastAudioDeviceOptionsSignature = this.createAudioDeviceOptionsSignature(options)
+
+      const defaultId = this.resolvePhysicalDefaultDeviceId(options)
+      if (!defaultId) return
+
+      // First observation only latches the current OS default; rebind only when it changes later.
+      if (!this.lastFollowedDefaultDeviceId) {
+        this.lastFollowedDefaultDeviceId = defaultId
+        return
+      }
+      if (defaultId === this.lastFollowedDefaultDeviceId) return
+
+      const previousFollowed = this.lastFollowedDefaultDeviceId
+      this.lastFollowedDefaultDeviceId = defaultId
+      const deviceSynced = await this.callNativeMaybeAsync(
+        '跟随系统默认输出设备',
+        'SetOutputDevice',
+        'auto'
+      )
+      if (!deviceSynced) {
+        this.lastFollowedDefaultDeviceId = previousFollowed
+        console.warn(
+          `跟随系统默认输出设备失败（${reason}）：`,
+          this.lastNativeError || '原生音频引擎不可用'
+        )
+        return
+      }
+      this.refreshOutputInfoFromNative(true)
+      // Re-resolve DSP only while actively playing so idle default flips stay cheap.
+      if (this.playbackInfo.state === 'playing' || this.playbackInfo.state === 'paused') {
+        await this.applyNativeDspGraphOrThrow('系统默认输出设备切换后解析 DSP 场景')
+      }
+    } catch (error) {
+      console.warn(`跟随系统默认输出设备失败（${reason}）：`, error)
+    }
   }
 
   private createAudioDeviceOptionsSignature(options: AudioDeviceOption[]): string {
@@ -4549,6 +4648,7 @@ export class AudioEngineManager extends EventEmitter {
         [
           device.id,
           device.label,
+          device.isDefault ? '1' : '0',
           device.backend || '',
           device.pathKind || '',
           device.capabilityVersion || 0,

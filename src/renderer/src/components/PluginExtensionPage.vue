@@ -132,8 +132,8 @@ watch(() => props.page.id, () => {
 
 <style scoped>
 .plugin-extension-page {
-  min-height: calc(100vh - 32px);
-  padding: 46px clamp(24px, 5vw, 76px) 120px;
+  min-height: 100vh;
+  padding: calc(32px + 46px) clamp(24px, 5vw, 76px) 120px;
   background: var(--te-subtle-bg);
 }
 

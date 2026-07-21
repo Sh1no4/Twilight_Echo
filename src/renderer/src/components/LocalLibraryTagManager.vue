@@ -383,7 +383,7 @@ onMounted(() => {
 <style scoped>
 .tag-manager {
   width: min(760px, calc(100vw - 32px));
-  max-height: min(780px, calc(100vh - 32px));
+  max-height: min(780px, calc(100vh - 48px));
   overflow: auto;
   padding: 20px;
   border: 1px solid var(--te-glass-border, #dce0e8);

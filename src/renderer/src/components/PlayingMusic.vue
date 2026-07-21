@@ -555,7 +555,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .playing-music {
   position: fixed;
-  inset: -32px 0 0 0;
+  inset: 0;
   z-index: 1100;
   overflow: hidden;
   color: #f4f7fb;
@@ -595,6 +595,16 @@ onBeforeUnmount(() => {
   transform-origin: center;
   filter: blur(58px) saturate(1.28) brightness(0.42);
   will-change: opacity, transform;
+}
+
+/* Light theme: slightly brighter backdrop art so the stage does not crush blacks */
+:global(html[data-theme='light'] .playing-music .backdrop-cover-wrap img),
+:global(html[data-theme='pureWhite'] .playing-music .backdrop-cover-wrap img) {
+  filter: blur(58px) saturate(1.22) brightness(0.52);
+}
+
+:global(html[data-theme='dark'] .playing-music .backdrop-cover-wrap img) {
+  filter: blur(58px) saturate(1.32) brightness(0.36);
 }
 
 .backdrop-cover-fade-enter-active,
@@ -746,6 +756,19 @@ onBeforeUnmount(() => {
   box-shadow: 0 26px 70px rgba(0, 0, 0, 0.38);
 }
 
+:global(html[data-theme='dark'] .playing-music .cover-frame) {
+  background: rgba(15, 23, 42, 0.45);
+  box-shadow:
+    0 26px 70px rgba(0, 0, 0, 0.55),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+:global(html[data-theme='light'] .playing-music .cover-frame),
+:global(html[data-theme='pureWhite'] .playing-music .cover-frame) {
+  background: rgba(15, 23, 42, 0.08);
+  box-shadow: 0 26px 70px rgba(15, 23, 42, 0.28);
+}
+
 .cover-frame :deep(img.cover-image),
 .cover-image {
   width: 100%;
@@ -764,6 +787,13 @@ onBeforeUnmount(() => {
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
     color-mix(in srgb, var(--accent-color) 18%, transparent);
+}
+
+:global(html[data-theme='dark'] .playing-music .cover-placeholder) {
+  color: rgba(148, 163, 184, 0.55);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01)),
+    color-mix(in srgb, var(--accent-color) 22%, rgba(15, 23, 42, 0.65));
 }
 
 .cover-meta {

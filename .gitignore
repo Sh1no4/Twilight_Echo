@@ -31,7 +31,8 @@ coverage/
 .nyc_output/
 playwright-report/
 test-results/
-
+Testing/
+output/
 
 # Caches
 .cache/
@@ -44,6 +45,8 @@ skills-lock.json
 # Logs
 logs/
 *.log
+.tmp-*.log
+.tmp-*.out
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -64,11 +67,13 @@ Desktop.ini
 # AI editor rules (personal development configs)
 .clinerules
 .cursorrules
+CLAUDE.md
 
 # AI agent session state
 .omo/
 .superpowers/
 .worktrees/
+agent-tools/
 
 # Prototype / preview files (not used in build)
 plugin-preview.html
@@ -85,12 +90,15 @@ plugin-preview.html
 .agents/
 .gemini/
 
-
-# Temporary files
+# Temporary files / local scratch
 tmp/
 temp/
 *.tmp
 *.temp
+tmp_*.py
+tmp_*.out
+tmp_*.log
+electron.vite.config.[0-9]*.mjs
 
 # Original font files (backup, WOFF2 versions are used)
 resources/font/_originals/

@@ -2652,10 +2652,10 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .dsp-rack-page {
-  height: calc(100vh - 32px);
+  height: 100vh;
   min-height: 0;
   min-width: 0;
-  padding: 28px 32px 22px;
+  padding: calc(32px + 28px) 32px 22px;
   background: var(--te-page-bg, #f5f7fa);
   color: var(--te-text, #1d2939);
   overflow-x: hidden;

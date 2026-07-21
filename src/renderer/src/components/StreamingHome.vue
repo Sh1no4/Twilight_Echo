@@ -950,12 +950,7 @@ watch(
 }
 
 .feature-hero-title {
-  font-family:
-    'Source Han Sans SC',
-    'PingFang SC',
-    'Microsoft YaHei UI',
-    'Microsoft YaHei',
-    var(--te-font-sans);
+  font-family: var(--te-font-display);
   font-size: clamp(34px, 4.4vw, 56px);
   line-height: 0.98;
   font-weight: 950;
@@ -965,11 +960,7 @@ watch(
 
 .feature-hero-subtitle {
   margin-top: 4px;
-  font-family:
-    Inter,
-    'Segoe UI',
-    Arial,
-    var(--te-font-sans);
+  font-family: var(--te-font-display);
   font-size: clamp(32px, 4.1vw, 52px);
   line-height: 0.96;
   font-weight: 900;

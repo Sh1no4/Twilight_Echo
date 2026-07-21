@@ -31,7 +31,7 @@
 .song-list {
   display: grid;
   position: relative;
-  padding: 30px min(4.4vw, 48px) 132px;
+  padding: calc(32px + 30px) min(4.4vw, 48px) 132px;
   overflow-y: auto;
   overflow-x: hidden;
   background:

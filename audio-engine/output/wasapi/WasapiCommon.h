@@ -12,6 +12,8 @@
 #include <string>
 #include <vector>
 
+// writeSilentPcm / leading-silence helpers below need AudioSampleFormat.
+
 #if defined(_WIN32) && defined(TAE_ENABLE_WASAPI)
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -197,6 +199,70 @@ inline size_t renderFloatCallbackWithTailSilence(
     std::fill(output + renderedSamples, output + totalSamples, 0.0f);
   }
   return renderedFrames;
+}
+
+// Soft-start helper: silence the first buffer period on device open so Start() does not
+// attack at full level after a hard rebind (device switch / default follow).
+inline size_t renderFloatCallbackWithLeadingSilence(
+    float* output,
+    size_t frameCount,
+    int channelCount,
+    const RenderCallback& callback,
+    size_t silentLeadFrames) {
+  if (!output || frameCount == 0 || channelCount <= 0) return 0;
+
+  const size_t lead = std::min(silentLeadFrames, frameCount);
+  if (lead > 0) {
+    std::fill(output, output + lead * static_cast<size_t>(channelCount), 0.0f);
+  }
+  if (lead >= frameCount) {
+    // Still advance the decoder so seek position stays aligned with wall clock.
+    if (callback && frameCount > 0) {
+      std::vector<float> discard(frameCount * static_cast<size_t>(channelCount));
+      (void)callback(discard.data(), frameCount);
+    }
+    return 0;
+  }
+
+  float* tail = output + lead * static_cast<size_t>(channelCount);
+  const size_t remaining = frameCount - lead;
+  size_t renderedFrames = 0;
+  if (callback) {
+    renderedFrames = std::min(callback(tail, remaining), remaining);
+  }
+  if (renderedFrames < remaining) {
+    const size_t renderedSamples = renderedFrames * static_cast<size_t>(channelCount);
+    const size_t totalSamples = remaining * static_cast<size_t>(channelCount);
+    std::fill(tail + renderedSamples, tail + totalSamples, 0.0f);
+  }
+  return lead + renderedFrames;
+}
+
+inline void writeSilentPcm(
+    BYTE* output,
+    size_t frameCount,
+    int channelCount,
+    AudioSampleFormat sampleFormat) {
+  if (!output || frameCount == 0 || channelCount <= 0) return;
+  size_t bytesPerSample = 4;
+  switch (sampleFormat) {
+    case AudioSampleFormat::Int16Interleaved:
+      bytesPerSample = 2;
+      break;
+    case AudioSampleFormat::Int24Interleaved:
+      bytesPerSample = 3;
+      break;
+    case AudioSampleFormat::Int24In32Interleaved:
+    case AudioSampleFormat::Int32Interleaved:
+    case AudioSampleFormat::Float32Interleaved:
+    default:
+      bytesPerSample = 4;
+      break;
+  }
+  std::memset(
+      output,
+      0,
+      frameCount * static_cast<size_t>(channelCount) * bytesPerSample);
 }
 
 inline UINT32 referenceTimeToFrames(REFERENCE_TIME duration, int sampleRate) {

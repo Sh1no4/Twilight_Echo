@@ -12,8 +12,10 @@ files:
   - '!out/renderer/audio-engine/**'
   - '!out/renderer/plugins/**'
   - '!out/renderer/plugin-index/**'
+  # Keep packaged Nunito/Nunito Sans (latin) UI fonts; strip legacy heavy CJK/Outfit.
   - '!out/renderer/font/Alibaba-PuHuiTi-Medium.ttf'
-  - '!out/renderer/font/**'
+  - '!out/renderer/font/Outfit-**'
+  - '!out/renderer/font/**/*.{ttf,otf,woff}'
   - '!node_modules/**/{test,tests,__tests__,docs,doc,example,examples,benchmark,benchmarks}/**'
   - '!node_modules/**/*.map'
   - '!node_modules/**/*.ts'

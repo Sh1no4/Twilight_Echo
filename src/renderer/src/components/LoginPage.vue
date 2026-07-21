@@ -879,7 +879,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 24px;
+  padding: calc(32px + 14px) 24px 14px;
   border-bottom: 1px solid rgba(15, 23, 42, 0.06);
   background: var(--te-card-bg);
   flex-shrink: 0;

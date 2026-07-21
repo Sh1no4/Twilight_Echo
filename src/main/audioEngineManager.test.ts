@@ -4102,6 +4102,172 @@ test('platform device change notifications refresh device options immediately', 
   assert.equal(refreshReasons.includes('platform-device-change:wm-devicechange'), true)
 })
 
+test('auto device follows OS default endpoint changes while playing', async () => {
+  const nativeBinding = new FakeNativeBinding(
+    {
+      state: 'playing',
+      outputDevice: 'auto',
+      outputInfo: makeOutputInfo({
+        deviceName: 'auto',
+        actualDeviceName: 'Desk DAC',
+        actualBackend: 'wasapi',
+        backend: 'wasapi'
+      })
+    },
+    [
+      {
+        id: 'auto',
+        label: '系统默认',
+        name: '系统默认',
+        isDefault: true,
+        pathKind: 'default'
+      },
+      {
+        id: 'dac-1',
+        label: 'Desk DAC',
+        name: 'Desk DAC',
+        isDefault: true,
+        pathKind: 'default'
+      },
+      {
+        id: 'speakers-2',
+        label: 'USB Speakers',
+        name: 'USB Speakers',
+        isDefault: false,
+        pathKind: 'default'
+      }
+    ]
+  )
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    {
+      nativeBinding,
+      scheduler: TEST_SCHEDULER
+    }
+  )
+  await manager.start()
+  const deviceCallsAfterStart = nativeBinding.outputDeviceCalls
+
+  // Flip the physical default endpoint (auto stays selected).
+  nativeBinding.devices = [
+    {
+      id: 'auto',
+      label: '系统默认',
+      name: '系统默认',
+      isDefault: true,
+      pathKind: 'default'
+    },
+    {
+      id: 'dac-1',
+      label: 'Desk DAC',
+      name: 'Desk DAC',
+      isDefault: false,
+      pathKind: 'default'
+    },
+    {
+      id: 'speakers-2',
+      label: 'USB Speakers',
+      name: 'USB Speakers',
+      isDefault: true,
+      pathKind: 'default'
+    }
+  ]
+
+  manager.notifyAudioDeviceOptionsChanged('platform-device-change:wm-devicechange')
+  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.ok(nativeBinding.outputDeviceCalls > deviceCallsAfterStart)
+  assert.equal((await manager.getAudioOutputState()).device, 'auto')
+  assert.equal(nativeBinding.playbackInfo.outputDevice, 'auto')
+})
+
+test('pinned device does not rebind when OS default endpoint changes', async () => {
+  const nativeBinding = new FakeNativeBinding(
+    {
+      state: 'playing',
+      outputDevice: 'dac-1',
+      outputInfo: makeOutputInfo({
+        deviceName: 'dac-1',
+        actualDeviceName: 'Desk DAC',
+        actualBackend: 'wasapi',
+        backend: 'wasapi'
+      })
+    },
+    [
+      {
+        id: 'auto',
+        label: '系统默认',
+        name: '系统默认',
+        isDefault: true,
+        pathKind: 'default'
+      },
+      {
+        id: 'dac-1',
+        label: 'Desk DAC',
+        name: 'Desk DAC',
+        isDefault: true,
+        pathKind: 'default'
+      },
+      {
+        id: 'speakers-2',
+        label: 'USB Speakers',
+        name: 'USB Speakers',
+        isDefault: false,
+        pathKind: 'default'
+      }
+    ]
+  )
+  const manager = new AudioEngineManager(
+    {
+      exclusiveMode: false,
+      audioOutput: 'wasapi',
+      audioDevice: 'dac-1'
+    },
+    {
+      nativeBinding,
+      scheduler: TEST_SCHEDULER
+    }
+  )
+  await manager.start()
+  const deviceCallsAfterStart = nativeBinding.outputDeviceCalls
+
+  nativeBinding.devices = [
+    {
+      id: 'auto',
+      label: '系统默认',
+      name: '系统默认',
+      isDefault: true,
+      pathKind: 'default'
+    },
+    {
+      id: 'dac-1',
+      label: 'Desk DAC',
+      name: 'Desk DAC',
+      isDefault: false,
+      pathKind: 'default'
+    },
+    {
+      id: 'speakers-2',
+      label: 'USB Speakers',
+      name: 'USB Speakers',
+      isDefault: true,
+      pathKind: 'default'
+    }
+  ]
+
+  manager.notifyAudioDeviceOptionsChanged('platform-device-change:wm-devicechange')
+  await new Promise((resolve) => setImmediate(resolve))
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.equal(nativeBinding.outputDeviceCalls, deviceCallsAfterStart)
+  assert.equal((await manager.getAudioOutputState()).device, 'dac-1')
+})
+
 test('getSpectrumData reuses native spectrum data within one visual frame', () => {
   const nativeBinding = new FakeNativeBinding()
   let now = 1000

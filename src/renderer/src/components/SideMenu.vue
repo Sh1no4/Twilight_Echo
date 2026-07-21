@@ -134,7 +134,7 @@ function handleImportClick(): void {
   transition:
     transform 0.32s cubic-bezier(0.16, 1, 0.3, 1),
     box-shadow 0.32s;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+  font-family: var(--te-font-sans);
 }
 
 .side-menu.open {

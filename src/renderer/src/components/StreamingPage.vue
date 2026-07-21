@@ -98,6 +98,40 @@ const activeTab = ref<StreamingTab>(props.initialTab ?? 'home')
 const streamingContentRef = ref<HTMLElement | null>(null)
 const streamingTransitionName = ref('stream-page-down')
 const currentDetail = ref<DetailView | null>(null)
+
+const streamingViewKey = computed(() => {
+  const detail = currentDetail.value
+  if (!detail) return `tab:${activeTab.value}`
+  switch (detail.type) {
+    case 'liked':
+      return 'detail:liked'
+    case 'playlist':
+      return `detail:playlist:${detail.playlist.id}`
+    case 'album':
+      return `detail:album:${detail.album.id}`
+    case 'rec':
+      return `detail:rec:${detail.section.key}`
+    case 'artist':
+      return `detail:artist:${detail.artist.id}`
+    case 'user_list':
+      return `detail:user_list:${detail.listType}`
+    case 'user_playlists':
+      return `detail:user_playlists:${detail.user.id}`
+    case 'recent':
+      return 'detail:recent'
+    case 'ranking':
+      return 'detail:ranking'
+    default:
+      return `detail:${(detail as { type: string }).type}`
+  }
+})
+
+function beginDetailTransition(): void {
+  streamingTransitionName.value = 'stream-detail-forward'
+  const el = streamingContentRef.value
+  if (el) el.scrollTop = 0
+}
+
 const detailTracks = ref<Track[]>([])
 const detailUsers = ref<NcmUserSummary[]>([])
 const artistAlbums = ref<NcmAlbumSummary[]>([])
@@ -255,7 +289,7 @@ const recSections = computed<RecSection[]>(() => [
 
 async function openRecSection(section: RecSection): Promise<void> {
   detailLoadToken++
-  streamingTransitionName.value = 'stream-page-down'
+  beginDetailTransition()
   currentDetail.value = { type: 'rec', section }
   detailTracks.value = section.tracks
   detailLoading.value = false
@@ -798,7 +832,7 @@ function selectTab(key: StreamingTab): void {
     const oldIndex = getStreamingTabIndex(activeTab.value)
     const newIndex = getStreamingTabIndex(key)
     streamingTransitionName.value = newIndex > oldIndex ? 'stream-page-down' : 'stream-page-up'
-    resetDetail()
+    resetDetail({ animate: false })
   }
   activeTab.value = key
 }
@@ -864,10 +898,13 @@ function selectSidebarItem(item: SidebarItem, options: { persistProvider?: boole
   if (item.tab) selectTab(item.tab)
 }
 
-function resetDetail(): void {
+function resetDetail(options?: { animate?: boolean }): void {
   detailLoadToken++
-  if (currentDetail.value) {
-    streamingTransitionName.value = 'stream-page-up'
+  const animate = options?.animate !== false
+  if (animate && currentDetail.value) {
+    streamingTransitionName.value = 'stream-detail-back'
+    const el = streamingContentRef.value
+    if (el) el.scrollTop = 0
   }
   currentDetail.value = null
   detailTracks.value = []
@@ -1033,7 +1070,7 @@ async function ensureExternalLibraryLoaded(id: string, force = false): Promise<v
 async function openLikedTracks(force = false): Promise<void> {
   const unifiedTracks = unifiedFavoriteTracks.value
   if (unifiedTracks.length > 0) {
-    streamingTransitionName.value = 'stream-page-down'
+    beginDetailTransition()
     currentDetail.value = { type: 'liked' }
     detailTracks.value = resolveUnifiedFavoriteTracks({
       unifiedTracks,
@@ -1054,14 +1091,14 @@ async function openLikedTracks(force = false): Promise<void> {
       await openPlaylist(liked, force)
       return
     }
-    streamingTransitionName.value = 'stream-page-down'
+    beginDetailTransition()
     currentDetail.value = { type: 'liked' }
     detailTracks.value = []
     detailLoading.value = false
     return
   }
 
-  streamingTransitionName.value = 'stream-page-down'
+  beginDetailTransition()
   currentDetail.value = { type: 'liked' }
   const token = beginDetailLoad()
 
@@ -1134,7 +1171,7 @@ async function ensureLikedTracksScrollable(): Promise<void> {
 }
 
 async function openPlaylist(playlist: MediaProviderPlaylistSummary, force = false): Promise<void> {
-  streamingTransitionName.value = 'stream-page-down'
+  beginDetailTransition()
   currentDetail.value = { type: 'playlist', playlist }
   const token = beginDetailLoad()
 
@@ -1156,7 +1193,7 @@ async function openPlaylist(playlist: MediaProviderPlaylistSummary, force = fals
 }
 
 async function openAlbum(album: NcmAlbumSummary): Promise<void> {
-  streamingTransitionName.value = 'stream-page-down'
+  beginDetailTransition()
   currentDetail.value = { type: 'album', album }
   const token = beginDetailLoad()
 
@@ -1186,7 +1223,7 @@ async function openArtist(
     albumSize: artist.albumSize ?? 0,
     musicSize: artist.musicSize ?? 0
   }
-  streamingTransitionName.value = 'stream-page-down'
+  beginDetailTransition()
   currentDetail.value = { type: 'artist', artist: ncmArtist, user: linkedUser }
   activeArtistTab.value = 'songs'
   const token = beginDetailLoad()
@@ -1258,7 +1295,7 @@ async function openArtist(
 
 async function openUserList(listType: 'follows' | 'followers'): Promise<void> {
   if (!profile.value) return
-  streamingTransitionName.value = 'stream-page-down'
+  beginDetailTransition()
   currentDetail.value = {
     type: 'user_list',
     listType,
@@ -1290,7 +1327,7 @@ async function openUserList(listType: 'follows' | 'followers'): Promise<void> {
 }
 
 async function openUserPlaylists(user: NcmUserSummary): Promise<void> {
-  streamingTransitionName.value = 'stream-page-down'
+  beginDetailTransition()
   currentDetail.value = { type: 'user_playlists', user, playlists: [] }
   const token = beginDetailLoad()
 
@@ -1311,7 +1348,7 @@ async function openUserPlaylists(user: NcmUserSummary): Promise<void> {
 }
 
 async function openRecent(): Promise<void> {
-  streamingTransitionName.value = 'stream-page-down'
+  beginDetailTransition()
   currentDetail.value = { type: 'recent' }
   const token = beginDetailLoad()
 
@@ -1350,7 +1387,7 @@ async function openRecent(): Promise<void> {
 }
 
 async function openRanking(): Promise<void> {
-  streamingTransitionName.value = 'stream-page-down'
+  beginDetailTransition()
   currentDetail.value = { type: 'ranking' }
   const token = beginDetailLoad()
 
@@ -2045,6 +2082,21 @@ async function retryCurrentView(): Promise<void> {
   await ensureLibraryLoaded(true)
 }
 
+watch(isSearching, (searching, wasSearching) => {
+  if (currentDetail.value) return
+  if (searching && !wasSearching) {
+    streamingTransitionName.value = 'stream-detail-forward'
+    const el = streamingContentRef.value
+    if (el) el.scrollTop = 0
+    return
+  }
+  if (!searching && wasSearching) {
+    streamingTransitionName.value = 'stream-detail-back'
+    const el = streamingContentRef.value
+    if (el) el.scrollTop = 0
+  }
+})
+
 // Keep preferredProvider in sync with persisted settings (initial load and
 // any external change). This is how the app restores the user's last provider
 // choice after restart.
@@ -2342,7 +2394,7 @@ onMounted(async () => {
         <div
           v-if="showUnifiedSearch && isSearching && !currentDetail"
           key="search-results"
-          class="streaming-content-body"
+          class="streaming-content-body stream-view-panel"
           :class="{ 'has-search-tabs': isSearching }"
         >
           <StreamingSearch
@@ -2376,7 +2428,7 @@ onMounted(async () => {
             @track-context-menu="onStreamingTrackContextMenu"
           />
         </div>
-        <div v-else :key="activeTab" class="streaming-content-body">
+        <div v-else :key="streamingViewKey" class="streaming-content-body stream-view-panel">
           <div v-if="!hasOnlineNavigationEntries && !currentDetail" class="streaming-placeholder">
             <i class="pi pi-plug" style="font-size: 48px; color: #ccc"></i>
             <p class="placeholder-title">未启用可用的在线音源</p>

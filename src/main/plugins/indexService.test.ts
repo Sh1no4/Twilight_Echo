@@ -406,9 +406,10 @@ test('resident official entries dynamically expire across TTL for list, status, 
 
   const downloaded = await service.downloadPackage(baseManifest.id)
   try {
-    assert.equal(downloaded.entry.verification.level, 'publisher-signed')
-    assert.equal(downloaded.evidence.expired, true)
-    assert.equal(downloaded.evidence.verification?.official, false)
+    // Install always force-refreshes the remote index so package metadata stays current.
+    assert.equal(downloaded.entry.verification.level, 'official')
+    assert.equal(downloaded.evidence.expired, false)
+    assert.equal(downloaded.evidence.verification?.official, true)
     assert.equal(downloaded.evidence.expectedPackageSha256, downloaded.entry.checksumSha256)
   } finally {
     await downloaded.cleanup()
@@ -485,8 +486,9 @@ for (const boundary of ['status', 'list', 'download'] as const) {
     }
     const downloaded = await harness.service.downloadPackage(baseManifest.id)
     try {
-      assert.equal(downloaded.entry.verification.level, 'publisher-signed')
-      assert.equal(downloaded.evidence.expired, true)
+      // downloadPackage force-refreshes remote, so TTL expiry is cleared before install.
+      assert.equal(downloaded.entry.verification.level, 'official')
+      assert.equal(downloaded.evidence.expired, false)
     } finally {
       await downloaded.cleanup()
     }
@@ -546,7 +548,8 @@ test('download rejects when a concurrent refresh changes the expected package ha
     fetchImpl: async (input) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url === remoteUrl) {
-        const body = indexRequests++ === 0 ? indexA : indexB
+        // list() + downloadPackage force-refresh both pin indexA; later refresh flips to indexB.
+        const body = indexRequests++ < 2 ? indexA : indexB
         return new Response(new Uint8Array(body))
       }
       if (url === packageUrl) {
@@ -596,7 +599,8 @@ test('download binds the complete index entry fingerprint even when checksum is 
     fetchImpl: async (input) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url
       if (url === remoteUrl) {
-        return new Response(new Uint8Array(indexRequests++ === 0 ? indexA : indexB))
+        // list() + downloadPackage force-refresh both pin indexA; later refresh flips to indexB.
+        return new Response(new Uint8Array(indexRequests++ < 2 ? indexA : indexB))
       }
       if (url === packageUrl) {
         packageRequested.resolve()

@@ -223,9 +223,7 @@ const sideMenuActiveKey = computed(() =>
     ? `plugin:${activePluginPage.value.pluginId}:${activePluginPage.value.id}`
     : activeCategory.value
 )
-const mainContentMinHeight = computed(() =>
-  showPluginPage.value ? '100vh' : hasPlayerBar.value ? 'calc(100vh - 32px)' : 'calc(100vh - 32px)'
-)
+const mainContentMinHeight = computed(() => '100vh')
 
 const playbackSessionPersistence = createPlaybackSessionPersistence({
   settings,
@@ -567,7 +565,7 @@ body {
   display: grid;
   margin-left: 0;
   width: 100%;
-  min-height: calc(100vh - 32px - 96px);
+  min-height: 100vh;
   transform: translate3d(0, 0, 0);
   transition:
     transform 0.32s var(--te-ease-soft),
@@ -656,7 +654,7 @@ body.te-no-blur .login-page-leave-to {
 }
 
 .main-content.dsp-rack-open {
-  height: calc(100vh - 32px);
+  height: 100vh;
   min-height: 0 !important;
 }
 

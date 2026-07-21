@@ -110,8 +110,6 @@ function close(): void {
 
 <style scoped>
 .title-bar {
-  --title-bar-bg-color: var(--te-local-bg);
-  --title-bar-bg-image: var(--te-local-bg-image);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -137,87 +135,37 @@ function close(): void {
   position: absolute;
   top: 0;
   left: 0;
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   z-index: 0;
   pointer-events: none;
-  background-color: var(--title-bar-bg-color);
-  background-image: var(--title-bar-bg-image);
-  background-position: center;
-  background-size: cover;
-  background-repeat: no-repeat;
+  background: transparent !important;
 }
 
 .title-bar::before {
   display: none;
 }
 
-.title-bar-glass {
-  --title-bar-bg-color: transparent;
-  --title-bar-bg-image: none;
-  background: transparent;
+.title-bar-glass,
+.title-bar.title-bar-settings,
+.title-bar.title-bar-streaming,
+.title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings),
+.title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
+  background: transparent !important;
   border-bottom-color: transparent;
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
-.title-bar.title-bar-settings {
-  --title-bar-bg-color: var(--te-settings-bg);
-  --title-bar-bg-image: var(--te-settings-bg-image);
-  background: transparent !important;
-  border-bottom-color: transparent;
-  box-shadow: none;
-}
-
-.title-bar.title-bar-settings::before {
+.title-bar.title-bar-settings::before,
+.title-bar.title-bar-glass::before {
   display: none;
 }
 
-.title-bar.title-bar-streaming {
-  --title-bar-bg-color: var(--te-streaming-bg);
-  --title-bar-bg-image: var(--te-streaming-bg-image);
-  background: transparent !important;
-  border-bottom-color: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
-  background: transparent;
-}
-
-.title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
-  background: transparent !important;
-}
-
-.title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings)::before {
-  transform: none;
-}
-
-.title-bar.title-bar-glass {
-  background: transparent;
-  border-bottom-color: transparent;
-  box-shadow: none;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-.title-bar.title-bar-glass::before,
-.title-bar.title-bar-settings::before {
-  transform: translate3d(-100%, 0, 0);
-}
-
-:global(html[data-theme='dark'] .title-bar) {
-  background: transparent !important;
-}
-
+:global(html[data-theme='dark'] .title-bar),
 :global(html[data-theme='dark'] .title-bar.title-bar-streaming),
-:global(html[data-theme='dark'] .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings)) {
-  background: transparent !important;
-}
-
+:global(html[data-theme='dark'] .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings)),
 :global(html[data-theme='dark'] .title-bar.title-bar-settings),
 :global(html[data-theme='dark'] .title-bar.title-bar-glass) {
   background: transparent !important;

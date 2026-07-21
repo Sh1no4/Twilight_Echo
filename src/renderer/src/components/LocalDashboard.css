@@ -27,7 +27,7 @@
   position: relative;
   isolation: isolate;
   width: 100%;
-  height: calc(100vh - 32px);
+  height: 100vh;
   overflow-x: hidden;
   overflow-y: auto;
   box-sizing: border-box;
@@ -190,7 +190,7 @@
   width: min(100%, 1360px);
   max-width: 1360px;
   margin: 0 auto;
-  padding: clamp(2.25rem, 4vw, 4rem) clamp(2rem, 4.2vw, 4.5rem) calc(6rem + 96px);
+  padding: calc(32px + clamp(2.25rem, 4vw, 4rem)) clamp(2rem, 4.2vw, 4.5rem) calc(6rem + 96px);
 }
 
 /* Masthead */
@@ -472,7 +472,9 @@
   inset: 0;
 }
 
-.feature-backdrop img {
+/* CoverImg is a child component — pierce with :deep so light/dark art filters apply. */
+.feature-backdrop img,
+.feature-backdrop :deep(img) {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -816,7 +818,8 @@
   );
 }
 
-.hero-vinyl img {
+.hero-vinyl img,
+.hero-vinyl :deep(img) {
   position: absolute;
   top: 50%;
   left: 50%;
@@ -825,6 +828,11 @@
   transform: translate(-50%, -50%);
   border-radius: 50%;
   object-fit: cover;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+}
+
+:global(html[data-theme='dark'] .home .hero-vinyl img) {
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.55);
 }
 
 .hero-vinyl span {
@@ -868,13 +876,15 @@
 
 :global(html[data-theme='dark'] .home .hero-sleeve) {
   border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 28px 60px rgba(0, 0, 0, 0.48);
 }
 
 .feature-card:hover .hero-sleeve {
   transform: rotate(-5deg) translateY(-3px);
 }
 
-.hero-sleeve img {
+.hero-sleeve img,
+.hero-sleeve :deep(img) {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -2437,7 +2447,7 @@
 @media (max-width: 980px) {
   .home-inner {
     gap: 3.5rem;
-    padding: 2.25rem 1.75rem calc(5rem + 96px);
+    padding: calc(32px + 2.25rem) 1.75rem calc(5rem + 96px);
   }
 
   .masthead {
@@ -2581,7 +2591,7 @@
 @media (max-width: 560px) {
   .home-inner {
     gap: 3rem;
-    padding: 1.75rem 1rem calc(4rem + 96px);
+    padding: calc(32px + 1.75rem) 1rem calc(4rem + 96px);
   }
 
   .greeting {

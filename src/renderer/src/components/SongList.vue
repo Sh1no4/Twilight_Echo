@@ -987,7 +987,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
     ref="containerRef"
     class="song-list"
     :class="{ 'has-player': props.hasPlayer, 'is-switching': isSwitching }"
-    :style="{ height: 'calc(100vh - 32px)' }"
+    :style="{ height: '100vh' }"
     @scroll="onScroll"
   >
     <Transition

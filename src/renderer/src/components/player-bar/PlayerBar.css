@@ -779,7 +779,9 @@
   cursor: pointer;
   border-radius: 12px;
   overflow: hidden;
+  background: rgba(15, 23, 42, 0.04);
 }
+.player-cover-slot img.player-cover,
 .player-cover-slot :deep(img.player-cover),
 .player-cover {
   width: 48px;
@@ -795,6 +797,7 @@
     filter 0.22s;
   box-shadow: 0 14px 32px rgba(15, 23, 42, 0.12);
 }
+.player-cover-slot:hover img.player-cover,
 .player-cover-slot:hover :deep(img.player-cover),
 .player-cover-slot:hover .player-cover {
   transform: translateY(-2px) scale(1.05);
@@ -817,6 +820,36 @@
 }
 .player-cover-placeholder:hover {
   background: #eee;
+}
+.player-cover-placeholder i {
+  color: #bbb;
+}
+
+/* Dark theme — non-glass playbar cover slot / placeholder */
+html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-slot {
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-slot img.player-cover,
+html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover {
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45);
+}
+html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-slot:hover img.player-cover,
+html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-slot:hover .player-cover {
+  box-shadow: 0 20px 45px rgba(0, 0, 0, 0.55);
+}
+html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeholder {
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.12), transparent 40%),
+    linear-gradient(135deg, rgba(56, 189, 248, 0.14), rgba(99, 102, 241, 0.12));
+}
+html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeholder:hover {
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.16), transparent 42%),
+    linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(99, 102, 241, 0.16));
+}
+html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeholder i {
+  color: rgba(148, 163, 184, 0.72);
 }
 .player-track-info {
   overflow: hidden;

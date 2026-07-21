@@ -1205,13 +1205,13 @@ watch(opraQuery, () => {
     /* HTML based labels & points */
     .chart-labels-y {
       position: absolute; top: 0; left: -32px; height: 100%; display: flex; flex-direction: column; justify-content: space-between;
-      color: var(--te-neutral-500); font-size: 11px; font-weight: 600; font-family: 'Inter', sans-serif; text-align: right; width: 24px;
+      color: var(--te-neutral-500); font-size: 11px; font-weight: 600; font-family: var(--te-font-sans); text-align: right; width: 24px;
     }
     .chart-labels-y span.zero { font-weight: 800; color: var(--te-neutral-900); }
     
     .chart-labels-x {
       position: absolute; bottom: -24px; left: 0; width: 100%; height: 16px;
-      color: var(--te-neutral-500); font-size: 11px; font-weight: 600; font-family: 'Inter', sans-serif;
+      color: var(--te-neutral-500); font-size: 11px; font-weight: 600; font-family: var(--te-font-sans);
     }
     .chart-labels-x span { position: absolute; transform: translateX(-50%); text-align: center; }
 

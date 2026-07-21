@@ -4,6 +4,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <sstream>
@@ -549,11 +550,49 @@ struct WasapiExclusiveBackend::Impl {
     eventCallback = std::move(nextEventCallback);
     stopRequested = false;
 
-    if (FAILED(renderPacket(wasapi::exclusiveInitialRenderFrames(
-            bufferFrameCount,
-            wasapiExclusivePushMode.load(std::memory_order_acquire))))) {
-      if (error) *error = diagnostics.lastError.empty() ? "无法预填充独占输出缓冲区" : diagnostics.lastError;
-      return false;
+    // Prefill with silence (and still advance the decoder) so Start() after a device rebind
+    // does not attack at full level.
+    {
+      const UINT32 prefillFrames = wasapi::exclusiveInitialRenderFrames(
+          bufferFrameCount,
+          wasapiExclusivePushMode.load(std::memory_order_acquire));
+      if (prefillFrames > 0 && renderClient) {
+        BYTE* data = nullptr;
+        HRESULT prefillHr = renderClient->GetBuffer(prefillFrames, &data);
+        if (FAILED(prefillHr)) {
+          if (error) *error = "无法预填充独占输出缓冲区";
+          return false;
+        }
+        if (data) {
+          const size_t byteCount =
+              static_cast<size_t>(prefillFrames) * audioFormatBytesPerFrame(outputFormat);
+          std::memset(data, 0, byteCount);
+          // Drain one period of decoder output into a discard buffer so position stays aligned.
+          if (outputFormat.sampleFormat == AudioSampleFormat::Float32Interleaved && callback) {
+            std::vector<float> discard(
+                static_cast<size_t>(prefillFrames) *
+                static_cast<size_t>(std::max(1, outputFormat.channelCount)));
+            (void)callback(discard.data(), prefillFrames);
+          } else if (typedCallback) {
+            PcmBlock block;
+            block.format = outputFormat;
+            block.data = data;  // already silence; typed path may overwrite — re-zero after
+            block.frames = prefillFrames;
+            block.byteSize = byteCount;
+            (void)typedCallback(block);
+            std::memset(data, 0, byteCount);
+          } else if (callback && outputFormat.channelCount > 0) {
+            std::vector<float> discard(
+                static_cast<size_t>(prefillFrames) * static_cast<size_t>(outputFormat.channelCount));
+            (void)callback(discard.data(), prefillFrames);
+          }
+        }
+        prefillHr = renderClient->ReleaseBuffer(prefillFrames, AUDCLNT_BUFFERFLAGS_SILENT);
+        if (FAILED(prefillHr)) {
+          if (error) *error = "无法提交独占输出预填充缓冲区";
+          return false;
+        }
+      }
     }
 
     if (!wasapiExclusivePushMode.load(std::memory_order_acquire)) {
@@ -608,6 +647,23 @@ struct WasapiExclusiveBackend::Impl {
     if (samplesReadyEvent) SetEvent(samplesReadyEvent.get());
     joinRenderThread();
     joinRecoveryThread();
+    // Soft mute residual free space after the render thread stops so Stop() does not
+    // leave non-zero samples at the device boundary (device-switch click/pop).
+    if (audioClient && renderClient && bufferFrameCount > 0) {
+      UINT32 padding = 0;
+      if (SUCCEEDED(audioClient->GetCurrentPadding(&padding))) {
+        const UINT32 framesAvailable = bufferFrameCount > padding ? bufferFrameCount - padding : 0;
+        if (framesAvailable > 0) {
+          BYTE* data = nullptr;
+          if (SUCCEEDED(renderClient->GetBuffer(framesAvailable, &data)) && data) {
+            const size_t byteCount =
+                static_cast<size_t>(framesAvailable) * audioFormatBytesPerFrame(outputFormat);
+            std::memset(data, 0, byteCount);
+            (void)renderClient->ReleaseBuffer(framesAvailable, AUDCLNT_BUFFERFLAGS_SILENT);
+          }
+        }
+      }
+    }
     if (audioClient) {
       audioClient->Stop();
       audioClient->Reset();

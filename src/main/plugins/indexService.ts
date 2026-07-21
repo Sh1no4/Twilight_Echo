@@ -287,7 +287,7 @@ export class PluginIndexService {
   }
 
   async downloadPackage(id: string): Promise<DownloadedPluginPackage> {
-    await this.list()
+    await this.list(true)
     this.refreshDerivedTrust()
     const entry = this.cachedEntries?.find((candidate) => candidate.id === id)
     if (!entry) throw new Error('插件索引中未找到该插件')

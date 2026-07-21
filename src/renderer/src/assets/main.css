@@ -1,4 +1,5 @@
 @import './primeicons.css';
+@import './fonts.css';
 @import './base.css';
 
 /* Loaded synchronously so a transparent mini window never paints base.css's square page background. */

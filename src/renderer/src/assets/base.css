@@ -27,12 +27,14 @@
   --te-ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
   --te-ui-scale: 0.94;
   --te-menu-width: clamp(132px, 18vw, 216px);
-  --te-font-display: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei',
+  /* Latin: Inter body + Plus Jakarta Sans titles. CJK: packaged MiSans, then system. */
+  --te-font-display: 'Plus Jakarta Sans', 'Inter', 'MiSans', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --te-font-rounded: 'Plus Jakarta Sans', 'Inter', 'MiSans', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --te-font-sans: 'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
     sans-serif;
-  --te-font-rounded: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei',
-    sans-serif;
-  --te-font-sans: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei', Inter,
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --te-text-title: 800;
   --te-text-body: 500;
   --te-text-meta: 400;
@@ -179,7 +181,7 @@ html {
 
 body {
   min-height: 100vh;
-  padding-top: 32px;
+  padding-top: 0;
   color: var(--color-text);
   background-color: var(--te-app-bg);
   background-image: var(--te-app-bg-image);
@@ -305,7 +307,7 @@ html[data-theme='pureWhite'] .main-content::after {
 }
 
 #app {
-  min-height: calc(100vh - 32px);
+  min-height: 100vh;
   position: relative;
   isolation: isolate;
 }
@@ -730,55 +732,26 @@ html[data-theme='dark'] .main-content::after {
   display: none;
 }
 
-html[data-theme='dark'] .title-bar {
+html[data-theme='dark'] .title-bar,
+html[data-theme='dark'] .title-bar.title-bar-settings,
+html[data-theme='dark'] .title-bar.title-bar-streaming,
+html[data-theme='dark']
+  .title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings),
+html[data-theme='dark'] .title-bar.title-bar-glass {
   border-bottom-color: transparent;
-  background-color: var(--te-local-bg);
-  background-image: var(--te-local-bg-image);
-  background-position: center top;
-  background-size: cover;
-  background-repeat: no-repeat;
+  background: transparent !important;
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
-}
-
-html[data-theme='dark'] .title-bar.title-bar-settings {
-  background: transparent;
-  border-bottom-color: transparent;
-  box-shadow: none;
-}
-
-html[data-theme='dark'] .title-bar.title-bar-streaming {
-  background-color: var(--te-streaming-bg);
-  background-image: var(--te-streaming-bg-image);
-  background-position: center top;
-  background-size: cover;
-  background-repeat: no-repeat;
-  border-bottom-color: transparent;
-  box-shadow: none;
-}
-
-html[data-theme='dark']
-  .title-bar.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings) {
-  background-color: var(--te-local-bg);
-  background-image: var(--te-local-bg-image);
-  background-position: center top;
-  background-size: cover;
-  background-repeat: no-repeat;
 }
 
 html[data-theme='dark'] .title-bar::before {
   display: none;
 }
 
-html[data-theme='dark'] .title-bar.title-bar-glass {
-  background: transparent;
-  border-bottom-color: transparent;
-  box-shadow: none;
-}
-
 html[data-theme='dark'] .menu-btn,
 html[data-theme='dark'] .settings-btn,
+html[data-theme='dark'] .plugins-btn,
 html[data-theme='dark'] .login-btn,
 html[data-theme='dark'] .control-btn {
   color: rgba(248, 250, 252, 0.9);
@@ -786,6 +759,7 @@ html[data-theme='dark'] .control-btn {
 
 html[data-theme='dark'] .menu-btn:hover,
 html[data-theme='dark'] .settings-btn:hover,
+html[data-theme='dark'] .plugins-btn:hover,
 html[data-theme='dark'] .login-btn:hover,
 html[data-theme='dark'] .control-btn:hover {
   background: var(--te-active-bg);
@@ -890,6 +864,23 @@ html[data-theme='dark'] .player-cover-placeholder,
 html[data-theme='dark'] .playlist-cover-placeholder,
 html[data-theme='dark'] .playlist-grid-cover-placeholder {
   background: rgba(30, 41, 59, 0.6);
+}
+
+html[data-theme='dark'] .player-cover-placeholder:hover {
+  background: rgba(51, 65, 85, 0.82);
+}
+
+html[data-theme='dark'] .player-cover-placeholder i {
+  color: rgba(148, 163, 184, 0.72);
+}
+
+html[data-theme='dark'] .player-cover-slot {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+html[data-theme='dark'] .player-cover-slot img.player-cover,
+html[data-theme='dark'] .player-cover {
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.45);
 }
 
 html[data-theme='dark'] .song-list-title,
@@ -2187,20 +2178,24 @@ html[data-window-transparent='on']
     .plugin-page,
     .plugin-page .main-content,
     .plugin-page .topbar,
-    .playing-music,
-    .title-bar,
-    .title-bar.title-bar-streaming,
-    .title-bar.title-bar-menu-open
+    .playing-music
   ) {
   background-color: var(--te-tp-surface) !important;
   background-image: none !important;
 }
 
-/* The title bar paints its backdrop via an inner full-viewport layer; it must
-   also go transparent or it re-paints the opaque page background on top. */
+html[data-window-transparent='on'] .title-bar,
+html[data-window-transparent='on'] .title-bar.title-bar-streaming,
+html[data-window-transparent='on'] .title-bar.title-bar-menu-open,
+html[data-window-transparent='on'] .title-bar.title-bar-settings,
+html[data-window-transparent='on'] .title-bar.title-bar-glass,
 html[data-window-transparent='on'] .title-bar-background {
   background-color: transparent !important;
   background-image: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+  border-bottom-color: transparent !important;
 }
 
 /* 3. Floating chrome (player bar, panels, drawers, plugin sidebar). */
@@ -2271,7 +2266,7 @@ html[data-window-transparent='on']
    fixed positioning — so only leaf surfaces are listed here. */
 html[data-window-transparent='on']
   body:not(.te-no-blur)
-  :is(.side-menu, .dashboard-wrapper, .streaming-sidebar, .title-bar) {
+  :is(.side-menu, .dashboard-wrapper, .streaming-sidebar) {
   backdrop-filter: blur(var(--te-tp-surface-blur)) !important;
   -webkit-backdrop-filter: blur(var(--te-tp-surface-blur)) !important;
 }

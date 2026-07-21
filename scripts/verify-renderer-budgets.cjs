@@ -4,7 +4,12 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 
-const BUDGETS = Object.freeze({ jsChunk: 900 * 1024, cssChunk: 400 * 1024, fonts: 1280 * 1024 })
+// fonts raised for packaged MiSans SC unicode-range subsets (~8MB) + Nunito + icons
+const BUDGETS = Object.freeze({
+  jsChunk: 900 * 1024,
+  cssChunk: 400 * 1024,
+  fonts: 10 * 1024 * 1024
+})
 
 function parseArgs(argv) {
   const index = argv.indexOf('--renderer-dir')
@@ -65,6 +70,15 @@ function assertRendererBudgets(rendererDir) {
     false,
     'Renderer retains unused Outfit font'
   )
+  const publicFontFiles = files.filter((file) => /[\\/]font[\\/]/i.test(file))
+  for (const file of publicFontFiles) {
+    const rel = path.relative(path.join(rendererDir, 'font'), file).replace(/\\/g, '/')
+    const ok =
+      /^(Inter|PlusJakartaSans)-latin(-ext)?-wght-normal\.woff2$/i.test(rel) ||
+      /^OFL-(Inter|PlusJakartaSans)\.txt$/i.test(rel) ||
+      /^misans\/(MiSans-(Regular|Medium|Bold|Heavy)\.[\w-]+\.woff2|misans\.css|LICENSE)$/i.test(rel)
+    assert.ok(ok, `Unexpected public font asset: ${rel}`)
+  }
   return { files: files.length, fontBytes, manifest, budgets: BUDGETS }
 }
 
