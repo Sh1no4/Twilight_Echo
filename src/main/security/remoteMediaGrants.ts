@@ -232,17 +232,18 @@ function buildUpstreamRequestHeaders(
   source: string,
   kind: RemoteMediaKind,
   range: string | null
-): Headers {
-  const headers = new Headers()
-  headers.set(
-    'User-Agent',
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-  )
-  headers.set('Accept', kind === 'image' ? 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' : '*/*')
-  headers.set('Accept-Language', 'zh-CN,zh;q=0.9,en;q=0.8')
+): Record<string, string> {
+  // Return a plain object so Electron net.fetch always receives string headers.
+  // Passing a WHATWG Headers instance can drop fields under some Electron builds.
+  const headers: Record<string, string> = {
+    'User-Agent':
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+    Accept: kind === 'image' ? 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' : '*/*',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
+  }
   const referer = refererForRemoteMediaSource(source)
-  if (referer) headers.set('Referer', referer)
-  if (range) headers.set('Range', range)
+  if (referer) headers.Referer = referer
+  if (range) headers.Range = range
   return headers
 }
 
@@ -269,12 +270,12 @@ async function fetchRemoteMediaWithRedirects(
   init: { method: string; headers?: HeadersInit }
 ): Promise<Response> {
   let current = source
-  const baseHeaders = new Headers(init.headers)
+  const baseHeaders = headersInitToRecord(init.headers)
   for (let hop = 0; hop <= MAX_REMOTE_MEDIA_REDIRECTS; hop += 1) {
     // Refresh Referer for each hop so edge hosts still look browser-like.
-    const hopHeaders = new Headers(baseHeaders)
+    const hopHeaders: Record<string, string> = { ...baseHeaders }
     const hopReferer = refererForRemoteMediaSource(current)
-    if (hopReferer) hopHeaders.set('Referer', hopReferer)
+    if (hopReferer) hopHeaders.Referer = hopReferer
     const response = await fetchImpl(current, {
       method: init.method,
       headers: hopHeaders,
@@ -302,6 +303,27 @@ async function fetchRemoteMediaWithRedirects(
     current = next
   }
   throw new Error('Remote media redirect limit exceeded')
+}
+
+function headersInitToRecord(headers?: HeadersInit): Record<string, string> {
+  const result: Record<string, string> = {}
+  if (!headers) return result
+  if (headers instanceof Headers) {
+    headers.forEach((value, key) => {
+      result[key] = value
+    })
+    return result
+  }
+  if (Array.isArray(headers)) {
+    for (const [key, value] of headers) {
+      if (typeof key === 'string' && typeof value === 'string') result[key] = value
+    }
+    return result
+  }
+  for (const [key, value] of Object.entries(headers)) {
+    if (typeof value === 'string') result[key] = value
+  }
+  return result
 }
 
 function normalizeRemoteMediaSource(source: string): string {
@@ -351,9 +373,11 @@ function isSingleByteRange(value: string): boolean {
 }
 
 function isExpectedMediaType(contentType: string | null, kind: RemoteMediaKind): boolean {
+  // NetEase occasionally emits `image/jpg; charset=UTF-8` — strip params first.
   const normalized = contentType?.split(';', 1)[0]?.trim().toLowerCase() ?? ''
   if (kind === 'image') {
-    // Some CDNs omit content-type or serve covers as generic binary.
+    // Some CDNs omit content-type, serve covers as generic binary, or use the
+    // non-standard `image/jpg` subtype (still starts with image/).
     return (
       !normalized ||
       normalized.startsWith('image/') ||
@@ -361,10 +385,18 @@ function isExpectedMediaType(contentType: string | null, kind: RemoteMediaKind):
       normalized === 'binary/octet-stream'
     )
   }
+  // NetEase stream edges often omit Content-Type, label FLAC/MP3 as
+  // application/octet-stream, or mis-tag AAC as video/mp4 / application/mp4.
   return (
+    !normalized ||
     normalized.startsWith('audio/') ||
     normalized === 'application/ogg' ||
-    normalized === 'application/octet-stream'
+    normalized === 'application/octet-stream' ||
+    normalized === 'binary/octet-stream' ||
+    normalized === 'application/mp4' ||
+    normalized === 'video/mp4' ||
+    normalized === 'application/x-mpegurl' ||
+    normalized === 'application/vnd.apple.mpegurl'
   )
 }
 

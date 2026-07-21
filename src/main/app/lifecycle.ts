@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, protocol, net } from 'electron'
 import { join, extname } from 'path'
 import { readFileSync } from 'fs'
 import { pathToFileURL } from 'url'
+import { fetch as undiciFetch } from 'undici'
 import { electronApp, optimizer } from '@electron-toolkit/utils'
 import { runtime } from '../core/runtime'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
@@ -195,14 +196,31 @@ export function startApp(): void {
         }
       })
 
+      // Provider CDN art/audio (especially NetEase) is unreliable through Electron's
+      // Chromium net.fetch in the main process — headers/redirects get mangled and
+      // covers come back as 403 HTML. undici speaks plain HTTP with the UA/Referer
+      // we set in remoteMediaGrants and is already a production dependency.
       protocol.handle(
         'twilight-media',
         createRemoteMediaRequestHandler({
-          fetch: (source, init) =>
-            net.fetch(source, {
-              ...init,
-              bypassCustomProtocolHandlers: true
+          fetch: async (source, init) => {
+            const upstream = await undiciFetch(source, {
+              method: init.method,
+              headers: init.headers as Record<string, string> | undefined,
+              // Manual so remoteMediaGrants can re-apply NetEase Referer on each hop.
+              redirect: 'manual'
             })
+            // Convert undici Response → web Response for protocol.handle consumers.
+            const headers = new Headers()
+            upstream.headers.forEach((value, key) => {
+              headers.set(key, value)
+            })
+            return new Response(upstream.body as ReadableStream<Uint8Array> | null, {
+              status: upstream.status,
+              statusText: upstream.statusText,
+              headers
+            })
+          }
         })
       )
 

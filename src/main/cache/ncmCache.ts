@@ -74,7 +74,18 @@ export async function cacheNcmSong(
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 45000)
   try {
-    const res = await fetch(url, { signal: controller.signal })
+    // NetEase CDN edges reject bare Node fetch without a browser-like UA/Referer
+    // (same constraint as the twilight-media proxy and native FFmpeg open path).
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Accept: '*/*',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+        Referer: 'https://music.163.com/'
+      }
+    })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const ext = inferNcmCacheExtension(url, res.headers.get('content-type'), fileName)
     const target = join(getNcmCacheDir(), `${songId}${ext}`)

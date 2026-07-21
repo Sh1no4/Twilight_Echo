@@ -161,6 +161,45 @@ test('remote media proxy follows same-policy CDN redirects for cover images', as
   assert.ok(requests.every((entry) => entry.referer === 'https://music.163.com/'))
 })
 
+test('remote media audio proxy accepts missing or generic CDN content types', async () => {
+  const grants = new RemoteMediaGrantService({
+    createToken: (() => {
+      let index = 0
+      return () => `audio-ct-${++index}`
+    })()
+  })
+  const cases: Array<{ contentType?: string | null; body: string }> = [
+    // Explicit empty content-type (string body would otherwise default to text/plain).
+    { contentType: '', body: 'flac-bytes' },
+    { contentType: 'application/octet-stream', body: 'mp3-bytes' },
+    { contentType: 'video/mp4', body: 'm4a-bytes' }
+  ]
+  for (const entry of cases) {
+    const granted = grants.grant(`https://m701.music.126.net/${entry.body}`, 'audio')
+    const handler = createRemoteMediaRequestHandler({
+      grants,
+      fetch: async (_source, init) => {
+        const headers = new Headers(init.headers)
+        assert.match(headers.get('user-agent') ?? '', /Mozilla\/5\.0/)
+        assert.equal(headers.get('referer'), 'https://music.163.com/')
+        const responseHeaders = new Headers({
+          'content-length': String(entry.body.length)
+        })
+        if (entry.contentType != null) {
+          responseHeaders.set('content-type', entry.contentType)
+        }
+        return new Response(new TextEncoder().encode(entry.body), {
+          status: 200,
+          headers: responseHeaders
+        })
+      }
+    })
+    const response = await handler(new Request(granted))
+    assert.equal(response.status, 200, entry.contentType || 'missing content-type')
+    assert.equal(await response.text(), entry.body)
+  }
+})
+
 test('provider media grants accept protocol-relative image URLs', () => {
   const grants = new RemoteMediaGrantService({ createToken: () => 'proto-token' })
   const protectedTrack = protectProviderMedia(

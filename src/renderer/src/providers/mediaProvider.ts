@@ -32,6 +32,8 @@ export interface MediaProviderPlaylistSummary {
   id: number | string
   name: string
   cover: string | null
+  /** Durable remote origin when `cover` is a session-scoped twilight-media grant. */
+  coverSource?: string | null
   trackCount: number
 }
 
@@ -39,6 +41,7 @@ export interface MediaProviderAlbumSummary {
   id: number | string
   name: string
   cover: string | null
+  coverSource?: string | null
   trackCount: number
   publishTime?: number
 }

@@ -167,6 +167,39 @@ bool sourceLooksSacdIso(const std::string& source) {
   return probeSacdIsoEntry(source).isSacdIso();
 }
 
+bool endsWithHost(const std::string& host, const std::string& suffix) {
+  return host.size() >= suffix.size() && host.compare(host.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
+bool hostLooksLikeNetEase(const std::string& source) {
+  // Match hostnames such as music.163.com, p1.music.126.net, m701.music.126.net.
+  const std::string lower = toLower(source);
+  const size_t scheme = lower.find("://");
+  if (scheme == std::string::npos) return false;
+  size_t hostBegin = scheme + 3;
+  size_t hostEnd = lower.find_first_of("/?#", hostBegin);
+  if (hostEnd == std::string::npos) hostEnd = lower.size();
+  // Strip userinfo if present (should never appear for authorized sources).
+  const size_t at = lower.find('@', hostBegin);
+  if (at != std::string::npos && at < hostEnd) hostBegin = at + 1;
+  // Strip port.
+  const size_t colon = lower.find(':', hostBegin);
+  if (colon != std::string::npos && colon < hostEnd) hostEnd = colon;
+  if (hostBegin >= hostEnd) return false;
+  const std::string host = lower.substr(hostBegin, hostEnd - hostBegin);
+  return host == "music.163.com" || endsWithHost(host, ".music.163.com") ||
+         endsWithHost(host, ".126.net") || endsWithHost(host, ".163.com");
+}
+
+// FFmpeg expects CRLF-terminated header lines in the "headers" option.
+std::string buildHttpOpenHeaders(const std::string& source) {
+  std::string headers = "Accept: */*\r\nAccept-Language: zh-CN,zh;q=0.9,en;q=0.8\r\n";
+  if (hostLooksLikeNetEase(source)) {
+    headers += "Referer: https://music.163.com/\r\n";
+  }
+  return headers;
+}
+
 int inferDsdRate(int sampleRate, bool dopCarrier = false) {
   if (dopCarrier) {
     if (sampleRate >= 650000) return 256;
@@ -475,6 +508,15 @@ bool FFmpegDecoder::open(const std::string& source, std::string* error) {
     av_dict_set(&openOptions, "reconnect", "1", 0);
     av_dict_set(&openOptions, "reconnect_streamed", "1", 0);
     av_dict_set(&openOptions, "reconnect_delay_max", "5", 0);
+    // NetEase (and many CDNs) reject bare FFmpeg clients. Attach a browser-like
+    // UA and, for NetEase hosts, the music.163.com Referer so stream open succeeds.
+    av_dict_set(
+        &openOptions,
+        "user_agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/122.0.0.0 Safari/537.36",
+        0);
+    av_dict_set(&openOptions, "headers", buildHttpOpenHeaders(source).c_str(), 0);
     impl_->icyEnabled = true;
   }
 

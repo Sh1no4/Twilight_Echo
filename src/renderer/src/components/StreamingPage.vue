@@ -22,6 +22,7 @@ import type {
 import StreamingHome from './StreamingHome.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
 import StreamingSearch from './StreamingSearch.vue'
+import CoverImg from './CoverImg.vue'
 import {
   buildStreamingSidebarItems,
   getFirstVisibleStreamingTab,
@@ -67,6 +68,7 @@ interface RecSection {
 interface DetailHeaderInfo {
   title: string
   cover: string | null
+  coverSource?: string | null
   desc: string
   icon: string
   intro?: string
@@ -650,6 +652,7 @@ const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
     return {
       title: '我收藏的歌曲',
       cover: likedSummary.value.cover,
+      coverSource: likedSummary.value.coverSource ?? null,
       desc: `共 ${likedSummary.value.trackCount} 首歌曲`,
       icon: 'pi pi-heart-fill'
     }
@@ -658,17 +661,17 @@ const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
     return {
       title: currentDetail.value.playlist.name,
       cover: currentDetail.value.playlist.cover,
+      coverSource: currentDetail.value.playlist.coverSource ?? null,
       desc: `共 ${currentDetail.value.playlist.trackCount} ${trackUnitLabel.value}`,
       icon: 'pi pi-list'
     }
   }
   if (currentDetail.value.type === 'rec') {
+    const firstTrack = currentDetail.value.section.tracks[0]
     return {
       title: currentDetail.value.section.title,
-      cover:
-        currentDetail.value.section.tracks.length > 0
-          ? currentDetail.value.section.tracks[0].cover
-          : null,
+      cover: firstTrack?.cover ?? null,
+      coverSource: firstTrack?.coverSource ?? null,
       desc: `共 ${currentDetail.value.section.tracks.length} ${trackUnitLabel.value}`,
       icon: currentDetail.value.section.icon
     }
@@ -677,6 +680,7 @@ const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
     return {
       title: currentDetail.value.album.name,
       cover: currentDetail.value.album.cover,
+      coverSource: currentDetail.value.album.coverSource ?? null,
       desc: `共 ${detailTracks.value.length || currentDetail.value.album.trackCount} 首歌曲`,
       icon: 'pi pi-clone'
     }
@@ -714,17 +718,21 @@ const detailHeaderInfo = computed<DetailHeaderInfo | null>(() => {
     }
   }
   if (currentDetail.value.type === 'recent') {
+    const firstTrack = detailTracks.value[0]
     return {
       title: '最近播放',
-      cover: detailTracks.value.length > 0 ? detailTracks.value[0].cover : null,
+      cover: firstTrack?.cover ?? null,
+      coverSource: firstTrack?.coverSource ?? null,
       desc: `共 ${detailTracks.value.length} 首歌曲`,
       icon: 'pi pi-history'
     }
   }
   if (currentDetail.value.type === 'ranking') {
+    const firstTrack = detailTracks.value[0]
     return {
       title: '听歌排行',
-      cover: detailTracks.value.length > 0 ? detailTracks.value[0].cover : null,
+      cover: firstTrack?.cover ?? null,
+      coverSource: firstTrack?.coverSource ?? null,
       desc: `共 ${detailTracks.value.length} 首歌曲`,
       icon: 'pi pi-chart-bar'
     }
@@ -1953,9 +1961,10 @@ onMounted(async () => {
             </div>
 
             <div v-if="detailHeaderInfo" class="detail-playlist-header">
-              <img
+              <CoverImg
                 v-if="detailHeaderInfo.cover"
-                :src="detailHeaderInfo.cover"
+                :cover="detailHeaderInfo.cover"
+                :cover-source="detailHeaderInfo.coverSource"
                 class="detail-playlist-cover"
                 alt="cover"
               />
@@ -2082,9 +2091,9 @@ onMounted(async () => {
                   class="playlist-grid-card artist-card"
                   @click="onUserClick(user as any)"
                 >
-                  <img
+                  <CoverImg
                     v-if="user.picUrl"
-                    :src="user.picUrl"
+                    :cover="user.picUrl"
                     class="playlist-grid-cover artist-cover"
                     alt=""
                   />
@@ -2120,9 +2129,10 @@ onMounted(async () => {
                   class="playlist-grid-card"
                   @click="openPlaylist(playlist, false)"
                 >
-                  <img
+                  <CoverImg
                     v-if="playlist.cover"
-                    :src="playlist.cover"
+                    :cover="playlist.cover"
+                    :cover-source="playlist.coverSource"
                     class="playlist-grid-cover"
                     alt=""
                   />
@@ -2217,7 +2227,13 @@ onMounted(async () => {
                       @dblclick="onTrackClick(track, index, $event)"
                     >
                       <td class="col-cover">
-                        <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
+                        <CoverImg
+                          v-if="track.cover"
+                          :cover="track.cover"
+                          :cover-source="track.coverSource"
+                          class="cover-img"
+                          alt="cover"
+                        />
                         <div v-else class="cover-placeholder">
                           <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
                         </div>
@@ -2280,7 +2296,13 @@ onMounted(async () => {
                   class="playlist-grid-card"
                   @click="openAlbum(album)"
                 >
-                  <img v-if="album.cover" :src="album.cover" class="playlist-grid-cover" alt="" />
+                  <CoverImg
+                    v-if="album.cover"
+                    :cover="album.cover"
+                    :cover-source="album.coverSource"
+                    class="playlist-grid-cover"
+                    alt=""
+                  />
                   <div v-else class="playlist-grid-cover-placeholder">
                     <i class="pi pi-clone" style="font-size: 28px; color: #bbb"></i>
                   </div>
@@ -2307,9 +2329,10 @@ onMounted(async () => {
                   class="playlist-grid-card"
                   @click="openPlaylist(playlist, false)"
                 >
-                  <img
+                  <CoverImg
                     v-if="playlist.cover"
-                    :src="playlist.cover"
+                    :cover="playlist.cover"
+                    :cover-source="playlist.coverSource"
                     class="playlist-grid-cover"
                     alt=""
                   />
@@ -2390,7 +2413,13 @@ onMounted(async () => {
                       @dblclick="onTrackClick(track, index, $event)"
                     >
                       <td class="col-cover">
-                        <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />
+                        <CoverImg
+                          v-if="track.cover"
+                          :cover="track.cover"
+                          :cover-source="track.coverSource"
+                          class="cover-img"
+                          alt="cover"
+                        />
                         <div v-else class="cover-placeholder">
                           <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
                         </div>

@@ -2064,14 +2064,20 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     shouldReuseResolvedStreamUrl(source) &&
     canReuseNcmStream
   ) {
-    return track.streamUrl
+    // Session-scoped twilight-media grants die with the main-process grant map.
+    // Never reuse a stale audio grant — re-resolve so protectProviderMedia issues
+    // a live token (or the provider returns a fresh cache path / stream URL).
+    if (!/^twilight-media:/i.test(track.streamUrl)) {
+      return track.streamUrl
+    }
   }
   if (
     source === 'ncm' &&
     track.streamUrl &&
     shouldReuseResolvedStreamUrl(source) &&
     canReuseNcmStream &&
-    !/^https?:\/\//i.test(track.streamUrl)
+    !/^https?:\/\//i.test(track.streamUrl) &&
+    !/^twilight-media:/i.test(track.streamUrl)
   ) {
     // Local cache path previously returned by the provider.
     return track.streamUrl

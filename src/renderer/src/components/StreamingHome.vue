@@ -2,12 +2,18 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import type { Track } from '../types/music'
 import type { NcmPlaylistSummary } from '../stores/useNcmStore'
+import CoverImg from './CoverImg.vue'
 
 interface RecSection {
   key: string
   title: string
   tracks: Track[]
   icon: string
+}
+
+interface DailyCoverEntry {
+  cover: string
+  coverSource?: string | null
 }
 
 const props = defineProps<{
@@ -29,10 +35,16 @@ const dailySection = computed(() => props.recSections.find((item) => item.key ==
 const dailyDesc = '根据你的音乐口味与听歌习惯，为你生成专属的今日推荐歌单。每日 06:00 更新，开启新的一天。'
 
 const dailyCoverIndex = ref(0)
-const dailyCovers = computed(() =>
+const dailyCovers = computed((): DailyCoverEntry[] =>
   (dailySection.value?.tracks ?? [])
-    .map((track) => track.cover)
-    .filter((cover): cover is string => Boolean(cover))
+    .map((track) => {
+      if (!track.cover) return null
+      return {
+        cover: track.cover,
+        coverSource: track.coverSource ?? null
+      }
+    })
+    .filter((entry): entry is DailyCoverEntry => Boolean(entry))
 )
 const dailyCover = computed(() => dailyCovers.value[dailyCoverIndex.value] ?? null)
 
@@ -143,10 +155,11 @@ watch(
               </span>
             </span>
             <span class="feature-hero-cover" :class="{ 'is-placeholder': !dailyCover }">
-              <img
+              <CoverImg
                 v-if="dailyCover"
-                :key="dailyCover"
-                :src="dailyCover"
+                :key="`${dailyCover.cover}:${dailyCover.coverSource ?? ''}`"
+                :cover="dailyCover.cover"
+                :cover-source="dailyCover.coverSource"
                 class="feature-hero-cover-img"
                 alt=""
                 @animationend="showNextDailyCover"
@@ -194,7 +207,13 @@ watch(
               @click="emit('openPlaylist', playlist)"
             >
               <span class="playlist-cover-wrap">
-                <img v-if="playlist.cover" :src="playlist.cover" class="playlist-cover" alt="" />
+                <CoverImg
+                  v-if="playlist.cover"
+                  :cover="playlist.cover"
+                  :cover-source="playlist.coverSource"
+                  class="playlist-cover"
+                  alt=""
+                />
                 <span v-else class="playlist-cover placeholder-cover">
                   <i class="pi pi-list"></i>
                 </span>
