@@ -28,6 +28,7 @@ import {
 import { exportAppSettingsForBackup, importAppSettingsFromBackup } from '../core/settingsBackup'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
 import { clearManagedMusicCache, getManagedMusicCacheSize } from '../cache/musicCacheLayout.ts'
+import { grantRemoteImageUrl } from '../security/remoteMediaGrants.ts'
 import {
   getLegacyCoverCacheDir,
   getCoverCacheDir,
@@ -817,6 +818,15 @@ export function setupDataIpc(): void {
     // Pass through existing data: URLs (e.g. from plugins)
     if (handle.startsWith('data:')) return normalizeCoverDataUrl(handle)
     return readCachedCover(handle)
+  })
+
+  // Re-issue an image grant for a durable http(s) cover origin (session restore /
+  // listening-stats rows whose previous twilight-media token has expired).
+  ipcMain.handle('cover:grantRemote', async (event, source: string): Promise<string> => {
+    assertTrustedIpcSender(event, 'cover IPC')
+    const raw = typeof source === 'string' ? source.trim() : ''
+    if (!raw || raw.length > 4096) throw new Error('Remote cover source is invalid')
+    return grantRemoteImageUrl(raw)
   })
 
   // Lyrics lazy loader — reads .lrc file on demand, falls back to embedded lyrics

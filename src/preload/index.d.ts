@@ -33,12 +33,6 @@ import type {
 } from '../shared/localLibraryScan.ts'
 import type { DuplicateDetectionReadApi } from '../shared/duplicateDetection.ts'
 import type { LyricsManagementDocument } from '../shared/lyricsManagement.ts'
-import type {
-  OfflineDownloadRecord,
-  OfflineDownloadRequest,
-  OfflinePlayablePathRequest,
-  OfflineStorageSummary
-} from '../shared/offlineDownloads.ts'
 
 export {}
 
@@ -57,6 +51,8 @@ interface TrackData {
   duration: number
   size: number
   cover: string | null
+  /** Durable remote cover origin for re-granting expired twilight-media handles. */
+  coverSource?: string | null
   lyrics: string | null
   translatedLyrics?: string | null
   romanizedLyrics?: string | null
@@ -1426,16 +1422,6 @@ interface WindowAPI {
     getCachedSong: (songId: number) => Promise<string | null>
     cacheSong: (songId: number, url: string, fileName?: string) => Promise<string | null>
   }
-  offline: {
-    list: () => Promise<OfflineStorageSummary>
-    queue: (request: OfflineDownloadRequest) => Promise<OfflineDownloadRecord>
-    queueMany: (requests: OfflineDownloadRequest[]) => Promise<OfflineDownloadRecord[]>
-    cancel: (id: string) => Promise<OfflineDownloadRecord | null>
-    unpin: (id: string) => Promise<boolean>
-    getPlayablePath: (providerId: string, trackId: string) => Promise<string | null>
-    getPlayablePaths: (requests: OfflinePlayablePathRequest[]) => Promise<(string | null)[]>
-    onChanged: (callback: (record: OfflineDownloadRecord) => void) => () => void
-  }
   radio: {
     loadStations: () => Promise<
       VersionedDataEnvelope<import('../shared/radioStations.ts').RadioStationsDocument>
@@ -1492,12 +1478,12 @@ interface WindowAPI {
     refreshAll: () => Promise<
       import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument
     >
-    pinEpisode: (trackId: string) => Promise<OfflineDownloadRecord>
   }
   data: {
     saveMusicLibrary: (data: LocalLibrarySnapshotInput) => Promise<LocalMusicLibraryDocument>
     loadMusicLibrary: () => Promise<LocalMusicLibraryDocument | unknown[]>
     getCover: (handle: string) => Promise<string | null>
+    grantRemoteCover: (source: string) => Promise<string>
     getLyrics: (dir: string, fileName: string, filePath?: string) => Promise<string | null>
     importLyrics: () => Promise<string | null>
     saveLyrics: (contents: string) => Promise<string | null>
@@ -1577,7 +1563,7 @@ interface WindowAPI {
     getDlnaDevices: () => Promise<import('../shared/remoteControl.ts').DlnaDeviceInfo[]>
     castToDevice: (payload: {
       usn: string
-      /** Authorized local library / offline pin path. Mutually exclusive with mediaUrl. */
+      /** Authorized local library / managed-cache path. Mutually exclusive with mediaUrl. */
       filePath?: string
       /** Direct http(s) stream URL (podcast / radio / provider). Mutually exclusive with filePath. */
       mediaUrl?: string

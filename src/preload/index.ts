@@ -86,12 +86,6 @@ import type {
   DspStereoImageConfig,
   Vst3CatalogState
 } from './types'
-import type {
-  OfflineDownloadRecord,
-  OfflineDownloadRequest,
-  OfflinePlayablePathRequest,
-  OfflineStorageSummary
-} from '../shared/offlineDownloads.ts'
 import {
   isRadioStationsDocument,
   type RadioStation,
@@ -136,11 +130,6 @@ const miniPlayerStateCallbacks = new Set<(state: MiniPlayerStateSnapshot) => voi
 const miniPlayerSettingsCallbacks = new Set<(settings: MiniPlayerSettings) => void>()
 const miniPlayerCommandCallbacks = new Set<(command: MiniPlayerCommand) => void>()
 const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
-const offlineDownloadCallbacks = new Set<(record: OfflineDownloadRecord) => void>()
-
-ipcRenderer.on('offline:changed', (_event, record: OfflineDownloadRecord) => {
-  for (const callback of offlineDownloadCallbacks) callback(record)
-})
 const pluginChangedCallbacks = new Set<() => void>()
 const sleepTimerEvents = createSleepTimerEventBridge()
 
@@ -705,24 +694,6 @@ const api = {
     cacheSong: (songId: number, url: string, fileName?: string): Promise<string | null> =>
       ipcRenderer.invoke('ncm:cacheSong', songId, url, fileName)
   },
-  offline: {
-    list: (): Promise<OfflineStorageSummary> => ipcRenderer.invoke('offline:list'),
-    queue: (request: OfflineDownloadRequest): Promise<OfflineDownloadRecord> =>
-      ipcRenderer.invoke('offline:queue', request),
-    queueMany: (requests: OfflineDownloadRequest[]): Promise<OfflineDownloadRecord[]> =>
-      ipcRenderer.invoke('offline:queueMany', requests),
-    cancel: (id: string): Promise<OfflineDownloadRecord | null> =>
-      ipcRenderer.invoke('offline:cancel', id),
-    unpin: (id: string): Promise<boolean> => ipcRenderer.invoke('offline:unpin', id),
-    getPlayablePath: (providerId: string, trackId: string): Promise<string | null> =>
-      ipcRenderer.invoke('offline:getPlayablePath', providerId, trackId),
-    getPlayablePaths: (requests: OfflinePlayablePathRequest[]): Promise<(string | null)[]> =>
-      ipcRenderer.invoke('offline:getPlayablePaths', requests),
-    onChanged: (callback: (record: OfflineDownloadRecord) => void): (() => void) => {
-      offlineDownloadCallbacks.add(callback)
-      return () => offlineDownloadCallbacks.delete(callback)
-    }
-  },
   radio: {
     loadStations: (): Promise<VersionedDataEnvelope<RadioStationsDocument>> =>
       ipcRenderer.invoke('radio:loadStations'),
@@ -787,9 +758,7 @@ const api = {
       revision: number
     }> => ipcRenderer.invoke('podcast:refresh', subscriptionId),
     refreshAll: (): Promise<PodcastSubscriptionsDocument> =>
-      ipcRenderer.invoke('podcast:refreshAll'),
-    pinEpisode: (trackId: string): Promise<OfflineDownloadRecord> =>
-      ipcRenderer.invoke('podcast:pinEpisode', trackId)
+      ipcRenderer.invoke('podcast:refreshAll')
   },
   remote: {
     getStatus: (): Promise<import('../shared/remoteControl.ts').RemoteControlStatus> =>
@@ -811,7 +780,7 @@ const api = {
       ipcRenderer.invoke('remote:getDlnaDevices'),
     castToDevice: (payload: {
       usn: string
-      /** Authorized local library / offline pin path. Mutually exclusive with mediaUrl. */
+      /** Authorized local library / managed-cache path. Mutually exclusive with mediaUrl. */
       filePath?: string
       /** Direct http(s) stream URL (podcast / radio / provider). Mutually exclusive with filePath. */
       mediaUrl?: string
@@ -843,6 +812,8 @@ const api = {
     loadMusicLibrary: (): Promise<LocalMusicLibraryDocument | unknown[]> =>
       ipcRenderer.invoke('data:loadMusicLibrary'),
     getCover: (handle: string): Promise<string | null> => ipcRenderer.invoke('cover:get', handle),
+    grantRemoteCover: (source: string): Promise<string> =>
+      ipcRenderer.invoke('cover:grantRemote', source),
     getLyrics: (dir: string, fileName: string, filePath?: string): Promise<string | null> =>
       ipcRenderer.invoke('lyrics:get', dir, fileName, filePath),
     importLyrics: (): Promise<string | null> => ipcRenderer.invoke('lyrics:import'),

@@ -116,11 +116,25 @@ const {
   refreshCastTarget
 } = usePlayerStore()
 
-const resolvedCurrentCover = useCover(computed(() => currentTrack.value?.cover ?? null))
+const resolvedCurrentCover = useCover(
+  computed(() => currentTrack.value?.cover ?? null),
+  computed(() => currentTrack.value?.coverSource ?? null)
+)
+/** After a load error, force a re-granted URL without waiting for the track to change. */
+const coverDisplayOverride = ref<string | null>(null)
+const displayCurrentCover = computed(
+  () => coverDisplayOverride.value ?? resolvedCurrentCover.value
+)
+watch(
+  () => currentTrack.value?.id,
+  () => {
+    coverDisplayOverride.value = null
+  }
+)
 /** Force cover remount + range rebind whenever track identity changes. */
 const currentTrackUiKey = computed(
   () =>
-    `${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.queueEntryId ?? ''}:${resolvedCurrentCover.value ?? ''}`
+    `${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.queueEntryId ?? ''}:${displayCurrentCover.value ?? ''}`
 )
 const {
   playlists,
@@ -183,6 +197,34 @@ function onCoverClick(): void {
   } else {
     emit('clickCover', { x: 24, y: window.innerHeight - 60, w: 48, h: 48 })
   }
+}
+
+/** Drop a failed grant and re-resolve from the durable origin when available. */
+async function onCurrentCoverError(): Promise<void> {
+  const track = currentTrack.value
+  if (!track) return
+  const source =
+    (typeof track.coverSource === 'string' && track.coverSource.trim()) ||
+    (typeof track.cover === 'string' && /^https?:\/\//i.test(track.cover.trim())
+      ? track.cover.trim()
+      : '')
+  if (!source) {
+    // Dead twilight-media token with no origin — hide the broken image chrome.
+    coverDisplayOverride.value = ''
+    return
+  }
+  const { clearRemoteCoverGrantCache, invalidateRemoteCoverGrant, resolveCover } = await import(
+    '../utils/coverLoader'
+  )
+  invalidateRemoteCoverGrant(source)
+  clearRemoteCoverGrantCache()
+  const next = await resolveCover(null, source)
+  if (currentTrack.value?.id !== track.id) return
+  if (next && next !== displayCurrentCover.value) {
+    coverDisplayOverride.value = next
+    return
+  }
+  coverDisplayOverride.value = ''
 }
 
 function onProgressInput(event: Event): void {
@@ -256,11 +298,10 @@ const castError = ref('')
 const canCastCurrentTrack = computed(() => {
   const track = currentTrack.value
   if (!track) return false
-  // Local path, offline pin, or any stream URL (podcast / radio / provider) can cast
-  // once the remote media token proxy is available in main.
+  // Local path or any stream URL (podcast / radio / provider) can cast once the
+  // remote media token proxy is available in main.
   return Boolean(
-    track.offlinePath ||
-      track.streamUrl ||
+    track.streamUrl ||
       track.filePath ||
       track.source === 'radio' ||
       track.source === 'podcast'
@@ -1086,14 +1127,15 @@ onMounted(() => {
       <!-- 左侧 -->
       <div class="player-left">
         <img
-          v-if="resolvedCurrentCover"
+          v-if="displayCurrentCover"
           :key="currentTrackUiKey"
           ref="coverRef"
-          :src="resolvedCurrentCover"
+          :src="displayCurrentCover"
           class="player-cover"
-          alt="cover"
+          alt=""
           title="打开播放页面"
           @click="onCoverClick"
+          @error="onCurrentCoverError"
         />
         <div
           v-else

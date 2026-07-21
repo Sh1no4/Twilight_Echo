@@ -1,6 +1,6 @@
 /**
  * Podcast subscriptions and cached episode metadata.
- * Episode media is remote; offline download can reuse offlineDownloadService later.
+ * Episode media is streamed from the feed enclosure URL.
  */
 
 export const PODCAST_SUBSCRIPTIONS_SCHEMA_VERSION = 1 as const

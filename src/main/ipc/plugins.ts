@@ -51,7 +51,10 @@ export function setupPluginIpc(): void {
     ncm: {
       request: requestNcmApi,
       officialLogin: openNcmOfficialLogin,
-      getCachedSong: async (songId) => getCachedNcmSong(Number(songId)),
+      getCachedSong: async (songId) => {
+        if (runtime.appSettings.cachePolicy.streamingAudio !== 'provider') return null
+        return getCachedNcmSong(Number(songId))
+      },
       cacheSong: async (songId, url, fileName) => {
         if (runtime.appSettings.cachePolicy.streamingAudio !== 'provider') return null
         return cacheNcmSong(Number(songId), url, fileName)

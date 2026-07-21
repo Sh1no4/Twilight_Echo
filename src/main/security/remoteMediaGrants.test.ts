@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-const { RemoteMediaGrantService, createRemoteMediaRequestHandler, protectProviderMedia } = (await import(
+const {
+  RemoteMediaGrantService,
+  createRemoteMediaRequestHandler,
+  protectProviderMedia,
+  grantRemoteImageUrl
+} = (await import(
   new URL('./remoteMediaGrants.ts', import.meta.url).href
 )) as typeof import('./remoteMediaGrants')
 
@@ -43,6 +48,7 @@ test('provider media results replace only approved remote media fields with gran
   ) as Array<Record<string, string>>
 
   assert.equal(protectedTracks[0].cover, 'twilight-media://image/token-1')
+  assert.equal(protectedTracks[0].coverSource, 'http://cover.example/art.jpg')
   assert.equal(protectedTracks[0].streamUrl, 'twilight-media://audio/token-2')
   assert.equal(protectedTracks[0].homepage, 'https://provider.example/song')
   assert.equal(
@@ -107,7 +113,9 @@ test('remote media proxy forwards only valid range requests without credentials'
   assert.equal(await response.text(), 'audio')
   assert.equal(requests.length, 1)
   assert.equal(requests[0].source, 'https://media.example/private.flac')
-  assert.equal(new Headers(requests[0].init.headers).get('range'), 'bytes=0-4')
+  const requestHeaders = new Headers(requests[0].init.headers)
+  assert.equal(requestHeaders.get('range'), 'bytes=0-4')
+  assert.match(requestHeaders.get('user-agent') ?? '', /Mozilla\/5\.0/)
   assert.equal(requests[0].init.credentials, 'omit')
   assert.equal(requests[0].init.redirect, 'manual')
   // Canvas cover-theme sampling loads grants with crossOrigin=anonymous.
@@ -121,11 +129,14 @@ test('remote media proxy forwards only valid range requests without credentials'
 test('remote media proxy follows same-policy CDN redirects for cover images', async () => {
   const grants = new RemoteMediaGrantService({ createToken: () => 'cover-token' })
   const granted = grants.grant('https://p1.music.126.net/album.jpg', 'image')
-  const requests: string[] = []
+  const requests: Array<{ source: string; referer: string | null }> = []
   const handler = createRemoteMediaRequestHandler({
     grants,
-    fetch: async (source) => {
-      requests.push(source)
+    fetch: async (source, init) => {
+      requests.push({
+        source,
+        referer: new Headers(init.headers).get('referer')
+      })
       if (source === 'https://p1.music.126.net/album.jpg') {
         return new Response(null, {
           status: 302,
@@ -142,10 +153,12 @@ test('remote media proxy follows same-policy CDN redirects for cover images', as
   const response = await handler(new Request(granted))
   assert.equal(response.status, 200)
   assert.equal(await response.text(), 'jpeg-bytes')
-  assert.deepEqual(requests, [
-    'https://p1.music.126.net/album.jpg',
-    'https://p2.music.126.net/edge/album.jpg'
-  ])
+  assert.deepEqual(
+    requests.map((entry) => entry.source),
+    ['https://p1.music.126.net/album.jpg', 'https://p2.music.126.net/edge/album.jpg']
+  )
+  // NetEase CDN hosts need a music.163.com Referer or they return 403 HTML.
+  assert.ok(requests.every((entry) => entry.referer === 'https://music.163.com/'))
 })
 
 test('provider media grants accept protocol-relative image URLs', () => {
@@ -156,8 +169,19 @@ test('provider media grants accept protocol-relative image URLs', () => {
     grants
   ) as Record<string, string>
   assert.equal(protectedTrack.cover, 'twilight-media://image/proto-token')
+  assert.equal(protectedTrack.coverSource, 'https://p3.music.126.net/cover.jpg')
   assert.deepEqual(grants.resolve(protectedTrack.cover, 'image'), {
     source: 'https://p3.music.126.net/cover.jpg',
+    kind: 'image'
+  })
+})
+
+test('grantRemoteImageUrl reissues an opaque image grant for durable cover origins', () => {
+  const grants = new RemoteMediaGrantService({ createToken: () => 'regrant-token' })
+  const granted = grantRemoteImageUrl('//p1.music.126.net/cover.jpg', grants)
+  assert.equal(granted, 'twilight-media://image/regrant-token')
+  assert.deepEqual(grants.resolve(granted, 'image'), {
+    source: 'https://p1.music.126.net/cover.jpg',
     kind: 'image'
   })
 })

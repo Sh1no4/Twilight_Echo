@@ -24,6 +24,8 @@ const WORD_TIMESTAMP_RE = /<(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?>/g
 const YRC_LINE_RE =
   /^\[(\d+),(\d+)\](.*)$/
 const YRC_WORD_RE = /\((\d+),(\d+),\d+\)([^()\[\]]*)/g
+/** NetEase lyric/new metadata & prose lines: {"t":-1,"c":[{"tx":"作词: "},{"tx":"ACO"}]} */
+const NETEASE_JSON_LINE_RE = /^\s*\{[\s\S]*"c"\s*:\s*\[[\s\S]*\]\s*\}\s*$/
 
 function parseTimestampParts(min: string, sec: string, frac?: string): number {
   let ms = 0
@@ -32,6 +34,41 @@ function parseTimestampParts(min: string, sec: string, frac?: string): number {
     if (frac.length === 2) ms *= 10
   }
   return Number.parseInt(min, 10) * 60 + Number.parseInt(sec, 10) + ms / 1000
+}
+
+/**
+ * Flatten NetEase JSON lyric fragments (`tx` tokens) into display text.
+ * Returns null when the line is not that format.
+ */
+export function parseNeteaseJsonLyricLine(
+  raw: string
+): { time: number | null; text: string } | null {
+  const trimmed = raw.trim()
+  if (!trimmed || trimmed[0] !== '{' || !NETEASE_JSON_LINE_RE.test(trimmed)) return null
+  try {
+    const parsed = JSON.parse(trimmed) as {
+      t?: unknown
+      c?: Array<{ tx?: unknown } | null> | null
+    }
+    if (!Array.isArray(parsed.c)) return null
+    const text = parsed.c
+      .map((part) => (part && typeof part.tx === 'string' ? part.tx : ''))
+      .join('')
+      .replace(/\s+/g, ' ')
+      .trim()
+    if (!text) return null
+    const timeMs = typeof parsed.t === 'number' && Number.isFinite(parsed.t) ? parsed.t : null
+    // t < 0 is NetEase credit / static metadata (作词 / 作曲 / 制作), not a playhead time.
+    const time = timeMs != null && timeMs >= 0 ? timeMs / 1000 : null
+    return { time, text }
+  } catch {
+    return null
+  }
+}
+
+function isRawNeteaseJsonLyricLine(raw: string): boolean {
+  const trimmed = raw.trim()
+  return trimmed.startsWith('{') && NETEASE_JSON_LINE_RE.test(trimmed)
 }
 
 function parseEnhancedWords(rawLine: string): { text: string; words: LyricWord[] } | null {
@@ -69,13 +106,27 @@ function parseEnhancedWords(rawLine: string): { text: string; words: LyricWord[]
   return { text: cleaned, words }
 }
 
-/** NetEase YRC: [startMs,durationMs](wordStart,wordDur,0)word... */
+/** NetEase YRC: [startMs,durationMs](wordStart,wordDur,0)word... plus JSON credit lines. */
 export function parseYrc(yrc: string | null | undefined): ParsedTimedLyricLine[] {
   if (!yrc) return []
-  const lines: ParsedTimedLyricLine[] = []
+  const timed: ParsedTimedLyricLine[] = []
+  const credits: ParsedTimedLyricLine[] = []
   for (const raw of yrc.split('\n')) {
     const trimmed = raw.trim()
     if (!trimmed) continue
+
+    const jsonLine = parseNeteaseJsonLyricLine(trimmed)
+    if (jsonLine) {
+      if (jsonLine.time != null) {
+        timed.push({ time: jsonLine.time, text: jsonLine.text })
+      } else {
+        // Credits (t:-1) are shown once at the top with t=0 so they don't scroll as timed lines.
+        credits.push({ time: 0, text: jsonLine.text })
+      }
+      continue
+    }
+    if (isRawNeteaseJsonLyricLine(trimmed)) continue
+
     const lineMatch = YRC_LINE_RE.exec(trimmed)
     if (!lineMatch) continue
     const lineStartMs = Number.parseInt(lineMatch[1], 10)
@@ -97,31 +148,48 @@ export function parseYrc(yrc: string | null | undefined): ParsedTimedLyricLine[]
       plain += text
     }
     if (!plain.trim()) continue
-    lines.push({
+    timed.push({
       time: lineStartMs / 1000,
       text: plain,
       words: words.length > 0 ? words : undefined
     })
   }
-  lines.sort((a, b) => a.time - b.time)
-  return lines
+  timed.sort((a, b) => a.time - b.time)
+  // Keep credit lines first so "作词 / 作曲" appear above the first sung line.
+  return credits.length > 0 ? [...credits, ...timed] : timed
 }
 
 export function parseTimedLrc(lrc: string | null | undefined): ParsedTimedLyricLine[] {
   if (!lrc) return []
 
-  // Prefer YRC when the payload looks like NetEase word lyrics.
-  if (/^\[\d+,\d+\]/m.test(lrc) && /\(\d+,\d+,\d+\)/.test(lrc)) {
+  const hasYrcWords = /^\[\d+,\d+\]/m.test(lrc) && /\(\d+,\d+,\d+\)/.test(lrc)
+  const hasNeteaseJsonCredits = /"tx"\s*:/.test(lrc) && /"c"\s*:\s*\[/.test(lrc)
+
+  // Prefer YRC when the payload looks like NetEase word lyrics. JSON credit lines
+  // (作词/作曲) are also handled inside parseYrc when mixed with YRC.
+  if (hasYrcWords || (hasNeteaseJsonCredits && hasYrcWords)) {
     const yrc = parseYrc(lrc)
     if (yrc.length > 0) return yrc
   }
 
   const lines: ParsedTimedLyricLine[] = []
+  const credits: ParsedTimedLyricLine[] = []
   const lineRe = LINE_TIMESTAMP_RE
 
   for (const raw of lrc.split('\n')) {
     const trimmed = raw.trim()
     if (!trimmed) continue
+
+    const jsonLine = parseNeteaseJsonLyricLine(trimmed)
+    if (jsonLine) {
+      if (jsonLine.time != null) {
+        lines.push({ time: jsonLine.time, text: jsonLine.text })
+      } else {
+        credits.push({ time: 0, text: jsonLine.text })
+      }
+      continue
+    }
+    if (isRawNeteaseJsonLyricLine(trimmed)) continue
 
     const timestamps: Array<{ time: number; index: number; end: number }> = []
     let match: RegExpExecArray | null
@@ -163,7 +231,7 @@ export function parseTimedLrc(lrc: string | null | undefined): ParsedTimedLyricL
   }
 
   lines.sort((a, b) => a.time - b.time)
-  return lines
+  return credits.length > 0 ? [...credits, ...lines] : lines
 }
 
 export function parsePlainLyrics(lyrics: string | null | undefined): string[] {
@@ -175,7 +243,12 @@ export function parsePlainLyrics(lyrics: string | null | undefined): string[] {
 
   return lyrics
     .split('\n')
-    .map((line) => line.replace(timeTagRe, '').replace(wordTagRe, '').trim())
+    .map((line) => {
+      const jsonLine = parseNeteaseJsonLyricLine(line)
+      if (jsonLine) return jsonLine.text
+      if (isRawNeteaseJsonLyricLine(line)) return ''
+      return line.replace(timeTagRe, '').replace(wordTagRe, '').trim()
+    })
     .filter((line) => line.length > 0 && !metadataTagRe.test(line))
 }
 

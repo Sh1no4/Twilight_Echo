@@ -22,8 +22,6 @@ import type {
 import StreamingHome from './StreamingHome.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
 import StreamingSearch from './StreamingSearch.vue'
-import OfflineDownloadsPanel from './OfflineDownloadsPanel.vue'
-import OfflinePinButton from './OfflinePinButton.vue'
 import {
   buildStreamingSidebarItems,
   getFirstVisibleStreamingTab,
@@ -1993,10 +1991,6 @@ onMounted(async () => {
                   <i class="pi pi-play"></i>
                   <span>播放全部</span>
                 </button>
-                <OfflineDownloadsPanel
-                  v-if="currentDetail?.type !== 'user_list' && currentDetail?.type !== 'user_playlists'"
-                  :tracks="detailTracks"
-                />
                 <p v-if="followActionError" class="detail-follow-error">
                   {{ followActionError }}
                 </p>
@@ -2263,7 +2257,6 @@ onMounted(async () => {
                           ></i>
                         </button>
                       </td>
-                      <td class="col-like"><OfflinePinButton :track="track" /></td>
                       <td class="col-album">{{ track.album }}</td>
                       <td class="col-duration">{{ formatTime(track.duration) }}</td>
                     </tr>
@@ -2437,7 +2430,6 @@ onMounted(async () => {
                           ></i>
                         </button>
                       </td>
-                      <td class="col-like"><OfflinePinButton :track="track" /></td>
                       <td class="col-album">{{ track.album }}</td>
                       <td class="col-duration">{{ formatTime(track.duration) }}</td>
                     </tr>

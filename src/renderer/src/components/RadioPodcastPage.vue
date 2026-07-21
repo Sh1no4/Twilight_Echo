@@ -3,7 +3,6 @@ import { computed, onMounted, ref } from 'vue'
 import { useRadioStore, radioStationToTrack } from '../stores/useRadioStore'
 import { usePodcastStore, podcastEpisodeToTrack } from '../stores/usePodcastStore'
 import { usePlayerStore } from '../stores/usePlayerStore'
-import { useOfflineDownloads } from '../stores/useOfflineDownloads.ts'
 import { isInsecureHttpUrl } from '../../../shared/radioStations.ts'
 import type { PodcastSubscription } from '../../../shared/podcastSubscriptions.ts'
 
@@ -13,7 +12,6 @@ const emit = defineEmits<{
 
 const radio = useRadioStore()
 const podcast = usePodcastStore()
-const offline = useOfflineDownloads()
 const { playTrack, playTrackFromPosition } = usePlayerStore()
 
 const tab = ref<'radio' | 'podcast'>('radio')
@@ -41,7 +39,6 @@ const directoryResults = ref<
 const directoryBusy = ref(false)
 const feedUrl = ref('')
 const selectedPodcastId = ref<string | null>(null)
-const pinBusyGuid = ref<string | null>(null)
 
 const selectedPodcast = computed<PodcastSubscription | null>(() => {
   if (!selectedPodcastId.value) return null
@@ -186,27 +183,6 @@ function playEpisode(subscription: PodcastSubscription, guid: string): void {
     return
   }
   playTrack(track, list)
-}
-
-function episodePinStatus(subscriptionId: string, guid: string): string {
-  const trackId = `podcast:${subscriptionId}:${guid}`
-  const record = offline.records.value.find(
-    (item) => item.providerId === 'podcast' && item.trackId === trackId
-  )
-  return record?.status ?? ''
-}
-
-async function pinEpisode(subscription: PodcastSubscription, guid: string): Promise<void> {
-  formError.value = ''
-  pinBusyGuid.value = guid
-  try {
-    await podcast.pinEpisode(subscription.id, guid)
-    await offline.refresh()
-  } catch (error) {
-    formError.value = error instanceof Error ? error.message : String(error)
-  } finally {
-    pinBusyGuid.value = null
-  }
 }
 
 function progressLabel(episode: { durationSeconds: number; progressSeconds?: number }): string {
@@ -410,11 +386,6 @@ function formatDuration(seconds: number): string {
                   <span v-if="progressLabel(episode)" class="badge progress">{{
                     progressLabel(episode)
                   }}</span>
-                  <span
-                    v-if="episodePinStatus(selectedPodcast.id, episode.guid)"
-                    class="badge pin"
-                    >{{ episodePinStatus(selectedPodcast.id, episode.guid) }}</span
-                  >
                 </small>
               </div>
               <div class="episode-actions">
@@ -425,30 +396,10 @@ function formatDuration(seconds: number): string {
                 >
                   播放
                 </button>
-                <button
-                  type="button"
-                  :disabled="
-                    pinBusyGuid === episode.guid ||
-                    episodePinStatus(selectedPodcast.id, episode.guid) === 'completed' ||
-                    episodePinStatus(selectedPodcast.id, episode.guid) === 'downloading' ||
-                    episodePinStatus(selectedPodcast.id, episode.guid) === 'queued'
-                  "
-                  :title="'固定供离线播放'"
-                  @click="pinEpisode(selectedPodcast, episode.guid)"
-                >
-                  {{
-                    pinBusyGuid === episode.guid
-                      ? '固定中…'
-                      : episodePinStatus(selectedPodcast.id, episode.guid) === 'completed'
-                        ? '已离线'
-                        : '离线'
-                  }}
-                </button>
               </div>
             </li>
             <li v-if="selectedPodcast.episodes.length === 0" class="empty">暂无剧集，请刷新订阅</li>
           </ul>
-          <p class="hint">离线固定会下载当前剧集音频到本机缓存；电台直播流不支持固定。</p>
         </div>
         <p v-else class="empty episode-panel">选择左侧订阅以查看剧集</p>
       </div>
@@ -493,11 +444,6 @@ function formatDuration(seconds: number): string {
   gap: 8px;
   flex-wrap: wrap;
   align-items: center;
-}
-.badge.pin {
-  margin-left: 6px;
-  text-transform: lowercase;
-  opacity: 0.85;
 }
 .directory-results {
   list-style: none;

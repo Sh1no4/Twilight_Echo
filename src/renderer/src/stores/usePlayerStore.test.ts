@@ -368,7 +368,7 @@ test('provider queues use native for resolved current targets without native que
   assert.doesNotMatch(isNativeQueueDelegated, /canUseNativeQueuePlayback/)
   assert.match(
     syncNativeQueueState,
-    /synchronizeLatestNativeQueue\(\s*nativeQueueRevisionFence,\s*snapshot\.revision,\s*\{[\s\S]*prepare: \(\) =>\s*preparePlayerNativeQueue\([\s\S]*isAudioFileAuthorized: window\.api\.fs\.isAudioFileAuthorized,[\s\S]*getOfflinePlayablePaths: window\.api\.offline\.getPlayablePaths/,
+    /synchronizeLatestNativeQueue\(\s*nativeQueueRevisionFence,\s*snapshot\.revision,\s*\{[\s\S]*prepare: \(\) =>\s*preparePlayerNativeQueue\([\s\S]*isAudioFileAuthorized: window\.api\.fs\.isAudioFileAuthorized/,
     'queue synchronization must authorize candidates through the latest-revision fence before delegating them to native playback'
   )
   assert.match(syncNativeQueueState, /if \(!synchronized\.applied\) return/)
@@ -389,7 +389,7 @@ test('player store prepares native queues before loading or synchronizing them',
     /import \{ preparePlayerNativeQueue \} from '\.\.\/utils\/nativeQueuePreparation\.ts'/
   )
   assert.match(loadAndPlay, /const preparedQueue = await preparePlayerNativeQueue\(/)
-  assert.match(loadAndPlay, /getOfflinePlayablePaths: window\.api\.offline\.getPlayablePaths/)
+  assert.match(loadAndPlay, /isAudioFileAuthorized: window\.api\.fs\.isAudioFileAuthorized/)
   assert.match(loadAndPlay, /preparedQueue\.items,\s*preparedQueue\.startIndex/)
   assert.match(loadAndPlay, /nativeQueueDelegated = preparedQueue\.delegated/)
   assert.match(
@@ -1032,9 +1032,13 @@ test('dominant cover color extraction ignores stale async results', () => {
 
   assert.match(source, /let dominantColorRequestId = 0/)
   assert.match(source, /const requestId = \+\+dominantColorRequestId/)
-  assert.match(source, /const color = await extractDominantColor\(cover\)/)
-  assert.match(source, /requestId === dominantColorRequestId/)
-  assert.match(source, /currentTrack\.value\?\.cover === cover/)
+  // Resolve durable coverSource (or re-grant) before sampling so restored NCM
+  // sessions do not blank the playbar accent from a dead twilight-media token.
+  assert.match(source, /const displayCover = await resolveCover\(cover, coverSource\)/)
+  assert.match(source, /await extractDominantColor\(displayCover\)/)
+  assert.match(source, /requestId !== dominantColorRequestId/)
+  assert.match(source, /currentTrack\.value\?\.cover !== cover/)
+  assert.match(source, /currentTrack\.value\?\.coverSource !== coverSource/)
   assert.match(source, /appSettings\.value\?\.useCoverTheme/)
 })
 

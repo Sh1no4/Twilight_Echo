@@ -1,5 +1,4 @@
 import type { Track, TrackSource } from '../types/music'
-import type { OfflinePlayablePathRequest } from '../../../shared/offlineDownloads.ts'
 import { isTwilightMediaGrantTarget, shouldUseNativePlaybackTarget } from './playbackRouting.ts'
 
 const WINDOWS_ABSOLUTE_PATH_PATTERN = /^[a-zA-Z]:[\\/]/
@@ -35,21 +34,19 @@ export interface PrepareNativeQueueOptions {
   currentTarget: string
   currentIndex: number
   isAudioFileAuthorized: (filePath: string) => Promise<boolean>
-  getOfflinePlayablePaths: (requests: OfflinePlayablePathRequest[]) => Promise<(string | null)[]>
 }
 
 export type PreparePlayerNativeQueueOptions = Omit<
   PrepareNativeQueueOptions,
-  'isAudioFileAuthorized' | 'getOfflinePlayablePaths'
+  'isAudioFileAuthorized'
 >
 
 export interface PlayerNativeQueueBoundary {
   isAudioFileAuthorized: PrepareNativeQueueOptions['isAudioFileAuthorized']
-  getOfflinePlayablePaths: PrepareNativeQueueOptions['getOfflinePlayablePaths']
 }
 
 /** Actual PlayerStore boundary: renderer identities cross preload once, while
- * filesystem authority and pin integrity remain owned by the main process. */
+ * filesystem authority remains owned by the main process. */
 export async function preparePlayerNativeQueue(
   options: PreparePlayerNativeQueueOptions,
   boundary: PlayerNativeQueueBoundary
@@ -60,11 +57,9 @@ export async function preparePlayerNativeQueue(
 export async function prepareNativeQueue(
   options: PrepareNativeQueueOptions
 ): Promise<PreparedNativeQueue | null> {
-  const offlineTargets = await resolveOfflineTargets(options)
-  const currentOfflineTarget = offlineTargets.get(trackOfflineKey(options.currentTrack))
   const currentItem = toQueueItem(
     options.currentTrack,
-    currentOfflineTarget ?? getCurrentFallbackTarget(options.currentTrack, options.currentTarget)
+    getCurrentFallbackTarget(options.currentTrack, options.currentTarget)
   )
   if (!(await isNativeTargetAvailable(options.currentTrack, currentItem.source, options)))
     return null
@@ -75,7 +70,7 @@ export async function prepareNativeQueue(
   const items = options.queue.map((track, index) =>
     index === currentIndex
       ? currentItem
-      : toQueueItem(track, offlineTargets.get(trackOfflineKey(track)) ?? getTrackTarget(track))
+      : toQueueItem(track, getTrackTarget(track))
   )
   const available = await Promise.all(
     options.queue.map((track, index) =>
@@ -86,40 +81,6 @@ export async function prepareNativeQueue(
     return { items, startIndex: currentIndex, delegated: true }
   }
   return asCurrentOnly(currentItem)
-}
-
-async function resolveOfflineTargets(
-  options: PrepareNativeQueueOptions
-): Promise<Map<string, string>> {
-  const uniqueTracks = new Map<string, Track>()
-  for (const track of [...options.queue, options.currentTrack]) {
-    if (getTrackSource(track) === 'local') continue
-    uniqueTracks.set(trackOfflineKey(track), track)
-  }
-  const entries = [...uniqueTracks.entries()]
-  if (entries.length === 0) return new Map()
-  const requests = entries.map(([, track]) => ({
-    providerId: getTrackSource(track),
-    trackId: track.id
-  }))
-  try {
-    const paths = await options.getOfflinePlayablePaths(requests)
-    if (!Array.isArray(paths) || paths.length !== requests.length) return new Map()
-    const result = new Map<string, string>()
-    for (let index = 0; index < entries.length; index += 1) {
-      const path = paths[index]
-      if (typeof path === 'string' && path.trim()) result.set(entries[index][0], path)
-    }
-    return result
-  } catch {
-    // A failed pin lookup is never authority for a cached renderer path. Queue
-    // preparation falls back to the ordinary online/provider target instead.
-    return new Map()
-  }
-}
-
-function trackOfflineKey(track: Pick<Track, 'id' | 'source'>): string {
-  return `${getTrackSource(track)}\0${track.id}`
 }
 
 function asCurrentOnly(item: NativeQueueLoadItem): PreparedNativeQueue {
@@ -137,15 +98,18 @@ function getTrackTarget(track: Track): string {
 }
 
 /**
- * A provider track may only use a local path returned by the main-process pin
- * lookup above. Renderer-restored fields (including offlinePath) and a caller-
- * supplied local currentTarget are not proof that the path belongs to this
- * provider identity. When no verified pin exists, retain only the ordinary
- * HTTP(S) provider target; an empty target fails closed in availability checks.
+ * Prefer the already-resolved play target for the current track. That may be a
+ * remote URL, a twilight-media grant, or an authorized managed-cache path
+ * (ncm-cache) returned by the provider. Renderer-restored local fields on
+ * provider tracks are not trusted unless they already are the resolved target
+ * or an ordinary remote URL on the track.
  */
 function getCurrentFallbackTarget(track: Track, currentTarget: string): string {
   if (getTrackSource(track) === 'local') return currentTarget
-  if (isAuthorizedRemoteUrl(currentTarget)) return currentTarget
+  const trimmed = currentTarget.trim()
+  if (trimmed && (isAuthorizedRemoteUrl(trimmed) || isLocalFilesystemTarget(trimmed))) {
+    return currentTarget
+  }
   const onlineTarget = [track.subTrack, track.streamUrl, track.filePath].find(
     (candidate): candidate is string =>
       typeof candidate === 'string' && isAuthorizedRemoteUrl(candidate)
@@ -221,6 +185,14 @@ async function isAuthorizedLocalFile(
   } catch {
     return false
   }
+}
+
+function isLocalFilesystemTarget(target: string): boolean {
+  const trimmed = target.trim()
+  if (!trimmed) return false
+  if (WINDOWS_ABSOLUTE_PATH_PATTERN.test(trimmed)) return true
+  if (trimmed.startsWith('/') || trimmed.startsWith('\\\\')) return true
+  return false
 }
 
 function isAuthorizedRemoteUrl(target: string): boolean {

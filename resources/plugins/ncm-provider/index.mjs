@@ -1128,6 +1128,17 @@ async function getPlaybackUrl(track, options = {}) {
   const quality = normalizePlaybackQuality(options?.quality)
   const cacheKey = `${songId}:${quality}`
 
+  // Basic cache-on-play: prefer a completed disk file so repeat plays skip the
+  // network. Host gates this with cachePolicy.streamingAudio; force always refreshes.
+  if (!force && typeof ncmApi?.getCachedSong === 'function') {
+    try {
+      const cachedPath = await ncmApi.getCachedSong(songId)
+      if (typeof cachedPath === 'string' && cachedPath.trim()) return cachedPath
+    } catch {
+      // A failed cache probe never blocks online resolution.
+    }
+  }
+
   if (!force && streamUrlCache.has(cacheKey)) return streamUrlCache.get(cacheKey)
 
   let lastFailureMessage = ''

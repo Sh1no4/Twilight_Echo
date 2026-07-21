@@ -30,7 +30,7 @@ export class MediaStreamGrantStore {
     this.ttlMs = options.ttlMs ?? REMOTE_MEDIA_TOKEN_TTL_MS
   }
 
-  /** Issue a token for a local file path (library / offline pin). */
+  /** Issue a token for a local file path (library / managed cache). */
   issue(filePath: string, options: IssueMediaGrantOptions = {}): string {
     return this.issueFile(filePath, options)
   }

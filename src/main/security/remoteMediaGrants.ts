@@ -95,7 +95,7 @@ export function createRemoteMediaRequestHandler(
     try {
       upstream = await fetchRemoteMediaWithRedirects(options.fetch, grant.source, {
         method: request.method,
-        headers: range ? { Range: range } : undefined
+        headers: buildUpstreamRequestHeaders(grant.source, grant.kind, range)
       })
     } catch {
       return failedRemoteMediaResponse(502, 'Remote media request failed')
@@ -133,6 +133,20 @@ export function protectProviderMedia<T>(
   return protectValue(value, method, grants) as T
 }
 
+/**
+ * Issue (or re-issue) an image grant for a durable remote cover URL.
+ * Used when the renderer restores a track whose previous twilight-media token
+ * is no longer in the main-process grant map.
+ */
+export function grantRemoteImageUrl(
+  source: string,
+  grants: RemoteMediaGrantService = remoteMediaGrants
+): string {
+  const normalized = normalizeProviderRemoteUrl(source)
+  if (!normalized) throw new Error('Remote image source is invalid')
+  return grants.grant(normalized, 'image')
+}
+
 function protectValue(value: unknown, method: string, grants: RemoteMediaGrantService): unknown {
   if (Array.isArray(value)) return value.map((entry) => protectValue(entry, method, grants))
   if (!value || typeof value !== 'object') return value
@@ -140,7 +154,18 @@ function protectValue(value: unknown, method: string, grants: RemoteMediaGrantSe
   const protectedValue: Record<string, unknown> = {}
   for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
     if (typeof entry === 'string' && isImageField(key, method)) {
-      protectedValue[key] = grantIfRemote(entry, 'image', grants)
+      const normalized = normalizeProviderRemoteUrl(entry)
+      if (normalized) {
+        protectedValue[key] = grants.grant(normalized, 'image')
+        // Keep a durable origin so session restore / listening stats can re-grant
+        // after the in-memory twilight-media token is gone.
+        const sourceKey = durableImageSourceKey(key)
+        if (sourceKey && protectedValue[sourceKey] === undefined) {
+          protectedValue[sourceKey] = normalized
+        }
+      } else {
+        protectedValue[key] = entry
+      }
     } else if (typeof entry === 'string' && isAudioField(key)) {
       protectedValue[key] = grantIfRemote(entry, 'audio', grants)
     } else {
@@ -148,6 +173,15 @@ function protectValue(value: unknown, method: string, grants: RemoteMediaGrantSe
     }
   }
   return protectedValue
+}
+
+/**
+ * Sibling field names that store the original http(s) image URL alongside a
+ * twilight-media grant. Only `cover` drives LocalDashboard + PlayerBar.
+ */
+function durableImageSourceKey(key: string): string | null {
+  if (key === 'cover' || key === 'coverUrl') return 'coverSource'
+  return null
 }
 
 function isImageField(key: string, method: string): boolean {
@@ -189,16 +223,61 @@ function normalizeProviderRemoteUrl(source: string): string | null {
   }
 }
 
+/**
+ * NetEase (and many CDNs) reject bare Electron net.fetch without a browser-like
+ * UA/Referer. Missing headers yield 403 HTML, which then fails the image
+ * content-type gate and leaves PlayerBar/LocalDashboard with a broken <img>.
+ */
+function buildUpstreamRequestHeaders(
+  source: string,
+  kind: RemoteMediaKind,
+  range: string | null
+): Headers {
+  const headers = new Headers()
+  headers.set(
+    'User-Agent',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+  )
+  headers.set('Accept', kind === 'image' ? 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8' : '*/*')
+  headers.set('Accept-Language', 'zh-CN,zh;q=0.9,en;q=0.8')
+  const referer = refererForRemoteMediaSource(source)
+  if (referer) headers.set('Referer', referer)
+  if (range) headers.set('Range', range)
+  return headers
+}
+
+function refererForRemoteMediaSource(source: string): string | null {
+  try {
+    const host = new URL(source).hostname.toLowerCase()
+    if (
+      host === 'music.163.com' ||
+      host.endsWith('.music.163.com') ||
+      host.endsWith('.126.net') ||
+      host.endsWith('.163.com')
+    ) {
+      return 'https://music.163.com/'
+    }
+  } catch {
+    // ignore parse failures
+  }
+  return null
+}
+
 async function fetchRemoteMediaWithRedirects(
   fetchImpl: RemoteMediaRequestHandlerOptions['fetch'],
   source: string,
   init: { method: string; headers?: HeadersInit }
 ): Promise<Response> {
   let current = source
+  const baseHeaders = new Headers(init.headers)
   for (let hop = 0; hop <= MAX_REMOTE_MEDIA_REDIRECTS; hop += 1) {
+    // Refresh Referer for each hop so edge hosts still look browser-like.
+    const hopHeaders = new Headers(baseHeaders)
+    const hopReferer = refererForRemoteMediaSource(current)
+    if (hopReferer) hopHeaders.set('Referer', hopReferer)
     const response = await fetchImpl(current, {
       method: init.method,
-      headers: init.headers,
+      headers: hopHeaders,
       credentials: 'omit',
       redirect: 'manual'
     })

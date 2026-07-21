@@ -2,15 +2,15 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-test('now playing lyrics expose original and translated lyric source labels', () => {
+test('now playing lyrics do not surface original/translated source path chips', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
 
-  assert.match(source, /const lyricSourceLabel = computed/)
-  assert.match(source, /const translatedLyricSourceLabel = computed/)
+  assert.doesNotMatch(source, /const lyricSourceLabel = computed/)
+  assert.doesNotMatch(source, /const translatedLyricSourceLabel = computed/)
+  assert.doesNotMatch(source, /class="lyric-source-chip"/)
+  assert.doesNotMatch(source, /lyric-source-chips/)
   assert.match(source, /currentTrack\.value\?\.lyricsSource/)
   assert.match(source, /currentTrack\.value\?\.translatedLyricsSource/)
-  assert.match(source, /class="lyric-source-chip"/)
-  assert.match(source, /v-if="lyricSourceLabel"/)
 })
 
 test('visualizer mode does not keep the heavy blurred backdrop mounted', () => {
@@ -34,17 +34,35 @@ test('visualizer mode uses a full viewport stage without changing the regular st
   assert.match(source, /\.stage--visualizer \{[\s\S]*margin: 0/)
 })
 
-test('visualizer close button moves to the top-left titlebar area only in visualizer mode', () => {
+test('visualizer toggle sits top-left with the frosted time-chip style', () => {
   const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
 
   assert.match(source, /:class="\{ 'visualizer-toggle-button--close': viewMode === 'visualizer' \}"/)
-  assert.match(source, /\.visualizer-toggle-button \{[\s\S]*top: 42px[\s\S]*right: 42px/)
+  assert.match(source, /\.visualizer-toggle-button \{[\s\S]*top: 42px[\s\S]*left: 42px/)
+  assert.match(source, /\.visualizer-toggle-button \{[\s\S]*border-radius: 999px/)
+  assert.match(source, /\.visualizer-toggle-button \{[\s\S]*background: rgba\(255, 255, 255, 0\.08\)/)
+  assert.match(source, /\.visualizer-toggle-button \{[\s\S]*border: 1px solid rgba\(255, 255, 255, 0\.1\)/)
   assert.match(source, /\.visualizer-toggle-button--close \{[\s\S]*top: 8px[\s\S]*left: 14px/)
   assert.match(source, /\.visualizer-toggle-button--close \{[\s\S]*right: auto/)
-  assert.match(source, /\.visualizer-toggle-button--close \{[\s\S]*background: transparent/)
-  assert.match(source, /\.visualizer-toggle-button--close:hover \{[\s\S]*background: rgba\(255, 255, 255, 0\.85\)/)
+  assert.match(
+    source,
+    /\.visualizer-toggle-button--close:hover \{[\s\S]*background: rgba\(255, 255, 255, 0\.14\)/
+  )
   assert.doesNotMatch(source, /\.visualizer-toggle-button--close \{[^}]*border-radius: 0/)
   assert.doesNotMatch(source, /title-bar-left-controls/)
+  assert.doesNotMatch(source, /lyric-manage-button/)
+  assert.doesNotMatch(source, /lyric-manager-backdrop/)
+})
+
+test('playbar lyrics section hosts the lyrics manager panel', () => {
+  const sidebar = readFileSync(new URL('./player-bar/HiFiSidebar.vue', import.meta.url), 'utf8')
+  const panel = readFileSync(new URL('./player-bar/LyricsManagerPanel.vue', import.meta.url), 'utf8')
+
+  assert.match(sidebar, /import LyricsManagerPanel from '\.\/LyricsManagerPanel\.vue'/)
+  assert.match(sidebar, /<LyricsManagerPanel \/>/)
+  assert.match(panel, /class="lyric-manager lyric-manager--panel"/)
+  assert.match(panel, /Save lyrics/)
+  assert.match(panel, /Import LRC/)
 })
 
 test('desktop lyrics html exposes lyric source metadata on hover', () => {

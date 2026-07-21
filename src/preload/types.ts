@@ -6,14 +6,6 @@ import type { SleepTimerSettings } from '../shared/sleepTimer.ts'
 
 export type { VersionedDataEnvelope } from '../shared/versionedPersistence.ts'
 export type {
-  OfflineDownloadDocument,
-  OfflineDownloadRecord,
-  OfflineDownloadRequest,
-  OfflinePlayablePathRequest,
-  OfflineDownloadStatus,
-  OfflineStorageSummary
-} from '../shared/offlineDownloads.ts'
-export type {
   LyricsManagementDocument,
   LyricTrackOverride,
   LyricSourcePreference

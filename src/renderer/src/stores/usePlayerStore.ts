@@ -21,6 +21,7 @@ import {
   type DspStereoImageConfig
 } from '../../../shared/dspGraph.ts'
 import { extractDominantColor } from '../utils/colorExtractor'
+import { resolveCover } from '../utils/coverLoader'
 import {
   shouldReuseResolvedStreamUrl,
   shouldUseNativePlaybackTarget
@@ -1355,8 +1356,7 @@ async function syncNativeQueueState(snapshot: NativeQueueStateSnapshot): Promise
             currentIndex: snapshot.currentIndex
           },
           {
-            isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized,
-            getOfflinePlayablePaths: window.api.offline.getPlayablePaths
+            isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized
           }
         ),
       loadQueue: (preparedQueue) =>
@@ -1559,23 +1559,32 @@ function flushPodcastEpisodeProgress(force = false): void {
 }
 
 watch(
-  [() => currentTrack.value?.cover, () => appSettings.value?.useCoverTheme],
-  async ([cover, useCoverTheme]) => {
+  [
+    () => currentTrack.value?.cover,
+    () => currentTrack.value?.coverSource,
+    () => appSettings.value?.useCoverTheme
+  ],
+  async ([cover, coverSource, useCoverTheme]) => {
     const requestId = ++dominantColorRequestId
     if (!useCoverTheme) {
       dominantColor.value = '#7c4dff'
       return
     }
 
-    if (cover) {
-      // cover:// and http(s): URLs can be loaded directly by Image
-      const color = await extractDominantColor(cover)
+    if (cover || coverSource) {
+      const displayCover = await resolveCover(cover, coverSource)
       if (
-        requestId === dominantColorRequestId &&
-        currentTrack.value?.cover === cover &&
-        appSettings.value?.useCoverTheme
+        requestId !== dominantColorRequestId ||
+        currentTrack.value?.cover !== cover ||
+        currentTrack.value?.coverSource !== coverSource ||
+        !appSettings.value?.useCoverTheme
       ) {
-        dominantColor.value = color
+        return
+      }
+      if (displayCover) {
+        dominantColor.value = await extractDominantColor(displayCover)
+      } else {
+        dominantColor.value = '#1a73e8'
       }
     } else {
       dominantColor.value = '#1a73e8'
@@ -2022,37 +2031,40 @@ async function resolvePlayTarget(track: Track): Promise<string> {
     return track.filePath
   }
 
-  // Live radio has no finite pin; always stream.
+  // Live radio always streams.
   if (source === 'radio') {
     const direct = track.streamUrl || track.filePath
     if (direct && /^https?:\/\//i.test(direct)) return direct
     throw new Error('Unable to resolve radio stream URL')
   }
 
-  // Podcast: completed offline pin wins; otherwise use the episode media URL.
+  // Podcast episodes stream from the feed media URL.
   if (source === 'podcast') {
-    const offlinePath = await window.api.offline.getPlayablePath('podcast', track.id)
-    if (offlinePath) {
-      track.offlinePath = offlinePath
-      return offlinePath
-    }
     const direct = track.streamUrl || track.filePath
     if (direct && /^https?:\/\//i.test(direct)) return direct
     throw new Error('Unable to resolve podcast stream URL')
   }
 
-  // A completed user pin is integrity-checked by the main process on every
-  // lookup.  It wins over a transient remote URL, then normal provider
-  // resolution remains the explicit online fallback.
-  const offlinePath = await window.api.offline.getPlayablePath(source, track.id)
-  if (offlinePath) {
-    track.offlinePath = offlinePath
-    return offlinePath
-  }
-
   const ncmPlaybackQuality = appSettings.value.ncmPlaybackQuality
+  // Do not reuse a remote NCM URL when a managed disk cache may already exist;
+  // the provider is the authority for cache-hit local paths.
   const canReuseNcmStream = source !== 'ncm' || track.streamQuality === ncmPlaybackQuality
-  if (track.streamUrl && shouldReuseResolvedStreamUrl(source) && canReuseNcmStream) {
+  if (
+    source !== 'ncm' &&
+    track.streamUrl &&
+    shouldReuseResolvedStreamUrl(source) &&
+    canReuseNcmStream
+  ) {
+    return track.streamUrl
+  }
+  if (
+    source === 'ncm' &&
+    track.streamUrl &&
+    shouldReuseResolvedStreamUrl(source) &&
+    canReuseNcmStream &&
+    !/^https?:\/\//i.test(track.streamUrl)
+  ) {
+    // Local cache path previously returned by the provider.
     return track.streamUrl
   }
 
@@ -2615,8 +2627,7 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
             currentIndex: queueIndex.value
           },
           {
-            isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized,
-            getOfflinePlayablePaths: window.api.offline.getPlayablePaths
+            isAudioFileAuthorized: window.api.fs.isAudioFileAuthorized
           }
         )
         if (!preparedQueue) {
@@ -3437,11 +3448,11 @@ function cloneTrackForPlaybackSession(track: Track): Track {
     duration: track.duration,
     size: track.size,
     cover: track.cover,
+    coverSource: track.coverSource ?? null,
     lyrics: null,
     source: track.source,
     ncmSongId: track.ncmSongId,
     streamUrl: source === 'local' ? track.streamUrl : null,
-    offlinePath: track.offlinePath ?? null,
     format: track.format,
     sampleRate: track.sampleRate,
     bitrate: track.bitrate,
@@ -3579,10 +3590,10 @@ async function castCurrentTrackToDevice(usn: string): Promise<void> {
   const remoteApi = window.api?.remote
   if (!remoteApi?.castToDevice) throw new Error('远程控制 API 不可用')
 
-  // Prefer a resolved offline pin / local path when available; otherwise
-  // resolve the live stream URL (podcast / radio / provider) and cast via
-  // the remote media token proxy. Provider streams may be twilight-media://
-  // grants — main resolves those to the real upstream.
+  // Prefer a resolved local library / managed-cache path when available;
+  // otherwise resolve the live stream URL (podcast / radio / provider) and
+  // cast via the remote media token proxy. Provider streams may be
+  // twilight-media:// grants — main resolves those to the real upstream.
   let filePath: string | undefined
   let mediaUrl: string | undefined
   const classifyCastTarget = (target: string): void => {
@@ -3606,7 +3617,7 @@ async function castCurrentTrackToDevice(usn: string): Promise<void> {
     // Fall through to direct fields when resolvePlayTarget fails.
   }
   if (!filePath && !mediaUrl) {
-    classifyCastTarget(track.offlinePath || track.streamUrl || track.filePath || '')
+    classifyCastTarget(track.streamUrl || track.filePath || '')
   }
   if (!filePath && !mediaUrl) {
     throw new Error('当前曲目不支持投送（缺少本地路径或流地址）')

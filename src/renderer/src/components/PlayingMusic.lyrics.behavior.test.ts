@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url)
 const execFileAsync = promisify(execFile)
 const workspaceRoot = resolve(fileURLToPath(new URL('../../../../', import.meta.url)))
 
-test('actual PlayingMusic UI manages a provider track without lyrics and surfaces persistence and dialog results', async () => {
+test('playbar lyrics manager panel manages provider tracks and projects into PlayingMusic', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-playing-music-lyrics-'))
   try {
     const entryPath = join(directory, 'playing-music-lyrics-entry.ts')
@@ -48,7 +48,7 @@ test('actual PlayingMusic UI manages a provider track without lyrics and surface
       }
     })
     const bundleName = (await readdir(bundleDirectory)).find((name) => name.endsWith('.iife.js'))
-    assert.ok(bundleName, 'Vite should bundle the real PlayingMusic component')
+    assert.ok(bundleName, 'Vite should bundle the real PlayingMusic + LyricsManagerPanel components')
     await writeFile(htmlPath, runtimeHtml(bundleName), 'utf8')
     await writeFile(runnerPath, electronRunnerSource(), 'utf8')
 
@@ -69,6 +69,10 @@ function runtimeEntrySource(): string {
     workspaceRoot,
     'src/renderer/src/components/PlayingMusic.vue'
   ).replaceAll('\\', '/')
+  const panelPath = join(
+    workspaceRoot,
+    'src/renderer/src/components/player-bar/LyricsManagerPanel.vue'
+  ).replaceAll('\\', '/')
   const playerStorePath = join(
     workspaceRoot,
     'src/renderer/src/stores/usePlayerStore.ts'
@@ -76,6 +80,7 @@ function runtimeEntrySource(): string {
   return `import { createApp, h, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import PlayingMusic from ${JSON.stringify(componentPath)}
+import LyricsManagerPanel from ${JSON.stringify(panelPath)}
 import { usePlayerStore } from ${JSON.stringify(playerStorePath)}
 
 function expect(condition, message) {
@@ -93,8 +98,8 @@ const waitFor = async (predicate, message) => {
     await tick()
     if (predicate()) return
   }
-  const importControl = [...document.querySelectorAll('.lyric-manager--dialog button')].find((item) => item.textContent.includes('Import'))
-  const originalEditor = document.querySelector('.lyric-manager--dialog textarea')
+  const importControl = [...document.querySelectorAll('.lyric-manager--panel button')].find((item) => item.textContent.includes('Import'))
+  const originalEditor = document.querySelector('.lyric-manager--panel textarea')
   throw new Error(message + '; importCalls=' + window.__lyricsFixture?.importCalls + '; importDisabled=' + importControl?.disabled + '; original=' + originalEditor?.value)
 }
 
@@ -117,26 +122,29 @@ window.runPlayingMusicLyricsRuntime = async () => {
   player.currentTrack.value = structuredClone(track)
   player.queue.value = [structuredClone(track)]
 
-  createApp({ render: () => h(PlayingMusic) }).use(pinia).mount('#app')
+  createApp({
+    render: () => h('div', [
+      h(PlayingMusic),
+      h(LyricsManagerPanel)
+    ])
+  }).use(pinia).mount('#app')
   await tick()
   const beforeCurrent = JSON.stringify(player.currentTrack.value)
   const beforeQueue = JSON.stringify(player.queue.value)
 
   expect(document.querySelector('.layout--single'), 'provider track without lyrics should use the single-column layout')
-  const coverEntry = document.querySelector('.lyric-manage-button--cover')
-  expect(coverEntry, 'provider track without lyrics has no lyrics-management entry')
-  coverEntry.click()
-  await waitFor(() => document.querySelector('.lyric-manager--dialog'), 'lyrics manager did not open')
+  expect(!document.querySelector('.lyric-manage-button'), 'now-playing must not surface a Lyrics entry button')
+  const panel = document.querySelector('.lyric-manager--panel')
+  expect(panel, 'playbar lyrics manager panel is mounted')
 
-  const dialog = document.querySelector('.lyric-manager--dialog')
-  const buttons = () => [...dialog.querySelectorAll('button')]
+  const buttons = () => [...panel.querySelectorAll('button')]
   const button = (label) => {
     const found = buttons().find((item) => item.textContent.trim() === label)
     if (!found) throw new Error('missing button ' + label + '; available: ' + buttons().map((item) => item.textContent.trim()).join(' | '))
     return found
   }
-  const textareas = dialog.querySelectorAll('textarea')
-  const source = dialog.querySelector('select')
+  const textareas = panel.querySelectorAll('textarea')
+  const source = panel.querySelector('select')
   const importButton = button('Import LRC')
   const saveLrcButton = button('Save LRC')
 
@@ -208,10 +216,17 @@ window.runPlayingMusicLyricsRuntime = async () => {
       buttons().some((item) => item.textContent.trim() === 'Save LRC'),
     'second save cancel did not complete'
   )
-  expect(!document.querySelector('.lyric-manager-notice'), 'save cancel retained a stale success notice')
+  expect(
+    !document.querySelector('.lyric-manager-notice')?.textContent.includes('edited.lrc'),
+    'save cancel retained a stale success notice'
+  )
 
   button('Save lyrics').click()
-  await waitFor(() => !document.querySelector('.lyric-manager--dialog'), 'Save lyrics did not close after persistence')
+  await waitFor(
+    () => window.__lyricsFixture.document.tracks[track.id]?.original === '[00:03.00]Imported original',
+    'Save lyrics did not persist the draft'
+  )
+  expect(document.querySelector('.lyric-manager--panel'), 'manager panel remains available after save')
   const stored = window.__lyricsFixture.document.tracks[track.id]
   expect(stored.source === 'manual', 'manual source was not persisted')
   expect(stored.original === '[00:03.00]Imported original', 'edited original was not persisted')
@@ -281,7 +296,8 @@ window.api = {
       window.__lyricsFixture.lastSavedContents = contents
       return window.__lyricsFixture.saveResult
     },
-    getLyrics: async () => null
+    getLyrics: async () => null,
+    searchOnlineLyrics: async () => ({ candidates: [] })
   },
   providers: { list: async () => [], call: async () => null }
 }

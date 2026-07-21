@@ -38,6 +38,7 @@ export function toPlaybackQueueSnapshot(track: Track): Track {
     duration: track.duration,
     size: track.size,
     cover: track.cover,
+    coverSource: track.coverSource ?? null,
     lyrics: null,
     source: track.source,
     ncmSongId: track.ncmSongId,

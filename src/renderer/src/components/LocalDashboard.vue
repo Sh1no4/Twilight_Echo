@@ -110,20 +110,23 @@ interface RankedStat {
   title: string
   artist: string
   cover: string | null
+  coverSource: string | null
   track: Track | null
 }
 
 const rankedStats = computed<RankedStat[]>(() => {
   const resolveRecentTrack = createUnifiedRecentTrackResolver(tracks.value)
   return getMostListenedTracks(TOP_TRACK_COUNT).map((stat) => {
+    const track = resolveRecentTrack(stat) ?? stat.track ?? null
     return {
       id: stat.id,
       seconds: stat.seconds,
       plays: stat.plays,
       title: stat.title,
       artist: stat.artist,
-      cover: stat.cover ?? null,
-      track: resolveRecentTrack(stat) ?? stat.track ?? null
+      cover: track?.cover ?? stat.cover ?? null,
+      coverSource: track?.coverSource ?? stat.coverSource ?? null,
+      track
     }
   })
 })
@@ -148,7 +151,10 @@ const heroIsCurrent = computed(
   () => !!currentTrack.value && heroTrack.value?.id === currentTrack.value.id
 )
 
-const heroCover = useCover(computed(() => heroTrack.value?.cover ?? null))
+const heroCover = useCover(
+  computed(() => heroTrack.value?.cover ?? null),
+  computed(() => heroTrack.value?.coverSource ?? null)
+)
 const heroCoverSrc = computed(() => heroCover.value || DEFAULT_COVER)
 const nowPlayingTitle = computed(() => currentTrack.value?.title || heroTrack.value?.title)
 const progressWidth = computed(() => `${Math.min(100, Math.max(0, progress.value))}%`)
@@ -179,6 +185,7 @@ const topTracks = computed<RankedStat[]>(() => {
     title: track.title,
     artist: track.artist,
     cover: track.cover,
+    coverSource: track.coverSource ?? null,
     track
   }))
 })
@@ -1084,7 +1091,12 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
               @click="playDashboardTrack(track)"
             >
               <span class="track-cover">
-                <CoverImg :cover="track.cover" :fallback="DEFAULT_COVER" :alt="track.title" />
+                <CoverImg
+                  :cover="track.cover"
+                  :cover-source="track.coverSource"
+                  :fallback="DEFAULT_COVER"
+                  :alt="track.title"
+                />
                 <span v-if="track.format" class="format-badge">{{
                   track.format.toUpperCase()
                 }}</span>
@@ -1130,6 +1142,7 @@ function onDspRouteDialogKeydown(event: KeyboardEvent): void {
                   }}</span>
                   <CoverImg
                     :cover="entry.track?.cover || entry.cover"
+                    :cover-source="entry.track?.coverSource || entry.coverSource"
                     :fallback="DEFAULT_COVER"
                     :alt="entry.title"
                     class="top-cover"

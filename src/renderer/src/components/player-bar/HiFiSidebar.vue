@@ -32,6 +32,7 @@ import type {
 import type { LyricSource, Track } from '../../types/music'
 import type { DlnaDeviceInfo } from '../../../../shared/remoteControl.ts'
 import type { PlaybackBookmark } from '../../../../shared/playbackBookmarks.ts'
+import LyricsManagerPanel from './LyricsManagerPanel.vue'
 
 export type StatusTone = 'success' | 'warning' | 'muted'
 
@@ -1435,6 +1436,14 @@ function resetStereoImage(): void {
           <p class="hifi-reason subtle">
             歌词来源会优先使用内嵌 / 本地 LRC，缺失时再回落 Provider。重新匹配不会改动音频本身。
           </p>
+        </section>
+
+        <section class="hifi-section">
+          <div class="hifi-section-label">
+            <span><em>02</em>Lyrics Manager</span>
+            <span class="hifi-section-hint">偏移 · 导入 · 编辑</span>
+          </div>
+          <LyricsManagerPanel />
         </section>
 
         <section class="hifi-section hifi-footer-section">

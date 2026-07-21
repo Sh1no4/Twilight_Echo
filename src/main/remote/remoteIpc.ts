@@ -404,7 +404,7 @@ export function setupRemoteIpc(): void {
 
         if (hasFile) {
           const filePath = normalizeIpcString(payload?.filePath, 'media file path', 4096)
-          // Only stream authorized library/cache/offline files.
+          // Only stream authorized library/managed-cache files.
           const authorizedPath = await resolveAuthorizedAudioFile(filePath)
           castUrl = instance.issueMediaUrl(authorizedPath, title)
           didlContentType = contentTypeHint

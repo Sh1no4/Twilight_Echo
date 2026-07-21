@@ -64,7 +64,6 @@ pnpm run benchmark:duplicate-detection:ci -- --output output/release-evidence/du
 pnpm run test:playback-routing
 pnpm run test:playlist-lifecycle
 pnpm run test:lyrics-management
-pnpm run test:offline-downloads
 pnpm run test:cue
 pnpm run test:local-perf
 pnpm run test:dsp-graph
@@ -95,10 +94,8 @@ Electron/Vue/Pinia DOM. It covers all three export downloads, pre-read import li
 import/cover feedback, rename/copy/reorder/batch move/unique relocation, and authoritative CAS
 conflict recovery. `test:lyrics-management` covers import and save-dialog validation, atomic LRC replacement and backup
 recovery, versioned CAS persistence, source-selection races, manual three-track projection, and the
-real Electron/Vue lyrics-management UI. `test:offline-downloads` covers the download service,
-authorization boundary, native-queue integrity fallback, and the real Electron download-management
-UI. All three scripts are part of `test:no-real-device`; the Ubuntu required job runs their Electron UI
-tests under an explicitly installed `xvfb`/`xauth` virtual display.
+real Electron/Vue lyrics-management UI. Both scripts are part of `test:no-real-device`; the Ubuntu
+required job runs their Electron UI tests under an explicitly installed `xvfb`/`xauth` virtual display.
 
 `test:cue` covers strict supported-encoding detection, size/path and single-source constraints,
 incremental CUE dependency identity, persisted range validation, logical seek/queue preparation,

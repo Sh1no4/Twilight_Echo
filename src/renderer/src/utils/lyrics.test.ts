@@ -87,3 +87,39 @@ test('parseTimedLrc parses NetEase YRC word lyrics', () => {
   assert.equal(lines[0]?.words?.length, 3)
   assert.equal(lines[0]?.words?.[1]?.endTime, 10.8)
 })
+
+test('parseTimedLrc flattens NetEase lyric/new JSON credit lines into readable text', () => {
+  const payload = [
+    '{"t":-1,"c":[{"tx":"作词: "},{"tx":"ACO"}]}',
+    '{"t":-1,"c":[{"tx":"作曲: "},{"tx":"ACO"}]}',
+    '[10000,2000](10000,400,0)バケット(10400,400,0)ソーダ'
+  ].join('\n')
+
+  const lines = parseTimedLrc(payload)
+  assert.equal(lines[0]?.text, '作词: ACO')
+  assert.equal(lines[1]?.text, '作曲: ACO')
+  assert.equal(lines[2]?.text, 'バケットソーダ')
+  assert.equal(lines[2]?.time, 10)
+  assert.ok(!lines.some((line) => line.text.includes('"tx"')))
+})
+
+test('parsePlainLyrics flattens NetEase JSON credit lines when lyrics are untimed', () => {
+  assert.deepEqual(
+    parsePlainLyrics(
+      '{"t":-1,"c":[{"tx":"作词: "},{"tx":"ACO"}]}\n{"t":-1,"c":[{"tx":"作曲: "},{"tx":"ACO"}]}'
+    ),
+    ['作词: ACO', '作曲: ACO']
+  )
+})
+
+test('buildLyricLines shows NetEase credits without raw JSON when only metadata is present', () => {
+  const lines = buildLyricLines(
+    '{"t":-1,"c":[{"tx":"作词: "},{"tx":"ACO"}]}\n{"t":-1,"c":[{"tx":"作曲: "},{"tx":"ACO"}]}',
+    null
+  )
+  assert.deepEqual(
+    lines.map((line) => line.text),
+    ['作词: ACO', '作曲: ACO']
+  )
+  assert.ok(!lines.some((line) => line.text.includes('{"t"')))
+})

@@ -33,8 +33,7 @@ test('uses only the resolved current stream when a restored companion is unautho
     currentTrack: current,
     currentTarget: 'https://media.example/current.flac',
     currentIndex: 1,
-    isAudioFileAuthorized: async (filePath) => filePath !== staleLocal.filePath,
-    getOfflinePlayablePaths: async (requests) => requests.map(() => null)
+    isAudioFileAuthorized: async (filePath) => filePath !== staleLocal.filePath
   })
 
   assert.deepEqual(prepared, {
@@ -63,8 +62,7 @@ test('preserves a fully authorized local queue and its renderer index', async ()
     currentTrack: second,
     currentTarget: second.filePath,
     currentIndex: 1,
-    isAudioFileAuthorized: async () => true,
-    getOfflinePlayablePaths: async (requests) => requests.map(() => null)
+    isAudioFileAuthorized: async () => true
   })
 
   assert.equal(prepared?.delegated, true)
@@ -84,8 +82,7 @@ test('uses a singleton when a provider companion has not resolved its placeholde
     currentTrack: current,
     currentTarget: 'https://media.example/current.flac',
     currentIndex: 0,
-    isAudioFileAuthorized: async () => true,
-    getOfflinePlayablePaths: async (requests) => requests.map(() => null)
+    isAudioFileAuthorized: async () => true
   })
 
   assert.equal(prepared?.delegated, false)
@@ -93,67 +90,54 @@ test('uses a singleton when a provider companion has not resolved its placeholde
   assert.equal(prepared?.items[0].source, 'https://media.example/current.flac')
 })
 
-test('batch-resolves every provider queue item to a main-verified pin before native delegation', async () => {
+test('accepts an authorized managed-cache path as the current provider target', async () => {
+  const cached = 'D:\\Cache\\ncm-cache\\123.flac'
   const current = createTrack({
     id: 'ncm:current',
     filePath: 'ncm:current',
     source: 'ncm',
-    streamUrl: null,
-    offlinePath: 'D:\\Untrusted\\stale-current.flac'
+    streamUrl: null
   })
   const next = createTrack({
     id: 'ncm:next',
     filePath: 'ncm:next',
     source: 'ncm',
-    streamUrl: null,
-    offlinePath: 'D:\\Untrusted\\stale-next.flac'
+    streamUrl: 'https://media.example/next.flac'
   })
-  const requests: Array<{ providerId: string; trackId: string }> = []
   const prepared = await prepareNativeQueue({
     queue: [current, next],
     currentTrack: current,
-    currentTarget: 'ncm:current',
+    currentTarget: cached,
     currentIndex: 0,
-    isAudioFileAuthorized: async (path) => path.startsWith('D:\\Pins\\'),
-    getOfflinePlayablePaths: async (batch) => {
-      requests.push(...batch)
-      return ['D:\\Pins\\current.flac', 'D:\\Pins\\next.flac']
-    }
+    isAudioFileAuthorized: async (path) => path === cached
   })
 
-  assert.deepEqual(requests, [
-    { providerId: 'ncm', trackId: 'ncm:current' },
-    { providerId: 'ncm', trackId: 'ncm:next' }
-  ])
   assert.equal(prepared?.delegated, true)
   assert.deepEqual(
     prepared?.items.map((item) => item.source),
-    ['D:\\Pins\\current.flac', 'D:\\Pins\\next.flac']
+    [cached, next.streamUrl]
   )
 })
 
-test('ignores renderer-cached offlinePath and uses the online fallback when main rejects a pin', async () => {
+test('uses online stream targets for a fully resolved provider queue', async () => {
   const current = createTrack({
     id: 'ncm:current',
     filePath: 'ncm:current',
     source: 'ncm',
-    streamUrl: 'https://media.example/current.flac',
-    offlinePath: 'D:\\Pins\\tampered-current.flac'
+    streamUrl: 'https://media.example/current.flac'
   })
   const next = createTrack({
     id: 'ncm:next',
     filePath: 'ncm:next',
     source: 'ncm',
-    streamUrl: 'https://media.example/next.flac',
-    offlinePath: 'D:\\Pins\\expired-next.flac'
+    streamUrl: 'https://media.example/next.flac'
   })
   const prepared = await prepareNativeQueue({
     queue: [current, next],
     currentTrack: current,
     currentTarget: current.streamUrl!,
     currentIndex: 0,
-    isAudioFileAuthorized: async () => true,
-    getOfflinePlayablePaths: async () => [null, null]
+    isAudioFileAuthorized: async () => true
   })
 
   assert.equal(prepared?.delegated, true)
@@ -163,33 +147,22 @@ test('ignores renderer-cached offlinePath and uses the online fallback when main
   )
 })
 
-test('rejects a renderer-supplied provider local currentTarget when main rejects the pin', async () => {
+test('rejects an unauthorized provider local currentTarget', async () => {
   const current = createTrack({
     id: 'ncm:current',
     filePath: 'ncm:current',
     source: 'ncm',
-    streamUrl: null,
-    offlinePath: 'D:\\Pins\\renderer-current.flac'
+    streamUrl: null
   })
-  const authorizedPaths: string[] = []
   const prepared = await prepareNativeQueue({
     queue: [current],
     currentTrack: current,
-    currentTarget: current.offlinePath!,
+    currentTarget: 'D:\\Untrusted\\stale.flac',
     currentIndex: 0,
-    isAudioFileAuthorized: async (path) => {
-      authorizedPaths.push(path)
-      return true
-    },
-    getOfflinePlayablePaths: async () => [null]
+    isAudioFileAuthorized: async () => false
   })
 
   assert.equal(prepared, null)
-  assert.deepEqual(
-    authorizedPaths,
-    [],
-    'renderer paths must not reach the generic local-file authorization boundary for provider pins'
-  )
 })
 
 test('rejects an unsafe current target instead of issuing a native queue request', async () => {
@@ -200,8 +173,7 @@ test('rejects an unsafe current target instead of issuing a native queue request
     currentTrack: current,
     currentTarget: 'https://user:secret@media.example/current.flac',
     currentIndex: 0,
-    isAudioFileAuthorized: async () => true,
-    getOfflinePlayablePaths: async (requests) => requests.map(() => null)
+    isAudioFileAuthorized: async () => true
   })
 
   assert.equal(prepared, null)
@@ -227,8 +199,7 @@ test('accepts twilight-media grant URLs as native playback targets', async () =>
     currentTrack: current,
     currentTarget: grant,
     currentIndex: 0,
-    isAudioFileAuthorized: async () => true,
-    getOfflinePlayablePaths: async (requests) => requests.map(() => null)
+    isAudioFileAuthorized: async () => true
   })
 
   assert.equal(prepared?.delegated, true)
@@ -249,8 +220,7 @@ test('uses the current-only queue when companion authorization throws', async ()
     currentIndex: 0,
     isAudioFileAuthorized: async () => {
       throw new Error('IPC unavailable')
-    },
-    getOfflinePlayablePaths: async (requests) => requests.map(() => null)
+    }
   })
 
   assert.equal(prepared?.delegated, false)
@@ -275,8 +245,7 @@ test('forwards library ReplayGain and R128 tags into native queue items', async 
     currentTrack: track,
     currentTarget: track.filePath,
     currentIndex: 0,
-    isAudioFileAuthorized: async () => true,
-    getOfflinePlayablePaths: async (requests) => requests.map(() => null)
+    isAudioFileAuthorized: async () => true
   })
 
   assert.equal(prepared?.items.length, 1)
@@ -304,8 +273,7 @@ test('keeps CUE tracks on the referenced file while preserving distinct native r
     currentTrack: second,
     currentTarget: second.filePath,
     currentIndex: 1,
-    isAudioFileAuthorized: async () => true,
-    getOfflinePlayablePaths: async (requests) => requests.map(() => null)
+    isAudioFileAuthorized: async () => true
   })
   assert.equal(prepared?.delegated, true)
   assert.deepEqual(

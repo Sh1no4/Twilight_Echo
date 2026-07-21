@@ -60,6 +60,11 @@ export interface Track {
   duration: number
   size: number
   cover: string | null
+  /**
+   * Durable remote cover origin (http/https). When `cover` is a twilight-media
+   * grant that dies after process restart, display code re-grants from this.
+   */
+  coverSource?: string | null
   lyrics: string | null
   translatedLyrics?: string | null
   romanizedLyrics?: string | null
@@ -71,8 +76,6 @@ export interface Track {
   ncmSongId?: number
   streamUrl?: string | null
   streamQuality?: NcmPlaybackQuality
-  /** Main-process verified path for an explicitly user-pinned provider track. */
-  offlinePath?: string | null
   format?: string
   sampleRate?: number
   bitrate?: number

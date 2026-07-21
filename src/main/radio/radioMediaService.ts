@@ -276,8 +276,7 @@ export class RadioMediaService {
   }
 
   /**
-   * Resolve an episode that belongs to a saved subscription. Used by offline pin
-   * so the downloader only ever sees media URLs already present in the feed cache.
+   * Resolve an episode that belongs to a saved subscription.
    */
   async resolveSubscribedEpisode(
     subscriptionId: string,

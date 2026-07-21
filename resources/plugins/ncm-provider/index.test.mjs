@@ -200,6 +200,56 @@ test('protocol-relative stream URLs are normalized to https', async () => {
   }
 })
 
+test('prefers a completed disk cache path and skips the network', async () => {
+  const cachedPath = 'D:\\Cache\\ncm-cache\\90.flac'
+  let networkCalls = 0
+  let registeredProvider = null
+  await ncmProvider.activate({
+    twilight: {
+      internal: {
+        ncm: {
+          request: async () => {
+            networkCalls += 1
+            throw new Error('network should not be used on cache hit')
+          },
+          officialLogin: async () => 'MUSIC_U=test;',
+          getCachedSong: async (songId) => (Number(songId) === 90 ? cachedPath : null),
+          cacheSong: async () => null
+        }
+      },
+      providers: {
+        register: async (provider) => {
+          registeredProvider = provider
+        }
+      }
+    },
+    settings: {
+      get: async (key) =>
+        key == null ? { cookie: 'MUSIC_U=test;' } : key === 'cookie' ? 'MUSIC_U=test;' : undefined,
+      set: async () => undefined,
+      delete: async () => undefined
+    },
+    logger: {
+      debug: () => undefined,
+      info: () => undefined,
+      warn: () => undefined,
+      error: () => undefined
+    }
+  })
+  assert.ok(registeredProvider)
+
+  try {
+    assert.equal(await registeredProvider.getPlaybackUrl({ id: 'ncm:90' }), cachedPath)
+    assert.equal(networkCalls, 0)
+    assert.equal(
+      await registeredProvider.getPlaybackUrl({ id: 'ncm:90' }, { force: true }),
+      null
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('artist songs keep paging when a short page reports more items', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {

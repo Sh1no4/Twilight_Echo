@@ -29,7 +29,6 @@ import { setupLoudnessAnalysisIpc } from '../audio/loudnessIpc'
 import { setupOpraIpc } from '../ipc/opra'
 import { setupPluginIpc } from '../ipc/plugins'
 import { setupDataIpc } from '../ipc/data'
-import { setupOfflineDownloadIpc, destroyOfflineDownloadIpc } from '../offline/offlineDownloadIpc.ts'
 import { setupRadioMediaIpc, destroyRadioMediaIpc } from '../radio/radioMediaIpc.ts'
 import { setupRemoteIpc, destroyRemoteIpc } from '../remote/remoteIpc.ts'
 import { installElectronSecurity } from '../security/electronSecurity.ts'
@@ -208,7 +207,6 @@ export function startApp(): void {
       setupBpmAnalysisIpc()
       setupLoudnessAnalysisIpc()
       setupNcmIpc()
-      await setupOfflineDownloadIpc()
       setupRadioMediaIpc()
       setupRemoteIpc()
       setupOpraIpc()
@@ -265,7 +263,6 @@ export function startApp(): void {
       runtime.bpmAnalysisManager = null
       runtime.loudnessAnalysisManager = null
       runtime.pluginManager = null
-      destroyOfflineDownloadIpc()
       destroyRadioMediaIpc()
       void destroyRemoteIpc()
       if (runtime.ncmServer) {

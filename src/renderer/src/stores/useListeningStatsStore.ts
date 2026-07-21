@@ -16,6 +16,8 @@ export interface ListeningTrackStat {
   title: string
   artist: string
   cover: string | null
+  /** Durable remote cover origin for re-granting expired twilight-media handles. */
+  coverSource?: string | null
   sourceIds?: ListeningTrackSourceId[]
   track?: Track
 }
@@ -35,6 +37,7 @@ export interface ListeningArtistStat {
   trackCount: number
   lastPlayed: number
   cover: string | null
+  coverSource?: string | null
   sourceIds: string[]
 }
 
@@ -130,6 +133,12 @@ function normalizeTrackStats(value: Record<string, unknown>): Record<string, Lis
       title: typeof raw.title === 'string' ? raw.title : 'Unknown Track',
       artist: typeof raw.artist === 'string' ? raw.artist : 'Unknown Artist',
       cover: typeof raw.cover === 'string' && raw.cover ? raw.cover : null,
+      coverSource:
+        typeof raw.coverSource === 'string' && raw.coverSource
+          ? raw.coverSource
+          : typeof raw.cover === 'string' && /^https?:\/\//i.test(raw.cover)
+            ? raw.cover
+            : null,
       sourceIds: Array.isArray(raw.sourceIds) ? normalizeSourceIds(raw.sourceIds) : undefined,
       track: isTrackSnapshot(raw.track) ? raw.track : undefined
     }
@@ -244,7 +253,7 @@ function recordListening(track: Track, seconds: number, timestamp: number): void
       completions: previous.completions,
       title: track.title || previous.title,
       artist: track.artist || previous.artist,
-      cover: track.cover || previous.cover,
+      ...pickCoverFields(track, previous),
       sourceIds: upsertSourceId(previous.sourceIds, track),
       track: cloneTrack(track)
     }
@@ -287,7 +296,7 @@ function recordPlaybackOutcome(
       completions: previous.completions + (outcome === 'completion' ? 1 : 0),
       title: track.title || previous.title,
       artist: track.artist || previous.artist,
-      cover: track.cover || previous.cover,
+      ...pickCoverFields(track, previous),
       sourceIds: upsertSourceId(previous.sourceIds, track),
       track: cloneTrack(track)
     }
@@ -312,6 +321,7 @@ function recordPlaybackTransition({
 }
 
 function createEmptyTrackStat(track: Track): ListeningTrackStat {
+  const coverFields = pickCoverFields(track)
   return {
     seconds: 0,
     plays: 0,
@@ -320,8 +330,34 @@ function createEmptyTrackStat(track: Track): ListeningTrackStat {
     completions: 0,
     title: track.title,
     artist: track.artist,
-    cover: track.cover,
+    cover: coverFields.cover,
+    coverSource: coverFields.coverSource,
     sourceIds: []
+  }
+}
+
+/** Prefer a durable remote origin so dashboard covers survive grant expiry. */
+function pickCoverFields(
+  track: Track,
+  previous?: ListeningTrackStat
+): { cover: string | null; coverSource: string | null } {
+  const nextSource =
+    (typeof track.coverSource === 'string' && track.coverSource.trim()) ||
+    (typeof track.cover === 'string' && /^https?:\/\//i.test(track.cover.trim())
+      ? track.cover.trim()
+      : '') ||
+    (typeof previous?.coverSource === 'string' && previous.coverSource.trim()) ||
+    (typeof previous?.cover === 'string' && /^https?:\/\//i.test(previous.cover.trim())
+      ? previous.cover.trim()
+      : '') ||
+    ''
+  const nextCover =
+    (typeof track.cover === 'string' && track.cover.trim()) ||
+    (typeof previous?.cover === 'string' && previous.cover.trim()) ||
+    ''
+  return {
+    cover: nextCover || null,
+    coverSource: nextSource || null
   }
 }
 
@@ -362,6 +398,7 @@ function cloneTrack(track: Track): Track {
     duration: track.duration,
     size: track.size,
     cover: track.cover,
+    coverSource: track.coverSource ?? null,
     lyrics: null,
     source: track.source,
     ncmSongId: track.ncmSongId,
@@ -556,6 +593,7 @@ export function getTopArtists(limit = 50): ListeningArtistStat[] {
         trackCount: 1,
         lastPlayed: stat.lastPlayed,
         cover: stat.cover,
+        coverSource: stat.coverSource ?? null,
         sourceIds: [...sourceIds]
       })
       continue
@@ -569,6 +607,7 @@ export function getTopArtists(limit = 50): ListeningArtistStat[] {
       previous.name = stat.artist
       previous.lastPlayed = stat.lastPlayed
       previous.cover = stat.cover || previous.cover
+      previous.coverSource = stat.coverSource || previous.coverSource
     }
     for (const sourceId of sourceIds) {
       if (!previous.sourceIds.includes(sourceId)) previous.sourceIds.push(sourceId)
