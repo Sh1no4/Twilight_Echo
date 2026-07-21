@@ -26,8 +26,10 @@ const props = defineProps<{
   showSocialStats?: boolean
   showFeatureCards?: boolean
   allowPinPlaylists?: boolean
+  allowPlaylistMutations?: boolean
   pinnedPlaylistIds?: Array<string | number>
   pinningPlaylistId?: string | number | null
+  deletingPlaylistId?: string | number | null
   availableProviders?: ProviderOption[]
   activeProvider?: string
 }>()
@@ -38,6 +40,8 @@ const emit = defineEmits<{
   playLikedSongs: []
   openPlaylist: [playlist: MediaProviderPlaylistSummary]
   togglePinnedPlaylist: [playlist: MediaProviderPlaylistSummary]
+  createPlaylist: []
+  deletePlaylist: [playlist: MediaProviderPlaylistSummary]
   openRecent: []
   openRanking: []
   switchProvider: [id: string]
@@ -128,6 +132,18 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
   if (event.key !== 'Enter' && event.key !== ' ') return
   event.preventDefault()
   emit('openPlaylist', playlist)
+}
+
+function canDeletePlaylist(): boolean {
+  return props.allowPlaylistMutations === true
+}
+
+function isPlaylistDeleting(playlist: MediaProviderPlaylistSummary): boolean {
+  return String(props.deletingPlaylistId ?? '') === playlistId(playlist)
+}
+
+function deletePlaylistLabel(playlist: MediaProviderPlaylistSummary): string {
+  return playlist.owned === false ? '取消收藏歌单' : '删除歌单'
 }
 </script>
 
@@ -285,6 +301,16 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
           <h2>我的收藏夹</h2>
           <p>{{ userPlaylistEntries.length }} 个在线列表</p>
         </div>
+        <button
+          v-if="allowPlaylistMutations"
+          type="button"
+          class="create-playlist-btn"
+          title="创建网易云歌单"
+          @click="emit('createPlaylist')"
+        >
+          <i class="pi pi-plus"></i>
+          <span>创建歌单</span>
+        </button>
       </div>
 
       <div v-if="libraryLoaded && userPlaylistEntries.length === 0" class="empty-state">
@@ -292,7 +318,13 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
           <i class="pi pi-list"></i>
         </span>
         <p class="empty-text">暂无在线歌单</p>
-        <p class="empty-hint">当前账号还没有可展示的在线歌单</p>
+        <p class="empty-hint">
+          {{
+            allowPlaylistMutations
+              ? '点击右上角「创建歌单」开始整理在线音乐'
+              : '当前账号还没有可展示的在线歌单'
+          }}
+        </p>
       </div>
 
       <div v-else class="playlist-grid">
@@ -311,9 +343,13 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
           </span>
           <div class="playlist-item-info">
             <h4 class="playlist-item-title">{{ playlist.name }}</h4>
-            <span class="playlist-item-count">{{ playlist.trackCount }} 首</span>
+            <span class="playlist-item-count">
+              {{ playlist.trackCount }} 首
+              <template v-if="playlist.owned === true"> · 创建</template>
+              <template v-else-if="playlist.owned === false"> · 收藏</template>
+            </span>
           </div>
-          
+
           <button
             v-if="allowPinPlaylists"
             type="button"
@@ -330,6 +366,21 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
                   : isPlaylistPinned(playlist)
                     ? 'pi pi-star-fill'
                     : 'pi pi-star'
+              "
+            ></i>
+          </button>
+
+          <button
+            v-if="canDeletePlaylist()"
+            type="button"
+            class="playlist-delete-button"
+            :disabled="isPlaylistDeleting(playlist)"
+            :title="deletePlaylistLabel(playlist)"
+            @click.stop="emit('deletePlaylist', playlist)"
+          >
+            <i
+              :class="
+                isPlaylistDeleting(playlist) ? 'pi pi-spin pi-spinner' : 'pi pi-trash'
               "
             ></i>
           </button>
@@ -845,9 +896,64 @@ function onPlaylistKeydown(event: KeyboardEvent, playlist: MediaProviderPlaylist
 /* Common Section Header */
 .section-header {
   display: flex;
-  justify-content: space-between;
   align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 20px;
+}
+
+.create-playlist-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  border: 1px solid rgba(var(--te-primary-rgb, 99, 102, 241), 0.22);
+  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.1);
+  color: var(--te-primary-600, #4f46e5);
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.create-playlist-btn:hover {
+  transform: translateY(-1px);
+  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.16);
+  box-shadow: 0 10px 24px rgba(var(--te-primary-rgb, 99, 102, 241), 0.16);
+}
+
+.playlist-delete-button {
+  position: absolute;
+  top: 14px;
+  right: 48px;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 10px;
+  background: rgba(244, 63, 94, 0.1);
+  color: #e11d48;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: all 0.2s ease;
+}
+
+.playlist-item:hover .playlist-delete-button,
+.playlist-item:focus-within .playlist-delete-button {
+  opacity: 1;
+}
+
+.playlist-delete-button:hover:not(:disabled) {
+  background: rgba(244, 63, 94, 0.18);
+}
+
+.playlist-delete-button:disabled {
+  opacity: 1;
+  cursor: wait;
 }
 
 .section-header h2 {

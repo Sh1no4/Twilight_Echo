@@ -263,6 +263,10 @@ type TwilightMediaProviderMethod =
   | 'followUser'
   | 'likeTrack'
   | 'isTrackLiked'
+  | 'createPlaylist'
+  | 'deletePlaylist'
+  | 'addTracksToPlaylist'
+  | 'removeTracksFromPlaylist'
 type EqMode = 'graphic' | 'parametric'
 type VolumeNormalizationMode = 'off' | 'track' | 'album' | 'loudnorm'
 type ChannelRoutingMode =

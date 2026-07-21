@@ -43,7 +43,11 @@ export const TWILIGHT_MEDIA_PROVIDER_METHODS = [
   'followArtist',
   'followUser',
   'likeTrack',
-  'isTrackLiked'
+  'isTrackLiked',
+  'createPlaylist',
+  'deletePlaylist',
+  'addTracksToPlaylist',
+  'removeTracksFromPlaylist'
 ] as const satisfies readonly TwilightMediaProviderMethod[]
 
 export function isTwilightMediaProviderMethod(
@@ -94,7 +98,11 @@ const PROVIDER_METHOD_CAPABILITIES: Partial<
   followArtist: 'library',
   followUser: 'library',
   likeTrack: 'library',
-  isTrackLiked: 'library'
+  isTrackLiked: 'library',
+  createPlaylist: 'library',
+  deletePlaylist: 'library',
+  addTracksToPlaylist: 'library',
+  removeTracksFromPlaylist: 'library'
 }
 
 export function providerSupportsMethod(

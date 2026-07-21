@@ -160,7 +160,11 @@ const PLUGIN_RPC_IDEMPOTENCY_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/
 const IDEMPOTENT_PROVIDER_WRITE_METHODS = new Set<TwilightMediaProviderMethod>([
   'likeTrack',
   'followArtist',
-  'followUser'
+  'followUser',
+  'createPlaylist',
+  'deletePlaylist',
+  'addTracksToPlaylist',
+  'removeTracksFromPlaylist'
 ])
 const INTERNAL_NCM_PLUGIN_ID = 'com.twilightecho.provider.ncm'
 const RESERVED_PROVIDER_IDS = new Set(['local', 'ncm'])

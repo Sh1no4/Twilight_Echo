@@ -35,6 +35,9 @@ export interface MediaProviderPlaylistSummary {
   /** Durable remote origin when `cover` is a session-scoped twilight-media grant. */
   coverSource?: string | null
   trackCount: number
+  creatorName?: string
+  /** True when the signed-in user owns (created) the playlist. */
+  owned?: boolean
 }
 
 export interface MediaProviderAlbumSummary {
@@ -170,6 +173,19 @@ export interface MediaProvider {
   followUser?: (userId: number | string, follow: boolean) => Promise<void>
   likeTrack?: (trackId: number | string, like: boolean) => Promise<void>
   isTrackLiked?: (trackId: number | string | undefined) => boolean | Promise<boolean>
+  createPlaylist?: (
+    name: string,
+    options?: { privacy?: 0 | 10 }
+  ) => Promise<MediaProviderPlaylistSummary>
+  deletePlaylist?: (playlistId: number | string) => Promise<void>
+  addTracksToPlaylist?: (
+    playlistId: number | string,
+    trackIds: Array<number | string>
+  ) => Promise<void>
+  removeTracksFromPlaylist?: (
+    playlistId: number | string,
+    trackIds: Array<number | string>
+  ) => Promise<void>
 }
 
 export class MediaProviderRegistry {

@@ -146,7 +146,11 @@ const PROVIDER_METHODS: TwilightMediaProviderMethod[] = [
   'followArtist',
   'followUser',
   'likeTrack',
-  'isTrackLiked'
+  'isTrackLiked',
+  'createPlaylist',
+  'deletePlaylist',
+  'addTracksToPlaylist',
+  'removeTracksFromPlaylist'
 ]
 
 const maybeParentPort = (process as unknown as { parentPort?: ParentPort }).parentPort

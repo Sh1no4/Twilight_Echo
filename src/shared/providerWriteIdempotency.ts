@@ -1,7 +1,15 @@
 export const PROVIDER_WRITE_IDEMPOTENCY_TTL_MS = 5 * 60_000
 export const MAX_PROVIDER_WRITE_IDEMPOTENCY_ENTRIES = 256
 
-const PROVIDER_WRITE_METHODS = new Set(['likeTrack', 'followArtist', 'followUser'])
+const PROVIDER_WRITE_METHODS = new Set([
+  'likeTrack',
+  'followArtist',
+  'followUser',
+  'createPlaylist',
+  'deletePlaylist',
+  'addTracksToPlaylist',
+  'removeTracksFromPlaylist'
+])
 
 interface ProviderWriteIdempotencyEntry {
   key: string

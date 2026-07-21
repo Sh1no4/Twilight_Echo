@@ -57,15 +57,29 @@ test('liked detail uses unified default favorites before provider liked APIs', (
 
 test('streaming page supports multi-select batch favorite and delete on track lists', () => {
   const searchSource = readFileSync(new URL('../StreamingSearch.vue', import.meta.url), 'utf8')
+  const detailSource = readFileSync(
+    new URL('./StreamingDetailStage.vue', import.meta.url),
+    'utf8'
+  )
 
   assert.match(source, /useTrackMultiSelect/)
   assert.match(source, /handleStreamingBatchFavorite/)
   assert.match(source, /handleStreamingBatchDelete/)
-  assert.match(source, /track-selected/)
-  assert.match(source, /selection-toolbar/)
+  assert.match(source, /handleStreamingBatchAddToPlaylist/)
+  assert.match(source, /createNcmPlaylist/)
+  assert.match(source, /removeNcmTracksFromPlaylist/)
+  assert.match(source, /onStreamingTrackContextMenu/)
+  assert.match(source, /streaming-context-menu/)
+  assert.match(source, /添加到歌单/)
   assert.match(source, /onSearchTrackClickWithSelect/)
   assert.match(searchSource, /batchFavorite/)
+  assert.match(searchSource, /batchAddToPlaylist/)
+  assert.match(searchSource, /trackContextMenu/)
   assert.match(searchSource, /track-selected/)
+  assert.match(searchSource, /selection-toolbar/)
+  assert.match(detailSource, /batchAddToPlaylist/)
+  assert.match(detailSource, /trackContextMenu/)
+  assert.match(detailSource, /从歌单移除/)
   assert.match(source, /executeStreamingBatchRemoval\(selected/)
   assert.doesNotMatch(source, /musicStore\.removeTrack\(track\.id\)/)
 })

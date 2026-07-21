@@ -228,7 +228,7 @@ loginExtraActions: [
 | `lyrics` | `getLyrics` |
 | `cover` | （通过 Track 对象的 cover 字段返回） |
 | `playlist` | `fetchPlaylistTracks`, `searchPlaylists` |
-| `library` | `fetchUserLibrary`, `fetchLikedTracks`, `fetchRecommendSongs` 等 |
+| `library` | `fetchUserLibrary`, `fetchLikedTracks`, `fetchRecommendSongs`、`createPlaylist`、`deletePlaylist`、`addTracksToPlaylist`、`removeTracksFromPlaylist` 等 |
 | `login` | `checkLogin`, `getQrLogin`, `checkQrLogin`, `logout` 等 |
 
 Provider 返回的 Track 对象可以包含可选 `bpm` 字段，单位为 beats per minute。

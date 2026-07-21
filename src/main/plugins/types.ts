@@ -363,6 +363,10 @@ export type TwilightMediaProviderMethod =
   | 'followUser'
   | 'likeTrack'
   | 'isTrackLiked'
+  | 'createPlaylist'
+  | 'deletePlaylist'
+  | 'addTracksToPlaylist'
+  | 'removeTracksFromPlaylist'
 
 export type TwilightUiContributionKind =
   | 'sidebarPage'

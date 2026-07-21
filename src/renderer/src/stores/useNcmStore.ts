@@ -17,6 +17,9 @@ export interface NcmPlaylistSummary {
   /** Durable remote origin when `cover` is a session-scoped twilight-media grant. */
   coverSource?: string | null
   trackCount: number
+  creatorName?: string
+  /** True when the signed-in user owns (created) the playlist. */
+  owned?: boolean
 }
 
 export interface NcmAlbumSummary {
@@ -133,6 +136,16 @@ export interface NcmStore {
   likeTrack: (songId: number, like: boolean) => Promise<void>
   isTrackLiked: (ncmSongId: number | undefined) => boolean
   syncLikedIds: (tracks: Track[]) => void
+  createPlaylist: (name: string, options?: { privacy?: 0 | 10 }) => Promise<NcmPlaylistSummary>
+  deletePlaylist: (playlistId: number | string) => Promise<void>
+  addTracksToPlaylist: (
+    playlistId: number | string,
+    trackIds: Array<number | string>
+  ) => Promise<void>
+  removeTracksFromPlaylist: (
+    playlistId: number | string,
+    trackIds: Array<number | string>
+  ) => Promise<void>
 }
 
 const NCM_PROVIDER_ID = 'ncm'
@@ -459,6 +472,58 @@ export function useNcmStore(): NcmStore {
     await callNcmProvider<void>('followUser', [userId, follow])
   }
 
+  async function createPlaylist(
+    name: string,
+    options?: { privacy?: 0 | 10 }
+  ): Promise<NcmPlaylistSummary> {
+    const playlist = await callNcmProvider<NcmPlaylistSummary>('createPlaylist', [name, options])
+    const summary: NcmPlaylistSummary = {
+      id: Number(playlist.id),
+      name: playlist.name || name,
+      cover: playlist.cover ?? null,
+      coverSource: playlist.coverSource ?? null,
+      trackCount: typeof playlist.trackCount === 'number' ? playlist.trackCount : 0,
+      creatorName: playlist.creatorName,
+      owned: playlist.owned !== false
+    }
+    userPlaylists.value = [summary, ...userPlaylists.value.filter((item) => item.id !== summary.id)]
+    libraryLoaded.value = true
+    return summary
+  }
+
+  async function deletePlaylist(playlistId: number | string): Promise<void> {
+    await callNcmProvider<void>('deletePlaylist', [playlistId])
+    const id = String(playlistId)
+    userPlaylists.value = userPlaylists.value.filter((item) => String(item.id) !== id)
+  }
+
+  async function addTracksToPlaylist(
+    playlistId: number | string,
+    trackIds: Array<number | string>
+  ): Promise<void> {
+    await callNcmProvider<void>('addTracksToPlaylist', [playlistId, trackIds])
+    const id = String(playlistId)
+    userPlaylists.value = userPlaylists.value.map((item) =>
+      String(item.id) === id
+        ? { ...item, trackCount: (item.trackCount ?? 0) + trackIds.length }
+        : item
+    )
+  }
+
+  async function removeTracksFromPlaylist(
+    playlistId: number | string,
+    trackIds: Array<number | string>
+  ): Promise<void> {
+    await callNcmProvider<void>('removeTracksFromPlaylist', [playlistId, trackIds])
+    const id = String(playlistId)
+    const removed = trackIds.length
+    userPlaylists.value = userPlaylists.value.map((item) =>
+      String(item.id) === id
+        ? { ...item, trackCount: Math.max(0, (item.trackCount ?? 0) - removed) }
+        : item
+    )
+  }
+
   return {
     providerAvailable,
     providerError,
@@ -506,6 +571,10 @@ export function useNcmStore(): NcmStore {
     followUser,
     likeTrack,
     isTrackLiked,
-    syncLikedIds
+    syncLikedIds,
+    createPlaylist,
+    deletePlaylist,
+    addTracksToPlaylist,
+    removeTracksFromPlaylist
   }
 }

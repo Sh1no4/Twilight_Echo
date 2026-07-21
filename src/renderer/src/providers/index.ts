@@ -235,6 +235,21 @@ export async function syncPluginProviders(): Promise<void> {
             : undefined,
           isTrackLiked: provider.capabilities.includes('library')
             ? (trackId) => callProvider<boolean>('isTrackLiked', [trackId])
+            : undefined,
+          createPlaylist: provider.capabilities.includes('library')
+            ? (name, options) =>
+                callProvider<MediaProviderPlaylistSummary>('createPlaylist', [name, options])
+            : undefined,
+          deletePlaylist: provider.capabilities.includes('library')
+            ? (playlistId) => callProvider<void>('deletePlaylist', [playlistId])
+            : undefined,
+          addTracksToPlaylist: provider.capabilities.includes('library')
+            ? (playlistId, trackIds) =>
+                callProvider<void>('addTracksToPlaylist', [playlistId, trackIds])
+            : undefined,
+          removeTracksFromPlaylist: provider.capabilities.includes('library')
+            ? (playlistId, trackIds) =>
+                callProvider<void>('removeTracksFromPlaylist', [playlistId, trackIds])
             : undefined
         })
       }

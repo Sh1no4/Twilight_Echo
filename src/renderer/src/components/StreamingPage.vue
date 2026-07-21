@@ -1,5 +1,5 @@
 ﻿<script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { Track } from '../types/music'
 import {
@@ -326,6 +326,10 @@ const {
   likeTrack,
   isTrackLiked,
   syncLikedIds,
+  createPlaylist: createNcmPlaylist,
+  deletePlaylist: deleteNcmPlaylist,
+  addTracksToPlaylist: addNcmTracksToPlaylist,
+  removeTracksFromPlaylist: removeNcmTracksFromPlaylist,
   checkLogin
 } = useNcmStore()
 
@@ -1453,7 +1457,8 @@ const {
   hasSelection,
   isSelected,
   clearSelection,
-  getSelectedTracks
+  getSelectedTracks,
+  ensureContextSelection
 } = multiSelect
 
 const selectionAllFavorited = computed(() => {
@@ -1463,6 +1468,122 @@ const selectionAllFavorited = computed(() => {
     if (track.ncmSongId != null) return isTrackLiked(track.ncmSongId)
     return musicStore.isFavoriteTrack(track)
   })
+})
+
+const selectionActionLabel = computed(() =>
+  selectedCount.value > 1 ? ` (${selectedCount.value})` : ''
+)
+
+const showStreamingContextMenu = ref(false)
+const streamingContextMenuX = ref(0)
+const streamingContextMenuY = ref(0)
+const showStreamingPlaylistSubmenu = ref(false)
+const streamingContextMenuTrack = ref<Track | null>(null)
+
+function closeStreamingContextMenu(): void {
+  showStreamingContextMenu.value = false
+  showStreamingPlaylistSubmenu.value = false
+  streamingContextMenuTrack.value = null
+}
+
+function onStreamingTrackContextMenu(track: Track, index: number, event: MouseEvent): void {
+  event.preventDefault()
+  event.stopPropagation()
+  ensureContextSelection(track, index)
+  streamingContextMenuTrack.value = track
+  streamingContextMenuX.value = event.clientX
+  streamingContextMenuY.value = event.clientY
+  showStreamingPlaylistSubmenu.value = false
+  showStreamingContextMenu.value = true
+  void nextTick(() => {
+    const menu = document.querySelector('.streaming-context-menu') as HTMLElement | null
+    if (!menu) return
+    const rect = menu.getBoundingClientRect()
+    if (rect.right > window.innerWidth) {
+      streamingContextMenuX.value = Math.max(8, event.clientX - rect.width)
+    }
+    if (rect.bottom > window.innerHeight) {
+      streamingContextMenuY.value = Math.max(8, event.clientY - rect.height)
+    }
+  })
+}
+
+function handleContextPlayTrack(): void {
+  const track = streamingContextMenuTrack.value
+  if (!track) return
+  const list = streamingListTracks.value
+  playTrack(track, list.length > 0 ? list : [track])
+  closeStreamingContextMenu()
+}
+
+async function handleContextFavorite(): Promise<void> {
+  closeStreamingContextMenu()
+  await handleStreamingBatchFavorite()
+}
+
+function handleContextAddToPlaylist(): void {
+  closeStreamingContextMenu()
+  openAddToNcmPlaylistDialog(getSelectedTracks())
+}
+
+function handleContextCreatePlaylist(): void {
+  closeStreamingContextMenu()
+  openCreateNcmPlaylistDialog(getSelectedTracks())
+}
+
+async function handleContextAddToOwnedPlaylist(
+  playlist: MediaProviderPlaylistSummary
+): Promise<void> {
+  closeStreamingContextMenu()
+  addToNcmPlaylistTracks.value = getSelectedTracks().filter(
+    (track) => track.ncmSongId != null && Number.isFinite(track.ncmSongId) && track.ncmSongId > 0
+  )
+  if (addToNcmPlaylistTracks.value.length === 0) {
+    setStreamingBatchRemovalError('所选曲目没有可写入网易云歌单的歌曲 ID')
+    return
+  }
+  await confirmAddTracksToNcmPlaylist(playlist)
+}
+
+async function handleContextRemoveFromPlaylist(): Promise<void> {
+  closeStreamingContextMenu()
+  await handleStreamingBatchDelete()
+}
+
+async function handleContextLikeTrack(): Promise<void> {
+  const track = streamingContextMenuTrack.value
+  if (!track?.ncmSongId) return
+  closeStreamingContextMenu()
+  if (likingTracks.value.has(track.ncmSongId)) return
+  likingTracks.value = new Set([...likingTracks.value, track.ncmSongId])
+  try {
+    await likeTrack(track.ncmSongId, !isTrackLiked(track.ncmSongId))
+  } finally {
+    const next = new Set(likingTracks.value)
+    next.delete(track.ncmSongId)
+    likingTracks.value = next
+  }
+}
+
+const contextMenuSingleLiked = computed(() => {
+  const track = streamingContextMenuTrack.value
+  if (!track?.ncmSongId) return false
+  return isTrackLiked(track.ncmSongId)
+})
+
+const contextMenuCanLike = computed(
+  () =>
+    !isExternalActive.value &&
+    streamingContextMenuTrack.value?.ncmSongId != null &&
+    selectedCount.value <= 1
+)
+
+onMounted(() => {
+  window.addEventListener('click', closeStreamingContextMenu)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('click', closeStreamingContextMenu)
 })
 
 function onTrackClick(track: Track, index: number, event?: MouseEvent): void {
@@ -1650,9 +1771,192 @@ async function handleStreamingBatchFavorite(): Promise<void> {
   }
 }
 
+const showCreateNcmPlaylistDialog = ref(false)
+const newNcmPlaylistName = ref('')
+const createNcmPlaylistBusy = ref(false)
+const createNcmPlaylistError = ref('')
+const createNcmPlaylistSeedTracks = ref<Track[]>([])
+const showAddToNcmPlaylistDialog = ref(false)
+const addToNcmPlaylistBusy = ref(false)
+const addToNcmPlaylistError = ref('')
+const addToNcmPlaylistTracks = ref<Track[]>([])
+const deletingNcmPlaylistId = ref<string | number | null>(null)
+
+const ownedUserPlaylists = computed(() =>
+  userPlaylistEntries.value.filter((playlist) => playlist.owned === true)
+)
+
+const canMutateCurrentNcmPlaylist = computed(() => {
+  if (isExternalActive.value) return false
+  const detail = currentDetail.value
+  if (detail?.type !== 'playlist') return false
+  return detail.playlist.owned === true
+})
+
+const canManageNcmPlaylists = computed(() => !isExternalActive.value && isLoggedIn.value)
+
+function openCreateNcmPlaylistDialog(seedTracks: Track[] = []): void {
+  if (!canManageNcmPlaylists.value) return
+  createNcmPlaylistSeedTracks.value = seedTracks
+  newNcmPlaylistName.value = ''
+  createNcmPlaylistError.value = ''
+  showCreateNcmPlaylistDialog.value = true
+}
+
+function closeCreateNcmPlaylistDialog(): void {
+  if (createNcmPlaylistBusy.value) return
+  showCreateNcmPlaylistDialog.value = false
+  createNcmPlaylistSeedTracks.value = []
+  newNcmPlaylistName.value = ''
+  createNcmPlaylistError.value = ''
+}
+
+async function confirmCreateNcmPlaylist(): Promise<void> {
+  const name = newNcmPlaylistName.value.trim()
+  if (!name || createNcmPlaylistBusy.value) return
+  createNcmPlaylistBusy.value = true
+  createNcmPlaylistError.value = ''
+  try {
+    const playlist = await createNcmPlaylist(name)
+    const seedIds = createNcmPlaylistSeedTracks.value
+      .map((track) => track.ncmSongId)
+      .filter((id): id is number => id != null && Number.isFinite(id) && id > 0)
+    if (seedIds.length > 0) {
+      await addNcmTracksToPlaylist(playlist.id, seedIds)
+    }
+    showCreateNcmPlaylistDialog.value = false
+    createNcmPlaylistSeedTracks.value = []
+    newNcmPlaylistName.value = ''
+    clearSelection()
+  } catch (error) {
+    createNcmPlaylistError.value = error instanceof Error ? error.message : '创建歌单失败'
+  } finally {
+    createNcmPlaylistBusy.value = false
+  }
+}
+
+async function handleDeleteNcmPlaylist(playlist: MediaProviderPlaylistSummary): Promise<void> {
+  if (!canManageNcmPlaylists.value || deletingNcmPlaylistId.value != null) return
+  const label = playlist.owned === false ? '取消收藏该歌单' : '删除该歌单'
+  const confirmed = window.confirm(`${label}「${playlist.name}」？此操作不可撤销。`)
+  if (!confirmed) return
+  deletingNcmPlaylistId.value = playlist.id
+  try {
+    await deleteNcmPlaylist(playlist.id)
+    if (
+      currentDetail.value?.type === 'playlist' &&
+      String(currentDetail.value.playlist.id) === String(playlist.id)
+    ) {
+      currentDetail.value = null
+      detailTracks.value = []
+    }
+  } catch (error) {
+    libraryError.value = error instanceof Error ? error.message : '删除歌单失败'
+  } finally {
+    deletingNcmPlaylistId.value = null
+  }
+}
+
+function openAddToNcmPlaylistDialog(tracks: Track[] = getSelectedTracks()): void {
+  if (!canManageNcmPlaylists.value) return
+  const ncmTracks = tracks.filter(
+    (track) => track.ncmSongId != null && Number.isFinite(track.ncmSongId) && track.ncmSongId > 0
+  )
+  if (ncmTracks.length === 0) {
+    setStreamingBatchRemovalError('所选曲目没有可写入网易云歌单的歌曲 ID')
+    return
+  }
+  addToNcmPlaylistTracks.value = ncmTracks
+  addToNcmPlaylistError.value = ''
+  showAddToNcmPlaylistDialog.value = true
+}
+
+function closeAddToNcmPlaylistDialog(): void {
+  if (addToNcmPlaylistBusy.value) return
+  showAddToNcmPlaylistDialog.value = false
+  addToNcmPlaylistTracks.value = []
+  addToNcmPlaylistError.value = ''
+}
+
+function convertAddToCreatePlaylist(): void {
+  if (addToNcmPlaylistBusy.value) return
+  const tracks = [...addToNcmPlaylistTracks.value]
+  showAddToNcmPlaylistDialog.value = false
+  addToNcmPlaylistTracks.value = []
+  addToNcmPlaylistError.value = ''
+  openCreateNcmPlaylistDialog(tracks)
+}
+
+async function confirmAddTracksToNcmPlaylist(playlist: MediaProviderPlaylistSummary): Promise<void> {
+  if (addToNcmPlaylistBusy.value) return
+  const trackIds = addToNcmPlaylistTracks.value
+    .map((track) => track.ncmSongId)
+    .filter((id): id is number => id != null && Number.isFinite(id) && id > 0)
+  if (trackIds.length === 0) return
+  addToNcmPlaylistBusy.value = true
+  addToNcmPlaylistError.value = ''
+  try {
+    await addNcmTracksToPlaylist(playlist.id, trackIds)
+    if (
+      currentDetail.value?.type === 'playlist' &&
+      String(currentDetail.value.playlist.id) === String(playlist.id)
+    ) {
+      const existing = new Set(detailTracks.value.map((track) => track.id))
+      detailTracks.value = [
+        ...detailTracks.value,
+        ...addToNcmPlaylistTracks.value.filter((track) => !existing.has(track.id))
+      ]
+      currentDetail.value = {
+        ...currentDetail.value,
+        playlist: {
+          ...currentDetail.value.playlist,
+          trackCount: (currentDetail.value.playlist.trackCount ?? 0) + trackIds.length
+        }
+      }
+    }
+    showAddToNcmPlaylistDialog.value = false
+    addToNcmPlaylistTracks.value = []
+    clearSelection()
+  } catch (error) {
+    addToNcmPlaylistError.value = error instanceof Error ? error.message : '添加到歌单失败'
+  } finally {
+    addToNcmPlaylistBusy.value = false
+  }
+}
+
 async function handleStreamingBatchDelete(): Promise<void> {
   const selected = getSelectedTracks()
   if (selected.length === 0) return
+
+  if (canMutateCurrentNcmPlaylist.value && currentDetail.value?.type === 'playlist') {
+    const playlistId = currentDetail.value.playlist.id
+    const trackIds = selected
+      .map((track) => track.ncmSongId)
+      .filter((id): id is number => id != null && Number.isFinite(id) && id > 0)
+    if (trackIds.length === 0) {
+      setStreamingBatchRemovalError('所选曲目没有可从网易云歌单移除的歌曲 ID')
+      return
+    }
+    try {
+      await removeNcmTracksFromPlaylist(playlistId, trackIds)
+      const removedSongIds = new Set(trackIds)
+      detailTracks.value = detailTracks.value.filter(
+        (track) => track.ncmSongId == null || !removedSongIds.has(track.ncmSongId)
+      )
+      currentDetail.value = {
+        ...currentDetail.value,
+        playlist: {
+          ...currentDetail.value.playlist,
+          trackCount: Math.max(0, (currentDetail.value.playlist.trackCount ?? 0) - trackIds.length)
+        }
+      }
+      clearSelection()
+    } catch (error) {
+      setStreamingBatchRemovalError(error instanceof Error ? error.message : '从歌单移除失败')
+    }
+    return
+  }
+
   try {
     const result = await executeStreamingBatchRemoval(selected, {
       removeLocalTracks: musicStore.removeLocalTracks,
@@ -1673,6 +1977,10 @@ async function handleStreamingBatchDelete(): Promise<void> {
   } catch (error) {
     setStreamingBatchRemovalError(error instanceof Error ? error.message : '移除曲目失败')
   }
+}
+
+function handleStreamingBatchAddToPlaylist(): void {
+  openAddToNcmPlaylistDialog(getSelectedTracks())
 }
 
 function setStreamingBatchRemovalError(message: string): void {
@@ -2054,6 +2362,7 @@ onMounted(async () => {
             :has-selection="hasSelection"
             :selected-count="selectedCount"
             :selection-all-favorited="selectionAllFavorited"
+            :can-add-to-playlist="canManageNcmPlaylists"
             @search-track-click="onSearchTrackClickWithSelect"
             @like-track="onLikeTrack"
             @open-playlist="openPlaylist"
@@ -2061,8 +2370,10 @@ onMounted(async () => {
             @page-change="onPageChange"
             @retry="performSearch(searchQuery)"
             @batch-favorite="handleStreamingBatchFavorite"
+            @batch-add-to-playlist="handleStreamingBatchAddToPlaylist"
             @batch-delete="handleStreamingBatchDelete"
             @clear-selection="clearSelection"
+            @track-context-menu="onStreamingTrackContextMenu"
           />
         </div>
         <div v-else :key="activeTab" class="streaming-content-body">
@@ -2169,6 +2480,8 @@ onMounted(async () => {
                 :has-selection="hasSelection"
                 :selected-count="selectedCount"
                 :selection-all-favorited="selectionAllFavorited"
+                :can-add-to-playlist="canManageNcmPlaylists"
+                :can-remove-from-playlist="canMutateCurrentNcmPlaylist"
                 :is-selected="isSelected"
                 :is-track-liked="isDetailTrackLiked"
                 :is-liking="isDetailTrackLiking"
@@ -2180,9 +2493,11 @@ onMounted(async () => {
                 @track-click="onTrackClick"
                 @like-track="onLikeTrack"
                 @batch-favorite="handleStreamingBatchFavorite"
+                @batch-add-to-playlist="handleStreamingBatchAddToPlaylist"
                 @batch-delete="handleStreamingBatchDelete"
                 @clear-selection="clearSelection"
                 @load-more-liked="loadMoreLikedTracks"
+                @track-context-menu="onStreamingTrackContextMenu"
               />
             </template>
 
@@ -2215,6 +2530,7 @@ onMounted(async () => {
               :has-selection="hasSelection"
               :selected-count="selectedCount"
               :selection-all-favorited="selectionAllFavorited"
+              :can-add-to-playlist="canManageNcmPlaylists"
               :is-selected="isSelected"
               :is-track-liked="isDetailTrackLiked"
               :is-liking="isDetailTrackLiking"
@@ -2231,8 +2547,10 @@ onMounted(async () => {
               @track-click="onTrackClick"
               @like-track="onLikeTrack"
               @batch-favorite="handleStreamingBatchFavorite"
+              @batch-add-to-playlist="handleStreamingBatchAddToPlaylist"
               @batch-delete="handleStreamingBatchDelete"
               @clear-selection="clearSelection"
+              @track-context-menu="onStreamingTrackContextMenu"
             />
           </div>
 
@@ -2249,6 +2567,8 @@ onMounted(async () => {
             :show-social-stats="!isExternalActive"
             :show-feature-cards="!isExternalActive"
             :allow-pin-playlists="false"
+            :allow-playlist-mutations="canManageNcmPlaylists"
+            :deleting-playlist-id="deletingNcmPlaylistId"
             :pinned-playlist-ids="activeExternalState?.pinnedPlaylistIds ?? []"
             :pinning-playlist-id="activeExternalState?.pinningPlaylistId ?? null"
             :available-providers="libraryProviderOptions"
@@ -2258,6 +2578,8 @@ onMounted(async () => {
             @open-liked-tracks="openLikedTracks"
             @play-liked-songs="playLikedSongs"
             @open-playlist="openPlaylist"
+            @create-playlist="openCreateNcmPlaylistDialog()"
+            @delete-playlist="handleDeleteNcmPlaylist"
             @open-recent="openRecent"
             @open-ranking="openRanking"
           />
@@ -2265,7 +2587,168 @@ onMounted(async () => {
       </Transition>
     </div>
 
-    <!-- Expansion overlay no longer needed, using clip-path on detail-view -->
+    <Teleport to="body">
+      <div
+        v-if="showStreamingContextMenu"
+        class="streaming-context-menu"
+        :style="{ top: `${streamingContextMenuY}px`, left: `${streamingContextMenuX}px` }"
+        @click.stop
+      >
+        <div class="menu-item" @click="handleContextPlayTrack">
+          <i class="pi pi-play"></i>
+          <span>播放</span>
+        </div>
+        <div class="menu-item" @click="handleContextFavorite">
+          <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+          <span>
+            {{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}{{ selectionActionLabel }}
+          </span>
+        </div>
+        <div
+          v-if="contextMenuCanLike"
+          class="menu-item"
+          @click="handleContextLikeTrack"
+        >
+          <i :class="contextMenuSingleLiked ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
+          <span>{{ contextMenuSingleLiked ? '取消喜欢' : '喜欢' }}</span>
+        </div>
+        <div
+          v-if="canManageNcmPlaylists"
+          class="menu-item"
+          @mouseenter="showStreamingPlaylistSubmenu = true"
+          @mouseleave="showStreamingPlaylistSubmenu = false"
+        >
+          <i class="pi pi-plus"></i>
+          <span>添加到歌单{{ selectionActionLabel }}</span>
+          <i class="pi pi-chevron-right submenu-icon"></i>
+          <div v-if="showStreamingPlaylistSubmenu" class="submenu">
+            <div class="menu-item create-playlist-menu-item" @click="handleContextCreatePlaylist">
+              <i class="pi pi-plus"></i>
+              <span>创建新歌单</span>
+            </div>
+            <div
+              v-if="ownedUserPlaylists.length === 0"
+              class="menu-item disabled"
+            >
+              暂无自建歌单
+            </div>
+            <div
+              v-for="playlist in ownedUserPlaylists"
+              :key="playlist.id"
+              class="menu-item"
+              @click="handleContextAddToOwnedPlaylist(playlist)"
+            >
+              {{ playlist.name }}
+            </div>
+            <div class="menu-item" @click="handleContextAddToPlaylist">
+              <i class="pi pi-list"></i>
+              <span>选择歌单…</span>
+            </div>
+          </div>
+        </div>
+        <div
+          v-if="canMutateCurrentNcmPlaylist"
+          class="menu-item danger"
+          @click="handleContextRemoveFromPlaylist"
+        >
+          <i class="pi pi-minus-circle"></i>
+          <span>从歌单移除{{ selectionActionLabel }}</span>
+        </div>
+      </div>
+    </Teleport>
+
+    <Teleport to="body">
+      <Transition name="dialog-fade">
+        <div
+          v-if="showCreateNcmPlaylistDialog"
+          class="ncm-playlist-dialog-overlay"
+          @click.self="closeCreateNcmPlaylistDialog"
+        >
+          <div class="ncm-playlist-dialog" role="dialog" aria-modal="true" aria-label="创建歌单">
+            <h3>创建网易云歌单</h3>
+            <input
+              v-model="newNcmPlaylistName"
+              type="text"
+              maxlength="50"
+              placeholder="请输入歌单名称"
+              :disabled="createNcmPlaylistBusy"
+              autofocus
+              @keyup.enter="confirmCreateNcmPlaylist"
+            />
+            <p v-if="createNcmPlaylistError" class="ncm-playlist-dialog-error">
+              {{ createNcmPlaylistError }}
+            </p>
+            <div class="ncm-playlist-dialog-actions">
+              <button type="button" :disabled="createNcmPlaylistBusy" @click="closeCreateNcmPlaylistDialog">
+                取消
+              </button>
+              <button
+                type="button"
+                class="primary"
+                :disabled="createNcmPlaylistBusy || !newNcmPlaylistName.trim()"
+                @click="confirmCreateNcmPlaylist"
+              >
+                {{ createNcmPlaylistBusy ? '创建中…' : '创建' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
+    <Teleport to="body">
+      <Transition name="dialog-fade">
+        <div
+          v-if="showAddToNcmPlaylistDialog"
+          class="ncm-playlist-dialog-overlay"
+          @click.self="closeAddToNcmPlaylistDialog"
+        >
+          <div class="ncm-playlist-dialog" role="dialog" aria-modal="true" aria-label="添加到歌单">
+            <h3>添加到网易云歌单</h3>
+            <p class="ncm-playlist-dialog-hint">
+              已选 {{ addToNcmPlaylistTracks.length }} 首，选择目标歌单
+            </p>
+            <div class="ncm-playlist-picker">
+              <button
+                type="button"
+                class="ncm-playlist-picker-item create"
+                :disabled="addToNcmPlaylistBusy"
+                @click="convertAddToCreatePlaylist"
+              >
+                <i class="pi pi-plus"></i>
+                <span>新建歌单并添加</span>
+              </button>
+              <button
+                v-for="playlist in ownedUserPlaylists"
+                :key="playlist.id"
+                type="button"
+                class="ncm-playlist-picker-item"
+                :disabled="addToNcmPlaylistBusy"
+                @click="confirmAddTracksToNcmPlaylist(playlist)"
+              >
+                <img v-if="playlist.cover" :src="playlist.cover" alt="" />
+                <i v-else class="pi pi-list"></i>
+                <span>
+                  <strong>{{ playlist.name }}</strong>
+                  <small>{{ playlist.trackCount ?? 0 }} 首</small>
+                </span>
+              </button>
+              <p v-if="ownedUserPlaylists.length === 0" class="ncm-playlist-dialog-hint">
+                暂无自建歌单，可先新建一个
+              </p>
+            </div>
+            <p v-if="addToNcmPlaylistError" class="ncm-playlist-dialog-error">
+              {{ addToNcmPlaylistError }}
+            </p>
+            <div class="ncm-playlist-dialog-actions">
+              <button type="button" :disabled="addToNcmPlaylistBusy" @click="closeAddToNcmPlaylistDialog">
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 

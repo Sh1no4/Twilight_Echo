@@ -39,6 +39,8 @@ const props = withDefaults(
     hasSelection?: boolean
     selectedCount?: number
     selectionAllFavorited?: boolean
+    canAddToPlaylist?: boolean
+    canRemoveFromPlaylist?: boolean
     isSelected: (id: string) => boolean
     isTrackLiked: (ncmSongId?: number | null) => boolean
     isLiking: (ncmSongId?: number | null) => boolean
@@ -69,6 +71,8 @@ const props = withDefaults(
     hasSelection: false,
     selectedCount: 0,
     selectionAllFavorited: false,
+    canAddToPlaylist: false,
+    canRemoveFromPlaylist: false,
     likedFooter: null
   }
 )
@@ -81,9 +85,11 @@ const emit = defineEmits<{
   likeTrack: [track: Track, event: MouseEvent]
   follow: []
   batchFavorite: []
+  batchAddToPlaylist: []
   batchDelete: []
   clearSelection: []
   loadMoreLiked: []
+  trackContextMenu: [track: Track, index: number, event: MouseEvent]
 }>()
 
 const kindLabel = computed(() => {
@@ -155,6 +161,12 @@ function onPlayRow(track: Track, index: number, event: MouseEvent): void {
 function onLike(track: Track, event: MouseEvent): void {
   event.stopPropagation()
   emit('likeTrack', track, event)
+}
+
+function onContextMenu(track: Track, index: number, event: MouseEvent): void {
+  event.preventDefault()
+  event.stopPropagation()
+  emit('trackContextMenu', track, index, event)
 }
 
 function shuffleAndPlay(): void {
@@ -286,9 +298,18 @@ function shuffleAndPlay(): void {
             <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
             <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
           </button>
+          <button
+            v-if="canAddToPlaylist"
+            type="button"
+            class="stage-mini-btn"
+            @click="emit('batchAddToPlaylist')"
+          >
+            <i class="pi pi-list"></i>
+            <span>添加到歌单</span>
+          </button>
           <button type="button" class="stage-mini-btn danger" @click="emit('batchDelete')">
             <i class="pi pi-minus-circle"></i>
-            <span>移除</span>
+            <span>{{ canRemoveFromPlaylist ? '从歌单移除' : '移除' }}</span>
           </button>
           <button type="button" class="stage-mini-btn ghost" @click="emit('clearSelection')">
             <i class="pi pi-times"></i>
@@ -317,6 +338,7 @@ function shuffleAndPlay(): void {
           role="listitem"
           @click="onRowActivate(track, index, $event)"
           @dblclick="onRowDblClick(track, index, $event)"
+          @contextmenu="onContextMenu(track, index, $event)"
         >
           <div class="col-index">
             <button

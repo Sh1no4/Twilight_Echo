@@ -228,6 +228,8 @@ export interface PlaylistSummary {
   cover?: string | null
   trackCount?: number
   creatorName?: string
+  /** True when the signed-in user owns (created) the playlist. */
+  owned?: boolean
 }
 
 export interface AlbumSummary {
@@ -390,6 +392,25 @@ export interface TwilightMediaProviderRegistration {
     trackId: string | number | undefined,
     context?: TwilightProviderRequestContext
   ): Promise<boolean> | boolean
+  createPlaylist?(
+    name: string,
+    options?: { privacy?: 0 | 10 },
+    context?: TwilightProviderRequestContext
+  ): Promise<PlaylistSummary>
+  deletePlaylist?(
+    playlistId: string | number,
+    context?: TwilightProviderRequestContext
+  ): Promise<void>
+  addTracksToPlaylist?(
+    playlistId: string | number,
+    trackIds: Array<string | number>,
+    context?: TwilightProviderRequestContext
+  ): Promise<void>
+  removeTracksFromPlaylist?(
+    playlistId: string | number,
+    trackIds: Array<string | number>,
+    context?: TwilightProviderRequestContext
+  ): Promise<void>
 }
 
 /**

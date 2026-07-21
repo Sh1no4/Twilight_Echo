@@ -30,6 +30,7 @@ const props = defineProps<{
   hasSelection?: boolean
   selectedCount?: number
   selectionAllFavorited?: boolean
+  canAddToPlaylist?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -40,8 +41,10 @@ const emit = defineEmits<{
   pageChange: [event: PageState]
   retry: []
   batchFavorite: []
+  batchAddToPlaylist: []
   batchDelete: []
   clearSelection: []
+  trackContextMenu: [track: Track, index: number, event: MouseEvent]
 }>()
 
 const pageSize = 30
@@ -88,6 +91,15 @@ function emitPage(first: number): void {
                   <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
                   <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
                 </button>
+                <button
+                  v-if="canAddToPlaylist"
+                  type="button"
+                  class="selection-btn"
+                  @click="emit('batchAddToPlaylist')"
+                >
+                  <i class="pi pi-list"></i>
+                  <span>添加到歌单</span>
+                </button>
                 <button type="button" class="selection-btn danger" @click="emit('batchDelete')">
                   <i class="pi pi-trash"></i>
                   <span>删除</span>
@@ -119,6 +131,7 @@ function emitPage(first: number): void {
                     'track-selected': isSelected(track.id)
                   }"
                   @click="emit('searchTrackClick', track, $event)"
+                  @contextmenu.prevent="emit('trackContextMenu', track, index, $event)"
                 >
                   <td class="col-cover">
                     <img v-if="track.cover" :src="track.cover" class="cover-img" alt="cover" />

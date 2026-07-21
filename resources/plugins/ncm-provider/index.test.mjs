@@ -601,6 +601,113 @@ test('artist intro and follow state use dedicated artist endpoints', async () =>
   }
 })
 
+test('create delete and track mutations call NetEase playlist write endpoints', async () => {
+  const requests = []
+  const provider = await activateProvider(async (path) => {
+    requests.push(path)
+    const url = parseRequest(path)
+    if (url.pathname === '/user/playlist') {
+      return {
+        playlist: [
+          {
+            id: 11,
+            name: '我创建的',
+            userId: 1001,
+            trackCount: 2,
+            coverImgUrl: null
+          },
+          {
+            id: 22,
+            name: '别人的',
+            userId: 2002,
+            trackCount: 5,
+            coverImgUrl: null
+          }
+        ]
+      }
+    }
+    if (url.pathname === '/login/status') {
+      return {
+        code: 200,
+        data: {
+          code: 200,
+          profile: {
+            userId: 1001,
+            nickname: 'tester',
+            avatarUrl: null,
+            signature: '',
+            follows: 0,
+            followeds: 0
+          }
+        }
+      }
+    }
+    if (url.pathname === '/playlist/create') {
+      return {
+        code: 200,
+        playlist: {
+          id: 99,
+          name: url.searchParams.get('name'),
+          userId: 1001,
+          trackCount: 0,
+          coverImgUrl: null
+        }
+      }
+    }
+    if (
+      url.pathname === '/playlist/delete' ||
+      url.pathname === '/playlist/subscribe' ||
+      url.pathname === '/playlist/tracks'
+    ) {
+      return { code: 200 }
+    }
+    return { code: 200 }
+  })
+
+  try {
+    const library = await provider.fetchUserLibrary(true)
+    assert.equal(library.playlists.find((item) => item.id === 11)?.owned, true)
+    assert.equal(library.playlists.find((item) => item.id === 22)?.owned, false)
+
+    const created = await provider.createPlaylist('新歌单')
+    assert.equal(created.id, 99)
+    assert.equal(created.owned, true)
+    assert.ok(requests.some((path) => parseRequest(path).pathname === '/playlist/create'))
+
+    await provider.addTracksToPlaylist(99, [1, 2, 2])
+    await provider.removeTracksFromPlaylist(99, [1])
+    const trackWrite = requests
+      .map((path) => parseRequest(path))
+      .filter((url) => url.pathname === '/playlist/tracks')
+    assert.equal(trackWrite.length, 2)
+    assert.equal(trackWrite[0].searchParams.get('op'), 'add')
+    assert.equal(trackWrite[0].searchParams.get('tracks'), '1,2')
+    assert.equal(trackWrite[1].searchParams.get('op'), 'del')
+
+    await provider.deletePlaylist(11)
+    assert.ok(
+      requests.some((path) => {
+        const url = parseRequest(path)
+        return url.pathname === '/playlist/delete' && url.searchParams.get('id') === '11'
+      })
+    )
+
+    await provider.deletePlaylist(22)
+    assert.ok(
+      requests.some((path) => {
+        const url = parseRequest(path)
+        return (
+          url.pathname === '/playlist/subscribe' &&
+          url.searchParams.get('t') === '2' &&
+          url.searchParams.get('id') === '22'
+        )
+      })
+    )
+  } finally {
+    ncmProvider.deactivate()
+  }
+})
+
 test('artist and user follow actions call NetEase follow endpoints', async () => {
   const requests = []
   const provider = await activateProvider(async (path) => {

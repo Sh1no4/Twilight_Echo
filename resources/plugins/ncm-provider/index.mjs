@@ -23,6 +23,7 @@ const PROVIDER_WRITE_IDEMPOTENCY_SETTINGS_KEY = 'providerWriteIdempotency'
 let likedTracksCache = null
 let likedSongIdListCache = null
 let likedSongIds = new Set()
+let ownedPlaylistIds = new Set()
 let providerWriteRecordsLoaded = false
 let providerWritePersistenceTail = Promise.resolve()
 
@@ -95,7 +96,11 @@ export async function activate(context) {
     followArtist,
     followUser,
     likeTrack,
-    isTrackLiked
+    isTrackLiked,
+    createPlaylist,
+    deletePlaylist,
+    addTracksToPlaylist,
+    removeTracksFromPlaylist
   })
 
   context.logger.info('Built-in NetEase Cloud Music provider registered')
@@ -176,6 +181,7 @@ function resetCaches() {
   likedTracksCache = null
   likedSongIdListCache = null
   likedSongIds = new Set()
+  ownedPlaylistIds = new Set()
   providerWriteRecordsLoaded = false
   providerWritePersistenceTail = Promise.resolve()
 }
@@ -509,12 +515,23 @@ function rememberStreamAudioMeta(songId, item) {
   }
 }
 
-function normalizePlaylist(playlist) {
+function normalizePlaylist(playlist, ownerUid) {
+  const creatorId = Number(playlist.userId ?? playlist.creator?.userId)
+  const ownerId = Number(ownerUid)
+  const owned =
+    Number.isFinite(ownerId) && Number.isFinite(creatorId) ? creatorId === ownerId : undefined
   return {
     id: Number(playlist.id),
     name: playlist.name || '未命名歌单',
     cover: normalizeRemoteAssetUrl(playlist.coverImgUrl || playlist.picUrl || null),
-    trackCount: typeof playlist.trackCount === 'number' ? playlist.trackCount : 0
+    trackCount: typeof playlist.trackCount === 'number' ? playlist.trackCount : 0,
+    creatorName:
+      typeof playlist.creator?.nickname === 'string'
+        ? playlist.creator.nickname
+        : typeof playlist.creatorName === 'string'
+          ? playlist.creatorName
+          : undefined,
+    owned
   }
 }
 
@@ -862,9 +879,18 @@ async function fetchUserLibrary(force = false) {
   })
   const items = getPlaylistItems(data)
   const likedItem = items.find(isLikedPlaylistItem) ?? null
+  const nextOwned = new Set()
+  for (const item of items) {
+    if (isPlaylistCreatedByUid(item, currentProfile.userId) && !isLikedPlaylistItem(item)) {
+      nextOwned.add(Number(item.id))
+    }
+  }
+  ownedPlaylistIds = nextOwned
   return {
-    likedPlaylist: likedItem ? normalizePlaylist(likedItem) : null,
-    playlists: items.filter((item) => Number(item.id) !== Number(likedItem?.id)).map(normalizePlaylist)
+    likedPlaylist: likedItem ? normalizePlaylist(likedItem, currentProfile.userId) : null,
+    playlists: items
+      .filter((item) => Number(item.id) !== Number(likedItem?.id))
+      .map((item) => normalizePlaylist(item, currentProfile.userId))
   }
 }
 
@@ -1471,6 +1497,132 @@ async function likeTrack(songId, like, requestContext) {
 function isTrackLiked(ncmSongId) {
   const songId = Number(ncmSongId)
   return Number.isFinite(songId) && likedSongIds.has(songId)
+}
+
+function requirePlaylistId(playlistId) {
+  const id = Number(playlistId)
+  if (!Number.isFinite(id) || id <= 0) throw new Error('歌单 ID 无效')
+  return id
+}
+
+function normalizeTrackIdList(trackIds) {
+  if (!Array.isArray(trackIds) || trackIds.length === 0) {
+    throw new Error('歌曲列表不能为空')
+  }
+  const ids = trackIds
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && id > 0)
+  if (ids.length === 0) throw new Error('歌曲列表不能为空')
+  return [...new Set(ids)]
+}
+
+function assertWriteOk(data, fallback) {
+  const code = Number(data?.code ?? data?.body?.code)
+  if (Number.isFinite(code) && code !== 200) {
+    throw new Error(normalizeApiMessage(data?.body ?? data, fallback))
+  }
+}
+
+function invalidatePlaylistCaches(playlistId) {
+  if (playlistId != null) playlistTrackCache.delete(String(playlistId))
+  likedTracksCache = null
+  likedSongIdListCache = null
+}
+
+async function createPlaylist(name, options = {}, requestContext) {
+  const playlistName = requireNonEmptyString(name, '歌单名称')
+  const privacy = Number(options?.privacy) === 10 ? 10 : 0
+  return runIdempotentProviderWrite(
+    'createPlaylist',
+    [playlistName, privacy],
+    requestContext,
+    async () => {
+      const data = await requestAuthed(
+        `/playlist/create?name=${encodeURIComponent(playlistName)}&privacy=${privacy}&timestamp=${Date.now()}`,
+        requestContext
+      )
+      throwIfRequestAborted(requestContext)
+      assertWriteOk(data, '创建歌单失败')
+      const raw = data.playlist ?? data.data?.playlist ?? data
+      const currentProfile = await ensureProfile().catch(() => null)
+      const summary = normalizePlaylist(
+        {
+          id: raw.id ?? raw.playlistId,
+          name: raw.name ?? playlistName,
+          coverImgUrl: raw.coverImgUrl ?? raw.picUrl ?? null,
+          trackCount: typeof raw.trackCount === 'number' ? raw.trackCount : 0,
+          userId: raw.userId ?? currentProfile?.userId,
+          creator: raw.creator ?? currentProfile
+        },
+        currentProfile?.userId
+      )
+      if (Number.isFinite(summary.id) && summary.id > 0) {
+        ownedPlaylistIds = new Set([...ownedPlaylistIds, Number(summary.id)])
+      }
+      return { ...summary, owned: true }
+    }
+  )
+}
+
+async function deletePlaylist(playlistId, requestContext) {
+  const id = requirePlaylistId(playlistId)
+  return runIdempotentProviderWrite('deletePlaylist', [id], requestContext, async () => {
+    const owned = ownedPlaylistIds.has(id)
+    const path = owned
+      ? `/playlist/delete?id=${encodeURIComponent(String(id))}&timestamp=${Date.now()}`
+      : `/playlist/subscribe?t=2&id=${encodeURIComponent(String(id))}&timestamp=${Date.now()}`
+    const data = await requestAuthed(path, requestContext)
+    throwIfRequestAborted(requestContext)
+    assertWriteOk(data, owned ? '删除歌单失败' : '取消收藏歌单失败')
+    ownedPlaylistIds = new Set([...ownedPlaylistIds].filter((entry) => entry !== id))
+    invalidatePlaylistCaches(id)
+  })
+}
+
+async function manipulatePlaylistTracks(playlistId, trackIds, op, requestContext) {
+  const pid = requirePlaylistId(playlistId)
+  const ids = normalizeTrackIdList(trackIds)
+  const tracks = ids.join(',')
+  return runIdempotentProviderWrite(
+    op === 'add' ? 'addTracksToPlaylist' : 'removeTracksFromPlaylist',
+    [pid, tracks, op],
+    requestContext,
+    async () => {
+      let data = await requestAuthed(
+        `/playlist/tracks?op=${encodeURIComponent(op)}&pid=${encodeURIComponent(String(pid))}&tracks=${encodeURIComponent(tracks)}&timestamp=${Date.now()}`,
+        requestContext
+      )
+      throwIfRequestAborted(requestContext)
+      let code = Number(data?.code ?? data?.body?.code)
+      // NetEase may return 512 for cloud-disk collisions; retry with duplicated ids (upstream workaround).
+      if (code === 512 && op === 'add') {
+        const doubled = [...ids, ...ids].join(',')
+        data = await requestAuthed(
+          `/playlist/tracks?op=add&pid=${encodeURIComponent(String(pid))}&tracks=${encodeURIComponent(doubled)}&timestamp=${Date.now()}`,
+          requestContext
+        )
+        throwIfRequestAborted(requestContext)
+        code = Number(data?.code ?? data?.body?.code)
+      }
+      if (Number.isFinite(code) && code !== 200) {
+        throw new Error(
+          normalizeApiMessage(
+            data?.body ?? data,
+            op === 'add' ? '添加歌曲到歌单失败' : '从歌单移除歌曲失败'
+          )
+        )
+      }
+      invalidatePlaylistCaches(pid)
+    }
+  )
+}
+
+async function addTracksToPlaylist(playlistId, trackIds, requestContext) {
+  return manipulatePlaylistTracks(playlistId, trackIds, 'add', requestContext)
+}
+
+async function removeTracksFromPlaylist(playlistId, trackIds, requestContext) {
+  return manipulatePlaylistTracks(playlistId, trackIds, 'del', requestContext)
 }
 
 function syncLikedIds(tracks) {
