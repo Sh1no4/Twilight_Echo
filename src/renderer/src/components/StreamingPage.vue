@@ -22,7 +22,8 @@ import type {
 import StreamingHome from './StreamingHome.vue'
 import StreamingLibrary from './StreamingLibrary.vue'
 import StreamingSearch from './StreamingSearch.vue'
-import CoverImg from './CoverImg.vue'
+import StreamingDetailStage from './streaming-page/StreamingDetailStage.vue'
+import StreamingSocialStage from './streaming-page/StreamingSocialStage.vue'
 import {
   buildStreamingSidebarItems,
   getFirstVisibleStreamingTab,
@@ -636,9 +637,35 @@ const showDetailInitialLoading = computed(
     currentArtistAlbums.value.length === 0 &&
     currentArtistPlaylists.value.length === 0
 )
-const showDetailOverlayLoading = computed(
-  () => detailLoading.value && !showDetailInitialLoading.value
-)
+const showTrackDetailStage = computed(() => {
+  const detail = currentDetail.value
+  if (!detail) return false
+  if (detail.type === 'user_list' || detail.type === 'user_playlists') return false
+  if (detail.type === 'artist') return false
+  return true
+})
+const showDetailOverlayLoading = computed(() => {
+  // Track / social stages own their skeletons; only show sticky overlay for partial reloads.
+  if (showTrackDetailStage.value) {
+    return detailLoading.value && detailTracks.value.length > 0
+  }
+  const detail = currentDetail.value
+  if (detail?.type === 'user_list') {
+    return detailLoading.value && detailUsers.value.length > 0
+  }
+  if (detail?.type === 'user_playlists') {
+    return detailLoading.value && detail.playlists.length > 0
+  }
+  if (detail?.type === 'artist') {
+    return (
+      detailLoading.value &&
+      (detailTracks.value.length > 0 ||
+        currentArtistAlbums.value.length > 0 ||
+        currentArtistPlaylists.value.length > 0)
+    )
+  }
+  return detailLoading.value && !showDetailInitialLoading.value
+})
 const detailTrackCountLabel = computed(() => {
   if (currentDetail.value?.type === 'liked' && likedTracksTotal.value != null) {
     return `${detailTracks.value.length} / ${likedTracksTotal.value} 首`
@@ -1449,6 +1476,149 @@ function onTrackClick(track: Track, index: number, event?: MouseEvent): void {
   playTrack(track, detailTracks.value)
 }
 
+function playDetailTrack(track: Track, _index: number): void {
+  playTrack(track, detailTracks.value)
+}
+
+function playAllDetailTracks(): void {
+  if (detailTracks.value.length === 0) return
+  playTrack(detailTracks.value[0], detailTracks.value)
+}
+
+function shufflePlayDetailTracks(): void {
+  if (detailTracks.value.length === 0) return
+  const shuffled = [...detailTracks.value]
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]]
+  }
+  playTrack(shuffled[0], shuffled)
+}
+
+function isDetailTrackLiking(ncmSongId?: number | null): boolean {
+  return ncmSongId != null && likingTracks.value.has(ncmSongId)
+}
+
+function isDetailTrackLiked(ncmSongId?: number | null): boolean {
+  if (ncmSongId == null) return false
+  return isTrackLiked(ncmSongId)
+}
+
+const detailLikedFooter = computed(() => {
+  if (currentDetail.value?.type !== 'liked' || isExternalActive.value) return null
+  return {
+    loadingMore: likedTracksLoadingMore.value,
+    hasMore: likedTracksHasMore.value,
+    loadMoreError: likedTracksLoadMoreError.value,
+    total: likedTracksTotal.value,
+    loaded: detailTracks.value.length
+  }
+})
+
+const socialPeople = computed(() =>
+  detailUsers.value.map((user) => ({
+    id: user.id,
+    name: user.name,
+    picUrl: user.picUrl ?? null
+  }))
+)
+
+const socialCollections = computed(() => {
+  const detail = currentDetail.value
+  if (detail?.type === 'user_playlists') {
+    return detail.playlists.map((playlist) => ({
+      id: playlist.id,
+      name: playlist.name,
+      cover: playlist.cover,
+      coverSource: playlist.coverSource ?? null,
+      trackCount: playlist.trackCount
+    }))
+  }
+  if (detail?.type === 'artist') {
+    if (activeArtistTab.value === 'albums') {
+      return currentArtistAlbums.value.map((album) => ({
+        id: album.id,
+        name: album.name,
+        cover: album.cover,
+        coverSource: album.coverSource ?? null,
+        trackCount: album.trackCount
+      }))
+    }
+    if (activeArtistTab.value === 'playlists') {
+      return currentArtistPlaylists.value.map((playlist) => ({
+        id: playlist.id,
+        name: playlist.name,
+        cover: playlist.cover,
+        coverSource: playlist.coverSource ?? null,
+        trackCount: playlist.trackCount
+      }))
+    }
+  }
+  return []
+})
+
+const socialCollectionEmptyHint = computed(() => {
+  if (currentDetail.value?.type !== 'artist' || activeArtistTab.value !== 'playlists') return ''
+  const name = currentDetail.value.user?.name ?? currentDetail.value.artist.name
+  return `${name} 目前没有公开创建的歌单`
+})
+
+function onSocialPersonClick(person: { id: string | number; name: string; picUrl?: string | null }): void {
+  const user = detailUsers.value.find((item) => String(item.id) === String(person.id))
+  if (user) void onUserClick(user)
+}
+
+function onArtistTabChange(key: string): void {
+  if (key === 'songs' || key === 'albums' || key === 'playlists') {
+    activeArtistTab.value = key
+  }
+}
+
+const socialStageKind = computed(() => currentDetail.value?.type ?? 'user_list')
+
+const socialStageLoading = computed(() => {
+  if (!detailLoading.value || !currentDetail.value) return false
+  const detail = currentDetail.value
+  if (detail.type === 'user_list') return detailUsers.value.length === 0
+  if (detail.type === 'user_playlists') return detail.playlists.length === 0
+  if (detail.type === 'artist') {
+    return (
+      detailTracks.value.length === 0 &&
+      currentArtistAlbums.value.length === 0 &&
+      currentArtistPlaylists.value.length === 0
+    )
+  }
+  return false
+})
+
+function onSocialCollectionClick(item: {
+  id: string | number
+  name: string
+  cover?: string | null
+  coverSource?: string | null
+  trackCount?: number
+}): void {
+  const detail = currentDetail.value
+  if (detail?.type === 'user_playlists') {
+    const playlist = detail.playlists.find((entry) => String(entry.id) === String(item.id))
+    if (playlist) openPlaylist(playlist, false)
+    return
+  }
+  if (detail?.type === 'artist') {
+    if (activeArtistTab.value === 'albums') {
+      const album = currentArtistAlbums.value.find((entry) => String(entry.id) === String(item.id))
+      if (album) openAlbum(album)
+      return
+    }
+    if (activeArtistTab.value === 'playlists') {
+      const playlist = currentArtistPlaylists.value.find(
+        (entry) => String(entry.id) === String(item.id)
+      )
+      if (playlist) openPlaylist(playlist, false)
+    }
+  }
+}
+
 function onSearchTrackClickWithSelect(track: Track, event: MouseEvent): void {
   const index = searchResults.value.findIndex((item) => item.id === track.id)
   const result = multiSelect.onRowClick(track, Math.max(0, index), event)
@@ -1709,17 +1879,30 @@ onMounted(async () => {
     </div>
 
     <div ref="streamingContentRef" class="streaming-content" @scroll="onStreamingContentScroll">
-      <div class="streaming-content-header">
+      <header
+        class="streaming-content-header"
+        :class="{
+          'is-detail': !!currentDetail,
+          'is-searching': isSearching && !currentDetail
+        }"
+      >
         <div class="streaming-header-left">
           <button
             v-if="currentDetail || isSearching"
+            type="button"
             class="btn-back"
             title="返回"
             @click="currentDetail ? goBack() : clearSearch()"
           >
             <i class="pi pi-arrow-left"></i>
           </button>
-          <div>
+          <div class="streaming-header-copy">
+            <div v-if="currentDetail || isSearching" class="streaming-header-kicker" aria-hidden="true">
+              <span class="streaming-header-kicker-mark"></span>
+              <span class="streaming-header-kicker-text">
+                {{ currentDetail ? '详情' : '搜索' }}
+              </span>
+            </div>
             <h2 class="streaming-content-title">{{ headerTitle }}</h2>
             <p
               v-if="activeTab === 'home' && !currentDetail && !isSearching"
@@ -1751,20 +1934,18 @@ onMounted(async () => {
               @blur="searchInputFocused = false"
             />
             <i v-if="searchLoading" class="pi pi-spin pi-spinner streaming-search-spinner"></i>
-            <button v-else-if="searchQuery" class="streaming-search-clear" @click="clearSearch">
+            <button
+              v-else-if="searchQuery"
+              type="button"
+              class="streaming-search-clear"
+              @click="clearSearch"
+            >
               <i class="pi pi-times"></i>
             </button>
           </div>
           <button
-            v-if="!isExternalActive && showUnifiedSearch"
-            class="streaming-round-btn"
-            title="通知"
-          >
-            <i class="pi pi-bell"></i>
-            <span class="notify-dot"></span>
-          </button>
-          <button
             v-if="activeLoggedIn"
+            type="button"
             class="streaming-avatar-btn"
             title="个人资料"
             @click="$emit('toggleMenu')"
@@ -1778,7 +1959,7 @@ onMounted(async () => {
             <i v-else class="pi pi-user"></i>
           </button>
         </div>
-      </div>
+      </header>
 
       <!-- Search Type Tabs + Source Selector -->
       <div v-if="showUnifiedSearch && isSearching && !currentDetail" class="streaming-search-tabs">
@@ -1960,534 +2141,99 @@ onMounted(async () => {
               <span>正在加载</span>
             </div>
 
-            <div v-if="detailHeaderInfo" class="detail-playlist-header">
-              <CoverImg
-                v-if="detailHeaderInfo.cover"
+            <!-- Track playlist / rec / liked / album / recent / ranking: editorial stage -->
+            <template v-if="showTrackDetailStage">
+              <div v-if="detailError" class="streaming-placeholder detail-placeholder">
+                <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
+                <p class="placeholder-title">加载失败</p>
+                <p class="placeholder-hint">{{ detailError }}</p>
+                <button type="button" class="stream-action-btn" @click="retryCurrentView">
+                  <span>重试</span>
+                </button>
+              </div>
+
+              <StreamingDetailStage
+                v-else-if="detailHeaderInfo"
+                :kind="currentDetail.type"
+                :title="detailHeaderInfo.title"
                 :cover="detailHeaderInfo.cover"
                 :cover-source="detailHeaderInfo.coverSource"
-                class="detail-playlist-cover"
-                alt="cover"
+                :description="detailHeaderInfo.desc"
+                :intro="detailHeaderInfo.intro"
+                :icon="detailHeaderInfo.icon"
+                :track-count-label="detailTrackCountLabel"
+                :tracks="detailTracks"
+                :current-track-id="currentTrack?.id ?? null"
+                :is-external="isExternalActive"
+                :loading="detailLoading && detailTracks.length === 0"
+                :has-selection="hasSelection"
+                :selected-count="selectedCount"
+                :selection-all-favorited="selectionAllFavorited"
+                :is-selected="isSelected"
+                :is-track-liked="isDetailTrackLiked"
+                :is-liking="isDetailTrackLiking"
+                :format-time="formatTime"
+                :liked-footer="detailLikedFooter"
+                @play-all="playAllDetailTracks"
+                @shuffle-play="shufflePlayDetailTracks"
+                @play-track="playDetailTrack"
+                @track-click="onTrackClick"
+                @like-track="onLikeTrack"
+                @batch-favorite="handleStreamingBatchFavorite"
+                @batch-delete="handleStreamingBatchDelete"
+                @clear-selection="clearSelection"
+                @load-more-liked="loadMoreLikedTracks"
               />
-              <div v-else class="detail-playlist-cover-placeholder">
-                <i :class="detailHeaderInfo.icon"></i>
-              </div>
-              <div class="detail-playlist-info">
-                <h2 class="detail-playlist-name">{{ detailHeaderInfo.title }}</h2>
-                <p class="detail-playlist-desc">{{ detailHeaderInfo.desc }}</p>
-                <p v-if="detailHeaderInfo.intro" class="detail-artist-intro">
-                  {{ detailHeaderInfo.intro }}
-                </p>
-                <button
-                  v-if="showDetailFollowButton"
-                  type="button"
-                  class="stream-action-btn detail-play-btn detail-follow-btn"
-                  :class="{ followed: detailFollowState }"
-                  :disabled="followActionLoading"
-                  @click="toggleCurrentDetailFollow"
-                >
-                  <i :class="detailFollowButtonIcon"></i>
-                  <span>{{ detailFollowButtonLabel }}</span>
-                </button>
-                <button
-                  v-else-if="
-                    currentDetail?.type !== 'user_list' && currentDetail?.type !== 'user_playlists'
-                  "
-                  type="button"
-                  class="stream-action-btn detail-play-btn"
-                  :disabled="detailLoading || detailTracks.length === 0"
-                  @click="detailTracks.length > 0 && playTrack(detailTracks[0], detailTracks)"
-                >
-                  <i class="pi pi-play"></i>
-                  <span>播放全部</span>
-                </button>
-                <p v-if="followActionError" class="detail-follow-error">
-                  {{ followActionError }}
-                </p>
-              </div>
-            </div>
+            </template>
 
-            <div
-              v-if="showDetailInitialLoading"
-              class="detail-content playlist-loading-state"
-              aria-live="polite"
-            >
-              <div class="track-table-wrapper playlist-loading-table">
-                <table class="track-table skeleton-table">
-                  <thead>
-                    <tr>
-                      <th class="col-cover-header"></th>
-                      <th class="col-index">#</th>
-                      <th class="col-info">标题</th>
-                      <th v-if="!isExternalActive" class="col-like-header"></th>
-                      <th class="col-album">专辑</th>
-                      <th class="col-duration">时长</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr v-for="i in 10" :key="i" class="track-row skeleton-row">
-                      <td class="col-cover">
-                        <div
-                          class="skeleton-box skeleton-cover-box"
-                          :style="{ animationDelay: `${i * 0.05}s` }"
-                        ></div>
-                      </td>
-                      <td class="col-index">
-                        <div
-                          class="skeleton-box skeleton-index-box"
-                          :style="{ animationDelay: `${i * 0.05}s` }"
-                        ></div>
-                      </td>
-                      <td class="col-info">
-                        <div
-                          class="skeleton-box skeleton-title-box"
-                          :style="{ animationDelay: `${i * 0.05}s` }"
-                        ></div>
-                        <div
-                          class="skeleton-box skeleton-artist-box"
-                          :style="{ animationDelay: `${i * 0.05}s` }"
-                        ></div>
-                      </td>
-                      <td v-if="!isExternalActive" class="col-like"></td>
-                      <td class="col-album">
-                        <div
-                          class="skeleton-box skeleton-album-box"
-                          :style="{ animationDelay: `${i * 0.05}s` }"
-                        ></div>
-                      </td>
-                      <td class="col-duration">
-                        <div
-                          class="skeleton-box skeleton-time-box"
-                          :style="{ animationDelay: `${i * 0.05}s` }"
-                        ></div>
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div
-              v-else-if="currentDetail?.type === 'user_list'"
-              class="rec-sections"
-              style="padding: 0 40px; margin-top: 16px"
-            >
-              <div v-if="detailLoading" class="streaming-placeholder">
-                <i class="pi pi-spin pi-spinner" style="font-size: 40px; color: #999"></i>
-                <p class="placeholder-title">正在加载</p>
-              </div>
-              <div v-else-if="detailError" class="streaming-placeholder">
-                <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
-                <p class="placeholder-title">加载失败</p>
-                <p class="placeholder-hint">{{ detailError }}</p>
-              </div>
-              <div v-else-if="detailUsers.length === 0" class="streaming-placeholder">
-                <i class="pi pi-users" style="font-size: 40px; color: #ccc"></i>
-                <p class="placeholder-title">暂无数据</p>
-              </div>
-              <div v-else class="playlist-grid">
-                <div
-                  v-for="user in detailUsers"
-                  :key="user.id"
-                  class="playlist-grid-card artist-card"
-                  @click="onUserClick(user as any)"
-                >
-                  <CoverImg
-                    v-if="user.picUrl"
-                    :cover="user.picUrl"
-                    class="playlist-grid-cover artist-cover"
-                    alt=""
-                  />
-                  <div v-else class="playlist-grid-cover-placeholder artist-cover">
-                    <i class="pi pi-user" style="font-size: 28px; color: #bbb"></i>
-                  </div>
-                  <div class="playlist-grid-name">{{ user.name }}</div>
-                </div>
-              </div>
-            </div>
-
-            <div
-              v-else-if="currentDetail?.type === 'user_playlists'"
-              class="rec-sections"
-              style="padding: 0 40px; margin-top: 16px"
-            >
-              <div v-if="!detailLoading && detailError" class="streaming-placeholder">
-                <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
-                <p class="placeholder-title">加载失败</p>
-                <p class="placeholder-hint">{{ detailError }}</p>
-              </div>
-              <div
-                v-else-if="!detailLoading && currentDetail.playlists.length === 0"
-                class="streaming-placeholder"
-              >
-                <i class="pi pi-list" style="font-size: 40px; color: #ccc"></i>
-                <p class="placeholder-title">暂无歌单</p>
-              </div>
-              <div v-else-if="!detailLoading" class="playlist-grid">
-                <div
-                  v-for="playlist in currentDetail.playlists"
-                  :key="playlist.id"
-                  class="playlist-grid-card"
-                  @click="openPlaylist(playlist, false)"
-                >
-                  <CoverImg
-                    v-if="playlist.cover"
-                    :cover="playlist.cover"
-                    :cover-source="playlist.coverSource"
-                    class="playlist-grid-cover"
-                    alt=""
-                  />
-                  <div v-else class="playlist-grid-cover-placeholder">
-                    <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
-                  </div>
-                  <div class="playlist-grid-name">{{ playlist.name }}</div>
-                  <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
-                </div>
-              </div>
-            </div>
-
-            <div v-else-if="detailError" class="streaming-placeholder detail-placeholder">
-              <i class="pi pi-exclamation-triangle" style="font-size: 40px; color: #e74c3c"></i>
-              <p class="placeholder-title">加载失败</p>
-              <p class="placeholder-hint">{{ detailError }}</p>
-              <button type="button" class="stream-action-btn" @click="retryCurrentView">
-                <span>重试</span>
-              </button>
-            </div>
-
-            <div v-else-if="currentDetail?.type === 'artist'" class="artist-detail-panel">
-              <div class="artist-detail-tabs" role="tablist" aria-label="歌手内容">
-                <button
-                  v-for="tab in artistDetailTabs"
-                  :key="tab.key"
-                  type="button"
-                  class="artist-detail-tab"
-                  :class="{ active: activeArtistTab === tab.key }"
-                  role="tab"
-                  :aria-selected="activeArtistTab === tab.key"
-                  @click="activeArtistTab = tab.key"
-                >
-                  <span>{{ tab.label }}</span>
-                  <strong>{{ tab.count }}</strong>
-                </button>
-              </div>
-
-              <div
-                v-if="activeArtistTab === 'songs' && detailTracks.length === 0"
-                class="streaming-placeholder detail-placeholder"
-              >
-                <i class="pi pi-wave-pulse" style="font-size: 40px; color: #ccc"></i>
-                <p class="placeholder-title">暂无歌曲</p>
-                <p class="placeholder-hint">这个歌手目前没有可展示的歌曲</p>
-              </div>
-
-              <div v-else-if="activeArtistTab === 'songs'" class="track-table-wrapper">
-                <div v-if="hasSelection" class="selection-toolbar">
-                  <span class="selection-count">已选择 {{ selectedCount }} 首</span>
-                  <div class="selection-actions">
-                    <button type="button" class="selection-btn" @click="handleStreamingBatchFavorite">
-                      <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
-                      <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
-                    </button>
-                    <button
-                      type="button"
-                      class="selection-btn danger"
-                      @click="handleStreamingBatchDelete"
-                    >
-                      <i class="pi pi-minus-circle"></i>
-                      <span>移除</span>
-                    </button>
-                    <button type="button" class="selection-btn ghost" @click="clearSelection">
-                      <i class="pi pi-times"></i>
-                      <span>取消</span>
-                    </button>
-                  </div>
-                </div>
-                <table class="track-table">
-                  <thead>
-                    <tr>
-                      <th class="col-cover-header">{{ detailTrackCountLabel }}</th>
-                      <th class="col-index">#</th>
-                      <th class="col-info">标题</th>
-                      <th class="col-like-header"></th>
-                      <th class="col-like-header"></th>
-                      <th class="col-album">专辑</th>
-                      <th class="col-duration">时长</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="(track, index) in detailTracks"
-                      :key="track.id"
-                      class="track-row"
-                      :class="{
-                        'track-playing': currentTrack?.id === track.id,
-                        'track-selected': isSelected(track.id)
-                      }"
-                      @click="onTrackClick(track, index, $event)"
-                      @dblclick="onTrackClick(track, index, $event)"
-                    >
-                      <td class="col-cover">
-                        <CoverImg
-                          v-if="track.cover"
-                          :cover="track.cover"
-                          :cover-source="track.coverSource"
-                          class="cover-img"
-                          alt="cover"
-                        />
-                        <div v-else class="cover-placeholder">
-                          <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
-                        </div>
-                      </td>
-                      <td class="col-index">
-                        <span v-if="currentTrack?.id === track.id" class="playing-indicator">
-                          <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
-                        </span>
-                        <span v-else>{{ index + 1 }}</span>
-                      </td>
-                      <td class="col-info">
-                        <div class="track-title">{{ track.title }}</div>
-                        <div class="track-artist">{{ track.artist }}</div>
-                      </td>
-                      <td class="col-like">
-                        <button
-                          class="btn-like"
-                          :class="{
-                            liked: isTrackLiked(track.ncmSongId),
-                            loading: likingTracks.has(track.ncmSongId ?? 0)
-                          }"
-                          :disabled="likingTracks.has(track.ncmSongId ?? 0)"
-                          title="喜欢"
-                          @click="onLikeTrack(track, $event)"
-                        >
-                          <i
-                            v-if="likingTracks.has(track.ncmSongId ?? 0)"
-                            class="pi pi-spin pi-spinner"
-                            style="font-size: 14px"
-                          ></i>
-                          <i
-                            v-else
-                            :class="
-                              isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'
-                            "
-                            style="font-size: 14px"
-                          ></i>
-                        </button>
-                      </td>
-                      <td class="col-album">{{ track.album }}</td>
-                      <td class="col-duration">{{ formatTime(track.duration) }}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-
-              <div
-                v-else-if="activeArtistTab === 'albums' && currentArtistAlbums.length === 0"
-                class="streaming-placeholder detail-placeholder"
-              >
-                <i class="pi pi-clone" style="font-size: 40px; color: #ccc"></i>
-                <p class="placeholder-title">暂无专辑</p>
-                <p class="placeholder-hint">这个歌手目前没有可展示的专辑</p>
-              </div>
-
-              <div v-else-if="activeArtistTab === 'albums'" class="playlist-grid">
-                <div
-                  v-for="album in currentArtistAlbums"
-                  :key="album.id"
-                  class="playlist-grid-card"
-                  @click="openAlbum(album)"
-                >
-                  <CoverImg
-                    v-if="album.cover"
-                    :cover="album.cover"
-                    :cover-source="album.coverSource"
-                    class="playlist-grid-cover"
-                    alt=""
-                  />
-                  <div v-else class="playlist-grid-cover-placeholder">
-                    <i class="pi pi-clone" style="font-size: 28px; color: #bbb"></i>
-                  </div>
-                  <div class="playlist-grid-name">{{ album.name }}</div>
-                  <div class="playlist-grid-count">{{ album.trackCount }} 首</div>
-                </div>
-              </div>
-
-              <div
-                v-else-if="currentArtistPlaylists.length === 0"
-                class="streaming-placeholder detail-placeholder"
-              >
-                <i class="pi pi-list" style="font-size: 40px; color: #ccc"></i>
-                <p class="placeholder-title">暂无创建的歌单</p>
-                <p class="placeholder-hint">
-                  {{ currentDetail.user?.name ?? currentDetail.artist.name }} 目前没有公开创建的歌单
-                </p>
-              </div>
-
-              <div v-else class="playlist-grid">
-                <div
-                  v-for="playlist in currentArtistPlaylists"
-                  :key="playlist.id"
-                  class="playlist-grid-card"
-                  @click="openPlaylist(playlist, false)"
-                >
-                  <CoverImg
-                    v-if="playlist.cover"
-                    :cover="playlist.cover"
-                    :cover-source="playlist.coverSource"
-                    class="playlist-grid-cover"
-                    alt=""
-                  />
-                  <div v-else class="playlist-grid-cover-placeholder">
-                    <i class="pi pi-list" style="font-size: 28px; color: #bbb"></i>
-                  </div>
-                  <div class="playlist-grid-name">{{ playlist.name }}</div>
-                  <div class="playlist-grid-count">{{ playlist.trackCount }} 首</div>
-                </div>
-              </div>
-            </div>
-
-            <div
-              v-else-if="detailTracks.length === 0 && !detailLoading"
-              class="streaming-placeholder detail-placeholder"
-            >
-              <i
-                :class="currentDetail?.type === 'recent' ? 'pi pi-history' : 'pi pi-wave-pulse'"
-                style="font-size: 40px; color: #ccc"
-              ></i>
-              <p class="placeholder-title">
-                {{ currentDetail?.type === 'recent' ? '还没有播放记录' : '暂无内容' }}
-              </p>
-              <p class="placeholder-hint">
-                {{
-                  currentDetail?.type === 'recent'
-                    ? '在 Twilight Echo 中播放歌曲后，这里会显示您的最近播放记录'
-                    : '这个页面目前没有可展示的歌曲或歌单'
-                }}
-              </p>
-            </div>
-
-            <div v-else class="detail-content">
-              <div class="track-table-wrapper">
-                <div v-if="hasSelection" class="selection-toolbar">
-                  <span class="selection-count">已选择 {{ selectedCount }} 首</span>
-                  <div class="selection-actions">
-                    <button type="button" class="selection-btn" @click="handleStreamingBatchFavorite">
-                      <i :class="selectionAllFavorited ? 'pi pi-heart-fill' : 'pi pi-heart'"></i>
-                      <span>{{ selectionAllFavorited ? '取消收藏' : '加入收藏' }}</span>
-                    </button>
-                    <button
-                      type="button"
-                      class="selection-btn danger"
-                      @click="handleStreamingBatchDelete"
-                    >
-                      <i class="pi pi-minus-circle"></i>
-                      <span>移除</span>
-                    </button>
-                    <button type="button" class="selection-btn ghost" @click="clearSelection">
-                      <i class="pi pi-times"></i>
-                      <span>取消</span>
-                    </button>
-                  </div>
-                </div>
-                <table class="track-table">
-                  <thead>
-                    <tr>
-                      <th class="col-cover-header">{{ detailTrackCountLabel }}</th>
-                      <th class="col-index">#</th>
-                      <th class="col-info">标题</th>
-                      <th v-if="!isExternalActive" class="col-like-header"></th>
-                      <th class="col-like-header"></th>
-                      <th class="col-album">专辑</th>
-                      <th class="col-duration">时长</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr
-                      v-for="(track, index) in detailTracks"
-                      :key="track.id"
-                      class="track-row"
-                      :class="{
-                        'track-playing': currentTrack?.id === track.id,
-                        'track-selected': isSelected(track.id)
-                      }"
-                      @click="onTrackClick(track, index, $event)"
-                      @dblclick="onTrackClick(track, index, $event)"
-                    >
-                      <td class="col-cover">
-                        <CoverImg
-                          v-if="track.cover"
-                          :cover="track.cover"
-                          :cover-source="track.coverSource"
-                          class="cover-img"
-                          alt="cover"
-                        />
-                        <div v-else class="cover-placeholder">
-                          <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
-                        </div>
-                      </td>
-                      <td class="col-index">
-                        <span v-if="currentTrack?.id === track.id" class="playing-indicator">
-                          <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
-                        </span>
-                        <span v-else>{{ index + 1 }}</span>
-                      </td>
-                      <td class="col-info">
-                        <div class="track-title">{{ track.title }}</div>
-                        <div class="track-artist">{{ track.artist }}</div>
-                      </td>
-                      <td v-if="!isExternalActive" class="col-like">
-                        <button
-                          class="btn-like"
-                          :class="{
-                            liked: isTrackLiked(track.ncmSongId),
-                            loading: likingTracks.has(track.ncmSongId ?? 0)
-                          }"
-                          :disabled="likingTracks.has(track.ncmSongId ?? 0)"
-                          title="喜欢"
-                          @click="onLikeTrack(track, $event)"
-                        >
-                          <i
-                            v-if="likingTracks.has(track.ncmSongId ?? 0)"
-                            class="pi pi-spin pi-spinner"
-                            style="font-size: 14px"
-                          ></i>
-                          <i
-                            v-else
-                            :class="
-                              isTrackLiked(track.ncmSongId) ? 'pi pi-heart-fill' : 'pi pi-heart'
-                            "
-                            style="font-size: 14px"
-                          ></i>
-                        </button>
-                      </td>
-                      <td class="col-album">{{ track.album }}</td>
-                      <td class="col-duration">{{ formatTime(track.duration) }}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-              <div
-                v-if="currentDetail?.type === 'liked' && !isExternalActive"
-                class="liked-page-loader"
-              >
-                <span v-if="likedTracksLoadingMore">
-                  <i class="pi pi-spin pi-spinner"></i>
-                  正在加载更多
-                </span>
-                <button
-                  v-else-if="likedTracksLoadMoreError"
-                  type="button"
-                  class="liked-page-retry"
-                  @click="loadMoreLikedTracks"
-                >
-                  <i class="pi pi-refresh"></i>
-                  <span>继续加载</span>
-                </button>
-                <span v-else-if="likedTracksHasMore">继续向下滚动加载更多</span>
-                <span v-else-if="likedTracksTotal != null && detailTracks.length > 0"
-                  >已加载全部</span
-                >
-              </div>
-            </div>
+            <!-- Artist / social / user playlists: editorial social stage -->
+            <StreamingSocialStage
+              v-else-if="detailHeaderInfo"
+              :kind="socialStageKind"
+              :title="detailHeaderInfo.title"
+              :cover="detailHeaderInfo.cover"
+              :cover-source="detailHeaderInfo.coverSource"
+              :description="detailHeaderInfo.desc"
+              :intro="detailHeaderInfo.intro"
+              :icon="detailHeaderInfo.icon"
+              :loading="socialStageLoading"
+              :error="detailError"
+              :show-follow="showDetailFollowButton"
+              :follow-label="detailFollowButtonLabel"
+              :follow-icon="detailFollowButtonIcon"
+              :follow-active="detailFollowState"
+              :follow-loading="followActionLoading"
+              :follow-error="followActionError"
+              :people="socialPeople"
+              :collections="socialCollections"
+              :collection-empty-hint="socialCollectionEmptyHint"
+              :tabs="socialStageKind === 'artist' ? artistDetailTabs : []"
+              :active-tab="socialStageKind === 'artist' ? activeArtistTab : ''"
+              :tracks="detailTracks"
+              :current-track-id="currentTrack?.id ?? null"
+              :is-external="isExternalActive"
+              :has-selection="hasSelection"
+              :selected-count="selectedCount"
+              :selection-all-favorited="selectionAllFavorited"
+              :is-selected="isSelected"
+              :is-track-liked="isDetailTrackLiked"
+              :is-liking="isDetailTrackLiking"
+              :format-time="formatTime"
+              :track-count-label="detailTrackCountLabel"
+              @follow="toggleCurrentDetailFollow"
+              @retry="retryCurrentView"
+              @person-click="onSocialPersonClick"
+              @collection-click="onSocialCollectionClick"
+              @tab-change="onArtistTabChange"
+              @play-all="playAllDetailTracks"
+              @shuffle-play="shufflePlayDetailTracks"
+              @play-track="playDetailTrack"
+              @track-click="onTrackClick"
+              @like-track="onLikeTrack"
+              @batch-favorite="handleStreamingBatchFavorite"
+              @batch-delete="handleStreamingBatchDelete"
+              @clear-selection="clearSelection"
+            />
           </div>
 
           <StreamingLibrary
