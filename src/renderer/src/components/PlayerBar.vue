@@ -92,7 +92,6 @@ const {
   dismissAudioEngineRecoveryNotice,
   formatTime,
   setUnityVolume,
-  toggleMute,
   configureSleepTimer,
   cancelSleepTimer,
   setAudioProcessing,
@@ -118,6 +117,11 @@ const {
 } = usePlayerStore()
 
 const resolvedCurrentCover = useCover(computed(() => currentTrack.value?.cover ?? null))
+/** Force cover remount + range rebind whenever track identity changes. */
+const currentTrackUiKey = computed(
+  () =>
+    `${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.queueEntryId ?? ''}:${resolvedCurrentCover.value ?? ''}`
+)
 const {
   playlists,
   addToPlaylist,
@@ -224,10 +228,55 @@ function cyclePlaybackRate(): void {
   void setPlaybackRate(next)
 }
 
-async function toggleCastPanel(): Promise<void> {
-  castPanelOpen.value = !castPanelOpen.value
+const abLoopRangeStyle = computed(() => {
+  const total = duration.value || 1
+  const a = Math.max(0, Math.min(abLoopA.value ?? 0, total))
+  const b = Math.max(a, Math.min(abLoopB.value ?? a, total))
+  return {
+    left: `${(a / total) * 100}%`,
+    width: `${((b - a) / total) * 100}%`
+  }
+})
+
+const activeResumeOffer = computed(() => {
+  const offer = resumeOffer.value
+  const track = currentTrack.value
+  if (!offer || !track || offer.trackId !== track.id) return null
+  return offer
+})
+
+const playbackBookmarks = usePlaybackBookmarks()
+const renamingBookmarkId = ref<string | null>(null)
+const renameDraft = ref('')
+const currentTrackBookmarks = computed(() => playbackBookmarks.bookmarksFor(currentTrack.value))
+
+const castDevices = ref<import('../../../shared/remoteControl.ts').DlnaDeviceInfo[]>([])
+const castBusy = ref(false)
+const castError = ref('')
+const canCastCurrentTrack = computed(() => {
+  const track = currentTrack.value
+  if (!track) return false
+  // Local path, offline pin, or any stream URL (podcast / radio / provider) can cast
+  // once the remote media token proxy is available in main.
+  return Boolean(
+    track.offlinePath ||
+      track.streamUrl ||
+      track.filePath ||
+      track.source === 'radio' ||
+      track.source === 'podcast'
+  )
+})
+
+const sleepTimerSelectValue = computed(() => {
+  if (!sleepTimerState.value?.active) return 'off'
+  if (sleepTimerState.value.mode === 'minutes') {
+    return String(settings.value.sleepTimer.defaultMinutes)
+  }
+  return sleepTimerState.value.mode
+})
+
+async function refreshCastDevices(): Promise<void> {
   castError.value = ''
-  if (!castPanelOpen.value) return
   castBusy.value = true
   try {
     await refreshCastTarget()
@@ -244,7 +293,6 @@ async function onCastToDevice(usn: string): Promise<void> {
   castError.value = ''
   try {
     await castToDevice(usn)
-    castPanelOpen.value = false
   } catch (err) {
     castError.value = err instanceof Error ? err.message : String(err)
   } finally {
@@ -264,51 +312,9 @@ async function onStopCast(): Promise<void> {
   }
 }
 
-const abLoopRangeStyle = computed(() => {
-  const total = duration.value || 1
-  const a = Math.max(0, Math.min(abLoopA.value ?? 0, total))
-  const b = Math.max(a, Math.min(abLoopB.value ?? a, total))
-  return {
-    left: `${(a / total) * 100}%`,
-    width: `${((b - a) / total) * 100}%`
-  }
-})
-
-const activeResumeOffer = computed(() => {
-  const offer = resumeOffer.value
-  const track = currentTrack.value
-  if (!offer || !track || offer.trackId !== track.id) return null
-  return offer
-})
-
-const playbackBookmarks = usePlaybackBookmarks()
-const bookmarkPanelOpen = ref(false)
-const renamingBookmarkId = ref<string | null>(null)
-const renameDraft = ref('')
-const currentTrackBookmarks = computed(() => playbackBookmarks.bookmarksFor(currentTrack.value))
-
-const castPanelOpen = ref(false)
-const castDevices = ref<import('../../../shared/remoteControl.ts').DlnaDeviceInfo[]>([])
-const castBusy = ref(false)
-const castError = ref('')
-const canCastCurrentTrack = computed(() => {
-  const track = currentTrack.value
-  if (!track) return false
-  // Local path, offline pin, or any stream URL (podcast / radio / provider) can cast
-  // once the remote media token proxy is available in main.
-  return Boolean(
-    track.offlinePath ||
-      track.streamUrl ||
-      track.filePath ||
-      track.source === 'radio' ||
-      track.source === 'podcast'
-  )
-})
-
 watch(
   () => currentTrack.value?.id,
   () => {
-    bookmarkPanelOpen.value = false
     renamingBookmarkId.value = null
     renameDraft.value = ''
   }
@@ -319,19 +325,18 @@ function onAddBookmark(): void {
   void playbackBookmarks.ensureLoaded()
 }
 
-function toggleBookmarkPanel(): void {
-  bookmarkPanelOpen.value = !bookmarkPanelOpen.value
-  if (bookmarkPanelOpen.value) void playbackBookmarks.ensureLoaded()
-}
-
 function jumpToBookmark(bookmark: PlaybackBookmark): void {
   seek(bookmark.positionSeconds)
-  bookmarkPanelOpen.value = false
 }
 
 function startRenameBookmark(bookmark: PlaybackBookmark): void {
   renamingBookmarkId.value = bookmark.id
   renameDraft.value = bookmark.label
+}
+
+function cancelRenameBookmark(): void {
+  renamingBookmarkId.value = null
+  renameDraft.value = ''
 }
 
 async function commitRenameBookmark(): Promise<void> {
@@ -384,8 +389,7 @@ function onVolumeWheel(event: WheelEvent): void {
   volume.value = clampVolume(volume.value + (event.deltaY < 0 ? step : -step))
 }
 
-function onSleepTimerSelect(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value
+function onSleepTimerSelectValue(value: string): void {
   if (value === 'off') {
     cancelSleepTimer()
     return
@@ -417,6 +421,10 @@ const {
   togglePlaylist,
   toggleMore
 } = useFloatingPanels(playerBarShellRef)
+
+watch(moreOpen, (open) => {
+  if (open) void playbackBookmarks.ensureLoaded()
+})
 
 const {
   containerRef: playlistListRef,
@@ -1079,6 +1087,7 @@ onMounted(() => {
       <div class="player-left">
         <img
           v-if="resolvedCurrentCover"
+          :key="currentTrackUiKey"
           ref="coverRef"
           :src="resolvedCurrentCover"
           class="player-cover"
@@ -1086,7 +1095,13 @@ onMounted(() => {
           title="打开播放页面"
           @click="onCoverClick"
         />
-        <div v-else ref="coverRef" class="player-cover-placeholder" @click="onCoverClick">
+        <div
+          v-else
+          :key="`ph:${currentTrackUiKey}`"
+          ref="coverRef"
+          class="player-cover-placeholder"
+          @click="onCoverClick"
+        >
           <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
         </div>
         <div class="player-track-info">
@@ -1150,82 +1165,6 @@ onMounted(() => {
           <button class="ctrl-btn" aria-label="下一首" @click="next">
             <img :src="nextTrackIcon" alt="下一首" />
           </button>
-          <button
-            class="ctrl-btn ab-loop-btn"
-            :class="{
-              'ab-loop-btn--partial': !isLiveStream && abLoopA != null && abLoopB == null,
-              'ab-loop-btn--active': !isLiveStream && abLoopA != null && abLoopB != null
-            }"
-            type="button"
-            :title="abLoopTitle"
-            :aria-label="abLoopTitle"
-            :disabled="isLiveStream"
-            @click="toggleAbLoopAtCurrentTime"
-            @contextmenu.prevent="clearAbLoop"
-          >
-            A-B
-          </button>
-          <button
-            class="ctrl-btn rate-btn"
-            :class="{ 'rate-btn--active': Math.abs(playbackRate - 1) > 0.001 }"
-            type="button"
-            :title="playbackRateTitle"
-            :aria-label="playbackRateTitle"
-            @click="cyclePlaybackRate"
-          >
-            {{ playbackRateLabel }}
-          </button>
-          <button
-            class="ctrl-btn bookmark-btn"
-            type="button"
-            title="添加书签（右键打开列表）"
-            aria-label="添加书签"
-            :disabled="isLiveStream"
-            @click="onAddBookmark"
-            @contextmenu.prevent="toggleBookmarkPanel"
-          >
-            书签
-          </button>
-        </div>
-        <div v-if="bookmarkPanelOpen" class="bookmark-panel" role="dialog" aria-label="书签列表">
-          <div class="bookmark-panel__header">
-            <span>当前曲目书签</span>
-            <button type="button" class="bookmark-panel__close" @click="bookmarkPanelOpen = false">
-              关闭
-            </button>
-          </div>
-          <p v-if="currentTrackBookmarks.length === 0" class="bookmark-panel__empty">暂无书签</p>
-          <ul v-else class="bookmark-panel__list">
-            <li v-for="bm in currentTrackBookmarks" :key="bm.id" class="bookmark-panel__item">
-              <button type="button" class="bookmark-panel__jump" @click="jumpToBookmark(bm)">
-                <span class="bookmark-panel__time">{{ formatTime(bm.positionSeconds) }}</span>
-                <template v-if="renamingBookmarkId === bm.id">
-                  <input
-                    v-model="renameDraft"
-                    class="bookmark-panel__rename"
-                    type="text"
-                    maxlength="120"
-                    @click.stop
-                    @keydown.enter.prevent="commitRenameBookmark"
-                    @keydown.esc.prevent="renamingBookmarkId = null"
-                  />
-                </template>
-                <span v-else class="bookmark-panel__label">{{ bm.label }}</span>
-                <span v-if="bm.kind === 'resume'" class="bookmark-panel__kind">续播</span>
-              </button>
-              <div class="bookmark-panel__actions">
-                <button
-                  v-if="renamingBookmarkId === bm.id"
-                  type="button"
-                  @click="commitRenameBookmark"
-                >
-                  保存
-                </button>
-                <button v-else type="button" @click="startRenameBookmark(bm)">重命名</button>
-                <button type="button" @click="deleteBookmark(bm.id)">删除</button>
-              </div>
-            </li>
-          </ul>
         </div>
         <div v-if="activeResumeOffer" class="resume-offer" role="status">
           <span class="resume-offer__text"
@@ -1234,7 +1173,7 @@ onMounted(() => {
           <button type="button" class="resume-offer__action" @click="onAcceptResume">继续</button>
           <button type="button" class="resume-offer__dismiss" @click="onDismissResume">忽略</button>
         </div>
-        <div class="progress-area">
+        <div class="progress-area" :key="`progress:${currentTrack.id}:${currentTrack.queueEntryId || ''}`">
           <span class="time-label">{{ isLiveStream ? 'LIVE' : formatTime(currentTime) }}</span>
           <div class="progress-slider-wrap">
             <div
@@ -1324,49 +1263,13 @@ onMounted(() => {
           </Transition>
           <button
             class="icon-btn"
-            :class="{ active: muted }"
-            :title="muted ? '恢复音量' : '静音'"
-            @click="toggleMute"
-          >
-            <i :class="muted ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
-          </button>
-          <button
-            class="icon-btn"
             :class="{ active: volumeOpen }"
             title="音量"
             @click="toggleVolume"
           >
-            <i class="pi pi-volume-up"></i>
+            <i :class="muted || volume <= 0.001 ? 'pi pi-volume-off' : 'pi pi-volume-up'"></i>
           </button>
         </div>
-        <select
-          class="sleep-timer-select"
-          :value="
-            sleepTimerState?.active
-              ? sleepTimerState.mode === 'minutes'
-                ? String(settings.sleepTimer.defaultMinutes)
-                : sleepTimerState.mode
-              : 'off'
-          "
-          title="睡眠定时器"
-          @change="onSleepTimerSelect"
-        >
-          <option value="off">睡眠关闭</option>
-          <option
-            v-if="![15, 30, 60].includes(settings.sleepTimer.defaultMinutes)"
-            :value="String(settings.sleepTimer.defaultMinutes)"
-          >
-            {{ settings.sleepTimer.defaultMinutes }} 分钟后停止
-          </option>
-          <option value="15">15 分钟后停止</option>
-          <option value="30">30 分钟后停止</option>
-          <option value="60">60 分钟后停止</option>
-          <option value="trackEnd">当前曲结束</option>
-          <option value="queueEnd">队列结束</option>
-        </select>
-        <span v-if="sleepTimerStatus" class="sleep-timer-status" :title="sleepTimerStatus">
-          {{ sleepTimerStatus }}
-        </span>
 
         <button
           class="icon-btn"
@@ -1397,62 +1300,6 @@ onMounted(() => {
         >
           <span class="desktop-lyrics-icon" aria-hidden="true">词</span>
         </button>
-
-        <div class="cast-anchor">
-          <button
-            class="icon-btn"
-            :class="{ active: castPanelOpen || Boolean(castTargetName) }"
-            title="投送到…"
-            aria-label="投送到"
-            :aria-pressed="castPanelOpen"
-            :disabled="!canCastCurrentTrack && !castTargetName"
-            @click="toggleCastPanel"
-          >
-            <i class="pi pi-wifi"></i>
-          </button>
-          <div v-if="castPanelOpen" class="cast-panel" role="dialog" aria-label="投送目标">
-            <div class="cast-panel__header">
-              <strong>投送到…</strong>
-              <button type="button" class="cast-panel__close" @click="castPanelOpen = false">
-                ×
-              </button>
-            </div>
-            <p v-if="castTargetName" class="cast-panel__active">
-              当前：{{ castTargetName }}
-              <button type="button" class="soft-mini" :disabled="castBusy" @click="onStopCast">
-                停止投送
-              </button>
-            </p>
-            <p v-if="castBusy" class="cast-panel__hint">正在搜索设备…</p>
-            <p v-else-if="castDevices.length === 0" class="cast-panel__hint">
-              未发现投送设备（DLNA / Chromecast）。请确认设备在线且本机已开启远程控制服务。
-            </p>
-            <ul v-else class="cast-panel__list">
-              <li v-for="device in castDevices" :key="device.usn">
-                <button
-                  type="button"
-                  class="cast-panel__item"
-                  :disabled="
-                    castBusy ||
-                    !canCastCurrentTrack ||
-                    (device.protocol !== 'chromecast' && !device.avTransportUrl)
-                  "
-                  @click="onCastToDevice(device.usn)"
-                >
-                  <span class="cast-panel__name">{{ device.friendlyName }}</span>
-                  <span class="cast-panel__meta">
-                    {{
-                      device.protocol === 'chromecast'
-                        ? 'Chromecast'
-                        : device.manufacturer || device.modelName || 'DLNA'
-                    }}
-                  </span>
-                </button>
-              </li>
-            </ul>
-            <p v-if="castError" class="cast-panel__error">{{ castError }}</p>
-          </div>
-        </div>
 
         <!-- HiFi 控制台入口 -->
         <button
@@ -1499,6 +1346,25 @@ onMounted(() => {
           :desktop-lyrics-on="desktopLyricsOn"
           :lyrics-reloading="lyricsReloading"
           :player-bar-buttons="playerBarButtons"
+          :is-live-stream="isLiveStream"
+          :playback-rate="playbackRate"
+          :playback-rate-label="playbackRateLabel"
+          :playback-rate-title="playbackRateTitle"
+          :ab-loop-a="abLoopA"
+          :ab-loop-b="abLoopB"
+          :ab-loop-title="abLoopTitle"
+          :sleep-timer-select-value="sleepTimerSelectValue"
+          :sleep-timer-status="sleepTimerStatus"
+          :sleep-timer-default-minutes="settings.sleepTimer.defaultMinutes"
+          :cast-target-name="castTargetName"
+          :cast-devices="castDevices"
+          :cast-busy="castBusy"
+          :cast-error="castError"
+          :can-cast-current-track="canCastCurrentTrack"
+          :bookmarks="currentTrackBookmarks"
+          :renaming-bookmark-id="renamingBookmarkId"
+          :rename-draft="renameDraft"
+          :format-time="formatTime"
           @open-settings="openPlaybackSettings"
           @open-dsp="openDspSettings"
           @open-equalizer="openEqualizerPage"
@@ -1527,6 +1393,20 @@ onMounted(() => {
           @clear-impulse-response="clearImpulseResponse"
           @reload-lyrics="onReloadLyrics"
           @run-extension="runPlayerBarExtension"
+          @cycle-playback-rate="cyclePlaybackRate"
+          @toggle-ab-loop="toggleAbLoopAtCurrentTime"
+          @clear-ab-loop="clearAbLoop"
+          @sleep-timer-select="onSleepTimerSelectValue"
+          @refresh-cast-devices="refreshCastDevices"
+          @cast-to-device="onCastToDevice"
+          @stop-cast="onStopCast"
+          @add-bookmark="onAddBookmark"
+          @jump-bookmark="jumpToBookmark"
+          @start-rename-bookmark="startRenameBookmark"
+          @commit-rename-bookmark="commitRenameBookmark"
+          @update-rename-draft="renameDraft = $event"
+          @cancel-rename-bookmark="cancelRenameBookmark"
+          @delete-bookmark="deleteBookmark"
         />
       </div>
     </Transition>

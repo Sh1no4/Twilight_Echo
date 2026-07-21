@@ -440,9 +440,17 @@ test('native queue switching guards the target track before applying playback-in
   const advanceNativePlayback = extractInternalFunctionBody(source, 'advanceNativePlayback')
   const applyNativePlaybackInfo = extractInternalFunctionBody(source, 'applyNativePlaybackInfo')
   const setupAudioEngineListeners = extractInternalFunctionBody(source, 'setupAudioEngineListeners')
+  const advanceAfterPlaybackEnded = extractInternalFunctionBody(source, 'advanceAfterPlaybackEnded')
+  const playQueueTrack = extractInternalFunctionBody(source, 'playQueueTrack')
+  const resetPlaybackUiForTrackSwitch = extractInternalFunctionBody(
+    source,
+    'resetPlaybackUiForTrackSwitch'
+  )
 
   assert.match(source, /evaluateNativePlaybackInfoIntent/)
   assert.match(advanceNativePlayback, /const target = getNativeQueueAdvanceTarget\(direction\)/)
+  assert.match(advanceNativePlayback, /currentTrack\.value = \{ \.\.\.target\.track \}/)
+  assert.match(advanceNativePlayback, /resetPlaybackUiForTrackSwitch\(target\.track, 0\)/)
   assert.match(
     advanceNativePlayback,
     /setNativePlaybackInfoIntent\(\s*activeLoadToken,\s*target\.track,\s*getTrackAudioSource\(target\.track\),\s*target\.queueIndex\s*\)/
@@ -452,10 +460,29 @@ test('native queue switching guards the target track before applying playback-in
     /const infoIndex = findTrackIndexFromPlaybackInfo\(info\)\s*if \(shouldIgnoreNativePlaybackInfo\(info, infoIndex\)\) return false\s*const normalizedInfo/
   )
   assert.match(applyNativePlaybackInfo, /applyNativeStreamBufferingFromInfo\(normalizedInfo\)/)
+  assert.match(applyNativePlaybackInfo, /if \(switchedTrack\)[\s\S]*clearAbLoop\(\)/)
+  assert.match(applyNativePlaybackInfo, /previousQueueIndex !== infoIndex/)
+  assert.match(applyNativePlaybackInfo, /clearNativePlaybackInfoIntent\(\)/)
+  assert.match(resetPlaybackUiForTrackSwitch, /clearAbLoop\(\)/)
+  assert.match(resetPlaybackUiForTrackSwitch, /setCurrentTimeImmediate/)
+  assert.match(advanceAfterPlaybackEnded, /resetPlaybackUiForTrackSwitch/)
+  assert.match(playQueueTrack, /resetPlaybackUiForTrackSwitch\(track, 0\)/)
   assert.match(
     setupAudioEngineListeners,
     /api\.onPlaybackInfo\(\(info\) => \{\s*applyNativePlaybackInfo\(info\)\s*\}\)/
   )
+  assert.match(setupAudioEngineListeners, /const startAt = pendingLoadStartTime/)
+  assert.match(setupAudioEngineListeners, /pendingLoadStartTime = 0/)
+  // Gapless auto-advance must refresh track identity even when nativePlaybackActive
+  // briefly lags, otherwise cover + progress stick on the previous track.
+  assert.match(setupAudioEngineListeners, /api\.onStartFile\(\(\) => \{/)
+  assert.doesNotMatch(
+    setupAudioEngineListeners.match(/api\.onStartFile\(\(\) => \{[\s\S]*?\n    \}\)/)?.[0] ?? '',
+    /if \(!nativePlaybackActive\) return/
+  )
+  assert.match(setupAudioEngineListeners, /getPlaybackInfo\(\)/)
+  assert.match(setupAudioEngineListeners, /applyNativePlaybackInfo\(info, \{ applyTrackWhenInactive: true \}\)/)
+  assert.match(setupAudioEngineListeners, /!nativePlaybackActive && !nativeQueueDelegated/)
 })
 
 test('native LIVE buffering maps sessionUnderrunCount rises onto isStreamBuffering', () => {
@@ -893,6 +920,26 @@ test('player bar exposes a HiFi console drawer instead of visualization meters',
   assert.match(hifiSidebarSource, /Devices/)
   assert.match(hifiSidebarSource, /Lyrics Source/)
   assert.match(hifiSidebarSource, /Source Quality/)
+  assert.match(hifiSidebarSource, /Sleep Timer/)
+  assert.match(hifiSidebarSource, /Playback Rate/)
+  assert.match(hifiSidebarSource, /A-B Loop/)
+  assert.match(hifiSidebarSource, /Cast \/ DLNA/)
+  assert.match(hifiSidebarSource, /Bookmarks/)
+  assert.match(hifiSidebarSource, /id: 'tools'/)
+  assert.match(playerBarSource, /@cycle-playback-rate="cyclePlaybackRate"/)
+  assert.match(playerBarSource, /@toggle-ab-loop="toggleAbLoopAtCurrentTime"/)
+  assert.match(playerBarSource, /@sleep-timer-select="onSleepTimerSelectValue"/)
+  assert.match(playerBarSource, /@refresh-cast-devices="refreshCastDevices"/)
+  assert.match(playerBarSource, /@add-bookmark="onAddBookmark"/)
+  assert.match(playerBarSource, /currentTrackUiKey/)
+  assert.match(playerBarSource, /:key="currentTrackUiKey"/)
+  assert.match(playerBarSource, /progress:\$\{currentTrack\.id\}/)
+  assert.doesNotMatch(playerBarSource, /class="sleep-timer-select"/)
+  assert.doesNotMatch(playerBarSource, /class="cast-anchor"/)
+  assert.doesNotMatch(playerBarSource, /class="ctrl-btn ab-loop-btn"/)
+  assert.doesNotMatch(playerBarSource, /class="ctrl-btn rate-btn"/)
+  assert.doesNotMatch(playerBarSource, /class="ctrl-btn bookmark-btn"/)
+  assert.doesNotMatch(playerBarSource, /@click="toggleMute"/)
   assert.match(hifiSidebarSource, /setUnityVolume/)
   assert.match(hifiSidebarSource, /HIFI_STATUS_COPY\.unityButton/)
   assert.match(hifiSidebarSource, /volume_not_unity/)
@@ -1121,7 +1168,7 @@ test('playback end auto-advance stops at queue end without changing manual next 
   assert.match(setupAudioEngineListeners, /case 'eof-reached':\s*handleNativePlaybackEnded\(\)/)
   assert.match(
     setupAudioEngineListeners,
-    /if \(nativePlaybackActive && reason === 'eof'\) \{\s*handleNativePlaybackEnded\(\)/
+    /if \(\(nativePlaybackActive \|\| nativeQueueDelegated\) && reason === 'eof'\) \{\s*handleNativePlaybackEnded\(\)/
   )
   assert.match(next, /queueIndex\.value = 0/)
   assert.match(scheduleCrossfadeIfNeeded, /queueIndex\.value \+ 1 >= queue\.value\.length/)

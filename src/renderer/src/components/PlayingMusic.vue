@@ -67,6 +67,10 @@ onBeforeUnmount(() => {
 })
 
 const resolvedCover = useCover(computed(() => currentTrack.value?.cover ?? null))
+const coverKey = computed(
+  () =>
+    `${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.queueEntryId ?? ''}:${resolvedCover.value ?? ''}`
+)
 const bgSrc = computed(() => resolvedCover.value ?? '')
 const lyricsEl = ref<HTMLElement | null>(null)
 const lyricLineEls = ref<Array<HTMLElement | null>>([])
@@ -647,7 +651,7 @@ onBeforeUnmount(() => {
       <Transition name="backdrop-cover-fade" appear>
         <img
           v-if="bgSrc && isBlurBackground"
-          :key="bgSrc"
+          :key="coverKey"
           :src="bgSrc"
           class="backdrop-cover"
           alt=""
@@ -668,7 +672,13 @@ onBeforeUnmount(() => {
       <main v-else class="layout" :class="{ 'layout--single': !reserveLyricsColumn }">
         <section class="cover-column">
           <div class="cover-frame">
-            <img v-if="resolvedCover" :src="resolvedCover" class="cover-image" alt="cover" />
+            <img
+              v-if="resolvedCover"
+              :key="coverKey"
+              :src="resolvedCover"
+              class="cover-image"
+              alt="cover"
+            />
             <div v-else class="cover-placeholder">
               <i class="pi pi-wave-pulse"></i>
             </div>

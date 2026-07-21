@@ -1206,6 +1206,17 @@ function applyNativeStreamBufferingFromInfo(info: NativePlaybackInfo): void {
   }
 }
 
+/**
+ * Reset playbar progress / A-B when the active track identity changes without
+ * going through loadAndPlay (native gapless, delegated queue next, start-file).
+ */
+function resetPlaybackUiForTrackSwitch(track: Track | null, position = 0): void {
+  clearAbLoop()
+  pendingLoadStartTime = 0
+  duration.value = track ? cueDuration(track) : 0
+  setCurrentTimeImmediate(Math.max(0, Number.isFinite(position) ? position : 0))
+}
+
 function applyNativePlaybackInfo(
   info: NativePlaybackInfo,
   options: { applyTrackWhenInactive?: boolean } = {}
@@ -1223,36 +1234,66 @@ function applyNativePlaybackInfo(
   }
   if (!nativePlaybackActive && !options.applyTrackWhenInactive) return true
 
+  const previousQueueIndex = queueIndex.value
+  const previousTrackId = currentTrack.value?.id ?? loadedTrackId
   let switchedTrack = false
 
   if (infoIndex >= 0) {
     const track = queue.value[infoIndex]
-    switchedTrack = currentTrack.value?.id !== track.id
+    // Treat queue-index changes as a switch even when consecutive CUE/logical
+    // entries share metadata, so cover + progress always rebind.
+    switchedTrack =
+      previousTrackId !== track.id ||
+      previousQueueIndex !== infoIndex ||
+      loadedTrackId !== track.id
     const mergedTrack = mergeTrackTransientData(track, currentTrack.value)
     queueIndex.value = infoIndex
     if (mergedTrack !== track) {
       const snapshot = { ...toPlaybackQueueSnapshot(mergedTrack), queueEntryId: track.queueEntryId }
       queue.value = queue.value.map((item, index) => (index === infoIndex ? snapshot : item))
     }
-    currentTrack.value = mergedTrack
+    // Always assign a new object on switch so Vue cover watchers fire even when
+    // the queue snapshot was referentially stable (same album cover handle).
+    currentTrack.value =
+      switchedTrack && mergedTrack === currentTrack.value
+        ? { ...mergedTrack }
+        : mergedTrack
     loadedTrackId = mergedTrack.id
+    lastActiveTrack = mergedTrack
   }
 
   const nextDuration =
     Number.isFinite(info.duration) && info.duration > 0
       ? info.duration
-      : currentTrack.value?.duration
-  if (nextDuration && nextDuration > 0) {
-    duration.value = nextDuration
-  }
+      : currentTrack.value
+        ? cueDuration(currentTrack.value)
+        : 0
 
   const nextPosition = Number.isFinite(info.position)
     ? Math.max(0, info.position)
-    : latestPlaybackTime
-  if (switchedTrack || nextPosition + 1 < latestPlaybackTime) {
+    : switchedTrack
+      ? 0
+      : latestPlaybackTime
+
+  if (switchedTrack) {
+    // Native gapless / queue next does not go through loadAndPlay — clear A-B and
+    // reset duration/time so the playbar cover + progress do not stick on the previous track.
+    clearAbLoop()
+    pendingLoadStartTime = 0
+    duration.value = nextDuration > 0 ? nextDuration : currentTrack.value ? cueDuration(currentTrack.value) : 0
     setCurrentTimeImmediate(nextPosition)
+    // Intent was for the previous identity; drop it once the engine confirms the switch.
+    clearNativePlaybackInfoIntent()
   } else {
-    setCurrentTimeThrottled(nextPosition)
+    if (nextDuration > 0) {
+      duration.value = nextDuration
+    }
+    // Always hard-reset when engine reports a rewind (new file, seek, loop).
+    if (nextPosition + 0.5 < latestPlaybackTime) {
+      setCurrentTimeImmediate(nextPosition)
+    } else {
+      setCurrentTimeThrottled(nextPosition)
+    }
   }
 
   applyNativePlayingState(normalizedInfo.state === 'playing')
@@ -1262,7 +1303,6 @@ function applyNativePlaybackInfo(
   advancingFromEndedTrackId = ''
   restoredPlaybackPending = false
   restoredPlaybackPosition = 0
-  pendingLoadStartTime = 0
   scheduleCrossfadeIfNeeded()
   return true
 }
@@ -1374,6 +1414,15 @@ function getNativeQueueAdvanceTarget(
 async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<void> {
   const target = getNativeQueueAdvanceTarget(direction)
   if (target) {
+    // Optimistic UI update so cover/title/progress reset immediately instead of
+    // waiting for (or missing) the first native playback-info event.
+    queueIndex.value = target.queueIndex
+    // Clone so cover watchers see a new identity even when the queue entry is
+    // the same referential snapshot reused across consecutive plays.
+    currentTrack.value = { ...target.track }
+    loadedTrackId = target.track.id
+    lastActiveTrack = target.track
+    resetPlaybackUiForTrackSwitch(target.track, 0)
     setNativePlaybackInfoIntent(
       activeLoadToken,
       target.track,
@@ -1404,7 +1453,15 @@ async function advanceNativePlayback(direction: 'next' | 'previous'): Promise<vo
       info = await window.api.audioEngine.getPlaybackInfo()
       applied = applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })
     }
-    if (!applied) return
+    if (!applied) {
+      // Keep optimistic track metadata; force a full load if native did not confirm.
+      const track = currentTrack.value
+      if (track) {
+        nativePlaybackActive = false
+        await loadAndPlay(track)
+      }
+      return
+    }
 
     const track = currentTrack.value
     if (track && info.state !== 'playing') {
@@ -1719,8 +1776,9 @@ async function advanceAfterPlaybackEnded(): Promise<void> {
   if (nextIndex >= 0 && nextIndex < queue.value.length) {
     queueIndex.value = nextIndex
     const track = queue.value[nextIndex]
-    currentTrack.value = track
-    void loadAndPlay(track)
+    currentTrack.value = track ? { ...track } : null
+    resetPlaybackUiForTrackSwitch(track ?? null, 0)
+    if (track) void loadAndPlay(track)
     return
   }
 
@@ -1730,7 +1788,8 @@ async function advanceAfterPlaybackEnded(): Promise<void> {
     queueIndex.value = 0
     const track = queue.value[0]
     if (track) {
-      currentTrack.value = track
+      currentTrack.value = { ...track }
+      resetPlaybackUiForTrackSwitch(track, 0)
       void loadAndPlay(track)
       return
     }
@@ -2118,9 +2177,17 @@ function setupAudioEngineListeners(): void {
     api.onPropertyChange(({ name, data }) => {
       switch (name) {
         case 'time-pos':
-          if (!nativePlaybackActive) break
+          // Accept time updates whenever native playback is active, or when the
+          // engine is mid hand-off (delegated queue) so the playbar never freezes
+          // while nativePlaybackActive briefly flips.
+          if (!nativePlaybackActive && !nativeQueueDelegated) break
           if (typeof data === 'number' && isFinite(data)) {
-            setCurrentTimeThrottled(data)
+            const next = Math.max(0, data)
+            if (next + 0.5 < latestPlaybackTime) {
+              setCurrentTimeImmediate(next)
+            } else {
+              setCurrentTimeThrottled(next)
+            }
           }
           break
         case 'duration':
@@ -2129,7 +2196,7 @@ function setupAudioEngineListeners(): void {
           }
           break
         case 'pause':
-          if (!nativePlaybackActive) break
+          if (!nativePlaybackActive && !nativeQueueDelegated) break
           applyNativePlayingState(!data)
           flushLatestCurrentTime()
           break
@@ -2145,7 +2212,7 @@ function setupAudioEngineListeners(): void {
 
   cleanupFns.push(
     api.onEndFile((reason) => {
-      if (nativePlaybackActive && reason === 'eof') {
+      if ((nativePlaybackActive || nativeQueueDelegated) && reason === 'eof') {
         handleNativePlaybackEnded()
       }
     })
@@ -2153,11 +2220,26 @@ function setupAudioEngineListeners(): void {
 
   cleanupFns.push(
     api.onStartFile(() => {
-      if (!nativePlaybackActive) return
+      // Gapless / delegated auto-advance emits start-file without going through
+      // loadAndPlay or advanceNativePlayback. Always refresh track identity +
+      // progress so cover and the playbar slider rebind to the new file.
       advancingFromEndedTrackId = ''
       autoAdvanceInFlight = false
-      setCurrentTimeImmediate(pendingLoadStartTime)
+      // Consume pending start once so gapless handoffs / late events cannot
+      // re-apply a stale loadAndPlay start offset and freeze the progress bar.
+      const startAt = pendingLoadStartTime
+      pendingLoadStartTime = 0
+      setCurrentTimeImmediate(startAt)
       isLoading.value = false
+      // Drop a stale intent from the previous track so the first playback-info
+      // after gapless handoff is not ignored for the full grace window.
+      clearNativePlaybackInfoIntent()
+      void api
+        .getPlaybackInfo()
+        .then((info) => {
+          applyNativePlaybackInfo(info, { applyTrackWhenInactive: true })
+        })
+        .catch(() => {})
     })
   )
 
@@ -2607,7 +2689,8 @@ async function loadAndPlay(track: Track, startTime = 0): Promise<void> {
 }
 
 function playQueueTrack(track: Track): void {
-  currentTrack.value = track
+  currentTrack.value = { ...track }
+  resetPlaybackUiForTrackSwitch(track, 0)
   // While casting, re-cast the new track to the same device instead of
   // starting local engine playback underneath the cast session.
   if (castTargetUsn.value) {

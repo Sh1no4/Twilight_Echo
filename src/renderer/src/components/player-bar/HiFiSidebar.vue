@@ -30,6 +30,8 @@ import type {
   VolumeNormalizationMode
 } from '../../types/settings'
 import type { LyricSource, Track } from '../../types/music'
+import type { DlnaDeviceInfo } from '../../../../shared/remoteControl.ts'
+import type { PlaybackBookmark } from '../../../../shared/playbackBookmarks.ts'
 
 export type StatusTone = 'success' | 'warning' | 'muted'
 
@@ -72,6 +74,25 @@ const props = defineProps<{
     description?: string
     command?: string
   }>
+  isLiveStream?: boolean
+  playbackRate?: number
+  playbackRateLabel?: string
+  playbackRateTitle?: string
+  abLoopA?: number | null
+  abLoopB?: number | null
+  abLoopTitle?: string
+  sleepTimerSelectValue?: string
+  sleepTimerStatus?: string
+  sleepTimerDefaultMinutes?: number
+  castTargetName?: string | null
+  castDevices?: DlnaDeviceInfo[]
+  castBusy?: boolean
+  castError?: string
+  canCastCurrentTrack?: boolean
+  bookmarks?: PlaybackBookmark[]
+  renamingBookmarkId?: string | null
+  renameDraft?: string
+  formatTime?: (seconds: number) => string
 }>()
 
 const emit = defineEmits<{
@@ -103,6 +124,20 @@ const emit = defineEmits<{
   clearImpulseResponse: []
   reloadLyrics: [prefer: 'auto' | 'local' | 'provider']
   runExtension: [command?: string]
+  cyclePlaybackRate: []
+  toggleAbLoop: []
+  clearAbLoop: []
+  sleepTimerSelect: [value: string]
+  refreshCastDevices: []
+  castToDevice: [usn: string]
+  stopCast: []
+  addBookmark: []
+  jumpBookmark: [bookmark: PlaybackBookmark]
+  startRenameBookmark: [bookmark: PlaybackBookmark]
+  commitRenameBookmark: []
+  updateRenameDraft: [value: string]
+  cancelRenameBookmark: []
+  deleteBookmark: [id: string]
 }>()
 
 const isVolumeUnity = computed(() => props.volume >= 0.999)
@@ -146,7 +181,7 @@ const loudnormStatusTone = computed(() => {
   }
 })
 
-const activeSection = ref<'console' | 'output' | 'dsp' | 'lyrics'>('console')
+const activeSection = ref<'console' | 'output' | 'dsp' | 'tools' | 'lyrics'>('console')
 
 const bufferSizeOptions = [
   { value: 0, label: 'Auto' },
@@ -178,8 +213,36 @@ const sectionTabs = [
   { id: 'console' as const, label: '总览', icon: 'ph-gauge' },
   { id: 'output' as const, label: '输出', icon: 'ph-speaker-hifi' },
   { id: 'dsp' as const, label: 'DSP', icon: 'ph-sliders-horizontal' },
+  { id: 'tools' as const, label: '工具', icon: 'ph-timer' },
   { id: 'lyrics' as const, label: '歌词', icon: 'ph-text-aa' }
 ]
+
+const rateActive = computed(() => Math.abs((props.playbackRate ?? 1) - 1) > 0.001)
+const abLoopPartial = computed(
+  () => !props.isLiveStream && props.abLoopA != null && props.abLoopB == null
+)
+const abLoopActive = computed(
+  () => !props.isLiveStream && props.abLoopA != null && props.abLoopB != null
+)
+const sleepDefaultMinutes = computed(() => props.sleepTimerDefaultMinutes ?? 30)
+const castDeviceList = computed(() => props.castDevices ?? [])
+const bookmarkList = computed(() => props.bookmarks ?? [])
+const renameDraftValue = computed({
+  get: () => props.renameDraft ?? '',
+  set: (value: string) => emit('updateRenameDraft', value)
+})
+
+function onSleepTimerChange(event: Event): void {
+  emit('sleepTimerSelect', (event.target as HTMLSelectElement).value)
+}
+
+function formatBookmarkTime(seconds: number): string {
+  if (typeof props.formatTime === 'function') return props.formatTime(seconds)
+  const total = Math.max(0, Math.floor(seconds || 0))
+  const m = Math.floor(total / 60)
+  const s = total % 60
+  return `${m}:${String(s).padStart(2, '0')}`
+}
 
 const selectedDevice = computed(
   () =>
@@ -1054,8 +1117,249 @@ function resetStereoImage(): void {
         </section>
       </section>
 
+      <!-- 工具：睡眠 / 倍速 / A-B / 投送 -->
+      <section v-else-if="activeSection === 'tools'" class="hifi-section-stack">
+        <section class="hifi-section">
+          <div class="hifi-section-label">
+            <span><em>01</em>Sleep Timer</span>
+            <span class="hifi-section-hint">定时停止</span>
+          </div>
+          <div class="hifi-field">
+            <span>模式</span>
+            <select
+              class="hifi-select"
+              :value="sleepTimerSelectValue || 'off'"
+              title="睡眠定时器"
+              @change="onSleepTimerChange"
+            >
+              <option value="off">睡眠关闭</option>
+              <option
+                v-if="![15, 30, 60].includes(sleepDefaultMinutes)"
+                :value="String(sleepDefaultMinutes)"
+              >
+                {{ sleepDefaultMinutes }} 分钟后停止
+              </option>
+              <option value="15">15 分钟后停止</option>
+              <option value="30">30 分钟后停止</option>
+              <option value="60">60 分钟后停止</option>
+              <option value="trackEnd">当前曲结束</option>
+              <option value="queueEnd">队列结束</option>
+            </select>
+          </div>
+          <p v-if="sleepTimerStatus" class="hifi-reason subtle" :title="sleepTimerStatus">
+            {{ sleepTimerStatus }}
+          </p>
+          <p v-else class="hifi-reason subtle">关闭后保持播放；可选分钟数或曲末 / 队列末停止。</p>
+        </section>
+
+        <section class="hifi-section">
+          <div class="hifi-section-label">
+            <span><em>02</em>Playback Rate</span>
+            <span class="hifi-section-hint">倍速</span>
+          </div>
+          <div class="hifi-module-row">
+            <div class="hifi-module-copy">
+              <strong>{{ playbackRateLabel || '1.0x' }}</strong>
+              <span>{{ playbackRateTitle || '播放倍速' }}</span>
+            </div>
+            <button
+              type="button"
+              class="hifi-mini-btn"
+              :class="{ accent: rateActive }"
+              :title="playbackRateTitle || '播放倍速'"
+              :aria-label="playbackRateTitle || '播放倍速'"
+              @click="emit('cyclePlaybackRate')"
+            >
+              切换
+            </button>
+          </div>
+          <p class="hifi-reason subtle">循环切换 0.75x → 1x → 1.25x → 1.5x → 2x。非 1x 会关闭 bit-perfect。</p>
+        </section>
+
+        <section class="hifi-section">
+          <div class="hifi-section-label">
+            <span><em>03</em>A-B Loop</span>
+            <span class="hifi-section-hint">区间循环</span>
+          </div>
+          <div class="hifi-module-row">
+            <div class="hifi-module-copy">
+              <strong>
+                {{
+                  abLoopActive
+                    ? '循环中'
+                    : abLoopPartial
+                      ? '已设起点 A'
+                      : isLiveStream
+                        ? '不可用'
+                        : '未设置'
+                }}
+              </strong>
+              <span>{{ abLoopTitle || 'A-B 循环' }}</span>
+            </div>
+            <div class="hifi-inline-actions">
+              <button
+                type="button"
+                class="hifi-mini-btn"
+                :class="{
+                  accent: abLoopActive,
+                  ghost: abLoopPartial
+                }"
+                :disabled="isLiveStream"
+                :title="abLoopTitle || 'A-B 循环'"
+                :aria-label="abLoopTitle || 'A-B 循环'"
+                @click="emit('toggleAbLoop')"
+              >
+                A-B
+              </button>
+              <button
+                type="button"
+                class="hifi-mini-btn ghost"
+                :disabled="isLiveStream || (abLoopA == null && abLoopB == null)"
+                title="清除 A-B 循环"
+                @click="emit('clearAbLoop')"
+              >
+                清除
+              </button>
+            </div>
+          </div>
+          <p class="hifi-reason subtle">
+            第一次点击设起点，第二次设终点并进入循环；可随时清除。直播流不支持。
+          </p>
+        </section>
+
+        <section class="hifi-section">
+          <div class="hifi-section-label">
+            <span><em>04</em>Cast / DLNA</span>
+            <span class="hifi-section-hint">投送到设备</span>
+          </div>
+          <div class="hifi-module-row">
+            <div class="hifi-module-copy">
+              <strong>{{ castTargetName || '未投送' }}</strong>
+              <span>{{ canCastCurrentTrack ? '当前曲目可投送' : '当前曲目不可投送' }}</span>
+            </div>
+            <div class="hifi-inline-actions">
+              <button
+                type="button"
+                class="hifi-mini-btn"
+                :disabled="castBusy"
+                title="刷新设备列表"
+                @click="emit('refreshCastDevices')"
+              >
+                {{ castBusy ? '搜索中…' : '刷新' }}
+              </button>
+              <button
+                v-if="castTargetName"
+                type="button"
+                class="hifi-mini-btn ghost"
+                :disabled="castBusy"
+                title="停止投送"
+                @click="emit('stopCast')"
+              >
+                停止
+              </button>
+            </div>
+          </div>
+          <p v-if="castBusy" class="hifi-reason subtle">正在搜索设备…</p>
+          <p v-else-if="castDeviceList.length === 0" class="hifi-reason subtle">
+            未发现投送设备（DLNA / Chromecast）。请确认设备在线且本机已开启远程控制服务。
+          </p>
+          <ul v-else class="hifi-cast-list">
+            <li v-for="device in castDeviceList" :key="device.usn">
+              <button
+                type="button"
+                class="hifi-cast-item"
+                :disabled="
+                  castBusy ||
+                  !canCastCurrentTrack ||
+                  (device.protocol !== 'chromecast' && !device.avTransportUrl)
+                "
+                @click="emit('castToDevice', device.usn)"
+              >
+                <span class="hifi-cast-name">{{ device.friendlyName }}</span>
+                <span class="hifi-cast-meta">
+                  {{
+                    device.protocol === 'chromecast'
+                      ? 'Chromecast'
+                      : device.manufacturer || device.modelName || 'DLNA'
+                  }}
+                </span>
+              </button>
+            </li>
+          </ul>
+          <p v-if="castError" class="hifi-reason warning">{{ castError }}</p>
+        </section>
+
+        <section class="hifi-section">
+          <div class="hifi-section-label">
+            <span><em>05</em>Bookmarks</span>
+            <span class="hifi-section-hint">书签</span>
+          </div>
+          <div class="hifi-module-row">
+            <div class="hifi-module-copy">
+              <strong>{{ bookmarkList.length }} 个书签</strong>
+              <span>{{ isLiveStream ? '直播流不支持书签' : '当前曲目' }}</span>
+            </div>
+            <button
+              type="button"
+              class="hifi-mini-btn"
+              :disabled="isLiveStream"
+              title="在当前时间添加书签"
+              @click="emit('addBookmark')"
+            >
+              添加
+            </button>
+          </div>
+          <p v-if="bookmarkList.length === 0" class="hifi-reason subtle">暂无书签</p>
+          <ul v-else class="hifi-bookmark-list">
+            <li v-for="bm in bookmarkList" :key="bm.id" class="hifi-bookmark-item">
+              <button type="button" class="hifi-bookmark-jump" @click="emit('jumpBookmark', bm)">
+                <span class="hifi-bookmark-time">{{ formatBookmarkTime(bm.positionSeconds) }}</span>
+                <template v-if="renamingBookmarkId === bm.id">
+                  <input
+                    v-model="renameDraftValue"
+                    class="hifi-bookmark-rename"
+                    type="text"
+                    maxlength="120"
+                    @click.stop
+                    @keydown.enter.prevent="emit('commitRenameBookmark')"
+                    @keydown.esc.prevent="emit('cancelRenameBookmark')"
+                  />
+                </template>
+                <span v-else class="hifi-bookmark-label">{{ bm.label }}</span>
+                <span v-if="bm.kind === 'resume'" class="hifi-bookmark-kind">续播</span>
+              </button>
+              <div class="hifi-inline-actions">
+                <button
+                  v-if="renamingBookmarkId === bm.id"
+                  type="button"
+                  class="hifi-mini-btn"
+                  @click="emit('commitRenameBookmark')"
+                >
+                  保存
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  class="hifi-mini-btn ghost"
+                  @click="emit('startRenameBookmark', bm)"
+                >
+                  重命名
+                </button>
+                <button
+                  type="button"
+                  class="hifi-mini-btn ghost"
+                  @click="emit('deleteBookmark', bm.id)"
+                >
+                  删除
+                </button>
+              </div>
+            </li>
+          </ul>
+        </section>
+      </section>
+
       <!-- 歌词 -->
-      <section v-else class="hifi-section-stack">
+      <section v-else-if="activeSection === 'lyrics'" class="hifi-section-stack">
         <section class="hifi-section">
           <div class="hifi-section-label">
             <span><em>01</em>Lyrics Source</span>
