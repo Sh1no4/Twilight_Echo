@@ -87,6 +87,13 @@ test('desktop lyrics receives the current playback snapshot when enabled', () =>
   )
 })
 
+test('desktop lyrics sends plain settings through Electron IPC', () => {
+  const source = readFileSync(new URL('./usePlayerStore.ts', import.meta.url), 'utf8')
+
+  assert.match(source, /desktopLyrics\?\.updateSettings\(\{ \.\.\.dl \}\)/)
+  assert.doesNotMatch(source, /desktopLyrics\?\.updateSettings\(dl\)/)
+})
+
 test('desktop lyrics window replays cached track and time on creation', () => {
   const desktopLyricsSource = readFileSync(
     new URL('../../../main/integrations/desktopLyrics.ts', import.meta.url),

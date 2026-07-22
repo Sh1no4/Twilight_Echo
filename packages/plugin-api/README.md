@@ -24,6 +24,10 @@ Themes are declared in `plugin.json` under `contributes.themes`. The legacy
 `twilight.themes.register()` signature is retained for API v1 source
 compatibility but rejects at runtime.
 
+Theme contributions may add a `structured` schemaVersion 1 document with `pureWhite`
+and `dark` token overrides. Existing `variables` and `stylesheet` fields remain supported;
+stylesheets are the advanced compatibility path and may depend on host selectors.
+
 Provider registrations may expose optional `health` metadata through
 `TwilightMediaProviderHealth`. The host also records aggregate and per-method
 health, including `methodStats.getPlaybackUrl`, so streaming UI can distinguish

@@ -20,6 +20,7 @@ import {
   stringifyJsonForIpcStorage
 } from '../security/ipcValidation.ts'
 import { assertTrustedIpcSender } from '../security/electronSecurity.ts'
+import { reconcileThemeAfterPluginChange } from './themes.ts'
 
 const MAX_PLUGIN_ID_LENGTH = 128
 const MAX_PROVIDER_ID_LENGTH = 128
@@ -109,6 +110,8 @@ export function setupPluginIpc(): void {
 
   runtime.pluginManager.on('changed', () => {
     runtime.mainWindow?.webContents.send('plugins:changed')
+    void reconcileThemeAfterPluginChange()
+      .catch((error) => console.warn('[themes] failed to refresh inherited window values', error))
   })
 
   ipcMain.handle('plugins:list', async (event) => {
@@ -138,12 +141,18 @@ export function setupPluginIpc(): void {
     await runtime.pluginManagerReady
     return await runtime.pluginManager!.disable(normalizePluginId(id))
   })
-  ipcMain.handle('plugins:uninstall', async (_event, id: string, options?: TwilightPluginUninstallOptions) => {
-    assertTrustedIpcSender(_event, 'plugin IPC')
-    await runtime.pluginManagerReady
-    await runtime.pluginManager!.uninstall(normalizePluginId(id), normalizeUninstallOptions(options))
-    return true
-  })
+  ipcMain.handle(
+    'plugins:uninstall',
+    async (_event, id: string, options?: TwilightPluginUninstallOptions) => {
+      assertTrustedIpcSender(_event, 'plugin IPC')
+      await runtime.pluginManagerReady
+      await runtime.pluginManager!.uninstall(
+        normalizePluginId(id),
+        normalizeUninstallOptions(options)
+      )
+      return true
+    }
+  )
   ipcMain.handle('plugins:openLog', async (_event, id: string) => {
     assertTrustedIpcSender(_event, 'plugin IPC')
     await runtime.pluginManagerReady
@@ -199,14 +208,17 @@ export function setupPluginIpc(): void {
       await downloaded.cleanup()
     }
   })
-  ipcMain.handle('plugins:setNativeDspParameters', async (_event, id: string, parameters: Record<string, number>) => {
-    assertTrustedIpcSender(_event, 'plugin IPC')
-    await runtime.pluginManagerReady
-    return await runtime.pluginManager!.setNativeDspPluginParameters(
-      normalizePluginId(id),
-      normalizeNativeDspParameters(parameters)
-    )
-  })
+  ipcMain.handle(
+    'plugins:setNativeDspParameters',
+    async (_event, id: string, parameters: Record<string, number>) => {
+      assertTrustedIpcSender(_event, 'plugin IPC')
+      await runtime.pluginManagerReady
+      return await runtime.pluginManager!.setNativeDspPluginParameters(
+        normalizePluginId(id),
+        normalizeNativeDspParameters(parameters)
+      )
+    }
+  )
   ipcMain.handle('providers:list', async (event) => {
     assertTrustedIpcSender(event, 'provider IPC')
     await runtime.pluginManagerReady
@@ -303,13 +315,17 @@ function normalizeProviderCallOptions(value: unknown): { idempotencyKey?: string
 
 function normalizeUninstallOptions(value: unknown): TwilightPluginUninstallOptions | undefined {
   if (value == null) return undefined
-  if (typeof value !== 'object' || Array.isArray(value)) throw new Error('plugin uninstall options must be an object')
+  if (typeof value !== 'object' || Array.isArray(value))
+    throw new Error('plugin uninstall options must be an object')
   return { removeData: (value as Record<string, unknown>).removeData === true }
 }
 
 function normalizeNativeDspParameters(value: unknown): Record<string, number> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  const entries = Object.entries(value as Record<string, unknown>).slice(0, MAX_NATIVE_DSP_PARAMETERS)
+  const entries = Object.entries(value as Record<string, unknown>).slice(
+    0,
+    MAX_NATIVE_DSP_PARAMETERS
+  )
   const parameters: Record<string, number> = {}
   for (const [key, raw] of entries) {
     if (!DSP_PARAMETER_ID_PATTERN.test(key)) continue
@@ -319,7 +335,10 @@ function normalizeNativeDspParameters(value: unknown): Record<string, number> {
   return parameters
 }
 
-function isRegisteredThemeStylesheet(stylesheet: string | undefined, expectedRealPath: string): boolean {
+function isRegisteredThemeStylesheet(
+  stylesheet: string | undefined,
+  expectedRealPath: string
+): boolean {
   if (!stylesheet) return false
   try {
     return realpathSync(resolve(stylesheet)) === expectedRealPath

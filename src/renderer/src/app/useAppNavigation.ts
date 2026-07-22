@@ -11,7 +11,16 @@ export type SettingsSection =
   | 'shortcuts'
   | 'about'
 
-const songlistOrder = ['dashboard', 'allSongs', 'artists', 'albums', 'genres', 'playlists', 'folders', 'recent'] as const
+const songlistOrder = [
+  'dashboard',
+  'allSongs',
+  'artists',
+  'albums',
+  'genres',
+  'playlists',
+  'folders',
+  'recent'
+] as const
 
 export function useAppNavigation() {
   const menuOpen = ref(false)
@@ -22,6 +31,7 @@ export function useAppNavigation() {
   const loginPageMode = ref<'login' | 'profile'>('login')
   const loginInitialProviderId = ref<string | null>(null)
   const showSettingsPage = ref(false)
+  const showThemeStudioPage = ref(false)
   const showPluginPage = ref(false)
   const showEqualizerPage = ref(false)
   const showDspRackPage = ref(false)
@@ -39,6 +49,7 @@ export function useAppNavigation() {
       !showPlayingPage.value &&
       !showLoginPage.value &&
       !showSettingsPage.value &&
+      !showThemeStudioPage.value &&
       !showEqualizerPage.value &&
       !showDspRackPage.value &&
       !showPluginPage.value &&
@@ -53,6 +64,7 @@ export function useAppNavigation() {
       !showRadioPodcastPage.value &&
       !showLoginPage.value &&
       !showSettingsPage.value &&
+      !showThemeStudioPage.value &&
       !showEqualizerPage.value &&
       !showDspRackPage.value &&
       !showPluginPage.value &&
@@ -72,7 +84,9 @@ export function useAppNavigation() {
   }
 
   function onSelectView(category: string, filter: string | null): void {
-    const currentIndex = songlistOrder.indexOf(activeCategory.value as (typeof songlistOrder)[number])
+    const currentIndex = songlistOrder.indexOf(
+      activeCategory.value as (typeof songlistOrder)[number]
+    )
     const nextIndex = songlistOrder.indexOf(category as (typeof songlistOrder)[number])
     if (currentIndex !== -1 && nextIndex !== -1) {
       songlistTransitionName.value = nextIndex > currentIndex ? 'page-down' : 'page-up'
@@ -95,6 +109,7 @@ export function useAppNavigation() {
     showRadioPodcastPage.value = false
     showLoginPage.value = false
     showSettingsPage.value = false
+    showThemeStudioPage.value = false
     showEqualizerPage.value = false
     showPluginPage.value = false
     activePluginPage.value = page
@@ -113,6 +128,7 @@ export function useAppNavigation() {
     menuOpen.value = false
     showPlayingPage.value = false
     showSettingsPage.value = false
+    showThemeStudioPage.value = false
     showEqualizerPage.value = false
     showPluginPage.value = false
     activePluginPage.value = null
@@ -132,6 +148,7 @@ export function useAppNavigation() {
     showPlayingPage.value = false
     showStreamingPage.value = false
     showSettingsPage.value = false
+    showThemeStudioPage.value = false
     showEqualizerPage.value = false
     showDspRackPage.value = false
     showPluginPage.value = false
@@ -150,6 +167,7 @@ export function useAppNavigation() {
     showStreamingPage.value = false
     showRadioPodcastPage.value = false
     showSettingsPage.value = false
+    showThemeStudioPage.value = false
     showEqualizerPage.value = false
     activePluginPage.value = null
     loginPageMode.value = 'login'
@@ -166,6 +184,7 @@ export function useAppNavigation() {
   function openSettingsPage(section: SettingsSection = 'general'): void {
     settingsInitialSection.value = section
     showPlayingPage.value = false
+    showThemeStudioPage.value = false
     showPluginPage.value = false
     showEqualizerPage.value = false
     showDspRackPage.value = false
@@ -175,6 +194,22 @@ export function useAppNavigation() {
 
   function closeSettingsPage(): void {
     showSettingsPage.value = false
+  }
+
+  function openThemeStudioPage(): void {
+    menuOpen.value = false
+    showPlayingPage.value = false
+    showSettingsPage.value = false
+    showPluginPage.value = false
+    showEqualizerPage.value = false
+    showDspRackPage.value = false
+    activePluginPage.value = null
+    showThemeStudioPage.value = true
+  }
+
+  function closeThemeStudioPage(): void {
+    showThemeStudioPage.value = false
+    openSettingsPage('appearance')
   }
 
   function openPlaybackSettings(): void {
@@ -188,6 +223,7 @@ export function useAppNavigation() {
   function openPluginPage(): void {
     menuOpen.value = false
     showSettingsPage.value = false
+    showThemeStudioPage.value = false
     showEqualizerPage.value = false
     showDspRackPage.value = false
     activePluginPage.value = null
@@ -200,6 +236,7 @@ export function useAppNavigation() {
 
   function openEqualizerPage(): void {
     showSettingsPage.value = false
+    showThemeStudioPage.value = false
     showPluginPage.value = false
     showDspRackPage.value = false
     activePluginPage.value = null
@@ -212,6 +249,7 @@ export function useAppNavigation() {
 
   function openDspRackPage(): void {
     showSettingsPage.value = false
+    showThemeStudioPage.value = false
     showPluginPage.value = false
     showEqualizerPage.value = false
     activePluginPage.value = null
@@ -278,6 +316,7 @@ export function useAppNavigation() {
     loginPageMode,
     loginInitialProviderId,
     showSettingsPage,
+    showThemeStudioPage,
     showPluginPage,
     showEqualizerPage,
     showDspRackPage,
@@ -305,6 +344,8 @@ export function useAppNavigation() {
     closeLoginPage,
     openSettingsPage,
     closeSettingsPage,
+    openThemeStudioPage,
+    closeThemeStudioPage,
     openPlaybackSettings,
     openDspSettings,
     openPluginPage,

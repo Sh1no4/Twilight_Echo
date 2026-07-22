@@ -177,12 +177,24 @@ async function openLog(plugin: TwilightPluginDescriptor) {
   }
 }
 
+function formatPluginInstallError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/fetch failed|network|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|aborted/i.test(message)) {
+    return (
+      `安装失败：无法下载插件包（${message}）。` +
+      '离线发现快照只能浏览元数据；.tep 仍需从网络获取。' +
+      '请切换到「已安装」→「从本地安装包 (.tep)」，或配置可访问 GitHub raw 的代理/镜像后重试。'
+    )
+  }
+  return `安装失败：${message}`
+}
+
 async function installFromLocal() {
   try {
     const result = await window.api.plugins.chooseAndInstall()
     if (result) await loadAll()
   } catch (e) {
-    errorMsg.value = `安装失败：${e instanceof Error ? e.message : String(e)}`
+    errorMsg.value = formatPluginInstallError(e)
   }
 }
 
@@ -193,7 +205,7 @@ async function installFromIndex(entry: TwilightPluginIndexEntry) {
     await window.api.plugins.installFromIndex(entry.id)
     await loadAll()
   } catch (e) {
-    errorMsg.value = `安装失败：${e instanceof Error ? e.message : String(e)}`
+    errorMsg.value = formatPluginInstallError(e)
   } finally {
     busyIds.value.delete(entry.id)
   }

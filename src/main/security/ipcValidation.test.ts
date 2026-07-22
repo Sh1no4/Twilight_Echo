@@ -78,8 +78,14 @@ test('data IPC applies path and storage limits before touching local files', () 
   assert.match(source, /filterAuthorizedLibraryRoots\(snapshot\.folders\)/)
   assert.match(repositorySource, /loadJsonFileWithBackup\(filePath, MUSIC_LIBRARY_JSON_OPTIONS\)/)
   assert.match(source, /new VersionedDataStore<PlaybackSession \| null>/)
-  assert.match(source, /return await saveVersionedData\(playbackSessionStore, session, expectedRevision\)/)
-  assert.match(source, /return await saveVersionedData\(playlistsStore, playlists, expectedRevision\)/)
+  assert.match(
+    source,
+    /return await saveVersionedData\(playbackSessionStore, session, expectedRevision\)/
+  )
+  assert.match(
+    source,
+    /return await saveVersionedData\(playlistsStore, playlists, expectedRevision\)/
+  )
   assert.match(versionedStoreSource, /writeJsonFileAtomic\(/)
   assert.match(source, /reportPersistentDataFailure\('Playback session'/)
   assert.match(source, /reportPersistentDataFailure\('Playlists'/)
@@ -206,14 +212,23 @@ test('Electron documents use local CSP, denied permissions, and trusted IPC send
     electronSecuritySource,
     /isAudioVisualizerDocumentUrl\(url\)[\s\S]*script-src 'self' 'unsafe-inline'/
   )
-  assert.match(electronSecuritySource, /img-src 'self' data: blob: cover: background: twilight-media:/)
+  assert.match(
+    electronSecuritySource,
+    /img-src 'self' data: blob: cover: background: theme-asset: twilight-media:/
+  )
+  assert.match(electronSecuritySource, /font-src 'self' data: theme-asset:/)
   assert.match(electronSecuritySource, /media-src 'self' blob: twilight-audio: twilight-media:/)
-  assert.match(rendererHtml, /img-src 'self' data: blob: cover: background: twilight-media:/)
+  assert.match(
+    rendererHtml,
+    /img-src 'self' data: blob: cover: background: theme-asset: twilight-media:/
+  )
+  assert.match(rendererHtml, /font-src 'self' data: theme-asset:/)
   assert.match(rendererHtml, /media-src 'self' blob: twilight-audio: twilight-media:/)
   // Playbar cover-theme sampling uses crossOrigin=anonymous on local + remote covers.
   assert.match(lifecycleSource, /scheme: 'twilight-media'[\s\S]*corsEnabled:\s*true/)
   assert.match(lifecycleSource, /scheme: 'cover'[\s\S]*corsEnabled:\s*true/)
   assert.match(lifecycleSource, /scheme: 'background'[\s\S]*corsEnabled:\s*true/)
+  assert.match(lifecycleSource, /scheme: 'theme-asset'[\s\S]*corsEnabled:\s*true/)
   assert.match(
     lifecycleSource,
     /protocol\.handle\('cover'[\s\S]*Access-Control-Allow-Origin['"]:\s*['"]\*['"]/

@@ -1,10 +1,4 @@
-import {
-  app,
-  session,
-  type IpcMainEvent,
-  type IpcMainInvokeEvent,
-  type Session
-} from 'electron'
+import { app, session, type IpcMainEvent, type IpcMainInvokeEvent, type Session } from 'electron'
 
 const NCM_API_ORIGINS = ['http://localhost:3100', 'http://127.0.0.1:3100']
 
@@ -38,7 +32,9 @@ export function installSessionSecurity(targetSession: Session): void {
   })
 }
 
-function shouldApplyDocumentSecurityHeaders(details: Electron.OnHeadersReceivedListenerDetails): boolean {
+function shouldApplyDocumentSecurityHeaders(
+  details: Electron.OnHeadersReceivedListenerDetails
+): boolean {
   if (details.resourceType !== 'mainFrame' && details.resourceType !== 'subFrame') return false
   return (
     isAppDocumentUrl(details.url) ||
@@ -57,8 +53,8 @@ function contentSecurityPolicyForUrl(url: string): string {
       "frame-ancestors 'self'",
       "script-src 'self' 'unsafe-inline'",
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: cover: background: twilight-media:",
-      "font-src 'self' data:",
+      "img-src 'self' data: blob: cover: background: theme-asset: twilight-media:",
+      "font-src 'self' data: theme-asset:",
       "media-src 'none'",
       "connect-src 'self'",
       "worker-src 'none'",
@@ -69,7 +65,12 @@ function contentSecurityPolicyForUrl(url: string): string {
   const scriptSrc = isDesktopLyricsDocumentUrl(url) ? "'self' 'unsafe-inline'" : "'self'"
   const connectSrc = ["'self'", ...NCM_API_ORIGINS]
   if (isDevRendererUrl(url)) {
-    connectSrc.push('ws://localhost:*', 'ws://127.0.0.1:*', 'http://localhost:*', 'http://127.0.0.1:*')
+    connectSrc.push(
+      'ws://localhost:*',
+      'ws://127.0.0.1:*',
+      'http://localhost:*',
+      'http://127.0.0.1:*'
+    )
   }
 
   return [
@@ -81,8 +82,8 @@ function contentSecurityPolicyForUrl(url: string): string {
     "frame-ancestors 'none'",
     `script-src ${scriptSrc}`,
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: cover: background: twilight-media:",
-    "font-src 'self' data:",
+    "img-src 'self' data: blob: cover: background: theme-asset: twilight-media:",
+    "font-src 'self' data: theme-asset:",
     "media-src 'self' blob: twilight-audio: twilight-media:",
     `connect-src ${connectSrc.join(' ')}`,
     "worker-src 'self' blob:",

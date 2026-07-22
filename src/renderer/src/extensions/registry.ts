@@ -1,4 +1,5 @@
 import { computed, ref } from 'vue'
+import type { StructuredPluginThemeV1 } from '../../../shared/theme.ts'
 
 export type UiContributionKind =
   | 'sidebarPage'
@@ -27,6 +28,7 @@ export interface ThemeContribution {
   description?: string
   variables?: Record<string, string>
   stylesheet?: string
+  structured?: StructuredPluginThemeV1
 }
 
 interface PluginExtensionContribution {

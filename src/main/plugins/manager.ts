@@ -34,6 +34,7 @@ import {
 } from './packageSecurity.ts'
 import { redactSensitiveText } from '../security/secureStorage.ts'
 import { protectProviderMedia } from '../security/remoteMediaGrants.ts'
+import { normalizeStructuredPluginTheme } from '../../shared/theme.ts'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -84,7 +85,7 @@ export interface TwilightPluginManagerOptions {
     stop: () => Promise<void> | void
     next: () => Promise<void> | void
     previous: () => Promise<void> | void
-  },
+  }
   getProxyEnv?: () => Record<string, string>
 }
 
@@ -204,7 +205,11 @@ function getProviderCallTimeoutMs(method: TwilightMediaProviderMethod): number {
   ) {
     return PLUGIN_PROVIDER_SLOW_TIMEOUT_MS
   }
-  if (['getPlaybackUrl', 'getLyrics', 'searchSongs', 'searchPlaylists', 'searchArtists'].includes(method)) {
+  if (
+    ['getPlaybackUrl', 'getLyrics', 'searchSongs', 'searchPlaylists', 'searchArtists'].includes(
+      method
+    )
+  ) {
     return PLUGIN_PROVIDER_MEDIUM_TIMEOUT_MS
   }
   return PLUGIN_PROVIDER_DEFAULT_TIMEOUT_MS
@@ -504,7 +509,10 @@ export class TwilightPluginManager extends EventEmitter {
     return this.pluginOperationQueue.run(id, () => this.uninstallUnchecked(id, options))
   }
 
-  private async uninstallUnchecked(id: string, options: TwilightPluginUninstallOptions): Promise<void> {
+  private async uninstallUnchecked(
+    id: string,
+    options: TwilightPluginUninstallOptions
+  ): Promise<void> {
     if (this.isBundledPluginId(id)) {
       throw new Error('自带插件不能卸载；如需关闭，请在插件页停用')
     }
@@ -522,7 +530,8 @@ export class TwilightPluginManager extends EventEmitter {
   async openLog(id: string): Promise<void> {
     const descriptor = await this.findDescriptor(id)
     ensureParent(descriptor.paths.logPath)
-    if (!existsSync(descriptor.paths.logPath)) await writeFile(descriptor.paths.logPath, '', 'utf-8')
+    if (!existsSync(descriptor.paths.logPath))
+      await writeFile(descriptor.paths.logPath, '', 'utf-8')
     shell.showItemInFolder(descriptor.paths.logPath)
   }
 
@@ -553,7 +562,10 @@ export class TwilightPluginManager extends EventEmitter {
     this.emit('changed')
   }
 
-  async setNativeDspPluginParameters(id: string, parameters: Record<string, number>): Promise<TwilightPluginDescriptor> {
+  async setNativeDspPluginParameters(
+    id: string,
+    parameters: Record<string, number>
+  ): Promise<TwilightPluginDescriptor> {
     return this.pluginOperationQueue.run(id, () =>
       this.setNativeDspPluginParametersUnchecked(id, parameters)
     )
@@ -782,7 +794,11 @@ export class TwilightPluginManager extends EventEmitter {
     for (const descriptor of startupPlan.ordered) {
       if (descriptor.main) {
         await this.startPlugin(descriptor).catch((error) => {
-          this.markFailed(descriptor.id, error instanceof Error ? error.message : String(error), descriptor)
+          this.markFailed(
+            descriptor.id,
+            error instanceof Error ? error.message : String(error),
+            descriptor
+          )
         })
       }
     }
@@ -813,7 +829,7 @@ export class TwilightPluginManager extends EventEmitter {
           ...previous,
           enabled: shouldRecoverBundledFailure
             ? bundled.defaultEnabled === true
-            : previous?.enabled ?? bundled.defaultEnabled === true,
+            : (previous?.enabled ?? bundled.defaultEnabled === true),
           installedAt: previous?.installedAt ?? now,
           updatedAt: previous?.updatedAt ?? now,
           source: 'bundled',
@@ -854,7 +870,8 @@ export class TwilightPluginManager extends EventEmitter {
     await trialStagedPluginCandidate({
       candidate,
       listActiveDescriptors: () => this.list(),
-      startJavaScriptCandidate: () => this.startPlugin(candidate, { persistState: false, trial: true }),
+      startJavaScriptCandidate: () =>
+        this.startPlugin(candidate, { persistState: false, trial: true }),
       stopJavaScriptCandidate: () => this.stopPlugin(candidate.id),
       syncDspChain: (descriptors) => this.syncNativeDspChain(descriptors)
     })
@@ -921,7 +938,12 @@ export class TwilightPluginManager extends EventEmitter {
         `Plugin host exited before its internal API completed (exit code: ${code}).`
       )
       this.running.delete(descriptor.id)
-      if (this.state[descriptor.id]?.enabled && !running.trial && !wasStopping && !this.shuttingDown) {
+      if (
+        this.state[descriptor.id]?.enabled &&
+        !running.trial &&
+        !wasStopping &&
+        !this.shuttingDown
+      ) {
         this.markFailed(descriptor.id, `插件宿主进程退出：${code}`)
       }
     })
@@ -1001,7 +1023,10 @@ export class TwilightPluginManager extends EventEmitter {
     if (this.running.get(id) === running) this.running.delete(id)
   }
 
-  private waitForActivation(child: UtilityProcess, descriptor: TwilightPluginDescriptor): Promise<void> {
+  private waitForActivation(
+    child: UtilityProcess,
+    descriptor: TwilightPluginDescriptor
+  ): Promise<void> {
     return new Promise((resolveReady, rejectReady) => {
       let settled = false
       const cleanup = (): void => {
@@ -1126,7 +1151,12 @@ export class TwilightPluginManager extends EventEmitter {
       const method = message.method
       if (method === 'getPlaybackInfo') {
         this.requirePermission(id, 'player:observe', 'player.getPlaybackInfo')
-        return { kind: 'api-result', requestId: message.requestId, ok: true, value: await this.getPlaybackInfo() }
+        return {
+          kind: 'api-result',
+          requestId: message.requestId,
+          ok: true,
+          value: await this.getPlaybackInfo()
+        }
       }
       if (['play', 'pause', 'togglePause', 'stop', 'next', 'previous'].includes(method)) {
         this.requirePermission(id, 'player:control', `player.${method}`)
@@ -1160,9 +1190,12 @@ export class TwilightPluginManager extends EventEmitter {
     const providerId = typeof record.id === 'string' ? record.id.trim().toLowerCase() : ''
     const name = typeof record.name === 'string' ? record.name.trim() : ''
     const capabilities = Array.isArray(record.capabilities)
-      ? record.capabilities.filter((item): item is TwilightMediaProviderRegistration['capabilities'][number] =>
-          typeof item === 'string' &&
-          ['search', 'playbackUrl', 'lyrics', 'cover', 'playlist', 'library', 'login'].includes(item)
+      ? record.capabilities.filter(
+          (item): item is TwilightMediaProviderRegistration['capabilities'][number] =>
+            typeof item === 'string' &&
+            ['search', 'playbackUrl', 'lyrics', 'cover', 'playlist', 'library', 'login'].includes(
+              item
+            )
         )
       : []
     if (!providerId || !/^[a-z][a-z0-9-]*$/.test(providerId)) {
@@ -1290,7 +1323,9 @@ export class TwilightPluginManager extends EventEmitter {
     let streamingSections: TwilightProviderStreamingSection[] | undefined
     if (Array.isArray(record.streamingSections)) {
       streamingSections = record.streamingSections
-        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+        .filter(
+          (item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object'
+        )
         .map((item) => ({
           id: typeof item.id === 'string' ? item.id : '',
           title: typeof item.title === 'string' ? item.title : '',
@@ -1305,12 +1340,16 @@ export class TwilightPluginManager extends EventEmitter {
       color: typeof record.color === 'string' ? record.color : undefined,
       description: typeof record.description === 'string' ? record.description : undefined,
       authType,
-      loginInstructions: typeof record.loginInstructions === 'string' ? record.loginInstructions : undefined,
+      loginInstructions:
+        typeof record.loginInstructions === 'string' ? record.loginInstructions : undefined,
       qrStatusCodes,
-      showBrowserButton: typeof record.showBrowserButton === 'boolean' ? record.showBrowserButton : undefined,
+      showBrowserButton:
+        typeof record.showBrowserButton === 'boolean' ? record.showBrowserButton : undefined,
       loginExtraActions: Array.isArray(record.loginExtraActions)
         ? record.loginExtraActions
-            .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+            .filter(
+              (item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object'
+            )
             .map((item) => ({
               label: typeof item.label === 'string' ? item.label : '',
               icon: typeof item.icon === 'string' ? item.icon : 'pi pi-external-link',
@@ -1319,8 +1358,10 @@ export class TwilightPluginManager extends EventEmitter {
             .filter((action) => action.label && action.method)
         : undefined,
       streamingSections,
-      streamingLibraryTab: typeof record.streamingLibraryTab === 'boolean' ? record.streamingLibraryTab : undefined,
-      streamingSearch: typeof record.streamingSearch === 'boolean' ? record.streamingSearch : undefined,
+      streamingLibraryTab:
+        typeof record.streamingLibraryTab === 'boolean' ? record.streamingLibraryTab : undefined,
+      streamingSearch:
+        typeof record.streamingSearch === 'boolean' ? record.streamingSearch : undefined,
       unifiedLibrary: typeof record.unifiedLibrary === 'boolean' ? record.unifiedLibrary : undefined
     }
   }
@@ -1408,12 +1449,23 @@ export class TwilightPluginManager extends EventEmitter {
     const record = raw as Record<string, unknown>
     const id = normalizeContributionId(record.id)
     const kind = typeof record.kind === 'string' ? record.kind : ''
-    if (!['sidebarPage', 'playerBarButton', 'settingsPanel', 'localSidebarItem', 'streamingHome'].includes(kind)) {
+    if (
+      ![
+        'sidebarPage',
+        'playerBarButton',
+        'settingsPanel',
+        'localSidebarItem',
+        'streamingHome'
+      ].includes(kind)
+    ) {
       throw new Error('未知 UI 扩展点')
     }
     const title = normalizeText(record.title, 'UI 扩展标题必填')
     const command = typeof record.command === 'string' ? record.command.trim() : undefined
-    if ((kind === 'playerBarButton' || kind === 'sidebarPage' || kind === 'localSidebarItem') && !command) {
+    if (
+      (kind === 'playerBarButton' || kind === 'sidebarPage' || kind === 'localSidebarItem') &&
+      !command
+    ) {
       throw new Error(`${kind} 扩展必须声明 command`)
     }
     // Legacy renderMode values are accepted as input for API v1 compatibility, but the
@@ -1432,7 +1484,9 @@ export class TwilightPluginManager extends EventEmitter {
     }
   }
 
-  private normalizeDeclarativeThemeContributions(descriptor: TwilightPluginDescriptor): TwilightThemeContribution[] {
+  private normalizeDeclarativeThemeContributions(
+    descriptor: TwilightPluginDescriptor
+  ): TwilightThemeContribution[] {
     const contributes = descriptor.contributes
     if (!contributes || typeof contributes !== 'object' || Array.isArray(contributes)) return []
     const themes = (contributes as Record<string, unknown>).themes
@@ -1462,13 +1516,17 @@ export class TwilightPluginManager extends EventEmitter {
       typeof record.stylesheet === 'string' && record.stylesheet.trim()
         ? this.resolveThemeStylesheet(descriptor, record.stylesheet.trim())
         : undefined
-    if (!variables && !stylesheet) throw new Error('主题必须声明 variables 或 stylesheet')
+    const structured = normalizeStructuredPluginTheme(record.structured)
+    if (!variables && !stylesheet && !structured) {
+      throw new Error('主题必须声明 variables、stylesheet 或 structured')
+    }
     return {
       id,
       name,
       description: typeof record.description === 'string' ? record.description.trim() : undefined,
       variables,
-      stylesheet
+      stylesheet,
+      structured
     }
   }
 
@@ -1480,7 +1538,9 @@ export class TwilightPluginManager extends EventEmitter {
     const running = this.running.get(pluginId)
     if (!running) throw new Error('插件未运行')
     if (!running.descriptor.permissions.includes(permission)) {
-      throw new Error(`插件 ${running.descriptor.id} 未声明 ${permission} 权限，不能调用 ${capability}`)
+      throw new Error(
+        `插件 ${running.descriptor.id} 未声明 ${permission} 权限，不能调用 ${capability}`
+      )
     }
   }
 
@@ -1547,7 +1607,9 @@ export class TwilightPluginManager extends EventEmitter {
       providerId: normalizedProviderId,
       pluginId,
       pluginStatus: pluginStatus,
-      available: pluginStatus === 'enabled' && (health?.lastError ? failedCalls === 0 || successfulCalls > 0 : true),
+      available:
+        pluginStatus === 'enabled' &&
+        (health?.lastError ? failedCalls === 0 || successfulCalls > 0 : true),
       totalCalls,
       successfulCalls,
       failedCalls,
@@ -1672,7 +1734,13 @@ export class TwilightPluginManager extends EventEmitter {
       const descriptorSource = state?.source ?? source
       return {
         ...manifest,
-        status: error ? 'invalid' : state?.lastError ? 'failed' : state?.enabled ? 'enabled' : 'disabled',
+        status: error
+          ? 'invalid'
+          : state?.lastError
+            ? 'failed'
+            : state?.enabled
+              ? 'enabled'
+              : 'disabled',
         enabled: state?.enabled === true && !error,
         builtIn: this.isBundledPluginId(manifest.id) || descriptorSource === 'bundled',
         error: error ?? state?.lastError ?? null,
@@ -1709,7 +1777,10 @@ export class TwilightPluginManager extends EventEmitter {
     }
   }
 
-  private validateRuntimeDescriptor(manifest: TwilightPluginManifest, versionRoot: string): string | null {
+  private validateRuntimeDescriptor(
+    manifest: TwilightPluginManifest,
+    versionRoot: string
+  ): string | null {
     if (!isCompatibleTwilightRange(manifest.engines.twilightEcho, this.appVersion)) {
       return `插件要求 Twilight Echo ${manifest.engines.twilightEcho}`
     }
@@ -1927,7 +1998,10 @@ export class TwilightPluginManager extends EventEmitter {
         detail
       })
       .catch((notificationError) => {
-        console.error('[plugin-state] Failed to show state recovery notification:', notificationError)
+        console.error(
+          '[plugin-state] Failed to show state recovery notification:',
+          notificationError
+        )
       })
   }
 
@@ -2028,7 +2102,12 @@ function isInsidePath(child: string, parent: string): boolean {
   const resolvedChild = resolve(child)
   const resolvedParent = resolve(parent)
   const pathBetween = relative(resolvedParent, resolvedChild)
-  return pathBetween === '' || (pathBetween !== '..' && !pathBetween.startsWith(`..${sepForPlatform()}`) && !isAbsoluteLike(pathBetween))
+  return (
+    pathBetween === '' ||
+    (pathBetween !== '..' &&
+      !pathBetween.startsWith(`..${sepForPlatform()}`) &&
+      !isAbsoluteLike(pathBetween))
+  )
 }
 
 function isAbsoluteLike(path: string): boolean {

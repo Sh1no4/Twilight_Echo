@@ -3789,7 +3789,7 @@ function setupPlayerIntegrationSideEffects(): void {
     () => appSettings.value?.desktopLyrics,
     (dl) => {
       if (!dl) return
-      window.api?.desktopLyrics?.updateSettings(dl)
+      window.api?.desktopLyrics?.updateSettings({ ...dl })
     },
     { deep: true }
   )

@@ -320,19 +320,29 @@ export interface TwilightMediaProviderRegistration {
     force?: boolean,
     context?: TwilightProviderRequestContext
   ): Promise<Track[]>
-  checkLogin?(context?: TwilightProviderRequestContext): Promise<{ loggedIn: boolean; profile: ProviderProfile | null }>
+  checkLogin?(
+    context?: TwilightProviderRequestContext
+  ): Promise<{ loggedIn: boolean; profile: ProviderProfile | null }>
   getProfile?(context?: TwilightProviderRequestContext): Promise<ProviderProfile | null>
   logout?(context?: TwilightProviderRequestContext): Promise<void>
   getQrLogin?(context?: TwilightProviderRequestContext): Promise<QrLoginRequest | null>
   getQrKey?(context?: TwilightProviderRequestContext): Promise<string | null>
   getQrImage?(key: string, context?: TwilightProviderRequestContext): Promise<string | null>
   checkQrLogin?(key: string, context?: TwilightProviderRequestContext): Promise<{ code: number }>
-  fetchUserLibrary?(force?: boolean, context?: TwilightProviderRequestContext): Promise<{
+  fetchUserLibrary?(
+    force?: boolean,
+    context?: TwilightProviderRequestContext
+  ): Promise<{
     likedPlaylist: PlaylistSummary | null
     playlists: PlaylistSummary[]
   }>
   fetchLikedTracks?(force?: boolean, context?: TwilightProviderRequestContext): Promise<Track[]>
-  fetchLikedTracksPage?(offset?: number, limit?: number, force?: boolean, context?: TwilightProviderRequestContext): Promise<{
+  fetchLikedTracksPage?(
+    offset?: number,
+    limit?: number,
+    force?: boolean,
+    context?: TwilightProviderRequestContext
+  ): Promise<{
     tracks: Track[]
     total: number
     offset: number
@@ -344,14 +354,26 @@ export interface TwilightMediaProviderRegistration {
   fetchRecommendPlaylists?(context?: TwilightProviderRequestContext): Promise<PlaylistSummary[]>
   fetchPersonalFm?(context?: TwilightProviderRequestContext): Promise<Track[]>
   fetchPrivateContent?(context?: TwilightProviderRequestContext): Promise<Track[]>
-  fetchArtistTopSongs?(artistId: string | number, context?: TwilightProviderRequestContext): Promise<Track[]>
-  fetchArtistAlbums?(artistId: string | number, context?: TwilightProviderRequestContext): Promise<AlbumSummary[]>
-  fetchArtistIntro?(artistId: string | number, context?: TwilightProviderRequestContext): Promise<string>
+  fetchArtistTopSongs?(
+    artistId: string | number,
+    context?: TwilightProviderRequestContext
+  ): Promise<Track[]>
+  fetchArtistAlbums?(
+    artistId: string | number,
+    context?: TwilightProviderRequestContext
+  ): Promise<AlbumSummary[]>
+  fetchArtistIntro?(
+    artistId: string | number,
+    context?: TwilightProviderRequestContext
+  ): Promise<string>
   fetchArtistFollowState?(
     artistId: string | number,
     context?: TwilightProviderRequestContext
   ): Promise<boolean | null>
-  fetchAlbumTracks?(albumId: string | number, context?: TwilightProviderRequestContext): Promise<Track[]>
+  fetchAlbumTracks?(
+    albumId: string | number,
+    context?: TwilightProviderRequestContext
+  ): Promise<Track[]>
   fetchArtistPlaylists?(
     artistId: string | number,
     context?: TwilightProviderRequestContext
@@ -492,6 +514,37 @@ export interface TwilightThemeContribution {
   description?: string
   variables?: Record<string, string>
   stylesheet?: string
+  structured?: TwilightStructuredThemeV1
+}
+
+export interface TwilightStructuredThemeV1 {
+  schemaVersion: 1
+  variants: Partial<Record<'pureWhite' | 'dark', { tokens?: Record<string, string> }>>
+  windowDefaults?: {
+    miniPlayer?: {
+      accentColor?: string
+      primaryTextColor?: string
+      mutedTextColor?: string
+      surfaceOpacity?: number
+      glassBlur?: number
+      cornerRadius?: number
+      borderWidth?: number
+      borderColor?: string
+      shadowStrength?: number
+    }
+    desktopLyrics?: {
+      fontFamily?: string
+      fontSize?: number
+      fontWeight?: number
+      color?: string
+      highlightColor?: string
+      backgroundColor?: string
+      backgroundOpacity?: number
+      shadow?: boolean
+      shadowBlur?: number
+      shadowColor?: string
+    }
+  }
 }
 
 export interface TwilightThemesApi {

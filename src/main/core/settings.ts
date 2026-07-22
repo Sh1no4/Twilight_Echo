@@ -46,10 +46,8 @@ import {
   normalizeMiniPlayerSettings
 } from '../../shared/miniPlayer'
 import { DEFAULT_SOFTWARE_VOLUME } from '../../shared/audioProcessingOptions'
-import {
-  DEFAULT_SLEEP_TIMER_SETTINGS,
-  type SleepTimerSettings
-} from '../../shared/sleepTimer.ts'
+import { normalizeThemeSelection, normalizeThemeWindowInheritance } from '../../shared/theme.ts'
+import { DEFAULT_SLEEP_TIMER_SETTINGS, type SleepTimerSettings } from '../../shared/sleepTimer.ts'
 import {
   loadSettingsFile,
   writeSettingsFile,
@@ -106,6 +104,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   startupHomePage: 'local',
   theme: 'system',
   pluginThemeId: null,
+  activeTheme: { kind: 'builtin', id: 'builtin:twilight-echo-default' },
+  themeWindowInheritance: { miniPlayer: true, desktopLyrics: true },
   blurEffect: true,
   windowTransparency: false,
   windowTransparencyEffect: {
@@ -615,6 +615,14 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
   const minimizeToTray =
     typeof settings.minimizeToTray === 'boolean' ? settings.minimizeToTray : closeToTray
 
+  const activeTheme = normalizeThemeSelection(settings.activeTheme, settings.pluginThemeId)
+  const themeWindowInheritance = normalizeThemeWindowInheritance(
+    settings.themeWindowInheritance,
+    Object.prototype.hasOwnProperty.call(settings, 'themeWindowInheritance')
+      ? DEFAULT_SETTINGS.themeWindowInheritance
+      : { miniPlayer: false, desktopLyrics: false }
+  )
+
   return {
     autoCheckLogin: settings.autoCheckLogin !== false,
     autoLaunch,
@@ -629,7 +637,10 @@ export function normalizeAppSettings(settings: Partial<AppSettings>): AppSetting
     closeToTray,
     startupHomePage: normalizeStartupHomePage(settings.startupHomePage),
     theme: normalizeAppTheme(settings.theme),
-    pluginThemeId: normalizePluginThemeId(settings.pluginThemeId),
+    pluginThemeId:
+      activeTheme.kind === 'plugin' ? `${activeTheme.pluginId}:${activeTheme.themeId}` : null,
+    activeTheme,
+    themeWindowInheritance,
     blurEffect: settings.blurEffect !== false,
     windowTransparency: settings.windowTransparency === true,
     windowTransparencyEffect: normalizeWindowTransparencyEffect(settings.windowTransparencyEffect),

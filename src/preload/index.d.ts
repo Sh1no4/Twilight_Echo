@@ -13,6 +13,15 @@ import type {
 } from '../shared/dspGraph.ts'
 import type { SleepTimerSettings } from '../shared/sleepTimer.ts'
 import type {
+  ThemeAssetReference,
+  ThemeAssetType,
+  ThemeBootstrap,
+  ThemeLibrarySnapshot,
+  ThemeProfileV1,
+  ThemeSelection,
+  ThemeWindowInheritance
+} from '../shared/theme.ts'
+import type {
   LocalLibraryRemoveRequest,
   LocalLibraryRemoveResult,
   LocalLibraryRestoreRequest,
@@ -621,6 +630,8 @@ interface AppSettings {
   startupHomePage: StartupHomePage
   theme: AppTheme
   pluginThemeId: string | null
+  activeTheme: ThemeSelection
+  themeWindowInheritance: ThemeWindowInheritance
   blurEffect: boolean
   windowTransparency: boolean
   windowTransparencyEffect: WindowTransparencyEffectSettings
@@ -1022,6 +1033,7 @@ interface TwilightThemeContribution {
   description?: string
   variables?: Record<string, string>
   stylesheet?: string
+  structured?: import('../shared/theme.ts').StructuredPluginThemeV1
 }
 
 interface TwilightPluginExtensionContribution {
@@ -1378,7 +1390,9 @@ interface WindowAPI {
     scanStartup: () => Promise<LocalLibraryScanUpdate>
     scanFull: () => Promise<LocalLibraryScanUpdate>
     getScanStatus: () => Promise<LocalLibraryScanStatus>
-    getWatcherStatus: () => Promise<import('../shared/localLibraryScan.ts').LibraryWatcherStatusSnapshot>
+    getWatcherStatus: () => Promise<
+      import('../shared/localLibraryScan.ts').LibraryWatcherStatusSnapshot
+    >
     pauseScan: () => Promise<boolean>
     resumeScan: () => Promise<boolean>
     cancelScan: () => Promise<boolean>
@@ -1446,11 +1460,7 @@ interface WindowAPI {
       fileNameHint?: string
       allowInsecureHttp?: boolean
     }) => Promise<import('../shared/radioStations.ts').RadioStation[]>
-    searchDirectory: (payload: {
-      query: string
-      limit?: number
-      offset?: number
-    }) => Promise<
+    searchDirectory: (payload: { query: string; limit?: number; offset?: number }) => Promise<
       Array<{
         stationuuid: string
         name: string
@@ -1468,13 +1478,17 @@ interface WindowAPI {
   }
   podcast: {
     loadSubscriptions: () => Promise<
-      VersionedDataEnvelope<import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument>
+      VersionedDataEnvelope<
+        import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument
+      >
     >
     saveSubscriptions: (
       document: import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument,
       expectedRevision: number
     ) => Promise<
-      VersionedDataEnvelope<import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument>
+      VersionedDataEnvelope<
+        import('../shared/podcastSubscriptions.ts').PodcastSubscriptionsDocument
+      >
     >
     subscribe: (feedUrl: string) => Promise<{
       subscription: import('../shared/podcastSubscriptions.ts').PodcastSubscription
@@ -1533,9 +1547,9 @@ interface WindowAPI {
       expectedRevision: number
     ) => Promise<VersionedDataEnvelope<LyricsManagementDocument>>
     loadLyricsManagement: () => Promise<VersionedDataEnvelope<LyricsManagementDocument> | null>
-    loadPlaybackBookmarks: () => Promise<
-      VersionedDataEnvelope<import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument> | null
-    >
+    loadPlaybackBookmarks: () => Promise<VersionedDataEnvelope<
+      import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument
+    > | null>
     savePlaybackBookmarks: (
       document: import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument,
       expectedRevision: number
@@ -1606,6 +1620,25 @@ interface WindowAPI {
     getShortcutStatuses: () => Promise<PlayerShortcutStatus[]>
     onChanged: (cb: (snapshot: SettingsSnapshot) => void) => () => void
     onPlayerShortcut: (cb: (action: PlayerShortcutAction) => void) => () => void
+  }
+  themes: {
+    getBootstrap: () => Promise<ThemeBootstrap>
+    list: () => Promise<ThemeLibrarySnapshot>
+    save: (profile: ThemeProfileV1, expectedRevision: number) => Promise<ThemeLibrarySnapshot>
+    delete: (profileId: string, expectedRevision: number) => Promise<ThemeLibrarySnapshot>
+    setActive: (
+      selection: ThemeSelection,
+      expectedRevision: number
+    ) => Promise<ThemeLibrarySnapshot>
+    setWindowInheritance: (
+      inheritance: ThemeWindowInheritance,
+      expectedRevision: number
+    ) => Promise<ThemeLibrarySnapshot>
+    importTheme: (expectedRevision: number) => Promise<ThemeLibrarySnapshot | null>
+    exportTheme: (profileId: string) => Promise<string | null>
+    importAsset: (profileId: string, type: ThemeAssetType) => Promise<ThemeAssetReference | null>
+    copyAssets: (sourceProfileId: string, targetProfileId: string) => Promise<void>
+    onChanged: (cb: (snapshot: ThemeLibrarySnapshot) => void) => () => void
   }
   plugins: {
     list: () => Promise<TwilightPluginDescriptor[]>

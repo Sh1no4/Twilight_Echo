@@ -450,7 +450,11 @@ onBeforeUnmount(() => {
 
     <div v-if="viewMode !== 'visualizer'" class="backdrop" aria-hidden="true">
       <Transition name="backdrop-cover-fade" appear>
-        <div v-if="isBlurBackground && currentTrack" :key="`bg:${coverIdentity}`" class="backdrop-cover-wrap">
+        <div
+          v-if="isBlurBackground && currentTrack"
+          :key="`bg:${coverIdentity}`"
+          class="backdrop-cover-wrap"
+        >
           <CoverImg
             :cover="currentTrack.cover"
             :cover-source="currentTrack.coverSource"
@@ -569,13 +573,13 @@ onBeforeUnmount(() => {
   inset: 0;
   z-index: 1100;
   overflow: hidden;
-  color: #f4f7fb;
+  color: var(--te-playback-page-text, #f4f7fb);
   background-color: var(--te-player-bg);
   background-image: var(--te-player-bg-image);
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
-  --accent-color: #7c4dff;
+  --accent-color: var(--te-playback-accent, #7c4dff);
 }
 
 .backdrop {
@@ -611,11 +615,11 @@ onBeforeUnmount(() => {
 /* Light theme: slightly brighter backdrop art so the stage does not crush blacks */
 :global(html[data-theme='light'] .playing-music .backdrop-cover-wrap img),
 :global(html[data-theme='pureWhite'] .playing-music .backdrop-cover-wrap img) {
-  filter: blur(58px) saturate(1.22) brightness(0.52);
+  filter: var(--te-playback-backdrop-filter, blur(58px) saturate(1.22) brightness(0.52));
 }
 
 :global(html[data-theme='dark'] .playing-music .backdrop-cover-wrap img) {
-  filter: blur(58px) saturate(1.32) brightness(0.36);
+  filter: var(--te-playback-backdrop-filter, blur(58px) saturate(1.32) brightness(0.36));
 }
 
 .backdrop-cover-fade-enter-active,
@@ -649,11 +653,14 @@ onBeforeUnmount(() => {
   position: absolute;
   inset: 0;
   background:
-    linear-gradient(
-      180deg,
-      rgba(5, 7, 11, 0.72) 0%,
-      rgba(5, 7, 11, 0.74) 52%,
-      rgba(5, 7, 11, 0.78) 100%
+    var(
+      --te-playback-backdrop-scrim,
+      linear-gradient(
+        180deg,
+        rgba(5, 7, 11, 0.72) 0%,
+        rgba(5, 7, 11, 0.74) 52%,
+        rgba(5, 7, 11, 0.78) 100%
+      )
     ),
     color-mix(in srgb, var(--accent-color) 8%, transparent);
   backdrop-filter: blur(10px);
@@ -669,14 +676,21 @@ onBeforeUnmount(() => {
       color-mix(in srgb, var(--accent-color) 22%, transparent),
       transparent 42%
     ),
-    radial-gradient(circle at 88% 20%, rgba(255, 255, 255, 0.12), transparent 26%);
+    radial-gradient(
+      circle at 88% 20%,
+      var(--te-playback-backdrop-highlight, rgba(255, 255, 255, 0.12)),
+      transparent 26%
+    );
   opacity: 0.8;
 }
 
 .backdrop-fluid {
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, #0f172a, #1e3a5f, #312e81, #1e3a5f, #0f172a);
+  background: var(
+    --te-playback-fluid-bg,
+    linear-gradient(135deg, #0f172a, #1e3a5f, #312e81, #1e3a5f, #0f172a)
+  );
   background-size: 400% 400%;
   animation: fluid-drift 18s ease-in-out infinite;
 }
@@ -761,23 +775,25 @@ onBeforeUnmount(() => {
 .cover-frame {
   width: 100%;
   aspect-ratio: 1;
-  border-radius: 26px;
+  border-radius: var(--te-playback-cover-radius, 26px);
   overflow: hidden;
   background: rgba(255, 255, 255, 0.06);
   box-shadow: 0 26px 70px rgba(0, 0, 0, 0.38);
 }
 
 :global(html[data-theme='dark'] .playing-music .cover-frame) {
-  background: rgba(15, 23, 42, 0.45);
-  box-shadow:
+  background: var(--te-playback-cover-surface, rgba(15, 23, 42, 0.45));
+  box-shadow: var(
+    --te-playback-cover-shadow,
     0 26px 70px rgba(0, 0, 0, 0.55),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06)
+  );
 }
 
 :global(html[data-theme='light'] .playing-music .cover-frame),
 :global(html[data-theme='pureWhite'] .playing-music .cover-frame) {
-  background: rgba(15, 23, 42, 0.08);
-  box-shadow: 0 26px 70px rgba(15, 23, 42, 0.28);
+  background: var(--te-playback-cover-surface, rgba(15, 23, 42, 0.08));
+  box-shadow: var(--te-playback-cover-shadow, 0 26px 70px rgba(15, 23, 42, 0.28));
 }
 
 .cover-frame :deep(img.cover-image),
@@ -794,14 +810,14 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   font-size: 68px;
-  color: rgba(255, 255, 255, 0.34);
+  color: var(--te-playback-cover-placeholder-text, rgba(255, 255, 255, 0.34));
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
     color-mix(in srgb, var(--accent-color) 18%, transparent);
 }
 
 :global(html[data-theme='dark'] .playing-music .cover-placeholder) {
-  color: rgba(148, 163, 184, 0.55);
+  color: var(--te-playback-cover-placeholder-text, rgba(148, 163, 184, 0.55));
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.01)),
     color-mix(in srgb, var(--accent-color) 22%, rgba(15, 23, 42, 0.65));
@@ -817,7 +833,7 @@ onBeforeUnmount(() => {
   font-size: 32px;
   font-weight: 400;
   line-height: 1.22;
-  color: #fff;
+  color: var(--te-playback-track-title, #fff);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -829,7 +845,7 @@ onBeforeUnmount(() => {
   font-family: var(--te-font-rounded);
   font-size: 18px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--te-playback-track-artist, rgba(255, 255, 255, 0.78));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -840,7 +856,7 @@ onBeforeUnmount(() => {
   font-family: var(--te-font-rounded);
   font-size: 14px;
   font-weight: 500;
-  color: rgba(255, 255, 255, 0.48);
+  color: var(--te-playback-track-album, rgba(255, 255, 255, 0.48));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -863,7 +879,7 @@ onBeforeUnmount(() => {
   display: grid;
   place-items: center;
   min-height: 120px;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42));
   font-size: 14px;
   letter-spacing: 0.08em;
 }
@@ -881,9 +897,9 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
   padding: 8px 12px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--te-playback-control-border, rgba(255, 255, 255, 0.1));
+  background: var(--te-playback-control-surface, rgba(255, 255, 255, 0.08));
+  color: var(--te-playback-control-text, rgba(255, 255, 255, 0.7));
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -943,7 +959,7 @@ onBeforeUnmount(() => {
   padding: 12px 20px;
   text-align: center;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42));
   transition:
     color 0.22s ease,
     opacity 0.22s ease,
@@ -954,7 +970,7 @@ onBeforeUnmount(() => {
 }
 
 .lyric-row:hover {
-  color: rgba(255, 255, 255, 0.74);
+  color: var(--te-playback-lyric-hover-text, rgba(255, 255, 255, 0.74));
 }
 
 .lyric-row.idle {
@@ -975,13 +991,13 @@ onBeforeUnmount(() => {
 
 .lyric-row.active {
   opacity: 1;
-  color: #fff;
+  color: var(--te-playback-lyric-active-text, #fff);
   transform: scale(1.012);
   background:
     linear-gradient(90deg, color-mix(in srgb, var(--accent-color) 22%, transparent), transparent),
-    rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.18);
+    var(--te-playback-lyric-active-surface, rgba(255, 255, 255, 0.08));
+  border-color: var(--te-playback-lyric-active-border, rgba(255, 255, 255, 0.1));
+  box-shadow: var(--te-playback-lyric-active-shadow, 0 14px 28px rgba(0, 0, 0, 0.18));
 }
 
 .lyric-text {
@@ -1009,7 +1025,9 @@ onBeforeUnmount(() => {
 }
 
 .lyric-word {
-  transition: color 0.12s ease, opacity 0.12s ease;
+  transition:
+    color 0.12s ease,
+    opacity 0.12s ease;
 }
 
 .lyric-row.active .lyric-word {
@@ -1029,12 +1047,12 @@ onBeforeUnmount(() => {
   font-size: calc(var(--te-lyric-font-size, 18px) - 2px);
   line-height: 1.45;
   text-align: center;
-  color: rgba(255, 255, 255, 0.58);
+  color: var(--te-playback-lyric-translation, rgba(255, 255, 255, 0.58));
   word-break: break-word;
 }
 
 .lyric-row.active .lyric-translation {
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--te-playback-lyric-translation-active, rgba(255, 255, 255, 0.82));
 }
 
 .lyric-romanization {
@@ -1043,12 +1061,12 @@ onBeforeUnmount(() => {
   font-size: calc(var(--te-lyric-font-size, 18px) - 3px);
   line-height: 1.35;
   text-align: center;
-  color: rgba(255, 255, 255, 0.46);
+  color: var(--te-playback-lyric-romanization, rgba(255, 255, 255, 0.46));
   word-break: break-word;
 }
 
 .lyric-row.active .lyric-romanization {
-  color: rgba(255, 255, 255, 0.72);
+  color: var(--te-playback-lyric-romanization-active, rgba(255, 255, 255, 0.72));
 }
 
 .empty-shell {
@@ -1068,7 +1086,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   gap: 14px;
-  color: rgba(255, 255, 255, 0.42);
+  color: var(--te-playback-lyric-text, rgba(255, 255, 255, 0.42));
   font-size: 14px;
 }
 
@@ -1139,27 +1157,27 @@ onBeforeUnmount(() => {
   width: 40px;
   height: 40px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--te-playback-control-surface, rgba(255, 255, 255, 0.08));
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--te-playback-control-border, rgba(255, 255, 255, 0.1));
   box-shadow: none;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.7);
+  color: var(--te-playback-control-text, rgba(255, 255, 255, 0.7));
   font-size: 16px;
   transition: all 0.2s;
   z-index: 1200;
 }
 
 .visualizer-toggle-button:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.16);
-  color: rgba(255, 255, 255, 0.92);
+  background: var(--te-playback-control-hover-surface, rgba(255, 255, 255, 0.14));
+  border-color: var(--te-playback-control-hover-border, rgba(255, 255, 255, 0.16));
+  color: var(--te-playback-control-hover-text, rgba(255, 255, 255, 0.92));
   transform: scale(1.06);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--te-playback-control-hover-shadow, 0 4px 12px rgba(0, 0, 0, 0.18));
 }
 
 .visualizer-toggle-button--close {
@@ -1170,10 +1188,10 @@ onBeforeUnmount(() => {
 }
 
 .visualizer-toggle-button--close:hover {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.16);
+  background: var(--te-playback-control-hover-surface, rgba(255, 255, 255, 0.14));
+  border-color: var(--te-playback-control-hover-border, rgba(255, 255, 255, 0.16));
   transform: scale(1.06);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--te-playback-control-hover-shadow, 0 4px 12px rgba(0, 0, 0, 0.18));
 }
 
 /* Visualizer surface fills the stage area */
@@ -1185,26 +1203,26 @@ onBeforeUnmount(() => {
 }
 
 :global(html[data-theme='dark'] .playing-music .visualizer-toggle-button) {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.7);
+  background: var(--te-playback-control-surface, rgba(255, 255, 255, 0.08));
+  border-color: var(--te-playback-control-border, rgba(255, 255, 255, 0.1));
+  color: var(--te-playback-control-text, rgba(255, 255, 255, 0.7));
 }
 
 :global(html[data-theme='dark'] .playing-music .visualizer-toggle-button:hover) {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.16);
-  color: rgba(255, 255, 255, 0.92);
+  background: var(--te-playback-control-hover-surface, rgba(255, 255, 255, 0.14));
+  border-color: var(--te-playback-control-hover-border, rgba(255, 255, 255, 0.16));
+  color: var(--te-playback-control-hover-text, rgba(255, 255, 255, 0.92));
 }
 
 :global(html[data-theme='dark'] .playing-music .visualizer-toggle-button--close) {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.1);
+  background: var(--te-playback-control-surface, rgba(255, 255, 255, 0.08));
+  border-color: var(--te-playback-control-border, rgba(255, 255, 255, 0.1));
   box-shadow: none;
 }
 
 :global(html[data-theme='dark'] .playing-music .visualizer-toggle-button--close:hover) {
-  background: rgba(255, 255, 255, 0.14);
-  border-color: rgba(255, 255, 255, 0.16);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  background: var(--te-playback-control-hover-surface, rgba(255, 255, 255, 0.14));
+  border-color: var(--te-playback-control-hover-border, rgba(255, 255, 255, 0.16));
+  box-shadow: var(--te-playback-control-hover-shadow, 0 4px 12px rgba(0, 0, 0, 0.18));
 }
 </style>

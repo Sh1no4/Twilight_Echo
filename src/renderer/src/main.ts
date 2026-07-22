@@ -3,6 +3,7 @@ import '@phosphor-icons/web/regular'
 
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
+import { bootstrapThemeRuntime } from './stores/useThemeStore'
 
 const query = new URLSearchParams(window.location.search)
 const isMiniPlayer = query.get('window') === 'mini-player'
@@ -15,6 +16,7 @@ if (isMiniPlayer) {
 }
 
 async function mountApp(): Promise<void> {
+  await bootstrapThemeRuntime()
   const rootComponent = isMiniPlayer
     ? (await import('./mini-player/MiniPlayerApp.vue')).default
     : (await import('./App.vue')).default

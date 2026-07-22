@@ -10,20 +10,20 @@
 
 ### 1.1 必填字段
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `id` | string | 反域名风格全局唯一 ID，如 `com.example.bili-source` |
-| `name` | string | 显示名称 |
-| `version` | string | 插件自身版本，遵循 semver |
-| `description` | string | 简短描述 |
-| `author` | string | 作者名或组织 |
-| `license` | string | SPDX 标识符 |
-| `type` | string[] | `provider` \| `tool` \| `ui` \| `theme` \| `dsp`，可组合 |
-| `main` | string | JS 轨入口文件（相对包根路径）；DSP 轨改用 `binary`；纯 theme 插件可省略 |
-| `binary` | object | DSP 轨：按平台声明动态库路径，如 `{ "win32-x64": "...", "darwin-arm64": "...", "linux-x64": "..." }` |
-| `engines.twilightEcho` | string | 兼容的宿主版本范围（semver range） |
-| `apiVersion` | number | 使用的插件 API 主版本 |
-| `permissions` | string[] | 权限声明（见 1.3）。**信任式安装下声明仍为必填**，安装时展示给用户 |
+| 字段                   | 类型     | 说明                                                                                                 |
+| ---------------------- | -------- | ---------------------------------------------------------------------------------------------------- |
+| `id`                   | string   | 反域名风格全局唯一 ID，如 `com.example.bili-source`                                                  |
+| `name`                 | string   | 显示名称                                                                                             |
+| `version`              | string   | 插件自身版本，遵循 semver                                                                            |
+| `description`          | string   | 简短描述                                                                                             |
+| `author`               | string   | 作者名或组织                                                                                         |
+| `license`              | string   | SPDX 标识符                                                                                          |
+| `type`                 | string[] | `provider` \| `tool` \| `ui` \| `theme` \| `dsp`，可组合                                             |
+| `main`                 | string   | JS 轨入口文件（相对包根路径）；DSP 轨改用 `binary`；纯 theme 插件可省略                              |
+| `binary`               | object   | DSP 轨：按平台声明动态库路径，如 `{ "win32-x64": "...", "darwin-arm64": "...", "linux-x64": "..." }` |
+| `engines.twilightEcho` | string   | 兼容的宿主版本范围（semver range）                                                                   |
+| `apiVersion`           | number   | 使用的插件 API 主版本                                                                                |
+| `permissions`          | string[] | 权限声明（见 1.3）。**信任式安装下声明仍为必填**，安装时展示给用户                                   |
 
 > JS 插件声明 `main`；DSP 插件声明 `binary`；纯 theme 插件可用 `contributes.themes`
 > 声明 CSS 变量/样式表并省略 `main` 与 `binary`。`type` 含 `dsp` 时 `binary` 必填。
@@ -33,13 +33,13 @@
 
 ### 1.2 可选字段
 
-| 字段 | 说明 |
-|---|---|
-| `contributes` | 声明扩展点贡献：页面、设置项、命令、主题资源 |
-| `dependencies` | 可选插件依赖表，形态为 `{ "<pluginId>": "<semver range>" }`，用于启用校验与按依赖序加载 |
-| `homepage` / `repository` | 主页与源码仓库 |
-| `icon` | 图标路径 |
-| `signature` | 预留签名字段（未来收紧安全策略时启用，不破坏格式） |
+| 字段                      | 说明                                                                                    |
+| ------------------------- | --------------------------------------------------------------------------------------- |
+| `contributes`             | 声明扩展点贡献：页面、设置项、命令、主题资源                                            |
+| `dependencies`            | 可选插件依赖表，形态为 `{ "<pluginId>": "<semver range>" }`，用于启用校验与按依赖序加载 |
+| `homepage` / `repository` | 主页与源码仓库                                                                          |
+| `icon`                    | 图标路径                                                                                |
+| `signature`               | 预留签名字段（未来收紧安全策略时启用，不破坏格式）                                      |
 
 `signature` 属于包内 manifest 的预留字段。索引发布者签名使用索引 entry 专有的
 `publisherSignature`，不得把两者混用；后者不写入 `.tep` 内的 `plugin.json`。
@@ -123,20 +123,25 @@ bridge 会在失败后保留该 key，payload 改变或上一次调用成功后�
 
 ### 4.4 扩展点清单（首批）
 
-| 扩展点 | 类型 | 能力 |
-|---|---|---|
+| 扩展点          | 类型     | 能力                                                    |
+| --------------- | -------- | ------------------------------------------------------- |
 | `MediaProvider` | provider | 搜索、播放 URL/流、歌词、封面、歌单、登录态（可选实现） |
-| 事件总线 | tool | 订阅曲目切换、播放/暂停、进度、队列变更、应用启停 |
-| 侧边栏页面 | ui | 插件提供自定义页面渲染入口 |
-| PlayerBar 按钮 | ui | 附加操作按钮 |
-| 设置页配置区 | ui | 插件自有设置界面 |
-| 主题 | theme | CSS 变量包 + 自定义样式表；**仅声明式样式，不执行脚本** |
-| DSP 节点 | dsp | 挂入引擎 DSP 链（见第 5 节） |
+| 事件总线        | tool     | 订阅曲目切换、播放/暂停、进度、队列变更、应用启停       |
+| 侧边栏页面      | ui       | 插件提供自定义页面渲染入口                              |
+| PlayerBar 按钮  | ui       | 附加操作按钮                                            |
+| 设置页配置区    | ui       | 插件自有设置界面                                        |
+| 主题            | theme    | CSS 变量包 + 自定义样式表；**仅声明式样式，不执行脚本** |
+| DSP 节点        | dsp      | 挂入引擎 DSP 链（见第 5 节）                            |
 
 Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playerBarButton`
 和 `settingsPanel` 均通过 command 回到插件宿主进程执行业务逻辑，不向插件开放
 任意 DOM 权限。主题插件由用户在外观设置中显式选择后生效；宿主一次只应用一个
 插件主题，且 stylesheet 必须位于插件包目录内。
+
+`contributes.themes[]` 在 API v1 内可选增加 `structured` 字段：`schemaVersion: 1`，
+`variants.pureWhite/dark.tokens` 使用宿主登记的稳定主题令牌 ID，并可声明受控的
+`windowDefaults`。原有 `variables + stylesheet` 字段不改名、不撤回；结构化字段只覆盖
+登记令牌，stylesheet 仍是可使用自定义选择器的高级兼容路径，但不承诺跨版本布局兼容。
 
 ### 4.5 多音源数据模型
 

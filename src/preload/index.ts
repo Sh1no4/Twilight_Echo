@@ -87,6 +87,16 @@ import type {
   Vst3CatalogState
 } from './types'
 import {
+  isThemeLibraryDocument,
+  type ThemeAssetReference,
+  type ThemeAssetType,
+  type ThemeBootstrap,
+  type ThemeLibrarySnapshot,
+  type ThemeProfileV1,
+  type ThemeSelection,
+  type ThemeWindowInheritance
+} from '../shared/theme.ts'
+import {
   isRadioStationsDocument,
   type RadioStation,
   type RadioStationsDocument
@@ -131,6 +141,7 @@ const miniPlayerSettingsCallbacks = new Set<(settings: MiniPlayerSettings) => vo
 const miniPlayerCommandCallbacks = new Set<(command: MiniPlayerCommand) => void>()
 const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
 const pluginChangedCallbacks = new Set<() => void>()
+const themeChangedCallbacks = new Set<(snapshot: ThemeLibrarySnapshot) => void>()
 const sleepTimerEvents = createSleepTimerEventBridge()
 
 ipcRenderer.on('audioEngine:property-change', (_event, data: { name: string; data: unknown }) => {
@@ -229,6 +240,10 @@ ipcRenderer.on('plugins:changed', () => {
   for (const cb of pluginChangedCallbacks) {
     cb()
   }
+})
+
+ipcRenderer.on('themes:changed', (_event, snapshot: ThemeLibrarySnapshot) => {
+  for (const cb of themeChangedCallbacks) cb(snapshot)
 })
 
 ipcRenderer.on('desktopLyrics:toggleChanged', (_event, enabled: boolean) => {
@@ -338,6 +353,22 @@ async function invokeVersionedDataWrite<T>(
   isData: (value: unknown) => value is T
 ): Promise<VersionedDataEnvelope<T>> {
   const response: unknown = await ipcRenderer.invoke(channel, ...args)
+  if (isPersistentDataRevisionConflictResponse(response, isData)) {
+    throw persistentDataRevisionConflictFromResponse(response)
+  }
+  if (!isVersionedDataEnvelope(response, isData)) {
+    throw new Error(`${channel} returned an invalid persistence response`)
+  }
+  return response
+}
+
+async function invokeOptionalVersionedDataWrite<T>(
+  channel: string,
+  args: unknown[],
+  isData: (value: unknown) => value is T
+): Promise<VersionedDataEnvelope<T> | null> {
+  const response: unknown = await ipcRenderer.invoke(channel, ...args)
+  if (response === null) return null
   if (isPersistentDataRevisionConflictResponse(response, isData)) {
     throw persistentDataRevisionConflictFromResponse(response)
   }
@@ -837,9 +868,9 @@ const api = {
       ),
     loadLyricsManagement: (): Promise<VersionedDataEnvelope<LyricsManagementDocument> | null> =>
       ipcRenderer.invoke('data:loadLyricsManagement'),
-    loadPlaybackBookmarks: (): Promise<
-      VersionedDataEnvelope<import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument> | null
-    > => ipcRenderer.invoke('data:loadPlaybackBookmarks'),
+    loadPlaybackBookmarks: (): Promise<VersionedDataEnvelope<
+      import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument
+    > | null> => ipcRenderer.invoke('data:loadPlaybackBookmarks'),
     savePlaybackBookmarks: (
       document: import('../shared/playbackBookmarks.ts').PlaybackBookmarksDocument,
       expectedRevision: number
@@ -905,6 +936,48 @@ const api = {
     onPlayerShortcut: (cb: (action: PlayerShortcutAction) => void): (() => void) => {
       playerShortcutCallbacks.add(cb)
       return () => playerShortcutCallbacks.delete(cb)
+    }
+  },
+  themes: {
+    getBootstrap: (): Promise<ThemeBootstrap> => ipcRenderer.invoke('themes:getBootstrap'),
+    list: (): Promise<ThemeLibrarySnapshot> => ipcRenderer.invoke('themes:list'),
+    save: (profile: ThemeProfileV1, expectedRevision: number): Promise<ThemeLibrarySnapshot> =>
+      invokeVersionedDataWrite('themes:save', [profile, expectedRevision], isThemeLibraryDocument),
+    delete: (profileId: string, expectedRevision: number): Promise<ThemeLibrarySnapshot> =>
+      invokeVersionedDataWrite(
+        'themes:delete',
+        [profileId, expectedRevision],
+        isThemeLibraryDocument
+      ),
+    setActive: (
+      selection: ThemeSelection,
+      expectedRevision: number
+    ): Promise<ThemeLibrarySnapshot> =>
+      invokeVersionedDataWrite(
+        'themes:setActive',
+        [selection, expectedRevision],
+        isThemeLibraryDocument
+      ),
+    setWindowInheritance: (
+      inheritance: ThemeWindowInheritance,
+      expectedRevision: number
+    ): Promise<ThemeLibrarySnapshot> =>
+      invokeVersionedDataWrite(
+        'themes:setWindowInheritance',
+        [inheritance, expectedRevision],
+        isThemeLibraryDocument
+      ),
+    importTheme: (expectedRevision: number): Promise<ThemeLibrarySnapshot | null> =>
+      invokeOptionalVersionedDataWrite('themes:import', [expectedRevision], isThemeLibraryDocument),
+    exportTheme: (profileId: string): Promise<string | null> =>
+      ipcRenderer.invoke('themes:export', profileId),
+    importAsset: (profileId: string, type: ThemeAssetType): Promise<ThemeAssetReference | null> =>
+      ipcRenderer.invoke('themes:importAsset', profileId, type),
+    copyAssets: (sourceProfileId: string, targetProfileId: string): Promise<void> =>
+      ipcRenderer.invoke('themes:copyAssets', sourceProfileId, targetProfileId),
+    onChanged: (cb: (snapshot: ThemeLibrarySnapshot) => void): (() => void) => {
+      themeChangedCallbacks.add(cb)
+      return () => themeChangedCallbacks.delete(cb)
     }
   },
   plugins: {

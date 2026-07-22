@@ -189,6 +189,17 @@ async function togglePlugin(plugin: PluginDescriptor): Promise<void> {
   }
 }
 
+function formatPluginInstallError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  if (/fetch failed|network|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|aborted/i.test(message)) {
+    return (
+      `无法下载插件包（${message}）。` +
+      '离线索引仅用于发现；请改用「从本地安装包 (.tep)」，或配置可访问 GitHub raw 的代理/镜像。'
+    )
+  }
+  return message
+}
+
 async function installIndexPlugin(entry: PluginIndexEntry): Promise<void> {
   busyId.value = entry.id
   marketError.value = ''
@@ -197,7 +208,7 @@ async function installIndexPlugin(entry: PluginIndexEntry): Promise<void> {
     await refreshPlugins()
     await refreshIndex(true)
   } catch (err) {
-    marketError.value = err instanceof Error ? err.message : String(err)
+    marketError.value = formatPluginInstallError(err)
     await refreshIndex(true)
   } finally {
     busyId.value = null

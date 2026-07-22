@@ -30,6 +30,8 @@ import { setupLoudnessAnalysisIpc } from '../audio/loudnessIpc'
 import { setupOpraIpc } from '../ipc/opra'
 import { setupPluginIpc } from '../ipc/plugins'
 import { setupDataIpc } from '../ipc/data'
+import { setupThemeIpc } from '../ipc/themes'
+import { resolveThemeAssetFile } from '../themes/themeArchive.ts'
 import { setupRadioMediaIpc, destroyRadioMediaIpc } from '../radio/radioMediaIpc.ts'
 import { setupRemoteIpc, destroyRemoteIpc } from '../remote/remoteIpc.ts'
 import { installElectronSecurity } from '../security/electronSecurity.ts'
@@ -112,6 +114,15 @@ export function startApp(): void {
           supportFetchAPI: true,
           corsEnabled: true
         }
+      },
+      {
+        scheme: 'theme-asset',
+        privileges: {
+          standard: true,
+          secure: true,
+          supportFetchAPI: true,
+          corsEnabled: true
+        }
       }
     ])
 
@@ -182,6 +193,36 @@ export function startApp(): void {
         })
       })
 
+      protocol.handle('theme-asset', (request) => {
+        try {
+          const url = new URL(request.url)
+          if (url.hostname !== 'asset') return new Response('Forbidden', { status: 403 })
+          const segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent)
+          const profileId = segments.shift() ?? ''
+          const filePath = resolveThemeAssetFile(profileId, segments.join('/'))
+          if (!filePath) return new Response('Not Found', { status: 404 })
+          const extension = extname(filePath).toLowerCase()
+          const contentType =
+            extension === '.png'
+              ? 'image/png'
+              : extension === '.webp'
+                ? 'image/webp'
+                : extension === '.woff2'
+                  ? 'font/woff2'
+                  : 'image/jpeg'
+          return new Response(readFileSync(filePath), {
+            headers: {
+              'Content-Type': contentType,
+              'Cache-Control': 'no-store',
+              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Methods': 'GET, HEAD'
+            }
+          })
+        } catch {
+          return new Response('Not Found', { status: 404 })
+        }
+      })
+
       protocol.handle('twilight-audio', async (request) => {
         try {
           const url = new URL(request.url)
@@ -234,6 +275,7 @@ export function startApp(): void {
         serviceEntry: join(__dirname, 'libraryScanService.js')
       })
       setupDataIpc()
+      setupThemeIpc()
       setupDesktopLyricsIpc()
       setupMiniPlayerIpc()
 

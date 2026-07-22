@@ -616,6 +616,7 @@ const {
   canClearMetadataMatchSelectedTrack,
   handleClearMetadataMatch,
   openCreatePlaylistDialog,
+  handleCreatePlaylist,
   completeCreatePlaylistDialog,
   handleCreatePlaylistFromMenu,
   handleDeletePlaylist,
@@ -839,13 +840,23 @@ function handleBatchCreatePlaylistFromMenu(): void {
   openCreatePlaylistDialog(selected[0])
 }
 
-function handleCreatePlaylistWithBatch(): void {
-  const name = newPlaylistName.value.trim()
-  const batch = pendingBatchCreateTracks.value
-  if (name && batch.length > 0) createPlaylistWithTracks(name, batch)
+function dismissCreatePlaylistDialog(): void {
   pendingBatchCreateTracks.value = []
   completeCreatePlaylistDialog()
-  if (batch.length > 0) clearSelection()
+}
+
+function handleConfirmCreatePlaylist(): void {
+  const name = newPlaylistName.value.trim()
+  if (!name) return
+  const batch = pendingBatchCreateTracks.value
+  if (batch.length > 0) {
+    createPlaylistWithTracks(name, batch)
+    pendingBatchCreateTracks.value = []
+    completeCreatePlaylistDialog()
+    clearSelection()
+    return
+  }
+  handleCreatePlaylist()
 }
 
 function handleContextRemoveFromLibrary(): void {
@@ -1828,7 +1839,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
         <div
           v-if="showCreatePlaylistDialog"
           class="dialog-overlay"
-          @click.self="showCreatePlaylistDialog = false"
+          @click.self="dismissCreatePlaylistDialog"
         >
           <div class="create-playlist-dialog" @click.stop>
             <h3 class="dialog-title">创建歌单</h3>
@@ -1839,16 +1850,16 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               placeholder="请输入歌单名称"
               maxlength="50"
               autofocus
-              @keyup.enter="handleCreatePlaylistWithBatch"
+              @keyup.enter="handleConfirmCreatePlaylist"
             />
             <div class="dialog-actions">
-              <button class="dialog-btn cancel" @click="showCreatePlaylistDialog = false">
+              <button class="dialog-btn cancel" @click="dismissCreatePlaylistDialog">
                 取消
               </button>
               <button
                 class="dialog-btn confirm"
                 :disabled="!newPlaylistName.trim()"
-                @click="handleCreatePlaylistWithBatch"
+                @click="handleConfirmCreatePlaylist"
               >
                 创建
               </button>

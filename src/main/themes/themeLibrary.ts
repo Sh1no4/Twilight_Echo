@@ -1,0 +1,62 @@
+import { app } from 'electron'
+import { join } from 'node:path'
+import {
+  createDefaultThemeLibraryDocument,
+  type ThemeLibrarySnapshot,
+  type ThemeProfileV1,
+  type ThemeSelection,
+  type ThemeWindowInheritance
+} from '../../shared/theme.ts'
+import { runtime } from '../core/runtime.ts'
+import { ThemeLibraryRepository } from './themeLibraryRepository.ts'
+
+let repository: ThemeLibraryRepository | null = null
+
+function getRepository(): ThemeLibraryRepository {
+  if (!repository) {
+    repository = new ThemeLibraryRepository(join(app.getPath('userData'), 'themes.json'), () =>
+      createDefaultThemeLibraryDocument(
+        runtime.appSettings.activeTheme,
+        runtime.appSettings.themeWindowInheritance
+      )
+    )
+  }
+  return repository
+}
+
+export async function loadThemeLibrary(): Promise<ThemeLibrarySnapshot> {
+  return await getRepository().load()
+}
+
+export async function saveThemeProfile(
+  candidate: ThemeProfileV1,
+  expectedRevision: number,
+  now = new Date().toISOString()
+): Promise<ThemeLibrarySnapshot> {
+  return await getRepository().saveProfile(candidate, expectedRevision, now)
+}
+
+export async function deleteThemeProfile(
+  profileId: string,
+  expectedRevision: number
+): Promise<ThemeLibrarySnapshot> {
+  return await getRepository().deleteProfile(profileId, expectedRevision)
+}
+
+export async function setActiveTheme(
+  selection: ThemeSelection,
+  expectedRevision: number
+): Promise<ThemeLibrarySnapshot> {
+  return await getRepository().setActive(selection, expectedRevision)
+}
+
+export async function setThemeWindowInheritance(
+  inheritance: ThemeWindowInheritance,
+  expectedRevision: number
+): Promise<ThemeLibrarySnapshot> {
+  return await getRepository().setWindowInheritance(inheritance, expectedRevision)
+}
+
+export function resetThemeLibraryStoreForTests(): void {
+  repository = null
+}

@@ -43,6 +43,16 @@ test('settings, plugin, equalizer, and extension pages are mutually exclusive', 
   assert.equal(navigation.showSettingsPage.value, false)
   assert.equal(navigation.showEqualizerPage.value, false)
 
+  navigation.openThemeStudioPage()
+  assert.equal(navigation.showThemeStudioPage.value, true)
+  assert.equal(navigation.showPluginPage.value, false)
+  assert.equal(navigation.showSettingsPage.value, false)
+
+  navigation.closeThemeStudioPage()
+  assert.equal(navigation.showThemeStudioPage.value, false)
+  assert.equal(navigation.showSettingsPage.value, true)
+  assert.equal(navigation.settingsInitialSection.value, 'appearance')
+
   navigation.openEqualizerPage()
   assert.equal(navigation.showEqualizerPage.value, true)
   assert.equal(navigation.showPluginPage.value, false)

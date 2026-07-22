@@ -18,6 +18,7 @@ const StreamingPage = defineAsyncComponent(() => import('./components/StreamingP
 const RadioPodcastPage = defineAsyncComponent(() => import('./components/RadioPodcastPage.vue'))
 const LoginPage = defineAsyncComponent(() => import('./components/LoginPage.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./components/SettingsPage.vue'))
+const ThemeStudioPage = defineAsyncComponent(() => import('./components/ThemeStudioPage.vue'))
 const PluginPage = defineAsyncComponent(() => import('./components/PluginPage.vue'))
 const EqualizerPage = defineAsyncComponent(() => import('./components/EqualizerPage.vue'))
 const DspRackPage = defineAsyncComponent(() => import('./components/DspRackPage.vue'))
@@ -50,6 +51,7 @@ const {
   loginPageMode,
   loginInitialProviderId,
   showSettingsPage,
+  showThemeStudioPage,
   showPluginPage,
   showEqualizerPage,
   showDspRackPage,
@@ -75,6 +77,8 @@ const {
   openLoginPage,
   closeLoginPage,
   closeSettingsPage,
+  openThemeStudioPage,
+  closeThemeStudioPage,
   openPlaybackSettings,
   openDspSettings,
   hidePluginPage,
@@ -199,6 +203,7 @@ const hasPlayerBar = computed(
   () =>
     !showLoginPage.value &&
     !showSettingsPage.value &&
+    !showThemeStudioPage.value &&
     !showEqualizerPage.value &&
     !showDspRackPage.value &&
     !showPluginPage.value &&
@@ -213,6 +218,7 @@ const showLocalSidebar = computed(
     !showRadioPodcastPage.value &&
     !showLoginPage.value &&
     !showSettingsPage.value &&
+    !showThemeStudioPage.value &&
     !showEqualizerPage.value &&
     !showDspRackPage.value &&
     !showPluginPage.value
@@ -386,7 +392,10 @@ watch(
 watch(
   showSettingsPage,
   (visible) => {
-    document.body.classList.toggle('te-settings-surface', visible || showPluginPage.value)
+    document.body.classList.toggle(
+      'te-settings-surface',
+      visible || showPluginPage.value || showThemeStudioPage.value
+    )
   },
   { immediate: true }
 )
@@ -394,7 +403,21 @@ watch(
 watch(
   showPluginPage,
   (visible) => {
-    document.body.classList.toggle('te-settings-surface', visible || showSettingsPage.value)
+    document.body.classList.toggle(
+      'te-settings-surface',
+      visible || showSettingsPage.value || showThemeStudioPage.value
+    )
+  },
+  { immediate: true }
+)
+
+watch(
+  showThemeStudioPage,
+  (visible) => {
+    document.body.classList.toggle(
+      'te-settings-surface',
+      visible || showSettingsPage.value || showPluginPage.value
+    )
   },
   { immediate: true }
 )
@@ -438,6 +461,7 @@ const coverTransformOrigin = computed(() => `${coverOrigin.value.x}px ${coverOri
 const titleSurface = computed<TitleSurface>(() => {
   if (showPlayingPage.value) return 'default'
   if (showSettingsPage.value) return 'settings'
+  if (showThemeStudioPage.value) return 'settings'
   if (showPluginPage.value) return 'settings'
   if (showStreamingPage.value) return 'streaming'
   if (activePluginPage.value) return 'settings'
@@ -532,7 +556,11 @@ const titleSurface = computed<TitleSurface>(() => {
         @back="closeSettingsPage"
         @open-equalizer="openEqualizerPage"
         @open-dsp-rack="openDspRackPage"
+        @open-theme-studio="openThemeStudioPage"
       />
+    </Transition>
+    <Transition name="settings-page">
+      <ThemeStudioPage v-if="showThemeStudioPage" @back="closeThemeStudioPage" />
     </Transition>
     <Transition name="settings-page">
       <DspRackPage v-if="showDspRackPage" @back="closeDspRackPage" />

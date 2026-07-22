@@ -1,17 +1,13 @@
 import type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 import type { DspScene } from '../../../shared/dspGraph.ts'
 import type { SleepTimerSettings } from '../../../shared/sleepTimer.ts'
+import type { ThemeSelection, ThemeWindowInheritance } from '../../../shared/theme.ts'
 
 export type { MiniPlayerSettings } from '../../../shared/miniPlayer.ts'
 
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
-export type NcmPlaybackQuality =
-  | 'auto'
-  | 'standard'
-  | 'exhigh'
-  | 'lossless'
-  | 'hires'
+export type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires'
 export type StartupHomePage = 'local' | 'streaming'
 /** sequential stops at the tail; listLoop wraps; repeat loops one track; shuffle uses a shuffled cycle. */
 export type PlayMode = 'sequential' | 'listLoop' | 'repeat' | 'shuffle'
@@ -286,6 +282,8 @@ export interface AppSettings {
   startupHomePage: StartupHomePage
   theme: AppTheme
   pluginThemeId: string | null
+  activeTheme: ThemeSelection
+  themeWindowInheritance: ThemeWindowInheritance
   blurEffect: boolean
   windowTransparency: boolean
   windowTransparencyEffect: WindowTransparencyEffectSettings

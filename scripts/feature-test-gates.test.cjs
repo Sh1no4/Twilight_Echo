@@ -6,7 +6,10 @@ const test = require('node:test')
 const root = join(__dirname, '..')
 const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const workflow = readFileSync(join(root, '.github', 'workflows', 'audio-engine.yml'), 'utf8')
-const finalIntegratedGate = readFileSync(join(root, 'scripts', 'run-final-integrated-gate.ps1'), 'utf8')
+const finalIntegratedGate = readFileSync(
+  join(root, 'scripts', 'run-final-integrated-gate.ps1'),
+  'utf8'
+)
 const windowsReleaseGate = readFileSync(join(root, 'docs', 'windows-release-gate.md'), 'utf8')
 const windowsRequiredCommands = markdownSection(windowsReleaseGate, 'Required Commands')
 
@@ -49,6 +52,14 @@ const tagDuplicateTests = [
   'src/renderer/src/components/LocalLibraryTagManager.a11y.test.ts'
 ]
 
+const themeTests = [
+  'src/shared/theme.test.ts',
+  'src/main/themes/themeArchiveValidation.test.ts',
+  'src/main/themes/themeLibraryRepository.test.ts',
+  'src/renderer/src/app/useAppNavigation.test.ts',
+  'src/renderer/src/components/themeTokenization.test.ts'
+]
+
 const recursivelyOwnedTestFiles = ['scripts', 'src', 'packages', 'resources']
   .flatMap((directory) => collectTestFiles(join(root, directory)))
   .sort()
@@ -78,14 +89,27 @@ test('tag and duplicate gate owns mutation, authorization, inspection, cache, an
   for (const file of tagDuplicateTests) assert.match(command, new RegExp(escapeRegExp(file)))
 })
 
+test('theme gate owns contracts, archive preflight, and navigation integration', () => {
+  const command = packageJson.scripts['test:themes']
+  assert.equal(typeof command, 'string')
+  assert.match(command, /^node --experimental-strip-types --test /)
+  for (const file of themeTests) assert.match(command, new RegExp(escapeRegExp(file)))
+})
+
 test('duplicate benchmark scripts retain the authenticated contract and isolated live runner', () => {
   const contract = packageJson.scripts['test:duplicate-detection-benchmark']
   const live = packageJson.scripts['benchmark:duplicate-detection:ci']
   const archive = packageJson.scripts['benchmark:duplicate-detection']
   assert.match(contract, /scripts\/duplicate-detection-benchmark\.test\.ts/)
   assert.match(live, /--expose-gc scripts\/duplicate-detection-benchmark\.ts$/)
-  assert.match(archive, /--output docs\/audit-evidence\/te-4\.4-duplicate-detection-2026-07-18\.json/)
-  assert.match(archive, /--manifest docs\/audit-evidence\/te-4\.4-duplicate-detection-2026-07-18\.manifest\.json/)
+  assert.match(
+    archive,
+    /--output docs\/audit-evidence\/te-4\.4-duplicate-detection-2026-07-18\.json/
+  )
+  assert.match(
+    archive,
+    /--manifest docs\/audit-evidence\/te-4\.4-duplicate-detection-2026-07-18\.manifest\.json/
+  )
 })
 
 test('required Ubuntu CI installs a bounded Xvfb dependency and runs real Electron feature gates', () => {

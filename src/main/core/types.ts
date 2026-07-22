@@ -10,6 +10,7 @@ import type { HeadphoneCompensationSettings } from '../audioProcessingEffective'
 import type { MiniPlayerSettings } from '../../shared/miniPlayer'
 import type { DspScene } from '../../shared/dspGraph'
 import type { SleepTimerSettings } from '../../shared/sleepTimer.ts'
+import type { ThemeSelection, ThemeWindowInheritance } from '../../shared/theme.ts'
 
 export type { MiniPlayerSettings } from '../../shared/miniPlayer'
 
@@ -28,12 +29,7 @@ export type PlayerShortcutAction =
 export type PlayerShortcutKeyAction = Extract<PlayerShortcutAction, string>
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
-export type NcmPlaybackQuality =
-  | 'auto'
-  | 'standard'
-  | 'exhigh'
-  | 'lossless'
-  | 'hires'
+export type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires'
 export type StartupHomePage = 'local' | 'streaming'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type ProxyMode = 'auto' | 'custom' | 'off'
@@ -162,6 +158,8 @@ export interface AppSettings {
   startupHomePage: StartupHomePage
   theme: AppTheme
   pluginThemeId: string | null
+  activeTheme: ThemeSelection
+  themeWindowInheritance: ThemeWindowInheritance
   blurEffect: boolean
   windowTransparency: boolean
   windowTransparencyEffect: WindowTransparencyEffectSettings

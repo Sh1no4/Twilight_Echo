@@ -91,6 +91,8 @@ const fallbackSettings: AppSettings = {
   startupHomePage: 'local',
   theme: 'system',
   pluginThemeId: null,
+  activeTheme: { kind: 'builtin', id: 'builtin:twilight-echo-default' },
+  themeWindowInheritance: { miniPlayer: true, desktopLyrics: true },
   blurEffect: true,
   windowTransparency: false,
   windowTransparencyEffect: {

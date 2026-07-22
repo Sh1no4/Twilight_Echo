@@ -14,6 +14,7 @@
     "test:renderer-data-tooling": "node --test scripts/persistence-benchmark.test.cjs scripts/strip-renderer-font-assets.test.cjs scripts/tsconfig-shared-boundary.test.cjs scripts/verify-renderer-budgets.test.cjs scripts/visibility-animation-controller.test.cjs",
     "test:sleep-timer": "node --experimental-strip-types --test src/main/audio/sleepTimerNativeBoundary.test.ts src/main/ipc/sleepTimerIpc.test.ts src/main/sleepTimer.test.ts src/renderer/src/stores/sleepTimerController.test.ts src/renderer/src/stores/sleepTimerCrossLayer.test.ts src/renderer/src/stores/sleepTimerFade.test.ts src/shared/sleepTimer.test.ts src/renderer/src/utils/volumeMute.test.ts",
     "test:cross-cutting-regressions": "node --experimental-strip-types --test src/main/app/closePersistence.test.ts src/preload/closePersistence.test.ts src/renderer/src/components/fontPackaging.test.ts src/renderer/src/components/visibilityBudget.test.ts src/renderer/src/utils/libraryViewPreferences.test.ts src/renderer/src/utils/visibilityPolling.test.ts",
+    "test:themes": "node --experimental-strip-types --test src/shared/theme.test.ts src/main/themes/themeArchiveValidation.test.ts src/main/themes/themeLibraryRepository.test.ts src/renderer/src/app/useAppNavigation.test.ts src/renderer/src/components/themeTokenization.test.ts",
     "format": "prettier --write .",
     "lint": "eslint --cache .",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",

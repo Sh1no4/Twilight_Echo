@@ -3,6 +3,29 @@ export type AudioEngineEndFileCallback = (reason: string) => void
 
 import type { DspGraphStatus, DspScene } from '../shared/dspGraph.ts'
 import type { SleepTimerSettings } from '../shared/sleepTimer.ts'
+import type {
+  StructuredPluginThemeV1,
+  ThemeSelection,
+  ThemeWindowInheritance
+} from '../shared/theme.ts'
+
+export type {
+  StructuredPluginThemeV1,
+  ThemeAssetBindings,
+  ThemeAssetReference,
+  ThemeAssetType,
+  ThemeBootstrap,
+  ThemeDocumentV1,
+  ThemeLibraryDocument,
+  ThemeLibrarySnapshot,
+  ThemeProfileV1,
+  ThemeSelection,
+  ThemeTokenDefinition,
+  ThemeTokenKind,
+  ThemeTone,
+  ThemeWindowDefaults,
+  ThemeWindowInheritance
+} from '../shared/theme.ts'
 
 export type { VersionedDataEnvelope } from '../shared/versionedPersistence.ts'
 export type {
@@ -122,12 +145,7 @@ export interface PlayerShortcutStatus {
 }
 export type AppTheme = 'system' | 'pureWhite' | 'dark'
 export type PlaybackResumeMode = 'off' | 'track' | 'trackAndPosition'
-export type NcmPlaybackQuality =
-  | 'auto'
-  | 'standard'
-  | 'exhigh'
-  | 'lossless'
-  | 'hires'
+export type NcmPlaybackQuality = 'auto' | 'standard' | 'exhigh' | 'lossless' | 'hires'
 export type StartupHomePage = 'local' | 'streaming'
 export type UiDensity = 'compact' | 'standard' | 'comfortable'
 export type NowPlayingBackground = 'blur' | 'fluid' | 'solid'
@@ -684,6 +702,8 @@ export interface AppSettings {
   startupHomePage: StartupHomePage
   theme: AppTheme
   pluginThemeId: string | null
+  activeTheme: ThemeSelection
+  themeWindowInheritance: ThemeWindowInheritance
   blurEffect: boolean
   windowTransparency: boolean
   windowTransparencyEffect: WindowTransparencyEffectSettings
@@ -969,6 +989,7 @@ export interface TwilightThemeContribution {
   description?: string
   variables?: Record<string, string>
   stylesheet?: string
+  structured?: StructuredPluginThemeV1
 }
 
 export interface TwilightPluginExtensionContribution {
