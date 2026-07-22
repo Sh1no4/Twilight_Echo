@@ -23,7 +23,7 @@ const LINE_TIMESTAMP_RE = /\[(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?\]/g
 const WORD_TIMESTAMP_RE = /<(\d{1,3}):(\d{2})(?:[.:](\d{2,3}))?>/g
 const YRC_LINE_RE =
   /^\[(\d+),(\d+)\](.*)$/
-const YRC_WORD_RE = /\((\d+),(\d+),\d+\)([^()\[\]]*)/g
+const YRC_WORD_RE = /\((\d+),(\d+),\d+\)([^()[\]]*)/g
 /** NetEase lyric/new metadata & prose lines: {"t":-1,"c":[{"tx":"作词: "},{"tx":"ACO"}]} */
 const NETEASE_JSON_LINE_RE = /^\s*\{[\s\S]*"c"\s*:\s*\[[\s\S]*\]\s*\}\s*$/
 

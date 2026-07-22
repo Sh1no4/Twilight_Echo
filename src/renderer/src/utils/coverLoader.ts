@@ -37,14 +37,6 @@ function isProtocolLocalCoverHandle(handle: string): boolean {
   return /^cover:/i.test(handle) || /^background:/i.test(handle)
 }
 
-function isLocalCoverHandle(handle: string): boolean {
-  return (
-    isProtocolLocalCoverHandle(handle) ||
-    /^data:/i.test(handle) ||
-    /^blob:/i.test(handle)
-  )
-}
-
 function isDisplayableCoverHandle(handle: string): boolean {
   // Protocol-local handles are NOT immediately safe for <img> after cold start —
   // they must be materialized first. data/blob/twilight-media can paint now.

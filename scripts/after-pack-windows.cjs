@@ -6,9 +6,8 @@ const { stripNativeArtifacts } = require('./release-artifact-strip.cjs')
 exports.default = async function afterPack(context) {
   if (context.electronPlatformName !== 'win32') return
 
-  if (process.env.TWILIGHT_RELEASE_BUILD === '1') {
-    // Strip the copied package payload, never the development resources directory. Code signing runs
-    // later in electron-builder and therefore covers the exact stripped bytes that are distributed.
+  if (process.env.TWILIGHT_RELEASE_BUILD === '1' || process.env.TWILIGHT_PACKAGE_STRIP === '1') {
+    // Strip the copied payload only. Release signing later covers these exact distributed bytes.
     stripNativeArtifacts(join(context.appOutDir, 'resources', 'audio-engine'))
   }
 

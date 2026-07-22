@@ -7,7 +7,7 @@ export function getTrackSource(track: { id: string; source?: string } | null | u
 }
 
 export function shouldReserveLyricsColumn({
-  source,
+  source: _source,
   hasLyrics,
   lyrics,
   translatedLyrics
@@ -18,5 +18,8 @@ export function shouldReserveLyricsColumn({
   translatedLyrics: string | null | undefined
 }): boolean {
   if (hasLyrics) return true
-  return source === 'local' && lyrics == null && translatedLyrics == null
+  // null = still resolving (local LRC / provider / online). Keep the column for
+  // every source so track switches on the now-playing page do not unmount the
+  // lyrics pane and flash blank until async load finishes.
+  return lyrics == null && translatedLyrics == null
 }

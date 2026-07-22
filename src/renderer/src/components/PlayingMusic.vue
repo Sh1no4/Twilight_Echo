@@ -13,7 +13,7 @@ import {
   type ComponentPublicInstance
 } from 'vue'
 import { storeToRefs } from 'pinia'
-import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
+import { usePlayerStore } from '../stores/usePlayerStore'
 import { useVisualizationStore } from '../stores/useVisualizationStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useLyricsManagement } from '../stores/lyricsManagement'
@@ -24,9 +24,9 @@ import { getTrackSource, shouldReserveLyricsColumn } from '../utils/nowPlayingLa
 import { projectLyricDisplay, projectManagedLyrics } from '../../../shared/lyricsManagement.ts'
 import AudioVisualizerPanel from './AudioVisualizerPanel.vue'
 
-const playbackStore = usePlaybackQueueStore()
+const playbackStore = usePlayerStore()
 const visualizationStore = useVisualizationStore()
-const { currentTrack, dominantColor, currentTime, duration } = storeToRefs(playbackStore)
+const { currentTrack, dominantColor, currentTime, duration } = playbackStore
 const { visualizerActive } = storeToRefs(visualizationStore)
 const { seek, formatTime } = playbackStore
 const { settings } = useSettingsStore()
@@ -216,6 +216,10 @@ const currentLyricOffsetSeconds = computed(() =>
 )
 
 const hasLyrics = computed(() => lyricLines.value.length > 0)
+const lyricsStillLoading = computed(
+  () => managedLyrics.value.original == null && managedLyrics.value.translation == null
+)
+const lyricsPendingLabel = computed(() => (lyricsStillLoading.value ? '加载歌词…' : '暂无歌词'))
 const reserveLyricsColumn = computed(() =>
   shouldReserveLyricsColumn({
     source: getTrackSource(currentTrack.value),
@@ -259,6 +263,9 @@ function lyricTone(index: number): 'idle' | 'far' | 'mid' | 'near' | 'active' {
 
 function jumpToLyric(time: number | null): void {
   if (time == null) return
+  clearLyricManualScrollTimer()
+  lyricManualScrollLocked = false
+  cancelLyricScrollAnimation()
   seek(Math.max(0, time - currentLyricOffsetSeconds.value))
 }
 
@@ -510,7 +517,10 @@ onBeforeUnmount(() => {
             @pointerdown="onLyricsManualScroll"
             @touchstart.passive="onLyricsManualScroll"
           >
-            <div class="lyrics-list">
+            <div v-if="!hasLyrics" class="lyrics-pending" aria-live="polite">
+              {{ lyricsPendingLabel }}
+            </div>
+            <div v-else class="lyrics-list">
               <button
                 v-for="(line, i) in displayLyricLines"
                 :key="`${line.time}-${i}`"
@@ -519,6 +529,7 @@ onBeforeUnmount(() => {
                 class="lyric-row"
                 :class="[lyricTone(i), { 'is-plain': !line.timed }]"
                 :disabled="!line.timed"
+                @pointerdown.stop
                 @click="jumpToLyric(line.time)"
               >
                 <span v-if="line.words?.length" class="lyric-text lyric-text--words">
@@ -844,8 +855,17 @@ onBeforeUnmount(() => {
 }
 
 .lyrics-column--pending {
-  visibility: hidden;
   pointer-events: none;
+}
+
+.lyrics-pending {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 14px;
+  letter-spacing: 0.08em;
 }
 
 .lyrics-head {

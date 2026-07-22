@@ -1,12 +1,11 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { storeToRefs } from 'pinia'
-import { usePlaybackQueueStore } from '../../stores/usePlaybackQueueStore'
+import { usePlayerStore } from '../../stores/usePlayerStore'
 import { useLyricsManagement } from '../../stores/lyricsManagement'
 import type { LyricSourcePreference } from '../../../../shared/lyricsManagement.ts'
 
-const playbackStore = usePlaybackQueueStore()
-const { currentTrack } = storeToRefs(playbackStore)
+const playbackStore = usePlayerStore()
+const { currentTrack } = playbackStore
 const { refreshCurrentLyrics } = playbackStore
 const lyricsManagement = useLyricsManagement()
 

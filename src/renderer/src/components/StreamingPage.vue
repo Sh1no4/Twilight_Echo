@@ -1,6 +1,5 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { storeToRefs } from 'pinia'
 import type { Track } from '../types/music'
 import {
   useNcmStore,
@@ -11,7 +10,7 @@ import {
 } from '../stores/useNcmStore'
 import { useProviderStore } from '../stores/useProviderStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
-import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
+import { usePlayerStore } from '../stores/usePlayerStore'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useMediaProviders } from '../providers'
 import type {
@@ -367,8 +366,8 @@ const {
   checkLogin
 } = useNcmStore()
 
-const playbackStore = usePlaybackQueueStore()
-const { currentTrack } = storeToRefs(playbackStore)
+const playbackStore = usePlayerStore()
+const { currentTrack } = playbackStore
 const { playTrack, formatTime } = playbackStore
 
 async function searchUnifiedSongs(
@@ -628,6 +627,7 @@ const likedSummary = computed(() => {
       providerSummary: {
         name: state?.likedPlaylist?.name ?? '我喜欢的音乐',
         cover: state?.likedPlaylist?.cover ?? null,
+        coverSource: state?.likedPlaylist?.coverSource ?? null,
         trackCount: state?.likedPlaylist?.trackCount ?? 0
       }
     })
@@ -637,6 +637,7 @@ const likedSummary = computed(() => {
     providerSummary: {
       name: '我收藏的歌曲',
       cover: likedPlaylist.value?.cover ?? null,
+      coverSource: likedPlaylist.value?.coverSource ?? null,
       trackCount: likedCount.value ?? likedPlaylist.value?.trackCount ?? 0
     }
   })

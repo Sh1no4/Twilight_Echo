@@ -492,11 +492,6 @@ const deckLiveTone = computed<StatusTone>(() => {
   return props.nonPerfectReason ? 'warning' : 'success'
 })
 
-const deckLiveLabel = computed(() => {
-  if (!props.currentTrack) return 'STANDBY'
-  return props.nonPerfectReason ? 'PROCESSED' : 'BIT-PERFECT'
-})
-
 const deckOutNodeSub = computed(() => {
   const backend = selectedDevice.value?.backend?.toUpperCase() || 'OUTPUT'
   return `${backend} · ${props.exclusiveMode ? 'EXCLUSIVE' : 'SHARED'}`
@@ -510,20 +505,6 @@ const deckAccentVars = computed(() => {
 
 <template>
   <div class="deck" :class="{ 'deck-dark': glass }" :style="deckAccentVars">
-    <header class="deck-topbar">
-      <div class="deck-brand">
-        <span class="deck-brand-badge"><i class="ph ph-waveform"></i></span>
-        <div class="deck-brand-copy">
-          <strong>SIGNAL DECK</strong>
-          <span>音频引擎控制台</span>
-        </div>
-      </div>
-      <div class="deck-live" :data-tone="deckLiveTone">
-        <span class="deck-led"></span>
-        <span class="deck-live-label">{{ deckLiveLabel }}</span>
-      </div>
-    </header>
-
     <section class="deck-display">
       <div class="deck-display-head">
         <span class="deck-display-now">NOW DECODING</span>
@@ -1662,91 +1643,6 @@ button:disabled {
   opacity: 0.42;
 }
 
-/* ===== 顶栏 ===== */
-.deck-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 18px 4px;
-  flex-shrink: 0;
-}
-
-.deck-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.deck-brand-badge {
-  width: 30px;
-  height: 30px;
-  border-radius: 9px;
-  display: grid;
-  place-items: center;
-  font-size: 16px;
-  color: #ffffff;
-  background: linear-gradient(140deg, var(--d-accent), var(--d-accent-strong));
-  box-shadow: 0 6px 14px var(--d-glow);
-}
-
-.deck-brand-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  line-height: 1.15;
-}
-
-.deck-brand-copy strong {
-  font-family: var(--d-mono);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-}
-
-.deck-brand-copy span {
-  font-size: 10.5px;
-  color: var(--d-muted);
-  letter-spacing: 0.08em;
-}
-
-.deck-live {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 11px;
-  border-radius: 999px;
-  border: 1px solid var(--d-line);
-  background: var(--d-card);
-}
-
-.deck-live-label {
-  font-family: var(--d-mono);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  color: var(--d-muted);
-}
-
-.deck-live[data-tone='success'] {
-  border-color: rgba(32, 198, 94, 0.3);
-  background: var(--d-success-soft);
-}
-
-.deck-live[data-tone='success'] .deck-live-label {
-  color: var(--d-success);
-}
-
-.deck-live[data-tone='warning'] {
-  border-color: var(--d-warn-line);
-  background: var(--d-warn-soft);
-}
-
-.deck-live[data-tone='warning'] .deck-live-label {
-  color: var(--d-warn);
-}
-
 /* LED */
 .deck-led {
   width: 7px;
@@ -1761,18 +1657,6 @@ button:disabled {
   background: var(--d-accent);
   box-shadow: 0 0 8px var(--d-glow);
   animation: deck-led-pulse 2.2s ease-in-out infinite;
-}
-
-.deck-live[data-tone='success'] .deck-led {
-  background: var(--d-success);
-  box-shadow: 0 0 8px rgba(32, 198, 94, 0.65);
-  animation: deck-led-pulse 2.2s ease-in-out infinite;
-}
-
-.deck-live[data-tone='warning'] .deck-led {
-  background: var(--d-warn);
-  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
-  animation: deck-led-pulse 1.4s ease-in-out infinite;
 }
 
 @keyframes deck-led-pulse {

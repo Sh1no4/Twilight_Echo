@@ -3253,6 +3253,201 @@ test('native tick skips full playback-info fanout when only position changes', a
   assert.equal(playbackUpdates.length, fullUpdatesAfterPlay)
 })
 
+test('native tick keeps time-pos moving when GetPlaybackInfo briefly fails', async () => {
+  let now = 1000
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+  const timePositions: number[] = []
+  manager.on('property-change', ({ name, data }) => {
+    if (name === 'time-pos') timePositions.push(data as number)
+  })
+
+  await manager.play('track.flac', 0)
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    state: 'playing',
+    position: 1
+  }
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+  assert.equal(timePositions.at(-1), 1)
+
+  const previousGetPlaybackInfo = nativeBinding.GetPlaybackInfo
+  nativeBinding.GetPlaybackInfo = () => {
+    throw new Error('transient native read failure')
+  }
+  now += 500
+  tickManager.tick()
+  assert.ok((timePositions.at(-1) ?? 0) > 1)
+  nativeBinding.GetPlaybackInfo = previousGetPlaybackInfo
+})
+
+test('native tick soft-advances past stale service GetPlaybackInfo cache', async () => {
+  let now = 2000
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    {
+      now: () => now
+    }
+  )
+  const timePositions: number[] = []
+  manager.on('property-change', ({ name, data }) => {
+    if (name === 'time-pos') timePositions.push(data as number)
+  })
+
+  await manager.play('track.flac', 0)
+  nativeBinding.playbackInfo = {
+    ...nativeBinding.playbackInfo,
+    state: 'playing',
+    position: 2
+  }
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+  assert.equal(timePositions.at(-1), 2)
+
+  // Simulate async service cache that keeps returning the same sample.
+  now += 250
+  tickManager.tick()
+  now += 250
+  tickManager.tick()
+  const advanced = timePositions.at(-1) ?? 0
+  assert.ok(
+    advanced >= 2.45,
+    `expected soft-advanced position >= 2.45, got ${advanced}; samples=${JSON.stringify(timePositions)}`
+  )
+})
+
+test('native tick rejects pre-seek cached positions until the requested position arrives', async () => {
+  let now = 3000
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    { now: () => now }
+  )
+  const timePositions: number[] = []
+  manager.on('property-change', ({ name, data }) => {
+    if (name === 'time-pos') timePositions.push(data as number)
+  })
+  const tickManager = manager as unknown as { tick: () => void }
+
+  await manager.play('track.flac', 0)
+  tickManager.tick()
+  nativeBinding.playbackInfo = { ...nativeBinding.playbackInfo, position: 30 }
+  now += 30_000
+  tickManager.tick()
+
+  const realGetPlaybackInfo = nativeBinding.GetPlaybackInfo
+  const staleForward = JSON.stringify(nativeBinding.playbackInfo)
+  await manager.seek(90)
+  nativeBinding.GetPlaybackInfo = () => staleForward
+  now += 250
+  tickManager.tick()
+  assert.ok((timePositions.at(-1) ?? 0) >= 90.2)
+
+  nativeBinding.GetPlaybackInfo = realGetPlaybackInfo
+  nativeBinding.playbackInfo = { ...nativeBinding.playbackInfo, position: 90.5 }
+  now += 250
+  tickManager.tick()
+  assert.equal(timePositions.at(-1), 90.5)
+
+  const staleBackward = JSON.stringify(nativeBinding.playbackInfo)
+  await manager.seek(10)
+  nativeBinding.GetPlaybackInfo = () => staleBackward
+  now += 250
+  tickManager.tick()
+  assert.ok((timePositions.at(-1) ?? 0) >= 10.2)
+  assert.ok((timePositions.at(-1) ?? 0) < 11)
+})
+
+test('native tick continues the new track while service cache still reports the previous track', async () => {
+  let now = 5000
+  const nativeBinding = new FakeNativeBinding()
+  const manager = makeManager(
+    {
+      exclusiveMode: true,
+      audioOutput: 'wasapi',
+      audioDevice: 'auto'
+    },
+    nativeBinding,
+    { now: () => now }
+  )
+  await manager.loadQueue(
+    [
+      { id: 'local:one', source: 'one.flac', title: 'One', duration: 180 },
+      { id: 'local:two', source: 'two.flac', title: 'Two', duration: 180 }
+    ],
+    0
+  )
+  await manager.play('one.flac', 0)
+  const tickManager = manager as unknown as { tick: () => void }
+  tickManager.tick()
+  nativeBinding.playbackInfo = { ...nativeBinding.playbackInfo, position: 20 }
+  now += 20_000
+  tickManager.tick()
+
+  const previousTrackSnapshot = JSON.stringify({
+    ...nativeBinding.playbackInfo,
+    state: 'stopped',
+    nativePlaybackActive: false
+  })
+  const realGetPlaybackInfo = nativeBinding.GetPlaybackInfo
+  nativeBinding.GetPlaybackInfo = () => previousTrackSnapshot
+  await manager.next()
+
+  const timePositions: number[] = []
+  manager.on('property-change', ({ name, data }) => {
+    if (name === 'time-pos') timePositions.push(data as number)
+  })
+  now += 250
+  tickManager.tick()
+
+  const info = await manager.getPlaybackInfo()
+  assert.equal(info.source, 'two.flac')
+  assert.equal(info.queueIndex, 1)
+  assert.equal(info.state, 'playing')
+  assert.equal(info.nativePlaybackActive, true)
+  assert.ok((timePositions.at(-1) ?? 0) >= 0.2)
+  assert.ok((timePositions.at(-1) ?? 0) < 1)
+
+  const targetStoppedSnapshot = JSON.stringify({
+    ...nativeBinding.playbackInfo,
+    source: 'two.flac',
+    queueIndex: 1,
+    state: 'stopped',
+    position: 0,
+    nativePlaybackActive: false
+  })
+  nativeBinding.GetPlaybackInfo = () => targetStoppedSnapshot
+  now += 250
+  tickManager.tick()
+  const pendingInfo = await manager.getPlaybackInfo()
+  assert.equal(pendingInfo.state, 'playing')
+  assert.equal(pendingInfo.nativePlaybackActive, true)
+  assert.ok((timePositions.at(-1) ?? 0) >= 0.45)
+  nativeBinding.GetPlaybackInfo = realGetPlaybackInfo
+})
+
 test('native tick publishes playback-info when non-position playback facts change', async () => {
   const nativeBinding = new FakeNativeBinding()
   const manager = makeManager(
@@ -5583,7 +5778,7 @@ test('setPlaybackRate clamps, fans out to native, and marks non-unity rate imper
       perfectReason: ''
     })
   })
-  const manager = new AudioEngineManager({}, { nativeBinding })
+  const manager = new AudioEngineManager({ exclusiveMode: false }, { nativeBinding })
 
   await manager.setPlaybackRate(1.25)
   assert.equal((await manager.getPlaybackInfo()).playbackRate, 1.25)
@@ -5618,7 +5813,7 @@ test('play preserves non-unity playbackRate and reasserts SetPlaybackRate on nat
       perfectReason: ''
     })
   })
-  const manager = new AudioEngineManager({}, { nativeBinding })
+  const manager = new AudioEngineManager({ exclusiveMode: false }, { nativeBinding })
   await manager.setPlaybackRate(1.5)
   assert.equal((await manager.getPlaybackInfo()).playbackRate, 1.5)
 
@@ -5638,7 +5833,6 @@ test('play preserves non-unity playbackRate and reasserts SetPlaybackRate on nat
 
   manager.destroy()
 })
-
 
 test('loudnorm status event, library RG queue fields, and cancel IPC are wired end-to-end', () => {
   const managerSource = readFileSync(new URL('./audioEngineManager.ts', import.meta.url), 'utf8')

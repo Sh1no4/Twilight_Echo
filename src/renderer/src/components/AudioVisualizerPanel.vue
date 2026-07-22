@@ -2,16 +2,16 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
-import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
+import { usePlayerStore } from '../stores/usePlayerStore'
 import { useCover } from '../utils/coverLoader'
 import { buildVisualizerQualityString, formatVisualizerBitrate } from './audioVisualizerFormatting'
 import { AudioTempoEstimator, normalizeBpm, type TempoEstimate } from './audioTempoEstimator'
 
 const props = defineProps<{ active: boolean }>()
 
-const playbackStore = usePlaybackQueueStore()
+const playbackStore = usePlayerStore()
 const audioOutputDspStore = useAudioOutputDspStore()
-const { currentTrack, isPlaying, currentTime, duration } = storeToRefs(playbackStore)
+const { currentTrack, isPlaying, currentTime, duration } = playbackStore
 const { audioEngineReady } = storeToRefs(audioOutputDspStore)
 const { formatTime, togglePlay, next, prev, seek } = playbackStore
 const resolvedCover = useCover(computed(() => currentTrack.value?.cover ?? null))

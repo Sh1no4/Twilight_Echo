@@ -32,19 +32,21 @@ const emit = defineEmits<{
 
 const dailySection = computed(() => props.recSections.find((item) => item.key === 'daily') ?? null)
 
-const dailyDesc = '根据你的音乐口味与听歌习惯，为你生成专属的今日推荐歌单。每日 06:00 更新，开启新的一天。'
+const dailyDesc =
+  '根据你的音乐口味与听歌习惯，为你生成专属的今日推荐歌单。每日 06:00 更新，开启新的一天。'
 
 const dailyCoverIndex = ref(0)
 const dailyCovers = computed((): DailyCoverEntry[] =>
-  (dailySection.value?.tracks ?? [])
-    .map((track) => {
-      if (!track.cover) return null
-      return {
-        cover: track.cover,
-        coverSource: track.coverSource ?? null
-      }
-    })
-    .filter((entry): entry is DailyCoverEntry => Boolean(entry))
+  (dailySection.value?.tracks ?? []).flatMap((track): DailyCoverEntry[] =>
+    track.cover
+      ? [
+          {
+            cover: track.cover,
+            coverSource: track.coverSource ?? null
+          }
+        ]
+      : []
+  )
 )
 const dailyCover = computed(() => dailyCovers.value[dailyCoverIndex.value] ?? null)
 
@@ -101,14 +103,11 @@ watch(
   }
 )
 
-watch(
-  dailyCovers,
-  (covers) => {
-    if (dailyCoverIndex.value >= covers.length) {
-      dailyCoverIndex.value = 0
-    }
+watch(dailyCovers, (covers) => {
+  if (dailyCoverIndex.value >= covers.length) {
+    dailyCoverIndex.value = 0
   }
-)
+})
 </script>
 
 <template>

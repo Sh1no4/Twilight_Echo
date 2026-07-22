@@ -77,11 +77,16 @@ function runtimeEntrySource(): string {
     workspaceRoot,
     'src/renderer/src/stores/usePlayerStore.ts'
   ).replaceAll('\\', '/')
+  const playbackQueueStorePath = join(
+    workspaceRoot,
+    'src/renderer/src/stores/usePlaybackQueueStore.ts'
+  ).replaceAll('\\', '/')
   return `import { createApp, h, nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import PlayingMusic from ${JSON.stringify(componentPath)}
 import LyricsManagerPanel from ${JSON.stringify(panelPath)}
 import { usePlayerStore } from ${JSON.stringify(playerStorePath)}
+import { usePlaybackQueueStore } from ${JSON.stringify(playbackQueueStorePath)}
 
 function expect(condition, message) {
   if (!condition) throw new Error(message)
@@ -112,6 +117,19 @@ window.runPlayingMusicLyricsRuntime = async () => {
   const pinia = createPinia()
   setActivePinia(pinia)
   const player = usePlayerStore()
+  const compatibilityPlayer = usePlaybackQueueStore()
+  expect(
+    usePlaybackQueueStore === usePlayerStore,
+    'compatibility store created a second playback factory'
+  )
+  expect(
+    compatibilityPlayer.currentTime === player.currentTime,
+    'compatibility store retained a second playback clock'
+  )
+  expect(
+    compatibilityPlayer.currentTrack === player.currentTrack,
+    'compatibility store retained a second current track'
+  )
   const track = {
     id: 'fixture-provider:no-lyrics', title: 'No lyrics yet', artist: 'Twilight', album: 'Echo',
     filePath: '', fileName: '', duration: 180, size: 0, cover: null,
@@ -243,6 +261,52 @@ window.runPlayingMusicLyricsRuntime = async () => {
     JSON.stringify(player.queue.value) === beforeQueue,
     'manual UI projection mutated queue; before=' + beforeQueue + '; after=' + JSON.stringify(player.queue.value)
   )
+
+  const playbackTrack = {
+    ...track,
+    id: 'fixture-provider:playback-clock',
+    title: 'Playback clock',
+    lyrics: '[00:00.00]Start line\\n[00:01.00]Moving line\\n[00:03.00]Seek line',
+    lyricsSource: 'embedded'
+  }
+  player.currentTrack.value = structuredClone(playbackTrack)
+  player.queue.value = [structuredClone(playbackTrack)]
+  player.queueIndex.value = 0
+  player.currentTime.value = 0
+  player.duration.value = 180
+  player.isPlaying.value = true
+  await tick()
+  player.isLoading.value = true
+  window.__audioFixture.emitProperty('time-pos', 0.25)
+  const stalledNextSamples = window.setInterval(
+    () => window.__audioFixture.emitProperty('time-pos', 0.25),
+    100
+  )
+  await new Promise((resolve) => setTimeout(resolve, 1400))
+  window.clearInterval(stalledNextSamples)
+  await tick()
+  expect(player.currentTime.value > 1, 'stalled engine samples froze the component playback clock')
+  expect(!document.querySelector('.time-chip')?.textContent.includes('0:00'), 'lyrics time chip did not advance')
+  const activeAfterStall = document.querySelector('.lyric-row.active')?.textContent ?? ''
+  expect(
+    activeAfterStall.includes('Moving line'),
+    'active lyric did not advance; currentTime=' + player.currentTime.value + '; active=' + activeAfterStall
+  )
+
+  const seekLine = [...document.querySelectorAll('.lyric-row')].find((item) => item.textContent.includes('Seek line'))
+  expect(seekLine, 'timed seek lyric was not rendered')
+  seekLine.click()
+  window.__audioFixture.emitProperty('time-pos', 3)
+  const stalledSeekSamples = window.setInterval(
+    () => window.__audioFixture.emitProperty('time-pos', 3),
+    100
+  )
+  await new Promise((resolve) => setTimeout(resolve, 900))
+  window.clearInterval(stalledSeekSamples)
+  await tick()
+  expect(player.currentTime.value > 3.4, 'lyric seek froze after repeated confirmation samples')
+  expect(document.querySelector('.lyric-row.active')?.textContent.includes('Seek line'), 'clicked lyric did not stay active while time advanced')
+  player.isLoading.value = false
   console.log('PLAYING_MUSIC_LYRICS_RUNTIME_OK')
 }
 `
@@ -268,7 +332,40 @@ window.__lyricsFixture = {
 }
 const clone = (value) => JSON.parse(JSON.stringify(value))
 const envelope = () => ({ version: 2, revision: window.__lyricsFixture.revision, savedAt: '2026-07-18T00:00:00.000Z', data: clone(window.__lyricsFixture.document) })
+window.__audioFixture = {
+  propertyCallbacks: [],
+  playbackInfoCallbacks: [],
+  playbackInfo: { state: 'stopped', position: 0, duration: 0, source: '', queueIndex: -1, nativePlaybackActive: false },
+  emitProperty(name, data) {
+    for (const cb of this.propertyCallbacks) cb({ name, data })
+  },
+  emitPlaybackInfo(info) {
+    this.playbackInfo = info
+    for (const cb of this.playbackInfoCallbacks) cb(info)
+  }
+}
+const subscribe = (list, cb) => {
+  list.push(cb)
+  return () => {
+    const index = list.indexOf(cb)
+    if (index >= 0) list.splice(index, 1)
+  }
+}
+const noopSubscribe = () => () => {}
 window.api = {
+  audioEngine: {
+    onPropertyChange: (cb) => subscribe(window.__audioFixture.propertyCallbacks, cb),
+    onPlaybackInfo: (cb) => subscribe(window.__audioFixture.playbackInfoCallbacks, cb),
+    onEndFile: noopSubscribe,
+    onStartFile: noopSubscribe,
+    onReady: noopSubscribe,
+    onError: noopSubscribe,
+    onDisconnected: noopSubscribe,
+    getPlaybackInfo: async () => window.__audioFixture.playbackInfo,
+    getAudioOutputState: async () => { throw new Error('fixture output unavailable') },
+    getAudioProcessing: async () => { throw new Error('fixture processing unavailable') },
+    seek: async (position) => { window.__audioFixture.seekPosition = position }
+  },
   data: {
     loadLyricsManagement: async () => envelope(),
     saveLyricsManagement: async (next, expectedRevision) => {

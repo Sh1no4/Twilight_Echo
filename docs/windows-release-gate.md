@@ -169,9 +169,10 @@ for a manual download. Do not add a generic `publish` URL or claim cryptographic
 until a signed, hash-validated updater design is implemented.
 
 A publishable Windows build must be created in the protected signing environment. `build:win` and
-`build:unpack` are deliberately unsigned development packaging paths. Only `gate:release:win`
-loads `electron-builder.release-win.yml`, which enables electron-builder's `forceCodeSigning`; no
-signing identity is a hard failure, not an unsigned fallback. Set
+`build:unpack` are deliberately unsigned development packaging paths. They still strip only the
+copied package payload when W64DevKit is configured, keeping the source runtime untouched.
+Only `gate:release:win` loads `electron-builder.release-win.yml`, which enables electron-builder's
+`forceCodeSigning`; no signing identity is a hard failure, not an unsigned fallback. Set
 `TWILIGHT_RELEASE_SIGNING_THUMBPRINT` to the expected release certificate thumbprint there, then run:
 
 ```powershell
@@ -181,10 +182,11 @@ pnpm run gate:release:win
 The gate checks every shipped DLL/EXE/NODE file under the packaged audio-engine directory for a
 non-zero size and a size budget. It additionally checks each required self-built native runtime
 binary for stripped PE debug/COFF metadata and a valid Authenticode signature from the
-expected certificate. `afterPack` invokes GNU/LLVM `strip --strip-unneeded` only on the copied
-package payload at `win-unpacked/resources/audio-engine`; it never alters `resources/audio-engine`
-in the source tree. The protected release environment must supply `TWILIGHT_RELEASE_STRIP` (or a
-W64DevKit `strip.exe`) for that step. The gate deliberately fails when the strip tool or
+expected certificate. Windows development and release packaging invoke GNU/LLVM
+`strip --strip-unneeded` only on the copied package payload at
+`win-unpacked/resources/audio-engine`; they never alter `resources/audio-engine` in the source tree.
+Set `W64DEVKIT_ROOT` or `TWILIGHT_RELEASE_STRIP` so the packaging wrapper can locate `strip.exe`.
+The protected release gate deliberately fails when the strip tool or
 `TWILIGHT_RELEASE_SIGNING_THUMBPRINT` is absent. It does not create or simulate a signature.
 Current budgets are 192 MiB for the audio DLL, 16 MiB for the Node addon, 32 MiB for each VST3 host
 executable, 64 MiB for any other shipped native DLL/EXE/NODE, and 384 MiB for the installer.

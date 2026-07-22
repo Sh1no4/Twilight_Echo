@@ -7,11 +7,7 @@ import {
   SSDP_MULTICAST_ADDRESS,
   SSDP_PORT
 } from './ssdp.ts'
-import {
-  buildAvTransportSoap,
-  buildRenderingControlSoap,
-  formatUpnpTime
-} from './soap.ts'
+import { buildAvTransportSoap, buildRenderingControlSoap, formatUpnpTime } from './soap.ts'
 import type { DlnaDeviceInfo } from '../../shared/remoteControl.ts'
 
 export interface DlnaDiscoveryOptions {
@@ -69,7 +65,7 @@ export async function discoverDlnaDevices(
 function collectSsdpResponses(
   socketFactory: typeof createSocket,
   timeoutMs: number
-): Promise<ReturnType<typeof parseSsdpResponse>[]> {
+): Promise<NonNullable<ReturnType<typeof parseSsdpResponse>>[]> {
   return new Promise((resolve) => {
     const found: NonNullable<ReturnType<typeof parseSsdpResponse>>[] = []
     let socket: Socket

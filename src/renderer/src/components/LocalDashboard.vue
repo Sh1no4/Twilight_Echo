@@ -8,7 +8,7 @@ import {
   useListeningStatsStore
 } from '../stores/useListeningStatsStore'
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
-import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
+import { usePlayerStore } from '../stores/usePlayerStore'
 import {
   DEFAULT_DSP_OUTPUT_STAGE,
   type DspGraphNode,
@@ -33,9 +33,9 @@ const ALBUM_SHELF_SIZE = 5
 
 const { tracks, albums, artists } = useMusicStore()
 const { listeningStats } = useListeningStatsStore()
-const playbackStore = usePlaybackQueueStore()
+const playbackStore = usePlayerStore()
 const audioOutputDspStore = useAudioOutputDspStore()
-const { currentTrack, isPlaying, currentTime, duration, progress } = storeToRefs(playbackStore)
+const { currentTrack, isPlaying, currentTime, duration, progress } = playbackStore
 const { audioProcessing, playbackInfo, outputInfo } = storeToRefs(audioOutputDspStore)
 const { playTrack, togglePlay, next, prev, seek, formatTime, setPlayMode } = playbackStore
 

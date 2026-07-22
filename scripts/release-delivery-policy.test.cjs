@@ -20,21 +20,36 @@ test('release configuration does not advertise a placeholder auto-updater and re
   assert.match(builder, /^\s+signAndEditExecutable:\s*true\s*$/m)
 })
 
-test('only the signed release wrapper enables post-pack stripping', () => {
+test('Windows packaging strips copied native binaries while signed releases stay fail-closed', () => {
   const afterPack = read('scripts/after-pack-windows.cjs')
+  const packageBuild = read('scripts/build-app-package.cjs')
   const releaseBuild = read('scripts/build-windows-release.cjs')
   assert.match(afterPack, /process\.env\.TWILIGHT_RELEASE_BUILD === '1'/)
+  assert.match(afterPack, /process\.env\.TWILIGHT_PACKAGE_STRIP === '1'/)
+  assert.match(packageBuild, /TWILIGHT_PACKAGE_STRIP: '1'/)
   assert.match(releaseBuild, /TWILIGHT_RELEASE_SIGNING_THUMBPRINT is required/)
   assert.match(releaseBuild, /TWILIGHT_RELEASE_BUILD: '1'/)
   assert.match(releaseBuild, /electron-builder\.release-win\.yml/)
 })
 
+test('development packages use maximum compression without a missing NSIS include', () => {
+  const builder = read('electron-builder.yml')
+  assert.match(builder, /^compression:\s*maximum\s*$/m)
+  assert.doesNotMatch(builder, /^\s+include:\s*build\/installer\.nsh\s*$/m)
+})
+
 test('update checks only direct users to the project GitHub releases page', () => {
   const updater = read('src/main/ipc/data.ts')
-  assert.match(updater, /https:\/\/api\.github\.com\/repos\/asenyarzc-cpu\/Twilight_Echo\/releases\/latest/)
+  assert.match(
+    updater,
+    /https:\/\/api\.github\.com\/repos\/asenyarzc-cpu\/Twilight_Echo\/releases\/latest/
+  )
   assert.doesNotMatch(updater, /autoUpdater/)
   const settings = read('src/renderer/src/components/SettingsPage.vue')
-  assert.match(settings, /const RELEASES_URL = 'https:\/\/github\.com\/asenyarzc-cpu\/Twilight_Echo\/releases'/)
+  assert.match(
+    settings,
+    /const RELEASES_URL = 'https:\/\/github\.com\/asenyarzc-cpu\/Twilight_Echo\/releases'/
+  )
   assert.match(settings, /前往下载/)
 })
 

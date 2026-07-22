@@ -49,7 +49,6 @@ export interface RadioMediaServiceOptions {
 function resolveUserDataPath(explicit?: string): string {
   if (explicit) return explicit
   // Lazy-load electron so unit tests can inject userDataPath without requiring Electron ESM.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const electron = require('electron') as { app?: { getPath: (name: string) => string } }
   if (!electron.app?.getPath) {
     throw new Error('RadioMediaService requires userDataPath outside Electron')

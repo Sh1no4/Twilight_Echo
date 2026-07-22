@@ -190,13 +190,41 @@ function onProgressInput(event: Event): void {
   seek(Number(target.value))
 }
 
+const RATE_PRESETS = [0.75, 1, 1.25, 1.5, 2] as const
+
+const isLiveStream = computed(() => {
+  const track = currentTrack.value
+  if (!track) return false
+  if (track.source === 'radio') return true
+  // On-demand sources (local / NCM / podcast) keep a seekable timeline even when
+  // metadata duration is still 0 before the engine reports length.
+  const source =
+    track.source ||
+    (track.id.includes(':') ? track.id.slice(0, track.id.indexOf(':')) : 'local')
+  if (source === 'local' || source === 'ncm' || source === 'podcast') return false
+  if (duration.value > 0) return false
+  return (
+    track.duration === 0 &&
+    Boolean(track.streamUrl || /^https?:\/\//i.test(track.filePath || ''))
+  )
+})
+
 /** Real DOM width (not CSS custom-prop on ::-webkit-slider-runnable-track).
  *  Chromium often skips repainting track pseudo-elements when only a custom
  *  property changes, which freezes the playbar fill until a full re-style
  *  (pause / open or close now-playing). */
+const effectiveDuration = computed(() => {
+  if (Number.isFinite(duration.value) && duration.value > 0) return duration.value
+  const trackDuration = currentTrack.value?.duration
+  if (typeof trackDuration === 'number' && Number.isFinite(trackDuration) && trackDuration > 0) {
+    return trackDuration
+  }
+  return 0
+})
+
 const progressPercent = computed(() => {
   if (isLiveStream.value) return 100
-  const total = duration.value
+  const total = effectiveDuration.value
   if (!Number.isFinite(total) || total <= 0) return 0
   const ratio = currentTime.value / total
   if (!Number.isFinite(ratio)) return 0
@@ -204,7 +232,8 @@ const progressPercent = computed(() => {
 })
 
 const progressFillStyle = computed(() => ({
-  width: `${progressPercent.value}%`
+  // Match LocalDashboard hero progress: real width % repaints reliably in Chromium.
+  width: `${Math.min(100, Math.max(0, progressPercent.value))}%`
 }))
 
 const abLoopTitle = computed(() => {
@@ -212,15 +241,6 @@ const abLoopTitle = computed(() => {
   if (abLoopA.value == null) return '设置 A-B 循环起点'
   if (abLoopB.value == null) return '设置 A-B 循环终点（右键清除）'
   return '清除 A-B 循环（右键也可清除）'
-})
-
-const RATE_PRESETS = [0.75, 1, 1.25, 1.5, 2] as const
-
-const isLiveStream = computed(() => {
-  const track = currentTrack.value
-  if (!track) return false
-  if (track.source === 'radio') return true
-  return track.duration === 0 && Boolean(track.streamUrl || /^https?:\/\//i.test(track.filePath || ''))
 })
 
 const liveBadgeLabel = computed(() => {
@@ -245,7 +265,7 @@ function cyclePlaybackRate(): void {
 }
 
 const abLoopRangeStyle = computed(() => {
-  const total = duration.value || 1
+  const total = effectiveDuration.value || 1
   const a = Math.max(0, Math.min(abLoopA.value ?? 0, total))
   const b = Math.max(a, Math.min(abLoopB.value ?? a, total))
   return {
@@ -1188,14 +1208,23 @@ onMounted(() => {
           <button type="button" class="resume-offer__action" @click="onAcceptResume">继续</button>
           <button type="button" class="resume-offer__dismiss" @click="onDismissResume">忽略</button>
         </div>
-        <div class="progress-area" :key="`progress:${currentTrack.id}:${currentTrack.queueEntryId || ''}`">
+        <div
+          :key="`progress:${currentTrack.id}:${currentTrack.queueEntryId || ''}`"
+          class="progress-area"
+          :data-track-id="currentTrack.id"
+          :data-entry-id="currentTrack.queueEntryId || ''"
+        >
           <span class="time-label">{{ isLiveStream ? 'LIVE' : formatTime(currentTime) }}</span>
           <div class="progress-slider-wrap">
             <div class="progress-track" aria-hidden="true">
-              <div class="progress-fill" :class="{ live: isLiveStream }" :style="progressFillStyle"></div>
+              <div
+                class="progress-fill"
+                :class="{ live: isLiveStream }"
+                :style="progressFillStyle"
+              ></div>
             </div>
             <div
-              v-if="abLoopA != null && abLoopB != null && duration > 0 && !isLiveStream"
+              v-if="abLoopA != null && abLoopB != null && effectiveDuration > 0 && !isLiveStream"
               class="ab-loop-range"
               :style="abLoopRangeStyle"
               aria-hidden="true"
@@ -1204,7 +1233,7 @@ onMounted(() => {
               type="range"
               :value="isLiveStream ? 0 : currentTime"
               min="0"
-              :max="duration || 1"
+              :max="effectiveDuration || 1"
               step="0.1"
               class="progress-slider"
               :class="{ live: isLiveStream }"
@@ -1214,7 +1243,7 @@ onMounted(() => {
               @input="onProgressInput"
             />
           </div>
-          <span class="time-label">{{ isLiveStream ? 'LIVE' : formatTime(duration) }}</span>
+          <span class="time-label">{{ isLiveStream ? 'LIVE' : formatTime(effectiveDuration) }}</span>
         </div>
       </div>
 

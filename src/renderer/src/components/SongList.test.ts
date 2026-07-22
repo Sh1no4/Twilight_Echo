@@ -76,15 +76,15 @@ test('song list unified search health chips include plugin and playback URL diag
   assert.match(source, /插件/)
 })
 
-test('song list shows generic source badges for mixed local and provider search results', () => {
+test('song list hides local source badges and keeps provider source badges', () => {
   const source = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
 
   assert.match(source, /unifiedSearchSourceNames/)
   assert.match(source, /trackSourceLabel\(track\)/)
   assert.match(source, /trackSourceClass\(track\)/)
-  assert.match(source, /isLosslessTrack\(track\)/)
   assert.match(source, /class="track-source-chip"/)
-  assert.match(source, /本地无损/)
+  assert.match(source, /v-if="getLogicalTrackSource\(track\) !== 'local'"/)
+  assert.doesNotMatch(source, /本地无损/)
   assert.match(source, /item\.sourceName/)
 })
 

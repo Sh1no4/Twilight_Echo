@@ -1281,7 +1281,9 @@ function clampQueueItemPosition(item: AudioEngineQueueItem | undefined, value: n
   const range = item?.cueRange
   if (!range) return position
   const duration =
-    (Number.isFinite(range.virtualPregapSeconds) ? Math.max(0, range.virtualPregapSeconds ?? 0) : 0) +
+    (Number.isFinite(range.virtualPregapSeconds)
+      ? Math.max(0, range.virtualPregapSeconds ?? 0)
+      : 0) +
     range.endSeconds -
     range.startSeconds
   if (!Number.isFinite(duration) || duration <= 0) return position
@@ -1910,6 +1912,8 @@ export class AudioEngineManager extends EventEmitter {
   private timer: NodeJS.Timeout | null = null
   private lastTick = 0
   private lastNativePlaybackInfoTickReadAt = Number.NEGATIVE_INFINITY
+  private lastNativeReportedPosition = Number.NaN
+  private pendingNativePositionTarget: number | null = null
   private nativeConfigRevisionObserved = false
   private nativeConfigRevisionEpochPending = false
   private lastRawRequestedConfigRevision = 0
@@ -2418,6 +2422,14 @@ export class AudioEngineManager extends EventEmitter {
     }
     await this.applyNativeDspGraph('播放源格式变更后解析 DSP 场景')
     this.lastTick = this.scheduler.now()
+    const nativePositionConfirmed =
+      nativeInfo?.source === source &&
+      nativeInfo.state !== 'stopped' &&
+      Number.isFinite(nativeInfo.position) &&
+      Math.abs(nativeInfo.position - boundedStartTime) <= 5
+    this.lastNativeReportedPosition =
+      nativePositionConfirmed && nativeInfo ? nativeInfo.position : Number.NaN
+    this.pendingNativePositionTarget = nativePositionConfirmed ? null : boundedStartTime
     this.emit('start-file')
     this.publishDuration(this.playbackInfo.duration, { force: true })
     this.publishProperty('pause', false)
@@ -2490,6 +2502,8 @@ export class AudioEngineManager extends EventEmitter {
     this.tryNative('跳转', (native) => native.Seek(position))
     this.playbackInfo.position = position
     this.lastTick = this.scheduler.now()
+    this.lastNativeReportedPosition = Number.NaN
+    this.pendingNativePositionTarget = position
     this.publishProperty('time-pos', position)
     this.publishPlaybackInfo()
   }
@@ -2521,7 +2535,9 @@ export class AudioEngineManager extends EventEmitter {
    */
   async setLoopRange(startSeconds: number, endSeconds: number): Promise<boolean> {
     const start =
-      typeof startSeconds === 'number' && Number.isFinite(startSeconds) ? Math.max(0, startSeconds) : -1
+      typeof startSeconds === 'number' && Number.isFinite(startSeconds)
+        ? Math.max(0, startSeconds)
+        : -1
     const end =
       typeof endSeconds === 'number' && Number.isFinite(endSeconds) ? Math.max(0, endSeconds) : -1
     if (!this.native || typeof this.native.SetLoopRange !== 'function') return false
@@ -2556,6 +2572,8 @@ export class AudioEngineManager extends EventEmitter {
     }
     this.nativePlaybackActive = false
     this.pendingNativeSource = null
+    this.pendingNativePositionTarget = null
+    this.lastNativeReportedPosition = Number.NaN
     this.playbackInfo.state = 'stopped'
     this.playbackInfo.position = 0
     this.publishProperty('pause', true)
@@ -3978,17 +3996,63 @@ export class AudioEngineManager extends EventEmitter {
     }
   }
 
+  private resolveNativeTickPosition(
+    nativePosition: number,
+    softPosition: number,
+    canConfirmPendingTarget: boolean
+  ): number {
+    if (!Number.isFinite(nativePosition)) return softPosition
+    const soft = Number.isFinite(softPosition) ? softPosition : 0
+    const pendingTarget = this.pendingNativePositionTarget
+    if (pendingTarget !== null) {
+      if (!canConfirmPendingTarget) return soft
+      const tolerance = Math.max(5, Math.abs(soft - pendingTarget) + 0.75)
+      if (Math.abs(nativePosition - pendingTarget) <= tolerance) {
+        this.pendingNativePositionTarget = null
+        this.lastNativeReportedPosition = nativePosition
+        return Math.max(0, nativePosition)
+      }
+      return soft
+    }
+
+    const lastNative = this.lastNativeReportedPosition
+    this.lastNativeReportedPosition = nativePosition
+
+    if (Number.isFinite(lastNative) && nativePosition > lastNative + 0.02) {
+      return nativePosition
+    }
+    if (nativePosition > soft + 0.05) return nativePosition
+    if (Number.isFinite(lastNative) && nativePosition + 1.25 < lastNative) {
+      return Math.max(0, nativePosition)
+    }
+    if (nativePosition <= 0.05 && soft > 1.5) return Math.max(0, nativePosition)
+    return soft
+  }
+
   private mergeNativePlaybackInfo(nativeInfo: PlaybackInfo): PlaybackInfo {
     const playbackRate =
       typeof nativeInfo.playbackRate === 'number' && Number.isFinite(nativeInfo.playbackRate)
         ? clampNumber(nativeInfo.playbackRate, 0.5, 2, this.playbackInfo.playbackRate ?? 1)
         : (this.playbackInfo.playbackRate ?? 1)
+    const previousPosition = this.playbackInfo.position
+    const resolvedPosition = this.resolveNativeTickPosition(
+      typeof nativeInfo.position === 'number' ? nativeInfo.position : previousPosition,
+      previousPosition,
+      (!this.pendingNativeSource || nativeInfo.source === this.pendingNativeSource) &&
+        nativeInfo.state !== 'stopped'
+    )
+    const waitingForNativePosition = this.pendingNativePositionTarget !== null
 
     if (!this.pendingNativeSource) {
       return this.withQueueIndexForSource({
         ...this.playbackInfo,
         ...nativeInfo,
-        playbackRate
+        state: waitingForNativePosition ? this.playbackInfo.state : nativeInfo.state,
+        position: resolvedPosition,
+        playbackRate,
+        nativePlaybackActive: waitingForNativePosition
+          ? this.nativePlaybackActive
+          : nativeInfo.nativePlaybackActive
       })
     }
 
@@ -3997,21 +4061,25 @@ export class AudioEngineManager extends EventEmitter {
       return this.withQueueIndexForSource({
         ...this.playbackInfo,
         ...nativeInfo,
-        playbackRate
+        state: waitingForNativePosition ? this.playbackInfo.state : nativeInfo.state,
+        position: resolvedPosition,
+        playbackRate,
+        nativePlaybackActive: waitingForNativePosition
+          ? this.nativePlaybackActive
+          : nativeInfo.nativePlaybackActive
       })
     }
 
     return {
       ...this.playbackInfo,
-      state: nativeInfo.state,
-      position: nativeInfo.position,
+      position: resolvedPosition,
       duration: this.playbackInfo.duration || nativeInfo.duration,
       volume: nativeInfo.volume,
       playbackRate,
       requestedConfigRevision: nativeInfo.requestedConfigRevision,
       appliedConfigRevision: nativeInfo.appliedConfigRevision,
       outputInfo: nativeInfo.outputInfo,
-      nativePlaybackActive: nativeInfo.nativePlaybackActive
+      nativePlaybackActive: this.nativePlaybackActive
     }
   }
 
@@ -4297,23 +4365,37 @@ export class AudioEngineManager extends EventEmitter {
       const wasPlaying = this.playbackInfo.state === 'playing'
       const previousSource = this.playbackInfo.source
       const previousQueueIndex = this.playbackInfo.queueIndex
+      const previousPosition = this.playbackInfo.position
+      const now = this.scheduler.now()
+      const elapsed = Math.max(0, (now - this.lastTick) / 1000)
+      const rate = this.playbackInfo.playbackRate ?? 1
+      if (this.playbackInfo.state === 'playing' && elapsed > 0) {
+        const estimatedPosition = previousPosition + elapsed * rate
+        this.playbackInfo.position =
+          this.playbackInfo.duration > 0
+            ? Math.min(estimatedPosition, this.playbackInfo.duration)
+            : estimatedPosition
+      }
+      this.lastTick = now
+
       const nativeInfo = this.readNativePlaybackInfo()
       if (nativeInfo) {
         this.playbackInfo = this.mergeNativePlaybackInfo(nativeInfo)
+        const nativeIdentityPending = this.pendingNativeSource !== null
         const nextCapabilitySignature = this.createDeviceCapabilityRefreshSignature(
           this.playbackInfo
         )
         if (nextCapabilitySignature !== previousCapabilitySignature) {
           this.invalidateAudioDeviceOptionsCache('native-output-diagnostics-changed')
         }
-        this.lastTick = this.scheduler.now()
-        this.lastNativePlaybackInfoTickReadAt = this.lastTick
+        this.lastNativePlaybackInfoTickReadAt = now
         this.publishProperty('time-pos', this.playbackInfo.position)
         if (this.playbackInfo.duration > 0) {
           this.publishDuration(this.playbackInfo.duration)
         }
         this.publishPlaybackInfo({ dedupePositionOnly: true })
         const switchedTrack =
+          !nativeIdentityPending &&
           nativeInfo.state !== 'stopped' &&
           ((nativeInfo.source && nativeInfo.source !== previousSource) ||
             (nativeInfo.queueIndex >= 0 && nativeInfo.queueIndex !== previousQueueIndex))
@@ -4324,7 +4406,12 @@ export class AudioEngineManager extends EventEmitter {
           if (this.queue.length > 1) this.emit('sleep-timer-boundary', { boundary: 'trackEnd' })
           this.emit('start-file')
         }
-        if (wasPlaying && nativeInfo.state === 'stopped') {
+        if (
+          wasPlaying &&
+          !nativeIdentityPending &&
+          this.pendingNativePositionTarget === null &&
+          nativeInfo.state === 'stopped'
+        ) {
           const isAtEnd = this.queue.length === 0 || nativeInfo.queueIndex >= this.queue.length - 1
           if (isAtEnd) {
             // 播放结束：保持 nativePlaybackActive=true 以便持续轮询原生真实状态，
@@ -4339,7 +4426,10 @@ export class AudioEngineManager extends EventEmitter {
             this.emit('sleep-timer-boundary', { boundary: 'queueEnd' })
           }
         }
+        return
       }
+
+      this.publishProperty('time-pos', this.playbackInfo.position)
       return
     }
 

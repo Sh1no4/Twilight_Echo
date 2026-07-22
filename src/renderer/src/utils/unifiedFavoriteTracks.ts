@@ -4,6 +4,7 @@ export interface FavoriteSummary {
   name: string
   trackCount: number
   cover: string | null
+  coverSource?: string | null
 }
 
 export interface ResolvedFavoriteTracks {
@@ -38,9 +39,11 @@ export function summarizeUnifiedFavorites({
   providerSummary: FavoriteSummary
 }): FavoriteSummary {
   if (unifiedTracks.length === 0) return providerSummary
+  const coverTrack = unifiedTracks.find((track) => track.cover)
   return {
     name: '我收藏的歌曲',
     trackCount: unifiedTracks.length,
-    cover: unifiedTracks.find((track) => track.cover)?.cover ?? null
+    cover: coverTrack?.cover ?? null,
+    ...(coverTrack?.coverSource ? { coverSource: coverTrack.coverSource } : {})
   }
 }

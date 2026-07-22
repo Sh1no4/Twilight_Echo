@@ -3,6 +3,7 @@ productName: TwilightEcho
 directories:
   buildResources: build
 asar: true
+compression: maximum
 icon: build/icon.png
 afterPack: scripts/after-pack-windows.cjs
 files:
@@ -59,7 +60,6 @@ nsis:
   createDesktopShortcut: always
   createStartMenuShortcut: true
   deleteAppDataOnUninstall: false
-  include: build/installer.nsh
   installerIcon: build/icon.ico
   uninstallerIcon: build/icon.ico
   installerHeaderIcon: build/icon.ico

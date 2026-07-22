@@ -1,20 +1,16 @@
 ﻿<script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { storeToRefs } from 'pinia'
 import type { LocalLibraryTagPatch } from '../../../shared/localLibraryTags.ts'
 import { useUnifiedMusicSearch } from '../app/useUnifiedMusicSearch'
 import { syncPluginProviders, useMediaProviders } from '../providers'
 import { useMusicStore } from '../stores/useMusicStore'
-import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
+import { usePlayerStore } from '../stores/usePlayerStore'
 import { usePlaybackBookmarks } from '../stores/playbackBookmarks'
 import { useProviderStore } from '../stores/useProviderStore'
 import { getRecentTracks, useListeningStatsStore } from '../stores/useListeningStatsStore'
 import type { Track } from '../types/music'
 import { resolveUnifiedRecentTracks } from '../utils/unifiedRecentTracks'
-import {
-  getTrackSource as getLogicalTrackSource,
-  isLosslessTrack
-} from '../utils/logicalTrackModel'
+import { getTrackSource as getLogicalTrackSource } from '../utils/logicalTrackModel'
 import { buildMetadataMatchCandidates } from '../utils/musicMetadataMatching'
 import {
   formatPlaylistSourceSummary,
@@ -82,8 +78,8 @@ const {
   isFavoriteTrack,
   setFavoriteTracks
 } = useMusicStore()
-const playbackStore = usePlaybackQueueStore()
-const { currentTrack } = storeToRefs(playbackStore)
+const playbackStore = usePlayerStore()
+const { currentTrack } = playbackStore
 const { playTrack, playTrackFromPosition } = playbackStore
 const playbackBookmarks = usePlaybackBookmarks()
 void playbackBookmarks.ensureLoaded()
@@ -528,14 +524,7 @@ function formatPercent(value: number): string {
 
 function trackSourceLabel(track: Track): string {
   const searchSourceName = unifiedSearchSourceNames.value.get(track.id)
-  if (searchSourceName) {
-    return getLogicalTrackSource(track) === 'local' && isLosslessTrack(track)
-      ? '本地无损'
-      : searchSourceName
-  }
-  const source = getLogicalTrackSource(track)
-  if (source === 'local') return isLosslessTrack(track) ? '本地无损' : '本地'
-  return source
+  return searchSourceName || getLogicalTrackSource(track)
 }
 
 function trackSourceClass(track: Track): string {
@@ -1675,6 +1664,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                       <div class="track-title">{{ track.title }}</div>
                       <div class="track-badges">
                         <span
+                          v-if="getLogicalTrackSource(track) !== 'local'"
                           class="track-source-chip"
                           :class="trackSourceClass(track)"
                           :title="`来源：${trackSourceLabel(track)}`"

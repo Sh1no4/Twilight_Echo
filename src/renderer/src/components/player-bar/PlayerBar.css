@@ -1126,6 +1126,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   background: linear-gradient(90deg, var(--accent-color, #2563eb), #0d9488);
   will-change: width;
   transform: translateZ(0);
+  transition: none;
 }
 .progress-fill.live {
   background: linear-gradient(90deg, #38bdf8, #0ea5e9 50%, #6366f1);

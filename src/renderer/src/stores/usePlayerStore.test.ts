@@ -149,10 +149,7 @@ test('desktop lyrics html rotates single lyrics (row0 becomes 3rd while row1 hig
   assert.match(source, /Single-lyric rotation/)
   assert.match(source, /active=1 → \[2,1\] hl row1/)
   assert.match(source, /base \+ pageSize \+ ri/)
-  assert.doesNotMatch(
-    source,
-    /activeIndex - Math\.floor\(\(count - 1\) \/ 2\)/
-  )
+  assert.doesNotMatch(source, /activeIndex - Math\.floor\(\(count - 1\) \/ 2\)/)
 })
 
 test('desktop lyrics html applies configurable lineOffset stagger', () => {
@@ -193,6 +190,7 @@ test('player lyric loading records local and provider lyric sources', () => {
     source,
     'ensureCurrentTrackLyricsLoaded'
   )
+  const commitResolvedLyrics = extractInternalFunctionBody(source, 'commitResolvedLyrics')
 
   assert.match(
     source,
@@ -201,11 +199,12 @@ test('player lyric loading records local and provider lyric sources', () => {
   assert.match(ensureCurrentTrackLyricsLoaded, /resolveLyricsWithSources\(\{/)
   assert.match(ensureCurrentTrackLyricsLoaded, /loadLocalLyrics:/)
   assert.match(ensureCurrentTrackLyricsLoaded, /loadProviderLyrics:/)
-  assert.match(ensureCurrentTrackLyricsLoaded, /lyricsSource: resolved\.lyricsSource/)
   assert.match(
     ensureCurrentTrackLyricsLoaded,
-    /translatedLyricsSource: resolved\.translatedLyricsSource/
+    /commitResolvedLyrics\(triggerTrack, resolverTrack, resolved\)/
   )
+  assert.match(commitResolvedLyrics, /lyricsSource: resolved\.lyricsSource/)
+  assert.match(commitResolvedLyrics, /translatedLyricsSource: resolved\.translatedLyricsSource/)
 })
 
 test('plugin playback resume waits for plugin providers while local sessions restore immediately', () => {
@@ -500,7 +499,7 @@ test('next and previous only use native controls when the native queue is delega
     /clearPlaybackToggleIntent\(\)/
   )
   assert.match(togglePlayState, /setPlaybackToggleIntent\(isPlaying\.value\)/)
-  assert.match(seekPlayback, /if \(nativePlaybackActive\)/)
+  assert.match(seekPlayback, /nativePlaybackActive \|\| nativeQueueDelegated/)
   assert.match(playQueueTrack, /if \(castTargetUsn\.value\)[\s\S]*castCurrentTrackToDevice/)
   assert.match(playQueueTrack, /void loadAndPlay\(track\)/)
   assert.match(nextBody, /playQueueTrack\(track\)/)
@@ -536,7 +535,10 @@ test('togglePlayState and seek/volume fan out to cast when castTargetName is act
   assert.match(castingBranch, /return/)
   assert.doesNotMatch(castingBranch, /audioEngine\.togglePause/)
   assert.doesNotMatch(castingBranch, /getPlaybackAudio/)
-  assert.match(seekPlayback, /if \(castTargetName\.value\)[\s\S]*controlCast\?\.\(\{ seek: position \}\)/)
+  assert.match(
+    seekPlayback,
+    /if \(castTargetName\.value\)[\s\S]*controlCast\?\.\(\{ seek: position \}\)/
+  )
   assert.match(source, /if \(castTargetName\.value\)[\s\S]*controlCast\?\.\(\{ volume: val \}\)/)
 })
 
@@ -592,7 +594,17 @@ test('native queue switching guards the target track before applying playback-in
     /nativePlaybackActive = info\.nativePlaybackActive === true/
   )
   assert.match(resetPlaybackUiForTrackSwitch, /clearAbLoop\(\)/)
-  assert.match(resetPlaybackUiForTrackSwitch, /setCurrentTimeImmediate/)
+  assert.match(resetPlaybackUiForTrackSwitch, /beginPlaybackPositionTransition/)
+  assert.doesNotMatch(source, /softClock/)
+  assert.match(
+    source,
+    /async function loadAndPlay[\s\S]*beginPlaybackPositionTransition\(normalizedStartTime\)[\s\S]*function next\(/
+  )
+  assert.match(source, /function applyPlaybackPositionSample/)
+  assert.match(source, /Math\.abs\(position - expectedPosition\)/)
+  assert.match(source, /return false[\s\S]*pendingPlaybackPositionTarget = null/)
+  assert.match(source, /restoredPlaybackPending &&\s*Number\.isFinite\(restoredPlaybackPosition\)/)
+  assert.match(source, /if \(isLoading\.value \|\| loadedTrackId !== track\.id\)/)
   assert.match(advanceAfterPlaybackEnded, /activateCurrentTrack\(track/)
   assert.match(playQueueTrack, /activateCurrentTrack\(track, \{ resetUi: true, position: 0 \}\)/)
   assert.match(
@@ -609,7 +621,10 @@ test('native queue switching guards the target track before applying playback-in
     /if \(!nativePlaybackActive\) return/
   )
   assert.match(setupAudioEngineListeners, /getPlaybackInfo\(\)/)
-  assert.match(setupAudioEngineListeners, /applyNativePlaybackInfo\(info, \{ applyTrackWhenInactive: true \}\)/)
+  assert.match(
+    setupAudioEngineListeners,
+    /applyNativePlaybackInfo\(info, \{ applyTrackWhenInactive: true \}\)/
+  )
   // Accept time-pos whenever a track/session is active — do not freeze solely on
   // nativePlaybackActive demotions during track hand-off.
   assert.match(
@@ -642,14 +657,8 @@ test('native LIVE buffering maps sessionUnderrunCount rises onto isStreamBufferi
   assert.match(source, /let nativeStreamBufferingClearTimer/)
   assert.match(isStreamLikeTrack, /track\.source === 'radio'/)
   assert.match(isStreamLikeTrack, /track\.source === 'podcast'/)
-  assert.match(
-    applyNativeStreamBufferingFromInfo,
-    /sessionUnderrunCount/
-  )
-  assert.match(
-    applyNativeStreamBufferingFromInfo,
-    /underruns > lastNativeSessionUnderrunCount/
-  )
+  assert.match(applyNativeStreamBufferingFromInfo, /sessionUnderrunCount/)
+  assert.match(applyNativeStreamBufferingFromInfo, /underruns > lastNativeSessionUnderrunCount/)
   assert.match(applyNativeStreamBufferingFromInfo, /isStreamBuffering\.value = true/)
   assert.match(applyNativeStreamBufferingFromInfo, /1500/)
   assert.match(resetNativeStreamBufferingState, /lastNativeSessionUnderrunCount = 0/)

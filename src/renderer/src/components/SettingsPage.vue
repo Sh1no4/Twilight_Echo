@@ -4,7 +4,7 @@ import QRCode from 'qrcode'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import MiniPlayerSettingsSection from './settings-page/MiniPlayerSettingsSection.vue'
 import { useAudioOutputDspStore } from '../stores/useAudioOutputDspStore'
-import { usePlaybackQueueStore } from '../stores/usePlaybackQueueStore'
+import { usePlayerStore } from '../stores/usePlayerStore'
 import { useSettingsStore } from '../stores/useSettingsStore'
 import { useMusicStore } from '../stores/useMusicStore'
 import { useExtensionRegistry, type UiContribution } from '../extensions/registry'
@@ -302,7 +302,7 @@ const {
 } = useSettingsStore()
 
 const audioOutputDspStore = useAudioOutputDspStore()
-const playbackQueueStore = usePlaybackQueueStore()
+const playbackQueueStore = usePlayerStore()
 const {
   libraryScanStatus,
   libraryScanProgress,
@@ -463,7 +463,7 @@ const {
   loudnormStatus
 } = storeToRefs(audioOutputDspStore)
 
-const { volume } = storeToRefs(playbackQueueStore)
+const { volume } = playbackQueueStore
 
 const {
   toggleExclusiveMode,
@@ -4072,7 +4072,10 @@ onBeforeUnmount(() => {
             </div>
             <hr />
             <div v-if="shortcutStatuses.length > 0" class="shortcut-grid">
-              <div v-for="shortcut in shortcutStatuses" :key="shortcut.action">
+              <div
+                v-for="shortcut in shortcutStatuses"
+                :key="JSON.stringify(shortcut.action)"
+              >
                 <span>{{ shortcut.label }}</span>
                 <kbd>{{ shortcut.accelerator }}</kbd>
               </div>

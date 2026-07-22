@@ -31,6 +31,7 @@ const providerFavorite: Track = {
   duration: 180,
   size: 0,
   cover: 'provider-cover.jpg',
+  coverSource: 'https://music.example/provider-cover.jpg',
   lyrics: null,
   source: 'ncm'
 }
@@ -68,6 +69,7 @@ test('unified favorite summary uses the first available cover and unified count'
   assert.deepEqual(summary, {
     name: '我收藏的歌曲',
     trackCount: 2,
-    cover: 'provider-cover.jpg'
+    cover: 'provider-cover.jpg',
+    coverSource: 'https://music.example/provider-cover.jpg'
   })
 })

@@ -13,7 +13,7 @@ const require = createRequire(import.meta.url)
 const execFileAsync = promisify(execFile)
 const workspaceRoot = resolve(fileURLToPath(new URL('../../../../', import.meta.url)))
 
-test('actual renderer player store restores Auto precedence and keeps manual lyrics out of playback state', async () => {
+test('actual renderer player store keeps lyric sources and playback position transitions authoritative', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'twilight-lyrics-player-runtime-'))
   try {
     const entryPath = join(directory, 'lyrics-player-runtime-entry.ts')
@@ -90,6 +90,7 @@ const deferredProviderStarted = new Promise((resolve) => {
 })
 
 window.api = {
+  ...window.api,
   data: {
     getLyrics: async () => null,
     loadLyricsManagement: async () => ({ version: 2, revision, savedAt: '2026-07-18T00:00:00.000Z', data: clone(document) }),
@@ -127,6 +128,14 @@ const track = {
   lyricsSource: 'embedded', translatedLyricsSource: 'embedded', source: 'fixture-provider'
 }
 
+const nextTrack = {
+  ...track,
+  id: 'fixture-provider:track-2',
+  title: 'Next provider fixture',
+  lyrics: '[00:01.00]Next lyrics',
+  translatedLyrics: null
+}
+
 window.runLyricsPlayerRuntime = async () => {
   const player = usePlayerStore()
   const management = useLyricsManagement()
@@ -160,13 +169,89 @@ window.runLyricsPlayerRuntime = async () => {
   expect(JSON.stringify(player.currentTrack.value) === JSON.stringify(beforeCurrent), 'manual original mutated current track')
   expect(JSON.stringify(player.queue.value) === JSON.stringify(beforeQueue), 'manual romanization mutated queue')
   expect(management.entryFor(track.id).romanization === '[00:03.00]Manual romanization', 'manual romanization was not persisted')
+
+  player.currentTrack.value = clone(track)
+  player.queue.value = [clone(track), clone(nextTrack)]
+  player.queueIndex.value = 0
+  window.__audioFixture.emitPlaybackInfo({
+    state: 'playing', position: 0, duration: 180, source: nextTrack.id,
+    queueIndex: 1, nativePlaybackActive: true, volume: 1, playbackRate: 1
+  })
+  await Promise.resolve()
+  expect(player.currentTrack.value.id === nextTrack.id, 'native next did not switch the active track')
+  expect(player.currentTime.value === 0, 'native next did not reset progress')
+
+  window.__audioFixture.emitProperty('time-pos', 42)
+  await Promise.resolve()
+  expect(player.currentTime.value === 0, 'previous-track time sample overwrote new-track progress')
+  window.__audioFixture.emitProperty('time-pos', 0.25)
+  await new Promise((resolve) => setTimeout(resolve, 280))
+  expect(player.currentTime.value >= 0.25, 'new-track progress confirmation was not applied')
+  player.isLoading.value = true
+  const stalledNextSamples = window.setInterval(
+    () => window.__audioFixture.emitProperty('time-pos', 0.25),
+    100
+  )
+  await new Promise((resolve) => setTimeout(resolve, 900))
+  window.clearInterval(stalledNextSamples)
+  expect(player.currentTime.value > 0.75, 'repeated zero-progress samples froze the new track clock')
+  player.isLoading.value = false
+
+  player.seek(60)
+  expect(player.currentTime.value === 60, 'lyric seek did not update progress immediately')
+  window.__audioFixture.emitProperty('time-pos', 0.5)
+  await Promise.resolve()
+  expect(player.currentTime.value === 60, 'pre-seek time sample rolled back lyric progress')
+  window.__audioFixture.emitProperty('time-pos', 60.25)
+  await new Promise((resolve) => setTimeout(resolve, 280))
+  expect(player.currentTime.value >= 60.25, 'seek target confirmation did not resume progress')
+  player.isLoading.value = true
+  const stalledSeekSamples = window.setInterval(
+    () => window.__audioFixture.emitProperty('time-pos', 60.25),
+    100
+  )
+  await new Promise((resolve) => setTimeout(resolve, 900))
+  window.clearInterval(stalledSeekSamples)
+  expect(player.currentTime.value > 60.5, 'renderer fallback clock stopped during a pending track hand-off')
+  const fallbackPosition = player.currentTime.value
+  window.__audioFixture.emitProperty('time-pos', 0.75)
+  window.__audioFixture.emitProperty('time-pos', 100)
+  await Promise.resolve()
+  expect(player.currentTime.value >= fallbackPosition, 'late stale samples displaced fallback progress')
+  await new Promise((resolve) => setTimeout(resolve, 2500))
+  window.__audioFixture.emitProperty('time-pos', 90)
+  await new Promise((resolve) => setTimeout(resolve, 280))
+  expect(player.currentTime.value >= 90, 'expired transition guard permanently rejected valid engine progress')
+  player.isLoading.value = false
   console.log('LYRICS_PLAYER_RUNTIME_OK')
 }
 `
 }
 
 function runtimeHtml(bundleName: string): string {
-  return `<!doctype html><html><body><script>window.process = { env: {} }</script><script src="bundle/${bundleName}"></script></body></html>`
+  return `<!doctype html><html><body><script>
+window.process = { env: {} }
+window.__audioFixture = {
+  propertyCallbacks: [], playbackInfoCallbacks: [],
+  emitProperty(name, data) { for (const cb of this.propertyCallbacks) cb({ name, data }) },
+  emitPlaybackInfo(info) { this.playbackInfo = info; for (const cb of this.playbackInfoCallbacks) cb(info) },
+  playbackInfo: { state: 'stopped', position: 0, duration: 0, source: '', queueIndex: -1, nativePlaybackActive: false }
+}
+const subscribe = (list, cb) => { list.push(cb); return () => { const i = list.indexOf(cb); if (i >= 0) list.splice(i, 1) } }
+const noopSubscribe = () => () => {}
+window.api = {
+  audioEngine: {
+    onPropertyChange: (cb) => subscribe(window.__audioFixture.propertyCallbacks, cb),
+    onPlaybackInfo: (cb) => subscribe(window.__audioFixture.playbackInfoCallbacks, cb),
+    onEndFile: noopSubscribe, onStartFile: noopSubscribe, onReady: noopSubscribe,
+    onError: noopSubscribe, onDisconnected: noopSubscribe,
+    getPlaybackInfo: async () => window.__audioFixture.playbackInfo,
+    getAudioOutputState: async () => { throw new Error('fixture output unavailable') },
+    getAudioProcessing: async () => { throw new Error('fixture processing unavailable') },
+    seek: async (position) => { window.__audioFixture.seekPosition = position }
+  }
+}
+</script><script src="bundle/${bundleName}"></script></body></html>`
 }
 
 function electronRunnerSource(): string {
