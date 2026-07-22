@@ -1336,6 +1336,7 @@ onMounted(() => {
       <div v-if="moreOpen" class="hifi-overlay" :class="{ glass }">
         <HiFiSidebar
           :glass="glass"
+          :accent-color="playButtonColor"
           :exclusive-mode="exclusiveMode"
           :exclusive-available="exclusiveAvailable"
           :audio-output="audioOutput"

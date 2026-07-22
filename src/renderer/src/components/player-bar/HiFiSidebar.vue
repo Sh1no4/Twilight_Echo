@@ -43,6 +43,7 @@ export interface HiFiStatusChip {
 
 const props = defineProps<{
   glass?: boolean
+  accentColor?: string
   exclusiveMode: boolean
   exclusiveAvailable: boolean
   audioOutput: AudioOutputId
@@ -500,10 +501,15 @@ const deckOutNodeSub = computed(() => {
   const backend = selectedDevice.value?.backend?.toUpperCase() || 'OUTPUT'
   return `${backend} · ${props.exclusiveMode ? 'EXCLUSIVE' : 'SHARED'}`
 })
+
+const deckAccentVars = computed(() => {
+  const color = props.accentColor?.trim()
+  return color ? { '--d-accent-src': color } : undefined
+})
 </script>
 
 <template>
-  <div class="deck" :class="{ 'deck-dark': glass }">
+  <div class="deck" :class="{ 'deck-dark': glass }" :style="deckAccentVars">
     <header class="deck-topbar">
       <div class="deck-brand">
         <span class="deck-brand-badge"><i class="ph ph-waveform"></i></span>
@@ -1595,16 +1601,16 @@ const deckOutNodeSub = computed(() => {
   --d-card: #ffffff;
   --d-card-hover: #ffffff;
   --d-well: #f8fafc;
-  --d-accent: #7c4dff;
-  --d-accent-strong: #5e35d9;
-  --d-accent-soft: rgba(124, 77, 255, 0.08);
-  --d-accent-line: rgba(124, 77, 255, 0.26);
+  --d-accent: var(--d-accent-src, #7c4dff);
+  --d-accent-strong: color-mix(in srgb, var(--d-accent) 68%, #312e81);
+  --d-accent-soft: color-mix(in srgb, var(--d-accent) 9%, transparent);
+  --d-accent-line: color-mix(in srgb, var(--d-accent) 28%, transparent);
   --d-success: #0ea968;
   --d-success-soft: rgba(32, 198, 94, 0.1);
   --d-warn: #d97706;
   --d-warn-soft: rgba(245, 158, 11, 0.1);
   --d-warn-line: rgba(245, 158, 11, 0.3);
-  --d-glow: rgba(124, 77, 255, 0.45);
+  --d-glow: color-mix(in srgb, var(--d-accent) 45%, transparent);
   --d-mono: 'JetBrains Mono', 'SFMono-Regular', ui-monospace, 'Cascadia Mono', Consolas, monospace;
 
   display: flex;
@@ -1634,16 +1640,16 @@ const deckOutNodeSub = computed(() => {
   --d-card: rgba(255, 255, 255, 0.05);
   --d-card-hover: rgba(255, 255, 255, 0.09);
   --d-well: rgba(255, 255, 255, 0.03);
-  --d-accent: #a885f7;
-  --d-accent-strong: #c4b5fd;
-  --d-accent-soft: rgba(168, 133, 247, 0.14);
-  --d-accent-line: rgba(168, 133, 247, 0.36);
+  --d-accent: color-mix(in srgb, var(--d-accent-src, #a885f7) 82%, #ffffff);
+  --d-accent-strong: color-mix(in srgb, var(--d-accent) 62%, #ffffff);
+  --d-accent-soft: color-mix(in srgb, var(--d-accent) 16%, transparent);
+  --d-accent-line: color-mix(in srgb, var(--d-accent) 38%, transparent);
   --d-success: #34d399;
   --d-success-soft: rgba(52, 211, 153, 0.14);
   --d-warn: #fbbf24;
   --d-warn-soft: rgba(251, 191, 36, 0.12);
   --d-warn-line: rgba(251, 191, 36, 0.32);
-  --d-glow: rgba(168, 133, 247, 0.5);
+  --d-glow: color-mix(in srgb, var(--d-accent) 50%, transparent);
 }
 
 button {
@@ -1681,8 +1687,8 @@ button:disabled {
   place-items: center;
   font-size: 16px;
   color: #ffffff;
-  background: linear-gradient(140deg, #7c4dff, #3b82f6);
-  box-shadow: 0 6px 14px rgba(124, 77, 255, 0.32);
+  background: linear-gradient(140deg, var(--d-accent), var(--d-accent-strong));
+  box-shadow: 0 6px 14px var(--d-glow);
 }
 
 .deck-brand-copy {
@@ -1788,20 +1794,40 @@ button:disabled {
   overflow: hidden;
   flex-shrink: 0;
   background:
-    radial-gradient(120% 160% at 10% -20%, rgba(124, 77, 255, 0.14), transparent 55%),
-    radial-gradient(110% 150% at 108% 120%, rgba(34, 211, 238, 0.12), transparent 52%),
-    linear-gradient(160deg, #ffffff 0%, #f7f6ff 100%);
-  border: 1px solid rgba(124, 77, 255, 0.14);
-  box-shadow: 0 14px 34px rgba(86, 70, 160, 0.13);
+    radial-gradient(
+      120% 160% at 10% -20%,
+      color-mix(in srgb, var(--d-accent) 13%, transparent),
+      transparent 55%
+    ),
+    radial-gradient(
+      110% 150% at 108% 120%,
+      color-mix(in srgb, var(--d-accent) 8%, transparent),
+      transparent 52%
+    ),
+    linear-gradient(160deg, #ffffff 0%, color-mix(in srgb, var(--d-accent) 4%, #ffffff) 100%);
+  border: 1px solid color-mix(in srgb, var(--d-accent) 16%, transparent);
+  box-shadow: 0 14px 34px color-mix(in srgb, var(--d-accent) 14%, transparent);
   color: var(--d-ink);
 }
 
 .deck-dark .deck-display {
   background:
-    radial-gradient(120% 160% at 10% -20%, rgba(168, 133, 247, 0.18), transparent 55%),
-    radial-gradient(110% 150% at 108% 120%, rgba(34, 211, 238, 0.1), transparent 52%),
-    linear-gradient(160deg, rgba(124, 77, 255, 0.12) 0%, rgba(255, 255, 255, 0.03) 100%);
-  border-color: rgba(168, 133, 247, 0.22);
+    radial-gradient(
+      120% 160% at 10% -20%,
+      color-mix(in srgb, var(--d-accent) 16%, transparent),
+      transparent 55%
+    ),
+    radial-gradient(
+      110% 150% at 108% 120%,
+      color-mix(in srgb, var(--d-accent) 9%, transparent),
+      transparent 52%
+    ),
+    linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--d-accent) 10%, transparent) 0%,
+      rgba(255, 255, 255, 0.03) 100%
+    );
+  border-color: var(--d-accent-line);
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.3);
 }
 
@@ -1854,7 +1880,7 @@ button:disabled {
   font-weight: 600;
   letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
-  background: linear-gradient(115deg, #7c4dff 15%, #3b82f6 90%);
+  background: linear-gradient(115deg, var(--d-accent-strong) 15%, var(--d-accent) 90%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -1862,7 +1888,7 @@ button:disabled {
 }
 
 .deck-dark .deck-rate-num {
-  background: linear-gradient(115deg, #c4b5fd 15%, #67e8f9 90%);
+  background: linear-gradient(115deg, var(--d-accent) 15%, var(--d-accent-strong) 90%);
   -webkit-background-clip: text;
   background-clip: text;
 }
@@ -1988,7 +2014,11 @@ button:disabled {
   width: 3px;
   height: 22px;
   border-radius: 0 3px 3px 0;
-  background: linear-gradient(180deg, #a885f7, #7c4dff);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--d-accent) 45%, #ffffff),
+    var(--d-accent)
+  );
   box-shadow: 0 0 8px var(--d-glow);
 }
 
@@ -2446,7 +2476,7 @@ button:disabled {
 .deck-switch.active {
   border-color: var(--d-accent-line);
   background: var(--d-accent-soft);
-  box-shadow: inset 0 0 10px rgba(124, 77, 255, 0.14);
+  box-shadow: inset 0 0 10px color-mix(in srgb, var(--d-accent) 14%, transparent);
 }
 
 .deck-switch.active .deck-switch-knob {
@@ -2723,8 +2753,8 @@ button:disabled {
   border-radius: 4px;
   background: linear-gradient(
     to right,
-    #a885f7 0%,
-    #7c4dff var(--range-value),
+    color-mix(in srgb, var(--d-accent) 45%, #ffffff) 0%,
+    var(--d-accent) var(--range-value),
     var(--d-line-strong) var(--range-value),
     var(--d-line-strong) 100%
   );
@@ -2738,8 +2768,8 @@ button:disabled {
   margin-top: -4.5px;
   border-radius: 50%;
   background: #ffffff;
-  border: 2px solid #7c4dff;
-  box-shadow: 0 0 6px rgba(124, 77, 255, 0.45);
+  border: 2px solid var(--d-accent);
+  box-shadow: 0 0 6px var(--d-glow);
   transition: transform 0.15s ease;
 }
 
@@ -2756,7 +2786,11 @@ button:disabled {
 .deck-range::-moz-range-progress {
   height: 4px;
   border-radius: 4px;
-  background: linear-gradient(to right, #a885f7, #7c4dff);
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--d-accent) 45%, #ffffff),
+    var(--d-accent)
+  );
 }
 
 .deck-range::-moz-range-thumb {
@@ -2764,8 +2798,8 @@ button:disabled {
   height: 11px;
   border-radius: 50%;
   background: #ffffff;
-  border: 2px solid #7c4dff;
-  box-shadow: 0 0 6px rgba(124, 77, 255, 0.45);
+  border: 2px solid var(--d-accent);
+  box-shadow: 0 0 6px var(--d-glow);
 }
 
 /* ===== DSP 主控 ===== */
