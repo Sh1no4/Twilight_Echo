@@ -1,18 +1,58 @@
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const os = require('node:os')
 const path = require('node:path')
 const test = require('node:test')
 
-const { NATIVE_RUNTIME_FILES, executableCandidates, stripNativeArtifacts } = require('./release-artifact-strip.cjs')
+const {
+  NATIVE_RUNTIME_FILES,
+  clearPeDebugDirectory,
+  executableCandidates,
+  stripNativeArtifacts
+} = require('./release-artifact-strip.cjs')
+
+function makePeWithDebugDirectory() {
+  const buffer = Buffer.alloc(0x400, 0)
+  const peOffset = 0x80
+  const coffOffset = peOffset + 4
+  const optionalOffset = coffOffset + 20
+  const sectionOffset = optionalOffset + 0xf0
+  const debugEntryOffset = optionalOffset + 112 + 6 * 8
+  const debugOffset = 0x200
+  const debugDataOffset = 0x240
+  buffer.write('MZ')
+  buffer.writeUInt32LE(peOffset, 0x3c)
+  buffer.write('PE\0\0', peOffset)
+  buffer.writeUInt16LE(1, coffOffset + 2)
+  buffer.writeUInt16LE(0xf0, coffOffset + 16)
+  buffer.writeUInt16LE(0x20b, optionalOffset)
+  buffer.writeUInt32LE(0x1000, debugEntryOffset)
+  buffer.writeUInt32LE(28, debugEntryOffset + 4)
+  buffer.write('.rdata', sectionOffset)
+  buffer.writeUInt32LE(0x200, sectionOffset + 8)
+  buffer.writeUInt32LE(0x1000, sectionOffset + 12)
+  buffer.writeUInt32LE(0x200, sectionOffset + 16)
+  buffer.writeUInt32LE(debugOffset, sectionOffset + 20)
+  buffer.writeUInt32LE(16, debugOffset + 16)
+  buffer.writeUInt32LE(0x1040, debugOffset + 20)
+  buffer.writeUInt32LE(debugDataOffset, debugOffset + 24)
+  buffer.fill(0x5a, debugDataOffset, debugDataOffset + 16)
+  return { buffer, debugDataOffset, debugEntryOffset, debugOffset }
+}
 
 test('release strip uses an explicit protected-environment tool before PATH', () => {
   assert.equal(
-    executableCandidates({ TWILIGHT_RELEASE_STRIP: 'C:/signing/strip.exe', TAE_W64DEVKIT_ROOT: 'C:/w64' })[0],
+    executableCandidates({
+      TWILIGHT_RELEASE_STRIP: 'C:/signing/strip.exe',
+      TAE_W64DEVKIT_ROOT: 'C:/w64'
+    })[0],
     'C:/signing/strip.exe'
   )
 })
 
 test('release strip only processes the packaged runtime copy and fails closed', () => {
   const calls = []
+  const cleared = []
   const packagedDir = path.resolve('C:/release/win-unpacked/resources/audio-engine')
   const stripped = stripNativeArtifacts(packagedDir, {
     stripCommand: 'C:/tools/strip.exe',
@@ -20,20 +60,56 @@ test('release strip only processes the packaged runtime copy and fails closed', 
     run: (command, args) => {
       calls.push({ command, args })
       return { status: 0 }
-    }
+    },
+    clearDebugDirectory: (filePath) => cleared.push(filePath)
   })
   assert.equal(stripped.length, NATIVE_RUNTIME_FILES.length)
   assert.equal(calls.length, NATIVE_RUNTIME_FILES.length)
+  assert.equal(cleared.length, NATIVE_RUNTIME_FILES.length)
+  assert.ok(calls.every((call) => call.args[0] === '--strip-all'))
   assert.ok(calls.every((call) => call.args[1].startsWith(packagedDir)))
   assert.throws(
-    () => stripNativeArtifacts(packagedDir, { stripCommand: 'strip', exists: () => false, run: () => ({ status: 0 }) }),
+    () =>
+      stripNativeArtifacts(packagedDir, {
+        stripCommand: 'strip',
+        exists: () => false,
+        run: () => ({ status: 0 })
+      }),
     /Missing packaged native runtime binary/
   )
 })
 
+test('release strip clears PE debug directory records and referenced data', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'twilight-clear-pe-debug-'))
+  try {
+    const filePath = path.join(directory, 'runtime.exe')
+    const fixture = makePeWithDebugDirectory()
+    fs.writeFileSync(filePath, fixture.buffer)
+    assert.equal(clearPeDebugDirectory(filePath), true)
+    const result = fs.readFileSync(filePath)
+    assert.equal(result.readUInt32LE(fixture.debugEntryOffset), 0)
+    assert.equal(result.readUInt32LE(fixture.debugEntryOffset + 4), 0)
+    assert.ok(
+      result.subarray(fixture.debugOffset, fixture.debugOffset + 28).every((value) => value === 0)
+    )
+    assert.ok(
+      result
+        .subarray(fixture.debugDataOffset, fixture.debugDataOffset + 16)
+        .every((value) => value === 0)
+    )
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 test('release strip propagates a strip failure instead of shipping debug binaries', () => {
   assert.throws(
-    () => stripNativeArtifacts('C:/release', { stripCommand: 'strip', exists: () => true, run: () => ({ status: 1, stderr: 'bad binary' }) }),
+    () =>
+      stripNativeArtifacts('C:/release', {
+        stripCommand: 'strip',
+        exists: () => true,
+        run: () => ({ status: 1, stderr: 'bad binary' })
+      }),
     /Failed to strip/
   )
 })

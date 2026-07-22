@@ -187,7 +187,7 @@ The gate checks every shipped DLL/EXE/NODE file under the packaged audio-engine 
 non-zero size and a size budget. It additionally checks each required self-built native runtime
 binary for stripped PE debug/COFF metadata and a valid Authenticode signature from the
 expected certificate. Windows development and release packaging invoke GNU/LLVM
-`strip --strip-unneeded` only on the copied package payload at
+`strip --strip-all` only on the copied package payload at
 `win-unpacked/resources/audio-engine`; they never alter `resources/audio-engine` in the source tree.
 Set `W64DEVKIT_ROOT` or `TWILIGHT_RELEASE_STRIP` so the packaging wrapper can locate `strip.exe`.
 The protected release gate deliberately fails when the strip tool or
