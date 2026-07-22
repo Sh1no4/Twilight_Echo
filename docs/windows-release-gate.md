@@ -173,6 +173,8 @@ A publishable Windows build must be created in the protected signing environment
 copied package payload when W64DevKit is configured, keeping the source runtime untouched.
 Packaging delegates production dependency discovery to electron-builder and keeps only the
 `zh-CN`, `zh-TW`, and `en-US` Electron locales instead of copying the full development tree.
+Development packaging skips electron-builder's signing helper; `afterPack` writes the unsigned
+executable metadata directly. The protected release overlay restores signing and executable editing.
 Only `gate:release:win` loads `electron-builder.release-win.yml`, which enables electron-builder's
 `forceCodeSigning`; no signing identity is a hard failure, not an unsigned fallback. Set
 `TWILIGHT_RELEASE_SIGNING_THUMBPRINT` to the expected release certificate thumbprint there, then run:

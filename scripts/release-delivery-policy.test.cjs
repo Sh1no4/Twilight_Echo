@@ -17,7 +17,8 @@ test('release configuration does not advertise a placeholder auto-updater and re
   assert.match(builder, /^win:\s*$/m)
   assert.doesNotMatch(builder, /^\s+forceCodeSigning:/m)
   assert.match(releaseBuilder, /^\s+forceCodeSigning:\s*true\s*$/m)
-  assert.match(builder, /^\s+signAndEditExecutable:\s*true\s*$/m)
+  assert.match(builder, /^\s+signAndEditExecutable:\s*false\s*$/m)
+  assert.match(releaseBuilder, /^\s+signAndEditExecutable:\s*true\s*$/m)
 })
 
 test('Windows packaging strips copied native binaries while signed releases stay fail-closed', () => {

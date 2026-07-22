@@ -47,7 +47,7 @@ win:
   icon: build/icon.ico
   # Development packages remain unsigned. The protected release config extends this file and
   # enables forceCodeSigning; see electron-builder.release-win.yml.
-  signAndEditExecutable: true
+  signAndEditExecutable: false
   signExts:
     - .exe
     - .dll
