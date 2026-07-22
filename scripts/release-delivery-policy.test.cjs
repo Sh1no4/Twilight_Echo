@@ -35,6 +35,8 @@ test('Windows packaging strips copied native binaries while signed releases stay
 test('development packages use maximum compression without a missing NSIS include', () => {
   const builder = read('electron-builder.yml')
   assert.match(builder, /^compression:\s*maximum\s*$/m)
+  assert.match(builder, /^electronLanguages:\s*\n\s+- zh-CN\s*\n\s+- zh-TW\s*\n\s+- en-US\s*$/m)
+  assert.doesNotMatch(builder, /^\s+- node_modules\/\*\*\s*$/m)
   assert.doesNotMatch(builder, /^\s+include:\s*build\/installer\.nsh\s*$/m)
 })
 

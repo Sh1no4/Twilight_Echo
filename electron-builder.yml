@@ -4,11 +4,14 @@ directories:
   buildResources: build
 asar: true
 compression: maximum
+electronLanguages:
+  - zh-CN
+  - zh-TW
+  - en-US
 icon: build/icon.png
 afterPack: scripts/after-pack-windows.cjs
 files:
   - out/**
-  - node_modules/**
   - package.json
   - '!out/renderer/audio-engine/**'
   - '!out/renderer/plugins/**'
