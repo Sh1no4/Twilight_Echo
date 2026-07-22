@@ -1583,25 +1583,28 @@ const deckOutNodeSub = computed(() => {
   </div>
 </template>
 
+
 <style scoped>
-/* ===== Signal Deck — 仪器控制台设计体系 ===== */
+/* ===== Signal Deck v2 — 应用原生设计体系（紫罗兰主色 / 白卡 / 石板灰） ===== */
 .deck {
-  --d-ink: #2a241c;
-  --d-muted: #8d8172;
-  --d-faint: #b3a897;
-  --d-line: rgba(74, 60, 38, 0.1);
-  --d-line-strong: rgba(74, 60, 38, 0.16);
-  --d-card: rgba(255, 255, 255, 0.58);
-  --d-card-hover: rgba(255, 255, 255, 0.82);
-  --d-well: rgba(74, 60, 38, 0.045);
-  --d-amber: #b06a14;
-  --d-amber-strong: #8f5407;
-  --d-amber-soft: rgba(196, 128, 32, 0.12);
-  --d-amber-line: rgba(196, 128, 32, 0.32);
-  --d-teal: #0d8f6e;
-  --d-teal-soft: rgba(13, 143, 110, 0.12);
-  --d-warn: #b04a1e;
-  --d-warn-soft: rgba(176, 74, 30, 0.1);
+  --d-ink: #111827;
+  --d-muted: #6b7280;
+  --d-faint: #9ca3af;
+  --d-line: rgba(15, 23, 42, 0.08);
+  --d-line-strong: rgba(15, 23, 42, 0.14);
+  --d-card: #ffffff;
+  --d-card-hover: #ffffff;
+  --d-well: #f8fafc;
+  --d-accent: #7c4dff;
+  --d-accent-strong: #5e35d9;
+  --d-accent-soft: rgba(124, 77, 255, 0.08);
+  --d-accent-line: rgba(124, 77, 255, 0.26);
+  --d-success: #0ea968;
+  --d-success-soft: rgba(32, 198, 94, 0.1);
+  --d-warn: #d97706;
+  --d-warn-soft: rgba(245, 158, 11, 0.1);
+  --d-warn-line: rgba(245, 158, 11, 0.3);
+  --d-glow: rgba(124, 77, 255, 0.45);
   --d-mono: 'JetBrains Mono', 'SFMono-Regular', ui-monospace, 'Cascadia Mono', Consolas, monospace;
 
   display: flex;
@@ -1623,22 +1626,24 @@ const deckOutNodeSub = computed(() => {
 }
 
 .deck-dark {
-  --d-ink: #efe8da;
-  --d-muted: #a29782;
-  --d-faint: #6f6656;
-  --d-line: rgba(239, 228, 205, 0.09);
-  --d-line-strong: rgba(239, 228, 205, 0.16);
-  --d-card: rgba(255, 255, 255, 0.045);
-  --d-card-hover: rgba(255, 255, 255, 0.08);
+  --d-ink: #eef2f7;
+  --d-muted: #9aa3b2;
+  --d-faint: #64748b;
+  --d-line: rgba(226, 232, 240, 0.1);
+  --d-line-strong: rgba(226, 232, 240, 0.18);
+  --d-card: rgba(255, 255, 255, 0.05);
+  --d-card-hover: rgba(255, 255, 255, 0.09);
   --d-well: rgba(255, 255, 255, 0.03);
-  --d-amber: #f0b35e;
-  --d-amber-strong: #ffd08a;
-  --d-amber-soft: rgba(240, 179, 94, 0.14);
-  --d-amber-line: rgba(240, 179, 94, 0.38);
-  --d-teal: #4fd6a8;
-  --d-teal-soft: rgba(79, 214, 168, 0.14);
-  --d-warn: #f08a5c;
-  --d-warn-soft: rgba(240, 138, 92, 0.12);
+  --d-accent: #a885f7;
+  --d-accent-strong: #c4b5fd;
+  --d-accent-soft: rgba(168, 133, 247, 0.14);
+  --d-accent-line: rgba(168, 133, 247, 0.36);
+  --d-success: #34d399;
+  --d-success-soft: rgba(52, 211, 153, 0.14);
+  --d-warn: #fbbf24;
+  --d-warn-soft: rgba(251, 191, 36, 0.12);
+  --d-warn-line: rgba(251, 191, 36, 0.32);
+  --d-glow: rgba(168, 133, 247, 0.5);
 }
 
 button {
@@ -1675,10 +1680,9 @@ button:disabled {
   display: grid;
   place-items: center;
   font-size: 16px;
-  color: #ffc878;
-  background: linear-gradient(155deg, #241c15, #100d0a);
-  border: 1px solid rgba(255, 190, 110, 0.28);
-  box-shadow: 0 4px 12px rgba(30, 18, 4, 0.22);
+  color: #ffffff;
+  background: linear-gradient(140deg, #7c4dff, #3b82f6);
+  box-shadow: 0 6px 14px rgba(124, 77, 255, 0.32);
 }
 
 .deck-brand-copy {
@@ -1720,16 +1724,16 @@ button:disabled {
 }
 
 .deck-live[data-tone='success'] {
-  border-color: var(--d-amber-line);
-  background: var(--d-amber-soft);
+  border-color: rgba(32, 198, 94, 0.3);
+  background: var(--d-success-soft);
 }
 
 .deck-live[data-tone='success'] .deck-live-label {
-  color: var(--d-amber);
+  color: var(--d-success);
 }
 
 .deck-live[data-tone='warning'] {
-  border-color: var(--d-warn-soft);
+  border-color: var(--d-warn-line);
   background: var(--d-warn-soft);
 }
 
@@ -1747,16 +1751,21 @@ button:disabled {
   transition: background 0.25s ease, box-shadow 0.25s ease;
 }
 
-.deck-live[data-tone='success'] .deck-led,
 .deck-led.on {
-  background: #f5b04c;
-  box-shadow: 0 0 8px rgba(245, 176, 76, 0.9), 0 0 2px rgba(245, 176, 76, 1);
+  background: var(--d-accent);
+  box-shadow: 0 0 8px var(--d-glow);
+  animation: deck-led-pulse 2.2s ease-in-out infinite;
+}
+
+.deck-live[data-tone='success'] .deck-led {
+  background: var(--d-success);
+  box-shadow: 0 0 8px rgba(32, 198, 94, 0.65);
   animation: deck-led-pulse 2.2s ease-in-out infinite;
 }
 
 .deck-live[data-tone='warning'] .deck-led {
   background: var(--d-warn);
-  box-shadow: 0 0 8px rgba(240, 138, 92, 0.8);
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
   animation: deck-led-pulse 1.4s ease-in-out infinite;
 }
 
@@ -1770,35 +1779,30 @@ button:disabled {
   }
 }
 
-/* ===== VFD 显示屏 ===== */
+/* ===== 解码显示屏（磨砂玻璃 + 紫蓝渐变读数） ===== */
 .deck-display {
   position: relative;
   margin: 12px 14px 6px;
-  padding: 13px 16px 15px;
+  padding: 14px 16px 16px;
   border-radius: 18px;
   overflow: hidden;
   flex-shrink: 0;
   background:
-    radial-gradient(130% 160% at 18% -10%, rgba(255, 180, 92, 0.16), transparent 55%),
-    radial-gradient(90% 120% at 105% 110%, rgba(79, 214, 168, 0.07), transparent 50%),
-    linear-gradient(158deg, #211a14 0%, #0f0c09 100%);
-  border: 1px solid rgba(255, 190, 110, 0.18);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 235, 200, 0.07),
-    0 12px 28px rgba(26, 15, 2, 0.22);
-  color: #ffd9a0;
+    radial-gradient(120% 160% at 10% -20%, rgba(124, 77, 255, 0.14), transparent 55%),
+    radial-gradient(110% 150% at 108% 120%, rgba(34, 211, 238, 0.12), transparent 52%),
+    linear-gradient(160deg, #ffffff 0%, #f7f6ff 100%);
+  border: 1px solid rgba(124, 77, 255, 0.14);
+  box-shadow: 0 14px 34px rgba(86, 70, 160, 0.13);
+  color: var(--d-ink);
 }
 
-.deck-display::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(255, 255, 255, 0.025) 0 1px,
-    transparent 1px 3px
-  );
-  pointer-events: none;
+.deck-dark .deck-display {
+  background:
+    radial-gradient(120% 160% at 10% -20%, rgba(168, 133, 247, 0.18), transparent 55%),
+    radial-gradient(110% 150% at 108% 120%, rgba(34, 211, 238, 0.1), transparent 52%),
+    linear-gradient(160deg, rgba(124, 77, 255, 0.12) 0%, rgba(255, 255, 255, 0.03) 100%);
+  border-color: rgba(168, 133, 247, 0.22);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.3);
 }
 
 .deck-display-head {
@@ -1814,14 +1818,16 @@ button:disabled {
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.3em;
-  color: rgba(255, 200, 130, 0.55);
+  color: var(--d-accent);
+  opacity: 0.65;
+  flex-shrink: 0;
 }
 
 .deck-display-track {
   font-family: var(--d-mono);
   font-size: 10px;
   letter-spacing: 0.04em;
-  color: rgba(255, 217, 160, 0.72);
+  color: var(--d-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1845,20 +1851,27 @@ button:disabled {
 .deck-rate-num {
   font-family: var(--d-mono);
   font-size: 52px;
-  font-weight: 200;
-  letter-spacing: 0.02em;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   font-variant-numeric: tabular-nums;
-  color: #ffc670;
-  text-shadow:
-    0 0 22px rgba(255, 178, 84, 0.42),
-    0 0 4px rgba(255, 205, 130, 0.65);
+  background: linear-gradient(115deg, #7c4dff 15%, #3b82f6 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+}
+
+.deck-dark .deck-rate-num {
+  background: linear-gradient(115deg, #c4b5fd 15%, #67e8f9 90%);
+  -webkit-background-clip: text;
+  background-clip: text;
 }
 
 .deck-rate-unit {
   font-family: var(--d-mono);
   font-size: 12px;
   letter-spacing: 0.18em;
-  color: rgba(255, 200, 130, 0.6);
+  color: var(--d-muted);
 }
 
 .deck-display-meta {
@@ -1875,11 +1888,10 @@ button:disabled {
   font-weight: 700;
   letter-spacing: 0.22em;
   padding: 4px 10px 3px;
-  border-radius: 7px;
-  color: #ffcf8a;
-  border: 1px solid rgba(255, 190, 110, 0.4);
-  background: rgba(255, 178, 84, 0.09);
-  box-shadow: inset 0 0 12px rgba(255, 178, 84, 0.12);
+  border-radius: 8px;
+  color: var(--d-accent-strong);
+  border: 1px solid var(--d-accent-line);
+  background: var(--d-accent-soft);
 }
 
 .deck-tier {
@@ -1888,28 +1900,27 @@ button:disabled {
   font-weight: 600;
   letter-spacing: 0.2em;
   text-transform: uppercase;
-  color: rgba(255, 217, 160, 0.5);
+  color: var(--d-faint);
 }
 
 .deck-tier[data-tone='success'] {
-  color: #6fe3b6;
-  text-shadow: 0 0 10px rgba(79, 214, 168, 0.5);
+  color: var(--d-success);
 }
 
 .deck-tier[data-tone='warning'] {
-  color: #ffab63;
+  color: var(--d-warn);
 }
 
 .deck-display-sub {
   font-family: var(--d-mono);
   font-size: 10px;
   letter-spacing: 0.08em;
-  color: rgba(255, 217, 160, 0.75);
+  color: var(--d-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .deck-display-sub.dim {
-  color: rgba(255, 217, 160, 0.42);
+  color: var(--d-faint);
 }
 
 /* ===== 主体：导轨 + 内容 ===== */
@@ -1958,14 +1969,14 @@ button:disabled {
 }
 
 .deck-rail-btn:hover {
-  background: var(--d-card);
+  background: var(--d-well);
   color: var(--d-ink);
 }
 
 .deck-rail-btn.active {
-  background: var(--d-amber-soft);
-  border-color: var(--d-amber-line);
-  color: var(--d-amber);
+  background: var(--d-accent-soft);
+  border-color: var(--d-accent-line);
+  color: var(--d-accent);
 }
 
 .deck-rail-btn.active::before {
@@ -1977,8 +1988,8 @@ button:disabled {
   width: 3px;
   height: 22px;
   border-radius: 0 3px 3px 0;
-  background: linear-gradient(180deg, #ffcf8a, #c57a1f);
-  box-shadow: 0 0 8px rgba(245, 176, 76, 0.55);
+  background: linear-gradient(180deg, #a885f7, #7c4dff);
+  box-shadow: 0 0 8px var(--d-glow);
 }
 
 .deck-rail-btn.utility {
@@ -2038,7 +2049,11 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  box-shadow: 0 1px 2px rgba(40, 28, 10, 0.04);
+  box-shadow: 0 4px 18px rgba(86, 70, 160, 0.05);
+}
+
+.deck-dark .deck-card {
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.18);
 }
 
 .deck-card-label {
@@ -2064,7 +2079,7 @@ button:disabled {
   font-style: normal;
   font-size: 9.5px;
   font-weight: 500;
-  color: var(--d-amber);
+  color: var(--d-accent);
   letter-spacing: 0.1em;
 }
 
@@ -2124,13 +2139,13 @@ button:disabled {
 }
 
 .deck-node[data-tone='success'] .deck-node-led {
-  background: var(--d-teal);
-  box-shadow: 0 0 7px rgba(13, 143, 110, 0.7);
+  background: var(--d-success);
+  box-shadow: 0 0 7px rgba(32, 198, 94, 0.6);
 }
 
 .deck-node[data-tone='warning'] .deck-node-led {
-  background: #f5b04c;
-  box-shadow: 0 0 7px rgba(245, 176, 76, 0.75);
+  background: #f59e0b;
+  box-shadow: 0 0 7px rgba(245, 158, 11, 0.6);
   animation: deck-led-pulse 2s ease-in-out infinite;
 }
 
@@ -2149,7 +2164,7 @@ button:disabled {
   content: '';
   position: absolute;
   inset: 0;
-  background: linear-gradient(90deg, transparent, #f5b04c, transparent);
+  background: linear-gradient(90deg, transparent, var(--d-accent), transparent);
   background-size: 200% 100%;
   animation: deck-flow-dash 1.6s linear infinite;
 }
@@ -2184,15 +2199,15 @@ button:disabled {
 }
 
 .deck-chip[data-tone='success'] {
-  color: var(--d-teal);
-  border-color: rgba(13, 143, 110, 0.3);
-  background: var(--d-teal-soft);
+  color: var(--d-success);
+  border-color: rgba(32, 198, 94, 0.28);
+  background: var(--d-success-soft);
 }
 
 .deck-chip[data-tone='warning'] {
-  color: var(--d-amber);
-  border-color: var(--d-amber-line);
-  background: var(--d-amber-soft);
+  color: var(--d-warn);
+  border-color: var(--d-warn-line);
+  background: var(--d-warn-soft);
 }
 
 /* ===== 读数 / 注释 ===== */
@@ -2223,7 +2238,7 @@ button:disabled {
 }
 
 .deck-note[data-tone='success'] {
-  color: var(--d-teal);
+  color: var(--d-success);
 }
 
 /* ===== Unity ===== */
@@ -2234,8 +2249,8 @@ button:disabled {
   gap: 12px;
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid var(--d-amber-line);
-  background: var(--d-amber-soft);
+  border: 1px solid var(--d-warn-line);
+  background: var(--d-warn-soft);
 }
 
 .deck-unity-copy {
@@ -2250,7 +2265,7 @@ button:disabled {
   font-size: 10.5px;
   font-weight: 700;
   letter-spacing: 0.14em;
-  color: var(--d-amber);
+  color: var(--d-warn);
 }
 
 .deck-unity-copy em {
@@ -2315,8 +2330,8 @@ button:disabled {
 }
 
 .deck-spec:hover {
-  border-color: var(--d-amber-line);
-  background: var(--d-amber-soft);
+  border-color: var(--d-accent-line);
+  background: var(--d-accent-soft);
 }
 
 .deck-spec span {
@@ -2384,18 +2399,18 @@ button:disabled {
 }
 
 .deck-toggle.on {
-  border-color: var(--d-amber-line);
-  background: var(--d-amber-soft);
+  border-color: var(--d-accent-line);
+  background: var(--d-accent-soft);
   color: var(--d-ink);
 }
 
 .deck-toggle.on .deck-led {
-  background: #f5b04c;
-  box-shadow: 0 0 8px rgba(245, 176, 76, 0.85);
+  background: var(--d-accent);
+  box-shadow: 0 0 8px var(--d-glow);
 }
 
 .deck-toggle.on em {
-  color: var(--d-amber);
+  color: var(--d-accent);
 }
 
 .deck-gapless {
@@ -2429,15 +2444,15 @@ button:disabled {
 }
 
 .deck-switch.active {
-  border-color: var(--d-amber-line);
-  background: var(--d-amber-soft);
-  box-shadow: inset 0 0 10px rgba(245, 176, 76, 0.18);
+  border-color: var(--d-accent-line);
+  background: var(--d-accent-soft);
+  box-shadow: inset 0 0 10px rgba(124, 77, 255, 0.14);
 }
 
 .deck-switch.active .deck-switch-knob {
   left: 20px;
-  background: #f5b04c;
-  box-shadow: 0 0 8px rgba(245, 176, 76, 0.8);
+  background: var(--d-accent);
+  box-shadow: 0 0 8px var(--d-glow);
 }
 
 /* ===== 按钮 ===== */
@@ -2456,13 +2471,13 @@ button:disabled {
 
 .deck-btn:hover {
   background: var(--d-card-hover);
-  border-color: var(--d-amber-line);
+  border-color: var(--d-accent-line);
 }
 
 .deck-btn.accent {
-  border-color: var(--d-amber-line);
-  background: var(--d-amber-soft);
-  color: var(--d-amber);
+  border-color: var(--d-accent-line);
+  background: var(--d-accent-soft);
+  color: var(--d-accent);
   font-weight: 600;
 }
 
@@ -2477,7 +2492,7 @@ button:disabled {
   gap: 4px;
   border: 0;
   background: transparent;
-  color: var(--d-amber);
+  color: var(--d-accent);
   font-size: 11px;
   letter-spacing: 0.04em;
   padding: 2px 4px;
@@ -2485,7 +2500,7 @@ button:disabled {
 }
 
 .deck-link:hover {
-  background: var(--d-amber-soft);
+  background: var(--d-accent-soft);
 }
 
 /* ===== 分段选择 ===== */
@@ -2521,10 +2536,10 @@ button:disabled {
 
 .deck-segmented button.active {
   background: var(--d-card-hover);
-  border-color: var(--d-amber-line);
-  color: var(--d-amber);
+  border-color: var(--d-accent-line);
+  color: var(--d-accent);
   font-weight: 600;
-  box-shadow: 0 2px 8px rgba(40, 28, 10, 0.08);
+  box-shadow: 0 2px 8px rgba(86, 70, 160, 0.1);
 }
 
 /* ===== 设备列表 ===== */
@@ -2585,9 +2600,9 @@ button:disabled {
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.12em;
-  color: var(--d-amber);
-  border: 1px solid var(--d-amber-line);
-  background: var(--d-amber-soft);
+  color: var(--d-accent);
+  border: 1px solid var(--d-accent-line);
+  background: var(--d-accent-soft);
   padding: 3px 7px;
   border-radius: 999px;
   flex-shrink: 0;
@@ -2599,12 +2614,12 @@ button:disabled {
 }
 
 .deck-device.active {
-  border-color: var(--d-amber-line);
-  background: var(--d-amber-soft);
+  border-color: var(--d-accent-line);
+  background: var(--d-accent-soft);
 }
 
 .deck-device.active > i {
-  color: var(--d-amber);
+  color: var(--d-accent);
 }
 
 /* ===== 表单 ===== */
@@ -2639,7 +2654,7 @@ button:disabled {
   border-radius: 10px;
   border: 1px solid var(--d-line-strong);
   background-color: var(--d-card);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238d8172' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239ca3af' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
   color: var(--d-ink);
@@ -2650,13 +2665,13 @@ button:disabled {
 
 .deck-select:hover,
 .deck-select:focus {
-  border-color: var(--d-amber-line);
+  border-color: var(--d-accent-line);
   outline: none;
 }
 
 .deck-select option {
-  color: #2a241c;
-  background: #fffdf8;
+  color: #111827;
+  background: #ffffff;
 }
 
 /* ===== 滑杆 ===== */
@@ -2690,7 +2705,7 @@ button:disabled {
   font-family: var(--d-mono);
   font-size: 11.5px;
   font-weight: 600;
-  color: var(--d-amber);
+  color: var(--d-accent);
   font-variant-numeric: tabular-nums;
 }
 
@@ -2708,8 +2723,8 @@ button:disabled {
   border-radius: 4px;
   background: linear-gradient(
     to right,
-    #f5b04c 0%,
-    #d18a2b var(--range-value),
+    #a885f7 0%,
+    #7c4dff var(--range-value),
     var(--d-line-strong) var(--range-value),
     var(--d-line-strong) 100%
   );
@@ -2722,9 +2737,9 @@ button:disabled {
   height: 13px;
   margin-top: -4.5px;
   border-radius: 50%;
-  background: #ffe2b8;
-  border: 2px solid #c57a1f;
-  box-shadow: 0 0 6px rgba(245, 176, 76, 0.55);
+  background: #ffffff;
+  border: 2px solid #7c4dff;
+  box-shadow: 0 0 6px rgba(124, 77, 255, 0.45);
   transition: transform 0.15s ease;
 }
 
@@ -2741,16 +2756,16 @@ button:disabled {
 .deck-range::-moz-range-progress {
   height: 4px;
   border-radius: 4px;
-  background: linear-gradient(to right, #f5b04c, #d18a2b);
+  background: linear-gradient(to right, #a885f7, #7c4dff);
 }
 
 .deck-range::-moz-range-thumb {
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  background: #ffe2b8;
-  border: 2px solid #c57a1f;
-  box-shadow: 0 0 6px rgba(245, 176, 76, 0.55);
+  background: #ffffff;
+  border: 2px solid #7c4dff;
+  box-shadow: 0 0 6px rgba(124, 77, 255, 0.45);
 }
 
 /* ===== DSP 主控 ===== */
@@ -2852,14 +2867,14 @@ button:disabled {
 }
 
 .deck-inline-toggle.on {
-  border-color: var(--d-amber-line);
-  background: var(--d-amber-soft);
-  color: var(--d-amber);
+  border-color: var(--d-accent-line);
+  background: var(--d-accent-soft);
+  color: var(--d-accent);
 }
 
 .deck-inline-toggle.on .deck-led {
-  background: #f5b04c;
-  box-shadow: 0 0 8px rgba(245, 176, 76, 0.85);
+  background: var(--d-accent);
+  box-shadow: 0 0 8px var(--d-glow);
 }
 
 /* ===== 行动按钮 ===== */
@@ -2919,22 +2934,21 @@ button:disabled {
 }
 
 .deck-action:hover {
-  border-color: var(--d-amber-line);
-  background: var(--d-card-hover);
+  border-color: var(--d-accent-line);
   transform: translateY(-1px);
 }
 
 .deck-action:hover > i {
-  color: var(--d-amber);
+  color: var(--d-accent);
 }
 
 .deck-action.accent {
-  border-color: var(--d-amber-line);
-  background: var(--d-amber-soft);
+  border-color: var(--d-accent-line);
+  background: var(--d-accent-soft);
 }
 
 .deck-action.accent > i {
-  color: var(--d-amber);
+  color: var(--d-accent);
 }
 
 .deck-action.full {
@@ -2990,8 +3004,8 @@ button:disabled {
 }
 
 .deck-cast-item:hover {
-  border-color: var(--d-amber-line);
-  background: var(--d-amber-soft);
+  border-color: var(--d-accent-line);
+  background: var(--d-accent-soft);
 }
 
 .deck-bookmark-item {
@@ -3020,7 +3034,7 @@ button:disabled {
   font-family: var(--d-mono);
   font-size: 11px;
   font-weight: 600;
-  color: var(--d-amber);
+  color: var(--d-accent);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
@@ -3036,9 +3050,9 @@ button:disabled {
 
 .deck-bookmark-kind {
   font-size: 9.5px;
-  color: var(--d-teal);
-  border: 1px solid rgba(13, 143, 110, 0.3);
-  background: var(--d-teal-soft);
+  color: var(--d-success);
+  border: 1px solid rgba(32, 198, 94, 0.28);
+  background: var(--d-success-soft);
   border-radius: 999px;
   padding: 2px 7px;
   flex-shrink: 0;
@@ -3047,7 +3061,7 @@ button:disabled {
 .deck-bookmark-rename {
   flex: 1;
   min-width: 0;
-  border: 1px solid var(--d-amber-line);
+  border: 1px solid var(--d-accent-line);
   border-radius: 8px;
   background: var(--d-card);
   color: var(--d-ink);
@@ -3088,8 +3102,8 @@ button:disabled {
 }
 
 .deck-extension:hover {
-  border-color: var(--d-amber-line);
-  background: var(--d-amber-soft);
+  border-color: var(--d-accent-line);
+  background: var(--d-accent-soft);
 }
 
 /* ===== 减少动态 ===== */
