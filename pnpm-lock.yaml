@@ -28,30 +28,171 @@ importers:
       '@phosphor-icons/web':
         specifier: ^2.1.2
         version: 2.1.2
+      '@tokenizer/inflate':
+        specifier: 0.4.1
+        version: 0.4.1
+      ansi-regex:
+        specifier: 5.0.1
+        version: 5.0.1
+      asynckit:
+        specifier: 0.4.0
+        version: 0.4.0
+      buffer-crc32:
+        specifier: 0.2.13
+        version: 0.2.13
+      call-bind-apply-helpers:
+        specifier: 1.0.2
+        version: 1.0.2
+      call-bound:
+        specifier: 1.0.4
+        version: 1.0.4
+      combined-stream:
+        specifier: 1.0.8
+        version: 1.0.8
+      delayed-stream:
+        specifier: 1.0.0
+        version: 1.0.0
+      dijkstrajs:
+        specifier: 1.0.3
+        version: 1.0.3
       discord-rpc:
         specifier: ^4.0.1
         version: 4.0.1(encoding@0.1.13)
+      dunder-proto:
+        specifier: 1.0.1
+        version: 1.0.1
+      ee-first:
+        specifier: 1.1.1
+        version: 1.1.1
+      emoji-regex:
+        specifier: 8.0.0
+        version: 8.0.0
+      es-define-property:
+        specifier: 1.0.1
+        version: 1.0.1
+      es-errors:
+        specifier: 1.3.0
+        version: 1.3.0
+      es-object-atoms:
+        specifier: 1.1.1
+        version: 1.1.1
+      es-set-tostringtag:
+        specifier: 2.1.0
+        version: 2.1.0
       extract-zip:
         specifier: ^2.0.1
         version: 2.0.1
+      fd-slicer:
+        specifier: 1.1.0
+        version: 1.1.0
+      follow-redirects:
+        specifier: 1.16.0
+        version: 1.16.0
+      form-data:
+        specifier: 4.0.6
+        version: 4.0.6
+      forwarded:
+        specifier: 0.2.0
+        version: 0.2.0
+      function-bind:
+        specifier: 1.1.2
+        version: 1.1.2
+      get-east-asian-width:
+        specifier: 1.5.0
+        version: 1.5.0
+      get-intrinsic:
+        specifier: 1.3.0
+        version: 1.3.0
+      get-proto:
+        specifier: 1.0.1
+        version: 1.0.1
+      get-stream:
+        specifier: 5.2.0
+        version: 5.2.0
+      gopd:
+        specifier: 1.2.0
+        version: 1.2.0
+      has-symbols:
+        specifier: 1.1.0
+        version: 1.1.0
+      has-tostringtag:
+        specifier: 1.0.2
+        version: 1.0.2
+      hasown:
+        specifier: 2.0.4
+        version: 2.0.4
+      ieee754:
+        specifier: 1.2.1
+        version: 1.2.1
+      ipaddr.js:
+        specifier: 1.9.1
+        version: 1.9.1
+      is-fullwidth-code-point:
+        specifier: 3.0.0
+        version: 3.0.0
+      math-intrinsics:
+        specifier: 1.1.0
+        version: 1.1.0
+      mime-db:
+        specifier: 1.52.0
+        version: 1.52.0
       music-metadata:
         specifier: ^11.12.3
         version: 11.12.3
       node-taglib-sharp:
         specifier: 6.0.3
         version: 6.0.3
+      object-inspect:
+        specifier: 1.13.4
+        version: 1.13.4
+      pend:
+        specifier: 1.2.0
+        version: 1.2.0
       pinia:
         specifier: ^3.0.4
         version: 3.0.4(typescript@5.9.3)(vue@3.5.33(typescript@5.9.3))
+      pngjs:
+        specifier: 5.0.0
+        version: 5.0.0
       primeicons:
         specifier: ^7.0.0
         version: 7.0.0
+      proxy-from-env:
+        specifier: 2.1.0
+        version: 2.1.0
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
+      side-channel:
+        specifier: 1.1.0
+        version: 1.1.0
+      side-channel-list:
+        specifier: 1.0.1
+        version: 1.0.1
+      side-channel-map:
+        specifier: 1.0.1
+        version: 1.0.1
+      side-channel-weakmap:
+        specifier: 1.0.2
+        version: 1.0.2
+      string_decoder:
+        specifier: 1.3.0
+        version: 1.3.0
+      toidentifier:
+        specifier: 1.0.1
+        version: 1.0.1
       undici:
         specifier: ^6.27.0
         version: 6.27.0
+      util-deprecate:
+        specifier: 1.0.2
+        version: 1.0.2
+      wrappy:
+        specifier: 1.0.2
+        version: 1.0.2
+      yauzl:
+        specifier: 2.10.0
+        version: 2.10.0
     devDependencies:
       '@electron-toolkit/eslint-config-prettier':
         specifier: 3.0.0
@@ -1933,10 +2074,6 @@ packages:
 
   has-tostringtag@1.0.2:
     resolution: {integrity: sha512-NqADB8VjPFLM2V0VvHUewwwsw0ZWBaIdgo+ieHtK3hasLz4qeCRjYcqfB6AQrBggRKppKF8L52/VqdVsO47Dlw==}
-    engines: {node: '>= 0.4'}
-
-  hasown@2.0.3:
-    resolution: {integrity: sha512-ej4AhfhfL2Q2zpMmLo7U1Uv9+PyhIZpgQLGT1F9miIGmiCJIoCgSmczFdrc97mWT4kVY72KA+WnnhJ5pghSvSg==}
     engines: {node: '>= 0.4'}
 
   hasown@2.0.4:
@@ -4676,7 +4813,7 @@ snapshots:
       es-errors: 1.3.0
       get-intrinsic: 1.3.0
       has-tostringtag: 1.0.2
-      hasown: 2.0.3
+      hasown: 2.0.4
 
   es6-error@4.1.1:
     optional: true
@@ -5107,7 +5244,7 @@ snapshots:
       get-proto: 1.0.1
       gopd: 1.2.0
       has-symbols: 1.1.0
-      hasown: 2.0.3
+      hasown: 2.0.4
       math-intrinsics: 1.1.0
 
   get-proto@1.0.1:
@@ -5194,10 +5331,6 @@ snapshots:
   has-tostringtag@1.0.2:
     dependencies:
       has-symbols: 1.1.0
-
-  hasown@2.0.3:
-    dependencies:
-      function-bind: 1.1.2
 
   hasown@2.0.4:
     dependencies:

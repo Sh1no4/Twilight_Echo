@@ -15,6 +15,7 @@ pnpm run verify:ncm-patch
 pnpm run test:production-audit
 pnpm run audit:production -- --output output/release-evidence/production-dependency-audit.json
 pnpm run test:release-artifacts
+pnpm run verify:packaged-dependencies
 ```
 
 The NCM API fix is declared under `patchedDependencies` in `pnpm-workspace.yaml`. The behavior-level
@@ -46,6 +47,10 @@ The install-policy check also confirms that `discord-rpc`'s non-Electron
 All shipped fonts are preconverted `.woff2` assets. Dependency installation does not compile or
 convert fonts; any future font regeneration tooling needs its own conversion smoke test before it
 can enter the release dependency tree.
+
+Packaged dependency verification parses every production `package.json` inside `app.asar` and
+fails when Node's nested/root `node_modules` lookup cannot resolve a required dependency. This gate
+prevents installers that build successfully but fail during main-process startup.
 
 ## Required Commands
 

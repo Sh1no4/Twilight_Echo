@@ -1,5 +1,7 @@
 const { spawnSync } = require('node:child_process')
+const fs = require('node:fs')
 const path = require('node:path')
+const { verifyPackagedDependencyClosure } = require('./verify-packaged-dependency-closure.cjs')
 
 const root = path.resolve(__dirname, '..')
 const electronBuilder = require.resolve('electron-builder/out/cli/cli.js')
@@ -15,7 +17,12 @@ function run(args, environment = process.env) {
 function main(args = process.argv.slice(2)) {
   const result = run(args)
   if (result.error) throw result.error
-  process.exit(result.status ?? 1)
+  if ((result.status ?? 1) !== 0) process.exit(result.status ?? 1)
+  const packagedAsar = path.join(root, 'dist', 'win-unpacked', 'resources', 'app.asar')
+  if (process.platform === 'win32' && fs.existsSync(packagedAsar)) {
+    const verified = verifyPackagedDependencyClosure(packagedAsar)
+    console.log(`Packaged dependency closure verified: ${verified.packages} packages`)
+  }
 }
 
 if (require.main === module) main()
