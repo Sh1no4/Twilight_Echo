@@ -1,6 +1,6 @@
 # Twilight Echo Theme Contract Audit
 
-Status: Phase 0 baseline, with Phase 1 and Phase 2 behavior frozen.
+Status: Phase 0 baseline, with Phase 1 through Phase 3 behavior frozen.
 
 ## Contract Rules
 
@@ -27,14 +27,16 @@ Status: Phase 0 baseline, with Phase 1 and Phase 2 behavior frozen.
 | Appearance | background treatment | `solid`, `gradient`, `cover-blur`, `image`                   | Bounded tokens with solid failure fallback          |
 | Appearance | tone scheduling      | `manual`, `system`, `timed`                                  | Native system events or bounded local time schedule |
 | Appearance | contrast guard       | `off`, `warn`, `enforce`                                     | WCAG warning or host-derived text fallback           |
-| Navigation | style                | `expanded`, `compact`, `rail`                                | Attribute output only                               |
-| Navigation | icon scale           | `sm`, `md`, `lg`                                             | Attribute output only                               |
-| Library    | density              | `comfortable`, `compact`                                     | Attribute output only                               |
-| Library    | selection            | `fill`, `stroke`                                             | Attribute output only                               |
+| Navigation | style                | `expanded`, `compact`, `rail`                                | Static host sidebar variants                        |
+| Navigation | icon scale           | `sm`, `md`, `lg`                                             | Fixed hit areas with scaled glyphs                  |
+| Navigation | logo                 | `show`, `hide`                                               | Host brand visibility only                          |
+| Library    | density              | `comfortable`, `compact`                                     | Static list/card presentation                       |
+| Library    | selection            | `fill`, `stroke`                                             | Static selected-row presentation                    |
+| Library    | title overlay        | `off`, `on`                                                  | Bounded token-driven heading overlay                |
 | Player     | layout               | `standard`, `full-cover`, `lyrics-focus`, `split`, `minimal` | Attribute output only                               |
 | Player     | controls             | `standard`, `pro`                                            | Attribute output only                               |
 | Artwork    | transition           | `fade`, `slide`, `none`                                      | Attribute output only                               |
-| Icons      | family               | `outline`, `rounded`, `filled`                               | Attribute output only                               |
+| Icons      | family               | `outline`, `rounded`, `filled`                               | Host-owned semantic slot mapping                    |
 | Typography | title case           | `preserve`, `uppercase`                                      | Presentation only; metadata remains unchanged       |
 | Typography | lyric accent         | `off`, `accent`                                              | Active lyric line may inherit the accent family     |
 | Typography | title color          | `off`, `track`, `artist-album`                               | Accent applies to the selected metadata hierarchy   |
@@ -89,6 +91,23 @@ repository has a stable Electron screenshot harness.
   Lora, JetBrains Mono, and Space Grotesk all pass `document.fonts.check()` after load.
 - `test:themes` (33/33), `test:cross-cutting-regressions` (13/13), ESLint, and both TypeScript
   typechecks pass for the Phase 2 state.
+
+### Phase 3 Evidence
+
+- `audit-evidence/theme-p3-light.png` and `audit-evidence/theme-p3-dark.png` capture the real Theme
+  Studio navigation and library domains. The implementation exposes 25 host-owned semantic slots;
+  theme profiles select a family but cannot provide icon resources or classes.
+- Raw CDP exercised all three icon families across all three navigation layouts. Every migrated
+  icon resolves exactly one visible glyph with the expected Phosphor font, while the real sidebar
+  remains 216/164/72px wide and every menu button remains 40px high.
+- Library density, fill/stroke selection, title overlay, icon size, selection radius/inset, cover
+  radius, overlay opacity, and action radius update root attributes, CSS variables, and the preview
+  without changing `ROW_HEIGHT = 68` or the virtual-scroll data path.
+- Geometry checks cover 1495×883, 1200×800, and 1080×720 with no document/preview horizontal
+  overflow or pane/header collisions. Forced-colors retains one visible glyph per slot and a 2px
+  focus outline.
+- `test:themes` (35/35), `test:local-perf` (99 passed, 2 skipped),
+  `test:cross-cutting-regressions` (13/13), ESLint, and both TypeScript typechecks pass.
 
 ## Color Baseline
 

@@ -13,9 +13,11 @@
 | P0 | ✅ 已完成 | 契约审计、token/mode 边界、颜色 allowlist、明暗视觉基线 | `docs/theme-contract-audit.md`、`themeColorAudit.test.ts`、P1 明暗截图 |
 | P1 | ✅ 已完成 | V2 profile/迁移/归档、白名单 `data-te-*`、Theme Studio 三栏与 12 项个性化/材质设置 | `test:themes`、`typecheck`、`docs/audit-evidence/theme-p1-*.png` |
 | P2 | ✅ 已完成 | 封面强调色、四类背景、明暗调度、16+16 色板、9 项字体域、内置字体、统一表面、对比度保护 | `test:themes` 33/33、`test:cross-cutting-regressions` 13/13、ESLint、typecheck、`docs/audit-evidence/theme-p2-*.png` |
-| P3 | ⏳ 待开始 | 图标、导航与媒体库主题域 | 以前述 P2 证据为启动基线 |
+| P3 | ✅ 已完成 | 25 个宿主图标槽、三图标族/三导航布局、导航标识与媒体库密度/选中/叠层 | `test:themes` 35/35、`test:local-perf` 99 通过/2 跳过、`docs/audit-evidence/theme-p3-*.png` |
 
 P2 额外通过 CDP 验证：1495×883、1200×800、1080×720 三种视口无横向溢出或三栏/顶栏碰撞；reduced-motion 下不添加 tone 过渡；无封面时动态背景保留实色回退；Lora、JetBrains Mono、Space Grotesk 实际加载；长中英日韩标题无越界。本轮遵循要求未使用 Computer Use。
+
+P3 额外通过原始 CDP 验证：三图标族 × 三导航布局的全部组合均只显示一个正确字族图标，真实侧栏宽度为 216/164/72px 且菜单点击区保持 40px；品牌标识显示时底部菜单仍完整可达。媒体库舒适/紧凑、填充/描边、标题叠层及 6 个新增数值令牌均在真实预览中即时生效。1495×883、1200×800、1080×720 无横向溢出或面板碰撞，forced-colors 下图标和 2px 焦点轮廓保持可见。验证全程未使用 Computer Use。
 
 已知非主题门禁：`test:playback-routing` 仍有 HiFi 抽屉旧文案断言和 metadata enrichment 请求次数断言两项失败，均位于本阶段未改动的播放/元数据行为，不通过修改主题代码掩盖。
 
@@ -171,7 +173,7 @@ interface ThemeProfileV2 extends ThemeProfileV1 {
 
 ---
 
-### Phase 3：图标、导航与媒体库（约 2–3 周）
+### Phase 3：图标、导航与媒体库（约 2–3 周，✅ 2026-07-23 完成）
 
 **目标**：完成 Aurora"图标 + 导航栏 + 媒体库"三域，守住大库性能。
 

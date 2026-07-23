@@ -8,9 +8,21 @@ const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 const baseStyle = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
 const settingsPage = readFileSync(new URL('./SettingsPage.vue', import.meta.url), 'utf8')
 const studio = readFileSync(new URL('./ThemeStudioPage.vue', import.meta.url), 'utf8')
+const studioStyle = readFileSync(
+  new URL('./theme-studio/ThemeStudioPage.css', import.meta.url),
+  'utf8'
+)
 const sideMenu = readFileSync(new URL('./SideMenu.vue', import.meta.url), 'utf8')
+const themeIcon = readFileSync(new URL('./ThemeIcon.vue', import.meta.url), 'utf8')
 const titleBar = readFileSync(new URL('./TitleBar.vue', import.meta.url), 'utf8')
 const songList = readFileSync(new URL('./song-list/SongList.css', import.meta.url), 'utf8')
+const songListView = readFileSync(new URL('./SongList.vue', import.meta.url), 'utf8')
+const virtualScroll = readFileSync(
+  new URL('./song-list/useSongListVirtualScroll.ts', import.meta.url),
+  'utf8'
+)
+const localDashboard = readFileSync(new URL('./LocalDashboard.css', import.meta.url), 'utf8')
+const rendererMain = readFileSync(new URL('../main.ts', import.meta.url), 'utf8')
 const settingsStyle = readFileSync(
   new URL('./settings-page/SettingsPage.css', import.meta.url),
   'utf8'
@@ -100,6 +112,32 @@ test('phase two unified surface and background tokens are wired into host CSS', 
   assert.match(baseStyle, /--te-track-title-radius/)
   assert.match(baseStyle, /data-te-title-case='uppercase'/)
   assert.match(baseStyle, /data-te-lyric-accent='accent'/)
+})
+
+test('phase three icon, navigation, and library modes use static host-owned presentation', () => {
+  assert.match(rendererMain, /@phosphor-icons\/web\/bold/)
+  assert.match(rendererMain, /@phosphor-icons\/web\/fill/)
+  assert.match(themeIcon, /THEME_ICON_SLOT_REGISTRY/)
+  assert.match(themeIcon, /data-theme-icon-slot/)
+  assert.match(sideMenu, /icon-slot="navigation\.streaming"/)
+  assert.match(sideMenu, /data-te-navigation-style='rail'/)
+  assert.match(sideMenu, /data-te-navigation-icon-scale='lg'/)
+  assert.match(studio, /updateIconFamily/)
+  assert.match(studio, /updateNavigationMode\('style'/)
+  assert.match(studio, /updateLibraryMode\('density'/)
+  assert.match(songListView, /icon-slot="library\.search"/)
+  assert.match(songList, /data-te-library-selection='stroke'/)
+  assert.match(songList, /--te-library-action-bg/)
+  assert.match(localDashboard, /data-te-library-density='compact'/)
+  assert.match(localDashboard, /--te-library-cover-radius/)
+  assert.match(studioStyle, /--te-navigation-opacity/)
+  assert.match(studioStyle, /--te-library-cover-radius/)
+  assert.doesNotMatch(studioStyle, /:global\(/)
+  for (const scopedStyle of [themeIcon, sideMenu, songList, localDashboard]) {
+    assert.doesNotMatch(scopedStyle, /:global\(html\[data-te-[^)]+\]\)\s+[.#:]/)
+  }
+  assert.match(virtualScroll, /const ROW_HEIGHT = 68/)
+  assert.doesNotMatch(virtualScroll, /data-te-library-density/)
 })
 
 test('preview and failed writes restore the persisted runtime without partially committing assets', () => {

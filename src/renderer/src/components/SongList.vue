@@ -31,6 +31,7 @@ import {
 } from '../utils/libraryViewPreferences.ts'
 import CoverImg from './CoverImg.vue'
 import LocalLibraryTagManager from './LocalLibraryTagManager.vue'
+import ThemeIcon from './ThemeIcon.vue'
 import { formatDuration } from './song-list/formatDuration'
 import type { GridItem } from './song-list/types'
 import { useSongListContextMenu } from './song-list/useSongListContextMenu'
@@ -1004,7 +1005,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
             <h2 class="song-list-title">{{ viewTitle }}</h2>
             <div class="header-right">
               <div class="search-box" :class="{ focused: searchInputFocused }">
-                <i class="pi pi-search search-icon"></i>
+                <ThemeIcon class="search-icon" icon-slot="library.search" />
                 <input
                   v-model="searchQuery"
                   type="text"
@@ -1014,7 +1015,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   @blur="searchInputFocused = false"
                 />
                 <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
-                  <i class="pi pi-times"></i>
+                  <ThemeIcon icon-slot="library.clear" />
                 </button>
               </div>
             </div>
@@ -1051,7 +1052,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   alt="cover"
                 />
                 <div v-else class="artist-cover-placeholder">
-                  <i class="pi pi-user" style="font-size: 28px; color: #bbb"></i>
+                  <ThemeIcon class="library-placeholder-icon" icon-slot="library.artist" />
                 </div>
                 <div class="artist-name">{{ artist.name }}</div>
                 <div class="artist-count">{{ artist.trackCount }} 首</div>
@@ -1070,7 +1071,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               >
                 <CoverImg v-if="album.cover" :cover="album.cover" class="album-cover" alt="cover" />
                 <div v-else class="album-cover-placeholder">
-                  <i class="pi pi-images" style="font-size: 28px; color: #bbb"></i>
+                  <ThemeIcon class="library-placeholder-icon" icon-slot="library.album" />
                 </div>
                 <div class="album-name">{{ album.name }}</div>
                 <div class="album-count">{{ album.trackCount }} 首</div>
@@ -1091,7 +1092,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   alt="cover"
                 />
                 <div v-else class="artist-cover-placeholder">
-                  <i class="pi pi-tags" style="font-size: 28px; color: #bbb"></i>
+                  <ThemeIcon class="library-placeholder-icon" icon-slot="library.genre" />
                 </div>
                 <div class="artist-name">{{ genre.name }}</div>
                 <div class="artist-count">{{ genre.trackCount }} 首</div>
@@ -1105,7 +1106,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               <!-- Create Playlist Card -->
               <div class="playlist-card create-playlist-card" @click="openCreatePlaylistDialog()">
                 <div class="playlist-cover-placeholder create-placeholder">
-                  <i class="pi pi-plus" style="font-size: 32px; color: #999"></i>
+                  <ThemeIcon class="library-placeholder-icon" icon-slot="library.add" />
                 </div>
                 <div class="playlist-name">创建歌单</div>
                 <div class="playlist-count">点击创建新歌单</div>
@@ -1161,7 +1162,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   alt="cover"
                 />
                 <div v-else class="playlist-cover-placeholder">
-                  <i class="pi pi-folder" style="font-size: 32px; color: #fff"></i>
+                  <ThemeIcon class="library-placeholder-icon" icon-slot="library.folder" />
                 </div>
                 <div class="playlist-name">{{ folder.name }}</div>
                 <div class="playlist-count">{{ folder.trackCount }} 首</div>
@@ -1275,7 +1276,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                 </div>
               </div>
               <div class="search-box" :class="{ focused: searchInputFocused }">
-                <i class="pi pi-search search-icon"></i>
+                <ThemeIcon class="search-icon" icon-slot="library.search" />
                 <input
                   v-model="searchQuery"
                   type="text"
@@ -1285,7 +1286,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   @blur="searchInputFocused = false"
                 />
                 <button v-if="searchQuery" class="search-clear" @click="searchQuery = ''">
-                  <i class="pi pi-times"></i>
+                  <ThemeIcon icon-slot="library.clear" />
                 </button>
               </div>
               <div
@@ -1303,7 +1304,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                   title="筛选器"
                   @click="toggleLibraryFilterPanel"
                 >
-                  <i class="pi pi-filter" style="font-size: 13px"></i>
+                  <ThemeIcon icon-slot="library.filter" />
                   <span>筛选器</span>
                   <span
                     v-if="activeLibraryFilterCount > 0"
@@ -1508,7 +1509,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
           </div>
           <div v-if="displayTracks.length === 0" class="empty-state">
             <div class="empty-icon">
-              <i class="pi pi-wave-pulse" style="font-size: 48px; color: #ccc"></i>
+              <ThemeIcon class="empty-library-icon" icon-slot="library.empty" />
             </div>
             <p class="empty-text">暂无内容</p>
             <p class="empty-hint">通过左侧菜单「歌单 → 添加文件夹」导入音乐</p>
@@ -1648,7 +1649,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                           @change="onTrackSelectToggle(track, Number(index), $event)"
                         />
                         <span class="track-select-box" aria-hidden="true">
-                          <i v-if="isSelected(track.id)" class="pi pi-check"></i>
+                          <ThemeIcon v-if="isSelected(track.id)" icon-slot="library.selected" />
                         </span>
                       </label>
                       <CoverImg
@@ -1660,13 +1661,13 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                         alt="cover"
                       />
                       <div v-else class="cover-placeholder">
-                        <i class="pi pi-wave-pulse" style="font-size: 18px; color: #bbb"></i>
+                        <ThemeIcon icon-slot="library.empty" />
                       </div>
                     </div>
                   </td>
                   <td class="col-index">
                     <span v-if="currentTrack?.id === track.id" class="playing-indicator">
-                      <i class="pi pi-volume-up" style="font-size: 12px; color: #1a73e8"></i>
+                      <ThemeIcon icon-slot="library.playing" />
                     </span>
                     <span v-else>{{ visibleRange.start + Number(index) + 1 }}</span>
                   </td>
@@ -1853,9 +1854,7 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
               @keyup.enter="handleConfirmCreatePlaylist"
             />
             <div class="dialog-actions">
-              <button class="dialog-btn cancel" @click="dismissCreatePlaylistDialog">
-                取消
-              </button>
+              <button class="dialog-btn cancel" @click="dismissCreatePlaylistDialog">取消</button>
               <button
                 class="dialog-btn confirm"
                 :disabled="!newPlaylistName.trim()"

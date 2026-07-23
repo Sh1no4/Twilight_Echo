@@ -127,8 +127,10 @@ export type ThemeToneScheduling = 'manual' | 'system' | 'timed'
 export type ThemeContrastGuard = 'off' | 'warn' | 'enforce'
 export type ThemeNavigationStyle = 'expanded' | 'compact' | 'rail'
 export type ThemeIconScale = 'sm' | 'md' | 'lg'
+export type ThemeNavigationLogo = 'show' | 'hide'
 export type ThemeLibraryDensity = 'comfortable' | 'compact'
 export type ThemeLibrarySelection = 'fill' | 'stroke'
+export type ThemeLibraryTitleOverlay = 'off' | 'on'
 export type ThemePlayerLayout = 'standard' | 'full-cover' | 'lyrics-focus' | 'split' | 'minimal'
 export type ThemePlayerControls = 'standard' | 'pro'
 export type ThemeArtworkTransition = 'fade' | 'slide' | 'none'
@@ -167,10 +169,12 @@ export interface ThemeModes {
   navigation?: {
     style?: ThemeNavigationStyle
     iconScale?: ThemeIconScale
+    logo?: ThemeNavigationLogo
   }
   library?: {
     density?: ThemeLibraryDensity
     selection?: ThemeLibrarySelection
+    titleOverlay?: ThemeLibraryTitleOverlay
   }
   player?: {
     layout?: ThemePlayerLayout
@@ -194,6 +198,58 @@ export interface ThemeProfileV2 extends Omit<ThemeProfileV1, 'schemaVersion'> {
   schemaVersion: 2
   modes: ThemeModes
   toneSchedule?: ThemeToneSchedule
+}
+
+export type ThemeIconDomain = 'navigation' | 'library'
+
+export interface ThemeIconSlotDefinition {
+  domain: ThemeIconDomain
+  classes: Readonly<Record<ThemeIconFamily, string>>
+}
+
+function themeIconSlot(domain: ThemeIconDomain, glyph: string): ThemeIconSlotDefinition {
+  return Object.freeze({
+    domain,
+    classes: Object.freeze({
+      outline: `ph ph-${glyph}`,
+      rounded: `ph-bold ph-${glyph}`,
+      filled: `ph-fill ph-${glyph}`
+    })
+  })
+}
+
+export const THEME_ICON_SLOT_REGISTRY = Object.freeze({
+  'navigation.home': themeIconSlot('navigation', 'house'),
+  'navigation.songs': themeIconSlot('navigation', 'music-notes-simple'),
+  'navigation.artists': themeIconSlot('navigation', 'microphone-stage'),
+  'navigation.albums': themeIconSlot('navigation', 'disc'),
+  'navigation.genres': themeIconSlot('navigation', 'tag'),
+  'navigation.playlists': themeIconSlot('navigation', 'playlist'),
+  'navigation.folders': themeIconSlot('navigation', 'folder-open'),
+  'navigation.recent': themeIconSlot('navigation', 'clock-counter-clockwise'),
+  'navigation.streaming': themeIconSlot('navigation', 'globe'),
+  'navigation.radio': themeIconSlot('navigation', 'radio'),
+  'navigation.import': themeIconSlot('navigation', 'plus'),
+  'navigation.plugin': themeIconSlot('navigation', 'puzzle-piece'),
+  'library.search': themeIconSlot('library', 'magnifying-glass'),
+  'library.clear': themeIconSlot('library', 'x'),
+  'library.artist': themeIconSlot('library', 'microphone-stage'),
+  'library.album': themeIconSlot('library', 'disc'),
+  'library.genre': themeIconSlot('library', 'tag'),
+  'library.playlist': themeIconSlot('library', 'playlist'),
+  'library.folder': themeIconSlot('library', 'folder-open'),
+  'library.add': themeIconSlot('library', 'plus'),
+  'library.play': themeIconSlot('library', 'play'),
+  'library.empty': themeIconSlot('library', 'waveform'),
+  'library.selected': themeIconSlot('library', 'check'),
+  'library.playing': themeIconSlot('library', 'speaker-high'),
+  'library.filter': themeIconSlot('library', 'funnel')
+})
+
+export type ThemeIconSlot = keyof typeof THEME_ICON_SLOT_REGISTRY
+
+export function resolveThemeIconClasses(slot: ThemeIconSlot, family: ThemeIconFamily): string {
+  return THEME_ICON_SLOT_REGISTRY[slot].classes[family]
 }
 
 export type ThemeProfile = ThemeProfileV1 | ThemeProfileV2
@@ -345,46 +401,45 @@ export const THEME_ACCENT_PALETTES: Readonly<Record<ThemeTone, readonly ThemePal
     ])
   })
 
-export const THEME_BACKGROUND_PALETTES: Readonly<
-  Record<ThemeTone, readonly ThemePaletteEntry[]>
-> = Object.freeze({
-  pureWhite: Object.freeze([
-    { id: 'paper', label: '纸白', value: '#f4f4f7' },
-    { id: 'snow', label: '雪白', value: '#f8fafc' },
-    { id: 'mist', label: '雾灰', value: '#f1f5f9' },
-    { id: 'blue-mist', label: '蓝雾', value: '#eff6ff' },
-    { id: 'indigo-mist', label: '靛雾', value: '#eef2ff' },
-    { id: 'violet-mist', label: '紫雾', value: '#f5f3ff' },
-    { id: 'rose-mist', label: '玫瑰雾', value: '#fff1f2' },
-    { id: 'amber-mist', label: '暖雾', value: '#fffbeb' },
-    { id: 'green-mist', label: '绿雾', value: '#f0fdf4' },
-    { id: 'teal-mist', label: '青雾', value: '#f0fdfa' },
-    { id: 'cyan-mist', label: '天青雾', value: '#ecfeff' },
-    { id: 'warm-gray', label: '暖灰', value: '#fafaf9' },
-    { id: 'pearl', label: '珍珠', value: '#f5f5f4' },
-    { id: 'lavender', label: '薰衣草', value: '#faf5ff' },
-    { id: 'blush', label: '浅绯', value: '#fdf2f8' },
-    { id: 'mint', label: '薄荷', value: '#ecfdf5' }
-  ]),
-  dark: Object.freeze([
-    { id: 'charcoal', label: '炭黑', value: '#17181a' },
-    { id: 'ink', label: '墨黑', value: '#111214' },
-    { id: 'black', label: '纯黑', value: '#09090b' },
-    { id: 'slate', label: '深石板', value: '#0f172a' },
-    { id: 'navy', label: '深海', value: '#111827' },
-    { id: 'indigo', label: '夜靛', value: '#17172a' },
-    { id: 'violet', label: '夜紫', value: '#1d1728' },
-    { id: 'plum', label: '暗梅', value: '#24161f' },
-    { id: 'wine', label: '酒红', value: '#281719' },
-    { id: 'umber', label: '暗褐', value: '#241c16' },
-    { id: 'olive', label: '暗橄榄', value: '#1d2117' },
-    { id: 'forest', label: '暗林', value: '#14211a' },
-    { id: 'teal', label: '暗青', value: '#122322' },
-    { id: 'cyan', label: '暗天青', value: '#102129' },
-    { id: 'steel', label: '钢蓝', value: '#17202a' },
-    { id: 'graphite', label: '石墨', value: '#1c1c1f' }
-  ])
-})
+export const THEME_BACKGROUND_PALETTES: Readonly<Record<ThemeTone, readonly ThemePaletteEntry[]>> =
+  Object.freeze({
+    pureWhite: Object.freeze([
+      { id: 'paper', label: '纸白', value: '#f4f4f7' },
+      { id: 'snow', label: '雪白', value: '#f8fafc' },
+      { id: 'mist', label: '雾灰', value: '#f1f5f9' },
+      { id: 'blue-mist', label: '蓝雾', value: '#eff6ff' },
+      { id: 'indigo-mist', label: '靛雾', value: '#eef2ff' },
+      { id: 'violet-mist', label: '紫雾', value: '#f5f3ff' },
+      { id: 'rose-mist', label: '玫瑰雾', value: '#fff1f2' },
+      { id: 'amber-mist', label: '暖雾', value: '#fffbeb' },
+      { id: 'green-mist', label: '绿雾', value: '#f0fdf4' },
+      { id: 'teal-mist', label: '青雾', value: '#f0fdfa' },
+      { id: 'cyan-mist', label: '天青雾', value: '#ecfeff' },
+      { id: 'warm-gray', label: '暖灰', value: '#fafaf9' },
+      { id: 'pearl', label: '珍珠', value: '#f5f5f4' },
+      { id: 'lavender', label: '薰衣草', value: '#faf5ff' },
+      { id: 'blush', label: '浅绯', value: '#fdf2f8' },
+      { id: 'mint', label: '薄荷', value: '#ecfdf5' }
+    ]),
+    dark: Object.freeze([
+      { id: 'charcoal', label: '炭黑', value: '#17181a' },
+      { id: 'ink', label: '墨黑', value: '#111214' },
+      { id: 'black', label: '纯黑', value: '#09090b' },
+      { id: 'slate', label: '深石板', value: '#0f172a' },
+      { id: 'navy', label: '深海', value: '#111827' },
+      { id: 'indigo', label: '夜靛', value: '#17172a' },
+      { id: 'violet', label: '夜紫', value: '#1d1728' },
+      { id: 'plum', label: '暗梅', value: '#24161f' },
+      { id: 'wine', label: '酒红', value: '#281719' },
+      { id: 'umber', label: '暗褐', value: '#241c16' },
+      { id: 'olive', label: '暗橄榄', value: '#1d2117' },
+      { id: 'forest', label: '暗林', value: '#14211a' },
+      { id: 'teal', label: '暗青', value: '#122322' },
+      { id: 'cyan', label: '暗天青', value: '#102129' },
+      { id: 'steel', label: '钢蓝', value: '#17202a' },
+      { id: 'graphite', label: '石墨', value: '#1c1c1f' }
+    ])
+  })
 
 export const THEME_VISIBILITY_SLOT_IDS: readonly ThemeVisibilitySlotId[] = Object.freeze([
   'playerAlbumArtist',
@@ -446,6 +501,13 @@ export const THEME_MODE_DEFINITIONS: readonly ThemeModeDefinition[] = Object.fre
     defaultValue: 'md'
   },
   {
+    id: 'navigation.logo',
+    dataAttribute: 'data-te-navigation-logo',
+    label: '导航品牌标识',
+    options: ['show', 'hide'],
+    defaultValue: 'hide'
+  },
+  {
     id: 'library.density',
     dataAttribute: 'data-te-library-density',
     label: '媒体库密度',
@@ -458,6 +520,13 @@ export const THEME_MODE_DEFINITIONS: readonly ThemeModeDefinition[] = Object.fre
     label: '媒体库选中样式',
     options: ['fill', 'stroke'],
     defaultValue: 'fill'
+  },
+  {
+    id: 'library.titleOverlay',
+    dataAttribute: 'data-te-library-title-overlay',
+    label: '媒体库标题叠层',
+    options: ['off', 'on'],
+    defaultValue: 'off'
   },
   {
     id: 'player.layout',
@@ -517,8 +586,8 @@ export const DEFAULT_THEME_MODES: Readonly<ThemeModes> = Object.freeze({
     toneScheduling: 'manual',
     contrastGuard: 'warn'
   }),
-  navigation: Object.freeze({ style: 'expanded', iconScale: 'md' }),
-  library: Object.freeze({ density: 'comfortable', selection: 'fill' }),
+  navigation: Object.freeze({ style: 'expanded', iconScale: 'md', logo: 'hide' }),
+  library: Object.freeze({ density: 'comfortable', selection: 'fill', titleOverlay: 'off' }),
   player: Object.freeze({ layout: 'standard', controls: 'standard' }),
   artwork: Object.freeze({ transition: 'fade' }),
   icons: Object.freeze({ family: 'outline' }),
@@ -1014,6 +1083,28 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     '#f59e0b'
   ),
   token(
+    'navigation.opacity',
+    '--te-navigation-opacity',
+    '导航表面透明度',
+    'materials',
+    'navigation',
+    'number',
+    '94%',
+    '100%',
+    { min: 35, max: 100, step: 1, unit: '%' }
+  ),
+  token(
+    'navigation.radius',
+    '--te-navigation-radius',
+    '导航外框圆角',
+    'shape',
+    'navigation',
+    'length',
+    '0px',
+    '0px',
+    { min: 0, max: 28, step: 1, unit: 'px' }
+  ),
+  token(
     'library.page.surface',
     '--te-library-bg',
     '媒体库页面表面',
@@ -1102,6 +1193,92 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'color',
     'rgba(15, 23, 42, 0.55)',
     'rgba(255, 255, 255, 0.72)'
+  ),
+  token(
+    'library.icon',
+    '--te-library-icon',
+    '媒体库图标颜色',
+    'colors',
+    'library',
+    'color',
+    '#64748b',
+    '#b8b8b2'
+  ),
+  token(
+    'library.iconSize',
+    '--te-library-icon-size',
+    '媒体库图标大小',
+    'shape',
+    'library',
+    'length',
+    '18px',
+    '18px',
+    { min: 14, max: 32, step: 1, unit: 'px' }
+  ),
+  token(
+    'library.selection.radius',
+    '--te-library-selection-radius',
+    '选中曲目圆角',
+    'shape',
+    'library-selection',
+    'length',
+    '10px',
+    '10px',
+    { min: 0, max: 24, step: 1, unit: 'px' }
+  ),
+  token(
+    'library.selection.inlineInset',
+    '--te-library-selection-inline-inset',
+    '选中曲目左右边距',
+    'shape',
+    'library-selection',
+    'length',
+    '0px',
+    '0px',
+    { min: 0, max: 18, step: 1, unit: 'px' }
+  ),
+  token(
+    'library.coverRadius',
+    '--te-library-cover-radius',
+    '媒体库封面圆角',
+    'shape',
+    'library-cover',
+    'length',
+    '8px',
+    '8px',
+    { min: 0, max: 28, step: 1, unit: 'px' }
+  ),
+  token(
+    'library.titleOverlayOpacity',
+    '--te-library-title-overlay-opacity',
+    '标题区叠层强度',
+    'materials',
+    'library-header',
+    'number',
+    '72%',
+    '72%',
+    { min: 0, max: 100, step: 1, unit: '%' }
+  ),
+  token(
+    'library.actionSurface',
+    '--te-library-action-bg',
+    '底部操作区背景',
+    'materials',
+    'library-actions',
+    'color',
+    'rgba(37, 99, 235, 0.08)',
+    'rgba(56, 189, 248, 0.12)'
+  ),
+  token(
+    'library.actionRadius',
+    '--te-library-action-radius',
+    '底部操作区圆角',
+    'shape',
+    'library-actions',
+    'length',
+    '12px',
+    '12px',
+    { min: 0, max: 24, step: 1, unit: 'px' }
   ),
   token(
     'surface.card',
@@ -1987,12 +2164,14 @@ export function normalizeThemeModes(value: unknown): ThemeModes {
     const navigation: NonNullable<ThemeModes['navigation']> = {}
     assignModeOption(navigation, 'style', value.navigation.style, ['expanded', 'compact', 'rail'])
     assignModeOption(navigation, 'iconScale', value.navigation.iconScale, ['sm', 'md', 'lg'])
+    assignModeOption(navigation, 'logo', value.navigation.logo, ['show', 'hide'])
     if (Object.keys(navigation).length > 0) result.navigation = navigation
   }
   if (isRecord(value.library)) {
     const library: NonNullable<ThemeModes['library']> = {}
     assignModeOption(library, 'density', value.library.density, ['comfortable', 'compact'])
     assignModeOption(library, 'selection', value.library.selection, ['fill', 'stroke'])
+    assignModeOption(library, 'titleOverlay', value.library.titleOverlay, ['off', 'on'])
     if (Object.keys(library).length > 0) result.library = library
   }
   if (isRecord(value.player)) {
@@ -2019,10 +2198,7 @@ export function normalizeThemeModes(value: unknown): ThemeModes {
   }
   if (isRecord(value.typography)) {
     const typography: NonNullable<ThemeModes['typography']> = {}
-    assignModeOption(typography, 'titleCase', value.typography.titleCase, [
-      'preserve',
-      'uppercase'
-    ])
+    assignModeOption(typography, 'titleCase', value.typography.titleCase, ['preserve', 'uppercase'])
     assignModeOption(typography, 'lyricAccent', value.typography.lyricAccent, ['off', 'accent'])
     assignModeOption(typography, 'titleColor', value.typography.titleColor, [
       'off',
@@ -2233,8 +2409,14 @@ export function themeContrastRatio(
   if (!canvasColor || !foregroundColor || !backgroundColor) return null
   const opaqueBackground = compositeThemeColor(backgroundColor, canvasColor)
   const opaqueForeground = compositeThemeColor(foregroundColor, opaqueBackground)
-  const light = Math.max(themeRelativeLuminance(opaqueForeground), themeRelativeLuminance(opaqueBackground))
-  const dark = Math.min(themeRelativeLuminance(opaqueForeground), themeRelativeLuminance(opaqueBackground))
+  const light = Math.max(
+    themeRelativeLuminance(opaqueForeground),
+    themeRelativeLuminance(opaqueBackground)
+  )
+  const dark = Math.min(
+    themeRelativeLuminance(opaqueForeground),
+    themeRelativeLuminance(opaqueBackground)
+  )
   return (light + 0.05) / (dark + 0.05)
 }
 
@@ -2261,9 +2443,10 @@ export function createThemeAccentTokenOverrides(
   const fallback = tone === 'dark' ? '#f59e0b' : '#2563eb'
   const source = parseThemeRgb(color)
   const normalized = source
-  const muted = adaptive && normalized
-    ? mixThemeColors(normalized, { r: 128, g: 128, b: 128, a: 1 }, 0.1)
-    : normalized ?? parseThemeRgb(fallback)!
+  const muted =
+    adaptive && normalized
+      ? mixThemeColors(normalized, { r: 128, g: 128, b: 128, a: 1 }, 0.1)
+      : (normalized ?? parseThemeRgb(fallback)!)
   let primary = themeRgbToHex(muted)
   if (
     adaptive &&
@@ -2293,7 +2476,13 @@ function parseThemeRgb(value: string): ThemeRgbColor | null {
   const normalized = value.trim()
   const hex = normalized.match(/^#([\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/i)
   if (hex) {
-    const raw = hex[1].length === 3 ? hex[1].split('').map((part) => part + part).join('') : hex[1]
+    const raw =
+      hex[1].length === 3
+        ? hex[1]
+            .split('')
+            .map((part) => part + part)
+            .join('')
+        : hex[1]
     return {
       r: Number.parseInt(raw.slice(0, 2), 16),
       g: Number.parseInt(raw.slice(2, 4), 16),
@@ -2301,7 +2490,9 @@ function parseThemeRgb(value: string): ThemeRgbColor | null {
       a: raw.length === 8 ? Number.parseInt(raw.slice(6, 8), 16) / 255 : 1
     }
   }
-  const rgb = normalized.match(/^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*(\d?(?:\.\d+)?))?\s*\)$/i)
+  const rgb = normalized.match(
+    /^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*(\d?(?:\.\d+)?))?\s*\)$/i
+  )
   if (!rgb) return null
   const channels = rgb.slice(1, 4).map(Number)
   if (channels.some((channel) => !Number.isFinite(channel) || channel < 0 || channel > 255)) {
@@ -2316,9 +2507,15 @@ function compositeThemeColor(foreground: ThemeRgbColor, background: ThemeRgbColo
   const alpha = foreground.a + background.a * (1 - foreground.a)
   if (alpha <= 0) return { r: 0, g: 0, b: 0, a: 0 }
   return {
-    r: Math.round((foreground.r * foreground.a + background.r * background.a * (1 - foreground.a)) / alpha),
-    g: Math.round((foreground.g * foreground.a + background.g * background.a * (1 - foreground.a)) / alpha),
-    b: Math.round((foreground.b * foreground.a + background.b * background.a * (1 - foreground.a)) / alpha),
+    r: Math.round(
+      (foreground.r * foreground.a + background.r * background.a * (1 - foreground.a)) / alpha
+    ),
+    g: Math.round(
+      (foreground.g * foreground.a + background.g * background.a * (1 - foreground.a)) / alpha
+    ),
+    b: Math.round(
+      (foreground.b * foreground.a + background.b * background.a * (1 - foreground.a)) / alpha
+    ),
     a: alpha
   }
 }

@@ -24,6 +24,7 @@ import {
 import { useExtensionRegistry, type ThemeContribution } from '../extensions/registry'
 import { getPluginThemeKey } from '../extensions/themeSelection'
 import { useThemeStore } from '../stores/useThemeStore'
+import ThemeIcon from './ThemeIcon.vue'
 
 const emit = defineEmits<{ back: [] }>()
 const themeStore = useThemeStore()
@@ -443,25 +444,18 @@ function updateAppearanceMode(
         ThemeModes['appearance']
       >['backgroundTreatment']
     } else if (key === 'toneScheduling' && ['manual', 'system', 'timed'].includes(value)) {
-      appearance.toneScheduling = value as NonNullable<
-        ThemeModes['appearance']
-      >['toneScheduling']
+      appearance.toneScheduling = value as NonNullable<ThemeModes['appearance']>['toneScheduling']
       if (value === 'timed' && !profile.toneSchedule) {
         profile.toneSchedule = { ...DEFAULT_THEME_TONE_SCHEDULE }
       }
     } else if (key === 'contrastGuard' && ['off', 'warn', 'enforce'].includes(value)) {
-      appearance.contrastGuard = value as NonNullable<
-        ThemeModes['appearance']
-      >['contrastGuard']
+      appearance.contrastGuard = value as NonNullable<ThemeModes['appearance']>['contrastGuard']
     }
     profile.modes.appearance = appearance
   })
 }
 
-function updateTypographyMode(
-  key: 'titleCase' | 'lyricAccent' | 'titleColor',
-  event: Event
-): void {
+function updateTypographyMode(key: 'titleCase' | 'lyricAccent' | 'titleColor', event: Event): void {
   const value = (event.target as HTMLSelectElement).value
   updateDraft((profile) => {
     const typography = { ...(profile.modes.typography ?? {}) }
@@ -476,6 +470,47 @@ function updateTypographyMode(
   })
 }
 
+function updateNavigationMode(key: 'style' | 'iconScale' | 'logo', event: Event): void {
+  const value = (event.target as HTMLSelectElement).value
+  updateDraft((profile) => {
+    const navigation = { ...(profile.modes.navigation ?? {}) }
+    if (key === 'style' && ['expanded', 'compact', 'rail'].includes(value)) {
+      navigation.style = value as NonNullable<ThemeModes['navigation']>['style']
+    } else if (key === 'iconScale' && ['sm', 'md', 'lg'].includes(value)) {
+      navigation.iconScale = value as NonNullable<ThemeModes['navigation']>['iconScale']
+    } else if (key === 'logo' && (value === 'show' || value === 'hide')) {
+      navigation.logo = value
+    }
+    profile.modes.navigation = navigation
+  })
+}
+
+function updateLibraryMode(key: 'density' | 'selection' | 'titleOverlay', event: Event): void {
+  const value = (event.target as HTMLSelectElement).value
+  updateDraft((profile) => {
+    const library = { ...(profile.modes.library ?? {}) }
+    if (key === 'density' && (value === 'comfortable' || value === 'compact')) {
+      library.density = value
+    } else if (key === 'selection' && (value === 'fill' || value === 'stroke')) {
+      library.selection = value
+    } else if (key === 'titleOverlay' && (value === 'off' || value === 'on')) {
+      library.titleOverlay = value
+    }
+    profile.modes.library = library
+  })
+}
+
+function updateIconFamily(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value
+  if (!['outline', 'rounded', 'filled'].includes(value)) return
+  updateDraft((profile) => {
+    profile.modes.icons = {
+      ...(profile.modes.icons ?? {}),
+      family: value as NonNullable<ThemeModes['icons']>['family']
+    }
+  })
+}
+
 function scheduleTime(key: 'lightStartMinutes' | 'darkStartMinutes'): string {
   const minutes = draft.value?.toneSchedule?.[key] ?? DEFAULT_THEME_TONE_SCHEDULE[key]
   return `${Math.floor(minutes / 60)
@@ -483,10 +518,7 @@ function scheduleTime(key: 'lightStartMinutes' | 'darkStartMinutes'): string {
     .padStart(2, '0')}:${(minutes % 60).toString().padStart(2, '0')}`
 }
 
-function updateScheduleTime(
-  key: 'lightStartMinutes' | 'darkStartMinutes',
-  event: Event
-): void {
+function updateScheduleTime(key: 'lightStartMinutes' | 'darkStartMinutes', event: Event): void {
   const match = (event.target as HTMLInputElement).value.match(/^(\d{2}):(\d{2})$/)
   if (!match) return
   const minutes = Number(match[1]) * 60 + Number(match[2])
@@ -519,9 +551,7 @@ function updateFontSlot(binding: (typeof fontBindings)[number], event: Event): v
       bindings[binding.key] = selection.slice('asset:'.length)
     } else {
       delete bindings[binding.key]
-      const font = BUILT_IN_THEME_FONTS.find(
-        (entry) => `builtin:${entry.id}` === selection
-      )
+      const font = BUILT_IN_THEME_FONTS.find((entry) => `builtin:${entry.id}` === selection)
       if (font) profile.overrides[tone.value][binding.tokenId] = font.value
     }
     profile.assetBindings = Object.keys(bindings).length > 0 ? bindings : undefined
@@ -575,7 +605,15 @@ function resetGroup(): void {
       }
     }
     if (domain.value === 'typography') profile.modes.typography = undefined
-    if (profile.assetBindings && (domain.value === 'personalization' || domain.value === 'typography')) {
+    if (domain.value === 'navigation') {
+      profile.modes.navigation = undefined
+      profile.modes.icons = undefined
+    }
+    if (domain.value === 'library') profile.modes.library = undefined
+    if (
+      profile.assetBindings &&
+      (domain.value === 'personalization' || domain.value === 'typography')
+    ) {
       if (domain.value === 'personalization') delete profile.assetBindings.appBackground
       delete profile.assetBindings.sansFont
       delete profile.assetBindings.displayFont
@@ -887,9 +925,9 @@ onBeforeUnmount(() => {
           <div class="preview-app-shell">
             <nav class="preview-sidebar">
               <strong>音乐库</strong>
-              <span class="active"><i class="ph ph-house"></i>主页</span>
-              <span><i class="ph ph-music-notes"></i>全部歌曲</span>
-              <span><i class="ph ph-disc"></i>专辑</span>
+              <span class="active"><ThemeIcon icon-slot="navigation.home" /><em>主页</em></span>
+              <span><ThemeIcon icon-slot="navigation.songs" /><em>全部歌曲</em></span>
+              <span><ThemeIcon icon-slot="navigation.albums" /><em>专辑</em></span>
             </nav>
             <div class="preview-content">
               <div class="preview-heading">
@@ -897,7 +935,7 @@ onBeforeUnmount(() => {
                   <small>本地音乐</small>
                   <h2>晚上好，暮色回声</h2>
                 </div>
-                <button><i class="ph ph-play"></i>播放全部</button>
+                <button><ThemeIcon icon-slot="library.play" />播放全部</button>
               </div>
               <div class="preview-cards">
                 <article>
@@ -913,7 +951,7 @@ onBeforeUnmount(() => {
                   ><small>86 首歌曲</small>
                 </article>
               </div>
-              <div class="preview-song-row">
+              <div class="preview-song-row is-selected">
                 <span>01</span><span class="preview-song-art"></span
                 ><span
                   ><strong title="暮色回声 · Twilight Echo · 真夜中の音楽"
@@ -977,7 +1015,8 @@ onBeforeUnmount(() => {
 
         <section v-if="domain === 'personalization'" class="studio-control-section">
           <div class="control-section-heading">
-            <span>个性化运行模式</span><small>配置档 · {{ tone === 'dark' ? '深色' : '浅色' }}</small>
+            <span>个性化运行模式</span
+            ><small>配置档 · {{ tone === 'dark' ? '深色' : '浅色' }}</small>
           </div>
           <label class="studio-setting-row">
             <span>强调色来源<small>封面模式复用已缓存主色</small></span>
@@ -1015,10 +1054,7 @@ onBeforeUnmount(() => {
               <option value="timed">定时时段</option>
             </select>
           </label>
-          <div
-            v-if="activeModes.appearance?.toneScheduling === 'timed'"
-            class="schedule-time-grid"
-          >
+          <div v-if="activeModes.appearance?.toneScheduling === 'timed'" class="schedule-time-grid">
             <label>
               <span>浅色开始</span>
               <input
@@ -1087,10 +1123,100 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <section v-if="domain === 'typography'" class="studio-control-section">
+        <section v-if="domain === 'navigation'" class="studio-control-section">
           <div class="control-section-heading">
-            <span>字体行为</span><small>配置档</small>
+            <span>图标与导航模式</span><small>静态宿主变体</small>
           </div>
+          <label class="studio-setting-row">
+            <span>图标族<small>语义槽保持不变</small></span>
+            <select
+              :value="activeModes.icons?.family"
+              :disabled="!draft"
+              @change="updateIconFamily"
+            >
+              <option value="outline">描边</option>
+              <option value="rounded">圆润粗线</option>
+              <option value="filled">填充</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>导航布局<small>菜单结构不由主题修改</small></span>
+            <select
+              :value="activeModes.navigation?.style"
+              :disabled="!draft"
+              @change="updateNavigationMode('style', $event)"
+            >
+              <option value="expanded">展开</option>
+              <option value="compact">紧凑</option>
+              <option value="rail">图标栏</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>导航图标大小<small>点击区域保持固定</small></span>
+            <select
+              :value="activeModes.navigation?.iconScale"
+              :disabled="!draft"
+              @change="updateNavigationMode('iconScale', $event)"
+            >
+              <option value="sm">小</option>
+              <option value="md">中</option>
+              <option value="lg">大</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>内置标识<small>仅控制宿主品牌标识</small></span>
+            <select
+              :value="activeModes.navigation?.logo"
+              :disabled="!draft"
+              @change="updateNavigationMode('logo', $event)"
+            >
+              <option value="hide">隐藏</option>
+              <option value="show">显示</option>
+            </select>
+          </label>
+        </section>
+
+        <section v-if="domain === 'library'" class="studio-control-section">
+          <div class="control-section-heading">
+            <span>媒体库模式</span><small>不改变数据流</small>
+          </div>
+          <label class="studio-setting-row">
+            <span>信息密度<small>虚拟列表步长保持稳定</small></span>
+            <select
+              :value="activeModes.library?.density"
+              :disabled="!draft"
+              @change="updateLibraryMode('density', $event)"
+            >
+              <option value="comfortable">舒适</option>
+              <option value="compact">紧凑</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>选中样式<small>填充或描边</small></span>
+            <select
+              :value="activeModes.library?.selection"
+              :disabled="!draft"
+              @change="updateLibraryMode('selection', $event)"
+            >
+              <option value="fill">填充</option>
+              <option value="stroke">描边</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>标题区叠层<small>强度由下方令牌控制</small></span>
+            <select
+              :value="activeModes.library?.titleOverlay"
+              :disabled="!draft"
+              @change="updateLibraryMode('titleOverlay', $event)"
+            >
+              <option value="off">关闭</option>
+              <option value="on">开启</option>
+            </select>
+          </label>
+        </section>
+
+        <section v-if="domain === 'typography'" class="studio-control-section">
+          <div class="control-section-heading"><span>字体行为</span><small>配置档</small></div>
           <label class="studio-setting-row">
             <span>标题大写<small>不改写原始元数据</small></span>
             <select
@@ -1135,7 +1261,9 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <label v-for="binding in fontBindings" :key="binding.key">
-            <span>{{ binding.label }}<small>{{ fontSource(binding) }}</small></span>
+            <span
+              >{{ binding.label }}<small>{{ fontSource(binding) }}</small></span
+            >
             <select
               :value="fontSelection(binding)"
               :disabled="!draft"
@@ -1189,10 +1317,7 @@ onBeforeUnmount(() => {
           </label>
         </section>
 
-        <section
-          v-if="domain === 'personalization' || domain === 'advanced'"
-          class="asset-editor"
-        >
+        <section v-if="domain === 'personalization' || domain === 'advanced'" class="asset-editor">
           <div class="asset-editor-heading">
             <span>本地字体资源</span>
             <button type="button" :disabled="!draft" @click="importAsset('font')">

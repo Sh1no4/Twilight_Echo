@@ -86,6 +86,8 @@
   --te-navigation-active: rgba(37, 99, 235, 0.08);
   --te-navigation-active-text: #2563eb;
   --te-navigation-indicator: #2563eb;
+  --te-navigation-opacity: 94%;
+  --te-navigation-radius: 0px;
   --te-library-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
   --te-library-table-bg: rgba(255, 255, 255, 0.16);
   --te-library-table-border: rgba(255, 255, 255, 0.52);
@@ -95,6 +97,14 @@
   --te-library-selection-bg: rgba(15, 23, 42, 0.045);
   --te-library-selection-hover: rgba(15, 23, 42, 0.07);
   --te-library-selection-indicator: rgba(15, 23, 42, 0.55);
+  --te-library-icon: #64748b;
+  --te-library-icon-size: 18px;
+  --te-library-selection-radius: 10px;
+  --te-library-selection-inline-inset: 0px;
+  --te-library-cover-radius: 8px;
+  --te-library-title-overlay-opacity: 72%;
+  --te-library-action-bg: rgba(37, 99, 235, 0.08);
+  --te-library-action-radius: 12px;
   --te-streaming-surface: #fafbfe;
   --te-card-bg: #ffffff;
   --te-card-border: rgba(15, 23, 42, 0.08);
@@ -2513,11 +2523,7 @@ html[data-te-lyric-accent='accent']
 
 :is(.playing-music .track-title, .player-title, .track-row .track-title) {
   border-radius: var(--te-track-title-radius);
-  background: color-mix(
-    in srgb,
-    var(--te-primary-500) var(--te-track-title-opacity),
-    transparent
-  );
+  background: color-mix(in srgb, var(--te-primary-500) var(--te-track-title-opacity), transparent);
 }
 
 :is([role='dialog'], .import-dialog, .dsp-route-dialog) {

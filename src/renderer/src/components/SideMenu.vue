@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import ImportDialog from './ImportDialog.vue'
-import PuzzleIcon from './icons/PuzzleIcon.vue'
+import ThemeIcon from './ThemeIcon.vue'
 import type { UiContribution } from '../extensions/registry'
+import type { ThemeIconSlot } from '../../../shared/theme.ts'
 
 const props = defineProps<{
   open: boolean
@@ -21,24 +22,22 @@ const emit = defineEmits<{
 interface MenuItem {
   key: string
   label: string
-  icon: string
+  icon: ThemeIconSlot
 }
 
 const menuItems: MenuItem[] = [
-  { key: 'dashboard', label: '首页', icon: 'pi pi-home' },
-  { key: 'allSongs', label: '所有歌曲', icon: 'pi pi-headphones' },
-  { key: 'artists', label: '艺术家', icon: 'pi pi-microphone' },
-  { key: 'albums', label: '专辑', icon: 'pi pi-clone' },
-  { key: 'genres', label: '流派', icon: 'pi pi-tags' },
-  { key: 'playlists', label: '歌单', icon: 'pi pi-list-check' },
-  { key: 'folders', label: '文件夹', icon: 'pi pi-folder-open' },
-  { key: 'recent', label: '最近播放', icon: 'pi pi-history' }
+  { key: 'dashboard', label: '首页', icon: 'navigation.home' },
+  { key: 'allSongs', label: '所有歌曲', icon: 'navigation.songs' },
+  { key: 'artists', label: '艺术家', icon: 'navigation.artists' },
+  { key: 'albums', label: '专辑', icon: 'navigation.albums' },
+  { key: 'genres', label: '流派', icon: 'navigation.genres' },
+  { key: 'playlists', label: '歌单', icon: 'navigation.playlists' },
+  { key: 'folders', label: '文件夹', icon: 'navigation.folders' },
+  { key: 'recent', label: '最近播放', icon: 'navigation.recent' }
 ]
 
 const scanning = ref(false)
 const showImportDialog = ref(false)
-
-// removed menuStyle
 
 function selectItem(key: string): void {
   emit('selectView', key, null)
@@ -55,57 +54,89 @@ function handleImportClick(): void {
 
 <template>
   <div class="side-menu" :class="{ open }">
+    <div class="navigation-brand" aria-hidden="true">
+      <img src="/icon.png" alt="" />
+      <span>Twilight Echo</span>
+    </div>
     <nav class="menu-items">
       <div class="menu-nav">
-        <div
+        <button
           v-for="item in menuItems"
           :key="item.key"
+          type="button"
           class="menu-item"
           :class="{ active: props.activeKey === item.key }"
+          :aria-current="props.activeKey === item.key ? 'page' : undefined"
+          :title="item.label"
           @click="selectItem(item.key)"
         >
-          <i class="item-icon" :class="item.icon"></i>
+          <ThemeIcon class="item-icon" :icon-slot="item.icon" />
           <span class="item-label">{{ item.label }}</span>
-        </div>
+        </button>
       </div>
       <div class="menu-bottom">
         <div v-if="(props.localItems?.length ?? 0) > 0" class="menu-separator"></div>
-        <div
+        <button
           v-for="item in props.localItems ?? []"
           :key="`local:${item.pluginId}:${item.id}`"
+          type="button"
           class="menu-item menu-item-plugin"
           :class="{ active: props.activeKey === `plugin:${item.pluginId}:${item.id}` }"
+          :aria-current="
+            props.activeKey === `plugin:${item.pluginId}:${item.id}` ? 'page' : undefined
+          "
+          :title="item.title"
           @click="selectPluginPage(item)"
         >
           <i v-if="item.icon" class="item-icon" :class="item.icon"></i>
-          <PuzzleIcon v-else class="item-icon" />
+          <ThemeIcon v-else class="item-icon" icon-slot="navigation.plugin" />
           <span class="item-label">{{ item.title }}</span>
-        </div>
+        </button>
         <div class="menu-separator"></div>
-        <div
+        <button
           v-for="page in props.pluginPages ?? []"
           :key="`${page.pluginId}:${page.id}`"
+          type="button"
           class="menu-item menu-item-plugin"
           :class="{ active: props.activeKey === `plugin:${page.pluginId}:${page.id}` }"
+          :aria-current="
+            props.activeKey === `plugin:${page.pluginId}:${page.id}` ? 'page' : undefined
+          "
+          :title="page.title"
           @click="selectPluginPage(page)"
         >
           <i v-if="page.icon" class="item-icon" :class="page.icon"></i>
-          <PuzzleIcon v-else class="item-icon" />
+          <ThemeIcon v-else class="item-icon" icon-slot="navigation.plugin" />
           <span class="item-label">{{ page.title }}</span>
-        </div>
+        </button>
         <div v-if="(props.pluginPages?.length ?? 0) > 0" class="menu-separator"></div>
-        <div class="menu-item menu-item-streaming" @click="emit('enterStreaming')">
-          <i class="item-icon pi pi-globe"></i>
+        <button
+          type="button"
+          class="menu-item menu-item-streaming"
+          title="流媒体"
+          @click="emit('enterStreaming')"
+        >
+          <ThemeIcon class="item-icon" icon-slot="navigation.streaming" />
           <span class="item-label">流媒体</span>
-        </div>
-        <div class="menu-item menu-item-radio" @click="emit('enterRadioPodcast')">
-          <i class="item-icon pi pi-wifi"></i>
+        </button>
+        <button
+          type="button"
+          class="menu-item menu-item-radio"
+          title="电台 / 播客"
+          @click="emit('enterRadioPodcast')"
+        >
+          <ThemeIcon class="item-icon" icon-slot="navigation.radio" />
           <span class="item-label">电台 / 播客</span>
-        </div>
-        <div class="menu-item menu-item-import" @click="handleImportClick()">
-          <i class="item-icon pi pi-plus"></i>
+        </button>
+        <button
+          type="button"
+          class="menu-item menu-item-import"
+          title="导入歌曲"
+          @click="handleImportClick()"
+        >
+          <ThemeIcon class="item-icon" icon-slot="navigation.import" />
           <span class="item-label">导入歌曲</span>
-        </div>
+        </button>
         <span v-if="scanning" class="scanning-text">正在扫描...</span>
       </div>
     </nav>
@@ -116,12 +147,15 @@ function handleImportClick(): void {
 <style scoped>
 .side-menu {
   position: fixed;
+  display: flex;
+  flex-direction: column;
   top: 32px;
   left: 0;
   bottom: 0;
   width: var(--te-menu-width);
-  background: color-mix(in srgb, var(--te-navigation-bg) var(--te-surface-opacity), transparent);
+  background: color-mix(in srgb, var(--te-navigation-bg) var(--te-navigation-opacity), transparent);
   border-right: 1px solid var(--te-navigation-border);
+  border-radius: 0 var(--te-navigation-radius) var(--te-navigation-radius) 0;
   z-index: 1000;
   overflow: hidden;
   box-shadow: var(--te-navigation-shadow);
@@ -144,7 +178,7 @@ function handleImportClick(): void {
   border-right-color: var(--te-navigation-border);
   background-color: color-mix(
     in srgb,
-    var(--te-navigation-bg) var(--te-surface-opacity),
+    var(--te-navigation-bg) var(--te-navigation-opacity),
     transparent
   );
   background-image: var(--te-local-bg-image);
@@ -153,6 +187,41 @@ function handleImportClick(): void {
   background-repeat: no-repeat;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
+}
+
+:global(html[data-te-navigation-style='expanded']) {
+  --te-menu-width: clamp(180px, 18vw, 216px);
+}
+
+:global(html[data-te-navigation-style='compact']) {
+  --te-menu-width: 164px;
+}
+
+:global(html[data-te-navigation-style='rail']) {
+  --te-menu-width: 72px;
+}
+
+.navigation-brand {
+  display: none;
+  height: 56px;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--te-navigation-border);
+  color: var(--te-navigation-text);
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.navigation-brand img {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+}
+
+:global(html[data-te-navigation-logo='show'] .navigation-brand) {
+  display: flex;
 }
 
 .side-menu .menu-items {
@@ -171,8 +240,10 @@ function handleImportClick(): void {
 
 .menu-items {
   display: flex;
+  flex: 1;
+  min-height: 0;
   flex-direction: column;
-  height: 100%;
+  height: auto;
   width: 100%;
   min-width: 132px;
   max-width: 216px;
@@ -196,17 +267,27 @@ function handleImportClick(): void {
   display: flex;
   align-items: center;
   height: 40px;
+  width: calc(100% - 8px);
   padding: 0 12px 0 16px;
   margin-left: 8px;
+  border: 0;
   cursor: pointer;
   border-radius: var(--te-radius-global);
   gap: 14px;
   white-space: nowrap;
   color: var(--te-chrome-text, var(--te-navigation-text));
+  background: transparent;
+  font: inherit;
+  text-align: left;
   transition:
     background 0.2s cubic-bezier(0.4, 0, 0.2, 1),
     color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
     transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.menu-item:focus-visible {
+  outline: 2px solid var(--te-navigation-indicator);
+  outline-offset: -2px;
 }
 
 .menu-item:hover {
@@ -235,17 +316,25 @@ function handleImportClick(): void {
 }
 
 .item-icon {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   color: var(--te-navigation-icon);
-  font-size: 16px;
+  font-size: 17px;
   transition:
     color 0.2s,
     transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+:global(html[data-te-navigation-icon-scale='sm'] .item-icon) {
+  font-size: 14px;
+}
+
+:global(html[data-te-navigation-icon-scale='lg'] .item-icon) {
+  font-size: 20px;
 }
 
 .menu-item:hover .item-icon {
@@ -270,6 +359,58 @@ function handleImportClick(): void {
 
 .open .item-label {
   opacity: 1;
+}
+
+:global(html[data-te-navigation-style='compact'] .menu-items) {
+  padding-right: 8px;
+}
+
+:global(html[data-te-navigation-style='compact'] .menu-item) {
+  gap: 10px;
+  padding-inline: 12px;
+}
+
+:global(html[data-te-navigation-style='compact'] .item-label) {
+  font-size: 12px;
+}
+
+:global(html[data-te-navigation-style='rail'] .menu-items) {
+  min-width: 0;
+  max-width: 100%;
+  padding: 12px 8px;
+}
+
+:global(html[data-te-navigation-style='rail'] .menu-nav) {
+  gap: 5px;
+}
+
+:global(html[data-te-navigation-style='rail'] .menu-item) {
+  width: 44px;
+  margin-left: 6px;
+  padding: 0;
+  justify-content: center;
+}
+
+:global(html[data-te-navigation-style='rail'] .menu-item:hover) {
+  transform: none;
+}
+
+:global(html[data-te-navigation-style='rail'] .menu-item.active::before) {
+  left: -6px;
+}
+
+:global(html[data-te-navigation-style='rail'] .item-label),
+:global(html[data-te-navigation-style='rail'] .navigation-brand span) {
+  display: none;
+}
+
+:global(html[data-te-navigation-style='rail'] .navigation-brand) {
+  justify-content: center;
+  padding-inline: 8px;
+}
+
+:global(html[data-te-navigation-style='rail'] .menu-separator) {
+  margin-inline: 8px;
 }
 
 .menu-separator {

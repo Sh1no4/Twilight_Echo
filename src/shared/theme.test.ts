@@ -4,6 +4,7 @@ import {
   BUILT_IN_THEME_FONTS,
   THEME_ACCENT_PALETTES,
   THEME_BACKGROUND_PALETTES,
+  THEME_ICON_SLOT_REGISTRY,
   THEME_TOKEN_DEFINITIONS,
   TWILIGHT_DEFAULT_THEME,
   TWILIGHT_DEFAULT_THEME_ID,
@@ -19,6 +20,7 @@ import {
   resolveThemeProfileModes,
   resolveThemeProfileTokens,
   resolveScheduledThemeTone,
+  resolveThemeIconClasses,
   ensureThemeTextContrast,
   themeContrastRatio,
   themeModesToDataAttributes,
@@ -126,6 +128,8 @@ test('numeric and length token constraints are enforced', () => {
       'background.coverBlur': '65px',
       'shape.cardRadius': '24px',
       'shape.dialogRadius': '12px',
+      'navigation.opacity': '72%',
+      'library.selection.inlineInset': '12px',
       'shape.cardBorderWidth': '4px',
       'typography.titleWeight': '950',
       'color.primary.500': 'not-a-color'
@@ -135,7 +139,9 @@ test('numeric and length token constraints are enforced', () => {
       'material.surfaceOpacity': '72%',
       'background.gradientAngle': '270deg',
       'shape.cardRadius': '24px',
-      'shape.dialogRadius': '12px'
+      'shape.dialogRadius': '12px',
+      'navigation.opacity': '72%',
+      'library.selection.inlineInset': '12px'
     }
   )
 })
@@ -153,7 +159,9 @@ test('v2 theme modes are sparse, whitelisted, and map only to managed attributes
     toneSchedule: { lightStartMinutes: 390, darkStartMinutes: 1230 },
     modes: {
       appearance: { backgroundTreatment: 'image', unknown: 'unsafe' },
-      navigation: { style: 'rail', iconScale: 'huge' },
+      navigation: { style: 'rail', iconScale: 'huge', logo: 'show' },
+      library: { density: 'compact', selection: 'unsafe', titleOverlay: 'on' },
+      icons: { family: 'filled' },
       typography: { titleCase: 'uppercase', lyricAccent: 'accent', titleColor: 'unsafe' },
       player: { layout: 'script:alert(1)' },
       visibility: { playerArtwork: false, arbitraryDomNode: false }
@@ -163,7 +171,9 @@ test('v2 theme modes are sparse, whitelisted, and map only to managed attributes
   assert.ok(profile)
   assert.deepEqual(profile.modes, {
     appearance: { backgroundTreatment: 'image' },
-    navigation: { style: 'rail' },
+    navigation: { style: 'rail', logo: 'show' },
+    library: { density: 'compact', titleOverlay: 'on' },
+    icons: { family: 'filled' },
     typography: { titleCase: 'uppercase', lyricAccent: 'accent' },
     visibility: { playerArtwork: false }
   })
@@ -171,6 +181,10 @@ test('v2 theme modes are sparse, whitelisted, and map only to managed attributes
   const attributes = themeModesToDataAttributes(resolveThemeProfileModes(profile))
   assert.equal(attributes['data-te-background-treatment'], 'image')
   assert.equal(attributes['data-te-navigation-style'], 'rail')
+  assert.equal(attributes['data-te-navigation-logo'], 'show')
+  assert.equal(attributes['data-te-library-density'], 'compact')
+  assert.equal(attributes['data-te-library-title-overlay'], 'on')
+  assert.equal(attributes['data-te-icon-family'], 'filled')
   assert.equal(attributes['data-te-title-case'], 'uppercase')
   assert.equal(attributes['data-te-lyric-accent'], 'accent')
   assert.equal(attributes['data-te-player-layout'], 'standard')
@@ -185,11 +199,24 @@ test('v2 theme modes are sparse, whitelisted, and map only to managed attributes
   )
 })
 
+test('phase three icon slots resolve every host-owned family without arbitrary resources', () => {
+  const slots = Object.entries(THEME_ICON_SLOT_REGISTRY)
+  assert.ok(slots.length >= 24)
+  for (const [id, definition] of slots) {
+    assert.match(id, /^(navigation|library)\.[a-z]+$/)
+    assert.ok(definition.domain === 'navigation' || definition.domain === 'library')
+    assert.match(definition.classes.outline, /^ph ph-/)
+    assert.match(definition.classes.rounded, /^ph-bold ph-/)
+    assert.match(definition.classes.filled, /^ph-fill ph-/)
+  }
+  assert.equal(resolveThemeIconClasses('navigation.home', 'filled'), 'ph-fill ph-house')
+})
+
 test('timed tone schedules are bounded and switch correctly across midnight', () => {
-  assert.deepEqual(
-    normalizeThemeToneSchedule({ lightStartMinutes: 420, darkStartMinutes: 1140 }),
-    { lightStartMinutes: 420, darkStartMinutes: 1140 }
-  )
+  assert.deepEqual(normalizeThemeToneSchedule({ lightStartMinutes: 420, darkStartMinutes: 1140 }), {
+    lightStartMinutes: 420,
+    darkStartMinutes: 1140
+  })
   assert.equal(
     normalizeThemeToneSchedule({ lightStartMinutes: 1440, darkStartMinutes: 1140 }),
     undefined
