@@ -3119,3 +3119,150 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
     transform: translate3d(14px, -6px, 0) scale(1.04);
   }
 }
+
+/* ===== Theme P4: host-owned player presentation ===== */
+:global(html[data-te-player-controls] .player-bar .player-controls) {
+  gap: var(--te-player-control-gap, 12px);
+}
+
+:global(html[data-te-player-controls] .player-bar .ctrl-btn),
+:global(html[data-te-player-controls] .player-bar .icon-btn) {
+  width: var(--te-player-control-size, 32px);
+  height: var(--te-player-control-size, 32px);
+  border: var(--te-player-control-border-width, 0) solid var(--te-playback-control-border);
+  border-radius: var(--te-player-control-radius, 999px);
+}
+
+:global(html[data-te-player-controls] .player-bar .btn-play) {
+  width: var(--te-player-play-size, 44px);
+  height: var(--te-player-play-size, 44px);
+}
+
+:global(html[data-te-player-controls='pro'] .player-bar .ctrl-btn),
+:global(html[data-te-player-controls='pro'] .player-bar .icon-btn) {
+  background: var(--te-playback-control-surface);
+  color: var(--te-playback-control-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--te-playback-control-border) 70%, transparent);
+}
+
+:global(html[data-te-player-controls='pro'] .player-bar .btn-play) {
+  background: var(--play-button-color, var(--accent-color, var(--te-primary-500)));
+  box-shadow: 0 8px 22px color-mix(in srgb, var(--accent-color) 28%, transparent);
+}
+
+:global(html[data-te-player-title-align='center'] .player-bar .player-track-info) {
+  text-align: center;
+}
+
+:global(html[data-te-player-progress] .player-bar .progress-track) {
+  height: var(--te-player-progress-height, 6px);
+  border-radius: var(--te-player-progress-radius, 999px);
+  background: var(--te-player-progress-track);
+}
+
+:global(html[data-te-player-progress] .player-bar .progress-fill) {
+  border-radius: var(--te-player-progress-radius, 999px);
+  background: var(--te-player-progress-fill);
+}
+
+:global(html[data-te-player-progress] .player-bar .progress-slider::-webkit-slider-runnable-track) {
+  height: var(--te-player-progress-height, 6px);
+  border-radius: var(--te-player-progress-radius, 999px);
+}
+
+:global(html[data-te-player-progress='ring'] .player-bar .progress-slider::-webkit-slider-thumb),
+:global(html[data-te-player-progress='solid'] .player-bar .progress-slider::-webkit-slider-thumb) {
+  width: var(--te-player-progress-thumb-size, 12px);
+  height: var(--te-player-progress-thumb-size, 12px);
+  margin-top: calc(
+    (var(--te-player-progress-height, 6px) - var(--te-player-progress-thumb-size, 12px)) / 2
+  );
+  border-radius: 50%;
+}
+
+:global(html[data-te-player-progress='ring'] .player-bar .progress-slider::-webkit-slider-thumb) {
+  border: 2px solid var(--te-primary-500);
+  background: var(--te-card-bg);
+}
+
+:global(html[data-te-player-progress='solid'] .player-bar .progress-slider::-webkit-slider-thumb) {
+  border: 0;
+  background: var(--te-primary-500);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--te-primary-500) 16%, transparent);
+}
+
+:global(html[data-te-player-progress='spectrum'] .player-bar .progress-track) {
+  height: max(10px, var(--te-player-progress-height, 6px));
+  background: repeating-linear-gradient(
+    90deg,
+    var(--te-player-progress-track) 0 3px,
+    transparent 3px 6px
+  );
+}
+
+:global(html[data-te-player-progress='spectrum'] .player-bar .progress-fill) {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--te-primary-500) 0 3px,
+    color-mix(in srgb, var(--te-primary-500) 35%, transparent) 3px 6px
+  );
+}
+
+:global(html[data-te-visible-player-duration] .player-bar .time-label) {
+  padding: 3px 6px;
+  border-radius: var(--te-player-time-radius, 8px);
+  background: color-mix(
+    in srgb,
+    var(--te-player-time-surface) var(--te-player-time-opacity),
+    transparent
+  );
+}
+
+:global(html[data-te-visible-player-artwork='false'] .player-bar .player-artwork-slot),
+:global(html[data-te-visible-player-track-info='false'] .player-bar .player-track-info),
+:global(html[data-te-visible-player-duration='false'] .player-bar .time-label),
+:global(html[data-te-visible-player-waveform='false'] .player-bar .progress-slider-wrap),
+:global(html[data-te-visible-player-track-menu='false'] .player-bar .track-menu-button),
+:global(html[data-te-visible-player-misc-icons='false'] .player-bar .player-misc-icon),
+:global(html[data-te-visible-previous-button='false'] .player-bar .previous-button),
+:global(html[data-te-visible-next-button='false'] .player-bar .next-button) {
+  display: none;
+}
+
+:global(html[data-te-visible-player-album-artist='false'] .player-bar .player-artist),
+:global(html[data-te-player-layout='minimal'] .player-bar .player-artist),
+:global(html[data-te-player-layout='minimal'] .player-bar .track-menu-button),
+:global(html[data-te-player-layout='minimal'] .player-bar .player-misc-icon),
+:global(html[data-te-player-layout='minimal'] .player-bar .time-label),
+:global(html[data-te-player-layout='minimal'] .player-bar .progress-slider-wrap) {
+  display: none;
+}
+
+:global(html[data-te-player-layout='minimal'][data-te-visible-player-album-artist='true'] .player-bar .player-artist),
+:global(html[data-te-player-layout='minimal'][data-te-visible-player-track-menu='true'] .player-bar .track-menu-button),
+:global(html[data-te-player-layout='minimal'][data-te-visible-player-misc-icons='true'] .player-bar .player-misc-icon),
+:global(html[data-te-player-layout='minimal'][data-te-visible-player-duration='true'] .player-bar .time-label),
+:global(html[data-te-player-layout='minimal'][data-te-visible-player-waveform='true'] .player-bar .progress-slider-wrap) {
+  display: flex;
+}
+
+.playlist-cover,
+.playlist-cover-placeholder {
+  border-radius: var(--te-artwork-list-radius, 12px);
+}
+
+:global(html[data-te-player-layout='minimal'] .player-bar) {
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+:global(html[data-te-artwork-shadow='off'] .player-bar .player-cover) {
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(html[data-te-player-controls] .player-bar .ctrl-btn),
+  :global(html[data-te-player-controls] .player-bar .icon-btn),
+  :global(html[data-te-artwork-transition] .player-bar .player-cover) {
+    transition: none;
+  }
+}

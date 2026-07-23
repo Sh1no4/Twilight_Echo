@@ -133,7 +133,15 @@ export type ThemeLibrarySelection = 'fill' | 'stroke'
 export type ThemeLibraryTitleOverlay = 'off' | 'on'
 export type ThemePlayerLayout = 'standard' | 'full-cover' | 'lyrics-focus' | 'split' | 'minimal'
 export type ThemePlayerControls = 'standard' | 'pro'
+export type ThemePlayerTitleAlign = 'left' | 'center'
+export type ThemePlayerProgressStyle = 'line' | 'ring' | 'solid' | 'spectrum'
 export type ThemeArtworkTransition = 'fade' | 'slide' | 'none'
+export type ThemeArtworkShadow = 'on' | 'off'
+export type ThemeEqualizerPanelStyle = 'neutral' | 'tinted' | 'glass'
+export type ThemeEqualizerSliderStyle = 'ring' | 'solid'
+export type ThemeEqualizerKnobIndicator = 'line' | 'dot'
+export type ThemeEqualizerSpectrumStyle = 'bars' | 'line' | 'area'
+export type ThemeEqualizerButtonStyle = 'soft' | 'outline' | 'solid'
 export type ThemeIconFamily = 'outline' | 'rounded' | 'filled'
 export type ThemeTitleCase = 'preserve' | 'uppercase'
 export type ThemeLyricAccent = 'off' | 'accent'
@@ -179,9 +187,19 @@ export interface ThemeModes {
   player?: {
     layout?: ThemePlayerLayout
     controls?: ThemePlayerControls
+    titleAlign?: ThemePlayerTitleAlign
+    progress?: ThemePlayerProgressStyle
   }
   artwork?: {
     transition?: ThemeArtworkTransition
+    shadow?: ThemeArtworkShadow
+  }
+  equalizer?: {
+    panel?: ThemeEqualizerPanelStyle
+    slider?: ThemeEqualizerSliderStyle
+    knob?: ThemeEqualizerKnobIndicator
+    spectrum?: ThemeEqualizerSpectrumStyle
+    button?: ThemeEqualizerButtonStyle
   }
   icons?: {
     family?: ThemeIconFamily
@@ -543,11 +561,67 @@ export const THEME_MODE_DEFINITIONS: readonly ThemeModeDefinition[] = Object.fre
     defaultValue: 'standard'
   },
   {
+    id: 'player.titleAlign',
+    dataAttribute: 'data-te-player-title-align',
+    label: '播放器标题对齐',
+    options: ['left', 'center'],
+    defaultValue: 'left'
+  },
+  {
+    id: 'player.progress',
+    dataAttribute: 'data-te-player-progress',
+    label: '播放器进度样式',
+    options: ['line', 'ring', 'solid', 'spectrum'],
+    defaultValue: 'line'
+  },
+  {
     id: 'artwork.transition',
     dataAttribute: 'data-te-artwork-transition',
     label: '封面过渡',
     options: ['fade', 'slide', 'none'],
     defaultValue: 'fade'
+  },
+  {
+    id: 'artwork.shadow',
+    dataAttribute: 'data-te-artwork-shadow',
+    label: '封面阴影',
+    options: ['on', 'off'],
+    defaultValue: 'on'
+  },
+  {
+    id: 'equalizer.panel',
+    dataAttribute: 'data-te-equalizer-panel',
+    label: '均衡器面板',
+    options: ['neutral', 'tinted', 'glass'],
+    defaultValue: 'neutral'
+  },
+  {
+    id: 'equalizer.slider',
+    dataAttribute: 'data-te-equalizer-slider',
+    label: '均衡器滑块',
+    options: ['ring', 'solid'],
+    defaultValue: 'ring'
+  },
+  {
+    id: 'equalizer.knob',
+    dataAttribute: 'data-te-equalizer-knob',
+    label: '均衡器旋钮指示',
+    options: ['line', 'dot'],
+    defaultValue: 'line'
+  },
+  {
+    id: 'equalizer.spectrum',
+    dataAttribute: 'data-te-equalizer-spectrum',
+    label: '均衡器频谱',
+    options: ['bars', 'line', 'area'],
+    defaultValue: 'line'
+  },
+  {
+    id: 'equalizer.button',
+    dataAttribute: 'data-te-equalizer-button',
+    label: '均衡器按钮',
+    options: ['soft', 'outline', 'solid'],
+    defaultValue: 'soft'
   },
   {
     id: 'icons.family',
@@ -588,8 +662,20 @@ export const DEFAULT_THEME_MODES: Readonly<ThemeModes> = Object.freeze({
   }),
   navigation: Object.freeze({ style: 'expanded', iconScale: 'md', logo: 'hide' }),
   library: Object.freeze({ density: 'comfortable', selection: 'fill', titleOverlay: 'off' }),
-  player: Object.freeze({ layout: 'standard', controls: 'standard' }),
-  artwork: Object.freeze({ transition: 'fade' }),
+  player: Object.freeze({
+    layout: 'standard',
+    controls: 'standard',
+    titleAlign: 'left',
+    progress: 'line'
+  }),
+  artwork: Object.freeze({ transition: 'fade', shadow: 'on' }),
+  equalizer: Object.freeze({
+    panel: 'neutral',
+    slider: 'ring',
+    knob: 'line',
+    spectrum: 'line',
+    button: 'soft'
+  }),
   icons: Object.freeze({ family: 'outline' }),
   typography: Object.freeze({
     titleCase: 'preserve',
@@ -1978,6 +2064,302 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     '0 4px 12px rgba(0, 0, 0, 0.18)'
   ),
   token(
+    'playback.cover.size',
+    '--te-playback-cover-size',
+    '播放页封面尺寸',
+    'playback',
+    'artwork-player',
+    'number',
+    '100%',
+    '100%',
+    { min: 48, max: 100, step: 1, unit: '%' }
+  ),
+  token(
+    'playback.artwork.listRadius',
+    '--te-artwork-list-radius',
+    '列表封面圆角',
+    'playback',
+    'artwork-list',
+    'length',
+    '12px',
+    '12px',
+    { min: 0, max: 28, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.control.size',
+    '--te-player-control-size',
+    '控制按钮大小',
+    'playback',
+    'player-controls',
+    'length',
+    '32px',
+    '32px',
+    { min: 28, max: 48, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.control.playSize',
+    '--te-player-play-size',
+    '播放按钮大小',
+    'playback',
+    'player-controls',
+    'length',
+    '44px',
+    '44px',
+    { min: 36, max: 64, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.control.gap',
+    '--te-player-control-gap',
+    '控制按钮间距',
+    'playback',
+    'player-controls',
+    'length',
+    '12px',
+    '12px',
+    { min: 4, max: 24, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.control.radius',
+    '--te-player-control-radius',
+    '控制按钮圆角',
+    'playback',
+    'player-controls',
+    'length',
+    '999px',
+    '999px',
+    { min: 0, max: 999, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.control.borderWidth',
+    '--te-player-control-border-width',
+    '控制按钮描边',
+    'playback',
+    'player-controls',
+    'length',
+    '0px',
+    '0px',
+    { min: 0, max: 4, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.progress.track',
+    '--te-player-progress-track',
+    '进度条轨道',
+    'playback',
+    'player-progress',
+    'color',
+    'rgba(37, 99, 235, 0.16)',
+    'rgba(255, 255, 255, 0.14)'
+  ),
+  token(
+    'playback.progress.fill',
+    '--te-player-progress-fill',
+    '进度条已播放',
+    'playback',
+    'player-progress',
+    'gradient',
+    'linear-gradient(90deg, #2563eb, #0d9488)',
+    'linear-gradient(90deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.88))'
+  ),
+  token(
+    'playback.progress.height',
+    '--te-player-progress-height',
+    '进度条高度',
+    'playback',
+    'player-progress',
+    'length',
+    '6px',
+    '6px',
+    { min: 2, max: 14, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.progress.radius',
+    '--te-player-progress-radius',
+    '进度条圆角',
+    'playback',
+    'player-progress',
+    'length',
+    '999px',
+    '999px',
+    { min: 0, max: 999, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.progress.thumbSize',
+    '--te-player-progress-thumb-size',
+    '进度滑块大小',
+    'playback',
+    'player-progress',
+    'length',
+    '12px',
+    '12px',
+    { min: 6, max: 22, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.time.surface',
+    '--te-player-time-surface',
+    '时长背景',
+    'playback',
+    'player-time',
+    'color',
+    'rgba(37, 99, 235, 0.08)',
+    'rgba(255, 255, 255, 0.08)'
+  ),
+  token(
+    'playback.time.radius',
+    '--te-player-time-radius',
+    '时长背景圆角',
+    'playback',
+    'player-time',
+    'length',
+    '8px',
+    '8px',
+    { min: 0, max: 24, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.time.opacity',
+    '--te-player-time-opacity',
+    '时长背景透明度',
+    'playback',
+    'player-time',
+    'number',
+    '0%',
+    '0%',
+    { min: 0, max: 100, step: 1, unit: '%' }
+  ),
+  token(
+    'playback.equalizer.panelSurface',
+    '--te-equalizer-panel-bg',
+    '均衡器面板表面',
+    'playback',
+    'equalizer-panel',
+    'color',
+    '#ffffff',
+    '#181818'
+  ),
+  token(
+    'playback.equalizer.panelBorder',
+    '--te-equalizer-panel-border',
+    '均衡器面板边框',
+    'playback',
+    'equalizer-panel',
+    'color',
+    'rgba(15, 23, 42, 0.08)',
+    'rgba(255, 255, 255, 0.1)'
+  ),
+  token(
+    'playback.equalizer.panelRadius',
+    '--te-equalizer-panel-radius',
+    '均衡器面板圆角',
+    'playback',
+    'equalizer-panel',
+    'length',
+    '20px',
+    '20px',
+    { min: 0, max: 32, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.equalizer.sliderTrack',
+    '--te-equalizer-slider-track',
+    '均衡器滑轨',
+    'playback',
+    'equalizer-slider',
+    'color',
+    'rgba(15, 23, 42, 0.06)',
+    'rgba(255, 255, 255, 0.1)'
+  ),
+  token(
+    'playback.equalizer.sliderFill',
+    '--te-equalizer-slider-fill',
+    '均衡器滑轨填充',
+    'playback',
+    'equalizer-slider',
+    'gradient',
+    'linear-gradient(to top, #2563eb, #14b8a6)',
+    'linear-gradient(to top, #38bdf8, #a78bfa)'
+  ),
+  token(
+    'playback.equalizer.sliderThumb',
+    '--te-equalizer-slider-thumb',
+    '均衡器滑块颜色',
+    'playback',
+    'equalizer-slider',
+    'color',
+    '#ffffff',
+    '#f8fafc'
+  ),
+  token(
+    'playback.equalizer.sliderThumbSize',
+    '--te-equalizer-slider-thumb-size',
+    '均衡器滑块大小',
+    'playback',
+    'equalizer-slider',
+    'length',
+    '20px',
+    '20px',
+    { min: 12, max: 30, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.equalizer.grid',
+    '--te-equalizer-grid',
+    '均衡器辅助线',
+    'playback',
+    'equalizer-spectrum',
+    'color',
+    'rgba(15, 23, 42, 0.07)',
+    'rgba(255, 255, 255, 0.1)'
+  ),
+  token(
+    'playback.equalizer.guide',
+    '--te-equalizer-guide',
+    '均衡器频率准线',
+    'playback',
+    'equalizer-spectrum',
+    'color',
+    'rgba(37, 99, 235, 0.45)',
+    'rgba(56, 189, 248, 0.55)'
+  ),
+  token(
+    'playback.equalizer.spectrum',
+    '--te-equalizer-spectrum',
+    '均衡器频谱颜色',
+    'playback',
+    'equalizer-spectrum',
+    'color',
+    '#2563eb',
+    '#38bdf8'
+  ),
+  token(
+    'playback.equalizer.buttonSurface',
+    '--te-equalizer-button-bg',
+    '均衡器按钮表面',
+    'playback',
+    'equalizer-controls',
+    'color',
+    'rgba(37, 99, 235, 0.08)',
+    'rgba(56, 189, 248, 0.12)'
+  ),
+  token(
+    'playback.equalizer.buttonRadius',
+    '--te-equalizer-button-radius',
+    '均衡器按钮圆角',
+    'playback',
+    'equalizer-controls',
+    'length',
+    '10px',
+    '10px',
+    { min: 0, max: 24, step: 1, unit: 'px' }
+  ),
+  token(
+    'playback.equalizer.knobSize',
+    '--te-equalizer-knob-size',
+    '音量面板旋钮大小',
+    'playback',
+    'equalizer-controls',
+    'length',
+    '18px',
+    '18px',
+    { min: 12, max: 30, step: 1, unit: 'px' }
+  ),
+  token(
     'motion.enter',
     '--te-ease-enter',
     '进入缓动',
@@ -2184,12 +2566,29 @@ export function normalizeThemeModes(value: unknown): ThemeModes {
       'minimal'
     ])
     assignModeOption(player, 'controls', value.player.controls, ['standard', 'pro'])
+    assignModeOption(player, 'titleAlign', value.player.titleAlign, ['left', 'center'])
+    assignModeOption(player, 'progress', value.player.progress, [
+      'line',
+      'ring',
+      'solid',
+      'spectrum'
+    ])
     if (Object.keys(player).length > 0) result.player = player
   }
   if (isRecord(value.artwork)) {
     const artwork: NonNullable<ThemeModes['artwork']> = {}
     assignModeOption(artwork, 'transition', value.artwork.transition, ['fade', 'slide', 'none'])
+    assignModeOption(artwork, 'shadow', value.artwork.shadow, ['on', 'off'])
     if (Object.keys(artwork).length > 0) result.artwork = artwork
+  }
+  if (isRecord(value.equalizer)) {
+    const equalizer: NonNullable<ThemeModes['equalizer']> = {}
+    assignModeOption(equalizer, 'panel', value.equalizer.panel, ['neutral', 'tinted', 'glass'])
+    assignModeOption(equalizer, 'slider', value.equalizer.slider, ['ring', 'solid'])
+    assignModeOption(equalizer, 'knob', value.equalizer.knob, ['line', 'dot'])
+    assignModeOption(equalizer, 'spectrum', value.equalizer.spectrum, ['bars', 'line', 'area'])
+    assignModeOption(equalizer, 'button', value.equalizer.button, ['soft', 'outline', 'solid'])
+    if (Object.keys(equalizer).length > 0) result.equalizer = equalizer
   }
   if (isRecord(value.icons)) {
     const icons: NonNullable<ThemeModes['icons']> = {}
@@ -2564,6 +2963,7 @@ export function resolveThemeProfileModes(profile: ThemeProfileV2 | null): ThemeM
     library: { ...DEFAULT_THEME_MODES.library, ...modes.library },
     player: { ...DEFAULT_THEME_MODES.player, ...modes.player },
     artwork: { ...DEFAULT_THEME_MODES.artwork, ...modes.artwork },
+    equalizer: { ...DEFAULT_THEME_MODES.equalizer, ...modes.equalizer },
     icons: { ...DEFAULT_THEME_MODES.icons, ...modes.icons },
     typography: { ...DEFAULT_THEME_MODES.typography, ...modes.typography },
     visibility: { ...modes.visibility }

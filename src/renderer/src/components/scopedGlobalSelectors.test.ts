@@ -5,7 +5,10 @@ import test from 'node:test'
 import { compileStyle } from '@vue/compiler-sfc'
 
 const scopedStyleFiles = [
+  './DspRackPage.vue',
+  './EqualizerPage.vue',
   './LocalDashboard.css',
+  './player-bar/PlayerBar.css',
   './PlayingMusic.vue',
   './SideMenu.vue',
   './StreamingLibrary.vue',

@@ -1011,14 +1011,14 @@
 .cover-img {
   width: 34px;
   height: 34px;
-  border-radius: var(--te-library-cover-radius);
+  border-radius: var(--te-artwork-list-radius, var(--te-library-cover-radius));
   object-fit: cover;
   box-shadow: 0 10px 22px rgba(86, 70, 160, 0.14);
 }
 .cover-placeholder {
   width: 34px;
   height: 34px;
-  border-radius: var(--te-library-cover-radius);
+  border-radius: var(--te-artwork-list-radius, var(--te-library-cover-radius));
   background:
     radial-gradient(circle at 35% 30%, rgba(255, 255, 255, 0.9), transparent 36%),
     linear-gradient(135deg, rgba(124, 77, 255, 0.18), rgba(34, 211, 238, 0.12));

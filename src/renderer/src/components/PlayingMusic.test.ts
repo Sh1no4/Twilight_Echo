@@ -103,17 +103,17 @@ test('visualizer toggle sits top-left with the frosted time-chip style', () => {
   assert.match(source, /\.visualizer-toggle-button \{[\s\S]*border-radius: 999px/)
   assert.match(
     source,
-    /\.visualizer-toggle-button \{[\s\S]*background: rgba\(255, 255, 255, 0\.08\)/
+    /\.visualizer-toggle-button \{[\s\S]*background: var\(--te-playback-control-surface, rgba\(255, 255, 255, 0\.08\)\)/
   )
   assert.match(
     source,
-    /\.visualizer-toggle-button \{[\s\S]*border: 1px solid rgba\(255, 255, 255, 0\.1\)/
+    /\.visualizer-toggle-button \{[\s\S]*border: 1px solid var\(--te-playback-control-border, rgba\(255, 255, 255, 0\.1\)\)/
   )
   assert.match(source, /\.visualizer-toggle-button--close \{[\s\S]*top: 8px[\s\S]*left: 14px/)
   assert.match(source, /\.visualizer-toggle-button--close \{[\s\S]*right: auto/)
   assert.match(
     source,
-    /\.visualizer-toggle-button--close:hover \{[\s\S]*background: rgba\(255, 255, 255, 0\.14\)/
+    /\.visualizer-toggle-button--close:hover \{[\s\S]*background: var\(--te-playback-control-hover-surface, rgba\(255, 255, 255, 0\.14\)\)/
   )
   assert.doesNotMatch(source, /\.visualizer-toggle-button--close \{[^}]*border-radius: 0/)
   assert.doesNotMatch(source, /title-bar-left-controls/)
@@ -146,4 +146,39 @@ test('desktop lyrics html exposes lyric source metadata on hover', () => {
   assert.match(source, /data\.translatedLyricsSource/)
   assert.match(source, /sourceLabel/)
   assert.match(source, /songInfoEl\.title = sourceLabel/)
+})
+
+test('phase four layouts only rearrange the existing cover and lyrics instances', () => {
+  const source = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+
+  for (const layout of ['full-cover', 'lyrics-focus', 'split', 'minimal']) {
+    assert.match(source, new RegExp(`data-te-player-layout='${layout}'`))
+  }
+  assert.match(source, /@media \(max-width: 1120px\)[\s\S]*data-te-player-layout='split'/)
+  assert.match(
+    source,
+    /data-te-player-layout='minimal'\]\[data-te-visible-player-album-artist='true'\]/
+  )
+  assert.equal(source.match(/<CoverImg/g)?.length, 2)
+  assert.equal(source.match(/class="lyrics-scroll"/g)?.length, 1)
+  assert.doesNotMatch(source, /usePlaybackQueueStore/)
+})
+
+test('player visibility selectors target stable controls and remove hidden buttons from layout', () => {
+  const component = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
+  const style = readFileSync(new URL('./player-bar/PlayerBar.css', import.meta.url), 'utf8')
+
+  for (const className of [
+    'previous-button',
+    'next-button',
+    'track-menu-button',
+    'player-misc-icon',
+    'player-artwork-slot'
+  ]) {
+    assert.match(component, new RegExp(className))
+  }
+  assert.match(style, /data-te-visible-previous-button='false'[\s\S]*display: none/)
+  assert.match(style, /data-te-visible-next-button='false'/)
+  assert.match(style, /data-te-visible-player-track-menu='false'/)
+  assert.match(style, /data-te-visible-player-waveform='false'/)
 })

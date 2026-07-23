@@ -31,10 +31,14 @@ import type {
   VolumeNormalizationMode
 } from '../types/settings'
 
-defineProps<{
-  glass?: boolean
-  menuOpen?: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    glass?: boolean
+    menuOpen?: boolean
+    preview?: boolean
+  }>(),
+  { preview: false }
+)
 
 const {
   currentTrack,
@@ -121,7 +125,6 @@ const playerLeftKey = computed(
     `pl:${currentTrack.value?.id ?? 'none'}:${currentTrack.value?.queueEntryId ?? ''}:${currentTrack.value?.cover ?? ''}`
 )
 const {
-
   playlists,
   addToPlaylist,
   removeFromPlaylist,
@@ -162,10 +165,11 @@ async function openMiniPlayer(): Promise<void> {
   }
 }
 
-// Keep in sync when toggled from settings
-window.api.desktopLyrics.onToggle((enabled: boolean) => {
-  desktopLyricsOn.value = enabled
-})
+if (!props.preview) {
+  window.api.desktopLyrics.onToggle((enabled: boolean) => {
+    desktopLyricsOn.value = enabled
+  })
+}
 
 const emit = defineEmits<{
   clickCover: [rect: { x: number; y: number; w: number; h: number }]
@@ -199,13 +203,11 @@ const isLiveStream = computed(() => {
   // On-demand sources (local / NCM / podcast) keep a seekable timeline even when
   // metadata duration is still 0 before the engine reports length.
   const source =
-    track.source ||
-    (track.id.includes(':') ? track.id.slice(0, track.id.indexOf(':')) : 'local')
+    track.source || (track.id.includes(':') ? track.id.slice(0, track.id.indexOf(':')) : 'local')
   if (source === 'local' || source === 'ncm' || source === 'podcast') return false
   if (duration.value > 0) return false
   return (
-    track.duration === 0 &&
-    Boolean(track.streamUrl || /^https?:\/\//i.test(track.filePath || ''))
+    track.duration === 0 && Boolean(track.streamUrl || /^https?:\/\//i.test(track.filePath || ''))
   )
 })
 
@@ -295,10 +297,7 @@ const canCastCurrentTrack = computed(() => {
   // Local path or any stream URL (podcast / radio / provider) can cast once the
   // remote media token proxy is available in main.
   return Boolean(
-    track.streamUrl ||
-      track.filePath ||
-      track.source === 'radio' ||
-      track.source === 'podcast'
+    track.streamUrl || track.filePath || track.source === 'radio' || track.source === 'podcast'
   )
 })
 
@@ -967,7 +966,7 @@ async function onReloadLyrics(prefer: 'auto' | 'local' | 'provider'): Promise<vo
 }
 
 onMounted(() => {
-  void syncExtensions()
+  if (!props.preview) void syncExtensions()
 })
 </script>
 
@@ -1126,7 +1125,12 @@ onMounted(() => {
     >
       <!-- 左侧：整块按曲目 identity remount，避免 cover:// 解码粘住上一首 -->
       <div :key="playerLeftKey" class="player-left">
-        <div ref="coverRef" class="player-cover-slot" title="打开播放页面" @click="onCoverClick">
+        <div
+          ref="coverRef"
+          class="player-cover-slot player-artwork-slot"
+          title="打开播放页面"
+          @click="onCoverClick"
+        >
           <CoverImg
             v-if="currentTrack.cover || currentTrack.coverSource"
             :cover="currentTrack.cover"
@@ -1191,13 +1195,13 @@ onMounted(() => {
       <!-- 中间 -->
       <div class="player-center">
         <div class="player-controls">
-          <button class="ctrl-btn" aria-label="上一首" @click="prev">
+          <button class="ctrl-btn previous-button" aria-label="上一首" @click="prev">
             <img :src="previousTrackIcon" alt="上一首" />
           </button>
           <button class="ctrl-btn btn-play" aria-label="播放/暂停" @click="togglePlay">
             <img :src="isPlaying ? pauseIcon : playIcon" :alt="isPlaying ? '暂停' : '播放'" />
           </button>
-          <button class="ctrl-btn" aria-label="下一首" @click="next">
+          <button class="ctrl-btn next-button" aria-label="下一首" @click="next">
             <img :src="nextTrackIcon" alt="下一首" />
           </button>
         </div>
@@ -1243,7 +1247,9 @@ onMounted(() => {
               @input="onProgressInput"
             />
           </div>
-          <span class="time-label">{{ isLiveStream ? 'LIVE' : formatTime(effectiveDuration) }}</span>
+          <span class="time-label">{{
+            isLiveStream ? 'LIVE' : formatTime(effectiveDuration)
+          }}</span>
         </div>
       </div>
 
@@ -1251,7 +1257,7 @@ onMounted(() => {
       <div class="player-right">
         <button
           v-if="favoriteButtonVisible"
-          class="icon-btn favorite-btn"
+          class="icon-btn favorite-btn player-misc-icon"
           :class="{ active: favoriteButtonLiked }"
           :title="favoriteButtonTitle"
           :aria-label="favoriteButtonTitle"
@@ -1270,7 +1276,11 @@ onMounted(() => {
           ></i>
         </button>
 
-        <button class="ctrl-btn mode-btn-right" :title="modeTitle" @click="cyclePlayMode">
+        <button
+          class="ctrl-btn mode-btn-right player-misc-icon"
+          :title="modeTitle"
+          @click="cyclePlayMode"
+        >
           <img v-if="playMode === 'sequential'" :src="sequentialIcon" alt="顺序" />
           <img v-else-if="playMode === 'listLoop'" :src="repeatIcon" alt="列表循环" />
           <img v-else-if="playMode === 'repeat'" :src="repeatIcon" alt="单曲循环" />
@@ -1278,7 +1288,7 @@ onMounted(() => {
         </button>
 
         <!-- 音量按钮 + 向上弹出抽屉 -->
-        <div class="volume-anchor" @wheel="onVolumeWheel">
+        <div class="volume-anchor player-misc-icon" @wheel="onVolumeWheel">
           <Transition name="volume-drawer">
             <div v-if="volumeOpen" class="volume-drawer" :class="{ 'drawer-glass': glass }">
               <div class="volume-drawer-slider-wrap">
@@ -1318,7 +1328,7 @@ onMounted(() => {
         </div>
 
         <button
-          class="icon-btn"
+          class="icon-btn track-menu-button"
           :class="{ active: playlistOpen }"
           title="播放列表"
           @click="togglePlaylist"
@@ -1327,7 +1337,7 @@ onMounted(() => {
         </button>
 
         <button
-          class="icon-btn mini-player-btn"
+          class="icon-btn mini-player-btn player-misc-icon"
           title="切换到迷你播放器"
           aria-label="切换到迷你播放器"
           :disabled="miniPlayerOpening"
@@ -1337,7 +1347,7 @@ onMounted(() => {
         </button>
 
         <button
-          class="icon-btn desktop-lyrics-btn"
+          class="icon-btn desktop-lyrics-btn player-misc-icon"
           :class="{ active: desktopLyricsOn }"
           title="桌面歌词"
           aria-label="桌面歌词"
@@ -1349,7 +1359,7 @@ onMounted(() => {
 
         <!-- HiFi 控制台入口 -->
         <button
-          class="icon-btn"
+          class="icon-btn player-misc-icon"
           :class="{ active: moreOpen }"
           title="HiFi 控制台"
           aria-label="HiFi 控制台"

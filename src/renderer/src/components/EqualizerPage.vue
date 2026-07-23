@@ -807,8 +807,8 @@ watch(opraQuery, () => {
                 </defs>
                 <line v-for="gain in gainTicks" :key="'gl-'+gain" x1="0" x2="100" :y1="gainToY(gain)" :y2="gainToY(gain)" class="grid-line" :class="{zero: gain===0}" />
                 <line v-for="freq in frequencyTicks" :key="'fl-'+freq" :x1="frequencyToX(freq)" :x2="frequencyToX(freq)" y1="0" y2="100" class="grid-line" />
-                <path :d="responseFillPath" fill="url(#fillGradient)" />
-                <path :d="responsePath" fill="none" stroke="url(#curveGradient)" stroke-width="3px" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" />
+                <path class="equalizer-spectrum-area" :d="responseFillPath" fill="url(#fillGradient)" />
+                <path class="equalizer-spectrum-line" :d="responsePath" fill="none" stroke="url(#curveGradient)" stroke-width="3px" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </div>
           </section>
@@ -856,10 +856,10 @@ watch(opraQuery, () => {
                 </defs>
                 <line v-for="gain in gainTicks" :key="'pgl-'+gain" x1="0" x2="100" :y1="gainToY(gain)" :y2="gainToY(gain)" class="grid-line" :class="{zero: gain===0}" />
                 <line v-for="freq in frequencyTicks" :key="'pfl-'+freq" :x1="frequencyToX(freq)" :x2="frequencyToX(freq)" y1="0" y2="100" class="grid-line" />
-                <line v-if="selectedBand" :x1="frequencyToX(selectedBand.frequency)" :x2="frequencyToX(selectedBand.frequency)" y1="0" y2="100" stroke="#6366f1" stroke-width="2px" stroke-dasharray="4 4" vector-effect="non-scaling-stroke" />
+                <line v-if="selectedBand" class="frequency-guide" :x1="frequencyToX(selectedBand.frequency)" :x2="frequencyToX(selectedBand.frequency)" y1="0" y2="100" stroke="#6366f1" stroke-width="2px" stroke-dasharray="4 4" vector-effect="non-scaling-stroke" />
 
-                <path :d="responseFillPath" fill="url(#fillGradientP)" />
-                <path :d="responsePath" fill="none" stroke="url(#curveGradientP)" stroke-width="3px" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" />
+                <path class="equalizer-spectrum-area" :d="responseFillPath" fill="url(#fillGradientP)" />
+                <path class="equalizer-spectrum-line" :d="responsePath" fill="none" stroke="url(#curveGradientP)" stroke-width="3px" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </div>
           </section>
@@ -1271,4 +1271,152 @@ watch(opraQuery, () => {
     .square-card i { font-size: 48px; color: var(--te-primary-500); background: #fff; /* keep-white: icon circle */ width: 100px; height: 100px; display: flex; align-items: center; justify-content: center; border-radius: 50%; box-shadow: 0 16px 32px rgba(15, 23, 42, 0.05); margin-bottom: 24px; }
     .square-card h2 { font-size: 24px; font-weight: 800; margin-bottom: 12px; }
     .square-card p { color: var(--te-neutral-500); max-width: 400px; line-height: 1.6; }
+    :global(html[data-te-equalizer-panel] .eq-page .opra-panel),
+    :global(html[data-te-equalizer-panel] .eq-page .chart-card),
+    :global(html[data-te-equalizer-panel] .eq-page .sliders-board),
+    :global(html[data-te-equalizer-panel] .eq-page .band-selector),
+    :global(html[data-te-equalizer-panel] .eq-page .parameter-card),
+    :global(html[data-te-equalizer-panel] .eq-page .square-card) {
+      border-color: var(--te-equalizer-panel-border);
+      border-radius: var(--te-equalizer-panel-radius);
+      background: var(--te-equalizer-panel-bg);
+    }
+
+    :global(html[data-te-equalizer-panel='tinted'] .eq-page .opra-panel),
+    :global(html[data-te-equalizer-panel='tinted'] .eq-page .chart-card),
+    :global(html[data-te-equalizer-panel='tinted'] .eq-page .sliders-board),
+    :global(html[data-te-equalizer-panel='tinted'] .eq-page .band-selector),
+    :global(html[data-te-equalizer-panel='tinted'] .eq-page .parameter-card),
+    :global(html[data-te-equalizer-panel='tinted'] .eq-page .square-card) {
+      background: color-mix(in srgb, var(--te-equalizer-panel-bg) 82%, var(--te-primary-500));
+    }
+
+    :global(html[data-te-equalizer-panel='glass'] .eq-page .opra-panel),
+    :global(html[data-te-equalizer-panel='glass'] .eq-page .chart-card),
+    :global(html[data-te-equalizer-panel='glass'] .eq-page .sliders-board),
+    :global(html[data-te-equalizer-panel='glass'] .eq-page .band-selector),
+    :global(html[data-te-equalizer-panel='glass'] .eq-page .parameter-card),
+    :global(html[data-te-equalizer-panel='glass'] .eq-page .square-card) {
+      background: color-mix(in srgb, var(--te-equalizer-panel-bg) 68%, transparent);
+      backdrop-filter: blur(18px) saturate(140%);
+      -webkit-backdrop-filter: blur(18px) saturate(140%);
+    }
+
+    :global(html[data-te-equalizer-slider] .eq-page .slider-track) {
+      background: var(--te-equalizer-slider-track);
+    }
+
+    :global(html[data-te-equalizer-slider] .eq-page .slider-fill),
+    :global(html[data-te-equalizer-slider] .eq-page .master-column .slider-fill) {
+      background: var(--te-equalizer-slider-fill);
+    }
+
+    :global(html[data-te-equalizer-slider] .eq-page .slider-thumb) {
+      width: var(--te-equalizer-slider-thumb-size);
+      height: var(--te-equalizer-slider-thumb-size);
+      background: var(--te-equalizer-slider-thumb);
+    }
+
+    :global(html[data-te-equalizer-slider='ring'] .eq-page .slider-thumb) {
+      border: 2px solid var(--te-primary-500);
+    }
+
+    :global(html[data-te-equalizer-slider='solid'] .eq-page .slider-thumb) {
+      border: 0;
+      background: var(--te-primary-500);
+    }
+
+    :global(html[data-te-equalizer-panel] .eq-page .grid-line) {
+      stroke: var(--te-equalizer-grid);
+    }
+
+    :global(html[data-te-equalizer-panel] .eq-page .grid-line.zero),
+    :global(html[data-te-equalizer-panel] .eq-page .frequency-guide) {
+      stroke: var(--te-equalizer-guide);
+    }
+
+    :global(html[data-te-equalizer-spectrum] .eq-page .equalizer-spectrum-line) {
+      stroke: var(--te-equalizer-spectrum);
+    }
+
+    :global(html[data-te-equalizer-spectrum] .eq-page .equalizer-spectrum-area) {
+      fill: color-mix(in srgb, var(--te-equalizer-spectrum) 28%, transparent);
+    }
+
+    :global(html[data-te-equalizer-spectrum='line'] .eq-page .equalizer-spectrum-area),
+    :global(html[data-te-equalizer-spectrum='bars'] .eq-page .equalizer-spectrum-area) {
+      display: none;
+    }
+
+    :global(html[data-te-equalizer-spectrum='bars'] .eq-page .equalizer-spectrum-line) {
+      stroke-width: 8px;
+      stroke-dasharray: 1.5 5;
+      stroke-linecap: butt;
+    }
+
+    :global(html[data-te-equalizer-spectrum='area'] .eq-page .equalizer-spectrum-line) {
+      stroke-width: 2px;
+    }
+
+    :global(html[data-te-equalizer-button] .eq-page .eq-command),
+    :global(html[data-te-equalizer-button] .eq-page .band-tab),
+    :global(html[data-te-equalizer-button] .eq-page .opra-action-btn),
+    :global(html[data-te-equalizer-button] .eq-page .result-apply) {
+      border-radius: var(--te-equalizer-button-radius);
+    }
+
+    :global(html[data-te-equalizer-button='soft'] .eq-page .eq-command),
+    :global(html[data-te-equalizer-button='soft'] .eq-page .band-tab) {
+      border-color: transparent;
+      background: var(--te-equalizer-button-bg);
+    }
+
+    :global(html[data-te-equalizer-button='outline'] .eq-page .eq-command),
+    :global(html[data-te-equalizer-button='outline'] .eq-page .band-tab) {
+      border-color: var(--te-equalizer-panel-border);
+      background: transparent;
+    }
+
+    :global(html[data-te-equalizer-button='solid'] .eq-page .eq-command),
+    :global(html[data-te-equalizer-button='solid'] .eq-page .band-tab) {
+      border-color: var(--te-primary-500);
+      background: var(--te-primary-500);
+      color: var(--te-neutral-50);
+    }
+
+    :global(html[data-te-equalizer-knob] .eq-page .toggle-thumb) {
+      width: var(--te-equalizer-knob-size);
+      height: var(--te-equalizer-knob-size);
+    }
+
+    :global(html[data-te-equalizer-knob] .eq-page .toggle-thumb::after) {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      background: var(--te-primary-500);
+      transform: translate(-50%, -50%);
+    }
+
+    :global(html[data-te-equalizer-knob='line'] .eq-page .toggle-thumb::after) {
+      width: 8px;
+      height: 2px;
+      border-radius: 1px;
+    }
+
+    :global(html[data-te-equalizer-knob='dot'] .eq-page .toggle-thumb::after) {
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+    }
+
+    :global(html[data-te-visible-equalizer-grid='false'] .eq-page .grid-line),
+    :global(html[data-te-visible-equalizer-frequency-guides='false'] .eq-page .chart-labels-x),
+    :global(html[data-te-visible-equalizer-frequency-guides='false'] .eq-page .chart-labels-y),
+    :global(html[data-te-visible-equalizer-frequency-guides='false'] .eq-page .frequency-guide),
+    :global(html[data-te-visible-equalizer-spectrum='false'] .eq-page .equalizer-spectrum-line),
+    :global(html[data-te-visible-equalizer-spectrum='false'] .eq-page .equalizer-spectrum-area),
+    :global(html[data-te-visible-equalizer-spectrum='false'] .eq-page .chart-point) {
+      display: none;
+    }
 </style>

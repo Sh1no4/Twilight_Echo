@@ -4,6 +4,10 @@ import test from 'node:test'
 import { THEME_TOKEN_DEFINITIONS } from '../../../shared/theme.ts'
 
 const playingMusic = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
+const playerBarComponent = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
+const playerBar = readFileSync(new URL('./player-bar/PlayerBar.css', import.meta.url), 'utf8')
+const equalizer = readFileSync(new URL('./EqualizerPage.vue', import.meta.url), 'utf8')
+const dspRack = readFileSync(new URL('./DspRackPage.vue', import.meta.url), 'utf8')
 const app = readFileSync(new URL('../App.vue', import.meta.url), 'utf8')
 const baseStyle = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
 const settingsPage = readFileSync(new URL('./SettingsPage.vue', import.meta.url), 'utf8')
@@ -37,12 +41,13 @@ const themeArchive = readFileSync(
 )
 const pluginIpc = readFileSync(new URL('../../../main/ipc/plugins.ts', import.meta.url), 'utf8')
 
-test('every registered playback token is wired into the real playback surface', () => {
+test('every registered playback token is wired into a real playback or DSP surface', () => {
   const playbackVariables = THEME_TOKEN_DEFINITIONS.filter(
     (definition) => definition.group === 'playback'
   ).map((definition) => definition.cssVariable)
+  const playbackSurfaces = [playingMusic, playerBar, equalizer, dspRack].join('\n')
   assert.ok(playbackVariables.length >= 20)
-  for (const variable of playbackVariables) assert.match(playingMusic, new RegExp(variable))
+  for (const variable of playbackVariables) assert.match(playbackSurfaces, new RegExp(variable))
 })
 
 test('theme studio is a dedicated navigable settings surface', () => {
@@ -55,6 +60,31 @@ test('theme studio is a dedicated navigable settings surface', () => {
   assert.match(studio, /sourceFor\(definition\)/)
   assert.match(studio, /assetSource\(binding\.key\)/)
   assert.match(studio, /draft\.name \}\} · 未保存/)
+})
+
+test('theme studio live preview mounts real application surfaces instead of a mock shell', () => {
+  for (const component of [
+    'LocalDashboard',
+    'PlayingMusic',
+    'EqualizerPage',
+    'PlayerBar',
+    'SideMenu',
+    'TitleBar'
+  ]) {
+    assert.match(studio, new RegExp(`import ${component} from`))
+    assert.match(studio, new RegExp(`<${component}`))
+  }
+  assert.match(studio, /class="live-preview-canvas"/)
+  assert.match(studio, /previewCanvasStyle/)
+  assert.match(studio, /inert/)
+  assert.match(studio, /<PlayerBar[\s\S]*preview/)
+  assert.match(playerBarComponent, /if \(!props\.preview\) void syncExtensions\(\)/)
+  assert.doesNotMatch(studio, /class="preview-(?:app-shell|cards|playerbar|player-surface)"/)
+  assert.match(studioStyle, /\.live-preview-canvas/)
+  assert.match(
+    themeStore,
+    /else if \(previewTone\.value\)[\s\S]*TWILIGHT_DEFAULT_THEME\.variants\[tone\]\.tokens/
+  )
 })
 
 test('theme assets use typed local bindings instead of arbitrary stylesheet urls', () => {
@@ -138,6 +168,28 @@ test('phase three icon, navigation, and library modes use static host-owned pres
   }
   assert.match(virtualScroll, /const ROW_HEIGHT = 68/)
   assert.doesNotMatch(virtualScroll, /data-te-library-density/)
+})
+
+test('phase four player layouts, controls, equalizer modes, and visibility stay host-owned', () => {
+  for (const layout of ['standard', 'full-cover', 'lyrics-focus', 'split', 'minimal']) {
+    assert.match(studio, new RegExp(`id: '${layout}'`))
+  }
+  assert.match(studio, /class="layout-gallery"/)
+  assert.match(studio, /minimalHiddenSlots/)
+  assert.match(studio, /typeof explicit === 'boolean'/)
+  assert.match(playingMusic, /data-te-player-layout='full-cover'/)
+  assert.match(playingMusic, /data-te-player-layout='lyrics-focus'/)
+  assert.match(playingMusic, /data-te-player-layout='split'/)
+  assert.match(playingMusic, /data-te-player-layout='minimal'/)
+  assert.match(playingMusic, /data-te-visible-player-artwork='false'/)
+  assert.match(playerBar, /data-te-player-controls='pro'/)
+  assert.match(playerBar, /data-te-player-progress='spectrum'/)
+  assert.match(playerBar, /data-te-visible-player-track-menu='false'/)
+  assert.match(equalizer, /data-te-equalizer-panel='glass'/)
+  assert.match(equalizer, /data-te-equalizer-spectrum='bars'/)
+  assert.match(equalizer, /data-te-visible-equalizer-spectrum='false'/)
+  assert.match(dspRack, /data-te-equalizer-button='solid'/)
+  assert.doesNotMatch(playingMusic, /usePlaybackQueueStore/)
 })
 
 test('preview and failed writes restore the persisted runtime without partially committing assets', () => {

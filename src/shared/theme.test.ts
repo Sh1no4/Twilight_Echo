@@ -130,6 +130,9 @@ test('numeric and length token constraints are enforced', () => {
       'shape.dialogRadius': '12px',
       'navigation.opacity': '72%',
       'library.selection.inlineInset': '12px',
+      'playback.cover.size': '84%',
+      'playback.control.borderWidth': '2px',
+      'playback.equalizer.sliderThumbSize': '24px',
       'shape.cardBorderWidth': '4px',
       'typography.titleWeight': '950',
       'color.primary.500': 'not-a-color'
@@ -141,7 +144,10 @@ test('numeric and length token constraints are enforced', () => {
       'shape.cardRadius': '24px',
       'shape.dialogRadius': '12px',
       'navigation.opacity': '72%',
-      'library.selection.inlineInset': '12px'
+      'library.selection.inlineInset': '12px',
+      'playback.cover.size': '84%',
+      'playback.control.borderWidth': '2px',
+      'playback.equalizer.sliderThumbSize': '24px'
     }
   )
 })
@@ -163,8 +169,27 @@ test('v2 theme modes are sparse, whitelisted, and map only to managed attributes
       library: { density: 'compact', selection: 'unsafe', titleOverlay: 'on' },
       icons: { family: 'filled' },
       typography: { titleCase: 'uppercase', lyricAccent: 'accent', titleColor: 'unsafe' },
-      player: { layout: 'script:alert(1)' },
-      visibility: { playerArtwork: false, arbitraryDomNode: false }
+      player: {
+        layout: 'split',
+        controls: 'pro',
+        titleAlign: 'center',
+        progress: 'spectrum',
+        unknown: 'unsafe'
+      },
+      artwork: { transition: 'slide', shadow: 'off' },
+      equalizer: {
+        panel: 'glass',
+        slider: 'solid',
+        knob: 'dot',
+        spectrum: 'area',
+        button: 'solid'
+      },
+      visibility: {
+        playerArtwork: false,
+        playerTrackMenu: false,
+        previousButton: true,
+        arbitraryDomNode: false
+      }
     }
   })
 
@@ -175,7 +200,16 @@ test('v2 theme modes are sparse, whitelisted, and map only to managed attributes
     library: { density: 'compact', titleOverlay: 'on' },
     icons: { family: 'filled' },
     typography: { titleCase: 'uppercase', lyricAccent: 'accent' },
-    visibility: { playerArtwork: false }
+    player: { layout: 'split', controls: 'pro', titleAlign: 'center', progress: 'spectrum' },
+    artwork: { transition: 'slide', shadow: 'off' },
+    equalizer: {
+      panel: 'glass',
+      slider: 'solid',
+      knob: 'dot',
+      spectrum: 'area',
+      button: 'solid'
+    },
+    visibility: { playerArtwork: false, playerTrackMenu: false, previousButton: true }
   })
   assert.deepEqual(profile.toneSchedule, { lightStartMinutes: 390, darkStartMinutes: 1230 })
   const attributes = themeModesToDataAttributes(resolveThemeProfileModes(profile))
@@ -187,8 +221,20 @@ test('v2 theme modes are sparse, whitelisted, and map only to managed attributes
   assert.equal(attributes['data-te-icon-family'], 'filled')
   assert.equal(attributes['data-te-title-case'], 'uppercase')
   assert.equal(attributes['data-te-lyric-accent'], 'accent')
-  assert.equal(attributes['data-te-player-layout'], 'standard')
+  assert.equal(attributes['data-te-player-layout'], 'split')
+  assert.equal(attributes['data-te-player-controls'], 'pro')
+  assert.equal(attributes['data-te-player-title-align'], 'center')
+  assert.equal(attributes['data-te-player-progress'], 'spectrum')
+  assert.equal(attributes['data-te-artwork-transition'], 'slide')
+  assert.equal(attributes['data-te-artwork-shadow'], 'off')
+  assert.equal(attributes['data-te-equalizer-panel'], 'glass')
+  assert.equal(attributes['data-te-equalizer-slider'], 'solid')
+  assert.equal(attributes['data-te-equalizer-knob'], 'dot')
+  assert.equal(attributes['data-te-equalizer-spectrum'], 'area')
+  assert.equal(attributes['data-te-equalizer-button'], 'solid')
   assert.equal(attributes['data-te-visible-player-artwork'], 'false')
+  assert.equal(attributes['data-te-visible-player-track-menu'], 'false')
+  assert.equal(attributes['data-te-visible-previous-button'], 'true')
   assert.equal(
     Object.keys(attributes).some((name) => name.includes('unknown')),
     false

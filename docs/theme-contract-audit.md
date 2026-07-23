@@ -1,6 +1,6 @@
 # Twilight Echo Theme Contract Audit
 
-Status: Phase 0 baseline, with Phase 1 through Phase 3 behavior frozen.
+Status: Phase 0 baseline, with Phase 1 through Phase 4 behavior frozen.
 
 ## Contract Rules
 
@@ -26,38 +26,47 @@ Status: Phase 0 baseline, with Phase 1 through Phase 3 behavior frozen.
 | Appearance | accent source        | `fixed`, `cover`                                             | Cached cover accent or fixed profile tokens         |
 | Appearance | background treatment | `solid`, `gradient`, `cover-blur`, `image`                   | Bounded tokens with solid failure fallback          |
 | Appearance | tone scheduling      | `manual`, `system`, `timed`                                  | Native system events or bounded local time schedule |
-| Appearance | contrast guard       | `off`, `warn`, `enforce`                                     | WCAG warning or host-derived text fallback           |
+| Appearance | contrast guard       | `off`, `warn`, `enforce`                                     | WCAG warning or host-derived text fallback          |
 | Navigation | style                | `expanded`, `compact`, `rail`                                | Static host sidebar variants                        |
 | Navigation | icon scale           | `sm`, `md`, `lg`                                             | Fixed hit areas with scaled glyphs                  |
 | Navigation | logo                 | `show`, `hide`                                               | Host brand visibility only                          |
 | Library    | density              | `comfortable`, `compact`                                     | Static list/card presentation                       |
 | Library    | selection            | `fill`, `stroke`                                             | Static selected-row presentation                    |
 | Library    | title overlay        | `off`, `on`                                                  | Bounded token-driven heading overlay                |
-| Player     | layout               | `standard`, `full-cover`, `lyrics-focus`, `split`, `minimal` | Attribute output only                               |
-| Player     | controls             | `standard`, `pro`                                            | Attribute output only                               |
-| Artwork    | transition           | `fade`, `slide`, `none`                                      | Attribute output only                               |
+| Player     | layout               | `standard`, `full-cover`, `lyrics-focus`, `split`, `minimal` | Static layouts with responsive split fallback       |
+| Player     | controls             | `standard`, `pro`                                            | Static host control presentation                    |
+| Player     | title alignment      | `left`, `center`                                             | Presentation only; independent from layout          |
+| Player     | progress             | `line`, `ring`, `solid`, `spectrum`                          | Static progress presentation                        |
+| Artwork    | transition           | `fade`, `slide`, `none`                                      | Bounded host animation                              |
+| Artwork    | shadow               | `on`, `off`                                                  | Static shadow presentation                          |
+| Equalizer  | panel                | `neutral`, `tinted`, `glass`                                 | Visual-only panel treatment                         |
+| Equalizer  | slider               | `ring`, `solid`                                              | Visual-only slider thumb treatment                  |
+| Equalizer  | knob                 | `line`, `dot`                                                | Visual-only knob indicator                          |
+| Equalizer  | spectrum             | `bars`, `line`, `area`                                       | Visual-only spectrum treatment                      |
+| Equalizer  | button               | `soft`, `outline`, `solid`                                   | Visual-only button treatment                        |
 | Icons      | family               | `outline`, `rounded`, `filled`                               | Host-owned semantic slot mapping                    |
 | Typography | title case           | `preserve`, `uppercase`                                      | Presentation only; metadata remains unchanged       |
 | Typography | lyric accent         | `off`, `accent`                                              | Active lyric line may inherit the accent family     |
 | Typography | title color          | `off`, `track`, `artist-album`                               | Accent applies to the selected metadata hierarchy   |
-| Visibility | registered slot IDs  | boolean                                                      | Sparse attributes only; UI is deferred              |
+| Visibility | 13 registered slots  | boolean                                                      | Static attributes with Theme Studio controls        |
 
 Only registry entries may become `data-te-*` attributes. Unknown keys and values are discarded by
 normalization.
 
 ## Component Audit
 
-| Order | Owner                | Visual semantics                                       | Current state                                 | Phase 1 contract                           | Classification  |
-| ----: | -------------------- | ------------------------------------------------------ | --------------------------------------------- | ------------------------------------------ | --------------- |
-|     1 | App shell / TitleBar | page surface, shell text, control hover                | app tokens plus literal hover colors          | shell surface/text/control tokens          | token           |
-|     2 | SettingsPage         | page text, navigation state, controls, borders         | mixed tokens and many legacy literals         | settings text/nav/control tokens           | token           |
-|     3 | SideMenu             | surface, border, shadow, text, hover, active indicator | glass tokens plus literal slate values        | navigation semantic tokens                 | token           |
-|     4 | SongList             | page/table surface, row text, hover, selection         | custom gradients and literal selection colors | library surface/row/selection tokens       | token           |
-|     5 | PlayerBar            | surface and controls                                   | partially tokenized                           | existing playback tokens; no layout change | token           |
-|     6 | PlayingMusic         | backdrop, artwork, lyrics, controls                    | registered playback token coverage            | unchanged in P1                            | token           |
-|     7 | EqualizerPage        | panel and control appearance                           | mixed global tokens and literals              | deferred visual preset                     | token, deferred |
-|     8 | Mini Player          | inherited appearance                                   | structured settings and window defaults       | unchanged in P1                            | token, deferred |
-|     9 | Desktop lyrics       | inherited text/background                              | structured settings and window defaults       | unchanged in P1                            | token, deferred |
+| Order | Owner                | Visual semantics                                       | Current state                                        | Frozen contract                                    | Classification  |
+| ----: | -------------------- | ------------------------------------------------------ | ---------------------------------------------------- | -------------------------------------------------- | --------------- |
+|     1 | App shell / TitleBar | page surface, shell text, control hover                | app tokens plus literal hover colors                 | shell surface/text/control tokens                  | token           |
+|     2 | SettingsPage         | page text, navigation state, controls, borders         | mixed tokens and many legacy literals                | settings text/nav/control tokens                   | token           |
+|     3 | SideMenu             | surface, border, shadow, text, hover, active indicator | host icon slots and static navigation modes          | navigation semantic tokens and modes               | token, mode     |
+|     4 | SongList             | page/table surface, row text, hover, selection         | tokenized selection and separate list artwork radius | library tokens; virtualized data path unchanged    | token, mode     |
+|     5 | PlayerBar            | surface, controls, progress, visibility                | tokenized Pro controls and four progress styles      | stable classes; playback behavior unchanged        | token, mode     |
+|     6 | PlayingMusic         | backdrop, artwork, lyrics, controls                    | five static layouts and bounded visibility           | one store and one lyrics component instance        | token, mode     |
+|     7 | EqualizerPage        | panel, slider, knob, spectrum, visibility              | tokenized host presentation modes                    | visual-only; EQ parameters and DSP chain unchanged | token, mode     |
+|     8 | DspRackPage          | EQ panel and control presentation                      | visual-only EQ token overrides                       | DSP graph and parameter behavior unchanged         | token, mode     |
+|     9 | Mini Player          | inherited appearance and artwork visibility            | host visibility selector plus window defaults        | no independent P4 state                            | token, mode     |
+|    10 | Desktop lyrics       | inherited text/background                              | structured settings and window defaults              | deferred to Phase 5                                | token, deferred |
 
 Rejected from the theme contract: playback behavior, DSP parameters, queue behavior, arbitrary DOM
 visibility, remote URLs, free-form CSS, scripts, window security policy, focus removal, and reduced
@@ -108,6 +117,21 @@ repository has a stable Electron screenshot harness.
   focus outline.
 - `test:themes` (35/35), `test:local-perf` (99 passed, 2 skipped),
   `test:cross-cutting-regressions` (13/13), ESLint, and both TypeScript typechecks pass.
+
+### Phase 4 Evidence
+
+- `audit-evidence/theme-p4-light.png` and `audit-evidence/theme-p4-dark.png` capture Theme Studio with
+  its read-only live canvas. The canvas mounts the real dashboard, player, equalizer, title bar,
+  navigation, and PlayerBar components; the former hand-built preview shell is no longer rendered.
+- Raw CDP exercised all five layouts at 1495×883, 1200×800, and 1080×720. Artwork and PlayerBar
+  remain inside the viewport with no document overflow or title/lyrics panel overlap.
+- `split` falls back to one column at the narrow breakpoint and returns to two columns when width is
+  restored. `minimal` applies host defaults without overwriting explicit visibility values, and
+  hidden interactive controls leave the visible focus order.
+- No-cover artwork, long scrolling lyrics, reduced motion, artwork shadow off, equalizer presentation
+  modes, and full-cover partitioning at 1080×720 and 720×720 pass direct DOM/style checks.
+- `test:themes` (37/37), the focused P4 component tests (16/16), `test:dsp-graph` (13/13), ESLint,
+  and both TypeScript typechecks pass. Validation used raw CDP and did not use Computer Use.
 
 ## Color Baseline
 

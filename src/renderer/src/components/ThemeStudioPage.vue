@@ -16,21 +16,29 @@ import {
   type ThemeAssetBindings,
   type ThemeAssetType,
   type ThemeModes,
+  type ThemePlayerLayout,
   type ThemeProfileV2,
   type ThemeSelection,
   type ThemeTokenDefinition,
-  type ThemeTone
+  type ThemeTone,
+  type ThemeVisibilitySlotId
 } from '../../../shared/theme.ts'
 import { useExtensionRegistry, type ThemeContribution } from '../extensions/registry'
 import { getPluginThemeKey } from '../extensions/themeSelection'
 import { useThemeStore } from '../stores/useThemeStore'
-import ThemeIcon from './ThemeIcon.vue'
+import EqualizerPage from './EqualizerPage.vue'
+import LocalDashboard from './LocalDashboard.vue'
+import PlayerBar from './PlayerBar.vue'
+import PlayingMusic from './PlayingMusic.vue'
+import SideMenu from './SideMenu.vue'
+import TitleBar from './TitleBar.vue'
 
 const emit = defineEmits<{ back: [] }>()
 const themeStore = useThemeStore()
 const { themeContributions, syncExtensions } = useExtensionRegistry()
 const selectedKey = ref('builtin')
 const tone = ref<ThemeTone>('pureWhite')
+type ThemePreviewSurface = 'dashboard' | 'player' | 'equalizer'
 type ThemeStudioDomain =
   | 'personalization'
   | 'shell'
@@ -42,6 +50,11 @@ type ThemeStudioDomain =
   | 'advanced'
 
 const domain = ref<ThemeStudioDomain>('personalization')
+const previewSurface = ref<ThemePreviewSurface>('dashboard')
+const previewViewportRef = ref<HTMLElement | null>(null)
+const previewViewportStyle = ref<Record<string, string>>({})
+const previewCanvasStyle = ref<Record<string, string>>({})
+let previewResizeObserver: ResizeObserver | null = null
 const draft = ref<ThemeProfileV2 | null>(null)
 const savedDraft = ref('')
 const history = ref<ThemeProfileV2[]>([])
@@ -60,6 +73,44 @@ const domains: Array<{ id: ThemeStudioDomain; label: string; icon: string }> = [
   { id: 'motion', label: '动效', icon: 'ph ph-wind' },
   { id: 'advanced', label: '高级令牌', icon: 'ph ph-sliders-horizontal' }
 ]
+
+const playerLayouts: Array<{ id: ThemePlayerLayout; label: string }> = [
+  { id: 'standard', label: '标准' },
+  { id: 'full-cover', label: '全封面' },
+  { id: 'lyrics-focus', label: '歌词聚焦' },
+  { id: 'split', label: '桌面双栏' },
+  { id: 'minimal', label: '极简' }
+]
+
+const previewSurfaces: Array<{ id: ThemePreviewSurface; label: string; icon: string }> = [
+  { id: 'dashboard', label: '主页', icon: 'ph ph-house' },
+  { id: 'player', label: '播放页', icon: 'ph ph-disc' },
+  { id: 'equalizer', label: '均衡器', icon: 'ph ph-sliders-horizontal' }
+]
+
+const visibilityOptions: Array<{ id: ThemeVisibilitySlotId; label: string }> = [
+  { id: 'playerAlbumArtist', label: '专辑与艺术家' },
+  { id: 'playerArtwork', label: '播放器封面' },
+  { id: 'playerTrackMenu', label: '曲目菜单' },
+  { id: 'playerMiscIcons', label: '杂项图标' },
+  { id: 'playerDuration', label: '时长显示' },
+  { id: 'playerWaveform', label: '进度轨道' },
+  { id: 'playerTrackInfo', label: '曲目信息' },
+  { id: 'equalizerGrid', label: '均衡器辅助线' },
+  { id: 'equalizerFrequencyGuides', label: '频率准线' },
+  { id: 'equalizerSpectrum', label: '频谱曲线' },
+  { id: 'previousButton', label: '上一首按钮' },
+  { id: 'nextButton', label: '下一首按钮' },
+  { id: 'miniPlayerArtwork', label: '小窗封面' }
+]
+
+const minimalHiddenSlots = new Set<ThemeVisibilitySlotId>([
+  'playerAlbumArtist',
+  'playerTrackMenu',
+  'playerMiscIcons',
+  'playerDuration',
+  'playerWaveform'
+])
 
 const personalizationTokenIds = new Set([
   'color.primary.500',
@@ -127,6 +178,9 @@ const definitions = computed(() => {
   return [...THEME_TOKEN_DEFINITIONS]
 })
 const activeDomain = computed(() => domains.find((item) => item.id === domain.value) ?? domains[0])
+const previewNavigationOpen = computed(
+  () => previewSurface.value === 'dashboard' && domain.value === 'navigation'
+)
 const profiles = computed(() => themeStore.profiles.value)
 const activeKey = computed(() => selectionKey(themeStore.activeTheme.value))
 const isUnsavedDraft = computed(
@@ -500,6 +554,75 @@ function updateLibraryMode(key: 'density' | 'selection' | 'titleOverlay', event:
   })
 }
 
+function updatePlayerMode(key: 'controls' | 'titleAlign' | 'progress', event: Event): void {
+  const value = (event.target as HTMLSelectElement).value
+  updateDraft((profile) => {
+    const player = { ...(profile.modes.player ?? {}) }
+    if (key === 'controls' && (value === 'standard' || value === 'pro')) {
+      player.controls = value
+    } else if (key === 'titleAlign' && (value === 'left' || value === 'center')) {
+      player.titleAlign = value
+    } else if (key === 'progress' && ['line', 'ring', 'solid', 'spectrum'].includes(value)) {
+      player.progress = value as NonNullable<ThemeModes['player']>['progress']
+    }
+    profile.modes.player = player
+  })
+}
+
+function setPlayerLayout(layout: ThemePlayerLayout): void {
+  updateDraft((profile) => {
+    profile.modes.player = { ...(profile.modes.player ?? {}), layout }
+  })
+}
+
+function updateArtworkMode(key: 'transition' | 'shadow', event: Event): void {
+  const value = (event.target as HTMLSelectElement).value
+  updateDraft((profile) => {
+    const artwork = { ...(profile.modes.artwork ?? {}) }
+    if (key === 'transition' && ['fade', 'slide', 'none'].includes(value)) {
+      artwork.transition = value as NonNullable<ThemeModes['artwork']>['transition']
+    } else if (key === 'shadow' && (value === 'on' || value === 'off')) {
+      artwork.shadow = value
+    }
+    profile.modes.artwork = artwork
+  })
+}
+
+function updateEqualizerMode(
+  key: 'panel' | 'slider' | 'knob' | 'spectrum' | 'button',
+  event: Event
+): void {
+  const value = (event.target as HTMLSelectElement).value
+  updateDraft((profile) => {
+    const equalizer = { ...(profile.modes.equalizer ?? {}) }
+    if (key === 'panel' && ['neutral', 'tinted', 'glass'].includes(value)) {
+      equalizer.panel = value as NonNullable<ThemeModes['equalizer']>['panel']
+    } else if (key === 'slider' && (value === 'ring' || value === 'solid')) {
+      equalizer.slider = value
+    } else if (key === 'knob' && (value === 'line' || value === 'dot')) {
+      equalizer.knob = value
+    } else if (key === 'spectrum' && ['bars', 'line', 'area'].includes(value)) {
+      equalizer.spectrum = value as NonNullable<ThemeModes['equalizer']>['spectrum']
+    } else if (key === 'button' && ['soft', 'outline', 'solid'].includes(value)) {
+      equalizer.button = value as NonNullable<ThemeModes['equalizer']>['button']
+    }
+    profile.modes.equalizer = equalizer
+  })
+}
+
+function visibilityValue(id: ThemeVisibilitySlotId): boolean {
+  const explicit = activeModes.value.visibility?.[id]
+  if (typeof explicit === 'boolean') return explicit
+  return activeModes.value.player?.layout !== 'minimal' || !minimalHiddenSlots.has(id)
+}
+
+function updateVisibility(id: ThemeVisibilitySlotId, event: Event): void {
+  const visible = (event.target as HTMLInputElement).checked
+  updateDraft((profile) => {
+    profile.modes.visibility = { ...(profile.modes.visibility ?? {}), [id]: visible }
+  })
+}
+
 function updateIconFamily(event: Event): void {
   const value = (event.target as HTMLSelectElement).value
   if (!['outline', 'rounded', 'filled'].includes(value)) return
@@ -610,6 +733,12 @@ function resetGroup(): void {
       profile.modes.icons = undefined
     }
     if (domain.value === 'library') profile.modes.library = undefined
+    if (domain.value === 'player') {
+      profile.modes.player = undefined
+      profile.modes.artwork = undefined
+      profile.modes.equalizer = undefined
+      profile.modes.visibility = undefined
+    }
     if (
       profile.assetBindings &&
       (domain.value === 'personalization' || domain.value === 'typography')
@@ -730,7 +859,31 @@ function closeStudio(): void {
   emit('back')
 }
 
+function updateLivePreviewScale(): void {
+  const viewport = previewViewportRef.value
+  if (!viewport) return
+  const sourceWidth = Math.max(1, document.documentElement.clientWidth)
+  const sourceHeight = Math.max(1, document.documentElement.clientHeight)
+  previewViewportStyle.value = { aspectRatio: `${sourceWidth} / ${sourceHeight}` }
+  const scale = Math.min(
+    viewport.clientWidth / sourceWidth,
+    viewport.clientHeight / sourceHeight,
+    1
+  )
+  const left = Math.max(0, (viewport.clientWidth - sourceWidth * scale) / 2)
+  const top = Math.max(0, (viewport.clientHeight - sourceHeight * scale) / 2)
+  previewCanvasStyle.value = {
+    width: `${sourceWidth}px`,
+    height: `${sourceHeight}px`,
+    transform: `translate3d(${left}px, ${top}px, 0) scale(${scale})`
+  }
+}
+
 onMounted(async () => {
+  previewResizeObserver = new ResizeObserver(updateLivePreviewScale)
+  if (previewViewportRef.value) previewResizeObserver.observe(previewViewportRef.value)
+  window.addEventListener('resize', updateLivePreviewScale)
+  window.requestAnimationFrame(updateLivePreviewScale)
   await Promise.all([themeStore.load(), syncExtensions()])
   originalTone = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'pureWhite'
   tone.value = originalTone
@@ -750,6 +903,9 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateLivePreviewScale)
+  previewResizeObserver?.disconnect()
+  previewResizeObserver = null
   document.documentElement.dataset.theme = originalTone
   void themeStore.setPreviewTone(null).then(() => themeStore.previewTheme(null))
 })
@@ -915,61 +1071,56 @@ onBeforeUnmount(() => {
 
       <main class="theme-preview-pane">
         <div class="preview-toolbar">
-          <strong>真实预览</strong><span>{{ activeDomain.label }}</span>
+          <div>
+            <strong>实时应用视图</strong><span>{{ activeDomain.label }}</span>
+          </div>
+          <div class="studio-segment preview-surface-switcher" aria-label="预览页面">
+            <button
+              v-for="surface in previewSurfaces"
+              :key="surface.id"
+              type="button"
+              :class="{ active: previewSurface === surface.id }"
+              :aria-pressed="previewSurface === surface.id"
+              @click="previewSurface = surface.id"
+            >
+              <i :class="surface.icon"></i><span>{{ surface.label }}</span>
+            </button>
+          </div>
         </div>
 
-        <section class="theme-preview-stage">
-          <div class="preview-titlebar">
-            <i class="ph ph-list"></i><span>Twilight Echo</span><i class="ph ph-gear"></i>
-          </div>
-          <div class="preview-app-shell">
-            <nav class="preview-sidebar">
-              <strong>音乐库</strong>
-              <span class="active"><ThemeIcon icon-slot="navigation.home" /><em>主页</em></span>
-              <span><ThemeIcon icon-slot="navigation.songs" /><em>全部歌曲</em></span>
-              <span><ThemeIcon icon-slot="navigation.albums" /><em>专辑</em></span>
-            </nav>
-            <div class="preview-content">
-              <div class="preview-heading">
-                <div>
-                  <small>本地音乐</small>
-                  <h2>晚上好，暮色回声</h2>
-                </div>
-                <button><ThemeIcon icon-slot="library.play" />播放全部</button>
-              </div>
-              <div class="preview-cards">
-                <article>
-                  <span class="preview-cover violet"></span><strong>夜间播放</strong
-                  ><small>24 首歌曲</small>
-                </article>
-                <article>
-                  <span class="preview-cover cyan"></span><strong>最近添加</strong
-                  ><small>12 首歌曲</small>
-                </article>
-                <article>
-                  <span class="preview-cover rose"></span><strong>我的收藏</strong
-                  ><small>86 首歌曲</small>
-                </article>
-              </div>
-              <div class="preview-song-row is-selected">
-                <span>01</span><span class="preview-song-art"></span
-                ><span
-                  ><strong title="暮色回声 · Twilight Echo · 真夜中の音楽"
-                    >暮色回声 · Twilight Echo · 真夜中の音楽</strong
-                  ><small>Theme Studio · 테마 미리보기</small></span
-                ><i class="ph ph-heart"></i><span>4:12</span>
-              </div>
+        <section
+          ref="previewViewportRef"
+          class="theme-preview-stage live-preview-viewport"
+          :style="previewViewportStyle"
+        >
+          <div class="live-preview-canvas" :style="previewCanvasStyle" inert aria-hidden="true">
+            <TitleBar
+              :menu-open="previewNavigationOpen"
+              :glass="previewSurface === 'player'"
+              :streaming="false"
+              :hide-start="false"
+              title-surface="default"
+            />
+            <SideMenu
+              v-if="previewSurface === 'dashboard'"
+              :open="previewNavigationOpen"
+              active-key="dashboard"
+            />
+            <div
+              v-if="previewSurface === 'dashboard'"
+              class="main-content live-preview-app"
+              :class="{ 'menu-open': previewNavigationOpen }"
+            >
+              <LocalDashboard />
             </div>
-          </div>
-          <div class="preview-playerbar">
-            <span class="preview-song-art"></span
-            ><span
-              ><strong title="暮色回声 · Twilight Echo · 真夜中の音楽"
-                >暮色回声 · Twilight Echo · 真夜中の音楽</strong
-              ><small>Theme Studio · 테마 미리보기</small></span
-            ><i class="ph ph-skip-back"></i><button><i class="ph ph-pause"></i></button
-            ><i class="ph ph-skip-forward"></i><span class="preview-progress"></span
-            ><i class="ph ph-speaker-high"></i>
+            <PlayingMusic v-else-if="previewSurface === 'player'" />
+            <EqualizerPage v-else />
+            <PlayerBar
+              v-if="previewSurface !== 'equalizer'"
+              :glass="previewSurface === 'player'"
+              :menu-open="previewNavigationOpen"
+              preview
+            />
           </div>
         </section>
       </main>
@@ -1213,6 +1364,172 @@ onBeforeUnmount(() => {
               <option value="on">开启</option>
             </select>
           </label>
+        </section>
+
+        <section v-if="domain === 'player'" class="studio-control-section player-layout-section">
+          <div class="control-section-heading">
+            <span>播放器布局</span><small>宿主缩略图</small>
+          </div>
+          <div class="layout-gallery" aria-label="播放器布局">
+            <button
+              v-for="layout in playerLayouts"
+              :key="layout.id"
+              type="button"
+              class="layout-choice"
+              :class="{ active: activeModes.player?.layout === layout.id }"
+              :aria-pressed="activeModes.player?.layout === layout.id"
+              :disabled="!draft"
+              @click="setPlayerLayout(layout.id)"
+            >
+              <span class="layout-thumbnail" :data-layout="layout.id" aria-hidden="true">
+                <i></i><i></i><i></i>
+              </span>
+              <span>{{ layout.label }}</span>
+            </button>
+          </div>
+        </section>
+
+        <section v-if="domain === 'player'" class="studio-control-section">
+          <div class="control-section-heading">
+            <span>控制区与封面</span><small>静态呈现</small>
+          </div>
+          <label class="studio-setting-row">
+            <span>控制区<small>业务按钮保持不变</small></span>
+            <select
+              :value="activeModes.player?.controls"
+              :disabled="!draft"
+              @change="updatePlayerMode('controls', $event)"
+            >
+              <option value="standard">标准</option>
+              <option value="pro">Pro</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>标题对齐<small>与布局正交</small></span>
+            <select
+              :value="activeModes.player?.titleAlign"
+              :disabled="!draft"
+              @change="updatePlayerMode('titleAlign', $event)"
+            >
+              <option value="left">左对齐</option>
+              <option value="center">居中</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>进度样式<small>原生 range 行为不变</small></span>
+            <select
+              :value="activeModes.player?.progress"
+              :disabled="!draft"
+              @change="updatePlayerMode('progress', $event)"
+            >
+              <option value="line">直线无滑块</option>
+              <option value="ring">空心圆</option>
+              <option value="solid">实心圆</option>
+              <option value="spectrum">频谱轨道</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>封面过渡<small>遵循减少动态效果</small></span>
+            <select
+              :value="activeModes.artwork?.transition"
+              :disabled="!draft"
+              @change="updateArtworkMode('transition', $event)"
+            >
+              <option value="fade">淡入</option>
+              <option value="slide">滑入</option>
+              <option value="none">无过渡</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>封面阴影<small>只影响视觉层</small></span>
+            <select
+              :value="activeModes.artwork?.shadow"
+              :disabled="!draft"
+              @change="updateArtworkMode('shadow', $event)"
+            >
+              <option value="on">开启</option>
+              <option value="off">关闭</option>
+            </select>
+          </label>
+        </section>
+
+        <section v-if="domain === 'player'" class="studio-control-section">
+          <div class="control-section-heading">
+            <span>均衡器视觉</span><small>不修改 DSP 参数</small>
+          </div>
+          <label class="studio-setting-row">
+            <span>面板材质<small>中性、着色或玻璃</small></span>
+            <select
+              :value="activeModes.equalizer?.panel"
+              :disabled="!draft"
+              @change="updateEqualizerMode('panel', $event)"
+            >
+              <option value="neutral">中性</option>
+              <option value="tinted">着色</option>
+              <option value="glass">玻璃</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>滑块<small>空心环或实心圆</small></span>
+            <select
+              :value="activeModes.equalizer?.slider"
+              :disabled="!draft"
+              @change="updateEqualizerMode('slider', $event)"
+            >
+              <option value="ring">空心环</option>
+              <option value="solid">实心圆</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>旋钮指示<small>线形或圆点</small></span>
+            <select
+              :value="activeModes.equalizer?.knob"
+              :disabled="!draft"
+              @change="updateEqualizerMode('knob', $event)"
+            >
+              <option value="line">线形</option>
+              <option value="dot">圆点</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>频谱<small>柱形、线形或面积</small></span>
+            <select
+              :value="activeModes.equalizer?.spectrum"
+              :disabled="!draft"
+              @change="updateEqualizerMode('spectrum', $event)"
+            >
+              <option value="bars">柱形</option>
+              <option value="line">线形</option>
+              <option value="area">面积</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>按钮<small>柔和、描边或填充</small></span>
+            <select
+              :value="activeModes.equalizer?.button"
+              :disabled="!draft"
+              @change="updateEqualizerMode('button', $event)"
+            >
+              <option value="soft">柔和</option>
+              <option value="outline">描边</option>
+              <option value="solid">填充</option>
+            </select>
+          </label>
+        </section>
+
+        <section v-if="domain === 'player'" class="studio-control-section">
+          <div class="control-section-heading"><span>可见性</span><small>白名单槽位</small></div>
+          <div class="visibility-grid">
+            <label v-for="option in visibilityOptions" :key="option.id">
+              <span>{{ option.label }}</span>
+              <input
+                type="checkbox"
+                :checked="visibilityValue(option.id)"
+                :disabled="!draft"
+                @change="updateVisibility(option.id, $event)"
+              />
+            </label>
+          </div>
         </section>
 
         <section v-if="domain === 'typography'" class="studio-control-section">

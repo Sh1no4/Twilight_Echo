@@ -159,10 +159,7 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
   if (selectedProfile) {
     await assertProfileAssetsAvailable(selectedProfile)
     const resolvedTokens = resolveThemeProfileTokens(selectedProfile, tone)
-    Object.assign(
-      variables,
-      themeTokensToCssVariables(resolvedTokens)
-    )
+    Object.assign(variables, themeTokensToCssVariables(resolvedTokens))
     Object.assign(variables, {
       '--te-app-bg-image': 'none',
       '--te-local-bg-image': 'none',
@@ -203,6 +200,17 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
       if (contribution.stylesheet) {
         stylesheet = await window.api.extensions.readThemeStylesheet(contribution.stylesheet)
       }
+    } else if (previewTone.value) {
+      const resolvedTokens = TWILIGHT_DEFAULT_THEME.variants[tone].tokens
+      Object.assign(variables, themeTokensToCssVariables(resolvedTokens))
+      Object.assign(variables, {
+        '--te-app-bg-image': 'none',
+        '--te-local-bg-image': 'none',
+        '--te-settings-bg-image': 'none',
+        '--te-streaming-bg-image': 'none',
+        '--te-player-bg-image': 'none'
+      })
+      applyProfileModeVariables(modes, tone, resolvedTokens, variables)
     }
   }
   const root = Object.entries(variables)
@@ -227,7 +235,10 @@ function resolveRuntimeTone(profile: ThemeProfileV2 | null, modes: ThemeModes): 
   if (scheduling === 'system') return systemTone.value
   if (scheduling === 'timed') {
     scheduleTimedToneRefresh(profile)
-    return resolveScheduledThemeTone(new Date(), profile?.toneSchedule ?? DEFAULT_THEME_TONE_SCHEDULE)
+    return resolveScheduledThemeTone(
+      new Date(),
+      profile?.toneSchedule ?? DEFAULT_THEME_TONE_SCHEDULE
+    )
   }
   clearTimedToneRefresh()
   return resolveTone()
@@ -244,7 +255,10 @@ function scheduleTimedToneRefresh(profile: ThemeProfileV2 | null): void {
       return delta > 0 ? delta : delta + 24 * 60
     })
     .sort((a, b) => a - b)
-  const delay = Math.max(1_000, boundaries[0] * 60_000 - now.getSeconds() * 1_000 - now.getMilliseconds())
+  const delay = Math.max(
+    1_000,
+    boundaries[0] * 60_000 - now.getSeconds() * 1_000 - now.getMilliseconds()
+  )
   toneRefreshTimer = window.setTimeout(() => void applyActiveTheme(false), delay)
 }
 
@@ -260,7 +274,8 @@ function applyProfileModeVariables(
   tokens: Record<string, string>,
   variables: Record<string, string>
 ): void {
-  const background = tokens['surface.app'] ?? TWILIGHT_DEFAULT_THEME.variants[tone].tokens['surface.app']
+  const background =
+    tokens['surface.app'] ?? TWILIGHT_DEFAULT_THEME.variants[tone].tokens['surface.app']
   if (modes.appearance?.accentSource === 'cover' && adaptiveAccentColor.value) {
     Object.assign(
       variables,
@@ -270,10 +285,7 @@ function applyProfileModeVariables(
     )
   }
   if (modes.appearance?.contrastGuard === 'enforce') {
-    variables['--te-neutral-900'] = ensureThemeTextContrast(
-      tokens['color.neutral.900'],
-      background
-    )
+    variables['--te-neutral-900'] = ensureThemeTextContrast(tokens['color.neutral.900'], background)
     variables['--te-settings-text'] = ensureThemeTextContrast(
       tokens['settings.text.primary'],
       tokens['surface.settings'] ?? background
@@ -290,7 +302,8 @@ function applyProfileModeVariables(
   const treatment = modes.appearance?.backgroundTreatment ?? 'solid'
   variables['--te-theme-background-image'] = 'none'
   if (treatment === 'gradient') {
-    variables['--te-theme-background-image'] = `linear-gradient(${tokens['background.gradientAngle']}, ${tokens['background.gradientStart']}, ${tokens['background.gradientEnd']})`
+    variables['--te-theme-background-image'] =
+      `linear-gradient(${tokens['background.gradientAngle']}, ${tokens['background.gradientStart']}, ${tokens['background.gradientEnd']})`
   } else if (treatment === 'cover-blur' && adaptiveCoverUrl.value) {
     variables['--te-theme-background-image'] = `url("${escapeCssUrl(adaptiveCoverUrl.value)}")`
   } else if (treatment === 'image') {
