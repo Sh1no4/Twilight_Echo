@@ -38,7 +38,7 @@
     radial-gradient(circle at 18% 7%, rgba(124, 77, 255, 0.045), transparent 34%),
     radial-gradient(circle at 53% 12%, rgba(255, 126, 182, 0.04), transparent 32%),
     radial-gradient(circle at 86% 12%, rgba(104, 132, 255, 0.038), transparent 36%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
+    var(--te-library-bg);
   width: 100%;
   box-sizing: border-box;
   scrollbar-width: thin;
@@ -138,7 +138,7 @@
   border: none;
   background: rgba(124, 77, 255, 0.09);
   cursor: pointer;
-  border-radius: 10px;
+  border-radius: var(--te-radius-global);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -687,14 +687,14 @@
 .track-table-wrapper {
   overflow-x: auto;
   padding: 18px 18px 18px;
-  border-radius: 13px;
-  border: 1px solid rgba(255, 255, 255, 0.52);
+  border-radius: calc(var(--te-radius-global) + 3px);
+  border: 1px solid var(--te-library-table-border);
   background:
     radial-gradient(circle at 42% 2%, rgba(255, 126, 182, 0.025), transparent 36%),
     linear-gradient(145deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.18)),
-    rgba(255, 255, 255, 0.16);
+    color-mix(in srgb, var(--te-library-table-bg) var(--te-surface-opacity), transparent);
   box-shadow:
-    0 26px 78px rgba(86, 70, 160, 0.1),
+    var(--te-library-table-shadow),
     inset 0 1px 0 rgba(255, 255, 255, 0.64);
   backdrop-filter: blur(30px) saturate(168%);
   -webkit-backdrop-filter: blur(30px) saturate(168%);
@@ -714,7 +714,7 @@
   backdrop-filter: blur(18px) saturate(140%);
   -webkit-backdrop-filter: blur(18px) saturate(140%);
   width: 100%;
-  border-radius: 10px;
+  border-radius: var(--te-radius-global);
 }
 .track-table thead tr {
   display: flex;
@@ -724,7 +724,7 @@
   padding: 0 14px 12px;
   font-size: 11px;
   font-weight: 800;
-  color: rgba(52, 61, 87, 0.76);
+  color: var(--te-library-row-text);
   text-transform: none;
   letter-spacing: 0;
   border-bottom: 0;
@@ -734,7 +734,7 @@
   z-index: 1;
   padding: 0 14px;
   font-size: 13px;
-  color: var(--te-neutral-700);
+  color: var(--te-library-row-text);
   border-bottom: 0;
   display: flex;
   align-items: center;
@@ -750,7 +750,7 @@
     box-shadow 0.24s,
     filter 0.24s;
   width: 100%;
-  border-radius: 10px;
+  border-radius: var(--te-radius-global);
   margin: 2px 0;
   isolation: isolate;
   transform-origin: center;
@@ -1519,7 +1519,7 @@
    Neutral left-rail + soft fill. No purple wash.
    Selected rows keep hover quiet so glass/scale animations don't fight selection. */
 .track-row.track-selected {
-  background: rgba(15, 23, 42, 0.045);
+  background: var(--te-library-selection-bg);
   box-shadow: none;
   transform: none;
   filter: none;
@@ -1536,7 +1536,7 @@
   inset: 3px 0 3px 0;
   border: 0;
   border-radius: 0;
-  border-left: 3px solid rgba(15, 23, 42, 0.55);
+  border-left: 3px solid var(--te-library-selection-indicator);
   background: transparent;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
@@ -1551,7 +1551,7 @@
 }
 
 .track-row.track-selected:hover {
-  background: rgba(15, 23, 42, 0.07);
+  background: var(--te-library-selection-hover);
   transform: none;
   box-shadow: none;
   filter: none;
@@ -1562,7 +1562,11 @@
   opacity: 1;
   animation: none !important;
   background: transparent;
-  border-left-color: rgba(15, 23, 42, 0.72);
+  border-left-color: color-mix(
+    in srgb,
+    var(--te-library-selection-indicator) 82%,
+    var(--te-library-row-text)
+  );
 }
 
 /* Playing + selected: keep playing border, drop selected glass conflict */
@@ -1579,10 +1583,7 @@
   border-radius: inherit;
   border: 1px solid rgba(124, 77, 255, 0.18);
   border-left: 3px solid rgba(15, 23, 42, 0.65);
-  background: linear-gradient(
-    rgba(255, 255, 255, 0.38),
-    rgba(255, 255, 255, 0.2)
-  );
+  background: linear-gradient(rgba(255, 255, 255, 0.38), rgba(255, 255, 255, 0.2));
   backdrop-filter: blur(18px) saturate(160%);
   -webkit-backdrop-filter: blur(18px) saturate(160%);
 }
@@ -1868,15 +1869,15 @@
 }
 
 :global(html[data-theme='dark'] .track-row.track-selected) {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--te-library-selection-bg);
 }
 
 :global(html[data-theme='dark'] .track-row.track-selected:hover) {
-  background: rgba(255, 255, 255, 0.09);
+  background: var(--te-library-selection-hover);
 }
 
 :global(html[data-theme='dark'] .track-row.track-selected::before) {
-  border-left-color: rgba(255, 255, 255, 0.72);
+  border-left-color: var(--te-library-selection-indicator);
 }
 
 :global(html[data-theme='dark'] .track-row.track-selected:hover::before) {
@@ -1885,8 +1886,5 @@
 
 :global(html[data-theme='dark'] .track-row.track-selected.track-playing::before) {
   border-left-color: rgba(255, 255, 255, 0.85);
-  background: linear-gradient(
-    rgba(255, 255, 255, 0.12),
-    rgba(255, 255, 255, 0.05)
-  );
+  background: linear-gradient(rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.05));
 }

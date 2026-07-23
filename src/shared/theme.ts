@@ -2,6 +2,8 @@ import type { VersionedDataEnvelope } from './versionedPersistence.ts'
 
 export const TWILIGHT_DEFAULT_THEME_ID = 'builtin:twilight-echo-default'
 export const THEME_DOCUMENT_SCHEMA_VERSION = 1
+export const THEME_PROFILE_SCHEMA_VERSION = 2
+export const THEME_ARCHIVE_SCHEMA_VERSION = 2
 export const THEME_LIBRARY_SCHEMA_VERSION = 1
 export const MAX_USER_THEME_PROFILES = 32
 
@@ -119,6 +121,91 @@ export interface ThemeProfileV1 {
   assetBindings?: ThemeAssetBindings
 }
 
+export type ThemeAppearanceAccentSource = 'fixed' | 'cover'
+export type ThemeBackgroundTreatment = 'solid' | 'gradient' | 'cover-blur' | 'image'
+export type ThemeToneScheduling = 'manual' | 'system' | 'timed'
+export type ThemeContrastGuard = 'off' | 'warn' | 'enforce'
+export type ThemeNavigationStyle = 'expanded' | 'compact' | 'rail'
+export type ThemeIconScale = 'sm' | 'md' | 'lg'
+export type ThemeLibraryDensity = 'comfortable' | 'compact'
+export type ThemeLibrarySelection = 'fill' | 'stroke'
+export type ThemePlayerLayout = 'standard' | 'full-cover' | 'lyrics-focus' | 'split' | 'minimal'
+export type ThemePlayerControls = 'standard' | 'pro'
+export type ThemeArtworkTransition = 'fade' | 'slide' | 'none'
+export type ThemeIconFamily = 'outline' | 'rounded' | 'filled'
+export type ThemeTitleCase = 'preserve' | 'uppercase'
+export type ThemeLyricAccent = 'off' | 'accent'
+export type ThemeTitleColorStyle = 'off' | 'track' | 'artist-album'
+
+export interface ThemeToneSchedule {
+  lightStartMinutes: number
+  darkStartMinutes: number
+}
+
+export type ThemeVisibilitySlotId =
+  | 'playerAlbumArtist'
+  | 'playerArtwork'
+  | 'playerTrackMenu'
+  | 'playerMiscIcons'
+  | 'playerDuration'
+  | 'playerWaveform'
+  | 'playerTrackInfo'
+  | 'equalizerGrid'
+  | 'equalizerFrequencyGuides'
+  | 'equalizerSpectrum'
+  | 'previousButton'
+  | 'nextButton'
+  | 'miniPlayerArtwork'
+
+export interface ThemeModes {
+  appearance?: {
+    accentSource?: ThemeAppearanceAccentSource
+    backgroundTreatment?: ThemeBackgroundTreatment
+    toneScheduling?: ThemeToneScheduling
+    contrastGuard?: ThemeContrastGuard
+  }
+  navigation?: {
+    style?: ThemeNavigationStyle
+    iconScale?: ThemeIconScale
+  }
+  library?: {
+    density?: ThemeLibraryDensity
+    selection?: ThemeLibrarySelection
+  }
+  player?: {
+    layout?: ThemePlayerLayout
+    controls?: ThemePlayerControls
+  }
+  artwork?: {
+    transition?: ThemeArtworkTransition
+  }
+  icons?: {
+    family?: ThemeIconFamily
+  }
+  typography?: {
+    titleCase?: ThemeTitleCase
+    lyricAccent?: ThemeLyricAccent
+    titleColor?: ThemeTitleColorStyle
+  }
+  visibility?: Partial<Record<ThemeVisibilitySlotId, boolean>>
+}
+
+export interface ThemeProfileV2 extends Omit<ThemeProfileV1, 'schemaVersion'> {
+  schemaVersion: 2
+  modes: ThemeModes
+  toneSchedule?: ThemeToneSchedule
+}
+
+export type ThemeProfile = ThemeProfileV1 | ThemeProfileV2
+
+export interface ThemeModeDefinition {
+  id: string
+  dataAttribute: `data-te-${string}`
+  label: string
+  options: readonly string[]
+  defaultValue: string
+}
+
 export type ThemeSelection =
   | { kind: 'builtin'; id: typeof TWILIGHT_DEFAULT_THEME_ID }
   | { kind: 'user'; id: string }
@@ -132,7 +219,7 @@ export interface ThemeWindowInheritance {
 export interface ThemeLibraryDocument {
   schemaVersion: 1
   activeTheme: ThemeSelection
-  profiles: ThemeProfileV1[]
+  profiles: ThemeProfileV2[]
   windowInheritance: ThemeWindowInheritance
 }
 
@@ -143,11 +230,19 @@ export interface ThemeBootstrap {
   defaultTheme: ThemeDocumentV1
 }
 
-export interface ThemeArchiveDocument {
+export interface ThemeArchiveDocumentV1 {
   schemaVersion: 1
   profile: ThemeProfileV1
   assets: ThemeAssetReference[]
 }
+
+export interface ThemeArchiveDocumentV2 {
+  schemaVersion: 2
+  profile: ThemeProfileV2
+  assets: ThemeAssetReference[]
+}
+
+export type ThemeArchiveDocument = ThemeArchiveDocumentV1 | ThemeArchiveDocumentV2
 
 export interface StructuredPluginThemeV1 {
   schemaVersion: 1
@@ -157,6 +252,283 @@ export interface StructuredPluginThemeV1 {
 
 const lightFont =
   "'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+
+export interface ThemePaletteEntry {
+  id: string
+  label: string
+  value: string
+}
+
+export interface BuiltInThemeFont {
+  id: string
+  label: string
+  category: 'system' | 'sans' | 'serif' | 'mono' | 'display'
+  value: string
+}
+
+export const DEFAULT_THEME_TONE_SCHEDULE: Readonly<ThemeToneSchedule> = Object.freeze({
+  lightStartMinutes: 7 * 60,
+  darkStartMinutes: 19 * 60
+})
+
+export const BUILT_IN_THEME_FONTS: readonly BuiltInThemeFont[] = Object.freeze([
+  { id: 'system', label: '系统与 MiSans', category: 'system', value: lightFont },
+  {
+    id: 'inter',
+    label: 'Inter',
+    category: 'sans',
+    value: "'Inter', 'MiSans', system-ui, sans-serif"
+  },
+  {
+    id: 'jakarta',
+    label: 'Plus Jakarta Sans',
+    category: 'sans',
+    value: "'Plus Jakarta Sans', 'MiSans', system-ui, sans-serif"
+  },
+  {
+    id: 'lora',
+    label: 'Lora Serif',
+    category: 'serif',
+    value: "'Lora', 'MiSans', Georgia, serif"
+  },
+  {
+    id: 'jetbrains',
+    label: 'JetBrains Mono',
+    category: 'mono',
+    value: "'JetBrains Mono', 'MiSans', Consolas, monospace"
+  },
+  {
+    id: 'space',
+    label: 'Space Grotesk',
+    category: 'display',
+    value: "'Space Grotesk', 'MiSans', system-ui, sans-serif"
+  }
+])
+
+export const THEME_ACCENT_PALETTES: Readonly<Record<ThemeTone, readonly ThemePaletteEntry[]>> =
+  Object.freeze({
+    pureWhite: Object.freeze([
+      { id: 'blue', label: '湖蓝', value: '#2563eb' },
+      { id: 'indigo', label: '靛青', value: '#4f46e5' },
+      { id: 'violet', label: '紫罗兰', value: '#7c3aed' },
+      { id: 'fuchsia', label: '品红', value: '#c026d3' },
+      { id: 'rose', label: '玫瑰', value: '#e11d48' },
+      { id: 'red', label: '朱红', value: '#dc2626' },
+      { id: 'orange', label: '橙色', value: '#ea580c' },
+      { id: 'amber', label: '琥珀', value: '#d97706' },
+      { id: 'lime', label: '青柠', value: '#65a30d' },
+      { id: 'green', label: '翠绿', value: '#16a34a' },
+      { id: 'emerald', label: '祖母绿', value: '#059669' },
+      { id: 'teal', label: '蓝绿', value: '#0d9488' },
+      { id: 'cyan', label: '青色', value: '#0891b2' },
+      { id: 'sky', label: '天蓝', value: '#0284c7' },
+      { id: 'slate', label: '石板', value: '#475569' },
+      { id: 'graphite', label: '石墨', value: '#374151' }
+    ]),
+    dark: Object.freeze([
+      { id: 'amber', label: '琥珀', value: '#f59e0b' },
+      { id: 'gold', label: '金色', value: '#eab308' },
+      { id: 'orange', label: '橙色', value: '#fb923c' },
+      { id: 'coral', label: '珊瑚', value: '#fb7185' },
+      { id: 'rose', label: '玫瑰', value: '#f43f5e' },
+      { id: 'pink', label: '粉色', value: '#ec4899' },
+      { id: 'fuchsia', label: '品红', value: '#d946ef' },
+      { id: 'violet', label: '紫罗兰', value: '#a78bfa' },
+      { id: 'indigo', label: '靛青', value: '#818cf8' },
+      { id: 'blue', label: '亮蓝', value: '#60a5fa' },
+      { id: 'sky', label: '天蓝', value: '#38bdf8' },
+      { id: 'cyan', label: '青色', value: '#22d3ee' },
+      { id: 'teal', label: '蓝绿', value: '#2dd4bf' },
+      { id: 'emerald', label: '祖母绿', value: '#34d399' },
+      { id: 'green', label: '翠绿', value: '#4ade80' },
+      { id: 'lime', label: '青柠', value: '#a3e635' }
+    ])
+  })
+
+export const THEME_BACKGROUND_PALETTES: Readonly<
+  Record<ThemeTone, readonly ThemePaletteEntry[]>
+> = Object.freeze({
+  pureWhite: Object.freeze([
+    { id: 'paper', label: '纸白', value: '#f4f4f7' },
+    { id: 'snow', label: '雪白', value: '#f8fafc' },
+    { id: 'mist', label: '雾灰', value: '#f1f5f9' },
+    { id: 'blue-mist', label: '蓝雾', value: '#eff6ff' },
+    { id: 'indigo-mist', label: '靛雾', value: '#eef2ff' },
+    { id: 'violet-mist', label: '紫雾', value: '#f5f3ff' },
+    { id: 'rose-mist', label: '玫瑰雾', value: '#fff1f2' },
+    { id: 'amber-mist', label: '暖雾', value: '#fffbeb' },
+    { id: 'green-mist', label: '绿雾', value: '#f0fdf4' },
+    { id: 'teal-mist', label: '青雾', value: '#f0fdfa' },
+    { id: 'cyan-mist', label: '天青雾', value: '#ecfeff' },
+    { id: 'warm-gray', label: '暖灰', value: '#fafaf9' },
+    { id: 'pearl', label: '珍珠', value: '#f5f5f4' },
+    { id: 'lavender', label: '薰衣草', value: '#faf5ff' },
+    { id: 'blush', label: '浅绯', value: '#fdf2f8' },
+    { id: 'mint', label: '薄荷', value: '#ecfdf5' }
+  ]),
+  dark: Object.freeze([
+    { id: 'charcoal', label: '炭黑', value: '#17181a' },
+    { id: 'ink', label: '墨黑', value: '#111214' },
+    { id: 'black', label: '纯黑', value: '#09090b' },
+    { id: 'slate', label: '深石板', value: '#0f172a' },
+    { id: 'navy', label: '深海', value: '#111827' },
+    { id: 'indigo', label: '夜靛', value: '#17172a' },
+    { id: 'violet', label: '夜紫', value: '#1d1728' },
+    { id: 'plum', label: '暗梅', value: '#24161f' },
+    { id: 'wine', label: '酒红', value: '#281719' },
+    { id: 'umber', label: '暗褐', value: '#241c16' },
+    { id: 'olive', label: '暗橄榄', value: '#1d2117' },
+    { id: 'forest', label: '暗林', value: '#14211a' },
+    { id: 'teal', label: '暗青', value: '#122322' },
+    { id: 'cyan', label: '暗天青', value: '#102129' },
+    { id: 'steel', label: '钢蓝', value: '#17202a' },
+    { id: 'graphite', label: '石墨', value: '#1c1c1f' }
+  ])
+})
+
+export const THEME_VISIBILITY_SLOT_IDS: readonly ThemeVisibilitySlotId[] = Object.freeze([
+  'playerAlbumArtist',
+  'playerArtwork',
+  'playerTrackMenu',
+  'playerMiscIcons',
+  'playerDuration',
+  'playerWaveform',
+  'playerTrackInfo',
+  'equalizerGrid',
+  'equalizerFrequencyGuides',
+  'equalizerSpectrum',
+  'previousButton',
+  'nextButton',
+  'miniPlayerArtwork'
+])
+
+export const THEME_MODE_DEFINITIONS: readonly ThemeModeDefinition[] = Object.freeze([
+  {
+    id: 'appearance.accentSource',
+    dataAttribute: 'data-te-accent-source',
+    label: '强调色来源',
+    options: ['fixed', 'cover'],
+    defaultValue: 'fixed'
+  },
+  {
+    id: 'appearance.backgroundTreatment',
+    dataAttribute: 'data-te-background-treatment',
+    label: '背景处理',
+    options: ['solid', 'gradient', 'cover-blur', 'image'],
+    defaultValue: 'solid'
+  },
+  {
+    id: 'appearance.toneScheduling',
+    dataAttribute: 'data-te-tone-scheduling',
+    label: '明暗调度',
+    options: ['manual', 'system', 'timed'],
+    defaultValue: 'manual'
+  },
+  {
+    id: 'appearance.contrastGuard',
+    dataAttribute: 'data-te-contrast-guard',
+    label: '对比度保护',
+    options: ['off', 'warn', 'enforce'],
+    defaultValue: 'warn'
+  },
+  {
+    id: 'navigation.style',
+    dataAttribute: 'data-te-navigation-style',
+    label: '导航样式',
+    options: ['expanded', 'compact', 'rail'],
+    defaultValue: 'expanded'
+  },
+  {
+    id: 'navigation.iconScale',
+    dataAttribute: 'data-te-navigation-icon-scale',
+    label: '导航图标大小',
+    options: ['sm', 'md', 'lg'],
+    defaultValue: 'md'
+  },
+  {
+    id: 'library.density',
+    dataAttribute: 'data-te-library-density',
+    label: '媒体库密度',
+    options: ['comfortable', 'compact'],
+    defaultValue: 'comfortable'
+  },
+  {
+    id: 'library.selection',
+    dataAttribute: 'data-te-library-selection',
+    label: '媒体库选中样式',
+    options: ['fill', 'stroke'],
+    defaultValue: 'fill'
+  },
+  {
+    id: 'player.layout',
+    dataAttribute: 'data-te-player-layout',
+    label: '播放器布局',
+    options: ['standard', 'full-cover', 'lyrics-focus', 'split', 'minimal'],
+    defaultValue: 'standard'
+  },
+  {
+    id: 'player.controls',
+    dataAttribute: 'data-te-player-controls',
+    label: '播放器控制区',
+    options: ['standard', 'pro'],
+    defaultValue: 'standard'
+  },
+  {
+    id: 'artwork.transition',
+    dataAttribute: 'data-te-artwork-transition',
+    label: '封面过渡',
+    options: ['fade', 'slide', 'none'],
+    defaultValue: 'fade'
+  },
+  {
+    id: 'icons.family',
+    dataAttribute: 'data-te-icon-family',
+    label: '图标族',
+    options: ['outline', 'rounded', 'filled'],
+    defaultValue: 'outline'
+  },
+  {
+    id: 'typography.titleCase',
+    dataAttribute: 'data-te-title-case',
+    label: '标题字形',
+    options: ['preserve', 'uppercase'],
+    defaultValue: 'preserve'
+  },
+  {
+    id: 'typography.lyricAccent',
+    dataAttribute: 'data-te-lyric-accent',
+    label: '歌词强调高亮',
+    options: ['off', 'accent'],
+    defaultValue: 'off'
+  },
+  {
+    id: 'typography.titleColor',
+    dataAttribute: 'data-te-title-color',
+    label: '自适应标题颜色',
+    options: ['off', 'track', 'artist-album'],
+    defaultValue: 'off'
+  }
+])
+
+export const DEFAULT_THEME_MODES: Readonly<ThemeModes> = Object.freeze({
+  appearance: Object.freeze({
+    accentSource: 'fixed',
+    backgroundTreatment: 'solid',
+    toneScheduling: 'manual',
+    contrastGuard: 'warn'
+  }),
+  navigation: Object.freeze({ style: 'expanded', iconScale: 'md' }),
+  library: Object.freeze({ density: 'comfortable', selection: 'fill' }),
+  player: Object.freeze({ layout: 'standard', controls: 'standard' }),
+  artwork: Object.freeze({ transition: 'fade' }),
+  icons: Object.freeze({ family: 'outline' }),
+  typography: Object.freeze({
+    titleCase: 'preserve',
+    lyricAccent: 'off',
+    titleColor: 'off'
+  }),
+  visibility: Object.freeze({})
+})
 
 function token(
   id: string,
@@ -389,6 +761,349 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     '#17181a'
   ),
   token(
+    'background.gradientStart',
+    '--te-background-gradient-start',
+    '渐变起始色',
+    'colors',
+    'app-background',
+    'color',
+    '#eff6ff',
+    '#111827'
+  ),
+  token(
+    'background.gradientEnd',
+    '--te-background-gradient-end',
+    '渐变结束色',
+    'colors',
+    'app-background',
+    'color',
+    '#f5f3ff',
+    '#1d1728'
+  ),
+  token(
+    'background.gradientAngle',
+    '--te-background-gradient-angle',
+    '渐变角度',
+    'materials',
+    'app-background',
+    'number',
+    '135deg',
+    '135deg',
+    { min: 0, max: 360, step: 1, unit: 'deg' }
+  ),
+  token(
+    'background.coverBlur',
+    '--te-background-cover-blur',
+    '封面背景模糊',
+    'materials',
+    'app-background',
+    'length',
+    '28px',
+    '36px',
+    { min: 0, max: 64, step: 1, unit: 'px' }
+  ),
+  token(
+    'background.overlayOpacity',
+    '--te-background-overlay-opacity',
+    '背景叠层强度',
+    'materials',
+    'app-background',
+    'number',
+    '12%',
+    '38%',
+    { min: 0, max: 80, step: 1, unit: '%' }
+  ),
+  token(
+    'shell.control.text',
+    '--te-shell-control-text',
+    '应用壳控制文字',
+    'colors',
+    'app-shell',
+    'color',
+    '#0f172a',
+    '#f7f7f2'
+  ),
+  token(
+    'shell.control.hoverSurface',
+    '--te-shell-control-hover',
+    '应用壳控制悬浮',
+    'materials',
+    'app-shell',
+    'color',
+    'rgba(37, 99, 235, 0.08)',
+    'rgba(245, 158, 11, 0.12)'
+  ),
+  token(
+    'settings.text.primary',
+    '--te-settings-text',
+    '设置主要文字',
+    'colors',
+    'settings',
+    'color',
+    '#111827',
+    '#f7f7f2'
+  ),
+  token(
+    'settings.text.muted',
+    '--te-settings-text-muted',
+    '设置辅助文字',
+    'colors',
+    'settings',
+    'color',
+    '#6b7280',
+    '#9b9b9b'
+  ),
+  token(
+    'settings.control.surface',
+    '--te-settings-control-bg',
+    '设置控件表面',
+    'materials',
+    'settings',
+    'color',
+    '#ffffff',
+    '#181818'
+  ),
+  token(
+    'settings.control.border',
+    '--te-settings-control-border',
+    '设置控件边框',
+    'materials',
+    'settings',
+    'color',
+    'rgba(229, 231, 235, 0.78)',
+    'rgba(255, 255, 255, 0.1)'
+  ),
+  token(
+    'settings.panel.border',
+    '--te-settings-panel-border',
+    '设置面板边框',
+    'materials',
+    'settings',
+    'color',
+    '#ffffff',
+    'rgba(255, 255, 255, 0.09)'
+  ),
+  token(
+    'settings.navigation.text',
+    '--te-settings-nav-text',
+    '设置导航文字',
+    'colors',
+    'settings-navigation',
+    'color',
+    '#4b5563',
+    '#d8d8d8'
+  ),
+  token(
+    'settings.navigation.hoverSurface',
+    '--te-settings-nav-hover',
+    '设置导航悬浮',
+    'materials',
+    'settings-navigation',
+    'color',
+    '#ffffff',
+    'rgba(255, 255, 255, 0.065)'
+  ),
+  token(
+    'settings.navigation.activeSurface',
+    '--te-settings-nav-active',
+    '设置导航选中',
+    'materials',
+    'settings-navigation',
+    'color',
+    '#ffffff',
+    'rgba(245, 158, 11, 0.16)'
+  ),
+  token(
+    'navigation.surface',
+    '--te-navigation-bg',
+    '导航表面',
+    'materials',
+    'navigation',
+    'color',
+    'rgba(255, 255, 255, 0.94)',
+    '#17181a'
+  ),
+  token(
+    'navigation.border',
+    '--te-navigation-border',
+    '导航边框',
+    'materials',
+    'navigation',
+    'color',
+    'rgba(0, 0, 0, 0.05)',
+    'transparent'
+  ),
+  token(
+    'navigation.shadow',
+    '--te-navigation-shadow',
+    '导航阴影',
+    'materials',
+    'navigation',
+    'shadow',
+    '4px 0 24px rgba(15, 23, 42, 0.03)',
+    'none'
+  ),
+  token(
+    'navigation.text',
+    '--te-navigation-text',
+    '导航文字',
+    'colors',
+    'navigation',
+    'color',
+    '#475569',
+    '#d8d8d8'
+  ),
+  token(
+    'navigation.icon',
+    '--te-navigation-icon',
+    '导航图标',
+    'colors',
+    'navigation',
+    'color',
+    '#64748b',
+    '#9b9b9b'
+  ),
+  token(
+    'navigation.hoverSurface',
+    '--te-navigation-hover',
+    '导航悬浮表面',
+    'materials',
+    'navigation',
+    'color',
+    'rgba(15, 23, 42, 0.04)',
+    'rgba(255, 255, 255, 0.065)'
+  ),
+  token(
+    'navigation.hoverText',
+    '--te-navigation-hover-text',
+    '导航悬浮文字',
+    'colors',
+    'navigation',
+    'color',
+    '#0f172a',
+    '#f7f7f2'
+  ),
+  token(
+    'navigation.activeSurface',
+    '--te-navigation-active',
+    '导航选中表面',
+    'materials',
+    'navigation',
+    'color',
+    'rgba(37, 99, 235, 0.08)',
+    'rgba(245, 158, 11, 0.16)'
+  ),
+  token(
+    'navigation.activeText',
+    '--te-navigation-active-text',
+    '导航选中文字',
+    'colors',
+    'navigation',
+    'color',
+    '#2563eb',
+    '#f59e0b'
+  ),
+  token(
+    'navigation.indicator',
+    '--te-navigation-indicator',
+    '导航指示器',
+    'colors',
+    'navigation',
+    'color',
+    '#2563eb',
+    '#f59e0b'
+  ),
+  token(
+    'library.page.surface',
+    '--te-library-bg',
+    '媒体库页面表面',
+    'materials',
+    'library',
+    'gradient',
+    'linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9))',
+    'linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9))'
+  ),
+  token(
+    'library.table.surface',
+    '--te-library-table-bg',
+    '媒体库列表表面',
+    'materials',
+    'library',
+    'color',
+    'rgba(255, 255, 255, 0.16)',
+    'rgba(255, 255, 255, 0.16)'
+  ),
+  token(
+    'library.table.border',
+    '--te-library-table-border',
+    '媒体库列表边框',
+    'materials',
+    'library',
+    'color',
+    'rgba(255, 255, 255, 0.52)',
+    'rgba(255, 255, 255, 0.52)'
+  ),
+  token(
+    'library.table.shadow',
+    '--te-library-table-shadow',
+    '媒体库列表阴影',
+    'materials',
+    'library',
+    'shadow',
+    '0 26px 78px rgba(86, 70, 160, 0.1)',
+    '0 26px 78px rgba(86, 70, 160, 0.1)'
+  ),
+  token(
+    'library.row.text',
+    '--te-library-row-text',
+    '媒体库行文字',
+    'colors',
+    'library',
+    'color',
+    '#334155',
+    '#d8d8d8'
+  ),
+  token(
+    'library.row.hoverSurface',
+    '--te-library-row-hover',
+    '媒体库行悬浮',
+    'materials',
+    'library',
+    'color',
+    'rgba(255, 255, 255, 0.22)',
+    'rgba(255, 255, 255, 0.065)'
+  ),
+  token(
+    'library.selection.surface',
+    '--te-library-selection-bg',
+    '媒体库选中表面',
+    'materials',
+    'library',
+    'color',
+    'rgba(15, 23, 42, 0.045)',
+    'rgba(255, 255, 255, 0.06)'
+  ),
+  token(
+    'library.selection.hoverSurface',
+    '--te-library-selection-hover',
+    '媒体库选中悬浮',
+    'materials',
+    'library',
+    'color',
+    'rgba(15, 23, 42, 0.07)',
+    'rgba(255, 255, 255, 0.09)'
+  ),
+  token(
+    'library.selection.indicator',
+    '--te-library-selection-indicator',
+    '媒体库选中指示器',
+    'colors',
+    'library',
+    'color',
+    'rgba(15, 23, 42, 0.55)',
+    'rgba(255, 255, 255, 0.72)'
+  ),
+  token(
     'surface.card',
     '--te-card-bg',
     '卡片背景',
@@ -477,6 +1192,22 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     'shadow',
     '0 16px 42px rgba(15, 23, 42, 0.08)',
     '0 18px 54px rgba(0, 0, 0, 0.34)'
+  ),
+  token(
+    'material.surfaceOpacity',
+    '--te-surface-opacity',
+    '全局表面透明度',
+    'materials',
+    'global',
+    'number',
+    '100%',
+    '100%',
+    {
+      min: 40,
+      max: 100,
+      step: 1,
+      unit: '%'
+    }
   ),
   token(
     'material.glowMain',
@@ -587,6 +1318,27 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
     }
   ),
   token(
+    'typography.bodySize',
+    '--te-font-size-body',
+    '界面字号',
+    'typography',
+    'global',
+    'length',
+    '14px',
+    '14px',
+    { min: 12, max: 20, step: 1, unit: 'px' }
+  ),
+  token(
+    'typography.chromeText',
+    '--te-chrome-text',
+    '导航与底栏文字',
+    'typography',
+    'app-chrome',
+    'color',
+    '#475569',
+    '#d8d8d8'
+  ),
+  token(
     'shape.cardRadius',
     '--te-card-radius',
     '卡片圆角',
@@ -601,6 +1353,77 @@ export const THEME_TOKEN_DEFINITIONS: readonly ThemeTokenDefinition[] = Object.f
       step: 1,
       unit: 'px'
     }
+  ),
+  token(
+    'shape.globalRadius',
+    '--te-radius-global',
+    '全局圆角',
+    'shape',
+    'global',
+    'length',
+    '10px',
+    '10px',
+    {
+      min: 0,
+      max: 24,
+      step: 1,
+      unit: 'px'
+    }
+  ),
+  token(
+    'shape.dialogRadius',
+    '--te-dialog-radius',
+    '对话框圆角',
+    'shape',
+    'dialog',
+    'length',
+    '8px',
+    '8px',
+    { min: 0, max: 24, step: 1, unit: 'px' }
+  ),
+  token(
+    'shape.searchRadius',
+    '--te-search-radius',
+    '搜索框圆角',
+    'shape',
+    'search',
+    'length',
+    '10px',
+    '10px',
+    { min: 0, max: 24, step: 1, unit: 'px' }
+  ),
+  token(
+    'shape.toastRadius',
+    '--te-toast-radius',
+    '提示圆角',
+    'shape',
+    'toast',
+    'length',
+    '8px',
+    '8px',
+    { min: 0, max: 24, step: 1, unit: 'px' }
+  ),
+  token(
+    'shape.trackTitleRadius',
+    '--te-track-title-radius',
+    '曲目标题背景圆角',
+    'shape',
+    'track-title',
+    'length',
+    '6px',
+    '6px',
+    { min: 0, max: 24, step: 1, unit: 'px' }
+  ),
+  token(
+    'material.trackTitleOpacity',
+    '--te-track-title-opacity',
+    '曲目标题背景透明度',
+    'materials',
+    'track-title',
+    'number',
+    '0%',
+    '0%',
+    { min: 0, max: 100, step: 1, unit: '%' }
   ),
   token(
     'shape.cardBorderWidth',
@@ -1071,7 +1894,7 @@ export function normalizeThemeLibraryDocument(value: unknown): ThemeLibraryDocum
   const profiles = Array.isArray(value.profiles)
     ? value.profiles
         .map((profile) => normalizeThemeProfile(profile))
-        .filter((profile): profile is ThemeProfileV1 => profile !== null)
+        .filter((profile): profile is ThemeProfileV2 => profile !== null)
         .slice(0, MAX_USER_THEME_PROFILES)
     : []
   const selection = isThemeSelection(value.activeTheme) ? value.activeTheme : fallback.activeTheme
@@ -1091,8 +1914,14 @@ export function normalizeThemeLibraryDocument(value: unknown): ThemeLibraryDocum
   }
 }
 
-export function normalizeThemeProfile(value: unknown): ThemeProfileV1 | null {
-  if (!isRecord(value) || value.schemaVersion !== THEME_DOCUMENT_SCHEMA_VERSION) return null
+export function normalizeThemeProfile(value: unknown): ThemeProfileV2 | null {
+  if (
+    !isRecord(value) ||
+    (value.schemaVersion !== THEME_DOCUMENT_SCHEMA_VERSION &&
+      value.schemaVersion !== THEME_PROFILE_SCHEMA_VERSION)
+  ) {
+    return null
+  }
   const id = normalizeThemeId(value.id)
   const name = normalizeText(value.name, 80)
   if (!id || !name || id === TWILIGHT_DEFAULT_THEME_ID) return null
@@ -1100,8 +1929,12 @@ export function normalizeThemeProfile(value: unknown): ThemeProfileV1 | null {
   const updatedAt = normalizeIsoDate(value.updatedAt)
   const overrides = isRecord(value.overrides) ? value.overrides : {}
   const assets = normalizeThemeAssets(value.assets)
+  const toneSchedule =
+    value.schemaVersion === THEME_PROFILE_SCHEMA_VERSION
+      ? normalizeThemeToneSchedule(value.toneSchedule)
+      : undefined
   return {
-    schemaVersion: THEME_DOCUMENT_SCHEMA_VERSION,
+    schemaVersion: THEME_PROFILE_SCHEMA_VERSION,
     id,
     name,
     description: normalizeText(value.description, 240),
@@ -1117,10 +1950,139 @@ export function normalizeThemeProfile(value: unknown): ThemeProfileV1 | null {
       ),
       dark: normalizeThemeTokenOverrides(isRecord(overrides.dark) ? overrides.dark : {})
     },
+    modes:
+      value.schemaVersion === THEME_PROFILE_SCHEMA_VERSION ? normalizeThemeModes(value.modes) : {},
+    ...(toneSchedule ? { toneSchedule } : {}),
     windowDefaults: normalizeWindowDefaults(value.windowDefaults),
     ...(assets.length > 0 ? { assets } : {}),
     ...normalizeThemeAssetBindings(value.assetBindings, assets)
   }
+}
+
+export function normalizeThemeModes(value: unknown): ThemeModes {
+  if (!isRecord(value)) return {}
+  const result: ThemeModes = {}
+  if (isRecord(value.appearance)) {
+    const appearance: NonNullable<ThemeModes['appearance']> = {}
+    assignModeOption(appearance, 'accentSource', value.appearance.accentSource, ['fixed', 'cover'])
+    assignModeOption(appearance, 'backgroundTreatment', value.appearance.backgroundTreatment, [
+      'solid',
+      'gradient',
+      'cover-blur',
+      'image'
+    ])
+    assignModeOption(appearance, 'toneScheduling', value.appearance.toneScheduling, [
+      'manual',
+      'system',
+      'timed'
+    ])
+    assignModeOption(appearance, 'contrastGuard', value.appearance.contrastGuard, [
+      'off',
+      'warn',
+      'enforce'
+    ])
+    if (Object.keys(appearance).length > 0) result.appearance = appearance
+  }
+  if (isRecord(value.navigation)) {
+    const navigation: NonNullable<ThemeModes['navigation']> = {}
+    assignModeOption(navigation, 'style', value.navigation.style, ['expanded', 'compact', 'rail'])
+    assignModeOption(navigation, 'iconScale', value.navigation.iconScale, ['sm', 'md', 'lg'])
+    if (Object.keys(navigation).length > 0) result.navigation = navigation
+  }
+  if (isRecord(value.library)) {
+    const library: NonNullable<ThemeModes['library']> = {}
+    assignModeOption(library, 'density', value.library.density, ['comfortable', 'compact'])
+    assignModeOption(library, 'selection', value.library.selection, ['fill', 'stroke'])
+    if (Object.keys(library).length > 0) result.library = library
+  }
+  if (isRecord(value.player)) {
+    const player: NonNullable<ThemeModes['player']> = {}
+    assignModeOption(player, 'layout', value.player.layout, [
+      'standard',
+      'full-cover',
+      'lyrics-focus',
+      'split',
+      'minimal'
+    ])
+    assignModeOption(player, 'controls', value.player.controls, ['standard', 'pro'])
+    if (Object.keys(player).length > 0) result.player = player
+  }
+  if (isRecord(value.artwork)) {
+    const artwork: NonNullable<ThemeModes['artwork']> = {}
+    assignModeOption(artwork, 'transition', value.artwork.transition, ['fade', 'slide', 'none'])
+    if (Object.keys(artwork).length > 0) result.artwork = artwork
+  }
+  if (isRecord(value.icons)) {
+    const icons: NonNullable<ThemeModes['icons']> = {}
+    assignModeOption(icons, 'family', value.icons.family, ['outline', 'rounded', 'filled'])
+    if (Object.keys(icons).length > 0) result.icons = icons
+  }
+  if (isRecord(value.typography)) {
+    const typography: NonNullable<ThemeModes['typography']> = {}
+    assignModeOption(typography, 'titleCase', value.typography.titleCase, [
+      'preserve',
+      'uppercase'
+    ])
+    assignModeOption(typography, 'lyricAccent', value.typography.lyricAccent, ['off', 'accent'])
+    assignModeOption(typography, 'titleColor', value.typography.titleColor, [
+      'off',
+      'track',
+      'artist-album'
+    ])
+    if (Object.keys(typography).length > 0) result.typography = typography
+  }
+  if (isRecord(value.visibility)) {
+    const visibility: Partial<Record<ThemeVisibilitySlotId, boolean>> = {}
+    for (const id of THEME_VISIBILITY_SLOT_IDS) {
+      if (typeof value.visibility[id] === 'boolean') visibility[id] = value.visibility[id]
+    }
+    if (Object.keys(visibility).length > 0) result.visibility = visibility
+  }
+  return result
+}
+
+function assignModeOption<T extends object, K extends keyof T>(
+  target: T,
+  key: K,
+  value: unknown,
+  options: readonly T[K][]
+): void {
+  if (options.includes(value as T[K])) target[key] = value as T[K]
+}
+
+export function normalizeThemeToneSchedule(value: unknown): ThemeToneSchedule | undefined {
+  if (!isRecord(value)) return undefined
+  const lightStartMinutes = value.lightStartMinutes
+  const darkStartMinutes = value.darkStartMinutes
+  if (
+    !Number.isInteger(lightStartMinutes) ||
+    !Number.isInteger(darkStartMinutes) ||
+    (lightStartMinutes as number) < 0 ||
+    (lightStartMinutes as number) >= 24 * 60 ||
+    (darkStartMinutes as number) < 0 ||
+    (darkStartMinutes as number) >= 24 * 60 ||
+    lightStartMinutes === darkStartMinutes
+  ) {
+    return undefined
+  }
+  return {
+    lightStartMinutes: lightStartMinutes as number,
+    darkStartMinutes: darkStartMinutes as number
+  }
+}
+
+export function resolveScheduledThemeTone(
+  date: Date,
+  schedule: ThemeToneSchedule = DEFAULT_THEME_TONE_SCHEDULE
+): ThemeTone {
+  const normalized = normalizeThemeToneSchedule(schedule) ?? DEFAULT_THEME_TONE_SCHEDULE
+  const minutes = date.getHours() * 60 + date.getMinutes()
+  const { lightStartMinutes, darkStartMinutes } = normalized
+  const isLight =
+    lightStartMinutes < darkStartMinutes
+      ? minutes >= lightStartMinutes && minutes < darkStartMinutes
+      : minutes >= lightStartMinutes || minutes < darkStartMinutes
+  return isLight ? 'pureWhite' : 'dark'
 }
 
 export function normalizeThemeAssets(value: unknown): ThemeAssetReference[] {
@@ -1222,8 +2184,15 @@ export function normalizeThemeTokenValue(id: string, value: string): string | nu
   const normalized = value.trim()
   if (!normalized || normalized.length > 240) return null
   if (/[;{}]|url\s*\(|@import|expression\s*\(/i.test(normalized)) return null
-  if (definition.kind === 'number' && definition.unit !== '%') {
-    const number = Number(normalized)
+  if (definition.kind === 'color' && !isThemeColor(normalized)) return null
+  if (definition.kind === 'enum' && !definition.options?.includes(normalized)) return null
+  if (definition.kind === 'number') {
+    const numberText = definition.unit
+      ? normalized.endsWith(definition.unit)
+        ? normalized.slice(0, -definition.unit.length)
+        : ''
+      : normalized
+    const number = Number(numberText)
     if (!Number.isFinite(number)) return null
     if (definition.min != null && number < definition.min) return null
     if (definition.max != null && number > definition.max) return null
@@ -1238,8 +2207,148 @@ export function normalizeThemeTokenValue(id: string, value: string): string | nu
   return normalized
 }
 
+function isThemeColor(value: string): boolean {
+  return (
+    /^#[0-9a-f]{3,4}(?:[0-9a-f]{3,4})?$/i.test(value) ||
+    /^(?:rgb|rgba|hsl|hsla)\([^()]{1,80}\)$/i.test(value) ||
+    /^(?:transparent|currentcolor)$/i.test(value)
+  )
+}
+
+interface ThemeRgbColor {
+  r: number
+  g: number
+  b: number
+  a: number
+}
+
+export function themeContrastRatio(
+  foreground: string,
+  background: string,
+  canvas = '#ffffff'
+): number | null {
+  const canvasColor = parseThemeRgb(canvas)
+  const foregroundColor = parseThemeRgb(foreground)
+  const backgroundColor = parseThemeRgb(background)
+  if (!canvasColor || !foregroundColor || !backgroundColor) return null
+  const opaqueBackground = compositeThemeColor(backgroundColor, canvasColor)
+  const opaqueForeground = compositeThemeColor(foregroundColor, opaqueBackground)
+  const light = Math.max(themeRelativeLuminance(opaqueForeground), themeRelativeLuminance(opaqueBackground))
+  const dark = Math.min(themeRelativeLuminance(opaqueForeground), themeRelativeLuminance(opaqueBackground))
+  return (light + 0.05) / (dark + 0.05)
+}
+
+export function ensureThemeTextContrast(
+  foreground: string,
+  background: string,
+  minimum = 4.5
+): string {
+  const ratio = themeContrastRatio(foreground, background)
+  if (ratio != null && ratio >= minimum) return foreground
+  const dark = '#111827'
+  const light = '#f8fafc'
+  const darkRatio = themeContrastRatio(dark, background) ?? 0
+  const lightRatio = themeContrastRatio(light, background) ?? 0
+  return darkRatio >= lightRatio ? dark : light
+}
+
+export function createThemeAccentTokenOverrides(
+  color: string,
+  tone: ThemeTone,
+  background: string,
+  adaptive = false
+): Record<string, string> {
+  const fallback = tone === 'dark' ? '#f59e0b' : '#2563eb'
+  const source = parseThemeRgb(color)
+  const normalized = source
+  const muted = adaptive && normalized
+    ? mixThemeColors(normalized, { r: 128, g: 128, b: 128, a: 1 }, 0.1)
+    : normalized ?? parseThemeRgb(fallback)!
+  let primary = themeRgbToHex(muted)
+  if (
+    adaptive &&
+    (themeContrastRatio(primary, background, tone === 'dark' ? '#17181a' : '#f4f4f7') ?? 0) < 3
+  ) {
+    primary = fallback
+  }
+  const base = parseThemeRgb(primary)!
+  const white = { r: 255, g: 255, b: 255, a: 1 }
+  const primary400 = themeRgbToHex(mixThemeColors(base, white, tone === 'dark' ? 0.18 : 0.12))
+  const primary300 = themeRgbToHex(mixThemeColors(base, white, tone === 'dark' ? 0.44 : 0.38))
+  const rgb = `${base.r}, ${base.g}, ${base.b}`
+  return {
+    'color.primary.500': primary,
+    'color.primary.400': primary400,
+    'color.primary.300': primary300,
+    'color.primary.rgb': rgb,
+    'material.glowMain': `rgba(${rgb}, ${tone === 'dark' ? '0.2' : '0.14'})`,
+    'surface.active': `rgba(${rgb}, ${tone === 'dark' ? '0.16' : '0.1'})`,
+    'navigation.activeText': primary,
+    'navigation.indicator': primary,
+    'playback.accent': primary
+  }
+}
+
+function parseThemeRgb(value: string): ThemeRgbColor | null {
+  const normalized = value.trim()
+  const hex = normalized.match(/^#([\da-f]{3}|[\da-f]{6}|[\da-f]{8})$/i)
+  if (hex) {
+    const raw = hex[1].length === 3 ? hex[1].split('').map((part) => part + part).join('') : hex[1]
+    return {
+      r: Number.parseInt(raw.slice(0, 2), 16),
+      g: Number.parseInt(raw.slice(2, 4), 16),
+      b: Number.parseInt(raw.slice(4, 6), 16),
+      a: raw.length === 8 ? Number.parseInt(raw.slice(6, 8), 16) / 255 : 1
+    }
+  }
+  const rgb = normalized.match(/^rgba?\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)(?:\s*,\s*(\d?(?:\.\d+)?))?\s*\)$/i)
+  if (!rgb) return null
+  const channels = rgb.slice(1, 4).map(Number)
+  if (channels.some((channel) => !Number.isFinite(channel) || channel < 0 || channel > 255)) {
+    return null
+  }
+  const alpha = rgb[4] == null || rgb[4] === '' ? 1 : Number(rgb[4])
+  if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) return null
+  return { r: channels[0], g: channels[1], b: channels[2], a: alpha }
+}
+
+function compositeThemeColor(foreground: ThemeRgbColor, background: ThemeRgbColor): ThemeRgbColor {
+  const alpha = foreground.a + background.a * (1 - foreground.a)
+  if (alpha <= 0) return { r: 0, g: 0, b: 0, a: 0 }
+  return {
+    r: Math.round((foreground.r * foreground.a + background.r * background.a * (1 - foreground.a)) / alpha),
+    g: Math.round((foreground.g * foreground.a + background.g * background.a * (1 - foreground.a)) / alpha),
+    b: Math.round((foreground.b * foreground.a + background.b * background.a * (1 - foreground.a)) / alpha),
+    a: alpha
+  }
+}
+
+function mixThemeColors(from: ThemeRgbColor, to: ThemeRgbColor, amount: number): ThemeRgbColor {
+  const ratio = Math.max(0, Math.min(1, amount))
+  return {
+    r: Math.round(from.r + (to.r - from.r) * ratio),
+    g: Math.round(from.g + (to.g - from.g) * ratio),
+    b: Math.round(from.b + (to.b - from.b) * ratio),
+    a: from.a + (to.a - from.a) * ratio
+  }
+}
+
+function themeRgbToHex(color: ThemeRgbColor): string {
+  return `#${[color.r, color.g, color.b]
+    .map((channel) => Math.round(channel).toString(16).padStart(2, '0'))
+    .join('')}`
+}
+
+function themeRelativeLuminance(color: ThemeRgbColor): number {
+  const [r, g, b] = [color.r, color.g, color.b].map((channel) => {
+    const normalized = channel / 255
+    return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
 export function resolveThemeProfileTokens(
-  profile: ThemeProfileV1 | null,
+  profile: ThemeProfileV2 | null,
   tone: ThemeTone
 ): Record<string, string> {
   return profile
@@ -1249,6 +2358,51 @@ export function resolveThemeProfileTokens(
       }
     : {}
 }
+
+export function resolveThemeProfileModes(profile: ThemeProfileV2 | null): ThemeModes {
+  const modes = profile?.modes ?? {}
+  return {
+    appearance: { ...DEFAULT_THEME_MODES.appearance, ...modes.appearance },
+    navigation: { ...DEFAULT_THEME_MODES.navigation, ...modes.navigation },
+    library: { ...DEFAULT_THEME_MODES.library, ...modes.library },
+    player: { ...DEFAULT_THEME_MODES.player, ...modes.player },
+    artwork: { ...DEFAULT_THEME_MODES.artwork, ...modes.artwork },
+    icons: { ...DEFAULT_THEME_MODES.icons, ...modes.icons },
+    typography: { ...DEFAULT_THEME_MODES.typography, ...modes.typography },
+    visibility: { ...modes.visibility }
+  }
+}
+
+export function themeModesToDataAttributes(value: unknown): Record<`data-te-${string}`, string> {
+  const modes = normalizeThemeModes(value)
+  const attributes: Record<`data-te-${string}`, string> = {}
+  for (const definition of THEME_MODE_DEFINITIONS) {
+    const modeValue = readThemeModeValue(modes, definition.id)
+    if (typeof modeValue === 'string' && definition.options.includes(modeValue)) {
+      attributes[definition.dataAttribute] = modeValue
+    }
+  }
+  for (const id of THEME_VISIBILITY_SLOT_IDS) {
+    const visible = modes.visibility?.[id]
+    if (typeof visible === 'boolean') attributes[visibilityDataAttribute(id)] = String(visible)
+  }
+  return attributes
+}
+
+function readThemeModeValue(modes: ThemeModes, id: string): string | undefined {
+  const [domain, key] = id.split('.')
+  const section = modes[domain as keyof ThemeModes]
+  return isRecord(section) && typeof section[key] === 'string' ? section[key] : undefined
+}
+
+function visibilityDataAttribute(id: ThemeVisibilitySlotId): `data-te-${string}` {
+  return `data-te-visible-${id.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`
+}
+
+export const THEME_MANAGED_DATA_ATTRIBUTES: readonly `data-te-${string}`[] = Object.freeze([
+  ...THEME_MODE_DEFINITIONS.map((definition) => definition.dataAttribute),
+  ...THEME_VISIBILITY_SLOT_IDS.map(visibilityDataAttribute)
+])
 
 export function themeTokensToCssVariables(tokens: Record<string, string>): Record<string, string> {
   const variables: Record<string, string> = {}

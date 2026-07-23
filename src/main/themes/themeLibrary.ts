@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import {
   createDefaultThemeLibraryDocument,
   type ThemeLibrarySnapshot,
-  type ThemeProfileV1,
+  type ThemeProfileV2,
   type ThemeSelection,
   type ThemeWindowInheritance
 } from '../../shared/theme.ts'
@@ -29,7 +29,7 @@ export async function loadThemeLibrary(): Promise<ThemeLibrarySnapshot> {
 }
 
 export async function saveThemeProfile(
-  candidate: ThemeProfileV1,
+  candidate: ThemeProfileV2,
   expectedRevision: number,
   now = new Date().toISOString()
 ): Promise<ThemeLibrarySnapshot> {

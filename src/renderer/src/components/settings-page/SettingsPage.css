@@ -1,4 +1,3 @@
-
 .settings-preview-page {
   position: fixed;
   inset: 0;
@@ -13,7 +12,7 @@
   background-position: center;
   background-size: cover;
   background-repeat: no-repeat;
-  color: #111827;
+  color: var(--te-settings-text);
   font-family: var(--te-font-sans), sans-serif;
   scroll-behavior: smooth;
 }
@@ -117,9 +116,9 @@
   height: 40px;
   padding: 10px 16px;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: calc(var(--te-radius-global) + 2px);
   background: transparent;
-  color: #4b5563;
+  color: var(--te-settings-nav-text);
   cursor: pointer;
   font-size: 13px;
   font-weight: 500;
@@ -138,13 +137,13 @@
 }
 
 .preview-nav-item:hover {
-  background: var(--te-card-bg);
-  color: #111827;
+  background: var(--te-settings-nav-hover);
+  color: var(--te-settings-text);
 }
 
 .preview-nav-item.active {
   border-color: var(--brand-100);
-  background: var(--te-card-bg);
+  background: var(--te-settings-nav-active);
   color: var(--brand-600);
   font-weight: 800;
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.08);
@@ -173,9 +172,9 @@
   gap: 10px;
   min-height: 42px;
   padding: 0 14px;
-  border: 1px solid rgba(229, 231, 235, 0.78);
-  border-radius: 10px;
-  background: var(--te-card-bg);
+  border: 1px solid var(--te-settings-control-border);
+  border-radius: var(--te-radius-global);
+  background: var(--te-settings-control-bg);
   box-shadow: 0 1px 5px rgba(15, 23, 42, 0.05);
 }
 
@@ -190,13 +189,13 @@
   border: 0;
   outline: 0;
   background: transparent;
-  color: #1f2937;
+  color: var(--te-settings-text);
   font-size: 13px;
   font-weight: 700;
 }
 
 .settings-search-box input::placeholder {
-  color: #9ca3af;
+  color: var(--te-settings-text-muted);
 }
 
 .settings-command-actions,
@@ -223,7 +222,7 @@
   gap: 6px;
   padding: 6px 10px;
   border: 1px solid rgba(var(--te-primary-rgb), 0.2);
-  border-radius: 8px;
+  border-radius: var(--te-radius-global);
   background: rgba(var(--te-primary-rgb), 0.08);
   color: var(--brand-600);
   cursor: pointer;
@@ -242,7 +241,7 @@
 
 .settings-search-empty {
   border: 1px dashed rgba(156, 163, 175, 0.55);
-  color: #6b7280;
+  color: var(--te-settings-text-muted);
 }
 
 .settings-inline-notice {
@@ -258,9 +257,9 @@
 }
 
 .glass-card {
-  border: 1px solid rgba(255, 255, 255, 1);
-  border-radius: 16px;
-  background: var(--te-glass-bg);
+  border: 1px solid var(--te-settings-panel-border);
+  border-radius: calc(var(--te-radius-global) + 6px);
+  background: color-mix(in srgb, var(--te-glass-bg) var(--te-surface-opacity), transparent);
   box-shadow: 0 4px 20px -5px rgba(0, 0, 0, 0.05);
   -webkit-backdrop-filter: blur(24px);
   backdrop-filter: blur(24px);
@@ -296,7 +295,7 @@
 
 .section-title-row h2 {
   margin: 0;
-  color: #1f2937;
+  color: var(--te-settings-text);
   font-size: 18px;
   font-weight: 800;
   letter-spacing: 0;
@@ -328,7 +327,7 @@
   height: 1px;
   margin: 0;
   border: 0;
-  background: rgba(243, 244, 246, 0.82);
+  background: var(--te-settings-control-border);
 }
 
 .setting-item {
@@ -353,14 +352,14 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #1f2937;
+  color: var(--te-settings-text);
   font-size: 13px;
   font-weight: 800;
   line-height: 1.35;
 }
 
 .setting-copy span {
-  color: #6b7280;
+  color: var(--te-settings-text-muted);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.45;
@@ -405,10 +404,10 @@
   gap: 8px;
   min-height: 36px;
   padding: 8px 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  background: var(--te-card-bg);
-  color: #374151;
+  border: 1px solid var(--te-settings-control-border);
+  border-radius: var(--te-radius-global);
+  background: var(--te-settings-control-bg);
+  color: var(--te-settings-text);
   box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
   font-size: 12px;
   font-weight: 800;
@@ -421,14 +420,14 @@
 }
 
 .folder-chip i {
-  color: #9ca3af;
+  color: var(--te-settings-text-muted);
   font-size: 12px;
   cursor: pointer;
 }
 
 .folder-empty-hint {
   padding: 8px 12px;
-  color: #9ca3af;
+  color: var(--te-settings-text-muted);
   font-size: 12px;
   font-weight: 600;
 }
@@ -443,7 +442,7 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border-radius: 8px;
+  border-radius: var(--te-radius-global);
   cursor: pointer;
   font-size: 12px;
   font-weight: 800;
@@ -556,7 +555,7 @@
   background: var(--brand-500, #2563eb);
   cursor: pointer;
   border: 2px solid #fff;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
 }
 .color-picker {
   width: 40px;
@@ -786,8 +785,7 @@
   border: 1px solid #e5e7eb;
   border-radius: 14px;
   background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.95), rgba(249, 250, 251, 0.78)),
-    #ffffff;
+    linear-gradient(145deg, rgba(255, 255, 255, 0.95), rgba(249, 250, 251, 0.78)), #ffffff;
   color: #374151;
   text-align: left;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
@@ -1200,12 +1198,30 @@
   font-size: 10px;
 }
 
-.swatch.violet { color: #8b5cf6; background: #8b5cf6; }
-.swatch.blue { color: #2563eb; background: #2563eb; }
-.swatch.emerald { color: #10b981; background: #10b981; }
-.swatch.rose { color: #e11d48; background: #e11d48; }
-.swatch.amber { color: #f59e0b; background: #f59e0b; }
-.swatch.slate { color: #334155; background: #334155; }
+.swatch.violet {
+  color: #8b5cf6;
+  background: #8b5cf6;
+}
+.swatch.blue {
+  color: #2563eb;
+  background: #2563eb;
+}
+.swatch.emerald {
+  color: #10b981;
+  background: #10b981;
+}
+.swatch.rose {
+  color: #e11d48;
+  background: #e11d48;
+}
+.swatch.amber {
+  color: #f59e0b;
+  background: #f59e0b;
+}
+.swatch.slate {
+  color: #334155;
+  background: #334155;
+}
 
 .background-accordion {
   display: grid;
@@ -1589,7 +1605,12 @@
 
 .blur-cover {
   filter: blur(2px);
-  background: linear-gradient(135deg, var(--te-primary-300), var(--te-primary-400) 52%, var(--te-primary-500));
+  background: linear-gradient(
+    135deg,
+    var(--te-primary-300),
+    var(--te-primary-400) 52%,
+    var(--te-primary-500)
+  );
 }
 
 .background-options button:hover .blur-cover {

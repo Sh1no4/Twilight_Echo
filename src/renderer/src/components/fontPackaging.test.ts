@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
-test('renderer CSS packages Inter + Plus Jakarta Sans + MiSans and excludes legacy families', () => {
+test('renderer CSS packages the licensed built-in font style library and excludes legacy families', () => {
   const base = readFileSync(new URL('../assets/base.css', import.meta.url), 'utf8')
   const fonts = readFileSync(new URL('../assets/fonts.css', import.meta.url), 'utf8')
   const indexHtml = readFileSync(new URL('../../index.html', import.meta.url), 'utf8')
@@ -14,6 +14,9 @@ test('renderer CSS packages Inter + Plus Jakarta Sans + MiSans and excludes lega
 
   assert.match(fonts, /font-family: 'Inter'/)
   assert.match(fonts, /font-family: 'Plus Jakarta Sans'/)
+  assert.match(fonts, /font-family: 'Lora'/)
+  assert.match(fonts, /font-family: 'JetBrains Mono'/)
+  assert.match(fonts, /font-family: 'Space Grotesk'/)
   assert.match(fonts, /url\(['"]?\/font\/Inter/)
   assert.match(fonts, /url\(['"]?\/font\/PlusJakartaSans/)
   assert.match(base, /--te-font-sans:[\s\S]*Inter/)
@@ -27,6 +30,12 @@ test('renderer CSS packages Inter + Plus Jakarta Sans + MiSans and excludes lega
   const misansDir = join(fontDir, 'misans')
   assert.equal(existsSync(join(fontDir, 'Inter-latin-wght-normal.woff2')), true)
   assert.equal(existsSync(join(fontDir, 'PlusJakartaSans-latin-wght-normal.woff2')), true)
+  assert.equal(existsSync(join(fontDir, 'Lora-latin-wght-normal.woff2')), true)
+  assert.equal(existsSync(join(fontDir, 'JetBrainsMono-latin-wght-normal.woff2')), true)
+  assert.equal(existsSync(join(fontDir, 'SpaceGrotesk-latin-wght-normal.woff2')), true)
+  assert.equal(existsSync(join(fontDir, 'OFL-Lora.txt')), true)
+  assert.equal(existsSync(join(fontDir, 'OFL-JetBrainsMono.txt')), true)
+  assert.equal(existsSync(join(fontDir, 'OFL-SpaceGrotesk.txt')), true)
   assert.equal(existsSync(join(misansDir, 'misans.css')), true)
   assert.equal(existsSync(join(misansDir, 'LICENSE')), true)
   const misansCss = readFileSync(join(misansDir, 'misans.css'), 'utf8')

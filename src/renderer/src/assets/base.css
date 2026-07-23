@@ -27,20 +27,37 @@
   --te-ease-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
   --te-ui-scale: 0.94;
   --te-menu-width: clamp(132px, 18vw, 216px);
+  --te-radius-global: 10px;
+  --te-surface-opacity: 100%;
   /* Latin: Inter (100–900) first so weight 700–800 never synthetic-bolds; CJK via MiSans. */
-  --te-font-display: 'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
-  --te-font-rounded: 'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, sans-serif;
-  --te-font-sans: 'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB',
-    'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
-    sans-serif;
+  --te-font-display:
+    'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
+    'Microsoft YaHei', system-ui, sans-serif;
+  --te-font-rounded:
+    'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
+    'Microsoft YaHei', system-ui, sans-serif;
+  --te-font-sans:
+    'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI',
+    'Microsoft YaHei', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --te-text-title: 700;
   --te-text-body: 500;
   --te-text-meta: 400;
   --te-text-strong: 600;
+  --te-font-size-body: 14px;
+  --te-chrome-text: #475569;
   --te-app-bg: #f4f4f7;
   --te-app-bg-image: none;
+  --te-theme-background-image: none;
+  --te-background-gradient-start: #eff6ff;
+  --te-background-gradient-end: #f5f3ff;
+  --te-background-gradient-angle: 135deg;
+  --te-background-cover-blur: 28px;
+  --te-background-overlay-opacity: 12%;
+  --te-dialog-radius: 8px;
+  --te-search-radius: 10px;
+  --te-toast-radius: 8px;
+  --te-track-title-radius: 6px;
+  --te-track-title-opacity: 0%;
   --te-local-bg: var(--te-app-bg);
   --te-local-bg-image: var(--te-app-bg-image);
   --te-settings-bg: var(--te-app-bg);
@@ -49,12 +66,70 @@
   --te-streaming-bg-image: var(--te-app-bg-image);
   --te-player-bg: var(--te-app-bg);
   --te-player-bg-image: var(--te-app-bg-image);
+  --te-shell-control-text: var(--te-neutral-900);
+  --te-shell-control-hover: rgba(37, 99, 235, 0.08);
+  --te-settings-text: #111827;
+  --te-settings-text-muted: #6b7280;
+  --te-settings-control-bg: #ffffff;
+  --te-settings-control-border: rgba(229, 231, 235, 0.78);
+  --te-settings-panel-border: #ffffff;
+  --te-settings-nav-text: #4b5563;
+  --te-settings-nav-hover: #ffffff;
+  --te-settings-nav-active: #ffffff;
+  --te-navigation-bg: rgba(255, 255, 255, 0.94);
+  --te-navigation-border: rgba(0, 0, 0, 0.05);
+  --te-navigation-shadow: 4px 0 24px rgba(15, 23, 42, 0.03);
+  --te-navigation-text: #475569;
+  --te-navigation-icon: #64748b;
+  --te-navigation-hover: rgba(15, 23, 42, 0.04);
+  --te-navigation-hover-text: #0f172a;
+  --te-navigation-active: rgba(37, 99, 235, 0.08);
+  --te-navigation-active-text: #2563eb;
+  --te-navigation-indicator: #2563eb;
+  --te-library-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
+  --te-library-table-bg: rgba(255, 255, 255, 0.16);
+  --te-library-table-border: rgba(255, 255, 255, 0.52);
+  --te-library-table-shadow: 0 26px 78px rgba(86, 70, 160, 0.1);
+  --te-library-row-text: #334155;
+  --te-library-row-hover: rgba(255, 255, 255, 0.22);
+  --te-library-selection-bg: rgba(15, 23, 42, 0.045);
+  --te-library-selection-hover: rgba(15, 23, 42, 0.07);
+  --te-library-selection-indicator: rgba(15, 23, 42, 0.55);
   --te-streaming-surface: #fafbfe;
   --te-card-bg: #ffffff;
   --te-card-border: rgba(15, 23, 42, 0.08);
   --te-subtle-bg: #f8fafc;
   --te-hover-bg: #f3f4f6;
   --te-active-bg: #e8e8e8;
+  --te-shell-control-text: #0f172a;
+  --te-shell-control-hover: rgba(37, 99, 235, 0.08);
+  --te-settings-text: #111827;
+  --te-settings-text-muted: #6b7280;
+  --te-settings-control-bg: #ffffff;
+  --te-settings-control-border: rgba(229, 231, 235, 0.78);
+  --te-settings-panel-border: #ffffff;
+  --te-settings-nav-text: #4b5563;
+  --te-settings-nav-hover: #ffffff;
+  --te-settings-nav-active: #ffffff;
+  --te-navigation-bg: rgba(255, 255, 255, 0.94);
+  --te-navigation-border: rgba(0, 0, 0, 0.05);
+  --te-navigation-shadow: 4px 0 24px rgba(15, 23, 42, 0.03);
+  --te-navigation-text: #475569;
+  --te-navigation-icon: #64748b;
+  --te-navigation-hover: rgba(15, 23, 42, 0.04);
+  --te-navigation-hover-text: #0f172a;
+  --te-navigation-active: rgba(37, 99, 235, 0.08);
+  --te-navigation-active-text: #2563eb;
+  --te-navigation-indicator: #2563eb;
+  --te-library-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
+  --te-library-table-bg: rgba(255, 255, 255, 0.16);
+  --te-library-table-border: rgba(255, 255, 255, 0.52);
+  --te-library-table-shadow: 0 26px 78px rgba(86, 70, 160, 0.1);
+  --te-library-row-text: #334155;
+  --te-library-row-hover: rgba(255, 255, 255, 0.22);
+  --te-library-selection-bg: rgba(15, 23, 42, 0.045);
+  --te-library-selection-hover: rgba(15, 23, 42, 0.07);
+  --te-library-selection-indicator: rgba(15, 23, 42, 0.55);
   --te-success-soft-bg: #f0fdf4;
   --te-success-soft-fg: #16a34a;
   --te-info-soft-bg: #eff6ff;
@@ -124,6 +199,7 @@
   --te-neutral-500: #9b9b9b;
   --te-neutral-700: #d8d8d8;
   --te-neutral-900: #f7f7f2;
+  --te-chrome-text: #d8d8d8;
   --te-glass-bg: rgba(24, 24, 24, 0.82);
   --te-glass-bg-strong: rgba(29, 29, 29, 0.94);
   --te-glass-border: rgba(255, 255, 255, 0.09);
@@ -143,6 +219,35 @@
   --te-subtle-bg: #121212;
   --te-hover-bg: rgba(255, 255, 255, 0.065);
   --te-active-bg: rgba(245, 158, 11, 0.16);
+  --te-shell-control-text: #f7f7f2;
+  --te-shell-control-hover: rgba(245, 158, 11, 0.12);
+  --te-settings-text: #f7f7f2;
+  --te-settings-text-muted: #9b9b9b;
+  --te-settings-control-bg: #181818;
+  --te-settings-control-border: rgba(255, 255, 255, 0.1);
+  --te-settings-panel-border: rgba(255, 255, 255, 0.09);
+  --te-settings-nav-text: #d8d8d8;
+  --te-settings-nav-hover: rgba(255, 255, 255, 0.065);
+  --te-settings-nav-active: rgba(245, 158, 11, 0.16);
+  --te-navigation-bg: #17181a;
+  --te-navigation-border: transparent;
+  --te-navigation-shadow: none;
+  --te-navigation-text: #d8d8d8;
+  --te-navigation-icon: #9b9b9b;
+  --te-navigation-hover: rgba(255, 255, 255, 0.065);
+  --te-navigation-hover-text: #f7f7f2;
+  --te-navigation-active: rgba(245, 158, 11, 0.16);
+  --te-navigation-active-text: #f59e0b;
+  --te-navigation-indicator: #f59e0b;
+  --te-library-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 255, 255, 0.9));
+  --te-library-table-bg: rgba(255, 255, 255, 0.16);
+  --te-library-table-border: rgba(255, 255, 255, 0.52);
+  --te-library-table-shadow: 0 26px 78px rgba(86, 70, 160, 0.1);
+  --te-library-row-text: #d8d8d8;
+  --te-library-row-hover: rgba(255, 255, 255, 0.065);
+  --te-library-selection-bg: rgba(255, 255, 255, 0.06);
+  --te-library-selection-hover: rgba(255, 255, 255, 0.09);
+  --te-library-selection-indicator: rgba(255, 255, 255, 0.72);
   --te-success-soft-bg: rgba(20, 184, 129, 0.15);
   --te-success-soft-fg: #5ee3b4;
   --te-info-soft-bg: rgba(56, 189, 248, 0.14);
@@ -200,8 +305,8 @@ body {
   -webkit-font-smoothing: auto;
   -moz-osx-font-smoothing: auto;
   overflow: hidden;
-  font-size: 14px;
-  letter-spacing: 0.01em;
+  font-size: var(--te-font-size-body);
+  letter-spacing: 0;
 }
 
 :root[data-theme='pureWhite'] {
@@ -2315,4 +2420,138 @@ html[data-window-transparent='on']
   ) {
   backdrop-filter: blur(var(--te-tp-card-blur)) !important;
   -webkit-backdrop-filter: blur(var(--te-tp-card-blur)) !important;
+}
+
+/* Phase 2 theme treatments stay declarative and only consume managed variables. */
+html[data-te-background-treatment='gradient'] body::before,
+html[data-te-background-treatment='image'] body::before {
+  display: none !important;
+}
+
+html[data-te-background-treatment='cover-blur'] body {
+  background-color: var(--te-app-bg) !important;
+  background-image: none !important;
+}
+
+html[data-te-background-treatment='cover-blur'] body::before {
+  content: '';
+  display: block !important;
+  position: fixed;
+  inset: -72px;
+  z-index: -2;
+  pointer-events: none;
+  background-color: var(--te-app-bg);
+  background-image: var(--te-theme-background-image) !important;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  filter: blur(var(--te-background-cover-blur)) saturate(1.08);
+  opacity: 1;
+  animation: none;
+}
+
+html[data-te-background-treatment='cover-blur'] body::after {
+  content: '';
+  display: block;
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: rgb(0 0 0 / var(--te-background-overlay-opacity));
+}
+
+html[data-te-background-treatment='cover-blur']
+  :is(
+    .dashboard-wrapper,
+    .home,
+    .song-list,
+    .settings-page,
+    .settings-preview-layout,
+    .streaming-page
+  ) {
+  background-color: color-mix(in srgb, var(--te-app-bg) 76%, transparent) !important;
+  background-image: none !important;
+}
+
+html.te-theme-tone-transition
+  :is(
+    body,
+    .title-bar,
+    .side-menu,
+    .dashboard-wrapper,
+    .song-list,
+    .settings-page,
+    .theme-studio-page,
+    .streaming-page,
+    .player-bar,
+    .glass-card
+  ) {
+  transition:
+    color 0.2s var(--te-ease-soft),
+    background-color 0.2s var(--te-ease-soft),
+    border-color 0.2s var(--te-ease-soft) !important;
+}
+
+html[data-te-title-case='uppercase']
+  :is(.track-title, .player-title, .preview-heading h2, .preview-song-row strong) {
+  text-transform: uppercase;
+}
+
+html[data-te-title-color='track'] :is(.playing-music .track-title, .player-title) {
+  color: var(--te-primary-300) !important;
+}
+
+html[data-te-title-color='artist-album']
+  :is(.playing-music .track-artist, .playing-music .track-album, .player-artist) {
+  color: var(--te-primary-300) !important;
+}
+
+html[data-te-lyric-accent='accent']
+  :is(.playing-music .lyric-row.active, .playing-music .lyric-row.active .lyric-translation) {
+  color: var(--te-primary-300) !important;
+}
+
+:is(.playing-music .track-title, .player-title, .track-row .track-title) {
+  border-radius: var(--te-track-title-radius);
+  background: color-mix(
+    in srgb,
+    var(--te-primary-500) var(--te-track-title-opacity),
+    transparent
+  );
+}
+
+:is([role='dialog'], .import-dialog, .dsp-route-dialog) {
+  border-radius: var(--te-dialog-radius);
+}
+
+:is(.search-box, .streaming-search-box, .opra-search-input-wrap input) {
+  border-radius: var(--te-search-radius);
+}
+
+:is(
+  .settings-inline-notice,
+  .playlist-action-notice,
+  .lyric-manager-notice,
+  .studio-message,
+  .audio-engine-recovery-notice
+) {
+  border-radius: var(--te-toast-radius);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.te-theme-tone-transition
+    :is(
+      body,
+      .title-bar,
+      .side-menu,
+      .dashboard-wrapper,
+      .song-list,
+      .settings-page,
+      .theme-studio-page,
+      .streaming-page,
+      .player-bar,
+      .glass-card
+    ) {
+    transition-duration: 0.01ms !important;
+  }
 }

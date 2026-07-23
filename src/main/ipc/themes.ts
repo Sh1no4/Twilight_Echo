@@ -1,11 +1,13 @@
-import { BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron'
+import { BrowserWindow, dialog, ipcMain, nativeTheme, type OpenDialogOptions } from 'electron'
 import { basename, extname } from 'node:path'
 import {
   TWILIGHT_DEFAULT_THEME,
   TWILIGHT_DEFAULT_THEME_ID,
+  normalizeThemeProfile,
+  type ThemeAssetReference,
   type ThemeAssetType,
   type ThemeLibrarySnapshot,
-  type ThemeProfileV1,
+  type ThemeProfileV2,
   type ThemeSelection,
   type ThemeWindowInheritance
 } from '../../shared/theme.ts'
@@ -22,7 +24,8 @@ import {
   deleteThemeAssets,
   exportThemeArchive,
   importThemeAsset,
-  importThemeArchive
+  importThemeArchive,
+  validateThemeProfileAssets
 } from '../themes/themeArchive.ts'
 import {
   deleteThemeProfile,
@@ -34,8 +37,24 @@ import {
 import { createInheritedThemeSettingsPatch } from '../themes/windowInheritance.ts'
 
 const MAX_THEME_IPC_BYTES = 2 * 1024 * 1024
+let nativeThemeListenerSetup = false
 
 export function setupThemeIpc(): void {
+  ipcMain.handle('themes:getSystemTone', async (event) => {
+    assertTrustedIpcSender(event, 'theme IPC')
+    return nativeTheme.shouldUseDarkColors ? 'dark' : 'pureWhite'
+  })
+
+  if (!nativeThemeListenerSetup) {
+    nativeThemeListenerSetup = true
+    nativeTheme.on('updated', () => {
+      const tone = nativeTheme.shouldUseDarkColors ? 'dark' : 'pureWhite'
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send('themes:systemToneChanged', tone)
+      }
+    })
+  }
+
   ipcMain.handle('themes:getBootstrap', async (event) => {
     assertTrustedIpcSender(event, 'theme IPC')
     return { library: await loadThemeLibrary(), defaultTheme: TWILIGHT_DEFAULT_THEME }
@@ -48,10 +67,13 @@ export function setupThemeIpc(): void {
 
   ipcMain.handle(
     'themes:save',
-    async (event, profile: ThemeProfileV1, expectedRevision: number) => {
+    async (event, profile: ThemeProfileV2, expectedRevision: number) => {
       assertTrustedIpcSender(event, 'theme IPC')
       stringifyJsonForIpcStorage(profile, 'theme profile', MAX_THEME_IPC_BYTES)
-      return await runMutation(() => saveThemeProfile(profile, expectedRevision))
+      const normalized = normalizeThemeProfile(profile)
+      if (!normalized) throw new Error('主题档案无效')
+      await assertThemeProfileAssetsAvailable(normalized)
+      return await runMutation(() => saveThemeProfile(normalized, expectedRevision))
     }
   )
 
@@ -140,6 +162,7 @@ export function setupThemeIpc(): void {
     }
     const profile = await importThemeArchive(source)
     try {
+      await assertThemeProfileAssetsAvailable(profile)
       const imported = await runMutation(() => saveThemeProfile(profile, expectedRevision))
       if (!('data' in imported)) await deleteThemeAssets(profile.id)
       return imported
@@ -171,6 +194,15 @@ export function setupThemeIpc(): void {
       normalizedType
     )
   })
+
+  ipcMain.handle(
+    'themes:validateAssets',
+    async (event, profileId: string, assets: ThemeAssetReference[]) => {
+      assertTrustedIpcSender(event, 'theme IPC')
+      stringifyJsonForIpcStorage(assets, 'theme assets', 128 * 1024)
+      return await validateThemeProfileAssets(normalizeShortText(profileId), assets)
+    }
+  )
 
   ipcMain.handle(
     'themes:copyAssets',
@@ -235,6 +267,17 @@ async function runMutation(
 
 function normalizeShortText(value: unknown): string {
   return typeof value === 'string' ? value.trim().slice(0, 160) : ''
+}
+
+async function assertThemeProfileAssetsAvailable(profile: ThemeProfileV2): Promise<void> {
+  const boundIds = new Set(
+    Object.values(profile.assetBindings ?? {}).filter((id): id is string => typeof id === 'string')
+  )
+  if (boundIds.size === 0) return
+  const assets = (profile.assets ?? []).filter((asset) => boundIds.has(asset.id))
+  if (assets.length !== boundIds.size || !(await validateThemeProfileAssets(profile.id, assets))) {
+    throw new Error('主题绑定的本地资源不可用')
+  }
 }
 
 function safeFileName(value: string): string {

@@ -19,6 +19,7 @@ export type {
   ThemeLibraryDocument,
   ThemeLibrarySnapshot,
   ThemeProfileV1,
+  ThemeProfileV2,
   ThemeSelection,
   ThemeTokenDefinition,
   ThemeTokenKind,

@@ -868,7 +868,7 @@ html[data-theme='dark'] .player-bar:not(.player-bar-glass) .player-cover-placeho
   font-size: 16px;
   font-weight: 900;
   line-height: 1.28;
-  color: var(--te-neutral-900);
+  color: var(--te-chrome-text, var(--te-neutral-900));
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

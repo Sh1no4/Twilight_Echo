@@ -1,17 +1,24 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
+  BUILT_IN_THEME_FONTS,
+  DEFAULT_THEME_TONE_SCHEDULE,
+  THEME_ACCENT_PALETTES,
+  THEME_BACKGROUND_PALETTES,
   THEME_TOKEN_DEFINITIONS,
   TWILIGHT_DEFAULT_THEME,
   TWILIGHT_DEFAULT_THEME_ID,
+  createThemeAccentTokenOverrides,
   normalizeThemeTokenOverrides,
   normalizeThemeTokenValue,
+  resolveThemeProfileModes,
+  themeContrastRatio,
   type ThemeAssetBindings,
   type ThemeAssetType,
-  type ThemeProfileV1,
+  type ThemeModes,
+  type ThemeProfileV2,
   type ThemeSelection,
   type ThemeTokenDefinition,
-  type ThemeTokenGroup,
   type ThemeTone
 } from '../../../shared/theme.ts'
 import { useExtensionRegistry, type ThemeContribution } from '../extensions/registry'
@@ -23,30 +30,107 @@ const themeStore = useThemeStore()
 const { themeContributions, syncExtensions } = useExtensionRegistry()
 const selectedKey = ref('builtin')
 const tone = ref<ThemeTone>('pureWhite')
-const group = ref<ThemeTokenGroup>('colors')
-const draft = ref<ThemeProfileV1 | null>(null)
+type ThemeStudioDomain =
+  | 'personalization'
+  | 'shell'
+  | 'navigation'
+  | 'library'
+  | 'typography'
+  | 'player'
+  | 'motion'
+  | 'advanced'
+
+const domain = ref<ThemeStudioDomain>('personalization')
+const draft = ref<ThemeProfileV2 | null>(null)
 const savedDraft = ref('')
-const history = ref<ThemeProfileV1[]>([])
+const history = ref<ThemeProfileV2[]>([])
 const historyIndex = ref(-1)
 const localError = ref('')
 const notice = ref('')
 let originalTone: ThemeTone = 'pureWhite'
 
-const groups: Array<{ id: ThemeTokenGroup; label: string; icon: string }> = [
-  { id: 'colors', label: '色彩', icon: 'ph ph-palette' },
-  { id: 'typography', label: '字体', icon: 'ph ph-text-aa' },
-  { id: 'materials', label: '材质', icon: 'ph ph-stack' },
-  { id: 'shape', label: '形状', icon: 'ph ph-square' },
-  { id: 'layout', label: '布局', icon: 'ph ph-layout' },
+const domains: Array<{ id: ThemeStudioDomain; label: string; icon: string }> = [
+  { id: 'personalization', label: '个性化与材质', icon: 'ph ph-palette' },
+  { id: 'shell', label: '界面与设置', icon: 'ph ph-squares-four' },
+  { id: 'navigation', label: '图标与导航', icon: 'ph ph-sidebar' },
+  { id: 'library', label: '媒体库', icon: 'ph ph-music-notes-simple' },
+  { id: 'typography', label: '字体与歌词', icon: 'ph ph-text-aa' },
+  { id: 'player', label: '播放器与封面', icon: 'ph ph-play-circle' },
   { id: 'motion', label: '动效', icon: 'ph ph-wind' },
-  { id: 'playback', label: '播放', icon: 'ph ph-play-circle' }
+  { id: 'advanced', label: '高级令牌', icon: 'ph ph-sliders-horizontal' }
 ]
 
-const definitions = computed(() =>
-  THEME_TOKEN_DEFINITIONS.filter((definition) => definition.group === group.value)
+const personalizationTokenIds = new Set([
+  'color.primary.500',
+  'surface.app',
+  'surface.card',
+  'surface.cardBorder',
+  'material.glassShadow',
+  'shape.globalRadius',
+  'material.surfaceOpacity',
+  'layout.uiScale',
+  'background.gradientStart',
+  'background.gradientEnd',
+  'background.gradientAngle',
+  'background.coverBlur',
+  'background.overlayOpacity'
+])
+
+const typographyTokenIds = new Set([
+  'typography.bodySize',
+  'typography.titleWeight',
+  'typography.chromeText'
+])
+
+const unifiedSurfaceTokenIds = new Set([
+  'shape.dialogRadius',
+  'shape.searchRadius',
+  'shape.toastRadius',
+  'shape.trackTitleRadius',
+  'material.trackTitleOpacity'
+])
+const tokenDefinitionById = new Map(
+  THEME_TOKEN_DEFINITIONS.map((definition) => [definition.id, definition])
 )
+
+const definitions = computed(() => {
+  if (domain.value === 'personalization') {
+    return THEME_TOKEN_DEFINITIONS.filter((definition) =>
+      personalizationTokenIds.has(definition.id)
+    )
+  }
+  if (domain.value === 'shell') {
+    return THEME_TOKEN_DEFINITIONS.filter(
+      (definition) =>
+        definition.id.startsWith('shell.') ||
+        definition.id.startsWith('settings.') ||
+        ['surface.settings', 'surface.local', 'surface.streaming'].includes(definition.id) ||
+        unifiedSurfaceTokenIds.has(definition.id)
+    )
+  }
+  if (domain.value === 'navigation') {
+    return THEME_TOKEN_DEFINITIONS.filter((definition) => definition.id.startsWith('navigation.'))
+  }
+  if (domain.value === 'library') {
+    return THEME_TOKEN_DEFINITIONS.filter((definition) => definition.id.startsWith('library.'))
+  }
+  if (domain.value === 'typography') {
+    return THEME_TOKEN_DEFINITIONS.filter((definition) => typographyTokenIds.has(definition.id))
+  }
+  if (domain.value === 'player') {
+    return THEME_TOKEN_DEFINITIONS.filter((definition) => definition.group === 'playback')
+  }
+  if (domain.value === 'motion') {
+    return THEME_TOKEN_DEFINITIONS.filter((definition) => definition.group === 'motion')
+  }
+  return [...THEME_TOKEN_DEFINITIONS]
+})
+const activeDomain = computed(() => domains.find((item) => item.id === domain.value) ?? domains[0])
 const profiles = computed(() => themeStore.profiles.value)
 const activeKey = computed(() => selectionKey(themeStore.activeTheme.value))
+const isUnsavedDraft = computed(
+  () => draft.value != null && !profiles.value.some((profile) => profile.id === draft.value?.id)
+)
 const isDirty = computed(() =>
   draft.value ? JSON.stringify(draft.value) !== savedDraft.value : false
 )
@@ -65,6 +149,43 @@ const imageAssets = computed(
 const fontAssets = computed(
   () => draft.value?.assets?.filter((asset) => asset.type === 'font') ?? []
 )
+const activeModes = computed(() => resolveThemeProfileModes(draft.value))
+const accentPalette = computed(() => THEME_ACCENT_PALETTES[tone.value])
+const backgroundPalette = computed(() => THEME_BACKGROUND_PALETTES[tone.value])
+const contrastWarnings = computed(() => {
+  if (activeModes.value.appearance?.contrastGuard === 'off') return []
+  const appBackground = valueForId('surface.app')
+  const pairs = [
+    {
+      label: '主要文字 / 应用背景',
+      foreground: valueForId('color.neutral.900'),
+      background: appBackground,
+      minimum: 4.5
+    },
+    {
+      label: '设置文字 / 设置表面',
+      foreground: valueForId('settings.text.primary'),
+      background: valueForId('surface.settings'),
+      minimum: 4.5
+    },
+    {
+      label: '导航文字 / 导航表面',
+      foreground: valueForId('navigation.text'),
+      background: valueForId('navigation.surface'),
+      minimum: 4.5
+    },
+    {
+      label: '大标题 / 应用背景',
+      foreground: valueForId('typography.chromeText'),
+      background: appBackground,
+      minimum: 3
+    }
+  ]
+  return pairs.flatMap((pair) => {
+    const ratio = themeContrastRatio(pair.foreground, pair.background, appBackground)
+    return ratio != null && ratio < pair.minimum ? [{ ...pair, ratio }] : []
+  })
+})
 
 const backgroundBindings: Array<{ key: keyof ThemeAssetBindings; label: string }> = [
   { key: 'appBackground', label: '全局背景' },
@@ -74,14 +195,19 @@ const backgroundBindings: Array<{ key: keyof ThemeAssetBindings; label: string }
   { key: 'playerBackground', label: '播放页背景' }
 ]
 
-const fontBindings: Array<{ key: keyof ThemeAssetBindings; label: string }> = [
-  { key: 'sansFont', label: '正文资源字体' },
-  { key: 'displayFont', label: '标题资源字体' },
-  { key: 'roundedFont', label: '歌词资源字体' }
+const fontBindings: Array<{
+  key: keyof ThemeAssetBindings
+  tokenId: 'typography.sans' | 'typography.display' | 'typography.rounded'
+  label: string
+}> = [
+  { key: 'sansFont', tokenId: 'typography.sans', label: '正文字体' },
+  { key: 'displayFont', tokenId: 'typography.display', label: '标题字体' },
+  { key: 'roundedFont', tokenId: 'typography.rounded', label: '歌词字体' }
 ]
+const personalizationBackgroundBindings = backgroundBindings.slice(0, 1)
 
-function cloneProfile(profile: ThemeProfileV1): ThemeProfileV1 {
-  return JSON.parse(JSON.stringify(profile)) as ThemeProfileV1
+function cloneProfile(profile: ThemeProfileV2): ThemeProfileV2 {
+  return JSON.parse(JSON.stringify(profile)) as ThemeProfileV2
 }
 
 function selectionKey(selection: ThemeSelection): string {
@@ -90,14 +216,14 @@ function selectionKey(selection: ThemeSelection): string {
   return `plugin:${selection.pluginId}:${selection.themeId}`
 }
 
-function resetHistory(profile: ThemeProfileV1): void {
+function resetHistory(profile: ThemeProfileV2): void {
   const clone = cloneProfile(profile)
   history.value = [clone]
   historyIndex.value = 0
   savedDraft.value = JSON.stringify(clone)
 }
 
-function pushHistory(profile: ThemeProfileV1): void {
+function pushHistory(profile: ThemeProfileV2): void {
   history.value = history.value.slice(0, historyIndex.value + 1)
   history.value.push(cloneProfile(profile))
   if (history.value.length > 50) history.value.shift()
@@ -112,7 +238,7 @@ async function selectBuiltIn(): Promise<void> {
   await themeStore.previewTheme({ kind: 'builtin', id: TWILIGHT_DEFAULT_THEME_ID })
 }
 
-async function selectProfile(profile: ThemeProfileV1): Promise<void> {
+async function selectProfile(profile: ThemeProfileV2): Promise<void> {
   selectedKey.value = `profile:${profile.id}`
   draft.value = cloneProfile(profile)
   resetHistory(draft.value)
@@ -127,7 +253,26 @@ async function selectPlugin(theme: ThemeContribution): Promise<void> {
   await themeStore.previewTheme({ kind: 'plugin', pluginId: theme.pluginId, themeId: theme.id })
 }
 
-function createProfileFromPlugin(theme: ThemeContribution): ThemeProfileV1 {
+async function selectThemeKey(event: Event): Promise<void> {
+  const key = (event.target as HTMLSelectElement).value
+  if (key === 'builtin') {
+    await selectBuiltIn()
+    return
+  }
+  if (key.startsWith('profile:')) {
+    const profile = profiles.value.find((entry) => `profile:${entry.id}` === key)
+    if (profile) await selectProfile(profile)
+    return
+  }
+  if (key.startsWith('plugin:')) {
+    const theme = themeContributions.value.find(
+      (entry) => `plugin:${getPluginThemeKey(entry)}` === key
+    )
+    if (theme) await selectPlugin(theme)
+  }
+}
+
+function createProfileFromPlugin(theme: ThemeContribution): ThemeProfileV2 {
   const profile = themeStore.createProfile(`${theme.name} 副本`)
   for (const currentTone of ['pureWhite', 'dark'] as const) {
     const structured = theme.structured?.variants[currentTone]?.tokens
@@ -160,7 +305,12 @@ async function duplicateSelected(): Promise<void> {
   resetHistory(profile)
   savedDraft.value = ''
   if (sourceProfileId && source?.assets?.length) {
-    await themeStore.copyAssets(sourceProfileId, profile.id)
+    try {
+      await themeStore.copyAssets(sourceProfileId, profile.id)
+    } catch (cause) {
+      localError.value = cause instanceof Error ? cause.message : '主题资源复制失败'
+      return
+    }
   }
   await themeStore.preview(profile)
 }
@@ -186,6 +336,12 @@ function updateAssetBinding(key: keyof ThemeAssetBindings, event: Event): void {
     if (assetId) bindings[key] = assetId
     else delete bindings[key]
     profile.assetBindings = Object.keys(bindings).length > 0 ? bindings : undefined
+    if (key === 'appBackground' && assetId) {
+      profile.modes.appearance = {
+        ...(profile.modes.appearance ?? {}),
+        backgroundTreatment: 'image'
+      }
+    }
   })
 }
 
@@ -197,7 +353,28 @@ function valueFor(definition: ThemeTokenDefinition): string {
   )
 }
 
-function updateDraft(mutator: (profile: ThemeProfileV1) => void): void {
+function valueForId(id: string): string {
+  const definition = tokenDefinitionById.get(id)
+  return definition ? valueFor(definition) : ''
+}
+
+function sourceFor(definition: ThemeTokenDefinition): string {
+  if (draft.value?.overrides[tone.value][definition.id] != null) return '当前配置档'
+  const plugin = selectedPluginTheme.value
+  if (
+    plugin?.structured?.variants[tone.value]?.tokens?.[definition.id] != null ||
+    plugin?.variables?.[definition.cssVariable] != null
+  ) {
+    return '主题包'
+  }
+  return '内置默认'
+}
+
+function assetSource(key: keyof ThemeAssetBindings): string {
+  return draft.value?.assetBindings?.[key] ? '当前配置档' : '内置默认'
+}
+
+function updateDraft(mutator: (profile: ThemeProfileV2) => void): void {
   if (!draft.value) return
   const next = cloneProfile(draft.value)
   mutator(next)
@@ -215,7 +392,139 @@ function updateToken(definition: ThemeTokenDefinition, raw: string): void {
   }
   localError.value = ''
   updateDraft((profile) => {
-    profile.overrides[tone.value][definition.id] = normalized
+    if (definition.id === 'color.primary.500') {
+      Object.assign(
+        profile.overrides[tone.value],
+        createThemeAccentTokenOverrides(normalized, tone.value, valueForId('surface.app'))
+      )
+    } else {
+      profile.overrides[tone.value][definition.id] = normalized
+    }
+  })
+}
+
+function applyAccentPalette(value: string): void {
+  updateDraft((profile) => {
+    Object.assign(
+      profile.overrides[tone.value],
+      createThemeAccentTokenOverrides(value, tone.value, valueForId('surface.app'))
+    )
+  })
+}
+
+function applyBackgroundPalette(value: string): void {
+  updateDraft((profile) => {
+    for (const id of [
+      'surface.app',
+      'surface.local',
+      'surface.settings',
+      'surface.streaming',
+      'surface.player'
+    ]) {
+      profile.overrides[tone.value][id] = value
+    }
+  })
+}
+
+function updateAppearanceMode(
+  key: 'accentSource' | 'backgroundTreatment' | 'toneScheduling' | 'contrastGuard',
+  event: Event
+): void {
+  const value = (event.target as HTMLSelectElement).value
+  updateDraft((profile) => {
+    const appearance = { ...(profile.modes.appearance ?? {}) }
+    if (key === 'accentSource' && (value === 'fixed' || value === 'cover')) {
+      appearance.accentSource = value
+    } else if (
+      key === 'backgroundTreatment' &&
+      ['solid', 'gradient', 'cover-blur', 'image'].includes(value)
+    ) {
+      appearance.backgroundTreatment = value as NonNullable<
+        ThemeModes['appearance']
+      >['backgroundTreatment']
+    } else if (key === 'toneScheduling' && ['manual', 'system', 'timed'].includes(value)) {
+      appearance.toneScheduling = value as NonNullable<
+        ThemeModes['appearance']
+      >['toneScheduling']
+      if (value === 'timed' && !profile.toneSchedule) {
+        profile.toneSchedule = { ...DEFAULT_THEME_TONE_SCHEDULE }
+      }
+    } else if (key === 'contrastGuard' && ['off', 'warn', 'enforce'].includes(value)) {
+      appearance.contrastGuard = value as NonNullable<
+        ThemeModes['appearance']
+      >['contrastGuard']
+    }
+    profile.modes.appearance = appearance
+  })
+}
+
+function updateTypographyMode(
+  key: 'titleCase' | 'lyricAccent' | 'titleColor',
+  event: Event
+): void {
+  const value = (event.target as HTMLSelectElement).value
+  updateDraft((profile) => {
+    const typography = { ...(profile.modes.typography ?? {}) }
+    if (key === 'titleCase' && (value === 'preserve' || value === 'uppercase')) {
+      typography.titleCase = value
+    } else if (key === 'lyricAccent' && (value === 'off' || value === 'accent')) {
+      typography.lyricAccent = value
+    } else if (key === 'titleColor' && ['off', 'track', 'artist-album'].includes(value)) {
+      typography.titleColor = value as NonNullable<ThemeModes['typography']>['titleColor']
+    }
+    profile.modes.typography = typography
+  })
+}
+
+function scheduleTime(key: 'lightStartMinutes' | 'darkStartMinutes'): string {
+  const minutes = draft.value?.toneSchedule?.[key] ?? DEFAULT_THEME_TONE_SCHEDULE[key]
+  return `${Math.floor(minutes / 60)
+    .toString()
+    .padStart(2, '0')}:${(minutes % 60).toString().padStart(2, '0')}`
+}
+
+function updateScheduleTime(
+  key: 'lightStartMinutes' | 'darkStartMinutes',
+  event: Event
+): void {
+  const match = (event.target as HTMLInputElement).value.match(/^(\d{2}):(\d{2})$/)
+  if (!match) return
+  const minutes = Number(match[1]) * 60 + Number(match[2])
+  updateDraft((profile) => {
+    const next = { ...(profile.toneSchedule ?? DEFAULT_THEME_TONE_SCHEDULE), [key]: minutes }
+    if (next.lightStartMinutes !== next.darkStartMinutes) profile.toneSchedule = next
+  })
+}
+
+function fontSelection(binding: (typeof fontBindings)[number]): string {
+  const assetId = draft.value?.assetBindings?.[binding.key]
+  if (assetId) return `asset:${assetId}`
+  const value = valueForId(binding.tokenId)
+  const builtIn = BUILT_IN_THEME_FONTS.find((font) => font.value === value)
+  return builtIn ? `builtin:${builtIn.id}` : 'custom'
+}
+
+function fontSource(binding: (typeof fontBindings)[number]): string {
+  if (draft.value?.assetBindings?.[binding.key]) return '当前配置档 · 本地资源'
+  if (draft.value?.overrides[tone.value][binding.tokenId]) return '当前配置档 · 内置字体'
+  return '内置默认'
+}
+
+function updateFontSlot(binding: (typeof fontBindings)[number], event: Event): void {
+  const selection = (event.target as HTMLSelectElement).value
+  if (selection === 'custom') return
+  updateDraft((profile) => {
+    const bindings = { ...(profile.assetBindings ?? {}) }
+    if (selection.startsWith('asset:')) {
+      bindings[binding.key] = selection.slice('asset:'.length)
+    } else {
+      delete bindings[binding.key]
+      const font = BUILT_IN_THEME_FONTS.find(
+        (entry) => `builtin:${entry.id}` === selection
+      )
+      if (font) profile.overrides[tone.value][binding.tokenId] = font.value
+    }
+    profile.assetBindings = Object.keys(bindings).length > 0 ? bindings : undefined
   })
 }
 
@@ -226,13 +535,53 @@ function updateRange(definition: ThemeTokenDefinition, event: Event): void {
 
 function removeOverride(definition: ThemeTokenDefinition): void {
   updateDraft((profile) => {
-    delete profile.overrides[tone.value][definition.id]
+    if (definition.id === 'color.primary.500') {
+      for (const id of [
+        'color.primary.500',
+        'color.primary.400',
+        'color.primary.300',
+        'color.primary.rgb',
+        'material.glowMain',
+        'surface.active',
+        'navigation.activeText',
+        'navigation.indicator',
+        'playback.accent'
+      ]) {
+        delete profile.overrides[tone.value][id]
+      }
+    } else {
+      delete profile.overrides[tone.value][definition.id]
+    }
   })
 }
 
 function resetGroup(): void {
   updateDraft((profile) => {
     for (const definition of definitions.value) delete profile.overrides[tone.value][definition.id]
+    if (domain.value === 'personalization') {
+      profile.modes.appearance = undefined
+      profile.toneSchedule = undefined
+      for (const id of [
+        'color.primary.400',
+        'color.primary.300',
+        'color.primary.rgb',
+        'material.glowMain',
+        'surface.active',
+        'navigation.activeText',
+        'navigation.indicator',
+        'playback.accent'
+      ]) {
+        delete profile.overrides[tone.value][id]
+      }
+    }
+    if (domain.value === 'typography') profile.modes.typography = undefined
+    if (profile.assetBindings && (domain.value === 'personalization' || domain.value === 'typography')) {
+      if (domain.value === 'personalization') delete profile.assetBindings.appBackground
+      delete profile.assetBindings.sansFont
+      delete profile.assetBindings.displayFont
+      delete profile.assetBindings.roundedFont
+      if (Object.keys(profile.assetBindings).length === 0) profile.assetBindings = undefined
+    }
   })
 }
 
@@ -308,7 +657,11 @@ async function exportTheme(): Promise<void> {
 async function toggleWindowInheritance(key: 'miniPlayer' | 'desktopLyrics'): Promise<void> {
   const current = themeStore.snapshot.value?.data.windowInheritance
   if (!current) return
-  await themeStore.setWindowInheritance({ ...current, [key]: !current[key] })
+  try {
+    await themeStore.setWindowInheritance({ ...current, [key]: !current[key] })
+  } catch (cause) {
+    localError.value = cause instanceof Error ? cause.message : '窗口主题继承设置失败'
+  }
 }
 
 function changeName(event: Event): void {
@@ -329,26 +682,13 @@ function supportsColorPicker(value: string): boolean {
 
 function setTone(nextTone: ThemeTone): void {
   tone.value = nextTone
-  document.documentElement.dataset.theme = nextTone
-  if (draft.value) {
-    void themeStore.preview(draft.value)
-    return
-  }
-  if (selectedPluginTheme.value) {
-    void themeStore.previewTheme({
-      kind: 'plugin',
-      pluginId: selectedPluginTheme.value.pluginId,
-      themeId: selectedPluginTheme.value.id
-    })
-    return
-  }
-  void themeStore.previewTheme({ kind: 'builtin', id: TWILIGHT_DEFAULT_THEME_ID })
+  void themeStore.setPreviewTone(nextTone)
 }
 
 function closeStudio(): void {
   if (isDirty.value && !window.confirm('放弃尚未应用的主题修改？')) return
   document.documentElement.dataset.theme = originalTone
-  void themeStore.previewTheme(null)
+  void themeStore.setPreviewTone(null).then(() => themeStore.previewTheme(null))
   emit('back')
 }
 
@@ -356,6 +696,7 @@ onMounted(async () => {
   await Promise.all([themeStore.load(), syncExtensions()])
   originalTone = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'pureWhite'
   tone.value = originalTone
+  await themeStore.setPreviewTone(originalTone)
   const active = themeStore.activeTheme.value
   if (active.kind === 'user') {
     const profile = profiles.value.find((entry) => entry.id === active.id)
@@ -372,7 +713,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   document.documentElement.dataset.theme = originalTone
-  void themeStore.previewTheme(null)
+  void themeStore.setPreviewTone(null).then(() => themeStore.previewTheme(null))
 })
 </script>
 
@@ -392,7 +733,61 @@ onBeforeUnmount(() => {
         <h1>主题工作室</h1>
         <span>{{ isDirty ? '有未应用的修改' : '所有修改已同步' }}</span>
       </div>
+      <label class="theme-profile-picker">
+        <span>配置档</span>
+        <select :value="selectedKey" aria-label="当前主题配置档" @change="selectThemeKey">
+          <option value="builtin">Twilight Echo 默认主题</option>
+          <option v-if="draft && isUnsavedDraft" :value="`profile:${draft.id}`">
+            {{ draft.name }} · 未保存
+          </option>
+          <optgroup v-if="profiles.length" label="个人主题">
+            <option v-for="profile in profiles" :key="profile.id" :value="`profile:${profile.id}`">
+              {{ profile.name }}{{ activeKey === `profile:${profile.id}` ? ' · 已应用' : '' }}
+            </option>
+          </optgroup>
+          <optgroup v-if="themeContributions.length" label="插件主题">
+            <option
+              v-for="theme in themeContributions"
+              :key="getPluginThemeKey(theme)"
+              :value="`plugin:${getPluginThemeKey(theme)}`"
+            >
+              {{ theme.name
+              }}{{ activeKey === `plugin:${getPluginThemeKey(theme)}` ? ' · 已应用' : '' }}
+            </option>
+          </optgroup>
+        </select>
+      </label>
       <div class="theme-studio-actions">
+        <div class="studio-segment" aria-label="主题变体">
+          <button
+            type="button"
+            title="浅色变体"
+            aria-label="浅色变体"
+            :class="{ active: tone === 'pureWhite' }"
+            @click="setTone('pureWhite')"
+          >
+            <i class="ph ph-sun"></i>
+          </button>
+          <button
+            type="button"
+            title="深色变体"
+            aria-label="深色变体"
+            :class="{ active: tone === 'dark' }"
+            @click="setTone('dark')"
+          >
+            <i class="ph ph-moon"></i>
+          </button>
+        </div>
+        <button
+          type="button"
+          class="studio-icon-button"
+          title="恢复当前视觉域"
+          aria-label="恢复当前视觉域"
+          :disabled="!draft"
+          @click="resetGroup"
+        >
+          <i class="ph ph-arrow-u-up-left"></i>
+        </button>
         <button
           type="button"
           class="studio-icon-button"
@@ -413,8 +808,23 @@ onBeforeUnmount(() => {
         >
           <i class="ph ph-arrow-clockwise"></i>
         </button>
-        <button type="button" class="studio-command ghost" @click="duplicateSelected">
-          <i class="ph ph-copy"></i><span>创建副本</span>
+        <button
+          type="button"
+          class="studio-icon-button"
+          title="导入主题"
+          aria-label="导入主题"
+          @click="importTheme"
+        >
+          <i class="ph ph-download-simple"></i>
+        </button>
+        <button
+          type="button"
+          class="studio-icon-button"
+          title="创建副本"
+          aria-label="创建副本"
+          @click="duplicateSelected"
+        >
+          <i class="ph ph-copy"></i>
         </button>
         <button
           type="button"
@@ -429,83 +839,21 @@ onBeforeUnmount(() => {
     </header>
 
     <div class="theme-studio-workspace">
-      <aside class="theme-library-pane" aria-label="主题库">
+      <aside class="theme-library-pane" aria-label="视觉域">
         <div class="pane-heading">
-          <strong>主题库</strong>
-          <div>
-            <button
-              type="button"
-              class="studio-icon-button"
-              title="导入主题"
-              aria-label="导入主题"
-              @click="importTheme"
-            >
-              <i class="ph ph-download-simple"></i>
-            </button>
-            <button
-              type="button"
-              class="studio-icon-button"
-              title="新建主题"
-              aria-label="新建主题"
-              @click="duplicateSelected"
-            >
-              <i class="ph ph-plus"></i>
-            </button>
-          </div>
+          <strong>视觉域</strong>
         </div>
-
-        <button
-          type="button"
-          class="theme-library-item"
-          :class="{ selected: selectedKey === 'builtin', active: activeKey === 'builtin' }"
-          @click="selectBuiltIn"
-        >
-          <span class="theme-swatch default-swatch"></span>
-          <span><strong>Twilight Echo 默认主题</strong><small>内置 · 只读</small></span>
-          <i v-if="activeKey === 'builtin'" class="ph ph-check"></i>
-        </button>
-
-        <button
-          v-for="profile in profiles"
-          :key="profile.id"
-          type="button"
-          class="theme-library-item"
-          :class="{
-            selected: selectedKey === `profile:${profile.id}`,
-            active: activeKey === `profile:${profile.id}`
-          }"
-          @click="selectProfile(profile)"
-        >
-          <span
-            class="theme-swatch"
-            :style="{ background: profile.overrides.pureWhite['color.primary.500'] || '#2563eb' }"
-          ></span>
-          <span
-            ><strong>{{ profile.name }}</strong
-            ><small>个人主题</small></span
+        <nav class="theme-domain-list">
+          <button
+            v-for="item in domains"
+            :key="item.id"
+            type="button"
+            :class="{ active: domain === item.id }"
+            @click="domain = item.id"
           >
-          <i v-if="activeKey === `profile:${profile.id}`" class="ph ph-check"></i>
-        </button>
-
-        <div v-if="themeContributions.length" class="library-section-label">插件主题</div>
-        <button
-          v-for="theme in themeContributions"
-          :key="getPluginThemeKey(theme)"
-          type="button"
-          class="theme-library-item"
-          :class="{
-            selected: selectedKey === `plugin:${getPluginThemeKey(theme)}`,
-            active: activeKey === `plugin:${getPluginThemeKey(theme)}`
-          }"
-          @click="selectPlugin(theme)"
-        >
-          <span class="theme-swatch plugin-swatch"><i class="ph ph-puzzle-piece"></i></span>
-          <span
-            ><strong>{{ theme.name }}</strong
-            ><small>{{ theme.pluginId }}</small></span
-          >
-          <i v-if="activeKey === `plugin:${getPluginThemeKey(theme)}`" class="ph ph-check"></i>
-        </button>
+            <i :class="item.icon"></i><span>{{ item.label }}</span>
+          </button>
+        </nav>
 
         <div class="window-inheritance">
           <label>
@@ -529,19 +877,7 @@ onBeforeUnmount(() => {
 
       <main class="theme-preview-pane">
         <div class="preview-toolbar">
-          <strong>实时预览</strong>
-          <div class="studio-segment">
-            <button
-              type="button"
-              :class="{ active: tone === 'pureWhite' }"
-              @click="setTone('pureWhite')"
-            >
-              <i class="ph ph-sun"></i><span>浅色</span>
-            </button>
-            <button type="button" :class="{ active: tone === 'dark' }" @click="setTone('dark')">
-              <i class="ph ph-moon"></i><span>深色</span>
-            </button>
-          </div>
+          <strong>真实预览</strong><span>{{ activeDomain.label }}</span>
         </div>
 
         <section class="theme-preview-stage">
@@ -559,7 +895,7 @@ onBeforeUnmount(() => {
               <div class="preview-heading">
                 <div>
                   <small>本地音乐</small>
-                  <h2>晚上好</h2>
+                  <h2>晚上好，暮色回声</h2>
                 </div>
                 <button><i class="ph ph-play"></i>播放全部</button>
               </div>
@@ -579,14 +915,20 @@ onBeforeUnmount(() => {
               </div>
               <div class="preview-song-row">
                 <span>01</span><span class="preview-song-art"></span
-                ><span><strong>Twilight Echo</strong><small>Theme Studio</small></span
+                ><span
+                  ><strong title="暮色回声 · Twilight Echo · 真夜中の音楽"
+                    >暮色回声 · Twilight Echo · 真夜中の音楽</strong
+                  ><small>Theme Studio · 테마 미리보기</small></span
                 ><i class="ph ph-heart"></i><span>4:12</span>
               </div>
             </div>
           </div>
           <div class="preview-playerbar">
             <span class="preview-song-art"></span
-            ><span><strong>Twilight Echo</strong><small>Theme Studio</small></span
+            ><span
+              ><strong title="暮色回声 · Twilight Echo · 真夜中の音楽"
+                >暮色回声 · Twilight Echo · 真夜中の音楽</strong
+              ><small>Theme Studio · 테마 미리보기</small></span
             ><i class="ph ph-skip-back"></i><button><i class="ph ph-pause"></i></button
             ><i class="ph ph-skip-forward"></i><span class="preview-progress"></span
             ><i class="ph ph-speaker-high"></i>
@@ -596,7 +938,7 @@ onBeforeUnmount(() => {
 
       <aside class="theme-editor-pane" aria-label="主题编辑器">
         <div class="pane-heading">
-          <strong>编辑</strong>
+          <strong>{{ activeDomain.label }}</strong>
           <div>
             <button
               type="button"
@@ -633,29 +975,207 @@ onBeforeUnmount(() => {
           <i class="ph ph-lock"></i><span>创建副本后编辑</span>
         </div>
 
-        <nav class="editor-tabs" aria-label="主题令牌分组">
-          <button
-            v-for="item in groups"
-            :key="item.id"
-            type="button"
-            :title="item.label"
-            :aria-label="item.label"
-            :class="{ active: group === item.id }"
-            @click="group = item.id"
+        <section v-if="domain === 'personalization'" class="studio-control-section">
+          <div class="control-section-heading">
+            <span>个性化运行模式</span><small>配置档 · {{ tone === 'dark' ? '深色' : '浅色' }}</small>
+          </div>
+          <label class="studio-setting-row">
+            <span>强调色来源<small>封面模式复用已缓存主色</small></span>
+            <select
+              :value="activeModes.appearance?.accentSource"
+              :disabled="!draft"
+              @change="updateAppearanceMode('accentSource', $event)"
+            >
+              <option value="fixed">固定颜色</option>
+              <option value="cover">当前封面</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>背景处理<small>失败时保留实色背景</small></span>
+            <select
+              :value="activeModes.appearance?.backgroundTreatment"
+              :disabled="!draft"
+              @change="updateAppearanceMode('backgroundTreatment', $event)"
+            >
+              <option value="solid">实色</option>
+              <option value="gradient">双色渐变</option>
+              <option value="cover-blur">封面模糊</option>
+              <option value="image">本地图片</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>日夜调度<small>切换只重解析当前变体</small></span>
+            <select
+              :value="activeModes.appearance?.toneScheduling"
+              :disabled="!draft"
+              @change="updateAppearanceMode('toneScheduling', $event)"
+            >
+              <option value="manual">手动</option>
+              <option value="system">跟随系统</option>
+              <option value="timed">定时时段</option>
+            </select>
+          </label>
+          <div
+            v-if="activeModes.appearance?.toneScheduling === 'timed'"
+            class="schedule-time-grid"
           >
-            <i :class="item.icon"></i>
-          </button>
-        </nav>
+            <label>
+              <span>浅色开始</span>
+              <input
+                type="time"
+                :value="scheduleTime('lightStartMinutes')"
+                :disabled="!draft"
+                @change="updateScheduleTime('lightStartMinutes', $event)"
+              />
+            </label>
+            <label>
+              <span>深色开始</span>
+              <input
+                type="time"
+                :value="scheduleTime('darkStartMinutes')"
+                :disabled="!draft"
+                @change="updateScheduleTime('darkStartMinutes', $event)"
+              />
+            </label>
+          </div>
+          <label class="studio-setting-row">
+            <span>对比度保护<small>普通文本 4.5:1，大文本 3:1</small></span>
+            <select
+              :value="activeModes.appearance?.contrastGuard"
+              :disabled="!draft"
+              @change="updateAppearanceMode('contrastGuard', $event)"
+            >
+              <option value="off">关闭</option>
+              <option value="warn">仅预警</option>
+              <option value="enforce">安全回退</option>
+            </select>
+          </label>
+        </section>
 
-        <section v-if="group === 'materials'" class="asset-editor">
+        <section v-if="domain === 'personalization'" class="palette-editor">
+          <div class="control-section-heading">
+            <span>精选强调色</span><small>{{ accentPalette.length }} 色</small>
+          </div>
+          <div class="palette-grid" aria-label="精选强调色色板">
+            <button
+              v-for="entry in accentPalette"
+              :key="entry.id"
+              type="button"
+              :class="{ active: valueForId('color.primary.500') === entry.value }"
+              :style="{ '--swatch-color': entry.value }"
+              :title="entry.label"
+              :aria-label="entry.label"
+              :disabled="!draft"
+              @click="applyAccentPalette(entry.value)"
+            ></button>
+          </div>
+          <div class="control-section-heading background-palette-heading">
+            <span>精选背景色</span><small>{{ backgroundPalette.length }} 色</small>
+          </div>
+          <div class="palette-grid" aria-label="精选背景色色板">
+            <button
+              v-for="entry in backgroundPalette"
+              :key="entry.id"
+              type="button"
+              :class="{ active: valueForId('surface.app') === entry.value }"
+              :style="{ '--swatch-color': entry.value }"
+              :title="entry.label"
+              :aria-label="entry.label"
+              :disabled="!draft"
+              @click="applyBackgroundPalette(entry.value)"
+            ></button>
+          </div>
+        </section>
+
+        <section v-if="domain === 'typography'" class="studio-control-section">
+          <div class="control-section-heading">
+            <span>字体行为</span><small>配置档</small>
+          </div>
+          <label class="studio-setting-row">
+            <span>标题大写<small>不改写原始元数据</small></span>
+            <select
+              :value="activeModes.typography?.titleCase"
+              :disabled="!draft"
+              @change="updateTypographyMode('titleCase', $event)"
+            >
+              <option value="preserve">保留原样</option>
+              <option value="uppercase">大写显示</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>歌词强调高亮<small>当前行使用强调色</small></span>
+            <select
+              :value="activeModes.typography?.lyricAccent"
+              :disabled="!draft"
+              @change="updateTypographyMode('lyricAccent', $event)"
+            >
+              <option value="off">关闭</option>
+              <option value="accent">强调色</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>自适应标题颜色<small>按信息层级应用强调色</small></span>
+            <select
+              :value="activeModes.typography?.titleColor"
+              :disabled="!draft"
+              @change="updateTypographyMode('titleColor', $event)"
+            >
+              <option value="off">禁用</option>
+              <option value="track">曲目标题</option>
+              <option value="artist-album">艺术家与专辑</option>
+            </select>
+          </label>
+        </section>
+
+        <section v-if="domain === 'typography'" class="font-library-editor">
+          <div class="asset-editor-heading">
+            <span>字体风格库</span>
+            <button type="button" :disabled="!draft" @click="importAsset('font')">
+              <i class="ph ph-file-woff"></i><span>导入 WOFF2</span>
+            </button>
+          </div>
+          <label v-for="binding in fontBindings" :key="binding.key">
+            <span>{{ binding.label }}<small>{{ fontSource(binding) }}</small></span>
+            <select
+              :value="fontSelection(binding)"
+              :disabled="!draft"
+              @change="updateFontSlot(binding, $event)"
+            >
+              <option value="custom">自定义令牌</option>
+              <optgroup label="内置字体">
+                <option
+                  v-for="font in BUILT_IN_THEME_FONTS"
+                  :key="font.id"
+                  :value="`builtin:${font.id}`"
+                >
+                  {{ font.label }} · {{ font.category }}
+                </option>
+              </optgroup>
+              <optgroup v-if="fontAssets.length" label="本地资源">
+                <option v-for="asset in fontAssets" :key="asset.id" :value="`asset:${asset.id}`">
+                  {{ asset.path }}
+                </option>
+              </optgroup>
+            </select>
+          </label>
+        </section>
+
+        <section v-if="domain === 'personalization' || domain === 'advanced'" class="asset-editor">
           <div class="asset-editor-heading">
             <span>本地背景资源</span>
             <button type="button" :disabled="!draft" @click="importAsset('image')">
               <i class="ph ph-image-square"></i><span>导入图片</span>
             </button>
           </div>
-          <label v-for="binding in backgroundBindings" :key="binding.key">
-            <span>{{ binding.label }}</span>
+          <label
+            v-for="binding in domain === 'personalization'
+              ? personalizationBackgroundBindings
+              : backgroundBindings"
+            :key="binding.key"
+          >
+            <span
+              >{{ binding.label }}<small>{{ assetSource(binding.key) }}</small></span
+            >
             <select
               :value="draft?.assetBindings?.[binding.key] ?? ''"
               :disabled="!draft"
@@ -669,7 +1189,10 @@ onBeforeUnmount(() => {
           </label>
         </section>
 
-        <section v-if="group === 'typography'" class="asset-editor">
+        <section
+          v-if="domain === 'personalization' || domain === 'advanced'"
+          class="asset-editor"
+        >
           <div class="asset-editor-heading">
             <span>本地字体资源</span>
             <button type="button" :disabled="!draft" @click="importAsset('font')">
@@ -677,7 +1200,9 @@ onBeforeUnmount(() => {
             </button>
           </div>
           <label v-for="binding in fontBindings" :key="binding.key">
-            <span>{{ binding.label }}</span>
+            <span
+              >{{ binding.label }}<small>{{ assetSource(binding.key) }}</small></span
+            >
             <select
               :value="draft?.assetBindings?.[binding.key] ?? ''"
               :disabled="!draft"
@@ -694,8 +1219,11 @@ onBeforeUnmount(() => {
         <div class="token-editor-list" :class="{ disabled: !draft }">
           <div v-for="definition in definitions" :key="definition.id" class="token-editor-row">
             <div>
-              <strong>{{ definition.label }}</strong
-              ><small>{{ definition.surface }}</small>
+              <span
+                ><strong>{{ definition.label }}</strong
+                ><small>{{ definition.surface }}</small></span
+              >
+              <span class="token-source">{{ sourceFor(definition) }}</span>
             </div>
             <div class="token-control">
               <template v-if="definition.min != null && definition.max != null">
@@ -747,9 +1275,18 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <button type="button" class="reset-group-button" :disabled="!draft" @click="resetGroup">
-          <i class="ph ph-arrow-counter-clockwise"></i><span>恢复当前分组</span>
-        </button>
+        <section
+          v-if="contrastWarnings.length && activeModes.appearance?.contrastGuard !== 'off'"
+          class="contrast-warning"
+          role="status"
+        >
+          <div><i class="ph ph-warning"></i><strong>对比度预警</strong></div>
+          <p v-for="warning in contrastWarnings" :key="warning.label">
+            {{ warning.label }}：{{ warning.ratio.toFixed(2) }}:1，最低
+            {{ warning.minimum.toFixed(1) }}:1
+          </p>
+        </section>
+
         <p v-if="localError || themeStore.error.value" class="studio-message error">
           {{ localError || themeStore.error.value }}
         </p>

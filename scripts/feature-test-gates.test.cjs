@@ -57,6 +57,7 @@ const themeTests = [
   'src/main/themes/themeArchiveValidation.test.ts',
   'src/main/themes/themeLibraryRepository.test.ts',
   'src/renderer/src/app/useAppNavigation.test.ts',
+  'src/renderer/src/components/themeColorAudit.test.ts',
   'src/renderer/src/components/themeTokenization.test.ts'
 ]
 

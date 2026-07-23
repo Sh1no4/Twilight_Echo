@@ -16,13 +16,13 @@ import { tmpdir } from 'node:os'
 import { createHash, randomUUID } from 'node:crypto'
 import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 import {
-  THEME_DOCUMENT_SCHEMA_VERSION,
+  THEME_ARCHIVE_SCHEMA_VERSION,
   normalizeThemeAssets,
   normalizeThemeProfile,
   type ThemeAssetReference,
   type ThemeAssetType,
-  type ThemeArchiveDocument,
-  type ThemeProfileV1
+  type ThemeArchiveDocumentV2,
+  type ThemeProfileV2
 } from '../../shared/theme.ts'
 import { validateThemeArchiveBuffer as preflightThemeArchive } from './themeArchiveValidation.ts'
 
@@ -45,14 +45,14 @@ const crcTable = new Uint32Array(256).map((_, index) => {
   return value >>> 0
 })
 
-export async function exportThemeArchive(profile: ThemeProfileV1, target: string): Promise<void> {
+export async function exportThemeArchive(profile: ThemeProfileV2, target: string): Promise<void> {
   const normalized = normalizeThemeProfile(profile)
   if (!normalized) throw new Error('主题档案无效')
   const temporary = await mkdtemp(join(tmpdir(), 'twilight-theme-export-'))
   try {
     const assets = await copyThemeAssetsForExport(normalized, temporary)
-    const document: ThemeArchiveDocument = {
-      schemaVersion: THEME_DOCUMENT_SCHEMA_VERSION,
+    const document: ThemeArchiveDocumentV2 = {
+      schemaVersion: THEME_ARCHIVE_SCHEMA_VERSION,
       profile: normalized,
       assets
     }
@@ -63,7 +63,7 @@ export async function exportThemeArchive(profile: ThemeProfileV1, target: string
   }
 }
 
-export async function importThemeArchive(source: string): Promise<ThemeProfileV1> {
+export async function importThemeArchive(source: string): Promise<ThemeProfileV2> {
   const archiveStat = await stat(source)
   if (!archiveStat.isFile() || archiveStat.size > MAX_THEME_ARCHIVE_BYTES) {
     throw new Error('主题包不存在或超过 20 MB')
@@ -81,18 +81,27 @@ export async function importThemeArchive(source: string): Promise<ThemeProfileV1
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       throw new Error('theme.json 必须是对象')
     }
-    const document = parsed as Partial<ThemeArchiveDocument>
-    if (document.schemaVersion !== THEME_DOCUMENT_SCHEMA_VERSION) {
+    const document = parsed as {
+      schemaVersion?: unknown
+      profile?: unknown
+      assets?: unknown
+    }
+    if (document.schemaVersion !== 1 && document.schemaVersion !== THEME_ARCHIVE_SCHEMA_VERSION) {
       throw new Error('不支持的主题包版本')
     }
+    const profileVersion =
+      document.profile && typeof document.profile === 'object' && !Array.isArray(document.profile)
+        ? (document.profile as { schemaVersion?: unknown }).schemaVersion
+        : undefined
+    if (profileVersion !== document.schemaVersion) throw new Error('主题包与档案版本不一致')
     const assets = await validateDeclaredAssets(document.assets, entries)
     const sourceProfile = normalizeThemeProfile({
-      ...(document.profile as ThemeProfileV1),
+      ...(document.profile as ThemeProfileV2),
       assets
     })
     if (!sourceProfile) throw new Error('主题包中的档案无效')
     const now = new Date().toISOString()
-    const profile: ThemeProfileV1 = {
+    const profile: ThemeProfileV2 = {
       ...sourceProfile,
       id: `user:${randomUUID()}`,
       createdAt: now,
@@ -109,14 +118,14 @@ export async function importThemeArchive(source: string): Promise<ThemeProfileV1
 }
 
 async function copyThemeAssetsForExport(
-  profile: ThemeProfileV1,
+  profile: ThemeProfileV2,
   targetRoot: string
-): Promise<ThemeArchiveDocument['assets']> {
+): Promise<ThemeAssetReference[]> {
   const sourceRoot = getThemeAssetRoot(profile.id)
   try {
     const entries = await collectSafeFiles(sourceRoot, true)
     const byPath = new Map(entries.map((entry) => [entry.relative, entry]))
-    const assets: ThemeArchiveDocument['assets'] = []
+    const assets: ThemeAssetReference[] = []
     for (const asset of profile.assets ?? []) {
       const entry = byPath.get(asset.path)
       if (!entry) throw new Error(`主题资源不存在: ${asset.id}`)
@@ -293,6 +302,29 @@ export async function importThemeAsset(
   await mkdir(targetRoot, { recursive: true })
   await writeFile(join(targetRoot, fileName), data)
   return { id: `asset-${hash.slice(0, 16)}`, path: fileName, type }
+}
+
+export async function validateThemeProfileAssets(
+  profileId: string,
+  assets: ThemeAssetReference[]
+): Promise<boolean> {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/.test(profileId)) return false
+  const normalized = normalizeThemeAssets(assets)
+  if (normalized.length !== assets.length) return false
+  for (const asset of normalized) {
+    const target = resolveThemeAssetFile(profileId, asset.path)
+    if (!target) return false
+    try {
+      const info = await stat(target)
+      if (!info.isFile() || info.size > MAX_THEME_ARCHIVE_BYTES) return false
+      if (!isThemeAssetContentValid(await readFile(target), extname(asset.path).toLowerCase())) {
+        return false
+      }
+    } catch {
+      return false
+    }
+  }
+  return true
 }
 
 export function resolveThemeAssetFile(profileId: string, assetPath: string): string | null {

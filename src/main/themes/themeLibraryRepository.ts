@@ -6,7 +6,7 @@ import {
   normalizeThemeProfile,
   type ThemeLibraryDocument,
   type ThemeLibrarySnapshot,
-  type ThemeProfileV1,
+  type ThemeProfileV2,
   type ThemeSelection,
   type ThemeWindowInheritance
 } from '../../shared/theme.ts'
@@ -41,7 +41,7 @@ export class ThemeLibraryRepository {
   }
 
   async saveProfile(
-    candidate: ThemeProfileV1,
+    candidate: ThemeProfileV2,
     expectedRevision: number,
     now = new Date().toISOString()
   ): Promise<ThemeLibrarySnapshot> {
@@ -52,7 +52,7 @@ export class ThemeLibraryRepository {
     if (!existing && current.data.profiles.length >= MAX_USER_THEME_PROFILES) {
       throw new Error(`最多只能保存 ${MAX_USER_THEME_PROFILES} 个用户主题`)
     }
-    const profile: ThemeProfileV1 = {
+    const profile: ThemeProfileV2 = {
       ...normalized,
       createdAt:
         existing?.createdAt ??

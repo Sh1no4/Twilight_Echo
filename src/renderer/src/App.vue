@@ -30,6 +30,7 @@ import { useNcmStore } from './stores/useNcmStore'
 import { setupListeningStatsTracking } from './stores/useListeningStatsStore'
 import { usePlayerStore } from './stores/usePlayerStore'
 import { useSettingsStore } from './stores/useSettingsStore'
+import { useThemeStore } from './stores/useThemeStore'
 import { setupPluginThemeRuntime } from './extensions/themeRuntime'
 import { useExtensionRegistry } from './extensions/registry'
 import { syncPluginProviders } from './providers'
@@ -154,6 +155,9 @@ const {
   volume,
   playMode,
   dominantColor,
+  coverThemeColor,
+  themeCoverUrl,
+  themeCoverIdentity,
   queue,
   queueIndex,
   togglePlay,
@@ -167,6 +171,15 @@ const {
   rehydrateCurrentTrackFromLibrary,
   visualizerActive
 } = usePlayerStore()
+const { setAdaptiveMedia } = useThemeStore()
+
+watch(
+  [themeCoverIdentity, coverThemeColor, themeCoverUrl],
+  ([identity, accentColor, coverUrl]) => {
+    void setAdaptiveMedia({ identity, accentColor, coverUrl })
+  },
+  { immediate: true }
+)
 
 useMiniPlayerSync({
   currentTrack,
@@ -473,6 +486,7 @@ const titleSurface = computed<TitleSurface>(() => {
   <TitleBar
     :glass="showPlayingPage"
     :streaming="showStreamingPage && !showPlayingPage"
+    :hide-start="showThemeStudioPage"
     :title-surface="titleSurface"
     :menu-open="titleMenuOpen"
     @toggle-menu="toggleMenu"

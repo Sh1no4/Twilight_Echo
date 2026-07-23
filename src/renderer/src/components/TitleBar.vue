@@ -8,6 +8,7 @@ withDefaults(
     menuOpen: boolean
     glass?: boolean
     streaming?: boolean
+    hideStart?: boolean
     titleSurface?: 'default' | 'settings' | 'streaming'
   }>(),
   {
@@ -51,7 +52,7 @@ function close(): void {
     }"
   >
     <div class="title-bar-background" aria-hidden="true"></div>
-    <div v-if="!glass" class="title-bar-start no-drag">
+    <div v-if="!glass && !hideStart" class="title-bar-start no-drag">
       <button class="menu-btn" title="菜单" @click="$emit('toggleMenu')">
         <svg
           width="18"
@@ -165,7 +166,12 @@ function close(): void {
 
 :global(html[data-theme='dark'] .title-bar),
 :global(html[data-theme='dark'] .title-bar.title-bar-streaming),
-:global(html[data-theme='dark'] .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(.title-bar-settings)),
+:global(
+  html[data-theme='dark']
+    .title-bar.title-bar-streaming.title-bar-menu-open:not(.title-bar-glass):not(
+      .title-bar-settings
+    )
+),
 :global(html[data-theme='dark'] .title-bar.title-bar-settings),
 :global(html[data-theme='dark'] .title-bar.title-bar-glass) {
   background: transparent !important;
@@ -186,7 +192,7 @@ function close(): void {
   height: 100%;
   border: none;
   background: transparent;
-  color: var(--te-neutral-900);
+  color: var(--te-shell-control-text);
   cursor: pointer;
   transition: background 0.15s;
   padding: 0;
@@ -194,7 +200,7 @@ function close(): void {
 }
 
 .menu-btn:hover {
-  background: rgba(124, 77, 255, 0.1);
+  background: var(--te-shell-control-hover);
 }
 
 .settings-btn {
@@ -205,7 +211,7 @@ function close(): void {
   height: 100%;
   border: none;
   background: transparent;
-  color: var(--te-neutral-900);
+  color: var(--te-shell-control-text);
   cursor: pointer;
   transition: background 0.15s;
   padding: 0;
@@ -214,7 +220,7 @@ function close(): void {
 }
 
 .settings-btn:hover {
-  background: rgba(124, 77, 255, 0.1);
+  background: var(--te-shell-control-hover);
 }
 
 .plugins-btn {
@@ -225,7 +231,7 @@ function close(): void {
   height: 100%;
   border: none;
   background: transparent;
-  color: var(--te-neutral-900);
+  color: var(--te-shell-control-text);
   cursor: pointer;
   transition: background 0.15s;
   padding: 0;
@@ -234,7 +240,7 @@ function close(): void {
 }
 
 .plugins-btn:hover {
-  background: rgba(124, 77, 255, 0.1);
+  background: var(--te-shell-control-hover);
 }
 
 .login-btn {
@@ -245,7 +251,7 @@ function close(): void {
   height: 100%;
   border: none;
   background: transparent;
-  color: var(--te-neutral-900);
+  color: var(--te-shell-control-text);
   cursor: pointer;
   transition: background 0.15s;
   padding: 0;
@@ -254,7 +260,7 @@ function close(): void {
 }
 
 .login-btn:hover {
-  background: rgba(124, 77, 255, 0.1);
+  background: var(--te-shell-control-hover);
 }
 
 .user-avatar {
@@ -296,7 +302,7 @@ function close(): void {
   height: 100%;
   border: none;
   background: transparent;
-  color: var(--te-neutral-900);
+  color: var(--te-shell-control-text);
   font-size: 16px;
   cursor: pointer;
   transition:
@@ -323,11 +329,11 @@ function close(): void {
 }
 
 .control-btn:hover {
-  background: rgba(124, 77, 255, 0.1);
+  background: var(--te-shell-control-hover);
 }
 
 .control-btn.maximize:hover {
-  background: rgba(124, 77, 255, 0.12);
+  background: var(--te-shell-control-hover);
 }
 
 .control-btn.close:hover {

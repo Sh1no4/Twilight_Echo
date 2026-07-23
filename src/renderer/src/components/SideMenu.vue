@@ -18,7 +18,6 @@ const emit = defineEmits<{
   enterRadioPodcast: []
 }>()
 
-
 interface MenuItem {
   key: string
   label: string
@@ -121,11 +120,11 @@ function handleImportClick(): void {
   left: 0;
   bottom: 0;
   width: var(--te-menu-width);
-  background: var(--te-glass-bg);
-  border-right: 1px solid rgba(0, 0, 0, 0.05);
+  background: color-mix(in srgb, var(--te-navigation-bg) var(--te-surface-opacity), transparent);
+  border-right: 1px solid var(--te-navigation-border);
   z-index: 1000;
   overflow: hidden;
-  box-shadow: 4px 0 24px rgba(15, 23, 42, 0.03);
+  box-shadow: var(--te-navigation-shadow);
   backdrop-filter: blur(24px) saturate(180%);
   -webkit-backdrop-filter: blur(24px) saturate(180%);
   transform: translate3d(-100%, 0, 0);
@@ -142,13 +141,16 @@ function handleImportClick(): void {
 }
 
 :global(html[data-theme='dark'] .side-menu) {
-  border-right-color: transparent;
-  background-color: var(--te-local-bg);
+  border-right-color: var(--te-navigation-border);
+  background-color: color-mix(
+    in srgb,
+    var(--te-navigation-bg) var(--te-surface-opacity),
+    transparent
+  );
   background-image: var(--te-local-bg-image);
   background-position: left center;
   background-size: cover;
   background-repeat: no-repeat;
-  box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -197,10 +199,10 @@ function handleImportClick(): void {
   padding: 0 12px 0 16px;
   margin-left: 8px;
   cursor: pointer;
-  border-radius: 10px;
+  border-radius: var(--te-radius-global);
   gap: 14px;
   white-space: nowrap;
-  color: #475569;
+  color: var(--te-chrome-text, var(--te-navigation-text));
   transition:
     background 0.2s cubic-bezier(0.4, 0, 0.2, 1),
     color 0.2s cubic-bezier(0.4, 0, 0.2, 1),
@@ -208,14 +210,14 @@ function handleImportClick(): void {
 }
 
 .menu-item:hover {
-  background: rgba(15, 23, 42, 0.04);
-  color: #0f172a;
+  background: var(--te-navigation-hover);
+  color: var(--te-navigation-hover-text);
   transform: translateX(3px);
 }
 
 .menu-item.active {
-  background: rgba(var(--te-primary-rgb, 99, 102, 241), 0.08);
-  color: var(--te-primary-500, #6366f1);
+  background: var(--te-navigation-active);
+  color: var(--te-navigation-active-text);
   font-weight: 600;
 }
 
@@ -227,9 +229,9 @@ function handleImportClick(): void {
   bottom: 10px;
   width: 4px;
   border-radius: 0 4px 4px 0;
-  background: var(--te-primary-500, #6366f1);
+  background: var(--te-navigation-indicator);
   opacity: 0.8;
-  box-shadow: 0 0 8px rgba(var(--te-primary-rgb, 99, 102, 241), 0.5);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--te-navigation-indicator) 50%, transparent);
 }
 
 .item-icon {
@@ -239,14 +241,16 @@ function handleImportClick(): void {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  color: #64748b;
+  color: var(--te-navigation-icon);
   font-size: 16px;
-  transition: color 0.2s, transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  transition:
+    color 0.2s,
+    transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .menu-item:hover .item-icon {
   transform: scale(1.1);
-  color: #334155;
+  color: var(--te-navigation-hover-text);
 }
 
 .menu-item.active .item-icon,
@@ -271,23 +275,23 @@ function handleImportClick(): void {
 .menu-separator {
   height: 1px;
   margin: 12px 10px 12px 16px;
-  background: linear-gradient(to right, rgba(0, 0, 0, 0.06), transparent);
+  background: linear-gradient(to right, var(--te-navigation-border), transparent);
 }
 
 .menu-item-streaming,
 .menu-item-import {
-  color: #334155;
+  color: var(--te-chrome-text, var(--te-navigation-text));
 }
 
 .menu-item-streaming:hover,
 .menu-item-import:hover {
-  background: rgba(15, 23, 42, 0.04);
+  background: var(--te-navigation-hover);
 }
 
 .scanning-text {
   display: block;
   padding: 8px 16px;
-  color: #94a3b8;
+  color: var(--te-navigation-icon);
   font-size: 12px;
   font-weight: 500;
 }
@@ -301,7 +305,7 @@ function handleImportClick(): void {
 .scanning-spinner {
   width: 12px;
   height: 12px;
-  border: 2px solid #e2e8f0;
+  border: 2px solid var(--te-navigation-border);
   border-top-color: var(--te-primary-500);
   border-radius: 50%;
   animation: spin 0.6s linear infinite;

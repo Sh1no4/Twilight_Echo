@@ -364,6 +364,9 @@ function normalizeAudioDeviceOptions(
 
 const currentTrack = ref<Track | null>(null)
 const dominantColor = ref('#1a73e8')
+const coverThemeColor = ref('#1a73e8')
+const themeCoverUrl = ref('')
+const themeCoverIdentity = ref('')
 const isPlaying = ref(false)
 const isLoading = ref(false)
 const isStreamBuffering = ref(false)
@@ -1797,34 +1800,48 @@ function flushPodcastEpisodeProgress(force = false): void {
 
 watch(
   [
+    () => currentTrack.value?.id,
     () => currentTrack.value?.cover,
     () => currentTrack.value?.coverSource,
     () => appSettings.value?.useCoverTheme
   ],
-  async ([cover, coverSource, useCoverTheme]) => {
+  async ([trackId, cover, coverSource, useCoverTheme]) => {
     const requestId = ++dominantColorRequestId
-    if (!useCoverTheme) {
-      dominantColor.value = '#7c4dff'
-      return
-    }
+    const identity = `${trackId ?? 'none'}:${cover ?? ''}:${coverSource ?? ''}`
+    themeCoverIdentity.value = identity
 
     if (cover || coverSource) {
       const displayCover = await resolveCover(cover, coverSource)
       if (
         requestId !== dominantColorRequestId ||
+        currentTrack.value?.id !== trackId ||
         currentTrack.value?.cover !== cover ||
-        currentTrack.value?.coverSource !== coverSource ||
-        !appSettings.value?.useCoverTheme
+        currentTrack.value?.coverSource !== coverSource
       ) {
         return
       }
       if (displayCover) {
-        dominantColor.value = await extractDominantColor(displayCover)
+        themeCoverUrl.value = displayCover
+        const extracted = await extractDominantColor(displayCover)
+        if (
+          requestId !== dominantColorRequestId ||
+          currentTrack.value?.id !== trackId ||
+          currentTrack.value?.cover !== cover ||
+          currentTrack.value?.coverSource !== coverSource
+        ) {
+          return
+        }
+        coverThemeColor.value = extracted
+        dominantColor.value = useCoverTheme ? extracted : '#7c4dff'
       } else {
-        dominantColor.value = '#1a73e8'
+        themeCoverUrl.value = ''
+        coverThemeColor.value = '#1a73e8'
+        dominantColor.value = useCoverTheme ? '#1a73e8' : '#7c4dff'
       }
     } else {
-      dominantColor.value = '#1a73e8'
+      themeCoverUrl.value = ''
+      coverThemeColor.value = '#1a73e8'
+      dominantColor.value = useCoverTheme ? '#1a73e8' : '#7c4dff'
     }
   }
 )
@@ -4160,6 +4177,9 @@ export function usePlayerStore(): {
   rehydrateCurrentTrackFromLibrary: () => void
   currentTrack: Ref<Track | null>
   dominantColor: Ref<string>
+  coverThemeColor: Ref<string>
+  themeCoverUrl: Ref<string>
+  themeCoverIdentity: Ref<string>
   isPlaying: Ref<boolean>
   isLoading: Ref<boolean>
   isStreamBuffering: Ref<boolean>
@@ -4571,6 +4591,9 @@ export function usePlayerStore(): {
     rehydrateCurrentTrackFromLibrary,
     currentTrack,
     dominantColor,
+    coverThemeColor,
+    themeCoverUrl,
+    themeCoverIdentity,
     isPlaying,
     isLoading,
     isStreamBuffering,

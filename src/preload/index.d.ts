@@ -17,7 +17,7 @@ import type {
   ThemeAssetType,
   ThemeBootstrap,
   ThemeLibrarySnapshot,
-  ThemeProfileV1,
+  ThemeProfileV2,
   ThemeSelection,
   ThemeWindowInheritance
 } from '../shared/theme.ts'
@@ -1622,9 +1622,10 @@ interface WindowAPI {
     onPlayerShortcut: (cb: (action: PlayerShortcutAction) => void) => () => void
   }
   themes: {
+    getSystemTone: () => Promise<ThemeTone>
     getBootstrap: () => Promise<ThemeBootstrap>
     list: () => Promise<ThemeLibrarySnapshot>
-    save: (profile: ThemeProfileV1, expectedRevision: number) => Promise<ThemeLibrarySnapshot>
+    save: (profile: ThemeProfileV2, expectedRevision: number) => Promise<ThemeLibrarySnapshot>
     delete: (profileId: string, expectedRevision: number) => Promise<ThemeLibrarySnapshot>
     setActive: (
       selection: ThemeSelection,
@@ -1637,8 +1638,10 @@ interface WindowAPI {
     importTheme: (expectedRevision: number) => Promise<ThemeLibrarySnapshot | null>
     exportTheme: (profileId: string) => Promise<string | null>
     importAsset: (profileId: string, type: ThemeAssetType) => Promise<ThemeAssetReference | null>
+    validateAssets: (profileId: string, assets: ThemeAssetReference[]) => Promise<boolean>
     copyAssets: (sourceProfileId: string, targetProfileId: string) => Promise<void>
     onChanged: (cb: (snapshot: ThemeLibrarySnapshot) => void) => () => void
+    onSystemToneChanged: (cb: (tone: ThemeTone) => void) => () => void
   }
   plugins: {
     list: () => Promise<TwilightPluginDescriptor[]>

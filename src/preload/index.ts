@@ -92,8 +92,9 @@ import {
   type ThemeAssetType,
   type ThemeBootstrap,
   type ThemeLibrarySnapshot,
-  type ThemeProfileV1,
+  type ThemeProfileV2,
   type ThemeSelection,
+  type ThemeTone,
   type ThemeWindowInheritance
 } from '../shared/theme.ts'
 import {
@@ -142,6 +143,7 @@ const miniPlayerCommandCallbacks = new Set<(command: MiniPlayerCommand) => void>
 const savePlaybackSessionCallbacks = new Set<() => Promise<void> | void>()
 const pluginChangedCallbacks = new Set<() => void>()
 const themeChangedCallbacks = new Set<(snapshot: ThemeLibrarySnapshot) => void>()
+const systemThemeChangedCallbacks = new Set<(tone: ThemeTone) => void>()
 const sleepTimerEvents = createSleepTimerEventBridge()
 
 ipcRenderer.on('audioEngine:property-change', (_event, data: { name: string; data: unknown }) => {
@@ -244,6 +246,11 @@ ipcRenderer.on('plugins:changed', () => {
 
 ipcRenderer.on('themes:changed', (_event, snapshot: ThemeLibrarySnapshot) => {
   for (const cb of themeChangedCallbacks) cb(snapshot)
+})
+
+ipcRenderer.on('themes:systemToneChanged', (_event, tone: ThemeTone) => {
+  if (tone !== 'dark' && tone !== 'pureWhite') return
+  for (const cb of systemThemeChangedCallbacks) cb(tone)
 })
 
 ipcRenderer.on('desktopLyrics:toggleChanged', (_event, enabled: boolean) => {
@@ -939,9 +946,10 @@ const api = {
     }
   },
   themes: {
+    getSystemTone: (): Promise<ThemeTone> => ipcRenderer.invoke('themes:getSystemTone'),
     getBootstrap: (): Promise<ThemeBootstrap> => ipcRenderer.invoke('themes:getBootstrap'),
     list: (): Promise<ThemeLibrarySnapshot> => ipcRenderer.invoke('themes:list'),
-    save: (profile: ThemeProfileV1, expectedRevision: number): Promise<ThemeLibrarySnapshot> =>
+    save: (profile: ThemeProfileV2, expectedRevision: number): Promise<ThemeLibrarySnapshot> =>
       invokeVersionedDataWrite('themes:save', [profile, expectedRevision], isThemeLibraryDocument),
     delete: (profileId: string, expectedRevision: number): Promise<ThemeLibrarySnapshot> =>
       invokeVersionedDataWrite(
@@ -973,11 +981,17 @@ const api = {
       ipcRenderer.invoke('themes:export', profileId),
     importAsset: (profileId: string, type: ThemeAssetType): Promise<ThemeAssetReference | null> =>
       ipcRenderer.invoke('themes:importAsset', profileId, type),
+    validateAssets: (profileId: string, assets: ThemeAssetReference[]): Promise<boolean> =>
+      ipcRenderer.invoke('themes:validateAssets', profileId, assets),
     copyAssets: (sourceProfileId: string, targetProfileId: string): Promise<void> =>
       ipcRenderer.invoke('themes:copyAssets', sourceProfileId, targetProfileId),
     onChanged: (cb: (snapshot: ThemeLibrarySnapshot) => void): (() => void) => {
       themeChangedCallbacks.add(cb)
       return () => themeChangedCallbacks.delete(cb)
+    },
+    onSystemToneChanged: (cb: (tone: ThemeTone) => void): (() => void) => {
+      systemThemeChangedCallbacks.add(cb)
+      return () => systemThemeChangedCallbacks.delete(cb)
     }
   },
   plugins: {
