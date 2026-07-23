@@ -1,6 +1,6 @@
-import type { StructuredPluginThemeV1 } from '../../shared/theme.ts'
+import type { StructuredPluginTheme } from '../../shared/theme.ts'
 
-export const TWILIGHT_PLUGIN_API_VERSION = 1
+export const TWILIGHT_PLUGIN_API_VERSION = 2
 
 export const PLUGIN_TYPES = ['provider', 'tool', 'ui', 'theme', 'dsp'] as const
 export type TwilightPluginType = (typeof PLUGIN_TYPES)[number]
@@ -396,7 +396,8 @@ export interface TwilightThemeContribution {
   description?: string
   variables?: Record<string, string>
   stylesheet?: string
-  structured?: StructuredPluginThemeV1
+  structured?: StructuredPluginTheme
+  compatibilityNotes?: string[]
 }
 
 export interface TwilightPluginExtensionContribution {

@@ -98,7 +98,7 @@ JS 插件 API 与 DSP C ABI 各自有独立版本号、独立的稳定性承诺�
    - PlayerBar 附加按钮
    - 设置页插件配置区
    - 主题：CSS 变量包 + 自定义样式表，用户显式选择后一次只应用一个插件主题
-   - 主题可选提供 schemaVersion 1 的结构化明暗令牌；旧 variables + stylesheet 保持兼容
+   - API v1 主题可选提供 schemaVersion 1 的结构化明暗令牌；API v2 追加 schemaVersion 2 的宿主注册 modes；旧 variables + stylesheet 保持兼容
 3. UI 插件代码在 renderer 中以受控方式注入；业务逻辑仍在宿主进程，渲染入口只拿到受限桥接对象。主题类插件只允许声明式样式，不执行脚本。
 4. UI command 使用 request/response 与短超时隔离；command 抛错或超时只影响所属插件，不阻塞 renderer。
 

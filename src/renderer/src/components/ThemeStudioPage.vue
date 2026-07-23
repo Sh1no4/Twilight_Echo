@@ -11,6 +11,7 @@ import {
   TWILIGHT_DEFAULT_THEME_ID,
   createThemeAccentTokenOverrides,
   getBuiltInThemePreset,
+  normalizeThemeModes,
   normalizeThemeTokenOverrides,
   normalizeThemeTokenValue,
   resolveThemeProfileModes,
@@ -381,6 +382,9 @@ function createProfileFromPlugin(theme: ThemeContribution): ThemeProfileV2 {
     if (!normalized) continue
     profile.overrides.pureWhite[id] = normalized
     profile.overrides.dark[id] = normalized
+  }
+  if (theme.structured?.schemaVersion === 2) {
+    profile.modes = normalizeThemeModes(theme.structured.modes)
   }
   return profile
 }
@@ -2237,6 +2241,15 @@ onBeforeUnmount(() => {
             {{ warning.label }}：{{ warning.ratio.toFixed(2) }}:1，最低
             {{ warning.minimum.toFixed(1) }}:1
           </p>
+        </section>
+
+        <section
+          v-if="selectedPluginTheme?.compatibilityNotes?.length"
+          class="contrast-warning"
+          role="status"
+        >
+          <div><i class="ph ph-warning"></i><strong>主题兼容提示</strong></div>
+          <p v-for="note in selectedPluginTheme.compatibilityNotes" :key="note">{{ note }}</p>
         </section>
 
         <p v-if="localError || themeStore.error.value" class="studio-message error">

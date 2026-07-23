@@ -4,13 +4,15 @@ export type AudioEngineEndFileCallback = (reason: string) => void
 import type { DspGraphStatus, DspScene } from '../shared/dspGraph.ts'
 import type { SleepTimerSettings } from '../shared/sleepTimer.ts'
 import type {
-  StructuredPluginThemeV1,
+  StructuredPluginTheme,
   ThemeSelection,
   ThemeWindowInheritance
 } from '../shared/theme.ts'
 
 export type {
+  StructuredPluginTheme,
   StructuredPluginThemeV1,
+  StructuredPluginThemeV2,
   ThemeAssetBindings,
   ThemeAssetReference,
   ThemeAssetType,
@@ -990,7 +992,8 @@ export interface TwilightThemeContribution {
   description?: string
   variables?: Record<string, string>
   stylesheet?: string
-  structured?: StructuredPluginThemeV1
+  structured?: StructuredPluginTheme
+  compatibilityNotes?: string[]
 }
 
 export interface TwilightPluginExtensionContribution {

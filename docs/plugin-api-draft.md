@@ -194,18 +194,37 @@ interface MediaProviderRegistration {
     translatedLyrics: string | null
     wordLyrics?: string | null
   }>
-  searchSongs?(keywords: string, limit?: number, offset?: number): Promise<{ items: Track[]; total: number }>
-  searchPlaylists?(keywords: string, limit?: number, offset?: number): Promise<{ items: PlaylistSummary[]; total: number }>
-  searchArtists?(keywords: string, limit?: number, offset?: number): Promise<{ items: ArtistSummary[]; total: number }>
+  searchSongs?(
+    keywords: string,
+    limit?: number,
+    offset?: number
+  ): Promise<{ items: Track[]; total: number }>
+  searchPlaylists?(
+    keywords: string,
+    limit?: number,
+    offset?: number
+  ): Promise<{ items: PlaylistSummary[]; total: number }>
+  searchArtists?(
+    keywords: string,
+    limit?: number,
+    offset?: number
+  ): Promise<{ items: ArtistSummary[]; total: number }>
   fetchPlaylistTracks?(playlistId: string | number, force?: boolean): Promise<Track[]>
   checkLogin?(): Promise<{ loggedIn: boolean; profile: ProviderProfile | null }>
   getProfile?(): Promise<ProviderProfile | null>
   logout?(): Promise<void>
-  getQrLogin?(): Promise<{ key: string; qrContent?: string; imageDataUrl?: string; expiresInSeconds?: number } | null>
+  getQrLogin?(): Promise<{
+    key: string
+    qrContent?: string
+    imageDataUrl?: string
+    expiresInSeconds?: number
+  } | null>
   getQrKey?(): Promise<string | null>
   getQrImage?(key: string): Promise<string | null>
   checkQrLogin?(key: string): Promise<{ code: number }>
-  fetchUserLibrary?(force?: boolean): Promise<{ likedPlaylist: PlaylistSummary | null; playlists: PlaylistSummary[] }>
+  fetchUserLibrary?(
+    force?: boolean
+  ): Promise<{ likedPlaylist: PlaylistSummary | null; playlists: PlaylistSummary[] }>
   fetchLikedTracks?(force?: boolean): Promise<Track[]>
   fetchRecommendSongs?(): Promise<Track[]>
   fetchRecommendPlaylists?(): Promise<PlaylistSummary[]>
@@ -216,10 +235,25 @@ interface MediaProviderRegistration {
   fetchUserPlaylistsByUid?(uid: string | number): Promise<PlaylistSummary[]>
   fetchUserFollows?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
   fetchUserFolloweds?(uid: string | number, limit?: number, offset?: number): Promise<UserSummary[]>
-  followArtist?(artistId: string | number, follow: boolean, context?: TwilightProviderRequestContext): Promise<void>
-  followUser?(userId: string | number, follow: boolean, context?: TwilightProviderRequestContext): Promise<void>
-  likeTrack?(trackId: string | number, like: boolean, context?: TwilightProviderRequestContext): Promise<void>
-  isTrackLiked?(trackId: string | number | undefined, context?: TwilightProviderRequestContext): Promise<boolean> | boolean
+  followArtist?(
+    artistId: string | number,
+    follow: boolean,
+    context?: TwilightProviderRequestContext
+  ): Promise<void>
+  followUser?(
+    userId: string | number,
+    follow: boolean,
+    context?: TwilightProviderRequestContext
+  ): Promise<void>
+  likeTrack?(
+    trackId: string | number,
+    like: boolean,
+    context?: TwilightProviderRequestContext
+  ): Promise<void>
+  isTrackLiked?(
+    trackId: string | number | undefined,
+    context?: TwilightProviderRequestContext
+  ): Promise<boolean> | boolean
 }
 ```
 
@@ -369,21 +403,31 @@ UI contributions require `type` containing `ui` or `tool` and permission
 
 ## Themes
 
-Pure theme plugins declare CSS variables and/or one packaged stylesheet in
-`plugin.json` and do not execute plugin scripts. Theme stylesheets are resolved
-inside the installed plugin directory and cannot point outside the package.
+Pure theme plugins declare tokens, modes, CSS variables, and/or one packaged stylesheet in
+`plugin.json` and do not execute plugin scripts. Theme stylesheets are resolved inside the installed
+plugin directory and cannot point outside the package.
 
 ```json
 {
   "type": ["theme"],
+  "apiVersion": 2,
   "permissions": [],
   "contributes": {
     "themes": [
       {
         "id": "nocturne",
         "name": "Nocturne",
-        "variables": {
-          "--te-primary-500": "#38bdf8"
+        "structured": {
+          "schemaVersion": 2,
+          "variants": {
+            "dark": {
+              "tokens": { "color.primary.500": "#38bdf8" }
+            }
+          },
+          "modes": {
+            "navigation": { "style": "rail" },
+            "player": { "layout": "split" }
+          }
         },
         "stylesheet": "theme.css"
       }
@@ -395,7 +439,10 @@ inside the installed plugin directory and cannot point outside the package.
 Theme plugins are declarative only. They must not execute renderer scripts or
 load remote runtime code. The renderer applies only the plugin theme selected by
 the user in Settings -> Appearance; disabling or uninstalling that plugin clears
-the selected plugin theme.
+the selected plugin theme. API v1 `variables`, packaged stylesheets, and structured schemaVersion 1
+remain supported. API v2 schemaVersion 2 modes are normalized through the host registry; unknown
+IDs and values are ignored with compatibility notes. See `theme-plugin-authoring.md` and the
+published `theme-contract.json` catalog.
 
 ## Native DSP Plugins
 

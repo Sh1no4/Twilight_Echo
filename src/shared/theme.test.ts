@@ -12,6 +12,7 @@ import {
   TWILIGHT_DEFAULT_THEME_ID,
   createThemeAccentTokenOverrides,
   createDefaultThemeLibraryDocument,
+  findUnsupportedThemeModeIds,
   normalizeThemeModes,
   normalizeStructuredPluginTheme,
   normalizeThemeLibraryDocument,
@@ -20,6 +21,7 @@ import {
   normalizeThemeSelection,
   normalizeThemeTokenOverrides,
   resolveThemeProfileModes,
+  resolveThemeModes,
   resolveThemeProfileTokens,
   limitThemeProfileHistory,
   resolveScheduledThemeTone,
@@ -448,5 +450,48 @@ test('structured plugin themes keep only registered safe tokens and bounded wind
         }
       }
     }
+  )
+})
+
+test('structured plugin theme v2 keeps only host-registered modes', () => {
+  const rawModes = {
+    navigation: { style: 'rail', futureStyle: 'floating' },
+    player: { layout: 'cinema', controls: 'pro' },
+    visibility: { playerDuration: false, futureControl: true }
+  }
+  assert.deepEqual(
+    normalizeStructuredPluginTheme({
+      schemaVersion: 2,
+      variants: {},
+      modes: rawModes
+    }),
+    {
+      schemaVersion: 2,
+      variants: {},
+      modes: {
+        navigation: { style: 'rail' },
+        player: { controls: 'pro' },
+        visibility: { playerDuration: false }
+      }
+    }
+  )
+  assert.deepEqual(findUnsupportedThemeModeIds(rawModes), [
+    'navigation.futureStyle',
+    'player.layout',
+    'visibility.futureControl'
+  ])
+  assert.equal(resolveThemeModes(rawModes).navigation?.style, 'rail')
+  assert.equal(resolveThemeModes(rawModes).player?.layout, 'standard')
+  assert.equal(
+    themeModesToDataAttributes(resolveThemeModes(rawModes))['data-te-navigation-style'],
+    'rail'
+  )
+  assert.equal(
+    themeModesToDataAttributes(resolveThemeModes(rawModes))['data-te-player-layout'],
+    'standard'
+  )
+  assert.equal(
+    themeModesToDataAttributes(resolveThemeModes(rawModes))['data-te-visible-player-duration'],
+    'false'
   )
 })

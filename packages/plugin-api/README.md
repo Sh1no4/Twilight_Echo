@@ -1,6 +1,6 @@
 # @twilight-echo/plugin-api
 
-TypeScript typings for Twilight Echo plugin API v1.
+TypeScript typings for Twilight Echo plugin API v1 and v2.
 
 ```ts
 import type { TwilightPluginContext } from '@twilight-echo/plugin-api'
@@ -27,6 +27,11 @@ compatibility but rejects at runtime.
 Theme contributions may add a `structured` schemaVersion 1 document with `pureWhite`
 and `dark` token overrides. Existing `variables` and `stylesheet` fields remain supported;
 stylesheets are the advanced compatibility path and may depend on host selectors.
+
+Plugin API v2 adds `structured` schemaVersion 2 with host-registered `modes`. API v1 themes and
+schemaVersion 1 remain supported without behavior changes. The machine-readable token, mode, and
+visibility registry ships as `theme-contract.json`; the complete authoring guide is
+`docs/theme-plugin-authoring.md` in the Twilight Echo repository.
 
 Provider registrations may expose optional `health` metadata through
 `TwilightMediaProviderHealth`. The host also records aggregate and per-method

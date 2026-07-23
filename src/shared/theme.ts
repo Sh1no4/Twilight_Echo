@@ -11,6 +11,7 @@ export const BUILT_IN_THEME_PRESET_IDS = [
   'builtin:zen-minimal'
 ] as const
 export const THEME_DOCUMENT_SCHEMA_VERSION = 1
+export const STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION = 2
 export const THEME_PROFILE_SCHEMA_VERSION = 2
 export const THEME_ARCHIVE_SCHEMA_VERSION = 2
 export const THEME_LIBRARY_SCHEMA_VERSION = 1
@@ -351,6 +352,15 @@ export interface StructuredPluginThemeV1 {
   variants: Partial<Record<ThemeTone, { tokens?: Record<string, string> }>>
   windowDefaults?: ThemeWindowDefaults
 }
+
+export interface StructuredPluginThemeV2 {
+  schemaVersion: 2
+  variants: Partial<Record<ThemeTone, { tokens?: Record<string, string> }>>
+  modes?: ThemeModes
+  windowDefaults?: ThemeWindowDefaults
+}
+
+export type StructuredPluginTheme = StructuredPluginThemeV1 | StructuredPluginThemeV2
 
 const lightFont =
   "'Inter', 'Plus Jakarta Sans', 'MiSans', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei UI', 'Microsoft YaHei', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
@@ -3232,6 +3242,46 @@ export function normalizeThemeModes(value: unknown): ThemeModes {
   return result
 }
 
+export function findUnsupportedThemeModeIds(value: unknown): string[] {
+  if (!isRecord(value)) return []
+  const definitions = new Map(
+    THEME_MODE_DEFINITIONS.map((definition) => [definition.id, definition])
+  )
+  const supportedDomains = new Set(
+    THEME_MODE_DEFINITIONS.map((definition) => definition.id.split('.')[0])
+  )
+  const unsupported = new Set<string>()
+  for (const [domain, section] of Object.entries(value)) {
+    if (domain === 'visibility') {
+      if (!isRecord(section)) {
+        unsupported.add(domain)
+        continue
+      }
+      for (const [id, visible] of Object.entries(section)) {
+        if (
+          !THEME_VISIBILITY_SLOT_IDS.includes(id as ThemeVisibilitySlotId) ||
+          typeof visible !== 'boolean'
+        ) {
+          unsupported.add(`${domain}.${id}`)
+        }
+      }
+      continue
+    }
+    if (!supportedDomains.has(domain) || !isRecord(section)) {
+      unsupported.add(domain)
+      continue
+    }
+    for (const [key, modeValue] of Object.entries(section)) {
+      const id = `${domain}.${key}`
+      const definition = definitions.get(id)
+      if (!definition || typeof modeValue !== 'string' || !definition.options.includes(modeValue)) {
+        unsupported.add(id)
+      }
+    }
+  }
+  return [...unsupported].slice(0, 64)
+}
+
 function assignModeOption<T extends object, K extends keyof T>(
   target: T,
   key: K,
@@ -3349,22 +3399,41 @@ export function normalizeThemeTokenOverrides(
   return result
 }
 
-export function normalizeStructuredPluginTheme(
-  value: unknown
-): StructuredPluginThemeV1 | undefined {
-  if (!isRecord(value) || value.schemaVersion !== THEME_DOCUMENT_SCHEMA_VERSION) return undefined
+export function normalizeStructuredPluginTheme(value: unknown): StructuredPluginTheme | undefined {
+  if (
+    !isRecord(value) ||
+    (value.schemaVersion !== THEME_DOCUMENT_SCHEMA_VERSION &&
+      value.schemaVersion !== STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION)
+  ) {
+    return undefined
+  }
+  const schemaVersion = value.schemaVersion
   const sourceVariants = isRecord(value.variants) ? value.variants : {}
-  const variants: StructuredPluginThemeV1['variants'] = {}
+  const variants: StructuredPluginTheme['variants'] = {}
   for (const tone of ['pureWhite', 'dark'] as const) {
     const source = isRecord(sourceVariants[tone]) ? sourceVariants[tone] : {}
     const tokens = normalizeThemeTokenOverrides(isRecord(source.tokens) ? source.tokens : {})
     if (Object.keys(tokens).length > 0) variants[tone] = { tokens }
   }
   const windowDefaults = normalizeWindowDefaults(value.windowDefaults)
-  if (Object.keys(variants).length === 0 && !windowDefaults) return undefined
+  const modes =
+    schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION
+      ? normalizeThemeModes(value.modes)
+      : undefined
+  const hasDeclaredModes =
+    schemaVersion === STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION && isRecord(value.modes)
+  if (Object.keys(variants).length === 0 && !windowDefaults && !hasDeclaredModes) return undefined
+  if (schemaVersion === THEME_DOCUMENT_SCHEMA_VERSION) {
+    return {
+      schemaVersion: THEME_DOCUMENT_SCHEMA_VERSION,
+      variants,
+      ...(windowDefaults ? { windowDefaults } : {})
+    }
+  }
   return {
-    schemaVersion: THEME_DOCUMENT_SCHEMA_VERSION,
+    schemaVersion: STRUCTURED_PLUGIN_THEME_SCHEMA_VERSION,
     variants,
+    ...(modes && Object.keys(modes).length > 0 ? { modes } : {}),
     ...(windowDefaults ? { windowDefaults } : {})
   }
 }
@@ -3575,6 +3644,12 @@ export function resolveThemeProfileTokens(
 export function resolveThemeProfileModes(profile: ThemeProfileV2 | null): ThemeModes {
   const baseModes = resolveThemeProfileBasePreset(profile)?.modes ?? {}
   const modes = profile?.modes ?? {}
+  return resolveThemeModes(modes, baseModes)
+}
+
+export function resolveThemeModes(value: unknown, baseValue: unknown = {}): ThemeModes {
+  const baseModes = normalizeThemeModes(baseValue)
+  const modes = normalizeThemeModes(value)
   return {
     appearance: {
       ...DEFAULT_THEME_MODES.appearance,

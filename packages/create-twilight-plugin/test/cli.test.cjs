@@ -22,7 +22,10 @@ test('init creates a valid tool plugin scaffold', async () => {
   assert.equal(manifest.id, 'com.example.my-tool')
   assert.deepEqual(manifest.type, ['tool'])
   assert.equal(await exists(path.join(target, 'src', 'index.mts')), true)
-  assert.match(await fs.readFile(path.join(target, 'package.json'), 'utf-8'), /create-twilight-plugin/)
+  assert.match(
+    await fs.readFile(path.join(target, 'package.json'), 'utf-8'),
+    /create-twilight-plugin/
+  )
 })
 
 test('init creates provider, ui-tool, and theme manifests', async () => {
@@ -36,11 +39,46 @@ test('init creates provider, ui-tool, and theme manifests', async () => {
     assert.equal(manifest.id, `com.example.${type}`)
     if (type === 'theme') {
       assert.equal(manifest.main, undefined)
+      assert.equal(manifest.apiVersion, 2)
       assert.equal(await exists(path.join(target, 'theme.css')), true)
       assert.equal(await exists(path.join(target, 'src', 'index.mts')), false)
       assert.equal(Array.isArray(manifest.contributes?.themes), true)
+      assert.equal(manifest.contributes.themes[0].structured.schemaVersion, 2)
+      assert.equal(manifest.contributes.themes[0].structured.modes.player.layout, 'split')
     }
   }
+})
+
+test('tooling gates structured theme v2 on plugin API v2', () => {
+  const manifest = {
+    id: 'com.example.mode-theme',
+    name: 'Mode Theme',
+    version: '1.0.0',
+    description: 'Theme modes',
+    author: 'Example',
+    license: 'Apache-2.0',
+    type: ['theme'],
+    engines: { twilightEcho: '>=0.20.0' },
+    apiVersion: 1,
+    permissions: [],
+    contributes: {
+      themes: [
+        {
+          id: 'mode-theme',
+          name: 'Mode Theme',
+          structured: {
+            schemaVersion: 2,
+            variants: {},
+            modes: { navigation: { style: 'rail' } }
+          }
+        }
+      ]
+    }
+  }
+
+  assert.throws(() => validatePluginManifest(manifest), /requires plugin apiVersion 2/)
+  assert.equal(validatePluginManifest({ ...manifest, apiVersion: 2 }).apiVersion, 2)
+  assert.throws(() => validatePluginManifest({ ...manifest, apiVersion: 3 }), /supported version 2/)
 })
 
 test('pack creates a tep for declarative theme plugins without a JS build', async () => {
@@ -66,7 +104,11 @@ test('pack creates a tep with plugin.json at root and excludes node_modules', as
   const target = path.join(root, 'my-tool')
   await initCommand([target, '--type', 'tool', '--id', 'com.example.packable'])
   await fs.mkdir(path.join(target, 'dist'), { recursive: true })
-  await fs.writeFile(path.join(target, 'dist', 'index.mjs'), 'export function activate() {}', 'utf-8')
+  await fs.writeFile(
+    path.join(target, 'dist', 'index.mjs'),
+    'export function activate() {}',
+    'utf-8'
+  )
   await fs.mkdir(path.join(target, 'node_modules', 'ignored'), { recursive: true })
   await fs.writeFile(path.join(target, 'node_modules', 'ignored', 'file.js'), 'ignored', 'utf-8')
 
@@ -86,7 +128,11 @@ test('pack accepts flags before the plugin directory', async () => {
   const target = path.join(root, 'my-tool')
   await initCommand([target, '--type', 'tool', '--id', 'com.example.flag-order'])
   await fs.mkdir(path.join(target, 'dist'), { recursive: true })
-  await fs.writeFile(path.join(target, 'dist', 'index.mjs'), 'export function activate() {}', 'utf-8')
+  await fs.writeFile(
+    path.join(target, 'dist', 'index.mjs'),
+    'export function activate() {}',
+    'utf-8'
+  )
 
   const outDir = path.join(root, 'packed')
   const result = await packCommand(['--out', outDir, target])

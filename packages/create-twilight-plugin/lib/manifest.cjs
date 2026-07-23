@@ -17,6 +17,7 @@ const PLUGIN_PERMISSIONS = new Set([
 
 const PLUGIN_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)+$/
 const SEMVER_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
+const TWILIGHT_PLUGIN_API_VERSION = 2
 
 function isRecord(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -62,10 +63,59 @@ function hasDeclarativeThemeContribution(raw, type) {
   return Array.isArray(raw.contributes.themes) && raw.contributes.themes.length > 0
 }
 
+function validateThemeContributions(raw, type, apiVersion) {
+  if (!type.includes('theme')) return
+  if (!isRecord(raw.contributes) || !Array.isArray(raw.contributes.themes)) return
+  for (const contribution of raw.contributes.themes) {
+    if (!isRecord(contribution)) throw new Error('theme contribution must be an object')
+    requireString(contribution, 'id')
+    requireString(contribution, 'name')
+    const hasVariables = isRecord(contribution.variables)
+    if (contribution.variables != null && !hasVariables) {
+      throw new Error('theme contribution variables must be an object')
+    }
+    const hasStylesheet =
+      typeof contribution.stylesheet === 'string' && contribution.stylesheet.trim()
+    if (contribution.stylesheet != null) {
+      normalizeRelativePath(contribution.stylesheet, 'contributes.themes.stylesheet')
+    }
+    const structured = contribution.structured
+    let hasStructured = false
+    if (structured != null) {
+      if (!isRecord(structured)) throw new Error('theme contribution structured must be an object')
+      if (structured.schemaVersion !== 1 && structured.schemaVersion !== 2) {
+        throw new Error('theme contribution structured schemaVersion must be 1 or 2')
+      }
+      if (structured.schemaVersion === 2 && apiVersion < 2) {
+        throw new Error('structured schemaVersion 2 requires plugin apiVersion 2')
+      }
+      if (structured.variants != null && !isRecord(structured.variants)) {
+        throw new Error('theme contribution structured variants must be an object')
+      }
+      if (structured.modes != null) {
+        if (structured.schemaVersion !== 2) {
+          throw new Error('theme contribution modes require structured schemaVersion 2')
+        }
+        if (!isRecord(structured.modes)) {
+          throw new Error('theme contribution modes must be an object')
+        }
+      }
+      if (structured.windowDefaults != null && !isRecord(structured.windowDefaults)) {
+        throw new Error('theme contribution windowDefaults must be an object')
+      }
+      hasStructured = true
+    }
+    if (!hasVariables && !hasStylesheet && !hasStructured) {
+      throw new Error('theme contribution must declare variables, stylesheet, or structured')
+    }
+  }
+}
+
 function isSupportedSemverRange(range) {
   if (range === '*') return true
   if (SEMVER_PATTERN.test(range)) return true
-  if (range.startsWith('^') || range.startsWith('~')) return SEMVER_PATTERN.test(range.slice(1).trim())
+  if (range.startsWith('^') || range.startsWith('~'))
+    return SEMVER_PATTERN.test(range.slice(1).trim())
   if (range.startsWith('>=')) return SEMVER_PATTERN.test(range.slice(2).trim())
   return false
 }
@@ -79,25 +129,39 @@ function validatePluginManifest(raw) {
   }
 
   const version = requireString(raw, 'version')
-  if (!SEMVER_PATTERN.test(version)) throw new Error('plugin.json version must follow semver, for example 1.0.0')
+  if (!SEMVER_PATTERN.test(version))
+    throw new Error('plugin.json version must follow semver, for example 1.0.0')
 
-  if (!isRecord(raw.engines) || typeof raw.engines.twilightEcho !== 'string' || !raw.engines.twilightEcho.trim()) {
+  if (
+    !isRecord(raw.engines) ||
+    typeof raw.engines.twilightEcho !== 'string' ||
+    !raw.engines.twilightEcho.trim()
+  ) {
     throw new Error('plugin.json missing engines.twilightEcho')
   }
 
   if (!Number.isInteger(raw.apiVersion) || raw.apiVersion < 1) {
     throw new Error('plugin.json apiVersion must be a positive integer')
   }
+  if (raw.apiVersion > TWILIGHT_PLUGIN_API_VERSION) {
+    throw new Error(
+      `plugin.json apiVersion exceeds supported version ${TWILIGHT_PLUGIN_API_VERSION}`
+    )
+  }
 
   const type = raw.type
-  if (!Array.isArray(type) || type.length === 0) throw new Error('plugin.json type must be a non-empty array')
+  if (!Array.isArray(type) || type.length === 0)
+    throw new Error('plugin.json type must be a non-empty array')
   for (const item of type) {
-    if (typeof item !== 'string' || !PLUGIN_TYPES.has(item)) throw new Error(`plugin.json contains unknown type: ${String(item)}`)
+    if (typeof item !== 'string' || !PLUGIN_TYPES.has(item))
+      throw new Error(`plugin.json contains unknown type: ${String(item)}`)
   }
+  validateThemeContributions(raw, type, raw.apiVersion)
 
   const main = normalizeRelativePath(raw.main, 'main')
   const rawBinary = raw.binary
-  if (rawBinary != null && !isRecord(rawBinary)) throw new Error('plugin.json binary must be an object')
+  if (rawBinary != null && !isRecord(rawBinary))
+    throw new Error('plugin.json binary must be an object')
   let binary
   if (rawBinary) {
     const normalizedBinary = {}
@@ -108,7 +172,9 @@ function validatePluginManifest(raw) {
     binary = Object.keys(normalizedBinary).length > 0 ? normalizedBinary : undefined
   }
   if (!main && !binary && !hasDeclarativeThemeContribution(raw, type)) {
-    throw new Error('plugin.json must declare main or binary, or contributes.themes for theme plugins')
+    throw new Error(
+      'plugin.json must declare main or binary, or contributes.themes for theme plugins'
+    )
   }
   if (type.includes('dsp') && !binary) throw new Error('plugin.json type dsp requires binary')
 
@@ -125,7 +191,8 @@ function validatePluginManifest(raw) {
   if (raw.dependencies != null) {
     if (!isRecord(raw.dependencies)) throw new Error('plugin.json dependencies must be an object')
     for (const [dependencyId, range] of Object.entries(raw.dependencies)) {
-      if (!PLUGIN_ID_PATTERN.test(dependencyId)) throw new Error(`plugin.json dependency id is invalid: ${dependencyId}`)
+      if (!PLUGIN_ID_PATTERN.test(dependencyId))
+        throw new Error(`plugin.json dependency id is invalid: ${dependencyId}`)
       if (typeof range !== 'string' || !isSupportedSemverRange(range.trim())) {
         throw new Error(`plugin.json dependency range is invalid: ${dependencyId}`)
       }

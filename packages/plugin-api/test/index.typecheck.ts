@@ -4,9 +4,12 @@ import type {
   TwilightMediaProviderMethodHealth,
   TwilightMediaProviderRegistration,
   TwilightPluginExtensionContribution,
+  TwilightStructuredThemeV2,
+  TwilightThemeContribution,
   TwilightUiContribution,
   TwilightUiContributionKind
 } from '../src/index'
+import { TWILIGHT_PLUGIN_API_VERSION } from '../src/index'
 
 const localSidebarKind: TwilightUiContributionKind = 'localSidebarItem'
 const streamingHomeKind: TwilightUiContributionKind = 'streamingHome'
@@ -31,6 +34,24 @@ const extensionContribution: TwilightPluginExtensionContribution = {
   pluginId: 'com.example.ui',
   ui: [localSidebarContribution, streamingHomeContribution],
   themes: []
+}
+
+const structuredThemeV2: TwilightStructuredThemeV2 = {
+  schemaVersion: 2,
+  variants: {
+    dark: { tokens: { 'color.primary.500': '#60a5fa' } }
+  },
+  modes: {
+    navigation: { style: 'rail' },
+    player: { layout: 'split', controls: 'pro' },
+    visibility: { playerWaveform: false }
+  }
+}
+
+const themeContribution: TwilightThemeContribution = {
+  id: 'mode-theme',
+  name: 'Mode Theme',
+  structured: structuredThemeV2
 }
 
 const playbackUrlHealth: TwilightMediaProviderMethodHealth = {
@@ -81,5 +102,7 @@ const providerTrackWithBpm: Track = {
 }
 
 void extensionContribution
+void themeContribution
+void TWILIGHT_PLUGIN_API_VERSION
 void providerRegistration
 void providerTrackWithBpm

@@ -14,6 +14,10 @@ const updateTransactionSource = readFileSync(
 )
 const packageSecuritySource = readFileSync(new URL('./packageSecurity.ts', import.meta.url), 'utf8')
 const pluginTypesSource = readFileSync(new URL('./types.ts', import.meta.url), 'utf8')
+const themeContributionSource = readFileSync(
+  new URL('./themeContribution.ts', import.meta.url),
+  'utf8'
+)
 const pluginHostSource = readFileSync(new URL('../pluginHost.ts', import.meta.url), 'utf8')
 const pluginApiSource = readFileSync(
   new URL('../../../packages/plugin-api/src/index.ts', import.meta.url),
@@ -42,7 +46,7 @@ test('plugin manager enforces controlled UI and theme extension contracts', () =
   assert.match(pluginExtensionPageSource, /<pre>\{\{ textResult \}\}<\/pre>/)
   assert.match(managerSource, /this\.resolveThemeStylesheet/)
   assert.match(managerSource, /resolvePluginFile\(stylesheetPath, descriptor\.paths\.versionRoot\)/)
-  assert.match(managerSource, /\^--te-\[a-z0-9-_\]\+\$/)
+  assert.match(themeContributionSource, /\^--te-\[a-z0-9-_\]\+\$/)
   assert.match(
     managerSource,
     /主题必须通过 manifest contributes\.themes 声明，运行时主题注册已禁用/
@@ -91,7 +95,10 @@ test('plugin updates stage, trial activate, and roll back without deleting the p
 })
 
 test('plugin updates serialize same-id installs and surface rollback failures', () => {
-  assert.match(managerSource, /private readonly pluginOperationQueue = new PluginOperationQueue\(\)/)
+  assert.match(
+    managerSource,
+    /private readonly pluginOperationQueue = new PluginOperationQueue\(\)/
+  )
   assert.match(managerSource, /return await this\.pluginOperationQueue\.run\(manifest\.id/)
   assert.match(managerSource, /PluginUpdateRollbackError/)
   assert.match(managerSource, /update-rollback-error/)
@@ -160,6 +167,10 @@ test('plugin manager exposes declarative manifest themes without executing theme
   assert.match(managerSource, /normalizeDeclarativeThemeContributions/)
   assert.match(managerSource, /descriptor\.contributes/)
   assert.match(managerSource, /manifest theme/)
+  assert.match(managerSource, /normalizeThemeContribution/)
+  assert.match(managerSource, /loggedThemeCompatibilityNotes/)
+  assert.match(themeContributionSource, /pluginApiVersion < 2/)
+  assert.match(themeContributionSource, /findUnsupportedThemeModeIds/)
 })
 
 test('plugin manager blocks bundled plugin uninstall while allowing disable', () => {
@@ -179,7 +190,10 @@ test('plugin manager isolates startup failures and keeps other enabled plugins l
 })
 
 test('plugin lifecycle stop is single-flight and stale process events cannot discard a replacement', () => {
-  assert.match(managerSource, /private readonly stopOperations = new Map<string, Promise<void>>\(\)/)
+  assert.match(
+    managerSource,
+    /private readonly stopOperations = new Map<string, Promise<void>>\(\)/
+  )
   assert.match(managerSource, /const existingStop = this\.stopOperations\.get\(id\)/)
   assert.match(managerSource, /if \(existingStop\) return existingStop/)
   assert.match(managerSource, /await this\.stopOperations\.get\(descriptor\.id\)/)
@@ -199,7 +213,10 @@ test('provider and UI RPC cancellation is wired through protocol, host AbortSign
   assert.match(pluginHostSource, /cancelPluginCall\(message\.requestId, message\.reason\)/)
   assert.match(pluginHostSource, /signal: controller\.signal/)
   assert.match(pluginHostSource, /abortPendingPluginCalls\('Plugin is being deactivated\.'\)/)
-  assert.match(pluginApiSource, /interface TwilightProviderRequestContext[\s\S]*signal: AbortSignal/)
+  assert.match(
+    pluginApiSource,
+    /interface TwilightProviderRequestContext[\s\S]*signal: AbortSignal/
+  )
   assert.match(pluginApiSource, /interface TwilightUiCommandContext[\s\S]*signal: AbortSignal/)
 })
 
@@ -277,8 +294,5 @@ test('provider results replace approved remote media URLs before returning to th
     managerSource,
     /import \{ protectProviderMedia \} from '\.\.\/security\/remoteMediaGrants\.ts'/
   )
-  assert.match(
-    managerSource,
-    /value: protectProviderMedia\(message\.value, metadata\.method\)/
-  )
+  assert.match(managerSource, /value: protectProviderMedia\(message\.value, metadata\.method\)/)
 })

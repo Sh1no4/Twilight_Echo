@@ -19,7 +19,7 @@ Twilight Echo 插件是一段随应用加载、通过统一 `twilight` API 句�
 - `provider`：音源插件，实现搜索、播放、歌词、封面、歌单、登录等能力。
 - `tool`：工具类插件，挂事件总线，订阅曲目切换、播放暂停、进度、队列变更等。
 - `ui`：界面扩展，提供侧边栏页面、播放栏按钮、设置面板。
-- `theme`：主题插件，纯 CSS 变量加样式表，不含脚本。
+- `theme`：主题插件，声明式 token / mode 加可选样式表，不含脚本。
 - `dsp`：原生音频处理插件，C ABI，挂进 Twilight Audio Engine 的 DSP 链。
 
 一个插件可以同时是 `["ui", "tool"]` 这种组合；但 `dsp` 轨单独走原生路径，与 JS 轨并行存在。
@@ -38,32 +38,32 @@ JS 插件运行在 Electron 的 `utilityProcess` 里。这是一个独立进程�
 
 ### 4.1 必填字段
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| `id` | string | 反域名风格全局唯一 ID，如 `com.example.bili-source` |
-| `name` | string | 显示名称 |
-| `version` | string | 插件版本，遵循 semver |
-| `description` | string | 简短描述 |
-| `author` | string | 作者名或组织 |
-| `license` | string | SPDX 标识符 |
-| `type` | string[] | 插件类型数组，可组合 |
-| `main` | string | JS 轨入口文件，相对包根路径 |
-| `binary` | object | DSP 轨按平台声明动态库路径，如 `{ "win32-x64": "...", "darwin-arm64": "...", "linux-x64": "..." }` |
-| `engines.twilightEcho` | string | 兼容的宿主版本范围，semver range |
-| `apiVersion` | number | 使用的插件 API 主版本号 |
-| `permissions` | string[] | 权限声明，安装时展示给用户 |
+| 字段                   | 类型     | 说明                                                                                               |
+| ---------------------- | -------- | -------------------------------------------------------------------------------------------------- |
+| `id`                   | string   | 反域名风格全局唯一 ID，如 `com.example.bili-source`                                                |
+| `name`                 | string   | 显示名称                                                                                           |
+| `version`              | string   | 插件版本，遵循 semver                                                                              |
+| `description`          | string   | 简短描述                                                                                           |
+| `author`               | string   | 作者名或组织                                                                                       |
+| `license`              | string   | SPDX 标识符                                                                                        |
+| `type`                 | string[] | 插件类型数组，可组合                                                                               |
+| `main`                 | string   | JS 轨入口文件，相对包根路径                                                                        |
+| `binary`               | object   | DSP 轨按平台声明动态库路径，如 `{ "win32-x64": "...", "darwin-arm64": "...", "linux-x64": "..." }` |
+| `engines.twilightEcho` | string   | 兼容的宿主版本范围，semver range                                                                   |
+| `apiVersion`           | number   | 使用的插件 API 主版本号                                                                            |
+| `permissions`          | string[] | 权限声明，安装时展示给用户                                                                         |
 
 JS 插件填写 `main`，DSP 插件填写 `binary`，纯 theme 插件可用 `contributes.themes` 声明 CSS 变量/样式表并省略二者。`type` 包含 `dsp` 时 `binary` 必填。
 
 ### 4.2 可选字段
 
-| 字段 | 说明 |
-|---|---|
-| `contributes` | 声明扩展点贡献：页面、设置项、命令、主题资源 |
-| `dependencies` | 插件依赖表，形态 `{ "<pluginId>": "<semver range>" }`，仅校验宿主内已安装插件，不自动安装 |
-| `homepage` / `repository` | 主页与源码仓库 |
-| `icon` | 图标路径 |
-| `signature` | 预留签名字段，未来启用签名校验时不破坏包格式 |
+| 字段                      | 说明                                                                                      |
+| ------------------------- | ----------------------------------------------------------------------------------------- |
+| `contributes`             | 声明扩展点贡献：页面、设置项、命令、主题资源                                              |
+| `dependencies`            | 插件依赖表，形态 `{ "<pluginId>": "<semver range>" }`，仅校验宿主内已安装插件，不自动安装 |
+| `homepage` / `repository` | 主页与源码仓库                                                                            |
+| `icon`                    | 图标路径                                                                                  |
+| `signature`               | 预留签名字段，未来启用签名校验时不破坏包格式                                              |
 
 ### 4.3 具体示例：内置 NCM provider manifest
 
@@ -93,19 +93,19 @@ JS 插件填写 `main`，DSP 插件填写 `binary`，纯 theme 插件可用 `con
 
 声明在 manifest 的 `permissions` 数组里，安装确认页会逐条展示。全部 11 个 token：
 
-| 权限 token | 含义 |
-|---|---|
-| `network` | 允许发起网络请求 |
-| `filesystem:read` | 读文件系统 |
-| `filesystem:write` | 写文件系统 |
-| `player:control` | 控制播放器（播放、暂停、跳转、队列等） |
-| `player:observe` | 观察播放器状态（事件订阅、读取状态） |
-| `library:read` | 读音乐库 |
-| `library:write` | 写音乐库 |
-| `settings` | 读写应用设置 |
-| `clipboard` | 访问剪贴板 |
-| `ui:inject` | 向 UI 注入扩展点（侧边栏页面、按钮、设置面板） |
-| `dsp:native` | 加载并运行原生 DSP 插件 |
+| 权限 token         | 含义                                           |
+| ------------------ | ---------------------------------------------- |
+| `network`          | 允许发起网络请求                               |
+| `filesystem:read`  | 读文件系统                                     |
+| `filesystem:write` | 写文件系统                                     |
+| `player:control`   | 控制播放器（播放、暂停、跳转、队列等）         |
+| `player:observe`   | 观察播放器状态（事件订阅、读取状态）           |
+| `library:read`     | 读音乐库                                       |
+| `library:write`    | 写音乐库                                       |
+| `settings`         | 读写应用设置                                   |
+| `clipboard`        | 访问剪贴板                                     |
+| `ui:inject`        | 向 UI 注入扩展点（侧边栏页面、按钮、设置面板） |
+| `dsp:native`       | 加载并运行原生 DSP 插件                        |
 
 权限声明在信任式安装下仍是必填项。当前阶段网关层不做强制 enforcement，但声明必须与实际行为一致，官方索引收录会人工核对。未来收紧策略时，网关层会按这些 token 加闸。
 
@@ -135,13 +135,13 @@ JS 插件实现两个函数：
 
 `context.twilight` 是 API 网关，按命名空间分组。概览如下，完整签名以 [spec §4](./twilight-echo-plugin-spec.md#4-js-插件运行模型) 和 `@twilight-echo/plugin-api` typings 为准。
 
-| 命名空间 | 能力 |
-|---|---|
-| `twilight.events` | 事件总线，订阅曲目切换、播放暂停、进度、队列变更、应用启停 |
-| `twilight.player` | 播放器控制与状态查询 |
-| `twilight.providers` | 注册 provider 能力、查询已注册 provider |
-| `twilight.ui` | 注册 UI 扩展点（侧边栏页面、播放栏按钮、设置面板、流媒体/本地侧栏入口） |
-| `twilight.themes` | 主题资源声明 |
+| 命名空间             | 能力                                                                    |
+| -------------------- | ----------------------------------------------------------------------- |
+| `twilight.events`    | 事件总线，订阅曲目切换、播放暂停、进度、队列变更、应用启停              |
+| `twilight.player`    | 播放器控制与状态查询                                                    |
+| `twilight.providers` | 注册 provider 能力、查询已注册 provider                                 |
+| `twilight.ui`        | 注册 UI 扩展点（侧边栏页面、播放栏按钮、设置面板、流媒体/本地侧栏入口） |
+| `twilight.themes`    | 主题资源声明                                                            |
 
 不要试图绕过网关直接拿宿主内部对象。API 主版本内只加不改不删（见 [spec §3](./twilight-echo-plugin-spec.md#3-api-版本与兼容性承诺)），所以绑在 `twilight` 上的调用是稳的。
 
@@ -183,14 +183,16 @@ UI contribution 通过 command 返回字符串或可序列化对象，宿主只�
 
 ## 10. 主题规则
 
-`theme` 类型插件提供一套 CSS 变量加自定义样式表。规则：
+`theme` 类型插件提供声明式 token、宿主 mode、CSS 变量和可选样式表。规则：
 
 - 样式表必须位于插件包目录内。
 - **仅声明式样式，不执行任何脚本**。
 - 用户在外观设置中显式选择主题后生效。
 - 宿主一次只应用一个插件主题。
+- API v2 的 `structured.schemaVersion: 2` 才能声明 `modes`；API v1 行为不变。
+- 未登记 mode 会被忽略、写入插件日志，并在主题工作室显示兼容提示。
 
-主题插件不启动 JS 轨（纯 `theme` 类型时）。它就是个 CSS 资源包，宿主负责把变量和样式表注入到 renderer。
+主题插件不启动 JS 轨（纯 `theme` 类型时）。完整示例、mode 表、兼容矩阵、弃用记录与迁移指南见 [`./theme-plugin-authoring.md`](./theme-plugin-authoring.md)，机器可读目录位于 `packages/plugin-api/theme-contract.json`。
 
 ## 11. 脚手架与打包 CLI
 
@@ -199,7 +201,7 @@ UI contribution 通过 command 返回字符串或可序列化对象，宿主只�
 - `init`：生成插件模板。模板有四种：`tool` / `provider` / `ui-tool` / `theme`。
 - `pack`：校验 manifest、检查 JS `main`、DSP `binary` 或纯 theme `contributes.themes`、排除 `node_modules` 和缓存、产出根目录带 `plugin.json` 的 `.tep` zip。
 
-TypeScript typings 来自 `@twilight-echo/plugin-api` 包，这是 API v1 的权威类型来源：
+TypeScript typings 来自 `@twilight-echo/plugin-api` 包，这是 API v1 与 v2 的权威类型来源：
 
 ```ts
 import type { TwilightPluginContext } from '@twilight-echo/plugin-api'
@@ -222,11 +224,11 @@ npm run pack
 
 插件装好后落在哪里，私有数据写到哪里，日志在哪，这三条路径要记牢：
 
-| 用途 | 路径 |
-|---|---|
+| 用途         | 路径                               |
+| ------------ | ---------------------------------- |
 | 插件安装目录 | `userData/plugins/<id>/<version>/` |
-| 插件私有数据 | `userData/plugin-data/<id>/` |
-| 插件日志 | `userData/logs/plugins/<id>.log` |
+| 插件私有数据 | `userData/plugin-data/<id>/`       |
+| 插件日志     | `userData/logs/plugins/<id>.log`   |
 
 `userData` 是 Electron 的用户数据目录。每个插件有独立的日志通道，方便排查。
 
@@ -250,14 +252,14 @@ TLS 由 `undici.ProxyAgent` 处理，使用系统 CA 校验证书。重定向由
 
 官方插件市场消费一个远程 `plugins.json` 文件，当前 `schemaVersion` 固定为 `1`。每个 entry 复用 manifest 字段，并额外增加：
 
-| 字段 | 说明 |
-|---|---|
-| `sourceUrl` | `.tep` 的下载 URL，或相对索引文件的路径 |
-| `checksumSha256` | `.tep` 文件的 sha256 校验和 |
-| `repository` / `homepage` | 源码仓库与主页 |
-| `tags` | 标签，用于搜索和分类 |
-| `verified` | 索引发布者声明“已审核”的元数据；单独出现时只显示“索引声明” |
-| `publisherSignature` | 索引专用 Ed25519 发布者签名；不写入包内 `plugin.json`，也不等同于 manifest 的预留 `signature` |
+| 字段                      | 说明                                                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------- |
+| `sourceUrl`               | `.tep` 的下载 URL，或相对索引文件的路径                                                       |
+| `checksumSha256`          | `.tep` 文件的 sha256 校验和                                                                   |
+| `repository` / `homepage` | 源码仓库与主页                                                                                |
+| `tags`                    | 标签，用于搜索和分类                                                                          |
+| `verified`                | 索引发布者声明“已审核”的元数据；单独出现时只显示“索引声明”                                    |
+| `publisherSignature`      | 索引专用 Ed25519 发布者签名；不写入包内 `plugin.json`，也不等同于 manifest 的预留 `signature` |
 
 默认远程索引是 `https://raw.githubusercontent.com/asenyarzc-cpu/Twilight-Echo-plugins/main/plugins.json`。第三方插件源码和发布 `.tep` 包不放在主仓库；开发和发布时应写入外部插件仓库，由外部仓库生成 `plugins.json`。
 

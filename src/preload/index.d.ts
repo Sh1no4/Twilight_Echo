@@ -1035,7 +1035,8 @@ interface TwilightThemeContribution {
   description?: string
   variables?: Record<string, string>
   stylesheet?: string
-  structured?: import('../shared/theme.ts').StructuredPluginThemeV1
+  structured?: import('../shared/theme.ts').StructuredPluginTheme
+  compatibilityNotes?: string[]
 }
 
 interface TwilightPluginExtensionContribution {

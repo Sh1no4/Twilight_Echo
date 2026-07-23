@@ -1,0 +1,1555 @@
+{
+  "schemaVersion": 1,
+  "pluginApiVersion": 2,
+  "structuredThemeSchemaVersion": 2,
+  "tokens": [
+    {
+      "id": "color.primary.500",
+      "cssVariable": "--te-primary-500",
+      "label": "主强调色",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.primary.400",
+      "cssVariable": "--te-primary-400",
+      "label": "主强调色悬浮",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.primary.300",
+      "cssVariable": "--te-primary-300",
+      "label": "主强调色柔和",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.primary.rgb",
+      "cssVariable": "--te-primary-rgb",
+      "label": "主强调色 RGB",
+      "group": "colors",
+      "surface": "global",
+      "kind": "raw"
+    },
+    {
+      "id": "color.favorite",
+      "cssVariable": "--te-favorite-500",
+      "label": "收藏色",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.success",
+      "cssVariable": "--te-success-500",
+      "label": "成功色",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.warning",
+      "cssVariable": "--te-warning-500",
+      "label": "警告色",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.info",
+      "cssVariable": "--te-info-500",
+      "label": "信息色",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.accentCyan",
+      "cssVariable": "--te-accent-cyan",
+      "label": "青色辅助色",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.neutral.50",
+      "cssVariable": "--te-neutral-50",
+      "label": "最低层背景",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.neutral.100",
+      "cssVariable": "--te-neutral-100",
+      "label": "柔和背景",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.neutral.200",
+      "cssVariable": "--te-neutral-200",
+      "label": "浅边界",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.neutral.300",
+      "cssVariable": "--te-neutral-300",
+      "label": "中边界",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.neutral.500",
+      "cssVariable": "--te-neutral-500",
+      "label": "次要文字",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.neutral.700",
+      "cssVariable": "--te-neutral-700",
+      "label": "正文辅助",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "color.neutral.900",
+      "cssVariable": "--te-neutral-900",
+      "label": "主要文字",
+      "group": "colors",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "surface.app",
+      "cssVariable": "--te-app-bg",
+      "label": "应用背景",
+      "group": "colors",
+      "surface": "app",
+      "kind": "color"
+    },
+    {
+      "id": "surface.local",
+      "cssVariable": "--te-local-bg",
+      "label": "本地音乐背景",
+      "group": "colors",
+      "surface": "local",
+      "kind": "color"
+    },
+    {
+      "id": "surface.settings",
+      "cssVariable": "--te-settings-bg",
+      "label": "设置背景",
+      "group": "colors",
+      "surface": "settings",
+      "kind": "color"
+    },
+    {
+      "id": "surface.streaming",
+      "cssVariable": "--te-streaming-bg",
+      "label": "流媒体背景",
+      "group": "colors",
+      "surface": "streaming",
+      "kind": "color"
+    },
+    {
+      "id": "surface.player",
+      "cssVariable": "--te-player-bg",
+      "label": "播放页背景",
+      "group": "colors",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "background.gradientStart",
+      "cssVariable": "--te-background-gradient-start",
+      "label": "渐变起始色",
+      "group": "colors",
+      "surface": "app-background",
+      "kind": "color"
+    },
+    {
+      "id": "background.gradientEnd",
+      "cssVariable": "--te-background-gradient-end",
+      "label": "渐变结束色",
+      "group": "colors",
+      "surface": "app-background",
+      "kind": "color"
+    },
+    {
+      "id": "background.gradientAngle",
+      "cssVariable": "--te-background-gradient-angle",
+      "label": "渐变角度",
+      "group": "materials",
+      "surface": "app-background",
+      "kind": "number"
+    },
+    {
+      "id": "background.coverBlur",
+      "cssVariable": "--te-background-cover-blur",
+      "label": "封面背景模糊",
+      "group": "materials",
+      "surface": "app-background",
+      "kind": "length"
+    },
+    {
+      "id": "background.overlayOpacity",
+      "cssVariable": "--te-background-overlay-opacity",
+      "label": "背景叠层强度",
+      "group": "materials",
+      "surface": "app-background",
+      "kind": "number"
+    },
+    {
+      "id": "shell.control.text",
+      "cssVariable": "--te-shell-control-text",
+      "label": "应用壳控制文字",
+      "group": "colors",
+      "surface": "app-shell",
+      "kind": "color"
+    },
+    {
+      "id": "shell.control.hoverSurface",
+      "cssVariable": "--te-shell-control-hover",
+      "label": "应用壳控制悬浮",
+      "group": "materials",
+      "surface": "app-shell",
+      "kind": "color"
+    },
+    {
+      "id": "settings.text.primary",
+      "cssVariable": "--te-settings-text",
+      "label": "设置主要文字",
+      "group": "colors",
+      "surface": "settings",
+      "kind": "color"
+    },
+    {
+      "id": "settings.text.muted",
+      "cssVariable": "--te-settings-text-muted",
+      "label": "设置辅助文字",
+      "group": "colors",
+      "surface": "settings",
+      "kind": "color"
+    },
+    {
+      "id": "settings.control.surface",
+      "cssVariable": "--te-settings-control-bg",
+      "label": "设置控件表面",
+      "group": "materials",
+      "surface": "settings",
+      "kind": "color"
+    },
+    {
+      "id": "settings.control.border",
+      "cssVariable": "--te-settings-control-border",
+      "label": "设置控件边框",
+      "group": "materials",
+      "surface": "settings",
+      "kind": "color"
+    },
+    {
+      "id": "settings.panel.border",
+      "cssVariable": "--te-settings-panel-border",
+      "label": "设置面板边框",
+      "group": "materials",
+      "surface": "settings",
+      "kind": "color"
+    },
+    {
+      "id": "settings.navigation.text",
+      "cssVariable": "--te-settings-nav-text",
+      "label": "设置导航文字",
+      "group": "colors",
+      "surface": "settings-navigation",
+      "kind": "color"
+    },
+    {
+      "id": "settings.navigation.hoverSurface",
+      "cssVariable": "--te-settings-nav-hover",
+      "label": "设置导航悬浮",
+      "group": "materials",
+      "surface": "settings-navigation",
+      "kind": "color"
+    },
+    {
+      "id": "settings.navigation.activeSurface",
+      "cssVariable": "--te-settings-nav-active",
+      "label": "设置导航选中",
+      "group": "materials",
+      "surface": "settings-navigation",
+      "kind": "color"
+    },
+    {
+      "id": "navigation.surface",
+      "cssVariable": "--te-navigation-bg",
+      "label": "导航表面",
+      "group": "materials",
+      "surface": "navigation",
+      "kind": "color"
+    },
+    {
+      "id": "navigation.border",
+      "cssVariable": "--te-navigation-border",
+      "label": "导航边框",
+      "group": "materials",
+      "surface": "navigation",
+      "kind": "color"
+    },
+    {
+      "id": "navigation.shadow",
+      "cssVariable": "--te-navigation-shadow",
+      "label": "导航阴影",
+      "group": "materials",
+      "surface": "navigation",
+      "kind": "shadow"
+    },
+    {
+      "id": "navigation.text",
+      "cssVariable": "--te-navigation-text",
+      "label": "导航文字",
+      "group": "colors",
+      "surface": "navigation",
+      "kind": "color"
+    },
+    {
+      "id": "navigation.icon",
+      "cssVariable": "--te-navigation-icon",
+      "label": "导航图标",
+      "group": "colors",
+      "surface": "navigation",
+      "kind": "color"
+    },
+    {
+      "id": "navigation.hoverSurface",
+      "cssVariable": "--te-navigation-hover",
+      "label": "导航悬浮表面",
+      "group": "materials",
+      "surface": "navigation",
+      "kind": "color"
+    },
+    {
+      "id": "navigation.hoverText",
+      "cssVariable": "--te-navigation-hover-text",
+      "label": "导航悬浮文字",
+      "group": "colors",
+      "surface": "navigation",
+      "kind": "color"
+    },
+    {
+      "id": "navigation.activeSurface",
+      "cssVariable": "--te-navigation-active",
+      "label": "导航选中表面",
+      "group": "materials",
+      "surface": "navigation",
+      "kind": "color"
+    },
+    {
+      "id": "navigation.activeText",
+      "cssVariable": "--te-navigation-active-text",
+      "label": "导航选中文字",
+      "group": "colors",
+      "surface": "navigation",
+      "kind": "color"
+    },
+    {
+      "id": "navigation.indicator",
+      "cssVariable": "--te-navigation-indicator",
+      "label": "导航指示器",
+      "group": "colors",
+      "surface": "navigation",
+      "kind": "color"
+    },
+    {
+      "id": "navigation.opacity",
+      "cssVariable": "--te-navigation-opacity",
+      "label": "导航表面透明度",
+      "group": "materials",
+      "surface": "navigation",
+      "kind": "number"
+    },
+    {
+      "id": "navigation.radius",
+      "cssVariable": "--te-navigation-radius",
+      "label": "导航外框圆角",
+      "group": "shape",
+      "surface": "navigation",
+      "kind": "length"
+    },
+    {
+      "id": "library.page.surface",
+      "cssVariable": "--te-library-bg",
+      "label": "媒体库页面表面",
+      "group": "materials",
+      "surface": "library",
+      "kind": "gradient"
+    },
+    {
+      "id": "library.table.surface",
+      "cssVariable": "--te-library-table-bg",
+      "label": "媒体库列表表面",
+      "group": "materials",
+      "surface": "library",
+      "kind": "color"
+    },
+    {
+      "id": "library.table.border",
+      "cssVariable": "--te-library-table-border",
+      "label": "媒体库列表边框",
+      "group": "materials",
+      "surface": "library",
+      "kind": "color"
+    },
+    {
+      "id": "library.table.shadow",
+      "cssVariable": "--te-library-table-shadow",
+      "label": "媒体库列表阴影",
+      "group": "materials",
+      "surface": "library",
+      "kind": "shadow"
+    },
+    {
+      "id": "library.row.text",
+      "cssVariable": "--te-library-row-text",
+      "label": "媒体库行文字",
+      "group": "colors",
+      "surface": "library",
+      "kind": "color"
+    },
+    {
+      "id": "library.row.hoverSurface",
+      "cssVariable": "--te-library-row-hover",
+      "label": "媒体库行悬浮",
+      "group": "materials",
+      "surface": "library",
+      "kind": "color"
+    },
+    {
+      "id": "library.selection.surface",
+      "cssVariable": "--te-library-selection-bg",
+      "label": "媒体库选中表面",
+      "group": "materials",
+      "surface": "library",
+      "kind": "color"
+    },
+    {
+      "id": "library.selection.hoverSurface",
+      "cssVariable": "--te-library-selection-hover",
+      "label": "媒体库选中悬浮",
+      "group": "materials",
+      "surface": "library",
+      "kind": "color"
+    },
+    {
+      "id": "library.selection.indicator",
+      "cssVariable": "--te-library-selection-indicator",
+      "label": "媒体库选中指示器",
+      "group": "colors",
+      "surface": "library",
+      "kind": "color"
+    },
+    {
+      "id": "library.icon",
+      "cssVariable": "--te-library-icon",
+      "label": "媒体库图标颜色",
+      "group": "colors",
+      "surface": "library",
+      "kind": "color"
+    },
+    {
+      "id": "library.iconSize",
+      "cssVariable": "--te-library-icon-size",
+      "label": "媒体库图标大小",
+      "group": "shape",
+      "surface": "library",
+      "kind": "length"
+    },
+    {
+      "id": "library.selection.radius",
+      "cssVariable": "--te-library-selection-radius",
+      "label": "选中曲目圆角",
+      "group": "shape",
+      "surface": "library-selection",
+      "kind": "length"
+    },
+    {
+      "id": "library.selection.inlineInset",
+      "cssVariable": "--te-library-selection-inline-inset",
+      "label": "选中曲目左右边距",
+      "group": "shape",
+      "surface": "library-selection",
+      "kind": "length"
+    },
+    {
+      "id": "library.coverRadius",
+      "cssVariable": "--te-library-cover-radius",
+      "label": "媒体库封面圆角",
+      "group": "shape",
+      "surface": "library-cover",
+      "kind": "length"
+    },
+    {
+      "id": "library.titleOverlayOpacity",
+      "cssVariable": "--te-library-title-overlay-opacity",
+      "label": "标题区叠层强度",
+      "group": "materials",
+      "surface": "library-header",
+      "kind": "number"
+    },
+    {
+      "id": "library.actionSurface",
+      "cssVariable": "--te-library-action-bg",
+      "label": "底部操作区背景",
+      "group": "materials",
+      "surface": "library-actions",
+      "kind": "color"
+    },
+    {
+      "id": "library.actionRadius",
+      "cssVariable": "--te-library-action-radius",
+      "label": "底部操作区圆角",
+      "group": "shape",
+      "surface": "library-actions",
+      "kind": "length"
+    },
+    {
+      "id": "surface.card",
+      "cssVariable": "--te-card-bg",
+      "label": "卡片背景",
+      "group": "materials",
+      "surface": "card",
+      "kind": "color"
+    },
+    {
+      "id": "surface.cardBorder",
+      "cssVariable": "--te-card-border",
+      "label": "卡片边框",
+      "group": "materials",
+      "surface": "card",
+      "kind": "color"
+    },
+    {
+      "id": "surface.subtle",
+      "cssVariable": "--te-subtle-bg",
+      "label": "次级表面",
+      "group": "materials",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "surface.hover",
+      "cssVariable": "--te-hover-bg",
+      "label": "悬浮表面",
+      "group": "materials",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "surface.active",
+      "cssVariable": "--te-active-bg",
+      "label": "选中表面",
+      "group": "materials",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "material.glass",
+      "cssVariable": "--te-glass-bg",
+      "label": "玻璃表面",
+      "group": "materials",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "material.glassStrong",
+      "cssVariable": "--te-glass-bg-strong",
+      "label": "强化玻璃表面",
+      "group": "materials",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "material.glassBorder",
+      "cssVariable": "--te-glass-border",
+      "label": "玻璃边框",
+      "group": "materials",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "material.glassShadow",
+      "cssVariable": "--te-glass-shadow",
+      "label": "玻璃阴影",
+      "group": "materials",
+      "surface": "global",
+      "kind": "shadow"
+    },
+    {
+      "id": "material.surfaceOpacity",
+      "cssVariable": "--te-surface-opacity",
+      "label": "全局表面透明度",
+      "group": "materials",
+      "surface": "global",
+      "kind": "number"
+    },
+    {
+      "id": "material.glowMain",
+      "cssVariable": "--te-glow-main",
+      "label": "主色光晕",
+      "group": "materials",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "material.glowSoft",
+      "cssVariable": "--te-glow-soft",
+      "label": "柔和光晕",
+      "group": "materials",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "material.glowCyan",
+      "cssVariable": "--te-glow-cyan",
+      "label": "青色光晕",
+      "group": "materials",
+      "surface": "global",
+      "kind": "color"
+    },
+    {
+      "id": "typography.sans",
+      "cssVariable": "--te-font-sans",
+      "label": "界面字体",
+      "group": "typography",
+      "surface": "global",
+      "kind": "font"
+    },
+    {
+      "id": "typography.display",
+      "cssVariable": "--te-font-display",
+      "label": "标题字体",
+      "group": "typography",
+      "surface": "global",
+      "kind": "font"
+    },
+    {
+      "id": "typography.rounded",
+      "cssVariable": "--te-font-rounded",
+      "label": "圆体字体",
+      "group": "typography",
+      "surface": "global",
+      "kind": "font"
+    },
+    {
+      "id": "typography.titleWeight",
+      "cssVariable": "--te-text-title",
+      "label": "标题字重",
+      "group": "typography",
+      "surface": "global",
+      "kind": "number"
+    },
+    {
+      "id": "typography.bodyWeight",
+      "cssVariable": "--te-text-body",
+      "label": "正文字重",
+      "group": "typography",
+      "surface": "global",
+      "kind": "number"
+    },
+    {
+      "id": "typography.metaWeight",
+      "cssVariable": "--te-text-meta",
+      "label": "辅助字重",
+      "group": "typography",
+      "surface": "global",
+      "kind": "number"
+    },
+    {
+      "id": "typography.bodySize",
+      "cssVariable": "--te-font-size-body",
+      "label": "界面字号",
+      "group": "typography",
+      "surface": "global",
+      "kind": "length"
+    },
+    {
+      "id": "typography.chromeText",
+      "cssVariable": "--te-chrome-text",
+      "label": "导航与底栏文字",
+      "group": "typography",
+      "surface": "app-chrome",
+      "kind": "color"
+    },
+    {
+      "id": "shape.cardRadius",
+      "cssVariable": "--te-card-radius",
+      "label": "卡片圆角",
+      "group": "shape",
+      "surface": "card",
+      "kind": "length"
+    },
+    {
+      "id": "shape.globalRadius",
+      "cssVariable": "--te-radius-global",
+      "label": "全局圆角",
+      "group": "shape",
+      "surface": "global",
+      "kind": "length"
+    },
+    {
+      "id": "shape.dialogRadius",
+      "cssVariable": "--te-dialog-radius",
+      "label": "对话框圆角",
+      "group": "shape",
+      "surface": "dialog",
+      "kind": "length"
+    },
+    {
+      "id": "shape.searchRadius",
+      "cssVariable": "--te-search-radius",
+      "label": "搜索框圆角",
+      "group": "shape",
+      "surface": "search",
+      "kind": "length"
+    },
+    {
+      "id": "shape.toastRadius",
+      "cssVariable": "--te-toast-radius",
+      "label": "提示圆角",
+      "group": "shape",
+      "surface": "toast",
+      "kind": "length"
+    },
+    {
+      "id": "shape.trackTitleRadius",
+      "cssVariable": "--te-track-title-radius",
+      "label": "曲目标题背景圆角",
+      "group": "shape",
+      "surface": "track-title",
+      "kind": "length"
+    },
+    {
+      "id": "material.trackTitleOpacity",
+      "cssVariable": "--te-track-title-opacity",
+      "label": "曲目标题背景透明度",
+      "group": "materials",
+      "surface": "track-title",
+      "kind": "number"
+    },
+    {
+      "id": "shape.cardBorderWidth",
+      "cssVariable": "--te-card-border-width",
+      "label": "卡片边框宽度",
+      "group": "shape",
+      "surface": "card",
+      "kind": "length"
+    },
+    {
+      "id": "material.cardBlur",
+      "cssVariable": "--te-card-blur",
+      "label": "卡片模糊",
+      "group": "materials",
+      "surface": "card",
+      "kind": "length"
+    },
+    {
+      "id": "material.cardSaturation",
+      "cssVariable": "--te-card-saturate",
+      "label": "卡片饱和度",
+      "group": "materials",
+      "surface": "card",
+      "kind": "number"
+    },
+    {
+      "id": "layout.uiScale",
+      "cssVariable": "--te-ui-scale",
+      "label": "界面缩放",
+      "group": "layout",
+      "surface": "global",
+      "kind": "number"
+    },
+    {
+      "id": "layout.menuWidth",
+      "cssVariable": "--te-menu-width",
+      "label": "侧边栏宽度",
+      "group": "layout",
+      "surface": "sidebar",
+      "kind": "length"
+    },
+    {
+      "id": "playback.text.page",
+      "cssVariable": "--te-playback-page-text",
+      "label": "播放页正文",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.accent",
+      "cssVariable": "--te-playback-accent",
+      "label": "播放强调色",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.backdrop.filter",
+      "cssVariable": "--te-playback-backdrop-filter",
+      "label": "封面背景滤镜",
+      "group": "playback",
+      "surface": "player",
+      "kind": "filter"
+    },
+    {
+      "id": "playback.backdrop.scrim",
+      "cssVariable": "--te-playback-backdrop-scrim",
+      "label": "播放背景遮罩",
+      "group": "playback",
+      "surface": "player",
+      "kind": "gradient"
+    },
+    {
+      "id": "playback.backdrop.highlight",
+      "cssVariable": "--te-playback-backdrop-highlight",
+      "label": "播放背景高光",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.backdrop.fluid",
+      "cssVariable": "--te-playback-fluid-bg",
+      "label": "动态背景渐变",
+      "group": "playback",
+      "surface": "player",
+      "kind": "gradient"
+    },
+    {
+      "id": "playback.cover.surface",
+      "cssVariable": "--te-playback-cover-surface",
+      "label": "封面底材",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.cover.shadow",
+      "cssVariable": "--te-playback-cover-shadow",
+      "label": "封面阴影",
+      "group": "playback",
+      "surface": "player",
+      "kind": "shadow"
+    },
+    {
+      "id": "playback.cover.radius",
+      "cssVariable": "--te-playback-cover-radius",
+      "label": "封面圆角",
+      "group": "playback",
+      "surface": "player",
+      "kind": "length"
+    },
+    {
+      "id": "playback.cover.placeholderText",
+      "cssVariable": "--te-playback-cover-placeholder-text",
+      "label": "空封面图标",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.track.title",
+      "cssVariable": "--te-playback-track-title",
+      "label": "曲目标题",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.track.artist",
+      "cssVariable": "--te-playback-track-artist",
+      "label": "曲目艺人",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.track.album",
+      "cssVariable": "--te-playback-track-album",
+      "label": "曲目专辑",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.lyrics.text",
+      "cssVariable": "--te-playback-lyric-text",
+      "label": "歌词正文",
+      "group": "playback",
+      "surface": "lyrics",
+      "kind": "color"
+    },
+    {
+      "id": "playback.lyrics.hoverText",
+      "cssVariable": "--te-playback-lyric-hover-text",
+      "label": "歌词悬浮文字",
+      "group": "playback",
+      "surface": "lyrics",
+      "kind": "color"
+    },
+    {
+      "id": "playback.lyrics.activeText",
+      "cssVariable": "--te-playback-lyric-active-text",
+      "label": "当前歌词",
+      "group": "playback",
+      "surface": "lyrics",
+      "kind": "color"
+    },
+    {
+      "id": "playback.lyrics.activeSurface",
+      "cssVariable": "--te-playback-lyric-active-surface",
+      "label": "当前歌词表面",
+      "group": "playback",
+      "surface": "lyrics",
+      "kind": "color"
+    },
+    {
+      "id": "playback.lyrics.activeBorder",
+      "cssVariable": "--te-playback-lyric-active-border",
+      "label": "当前歌词边框",
+      "group": "playback",
+      "surface": "lyrics",
+      "kind": "color"
+    },
+    {
+      "id": "playback.lyrics.activeShadow",
+      "cssVariable": "--te-playback-lyric-active-shadow",
+      "label": "当前歌词阴影",
+      "group": "playback",
+      "surface": "lyrics",
+      "kind": "shadow"
+    },
+    {
+      "id": "playback.lyrics.translation",
+      "cssVariable": "--te-playback-lyric-translation",
+      "label": "歌词翻译",
+      "group": "playback",
+      "surface": "lyrics",
+      "kind": "color"
+    },
+    {
+      "id": "playback.lyrics.translationActive",
+      "cssVariable": "--te-playback-lyric-translation-active",
+      "label": "当前歌词翻译",
+      "group": "playback",
+      "surface": "lyrics",
+      "kind": "color"
+    },
+    {
+      "id": "playback.lyrics.romanization",
+      "cssVariable": "--te-playback-lyric-romanization",
+      "label": "歌词音译",
+      "group": "playback",
+      "surface": "lyrics",
+      "kind": "color"
+    },
+    {
+      "id": "playback.lyrics.romanizationActive",
+      "cssVariable": "--te-playback-lyric-romanization-active",
+      "label": "当前歌词音译",
+      "group": "playback",
+      "surface": "lyrics",
+      "kind": "color"
+    },
+    {
+      "id": "playback.control.surface",
+      "cssVariable": "--te-playback-control-surface",
+      "label": "播放控制表面",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.control.border",
+      "cssVariable": "--te-playback-control-border",
+      "label": "播放控制边框",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.control.text",
+      "cssVariable": "--te-playback-control-text",
+      "label": "播放控制图标",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.control.hoverSurface",
+      "cssVariable": "--te-playback-control-hover-surface",
+      "label": "播放控制悬浮表面",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.control.hoverBorder",
+      "cssVariable": "--te-playback-control-hover-border",
+      "label": "播放控制悬浮边框",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.control.hoverText",
+      "cssVariable": "--te-playback-control-hover-text",
+      "label": "播放控制悬浮图标",
+      "group": "playback",
+      "surface": "player",
+      "kind": "color"
+    },
+    {
+      "id": "playback.control.hoverShadow",
+      "cssVariable": "--te-playback-control-hover-shadow",
+      "label": "播放控制悬浮阴影",
+      "group": "playback",
+      "surface": "player",
+      "kind": "shadow"
+    },
+    {
+      "id": "playback.cover.size",
+      "cssVariable": "--te-playback-cover-size",
+      "label": "播放页封面尺寸",
+      "group": "playback",
+      "surface": "artwork-player",
+      "kind": "number"
+    },
+    {
+      "id": "playback.artwork.listRadius",
+      "cssVariable": "--te-artwork-list-radius",
+      "label": "列表封面圆角",
+      "group": "playback",
+      "surface": "artwork-list",
+      "kind": "length"
+    },
+    {
+      "id": "playback.control.size",
+      "cssVariable": "--te-player-control-size",
+      "label": "控制按钮大小",
+      "group": "playback",
+      "surface": "player-controls",
+      "kind": "length"
+    },
+    {
+      "id": "playback.control.playSize",
+      "cssVariable": "--te-player-play-size",
+      "label": "播放按钮大小",
+      "group": "playback",
+      "surface": "player-controls",
+      "kind": "length"
+    },
+    {
+      "id": "playback.control.gap",
+      "cssVariable": "--te-player-control-gap",
+      "label": "控制按钮间距",
+      "group": "playback",
+      "surface": "player-controls",
+      "kind": "length"
+    },
+    {
+      "id": "playback.control.radius",
+      "cssVariable": "--te-player-control-radius",
+      "label": "控制按钮圆角",
+      "group": "playback",
+      "surface": "player-controls",
+      "kind": "length"
+    },
+    {
+      "id": "playback.control.borderWidth",
+      "cssVariable": "--te-player-control-border-width",
+      "label": "控制按钮描边",
+      "group": "playback",
+      "surface": "player-controls",
+      "kind": "length"
+    },
+    {
+      "id": "playback.progress.track",
+      "cssVariable": "--te-player-progress-track",
+      "label": "进度条轨道",
+      "group": "playback",
+      "surface": "player-progress",
+      "kind": "color"
+    },
+    {
+      "id": "playback.progress.fill",
+      "cssVariable": "--te-player-progress-fill",
+      "label": "进度条已播放",
+      "group": "playback",
+      "surface": "player-progress",
+      "kind": "gradient"
+    },
+    {
+      "id": "playback.progress.height",
+      "cssVariable": "--te-player-progress-height",
+      "label": "进度条高度",
+      "group": "playback",
+      "surface": "player-progress",
+      "kind": "length"
+    },
+    {
+      "id": "playback.progress.radius",
+      "cssVariable": "--te-player-progress-radius",
+      "label": "进度条圆角",
+      "group": "playback",
+      "surface": "player-progress",
+      "kind": "length"
+    },
+    {
+      "id": "playback.progress.thumbSize",
+      "cssVariable": "--te-player-progress-thumb-size",
+      "label": "进度滑块大小",
+      "group": "playback",
+      "surface": "player-progress",
+      "kind": "length"
+    },
+    {
+      "id": "playback.time.surface",
+      "cssVariable": "--te-player-time-surface",
+      "label": "时长背景",
+      "group": "playback",
+      "surface": "player-time",
+      "kind": "color"
+    },
+    {
+      "id": "playback.time.radius",
+      "cssVariable": "--te-player-time-radius",
+      "label": "时长背景圆角",
+      "group": "playback",
+      "surface": "player-time",
+      "kind": "length"
+    },
+    {
+      "id": "playback.time.opacity",
+      "cssVariable": "--te-player-time-opacity",
+      "label": "时长背景透明度",
+      "group": "playback",
+      "surface": "player-time",
+      "kind": "number"
+    },
+    {
+      "id": "playback.equalizer.panelSurface",
+      "cssVariable": "--te-equalizer-panel-bg",
+      "label": "均衡器面板表面",
+      "group": "playback",
+      "surface": "equalizer-panel",
+      "kind": "color"
+    },
+    {
+      "id": "playback.equalizer.panelBorder",
+      "cssVariable": "--te-equalizer-panel-border",
+      "label": "均衡器面板边框",
+      "group": "playback",
+      "surface": "equalizer-panel",
+      "kind": "color"
+    },
+    {
+      "id": "playback.equalizer.panelRadius",
+      "cssVariable": "--te-equalizer-panel-radius",
+      "label": "均衡器面板圆角",
+      "group": "playback",
+      "surface": "equalizer-panel",
+      "kind": "length"
+    },
+    {
+      "id": "playback.equalizer.sliderTrack",
+      "cssVariable": "--te-equalizer-slider-track",
+      "label": "均衡器滑轨",
+      "group": "playback",
+      "surface": "equalizer-slider",
+      "kind": "color"
+    },
+    {
+      "id": "playback.equalizer.sliderFill",
+      "cssVariable": "--te-equalizer-slider-fill",
+      "label": "均衡器滑轨填充",
+      "group": "playback",
+      "surface": "equalizer-slider",
+      "kind": "gradient"
+    },
+    {
+      "id": "playback.equalizer.sliderThumb",
+      "cssVariable": "--te-equalizer-slider-thumb",
+      "label": "均衡器滑块颜色",
+      "group": "playback",
+      "surface": "equalizer-slider",
+      "kind": "color"
+    },
+    {
+      "id": "playback.equalizer.sliderThumbSize",
+      "cssVariable": "--te-equalizer-slider-thumb-size",
+      "label": "均衡器滑块大小",
+      "group": "playback",
+      "surface": "equalizer-slider",
+      "kind": "length"
+    },
+    {
+      "id": "playback.equalizer.grid",
+      "cssVariable": "--te-equalizer-grid",
+      "label": "均衡器辅助线",
+      "group": "playback",
+      "surface": "equalizer-spectrum",
+      "kind": "color"
+    },
+    {
+      "id": "playback.equalizer.guide",
+      "cssVariable": "--te-equalizer-guide",
+      "label": "均衡器频率准线",
+      "group": "playback",
+      "surface": "equalizer-spectrum",
+      "kind": "color"
+    },
+    {
+      "id": "playback.equalizer.spectrum",
+      "cssVariable": "--te-equalizer-spectrum",
+      "label": "均衡器频谱颜色",
+      "group": "playback",
+      "surface": "equalizer-spectrum",
+      "kind": "color"
+    },
+    {
+      "id": "playback.equalizer.buttonSurface",
+      "cssVariable": "--te-equalizer-button-bg",
+      "label": "均衡器按钮表面",
+      "group": "playback",
+      "surface": "equalizer-controls",
+      "kind": "color"
+    },
+    {
+      "id": "playback.equalizer.buttonRadius",
+      "cssVariable": "--te-equalizer-button-radius",
+      "label": "均衡器按钮圆角",
+      "group": "playback",
+      "surface": "equalizer-controls",
+      "kind": "length"
+    },
+    {
+      "id": "playback.equalizer.knobSize",
+      "cssVariable": "--te-equalizer-knob-size",
+      "label": "音量面板旋钮大小",
+      "group": "playback",
+      "surface": "equalizer-controls",
+      "kind": "length"
+    },
+    {
+      "id": "motion.enter",
+      "cssVariable": "--te-ease-enter",
+      "label": "进入缓动",
+      "group": "motion",
+      "surface": "global",
+      "kind": "easing"
+    },
+    {
+      "id": "motion.soft",
+      "cssVariable": "--te-ease-soft",
+      "label": "柔和缓动",
+      "group": "motion",
+      "surface": "global",
+      "kind": "easing"
+    }
+  ],
+  "modes": [
+    {
+      "id": "appearance.accentSource",
+      "dataAttribute": "data-te-accent-source",
+      "label": "强调色来源",
+      "options": [
+        "fixed",
+        "cover"
+      ],
+      "defaultValue": "fixed"
+    },
+    {
+      "id": "appearance.backgroundTreatment",
+      "dataAttribute": "data-te-background-treatment",
+      "label": "背景处理",
+      "options": [
+        "solid",
+        "gradient",
+        "cover-blur",
+        "image"
+      ],
+      "defaultValue": "solid"
+    },
+    {
+      "id": "appearance.toneScheduling",
+      "dataAttribute": "data-te-tone-scheduling",
+      "label": "明暗调度",
+      "options": [
+        "manual",
+        "system",
+        "timed"
+      ],
+      "defaultValue": "manual"
+    },
+    {
+      "id": "appearance.contrastGuard",
+      "dataAttribute": "data-te-contrast-guard",
+      "label": "对比度保护",
+      "options": [
+        "off",
+        "warn",
+        "enforce"
+      ],
+      "defaultValue": "warn"
+    },
+    {
+      "id": "navigation.style",
+      "dataAttribute": "data-te-navigation-style",
+      "label": "导航样式",
+      "options": [
+        "expanded",
+        "compact",
+        "rail"
+      ],
+      "defaultValue": "expanded"
+    },
+    {
+      "id": "navigation.iconScale",
+      "dataAttribute": "data-te-navigation-icon-scale",
+      "label": "导航图标大小",
+      "options": [
+        "sm",
+        "md",
+        "lg"
+      ],
+      "defaultValue": "md"
+    },
+    {
+      "id": "navigation.logo",
+      "dataAttribute": "data-te-navigation-logo",
+      "label": "导航品牌标识",
+      "options": [
+        "show",
+        "hide"
+      ],
+      "defaultValue": "hide"
+    },
+    {
+      "id": "library.density",
+      "dataAttribute": "data-te-library-density",
+      "label": "媒体库密度",
+      "options": [
+        "comfortable",
+        "compact"
+      ],
+      "defaultValue": "comfortable"
+    },
+    {
+      "id": "library.selection",
+      "dataAttribute": "data-te-library-selection",
+      "label": "媒体库选中样式",
+      "options": [
+        "fill",
+        "stroke"
+      ],
+      "defaultValue": "fill"
+    },
+    {
+      "id": "library.titleOverlay",
+      "dataAttribute": "data-te-library-title-overlay",
+      "label": "媒体库标题叠层",
+      "options": [
+        "off",
+        "on"
+      ],
+      "defaultValue": "off"
+    },
+    {
+      "id": "player.layout",
+      "dataAttribute": "data-te-player-layout",
+      "label": "播放器布局",
+      "options": [
+        "standard",
+        "full-cover",
+        "lyrics-focus",
+        "split",
+        "minimal"
+      ],
+      "defaultValue": "standard"
+    },
+    {
+      "id": "player.controls",
+      "dataAttribute": "data-te-player-controls",
+      "label": "播放器控制区",
+      "options": [
+        "standard",
+        "pro"
+      ],
+      "defaultValue": "standard"
+    },
+    {
+      "id": "player.titleAlign",
+      "dataAttribute": "data-te-player-title-align",
+      "label": "播放器标题对齐",
+      "options": [
+        "left",
+        "center"
+      ],
+      "defaultValue": "left"
+    },
+    {
+      "id": "player.progress",
+      "dataAttribute": "data-te-player-progress",
+      "label": "播放器进度样式",
+      "options": [
+        "line",
+        "ring",
+        "solid",
+        "spectrum"
+      ],
+      "defaultValue": "line"
+    },
+    {
+      "id": "artwork.transition",
+      "dataAttribute": "data-te-artwork-transition",
+      "label": "封面过渡",
+      "options": [
+        "fade",
+        "slide",
+        "none"
+      ],
+      "defaultValue": "fade"
+    },
+    {
+      "id": "artwork.shadow",
+      "dataAttribute": "data-te-artwork-shadow",
+      "label": "封面阴影",
+      "options": [
+        "on",
+        "off"
+      ],
+      "defaultValue": "on"
+    },
+    {
+      "id": "equalizer.panel",
+      "dataAttribute": "data-te-equalizer-panel",
+      "label": "均衡器面板",
+      "options": [
+        "neutral",
+        "tinted",
+        "glass"
+      ],
+      "defaultValue": "neutral"
+    },
+    {
+      "id": "equalizer.slider",
+      "dataAttribute": "data-te-equalizer-slider",
+      "label": "均衡器滑块",
+      "options": [
+        "ring",
+        "solid"
+      ],
+      "defaultValue": "ring"
+    },
+    {
+      "id": "equalizer.knob",
+      "dataAttribute": "data-te-equalizer-knob",
+      "label": "均衡器旋钮指示",
+      "options": [
+        "line",
+        "dot"
+      ],
+      "defaultValue": "line"
+    },
+    {
+      "id": "equalizer.spectrum",
+      "dataAttribute": "data-te-equalizer-spectrum",
+      "label": "均衡器频谱",
+      "options": [
+        "bars",
+        "line",
+        "area"
+      ],
+      "defaultValue": "line"
+    },
+    {
+      "id": "equalizer.button",
+      "dataAttribute": "data-te-equalizer-button",
+      "label": "均衡器按钮",
+      "options": [
+        "soft",
+        "outline",
+        "solid"
+      ],
+      "defaultValue": "soft"
+    },
+    {
+      "id": "icons.family",
+      "dataAttribute": "data-te-icon-family",
+      "label": "图标族",
+      "options": [
+        "outline",
+        "rounded",
+        "filled"
+      ],
+      "defaultValue": "outline"
+    },
+    {
+      "id": "typography.titleCase",
+      "dataAttribute": "data-te-title-case",
+      "label": "标题字形",
+      "options": [
+        "preserve",
+        "uppercase"
+      ],
+      "defaultValue": "preserve"
+    },
+    {
+      "id": "typography.lyricAccent",
+      "dataAttribute": "data-te-lyric-accent",
+      "label": "歌词强调高亮",
+      "options": [
+        "off",
+        "accent"
+      ],
+      "defaultValue": "off"
+    },
+    {
+      "id": "typography.titleColor",
+      "dataAttribute": "data-te-title-color",
+      "label": "自适应标题颜色",
+      "options": [
+        "off",
+        "track",
+        "artist-album"
+      ],
+      "defaultValue": "off"
+    }
+  ],
+  "visibility": [
+    "playerAlbumArtist",
+    "playerArtwork",
+    "playerTrackMenu",
+    "playerMiscIcons",
+    "playerDuration",
+    "playerWaveform",
+    "playerTrackInfo",
+    "equalizerGrid",
+    "equalizerFrequencyGuides",
+    "equalizerSpectrum",
+    "previousButton",
+    "nextButton",
+    "miniPlayerArtwork"
+  ]
+}

@@ -1,4 +1,4 @@
-export const TWILIGHT_PLUGIN_API_VERSION = 1 as const
+export const TWILIGHT_PLUGIN_API_VERSION = 2 as const
 export const TAE_DSP_PLUGIN_ABI_VERSION = 1 as const
 export const TAE_DSP_PLUGIN_ABI_VERSION_V2 = 2 as const
 
@@ -514,23 +514,86 @@ export interface TwilightThemeContribution {
   description?: string
   variables?: Record<string, string>
   stylesheet?: string
-  structured?: TwilightStructuredThemeV1
+  structured?: TwilightStructuredTheme
+  compatibilityNotes?: string[]
+}
+
+export type TwilightThemeTone = 'pureWhite' | 'dark'
+export type TwilightThemeVisibilitySlot =
+  | 'playerAlbumArtist'
+  | 'playerArtwork'
+  | 'playerTrackMenu'
+  | 'playerMiscIcons'
+  | 'playerDuration'
+  | 'playerWaveform'
+  | 'playerTrackInfo'
+  | 'equalizerGrid'
+  | 'equalizerFrequencyGuides'
+  | 'equalizerSpectrum'
+  | 'previousButton'
+  | 'nextButton'
+  | 'miniPlayerArtwork'
+
+export interface TwilightThemeModesV2 {
+  appearance?: {
+    accentSource?: 'fixed' | 'cover'
+    backgroundTreatment?: 'solid' | 'gradient' | 'cover-blur' | 'image'
+    toneScheduling?: 'manual' | 'system' | 'timed'
+    contrastGuard?: 'off' | 'warn' | 'enforce'
+  }
+  navigation?: {
+    style?: 'expanded' | 'compact' | 'rail'
+    iconScale?: 'sm' | 'md' | 'lg'
+    logo?: 'show' | 'hide'
+  }
+  library?: {
+    density?: 'comfortable' | 'compact'
+    selection?: 'fill' | 'stroke'
+    titleOverlay?: 'off' | 'on'
+  }
+  player?: {
+    layout?: 'standard' | 'full-cover' | 'lyrics-focus' | 'split' | 'minimal'
+    controls?: 'standard' | 'pro'
+    titleAlign?: 'left' | 'center'
+    progress?: 'line' | 'ring' | 'solid' | 'spectrum'
+  }
+  artwork?: {
+    transition?: 'fade' | 'slide' | 'none'
+    shadow?: 'on' | 'off'
+  }
+  equalizer?: {
+    panel?: 'neutral' | 'tinted' | 'glass'
+    slider?: 'ring' | 'solid'
+    knob?: 'line' | 'dot'
+    spectrum?: 'bars' | 'line' | 'area'
+    button?: 'soft' | 'outline' | 'solid'
+  }
+  icons?: { family?: 'outline' | 'rounded' | 'filled' }
+  typography?: {
+    titleCase?: 'preserve' | 'uppercase'
+    lyricAccent?: 'off' | 'accent'
+    titleColor?: 'off' | 'track' | 'artist-album'
+  }
+  visibility?: Partial<Record<TwilightThemeVisibilitySlot, boolean>>
 }
 
 export interface TwilightStructuredThemeV1 {
   schemaVersion: 1
-  variants: Partial<Record<'pureWhite' | 'dark', { tokens?: Record<string, string> }>>
+  variants: Partial<Record<TwilightThemeTone, { tokens?: Record<string, string> }>>
   windowDefaults?: {
     miniPlayer?: {
+      surfaceColor?: string
       accentColor?: string
       primaryTextColor?: string
       mutedTextColor?: string
+      fontFamily?: string
       surfaceOpacity?: number
       glassBlur?: number
       cornerRadius?: number
       borderWidth?: number
       borderColor?: string
       shadowStrength?: number
+      shadowColor?: string
     }
     desktopLyrics?: {
       fontFamily?: string
@@ -546,6 +609,16 @@ export interface TwilightStructuredThemeV1 {
     }
   }
 }
+
+export interface TwilightStructuredThemeV2 extends Omit<
+  TwilightStructuredThemeV1,
+  'schemaVersion'
+> {
+  schemaVersion: 2
+  modes?: TwilightThemeModesV2
+}
+
+export type TwilightStructuredTheme = TwilightStructuredThemeV1 | TwilightStructuredThemeV2
 
 export interface TwilightThemesApi {
   /** @deprecated Themes must be declared in plugin.json contributes.themes. This call rejects. */

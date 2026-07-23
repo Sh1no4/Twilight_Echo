@@ -143,6 +143,12 @@ Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playe
 `windowDefaults`。原有 `variables + stylesheet` 字段不改名、不撤回；结构化字段只覆盖
 登记令牌，stylesheet 仍是可使用自定义选择器的高级兼容路径，但不承诺跨版本布局兼容。
 
+插件 API v2 允许 `structured.schemaVersion: 2` 在上述字段之外追加 `modes`。每个 mode ID、
+值与可见性槽必须来自宿主注册表；未知 ID 或值独立忽略，写入所属插件日志，并作为 Theme
+Studio 兼容提示返回。API v1 不接受 schemaVersion 2，不能通过回填字段改变已冻结的 v1
+语义。API v2 仍接受 schemaVersion 1，`variables + stylesheet` 也继续兼容。完整机器可读目录
+随 `@twilight-echo/plugin-api` 的 `theme-contract.json` 分发。
+
 ### 4.5 多音源数据模型
 
 - 曲目 ID 必须带 provider 前缀（如 `ncm:12345`、`local:<hash>`）。
@@ -238,7 +244,7 @@ Phase 3 的受控 UI 注入只渲染宿主批准的 DTO：`sidebarPage`、`playe
 
 ### 7.5 Phase 5 本地可发布生态形态
 
-- `@twilight-echo/plugin-api` 是开发者侧权威 typings 包，API v1 类型从这里导出；宿主内部实现可复用自身类型，但不得改变 v1 语义。
+- `@twilight-echo/plugin-api` 是开发者侧权威 typings 包，API v1 与 v2 类型从这里导出；宿主内部实现可复用自身类型，但不得改变 v1 语义。
 - `create-twilight-plugin` 提供 `init` 与 `pack`：模板覆盖 `tool`、`provider`、`ui-tool`、`theme`；`pack` 产物为 `.tep` zip，根目录必须包含 `plugin.json`。
 - 官方索引为远程 `plugins.json`，当前 schemaVersion 固定为 `1`。索引 entry 复用 manifest 字段，并增加 `sourceUrl`、`checksumSha256`、`tags`、`verified` 与 `publisherSignature`。为兼容 API v1 保留 `verified`，但它严格表示“索引发布者声明已审核”，自定义索引、缓存索引和离线索引中的 `verified: true` 最多显示为“索引声明”。
 - `publisherSignature` 格式固定为 `{ schemaVersion: 1, algorithm: "ed25519", keyId, value }`，其中 `value` 是 canonical base64 编码的 64-byte Ed25519 签名。签名 payload 是 canonical JSON：`{ schemaVersion: 1, indexOrigin, entry }`；`entry` 包含规范化后的完整 manifest、`sourceUrl`、`checksumSha256`、`tags` 和 `verified`，只排除 `publisherSignature` 及宿主派生的 `verification` / `installState` / `installedVersion`。manifest 的 nested `main` / `icon` / `binary.*` 路径必须先按 POSIX `/` canonicalize，因此 Windows host 与 Linux signer 产生完全相同的 bytes。修改来源 URL、checksum、审核声明、路径或任一 manifest 字段都会使签名失效。

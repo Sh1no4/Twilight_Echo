@@ -34,7 +34,7 @@ import {
 } from './packageSecurity.ts'
 import { redactSensitiveText } from '../security/secureStorage.ts'
 import { protectProviderMedia } from '../security/remoteMediaGrants.ts'
-import { normalizeStructuredPluginTheme } from '../../shared/theme.ts'
+import { normalizeThemeContribution } from './themeContribution.ts'
 import type {
   PluginHostApiResult,
   PluginHostRequest,
@@ -228,6 +228,7 @@ export class TwilightPluginManager extends EventEmitter {
   private readonly providerHealth = new Map<string, ProviderHealthRecord>()
   private readonly stopOperations = new Map<string, Promise<void>>()
   private readonly internalNcmRequests = new Map<string, AbortController>()
+  private readonly loggedThemeCompatibilityNotes = new Set<string>()
   /**
    * Every state-changing lifecycle action for one plugin shares this queue.
    * Staging may happen before the manifest id is known, but no installed
@@ -867,6 +868,7 @@ export class TwilightPluginManager extends EventEmitter {
   }
 
   private async trialActivatePlugin(candidate: TwilightPluginDescriptor): Promise<void> {
+    this.normalizeDeclarativeThemeContributions(candidate)
     await trialStagedPluginCandidate({
       candidate,
       listActiveDescriptors: () => this.list(),
@@ -1501,32 +1503,26 @@ export class TwilightPluginManager extends EventEmitter {
     raw: unknown,
     source: string
   ): TwilightThemeContribution {
-    if (!descriptor.type.includes('theme')) {
-      throw new Error('只有 theme 类型插件可以注册主题')
-    }
-    if (!raw || typeof raw !== 'object') throw new Error(`${source} 注册信息必须是对象`)
-    const record = raw as Record<string, unknown>
-    const id = normalizeContributionId(record.id)
-    const name = normalizeText(record.name, '主题名称必填')
-    const variables =
-      record.variables && typeof record.variables === 'object'
-        ? normalizeCssVariables(record.variables as Record<string, unknown>)
-        : undefined
-    const stylesheet =
-      typeof record.stylesheet === 'string' && record.stylesheet.trim()
-        ? this.resolveThemeStylesheet(descriptor, record.stylesheet.trim())
-        : undefined
-    const structured = normalizeStructuredPluginTheme(record.structured)
-    if (!variables && !stylesheet && !structured) {
-      throw new Error('主题必须声明 variables、stylesheet 或 structured')
-    }
-    return {
-      id,
-      name,
-      description: typeof record.description === 'string' ? record.description.trim() : undefined,
-      variables,
-      stylesheet,
-      structured
+    const contribution = normalizeThemeContribution({
+      pluginApiVersion: descriptor.apiVersion,
+      pluginTypes: descriptor.type,
+      raw,
+      source,
+      resolveStylesheet: (stylesheet) => this.resolveThemeStylesheet(descriptor, stylesheet)
+    })
+    this.recordThemeCompatibilityNotes(descriptor, contribution)
+    return contribution
+  }
+
+  private recordThemeCompatibilityNotes(
+    descriptor: TwilightPluginDescriptor,
+    contribution: TwilightThemeContribution
+  ): void {
+    for (const note of contribution.compatibilityNotes ?? []) {
+      const key = `${descriptor.id}@${descriptor.version}:${contribution.id}:${note}`
+      if (this.loggedThemeCompatibilityNotes.has(key)) continue
+      this.loggedThemeCompatibilityNotes.add(key)
+      this.appendLog(descriptor, 'warn', `Theme ${contribution.id}: ${note}`)
     }
   }
 
@@ -2164,16 +2160,4 @@ function normalizeNullableString(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const normalized = value.trim()
   return normalized ? normalized.slice(0, 500) : null
-}
-
-function normalizeCssVariables(raw: Record<string, unknown>): Record<string, string> {
-  const variables: Record<string, string> = {}
-  for (const [key, value] of Object.entries(raw)) {
-    if (!/^--te-[a-z0-9-_]+$/.test(key)) continue
-    if (typeof value !== 'string') continue
-    const normalized = value.trim()
-    if (!normalized || /url\s*\(|@import|expression\s*\(/i.test(normalized)) continue
-    variables[key] = normalized.slice(0, 240)
-  }
-  return variables
 }

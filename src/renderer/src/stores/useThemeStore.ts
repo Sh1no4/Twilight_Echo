@@ -9,7 +9,6 @@ import {
   ensureThemeTextContrast,
   getBuiltInThemePreset,
   isBuiltInThemePresetId,
-  normalizeThemeTokenOverrides,
   resolveScheduledThemeTone,
   resolveThemeProfileModes,
   resolveThemeProfileTokens,
@@ -26,6 +25,7 @@ import {
   type ThemeWindowInheritance
 } from '../../../shared/theme.ts'
 import { useExtensionRegistry, type ThemeContribution } from '../extensions/registry'
+import { resolvePluginThemeRuntimeContract } from '../extensions/pluginThemeRuntime'
 import { getPluginThemeKey } from '../extensions/themeSelection'
 
 const STYLE_ID = 'twilight-theme-runtime'
@@ -158,7 +158,16 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
   let assetStylesheet = ''
   const selection = previewSelection.value ?? snapshot.value?.data.activeTheme
   const selectedProfile = getSelectedProfile(selection)
-  const modes = resolveThemeProfileModes(selectedProfile)
+  let selectedPluginTheme: ThemeContribution | null = null
+  let modes = resolveThemeProfileModes(selectedProfile)
+  if (!selectedProfile && selection?.kind === 'plugin') {
+    const registry = useExtensionRegistry()
+    if (syncPluginExtensions) await registry.syncExtensions()
+    selectedPluginTheme = resolvePluginTheme(registry.themeContributions.value, selection)
+    if (selectedPluginTheme) {
+      modes = resolvePluginThemeRuntimeContract(selectedPluginTheme, resolveTone()).modes
+    }
+  }
   const tone = resolveRuntimeTone(selectedProfile, modes)
   if (selectedProfile) {
     await assertProfileAssetsAvailable(selectedProfile)
@@ -175,9 +184,7 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
     applyProfileModeVariables(modes, tone, resolvedTokens, variables)
   } else {
     if (selection?.kind === 'plugin') {
-      const registry = useExtensionRegistry()
-      if (syncPluginExtensions) await registry.syncExtensions()
-      const contribution = resolvePluginTheme(registry.themeContributions.value, selection)
+      const contribution = selectedPluginTheme
       if (!contribution) {
         if (previewSelection.value) throw new Error('当前插件主题不可用')
         return {
@@ -187,19 +194,10 @@ async function buildThemeRuntimeState(syncPluginExtensions: boolean): Promise<Th
           tone
         }
       }
-      if (contribution.structured) {
-        Object.assign(
-          variables,
-          themeTokensToCssVariables(TWILIGHT_DEFAULT_THEME.variants[tone].tokens)
-        )
-      }
-      Object.assign(variables, contribution.variables ?? {})
-      const structuredTokens = contribution.structured?.variants[tone]?.tokens
-      if (structuredTokens) {
-        Object.assign(
-          variables,
-          themeTokensToCssVariables(normalizeThemeTokenOverrides(structuredTokens))
-        )
+      const contract = resolvePluginThemeRuntimeContract(contribution, tone)
+      Object.assign(variables, contract.variables)
+      if (contract.usesStructuredModes) {
+        applyProfileModeVariables(modes, tone, contract.resolvedTokens, variables)
       }
       if (contribution.stylesheet) {
         stylesheet = await window.api.extensions.readThemeStylesheet(contribution.stylesheet)

@@ -100,6 +100,10 @@ arbitrary renderer DOM access. Theme plugins register CSS variables and/or one
 packaged stylesheet; users explicitly choose one plugin theme in appearance
 settings before it is applied.
 
+Plugin API v2 extends declarative themes with `structured.schemaVersion: 2` and host-registered
+`modes`. Unknown IDs and values are ignored with compatibility notes. API v1 `variables`, packaged
+stylesheets, and structured schemaVersion 1 remain valid and unchanged.
+
 Phase 4 implements native DSP C ABI loading for Twilight Echo DSP plugins.
 Native DSP plugins are loaded through the audio engine plugin registry, appear
 in a separate risk-marked management section, and can be enabled or disabled
@@ -192,9 +196,9 @@ int, float, and enum controls.
 
 Twilight Echo ships local-publishable ecosystem tooling:
 
-- `@twilight-echo/plugin-api` exports the authoritative API v1 typings for
+- `@twilight-echo/plugin-api` exports the authoritative API v1 and v2 typings for
   manifests, lifecycle context, providers, events, UI/theme contributions, and
-  native DSP diagnostics.
+  native DSP diagnostics. Its `theme-contract.json` is the machine-readable public theme catalog.
 - `create-twilight-plugin` scaffolds `tool`, `provider`, `ui-tool`, and `theme`
   plugins, then packages any valid plugin root as a `.tep` archive.
 - `plugins.json` is a schemaVersion 1 index. Entries repeat the plugin

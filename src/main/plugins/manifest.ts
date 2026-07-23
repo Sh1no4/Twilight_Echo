@@ -1,11 +1,10 @@
 import { posix, win32 } from 'path'
-import type {
-  TwilightPluginManifest,
-  TwilightPluginPermission,
-  TwilightPluginType
-} from './types'
-
-const TWILIGHT_PLUGIN_API_VERSION = 1
+import {
+  TWILIGHT_PLUGIN_API_VERSION,
+  type TwilightPluginManifest,
+  type TwilightPluginPermission,
+  type TwilightPluginType
+} from './types.ts'
 const PLUGIN_TYPES = ['provider', 'tool', 'ui', 'theme', 'dsp'] as const
 const PLUGIN_PERMISSIONS = [
   'network',
@@ -125,11 +124,24 @@ function setCanonicalPath(
   else delete target[key]
 }
 
-function hasDeclarativeThemeContribution(raw: Record<string, unknown>, type: TwilightPluginType[]): boolean {
+function hasDeclarativeThemeContribution(
+  raw: Record<string, unknown>,
+  type: TwilightPluginType[]
+): boolean {
   if (!type.includes('theme')) return false
   const contributes = raw.contributes
   if (!isRecord(contributes)) return false
   return Array.isArray(contributes.themes) && contributes.themes.length > 0
+}
+
+function validateThemeSchemaVersion(raw: Record<string, unknown>, apiVersion: number): void {
+  if (!isRecord(raw.contributes) || !Array.isArray(raw.contributes.themes)) return
+  for (const contribution of raw.contributes.themes) {
+    if (!isRecord(contribution) || !isRecord(contribution.structured)) continue
+    if (contribution.structured.schemaVersion === 2 && apiVersion < 2) {
+      throw new Error('structured schemaVersion 2 需要 plugin.json apiVersion 2')
+    }
+  }
 }
 
 function normalizeDependencies(value: unknown): Record<string, string> | undefined {
@@ -175,8 +187,11 @@ export function validatePluginManifest(raw: unknown): TwilightPluginManifest {
     throw new Error('plugin.json 字段 apiVersion 必须是正整数')
   }
   if (normalizedApiVersion > TWILIGHT_PLUGIN_API_VERSION) {
-    throw new Error(`插件 API 版本 ${normalizedApiVersion} 高于宿主支持版本 ${TWILIGHT_PLUGIN_API_VERSION}`)
+    throw new Error(
+      `插件 API 版本 ${normalizedApiVersion} 高于宿主支持版本 ${TWILIGHT_PLUGIN_API_VERSION}`
+    )
   }
+  validateThemeSchemaVersion(raw, normalizedApiVersion)
 
   const type = normalizeTypes(raw.type)
   const canonicalPaths = canonicalizePluginManifestPaths(raw)

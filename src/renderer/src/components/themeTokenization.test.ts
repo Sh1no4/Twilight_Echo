@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { THEME_TOKEN_DEFINITIONS } from '../../../shared/theme.ts'
+import {
+  THEME_MODE_DEFINITIONS,
+  THEME_TOKEN_DEFINITIONS,
+  THEME_VISIBILITY_SLOT_IDS
+} from '../../../shared/theme.ts'
 
 const playingMusic = readFileSync(new URL('./PlayingMusic.vue', import.meta.url), 'utf8')
 const playerBarComponent = readFileSync(new URL('./PlayerBar.vue', import.meta.url), 'utf8')
@@ -32,6 +36,10 @@ const settingsStyle = readFileSync(
   'utf8'
 )
 const themeStore = readFileSync(new URL('../stores/useThemeStore.ts', import.meta.url), 'utf8')
+const pluginThemeRuntime = readFileSync(
+  new URL('../extensions/pluginThemeRuntime.ts', import.meta.url),
+  'utf8'
+)
 const playerStore = readFileSync(new URL('../stores/usePlayerStore.ts', import.meta.url), 'utf8')
 const preload = readFileSync(new URL('../../../preload/index.ts', import.meta.url), 'utf8')
 const themeIpc = readFileSync(new URL('../../../main/ipc/themes.ts', import.meta.url), 'utf8')
@@ -48,6 +56,33 @@ const settingsBackup = readFileSync(
   'utf8'
 )
 const pluginIpc = readFileSync(new URL('../../../main/ipc/plugins.ts', import.meta.url), 'utf8')
+const pluginThemeContribution = readFileSync(
+  new URL('../../../main/plugins/themeContribution.ts', import.meta.url),
+  'utf8'
+)
+const pluginApi = readFileSync(
+  new URL('../../../../packages/plugin-api/src/index.ts', import.meta.url),
+  'utf8'
+)
+const pluginThemeTemplate = readFileSync(
+  new URL(
+    '../../../../packages/create-twilight-plugin/templates/theme/plugin.json.tmpl',
+    import.meta.url
+  ),
+  'utf8'
+)
+const pluginThemeContract = JSON.parse(
+  readFileSync(
+    new URL('../../../../packages/plugin-api/theme-contract.json', import.meta.url),
+    'utf8'
+  )
+) as {
+  pluginApiVersion: number
+  structuredThemeSchemaVersion: number
+  tokens: Array<{ id: string }>
+  modes: Array<{ id: string }>
+  visibility: string[]
+}
 
 test('every registered playback token is wired into a real playback or DSP surface', () => {
   const playbackVariables = THEME_TOKEN_DEFINITIONS.filter(
@@ -217,6 +252,31 @@ test('phase five presets, recovery, window inheritance, and contextual entries s
   assert.match(settingsBackup, /themeLibrary/)
   assert.match(themeIpc, /restoreThemeLibraryFromBackup/)
   assert.match(themeIpc, /reconcileThemeAfterPluginChange\(\)/)
+})
+
+test('phase six plugin theme modes are API v2, host-owned, and compatibility-reporting', () => {
+  assert.match(pluginApi, /TWILIGHT_PLUGIN_API_VERSION = 2/)
+  assert.match(pluginApi, /interface TwilightStructuredThemeV2/)
+  assert.match(pluginThemeTemplate, /"apiVersion": 2/)
+  assert.match(pluginThemeTemplate, /"schemaVersion": 2/)
+  assert.match(pluginThemeContribution, /pluginApiVersion < 2/)
+  assert.match(pluginThemeContribution, /findUnsupportedThemeModeIds/)
+  assert.match(pluginThemeRuntime, /structured\?\.schemaVersion === 2/)
+  assert.match(pluginThemeRuntime, /resolveThemeModes/)
+  assert.match(themeStore, /resolvePluginThemeRuntimeContract/)
+  assert.match(studio, /profile\.modes = normalizeThemeModes/)
+  assert.match(studio, /selectedPluginTheme\?\.compatibilityNotes/)
+  assert.equal(pluginThemeContract.pluginApiVersion, 2)
+  assert.equal(pluginThemeContract.structuredThemeSchemaVersion, 2)
+  assert.deepEqual(
+    pluginThemeContract.tokens.map(({ id }) => id),
+    THEME_TOKEN_DEFINITIONS.map(({ id }) => id)
+  )
+  assert.deepEqual(
+    pluginThemeContract.modes.map(({ id }) => id),
+    THEME_MODE_DEFINITIONS.map(({ id }) => id)
+  )
+  assert.deepEqual(pluginThemeContract.visibility, THEME_VISIBILITY_SLOT_IDS)
 })
 
 test('preview and failed writes restore the persisted runtime without partially committing assets', () => {

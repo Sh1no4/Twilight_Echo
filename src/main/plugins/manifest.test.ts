@@ -41,7 +41,10 @@ test('rejects unknown permissions and plugin types', () => {
     () => validatePluginManifest({ ...validManifest, permissions: ['danger'] }),
     /未知权限/
   )
-  assert.throws(() => validatePluginManifest({ ...validManifest, type: ['source'] }), /未知插件类型/)
+  assert.throws(
+    () => validatePluginManifest({ ...validManifest, type: ['source'] }),
+    /未知插件类型/
+  )
 })
 
 test('requires binary for DSP plugins', () => {
@@ -70,7 +73,10 @@ test('requires native permission for DSP plugins', () => {
 })
 
 test('requires either executable entry or declarative theme contribution', () => {
-  assert.throws(() => validatePluginManifest({ ...validManifest, main: undefined }), /main 或 binary/)
+  assert.throws(
+    () => validatePluginManifest({ ...validManifest, main: undefined }),
+    /main 或 binary/
+  )
   const manifest = validatePluginManifest({
     ...validManifest,
     id: 'com.example.declarative-theme',
@@ -128,14 +134,8 @@ test('rejects paths outside plugin root', () => {
     'assets/illegal\0file'
   ]
   for (const path of rejectedPaths) {
-    assert.throws(
-      () => validatePluginManifest({ ...validManifest, main: path }),
-      /目录外|空字符/
-    )
-    assert.throws(
-      () => validatePluginManifest({ ...validManifest, icon: path }),
-      /目录外|空字符/
-    )
+    assert.throws(() => validatePluginManifest({ ...validManifest, main: path }), /目录外|空字符/)
+    assert.throws(() => validatePluginManifest({ ...validManifest, icon: path }), /目录外|空字符/)
     assert.throws(
       () =>
         validatePluginManifest({
@@ -192,7 +192,58 @@ test('normalizes nested main, icon, and binary paths to a platform-independent P
 })
 
 test('rejects future plugin API versions', () => {
-  assert.throws(() => validatePluginManifest({ ...validManifest, apiVersion: 99 }), /高于宿主支持版本/)
+  assert.throws(
+    () => validatePluginManifest({ ...validManifest, apiVersion: 99 }),
+    /高于宿主支持版本/
+  )
+})
+
+test('accepts plugin API v2 declarative theme modes', () => {
+  const manifest = validatePluginManifest({
+    ...validManifest,
+    id: 'com.example.mode-theme',
+    type: ['theme'],
+    main: undefined,
+    apiVersion: 2,
+    permissions: [],
+    contributes: {
+      themes: [
+        {
+          id: 'mode-theme',
+          name: 'Mode Theme',
+          structured: {
+            schemaVersion: 2,
+            variants: {},
+            modes: { navigation: { style: 'rail' } }
+          }
+        }
+      ]
+    }
+  })
+  assert.equal(manifest.apiVersion, 2)
+})
+
+test('rejects structured theme v2 under plugin API v1', () => {
+  assert.throws(
+    () =>
+      validatePluginManifest({
+        ...validManifest,
+        id: 'com.example.invalid-mode-theme',
+        type: ['theme'],
+        main: undefined,
+        permissions: [],
+        contributes: {
+          themes: [
+            {
+              id: 'invalid-mode-theme',
+              name: 'Invalid Mode Theme',
+              structured: { schemaVersion: 2, variants: {}, modes: {} }
+            }
+          ]
+        }
+      }),
+    /apiVersion 2/
+  )
 })
 
 test('accepts valid plugin dependencies', () => {

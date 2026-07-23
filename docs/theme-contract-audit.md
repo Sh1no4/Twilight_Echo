@@ -1,6 +1,6 @@
 # Twilight Echo Theme Contract Audit
 
-Status: Phase 0 baseline, with Phase 1 through Phase 5 behavior frozen.
+Status: Phase 0 baseline, with Phase 1 through Phase 6 behavior frozen.
 
 ## Contract Rules
 
@@ -11,8 +11,10 @@ Status: Phase 0 baseline, with Phase 1 through Phase 5 behavior frozen.
 - Unknown profile or archive versions are not rewritten. The active selection falls back to the
   built-in theme and the original file remains available for recovery.
 - Modes are host-owned enum IDs. Profiles never contain CSS, selectors, HTML, or scripts.
-- Plugin theme v1 keeps its existing `variables + stylesheet + structured` semantics. Plugin modes
-  are explicitly deferred to Phase 6.
+- Plugin theme v1 keeps its existing `variables + stylesheet + structured` semantics. Plugin API v2
+  adds structured schemaVersion 2 modes without changing v1 input or runtime behavior.
+- Plugin modes are normalized through the host registry. Unknown IDs or values are ignored, logged
+  once for the owning plugin, and returned to Theme Studio as compatibility notes.
 - Removed tokens remain readable for one compatibility cycle, are omitted from new UI, and emit a
   migration note before deletion in a later schema version.
 - User profile count remains capped at `MAX_USER_THEME_PROFILES = 32`.
@@ -155,6 +157,24 @@ repository has a stable Electron screenshot harness.
 - `test:themes` (43/43), `test:local-perf` (99 passed, 2 skipped), `test:lyrics-management` (64/64),
   the focused backup/window tests (13/13), ESLint, the production build, and both TypeScript
   typechecks pass. Validation used raw CDP and did not use Computer Use.
+
+### Phase 6 Evidence
+
+- `audit-evidence/theme-p6-light.png` and `audit-evidence/theme-p6-dark.png` capture an isolated real
+  Electron instance with a pure plugin API v2 theme selected. The audit fixture and user-data
+  directory were removed after validation; the user's existing dev instance was not stopped.
+- The v2 contribution applied registered `rail`, `split`, `pro`, `filled`, and
+  `playerDuration=false` modes. The dark primary and app surface resolved to `#5eead4` and `#07090a`.
+- An unknown `futureDomain` was omitted from the normalized contribution, written once to the plugin
+  log, and rendered by Theme Studio as a compatibility note.
+- Raw CDP checked 1495×883, 1200×800, and 1080×720 with no document/workspace overflow or overlap
+  between the domain, editor, and real preview panes.
+- The committed `theme-contract.json` is generated from the token/mode/visibility registries and is
+  checked for exact ordering and content by `test:themes`.
+- `test:themes` (47/47), `test:plugin-tooling` (7/7), the focused manager contract (21/21), plugin API
+  type build, ESLint, both TypeScript typechecks, the production build, and renderer budgets pass.
+  Full `test:plugins` has one unchanged NCM cache-path assertion failure outside the theme contract.
+  Validation used raw CDP and did not use Computer Use.
 
 ## Color Baseline
 
