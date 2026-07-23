@@ -39,6 +39,14 @@ const themeArchive = readFileSync(
   new URL('../../../main/themes/themeArchive.ts', import.meta.url),
   'utf8'
 )
+const windowInheritance = readFileSync(
+  new URL('../../../main/themes/windowInheritance.ts', import.meta.url),
+  'utf8'
+)
+const settingsBackup = readFileSync(
+  new URL('../../../main/core/settingsBackup.ts', import.meta.url),
+  'utf8'
+)
 const pluginIpc = readFileSync(new URL('../../../main/ipc/plugins.ts', import.meta.url), 'utf8')
 
 test('every registered playback token is wired into a real playback or DSP surface', () => {
@@ -190,6 +198,25 @@ test('phase four player layouts, controls, equalizer modes, and visibility stay 
   assert.match(equalizer, /data-te-visible-equalizer-spectrum='false'/)
   assert.match(dspRack, /data-te-equalizer-button='solid'/)
   assert.doesNotMatch(playingMusic, /usePlaybackQueueStore/)
+})
+
+test('phase five presets, recovery, window inheritance, and contextual entries stay declarative', () => {
+  assert.match(studio, /BUILT_IN_THEME_PRESETS/)
+  assert.match(studio, /class="preset-gallery"/)
+  assert.match(studio, /derivePreset/)
+  assert.match(studio, /persistedHistory/)
+  assert.match(studio, /restoreVersion/)
+  assert.match(studio, /resetAll/)
+  assert.match(studio, /独立窗口/)
+  assert.match(studio, /updateWindowDefault/)
+  assert.match(songListView, /定制此区域外观/)
+  assert.match(playingMusic, /定制此区域外观/)
+  assert.match(windowInheritance, /surfaceColor/)
+  assert.match(windowInheritance, /fontFamily/)
+  assert.match(windowInheritance, /shadowColor/)
+  assert.match(settingsBackup, /themeLibrary/)
+  assert.match(themeIpc, /restoreThemeLibraryFromBackup/)
+  assert.match(themeIpc, /reconcileThemeAfterPluginChange\(\)/)
 })
 
 test('preview and failed writes restore the persisted runtime without partially committing assets', () => {

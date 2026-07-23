@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import {
   createDefaultThemeLibraryDocument,
   type ThemeLibrarySnapshot,
+  type ThemeLibraryDocument,
   type ThemeProfileV2,
   type ThemeSelection,
   type ThemeWindowInheritance
@@ -55,6 +56,13 @@ export async function setThemeWindowInheritance(
   expectedRevision: number
 ): Promise<ThemeLibrarySnapshot> {
   return await getRepository().setWindowInheritance(inheritance, expectedRevision)
+}
+
+export async function replaceThemeLibrary(
+  document: ThemeLibraryDocument,
+  expectedRevision: number
+): Promise<ThemeLibrarySnapshot> {
+  return await getRepository().replaceDocument(document, expectedRevision)
 }
 
 export function resetThemeLibraryStoreForTests(): void {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
+  BUILT_IN_THEME_PRESETS,
   BUILT_IN_THEME_FONTS,
   DEFAULT_THEME_TONE_SCHEDULE,
   THEME_ACCENT_PALETTES,
@@ -9,19 +10,25 @@ import {
   TWILIGHT_DEFAULT_THEME,
   TWILIGHT_DEFAULT_THEME_ID,
   createThemeAccentTokenOverrides,
+  getBuiltInThemePreset,
   normalizeThemeTokenOverrides,
   normalizeThemeTokenValue,
   resolveThemeProfileModes,
+  resolveThemeProfileTokens,
+  resolveThemeProfileWindowDefaults,
   themeContrastRatio,
+  type BuiltInThemePresetId,
   type ThemeAssetBindings,
   type ThemeAssetType,
   type ThemeModes,
   type ThemePlayerLayout,
+  type ThemeProfileHistoryEntry,
   type ThemeProfileV2,
   type ThemeSelection,
   type ThemeTokenDefinition,
   type ThemeTone,
-  type ThemeVisibilitySlotId
+  type ThemeVisibilitySlotId,
+  type ThemeWindowDefaults
 } from '../../../shared/theme.ts'
 import { useExtensionRegistry, type ThemeContribution } from '../extensions/registry'
 import { getPluginThemeKey } from '../extensions/themeSelection'
@@ -33,23 +40,26 @@ import PlayingMusic from './PlayingMusic.vue'
 import SideMenu from './SideMenu.vue'
 import TitleBar from './TitleBar.vue'
 
-const emit = defineEmits<{ back: [] }>()
-const themeStore = useThemeStore()
-const { themeContributions, syncExtensions } = useExtensionRegistry()
-const selectedKey = ref('builtin')
-const tone = ref<ThemeTone>('pureWhite')
 type ThemePreviewSurface = 'dashboard' | 'player' | 'equalizer'
 type ThemeStudioDomain =
+  | 'presets'
   | 'personalization'
   | 'shell'
   | 'navigation'
   | 'library'
   | 'typography'
   | 'player'
+  | 'windows'
   | 'motion'
   | 'advanced'
 
-const domain = ref<ThemeStudioDomain>('personalization')
+const props = defineProps<{ initialDomain?: ThemeStudioDomain }>()
+const emit = defineEmits<{ back: [] }>()
+const themeStore = useThemeStore()
+const { themeContributions, syncExtensions } = useExtensionRegistry()
+const selectedKey = ref(`preset:${TWILIGHT_DEFAULT_THEME_ID}`)
+const tone = ref<ThemeTone>('pureWhite')
+const domain = ref<ThemeStudioDomain>(props.initialDomain ?? 'presets')
 const previewSurface = ref<ThemePreviewSurface>('dashboard')
 const previewViewportRef = ref<HTMLElement | null>(null)
 const previewViewportStyle = ref<Record<string, string>>({})
@@ -64,12 +74,14 @@ const notice = ref('')
 let originalTone: ThemeTone = 'pureWhite'
 
 const domains: Array<{ id: ThemeStudioDomain; label: string; icon: string }> = [
+  { id: 'presets', label: '预设画廊', icon: 'ph ph-grid-four' },
   { id: 'personalization', label: '个性化与材质', icon: 'ph ph-palette' },
   { id: 'shell', label: '界面与设置', icon: 'ph ph-squares-four' },
   { id: 'navigation', label: '图标与导航', icon: 'ph ph-sidebar' },
   { id: 'library', label: '媒体库', icon: 'ph ph-music-notes-simple' },
   { id: 'typography', label: '字体与歌词', icon: 'ph ph-text-aa' },
   { id: 'player', label: '播放器与封面', icon: 'ph ph-play-circle' },
+  { id: 'windows', label: '独立窗口', icon: 'ph ph-app-window' },
   { id: 'motion', label: '动效', icon: 'ph ph-wind' },
   { id: 'advanced', label: '高级令牌', icon: 'ph ph-sliders-horizontal' }
 ]
@@ -146,6 +158,7 @@ const tokenDefinitionById = new Map(
 )
 
 const definitions = computed(() => {
+  if (domain.value === 'presets' || domain.value === 'windows') return []
   if (domain.value === 'personalization') {
     return THEME_TOKEN_DEFINITIONS.filter((definition) =>
       personalizationTokenIds.has(definition.id)
@@ -183,6 +196,13 @@ const previewNavigationOpen = computed(
 )
 const profiles = computed(() => themeStore.profiles.value)
 const activeKey = computed(() => selectionKey(themeStore.activeTheme.value))
+const selectedBuiltInPreset = computed(() => {
+  if (!selectedKey.value.startsWith('preset:')) return null
+  return getBuiltInThemePreset(selectedKey.value.slice('preset:'.length))
+})
+const persistedHistory = computed(() =>
+  draft.value ? (themeStore.snapshot.value?.data.profileHistory[draft.value.id] ?? []) : []
+)
 const isUnsavedDraft = computed(
   () => draft.value != null && !profiles.value.some((profile) => profile.id === draft.value?.id)
 )
@@ -204,7 +224,22 @@ const imageAssets = computed(
 const fontAssets = computed(
   () => draft.value?.assets?.filter((asset) => asset.type === 'font') ?? []
 )
-const activeModes = computed(() => resolveThemeProfileModes(draft.value))
+const activeModes = computed(() =>
+  resolveThemeProfileModes(draft.value ?? selectedBuiltInPreset.value)
+)
+const resolvedWindowDefaults = computed<Required<ThemeWindowDefaults>>(() => {
+  const resolved = resolveThemeProfileWindowDefaults(draft.value ?? selectedBuiltInPreset.value)
+  return {
+    miniPlayer: {
+      ...(TWILIGHT_DEFAULT_THEME.windowDefaults?.miniPlayer ?? {}),
+      ...(resolved.miniPlayer ?? {})
+    },
+    desktopLyrics: {
+      ...(TWILIGHT_DEFAULT_THEME.windowDefaults?.desktopLyrics ?? {}),
+      ...(resolved.desktopLyrics ?? {})
+    }
+  }
+})
 const accentPalette = computed(() => THEME_ACCENT_PALETTES[tone.value])
 const backgroundPalette = computed(() => THEME_BACKGROUND_PALETTES[tone.value])
 const contrastWarnings = computed(() => {
@@ -266,7 +301,7 @@ function cloneProfile(profile: ThemeProfileV2): ThemeProfileV2 {
 }
 
 function selectionKey(selection: ThemeSelection): string {
-  if (selection.kind === 'builtin') return 'builtin'
+  if (selection.kind === 'builtin') return `preset:${selection.id}`
   if (selection.kind === 'user') return `profile:${selection.id}`
   return `plugin:${selection.pluginId}:${selection.themeId}`
 }
@@ -285,12 +320,14 @@ function pushHistory(profile: ThemeProfileV2): void {
   historyIndex.value = history.value.length - 1
 }
 
-async function selectBuiltIn(): Promise<void> {
-  selectedKey.value = 'builtin'
+async function selectBuiltIn(
+  presetId: BuiltInThemePresetId = TWILIGHT_DEFAULT_THEME_ID
+): Promise<void> {
+  selectedKey.value = `preset:${presetId}`
   draft.value = null
   history.value = []
   historyIndex.value = -1
-  await themeStore.previewTheme({ kind: 'builtin', id: TWILIGHT_DEFAULT_THEME_ID })
+  await themeStore.previewTheme({ kind: 'builtin', id: presetId })
 }
 
 async function selectProfile(profile: ThemeProfileV2): Promise<void> {
@@ -310,8 +347,9 @@ async function selectPlugin(theme: ThemeContribution): Promise<void> {
 
 async function selectThemeKey(event: Event): Promise<void> {
   const key = (event.target as HTMLSelectElement).value
-  if (key === 'builtin') {
-    await selectBuiltIn()
+  if (key.startsWith('preset:')) {
+    const presetId = key.slice('preset:'.length)
+    if (getBuiltInThemePreset(presetId)) await selectBuiltIn(presetId as BuiltInThemePresetId)
     return
   }
   if (key.startsWith('profile:')) {
@@ -351,10 +389,12 @@ async function duplicateSelected(): Promise<void> {
   const sourceProfileId = draft.value?.id
   const source = draft.value
     ? cloneProfile(draft.value)
-    : selectedPluginTheme.value
-      ? createProfileFromPlugin(selectedPluginTheme.value)
-      : null
-  const profile = themeStore.createProfile(source ? `${source.name} 副本` : '自定义主题', source)
+    : selectedBuiltInPreset.value
+      ? selectedBuiltInPreset.value
+      : selectedPluginTheme.value
+        ? createProfileFromPlugin(selectedPluginTheme.value)
+        : null
+  const profile = themeStore.createProfile(source ? `${source.name} 自定义` : '自定义主题', source)
   selectedKey.value = `profile:${profile.id}`
   draft.value = profile
   resetHistory(profile)
@@ -368,6 +408,11 @@ async function duplicateSelected(): Promise<void> {
     }
   }
   await themeStore.preview(profile)
+}
+
+async function derivePreset(preset: ThemeProfileV2): Promise<void> {
+  await selectBuiltIn(preset.id as BuiltInThemePresetId)
+  await duplicateSelected()
 }
 
 async function importAsset(type: ThemeAssetType): Promise<void> {
@@ -400,9 +445,72 @@ function updateAssetBinding(key: keyof ThemeAssetBindings, event: Event): void {
   })
 }
 
+type ThemeMiniPlayerDefaultKey = keyof NonNullable<ThemeWindowDefaults['miniPlayer']>
+type ThemeDesktopLyricsDefaultKey = keyof NonNullable<ThemeWindowDefaults['desktopLyrics']>
+
+function windowDefaultValue(
+  section: 'miniPlayer' | 'desktopLyrics',
+  key: ThemeMiniPlayerDefaultKey | ThemeDesktopLyricsDefaultKey
+): string | number | boolean | undefined {
+  return (resolvedWindowDefaults.value[section] as Record<string, string | number | boolean>)[key]
+}
+
+function updateWindowDefault(
+  section: 'miniPlayer' | 'desktopLyrics',
+  key: ThemeMiniPlayerDefaultKey | ThemeDesktopLyricsDefaultKey,
+  value: string | number | boolean
+): void {
+  updateDraft((profile) => {
+    const windowDefaults = { ...(profile.windowDefaults ?? {}) }
+    const sectionDefaults = {
+      ...(windowDefaults[section] ?? {}),
+      [key]: value
+    }
+    profile.windowDefaults = {
+      ...windowDefaults,
+      [section]: sectionDefaults
+    } as ThemeWindowDefaults
+  })
+}
+
+function updateWindowText(
+  section: 'miniPlayer' | 'desktopLyrics',
+  key: ThemeMiniPlayerDefaultKey | ThemeDesktopLyricsDefaultKey,
+  event: Event
+): void {
+  updateWindowDefault(section, key, (event.target as HTMLInputElement).value)
+}
+
+function updateWindowNumber(
+  section: 'miniPlayer' | 'desktopLyrics',
+  key: ThemeMiniPlayerDefaultKey | ThemeDesktopLyricsDefaultKey,
+  event: Event
+): void {
+  updateWindowDefault(section, key, Number((event.target as HTMLInputElement).value))
+}
+
+function updateWindowBoolean(
+  section: 'miniPlayer' | 'desktopLyrics',
+  key: ThemeDesktopLyricsDefaultKey,
+  event: Event
+): void {
+  updateWindowDefault(section, key, (event.target as HTMLInputElement).checked)
+}
+
 function valueFor(definition: ThemeTokenDefinition): string {
+  if (draft.value) {
+    return (
+      resolveThemeProfileTokens(draft.value, tone.value)[definition.id] ??
+      definition.defaults[tone.value]
+    )
+  }
+  if (selectedBuiltInPreset.value) {
+    return (
+      resolveThemeProfileTokens(selectedBuiltInPreset.value, tone.value)[definition.id] ??
+      definition.defaults[tone.value]
+    )
+  }
   return (
-    draft.value?.overrides[tone.value][definition.id] ??
     TWILIGHT_DEFAULT_THEME.variants[tone.value].tokens[definition.id] ??
     definition.defaults[tone.value]
   )
@@ -415,6 +523,8 @@ function valueForId(id: string): string {
 
 function sourceFor(definition: ThemeTokenDefinition): string {
   if (draft.value?.overrides[tone.value][definition.id] != null) return '当前配置档'
+  const sourcePreset = getBuiltInThemePreset(draft.value?.baseThemeId)
+  if (sourcePreset?.overrides[tone.value][definition.id] != null) return '来源预设'
   const plugin = selectedPluginTheme.value
   if (
     plugin?.structured?.variants[tone.value]?.tokens?.[definition.id] != null ||
@@ -739,17 +849,54 @@ function resetGroup(): void {
       profile.modes.equalizer = undefined
       profile.modes.visibility = undefined
     }
+    if (domain.value === 'windows') profile.windowDefaults = undefined
     if (
       profile.assetBindings &&
       (domain.value === 'personalization' || domain.value === 'typography')
     ) {
       if (domain.value === 'personalization') delete profile.assetBindings.appBackground
-      delete profile.assetBindings.sansFont
-      delete profile.assetBindings.displayFont
-      delete profile.assetBindings.roundedFont
+      if (domain.value === 'typography') {
+        delete profile.assetBindings.sansFont
+        delete profile.assetBindings.displayFont
+        delete profile.assetBindings.roundedFont
+      }
       if (Object.keys(profile.assetBindings).length === 0) profile.assetBindings = undefined
     }
   })
+}
+
+function resetAll(): void {
+  updateDraft((profile) => {
+    profile.overrides = { pureWhite: {}, dark: {} }
+    profile.modes = {}
+    profile.toneSchedule = undefined
+    profile.windowDefaults = undefined
+    profile.assetBindings = undefined
+  })
+}
+
+function restoreVersion(entry: ThemeProfileHistoryEntry): void {
+  if (!draft.value || entry.profile.id !== draft.value.id) return
+  const restored = cloneProfile(entry.profile)
+  restored.updatedAt = new Date().toISOString()
+  draft.value = restored
+  pushHistory(restored)
+  void themeStore.preview(restored)
+}
+
+function historyLabel(entry: ThemeProfileHistoryEntry): string {
+  const timestamp = Date.parse(entry.savedAt)
+  return Number.isFinite(timestamp) ? new Date(timestamp).toLocaleString('zh-CN') : entry.savedAt
+}
+
+function presetPreviewStyle(profile: ThemeProfileV2): Record<string, string> {
+  const tokens = resolveThemeProfileTokens(profile, tone.value)
+  return {
+    '--preset-accent': tokens['color.primary.500'],
+    '--preset-surface': tokens['surface.app'],
+    '--preset-card': tokens['surface.card'],
+    '--preset-border': tokens['surface.cardBorder']
+  }
 }
 
 function undo(): void {
@@ -771,9 +918,12 @@ async function applySelected(): Promise<void> {
   notice.value = ''
   try {
     if (draft.value) {
-      await themeStore.saveProfile(draft.value)
+      const saved = await themeStore.saveProfile(draft.value)
+      const persisted = saved.data.profiles.find((profile) => profile.id === draft.value?.id)
+      if (!persisted) throw new Error('保存后的主题档案不可用')
+      draft.value = cloneProfile(persisted)
+      resetHistory(draft.value)
       await themeStore.setActive({ kind: 'user', id: draft.value.id })
-      savedDraft.value = JSON.stringify(draft.value)
       selectedKey.value = `profile:${draft.value.id}`
     } else if (selectedPluginTheme.value) {
       await themeStore.setActive({
@@ -781,8 +931,11 @@ async function applySelected(): Promise<void> {
         pluginId: selectedPluginTheme.value.pluginId,
         themeId: selectedPluginTheme.value.id
       })
-    } else {
-      await themeStore.setActive({ kind: 'builtin', id: TWILIGHT_DEFAULT_THEME_ID })
+    } else if (selectedBuiltInPreset.value) {
+      await themeStore.setActive({
+        kind: 'builtin',
+        id: selectedBuiltInPreset.value.id as BuiltInThemePresetId
+      })
     }
     notice.value = '主题已应用'
   } catch (cause) {
@@ -888,6 +1041,7 @@ onMounted(async () => {
   originalTone = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'pureWhite'
   tone.value = originalTone
   await themeStore.setPreviewTone(originalTone)
+  if (domain.value === 'player' || domain.value === 'typography') previewSurface.value = 'player'
   const active = themeStore.activeTheme.value
   if (active.kind === 'user') {
     const profile = profiles.value.find((entry) => entry.id === active.id)
@@ -898,7 +1052,7 @@ onMounted(async () => {
     )
     if (theme) await selectPlugin(theme)
   } else {
-    await selectBuiltIn()
+    await selectBuiltIn(active.id)
   }
 })
 
@@ -930,7 +1084,15 @@ onBeforeUnmount(() => {
       <label class="theme-profile-picker">
         <span>配置档</span>
         <select :value="selectedKey" aria-label="当前主题配置档" @change="selectThemeKey">
-          <option value="builtin">Twilight Echo 默认主题</option>
+          <optgroup label="内置预设">
+            <option
+              v-for="preset in BUILT_IN_THEME_PRESETS"
+              :key="preset.id"
+              :value="`preset:${preset.id}`"
+            >
+              {{ preset.name }}{{ activeKey === `preset:${preset.id}` ? ' · 已应用' : '' }}
+            </option>
+          </optgroup>
           <option v-if="draft && isUnsavedDraft" :value="`profile:${draft.id}`">
             {{ draft.name }} · 未保存
           </option>
@@ -977,10 +1139,20 @@ onBeforeUnmount(() => {
           class="studio-icon-button"
           title="恢复当前视觉域"
           aria-label="恢复当前视觉域"
-          :disabled="!draft"
+          :disabled="!draft || domain === 'presets'"
           @click="resetGroup"
         >
           <i class="ph ph-arrow-u-up-left"></i>
+        </button>
+        <button
+          type="button"
+          class="studio-icon-button"
+          title="恢复完整默认值"
+          aria-label="恢复完整默认值"
+          :disabled="!draft"
+          @click="resetAll"
+        >
+          <i class="ph ph-broom"></i>
         </button>
         <button
           type="button"
@@ -1152,15 +1324,132 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
+        <section v-if="domain === 'presets'" class="preset-gallery-section">
+          <div class="control-section-heading">
+            <span>内置预设</span><small>预览后确认应用</small>
+          </div>
+          <div class="preset-gallery" aria-label="内置主题预设">
+            <article
+              v-for="preset in BUILT_IN_THEME_PRESETS"
+              :key="preset.id"
+              class="preset-gallery-item"
+              :class="{
+                selected: selectedKey === `preset:${preset.id}`,
+                active: activeKey === `preset:${preset.id}`
+              }"
+            >
+              <button
+                type="button"
+                class="preset-preview-command"
+                :aria-pressed="selectedKey === `preset:${preset.id}`"
+                @click="selectBuiltIn(preset.id as BuiltInThemePresetId)"
+              >
+                <span
+                  class="preset-thumbnail"
+                  :style="presetPreviewStyle(preset)"
+                  :data-layout="resolveThemeProfileModes(preset).player?.layout"
+                  aria-hidden="true"
+                >
+                  <i></i><i></i><i></i><i></i>
+                </span>
+                <span class="preset-copy">
+                  <strong>{{ preset.name }}</strong>
+                  <small>{{ preset.description }}</small>
+                </span>
+              </button>
+              <div class="preset-item-actions">
+                <span v-if="activeKey === `preset:${preset.id}`">当前使用</span>
+                <button
+                  type="button"
+                  title="从预设派生"
+                  aria-label="从预设派生"
+                  @click="derivePreset(preset)"
+                >
+                  <i class="ph ph-copy"></i>
+                </button>
+              </div>
+            </article>
+          </div>
+
+          <div class="control-section-heading user-profile-heading">
+            <span>个人主题</span><small>{{ profiles.length }} / 32</small>
+          </div>
+          <div v-if="profiles.length" class="preset-gallery user-profile-gallery">
+            <article
+              v-for="profile in profiles"
+              :key="profile.id"
+              class="preset-gallery-item"
+              :class="{
+                selected: selectedKey === `profile:${profile.id}`,
+                active: activeKey === `profile:${profile.id}`
+              }"
+            >
+              <button
+                type="button"
+                class="preset-preview-command"
+                :aria-pressed="selectedKey === `profile:${profile.id}`"
+                @click="selectProfile(profile)"
+              >
+                <span
+                  class="preset-thumbnail"
+                  :style="presetPreviewStyle(profile)"
+                  :data-layout="resolveThemeProfileModes(profile).player?.layout"
+                  aria-hidden="true"
+                >
+                  <i></i><i></i><i></i><i></i>
+                </span>
+                <span class="preset-copy">
+                  <strong>{{ profile.name }}</strong>
+                  <small>
+                    {{
+                      profile.source?.kind === 'builtin-preset'
+                        ? `派生自 ${getBuiltInThemePreset(profile.source.presetId)?.name ?? '内置预设'}`
+                        : profile.description || '个人配置档'
+                    }}
+                  </small>
+                </span>
+              </button>
+              <div class="preset-item-actions">
+                <span v-if="activeKey === `profile:${profile.id}`">当前使用</span>
+                <time>{{ new Date(profile.updatedAt).toLocaleDateString('zh-CN') }}</time>
+              </div>
+            </article>
+          </div>
+          <p v-else class="preset-empty-state">尚未创建个人主题</p>
+
+          <section v-if="draft" class="profile-history-section">
+            <div class="control-section-heading">
+              <span>版本历史</span><small>最多保留 8 个版本</small>
+            </div>
+            <div v-if="persistedHistory.length" class="profile-history-list">
+              <div v-for="entry in persistedHistory" :key="entry.savedAt">
+                <span>
+                  <strong>{{ entry.profile.name }}</strong>
+                  <time>{{ historyLabel(entry) }}</time>
+                </span>
+                <button
+                  type="button"
+                  title="恢复此版本"
+                  aria-label="恢复此版本"
+                  @click="restoreVersion(entry)"
+                >
+                  <i class="ph ph-clock-counter-clockwise"></i>
+                </button>
+              </div>
+            </div>
+            <p v-else class="preset-empty-state">保存修改后会在此保留可恢复版本</p>
+          </section>
+        </section>
+
         <input
-          v-if="draft"
+          v-if="draft && domain !== 'presets'"
           class="theme-name-input"
           :value="draft.name"
           maxlength="80"
           aria-label="主题名称"
           @change="changeName"
         />
-        <div v-else class="read-only-theme">
+        <div v-else-if="domain !== 'presets'" class="read-only-theme">
           <i class="ph ph-lock"></i><span>创建副本后编辑</span>
         </div>
 
@@ -1605,6 +1894,227 @@ onBeforeUnmount(() => {
           </label>
         </section>
 
+        <div v-if="domain === 'windows'" class="window-default-grid">
+          <section class="studio-control-section">
+            <div class="control-section-heading">
+              <span>迷你播放器</span><small>继承开启时生效</small>
+            </div>
+            <label class="studio-setting-row">
+              <span>表面颜色<small>无封面时也保留</small></span>
+              <input
+                type="color"
+                :value="String(windowDefaultValue('miniPlayer', 'surfaceColor'))"
+                :disabled="!draft"
+                @input="updateWindowText('miniPlayer', 'surfaceColor', $event)"
+              />
+            </label>
+            <label class="studio-setting-row">
+              <span>强调色<small>控件与进度</small></span>
+              <input
+                type="color"
+                :value="String(windowDefaultValue('miniPlayer', 'accentColor'))"
+                :disabled="!draft"
+                @input="updateWindowText('miniPlayer', 'accentColor', $event)"
+              />
+            </label>
+            <label class="studio-setting-row">
+              <span>主要文字<small>覆盖自动取色</small></span>
+              <input
+                type="color"
+                :value="String(windowDefaultValue('miniPlayer', 'primaryTextColor'))"
+                :disabled="!draft"
+                @input="updateWindowText('miniPlayer', 'primaryTextColor', $event)"
+              />
+            </label>
+            <label class="studio-setting-row">
+              <span>字体<small>本地字体栈</small></span>
+              <input
+                type="text"
+                :value="String(windowDefaultValue('miniPlayer', 'fontFamily'))"
+                :disabled="!draft"
+                @change="updateWindowText('miniPlayer', 'fontFamily', $event)"
+              />
+            </label>
+            <label class="studio-setting-row window-range-row">
+              <span
+                >表面透明度<small
+                  >{{ windowDefaultValue('miniPlayer', 'surfaceOpacity') }}%</small
+                ></span
+              >
+              <input
+                type="range"
+                min="40"
+                max="100"
+                :value="Number(windowDefaultValue('miniPlayer', 'surfaceOpacity'))"
+                :disabled="!draft"
+                @input="updateWindowNumber('miniPlayer', 'surfaceOpacity', $event)"
+              />
+            </label>
+            <label class="studio-setting-row window-range-row">
+              <span
+                >玻璃模糊<small>{{ windowDefaultValue('miniPlayer', 'glassBlur') }}px</small></span
+              >
+              <input
+                type="range"
+                min="0"
+                max="40"
+                :value="Number(windowDefaultValue('miniPlayer', 'glassBlur'))"
+                :disabled="!draft"
+                @input="updateWindowNumber('miniPlayer', 'glassBlur', $event)"
+              />
+            </label>
+            <label class="studio-setting-row window-range-row">
+              <span
+                >圆角<small>{{ windowDefaultValue('miniPlayer', 'cornerRadius') }}px</small></span
+              >
+              <input
+                type="range"
+                min="0"
+                max="36"
+                :value="Number(windowDefaultValue('miniPlayer', 'cornerRadius'))"
+                :disabled="!draft"
+                @input="updateWindowNumber('miniPlayer', 'cornerRadius', $event)"
+              />
+            </label>
+            <label class="studio-setting-row">
+              <span>边框颜色<small>独立窗口轮廓</small></span>
+              <input
+                type="color"
+                :value="String(windowDefaultValue('miniPlayer', 'borderColor'))"
+                :disabled="!draft"
+                @input="updateWindowText('miniPlayer', 'borderColor', $event)"
+              />
+            </label>
+            <label class="studio-setting-row">
+              <span>阴影颜色<small>窗口层次</small></span>
+              <input
+                type="color"
+                :value="String(windowDefaultValue('miniPlayer', 'shadowColor'))"
+                :disabled="!draft"
+                @input="updateWindowText('miniPlayer', 'shadowColor', $event)"
+              />
+            </label>
+            <label class="studio-setting-row window-range-row">
+              <span
+                >阴影强度<small
+                  >{{ windowDefaultValue('miniPlayer', 'shadowStrength') }}%</small
+                ></span
+              >
+              <input
+                type="range"
+                min="0"
+                max="100"
+                :value="Number(windowDefaultValue('miniPlayer', 'shadowStrength'))"
+                :disabled="!draft"
+                @input="updateWindowNumber('miniPlayer', 'shadowStrength', $event)"
+              />
+            </label>
+          </section>
+
+          <section class="studio-control-section">
+            <div class="control-section-heading">
+              <span>桌面歌词</span><small>文字与窗口材质</small>
+            </div>
+            <label class="studio-setting-row">
+              <span>文字颜色<small>未激活歌词</small></span>
+              <input
+                type="color"
+                :value="String(windowDefaultValue('desktopLyrics', 'color'))"
+                :disabled="!draft"
+                @input="updateWindowText('desktopLyrics', 'color', $event)"
+              />
+            </label>
+            <label class="studio-setting-row">
+              <span>高亮颜色<small>当前歌词</small></span>
+              <input
+                type="color"
+                :value="String(windowDefaultValue('desktopLyrics', 'highlightColor'))"
+                :disabled="!draft"
+                @input="updateWindowText('desktopLyrics', 'highlightColor', $event)"
+              />
+            </label>
+            <label class="studio-setting-row">
+              <span>背景颜色<small>桌面歌词窗口</small></span>
+              <input
+                type="color"
+                :value="String(windowDefaultValue('desktopLyrics', 'backgroundColor'))"
+                :disabled="!draft"
+                @input="updateWindowText('desktopLyrics', 'backgroundColor', $event)"
+              />
+            </label>
+            <label class="studio-setting-row">
+              <span>字体<small>系统或内置字体 ID</small></span>
+              <input
+                type="text"
+                :value="String(windowDefaultValue('desktopLyrics', 'fontFamily'))"
+                :disabled="!draft"
+                @change="updateWindowText('desktopLyrics', 'fontFamily', $event)"
+              />
+            </label>
+            <label class="studio-setting-row window-range-row">
+              <span
+                >字号<small>{{ windowDefaultValue('desktopLyrics', 'fontSize') }}px</small></span
+              >
+              <input
+                type="range"
+                min="12"
+                max="80"
+                :value="Number(windowDefaultValue('desktopLyrics', 'fontSize'))"
+                :disabled="!draft"
+                @input="updateWindowNumber('desktopLyrics', 'fontSize', $event)"
+              />
+            </label>
+            <label class="studio-setting-row window-range-row">
+              <span
+                >背景透明度<small
+                  >{{ windowDefaultValue('desktopLyrics', 'backgroundOpacity') }}%</small
+                ></span
+              >
+              <input
+                type="range"
+                min="0"
+                max="100"
+                :value="Number(windowDefaultValue('desktopLyrics', 'backgroundOpacity'))"
+                :disabled="!draft"
+                @input="updateWindowNumber('desktopLyrics', 'backgroundOpacity', $event)"
+              />
+            </label>
+            <label class="studio-setting-row">
+              <span>文字阴影<small>关闭后保留阴影参数</small></span>
+              <input
+                type="checkbox"
+                :checked="Boolean(windowDefaultValue('desktopLyrics', 'shadow'))"
+                :disabled="!draft"
+                @change="updateWindowBoolean('desktopLyrics', 'shadow', $event)"
+              />
+            </label>
+            <label class="studio-setting-row">
+              <span>阴影颜色<small>文字边缘</small></span>
+              <input
+                type="color"
+                :value="String(windowDefaultValue('desktopLyrics', 'shadowColor'))"
+                :disabled="!draft"
+                @input="updateWindowText('desktopLyrics', 'shadowColor', $event)"
+              />
+            </label>
+            <label class="studio-setting-row window-range-row">
+              <span
+                >阴影模糊<small
+                  >{{ windowDefaultValue('desktopLyrics', 'shadowBlur') }}px</small
+                ></span
+              >
+              <input
+                type="range"
+                min="0"
+                max="30"
+                :value="Number(windowDefaultValue('desktopLyrics', 'shadowBlur'))"
+                :disabled="!draft"
+                @input="updateWindowNumber('desktopLyrics', 'shadowBlur', $event)"
+              />
+            </label>
+          </section>
+        </div>
+
         <section v-if="domain === 'personalization' || domain === 'advanced'" class="asset-editor">
           <div class="asset-editor-heading">
             <span>本地背景资源</span>
@@ -1658,7 +2168,7 @@ onBeforeUnmount(() => {
           </label>
         </section>
 
-        <div class="token-editor-list" :class="{ disabled: !draft }">
+        <div v-if="domain !== 'presets'" class="token-editor-list" :class="{ disabled: !draft }">
           <div v-for="definition in definitions" :key="definition.id" class="token-editor-row">
             <div>
               <span
@@ -1739,3 +2249,4 @@ onBeforeUnmount(() => {
 </template>
 
 <style src="./theme-studio/ThemeStudioPage.css"></style>
+type BuiltInThemePresetId, type ThemeProfileHistoryEntry,

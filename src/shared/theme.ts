@@ -1,11 +1,24 @@
 import type { VersionedDataEnvelope } from './versionedPersistence.ts'
 
 export const TWILIGHT_DEFAULT_THEME_ID = 'builtin:twilight-echo-default'
+export const BUILT_IN_THEME_PRESET_IDS = [
+  TWILIGHT_DEFAULT_THEME_ID,
+  'builtin:aurora-reference',
+  'builtin:obsidian-glass',
+  'builtin:paper-light',
+  'builtin:neon-gradient',
+  'builtin:studio-split',
+  'builtin:zen-minimal'
+] as const
 export const THEME_DOCUMENT_SCHEMA_VERSION = 1
 export const THEME_PROFILE_SCHEMA_VERSION = 2
 export const THEME_ARCHIVE_SCHEMA_VERSION = 2
 export const THEME_LIBRARY_SCHEMA_VERSION = 1
 export const MAX_USER_THEME_PROFILES = 32
+export const MAX_THEME_PROFILE_HISTORY_ENTRIES = 8
+export const MAX_THEME_PROFILE_HISTORY_BYTES = 256 * 1024
+
+export type BuiltInThemePresetId = (typeof BUILT_IN_THEME_PRESET_IDS)[number]
 
 export type ThemeTone = 'pureWhite' | 'dark'
 export type ThemeTokenKind =
@@ -50,15 +63,18 @@ export interface ThemeVariant {
 }
 
 export interface ThemeMiniPlayerDefaults {
+  surfaceColor?: string
   accentColor?: string
   primaryTextColor?: string
   mutedTextColor?: string
+  fontFamily?: string
   surfaceOpacity?: number
   glassBlur?: number
   cornerRadius?: number
   borderWidth?: number
   borderColor?: string
   shadowStrength?: number
+  shadowColor?: string
 }
 
 export interface ThemeDesktopLyricsDefaults {
@@ -216,6 +232,12 @@ export interface ThemeProfileV2 extends Omit<ThemeProfileV1, 'schemaVersion'> {
   schemaVersion: 2
   modes: ThemeModes
   toneSchedule?: ThemeToneSchedule
+  source?: ThemeProfileSource
+}
+
+export interface ThemeProfileSource {
+  kind: 'builtin-preset'
+  presetId: BuiltInThemePresetId
 }
 
 export type ThemeIconDomain = 'navigation' | 'library'
@@ -281,7 +303,7 @@ export interface ThemeModeDefinition {
 }
 
 export type ThemeSelection =
-  | { kind: 'builtin'; id: typeof TWILIGHT_DEFAULT_THEME_ID }
+  | { kind: 'builtin'; id: BuiltInThemePresetId }
   | { kind: 'user'; id: string }
   | { kind: 'plugin'; pluginId: string; themeId: string }
 
@@ -295,6 +317,12 @@ export interface ThemeLibraryDocument {
   activeTheme: ThemeSelection
   profiles: ThemeProfileV2[]
   windowInheritance: ThemeWindowInheritance
+  profileHistory: Record<string, ThemeProfileHistoryEntry[]>
+}
+
+export interface ThemeProfileHistoryEntry {
+  savedAt: string
+  profile: ThemeProfileV2
 }
 
 export type ThemeLibrarySnapshot = VersionedDataEnvelope<ThemeLibraryDocument>
@@ -2404,15 +2432,18 @@ export const TWILIGHT_DEFAULT_THEME: ThemeDocumentV1 = Object.freeze({
   },
   windowDefaults: {
     miniPlayer: {
+      surfaceColor: '#11121d',
       accentColor: '#7c4dff',
       primaryTextColor: '#ffffff',
       mutedTextColor: '#b8b7c2',
+      fontFamily: lightFont,
       surfaceOpacity: 94,
       glassBlur: 18,
       cornerRadius: 25,
       borderWidth: 1,
       borderColor: '#353542',
-      shadowStrength: 80
+      shadowStrength: 80,
+      shadowColor: '#000000'
     },
     desktopLyrics: {
       fontFamily: 'system',
@@ -2429,6 +2460,513 @@ export const TWILIGHT_DEFAULT_THEME: ThemeDocumentV1 = Object.freeze({
   }
 })
 
+const allThemeVisibilitySlots = Object.freeze(
+  Object.fromEntries(THEME_VISIBILITY_SLOT_IDS.map((id) => [id, true])) as Record<
+    ThemeVisibilitySlotId,
+    boolean
+  >
+)
+
+function builtInThemePreset(
+  id: BuiltInThemePresetId,
+  name: string,
+  description: string,
+  overrides: ThemeProfileV2['overrides'],
+  modes: ThemeModes,
+  windowDefaults: ThemeWindowDefaults = {}
+): ThemeProfileV2 {
+  return Object.freeze({
+    schemaVersion: THEME_PROFILE_SCHEMA_VERSION,
+    id,
+    name,
+    description,
+    baseThemeId: TWILIGHT_DEFAULT_THEME_ID,
+    createdAt: new Date(0).toISOString(),
+    updatedAt: new Date(0).toISOString(),
+    overrides,
+    modes,
+    windowDefaults
+  })
+}
+
+export const BUILT_IN_THEME_PRESETS: readonly ThemeProfileV2[] = Object.freeze([
+  builtInThemePreset(
+    TWILIGHT_DEFAULT_THEME_ID,
+    'Twilight Default',
+    'Twilight Echo 的基准外观与完整功能可见性。',
+    { pureWhite: {}, dark: {} },
+    { visibility: { ...allThemeVisibilitySlots } },
+    TWILIGHT_DEFAULT_THEME.windowDefaults
+  ),
+  builtInThemePreset(
+    'builtin:aurora-reference',
+    'Aurora 参考',
+    '封面取色、模糊背景与圆润图标组成的分域定制参考。',
+    {
+      pureWhite: {
+        'color.primary.500': '#7c3aed',
+        'color.primary.400': '#8b5cf6',
+        'surface.app': '#f7f5ff',
+        'surface.local': '#f7f5ff',
+        'surface.settings': '#f7f5ff',
+        'surface.streaming': '#f7f5ff',
+        'surface.player': '#f7f5ff',
+        'surface.card': '#ffffff',
+        'background.gradientStart': '#ede9fe',
+        'background.gradientEnd': '#fdf2f8',
+        'shape.globalRadius': '16px',
+        'material.cardBlur': '18px',
+        'playback.cover.radius': '24px'
+      },
+      dark: {
+        'color.primary.500': '#a78bfa',
+        'color.primary.400': '#c4b5fd',
+        'surface.app': '#13111c',
+        'surface.local': '#13111c',
+        'surface.settings': '#13111c',
+        'surface.streaming': '#13111c',
+        'surface.player': '#13111c',
+        'surface.card': '#1d1929',
+        'background.gradientStart': '#201638',
+        'background.gradientEnd': '#181124',
+        'shape.globalRadius': '16px',
+        'material.cardBlur': '18px',
+        'playback.cover.radius': '24px'
+      }
+    },
+    {
+      appearance: {
+        accentSource: 'cover',
+        backgroundTreatment: 'cover-blur',
+        contrastGuard: 'enforce'
+      },
+      navigation: { style: 'expanded', iconScale: 'md' },
+      library: { density: 'comfortable', selection: 'fill', titleOverlay: 'on' },
+      player: { layout: 'standard', controls: 'pro', titleAlign: 'center', progress: 'ring' },
+      artwork: { transition: 'fade', shadow: 'on' },
+      equalizer: { panel: 'glass', slider: 'ring', knob: 'dot', spectrum: 'bars' },
+      icons: { family: 'rounded' },
+      typography: { lyricAccent: 'accent', titleColor: 'artist-album' },
+      visibility: { ...allThemeVisibilitySlots }
+    },
+    {
+      miniPlayer: {
+        surfaceColor: '#171320',
+        accentColor: '#a78bfa',
+        primaryTextColor: '#ffffff',
+        mutedTextColor: '#d0c8de',
+        fontFamily: lightFont,
+        surfaceOpacity: 88,
+        glassBlur: 24,
+        cornerRadius: 28,
+        borderWidth: 1,
+        borderColor: '#564b68',
+        shadowStrength: 72,
+        shadowColor: '#0b0712'
+      },
+      desktopLyrics: {
+        fontFamily: "MiSans, 'Microsoft YaHei UI', system-ui, sans-serif",
+        color: '#f5f3ff',
+        highlightColor: '#c4b5fd',
+        backgroundColor: '#171320',
+        backgroundOpacity: 38,
+        shadow: true,
+        shadowBlur: 10,
+        shadowColor: '#0b0712'
+      }
+    }
+  ),
+  builtInThemePreset(
+    'builtin:obsidian-glass',
+    'Obsidian Glass',
+    '纯黑玻璃表面、全封面播放器与紧凑图标导航。',
+    {
+      pureWhite: {
+        'color.primary.500': '#5eead4',
+        'surface.app': '#080a0b',
+        'surface.local': '#080a0b',
+        'surface.settings': '#080a0b',
+        'surface.streaming': '#080a0b',
+        'surface.player': '#050607',
+        'surface.card': '#111415',
+        'surface.cardBorder': '#293033',
+        'color.neutral.900': '#f4f7f7',
+        'color.neutral.500': '#a4adaf',
+        'material.glassShadow': '0 20px 60px rgba(0, 0, 0, 0.58)',
+        'playback.backdrop.filter': 'blur(62px) saturate(1.1) brightness(0.28)'
+      },
+      dark: {
+        'color.primary.500': '#5eead4',
+        'surface.app': '#050607',
+        'surface.local': '#050607',
+        'surface.settings': '#050607',
+        'surface.streaming': '#050607',
+        'surface.player': '#050607',
+        'surface.card': '#0d1011',
+        'surface.cardBorder': '#22282a',
+        'material.glassShadow': '0 20px 60px rgba(0, 0, 0, 0.72)',
+        'playback.backdrop.filter': 'blur(62px) saturate(1.1) brightness(0.24)'
+      }
+    },
+    {
+      appearance: {
+        accentSource: 'cover',
+        backgroundTreatment: 'cover-blur',
+        contrastGuard: 'enforce'
+      },
+      navigation: { style: 'rail', iconScale: 'lg', logo: 'hide' },
+      library: { density: 'compact', selection: 'stroke' },
+      player: { layout: 'full-cover', controls: 'pro', titleAlign: 'left', progress: 'solid' },
+      artwork: { transition: 'fade', shadow: 'off' },
+      equalizer: { panel: 'glass', slider: 'solid', knob: 'dot', spectrum: 'area' },
+      icons: { family: 'filled' },
+      visibility: { ...allThemeVisibilitySlots, playerDuration: false, playerWaveform: false }
+    },
+    {
+      miniPlayer: {
+        surfaceColor: '#07090a',
+        accentColor: '#5eead4',
+        primaryTextColor: '#f4f7f7',
+        mutedTextColor: '#a4adaf',
+        fontFamily: lightFont,
+        surfaceOpacity: 82,
+        glassBlur: 30,
+        cornerRadius: 18,
+        borderWidth: 1,
+        borderColor: '#293033',
+        shadowStrength: 92,
+        shadowColor: '#000000'
+      },
+      desktopLyrics: {
+        color: '#d8e2e3',
+        highlightColor: '#5eead4',
+        backgroundColor: '#050607',
+        backgroundOpacity: 52,
+        shadow: true,
+        shadowBlur: 12,
+        shadowColor: '#000000'
+      }
+    }
+  ),
+  builtInThemePreset(
+    'builtin:paper-light',
+    'Paper Light',
+    '浅色印刷表面、衬线标题与无模糊的克制排版。',
+    {
+      pureWhite: {
+        'color.primary.500': '#b42318',
+        'surface.app': '#fbfbf8',
+        'surface.local': '#fbfbf8',
+        'surface.settings': '#fbfbf8',
+        'surface.streaming': '#fbfbf8',
+        'surface.player': '#fbfbf8',
+        'surface.card': '#ffffff',
+        'surface.cardBorder': '#d8d8d0',
+        'typography.display': "Georgia, 'Times New Roman', serif",
+        'shape.globalRadius': '4px',
+        'shape.cardRadius': '4px',
+        'material.glassShadow': 'none',
+        'material.cardBlur': '0px'
+      },
+      dark: {
+        'color.primary.500': '#fda29b',
+        'surface.app': '#1a1a18',
+        'surface.local': '#1a1a18',
+        'surface.settings': '#1a1a18',
+        'surface.streaming': '#1a1a18',
+        'surface.player': '#1a1a18',
+        'surface.card': '#242421',
+        'surface.cardBorder': '#484840',
+        'typography.display': "Georgia, 'Times New Roman', serif",
+        'shape.globalRadius': '4px',
+        'shape.cardRadius': '4px',
+        'material.glassShadow': 'none',
+        'material.cardBlur': '0px'
+      }
+    },
+    {
+      appearance: { backgroundTreatment: 'solid', contrastGuard: 'enforce' },
+      navigation: { style: 'expanded', iconScale: 'sm', logo: 'show' },
+      library: { density: 'comfortable', selection: 'stroke', titleOverlay: 'off' },
+      player: { layout: 'standard', controls: 'standard', titleAlign: 'left', progress: 'line' },
+      artwork: { transition: 'none', shadow: 'off' },
+      equalizer: { panel: 'neutral', slider: 'ring', knob: 'line', spectrum: 'line' },
+      icons: { family: 'outline' },
+      typography: { titleCase: 'preserve', lyricAccent: 'off', titleColor: 'off' },
+      visibility: { ...allThemeVisibilitySlots }
+    },
+    {
+      miniPlayer: {
+        surfaceColor: '#fbfbf8',
+        accentColor: '#b42318',
+        primaryTextColor: '#25251f',
+        mutedTextColor: '#68685f',
+        fontFamily: "Georgia, 'Times New Roman', serif",
+        surfaceOpacity: 100,
+        glassBlur: 0,
+        cornerRadius: 4,
+        borderWidth: 1,
+        borderColor: '#d8d8d0',
+        shadowStrength: 0,
+        shadowColor: '#000000'
+      },
+      desktopLyrics: {
+        fontFamily: "Georgia, 'Times New Roman', serif",
+        color: '#25251f',
+        highlightColor: '#b42318',
+        backgroundColor: '#fbfbf8',
+        backgroundOpacity: 94,
+        shadow: false,
+        shadowBlur: 0,
+        shadowColor: '#000000'
+      }
+    }
+  ),
+  builtInThemePreset(
+    'builtin:neon-gradient',
+    'Neon Gradient',
+    '高饱和渐变、紧凑密度与极简播放页。',
+    {
+      pureWhite: {
+        'color.primary.500': '#db2777',
+        'surface.app': '#fff7fd',
+        'surface.local': '#fff7fd',
+        'surface.settings': '#fff7fd',
+        'surface.streaming': '#fff7fd',
+        'surface.player': '#fff7fd',
+        'background.gradientStart': '#f0abfc',
+        'background.gradientEnd': '#67e8f9',
+        'background.gradientAngle': '138deg',
+        'shape.globalRadius': '24px',
+        'shape.cardRadius': '24px',
+        'material.glowMain': '0 18px 50px rgba(219, 39, 119, 0.3)'
+      },
+      dark: {
+        'color.primary.500': '#f472b6',
+        'surface.app': '#120719',
+        'surface.local': '#120719',
+        'surface.settings': '#120719',
+        'surface.streaming': '#120719',
+        'surface.player': '#120719',
+        'background.gradientStart': '#701a75',
+        'background.gradientEnd': '#164e63',
+        'background.gradientAngle': '138deg',
+        'shape.globalRadius': '24px',
+        'shape.cardRadius': '24px',
+        'material.glowMain': '0 18px 50px rgba(244, 114, 182, 0.38)'
+      }
+    },
+    {
+      appearance: { backgroundTreatment: 'gradient', contrastGuard: 'enforce' },
+      navigation: { style: 'compact', iconScale: 'lg', logo: 'hide' },
+      library: { density: 'compact', selection: 'fill', titleOverlay: 'on' },
+      player: { layout: 'minimal', controls: 'pro', titleAlign: 'center', progress: 'spectrum' },
+      artwork: { transition: 'slide', shadow: 'on' },
+      equalizer: { panel: 'tinted', slider: 'solid', knob: 'dot', spectrum: 'bars' },
+      icons: { family: 'filled' },
+      typography: { titleCase: 'uppercase', lyricAccent: 'accent', titleColor: 'track' },
+      visibility: {
+        ...allThemeVisibilitySlots,
+        playerAlbumArtist: false,
+        playerTrackMenu: false,
+        playerMiscIcons: false,
+        playerDuration: false,
+        playerWaveform: false
+      }
+    },
+    {
+      miniPlayer: {
+        surfaceColor: '#1b0a24',
+        accentColor: '#f472b6',
+        primaryTextColor: '#fff7fd',
+        mutedTextColor: '#e9cde6',
+        fontFamily: lightFont,
+        surfaceOpacity: 86,
+        glassBlur: 22,
+        cornerRadius: 32,
+        borderWidth: 1,
+        borderColor: '#8b3f87',
+        shadowStrength: 82,
+        shadowColor: '#240029'
+      },
+      desktopLyrics: {
+        color: '#fff7fd',
+        highlightColor: '#67e8f9',
+        backgroundColor: '#1b0a24',
+        backgroundOpacity: 44,
+        shadow: true,
+        shadowBlur: 14,
+        shadowColor: '#240029'
+      }
+    }
+  ),
+  builtInThemePreset(
+    'builtin:studio-split',
+    'Studio Split',
+    '双栏播放布局、等宽信息层级与描边选择态。',
+    {
+      pureWhite: {
+        'color.primary.500': '#0f766e',
+        'surface.app': '#f2f5f5',
+        'surface.local': '#f2f5f5',
+        'surface.settings': '#f2f5f5',
+        'surface.streaming': '#f2f5f5',
+        'surface.player': '#f2f5f5',
+        'surface.card': '#ffffff',
+        'typography.sans': "'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
+        'typography.display': "'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
+        'library.selection.inlineInset': '6px',
+        'playback.control.radius': '6px'
+      },
+      dark: {
+        'color.primary.500': '#2dd4bf',
+        'surface.app': '#101617',
+        'surface.local': '#101617',
+        'surface.settings': '#101617',
+        'surface.streaming': '#101617',
+        'surface.player': '#101617',
+        'surface.card': '#182123',
+        'typography.sans': "'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
+        'typography.display': "'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
+        'library.selection.inlineInset': '6px',
+        'playback.control.radius': '6px'
+      }
+    },
+    {
+      appearance: { backgroundTreatment: 'solid', contrastGuard: 'enforce' },
+      navigation: { style: 'compact', iconScale: 'sm', logo: 'show' },
+      library: { density: 'compact', selection: 'stroke', titleOverlay: 'off' },
+      player: { layout: 'split', controls: 'pro', titleAlign: 'left', progress: 'line' },
+      artwork: { transition: 'none', shadow: 'on' },
+      equalizer: { panel: 'neutral', slider: 'solid', knob: 'line', spectrum: 'line' },
+      icons: { family: 'outline' },
+      typography: { titleCase: 'preserve', lyricAccent: 'accent', titleColor: 'off' },
+      visibility: { ...allThemeVisibilitySlots }
+    },
+    {
+      miniPlayer: {
+        surfaceColor: '#101617',
+        accentColor: '#2dd4bf',
+        primaryTextColor: '#effcfa',
+        mutedTextColor: '#a5b9b7',
+        fontFamily: "'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
+        surfaceOpacity: 96,
+        glassBlur: 6,
+        cornerRadius: 8,
+        borderWidth: 1,
+        borderColor: '#365153',
+        shadowStrength: 48,
+        shadowColor: '#061011'
+      },
+      desktopLyrics: {
+        fontFamily: "'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
+        color: '#dcebea',
+        highlightColor: '#2dd4bf',
+        backgroundColor: '#101617',
+        backgroundOpacity: 72,
+        shadow: false,
+        shadowBlur: 0,
+        shadowColor: '#061011'
+      }
+    }
+  ),
+  builtInThemePreset(
+    'builtin:zen-minimal',
+    'Zen Minimal',
+    '低干扰单色材质与最大化内容隐藏，保留清晰文字对比。',
+    {
+      pureWhite: {
+        'color.primary.500': '#475569',
+        'surface.app': '#f8fafc',
+        'surface.local': '#f8fafc',
+        'surface.settings': '#f8fafc',
+        'surface.streaming': '#f8fafc',
+        'surface.player': '#f8fafc',
+        'surface.card': '#f1f5f9',
+        'surface.cardBorder': '#e2e8f0',
+        'shape.globalRadius': '10px',
+        'material.glassShadow': 'none',
+        'material.glowMain': 'none'
+      },
+      dark: {
+        'color.primary.500': '#94a3b8',
+        'surface.app': '#111417',
+        'surface.local': '#111417',
+        'surface.settings': '#111417',
+        'surface.streaming': '#111417',
+        'surface.player': '#111417',
+        'surface.card': '#181c20',
+        'surface.cardBorder': '#293038',
+        'shape.globalRadius': '10px',
+        'material.glassShadow': 'none',
+        'material.glowMain': 'none'
+      }
+    },
+    {
+      appearance: { backgroundTreatment: 'solid', contrastGuard: 'enforce' },
+      navigation: { style: 'rail', iconScale: 'sm', logo: 'hide' },
+      library: { density: 'compact', selection: 'stroke', titleOverlay: 'off' },
+      player: { layout: 'minimal', controls: 'standard', titleAlign: 'left', progress: 'line' },
+      artwork: { transition: 'none', shadow: 'off' },
+      equalizer: { panel: 'neutral', slider: 'ring', knob: 'line', spectrum: 'line' },
+      icons: { family: 'outline' },
+      typography: { titleCase: 'preserve', lyricAccent: 'off', titleColor: 'off' },
+      visibility: {
+        playerAlbumArtist: false,
+        playerArtwork: true,
+        playerTrackMenu: false,
+        playerMiscIcons: false,
+        playerDuration: false,
+        playerWaveform: false,
+        playerTrackInfo: true,
+        equalizerGrid: false,
+        equalizerFrequencyGuides: false,
+        equalizerSpectrum: false,
+        previousButton: false,
+        nextButton: false,
+        miniPlayerArtwork: false
+      }
+    },
+    {
+      miniPlayer: {
+        surfaceColor: '#181c20',
+        accentColor: '#94a3b8',
+        primaryTextColor: '#f1f5f9',
+        mutedTextColor: '#a8b1bc',
+        fontFamily: lightFont,
+        surfaceOpacity: 100,
+        glassBlur: 0,
+        cornerRadius: 10,
+        borderWidth: 1,
+        borderColor: '#293038',
+        shadowStrength: 0,
+        shadowColor: '#000000'
+      },
+      desktopLyrics: {
+        color: '#d5dbe2',
+        highlightColor: '#f1f5f9',
+        backgroundColor: '#111417',
+        backgroundOpacity: 82,
+        shadow: false,
+        shadowBlur: 0,
+        shadowColor: '#000000'
+      }
+    }
+  )
+])
+
+const builtInThemePresetById = new Map(
+  BUILT_IN_THEME_PRESETS.map((preset) => [preset.id as BuiltInThemePresetId, preset])
+)
+
+export function isBuiltInThemePresetId(value: unknown): value is BuiltInThemePresetId {
+  return typeof value === 'string' && builtInThemePresetById.has(value as BuiltInThemePresetId)
+}
+
+export function getBuiltInThemePreset(value: unknown): ThemeProfileV2 | null {
+  return isBuiltInThemePresetId(value) ? (builtInThemePresetById.get(value) ?? null) : null
+}
+
 export function createDefaultThemeLibraryDocument(
   activeTheme: ThemeSelection = { kind: 'builtin', id: TWILIGHT_DEFAULT_THEME_ID },
   windowInheritance: ThemeWindowInheritance = { miniPlayer: true, desktopLyrics: true }
@@ -2437,13 +2975,15 @@ export function createDefaultThemeLibraryDocument(
     schemaVersion: THEME_LIBRARY_SCHEMA_VERSION,
     activeTheme,
     profiles: [],
-    windowInheritance
+    windowInheritance,
+    profileHistory: {}
   }
 }
 
 export function isThemeLibraryDocument(value: unknown): value is ThemeLibraryDocument {
   if (!isRecord(value) || value.schemaVersion !== THEME_LIBRARY_SCHEMA_VERSION) return false
   if (!Array.isArray(value.profiles) || !isRecord(value.windowInheritance)) return false
+  if (value.profileHistory !== undefined && !isRecord(value.profileHistory)) return false
   return isThemeSelection(value.activeTheme)
 }
 
@@ -2462,6 +3002,7 @@ export function normalizeThemeLibraryDocument(value: unknown): ThemeLibraryDocum
       ? selection
       : fallback.activeTheme
   const inheritance = isRecord(value.windowInheritance) ? value.windowInheritance : {}
+  const profileHistory = normalizeThemeProfileHistory(value.profileHistory, profiles)
   return {
     schemaVersion: THEME_LIBRARY_SCHEMA_VERSION,
     activeTheme,
@@ -2469,7 +3010,8 @@ export function normalizeThemeLibraryDocument(value: unknown): ThemeLibraryDocum
     windowInheritance: {
       miniPlayer: inheritance.miniPlayer !== false,
       desktopLyrics: inheritance.desktopLyrics !== false
-    }
+    },
+    profileHistory
   }
 }
 
@@ -2483,11 +3025,15 @@ export function normalizeThemeProfile(value: unknown): ThemeProfileV2 | null {
   }
   const id = normalizeThemeId(value.id)
   const name = normalizeText(value.name, 80)
-  if (!id || !name || id === TWILIGHT_DEFAULT_THEME_ID) return null
+  if (!id || !name || isBuiltInThemePresetId(id)) return null
   const createdAt = normalizeIsoDate(value.createdAt)
   const updatedAt = normalizeIsoDate(value.updatedAt)
   const overrides = isRecord(value.overrides) ? value.overrides : {}
   const assets = normalizeThemeAssets(value.assets)
+  const source =
+    value.schemaVersion === THEME_PROFILE_SCHEMA_VERSION
+      ? normalizeThemeProfileSource(value.source)
+      : undefined
   const toneSchedule =
     value.schemaVersion === THEME_PROFILE_SCHEMA_VERSION
       ? normalizeThemeToneSchedule(value.toneSchedule)
@@ -2497,8 +3043,9 @@ export function normalizeThemeProfile(value: unknown): ThemeProfileV2 | null {
     id,
     name,
     description: normalizeText(value.description, 240),
-    baseThemeId:
-      typeof value.baseThemeId === 'string' && value.baseThemeId.trim()
+    baseThemeId: source
+      ? source.presetId
+      : typeof value.baseThemeId === 'string' && value.baseThemeId.trim()
         ? value.baseThemeId.trim().slice(0, 160)
         : TWILIGHT_DEFAULT_THEME_ID,
     createdAt,
@@ -2512,9 +3059,78 @@ export function normalizeThemeProfile(value: unknown): ThemeProfileV2 | null {
     modes:
       value.schemaVersion === THEME_PROFILE_SCHEMA_VERSION ? normalizeThemeModes(value.modes) : {},
     ...(toneSchedule ? { toneSchedule } : {}),
+    ...(source ? { source } : {}),
     windowDefaults: normalizeWindowDefaults(value.windowDefaults),
     ...(assets.length > 0 ? { assets } : {}),
     ...normalizeThemeAssetBindings(value.assetBindings, assets)
+  }
+}
+
+function normalizeThemeProfileSource(value: unknown): ThemeProfileSource | undefined {
+  if (!isRecord(value) || value.kind !== 'builtin-preset') return undefined
+  return isBuiltInThemePresetId(value.presetId)
+    ? { kind: 'builtin-preset', presetId: value.presetId }
+    : undefined
+}
+
+function normalizeThemeProfileHistory(
+  value: unknown,
+  profiles: ThemeProfileV2[]
+): Record<string, ThemeProfileHistoryEntry[]> {
+  if (!isRecord(value)) return {}
+  const profileIds = new Set(profiles.map((profile) => profile.id))
+  const result: Record<string, ThemeProfileHistoryEntry[]> = {}
+  for (const [profileId, rawEntries] of Object.entries(value)) {
+    if (!profileIds.has(profileId) || !Array.isArray(rawEntries)) continue
+    const entries = rawEntries.flatMap((rawEntry) => {
+      if (!isRecord(rawEntry)) return []
+      const profile = normalizeThemeProfile(rawEntry.profile)
+      if (!profile || profile.id !== profileId) return []
+      return [{ savedAt: normalizeIsoDate(rawEntry.savedAt), profile }]
+    })
+    const limited = limitThemeProfileHistory(entries)
+    if (limited.length > 0) result[profileId] = limited
+  }
+  return result
+}
+
+export function limitThemeProfileHistory(
+  entries: readonly ThemeProfileHistoryEntry[]
+): ThemeProfileHistoryEntry[] {
+  const result: ThemeProfileHistoryEntry[] = []
+  let byteLength = 2
+  for (const entry of entries.slice(0, MAX_THEME_PROFILE_HISTORY_ENTRIES)) {
+    const serialized = JSON.stringify(entry)
+    const entryBytes = new TextEncoder().encode(serialized).byteLength + (result.length > 0 ? 1 : 0)
+    if (byteLength + entryBytes > MAX_THEME_PROFILE_HISTORY_BYTES) break
+    result.push(entry)
+    byteLength += entryBytes
+  }
+  return result
+}
+
+export function themeProfilesHaveSameEditableState(
+  first: ThemeProfileV2,
+  second: ThemeProfileV2
+): boolean {
+  return (
+    JSON.stringify(themeProfileEditableState(first)) ===
+    JSON.stringify(themeProfileEditableState(second))
+  )
+}
+
+function themeProfileEditableState(profile: ThemeProfileV2): object {
+  return {
+    name: profile.name,
+    description: profile.description,
+    baseThemeId: profile.baseThemeId,
+    overrides: profile.overrides,
+    modes: profile.modes,
+    toneSchedule: profile.toneSchedule,
+    source: profile.source,
+    windowDefaults: profile.windowDefaults,
+    assets: profile.assets,
+    assetBindings: profile.assetBindings
   }
 }
 
@@ -2947,27 +3563,66 @@ export function resolveThemeProfileTokens(
   profile: ThemeProfileV2 | null,
   tone: ThemeTone
 ): Record<string, string> {
-  return profile
-    ? {
-        ...TWILIGHT_DEFAULT_THEME.variants[tone].tokens,
-        ...profile.overrides[tone]
-      }
-    : {}
+  if (!profile) return {}
+  const basePreset = resolveThemeProfileBasePreset(profile)
+  return {
+    ...TWILIGHT_DEFAULT_THEME.variants[tone].tokens,
+    ...(basePreset?.overrides[tone] ?? {}),
+    ...profile.overrides[tone]
+  }
 }
 
 export function resolveThemeProfileModes(profile: ThemeProfileV2 | null): ThemeModes {
+  const baseModes = resolveThemeProfileBasePreset(profile)?.modes ?? {}
   const modes = profile?.modes ?? {}
   return {
-    appearance: { ...DEFAULT_THEME_MODES.appearance, ...modes.appearance },
-    navigation: { ...DEFAULT_THEME_MODES.navigation, ...modes.navigation },
-    library: { ...DEFAULT_THEME_MODES.library, ...modes.library },
-    player: { ...DEFAULT_THEME_MODES.player, ...modes.player },
-    artwork: { ...DEFAULT_THEME_MODES.artwork, ...modes.artwork },
-    equalizer: { ...DEFAULT_THEME_MODES.equalizer, ...modes.equalizer },
-    icons: { ...DEFAULT_THEME_MODES.icons, ...modes.icons },
-    typography: { ...DEFAULT_THEME_MODES.typography, ...modes.typography },
-    visibility: { ...modes.visibility }
+    appearance: {
+      ...DEFAULT_THEME_MODES.appearance,
+      ...baseModes.appearance,
+      ...modes.appearance
+    },
+    navigation: {
+      ...DEFAULT_THEME_MODES.navigation,
+      ...baseModes.navigation,
+      ...modes.navigation
+    },
+    library: { ...DEFAULT_THEME_MODES.library, ...baseModes.library, ...modes.library },
+    player: { ...DEFAULT_THEME_MODES.player, ...baseModes.player, ...modes.player },
+    artwork: { ...DEFAULT_THEME_MODES.artwork, ...baseModes.artwork, ...modes.artwork },
+    equalizer: {
+      ...DEFAULT_THEME_MODES.equalizer,
+      ...baseModes.equalizer,
+      ...modes.equalizer
+    },
+    icons: { ...DEFAULT_THEME_MODES.icons, ...baseModes.icons, ...modes.icons },
+    typography: {
+      ...DEFAULT_THEME_MODES.typography,
+      ...baseModes.typography,
+      ...modes.typography
+    },
+    visibility: { ...baseModes.visibility, ...modes.visibility }
   }
+}
+
+export function resolveThemeProfileWindowDefaults(
+  profile: ThemeProfileV2 | null
+): ThemeWindowDefaults {
+  const base = resolveThemeProfileBasePreset(profile)?.windowDefaults
+  return {
+    miniPlayer: { ...base?.miniPlayer, ...profile?.windowDefaults?.miniPlayer },
+    desktopLyrics: { ...base?.desktopLyrics, ...profile?.windowDefaults?.desktopLyrics }
+  }
+}
+
+function resolveThemeProfileBasePreset(profile: ThemeProfileV2 | null): ThemeProfileV2 | null {
+  if (
+    !profile ||
+    profile.baseThemeId === profile.id ||
+    profile.baseThemeId === TWILIGHT_DEFAULT_THEME_ID
+  ) {
+    return null
+  }
+  return getBuiltInThemePreset(profile.baseThemeId)
 }
 
 export function themeModesToDataAttributes(value: unknown): Record<`data-te-${string}`, string> {
@@ -3016,7 +3671,7 @@ export function getThemeTokenDefinition(id: string): ThemeTokenDefinition | null
 
 export function isThemeSelection(value: unknown): value is ThemeSelection {
   if (!isRecord(value) || typeof value.kind !== 'string') return false
-  if (value.kind === 'builtin') return value.id === TWILIGHT_DEFAULT_THEME_ID
+  if (value.kind === 'builtin') return isBuiltInThemePresetId(value.id)
   if (value.kind === 'user') return Boolean(normalizeThemeId(value.id))
   return (
     value.kind === 'plugin' &&
@@ -3040,7 +3695,7 @@ export function normalizeThemeSelection(
       }
     }
     if (value.kind === 'user') return { kind: 'user', id: normalizeThemeId(value.id) }
-    return { kind: 'builtin', id: TWILIGHT_DEFAULT_THEME_ID }
+    return { kind: 'builtin', id: value.id }
   }
   if (typeof legacyPluginThemeId === 'string') {
     const separator = legacyPluginThemeId.indexOf(':')
@@ -3083,7 +3738,16 @@ function normalizeWindowDefaults(value: unknown): ThemeWindowDefaults | undefine
       cornerRadius: normalizeOptionalNumber(value.miniPlayer.cornerRadius, 0, 36),
       borderWidth: normalizeOptionalNumber(value.miniPlayer.borderWidth, 0, 3),
       borderColor: normalizeOptionalColor(value.miniPlayer.borderColor),
-      shadowStrength: normalizeOptionalNumber(value.miniPlayer.shadowStrength, 0, 100)
+      shadowStrength: normalizeOptionalNumber(value.miniPlayer.shadowStrength, 0, 100),
+      ...(value.miniPlayer.surfaceColor !== undefined
+        ? { surfaceColor: normalizeOptionalColor(value.miniPlayer.surfaceColor) }
+        : {}),
+      ...(value.miniPlayer.fontFamily !== undefined
+        ? { fontFamily: normalizeOptionalText(value.miniPlayer.fontFamily, 240) }
+        : {}),
+      ...(value.miniPlayer.shadowColor !== undefined
+        ? { shadowColor: normalizeOptionalColor(value.miniPlayer.shadowColor) }
+        : {})
     }
   }
   if (isRecord(value.desktopLyrics)) {

@@ -33,12 +33,14 @@ export interface MiniPlayerAppearanceSettings {
   textMode: 'auto' | 'custom'
   primaryTextColor: string
   mutedTextColor: string
+  fontFamily: string
   surfaceOpacity: number
   glassBlur: number
   cornerRadius: number
   borderWidth: number
   borderColor: string
   shadowStrength: number
+  shadowColor: string
 }
 
 export interface MiniPlayerLayoutSettings {
@@ -149,12 +151,14 @@ export const DEFAULT_MINI_PLAYER_THEME_PROFILES: Readonly<Record<string, MiniPla
         textMode: 'auto',
         primaryTextColor: '#ffffff',
         mutedTextColor: '#b8b7c2',
+        fontFamily: "'Inter', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif",
         surfaceOpacity: 94,
         glassBlur: 18,
         cornerRadius: 25,
         borderWidth: 1,
         borderColor: '#353542',
-        shadowStrength: 80
+        shadowStrength: 80,
+        shadowColor: '#000000'
       },
       layout: { preference: 'auto' },
       visibility: { ...DEFAULT_MINI_PLAYER_VISIBILITY }
@@ -182,12 +186,14 @@ export const DEFAULT_MINI_PLAYER_THEME_PROFILES: Readonly<Record<string, MiniPla
         textMode: 'auto',
         primaryTextColor: '#1b2034',
         mutedTextColor: '#656a7b',
+        fontFamily: "'Inter', 'MiSans', 'Microsoft YaHei UI', system-ui, sans-serif",
         surfaceOpacity: 97,
         glassBlur: 14,
         cornerRadius: 25,
         borderWidth: 1,
         borderColor: '#d7d9e5',
-        shadowStrength: 35
+        shadowStrength: 35,
+        shadowColor: '#1b2034'
       },
       layout: { preference: 'auto' },
       visibility: { ...DEFAULT_MINI_PLAYER_VISIBILITY }
@@ -430,6 +436,7 @@ export function normalizeMiniPlayerThemeProfile(
         appearanceValue.mutedTextColor,
         fallback.appearance.mutedTextColor
       ),
+      fontFamily: normalizeFontFamily(appearanceValue.fontFamily, fallback.appearance.fontFamily),
       surfaceOpacity: clampFiniteNumber(
         appearanceValue.surfaceOpacity,
         40,
@@ -465,7 +472,8 @@ export function normalizeMiniPlayerThemeProfile(
         100,
         fallback.appearance.shadowStrength,
         true
-      )
+      ),
+      shadowColor: normalizeHexColor(appearanceValue.shadowColor, fallback.appearance.shadowColor)
     },
     layout: {
       preference: normalizeLayoutPreference(layoutValue.preference, fallback.layout.preference)
@@ -594,6 +602,14 @@ function normalizeHexColor(value: unknown, fallback: string): string {
 
 function normalizeOptionalHexColor(value: unknown): string | null {
   return typeof value === 'string' && /^#[\da-f]{6}$/i.test(value.trim()) ? value.trim() : null
+}
+
+function normalizeFontFamily(value: unknown, fallback: string): string {
+  if (typeof value !== 'string') return fallback
+  const normalized = value.trim().slice(0, 240)
+  return normalized && !/[;{}]|url\s*\(|@import|expression\s*\(/i.test(normalized)
+    ? normalized
+    : fallback
 }
 
 function normalizeCoordinate(value: unknown, fallback: number): number {

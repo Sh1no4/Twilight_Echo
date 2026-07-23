@@ -31,6 +31,26 @@ const { visualizerActive } = storeToRefs(visualizationStore)
 const { seek, formatTime } = playbackStore
 const { settings } = useSettingsStore()
 const lyricsManagement = useLyricsManagement()
+const emit = defineEmits<{ customizeAppearance: [] }>()
+const appearanceMenuOpen = ref(false)
+const appearanceMenuPosition = ref({ x: 0, y: 0 })
+
+function openAppearanceMenu(event: MouseEvent): void {
+  appearanceMenuPosition.value = {
+    x: Math.max(8, Math.min(event.clientX, window.innerWidth - 210)),
+    y: Math.max(8, Math.min(event.clientY, window.innerHeight - 52))
+  }
+  appearanceMenuOpen.value = true
+}
+
+function closeAppearanceMenu(): void {
+  appearanceMenuOpen.value = false
+}
+
+function customizePlayerAppearance(): void {
+  closeAppearanceMenu()
+  emit('customizeAppearance')
+}
 
 const nowPlayingBackground = computed(() => settings.value.nowPlayingBackground)
 const lyricAlign = computed(() => settings.value.lyricAlign)
@@ -425,10 +445,12 @@ onMounted(() => {
   }
   void restoreOrCenterLyrics()
   window.addEventListener('resize', onLyricLayoutResize)
+  window.addEventListener('pointerdown', closeAppearanceMenu)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', onLyricLayoutResize)
+  window.removeEventListener('pointerdown', closeAppearanceMenu)
 })
 </script>
 
@@ -437,6 +459,7 @@ onBeforeUnmount(() => {
     class="playing-music"
     :class="`bg-${nowPlayingBackground}`"
     :style="{ '--accent-color': dominantColor, '--lyric-dim': lyricDimOpacity }"
+    @contextmenu.prevent="openAppearanceMenu"
   >
     <button
       type="button"
@@ -564,6 +587,21 @@ onBeforeUnmount(() => {
         <p>暂无正在播放的歌曲</p>
       </div>
     </div>
+    <Teleport to="body">
+      <div
+        v-if="appearanceMenuOpen"
+        class="player-appearance-menu"
+        :style="{
+          left: `${appearanceMenuPosition.x}px`,
+          top: `${appearanceMenuPosition.y}px`
+        }"
+        @pointerdown.stop
+      >
+        <button type="button" @click="customizePlayerAppearance">
+          <i class="ph ph-palette"></i><span>定制此区域外观</span>
+        </button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -580,6 +618,37 @@ onBeforeUnmount(() => {
   background-size: cover;
   background-repeat: no-repeat;
   --accent-color: var(--te-playback-accent, #7c4dff);
+}
+
+.player-appearance-menu {
+  position: fixed;
+  z-index: 10000;
+  width: 202px;
+  padding: 5px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 6px;
+  box-shadow: var(--te-glass-shadow);
+  background: var(--te-card-bg);
+}
+
+.player-appearance-menu button {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  gap: 9px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 4px;
+  color: var(--te-neutral-900);
+  text-align: left;
+  background: transparent;
+  cursor: pointer;
+}
+
+.player-appearance-menu button:hover {
+  color: var(--te-primary-500);
+  background: var(--te-hover-bg);
 }
 
 .backdrop {

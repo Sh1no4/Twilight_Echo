@@ -1,5 +1,7 @@
 import {
   TWILIGHT_DEFAULT_THEME,
+  getBuiltInThemePreset,
+  resolveThemeProfileWindowDefaults,
   type ThemeLibrarySnapshot,
   type ThemeWindowDefaults
 } from '../../shared/theme.ts'
@@ -20,11 +22,26 @@ export async function createInheritedThemeSettingsPatch(
     if (profile && appearance) {
       miniPlayer.profiles[miniPlayer.activeStyleId] = {
         ...profile,
+        background: {
+          ...profile.background,
+          ...(appearance.surfaceColor
+            ? {
+                solidColor: appearance.surfaceColor,
+                fallbackColor: appearance.surfaceColor
+              }
+            : {})
+        },
         appearance: {
           ...profile.appearance,
-          ...(appearance.accentColor ? { accentColor: appearance.accentColor } : {}),
+          ...(appearance.accentColor
+            ? { accentMode: 'custom' as const, accentColor: appearance.accentColor }
+            : {}),
+          ...(appearance.primaryTextColor || appearance.mutedTextColor
+            ? { textMode: 'custom' as const }
+            : {}),
           ...(appearance.primaryTextColor ? { primaryTextColor: appearance.primaryTextColor } : {}),
           ...(appearance.mutedTextColor ? { mutedTextColor: appearance.mutedTextColor } : {}),
+          ...(appearance.fontFamily ? { fontFamily: appearance.fontFamily } : {}),
           ...(appearance.surfaceOpacity != null
             ? { surfaceOpacity: appearance.surfaceOpacity }
             : {}),
@@ -34,7 +51,8 @@ export async function createInheritedThemeSettingsPatch(
           ...(appearance.borderColor ? { borderColor: appearance.borderColor } : {}),
           ...(appearance.shadowStrength != null
             ? { shadowStrength: appearance.shadowStrength }
-            : {})
+            : {}),
+          ...(appearance.shadowColor ? { shadowColor: appearance.shadowColor } : {})
         }
       }
       patch.miniPlayer = miniPlayer
@@ -67,8 +85,11 @@ async function resolveThemeWindowDefaults(
   const base = TWILIGHT_DEFAULT_THEME.windowDefaults ?? {}
   const selection = snapshot.data.activeTheme
   let selected: ThemeWindowDefaults | undefined
-  if (selection.kind === 'user') {
-    selected = snapshot.data.profiles.find((profile) => profile.id === selection.id)?.windowDefaults
+  if (selection.kind === 'builtin') {
+    selected = getBuiltInThemePreset(selection.id)?.windowDefaults
+  } else if (selection.kind === 'user') {
+    const profile = snapshot.data.profiles.find((entry) => entry.id === selection.id) ?? null
+    selected = resolveThemeProfileWindowDefaults(profile)
   } else if (selection.kind === 'plugin') {
     await runtime.pluginManagerReady
     const extensions = (await runtime.pluginManager?.listExtensions()) ?? []

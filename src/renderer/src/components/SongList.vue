@@ -50,6 +50,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   selectView: [category: string, filter: string | null]
+  customizeAppearance: []
 }>()
 
 const {
@@ -731,6 +732,11 @@ function onTrackSelectToggle(track: Track, indexInVisible: number, event: Event)
 function onTrackContextMenu(event: MouseEvent, track: Track, indexInVisible: number): void {
   ensureContextSelection(track, absoluteIndex(indexInVisible))
   onContextMenu(event, track)
+}
+
+function customizeLibraryAppearance(): void {
+  closeContextMenu()
+  emit('customizeAppearance')
 }
 
 const selectionActionLabel = computed(() =>
@@ -1811,6 +1817,10 @@ function getTrackSource(track: Pick<Track, 'id' | 'source'>): string {
                       {{ pl.name }}
                     </div>
                   </div>
+                </div>
+                <div class="menu-item" @click="customizeLibraryAppearance">
+                  <i class="ph ph-palette"></i>
+                  <span>定制此区域外观</span>
                 </div>
               </div>
             </Teleport>

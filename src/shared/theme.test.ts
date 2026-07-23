@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  BUILT_IN_THEME_PRESETS,
+  BUILT_IN_THEME_PRESET_IDS,
   BUILT_IN_THEME_FONTS,
   THEME_ACCENT_PALETTES,
   THEME_BACKGROUND_PALETTES,
@@ -19,6 +21,7 @@ import {
   normalizeThemeTokenOverrides,
   resolveThemeProfileModes,
   resolveThemeProfileTokens,
+  limitThemeProfileHistory,
   resolveScheduledThemeTone,
   resolveThemeIconClasses,
   ensureThemeTextContrast,
@@ -299,6 +302,67 @@ test('phase two palettes and built-in fonts are broad UI shortcuts, not schema v
   })
   assert.ok(profile)
   assert.equal('paletteId' in profile, false)
+})
+
+test('phase five ships seven contrasting read-only presets with token, mode, and visibility layers', () => {
+  assert.deepEqual(
+    BUILT_IN_THEME_PRESETS.map((preset) => preset.id),
+    BUILT_IN_THEME_PRESET_IDS
+  )
+  assert.equal(new Set(BUILT_IN_THEME_PRESETS.map((preset) => preset.name)).size, 7)
+  for (const preset of BUILT_IN_THEME_PRESETS) {
+    assert.ok(Object.keys(preset.overrides.pureWhite).length >= 0)
+    assert.ok(Object.keys(preset.modes).length > 0)
+    assert.ok(preset.modes.visibility)
+    assert.ok(preset.windowDefaults?.miniPlayer?.fontFamily)
+    assert.ok(preset.windowDefaults?.desktopLyrics?.highlightColor)
+    assert.equal(normalizeThemeProfile(preset), null)
+  }
+  const obsidian = BUILT_IN_THEME_PRESETS.find((preset) => preset.id.endsWith('obsidian-glass'))!
+  assert.equal(resolveThemeProfileModes(obsidian).player?.layout, 'full-cover')
+  assert.equal(resolveThemeProfileModes(obsidian).navigation?.style, 'rail')
+  assert.equal(resolveThemeProfileModes(obsidian).visibility?.playerDuration, false)
+})
+
+test('derived profiles retain a preset source and reset through the preset base', () => {
+  const derived = normalizeThemeProfile({
+    schemaVersion: 2,
+    id: 'user:derived',
+    name: 'Derived',
+    description: '',
+    baseThemeId: TWILIGHT_DEFAULT_THEME_ID,
+    source: { kind: 'builtin-preset', presetId: 'builtin:studio-split' },
+    createdAt: '2026-07-22T00:00:00.000Z',
+    updatedAt: '2026-07-22T00:00:00.000Z',
+    overrides: { pureWhite: {}, dark: {} },
+    modes: {}
+  })
+  assert.ok(derived)
+  assert.equal(derived.baseThemeId, 'builtin:studio-split')
+  assert.equal(derived.source?.presetId, 'builtin:studio-split')
+  assert.equal(resolveThemeProfileModes(derived).player?.layout, 'split')
+  assert.equal(resolveThemeProfileTokens(derived, 'dark')['color.primary.500'], '#2dd4bf')
+})
+
+test('profile history is bounded by count and UTF-8 byte budget', () => {
+  const profile = normalizeThemeProfile({
+    schemaVersion: 2,
+    id: 'user:history',
+    name: 'History',
+    description: '',
+    baseThemeId: TWILIGHT_DEFAULT_THEME_ID,
+    createdAt: '2026-07-22T00:00:00.000Z',
+    updatedAt: '2026-07-22T00:00:00.000Z',
+    overrides: { pureWhite: {}, dark: {} },
+    modes: {}
+  })!
+  const entries = Array.from({ length: 32 }, (_, index) => ({
+    savedAt: new Date(2026, 0, index + 1).toISOString(),
+    profile: { ...profile, description: 'x'.repeat(60_000) }
+  }))
+  const limited = limitThemeProfileHistory(entries)
+  assert.ok(limited.length <= 8)
+  assert.ok(new TextEncoder().encode(JSON.stringify(limited)).byteLength <= 256 * 1024)
 })
 
 test('adaptive accents and contrast enforcement produce bounded readable host colors', () => {

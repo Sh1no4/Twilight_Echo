@@ -82,6 +82,36 @@ test('theme library reads v1 profiles as v2 without rewriting the recovery sourc
   }
 })
 
+test('theme profile writes keep a bounded recoverable history without changing CAS semantics', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'twilight-theme-history-'))
+  try {
+    const repository = new ThemeLibraryRepository(
+      join(directory, 'themes.json'),
+      createDefaultThemeLibraryDocument
+    )
+    let profile = createProfile('user:history')
+    let snapshot = await repository.saveProfile(profile, 0, '2026-07-23T00:00:00.000Z')
+    for (let index = 1; index <= 12; index += 1) {
+      profile = {
+        ...profile,
+        updatedAt: `2026-07-23T00:${String(index).padStart(2, '0')}:00.000Z`,
+        overrides: {
+          ...profile.overrides,
+          pureWhite: { 'color.primary.500': `#${String(index).padStart(2, '0')}3456` }
+        }
+      }
+      snapshot = await repository.saveProfile(profile, snapshot.revision)
+    }
+    const history = snapshot.data.profileHistory['user:history']
+    assert.ok(history)
+    assert.ok(history.length <= 8)
+    assert.equal(history[0].profile.overrides.pureWhite['color.primary.500'], '#113456')
+    assert.ok(Buffer.byteLength(JSON.stringify(history), 'utf8') <= 256 * 1024)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
 function createProfile(id: string): ThemeProfileV2 {
   return {
     schemaVersion: 2,

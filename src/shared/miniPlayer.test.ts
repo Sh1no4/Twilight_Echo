@@ -81,12 +81,14 @@ test('mini player profiles clamp nested values and reject unsafe background urls
           textMode: 'custom',
           primaryTextColor: '#123456',
           mutedTextColor: '#654321',
+          fontFamily: "url('https://example.com/font.woff2')",
           surfaceOpacity: 2,
           glassBlur: 99,
           cornerRadius: 80,
           borderWidth: 9,
           borderColor: '#111111',
-          shadowStrength: -5
+          shadowStrength: -5,
+          shadowColor: '#222222'
         },
         layout: { preference: 'wide' },
         visibility: { artwork: false, playbackState: false, volume: false }
@@ -109,6 +111,11 @@ test('mini player profiles clamp nested values and reject unsafe background urls
   assert.equal(profile.appearance.cornerRadius, 36)
   assert.equal(profile.appearance.borderWidth, 3)
   assert.equal(profile.appearance.shadowStrength, 0)
+  assert.equal(
+    profile.appearance.fontFamily,
+    DEFAULT_MINI_PLAYER_SETTINGS.profiles['aurora-glass'].appearance.fontFamily
+  )
+  assert.equal(profile.appearance.shadowColor, '#222222')
   assert.equal(profile.visibility.artwork, false)
   assert.equal(profile.visibility.album, true)
   assert.equal('playbackState' in profile.visibility, false)

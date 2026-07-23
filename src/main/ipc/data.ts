@@ -25,7 +25,9 @@ import {
   getDefaultCachePath,
   normalizeAppSettings
 } from '../core/settings'
-import { exportAppSettingsForBackup, importAppSettingsFromBackup } from '../core/settingsBackup'
+import { exportAppSettingsForBackup, importAppSettingsBackup } from '../core/settingsBackup'
+import { loadThemeLibrary } from '../themes/themeLibrary.ts'
+import { restoreThemeLibraryFromBackup } from './themes.ts'
 import { ensureMusicCacheDirectories } from '../cache/ncmCache'
 import { clearManagedMusicCache, getManagedMusicCacheSize } from '../cache/musicCacheLayout.ts'
 import { grantRemoteImageUrl } from '../security/remoteMediaGrants.ts'
@@ -344,7 +346,7 @@ export function setupDataIpc(): void {
 
   ipcMain.handle('settings:export', async (event) => {
     assertTrustedIpcSender(event, 'settings IPC')
-    return exportAppSettingsForBackup(runtime.appSettings)
+    return exportAppSettingsForBackup(runtime.appSettings, (await loadThemeLibrary()).data)
   })
 
   ipcMain.handle('settings:import', async (event, json: string) => {
@@ -355,12 +357,13 @@ export function setupDataIpc(): void {
     if (Buffer.byteLength(json, 'utf-8') > MAX_SETTINGS_BACKUP_BYTES) {
       throw new Error('Settings backup is too large')
     }
-    const importedSettings = importAppSettingsFromBackup(
-      json,
-      runtime.appSettings,
-      normalizeAppSettings
+    const imported = importAppSettingsBackup(json, runtime.appSettings, normalizeAppSettings)
+    const settingsSnapshot = await updateAppSettings(
+      await authorizeSettingsPathPatch(imported.settings)
     )
-    return await updateAppSettings(await authorizeSettingsPathPatch(importedSettings))
+    if (!imported.themeLibrary) return settingsSnapshot
+    await restoreThemeLibraryFromBackup(imported.themeLibrary)
+    return createSettingsSnapshot(runtime.appSettings, runtime.launchSettings)
   })
 
   ipcMain.handle('settings:getShortcutStatuses', async (event) => {

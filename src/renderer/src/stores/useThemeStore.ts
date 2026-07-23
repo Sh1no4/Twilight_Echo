@@ -7,6 +7,8 @@ import {
   TWILIGHT_DEFAULT_THEME_ID,
   createThemeAccentTokenOverrides,
   ensureThemeTextContrast,
+  getBuiltInThemePreset,
+  isBuiltInThemePresetId,
   normalizeThemeTokenOverrides,
   resolveScheduledThemeTone,
   resolveThemeProfileModes,
@@ -126,7 +128,9 @@ function setupThemeListeners(): void {
 
 function getSelectedProfile(selection: ThemeSelection | undefined): ThemeProfileV2 | null {
   if (previewProfile.value) return previewProfile.value
-  if (!selection || selection.kind !== 'user') return null
+  if (!selection) return null
+  if (selection.kind === 'builtin') return getBuiltInThemePreset(selection.id)
+  if (selection.kind !== 'user') return null
   const library = snapshot.value?.data
   if (!library) return null
   const profileId = selection.id
@@ -555,25 +559,34 @@ export function useThemeStore(): {
     source: ThemeProfileV2 | null = null
   ): ThemeProfileV2 {
     const now = new Date().toISOString()
+    const derivedPresetId = source && isBuiltInThemePresetId(source.id) ? source.id : null
+    const derivedPreset = derivedPresetId ? source : null
     return {
       schemaVersion: 2,
       id: `user:${crypto.randomUUID()}`,
       name,
       description: source?.description ?? '',
-      baseThemeId: source?.baseThemeId ?? TWILIGHT_DEFAULT_THEME_ID,
+      baseThemeId: derivedPresetId ?? source?.baseThemeId ?? TWILIGHT_DEFAULT_THEME_ID,
       createdAt: now,
       updatedAt: now,
       overrides: {
-        pureWhite: { ...(source?.overrides.pureWhite ?? {}) },
-        dark: { ...(source?.overrides.dark ?? {}) }
+        pureWhite: { ...(derivedPreset ? {} : (source?.overrides.pureWhite ?? {})) },
+        dark: { ...(derivedPreset ? {} : (source?.overrides.dark ?? {})) }
       },
-      modes: source?.modes ? JSON.parse(JSON.stringify(source.modes)) : {},
-      toneSchedule: source?.toneSchedule ? { ...source.toneSchedule } : undefined,
-      windowDefaults: source?.windowDefaults
-        ? JSON.parse(JSON.stringify(source.windowDefaults))
-        : undefined,
-      assets: source?.assets?.map((asset) => ({ ...asset })),
-      assetBindings: source?.assetBindings ? { ...source.assetBindings } : undefined
+      modes: source?.modes && !derivedPreset ? JSON.parse(JSON.stringify(source.modes)) : {},
+      toneSchedule: source?.toneSchedule && !derivedPreset ? { ...source.toneSchedule } : undefined,
+      source: derivedPreset
+        ? { kind: 'builtin-preset' as const, presetId: derivedPresetId! }
+        : source?.source
+          ? { ...source.source }
+          : undefined,
+      windowDefaults:
+        source?.windowDefaults && !derivedPreset
+          ? JSON.parse(JSON.stringify(source.windowDefaults))
+          : undefined,
+      assets: derivedPreset ? undefined : source?.assets?.map((asset) => ({ ...asset })),
+      assetBindings:
+        source?.assetBindings && !derivedPreset ? { ...source.assetBindings } : undefined
     }
   }
 

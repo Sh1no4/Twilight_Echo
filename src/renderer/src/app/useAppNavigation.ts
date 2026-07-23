@@ -11,6 +11,18 @@ export type SettingsSection =
   | 'shortcuts'
   | 'about'
 
+export type ThemeStudioDomain =
+  | 'presets'
+  | 'personalization'
+  | 'shell'
+  | 'navigation'
+  | 'library'
+  | 'typography'
+  | 'player'
+  | 'windows'
+  | 'motion'
+  | 'advanced'
+
 const songlistOrder = [
   'dashboard',
   'allSongs',
@@ -32,6 +44,8 @@ export function useAppNavigation() {
   const loginInitialProviderId = ref<string | null>(null)
   const showSettingsPage = ref(false)
   const showThemeStudioPage = ref(false)
+  const themeStudioInitialDomain = ref<ThemeStudioDomain>('presets')
+  const themeStudioReturnTarget = ref<'local' | 'playing' | 'settings'>('settings')
   const showPluginPage = ref(false)
   const showEqualizerPage = ref(false)
   const showDspRackPage = ref(false)
@@ -196,7 +210,13 @@ export function useAppNavigation() {
     showSettingsPage.value = false
   }
 
-  function openThemeStudioPage(): void {
+  function openThemeStudioPage(initialDomain: ThemeStudioDomain = 'presets'): void {
+    themeStudioInitialDomain.value = initialDomain
+    themeStudioReturnTarget.value = initialDomain === 'presets' || showSettingsPage.value
+      ? 'settings'
+      : showPlayingPage.value
+        ? 'playing'
+        : 'local'
     menuOpen.value = false
     showPlayingPage.value = false
     showSettingsPage.value = false
@@ -209,7 +229,11 @@ export function useAppNavigation() {
 
   function closeThemeStudioPage(): void {
     showThemeStudioPage.value = false
-    openSettingsPage('appearance')
+    if (themeStudioReturnTarget.value === 'playing') {
+      showPlayingPage.value = true
+    } else if (themeStudioReturnTarget.value === 'settings') {
+      openSettingsPage('appearance')
+    }
   }
 
   function openPlaybackSettings(): void {
@@ -317,6 +341,7 @@ export function useAppNavigation() {
     loginInitialProviderId,
     showSettingsPage,
     showThemeStudioPage,
+    themeStudioInitialDomain,
     showPluginPage,
     showEqualizerPage,
     showDspRackPage,

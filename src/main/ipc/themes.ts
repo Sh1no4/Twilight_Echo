@@ -7,6 +7,7 @@ import {
   type ThemeAssetReference,
   type ThemeAssetType,
   type ThemeLibrarySnapshot,
+  type ThemeLibraryDocument,
   type ThemeProfileV2,
   type ThemeSelection,
   type ThemeWindowInheritance
@@ -30,6 +31,7 @@ import {
 import {
   deleteThemeProfile,
   loadThemeLibrary,
+  replaceThemeLibrary,
   saveThemeProfile,
   setActiveTheme,
   setThemeWindowInheritance
@@ -246,6 +248,29 @@ export async function reconcileThemeAfterPluginChange(): Promise<void> {
     }
   }
   await synchronizeThemeSettings(snapshot)
+}
+
+export async function restoreThemeLibraryFromBackup(
+  document: ThemeLibraryDocument
+): Promise<ThemeLibrarySnapshot> {
+  let candidate = document
+  const active = candidate.activeTheme
+  if (active.kind === 'user') {
+    const profile = candidate.profiles.find((entry) => entry.id === active.id)
+    try {
+      if (profile) await assertThemeProfileAssetsAvailable(profile)
+    } catch {
+      candidate = {
+        ...candidate,
+        activeTheme: { kind: 'builtin', id: TWILIGHT_DEFAULT_THEME_ID }
+      }
+    }
+  }
+  const current = await loadThemeLibrary()
+  const restored = await runMutation(() => replaceThemeLibrary(candidate, current.revision))
+  if (!('data' in restored)) throw new Error('主题库在恢复时发生并发修改')
+  await reconcileThemeAfterPluginChange()
+  return await loadThemeLibrary()
 }
 
 async function runMutation(

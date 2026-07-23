@@ -15,12 +15,15 @@
 | P2   | ✅ 已完成 | 封面强调色、四类背景、明暗调度、16+16 色板、9 项字体域、内置字体、统一表面、对比度保护  | `test:themes` 33/33、`test:cross-cutting-regressions` 13/13、ESLint、typecheck、`docs/audit-evidence/theme-p2-*.png`    |
 | P3   | ✅ 已完成 | 25 个宿主图标槽、三图标族/三导航布局、导航标识与媒体库密度/选中/叠层                    | `test:themes` 35/35、`test:local-perf` 99 通过/2 跳过、`docs/audit-evidence/theme-p3-*.png`                             |
 | P4   | ✅ 已完成 | 五种播放页布局、标题对齐/四类进度样式、封面/Pro 控制区、均衡器视觉预设、13 个可见性槽位 | `test:themes` 37/37、P4 组件测试 16/16、`test:dsp-graph` 13/13、ESLint、typecheck、`docs/audit-evidence/theme-p4-*.png` |
+| P5   | ✅ 已完成 | 7 个只读预设、派生档与版本恢复、小窗/桌面歌词继承、区域快捷入口、主题库备份恢复         | `test:themes` 43/43、窗口/备份测试 13/13、`test:local-perf` 99 通过/2 跳过、`docs/audit-evidence/theme-p5-*.png`        |
 
 P2 额外通过 CDP 验证：1495×883、1200×800、1080×720 三种视口无横向溢出或三栏/顶栏碰撞；reduced-motion 下不添加 tone 过渡；无封面时动态背景保留实色回退；Lora、JetBrains Mono、Space Grotesk 实际加载；长中英日韩标题无越界。本轮遵循要求未使用 Computer Use。
 
 P3 额外通过原始 CDP 验证：三图标族 × 三导航布局的全部组合均只显示一个正确字族图标，真实侧栏宽度为 216/164/72px 且菜单点击区保持 40px；品牌标识显示时底部菜单仍完整可达。媒体库舒适/紧凑、填充/描边、标题叠层及 6 个新增数值令牌均在真实预览中即时生效。1495×883、1200×800、1080×720 无横向溢出或面板碰撞，forced-colors 下图标和 2px 焦点轮廓保持可见。验证全程未使用 Computer Use。
 
 P4 额外通过原始 CDP 验证：五种布局在 1495×883、1200×800、1080×720 均无文档溢出、封面/PlayerBar 越界或标题/歌词面板碰撞；`split` 在窄窗降为单栏并在恢复宽度后回到双栏，`minimal` 默认隐藏项可逐项显式恢复且隐藏按钮不进入可见焦点顺序。Theme Studio 已移除手写预览壳，直接以只读画布挂载真实 LocalDashboard、PlayingMusic、EqualizerPage、TitleBar、SideMenu 和 PlayerBar；三种页面切换均只有一个真实表面实例，明暗 token 与页面计算色一致。无封面占位符、长歌词滚动、均衡器 mode/可见性、reduced-motion、关闭封面阴影以及 full-cover 在 1080×720/720×720 的分区均通过检查。验证全程未使用 Computer Use。
+
+P5 额外通过原始 CDP 验证：7 个内置预设在 1495×883、1200×800、1080×720 共 21 组检查中无文档/编辑区溢出、面板碰撞或重复预览画布；从 `Paper Light` 派生的用户档修改窗口字段后，完整重置准确回到来源预设。媒体库/播放页右键入口分别直达 Theme Studio 的 `library`/`player` 域；真实小窗接收到 `Obsidian Glass` 的表面色、圆角、边框与阴影，真实桌面歌词接收到背景、正文/高亮和 12px 阴影模糊。验证全程未使用 Computer Use。
 
 已知非主题门禁：`test:playback-routing` 仍有 HiFi 抽屉旧文案断言和 metadata enrichment 请求次数断言两项失败；`test:app` 仍有离线下载门禁、Windows no-device/release 门禁、测试归属及 SettingsPage 旧背景 URL 四项断言失败。它们均位于本阶段未改动的门禁、播放、元数据或设置行为，不通过修改主题代码掩盖。
 
@@ -224,7 +227,7 @@ interface ThemeProfileV2 extends ThemeProfileV1 {
 
 ---
 
-### Phase 5：小窗、桌面歌词、预设与恢复（约 2 周）
+### Phase 5：小窗、桌面歌词、预设与恢复（约 2 周，✅ 2026-07-23 完成）
 
 **目标**：主题体验延伸到独立窗口；用户可放心试验复杂配置。
 

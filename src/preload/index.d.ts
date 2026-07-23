@@ -472,12 +472,14 @@ interface MiniPlayerAppearanceSettings {
   textMode: 'auto' | 'custom'
   primaryTextColor: string
   mutedTextColor: string
+  fontFamily: string
   surfaceOpacity: number
   glassBlur: number
   cornerRadius: number
   borderWidth: number
   borderColor: string
   shadowStrength: number
+  shadowColor: string
 }
 
 interface MiniPlayerLayoutSettings {

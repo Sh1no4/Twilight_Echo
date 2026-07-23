@@ -113,3 +113,22 @@ test('returning from local list pages to dashboard uses page-up transition', () 
   navigation.onSelectView('dashboard', null)
   assert.equal(navigation.songlistTransitionName.value, 'page-up')
 })
+
+test('contextual theme studio entries return to the originating player or library workflow', () => {
+  const navigation = useAppNavigation()
+
+  navigation.openPlayingPage()
+  navigation.openThemeStudioPage('player')
+  assert.equal(navigation.themeStudioInitialDomain.value, 'player')
+  assert.equal(navigation.showPlayingPage.value, false)
+  navigation.closeThemeStudioPage()
+  assert.equal(navigation.showPlayingPage.value, true)
+  assert.equal(navigation.showSettingsPage.value, false)
+
+  navigation.closePlayingPage()
+  navigation.openThemeStudioPage('library')
+  assert.equal(navigation.themeStudioInitialDomain.value, 'library')
+  navigation.closeThemeStudioPage()
+  assert.equal(navigation.showSettingsPage.value, false)
+  assert.equal(navigation.localViewVisible.value, true)
+})

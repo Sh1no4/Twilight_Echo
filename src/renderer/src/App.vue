@@ -53,6 +53,7 @@ const {
   loginInitialProviderId,
   showSettingsPage,
   showThemeStudioPage,
+  themeStudioInitialDomain,
   showPluginPage,
   showEqualizerPage,
   showDspRackPage,
@@ -531,6 +532,7 @@ const titleSurface = computed<TitleSurface>(() => {
         :has-player="hasPlayerBar"
         :transition-name="songlistTransitionName"
         @select-view="onSelectView"
+        @customize-appearance="openThemeStudioPage('library')"
       />
     </Transition>
     <Transition name="playing-page">
@@ -539,6 +541,7 @@ const titleSurface = computed<TitleSurface>(() => {
         :key="`playing:${currentTrack?.id ?? 'none'}`"
         :style="{ transformOrigin: coverTransformOrigin }"
         @back="closePlayingPage"
+        @customize-appearance="openThemeStudioPage('player')"
       />
     </Transition>
     <StreamingPage
@@ -574,7 +577,11 @@ const titleSurface = computed<TitleSurface>(() => {
       />
     </Transition>
     <Transition name="settings-page">
-      <ThemeStudioPage v-if="showThemeStudioPage" @back="closeThemeStudioPage" />
+      <ThemeStudioPage
+        v-if="showThemeStudioPage"
+        :initial-domain="themeStudioInitialDomain"
+        @back="closeThemeStudioPage"
+      />
     </Transition>
     <Transition name="settings-page">
       <DspRackPage v-if="showDspRackPage" @back="closeDspRackPage" />

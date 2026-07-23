@@ -1,6 +1,6 @@
 # Twilight Echo Theme Contract Audit
 
-Status: Phase 0 baseline, with Phase 1 through Phase 4 behavior frozen.
+Status: Phase 0 baseline, with Phase 1 through Phase 5 behavior frozen.
 
 ## Contract Rules
 
@@ -18,6 +18,12 @@ Status: Phase 0 baseline, with Phase 1 through Phase 4 behavior frozen.
 - User profile count remains capped at `MAX_USER_THEME_PROFILES = 32`.
 - Phase 2 adds an optional bounded `toneSchedule` to V2. Curated palettes and built-in font styles
   are UI shortcuts only; profiles persist the resulting token values, never palette/font-style IDs.
+- Seven host-owned built-in presets are valid persisted selections and remain read-only. A derived
+  profile records its preset source, uses that preset as its base, and persists only sparse overrides.
+- Profile history is library-owned rather than recursive profile data. It is capped at 8 entries and
+  256 KiB per profile while the existing 2 MiB theme-library limit remains authoritative.
+- Settings backup schema V2 carries the normalized theme library and history. Legacy settings backups
+  remain readable, missing assets fall back safely, and plugin-theme reconciliation is unchanged.
 
 ## Mode Registry
 
@@ -55,18 +61,18 @@ normalization.
 
 ## Component Audit
 
-| Order | Owner                | Visual semantics                                       | Current state                                        | Frozen contract                                    | Classification  |
-| ----: | -------------------- | ------------------------------------------------------ | ---------------------------------------------------- | -------------------------------------------------- | --------------- |
-|     1 | App shell / TitleBar | page surface, shell text, control hover                | app tokens plus literal hover colors                 | shell surface/text/control tokens                  | token           |
-|     2 | SettingsPage         | page text, navigation state, controls, borders         | mixed tokens and many legacy literals                | settings text/nav/control tokens                   | token           |
-|     3 | SideMenu             | surface, border, shadow, text, hover, active indicator | host icon slots and static navigation modes          | navigation semantic tokens and modes               | token, mode     |
-|     4 | SongList             | page/table surface, row text, hover, selection         | tokenized selection and separate list artwork radius | library tokens; virtualized data path unchanged    | token, mode     |
-|     5 | PlayerBar            | surface, controls, progress, visibility                | tokenized Pro controls and four progress styles      | stable classes; playback behavior unchanged        | token, mode     |
-|     6 | PlayingMusic         | backdrop, artwork, lyrics, controls                    | five static layouts and bounded visibility           | one store and one lyrics component instance        | token, mode     |
-|     7 | EqualizerPage        | panel, slider, knob, spectrum, visibility              | tokenized host presentation modes                    | visual-only; EQ parameters and DSP chain unchanged | token, mode     |
-|     8 | DspRackPage          | EQ panel and control presentation                      | visual-only EQ token overrides                       | DSP graph and parameter behavior unchanged         | token, mode     |
-|     9 | Mini Player          | inherited appearance and artwork visibility            | host visibility selector plus window defaults        | no independent P4 state                            | token, mode     |
-|    10 | Desktop lyrics       | inherited text/background                              | structured settings and window defaults              | deferred to Phase 5                                | token, deferred |
+| Order | Owner                | Visual semantics                                       | Current state                                        | Frozen contract                                    | Classification |
+| ----: | -------------------- | ------------------------------------------------------ | ---------------------------------------------------- | -------------------------------------------------- | -------------- |
+|     1 | App shell / TitleBar | page surface, shell text, control hover                | app tokens plus literal hover colors                 | shell surface/text/control tokens                  | token          |
+|     2 | SettingsPage         | page text, navigation state, controls, borders         | mixed tokens and many legacy literals                | settings text/nav/control tokens                   | token          |
+|     3 | SideMenu             | surface, border, shadow, text, hover, active indicator | host icon slots and static navigation modes          | navigation semantic tokens and modes               | token, mode    |
+|     4 | SongList             | page/table surface, row text, hover, selection         | tokenized selection and separate list artwork radius | library tokens; virtualized data path unchanged    | token, mode    |
+|     5 | PlayerBar            | surface, controls, progress, visibility                | tokenized Pro controls and four progress styles      | stable classes; playback behavior unchanged        | token, mode    |
+|     6 | PlayingMusic         | backdrop, artwork, lyrics, controls                    | five static layouts and bounded visibility           | one store and one lyrics component instance        | token, mode    |
+|     7 | EqualizerPage        | panel, slider, knob, spectrum, visibility              | tokenized host presentation modes                    | visual-only; EQ parameters and DSP chain unchanged | token, mode    |
+|     8 | DspRackPage          | EQ panel and control presentation                      | visual-only EQ token overrides                       | DSP graph and parameter behavior unchanged         | token, mode    |
+|     9 | Mini Player          | inherited surface, border, shadow, radius, typography  | explicit inheritance plus independent profile        | window-only overrides; playback state unchanged    | token, window  |
+|    10 | Desktop lyrics       | inherited text, highlight, background, font, shadow    | explicit inheritance plus independent settings       | window-only overrides; lyric timing unchanged      | token, window  |
 
 Rejected from the theme contract: playback behavior, DSP parameters, queue behavior, arbitrary DOM
 visibility, remote URLs, free-form CSS, scripts, window security policy, focus removal, and reduced
@@ -132,6 +138,23 @@ repository has a stable Electron screenshot harness.
   modes, and full-cover partitioning at 1080×720 and 720×720 pass direct DOM/style checks.
 - `test:themes` (37/37), the focused P4 component tests (16/16), `test:dsp-graph` (13/13), ESLint,
   and both TypeScript typechecks pass. Validation used raw CDP and did not use Computer Use.
+
+### Phase 5 Evidence
+
+- `audit-evidence/theme-p5-light.png` and `audit-evidence/theme-p5-dark.png` capture the real preset
+  gallery and derived-profile workflow. All seven presets are host-owned selections rather than
+  imported user profiles, and the gallery previews each preset before apply.
+- Raw CDP exercised seven presets at 1495×883, 1200×800, and 1080×720: 21 checks completed with no
+  document/editor overflow, pane collision, or duplicate preview canvas.
+- A profile derived from `Paper Light` retained sparse overrides and returned to the source preset on
+  full reset. Category reset, the bounded persistent history, and history restore use existing CAS
+  theme-library writes.
+- Library and player context actions opened the matching Theme Studio domains. The real mini-player
+  inherited Obsidian surface/radius/border/shadow values, while the real desktop-lyrics window
+  inherited its background, active text color, and 12px shadow blur.
+- `test:themes` (43/43), `test:local-perf` (99 passed, 2 skipped), `test:lyrics-management` (64/64),
+  the focused backup/window tests (13/13), ESLint, the production build, and both TypeScript
+  typechecks pass. Validation used raw CDP and did not use Computer Use.
 
 ## Color Baseline
 
