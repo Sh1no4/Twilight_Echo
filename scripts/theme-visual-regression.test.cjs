@@ -57,4 +57,5 @@ test('theme visual runner parses explicit CDP, output, baseline, and viewport op
   assert.match(options.outputDir, /output[\\/]current$/)
   assert.match(options.baselineDir, /output[\\/]baseline$/)
   assert.equal(createStressLibraryDocument(3).tracks.length, 3)
+  assert.equal(parseArgs(['--help']).help, true)
 })

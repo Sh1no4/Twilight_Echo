@@ -14,6 +14,19 @@ test('background settings updates are applied optimistically and protected from 
   assert.match(source, /if \(sequence === settingsUpdateSequence\) \{\s*applySnapshot\(snapshot\)\s*\}/)
 })
 
+test('settings chrome no longer dual-writes theme-owned CSS variables', () => {
+  const source = readFileSync(new URL('./useSettingsStore.ts', import.meta.url), 'utf8')
+
+  assert.match(source, /THEME_OWNED_INLINE_STYLE_VARS/)
+  assert.match(source, /clearLegacyThemeOwnedInlineStyles/)
+  assert.match(source, /dataset\.themePreference/)
+  assert.doesNotMatch(source, /setProperty\('--te-primary-500'/)
+  assert.doesNotMatch(source, /setProperty\('--brand-500'/)
+  assert.doesNotMatch(source, /setProperty\('--te-app-bg'/)
+  assert.doesNotMatch(source, /function applyCardAppearance/)
+  assert.doesNotMatch(source, /dataset\.theme = resolvedTheme/)
+})
+
 test('background image import accepts ArrayBuffer views from Electron IPC', () => {
   const source = readFileSync(new URL('../../../main/library/coverCache.ts', import.meta.url), 'utf8')
   const ipcSource = readFileSync(new URL('../../../main/ipc/data.ts', import.meta.url), 'utf8')

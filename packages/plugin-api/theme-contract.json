@@ -1314,6 +1314,16 @@
       "defaultValue": "warn"
     },
     {
+      "id": "appearance.effectsMode",
+      "dataAttribute": "data-te-effects-mode",
+      "label": "特效模式",
+      "options": [
+        "full",
+        "reduced"
+      ],
+      "defaultValue": "full"
+    },
+    {
       "id": "navigation.style",
       "dataAttribute": "data-te-navigation-style",
       "label": "导航样式",

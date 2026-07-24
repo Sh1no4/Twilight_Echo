@@ -17,6 +17,23 @@
 | P4   | ✅ 已完成 | 五种播放页布局、标题对齐/四类进度样式、封面/Pro 控制区、均衡器视觉预设、13 个可见性槽位 | `test:themes` 37/37、P4 组件测试 16/16、`test:dsp-graph` 13/13、ESLint、typecheck、`docs/audit-evidence/theme-p4-*.png` |
 | P5   | ✅ 已完成 | 7 个只读预设、派生档与版本恢复、小窗/桌面歌词继承、区域快捷入口、主题库备份恢复         | `test:themes` 43/43、窗口/备份测试 13/13、`test:local-perf` 99 通过/2 跳过、`docs/audit-evidence/theme-p5-*.png`        |
 | P6   | ✅ 已完成 | 插件 API v2 结构化 modes、v1 兼容、宿主过滤/诊断、作者目录/模板/打包校验                | `test:themes` 47/47、工具链 7/7、manager 21/21、ESLint、typecheck、build、`docs/audit-evidence/theme-p6-*.png`          |
+| P7   | 🟡 收口中 | rAF 预览合并、P95 预算、黄金矩阵脚本、Settings 双写收敛、Studio 搜索、关闭特效 mode       | `test:themes` 契约；`pnpm run evidence:themes` 需人工 Electron+CDP；完整像素证据包待入库                               |
+
+### P7 收口说明（2026-07-24）
+
+已落地：
+- Settings 不再 inline 写入主题拥有的 `--te-primary-*` / `--brand-*` / 背景 / 卡片变量；`data-theme` 由主题 runtime 独占；Settings 仅保留 chrome（歌词字号、密度、窗口透明、`blurEffect` kill-switch、`themePreference`）。
+- 主题 runtime 在 token 输出时派生 `--te-accent` 与 `--brand-*` 兼容别名。
+- `appearance.effectsMode`: `full | reduced`（`data-te-effects-mode`），关闭模糊/玻璃/封面滤镜，不覆盖系统 `prefers-reduced-motion`。
+- Theme Studio 设置搜索（域/令牌/模式跳转）与当前域令牌过滤。
+- `evidence:themes` 增加 `--help` 与无 CDP 目标时的操作指引。
+
+仍待人工完成：
+1. `pnpm run evidence:themes -- --seed-user-data <dir>`
+2. 以 `--remote-debugging-port=9223` 启动隔离 userData 实例
+3. `pnpm run evidence:themes -- --port 9223 --output output/theme-golden-p7`
+4. 人工复核像素差后把代表截图与 manifest 摘要写入 `docs/audit-evidence/`
+5. 发布前单独处理非主题门禁失败（`test:plugins` / `test:playback-routing` / `test:app`）
 
 P2 额外通过 CDP 验证：1495×883、1200×800、1080×720 三种视口无横向溢出或三栏/顶栏碰撞；reduced-motion 下不添加 tone 过渡；无封面时动态背景保留实色回退；Lora、JetBrains Mono、Space Grotesk 实际加载；长中英日韩标题无越界。本轮遵循要求未使用 Computer Use。
 
@@ -54,7 +71,7 @@ Aurora 的价值在于**体验模型**，不是 Android 实现：按视觉域组
 2. **封面动态取色作为强调色来源**（Aurora 的 Material You 对应桌面端的"封面取色"）。
 3. **可见性开关**（隐藏播放页元素/按钮）。
 4. **按视觉域组织的设置页信息架构**（当前 Theme Studio 是单页令牌编辑，不是 Aurora 式分域导航）。
-5. **令牌覆盖面**：渲染层实际出现约 398 个 `--te-*` 变量名，登记令牌仅 77 个，且约 2700 行 CSS/Vue 存在硬编码色值 —— 大量表面尚未接入主题系统。
+5. **令牌覆盖面（P0 基线）**：当时渲染层约 398 个 `--te-*` 变量名、登记 77 个令牌；P7 收口时登记令牌 158 个，派生别名由 runtime 输出，存量硬编码色仍受 allowlist 预算约束。
 
 ### 硬约束（不可妥协，来自项目规范）
 

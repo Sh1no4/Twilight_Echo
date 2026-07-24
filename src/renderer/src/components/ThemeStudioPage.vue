@@ -6,6 +6,7 @@ import {
   DEFAULT_THEME_TONE_SCHEDULE,
   THEME_ACCENT_PALETTES,
   THEME_BACKGROUND_PALETTES,
+  THEME_MODE_DEFINITIONS,
   THEME_TOKEN_DEFINITIONS,
   TWILIGHT_DEFAULT_THEME,
   TWILIGHT_DEFAULT_THEME_ID,
@@ -62,6 +63,7 @@ const { themeContributions, syncExtensions } = useExtensionRegistry()
 const selectedKey = ref(`preset:${TWILIGHT_DEFAULT_THEME_ID}`)
 const tone = ref<ThemeTone>('pureWhite')
 const domain = ref<ThemeStudioDomain>(props.initialDomain ?? 'presets')
+const studioSearchQuery = ref('')
 const previewSurface = ref<ThemePreviewSurface>('dashboard')
 const previewViewportRef = ref<HTMLElement | null>(null)
 const previewViewportStyle = ref<Record<string, string>>({})
@@ -162,6 +164,82 @@ const tokenDefinitionById = new Map(
   THEME_TOKEN_DEFINITIONS.map((definition) => [definition.id, definition])
 )
 
+function domainForToken(definition: ThemeTokenDefinition): ThemeStudioDomain {
+  if (personalizationTokenIds.has(definition.id)) return 'personalization'
+  if (
+    definition.id.startsWith('shell.') ||
+    definition.id.startsWith('settings.') ||
+    ['surface.settings', 'surface.local', 'surface.streaming'].includes(definition.id) ||
+    unifiedSurfaceTokenIds.has(definition.id)
+  ) {
+    return 'shell'
+  }
+  if (definition.id.startsWith('navigation.')) return 'navigation'
+  if (definition.id.startsWith('library.')) return 'library'
+  if (typographyTokenIds.has(definition.id) || definition.id.startsWith('typography.')) {
+    return 'typography'
+  }
+  if (definition.group === 'playback') return 'player'
+  if (definition.group === 'motion') return 'motion'
+  return 'advanced'
+}
+
+function domainForModeId(modeId: string): ThemeStudioDomain {
+  const root = modeId.split('.')[0]
+  if (root === 'appearance') return 'personalization'
+  if (root === 'navigation' || root === 'icons') return 'navigation'
+  if (root === 'library') return 'library'
+  if (root === 'typography') return 'typography'
+  if (root === 'player' || root === 'artwork' || root === 'equalizer') return 'player'
+  return 'advanced'
+}
+
+type StudioSearchHit = {
+  domain: ThemeStudioDomain
+  kind: 'token' | 'mode' | 'section'
+  id: string
+  title: string
+  terms: string
+}
+
+const STUDIO_SEARCH_INDEX: readonly StudioSearchHit[] = Object.freeze([
+  ...domains.map((item) => ({
+    domain: item.id,
+    kind: 'section' as const,
+    id: item.id,
+    title: item.label,
+    terms: `${item.id} ${item.label}`
+  })),
+  ...THEME_TOKEN_DEFINITIONS.map((definition) => ({
+    domain: domainForToken(definition),
+    kind: 'token' as const,
+    id: definition.id,
+    title: definition.label,
+    terms: `${definition.id} ${definition.surface} ${definition.group} ${definition.cssVariable}`
+  })),
+  ...THEME_MODE_DEFINITIONS.map((definition) => ({
+    domain: domainForModeId(definition.id),
+    kind: 'mode' as const,
+    id: definition.id,
+    title: definition.label,
+    terms: `${definition.id} ${definition.options.join(' ')}`
+  })),
+  {
+    domain: 'player',
+    kind: 'section',
+    id: 'visibility',
+    title: '可见性',
+    terms: 'visibility 可见性 隐藏 显示'
+  },
+  {
+    domain: 'personalization',
+    kind: 'section',
+    id: 'palettes',
+    title: '精选色板',
+    terms: 'palette 色板 强调色 背景色'
+  }
+])
+
 const definitions = computed(() => {
   if (domain.value === 'presets' || domain.value === 'windows') return []
   if (domain.value === 'personalization') {
@@ -195,6 +273,32 @@ const definitions = computed(() => {
   }
   return [...THEME_TOKEN_DEFINITIONS]
 })
+
+const visibleDefinitions = computed(() => {
+  const query = studioSearchQuery.value.trim().toLowerCase()
+  if (!query) return definitions.value
+  return definitions.value.filter((definition) =>
+    `${definition.label} ${definition.id} ${definition.surface} ${definition.group}`
+      .toLowerCase()
+      .includes(query)
+  )
+})
+
+const filteredStudioHits = computed(() => {
+  const query = studioSearchQuery.value.trim().toLowerCase()
+  if (!query) return [] as StudioSearchHit[]
+  return STUDIO_SEARCH_INDEX.filter((hit) =>
+    `${hit.title} ${hit.terms}`.toLowerCase().includes(query)
+  ).slice(0, 40)
+})
+
+function jumpToSearchHit(hit: StudioSearchHit): void {
+  domain.value = hit.domain
+  if (hit.kind === 'section' && hit.id !== 'visibility' && hit.id !== 'palettes') {
+    studioSearchQuery.value = ''
+  }
+}
+
 const activeDomain = computed(() => domains.find((item) => item.id === domain.value) ?? domains[0])
 const previewNavigationOpen = computed(
   () => previewSurface.value === 'dashboard' && domain.value === 'navigation'
@@ -604,7 +708,12 @@ function applyBackgroundPalette(value: string): void {
 }
 
 function updateAppearanceMode(
-  key: 'accentSource' | 'backgroundTreatment' | 'toneScheduling' | 'contrastGuard',
+  key:
+    | 'accentSource'
+    | 'backgroundTreatment'
+    | 'toneScheduling'
+    | 'contrastGuard'
+    | 'effectsMode',
   event: Event
 ): void {
   const value = (event.target as HTMLSelectElement).value
@@ -626,6 +735,8 @@ function updateAppearanceMode(
       }
     } else if (key === 'contrastGuard' && ['off', 'warn', 'enforce'].includes(value)) {
       appearance.contrastGuard = value as NonNullable<ThemeModes['appearance']>['contrastGuard']
+    } else if (key === 'effectsMode' && (value === 'full' || value === 'reduced')) {
+      appearance.effectsMode = value
     }
     profile.modes.appearance = appearance
   })
@@ -1225,6 +1336,27 @@ onBeforeUnmount(() => {
         <div class="pane-heading">
           <strong>视觉域</strong>
         </div>
+        <label class="studio-search">
+          <i class="ph ph-magnifying-glass" aria-hidden="true"></i>
+          <input
+            v-model="studioSearchQuery"
+            type="search"
+            placeholder="搜索设置、令牌或模式"
+            aria-label="搜索主题设置"
+          />
+        </label>
+        <div v-if="filteredStudioHits.length" class="studio-search-hits" role="listbox">
+          <button
+            v-for="hit in filteredStudioHits"
+            :key="`${hit.kind}:${hit.id}`"
+            type="button"
+            role="option"
+            @click="jumpToSearchHit(hit)"
+          >
+            <strong>{{ hit.title }}</strong>
+            <small>{{ hit.kind }} · {{ hit.domain }}</small>
+          </button>
+        </div>
         <nav class="theme-domain-list">
           <button
             v-for="item in domains"
@@ -1540,6 +1672,17 @@ onBeforeUnmount(() => {
               <option value="off">关闭</option>
               <option value="warn">仅预警</option>
               <option value="enforce">安全回退</option>
+            </select>
+          </label>
+          <label class="studio-setting-row">
+            <span>特效模式<small>关闭模糊/玻璃/封面滤镜，不覆盖系统动效偏好</small></span>
+            <select
+              :value="activeModes.appearance?.effectsMode"
+              :disabled="!draft"
+              @change="updateAppearanceMode('effectsMode', $event)"
+            >
+              <option value="full">完整特效</option>
+              <option value="reduced">关闭特效</option>
             </select>
           </label>
         </section>
@@ -2185,7 +2328,7 @@ onBeforeUnmount(() => {
         </section>
 
         <div v-if="domain !== 'presets'" class="token-editor-list" :class="{ disabled: !draft }">
-          <div v-for="definition in definitions" :key="definition.id" class="token-editor-row">
+          <div v-for="definition in visibleDefinitions" :key="definition.id" class="token-editor-row">
             <div>
               <span
                 ><strong>{{ definition.label }}</strong

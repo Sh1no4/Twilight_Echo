@@ -2589,3 +2589,36 @@ html[data-te-lyric-accent='accent']
     transition-duration: 0.01ms !important;
   }
 }
+
+html[data-te-effects-mode='reduced'] {
+  --te-background-cover-blur: 0px;
+  --te-background-overlay-opacity: 0%;
+  --te-card-blur: 0px;
+  --te-card-saturate: 100%;
+  --te-glass-shadow: none;
+  --te-card-shadow: none;
+  --te-library-table-shadow: none;
+  --te-player-artwork-shadow: none;
+}
+
+html[data-te-effects-mode='reduced'] body::before,
+html[data-te-effects-mode='reduced'] body::after {
+  filter: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 0 !important;
+}
+
+html[data-te-effects-mode='reduced']
+  :is(.glass-card, .side-menu, .player-bar, .title-bar, .theme-studio-page, .settings-page) {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  box-shadow: none !important;
+}
+
+html[data-te-effects-mode='reduced'][data-te-background-treatment='cover-blur'] body,
+html[data-te-effects-mode='reduced'][data-te-background-treatment='gradient'] body::before,
+html[data-te-effects-mode='reduced'][data-te-background-treatment='image'] body::before {
+  background-image: none !important;
+  filter: none !important;
+}

@@ -8,7 +8,7 @@ const SCALES = [1, 1.25, 1.5]
 const PLAYER_LAYOUTS = ['standard', 'full-cover', 'lyrics-focus', 'split', 'minimal']
 const NAVIGATION_LAYOUTS = ['expanded', 'compact', 'rail']
 const PRESETS = [
-  ['builtin:twilight-default', 'pureWhite'],
+  ['builtin:twilight-echo-default', 'pureWhite'],
   ['builtin:aurora-reference', 'dark'],
   ['builtin:obsidian-glass', 'dark'],
   ['builtin:paper-light', 'pureWhite'],
@@ -38,7 +38,7 @@ function createThemeGoldenCases() {
     }
   }
   const presets = PRESETS.map(([presetId, tone]) => ({
-    id: `preset-${presetId.slice('builtin:'.length)}-no-cover`,
+    id: `preset-${presetId.startsWith('builtin:') ? presetId.slice('builtin:'.length) : presetId}-no-cover`,
     kind: 'preset',
     tone,
     scale: 1,
@@ -265,7 +265,7 @@ async function applyGoldenCase(client, currentCase) {
           id: '${VISUAL_PROFILE_ID}',
           name: 'P7 Golden Matrix',
           description: 'Isolated visual regression fixture',
-          baseThemeId: 'builtin:twilight-default',
+          baseThemeId: 'builtin:twilight-echo-default',
           createdAt: existing?.createdAt ?? now,
           updatedAt: now,
           overrides: { pureWhite: {}, dark: {} },
@@ -445,6 +445,30 @@ async function exerciseRafPreview(client) {
   )
 }
 
+function printEvidenceUsage(errorMessage) {
+  const lines = [
+    errorMessage ? `error: ${errorMessage}` : '',
+    'usage: pnpm run evidence:themes -- [options]',
+    '',
+    'options:',
+    '  --port <n>              CDP port (default 9223)',
+    '  --output <dir>          screenshot/manifest dir (default output/theme-golden-p7)',
+    '  --baseline <dir>        optional baseline dir for pixel delta review',
+    '  --width <n>             viewport width (default 1440)',
+    '  --height <n>            viewport height (default 900)',
+    '  --seed-user-data <dir>  write isolated 10k library and exit',
+    '  --inspect               print live page diagnostics and exit',
+    '  --help                  show this help',
+    '',
+    'flow:',
+    '  1) pnpm run evidence:themes -- --seed-user-data C:\\twilight-p7-userData',
+    '  2) launch the app with --remote-debugging-port=9223 and that userData dir',
+    '  3) pnpm run evidence:themes -- --port 9223 --output output/theme-golden-p7',
+    '  4) review output/theme-golden-p7/manifest.json and commit selected PNGs to docs/audit-evidence/'
+  ].filter(Boolean)
+  process.stderr.write(`${lines.join('\n')}\n`)
+}
+
 function parseArgs(args) {
   const options = {
     port: 9223,
@@ -452,7 +476,9 @@ function parseArgs(args) {
     baselineDir: null,
     width: 1440,
     height: 900,
-    seedUserData: null
+    seedUserData: null,
+    inspect: false,
+    help: false
   }
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index]
@@ -467,25 +493,71 @@ function parseArgs(args) {
     else if (value === '--width') options.width = Number(next())
     else if (value === '--height') options.height = Number(next())
     else if (value === '--seed-user-data') options.seedUserData = resolve(next())
+    else if (value === '--inspect') options.inspect = true
+    else if (value === '--help' || value === '-h') options.help = true
     else throw new Error(`Unknown option: ${value}`)
   }
   return options
 }
 
 async function main() {
-  const options = parseArgs(process.argv.slice(2))
+  let options
+  try {
+    options = parseArgs(process.argv.slice(2))
+  } catch (error) {
+    printEvidenceUsage(error instanceof Error ? error.message : String(error))
+    process.exitCode = 1
+    return
+  }
+  if (options.help) {
+    printEvidenceUsage()
+    return
+  }
   if (options.seedUserData) {
     const output = seedStressLibrary(options.seedUserData)
     process.stdout.write(`${JSON.stringify({ seeded: output, trackCount: 10_000 })}\n`)
     return
   }
-  const target = await findPageTarget(options.port)
+  let target
+  try {
+    target = await findPageTarget(options.port)
+  } catch (error) {
+    printEvidenceUsage(
+      error instanceof Error
+        ? `${error.message}. Start Electron with --remote-debugging-port=${options.port} first.`
+        : String(error)
+    )
+    process.exitCode = 1
+    return
+  }
   const client = new CdpClient(target.webSocketDebuggerUrl)
   await client.connect()
   try {
     await client.send('Page.enable')
     await client.send('Runtime.enable')
     await waitForExpression(client, `document.readyState === 'complete' && window.api?.themes`)
+    if (options.inspect) {
+      const state = await evaluate(
+        client,
+        `(async () => {
+          const library = await window.api.data.loadMusicLibrary()
+          return {
+            url: location.href,
+            title: document.title,
+            apiNamespaces: Object.keys(window.api),
+            libraryVersion: Array.isArray(library) ? 1 : library.version,
+            libraryTracks: Array.isArray(library) ? library.length : library.tracks.length,
+            body: document.body.innerText.slice(0, 500),
+            menuTitles: [...document.querySelectorAll('.menu-item')].map((item) => item.title),
+            songList: Boolean(document.querySelector('.song-list')),
+            tbodyHeight: document.querySelector('.song-list tbody')?.style.height ?? null,
+            mountedRows: document.querySelectorAll('.track-row').length
+          }
+        })()`
+      )
+      process.stdout.write(`${JSON.stringify(state, null, 2)}\n`)
+      return
+    }
     await navigateToStressLibrary(client)
     const stress = await runElectronLibraryStress(client)
     if (
@@ -537,6 +609,7 @@ module.exports = {
   findPageTarget,
   inspectPng,
   parseArgs,
+  printEvidenceUsage,
   seedStressLibrary
 }
 

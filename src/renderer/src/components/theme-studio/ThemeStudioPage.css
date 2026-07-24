@@ -189,6 +189,70 @@
   white-space: nowrap;
 }
 
+.studio-search {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  margin: 0 0 10px;
+  padding: 0 10px;
+  border: 1px solid var(--te-card-border);
+  border-radius: 8px;
+  background: var(--te-subtle-bg);
+}
+
+.studio-search i {
+  color: var(--te-neutral-500);
+  font-size: 14px;
+}
+
+.studio-search input {
+  width: 100%;
+  min-width: 0;
+  height: 34px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  outline: none;
+}
+
+.studio-search-hits {
+  display: grid;
+  gap: 4px;
+  max-height: 180px;
+  margin: 0 0 10px;
+  overflow: auto;
+}
+
+.studio-search-hits button {
+  display: grid;
+  gap: 2px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: inherit;
+  text-align: left;
+  background: var(--te-subtle-bg);
+  cursor: pointer;
+}
+
+.studio-search-hits button:hover {
+  border-color: color-mix(in srgb, var(--te-primary-500) 28%, transparent);
+  background: var(--te-active-bg);
+}
+
+.studio-search-hits strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.studio-search-hits small {
+  color: var(--te-neutral-500);
+  font-size: 10px;
+}
+
 .theme-domain-list {
   display: grid;
   gap: 4px;

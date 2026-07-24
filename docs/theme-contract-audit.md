@@ -1,6 +1,8 @@
 # Twilight Echo Theme Contract Audit
 
-Status: Phase 0 baseline, with Phase 1 through Phase 6 behavior frozen.
+Status: Phase 0 baseline, with Phase 1 through Phase 6 behavior frozen. Phase 7 closeout
+adds effects mode, Theme Studio search, and Settings dual-write removal; live golden matrix
+evidence remains opt-in via `pnpm run evidence:themes`.
 
 ## Contract Rules
 
@@ -35,6 +37,7 @@ Status: Phase 0 baseline, with Phase 1 through Phase 6 behavior frozen.
 | Appearance | background treatment | `solid`, `gradient`, `cover-blur`, `image`                   | Bounded tokens with solid failure fallback          |
 | Appearance | tone scheduling      | `manual`, `system`, `timed`                                  | Native system events or bounded local time schedule |
 | Appearance | contrast guard       | `off`, `warn`, `enforce`                                     | WCAG warning or host-derived text fallback          |
+| Appearance | effects mode         | `full`, `reduced`                                            | Host-owned blur/glass/cover filter kill-switch      |
 | Navigation | style                | `expanded`, `compact`, `rail`                                | Static host sidebar variants                        |
 | Navigation | icon scale           | `sm`, `md`, `lg`                                             | Fixed hit areas with scaled glyphs                  |
 | Navigation | logo                 | `show`, `hide`                                               | Host brand visibility only                          |
@@ -175,6 +178,18 @@ repository has a stable Electron screenshot harness.
   type build, ESLint, both TypeScript typechecks, the production build, and renderer budgets pass.
   Full `test:plugins` has one unchanged NCM cache-path assertion failure outside the theme contract.
   Validation used raw CDP and did not use Computer Use.
+
+## Phase 7 Closeout
+
+- Registered token count is now 158 (was 77 at Phase 0 baseline). CSS consumers may still reference
+  derived aliases such as `--te-accent` / `--brand-*` emitted by `themeTokensToCssVariables`.
+- Settings chrome (`useSettingsStore.applyDomSettings`) must not write theme-owned skin variables.
+  Theme runtime owns `data-theme`, token CSS, and `data-te-*` modes.
+- `appearance.effectsMode=reduced` clears decorative blur/glass/cover filters only; OS
+  `prefers-reduced-motion` remains independent and non-overridable.
+- Golden matrix: 90 tone×scale×layout×nav cases + 7 presets = 97 no-cover screenshots via
+  `scripts/theme-visual-regression.cjs`. Unit tests cover matrix shape and seed fixture; live CDP
+  capture is manual (`pnpm run evidence:themes -- --help`).
 
 ## Color Baseline
 

@@ -1,9 +1,10 @@
 # Twilight Echo 深度主题定制路线图
 
-> 状态：提案
+> 状态：P0–P6 已实施；P7 收口中（性能/黄金矩阵/双写收敛）
 > 创建日期：2026-07-23
+> 修订：2026-07-24 与 `docs/aurora-theme-customization-plan.md` 对齐（5 布局、7 预设、effectsMode）
 > 目标：在不破坏桌面端可用性、性能和插件安全边界的前提下，逐步做到与 Aurora
-> 这类深度皮肤相当的可定制体验。本文是实施顺序和验收契约，不是一次性开发清单。
+> 这类深度皮肤相当的可定制体验。细粒度任务与验收证据以实施计划为准。
 
 ## 1. 结论与范围
 
@@ -33,15 +34,15 @@ Aurora 值得借鉴的是体验模型：按视觉域组织选项、即时预览�
 
 | 已有能力                                                    | 位置                                      | 对本计划的意义                           |
 | ----------------------------------------------------------- | ----------------------------------------- | ---------------------------------------- |
-| 77 个带类型、范围和明暗默认值的主题令牌                     | `src/shared/theme.ts`                     | 作为唯一稳定的颜色、尺寸、字体和材质契约 |
+| 158 个带类型、范围和明暗默认值的主题令牌（P0 基线为 77）    | `src/shared/theme.ts`                     | 作为唯一稳定的颜色、尺寸、字体和材质契约 |
 | 用户主题档、预览、撤销/重做、导入/导出、局部图片/woff2 资源 | `ThemeStudioPage.vue`、`useThemeStore.ts` | 直接扩展为主题工作室，不重写持久化流程   |
 | 单个激活主题、插件结构化 token 与包内样式表                 | `extensions/themeRuntime.ts`、插件规范    | 可做主题包，但须保持声明式边界           |
 | 小窗与桌面歌词的主题默认值/继承                             | `ThemeWindowDefaults`                     | 后续单独扩展窗口，不必重新设计主题选择   |
 | 主题归档路径、体积与格式校验                                | `src/main/themes/`                        | 可安全地继续支持本地主题资源             |
 
 2026-07-23 的粗略静态审计还发现：渲染层出现约 398 个 `--te-*` 变量名，而登记令牌为 77
-个；约 2,702 行 CSS/Vue 命中硬编码色值模式。这个数字只用于建立迁移基线，不能直接视为
-颜色总数或覆盖率。第一阶段必须先把它变成带组件归属的清单，不能靠批量替换取得“进度”。
+个；约 2,702 行 CSS/Vue 命中硬编码色值模式。P7 收口时登记令牌已升至 158，派生别名
+（`--te-accent` / `--brand-*`）由 runtime 输出；存量硬编码色仍由 `themeColorAudit` 预算约束。
 
 ### 与插件规范的关系
 
@@ -85,13 +86,19 @@ interface ThemeProfileV2 extends ThemeProfileV1 {
     appearance?: {
       accentSource?: 'fixed' | 'cover'
       backgroundTreatment?: 'solid' | 'gradient' | 'cover-blur' | 'image'
+      toneScheduling?: 'manual' | 'system' | 'timed'
       contrastGuard?: 'off' | 'warn' | 'enforce'
+      effectsMode?: 'full' | 'reduced'
     }
     navigation?: { style?: 'expanded' | 'compact' | 'rail'; iconScale?: 'sm' | 'md' | 'lg' }
     library?: { density?: 'comfortable' | 'compact'; selection?: 'fill' | 'stroke' }
-    player?: { layout?: 'standard' | 'full-cover' | 'lyrics-focus'; controls?: 'standard' | 'pro' }
+    player?: {
+      layout?: 'standard' | 'full-cover' | 'lyrics-focus' | 'split' | 'minimal'
+      controls?: 'standard' | 'pro'
+    }
     artwork?: { transition?: 'fade' | 'slide' | 'none' }
     icons?: { family?: 'outline' | 'rounded' | 'filled' }
+    visibility?: Record<string, boolean>
   }
 }
 ```
@@ -198,8 +205,8 @@ SongList 虚拟化和多选没有布局跳动；高对比和键盘导航没有�
 
 **目标**：完成最有辨识度的播放体验，覆盖 Aurora 的播放器、封面、控制和均衡器参考项。
 
-- 将播放器三种布局定义为 `standard`、`full-cover`、`lyrics-focus`；标题 left/center 对齐是独立 mode。
-  布局只重排现有已加载组件，不能复制播放器业务状态或重启音频服务。
+- 将播放器五种布局定义为 `standard`、`full-cover`、`lyrics-focus`、`split`、`minimal`；标题 left/center
+  对齐是独立 mode。布局只重排现有已加载组件，不能复制播放器业务状态或重启音频服务。
 - 补齐封面尺寸、圆角、阴影、占位符、fade/slide/none 过渡、封面模糊背景、遮罩和渐变 token。
 - 为 standard/pro 两种内置控制区、进度条/波形的形状和颜色增加 token；保留播放、无障碍标签和快捷键。
 - 为 EqualizerPage、DspRackPage 和可视化面板增加视觉预设（面板、旋钮、频谱、强调色），但不改变 EQ
@@ -215,8 +222,8 @@ SongList 虚拟化和多选没有布局跳动；高对比和键盘导航没有�
 
 - 扩展已有 `ThemeWindowDefaults`：小窗表面、边框、阴影、圆角、字体和桌面歌词的文字/高亮/背景/阴影；
   继续支持“继承主主题”和单独关闭继承。
-- 增加三个随应用发布的高质量预设和一份 Aurora 风格的“参考预设”，只使用原创 token 配置，不复制
-  Aurora 的资源、名称、图标或源码。
+- 发布七个内置只读预设（含 Aurora 参考、Obsidian Glass、Paper Light、Neon Gradient、Studio Split、
+  Zen Minimal 等），只使用原创 token/mode 配置，不复制 Aurora 的资源、名称、图标或源码。
 - 为 profile 建立可恢复版本历史（限定数量和磁盘预算），支持“恢复本分类默认值”和“恢复完整默认值”。
 - 设置备份/还原必须包含 V2 profile，但不能覆盖失效插件主题的安全回退判断。
 
@@ -240,9 +247,11 @@ SongList 虚拟化和多选没有布局跳动；高对比和键盘导航没有�
 
 ### Phase 7：性能、视觉回归与发布门槛（贯穿开发，正式发布前完成）
 
-- 令牌滑块预览合并到动画帧，磁盘只在明确“应用”时写入；记录主题应用和资源解码耗时。
-- 建立上述黄金样本的 Electron 截图矩阵，覆盖浅/深、三种缩放、三个播放器布局、三种导航和无封面
-  状态；修复前后的像素差需人工复核，不能只看快照更新。
+- 令牌滑块预览合并到动画帧，磁盘只在明确“应用”时写入；记录主题应用和资源解码耗时（已实现）。
+- 黄金样本 Electron 截图矩阵：浅/深 × 三缩放 × 五播放器布局 × 三导航 × 无封面，另加 7 个预设；
+  由 `pnpm run evidence:themes` 对接 CDP（脚本已就绪，实机证据包人工入库）。
+- Settings 与 Theme Studio 双写收敛：皮肤 token/mode 仅由主题 runtime 输出（已实现）。
+- Theme Studio 可搜索设置与 `effectsMode=reduced` 关闭特效（已实现）。
 - 把新增 token/mode 的 schema、迁移、回退、导入归档、插件主题和窗口继承写入 `node --test` 契约测试。
 - 以 10k 本地库执行滚动和主题切换；主题切换不得使 `SongList` 失去虚拟化或触发全库搜索/重建。
 - 发布候选至少运行 `pnpm run test:themes`、`pnpm run test:local-perf`、`pnpm run test:playback-routing`、

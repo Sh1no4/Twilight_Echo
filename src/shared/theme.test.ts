@@ -77,7 +77,16 @@ test('theme profiles keep sparse known-token overrides and reject unsafe values'
     THEME_TOKEN_DEFINITIONS.length
   )
   assert.deepEqual(themeTokensToCssVariables(profile.overrides.pureWhite), {
-    '--te-primary-500': '#123456'
+    '--te-primary-500': '#123456',
+    '--te-accent': '#123456',
+    '--brand-50': '#123456',
+    '--brand-100': '#123456',
+    '--brand-200': '#123456',
+    '--brand-300': '#123456',
+    '--brand-400': '#123456',
+    '--brand-500': '#123456',
+    '--brand-600': '#123456',
+    '--brand-700': '#123456'
   })
 })
 
@@ -169,7 +178,11 @@ test('v2 theme modes are sparse, whitelisted, and map only to managed attributes
     overrides: { pureWhite: {}, dark: {} },
     toneSchedule: { lightStartMinutes: 390, darkStartMinutes: 1230 },
     modes: {
-      appearance: { backgroundTreatment: 'image', unknown: 'unsafe' },
+      appearance: {
+        backgroundTreatment: 'image',
+        effectsMode: 'reduced',
+        unknown: 'unsafe'
+      },
       navigation: { style: 'rail', iconScale: 'huge', logo: 'show' },
       library: { density: 'compact', selection: 'unsafe', titleOverlay: 'on' },
       icons: { family: 'filled' },
@@ -200,7 +213,7 @@ test('v2 theme modes are sparse, whitelisted, and map only to managed attributes
 
   assert.ok(profile)
   assert.deepEqual(profile.modes, {
-    appearance: { backgroundTreatment: 'image' },
+    appearance: { backgroundTreatment: 'image', effectsMode: 'reduced' },
     navigation: { style: 'rail', logo: 'show' },
     library: { density: 'compact', titleOverlay: 'on' },
     icons: { family: 'filled' },
@@ -219,6 +232,7 @@ test('v2 theme modes are sparse, whitelisted, and map only to managed attributes
   assert.deepEqual(profile.toneSchedule, { lightStartMinutes: 390, darkStartMinutes: 1230 })
   const attributes = themeModesToDataAttributes(resolveThemeProfileModes(profile))
   assert.equal(attributes['data-te-background-treatment'], 'image')
+  assert.equal(attributes['data-te-effects-mode'], 'reduced')
   assert.equal(attributes['data-te-navigation-style'], 'rail')
   assert.equal(attributes['data-te-navigation-logo'], 'show')
   assert.equal(attributes['data-te-library-density'], 'compact')

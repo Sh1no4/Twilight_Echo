@@ -163,6 +163,7 @@ export type ThemeIconFamily = 'outline' | 'rounded' | 'filled'
 export type ThemeTitleCase = 'preserve' | 'uppercase'
 export type ThemeLyricAccent = 'off' | 'accent'
 export type ThemeTitleColorStyle = 'off' | 'track' | 'artist-album'
+export type ThemeEffectsMode = 'full' | 'reduced'
 
 export interface ThemeToneSchedule {
   lightStartMinutes: number
@@ -190,6 +191,7 @@ export interface ThemeModes {
     backgroundTreatment?: ThemeBackgroundTreatment
     toneScheduling?: ThemeToneScheduling
     contrastGuard?: ThemeContrastGuard
+    effectsMode?: ThemeEffectsMode
   }
   navigation?: {
     style?: ThemeNavigationStyle
@@ -543,6 +545,13 @@ export const THEME_MODE_DEFINITIONS: readonly ThemeModeDefinition[] = Object.fre
     defaultValue: 'warn'
   },
   {
+    id: 'appearance.effectsMode',
+    dataAttribute: 'data-te-effects-mode',
+    label: '特效模式',
+    options: ['full', 'reduced'],
+    defaultValue: 'full'
+  },
+  {
     id: 'navigation.style',
     dataAttribute: 'data-te-navigation-style',
     label: '导航样式',
@@ -696,7 +705,8 @@ export const DEFAULT_THEME_MODES: Readonly<ThemeModes> = Object.freeze({
     accentSource: 'fixed',
     backgroundTreatment: 'solid',
     toneScheduling: 'manual',
-    contrastGuard: 'warn'
+    contrastGuard: 'warn',
+    effectsMode: 'full'
   }),
   navigation: Object.freeze({ style: 'expanded', iconScale: 'md', logo: 'hide' }),
   library: Object.freeze({ density: 'comfortable', selection: 'fill', titleOverlay: 'off' }),
@@ -3166,6 +3176,7 @@ export function normalizeThemeModes(value: unknown): ThemeModes {
       'warn',
       'enforce'
     ])
+    assignModeOption(appearance, 'effectsMode', value.appearance.effectsMode, ['full', 'reduced'])
     if (Object.keys(appearance).length > 0) result.appearance = appearance
   }
   if (isRecord(value.navigation)) {
@@ -3737,6 +3748,22 @@ export function themeTokensToCssVariables(tokens: Record<string, string>): Recor
     const definition = tokenDefinitionById.get(id)
     if (definition) variables[definition.cssVariable] = value
   }
+  const primary500 = variables['--te-primary-500']
+  if (primary500) {
+    const primary400 = variables['--te-primary-400'] ?? primary500
+    const primary300 = variables['--te-primary-300'] ?? primary500
+    variables['--te-accent'] = primary500
+    variables['--brand-50'] = primary300
+    variables['--brand-100'] = primary300
+    variables['--brand-200'] = primary300
+    variables['--brand-300'] = primary300
+    variables['--brand-400'] = primary400
+    variables['--brand-500'] = primary500
+    variables['--brand-600'] = primary500
+    variables['--brand-700'] = primary500
+  }
+  const active = variables['--te-active-bg']
+  if (active) variables['--te-accent-soft'] = active
   return variables
 }
 
