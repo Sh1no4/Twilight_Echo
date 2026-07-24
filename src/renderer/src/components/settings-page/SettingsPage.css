@@ -13,9 +13,8 @@
   background-size: cover;
   background-repeat: no-repeat;
   color: var(--te-settings-text, #1a1a1a);
-  font-family: var(--te-font-sans), sans-serif;
+  font-family: var(--te-font-sans);
   scroll-behavior: smooth;
-  -webkit-font-smoothing: antialiased;
 }
 
 .settings-preview-page::-webkit-scrollbar {

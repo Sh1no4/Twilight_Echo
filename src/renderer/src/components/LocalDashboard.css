@@ -22,7 +22,7 @@
   );
   --home-on-accent: #ffffff;
   --home-control: rgba(255, 255, 255, 0.74);
-  --home-display: var(--te-font-rounded, var(--te-font-sans));
+  --home-display: var(--te-font-display, var(--te-font-rounded, var(--te-font-sans)));
 
   position: relative;
   isolation: isolate;

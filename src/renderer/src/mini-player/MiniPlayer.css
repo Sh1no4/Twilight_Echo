@@ -7,8 +7,7 @@
   clip-path: inset(0 round var(--mini-window-radius));
   contain: paint;
   color: var(--mini-text);
-  font-family: var(--mini-font-family);
-  font-family: var(--te-font-rounded, 'Microsoft YaHei UI', sans-serif);
+  font-family: var(--mini-font-family, var(--te-font-rounded, var(--te-font-sans)));
   letter-spacing: 0;
   opacity: 0;
   transform: translateY(5px) scale(0.985);
